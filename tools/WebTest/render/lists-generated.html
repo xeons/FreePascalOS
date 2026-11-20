@@ -1,0 +1,32 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 15px sans-serif; counter-reset: section; }
+h3 { margin: 6px 0; font-size: 16px; }
+h3::before { counter-increment: section; content: "Section " counter(section) ": "; color: #a00; }
+.inside { list-style-position: inside; }
+.roman { list-style-type: upper-roman; }
+.alpha { list-style-type: lower-alpha; }
+.none { list-style: none; }
+.nested { counter-reset: item; list-style: none; }
+.nested li::before { counter-increment: item; content: counters(item, ".") " "; }
+.tag::after { content: " [" attr(data-tag) "]"; color: #00a; }
+.block::before { content: "Block before"; display: block; background: #eef; }
+.contents { display: contents; }
+.hidden { display: none; }
+</style></head>
+<body>
+<h3>Lists</h3>
+<ul><li>Disc</li><li>Disc<ul><li>Circle<ul><li>Square</li></ul></li></ul></li></ul>
+<ol start=4><li>Four</li><li>Five</li><li value=9>Nine</li><li>Ten</li></ol>
+<ol class=roman><li>One</li><li>Two</li><li>Three</li><li>Four</li></ol>
+<ol class="alpha inside"><li>Inside marker that wraps onto another line of this narrow list item text.</li></ol>
+<ul class=none><li>No marker</li></ul>
+<h3>Counters</h3>
+<ol class=nested><li>A<ol class=nested><li>A.1</li><li>A.2</li></ol></li><li>B</li></ol>
+<h3>Generated</h3>
+<p class=tag data-tag=info>Attribute content</p>
+<p>Quotes: <q>outer <q>inner</q> outer</q>.</p>
+<div class=block>Content after the block.</div>
+<div><span class=contents>display contents keeps <b>children</b></span> in the flow; <span class=hidden>hidden</span>none leaves nothing.</div>
+</body></html>

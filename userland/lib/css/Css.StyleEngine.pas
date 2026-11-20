@@ -125,6 +125,9 @@ type
       ElementStyle), or nil when no rule targets it. }
     function ResolvePseudoStyle(Element: TCssElement; ElementStyle: TCssComputedStyle;
       PseudoElement: TCssPseudoElement): TCssComputedStyle;
+    { The style of an anonymous box under ParentStyle (inherited values
+      from it, initial values for the rest); a new reference. }
+    function AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { Styles Root and everything below it, top-down. }
     procedure StyleTree(Root: TCssElement; ParentStyle: TCssComputedStyle; Visitor: TCssStyleVisitor; Data: Pointer);
     { For hosts that walk the tree themselves: keep the ancestor filter
@@ -478,6 +481,12 @@ function TCssStyleEngine.ResolvePseudoStyle(Element: TCssElement; ElementStyle: 
   PseudoElement: TCssPseudoElement): TCssComputedStyle;
 begin
   Result := Resolve(Element, ElementStyle, PseudoElement, True);
+end;
+
+function TCssStyleEngine.AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
+begin
+  EnsureIndex;
+  Result := FComputer.AnonymousStyle(ParentStyle);
 end;
 
 procedure TCssStyleEngine.PushAncestor(Element: TCssElement);

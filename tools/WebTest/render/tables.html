@@ -1,0 +1,25 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+table { margin-bottom: 10px; }
+.styled { border-collapse: separate; border-spacing: 4px; border: 1px solid #888; }
+.styled td, .styled th { border: 1px solid #aaa; padding: 3px 6px; }
+.full { width: 100%; }
+.fixedcol td:first-child { width: 120px; }
+caption { font-weight: bold; }
+.valign td { height: 40px; }
+</style></head>
+<body>
+<table class=styled>
+<caption>Caption above</caption>
+<thead><tr><th>Name</th><th>Value</th></tr></thead>
+<tfoot><tr><td colspan=2>Footer last</td></tr></tfoot>
+<tbody><tr><td>Alpha</td><td>1</td></tr><tr><td>Beta with a longer name</td><td>22</td></tr></tbody>
+</table>
+<table class="styled full fixedcol"><tr><td>fixed 120</td><td>auto</td><td>auto, longer text content</td></tr></table>
+<table class=styled><tr><td rowspan=2>Spans two rows</td><td>top</td></tr><tr><td>bottom</td></tr></table>
+<table class="styled valign"><tr><td style="vertical-align: top">top</td><td style="vertical-align: middle">middle</td><td style="vertical-align: bottom">bottom</td><td>default</td></tr></table>
+<table border=1 cellpadding=4 cellspacing=0 width=300 bgcolor="#ffffcc" align=center><tr><td align=right>right</td><td>legacy attributes</td></tr></table>
+<table class=styled><tr><td>A cell that is long enough to wrap when the table is limited by the width of the page it is on, which is narrow here.</td><td>short</td></tr></table>
+</body></html>

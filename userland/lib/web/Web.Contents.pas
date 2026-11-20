@@ -18,8 +18,9 @@
 
 {
   The contents of libweb.so, the browser engine: encodings, the HTML
-  parser and the DOM (layout, painting, loading and the script bindings
-  come in later phases). Compiling this unit compiles all of them.
+  parser and the DOM, styling (through libcss), text (through libfont),
+  layout and painting (through libdrawing and libimage). Compiling this
+  unit compiles all of them.
 }
 unit Web.Contents;
 
@@ -55,7 +56,41 @@ uses
   Web.Html.Parser,
   Web.Html.Serializer,
   Web.Html.Markup,
-  Web.Html.TreeDump;
+  Web.Html.TreeDump,
+  Web.Style.Atoms,
+  Web.Style.NodeData,
+  Web.Style.Adapter,
+  Web.Style.Hints,
+  Web.Style.Sheets,
+  Web.Style.UserAgent,
+  Web.Style.Resolver,
+  Web.Text.Fonts,
+  Web.Text.FontInstances,
+  Web.Text.Breaking,
+  Web.Layout.Resources,
+  Web.Layout.Boxes,
+  Web.Layout.Values,
+  Web.Layout.Context,
+  Web.Layout.Floats,
+  Web.Layout.TreeBuilder,
+  Web.Layout.Counters,
+  Web.Layout.InlineItems,
+  Web.Layout.Inline,
+  Web.Layout.Sizing,
+  Web.Layout.Replaced,
+  Web.Layout.Block,
+  Web.Layout.Flex,
+  Web.Layout.Grid,
+  Web.Layout.Table,
+  Web.Layout.Positioned,
+  Web.Layout.Dispatch,
+  Web.Layout.Document,
+  Web.Layout.Dump,
+  Web.Paint.DisplayList,
+  Web.Paint.Gradients,
+  Web.Paint.Builder,
+  Web.Paint.Raster,
+  Web.Paint.Painter;
 
 implementation
 

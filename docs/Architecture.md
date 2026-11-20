@@ -8252,7 +8252,8 @@ independent) against the Free Pascal runtime library:
   points (`Drawing.SmoothStrokes`: a brush's mark, one shape so
   overlaps blend once), quadratic and cubic Bezier curves as points
   (`Drawing.Curves`), anti-aliased rectangles with rounded corners
-  (`Drawing.SmoothRoundedRectangles`) and
+  (`Drawing.SmoothRoundedRectangles`; also with each corner's own
+  elliptical radii, scaled down together as CSS says) and
   `Drawing.Bevels` (raised and sunken edges, the focus frame). Every
   shape is drawn as horizontal spans through one routine (`FillSpan`),
   which clips them and blends translucent colours. It needs only the
@@ -9112,7 +9113,9 @@ dynamic range, update; set by the host), the rule index, the struct
 cache and the style sharing cache. `ResolveStyle(Element, ParentStyle)`
 gives a new reference; `ResolvePseudoStyle` gives nil when no rule
 targets the pseudo-element; `StyleTree` styles a subtree top-down with
-the bloom filter (hosts walking themselves call PushAncestor and
+the bloom filter (`AnonymousStyle` gives an anonymous box's style:
+inherited values from the parent, initial ones for the rest; hosts
+walking themselves call PushAncestor and
 PopAncestor). Elements with the same parent style that match the same
 rules, with no style attribute or presentational hints and no attr()
 in their declarations, get the same computed style from the sharing
@@ -9165,12 +9168,11 @@ insertion sort (fine for the dozens of rules that match one element).
 
 libweb (`userland/lib/web`, `libweb.so`, units `Web.*`) is the browser
 engine that both the browser application and the web view control will
-use. Part 1, here, is the text side: the WHATWG Encoding Standard, the
-HTML parser and the DOM. Layout, painting, resource loading (through
-libhttp), the CSS adapter (libcss) and the script bindings
-(libjavascript) are later phases, and the structures below leave room
-for them. It depends on libsystem only; `htmldump` (in /bin) is its
-command line front end.
+use: the WHATWG Encoding Standard, the HTML parser and the DOM; styling
+through libcss, text through libfont, layout and painting through
+libdrawing and libimage (sections below). Resource loading (through
+libhttp) and the script bindings (libjavascript) are other phases' work.
+`htmldump` and `webrender` (in /bin) are its command line front ends.
 
 ### Atoms and namespaces
 
@@ -9371,6 +9373,311 @@ observer hook, node lifetime, the script hook with document.write and
 pausing, innerHTML and friends, event dispatch, and serialization. The
 test prints the parser's speed and bytes per node ("perf" lines): on the
 build machine about 2.3 million nodes (20 MB of HTML) per second.
+
+### Styling (Web.Style)
+
+libweb styles its DOM with libcss. libweb's atoms cannot be libcss's
+(libweb's table starts with the HTML names as constants, libcss's with
+its keywords in enum order), so `Web.Style.Atoms` maps each libweb atom
+once to the libcss atom of the same name, in an array indexed by the
+libweb atom; `TDomElementAdapter` (`Web.Style.Adapter`) then answers the
+selector matcher with array reads (local names, namespaces, attribute
+names, classes from the element's cached class atoms) and the id atom
+kept in the node's data, and allocates nothing per element. The states
+of the dynamic pseudo-classes come from the node's data (set by the web
+view: hover, focus, active ...) plus those the document gives (links,
+disabled/enabled/checked controls, required, read-only, placeholder
+shown, open details).
+
+Each styled node has a small record in its `LayoutData` slot
+(`Web.Style.NodeData`): its computed style and those of its ::before,
+::after and ::marker, its parsed style attribute and presentational
+hints, its id atom, its states, dirty bits and its first box. The record
+is freed when the node leaves the document.
+
+`TDocumentStyler` (`Web.Style.Resolver`) owns the `TCssStyleEngine`: it
+keeps the engine's sheets in step with the document's
+(`Web.Style.Sheets`: libcss's HTML user agent sheet, the engine's own
+additions for form controls and `center` in `Web.Style.UserAgent`, the
+user sheets and then the author sheets in tree order: each `<style>`
+parsed here and kept with its text, each `<link rel=stylesheet>`'s sheet
+from the document's resources; media attributes become the sheets'
+media lists, alternate sheets do not apply). Presentational hints
+(`Web.Style.Hints`) follow the HTML Standard's rendering section with
+its rules for dimension and legacy color values: body's bgcolor, text,
+background and margins; table's width, height, bgcolor, border,
+cellspacing and align; cells' width, height, nowrap, align, valign and
+the table's cellpadding and border; align on p, div, headings and
+captions; img/object/embed/iframe/video/canvas width, height, align,
+border, hspace, vspace; hr's width, size, color, noshade and align;
+font's color, face and size; list types; ol start and li value as the
+list-item counter; br clear.
+
+Styling walks the tree top-down with the engine's ancestor bloom filter
+(PushAncestor/PopAncestor), visiting only subtrees whose dirty bits say
+something changed. The styler is a document observer: an inserted
+subtree is marked for styling with its new siblings (structural
+selectors), an attribute change restyles the element's subtree and
+siblings (a style attribute change only the element), states likewise,
+and `<style>`/`<link>` changes mark the sheets dirty. After restyling an
+element it compares old and new styles struct by struct (structs are
+interned, so pointers compare) and reports the kind of change to the
+layout: boxes (display, position, float, generated content, lists),
+layout, or paint (the boxes then take the new styles and nothing is laid
+out again); a changed inherited group restyles the children.
+
+### Text (Web.Text)
+
+`Web.Text.Fonts` lists the TrueType faces under the font directory
+(/lib/fonts; the host tools point it at userland/fonts): a subdirectory
+per family ("dejavu-sans" is "DejaVu Sans"), weight and slant from the
+file names; a face's file is read when first used. Matching walks the
+font-family list: generic families map to installed ones (sans-serif,
+serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
+Sans Mono; some well-known names too), the face nearest the weight and
+slant is taken, and a character the face lacks takes the nearest face
+of the library that has it (remembered per font).
+
+`TTextFont` (`Web.Text.FontInstances`) is a face at a CSS pixel size,
+one per font style struct. Layout measures with the faces' unhinted
+advances and kerning scaled exactly, in CSS pixels, so a text has the
+same width at every device scale; painting renders glyphs at the device
+pixel size from libfont's glyph cache and places them where layout
+measured them. Measurements are cached per (font, string) in one hash
+table (cleared when full). Bold without a bold face is drawn twice, one
+device pixel apart; italic or oblique without such a face is drawn
+sheared (a synthetic oblique). `Web.Text.Breaking` has UTF-8 stepping,
+text-transform (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic) and
+line break opportunities (a simplified UAX #14: after spaces, U+200B and
+hyphens between letters, around ideographs, never before closing
+punctuation; word-break break-all and keep-all, line-break anywhere,
+no-break spaces).
+
+### Boxes and layout (Web.Layout)
+
+`Web.Layout.TreeBuilder` makes the box tree (`Web.Layout.Boxes`): one box
+per element that generates one (display's outer and inner types: block
+containers, inline boxes, inline-blocks, flex, grid, the table boxes,
+list items with ::marker boxes; replaced boxes for img, video, canvas,
+iframe, embed, object and the controls the engine draws), one per text
+node (not per word or line), ::before/::after with generated text,
+`display: contents` giving its children to its parent, `display: none`
+nothing. CSS's anonymous boxes: block containers with both block and
+inline children wrap inline runs in anonymous blocks (a run of
+collapsible white space alone is dropped); flex items are blockified and
+text runs among them wrapped; missing table rows, row groups and cells
+are made. A block inside an inline box stays there and gets lines of its
+own (no inline splitting). `Web.Layout.Counters` applies
+counter-reset/set/increment and the list-item counter with CSS Lists 3
+scoping in one walk and writes the generated text: strings, counter(),
+counters(), attr(), quotes (and the quotes property), markers from
+::marker content or list-style-type (the predefined counter styles lists
+use) with their suffixes.
+
+A box's border box position is relative to its nearest ancestor that is
+not an inline box, in CSS pixels as singles; inline boxes are drawn from
+fragments. Each box keeps its used margins, borders and padding, its
+collapsing margins as seen from outside, its baselines, its scroll state
+and its min/max-content widths (forgotten when it changes). Inline
+content is two arrays on the block container: line boxes and fragments
+(a byte range of a text box's text, an atomic inline, or an inline box's
+part on one line); consecutive text of one box on a line is one
+fragment.
+
+`TDocumentLayout` (`Web.Layout.Document`) brings everything up to date:
+restyle, rebuild the box children of the elements whose boxes changed
+(boxes of untouched subtrees are moved over, not rebuilt), counters,
+layout, fixed boxes, scroll extents. `LayoutBox` (`Web.Layout.Dispatch`)
+lays out one box for an input (`Web.Layout.Context`: containing block
+size, width mode stretch/shrink-to-fit/fixed, the formatting context's
+floats and the box's offset in it, the lists absolutely positioned and
+fixed boxes go to); a clean box laid out before for the same input whose
+layout did not depend on outside floats or containing blocks is skipped,
+so relayout after a change touches the changed part and what depends on
+its size.
+
+- Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
+  8.3.1): widths with auto margins, min/max, box-sizing and percentages;
+  margin collapsing between siblings, through parents' tops and bottoms
+  and through empty blocks, positive and negative; clearance; floats
+  (`Web.Layout.Floats`, CSS 2.2 9.5.1) and formatting context roots
+  placed beside them; children whose position differs from the guess
+  are laid out again when floats could matter; a formatting context
+  root's height includes its floats; outside list markers beside the
+  first line.
+- Inline formatting (`Web.Layout.InlineItems`, `Web.Layout.Inline`): white
+  space processing across box boundaries (normal, nowrap, pre, pre-wrap,
+  pre-line, break-spaces, tabs), text-transform, letter- and
+  word-spacing, greedy line breaking at the break opportunities with
+  overflow-wrap/word-break splitting, hanging and dropped collapsible
+  spaces, text-indent, text-align (start, end, left, right, center,
+  justify, text-align-last, the -webkit- ones HTML's align maps to),
+  line heights from each inline box's ascent, descent and half leading
+  with vertical-align (baseline, sub, super, text-top, text-bottom,
+  middle, lengths, percentages; top and bottom for atomic inlines),
+  floats beside or below lines, lines moved below floats too narrow for
+  them, static positions, empty lines after forced breaks.
+- Intrinsic sizes (`Web.Layout.Sizing`): min-content and max-content of
+  inline content, block children, flex containers, tables and replaced
+  boxes; shrink-to-fit.
+- Positioning (`Web.Layout.Positioned`, CSS 2.2 10.3.7, 10.6.4):
+  relative offsets, absolute boxes against the padding box of the
+  nearest positioned block (left/right/width and top/bottom/height
+  constraints, static positions, auto margins centering), fixed boxes
+  against the viewport; sticky boxes are laid out as relative ones
+  without offsets.
+- Replaced elements (`Web.Layout.Replaced`): intrinsic sizes from the
+  image (or 300x150, or the controls' font-based sizes), the ratio kept
+  when one side or a min/max applies; object-fit and object-position
+  when painting.
+- Flexbox (`Web.Layout.Flex`, CSS Flexbox 1 section 9): flex base sizes,
+  automatic minimum sizes, lines, the flexible length resolution loop
+  with freezing, cross sizes, align-content, stretch, auto margins,
+  justify-content, align-items/align-self with baselines, gaps, order,
+  reversed directions and wrap-reverse.
+- Grid (`Web.Layout.Grid`, CSS Grid 1 in its basic form): explicit
+  tracks from grid-template-columns/rows (lengths, percentages, fr,
+  auto, min-content, max-content, minmax(), fit-content(), repeat() with
+  counts and auto-fill/auto-fit) and grid-template-areas; placement by
+  line numbers (negative from the end), spans and area names, the rest
+  by the sparse auto-placement cursor in row or column flow; implicit
+  tracks from grid-auto-rows/columns; track sizing (fixed, intrinsic
+  from the items' min/max-content contributions with spanning items
+  spread, growth to the limits, fr sharing with the minimum kept, auto
+  tracks stretched); columns first, rows from the items laid out at
+  their widths; justify/align-self and -items (stretch, start, center,
+  end), justify/align-content, gaps.
+- Tables (`Web.Layout.Table`): automatic layout in brief (grid with
+  colspan/rowspan, header groups first and footers last, column
+  min/max from cells, spanning cells spread, distribution by what each
+  column can still use, row heights, cells stretched to their rows with
+  vertical-align, border-spacing, captions above or below the grid).
+- Overflow: boxes whose overflow is not visible clip their contents and
+  (except overflow: clip) are scroll containers; their scrollable
+  overflow is computed after layout.
+
+`Web.Layout.Dump` writes the layout tree as text (box kind, element,
+border box in document coordinates, lines and fragments) for the tests.
+
+### Painting and hit testing (Web.Paint)
+
+`Web.Paint.Builder` turns the laid out tree into a display list
+(`Web.Paint.DisplayList`: small records of one kind each, bounds in
+document CSS pixels, color, source box, and an index into side arrays
+for radii, border sides, text runs, images, gradients, shadows and
+strings) in the painting order of CSS 2.2 Appendix E: each stacking
+context paints its background, negative z-index contexts, block
+backgrounds in tree order, floats, inline content (inline boxes'
+backgrounds and borders on each line, text with decorations and a
+text-shadow copy, atomic inlines, replaced content), positioned
+descendants with z-index auto/0 in tree order, positive z-index, then
+outlines. Positioned boxes with z-index auto, floats and atomic inlines
+paint as if they were stacking contexts. Overflow clips become clip
+pairs (rounded with border-radius), scroll containers move their
+contents, opacity becomes a group, fixed boxes are marked to ignore the
+viewport's scroll. The root's (or body's) background paints the canvas.
+Backgrounds have all their layers: color, url() images (sized with
+background-size auto/cover/contain/lengths, positioned, repeated) and
+gradients (`Web.Paint.Gradients`: linear and radial, repeating,
+directions, angles, corners, shapes, sizes, positions, stop fixup,
+premultiplied sRGB), clipped by background-clip and origin.
+
+`Web.Paint.Raster` draws a list with libdrawing onto a surface showing
+the viewport, for a damaged rectangle only (everything outside it is
+skipped), at the device scale and the viewport's scroll offset:
+coverage-shaped (anti-aliased) rectangles with elliptical corners (a
+libdrawing addition), borders of every style (solid, dashed, dotted,
+double, groove, ridge, inset, outset; one ring when rounded), glyphs from
+libfont's glyph cache, images scaled and tiled, gradients per pixel, box
+shadows as a blurred coverage mask (outer and inset), the controls
+(check boxes, radio buttons, meters, text field values), clip regions,
+opacity groups on transparent surfaces and rounded clips composited
+through their coverage.
+
+`TDocumentPainter` (`Web.Paint.Painter`) keeps a layout's display list,
+rebuilt when the layout's `PaintVersion` moved, and hit tests on the
+same list (every box adds a hit area; clips and fixed boxes respected):
+the topmost node at a viewport point, its element and box.
+
+### Resources: what the loader supplies
+
+`TDocumentResources` (`Web.Layout.Resources`, found or made with
+`DocumentResourcesOf(Document)`) is how the loader (Web.Loading) hands
+results to styling and layout without either knowing the other:
+
+- `SetElementStyleSheet(LinkElement, Sheet)`: the sheet of a
+  `<link rel=stylesheet>` (parsed with libcss's `ParseStyleSheet(Text,
+  coAuthor, Url)`), taken over; nil removes it. `AddUserStyleSheet`.
+  Imported sheets are hung on their `TCssImportRule.StyleSheet`, then
+  `StyleSheetsChanged`. `OnImportsNeeded(Sheet, StyleElement)` asks for
+  the imports of sheets made from `<style>` elements.
+- `SetElementImage(Element, Image)`: an `<img>`'s (`<input type=image>`,
+  `<object>`, `<video poster>`) decoded `TImage`, taken over.
+- `SetUrlImage(Url, Image)` for url() in style (backgrounds, ...): the
+  layout asks through `OnImageNeeded(Url, BaseUrl)` once per URL text (as
+  written; BaseUrl is what it is relative to), the loader answers with
+  SetUrlImage under the same URL text, now or later.
+- `FreeDocumentResources(Document)` when the document goes.
+
+Changes notify the layout (styles become dirty, replaced boxes take
+their images and are laid out again, the display list is rebuilt).
+
+### The web view's API
+
+    Layout := TDocumentLayout.Create(Document);   { resources found by document }
+    Layout.SetViewport(WidthCss, HeightCss, Scale);
+    Layout.Update;                                 { after any change; NeedsUpdate says if one is due }
+    Painter := TDocumentPainter.Create(Layout);
+    Painter.Paint(Surface, DamagedDeviceRect);     { the surface shows the viewport }
+    Hit := Painter.HitTest(XCss, YCss);            { Hit.Node, Hit.Element, Hit.Box }
+    Layout.ScrollContainers                        { viewport first: rects, scroll sizes, offsets }
+    Layout.SetScrollOffset(NodeOrNil, X, Y); Layout.GetScrollOffset(...)
+    Layout.SetElementStates(Element, [esHover, esFocus ...])
+    Layout.DocumentWidth / DocumentHeight / NodeBounds(Node, ...) / PaintVersion
+
+DOM changes reach the layout through the document observer, so a web
+view only calls Update (and repaints when PaintVersion moved).
+
+### Tests and webrender
+
+`make web-layout-test` (in `make test`) builds tools/WebLayoutTest on the
+host with libcss, libfont, libdrawing and libimage. It lays out the
+reference pages of `tools/WebTest/render` (block margins, inline text,
+floats, positioning, lists and generated content, flex, grid, tables, replaced
+elements and controls, legacy attributes and overflow, painting) and
+compares their layout tree dumps with the `.txt` files beside them
+(`make web-layout-update` rewrites those; look at the difference and at
+the PNGs before committing); checks that incremental restyle and
+relayout after DOM changes (classes, inserted and removed elements,
+text, display changes, :hover, the viewport size) give the tree a fresh
+layout gives and skip clean boxes; hit testing; painting (known pixels:
+backgrounds, borders, canvas, z-order, opacity, clipping, scrolling, the
+device scale; a damaged rectangle painted alone equal to the full
+paint); and reports the speed and memory of a 1000 paragraph page (on
+the build machine about 30 ms to lay out 8000 nodes, one box per node,
+10 display items per paragraph).
+
+`webrender [-w WIDTH] [-h HEIGHT] [-s SCALE] [-f FONTDIR] [-l] [-t]
+PAGE.html [OUT.png]` (in /bin, and `make webrender` on the host as
+build/tools/webrender with `-f userland/fonts`) renders a page to a PNG
+(-t: the whole document) or prints its layout tree (-l); stylesheets and
+images referred to by relative URLs are read from beside the page.
+
+### Not done yet (layout and painting)
+
+Grid's subgrid, dense packing, baseline alignment, named lines and the
+full intrinsic track sizing algorithm, the fixed table
+layout and collapsing borders (laid out as separate borders without
+spacing), multi-column layout, writing modes and bidirectional text
+(rtl only flips text-align), shaping beyond kerning (ligatures, complex
+scripts), font loading from @font-face, ::first-line and ::first-letter, inline boxes
+split around blocks (blocks inside inline boxes take lines of their own
+instead), relative positioning of inline boxes, true sticky positioning,
+transforms, filters, blend modes, clip-path, border-image, conic
+gradients, text-shadow blur, outlines following border radii, the
+`visibility: collapse` of table parts, scrollbars (the web view draws
+them from ScrollContainers), incremental display list updates (it is
+rebuilt whole when anything changes).
 
 ## The AArch64 port
 

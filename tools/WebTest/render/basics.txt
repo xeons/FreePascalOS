@@ -1,0 +1,53 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x339.76
+    block <body> at (10,21.44) size 780x308.32
+      block <h1> at (10,21.44) size 780x37.25
+        line 0 at y 21.44 height 37.25 baseline 51.14
+          text "Hello world" at (10,21.44) size 204.75x37.25
+      block <div> at (293,80.13) size 214x69.88
+        line 0 at y 87.13 height 18.62 baseline 101.98
+          text "Some " at (300,87.13) size 50.46x18.62
+          inline-box <b> at (350.46,87.13) size 39.38x18.62
+          text "bold" at (350.46,87.13) size 39.38x18.62
+          text " text that" at (389.84,87.13) size 74.24x18.62
+        line 1 at y 105.76 height 18.62 baseline 120.61
+          text "wraps across a couple of" at (300,105.76) size 197.99x18.62
+        line 2 at y 124.38 height 18.62 baseline 139.23
+          text "lines in a narrow box." at (300,124.38) size 171.3x18.62
+      block <p> at (10,170) size 780x18.62
+        line 0 at y 170 height 18.62 baseline 184.86
+          text "Float beside this text which should wrap around the float nicely when long enough." at (60,170) size 667.07x18.62
+        block <span> at (10,170) size 50x50 float
+      block <ul> at (10,204.63) size 780x37.25
+        block <li> at (50,204.63) size 740x18.62
+          line 0 at y 204.63 height 18.62 baseline 219.48
+            text "One" at (60,204.63) size 32.58x18.62
+          block ::marker at (35.76,204.63) size 9.44x18.62
+            line 0 at y 204.63 height 18.62 baseline 219.48
+              text "•" at (35.76,204.63) size 9.44x18.62
+        block <li> at (50,223.26) size 740x18.62
+          line 0 at y 223.26 height 18.62 baseline 238.11
+            text "Two" at (50,223.26) size 30x18.62
+          block ::marker at (35.76,223.26) size 9.44x18.62
+            line 0 at y 223.26 height 18.62 baseline 238.11
+              text "•" at (35.76,223.26) size 9.44x18.62
+      table <table> at (10,257.88) size 80.15x53.25
+        row-group <tbody> at (11,260.88) size 78.15x47.25
+          row <tr> at (11,260.88) size 78.15x22.62
+            cell <td> at (13,260.88) size 30.82x22.62
+              line 0 at y 262.88 height 18.62 baseline 277.73
+                text "a" at (15,262.88) size 9.8x18.62
+            cell <td> at (45.82,260.88) size 41.33x22.62
+              line 0 at y 262.88 height 18.62 baseline 277.73
+                text "bb" at (47.82,262.88) size 20.31x18.62
+          row <tr> at (11,285.5) size 78.15x22.62
+            cell <td> at (13,285.5) size 74.15x22.62
+              line 0 at y 287.5 height 18.62 baseline 302.36
+                text "wide cell" at (15,287.5) size 70.15x18.62
+      flex <div> at (10,311.13) size 780x18.62
+        block <div> at (10,311.13) size 256.67x18.62
+          line 0 at y 311.13 height 18.62 baseline 325.98
+            text "A" at (10,311.13) size 10.95x18.62
+        block <div> at (276.67,311.13) size 513.33x18.62
+          line 0 at y 311.13 height 18.62 baseline 325.98
+            text "B" at (276.67,311.13) size 10.98x18.62

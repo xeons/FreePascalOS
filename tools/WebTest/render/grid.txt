@@ -1,0 +1,130 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x592.16
+    block <body> at (8,8) size 484x574.16
+      grid <div> at (8,8) size 484x18.3
+        block <div> at (8,8) size 100x18.3
+          line 0 at y 9 height 16.3 baseline 22
+            text "100px" at (9,9) size 43.89x16.3
+        block <div> at (112,8) size 125.33x18.3
+          line 0 at y 9 height 16.3 baseline 22
+            text "1fr" at (113,9) size 19.59x16.3
+        block <div> at (241.33,8) size 250.67x18.3
+          line 0 at y 9 height 16.3 baseline 22
+            text "2fr" at (242.33,9) size 19.59x16.3
+      grid <div> at (8,36.3) size 484x40.59
+        block <div> at (8,36.3) size 158.67x18.3
+          line 0 at y 37.3 height 16.3 baseline 50.29
+            text "one" at (9,37.3) size 26.05x16.3
+        block <div> at (170.67,36.3) size 158.67x18.3
+          line 0 at y 37.3 height 16.3 baseline 50.29
+            text "two" at (171.67,37.3) size 25.5x16.3
+        block <div> at (333.33,36.3) size 158.67x18.3
+          line 0 at y 37.3 height 16.3 baseline 50.29
+            text "three" at (334.33,37.3) size 37.04x16.3
+        block <div> at (8,58.59) size 158.67x18.3
+          line 0 at y 59.59 height 16.3 baseline 72.59
+            text "four" at (9,59.59) size 28.12x16.3
+      grid <div> at (8,86.89) size 484x40.59
+        block <div> at (8,86.89) size 118x18.3
+          line 0 at y 87.89 height 16.3 baseline 100.89
+            text "a" at (9,87.89) size 8.58x16.3
+        block <div> at (130,86.89) size 118x18.3
+          line 0 at y 87.89 height 16.3 baseline 100.89
+            text "b" at (131,87.89) size 8.89x16.3
+        block <div> at (252,86.89) size 118x18.3
+          line 0 at y 87.89 height 16.3 baseline 100.89
+            text "c" at (253,87.89) size 7.7x16.3
+        block <div> at (374,86.89) size 118x18.3
+          line 0 at y 87.89 height 16.3 baseline 100.89
+            text "d" at (375,87.89) size 8.89x16.3
+        block <div> at (8,109.19) size 118x18.3
+          line 0 at y 110.19 height 16.3 baseline 123.18
+            text "e" at (9,110.19) size 8.61x16.3
+      grid <div> at (8,137.48) size 484x18.3
+        block <div> at (8,137.48) size 33.51x18.3
+          line 0 at y 138.48 height 16.3 baseline 151.48
+            text "auto" at (9,138.48) size 31.51x16.3
+        block <div> at (45.51,137.48) size 82.54x18.3
+          line 0 at y 138.48 height 16.3 baseline 151.48
+            text "longer auto" at (46.51,138.48) size 80.54x16.3
+        block <div> at (132.05,137.48) size 359.95x18.3
+          line 0 at y 138.48 height 16.3 baseline 151.48
+            text "rest" at (133.05,138.48) size 26.84x16.3
+      grid <div> at (8,165.78) size 484x40.59
+        block <div> at (8,165.78) size 321.33x18.3
+          line 0 at y 166.78 height 16.3 baseline 179.78
+            text "spans two" at (9,166.78) size 70.88x16.3
+        block <div> at (333.33,165.78) size 158.67x18.3
+          line 0 at y 166.78 height 16.3 baseline 179.78
+            text "x" at (334.33,166.78) size 8.29x16.3
+        block <div> at (8,188.08) size 158.67x18.3
+          line 0 at y 189.08 height 16.3 baseline 202.07
+            text "y" at (9,189.08) size 8.29x16.3
+        block <div> at (170.67,188.08) size 158.67x18.3
+          line 0 at y 189.08 height 16.3 baseline 202.07
+            text "z" at (171.67,189.08) size 7.35x16.3
+      grid <div> at (8,216.38) size 484x40.59
+        block <div> at (170.67,216.38) size 321.33x18.3
+          line 0 at y 217.38 height 16.3 baseline 230.37
+            text "columns 2 to 4" at (171.67,217.38) size 104.05x16.3
+        block <div> at (8,216.38) size 158.67x40.59
+          line 0 at y 217.38 height 16.3 baseline 230.37
+            text "rows 1 to 3" at (9,217.38) size 77.98x16.3
+        block <div> at (170.67,238.67) size 158.67x18.3
+          line 0 at y 239.67 height 16.3 baseline 252.67
+            text "auto" at (171.67,239.67) size 31.51x16.3
+        block <div> at (333.33,238.67) size 158.67x18.3
+          line 0 at y 239.67 height 16.3 baseline 252.67
+            text "auto" at (334.33,239.67) size 31.51x16.3
+      grid <div> at (8,266.97) size 484x104.59
+        block <div> at (8,266.97) size 484x18.3
+          line 0 at y 267.97 height 16.3 baseline 280.96
+            text "Header" at (9,267.97) size 50.98x16.3
+        block <div> at (8,289.27) size 120x60
+          line 0 at y 290.27 height 16.3 baseline 303.26
+            text "Side" at (9,290.27) size 30.28x16.3
+        block <div> at (132,289.27) size 360x60
+          line 0 at y 290.27 height 16.3 baseline 303.26
+            text "Main" at (133,290.27) size 33.42x16.3
+        block <div> at (8,353.27) size 484x18.3
+          line 0 at y 354.27 height 16.3 baseline 367.26
+            text "Footer" at (9,354.27) size 44.54x16.3
+      grid <div> at (8,381.56) size 484x50
+        block <div> at (55.22,397.41) size 64.23x18.3
+          line 0 at y 398.41 height 16.3 baseline 411.41
+            text "centered" at (56.22,398.41) size 62.23x16.3
+        block <div> at (242.62,397.41) size 14.76x18.3
+          line 0 at y 398.41 height 16.3 baseline 411.41
+            text "in" at (243.62,398.41) size 12.76x16.3
+        block <div> at (392.41,397.41) size 40.51x18.3
+          line 0 at y 398.41 height 16.3 baseline 411.41
+            text "areas" at (393.41,398.41) size 38.51x16.3
+      grid <div> at (8,441.56) size 484x40.59
+        block <div> at (8,441.56) size 158.67x18.3
+          line 0 at y 442.56 height 16.3 baseline 455.56
+            text "1" at (9,442.56) size 8.91x16.3
+        block <div> at (8,463.86) size 158.67x18.3
+          line 0 at y 464.86 height 16.3 baseline 477.85
+            text "2" at (9,464.86) size 8.91x16.3
+        block <div> at (170.67,441.56) size 158.67x18.3
+          line 0 at y 442.56 height 16.3 baseline 455.56
+            text "3" at (171.67,442.56) size 8.91x16.3
+        block <div> at (170.67,463.86) size 158.67x18.3
+          line 0 at y 464.86 height 16.3 baseline 477.85
+            text "4" at (171.67,464.86) size 8.91x16.3
+        block <div> at (333.33,441.56) size 158.67x18.3
+          line 0 at y 442.56 height 16.3 baseline 455.56
+            text "5" at (334.33,442.56) size 8.91x16.3
+      grid <div> at (8,492.16) size 484x90
+        block <div> at (8,492.16) size 240x28.67
+          line 0 at y 493.16 height 16.3 baseline 506.15
+            text "1fr" at (9,493.16) size 19.59x16.3
+        block <div> at (252,492.16) size 240x28.67
+          line 0 at y 493.16 height 16.3 baseline 506.15
+            text "1fr" at (253,493.16) size 19.59x16.3
+        block <div> at (8,524.82) size 240x57.33
+          line 0 at y 525.82 height 16.3 baseline 538.82
+            text "2fr" at (9,525.82) size 19.59x16.3
+        block <div> at (252,524.82) size 240x57.33
+          line 0 at y 525.82 height 16.3 baseline 538.82
+            text "2fr" at (253,525.82) size 19.59x16.3

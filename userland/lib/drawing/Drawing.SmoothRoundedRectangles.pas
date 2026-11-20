@@ -41,6 +41,18 @@ uses
   screen (filled), or not (a hole in a clockwise outline around it). }
 procedure AddShapeRoundedRectangle(var Shape: TCoverageShape; Left, Top, Right, Bottom, Radius: Double;
   Clockwise: Boolean);
+type
+  { Each corner's horizontal and vertical radius: top left, top right,
+    bottom right, bottom left (CSS's border-radius order). }
+  TCornerRadii = array[0..3] of TPrecisePoint;
+
+{ A rectangle with elliptical corners of their own sizes (scaled down
+  together when adjacent ones do not fit, as CSS says), added to Shape. }
+procedure AddShapeRoundedRectangleCorners(var Shape: TCoverageShape; Left, Top, Right, Bottom: Double;
+  const Radii: TCornerRadii; Clockwise: Boolean);
+{ CSS's rule: when two radii on a side add up to more than the side,
+  all are scaled by the same factor. }
+procedure FitCornerRadii(var Radii: TCornerRadii; Width, Height: Double);
 procedure FillSmoothRoundedRectangle(const Canvas: TCanvas; const Bounds: TRectangle; Radius: Double;
   Color: TColor);
 procedure DrawSmoothRoundedRectangleOutline(const Canvas: TCanvas; const Bounds: TRectangle; Radius,
@@ -111,6 +123,115 @@ begin
     begin
       Angle := -Pi / 2 + Corner * (Pi / 2) + Piece * (Pi / 2) / Pieces;
       Points[Count] := PrecisePoint(CentreX + Radius * Cos(Angle), CentreY + Radius * Sin(Angle));
+      Inc(Count);
+    end;
+  end;
+  if Clockwise then
+    AddShapePolygon(Shape, Points)
+  else
+  begin
+    Reversed := nil;
+    SetLength(Reversed, Count);
+    for Index := 0 to Count - 1 do
+      Reversed[Index] := Points[Count - 1 - Index];
+    AddShapePolygon(Shape, Reversed);
+  end;
+end;
+
+procedure FitCornerRadii(var Radii: TCornerRadii; Width, Height: Double);
+var
+  Factor: Double;
+  Corner: LongInt;
+
+  procedure Limit(Sum, Side: Double);
+  begin
+    if (Sum > 0) and (Side / Sum < Factor) then
+      Factor := Side / Sum;
+  end;
+
+begin
+  Factor := 1;
+  Limit(Radii[0].X + Radii[1].X, Width);
+  Limit(Radii[3].X + Radii[2].X, Width);
+  Limit(Radii[0].Y + Radii[3].Y, Height);
+  Limit(Radii[1].Y + Radii[2].Y, Height);
+  if Factor < 1 then
+    for Corner := 0 to 3 do
+    begin
+      Radii[Corner].X := Radii[Corner].X * Factor;
+      Radii[Corner].Y := Radii[Corner].Y * Factor;
+    end;
+end;
+
+procedure AddShapeRoundedRectangleCorners(var Shape: TCoverageShape; Left, Top, Right, Bottom: Double;
+  const Radii: TCornerRadii; Clockwise: Boolean);
+var
+  Fitted: TCornerRadii;
+  Points, Reversed: array of TPrecisePoint;
+  Corner, Piece, Pieces, Count, Index: LongInt;
+  CentreX, CentreY, RadiusX, RadiusY, Angle: Double;
+begin
+  if (Right <= Left) or (Bottom <= Top) then
+    Exit;
+  Fitted := Radii;
+  for Corner := 0 to 3 do
+  begin
+    if Fitted[Corner].X < 0 then
+      Fitted[Corner].X := 0;
+    if Fitted[Corner].Y < 0 then
+      Fitted[Corner].Y := 0;
+  end;
+  FitCornerRadii(Fitted, Right - Left, Bottom - Top);
+  Points := nil;
+  Count := 0;
+  { Clockwise from the top right corner (TCornerRadii index 1). }
+  for Corner := 0 to 3 do
+  begin
+    case Corner of
+      0:
+        begin
+          RadiusX := Fitted[1].X;
+          RadiusY := Fitted[1].Y;
+          CentreX := Right - RadiusX;
+          CentreY := Top + RadiusY;
+        end;
+      1:
+        begin
+          RadiusX := Fitted[2].X;
+          RadiusY := Fitted[2].Y;
+          CentreX := Right - RadiusX;
+          CentreY := Bottom - RadiusY;
+        end;
+      2:
+        begin
+          RadiusX := Fitted[3].X;
+          RadiusY := Fitted[3].Y;
+          CentreX := Left + RadiusX;
+          CentreY := Bottom - RadiusY;
+        end;
+    else
+      begin
+        RadiusX := Fitted[0].X;
+        RadiusY := Fitted[0].Y;
+        CentreX := Left + RadiusX;
+        CentreY := Top + RadiusY;
+      end;
+    end;
+    if (RadiusX <= 0) or (RadiusY <= 0) then
+      Pieces := 0
+    else
+      Pieces := CornerPieces(Max(RadiusX, RadiusY));
+    SetLength(Points, Count + Pieces + 1);
+    for Piece := 0 to Pieces do
+    begin
+      if Pieces = 0 then
+        Angle := -Pi / 2 + Corner * (Pi / 2) + Pi / 4
+      else
+        Angle := -Pi / 2 + Corner * (Pi / 2) + Piece * (Pi / 2) / Pieces;
+      if Pieces = 0 then
+        Points[Count] := PrecisePoint(CentreX, CentreY)
+      else
+        Points[Count] := PrecisePoint(CentreX + RadiusX * Cos(Angle), CentreY + RadiusY * Sin(Angle));
       Inc(Count);
     end;
   end;

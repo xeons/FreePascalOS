@@ -1099,6 +1099,45 @@ Part 1 (encodings, HTML parsing, DOM):
 - [ ] Text kept in a document arena instead of one string per node (about
       150 bytes per node today, text included)
 
-Later phases: libcss adapter and computed style, layout and painting,
-loading through libhttp, JavaScript bindings (wrappers in the node's rare
-data, `TScriptHost`, element interface classes via `ElementClassFor`).
+Part 2 (style, layout, painting):
+- [x] libcss adapter over the DOM (atom map, no per-element allocation),
+      document sheets (UA + engine additions, <style>, <link> from the
+      resources, user sheets), style attributes, presentational hints,
+      top-down styling with the bloom filter, incremental restyle through
+      the document observer, change kinds (boxes / layout / paint)
+- [x] Resources hook for the loader (`TDocumentResources`: element sheets,
+      element images, url() images with `OnImageNeeded`, imports)
+- [x] Fonts from /lib/fonts, family matching with generics, weight and
+      slant, per-character fallback, measurement cache, DPI-independent
+      layout in CSS px
+- [x] Box tree: display types, anonymous boxes, ::before/::after/::marker,
+      counters and quotes, display contents/none, box reuse on rebuild
+- [x] Block layout with margin collapsing, floats and clear, inline layout
+      (white space, breaking, alignment, vertical-align, spacing,
+      transform), positioning (relative, absolute, fixed; sticky as
+      relative), overflow and scroll containers, replaced elements with
+      object-fit, flexbox (full algorithm), tables (auto layout, spans,
+      captions, vertical-align), incremental relayout of dirty subtrees
+- [x] Display list in Appendix E order, raster with damage rectangles
+      (backgrounds, gradients, images, borders with radii, shadows, text,
+      opacity, rounded clips), hit testing
+- [x] `webrender` (/bin and host), `make web-layout-test` with reference
+      pages and layout dumps
+- [x] Grid layout, basic: templates with repeat()/minmax()/fr/auto-fill,
+      areas, line and span placement, auto placement (row/column, sparse),
+      implicit tracks, simplified track sizing, alignment, gaps
+- [ ] Grid: subgrid, dense packing, baseline alignment, named lines, the full
+      intrinsic track sizing algorithm
+- [ ] Fixed table layout, collapsing borders, `visibility: collapse`
+- [x] Synthetic bold and oblique for faces the system lacks; paint-only
+      restyle without relayout
+- [ ] Bidi and writing modes, shaping beyond kerning, @font-face loading,
+      ::first-line/::first-letter
+- [ ] Inline boxes split around blocks, relative inline boxes, real sticky
+      positioning, transforms, filters, blend modes, clip-path,
+      border-image, conic gradients, blurred text shadows
+- [ ] Incremental display list updates; scrollbars (left to the web view)
+
+Later phases: loading through libhttp, JavaScript bindings (wrappers in
+the node's rare data, `TScriptHost`, element interface classes via
+`ElementClassFor`).

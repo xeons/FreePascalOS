@@ -1,0 +1,28 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 14px sans-serif; }
+.rel { position: relative; left: 20px; top: 10px; background: #eef; }
+.container { position: relative; height: 120px; border: 2px solid; margin-top: 20px; }
+.tl { position: absolute; left: 10px; top: 10px; width: 50px; height: 30px; background: #fcc; }
+.br { position: absolute; right: 10px; bottom: 10px; width: 60px; height: 20px; background: #cfc; }
+.stretch { position: absolute; left: 100px; right: 100px; top: 50px; bottom: 30px; background: rgba(0,0,255,.2); }
+.centered { position: absolute; left: 0; right: 0; width: 80px; margin: 0 auto; top: 5px; height: 10px; background: #000; }
+.shrink { position: absolute; left: 10px; top: 60px; background: #ffc; }
+.static { position: absolute; background: #fcf; }
+.fixed { position: fixed; right: 0; top: 0; width: 40px; height: 40px; background: #f80; }
+.z1 { position: relative; z-index: 1; background: #ccf; height: 30px; }
+.zneg { position: absolute; z-index: -1; top: 200px; left: 0; width: 200px; height: 100px; background: #eee; }
+</style></head>
+<body>
+<div class=rel>Relatively positioned by 20px and 10px.</div>
+<div class=container>
+  <div class=tl></div><div class=br></div><div class=stretch></div><div class=centered></div>
+  <div class=shrink>shrink to fit</div>
+  Static text <span class=static>static position</span> follows.
+</div>
+<div class=fixed></div>
+<div class=zneg></div>
+<div class=z1>z-index 1</div>
+<div style="position: sticky; top: 0">Sticky laid out as relative.</div>
+</body></html>

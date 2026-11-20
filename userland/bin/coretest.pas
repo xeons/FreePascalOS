@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..393] of TCommandTest = (
+  CommandTests: array[0..394] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -669,7 +669,9 @@ const
       and a timer, and the status of an uncaught exception. }
     (Command: 'js -e ''console.log([1, 2, 3].map(x => x * 2).join("-"), typeof Symbol(), 2n ** 70n)'''; ExpectedOutput: '2-4-6 symbol 1180591620717411303424n'#10; ExpectedStatus: 0),
     (Command: 'echo ''setTimeout(() => print("timer"), 10); Promise.resolve().then(() => print("job")); print(new Date(0).toISOString())'' > /tmp/t.js; js /tmp/t.js; rm /tmp/t.js'; ExpectedOutput: '1970-01-01T00:00:00.000Z'#10'job'#10'timer'#10; ExpectedStatus: 0),
-    (Command: 'js -e ''throw new TypeError("bad")'' 2> /tmp/js.err; echo $?; head -n 1 /tmp/js.err; rm /tmp/js.err'; ExpectedOutput: '1'#10'TypeError: bad'#10; ExpectedStatus: 0)
+    (Command: 'js -e ''throw new TypeError("bad")'' 2> /tmp/js.err; echo $?; head -n 1 /tmp/js.err; rm /tmp/js.err'; ExpectedOutput: '1'#10'TypeError: bad'#10; ExpectedStatus: 0),
+    { libweb: webrender lays a page out (auto margins, collapsing through the body) and paints it into a PNG. }
+    (Command: 'printf ''<!doctype html><body style="margin:0"><div style="width:100px;height:20px;margin:10px auto"></div>'' > w.html; webrender -w 300 -h 100 -l w.html w.png && test -s w.png && echo png; rm w.html w.png'; ExpectedOutput: 'viewport (anonymous) at (0,0) size 300x100'#10'  block <html> at (0,0) size 300x40'#10'    block <body> at (0,10) size 300x20'#10'      block <div> at (100,10) size 100x20'#10'png'#10; ExpectedStatus: 0)
   );
 
 var

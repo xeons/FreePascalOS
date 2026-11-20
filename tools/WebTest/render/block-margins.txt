@@ -1,0 +1,21 @@
+viewport (anonymous) at (0,0) size 600x600
+  block <html> at (0,0) size 600x479
+    block <body> at (0,20) size 600x459
+      block <div> at (0,20) size 600x30
+      block <div> at (0,80) size 600x30
+      block <div> at (0,135) size 600x20
+        block <div> at (0,135) size 600x20
+      block <div> at (0,173) size 600x0
+      block <div> at (0,163) size 600x20
+      block <div> at (0,193) size 600x46
+        block <div> at (0,219) size 600x20
+      block <div> at (200,239) size 200x10
+      block <div> at (500,249) size 100x10
+      block <div> at (0,259) size 350x10
+      block <div> at (0,269) size 200x50
+      block <div> at (0,319) size 230x80
+      block <div> at (0,399) size 210x10
+      block <div> at (0,419) size 600x60 scroll 600x60
+        block <p> at (0,439) size 600x20
+          line 0 at y 439 height 20 baseline 454.54
+            text "Inside a formatting context root." at (0,439.69) size 259.66x18.62

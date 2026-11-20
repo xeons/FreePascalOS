@@ -1,0 +1,36 @@
+<!-- width=600 -->
+<!doctype html>
+<html><head><style>
+body { margin: 0; font: 16px/20px sans-serif; }
+div { background: rgba(0, 0, 255, 0.1); }
+.a { margin: 20px 0; height: 30px; }
+.b { margin: 30px 0 10px; height: 30px; }
+.parent { margin-top: 15px; }
+.child { margin-top: 25px; height: 20px; }
+.empty { margin: 12px 0 18px; }
+.negative { margin-top: -10px; height: 20px; }
+.bordered { border-top: 1px solid; margin-top: 10px; }
+.auto { width: 200px; margin-left: auto; margin-right: auto; height: 10px; }
+.right { width: 100px; margin-left: auto; height: 10px; }
+.minmax { width: 50%; min-width: 350px; max-width: 400px; height: 10px; }
+.borderbox { box-sizing: border-box; width: 200px; padding: 10px; border: 5px solid; height: 50px; }
+.contentbox { width: 200px; padding: 10px; border: 5px solid; height: 50px; }
+.percent { width: 25%; padding: 0 5%; height: 10px; }
+.overflow { overflow: hidden; margin-top: 10px; }
+.overflow > p { margin: 20px 0; }
+</style></head>
+<body>
+<div class=a></div>
+<div class=b></div>
+<div class=parent><div class=child></div></div>
+<div class=empty></div>
+<div class=negative></div>
+<div class=bordered><div class=child></div></div>
+<div class=auto></div>
+<div class=right></div>
+<div class=minmax></div>
+<div class=borderbox></div>
+<div class=contentbox></div>
+<div class=percent></div>
+<div class=overflow><p>Inside a formatting context root.</p></div>
+</body></html>

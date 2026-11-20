@@ -1,0 +1,41 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x351.62
+    block <body> at (8,16) size 484x319.62
+      block <div> at (8,16) size 80x60 float
+      block <div> at (392,16) size 100x40 float
+      block <p> at (8,16) size 484x74.5
+        line 0 at y 16 height 18.62 baseline 30.85
+          text "Text flows around a left float and a" at (96,16) size 277.08x18.62
+        line 1 at y 34.62 height 18.62 baseline 49.48
+          text "right float, filling the space between" at (96,34.62) size 290.15x18.62
+        line 2 at y 53.25 height 18.62 baseline 68.1
+          text "them and then the full width once" at (96,53.25) size 272.45x18.62
+        line 3 at y 71.88 height 18.62 baseline 86.73
+          text "the floats end below." at (96,71.88) size 166.88x18.62
+      block <div> at (8,106.5) size 484x18.62
+        line 0 at y 106.5 height 18.62 baseline 121.35
+          text "Cleared below both floats." at (8,106.5) size 209.8x18.62
+      block <div> at (8,125.12) size 30x30 float
+      block <div> at (38,125.12) size 30x30 float
+      block <div> at (68,125.12) size 30x30 float
+      block <div> at (98,125.12) size 394x40 scroll 394x40
+        line 0 at y 125.12 height 18.62 baseline 139.98
+          text "A formatting context root beside the floats." at (98,125.12) size 346.65x18.62
+      block <div> at (8,165.12) size 484x0
+      block <div> at (8,165.12) size 484x18.62
+        line 0 at y 165.12 height 18.62 baseline 179.98
+          text "The container does not contain its float." at (96,165.12) size 319.89x18.62
+        block <div> at (8,165.12) size 80x60 float
+      block <div> at (96,183.75) size 396x64
+        line 0 at y 183.75 height 18.62 baseline 198.6
+          text "A flow root contains its float." at (184,183.75) size 229.22x18.62
+        block <div> at (96,183.75) size 80x60 float
+      block <p> at (8,263.75) size 484x18.62
+        line 0 at y 263.75 height 18.62 baseline 278.6
+          text "After." at (8,263.75) size 42.04x18.62
+      block <p> at (8,298.38) size 484x37.25
+        line 0 at y 298.38 height 18.62 baseline 313.23
+          text "A float inside a line of text, placed beside it on the" at (8,298.38) size 403.86x18.62
+        line 1 at y 317 height 18.62 baseline 331.85
+          text "right." at (8,317) size 42.68x18.62
+        block <span> at (432,298.38) size 60x20 float

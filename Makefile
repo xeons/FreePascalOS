@@ -191,7 +191,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test javascript-test
+	quic-test css-test web-test javascript-test web-layout-test webrender
 
 all: esp
 
@@ -502,7 +502,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test web-test javascript-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test web-test javascript-test web-layout-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -1106,6 +1106,56 @@ javascript-test: $(JAVASCRIPT_TEST)
 		{ grep -A3 FAIL build/tools/javascript-test.out; echo "JAVASCRIPT TEST FAILED (build/tools/javascript-test.out)"; exit 1; }
 	@grep BENCH build/tools/javascript-test.out
 	@echo "JAVASCRIPT TEST PASSED: $$(tail -n 1 build/tools/javascript-test.out | cut -d ' ' -f 2-)"
+
+# libweb's style, layout and painting on the host (with libcss, libfont,
+# libdrawing and libimage): the reference pages of tools/WebTest/render
+# laid out and their layout tree dumps compared with the .txt files
+# beside them (with DejaVu Sans from userland/fonts), incremental
+# relayout after DOM changes against fresh layouts, hit testing,
+# painting (known pixels, damaged rectangles), and the speed and memory
+# of a large page ("perf" lines). make web-layout-update rewrites the
+# expected dumps (look at what changed before committing them).
+WEB_LAYOUT_TEST := build/tools/WebLayoutTest
+WEB_LAYOUT_TEST_UNITS := build/tools/web-layout-test-units
+WEB_RENDER_LIBRARY_SOURCES := $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
+	$(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/font/*.pas) $(wildcard userland/lib/drawing/*.pas) \
+	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas)
+WEB_RENDER_UNIT_PATHS := -Fuuserland/lib/web -Fuuserland/lib/css -Fuuserland/lib/font -Fuuserland/lib/drawing \
+	-Fuuserland/lib/image -Fuuserland/lib/compression
+WEB_LAYOUT_TEST_SOURCES := $(wildcard tools/WebLayoutTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(WEB_RENDER_LIBRARY_SOURCES)
+
+$(WEB_LAYOUT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
+	@mkdir -p $(WEB_LAYOUT_TEST_UNITS)
+	python3 -B userland/lib/web/make-tables.py $(WEB_LAYOUT_TEST_UNITS)
+	@touch $@
+
+$(WEB_LAYOUT_TEST): $(WEB_LAYOUT_TEST_SOURCES) $(WEB_LAYOUT_TEST_UNITS)/.generated
+	@mkdir -p $(WEB_LAYOUT_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLayoutTest -Futools/CryptoTest $(WEB_RENDER_UNIT_PATHS) \
+		-Fi$(WEB_LAYOUT_TEST_UNITS) -FU$(WEB_LAYOUT_TEST_UNITS) -o$@ tools/WebLayoutTest/WebLayoutTest.pas
+
+web-layout-test: $(WEB_LAYOUT_TEST)
+	@$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts > build/tools/web-layout-test.out || \
+		{ grep -B3 -A3 FAIL build/tools/web-layout-test.out | head -80; echo "WEB LAYOUT TEST FAILED (build/tools/web-layout-test.out)"; exit 1; }
+	@grep '^perf' build/tools/web-layout-test.out || true
+	@echo "WEB LAYOUT TEST PASSED: $$(tail -n 1 build/tools/web-layout-test.out | cut -d ' ' -f 4-)"
+
+web-layout-update: $(WEB_LAYOUT_TEST)
+	$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts --update | tail -n 1
+
+# webrender on the host: renders an HTML file to a PNG or prints its
+# layout tree (build/tools/webrender -f userland/fonts [-l] PAGE.html [OUT.png]).
+WEB_RENDER := build/tools/webrender
+WEB_RENDER_UNITS := build/tools/webrender-units
+
+$(WEB_RENDER): userland/bin/webrender.pas $(wildcard userland/webrender/*.pas) $(WEB_RENDER_LIBRARY_SOURCES) \
+		$(WEB_LAYOUT_TEST_UNITS)/.generated
+	@mkdir -p $(WEB_RENDER_UNITS)
+	fpc -Mobjfpc -O2 -vew -Fuuserland/webrender $(WEB_RENDER_UNIT_PATHS) -Fi$(WEB_LAYOUT_TEST_UNITS) \
+		-FU$(WEB_RENDER_UNITS) -o$@ userland/bin/webrender.pas
+
+webrender: $(WEB_RENDER)
 
 # The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
 # RFC 6724 address selection, the destination cache, fragments.
