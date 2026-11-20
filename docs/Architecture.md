@@ -5325,7 +5325,7 @@ streams). The TLS handshake is pulled the same way: libtls's
 `ReceiveHandshake` callback pumps until CRYPTO bytes of its level are
 there. Packets of a level whose keys TLS has not made yet (a Handshake
 packet coalesced behind the Initial whose ServerHello makes its keys,
-1-RTT data behind the server's Finished) are kept (at most eight) and
+1-RTT data behind the server's Finished) are kept (at most sixteen) and
 handled when `InstallSecret` brings the keys.
 
 **Packets** (`Quic.PacketHeaders`, `Quic.PacketProtection`,
@@ -5416,7 +5416,7 @@ acknowledged; a packet with the other key phase bit is tried with the
 next keys and, when it opens, moves the receiving side (and the sending
 side, if the peer started); the previous keys open late packets for
 three PTOs. Memory per connection is fixed but for the streams' buffers:
-one datagram buffer each way, the sent-packet rings, eight buffered
+one datagram buffer each way, the sent-packet rings, sixteen buffered
 packets.
 
 **QPACK** (`Qpack.*`). The static table's 99 entries; HPACK's Huffman

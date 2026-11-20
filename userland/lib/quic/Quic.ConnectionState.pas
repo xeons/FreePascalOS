@@ -56,7 +56,7 @@ const
   { The largest datagram that is read whole. }
   ReceiveBufferSize = 2048;
   { Packets kept for keys that are not there yet (RFC 9001 section 5.7). }
-  MaximumBufferedPackets = 8;
+  MaximumBufferedPackets = 16;
   MaximumPeerConnectionIds = 4;
   { The bytes of a CRYPTO stream held either way. }
   CryptoBufferLimit = 65536;
