@@ -51,6 +51,10 @@
 #   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
 #                   exchange hash and keys, host keys and signatures against Python's
 #                   and OpenSSL's answers, and the server against a client in memory
+#   make web-script-test  Check libweb's script bindings on the host: scripts using
+#                   the DOM, events, selectors, reflection, parsing with scripts,
+#                   MutationObserver, encodings, URLs, the window, and wrapper
+#                   lifetime with both collectors (bytes per wrapper)
 #   make javascript-test  Run libjavascript on the host: scripts with their expected
 #                   output, the embedding API, and a benchmark (time and peak bytes)
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
@@ -191,7 +195,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test javascript-test
+	quic-test css-test web-test web-script-test javascript-test
 
 all: esp
 
@@ -502,7 +506,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test web-test javascript-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test web-test web-script-test javascript-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -1085,6 +1089,36 @@ web-test: $(WEB_TEST)
 		{ grep -A14 FAIL build/tools/web-test.out | head -150; echo "WEB TEST FAILED (build/tools/web-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-test.out || true
 	@echo "WEB TEST PASSED: $$(tail -n 1 build/tools/web-test.out | cut -d ' ' -f 3-)"
+
+# libweb's script bindings on the host, with libjavascript, libcss and
+# libhttp's URL units: tools/WebScriptTest/scripts/*.js run in windows
+# over their .html pages, then wrapper lifetime and bytes per wrapper.
+WEB_SCRIPT_TEST := build/tools/WebScriptTest
+WEB_SCRIPT_TEST_UNITS := build/tools/web-script-test-units
+WEB_BINDING_SOURCES := userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl)
+WEB_SCRIPT_TEST_SOURCES := $(wildcard tools/WebScriptTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Web.Contents.pas,$(wildcard userland/lib/web/*.pas)) $(wildcard userland/lib/web/*.inc) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/Url.*.pas)
+
+$(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
+		$(WEB_BINDING_SOURCES)
+	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
+	python3 -B userland/lib/web/make-tables.py $(WEB_SCRIPT_TEST_UNITS)
+	python3 -B userland/lib/web/make-bindings.py $(WEB_SCRIPT_TEST_UNITS)
+	@touch $@
+
+$(WEB_SCRIPT_TEST): $(WEB_SCRIPT_TEST_SOURCES) $(WEB_SCRIPT_TEST_UNITS)/.generated
+	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/WebScriptTest -Futools/CryptoTest -Fuuserland/lib/web -Fuuserland/lib/javascript \
+		-Fuuserland/lib/css -Fuuserland/lib/http -Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
+		tools/WebScriptTest/WebScriptTest.pas
+
+web-script-test: $(WEB_SCRIPT_TEST)
+	@$(WEB_SCRIPT_TEST) tools/WebScriptTest/scripts > build/tools/web-script-test.out || \
+		{ grep -A3 FAIL build/tools/web-script-test.out | head -150; echo "WEB SCRIPT TEST FAILED (build/tools/web-script-test.out)"; exit 1; }
+	@grep '^perf' build/tools/web-script-test.out || true
+	@echo "WEB SCRIPT TEST PASSED: $$(tail -n 1 build/tools/web-script-test.out | cut -d ' ' -f 4-)"
 
 # libjavascript builds for the host too (but for its FreePascalOS clock)
 # and runs every tools/JavaScriptTest/scripts/*.js against the output

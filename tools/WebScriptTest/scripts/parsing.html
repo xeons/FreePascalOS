@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>parsing</title>
+<script>
+  var states = [document.readyState];
+  var order = ["head"];
+  check("document.currentScript during an inline script", document.currentScript.tagName === "SCRIPT");
+  check("the body is not parsed yet", document.body === null);
+  document.addEventListener("DOMContentLoaded", function () { states.push("DOMContentLoaded:" + document.readyState); });
+  window.addEventListener("load", function () { states.push("load:" + document.readyState); });
+  document.onreadystatechange = function () { states.push("change:" + document.readyState); };
+</script>
+</head>
+<body>
+<p id="before">before</p>
+<script>
+  order.push("body");
+  check("elements before the script are there", document.getElementById("before") !== null);
+  check("elements after it are not", document.getElementById("after") === null);
+  document.write("<p id='written'>written <b>bold</b></p>");
+  check("document.write parses at once", document.getElementById("written").lastChild.tagName === "B");
+</script>
+<p id="after">after</p>
+<script>
+  document.write("<script>order.push('nested'); document.write('<i id=deep>deep</i>');<\/script>");
+  order.push("after nested");
+</script>
+<div id="clicker" onclick="window.clicked = (window.clicked || 0) + 1; return false">click</div>
+<script>
+  undefinedFunction();
+</script>
+<script>
+  order.push("after error");
+</script>
+<script type="text/plain">order.push("data block");</script>
+<script nomodule>order.push("nomodule");</script>
+</body>
+</html>
