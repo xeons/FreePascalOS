@@ -78,8 +78,24 @@ uses
   Web.Bindings.UrlResolution;
 
 function IsEventHandlerAttribute(const Name: string): Boolean;
+var
+  Low, High, Middle: Integer;
 begin
-  Result := (Length(Name) > 2) and (Name[1] = 'o') and (Name[2] = 'n');
+  if (Length(Name) <= 2) or (Name[1] <> 'o') or (Name[2] <> 'n') then
+    Exit(False);
+  Low := 0;
+  High := System.High(EventHandlerNames);
+  while Low <= High do
+  begin
+    Middle := (Low + High) div 2;
+    if EventHandlerNames[Middle] = Name then
+      Exit(True);
+    if EventHandlerNames[Middle] < Name then
+      Low := Middle + 1
+    else
+      High := Middle - 1;
+  end;
+  Result := False;
 end;
 
 procedure EnsureHandlerListener(Context: TBindingContext; Target: TEventTarget; const EventType: string);

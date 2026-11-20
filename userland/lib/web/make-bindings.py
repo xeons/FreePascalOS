@@ -835,6 +835,11 @@ def write_ids(model, path):
             lines.append('  %s_%s = %d;' % (name, member[0], index))
         position += 1
     lines.append('')
+    handlers = sorted(set(member['name'] for member in model.members if member['kind'] == 'mkEventHandler'))
+    lines.append('  { The event handler attribute names (sorted). }')
+    lines.append('  EventHandlerNames: array[0..%d] of string = (' % (len(handlers) - 1))
+    lines.append(',\n'.join("    '%s'" % name for name in handlers) + ');')
+    lines.append('')
     for name, first, count in model.enum_rows:
         lines.append('  Enum%s = %d;' % (name, model.enum_ids[name]))
         for index in range(count):

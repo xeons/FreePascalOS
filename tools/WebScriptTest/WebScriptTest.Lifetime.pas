@@ -239,8 +239,34 @@ begin
   Web.Dom.CollectGarbage;
 end;
 
+procedure TestSpeed;
+var
+  Bed: TTestBed;
+  Started: QWord;
+begin
+  Bed := TTestBed.Create('speed');
+  try
+    Started := GetTickCount64;
+    Bed.Run('var root = document.createElement("div"); document.body.appendChild(root);' +
+      ' for (var i = 0; i < 20000; i++) { var e = document.createElement("span"); e.className = "c" + (i % 10);' +
+      ' e.textContent = "x"; root.appendChild(e); }');
+    WriteLn('perf 20000 createElement, className, textContent and appendChild from script in ',
+      GetTickCount64 - Started, ' ms');
+    Started := GetTickCount64;
+    Bed.Run('var n = 0; for (var i = 0; i < 200000; i++) { n += root.firstChild.nodeType; }');
+    WriteLn('perf 200000 reads of node.firstChild.nodeType in ', GetTickCount64 - Started, ' ms');
+    Started := GetTickCount64;
+    Bed.Run('var found = 0; for (var i = 0; i < 100; i++) { found += document.querySelectorAll("span.c3").length; }');
+    WriteLn('perf 100 querySelectorAll("span.c3") over 20000 elements in ', GetTickCount64 - Started, ' ms');
+    Check(Bed.Evaluate('found') = '200000', 'speed: the queries found every match');
+  finally
+    Bed.Free;
+  end;
+end;
+
 procedure RunLifetimeTests;
 begin
+  TestSpeed;
   TestUnreachableWrappers;
   TestWrapperBytes;
   TestNativeEvents;
