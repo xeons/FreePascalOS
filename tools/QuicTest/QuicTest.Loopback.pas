@@ -209,6 +209,8 @@ begin
         Check(Client.Statistics.PacketsLost > 0, Name + ': losses were noticed and repaired');
       WriteLn('info ', Name, ': ', QuicMilliseconds - Started, ' ms, ', Client.Statistics.PacketsSent,
         ' packets sent, ', Client.Statistics.PacketsLost, ' lost, window ', Client.CongestionWindow);
+      { The close goes once: it must not be the datagram dropped. }
+      Endpoint.DropEverySent := 0;
       Client.Close(0, '');
     end;
   finally
