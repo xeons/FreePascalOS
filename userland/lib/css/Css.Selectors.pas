@@ -94,6 +94,8 @@ type
     Name: TCssAtom;
     LowerName: TCssAtom;
     Namespace: TCssAtom;
+    { The namespace prefix as written (for serialization). }
+    NamespacePrefix: TCssAtom;
     { The attribute value; the :dir direction; the prefixed pseudo-element's name. }
     Value: string;
     { The :lang ranges. }
@@ -288,7 +290,7 @@ begin
   case Simple.NamespaceKind of
     nkAny: Result := '*|';
     nkNone: Result := '|';
-    nkSpecific: Result := SerializeIdentifier(AtomText(Simple.Namespace)) + '|';
+    nkSpecific: Result := SerializeIdentifier(AtomText(Simple.NamespacePrefix)) + '|';
   else
     Result := '';
   end;

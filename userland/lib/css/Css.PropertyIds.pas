@@ -169,6 +169,7 @@ type
     { a custom property (--name); its name is kept with the declaration }
     cpCustom);
 
+  TCssPropertyIdArray = array of TCssPropertyId;
   TCssLonghandId = Succ(cpInvalid)..Pred(cpMargin);
   TCssPhysicalId = Succ(cpInvalid)..cpAnimationComposition;
 

@@ -136,7 +136,7 @@ type
     kwHover, kwInterlace, kwProgressive, kwFast, kwSlow, kwStandard, kwHigh, kwMore, kwLess,
     kwCustom, kwActive, kwInverted, kwBrowser, kwFullscreen, kwStandalone, kwMinimalUi,
     kwPictureInPicture, kwP3, kwEnabled, kwInitialOnly, kwSpeech, kwTty, kwTv, kwProjection,
-    kwHandheld, kwBraille, kwEmbossed, kwAural,
+    kwHandheld, kwBraille, kwEmbossed, kwAural, kwPaged,
     { math }
     kwE, kwPi, kwInfinity, kwNan, kwNearest, kwUp, kwDown, kwToZero
   );

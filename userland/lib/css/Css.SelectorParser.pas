@@ -191,6 +191,7 @@ begin
     end;
     Simple.NamespaceKind := nkSpecific;
     Simple.Namespace := Uri;
+    Simple.NamespacePrefix := InternAtom(First^.Text);
   end;
   Inc(Cursor.Position, 2);
   Result := True;
