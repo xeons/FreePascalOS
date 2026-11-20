@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..385] of TCommandTest = (
+  CommandTests: array[0..386] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -655,7 +655,9 @@ const
     (Command: 'command -v notepad; command -v imageviewer; type controlpanel'; ExpectedOutput: '/app/notepad/notepad'#10'/app/imageviewer/imageviewer'#10'controlpanel is /app/controlpanel/controlpanel'#10; ExpectedStatus: 0),
     (Command: 'nc -l 8080 < /dev/null > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":8080 " && break; sleep 0.1; done; netstat -tl | grep ":http-alt " | tr -s " "; ss -tl | grep -c ":http-alt "; ss -tlnH sport = :http-alt | grep -c ":8080 "; nc -z 127.0.0.1 8080; wait'; ExpectedOutput: 'tcp 0 0 0.0.0.0:http-alt 0.0.0.0:* LISTEN'#10'1'#10'1'#10; ExpectedStatus: 0),
     (Command: 'nc -l 7121 < /dev/null > /dev/null & for i in $(seq 50); do netstat -tln | grep -q ":7121 " && break; sleep 0.1; done; sleep 2 | nc -N 127.0.0.1 7121 > /dev/null & for i in $(seq 50); do test $(netstat -tn | grep -c ":7121 .*ESTABLISHED") -ge 2 && break; sleep 0.1; done; netstat -t | grep -c "localhost:7121 .*ESTABLISHED"; ss -tr state established "( sport = :7121 or dport = :7121 )" | grep -c "localhost:7121"; ss -tH state established dport = :7121 | tr -s " " | cut -d " " -f 4; wait'; ExpectedOutput: '2'#10'2'#10'127.0.0.1:7121'#10; ExpectedStatus: 0),
-    (Command: 'ss -t | head -n 1 | tr -s " "; ss -s | head -n 1 | cut -d " " -f 1; ss -s | grep -c "^Transport Total"; ss -xH | grep -c .; ss -t sport = :nosuchservice 2> /dev/null; echo $?'; ExpectedOutput: 'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process'#10'Total:'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'ss -t | head -n 1 | tr -s " "; ss -s | head -n 1 | cut -d " " -f 1; ss -s | grep -c "^Transport Total"; ss -xH | grep -c .; ss -t sport = :nosuchservice 2> /dev/null; echo $?'; ExpectedOutput: 'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process'#10'Total:'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
+    { libweb: htmldump parses a file into the html5lib tree format and serializes it again. }
+    (Command: 'printf ''<!DOCTYPE html><title>T</title><p class=a>x&amp;y<b>z</p>'' > t.html; htmldump t.html; htmldump -s t.html; echo; rm t.html'; ExpectedOutput: '| <!DOCTYPE html>'#10'| <html>'#10'|   <head>'#10'|     <title>'#10'|       "T"'#10'|   <body>'#10'|     <p>'#10'|       class="a"'#10'|       "x&y"'#10'|       <b>'#10'|         "z"'#10'<!DOCTYPE html><html><head><title>T</title></head><body><p class="a">x&amp;y<b>z</b></p></body></html>'#10; ExpectedStatus: 0)
   );
 
 var
