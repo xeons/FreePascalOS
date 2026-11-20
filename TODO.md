@@ -661,16 +661,33 @@ normalized (0-65535), not pixels.
       fetch tasks on threads; wget moved onto it (HTTP/2 by ALPN,
       --no-http2); host tests (RFC 7541 appendix C, libnghttp2, curl
       against the test server) and HTTP/2 checks in wgettest
-- [ ] libhttp: HTTP/3 through libquic (register an "h3" connection factory
-      in Http.AltServices and race it against TCP), Brotli (needs RFC
+- [x] libhttp: HTTP/3 through libquic (libquic's Http3.HttpConnections
+      and the "h3" factory EnableHttp3 registers; threads sharing a
+      connection, cancel, trailers, GOAWAY, PRIORITY_UPDATE; new requests
+      move to an advertised alternative, a failing one is broken for five
+      minutes and TCP used); Alt-Svc with persist, bounds and a file
+      (wget --alt-svc-file); one Huffman code and field record for HPACK
+      and QPACK; wget --http3/--no-http3; QuicTest end to end with the
+      TCP fallbacks
+- [ ] libhttp HTTP/3 next: race QUIC against TCP (happy eyeballs) instead
+      of waiting AltServiceTimeoutMilliseconds (3 s) on a silently blocked
+      UDP path; HTTPS DNS records (RFC 9460: libsystem's resolver keeps
+      no data of unknown record types, so it needs raw RDATA and an SVCB
+      parser first); drop non-persist Alt-Svc entries when the network
+      changes (needs a notification); an HTTP/3 check in wgettest (guestfwd
+      is TCP only, but slirp passes UDP to 10.0.2.2 to the host's
+      loopback: needs a host HTTP/3 server for many connections with a
+      certificate under the test root); libquic's own waits (a full send
+      buffer, MAX_STREAMS) to wait in slices too, so a large upload does
+      not hold the connection's lock
+- [ ] libhttp: Brotli (needs RFC
       7932's dictionary in the tree) and zstd, proxies (http_proxy,
       CONNECT), 100-continue, a PING keep-alive and idle timeout for
       HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
       suffix list on the system disk, a persistent cookie store for the
       browser, HSTS, CORS and the rest of Fetch's request modes (libweb)
-- [ ] wgettest's HTTP/2 server address (10.0.2.107) is not in the test
-      certificate, so those checks use --no-check-certificate; adding it
-      to tools/TlsTest/certificates would let them verify
+- [x] wgettest's HTTP/2 server address (10.0.2.107) in the test
+      certificate (server.pem reissued), so those checks verify
 - [x] Control Panel network page (DHCP or a static address per interface,
       DNS servers, live status; changes through the system settings service)
 - [x] Taskbar network icon (connected, connecting, no address, no cable, no
@@ -757,16 +774,17 @@ normalized (0-65535), not pixels.
       streaming requests and responses, trailers); libquic.so, h3get;
       host tests (RFC 9001 and RFC 9204 vectors, loopback connections
       against a test server, curl's HTTP/3 against that server)
-- [ ] libquic next: HTTP/3 in libhttp behind its protocol-independent
-      interface with Alt-Svc discovery (phase 2); h3get and coretest
+- [x] libquic: HTTP/3 in libhttp behind its protocol-independent
+      interface with Alt-Svc discovery (phase 2); QPACK on libhttp's
+      Huffman code (one copy)
+- [ ] libquic next: h3get and coretest
       against real servers (not tried yet: no outside network in the
       tests); 0-RTT and session resumption over QUIC (libtls's QUIC
       mode turns tickets off); connection migration and NEW_CONNECTION_ID
       issued by the client (only the handshake's ID is used); CUBIC;
       ECN; DPLPMTUD beyond the single 1452-byte probe; a QPACK encoder
-      that uses the dynamic table; server push (refused now); a
-      QPACK/HPACK Huffman and static-table unit shared with libhttp's
-      HTTP/2; libtls matching IPv6 literals against the certificate
+      that uses the dynamic table; server push (refused now); libtls
+      matching IPv6 literals against the certificate
       (h3get to [::1] needs a name)
 
 ## ARM64 port

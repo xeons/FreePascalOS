@@ -13,13 +13,15 @@ or later, for `-not_before` and `-not_after`):
 
 Running it again makes new keys and certificates; the tests use only
 what is in the files, except wgettest, whose expected error messages
-name the common names below.
+name the common names below. (`server.pem` and `server-rsa.pem` were
+later issued again with their keys, to add 10.0.2.107; the other
+certificates still name the four addresses before it.)
 
 | File | What it is |
 |---|---|
 | `ca.pem`, `ca.key` | RSA-2048 root, "FreePascalOS Test Root CA" (self-signed, SHA-256) |
 | `intermediate.pem` | P-384 intermediate under the root (RSA PKCS#1 SHA-256), path length 0 |
-| `server.pem` | P-256 server under the intermediate (ECDSA SHA-384): DNS localhost, IP 127.0.0.1, 10.0.2.101, 10.0.2.103 |
+| `server.pem` | P-256 server under the intermediate (ECDSA SHA-384): DNS localhost, IP 127.0.0.1, 10.0.2.101, 10.0.2.103, 10.0.2.107 |
 | `server-rsa.pem` | RSA-2048 server directly under the root, signed with RSA-PSS SHA-256 (salt 32), same names |
 | `wrong-name.pem` | P-256 server under the intermediate for DNS other.example only |
 | `expired.pem` | P-256 server under the intermediate, valid 2020-01-01 to 2021-01-01, CN "localhost expired" |

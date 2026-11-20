@@ -55,8 +55,9 @@
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
 #   make quic-test  Check libquic on the host: RFC 9001 and RFC 9204 vectors, frames,
-#                   whole QUIC and HTTP/3 connections over loopback UDP, and curl's
-#                   HTTP/3 against the test server when the host's curl has it
+#                   whole QUIC and HTTP/3 connections over loopback UDP, libhttp's
+#                   client finding the test server by Alt-Svc and falling back to
+#                   TCP, and curl's HTTP/3 against the test server when it has it
 #   make http-test  Check libhttp on the host: URLs, HPACK, HTTP/2, HTTP/1.1, the client
 #   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
 #                   and DHCPv6 messages on the host
@@ -989,8 +990,10 @@ ssh-test: $(SSH_TEST)
 # 9001's packet protection vectors, frames, transport parameters, QPACK
 # (RFC 9204 appendix B), HTTP/3 frames, and whole QUIC and HTTP/3
 # connections over UDP on 127.0.0.1 and ::1 against a small server made
-# for the test (threads: cthreads); then curl, when it has HTTP/3,
-# fetches from that server. make-vectors.py works out the known answers
+# for the test (threads: cthreads), and libhttp's client (built in, with
+# libcompression and HttpTest's pipes) reaching it by Alt-Svc after an
+# HTTP/1.1 response and falling back to TCP; then curl, when it has
+# HTTP/3, fetches from that server. make-vectors.py works out the known answers
 # with Python's cryptography and makes the server's certificate.
 QUIC_TEST := build/tools/QuicTest
 QUIC_TEST_UNITS := build/tools/quic-test-units

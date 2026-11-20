@@ -5128,7 +5128,11 @@ program on top of libhttp (below): each request goes through
 `THttpClient.Execute`, which looks the host up (`Sys.HostLookup`,
 numeric addresses need no DNS), connects within the timeout, runs TLS
 for https offering HTTP/2 and HTTP/1.1 by ALPN (`--no-http2`: HTTP/1.1
-only), and returns the head with the body left to read; wget's own
+only), or goes over HTTP/3 (libquic) once the server advertised it by
+Alt-Svc (`--no-http3`: never; `--alt-svc-file=FILE` keeps the
+advertised alternatives between runs, so even a one-URL run can use
+HTTP/3 the next time; "Connecting to HOST:PORT over HTTP/3..." and,
+after a failure, the TCP connection as usual), and returns the head with the body left to read; wget's own
 units say what it does in GNU wget's words (`Wget.Observer`:
 "Resolving...", "Connecting to...", "Reusing existing connection...",
 "HTTP request sent, awaiting response..."), decide what each status
@@ -5289,24 +5293,44 @@ site under /site/ (-r, -l 1, -np, -A, -R, -p, -k, robots.txt and -e
 robots=off), and HTTP/2 against 10.0.2.107 (the same server in its
 https-h2 mode: contents, -S showing "HTTP/2 200", requests sharing one
 connection, redirects, gzip, Digest, continuing, and HTTP/1.1 with
-`--no-http2`; that address is not in the test certificate, so these
-use --no-check-certificate). test-qemu.sh says so and stops when python3
+`--no-http2`; checked against the test root, which names 10.0.2.107
+too). HTTP/3 is not checked in QEMU yet: guestfwd forwards TCP only;
+slirp does pass the guest's UDP to 10.0.2.2 on to the host's loopback,
+but that needs a host HTTP/3 server serving many connections with a
+certificate under the test root for the advertising origin (QuicTest's
+serves one connection with a pinned Ed25519 certificate). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
 ### libquic: QUIC and HTTP/3
 
 **libquic** (`userland/lib/quic`, units `Quic.*`, `Qpack.*`, `Http3.*`,
 `libquic.so` on libtls) is a QUIC version 1 client (RFC 9000, 9001,
-9002) with QPACK (RFC 9204) and HTTP/3 (RFC 9114) on top: the transport
-libhttp will use for HTTP/3 (with Alt-Svc discovery, a later phase).
-`h3get` fetches a URL with it.
+9002) with QPACK (RFC 9204) and HTTP/3 (RFC 9114) on top, and libhttp's
+HTTP/3: `Http3.HttpConnections` makes an HTTP/3 connection one of
+libhttp's `THttpConnection`s, `Http3.SystemConnections` registers it
+with libhttp's Alt-Svc factories. `h3get` fetches a URL with libquic
+alone; wget (and every libhttp client that calls `EnableHttp3`) gets
+HTTP/3 through libhttp.
+
+**On libhttp, not the other way.** libquic links libhttp (HPACK's
+Huffman code, which QPACK shares; header fields; the connection class
+it implements) and libhttp knows nothing of QUIC: it only offers
+`RegisterConnectionFactory`. A program that wants HTTP/3 links libquic
+and calls `EnableHttp3` (or `CreateHttp3Client` in place of
+`CreateSystemClient`); one that does not never loads libquic's 350 KB.
+The other way (libhttp linking libquic) would have put libquic in every
+HTTP program, and made one Huffman unit impossible without a third
+library under both.
 
 ```
+  libhttp's client       Http3.SystemConnections (the "h3" factory, EnableHttp3)
+                         Http3.HttpConnections (THttpConnection over the below)
   h3get                  Http3.Requests (a request, its response)
                          Http3.Connections (control/QPACK streams, SETTINGS, GOAWAY)
                          Http3.FrameParser  Http3.Frames  Http3.Constants
                          Qpack.Decoder  Qpack.Encoder  Qpack.DynamicTable
-                         Qpack.StaticTable  Qpack.Primitives  Qpack.Huffman
+                         Qpack.StaticTable  Qpack.Primitives
+                         (libhttp: Http.HpackHuffman, Http.HeaderFields, Http.ByteBuffers)
 =========== Quic.Sessions: host and port, the system's roots, NEW_TOKEN cache
   Quic.UdpSockets        a connected UDP socket (Sys.Sockets) as transport
   Quic.Connections       TQuicConnection: Connect, streams, Pump, Close
@@ -5435,9 +5459,11 @@ one datagram buffer each way, the sent-packet rings, sixteen buffered
 packets.
 
 **QPACK** (`Qpack.*`). The static table's 99 entries; HPACK's Huffman
-code kept as its 257 code lengths only (the code is canonical, so the
-codes and a decoding table by length are worked out once), with padding
-and EOS checks; prefixed integers and string literals. The decoder keeps
+code from libhttp's `Http.HpackHuffman` (one copy for HTTP/2 and HTTP/3:
+its 257 code lengths only, the code being canonical), field lines as
+libhttp's `THttpHeaderField` (so heads pass between the two without a
+copy into another shape) and libhttp's byte buffers for output; prefixed
+integers (62-bit, QPACK's own) and string literals. The decoder keeps
 the dynamic table the server's encoder stream builds (capacity, inserts
 with static or dynamic names, literal names, duplicates, eviction;
 instructions may arrive in any pieces), decodes field sections (Required
@@ -5467,9 +5493,49 @@ connection-specific fields: else H3_MESSAGE_ERROR on the stream),
 passes over unknown and reserved ones), checks Content-Length and takes
 trailers. A frame in the wrong place is H3_FRAME_UNEXPECTED, a frame cut
 by the stream's end H3_FRAME_ERROR; a request freed before its end is
-cancelled (H3_REQUEST_CANCELLED). Errors are libquic's QuicError* codes
-and Http3Error* (-101 malformed response, -102 reset by the server,
--103 connection error, -104 GOAWAY, -105 incomplete).
+cancelled (H3_REQUEST_CANCELLED), and so is one that failed on this
+side (canceled, timed out) with its stream still open.
+`SendPriorityUpdate` sends PRIORITY_UPDATE (0xF0700, RFC 9218) on the
+control stream. Errors are libquic's QuicError* codes and Http3Error*
+(-101 malformed response, -102 reset by the server, -103 connection
+error, -104 GOAWAY, -105 incomplete, -106 not possible now, -107
+canceled while waiting).
+
+**HTTP/3 in libhttp** (`Http3.HttpConnections`, `Http3.SystemConnections`).
+`THttp3Connection` is a libhttp `THttpConnection` (protocol
+`HttpProtocol3`, multiplexed) over `THttp3ClientConnection`, each
+`THttp3Exchange` a `THttp3Request`: Send writes HEADERS (the fields less
+Host and the connection-specific ones, Priority when not the default,
+content-type and content-length from the content) and the content in
+16 KiB DATA frames (a server that sent STOP_SENDING has answered: the
+sending stops and the response is read); ReceiveHead passes interim
+heads and gives libhttp's head record with RawHead "HTTP/3 200" and the
+fields (wget -S); ReadBody streams DATA; trailers are kept at the end.
+Threads share one connection: QUIC has no thread and libquic is not
+thread safe, so one lock guards it and every libquic call holds it. A
+request that waits runs the connection itself in slices of at most 20
+ms (`THttp3ClientConnection.WaitForProgress` is virtual for this): a
+slice sends what is due, takes in what came for every stream, and lets
+the lock go before the next, so other threads' requests go out and find
+what arrived for them. `Abort` only sets a flag the waiting thread sees
+within a slice; the stream is cancelled when the exchange finishes.
+StartExchange first takes in, without waiting, what came while the
+connection sat idle (a GOAWAY, a close, more streams), and refuses when
+no stream is left within the server's MAX_STREAMS (the pool then opens
+another connection). The connection is usable while QUIC is open, no
+GOAWAY came and the idle timeout is over a second away. Results map to
+libhttp's: GOAWAY for a request at or above its ID and
+H3_REQUEST_REJECTED are retryable `HttpStreamReset`, an incomplete head
+`HttpNoResponse`, an incomplete body `HttpBodyEndedEarly`, a waiting
+timeout `HttpTimedOut`. A thread blocked in libquic's own waits (room
+in a full 256 KiB send buffer, MAX_STREAMS) holds the lock until they
+end. The factory (`OpenHttp3Connection`) opens a `TQuicSession` to the
+alternative's host (the origin's when Alt-Svc named none) and port,
+with the origin's host as the TLS server name (`TQuicSession.ServerName`:
+the certificate must be good for the origin), the client's trust file,
+certificate checking and suites, the handshake within
+`AltServiceTimeoutMilliseconds` (3 s), then the client's timeout for
+every wait; `EnableHttp3` registers it for "h3".
 
 **h3get** (`userland/bin/h3get.pas`): `h3get [-v] [-s] [-I] [-k] [-o FILE]
 [-X METHOD] [-d DATA] [-H 'NAME: VALUE'] [--cacert FILE] [--timeout S]
@@ -5487,7 +5553,7 @@ Ed25519 certificate), RFC 9000's packet number and varint examples, every
 frame written and read back, ACK ranges, malformed frames, transport
 parameters; QPACK through RFC 9204 appendix B (B.1 to B.5, the encoder
 stream fed a byte at a time, a section blocked until its inserts come)
-and RFC 7541's Huffman strings; HTTP/3 frames and the frame parser. Then
+and RFC 7541's Huffman strings (libhttp's unit); HTTP/3 frames and the frame parser. Then
 whole connections over UDP on 127.0.0.1 and ::1 to a server written for
 the test (`QuicTest.Server`: libquic's core in the server role, a
 minimal TLS 1.3 server over libtls's key schedule and an Ed25519
@@ -5499,7 +5565,20 @@ application close, an untrusted certificate (the server gets CRYPTO_ERROR
 unknown_ca); and HTTP/3 to the test's HTTP/3 server: GET, 1 MB, a POST
 echoed with trailers, 204, 103 then 200, a head waiting 100 ms for the
 encoder stream, five requests at once, a malformed :status, a reset
-request, GOAWAY, the close. Last, `run-curl-interop.sh` has the host's
+request, GOAWAY, the close. Then libhttp's client over HTTP/3
+(`QuicTest.HttpClient`, with libhttp, libcompression and HttpTest's
+pipes built in): the first request goes to an HTTP/1.1 server on pipes
+whose response says Alt-Svc: h3=":PORT"; the next go over a factory
+like the system's (UDP to the test server, its certificate pinned):
+"HTTP/3 200" with its fields, one QUIC connection for everything, 1 MB,
+a 200 KB POST echoed with trailers, 204, 103, a head waiting for the
+encoder stream, six threads at once on the connection, a cancel from
+another thread (the connection goes on), the request's fields (no Host,
+no Connection), PRIORITY_UPDATE, GOAWAY; after it a new connection fails
+and TCP answers (the alternative marked broken, not tried again); an
+alternative whose UDP is dropped silently costs one handshake timeout
+before TCP answers, then nothing; with AllowHttp3 off it is never
+tried. Last, `run-curl-interop.sh` has the host's
 curl (ngtcp2 and nghttp3, when it has HTTP/3) fetch from `QuicTest
 serve`, an independent stack against libquic's core. Nothing has been
 tried against servers on the internet yet.
@@ -5527,7 +5606,8 @@ builds on the host (`make http-test`).
   HTTP/2:   Http.Http2Connections, Http.Http2Streams, Http.Http2Frames,
             Http.HpackEncoder, Http.HpackDecoder, Http.HpackTables,
             Http.HpackHuffman
-  HTTP/3:   libquic's connection class, from a factory (not yet)
+  HTTP/3:   libquic's Http3.HttpConnections, from the "h3" factory that
+            libquic's EnableHttp3 registers (libhttp does not link libquic)
 =========== Http.Transports: a byte stream (Http.SocketTransports: TCP+TLS)
   Http.HeaderFields  Http.FieldValues  Http.Dates  Http.StatusCodes
   Http.Methods  Http.Priorities  Http.RequestBodies  Http.BodySinks
@@ -5635,11 +5715,21 @@ only a connection class of its own.
   incremental indexing unless an entry would take half the table,
   Huffman unless longer, size updates at the next block, the smallest
   first).
-- **HTTP/3** is not here: libquic (QUIC, QPACK, HTTP/3 framing) will
-  register a factory for "h3" (`RegisterConnectionFactory`); the client
-  asks it for a connection when an https origin advertised h3 by
-  Alt-Svc, marks the alternative broken for five minutes when it fails
-  and uses TCP meanwhile.
+- **HTTP/3** is libquic's (see "libquic: QUIC and HTTP/3"): a program
+  that wants it links libquic and calls `EnableHttp3`, which registers
+  a factory for "h3" (`RegisterConnectionFactory`), or makes its client
+  with `CreateHttp3Client`. Once an https origin advertised h3 by
+  Alt-Svc (and `AllowHttp3`, the default), new requests to it go to an
+  HTTP/3 connection of the pool or a new one from the factory, leaving
+  the origin's HTTP/1.1 and HTTP/2 connections; a factory that finds no
+  connection, or a new HTTP/3 connection that fails a request before
+  its answer when the request may go again (sending failed, refused, or
+  an idempotent method with no answer), marks h3 broken for five
+  minutes and the request goes over TCP. There is no racing of QUIC
+  against TCP (happy eyeballs): a silently blocked UDP path costs one
+  `AltServiceTimeoutMilliseconds` (3 s) every five minutes.
+  HPACK's Huffman code (`Http.HpackHuffman`) and the header field record
+  are QPACK's too.
 
 **The client** (`Http.Client`). `Execute` is one request: a connection
 from the pool (`Http.ConnectionPool`: a shared HTTP/2 connection with
@@ -5699,8 +5789,16 @@ thread safe.
 - **Authentication** (`Http.Authentication`): as wget's was (above),
   per origin, with a credentials provider for what was not given.
 - **Alt-Svc** (`Http.AltServices`, RFC 7838): values parsed (protocol
-  ids percent-decoded, ma, clear) and kept per origin until they
-  expire.
+  ids percent-decoded, IPv6 alt-authorities, ma, persist, clear; ma=0,
+  port 0 and bad authorities dropped, bad parameters ignored) and kept
+  per origin until they expire, at most eight per origin and 512
+  origins (the least recently updated go first); an alternative marked
+  broken stays broken when advertised again; persist=1 is kept (no
+  network changes are told to programs, so nothing is dropped for it
+  yet); `SaveText` and `LoadText` keep the cache between runs (lines
+  "ORIGIN PROTOCOL HOST PORT EXPIRES PERSIST"; wget's --alt-svc-file).
+  HTTPS DNS records (RFC 9460) are not looked up: libsystem's resolver
+  keeps no data of unknown record types.
 
 Not here yet: proxies (wget had none), 100-continue, HTTP/2 PING
 keep-alive, HSTS and CORS (libweb's), Brotli and zstd, the full UTS #46
@@ -5727,7 +5825,10 @@ cache fresh and revalidated, Basic, Alt-Svc, eight fetch tasks on one
 HTTP/2 connection, a cancel), RFC 6265bis's rules in the jar (public
 suffixes, Secure, prefixes, SameSite both ways, HttpOnly against scripts,
 400 days), RFC 9111's freshness and age arithmetic, the disk cache read
-back by another cache, Alt-Svc parsing, and HPACK in bounded memory over
+back by another cache, Alt-Svc parsing and its cache (expiry, choosing
+an alternative with a factory, broken for five minutes and still broken
+when advertised again, saved and read back, AllowHttp3, the bounds),
+and HPACK in bounded memory over
 5000 blocks. Then `run-interop.sh`: HPACK both ways
 with libnghttp2 through Python's ctypes (libhttp's blocks with
 evictions and every byte Huffman coded decoded by nghttp2, nghttp2's
@@ -5736,7 +5837,8 @@ that test-web-server.py's https-h2 mode speaks HTTP/2, and the client
 over a host socket and libtls against that server (HTTP/2 by ALPN,
 200000 bytes, one connection, gzip, a range, Digest, cookies across a
 redirect, HTTP/1.1 when HTTP/2 is not offered). In QEMU, wgettest's
-HTTP/2 checks (above).
+HTTP/2 checks (above). HTTP/3 through the client is checked by `make
+quic-test` (above).
 
 ### The SSH server
 
@@ -7979,8 +8081,9 @@ independent) against the Free Pascal runtime library:
   libsystem. wget uses it.
 - **libquic.so** – a QUIC version 1 client with QPACK and HTTP/3, the
   `Quic.*`, `Qpack.*` and `Http3.*` units (see "libquic: QUIC and
-  HTTP/3"); it needs libtls (in its QUIC mode), libcryptography and
-  libsystem. h3get uses it.
+  HTTP/3"), and libhttp's HTTP/3 connections; it needs libhttp, libtls
+  (in its QUIC mode), libcompression, libcryptography and libsystem.
+  h3get and wget use it.
 - **libcompression.so** – deflate compression and decompression with the
   zlib and gzip wrappers, Adler-32 and CRC-32, streaming classes
   (`TInflater`, `TDeflater`), stream adapters and one-call functions on
