@@ -29,7 +29,9 @@
     them the loader calls StyleSheetsChanged. OnImportsNeeded asks for
     the imports of sheets made here (from <style> elements).
   - images: an element's own image (<img>, <input type=image>, <video
-    poster>, <object>: SetElementImage) and images named by url() in
+    poster>, <object>: SetElementImage, with the natural size the
+    loader computed when the pixels were scaled down or have a density)
+    and images named by url() in
     style (background-image, list-style-image, content: SetUrlImage, by
     the URL text as written, with the base it is relative to given in
     OnImageNeeded). Images are owned here.
@@ -48,7 +50,9 @@ uses
   Web.Dom, Css.Stylesheets, Image.Model;
 
 type
-  TResourceChange = (rcStyleSheets, rcImages);
+  { rcFonts: the font library gained faces (@font-face): text is
+    measured again. }
+  TResourceChange = (rcStyleSheets, rcImages, rcFonts);
 
   TResourceListener = procedure(Change: TResourceChange) of object;
   { A url() image is wanted (once per URL text): Url as written, BaseUrl
@@ -65,6 +69,8 @@ type
   TElementImage = record
     Element: TElement;
     Image: TImage;
+    { CSS pixels; 0 when the image's own size is its natural size. }
+    NaturalWidth, NaturalHeight: Single;
   end;
 
   TUrlImage = record
@@ -99,8 +105,16 @@ type
     { Imported sheets were filled in. }
     procedure StyleSheetsChanged;
     { An element's image; nil removes it. Takes Image. }
-    procedure SetElementImage(Element: TElement; Image: TImage);
+    procedure SetElementImage(Element: TElement; Image: TImage); overload;
+    { The same with the natural size in CSS pixels (a downscaled image,
+      a srcset density). }
+    procedure SetElementImage(Element: TElement; Image: TImage; NaturalWidth, NaturalHeight: Single); overload;
     function ElementImage(Element: TElement): TImage;
+    { The natural size given with the element's image; False when none
+      was given (the image's pixel size is its natural size). }
+    function ElementImageNaturalSize(Element: TElement; out Width, Height: Single): Boolean;
+    { The font library changed (web fonts): layouts measure text again. }
+    procedure FontsChanged;
     { A url() image by its URL text; takes Image. }
     procedure SetUrlImage(const Url: string; Image: TImage);
     { The image for Url, nil (and asked for once) while it is missing. }
@@ -121,6 +135,9 @@ type
 function DocumentResourcesOf(Document: TDocument): TDocumentResources;
 { Frees the document's resources (when the document goes). }
 procedure FreeDocumentResources(Document: TDocument);
+{ Tells every document's listeners that the font library changed (the
+  library is the process's, so every document measures again). }
+procedure NotifyFontsChanged;
 
 implementation
 
@@ -151,6 +168,14 @@ begin
       SetLength(AllResources, Length(AllResources) - 1);
       Exit;
     end;
+end;
+
+procedure NotifyFontsChanged;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(AllResources) do
+    AllResources[Index].FontsChanged;
 end;
 
 constructor TDocumentResources.Create(Document: TDocument);
@@ -262,6 +287,11 @@ begin
 end;
 
 procedure TDocumentResources.SetElementImage(Element: TElement; Image: TImage);
+begin
+  SetElementImage(Element, Image, 0, 0);
+end;
+
+procedure TDocumentResources.SetElementImage(Element: TElement; Image: TImage; NaturalWidth, NaturalHeight: Single);
 var
   Index: Integer;
 begin
@@ -276,15 +306,40 @@ begin
       SetLength(FElementImages, Length(FElementImages) - 1);
     end
     else
+    begin
       FElementImages[Index].Image := Image;
+      FElementImages[Index].NaturalWidth := NaturalWidth;
+      FElementImages[Index].NaturalHeight := NaturalHeight;
+    end;
   end
   else if Image <> nil then
   begin
     SetLength(FElementImages, Length(FElementImages) + 1);
     FElementImages[High(FElementImages)].Element := Element;
     FElementImages[High(FElementImages)].Image := Image;
+    FElementImages[High(FElementImages)].NaturalWidth := NaturalWidth;
+    FElementImages[High(FElementImages)].NaturalHeight := NaturalHeight;
   end;
   Notify(rcImages);
+end;
+
+function TDocumentResources.ElementImageNaturalSize(Element: TElement; out Width, Height: Single): Boolean;
+var
+  Index: Integer;
+begin
+  Width := 0;
+  Height := 0;
+  Index := FindElementImage(Element);
+  if Index < 0 then
+    Exit(False);
+  Width := FElementImages[Index].NaturalWidth;
+  Height := FElementImages[Index].NaturalHeight;
+  Result := (Width > 0) and (Height > 0);
+end;
+
+procedure TDocumentResources.FontsChanged;
+begin
+  Notify(rcFonts);
 end;
 
 function TDocumentResources.ElementImage(Element: TElement): TImage;

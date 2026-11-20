@@ -35,6 +35,7 @@ uses
   WebLoadTest.FetchRules,
   WebLoadTest.Fetching,
   WebLoadTest.Loading,
+  WebLoadTest.Rendering,
   Web.Navigation.Pages;
 
 begin
@@ -42,5 +43,6 @@ begin
   RunFetchRuleTests;
   RunFetchingTests;
   RunLoadingTests;
+  RunRenderingTests;
   FinishChecks('web load test');
 end.

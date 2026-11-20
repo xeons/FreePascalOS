@@ -1233,7 +1233,7 @@ WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/Te
 	tools/HttpTest/HttpTest.Pipes.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) \
-	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas)
+	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas)
 
 $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
 	@mkdir -p $(WEB_LOAD_TEST_UNITS)
@@ -1243,7 +1243,7 @@ $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard us
 $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLoadTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
-		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fushared -Fishared \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font -Fushared -Fishared \
 		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
 
 web-load-test: $(WEB_LOAD_TEST)

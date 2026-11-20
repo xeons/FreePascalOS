@@ -246,6 +246,9 @@ type
   TReplacedBox = class(TLayoutBox)
   public
     Image: TImage;
+    { The image's natural size in CSS pixels when it is not its pixel
+      size (scaled down when loaded, a srcset density); 0 otherwise. }
+    NaturalWidth, NaturalHeight: Single;
     { From the image, else the element's attributes; 0 when none. }
     IntrinsicWidth, IntrinsicHeight: Single;
     HasIntrinsicWidth, HasIntrinsicHeight: Boolean;

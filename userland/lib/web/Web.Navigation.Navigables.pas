@@ -185,6 +185,11 @@ type
     { Starts a navigation; False when Text is not a URL. }
     function NavigateTo(const Text: string; UserInitiated: Boolean = True): Boolean;
     procedure Navigate(constref Url: TUrlRecord; constref Options: TNavigateOptions);
+    { Shows Html as a new document at Url (its base URL and origin), in a
+      new history entry: for programs showing HTML of their own. Going
+      back to the entry later loads Url itself. False when the page
+      asked to stay (beforeunload). }
+    function LoadHtml(const Html: string; constref Url: TUrlRecord): Boolean;
     procedure Back;
     procedure Forward;
     procedure Traverse(Delta: Integer);
@@ -605,6 +610,22 @@ begin
   end;
   SetState(LoadingReceiving);
   FLoader.BeginContent(Kind, Charset);
+end;
+
+function TNavigable.LoadHtml(const Html: string; constref Url: TUrlRecord): Boolean;
+begin
+  Result := PromptToUnload;
+  if not Result then
+    Exit;
+  CancelNavigation;
+  CancelRefresh;
+  if FInitialAboutBlank then
+    FNavigationHandling := HistoryReplace
+  else
+    FNavigationHandling := HistoryPush;
+  CommitDocument(Url, ContentHtml, 'utf-8');
+  FLoader.ReceiveBytes(PChar(Html), Length(Html));
+  FLoader.EndOfInput;
 end;
 
 procedure TNavigable.ShowErrorPage(constref Url: TUrlRecord; const Html: string);

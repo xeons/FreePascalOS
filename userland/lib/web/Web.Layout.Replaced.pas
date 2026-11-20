@@ -82,8 +82,16 @@ begin
     ControlImage:
       if Box.Image <> nil then
       begin
-        Box.IntrinsicWidth := Box.Image.Width;
-        Box.IntrinsicHeight := Box.Image.Height;
+        if (Box.NaturalWidth > 0) and (Box.NaturalHeight > 0) then
+        begin
+          Box.IntrinsicWidth := Box.NaturalWidth;
+          Box.IntrinsicHeight := Box.NaturalHeight;
+        end
+        else
+        begin
+          Box.IntrinsicWidth := Box.Image.Width;
+          Box.IntrinsicHeight := Box.Image.Height;
+        end;
         Box.HasIntrinsicWidth := True;
         Box.HasIntrinsicHeight := True;
       end

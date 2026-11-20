@@ -98,8 +98,13 @@ type
     destructor Destroy; override;
   end;
 
+  { The browser's own about: pages (about:home, about:history): the
+    HTML for about:Path, False when there is no such page. }
+  TAboutPageProvider = function(const Path: string; out Html: string): Boolean of object;
+
   TFetcher = class
   private
+    FAboutPageProvider: TAboutPageProvider;
     FLoop: TEventLoop;
     FNetwork: TNetworkContext;
     FJobs: TIdMap;
@@ -153,6 +158,10 @@ type
     function ActiveJobCount: Integer;
     property Loop: TEventLoop read FLoop;
     property Network: TNetworkContext read FNetwork;
+    { Pages for about: URLs other than blank and srcdoc, given only to
+      navigations the browser itself starts (no client document, or an
+      about: one). }
+    property AboutPageProvider: TAboutPageProvider read FAboutPageProvider write FAboutPageProvider;
   end;
 
 { The Accept value a destination sends. }
@@ -546,6 +555,7 @@ end;
 
 procedure TFetcher.SchemeFetch(Job: TFetchJob);
 var
+  AboutHtml: string;
   Current: TUrlRecord;
   Response: TFetchResponse;
   DataUrl: TDataUrlResult;
@@ -554,7 +564,11 @@ begin
   Current := Job.Request.CurrentUrl;
   if Current.Scheme = 'about' then
   begin
-    if (Current.Path <> 'blank') and (Current.Path <> 'srcdoc') then
+    AboutHtml := '';
+    if (Current.Path <> 'blank') and (Current.Path <> 'srcdoc') and
+       not (Assigned(FAboutPageProvider) and (Job.Request.Mode = FetchModeNavigate) and
+         ((Job.Request.Client = nil) or not Job.Request.Client.HasCreationUrl or
+          (Job.Request.Client.CreationUrl.Scheme = 'about')) and FAboutPageProvider(Current.Path, AboutHtml)) then
     begin
       FailJob(Job, 'about:' + Current.Path + ' is not a page');
       Exit;
@@ -565,7 +579,7 @@ begin
     Response.Headers.Add('content-type', 'text/html;charset=utf-8');
     Response.MimeType := ParseMimeType('text/html;charset=utf-8');
     Response.Protocol := 'about';
-    CompleteWithBody(Job, Response, '');
+    CompleteWithBody(Job, Response, AboutHtml);
   end
   else if Current.Scheme = 'data' then
   begin

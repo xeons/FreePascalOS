@@ -77,6 +77,7 @@ type
     procedure AttributeChanged(Node: TNode);
     procedure ResourcesChanged(Change: TResourceChange);
     procedure MarkBoxesOf(Node: TNode);
+    procedure TakeElementImage(Box: TReplacedBox; Element: TElement);
     procedure TakePaintStyles(Box: TLayoutBox; Element: TElement; Style: TCssComputedStyle);
     procedure RebuildDirtyBoxes(Node: TNode);
     procedure ApplyEnvironment;
@@ -346,7 +347,7 @@ begin
   Box := BoxOf(Node);
   if (Box <> nil) and (Box.Kind = bkReplaced) then
   begin
-    TReplacedBox(Box).Image := FResources.ElementImage(TElement(Node));
+    TakeElementImage(TReplacedBox(Box), TElement(Node));
     Box.MarkNeedsLayout;
     FLayoutDirty := True;
   end
@@ -366,6 +367,13 @@ var
   Box: TLayoutBox;
 begin
   Inc(FPaintVersion);
+  if Change = rcFonts then
+  begin
+    { Faces changed under the fonts: everything is measured again. }
+    FFullRebuild := True;
+    FLayoutDirty := True;
+    Exit;
+  end;
   if Change <> rcImages then
     Exit;
   { Images arrived: replaced boxes take them and are laid out again. }
@@ -378,11 +386,21 @@ begin
     if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
       if TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node)) then
       begin
-        TReplacedBox(Box).Image := FResources.ElementImage(TElement(Node));
+        TakeElementImage(TReplacedBox(Box), TElement(Node));
         Box.MarkNeedsLayout;
         FLayoutDirty := True;
       end;
     Node := Node.NextInTree(FDocument);
+  end;
+end;
+
+procedure TDocumentLayout.TakeElementImage(Box: TReplacedBox; Element: TElement);
+begin
+  Box.Image := FResources.ElementImage(Element);
+  if not FResources.ElementImageNaturalSize(Element, Box.NaturalWidth, Box.NaturalHeight) then
+  begin
+    Box.NaturalWidth := 0;
+    Box.NaturalHeight := 0;
   end;
 end;
 

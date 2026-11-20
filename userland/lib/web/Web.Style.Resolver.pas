@@ -63,6 +63,9 @@ type
     FSheetList: TDocumentSheetList;
     FActiveSheets: TCssStyleSheetArray;
     FSheetsDirty: Boolean;
+    { The resources said sheets changed: imports may have been hung on
+      sheets already in use, so the engine indexes them again. }
+    FSheetContentsChanged: Boolean;
     FTreeChanged: Boolean;
     FOnStyleChanged: TStyleChangedEvent;
     FOnTextChanged: TNodeChangedEvent;
@@ -212,7 +215,10 @@ end;
 procedure TDocumentStyler.ResourcesChanged(Change: TResourceChange);
 begin
   if Change = rcStyleSheets then
+  begin
     FSheetsDirty := True;
+    FSheetContentsChanged := True;
+  end;
 end;
 
 procedure TDocumentStyler.UpdateSheets;
@@ -223,7 +229,8 @@ var
 begin
   FSheetsDirty := False;
   Sheets := FSheetList.Collect;
-  Same := Length(Sheets) = Length(FActiveSheets);
+  Same := (Length(Sheets) = Length(FActiveSheets)) and not FSheetContentsChanged;
+  FSheetContentsChanged := False;
   if Same then
     for Index := 0 to High(Sheets) do
       if Sheets[Index] <> FActiveSheets[Index] then

@@ -72,6 +72,7 @@ type
     FFallbacks: array of TFallbackEntry;
     FMonospace: Boolean;
     procedure FillLatinAdvances;
+    procedure BindFace(Primary: TFontFaceEntry);
   public
     constructor Create(Primary: TFontFaceEntry; Size: Double; Weight: Integer; Italic: Boolean);
     { The face that draws CodePoint (the primary one or a fallback). }
@@ -83,6 +84,9 @@ type
       out GlyphCount: Integer): Double;
     { The advance of one character. }
     function AdvanceOf(CodePoint: LongWord): Double;
+    { Takes another primary face (the library gained a better match):
+      metrics and cached advances start again. }
+    procedure Rebind(Primary: TFontFaceEntry);
     property Primary: TFontFaceEntry read FPrimary;
     { CSS px. }
     property Size: Double read FSize;
@@ -102,6 +106,12 @@ function TextFontOf(Style: TCssComputedStyle): TTextFont;
 { The font for a family list's text (tests and tools). }
 function MakeTextFont(const Families: array of string; Size: Double; Weight: Integer; Italic: Boolean): TTextFont;
 procedure ClearTextFonts;
+{ The font library gained faces (web fonts): every font made from a
+  style picks its face again, in place (no font object goes, so display
+  lists and layouts keep valid pointers), and the measurements are
+  forgotten. Layouts must lay out again (Web.Layout.Resources'
+  NotifyFontsChanged). True if any font took another face. }
+function RefreshTextFonts: Boolean;
 { How many measurements the cache answered, and how many it computed. }
 function MeasureCacheHits: Int64;
 function MeasureCacheMisses: Int64;
@@ -119,6 +129,10 @@ type
   TFontCacheEntry = record
     Struct: PCssStyleStruct;
     Font: TTextFont;
+    { What the face was chosen from (Families referenced). }
+    Families: TCssValue;
+    Weight: Integer;
+    Italic: Boolean;
   end;
 
   TMeasureEntry = record
@@ -136,14 +150,28 @@ var
   OwnedFonts: array of TTextFont;
 
 constructor TTextFont.Create(Primary: TFontFaceEntry; Size: Double; Weight: Integer; Italic: Boolean);
-var
-  Outline: TOutlineFont;
 begin
   inherited Create;
-  FPrimary := Primary;
   FSize := Size;
   FWeight := Weight;
   FItalic := Italic;
+  BindFace(Primary);
+end;
+
+procedure TTextFont.Rebind(Primary: TFontFaceEntry);
+begin
+  FLatinKnown := False;
+  FFallbacks := nil;
+  FLineGap := 0;
+  FMonospace := False;
+  BindFace(Primary);
+end;
+
+procedure TTextFont.BindFace(Primary: TFontFaceEntry);
+var
+  Outline: TOutlineFont;
+begin
+  FPrimary := Primary;
   FSyntheticBold := (Weight >= 600) and (Primary <> nil) and (Primary.Weight < 600);
   FSyntheticItalic := Italic and (Primary <> nil) and not Primary.Italic;
   if (Primary = nil) or (Primary.Font = nil) then
@@ -451,6 +479,33 @@ begin
   SetLength(FontCache, Length(FontCache) + 1);
   FontCache[High(FontCache)].Struct := Struct;
   FontCache[High(FontCache)].Font := Result;
+  if Families <> nil then
+    Families.AddRef;
+  FontCache[High(FontCache)].Families := Families;
+  FontCache[High(FontCache)].Weight := Weight;
+  FontCache[High(FontCache)].Italic := Italic;
+end;
+
+function RefreshTextFonts: Boolean;
+var
+  Index: Integer;
+  Face: TFontFaceEntry;
+begin
+  Result := False;
+  for Index := 0 to High(FontCache) do
+  begin
+    Face := ChooseFace(FontCache[Index].Families, FontCache[Index].Weight, FontCache[Index].Italic);
+    if Face <> FontCache[Index].Font.Primary then
+    begin
+      FontCache[Index].Font.Rebind(Face);
+      Result := True;
+    end;
+  end;
+  if Result then
+  begin
+    MeasureEntries := nil;
+    MeasureCount := 0;
+  end;
 end;
 
 function MakeTextFont(const Families: array of string; Size: Double; Weight: Integer; Italic: Boolean): TTextFont;
@@ -487,6 +542,7 @@ begin
   begin
     ReleaseStruct(FontCache[Index].Struct);
     FontCache[Index].Font.Free;
+    ReleaseValue(FontCache[Index].Families);
   end;
   FontCache := nil;
   for Index := 0 to High(OwnedFonts) do

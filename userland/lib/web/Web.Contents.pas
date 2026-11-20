@@ -68,6 +68,7 @@ uses
   Web.Text.Fonts,
   Web.Text.FontInstances,
   Web.Text.Breaking,
+  Web.Text.Woff,
   Web.Layout.Resources,
   Web.Layout.Boxes,
   Web.Layout.Values,
@@ -132,7 +133,8 @@ uses
   Web.Navigation.SessionHistory,
   Web.Navigation.ErrorPages,
   Web.Navigation.Navigables,
-  Web.Navigation.Pages;
+  Web.Navigation.Pages,
+  Web.Loading.LayoutSink;
 
 implementation
 

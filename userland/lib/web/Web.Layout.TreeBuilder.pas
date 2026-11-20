@@ -278,7 +278,10 @@ begin
     Replaced := TReplacedBox.Create(bkReplaced, Element, Style);
     Replaced.ControlKind := Control;
     if FResources <> nil then
+    begin
       Replaced.Image := FResources.ElementImage(Element);
+      FResources.ElementImageNaturalSize(Element, Replaced.NaturalWidth, Replaced.NaturalHeight);
+    end;
     Result := Replaced;
     if not (KeywordIn(Display, [kwBlock, kwListItem, kwFlex, kwGrid, kwTable, kwFlowRoot])) then
       Include(Result.Flags, bfInlineLevel);
