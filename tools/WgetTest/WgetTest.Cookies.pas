@@ -35,9 +35,9 @@ implementation
 uses
   SysUtils,
   TestChecks,
-  Wget.CookieDates,
-  Wget.CookieFiles,
-  Wget.Cookies;
+  Http.CookieDates,
+  Http.CookieFiles,
+  Http.Cookies;
 
 const
   { 2026-01-01 00:00:00 UTC. }

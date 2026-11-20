@@ -38,7 +38,7 @@
 
   Plain Pascal (the RTL only), checked on the host by tools/WgetTest.
 }
-unit Wget.Cookies;
+unit Http.Cookies;
 
 {$mode objfpc}
 {$H+}
@@ -104,7 +104,7 @@ implementation
 
 uses
   SysUtils,
-  Wget.CookieDates;
+  Http.CookieDates;
 
 const
   Blanks = [' ', #9];

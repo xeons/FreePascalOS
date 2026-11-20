@@ -28,7 +28,7 @@
 
   Plain Pascal (the RTL only), checked on the host by tools/WgetTest.
 }
-unit Wget.Challenges;
+unit Http.Challenges;
 
 {$mode objfpc}
 {$H+}

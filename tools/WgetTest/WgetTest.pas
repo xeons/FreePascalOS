@@ -34,8 +34,8 @@ uses
   WgetTest.Authentication,
   WgetTest.Cookies,
   WgetTest.Recursion,
-  Wget.Chunks,
-  Wget.Headers,
+  Http.Chunks,
+  Http.ResponseHeads,
   Wget.Urls;
 
 function UrlText(constref Url: TUrl): string;

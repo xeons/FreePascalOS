@@ -30,9 +30,9 @@ unit Wget.Sessions;
 interface
 
 uses
-  Wget.Authentication,
+  Http.Authentication,
   Wget.ConnectionPool,
-  Wget.Cookies,
+  Http.Cookies,
   Wget.Settings;
 
 type
@@ -65,7 +65,7 @@ uses
   SysUtils,
   Sys.Time,
   Util.Messages,
-  Wget.CookieFiles;
+  Http.CookieFiles;
 
 function CurrentUnixTime: Int64;
 begin

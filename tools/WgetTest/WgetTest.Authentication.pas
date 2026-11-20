@@ -35,8 +35,8 @@ implementation
 uses
   SysUtils,
   TestChecks,
-  Wget.Challenges,
-  Wget.Digest,
+  Http.Challenges,
+  Http.Digest,
   Wget.Netrc;
 
 const

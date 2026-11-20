@@ -25,7 +25,7 @@
     the response's body had a known end and the server did not close;
     the bodies of redirections and errors are read for that;
   - cookies go out with the request and come back into the jar;
-  - a 401 is answered once with the credentials (Wget.Authentication),
+  - a 401 is answered once with the credentials (Http.Authentication),
     again only when the server calls its nonce stale;
   - redirects (301, 302, 303, 307, 308) are followed, at most 20, to
     http or https URLs only, the Location resolved against the URL it
@@ -93,7 +93,7 @@ uses
   Wget.Bodies,
   Wget.Connections,
   Wget.Files,
-  Wget.Headers,
+  Http.ResponseHeads,
   Wget.Progress,
   Wget.Requests,
   Wget.Settings,

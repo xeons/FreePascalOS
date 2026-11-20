@@ -33,7 +33,7 @@ interface
 
 uses
   Wget.Connections,
-  Wget.Headers,
+  Http.ResponseHeads,
   Wget.Settings,
   Wget.Urls;
 

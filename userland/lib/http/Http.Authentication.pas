@@ -27,7 +27,7 @@
   The user name and password are --http-user/--http-password, else
   --user/--password, else the host's entry in ~/.netrc (Wget.Netrc).
 }
-unit Wget.Authentication;
+unit Http.Authentication;
 
 {$mode objfpc}
 {$H+}
@@ -35,7 +35,7 @@ unit Wget.Authentication;
 interface
 
 uses
-  Wget.Digest,
+  Http.Digest,
   Wget.Urls;
 
 type
@@ -80,7 +80,7 @@ uses
   Crypto.Digests,
   Sys.Environment,
   Sys.RandomNumbers,
-  Wget.Challenges,
+  Http.Challenges,
   Wget.Netrc;
 
 const

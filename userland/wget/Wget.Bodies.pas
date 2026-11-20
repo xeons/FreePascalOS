@@ -36,7 +36,7 @@ interface
 
 uses
   Wget.Connections,
-  Wget.Headers,
+  Http.ResponseHeads,
   Wget.Progress,
   Wget.Sinks;
 
@@ -61,7 +61,7 @@ implementation
 
 uses
   Abi.SystemCalls,
-  Wget.Chunks;
+  Http.Chunks;
 
 const
   ReadSize = 16 * 1024;

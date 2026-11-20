@@ -26,10 +26,19 @@ program HttpTest;
 {$H+}
 
 uses
+  {$ifdef unix}
+  cthreads,
+  {$endif}
   TestChecks,
+  HttpTest.Hpack,
+  HttpTest.Http2Frames,
+  HttpTest.Loopback,
   HttpTest.Urls;
 
 begin
   TestUrls;
+  TestHpack;
+  TestHttp2Frames;
+  TestLoopback;
   FinishChecks('http test');
 end.
