@@ -191,7 +191,7 @@ fi
 # runs for each connection the guest makes to one of their addresses,
 # over HTTP or HTTPS with the test certificates of tools/TlsTest; behind
 # 10.0.2.103 is OpenSSL's s_server -www (reached through the same
-# script as a relay). They need Python 3 with its ssl module and openssl
+# script as a relay); 10.0.2.107 speaks HTTP/2 to a client offering it. They need Python 3 with its ssl module and openssl
 # on the host.
 if ! python3 -c 'import ssl' 2> /dev/null; then
     echo "TEST FAILED: the wget test needs Python 3 with its ssl module on the host"
@@ -218,11 +218,12 @@ web_forwards+=",guestfwd=tcp:10.0.2.103:443-cmd:$web_server relay $s_server_port
 web_forwards+=",guestfwd=tcp:10.0.2.104:443-cmd:$web_server https wrong-name-chain.pem wrong-name.key"
 web_forwards+=",guestfwd=tcp:10.0.2.105:443-cmd:$web_server https other-server.pem other-server.key"
 web_forwards+=",guestfwd=tcp:10.0.2.106:443-cmd:$web_server https expired-chain.pem expired.key"
+web_forwards+=",guestfwd=tcp:10.0.2.107:443-cmd:$web_server https-h2 server-chain.pem server.key"
 
 # A virtio network card on QEMU's user networking (the guest is
 # 10.0.2.15, the gateway 10.0.2.2 answers pings); a TCP connection to
 # 10.0.2.100 port 7 reaches "cat", an echo service for networktest, and
-# 10.0.2.101 to 10.0.2.106 the web servers above. IPv6 too, as user
+# 10.0.2.101 to 10.0.2.107 the web servers above. IPv6 too, as user
 # networking has it by default: QEMU's router (fe80::2) advertises
 # fec0::/64 (the guest makes a stable-privacy and a temporary address in it,
 # not the EUI-64 one), fec0::2 answers pings and fec0::3 is the DNS server it

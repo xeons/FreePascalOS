@@ -22,6 +22,9 @@ each TCP connection the guest makes to a guestfwd address
 
     test-web-server.py http
     test-web-server.py https CERTIFICATE-CHAIN KEY
+    test-web-server.py https-h2 CERTIFICATE-CHAIN KEY
+                                         (HTTP/2 when the client offers h2
+                                          by ALPN: scripts/test_http2_server.py)
     test-web-server.py relay PORT        (to a server on the host, such
                                           as openssl s_server)
 
@@ -73,6 +76,8 @@ import ssl
 import sys
 import time
 
+import test_http2_server
+
 HELLO = b"Hello from the FreePascalOS test server\n"
 DATA = bytes((i * 7 + i // 256) % 256 for i in range(200000))
 LINES = b"".join(b"line %d of the compressible text\n" % number for number in range(1, 101))
@@ -119,10 +124,12 @@ class PlainStream:
 class TlsStream:
     """TLS over standard input and output through memory buffers."""
 
-    def __init__(self, chain, key):
+    def __init__(self, chain, key, protocols=None):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_3
         context.load_cert_chain(chain, key)
+        if protocols:
+            context.set_alpn_protocols(protocols)
         self.incoming = ssl.MemoryBIO()
         self.outgoing = ssl.MemoryBIO()
         self.tls = context.wrap_bio(self.incoming, self.outgoing, server_side=True)
@@ -155,6 +162,9 @@ class TlsStream:
 
     def write(self, data):
         self.run(self.tls.write, data)
+
+    def selected_protocol(self):
+        return self.tls.selected_alpn_protocol()
 
     def close(self):
         try:
@@ -375,6 +385,25 @@ def serve_request(connection, method, path, headers):
     return True
 
 
+def plain_data(response, headers):
+    response.respond_body("200 OK", "application/octet-stream", DATA)
+
+
+def plain_gzip(response, headers):
+    if accepts_gzip(headers):
+        response.respond_body("200 OK", "text/plain", gzip.compress(LINES, mtime=0), [("Content-Encoding", "gzip")])
+    else:
+        response.respond_body("200 OK", "text/plain", LINES)
+
+
+# Over HTTP/2 the chunked and connection-ending pages are plain bodies.
+HTTP2_PLAIN_PAGES = {"/stream.bin": plain_data, "/chunked.bin": plain_data, "/gzip-chunked.txt": plain_gzip}
+
+
+def serve_http2(stream):
+    test_http2_server.Http2Connection(stream, serve_request, HTTP2_PLAIN_PAGES).serve()
+
+
 def serve(stream):
     connection = Connection(stream)
     while True:
@@ -415,11 +444,17 @@ def main():
     try:
         if mode == "https":
             stream = TlsStream(os.path.join(CERTIFICATES, sys.argv[2]), os.path.join(CERTIFICATES, sys.argv[3]))
+        elif mode == "https-h2":
+            stream = TlsStream(os.path.join(CERTIFICATES, sys.argv[2]), os.path.join(CERTIFICATES, sys.argv[3]),
+                               ["h2", "http/1.1"])
         else:
             stream = PlainStream()
-        serve(stream)
+        if mode == "https-h2" and stream.selected_protocol() == "h2":
+            serve_http2(stream)
+        else:
+            serve(stream)
         stream.close()
-    except (EOFError, ssl.SSLError, BrokenPipeError, ConnectionResetError):
+    except (EOFError, ssl.SSLError, BrokenPipeError, ConnectionResetError, test_http2_server.HpackError):
         pass
 
 

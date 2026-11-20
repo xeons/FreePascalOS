@@ -31,6 +31,8 @@
     10.0.2.104:443   HTTPS with a certificate for another name
     10.0.2.105:443   HTTPS with a certificate from an unknown authority
     10.0.2.106:443   HTTPS with an expired certificate
+    10.0.2.107:443   HTTPS speaking HTTP/2 when offered (its certificate
+                     does not name this address: --no-check-certificate)
 
   The test root is fetched over HTTP first and given to wget with
   --ca-certificate. Each check runs a command line through sh and
@@ -42,7 +44,9 @@
   cookies (kept across a redirection, written to and read from cookie
   files), Basic and Digest authentication (and ~/.netrc), gzip bodies
   (--compression), --trust-server-names, and recursion over a small
-  site (-r, -l, -np, -A, -R, -p, -k, robots.txt). Prints a line per check and
+  site (-r, -l, -np, -A, -R, -p, -k, robots.txt); HTTP/2 (contents,
+  -S, keep-alive, redirects, gzip, Digest, continuing, and HTTP/1.1
+  with --no-http2). Prints a line per check and
   "wgettest: N of N checks passed" at the end; exits with 1 if any
   failed.
 }
@@ -71,8 +75,9 @@ const
   DataHash = 'df0f6306fcfb22cadc19e9868af0728ea9444c363c55ac205c4782a827176d9e';
   Hello = 'Hello from the FreePascalOS test server'#10;
   Trust = '--ca-certificate=ca.pem ';
+  Http2 = '--no-check-certificate ';
 
-  CommandTests: array[0..61] of TCommandTest = (
+  CommandTests: array[0..70] of TCommandTest = (
     { Plain HTTP, and the test root for the rest. }
     (Command: 'wget -q http://10.0.2.102/hello.txt && cat hello.txt'; ExpectedOutput: Hello; ExpectedStatus: 0),
     (Command: 'wget -q http://10.0.2.102/hello.txt && ls hello.txt*'; ExpectedOutput: 'hello.txt'#10'hello.txt.1'#10;
@@ -230,7 +235,27 @@ const
     (Command: 'mkdir r6 && cd r6 && wget -q -r -np -e robots=off http://10.0.2.102/site/ && ' +
        'find 10.0.2.102 -type f | grep -c secret; test -e 10.0.2.102/robots.txt; echo $?';
      ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'wget -q -r -O x http://10.0.2.102/site/; echo $?'; ExpectedOutput: '2'#10; ExpectedStatus: 0));
+    (Command: 'wget -q -r -O x http://10.0.2.102/site/; echo $?'; ExpectedOutput: '2'#10; ExpectedStatus: 0),
+
+    { HTTP/2 (libhttp), chosen by ALPN. }
+    (Command: 'wget -q ' + Http2 + '-O - https://10.0.2.107/hello.txt'; ExpectedOutput: Hello; ExpectedStatus: 0),
+    (Command: 'wget -S ' + Http2 + '-O h2.txt https://10.0.2.107/hello.txt 2>&1 | grep "^  HTTP/"';
+     ExpectedOutput: '  HTTP/2 200'#10; ExpectedStatus: 0),
+    (Command: 'wget -q ' + Http2 + '-O - https://10.0.2.107/data.bin | sha256sum'; ExpectedOutput: DataHash + '  -'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -q ' + Http2 + '-O - https://10.0.2.107/count https://10.0.2.107/count';
+     ExpectedOutput: '1'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'wget ' + Http2 + '-O h2r.txt https://10.0.2.107/redirect/2 2>&1 | grep -c "^Reusing existing ' +
+       'connection to 10.0.2.107:443."; cat h2r.txt'; ExpectedOutput: '3'#10 + Hello; ExpectedStatus: 0),
+    (Command: 'wget -q ' + Http2 + '--compression=gzip -O - https://10.0.2.107/gzip.txt | tail -n 1';
+     ExpectedOutput: 'line 100 of the compressible text'#10; ExpectedStatus: 0),
+    (Command: 'wget -q ' + Http2 + '-O - --user=user --password=secret https://10.0.2.107/digest';
+     ExpectedOutput: 'digest ok'#10; ExpectedStatus: 0),
+    (Command: 'head -c 100000 data.bin > h2part.bin && wget -q -c ' + Http2 + '-O h2part.bin ' +
+       'https://10.0.2.107/data.bin && sha256sum h2part.bin'; ExpectedOutput: DataHash + '  h2part.bin'#10;
+     ExpectedStatus: 0),
+    (Command: 'wget -S --no-http2 ' + Http2 + '-O h1.txt https://10.0.2.107/hello.txt 2>&1 | grep "^  HTTP/"';
+     ExpectedOutput: '  HTTP/1.1 200 OK'#10; ExpectedStatus: 0));
 
 var
   PassedCount: Integer;

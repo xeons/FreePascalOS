@@ -17,8 +17,17 @@
 }
 
 {
-  HttpTest - checks libhttp on the host (make http-test): the URL
-  Standard (HttpTest.Urls).
+  HttpTest - checks libhttp on the host (make http-test):
+
+    HttpTest                      the URL Standard, HPACK (RFC 7541
+                                  appendix C), HTTP/2 frames, HTTP/1.1
+                                  and HTTP/2 over pipes, the client
+    HttpTest hpack-export FILE    blocks for libnghttp2 to decode
+    HttpTest hpack-import FILE    libnghttp2's blocks decoded
+    HttpTest interop PORT         against scripts/test-web-server.py
+                                  (https-h2) on 127.0.0.1:PORT
+
+  run-interop.sh runs the last three.
 }
 program HttpTest;
 
@@ -29,14 +38,34 @@ uses
   {$ifdef unix}
   cthreads,
   {$endif}
+  SysUtils,
   TestChecks,
   HttpTest.Hpack,
+  HttpTest.HpackExchange,
   HttpTest.Http2Frames,
+  HttpTest.Interop,
   HttpTest.Loopback,
   HttpTest.Client,
   HttpTest.Urls;
 
 begin
+  if ParamStr(1) = 'hpack-export' then
+  begin
+    ExportHpack(ParamStr(2));
+    Exit;
+  end;
+  if ParamStr(1) = 'hpack-import' then
+  begin
+    ImportHpack(ParamStr(2));
+    FinishChecks('http hpack interop');
+    Exit;
+  end;
+  if ParamStr(1) = 'interop' then
+  begin
+    TestInterop(StrToInt(ParamStr(2)));
+    FinishChecks('http interop');
+    Exit;
+  end;
   TestUrls;
   TestHpack;
   TestHttp2Frames;

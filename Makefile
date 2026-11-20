@@ -1028,11 +1028,12 @@ HTTP_TEST_SOURCES := $(wildcard tools/HttpTest/*.pas) tools/CryptoTest/TestCheck
 		$(wildcard userland/lib/http/*.pas)) \
 	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
-	userland/lib/tls/Tls.CipherSuites.pas
+	$(filter-out %/Tls.SocketTransport.pas %/Tls.SystemTrust.pas %/Tls.Sessions.pas %/Tls.Contents.pas, \
+		$(wildcard userland/lib/tls/*.pas))
 
 $(HTTP_TEST): $(HTTP_TEST_SOURCES)
 	@mkdir -p $(HTTP_TEST_UNITS)
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/HttpTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/http \
+	fpc -Mobjfpc -O2 -vew -Futools/HttpTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/http \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fushared -Fishared \
 		-FU$(HTTP_TEST_UNITS) -o$@ tools/HttpTest/HttpTest.pas
 
@@ -1040,6 +1041,9 @@ http-test: $(HTTP_TEST)
 	@$(HTTP_TEST) > build/tools/http-test.out || \
 		{ grep -A2 FAIL build/tools/http-test.out; echo "HTTP TEST FAILED (build/tools/http-test.out)"; exit 1; }
 	@echo "HTTP TEST PASSED: $$(tail -n 1 build/tools/http-test.out | cut -d ' ' -f 3-)"
+	@tools/HttpTest/run-interop.sh $(HTTP_TEST) build/tools/http-interop > build/tools/http-interop.out 2>&1 || \
+		{ grep -B2 -A6 "FAIL\|exception" build/tools/http-interop.out; echo "HTTP INTEROP TEST FAILED (build/tools/http-interop.out)"; exit 1; }
+	@tail -n 1 build/tools/http-interop.out
 
 # The resolver's EDNS(0) and cache of answers (libsystem) and the network
 # service's DHCP and DHCPv6 messages build for the host too, with range
