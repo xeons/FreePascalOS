@@ -977,6 +977,32 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         virt has none); I/O BARs are assigned but the port window
         (`Hal.PortIo.SetPortIoWindow`) is not set
 
+## Web platform: style engine (libcss)
+
+- [x] CSS Syntax Level 3 tokenizer and parser with error recovery; CSS Nesting
+- [x] Style sheet object model with CSSOM serialization; cssdump
+- [x] Selectors Level 4 (:is/:where/:not/:has, nth-child of S, attribute flags,
+      pseudo-elements), right-to-left matching, ancestor bloom filter, rule
+      buckets by id, class and type
+- [x] Values: units of Values 4, math functions, colors (Color 4/5 with
+      color-mix), gradients, transforms, var() and env()
+- [x] Property table (about 220 longhands, logical properties, 55 shorthands)
+- [x] Media queries 4/5 with the range syntax; @supports; @layer; @import;
+      @font-face, @keyframes, @page and @property parsed
+- [x] Cascade 5 (origins, importance, layers, style attribute, revert,
+      revert-layer) and computed values in shared, interned style structs;
+      style sharing cache
+- [x] HTML user agent style sheet and quirks mode additions
+- [x] Host test (make css-test) and coretest lines for cssdump
+- [ ] Container queries: evaluate @container once layout knows container sizes
+- [ ] :visited privacy (two styles per link, only color differences shown)
+- [ ] Relative color syntax, light-dark(), @scope, @counter-style,
+      @font-feature-values, SVG presentation properties
+- [ ] Run transitions and animations (interpolation per animation type)
+- [ ] Gamut mapping in OKLCh instead of clipping
+- [ ] Incremental restyle (invalidation by changed class, id, attribute or state
+      instead of restyling the subtree)
+
 ## Tooling
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results

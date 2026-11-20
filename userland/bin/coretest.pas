@@ -124,7 +124,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..386] of TCommandTest = (
+  CommandTests: array[0..389] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -658,7 +658,11 @@ const
     (Command: 'ss -t | head -n 1 | tr -s " "; ss -s | head -n 1 | cut -d " " -f 1; ss -s | grep -c "^Transport Total"; ss -xH | grep -c .; ss -t sport = :nosuchservice 2> /dev/null; echo $?'; ExpectedOutput: 'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process'#10'Total:'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
     { h3get and libquic in the system: a URL that is not https is refused,
       and a server that never answers ends in a handshake timeout (4). }
-    (Command: 'h3get -s http://localhost/ 2> /dev/null; echo $?; h3get -s --timeout 2 https://127.0.0.1:9/ 2> /dev/null; echo $?'; ExpectedOutput: '1'#10'4'#10; ExpectedStatus: 0)
+    (Command: 'h3get -s http://localhost/ 2> /dev/null; echo $?; h3get -s --timeout 2 https://127.0.0.1:9/ 2> /dev/null; echo $?'; ExpectedOutput: '1'#10'4'#10; ExpectedStatus: 0),
+    { cssdump: style sheets through libcss, printed back normalized. }
+    (Command: 'printf "a{color:red;margin:1px 1px}" | cssdump'; ExpectedOutput: 'a { color: rgb(255, 0, 0); margin: 1px; }'#10; ExpectedStatus: 0),
+    (Command: 'printf "margin:1px 2px;color:blue;bogus:1" | cssdump -d'; ExpectedOutput: 'margin: 1px 2px; color: rgb(0, 0, 255);'#10; ExpectedStatus: 0),
+    (Command: 'printf "a > b.c, #x:hover {}" | cssdump -s'; ExpectedOutput: '(0,1,2) a > b.c'#10'(1,1,0) #x:hover'#10; ExpectedStatus: 0)
   );
 
 var

@@ -61,6 +61,9 @@
 #   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
 #                   and DHCPv6 messages on the host
 #   make netstat-test  Check the ports list parser and ss's filters on the host
+#   make css-test   Check libcss on the host: tokenizer, parsing and serialization,
+#                   selectors, the cascade, computed values, media queries, colors
+#                   (against Python's conversions), memory and style sharing
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
@@ -185,7 +188,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test
+	quic-test css-test
 
 all: esp
 
@@ -496,7 +499,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -869,6 +872,32 @@ crypto-test: $(CRYPTO_TEST)
 	@$(CRYPTO_TEST) > build/tools/crypto-test.out || \
 		{ grep -A2 FAIL build/tools/crypto-test.out; echo "CRYPTO TEST FAILED (build/tools/crypto-test.out)"; exit 1; }
 	@echo "CRYPTO TEST PASSED: $$(tail -n 1 build/tools/crypto-test.out | cut -d ' ' -f 3-)"
+
+# libcss builds for the host too and is checked there: tokenizer cases,
+# round trips, selector matching through a test adapter, the cascade,
+# computed values, media queries, shorthands, colors (the answers made by
+# Python), and memory and sharing on a synthetic page.
+CSS_TEST := build/tools/CssTest
+CSS_TEST_UNITS := build/tools/css-test-units
+CSS_COLOR_VECTORS := $(CSS_TEST_UNITS)/CssTest.ColorVectors.inc
+CSS_TEST_SOURCES := $(wildcard tools/CssTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas))
+
+$(CSS_COLOR_VECTORS): tools/CssTest/make-color-vectors.py
+	@mkdir -p $(CSS_TEST_UNITS)
+	python3 -I tools/CssTest/make-color-vectors.py > $@.tmp
+	@mv $@.tmp $@
+
+$(CSS_TEST): $(CSS_TEST_SOURCES) $(CSS_COLOR_VECTORS)
+	@mkdir -p $(CSS_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/CssTest -Futools/CryptoTest -Fuuserland/lib/css \
+		-Fi$(CSS_TEST_UNITS) -FU$(CSS_TEST_UNITS) -o$@ tools/CssTest/CssTest.pas
+
+css-test: $(CSS_TEST)
+	@$(CSS_TEST) > build/tools/css-test.out || \
+		{ grep -A2 FAIL build/tools/css-test.out; echo "CSS TEST FAILED (build/tools/css-test.out)"; exit 1; }
+	@grep -a '^info' build/tools/css-test.out | sed 's/^info /  /'
+	@echo "CSS TEST PASSED: $$(tail -n 1 build/tools/css-test.out | cut -d ' ' -f 3-)"
 
 # libcompression builds for the host too, and is checked there against
 # zlib's own output (made by Python's zlib when the test is built); what

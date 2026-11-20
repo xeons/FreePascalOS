@@ -32,6 +32,7 @@
 #                  libtls <- libquic (QUIC, QPACK, HTTP/3; h3get)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
+#                  libsystem <- libcss (the style engine; cssdump, libweb)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -95,6 +96,7 @@ COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
+CSS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/css
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -111,6 +113,7 @@ COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
+CSS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcss.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -164,7 +167,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -294,6 +297,16 @@ $(SSH_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/ssh/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libssh.so -o $@ \
 		$(SSH_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
+# libcss: the style engine (CSS syntax, selectors, values, the cascade,
+# computed styles); it knows no document model (an element adapter).
+$(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
+	@rm -rf $(CSS_LIBRARY_OBJECTS)
+	@mkdir -p $(CSS_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/css \
+		-FU$(CSS_LIBRARY_OBJECTS) userland/lib/css/Css.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcss.so -o $@ \
+		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
 $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
@@ -414,6 +427,11 @@ SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-key
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
 $(SSH_PROGRAMS): $(SSH_LIBRARY)
+# cssdump parses style sheets through libcss.
+CSS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,cssdump)
+$(CSS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcss
+$(CSS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CSS_LIBRARY_OBJECTS)
+$(CSS_PROGRAMS): $(CSS_LIBRARY)
 # gzip compresses through libcompression.
 COMPRESSION_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,gzip)
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
