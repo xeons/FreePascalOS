@@ -79,6 +79,10 @@ type
       IsRoot: Boolean): TCssComputedStyle;
     { The style of an element nothing applies to, under Parent. }
     function InitialStyle: TCssComputedStyle;
+    { The style of an anonymous box (or a box no rule styles) under
+      Parent: Parent's inherited groups and custom properties, the
+      initial values of the rest. }
+    function AnonymousStyle(Parent: TCssComputedStyle): TCssComputedStyle;
     property InitialStructs: TCssInitialStructs read FInitial;
   end;
 
@@ -732,6 +736,24 @@ begin
     Result.Structs[Group] := FInitial[Group];
     AddRefStruct(FInitial[Group]);
   end;
+end;
+
+function TCssStyleComputer.AnonymousStyle(Parent: TCssComputedStyle): TCssComputedStyle;
+var
+  Group: TCssStructGroup;
+begin
+  if Parent = nil then
+    Exit(InitialStyle);
+  Result := TCssComputedStyle.Create;
+  for Group := Low(TCssStructGroup) to High(TCssStructGroup) do
+  begin
+    if Group in InheritedGroups then
+      Result.Structs[Group] := Parent.Structs[Group]
+    else
+      Result.Structs[Group] := FInitial[Group];
+    AddRefStruct(Result.Structs[Group]);
+  end;
+  Result.Custom := Parent.Custom.AddRef;
 end;
 
 type
