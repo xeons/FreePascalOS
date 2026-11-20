@@ -35,6 +35,8 @@
     psk_key_exchange_modes      psk_dhe_ke, when resuming is allowed
     key_share                   the shares the handshake made (TLS 1.3)
     renegotiation_info          empty: a first handshake (RFC 5746)
+    quic_transport_parameters   in QUIC mode (Tls.Quic), which also
+                                leaves the legacy session id empty
     pre_shared_key              a session ticket, last of all, its
                                 binder left for the handshake to fill
 }
@@ -83,6 +85,10 @@ type
     PskIdentity: TBytes;
     ObfuscatedTicketAge: LongWord;
     BinderLength: Integer;
+    { QUIC (Tls.Quic): an empty legacy session id and the
+      quic_transport_parameters extension with these bytes. }
+    Quic: Boolean;
+    QuicTransportParameters: TBytes;
   end;
 
 const
@@ -102,7 +108,8 @@ function SuiteFitsVersions(Identifier: Word; MinimumVersion, MaximumVersion: Wor
 implementation
 
 uses
-  Tls.Constants;
+  Tls.Constants,
+  Tls.Quic;
 
 function SuiteFitsVersions(Identifier: Word; MinimumVersion, MaximumVersion: Word): Boolean;
 begin
@@ -259,6 +266,17 @@ begin
   AppendByte(Builder, PskModeDheKeyExchange);
 end;
 
+procedure AddQuicTransportParameters(var Builder: TTlsBuilder; constref Parameters: TClientHelloParameters);
+var
+  Extension: PtrUInt;
+begin
+  AppendUInt16(Builder, ExtensionQuicTransportParameters);
+  Extension := BeginVector(Builder, 2);
+  if Length(Parameters.QuicTransportParameters) > 0 then
+    AppendBytes(Builder, @Parameters.QuicTransportParameters[0], Length(Parameters.QuicTransportParameters));
+  EndVector(Builder, Extension, 2);
+end;
+
 procedure AddRenegotiationInfo(var Builder: TTlsBuilder);
 begin
   AppendUInt16(Builder, ExtensionRenegotiationInfo);
@@ -312,7 +330,8 @@ begin
   AppendUInt16(Builder, VersionTls12);
   AppendBytes(Builder, @Parameters.Random[0], 32);
   SessionId := BeginVector(Builder, 1);
-  AppendBytes(Builder, @Parameters.SessionId[0], 32);
+  if not Parameters.Quic then
+    AppendBytes(Builder, @Parameters.SessionId[0], 32);
   EndVector(Builder, SessionId, 1);
   Suites := BeginVector(Builder, 2);
   for Index := 0 to Parameters.CipherSuites.Count - 1 do
@@ -349,6 +368,8 @@ begin
   end;
   if OffersTls12 then
     AddRenegotiationInfo(Builder);
+  if Parameters.Quic then
+    AddQuicTransportParameters(Builder, Parameters);
   if OffersTls13 and (Length(Parameters.PskIdentity) > 0) then
     BindersOffset := AddPreSharedKey(Builder, Parameters) - Start;
   EndVector(Builder, Extensions, 2);

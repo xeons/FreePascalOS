@@ -46,7 +46,8 @@
   checked when its Certificate arrives (Tls.ServerAuthentication); the
   CertificateVerify signature with its key over the transcript so far
   (Tls.Signatures); the server's Finished as an HMAC of the transcript,
-  compared in constant time. After the client's Finished both
+  compared in constant time. In QUIC mode (Tls.Quic) the secrets go to
+  the QUIC connection instead of the record layer. After the client's Finished both
   directions use the application traffic keys, and the resumption
   master secret is kept for the tickets the server sends (Tls.Client).
 *)
@@ -79,6 +80,7 @@ uses
   Tls.HostNames,
   Tls.KeySchedule,
   Tls.KeyShares,
+  Tls.Quic,
   Tls.RecordLayer,
   Tls.RecordProtection,
   Tls.ServerAuthentication,
@@ -105,6 +107,44 @@ type
 
 const
   CertificateVerifyContext: PChar = 'TLS 1.3, server CertificateVerify';
+
+{ QUIC mode: a traffic secret to the QUIC connection. }
+function HandOverQuicSecret(Connection: PTlsConnection; Level: TTlsQuicLevel; Direction: TTlsQuicDirection;
+  constref Secret: TTlsSecret): LongInt;
+begin
+  Result := Connection^.Options.Quic^.InstallSecret(Connection^.Options.Quic^.Context, Level, Direction,
+    Connection^.Suite.Identifier, @Secret[0], DigestSize(Connection^.Suite.Hash));
+end;
+
+{ The server's traffic secret of a level: the record keys, or in QUIC
+  mode the QUIC connection's, whose CRYPTO frames of that level are read
+  from now on. }
+function InstallReadSecret(Connection: PTlsConnection; Level: TTlsQuicLevel; constref Secret: TTlsSecret): LongInt;
+begin
+  if Connection^.Options.Quic = nil then
+  begin
+    SetRecordProtection(Connection^.ReadProtection, Connection^.Suite, Secret);
+    Exit(TlsErrorNone);
+  end;
+  Connection^.QuicReadLevel := Level;
+  Result := HandOverQuicSecret(Connection, Level, QuicDirectionRead, Secret);
+end;
+
+{ The client's traffic secret of a level, likewise. QUIC has the
+  handshake write secret already (with the read one: it acknowledges
+  the server's Handshake packets with it), so only the level changes. }
+function InstallWriteSecret(Connection: PTlsConnection; Level: TTlsQuicLevel; constref Secret: TTlsSecret): LongInt;
+begin
+  if Connection^.Options.Quic = nil then
+  begin
+    SetRecordProtection(Connection^.WriteProtection, Connection^.Suite, Secret);
+    Exit(TlsErrorNone);
+  end;
+  Connection^.QuicWriteLevel := Level;
+  if Level = QuicLevelHandshake then
+    Exit(TlsErrorNone);
+  Result := HandOverQuicSecret(Connection, Level, QuicDirectionWrite, Secret);
+end;
 
 function CurrentMilliseconds(Connection: PTlsConnection): Int64;
 begin
@@ -160,6 +200,9 @@ begin
     State.Hello.KeyShareCount := 1;
   end;
   State.Hello.PskIdentity := nil;
+  State.Hello.Quic := Connection^.Options.Quic <> nil;
+  if State.Hello.Quic then
+    State.Hello.QuicTransportParameters := Connection^.Options.Quic^.TransportParameters;
   State.OfferedPsk := State.HasTicket;
   if State.OfferedPsk then
   begin
@@ -280,7 +323,10 @@ begin
   Result := EnsureNoBufferedHandshake(Connection);
   if Result <> TlsErrorNone then
     Exit;
-  SetRecordProtection(Connection^.ReadProtection, Connection^.Suite, Connection^.Schedule.ServerHandshakeTraffic);
+  Result := InstallReadSecret(Connection, QuicLevelHandshake, Connection^.Schedule.ServerHandshakeTraffic);
+  if (Result = TlsErrorNone) and (Connection^.Options.Quic <> nil) then
+    Result := HandOverQuicSecret(Connection, QuicLevelHandshake, QuicDirectionWrite,
+      Connection^.Schedule.ClientHandshakeTraffic);
 end;
 
 { A TLS 1.2 answer: only when it was offered, and never from a TLS 1.3
@@ -330,8 +376,13 @@ begin
     end;
     if Connection^.Options.MaximumVersion < VersionTls13 then
       Exit(TlsErrorIllegalParameter);
-    { The legacy session id comes back as it was sent. }
-    if (Hello.SessionIdEcho.Length <> 32) or
+    { The legacy session id comes back as it was sent (empty in QUIC). }
+    if State.Hello.Quic then
+    begin
+      if Hello.SessionIdEcho.Length <> 0 then
+        Exit(TlsErrorIllegalParameter);
+    end
+    else if (Hello.SessionIdEcho.Length <> 32) or
        (CompareByte(Hello.SessionIdEcho.Data^, State.Hello.SessionId[0], 32) <> 0) then
       Exit(TlsErrorIllegalParameter);
     if Hello.IsRetryRequest then
@@ -475,16 +526,25 @@ var
   MessageType: Byte;
   Message: PByte;
   MessageLength: PtrUInt;
-  SelectedProtocol: TTlsByteRange;
+  SelectedProtocol, QuicParameters: TTlsByteRange;
 begin
   Result := ExpectMessage(Connection, HandshakeEncryptedExtensions, 0, MessageType, Message, MessageLength);
   if Result <> TlsErrorNone then
     Exit;
   Result := ParseEncryptedExtensions(Message + 4, MessageLength - 4, PChar(Connection^.Options.ApplicationProtocol),
-    SelectedProtocol);
+    Connection^.Options.Quic <> nil, SelectedProtocol, QuicParameters);
   if Result <> TlsErrorNone then
     Exit;
   SetString(Connection^.SelectedProtocol, PChar(SelectedProtocol.Data), SelectedProtocol.Length);
+  if Connection^.Options.Quic <> nil then
+  begin
+    { QUIC needs an application protocol (RFC 9001 section 8.1). }
+    if Connection^.SelectedProtocol = '' then
+      Exit(TlsErrorApplicationProtocolMissing);
+    SetLength(Connection^.QuicPeerParameters, QuicParameters.Length);
+    if QuicParameters.Length > 0 then
+      Move(QuicParameters.Data^, Connection^.QuicPeerParameters[0], QuicParameters.Length);
+  end;
   AddToTranscript(Connection^.Transcript, Message, MessageLength);
 
   if not Connection^.Resumed then
@@ -511,13 +571,17 @@ begin
   Result := EnsureNoBufferedHandshake(Connection);
   if Result <> TlsErrorNone then
     Exit;
-  SetRecordProtection(Connection^.ReadProtection, Connection^.Suite, Connection^.Schedule.ServerApplicationTraffic);
+  Result := InstallReadSecret(Connection, QuicLevelApplication, Connection^.Schedule.ServerApplicationTraffic);
+  if Result <> TlsErrorNone then
+    Exit;
   Connection^.AllowChangeCipherSpec := False;
 
   Result := SendChangeCipherSpec(Connection);
   if Result <> TlsErrorNone then
     Exit;
-  SetRecordProtection(Connection^.WriteProtection, Connection^.Suite, Connection^.Schedule.ClientHandshakeTraffic);
+  Result := InstallWriteSecret(Connection, QuicLevelHandshake, Connection^.Schedule.ClientHandshakeTraffic);
+  if Result <> TlsErrorNone then
+    Exit;
   if State.CertificateRequested then
   begin
     Result := SendEmptyCertificate(Connection, State.CertificateRequestContext.Data,
@@ -528,8 +592,9 @@ begin
   Result := SendClientFinished(Connection);
   if Result <> TlsErrorNone then
     Exit;
-  SetRecordProtection(Connection^.WriteProtection, Connection^.Suite,
-    Connection^.Schedule.ClientApplicationTraffic);
+  Result := InstallWriteSecret(Connection, QuicLevelApplication, Connection^.Schedule.ClientApplicationTraffic);
+  if Result <> TlsErrorNone then
+    Exit;
   { For the tickets to come: the transcript through the client's
     Finished. }
   if Connection^.Options.SessionCacheKey <> '' then
@@ -602,6 +667,7 @@ begin
   State.Hello.ServerName := '';
   State.Hello.ApplicationProtocol := '';
   State.Hello.PskIdentity := nil;
+  State.Hello.QuicTransportParameters := nil;
   WipeMemory(@State, SizeOf(State));
   if Result <> TlsErrorNone then
   begin

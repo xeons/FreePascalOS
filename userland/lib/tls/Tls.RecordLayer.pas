@@ -36,6 +36,11 @@
   Writing: data goes out in records of at most 2^14 bytes, sealed with
   the write keys when they are set.
 
+  In QUIC mode (Options.Quic) there are no records: handshake bytes go
+  to and come from the QUIC connection at the current encryption level,
+  alerts are only noted (QuicAlert) and change_cipher_spec is never
+  sent.
+
   Once the server has chosen TLS 1.2 (Connection^.Version) records are
   protected the TLS 1.2 way (no inner content type), the server's
   change_cipher_spec switches on the read keys the handshake has made
@@ -83,6 +88,7 @@ uses
   Tls.ByteBuffers,
   Tls.Constants,
   Tls.Errors,
+  Tls.Quic,
   Tls.RecordProtection;
 
 { Makes at least Needed bytes available from InputStart on. }
@@ -297,6 +303,21 @@ begin
   Available := True;
 end;
 
+{ QUIC mode: the next handshake bytes of the read level, from the QUIC
+  connection's CRYPTO frames. }
+function ReceiveQuicHandshakeData(Connection: PTlsConnection): LongInt;
+var
+  Received: Int64;
+begin
+  Received := Connection^.Options.Quic^.ReceiveHandshake(Connection^.Options.Quic^.Context,
+    Connection^.QuicReadLevel, Connection^.Input, InputBufferSize);
+  if Received < 0 then
+    Exit(LongInt(Received));
+  if Received = 0 then
+    Exit(TlsErrorConnectionClosed);
+  Result := BufferHandshakeData(Connection, Connection^.Input, PtrUInt(Received));
+end;
+
 function NextHandshakeMessage(Connection: PTlsConnection; out MessageType: Byte; out Message: PByte;
   out MessageLength: PtrUInt): LongInt;
 var
@@ -310,6 +331,13 @@ begin
     Result := TakeBufferedHandshakeMessage(Connection, MessageType, Message, MessageLength, Available);
     if (Result <> TlsErrorNone) or Available then
       Exit;
+    if Connection^.Options.Quic <> nil then
+    begin
+      Result := ReceiveQuicHandshakeData(Connection);
+      if Result <> TlsErrorNone then
+        Exit;
+      Continue;
+    end;
     Result := ReadRecord(Connection, ContentType, Payload, Length);
     if Result <> TlsErrorNone then
       Exit;
@@ -395,6 +423,14 @@ function SendRecords(Connection: PTlsConnection; ContentType: Byte; Data: PByte;
 var
   Take: PtrUInt;
 begin
+  if Connection^.Options.Quic <> nil then
+  begin
+    { QUIC carries handshake messages itself, at the write level. }
+    if ContentType <> ContentHandshake then
+      Exit(TlsErrorInternal);
+    Exit(Connection^.Options.Quic^.SendHandshake(Connection^.Options.Quic^.Context, Connection^.QuicWriteLevel,
+      Data, Length));
+  end;
   repeat
     Take := Length;
     if Take > MaximumPlaintextLength then
@@ -411,6 +447,13 @@ procedure SendAlert(Connection: PTlsConnection; Description: LongInt);
 var
   Alert: array[0..1] of Byte;
 begin
+  if Connection^.Options.Quic <> nil then
+  begin
+    { QUIC sends the alert in its CONNECTION_CLOSE (TlsQuicAlert). }
+    if (Connection^.QuicAlert < 0) and (Description <> TlsAlertCloseNotify) then
+      Connection^.QuicAlert := Description;
+    Exit;
+  end;
   { Level 2 (fatal) except for close_notify and (TLS 1.2's refusal to
     renegotiate) no_renegotiation. }
   if (Description = TlsAlertCloseNotify) or (Description = TlsAlertNoRenegotiation) then
@@ -426,6 +469,9 @@ var
   Message: Byte;
   Saved: Boolean;
 begin
+  { Never in QUIC (RFC 9001 section 8.4). }
+  if Connection^.Options.Quic <> nil then
+    Exit(TlsErrorNone);
   { Always in the clear, whatever the keys. }
   Message := 1;
   Saved := Connection^.WriteProtection.Active;

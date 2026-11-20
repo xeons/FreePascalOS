@@ -54,6 +54,7 @@ uses
   Tls.Transcript,
   Tls.RecordProtection,
   Tls.Transport,
+  Tls.Quic,
   Tls.ClientHello,
   Tls.ServerMessages,
   Tls.ServerMessages12,

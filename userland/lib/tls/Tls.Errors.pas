@@ -57,6 +57,8 @@ const
   TlsErrorClosed = -19;
   TlsErrorNoTrustStore = -20;
   TlsErrorInvalidArgument = -21;
+  { QUIC: the server chose no application protocol. }
+  TlsErrorApplicationProtocolMissing = -22;
 
   { Certificates. }
   TlsErrorCertificateExpired = -40;
@@ -166,6 +168,7 @@ begin
     TlsErrorClosed: Result := 'the connection is closed';
     TlsErrorNoTrustStore: Result := 'no trusted certificates could be read';
     TlsErrorInvalidArgument: Result := 'invalid argument';
+    TlsErrorApplicationProtocolMissing: Result := 'the server chose no application protocol';
     TlsErrorCertificateExpired: Result := 'the certificate has expired';
     TlsErrorCertificateNotYetValid: Result := 'the certificate is not yet valid';
     TlsErrorCertificateUnknownIssuer: Result := 'the certificate was issued by an unknown authority';
@@ -205,7 +208,7 @@ begin
     TlsErrorUnsupportedExtension: Result := TlsAlertUnsupportedExtension;
     TlsErrorMissingExtension: Result := TlsAlertMissingExtension;
     TlsErrorBadCertificateVerify, TlsErrorBadFinished: Result := TlsAlertDecryptError;
-    TlsErrorNoApplicationProtocol: Result := TlsAlertNoApplicationProtocol;
+    TlsErrorNoApplicationProtocol, TlsErrorApplicationProtocolMissing: Result := TlsAlertNoApplicationProtocol;
     TlsErrorOutOfMemory, TlsErrorInternal, TlsErrorNoTrustStore, TlsErrorInvalidArgument:
       Result := TlsAlertInternalError;
     TlsErrorCertificateExpired, TlsErrorCertificateNotYetValid: Result := TlsAlertCertificateExpired;

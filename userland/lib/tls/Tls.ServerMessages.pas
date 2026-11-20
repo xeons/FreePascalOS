@@ -83,6 +83,10 @@ function ParseCertificateStatusBody(var Reader: TTlsReader; out Response: TTlsBy
   SelectedProtocol is the server's choice (empty: none). }
 function ParseEncryptedExtensions(Body: PByte; Length: PtrUInt; OfferedProtocol: PChar;
   out SelectedProtocol: TTlsByteRange): LongInt;
+{ The same in QUIC mode: quic_transport_parameters must be there and
+  its data comes back in QuicParameters. }
+function ParseEncryptedExtensions(Body: PByte; Length: PtrUInt; OfferedProtocol: PChar; Quic: Boolean;
+  out SelectedProtocol, QuicParameters: TTlsByteRange): LongInt;
 function ParseCertificateRequest(Body: PByte; Length: PtrUInt; out Context: TTlsByteRange): LongInt;
 { Staple is the OCSP response stapled to the server's certificate
   (status_request on the first entry), or empty. }
@@ -97,7 +101,8 @@ implementation
 
 uses
   Tls.Constants,
-  Tls.Errors;
+  Tls.Errors,
+  Tls.Quic;
 
 const
   MaximumExtensionsSeen = 32;
@@ -336,12 +341,23 @@ end;
 function ParseEncryptedExtensions(Body: PByte; Length: PtrUInt; OfferedProtocol: PChar;
   out SelectedProtocol: TTlsByteRange): LongInt;
 var
+  QuicParameters: TTlsByteRange;
+begin
+  Result := ParseEncryptedExtensions(Body, Length, OfferedProtocol, False, SelectedProtocol, QuicParameters);
+end;
+
+function ParseEncryptedExtensions(Body: PByte; Length: PtrUInt; OfferedProtocol: PChar; Quic: Boolean;
+  out SelectedProtocol, QuicParameters: TTlsByteRange): LongInt;
+var
+  HasQuicParameters: Boolean;
   Reader, Extensions, Data: TTlsReader;
   Seen: TSeenExtensions;
   ExtensionType: Word;
   Offered: string;
 begin
   SelectedProtocol := ByteRange(nil, 0);
+  QuicParameters := ByteRange(nil, 0);
+  HasQuicParameters := False;
   Offered := string(OfferedProtocol);
   InitializeReader(Reader, Body, Length);
   if not ReadVector(Reader, 2, Extensions) or not ReaderAtEnd(Reader) then
@@ -367,10 +383,20 @@ begin
           if Result <> TlsErrorNone then
             Exit;
         end;
+      ExtensionQuicTransportParameters:
+        begin
+          if not Quic then
+            Exit(TlsErrorUnsupportedExtension);
+          QuicParameters := ByteRange(Data.Position, ReaderRemaining(Data));
+          HasQuicParameters := True;
+        end;
     else
       Exit(TlsErrorUnsupportedExtension);
     end;
   end;
+  { QUIC: the server's transport parameters must come (RFC 9001 section 8.2). }
+  if Quic and not HasQuicParameters then
+    Exit(TlsErrorMissingExtension);
   Result := TlsErrorNone;
 end;
 

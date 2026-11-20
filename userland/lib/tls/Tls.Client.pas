@@ -36,6 +36,10 @@
   returns 0); so does the transport ending without one, which
   TlsClosedCleanly tells apart. Tls.Sessions puts this over a socket
   with the system's trusted roots and clock.
+
+  With Options.Quic set the connection is a QUIC connection's handshake
+  (Tls.Quic): no transport, only TlsHandshake, and afterwards
+  TlsQuicPeerTransportParameters; TlsQuicAlert after a failure.
 }
 unit Tls.Client;
 
@@ -46,6 +50,7 @@ unit Tls.Client;
 interface
 
 uses
+  SysUtils,
   Tls.Connections,
   Tls.Transport;
 
@@ -81,11 +86,16 @@ function TlsKeyExchangeGroupName(Connection: PTlsConnection): string;
 function TlsSessionResumed(Connection: PTlsConnection): Boolean;
 { What the stapled OCSP response said. }
 function TlsCertificateStatus(Connection: PTlsConnection): TTlsCertificateStatus;
+{ QUIC mode (Tls.Quic): the server's transport parameters as it sent
+  them (empty before its EncryptedExtensions). }
+function TlsQuicPeerTransportParameters(Connection: PTlsConnection): TBytes;
+{ QUIC mode: the alert the handshake's failure stands for (QUIC's
+  CRYPTO_ERROR is 0x100 + it), or -1. }
+function TlsQuicAlert(Connection: PTlsConnection): LongInt;
 
 implementation
 
 uses
-  SysUtils,
   Tls.ByteBuffers,
   Tls.Constants,
   Tls.Errors,
@@ -101,7 +111,13 @@ function CreateTlsClient(constref Transport: TTlsTransport; constref Options: TT
   out Connection: PTlsConnection): LongInt;
 begin
   Connection := nil;
-  if (Transport.Send = nil) or (Transport.Receive = nil) then
+  if Options.Quic <> nil then
+  begin
+    if (Options.Quic^.SendHandshake = nil) or (Options.Quic^.ReceiveHandshake = nil) or
+       (Options.Quic^.InstallSecret = nil) or (Options.ApplicationProtocol = '') then
+      Exit(TlsErrorInvalidArgument);
+  end
+  else if (Transport.Send = nil) or (Transport.Receive = nil) then
     Exit(TlsErrorInvalidArgument);
   if Options.ServerName = '' then
     Exit(TlsErrorInvalidArgument);
@@ -393,6 +409,21 @@ begin
   if Connection = nil then
     Exit(StatusNotChecked);
   Result := Connection^.CertificateStatus;
+end;
+
+function TlsQuicPeerTransportParameters(Connection: PTlsConnection): TBytes;
+begin
+  Result := nil;
+  if Connection = nil then
+    Exit;
+  Result := Copy(Connection^.QuicPeerParameters);
+end;
+
+function TlsQuicAlert(Connection: PTlsConnection): LongInt;
+begin
+  if Connection = nil then
+    Exit(-1);
+  Result := Connection^.QuicAlert;
 end;
 
 end.

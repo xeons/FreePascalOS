@@ -35,12 +35,14 @@ unit Tls.Connections;
 interface
 
 uses
+  SysUtils,
   Tls.ByteBuffers,
   Tls.Constants,
   Tls.Certificates,
   Tls.CipherSuites,
   Tls.KeyShares,
   Tls.KeySchedule,
+  Tls.Quic,
   Tls.RecordProtection,
   Tls.Transcript,
   Tls.Transport,
@@ -73,6 +75,9 @@ type
     { Where session tickets are kept for resumption ("host:port"); empty:
       no resumption. }
     SessionCacheKey: string;
+    { Set: the handshake of a QUIC connection, without records (Tls.Quic);
+      Transport is not used. nil: TLS over Transport. }
+    Quic: PTlsQuicCallbacks;
   end;
 
   { What the server's stapled OCSP response said. }
@@ -140,6 +145,14 @@ type
     ServerIssuer: PTlsCertificate;
     { The ALPN protocol the server chose, or empty. }
     SelectedProtocol: string;
+
+    { QUIC mode: the levels handshake bytes are read and written at,
+      the server's transport parameters, and the alert a failure stands
+      for (-1: none). }
+    QuicReadLevel: TTlsQuicLevel;
+    QuicWriteLevel: TTlsQuicLevel;
+    QuicPeerParameters: TBytes;
+    QuicAlert: LongInt;
   end;
   PTlsConnection = ^TTlsConnection;
 
@@ -176,6 +189,15 @@ begin
     Connection^.Options.MaximumVersion := VersionTls13;
   Connection^.State := ConnectionNew;
   Connection^.ReceivedAlert := -1;
+  Connection^.QuicAlert := -1;
+  if Connection^.Options.Quic <> nil then
+  begin
+    { TLS 1.3 only, and no tickets (their transport parameters would
+      have to be kept with them). }
+    Connection^.Options.MinimumVersion := VersionTls13;
+    Connection^.Options.MaximumVersion := VersionTls13;
+    Connection^.Options.SessionCacheKey := '';
+  end;
   Connection^.IgnoredCertificateError := TlsErrorNone;
   Connection^.Input := GetMem(InputBufferSize);
   Connection^.Output := GetMem(InputBufferSize);
