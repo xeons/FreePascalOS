@@ -413,6 +413,10 @@ begin
     ActivateTab(Index);
   RefreshTab(Index);
   GoToAddressIn(Result, Url);
+  { A page asked for gets the keys; a new tab's home page leaves them
+    in the address bar. }
+  if Bringing and (Url <> FSettings.HomePage) and (Url <> 'about:home') and (Url <> 'about:blank') then
+    FocusControl(Result.View);
 end;
 
 procedure TBrowserWindow.ActivateTab(Index: Integer);
@@ -675,8 +679,9 @@ begin
       DownloadCancelled:
         ShowStatus('Download of ' + Item.FileName + ' cancelled');
     end;
-    if Item.State <> DownloadRunning then
+    if (Item.State <> DownloadRunning) and not Item.EndReported then
     begin
+      Item.EndReported := True;
       Say('download ' + Item.FileName + ' ' + StateNames[Item.State]);
       FDownloads.Reap;
     end;

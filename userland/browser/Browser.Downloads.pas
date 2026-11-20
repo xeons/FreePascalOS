@@ -53,6 +53,8 @@ type
     Total: Int64;
     ErrorText: string;
     CancelWanted: Boolean;
+    { The window told of its end already. }
+    EndReported: Boolean;
     Worker: TThread;
   end;
 

@@ -98,6 +98,7 @@ end;
 
 procedure TWebView.Paint(var Canvas: TCanvas);
 var
+  Overlay: TCanvas;
   Width, Height: LongInt;
   Corner: TRectangle;
 begin
@@ -113,11 +114,14 @@ begin
   PaintBacking;
   if FBacking.Pixels <> nil then
     DrawSurface(Canvas, FBacking, MakeRectangle(0, 0, FBacking.Width, FBacking.Height), 0, 0, False, AlphaOpaque);
-  { The overlays stay within the viewport. }
-  NarrowCanvasClip(Canvas, MakeRectangle(0, 0, ViewportPixelWidth, ViewportPixelHeight));
-  PaintSelection(Canvas);
-  PaintCaret(Canvas);
-  PaintInnerScrollBars(Canvas);
+  { The overlays stay within the viewport, on a canvas of their own
+    (the one given goes on to the scroll bars). }
+  Overlay := Canvas;
+  CopyRegion(Canvas.Clip, Overlay.Clip);
+  NarrowCanvasClip(Overlay, MakeRectangle(0, 0, ViewportPixelWidth, ViewportPixelHeight));
+  PaintSelection(Overlay);
+  PaintCaret(Overlay);
+  PaintInnerScrollBars(Overlay);
 end;
 
 procedure TWebView.PaintSelection(var Canvas: TCanvas);

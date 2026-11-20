@@ -75,6 +75,7 @@ uses
   Drawing.Canvas,
   Drawing.Surfaces,
   Drawing.Rectangles,
+  Drawing.Regions,
   Image.Model,
   Css.ElementAdapter,
   Windowing.Messages,
@@ -103,7 +104,8 @@ type
   { Makes the script engine for a view's page (the DOM bindings). }
   TScriptExecutorFactory = function(View: TWebView; Page: TWebPage): TScriptExecutor;
 
-  TLinkDisposition = (LinkInView, LinkInNewTab, LinkInNewWindow);
+  { Background: a middle click or Ctrl+click; a new tab: a target. }
+  TLinkDisposition = (LinkInView, LinkInNewTab, LinkInBackgroundTab, LinkInNewWindow);
 
   { An element and its ancestors (each retained while listed). }
   TElementChain = array of TElement;
@@ -240,6 +242,8 @@ type
     function ViewportPixelHeight: LongInt;
     function ViewportCssWidth: Double;
     function ViewportCssHeight: Double;
+    { Shown, with a size: a hidden view is not laid out. }
+    function HasRoom: Boolean;
     procedure ApplyViewport;
     procedure UpdateLayout;
     { Painting (WebView.Control.Painting.inc). }
@@ -302,6 +306,7 @@ type
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure Layout; override;
+    procedure PlaceChildren(const Area: TRectangle); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;

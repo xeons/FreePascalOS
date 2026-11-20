@@ -84,6 +84,10 @@ begin
   Say('state ' + StateNames[State]);
   if State = LoadingComplete then
     Say('loaded ' + Sender.Url);
+  { A navigation that made no page (a download, a stop): the bar shows
+    the page's address again. }
+  if (State in [LoadingIdle, LoadingComplete]) and (Index = FActive) and (Index >= 0) and not TabAt(Index).Typing then
+    FAddress.Text := ShownAddress(Sender.Url);
   RefreshTab(Index);
   if Index = FActive then
     RefreshChrome;
@@ -127,8 +131,7 @@ begin
   Say('link ' + Url);
   if Disposition = LinkInView then
     Exit;
-  { Ctrl+click opens behind; a middle click, a target or Shift in front. }
-  OpenTab(Url, (HeldModifiers and ModifierControl) = 0);
+  OpenTab(Url, Disposition <> LinkInBackgroundTab);
   Handled := True;
 end;
 
@@ -136,6 +139,8 @@ procedure TBrowserWindow.ViewDownloadRequested(Sender: TWebView; constref Downlo
 var
   Item: TDownloadItem;
 begin
+  if (TabOfView(Sender) = FActive) and (ActiveTab <> nil) then
+    FAddress.Text := ShownAddress(Sender.Url);
   Item := FDownloads.Start(Download.Url, Download.FileName);
   Say('download ' + Item.FileName + ' started');
   ShowStatus('Downloading ' + Item.FileName);

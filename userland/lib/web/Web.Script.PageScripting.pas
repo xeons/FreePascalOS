@@ -58,6 +58,7 @@ uses
   Web.Dom,
   Web.EventLoop,
   Web.ScriptEnvironment,
+  Js.Engine,
   Web.Script.Context,
   Web.Loading.Scripts,
   Web.Navigation.Navigables;
@@ -108,9 +109,28 @@ type
     property UserAgentText: string read FUserAgent write FUserAgent;
   end;
 
+  { A context's module graph: specifiers resolved against the
+    importing module's URL, module sources fetched through the loader
+    (CORS, UTF-8). }
+  TContextModules = class
+  private
+    FContext: TScriptContext;
+    FLoader: TObject;
+    FInlineCount: Integer;
+    function Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+    procedure Fetch(Request: TJsModuleFetch);
+    procedure FetchDone(const Source: string; Success: Boolean; Data: TObject);
+  public
+    Stopped: Boolean;
+    constructor Create(Context: TScriptContext; Loader: TObject);
+    { Runs a module script (Url '' for an inline one). }
+    procedure Run(const Source, Url: string);
+  end;
+
   TPageContextRecord = record
     Loader: TObject;
     Context: TScriptContext;
+    Modules: TContextModules;
     Stopped: Boolean;
   end;
 
@@ -461,6 +481,91 @@ begin
     Result := 'en-US';
 end;
 
+{ ---- modules ---- }
+
+type
+  TModuleFetchRequest = class
+  public
+    Request: TJsModuleFetch;
+  end;
+
+constructor TContextModules.Create(Context: TScriptContext; Loader: TObject);
+begin
+  inherited Create;
+  FContext := Context;
+  FLoader := Loader;
+  FContext.Engine.ModuleResolver := @Resolve;
+  FContext.Engine.ModuleFetcher := @Fetch;
+end;
+
+function TContextModules.Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
+var
+  Base, Target: TUrlRecord;
+begin
+  Key := '';
+  { Bare specifiers need an import map (not read yet). }
+  if not ((Copy(Specifier, 1, 1) = '/') or (Copy(Specifier, 1, 2) = './') or (Copy(Specifier, 1, 3) = '../')) then
+  begin
+    Result := ParseUrl(Specifier, Target);
+    if Result then
+      Key := SerializeUrl(Target);
+    Exit;
+  end;
+  if (ReferrerKey = '') or not ParseUrl(ReferrerKey, Base) then
+    Base := TDocumentLoader(FLoader).BaseUrl;
+  Result := ParseUrl(Specifier, Base, Target);
+  if Result then
+    Key := SerializeUrl(Target);
+end;
+
+procedure TContextModules.Fetch(Request: TJsModuleFetch);
+var
+  Target: TUrlRecord;
+  Pending: TModuleFetchRequest;
+begin
+  if Stopped or not ParseUrl(Request.Key, Target) then
+  begin
+    Request.Fail('cannot load ' + Request.Key);
+    Exit;
+  end;
+  Pending := TModuleFetchRequest.Create;
+  Pending.Request := Request;
+  TDocumentLoader(FLoader).Scripts.FetchScript(Target, True, @FetchDone, Pending);
+end;
+
+procedure TContextModules.FetchDone(const Source: string; Success: Boolean; Data: TObject);
+var
+  Request: TJsModuleFetch;
+begin
+  Request := TModuleFetchRequest(Data).Request;
+  Data.Free;
+  if Success and not Stopped then
+    Request.Succeed(Source)
+  else
+    Request.Fail('cannot load ' + Request.Key);
+  if not Stopped then
+    FContext.PerformMicrotaskCheckpoint;
+end;
+
+procedure TContextModules.Run(const Source, Url: string);
+var
+  Key: string;
+begin
+  Key := Url;
+  if Key = '' then
+  begin
+    Inc(FInlineCount);
+    Key := TDocumentLoader(FLoader).Document.Url + '#module' + IntToStr(FInlineCount);
+  end;
+  try
+    FContext.Engine.EvaluateModule(Source, Key);
+  except
+    on Error: EJsError do
+      FContext.Console('error', 'Uncaught ' + Error.Message);
+  end;
+  FContext.PerformMicrotaskCheckpoint;
+end;
+
 { ---- the executor ---- }
 
 constructor TPageScriptExecutor.Create(Navigable: TNavigable);
@@ -480,6 +585,7 @@ begin
   for Index := 0 to High(FContexts) do
   begin
     FEnvironment.ForgetContext(FContexts[Index].Context);
+    FContexts[Index].Modules.Free;
     FContexts[Index].Context.Free;
   end;
   FContexts := nil;
@@ -503,7 +609,7 @@ end;
 
 function TPageScriptExecutor.SupportsModules: Boolean;
 begin
-  Result := False;
+  Result := True;
 end;
 
 function TPageScriptExecutor.IndexOfLoader(Loader: TObject): Integer;
@@ -557,6 +663,7 @@ begin
   SetLength(FContexts, Length(FContexts) + 1);
   FContexts[High(FContexts)].Loader := Loader;
   FContexts[High(FContexts)].Context := Context;
+  FContexts[High(FContexts)].Modules := TContextModules.Create(Context, Loader);
   FContexts[High(FContexts)].Stopped := False;
 end;
 
@@ -568,6 +675,7 @@ begin
   if (Index < 0) or FContexts[Index].Stopped then
     Exit;
   FContexts[Index].Stopped := True;
+  FContexts[Index].Modules.Stopped := True;
   FContexts[Index].Context.AttachParser(nil);
   FEnvironment.ForgetContext(FContexts[Index].Context);
 end;
@@ -581,6 +689,7 @@ begin
   if Index < 0 then
     Exit;
   Context := FContexts[Index].Context;
+  FContexts[Index].Modules.Free;
   FContexts[Index] := FContexts[High(FContexts)];
   SetLength(FContexts, Length(FContexts) - 1);
   FEnvironment.ForgetContext(Context);
@@ -589,6 +698,7 @@ end;
 
 procedure TPageScriptExecutor.ExecuteScript(Script: TPendingScript);
 var
+  Modules: TContextModules;
   Index: Integer;
   Context: TScriptContext;
   DocumentLoader: TDocumentLoader;
@@ -596,18 +706,27 @@ var
 begin
   Context := nil;
   DocumentLoader := nil;
+  Modules := nil;
   for Index := 0 to High(FContexts) do
     if (FContexts[Index].Context.Document = Script.Element.NodeDocument) and not FContexts[Index].Stopped then
     begin
       Context := FContexts[Index].Context;
       DocumentLoader := TDocumentLoader(FContexts[Index].Loader);
+      Modules := FContexts[Index].Modules;
     end;
-  if (Context = nil) or (Script.Kind <> ScriptClassic) then
+  if Context = nil then
     Exit;
   if Script.External then
     Url := SerializeUrl(Script.Url)
   else
     Url := '';
+  if Script.Kind = ScriptModule then
+  begin
+    Modules.Run(Script.Source, Url);
+    Exit;
+  end;
+  if Script.Kind <> ScriptClassic then
+    Exit;
   if not DocumentLoader.ParsingDone then
     Context.AttachParser(DocumentLoader.Parser);
   try

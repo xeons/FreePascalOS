@@ -208,7 +208,7 @@ var
 begin
   Result := LinkInView;
   if (Button = ButtonMiddle) or ((Modifiers and ModifierControl) <> 0) then
-    Result := LinkInNewTab
+    Result := LinkInBackgroundTab
   else if (Modifiers and ModifierShift) <> 0 then
     Result := LinkInNewWindow
   else if Link <> nil then
@@ -377,7 +377,7 @@ begin
   if Button = ButtonMiddle then
   begin
     if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
-      ActivateLink(Link, LinkInNewTab);
+      ActivateLink(Link, DispositionFor(ButtonMiddle, HeldModifiers, Link));
     HoldElement(FPressedLink, nil);
     Exit;
   end;

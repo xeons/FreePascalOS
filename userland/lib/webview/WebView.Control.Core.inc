@@ -268,6 +268,10 @@ begin
   FPage.RenderingOpportunity;
   if FLayout = nil then
     Exit;
+  { A hidden view (a tab in the background) lays out when it is shown
+    and has its size: Layout asks for a frame then. }
+  if not HasRoom then
+    Exit;
   UpdateLayout;
   ApplyPendingScroll;
   if not FBackingValid or (FLayout.PaintVersion <> FBackingVersion) then
@@ -312,8 +316,24 @@ begin
   Result := ViewportPixelHeight / DeviceScale;
 end;
 
+function TWebView.HasRoom: Boolean;
+var
+  Control: TControl;
+begin
+  Control := Self;
+  while Control <> nil do
+  begin
+    if not Control.Visible then
+      Exit(False);
+    Control := Control.Parent;
+  end;
+  Result := (RectangleWidth(PixelBounds) > 1) and (RectangleHeight(PixelBounds) > 1);
+end;
+
 procedure TWebView.ApplyViewport;
 begin
+  if not HasRoom then
+    Exit;
   FSink.SetViewport(ViewportCssWidth, ViewportCssHeight, DeviceScale);
   if FLayout <> nil then
     FLayout.SetViewport(ViewportCssWidth, ViewportCssHeight, DeviceScale);
@@ -325,7 +345,7 @@ var
   Round_: Integer;
   HadVertical, HadHorizontal: Boolean;
 begin
-  if FLayout = nil then
+  if (FLayout = nil) or not HasRoom then
     Exit;
   for Round_ := 1 to 3 do
   begin
@@ -343,20 +363,31 @@ begin
 end;
 
 procedure TWebView.Layout;
-var
-  Width, Height, BarWidth: LongInt;
 begin
-  Width := Unscaled(RectangleWidth(PixelBounds));
-  Height := Unscaled(RectangleHeight(PixelBounds));
-  BarWidth := Theme.ScrollBarWidth;
-  if FVerticalBar.Visible then
-    FVerticalBar.AssignBounds(Width - BarWidth, 0, BarWidth, Height - Ord(FHorizontalBar.Visible) * BarWidth);
-  if FHorizontalBar.Visible then
-    FHorizontalBar.AssignBounds(0, Height - BarWidth, Width - Ord(FVerticalBar.Visible) * BarWidth, BarWidth);
   inherited Layout;
   ApplyViewport;
   RequestFrame;
   InvalidateViewport;
+end;
+
+{ The scroll bars along the right and bottom edges (the theme's width). }
+procedure TWebView.PlaceChildren(const Area: TRectangle);
+var
+  BarWidth, BottomRoom, RightRoom: LongInt;
+begin
+  BarWidth := Scaled(Theme.ScrollBarWidth);
+  BottomRoom := 0;
+  RightRoom := 0;
+  if FHorizontalBar.Visible then
+    BottomRoom := BarWidth;
+  if FVerticalBar.Visible then
+    RightRoom := BarWidth;
+  if FVerticalBar.Visible then
+    PlaceChild(FVerticalBar, MakeRectangle(Area.Right - BarWidth, Area.Top, BarWidth,
+      RectangleHeight(Area) - BottomRoom));
+  if FHorizontalBar.Visible then
+    PlaceChild(FHorizontalBar, MakeRectangle(Area.Left, Area.Bottom - BarWidth, RectangleWidth(Area) - RightRoom,
+      BarWidth));
 end;
 
 { ---- navigation ---- }

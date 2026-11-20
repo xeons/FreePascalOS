@@ -1644,6 +1644,35 @@ calculator_log = bytes(received[calculator_from:])
 checks.append(('calculator: 12*(3+4) typed on the keyboard and Enter give 84; Ctrl+C copies it',
                calculator_ok and re.search(rb'result 12 \xc3\x97 \(3 \+ 4\) = 84', calculator_log) is not None and
                re.search(rb'\n84\r?\n', calculator_log) is not None and b'copied 84' in calculator_log))
+# The browser shows a local page (file:///tmp/browser-test.html, written
+# here): it prints the page's title and that it loaded, the page's
+# script logs to the console (scripting is on), and the page's orange
+# background is on the screen inside the window. Its settings and
+# profile are deleted afterwards.
+type_on_serial(b"printf '<!DOCTYPE html><title>Browser test</title><body style=\"background:#ff8000\">"
+               b"<p>Local page</p><script>console.log(\"script ran \" + (40 + 2))</script>' "
+               b"> /tmp/browser-test.html\r")
+time.sleep(0.5)
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'/app/browser/browser file:///tmp/browser-test.html > /tmp/browser.log 2>&1 &\r')
+time.sleep(8)
+browser_screen = take_screen()
+
+
+def browser_colour_near(colour, expected):
+    return len(colour) == 6 and all(abs(int(colour[i:i + 2], 16) - int(expected[i:i + 2], 16)) <= 8 for i in (0, 2, 4))
+
+
+browser_from = len(received)
+type_on_serial(b'kill %2; wait %2; cat /tmp/browser.log; settings delete Browser; rm -r /.settings/browser; kill %1; wait; '
+               b'm=DONE; echo BROWSER $m\r')
+browser_ok = wait_for('BROWSER DONE', 30)
+browser_log = bytes(received[browser_from:])
+checks.append(('browser: a local page loads (title, loaded), its script runs, its background is on the screen',
+               browser_ok and b'title Browser test' in browser_log and
+               b'loaded file:///tmp/browser-test.html' in browser_log and b'console log script ran 42' in browser_log and
+               browser_colour_near(browser_screen(500, 500), 'ff8000')))
 # Paint on a new picture (480x320, white): the rectangle tool picked by
 # its button in the tool box, a rectangle dragged with the pointer from
 # (20, 20) to (120, 80) of the picture (Paint prints where its top left
