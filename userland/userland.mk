@@ -29,8 +29,9 @@
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
-#                  libtls <- libquic (QUIC, QPACK, HTTP/3; h3get)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
+#                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
+#                  HTTP/3 connections; h3get, wget)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -265,14 +266,17 @@ $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
 		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
 
-# libquic: QUIC (RFC 9000-9002), QPACK and HTTP/3, over libtls's QUIC mode.
-$(QUIC_LIBRARY): $(TLS_LIBRARY) $(wildcard userland/lib/quic/*.pas)
+# libquic: QUIC (RFC 9000-9002), QPACK and HTTP/3, over libtls's QUIC mode;
+# on libhttp for HPACK's Huffman code, header fields and the connection
+# class its HTTP/3 connections plug into.
+$(QUIC_LIBRARY): $(TLS_LIBRARY) $(HTTP_LIBRARY) $(wildcard userland/lib/quic/*.pas)
 	@rm -rf $(QUIC_LIBRARY_OBJECTS)
 	@mkdir -p $(QUIC_LIBRARY_OBJECTS)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
-		-Fu$(TLS_LIBRARY_OBJECTS) -Fuuserland/lib/quic -FU$(QUIC_LIBRARY_OBJECTS) userland/lib/quic/Quic.Contents.pas
+		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fuuserland/lib/quic \
+		-FU$(QUIC_LIBRARY_OBJECTS) userland/lib/quic/Quic.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libquic.so -o $@ \
-		$(QUIC_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ltls -lcryptography -lsystem
+		$(QUIC_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lhttp -ltls -lcompression -lcryptography -lsystem
 # libhttp: the URL Standard and an HTTP/1.1 and HTTP/2 client (cookies,
 # cache, authentication, content decoding) over libtls and libcompression.
 $(HTTP_LIBRARY): $(TLS_LIBRARY) $(COMPRESSION_LIBRARY) $(wildcard userland/lib/http/*.pas)
@@ -394,16 +398,13 @@ SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest n
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
-# h3get speaks HTTP/3 through libquic.
-QUIC_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,h3get)
-$(QUIC_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lquic -ltls
-$(QUIC_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS) -Fu$(QUIC_LIBRARY_OBJECTS)
+# h3get speaks HTTP/3 through libquic; wget fetches through libhttp, with
+# HTTP/3 from libquic (both over libtls and libcompression).
+QUIC_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,h3get wget)
+$(QUIC_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lquic -lhttp -ltls -lcompression
+$(QUIC_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(QUIC_PROGRAMS): $(QUIC_LIBRARY)
-# wget fetches through libhttp (over libtls and libcompression).
-HTTP_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
-$(HTTP_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lhttp -ltls -lcompression
-$(HTTP_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS)
-$(HTTP_PROGRAMS): $(HTTP_LIBRARY)
 # ss is built on netstat's units (userland/netstat).
 NETSTAT_UNIT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,ss)
 $(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat

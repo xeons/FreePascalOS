@@ -999,7 +999,12 @@ QUIC_TEST_SOURCES := $(wildcard tools/QuicTest/*.pas) tools/CryptoTest/TestCheck
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
 	$(filter-out %/Tls.SocketTransport.pas %/Tls.SystemTrust.pas %/Tls.Sessions.pas %/Tls.Contents.pas, \
 		$(wildcard userland/lib/tls/*.pas)) \
-	$(filter-out %/Quic.UdpSockets.pas %/Quic.Sessions.pas %/Quic.Contents.pas,$(wildcard userland/lib/quic/*.pas))
+	$(filter-out %/Quic.UdpSockets.pas %/Quic.Sessions.pas %/Quic.Contents.pas %/Http3.SystemConnections.pas, \
+		$(wildcard userland/lib/quic/*.pas)) \
+	$(filter-out %/Http.SocketTransports.pas %/Http.SocketConnector.pas %/Http.Contents.pas, \
+		$(wildcard userland/lib/http/*.pas)) \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	tools/HttpTest/HttpTest.Pipes.pas
 
 $(QUIC_VECTORS): tools/QuicTest/make-vectors.py
 	@mkdir -p $(QUIC_TEST_UNITS)
@@ -1009,8 +1014,9 @@ $(QUIC_VECTORS): tools/QuicTest/make-vectors.py
 
 $(QUIC_TEST): $(QUIC_TEST_SOURCES) $(QUIC_VECTORS)
 	@mkdir -p $(QUIC_TEST_UNITS)
-	fpc -Mobjfpc -O2 -vew -Futools/QuicTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/quic -Fuuserland/lib/tls \
-		-Fuuserland/lib/cryptography -Fushared -Fishared -Fi$(QUIC_TEST_UNITS) -FU$(QUIC_TEST_UNITS) -o$@ tools/QuicTest/QuicTest.pas
+	fpc -Mobjfpc -O2 -vew -Futools/QuicTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest -Fuuserland/lib/quic \
+		-Fuuserland/lib/http -Fuuserland/lib/compression -Fuuserland/lib/tls -Fuuserland/lib/cryptography -Fushared \
+		-Fishared -Fi$(QUIC_TEST_UNITS) -FU$(QUIC_TEST_UNITS) -o$@ tools/QuicTest/QuicTest.pas
 
 quic-test: $(QUIC_TEST)
 	@$(QUIC_TEST) > build/tools/quic-test.out || \

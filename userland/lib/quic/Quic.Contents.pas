@@ -60,7 +60,6 @@ uses
   Quic.Connections,
   Quic.UdpSockets,
   Quic.Sessions,
-  Qpack.Huffman,
   Qpack.StaticTable,
   Qpack.Primitives,
   Qpack.DynamicTable,

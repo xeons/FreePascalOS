@@ -20,6 +20,9 @@
   Field lines and QPACK's static table (RFC 9204 appendix A): the 99
   field lines every encoder and decoder know by index, and the lookup
   an encoder makes (a whole field line, or only its name).
+
+  A field line is libhttp's THttpHeaderField, so HTTP/3's heads go to
+  and from libhttp's messages without a copy into another shape.
 }
 unit Qpack.StaticTable;
 
@@ -28,12 +31,12 @@ unit Qpack.StaticTable;
 
 interface
 
+uses
+  Http.HeaderFields;
+
 type
-  TQpackField = record
-    Name: string;
-    Value: string;
-  end;
-  TQpackFieldList = array of TQpackField;
+  TQpackField = THttpHeaderField;
+  TQpackFieldList = THttpHeaderFieldArray;
 
 const
   StaticTableSize = 99;

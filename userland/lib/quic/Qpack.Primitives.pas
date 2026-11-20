@@ -25,6 +25,10 @@
   (an instruction stream waits for more) or Malformed when it is wrong
   (an integer over 62 bits, a bad Huffman code, a string over the
   limit).
+
+  The Huffman code is HPACK's own unit (Http.HpackHuffman, in libhttp)
+  and the output buffer libhttp's THttpByteBuffer: one copy of each for
+  HTTP/2 and HTTP/3.
 }
 unit Qpack.Primitives;
 
@@ -35,13 +39,12 @@ unit Qpack.Primitives;
 interface
 
 uses
-  SysUtils;
+  SysUtils,
+  Http.ByteBuffers;
 
 type
-  TQpackOutput = record
-    Data: array of Byte;
-    Length: Integer;
-  end;
+  { AppendByte and AppendBytes are Http.ByteBuffers'. }
+  TQpackOutput = THttpByteBuffer;
 
   TQpackInput = record
     Position: PByte;
@@ -62,8 +65,6 @@ function ReadPrefixedInteger(var Input: TQpackInput; PrefixBits: Integer; out Va
   prefix is the bits below it). }
 function ReadStringLiteral(var Input: TQpackInput; PrefixBits: Integer; out Text: string): Boolean;
 
-procedure AppendByte(var Output: TQpackOutput; Value: Byte);
-procedure AppendBytes(var Output: TQpackOutput; Data: PByte; Count: Integer);
 { Flags are the first byte's bits above the prefix. }
 procedure AppendPrefixedInteger(var Output: TQpackOutput; Flags: Byte; PrefixBits: Integer; Value: QWord);
 { Huffman coded when that is shorter; Flags are the bits above the H
@@ -74,7 +75,7 @@ function OutputBytes(constref Output: TQpackOutput): TBytes;
 implementation
 
 uses
-  Qpack.Huffman;
+  Http.HpackHuffman;
 
 procedure InitializeInput(out Input: TQpackInput; Data: PByte; Length: PtrUInt);
 begin
@@ -162,7 +163,7 @@ begin
   end;
   if Huffman then
   begin
-    if not HuffmanDecode(Input.Position, Count, Text) then
+    if not HuffmanDecode(Input.Position, Integer(Count), Text) then
     begin
       Input.Malformed := True;
       Exit(False);
@@ -172,24 +173,6 @@ begin
     SetString(Text, PChar(Input.Position), Count);
   Input.Position := Input.Position + Count;
   Result := True;
-end;
-
-procedure AppendByte(var Output: TQpackOutput; Value: Byte);
-begin
-  if Output.Length >= Length(Output.Data) then
-    SetLength(Output.Data, Output.Length * 2 + 64);
-  Output.Data[Output.Length] := Value;
-  Inc(Output.Length);
-end;
-
-procedure AppendBytes(var Output: TQpackOutput; Data: PByte; Count: Integer);
-begin
-  if Count <= 0 then
-    Exit;
-  if Output.Length + Count > Length(Output.Data) then
-    SetLength(Output.Data, (Output.Length + Count) * 2);
-  Move(Data^, Output.Data[Output.Length], Count);
-  Output.Length := Output.Length + Count;
 end;
 
 procedure AppendPrefixedInteger(var Output: TQpackOutput; Flags: Byte; PrefixBits: Integer; Value: QWord);
@@ -214,23 +197,18 @@ end;
 
 procedure AppendStringLiteral(var Output: TQpackOutput; Flags: Byte; PrefixBits: Integer; const Text: string);
 var
-  HuffmanLength: PtrUInt;
-  Start: Integer;
+  HuffmanLength: Integer;
 begin
   HuffmanLength := HuffmanEncodedLength(Text);
-  if HuffmanLength < PtrUInt(Length(Text)) then
+  if HuffmanLength < Length(Text) then
   begin
     AppendPrefixedInteger(Output, Flags or (1 shl PrefixBits), PrefixBits, HuffmanLength);
-    Start := Output.Length;
-    if Output.Length + Integer(HuffmanLength) > Length(Output.Data) then
-      SetLength(Output.Data, (Output.Length + Integer(HuffmanLength)) * 2);
-    HuffmanEncode(Text, @Output.Data[Start]);
-    Output.Length := Start + Integer(HuffmanLength);
+    HuffmanEncode(Text, Output);
   end
   else
   begin
     AppendPrefixedInteger(Output, Flags, PrefixBits, Length(Text));
-    AppendBytes(Output, PByte(PChar(Text)), Length(Text));
+    AppendText(Output, Text);
   end;
 end;
 

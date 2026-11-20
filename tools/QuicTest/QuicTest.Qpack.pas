@@ -40,19 +40,20 @@ uses
   TestChecks,
   Qpack.Decoder,
   Qpack.Encoder,
-  Qpack.Huffman,
-  Qpack.StaticTable;
+  Qpack.StaticTable,
+  Http.ByteBuffers,
+  Http.HpackHuffman;
 
 procedure CheckHuffman(const Text, Hex: string);
 var
-  Encoded: array of Byte;
+  Encoded: THttpByteBuffer;
   Decoded: string;
   Expected: TByteArray;
 begin
-  Encoded := nil;
-  SetLength(Encoded, HuffmanEncodedLength(Text) + 1);
-  HuffmanEncode(Text, @Encoded[0]);
-  CheckBytes(@Encoded[0], HuffmanEncodedLength(Text), Hex, 'Huffman encodes "' + Text + '"');
+  Encoded := Default(THttpByteBuffer);
+  HuffmanEncode(Text, Encoded);
+  Check(Encoded.Length = HuffmanEncodedLength(Text), 'Huffman length of "' + Text + '"');
+  CheckBytes(@Encoded.Data[0], Encoded.Length, Hex, 'Huffman encodes "' + Text + '"');
   Expected := HexToBytes(Hex);
   Check(HuffmanDecode(@Expected[0], Length(Expected), Decoded) and (Decoded = Text),
     'Huffman decodes "' + Text + '"');
@@ -62,7 +63,7 @@ procedure TestHuffman;
 var
   Bytes: TByteArray;
   Text, All: string;
-  Encoded: array of Byte;
+  Encoded: THttpByteBuffer;
   Index: Integer;
 begin
   CheckHuffman('www.example.com', 'f1e3c2e5f23a6ba0ab90f4ff');
@@ -77,10 +78,9 @@ begin
   All := '';
   for Index := 0 to 255 do
     All := All + Chr(Index);
-  Encoded := nil;
-  SetLength(Encoded, HuffmanEncodedLength(All));
-  HuffmanEncode(All, @Encoded[0]);
-  Check(HuffmanDecode(@Encoded[0], Length(Encoded), Text) and (Text = All), 'Huffman: all 256 byte values');
+  Encoded := Default(THttpByteBuffer);
+  HuffmanEncode(All, Encoded);
+  Check(HuffmanDecode(@Encoded.Data[0], Encoded.Length, Text) and (Text = All), 'Huffman: all 256 byte values');
   { Padding longer than seven bits, padding of zeros, EOS inside. }
   Bytes := HexToBytes('f1e3c2e5f23a6ba0ab90f4ffff');
   Check(not HuffmanDecode(@Bytes[0], Length(Bytes), Text), 'Huffman: eight bits of padding refused');

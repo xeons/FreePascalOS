@@ -46,6 +46,7 @@ function EncodeFieldSection(constref Fields: TQpackFieldList): TBytes;
 implementation
 
 uses
+  Http.ByteBuffers,
   Qpack.Primitives;
 
 function EncodeFieldSection(constref Fields: TQpackFieldList): TBytes;

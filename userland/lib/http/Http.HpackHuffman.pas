@@ -17,7 +17,9 @@
 }
 
 {
-  HPACK's Huffman code (RFC 7541 section 5.2 and appendix B). The code
+  HPACK's Huffman code (RFC 7541 section 5.2 and appendix B), which
+  QPACK (RFC 9204 section 4.1.2) uses too: libquic's Qpack units take
+  it from here, so the system has one copy. The code
   of appendix B is canonical: codes of the same length are consecutive
   in symbol order and each length's first code follows the last code of
   the length before. So the table here is only the 257 code lengths
