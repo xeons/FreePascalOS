@@ -73,6 +73,8 @@ type
     CipherSuites: TCipherSuiteList;
     { Several requests over one connection (--no-http-keep-alive: not). }
     KeepAlive: Boolean;
+    { Offer HTTP/2 over TLS (--no-http2: HTTP/1.1 only). }
+    Http2: Boolean;
     { Cookies kept and sent (--no-cookies: not); files to read them from
       and write them to; session cookies written too. }
     UseCookies: Boolean;
@@ -116,6 +118,7 @@ begin
   Settings.Tries := DefaultTries;
   Settings.UserAgent := DefaultUserAgent;
   Settings.KeepAlive := True;
+  Settings.Http2 := True;
   Settings.UseCookies := True;
   Settings.UseNetrc := True;
   Settings.Compression := CompressionNone;

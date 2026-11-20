@@ -114,8 +114,13 @@ begin
     'set-cookie: a path not starting with / is ignored');
   Check(ParseSetCookie('empty=', Now, Cookie, HasDomain) and (Cookie.Value = ''), 'set-cookie: an empty value');
   Check(ParseSetCookie('a=b=c', Now, Cookie, HasDomain) and (Cookie.Value = 'b=c'), 'set-cookie: = in the value');
-  Check(not ParseSetCookie('novalue', Now, Cookie, HasDomain), 'set-cookie: no = is refused');
-  Check(not ParseSetCookie('=value', Now, Cookie, HasDomain), 'set-cookie: no name is refused');
+  { RFC 6265bis: a pair without "=" (or with nothing before it) is a
+    cookie with an empty name; only an empty name and value is refused. }
+  Check(ParseSetCookie('novalue', Now, Cookie, HasDomain) and (Cookie.Name = '') and (Cookie.Value = 'novalue'),
+    'set-cookie: no = makes a nameless cookie');
+  Check(ParseSetCookie('=value', Now, Cookie, HasDomain) and (Cookie.Name = '') and (Cookie.Value = 'value'),
+    'set-cookie: an empty name is a nameless cookie');
+  Check(not ParseSetCookie('=', Now, Cookie, HasDomain), 'set-cookie: no name and no value is refused');
   Check(ParseSetCookie('a=b; unknown=1; Domain=', Now, Cookie, HasDomain) and not HasDomain,
     'set-cookie: unknown attributes and an empty domain are ignored');
 end;

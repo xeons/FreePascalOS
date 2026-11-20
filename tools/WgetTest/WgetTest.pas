@@ -22,7 +22,8 @@
   names, response heads, Content-Range, and the chunked coding fed in
   pieces of every size; cookies (WgetTest.Cookies), authentication
   (WgetTest.Authentication) and what recursion is made of
-  (WgetTest.Recursion).
+  (WgetTest.Recursion). The HTTP parts are libhttp's now (Http.*, also
+  checked by tools/HttpTest); these checks stay as wget relies on them.
 }
 program WgetTest;
 
@@ -36,6 +37,7 @@ uses
   WgetTest.Recursion,
   Http.Chunks,
   Http.ResponseHeads,
+  Http.StatusCodes,
   Wget.Urls;
 
 function UrlText(constref Url: TUrl): string;

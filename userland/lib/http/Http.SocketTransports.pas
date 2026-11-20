@@ -45,7 +45,7 @@ type
     FSession: TTlsSocketSession;
   public
     { Takes over a connected socket. }
-    constructor Create(Socket: Int64; TimeoutMilliseconds: Int64);
+    constructor Create(Socket: Int64; Timeout: Int64);
     destructor Destroy; override;
     { TLS over the socket. A certificate failure is HttpCertificateFailed. }
     function StartTls(const ServerName: string; Port: Word; constref Settings: THttpClientSettings;
@@ -68,11 +68,11 @@ uses
 const
   TimeoutText = 'Connection timed out';
 
-constructor THttpSocketTransport.Create(Socket: Int64; TimeoutMilliseconds: Int64);
+constructor THttpSocketTransport.Create(Socket: Int64; Timeout: Int64);
 begin
   inherited Create;
   FSocket := Socket;
-  FTimeoutMilliseconds := TimeoutMilliseconds;
+  FTimeoutMilliseconds := Timeout;
 end;
 
 destructor THttpSocketTransport.Destroy;

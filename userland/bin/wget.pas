@@ -21,8 +21,9 @@
 
   wget [OPTION]... URL...
 
-  Fetches each URL with HTTP/1.1, over TLS 1.3 (libtls) for https, and
-  saves it in a file named after the URL (index.html for a directory),
+  Fetches each URL through libhttp: HTTP/1.1, or HTTP/2 when a server
+  chooses it over TLS (libtls), and saves it in a file named after the
+  URL (index.html for a directory),
   or as -O says ("-O -": standard output). Follows redirects (at most
   20), takes chunked and Content-Length bodies, continues files (-c),
   tries again after network failures (-t) and shows a progress line on
@@ -35,7 +36,8 @@
   credentials (given, or from ~/.netrc); gzip bodies are decoded with
   --compression. -r fetches a site recursively (-l, -np, -A, -R,
   robots.txt), -p a page's requisites, -k converts the links of what
-  was fetched. The units are in userland/wget.
+  was fetched. The units are in userland/wget; what is HTTP and not
+  wget's own is libhttp's (userland/lib/http).
 
   Exit status as GNU wget: 0 success, 1 generic error, 2 bad options,
   3 file error, 4 network failure, 5 certificate check failed, 6
@@ -79,6 +81,7 @@ const
     '                              by colons: TLS_AES_128_GCM_SHA256,'#10 +
     '                              TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256)'#10 +
     '      --no-http-keep-alive    one request per connection'#10 +
+    '      --no-http2              HTTP/1.1 only (HTTP/2 is offered over TLS)'#10 +
     '      --compression=TYPE      auto, gzip (ask for gzip and decode it) or none'#10 +
     '      --trust-server-names    name the file after the last URL of a redirection'#10 +
     #10 +
@@ -138,6 +141,7 @@ const
   OptionNoHostDirectories = 30;
   OptionNoDirectories = 31;
   OptionExecute = 32;
+  OptionNoHttp2 = 33;
 
   MaximumTimeoutSeconds = 24 * 3600;
   MaximumTries = 1000000;
@@ -305,6 +309,7 @@ begin
         end;
       OptionCiphers: ParseCipherList(Value, Settings);
       OptionNoKeepAlive: Settings.KeepAlive := False;
+      OptionNoHttp2: Settings.Http2 := False;
       OptionCompression: ParseCompression(Value, Settings);
       OptionTrustServerNames: Settings.TrustServerNames := True;
       OptionNoCookies: Settings.UseCookies := False;
@@ -410,6 +415,7 @@ begin
     CommandOption(#0, 'ca-certificate', True, OptionCaCertificate),
     CommandOption(#0, 'ciphers', True, OptionCiphers),
     CommandOption(#0, 'no-http-keep-alive', False, OptionNoKeepAlive),
+    CommandOption(#0, 'no-http2', False, OptionNoHttp2),
     CommandOption(#0, 'compression', True, OptionCompression),
     CommandOption(#0, 'trust-server-names', False, OptionTrustServerNames),
     CommandOption(#0, 'no-cookies', False, OptionNoCookies),

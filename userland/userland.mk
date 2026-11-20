@@ -29,6 +29,7 @@
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
+#                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -91,6 +92,7 @@ TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
+HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -105,6 +107,7 @@ TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
+HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -158,7 +161,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(HTTP_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -258,6 +261,17 @@ $(TLS_LIBRARY): $(CRYPTO_LIBRARY) $(wildcard userland/lib/tls/*.pas)
 		-Fuuserland/lib/tls -FU$(TLS_LIBRARY_OBJECTS) userland/lib/tls/Tls.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtls.so -o $@ \
 		$(TLS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcryptography -lsystem
+
+# libhttp: the URL Standard and an HTTP/1.1 and HTTP/2 client (cookies,
+# cache, authentication, content decoding) over libtls and libcompression.
+$(HTTP_LIBRARY): $(TLS_LIBRARY) $(COMPRESSION_LIBRARY) $(wildcard userland/lib/http/*.pas)
+	@rm -rf $(HTTP_LIBRARY_OBJECTS)
+	@mkdir -p $(HTTP_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
+		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fuuserland/lib/http -FU$(HTTP_LIBRARY_OBJECTS) \
+		userland/lib/http/Http.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libhttp.so -o $@ \
+		$(HTTP_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ltls -lcompression -lcryptography -lsystem
 
 # libssh: the SSH protocol, the server's side (transport, key exchange,
 # host keys, user authentication, channels).
@@ -369,12 +383,11 @@ SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest n
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)
-# wget speaks TLS through libtls and decodes gzip bodies through
-# libcompression.
-TLS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
-$(TLS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -ltls -lcompression
-$(TLS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS)
-$(TLS_PROGRAMS): $(TLS_LIBRARY) $(COMPRESSION_LIBRARY)
+# wget fetches through libhttp (over libtls and libcompression).
+HTTP_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,wget)
+$(HTTP_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lhttp -ltls -lcompression
+$(HTTP_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS)
+$(HTTP_PROGRAMS): $(HTTP_LIBRARY)
 # ss is built on netstat's units (userland/netstat).
 NETSTAT_UNIT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,ss)
 $(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat
