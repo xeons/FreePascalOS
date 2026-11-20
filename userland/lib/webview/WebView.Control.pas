@@ -1,0 +1,394 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  TWebView: a control that shows web pages, for any program with
+  controls (libcontrols). It owns a page (libweb's TWebPage: event
+  loop, fetcher over the program's shared network, navigable), the
+  resource sink that hands loaded sheets, images and fonts to layout,
+  and the active document's layout and painter.
+
+    View := TWebView.Create(Root);
+    View.Align := AlignClient;
+    View.OnTitleChanged := @TitleChanged;
+    View.Navigate('https://example.com/');
+    View.LoadHtml('<p>Hello</p>', 'about:blank');
+
+  - The event loop runs on the GUI thread: other threads wake it with a
+    posted message, its timers on a TTimer, rendering on a frame timer
+    (layout, then a repaint when what is painted changed).
+  - Painting: the viewport is painted into a surface of its own and
+    copied to the window; only what changed is painted again (a scroll
+    moves the pixels and paints the strip that came into view, unless
+    the page has fixed boxes or the step is not whole pixels).
+  - Scrolling: the theme's scroll bars for the viewport; the wheel, the
+    arrow keys, Page Up and Down, Space, Home and End; the wheel scrolls
+    a scroll container under the pointer first (with a thin bar of the
+    theme's colours drawn in it).
+  - The pointer: :hover and :active states, the CSS cursor (the hand
+    over links, the text beam over text), links followed on a click
+    (OnLinkClicked first: the host may handle it, as a new tab for a
+    middle click or Ctrl+click), the hovered link's URL in
+    OnStatusText; text selected by dragging (a double click selects a
+    word), copied with Ctrl+C (the system clipboard).
+  - The keyboard: Tab and Shift+Tab move the page's focus between links
+    and form controls (:focus, :focus-visible), Enter follows a link or
+    presses a button, Space toggles a check box.
+  - Form controls: typing into text fields and text areas, check boxes,
+    radio buttons, buttons (a submit button submits its form, GET or
+    POST), selects (a pop-up menu of the options).
+  - Find in page (FindText), zoom (Ctrl+plus, Ctrl+minus, Ctrl+0,
+    Ctrl+wheel: the CSS-to-device scale is the display's times the
+    zoom), context menus (OnContextMenu, else a menu of its own).
+  - Scripting: a TScriptExecutor from ScriptExecutorFactory (or
+    DefaultScriptExecutorFactory) when the page is made; none, and
+    scripting is off.
+}
+unit WebView.Control;
+
+{$mode objfpc}
+{$H+}
+
+interface
+
+uses
+  Classes,
+  SysUtils,
+  Drawing.Canvas,
+  Drawing.Surfaces,
+  Drawing.Rectangles,
+  Image.Model,
+  Css.ElementAdapter,
+  Windowing.Messages,
+  Controls.Base,
+  Controls.ScrollBar,
+  Controls.Timers,
+  Controls.Menus,
+  Web.Dom,
+  Web.Layout.Boxes,
+  Web.Navigation.Navigables,
+  Web.Navigation.Pages,
+  Web.Loading.Scripts,
+  Web.Loading.LayoutSink,
+  Web.Layout.Document,
+  Web.Paint.Painter,
+  WebView.TextIndex,
+  WebView.Elements;
+
+const
+  { The web view's own messages (below MessageUser: a library's). }
+  MessageWebViewWake = $0F01;
+
+type
+  TWebView = class;
+
+  { Makes the script engine for a view's page (the DOM bindings). }
+  TScriptExecutorFactory = function(View: TWebView; Page: TWebPage): TScriptExecutor;
+
+  TLinkDisposition = (LinkInView, LinkInNewTab, LinkInNewWindow);
+
+  { An element and its ancestors (each retained while listed). }
+  TElementChain = array of TElement;
+
+  TWebContextInfo = record
+    { The control's own pixels. }
+    X, Y: LongInt;
+    FromKeyboard: Boolean;
+    LinkUrl: string;
+    LinkText: string;
+    ImageUrl: string;
+    SelectedText: string;
+    InTextField: Boolean;
+  end;
+
+  TWebViewEvent = procedure(Sender: TWebView) of object;
+  TWebViewTextEvent = procedure(Sender: TWebView; const Text: string) of object;
+  TWebViewLoadingEvent = procedure(Sender: TWebView; State: TLoadingState) of object;
+  TWebViewLinkEvent = procedure(Sender: TWebView; const Url: string; Disposition: TLinkDisposition;
+    var Handled: Boolean) of object;
+  TWebViewDownloadEvent = procedure(Sender: TWebView; constref Download: TDownloadInfo) of object;
+  TWebViewFailureEvent = procedure(Sender: TWebView; const Url, Reason: string) of object;
+  TWebViewContextEvent = procedure(Sender: TWebView; constref Info: TWebContextInfo; var Handled: Boolean) of object;
+  TWebViewConfirmEvent = function(Sender: TWebView): Boolean of object;
+
+  TWebView = class(TControl)
+  private
+    FPage: TWebPage;
+    FSink: TLayoutResourceSink;
+    FObserver: TNavigableObserver;
+    FExecutor: TScriptExecutor;
+    FScriptExecutorFactory: TScriptExecutorFactory;
+    FDocument: TDocument;
+    FLayout: TDocumentLayout;
+    FPainter: TDocumentPainter;
+    { Painting. }
+    FBacking: TSurface;
+    FBackingVersion: LongWord;
+    FBackingValid: Boolean;
+    FBackingDirty: TRectangle;
+    FListHasFixed: Boolean;
+    FFixedCheckedVersion: LongWord;
+    FFixedChecked: Boolean;
+    { Scrolling. }
+    FVerticalBar: TScrollBar;
+    FHorizontalBar: TScrollBar;
+    FSyncingBars: Boolean;
+    FHasPendingRestore: Boolean;
+    FPendingRestoreX, FPendingRestoreY: Double;
+    FPendingFragment: TElement;
+    FHasPendingFragment: Boolean;
+    { The loop. }
+    FWakePending: LongInt;
+    FLoopTimer: TTimer;
+    FFrameTimer: TTimer;
+    { State told to the host. }
+    FUrl: string;
+    FTitle: string;
+    FState: TLoadingState;
+    FFavicon: TImage;
+    FStatusText: string;
+    FZoom: Double;
+    { The pointer and the focus. }
+    FHoverChain: TElementChain;
+    FActiveChain: TElementChain;
+    FFocusedElement: TElement;
+    FFocusVisible: Boolean;
+    FPressedLink: TElement;
+    FPressedControl: TElement;
+    FPressButton: LongWord;
+    FPressX, FPressY: LongInt;
+    FDragged: Boolean;
+    FLastPointerX, FLastPointerY: LongInt;
+    FLastClickTime: QWord;
+    FLastClickX, FLastClickY: LongInt;
+    { Selection and find. }
+    FTextIndex: TPageTextIndex;
+    FTextIndexVersion: LongWord;
+    FTextIndexValid: Boolean;
+    FSelecting: Boolean;
+    FSelectionAnchor, FSelectionFocus: TTextPosition;
+    FFindText: string;
+    { A select's pop-up. }
+    FSelectMenu: TMenuItem;
+    FSelectElement: TElement;
+    FOwnMenu: TMenuItem;
+    FMenuLink: string;
+    { Events. }
+    FOnTitleChanged: TWebViewTextEvent;
+    FOnLocationChanged: TWebViewTextEvent;
+    FOnLoadingStateChanged: TWebViewLoadingEvent;
+    FOnFaviconChanged: TWebViewEvent;
+    FOnStatusText: TWebViewTextEvent;
+    FOnHistoryChanged: TWebViewEvent;
+    FOnZoomChanged: TWebViewEvent;
+    FOnLinkClicked: TWebViewLinkEvent;
+    FOnDownloadRequested: TWebViewDownloadEvent;
+    FOnNavigationFailed: TWebViewFailureEvent;
+    FOnContextMenuRequested: TWebViewContextEvent;
+    FOnConfirmUnload: TWebViewConfirmEvent;
+    { The page and its document. }
+    procedure EnsurePage;
+    procedure AdoptDocument(Document: TDocument);
+    procedure ReleaseDocument;
+    procedure ForgetElements;
+    { The loop. }
+    procedure PageWake(Sender: TObject);
+    procedure PostWake;
+    procedure PumpEventLoop;
+    procedure LoopTimerFired(Sender: TTimer);
+    procedure FrameTimerFired(Sender: TTimer);
+    procedure RenderingRequested(Sender: TObject);
+    procedure RequestFrame;
+    procedure RenderFrame;
+    { Geometry. }
+    function DeviceScale: Double;
+    function ViewportPixelWidth: LongInt;
+    function ViewportPixelHeight: LongInt;
+    function ViewportCssWidth: Double;
+    function ViewportCssHeight: Double;
+    procedure ApplyViewport;
+    procedure UpdateLayout;
+    { Painting (WebView.Control.Painting.inc). }
+    procedure EnsureBacking;
+    procedure PaintBacking;
+    procedure InvalidateViewport;
+    function PageHasFixedBoxes: Boolean;
+    procedure PaintSelection(var Canvas: TCanvas);
+    procedure PaintCaret(var Canvas: TCanvas);
+    procedure PaintInnerScrollBars(var Canvas: TCanvas);
+    { Scrolling (WebView.Control.Scrolling.inc). }
+    procedure UpdateScrollBars;
+    procedure ScrollBarMoved(Bar: TScrollBar);
+    procedure ScrollViewportTo(X, Y: Double);
+    function ScrollInnerContainer(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
+    procedure ApplyPendingScroll;
+    procedure ScrollRectangleIntoView(X, Y, Width, Height: Double);
+    procedure ScrollToElement(Element: TElement);
+    { The pointer (WebView.Control.Pointer.inc). }
+    procedure UpdateHover(CssX, CssY: Double);
+    procedure ClearHover;
+    procedure SetChain(var Chain: TElementChain; Element: TElement);
+    procedure ApplyStates(Element: TElement);
+    function StatesOf(Element: TElement): TCssElementStates;
+    procedure SetStatus(const Value: string);
+    function ResolveLink(Link: TElement): string;
+    procedure ActivateLink(Link: TElement; Disposition: TLinkDisposition);
+    function DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
+    procedure SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+    { Form controls (WebView.Control.Forms.inc). }
+    procedure ClickElement(Element: TElement);
+    procedure ActivateControl(Control: TElement);
+    procedure SubmitForm(Form, Submitter: TElement);
+    procedure OpenSelectMenu(Select: TElement);
+    procedure SelectOptionChosen(Item: TMenuItem);
+    function TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
+    procedure ControlEdited(Element: TElement);
+    { Selection (WebView.Control.Selection.inc). }
+    procedure EnsureTextIndex;
+    function TextPositionAt(X, Y: LongInt): TTextPosition;
+    procedure SetSelection(constref Anchor, Focus: TTextPosition);
+    { Context menus. }
+    procedure ShowOwnContextMenu(constref Info: TWebContextInfo);
+    procedure OwnMenuChosen(Item: TMenuItem);
+    function GetCanGoBack: Boolean;
+    function GetCanGoForward: Boolean;
+    procedure SetZoom(Value: Double);
+    function GetNavigable: TNavigable;
+    { What the navigable tells (through the observer). }
+    procedure NavigableLocationChanged(const Url: string);
+    procedure NavigableTitleChanged(const Title: string);
+    procedure NavigableLoadingStateChanged(State: TLoadingState);
+    procedure NavigableFaviconChanged(Image: TImage);
+    procedure NavigableHistoryChanged;
+    procedure NavigableScrollToFragment(Element: TElement);
+    procedure NavigableRestoreScrollPosition(X, Y: Double);
+    function NavigableConfirmUnload: Boolean;
+    procedure NavigableDownloadRequested(constref Download: TDownloadInfo);
+    procedure NavigableFailed(const Url, Reason: string);
+  protected
+    procedure Paint(var Canvas: TCanvas); override;
+    procedure Layout; override;
+    procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
+    procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
+    procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
+    procedure PointerLeave; override;
+    procedure Wheel(Steps: LongInt); override;
+    function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    procedure FocusChanged; override;
+    procedure ContextMenu(X, Y: LongInt; FromKeyboard: Boolean); override;
+  public
+    constructor Create(AParent: TControl); override;
+    destructor Destroy; override;
+    procedure ReceiveMessage(var Message: TPostedMessage); override;
+    { Navigates to a URL (False when Text is not one). }
+    function Navigate(const Address: string): Boolean;
+    { Shows Html as a document at BaseUrl (its base for relative URLs). }
+    procedure LoadHtml(const Html, BaseUrl: string);
+    procedure GoBack;
+    procedure GoForward;
+    procedure Reload(BypassCache: Boolean = False);
+    procedure Stop;
+    { Scrolls the viewport by CSS pixels. }
+    procedure ScrollBy(DeltaX, DeltaY: Double);
+    procedure ScrollTo(X, Y: Double);
+    procedure ZoomIn;
+    procedure ZoomOut;
+    procedure ResetZoom;
+    { Finds Text after the selection (or before it), selects it and
+      scrolls to it; False when the page has no such text. }
+    function FindText(const Needle: string; Forward: Boolean = True; MatchCase: Boolean = False): Boolean;
+    procedure ClearSelection;
+    procedure SelectAll;
+    function SelectedText: string;
+    function HasSelection: Boolean;
+    procedure CopySelection;
+    { The page's whole text as shown. }
+    function PageText: string;
+    property Page: TWebPage read FPage;
+    property Navigable: TNavigable read GetNavigable;
+    property Document: TDocument read FDocument;
+    property DocumentLayout: TDocumentLayout read FLayout;
+    property Url: string read FUrl;
+    property Title: string read FTitle;
+    property LoadingState: TLoadingState read FState;
+    { The page's icon, nil when it has none (the view owns it). }
+    property Favicon: TImage read FFavicon;
+    property StatusText: string read FStatusText;
+    property CanGoBack: Boolean read GetCanGoBack;
+    property CanGoForward: Boolean read GetCanGoForward;
+    property Zoom: Double read FZoom write SetZoom;
+    { Set before the first navigation (the page is made then). }
+    property ScriptExecutorFactory: TScriptExecutorFactory read FScriptExecutorFactory write FScriptExecutorFactory;
+    property OnTitleChanged: TWebViewTextEvent read FOnTitleChanged write FOnTitleChanged;
+    property OnLocationChanged: TWebViewTextEvent read FOnLocationChanged write FOnLocationChanged;
+    property OnLoadingStateChanged: TWebViewLoadingEvent read FOnLoadingStateChanged write FOnLoadingStateChanged;
+    property OnFaviconChanged: TWebViewEvent read FOnFaviconChanged write FOnFaviconChanged;
+    { The URL of the link under the pointer ('' when it leaves). }
+    property OnStatusText: TWebViewTextEvent read FOnStatusText write FOnStatusText;
+    property OnHistoryChanged: TWebViewEvent read FOnHistoryChanged write FOnHistoryChanged;
+    property OnZoomChanged: TWebViewEvent read FOnZoomChanged write FOnZoomChanged;
+    { A link was clicked: Handled stops the view from following it. }
+    property OnLinkClicked: TWebViewLinkEvent read FOnLinkClicked write FOnLinkClicked;
+    property OnDownloadRequested: TWebViewDownloadEvent read FOnDownloadRequested write FOnDownloadRequested;
+    property OnNavigationFailed: TWebViewFailureEvent read FOnNavigationFailed write FOnNavigationFailed;
+    { A context menu is wanted: Handled stops the view's own menu. }
+    property OnContextMenuRequested: TWebViewContextEvent read FOnContextMenuRequested write FOnContextMenuRequested;
+    { The page asked to stay (beforeunload): True leaves it. }
+    property OnConfirmUnload: TWebViewConfirmEvent read FOnConfirmUnload write FOnConfirmUnload;
+  end;
+
+var
+  { The bindings set this (scripting is off while it is nil). }
+  DefaultScriptExecutorFactory: TScriptExecutorFactory = nil;
+
+implementation
+
+uses
+  Math,
+  Abi.SystemCalls,
+  Url.Records,
+  Url.Parser,
+  Drawing.Colors,
+  Windowing.Theme,
+  Windowing.Connection,
+  Windowing.Windows,
+  Windowing.Protocol,
+  Controls.Window,
+  Controls.Keys,
+  Controls.Clipboard,
+  Controls.Painting,
+  Web.Atoms,
+  Web.Navigation.Events,
+  Web.Navigation.Windows,
+  Web.Layout.Resources,
+  Web.Paint.DisplayList,
+  Web.Text.FontInstances,
+  WebView.Network,
+  WebView.Zoom,
+  WebView.Forms;
+
+{$I WebView.Control.Observer.inc}
+{$I WebView.Control.Core.inc}
+{$I WebView.Control.Painting.inc}
+{$I WebView.Control.Scrolling.inc}
+{$I WebView.Control.Pointer.inc}
+{$I WebView.Control.Keyboard.inc}
+{$I WebView.Control.Forms.inc}
+{$I WebView.Control.Selection.inc}
+
+end.

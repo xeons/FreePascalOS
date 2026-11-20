@@ -45,8 +45,7 @@ function WebFontToSfnt(const Data: TBytes): TBytes;
 implementation
 
 uses
-  Compression.DecodeResults,
-  Compression.BufferInflate;
+  Compression.Buffers;
 
 const
   WoffHeaderSize = 44;
@@ -102,23 +101,26 @@ begin
   end;
 end;
 
-{ Inflates a zlib stream (2 byte header, deflate data, Adler-32) into
-  exactly OutputSize bytes. }
+{ Inflates a zlib stream (header, deflate data, Adler-32) into exactly
+  OutputSize bytes at OutputOffset. }
 function InflateZlib(const Data: TBytes; Offset, Count: SizeInt; var Output: TBytes; OutputOffset,
   OutputSize: SizeInt): Boolean;
 var
-  State: TBufferInflateState;
-  InputUsed, OutputUsed: SizeUInt;
+  Compressed, Inflated: TBytes;
 begin
   Result := False;
   if Count < 6 then
     Exit;
-  if (Data[Offset] and $0F) <> 8 then
+  Compressed := Copy(Data, Offset, Count);
+  try
+    Inflated := DecompressZlib(Compressed, OutputSize);
+  except
     Exit;
-  if InflateIntoBuffer(State, @Data[Offset + 2], Count - 2, InputUsed, @Output[OutputOffset], OutputSize,
-    OutputUsed) <> DecodeSucceeded then
+  end;
+  if Length(Inflated) <> OutputSize then
     Exit;
-  Result := SizeInt(OutputUsed) = OutputSize;
+  Move(Inflated[0], Output[OutputOffset], OutputSize);
+  Result := True;
 end;
 
 function UnwrapWoff(const Data: TBytes): TBytes;

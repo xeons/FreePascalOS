@@ -37,6 +37,7 @@
 #                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
+#                  libweb, libcontrols <- libwebview (the web view control; browser)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -103,6 +104,7 @@ HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
 CSS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/css
 WEB_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/web
 JAVASCRIPT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/javascript
+WEBVIEW_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webview
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -122,6 +124,7 @@ HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
 CSS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcss.so
 WEB_LIBRARY := $(USER_LIBRARY_OUTPUT)/libweb.so
 JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
+WEBVIEW_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebview.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 
@@ -175,7 +178,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -342,6 +345,22 @@ $(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(FONT_LIBRARY)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
 		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lhttp -lcss -lfont -limage -ldrawing -ltls -lcompression \
 		-lcryptography -lsystem
+
+# libwebview: TWebView, the control that shows web pages (libweb in a
+# libcontrols control), for the browser and any program.
+$(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(wildcard userland/lib/webview/*.pas) \
+		$(wildcard userland/lib/webview/*.inc)
+	@rm -rf $(WEBVIEW_LIBRARY_OBJECTS)
+	@mkdir -p $(WEBVIEW_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
+		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
+		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
+		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fuuserland/lib/webview -FU$(WEBVIEW_LIBRARY_OBJECTS) \
+		userland/lib/webview/WebView.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwebview.so -o $@ \
+		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -lcontrols -lwindowing -lconfiguration -lhttp \
+		-lcss -lfont -limage -ldrawing -ltls -lcompression -lcryptography -lsystem
 
 # libjavascript: the ECMAScript engine (Js.*) and its embedding API.
 $(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pas)

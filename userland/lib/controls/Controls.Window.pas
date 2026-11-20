@@ -875,7 +875,12 @@ begin
       Target.HandlePointerEnter;
   end;
   if Target <> nil then
+  begin
     Target.HandlePointerMove(X, Y, Buttons);
+    { A control whose shape depends on what is under the pointer (a web
+      view over a link) set it as the pointer moved. }
+    ShowPointerShapeOf(Target);
+  end;
 end;
 
 procedure TControlWindow.PointerDown(X, Y: LongInt; Button: LongWord);

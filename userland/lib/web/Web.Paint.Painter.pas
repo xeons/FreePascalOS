@@ -64,6 +64,8 @@ type
     { The node at a viewport point (CSS px). }
     function HitTest(X, Y: Single): THitTestResult;
     property DisplayList: TDisplayList read FList;
+    { The layout's display list version the list was built at. }
+    property BuiltVersion: LongWord read FBuiltVersion;
   end;
 
 implementation
@@ -86,10 +88,10 @@ end;
 
 procedure TDocumentPainter.Refresh;
 begin
-  if FBuilt and (FBuiltVersion = FLayout.PaintVersion) then
+  if FBuilt and (FBuiltVersion = FLayout.DisplayListVersion) then
     Exit;
   BuildDisplayList(FLayout.Root, FLayout.Resources, FList);
-  FBuiltVersion := FLayout.PaintVersion;
+  FBuiltVersion := FLayout.DisplayListVersion;
   FBuilt := True;
 end;
 

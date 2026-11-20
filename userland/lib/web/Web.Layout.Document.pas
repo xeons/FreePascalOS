@@ -68,6 +68,9 @@ type
     FBoxesChanged: Boolean;
     FLayoutDirty: Boolean;
     FPaintVersion: LongWord;
+    { How many of the paint version's steps were the viewport scrolling
+      (which leaves the display list as it was). }
+    FViewportScrolls: LongWord;
     FFixedBoxes: TPositionedList;
     FDarkScheme: Boolean;
     procedure StyleChanged(Element: TElement; Change: TStyleChangeKind);
@@ -115,6 +118,9 @@ type
     property Scale: Single read FScale;
     { Changes whenever what painting would draw changed. }
     property PaintVersion: LongWord read FPaintVersion;
+    { Changes whenever the display list would change: the paint version
+      without the viewport's own scrolling (painted at an offset). }
+    function DisplayListVersion: LongWord;
   end;
 
 implementation
@@ -653,7 +659,14 @@ begin
     Box.ScrollX := X;
     Box.ScrollY := Y;
     Inc(FPaintVersion);
+    if Node = nil then
+      Inc(FViewportScrolls);
   end;
+end;
+
+function TDocumentLayout.DisplayListVersion: LongWord;
+begin
+  Result := FPaintVersion - FViewportScrolls;
 end;
 
 procedure TDocumentLayout.GetScrollOffset(Node: TNode; out X, Y: Single);

@@ -1,0 +1,532 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{ WebView.Control: the page, its document, the event loop, navigation. }
+
+const
+  { Milliseconds of tasks run per turn of the program's message loop. }
+  TaskBudgetMilliseconds = 12;
+  FrameIntervalMilliseconds = 16;
+
+constructor TWebView.Create(AParent: TControl);
+begin
+  inherited Create(AParent);
+  CanFocus := True;
+  FZoom := 1;
+  FState := LoadingIdle;
+  FSink := TLayoutResourceSink.Create;
+  FTextIndex := TPageTextIndex.Create;
+  FSelectionAnchor := TextPosition(-1, 0);
+  FSelectionFocus := FSelectionAnchor;
+  FVerticalBar := TScrollBar.Create(Self);
+  FVerticalBar.Kind := ScrollVertical;
+  FVerticalBar.Visible := False;
+  FVerticalBar.Step := 40;
+  FHorizontalBar := TScrollBar.Create(Self);
+  FHorizontalBar.Kind := ScrollHorizontal;
+  FHorizontalBar.Visible := False;
+  FHorizontalBar.Step := 40;
+  FLoopTimer := TTimer.Create(Self);
+  FLoopTimer.OnTimer := @LoopTimerFired;
+  FFrameTimer := TTimer.Create(Self);
+  FFrameTimer.Interval := FrameIntervalMilliseconds;
+  FFrameTimer.OnTimer := @FrameTimerFired;
+end;
+
+destructor TWebView.Destroy;
+begin
+  FLoopTimer.Free;
+  FFrameTimer.Free;
+  if FPage <> nil then
+  begin
+    FPage.OnWake := nil;
+    FPage.OnRenderingRequested := nil;
+    FPage.Navigable.ObserverObject := nil;
+  end;
+  ReleaseDocument;
+  FPage.Free;
+  FExecutor.Free;
+  FObserver.Free;
+  FSink.Free;
+  FTextIndex.Free;
+  FFavicon.Free;
+  FSelectMenu.Free;
+  FOwnMenu.Free;
+  FreeSurface(FBacking);
+  inherited Destroy;
+end;
+
+procedure TWebView.EnsurePage;
+var
+  Factory: TScriptExecutorFactory;
+begin
+  if FPage <> nil then
+    Exit;
+  FPage := TWebPage.Create(SharedNetworkContext, FSink, nil);
+  FSink.AttachNavigable(FPage.Navigable);
+  Factory := FScriptExecutorFactory;
+  if not Assigned(Factory) then
+    Factory := DefaultScriptExecutorFactory;
+  if Assigned(Factory) then
+  begin
+    FExecutor := Factory(Self, FPage);
+    FPage.Navigable.Executor := FExecutor;
+  end;
+  FObserver := TViewObserver.Create;
+  TViewObserver(FObserver).View := Self;
+  FPage.Navigable.ObserverObject := FObserver;
+  FPage.OnWake := @PageWake;
+  FPage.OnRenderingRequested := @RenderingRequested;
+  AdoptDocument(FPage.Navigable.ActiveDocument);
+end;
+
+function TWebView.GetNavigable: TNavigable;
+begin
+  EnsurePage;
+  Result := FPage.Navigable;
+end;
+
+{ Element pointers die with their document: drop every one held. }
+procedure TWebView.ForgetElements;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FHoverChain) do
+    FHoverChain[Index].Release;
+  FHoverChain := nil;
+  for Index := 0 to High(FActiveChain) do
+    FActiveChain[Index].Release;
+  FActiveChain := nil;
+  if FFocusedElement <> nil then
+    FFocusedElement.Release;
+  FFocusedElement := nil;
+  if FPressedLink <> nil then
+    FPressedLink.Release;
+  FPressedLink := nil;
+  if FPressedControl <> nil then
+    FPressedControl.Release;
+  FPressedControl := nil;
+  if FSelectElement <> nil then
+    FSelectElement.Release;
+  FSelectElement := nil;
+  if FPendingFragment <> nil then
+    FPendingFragment.Release;
+  FPendingFragment := nil;
+  FHasPendingFragment := False;
+end;
+
+procedure TWebView.ReleaseDocument;
+begin
+  ForgetElements;
+  FTextIndex.Clear;
+  FTextIndexValid := False;
+  FSelectionAnchor := TextPosition(-1, 0);
+  FSelectionFocus := FSelectionAnchor;
+  FreeAndNil(FPainter);
+  FreeAndNil(FLayout);
+  if FDocument <> nil then
+  begin
+    FSink.DocumentGoing(FDocument);
+    FreeDocumentResources(FDocument);
+  end;
+  FDocument := nil;
+  FBackingValid := False;
+  FFixedChecked := False;
+end;
+
+procedure TWebView.AdoptDocument(Document: TDocument);
+begin
+  if Document = FDocument then
+    Exit;
+  ReleaseDocument;
+  FHasPendingRestore := False;
+  SetStatus('');
+  FDocument := Document;
+  if Document = nil then
+    Exit;
+  FSink.PrepareDocument(Document);
+  FLayout := TDocumentLayout.Create(Document);
+  FPainter := TDocumentPainter.Create(FLayout);
+  ApplyViewport;
+  RequestFrame;
+  InvalidateViewport;
+end;
+
+{ ---- the event loop ---- }
+
+{ Any thread: the page has work. }
+procedure TWebView.PageWake(Sender: TObject);
+begin
+  PostWake;
+end;
+
+procedure TWebView.PostWake;
+begin
+  if InterlockedExchange(FWakePending, 1) = 0 then
+    if not PostMessage(Self, MessageWebViewWake) then
+      FWakePending := 0;
+end;
+
+procedure TWebView.ReceiveMessage(var Message: TPostedMessage);
+begin
+  if Message.Code = MessageWebViewWake then
+  begin
+    FWakePending := 0;
+    PumpEventLoop;
+    Exit;
+  end;
+  if (Message.Code = MessageNotify) and ((TControl(Message.Parameter1) = FVerticalBar) or
+     (TControl(Message.Parameter1) = FHorizontalBar)) then
+  begin
+    if Message.Parameter2 = NotifyChanged then
+      ScrollBarMoved(TScrollBar(Message.Parameter1));
+    Exit;
+  end;
+  inherited ReceiveMessage(Message);
+end;
+
+procedure TWebView.PumpEventLoop;
+var
+  Delay: Double;
+begin
+  if FPage = nil then
+    Exit;
+  FPage.ProcessPendingWork(TaskBudgetMilliseconds);
+  if FPage.Loop.HasReadyTask then
+    PostWake;
+  Delay := FPage.MillisecondsUntilNextTimer;
+  if Delay >= 0 then
+  begin
+    FLoopTimer.Interval := Max(1, Ceil(Delay));
+    FLoopTimer.Enabled := True;
+  end
+  else
+    FLoopTimer.Enabled := False;
+  RequestFrame;
+end;
+
+procedure TWebView.LoopTimerFired(Sender: TTimer);
+begin
+  FLoopTimer.Enabled := False;
+  PumpEventLoop;
+end;
+
+procedure TWebView.RenderingRequested(Sender: TObject);
+begin
+  RequestFrame;
+end;
+
+procedure TWebView.RequestFrame;
+begin
+  if not FFrameTimer.Enabled then
+    FFrameTimer.Enabled := True;
+end;
+
+procedure TWebView.FrameTimerFired(Sender: TTimer);
+begin
+  FFrameTimer.Enabled := False;
+  RenderFrame;
+end;
+
+procedure TWebView.RenderFrame;
+begin
+  if FPage = nil then
+    Exit;
+  FPage.RenderingOpportunity;
+  if FLayout = nil then
+    Exit;
+  UpdateLayout;
+  ApplyPendingScroll;
+  if not FBackingValid or (FLayout.PaintVersion <> FBackingVersion) then
+    InvalidateViewport;
+  { Tasks the frame queued (animation frame callbacks, events). }
+  if FPage.Loop.HasReadyTask then
+    PostWake;
+end;
+
+{ ---- geometry ---- }
+
+function TWebView.DeviceScale: Double;
+begin
+  Result := DeviceScaleFor(Scaled(1000) / 1000, FZoom);
+end;
+
+function TWebView.ViewportPixelWidth: LongInt;
+begin
+  Result := RectangleWidth(PixelBounds);
+  if FVerticalBar.Visible then
+    Dec(Result, RectangleWidth(FVerticalBar.PixelBounds));
+  if Result < 1 then
+    Result := 1;
+end;
+
+function TWebView.ViewportPixelHeight: LongInt;
+begin
+  Result := RectangleHeight(PixelBounds);
+  if FHorizontalBar.Visible then
+    Dec(Result, RectangleHeight(FHorizontalBar.PixelBounds));
+  if Result < 1 then
+    Result := 1;
+end;
+
+function TWebView.ViewportCssWidth: Double;
+begin
+  Result := ViewportPixelWidth / DeviceScale;
+end;
+
+function TWebView.ViewportCssHeight: Double;
+begin
+  Result := ViewportPixelHeight / DeviceScale;
+end;
+
+procedure TWebView.ApplyViewport;
+begin
+  FSink.SetViewport(ViewportCssWidth, ViewportCssHeight, DeviceScale);
+  if FLayout <> nil then
+    FLayout.SetViewport(ViewportCssWidth, ViewportCssHeight, DeviceScale);
+end;
+
+{ Lays the page out, and again if the scroll bars came or went. }
+procedure TWebView.UpdateLayout;
+var
+  Round_: Integer;
+  HadVertical, HadHorizontal: Boolean;
+begin
+  if FLayout = nil then
+    Exit;
+  for Round_ := 1 to 3 do
+  begin
+    ApplyViewport;
+    if FLayout.NeedsUpdate then
+      FLayout.Update;
+    HadVertical := FVerticalBar.Visible;
+    HadHorizontal := FHorizontalBar.Visible;
+    UpdateScrollBars;
+    if (HadVertical = FVerticalBar.Visible) and (HadHorizontal = FHorizontalBar.Visible) then
+      Break;
+    { The bars take room: place them now, the viewport is narrower. }
+    Layout;
+  end;
+end;
+
+procedure TWebView.Layout;
+var
+  Width, Height, BarWidth: LongInt;
+begin
+  Width := Unscaled(RectangleWidth(PixelBounds));
+  Height := Unscaled(RectangleHeight(PixelBounds));
+  BarWidth := Theme.ScrollBarWidth;
+  if FVerticalBar.Visible then
+    FVerticalBar.AssignBounds(Width - BarWidth, 0, BarWidth, Height - Ord(FHorizontalBar.Visible) * BarWidth);
+  if FHorizontalBar.Visible then
+    FHorizontalBar.AssignBounds(0, Height - BarWidth, Width - Ord(FVerticalBar.Visible) * BarWidth, BarWidth);
+  inherited Layout;
+  ApplyViewport;
+  RequestFrame;
+  InvalidateViewport;
+end;
+
+{ ---- navigation ---- }
+
+function TWebView.Navigate(const Address: string): Boolean;
+var
+  ScrollX, ScrollY: Single;
+begin
+  EnsurePage;
+  if FLayout <> nil then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
+  end;
+  Result := FPage.NavigateTo(Address);
+  PostWake;
+end;
+
+procedure TWebView.LoadHtml(const Html, BaseUrl: string);
+var
+  Base: TUrlRecord;
+begin
+  EnsurePage;
+  if not ParseUrl(BaseUrl, Base) then
+    ParseUrl('about:blank', Base);
+  FPage.Navigable.LoadHtml(Html, Base);
+  PostWake;
+end;
+
+procedure TWebView.GoBack;
+begin
+  EnsurePage;
+  FPage.Navigable.Back;
+  PostWake;
+end;
+
+procedure TWebView.GoForward;
+begin
+  EnsurePage;
+  FPage.Navigable.Forward;
+  PostWake;
+end;
+
+procedure TWebView.Reload(BypassCache: Boolean);
+begin
+  EnsurePage;
+  FPage.Navigable.Reload(BypassCache);
+  PostWake;
+end;
+
+procedure TWebView.Stop;
+begin
+  if FPage = nil then
+    Exit;
+  FPage.Navigable.Stop;
+  PostWake;
+end;
+
+function TWebView.GetCanGoBack: Boolean;
+begin
+  Result := (FPage <> nil) and FPage.Navigable.History.CanGoBack;
+end;
+
+function TWebView.GetCanGoForward: Boolean;
+begin
+  Result := (FPage <> nil) and FPage.Navigable.History.CanGoForward;
+end;
+
+{ ---- zoom ---- }
+
+procedure TWebView.SetZoom(Value: Double);
+var
+  ScrollX, ScrollY: Single;
+  Ratio: Double;
+begin
+  Value := ClampZoom(Value);
+  if Abs(Value - FZoom) < 0.0001 then
+    Exit;
+  { Keep the same part of the page at the top. }
+  ScrollX := 0;
+  ScrollY := 0;
+  Ratio := 0;
+  if FLayout <> nil then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    if FLayout.DocumentHeight > 0 then
+      Ratio := ScrollY / FLayout.DocumentHeight;
+  end;
+  FZoom := Value;
+  ApplyViewport;
+  if FLayout <> nil then
+  begin
+    UpdateLayout;
+    ScrollViewportTo(ScrollX, Ratio * FLayout.DocumentHeight);
+  end;
+  InvalidateViewport;
+  if Assigned(FOnZoomChanged) then
+    FOnZoomChanged(Self);
+end;
+
+procedure TWebView.ZoomIn;
+begin
+  SetZoom(ZoomedIn(FZoom));
+end;
+
+procedure TWebView.ZoomOut;
+begin
+  SetZoom(ZoomedOut(FZoom));
+end;
+
+procedure TWebView.ResetZoom;
+begin
+  SetZoom(1);
+end;
+
+{ ---- what the navigable tells ---- }
+
+procedure TWebView.NavigableLocationChanged(const Url: string);
+begin
+  FUrl := Url;
+  if Assigned(FOnLocationChanged) then
+    FOnLocationChanged(Self, Url);
+end;
+
+procedure TWebView.NavigableTitleChanged(const Title: string);
+begin
+  FTitle := Title;
+  if Assigned(FOnTitleChanged) then
+    FOnTitleChanged(Self, Title);
+end;
+
+procedure TWebView.NavigableLoadingStateChanged(State: TLoadingState);
+begin
+  FState := State;
+  if Assigned(FOnLoadingStateChanged) then
+    FOnLoadingStateChanged(Self, State);
+  RequestFrame;
+end;
+
+procedure TWebView.NavigableFaviconChanged(Image: TImage);
+begin
+  FFavicon.Free;
+  FFavicon := Image;
+  if Assigned(FOnFaviconChanged) then
+    FOnFaviconChanged(Self);
+end;
+
+procedure TWebView.NavigableHistoryChanged;
+begin
+  if Assigned(FOnHistoryChanged) then
+    FOnHistoryChanged(Self);
+end;
+
+procedure TWebView.NavigableScrollToFragment(Element: TElement);
+begin
+  if FPendingFragment <> nil then
+    FPendingFragment.Release;
+  FPendingFragment := Element;
+  if Element <> nil then
+    Element.Retain;
+  FHasPendingFragment := True;
+  RequestFrame;
+end;
+
+procedure TWebView.NavigableRestoreScrollPosition(X, Y: Double);
+begin
+  FHasPendingRestore := True;
+  FPendingRestoreX := X;
+  FPendingRestoreY := Y;
+  RequestFrame;
+end;
+
+function TWebView.NavigableConfirmUnload: Boolean;
+begin
+  if Assigned(FOnConfirmUnload) then
+    Result := FOnConfirmUnload(Self)
+  else
+    Result := True;
+end;
+
+procedure TWebView.NavigableDownloadRequested(constref Download: TDownloadInfo);
+begin
+  if Assigned(FOnDownloadRequested) then
+    FOnDownloadRequested(Self, Download);
+end;
+
+procedure TWebView.NavigableFailed(const Url, Reason: string);
+begin
+  if Assigned(FOnNavigationFailed) then
+    FOnNavigationFailed(Self, Url, Reason);
+end;
