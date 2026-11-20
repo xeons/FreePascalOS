@@ -75,6 +75,11 @@ type
     KeepAlive: Boolean;
     { Offer HTTP/2 over TLS (--no-http2: HTTP/1.1 only). }
     Http2: Boolean;
+    { HTTP/3 where a server advertised it by Alt-Svc (--no-http3: not). }
+    Http3: Boolean;
+    { --alt-svc-file: the alternative services read at the start and
+      written at the end ('' for none). }
+    AltSvcFile: string;
     { Cookies kept and sent (--no-cookies: not); files to read them from
       and write them to; session cookies written too. }
     UseCookies: Boolean;
@@ -119,6 +124,7 @@ begin
   Settings.UserAgent := DefaultUserAgent;
   Settings.KeepAlive := True;
   Settings.Http2 := True;
+  Settings.Http3 := True;
   Settings.UseCookies := True;
   Settings.UseNetrc := True;
   Settings.Compression := CompressionNone;

@@ -53,6 +53,7 @@ type
     procedure Connecting(const Host, Address: string; Port: Word); override;
     procedure Connected; override;
     procedure ConnectFailed(const Reason: string); override;
+    procedure ConnectingAlternative(const Host: string; Port: Word; const ProtocolId: string); override;
     procedure CertificateNotVerified(const Host, Reason: string); override;
     procedure ReusingConnection(const HostText: string; Port: Word); override;
     procedure RequestSent; override;
@@ -119,6 +120,19 @@ end;
 procedure TWgetObserver.ConnectFailed(const Reason: string);
 begin
   Say(Format('failed: %s.'#10, [Reason]));
+end;
+
+procedure TWgetObserver.ConnectingAlternative(const Host: string; Port: Word; const ProtocolId: string);
+var
+  Name: string;
+begin
+  Name := ProtocolId;
+  if ProtocolId = 'h3' then
+    Name := 'HTTP/3';
+  if Pos(':', Host) > 0 then
+    Say(Format('Connecting to [%s]:%d over %s... ', [Host, Port, Name]))
+  else
+    Say(Format('Connecting to %s:%d over %s... ', [Host, Port, Name]));
 end;
 
 procedure TWgetObserver.CertificateNotVerified(const Host, Reason: string);

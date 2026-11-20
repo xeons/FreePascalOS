@@ -19,8 +19,10 @@
 {
   What one run of wget keeps from one request to the next: the
   settings, libhttp's client (its connections: as GNU wget, one kept
-  alive at a time, an HTTP/2 one shared by every request to its
-  server), the cookie jar (read from --load-cookies at the start,
+  alive at a time, an HTTP/2 or HTTP/3 one shared by every request to
+  its server; HTTP/3 from libquic, used where a server advertised it by
+  Alt-Svc unless --no-http3, the alternatives read from and written to
+  --alt-svc-file), the cookie jar (read from --load-cookies at the start,
   written to --save-cookies at the end) and the authenticator (how
   each server wants to be authenticated, the credentials given or from
   ~/.netrc).
@@ -56,6 +58,11 @@ type
     function LoadCookies: Boolean;
     { --save-cookies; False (said why) if the file cannot be written. }
     function SaveCookies: Boolean;
+    { --alt-svc-file: what servers advertised on earlier runs (a missing
+      file is an empty one). }
+    procedure LoadAltServices;
+    { False (said why) if --alt-svc-file cannot be written. }
+    function SaveAltServices: Boolean;
     property Settings: TWgetSettings read FSettings;
     property Cookies: TCookieJar read FCookies;
     property Authenticator: TAuthenticator read FAuthenticator;
@@ -75,7 +82,8 @@ uses
   Util.Messages,
   Http.CookieFiles,
   Http.Observers,
-  Http.SocketConnector;
+  Http.SocketConnector,
+  Http3.SystemConnections;
 
 function CurrentUnixTime: Int64;
 begin
@@ -92,6 +100,7 @@ begin
   Result.TrustFile := Settings.TrustFile;
   Result.CipherSuites := Settings.CipherSuites;
   Result.AllowHttp2 := Settings.Http2;
+  Result.AllowHttp3 := Settings.Http3;
   { wget asks for gzip itself, and only with --compression. }
   Result.AcceptEncoding := '';
 end;
@@ -109,7 +118,10 @@ begin
     Provider := @FNetrc.Lookup;
   FAuthenticator := TAuthenticator.Create(Settings.User, Settings.Password, Settings.HasUser, Provider);
   FObserver := TWgetObserver.Create(Settings.Quiet, Settings.ShowServerResponse);
-  FClient := CreateSystemClient(ClientSettingsOf(Settings));
+  if Settings.Http3 then
+    FClient := CreateHttp3Client(ClientSettingsOf(Settings))
+  else
+    FClient := CreateSystemClient(ClientSettingsOf(Settings));
   FClient.ObserverObject := FObserver;
   FClient.Authenticator := FAuthenticator;
   if Settings.UseCookies then
@@ -175,6 +187,52 @@ begin
     on EStreamError do
     begin
       Report(Format('cannot write the cookies to ''%s''', [FSettings.SaveCookiesFile]));
+      Result := False;
+    end;
+  end;
+end;
+
+procedure TWgetSession.LoadAltServices;
+var
+  Lines: TStringList;
+begin
+  if (FSettings.AltSvcFile = '') or not FileExists(FSettings.AltSvcFile) then
+    Exit;
+  Lines := TStringList.Create;
+  try
+    try
+      Lines.LoadFromFile(FSettings.AltSvcFile);
+      FClient.AltServices.LoadText(Lines.Text, CurrentUnixTime);
+    except
+      on EStreamError do
+        Report(Format('cannot read the alternative services in ''%s''', [FSettings.AltSvcFile]));
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function TWgetSession.SaveAltServices: Boolean;
+var
+  Stream: TFileStream;
+  Text: string;
+begin
+  Result := True;
+  if FSettings.AltSvcFile = '' then
+    Exit;
+  Text := FClient.AltServices.SaveText(CurrentUnixTime);
+  try
+    Stream := TFileStream.Create(FSettings.AltSvcFile, fmCreate);
+    try
+      if Text <> '' then
+        Stream.WriteBuffer(Text[1], Length(Text));
+    finally
+      Stream.Free;
+    end;
+  except
+    on EStreamError do
+    begin
+      Report(Format('cannot write the alternative services to ''%s''', [FSettings.AltSvcFile]));
       Result := False;
     end;
   end;

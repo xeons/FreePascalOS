@@ -22,8 +22,10 @@
   wget [OPTION]... URL...
 
   Fetches each URL through libhttp: HTTP/1.1, or HTTP/2 when a server
-  chooses it over TLS (libtls), and saves it in a file named after the
-  URL (index.html for a directory),
+  chooses it over TLS (libtls), or HTTP/3 over QUIC (libquic) once a
+  server advertised it by Alt-Svc (--no-http3: never; --alt-svc-file
+  keeps what servers advertised between runs), and saves it in a file
+  named after the URL (index.html for a directory),
   or as -O says ("-O -": standard output). Follows redirects (at most
   20), takes chunked and Content-Length bodies, continues files (-c),
   tries again after network failures (-t) and shows a progress line on
@@ -82,6 +84,10 @@ const
     '                              TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256)'#10 +
     '      --no-http-keep-alive    one request per connection'#10 +
     '      --no-http2              HTTP/1.1 only (HTTP/2 is offered over TLS)'#10 +
+    '      --http3, --no-http3     use HTTP/3 where a server advertises it (Alt-Svc),'#10 +
+    '                              or never (the default: --http3)'#10 +
+    '      --alt-svc-file=FILE     read the advertised alternatives from FILE and'#10 +
+    '                              write them back at the end'#10 +
     '      --compression=TYPE      auto, gzip (ask for gzip and decode it) or none'#10 +
     '      --trust-server-names    name the file after the last URL of a redirection'#10 +
     #10 +
@@ -142,6 +148,9 @@ const
   OptionNoDirectories = 31;
   OptionExecute = 32;
   OptionNoHttp2 = 33;
+  OptionHttp3 = 34;
+  OptionNoHttp3 = 35;
+  OptionAltSvcFile = 36;
 
   MaximumTimeoutSeconds = 24 * 3600;
   MaximumTries = 1000000;
@@ -310,6 +319,9 @@ begin
       OptionCiphers: ParseCipherList(Value, Settings);
       OptionNoKeepAlive: Settings.KeepAlive := False;
       OptionNoHttp2: Settings.Http2 := False;
+      OptionHttp3: Settings.Http3 := True;
+      OptionNoHttp3: Settings.Http3 := False;
+      OptionAltSvcFile: Settings.AltSvcFile := Value;
       OptionCompression: ParseCompression(Value, Settings);
       OptionTrustServerNames: Settings.TrustServerNames := True;
       OptionNoCookies: Settings.UseCookies := False;
@@ -416,6 +428,9 @@ begin
     CommandOption(#0, 'ciphers', True, OptionCiphers),
     CommandOption(#0, 'no-http-keep-alive', False, OptionNoKeepAlive),
     CommandOption(#0, 'no-http2', False, OptionNoHttp2),
+    CommandOption(#0, 'http3', False, OptionHttp3),
+    CommandOption(#0, 'no-http3', False, OptionNoHttp3),
+    CommandOption(#0, 'alt-svc-file', True, OptionAltSvcFile),
     CommandOption(#0, 'compression', True, OptionCompression),
     CommandOption(#0, 'trust-server-names', False, OptionTrustServerNames),
     CommandOption(#0, 'no-cookies', False, OptionNoCookies),
@@ -454,6 +469,7 @@ begin
   Session := TWgetSession.Create(Settings);
   if not Session.LoadCookies then
     ExitStatus := ExitFileError;
+  Session.LoadAltServices;
   if Settings.Recursive or Settings.PageRequisites then
     Status := RetrieveRecursively(Session, Urls)
   else
@@ -461,6 +477,8 @@ begin
   if Status <> ExitSuccess then
     ExitStatus := Status;
   if not Session.SaveCookies and (ExitStatus = ExitSuccess) then
+    ExitStatus := ExitFileError;
+  if not Session.SaveAltServices and (ExitStatus = ExitSuccess) then
     ExitStatus := ExitFileError;
   Session.Free;
   CommandLine.Free;
