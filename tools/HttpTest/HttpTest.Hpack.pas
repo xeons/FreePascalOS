@@ -322,8 +322,48 @@ begin
   end;
 end;
 
+{ Thousands of blocks through one encoder and decoder: the memory in
+  use stays where it was after the first ones (the dynamic tables are
+  bounded, the buffers reused). }
+procedure TestMemoryBound;
+var
+  Encoder: THpackEncoder;
+  Decoder: THpackDecoder;
+  Output: THttpByteBuffer;
+  Fields, Decoded: THpackHeaderList;
+  Round: Integer;
+  Before, After: PtrUInt;
+begin
+  Encoder := THpackEncoder.Create;
+  Decoder := THpackDecoder.Create;
+  Output := Default(THttpByteBuffer);
+  try
+    Before := 0;
+    for Round := 1 to 5000 do
+    begin
+      Fields := MakeFields([':method: GET', ':path: /item/' + IntToStr(Round), 'x-round: ' + IntToStr(Round * 7919),
+        'user-agent: FreePascalOS-libhttp/1.0']);
+      ClearBuffer(Output);
+      Encoder.Encode(Fields, Output);
+      Decoded := nil;
+      Decoder.Decode(@Output.Data[0], Output.Length, Decoded);
+      if Round = 100 then
+        Before := GetFPCHeapStatus.CurrHeapUsed;
+    end;
+    After := GetFPCHeapStatus.CurrHeapUsed;
+    Check((Encoder.Table.Size <= DefaultHeaderTableSize) and (Decoder.Table.Size <= DefaultHeaderTableSize),
+      'HPACK: the dynamic tables stay within 4096 bytes');
+    Check(After <= Before + 16384, 'HPACK: 5000 blocks in constant memory (' + IntToStr(Int64(After) - Int64(Before)) +
+      ' bytes more after the first 100)');
+  finally
+    Decoder.Free;
+    Encoder.Free;
+  end;
+end;
+
 procedure TestHpack;
 begin
+  TestMemoryBound;
   TestIntegers;
   TestSingleFields;
   TestRequests(False);
