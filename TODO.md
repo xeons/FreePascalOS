@@ -1139,12 +1139,17 @@ Part 2 (style, layout, painting):
 - [ ] Fixed table layout, collapsing borders, `visibility: collapse`
 - [x] Synthetic bold and oblique for faces the system lacks; paint-only
       restyle without relayout
-- [ ] Bidi and writing modes, shaping beyond kerning, @font-face loading,
+- [x] @font-face loading: TrueType and WOFF 1 faces join the font library
+      (Web.Loading.LayoutSink, Web.Text.Woff); fonts re-bound in place
+- [ ] Bidi and writing modes, shaping beyond kerning, WOFF2 and CFF web
+      fonts (web fonts are process-wide, not per document),
       ::first-line/::first-letter
 - [ ] Inline boxes split around blocks, relative inline boxes, real sticky
       positioning, transforms, filters, blend modes, clip-path,
       border-image, conic gradients, blurred text shadows
-- [ ] Incremental display list updates; scrollbars (left to the web view)
+- [x] Scrollbars (the web view's: theme bars for the viewport, thin bars in
+      scroll containers)
+- [ ] Incremental display list updates
 
 Later phases: loading through libhttp, JavaScript bindings (wrappers in
 the node's rare data, `TScriptHost`, element interface classes via
@@ -1165,16 +1170,19 @@ Part 2, loading side (event loop, fetch, loading, navigation):
       srcset/sizes/picture (decoded on threads, downscaled), @font-face,
       favicon, link preload, preload scanner, RFC 9218 priorities
 - [x] Script scheduling (parser-blocking, defer, async, in-order, modules)
-      for a `TScriptExecutor`; nothing runs yet
+      for a `TScriptExecutor` (Web.Script.PageScripting runs them)
+- [x] The layout's resource sink (Web.Loading.LayoutSink): sheets, imports
+      of <style> sheets, images with natural sizes, url() images, web fonts;
+      host test renders a fetched page
 - [x] Navigable with session history: navigate, fragments, back/forward,
       reload, stop, meta refresh, unload events, observer notifications;
       `TWebPage` for embedders
 - [x] Host test (`make web-load-test`) with an in-process HTTP server
 - [ ] CSP enforcement and Subresource Integrity (stored on requests now)
-- [ ] history.pushState/replaceState and the History/Location bindings
-      (entries have the state slot); bfcache
-- [ ] iframes and nested navigables; form submission (POST navigations are
-      supported by `TNavigateOptions`)
+- [x] history.pushState/replaceState (TNavigable.ChangeUrlFromScript)
+- [ ] bfcache; popstate's state object across documents
+- [x] Form submission from the web view (GET and POST, urlencoded)
+- [ ] iframes and nested navigables; multipart/form-data
 - [ ] Animated images (only the first frame goes to the sink); decoding
       images progressively as they arrive
 - [ ] ORB (opaque response blocking) for no-cors responses; blob: URLs
@@ -1204,12 +1212,13 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       `TScriptEnvironment.FetchClassicScript`, event handler attributes and
       properties, errors to the console with file and line
 - [x] Host test (`make web-script-test`, `JS_GC_STRESS=1` collects often)
-- [ ] Merge `TDomElementAdapter` (Web.Bindings.Selectors) with the style
-      system's element adapter once that lands; hover/focus states
-- [ ] Module scripts (libjavascript has no modules yet), import maps; the
-      in-order list of script-inserted scripts (async=false)
-- [ ] The event loop's side of `TScriptEnvironment` (timers, script
-      fetching, navigation, history, prompts, cookies)
+- [x] Selectors through the style system's element adapter (hover, focus
+      states shared)
+- [x] Module scripts through the loader (resolver and fetcher per context)
+- [ ] Import maps (bare specifiers fail)
+- [x] The event loop's side of `TScriptEnvironment` (Web.Script.PageScripting:
+      timers, navigation, history, prompts, cookies, viewport) and the
+      loader's `TScriptExecutor`; host test with a scripted page
 - [ ] ErrorEvent and window.onerror for reported exceptions;
       unhandledrejection
 - [ ] document.open() replacing a loaded document; document.write from
@@ -1221,10 +1230,30 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       only, today); layout answers (offset*, client*, getBoundingClientRect)
 - [ ] AbortSignal for addEventListener's signal option; focus tracking
       (document.activeElement, focus events from the input code)
-- [ ] Typed arrays: TextEncoder.encode and TextDecoder.decode use
-      Uint8Array/ArrayBuffer once libjavascript has them (arrays meanwhile)
+- [x] Typed arrays: TextEncoder.encode gives a Uint8Array (checked in the
+      browser)
 - [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, Blob/File,
       FormData, fetch() and XMLHttpRequest, Storage, postMessage, iframes
 - [ ] A cheaper interface object: native accessors keyed by property in
       libjavascript would let one getter serve every attribute (a window
       costs about 420 KB of script heap over the bare realm today)
+
+## Web view and browser
+
+- [x] libwebview: TWebView (event loop on the GUI thread, backing surface
+      with scroll moves, theme scroll bars, hover/active/focus states,
+      CSS cursors, links with dispositions, selection and copy, find,
+      zoom with the display scale, forms, context menu, prompts, console)
+- [x] Browser (/app/browser): tabs, address bar with URL detection and a
+      search URL setting, back/forward/reload/stop/home, bookmarks bar and
+      menu, history and about pages, downloads to ~/Downloads, find bar,
+      zoom, settings (home page, search URL, HTTP/3, JavaScript); in
+      test-input
+- [ ] Web view: caret movement and selection inside text fields (typing
+      appends at the end), text field values kept in the value attribute,
+      dragging the bars of inner scroll containers, drag and drop, IME
+- [ ] Web view: lazy images near the viewport, animated images, printing
+- [ ] Browser: session restore, per-site settings, a downloads window with
+      cancel buttons, separate windows (Shift+click opens a tab), tab drag
+- [ ] getComputedStyle and layout metrics from the web view's layout (a
+      `TScriptEnvironment` hook the view could answer)

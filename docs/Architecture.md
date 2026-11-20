@@ -9869,16 +9869,50 @@ timers are removed from the window unless `SupportsTimers`):
   (complete, load), and calls `PerformMicrotaskCheckpoint` after each
   task it runs.
 
-**Not done yet**: module scripts, the in-order list of script-inserted
-scripts, ErrorEvent and onerror's arguments, the event handler scope
+**Scripts in loaded pages** (`Web.Script.PageScripting`): a page's
+`TPageScriptExecutor` (the loader's `TScriptExecutor`, made by the web
+view for its page) and its `TPageScriptEnvironment` join the two sides.
+The loader tells its executor when a document starts, stops (aborted:
+being left) and goes (`DocumentStarted`, `DocumentStopped`,
+`DocumentFreed`, virtual hooks of `TScriptExecutor` called by
+`TDocumentLoader`), and the executor makes the document's
+`TScriptContext` with the loader's `TWebWindow` as the window (a binding
+context takes a window event target now; without one it makes its own),
+so the loader's events (DOMContentLoaded, load, pageshow) and the
+page's listeners and `on...` handlers meet. The loader prepares,
+fetches and orders script elements (parser-blocking, deferred, async,
+script-inserted in order, modules) and hands each to `ExecuteScript`;
+the context does not prepare scripts itself (`PreparesScripts` False)
+and document.readyState is the document's (`ReadyStateFromDocument`).
+While a parser-inserted script runs, document.write goes to the loader's
+parser (`AttachParser`). Module scripts run through the engine's
+`EvaluateModule` with a resolver (specifiers against the importing
+module's URL; bare ones need an import map, not read yet) and a fetcher
+that asks the loader (`TScriptScheduler.FetchScript`: CORS, UTF-8), one
+pair per context. The loop's microtask checkpoint runs every live
+context's jobs. The environment: timers as the loop's delayed tasks
+grouped by context (they stop with its document); location; navigation
+with the page as its source; history.go as a history traversal task;
+pushState and replaceState through `TNavigable.ChangeUrlFromScript` (a
+new entry of the same document, or the current one); prompts as events
+(`OnAlert`, `OnConfirm`, `OnPrompt`: the web view's page waits while a
+dialog is open); the console (`OnConsoleMessage`); the viewport and
+pixel ratio from the resource sink's media environment; document.cookie
+through the network context's jar (HttpOnly cookies neither read nor
+replaced); the user agent and language. Because the bindings' units use
+each other in a cycle, libweb is compiled a second time from
+`Web.Script.PageScripting`, so programs that use them find consistent
+units. querySelector, matches and closest match through the style
+system's element adapter (`Web.Style.Adapter`), so script sees the
+hover, active and focus states the web view sets.
+
+**Not done yet**: import maps, ErrorEvent and onerror's arguments, the event handler scope
 chain (form, document), document.open on a loaded document, shadow DOM,
 Range and Selection, TreeWalker, Blob, FormData, fetch and
 XMLHttpRequest, Storage, iframes and postMessage; getComputedStyle
-gives the inline declarations (read only) until the style system can
-compute styles, layout metrics are 0, images have no natural size; with
-no typed arrays in libjavascript yet, TextEncoder gives an array of
-numbers (a Uint8Array as soon as the global object has one) and
-TextDecoder reads any array-like.
+gives the inline declarations (read only) and layout metrics are 0 (the
+web view's layout could answer both through an environment hook);
+images have no natural size for script. TextEncoder gives a Uint8Array.
 
 ### Tests
 
@@ -10143,7 +10177,30 @@ results to styling and layout without either knowing the other:
   layout asks through `OnImageNeeded(Url, BaseUrl)` once per URL text (as
   written; BaseUrl is what it is relative to), the loader answers with
   SetUrlImage under the same URL text, now or later.
+- `SetElementImage(Element, Image, NaturalWidth, NaturalHeight)`: with
+  the natural size the loader computed (a downscaled image, a srcset
+  density), which replaced boxes take as their intrinsic size.
+- `FontsChanged` / `NotifyFontsChanged`: the process's font library
+  gained web fonts; every layout lays out again (`rcFonts`).
 - `FreeDocumentResources(Document)` when the document goes.
+
+The sink that fills them is `TLayoutResourceSink`
+(`Web.Loading.LayoutSink`): the loader's deliveries go to the active
+document's resources (others are dropped): link sheets, the imports of
+`<style>` sheets (asked of the loader with `LoadImportsOf`, then
+`StyleSheetsChanged`; the styler indexes its sheets again when told,
+since an import hangs on a sheet already in use), images with their
+natural size, url() images fetched when the layout first asks (no-cors,
+sniffed, decoded on the page thread, given under the URL text as
+written), and @font-face sources: TrueType, OpenType with TrueType
+outlines and WOFF 1 (`Web.Text.Woff` unwraps it with libcompression's
+zlib) join the font library under the rule's family, weight and style;
+the fonts made from styles then pick their faces again in place
+(`RefreshTextFonts`: no font object goes, so display lists keep valid
+pointers) and every layout measures again. WOFF2 and CFF outlines are
+refused by `FontFormatSupported`, so the loader tries the next source;
+web fonts are process-wide rather than per document. `SetViewport`
+gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
 their images and are laid out again, the display list is rebuilt).
@@ -10160,6 +10217,7 @@ their images and are laid out again, the display list is rebuilt).
     Layout.SetScrollOffset(NodeOrNil, X, Y); Layout.GetScrollOffset(...)
     Layout.SetElementStates(Element, [esHover, esFocus ...])
     Layout.DocumentWidth / DocumentHeight / NodeBounds(Node, ...) / PaintVersion
+    Layout.DisplayListVersion                      { PaintVersion less the viewport's scrolls }
 
 DOM changes reach the layout through the document observer, so a web
 view only calls Update (and repaints when PaintVersion moved).
@@ -10196,14 +10254,14 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), font loading from @font-face, ::first-line and ::first-letter, inline boxes
+scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes, true sticky positioning,
 transforms, filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
-`visibility: collapse` of table parts, scrollbars (the web view draws
-them from ScrollContainers), incremental display list updates (it is
-rebuilt whole when anything changes).
+`visibility: collapse` of table parts, incremental display list updates
+(it is rebuilt whole when anything changes; scrolling the viewport does
+not rebuild it).
 
 `make web-load-test` (in `make test`) builds `tools/WebLoadTest` with
 libhttp, libcss, libimage and what they need, with range checks. It
@@ -10225,7 +10283,16 @@ the load event, fonts, srcset at a pixel ratio of 2, downscaling, the
 favicon, a late meta charset restarting the parse, text and error
 documents, downloads, scripts in order with the preload scanner
 fetching ahead, unload events, and history (fragments, back, forward,
-reload).
+reload). Then a page rendered end to end: a navigable with the layout's
+sink loads a page with a linked sheet, a `<style>` with an @import, an
+image, a url() background and web fonts (TrueType and WOFF made from
+DejaVu Sans Mono) from the in-process site; the layout dump has the
+sizes those give, the background and the image are painted, and the
+web fonts measure. And a scripted page through `TPageScriptExecutor`:
+inline, external and deferred scripts in order, document.write,
+DOMContentLoaded and load at the page's listeners and handlers,
+setTimeout, document.cookie without the HttpOnly cookie, readyState and
+location, an onclick attribute, alert and pushState.
 
 `make web-script-test` (in `make test`) builds `tools/WebScriptTest`
 with libjavascript, libcss and libhttp's URL units. Each
@@ -10244,6 +10311,147 @@ is in the document, that detached cycles go in one collection, events
 made by native code, fetched scripts in parser order, a document
 outliving its context, and prints the bytes per wrapper.
 `JS_GC_STRESS=1` makes the engines collect every 16 KiB.
+
+## Web view (libwebview)
+
+libwebview (`userland/lib/webview`, `libwebview.so`, units `WebView.*`)
+is `TWebView` (`WebView.Control`, its parts in
+`WebView.Control.*.inc`), a libcontrols control any program embeds to
+show web pages:
+
+    View := TWebView.Create(Root);
+    View.Align := AlignClient;
+    View.OnTitleChanged := @TitleChanged;
+    View.Navigate('https://example.com/');     { or LoadHtml(Html, BaseUrl) }
+
+It owns a `TWebPage` over the program's shared network
+(`WebView.Network`: one libhttp client over the system's sockets with a
+cookie jar and an in-memory cache, local files allowed; a program that
+wants HTTP/3 links libquic and calls `EnableHttp3`; `SetHttp3Allowed`),
+a `TLayoutResourceSink`, and the active document's `TDocumentLayout`
+and `TDocumentPainter` (made on the navigable's `DocumentChanged`, freed
+with the document's resources before the document goes).
+
+- **The loop on the GUI thread.** The page's `OnWake` (any thread)
+  posts the view a message (`MessageWebViewWake`, once until it is
+  served); the view runs tasks for at most 12 ms a turn, posts itself
+  again while tasks are ready, sets a `TTimer` for the loop's next
+  timer, and asks for a frame (a 16 ms timer): rendering opportunity
+  (animation frames), layout, and a repaint when the paint version
+  moved. A hidden view (a background tab) does not lay out.
+- **Painting** into a backing surface of the viewport's size, copied to
+  the window; the viewport is painted again only when what is painted
+  changed. Scrolling the viewport moves the surface's rows and paints
+  the strip that came into view, unless the page has fixed boxes or the
+  step is not whole device pixels; the display list is not rebuilt for
+  it (`DisplayListVersion`). The selection, a text field's caret and
+  the bars of inner scroll containers are drawn over it.
+- **Scrolling**: the theme's `TScrollBar`s for the viewport (placed in
+  `PlaceChildren`); the wheel (the scroll container under the pointer
+  first; Shift for across; Ctrl zooms), arrows, Page Up and Down, Space,
+  Home and End; dragging a selection past the edge.
+- **The pointer**: hit testing for :hover and :active (an element and
+  its ancestors, retained while held), the CSS cursor (the hand over
+  links, the text beam over text and text fields), the hovered link's
+  URL in `OnStatusText`; a click follows a link after a cancelable
+  click event (`OnLinkClicked` first, with the disposition: in the
+  view, a new tab for a target, a background tab for a middle click or
+  Ctrl+click, a new window for Shift); a label acts on its control, a
+  summary opens its details. Dragging selects text (a double click a
+  word), Ctrl+C copies it to the system clipboard, Ctrl+A selects all.
+  The text the page shows is indexed from the display list
+  (`WebView.TextIndex`: each text run with its place, character
+  positions from the font's glyph placement, a text-shadow copy once),
+  which selection, copying (`SelectedText`, `PageText`) and find
+  (`FindText`: after the selection, wrapping, ASCII case folded;
+  scrolled into view) use.
+- **The keyboard and forms** (`WebView.Elements`, `WebView.Forms`): Tab
+  and Shift+Tab move the page's focus between links and controls
+  (:focus, :focus-visible, :focus-within), Enter follows a link or
+  presses a button, Space toggles; text fields and text areas take
+  typing (characters, Backspace, Ctrl+V; the value attribute or the text
+  area's text is the value), check boxes and radio groups toggle, a
+  select opens a pop-up menu of its options, a submit button or Enter in
+  a field submits the form (urlencoded, GET or POST, through the
+  navigable).
+- **Zoom** (Ctrl+plus, Ctrl+minus, Ctrl+0, `Zoom`): the CSS-to-device
+  scale is the window's display scale times the zoom (30 % to 300 %),
+  the top of the page kept; at another display scale the view lays out
+  again by itself.
+- **Context menus**: `OnContextMenuRequested` with what is under the
+  point (link, image, selection, a text field), else a menu of its own.
+- **Scripting**: on unless `ScriptingEnabled` is False (from the next
+  document): libweb's `TPageScriptExecutor`, or a program's own through
+  `ScriptExecutorFactory` / `DefaultScriptExecutorFactory`; the page's
+  prompts come to `OnScriptAlert`, `OnScriptConfirm` and
+  `OnScriptPrompt` (the page's tasks and frames wait meanwhile), its
+  console to `OnConsoleMessage`.
+- For hosts: `Url`, `Title`, `LoadingState`, `Favicon`, `CanGoBack`,
+  `CanGoForward`, `Navigate`, `LoadHtml`, `GoBack`, `GoForward`,
+  `Reload`, `Stop`, `ScrollBy`, `ScrollTo`, `OnTitleChanged`,
+  `OnLocationChanged`, `OnLoadingStateChanged`, `OnFaviconChanged`,
+  `OnHistoryChanged`, `OnZoomChanged`, `OnDownloadRequested`,
+  `OnNavigationFailed`, `OnConfirmUnload`.
+
+libcontrols gained what the view needed: a control's pointer shape is
+asked again after it handled a move (`TControlWindow`), and
+`TMenuItem.Clear`.
+
+Not yet: a caret that moves and selects within a text field (typing
+appends), dragging the bars of inner scroll containers, drag and drop,
+lazy images near the viewport, printing.
+
+## Browser
+
+`browser` (`userland/browser`, installed as `/app/browser`: "Browser"
+in the Internet category with the `app-web-browser` icon) is a web
+browser on libwebview, linked with libquic for HTTP/3:
+
+- The window (`Browser.MainWindow`, its menus and keys in
+  `Browser.MainWindow.Menus.inc`, what the views tell in
+  `Browser.MainWindow.Views.inc`): the menu bar (File, Edit, View,
+  History, Bookmarks, Tools, Help), the tab strip (`Browser.TabStrip`:
+  each tab's icon, or a turning ring while it loads, its title cut with
+  "...", a close button; "+" for a new tab; a middle click closes; the
+  chosen tab in the theme's header band in Sunrise, raised in Classic),
+  the navigation bar (back, forward, reload or stop, home from the icon
+  theme; the address bar; the bookmark button), the bookmarks bar
+  (`Browser.BookmarksBar`), a web view per tab (`Browser.Tabs`), the
+  find bar (`Browser.FindBar`: incremental, Enter and Shift+Enter, match
+  case) and the status bar (the hovered link, downloads, the zoom). The
+  window's title is the page's.
+- The address bar (`Browser.Addresses`, plain logic): a URL with a known
+  scheme as it is, an absolute path as a file, something like a host (a
+  dot, a port, localhost) as https:// (http:// for IP addresses and
+  localhost), anything else searched with the search URL setting ("%s"
+  for the form-encoded words), and with none set a page saying it is not
+  an address. Escape puts the page's address back; Alt+Enter opens it
+  in a new tab.
+- Keys: Ctrl+L (and Alt+D), Ctrl+T, Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab
+  (and Ctrl+Page Down/Up), F5 and Ctrl+R, Alt+Left and Alt+Right,
+  Alt+Home, Ctrl+F and F3, Ctrl++ Ctrl+- Ctrl+0, Ctrl+D, Ctrl+H, Ctrl+J,
+  Ctrl+O (a file).
+- The browser's own pages (`Browser.AboutPages`, through the fetcher's
+  `AboutPageProvider`, for navigations the browser itself starts):
+  about:home (the start page: bookmarks and recently visited pages),
+  about:history, about:bookmarks, about:downloads, in the theme's
+  colours.
+- Kept in the user's settings folder (`Browser.Stores`,
+  ~/.settings/browser): the history (history.txt: time, URL, title; at
+  most 2000 visits) and the bookmarks (bookmarks.txt).
+- Downloads (`Browser.Downloads`): what a page cannot show is fetched
+  again on a thread of its own over the shared client (a local file is
+  copied) into ~/Downloads under a name not taken yet; the status bar
+  follows it.
+- Settings (`Browser.Settings`, group Browser; Tools > Settings,
+  `Browser.SettingsDialog`): the home page, the search URL, HTTP/3,
+  JavaScript, the bookmarks bar. A page's prompts are message boxes and
+  a text dialog (`Browser.PromptDialog`).
+- It prints what happens, a line each (`browser.pas` lists them: tabs,
+  locations, titles, loading states, finds, zoom, bookmarks, downloads,
+  prompts, the console), which `scripts/test-input.py` reads: it shows a
+  local page and checks its title, that it loaded, that its script
+  logged, and its background on the screen.
 
 ## The AArch64 port
 
