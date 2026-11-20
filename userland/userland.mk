@@ -32,7 +32,7 @@
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
 #                  HTTP/3 connections; h3get, wget)
-#                  libsystem <- libweb (the browser engine; htmldump)
+#                  libjavascript, libcss, libhttp <- libweb (the browser engine; htmldump)
 #                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
@@ -317,26 +317,33 @@ $(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcss.so -o $@ \
 		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
-# libweb: the browser engine (encodings, the HTML parser, the DOM). Its
-# tables (atoms, encodings, named character references) are generated
-# from userland/lib/web/data by make-tables.py.
+# libweb: the browser engine (encodings, the HTML parser, the DOM, the
+# script bindings). Its tables (atoms, encodings, named character
+# references) are generated from userland/lib/web/data by make-tables.py,
+# the binding tables from userland/lib/web/bindings/*.webidl by
+# make-bindings.py. The bindings use libjavascript, libcss (selectors,
+# declarations) and libhttp's URL units.
 WEB_GENERATED := $(USER_BUILD_DIRECTORY)/web-generated
-WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
+WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
+	userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl)
 
 $(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
 	@rm -rf $(WEB_GENERATED)
 	@mkdir -p $(WEB_GENERATED)
 	python3 -B userland/lib/web/make-tables.py $(WEB_GENERATED)
+	python3 -B userland/lib/web/make-bindings.py $(WEB_GENERATED)
 	@touch $@
 
-$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) \
-		$(wildcard userland/lib/web/*.inc)
+$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(JAVASCRIPT_LIBRARY) $(CSS_LIBRARY) $(HTTP_LIBRARY) $(WEB_GENERATED)/.generated \
+		$(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc)
 	@rm -rf $(WEB_LIBRARY_OBJECTS)
 	@mkdir -p $(WEB_LIBRARY_OBJECTS)
-	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/web \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) \
+		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fuuserland/lib/web \
 		-Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
-		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ljavascript -lcss -lhttp -ltls -lcompression \
+		-lcryptography -lsystem
 
 # libjavascript: the ECMAScript engine (Js.*) and its embedding API.
 $(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pas)
@@ -462,8 +469,9 @@ $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # through libssh.
 # htmldump parses HTML through libweb.
 WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump)
-$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb
-$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS)
+$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -ljavascript -lcss -lhttp -ltls -lcompression -lcryptography
+$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) \
+	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS)
 $(WEB_PROGRAMS): $(WEB_LIBRARY)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh

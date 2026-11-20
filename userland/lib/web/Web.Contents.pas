@@ -18,7 +18,7 @@
 
 {
   The contents of libweb.so, the browser engine: encodings, the HTML
-  parser and the DOM (layout, painting, loading and the script bindings
+  parser, the DOM and the script bindings (layout, painting and loading
   come in later phases). Compiling this unit compiles all of them.
 }
 unit Web.Contents;
@@ -55,7 +55,26 @@ uses
   Web.Html.Parser,
   Web.Html.Serializer,
   Web.Html.Markup,
-  Web.Html.TreeDump;
+  Web.Html.TreeDump,
+  Web.Dom.UiEvents,
+  Web.ScriptEnvironment,
+  Web.Bindings.Types,
+  Web.Bindings.Strings,
+  Web.Bindings.Listeners,
+  Web.Bindings.Context,
+  Web.Bindings.UrlResolution,
+  Web.Bindings.Selectors,
+  Web.Bindings.FormControls,
+  Web.Bindings.Reflection,
+  Web.Bindings.EventHandlers,
+  Web.Bindings.Tables,
+  Web.Bindings.Conversions,
+  Web.Bindings.Dispatch,
+  Web.Bindings.Exotic,
+  Web.Bindings.Install,
+  Web.Script.Timers,
+  Web.Script.Prelude,
+  Web.Script.Context;
 
 implementation
 
