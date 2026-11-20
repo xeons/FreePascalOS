@@ -4838,12 +4838,11 @@ and session resumption; **wget** fetches over HTTP and, through it,
 HTTPS. TLS 1.1 and older are not spoken ("protocol version").
 
 ```
-  wget (userland/wget: Wget.Urls, .Headers, .Chunks, .Connections,
-        .Requests, .Bodies, .Sinks, .Transfer, .Progress, .Files,
-        .Settings, .Sessions, .ConnectionPool; .Cookies, .CookieDates,
-        .CookieFiles; .Authentication, .Challenges, .Digest, .Netrc;
+  wget (userland/wget: Wget.Urls, .Transfer, .Sessions, .Observer,
+        .Sinks, .Progress, .Files, .Settings, .Credentials, .Netrc;
         .Recursion, .Links, .Robots, .RobotsCache, .Patterns,
         .LocalPaths, .Downloads, .Converter, .LinkConversion, .FileText)
+=========== libhttp (see "libhttp" below): URLs, HTTP/1.1 and HTTP/2 =====
 =========== Tls.Sessions: over a socket, the system's roots and clock ======
   Tls.SocketTransport  Tls.SystemTrust (/etc/ssl/certs/ca-certificates.crt)
   Tls.Client           create, handshake, read, write, close, errors, tickets
@@ -4908,7 +4907,8 @@ signature schemes ECDSA P-256/SHA-256, P-384/SHA-384, P-521/SHA-512,
 Ed25519, RSA-PSS (rsae and pss, SHA-256/384/512) and RSA PKCS #1 (for
 certificates and TLS 1.2 only), server_name (unless the host is an IP
 address), status_request (an OCSP staple), ALPN when the program names
-a protocol (wget: http/1.1), psk_key_exchange_modes (psk_dhe_ke) when
+protocols, in order, from a comma separated list (libhttp: "h2,http/1.1";
+the server must choose one of them), psk_key_exchange_modes (psk_dhe_ke) when
 resumption is on, and for TLS 1.2 ec_point_formats (uncompressed),
 extended_master_secret and an empty renegotiation_info; a random
 32-byte legacy session id and a dummy change_cipher_spec before the
@@ -5123,19 +5123,26 @@ server's transport parameters (`TlsQuicPeerTransportParameters`) and an
 ALPN protocol (else `TlsErrorApplicationProtocolMissing`, -22,
 no_application_protocol). Without `Quic` nothing changes.
 
-**wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
-HTTP/1.1, keeping a connection alive between requests: the URL
-(`Wget.Urls`: http and https, no user names or IPv6 literals, unsafe
-bytes percent-encoded, a Location resolved as RFC 3986 says), the host
-looked up by `Sys.HostNames` (numeric addresses need no DNS), a
-non-blocking connect within the timeout and TLS for https
-(`Wget.Connections`), the request (`Wget.Requests`: Host, User-Agent,
-Accept, Accept-Encoding, Range when continuing, Authorization, Cookie,
-"Connection: Keep-Alive"), the head
-(`Wget.Headers`: 1xx skipped; a Content-Length that is not a number,
-two that differ, and transfer codings other than chunked are refused)
-and the body (`Wget.Bodies`, `Wget.Chunks`: by length, chunked with
-extensions and trailers skipped, or to the end of the connection).
+**wget** (`userland/bin/wget.pas`, units in `userland/wget`) is a
+program on top of libhttp (below): each request goes through
+`THttpClient.Execute`, which looks the host up (`Sys.HostLookup`,
+numeric addresses need no DNS), connects within the timeout, runs TLS
+for https offering HTTP/2 and HTTP/1.1 by ALPN (`--no-http2`: HTTP/1.1
+only), and returns the head with the body left to read; wget's own
+units say what it does in GNU wget's words (`Wget.Observer`:
+"Resolving...", "Connecting to...", "Reusing existing connection...",
+"HTTP request sent, awaiting response..."), decide what each status
+means, where the body goes and when to try again (`Wget.Transfer`). The
+URL (`Wget.Urls`) is parsed and resolved by libhttp's URL Standard
+parser, then wget refuses other schemes, user names and port 0 and
+drops the fragment. The request carries Host, User-Agent, Accept,
+Accept-Encoding, a Range when continuing, Authorization, Cookie and
+"Connection: Keep-Alive"; the head is checked by libhttp (1xx skipped;
+a Content-Length that is not a number, two that differ, and transfer
+codings other than chunked are refused) and the body framed by it (by
+length, chunked with extensions and trailers skipped, or to the end of
+the connection; DATA frames over HTTP/2). `-S` shows an HTTP/2 head as
+"HTTP/2 200" and its fields.
 Redirects 301/302/303/307/308 are followed to http or https URLs only,
 at most 20, the file keeping the first URL's name; the file is named
 after the URL's last segment (index.html for a directory), with .1,
@@ -5156,11 +5163,11 @@ statuses are GNU wget's (4 network, 5 certificate, 6 authentication,
 7 protocol, 8 server error...).
 
 What one run keeps from request to request is a `TWgetSession`
-(`Wget.Sessions`): the settings, the cookie jar, the kept connection
-and each server's authentication.
+(`Wget.Sessions`): the settings, libhttp's client with its connection
+pool, the cookie jar and the authenticator.
 
-- **Keep-alive** (`Wget.ConnectionPool`): as GNU wget, one connection
-  is kept, for the scheme, host and port it went to; the next request
+- **Keep-alive** (libhttp's pool, limited to one idle connection): as
+  GNU wget, one connection is kept, for the scheme, host and port it went to; the next request
   there (a redirection, another URL of the command line, the next file
   of a recursion) uses it ("Reusing existing connection to host:80.").
   It is kept only when the response's body had a known end (a length
@@ -5168,10 +5175,11 @@ and each server's authentication.
   keep-alive); the bodies of redirections and errors are read and
   dropped for that (up to 1 MiB, else the connection is closed). A
   kept connection the server closed meanwhile shows as a failed send or
-  no answer, and the request goes once more on a new one.
+  no answer, and libhttp sends the request once more on a new one. An
+  HTTP/2 connection is shared the same way.
   `--no-http-keep-alive` sends "Connection: close".
-- **Cookies** (`Wget.Cookies`, `Wget.CookieDates`, `Wget.CookieFiles`):
-  a jar as RFC 6265 has one: Set-Cookie with Expires (its date
+- **Cookies** (libhttp's `Http.Cookies`, `Http.CookieDates`,
+  `Http.CookieFiles`): a jar as RFC 6265 (and 6265bis) has one: Set-Cookie with Expires (its date
   algorithm), Max-Age (which wins), Domain (domain-matching, no
   top-level domains, never inside an IP address), Path (the default
   path is the request's folder), Secure and HttpOnly; a request gets the
@@ -5180,8 +5188,9 @@ and each server's authentication.
   TRUE/FALSE, `#HttpOnly_`, expiry 0 for session cookies, which are
   written only with `--keep-session-cookies`); `--no-cookies` turns the
   jar off.
-- **Authentication** (`Wget.Authentication`, `Wget.Challenges`,
-  `Wget.Digest`, `Wget.Netrc`): nothing goes until a 401; then the best
+- **Authentication** (libhttp's `Http.Authentication`,
+  `Http.Challenges`, `Http.Digest`; `Wget.Credentials` and
+  `Wget.Netrc` for ~/.netrc): nothing goes until a 401; then the best
   challenge wget can answer is taken (Digest SHA-256, Digest MD5, Basic)
   and the request made again, once (again only for a stale nonce); a
   server that refuses ends with "Username/Password Authentication
@@ -5192,10 +5201,11 @@ and each server's authentication.
   `--http-user`/`--http-password`, else `--user`/`--password`, else the
   host's line in `~/.netrc` (machine, default, macdef skipped; `-e
   netrc=off` turns it off).
-- **gzip** (`Wget.Sinks`): bodies go through a sink chain (the file, or
-  nothing, with a decoder in front when wanted). `--compression=auto`
-  or `gzip` asks for gzip (not when continuing) and decodes gzip,
-  x-gzip or deflate on the way through libcompression's `TInflater`;
+- **gzip** (`Wget.Sinks`): bodies go into the file through a sink, with
+  libhttp's decoders (`Http.ContentDecoding`) in front when wanted.
+  `--compression=auto` or `gzip` asks for gzip (not when continuing)
+  and decodes gzip, x-gzip or deflate on the way (libcompression's
+  `TInflater`);
   auto leaves .gz and .tgz files as they are; `none` (the default, as
   GNU wget's) asks for identity. A decoded body that breaks starts
   again rather than continuing, and damaged data is status 7.
@@ -5252,6 +5262,7 @@ secp256r1, secp384r1 or X25519MLKEM768 (a HelloRetryRequest),
 resumption, stapled OCSP responses (good, revoked, must-staple with and
 without), a certificate request, key updates both ways and each
 failure) and
+`make http-test` (libhttp, below) and
 `make wget-test` (URLs with RFC 3986's resolution examples, file names,
 response heads with their repeated fields and keep-alive rules,
 chunked bodies fed in pieces of every size, RFC 6265's dates, cookie
@@ -5275,7 +5286,11 @@ files, Basic and Digest (both algorithms, the credentials sent at once
 the second time, ~/.netrc), gzip bodies (plain, chunked, a .gz left
 alone, damaged data), --trust-server-names, and recursion over a small
 site under /site/ (-r, -l 1, -np, -A, -R, -p, -k, robots.txt and -e
-robots=off). test-qemu.sh says so and stops when python3
+robots=off), and HTTP/2 against 10.0.2.107 (the same server in its
+https-h2 mode: contents, -S showing "HTTP/2 200", requests sharing one
+connection, redirects, gzip, Digest, continuing, and HTTP/1.1 with
+`--no-http2`; that address is not in the test certificate, so these
+use --no-check-certificate). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
 ### libquic: QUIC and HTTP/3
@@ -5489,6 +5504,241 @@ curl (ngtcp2 and nghttp3, when it has HTTP/3) fetch from `QuicTest
 serve`, an independent stack against libquic's core. Nothing has been
 tried against servers on the internet yet.
 
+### libhttp
+
+**libhttp** (`userland/lib/http`, units `Url.*` and `Http.*`,
+`libhttp.so` over libtls, libcompression, libcryptography and libsystem)
+is the one HTTP client of the system: wget now, the browser engine
+(libweb) next. Everything but the two socket units is plain Pascal and
+builds on the host (`make http-test`).
+
+```
+  programs: wget, libweb (later), ...
+=========== Http.Client: Execute (one request) and Fetch (the whole fetch)
+  Http.FetchTasks   fetches on threads: OnHead, OnData, OnDone, Cancel
+  Http.Messages     THttpRequest, THttpResponse (content read as it comes)
+  Http.Redirects  Http.Authentication (Http.Challenges, Http.Digest)
+  Http.Cookies (Http.CookieDates, Http.CookieFiles, Http.PublicSuffixes)
+  Http.Cache (Http.CacheControl, Http.DiskCache)   Http.ContentDecoding
+  Http.AltServices  Alt-Svc, and the connection factories (h3 plugs in)
+  Http.ConnectionPool   Http.Connectors (Http.SocketConnector: the system's)
+=========== Http.Connections: THttpConnection / THttpExchange =============
+  HTTP/1.1: Http.Http1Connections (Http.ResponseHeads, Http.Chunks)
+  HTTP/2:   Http.Http2Connections, Http.Http2Streams, Http.Http2Frames,
+            Http.HpackEncoder, Http.HpackDecoder, Http.HpackTables,
+            Http.HpackHuffman
+  HTTP/3:   libquic's connection class, from a factory (not yet)
+=========== Http.Transports: a byte stream (Http.SocketTransports: TCP+TLS)
+  Http.HeaderFields  Http.FieldValues  Http.Dates  Http.StatusCodes
+  Http.Methods  Http.Priorities  Http.RequestBodies  Http.BodySinks
+  Http.Results  Http.Observers  Http.ByteBuffers
+=========== Url.*: the URL Standard =======================================
+  Url.Parser  Url.Records  Url.Accessors  Url.Hosts  Url.IpAddresses
+  Url.DomainNames  Url.Punycode  Url.PercentEncoding  Url.FormEncoding
+  Url.SearchParams  Url.Origins
+```
+
+**URLs** (the WHATWG URL Standard). `Url.Parser` is the basic URL
+parser's state machine, with a base URL and the state override the
+URL class's setters use (`Url.Accessors`: href, origin, protocol,
+username, password, host, hostname, port, pathname, search, hash, each
+doing nothing where the standard says so). A `TUrlRecord` keeps the
+scheme, credentials, host (null, empty, domain, IPv4, IPv6 or opaque),
+port (null when the scheme's default), the path serialized ("/a/b";
+an opaque path as it is), query and fragment. Input is UTF-8 and every
+percent-encode set takes all bytes above 0x7E, so the machine works
+byte by byte (`Url.PercentEncoding` has the C0 control, fragment,
+query, special-query, path, userinfo, component and form sets).
+Hosts (`Url.Hosts`): "[...]" is IPv6 (`Url.IpAddresses`: "::" once, an
+embedded IPv4 address; serialized with the first longest zero run
+compressed), a special URL's host is percent-decoded, put through
+domain to ASCII and, when it ends in a number, must be IPv4 (decimal,
+octal or hexadecimal parts, the last filling the remaining bytes);
+other hosts are opaque. Domain to ASCII (`Url.DomainNames`): an ASCII
+domain without "xn--" labels is lower cased; otherwise the code points
+are mapped (the cased scripts' capitals, full-width ASCII, ideographic
+full stops; joiners refuse the domain) and non-ASCII labels become
+"xn--" Punycode (`Url.Punycode`, RFC 3492); "xn--" labels must decode
+to something non-ASCII. This is the part of UTS #46's table that
+matters for case, without NFC. `Url.SearchParams` is URLSearchParams
+(append, delete, get, getAll, has, set, a stable sort by UTF-16 code
+units, form serialization), over `Url.FormEncoding`
+(application/x-www-form-urlencoded); `Url.Origins` gives tuple and
+opaque origins (blob: URLs take their inner URL's), same-origin and
+the serialization, and "potentially trustworthy".
+
+**Messages.** Header fields (`Http.HeaderFields`) are an ordered array
+of name-value pairs, names in lower case and shared strings for the
+common ones; `Combined` joins a name's values (never Set-Cookie's).
+`Http.FieldValues` reads lists, tokens, quoted strings and parameters;
+`Http.Dates` HTTP dates (all three forms, through the cookie date
+algorithm) and writes IMF-fixdate; `Http.StatusCodes` reason phrases
+(HTTP/2 sends none), classes and heuristic cacheability;
+`Http.Methods` safe and idempotent methods; `Http.Priorities` RFC
+9218's urgency and incremental flag as the Priority field. A request's
+content (`Http.RequestBodies`: bytes, a stream, or a producer routine)
+says its length (unknown: chunked over HTTP/1.1) and rewinds for 307,
+308, retries and 401. A response's content goes into sinks
+(`Http.BodySinks`: memory, discard, stream, callback) as it arrives.
+
+**Connections.** `Http.Connections` is what every version offers: a
+`THttpConnection` starts `THttpExchange`s (Send, ReceiveHead with 1xx
+skipped, ReadBody without framing, Finish, Abort from any thread,
+Reprioritize). Requests and responses are the same records for every
+version (`THttpRequestHead`, `THttpResponseHeadInfo`), so HTTP/3 needs
+only a connection class of its own.
+
+- **HTTP/1.1** (`Http.Http1Connections`, RFC 9112): one exchange at a
+  time, no pipelining; the request line, Host, the fields (names written
+  as "User-Agent"), Content-Length or chunked content; the head through a
+  16 KiB buffer (`Http.ResponseHeads`); bodies by length, chunked
+  (`Http.Chunks`), or to the end of the connection; none for HEAD, 1xx,
+  204 and 304. The connection goes on only when the body had a known
+  end, was read whole, and neither side said close (HTTP/1.0 must say
+  keep-alive).
+- **HTTP/2** (`Http.Http2Connections`, RFC 9113): the preface and
+  SETTINGS (push off, a 1 MiB stream window, 100 streams,
+  SETTINGS_NO_RFC7540_PRIORITIES) and a WINDOW_UPDATE to a 16 MiB
+  connection window; the server's SETTINGS must come first and are
+  acknowledged (header table size, concurrent streams, initial window
+  with every stream's adjusted, frame size). The connection has no
+  thread: an exchange that waits reads the connection itself when no
+  other thread is, deals each frame to its stream (`Http.Http2Streams`)
+  and wakes the exchange waiting on it, then hands reading over; a
+  one-thread program simply reads. FWriteLock (writing, the HPACK
+  encoder, stream id order) is taken before FLock (the rest), never the
+  other way. Flow control both ways: DATA waits for both send windows;
+  received data is given back half a window at a time as exchanges take
+  it, so a slow reader slows the server instead of filling memory;
+  padding and data for streams given up go back at once. SETTINGS,
+  PING, GOAWAY (streams above its last id fail as retryable, no new
+  ones), RST_STREAM (REFUSED_STREAM retryable), WINDOW_UPDATE (0 and
+  overflow refused), header blocks across CONTINUATION (decoded even for
+  streams gone, at most 1 MiB), PUSH_PROMISE refused, unknown frames
+  skipped. Responses are checked (:status once and first, no other
+  pseudo-headers, lower case names, no connection-specific fields,
+  content-length against the data); a bad one resets its stream; a
+  connection error sends GOAWAY. Requests drop connection-specific
+  fields and Host (it becomes :authority), add Priority when not the
+  default, and PRIORITY_UPDATE re-prioritizes. Frames
+  (`Http.Http2Frames`) are built into reused byte buffers
+  (`Http.ByteBuffers`).
+- **HPACK** (RFC 7541): `Http.HpackHuffman` holds only appendix B's 257
+  code lengths, the code being canonical (codes made on first use;
+  decoding by first code per length; padding over seven bits, padding
+  not all ones and EOS refused); `Http.HpackTables` the static table and
+  the dynamic table, a ring bounded by its size; `Http.HpackDecoder`
+  (integer overflow, bad indexes, size updates only first and within
+  SETTINGS_HEADER_TABLE_SIZE, the header list limit reported per
+  stream while the table stays in step); `Http.HpackEncoder` (indexed
+  when in a table, never-indexed Authorization and short cookies,
+  incremental indexing unless an entry would take half the table,
+  Huffman unless longer, size updates at the next block, the smallest
+  first).
+- **HTTP/3** is not here: libquic (QUIC, QPACK, HTTP/3 framing) will
+  register a factory for "h3" (`RegisterConnectionFactory`); the client
+  asks it for a connection when an https origin advertised h3 by
+  Alt-Svc, marks the alternative broken for five minutes when it fails
+  and uses TCP meanwhile.
+
+**The client** (`Http.Client`). `Execute` is one request: a connection
+from the pool (`Http.ConnectionPool`: a shared HTTP/2 connection with
+room for a stream, an idle HTTP/1.1 one, at most 6 idle per origin and
+32 in all, 60 s idle), else a new one (an Alt-Svc factory's, or the
+connector's: `Http.SocketConnector` looks up, connects and runs TLS
+with ALPN "h2,http/1.1" through `Http.SocketTransports`; the client
+makes an HTTP/2 connection when "h2" was chosen); User-Agent, Accept,
+Accept-Encoding, Authorization (once a server asked) and Cookie added;
+Set-Cookie and Alt-Svc taken; a kept connection that turns out closed
+(a failed send, or no answer) or a request refused unprocessed sends
+the request again on a new connection (at most three tries). The
+observer (`Http.Observers`) hears each step. `Fetch` adds the rest:
+the cache, redirects (`Http.Redirects`: 301/302 POST and 303 non-HEAD
+become GET without content and its fields, 307/308 keep both,
+credentials only to the same origin, cookies worked out again, at most
+20), 401 answered with credentials (once, again for a stale nonce),
+content decoding (`Http.ContentDecoding`: gzip and x-gzip with
+concatenated members, deflate as zlib or raw; Brotli and zstd are not
+offered - Brotli needs RFC 7932's 122 KiB dictionary in the tree), and
+the content handed to a sink as it comes; OnHead sees the final head
+first and a cancel token stops it from another thread. `Get` is the
+one-line form; `Http.FetchTasks` runs fetches on threads (OnHead,
+OnData, OnDone on the task's thread; Cancel resets an HTTP/2 stream or
+closes an HTTP/1.1 connection), many tasks sharing one client and its
+HTTP/2 connections. The client, pool, jar, cache and authenticator are
+thread safe.
+
+- **Cookies** (`Http.Cookies`, RFC 6265bis): nameless cookies, 4096
+  bytes for a name and value, 1024 for an attribute value, control
+  characters refused, 400 days at most; a Domain that is a public
+  suffix (`Http.PublicSuffixes`: the Public Suffix List's algorithm with
+  wildcards and exceptions, over a compiled list of the main
+  second-level and hosting suffixes, or
+  /usr/share/publicsuffix/public_suffix_list.dat when there) only for
+  that host itself; Secure only from secure requests and not shadowed
+  by insecure ones; `__Secure-` and `__Host-` prefixes; SameSite (Strict,
+  Lax, None needing Secure; unspecified as Lax) on storing and sending,
+  from the request's `TCookieRequestContext` (secure, same-site,
+  top-level navigation, safe method, HTTP or script); HttpOnly hidden
+  from and kept from scripts (`DocumentCookie`, `SetDocumentCookie`);
+  50 per domain and 3000 in all, least recently used first. Netscape
+  cookie files (`Http.CookieFiles`) read and write the jar.
+- **Cache** (`Http.Cache`, RFC 9111, a private cache): complete GET
+  responses with a final status, unless no-store or Vary: *; matched
+  by URL and the Vary fields; fresh by max-age, Expires - Date, or 10%
+  of the time since Last-Modified (at most a day) for statuses
+  cacheable by default, the age from Age, Date and the request and
+  response times; no-cache, max-age, max-stale, min-fresh and
+  must-revalidate honoured; stale responses revalidated with
+  If-None-Match or If-Modified-Since, a 304 freshening the stored
+  fields; unsafe requests invalidate; 32 MiB by default, the least
+  recently used first; with a folder, each response also a file
+  (`Http.DiskCache`: an FNV-1a name, written through a temporary file).
+  The request's cache mode (default, no-store, reload, no-cache,
+  force-cache, only-if-cached) is Fetch's.
+- **Authentication** (`Http.Authentication`): as wget's was (above),
+  per origin, with a credentials provider for what was not given.
+- **Alt-Svc** (`Http.AltServices`, RFC 7838): values parsed (protocol
+  ids percent-decoded, ma, clear) and kept per origin until they
+  expire.
+
+Not here yet: proxies (wget had none), 100-continue, HTTP/2 PING
+keep-alive, HSTS and CORS (libweb's), Brotli and zstd, the full UTS #46
+table.
+
+**Tests** (`make http-test`, tools/HttpTest): the URL Standard (about
+200 cases written from the standard's examples and rules: special and
+other schemes, credentials, ports, dot segments, every percent-encode
+set, IPv4 forms, IPv6 compression and embedded IPv4, IDNA with
+Punycode, file URLs and Windows drive letters, relative references
+with RFC 3986's examples, setters, URLSearchParams, origins), HPACK
+against RFC 7541 appendix C (C.1 to C.6, each block decoded with the
+table sizes checked and encoded again byte for byte, then malformed
+blocks), HTTP/2 frames built and read back, HTTP/1.1 and HTTP/2
+exchanges with small servers in threads over in-memory pipes (every
+body framing, interim responses, content of unknown length, HEAD; a
+3 MiB response through a 1 MiB window, a 200 KB upload into a 64 KB
+window, four threads and forty requests on one connection, an answer
+after a later one, trailers, CONTINUATION, a refused stream, a
+malformed response, priorities, GOAWAY), and the client over a
+connector of pipes (keep-alive and a stale connection, gzip and
+deflate, redirects with their method rules and limit, cookies, the
+cache fresh and revalidated, Basic, Alt-Svc, eight fetch tasks on one
+HTTP/2 connection, a cancel), RFC 6265bis's rules in the jar (public
+suffixes, Secure, prefixes, SameSite both ways, HttpOnly against scripts,
+400 days), RFC 9111's freshness and age arithmetic, the disk cache read
+back by another cache, Alt-Svc parsing, and HPACK in bounded memory over
+5000 blocks. Then `run-interop.sh`: HPACK both ways
+with libnghttp2 through Python's ctypes (libhttp's blocks with
+evictions and every byte Huffman coded decoded by nghttp2, nghttp2's
+blocks decoded by libhttp; skipped without libnghttp2), curl checking
+that test-web-server.py's https-h2 mode speaks HTTP/2, and the client
+over a host socket and libtls against that server (HTTP/2 by ALPN,
+200000 bytes, one connection, gzip, a range, Digest, cookies across a
+redirect, HTTP/1.1 when HTTP/2 is not offered). In QEMU, wgettest's
+HTTP/2 checks (above).
+
+### The SSH server
 
 `sshd` lets another machine log in, run commands and copy files with a
 stock OpenSSH client (`ssh`, `scp`, `sftp` of OpenSSH 9 and later); the

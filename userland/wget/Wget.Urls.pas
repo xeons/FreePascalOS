@@ -17,21 +17,23 @@
 }
 
 {
-  The URLs wget fetches (RFC 3986, http and https only):
+  The URLs wget fetches, http and https only:
 
     [http:// | https://]host[:port][/path][?query][#fragment]
 
-  A URL without a scheme is http. The host is a name, an IPv4 address
-  or an IPv6 address in brackets ([::1]:8080; kept without them in
-  Host, and put back in the Host header); user names are refused, and
-  so are IPv6 zones (fe80::1%25eth0). The fragment is dropped;
-  characters that may not appear in a request line (controls, spaces,
-  bytes above 127) are percent-encoded. A redirect's Location is
-  resolved against the URL it came from, relative paths and dot
-  segments included. The file a URL is saved to is the last segment of
-  its path, decoded, or index.html.
+  A URL without a scheme is http. Parsing and resolving are libhttp's
+  URL Standard parser (Url.Parser): hosts lower cased, IDN hosts in
+  Punycode, IPv4 and IPv6 hosts read every way the standard reads them,
+  dot segments removed, what may not be sent percent-encoded, a
+  redirect's Location or a page's link resolved against the URL it
+  came from. On top of the standard wget refuses other schemes, user
+  names and port 0, and drops the fragment. The host is kept without
+  the brackets of an IPv6 address (they are put back in the Host
+  header). The file a URL is saved to is the last segment of its path,
+  decoded, or index.html.
 
-  Plain Pascal (the RTL only), so tools/WgetTest checks it on the host.
+  Plain Pascal (the RTL and libhttp's URL units), so tools/WgetTest
+  checks it on the host.
 }
 unit Wget.Urls;
 
@@ -39,6 +41,9 @@ unit Wget.Urls;
 {$H+}
 
 interface
+
+uses
+  Url.Records;
 
 const
   { The longest host name DNS allows. }
@@ -73,19 +78,32 @@ function DefaultFileName(constref Url: TUrl): string;
 { A path segment with its %XX escapes decoded, but for those that would
   put a "/", a NUL or a control character in a file name. }
 function DecodeFileName(const Segment: string): string;
+{ The URL as libhttp's URL record (for requests). }
+function UrlRecordOf(constref Url: TUrl): TUrlRecord;
 
 implementation
 
 uses
   SysUtils,
-  StrUtils;
+  StrUtils,
+  Url.Parser;
 
 const
   SchemeCharacters = ['a'..'z', 'A'..'Z', '0'..'9', '+', '-', '.'];
-  UnsafePathCharacters = ['"', '<', '>', '\', '^', '`', '{', '|', '}'];
   HttpPrefix = 'http://';
   HttpsPrefix = 'https://';
   IndexName = 'index.html';
+
+{ libhttp's parser (its name is hidden by this unit's ParseUrl). }
+function ParseUrlRecord(const Text: string; out Parsed: TUrlRecord): Boolean;
+begin
+  Result := Url.Parser.ParseUrl(Text, Parsed);
+end;
+
+function ResolveUrlRecord(const Text: string; constref Base: TUrlRecord; out Parsed: TUrlRecord): Boolean;
+begin
+  Result := Url.Parser.ParseUrl(Text, Base, Parsed);
+end;
 
 function DefaultPort(Scheme: TUrlScheme): Word;
 begin
@@ -93,110 +111,6 @@ begin
     Result := 443
   else
     Result := 80;
-end;
-
-{ A path, percent-encoding what may not be sent as it is. }
-function EncodePath(const Source: string): string;
-var
-  Character: Char;
-begin
-  Result := '';
-  for Character in Source do
-    if (Ord(Character) <= 32) or (Ord(Character) >= 127) or (Character in UnsafePathCharacters) then
-      Result := Result + '%' + IntToHex(Ord(Character), 2)
-    else
-      Result := Result + Character;
-end;
-
-{ "[ipv6]" at the start of the authority: the address (hexadecimal
-  digits, colons and dots) goes into Url.Host without the brackets;
-  HostEnd is where what follows the closing bracket begins. }
-function ParseBracketedHost(const Authority: string; var Url: TUrl; out HostEnd: Integer): Boolean;
-var
-  Closing: Integer;
-  Index: Integer;
-begin
-  Result := False;
-  HostEnd := 0;
-  Closing := Pos(']', Authority);
-  if (Closing = 0) or (Closing = 2) or (Closing - 2 > MaximumHostLength) then
-    Exit;
-  for Index := 2 to Closing - 1 do
-    if not (Authority[Index] in ['0'..'9', 'a'..'f', 'A'..'F', ':', '.']) then
-      Exit;
-  Url.Host := LowerCase(Copy(Authority, 2, Closing - 2));
-  HostEnd := Closing + 1;
-  Result := (HostEnd > Length(Authority)) or (Authority[HostEnd] = ':');
-end;
-
-{ A name or an IPv4 address up to the port's colon. }
-function ParsePlainHost(const Authority: string; var Url: TUrl; out HostEnd: Integer): Boolean;
-var
-  Index: Integer;
-begin
-  Result := False;
-  HostEnd := Pos(':', Authority);
-  if HostEnd = 0 then
-    HostEnd := Length(Authority) + 1;
-  if (HostEnd = 1) or (HostEnd - 1 > MaximumHostLength) then
-    Exit;
-  for Index := 1 to HostEnd - 1 do
-    if not (Authority[Index] in ['a'..'z', 'A'..'Z', '0'..'9', '-', '.', '_']) then
-      Exit;
-  Url.Host := LowerCase(Copy(Authority, 1, HostEnd - 1));
-  Result := True;
-end;
-
-{ ":port" after the host: 1 to 65535; an empty port means the default. }
-function ParsePort(const Text: string; var Url: TUrl): Boolean;
-var
-  Port: LongWord;
-  Character: Char;
-begin
-  Result := False;
-  if Text = '' then
-    Exit(True);
-  Port := 0;
-  for Character in Text do
-  begin
-    if not (Character in ['0'..'9']) then
-      Exit;
-    Port := Port * 10 + LongWord(Ord(Character) - Ord('0'));
-    if Port > 65535 then
-      Exit;
-  end;
-  if Port = 0 then
-    Exit;
-  Url.Port := Port;
-  Result := True;
-end;
-
-function ParseAuthority(const Authority: string; var Url: TUrl): Boolean;
-var
-  HostEnd: Integer;
-begin
-  Result := False;
-  { No user names. }
-  if (Authority = '') or (Pos('@', Authority) > 0) then
-    Exit;
-  if Authority[1] = '[' then
-  begin
-    if not ParseBracketedHost(Authority, Url, HostEnd) then
-      Exit;
-  end
-  else if not ParsePlainHost(Authority, Url, HostEnd) then
-    Exit;
-  Url.Port := DefaultPort(Url.Scheme);
-  Result := ParsePort(Copy(Authority, HostEnd + 1, MaxInt), Url);
-end;
-
-{ The position of the first of Characters in Text from Start on, or
-  just past its end. }
-function FindAny(const Text: string; Start: Integer; Characters: TSysCharSet): Integer;
-begin
-  Result := Start;
-  while (Result <= Length(Text)) and not (Text[Result] in Characters) do
-    Inc(Result);
 end;
 
 { Text starts with "scheme://" of a scheme other than http(s). }
@@ -210,143 +124,89 @@ begin
   Result := Copy(Text, SchemeEnd, 3) = '://';
 end;
 
-function ParseUrl(const Text: string; out Url: TUrl): Boolean;
+{ A parsed URL as wget's, or False when wget does not take it. }
+function FromRecord(constref Parsed: TUrlRecord; out Url: TUrl): Boolean;
 var
-  Rest: string;
-  AuthorityEnd, PathEnd: Integer;
-  PathText: string;
+  Host: string;
 begin
   Url := Default(TUrl);
   Result := False;
-  if Text = '' then
+  if (Parsed.Scheme <> 'http') and (Parsed.Scheme <> 'https') then
     Exit;
-  Url.Scheme := SchemeHttp;
-  if StartsText(HttpsPrefix, Text) then
-  begin
-    Url.Scheme := SchemeHttps;
-    Rest := Copy(Text, Length(HttpsPrefix) + 1, MaxInt);
-  end
-  else if StartsText(HttpPrefix, Text) then
-    Rest := Copy(Text, Length(HttpPrefix) + 1, MaxInt)
-  else
-  begin
-    { Another scheme ("ftp:") is refused; "host:port" is not a scheme. }
-    if HasOtherScheme(Text) then
-      Exit;
-    Rest := Text;
-  end;
-  AuthorityEnd := FindAny(Rest, 1, ['/', '?', '#']);
-  if not ParseAuthority(Copy(Rest, 1, AuthorityEnd - 1), Url) then
+  if UrlIncludesCredentials(Parsed) or (Parsed.Port = 0) then
     Exit;
-  PathEnd := FindAny(Rest, AuthorityEnd, ['#']);
-  PathText := Copy(Rest, AuthorityEnd, PathEnd - AuthorityEnd);
-  if PathText = '' then
-    Url.Path := '/'
-  else if PathText[1] = '?' then
-    { "host?query": the path is "/". }
-    Url.Path := '/' + EncodePath(PathText)
+  if not (Parsed.Host.Kind in [UrlHostDomain, UrlHostIpv4, UrlHostIpv6]) then
+    Exit;
+  Host := SerializeHost(Parsed.Host);
+  if Parsed.Host.Kind = UrlHostIpv6 then
+    Host := Copy(Host, 2, Length(Host) - 2);
+  if (Host = '') or (Length(Host) > MaximumHostLength) then
+    Exit;
+  if Parsed.Scheme = 'https' then
+    Url.Scheme := SchemeHttps
   else
-    Url.Path := EncodePath(PathText);
+    Url.Scheme := SchemeHttp;
+  Url.Host := Host;
+  Url.Port := UrlEffectivePort(Parsed);
+  Url.Path := Parsed.Path;
+  if Url.Path = '' then
+    Url.Path := '/';
+  if Parsed.HasQuery then
+    Url.Path := Url.Path + '?' + Parsed.Query;
   Result := True;
 end;
 
-{ Drops the last segment (and its "/") of Output. }
-procedure DropLastSegment(var Output: string);
-var
-  Cut: Integer;
+function UrlRecordOf(constref Url: TUrl): TUrlRecord;
 begin
-  Cut := Length(Output);
-  while (Cut > 0) and (Output[Cut] <> '/') do
-    Dec(Cut);
-  if Cut > 0 then
-    Dec(Cut);
-  SetLength(Output, Cut);
+  if not ParseUrlRecord(FormatUrl(Url), Result) then
+    Result := EmptyUrl;
 end;
 
-{ RFC 3986 section 5.2.4 on a path that starts with "/" (the query, if
-  any, left alone). }
-function RemoveDotSegments(const Path: string): string;
+function ParseUrl(const Text: string; out Url: TUrl): Boolean;
 var
-  QueryStart, Input, SegmentEnd: Integer;
-  Segment: string;
+  Parsed: TUrlRecord;
+  Input: string;
 begin
-  QueryStart := FindAny(Path, 1, ['?']);
-  Result := '';
-  Input := 1;
-  while Input < QueryStart do
+  Url := Default(TUrl);
+  Result := False;
+  if Trim(Text) = '' then
+    Exit;
+  Input := Text;
+  if not StartsText(HttpPrefix, Input) and not StartsText(HttpsPrefix, Input) then
   begin
-    { Path[Input] is "/" here. }
-    SegmentEnd := FindAny(Path, Input + 1, ['/']);
-    if SegmentEnd > QueryStart then
-      SegmentEnd := QueryStart;
-    Segment := Copy(Path, Input, SegmentEnd - Input);
-    if (Segment = '/.') or (Segment = '/..') then
-    begin
-      if Segment = '/..' then
-        DropLastSegment(Result);
-      if SegmentEnd = QueryStart then
-        Result := Result + '/';
-    end
-    else
-      Result := Result + Segment;
-    Input := SegmentEnd;
+    { Another scheme ("ftp://") is refused; "host:port" is not a scheme. }
+    if HasOtherScheme(Input) then
+      Exit;
+    Input := HttpPrefix + Input;
   end;
-  if Result = '' then
-    Result := '/';
-  Result := Result + Copy(Path, QueryStart, MaxInt);
-end;
-
-{ The base path without its query. }
-function PathWithoutQuery(const Path: string): string;
-begin
-  Result := Copy(Path, 1, FindAny(Path, 1, ['?']) - 1);
-end;
-
-{ The base path up to and including its last "/" (before the query). }
-function PathDirectory(const Path: string): string;
-begin
-  Result := PathWithoutQuery(Path);
-  SetLength(Result, RPos('/', Result));
+  Result := ParseUrlRecord(Input, Parsed) and FromRecord(Parsed, Url);
 end;
 
 function ResolveUrl(constref Base: TUrl; const Reference: string; out Resolved: TUrl): Boolean;
 var
-  Merged: string;
-  SchemeEnd: Integer;
+  BaseRecord, Parsed: TUrlRecord;
 begin
   Resolved := Base;
   Result := False;
   if Reference = '' then
     Exit;
-  if StartsText(HttpPrefix, Reference) or StartsText(HttpsPrefix, Reference) then
-    Exit(ParseUrl(Reference, Resolved));
-  { Another scheme: refused. }
-  SchemeEnd := 1;
-  while (SchemeEnd <= Length(Reference)) and (Reference[SchemeEnd] in SchemeCharacters) do
-    Inc(SchemeEnd);
-  if (SchemeEnd > 1) and (SchemeEnd <= Length(Reference)) and (Reference[SchemeEnd] = ':') then
+  if not ParseUrlRecord(FormatUrl(Base), BaseRecord) then
     Exit;
-  if StartsStr('//', Reference) then
-  begin
-    { Network path: the base's scheme. }
-    if Base.Scheme = SchemeHttps then
-      Exit(ParseUrl('https:' + Reference, Resolved))
-    else
-      Exit(ParseUrl('http:' + Reference, Resolved));
-  end;
+  Result := ResolveUrlRecord(Reference, BaseRecord, Parsed) and FromRecord(Parsed, Resolved);
+  if not Result then
+    Resolved := Base;
+end;
 
-  if Reference[1] = '/' then
-    Merged := Reference
-  else if Reference[1] = '?' then
-    { The base path with a new query. }
-    Merged := PathWithoutQuery(Base.Path) + Reference
+{ The path without its query. }
+function PathWithoutQuery(const Path: string): string;
+var
+  QueryStart: Integer;
+begin
+  QueryStart := Pos('?', Path);
+  if QueryStart > 0 then
+    Result := Copy(Path, 1, QueryStart - 1)
   else
-    { The base path up to its last "/", then the reference. }
-    Merged := PathDirectory(Base.Path) + Reference;
-  { Drop a fragment. }
-  Merged := Copy(Merged, 1, FindAny(Merged, 1, ['#']) - 1);
-  Resolved.Path := RemoveDotSegments(EncodePath(Merged));
-  Result := True;
+    Result := Path;
 end;
 
 function UrlHostIsIpv6(constref Url: TUrl): Boolean;

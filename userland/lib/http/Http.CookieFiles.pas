@@ -32,7 +32,7 @@
 
   Plain Pascal (the RTL only), checked on the host by tools/WgetTest.
 }
-unit Wget.CookieFiles;
+unit Http.CookieFiles;
 
 {$mode objfpc}
 {$H+}
@@ -40,7 +40,7 @@ unit Wget.CookieFiles;
 interface
 
 uses
-  Wget.Cookies;
+  Http.Cookies;
 
 { Adds the cookies of a file's text to Jar; returns how many. }
 function LoadCookieText(Jar: TCookieJar; const Text: string; Now: Int64): Integer;

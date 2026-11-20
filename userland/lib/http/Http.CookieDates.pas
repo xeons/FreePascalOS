@@ -27,7 +27,7 @@
 
   Plain Pascal (the RTL only), checked on the host by tools/WgetTest.
 }
-unit Wget.CookieDates;
+unit Http.CookieDates;
 
 {$mode objfpc}
 {$H+}

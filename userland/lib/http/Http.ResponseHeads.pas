@@ -18,10 +18,13 @@
 
 {
   The head of an HTTP/1.x response (RFC 9112): the status line and the
-  header fields wget acts on - Content-Length, Transfer-Encoding,
+  header fields that frame the message or that clients act on at once -
+  Content-Length, Transfer-Encoding,
   Content-Range, Content-Type, Content-Encoding, Location, Connection,
   Set-Cookie and WWW-Authenticate (the last two kept as given, each
   field on its own).
+
+  Every field is also kept, in order, for the message's header list.
 
   The head is given whole (up to and including the empty line). Field
   names compare without regard to case; values have their surrounding
@@ -30,15 +33,19 @@
   other than chunked are refused, as RFC 9112 says, since they make it
   impossible to know where the body ends.
 
-  Plain Pascal (the RTL only), checked on the host by tools/WgetTest.
+  Plain Pascal (the RTL only), checked on the host by tools/WgetTest
+  and tools/HttpTest.
 }
-unit Wget.Headers;
+unit Http.ResponseHeads;
 
 {$mode objfpc}
 {$H+}
 {$pointermath on}
 
 interface
+
+uses
+  Http.HeaderFields;
 
 const
   MaximumHeadLength = 64 * 1024;
@@ -68,6 +75,8 @@ type
     ContentEncoding: string;
     SetCookies: THeadTextList;
     Challenges: THeadTextList;
+    { Every field as it came (names in lower case). }
+    Fields: THttpHeaderFieldArray;
   end;
 
   THeadParseResult = (HeadParsed, HeadMalformed, HeadUnsupportedCoding);
@@ -83,9 +92,6 @@ function ParseContentRange(const Value: string; out First, Last, Total: Int64): 
   response (whose body has a known end): HTTP/1.1 unless "close",
   HTTP/1.0 only with "keep-alive". }
 function ConnectionPersists(constref Response: THttpResponseHead): Boolean;
-{ True for codes that never have a body (1xx, 204, 304). }
-function StatusHasNoBody(StatusCode: Integer): Boolean;
-function StatusIsRedirect(StatusCode: Integer): Boolean;
 
 implementation
 
@@ -194,17 +200,6 @@ begin
   if (Response.MajorVersion = 1) and (Response.MinorVersion = 0) then
     Exit(Response.ConnectionKeepAlive);
   Result := True;
-end;
-
-function StatusHasNoBody(StatusCode: Integer): Boolean;
-begin
-  Result := ((StatusCode >= 100) and (StatusCode < 200)) or (StatusCode = 204) or (StatusCode = 304);
-end;
-
-function StatusIsRedirect(StatusCode: Integer): Boolean;
-begin
-  Result := (StatusCode = 301) or (StatusCode = 302) or (StatusCode = 303) or (StatusCode = 307) or
-    (StatusCode = 308);
 end;
 
 function DigitValue(Character: Char): Integer;
@@ -328,6 +323,9 @@ begin
     Exit;
   Name := Copy(Line, 1, NameEnd - 1);
   Value := TrimBlanks(Copy(Line, NameEnd + 1, MaxInt));
+  SetLength(Response.Fields, Length(Response.Fields) + 1);
+  Response.Fields[High(Response.Fields)].Name := InternFieldName(Name);
+  Response.Fields[High(Response.Fields)].Value := Value;
 
   if SameText(Name, 'content-length') then
   begin

@@ -57,6 +57,7 @@
 #   make quic-test  Check libquic on the host: RFC 9001 and RFC 9204 vectors, frames,
 #                   whole QUIC and HTTP/3 connections over loopback UDP, and curl's
 #                   HTTP/3 against the test server when the host's curl has it
+#   make http-test  Check libhttp on the host: URLs, HPACK, HTTP/2, HTTP/1.1, the client
 #   make network-protocol-test  Check the resolver's EDNS(0) and cache and the DHCP
 #                   and DHCPv6 messages on the host
 #   make netstat-test  Check the ports list parser and ss's filters on the host
@@ -183,7 +184,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test
 
 all: esp
@@ -494,7 +495,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -1036,22 +1037,53 @@ ipv6-test: $(IPV6_TEST)
 		{ grep FAIL build/tools/ipv6-test.out; echo "IPV6 TEST FAILED (build/tools/ipv6-test.out)"; exit 1; }
 	@echo "IPV6 TEST PASSED: $$(tail -n 1 build/tools/ipv6-test.out | cut -d ' ' -f 3-)"
 
-# wget's URLs, response heads and chunked decoding build for the host too.
 # wget's URLs, response heads, chunked decoding, cookies, authentication
-# and recursion's pieces build for the host too.
+# and recursion's pieces build for the host too (the HTTP ones from
+# libhttp).
 WGET_TEST := build/tools/WgetTest
 WGET_TEST_SOURCES := $(wildcard tools/WgetTest/*.pas) tools/CryptoTest/TestChecks.pas $(wildcard userland/wget/*.pas) \
-	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
+	$(wildcard userland/lib/http/*.pas)
 
 $(WGET_TEST): $(WGET_TEST_SOURCES)
 	@mkdir -p build/tools/wget-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget -Fuuserland/lib/cryptography -Fushared -Fishared \
-		-FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
+	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget -Fuuserland/lib/http \
+		-Fuuserland/lib/cryptography -Fushared -Fishared -FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
 
 wget-test: $(WGET_TEST)
 	@$(WGET_TEST) > build/tools/wget-test.out || \
 		{ grep FAIL build/tools/wget-test.out; echo "WGET TEST FAILED (build/tools/wget-test.out)"; exit 1; }
 	@echo "WGET TEST PASSED: $$(tail -n 1 build/tools/wget-test.out | cut -d ' ' -f 3-)"
+
+# libhttp but for its socket units builds for the host too (with
+# TlsTest's Crypto.Random): the URL Standard, HPACK against RFC 7541's
+# appendix C, HTTP/2 frames, HTTP/1.1 and HTTP/2 exchanges and the
+# client against small servers over in-memory pipes; then HPACK and
+# Huffman coding against libnghttp2 and an HTTPS + HTTP/2 exchange with
+# scripts/test-web-server.py (each skipped when the host lacks it).
+HTTP_TEST := build/tools/HttpTest
+HTTP_TEST_UNITS := build/tools/http-test-units
+HTTP_TEST_SOURCES := $(wildcard tools/HttpTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
+	$(filter-out %/Http.SocketTransports.pas %/Http.SocketConnector.pas %/Http.Contents.pas, \
+		$(wildcard userland/lib/http/*.pas)) \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
+	$(filter-out %/Tls.SocketTransport.pas %/Tls.SystemTrust.pas %/Tls.Sessions.pas %/Tls.Contents.pas, \
+		$(wildcard userland/lib/tls/*.pas))
+
+$(HTTP_TEST): $(HTTP_TEST_SOURCES)
+	@mkdir -p $(HTTP_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/HttpTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/http \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fushared -Fishared \
+		-FU$(HTTP_TEST_UNITS) -o$@ tools/HttpTest/HttpTest.pas
+
+http-test: $(HTTP_TEST)
+	@$(HTTP_TEST) > build/tools/http-test.out || \
+		{ grep -A2 FAIL build/tools/http-test.out; echo "HTTP TEST FAILED (build/tools/http-test.out)"; exit 1; }
+	@echo "HTTP TEST PASSED: $$(tail -n 1 build/tools/http-test.out | cut -d ' ' -f 3-)"
+	@tools/HttpTest/run-interop.sh $(HTTP_TEST) build/tools/http-interop > build/tools/http-interop.out 2>&1 || \
+		{ grep -B2 -A6 "FAIL\|exception" build/tools/http-interop.out; echo "HTTP INTEROP TEST FAILED (build/tools/http-interop.out)"; exit 1; }
+	@tail -n 1 build/tools/http-interop.out
 
 # The resolver's EDNS(0) and cache of answers (libsystem) and the network
 # service's DHCP and DHCPv6 messages build for the host too, with range

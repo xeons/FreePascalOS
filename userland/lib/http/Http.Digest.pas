@@ -36,7 +36,7 @@
   Plain Pascal (with libcryptography's digests), checked on the host by
   tools/WgetTest.
 }
-unit Wget.Digest;
+unit Http.Digest;
 
 {$mode objfpc}
 {$H+}
@@ -44,7 +44,7 @@ unit Wget.Digest;
 interface
 
 uses
-  Wget.Challenges;
+  Http.Challenges;
 
 type
   TDigestHash = (DigestHashMd5, DigestHashSha256);

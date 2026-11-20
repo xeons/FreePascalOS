@@ -128,6 +128,24 @@ begin
   Result := True;
 end;
 
+{ Name is one of the comma separated names of Offered. }
+function ProtocolWasOffered(constref Name: TTlsByteRange; const Offered: string): Boolean;
+var
+  Start, Finish: Integer;
+begin
+  Start := 1;
+  while Start <= System.Length(Offered) do
+  begin
+    Finish := Start;
+    while (Finish <= System.Length(Offered)) and (Offered[Finish] <> ',') do
+      Inc(Finish);
+    if (PtrUInt(Finish - Start) = Name.Length) and (CompareByte(Name.Data^, Offered[Start], Name.Length) = 0) then
+      Exit(True);
+    Start := Finish + 1;
+  end;
+  Result := False;
+end;
+
 function ParseSelectedProtocol(var Data: TTlsReader; const Offered: string; out Selected: TTlsByteRange): LongInt;
 var
   Names: TTlsReader;
@@ -136,12 +154,12 @@ begin
   Selected := ByteRange(nil, 0);
   if Offered = '' then
     Exit(TlsErrorUnsupportedExtension);
-  { Exactly one name, which must be the one offered. }
+  { Exactly one name, which must be one of those offered. }
   if not ReadVector(Data, 2, Names) or not ReaderAtEnd(Data) then
     Exit(TlsErrorMalformedMessage);
   if not ReadVectorBytes(Names, 1, Name) or (Name.Length = 0) or not ReaderAtEnd(Names) then
     Exit(TlsErrorMalformedMessage);
-  if (Name.Length <> PtrUInt(System.Length(Offered))) or (CompareByte(Name.Data^, Offered[1], Name.Length) <> 0) then
+  if not ProtocolWasOffered(Name, Offered) then
     Exit(TlsErrorNoApplicationProtocol);
   Selected := Name;
   Result := TlsErrorNone;

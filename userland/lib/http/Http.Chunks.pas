@@ -27,14 +27,21 @@
   extensions and trailers are skipped; a lone LF is taken for CRLF.
   Anything else fails the decoder.
 
-  Plain Pascal, checked on the host by tools/WgetTest.
+  Encoding (a request body of unknown length): each piece as a chunk,
+  then the last chunk without trailers.
+
+  Plain Pascal, checked on the host by tools/WgetTest and tools/HttpTest.
 }
-unit Wget.Chunks;
+unit Http.Chunks;
 
 {$mode objfpc}
+{$H+}
 {$pointermath on}
 
 interface
+
+uses
+  Http.ByteBuffers;
 
 type
   TChunkState = (ChunkSize, ChunkExtension, ChunkSizeLineEnd, ChunkData, ChunkDataCarriageReturn,
@@ -55,7 +62,29 @@ function DecodeChunks(var Decoder: TChunkDecoder; Input: PByte; InputLength: Ptr
   out OutputLength: PtrUInt; out Consumed: PtrUInt): Boolean;
 function ChunkDecoderFinished(constref Decoder: TChunkDecoder): Boolean;
 
+{ "size CRLF data CRLF" appended to Output (nothing for Count 0). }
+procedure EncodeChunk(Data: Pointer; Count: Integer; var Output: THttpByteBuffer);
+{ The last chunk and the end of the (empty) trailer section. }
+procedure EncodeLastChunk(var Output: THttpByteBuffer);
+
 implementation
+
+uses
+  SysUtils;
+
+procedure EncodeChunk(Data: Pointer; Count: Integer; var Output: THttpByteBuffer);
+begin
+  if Count <= 0 then
+    Exit;
+  AppendText(Output, LowerCase(IntToHex(Count, 1)) + #13#10);
+  AppendBytes(Output, Data, Count);
+  AppendText(Output, #13#10);
+end;
+
+procedure EncodeLastChunk(var Output: THttpByteBuffer);
+begin
+  AppendText(Output, '0'#13#10#13#10);
+end;
 
 procedure BeginChunkDecoder(out Decoder: TChunkDecoder);
 begin
