@@ -31,7 +31,8 @@
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libtls <- libquic (QUIC, QPACK, HTTP/3; h3get)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
-#                  libsystem <- libweb (the browser engine; htmldump)
+#                  libsystem, libcss, libfont, libdrawing, libimage <- libweb (the browser
+#                  engine; htmldump, webrender)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
 #   programs       ld -pie against the libraries, with si_prc providing
@@ -322,14 +323,16 @@ $(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
 	python3 -B userland/lib/web/make-tables.py $(WEB_GENERATED)
 	@touch $@
 
-$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) \
-		$(wildcard userland/lib/web/*.inc)
+$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(CSS_LIBRARY) $(FONT_LIBRARY) $(DRAWING_LIBRARY) $(IMAGE_LIBRARY) \
+		$(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc)
 	@rm -rf $(WEB_LIBRARY_OBJECTS)
 	@mkdir -p $(WEB_LIBRARY_OBJECTS)
-	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/web \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) \
+		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
+		-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fuuserland/lib/web \
 		-Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
-		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -limage -lcompression -lfont -ldrawing -lcss -lsystem
 
 # libcompression: deflate compression and decompression, the zlib and
 # gzip wrappers and their checksums.
@@ -448,10 +451,12 @@ $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # The SSH server, its SFTP subsystem and the client programs speak SSH
 # through libssh.
 # htmldump parses HTML through libweb.
-WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump)
-$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb
-$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS)
-$(WEB_PROGRAMS): $(WEB_LIBRARY)
+# webrender renders a page to a PNG (or prints its layout) through libweb.
+WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump webrender)
+$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -lcss -limage -lcompression -lfont -ldrawing
+$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fuuserland/webrender
+$(WEB_PROGRAMS): $(WEB_LIBRARY) $(wildcard userland/webrender/*.pas)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)

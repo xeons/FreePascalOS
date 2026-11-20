@@ -573,7 +573,10 @@ var
   Name: TAtom;
 begin
   Result := nil;
-  if not Element.IsHtml or not Element.HasAttributes then
+  if not Element.IsHtml then
+    Exit;
+  { Cells take hints from their table's attributes too. }
+  if not Element.HasAttributes and not Element.IsHtmlElement(AtomTd) and not Element.IsHtmlElement(AtomTh) then
     Exit;
   Writer.Text := '';
   Writer.Element := Element;

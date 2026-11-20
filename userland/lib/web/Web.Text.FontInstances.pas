@@ -46,6 +46,7 @@ type
   TPlacedGlyph = record
     Face: TFontFaceEntry;
     Glyph: LongWord;
+    CodePoint: LongWord;
     { The pen's position from the start of the run, CSS px. }
     X: Single;
   end;
@@ -265,6 +266,7 @@ begin
       SetLength(Glyphs, GlyphCount * 2 + 16);
     Glyphs[GlyphCount].Face := Face;
     Glyphs[GlyphCount].Glyph := Glyph;
+    Glyphs[GlyphCount].CodePoint := CodePoint;
     Glyphs[GlyphCount].X := Pen;
     Inc(GlyphCount);
     if CodePoint < 256 then

@@ -537,6 +537,12 @@ begin
           Box := Item^.Box;
           Above := AtomicBaseline(Box);
           Below := Box.MarginBoxHeight - Above;
+          if KeywordIn(Box.Style.Keyword(cpVerticalAlign), [kwTop, kwBottom]) then
+          begin
+            { Placed once the line's extent is known. }
+            Shifts[Index - First] := 0;
+            Continue;
+          end;
           if Box.Style.Keyword(cpVerticalAlign) = kwMiddle then
             Shift := Frames[FrameCount - 1].Shift - Frames[FrameCount - 1].FontSize * 0.27 +
               (Above - Below) / 2
@@ -545,6 +551,28 @@ begin
           Shifts[Index - First] := Shift;
           Extend(Shift - Above, Shift + Below);
         end;
+    end;
+  end;
+  { vertical-align: top and bottom against the line's extent. }
+  for Index := First to Last - 1 do
+  begin
+    Item := @Items.Items[Index];
+    if (Item^.Kind <> ikAtomic) or not KeywordIn(Item^.Box.Style.Keyword(cpVerticalAlign), [kwTop, kwBottom]) then
+      Continue;
+    Box := Item^.Box;
+    Above := AtomicBaseline(Box);
+    Below := Box.MarginBoxHeight - Above;
+    if Box.Style.Keyword(cpVerticalAlign) = kwTop then
+    begin
+      if TopRel + Box.MarginBoxHeight > BottomRel then
+        BottomRel := TopRel + Box.MarginBoxHeight;
+      Shifts[Index - First] := TopRel + Above;
+    end
+    else
+    begin
+      if BottomRel - Box.MarginBoxHeight < TopRel then
+        TopRel := BottomRel - Box.MarginBoxHeight;
+      Shifts[Index - First] := BottomRel - Below;
     end;
   end;
   Result := BottomRel - TopRel;

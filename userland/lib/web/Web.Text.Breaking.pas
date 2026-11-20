@@ -208,7 +208,7 @@ var
   Index, ByteCount: Integer;
   CodePoint: LongWord;
 begin
-  if not (Transform in [kwUppercase, kwLowercase, kwCapitalize]) then
+  if not (KeywordIn(Transform, [kwUppercase, kwLowercase, kwCapitalize])) then
     Exit(Text);
   Result := '';
   Index := 1;

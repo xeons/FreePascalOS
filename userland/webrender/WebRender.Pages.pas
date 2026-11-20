@@ -67,7 +67,7 @@ begin
   Result.Width := 800;
   Result.Height := 600;
   Result.Scale := 1;
-  Result.FontDirectory := 'userland/fonts';
+  Result.FontDirectory := '';
 end;
 
 function ReadTextFile(const Path: string): string;

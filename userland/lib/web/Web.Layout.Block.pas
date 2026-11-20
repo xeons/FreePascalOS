@@ -237,9 +237,9 @@ begin
       Continue;
     end;
     { An in-flow block-level box. }
-    ResolveBoxEdges(Child, ContentWidth);
+    { The edges are the child's layout's to set (a skipped layout keeps them). }
     Combined := Pending;
-    AddMargin(Combined, Child.Margin[sideTop]);
+    AddMargin(Combined, LengthOf(Child.Style, cpMarginTop, ContentWidth));
     if FirstInFlow and CollapseTop then
       Estimate := Y
     else
@@ -278,7 +278,8 @@ begin
           if IsAutoValue(Child.Style, cpWidth) and not (Child.Kind in [bkTable, bkReplaced]) then
           begin
             ChildInput.WidthMode := wmFixed;
-            ChildInput.FixedWidth := ChildInput.AvailableWidth - Child.Margin[sideLeft] - Child.Margin[sideRight];
+            ChildInput.FixedWidth := ChildInput.AvailableWidth - LengthOf(Child.Style, cpMarginLeft, ContentWidth) -
+              LengthOf(Child.Style, cpMarginRight, ContentWidth);
             if ChildInput.FixedWidth < 0 then
               ChildInput.FixedWidth := 0;
           end;

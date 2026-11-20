@@ -239,9 +239,9 @@ begin
   if not (bfAbsolute in Box.Flags) then
   begin
     FloatValue := Style.Keyword(cpFloat);
-    if FloatValue in [kwLeft, kwInlineStart] then
+    if KeywordIn(FloatValue, [kwLeft, kwInlineStart]) then
       Include(Box.Flags, bfFloatLeft)
-    else if FloatValue in [kwRight, kwInlineEnd] then
+    else if KeywordIn(FloatValue, [kwRight, kwInlineEnd]) then
       Include(Box.Flags, bfFloatRight);
   end;
   if Box.IsOutOfFlow then
@@ -269,7 +269,7 @@ var
 begin
   Result := nil;
   Display := DisplayKeyword(Style);
-  if Display in [kwNone, kwContents] then
+  if KeywordIn(Display, [kwNone, kwContents]) then
     Exit;
   Control := ReplacedControlKind(Element);
   if Control <> ControlNone then
@@ -279,7 +279,7 @@ begin
     if FResources <> nil then
       Replaced.Image := FResources.ElementImage(Element);
     Result := Replaced;
-    if not (Display in [kwBlock, kwListItem, kwFlex, kwGrid, kwTable, kwFlowRoot]) then
+    if not (KeywordIn(Display, [kwBlock, kwListItem, kwFlex, kwGrid, kwTable, kwFlowRoot])) then
       Include(Result.Flags, bfInlineLevel);
   end
   else
@@ -366,12 +366,12 @@ begin
   if PseudoStyle = nil then
     Exit;
   Content := PseudoStyle.Value(cpContent);
-  if (Content^.Kind = cvKeyword) and (TCssKeyword(Content^.Keyword) in [kwNone, kwNormal]) then
+  if (Content^.Kind = cvKeyword) and (KeywordIn(TCssKeyword(Content^.Keyword), [kwNone, kwNormal])) then
     Exit;
   Display := DisplayKeyword(PseudoStyle);
   if Display = kwNone then
     Exit;
-  if Display in [kwInline, kwContents] then
+  if KeywordIn(Display, [kwInline, kwContents]) then
   begin
     Box := TLayoutBox.Create(bkInline, Element, PseudoStyle);
     Include(Box.Flags, bfInlineLevel);
@@ -408,7 +408,7 @@ begin
   if MarkerStyle = nil then
     MarkerStyle := AnonymousStyleFor(Parent.Style);
   Content := MarkerStyle.Value(cpContent);
-  HasContent := not ((Content^.Kind = cvKeyword) and (TCssKeyword(Content^.Keyword) in [kwNone, kwNormal]));
+  HasContent := not ((Content^.Kind = cvKeyword) and (KeywordIn(TCssKeyword(Content^.Keyword), [kwNone, kwNormal])));
   if (Content^.Kind = cvKeyword) and (TCssKeyword(Content^.Keyword) = kwNone) then
     Exit;
   if not HasContent and (Parent.Style.Keyword(cpListStyleType) = kwNone) and
@@ -691,7 +691,7 @@ begin
   if (Box.Kind <> bkText) or (Box.Node = nil) then
     Exit;
   WhiteSpace := Box.Style.Keyword(cpWhiteSpace);
-  if WhiteSpace in [kwPre, kwPreWrap, kwBreakSpaces, kwPreLine] then
+  if KeywordIn(WhiteSpace, [kwPre, kwPreWrap, kwBreakSpaces, kwPreLine]) then
     Exit;
   Result := IsWhiteSpaceOnly(TCharacterData(Box.Node).Data);
 end;
