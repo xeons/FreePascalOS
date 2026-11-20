@@ -46,6 +46,8 @@ uses
   JsShell.Timers,
   JsShell.Globals,
   Js.Values,
+  Js.Objects,
+  Js.Promises,
   Js.Engine;
 
 const
@@ -68,12 +70,28 @@ begin
   Result := True;
 end;
 
+{ Promises rejected with nobody to handle them: reported as errors. }
+procedure ReportRejections;
+var
+  Index: Integer;
+  Promise: TJsPromise;
+begin
+  for Index := 0 to High(Engine.Realm.UnhandledRejections) do
+  begin
+    Promise := TJsPromise(JsAsObject(Engine.Realm.UnhandledRejections[Index]));
+    WriteLn(StdErr, 'Uncaught (in promise) ' + Engine.ErrorText(Promise.Value));
+    Failed := True;
+  end;
+  Engine.Realm.UnhandledRejections := nil;
+end;
+
 { Runs code, then everything it left to do; reports what threw. }
 procedure RunCode(const Source, FileName: string);
 begin
   try
     Engine.Evaluate(Source, FileName);
     RunPendingWork(Engine);
+    ReportRejections;
   except
     on Error: EJsError do
     begin

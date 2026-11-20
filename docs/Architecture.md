@@ -5684,6 +5684,127 @@ decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
 
+## JavaScript engine
+
+libjavascript (`userland/lib/javascript`, units `Js.*`, built as
+`libjavascript.so` for amd64 and arm64 on libsystem alone) is an
+ECMAScript engine made for speed and a small footprint, with an
+embedding API for libweb's DOM bindings. `js` (`userland/bin/js.pas`,
+units in `userland/js`) runs a file, `-e` code or a REPL.
+
+**Values** (`Js.Values`) are 64-bit NaN-boxed words: every double but
+NaN is its own bit pattern, the negative quiet NaN space above the one
+canonical NaN carries tagged values (top 16 bits: FFF9 int32, FFFA
+undefined/null/false/true/the hole/the exception mark, FFFB object,
+FFFC string, FFFD symbol, FFFE BigInt; pointers in the low 48 bits).
+Numbers, booleans, null and undefined never allocate; integral doubles
+in the int32 range are kept as integers so loops and indexing take
+integer paths. A routine that has thrown returns `JsException`; the
+thrown value waits in the runtime (no Pascal exception per JS throw).
+
+**Strings** (`Js.Strings`) are immutable UTF-16 sequences stored with one
+byte per unit when Latin-1 and two otherwise; concatenations longer than
+40 units make ropes, flattened (iteratively, never recursively) on first
+read. Property keys are atoms (`Js.Atoms`: interned strings, compared by
+pointer; the table is weak) or symbols, or int32 values for array indices
+below 2^31.
+
+**Objects** (`Js.Objects`, `Js.Shapes`) have a shape (hidden class: a
+parent plus one property, with transitions to children that are weak and
+die with their last object), four inline slots and a slot buffer, a
+prototype, and dense elements in an array of their own (holes marked;
+sealed and frozen elements by a flag, not by moving them). Many
+properties, a delete or a reconfiguration turn an object's shape into a
+dictionary of its own that it changes in place, bumping a generation
+number. The internal methods are virtual: arrays (length), String
+objects, arguments, proxies and host objects override them; the fast
+paths read shapes and elements directly.
+
+**Compiler.** `Js.Lexer` → `Js.Parser` (recursive descent, precedence
+climbing, cover grammars for arrows and destructuring; scopes and
+references recorded while parsing; nesting bounded) → `Js.Scopes`
+(resolves each identifier to its variable; a variable used by a nested
+function is captured; this/new.target/super/arguments used from arrows
+become captured implicit variables of the enclosing function) → the
+compiler in four layers (`Js.CodeBuilder`, `Js.ExpressionCompiler`,
+`Js.StatementCompiler`, `Js.Compiler`) emitting register bytecode
+(`Js.Bytecode`). Locals live in registers, captured variables in
+per-scope environments (a scope only gets one when something in it is
+captured; a for-let loop copies its environment per iteration).
+finally blocks are copied in front of each jump out of them and compiled
+once more as an exception handler; their copies are gaps in the
+protected ranges. The temporal dead zone is checked only where a read
+can precede initialisation. A script's own declarations are global
+bindings found by name (var/function on the global object, let/const/
+class in the global lexical environment).
+
+**Interpreter** (`Js.Interpreter`): one value stack of fixed capacity
+holds every frame's registers (so pointers handed to natives stay
+valid) and a fixed frame array bounds recursion (RangeError beyond). A
+call passes callee, this and arguments in consecutive registers and the
+callee's frame begins at its arguments; JS-to-JS calls continue in the
+same loop, calls from Pascal re-enter it. Property access sites have
+inline caches: own slot (shape + generation), direct prototype slot,
+and property addition (shape transition, guarded by a prototype epoch
+bumped when a prototype gains a setter or read-only property or a
+prototype changes). Globals have their own caches. Exceptions look up
+the frame's handler table (innermost first); a generator's return() is
+a return completion that only finally handlers take. Generators, async
+functions and async generators run in frames copied into and out of
+their suspension object at each yield or await.
+
+**Collector** (`Js.Heap`): precise, tracing, stop-the-world
+mark-and-sweep with an explicit mark stack. It runs only at safe points
+(loop back edges, frame entries), so no allocation ever collects; native
+code keeps values it holds across calls into JavaScript in the runtime's
+temporary roots. Weak structures: the atom table, shape transitions,
+WeakMap/WeakSet (ephemerons: values marked to a fixpoint for live keys),
+WeakRef, FinalizationRegistry (cleanup queued as jobs). The next
+collection is due at twice what survived (at least 4 MiB by default);
+the memory limit and interrupts are checked at safe points and stop the
+script with an uncatchable InternalError.
+
+**Embedding** (`Js.Engine`): `TJsEngine` (one realm) with Evaluate /
+TryEvaluate, Call, Construct, RunJobs (the microtask queue), host
+functions (plain callbacks with a magic number, or methods of objects),
+host classes (`DefineClass`: constructor, prototype, instances carrying
+native data with a finalizer and a trace hook for the JavaScript values
+the host keeps alive), Protect/Unprotect for values held across calls,
+MemoryLimit, Interrupt (any thread), CollectGarbage and heap statistics.
+Uncaught exceptions reach the host as `EJsError` with the stack text.
+`Js.Platform` holds the clock and time zone hooks; `Js.SystemClock`
+fills them on FreePascalOS from the kernel's clock and the time zone
+database (the host tests keep the runtime's).
+
+**Built-ins**: Object, Function (and the generator/async function
+constructors), Array, String, Number, Boolean, Symbol, BigInt, Math,
+JSON, Error and its kinds (with causes and V8-style stack traces),
+Map/Set (ordered hash tables whose iterators survive deletions; the Set
+methods), WeakMap/WeakSet/WeakRef/FinalizationRegistry, Promise (all,
+allSettled, any, race, withResolvers, try), iterator helpers
+(Iterator.prototype.map and the others, Iterator.from), Reflect, Proxy,
+Date (proleptic Gregorian arithmetic, ISO and toString/toUTCString
+parsing, en-US locale strings), RegExp (`Js.RegExpCompiler` and
+`Js.RegExpMatcher`: a backtracking matcher with an undo stack; named
+groups, back references, lookahead and lookbehind, the u, v, y, s, d, i,
+m, g flags, \p general categories and a few scripts), globalThis, the URI
+functions, parseInt/parseFloat, indirect eval, queueMicrotask, console.
+`Js.Inspect` prints values as Node's util.inspect does, on one line.
+
+Not there yet: modules (import/export, import()), direct eval (eval
+runs in the global scope), the with statement, sloppy-mode mapped
+arguments, typed arrays and ArrayBuffer, Intl, String.prototype.normalize
+(returns the text unchanged), Annex B escape/unescape and the RegExp
+legacy statics; there is no JIT and the collector is neither
+incremental nor generational.
+
+`make javascript-test` (tools/JavaScriptTest) runs each
+`scripts/*.js` against the output written in its trailing `/* expected`
+comment, checks the embedding API (host functions and classes,
+finalizers, protected values, the memory limit, interrupts) and runs
+`benchmarks/*.js`, reporting time, the heap's peak and the process's
+peak bytes; `JS_GC_STRESS=1` collects every 16 KiB to find missed roots.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a
