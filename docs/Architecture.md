@@ -5105,6 +5105,24 @@ strings, and `Port` and `ResumeSessions` (on) for the ticket cache. Names,
 error details and the server's certificate list are strings and
 dynamic arrays; the DER, keys and records stay bytes.
 
+**QUIC mode** (`Tls.Quic`, for libquic; RFC 9001 section 4). With
+`TTlsClientOptions.Quic` pointing at a `TTlsQuicCallbacks` the same
+handshake runs without records: `SendHandshake(Level, Data)` takes each
+handshake message with its encryption level (Initial, Handshake,
+Application), `ReceiveHandshake(Level, Buffer)` waits for the server's
+bytes of the level being read (QUIC pumps the connection meanwhile), and
+`InstallSecret(Level, Direction, Suite, Secret)` hands over each traffic
+secret as it is made (both handshake secrets at the ServerHello: the
+client acknowledges Handshake packets before its Finished). The
+ClientHello then offers TLS 1.3 only, leaves the legacy session id
+empty, carries quic_transport_parameters (0x39) with the callbacks'
+`TransportParameters`, and never resumes; no change_cipher_spec and no
+alert is sent: `TlsQuicAlert` gives the alert a failure stands for
+(QUIC's CRYPTO_ERROR 0x100 + alert). EncryptedExtensions must carry the
+server's transport parameters (`TlsQuicPeerTransportParameters`) and an
+ALPN protocol (else `TlsErrorApplicationProtocolMissing`, -22,
+no_application_protocol). Without `Quic` nothing changes.
+
 **wget** (`userland/bin/wget.pas`, units in `userland/wget`) speaks
 HTTP/1.1, keeping a connection alive between requests: the URL
 (`Wget.Urls`: http and https, no user names or IPv6 literals, unsafe
@@ -5260,7 +5278,217 @@ site under /site/ (-r, -l 1, -np, -A, -R, -p, -k, robots.txt and -e
 robots=off). test-qemu.sh says so and stops when python3
 with ssl or openssl is missing on the host.
 
-### The SSH server
+### libquic: QUIC and HTTP/3
+
+**libquic** (`userland/lib/quic`, units `Quic.*`, `Qpack.*`, `Http3.*`,
+`libquic.so` on libtls) is a QUIC version 1 client (RFC 9000, 9001,
+9002) with QPACK (RFC 9204) and HTTP/3 (RFC 9114) on top: the transport
+libhttp will use for HTTP/3 (with Alt-Svc discovery, a later phase).
+`h3get` fetches a URL with it.
+
+```
+  h3get                  Http3.Requests (a request, its response)
+                         Http3.Connections (control/QPACK streams, SETTINGS, GOAWAY)
+                         Http3.FrameParser  Http3.Frames  Http3.Constants
+                         Qpack.Decoder  Qpack.Encoder  Qpack.DynamicTable
+                         Qpack.StaticTable  Qpack.Primitives  Qpack.Huffman
+=========== Quic.Sessions: host and port, the system's roots, NEW_TOKEN cache
+  Quic.UdpSockets        a connected UDP socket (Sys.Sockets) as transport
+  Quic.Connections       TQuicConnection: Connect, streams, Pump, Close
+  Quic.ClientHandshake   libtls in QUIC mode over the CRYPTO streams
+  Quic.ConnectionCore    start, keys, transport parameters, the pump
+  Quic.PacketReceiving   Quic.FrameHandling   Quic.PacketSending
+  Quic.LossRecovery      Quic.Congestion (RTT, NewReno, pacing)
+  Quic.StreamTable       Quic.Streams  Quic.SendBuffers  Quic.ReceiveBuffers
+  Quic.SentPackets       Quic.ConnectionState (one connection's state)
+  Quic.PacketProtection  Quic.InitialSecrets (and the Retry tag)
+  Quic.PacketHeaders     Quic.Frames  Quic.FrameWriter  Quic.TransportParameters
+  Quic.RangeSets  Quic.ConnectionIds  Quic.Buffers  Quic.VariableIntegers
+  Quic.DatagramTransports  Quic.Errors  Quic.Constants
+=========== libtls (Tls.Quic), libcryptography ==============================
+```
+
+Everything but `Quic.UdpSockets` and `Quic.Sessions` is plain Pascal over
+a datagram transport (two routines: send a datagram, wait up to a
+timeout for one), so it builds and runs on the host (make quic-test).
+
+**Driving it.** A connection has no thread: whoever waits runs it.
+`PumpConnection` sends what is due, waits for a datagram until the next
+timer (loss detection, an acknowledgement's delay, pacing, the idle
+timeout, the end of closing) or the caller's deadline, handles what
+came and the timers that ran out, and sends again. Every blocking call
+(`Connect`, `OpenStream` waiting for MAX_STREAMS, `Write` waiting for
+room, `Read`, `AcceptStream`) pumps until its condition holds or its
+timeout (`TQuicConnection.Timeout`, 30 s) passes; `Pump(ms)` runs one
+round for a caller that serves several streams (HTTP/3's control
+streams). The TLS handshake is pulled the same way: libtls's
+`ReceiveHandshake` callback pumps until CRYPTO bytes of its level are
+there. Packets of a level whose keys TLS has not made yet (a Handshake
+packet coalesced behind the Initial whose ServerHello makes its keys,
+1-RTT data behind the server's Finished) are kept (at most eight) and
+handled when `InstallSecret` brings the keys.
+
+**Packets** (`Quic.PacketHeaders`, `Quic.PacketProtection`,
+`Quic.InitialSecrets`). Long headers (Initial with its token, Handshake,
+Retry, Version Negotiation; 0-RTT is dropped) and short headers with this
+side's 8-byte connection ID; several packets per datagram, the 1-RTT one
+last. Packet numbers go out in as few bytes as twice the unacknowledged
+range needs and are expanded with RFC 9000 A.3's rule. Initial keys come
+from the client's first Destination ID (HKDF with version 1's salt,
+"client in"/"server in"); other levels' keys from the TLS secrets
+("quic key", "quic iv", "quic hp") for AES-128-GCM, AES-256-GCM (SHA-384)
+or ChaCha20-Poly1305; header protection masks from AES-ECB or ChaCha20
+over a 16-byte sample. Reserved bits must be zero once a packet opens.
+Datagrams with an Initial from the client (or an ack-eliciting one from
+a server) are padded to 1200 bytes; datagrams are 1200 bytes until the
+handshake is confirmed, then a single PING+PADDING probe of 1452 bytes
+(`Options.ProbePathMtu`) raises them to 1452 when it is acknowledged
+(its loss does not count as congestion).
+
+**The handshake** (`Quic.ClientHandshake`, `Quic.ConnectionCore`). The
+client picks a random 8-byte Destination ID, sends the ClientHello in a
+padded Initial and takes the server's first Initial's Source ID as its
+Destination from then on. A Retry (once, before any Initial, with a
+valid integrity tag: AES-128-GCM with RFC 9001's fixed key over the
+original Destination ID and the packet) gives a token, a new Destination
+ID and new Initial keys, and the CRYPTO data goes again; a Version
+Negotiation packet that does not list version 1 (and came before
+anything else, echoing the IDs) ends the attempt
+(`QuicErrorVersionNegotiation`). Transport parameters (`Quic.TransportParameters`:
+duplicates, ranges and server-only parameters checked) go in the
+ClientHello; the server's must confirm every ID seen
+(original_destination_connection_id, initial_source_connection_id,
+retry_source_connection_id exactly when there was a Retry), else
+TRANSPORT_PARAMETER_ERROR. Initial keys are dropped when the first
+Handshake packet goes out, Handshake keys when HANDSHAKE_DONE comes
+(the handshake is then confirmed). A TLS failure closes with
+CRYPTO_ERROR (0x100 + alert).
+
+**Streams and flow control** (`Quic.StreamTable`, `Quic.SendBuffers`,
+`Quic.ReceiveBuffers`). Each stream's sending side keeps what was
+written until it is acknowledged (at most 256 KiB: writers wait), sends
+lost ranges again first, then new bytes within the peer's
+MAX_STREAM_DATA and MAX_DATA, then a FIN; its receiving side puts frames
+together in a ring that grows up to the window this side gave (256 KiB
+a stream, 1 MiB the connection), refuses data beyond it
+(FLOW_CONTROL_ERROR) or beyond a final size (FINAL_SIZE_ERROR), and
+gives the peer a new limit when half the window has been read. Peer
+streams open when first named (with all lower ones of their kind) within
+the MAX_STREAMS given (100 of each kind), and a forgotten one makes room
+for the next; this side's wait for the peer's MAX_STREAMS (sending
+STREAMS_BLOCKED). RESET_STREAM, STOP_SENDING (answered with a reset),
+STREAM_DATA_BLOCKED and DATA_BLOCKED are handled; streams that are done
+both ways are freed.
+
+**Recovery and congestion** (`Quic.LossRecovery`, `Quic.Congestion`,
+`Quic.SentPackets`): RFC 9002's appendix A. Ack-eliciting packets are
+remembered in a ring per space (384 1-RTT, 32 Initial or Handshake) with
+records of their frames (a stream range, a CRYPTO range, which control
+frame) rather than copies; an ACK frees them (the ranges count as
+delivered) and gives an RTT sample (the peer's ack delay taken off up to
+max_ack_delay); a packet three behind an acknowledged one, or 9/8 RTT
+older, is lost and its frames queued again (control frames with current
+values). The PTO (smoothed RTT + 4 variances, + max_ack_delay for 1-RTT,
+doubled each time) sends one or two probes carrying the oldest data in
+flight again (or a PING), in Initial too while the handshake runs; a
+client with nothing in flight before its address is validated probes
+anyway. NewReno: 10 datagrams to start (at most 14720 bytes), slow start,
+halving per recovery period, persistent congestion (losses over three
+PTOs with nothing acknowledged between them) down to two datagrams; a
+pacer lets 5/4 of the window go per smoothed RTT in bursts of ten. ACKs
+go at once for Initial and Handshake and for packets out of order or
+after a gap, else after two ack-eliciting packets or 25 ms; they carry up
+to 32 ranges, and ranges below an acknowledged ACK are no longer sent.
+
+**The rest of the transport.** CONNECTION_CLOSE (transport or
+application; an application's close is APPLICATION_ERROR in Initial and
+Handshake packets) is sent once and again in answer while closing (three
+PTOs); a peer's close drains. The idle timeout is the smaller of both
+sides' (at least three PTOs). A short packet that does not open but ends
+in one of the peer's stateless reset tokens ends the connection
+(`QuicErrorStatelessReset`). NEW_CONNECTION_ID frames are kept (up to
+four, retire_prior_to honoured, RETIRE_CONNECTION_ID sent);
+PATH_CHALLENGE is answered; NEW_TOKEN is kept and `Quic.Sessions` offers
+it on the next connection to that host and port. Key updates (RFC 9001
+section 6): `RequestKeyUpdate` (or `Options.KeyUpdateInterval` packets)
+moves the send keys ("quic ku") once the previous update was
+acknowledged; a packet with the other key phase bit is tried with the
+next keys and, when it opens, moves the receiving side (and the sending
+side, if the peer started); the previous keys open late packets for
+three PTOs. Memory per connection is fixed but for the streams' buffers:
+one datagram buffer each way, the sent-packet rings, eight buffered
+packets.
+
+**QPACK** (`Qpack.*`). The static table's 99 entries; HPACK's Huffman
+code kept as its 257 code lengths only (the code is canonical, so the
+codes and a decoding table by length are worked out once), with padding
+and EOS checks; prefixed integers and string literals. The decoder keeps
+the dynamic table the server's encoder stream builds (capacity, inserts
+with static or dynamic names, literal names, duplicates, eviction;
+instructions may arrive in any pieces), decodes field sections (Required
+Insert Count, Base, indexed, post-base, name-reference and literal
+lines, a size limit), lets a section whose entries have not arrived wait
+(at most 16 streams) and acknowledges on the decoder stream (Section
+Acknowledgment, Stream Cancellation, Insert Count Increment). The
+encoder uses the static table and literals only (Required Insert Count
+0), so it never blocks the server and needs nothing back.
+
+**HTTP/3** (`Http3.*`). `THttp3ClientConnection` opens this side's
+control stream (SETTINGS: a 4 KiB QPACK table, 16 blocked streams, 64
+KiB field sections) and QPACK streams, reads the server's: the control
+stream must start with SETTINGS (H3_MISSING_SETTINGS) and may carry
+GOAWAY (no new requests at or above its ID) and CANCEL_PUSH; the
+encoder stream feeds the decoder; push streams are refused (no
+MAX_PUSH_ID: H3_ID_ERROR), unknown types get STOP_SENDING
+H3_STREAM_CREATION_ERROR, and a critical stream's end is
+H3_CLOSED_CRITICAL_STREAM. `THttp3Request` sends HEADERS (:method,
+:scheme, :authority, :path, then the caller's fields), the body in DATA
+frames (`WriteBody`, `FinishRequest`), and reads the response:
+`ReadHead` passes interim 1xx heads (kept in `InterimStatus`) and checks
+the final one (one three-digit :status first, lower case names, no
+connection-specific fields: else H3_MESSAGE_ERROR on the stream),
+`ReadBody` streams the DATA payloads out as they arrive
+(`THttp3FrameParser` collects only non-DATA frames, up to a limit, and
+passes over unknown and reserved ones), checks Content-Length and takes
+trailers. A frame in the wrong place is H3_FRAME_UNEXPECTED, a frame cut
+by the stream's end H3_FRAME_ERROR; a request freed before its end is
+cancelled (H3_REQUEST_CANCELLED). Errors are libquic's QuicError* codes
+and Http3Error* (-101 malformed response, -102 reset by the server,
+-103 connection error, -104 GOAWAY, -105 incomplete).
+
+**h3get** (`userland/bin/h3get.pas`): `h3get [-v] [-s] [-I] [-k] [-o FILE]
+[-X METHOD] [-d DATA] [-H 'NAME: VALUE'] [--cacert FILE] [--timeout S]
+[--mtu BYTES] [--fail] https://HOST[:PORT]/PATH`; `-v` shows the address,
+suite, response head, trailers, RTT and packet counts. Exit statuses as
+wget's: 4 network, 5 TLS, 7 protocol, 8 an error status with --fail.
+
+**Tests.** `make quic-test` builds libquic for the host (with libtls and
+TlsTest's Crypto.Random) and checks: RFC 9001 appendix A (the Initial
+secrets and keys, the header protection sample, the ChaCha20 short header
+packet whole, the key update secret, the Retry tag), whole Initial and
+AES-256-GCM packets against the same built by Python's cryptography
+(tools/QuicTest/make-vectors.py, which also makes the test server's
+Ed25519 certificate), RFC 9000's packet number and varint examples, every
+frame written and read back, ACK ranges, malformed frames, transport
+parameters; QPACK through RFC 9204 appendix B (B.1 to B.5, the encoder
+stream fed a byte at a time, a section blocked until its inserts come)
+and RFC 7541's Huffman strings; HTTP/3 frames and the frame parser. Then
+whole connections over UDP on 127.0.0.1 and ::1 to a server written for
+the test (`QuicTest.Server`: libquic's core in the server role, a
+minimal TLS 1.3 server over libtls's key schedule and an Ed25519
+certificate the client pins): each suite, IPv6, 3 MB both ways, 150
+streams in a row, a tenth of the datagrams of both sides dropped, a
+Retry, key updates from either side, the path MTU probe, Version
+Negotiation without version 1, a stateless reset, the server's
+application close, an untrusted certificate (the server gets CRYPTO_ERROR
+unknown_ca); and HTTP/3 to the test's HTTP/3 server: GET, 1 MB, a POST
+echoed with trailers, 204, 103 then 200, a head waiting 100 ms for the
+encoder stream, five requests at once, a malformed :status, a reset
+request, GOAWAY, the close. Last, `run-curl-interop.sh` has the host's
+curl (ngtcp2 and nghttp3, when it has HTTP/3) fetch from `QuicTest
+serve`, an independent stack against libquic's core. Nothing has been
+tried against servers on the internet yet.
+
 
 `sshd` lets another machine log in, run commands and copy files with a
 stock OpenSSH client (`ssh`, `scp`, `sftp` of OpenSSH 9 and later); the
@@ -7499,6 +7727,10 @@ independent) against the Free Pascal runtime library:
   checking (name constraints, OCSP stapling) and session resumption, the
   `Tls.*` units (see "TLS and wget"); it needs libcryptography and
   libsystem. wget uses it.
+- **libquic.so** – a QUIC version 1 client with QPACK and HTTP/3, the
+  `Quic.*`, `Qpack.*` and `Http3.*` units (see "libquic: QUIC and
+  HTTP/3"); it needs libtls (in its QUIC mode), libcryptography and
+  libsystem. h3get uses it.
 - **libcompression.so** – deflate compression and decompression with the
   zlib and gzip wrappers, Adler-32 and CRC-32, streaming classes
   (`TInflater`, `TDeflater`), stream adapters and one-call functions on

@@ -726,6 +726,29 @@ normalized (0-65535), not pixels.
       scp in the system (an SFTP client), encrypted private key files
       (ssh-keygen -N, bcrypt-pbkdf and aes256-ctr), ssh_config files,
       a local ssh-agent, X11 forwarding
+- [x] libquic (web platform phase 1): QUIC v1 client (RFC 9000/9001/9002:
+      packets, coalescing, Initial keys, AES-GCM and ChaCha20-Poly1305
+      protection, header protection, key updates, Retry and Version
+      Negotiation, transport parameters, streams with flow control,
+      ACK ranges, loss detection, PTO, NewReno, pacing, idle timeout,
+      stateless reset, NEW_TOKEN, a 1452-byte path MTU probe), libtls's
+      QUIC mode (Tls.Quic), QPACK (static table, Huffman, dynamic table
+      decoder with blocked sections, static+literal encoder) and an
+      HTTP/3 client (control and QPACK streams, SETTINGS, GOAWAY,
+      streaming requests and responses, trailers); libquic.so, h3get;
+      host tests (RFC 9001 and RFC 9204 vectors, loopback connections
+      against a test server, curl's HTTP/3 against that server)
+- [ ] libquic next: HTTP/3 in libhttp behind its protocol-independent
+      interface with Alt-Svc discovery (phase 2); h3get and coretest
+      against real servers (not tried yet: no outside network in the
+      tests); 0-RTT and session resumption over QUIC (libtls's QUIC
+      mode turns tickets off); connection migration and NEW_CONNECTION_ID
+      issued by the client (only the handshake's ID is used); CUBIC;
+      ECN; DPLPMTUD beyond the single 1452-byte probe; a QPACK encoder
+      that uses the dynamic table; server push (refused now); a
+      QPACK/HPACK Huffman and static-table unit shared with libhttp's
+      HTTP/2; libtls matching IPv6 literals against the certificate
+      (h3get to [::1] needs a name)
 
 ## ARM64 port
 
