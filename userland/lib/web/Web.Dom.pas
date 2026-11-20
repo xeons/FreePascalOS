@@ -141,6 +141,9 @@ type
   TElementClass = class of TElement;
 
   TDocumentMode = (DocumentModeNoQuirks, DocumentModeQuirks, DocumentModeLimitedQuirks);
+  { document.readyState (HTML Standard 3.1.5). }
+  TDocumentReadyState = (ReadyStateLoading, ReadyStateInteractive, ReadyStateComplete);
+  TDocumentNotifyEvent = procedure(Sender: TObject) of object;
 
   TAttributeRecord = record
     Value: string;
@@ -506,6 +509,13 @@ type
     FTemplateContentsOwner: TDocument;
     FIsTemplateContentsOwner: Boolean;
     FScriptingEnabled: Boolean;
+    FReadyState: TDocumentReadyState;
+    FDefaultView: TEventTarget;
+    FTargetElement: TElement;
+    FBrowsingContext: TObject;
+    FOnReadyStateChange: TDocumentNotifyEvent;
+    procedure SetReadyState(Value: TDocumentReadyState);
+    function GetReadyStateText: string;
     function GetDocumentElement: TElement;
     function GetDoctype: TDocumentType;
     function GetHead: TElement;
@@ -529,6 +539,7 @@ type
     function GetTextContent: string; override;
     procedure SetTextContent(const Value: string); override;
     function CloneSelf(Document: TDocument): TNode; override;
+    function GetTheParent(Event: TEvent): TEventTarget; override;
   public
     { A new document; the caller holds its first reference (Release). }
     constructor CreateDocument(HtmlDocument: Boolean = True);
@@ -573,6 +584,18 @@ type
     property Body: TElement read GetBody;
     property Title: string read GetTitle;
     property ScriptingEnabled: Boolean read FScriptingEnabled write FScriptingEnabled;
+    { Set by the loader (Web.Loading); fires readystatechange itself. }
+    property ReadyState: TDocumentReadyState read FReadyState write SetReadyState;
+    property ReadyStateText: string read GetReadyStateText;
+    { The window (an event target the loader makes): events other than
+      load bubble from the document to it. Not owned. }
+    property DefaultView: TEventTarget read FDefaultView write FDefaultView;
+    { The element the URL's fragment indicates (:target), or nil. }
+    property TargetElement: TElement read FTargetElement write FTargetElement;
+    { The loading side's object for this document (Web.Loading). }
+    property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
+    { Called after ReadyState changed (and readystatechange fired). }
+    property OnReadyStateChange: TDocumentNotifyEvent read FOnReadyStateChange write FOnReadyStateChange;
   end;
 
   { NodeList: live (a node's children) or a fixed list. }

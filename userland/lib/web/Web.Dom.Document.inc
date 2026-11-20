@@ -574,6 +574,8 @@ begin
     Node.FFlags := Node.FFlags and not NodeFlagConnected;
     if (Node.FFlags and NodeFlagHasId) <> 0 then
       UnregisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
+    if Node = FTargetElement then
+      FTargetElement := nil;
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
     Node := Node.NextInTree(Root);
@@ -665,6 +667,40 @@ begin
       PendingSpace := False;
       Result := Result + Text[Index];
     end;
+end;
+
+procedure TDocument.SetReadyState(Value: TDocumentReadyState);
+var
+  Event: TEvent;
+begin
+  if FReadyState = Value then
+    Exit;
+  FReadyState := Value;
+  Event := TEvent.Create('readystatechange');
+  try
+    Event.IsTrusted := True;
+    DispatchEvent(Event);
+  finally
+    Event.Free;
+  end;
+  if Assigned(FOnReadyStateChange) then
+    FOnReadyStateChange(Self);
+end;
+
+function TDocument.GetReadyStateText: string;
+const
+  Names: array[TDocumentReadyState] of string = ('loading', 'interactive', 'complete');
+begin
+  Result := Names[FReadyState];
+end;
+
+function TDocument.GetTheParent(Event: TEvent): TEventTarget;
+begin
+  { HTML: a document's parent is its window, except for load events. }
+  if (FDefaultView = nil) or (Event.TypeName = 'load') then
+    Result := nil
+  else
+    Result := FDefaultView;
 end;
 
 function TDocument.GetTitle: string;
