@@ -39,11 +39,13 @@ uses
   TestChecks,
   QuicTest.Protection,
   QuicTest.Framing,
+  QuicTest.Qpack,
   QuicTest.Loopback;
 
 begin
   RunProtectionTests;
   RunFramingTests;
+  RunQpackTests;
   RunLoopbackTests;
   FinishChecks('QUIC TEST');
 end.
