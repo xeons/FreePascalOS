@@ -32,7 +32,7 @@
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
 #                  HTTP/3 connections; h3get, wget)
-#                  libhttp, libcss, libfont, libdrawing, libimage <- libweb (the browser
+#                  libjavascript, libhttp, libcss, libfont, libdrawing, libimage <- libweb (the browser
 #                  engine; htmldump, webrender)
 #                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
@@ -322,28 +322,32 @@ $(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
 		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libweb: the browser engine (encodings, the HTML parser, the DOM, the event
-# loop, fetching through libhttp, loading and navigation). Its
-# tables (atoms, encodings, named character references) are generated
-# from userland/lib/web/data by make-tables.py.
+# loop, fetching through libhttp, loading and navigation, styling, layout,
+# painting and the script bindings). Its tables (atoms, encodings, named
+# character references) are generated from userland/lib/web/data by
+# make-tables.py, the binding tables from userland/lib/web/bindings/*.webidl
+# by make-bindings.py.
 WEB_GENERATED := $(USER_BUILD_DIRECTORY)/web-generated
-WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt)
+WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
+	userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl)
 
 $(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
 	@rm -rf $(WEB_GENERATED)
 	@mkdir -p $(WEB_GENERATED)
 	python3 -B userland/lib/web/make-tables.py $(WEB_GENERATED)
+	python3 -B userland/lib/web/make-bindings.py $(WEB_GENERATED)
 	@touch $@
 
-$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(FONT_LIBRARY) $(DRAWING_LIBRARY) $(IMAGE_LIBRARY) \
+$(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(JAVASCRIPT_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(FONT_LIBRARY) $(DRAWING_LIBRARY) $(IMAGE_LIBRARY) \
 		$(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc)
 	@rm -rf $(WEB_LIBRARY_OBJECTS)
 	@mkdir -p $(WEB_LIBRARY_OBJECTS)
-	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/web -Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
-		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lhttp -lcss -lfont -limage -ldrawing -ltls -lcompression \
+		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ljavascript -lhttp -lcss -lfont -limage -ldrawing -ltls -lcompression \
 		-lcryptography -lsystem
 
 # libwebview: TWebView, the control that shows web pages (libweb in a
@@ -487,8 +491,8 @@ $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # htmldump parses HTML through libweb.
 # webrender renders a page to a PNG (or prints its layout) through libweb.
 WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump webrender)
-$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -lhttp -lcss -limage -lfont -ldrawing -ltls -lcompression -lcryptography
-$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
+$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -ljavascript -lhttp -lcss -limage -lfont -ldrawing -ltls -lcompression -lcryptography
+$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fuuserland/webrender
 $(WEB_PROGRAMS): $(WEB_LIBRARY) $(wildcard userland/webrender/*.pas)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
