@@ -117,6 +117,15 @@ type
 
   TJsHostClass = class;
 
+  { What the collector has done (times in milliseconds). }
+  TJsCollectorStatistics = record
+    Collections: Integer;
+    LongestPause: Double;
+    TotalPause: Double;
+    MarkTime: Double;
+    SweepTime: Double;
+  end;
+
   TJsHostFinalizer = procedure(HostClass: TJsHostClass; NativeData: Pointer) of object;
   TJsHostTracer = procedure(HostClass: TJsHostClass; NativeData: Pointer; Tracer: TJsTracer) of object;
 
@@ -251,6 +260,7 @@ type
     procedure CollectGarbage;
     function HeapBytes: Int64;
     function PeakHeapBytes: Int64;
+    function CollectorStatistics: TJsCollectorStatistics;
 
     property Runtime: TJsRuntime read FRuntime;
     property Realm: TJsInterpreterRealm read FRealm;
@@ -801,6 +811,15 @@ end;
 function TJsEngine.HeapBytes: Int64;
 begin
   Result := FRuntime.Heap.BytesAllocated;
+end;
+
+function TJsEngine.CollectorStatistics: TJsCollectorStatistics;
+begin
+  Result.Collections := FRuntime.Heap.Collections;
+  Result.LongestPause := FRuntime.Heap.LongestPause;
+  Result.TotalPause := FRuntime.Heap.TotalPause;
+  Result.MarkTime := FRuntime.Heap.MarkTime;
+  Result.SweepTime := FRuntime.Heap.SweepTime;
 end;
 
 function TJsEngine.PeakHeapBytes: Int64;

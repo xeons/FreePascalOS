@@ -338,6 +338,7 @@ var
   Started: QWord;
   Elapsed: QWord;
   BaseBytes: Int64;
+  Statistics: TJsCollectorStatistics;
 begin
   Capture := TCapture.Create;
   BaseBytes := CurrentBytes;
@@ -350,8 +351,10 @@ begin
       Engine.Evaluate(ReadText(Path), ExtractFileName(Path));
       Engine.RunJobs;
       Elapsed := GetTickCount64 - Started;
-      WriteLn(Format('BENCH %-24s %6d ms  heap peak %8d KiB  process peak %8d KiB', [ExtractFileName(Path), Elapsed,
-        Engine.PeakHeapBytes div 1024, (PeakBytes - BaseBytes) div 1024]));
+      Statistics := Engine.CollectorStatistics;
+      WriteLn(Format('BENCH %-27s %6d ms  heap peak %8d KiB  process peak %8d KiB  gc %3d, longest %4d ms',
+        [ExtractFileName(Path), Elapsed, Engine.PeakHeapBytes div 1024, (PeakBytes - BaseBytes) div 1024,
+        Statistics.Collections, Round(Statistics.LongestPause)]));
       Check(True, 'benchmark ' + ExtractFileName(Path));
     except
       on Error: EJsError do

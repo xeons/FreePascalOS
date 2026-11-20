@@ -18,15 +18,25 @@
 
 {
   The garbage collected heap: a precise, tracing mark-and-sweep
-  collector.
+  collector whose sweeping is incremental.
 
-  Every cell is linked into one list when it is made (Register). A
+  Every cell is linked into a list when it is made (Register). A
   collection marks from the roots - the providers registered with
   AddRootProvider: the interpreter's register stack and frames, the
   realms' intrinsics, values the host protects - then lets the weak
   processors run (ephemeron tables mark the values of live keys until
   nothing changes, then drop dead keys; the atom table forgets atoms
-  nobody holds), tells each dead cell it is dying and frees it.
+  nobody holds).
+
+  The few kinds of cells that hold weak links of their own (shapes,
+  whose parents list them as transitions; collection iterators) are
+  kept on a list of their own (NeedsDying), told they are dying and
+  freed during the pause. Everything else is swept afterwards, a slice
+  at each safe point (SweepSome): the cells marked live are kept (their
+  mark cleared), the others freed. Cells made meanwhile go on a fresh
+  list, so they are never mistaken for garbage. A collection that is
+  asked for explicitly (CollectGarbage, finalizers expected), or when
+  memory is near its limit, sweeps at once.
 
   The collector never runs inside an allocation: it runs only at safe
   points (the interpreter's calls and loop back edges, or an explicit
@@ -35,10 +45,14 @@
   into JavaScript protects it (the realm's temporary roots).
 
   BytesAllocated counts the bytes cells hold (instances and their
-  buffers): measured exactly over the survivors at each collection,
-  estimated in between from what was registered and accounted; the next collection is due when it passes Threshold, which
-  is set to twice what survived the last one (at least
-  MinimumThreshold).
+  buffers): measured over the survivors when a sweep ends, estimated in
+  between from what was registered and accounted. The next collection
+  is due when it passes Threshold: twice what survived (at least
+  MinimumThreshold). While a sweep is unfinished, passing the
+  threshold finishes it first.
+
+  Pause times (LongestPause...) are measured with Js.Platform's
+  monotonic clock.
 }
 unit Js.Heap;
 
@@ -48,7 +62,8 @@ unit Js.Heap;
 interface
 
 uses
-  Js.Values;
+  Js.Values,
+  Js.Platform;
 
 type
   TJsRootProvider = procedure(Tracer: TJsTracer) of object;
@@ -60,6 +75,14 @@ type
   TJsHeap = class(TJsTracer)
   private
     FFirstCell: TJsCell;
+    { Shapes and the other cells with weak links of their own. }
+    FFirstDyingCell: TJsCell;
+    { The cells of the last collection still to sweep. }
+    FSweepCell: TJsCell;
+    FSweeping: Boolean;
+    FSweepLiveBytes: Int64;
+    { Bytes registered or accounted since the sweep started. }
+    FBytesSinceSweep: Int64;
     FCellCount: Integer;
     FBytesAllocated: Int64;
     FPeakBytes: Int64;
@@ -70,7 +93,13 @@ type
     FRootProviders: array of TJsRootProvider;
     FWeakProcessors: array of TJsWeakProcessor;
     FCollecting: Boolean;
-    procedure Sweep;
+    FLongestPause: Double;
+    FTotalPause: Double;
+    FMarkTime: Double;
+    FSweepTime: Double;
+    procedure SweepDyingCells;
+    procedure FinishSweep;
+    procedure StartCollectionThreshold;
   public
     constructor Create;
     destructor Destroy; override;
@@ -82,7 +111,11 @@ type
     procedure RemoveRootProvider(Provider: TJsRootProvider);
     procedure AddWeakProcessor(Processor: TJsWeakProcessor);
     function ShouldCollect: Boolean; inline;
-    procedure Collect;
+    { A collection; Incremental leaves the sweep to SweepSome. }
+    procedure Collect(Incremental: Boolean = False);
+    { Sweeps a slice of the cells left by the last collection. }
+    procedure SweepSome;
+    property Sweeping: Boolean read FSweeping;
     { True when the heap holds more than the memory limit allows. }
     function OverLimit: Boolean; inline;
     property BytesAllocated: Int64 read FBytesAllocated;
@@ -94,6 +127,11 @@ type
     { 0: no limit. }
     property MemoryLimit: Int64 read FMemoryLimit write FMemoryLimit;
     property Collecting: Boolean read FCollecting;
+    { Milliseconds: the longest collection, all of them, and the parts. }
+    property LongestPause: Double read FLongestPause;
+    property TotalPause: Double read FTotalPause;
+    property MarkTime: Double read FMarkTime;
+    property SweepTime: Double read FSweepTime;
   end;
 
 implementation
@@ -105,28 +143,45 @@ begin
   FThreshold := FMinimumThreshold;
 end;
 
-destructor TJsHeap.Destroy;
+procedure FreeList(Cell: TJsCell);
 var
-  Cell, Next: TJsCell;
+  Next: TJsCell;
 begin
-  Cell := FFirstCell;
   while Cell <> nil do
   begin
     Next := Cell.NextCell;
     Cell.Free;
     Cell := Next;
   end;
+end;
+
+destructor TJsHeap.Destroy;
+begin
+  FreeList(FFirstCell);
+  FreeList(FSweepCell);
+  FreeList(FFirstDyingCell);
   FFirstCell := nil;
+  FSweepCell := nil;
+  FFirstDyingCell := nil;
   inherited Destroy;
 end;
 
 procedure TJsHeap.Register(Cell: TJsCell; Kind: TJsCellKind);
 begin
   Cell.Kind := Kind;
-  Cell.NextCell := FFirstCell;
-  FFirstCell := Cell;
+  if Cell.NeedsDying then
+  begin
+    Cell.NextCell := FFirstDyingCell;
+    FFirstDyingCell := Cell;
+  end
+  else
+  begin
+    Cell.NextCell := FFirstCell;
+    FFirstCell := Cell;
+  end;
   Inc(FCellCount);
   Inc(FBytesAllocated, Cell.InstanceSize);
+  Inc(FBytesSinceSweep, Cell.InstanceSize);
   if FBytesAllocated > FPeakBytes then
     FPeakBytes := FBytesAllocated;
 end;
@@ -134,6 +189,7 @@ end;
 procedure TJsHeap.Account(Delta: SizeInt);
 begin
   Inc(FBytesAllocated, Delta);
+  Inc(FBytesSinceSweep, Delta);
   if FBytesAllocated > FPeakBytes then
     FPeakBytes := FBytesAllocated;
 end;
@@ -175,13 +231,13 @@ begin
   Result := (FMemoryLimit > 0) and (FBytesAllocated > FMemoryLimit);
 end;
 
-procedure TJsHeap.Sweep;
+{ The dying list, in the pause: every dead one told first (they look
+  at each other's marks), then freed; the live ones unmarked. }
+procedure TJsHeap.SweepDyingCells;
 var
   Cell, Previous, Next: TJsCell;
-  LiveBytes: Int64;
 begin
-  { Dying first, while every mark still tells who lives. }
-  Cell := FFirstCell;
+  Cell := FFirstDyingCell;
   while Cell <> nil do
   begin
     if not Cell.Marked then
@@ -189,21 +245,20 @@ begin
     Cell := Cell.NextCell;
   end;
   Previous := nil;
-  LiveBytes := 0;
-  Cell := FFirstCell;
+  Cell := FFirstDyingCell;
   while Cell <> nil do
   begin
     Next := Cell.NextCell;
     if Cell.Marked then
     begin
       Cell.Marked := False;
-      Inc(LiveBytes, Cell.MemorySize);
+      Inc(FSweepLiveBytes, Cell.MemorySize);
       Previous := Cell;
     end
     else
     begin
       if Previous = nil then
-        FFirstCell := Next
+        FFirstDyingCell := Next
       else
         Previous.NextCell := Next;
       Dec(FCellCount);
@@ -211,19 +266,95 @@ begin
     end;
     Cell := Next;
   end;
-  { What the survivors hold, measured: the running count between
-    collections is only an estimate. }
-  FBytesAllocated := LiveBytes;
 end;
 
-procedure TJsHeap.Collect;
+const
+  { Cells looked at per SweepSome. }
+  SweepSlice = 4096;
+
+procedure TJsHeap.SweepSome;
+var
+  Cell, Next: TJsCell;
+  Count: Integer;
+begin
+  if not FSweeping then
+    Exit;
+  Count := 0;
+  Cell := FSweepCell;
+  while (Cell <> nil) and (Count < SweepSlice) do
+  begin
+    Next := Cell.NextCell;
+    if Cell.Marked then
+    begin
+      Cell.Marked := False;
+      Inc(FSweepLiveBytes, Cell.MemorySize);
+      Cell.NextCell := FFirstCell;
+      FFirstCell := Cell;
+    end
+    else
+    begin
+      Dec(FCellCount);
+      Cell.Free;
+    end;
+    Cell := Next;
+    Inc(Count);
+  end;
+  FSweepCell := Cell;
+  if Cell = nil then
+  begin
+    { What the survivors hold, measured, and what came since. }
+    FSweeping := False;
+    FBytesAllocated := FSweepLiveBytes + FBytesSinceSweep;
+    FThreshold := FSweepLiveBytes * 2;
+    if FThreshold < FMinimumThreshold then
+      FThreshold := FMinimumThreshold;
+    if FThreshold < FBytesAllocated then
+      FThreshold := FBytesAllocated + FMinimumThreshold div 2;
+  end;
+end;
+
+procedure TJsHeap.FinishSweep;
+begin
+  while FSweeping do
+    SweepSome;
+end;
+
+{ While sweeping: the threshold that makes the next safe point finish
+  the sweep (memory keeps growing otherwise). }
+procedure TJsHeap.StartCollectionThreshold;
+var
+  Room: Int64;
+begin
+  Room := FBytesAllocated div 2;
+  if Room < FMinimumThreshold then
+    Room := FMinimumThreshold;
+  FThreshold := FBytesAllocated + Room;
+end;
+
+procedure TJsHeap.Collect(Incremental: Boolean);
 var
   Index: Integer;
   MarkedSomething: Boolean;
+  Started, Marked, Finished: Double;
 begin
   if FCollecting then
     Exit;
+  if FSweeping then
+  begin
+    { The last collection's sweep first; maybe that is enough. }
+    Started := JsMonotonicTime();
+    FinishSweep;
+    Finished := JsMonotonicTime();
+    FSweepTime := FSweepTime + (Finished - Started);
+    FTotalPause := FTotalPause + (Finished - Started);
+    if Finished - Started > FLongestPause then
+      FLongestPause := Finished - Started;
+    { A pause of its own: the next safe point collects if still due. }
+    if Incremental then
+      Exit;
+  end;
   FCollecting := True;
+  Started := JsMonotonicTime();
   try
     for Index := 0 to High(FRootProviders) do
       FRootProviders[Index](Self);
@@ -237,11 +368,25 @@ begin
     until not MarkedSomething;
     for Index := 0 to High(FWeakProcessors) do
       FWeakProcessors[Index](Self, 1);
-    Sweep;
+    Marked := JsMonotonicTime();
+    FSweepLiveBytes := 0;
+    FBytesSinceSweep := 0;
+    SweepDyingCells;
+    FSweepCell := FFirstCell;
+    FFirstCell := nil;
+    FSweeping := True;
     Inc(FCollections);
-    FThreshold := FBytesAllocated * 2;
-    if FThreshold < FMinimumThreshold then
-      FThreshold := FMinimumThreshold;
+    { Near the memory limit (or when asked): all at once. }
+    if not Incremental or ((FMemoryLimit > 0) and (FBytesAllocated > FMemoryLimit div 2)) then
+      FinishSweep
+    else
+      StartCollectionThreshold;
+    Finished := JsMonotonicTime();
+    FMarkTime := FMarkTime + (Marked - Started);
+    FSweepTime := FSweepTime + (Finished - Marked);
+    FTotalPause := FTotalPause + (Finished - Started);
+    if Finished - Started > FLongestPause then
+      FLongestPause := Finished - Started;
   finally
     FCollecting := False;
   end;

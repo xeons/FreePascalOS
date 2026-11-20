@@ -382,9 +382,11 @@ begin
     Terminate('Script interrupted');
     Exit(False);
   end;
+  if Heap.Sweeping then
+    Heap.SweepSome;
   if Heap.ShouldCollect then
   begin
-    Heap.Collect;
+    Heap.Collect(True);
     if Heap.OverLimit then
     begin
       Terminate('Out of memory');
