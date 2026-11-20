@@ -105,6 +105,7 @@ end;
 
 procedure TestWrapperBytes;
 var
+  Bare: TJsEngine;
   Bed: TTestBed;
   Container: TElement;
   Index, Count: Integer;
@@ -112,8 +113,17 @@ var
   Values: array of TJsValue;
 begin
   Count := 10000;
+  Bare := TJsEngine.Create;
+  try
+    Bare.CollectGarbage;
+    WriteLn('perf ', Bare.HeapBytes, ' bytes of script heap for libjavascript''s realm alone');
+  finally
+    Bare.Free;
+  end;
   Bed := TTestBed.Create('bytes');
   try
+    Collect(Bed);
+    WriteLn('perf ', Bed.Context.Engine.HeapBytes, ' bytes of script heap for a new window (interfaces are made when first used)');
     Container := Bed.Document.CreateElement('div');
     Bed.Document.Body.AppendChild(Container);
     for Index := 1 to Count do

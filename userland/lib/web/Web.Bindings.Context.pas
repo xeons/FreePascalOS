@@ -74,6 +74,7 @@ interface
 
 uses
   SysUtils,
+  Classes,
   fgl,
   Js.Values,
   Js.Heap,
@@ -142,6 +143,10 @@ type
 
   TBindingWrapperClass = class of TBindingWrapper;
   TBindingWrapperArray = array of TBindingWrapper;
+
+  { Makes an interface's objects (Web.Bindings.Install does it the first
+    time an interface is needed). }
+  TInterfaceInstaller = procedure(Context: TBindingContext; InterfaceId: Integer);
 
   { The state of a form control that is not in its attributes (HTML
     Standard 4.10.17): value and checkedness with their dirty flags,
@@ -215,6 +220,11 @@ type
     InterfaceParents: array of SmallInt;
     ElementInterfaces: array of SmallInt;
     IndexedWrapperClass: TBindingWrapperClass;
+    InterfaceInstaller: TInterfaceInstaller;
+    { The accessor functions of event handler attributes by name, shared
+      by the interfaces that have them (the installer's); the prototypes
+      keep them alive. }
+    EventHandlerAccessors: TStringList;
     { The mutation observers' state (Web.Bindings.MutationObservers),
       freed after the engine. }
     MutationObservers: TObject;
@@ -225,6 +235,8 @@ type
 
     { Interfaces }
     function IsInterface(InterfaceId, Ancestor: Integer): Boolean;
+    { The interface's class, its objects made if they were not yet. }
+    function EnsureInterface(InterfaceId: Integer): TBindingClass;
     function InterfaceForNode(Node: TNode): Integer;
     function HostClassOf(InterfaceId: Integer): TJsHostClass;
     function PrototypeOf(InterfaceId: Integer): TJsObject;
@@ -324,6 +336,11 @@ type
     { The script element whose script runs (document.currentScript). }
     property CurrentScript: TElement read FCurrentScript write FCurrentScript;
   end;
+
+var
+  { The first collection threshold of new contexts' engines in bytes (0:
+    libjavascript's default); tests make it small to collect often. }
+  ContextHeapThreshold: Int64 = 0;
 
 { The context of a realm (natives get the realm). }
 function ContextOfRealm(R: TJsRealm): TBindingContext;
@@ -492,9 +509,13 @@ end;
 constructor TBindingContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment);
 var
   Singleton_: TWindowSingleton;
+  Options: TJsEngineOptions;
 begin
   inherited Create;
-  FEngine := TJsEngine.Create;
+  Options := TJsEngine.DefaultOptions;
+  if ContextHeapThreshold > 0 then
+    Options.InitialHeapThreshold := ContextHeapThreshold;
+  FEngine := TJsEngine.Create(Options);
   FDocument := ADocument;
   FDocument.Retain;
   FEnvironment := AEnvironment;
@@ -542,6 +563,7 @@ begin
     LastContext := nil;
   for Index := 0 to High(InterfaceClasses) do
     InterfaceClasses[Index].Free;
+  EventHandlerAccessors.Free;
   if FDocument.DefaultView = FWindow then
     FDocument.DefaultView := nil;
   if FDocumentObserver <> nil then
@@ -785,14 +807,21 @@ begin
   Result := False;
 end;
 
+function TBindingContext.EnsureInterface(InterfaceId: Integer): TBindingClass;
+begin
+  Result := InterfaceClasses[InterfaceId];
+  if Result.HostClass = nil then
+    InterfaceInstaller(Self, InterfaceId);
+end;
+
 function TBindingContext.HostClassOf(InterfaceId: Integer): TJsHostClass;
 begin
-  Result := InterfaceClasses[InterfaceId].HostClass;
+  Result := EnsureInterface(InterfaceId).HostClass;
 end;
 
 function TBindingContext.PrototypeOf(InterfaceId: Integer): TJsObject;
 begin
-  Result := InterfaceClasses[InterfaceId].HostClass.Prototype;
+  Result := EnsureInterface(InterfaceId).HostClass.Prototype;
 end;
 
 function IsCustomElementName(const Name: string): Boolean;
@@ -859,7 +888,7 @@ var
   Wrapper: TBindingWrapper;
   Binding: TBindingClass;
 begin
-  Binding := InterfaceClasses[InterfaceId];
+  Binding := EnsureInterface(InterfaceId);
   Wrapper := TBindingWrapper(FEngine.Realm.NewObjectOfClass(WrapperClass, Prototype, ocHost));
   if WrapperClass <> TBindingWrapper then
     Wrapper.ObjectFlags := Wrapper.ObjectFlags or ObjectExotic;

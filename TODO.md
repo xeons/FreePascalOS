@@ -1093,12 +1093,57 @@ Part 1 (encodings, HTML parsing, DOM):
 - [x] Events: EventTarget, capture/bubble dispatch, once/passive, stop flags
 - [ ] Ranges and StaticRange, NodeIterator/TreeWalker (the mutation algorithms
       mark where live ranges are adjusted)
-- [ ] MutationObserver on the observer hook (records are already exact)
+- [x] MutationObserver on the observer hook (the script bindings)
 - [x] HTML fragment serialization, innerHTML/outerHTML/insertAdjacentHTML
 - [x] `htmldump`; host test (`make web-test`) with html5lib-format cases
 - [ ] Text kept in a document arena instead of one string per node (about
       150 bytes per node today, text included)
 
 Later phases: libcss adapter and computed style, layout and painting,
-loading through libhttp, JavaScript bindings (wrappers in the node's rare
-data, `TScriptHost`, element interface classes via `ElementClassFor`).
+loading through libhttp.
+
+Script bindings (`Web.Bindings*`, `Web.Script*`):
+- [x] WebIDL files and `make-bindings.py`: interfaces, mixins, partials,
+      dictionaries, enums, callbacks, typedefs, overloads, constants,
+      reflection by extended attributes; tables plus declared routines
+- [x] Dispatcher with WebIDL conversions (integers with EnforceRange/Clamp,
+      strings, nullable, unions, sequences, records, dictionaries, enums,
+      callbacks), brand checks, [SameObject], [PutForwards], [Replaceable],
+      [LegacyUnforgeable] on the window, legacy platform objects
+- [x] Wrappers: one per node, kept by tree groups through a weak processor;
+      events, owned and node-owned objects; bytes per wrapper reported
+- [x] Interfaces: EventTarget, Event and the UI events, Node and its kinds,
+      Document, DOMImplementation, Element, the HTML element interfaces with
+      reflection, collections, DOMTokenList, NamedNodeMap, DOMStringMap,
+      DOMException, CSSStyleDeclaration (inline style), Window, Location
+      (read only), History and Navigator, TextEncoder/TextDecoder, URL,
+      URLSearchParams, MutationObserver, atob/btoa, structuredClone, timers
+- [x] Scripts: inline at the parser's script end tags, document.write,
+      dynamically inserted scripts, external scripts through
+      `TScriptEnvironment.FetchClassicScript`, event handler attributes and
+      properties, errors to the console with file and line
+- [x] Host test (`make web-script-test`, `JS_GC_STRESS=1` collects often)
+- [ ] Merge `TDomElementAdapter` (Web.Bindings.Selectors) with the style
+      system's element adapter once that lands; hover/focus states
+- [ ] Module scripts (libjavascript has no modules yet), import maps; the
+      in-order list of script-inserted scripts (async=false)
+- [ ] The event loop's side of `TScriptEnvironment` (timers, script
+      fetching, navigation, history, prompts, cookies)
+- [ ] ErrorEvent and window.onerror for reported exceptions;
+      unhandledrejection
+- [ ] document.open() replacing a loaded document; document.write from
+      timers after loading (refused with NotSupportedError today)
+- [ ] Event handler scope (form and document in the scope chain: needs the
+      with statement or an environment hook in libjavascript), onerror's
+      five arguments, body/frameset handlers forwarding to the window
+- [ ] getComputedStyle from the style system (inline declarations, read
+      only, today); layout answers (offset*, client*, getBoundingClientRect)
+- [ ] AbortSignal for addEventListener's signal option; focus tracking
+      (document.activeElement, focus events from the input code)
+- [ ] Typed arrays: TextEncoder.encode and TextDecoder.decode use
+      Uint8Array/ArrayBuffer once libjavascript has them (arrays meanwhile)
+- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, Blob/File,
+      FormData, fetch() and XMLHttpRequest, Storage, postMessage, iframes
+- [ ] A cheaper interface object: native accessors keyed by property in
+      libjavascript would let one getter serve every attribute (a window
+      costs about 420 KB of script heap over the bare realm today)

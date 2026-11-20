@@ -25,6 +25,9 @@
   a wrapper costs.
 
     WebScriptTest <scripts directory>
+
+  JS_GC_STRESS=1 in the environment makes the engines collect every
+  16 KiB.
 }
 program WebScriptTest;
 
@@ -35,6 +38,7 @@ uses
   SysUtils,
   Classes,
   TestChecks,
+  Web.Bindings.Context,
   WebScriptTest.Harness,
   WebScriptTest.Lifetime;
 
@@ -77,6 +81,10 @@ begin
 end;
 
 begin
+  { JS_GC_STRESS: collect every 16 KiB, to find wrappers or values the
+    collector does not see. }
+  if GetEnvironmentVariable('JS_GC_STRESS') <> '' then
+    ContextHeapThreshold := 16 * 1024;
   if ParamCount >= 1 then
     RunScripts(ParamStr(1))
   else

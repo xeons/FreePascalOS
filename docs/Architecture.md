@@ -9165,11 +9165,12 @@ insertion sort (fine for the dozens of rules that match one element).
 
 libweb (`userland/lib/web`, `libweb.so`, units `Web.*`) is the browser
 engine that both the browser application and the web view control will
-use. Part 1, here, is the text side: the WHATWG Encoding Standard, the
-HTML parser and the DOM. Layout, painting, resource loading (through
-libhttp), the CSS adapter (libcss) and the script bindings
-(libjavascript) are later phases, and the structures below leave room
-for them. It depends on libsystem only; `htmldump` (in /bin) is its
+use. Part 1 is the text side: the WHATWG Encoding Standard, the HTML
+parser and the DOM; the script bindings (below) put the DOM in front of
+libjavascript. Layout, painting and resource loading (through libhttp)
+are later phases, and the structures below leave room for them. It
+depends on libjavascript, libcss (selectors and declarations for
+scripts), libhttp (URLs) and libsystem; `htmldump` (in /bin) is its
 command line front end.
 
 ### Atoms and namespaces
@@ -9257,9 +9258,11 @@ until the global DOM version moves: `children`, `getElementsByTagName`,
   children changed steps, each node becoming connected (after the
   insertion, like the insertion steps scripts need) or disconnected,
   attribute and character data changes with old values.
-  `TDocument.ElementClassFor` picks the element class (the bindings will
-  give HTML elements their interface classes); `LayoutData` and
-  `ScriptWrapper` are slots for layout and the bindings.
+  `TDocument.ElementClassFor` picks the element class (the bindings pick
+  an element's interface from a table by local name instead, so all
+  elements stay TElement); `LayoutData` and `ScriptWrapper` are slots for
+  layout and the bindings; `DefaultView` is the window, the document's
+  parent in event paths (but for load events).
 - Templates have their contents in a fragment of the document's
   inert "template contents owner" document; cloning copies them and
   adoption moves them, as the HTML Standard says.
@@ -9352,6 +9355,208 @@ prints its tree in the html5lib format (`-s` the serialization, `-e`
 the parse errors, `-c` the transport charset, `-f` a fragment in an
 HTML context element).
 
+### Script bindings
+
+`Web.Bindings*` and `Web.Script*` give page scripts the DOM and the
+window through libjavascript's embedding API (host classes; plus the
+engine's object model for exotic objects and a weak processor of its
+heap; nothing was added to libjavascript).
+
+**Tables from WebIDL.** The interfaces are written in WebIDL
+(`userland/lib/web/bindings/*.webidl`, close to the standards' text) and
+`make-bindings.py` turns them into constant tables at build time
+(`Web.Bindings.Tables.inc`: types, arguments, overloads, members,
+interfaces, dictionaries, enums, the HTML element interface of each
+local name) and, per file, the declarations of the routines its
+`Web.Bindings.<File>` unit implements (`Node_appendChild`,
+`Node_get_firstChild`, `Event_constructor` ...; mixin members are named
+after the mixin and shared). A routine missing on either side does not
+compile. The generator understands interfaces with inheritance, partial
+interfaces, mixins and includes, dictionaries (flattened, inherited
+members first and each level by name, as WebIDL reads them), enums,
+callbacks, callback interfaces, typedefs, constants, attributes,
+operations with overloads, optional arguments with defaults and variadic
+ones, constructors, static members, getters, setters and deleters,
+`iterable<>` and stringifiers. Reflected attributes need no code: an
+extended attribute names the content attribute and kind (`[Reflect]`,
+`[Reflect=for]`, `[ReflectURL]`, `[ReflectEnum=(...)]` with
+`[ReflectMissing]`/`[ReflectInvalid]`, `[ReflectDefault]`,
+`[ReflectPositive]`), and `[LocalNames=(...)]` says which HTML elements
+get an interface. Attributes of type EventHandler are event handlers,
+also without code.
+
+**The dispatcher** (`Web.Bindings.Dispatch`): every member becomes a
+native function (or an accessor pair) whose data is its table row and
+whose magic number is the declaring interface. The entry checks the
+brand (a wrapper of the interface or a descendant, by the parent table;
+the global object is the window), picks the overload by argument count,
+converts the arguments with WebIDL's conversions (`Web.Bindings.Conversions`:
+boolean, the integer types with modulo, `[EnforceRange]` and `[Clamp]`,
+float and double, DOMString kept as WTF-8 and USVString made proper
+UTF-8, ByteString, object, interface types, callback functions and
+interfaces, dictionaries with defaults and required members, enums,
+sequences through the iterator protocol, records, nullable types and
+unions in the standard's order), calls the routine with a `TBindingCall`
+(the converted values, this's native object) and turns Pascal exceptions
+into script ones: EDomException becomes a DOMException (whose prototype
+inherits from Error.prototype), EBindingTypeError and EBindingRangeError
+TypeError and RangeError, EScriptEnvironmentUnsupported a
+NotSupportedError. Attributes add `[SameObject]` (the value cached in a
+slot of the wrapper), `[PutForwards]`, `[Replaceable]`, reflection
+(`Web.Bindings.Reflection`: strings, URLs against the document's base
+URL, booleans, the HTML rules for integers and floats with defaults,
+enumerated attributes) and event handlers. Interfaces with indexed or
+named getters (NodeList, HTMLCollection, NamedNodeMap, DOMTokenList,
+DOMStringMap, CSSStyleDeclaration's indices) have exotic wrappers
+(`Web.Bindings.Exotic`) answering the internal methods as WebIDL's legacy
+platform objects do, with the named property visibility rules,
+`[LegacyUnenumerableNamedProperties]` and `[LegacyOverrideBuiltIns]`.
+Interface objects are made when first needed (a wrapper of the
+interface, or a script reading its name, which is an accessor on the
+global object until then), parents first; the window's members are the
+global object's own and its prototype becomes Window.prototype.
+
+**Wrappers and lifetime** (`Web.Bindings.Context`). A wrapper is a
+`TBindingWrapper` (a host object) whose native object is a node, an
+event, an object a node owns (childNodes, children, classList,
+attributes, dataset), or an object of its own (a static NodeList, a URL,
+a TextDecoder):
+
+- A node has one wrapper, made the first time script sees it and kept in
+  the node's ScriptWrapper slot; the wrapper holds a reference to the
+  node (Retain/Release), so a node lives at least as long as its wrapper.
+  Events the same with TEvent's new reference count (an event freed
+  while its wrapper lives leaves the wrapper without a native object
+  instead of dangling).
+- The node's slot does not keep its wrapper alive. Nodes keep wrappers
+  alive by groups: a node's group is the root of its tree (the document
+  for a connected node, the root of a detached subtree; an Attr is in its
+  element's group, template contents in the template's). After the
+  collector has marked from the roots, a weak processor finds the groups
+  with a marked wrapper and marks every other wrapper of those groups,
+  until nothing more is marked (each wrapper's group root is computed
+  once per collection, the live groups are a hash set). The window's
+  document wrapper is a root, so every wrapper of a connected node lives
+  with its expandos, listeners and handlers as long as its node is in
+  the document, and script never sees two wrappers of one node (WeakMaps
+  keyed by nodes keep working).
+- Cycles through the DOM need nothing special: a detached subtree whose
+  wrappers refer only to each other (expandos, listeners closing over
+  nodes) has no wrapper marked from outside, so its whole group dies in
+  one collection; the wrappers' destructors release their nodes and the
+  DOM's CollectGarbage, between tasks, frees the subtree. A dying node
+  wrapper disables its node's script listeners, so the DOM never calls a
+  dead function.
+- Script listeners (`TScriptEventListener` in the DOM's listener lists)
+  and event handlers are marked by their target's wrapper; the window's
+  by the context's root provider, which also marks the wrappers of events
+  being dispatched. Objects owned by a node keep their owner's wrapper
+  (and so the node) alive.
+- On x86-64 a node wrapper costs 152 bytes (the host object, a registry
+  index, the [SameObject] slots made on demand and the owner value); a
+  new window about 420 KB of script heap over the bare realm (the
+  window's and the document's interfaces; the others when used).
+
+**Interfaces.** EventTarget (with capture, once, passive, handleEvent
+objects), Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent,
+FocusEvent, InputEvent (`Web.Dom.UiEvents` has their native classes for
+the input code); Node, Document, DOMImplementation, DocumentFragment,
+DocumentType, CharacterData, Text, CDATASection, Comment,
+ProcessingInstruction, Attr, Element with the ParentNode, ChildNode and
+NonDocumentTypeChildNode mixins; innerHTML, outerHTML,
+insertAdjacentHTML; querySelector, querySelectorAll, matches and closest
+through libcss's parser and matcher (`Web.Bindings.Selectors` has a
+small element adapter, to be merged with the style system's; parsed
+selectors are cached); HTMLElement and about seventy element interfaces,
+mostly reflection, with click() and its checkbox activation, focus
+events, dataset, style (`Web.Bindings.Style`: CSSStyleDeclaration over
+the style attribute with libcss's declaration parser and serializer;
+the properties by camel-cased, dashed and -webkit- names are answered by
+the wrapper rather than an accessor pair each), the hyperlink URL parts,
+form controls' value and checkedness with their dirty flags, radio
+groups, select and option selectedness, constraint validation basics,
+form.elements and GET submission (`Web.Bindings.FormControls`); NodeList,
+HTMLCollection, HTMLOptionsCollection, NamedNodeMap, DOMTokenList,
+DOMStringMap, DOMException; Window (window, self, document, location,
+history, navigator, the prompts, viewport metrics, origin, atob, btoa,
+the timers, structuredClone, getComputedStyle), Location (read only),
+History and Navigator; TextEncoder and TextDecoder over libweb's decoders
+(fatal, ignoreBOM, streaming); URL and URLSearchParams over libhttp's
+`Url.*`; MutationObserver and MutationRecord. console and queueMicrotask
+are libjavascript's (console output goes to the context's
+OnConsoleMessage).
+
+**MutationObserver** (`Web.Bindings.MutationObservers`) takes the
+document observer's records: registrations (an observer, a node, the
+options; transient ones for removed nodes of observed subtrees until the
+next notification) are matched on the target's inclusive ancestors and
+each interested observer gets its record, with the old value if one of
+its registrations asked; the first record queues the mutation observer
+microtask as a libjavascript job.
+
+**Scripts** (`Web.Script.Context`). `TScriptContext` is the window: it
+installs the interfaces, observes the document (event handler content
+attributes, script elements, mutation observers), and is the parser's
+script host (`TParserScriptHost`). Script elements go through
+`PrepareScript`, the standard's "prepare the script element" (type and
+language checks, already started, parser-inserted, nomodule scripts run
+because modules do not exist yet): inline classic scripts run at once,
+external ones go to the environment with their mode (parser-blocking
+ones pause the parser). It runs at the parser's script end tags and for
+script elements that become connected or get their text while
+connected (not innerHTML's, whose scripts are marked already started).
+`ExecuteClassicScript(Source, Url, Element)` runs a script with
+document.currentScript set, reports an uncaught exception to the
+console with the file and line ("page.html (inline script 3)"), fires
+an external script's load event, and leaves through the microtask
+checkpoint (the job queue, mutation observers included; at script depth
+0 only, as in "clean up after running script"). document.write goes to
+the active parser at its insertion point (the parser now saves the old
+insertion point and limit of nested scripts and writes, so scripts
+written by scripts write in the right place); after loading it is a
+NotSupportedError rather than a silent document.open. Event handler IDL
+attributes and content attributes (`Web.Bindings.EventHandlers`) keep
+their functions in the target wrapper's handler slot; a content
+attribute is compiled as the body of `function on<type>(event)` when
+first needed and again after it changes; each target registers one
+listener per handler type, keeping its place among the listeners;
+returning false cancels. `ParseDocument(Html)` parses a whole page with
+its scripts, then fires readystatechange, DOMContentLoaded and the
+window's load event.
+
+**What the rest of the engine provides** (`Web.ScriptEnvironment`): the
+loader and the event loop subclass `TScriptEnvironment` and pass it to
+the context. Hooks they implement (a hook left alone raises
+EScriptEnvironmentUnsupported, a NotSupportedError for scripts; the
+timers are removed from the window unless `SupportsTimers`):
+
+- `SupportsTimers`, `StartTimer(Context, Id, Milliseconds, Repeating)`,
+  `StopTimer`: the loop calls `TScriptContext.FireTimer(Id)` as a task
+  when due (the context keeps the handlers, arguments and nesting).
+- `FetchClassicScript(Context, Element, Url, Charset, Mode)`: fetch, then
+  `ExecuteClassicScript` (or `ScriptFetchFailed`) in the mode's order;
+  after a parser-blocking one, `Parser.Resume`.
+- `LocationHref`, `Navigate(Url, ReplaceEntry)`, `Reload`,
+  `HistoryLength`, `HistoryGo`, `HistoryChangeUrl` (pushState and
+  replaceState; the context changes document.URL and keeps the state).
+- `Alert`, `Confirm`, `Prompt`; `ViewportWidth`, `ViewportHeight`,
+  `DevicePixelRatio`; `GetCookies`, `SetCookie`; `UserAgent`, `Language`.
+- The loader drives a page in pieces with `BeginParsing(Parser)`,
+  `FinishParsing` (interactive, DOMContentLoaded) and `DocumentLoaded`
+  (complete, load), and calls `PerformMicrotaskCheckpoint` after each
+  task it runs.
+
+**Not done yet**: module scripts, the in-order list of script-inserted
+scripts, ErrorEvent and onerror's arguments, the event handler scope
+chain (form, document), document.open on a loaded document, shadow DOM,
+Range and Selection, TreeWalker, Blob, FormData, fetch and
+XMLHttpRequest, Storage, iframes and postMessage; getComputedStyle
+gives the inline declarations (read only) until the style system can
+compute styles, layout metrics are 0, images have no natural size; with
+no typed arrays in libjavascript yet, TextEncoder gives an array of
+numbers (a Uint8Array as soon as the global object has one) and
+TextDecoder reads any array-like.
+
 ### Tests
 
 `make web-test` (in `make test`) builds `tools/WebTest` on the host
@@ -9371,6 +9576,24 @@ observer hook, node lifetime, the script hook with document.write and
 pausing, innerHTML and friends, event dispatch, and serialization. The
 test prints the parser's speed and bytes per node ("perf" lines): on the
 build machine about 2.3 million nodes (20 MB of HTML) per second.
+
+`make web-script-test` (in `make test`) builds `tools/WebScriptTest`
+with libjavascript, libcss and libhttp's URL units. Each
+`scripts/*.js` runs in a fresh window over its `scripts/*.html` page (or
+an empty one) with a test environment (timers fired as tasks, external
+scripts served from a table, navigations recorded) and makes its checks
+with `check()`: tree changes and serialization, events (order, once,
+stopping, canceling, handlers, the window in the path, exceptions in
+listeners), wrapper identity and prototype chains, selectors,
+reflection and form controls, parsing with scripts and document.write,
+MutationObserver records and their microtask, TextEncoder/TextDecoder,
+atob/btoa, structuredClone, URL and URLSearchParams, the window and the
+timers. The Pascal side checks that unreachable wrappers are collected
+and their nodes freed, that expandos and listeners live while their node
+is in the document, that detached cycles go in one collection, events
+made by native code, fetched scripts in parser order, a document
+outliving its context, and prints the bytes per wrapper.
+`JS_GC_STRESS=1` makes the engines collect every 16 KiB.
 
 ## The AArch64 port
 
