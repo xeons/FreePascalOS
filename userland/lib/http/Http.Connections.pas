@@ -51,6 +51,7 @@ uses
 
 type
   THttpProtocol = (HttpProtocol11, HttpProtocol2, HttpProtocol3);
+  THttpProtocols = set of THttpProtocol;
 
   { A request as it goes out, the same for every version. }
   THttpRequestHead = record

@@ -21,7 +21,9 @@
   vectors, variable-length integers, frames, transport parameters,
   QPACK (RFC 9204 appendix B) and HPACK's Huffman code, HTTP/3 frames,
   and whole connections over UDP on the loopback addresses between the
-  client and a small server made for the test.
+  client and a small server made for the test; then libhttp's client
+  finding that server by Alt-Svc and fetching from it over HTTP/3, and
+  falling back to TCP when it cannot.
 
     QuicTest            every check
     QuicTest serve PORT run the test's HTTP/3 server on 127.0.0.1:PORT
@@ -42,6 +44,7 @@ uses
   QuicTest.Qpack,
   QuicTest.Loopback,
   QuicTest.Http3,
+  QuicTest.HttpClient,
   QuicTest.Http3Server,
   QuicTest.Server;
 
@@ -74,5 +77,6 @@ begin
   RunQpackTests;
   RunLoopbackTests;
   RunHttp3Tests;
+  RunHttpClientTests;
   FinishChecks('QUIC TEST');
 end.

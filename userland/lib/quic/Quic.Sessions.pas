@@ -33,7 +33,9 @@
   gives) and each address is tried in turn with a UDP socket connected
   to it until a handshake completes; the server's certificate is
   checked against the system's roots (or a PEM file) at the system
-  clock's time unless told not to. Address validation tokens from the
+  clock's time unless told not to, for ServerName when set (an
+  alternative service of another host serves the origin's name), else
+  for the host. Address validation tokens from the
   server's NEW_TOKEN are kept in the process (by "host:port") for the
   next session to the same server. Freeing the session closes the
   connection (CONNECTION_CLOSE) and the socket.
@@ -59,6 +61,7 @@ type
     FConnection: TQuicConnection;
     FStore: Pointer;
     FApplicationProtocol: string;
+    FServerName: string;
     FVerifyCertificates: Boolean;
     FTrustFile: string;
     FHasTrustFile: Boolean;
@@ -79,6 +82,9 @@ type
     property Connection: TQuicConnection read FConnection;
     { "h3" unless set. }
     property ApplicationProtocol: string read FApplicationProtocol write FApplicationProtocol;
+    { The name for TLS (server_name, the certificate check); '' for the
+      host given to Open. }
+    property ServerName: string read FServerName write FServerName;
     property VerifyCertificates: Boolean read FVerifyCertificates write FVerifyCertificates;
     property TrustFile: string read FTrustFile write SetTrustFile;
     property CipherSuites: TCipherSuiteList read FCipherSuites write FCipherSuites;
@@ -218,7 +224,9 @@ begin
     Exit(QuicErrorHostNotFound);
   FCacheKey := LowerCase(Host) + ':' + IntToStr(Port);
   Options := Default(TQuicConnectionOptions);
-  Options.ServerName := Host;
+  Options.ServerName := FServerName;
+  if Options.ServerName = '' then
+    Options.ServerName := Host;
   Options.ApplicationProtocol := FApplicationProtocol;
   Options.TrustStore := Store;
   Options.VerifyCertificates := FVerifyCertificates;

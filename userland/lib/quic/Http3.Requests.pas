@@ -35,8 +35,9 @@
   lower case names, no connection-specific fields), the body streams out
   of the DATA frames as it arrives and must match Content-Length, and
   trailers may follow. A malformed response resets the stream with
-  H3_MESSAGE_ERROR; a request freed before its response ended is
-  cancelled (H3_REQUEST_CANCELLED).
+  H3_MESSAGE_ERROR; a request freed before its response ended (or
+  before its body was sent), or after a failure that left the stream
+  open, is cancelled (H3_REQUEST_CANCELLED).
 }
 unit Http3.Requests;
 
@@ -72,6 +73,9 @@ type
     FBodyReceived: QWord;
     FContentLength: Int64;
     FRequestEnded: Boolean;
+    { STOP_SENDING and RESET_STREAM went (or the server reset it). }
+    FAbandoned: Boolean;
+    FPeerReset: Boolean;
     FError: LongInt;
     FResetCode: QWord;
     FTimeout: Int64;
@@ -105,6 +109,8 @@ type
       H3_REQUEST_CANCELLED. }
     procedure Cancel;
     property StreamId: QWord read FStreamId;
+    { The request's end (FIN) went. }
+    property RequestEnded: Boolean read FRequestEnded;
     property Status: Integer read FStatus;
     property Headers: TQpackFieldList read FHeaders;
     property Trailers: TQpackFieldList read FTrailers;
@@ -172,7 +178,7 @@ end;
 
 destructor THttp3Request.Destroy;
 begin
-  if not (FPhase in [ResponseDone, ResponseFailed]) and (FConnection.LastError = 0) then
+  if not FAbandoned and ((FPhase <> ResponseDone) or not FRequestEnded) and (FConnection.LastError = 0) then
     Cancel;
   FParser.Free;
   inherited Destroy;
@@ -213,15 +219,25 @@ end;
 
 procedure THttp3Request.Cancel;
 begin
-  if FPhase in [ResponseDone, ResponseFailed] then
+  if FAbandoned then
     Exit;
-  FConnection.Quic.StopSending(FStreamId, Http3RequestCancelled);
+  FAbandoned := True;
+  if FPhase <> ResponseDone then
+  begin
+    if not FPeerReset then
+    begin
+      FConnection.Quic.StopSending(FStreamId, Http3RequestCancelled);
+      FConnection.Decoder.CancelStream(FStreamId);
+    end;
+    FPhase := ResponseFailed;
+    if FError = 0 then
+      FError := Http3ErrorInvalidState;
+  end;
   if not FRequestEnded then
+  begin
     FConnection.Quic.ResetStream(FStreamId, Http3RequestCancelled);
-  FConnection.Decoder.CancelStream(FStreamId);
-  FPhase := ResponseFailed;
-  if FError = 0 then
-    FError := Http3ErrorInvalidState;
+    FRequestEnded := True;
+  end;
 end;
 
 function THttp3Request.Fail(Error: LongInt; StreamErrorCode: QWord): LongInt;
@@ -232,6 +248,8 @@ begin
     begin
       FConnection.Quic.StopSending(FStreamId, StreamErrorCode);
       FConnection.Quic.ResetStream(FStreamId, StreamErrorCode);
+      FAbandoned := True;
+      FRequestEnded := True;
     end;
     FPhase := ResponseFailed;
     FError := Error;
@@ -385,6 +403,7 @@ begin
       Stream := FindStream(FConnection.Quic.State, FStreamId);
       if Stream <> nil then
         FResetCode := Stream^.PeerResetCode;
+      FPeerReset := True;
       FConnection.Decoder.CancelStream(FStreamId);
       Exit(Fail(Http3ErrorRequestReset, 0));
     end;

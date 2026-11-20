@@ -37,6 +37,9 @@ const
   Http3FramePushPromise = $05;
   Http3FrameGoaway = $07;
   Http3FrameMaxPushId = $0D;
+  { RFC 9218 section 7.2: a request stream's new priority, on the
+    control stream. }
+  Http3FramePriorityUpdate = $F0700;
 
   { Unidirectional stream types (section 6.2; RFC 9204 section 4.2). }
   Http3StreamControl = $00;
@@ -82,6 +85,8 @@ const
   Http3ErrorIncomplete = -105;
   { The call is not possible in the request's state. }
   Http3ErrorInvalidState = -106;
+  { The request was given up by its caller while it waited. }
+  Http3ErrorCanceled = -107;
 
 { "H3_FRAME_UNEXPECTED", "QPACK_DECOMPRESSION_FAILED", ... }
 function Http3ErrorName(Code: QWord): string;

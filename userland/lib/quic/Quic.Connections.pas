@@ -70,6 +70,7 @@ type
     function GetSmoothedRtt: Int64;
     function GetCongestionWindow: Int64;
     function GetDatagramSize: Integer;
+    function GetIdleDeadline: Int64;
     function WaitUntil(Deadline: Int64): LongInt;
   public
     { The transport's context must stay valid while the connection
@@ -127,6 +128,9 @@ type
     property SmoothedRtt: Int64 read GetSmoothedRtt;
     property CongestionWindow: Int64 read GetCongestionWindow;
     property DatagramSize: Integer read GetDatagramSize;
+    { When the idle timeout would end the connection unless something
+      came first (a QuicMilliseconds time). }
+    property IdleDeadline: Int64 read GetIdleDeadline;
   end;
 
 implementation
@@ -190,6 +194,11 @@ end;
 function TQuicConnection.GetPeerParameters: TQuicTransportParameters;
 begin
   Result := FState^.PeerParameters;
+end;
+
+function TQuicConnection.GetIdleDeadline: Int64;
+begin
+  Result := Quic.ConnectionCore.IdleDeadline(FState);
 end;
 
 function TQuicConnection.GetSmoothedRtt: Int64;

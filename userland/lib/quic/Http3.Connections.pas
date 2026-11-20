@@ -101,8 +101,13 @@ type
       decoder stream's acknowledgments. }
     function Service: LongInt;
     { Runs the connection once (at most until Deadline, a
-      QuicMilliseconds time) and services the streams. }
-    function WaitForProgress(Deadline: Int64): LongInt;
+      QuicMilliseconds time) and services the streams. Every wait of a
+      request comes here, so a subclass shared by several threads can
+      wait in slices and let the others in between. }
+    function WaitForProgress(Deadline: Int64): LongInt; virtual;
+    { PRIORITY_UPDATE for a request stream (RFC 9218 section 7.2):
+      Value is a Priority field value ("u=1, i"). }
+    function SendPriorityUpdate(StreamId: QWord; const Value: string): LongInt;
     { Ends the connection for breaking HTTP/3 (Code: H3_*). }
     procedure Fail(Code: QWord; const Reason: string);
     { H3_NO_ERROR, and the QUIC connection closes. }
@@ -431,6 +436,30 @@ begin
   Result := Service;
 end;
 
+function THttp3ClientConnection.SendPriorityUpdate(StreamId: QWord; const Value: string): LongInt;
+var
+  Payload: array[0..7] of Byte;
+  Length: Integer;
+  Frame: TBytes;
+  Body: TBytes;
+  Written: Int64;
+begin
+  Result := LastError;
+  if (Result <> 0) or not FStarted then
+    Exit;
+  Length := EncodeVariableInteger(StreamId, @Payload[0]);
+  Body := nil;
+  SetLength(Body, Length + System.Length(Value));
+  Move(Payload[0], Body[0], Length);
+  if Value <> '' then
+    Move(Value[1], Body[Length], System.Length(Value));
+  Frame := MakeFrame(Http3FramePriorityUpdate, @Body[0], System.Length(Body));
+  Written := FQuic.Write(FControlStream, @Frame[0], System.Length(Frame));
+  if Written < 0 then
+    Exit(LongInt(Written));
+  Result := QuicErrorNone;
+end;
+
 function THttp3ClientConnection.ErrorDescription(Error: LongInt): string;
 begin
   case Error of
@@ -446,6 +475,8 @@ begin
       Result := 'the response ended early';
     Http3ErrorInvalidState:
       Result := 'not possible now';
+    Http3ErrorCanceled:
+      Result := 'canceled';
     QuicErrorClosedByPeer:
       begin
         Result := FQuic.ErrorDescription(Error);

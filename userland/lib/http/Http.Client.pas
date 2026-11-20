@@ -108,6 +108,8 @@ type
     function Observer: THttpClientObserver;
     function Now: Int64;
     procedure PrepareHead(Request: THttpRequest; out Head: THttpRequestHead; out SentAuthorization: Boolean);
+    function OpenAlternative(constref Url: TUrlRecord; constref Service: THttpAltService;
+      Factory: THttpConnectionFactory; out Connection: THttpConnection; out Exchange: THttpExchange): Boolean;
     function OpenConnection(constref Url: TUrlRecord; out Connection: THttpConnection;
       out Exchange: THttpExchange): THttpResult;
     function ObtainConnection(constref Url: TUrlRecord; ForceNew: Boolean; out Connection: THttpConnection;
@@ -376,6 +378,26 @@ begin
   end;
 end;
 
+{ A new connection to an alternative service (pooled); False, and the
+  alternative marked broken, when there is none. }
+function THttpClient.OpenAlternative(constref Url: TUrlRecord; constref Service: THttpAltService;
+  Factory: THttpConnectionFactory; out Connection: THttpConnection; out Exchange: THttpExchange): Boolean;
+var
+  Failure: THttpResult;
+begin
+  Exchange := nil;
+  Connection := Factory(Url, Service, FSettings, Observer, Failure);
+  if Connection = nil then
+  begin
+    FAltServices.MarkBroken(OriginKeyOf(Url), Service.ProtocolId, Now);
+    Exit(False);
+  end;
+  Connection.OriginKey := OriginKeyOf(Url);
+  Exchange := Connection.StartExchange;
+  FPool.Add(Connection);
+  Result := True;
+end;
+
 function THttpClient.OpenConnection(constref Url: TUrlRecord; out Connection: THttpConnection;
   out Exchange: THttpExchange): THttpResult;
 var
@@ -388,18 +410,9 @@ begin
   Connection := nil;
   Exchange := nil;
   Key := OriginKeyOf(Url);
-  if (Url.Scheme = 'https') and FAltServices.Choose(Key, Now, FSettings.AllowHttp3, Service, Factory) then
-  begin
-    Connection := Factory(Url, Service, FSettings, Observer, Result);
-    if Connection <> nil then
-    begin
-      Connection.OriginKey := Key;
-      Exchange := Connection.StartExchange;
-      FPool.Add(Connection);
-      Exit(HttpOk);
-    end;
-    FAltServices.MarkBroken(Key, Service.ProtocolId, Now);
-  end;
+  if (Url.Scheme = 'https') and FAltServices.Choose(Key, Now, FSettings.AllowHttp3, Service, Factory) and
+     OpenAlternative(Url, Service, Factory, Connection, Exchange) then
+    Exit(HttpOk);
   Result := FConnector.Connect(Url, FSettings, Observer, Transport);
   if not HttpSucceeded(Result) then
     Exit;
@@ -423,10 +436,33 @@ end;
 
 function THttpClient.ObtainConnection(constref Url: TUrlRecord; ForceNew: Boolean; out Connection: THttpConnection;
   out Exchange: THttpExchange; out Reused: Boolean): THttpResult;
+var
+  Service: THttpAltService;
+  Factory: THttpConnectionFactory;
+  Protocols: THttpProtocols;
 begin
   Reused := False;
   if not ForceNew then
   begin
+    { Once an origin advertised an alternative, new requests move to it
+      (a connection to it, or a new one) and leave the origin's own
+      connections; while it is broken they stay. }
+    if (Url.Scheme = 'https') and FAltServices.Choose(OriginKeyOf(Url), Now, FSettings.AllowHttp3, Service,
+       Factory) then
+    begin
+      Protocols := [Low(THttpProtocol)..High(THttpProtocol)];
+      if IsHttp3ProtocolId(Service.ProtocolId) then
+        Protocols := [HttpProtocol3];
+      Connection := FPool.Acquire(OriginKeyOf(Url), Exchange, Protocols);
+      if Connection <> nil then
+      begin
+        Reused := True;
+        Observer.ReusingConnection(SerializeHost(Url.Host), UrlEffectivePort(Url));
+        Exit(HttpOk);
+      end;
+      if OpenAlternative(Url, Service, Factory, Connection, Exchange) then
+        Exit(HttpOk);
+    end;
     Connection := FPool.Acquire(OriginKeyOf(Url), Exchange);
     if Connection <> nil then
     begin

@@ -64,9 +64,10 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    { A connection of the origin that started an exchange for the caller
-      (both returned), or nil. }
-    function Acquire(const OriginKey: string; out Exchange: THttpExchange): THttpConnection;
+    { A connection of the origin (speaking one of Protocols) that started
+      an exchange for the caller (both returned), or nil. }
+    function Acquire(const OriginKey: string; out Exchange: THttpExchange;
+      Protocols: THttpProtocols = [HttpProtocol11, HttpProtocol2, HttpProtocol3]): THttpConnection;
     { A new connection (with one exchange about to start on it). }
     procedure Add(Connection: THttpConnection);
     { An exchange on the connection ended (the exchange is finished and
@@ -180,7 +181,8 @@ begin
   end;
 end;
 
-function THttpConnectionPool.Acquire(const OriginKey: string; out Exchange: THttpExchange): THttpConnection;
+function THttpConnectionPool.Acquire(const OriginKey: string; out Exchange: THttpExchange;
+  Protocols: THttpProtocols): THttpConnection;
 var
   Index: Integer;
   Candidate: THttpConnection;
@@ -194,7 +196,7 @@ begin
     for Index := 0 to High(FEntries) do
     begin
       Candidate := FEntries[Index].Connection;
-      if (Candidate.OriginKey <> OriginKey) or not Candidate.IsUsable then
+      if (Candidate.OriginKey <> OriginKey) or not (Candidate.Protocol in Protocols) or not Candidate.IsUsable then
         Continue;
       if not Candidate.IsMultiplexed and (FEntries[Index].Active > 0) then
         Continue;

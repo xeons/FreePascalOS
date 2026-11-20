@@ -18,11 +18,14 @@
 
 {
   The contents of libquic.so: QUIC version 1 (RFC 9000, 9001, 9002),
-  QPACK (RFC 9204) and HTTP/3 (RFC 9114), client side. Compiling this
-  unit compiles all of them.
+  QPACK (RFC 9204) and HTTP/3 (RFC 9114), client side, and HTTP/3 as
+  one of libhttp's connections (Http3.HttpConnections, made by
+  Http3.SystemConnections' factory). Compiling this unit compiles all
+  of them.
 
-  Everything but Quic.UdpSockets and Quic.Sessions is plain Pascal over
-  a datagram transport and builds on the host too (make quic-test).
+  Everything but Quic.UdpSockets, Quic.Sessions and
+  Http3.SystemConnections is plain Pascal over a datagram transport and
+  builds on the host too (make quic-test).
 }
 unit Quic.Contents;
 
@@ -69,7 +72,9 @@ uses
   Http3.Frames,
   Http3.FrameParser,
   Http3.Connections,
-  Http3.Requests;
+  Http3.Requests,
+  Http3.HttpConnections,
+  Http3.SystemConnections;
 
 implementation
 

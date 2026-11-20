@@ -69,6 +69,9 @@ function PumpConnection(State: PQuicConnectionState; Deadline: Int64): LongInt;
 procedure FlushConnection(State: PQuicConnectionState);
 { QuicErrorNone while open, else why it is not. }
 function ConnectionError(State: PQuicConnectionState): LongInt;
+{ When the idle timeout ends the connection unless something comes
+  (a QuicMilliseconds time). }
+function IdleDeadline(State: PQuicConnectionState): Int64;
 
 implementation
 
