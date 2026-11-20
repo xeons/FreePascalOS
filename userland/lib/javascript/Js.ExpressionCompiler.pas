@@ -1015,7 +1015,7 @@ begin
   else
     Opcode := opDecrement;
   Prefix := (Node.Flags and UpdateFlagPrefix) <> 0;
-  if (Operand.Kind = nkIdentifier) and (Operand.Variable <> nil) and not Operand.Variable.Captured and
+  if (Operand.Kind = nkIdentifier) and (Operand.Variable <> nil) and not Operand.Variable.Captured and not Operand.Variable.IsGlobal and
     not DeclarationIsConstant(Operand.Variable) and not NeedsTdzCheck(Operand.Variable, Operand) and
     (Operand.Variable.Kind <> dkImplicit) then
   begin
@@ -1297,7 +1297,7 @@ begin
   if (Node.Op = tkAssign) and (Left.Kind = nkIdentifier) then
   begin
     Variable := Left.Variable;
-    if (Variable <> nil) and not Variable.Captured and not DeclarationIsConstant(Variable) and
+    if (Variable <> nil) and not Variable.Captured and not Variable.IsGlobal and not DeclarationIsConstant(Variable) and
       not NeedsTdzCheck(Variable, Left) and (Variable.Kind <> dkImplicit) and WritesTargetLast(Node.B) then
     begin
       Value := NamedExpression(Node.B, Variable.Index, Left.Text);

@@ -819,14 +819,14 @@ begin
       Equal := JsNumberValue(First) = JsNumberValue(Second);
       Exit;
     end;
-    if (JsTag(First) = JsTag(Second)) and not JsIsNumber(First) then
-    begin
-      Equal := StrictEquals(First, Second, R.Heap);
-      Exit;
-    end;
     if JsIsNullish(First) and JsIsNullish(Second) then
     begin
       Equal := True;
+      Exit;
+    end;
+    if (JsTag(First) = JsTag(Second)) and not JsIsNumber(First) then
+    begin
+      Equal := StrictEquals(First, Second, R.Heap);
       Exit;
     end;
     if JsIsNullish(First) or JsIsNullish(Second) then

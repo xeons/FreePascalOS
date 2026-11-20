@@ -1472,6 +1472,7 @@ var
   Slot: Integer;
   PrivateName: TJsSymbol;
   TypeofCache: TJsPropertyCache;
+  Descriptor: TJsPropertyDescriptor;
 label
   ReloadFrame, DispatchLoop, Unwind, DoReturn, Finished;
 begin
@@ -1931,9 +1932,16 @@ DispatchLoop:
             opDefineMethod:
               Comparison := Target.DefineOwnProperty(Self, Key, DataDescriptor(Value, Flags or PropertyWritable), True);
             opDefineGetter:
-              Comparison := Target.DefineOwnProperty(Self, Key, AccessorDescriptor(Value, JsUndefined, Flags) , True);
+              begin
+                { Only the getter: a setter defined before stays. }
+                Descriptor := AccessorDescriptor(Value, JsUndefined, Flags);
+                Descriptor.Present := Descriptor.Present and not HasSetter;
+                Comparison := Target.DefineOwnProperty(Self, Key, Descriptor, True);
+              end;
           else
-            Comparison := Target.DefineOwnProperty(Self, Key, AccessorDescriptor(JsUndefined, Value, Flags), True);
+            Descriptor := AccessorDescriptor(JsUndefined, Value, Flags);
+            Descriptor.Present := Descriptor.Present and not HasGetter;
+            Comparison := Target.DefineOwnProperty(Self, Key, Descriptor, True);
           end;
           if Comparison < 0 then
             goto Unwind;

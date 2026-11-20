@@ -411,7 +411,8 @@ var
 begin
   if Opcode = opAdd then
   begin
-    if not (JsIsNumber(First) and JsIsNumber(Second)) and not (JsIsBigInt(First) and JsIsBigInt(Second)) then
+    { Strings and objects take the + of strings; primitives add as numbers. }
+    if JsIsString(First) or JsIsString(Second) or JsIsObject(First) or JsIsObject(Second) then
       Exit(AddValues(R, First, Second));
   end;
   if not JsIsNumber(First) then
