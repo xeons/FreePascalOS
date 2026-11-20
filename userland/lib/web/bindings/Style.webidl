@@ -14,6 +14,12 @@ interface CSSStyleDeclaration {
                         optional [LegacyNullToEmptyString] DOMString priority = "");
   DOMString removeProperty(DOMString property);
   readonly attribute CSSRule? parentRule;
+};
+
+// What element.style and getComputedStyle give (CSSOM 6.7: the property
+// attributes live on this interface).
+[Exposed=Window]
+interface CSSStyleProperties : CSSStyleDeclaration {
   attribute [LegacyNullToEmptyString] DOMString cssFloat;
 };
 

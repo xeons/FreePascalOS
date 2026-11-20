@@ -47,6 +47,7 @@ implementation
 uses
   SysUtils,
   Math,
+  Js.Objects,
   Js.Conversions,
   Url.Records,
   Url.Parser,
@@ -645,13 +646,23 @@ begin
 end;
 
 function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+var
+  Frame: TBindingContext;
 begin
-  Result := JsNull;
+  Frame := Context(Call).FrameOf(ThisElement(Call));
+  if Frame = nil then
+    Exit(JsNull);
+  Result := Frame.WrapNode(Frame.Document);
 end;
 
 function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+var
+  Frame: TBindingContext;
 begin
-  Result := JsNull;
+  Frame := Context(Call).FrameOf(ThisElement(Call));
+  if Frame = nil then
+    Exit(JsNull);
+  Result := JsObjectValue(Frame.Engine.GlobalObject);
 end;
 
 function HTMLStyleElement_get_blocking(var Call: TBindingCall): TJsValue;

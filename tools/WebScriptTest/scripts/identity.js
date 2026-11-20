@@ -25,7 +25,8 @@ check("prototype chain", Object.getPrototypeOf(a) === HTMLDivElement.prototype &
 check("instanceof", a instanceof HTMLDivElement && a instanceof Node && a instanceof EventTarget &&
   !(a instanceof Text) && document instanceof Document && a.firstChild.firstChild instanceof Text);
 check("toStringTag", Object.prototype.toString.call(a) === "[object HTMLDivElement]" &&
-  String(document) === "[object Document]");
+  String(document) === "[object HTMLDocument]" && String(new Document()) === "[object Document]" &&
+  document instanceof HTMLDocument && String(document.body.style) === "[object CSSStyleProperties]");
 check("element interfaces by name", document.createElement("a") instanceof HTMLAnchorElement &&
   document.createElement("h3") instanceof HTMLHeadingElement &&
   document.createElement("blink") instanceof HTMLUnknownElement &&

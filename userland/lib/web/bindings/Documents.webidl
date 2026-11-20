@@ -80,6 +80,11 @@ interface Document : Node {
   attribute EventHandler onreadystatechange;
   attribute EventHandler onvisibilitychange;
 };
+
+// The legacy interface of HTML documents (HTML Standard 3.1.1): what a
+// page's document is an instance of.
+[Exposed=Window]
+interface HTMLDocument : Document { };
 Document includes NonElementParentNode;
 Document includes ParentNode;
 Document includes GlobalEventHandlers;

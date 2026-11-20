@@ -367,13 +367,13 @@ end;
 function InlineStyleObject(Context: TBindingContext; Element: TElement; OwnerWrapper: TJsValue): TJsValue;
 begin
   Result := Context.WrapObjectAs(TStyleDeclarationWrapper, TInlineStyle.Create(Element, False),
-    InterfaceCSSStyleDeclaration, True, OwnerWrapper);
+    InterfaceCSSStyleProperties, True, OwnerWrapper);
 end;
 
 function ComputedStyleObject(Context: TBindingContext; Element: TElement; OwnerWrapper: TJsValue): TJsValue;
 begin
   Result := Context.WrapObjectAs(TStyleDeclarationWrapper, TInlineStyle.Create(Element, True),
-    InterfaceCSSStyleDeclaration, True, OwnerWrapper);
+    InterfaceCSSStyleProperties, True, OwnerWrapper);
 end;
 
 { CSSStyleDeclaration }
@@ -449,12 +449,12 @@ begin
   Result := JsNull;
 end;
 
-function CSSStyleDeclaration_get_cssFloat(var Call: TBindingCall): TJsValue;
+function CSSStyleProperties_get_cssFloat(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).TextValue(ThisStyle(Call).PropertyValue('float'));
 end;
 
-function CSSStyleDeclaration_set_cssFloat(var Call: TBindingCall): TJsValue;
+function CSSStyleProperties_set_cssFloat(var Call: TBindingCall): TJsValue;
 begin
   ThisStyle(Call).SetProperty('float', Call.Text(0), '');
   Result := JsUndefined;

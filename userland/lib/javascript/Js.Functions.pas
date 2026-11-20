@@ -172,6 +172,9 @@ type
     { Field initializers: computed keys and private methods, made when
       the class was defined. }
     ClassSlots: TJsValueList;
+    { The realm whose interpreter runs it (its global object and
+      intrinsics). }
+    Realm: TJsRealm;
     procedure Trace(Tracer: TJsTracer); override;
     procedure MaterializeLazy(R: TJsRealm); override;
   end;
@@ -191,6 +194,9 @@ type
     Data: TJsValue;
     Data2: TJsValue;
     HostData: Pointer;
+    { The realm it was made in, which its callback gets (a built-in
+      function's realm, ECMAScript 10.3). }
+    Realm: TJsRealm;
     procedure Trace(Tracer: TJsTracer); override;
   end;
 

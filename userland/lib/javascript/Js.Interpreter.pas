@@ -167,6 +167,8 @@ type
     function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
     function DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
     function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
+    { Another live realm (a function of it runs there). }
+    function IsForeign(Realm: TJsRealm): Boolean; inline;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
   public
@@ -354,6 +356,7 @@ begin
   else
     Prototype := Intrinsics[inFunctionPrototype];
   Result := TJsClosure.Create;
+  Result.Realm := Self;
   Heap.Register(Result, ckObject);
   Result.Shape := FunctionShape;
   Result.Proto := Prototype;
@@ -925,6 +928,11 @@ begin
     Suspension.State := ssCompleted;
 end;
 
+function TJsInterpreterRealm.IsForeign(Realm: TJsRealm): Boolean;
+begin
+  Result := (Realm <> Self) and (Realm <> nil) and not Realm.Detached;
+end;
+
 function TJsInterpreterRealm.Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
 var
   Target: TJsObject;
@@ -937,10 +945,16 @@ begin
     Exit(NotCallable(F));
   Target := JsAsObject(F);
   if Target is TJsClosure then
+  begin
+    if IsForeign(TJsClosure(Target).Realm) then
+      Exit(TJsClosure(Target).Realm.Call(F, This, Args, Count));
     Exit(CallClosure(TJsClosure(Target), This, Args, Count, JsUndefined, False));
+  end;
   if Target is TJsNativeFunction then
   begin
     Native := TJsNativeFunction(Target);
+    if IsForeign(Native.Realm) then
+      Exit(Native.Realm.Call(F, This, Args, Count));
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
@@ -985,10 +999,16 @@ begin
     Exit(ThrowTypeError(ValueToPascal(Self, F) + ' is not a constructor'));
   Target := JsAsObject(F);
   if Target is TJsClosure then
+  begin
+    if IsForeign(TJsClosure(Target).Realm) then
+      Exit(TJsClosure(Target).Realm.Construct(F, Args, Count, NewTarget));
     Exit(CallClosure(TJsClosure(Target), JsUndefined, Args, Count, NewTarget, True));
+  end;
   if Target is TJsNativeFunction then
   begin
     Native := TJsNativeFunction(Target);
+    if IsForeign(Native.Realm) then
+      Exit(Native.Realm.Construct(F, Args, Count, NewTarget));
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
@@ -2861,7 +2881,8 @@ DispatchLoop:
           begin
             Target := JsAsObject(Callee);
             if (Target is TJsClosure) and ((TJsClosure(Target).Code.Flags and
-              (CodeGenerator or CodeAsync or CodeClassConstructor)) = 0) then
+              (CodeGenerator or CodeAsync or CodeClassConstructor)) = 0) and
+              not IsForeign(TJsClosure(Target).Realm) then
             begin
               Frame^.PC := PC + 4;
               if not EnterFrame(TJsClosure(Target), Frame^.Base + Index + 2, Count, JsUndefined, 0,
@@ -2877,7 +2898,7 @@ DispatchLoop:
                   goto Unwind;
               goto ReloadFrame;
             end;
-            if Target is TJsNativeFunction then
+            if (Target is TJsNativeFunction) and not IsForeign(TJsNativeFunction(Target).Realm) then
             begin
               Native := TJsNativeFunction(Target);
               Inc(FRunDepth);
@@ -2927,7 +2948,8 @@ DispatchLoop:
           Count := Code[PC + 3];
           if JsIsObject(Callee) and (JsAsObject(Callee) is TJsClosure) and
             ((TJsClosure(JsAsObject(Callee)).Code.Flags and (CodeConstructor or CodeDerivedConstructor or
-            CodeGenerator or CodeAsync)) = CodeConstructor) and JsIsConstructor(Callee) then
+            CodeGenerator or CodeAsync)) = CodeConstructor) and JsIsConstructor(Callee) and
+            not IsForeign(TJsClosure(JsAsObject(Callee)).Realm) then
           begin
             Closure := TJsClosure(JsAsObject(Callee));
             FStackTop := Frame^.Base + CodeObject.RegisterCount;

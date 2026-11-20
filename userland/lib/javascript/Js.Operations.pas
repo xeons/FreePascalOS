@@ -903,6 +903,7 @@ begin
   Result := TJsNativeFunction(R.NewObjectOfClass(TJsNativeFunction, R.Intrinsics[inFunctionPrototype], ocFunction));
   Result.ObjectFlags := Result.ObjectFlags or ObjectCallable;
   Result.Callback := Callback;
+  Result.Realm := R;
   Result.Magic := Magic;
   Result.Data := JsUndefined;
   Result.Data2 := JsUndefined;

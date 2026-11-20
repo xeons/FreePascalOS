@@ -106,12 +106,15 @@ end;
 
 function Window_get_top(var Call: TBindingCall): TJsValue;
 begin
-  Result := GlobalValue(Call);
+  Result := JsObjectValue(Context(Call).TopContext.Engine.GlobalObject);
 end;
 
 function Window_get_parent(var Call: TBindingCall): TJsValue;
 begin
-  Result := GlobalValue(Call);
+  if Context(Call).ParentContext <> nil then
+    Result := JsObjectValue(Context(Call).ParentContext.Engine.GlobalObject)
+  else
+    Result := GlobalValue(Call);
 end;
 
 function Window_get_document(var Call: TBindingCall): TJsValue;
@@ -174,12 +177,15 @@ end;
 
 function Window_get_length(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsInteger(0);
+  Result := JsInteger(Context(Call).FrameCount);
 end;
 
 function Window_get_frameElement(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsNull;
+  if (Context(Call).ParentContext <> nil) and not Context(Call).Closed then
+    Result := Context(Call).ParentContext.WrapNode(Context(Call).FrameElement)
+  else
+    Result := JsNull;
 end;
 
 function Window_get_originAgentCluster(var Call: TBindingCall): TJsValue;

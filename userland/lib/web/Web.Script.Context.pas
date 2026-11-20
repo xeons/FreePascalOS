@@ -72,10 +72,14 @@ type
     procedure ObserveDocument(Target: TDocument);
     procedure FireSimpleEvent(Target: TEventTarget; const EventType: string; Bubbles: Boolean);
     function ScriptSource(Script: TElement): string;
+    procedure Setup;
   protected
     procedure NodeWrapped(Node: TNode); override;
   public
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment = nil; AWindow: TEventTarget = nil);
+    { An iframe's window (Web.Script.Frames makes them). }
+    constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
+      AFrameElement: TElement);
     destructor Destroy; override;
 
     { Runs a classic script (an inline one, or an external one the
@@ -139,7 +143,8 @@ uses
   Web.Bindings.MutationObservers,
   Web.Bindings.UrlResolution,
   Web.Script.Timers,
-  Web.Script.Prelude;
+  Web.Script.Prelude,
+  Web.Script.Frames;
 
 type
   { Forwards the document's changes to event handlers, script elements
@@ -153,6 +158,7 @@ type
       PreviousSibling, NextSibling: TNode); override;
     procedure ChildrenChanged(Parent: TNode); override;
     procedure NodeConnected(Node: TNode); override;
+    procedure NodeDisconnected(Node: TNode); override;
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
@@ -186,10 +192,18 @@ begin
     FContext.PrepareScript(TElement(Parent), nil);
 end;
 
+procedure TScriptDocumentObserver.NodeDisconnected(Node: TNode);
+begin
+  if (Node.NodeType = NodeTypeElement) and TElement(Node).IsHtmlElement(AtomIframe) then
+    FrameElementDisconnected(FContext, TElement(Node));
+end;
+
 procedure TScriptDocumentObserver.NodeConnected(Node: TNode);
 begin
   if Node.NodeType <> NodeTypeElement then
     Exit;
+  if TElement(Node).IsHtmlElement(AtomIframe) and (Node.OwnerDocument = FContext.Document) then
+    FrameElementConnected(FContext, TElement(Node));
   if TElement(Node).HasAttributes then
     ActivateEventHandlerAttributes(FContext, TElement(Node));
   if IsPendingScript(Node) then
@@ -215,16 +229,28 @@ end;
 { TScriptContext }
 
 constructor TScriptContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
+begin
+  inherited Create(ADocument, AEnvironment, AWindow);
+  Setup;
+end;
+
+constructor TScriptContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
+  Parent: TBindingContext; AFrameElement: TElement);
+begin
+  inherited CreateFrame(ADocument, AEnvironment, Parent, AFrameElement);
+  Setup;
+end;
+
+procedure TScriptContext.Setup;
 var
   Global: TJsObject;
   Clone: TJsValue;
 begin
-  inherited Create(ADocument, AEnvironment, AWindow);
   FPreparesScripts := True;
   FReadyState := 'complete';
   FDocumentObserver := TScriptDocumentObserver.Create(Self);
   InstallBindings(Self);
-  ObserveDocument(ADocument);
+  ObserveDocument(Document);
   Global := Engine.GlobalObject;
   if not Environment.SupportsTimers then
   begin
@@ -237,7 +263,7 @@ begin
   SetSingleton(SingletonStructuredClone, Clone);
   { The document's wrapper is a root: every wrapper of its tree lives
     with it. }
-  WrapNode(ADocument);
+  WrapNode(Document);
 end;
 
 destructor TScriptContext.Destroy;

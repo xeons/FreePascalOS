@@ -197,6 +197,11 @@ type
     FSingletons: array[TWindowSingleton] of TJsValue;
     FCurrentScript: TElement;
     FFormStates: TFormStateMap;
+    FParentContext: TBindingContext;
+    FFrameElement: TElement;
+    FChildFrames: array of TBindingContext;
+    FClosed: Boolean;
+    procedure FreeChildFrames;
     procedure MarkRoots(Tracer: TJsTracer);
     function MarkLiveGroups(Tracer: TJsTracer; Phase: Integer): Boolean;
     function GroupIsLive(Root: TNode): Boolean;
@@ -235,7 +240,27 @@ type
       TWebWindow, whose load event and timers it drives); nil makes one
       of the context's own. }
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget = nil);
+    { The window of a nested navigable (an iframe's): a realm in Parent's
+      engine, so objects pass between the two. Parent frees it (after its
+      engine). }
+    constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
+      AFrameElement: TElement);
     destructor Destroy; override;
+
+    { Nested navigables (iframes) }
+    { The window of a frame element's content, nil if none (or closed). }
+    function FrameOf(Element: TElement): TBindingContext;
+    { The live child windows in the order their elements were inserted. }
+    function FrameCount: Integer;
+    function FrameAt(Index: Integer): TBindingContext;
+    { The frame element went from the document: its window closes (no
+      longer reachable as contentWindow; its realm stops being a root). }
+    procedure Close;
+    { The top-level window's context. }
+    function TopContext: TBindingContext;
+    property ParentContext: TBindingContext read FParentContext;
+    property FrameElement: TElement read FFrameElement;
+    property Closed: Boolean read FClosed;
 
     { Interfaces }
     function IsInterface(InterfaceId, Ancestor: Integer): Boolean;
@@ -334,6 +359,8 @@ type
     property Document: TDocument read FDocument;
     property Window: TEventTarget read FWindow;
     property Environment: TScriptEnvironment read FEnvironment write FEnvironment;
+    { The context frees its environment. }
+    property OwnsEnvironment: Boolean read FOwnsEnvironment write FOwnsEnvironment;
     property CallDepth: Integer read FCallDepth;
     property OnConsoleMessage: TConsoleMessageEvent read FOnConsoleMessage write FOnConsoleMessage;
     property Destroying: Boolean read FDestroying;
@@ -511,15 +538,47 @@ end;
 { TBindingContext }
 
 constructor TBindingContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
+begin
+  CreateFrame(ADocument, AEnvironment, nil, nil);
+  if AWindow <> nil then
+  begin
+    { The loader's window replaces the context's own. }
+    FDocument.DefaultView := nil;
+    FWindow.Free;
+    FWindow := AWindow;
+    FOwnsWindow := False;
+    FDocument.DefaultView := FWindow;
+  end;
+end;
+
+constructor TBindingContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
+  Parent: TBindingContext; AFrameElement: TElement);
+const
+  FrameStackCapacity = 64 * 1024;
+  FrameMaximumFrames = 2000;
 var
   Singleton_: TWindowSingleton;
   Options: TJsEngineOptions;
+  AWindow: TEventTarget;
 begin
   inherited Create;
+  AWindow := nil;
   Options := TJsEngine.DefaultOptions;
   if ContextHeapThreshold > 0 then
     Options.InitialHeapThreshold := ContextHeapThreshold;
-  FEngine := TJsEngine.Create(Options);
+  if Parent = nil then
+    FEngine := TJsEngine.Create(Options)
+  else
+  begin
+    Options.StackCapacity := FrameStackCapacity;
+    Options.MaximumFrames := FrameMaximumFrames;
+    FEngine := TJsEngine.CreateSharing(Parent.FEngine, Options);
+    FParentContext := Parent;
+    FFrameElement := AFrameElement;
+    FFrameElement.Retain;
+    SetLength(Parent.FChildFrames, Length(Parent.FChildFrames) + 1);
+    Parent.FChildFrames[High(Parent.FChildFrames)] := Self;
+  end;
   FDocument := ADocument;
   FDocument.Retain;
   FEnvironment := AEnvironment;
@@ -555,8 +614,12 @@ begin
   UnregisterListenerOwner(Self);
   if FWindow.ListenerList(False) <> nil then
     DisableListeners(FWindow.ListenerList(False), Self);
-  { The engine's cells go first: the wrappers release their nodes. }
+  { The engine's cells go first: the wrappers release their nodes (a
+    frame's cells go with the top-level engine, before the frames). }
   FreeAndNil(FEngine);
+  FreeChildFrames;
+  if FFrameElement <> nil then
+    FFrameElement.Release;
   FreeAndNil(MutationObservers);
   FreeAndNil(Timers);
   for Index := 0 to High(Contexts) do
@@ -583,6 +646,69 @@ begin
   if FOwnsEnvironment then
     FEnvironment.Free;
   inherited Destroy;
+end;
+
+procedure TBindingContext.FreeChildFrames;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FChildFrames) do
+    FChildFrames[Index].Free;
+  FChildFrames := nil;
+end;
+
+function TBindingContext.FrameOf(Element: TElement): TBindingContext;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FChildFrames) do
+    if (FChildFrames[Index].FFrameElement = Element) and not FChildFrames[Index].FClosed then
+      Exit(FChildFrames[Index]);
+  Result := nil;
+end;
+
+function TBindingContext.FrameCount: Integer;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to High(FChildFrames) do
+    if not FChildFrames[Index].FClosed then
+      Inc(Result);
+end;
+
+function TBindingContext.FrameAt(Index: Integer): TBindingContext;
+var
+  Walk: Integer;
+begin
+  for Walk := 0 to High(FChildFrames) do
+    if not FChildFrames[Walk].FClosed then
+    begin
+      if Index = 0 then
+        Exit(FChildFrames[Walk]);
+      Dec(Index);
+    end;
+  Result := nil;
+end;
+
+procedure TBindingContext.Close;
+var
+  Index: Integer;
+begin
+  if FClosed or (FParentContext = nil) then
+    Exit;
+  FClosed := True;
+  for Index := 0 to High(FChildFrames) do
+    FChildFrames[Index].Close;
+  FEngine.Runtime.Heap.RemoveRootProvider(@MarkRoots);
+  FEngine.Detach;
+end;
+
+function TBindingContext.TopContext: TBindingContext;
+begin
+  Result := Self;
+  while Result.FParentContext <> nil do
+    Result := Result.FParentContext;
 end;
 
 procedure TBindingContext.FreeFormStates;
@@ -866,7 +992,10 @@ begin
     NodeTypeDocumentFragment:
       Result := InterfaceDocumentFragment;
     NodeTypeDocument:
-      Result := InterfaceDocument;
+      if TDocument(Node).IsHtmlDocument then
+        Result := InterfaceHTMLDocument
+      else
+        Result := InterfaceDocument;
     NodeTypeAttribute:
       Result := InterfaceAttr;
   else
@@ -1259,16 +1388,29 @@ begin
 end;
 
 procedure TBindingContext.PerformMicrotaskCheckpoint;
+var
+  Index: Integer;
+  Again: Boolean;
 begin
   if FCheckpointRunning or FDestroying then
     Exit;
   FCheckpointRunning := True;
   try
-    while FEngine.PendingJobs > 0 do
-    begin
-      if not FEngine.Realm.RunJobs then
-        ReportPendingException;
-    end;
+    { The frames' realms share the event loop's microtask queue. }
+    repeat
+      Again := False;
+      while FEngine.PendingJobs > 0 do
+      begin
+        if not FEngine.Realm.RunJobs then
+          ReportPendingException;
+      end;
+      for Index := 0 to High(FChildFrames) do
+        if not FChildFrames[Index].FClosed and (FChildFrames[Index].FEngine.PendingJobs > 0) then
+        begin
+          FChildFrames[Index].PerformMicrotaskCheckpoint;
+          Again := True;
+        end;
+    until not Again;
   finally
     FCheckpointRunning := False;
   end;

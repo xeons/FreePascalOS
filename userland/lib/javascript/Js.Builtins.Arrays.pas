@@ -166,6 +166,12 @@ begin
   Constructor_ := Original.GetValue(R, R.ConstructorKey);
   if Constructor_ = JsException then
     Exit(JsException);
+  { Another realm's %Array% makes an array of this realm (10.4.2.3). }
+  if JsIsObject(Constructor_) and (JsAsObject(Constructor_) is TJsNativeFunction) and
+    (TJsNativeFunction(JsAsObject(Constructor_)).Realm <> nil) and
+    (TJsNativeFunction(JsAsObject(Constructor_)).Realm <> R) and
+    (JsAsObject(Constructor_) = TJsNativeFunction(JsAsObject(Constructor_)).Realm.Intrinsics[inArray]) then
+    Constructor_ := JsUndefined;
   if JsIsObject(Constructor_) then
   begin
     Constructor_ := JsAsObject(Constructor_).GetValue(R, R.Runtime.SymbolValue(wsSpecies));
