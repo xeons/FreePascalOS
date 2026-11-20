@@ -5495,7 +5495,11 @@ malformed response, priorities, GOAWAY), and the client over a
 connector of pipes (keep-alive and a stale connection, gzip and
 deflate, redirects with their method rules and limit, cookies, the
 cache fresh and revalidated, Basic, Alt-Svc, eight fetch tasks on one
-HTTP/2 connection, a cancel). Then `run-interop.sh`: HPACK both ways
+HTTP/2 connection, a cancel), RFC 6265bis's rules in the jar (public
+suffixes, Secure, prefixes, SameSite both ways, HttpOnly against scripts,
+400 days), RFC 9111's freshness and age arithmetic, the disk cache read
+back by another cache, Alt-Svc parsing, and HPACK in bounded memory over
+5000 blocks. Then `run-interop.sh`: HPACK both ways
 with libnghttp2 through Python's ctypes (libhttp's blocks with
 evictions and every byte Huffman coded decoded by nghttp2, nghttp2's
 blocks decoded by libhttp; skipped without libnghttp2), curl checking

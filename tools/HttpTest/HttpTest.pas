@@ -46,6 +46,7 @@ uses
   HttpTest.Interop,
   HttpTest.Loopback,
   HttpTest.Client,
+  HttpTest.CookiesAndCache,
   HttpTest.Urls;
 
 begin
@@ -71,5 +72,6 @@ begin
   TestHttp2Frames;
   TestLoopback;
   TestClient;
+  TestCookiesAndCache(ExtractFilePath(ParamStr(0)));
   FinishChecks('http test');
 end.
