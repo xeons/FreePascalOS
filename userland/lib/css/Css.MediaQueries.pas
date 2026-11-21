@@ -653,8 +653,35 @@ begin
   Result.FontSize := 16;
 end;
 
+{ A length in a font- or viewport-relative unit, in px. }
+function RelativeLengthPixels(Number: Double; UnitValue: TCssUnit; const Environment: TCssMediaEnvironment;
+  out Pixels: Double): Boolean;
+begin
+  Result := True;
+  case UnitValue of
+    cuEm, cuRem: Pixels := Number * Environment.FontSize;
+    cuEx, cuRex, cuCh, cuRch: Pixels := Number * Environment.FontSize / 2;
+    cuVw, cuSvw, cuLvw, cuDvw, cuVi: Pixels := Number * Environment.Width / 100;
+    cuVh, cuSvh, cuLvh, cuDvh, cuVb: Pixels := Number * Environment.Height / 100;
+    cuVmin: Pixels := Number * Min(Environment.Width, Environment.Height) / 100;
+    cuVmax: Pixels := Number * Max(Environment.Width, Environment.Height) / 100;
+  else
+    Result := False;
+  end;
+end;
+
+type
+  PCssMediaEnvironment = ^TCssMediaEnvironment;
+
+{ calc() leaves in relative units (Data is the environment). }
+function ResolveMediaCalcLeaf(Value: Double; UnitValue: TCssUnit; Data: Pointer): Double;
+begin
+  if not RelativeLengthPixels(Value, UnitValue, PCssMediaEnvironment(Data)^, Result) then
+    Result := Value * CanonicalFactor(UnitValue);
+end;
+
 { A value as a number in the feature's canonical unit; False if it does not fit. }
-function NumericValue(Value: TCssValue; const Environment: TCssMediaEnvironment; out Number: Double;
+function NumericValue(Value: TCssValue; constref Environment: TCssMediaEnvironment; out Number: Double;
   out Category: TCssUnitCategory): Boolean;
 begin
   Result := True;
@@ -664,14 +691,8 @@ begin
     vkDimension:
       begin
         Category := UnitCategory(Value.UnitValue);
-        case Value.UnitValue of
-          cuEm, cuRem: Number := Value.Number * Environment.FontSize;
-          cuEx, cuRex, cuCh, cuRch: Number := Value.Number * Environment.FontSize / 2;
-          cuVw, cuSvw, cuLvw, cuDvw, cuVi: Number := Value.Number * Environment.Width / 100;
-          cuVh, cuSvh, cuLvh, cuDvh, cuVb: Number := Value.Number * Environment.Height / 100;
-          cuVmin: Number := Value.Number * Min(Environment.Width, Environment.Height) / 100;
-          cuVmax: Number := Value.Number * Max(Environment.Width, Environment.Height) / 100;
-        else
+        if not RelativeLengthPixels(Value.Number, Value.UnitValue, Environment, Number) then
+        begin
           if CanonicalFactor(Value.UnitValue) = 0 then
             Exit(False);
           Number := Value.Number * CanonicalFactor(Value.UnitValue);
@@ -679,7 +700,8 @@ begin
       end;
     vkCalc:
       begin
-        Number := EvaluateCalc(Value.Calc, nil, nil);
+        { calc(1rem * 2 + 31rem): relative units against the environment. }
+        Number := EvaluateCalc(Value.Calc, @ResolveMediaCalcLeaf, @Environment);
         Category := ucLength;
       end;
     vkList:
