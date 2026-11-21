@@ -491,16 +491,27 @@ end;
 
 { --- Memory ---------------------------------------------------------- }
 
-function PerformAllocateMemory(Length: QWord): Int64;
+{ The address space has a lock of its own, and stays while one of its
+  threads runs, so these do not take the process's lock. }
+function PerformAllocateMemory(Length, Flags: QWord): Int64;
 var
   Process: PProcess;
+  Thread: PThread;
   Start: QWord;
   Error: LongInt;
 begin
+  if (Flags and not QWord(AllocateForThread)) <> 0 then
+    Exit(Failure(ErrorInvalidArgument));
   Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Error := AllocateUserMemory(Process^.AddressSpace, Length, Start);
-  ReleaseMutex(Process^.Lock);
+  if (Flags and AllocateForThread) <> 0 then
+  begin
+    Thread := CurrentThreadObject;
+    Error := AllocateThreadOwnedUserMemory(Process^.AddressSpace, Length, Thread^.ControlBlock.ThreadId, Start);
+    if Error = ErrorNone then
+      Thread^.OwnedAllocationStart := Start;
+  end
+  else
+    Error := AllocateUserMemory(Process^.AddressSpace, Length, Start);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := Int64(Start);
@@ -508,12 +519,12 @@ end;
 
 function PerformFreeMemory(Address: QWord): Int64;
 var
-  Process: PProcess;
+  Thread: PThread;
 begin
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Result := -Int64(FreeUserMemory(Process^.AddressSpace, Address));
-  ReleaseMutex(Process^.Lock);
+  Thread := CurrentThreadObject;
+  if (Address <> 0) and (Thread^.OwnedAllocationStart = Address) then
+    Thread^.OwnedAllocationStart := 0;
+  Result := -Int64(FreeUserMemory(CurrentProcess^.AddressSpace, Address));
 end;
 
 { --- Libraries ------------------------------------------------------- }
@@ -678,7 +689,7 @@ begin
     CallSetFileSize: Result := PerformSetFileSize(Int64(Argument0), Argument1);
     CallGetCurrentDirectory: Result := PerformGetCurrentDirectory(Argument0, Argument1);
     CallSetCurrentDirectory: Result := PerformSetCurrentDirectory(Argument0);
-    CallAllocateMemory: Result := PerformAllocateMemory(Argument0);
+    CallAllocateMemory: Result := PerformAllocateMemory(Argument0, Argument1);
     CallFreeMemory: Result := PerformFreeMemory(Argument0);
     CallCreateProcess: Result := PerformCreateProcess(Argument0);
     CallWaitForProcess: Result := PerformWaitForProcess(Int64(Argument0), Int64(Argument1));

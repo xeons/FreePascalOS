@@ -112,6 +112,7 @@ uses
   Kernel.Panic,
   Objects.Manager,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.ImageLoader,
   Processes.ImageInitializers,
   Processes.Thread,

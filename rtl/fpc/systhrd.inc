@@ -103,8 +103,9 @@ begin
   if ReadRuntimeWord <> nil then
     Exit;
   { From the kernel, not the heap: the heap itself uses threadvars. Fresh
-    pages are zero, as threadvars start out. }
-  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, 0, 0, 0, 0, 0);
+    pages are zero, as threadvars start out. The kernel frees the block
+    if the thread is ended without coming back here to free it. }
+  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, AllocateForThread, 0, 0, 0, 0);
   if Address <= 0 then
     RunError(226);
   WriteRuntimeWord(Pointer(Address));

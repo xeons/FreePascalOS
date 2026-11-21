@@ -43,7 +43,10 @@ const
   CallSetFileSize = 14;
   CallGetCurrentDirectory = 15;
   CallSetCurrentDirectory = 16;
+  { (Length, Flags): Length bytes of fresh zeroed memory (whole pages);
+    returns its address. Flags: 0, or AllocateForThread. }
   CallAllocateMemory = 17;
+  { (Address): frees memory from CallAllocateMemory or CallMapHandle. }
   CallFreeMemory = 18;
   CallCreateProcess = 19;
   CallWaitForProcess = 20;
@@ -449,7 +452,22 @@ const
     it is not known, as on PCs for now). Anyone may read it. }
   CallGetMachineModel = 129;
 
-  CallCount = 130;
+  { --- Limits of a process ---------------------------------------------- }
+
+  { (ProcessId, ResourcesAddress): what the process (0: the caller)
+    holds against its limits, as a TAbiProcessResources: its regions
+    (ranges of its address space: program and library segments, stacks,
+    allocations, mappings), handles, threads and memory. Anyone may ask
+    about any process; ErrorNotFound if none has that id. }
+  CallGetProcessResources = 130;
+  { (Limit, Value): sets one of the caller's limits (ProcessLimit*),
+    which the processes it starts inherit. Lowering is always allowed
+    (what is already there stays); raising above the default needs root
+    (ErrorNotPermitted). ErrorInvalidArgument above the limit's ceiling
+    or for an unknown limit. Returns the previous value. }
+  CallSetProcessLimit = 131;
+
+  CallCount = 132;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
@@ -753,12 +771,35 @@ const
     foreground group decides whether reading it stops the process. }
   GroupNewInForeground = -2;
 
+  { Flags of CallAllocateMemory. }
+  { The memory belongs to the calling thread (a threadvar block): if the
+    thread ends without freeing it (ended by another thread, say), the
+    kernel frees it. Only the latest such allocation of a thread is
+    tracked. }
+  AllocateForThread = $01;
+
+  { CallSetProcessLimit: the most regions and the most handles a process
+    may have, by default and at most. }
+  ProcessLimitRegions = 1;
+  ProcessLimitHandles = 2;
+  DefaultProcessRegionLimit = 65536;
+  ProcessRegionLimitCeiling = 1048576;
+  DefaultProcessHandleLimit = 16384;
+  ProcessHandleLimitCeiling = 65536;
+
   { Flags of TAbiProcessCreation. }
   { The new process leads a new session: it and the processes it starts
     (unless they start sessions of their own) can be ended together with
     CallTerminateSession (a service and its helpers, a user's logon).
     Without it a process belongs to its parent's session. }
   ProcessNewSession = $01;
+  { The record goes on with PassedHandles and PassedHandleCount: the
+    new process gets those handles of the caller too, with the same
+    numbers (after the three standard ones, which a passed handle with
+    the number 0, 1 or 2 replaces). ErrorBadHandle if one is not open,
+    ErrorInvalidArgument for a thread handle (those belong to the
+    caller) or more than the handle limit. }
+  ProcessPassHandles = $02;
 
   { Flags of CallCreateWatch: what to report. }
   { Names created, removed and renamed (files, folders, links). }
@@ -1165,10 +1206,32 @@ type
       groups); root only (ErrorNotPermitted), for starting a user's
       programs (login, the session manager, services). }
     Identity: ^TAbiProcessIdentity;
-    { ProcessNewSession, or 0. }
+    { ProcessNewSession, ProcessPassHandles, or 0. }
     Flags: QWord;
+    { Read only with ProcessPassHandles (older programs end the record
+      above): the address of PassedHandleCount Int64 handles. }
+    PassedHandles: ^Int64;
+    PassedHandleCount: QWord;
   end;
   PAbiProcessCreation = ^TAbiProcessCreation;
+
+  { What CallGetProcessResources gives. }
+  TAbiProcessResources = record
+    RegionCount: LongWord;
+    RegionLimit: LongWord;
+    HandleCount: LongWord;
+    HandleLimit: LongWord;
+    ThreadCount: LongWord;
+    Reserved: LongWord;
+    { The regions' sizes (stack guards left out), in bytes; the pages
+      mapped now (resident), the most there ever were, and those of them
+      shared with other processes. }
+    VirtualBytes: QWord;
+    CommittedPages: QWord;
+    PeakCommittedPages: QWord;
+    SharedPages: QWord;
+  end;
+  PAbiProcessResources = ^TAbiProcessResources;
 
   { Who the other end of a channel is (CallGetChannelPeer). }
   { What CallReceiveNotification gives. }
