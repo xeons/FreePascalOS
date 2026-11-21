@@ -7065,7 +7065,7 @@ copied from the kernel's table when the process is created, so kernel
 addresses stay valid in every process; the scheduler loads a thread's
 `AddressSpaceRoot` into CR3 when it switches between processes.
 
-User memory is described by a sorted list of regions (`Processes.AddressSpace`):
+User memory is described by regions (`Processes.AddressSpace`):
 the program image (from 0x400000), shared libraries (from 0x7F00_0000_0000),
 heap allocations and an 8 MiB stack below 0x7FFF_FFFF_F000. Pages are only
 mapped when first touched: the page fault handler asks the address space
@@ -7074,6 +7074,46 @@ fault anywhere else in user mode ends just that process (exit status 139,
 as a segmentation fault on Unix). The threads of a process share its
 address space; region changes, page commits and the copies the kernel
 makes in and out of it are serialized by a spin lock in the address space.
+
+The regions are kept in a region tree (`Processes.RegionTree`): an AVL
+tree ordered by start address, one kernel heap node per region, each
+node also holding its subtree's lowest start, highest end and largest
+gap between neighbouring regions. Finding the region of a faulting
+address, checking that a new region overlaps none (only the region
+starting last below its end can) and first-fit search for free room
+above a base (subtrees whose largest gap is too small are skipped
+whole) all take time logarithmic in the number of regions. Nothing
+bounds the number but the address space and the process's region
+limit (65536 by default, see "Process limits"); the tree code depends
+on nothing else in the kernel and is tested on the host against a plain
+list (`tools/RegionTreeTest`, `make region-tree-test`).
+
+What goes with what: a thread's stack, the stack's guard and its thread
+data go when the thread exits, however it ends (an exit call, the
+process ending, `CallTerminateThread` while it waits); an allocation
+made with `AllocateForThread` (the runtime's threadvar block) goes with
+its thread too unless freed before (the region remembers its owner's
+id, so an address freed and handed out again is never taken by
+mistake); device mappings and sections go with `CallFreeMemory`;
+libraries are never unloaded, and everything goes with the address
+space.
+
+#### Process limits
+
+Every process has a region limit and a handle limit (by default 65536
+regions and 16384 handles, at most 1048576 and 65536), inherited by the
+processes it starts. `CallSetProcessLimit(Limit, Value)` (131) changes
+the caller's (`ProcessLimitRegions`, `ProcessLimitHandles`; lowering is
+always allowed, raising above the default is root's) and
+`CallGetProcessResources(ProcessId, Address)` (130) reports what a
+process holds as a `TAbiProcessResources`: regions, handles and threads
+against the limits, the regions' size and its committed, peak and
+shared pages (`Processes.LimitCalls`). `ps -o regions,handles` shows the
+counts. `limittest` (a coretest line) starts and joins 2000 threads,
+ends 200 more from outside while they wait, holds 5000 regions and 3000
+handles (pipes, events, sockets) at once, lowers both limits, passes
+600 handles to a child, and checks every count comes back to its
+baseline.
 
 Device memory is mapped into a process with `CallMapHandle(Handle,
 Offset, Length)`: the handle's driver says which physical memory that is
@@ -7139,7 +7179,9 @@ first thread starts they are plain globals; then the runtime's thread
 manager (`rtl/fpc/systhrd.inc`) hands out the offsets from the program's
 `FPC_THREADVARTABLES` (which covers every unit the program uses, those in
 libraries included) and gives each thread a zeroed threadvar block, kept
-in the runtime word of its control block.
+in the runtime word of its control block. The block is allocated with
+`AllocateForThread`, so the kernel frees it when a thread is ended from
+outside and never runs the runtime's own ending.
 
 Initialization code runs in user mode. The kernel collects the
 initializers (DT_INIT, then DT_INIT_ARRAY) of the program and its
@@ -8204,9 +8246,22 @@ the next login.
 
 ### Handles
 
-A process has a table of 64 handles, each naming a referenced object and
+A process has a table of handles, each naming a referenced object and
 its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread,
 watch, socket or the null device. Handles 0-2 are standard input, output and error.
+The table (`Processes.Handles`) has two levels: a fixed directory of
+256 chunk pointers and chunks of 256 entries, allocated as handles
+reach them and freed when the process ends; entries never move. A new
+handle gets the lowest free number: a hint keeps the number below which
+all are open and each chunk counts its open entries, so full chunks are
+passed over whole. The process's handle limit (16384 by default, see
+"Process limits") bounds the numbers; `CallWaitForHandles` still takes
+at most 64. A program passes more than the standard handles to a
+program it starts with `ProcessPassHandles` in `TAbiProcessCreation`'s
+flags and the `PassedHandles`/`PassedHandleCount` fields that follow
+(read only with the flag, so older programs' shorter record still
+works): the new process gets them under the same numbers
+(`Processes.HandlePassing`); thread handles are refused.
 `DuplicateHandle` copies one onto another number, which is how the shell
 redirects its own output for builtins. A pipe counts its open ends
 separately from object references, so a reader sees end of file once the
@@ -11819,11 +11874,19 @@ fail when the log shows a heap check report from any other program, and
 `Kernel.SelfTest`'s heap test empties the quarantine before it counts
 pages.
 
+In user programs a quarantined block remembers which thread allocated
+it (the header's `Owner`, from the thread's threadvar block address),
+and a thread about to end releases its own blocks from the quarantine
+before the heap gives up its chunks: otherwise one small block waiting
+there keeps a whole heap chunk of an ended thread, and a region, for
+every thread a program ever ran (2000 threads left about 470 regions
+behind before; now 2).
+
 **Not done:** a page heap (each block on its own pages, end-aligned against
-an unmapped guard page, freed pages unmapped). User address spaces are a
-sorted table of at most 1024 regions with first-fit reuse, so a region per
-block would neither fit nor keep freed addresses unused; it needs a reserve
-/ commit / decommit system call first (see TODO.md).
+an unmapped guard page, freed pages unmapped). The region tree would hold
+a region per block, but first-fit reuse would not keep freed addresses
+unused; it needs a reserve / commit / decommit system call first (see
+TODO.md).
 
 ## Diagnosing hangs
 

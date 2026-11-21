@@ -195,7 +195,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -507,7 +507,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -554,6 +554,18 @@ aml-test: $(AML_TEST)
 		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
 		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
 	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
+
+# The region tree of user address spaces (Processes.RegionTree) on the
+# host, against a plain list doing the same the slow way.
+REGION_TREE_TEST := build/tools/RegionTreeTest
+
+$(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Processes.RegionTree.pas \
+		kernel/processes/Processes.UserRegions.pas
+	@mkdir -p build/tools/region-tree-units
+	$(FPC) -O2 -Cr -Co -Fukernel/processes -FEbuild/tools -FUbuild/tools/region-tree-units $<
+
+region-tree-test: $(REGION_TREE_TEST)
+	$(REGION_TREE_TEST)
 
 # The platform device walk (kernel/firmware) on the host, over a table
 # tools/AcpiDeviceTest/make-table.py assembles.

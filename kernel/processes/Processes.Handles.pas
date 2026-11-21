@@ -24,6 +24,17 @@
   process's handle table. Handles 0, 1 and 2 are standard input, output
   and error by convention. A table entry holds a reference to its object,
   which is dropped when the handle is closed.
+
+  The table has two levels: a fixed directory of chunk pointers, and
+  chunks of HandlesPerChunk entries allocated as handles reach them, so
+  a process with a few handles costs one chunk and one with thousands
+  only what it uses. Chunks never move, so an entry stays where it is.
+  A new handle gets the lowest free number (at or above the one asked
+  for), found quickly: a hint keeps the number below which every handle
+  is open, and each chunk counts its open handles, so full chunks are
+  passed over whole. The table's limit (a process limit,
+  DefaultHandleLimit unless changed with CallSetProcessLimit) bounds the
+  numbers handed out, up to HandleLimitCeiling.
 }
 unit Processes.Handles;
 
@@ -31,8 +42,14 @@ unit Processes.Handles;
 
 interface
 
+uses
+  Abi.SystemCalls;
+
 const
-  MaximumHandles = 64;
+  HandlesPerChunk = 256;
+  DefaultHandleLimit = DefaultProcessHandleLimit;
+  HandleLimitCeiling = ProcessHandleLimitCeiling;
+  HandleChunkCount = HandleLimitCeiling div HandlesPerChunk;
 
 type
   THandleKind = (
@@ -62,25 +79,42 @@ type
     ObjectBody: Pointer;
   end;
 
+  THandleChunk = record
+    OpenCount: LongWord;
+    Entries: array[0..HandlesPerChunk - 1] of THandleEntry;
+  end;
+  PHandleChunk = ^THandleChunk;
+
   THandleTable = record
-    Entries: array[0..MaximumHandles - 1] of THandleEntry;
+    Chunks: array[0..HandleChunkCount - 1] of PHandleChunk;
+    { New handles stay below Limit. }
+    Limit: LongWord;
+    OpenCount: LongWord;
+    { Every handle below this one is open. }
+    LowestFree: LongWord;
   end;
   PHandleTable = ^THandleTable;
 
 procedure InitializeHandleTable(out Table: THandleTable);
+{ Changes the table's limit (at most HandleLimitCeiling); handles
+  already open at or above it stay. }
+procedure SetHandleLimit(var Table: THandleTable; Limit: LongWord);
 
 { Stores ObjectBody (taking a new reference) in the lowest free slot at or
-  above FirstSlot. Returns the handle, or -1 if the table is full. }
+  above FirstSlot. Returns the handle, or -1 if the table is full (or
+  memory for it ran out). }
 function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;
   FirstSlot: Integer): Integer;
 
-{ Stores into a specific slot, closing what was there before. }
-procedure SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer);
+{ Stores into a specific slot (below the limit), closing what was there
+  before. False if Handle is out of range or memory ran out. }
+function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
 
 function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
   out ObjectBody: Pointer): Boolean;
 
 function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
+{ Closes every handle and frees the chunks (the table stays usable). }
 procedure CloseAllHandles(var Table: THandleTable);
 { How many handles are open (a snapshot: read without the process's
   lock, it may be one out while another thread opens or closes one). }
@@ -95,6 +129,7 @@ procedure DropHandleReference(Kind: THandleKind; ObjectBody: Pointer);
 implementation
 
 uses
+  Memory.KernelHeap,
   Objects.Manager,
   Io.Pipes;
 
@@ -102,11 +137,18 @@ procedure InitializeHandleTable(out Table: THandleTable);
 var
   Index: Integer;
 begin
-  for Index := 0 to MaximumHandles - 1 do
-  begin
-    Table.Entries[Index].Kind := HandleKindFree;
-    Table.Entries[Index].ObjectBody := nil;
-  end;
+  for Index := 0 to HandleChunkCount - 1 do
+    Table.Chunks[Index] := nil;
+  Table.Limit := DefaultHandleLimit;
+  Table.OpenCount := 0;
+  Table.LowestFree := 0;
+end;
+
+procedure SetHandleLimit(var Table: THandleTable; Limit: LongWord);
+begin
+  if Limit > HandleLimitCeiling then
+    Limit := HandleLimitCeiling;
+  Table.Limit := Limit;
 end;
 
 { Pipes count their open ends separately from object references, so
@@ -139,57 +181,125 @@ begin
   DereferenceObject(ObjectBody);
 end;
 
+{ --- Chunks and entries --------------------------------------------- }
+
+{ The chunk holding Handle (below HandleLimitCeiling), allocated if it
+  is not there yet; nil if memory ran out. }
+function ChunkFor(var Table: THandleTable; Handle: LongWord): PHandleChunk;
+var
+  ChunkIndex: LongWord;
+begin
+  ChunkIndex := Handle div HandlesPerChunk;
+  Result := Table.Chunks[ChunkIndex];
+  if Result <> nil then
+    Exit;
+  { Zeroed: every entry is HandleKindFree. }
+  Result := PHandleChunk(AllocateZeroedKernelMemory(SizeOf(THandleChunk)));
+  Table.Chunks[ChunkIndex] := Result;
+end;
+
+{ The chunk holding Handle if there is one, else nil. }
+function ExistingChunk(const Table: THandleTable; Handle: Int64): PHandleChunk;
+begin
+  if (Handle < 0) or (Handle >= HandleLimitCeiling) then
+    Exit(nil);
+  Result := Table.Chunks[Handle div HandlesPerChunk];
+end;
+
+procedure FillEntry(var Table: THandleTable; Chunk: PHandleChunk; Handle: LongWord; Kind: THandleKind;
+  ObjectBody: Pointer);
+begin
+  ReferenceObject(ObjectBody);
+  NoteHandleOpened(Kind, ObjectBody);
+  Chunk^.Entries[Handle mod HandlesPerChunk].Kind := Kind;
+  Chunk^.Entries[Handle mod HandlesPerChunk].ObjectBody := ObjectBody;
+  Inc(Chunk^.OpenCount);
+  Inc(Table.OpenCount);
+  if Handle = Table.LowestFree then
+    Table.LowestFree := Handle + 1;
+end;
+
 function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;
   FirstSlot: Integer): Integer;
 var
-  Index: Integer;
+  Handle: LongWord;
+  ChunkEnd: LongWord;
+  Chunk: PHandleChunk;
 begin
-  for Index := FirstSlot to MaximumHandles - 1 do
+  if FirstSlot < 0 then
+    FirstSlot := 0;
+  Handle := LongWord(FirstSlot);
+  if Handle < Table.LowestFree then
+    Handle := Table.LowestFree;
+  while Handle < Table.Limit do
   begin
-    if Table.Entries[Index].Kind = HandleKindFree then
+    Chunk := ChunkFor(Table, Handle);
+    if Chunk = nil then
+      Exit(-1);
+    ChunkEnd := (Handle div HandlesPerChunk + 1) * HandlesPerChunk;
+    if ChunkEnd > Table.Limit then
+      ChunkEnd := Table.Limit;
+    if Chunk^.OpenCount < HandlesPerChunk then
     begin
-      ReferenceObject(ObjectBody);
-      NoteHandleOpened(Kind, ObjectBody);
-      Table.Entries[Index].Kind := Kind;
-      Table.Entries[Index].ObjectBody := ObjectBody;
-      Exit(Index);
+      while Handle < ChunkEnd do
+      begin
+        if Chunk^.Entries[Handle mod HandlesPerChunk].Kind = HandleKindFree then
+        begin
+          FillEntry(Table, Chunk, Handle, Kind, ObjectBody);
+          Exit(Integer(Handle));
+        end;
+        Inc(Handle);
+      end;
     end;
+    Handle := ChunkEnd;
   end;
   Result := -1;
 end;
 
-procedure SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer);
+function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
+var
+  Chunk: PHandleChunk;
 begin
-  if (Handle < 0) or (Handle >= MaximumHandles) then
-    Exit;
+  if (Handle < 0) or (LongWord(Handle) >= Table.Limit) then
+    Exit(False);
+  Chunk := ChunkFor(Table, LongWord(Handle));
+  if Chunk = nil then
+    Exit(False);
   CloseHandle(Table, Handle);
-  ReferenceObject(ObjectBody);
-  NoteHandleOpened(Kind, ObjectBody);
-  Table.Entries[Handle].Kind := Kind;
-  Table.Entries[Handle].ObjectBody := ObjectBody;
+  FillEntry(Table, Chunk, LongWord(Handle), Kind, ObjectBody);
+  Result := True;
 end;
 
 function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
   out ObjectBody: Pointer): Boolean;
+var
+  Chunk: PHandleChunk;
 begin
   Kind := HandleKindFree;
   ObjectBody := nil;
-  if (Handle < 0) or (Handle >= MaximumHandles) then
+  Chunk := ExistingChunk(Table, Handle);
+  if Chunk = nil then
     Exit(False);
-  Kind := Table.Entries[Handle].Kind;
-  ObjectBody := Table.Entries[Handle].ObjectBody;
+  Kind := Chunk^.Entries[Handle mod HandlesPerChunk].Kind;
+  ObjectBody := Chunk^.Entries[Handle mod HandlesPerChunk].ObjectBody;
   Result := Kind <> HandleKindFree;
 end;
 
 function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
 var
+  Chunk: PHandleChunk;
   Kind: THandleKind;
   ObjectBody: Pointer;
 begin
   if not LookupHandle(Table, Handle, Kind, ObjectBody) then
     Exit(False);
-  Table.Entries[Handle].Kind := HandleKindFree;
-  Table.Entries[Handle].ObjectBody := nil;
+  Chunk := Table.Chunks[Handle div HandlesPerChunk];
+  Chunk^.Entries[Handle mod HandlesPerChunk].Kind := HandleKindFree;
+  Chunk^.Entries[Handle mod HandlesPerChunk].ObjectBody := nil;
+  Dec(Chunk^.OpenCount);
+  Dec(Table.OpenCount);
+  if Handle < Table.LowestFree then
+    Table.LowestFree := LongWord(Handle);
   NoteHandleClosed(Kind, ObjectBody);
   DereferenceObject(ObjectBody);
   Result := True;
@@ -197,20 +307,35 @@ end;
 
 procedure CloseAllHandles(var Table: THandleTable);
 var
-  Index: Integer;
+  ChunkIndex: Integer;
+  EntryIndex: Integer;
+  Chunk: PHandleChunk;
 begin
-  for Index := 0 to MaximumHandles - 1 do
-    CloseHandle(Table, Index);
+  for ChunkIndex := 0 to HandleChunkCount - 1 do
+  begin
+    Chunk := Table.Chunks[ChunkIndex];
+    if Chunk = nil then
+      Continue;
+    EntryIndex := 0;
+    while (Chunk^.OpenCount > 0) and (EntryIndex < HandlesPerChunk) do
+    begin
+      if Chunk^.Entries[EntryIndex].Kind <> HandleKindFree then
+        CloseHandle(Table, Int64(ChunkIndex) * HandlesPerChunk + EntryIndex);
+      Inc(EntryIndex);
+    end;
+  end;
+  for ChunkIndex := 0 to HandleChunkCount - 1 do
+  begin
+    FreeKernelMemory(Table.Chunks[ChunkIndex]);
+    Table.Chunks[ChunkIndex] := nil;
+  end;
+  Table.OpenCount := 0;
+  Table.LowestFree := 0;
 end;
 
 function CountOpenHandles(const Table: THandleTable): LongWord;
-var
-  Index: Integer;
 begin
-  Result := 0;
-  for Index := 0 to MaximumHandles - 1 do
-    if Table.Entries[Index].Kind <> HandleKindFree then
-      Inc(Result);
+  Result := Table.OpenCount;
 end;
 
 end.

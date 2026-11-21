@@ -43,7 +43,8 @@ interface
 
 uses
   Processes.Process,
-  Processes.Handles;
+  Processes.Handles,
+  Processes.HandlePassing;
 
 type
   TProcessStartup = record
@@ -70,6 +71,12 @@ type
     Credentials: TProcessCredentials;
     { Its controlling terminal (a PDeviceObject; see TProcess). }
     ControllingTerminal: Pointer;
+    { Its limits (see Processes.LimitCalls); 0 for the default. }
+    RegionLimit: LongWord;
+    HandleLimit: LongWord;
+    { More handles it gets, with their numbers (after the standard ones,
+      so a passed 0, 1 or 2 replaces one). }
+    PassedHandles: TPassedHandles;
   end;
 
 procedure InitializeUserProcesses;
@@ -113,6 +120,7 @@ uses
   Kernel.Panic,
   Objects.Manager,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.ImageLoader,
   Processes.ImageInitializers,
   Processes.Thread,
@@ -356,9 +364,13 @@ begin
   Process^.ControllingTerminal := Startup.ControllingTerminal;
   JoinArguments(Startup.Arguments, Startup.ArgumentCount, @Process^.CommandLine[0], ProcessCommandLineCapacity);
 
+  if Startup.HandleLimit <> 0 then
+    SetHandleLimit(Process^.Handles, Startup.HandleLimit);
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then
   begin
+    if Startup.RegionLimit <> 0 then
+      SetRegionLimit(Process^.AddressSpace, Startup.RegionLimit);
     Process^.PageTableRoot := Process^.AddressSpace^.Root;
     Result := AddRegion(Process^.AddressSpace, UserStackTop - UserStackReserve, UserStackReserve,
       RegionReadable or RegionWritable, RegionKindStack, True);
@@ -381,7 +393,11 @@ begin
         SetHandle(Process^.Handles, StandardIndex, Startup.StandardKinds[StandardIndex],
           Startup.StandardObjects[StandardIndex]);
     end;
+    Result := InstallPassedHandles(Process, Startup.PassedHandles);
+  end;
 
+  if Result = ErrorNone then
+  begin
     { Registered before the thread starts, so it is always found while
       it runs. }
     RegisterRunningProcess(Process);

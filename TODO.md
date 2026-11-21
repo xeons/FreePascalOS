@@ -51,6 +51,13 @@ how the existing pieces fit together.
 - [ ] Contiguous physical allocations (for DMA buffers)
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
+- [x] Growable region table: an address space's regions in a balanced tree
+      (logarithmic fault lookup, overlap check and first-fit search) instead
+      of a fixed 1024-entry table, bounded by a per-process region limit
+- [x] Every region released with its owner: thread stacks, guards and thread
+      data however a thread ends, threadvar blocks of threads ended from
+      outside (AllocateForThread), heap chunks of ended threads kept by the
+      heap check quarantine; checked by limittest
 - [ ] Demand paging from files (map executables instead of copying them in)
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
@@ -63,8 +70,8 @@ how the existing pieces fit together.
 - [ ] Page heap (opt-in per program): every block on pages of its own,
       end-aligned against an unmapped guard page, freed pages unmapped and
       their addresses kept from reuse. Needs a reserve / commit / decommit
-      call and an address space that is not a 1024-entry region table with
-      first-fit reuse
+      call and keeping freed addresses from first-fit reuse (the region
+      tree holds a region per block now)
 - [ ] Heap checking for the physical page allocator (fill freed pages, keep
       them from reuse for a while)
 
@@ -72,6 +79,11 @@ how the existing pieces fit together.
 
 - [ ] Hierarchical object namespace (directories, e.g. `\Device\Keyboard`)
 - [x] Per-process handle tables
+- [x] Growable handle tables (two levels, lowest free number first) up to a
+      per-process handle limit; limits for regions and handles
+      (CallGetProcessResources, CallSetProcessLimit), inherited by children
+- [x] Passing more handles than the standard three to a new process
+      (ProcessPassHandles)
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,

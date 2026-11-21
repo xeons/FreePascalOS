@@ -125,7 +125,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..396] of TCommandTest = (
+  CommandTests: array[0..397] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -681,7 +681,10 @@ const
       a while, as the task manager does, and a group ended as a whole
       (kill -9 of a group). And "$@" with no parameters makes no field. }
     (Command: 'hangtest --check > hang.log; echo $?; grep FAIL hang.log; tail -n 1 hang.log | cut -d " " -f 2-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
-    (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0)
+    (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0),
+    { Process limits (limittest): thousands of threads, regions and handles,
+      a child given 600 handles, and every count back to its baseline. }
+    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

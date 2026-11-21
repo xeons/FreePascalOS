@@ -19,8 +19,13 @@
 {
   User address spaces.
 
-  An address space is a page table root plus a sorted list of regions:
-  ranges of user addresses with fixed attributes. Pages of most regions
+  An address space is a page table root plus its regions: ranges of
+  user addresses with fixed attributes, kept in a balanced tree ordered
+  by address (Processes.RegionTree), so finding the region of a fault,
+  adding one and finding room for one take logarithmic time however
+  many there are. Their number is bounded only by the address space and
+  the process's region limit (RegionLimit, DefaultRegionLimit unless
+  changed with CallSetProcessLimit). Pages of most regions
   are provided on demand: the first touch of an address in such a region
   raises a page fault, and the fault resolver maps a fresh zero filled
   page. Pages of program images are mapped eagerly by the loader, from
@@ -72,8 +77,11 @@ unit Processes.AddressSpace;
 interface
 
 uses
+  Abi.SystemCalls,
   Memory.Layout,
-  Kernel.SpinLock;
+  Kernel.SpinLock,
+  Processes.UserRegions,
+  Processes.RegionTree;
 
 const
   UserImageBase = QWord($0000000000400000);
@@ -82,7 +90,11 @@ const
   UserLibraryBase = QWord($00007F0000000000);
   UserStackTop = QWord($00007FFFFFFFF000);
   UserStackReserve = QWord(8) * 1024 * 1024;
-  MaximumRegions = 1024;
+
+  { The regions a process may have unless it changes its limit, and the
+    most any process may set (each costs a little kernel memory). }
+  DefaultRegionLimit = DefaultProcessRegionLimit;
+  RegionLimitCeiling = ProcessRegionLimitCeiling;
 
   { The reserve at the bottom of a stack, and how far above it the stack
     pointer must be before a used reserve is armed again. }
@@ -95,34 +107,14 @@ const
   RegionExecutable = LongWord(1) shl 2;
 
 type
-  TRegionKind = (RegionKindImage, RegionKindStack, RegionKindAllocation,
-    { A thread's thread control block and static thread-local storage. }
-    RegionKindThreadData,
-    { Address space below a stack that is never mapped. }
-    RegionKindStackGuard,
-    { Device memory, mapped when the region was made. }
-    RegionKindDevice,
-    { A section's pages, mapped when the region was made. }
-    RegionKindSection);
-
-  TUserRegion = record
-    Start: QWord;
-    Length: QWord;
-    Attributes: LongWord;
-    Kind: TRegionKind;
-    CommitsOnDemand: Boolean;
-    { Stacks: the bottom ReserveBytes are only provided once a stack
-      overflow opened them (ReserveInUse). }
-    ReserveBytes: QWord;
-    ReserveInUse: Boolean;
-  end;
-  PUserRegion = ^TUserRegion;
-
   PAddressSpace = ^TAddressSpace;
   TAddressSpace = record
     Root: TPhysicalAddress;
-    Regions: PUserRegion;
-    RegionCount: Integer;
+    Regions: TRegionTree;
+    { The most regions there may be (a process limit). }
+    RegionLimit: LongWord;
+    { The regions' sizes, guards left out. }
+    VirtualBytes: QWord;
     NextLibraryAddress: QWord;
     { The pages mapped (the resident set), the ones among them that are
       shared - mapped from a program image or a section, which other
@@ -143,6 +135,8 @@ type
     ResidentPages: QWord;
     SharedPages: QWord;
     PeakResidentPages: QWord;
+    RegionCount: LongWord;
+    RegionLimit: LongWord;
   end;
 
 { All routines returning LongInt return 0 on success or an Abi error code. }
@@ -153,6 +147,9 @@ procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsa
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+{ Changes the most regions Space may have (existing ones stay). }
+procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);
+
 { Finds room for Length bytes at or above Base and below Limit. }
 function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
   out Start: QWord): Boolean;
@@ -160,6 +157,15 @@ function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
 { Run time allocations (backing for the user heap). }
 function AllocateUserMemory(Space: PAddressSpace; Length: QWord; out Start: QWord): LongInt;
 function FreeUserMemory(Space: PAddressSpace; Start: QWord): LongInt;
+{ A run time allocation that belongs to the thread OwnerThreadId (its
+  threadvar block): freed like any other, or given back by
+  ReleaseThreadOwnedMemory when the thread ends. }
+function AllocateThreadOwnedUserMemory(Space: PAddressSpace; Length: QWord; OwnerThreadId: QWord;
+  out Start: QWord): LongInt;
+{ Frees the allocation starting at Start if it still belongs to the
+  thread OwnerThreadId (it may have been freed, and its addresses used
+  again, since). }
+procedure ReleaseThreadOwnedMemory(Space: PAddressSpace; Start: QWord; OwnerThreadId: QWord);
 
 { Allocates Length bytes of on-demand memory of the given kind with an
   unmapped guard page below it (thread stacks). }
@@ -228,7 +234,6 @@ implementation
 
 uses
   Runtime.Memory,
-  Abi.SystemCalls,
   Kernel.PriorityLevel,
   Memory.PhysicalPages,
   Memory.KernelHeap,
@@ -247,20 +252,25 @@ begin
     Space^.PeakCommittedPages := Space^.CommittedPages;
 end;
 
+procedure FreeRegionNode(Node: PRegionNode);
+begin
+  FreeKernelMemory(Node);
+end;
+
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
 begin
   Space := PAddressSpace(AllocateZeroedKernelMemory(SizeOf(TAddressSpace)));
   if Space = nil then
     Exit(ErrorOutOfMemory);
-  Space^.Regions := PUserRegion(AllocateZeroedKernelMemory(MaximumRegions * SizeOf(TUserRegion)));
   Space^.Root := CreateAddressSpaceRoot;
-  if (Space^.Regions = nil) or (Space^.Root = 0) then
+  if Space^.Root = 0 then
   begin
-    FreeKernelMemory(Space^.Regions);
     FreeKernelMemory(Space);
     Space := nil;
     Exit(ErrorOutOfMemory);
   end;
+  InitializeRegionTree(Space^.Regions);
+  Space^.RegionLimit := DefaultRegionLimit;
   Space^.NextLibraryAddress := UserLibraryBase;
   InitializeSpinLock(Space^.Lock);
   Result := ErrorNone;
@@ -272,44 +282,47 @@ begin
     Exit;
   { Every user page and page table is released along with the root. }
   DestroyAddressSpaceRoot(Space^.Root);
-  FreeKernelMemory(Space^.Regions);
+  ClearRegionTree(Space^.Regions, @FreeRegionNode);
   FreeKernelMemory(Space);
 end;
 
 procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
 begin
-  Usage.VirtualBytes := 0;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  for Index := 0 to Space^.RegionCount - 1 do
-    if Space^.Regions[Index].Kind <> RegionKindStackGuard then
-      Usage.VirtualBytes := Usage.VirtualBytes + Space^.Regions[Index].Length;
+  Usage.VirtualBytes := Space^.VirtualBytes;
   Usage.ResidentPages := Space^.CommittedPages;
   Usage.SharedPages := Space^.SharedPages;
   Usage.PeakResidentPages := Space^.PeakCommittedPages;
+  Usage.RegionCount := Space^.Regions.Count;
+  Usage.RegionLimit := Space^.RegionLimit;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Space^.RegionLimit := Limit;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 { --- Regions --------------------------------------------------------- }
 
-function RangesOverlap(FirstStart, FirstLength, SecondStart, SecondLength: QWord): Boolean;
+{ The region holding Address, or nil. Caller holds the lock. }
+function FindRegionLocked(Space: PAddressSpace; Address: QWord): PUserRegion;
 begin
-  Result := (FirstStart < SecondStart + SecondLength) and (SecondStart < FirstStart + FirstLength);
+  Result := FindRegion(Space^.Regions, Address);
 end;
 
-function FindRegionIndex(Space: PAddressSpace; Address: QWord): Integer;
-var
-  Index: Integer;
+{ The region starting exactly at Start, or nil. Caller holds the lock. }
+function RegionStartingAtLocked(Space: PAddressSpace; Start: QWord): PUserRegion;
 begin
-  for Index := 0 to Space^.RegionCount - 1 do
-  begin
-    if (Address >= Space^.Regions[Index].Start) and
-       (Address - Space^.Regions[Index].Start < Space^.Regions[Index].Length) then
-      Exit(Index);
-  end;
-  Result := -1;
+  Result := FindRegion(Space^.Regions, Start);
+  if (Result <> nil) and (Result^.Start <> Start) then
+    Result := nil;
 end;
 
 { A quarter of a small stack, at most StackReserveSize, at least a page. }
@@ -325,42 +338,29 @@ end;
 function AddRegionLocked(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
 var
-  Index: Integer;
-  InsertAt: Integer;
+  Node: PRegionNode;
 begin
   if (Length = 0) or ((Start and PageOffsetMask) <> 0) or ((Length and PageOffsetMask) <> 0) or
      (Start >= UserSpaceLimit) or (Length > UserSpaceLimit - Start) or (Start = 0) then
     Exit(ErrorInvalidArgument);
-  if Space^.RegionCount >= MaximumRegions then
+  if Space^.Regions.Count >= Space^.RegionLimit then
     Exit(ErrorOutOfMemory);
+  if RangeOverlapsRegion(Space^.Regions, Start, Length) then
+    Exit(ErrorExists);
 
-  InsertAt := Space^.RegionCount;
-  for Index := 0 to Space^.RegionCount - 1 do
-  begin
-    if RangesOverlap(Start, Length, Space^.Regions[Index].Start, Space^.Regions[Index].Length) then
-      Exit(ErrorExists);
-    if (InsertAt = Space^.RegionCount) and (Space^.Regions[Index].Start > Start) then
-      InsertAt := Index;
-  end;
-
-  { Keep the list sorted by start address. }
-  Index := Space^.RegionCount;
-  while Index > InsertAt do
-  begin
-    Space^.Regions[Index] := Space^.Regions[Index - 1];
-    Dec(Index);
-  end;
-  Space^.Regions[InsertAt].Start := Start;
-  Space^.Regions[InsertAt].Length := Length;
-  Space^.Regions[InsertAt].Attributes := Attributes;
-  Space^.Regions[InsertAt].Kind := Kind;
-  Space^.Regions[InsertAt].CommitsOnDemand := CommitsOnDemand;
-  Space^.Regions[InsertAt].ReserveInUse := False;
+  Node := PRegionNode(AllocateZeroedKernelMemory(SizeOf(TRegionNode)));
+  if Node = nil then
+    Exit(ErrorOutOfMemory);
+  Node^.Region.Start := Start;
+  Node^.Region.Length := Length;
+  Node^.Region.Attributes := Attributes;
+  Node^.Region.Kind := Kind;
+  Node^.Region.CommitsOnDemand := CommitsOnDemand;
   if (Kind = RegionKindStack) and CommitsOnDemand then
-    Space^.Regions[InsertAt].ReserveBytes := StackReserveFor(Length)
-  else
-    Space^.Regions[InsertAt].ReserveBytes := 0;
-  Inc(Space^.RegionCount);
+    Node^.Region.ReserveBytes := StackReserveFor(Length);
+  InsertRegionNode(Space^.Regions, Node);
+  if Kind <> RegionKindStackGuard then
+    Space^.VirtualBytes := Space^.VirtualBytes + Length;
   Result := ErrorNone;
 end;
 
@@ -374,26 +374,20 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
+function FindFreeRangeLocked(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
+  out Start: QWord): Boolean;
+begin
+  Result := FindFreeGap(Space^.Regions, Length, Base, Limit, Start);
+end;
+
 function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
   out Start: QWord): Boolean;
 var
-  Index: Integer;
-  Candidate: QWord;
+  PreviousLevel: TPriorityLevel;
 begin
-  Start := 0;
-  Candidate := Base;
-  { Regions are sorted, so one pass finds the first gap that fits. }
-  for Index := 0 to Space^.RegionCount - 1 do
-  begin
-    if Space^.Regions[Index].Start + Space^.Regions[Index].Length <= Candidate then
-      Continue;
-    if Space^.Regions[Index].Start >= Candidate + Length then
-      Break;
-    Candidate := Space^.Regions[Index].Start + Space^.Regions[Index].Length;
-  end;
-  Result := (Candidate + Length <= Limit) and (Candidate + Length > Candidate);
-  if Result then
-    Start := Candidate;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := FindFreeRangeLocked(Space, Length, Base, Limit, Start);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 { Unmaps and frees the pages of [Start, Start + Length); returns how
@@ -424,22 +418,46 @@ begin
   end;
 end;
 
-{ Finds room for GuardBytes + Length and adds a region for the upper
-  Length bytes. }
-function AddStackGuardLocked(Space: PAddressSpace; StackStart: QWord): LongInt; forward;
-procedure RemoveRegionAtLocked(Space: PAddressSpace; Index: Integer); forward;
+{ Gives back the pages of the region starting at Start and takes it out
+  of the tree (nothing if there is none). Caller holds the lock. }
+procedure RemoveRegionLocked(Space: PAddressSpace; Start: QWord);
+var
+  Node: PRegionNode;
+  Released: QWord;
+begin
+  Node := RemoveRegionNode(Space^.Regions, Start);
+  if Node = nil then
+    Exit;
+  Released := ReleaseRegionPages(Space, Node^.Region.Start, Node^.Region.Length);
+  { A section's pages were all counted as shared. (Image regions, the
+    other shared kind, go only with the whole address space.) }
+  if Node^.Region.Kind = RegionKindSection then
+    Space^.SharedPages := Space^.SharedPages - Released;
+  if Node^.Region.Kind <> RegionKindStackGuard then
+    Space^.VirtualBytes := Space^.VirtualBytes - Node^.Region.Length;
+  FreeRegionNode(Node);
+end;
 
+function AddStackGuardLocked(Space: PAddressSpace; StackStart: QWord): LongInt; forward;
+
+{ Finds room for GuardBytes + Length and adds a region for the upper
+  Length bytes (with a stack guard below it for stacks). }
 function AllocateWithGuard(Space: PAddressSpace; Length, GuardBytes: QWord; Kind: TRegionKind;
-  out Start: QWord): LongInt;
+  OwnerThreadId: QWord; out Start: QWord): LongInt;
 var
   PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
 begin
   Start := 0;
-  Length := RoundUpToPage(Length);
-  if Length = 0 then
+  if (Length = 0) or (Length > UserAllocationLimit - UserAllocationBase) then
     Exit(ErrorInvalidArgument);
+  Length := RoundUpToPage(Length);
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if not FindFreeRange(Space, GuardBytes + Length, UserAllocationBase, UserAllocationLimit, Start) then
+  { The guard needs a region too. }
+  if (Kind = RegionKindStack) and (Space^.Regions.Count + 1 >= Space^.RegionLimit) then
+    Result := ErrorOutOfMemory
+  else if not FindFreeRangeLocked(Space, GuardBytes + Length, UserAllocationBase, UserAllocationLimit,
+    Start) then
     Result := ErrorOutOfMemory
   else
   begin
@@ -449,73 +467,65 @@ begin
     begin
       Result := AddStackGuardLocked(Space, Start);
       if Result <> ErrorNone then
-        RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+        RemoveRegionLocked(Space, Start);
+    end;
+    if (Result = ErrorNone) and (OwnerThreadId <> 0) then
+    begin
+      Region := RegionStartingAtLocked(Space, Start);
+      Region^.OwnerThreadId := OwnerThreadId;
     end;
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if Result <> ErrorNone then
+    Start := 0;
 end;
 
 function AllocateUserMemory(Space: PAddressSpace; Length: QWord; out Start: QWord): LongInt;
 begin
-  Result := AllocateWithGuard(Space, Length, 0, RegionKindAllocation, Start);
+  Result := AllocateWithGuard(Space, Length, 0, RegionKindAllocation, 0, Start);
+end;
+
+function AllocateThreadOwnedUserMemory(Space: PAddressSpace; Length: QWord; OwnerThreadId: QWord;
+  out Start: QWord): LongInt;
+begin
+  Result := AllocateWithGuard(Space, Length, 0, RegionKindAllocation, OwnerThreadId, Start);
 end;
 
 function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TRegionKind;
   out Start: QWord): LongInt;
 begin
   if Kind = RegionKindStack then
-    Result := AllocateWithGuard(Space, Length, StackGuardSize, Kind, Start)
+    Result := AllocateWithGuard(Space, Length, StackGuardSize, Kind, 0, Start)
   else
-    Result := AllocateWithGuard(Space, Length, PageSize, Kind, Start);
+    Result := AllocateWithGuard(Space, Length, PageSize, Kind, 0, Start);
 end;
 
 { Removes the region starting at Start; AnyKind allows other kinds than
-  run time allocations. }
-{ Gives back the pages of region Index and takes it out of the list. }
-procedure RemoveRegionAtLocked(Space: PAddressSpace; Index: Integer);
-var
-  Released: QWord;
-begin
-  if Index < 0 then
-    Exit;
-  Released := ReleaseRegionPages(Space, Space^.Regions[Index].Start, Space^.Regions[Index].Length);
-  { A section's pages were all counted as shared. (Image regions, the
-    other shared kind, go only with the whole address space.) }
-  if Space^.Regions[Index].Kind = RegionKindSection then
-    Space^.SharedPages := Space^.SharedPages - Released;
-  while Index + 1 < Space^.RegionCount do
-  begin
-    Space^.Regions[Index] := Space^.Regions[Index + 1];
-    Inc(Index);
-  end;
-  Dec(Space^.RegionCount);
-end;
-
+  run time allocations, device memory and sections. }
 function RemoveRegion(Space: PAddressSpace; Start: QWord; AnyKind: Boolean): LongInt;
 var
-  Index: Integer;
+  Region: PUserRegion;
   PreviousLevel: TPriorityLevel;
   IsStack: Boolean;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := FindRegionIndex(Space, Start);
-  if (Index < 0) or (Space^.Regions[Index].Start <> Start) or
-     (not AnyKind and not (Space^.Regions[Index].Kind in [RegionKindAllocation, RegionKindDevice,
-       RegionKindSection])) then
+  Region := RegionStartingAtLocked(Space, Start);
+  if (Region = nil) or
+     (not AnyKind and not (Region^.Kind in [RegionKindAllocation, RegionKindDevice, RegionKindSection])) then
   begin
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
     Exit(ErrorInvalidArgument);
   end;
 
-  IsStack := Space^.Regions[Index].Kind = RegionKindStack;
-  RemoveRegionAtLocked(Space, Index);
+  IsStack := Region^.Kind = RegionKindStack;
+  RemoveRegionLocked(Space, Start);
   { A stack's guard goes with it. }
   if IsStack and (Start >= StackGuardSize) then
   begin
-    Index := FindRegionIndex(Space, Start - StackGuardSize);
-    if (Index >= 0) and (Space^.Regions[Index].Kind = RegionKindStackGuard) and
-       (Space^.Regions[Index].Start + Space^.Regions[Index].Length = Start) then
-      RemoveRegionAtLocked(Space, Index);
+    Region := RegionStartingAtLocked(Space, Start - StackGuardSize);
+    if (Region <> nil) and (Region^.Kind = RegionKindStackGuard) and
+       (Region^.Length = StackGuardSize) then
+      RemoveRegionLocked(Space, Start - StackGuardSize);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
   Result := ErrorNone;
@@ -524,6 +534,20 @@ end;
 function FreeUserMemory(Space: PAddressSpace; Start: QWord): LongInt;
 begin
   Result := RemoveRegion(Space, Start, False);
+end;
+
+procedure ReleaseThreadOwnedMemory(Space: PAddressSpace; Start: QWord; OwnerThreadId: QWord);
+var
+  Region: PUserRegion;
+  PreviousLevel: TPriorityLevel;
+begin
+  if (Start = 0) or (OwnerThreadId = 0) then
+    Exit;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Region := RegionStartingAtLocked(Space, Start);
+  if (Region <> nil) and (Region^.Kind = RegionKindAllocation) and (Region^.OwnerThreadId = OwnerThreadId) then
+    RemoveRegionLocked(Space, Start);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
@@ -554,7 +578,7 @@ begin
   else
     Mapping := Mapping or MappingUncached;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if not FindFreeRange(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+  if not FindFreeRangeLocked(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
     Result := ErrorOutOfMemory
   else
     Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindDevice, False);
@@ -571,7 +595,7 @@ begin
       Offset := Offset + PageSize;
     end;
     if Result <> ErrorNone then
-      RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+      RemoveRegionLocked(Space, Start);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
   if Result <> ErrorNone then
@@ -599,7 +623,7 @@ begin
     Mapping := Mapping or MappingWritable;
   end;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if not FindFreeRange(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+  if not FindFreeRangeLocked(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
     Result := ErrorOutOfMemory
   else
     Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindSection, False);
@@ -619,7 +643,7 @@ begin
       NoteCommittedPagesGrew(Space);
     end;
     if Result <> ErrorNone then
-      RemoveRegionAtLocked(Space, FindRegionIndex(Space, Start));
+      RemoveRegionLocked(Space, Start);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
   if Result <> ErrorNone then
@@ -642,7 +666,7 @@ var
   PageAddress: QWord;
   PhysicalAddress: TPhysicalAddress;
   ExistingPhysical: TPhysicalAddress;
-  Index: Integer;
+  Region: PUserRegion;
 begin
   PageAddress := RoundDownToPage(Address);
 
@@ -650,9 +674,9 @@ begin
   begin
     { Already there (two image segments sharing a page): widen the
       attributes to cover both. }
-    Index := FindRegionIndex(Space, PageAddress);
-    if Index >= 0 then
-      Attributes := Attributes or Space^.Regions[Index].Attributes;
+    Region := FindRegionLocked(Space, PageAddress);
+    if Region <> nil then
+      Attributes := Attributes or Region^.Attributes;
     UnmapPageInAddressSpace(Space^.Root, PageAddress);
     if not MapPageInAddressSpace(Space^.Root, PageAddress, ExistingPhysical,
       MappingAttributesFor(Attributes)) then
@@ -712,14 +736,14 @@ end;
 function BreakCopyOnWriteLocked(Space: PAddressSpace; PageAddress: QWord;
   Shared: TPhysicalAddress): LongInt;
 var
-  Index: Integer;
+  Region: PUserRegion;
   Attributes: LongWord;
   Copy: TPhysicalAddress;
 begin
-  Index := FindRegionIndex(Space, PageAddress);
-  if Index < 0 then
+  Region := FindRegionLocked(Space, PageAddress);
+  if Region = nil then
     Exit(ErrorBadAddress);
-  Attributes := Space^.Regions[Index].Attributes;
+  Attributes := Region^.Attributes;
   if PhysicalPageIsShared(Shared) then
   begin
     Copy := AllocatePhysicalPage(PageUsageUserMemory);
@@ -747,10 +771,10 @@ end;
 
 function RegionIsWritableLocked(Space: PAddressSpace; Address: QWord): Boolean;
 var
-  Index: Integer;
+  Region: PUserRegion;
 begin
-  Index := FindRegionIndex(Space, Address);
-  Result := (Index >= 0) and ((Space^.Regions[Index].Attributes and RegionWritable) <> 0);
+  Region := FindRegionLocked(Space, Address);
+  Result := (Region <> nil) and ((Region^.Attributes and RegionWritable) <> 0);
 end;
 
 function ResolveCopyOnWriteFault(Space: PAddressSpace; Address: QWord): Boolean;
@@ -776,7 +800,6 @@ end;
 
 function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
 var
-  Index: Integer;
   Region: PUserRegion;
   PreviousLevel: TPriorityLevel;
   PhysicalAddress: TPhysicalAddress;
@@ -799,10 +822,9 @@ begin
     Result := True
   else
   begin
-    Index := FindRegionIndex(Space, Address);
-    if Index >= 0 then
+    Region := FindRegionLocked(Space, Address);
+    if Region <> nil then
     begin
-      Region := @Space^.Regions[Index];
       { An armed stack reserve is not provided: that is a stack overflow,
         for the exception dispatcher. }
       if Region^.CommitsOnDemand and (((ErrorCode and PageFaultWasWrite) = 0) or
@@ -818,7 +840,7 @@ function ValidateUserRange(Space: PAddressSpace; Address, Length: QWord; NeedWri
 var
   Position: QWord;
   Finish: QWord;
-  Index: Integer;
+  Region: PUserRegion;
   PreviousLevel: TPriorityLevel;
 begin
   Result := False;
@@ -835,14 +857,14 @@ begin
   Result := True;
   while Position < Finish do
   begin
-    Index := FindRegionIndex(Space, Position);
-    if (Index < 0) or (Space^.Regions[Index].Kind = RegionKindStackGuard) or
-       (NeedWrite and ((Space^.Regions[Index].Attributes and RegionWritable) = 0)) then
+    Region := FindRegionLocked(Space, Position);
+    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) or
+       (NeedWrite and ((Region^.Attributes and RegionWritable) = 0)) then
     begin
       Result := False;
       Break;
     end;
-    Position := Space^.Regions[Index].Start + Space^.Regions[Index].Length;
+    Position := Region^.Start + Region^.Length;
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
@@ -854,13 +876,13 @@ function PageInWindow(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
   out Window: PByte): LongInt;
 var
   PhysicalAddress: TPhysicalAddress;
-  Index: Integer;
+  Region: PUserRegion;
   IsCopyOnWrite: Boolean;
 begin
   Window := nil;
   { Device memory is not reached through the physical memory window. }
-  Index := FindRegionIndex(Space, Address);
-  if (Index >= 0) and (Space^.Regions[Index].Kind = RegionKindDevice) then
+  Region := FindRegionLocked(Space, Address);
+  if (Region <> nil) and (Region^.Kind = RegionKindDevice) then
     Exit(ErrorBadAddress);
   if ForWrite and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) and
      IsCopyOnWrite then
@@ -871,10 +893,9 @@ begin
   end;
   if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
   begin
-    Index := FindRegionIndex(Space, Address);
-    if (Index < 0) or (Space^.Regions[Index].Kind = RegionKindStackGuard) then
+    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) then
       Exit(ErrorBadAddress);
-    Result := CommitPageLocked(Space, Address, Space^.Regions[Index].Attributes);
+    Result := CommitPageLocked(Space, Address, Region^.Attributes);
     if Result <> ErrorNone then
       Exit;
     if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
@@ -947,16 +968,14 @@ function OpenStackReserve(Space: PAddressSpace; Address: QWord; StackStart: QWor
   out RegionStart: QWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
   Region: PUserRegion;
 begin
   Result := False;
   RegionStart := 0;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := FindRegionIndex(Space, Address);
-  if Index >= 0 then
+  Region := FindRegionLocked(Space, Address);
+  if Region <> nil then
   begin
-    Region := @Space^.Regions[Index];
     if (Region^.Kind = RegionKindStack) and (Region^.Start = StackStart) and not Region^.ReserveInUse and
        (Address < Region^.Start + Region^.ReserveBytes) then
     begin
@@ -971,15 +990,13 @@ end;
 function RearmStackReserve(Space: PAddressSpace; RegionStart, StackPointer: QWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
   Region: PUserRegion;
 begin
   Result := True;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := FindRegionIndex(Space, RegionStart);
-  if (Index >= 0) and (Space^.Regions[Index].Start = RegionStart) then
+  Region := RegionStartingAtLocked(Space, RegionStart);
+  if Region <> nil then
   begin
-    Region := @Space^.Regions[Index];
     if Region^.ReserveInUse then
     begin
       if StackPointer >= Region^.Start + Region^.ReserveBytes + StackReserveRearmDistance then
@@ -994,39 +1011,37 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
-{ The index of the stack region starting at StackStart, or -1. Caller
-  holds the lock. }
-function StackRegionIndexLocked(Space: PAddressSpace; StackStart: QWord): Integer;
+{ The stack region starting at StackStart, or nil. Caller holds the
+  lock. }
+function StackRegionLocked(Space: PAddressSpace; StackStart: QWord): PUserRegion;
 begin
-  Result := FindRegionIndex(Space, StackStart);
-  if (Result >= 0) and ((Space^.Regions[Result].Start <> StackStart) or
-     (Space^.Regions[Result].Kind <> RegionKindStack)) then
-    Result := -1;
+  Result := RegionStartingAtLocked(Space, StackStart);
+  if (Result <> nil) and (Result^.Kind <> RegionKindStack) then
+    Result := nil;
 end;
 
 function OpenStackReserveOfRegion(Space: PAddressSpace; StackStart: QWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
+  Region: PUserRegion;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := StackRegionIndexLocked(Space, StackStart);
-  Result := (Index >= 0) and not Space^.Regions[Index].ReserveInUse and
-    (Space^.Regions[Index].ReserveBytes > 0);
+  Region := StackRegionLocked(Space, StackStart);
+  Result := (Region <> nil) and not Region^.ReserveInUse and (Region^.ReserveBytes > 0);
   if Result then
-    Space^.Regions[Index].ReserveInUse := True;
+    Region^.ReserveInUse := True;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
+  Region: PUserRegion;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := StackRegionIndexLocked(Space, StackStart);
-  if Index >= 0 then
-    Result := Space^.Regions[Index].Start + Space^.Regions[Index].ReserveBytes
+  Region := StackRegionLocked(Space, StackStart);
+  if Region <> nil then
+    Result := Region^.Start + Region^.ReserveBytes
   else
     Result := 0;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
@@ -1035,11 +1050,11 @@ end;
 function AddressIsInUsableRegion(Space: PAddressSpace; Address: QWord): Boolean;
 var
   PreviousLevel: TPriorityLevel;
-  Index: Integer;
+  Region: PUserRegion;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Index := FindRegionIndex(Space, Address);
-  Result := (Index >= 0) and (Space^.Regions[Index].Kind <> RegionKindStackGuard);
+  Region := FindRegionLocked(Space, Address);
+  Result := (Region <> nil) and (Region^.Kind <> RegionKindStackGuard);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
