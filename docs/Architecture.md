@@ -9702,7 +9702,8 @@ decided on the page thread:
 | `Web.Fetch.Requests` | `TFetchRequest` (method, URL, fields, body, destination, mode, credentials, redirect and cache modes, referrer and policy, initiator, parser metadata, fetchpriority and the RFC 9218 priority, URL list, tainting) and `TFetchClient` (a document's URL, origin, referrer policy, CSP list, secure context, top-level origin) |
 | `Web.Fetch.Responses` | `TFetchResponse`: type (basic, cors, opaque, opaqueredirect, error), status, fields, URL list, MIME type and the sniffed one |
 | `Web.Fetch.Fetcher` | main fetch, scheme fetch, HTTP fetch, redirects, sniffing before delivery |
-| `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks |
+| `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks; at most 12 run at once, the others wait (documents, style sheets, scripts and fonts ahead of images); a hop whose thread cannot be made fails like a network error |
+| `Web.Fetch.Monitors` | `TFetchMonitor`: told of each fetch's start, response, failure, end or cancel (a network log; webbrowse -n) |
 | `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks) |
 | `Web.Fetch.NetworkContexts` | a profile's libhttp client (connections, cookies, cache), HSTS store, preflight cache, Accept-Language; shared by its pages |
 | `Web.Fetch.MimeTypes` | MIME Sniffing's parser and serializer, Fetch's "extract a MIME type", the type groups |
@@ -9789,7 +9790,8 @@ Subresources, each delaying the load event while it loads:
   w descriptors, sizes (media conditions; px, em, rem, vw, vh, vmin,
   vmax), `<picture>` sources by media and type, chosen for the device
   pixel ratio; fetched with image sniffing, decoded by libimage on a
-  worker thread (orientation, sRGB), scaled down there when larger than
+  worker thread (at most 3 at once, the rest waiting; on the page thread
+  when no thread can be had) (orientation, sRGB), scaled down there when larger than
   twice the width and height attributes at the pixel ratio (or than
   MaximumImageSide); the natural size is the original's over the chosen
   density. load or error at the element; loading=lazy waits for
@@ -10184,8 +10186,18 @@ Styling walks the tree top-down with the engine's ancestor bloom filter
 something changed. The styler is a document observer: an inserted
 subtree is marked for styling with its new siblings (structural
 selectors), an attribute change restyles the element's subtree and
-siblings (a style attribute change only the element), states likewise,
-and `<style>`/`<link>` changes mark the sheets dirty. After restyling an
+siblings (a style attribute change only the element), and
+`<style>`/`<link>` changes mark the sheets dirty. A change of states
+(:hover, :focus, :active ...) restyles only what the selectors reading
+those states can reach (libcss's `Css.StateInvalidation`, built with the
+rule index: each compound with a state pseudo-class, keyed by its type,
+id and classes, as the subject - the element -, left of a descendant or
+child combinator - its subtree - or of a sibling combinator - its later
+siblings' subtrees; one inside :is()/:where() keyed by its alternatives,
+one inside :has() restyles all of them). Moving the pointer changes
+:hover on a chain of ancestors, which used to restyle whole subtrees (16
+ms a move over a Wikipedia article on the build machine, 2 ms now).
+Pseudo-elements are matched with the ancestor filter too. After restyling an
 element it compares old and new styles struct by struct (structs are
 interned, so pointers compare) and reports the kind of change to the
 layout: boxes (display, position, float, generated content, lists),
@@ -10291,7 +10303,7 @@ its size.
   nearest positioned block (left/right/width and top/bottom/height
   constraints, static positions, auto margins centering), fixed boxes
   against the viewport; sticky boxes are laid out as relative ones
-  without offsets.
+  without offsets and moved when painted (below).
 - Replaced elements (`Web.Layout.Replaced`): intrinsic sizes from the
   image (or 300x150, or the controls' font-based sizes), the ratio kept
   when one side or a min/max applies; object-fit and object-position
@@ -10356,7 +10368,20 @@ outlines. Positioned boxes with z-index auto, floats and atomic inlines
 paint as if they were stacking contexts. Overflow clips become clip
 pairs (rounded with border-radius), scroll containers move their
 contents, opacity becomes a group, fixed boxes are marked to ignore the
-viewport's scroll. The root's (or body's) background paints the canvas.
+viewport's scroll. Sticky boxes (`Web.Paint.Sticky`, CSS Positioned
+Layout 3.4) keep their insets from the scrollport's edges while their
+containing block (its content box less their margins) is in view:
+under the viewport the list holds a sticky push/pop with those limits
+and insets and painting and hit testing work out the offset for the
+scroll offset of the moment; inside an inner scroll container (whose
+offset is known when the list is built) the offset is applied then.
+Masks (`mask-image`, `-position`, `-size`, `-repeat`, `-origin`,
+`-clip`, `-mode`, the `mask` shorthand and the `-webkit-` names) are a
+mask group: its image layers (url() images and gradients, laid out like
+background layers) drawn first, then the content, composited through
+the layers' alpha; an image not loaded (or not decodable) masks
+everything out, as the spec says (Wikipedia's icons are masks of SVG
+images over currentColor). The root's (or body's) background paints the canvas.
 Backgrounds have all their layers: color, url() images (sized with
 background-size auto/cover/contain/lengths, positioned, repeated) and
 gradients (`Web.Paint.Gradients`: linear and radial, repeating,
@@ -10374,12 +10399,13 @@ drawn again at the device size of the tile instead, so it stays crisp at
 any zoom and pixel ratio), gradients per pixel, box
 shadows as a blurred coverage mask (outer and inset), the controls
 (check boxes, radio buttons, meters, text field values), clip regions,
-opacity groups on transparent surfaces and rounded clips composited
-through their coverage.
+opacity groups and masks on transparent surfaces as big as their clip
+(not the whole surface) and rounded clips composited through their
+coverage.
 
 `TDocumentPainter` (`Web.Paint.Painter`) keeps a layout's display list,
 rebuilt when the layout's `PaintVersion` moved, and hit tests on the
-same list (every box adds a hit area; clips and fixed boxes respected):
+same list (every box adds a hit area; clips, fixed and sticky boxes respected):
 the topmost node at a viewport point, its element and box.
 
 ### Resources: what the loader supplies
@@ -10471,6 +10497,53 @@ build/tools/webrender with `-f userland/fonts`) renders a page to a PNG
 (-t: the whole document) or prints its layout tree (-l); stylesheets and
 images referred to by relative URLs are read from beside the page.
 
+### webbrowse: real sites on the host
+
+`make webbrowse` (not in `make test`) builds `build/tools/webbrowse`
+(tools/WebBrowse): the engine as the browser runs it, on the Linux host.
+A `TWebPage` over a network context whose libhttp client connects with
+the host's sockets (`WebBrowse.HostNetwork`: getaddrinfo, a non-blocking
+connect within the timeout, libtls with `/etc/ssl/certs/ca-certificates.crt`
+and session resumption, ALPN h2), the layout resource sink, page
+scripting, and the event loop driven like the web view drives it (tasks
+in 12 ms slices, a frame every 16 ms: rendering steps, style, layout,
+then the viewport painted, which is when url() images are asked for).
+It runs until the load event and quiet (no fetch, no url() image, no
+ready task, no layout due for `-q` ms) or the timeout:
+
+    webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y SCROLL] [--full]
+      [--resize WxH] [-l LAYOUT|-] [--dom HTML|-] [-c] [-n] [--live] [-p] [-m]
+      [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--hover N]
+      [--profile] [-f FONTDIR] [-v] URL
+
+`-n` prints every request (start, time to the head, total, status,
+protocol, destination, bytes, outcome) from a fetch monitor
+(`Web.Fetch.Monitors`: the fetcher tells a `TFetchMonitor` when a fetch
+starts, responds, fails, ends or is cancelled); `-p` the time in each
+phase (`Web.Profiling`: the engine marks HTML parsing, style sheet
+parsing, style, box building, layout, painting, script and other tasks;
+nested phases are charged their own time only; off unless a program
+starts profiling with a fine clock); `-c` console messages; `-m` peak
+memory; `--hover N` moves the pointer over the page as the web view
+does (:hover on the chain under it) and times each move; `--resize`
+changes the viewport once quiet; `-e` evaluates script once quiet. A
+watchdog thread (`WebBrowse.Watchdog`) reports a page thread making no
+progress for `--stall` seconds: its phase stack and detail (the script
+or sheet being worked on) and its stack, sampled by interrupting it
+with SIGUSR1 and walking its frame pointers (`WebBrowse.Sampler`,
+x86-64; the tool keeps frame pointers and line information), and ends
+the process after a minute more. `--profile` samples that stack every
+millisecond while the page thread works and prints the functions it
+was in (self) and under (total), symbolized from the line information
+and `nm` for the run-time library.
+
+On the build machine Wikipedia's Main Page (1280 px) loads in about 1.3
+s, most of it network: 30 ms of style, 25 ms of layout, longest frame
+about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
+80 ms of layout in all, the longest frame about 90 ms (the first full
+style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
+ms each. A pointer move over an article costs about 2 ms.
+
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
@@ -10480,7 +10553,7 @@ spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
 scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
-instead), relative positioning of inline boxes, true sticky positioning,
+instead), relative positioning of inline boxes,
 transforms, filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, incremental display list updates
@@ -10562,14 +10635,20 @@ with the document's resources before the document goes).
   again while tasks are ready, sets a `TTimer` for the loop's next
   timer, and asks for a frame (a 16 ms timer): rendering opportunity
   (animation frames), layout, and a repaint when the paint version
-  moved. A hidden view (a background tab) does not lay out.
+  moved. A hidden view (a background tab) does not lay out. A layout
+  that took longer than 25 ms runs again only after the GUI had twice
+  its time to itself (`LayoutDue`): while a long page loads on a slow
+  machine, input, scrolling, hit testing and painting go on against the
+  last layout (boxes keep their styles alive, so the old list paints
+  safely); zooming lays out at once.
 - **Painting** into a backing surface of the viewport's size, copied to
   the window; the viewport is painted again only when what is painted
   changed. Scrolling the viewport moves the surface's rows and paints
-  the strip that came into view, unless the page has fixed boxes or the
+  the strip that came into view, unless the page has fixed or sticky boxes or the
   step is not whole device pixels; the display list is not rebuilt for
   it (`DisplayListVersion`). The selection, a text field's caret and
-  the bars of inner scroll containers are drawn over it.
+  the bars of inner scroll containers (visible ones with overflow auto
+  or scroll only) are drawn over it.
 - **Scrolling**: the theme's `TScrollBar`s for the viewport (placed in
   `PlaceChildren`); the wheel (the scroll container under the pointer
   first; Shift for across; Ctrl zooms), arrows, Page Up and Down, Space,

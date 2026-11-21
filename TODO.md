@@ -1191,8 +1191,14 @@ Part 2 (style, layout, painting):
 - [ ] Bidi and writing modes, shaping beyond kerning, WOFF2 and CFF web
       fonts (web fonts are process-wide, not per document),
       ::first-line/::first-letter
-- [ ] Inline boxes split around blocks, relative inline boxes, real sticky
-      positioning, transforms, filters, blend modes, clip-path,
+- [x] position: sticky (offsets at painting and hit testing time under
+      the viewport, when the list is built in inner scroll containers)
+- [x] CSS masks (mask-image and friends, -webkit- names, the shorthand),
+      composited through the layers' alpha
+- [x] :hover/:focus changes restyle only what selectors reading them reach
+      (Css.StateInvalidation); the parser nests at most 512 deep
+- [ ] Inline boxes split around blocks, relative inline boxes,
+      transforms, filters, blend modes, clip-path,
       border-image, conic gradients, blurred text shadows
 - [x] Scrollbars (the web view's: theme bars for the viewport, thin bars in
       scroll containers)
@@ -1302,5 +1308,18 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Web view: lazy images near the viewport, animated images, printing
 - [ ] Browser: session restore, per-site settings, a downloads window with
       cancel buttons, separate windows (Shift+click opens a tab), tab drag
+- [x] webbrowse (make webbrowse): the engine on real sites from the host
+      (PNG, layout, DOM, console, network log, phase times, memory, hover
+      timing, a sampling profiler, a watchdog with stacks)
+- [x] Wikipedia (Main Page, articles, search, en.m redirect) loads and
+      renders: grid minmax(0, 1fr), sticky contents, masked icons, no
+      crash on resize or on a layout before the first bytes; bounded HTTP
+      and decode threads; slow layouts throttled in the web view
+- [ ] Wikipedia's JavaScript (ResourceLoader's startup stops at its
+      compatibility check: no localStorage); TOC and menus as with JS
+- [ ] Large pages in QEMU need the kernel's growable address-space region
+      table (1024 regions run out on Wikipedia's Linux article)
+- [ ] Interruptible style and layout (a first layout of a long page is one
+      piece of work on the GUI thread)
 - [ ] getComputedStyle and layout metrics from the web view's layout (a
       `TScriptEnvironment` hook the view could answer)
