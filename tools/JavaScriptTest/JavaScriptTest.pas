@@ -464,6 +464,36 @@ begin
   end;
 end;
 
+{ A frame's engine shares its page's runtime and loads a module; the
+  page's engine is freed first: the frame's module loader must not reach
+  the heap that went with it (webbrowse crashed at exit on
+  developer.mozilla.org). }
+procedure TestSharedEngineModules;
+var
+  Parent, Child: TJsEngine;
+  Host: TDeferredModules;
+begin
+  Host := TDeferredModules.Create;
+  Parent := TJsEngine.Create;
+  Child := TJsEngine.CreateSharing(Parent, TJsEngine.DefaultOptions);
+  try
+    Child.ModuleFetcher := @Host.Fetch;
+    Child.ImportModule('./frame.mjs', 'app/page.mjs');
+    Check(Length(Host.Pending) = 1, 'api: a sharing engine loads a module');
+    Host.Pending[0].Fail('gone');
+    Host.Pending := nil;
+    Parent.Free;
+    Parent := nil;
+    Child.Free;
+    Child := nil;
+    Check(True, 'api: a sharing engine with modules freed after its parent');
+  finally
+    Child.Free;
+    Parent.Free;
+    Host.Free;
+  end;
+end;
+
 { ArrayBuffers made and read from Pascal without copies. }
 procedure TestBinaryData;
 var
@@ -681,6 +711,7 @@ begin
     TestEmbedding;
     TestBinaryData;
     TestModuleLoading;
+    TestSharedEngineModules;
     Files.Clear;
     if FindFirst(BenchmarkDirectory + '*.js', faAnyFile, Search) = 0 then
     begin

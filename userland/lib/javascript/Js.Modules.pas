@@ -378,7 +378,10 @@ destructor TJsModuleLoader.Destroy;
 var
   Index: Integer;
 begin
-  FRealm.Heap.RemoveRootProvider(@MarkRoots);
+  { A realm of an engine that shared its parent's runtime may outlive
+    that runtime's heap (the parent engine went first). }
+  if not FRealm.HeapGone then
+    FRealm.Heap.RemoveRootProvider(@MarkRoots);
   { Fetches the host still holds complete into nothing. }
   for Index := 0 to High(FFetches) do
     FFetches[Index].FLoader := nil;
