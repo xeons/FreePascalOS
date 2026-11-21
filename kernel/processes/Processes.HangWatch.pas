@@ -27,6 +27,12 @@
   in - and what every processor is running, then waits for progress
   again.
   The tests turn it on, so a hang explains itself in the log.
+
+  Whether the option is given or not, it also watches processes that
+  were told to end (killed, or crashed): ending takes no longer than
+  reaching the next safe point, so one still there after
+  OverdueEndingSeconds is stuck where the kernel cannot reach it, and
+  its threads are written to the log the same way, once ("[ending]").
 }
 unit Processes.HangWatch;
 
@@ -34,7 +40,8 @@ unit Processes.HangWatch;
 
 interface
 
-{ Starts the watch if the hangdump option asks for it. }
+{ Starts the watch: overdue endings always, quiet systems if the
+  hangdump option asks for it. }
 procedure StartHangWatch;
 
 implementation
@@ -47,6 +54,7 @@ uses
   Kernel.Scheduler,
   Kernel.Processors,
   Kernel.Options,
+  Kernel.Clock,
   Processes.Process,
   Processes.Thread,
   Debug.Output;
@@ -54,6 +62,7 @@ uses
 const
   CheckIntervalMilliseconds = 1000;
   WatchThreadPriority = 24;
+  OverdueEndingSeconds = 10;
 
 var
   LimitSeconds: QWord;
@@ -225,6 +234,49 @@ begin
   DebugEndMessage;
 end;
 
+{ A process told to end OverdueEndingSeconds ago or more that is still
+  here, not reported yet: its threads, once. }
+procedure ReportIfEndingOverdue(Process: PProcess; Context: Pointer);
+var
+  Described: Boolean;
+begin
+  if not Process^.IsUserProcess or not Process^.TerminationRequested or Process^.HasExited or
+     Process^.OverdueEndingReported then
+    Exit;
+  if UptimeMilliseconds - Process^.TerminationRequestedAt < OverdueEndingSeconds * 1000 then
+    Exit;
+  Process^.OverdueEndingReported := True;
+  DebugBeginMessage;
+  DebugWriteTag('ending');
+  DebugWrite('process ');
+  DebugWriteDecimal(Process^.ProcessId);
+  DebugWrite(' ');
+  DebugWrite(@Process^.Name[0]);
+  DebugWrite(' was told to end ');
+  DebugWriteDecimal((UptimeMilliseconds - Process^.TerminationRequestedAt) div 1000);
+  DebugWriteLine(' s ago and is still here:');
+  DebugEndMessage;
+  Described := False;
+  DescribeProcess(Process, @Described);
+  PBoolean(Context)^ := True;
+end;
+
+procedure ReportOverdueEndings;
+var
+  AnyReported: Boolean;
+begin
+  AnyReported := False;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@ReportIfEndingOverdue, @AnyReported);
+  UnlockProcessRegistry;
+  if AnyReported then
+  begin
+    DebugBeginMessage;
+    DescribeProcessors;
+    DebugEndMessage;
+  end;
+end;
+
 procedure WatchMain(Context: Pointer);
 var
   LastCount: QWord;
@@ -237,6 +289,9 @@ begin
   while True do
   begin
     SleepMilliseconds(CheckIntervalMilliseconds);
+    ReportOverdueEndings;
+    if LimitSeconds = 0 then
+      Continue;
     if ProcessChangeCount <> LastCount then
     begin
       LastCount := ProcessChangeCount;
@@ -254,11 +309,9 @@ procedure StartHangWatch;
 var
   Seconds: QWord;
 begin
-  if not GetKernelOptionNumber('hangdump', Seconds) then
-    Exit;
-  LimitSeconds := Seconds;
-  if LimitSeconds = 0 then
-    Exit;
+  LimitSeconds := 0;
+  if GetKernelOptionNumber('hangdump', Seconds) then
+    LimitSeconds := Seconds;
   CreateSystemThread(@WatchMain, nil, WatchThreadPriority, 'HangWatch', False);
 end;
 

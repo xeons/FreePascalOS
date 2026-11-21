@@ -28,7 +28,10 @@
     referrerpolicy and fetchpriority, sniffed in the image context. The
     first images of a document get the urgency of visible ones.
   - Decoding (libimage, EXIF orientation applied, colours to sRGB) runs
-    on a worker thread; the result comes back as a task. Images much
+    on a worker thread; the result comes back as a task. SVG files are
+    found by their content (libsvg's codec in libimage's registry) and
+    come back as scalable images, never scaled down: the painter draws
+    them again at the size shown. Images much
     larger than needed (DownscaleFactor times the width and height
     attributes at the device pixel ratio, or MaximumImageSide) are
     scaled down there, so a huge photo shown small does not keep its
@@ -116,6 +119,8 @@ uses
   Image.Files,
   Image.Scaling,
   Image.StandardCodecs,
+  Image.Scalable,
+  Svg.Images,
   Web.Atoms,
   Web.EventLoop.Tasks,
   Web.Fetch.Requests,
@@ -204,6 +209,11 @@ begin
     Exit;
   Result.OriginalWidth := Image.Width;
   Result.OriginalHeight := Image.Height;
+  if Image is TScalableImage then
+  begin
+    Result.Image := Image;
+    Exit;
+  end;
   if (MaximumWidth > 0) and (MaximumHeight > 0) and ((Image.Width > MaximumWidth) or (Image.Height > MaximumHeight)) then
   begin
     try
@@ -253,6 +263,7 @@ begin
   FDecoders := TList.Create;
   InitCriticalSection(FDecoderLock);
   RegisterStandardImageCodecs;
+  RegisterSvgImageCodec;
 end;
 
 destructor TImageLoader.Destroy;

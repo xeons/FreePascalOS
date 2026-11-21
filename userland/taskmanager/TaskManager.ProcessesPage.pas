@@ -133,6 +133,7 @@ uses
   Util.Accounts,
   TaskManager.Formatting,
   TaskManager.PropertiesDialog,
+  TaskManager.NotResponding,
   TaskManager.Output;
 
 const
@@ -164,7 +165,7 @@ begin
   FList.AddColumn('CPU', 56);
   FList.AddColumn('Memory', 80);
   FList.AddColumn('Threads', 62);
-  FList.AddColumn('State', 70);
+  FList.AddColumn('State', 100);
   FList.AddColumn('Session', 60);
   FList.MultiSelect := True;
   FList.SortOnHeaderClick := True;
@@ -253,7 +254,10 @@ begin
   FList.Cells[Index, ColumnProcessor] := FormatPercent(Row^.ProcessorTenths);
   FList.Cells[Index, ColumnMemory] := FormatBytes(Row^.PrivateBytes);
   FList.Cells[Index, ColumnThreads] := IntToStr(Row^.ThreadCount);
-  FList.Cells[Index, ColumnState] := ProcessStateName(Row^.State);
+  if IsNotResponding(Row^.ProcessId) then
+    FList.Cells[Index, ColumnState] := 'not responding'
+  else
+    FList.Cells[Index, ColumnState] := ProcessStateName(Row^.State);
   FList.Cells[Index, ColumnSession] := IntToStr(Row^.SessionId);
 end;
 

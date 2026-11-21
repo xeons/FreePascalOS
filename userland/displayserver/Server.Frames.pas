@@ -224,6 +224,14 @@ begin
   end;
 end;
 
+{ The title, and that its program does not respond if so. }
+function ShownTitle(Window: TServerWindow): string;
+begin
+  Result := Window.Title;
+  if Window.NotResponding then
+    Result := Result + NotRespondingTitleSuffix;
+end;
+
 procedure DrawFrame(const Canvas: TCanvas; Window: TServerWindow; Active: Boolean);
 var
   Frame: TRectangle;
@@ -259,8 +267,8 @@ begin
     TextClip := Canvas;
     TextRight := TitleButtonRectangle(Window, LeftmostTitleButton(Window)).Left - WindowMetric(Window, 2);
     NarrowCanvasClip(TextClip, MakeRectangle(Bar.Left, Bar.Top, TextRight - Bar.Left, RectangleHeight(Bar)));
-    DrawText(TextClip, TitleFace^, TextLeft, Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2, Window.Title,
-      TextColor);
+    DrawText(TextClip, TitleFace^, TextLeft, Bar.Top + (RectangleHeight(Bar) - TitleFace^.Height) div 2,
+      ShownTitle(Window), TextColor);
   end;
   DrawTitleButton(Canvas, Window, HitClose, Active);
   if HasSizeButtons(Window) then

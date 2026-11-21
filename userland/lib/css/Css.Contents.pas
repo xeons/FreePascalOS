@@ -49,6 +49,7 @@ uses
   Css.BoxParsers,
   Css.GridParsers,
   Css.TextParsers,
+  Css.SvgParsers,
   Css.PropertyParsers,
   Css.InitialValues,
   Css.Shorthands,

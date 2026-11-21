@@ -67,7 +67,7 @@ implementation
 uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
-  Font.GlyphCache, Image.Surfaces, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
+  Font.GlyphCache, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
   Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky;
 
 type
@@ -491,7 +491,11 @@ end;
 { ---- images ---- }
 
 procedure DrawImage(var Raster: TRaster; const Item: TDisplayItem);
+const
+  { 4096 x 4096: larger images are scaled from their own pixels. }
+  MaximumVectorRenderingPixels = 16 * 1024 * 1024;
 var
+  Rendered: TImage;
   Run: TImageRun;
   Source: TSurface;
   SourceRectangle, Destination, Area, Common: TRectangle;
@@ -534,7 +538,15 @@ begin
         Destination := DeviceRectangle(Raster, TileX, TileY, Run.TileWidth, Run.TileHeight);
         if IntersectRectangles(Destination, RegionBounds(Raster.Canvas.Clip), Common) then
         begin
-          if (RectangleWidth(Destination) = Run.Image.Width) and (RectangleHeight(Destination) = Run.Image.Height) then
+          { A vector image (SVG) is drawn again at the size shown. }
+          Rendered := nil;
+          if (Run.Image is TScalableImage) and not Run.Pixelated and
+             (Int64(RectangleWidth(Destination)) * RectangleHeight(Destination) <= MaximumVectorRenderingPixels) then
+            Rendered := TScalableImage(Run.Image).RenderedAt(RectangleWidth(Destination), RectangleHeight(Destination));
+          if Rendered <> nil then
+            DrawSurface(Raster.Canvas, ImageSurface(Rendered), MakeRectangle(0, 0, Rendered.Width, Rendered.Height),
+              Destination.Left, Destination.Top, True, 255)
+          else if (RectangleWidth(Destination) = Run.Image.Width) and (RectangleHeight(Destination) = Run.Image.Height) then
             DrawSurface(Raster.Canvas, Source, SourceRectangle, Destination.Left, Destination.Top, True, 255)
           else if Run.Pixelated then
             DrawSurfaceStretched(Raster.Canvas, Source, SourceRectangle, Destination, True)

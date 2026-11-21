@@ -380,7 +380,7 @@ function IsSupportedImageType(const MimeType: string): Boolean;
 begin
   case AsciiLowerCase(TrimHttpWhitespace(MimeType)) of
     'image/png', 'image/apng', 'image/jpeg', 'image/pjpeg', 'image/gif', 'image/webp', 'image/bmp',
-    'image/x-icon', 'image/vnd.microsoft.icon', 'image/tiff', 'image/jxl':
+    'image/x-icon', 'image/vnd.microsoft.icon', 'image/tiff', 'image/jxl', 'image/svg+xml':
       Result := True;
   else
     Result := False;

@@ -69,6 +69,13 @@ function ProcessorShareTenths(EarlierNanoseconds, LaterNanoseconds: QWord; Elaps
 { "running", "waiting", "stopped" or "ending" (ProcessState*). }
 function ProcessStateName(State: LongWord): string;
 
+{ Ends every process of group GroupId outright with ExitCode (kill -9
+  of a group): the kernel ends processes one at a time, so this looks
+  for the group's processes until none is left that this user may end.
+  Returns how many were ended, or minus ErrorNoSuchProcess (the group
+  has no processes) or ErrorNotPermitted (none may be ended). }
+function TerminateProcessGroup(GroupId: QWord; ExitCode: LongInt): Int64;
+
 implementation
 
 uses
@@ -190,6 +197,64 @@ begin
   else
     Result := 'waiting';
   end;
+end;
+
+{ Ends the processes of GroupId in Snapshot; how many it ended, and
+  whether one was refused. }
+function TerminateGroupInSnapshot(const Snapshot: TProcessSnapshot; GroupId: QWord; ExitCode: LongInt;
+  var Refused: Boolean): Int64;
+var
+  Index: LongInt;
+  Outcome: Int64;
+begin
+  Result := 0;
+  for Index := 0 to Snapshot.Count - 1 do
+  begin
+    if (Snapshot.Entries[Index].GroupId <> GroupId) or (Snapshot.Entries[Index].State = ProcessStateExiting) then
+      Continue;
+    Outcome := KernelTerminateProcess(Snapshot.Entries[Index].ProcessId, ExitCode);
+    if Outcome = -ErrorNotPermitted then
+      Refused := True
+    else if Outcome >= 0 then
+      Inc(Result);
+  end;
+end;
+
+function TerminateProcessGroup(GroupId: QWord; ExitCode: LongInt): Int64;
+const
+  { A process of the group may start another while it is being ended. }
+  Rounds = 4;
+var
+  Snapshot: TProcessSnapshot;
+  Round: LongInt;
+  Ended: Int64;
+  Total: Int64;
+  Refused: Boolean;
+  Error: LongInt;
+begin
+  InitializeProcessSnapshot(Snapshot);
+  Total := 0;
+  Refused := False;
+  for Round := 1 to Rounds do
+  begin
+    Error := TakeProcessSnapshot(Snapshot);
+    if Error <> ErrorNone then
+    begin
+      FreeProcessSnapshot(Snapshot);
+      Exit(-Error);
+    end;
+    Ended := TerminateGroupInSnapshot(Snapshot, GroupId, ExitCode, Refused);
+    if Ended = 0 then
+      Break;
+    Total := Total + Ended;
+  end;
+  FreeProcessSnapshot(Snapshot);
+  if Total > 0 then
+    Result := Total
+  else if Refused then
+    Result := -ErrorNotPermitted
+  else
+    Result := -ErrorNoSuchProcess;
 end;
 
 end.

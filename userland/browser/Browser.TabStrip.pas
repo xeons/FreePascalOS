@@ -107,6 +107,7 @@ uses
   Drawing.Scaling,
   Drawing.SmoothLines,
   Image.Surfaces,
+  Image.Scalable,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Text,
@@ -310,6 +311,7 @@ var
   Active: Boolean;
   TextColor, CrossColor: TColor;
   Size, Inset: LongInt;
+  Icon: TImage;
 begin
   Item := Items[Index];
   Box := TabBox(Index);
@@ -342,8 +344,15 @@ begin
   if Item.Loading then
     PaintSpinner(Canvas, IconBox)
   else if Item.Icon <> nil then
-    DrawSurfaceScaled(Canvas, ImageSurface(Item.Icon), MakeRectangle(0, 0, Item.Icon.Width, Item.Icon.Height), IconBox,
-      True)
+  begin
+    { A vector icon (SVG) is drawn again at the size shown. }
+    Icon := Item.Icon;
+    if Icon is TScalableImage then
+      Icon := TScalableImage(Icon).RenderedAt(Size, Size);
+    if Icon = nil then
+      Icon := Item.Icon;
+    DrawSurfaceScaled(Canvas, ImageSurface(Icon), MakeRectangle(0, 0, Icon.Width, Icon.Height), IconBox, True);
+  end
   else
   begin
     { A page without an icon: a small sheet. }

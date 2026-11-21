@@ -118,6 +118,10 @@ var
   begin
     Weighted := SourceValue * SourceAlpha * 255 + DestinationValue * DestinationAlpha * (255 - SourceAlpha);
     Result := (Weighted + OutputAlpha * 255 div 2) div (OutputAlpha * 255);
+    { The output alpha is rounded, so a full channel over a translucent
+      one can come out a step above 255. }
+    if Result > 255 then
+      Result := 255;
   end;
 
 begin

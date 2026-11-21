@@ -105,6 +105,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.Exceptions,
   Kernel.Arch.UserMode,
+  Kernel.Clock,
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Events,
@@ -457,6 +458,7 @@ begin
   if IsNewRequest then
   begin
     Process^.TerminationCode := ExitCode;
+    Process^.TerminationRequestedAt := UptimeMilliseconds;
     Process^.TerminationRequested := True;
   end;
   UnlockProcessRegistry;

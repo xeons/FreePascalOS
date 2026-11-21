@@ -30,7 +30,7 @@ interface
 implementation
 
 uses
-  Css.Grammar, Css.BoxParsers, Css.GridParsers, Css.TextParsers;
+  Css.Grammar, Css.BoxParsers, Css.GridParsers, Css.TextParsers, Css.SvgParsers;
 
 procedure RegisterRoutines;
 begin
@@ -65,6 +65,8 @@ begin
   RegisterValueRoutine('clip-path', @ParseClipPath);
   RegisterValueRoutine('filter', @ParseFilter);
   RegisterValueRoutine('scrollbar-color', @ParseScrollbarColor);
+  RegisterValueRoutine('paint', @ParsePaint);
+  RegisterValueRoutine('stroke-dasharray', @ParseStrokeDasharray);
   RegisterValueRoutine('track-list', @ParseTrackListValue);
   RegisterValueRoutine('grid-template-areas', @ParseGridTemplateAreas);
   RegisterValueRoutine('track-sizes', @ParseTrackSizes);

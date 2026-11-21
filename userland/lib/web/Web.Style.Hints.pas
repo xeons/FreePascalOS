@@ -23,6 +23,10 @@
   size, hr's size and noshade, list types, br's clear, hspace and
   vspace ...).
 
+  SVG elements (inline SVG) take their presentation attributes (fill,
+  stroke-width, font-size ...) as hints, through libsvg's list of them;
+  the outermost <svg> also its width and height, which size its box.
+
   The hints are written as declaration text and parsed with libcss's
   style attribute parser, once per element until its attributes change;
   the cascade puts them below every author rule. Dimensions and colors
@@ -52,7 +56,7 @@ function ParseHtmlLegacyColor(const Value: string): string;
 implementation
 
 uses
-  SysUtils, Web.Atoms, Web.Namespaces, Css.Colors, Css.Parser;
+  SysUtils, Web.Atoms, Web.Namespaces, Css.Colors, Css.Parser, Svg.Presentation;
 
 var
   AtomBgcolor, AtomAlign, AtomValign, AtomBorder, AtomCellspacing, AtomCellpadding, AtomNowrap,
@@ -567,12 +571,69 @@ begin
     AddDeclaration(Writer, 'clear', 'both');
 end;
 
+{ An outermost <svg>'s width or height: a length (a bare number is in
+  pixels) or a percentage; '' for anything else (auto). }
+function SvgDimension(const Value: string): string;
+var
+  Text: string;
+  Number: Double;
+  Code: Integer;
+begin
+  Result := '';
+  Text := Trim(Value);
+  if Text = '' then
+    Exit;
+  Val(Text, Number, Code);
+  if Code = 0 then
+  begin
+    if Number >= 0 then
+      Result := Text + 'px';
+    Exit;
+  end;
+  if (Pos(';', Text) = 0) and (Pos('{', Text) = 0) and (Pos('}', Text) = 0) and (Text[1] in ['0'..'9', '.']) then
+    Result := Text;
+end;
+
+function BuildSvgHints(Element: TElement): TCssDeclarationBlock;
+var
+  Index: Integer;
+  Attribute: PAttributeRecord;
+  Text, Dimension: string;
+  Parent: TElement;
+  Outermost: Boolean;
+begin
+  Result := nil;
+  if not Element.HasAttributes then
+    Exit;
+  Parent := Element.ParentElement;
+  Outermost := (NameOfAtom(Element.LocalNameAtom) = 'svg') and ((Parent = nil) or (Parent.NamespaceId <> NamespaceSvg));
+  Text := '';
+  for Index := 0 to Element.AttributeCount - 1 do
+  begin
+    Attribute := Element.AttributeAt(Index);
+    if Attribute^.NamespaceId <> NamespaceNone then
+      Continue;
+    if Outermost and ((Attribute^.LocalName = AtomWidth) or (Attribute^.LocalName = AtomHeight)) then
+    begin
+      Dimension := SvgDimension(Attribute^.Value);
+      if Dimension <> '' then
+        Text := Text + NameOfAtom(Attribute^.LocalName) + ':' + Dimension + ';';
+    end
+    else
+      Text := Text + PresentationDeclaration(NameOfAtom(Attribute^.LocalName), Attribute^.Value);
+  end;
+  if Text <> '' then
+    Result := ParseStyleAttribute(Text);
+end;
+
 function BuildPresentationalHints(Element: TElement): TCssDeclarationBlock;
 var
   Writer: THintWriter;
   Name: TAtom;
 begin
   Result := nil;
+  if Element.NamespaceId = NamespaceSvg then
+    Exit(BuildSvgHints(Element));
   if not Element.IsHtml then
     Exit;
   { Cells take hints from their table's attributes too. }

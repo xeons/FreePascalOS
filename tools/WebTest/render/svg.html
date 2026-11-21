@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font: 16px sans-serif; color: #333; margin: 8px; }
+  .icon { width: 24px; height: 24px; fill: currentColor; vertical-align: middle; }
+  .red { color: #c00; }
+  .blue { color: #06c; }
+  .banner { width: 120px; height: 30px; background: url(svg-image.svg) 0 0 / 30px 15px repeat; }
+  svg .accent { fill: #f80; }
+  .sprites { display: none; }
+</style>
+</head>
+<body>
+<!-- A sprite sheet of symbols, used below (the pattern Google and Wikipedia use). -->
+<svg class="sprites" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 14 L21 21" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></symbol>
+  <symbol id="icon-star" viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5 2 7.5-6.5-4.5-6.5 4.5 2-7.5-5.5-4.5h7z"/></symbol>
+</svg>
+<p>Icons from a sprite: <svg class="icon red"><use href="#icon-search"/></svg>
+  <svg class="icon blue"><use href="#icon-star"/></svg> inline with text.</p>
+<p>Inline drawing:
+<svg width="100" height="60" viewBox="0 0 100 60" style="border: 1px solid #999">
+  <defs><radialGradient id="sun"><stop offset="0" stop-color="#ff0"/><stop offset="1" stop-color="#f60"/></radialGradient></defs>
+  <rect x="0" y="40" width="100" height="20" fill="#4a4"/>
+  <circle cx="75" cy="18" r="12" fill="url(#sun)"/>
+  <path class="accent" d="M10 40 L30 15 L50 40 Z"/>
+  <text x="5" y="56" font-size="10" fill="white">SVG</text>
+</svg></p>
+<p>Sized by CSS only: <svg viewBox="0 0 10 10" style="width: 40px; height: 40px"><rect width="10" height="10" rx="2" fill="#639"/></svg></p>
+<p>Images: <img src="svg-image.svg" alt="natural"> <img src="svg-image.svg" width="80" alt="wide"></p>
+<div class="banner"></div>
+</body>
+</html>

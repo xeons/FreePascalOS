@@ -48,7 +48,8 @@ unit Web.Layout.TreeBuilder;
 interface
 
 uses
-  Web.Dom, Css.ComputedStyle, Css.PointerMaps, Web.Layout.Boxes, Web.Style.Resolver, Web.Layout.Resources;
+  Web.Dom, Css.ComputedStyle, Css.PointerMaps, Web.Layout.Boxes, Web.Style.Resolver, Web.Layout.Resources,
+  Web.Svg.InlineImages, Image.Model;
 
 type
   TBoxTreeBuilder = class
@@ -60,6 +61,8 @@ type
     { The children BuildChildren took away, which boxes may be reused from. }
     FOldChildren: array of TLayoutBox;
     FBuildDepth: Integer;
+    { The images of inline <svg> elements. }
+    FInlineSvgs: TInlineSvgImages;
     function TakeReusableBox(Node: TNode; Parent: TLayoutBox): TLayoutBox;
     function NewAnonymousBlock(Parent: TLayoutBox): TLayoutBox;
     procedure AddChildrenOf(Parent: TLayoutBox; Node: TNode);
@@ -87,6 +90,9 @@ type
     { The (cached) style of anonymous boxes under ParentStyle. }
     function AnonymousStyleFor(ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { Forgets the cached anonymous styles. }
+    { The image a replaced box of Element shows when the loader has none
+      for it: an inline <svg>'s drawing (nil for anything else). }
+    function OwnImageOf(Element: TElement): TImage;
     procedure ClearCaches;
     property Styler: TDocumentStyler read FStyler;
   end;
@@ -168,12 +174,14 @@ begin
   FStyler := Styler;
   FResources := Resources;
   FAnonymousStyles := TCssPointerMap.Create;
+  FInlineSvgs := TInlineSvgImages.Create;
 end;
 
 destructor TBoxTreeBuilder.Destroy;
 begin
   ClearCaches;
   FAnonymousStyles.Free;
+  FInlineSvgs.Free;
   inherited Destroy;
 end;
 
@@ -185,6 +193,13 @@ begin
     FKeptStyles[Index].Release;
   FKeptStyles := nil;
   FAnonymousStyles.Clear;
+end;
+
+function TBoxTreeBuilder.OwnImageOf(Element: TElement): TImage;
+begin
+  Result := nil;
+  if IsOutermostSvgElement(Element) then
+    Result := FInlineSvgs.ImageFor(Element, FStyler);
 end;
 
 function TBoxTreeBuilder.AnonymousStyleFor(ParentStyle: TCssComputedStyle): TCssComputedStyle;
@@ -282,6 +297,8 @@ begin
       Replaced.Image := FResources.ElementImage(Element);
       FResources.ElementImageNaturalSize(Element, Replaced.NaturalWidth, Replaced.NaturalHeight);
     end;
+    if Replaced.Image = nil then
+      Replaced.Image := OwnImageOf(Element);
     Result := Replaced;
     if not (KeywordIn(Display, [kwBlock, kwListItem, kwFlex, kwGrid, kwTable, kwFlowRoot])) then
       Include(Result.Flags, bfInlineLevel);
@@ -651,6 +668,9 @@ begin
   Data := NodeDataOf(Element);
   if Box.Kind = bkReplaced then
   begin
+    { Inline SVG draws its subtree: a change there is a new image. }
+    if IsOutermostSvgElement(Element) then
+      TReplacedBox(Box).Image := OwnImageOf(Element);
     Data^.Flags := Data^.Flags - [ndBoxesDirty, ndDescendantBoxesDirty];
     Exit;
   end;
