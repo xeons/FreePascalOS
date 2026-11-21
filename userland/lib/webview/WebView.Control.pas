@@ -296,6 +296,10 @@ type
     procedure ScrollToElement(Element: TElement);
     { The pointer (WebView.Control.Pointer.inc). }
     procedure UpdateHover(CssX, CssY: Double);
+    { The pointer pressed and released over what Hit found (its node and
+      element retained by the caller). }
+    procedure PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
+    procedure ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
     procedure ClearHover;
     procedure SetChain(var Chain: TElementChain; Element: TElement);
     procedure ApplyStates(Element: TElement);

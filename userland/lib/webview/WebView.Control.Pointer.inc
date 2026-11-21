@@ -179,12 +179,32 @@ begin
     FOnStatusText(Self, Value);
 end;
 
+{ The hit's node and element stay alive while the page's handlers run
+  (they may remove them from the document); its box is not used after
+  an event, since a handler may lay out again. }
+procedure RetainHit(constref Hit: THitTestResult);
+begin
+  if Hit.Node <> nil then
+    Hit.Node.Retain;
+  if Hit.Element <> nil then
+    Hit.Element.Retain;
+end;
+
+procedure ReleaseHit(constref Hit: THitTestResult);
+begin
+  if Hit.Element <> nil then
+    Hit.Element.Release;
+  if Hit.Node <> nil then
+    Hit.Node.Release;
+end;
+
 procedure TWebView.UpdateHover(CssX, CssY: Double);
 var
   Hit: THitTestResult;
   Link, Control, Old: TElement;
   Shape: LongWord;
   Path: TFramePath;
+  Status: string;
 begin
   if FPainter = nil then
     Exit;
@@ -198,8 +218,27 @@ begin
     Old.Retain;
   end;
   SetChain(FHoverChain, Hit.Element);
+  { What the hit shows - the link's address, the pointer shape from the
+    box's style - is read before any event: the page's handlers may lay
+    out again (reading a size) or change the document, which frees the
+    hit's box and its style and may free its text node. }
+  Link := LinkElementOf(Hit.Node);
+  if Link <> nil then
+    Status := ResolveLink(Link)
+  else
+    Status := '';
+  Shape := PointerShapeForCursor(Hit.Box, (Hit.Node <> nil) and Hit.Node.IsText, Link <> nil);
+  Control := FormControlOf(Hit.Node);
+  if (Control <> nil) and (Shape = PointerTextBeam) and
+     not (FormControlKindOf(Control) in [FormControlText, FormControlPassword, FormControlTextArea]) then
+    Shape := PointerArrow
+  else if (Control <> nil) and (FormControlKindOf(Control) in [FormControlText, FormControlPassword,
+     FormControlTextArea]) and (Shape = PointerArrow) then
+    Shape := PointerTextBeam;
+  Hit.Box := nil;
+  Hit.Node := nil;
   { mouseout and mouseover where the element under the pointer changed,
-    then mousemove at it. }
+    then mousemove at it (kept alive by the hover chain). }
   if Old <> Hit.Element then
   begin
     if Old <> nil then
@@ -211,19 +250,7 @@ begin
     Old.Release;
   if Hit.Element <> nil then
     FireMouse(Hit.Element, 'mousemove', 0, 0);
-  Link := LinkElementOf(Hit.Node);
-  if Link <> nil then
-    SetStatus(ResolveLink(Link))
-  else
-    SetStatus('');
-  Shape := PointerShapeForCursor(Hit.Box, (Hit.Node <> nil) and Hit.Node.IsText, Link <> nil);
-  Control := FormControlOf(Hit.Node);
-  if (Control <> nil) and (Shape = PointerTextBeam) and
-     not (FormControlKindOf(Control) in [FormControlText, FormControlPassword, FormControlTextArea]) then
-    Shape := PointerArrow
-  else if (Control <> nil) and (FormControlKindOf(Control) in [FormControlText, FormControlPassword,
-     FormControlTextArea]) and (Shape = PointerArrow) then
-    Shape := PointerTextBeam;
+  SetStatus(Status);
   PointerShape := Shape;
 end;
 
@@ -350,12 +377,8 @@ end;
 procedure TWebView.PointerDown(X, Y: LongInt; Button: LongWord);
 var
   Hit: THitTestResult;
-  Control, Link: TElement;
-  Position, WordStart, WordEnd: TTextPosition;
-  Now: QWord;
   Scale: Double;
   Path: TFramePath;
-  Proceed: Boolean;
 begin
   inherited PointerDown(X, Y, Button);
   SetFocus;
@@ -368,6 +391,21 @@ begin
   Scale := DeviceScale;
   Hit := HitTestDeep(X / Scale, Y / Scale, Path);
   FButtonsHeld := FButtonsHeld or ButtonsBitOf(Button);
+  RetainHit(Hit);
+  try
+    PressAt(Hit, Length(Path) > 0, X, Y, Button);
+  finally
+    ReleaseHit(Hit);
+  end;
+end;
+
+procedure TWebView.PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
+var
+  Control, Link: TElement;
+  Position, WordStart, WordEnd: TTextPosition;
+  Now: QWord;
+  Proceed: Boolean;
+begin
   { A cancelled mousedown keeps the focus and the selection as they are. }
   Proceed := FireMouse(Hit.Element, 'mousedown', DomButtonOf(Button), 1);
   if Button = ButtonMiddle then
@@ -412,7 +450,7 @@ begin
   end;
   { Inside a frame its document has the focus (no element of it); its
     text is not selected. }
-  if Length(Path) > 0 then
+  if InFrame then
   begin
     SetFocusedElement(nil, False);
     ClearSelection;
@@ -469,7 +507,6 @@ procedure TWebView.PointerUp(X, Y: LongInt; Button: LongWord);
 var
   Hit: THitTestResult;
   Scale: Double;
-  Link, Control: TElement;
   Path: TFramePath;
 begin
   inherited PointerUp(X, Y, Button);
@@ -480,6 +517,18 @@ begin
     Exit;
   Scale := DeviceScale;
   Hit := HitTestDeep(X / Scale, Y / Scale, Path);
+  RetainHit(Hit);
+  try
+    ReleaseAt(Hit, Button);
+  finally
+    ReleaseHit(Hit);
+  end;
+end;
+
+procedure TWebView.ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
+var
+  Link, Control: TElement;
+begin
   FireMouse(Hit.Element, 'mouseup', DomButtonOf(Button), 1);
   if Button <> FPressButton then
     Exit;
@@ -542,19 +591,25 @@ begin
   begin
     Scale := DeviceScale;
     Hit := HitTestDeep(X / Scale, Y / Scale, Path);
-    if not FromKeyboard and not FireMouse(Hit.Element, 'contextmenu', 2, 0) then
-      Exit;
-    Link := LinkElementOf(Hit.Node);
-    if Link <> nil then
-    begin
-      Info.LinkUrl := ResolveLink(Link);
-      Info.LinkText := Trim(Link.TextContent);
+    RetainHit(Hit);
+    try
+      if not FromKeyboard and not FireMouse(Hit.Element, 'contextmenu', 2, 0) then
+        Exit;
+      Link := LinkElementOf(Hit.Node);
+      if Link <> nil then
+      begin
+        Info.LinkUrl := ResolveLink(Link);
+        Info.LinkText := Trim(Link.TextContent);
+      end;
+      if (Hit.Element <> nil) and (Hit.Element.LocalName = 'img') and (FPage <> nil) and
+         (FPage.Navigable.Loader <> nil) then
+        Info.ImageUrl := Hit.Element.GetAttribute('src');
+      Control := FormControlOf(Hit.Node);
+      Info.InTextField := (Control <> nil) and (FormControlKindOf(Control) in [FormControlText, FormControlPassword,
+        FormControlTextArea]);
+    finally
+      ReleaseHit(Hit);
     end;
-    if (Hit.Element <> nil) and (Hit.Element.LocalName = 'img') and (FPage <> nil) and (FPage.Navigable.Loader <> nil) then
-      Info.ImageUrl := Hit.Element.GetAttribute('src');
-    Control := FormControlOf(Hit.Node);
-    Info.InTextField := (Control <> nil) and (FormControlKindOf(Control) in [FormControlText, FormControlPassword,
-      FormControlTextArea]);
   end;
   Handled := False;
   if Assigned(FOnContextMenuRequested) then
