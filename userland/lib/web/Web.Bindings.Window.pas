@@ -496,6 +496,103 @@ begin
   Result := LocationPart(Call, @GetHash);
 end;
 
+{ HTML 7.2.4: the setters navigate to the location's URL with one part
+  changed (nothing when the part cannot change: a URL with an opaque
+  path has no host or path to set, a protocol other than http(s) is not
+  taken). }
+type
+  TUrlSetter = procedure(var Url: TUrlRecord; const Value: string);
+
+function SetLocationPart(const Call: TBindingCall; Setter: TUrlSetter): TJsValue;
+var
+  Url: TUrlRecord;
+begin
+  Result := JsUndefined;
+  if not LocationUrl(Call, Url) then
+    Exit;
+  Setter(Url, Call.Text(0));
+  Context(Call).Environment.Navigate(Context(Call), GetHref(Url), False);
+end;
+
+function Location_set_href(var Call: TBindingCall): TJsValue;
+var
+  Resolved: string;
+begin
+  if not ResolveUrlText(Context(Call).Document, Call.Text(0), Resolved) then
+    raise EBindingTypeError.Create('''' + Call.Text(0) + ''' is not a valid URL');
+  Context(Call).Environment.Navigate(Context(Call), Resolved, False);
+  Result := JsUndefined;
+end;
+
+function Location_set_protocol(var Call: TBindingCall): TJsValue;
+var
+  Url: TUrlRecord;
+begin
+  Result := JsUndefined;
+  if not LocationUrl(Call, Url) then
+    Exit;
+  SetProtocol(Url, Call.Text(0));
+  if (Url.Scheme <> 'http') and (Url.Scheme <> 'https') then
+    Exit;
+  Context(Call).Environment.Navigate(Context(Call), GetHref(Url), False);
+end;
+
+function OpaquePathLocation(const Call: TBindingCall): Boolean;
+var
+  Url: TUrlRecord;
+begin
+  Result := not LocationUrl(Call, Url) or Url.OpaquePath;
+end;
+
+function Location_set_host(var Call: TBindingCall): TJsValue;
+begin
+  if OpaquePathLocation(Call) then
+    Exit(JsUndefined);
+  Result := SetLocationPart(Call, @SetHost);
+end;
+
+function Location_set_hostname(var Call: TBindingCall): TJsValue;
+begin
+  if OpaquePathLocation(Call) then
+    Exit(JsUndefined);
+  Result := SetLocationPart(Call, @SetHostname);
+end;
+
+function Location_set_port(var Call: TBindingCall): TJsValue;
+begin
+  if OpaquePathLocation(Call) then
+    Exit(JsUndefined);
+  Result := SetLocationPart(Call, @SetPort);
+end;
+
+function Location_set_pathname(var Call: TBindingCall): TJsValue;
+begin
+  if OpaquePathLocation(Call) then
+    Exit(JsUndefined);
+  Result := SetLocationPart(Call, @SetPathname);
+end;
+
+function Location_set_search(var Call: TBindingCall): TJsValue;
+begin
+  Result := SetLocationPart(Call, @SetSearch);
+end;
+
+function Location_set_hash(var Call: TBindingCall): TJsValue;
+var
+  Url: TUrlRecord;
+  Before: string;
+begin
+  Result := JsUndefined;
+  if not LocationUrl(Call, Url) then
+    Exit;
+  Before := GetHash(Url);
+  SetHash(Url, Call.Text(0));
+  { The same fragment: no navigation. }
+  if GetHash(Url) = Before then
+    Exit;
+  Context(Call).Environment.Navigate(Context(Call), GetHref(Url), False);
+end;
+
 function NavigateTo(const Call: TBindingCall; ReplaceEntry: Boolean): TJsValue;
 var
   Resolved: string;

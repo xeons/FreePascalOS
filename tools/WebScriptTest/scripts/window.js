@@ -52,3 +52,10 @@ setTimeout(function () {
   Promise.resolve().then(function () { nested.push("outer microtask"); });
   setTimeout(function () { nested.push("inner"); });
 }, 0);
+// Location's setters navigate (HTML 7.2.4).
+location.href = "page2.html";
+check("location.href = navigates", lastNavigation().indexOf("page2.html") > 0);
+window.location = "page3.html";
+check("window.location = navigates (PutForwards href)", lastNavigation().indexOf("page3.html") > 0);
+location.search = "?q=1";
+check("location.search = navigates with the new query", lastNavigation().indexOf("?q=1") > 0);
