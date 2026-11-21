@@ -155,6 +155,7 @@ uses
   Web.ScriptEnvironment,
   { First of the script units: compiled in the order a program using
     them loads them (the bindings' units use each other in a cycle). }
+  Web.Script.ImportMaps,
   Web.Script.PageScripting,
   Web.Bindings.Types,
   Web.Bindings.Strings,
