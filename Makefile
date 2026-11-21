@@ -40,6 +40,8 @@
 #                   plain logic on the host
 #   make controls-test  Check libcontrols' layout arithmetic on the host (anchors,
 #                   docking, flow and table panels, split containers)
+#   make navigation-controls-test  Check the plain logic of libcontrols' tab
+#                   strip, breadcrumb bar, command bar and transfer rates on the host
 #   make settings-test  Check the settings library on the host (files, escaping,
 #                   layering, two writers, damaged files, the network's
 #                   settings and state files)
@@ -200,7 +202,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test navigation-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -549,7 +551,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test navigation-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -983,6 +985,24 @@ date-controls-test: $(DATE_CONTROLS_TEST)
 	@$(DATE_CONTROLS_TEST) > build/tools/date-controls-test.out || \
 		{ grep FAIL build/tools/date-controls-test.out; echo "DATE CONTROLS TEST FAILED (build/tools/date-controls-test.out)"; exit 1; }
 	@echo "DATE CONTROLS TEST PASSED: $$(tail -n 1 build/tools/date-controls-test.out | cut -d ' ' -f 2-)"
+
+# The plain logic behind libcontrols' tab strip, breadcrumb bar, command
+# bar and progress dialog (where their parts go, transfer rates and
+# their texts) builds for the host too, and is checked there.
+NAVIGATION_CONTROLS_TEST := build/tools/NavigationControlsTest
+NAVIGATION_CONTROLS_TEST_SOURCES := tools/NavigationControlsTest/NavigationControlsTest.pas \
+	userland/lib/controls/Controls.TransferRates.pas userland/lib/controls/Controls.TabStripLayout.pas \
+	userland/lib/controls/Controls.BreadcrumbLayout.pas userland/lib/controls/Controls.CommandLayout.pas
+
+$(NAVIGATION_CONTROLS_TEST): $(NAVIGATION_CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/navigation-controls-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NavigationControlsTest -Fuuserland/lib/controls \
+		-FUbuild/tools/navigation-controls-test-units -o$@ tools/NavigationControlsTest/NavigationControlsTest.pas
+
+navigation-controls-test: $(NAVIGATION_CONTROLS_TEST)
+	@$(NAVIGATION_CONTROLS_TEST) > build/tools/navigation-controls-test.out || \
+		{ grep FAIL build/tools/navigation-controls-test.out; echo "NAVIGATION CONTROLS TEST FAILED (build/tools/navigation-controls-test.out)"; exit 1; }
+	@echo "NAVIGATION CONTROLS TEST PASSED: $$(tail -n 1 build/tools/navigation-controls-test.out | cut -d ' ' -f 2-)"
 
 # The settings library (libconfiguration) but for its files builds for
 # the host too, and is checked there over a storage in memory.
