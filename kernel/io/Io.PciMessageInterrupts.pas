@@ -127,7 +127,8 @@ begin
   for Index := 0 to MessageControllerCount - 1 do
     if MessageControllers[Index].Segment = Device^.Segment then
       Exit(MessageControllers[Index].Connect(MessageControllers[Index].Controller, Handler, Context, Message));
-  Result := ConnectMessageInterrupt(Handler, Context, Message);
+  Result := ConnectMessageInterrupt((LongWord(Device^.Bus) shl 8) or (LongWord(Device^.Device) shl 3) or
+    Device^.FunctionNumber, Handler, Context, Message);
 end;
 
 const

@@ -23,8 +23,10 @@
   are no ISA interrupts.
 
   Message signalled interrupts need a GICv2m frame (QEMU's virt machine
-  has one): a device writes an SPI's number into the frame, which raises
-  that SPI. The Raspberry Pi 4's GIC-400 has none; its PCIe bridge
+  with GICv2 has one): a device writes an SPI's number into the frame,
+  which raises that SPI. On a GICv3 they are LPIs through its ITS
+  (Hal.GicV3Its), which tells devices apart by their requester id. The
+  Raspberry Pi 4's GIC-400 has no frame; its PCIe bridge
   (BCM2711) has a message controller of its own, for a later driver, so
   PCIe devices there use their INTx lines.
 }
@@ -47,10 +49,10 @@ procedure WriteDeviceInterruptRouting;
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
 
-{ What a device writes, and where, to raise Vector on processor
-  TargetProcessorId: a GICv2m SPI. False without a frame, or once its
-  SPIs are used up. }
-function ComposeMessageInterrupt(Vector: Byte; TargetProcessorId: LongWord;
+{ What the device with PCI requester id RequesterId writes, and where,
+  to raise Vector on processor TargetProcessorId: a GICv2m SPI, or a
+  GICv3 LPI. False without a frame or ITS, or once they are used up. }
+function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 
 implementation
@@ -59,6 +61,7 @@ uses
   Firmware.Madt,
   Memory.DeviceMapping,
   Hal.Gic,
+  Hal.GicV3,
   Debug.Output;
 
 const
@@ -73,6 +76,7 @@ var
   MessageFrameAddress: QWord = 0;
   NextMessageSpi: LongWord = 0;
   LastMessageSpi: LongWord = 0;
+  UsesTranslationService: Boolean = False;
 
 { A device tree may leave the frame's SPIs to its type register. }
 procedure ReadMessageFrameType(var Description: TGicDescription);
@@ -105,6 +109,8 @@ begin
       NextMessageSpi := Description.MessageFrameFirstSpi;
       LastMessageSpi := Description.MessageFrameFirstSpi + Description.MessageFrameSpiCount - 1;
     end;
+    if (GicVersion = 3) and (Description.ItsAddress <> 0) then
+      UsesTranslationService := InitializeGicV3MessageInterrupts(Description);
   end;
   Result := Available;
 end;
@@ -115,7 +121,9 @@ begin
   DebugWriteTag('interrupts');
   if Available then
   begin
-    DebugWrite('GIC routing, ');
+    DebugWrite('GICv');
+    DebugWriteDecimal(GicVersion);
+    DebugWrite(' routing, ');
     DebugWriteDecimal(GicInterruptCount);
     DebugWrite(' interrupts');
     if MessageFrameAddress <> 0 then
@@ -126,6 +134,8 @@ begin
       DebugWriteDecimal(LastMessageSpi);
       DebugWrite(')');
     end;
+    if UsesTranslationService then
+      DebugWrite(', message interrupts as LPIs through the ITS');
     DebugWriteLine('');
   end
   else
@@ -141,11 +151,13 @@ begin
   Result := ConnectGicInterrupt(Gsi, Vector, LevelTriggered, TargetProcessorId);
 end;
 
-function ComposeMessageInterrupt(Vector: Byte; TargetProcessorId: LongWord;
+function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 begin
   Address := 0;
   Data := 0;
+  if UsesTranslationService then
+    Exit(ComposeGicV3MessageInterrupt(RequesterId, Vector, TargetProcessorId, Address, Data));
   if (MessageFrameAddress = 0) or (NextMessageSpi > LastMessageSpi) then
     Exit(False);
   if not ConnectGicInterrupt(NextMessageSpi, Vector, False, TargetProcessorId) then

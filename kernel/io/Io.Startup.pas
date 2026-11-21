@@ -78,6 +78,7 @@ uses
   Firmware.DeviceTree,
   Io.DeviceTreeDevices,
   Io.PciResources,
+  Io.PciPortWindow,
   Drivers.BrcmPcie,
   Drivers.Rp1,
   Io.BlockDevice,
@@ -227,12 +228,22 @@ begin
       InitializeI6300EsbWatchdog;
     StartWatchdogPolicy;
   end;
+  { The PCI I/O space window (AArch64: from the root bridge's _CRS). }
+  InitializePciPortWindow;
   InitializeBlockDevices;
   RegisterBlockIoPowerHandler;
   { The image a network boot brought (ramdisk0), the system volume. }
   InitializeRamDisk;
+  { The boot volume's disk first, so it is disk0: an AHCI port on x86-64
+    PCs (and QEMU's q35), a virtio disk on QEMU's AArch64 virt machine,
+    whose firmware cannot boot from AHCI. }
+{$ifdef CPUAARCH64}
+  InitializeVirtioBlockDevices;
+  InitializeAhciControllers;
+{$else}
   InitializeAhciControllers;
   InitializeVirtioBlockDevices;
+{$endif}
   InitializeNvmeControllers;
   { Network adapters (Io.NetworkAdapters). }
   InitializeVirtioNetDevices;

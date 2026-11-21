@@ -37,6 +37,9 @@
 #                  does, so the loader's drop to EL1 is exercised
 #   CPU            the processor model (default cortex-a72; "max" has
 #                  PAN, ARMv8.1+, like the Raspberry Pi 5's Cortex-A76)
+#   GIC            the interrupt controller's version: 2 (default, the
+#                  Pi 4's GIC-400) or 3 (redistributors, the system
+#                  register interface and an ITS, as servers have)
 #   SEMIHOSTING=1  let the kernel end QEMU with an exit status (tests)
 #   SD_CARD=image  an SD card holding the image, on an SD host controller
 #                  (sdhci-pci; the image's size must be a power of two)
@@ -94,7 +97,7 @@ if [[ ! -f "$firmware_variables" ]]; then
     cp "$firmware_variables_template" "$firmware_variables"
 fi
 
-machine="virt,gic-version=2"
+machine="virt,gic-version=${GIC:-2}"
 if [[ "${VIRTUALIZATION:-}" == 1 ]]; then
     machine="$machine,virtualization=on"
 fi
@@ -126,21 +129,23 @@ qemu_binary=qemu-system-aarch64
 # Sound: an HD Audio controller with an output and a microphone, played
 # through PipeWire or PulseAudio when this QEMU has that backend
 # (packages qemu-audio-pipewire / qemu-audio-pa), otherwise recorded to
-# a WAV file in the build folder (AUDIO=none leaves sound out).
+# a WAV file in the build folder (AUDIO=none leaves sound out). The
+# audio backends' ids are this script's own, so a caller's devices
+# (after "--") may use any other.
 audio_arguments=()
 if [[ "${AUDIO:-}" != none ]]; then
     audio_backends=$("$qemu_binary" -audiodev help 2>/dev/null)
     if grep -qx pipewire <<< "$audio_backends"; then
-        audio_arguments=(-audiodev pipewire,id=sound0 -audiodev pipewire,id=microphone0)
+        audio_arguments=(-audiodev pipewire,id=run-sound -audiodev pipewire,id=run-microphone)
     elif grep -qx pa <<< "$audio_backends"; then
-        audio_arguments=(-audiodev pa,id=sound0 -audiodev pa,id=microphone0)
+        audio_arguments=(-audiodev pa,id=run-sound -audiodev pa,id=run-microphone)
     else
         echo "QEMU has no PipeWire or PulseAudio backend: sound goes to $build_directory/run-audio.wav"
-        audio_arguments=(-audiodev wav,id=sound0,path="$build_directory/run-audio.wav"
-            -audiodev none,id=microphone0)
+        audio_arguments=(-audiodev wav,id=run-sound,path="$build_directory/run-audio.wav"
+            -audiodev none,id=run-microphone)
     fi
-    audio_arguments+=(-device intel-hda -device hda-output,audiodev=sound0
-        -device hda-micro,audiodev=microphone0)
+    audio_arguments+=(-device intel-hda -device hda-output,audiodev=run-sound
+        -device hda-micro,audiodev=run-microphone)
 fi
 
 exec "$qemu_binary" \

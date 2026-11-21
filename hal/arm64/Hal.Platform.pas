@@ -121,7 +121,7 @@ end;
 procedure InitializeHal;
 begin
   if not InitializeGic then
-    KernelPanicWithCode(PanicHardwareMissing, 'no GICv2 interrupt controller (ACPI MADT or device tree)', 0, 0, 0, 0);
+    KernelPanicWithCode(PanicHardwareMissing, 'no GICv2 or GICv3 interrupt controller (ACPI MADT or device tree)', 0, 0, 0, 0);
   SetInterruptAcknowledger(@AcknowledgeGicInterrupt);
   InitializeGenericTimer;
   if CounterFrequency = 0 then
@@ -242,7 +242,9 @@ procedure HalWriteDescription;
 begin
   DebugBeginMessage;
   DebugWriteTag('hal');
-  DebugWrite('GICv2, ');
+  DebugWrite('GICv');
+  DebugWriteDecimal(GicVersion);
+  DebugWrite(', ');
   DebugWriteDecimal(GicInterruptCount);
   DebugWrite(' interrupts; generic timer ');
   DebugWriteDecimal(CounterFrequency div 1000);

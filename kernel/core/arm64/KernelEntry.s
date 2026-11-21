@@ -81,6 +81,18 @@ ArchSecondaryEntry:
     mov     x9, #0x33FF
     msr     cptr_el2, x9
     msr     hstr_el2, xzr
+    // A GICv3's system register interface open to EL1 (ICC_SRE_EL2:
+    // SRE and Enable), its virtual interface off (ICH_HCR_EL2).
+    mrs     x9, id_aa64pfr0_el1
+    ubfx    x9, x9, #24, #4
+    cbz     x9, .Lsecondary_gic_open_done
+    mrs     x9, S3_4_C12_C9_5
+    orr     x9, x9, #1
+    orr     x9, x9, #8
+    msr     S3_4_C12_C9_5, x9
+    isb
+    msr     S3_4_C12_C11_0, xzr
+.Lsecondary_gic_open_done:
     mrs     x9, midr_el1
     msr     vpidr_el2, x9
     mrs     x9, mpidr_el1

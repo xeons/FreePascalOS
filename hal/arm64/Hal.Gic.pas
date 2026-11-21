@@ -17,27 +17,18 @@
 }
 
 {
-  The ARM generic interrupt controller, version 2 (the Raspberry Pi 4's
-  GIC-400, and QEMU's virt machine with gic-version=2).
-
-  Its distributor (shared) routes the shared peripheral interrupts
-  (SPIs, INTID 32 and up) to processors and holds every interrupt's
-  priority, enable bit and trigger; each processor's CPU interface
-  (banked at one address) acknowledges and ends interrupts and holds the
-  priority mask, which is the kernel's priority level
-  (Kernel.Arch.PriorityLevel). The addresses come from the ACPI MADT.
+  The ARM generic interrupt controller, whichever version the firmware
+  describes: GICv2 (Hal.GicV2: the Raspberry Pi 4's GIC-400, QEMU's
+  virt machine with gic-version=2) or GICv3 (Hal.GicV3: system register
+  CPU interface, redistributors, affinity routing, LPIs through an ITS;
+  servers, QEMU with gic-version=3). The ACPI MADT's distributor entry
+  gives the version (0, from older firmware, means 2 when it names a CPU
+  interface), a device tree its compatible string (Firmware.Madt).
 
   The kernel's vectors (Hal.InterruptVectors) are given to the INTIDs
   the HAL uses: the dispatch and request SGIs, the timer's PPI, and the
-  SPIs drivers connect (RouteSharedInterrupt). Each INTID gets the GIC
-  priority of its vector's level.
-
-  GICv2 addresses processors by CPU interface number (0-7), not by
-  affinity: each processor learns its own from the distributor's banked
-  target register and records it next to its id.
-
-  GICv3 (system register CPU interface, redistributors, affinity
-  routing; the Raspberry Pi 5 has none, but servers do) is for later.
+  SPIs and message interrupts drivers connect; each INTID gets the GIC
+  priority of its vector's level (Kernel.Arch.PriorityLevel).
 }
 unit Hal.Gic;
 
@@ -45,19 +36,25 @@ unit Hal.Gic;
 
 interface
 
-const
-  SoftwareInterruptDispatch = 0;
-  SoftwareInterruptRequest = 1;
-  SoftwareInterruptStop = 2;
-  FirstSharedInterrupt = 32;
-  SpuriousInterruptId = 1023;
+uses
+  Hal.GicDefinitions;
 
-{ Maps the GIC the MADT describes and sets up the distributor and this
-  processor's CPU interface. False if there is none (or not version 2). }
+const
+  SoftwareInterruptDispatch = Hal.GicDefinitions.SoftwareInterruptDispatch;
+  SoftwareInterruptRequest = Hal.GicDefinitions.SoftwareInterruptRequest;
+  SoftwareInterruptStop = Hal.GicDefinitions.SoftwareInterruptStop;
+  FirstSharedInterrupt = Hal.GicDefinitions.FirstSharedInterrupt;
+  SpuriousInterruptId = Hal.GicDefinitions.SpuriousInterruptId;
+
+{ Maps the GIC the MADT (or device tree) describes and sets up the
+  distributor and this processor's CPU interface. False if there is
+  none, or it is of a version not driven. }
 function InitializeGic: Boolean;
-{ Sets up a secondary processor's CPU interface and private interrupts. }
+{ Sets up a processor's CPU interface and private interrupts. }
 procedure InitializeGicOnThisProcessor;
 
+{ 2 or 3; 0 before InitializeGic found one. }
+function GicVersion: Byte;
 function GicInterruptCount: LongWord;
 
 { Gives INTID Interrupt the kernel's Vector (a private interrupt on
@@ -85,333 +82,116 @@ implementation
 
 uses
   Firmware.Madt,
-  Memory.DeviceMapping,
-  Hal.InterruptVectors,
-  Kernel.Arch.Cpu,
-  Kernel.Arch.PriorityLevel,
-  Kernel.Processors;
-
-const
-  DistributorSize = $1000;
-  CpuInterfaceSize = $2000;
-
-  DistributorControl = $000;
-  DistributorType = $004;
-  DistributorSetEnable = $100;
-  DistributorClearEnable = $180;
-  DistributorClearPending = $280;
-  DistributorClearActive = $380;
-  DistributorPriority = $400;
-  DistributorTargets = $800;
-  DistributorConfiguration = $C00;
-  DistributorSoftwareInterrupt = $F00;
-
-  CpuControl = $000;
-  CpuPriorityMask = $004;
-  CpuBinaryPoint = $008;
-  CpuAcknowledge = $00C;
-  CpuEndOfInterrupt = $010;
-
-  InterruptIdMask = $3FF;
-  MaximumInterrupts = 1020;
-  TargetFilterSelf = LongWord(2) shl 24;
-  TargetFilterOthers = LongWord(1) shl 24;
-  TargetListShift = 16;
-
-  MaximumKnownProcessors = 8;
+  Hal.GicV2,
+  Hal.GicV3;
 
 var
-  Distributor: PByte = nil;
-  CpuInterface: PByte = nil;
-  InterruptTotal: LongWord = 0;
-  VectorOfInterrupt: array[0..MaximumInterrupts - 1] of Byte;
-  LastAcknowledged: array[0..MaximumProcessors - 1] of LongWord;
-  KnownIds: array[0..MaximumKnownProcessors - 1] of LongWord;
-  KnownMasks: array[0..MaximumKnownProcessors - 1] of Byte;
-  KnownCount: LongWord = 0;
+  Version: Byte = 0;
+
+function GicVersion: Byte;
+begin
+  Result := Version;
+end;
 
 function GicIsAvailable: Boolean;
 begin
-  Result := Distributor <> nil;
-end;
-
-function GicInterruptCount: LongWord;
-begin
-  Result := InterruptTotal;
-end;
-
-function ReadDistributor(Offset: LongWord): LongWord;
-begin
-  Result := PLongWord(Distributor + Offset)^;
-end;
-
-procedure WriteDistributor(Offset: LongWord; Value: LongWord);
-begin
-  PLongWord(Distributor + Offset)^ := Value;
-end;
-
-procedure WriteCpuInterface(Offset: LongWord; Value: LongWord);
-begin
-  PLongWord(CpuInterface + Offset)^ := Value;
-end;
-
-function ReadCpuInterface(Offset: LongWord): LongWord;
-begin
-  Result := PLongWord(CpuInterface + Offset)^;
-end;
-
-procedure WriteDistributorByte(Offset: LongWord; Value: Byte);
-begin
-  PByte(Distributor + Offset)^ := Value;
-end;
-
-{ This processor's bit in the target registers: the banked targets of
-  its private interrupts read as itself. }
-function OwnCpuMask: Byte;
-var
-  Mask: LongWord;
-begin
-  Mask := ReadDistributor(DistributorTargets) and $FF;
-  if Mask = 0 then
-    Mask := 1;
-  Result := Byte(Mask);
-end;
-
-procedure RecordOwnCpuMask;
-var
-  Id: LongWord;
-  Index: LongWord;
-begin
-  Id := CurrentProcessor^.ApicId;
-  Index := 0;
-  while Index < KnownCount do
-  begin
-    if KnownIds[Index] = Id then
-    begin
-      KnownMasks[Index] := OwnCpuMask;
-      Exit;
-    end;
-    Inc(Index);
-  end;
-  if KnownCount < MaximumKnownProcessors then
-  begin
-    KnownIds[KnownCount] := Id;
-    KnownMasks[KnownCount] := OwnCpuMask;
-    Inc(KnownCount);
-  end;
-end;
-
-function CpuMaskOf(ProcessorId: LongWord): Byte;
-var
-  Index: LongWord;
-begin
-  Index := 0;
-  while Index < KnownCount do
-  begin
-    if KnownIds[Index] = ProcessorId then
-      Exit(KnownMasks[Index]);
-    Inc(Index);
-  end;
-  Result := 0;
-end;
-
-procedure SetPriority(Interrupt: LongWord; Vector: Byte);
-begin
-  WriteDistributorByte(DistributorPriority + Interrupt,
-    GicPriorityOfLevel(ArchPriorityLevelOfVector(Vector)));
-end;
-
-procedure SetTrigger(Interrupt: LongWord; LevelTriggered: Boolean);
-var
-  Offset: LongWord;
-  Shift: LongWord;
-  Value: LongWord;
-begin
-  { SGIs are always edge triggered; the trigger of PPIs may be fixed. }
-  if Interrupt < 16 then
-    Exit;
-  Offset := DistributorConfiguration + (Interrupt div 16) * 4;
-  Shift := (Interrupt mod 16) * 2 + 1;
-  Value := ReadDistributor(Offset);
-  if LevelTriggered then
-    Value := Value and not (LongWord(1) shl Shift)
-  else
-    Value := Value or (LongWord(1) shl Shift);
-  WriteDistributor(Offset, Value);
-end;
-
-procedure EnableInterrupt(Interrupt: LongWord);
-begin
-  WriteDistributor(DistributorSetEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
-end;
-
-procedure DisableGicInterrupt(Interrupt: LongWord);
-begin
-  if (Distributor = nil) or (Interrupt >= InterruptTotal) then
-    Exit;
-  WriteDistributor(DistributorClearEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
-end;
-
-{ Private interrupts (SGIs, PPIs) are banked: each processor sets its own. }
-procedure InitializePrivateInterrupts;
-var
-  Interrupt: LongWord;
-begin
-  WriteDistributor(DistributorClearEnable, $FFFFFFFF);
-  WriteDistributor(DistributorClearPending, $FFFFFFFF);
-  WriteDistributor(DistributorClearActive, $FFFFFFFF);
-  for Interrupt := 0 to FirstSharedInterrupt - 1 do
-    if VectorOfInterrupt[Interrupt] <> SpuriousInterruptVector then
-    begin
-      SetPriority(Interrupt, VectorOfInterrupt[Interrupt]);
-      EnableInterrupt(Interrupt);
-    end;
-end;
-
-procedure InitializeCpuInterface;
-begin
-  { Everything masked until the kernel lowers its level; every priority
-    bit decides preemption. }
-  WriteCpuInterface(CpuPriorityMask, 0);
-  WriteCpuInterface(CpuBinaryPoint, 0);
-  WriteCpuInterface(CpuControl, 1);
-  UsePriorityMaskRegister(PLongWord(CpuInterface + CpuPriorityMask));
-end;
-
-procedure InitializeGicOnThisProcessor;
-begin
-  if Distributor = nil then
-    Exit;
-  RecordOwnCpuMask;
-  InitializePrivateInterrupts;
-  InitializeCpuInterface;
-end;
-
-procedure InitializeDistributor;
-var
-  Index: LongWord;
-begin
-  WriteDistributor(DistributorControl, 0);
-  InterruptTotal := ((ReadDistributor(DistributorType) and $1F) + 1) * 32;
-  if InterruptTotal > MaximumInterrupts then
-    InterruptTotal := MaximumInterrupts;
-  Index := FirstSharedInterrupt;
-  while Index < InterruptTotal do
-  begin
-    WriteDistributor(DistributorClearEnable + (Index div 32) * 4, $FFFFFFFF);
-    WriteDistributor(DistributorClearPending + (Index div 32) * 4, $FFFFFFFF);
-    Index := Index + 32;
-  end;
-  WriteDistributor(DistributorControl, 1);
+  Result := Version <> 0;
 end;
 
 function InitializeGic: Boolean;
 var
   Description: TGicDescription;
-  Index: LongWord;
 begin
   Result := False;
-  for Index := 0 to MaximumInterrupts - 1 do
-    VectorOfInterrupt[Index] := SpuriousInterruptVector;
   if not ParseMadt then
     Exit;
   Description := GicDescription;
-  if (Description.DistributorAddress = 0) or (Description.CpuInterfaceAddress = 0) then
-    Exit;
-  { Version 0 means "not given" (older firmware); 2 is GICv2. }
-  if (Description.Version <> 0) and (Description.Version <> 2) then
-    Exit;
-  Distributor := PByte(MapDeviceMemory(Description.DistributorAddress, DistributorSize));
-  CpuInterface := PByte(MapDeviceMemory(Description.CpuInterfaceAddress, CpuInterfaceSize));
-  if (Distributor = nil) or (CpuInterface = nil) then
-  begin
-    Distributor := nil;
-    Exit;
+  case Description.Version of
+    0, 2:
+      if InitializeGicV2(Description) then
+        Version := 2;
+    3, 4:
+      if InitializeGicV3(Description) then
+        Version := 3;
   end;
+  Result := Version <> 0;
+end;
 
-  VectorOfInterrupt[SoftwareInterruptDispatch] := DispatchInterruptVector;
-  VectorOfInterrupt[SoftwareInterruptRequest] := InterProcessorInterruptVector;
-  VectorOfInterrupt[SoftwareInterruptStop] := InterProcessorInterruptVector + 1;
+procedure InitializeGicOnThisProcessor;
+begin
+  case Version of
+    2: InitializeGicV2OnThisProcessor;
+    3: InitializeGicV3OnThisProcessor;
+  end;
+end;
 
-  InitializeDistributor;
-  InitializeGicOnThisProcessor;
-  Result := True;
+function GicInterruptCount: LongWord;
+begin
+  case Version of
+    2: Result := GicV2InterruptCount;
+    3: Result := GicV3InterruptCount;
+  else
+    Result := 0;
+  end;
 end;
 
 function ConnectGicInterrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
   TargetProcessorId: LongWord): Boolean;
-var
-  Mask: Byte;
 begin
-  Result := False;
-  if (Distributor = nil) or (Interrupt >= InterruptTotal) then
-    Exit;
-  VectorOfInterrupt[Interrupt] := Vector;
-  SetPriority(Interrupt, Vector);
-  SetTrigger(Interrupt, LevelTriggered);
-  if Interrupt >= FirstSharedInterrupt then
-  begin
-    Mask := CpuMaskOf(TargetProcessorId);
-    if Mask = 0 then
-      Mask := OwnCpuMask;
-    WriteDistributorByte(DistributorTargets + Interrupt, Mask);
+  case Version of
+    2: Result := ConnectGicV2Interrupt(Interrupt, Vector, LevelTriggered, TargetProcessorId);
+    3: Result := ConnectGicV3Interrupt(Interrupt, Vector, LevelTriggered, TargetProcessorId);
+  else
+    Result := False;
   end;
-  EnableInterrupt(Interrupt);
-  Result := True;
+end;
+
+procedure DisableGicInterrupt(Interrupt: LongWord);
+begin
+  case Version of
+    2: DisableGicV2Interrupt(Interrupt);
+    3: DisableGicV3Interrupt(Interrupt);
+  end;
 end;
 
 function AcknowledgeGicInterrupt: Byte;
-var
-  Acknowledge: LongWord;
-  Interrupt: LongWord;
 begin
-  Acknowledge := ReadCpuInterface(CpuAcknowledge);
-  Interrupt := Acknowledge and InterruptIdMask;
-  if Interrupt >= MaximumInterrupts then
-    Exit(SpuriousInterruptVector);
-  Result := VectorOfInterrupt[Interrupt];
-  if Result = SpuriousInterruptVector then
-  begin
-    { Nobody asked for it: end it and mask it. }
-    WriteCpuInterface(CpuEndOfInterrupt, Acknowledge);
-    DisableGicInterrupt(Interrupt);
-    Exit;
-  end;
-  LastAcknowledged[CurrentProcessorIndexOrZero] := Acknowledge;
+  if Version = 3 then
+    Result := AcknowledgeGicV3Interrupt
+  else
+    Result := AcknowledgeGicV2Interrupt;
 end;
 
 procedure EndGicInterrupt;
 begin
-  WriteCpuInterface(CpuEndOfInterrupt, LastAcknowledged[CurrentProcessorIndexOrZero]);
+  if Version = 3 then
+    EndGicV3Interrupt
+  else
+    EndGicV2Interrupt;
 end;
 
 procedure SendSoftwareInterrupt(Number: LongWord; TargetProcessorId: LongWord);
-var
-  Mask: Byte;
 begin
-  if Distributor = nil then
-    Exit;
-  Mask := CpuMaskOf(TargetProcessorId);
-  if Mask = 0 then
-    Exit;
-  DataSynchronizationBarrier;
-  WriteDistributor(DistributorSoftwareInterrupt, (LongWord(Mask) shl TargetListShift) or Number);
+  case Version of
+    2: SendGicV2SoftwareInterrupt(Number, TargetProcessorId);
+    3: SendGicV3SoftwareInterrupt(Number, TargetProcessorId);
+  end;
 end;
 
 procedure SendSoftwareInterruptToSelf(Number: LongWord);
 begin
-  if Distributor = nil then
-    Exit;
-  DataSynchronizationBarrier;
-  WriteDistributor(DistributorSoftwareInterrupt, TargetFilterSelf or Number);
+  case Version of
+    2: SendGicV2SoftwareInterruptToSelf(Number);
+    3: SendGicV3SoftwareInterruptToSelf(Number);
+  end;
 end;
 
 procedure SendSoftwareInterruptToOthers(Number: LongWord);
 begin
-  if Distributor = nil then
-    Exit;
-  DataSynchronizationBarrier;
-  WriteDistributor(DistributorSoftwareInterrupt, TargetFilterOthers or Number);
+  case Version of
+    2: SendGicV2SoftwareInterruptToOthers(Number);
+    3: SendGicV3SoftwareInterruptToOthers(Number);
+  end;
 end;
 
 end.
