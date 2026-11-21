@@ -12101,15 +12101,16 @@ about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
 style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
 ms each. A pointer move over an article costs about 2 ms.
 
-More `--do` steps drive the pointer and the viewport
-(`WebBrowse.Pointer`, as the web view does them): `scroll:Y` (or `top`,
-`bottom`), `scrollby:DY`, `hover:SELECTOR` (mouseout, mouseover and
-mousemove, :hover on the chain), `hoverat:X,Y` (hit tested),
-`drag:X1,Y1,X2,Y2` (pressed, moved, released; the text between selected
-through libwebview's text index and `Selection.setBaseAndExtent`),
-`back` and `forward`. `--patience MS` is how long a step waits for quiet
-before it goes on (10 s); an endless animation alone does not keep a
-page from being quiet.
+On top of the pointer steps (`WebBrowse.Pointer` over libwebview's
+page selection), two steps also take another shape of argument:
+`scroll:top` and `scroll:bottom` put the viewport there (a number is
+the wheel's DY), and `hover:SELECTOR` moves the pointer to the middle of
+the first element matching, scrolled into view (X,Y is a point).
+`scrollby:DY` scrolls the viewport itself, `hoverat:X,Y` is
+`hover:X,Y`, `back` and `forward` go through the session history.
+`--patience MS` is how long a step waits for quiet before it goes on
+(10 s); an endless animation alone does not keep a page from being
+quiet.
 
 #### Comparing common sites with a reference browser
 
