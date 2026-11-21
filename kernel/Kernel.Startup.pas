@@ -106,6 +106,7 @@ uses
   Io.DeviceFiles,
   Kernel.IoSelfTest,
   Kernel.WatchdogSelfTest,
+  Kernel.RandomSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -329,6 +330,7 @@ begin
   StartHangWatch;
 
   RunKernelSelfTests;
+  RunRandomSelfTest;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
   RunWatchdogSelfTest;
