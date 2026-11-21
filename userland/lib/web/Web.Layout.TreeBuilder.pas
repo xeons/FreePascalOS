@@ -114,7 +114,8 @@ const
 implementation
 
 uses
-  SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values;
+  SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values,
+  Web.Dom.FormControls;
 
 var
   AtomCanvasElement, AtomIframeElement, AtomEmbedElement, AtomObjectElement, AtomVideoElement,
@@ -460,7 +461,8 @@ procedure TBoxTreeBuilder.AddControlContent(Box: TLayoutBox; Element: TElement);
 var
   Text: TTextBox;
   Value, InputType: string;
-  Option: TNode;
+  Options: TNodeArray;
+  Index: Integer;
 begin
   Value := '';
   if Element.IsHtmlElement(AtomInput) then
@@ -479,19 +481,17 @@ begin
   end
   else if Element.IsHtmlElement(AtomSelect) then
   begin
-    Option := Element.FirstChild;
-    while Option <> nil do
-    begin
-      if Option.IsElement and TElement(Option).IsHtmlElement(AtomOption) then
-      begin
-        if (Value = '') or TElement(Option).HasAttributeAtom(AtomSelected) then
-          Value := Trim(DescendantTextContent(Option));
-        if TElement(Option).HasAttributeAtom(AtomSelected) then
-          Break;
-      end;
-      Option := Option.NextInTree(Element);
-    end;
-    Value := Value + ' '#$E2#$96#$BE;
+    { The selected option (the form control state's selectedness, which
+      script and the user change), and the drop-down arrow unless the
+      page draws its own (appearance: none). }
+    Options := SelectOptions(Element);
+    Index := SelectSelectedIndex(Element);
+    if (Index >= 0) and (Index <= High(Options)) then
+      Value := Trim(DescendantTextContent(Options[Index]));
+    if Box.Style.Keyword(cpAppearance) <> kwNone then
+      Value := Value + ' '#$E2#$96#$BE
+    else if Value = '' then
+      Value := ' ';
   end
   else
     Exit;
