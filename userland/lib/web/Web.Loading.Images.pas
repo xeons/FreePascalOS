@@ -84,6 +84,10 @@ type
     FNextGeneration: QWord;
     FStartedCount: Integer;
     FDecoders: TList;
+    { Decodes waiting for one of the MaximumDecoders threads, and how
+      many run (each ends with one DecodeDone). }
+    FPendingDecodes: TList;
+    FRunningDecodes: Integer;
     FDecoderLock: TRTLCriticalSection;
     FLoadEventFired: Boolean;
     function StateOf(Element: TElement): TImageState;
@@ -94,6 +98,8 @@ type
     procedure EndDelay(State: TImageState);
     procedure FireElementEvent(Element: TElement; const Name: string);
     procedure ReapDecoders;
+    procedure StartDecode(const Bytes: TBytes; Generation: QWord; MaximumWidth, MaximumHeight: Integer);
+    procedure StartPendingDecodes;
     procedure Update(Element: TElement; Force: Boolean);
     function NeededSide(Element: TElement; Attribute: LongWord; Ratio: Double): Integer;
   public
@@ -130,6 +136,9 @@ uses
 
 const
   VisibleImageCount = 6;
+  { Images decoded at once, each on a thread of its own; the others
+    wait their turn. }
+  MaximumDecoders = 3;
 
 type
   TDecodeJob = class(TThread)
@@ -143,6 +152,13 @@ type
   public
     constructor Create(Loader: TImageLoader; const Bytes: TBytes; Generation: QWord; MaximumWidth,
       MaximumHeight: Integer);
+  end;
+
+  TPendingDecode = class
+  public
+    Bytes: TBytes;
+    Generation: QWord;
+    MaximumWidth, MaximumHeight: Integer;
   end;
 
   TDecodedImage = class
@@ -261,6 +277,7 @@ begin
   FPreloads := Preloads;
   FStates := TList.Create;
   FDecoders := TList.Create;
+  FPendingDecodes := TList.Create;
   InitCriticalSection(FDecoderLock);
   RegisterStandardImageCodecs;
   RegisterSvgImageCodec;
@@ -276,6 +293,9 @@ begin
     TThread(FDecoders[Index]).Free;
   end;
   FDecoders.Free;
+  for Index := 0 to FPendingDecodes.Count - 1 do
+    TPendingDecode(FPendingDecodes[Index]).Free;
+  FPendingDecodes.Free;
   FContext.Loop.DiscardTasks(Self);
   for Index := 0 to FStates.Count - 1 do
     TImageState(FStates[Index]).Free;
@@ -458,8 +478,7 @@ begin
   State.Decoding := True;
   if FContext.Settings.DecodeImagesOnThreads then
   begin
-    ReapDecoders;
-    FDecoders.Add(TDecodeJob.Create(Self, Bytes, State.Generation, MaximumWidth, MaximumHeight));
+    StartDecode(Bytes, State.Generation, MaximumWidth, MaximumHeight)
   end
   else
   begin
@@ -470,6 +489,51 @@ begin
       Decoded.Generation := State.Generation;
     end;
     FContext.Loop.QueueTask(TDataTask.Create(@DecodeDone, Decoded), TaskSourceDomManipulation, Self);
+  end;
+end;
+
+procedure TImageLoader.StartDecode(const Bytes: TBytes; Generation: QWord; MaximumWidth, MaximumHeight: Integer);
+var
+  Pending: TPendingDecode;
+  Decoded: TDecodedImage;
+begin
+  ReapDecoders;
+  if FRunningDecodes >= MaximumDecoders then
+  begin
+    Pending := TPendingDecode.Create;
+    Pending.Bytes := Bytes;
+    Pending.Generation := Generation;
+    Pending.MaximumWidth := MaximumWidth;
+    Pending.MaximumHeight := MaximumHeight;
+    FPendingDecodes.Add(Pending);
+    Exit;
+  end;
+  try
+    FDecoders.Add(TDecodeJob.Create(Self, Bytes, Generation, MaximumWidth, MaximumHeight));
+    Inc(FRunningDecodes);
+  except
+    { No thread to be had: decoded here instead. }
+    try
+      Decoded := DecodeImageBytes(Bytes, MaximumWidth, MaximumHeight, Generation);
+    except
+      Decoded := TDecodedImage.Create;
+      Decoded.Generation := Generation;
+    end;
+    Inc(FRunningDecodes);
+    FContext.Loop.QueueTask(TDataTask.Create(@DecodeDone, Decoded), TaskSourceDomManipulation, Self);
+  end;
+end;
+
+procedure TImageLoader.StartPendingDecodes;
+var
+  Pending: TPendingDecode;
+begin
+  while (FPendingDecodes.Count > 0) and (FRunningDecodes < MaximumDecoders) do
+  begin
+    Pending := TPendingDecode(FPendingDecodes[0]);
+    FPendingDecodes.Delete(0);
+    StartDecode(Pending.Bytes, Pending.Generation, Pending.MaximumWidth, Pending.MaximumHeight);
+    Pending.Free;
   end;
 end;
 
@@ -495,6 +559,9 @@ var
   Image: TImage;
 begin
   Decoded := TDecodedImage(Data);
+  if FRunningDecodes > 0 then
+    Dec(FRunningDecodes);
+  StartPendingDecodes;
   State := nil;
   for Index := 0 to FStates.Count - 1 do
     if TImageState(FStates[Index]).Generation = Decoded.Generation then

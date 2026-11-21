@@ -898,7 +898,10 @@ begin
     Job.State := JobPreflight
   else
     Job.State := JobAwaitingResponse;
-  FRunner.Start(FNetwork.Client, BuildHttpRequest(Job, Kind), FNextHopId);
+  { What the page cannot show without goes ahead of images. }
+  FRunner.Start(FNetwork.Client, BuildHttpRequest(Job, Kind), FNextHopId,
+    Job.Request.Destination in [DestinationDocument, DestinationIframe, DestinationStyle, DestinationScript,
+    DestinationFont, DestinationEmpty]);
 end;
 
 procedure TFetcher.StartPreflight(Job: TFetchJob);

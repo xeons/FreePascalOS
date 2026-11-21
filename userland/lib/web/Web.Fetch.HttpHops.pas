@@ -73,8 +73,20 @@ type
   THopDataEvent = procedure(Message: THopDataMessage) of object;
   THopDoneEvent = procedure(Message: THopDoneMessage) of object;
 
+  { A hop waiting for a thread. }
+  THopQueued = class
+  public
+    Client: THttpClient;
+    Request: THttpRequest;
+    HopId: QWord;
+  end;
+
   { Starts hops and posts their results; Group is the fetcher (so its
-    pending messages can be dropped when it goes). }
+    pending messages can be dropped when it goes). At most
+    MaximumRunningHops run at once, each on a thread of its own; the
+    others wait in order (urgent ones - documents, style sheets,
+    scripts, fonts - ahead of the rest). A hop whose thread cannot be
+    made fails like a network error. }
   THopRunner = class
   private
     FLoop: TEventLoop;
@@ -84,6 +96,11 @@ type
     FOnDone: THopDoneEvent;
     FLock: TRTLCriticalSection;
     FTasks: TList;
+    FQueue: TList;
+    FUrgentCount: Integer;
+    procedure Launch(Client: THttpClient; Request: THttpRequest; HopId: QWord);
+    procedure StartQueued;
+    procedure PostDone(HopId: QWord; constref Outcome: THttpResult);
     procedure TaskHead(Task: THttpFetchTask; Response: THttpResponse);
     procedure TaskData(Task: THttpFetchTask; Data: Pointer; Count: PtrUInt);
     procedure TaskDone(Task: THttpFetchTask; constref Outcome: THttpResult);
@@ -96,14 +113,17 @@ type
       OnDone: THopDoneEvent);
     { Cancels and frees every task (waiting for their threads). }
     destructor Destroy; override;
-    { Starts Request (taken over) on Client as hop HopId. }
-    procedure Start(Client: THttpClient; Request: THttpRequest; HopId: QWord);
+    { Starts Request (taken over) on Client as hop HopId, or queues it. }
+    procedure Start(Client: THttpClient; Request: THttpRequest; HopId: QWord; Urgent: Boolean = False);
     { From the page thread: stop the hop (its done message still comes). }
     procedure Cancel(HopId: QWord);
     { After its done message: the task's thread is over, free it. }
     procedure Release(HopId: QWord);
     function RunningCount: Integer;
   end;
+
+const
+  MaximumRunningHops = 12;
 
 function ProtocolName(Protocol: THttpProtocol): string;
 
@@ -131,6 +151,7 @@ begin
   FOnDone := OnDone;
   InitCriticalSection(FLock);
   FTasks := TList.Create;
+  FQueue := TList.Create;
 end;
 
 destructor THopRunner.Destroy;
@@ -151,11 +172,28 @@ begin
   for Index := 0 to High(Tasks) do
     Tasks[Index].Free;
   FTasks.Free;
+  for Index := 0 to FQueue.Count - 1 do
+  begin
+    THopQueued(FQueue[Index]).Request.Free;
+    THopQueued(FQueue[Index]).Free;
+  end;
+  FQueue.Free;
   DoneCriticalSection(FLock);
   inherited Destroy;
 end;
 
-procedure THopRunner.Start(Client: THttpClient; Request: THttpRequest; HopId: QWord);
+procedure THopRunner.PostDone(HopId: QWord; constref Outcome: THttpResult);
+var
+  Message: THopDoneMessage;
+begin
+  Message := THopDoneMessage.Create;
+  Message.HopId := HopId;
+  Message.Outcome := Outcome;
+  FLoop.PostMethod(@DeliverDone, Message, TaskSourceNetworking, FGroup);
+end;
+
+{ On the page thread, the lock not held. }
+procedure THopRunner.Launch(Client: THttpClient; Request: THttpRequest; HopId: QWord);
 var
   Task: THttpFetchTask;
 begin
@@ -163,10 +201,58 @@ begin
     callbacks can look for it. }
   EnterCriticalSection(FLock);
   try
-    Task := THttpFetchTask.Create(Client, Request, @TaskHead, @TaskData, @TaskDone, PtrInt(HopId));
-    FTasks.Add(Task);
+    try
+      Task := THttpFetchTask.Create(Client, Request, @TaskHead, @TaskData, @TaskDone, PtrInt(HopId));
+      FTasks.Add(Task);
+    except
+      on Error: Exception do
+      begin
+        { No thread for it (the system is out of them): a network error. }
+        Request.Free;
+        PostDone(HopId, HttpFailure(HttpConnectFailed, 'cannot start the request: ' + Error.Message));
+      end;
+    end;
   finally
     LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure THopRunner.Start(Client: THttpClient; Request: THttpRequest; HopId: QWord; Urgent: Boolean);
+var
+  Queued: THopQueued;
+begin
+  if (RunningCount < MaximumRunningHops) and (FQueue.Count = 0) then
+  begin
+    Launch(Client, Request, HopId);
+    Exit;
+  end;
+  Queued := THopQueued.Create;
+  Queued.Client := Client;
+  Queued.Request := Request;
+  Queued.HopId := HopId;
+  if Urgent then
+  begin
+    FQueue.Insert(FUrgentCount, Queued);
+    Inc(FUrgentCount);
+  end
+  else
+    FQueue.Add(Queued);
+  StartQueued;
+end;
+
+{ Starts waiting hops while there is room. }
+procedure THopRunner.StartQueued;
+var
+  Queued: THopQueued;
+begin
+  while (FQueue.Count > 0) and (RunningCount < MaximumRunningHops) do
+  begin
+    Queued := THopQueued(FQueue[0]);
+    FQueue.Delete(0);
+    if FUrgentCount > 0 then
+      Dec(FUrgentCount);
+    Launch(Queued.Client, Queued.Request, Queued.HopId);
+    Queued.Free;
   end;
 end;
 
@@ -183,7 +269,20 @@ end;
 procedure THopRunner.Cancel(HopId: QWord);
 var
   Task: THttpFetchTask;
+  Index: Integer;
 begin
+  for Index := 0 to FQueue.Count - 1 do
+    if THopQueued(FQueue[Index]).HopId = HopId then
+    begin
+      { Never started: its done message comes now. }
+      THopQueued(FQueue[Index]).Request.Free;
+      THopQueued(FQueue[Index]).Free;
+      FQueue.Delete(Index);
+      if Index < FUrgentCount then
+        Dec(FUrgentCount);
+      PostDone(HopId, HttpFailure(HttpCanceled, 'canceled'));
+      Exit;
+    end;
   EnterCriticalSection(FLock);
   try
     Task := FindTask(HopId);
@@ -207,6 +306,7 @@ begin
     LeaveCriticalSection(FLock);
   end;
   Task.Free;
+  StartQueued;
 end;
 
 function THopRunner.RunningCount: Integer;
@@ -248,13 +348,8 @@ begin
 end;
 
 procedure THopRunner.TaskDone(Task: THttpFetchTask; constref Outcome: THttpResult);
-var
-  Message: THopDoneMessage;
 begin
-  Message := THopDoneMessage.Create;
-  Message.HopId := QWord(Task.Tag);
-  Message.Outcome := Outcome;
-  FLoop.PostMethod(@DeliverDone, Message, TaskSourceNetworking, FGroup);
+  PostDone(QWord(Task.Tag), Outcome);
 end;
 
 procedure THopRunner.DeliverHead(Data: TObject);
