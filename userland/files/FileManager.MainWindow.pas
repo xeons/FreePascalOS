@@ -73,6 +73,7 @@ type
     FEmptyTrashButton: TCommandButton;
     FDetailsButton: TCommandButton;
     FPreviewButton: TCommandButton;
+    FExtractDue: Boolean;
     procedure BuildCommandBar;
     procedure BuildAccelerators;
     function AddButton(const Caption, Icon, Hint: string; Command: LongInt; ShowCaption: Boolean): TCommandButton;
@@ -250,6 +251,7 @@ var
   Selected: Boolean;
   Real: Boolean;
   Entry: TFolderEntry;
+  WasShown: Boolean;
 begin
   if FNewButton = nil then
     Exit;
@@ -270,7 +272,12 @@ begin
   else
     FDeleteButton.Hint := 'Delete (Del)';
   FFilterButton.Enabled := not (Kind in [LocationHome, LocationComputer, LocationNetwork]);
+  WasShown := FExtractButton.Visible;
   FExtractButton.Visible := FocusedIsArchive or (Kind = LocationArchive);
+  { Appearing: where it is now (for tests). }
+  if FExtractButton.Visible and not WasShown then
+    FCommandBar.RequestLayout;
+  FExtractDue := FExtractButton.Visible and not WasShown;
   FRestoreButton.Visible := (Kind = LocationTrash) and Selected;
   FRestoreAllButton.Visible := Kind = LocationTrash;
   FEmptyTrashButton.Visible := Kind = LocationTrash;
@@ -291,9 +298,19 @@ begin
 end;
 
 procedure TFileManagerWindow.SelectionChanged(Sender: TControl);
+var
+  Box: TRectangle;
 begin
   SelectionShown;
   Say('selected ' + IntToStr(FView.SelectedCount));
+  if FExtractDue then
+  begin
+    FExtractDue := False;
+    Box := FCommandBar.ButtonBounds(FExtractButton);
+    if RectangleWidth(Box) > 0 then
+      TellPlace('command-extract', FCommandBar, Box.Left + RectangleWidth(Box) div 2,
+        Box.Top + RectangleHeight(Box) div 2);
+  end;
 end;
 
 procedure TFileManagerWindow.SettingsChanged(Sender: TControl);

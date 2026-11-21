@@ -77,11 +77,11 @@ type
     FTabImages: TImageList;
     FTabIcons: TStringList;
     FNavigationBar: TPanel;
-    FNavigationButtons: TToolBar;
-    FBackButton: TToolButton;
-    FForwardButton: TToolButton;
-    FUpButton: TToolButton;
-    FRefreshButton: TToolButton;
+    FNavigationButtons: TCommandBar;
+    FBackButton: TCommandButton;
+    FForwardButton: TCommandButton;
+    FUpButton: TCommandButton;
+    FRefreshButton: TCommandButton;
     FTabMenu: TMenuItem;
     FTabMenuIndex: LongInt;
     FSearchSuggestions: TSuggestionDropDown;
@@ -206,6 +206,7 @@ type
 
 const
   NavigationBarHeight = 36;
+  NavigationButtonsWidth = 4 * 36 + 20;
   SearchBoxWidth = 220;
   ItemsPanelWidth = 160;
   MostCompletions = 12;
@@ -237,18 +238,18 @@ begin
   FNavigationBar := TPanel.Create(Root);
   FNavigationBar.SetBounds(0, 0, 0, NavigationBarHeight);
   FNavigationBar.Align := AlignTop;
-  FNavigationButtons := TToolBar.Create(FNavigationBar);
+  FNavigationButtons := TCommandBar.Create(FNavigationBar);
   FNavigationButtons.Images := FCommandImages;
   FNavigationButtons.Align := AlignLeft;
-  FNavigationButtons.SetBounds(0, 0, 4 * 30 + 8, NavigationBarHeight);
-  FBackButton := FNavigationButtons.AddImageButton(AddThemeIcon(FCommandImages, 'action-back'), '',
-    'Back (Alt+Left)', 28, @BackClicked);
-  FForwardButton := FNavigationButtons.AddImageButton(AddThemeIcon(FCommandImages, 'action-forward'), '',
-    'Forward (Alt+Right)', 28, @ForwardClicked);
-  FUpButton := FNavigationButtons.AddImageButton(AddThemeIcon(FCommandImages, 'action-up'), '',
-    'Up (Alt+Up)', 28, @UpClicked);
-  FRefreshButton := FNavigationButtons.AddImageButton(AddThemeIcon(FCommandImages, 'action-refresh'), '',
-    'Refresh (F5)', 28, @RefreshClicked);
+  FNavigationButtons.SetBounds(0, 0, NavigationButtonsWidth, NavigationBarHeight);
+  FBackButton := FNavigationButtons.AddCommand('Back', AddThemeIcon(FCommandImages, 'action-back'),
+    'Back (Alt+Left)', @BackClicked, False);
+  FForwardButton := FNavigationButtons.AddCommand('Forward', AddThemeIcon(FCommandImages, 'action-forward'),
+    'Forward (Alt+Right)', @ForwardClicked, False);
+  FUpButton := FNavigationButtons.AddCommand('Up', AddThemeIcon(FCommandImages, 'action-up'), 'Up (Alt+Up)',
+    @UpClicked, False);
+  FRefreshButton := FNavigationButtons.AddCommand('Refresh', AddThemeIcon(FCommandImages, 'action-refresh'),
+    'Refresh (F5)', @RefreshClicked, False);
   FSearchBox := TEditBox.Create(FNavigationBar);
   FSearchBox.Align := AlignRight;
   FSearchBox.SetBounds(0, 0, SearchBoxWidth, 24);
@@ -291,6 +292,7 @@ begin
   FView.SetHomeSections(FOptions.ShowRecent, FOptions.ShowFavorites);
   FView.OnFolderGone := @FolderGone;
   FView.OnRefreshed := @ViewRefreshed;
+  FView.OnSearchFinished := @ViewRefreshed;
   if FOptions.ShowPreviewPane then
     ShowSidePane(SidePanePreview)
   else if FOptions.ShowDetailsPane then
@@ -1082,10 +1084,16 @@ begin
   Chosen := FView.SelectedCount;
   if Chosen = 0 then
     FStatusBar.PanelText[1] := ''
-  else if Chosen = 1 then
-    FStatusBar.PanelText[1] := '1 item selected  ' + SizeText(FView.SelectedTotalSize)
   else
-    FStatusBar.PanelText[1] := IntToStr(Chosen) + ' items selected  ' + SizeText(FView.SelectedTotalSize);
+  begin
+    if Chosen = 1 then
+      Text := '1 item selected'
+    else
+      Text := IntToStr(Chosen) + ' items selected';
+    if FView.SelectedTotalSize > 0 then
+      Text := Text + '  ' + SizeText(FView.SelectedTotalSize);
+    FStatusBar.PanelText[1] := Text;
+  end;
 end;
 
 procedure TBrowserWindow.TellPlaces;
@@ -1094,10 +1102,16 @@ var
   Box: TRectangle;
   Point: TPoint;
 begin
-  TellControlPlace('back', FBackButton);
-  TellControlPlace('forward', FForwardButton);
-  TellControlPlace('up', FUpButton);
-  TellControlPlace('refresh', FRefreshButton);
+  Box := FNavigationButtons.ButtonBounds(FBackButton);
+  TellPlace('back', FNavigationButtons, Box.Left + RectangleWidth(Box) div 2, Box.Top + RectangleHeight(Box) div 2);
+  Box := FNavigationButtons.ButtonBounds(FForwardButton);
+  TellPlace('forward', FNavigationButtons, Box.Left + RectangleWidth(Box) div 2,
+    Box.Top + RectangleHeight(Box) div 2);
+  Box := FNavigationButtons.ButtonBounds(FUpButton);
+  TellPlace('up', FNavigationButtons, Box.Left + RectangleWidth(Box) div 2, Box.Top + RectangleHeight(Box) div 2);
+  Box := FNavigationButtons.ButtonBounds(FRefreshButton);
+  TellPlace('refresh', FNavigationButtons, Box.Left + RectangleWidth(Box) div 2,
+    Box.Top + RectangleHeight(Box) div 2);
   TellControlPlace('search', FSearchBox);
   Point := FBreadcrumb.EmptyAreaPoint;
   TellPlace('address', FBreadcrumb, Point.X, Point.Y);

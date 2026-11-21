@@ -399,7 +399,7 @@ begin
   end;
   AddCommandItem(Menu, 'P&roperties', CommandProperties, 'Alt+Enter', 'action-properties');
   Menu.AddSeparator;
-  AddCommandItem(Menu, 'Show more &options', CommandShowMoreOptions, 'Shift+F10', 'action-more');
+  AddCommandItem(Menu, 'Show more &options', CommandShowMoreOptions, '', 'action-more');
 end;
 
 procedure TMenuWindow.FillClassicMenu(Menu: TMenuItem);
