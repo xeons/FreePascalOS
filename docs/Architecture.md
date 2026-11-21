@@ -10373,7 +10373,9 @@ additions for form controls and `center` in `Web.Style.UserAgent`, the
 user sheets and then the author sheets in tree order: each `<style>`
 parsed here and kept with its text, each `<link rel=stylesheet>`'s sheet
 from the document's resources; media attributes become the sheets'
-media lists, alternate sheets do not apply). Presentational hints
+media lists, alternate sheets do not apply; a sheet arriving or going
+makes the layout due, `SheetsDirty`, so a page whose only change is a
+late sheet restyles). Presentational hints
 (`Web.Style.Hints`) follow the HTML Standard's rendering section with
 its rules for dimension and legacy color values: body's bgcolor, text,
 background and margins; table's width, height, bgcolor, border,

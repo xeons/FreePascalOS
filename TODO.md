@@ -1363,8 +1363,9 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       check (localStorage, IntersectionObserver)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
 - [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
-      the results page (main and html.duckduckgo.com/html/), later
-      searches; no crash (released events, translations of transforms,
+      the results page (main and html.duckduckgo.com/html/, whose late
+      sheet now restyles), later searches; no crash (released events,
+      translations of transforms,
       z-index auto layers, computed shorthands, positioned boxes not left
       due, for-of over Map iterators, lone surrogates in case mapping)
 - [ ] DuckDuckGo: following a result on the main results page posts the
