@@ -324,7 +324,9 @@ var
   Options: TNavigateOptions;
 begin
   Result := False;
-  if (Form = nil) or (Navigable = nil) or (Navigable.Loader = nil) then
+  { HTML 4.10.21.3: a form that is not in a document cannot navigate
+    (before the submit event and after it). }
+  if (Form = nil) or not Form.IsConnected or (Navigable = nil) or (Navigable.Loader = nil) then
     Exit;
   { The submit event's listeners may take the form (and the submitter)
     out of the document. }
@@ -332,7 +334,7 @@ begin
   if Submitter <> nil then
     Submitter.Retain;
   try
-    if not FireEvent(Form, 'submit', True, True) then
+    if not FireEvent(Form, 'submit', True, True) or not Form.IsConnected then
       Exit;
     if (Navigable.Loader = nil) or not BuildFormSubmission(Form, Submitter, Navigable.Loader, Target, Options) then
       Exit;

@@ -477,7 +477,8 @@ procedure TJsEngine.MarkRoots(Tracer: TJsTracer);
 var
   Index: Integer;
 begin
-  Tracer.MarkValues(@FRoots[0], Length(FRoots));
+  if Length(FRoots) > 0 then
+    Tracer.MarkValues(@FRoots[0], Length(FRoots));
   for Index := 0 to High(FHostClasses) do
   begin
     Tracer.MarkCell(FHostClasses[Index].Prototype);

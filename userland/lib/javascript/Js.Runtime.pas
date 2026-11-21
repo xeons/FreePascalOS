@@ -136,7 +136,8 @@ begin
     if FCharacterStrings[Index] <> nil then
       Tracer.MarkCell(FCharacterStrings[Index]);
   Tracer.MarkValue(Exception);
-  Tracer.MarkValues(@FTempRoots[0], FTempRootCount);
+  if FTempRootCount > 0 then
+    Tracer.MarkValues(@FTempRoots[0], FTempRootCount);
 end;
 
 function TJsRuntime.PushRoot(Value: TJsValue): Integer;

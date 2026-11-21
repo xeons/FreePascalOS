@@ -327,7 +327,8 @@ procedure TJsCode.Trace(Tracer: TJsTracer);
 var
   Index, Inner: Integer;
 begin
-  Tracer.MarkValues(@Constants[0], System.Length(Constants));
+  if System.Length(Constants) > 0 then
+    Tracer.MarkValues(@Constants[0], System.Length(Constants));
   for Index := 0 to High(Functions) do
     Tracer.MarkCell(Functions[Index]);
   for Index := 0 to High(Caches) do
@@ -343,7 +344,8 @@ begin
   Tracer.MarkCell(Lazy);
   for Index := 0 to High(EvalChains) do
     Tracer.MarkCell(EvalChains[Index]);
-  Tracer.MarkValues(@TemplateObjects[0], System.Length(TemplateObjects));
+  if System.Length(TemplateObjects) > 0 then
+    Tracer.MarkValues(@TemplateObjects[0], System.Length(TemplateObjects));
 end;
 
 function TJsCode.MemorySize: SizeInt;
@@ -425,7 +427,8 @@ begin
   if HomeObject <> nil then
     Tracer.MarkCell(HomeObject);
   Tracer.MarkValue(FieldInitializer);
-  Tracer.MarkValues(@ClassSlots[0], System.Length(ClassSlots));
+  if System.Length(ClassSlots) > 0 then
+    Tracer.MarkValues(@ClassSlots[0], System.Length(ClassSlots));
 end;
 
 procedure TJsClosure.MaterializeLazy(R: TJsRealm);
@@ -463,7 +466,8 @@ begin
   inherited Trace(Tracer);
   Tracer.MarkValue(Target);
   Tracer.MarkValue(BoundThis);
-  Tracer.MarkValues(@BoundArguments[0], System.Length(BoundArguments));
+  if System.Length(BoundArguments) > 0 then
+    Tracer.MarkValues(@BoundArguments[0], System.Length(BoundArguments));
 end;
 
 { TJsSuspension }
@@ -475,7 +479,8 @@ begin
   Tracer.MarkValue(Callee);
   Tracer.MarkValue(ThisValue);
   Tracer.MarkValue(NewTarget);
-  Tracer.MarkValues(@Registers[0], System.Length(Registers));
+  if System.Length(Registers) > 0 then
+    Tracer.MarkValues(@Registers[0], System.Length(Registers));
   if Environment <> nil then
     Tracer.MarkCell(Environment);
   Tracer.MarkValue(Promise);
