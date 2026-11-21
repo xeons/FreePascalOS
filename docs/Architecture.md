@@ -12156,6 +12156,33 @@ the engines collect every 16 KiB. It found the script clones that ran
 again, a detached form submitting, and empty root arrays failing range
 checks in the collector.
 
+And a fuzz test of the pointer (`WebLoadTest.Pointer`): a long generated
+page (`tools/WebLoadTest/pointer-fuzz.html`: a sticky header and
+section titles, a fixed footer, floats, transformed, animated and
+absolutely placed paragraphs, an inner scroll container, a frame) whose
+listeners on every mouse event, selectionchange, timer and animation
+frame read sizes (laying the page out inside the event), remove,
+replace, split, merge, move and hide the text under the pointer and in
+the selection, set the selection (also into a detached tree), delete it
+from the document and scroll, is given 3000 seeded random moves,
+presses, drags (past the viewport's edges, the wheel turned in the
+middle), releases, double and triple clicks, wheel steps, resizes,
+copies and select-alls through `TPagePointer` (`WebBrowse.Pointer`: the
+web view's pointer steps over its `TPageSelection`), with the layout
+brought up to date or left behind (as the web view puts a slow layout
+off), painting, hit testing, the selection's rectangles and both
+collectors between steps; then 600 more with the engines collecting
+every 16 KiB. It passes when the document's selection stays in the
+document, the view's selection in its current index, its text and
+rectangles readable, and no script error is uncaught. `WebLoadTest
+pointer` runs it alone, `WEB_POINTER_VERBOSE=1` prints a line a step.
+It found a removed frame's freed document painted from a stale box and
+a steep edge rounded to cell -1 in libdrawing's rasterizer.
+webbrowse's `--do` drives the same pointer on real sites: `scroll:DY`,
+`hover:X,Y`, `press:X,Y`, `move:X,Y`, `release:X,Y`,
+`drag:X1,Y1,X2,Y2`, `dblclick:X,Y`, `tripleclick:X,Y`, `selectall` and
+`copy` (prints the selected text).
+
 `make web-script-test` (in `make test`) builds `tools/WebScriptTest`
 with libjavascript, libcss and libhttp's URL units. Each
 `scripts/*.js` runs in a fresh window over its `scripts/*.html` page (or
@@ -12244,7 +12271,11 @@ with the document's resources before the document goes).
   view, a new tab for a target, a background tab for a middle click or
   Ctrl+click, a new window for Shift); a label acts on its control, a
   summary opens its details. Dragging selects text (a double click a
-  word), Ctrl+C copies it to the system clipboard, Ctrl+A selects all.
+  word, a triple click the line), Ctrl+C copies it to the system
+  clipboard, Ctrl+A selects all; a drag held past the top or bottom
+  scrolls on every frame, the wheel during a drag moves its focus. The
+  page gets mousemove while a button is held, the click count in
+  mousedown and mouseup (`detail`), and dblclick.
   The text the page shows is indexed from the display list
   (`WebView.TextIndex`: each text run with its place, character
   positions from the font's glyph placement, a text-shadow copy once),
@@ -12255,7 +12286,31 @@ with the document's resources before the document goes).
   (script's getSelection sees it, selectionchange fires) and a range
   script selects is painted (`WebView.SelectionMapping`); after the
   display list changes the painted selection is found again from the
-  DOM range, which the DOM kept up to date.
+  DOM range, which the DOM kept up to date. Text in a position: sticky
+  or transformed box is placed where it is shown (`WebView.TextGroups`:
+  the display list's sticky and transform groups; the pointer is mapped
+  into a run's group, a range's rectangles out of it at the scroll
+  offset now).
+  The selection lives in `TPageSelection` (`WebView.PageSelection`, no
+  controls: host tools drive the same code). Its index points at the
+  layout's text boxes, which a layout frees (a page's handler that reads
+  a size, an animation, a frame), so the index is only read while it was
+  built from the display list of the layout as it is now
+  (`IndexCurrent`); a place from an older index is dropped and the
+  selection found again from the DOM range. The rule for the whole
+  pointer path: nothing of a hit (its box, a text run, a place in the
+  text) is used after an event was fired, every element an event is
+  fired at is held (retained) while it is dispatched (the hover's
+  target, the target of mousemove while pressed, the pressed link,
+  control and target through the click), and boxes and places are
+  looked up again afterwards. (The crash after scrolling Wikipedia's
+  Linux article and moving to select text was the hover reading the
+  hit's box style after the link previews' mouseover handler had laid
+  the page out and freed it.) A selection's range moved by script out of
+  its document's tree stops being the selection (`TLiveRange.Moved`: it
+  does not hold its nodes while it is one), and a removed frame's or
+  image's box lets go of its content at once (a display list built from
+  it while a slow layout waits drew a freed frame).
 - **Animations**: each frame advances the layout's CSS animations and
   transitions and queues their events; the view asks for frames while
   any runs.

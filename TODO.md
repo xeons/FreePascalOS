@@ -1476,6 +1476,16 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [x] Editing without libcontrols (WebView.FieldEditing) and a fuzz test
       typing into a page that replaces its fields under the editor
       (WebLoadTest.Editing); elements held across click and submit events
+- [x] No crash selecting text after scrolling (Wikipedia's Linux article):
+      the pointer path holds what it fires events at and looks boxes and
+      places up again after them (WebView.PageSelection); triple click,
+      mousemove while pressed, dblclick, autoscroll, the wheel during a
+      drag; sticky and transformed text selected where it is shown; a
+      pointer fuzz test (WebLoadTest.Pointer) and webbrowse pointer steps
+- [ ] DOM: TreeWalker, NodeIterator and NodeFilter (document.createTreeWalker
+      is missing)
+- [ ] Web view: selecting text inside frames (a press in a frame clears the
+      selection)
 - [ ] Web view: drawing a field's selection, dragging the bars of inner
       scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing

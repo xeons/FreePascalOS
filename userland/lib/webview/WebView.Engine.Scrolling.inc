@@ -233,6 +233,10 @@ begin
   end
   else if not ScrollInnerContainer(CssX, CssY, 0, Delta) then
     ScrollBy(0, Delta);
+  { Scrolled while dragging a selection: its focus follows the text now
+    under the pointer. }
+  if FSelecting and FDragged and (FPressButton = ButtonLeft) then
+    ExtendSelectionTo(FLastPointerX, FLastPointerY);
 end;
 
 procedure TWebEngineView.ScrollRectangleIntoView(X, Y, Width, Height: Double);

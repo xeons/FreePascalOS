@@ -1477,7 +1477,7 @@ WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/Te
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \
 	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
-	tools/WebLoadTest/editing-fuzz.html tools/WebBrowse/WebBrowse.Input.pas $(wildcard userland/lib/webview/WebView.*.pas)
+	tools/WebLoadTest/editing-fuzz.html tools/WebLoadTest/pointer-fuzz.html tools/WebBrowse/WebBrowse.Input.pas tools/WebBrowse/WebBrowse.Pointer.pas $(wildcard userland/lib/webview/WebView.*.pas)
 
 $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
 		$(WEB_BINDING_SOURCES)

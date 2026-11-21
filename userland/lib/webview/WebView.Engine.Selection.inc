@@ -18,46 +18,25 @@
 
 { WebView.Engine: the text index, selection, copying and finding. }
 
-function ValidPosition(Index: TPageTextIndex; constref Position: TTextPosition): Boolean;
-begin
-  Result := (Position.Run >= 0) and (Position.Run < Index.Count) and (Position.Offset >= 0) and
-    (Position.Offset <= Index.Run(Position.Run)^.TextLength);
-end;
-
-{ The index follows the display list; a selection that no longer fits
-  the new runs goes. }
+{ The index follows the display list of the layout as it is now
+  (TPageSelection rebuilds it when the layout changed and takes the
+  selection from the document's again). }
 procedure TWebEngineView.EnsureTextIndex;
 begin
-  if FPainter = nil then
-  begin
-    FTextIndex.Clear;
-    Exit;
-  end;
-  if FLayout.NeedsUpdate then
+  if (FLayout <> nil) and FLayout.NeedsUpdate then
     UpdateLayout;
-  FPainter.Refresh;
-  if FTextIndexValid and (FTextIndexVersion = FPainter.BuiltVersion) then
-    Exit;
-  FTextIndex.Build(FPainter.DisplayList);
-  FTextIndexVersion := FPainter.BuiltVersion;
-  FTextIndexValid := True;
-  { The runs changed: the painted selection is found again from the
-    document's, which the DOM kept up to date. }
-  FSelectionFromDocument := True;
-  if not ValidPosition(FTextIndex, FSelectionAnchor) or not ValidPosition(FTextIndex, FSelectionFocus) then
-  begin
-    FSelectionAnchor := TextPosition(-1, 0);
-    FSelectionFocus := FSelectionAnchor;
-  end;
-  PullSelectionFromDocument;
+  FSelection.Refresh;
+end;
+
+function TWebEngineView.TextViewport: TTextViewport;
+begin
+  Result := ViewportOfLayout(FLayout);
 end;
 
 procedure TWebEngineView.DocumentSelectionChanged;
 begin
-  if FSettingDocumentSelection then
-    Exit;
-  FSelectionFromDocument := True;
-  InvalidateViewport;
+  if FSelection.DocumentSelectionChanged then
+    InvalidateViewport;
   SelectionChanged;
 end;
 
@@ -67,86 +46,71 @@ begin
     FOnSelectionChanged(Self);
 end;
 
-procedure TWebEngineView.PushSelectionToDocument;
-var
-  AnchorNode, FocusNode: TNode;
-  AnchorOffset, FocusOffset: Integer;
-begin
-  if FDocument = nil then
-    Exit;
-  FSettingDocumentSelection := True;
-  try
-    try
-      if (FSelectionAnchor.Run >= 0) and
-        TextPositionToDomPoint(FTextIndex, FSelectionAnchor, AnchorNode, AnchorOffset) and
-        TextPositionToDomPoint(FTextIndex, FSelectionFocus, FocusNode, FocusOffset) and
-        (AnchorNode.NodeDocument = FDocument) and (FocusNode.NodeDocument = FDocument) and
-        AnchorNode.IsConnected and FocusNode.IsConnected then
-        FDocument.Selection.SetBaseAndExtent(AnchorNode, AnchorOffset, FocusNode, FocusOffset)
-      else
-        FDocument.Selection.RemoveAllRanges;
-    except
-      on EDomException do
-        FDocument.Selection.RemoveAllRanges;
-    end;
-  finally
-    FSettingDocumentSelection := False;
-  end;
-  FSelectionFromDocument := False;
-end;
-
-procedure TWebEngineView.PullSelectionFromDocument;
-var
-  Selection: TDocumentSelection;
-begin
-  if not FSelectionFromDocument or (FDocument = nil) or not FTextIndexValid then
-    Exit;
-  FSelectionFromDocument := False;
-  Selection := FDocument.Selection;
-  if Selection.Range = nil then
-  begin
-    FSelectionAnchor := TextPosition(-1, 0);
-    FSelectionFocus := FSelectionAnchor;
-    Exit;
-  end;
-  FSelectionAnchor := DomPointToTextPosition(FTextIndex, Selection.AnchorNode, Selection.AnchorOffset);
-  FSelectionFocus := DomPointToTextPosition(FTextIndex, Selection.FocusNode, Selection.FocusOffset);
-  if (FSelectionAnchor.Run < 0) or (FSelectionFocus.Run < 0) then
-  begin
-    FSelectionAnchor := TextPosition(-1, 0);
-    FSelectionFocus := FSelectionAnchor;
-  end;
-end;
-
 function TWebEngineView.TextPositionAt(X, Y: LongInt): TTextPosition;
 var
   Scale: Double;
-  ScrollX, ScrollY: Single;
+  View: TTextViewport;
 begin
   Result := TextPosition(-1, 0);
   if FLayout = nil then
     Exit;
   EnsureTextIndex;
   Scale := DeviceScale;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
-  Result := FTextIndex.PositionAt(X / Scale + ScrollX, Y / Scale + ScrollY, ScrollX, ScrollY);
+  View := TextViewport;
+  Result := FSelection.PositionAt(X / Scale + View.ScrollX, Y / Scale + View.ScrollY, View);
 end;
 
 procedure TWebEngineView.SetSelection(constref Anchor, Focus: TTextPosition);
 begin
-  if (TPageTextIndex.Compare(Anchor, FSelectionAnchor) = 0) and (TPageTextIndex.Compare(Focus, FSelectionFocus) = 0)
-     and (Anchor.Run = FSelectionAnchor.Run) then
+  if FSelection.Select(Anchor, Focus) then
+  begin
+    InvalidateViewport;
+    SelectionChanged;
+  end;
+end;
+
+procedure TWebEngineView.ExtendSelectionTo(X, Y: LongInt);
+var
+  Focus: TTextPosition;
+begin
+  { The place is found in the index as it is now; the anchor kept is
+    the one the index (rebuilt if the layout changed) has now. }
+  Focus := TextPositionAt(X, Y);
+  if (Focus.Run >= 0) and FSelection.Extend(Focus) then
+  begin
+    InvalidateViewport;
+    SelectionChanged;
+  end;
+end;
+
+function TWebEngineView.AutoscrollSelection: Boolean;
+var
+  Scale: Double;
+  Delta: Double;
+begin
+  Result := False;
+  if not FSelecting or not FDragged or (FPressButton <> ButtonLeft) or (FLayout = nil) then
     Exit;
-  FSelectionAnchor := Anchor;
-  FSelectionFocus := Focus;
-  PushSelectionToDocument;
-  InvalidateViewport;
-  SelectionChanged;
+  Scale := DeviceScale;
+  Delta := 0;
+  if FLastPointerY < 0 then
+    Delta := FLastPointerY / Scale
+  else if FLastPointerY > ViewportPixelHeight then
+    Delta := (FLastPointerY - ViewportPixelHeight) / Scale;
+  if Delta = 0 then
+    Exit;
+  ScrollBy(0, Delta);
+  ExtendSelectionTo(FLastPointerX, FLastPointerY);
+  Result := True;
 end;
 
 procedure TWebEngineView.ClearSelection;
 begin
-  SetSelection(TextPosition(-1, 0), TextPosition(-1, 0));
+  if FSelection.Clear then
+  begin
+    InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
 procedure TWebEngineView.SelectAll;
@@ -154,26 +118,27 @@ begin
   if FLayout = nil then
     Exit;
   EnsureTextIndex;
-  SetSelection(FTextIndex.FirstPosition, FTextIndex.LastPosition);
+  if FSelection.SelectAll then
+  begin
+    InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
 function TWebEngineView.HasSelection: Boolean;
 begin
-  if FSelectionFromDocument and (FLayout <> nil) then
+  if FLayout <> nil then
     EnsureTextIndex;
-  PullSelectionFromDocument;
-  Result := (FSelectionAnchor.Run >= 0) and (FSelectionFocus.Run >= 0) and
-    (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) <> 0);
+  Result := FSelection.HasSelection;
 end;
 
 function TWebEngineView.SelectedText: string;
 begin
   Result := '';
-  if not HasSelection then
+  if FLayout = nil then
     Exit;
   EnsureTextIndex;
-  if HasSelection then
-    Result := FTextIndex.TextBetween(FSelectionAnchor, FSelectionFocus);
+  Result := FSelection.SelectedText;
 end;
 
 procedure TWebEngineView.CopySelection;
@@ -191,42 +156,40 @@ begin
   if FLayout = nil then
     Exit;
   EnsureTextIndex;
-  Result := FTextIndex.AllText;
+  Result := FSelection.Index.AllText;
 end;
 
 function TWebEngineView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
 var
-  From, MatchStart, MatchEnd: TTextPosition;
+  From, MatchStart, MatchEnd, Anchor, Focus: TTextPosition;
   Rectangles: TTextRectangleArray;
-  ScrollX, ScrollY: Single;
 begin
   Result := False;
   if (FLayout = nil) or (Needle = '') then
     Exit;
   EnsureTextIndex;
   From := TextPosition(-1, 0);
-  if HasSelection then
+  if FSelection.HasSelection then
   begin
+    Anchor := FSelection.Anchor;
+    Focus := FSelection.Focus;
     { Again: after the match shown (or before it). }
-    if Forward = (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) < 0) then
-      From := FSelectionFocus
+    if Forward = (TPageTextIndex.Compare(Anchor, Focus) < 0) then
+      From := Focus
     else
-      From := FSelectionAnchor;
+      From := Anchor;
     if (Needle <> FFindText) then
-      if TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) < 0 then
-        From := FSelectionAnchor
+      if TPageTextIndex.Compare(Anchor, Focus) < 0 then
+        From := Anchor
       else
-        From := FSelectionFocus;
+        From := Focus;
   end;
   FFindText := Needle;
-  if not FTextIndex.Find(Needle, From, Forward, MatchCase, MatchStart, MatchEnd) then
+  if not FSelection.Index.Find(Needle, From, Forward, MatchCase, MatchStart, MatchEnd) then
     Exit;
   SetSelection(MatchStart, MatchEnd);
-  Rectangles := FTextIndex.RangeRectangles(MatchStart, MatchEnd);
+  Rectangles := FSelection.Index.RangeRectangles(MatchStart, MatchEnd, TextViewport);
   if (Length(Rectangles) > 0) and not Rectangles[0].Fixed then
-  begin
-    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
     ScrollRectangleIntoView(Rectangles[0].X, Rectangles[0].Y, Rectangles[0].Width, Rectangles[0].Height);
-  end;
   Result := True;
 end;
