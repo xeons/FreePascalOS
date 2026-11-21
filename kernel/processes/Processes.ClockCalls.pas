@@ -54,7 +54,8 @@ uses
   Kernel.WallClock,
   Processes.Process,
   Processes.Thread,
-  Processes.UserAccess;
+  Processes.UserAccess,
+  Debug.Output;
 
 const
   { 2000-01-01 and 2099-12-31: what the battery backed clock can hold. }
@@ -151,6 +152,33 @@ begin
   Result := -Int64(CopyToUser(TimeAddress, @Time, SizeOf(Time)));
 end;
 
+{ A line in the kernel log for every change of the clock. }
+procedure ReportAdjustment(OffsetNanoseconds: Int64; Gradually: Boolean);
+var
+  Magnitude: QWord;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('clock');
+  if Gradually then
+    DebugWrite('slewing the wall clock by ')
+  else
+    DebugWrite('stepped the wall clock by ');
+  if OffsetNanoseconds < 0 then
+  begin
+    DebugWrite('-');
+    Magnitude := QWord(-OffsetNanoseconds);
+  end
+  else
+    Magnitude := QWord(OffsetNanoseconds);
+  DebugWriteDecimal(Magnitude div 1000000);
+  DebugWrite('.');
+  DebugWriteDecimal((Magnitude mod 1000000) div 100000);
+  DebugWrite(' ms (process ');
+  DebugWriteDecimal(CurrentProcess^.ProcessId);
+  DebugWriteLine(')');
+  DebugEndMessage;
+end;
+
 function PerformAdjustWallClock(OffsetNanoseconds: Int64; Flags, RemainingAddress: QWord): Int64;
 var
   Remaining: Int64;
@@ -162,6 +190,7 @@ begin
     if not CallerIsRoot then
       Exit(Failure(ErrorNotPermitted));
     AdjustWallClock(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
+    ReportAdjustment(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
   end;
   Result := 0;
   if RemainingAddress <> 0 then
