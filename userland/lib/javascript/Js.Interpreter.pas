@@ -164,6 +164,10 @@ type
     function ForInNext(Iterator: TJsForInIterator; out Key: TJsValue): Integer;
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
+    { The source text of the callee of the call the running frame is at
+      ("a.b.c" of "a.b.c(x)"), '' when it is not a plain name or member
+      chain. }
+    function CurrentCalleeText: string;
     function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
     function DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
     function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
@@ -481,8 +485,75 @@ begin
 end;
 
 function TJsInterpreterRealm.NotCallable(Value: TJsValue): TJsValue;
+var
+  Callee: string;
 begin
-  Result := ThrowTypeError(ValueToPascal(Self, Value) + ' is not a function');
+  Callee := CurrentCalleeText;
+  if Callee = '' then
+    Callee := ValueToPascal(Self, Value);
+  Result := ThrowTypeError(Callee + ' is not a function');
+end;
+
+function TJsInterpreterRealm.CurrentCalleeText: string;
+const
+  MaximumCalleeLength = 120;
+var
+  Frame: PJsFrame;
+  Text: UnicodeString;
+  Line, Column, Offset, Start, Depth: Integer;
+  Character: WideChar;
+begin
+  Result := '';
+  if FFrameCount = 0 then
+    Exit;
+  Frame := @FFrames^[FFrameCount - 1];
+  if (Frame^.Code = nil) or (Frame^.Code.Source = nil) or Frame^.Code.Source.Builtin then
+    Exit;
+  Line := Frame^.Code.LineAt(Frame^.PC, Column);
+  if (Line <= 0) or (Column <= 0) then
+    Exit;
+  Text := Frame^.Code.Source.Text;
+  Offset := 1;
+  while (Line > 1) and (Offset <= Length(Text)) do
+  begin
+    if Text[Offset] = #10 then
+      Dec(Line);
+    Inc(Offset);
+  end;
+  Offset := Offset + Column - 1;
+  Start := Offset;
+  Depth := 0;
+  while (Offset <= Length(Text)) and (Offset - Start < MaximumCalleeLength) do
+  begin
+    Character := Text[Offset];
+    if Depth > 0 then
+    begin
+      if Character = '[' then
+        Inc(Depth)
+      else if Character = ']' then
+        Dec(Depth)
+      else if (Character = #10) or (Character = '(') then
+        Exit;
+    end
+    else if Character = '[' then
+      Inc(Depth)
+    else if not ((Character = '.') or (Character = '_') or (Character = '$') or (Character = '?') or
+      ((Character >= 'a') and (Character <= 'z')) or ((Character >= 'A') and (Character <= 'Z')) or
+      ((Character >= '0') and (Character <= '9'))) then
+      Break;
+    Inc(Offset);
+  end;
+  if (Offset > Length(Text)) or (Offset = Start) or (Depth <> 0) then
+    Exit;
+  { The chain must end where the arguments begin. }
+  Depth := Offset;
+  while (Depth <= Length(Text)) and ((Text[Depth] = ' ') or (Text[Depth] = #9)) do
+    Inc(Depth);
+  if (Depth > Length(Text)) or (Text[Depth] <> '(') then
+    Exit;
+  Result := UTF8Encode(Copy(Text, Start, Offset - Start));
+  if (Result <> '') and (Result[Length(Result)] in ['.', '?']) then
+    Result := '';
 end;
 
 { Errors }

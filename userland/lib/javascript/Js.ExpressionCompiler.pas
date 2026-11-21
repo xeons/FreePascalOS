@@ -184,7 +184,7 @@ end;
 function TJsExpressionCompiler.WritesTargetLast(Node: TJsNode): Boolean;
 begin
   Result := Node.Kind in [nkNumber, nkString, nkNull, nkTrue, nkFalse, nkBigInt, nkIdentifier, nkBinary,
-    nkCall, nkNew, nkMember, nkThis, nkFunction, nkArray, nkObject, nkRegExp];
+    nkCall, nkNew, nkMember, nkThis, nkFunction, nkRegExp];
   if (Node.Kind = nkUnary) and (Node.Op <> tkDelete) then
     Result := True;
 end;

@@ -91,6 +91,7 @@ begin
   begin
     FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
     TPageScriptExecutor(FExecutor).Environment.UserAgentText := WebViewUserAgent;
+    TPageScriptExecutor(FExecutor).Environment.LocalStorage := SharedLocalStorage;
     TPageScriptExecutor(FExecutor).OnAlert := @ScriptAlert;
     TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;
     TPageScriptExecutor(FExecutor).OnPrompt := @ScriptPrompt;

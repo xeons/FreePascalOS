@@ -204,7 +204,13 @@ type
   end;
 
 const
-  DefaultScriptUserAgent = 'Mozilla/5.0 (FreePascalOS) libweb/1.0';
+{$ifdef CPUAARCH64}
+  DefaultScriptUserAgent = 'Mozilla/5.0 (X11; FreePascalOS aarch64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
+    'Safari/537.36';
+{$else}
+  DefaultScriptUserAgent = 'Mozilla/5.0 (X11; FreePascalOS x86_64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
+    'Safari/537.36';
+{$endif}
 
 implementation
 

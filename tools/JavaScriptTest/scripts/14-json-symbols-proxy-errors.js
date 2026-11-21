@@ -52,6 +52,9 @@ try { null(); } catch (e) { console.log(e.constructor === TypeError); }
 try { new (function () {}.bind())().x.y; } catch (e) { console.log(e.name); }
 try { throw { custom: "object" }; } catch (e) { console.log(e.custom); }
 console.log(String(new TypeError("msg")), Error.prototype.toString.call({ name: "N", message: "M" }), new Error("x") instanceof Object);
+var calleeHolder = { inner: {} };
+try { calleeHolder.inner.missing(1); } catch (e) { console.log(e.message); }
+try { calleeHolder.inner["k"](); } catch (e) { console.log(e.message); }
 /* expected
 {"s":"q\"uote\n","n":1.5,"b":false,"nul":null,"d":"1970-01-01T00:00:00.000Z","nested":[1,{"a":[]}]}
 [null,null,null,null] " \ud800" undefined null
@@ -98,4 +101,6 @@ true
 TypeError
 object
 TypeError: msg N: M true
+calleeHolder.inner.missing is not a function
+calleeHolder.inner["k"] is not a function
 */
