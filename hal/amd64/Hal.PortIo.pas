@@ -40,7 +40,22 @@ procedure WritePortLongWord(Port: Word; Value: LongWord);
 { Writes to an unused port, giving slow legacy devices time to settle. }
 procedure WaitForPortIo;
 
+{ False: the processor has I/O instructions, no window is needed (the
+  AArch64 HAL maps one, Io.PciPortWindow). }
+function PortIoNeedsWindow: Boolean;
+function UsePortIoWindow(PhysicalBase, Length: QWord): Boolean;
+
 implementation
+
+function PortIoNeedsWindow: Boolean;
+begin
+  Result := False;
+end;
+
+function UsePortIoWindow(PhysicalBase, Length: QWord): Boolean;
+begin
+  Result := True;
+end;
 
 function ReadPortByte(Port: Word): Byte; assembler; nostackframe;
 asm

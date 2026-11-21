@@ -12403,13 +12403,20 @@ make toolchain ARCH=arm64    # build/toolchain/ppcrossa64 from the FPC sources
 make ARCH=arm64              # build/arm64/esp: BOOTAA64.EFI and kernel.elf
 make ARCH=arm64 userland system-disk   # build/arm64/system-disk.img
 make run ARCH=arm64          # QEMU virt with the system disk, serial on the terminal
-make arm64-test              # boot (with an SD card), coretest and session tests (not in make test)
+make arm64-test              # boot (with an SD card, GICv2 and GICv3), coretest (GICv2 and GICv3), panic trace and session tests
 ```
 
+`make test` runs the boot tests, the GICv2 coretest and the panic trace
+test too when `scripts/arm64-test-requirements.sh` finds
+qemu-system-aarch64, the edk2 AArch64 firmware, the cross compiler and
+the AArch64 binutils, and says what is missing otherwise.
+
 What runs today: the loader, the kernel on every processor, the drivers
-that are bus generic (virtio block and network, NVMe, xHCI with USB
-keyboards, pointers and storage, SD cards on SDHCI, e1000/e1000e, HD
-Audio, on PCIe with message interrupts), the ACPI platform devices, the
+that are bus generic (virtio block and network, NVMe, AHCI with disks and
+optical drives, xHCI with USB keyboards, pointers, storage and audio, SD
+cards on SDHCI, e1000/e1000e, HD Audio, on PCIe with message interrupts;
+AC'97 on a PCI interrupt line with its I/O ports through the root
+bridge's window), the ACPI platform devices, the
 file systems, the network stack, every kernel self test, and all of
 user mode: the runtime library, every library and program, the service
 manager, shells on the serial console, coretest
@@ -12419,11 +12426,9 @@ GOP framebuffer (QEMU's ramfb) with a USB keyboard and tablet
 opens a terminal, typed commands run). The Raspberry Pi 4's own devices
 have drivers (xHCI as a platform device, EMMC2, the VideoCore mailbox,
 GENET) that cannot run in QEMU; see "Trying it on a Raspberry Pi 4".
-Not working yet on QEMU's virt machine: AHCI finds no drives, and PCI
-devices on interrupt lines (INTx: AC'97, the plain e1000) get no
-interrupts; floating point exceptions do not trap (the Cortex-A72
-cannot), so a floating point division by zero gives an infinity instead
-of `EZeroDivide`.
+On QEMU's virt machine the kernel numbers its virtio disks before the
+AHCI ones, so the boot volume (a virtio disk: edk2's ArmVirt firmware
+cannot boot from AHCI) is disk0 as on x86-64.
 
 ### Boot path
 
@@ -12465,6 +12470,9 @@ of `EZeroDivide`.
 | framebuffer                  | UEFI GOP                                           |
 | serial console               | ACPI SPCR (PL011, SBSA UART, BCM2835 mini UART, 16550 with 32-bit registers) |
 | GIC distributor, CPU interface, GICv2m frame | ACPI MADT (GICD, GICC, MSI frame entries) |
+| GICv3 redistributors, ITS    | ACPI MADT (GICR entries, else each GICC's redistributor address; ITS entries) |
+| PCI I/O port window          | the root bridge's `_CRS` (its I/O range's translation offset) |
+| real-time clock              | QEMU virt's PL031 at its fixed address (checked by its PrimeCell ids; the tables do not list it), else the firmware's GetTime |
 | processors                   | ACPI MADT GICC entries (MPIDR affinity)            |
 | timer interrupt              | ACPI GTDT (the virtual timer's PPI)                |
 | PSCI and its conduit         | ACPI FADT ARM boot flags (HVC under QEMU, SMC on the Pi) |
@@ -12498,7 +12506,13 @@ inside the copy routines (see "Kernel memory protection").
 A user address space is only a TTBR0 table; the "kernel address space"
 loads an empty one. Kernel mappings are global and user mappings are not:
 they are tagged with the address space's ASID, so switching TTBR0
-invalidates nothing (`Memory.Arch.AddressSpaceIds`). The 8-bit ASIDs are
+invalidates nothing (`Memory.Arch.AddressSpaceIds`). Where
+ID_AA64MMFR0_EL1.ASIDBits says 16 (the Cortex-A72 and A76 do) the boot
+processor turns 16-bit ASIDs on (TCR_EL1.AS) before any address space
+has one, and the others take its translation control over; otherwise 8.
+The kernel option `asidbits=N` (N from 2) uses only 2^N of them, so the
+tests can make generations roll over (the GICv3 boot test uses 16, the
+GICv3 coretest 32; the first rollover is logged). The ASIDs are
 handed out by generations, as Linux does: a context (ASID and generation,
 kept in the never valid last entry of the user root table) of the current
 generation is loaded without a lock; otherwise the space gets a new ASID
@@ -12546,15 +12560,36 @@ program with SP at the argument count, as on x86-64.
   at the next instruction (as INT3 on x86-64). The dispatcher starts
   with X0 = the record, LR = 0. AAPCS64 has no red zone.
 - **Floating point:** V0-V31, FPCR and FPSR are saved and restored at
-  every thread switch (eagerly). Free Pascal 3.2.2 does not check FPSR
-  after floating point operations, and the Cortex-A72 does not trap, so
-  floating point exceptions go unnoticed.
+  every thread switch (eagerly). AArch64 processors set FPSR's flags
+  rather than trap, so user code is compiled with `-CE`
+  (CHECKFPUEXCEPTIONS, undocumented in Free Pascal 3.2.2 but there): the
+  compiler checks FPSR after each floating point operation and calls
+  `FPC_THROWFPUEXCEPTION`, which raises the exceptions
+  `SetExceptionMask` leaves unmasked (invalid operation,
+  division by zero, overflow by default, as on x86-64): `1.0 / 0`
+  raises `EZeroDivide`, and libjavascript, which masks them all, gets
+  its infinities. SysUtils clears the runtime's soft exception flags
+  before the exception is raised (`ClearFloatExceptionThenRaise`), as
+  the x86-64 runtime clears MXCSR after a trap. The compiler keeps the
+  operation's result in its register across that call and expects every
+  floating point register and the flags kept, which the RTL's Pascal
+  routine (rtl/aarch64) does not promise: it is renamed
+  `FPC_THROWFPUEXCEPTION_RAISE` in system.o at the RTL's build, and
+  `rtl/fpc/FloatCheck.aarch64.s` saves the registers around it under the
+  name the compiler calls. The RTL itself is built without `-CE`. rtltest
+  checks division by zero, overflow, an invalid operation, and masking
+  and unmasking.
 - **The processor:** `CallGetProcessorDescription` reads MIDR_EL1 for
   `sysinfo` ("Cortex-A72 r0p3"); `uname -m` says `aarch64`. Without AES
   or RDRAND equivalents used yet, AES runs from tables and random
   numbers are seeded from the clock (`RandomIsStrong` is False).
-- **Time of day:** the loader reads the firmware's GetTime and passes it
-  in `TBootInformation.FirmwareTime`; `Hal.RealTimeClock` adds the
+- **Time of day:** where there is a PL031 (`Hal.Pl031`: a device tree's
+  `arm,pl031`, or QEMU virt's fixed address when the ACPI tables are
+  QEMU's, checked by its PrimeCell ids) it is read at start and after
+  waking, and written whenever the wall clock is stepped
+  (`StepWallClockTo`, a stepping `AdjustWallClock`). Otherwise the
+  loader reads the firmware's GetTime and passes it in
+  `TBootInformation.FirmwareTime`; `Hal.RealTimeClock` adds the
   counter's time to it.
 
 ### Exceptions, interrupts and priority levels
@@ -12574,11 +12609,34 @@ The kernel's vectors and levels are those of x86-64 (level = vector div
 inter-processor requests, SGI 2 stop on panic, the timer PPI the clock,
 SPIs the device vectors) and each INTID the GIC priority of its level,
 (15 - level) x 16; the priority level is the CPU interface's priority mask
-register, so the GIC holds off exactly what CR8 does on x86-64. GICv2
-addresses processors by CPU interface number: each records its own from
-the distributor's banked target register. Device interrupts are SPIs;
-message interrupts go through the GICv2m frame when there is one (QEMU),
-otherwise PCIe devices use their INTx lines.
+register, so the GIC holds off exactly what CR8 does on x86-64.
+`Hal.Gic` drives the version the MADT's distributor entry (or the device
+tree's compatible) names. GICv2 (`Hal.GicV2`) addresses processors by
+CPU interface number: each records its own from the distributor's banked
+target register. GICv3 (`Hal.GicV3`) addresses them by affinity: the
+distributor runs in affinity routing mode (GICD_CTLR.ARE, every
+interrupt in group 1) and sends each SPI to an MPIDR (GICD_IROUTERn);
+each processor finds its redistributor by its affinity in the regions
+(`Hal.GicV3Redistributors`: GICR_TYPER, 128 or 256 KiB apart), wakes it
+and sets its SGIs and PPIs there; the CPU interface is the ICC system
+registers (`GicSystemRegisters.s`: IAR1, EOIR1, PMR as the priority
+level, SGIs through ICC_SGI1R_EL1 by affinity and target list, or to all
+others). The loader and the secondary entry open ICC_SRE_EL2 to EL1 when
+they leave EL2. Device interrupts are SPIs; message interrupts go
+through the GICv2m frame when there is one (QEMU with GICv2), or as LPIs
+through a GICv3's ITS (`Hal.GicV3Its`: a device table, a collection per
+processor, an interrupt translation table of 32 events per device,
+MAPD/MAPC/MAPTI/INV/SYNC through its command queue, the LPI
+configuration and pending tables of each redistributor; devices are
+told apart by their PCI requester id, which `ConnectMessageInterrupt`
+now carries; QEMU maps it one to one, an IORT's mappings are not read).
+Otherwise PCIe devices use their INTx lines (`_PRT` or the tree's
+`interrupt-map`).
+
+PCI I/O space is a window of memory on AArch64: `Io.PciPortWindow`
+hands `Hal.PortIo` the processor address of port 0 from the root
+bridge's `_CRS` (QEMU virt: 64 KiB at 3EFF0000h) or the ECAM host's
+"ranges", so devices with I/O BARs work (AC'97).
 
 The clock is the generic timer: the counter (the same on all processors)
 gives the time, each processor's virtual timer the one-shot clock
@@ -12602,6 +12660,24 @@ ExitBootServices without SetVirtualAddressMap it would need the runtime
 regions mapped at their physical addresses for the call, and the Pi's
 firmware implements it with PSCI anyway. Under test (`test-exit`) the kernel ends QEMU
 through semihosting with the x86-64 exit codes.
+
+Suspend to RAM is PSCI SYSTEM_SUSPEND where PSCI_FEATURES offers it
+(`HalOffersSuspendToRam`; `Io.AcpiSleep` takes that way when ACPI has no
+fixed hardware): the same steps as x86-64's S3 (`Processes.Suspend`),
+but a frozen processor turns itself off with CPU_OFF
+(`ArchParkFrozenProcessor`), since SYSTEM_SUSPEND wants every other
+processor off, and the boot processor wakes at `ArchSecondaryEntry`
+with the start-up record (`PrepareWakeEntry`), as CPU_ON starts the
+others again afterwards. The saved context (`SuspendContext.s`) holds
+X19-X30, SP, DAIF, TPIDR_EL0 and the priority level; the woken
+processors set up their vectors, translation, PAN, their GIC interface
+and clock again, and the boot processor the GIC distributor (and ITS)
+with every connected interrupt if waking reset it. QEMU's PSCI has no
+SYSTEM_SUSPEND: the kernel options `suspendtest psci-suspend=force` try
+it anyway during start-up (a self test, in the EL1 and GICv3 boot
+tests), so the firmware refuses and every processor comes back through
+CPU_OFF and CPU_ON and the drivers' power handlers run both ways; the
+sleep itself is untested.
 
 ### Native boot (device tree)
 
@@ -12679,7 +12755,7 @@ trigger and polarity from the flags).
 | What | From the tree |
 |---|---|
 | console (`Hal.SerialPort`) | `stdout-path`: `arm,pl011`/`arm,sbsa-uart` (QEMU; the Pi 5's debug UART at `10_7D00_1000`), `brcm,bcm2835-aux-uart`, `ns16550a`/`snps,dw-apb-uart` (`reg-shift`, `reg-io-width`); its interrupt |
-| GIC and processors (`Firmware.Madt`, `Firmware.DeviceTreeMachine`) | `arm,gic-400`/`arm,cortex-a15-gic` (distributor, CPU interface), `arm,gic-v2m-frame` (its SPIs from `arm,msi-base-spi`/`-num-spis` or the frame's type register); `arm,gic-v3` is read but not driven; `/cpus/cpu@N` `reg` as the MPIDR affinity, `enable-method` `psci` |
+| GIC and processors (`Firmware.Madt`, `Firmware.DeviceTreeMachine`) | `arm,gic-400`/`arm,cortex-a15-gic` (distributor, CPU interface), `arm,gic-v2m-frame` (its SPIs from `arm,msi-base-spi`/`-num-spis` or the frame's type register); `arm,gic-v3` (distributor, the first redistributor region) with an ITS below it (`arm,gic-v3-its`); `arm,pl031`; `/cpus/cpu@N` `reg` as the MPIDR affinity, `enable-method` `psci` |
 | timer (`Hal.GenericTimer`) | `arm,armv8-timer`: the third interrupt (virtual timer), `clock-frequency` if CNTFRQ_EL0 is 0 |
 | PSCI (`Hal.Psci`) | `arm,psci-1.0`/`-0.2` (`method` `hvc` or `smc`), `arm,psci` 0.1 with its `cpu_on` id |
 | PCI (`Io.Pci`, `Firmware.DeviceTreePci`) | `pci-host-ecam-generic`: ECAM `reg`, `bus-range`, `linux,pci-domain`; `ranges` windows (bus to processor addresses: `PciReadBar` gives the processor's); `interrupt-map` for INTx (`Io.PciLineInterrupts`); BARs nobody assigned get addresses from the windows (`Io.PciResources`, root bus only) |
@@ -12694,7 +12770,8 @@ display whose flushes are narrowed into it (`Drivers.NarrowFramebuffer`,
 `DisplayCapabilityNeedsFlush`).
 
 **Testing.** `make arm64-native-test` (`scripts/test-arm64-native.py`,
-not in `make test`) boots `qemu-system-aarch64 -machine virt,gic-version=2
+not in `make test`; a GICv3 case checks the redistributors, the ITS, the
+PL031 and the I/O window from the tree with an AC'97 card) boots `qemu-system-aarch64 -machine virt,gic-version=2
 -cpu cortex-a76 -smp 4 -m 2G -kernel fpos.img -initrd system-disk.img
 -append "test-exit init=/bin/true"` with virtio-net and ramfb, at EL1 and
 at EL2, and checks the stub, the tree's devices, GIC/timer/PSCI, four

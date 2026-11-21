@@ -78,9 +78,11 @@ function GlobalInterruptOfIsaIrq(Irq: Byte): LongWord;
   (the kernel debug shell's "interrupts"). }
 procedure WriteSharedLineSummary;
 
-{ Connects a message signalled interrupt to Handler. Returns False if no
-  vector is free. }
-function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
+{ Connects a message signalled interrupt of the device with PCI
+  requester id RequesterId (bus, device, function: what a GICv3 ITS
+  tells devices apart by) to Handler. Returns False if no vector is
+  free. }
+function ConnectMessageInterrupt(RequesterId: LongWord; Handler: TInterruptHandler; Context: Pointer;
   out Message: TInterruptMessage): Boolean;
 
 implementation
@@ -295,7 +297,7 @@ begin
   DebugEndMessage;
 end;
 
-function ConnectMessageInterrupt(Handler: TInterruptHandler; Context: Pointer;
+function ConnectMessageInterrupt(RequesterId: LongWord; Handler: TInterruptHandler; Context: Pointer;
   out Message: TInterruptMessage): Boolean;
 var
   Vector: Byte;
@@ -306,7 +308,7 @@ begin
   if not AllocateVector(Handler, Context, Vector) then
     Exit(False);
   Target := ChooseTargetProcessor;
-  if not ComposeMessageInterrupt(Vector, Target^.ApicId, Message.Address, Message.Data) then
+  if not ComposeMessageInterrupt(RequesterId, Vector, Target^.ApicId, Message.Address, Message.Data) then
   begin
     ReleaseLastVector(Vector);
     Exit(False);

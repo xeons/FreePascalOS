@@ -753,8 +753,29 @@ begin
   InitAnsi;
 end;
 
+{$ifdef CPUAARCH64}
+var
+  ErrorProcBeforeFloat: TErrorProc;
+
+{ A floating point exception found in FPSR (FPC_THROWFPUEXCEPTION) left
+  its flag in the runtime's soft exception flags; cleared before it
+  becomes an exception, as the x86-64 runtime clears MXCSR after a trap
+  (SysDispatchException), or the next unmasked exception would be
+  reported as this one again. }
+procedure ClearFloatExceptionThenRaise(ErrNo: LongInt; Address: CodePointer; Frame: Pointer);
+begin
+  if (ErrNo >= 205) and (ErrNo <= 208) then
+    SysResetFPU;
+  ErrorProcBeforeFloat(ErrNo, Address, Frame);
+end;
+{$endif}
+
 initialization
   InitExceptions;
+{$ifdef CPUAARCH64}
+  ErrorProcBeforeFloat := ErrorProc;
+  ErrorProc := @ClearFloatExceptionThenRaise;
+{$endif}
   InitInternational;
   SysConfigDir := '/etc';
   OnBeep := @SysBeep;

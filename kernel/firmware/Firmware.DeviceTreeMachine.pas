@@ -25,7 +25,8 @@
     CPU interface, the first two "reg" entries; a GICv2m frame below it,
     "arm,gic-v2m-frame", with its SPIs in "arm,msi-base-spi" and
     "arm,msi-num-spis" or else in the frame's own type register) and
-    GICv3 ("arm,gic-v3": distributor and redistributors);
+    GICv3 ("arm,gic-v3": distributor and the first redistributor
+    region, and an ITS below it, "arm,gic-v3-its");
   - the processors: /cpus/cpu@N with device_type "cpu", their "reg"
     being the MPIDR affinity, started by PSCI ("enable-method");
   - the generic timer ("arm,armv8-timer"): its interrupts are the
@@ -54,6 +55,10 @@ type
     DistributorAddress: QWord;
     CpuInterfaceAddress: QWord;
     RedistributorAddress: QWord;
+    { The first redistributor region's size, and the first ITS
+      ("arm,gic-v3-its" below the GIC), 0 if none. }
+    RedistributorSize: QWord;
+    ItsAddress: QWord;
     MessageFrameAddress: QWord;
     { 0 if the tree does not say: read the frame's type register. }
     MessageFrameFirstSpi: LongWord;
@@ -152,6 +157,16 @@ begin
   end;
 end;
 
+procedure DescribeTranslationService(var Gic: TDeviceTreeGic);
+var
+  Its: LongInt;
+  Size: QWord;
+begin
+  Its := FindFirstCompatible('arm,gic-v3-its');
+  if (Its = NoNode) or not NodeRegisterPhysical(SystemDeviceTree^, Its, 0, Gic.ItsAddress, Size) then
+    Gic.ItsAddress := 0;
+end;
+
 function DescribeDeviceTreeGic(out Gic: TDeviceTreeGic): Boolean;
 var
   Tree: PDeviceTree;
@@ -164,6 +179,8 @@ begin
   Gic.DistributorAddress := 0;
   Gic.CpuInterfaceAddress := 0;
   Gic.RedistributorAddress := 0;
+  Gic.RedistributorSize := 0;
+  Gic.ItsAddress := 0;
   Gic.MessageFrameAddress := 0;
   Gic.MessageFrameFirstSpi := 0;
   Gic.MessageFrameSpiCount := 0;
@@ -178,7 +195,11 @@ begin
   if Gic.Version = 2 then
     Gic.CpuInterfaceAddress := SecondAddress
   else
+  begin
     Gic.RedistributorAddress := SecondAddress;
+    Gic.RedistributorSize := Size;
+    DescribeTranslationService(Gic);
+  end;
   DescribeMessageFrame(Gic);
   Result := True;
 end;

@@ -42,7 +42,7 @@ function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: Lo
 
 { What a device writes, and where, to raise Vector on processor
   TargetProcessorId. False if the platform has no message interrupts. }
-function ComposeMessageInterrupt(Vector: Byte; TargetProcessorId: LongWord;
+function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 
 implementation
@@ -113,7 +113,7 @@ begin
   Result := RouteGlobalInterrupt(Gsi, Vector, Byte(TargetProcessorId), ActiveLow, LevelTriggered);
 end;
 
-function ComposeMessageInterrupt(Vector: Byte; TargetProcessorId: LongWord;
+function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 begin
   Address := MessageAddressBase or (QWord(TargetProcessorId and $FF) shl MessageDestinationShift);

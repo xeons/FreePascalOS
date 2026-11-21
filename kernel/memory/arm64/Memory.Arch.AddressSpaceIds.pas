@@ -21,13 +21,18 @@
 
   User mappings are tagged in the TLB with the ASID TTBR0_EL1 held when
   they were cached, so switching address spaces only loads TTBR0_EL1
-  with the next space's root and ASID: nothing is invalidated. The 8-bit
-  ASIDs every AArch64 processor has (TCR_EL1.AS = 0) are handed out with
-  generations, the scheme Linux uses:
+  with the next space's root and ASID: nothing is invalidated. Every
+  AArch64 processor has 8-bit ASIDs; most (ID_AA64MMFR0_EL1.ASIDBits = 2:
+  the Cortex-A72 and A76 among them) have 16-bit ones, which the boot
+  processor turns on (TCR_EL1.AS; the other processors take its
+  translation control over) before any address space has one. The
+  kernel option asidbits=N uses only the first 2^N (N at least 2), so
+  the tests can make generations roll over often. They are handed out
+  with generations, the scheme Linux uses:
 
   - An address space's context is its ASID plus the generation it was
-    given in: the generation's number above bit 9, the ASID in bits 1-8,
-    and bit 0 always clear, so the context can be kept in a translation
+    given in: the generation's number above the ASID, the ASID from bit
+    1 up, and bit 0 always clear, so the context can be kept in a translation
     table entry that is never valid (Memory.Arch.PageTables). A context of the
     current generation is valid as it is; switching to it takes no lock
     (the common case).
@@ -52,11 +57,16 @@ unit Memory.Arch.AddressSpaceIds;
 interface
 
 const
-  AsidBits = 8;
-  AsidCount = 1 shl AsidBits;
-  AsidMask = AsidCount - 1;
   { The ASID of the kernel's empty user half. }
   KernelAsid = 0;
+
+{ Turns 16-bit ASIDs on where the processor has them (the boot
+  processor, before any address space runs) and reads asidbits=. }
+procedure InitializeAddressSpaceIds;
+{ How many bits of ASID are used (8 or 16, fewer with asidbits=). }
+function AddressSpaceIdBits: LongWord;
+{ How many generations began after the first. }
+function AddressSpaceIdRollovers: QWord;
 
 { The ASID the address space whose context word is Context runs with on
   this processor, giving it one if its context is from an older
@@ -72,20 +82,33 @@ uses
   Runtime.Memory,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
-  Kernel.Processors;
+  Kernel.Processors,
+  Kernel.Options,
+  Debug.Output;
 
 const
   AsidShift = 1;
-  GenerationStep = PtrUInt(AsidCount) shl AsidShift;
-  GenerationMask = not (GenerationStep - 1);
-  UsedWordCount = AsidCount div 64;
+  MaximumAsidBits = 16;
+  MaximumAsidCount = 1 shl MaximumAsidBits;
+  MaximumUsedWords = MaximumAsidCount div 64;
+  MinimumAsidBits = 2;
+  { TCR_EL1.AS: 16-bit ASIDs. }
+  TranslationControlWideAsids = QWord(1) shl 36;
+  MemoryModelAsidBitsShift = 4;
+  MemoryModelAsidBits16 = 2;
 
 var
   AsidLock: TSpinLock;
+  AsidBits: LongWord = 8;
+  AsidCount: LongWord = 1 shl 8;
+  AsidMask: LongWord = (1 shl 8) - 1;
+  GenerationStep: PtrUInt = PtrUInt(1 shl 8) shl AsidShift;
+  GenerationMask: PtrUInt = not ((PtrUInt(1 shl 8) shl AsidShift) - 1);
   { The current generation; the first is GenerationStep, so a context of
     zero (a new address space) is never current. }
-  Generation: PtrUInt = GenerationStep;
-  UsedAsids: array[0..UsedWordCount - 1] of QWord = (1, 0, 0, 0);
+  Generation: PtrUInt = PtrUInt(1 shl 8) shl AsidShift;
+  Rollovers: QWord = 0;
+  UsedAsids: array[0..MaximumUsedWords - 1] of QWord;
   NextAsid: LongWord = 1;
   { The context each processor runs with, 0 once a new generation began
     and it has not loaded a context since. }
@@ -93,6 +116,57 @@ var
   { The context each processor ran with when the last generation began. }
   ReservedContexts: array[0..MaximumProcessors - 1] of PtrUInt;
   FlushPending: array[0..MaximumProcessors - 1] of Boolean;
+
+function ArchReadTranslationControl: QWord; external name 'ArchReadTranslationControl';
+procedure ArchWriteTranslationControl(Value: QWord); external name 'ArchWriteTranslationControl';
+function ArchReadMemoryModelFeatures0: QWord; external name 'ArchReadMemoryModelFeatures0';
+
+procedure UseAsidBits(Bits: LongWord);
+begin
+  AsidBits := Bits;
+  AsidCount := LongWord(1) shl Bits;
+  AsidMask := AsidCount - 1;
+  GenerationStep := PtrUInt(AsidCount) shl AsidShift;
+  GenerationMask := not (GenerationStep - 1);
+  Generation := GenerationStep;
+end;
+
+procedure InitializeAddressSpaceIds;
+var
+  Hardware: LongWord;
+  Wanted: QWord;
+begin
+  InitializeSpinLock(AsidLock);
+  ZeroMemory(@UsedAsids, SizeOf(UsedAsids));
+  UsedAsids[0] := 1;
+  Hardware := 8;
+  if ((ArchReadMemoryModelFeatures0 shr MemoryModelAsidBitsShift) and $F) = MemoryModelAsidBits16 then
+  begin
+    ArchWriteTranslationControl(ArchReadTranslationControl or TranslationControlWideAsids);
+    Hardware := 16;
+  end;
+  if GetKernelOptionNumber('asidbits', Wanted) and (Wanted >= MinimumAsidBits) and (Wanted < Hardware) then
+    UseAsidBits(LongWord(Wanted))
+  else
+    UseAsidBits(Hardware);
+  DebugBeginMessage;
+  DebugWriteTag('memory');
+  DebugWriteDecimal(AsidBits);
+  DebugWrite('-bit address space identifiers (the processor has ');
+  DebugWriteDecimal(Hardware);
+  DebugWriteLine(')');
+  DebugEndMessage;
+end;
+
+function AddressSpaceIdBits: LongWord;
+begin
+  Result := AsidBits;
+end;
+
+function AddressSpaceIdRollovers: QWord;
+begin
+  Result := Rollovers;
+end;
 
 function IsCurrent(Context: PtrUInt): Boolean;
 begin
@@ -119,7 +193,8 @@ begin
   UsedAsids[Asid shr 6] := UsedAsids[Asid shr 6] or (QWord(1) shl (Asid and 63));
 end;
 
-{ A free ASID from From upwards, 0 if there is none. }
+{ A free ASID from From upwards, 0 if there is none. Whole words of
+  used ones are passed over at once. }
 function FindFreeAsid(From: LongWord): LongWord;
 var
   Asid: LongWord;
@@ -127,6 +202,11 @@ begin
   Asid := From;
   while Asid < AsidCount do
   begin
+    if ((Asid and 63) = 0) and (Asid + 64 <= AsidCount) and (UsedAsids[Asid shr 6] = High(QWord)) then
+    begin
+      Inc(Asid, 64);
+      Continue;
+    end;
     if not AsidIsUsed(Asid) then
       Exit(Asid);
     Inc(Asid);
@@ -141,7 +221,15 @@ var
   Context: PtrUInt;
 begin
   AtomicStore(Generation, Generation + GenerationStep);
-  ZeroMemory(@UsedAsids, SizeOf(UsedAsids));
+  Inc(Rollovers);
+  if Rollovers = 1 then
+  begin
+    DebugBeginMessage;
+    DebugWriteTag('memory');
+    DebugWriteLine('address space identifiers used up: a new generation began');
+    DebugEndMessage;
+  end;
+  ZeroMemory(@UsedAsids, ((AsidCount + 63) div 64) * SizeOf(QWord));
   MarkAsidUsed(KernelAsid);
   for Index := 0 to MaximumProcessors - 1 do
   begin

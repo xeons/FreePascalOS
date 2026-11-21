@@ -63,7 +63,21 @@ USER_ROOT_DIRECTORY := $(USER_BUILD_DIRECTORY)/root
 # the addresses after a runtime error, and where a block was freed in a
 # heap check report.
 USER_FRAME_FLAGS := -OoNOSTACKFRAME
-USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
+# AArch64 processors set FPSR's flags instead of trapping floating point
+# exceptions: -CE (CHECKFPUEXCEPTIONS) makes the compiler check FPSR
+# after each floating point operation in the libraries and programs and
+# call the runtime's FPC_THROWFPUEXCEPTION (rtl/aarch64), which raises
+# the unmasked ones, as the x86-64 processor's traps do
+# (SetExceptionMask masks them). The compiler expects the call to keep
+# every floating point register, which the RTL's Pascal routine does not
+# promise: it is renamed in system.o, and rtl/fpc/FloatCheck.aarch64.s
+# keeps the registers around it. The runtime library itself is built
+# without -CE (its own floating point code expects no such calls).
+USER_FLOAT_CHECK_FLAGS :=
+ifeq ($(ARCH),arm64)
+  USER_FLOAT_CHECK_FLAGS := -CE
+endif
+USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) $(USER_FLOAT_CHECK_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
 
 # The user runtime library is the Free Pascal RTL: the FreePascalOS parts
 # in rtl/fpc, everything generic from the compiler's source tree.
@@ -198,6 +212,10 @@ $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.i
 	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_prc.pas
 	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_dll.pas
 	@rm -f $(RTL_USER_DIRECTORY)/buildrtl.o
+ifeq ($(ARCH),arm64)
+	$(OBJCOPY) --redefine-sym FPC_THROWFPUEXCEPTION=FPC_THROWFPUEXCEPTION_RAISE $(RTL_USER_DIRECTORY)/system.o
+	$(TARGET_AS) -o $(RTL_USER_DIRECTORY)/FloatCheck.o rtl/fpc/FloatCheck.aarch64.s
+endif
 
 # libsystem: the runtime library (System, SysUtils, Classes, ...), the
 # shared runtime units and Sys.*.

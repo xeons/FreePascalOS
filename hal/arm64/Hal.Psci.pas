@@ -48,6 +48,18 @@ function PsciSuspendProcessor(PowerState: LongWord): Boolean;
   as offered by a 0.2 firmware), and whether its power states use the
   extended format (the state type in bit 30 rather than bit 16). }
 function PsciOffersProcessorSuspend(out ExtendedStateFormat: Boolean): Boolean;
+{ Whether the firmware offers SYSTEM_SUSPEND (suspend to RAM; PSCI 1.0
+  PSCI_FEATURES). }
+function PsciOffersSystemSuspend: Boolean;
+{ Suspends the machine to RAM; every other processor must be off
+  (PsciTurnOffThisProcessor). Waking, the boot processor starts at the
+  physical address EntryPoint with its MMU off and Context in X0, as
+  PsciStartProcessor's processors do. Returns only if the firmware
+  refused. }
+procedure PsciSuspendSystem(EntryPoint, Context: QWord);
+{ CPU_OFF: this processor stops until started again
+  (PsciStartProcessor). Returns only if the firmware refused. }
+procedure PsciTurnOffThisProcessor;
 { Never return when they work. }
 procedure PsciPowerOff;
 procedure PsciReset;
@@ -68,6 +80,8 @@ const
   FeatureExtendedStateFormat = 2;
   VersionOnePointZero = $00010000;
   FunctionSystemOff = $84000008;
+  FunctionSystemSuspend = $C400000E;
+  FunctionCpuOff = $84000002;
   FunctionSystemReset = $84000009;
   ResultSuccess = 0;
   ResultAlreadyOn = QWord(-4);
@@ -165,6 +179,25 @@ begin
     Exit(False);
   ExtendedStateFormat := (Features and FeatureExtendedStateFormat) <> 0;
   Result := True;
+end;
+
+function PsciOffersSystemSuspend: Boolean;
+begin
+  if not Available or (CpuOnFunction <> FunctionCpuOn) or (PsciVersion < VersionOnePointZero) then
+    Exit(False);
+  Result := Int64(CallPsci(FunctionFeatures, FunctionSystemSuspend, 0, 0)) >= 0;
+end;
+
+procedure PsciSuspendSystem(EntryPoint, Context: QWord);
+begin
+  if Available then
+    CallPsci(FunctionSystemSuspend, EntryPoint, Context, 0);
+end;
+
+procedure PsciTurnOffThisProcessor;
+begin
+  if Available then
+    CallPsci(FunctionCpuOff, 0, 0, 0);
 end;
 
 procedure PsciPowerOff;

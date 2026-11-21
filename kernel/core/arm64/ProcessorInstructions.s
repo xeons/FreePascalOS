@@ -161,6 +161,20 @@ ROUTINE ArchReadTranslationControl
     mrs     x0, tcr_el1
     ret
 
+// A new translation control (TCR_EL1.AS changed): nothing cached under
+// the old one may be used.
+ROUTINE ArchWriteTranslationControl
+    msr     tcr_el1, x0
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    ret
+
+ROUTINE ArchReadMemoryModelFeatures0
+    mrs     x0, id_aa64mmfr0_el1
+    ret
+
 ROUTINE ArchReadMemoryAttributes
     mrs     x0, mair_el1
     ret

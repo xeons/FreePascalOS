@@ -118,6 +118,7 @@ uses
   Kernel.PanicTest,
   Kernel.StackTraceSelfTest,
   Kernel.RandomSelfTest,
+  Kernel.Arch.PlatformSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.MappedFiles,
@@ -360,6 +361,7 @@ begin
   RunSynchronizationSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
+  RunPlatformSelfTest;
   RunHeapCheckSelfTest;
   RunProtectionSelfTests;
   RunProtectionFaultTest;

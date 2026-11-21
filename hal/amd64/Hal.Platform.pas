@@ -78,6 +78,10 @@ procedure HalInitializeSecondaryProcessor;
 { Before suspend to RAM: keeps the interrupt routing and pauses the
   clock. }
 procedure HalPrepareForSleep;
+{ False: x86-64 machines suspend through ACPI S3 (Io.AcpiSleep), not
+  the HAL. }
+function HalOffersSuspendToRam: Boolean;
+procedure HalEnterSuspendToRam(WakeVector: QWord);
 { After waking, on the boot processor: the legacy PICs masked again, its
   local APIC as before, the interrupt routing put back and the clock
   continued from where it paused. }
@@ -267,6 +271,15 @@ begin
   PauseTimeStampClock;
   if UsesParavirtualClock then
     PauseParavirtualClock;
+end;
+
+function HalOffersSuspendToRam: Boolean;
+begin
+  Result := False;
+end;
+
+procedure HalEnterSuspendToRam(WakeVector: QWord);
+begin
 end;
 
 procedure HalResumeBootProcessor;

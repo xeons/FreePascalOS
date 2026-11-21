@@ -10,4 +10,5 @@ build/
 !kernel/core/arm64/*.s
 !boot/uefi/arm64/*.s
 !boot/native/arm64/*.s
+!rtl/fpc/*.s
 __pycache__/
