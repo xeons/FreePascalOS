@@ -78,6 +78,8 @@ type
     CommitLimitPages: QWord;
     ProcessCountLimit: LongWord;
     OomScoreAdjust: LongInt;
+    { The starting process's restrictions (Processes.Restrictions). }
+    Restrictions: LongWord;
     { More handles it gets, with their numbers (after the standard ones,
       so a passed 0, 1 or 2 replaces one). }
     PassedHandles: TPassedHandles;
@@ -400,6 +402,7 @@ begin
     SetHandleLimit(Process^.Handles, Startup.HandleLimit);
   Process^.ProcessCountLimit := Startup.ProcessCountLimit;
   Process^.OomScoreAdjust := Startup.OomScoreAdjust;
+  Process^.Restrictions := Startup.Restrictions;
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then
   begin

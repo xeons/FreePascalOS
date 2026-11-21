@@ -51,6 +51,7 @@ uses
   Sys.ProcessList,
   Sys.SystemUsage,
   Sys.MemoryStatus,
+  Sys.Restrictions,
   Sys.Power,
   Sys.Time,
   Sys.TimeZones,

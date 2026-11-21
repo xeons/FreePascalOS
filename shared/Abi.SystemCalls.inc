@@ -1069,6 +1069,30 @@ const
     mappings); 0, the default, is no limit. Once there is a limit, only
     root may raise it or take it away. }
   ProcessLimitCommit = 3;
+  { Restrictions the process puts on itself (Value: Restrict* flags to
+    add; the call returns the flags before). They are only ever added,
+    never taken away - not even by root - and the processes it starts
+    inherit them: what a browser's content process (a renderer) runs
+    under, so a page that takes it over still cannot reach the network,
+    the user's files or other programs. Refused calls fail with
+    ErrorAccessDenied (process control with ErrorNotPermitted). }
+  ProcessLimitRestrictions = 6;
+  { No sockets. }
+  RestrictNetwork = $01;
+  { Nothing opened for writing, created, removed, renamed, linked or
+    changed in the file system. }
+  RestrictFileWrites = $02;
+  { Files opened or looked at only under /lib and /etc (libraries,
+    fonts, the system's settings), and of the devices only /dev/null,
+    /dev/random and /dev/urandom. }
+  RestrictFileReads = $04;
+  { No processes started. }
+  RestrictProcessCreation = $08;
+  { No named ports made or connected to (the display server, services). }
+  RestrictPortConnections = $10;
+  { No other process ended, stopped, continued or asked to end. }
+  RestrictProcessControl = $20;
+  RestrictionsAll = $3F;
 
   { Protections (CallCommitMemory, CallProtectMemory, TAbiMemoryInformation). }
   MemoryNoAccess = 0;
