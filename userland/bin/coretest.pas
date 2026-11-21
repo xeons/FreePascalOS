@@ -37,6 +37,10 @@
     * watching files and folders for changes made by other processes,
       on several file system types (watchtest), and the permission a
       watch needs,
+    * mounts: the memory volume /etc/fstab puts on /tmp (coretest mounts
+      the table first, as the service manager does), a test volume at a
+      folder with FAT owner options, unmounting busy and idle, renames
+      across refused, tmpfs pages given back, file times (mounttest),
     * pseudo-terminals: a shell on one, typed into through the master
       side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
     * notifications and requests to end: taken or left to the system,
