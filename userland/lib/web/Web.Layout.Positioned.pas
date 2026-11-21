@@ -142,7 +142,12 @@ begin
   if AutoHeight and HasTop and HasBottom then
     ChildInput.FixedHeight := ContainingHeight - TopValue - BottomValue - Box.Margin[sideTop] -
       Box.Margin[sideBottom];
-  Box.MarkNeedsLayout;
+  { Laid out again whenever its containing block is (the static position
+    and the containing block's size come from that layout). Only the box
+    is marked: its ancestors were laid out already, and marking them
+    (MarkNeedsLayout) left the tree dirty after every layout of a page
+    with fixed boxes, laid out after the viewport. }
+  Include(Box.Flags, bfNeedsLayout);
   SavedMargins := Box.Margin;
   LayoutBox(Box, ChildInput);
   { The layout resolved the margins again (auto as 0). }

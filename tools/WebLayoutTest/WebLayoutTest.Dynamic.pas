@@ -159,6 +159,21 @@ begin
     FreeLayout(Layout, Document);
     Document := nil;
   end;
+  { Fixed and absolutely positioned boxes (one inside an inline box, as
+    Next.js's route announcer is) are laid out after their ancestors: a
+    layout must leave nothing due, else every frame lays out again. }
+  Layout := LayoutText('<body><div style="position: fixed; top: 0">bar</div><p>text ' +
+    '<span><b style="position: absolute; left: 4px">abs</b></span></p><div style="position: relative">' +
+    '<i style="position: absolute; right: 0">in</i></div></body>', 600, Document);
+  try
+    Check(not Layout.NeedsUpdate, 'incremental: nothing due after laying out positioned boxes');
+    Document.Body.AppendChild(Document.CreateElement('span'));
+    Layout.Update;
+    Check(not Layout.NeedsUpdate, 'incremental: nothing due after a box was added beside them');
+  finally
+    FreeLayout(Layout, Document);
+    Document := nil;
+  end;
 end;
 
 procedure CheckStateInvalidation;

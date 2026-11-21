@@ -506,9 +506,10 @@ begin
     end;
     if Clock >= Deadline then
     begin
-      WriteLn(StdErr, Format('webbrowse: timed out after %.0f s (state %d, %d fetches active, %d url() images pending)',
-        [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State), FPage.Fetcher.ActiveJobCount,
-        FSink.PendingStyleImageCount]));
+      WriteLn(StdErr, Format('webbrowse: timed out after %.0f s (state %d, %d fetches active, %d url() images pending, ' +
+        'a task ready: %s, layout due: %s)', [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State),
+        FPage.Fetcher.ActiveJobCount, FSink.PendingStyleImageCount, BoolToStr(FPage.Loop.HasReadyTask, 'yes', 'no'),
+        BoolToStr((FLayout <> nil) and FLayout.NeedsUpdate, 'yes', 'no')]));
       Result := 2;
       Break;
     end;
