@@ -997,14 +997,12 @@ begin
     if Result < 0 then
       Result := Failure(ErrorTooManyHandles);
   end
-  else if NewHandle >= MaximumHandles then
+  else if NewHandle >= Process^.Handles.Limit then
     Result := Failure(ErrorBadHandle)
+  else if (NewHandle <> Handle) and not SetHandle(Process^.Handles, Integer(NewHandle), Kind, ObjectBody) then
+    Result := Failure(ErrorOutOfMemory)
   else
-  begin
-    if NewHandle <> Handle then
-      SetHandle(Process^.Handles, Integer(NewHandle), Kind, ObjectBody);
     Result := NewHandle;
-  end;
   ReleaseMutex(Process^.Lock);
 end;
 

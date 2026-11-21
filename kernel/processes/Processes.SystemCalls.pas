@@ -84,6 +84,8 @@ uses
   Processes.Security,
   Processes.SecurityCalls,
   Processes.AffinityCalls,
+  Processes.LimitCalls,
+  Processes.HandlePassing,
   Processes.Shutdown,
   Processes.Suspend,
   Processes.ThreadControl,
@@ -258,6 +260,11 @@ begin
   Result := ErrorNone;
 end;
 
+const
+  { The bytes of TAbiProcessCreation up to Flags: the whole record as
+    programs from before ProcessPassHandles know it. }
+  CreationBaseSize = 10 * SizeOf(QWord);
+
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
   Credentials: TProcessCredentials;
@@ -277,7 +284,13 @@ var
   Error: LongInt;
   NewTerminal: Pointer;
 begin
-  Error := CopyFromUser(@Creation, CreationAddress, SizeOf(Creation));
+  { Programs from before ProcessPassHandles pass a record ending at
+    Flags: the rest is read only when the flag says it is there. }
+  FillMemory(@Creation, SizeOf(Creation), 0);
+  Error := CopyFromUser(@Creation, CreationAddress, CreationBaseSize);
+  if (Error = ErrorNone) and ((Creation.Flags and ProcessPassHandles) <> 0) then
+    Error := CopyFromUser(PByte(@Creation) + CreationBaseSize, CreationAddress + CreationBaseSize,
+      SizeOf(Creation) - CreationBaseSize);
   if Error = ErrorNone then
     Error := CopyStringFromUser(QWord(Creation.Path), @UserPath[0], ProcessPathCapacity);
   if Error <> ErrorNone then
@@ -358,7 +371,23 @@ begin
       { Keep the objects alive while the child is being set up. }
       ReferenceObject(Startup.StandardObjects[StandardIndex]);
   end;
+  { The child starts with the caller's limits. }
+  Startup.HandleLimit := Caller^.Handles.Limit;
+  Startup.RegionLimit := Caller^.AddressSpace^.RegionLimit;
   ReleaseMutex(Caller^.Lock);
+  Error := ErrorNone;
+  if (Creation.Flags and ProcessPassHandles) <> 0 then
+    Error := CollectPassedHandles(Caller, QWord(Creation.PassedHandles), Creation.PassedHandleCount,
+      Startup.PassedHandles);
+  if Error <> ErrorNone then
+  begin
+    for StandardIndex := 0 to 2 do
+      if Startup.StandardObjects[StandardIndex] <> nil then
+        DereferenceObject(Startup.StandardObjects[StandardIndex]);
+    FreeStringList(Arguments);
+    FreeStringList(Environment);
+    Exit(Failure(Error));
+  end;
   { A group for the foreground: of the terminal that is its standard
     input, which becomes its controlling terminal (a terminal window's
     shell), or else of the one it inherits. }
@@ -380,6 +409,7 @@ begin
     if Startup.StandardObjects[StandardIndex] <> nil then
       DereferenceObject(Startup.StandardObjects[StandardIndex]);
   end;
+  ReleasePassedHandles(Startup.PassedHandles);
   FreeStringList(Arguments);
   FreeStringList(Environment);
   if Error <> ErrorNone then
@@ -820,6 +850,8 @@ begin
     CallSetNodeName: Result := PerformSetNodeName(Argument0);
     CallGetProcessorDescription: Result := PerformGetProcessorDescription(Argument0);
     CallGetMachineModel: Result := PerformGetMachineModel(Argument0, Argument1);
+    CallGetProcessResources: Result := PerformGetProcessResources(Argument0, Argument1);
+    CallSetProcessLimit: Result := PerformSetProcessLimit(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
   else
