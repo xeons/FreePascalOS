@@ -272,6 +272,7 @@ type
     function PageHasFixedBoxes: Boolean;
     procedure PaintSelection(var Canvas: TCanvas);
     procedure PaintCaret(var Canvas: TCanvas);
+    function ShowsAt(Container: TNode; X, Y: Single): Boolean;
     procedure PaintInnerScrollBars(var Canvas: TCanvas);
     { Scrolling (WebView.Control.Scrolling.inc). }
     procedure UpdateScrollBars;
