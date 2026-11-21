@@ -61,8 +61,12 @@ type
     { What a user does once the page is quiet (after -e), each step when
       the page is quiet again (or ten seconds on): "eval:JS",
       "type:TEXT" (\n is Enter), "key:NAME" ("Enter", "ctrl+KeyA"),
-      "click:SELECTOR", "wait:MS", "shot:FILE.png". }
+      "click:SELECTOR", "wait:MS", "shot:FILE.png", "scroll:Y" (or
+      top, bottom), "scrollby:DY", "hover:SELECTOR", "hoverat:X,Y",
+      "drag:X1,Y1,X2,Y2" (selects the text between), "back", "forward". }
     Steps: array of string;
+    { How long a step waits for quiet before it goes on anyway. }
+    StepPatienceMilliseconds: Double;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -111,6 +115,7 @@ uses
   Web.Bindings.Selectors,
   Web.UserAgent,
   WebBrowse.Input,
+  WebBrowse.Pointer,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
   WebBrowse.Sampler,
@@ -121,7 +126,6 @@ const
   FrameMilliseconds = 16;
   { Between typed characters, and the longest wait for quiet before a step. }
   KeyMilliseconds = 60;
-  StepPatienceMilliseconds = 10000;
   { The browser's. }
   UserAgentText = EngineUserAgent;
 
@@ -152,6 +156,7 @@ type
     FLoadedAt, FFirstLayoutAt: Double;
     FFailure: string;
     FInput: TPageInput;
+    FPointer: TPagePointer;
     FStepIndex: Integer;
     FStepReadyAt: Double;
     FTyping: string;
@@ -172,6 +177,8 @@ type
     function StepsBusy: Boolean;
     procedure TypeNextCharacter;
     procedure RunStep(const Step: string);
+    procedure ScrollStep(const Argument: string; Relative: Boolean);
+    procedure PointerStep(const Kind, Argument: string);
   public
     constructor Create(const Options: TBrowseOptions);
     destructor Destroy; override;
@@ -204,6 +211,7 @@ begin
   Result.TimeoutSeconds := 60;
   Result.QuietMilliseconds := 500;
   Result.StallSeconds := 5;
+  Result.StepPatienceMilliseconds := 10000;
   Result.FontDirectory := 'userland/fonts';
 end;
 
@@ -240,6 +248,7 @@ begin
   FSink.AttachNavigable(FPage.Navigable);
   FSink.SetViewport(Options.Width, Options.Height, Options.Scale);
   FInput := TPageInput.Create(FPage.Navigable);
+  FPointer := TPagePointer.Create;
   FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
   FExecutor.Environment.UserAgentText := UserAgentText;
   FScriptLayout := TDocumentScriptLayout.Create;
@@ -268,6 +277,7 @@ begin
   FPage.Free;
   FExecutor.Free;
   FInput.Free;
+  FPointer.Free;
   FScriptLayout.Free;
   FSink.Free;
   FNetwork.Free;
@@ -295,6 +305,8 @@ end;
 
 procedure TBrowseSession.ReleaseDocument;
 begin
+  if FPointer <> nil then
+    FPointer.Attach(nil, nil);
   if FScriptLayout <> nil then
   begin
     FScriptLayout.Layout := nil;
@@ -330,6 +342,8 @@ begin
     FScriptLayout.Layout := FLayout;
     FScriptLayout.Painter := FFramePainter;
   end;
+  if FPointer <> nil then
+    FPointer.Attach(FLayout, FFramePainter);
 end;
 
 { What the web view does on its frame timer. }
@@ -518,13 +532,81 @@ begin
   FNextKeyAt := Clock + KeyMilliseconds;
 end;
 
+{ The viewport scrolled to Argument (CSS px, top or bottom), or by it. }
+procedure TBrowseSession.ScrollStep(const Argument: string; Relative: Boolean);
+var
+  ScrollX, ScrollY: Single;
+  Target: Double;
+begin
+  if FLayout = nil then
+    Exit;
+  if FLayout.NeedsUpdate then
+    FLayout.Update;
+  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  if Argument = 'top' then
+    Target := 0
+  else if Argument = 'bottom' then
+    Target := Max(0, FLayout.DocumentHeight - FLayout.ViewportHeight)
+  else if Relative then
+    Target := ScrollY + StrToFloatDef(Argument, 0)
+  else
+    Target := StrToFloatDef(Argument, 0);
+  FLayout.SetScrollOffset(nil, ScrollX, Target);
+  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  WriteLn(Format('scrolled to %.0f of %.0f', [ScrollY, FLayout.DocumentHeight]));
+end;
+
+{ Numbers separated by commas. }
+function StepNumbers(const Argument: string): TStringArray;
+begin
+  Result := Argument.Split([',']);
+end;
+
+procedure TBrowseSession.PointerStep(const Kind, Argument: string);
+var
+  Numbers: TStringArray;
+  Element: TElement;
+  Selected: string;
+begin
+  if FDocument = nil then
+    Exit;
+  if Kind = 'hover' then
+  begin
+    Element := QuerySelector(FDocument, Argument);
+    if Element = nil then
+      WriteLn('step: nothing matches ', Argument)
+    else
+      FPointer.HoverElement(Element);
+    Exit;
+  end;
+  Numbers := StepNumbers(Argument);
+  if (Kind = 'hoverat') and (Length(Numbers) = 2) then
+    FPointer.HoverAt(StrToFloatDef(Numbers[0], 0), StrToFloatDef(Numbers[1], 0))
+  else if (Kind = 'drag') and (Length(Numbers) = 4) then
+  begin
+    Selected := FPointer.Drag(StrToFloatDef(Numbers[0], 0), StrToFloatDef(Numbers[1], 0),
+      StrToFloatDef(Numbers[2], 0), StrToFloatDef(Numbers[3], 0));
+    WriteLn('selected: ', Length(Selected), ' bytes');
+  end
+  else
+    WriteLn('step: bad arguments ', Kind, ':', Argument);
+end;
+
 procedure TBrowseSession.RunStep(const Step: string);
 var
   Kind, Argument: string;
   Element: TElement;
 begin
-  Kind := Copy(Step, 1, Pos(':', Step) - 1);
-  Argument := Copy(Step, Pos(':', Step) + 1, MaxInt);
+  if Pos(':', Step) > 0 then
+  begin
+    Kind := Copy(Step, 1, Pos(':', Step) - 1);
+    Argument := Copy(Step, Pos(':', Step) + 1, MaxInt);
+  end
+  else
+  begin
+    Kind := Step;
+    Argument := '';
+  end;
   WriteLn(Format('%8.0f step %s', [Clock, Step]));
   if Kind = 'eval' then
     Evaluate(Argument)
@@ -552,6 +634,16 @@ begin
     FWaitUntil := Clock + StrToFloatDef(Argument, 0)
   else if Kind = 'shot' then
     SavePng(Argument)
+  else if Kind = 'scroll' then
+    ScrollStep(Argument, False)
+  else if Kind = 'scrollby' then
+    ScrollStep(Argument, True)
+  else if (Kind = 'hover') or (Kind = 'hoverat') or (Kind = 'drag') then
+    PointerStep(Kind, Argument)
+  else if Kind = 'back' then
+    FPage.Navigable.Back
+  else if Kind = 'forward' then
+    FPage.Navigable.Forward
   else
     WriteLn('step: unknown ', Step);
 end;
@@ -593,7 +685,7 @@ begin
     if (FTyping <> '') and (Clock >= FNextKeyAt) then
       TypeNextCharacter;
     if Evaluated and (FStepIndex < Length(FOptions.Steps)) and not StepsBusy and Loaded and
-      (Clock - FStepReadyAt >= StepPatienceMilliseconds) then
+      (Clock - FStepReadyAt >= FOptions.StepPatienceMilliseconds) then
     begin
       { Not quiet for this long: the next step goes on anyway. }
       RunStep(FOptions.Steps[FStepIndex]);

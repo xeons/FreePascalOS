@@ -47,7 +47,9 @@
     --do STEP      then what a user does, each step once the page is quiet
                    again (or after 10 s): eval:JS, type:TEXT (\n is Enter),
                    key:NAME (Enter, ArrowDown, ctrl+KeyA), click:SELECTOR,
-                   wait:MS, shot:FILE.png
+                   wait:MS, shot:FILE.png, scroll:Y|top|bottom, scrollby:DY,
+                   hover:SELECTOR, hoverat:X,Y, drag:X1,Y1,X2,Y2, back, forward
+    --patience MS  how long a step waits for quiet before it goes on (10000)
     -f FONTDIR     font directory (userland/fonts)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move
@@ -142,6 +144,8 @@ begin
       SetLength(Options.Steps, Length(Options.Steps) + 1);
       Options.Steps[High(Options.Steps)] := NextArgument;
     end
+    else if Argument = '--patience' then
+      Options.StepPatienceMilliseconds := StrToFloatDef(NextArgument, 10000)
     else if Argument = '-f' then
       Options.FontDirectory := NextArgument
     else if Argument = '--hover' then
