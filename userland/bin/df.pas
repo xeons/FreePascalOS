@@ -31,6 +31,7 @@ program df;
 uses
   SysUtils,
   Sys.Information,
+  Sys.Mounts,
   Util.CommandLine,
   Sys.Streams,
   Util.Sizes;
@@ -66,9 +67,26 @@ begin
   Result := Result + Format(' %3d%%', [Percent]);
 end;
 
-function VolumeLine(const Volume: TVolumeInformation; PrintType: Boolean): string;
+{ Where the volume is mounted: its directory, else /volumes/NAME. }
+function MountPointOf(const Volume: TVolumeInformation): string;
 var
-  MountPoint: string;
+  Index: Integer;
+  Description: TMountDescription;
+begin
+  Index := 0;
+  while GetMountDescription(Index, Description) do
+  begin
+    if Description.Name = PChar(@Volume.Name[0]) then
+      Exit(Description.MountPoint);
+    Inc(Index);
+  end;
+  if Volume.IsSystemVolume <> 0 then
+    Result := '/'
+  else
+    Result := '/volumes/' + PChar(@Volume.Name[0]);
+end;
+
+function VolumeLine(const Volume: TVolumeInformation; PrintType: Boolean): string;
 begin
   Result := Format('%-15s ', [PChar(@Volume.Name[0])]);
   if PrintType then
@@ -81,11 +99,7 @@ begin
     Result := Result + UsageColumns(Volume)
   else
     Result := Result + '     -         -    -';
-  if Volume.IsSystemVolume <> 0 then
-    MountPoint := '/'
-  else
-    MountPoint := '/volumes/' + PChar(@Volume.Name[0]);
-  Result := Result + ' ' + MountPoint;
+  Result := Result + ' ' + MountPointOf(Volume);
 end;
 
 var

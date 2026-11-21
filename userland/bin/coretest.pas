@@ -94,6 +94,8 @@ uses
   SysUtils,
   Sys.Libraries,
   Sys.Memory,
+  Sys.MountTable,
+  Sys.MountAll,
   Sys.Processes,
   Sys.Streams,
   Sys.Text,
@@ -128,7 +130,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..403] of TCommandTest = (
+  CommandTests: array[0..411] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -710,7 +712,22 @@ const
     (Command: 'timetest > time.log; echo $?; grep FAIL time.log; tail -n 1 time.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Tickless idle: processors idle for 3 seconds take fewer than 5 clock
       interrupts a second each (100 with the old periodic tick). }
-    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0),
+    { Mounts (mounttest and these): /etc/fstab puts a memory volume on
+      /tmp; a test volume mounted at a folder, walked into and back out,
+      its FAT owners and modes from uid=, gid= and umask= (a non-root
+      user allowed, then refused), the read-only attribute kept, an
+      unmount refused while a file is open or a program works in it,
+      done when idle, the volume mounted again at /volumes; times
+      (touch -a, -m, ls --time, a birth time on tmpfs). }
+    (Command: 'mount | grep " on /tmp "; stat -c "%a %U" /tmp'; ExpectedOutput: 'tmpfs on /tmp type tmpfs (rw,size=50%,mode=1777)'#10'1777 root'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p mnt && mount LABEL=FAT16TEST mnt && cd mnt && pwd && cat hello.txt && cd .. && pwd && test "$(stat -c %d mnt)" != "$(stat -c %d .)" && echo other-volume; mount | grep -c " on /tmp/coretest/mnt type fat16 "'; ExpectedOutput: '/tmp/coretest/mnt'#10'Hello from FreePascalOS!'#10'/tmp/coretest'#10'other-volume'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'stat -c "%u %g %a" mnt/hello.txt mnt/docs; mount -o uid=1000,gid=1000,umask=027 LABEL=FAT16TEST mnt; stat -c "%u %g %a" mnt/hello.txt mnt/docs mnt'; ExpectedOutput: '0 0 644'#10'0 0 755'#10'1000 1000 640'#10'1000 1000 750'#10'1000 1000 750'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "echo hi > mnt/mine && cat mnt/mine && rm mnt/mine"; mount -o uid=0,gid=0,umask=022 LABEL=FAT16TEST mnt; su user -c "echo hi > mnt/mine" 2>/dev/null || echo denied'; ExpectedOutput: 'hi'#10'denied'#10; ExpectedStatus: 0),
+    (Command: 'echo a > mnt/ro.txt; chmod a-w mnt/ro.txt; stat -c %a mnt/ro.txt; chmod u+w mnt/ro.txt; stat -c %a mnt/ro.txt; rm mnt/ro.txt'; ExpectedOutput: '555'#10'755'#10; ExpectedStatus: 0),
+    (Command: 'src=$(mount | grep " on /tmp/coretest/mnt " | cut -d " " -f 1); sleep 2 < mnt/hello.txt & sleep 0.5; umount mnt 2>&1; wait; cd mnt && umount /tmp/coretest/mnt 2>&1; cd ..; umount mnt && echo unmounted; ls mnt | grep -c .; mount $src && cat /volumes/$(basename $src)/hello.txt'; ExpectedOutput: 'umount: mnt: target is busy'#10'umount: /tmp/coretest/mnt: target is busy'#10'unmounted'#10'0'#10'Hello from FreePascalOS!'#10; ExpectedStatus: 0),
+    (Command: 'touch -m -t 202301010000 t; touch -a -t 202401010000 t; test $(stat -c %X t) -gt $(stat -c %Y t) && echo access-later; ls -l --time=atime t | grep -c 2024; ls -lu t | grep -c 2024; ls -l t | grep -c 2023; stat -c %W t | grep -c "^0$"; stat t | grep -c "Birth: [0-9]"'; ExpectedOutput: 'access-later'#10'1'#10'1'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var
@@ -875,8 +892,22 @@ begin
   FreeMemory(Grown);
 end;
 
+{ coretest runs as the first program, in place of the service manager:
+  it mounts what /etc/fstab says first, as the manager does (a memory
+  volume on /tmp). }
+procedure MountFileSystems;
+var
+  Messages: TMountMessages;
+  Message: AnsiString;
+begin
+  if MountAllFromTable(MountTablePath, Messages) > 0 then
+    for Message in Messages do
+      WriteString(StandardOutput, Format('[coretest] %s'#10, [Message]));
+end;
+
 procedure PrepareWorkDirectory;
 begin
+  MountFileSystems;
   if PathExists(WorkDirectory) then
     RemoveTree(WorkDirectory);
   if not IsDirectory('/tmp') then

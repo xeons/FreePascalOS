@@ -206,7 +206,14 @@ var
   Parent: PVolume;
   MountPointNode: PNode;
   RelativePath: array[0..MaximumMountPathBytes - 1] of Char;
+  Found: PVolume;
 begin
+  { Mounted there already: nothing to do (mount -o on a mount point
+    only changes the options, which the caller did). }
+  if (Child^.MountRecord <> nil) and
+     (LocatePath(Path, True, Found, @RelativePath[0], MaximumMountPathBytes) = StatusSuccess) and
+     (Found = Child) and (RelativePath[0] = #0) then
+    Exit(StatusSuccess);
   Result := ResolveDirectoryForMount(Path, Parent, MountPointNode, @RelativePath[0], MaximumMountPathBytes);
   if Result <> StatusSuccess then
     Exit;
