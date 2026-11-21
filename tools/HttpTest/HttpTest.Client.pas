@@ -207,6 +207,9 @@ begin
     Check((Observer.Reused = 1) and (Connector.Connects = 1), 'client: one connection, reused once');
     Check(GetText(Client, 'https://one.test/gzip', Status) = 'hello hello hello hello'#10, 'client: gzip decoded');
     Check(GetText(Client, 'https://one.test/deflate', Status) = 'deflated text'#10, 'client: deflate decoded');
+    Check(GetText(Client, 'https://one.test/br', Status) = 'brotli text brotli text'#10, 'client: br decoded');
+    Check(GetText(Client, 'https://one.test/zstd', Status) = 'zstandard text zstandard text'#10,
+      'client: zstd decoded');
     Check((GetText(Client, 'https://one.test/redirect', Status) = 'hello') and (Status = 200),
       'client: a 302 followed');
     Request := MakeRequest('POST', 'https://one.test/see-other');

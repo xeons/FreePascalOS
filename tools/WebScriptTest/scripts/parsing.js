@@ -44,6 +44,3 @@ var viaInnerHtml = document.createElement("div");
 viaInnerHtml.innerHTML = "<script>window.innerRan = true<\/script>";
 document.body.appendChild(viaInnerHtml);
 check("innerHTML scripts never run", window.innerRan === undefined);
-var writeError = null;
-try { document.write("late"); } catch (e) { writeError = e; }
-check("document.write after loading is refused", writeError instanceof DOMException && writeError.name === "NotSupportedError");

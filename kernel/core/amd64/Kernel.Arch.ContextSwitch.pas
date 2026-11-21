@@ -33,6 +33,7 @@
 unit Kernel.Arch.ContextSwitch;
 
 {$mode objfpc}
+{$pointermath on}
 {$asmmode intel}
 
 interface
@@ -54,6 +55,11 @@ function ArchPrepareInitialStack(StackTop: QWord; EntryPoint: Pointer): QWord;
 { Tells the processor which stack to use for interrupts that arrive while
   the given thread is running in user mode. }
 procedure ArchSetThreadInterruptStack(StackTop: QWord);
+
+{ Where a thread that is not running stopped, from the state the switch
+  saved on its stack (SavedStackPointer): the address it resumes at and
+  its frame pointer, so its back trace can be walked. }
+procedure ArchSwitchFramePointers(SavedStackPointer: QWord; out ProgramCounter, FramePointer: QWord);
 
 { Loads the user thread pointer: the FS base, which user code reaches as
   %fs:0 (thread-local storage). The kernel itself never uses FS. }
@@ -99,6 +105,15 @@ asm
   pop r12
   pop rbx
   pop rbp
+end;
+
+procedure ArchSwitchFramePointers(SavedStackPointer: QWord; out ProgramCounter, FramePointer: QWord);
+const
+  SavedRbpSlot = 6;
+  ReturnAddressSlot = 7;
+begin
+  FramePointer := PQWord(SavedStackPointer)[SavedRbpSlot];
+  ProgramCounter := PQWord(SavedStackPointer)[ReturnAddressSlot];
 end;
 
 function ArchPrepareInitialStack(StackTop: QWord; EntryPoint: Pointer): QWord;

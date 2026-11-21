@@ -34,6 +34,12 @@ begin
   FScriptLayout := TDocumentScriptLayout.Create;
   TDocumentScriptLayout(FScriptLayout).OnScrolled := @ScriptScrolled;
   FTextIndex := TPageTextIndex.Create;
+  FFieldEditor := TTextFieldEditor.Create;
+  FFieldEditor.OnEdited := @FireInputEvent;
+  FFieldEditor.OnSelectionMoved := @FieldSelectionMoved;
+  FFieldEditor.OnSubmit := @SubmitImplicitly;
+  FFieldEditor.OnReadClipboard := @ReadClipboard;
+  FFieldEditor.OnWriteClipboard := @WriteClipboard;
   FSelectionAnchor := TextPosition(-1, 0);
   FSelectionFocus := FSelectionAnchor;
   FVerticalBar := TScrollBar.Create(Self);
@@ -70,6 +76,7 @@ begin
   FSink.Free;
   FScriptLayout.Free;
   FTextIndex.Free;
+  FFieldEditor.Free;
   FFavicon.Free;
   FSelectMenu.Free;
   FOwnMenu.Free;
@@ -144,6 +151,9 @@ begin
   if FPressedControl <> nil then
     FPressedControl.Release;
   FPressedControl := nil;
+  if FPressedTarget <> nil then
+    FPressedTarget.Release;
+  FPressedTarget := nil;
   if FSelectElement <> nil then
     FSelectElement.Release;
   FSelectElement := nil;

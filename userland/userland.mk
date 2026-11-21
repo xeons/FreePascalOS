@@ -27,7 +27,7 @@
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
-#                  libsystem <- libcompression (deflate, zlib, gzip)
+#                  libsystem <- libcompression (deflate, zlib, gzip; brotli, zstd)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
@@ -131,6 +131,8 @@ JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
 WEBVIEW_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebview.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
+DYNTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdyntls.so
+DYNPASCAL_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdynpascal.so
 
 # Every userland/bin/<name>.pas becomes /bin/<name>. A program made of
 # several units keeps the others in userland/<name>/.
@@ -182,7 +184,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -194,6 +196,7 @@ $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.i
 	$(TARGET_FPC) $(USER_RTL_FLAGS) -Us -FU$(RTL_USER_DIRECTORY) rtl/fpc/system.pp
 	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/buildrtl.pp
 	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_prc.pas
+	$(TARGET_FPC) $(USER_RTL_FLAGS) -Fu$(RTL_USER_DIRECTORY) -FU$(RTL_USER_DIRECTORY) rtl/fpc/si_dll.pas
 	@rm -f $(RTL_USER_DIRECTORY)/buildrtl.o
 
 # libsystem: the runtime library (System, SysUtils, Classes, ...), the
@@ -206,7 +209,7 @@ $(SYSTEM_LIBRARY): $(RTL_USER_DIRECTORY)/si_prc.ppu $(wildcard userland/lib/syst
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fushared -Fuuserland/lib/system \
 		-FU$(SYSTEM_LIBRARY_OBJECTS) userland/lib/system/Sys.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libsystem.so -o $@ \
-		$(SYSTEM_LIBRARY_OBJECTS)/*.o $(filter-out %/si_prc.o,$(wildcard $(RTL_USER_DIRECTORY)/*.o))
+		$(SYSTEM_LIBRARY_OBJECTS)/*.o $(filter-out %/si_prc.o %/si_dll.o,$(wildcard $(RTL_USER_DIRECTORY)/*.o))
 
 # libcryptography: hashes, checksums, ciphers and random numbers.
 $(CRYPTO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/cryptography/*.pas)
@@ -404,8 +407,9 @@ $(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pa
 		$(JAVASCRIPT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libcompression: deflate compression and decompression, the zlib and
-# gzip wrappers and their checksums.
-$(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
+# gzip wrappers and their checksums, brotli and Zstandard decompression.
+$(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas) \
+		$(wildcard userland/lib/compression/*.inc)
 	@rm -rf $(COMPRESSION_LIBRARY_OBJECTS)
 	@mkdir -p $(COMPRESSION_LIBRARY_OBJECTS)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/compression \
@@ -479,6 +483,28 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) $(TLSTEST_SOURCE)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libtlstest.so -o $@ \
 		$(USER_BUILD_DIRECTORY)/tlstest/TlsTest.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# Libraries dynlibtest loads with LoadLibrary after it started threads:
+# libdyntls.so in assembly (ELF thread-local storage, initializer and
+# finalizer arrays; one source per architecture) and libdynpascal.so, a
+# Free Pascal "library" with threadvars and a unit initialization of its
+# own, started by si_dll (its DT_INIT and DT_FINI).
+DYNTLS_SOURCE := $(firstword $(wildcard userland/lib/dyntls/DynTls.$(ARCH).s) userland/lib/dyntls/DynTls.s)
+$(DYNTLS_LIBRARY): $(SYSTEM_LIBRARY) $(DYNTLS_SOURCE)
+	@mkdir -p $(USER_BUILD_DIRECTORY)/dyntls
+	$(TARGET_AS) -o $(USER_BUILD_DIRECTORY)/dyntls/DynTls.o $(DYNTLS_SOURCE)
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdyntls.so -o $@ \
+		$(USER_BUILD_DIRECTORY)/dyntls/DynTls.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+$(DYNPASCAL_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/dynpascal/*.pas)
+	@rm -rf $(USER_BUILD_DIRECTORY)/dynpascal
+	@mkdir -p $(USER_BUILD_DIRECTORY)/dynpascal
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/dynpascal \
+		-FU$(USER_BUILD_DIRECTORY)/dynpascal -FE$(USER_BUILD_DIRECTORY)/dynpascal userland/lib/dynpascal/DynPascal.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdynpascal.so -init FPC_SHARED_LIB_START -fini FPC_LIB_EXIT \
+		-o $@ $(USER_BUILD_DIRECTORY)/dynpascal/*.o $(RTL_USER_DIRECTORY)/si_dll.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+$(USER_PROGRAM_OUTPUT)/dynlibtest: $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY)
+
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
@@ -499,7 +525,7 @@ $(GRAPHICAL_SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(GRAPHICAL_SOUND_PROGRAMS): $(CONTROLS_LIBRARY) $(AUDIO_LIBRARY)
 # The network service reads its configuration from the settings.
-SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest network networktest)
+SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,settings settingstest network networktest timesync)
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lconfiguration
 $(SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SETTINGS_PROGRAMS): $(CONFIGURATION_LIBRARY)

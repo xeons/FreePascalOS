@@ -59,7 +59,8 @@ type
     HasUaVisualTransition: Boolean;
   end;
 
-{ Fires a trusted event (freed afterwards); False if it was canceled. }
+{ Fires a trusted event (its creator's reference released afterwards: a
+  wrapper script made keeps it); False if it was canceled. }
 function FireEvent(Target: TEventTarget; const TypeName: string; Bubbles: Boolean = False;
   Cancelable: Boolean = False): Boolean;
 function FireTrustedEvent(Target: TEventTarget; Event: TEvent): Boolean;
@@ -72,7 +73,7 @@ begin
     Event.IsTrusted := True;
     Result := Target.DispatchEvent(Event);
   finally
-    Event.Free;
+    Event.Release;
   end;
 end;
 

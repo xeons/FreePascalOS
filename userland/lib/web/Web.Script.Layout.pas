@@ -41,6 +41,11 @@ type
   TDocumentScriptLayout = class(TScriptLayout)
   private
     function Ready: Boolean;
+  protected
+    { Points Layout and Painter at the document's layout before a
+      question (a frame's: Web.Frames.Views); the embedder's own sets
+      them itself. }
+    procedure Resolve; virtual;
   public
     Layout: TDocumentLayout;
     Painter: TDocumentPainter;
@@ -64,8 +69,13 @@ uses
   Web.Layout.Boxes,
   Web.Style.NodeData;
 
+procedure TDocumentScriptLayout.Resolve;
+begin
+end;
+
 function TDocumentScriptLayout.Ready: Boolean;
 begin
+  Resolve;
   Result := Layout <> nil;
   if Result and Layout.NeedsUpdate then
     Layout.Update;
@@ -150,6 +160,7 @@ var
 begin
   Left := 0;
   Top := 0;
+  Resolve;
   if Layout = nil then
     Exit;
   Layout.GetScrollOffset(nil, X, Y);

@@ -162,7 +162,7 @@ end;
 procedure TWebView.PaintCaret(var Canvas: TCanvas);
 var
   Box: TLayoutBox;
-  BoxX, BoxY, TextWidth, LineHeight: Single;
+  BoxX, BoxY, TextWidth, LineHeight, LineTop: Single;
   ScrollX, ScrollY: Single;
   Scale: Double;
   Value, Before, Direction: string;
@@ -170,13 +170,18 @@ var
   Font: TTextFont;
   Kind: TFormControlKind;
   Start, Finish, Caret, LineIndex, Index: Integer;
+  TargetLayout: TDocumentLayout;
+  OriginX, OriginY: Single;
 begin
   if (FLayout = nil) or (FFocusedElement = nil) or not Focused then
     Exit;
   Kind := FormControlKindOf(FFocusedElement);
   if not (Kind in [FormControlText, FormControlPassword, FormControlTextArea]) then
     Exit;
-  Box := FLayout.BoxOf(FFocusedElement);
+  { A field in a frame: its document's layout, at its frame's place. }
+  if not DocumentViewportOrigin(FLayout, FFocusedElement.NodeDocument, OriginX, OriginY, TargetLayout) then
+    Exit;
+  Box := TargetLayout.BoxOf(FFocusedElement);
   if Box = nil then
     Exit;
   Box.AbsolutePosition(BoxX, BoxY);
@@ -202,14 +207,42 @@ begin
   TextWidth := 0;
   if Before <> '' then
     TextWidth := Font.MeasureText(Before, 1, Length(Before));
-  LineHeight := Font.Ascent + Font.Descent + 2;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  { Where the painter puts the text (Web.Paint.Raster's DrawControlText):
+    a field's line centred in its content box, a text area's lines from
+    its top. }
+  LineHeight := Font.Ascent + Font.Descent;
+  if Kind = FormControlTextArea then
+    LineTop := LineIndex * LineHeight
+  else
+    LineTop := (Box.ContentHeight - LineHeight) / 2;
+  TargetLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  ScrollX := ScrollX - OriginX;
+  ScrollY := ScrollY - OriginY;
   Scale := DeviceScale;
   Left := Round((BoxX + Box.ContentLeft + Min(TextWidth, Box.ContentWidth) - ScrollX) * Scale);
-  Top := Round((BoxY + Box.ContentTop + LineIndex * LineHeight - ScrollY) * Scale);
-  Bottom := Round((BoxY + Box.ContentTop + LineIndex * LineHeight + Min(Box.ContentHeight, LineHeight) - ScrollY) *
+  Top := Round((BoxY + Box.ContentTop + Max(0, LineTop) - ScrollY) * Scale);
+  Bottom := Round((BoxY + Box.ContentTop + Max(0, LineTop) + Min(Box.ContentHeight, LineHeight) - ScrollY) *
     Scale);
   FillRectangle(Canvas, MakeRectangle(Left, Top, Max(1, Round(Scale)), Max(1, Bottom - Top)), ColorBlack);
+end;
+
+{ Whether what is at the viewport point (CSS px) is Container or inside
+  it: a bar under something painted over its container (a pop-up, a
+  menu) is not drawn over that. }
+function TWebView.ShowsAt(Container: TNode; X, Y: Single): Boolean;
+var
+  Node: TNode;
+begin
+  Result := False;
+  if (FPainter = nil) or (Container = nil) then
+    Exit;
+  Node := FPainter.HitTest(X, Y).Element;
+  while Node <> nil do
+  begin
+    if Node = Container then
+      Exit(True);
+    Node := Node.ParentNode;
+  end;
 end;
 
 { Scroll containers inside the page show a thin bar of the theme's
@@ -235,7 +268,8 @@ begin
     Info := Containers[Index];
     if (Info.Height <= 0) or (Info.Width <= 0) then
       Continue;
-    if Info.BarY and (Info.ScrollHeight > Info.Height + 0.5) then
+    if Info.BarY and (Info.ScrollHeight > Info.Height + 0.5) and
+      ShowsAt(Info.Node, Info.X + Info.Width - 2 - ScrollX, Info.Y + Info.Height / 2 - ScrollY) then
     begin
       Track := MakeRectangle(Round((Info.X + Info.Width - ScrollX) * Scale) - Thickness,
         Round((Info.Y - ScrollY) * Scale), Thickness, Round(Info.Height * Scale));
@@ -246,7 +280,8 @@ begin
       Thumb := MakeRectangle(Track.Left, Track.Top + ThumbStart, Thickness, ThumbLength);
       FillRectangle(Canvas, Thumb, Theme.Shadow);
     end;
-    if Info.BarX and (Info.ScrollWidth > Info.Width + 0.5) then
+    if Info.BarX and (Info.ScrollWidth > Info.Width + 0.5) and
+      ShowsAt(Info.Node, Info.X + Info.Width / 2 - ScrollX, Info.Y + Info.Height - 2 - ScrollY) then
     begin
       Track := MakeRectangle(Round((Info.X - ScrollX) * Scale), Round((Info.Y + Info.Height - ScrollY) * Scale) -
         Thickness, Round(Info.Width * Scale), Thickness);

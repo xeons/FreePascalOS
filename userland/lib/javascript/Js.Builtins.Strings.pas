@@ -60,6 +60,7 @@ implementation
 
 uses
   Character,
+  Js.CaseMapping,
   Js.Normalization;
 
 function ThisString(R: TJsRealm; This: TJsValue; const Name: string): TJsString;
@@ -488,10 +489,10 @@ begin
   end;
   Unicode := StringToUnicode(R.Heap, Text);
   if Callee.Magic = 0 then
-    Unicode := TCharacter.ToLower(Unicode)
+    Unicode := JsLowerCase(Unicode)
   else
   begin
-    Unicode := TCharacter.ToUpper(Unicode);
+    Unicode := JsUpperCase(Unicode);
     Unicode := UnicodeStringReplace(Unicode, #$DF, 'SS', [rfReplaceAll]);
   end;
   Result := JsStringValue(NewStringFromUnicode(R.Heap, Unicode));
@@ -962,8 +963,8 @@ var
   A, B: UnicodeString;
   Tie: Integer;
 begin
-  A := TCharacter.ToLower(StringToUnicode(R.Heap, Text));
-  B := TCharacter.ToLower(StringToUnicode(R.Heap, Other));
+  A := JsLowerCase(StringToUnicode(R.Heap, Text));
+  B := JsLowerCase(StringToUnicode(R.Heap, Other));
   Shorter := Length(A);
   if Length(B) < Shorter then
     Shorter := Length(B);

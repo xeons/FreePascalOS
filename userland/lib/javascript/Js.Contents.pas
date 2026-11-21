@@ -45,6 +45,7 @@ uses
   Js.Builtins.Iterators,
   Js.Builtins.Arrays,
   Js.Builtins.Strings,
+  Js.CaseMapping,
   Js.Builtins.Number,
   Js.Builtins.Math,
   Js.Builtins.BigInt,

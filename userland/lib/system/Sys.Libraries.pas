@@ -27,6 +27,13 @@
   Free Pascal exports routines under mangled names; a library meant for
   run time loading should give its entry points plain names with
   "public name '...'" or "alias".
+
+  Before LoadLibrary returns, the initializers of the libraries it
+  brought in have run (and their finalizers run when the program ends);
+  their thread-local storage and threadvars work in every thread, those
+  that ran before included. A Free Pascal library compiled from a
+  "library" source with the startup unit si_dll gets its units
+  initialized (userland/lib/dynpascal shows how it is built).
 }
 unit Sys.Libraries;
 
@@ -46,7 +53,7 @@ uses
 
 function LoadLibrary(Name: PChar): Int64;
 begin
-  Result := KernelLoadLibrary(Name);
+  Result := SysLoadLibraryHandle(Name);
 end;
 
 function FindSymbol(LibraryHandle: Int64; Name: PChar): Pointer;

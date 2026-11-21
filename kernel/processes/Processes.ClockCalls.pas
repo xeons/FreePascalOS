@@ -18,7 +18,8 @@
 
 {
   System calls for the clock and the time zone (CallSetWallClock,
-  CallGetTimeZone, CallSetTimeZone).
+  CallGetTimeZone, CallSetTimeZone, CallGetPreciseTime,
+  CallAdjustWallClock).
 
   The wall clock is the kernel's (Kernel.Clock); setting it writes the
   battery backed clock too, so the time survives a restart. The time
@@ -39,6 +40,8 @@ interface
 function PerformSetWallClock(Time: Int64): Int64;
 function PerformGetTimeZone(BufferAddress, Capacity: QWord): Int64;
 function PerformSetTimeZone(NameAddress: QWord): Int64;
+function PerformGetPreciseTime(Which, TimeAddress: QWord): Int64;
+function PerformAdjustWallClock(OffsetNanoseconds: Int64; Flags, RemainingAddress: QWord): Int64;
 
 implementation
 
@@ -48,9 +51,11 @@ uses
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Clock,
+  Kernel.WallClock,
   Processes.Process,
   Processes.Thread,
-  Processes.UserAccess;
+  Processes.UserAccess,
+  Debug.Output;
 
 const
   { 2000-01-01 and 2099-12-31: what the battery backed clock can hold. }
@@ -118,6 +123,81 @@ begin
   CopyText(@ZoneName[0], @Name[0], TimeZoneNameCapacity);
   ReleaseSpinLock(ZoneLock, PreviousLevel);
   Result := 0;
+end;
+
+function PerformGetPreciseTime(Which, TimeAddress: QWord): Int64;
+var
+  Time: TAbiPreciseTime;
+  Nanoseconds: Int64;
+begin
+  case Which of
+    TimeWallClock:
+      Nanoseconds := WallClockNanoseconds;
+    TimeUptimeNanoseconds:
+      Nanoseconds := Int64(ClockNanoseconds);
+  else
+    Exit(Failure(ErrorInvalidArgument));
+  end;
+  { Whole seconds rounded down, the nanoseconds past them positive (for
+    times before 1970 too). }
+  Time.Seconds := Nanoseconds div NanosecondsPerSecond;
+  if (Nanoseconds mod NanosecondsPerSecond) < 0 then
+  begin
+    Time.Seconds := Time.Seconds - 1;
+    Time.Nanoseconds := LongWord(NanosecondsPerSecond + Nanoseconds mod NanosecondsPerSecond);
+  end
+  else
+    Time.Nanoseconds := LongWord(Nanoseconds mod NanosecondsPerSecond);
+  Time.Reserved := 0;
+  Result := -Int64(CopyToUser(TimeAddress, @Time, SizeOf(Time)));
+end;
+
+{ A line in the kernel log for every change of the clock. }
+procedure ReportAdjustment(OffsetNanoseconds: Int64; Gradually: Boolean);
+var
+  Magnitude: QWord;
+begin
+  DebugBeginMessage;
+  DebugWriteTag('clock');
+  if Gradually then
+    DebugWrite('slewing the wall clock by ')
+  else
+    DebugWrite('stepped the wall clock by ');
+  if OffsetNanoseconds < 0 then
+  begin
+    DebugWrite('-');
+    Magnitude := QWord(-OffsetNanoseconds);
+  end
+  else
+    Magnitude := QWord(OffsetNanoseconds);
+  DebugWriteDecimal(Magnitude div 1000000);
+  DebugWrite('.');
+  DebugWriteDecimal((Magnitude mod 1000000) div 100000);
+  DebugWrite(' ms (process ');
+  DebugWriteDecimal(CurrentProcess^.ProcessId);
+  DebugWriteLine(')');
+  DebugEndMessage;
+end;
+
+function PerformAdjustWallClock(OffsetNanoseconds: Int64; Flags, RemainingAddress: QWord): Int64;
+var
+  Remaining: Int64;
+begin
+  if (Flags and not QWord(AdjustGradually or AdjustQueryOnly)) <> 0 then
+    Exit(Failure(ErrorInvalidArgument));
+  if (Flags and AdjustQueryOnly) = 0 then
+  begin
+    if not CallerIsRoot then
+      Exit(Failure(ErrorNotPermitted));
+    AdjustWallClock(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
+    ReportAdjustment(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
+  end;
+  Result := 0;
+  if RemainingAddress <> 0 then
+  begin
+    Remaining := WallClockAdjustmentRemaining;
+    Result := -Int64(CopyToUser(RemainingAddress, @Remaining, SizeOf(Remaining)));
+  end;
 end;
 
 end.

@@ -103,8 +103,10 @@ type
   private
     FEventType: TAtom;
     FTarget: TEventTarget;
+    FTargetHeld: Boolean;
     FCurrentTarget: TEventTarget;
     FRelatedTarget: TEventTarget;
+    FRelatedTargetHeld: Boolean;
     FPhase: TEventPhase;
     FBubbles: Boolean;
     FCancelable: Boolean;
@@ -131,8 +133,9 @@ type
     constructor Create(const TypeName: string; CanBubble: Boolean = False; IsCancelable: Boolean = False);
     destructor Destroy; override;
     { References: the creator holds the first; Release frees the event at
-      the last (the script bindings hold one per wrapper). Free still
-      works for an event nothing else holds. }
+      the last (the script bindings hold one per wrapper). Native code
+      always releases an event it dispatched, never frees it: a listener
+      may have made a wrapper that outlives the dispatch. }
     procedure Retain;
     procedure Release;
     procedure StopPropagation;
@@ -173,6 +176,12 @@ type
   public
     procedure RetainTarget; virtual;
     procedure ReleaseTarget; virtual;
+    { Whether events hold the target (RetainTarget and ReleaseTarget):
+      nodes. Other targets (the window, XMLHttpRequest, AbortSignal ...)
+      belong to their wrappers, which the event's wrapper keeps alive;
+      an event never calls them back, since it may go after them when a
+      heap is freed whole. }
+    function HeldByEvents: Boolean; virtual;
     function AddEventListener(const TypeName: string; Callback: TEventListener;
       const Options: TEventListenerOptions): Boolean; overload;
     function AddEventListener(const TypeName: string; Callback: TEventListener;
@@ -355,25 +364,33 @@ begin
 end;
 
 procedure TEvent.SetTarget(NewTarget: TEventTarget);
+var
+  Held: Boolean;
 begin
   if NewTarget = FTarget then
     Exit;
-  if NewTarget <> nil then
+  Held := (NewTarget <> nil) and NewTarget.HeldByEvents;
+  if Held then
     NewTarget.RetainTarget;
-  if FTarget <> nil then
+  if FTargetHeld then
     FTarget.ReleaseTarget;
   FTarget := NewTarget;
+  FTargetHeld := Held;
 end;
 
 procedure TEvent.SetRelatedTarget(NewTarget: TEventTarget);
+var
+  Held: Boolean;
 begin
   if NewTarget = FRelatedTarget then
     Exit;
-  if NewTarget <> nil then
+  Held := (NewTarget <> nil) and NewTarget.HeldByEvents;
+  if Held then
     NewTarget.RetainTarget;
-  if FRelatedTarget <> nil then
+  if FRelatedTargetHeld then
     FRelatedTarget.ReleaseTarget;
   FRelatedTarget := NewTarget;
+  FRelatedTargetHeld := Held;
 end;
 
 function TEvent.GetEventTypeName: string;
@@ -460,6 +477,11 @@ end;
 
 procedure TEventTarget.ReleaseTarget;
 begin
+end;
+
+function TEventTarget.HeldByEvents: Boolean;
+begin
+  Result := False;
 end;
 
 function TEventTarget.AddEventListener(const TypeName: string; Callback: TEventListener;
@@ -575,7 +597,6 @@ var
 begin
   if Event.FDispatching or not Event.FInitialized then
     RaiseDomError(InvalidStateError, 'the event is being dispatched or was not initialized');
-  Event.FIsTrusted := False;
   Event.FDispatching := True;
   Event.SetTarget(Self);
   Path := nil;
@@ -586,7 +607,8 @@ begin
     if Count >= Length(Path) then
       SetLength(Path, Count * 2 + 8);
     Path[Count] := Parent;
-    Parent.RetainTarget;
+    if Parent.HeldByEvents then
+      Parent.RetainTarget;
     Inc(Count);
     Parent := Parent.GetTheParent(Event);
   end;
@@ -623,7 +645,8 @@ begin
     Event.FStopPropagation := False;
     Event.FStopImmediatePropagation := False;
     for Index := 1 to Count do
-      Path[Index - 1].ReleaseTarget;
+      if Path[Index - 1].HeldByEvents then
+        Path[Index - 1].ReleaseTarget;
   end;
   Result := not Event.FCanceled;
 end;

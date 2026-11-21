@@ -62,7 +62,7 @@ implementation
 uses
   Runtime.LinkedList,
   Memory.KernelHeap,
-  Kernel.Arch.Cpu,
+  Kernel.Random,
   Network.ByteRings,
   Network.TcpWindows,
   Network.TcpReceivedBlocks,
@@ -75,13 +75,9 @@ var
   SequenceOffset: LongWord;
 
 procedure InitializeTcpConnections;
-var
-  Random: QWord;
 begin
   InitializeListHead(Connections);
-  if not ReadHardwareRandom(Random) then
-    Random := ReadTimeStampCounter * 2654435761;
-  SequenceOffset := LongWord(Random);
+  SequenceOffset := LongWord(RandomQWord);
 end;
 
 function CreateTcpConnection: PTcpConnection;

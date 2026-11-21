@@ -222,6 +222,7 @@ type
     procedure SetFormStateObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
+    function HeldByEvents: Boolean; override;
     { References: see the unit's description. }
     procedure Retain;
     procedure Release;
@@ -523,6 +524,7 @@ type
     FTargetElement: TElement;
     FFocusedElement: TElement;
     FBrowsingContext: TObject;
+    FOriginText: string;
     FOnReadyStateChange: TDocumentNotifyEvent;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
@@ -611,6 +613,10 @@ type
     procedure SetFocusedElementOnly(Element: TElement);
     { The loading side's object for this document (Web.Loading). }
     property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
+    { The document's origin when it is not its URL's (Web.Origins writes
+      and reads it): a creator's (about:blank, srcdoc) or an opaque one
+      (a sandboxed frame); '' for the URL's. }
+    property OriginText: string read FOriginText write FOriginText;
     { Called after ReadyState changed (and readystatechange fired). }
     property OnReadyStateChange: TDocumentNotifyEvent read FOnReadyStateChange write FOnReadyStateChange;
   end;
@@ -740,6 +746,12 @@ type
     FormState: TObject;
     destructor Destroy; override;
   end;
+
+var
+  { Copies a form control's state to its clone (HTML's cloning steps of
+    input and textarea: the value, checkedness and their dirty flags);
+    Web.Dom.FormControls sets it. }
+  FormStateCloning: procedure(Source, Copy: TElement) = nil;
 
 { Frees detached, unreferenced nodes (see the unit's description). }
 procedure CollectGarbage;

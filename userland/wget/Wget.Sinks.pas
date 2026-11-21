@@ -19,7 +19,7 @@
 {
   Where a response body goes as it arrives: TOutputSink writes it into
   the output file (or standard output), a libhttp sink, so libhttp's
-  decoders (Http.ContentDecoding: gzip, x-gzip, deflate) can stand in
+  decoders (Http.ContentDecoding: gzip, deflate, br, zstd) can stand in
   front of it. A failed write keeps the system's error code
   (ErrorCode).
 }
@@ -54,7 +54,7 @@ uses
 
 function EncodingCanBeDecoded(const Encoding: string): Boolean;
 begin
-  Result := ContentCodingOf(Encoding) in [CodingGzip, CodingDeflate];
+  Result := not (ContentCodingOf(Encoding) in [CodingIdentity, CodingUnknown]);
 end;
 
 constructor TOutputSink.Create(var Target: TOutputTarget);

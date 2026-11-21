@@ -35,6 +35,7 @@ program WebScriptTest;
 {$H+}
 
 uses
+  WebScriptTest.Poison,
   SysUtils,
   Classes,
   TestChecks,

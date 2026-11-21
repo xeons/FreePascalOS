@@ -68,6 +68,7 @@ uses
   Web.Bindings.Reflection,
   Web.Bindings.Style,
   Web.Bindings.UrlResolution,
+  Web.Bindings.CrossOrigin,
   Web.ScriptEnvironment;
 
 type
@@ -261,13 +262,13 @@ begin
   end;
 end;
 
-function HTMLElement_focus(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_focus(var Call: TBindingCall): TJsValue;
 begin
   FocusElement(ThisElement(Call));
   Result := Nothing;
 end;
 
-function HTMLElement_blur(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_blur(var Call: TBindingCall): TJsValue;
 begin
   UnfocusElement(ThisElement(Call));
   Result := Nothing;
@@ -325,12 +326,12 @@ begin
   Result := JsFalse;
 end;
 
-function HTMLElement_get_dataset(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_dataset(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).WrapObject(ThisElement(Call), InterfaceDOMStringMap, False, Call.This);
 end;
 
-function HTMLElement_get_style(var Call: TBindingCall): TJsValue;
+function ElementCSSInlineStyle_get_style(var Call: TBindingCall): TJsValue;
 begin
   Result := InlineStyleObject(Context(Call), ThisElement(Call), Call.This);
 end;
@@ -395,7 +396,7 @@ begin
     (Element.LocalNameAtom = AtomIframe) or (Element.LocalNameAtom = AtomSummary));
 end;
 
-function HTMLElement_get_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_tabIndex(var Call: TBindingCall): TJsValue;
 var
   Value: Int64;
 begin
@@ -409,7 +410,7 @@ begin
     Result := JsInteger(-1);
 end;
 
-function HTMLElement_set_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_set_tabIndex(var Call: TBindingCall): TJsValue;
 begin
   ThisElement(Call).SetAttributeAtom(AtomTabindex, NamespaceNone, IntToStr(Call.Int(0)));
   Result := Nothing;
@@ -607,24 +608,45 @@ begin
   Result := TokenList(Call, 'sandbox');
 end;
 
-function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+function FrameContentDocument(var Call: TBindingCall): TJsValue;
 var
   Frame: TBindingContext;
 begin
   Frame := Context(Call).FrameOf(ThisElement(Call));
-  if Frame = nil then
+  { Not across origins. }
+  if (Frame = nil) or not SameOriginContexts(Context(Call), Frame) then
     Exit(JsNull);
   Result := Frame.WrapNode(Frame.Document);
 end;
 
-function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+function FrameContentWindow(var Call: TBindingCall): TJsValue;
 var
   Frame: TBindingContext;
 begin
   Frame := Context(Call).FrameOf(ThisElement(Call));
   if Frame = nil then
     Exit(JsNull);
-  Result := JsObjectValue(Frame.Engine.GlobalObject);
+  Result := WindowValueFor(Context(Call), Frame);
+end;
+
+function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentDocument(Call);
+end;
+
+function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentWindow(Call);
+end;
+
+function HTMLFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentDocument(Call);
+end;
+
+function HTMLFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentWindow(Call);
 end;
 
 function HTMLStyleElement_get_blocking(var Call: TBindingCall): TJsValue;

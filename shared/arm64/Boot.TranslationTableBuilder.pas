@@ -28,6 +28,12 @@
   so nothing beyond them is mapped as memory (a device's registers next
   to RAM must never be normal memory: the processor may read it
   speculatively). Mapping over part of a block splits it into pages.
+
+  Nothing is both writable and executable: the physical memory window
+  is execute-never, the kernel image's code read-only, and the window's
+  view of the kernel's code and read-only data is made read-only too
+  (ProtectKernelImageInWindow), so neither can be changed through
+  another address.
 }
 unit Boot.TranslationTableBuilder;
 
@@ -35,6 +41,9 @@ unit Boot.TranslationTableBuilder;
 {$pointermath on}
 
 interface
+
+uses
+  Boot.KernelElf;
 
 type
   { A zeroed page for a table, by physical address; 0 when memory ran out. }
@@ -60,6 +69,11 @@ function DataAttributes(MemoryType: Integer): QWord;
 { A kernel image segment: text read-only and executable, the rest
   execute-never, nothing for user mode. }
 function KernelSegmentAttributes(IsWritable, IsExecutable: Boolean): QWord;
+{ Maps the window's view (at WindowBase + physical address) of every
+  read-only segment of the kernel image read-only, after the window was
+  mapped. }
+procedure ProtectKernelImageInWindow(var Builder: TTranslationTableBuilder; Root: QWord; WindowBase: QWord;
+  const KernelImage: TLoadedKernelImage);
 
 implementation
 
@@ -231,6 +245,23 @@ begin
     Result := Result or DescriptorReadOnly;
   if not IsExecutable then
     Result := Result or DescriptorPrivilegedExecuteNever;
+end;
+
+procedure ProtectKernelImageInWindow(var Builder: TTranslationTableBuilder; Root: QWord; WindowBase: QWord;
+  const KernelImage: TLoadedKernelImage);
+var
+  Index: LongWord;
+  Segment: ^TKernelSegment;
+begin
+  Index := 0;
+  while Index < KernelImage.SegmentCount do
+  begin
+    Segment := @KernelImage.Segments[Index];
+    if not Segment^.IsWritable then
+      MapTranslationRange(Builder, Root, WindowBase + Segment^.PhysicalStart, Segment^.PhysicalStart,
+        Segment^.PageCount * PageBytes, DataAttributes(MemoryTypeNormal) or DescriptorReadOnly);
+    Inc(Index);
+  end;
 end;
 
 end.

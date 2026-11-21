@@ -49,7 +49,9 @@ uses
   Web.Layout.Resources;
 
 type
-  TStyleChangeKind = (scNone, scPaint, scLayout, scBoxes);
+  { scMove: painting and the box's translation (transform, translate),
+    which layout keeps as an offset of the box. }
+  TStyleChangeKind = (scNone, scPaint, scMove, scLayout, scBoxes);
 
   TStyleChangedEvent = procedure(Element: TElement; Change: TStyleChangeKind) of object;
   TNodeChangedEvent = procedure(Node: TNode) of object;
@@ -112,6 +114,9 @@ type
     property Adapter: TDomElementAdapter read FAdapter;
     property Resources: TDocumentResources read FResources;
     property StylesComputed: Int64 read FStylesComputed;
+    { The sheets changed (one loaded, was added or removed) and are
+      collected again at the next update. }
+    property SheetsDirty: Boolean read FSheetsDirty;
     property OnStyleChanged: TStyleChangedEvent read FOnStyleChanged write FOnStyleChanged;
     property OnTextChanged: TNodeChangedEvent read FOnTextChanged write FOnTextChanged;
     property OnNodeRemoved: TNodeChangedEvent read FOnNodeRemoved write FOnNodeRemoved;
@@ -161,6 +166,8 @@ begin
         Exit(scLayout);
       Result := scPaint;
     end;
+  if (Result = scPaint) and (not SameValue(Old, New, cpTransform) or not SameValue(Old, New, cpTranslate)) then
+    Result := scMove;
 end;
 
 { display: list-item in its two value forms (inline list-item). }

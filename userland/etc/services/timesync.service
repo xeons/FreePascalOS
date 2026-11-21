@@ -1,0 +1,12 @@
+# Keeps the wall clock to time servers over SNTP once the network is up
+# (/bin/timesync): the first answer steps the clock, later ones slew it.
+# Off by default: with TimeSync/Enabled = false in
+# /etc/settings/TimeSync.settings it ends at once and stays stopped.
+description   = Clock synchronization (SNTP)
+program       = /bin/timesync
+needs         = network
+modes         = text graphical
+restart       = on-failure
+restart-limit = 3
+restart-delay = 30
+stop-timeout  = 2

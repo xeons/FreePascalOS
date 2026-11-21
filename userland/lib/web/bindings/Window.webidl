@@ -63,15 +63,15 @@ Window includes WindowEventHandlers;
 
 [Exposed=Window]
 interface Location {
-  stringifier readonly attribute USVString href;
+  stringifier attribute USVString href;
   readonly attribute USVString origin;
-  readonly attribute USVString protocol;
-  readonly attribute USVString host;
-  readonly attribute USVString hostname;
-  readonly attribute USVString port;
-  readonly attribute USVString pathname;
-  readonly attribute USVString search;
-  readonly attribute USVString hash;
+  attribute USVString protocol;
+  attribute USVString host;
+  attribute USVString hostname;
+  attribute USVString port;
+  attribute USVString pathname;
+  attribute USVString search;
+  attribute USVString hash;
   undefined assign(USVString url);
   undefined replace(USVString url);
   undefined reload();

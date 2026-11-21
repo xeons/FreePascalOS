@@ -42,6 +42,7 @@ uses
   Processes.ProcessDetails,
   Processes.SystemUsage,
   Processes.ClockCalls,
+  Processes.PowerCalls,
   Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
@@ -49,6 +50,8 @@ uses
   Processes.SocketCalls,
   Processes.NetworkCalls,
   Processes.NodeName,
+  Processes.ThreadNames,
+  Processes.ModuleCalls,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -85,6 +88,7 @@ uses
   Processes.SecurityCalls,
   Processes.AffinityCalls,
   Processes.LimitCalls,
+  Processes.LoadedModules,
   Processes.HandlePassing,
   Processes.Shutdown,
   Processes.Suspend,
@@ -538,7 +542,13 @@ begin
     Thread := CurrentThreadObject;
     Error := AllocateThreadOwnedUserMemory(Process^.AddressSpace, Length, Thread^.ControlBlock.ThreadId, Start);
     if Error = ErrorNone then
+    begin
+      { More than one (dynamic TLS blocks besides the threadvar block):
+        an ending thread then looks for all of them. }
+      if Thread^.OwnedAllocationStart <> 0 then
+        Thread^.HasSeveralOwnedAllocations := True;
       Thread^.OwnedAllocationStart := Start;
+    end;
   end
   else
     Error := AllocateUserMemory(Process^.AddressSpace, Length, Start);
@@ -588,6 +598,9 @@ begin
 
   AcquireMutex(Process^.Lock);
   Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+  { Its initializers wait for the runtime (CallTakeModuleInitializers). }
+  if Error = ErrorNone then
+    Error := NoteLibraryInitializers(Process, ModuleHandle);
   ReleaseMutex(Process^.Lock);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -812,6 +825,12 @@ begin
     CallSetWallClock: Result := PerformSetWallClock(Int64(Argument0));
     CallGetTimeZone: Result := PerformGetTimeZone(Argument0, Argument1);
     CallSetTimeZone: Result := PerformSetTimeZone(Argument0);
+    CallGetPreciseTime: Result := PerformGetPreciseTime(Argument0, Argument1);
+    CallAdjustWallClock: Result := PerformAdjustWallClock(Int64(Argument0), Argument1, Argument2);
+    { Power (Processes.PowerCalls). }
+    CallGetProcessorPower: Result := PerformGetProcessorPower(Argument0);
+    CallListThermalZones: Result := PerformListThermalZones(Argument0, Argument1);
+    CallListBatteries: Result := PerformListBatteries(Argument0, Argument1);
     CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
     CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
     CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);
@@ -855,8 +874,13 @@ begin
     CallGetMachineModel: Result := PerformGetMachineModel(Argument0, Argument1);
     CallGetProcessResources: Result := PerformGetProcessResources(Argument0, Argument1);
     CallSetProcessLimit: Result := PerformSetProcessLimit(Argument0, Argument1);
+    CallGetProcessModules: Result := PerformGetProcessModules(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
+    CallSetThreadName: Result := PerformSetThreadName(Int64(Argument0), Argument1);
+    CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
+    CallGetModuleTls: Result := PerformGetModuleTls(Int64(Argument0), Argument1);
+    CallTakeModuleInitializers: Result := PerformTakeModuleInitializers(Int64(Argument0), Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;

@@ -36,20 +36,12 @@ interface
 
 uses
   Web.Fetch.NetworkContexts,
-  Web.Storage;
+  Web.Storage,
+  Web.UserAgent;
 
 const
-  { What the web views say they are (HTTP and navigator.userAgent): the
-    platform (FreePascalOS on its processor), the usual compatibility
-    tokens every engine sends so sites serve their standard pages, and
-    the engine itself. }
-{$ifdef CPUAARCH64}
-  WebViewUserAgent = 'Mozilla/5.0 (X11; FreePascalOS aarch64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
-    'Safari/537.36';
-{$else}
-  WebViewUserAgent = 'Mozilla/5.0 (X11; FreePascalOS x86_64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
-    'Safari/537.36';
-{$endif}
+  { What the web views say they are (libweb's). }
+  WebViewUserAgent = EngineUserAgent;
 
 { The program's shared network context. }
 function SharedNetworkContext: TNetworkContext;

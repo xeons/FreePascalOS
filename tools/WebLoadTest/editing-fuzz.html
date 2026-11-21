@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>editing fuzz</title>
+<style>
+  input, textarea { display: block; margin: 2px; font-size: 13px }
+  .wide { width: 300px }
+  .hidden { display: none }
+  #panel { position: relative }
+  #pop { position: absolute; top: 20px; left: 10px; z-index: 5; background: #ffd }
+</style>
+</head>
+<body>
+<!--
+  A page that fights the editor: its listeners replace, remove, move,
+  hide and retype the fields being typed into, change their values and
+  selections, move the focus and rebuild whole forms while key, input,
+  focus and change events are dispatched (WebLoadTest.Editing types
+  random keys into it). A seeded generator makes every run the same.
+-->
+<form id="f1" action="/nowhere"><input id="a" name="a" value="seed"><input id="b" type="search" name="b">
+<button id="go" type="submit">go</button></form>
+<div id="panel"><textarea id="t" name="t">line one
+line two</textarea><div id="pop"></div></div>
+<form id="f2"><input id="c" maxlength="8"><input id="d" type="password"></form>
+<div id="spare"></div>
+<p id="log"></p>
+<script>
+var seed = 12345;
+function random(n) { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; }
+var counts = { input: 0, keydown: 0, change: 0, focus: 0, mutations: 0 };
+var markup = ['<input name="x" value="rebuilt">', '<textarea>rebuilt</textarea>',
+  '<input type="text" maxlength="3" value="abc">', '<input readonly value="ro">'];
+function fields() { return Array.prototype.slice.call(document.querySelectorAll("input, textarea")); }
+function anyField() { var all = fields(); return all.length ? all[random(all.length)] : null; }
+function newField() {
+  var field = random(3) === 0 ? document.createElement("textarea") : document.createElement("input");
+  field.value = "new" + random(100);
+  return field;
+}
+var depth = 0;
+function upset(target, why) {
+  /* Focus moves fire focusin and focusout, whose listeners upset again:
+     a few levels are enough. */
+  if (depth > 3) return;
+  depth++;
+  try { upsetOnce(target, why); } finally { depth--; }
+}
+function upsetOnce(target, why) {
+  /* The document's frame (and the scripts) stay; their fields do not. */
+  if (target && /^(HTML|HEAD|BODY|SCRIPT|STYLE|TITLE|META)$/.test(target.tagName)) target = anyField();
+  var parent = target && target.parentNode;
+  switch (random(16)) {
+    case 0: if (parent) { var clone = target.cloneNode(true); parent.replaceChild(clone, target); if (random(2)) clone.focus(); } break;
+    case 1: if (parent) target.remove(); break;
+    case 2: if (target) target.value = "set" + random(1000); break;
+    case 3: if (target && target.setSelectionRange) target.setSelectionRange(random(5), random(9)); break;
+    case 4: if (target) target.classList.toggle("hidden"); break;
+    case 5: if (target) document.getElementById("spare").appendChild(target); break;
+    case 6: if (target && target.tagName === "INPUT") target.type = ["text", "password", "search", "checkbox", "email"][random(5)]; break;
+    case 7: if (target) target.maxLength = random(6); break;
+    case 8: if (target) target.readOnly = !target.readOnly; break;
+    case 9: if (target) target.disabled = !target.disabled; break;
+    case 10: if (parent && parent !== document.body) parent.innerHTML = markup[random(markup.length)] + markup[random(markup.length)]; break;
+    case 11: if (parent) { var wrapper = document.createElement("div"); parent.insertBefore(wrapper, target); wrapper.appendChild(target); } break;
+    case 12: if (target && target.tagName === "TEXTAREA") target.textContent = "text" + random(50); break;
+    case 13: var other = anyField(); if (other) other.focus(); break;
+    case 14: if (document.activeElement) document.activeElement.blur(); break;
+    case 15: document.getElementById("pop").textContent = why + random(10); document.body.appendChild(newField()); break;
+  }
+}
+document.addEventListener("keydown", function (e) {
+  counts.keydown++;
+  if (random(9) === 0) e.preventDefault();
+  if (random(7) === 0) upset(e.target, "keydown");
+}, true);
+document.addEventListener("keypress", function (e) { if (random(11) === 0) upset(e.target, "keypress"); });
+document.addEventListener("keyup", function (e) { if (random(13) === 0) upset(document.activeElement, "keyup"); });
+document.addEventListener("input", function (e) {
+  counts.input++;
+  var what = e.inputType + ":" + (e.data || "");
+  if (random(3) === 0) upset(e.target, what);
+  if (random(5) === 0) Promise.resolve().then(function () { upset(anyField(), "microtask"); });
+  if (random(6) === 0) setTimeout(function () { upset(anyField(), "timer"); }, 0);
+  if (random(8) === 0) requestAnimationFrame(function () { upset(anyField(), "frame"); });
+});
+document.addEventListener("change", function (e) { counts.change++; if (random(3) === 0) upset(e.target, "change"); });
+document.addEventListener("focusin", function (e) { counts.focus++; if (random(10) === 0) upset(e.target, "focusin"); });
+document.addEventListener("focusout", function (e) { if (random(10) === 0) upset(e.target, "focusout"); });
+document.addEventListener("submit", function (e) { e.preventDefault(); if (random(4) === 0) e.target.remove(); });
+document.addEventListener("click", function (e) { if (random(5) === 0) upset(e.target, "click"); });
+new MutationObserver(function (records) {
+  counts.mutations += records.length;
+  var count = fields().length;
+  if (count < 6 || random(20) === 0) document.body.appendChild(newField());
+  if (count > 40) fields().slice(0, 20).forEach(function (field) { field.remove(); });
+}).observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+document.getElementById("a").focus();
+</script>
+</body>
+</html>

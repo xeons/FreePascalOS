@@ -55,12 +55,21 @@ begin
     Context.CallPlatform('onAnimationFrame', [JsNumber(Context.Now)]);
 end;
 
-{ The loader of a context's top-level window, nil if it has none. }
+{ The loader of a context's document: its own (a page's or a loaded
+  frame's), else its top-level window's (a script-made about:blank
+  frame); nil when it has none or its document was left. }
 function TPageScriptEnvironment.LoaderOf(Context: TObject): TObject;
 var
   Index: Integer;
   Top: TObject;
 begin
+  for Index := 0 to High(FExecutor.FContexts) do
+    if FExecutor.FContexts[Index].Context = Context then
+    begin
+      if FExecutor.FContexts[Index].Stopped then
+        Exit(nil);
+      Exit(FExecutor.FContexts[Index].Loader);
+    end;
   Top := Context;
   if Context is TBindingContext then
     Top := TBindingContext(Context).TopContext;
@@ -75,9 +84,10 @@ var
   Loader: TDocumentLoader;
 begin
   Result := inherited NavigationTiming(Context);
-  if (Context is TBindingContext) and (TBindingContext(Context).ParentContext <> nil) then
-    Exit;
   Loader := TDocumentLoader(LoaderOf(Context));
+  { A script-made frame has no navigation of its own. }
+  if (Loader <> nil) and (TBindingContext(Context).Document <> Loader.Document) then
+    Exit;
   if Loader = nil then
     Exit;
   Result.Kind := Loader.Times.Kind;
@@ -121,6 +131,9 @@ begin
   if not (Context is TBindingContext) or not ParseUrl(OriginUrlOf(TBindingContext(Context)), Url) then
     Exit;
   if (Url.Scheme <> 'http') and (Url.Scheme <> 'https') and (Url.Scheme <> 'file') then
+    Exit;
+  { A sandboxed frame's opaque origin has no storage. }
+  if (Url.Scheme <> 'file') and DocumentOrigin(TBindingContext(Context).Document).Opaque then
     Exit;
   Origin := OriginOfUrl(Url);
   if Url.Scheme = 'file' then

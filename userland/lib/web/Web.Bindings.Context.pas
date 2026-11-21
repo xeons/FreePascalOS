@@ -223,15 +223,27 @@ type
     MutationObservers: TObject;
     { The window's timers (Web.Script.Timers), freed after the engine. }
     Timers: TObject;
+    { The cross-origin views of other windows made for this window's
+      script (Web.Bindings.CrossOrigin), alive while it is open. }
+    CrossOriginTargets: array of TBindingContext;
+    CrossOriginViews: array of TJsValue;
+    { How many index properties (window[0] ...) the global object has
+      for its frames. }
+    FrameIndexCount: Integer;
+    { The realms of its dedicated workers (Web.Script.NativeWorkers):
+      engines sharing its runtime, their jobs run at its microtask
+      checkpoints, freed after its engine. }
+    WorkerEngines: array of TJsEngine;
     { AWindow: the window event target the loader made (the navigable's
       TWebWindow, whose load event and timers it drives); nil makes one
       of the context's own. }
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget = nil);
     { The window of a nested navigable (an iframe's): a realm in Parent's
       engine, so objects pass between the two. Parent frees it (after its
-      engine). }
+      engine). AWindow: the child navigable's window (nil: one of the
+      context's own). }
     constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
-      AFrameElement: TElement);
+      AFrameElement: TElement; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Nested navigables (iframes) }
@@ -243,6 +255,10 @@ type
     { The frame element went from the document: its window closes (no
       longer reachable as contentWindow; its realm stops being a root). }
     procedure Close;
+    { The window event target it was given goes before the context (a
+      frame's document was left): its listeners are dropped and the
+      context gets a target of its own. }
+    procedure DetachWindow;
     { The top-level window's context. }
     function TopContext: TBindingContext;
     property ParentContext: TBindingContext read FParentContext;
@@ -318,6 +334,7 @@ type
     { Takes the pending exception and reports it. }
     procedure ReportPendingException(const Where: string = '');
     procedure Console(const Level, Text: string);
+    procedure ReportUnhandledRejections;
 
     { Calling script from native code. }
     procedure EnterScript;
@@ -497,6 +514,16 @@ begin
   Cache[Slot] := Value;
 end;
 
+{ An event keeps the wrapper of a target that is not a node (an
+  XMLHttpRequest, an AbortSignal ...): the event does not hold it, and
+  script may still ask for event.target. }
+procedure TraceEventTarget(Target: TEventTarget; Tracer: TJsTracer);
+begin
+  if (Target <> nil) and not Target.HeldByEvents and (Target is TStandaloneEventTarget) and
+    (TStandaloneEventTarget(Target).ScriptWrapper <> nil) then
+    Tracer.MarkCell(TBindingWrapper(TStandaloneEventTarget(Target).ScriptWrapper));
+end;
+
 procedure TBindingWrapper.Trace(Tracer: TJsTracer);
 var
   Index: Integer;
@@ -505,7 +532,14 @@ begin
   for Index := 0 to High(Cache) do
     Tracer.MarkValue(Cache[Index]);
   Tracer.MarkValue(Owner);
-  if (NativeData <> nil) and (TObject(NativeData) is TEventTarget) then
+  if NativeData = nil then
+    Exit;
+  if (WrapperFlags and WrapperIsEvent) <> 0 then
+  begin
+    TraceEventTarget(TEvent(NativeData).Target, Tracer);
+    TraceEventTarget(TEvent(NativeData).RelatedTarget, Tracer);
+  end
+  else if TObject(NativeData) is TEventTarget then
     TraceListeners(TEventTarget(NativeData).ListenerList(False), Tracer);
 end;
 
@@ -566,17 +600,15 @@ begin
 end;
 
 constructor TBindingContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
-  Parent: TBindingContext; AFrameElement: TElement);
+  Parent: TBindingContext; AFrameElement: TElement; AWindow: TEventTarget);
 const
   FrameStackCapacity = 64 * 1024;
   FrameMaximumFrames = 2000;
 var
   Singleton_: TWindowSingleton;
   Options: TJsEngineOptions;
-  AWindow: TEventTarget;
 begin
   inherited Create;
-  AWindow := nil;
   Options := TJsEngine.DefaultOptions;
   if ContextHeapThreshold > 0 then
     Options.InitialHeapThreshold := ContextHeapThreshold;
@@ -633,6 +665,9 @@ begin
   { The engine's cells go first: the wrappers release their nodes (a
     frame's cells go with the top-level engine, before the frames). }
   FreeAndNil(FEngine);
+  for Index := 0 to High(WorkerEngines) do
+    WorkerEngines[Index].Free;
+  WorkerEngines := nil;
   FreeChildFrames;
   if FFrameElement <> nil then
     FFrameElement.Release;
@@ -692,18 +727,33 @@ begin
       Inc(Result);
 end;
 
+{ The open frames in the tree order of their elements (window.frames). }
 function TBindingContext.FrameAt(Index: Integer): TBindingContext;
 var
-  Walk: Integer;
+  Open: array of TBindingContext;
+  Walk, Position: Integer;
+  Candidate: TBindingContext;
 begin
-  for Walk := 0 to High(FChildFrames) do
-    if not FChildFrames[Walk].FClosed then
-    begin
-      if Index = 0 then
-        Exit(FChildFrames[Walk]);
-      Dec(Index);
-    end;
   Result := nil;
+  Open := nil;
+  for Walk := 0 to High(FChildFrames) do
+  begin
+    Candidate := FChildFrames[Walk];
+    if Candidate.FClosed then
+      Continue;
+    { Insertion sort by the elements' places in the document. }
+    SetLength(Open, Length(Open) + 1);
+    Position := High(Open);
+    while (Position > 0) and ((Candidate.FFrameElement.CompareDocumentPosition(Open[Position - 1].FFrameElement) and
+      DocumentPositionFollowing) <> 0) do
+    begin
+      Open[Position] := Open[Position - 1];
+      Dec(Position);
+    end;
+    Open[Position] := Candidate;
+  end;
+  if (Index >= 0) and (Index <= High(Open)) then
+    Result := Open[Index];
 end;
 
 procedure TBindingContext.Close;
@@ -713,10 +763,22 @@ begin
   if FClosed or (FParentContext = nil) then
     Exit;
   FClosed := True;
+  CrossOriginTargets := nil;
+  CrossOriginViews := nil;
   for Index := 0 to High(FChildFrames) do
     FChildFrames[Index].Close;
   FEngine.Runtime.Heap.RemoveRootProvider(@MarkRoots);
   FEngine.Detach;
+end;
+
+procedure TBindingContext.DetachWindow;
+begin
+  if FOwnsWindow then
+    Exit;
+  if FWindow.ListenerList(False) <> nil then
+    DisableListeners(FWindow.ListenerList(False), Self);
+  FWindow := TWindowTarget.Create;
+  FOwnsWindow := True;
 end;
 
 function TBindingContext.TopContext: TBindingContext;
@@ -773,6 +835,8 @@ begin
     Tracer.MarkValue(FSingletons[Kind]);
   Tracer.MarkValue(FWindowHandlers);
   TraceListeners(FWindow.ListenerList(False), Tracer);
+  for Index := 0 to High(CrossOriginViews) do
+    Tracer.MarkValue(CrossOriginViews[Index]);
   { The window's document: every wrapper of a connected node lives. }
   if FDocument.ScriptWrapper <> nil then
     Tracer.MarkCell(TBindingWrapper(FDocument.ScriptWrapper));
@@ -946,6 +1010,21 @@ begin
   Result := (Pos('-', Name) > 0) and (Name <> '') and (Name[1] in ['a'..'z']);
 end;
 
+{ SVG 2: the svg element, the graphics elements (what is drawn, groups and
+  links), and SVGElement for the rest. }
+function SvgInterfaceOf(Name: TAtom): Integer;
+begin
+  case Name of
+    AtomSvg:
+      Result := InterfaceSVGSVGElement;
+    AtomG, AtomPath, AtomRect, AtomCircle, AtomEllipse, AtomLine, AtomPolyline, AtomPolygon, AtomText, AtomTspan,
+    AtomUse, AtomDefs, AtomImage, AtomForeignObject, AtomA:
+      Result := InterfaceSVGGraphicsElement;
+  else
+    Result := InterfaceSVGElement;
+  end;
+end;
+
 function TBindingContext.InterfaceForNode(Node: TNode): Integer;
 var
   Atom: TAtom;
@@ -953,6 +1032,8 @@ begin
   case Node.NodeType of
     NodeTypeElement:
       begin
+        if TElement(Node).NamespaceId = NamespaceSvg then
+          Exit(SvgInterfaceOf(Node.LocalNameAtom));
         if not TElement(Node).IsHtml then
           Exit(InterfaceElement);
         Atom := Node.LocalNameAtom;
@@ -1395,6 +1476,34 @@ begin
   end;
 end;
 
+{ HTML 8.1.4.7: promises rejected with nobody to handle them are
+  reported at the end of a microtask checkpoint (the unhandledrejection
+  event is not fired yet). }
+procedure TBindingContext.ReportUnhandledRejections;
+var
+  Reasons: TJsValueList;
+  Index, Handle: Integer;
+  Text: string;
+  Data: TObject;
+begin
+  Reasons := FEngine.TakeUnhandledRejections;
+  for Index := 0 to High(Reasons) do
+  begin
+    { Its text may run script (an error's stack getter): kept meanwhile. }
+    Handle := FEngine.Protect(Reasons[Index]);
+    try
+      Data := Unwrap(Reasons[Index], InterfaceDOMException);
+      if Data <> nil then
+        Text := TDomExceptionData(Data).Name + ': ' + TDomExceptionData(Data).Message
+      else
+        Text := FEngine.ErrorText(Reasons[Index]);
+    finally
+      FEngine.Unprotect(Handle);
+    end;
+    Console('error', 'Uncaught (in promise) ' + Text);
+  end;
+end;
+
 procedure TBindingContext.PerformMicrotaskCheckpoint;
 var
   Index: Integer;
@@ -1418,7 +1527,15 @@ begin
           FChildFrames[Index].PerformMicrotaskCheckpoint;
           Again := True;
         end;
+      for Index := 0 to High(WorkerEngines) do
+        while WorkerEngines[Index].PendingJobs > 0 do
+        begin
+          Again := True;
+          if not WorkerEngines[Index].Realm.RunJobs then
+            ReportPendingException;
+        end;
     until not Again;
+    ReportUnhandledRejections;
   finally
     FCheckpointRunning := False;
   end;

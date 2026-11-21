@@ -176,6 +176,11 @@ begin
   Release;
 end;
 
+function TNode.HeldByEvents: Boolean;
+begin
+  Result := True;
+end;
+
 { Node has just become a root: it takes its references away from its old
   reference ancestors (OldParent up), and holds its document if it is
   referenced or is listed for collection otherwise. }

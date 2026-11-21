@@ -126,6 +126,7 @@ uses
   Processes.Thread,
   Processes.UserThread,
   Processes.UserExceptions,
+  Processes.LoadedModules,
   Debug.Output;
 
 const
@@ -174,6 +175,7 @@ begin
   DebugWrite(Description);
   DebugWrite(' at ');
   DebugWriteAddress(TrapFrameInstructionPointer(Frame));
+  WriteModuleOfAddress(Process, TrapFrameInstructionPointer(Frame));
   if TrapFrameVector(Frame) = VectorPageFault then
   begin
     DebugWrite(' accessing ');
@@ -184,8 +186,11 @@ begin
   DebugWriteLine(', terminated');
   DebugEndMessage;
 
-  { Exceptions arrive with interrupts off; ending the process may block. }
+  { Exceptions arrive with interrupts off; ending the process may block,
+    and so may the module list's lock. Where the modules were loaded
+    makes the addresses above meaningful (scripts/symbolize.py). }
   EnableInterrupts;
+  WriteProcessModules(Process, 'process');
   ExitCurrentProcess(ExitStatusException);
 end;
 
@@ -233,8 +238,9 @@ begin
     Result := Result + TextLength(Strings[Index]) + 1;
 end;
 
-{ Builds the initial stack below UserStackTop and returns the stack
-  pointer the program starts with (pointing at the argument count). }
+{ Builds the initial stack below the stack top of the process's layout
+  (less its random offset) and returns the stack pointer the program
+  starts with (pointing at the argument count). }
 function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
   MainModule: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
 var
@@ -250,6 +256,8 @@ var
   StringPosition: QWord;
   Index: Integer;
   Length: QWord;
+  StackTop: QWord;
+  ImageTop: QWord;
 
   procedure PutSlot(Value: QWord);
   begin
@@ -282,12 +290,14 @@ begin
   PointerSlots := 1 + QWord(Startup.ArgumentCount) + 1 + QWord(Startup.EnvironmentCount) + 1 +
     2 * AuxiliaryEntryCount;
 
-  StringsStart := (UserStackTop - StringBytes) and not QWord(15);
+  StackTop := Process^.AddressSpace^.Layout.StackTop;
+  ImageTop := StackTop - Process^.AddressSpace^.Layout.InitialStackOffset;
+  StringsStart := (ImageTop - StringBytes) and not QWord(15);
   ListsStart := (StringsStart - (Lists.InitializerCount + Lists.FinalizerCount) * SizeOf(QWord)) and
     not QWord(15);
   StackPointer := (ListsStart - PointerSlots * SizeOf(QWord)) and not QWord(15);
-  ImageSize := UserStackTop - StackPointer;
-  if ImageSize > UserStackReserve div 2 then
+  ImageSize := ImageTop - StackPointer;
+  if StackTop - StackPointer > UserStackReserve div 2 then
     Exit(ErrorNameTooLong); { arguments and environment are too large }
 
   Image := PByte(AllocateZeroedKernelMemory(ImageSize));
@@ -339,6 +349,7 @@ var
   StandardIndex: Integer;
   Lists: TInitializerLists;
   MainThread: PThread;
+  StackStart: QWord;
 begin
   { The idle thread normally frees exited threads, but a busy system may
     not go idle for a long time; starting a process is a good moment to
@@ -372,11 +383,12 @@ begin
     if Startup.RegionLimit <> 0 then
       SetRegionLimit(Process^.AddressSpace, Startup.RegionLimit);
     Process^.PageTableRoot := Process^.AddressSpace^.Root;
-    Result := AddRegion(Process^.AddressSpace, UserStackTop - UserStackReserve, UserStackReserve,
+    StackStart := Process^.AddressSpace^.Layout.StackTop - UserStackReserve;
+    Result := AddRegion(Process^.AddressSpace, StackStart, UserStackReserve,
       RegionReadable or RegionWritable, RegionKindStack, True);
   end;
   if Result = ErrorNone then
-    Result := AddStackGuard(Process^.AddressSpace, UserStackTop - UserStackReserve);
+    Result := AddStackGuard(Process^.AddressSpace, StackStart);
   if Result = ErrorNone then
     Result := LoadProgramImage(Process, Startup.KernelPath, MainModule);
   if Result = ErrorNone then
@@ -402,7 +414,7 @@ begin
       it runs. }
     RegisterRunningProcess(Process);
     Result := StartUserThread(Process, MainModule^.EntryPoint, StackPointer, 0,
-      UserStackTop - UserStackReserve, Startup.Name, False, MainThread);
+      StackStart, Startup.Name, False, MainThread);
     if Result <> ErrorNone then
       UnregisterRunningProcess(Process);
   end;

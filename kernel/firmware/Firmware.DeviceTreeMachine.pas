@@ -73,12 +73,26 @@ type
     CpuOnFunction: LongWord;
   end;
 
+  { A processor idle state ("arm,idle-state" under /cpus/idle-states). }
+  TDeviceTreeIdleState = record
+    { arm,psci-suspend-param: the PSCI CPU_SUSPEND power state. }
+    PowerState: LongWord;
+    EntryLatencyMicroseconds: LongWord;
+    ExitLatencyMicroseconds: LongWord;
+    MinimumResidencyMicroseconds: LongWord;
+    { local-timer-stop: the processor's timer stops in it. }
+    StopsLocalTimer: Boolean;
+  end;
+
 function DescribeDeviceTreeGic(out Gic: TDeviceTreeGic): Boolean;
 function DescribeDeviceTreeTimer(out Timer: TDeviceTreeTimer): Boolean;
 function DescribeDeviceTreePsci(out Psci: TDeviceTreePsci): Boolean;
 { The processors that can be started: their MPIDR affinities
   (Aff2.Aff1.Aff0), the boot processor among them. Returns the count. }
 function ListDeviceTreeProcessors(var Affinities: array of LongWord): Integer;
+{ The idle states the tree describes (those with a PSCI power state).
+  Returns the count. }
+function ListDeviceTreeIdleStates(var States: array of TDeviceTreeIdleState): Integer;
 
 implementation
 
@@ -254,6 +268,35 @@ begin
       end;
     end;
     Node := NextSiblingNode(Tree^, Node);
+  end;
+end;
+
+function ListDeviceTreeIdleStates(var States: array of TDeviceTreeIdleState): Integer;
+var
+  Tree: PDeviceTree;
+  Node: LongInt;
+  State: TDeviceTreeIdleState;
+begin
+  Result := 0;
+  Tree := SystemDeviceTree;
+  if Tree = nil then
+    Exit;
+  Node := FindCompatibleNode(Tree^, NoNode, 'arm,idle-state');
+  while (Node <> NoNode) and (Result <= High(States)) do
+  begin
+    if ReadCellProperty(Tree^, Node, 'arm,psci-suspend-param', State.PowerState) then
+    begin
+      if not ReadCellProperty(Tree^, Node, 'entry-latency-us', State.EntryLatencyMicroseconds) then
+        State.EntryLatencyMicroseconds := 0;
+      if not ReadCellProperty(Tree^, Node, 'exit-latency-us', State.ExitLatencyMicroseconds) then
+        State.ExitLatencyMicroseconds := 0;
+      if not ReadCellProperty(Tree^, Node, 'min-residency-us', State.MinimumResidencyMicroseconds) then
+        State.MinimumResidencyMicroseconds := 0;
+      State.StopsLocalTimer := NodeHasProperty(Tree^, Node, 'local-timer-stop');
+      States[Result] := State;
+      Inc(Result);
+    end;
+    Node := FindCompatibleNode(Tree^, Node, 'arm,idle-state');
   end;
 end;
 

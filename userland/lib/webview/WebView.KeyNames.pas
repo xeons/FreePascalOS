@@ -52,6 +52,12 @@ function CodePointText(CodePoint: LongWord): string;
 function DispatchKeyEvent(Target: TObject; const EventType: string; ScanCode, Character, Modifiers: LongWord): Boolean;
 { Dispatches a trusted InputEvent "input" (inputType, data) at Target. }
 procedure DispatchInputEvent(Target: TObject; const InputType, Data: string; HasData: Boolean);
+{ The scan code of the key whose code is Code ("KeyA", "Enter",
+  "ArrowLeft"; 0 when unknown), and of the key that types Character on a
+  US layout (NeedsShift for an upper case letter or a shifted symbol). For
+  programs and tests that make key presses of their own. }
+function ScanCodeOfKeyCode(const Code: string): LongWord;
+function ScanCodeOfCharacter(Character: LongWord; out NeedsShift: Boolean): LongWord;
 
 implementation
 
@@ -286,6 +292,42 @@ begin
   end
   else if Result.Key = '' then
     Result.Key := 'Unidentified';
+end;
+
+function ScanCodeOfKeyCode(const Code: string): LongWord;
+var
+  Index: Integer;
+begin
+  for Index := Low(KeyRows) to High(KeyRows) do
+    if KeyRows[Index].Code = Code then
+      Exit(KeyRows[Index].ScanCode);
+  Result := 0;
+end;
+
+function ScanCodeOfCharacter(Character: LongWord; out NeedsShift: Boolean): LongWord;
+const
+  { The US layout's printable keys: the character unshifted, then shifted. }
+  Plain: string = '1234567890-=qwertyuiop[]asdfghjkl;''`\zxcvbnm,./ ';
+  Shifted: string = '!@#$%^&*()_+QWERTYUIOP{}ASDFGHJKL:"~|ZXCVBNM<>? ';
+  ScanCodes: array[1..48] of Byte = ($02, $03, $04, $05, $06, $07, $08, $09, $0A, $0B, $0C, $0D,
+    $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $1A, $1B,
+    $1E, $1F, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $2B,
+    $2C, $2D, $2E, $2F, $30, $31, $32, $33, $34, $35, $39);
+var
+  Index: Integer;
+begin
+  NeedsShift := False;
+  Result := 0;
+  if Character > 127 then
+    Exit;
+  Index := Pos(Chr(Character), Plain);
+  if Index = 0 then
+  begin
+    Index := Pos(Chr(Character), Shifted);
+    NeedsShift := Index > 0;
+  end;
+  if (Index > 0) and (Index <= High(ScanCodes)) then
+    Result := ScanCodes[Index];
 end;
 
 end.

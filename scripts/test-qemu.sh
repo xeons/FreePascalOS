@@ -308,6 +308,13 @@ case "$qemu_status" in
             echo "TEST FAILED: the kernel heap check self test did not run"
             exit 1
         fi
+        # The kernel's report of coretest --crash-without-dispatcher,
+        # symbolized from the modules it lists (scripts/symbolize.py).
+        if [[ -n "$system_disk_image" ]] &&
+           ! "$(dirname "$0")/test-symbolize.py" "$serial_log" "$build_directory/user"; then
+            echo "TEST FAILED: the crash report could not be symbolized"
+            exit 1
+        fi
         if (( ${#missing_file_systems[@]} > 0 )); then
             echo "TEST FAILED: no passing file system test for: ${missing_file_systems[*]}"
             exit 1

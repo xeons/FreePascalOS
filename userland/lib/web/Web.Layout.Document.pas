@@ -42,6 +42,7 @@ interface
 
 uses
   Web.Dom, Css.ElementAdapter, Css.ComputedStyle, Web.Style.Resolver, Web.Layout.Resources, Web.Layout.Boxes,
+  Web.Layout.EmbeddedContent,
   Web.Layout.TreeBuilder, Web.Layout.Context;
 
 type
@@ -90,6 +91,10 @@ type
     procedure UpdateBoxes;
     procedure ApplyEnvironment;
     procedure ComputeScrollExtents;
+    procedure UpdateFrames;
+    procedure TakeFrames;
+    function FramesNeedUpdate: Boolean;
+    function GetPaintVersion: LongWord;
   public
     constructor Create(Document: TDocument; Resources: TDocumentResources = nil);
     destructor Destroy; override;
@@ -121,8 +126,9 @@ type
     property ViewportWidth: Single read FViewportWidth;
     property ViewportHeight: Single read FViewportHeight;
     property Scale: Single read FScale;
-    { Changes whenever what painting would draw changed. }
-    property PaintVersion: LongWord read FPaintVersion;
+    { Changes whenever what painting would draw changed (in the frames'
+      documents too). }
+    property PaintVersion: LongWord read GetPaintVersion;
     { Changes whenever the display list would change: the paint version
       without the viewport's own scrolling (painted at an offset). }
     function DisplayListVersion: LongWord;
@@ -274,10 +280,16 @@ begin
     Box.Style.Release;
     Box.Style := Data^.Style.AddRef;
   end;
-  if (Change = scPaint) and (Data <> nil) then
+  if (Change in [scPaint, scMove]) and (Data <> nil) then
   begin
-    { Only painting changes: the boxes take the new styles, no layout. }
+    { Only painting changes: the boxes take the new styles, no layout;
+      a new translation lays out the box again (its offset). }
     TakePaintStyles(Box, Element, Data^.Style);
+    if Change = scMove then
+    begin
+      Box.MarkNeedsLayout;
+      FLayoutDirty := True;
+    end;
     Exit;
   end;
   if Box.Kind = bkReplaced then
@@ -386,6 +398,11 @@ begin
     FLayoutDirty := True;
     Exit;
   end;
+  if Change = rcFrames then
+  begin
+    TakeFrames;
+    Exit;
+  end;
   if Change <> rcImages then
     Exit;
   { Images arrived: replaced boxes take them and are laid out again. }
@@ -405,6 +422,67 @@ begin
       end;
     Node := Node.NextInTree(FDocument);
   end;
+end;
+
+{ Frames came or went: their boxes show the new content. }
+procedure TDocumentLayout.TakeFrames;
+var
+  Node: TNode;
+  Box: TLayoutBox;
+begin
+  if FRoot = nil then
+    Exit;
+  Node := FDocument;
+  while Node <> nil do
+  begin
+    Box := BoxOf(Node);
+    if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
+      TReplacedBox(Box).Content := FResources.ElementFrame(TElement(Node));
+    Node := Node.NextInTree(FDocument);
+  end;
+end;
+
+{ Each frame's document laid out at its box's content size. }
+procedure TDocumentLayout.UpdateFrames;
+var
+  Index: Integer;
+  Content: TEmbeddedContent;
+  Box: TLayoutBox;
+begin
+  Index := 0;
+  while Index < FResources.FrameCount do
+  begin
+    Content := FResources.FrameContentAt(Index);
+    Box := BoxOf(FResources.FrameElementAt(Index));
+    if (Box <> nil) and (Box is TReplacedBox) then
+      Content.SetViewport(Box.ContentWidth, Box.ContentHeight, FScale)
+    else
+      Content.SetViewport(0, 0, FScale);
+    if Content.NeedsUpdate then
+      Content.Update;
+    Inc(Index);
+  end;
+end;
+
+function TDocumentLayout.FramesNeedUpdate: Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to FResources.FrameCount - 1 do
+    if FResources.FrameContentAt(Index).NeedsUpdate then
+      Exit(True);
+  Result := False;
+end;
+
+function TDocumentLayout.GetPaintVersion: LongWord;
+var
+  Index: Integer;
+  Sum: QWord;
+begin
+  Sum := FPaintVersion;
+  for Index := 0 to FResources.FrameCount - 1 do
+    Sum := (Sum + FResources.FrameContentAt(Index).PaintVersion) and $FFFFFFFF;
+  Result := LongWord(Sum);
 end;
 
 procedure TDocumentLayout.TakeElementImage(Box: TReplacedBox; Element: TElement);
@@ -453,10 +531,12 @@ var
   Data: PNodeData;
 begin
   Data := ExistingNodeData(FDocument);
-  Result := FFullRebuild or FBoxesChanged or FLayoutDirty or (FRoot = nil) or
+  Result := FFullRebuild or FBoxesChanged or FLayoutDirty or (FRoot = nil) or FStyler.SheetsDirty or
     ((Data <> nil) and ((ndDescendantStyleDirty in Data^.Flags) or (ndDescendantBoxesDirty in Data^.Flags)));
   if (FRoot <> nil) and ([bfNeedsLayout, bfChildNeedsLayout] * FRoot.Flags <> []) then
     Result := True;
+  if not Result and (FResources.FrameCount > 0) then
+    Result := FramesNeedUpdate;
 end;
 
 procedure TDocumentLayout.Update;
@@ -500,6 +580,8 @@ begin
       LeavePhase;
     end;
   end;
+  if FResources.FrameCount > 0 then
+    UpdateFrames;
 end;
 
 { The box tree brought up to date with the styles: built whole the first
@@ -607,9 +689,13 @@ begin
     Result := FRoot.ScrollHeight;
 end;
 
+{ A scroll container shows a bar unless its overflow is hidden or clipped
+  or it asks for none (scrollbar-width: none: the page scrolls it its own
+  way). }
 function ShowsBar(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
 begin
-  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]);
+  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]) and
+    (Style.Keyword(cpScrollbarWidth) <> kwNone);
 end;
 
 procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer;

@@ -712,7 +712,7 @@ begin
     Event.IsTrusted := True;
     DispatchEvent(Event);
   finally
-    Event.Free;
+    Event.Release;
   end;
   if Assigned(FOnReadyStateChange) then
     FOnReadyStateChange(Self);

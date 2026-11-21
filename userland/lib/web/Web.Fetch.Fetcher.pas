@@ -211,7 +211,7 @@ type
 function AcceptForDestination(Destination: TFetchDestination): string;
 begin
   case Destination of
-    DestinationDocument, DestinationIframe:
+    DestinationDocument, DestinationIframe, DestinationFrame:
       Result := 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
     DestinationImage:
       Result := 'image/jxl,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8';
@@ -900,7 +900,7 @@ begin
     Job.State := JobAwaitingResponse;
   { What the page cannot show without goes ahead of images. }
   FRunner.Start(FNetwork.Client, BuildHttpRequest(Job, Kind), FNextHopId,
-    Job.Request.Destination in [DestinationDocument, DestinationIframe, DestinationStyle, DestinationScript,
+    Job.Request.Destination in [DestinationDocument, DestinationIframe, DestinationFrame, DestinationStyle, DestinationScript,
     DestinationFont, DestinationEmpty]);
 end;
 

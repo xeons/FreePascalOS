@@ -92,6 +92,13 @@ type
     { format() hints worth fetching ('' when the source gave none). }
     function FontFormatSupported(const Format: string): Boolean; virtual;
     function MediaEnvironment: TCssMediaEnvironment; virtual;
+    { The sink for a child navigable (an iframe's) of the navigable this
+      sink serves (the caller owns it): a null sink unless the sink
+      renders. }
+    function CreateChildSink(Navigable: TObject): TResourceSink; virtual;
+    { The observer the navigable this sink was made for should have
+      (a rendering child sink's frame view), nil if none. }
+    function NavigableObserver: TObject; virtual;
   end;
 
   TNullResourceSink = class(TResourceSink)
@@ -126,6 +133,17 @@ begin
   Result.DeviceWidth := Width;
   Result.DeviceHeight := Height;
   Result.Resolution := Ratio;
+end;
+
+function TResourceSink.CreateChildSink(Navigable: TObject): TResourceSink;
+begin
+  Result := TNullResourceSink.Create;
+  TNullResourceSink(Result).Environment := ScreenMediaEnvironment(300, 150, MediaEnvironment.Resolution);
+end;
+
+function TResourceSink.NavigableObserver: TObject;
+begin
+  Result := nil;
 end;
 
 function TResourceSink.FontFormatSupported(const Format: string): Boolean;

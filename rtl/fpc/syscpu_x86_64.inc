@@ -61,6 +61,18 @@ asm
   movq %fs:16, %rax
 end;
 
+{ The thread's dynamic TLS vector (sysdyntls.inc), in the control block
+  (ThreadBlockDynamicVectorOffset). }
+function ReadDynamicVector: Pointer; assembler; nostackframe;
+asm
+  movq %fs:24, %rax
+end;
+
+procedure WriteDynamicVector(Value: Pointer); assembler; nostackframe;
+asm
+  movq %rdi, %fs:24
+end;
+
 { --- Processor exceptions ------------------------------------------------ }
 
 const
