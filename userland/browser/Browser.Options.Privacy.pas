@@ -33,6 +33,7 @@ interface
 uses
   Controls.Base,
   Controls.Panels,
+  Controls.Labels,
   Controls.Toggles,
   Controls.ComboBox,
   Browser.Settings,
@@ -43,6 +44,8 @@ type
   private
     FHistoryMode: TComboBox;
     FCustom: TPanel;
+    FExplanation: TLabel;
+    FExplanation2: TLabel;
     FAlwaysPrivate: TCheckBox;
     FRememberHistory: TCheckBox;
     FRememberDownloads: TCheckBox;
@@ -79,6 +82,8 @@ begin
   FHistoryMode := AddCombo(Group, ['Remember history', 'Never remember history', 'Use custom settings for history'],
     100, GroupTop, 260);
   FHistoryMode.OnChange := @ModeChanged;
+  FExplanation := AddLabel(Group, '', 10, GroupTop + 34, PaneWidth - 60);
+  FExplanation2 := AddLabel(Group, '', 10, GroupTop + 54, PaneWidth - 60);
   FCustom := AddRadioPanel(Group, 10, GroupTop + 28, PaneWidth - 50, 204);
   FAlwaysPrivate := AddCheck(FCustom, 'Automatically start Browser in a &private browsing session', 0, 0);
   FRememberHistory := AddCheck(FCustom, 'Remember my &browsing history', 16, 22);
@@ -100,6 +105,23 @@ end;
 procedure TPrivacyPane.ModeChanged(Sender: TControl);
 begin
   FCustom.Visible := FHistoryMode.ItemIndex = Ord(HistoryCustom);
+  case FHistoryMode.ItemIndex of
+    Ord(HistoryRemember):
+      begin
+        FExplanation.Text := 'Browser will remember your browsing, download, form and search history,';
+        FExplanation2.Text := 'and keep cookies from web sites you visit.';
+      end;
+    Ord(HistoryNever):
+      begin
+        FExplanation.Text := 'Browser will use the same settings as private browsing, and will not';
+        FExplanation2.Text := 'remember any history as you browse the Web.';
+      end;
+  else
+    begin
+      FExplanation.Text := '';
+      FExplanation2.Text := '';
+    end;
+  end;
 end;
 
 procedure TPrivacyPane.Load(constref Settings: TBrowserSettings);

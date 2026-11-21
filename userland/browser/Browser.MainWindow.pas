@@ -242,6 +242,9 @@ type
     procedure SearchEnginesChanged;
     procedure DownloadChanged(Item: TDownloadItem);
     procedure RunCommand(Command: LongInt);
+    { Prints where the bars are (tests): "layout menu Y toolbars Y tabs Y
+      content Y status Y", pixels from the client area's top. }
+    procedure ReportLayout;
   end;
 
 implementation
@@ -949,6 +952,13 @@ begin
     Exit;
   end;
   inherited ReceiveMessage(Message);
+end;
+
+procedure TBrowserWindow.ReportLayout;
+begin
+  Say('layout menu ' + IntToStr(FMenus.Bar.PixelBounds.Top) + ' toolbars ' +
+    IntToStr(FToolbars.Toolbox.PixelBounds.Top) + ' tabs ' + IntToStr(FTabStrip.PixelBounds.Top) + ' content ' +
+    IntToStr(FContent.PixelBounds.Top) + ' status ' + IntToStr(FStatusBar.PixelBounds.Top));
 end;
 
 function TBrowserWindow.AboutPage(const Path: string; out Html: string): Boolean;

@@ -680,7 +680,7 @@ var
   OverClose: Boolean;
 begin
   inherited PointerMove(X, Y, Buttons);
-  if (FPressTab >= 0) and ((Buttons and ButtonLeft) <> 0) then
+  if (FPressTab >= 0) and ((Buttons and (LongWord(1) shl ButtonLeft)) <> 0) then
   begin
     if not FDragging and ((Abs(X - FPressX) >= Scaled(DragThreshold)) or (Abs(Y - FPressY) >= Scaled(DragThreshold))) then
       FDragging := True;

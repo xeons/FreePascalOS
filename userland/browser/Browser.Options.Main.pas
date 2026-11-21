@@ -85,9 +85,9 @@ begin
   AddLabel(Group, 'Home &Page:', 10, GroupTop + 30, 90);
   FHomePage := AddEdit(Group, 150, GroupTop + 30, 380);
   FHomePage.Anchors := [akLeft, akTop, akRight];
-  AddButton(Group, 'Use &Current Pages', 150, GroupTop + 58, 0, @UseCurrentClicked);
-  AddButton(Group, 'Use &Bookmark...', 290, GroupTop + 58, 0, @UseBookmarkClicked);
-  AddButton(Group, '&Restore to Default', 410, GroupTop + 58, 0, @RestoreClicked);
+  AddButton(Group, 'Use &Current Pages', 150, GroupTop + 58, 128, @UseCurrentClicked);
+  AddButton(Group, 'Use &Bookmark...', 284, GroupTop + 58, 116, @UseBookmarkClicked);
+  AddButton(Group, '&Restore to Default', 406, GroupTop + 58, 124, @RestoreClicked);
   Group := AddGroup('Downloads', 128, 132);
   FShowDownloads := AddCheck(Group, 'Show the &Downloads window when downloading a file', 10, GroupTop);
   FCloseDownloads := AddCheck(Group, 'C&lose it when all downloads are finished', 30, GroupTop + 22);

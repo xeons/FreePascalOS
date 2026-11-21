@@ -355,7 +355,7 @@ var
   Index: Integer;
 begin
   inherited PointerMove(X, Y, Buttons);
-  if (FPressIndex >= 0) and ((Buttons and ButtonLeft) <> 0) and
+  if (FPressIndex >= 0) and ((Buttons and (LongWord(1) shl ButtonLeft)) <> 0) and
      ((Abs(X - FPressX) >= Scaled(DragThreshold)) or (Abs(Y - FPressY) >= Scaled(DragThreshold))) then
   begin
     Index := FPressIndex;

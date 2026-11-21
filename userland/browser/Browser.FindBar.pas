@@ -146,7 +146,7 @@ begin
   Spaced(FPrevious, 2, 6);
   FPrevious.OnClick := @PreviousClicked;
   FHighlight := TCheckBox.Create(Self);
-  FHighlight.Text := '&Highlight all';
+  FHighlight.Text := 'Highlight &all';
   FHighlight.AutoSize := True;
   FHighlight.Align := AlignLeft;
   Spaced(FHighlight, 4, 6);

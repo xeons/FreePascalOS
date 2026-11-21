@@ -87,7 +87,7 @@ const
     TSecurityPane, TAdvancedPane);
   Captions: array[0..6] of string = ('Main', 'Tabs', 'Content', 'Applications', 'Privacy', 'Security', 'Advanced');
   Icons: array[0..6] of string = ('app-settings', 'app-web-browser', 'file-document', 'applications',
-    'overlay-locked', 'status-security-ok', 'action-options');
+    'action-lock', 'status-security-ok', 'action-options');
 var
   Window: TPreferencesWindow;
   Panes: array[0..6] of TOptionsPane;

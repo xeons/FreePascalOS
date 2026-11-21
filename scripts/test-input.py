@@ -1679,6 +1679,67 @@ checks.append(('browser: a local page loads (title, loaded), its script runs, it
                browser_ok and b'title Browser test' in browser_log and
                b'loaded file:///tmp/browser-test.html' in browser_log and b'console log script ran 42' in browser_log and
                browser_colour_near(browser_screen(500, 500), 'ff8000')))
+# The browser's chrome, laid out as browsers were before they hid their
+# menus: the menu bar, then the toolbars, then the tabs under them, then
+# the page (the window prints where each is). From the keyboard: Tools >
+# Options... (Alt+T, O), the Tabs pane (Ctrl+Tab), "Open new windows in a
+# new tab" turned off (Alt+B) and OK (Enter): the setting is kept; the
+# Library (Ctrl+Shift+B, closed with Alt+F4); the location bar (Ctrl+L)
+# suggests the page visited when part of its title is typed, and Down
+# and Enter go to it; the find bar (Ctrl+F) finds text on the page and
+# Highlight all (Alt+A) highlights every match. Its settings and profile
+# are deleted afterwards.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'/app/browser/browser file:///tmp/browser-test.html > /tmp/chrome.log 2>&1 &\r')
+time.sleep(8)
+press('alt-t')
+time.sleep(0.6)
+press('o')
+time.sleep(2)
+press('ctrl-tab')
+time.sleep(0.5)
+press('alt-b')
+time.sleep(0.3)
+press('ret')
+time.sleep(1)
+press('ctrl-shift-b')
+time.sleep(2.5)
+press('alt-f4')
+time.sleep(1)
+press('ctrl-l')
+time.sleep(0.3)
+type_on_keyboard('browser')
+time.sleep(1.5)
+press('down')
+time.sleep(0.3)
+press('ret')
+time.sleep(3)
+press('ctrl-f')
+time.sleep(0.5)
+type_on_keyboard('Local')
+time.sleep(1)
+press('alt-a')
+time.sleep(1)
+chrome_screen = take_screen()
+chrome_from = len(received)
+type_on_serial(b'kill %2; wait %2; cat /tmp/chrome.log; settings get Browser/NewWindowsInTabs; settings delete Browser; '
+               b'rm -r /.settings/browser; kill %1; wait; m=DONE; echo CHROME $m\r')
+chrome_ok = wait_for('CHROME DONE', 30)
+chrome_log = bytes(received[chrome_from:])
+layout = re.search(rb'layout menu (\d+) toolbars (\d+) tabs (\d+) content (\d+)', chrome_log)
+checks.append(('browser chrome: the menu bar, then the toolbars, then the tabs under them, then the page',
+               chrome_ok and layout is not None and
+               int(layout.group(1)) < int(layout.group(2)) < int(layout.group(3)) < int(layout.group(4))))
+checks.append(('browser chrome: Tools > Options... changes a setting from the keyboard and keeps it',
+               chrome_ok and b'options open' in chrome_log and b'options saved' in chrome_log and
+               re.search(rb'\nfalse\r?\n', chrome_log) is not None))
+checks.append(('browser chrome: the Library opens (Ctrl+Shift+B)', chrome_ok and b'library open bookmarks' in chrome_log))
+checks.append(('browser chrome: the location bar suggests a visited page by its title, and goes to it',
+               chrome_ok and re.search(rb'suggest browser [1-9]', chrome_log) is not None and
+               chrome_log.count(b'loaded file:///tmp/browser-test.html') >= 2))
+checks.append(('browser chrome: the find bar finds text and highlights every match',
+               chrome_ok and b'found Local' in chrome_log and b'highlight Local' in chrome_log))
 # The browser's process model: pages run in content processes, one per
 # site. Two local pages (the site file:) share one renderer, a page
 # served from here (http://10.0.2.2, another site) gets its own: two

@@ -138,7 +138,9 @@ function TOptionsPane.AddLabel(Parent: TControl; const Caption: string; Left, To
 begin
   Result := TLabel.Create(Parent);
   Result.Text := Caption;
-  Result.SetBounds(Left, Top + 3, CaptionWidth(Caption, Width) - 24, 18);
+  if Width <= 0 then
+    Width := CaptionWidth(Caption, 0) - 24;
+  Result.SetBounds(Left, Top + 3, Width, 18);
 end;
 
 function TOptionsPane.AddEdit(Parent: TControl; Left, Top, Width: LongInt): TEditBox;

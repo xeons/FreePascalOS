@@ -101,8 +101,11 @@ type
     procedure WindowClosed(Window: TObject);
     function WindowCount: Integer;
     function WindowAt(Index: Integer): TObject;
-    { Ends the browser (asking first about several tabs, if set). }
-    procedure Quit;
+    { Ends the browser (asking first about several tabs, if set and Ask). }
+    procedure Quit(Ask: Boolean = True);
+    { Someone asked the browser to end (kill, log off, shut down): it
+      ends without asking, the session kept. }
+    procedure EndRequested(Reason: LongWord);
     { The session is to be saved soon. }
     procedure SessionChanged;
     procedure SaveSessionNow(Running: Boolean);
@@ -151,6 +154,7 @@ uses
   Controls.MessageBoxes,
   Controls.Dialogs,
   WebView.Network,
+  Windowing.EndRequests,
   Browser.Profile,
   Browser.Output,
   Browser.MainWindow,
@@ -199,6 +203,7 @@ begin
   FSaveTimer := TTimer.Create(Self);
   FSaveTimer.Interval := SessionSaveDelay;
   FSaveTimer.OnTimer := @SaveTimerFired;
+  OnEndRequested := @EndRequested;
 end;
 
 destructor TBrowserApplication.Destroy;
@@ -266,6 +271,7 @@ begin
   for Index := 0 to High(Pages) do
     Window.OpenTab(Pages[Index], Index = 0);
   Window.Show;
+  Window.ReportLayout;
   Say('windows ' + IntToStr(FWindows.Count));
   SessionChanged;
   Result := Window;
@@ -418,7 +424,12 @@ begin
   TBrowserWindow(FActiveWindow).Activate;
 end;
 
-procedure TBrowserApplication.Quit;
+procedure TBrowserApplication.EndRequested(Reason: LongWord);
+begin
+  Quit(False);
+end;
+
+procedure TBrowserApplication.Quit(Ask: Boolean);
 var
   Index, Tabs: Integer;
 begin
@@ -427,7 +438,7 @@ begin
   Tabs := 0;
   for Index := 0 to FWindows.Count - 1 do
     Inc(Tabs, TBrowserWindow(FWindows[Index]).TabCount);
-  if FSettings.WarnClosingTabs and (Tabs > 1) and (FSettings.Startup <> StartupSession) and
+  if Ask and FSettings.WarnClosingTabs and (Tabs > 1) and (FSettings.Startup <> StartupSession) and
      (FWindows.Count > 0) then
     if ShowMessageBox('Confirm close', 'You are about to close ' + IntToStr(FWindows.Count) + ' window(s) with ' +
       IntToStr(Tabs) + ' tabs. Are you sure you want to continue?', MessageOkCancel, SignWarning,

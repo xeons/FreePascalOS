@@ -227,13 +227,13 @@ begin
   FOrganizeMenu.Add('Forget About This &Site', @OrganizeChosen).Tag := OrganizeForgetSite;
   FOrganizeMenu.AddSeparator;
   FOrganizeMenu.Add('&Close', @OrganizeChosen).Tag := OrganizeClose;
-  Button := FToolBar.AddButton('&Organize', 0);
+  Button := FToolBar.AddButton('&Organize', 96);
   Button.DropDownKind := DropDownWhole;
   Button.DropDownMenu := FOrganizeMenu;
   FViewsMenu := TMenuItem.Create('');
   FViewsMenu.Add('&Unsorted', @ViewsChosen).Tag := ViewsUnsorted;
   FViewsMenu.Add('Sort by &Name', @ViewsChosen).Tag := ViewsSortByName;
-  Button := FToolBar.AddButton('&Views', 0);
+  Button := FToolBar.AddButton('&Views', 74);
   Button.DropDownKind := DropDownWhole;
   Button.DropDownMenu := FViewsMenu;
   FBackupMenu := TMenuItem.Create('');
@@ -242,7 +242,7 @@ begin
   FBackupMenu.AddSeparator;
   FBackupMenu.Add('&Backup...', @BackupChosen).Tag := BackupSave;
   FBackupMenu.Add('&Restore...', @BackupChosen).Tag := BackupRestore;
-  Button := FToolBar.AddButton('&Import and Backup', 0);
+  Button := FToolBar.AddButton('&Import and Backup', 150);
   Button.DropDownKind := DropDownWhole;
   Button.DropDownMenu := FBackupMenu;
   Top := TPanel.Create(Root);

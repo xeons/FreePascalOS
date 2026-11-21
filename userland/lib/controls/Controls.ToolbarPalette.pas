@@ -318,7 +318,7 @@ var
   Index: LongInt;
 begin
   inherited PointerMove(X, Y, Buttons);
-  if (FPressIndex < 0) or ((Buttons and ButtonLeft) = 0) then
+  if (FPressIndex < 0) or ((Buttons and (LongWord(1) shl ButtonLeft)) = 0) then
     Exit;
   if (Abs(X - FPressX) < Scaled(DragThreshold)) and (Abs(Y - FPressY) < Scaled(DragThreshold)) then
     Exit;

@@ -335,7 +335,7 @@ end;
 procedure TIdentityButton.PointerMove(X, Y: LongInt; Buttons: LongWord);
 begin
   inherited PointerMove(X, Y, Buttons);
-  if not FPressed or ((Buttons and ButtonLeft) = 0) or (FBar.FPageUrl = '') then
+  if not FPressed or ((Buttons and (LongWord(1) shl ButtonLeft)) = 0) or (FBar.FPageUrl = '') then
     Exit;
   if (Abs(X - FPressX) < Scaled(DragThreshold)) and (Abs(Y - FPressY) < Scaled(DragThreshold)) then
     Exit;
@@ -454,7 +454,7 @@ var
   IdentityWidth, Glyph: LongInt;
 begin
   Inner := InflateRectangle(Area, -BevelWidth);
-  IdentityWidth := Scaled(ChildSize(FIdentity).Width);
+  IdentityWidth := Scaled(FIdentity.PreferredSize.Width);
   Glyph := Scaled(GlyphWidth);
   PlaceChild(FIdentity, MakeRectangle(Inner.Left, Inner.Top, IdentityWidth, RectangleHeight(Inner)));
   PlaceChild(FStar, MakeRectangle(Inner.Right - Glyph, Inner.Top, Glyph, RectangleHeight(Inner)));
