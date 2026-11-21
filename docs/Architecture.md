@@ -359,8 +359,10 @@ test boots it once). Every system call reaches user memory through
 `Processes.UserAccess` (`CopyFromUser`, `CopyToUser`,
 `CopyStringFromUser`, the transfer buffers) or through the physical
 memory window (`ReadFromAddressSpace`, the image loader), never through
-a user pointer: the test boots run coretest under SMAP (x86-64, "max")
-and PAN (AArch64, "max").
+a user pointer: the x86-64 test runs coretest under SMAP (QEMU's "max"),
+and coretest passes under PAN with `CPU=max
+scripts/test-qemu-arm64-user.sh` (the native boot test's Cortex-A76 has
+PAN too).
 
 **Tests.** `Kernel.ProtectionSelfTest` runs at every start: it walks the
 kernel's page tables (`Memory.Arch.MappingAudit`, honouring the rights
