@@ -85,6 +85,7 @@ uses
   Processes.SecurityCalls,
   Processes.AffinityCalls,
   Processes.LimitCalls,
+  Processes.LoadedModules,
   Processes.HandlePassing,
   Processes.Shutdown,
   Processes.Suspend,
@@ -852,6 +853,7 @@ begin
     CallGetMachineModel: Result := PerformGetMachineModel(Argument0, Argument1);
     CallGetProcessResources: Result := PerformGetProcessResources(Argument0, Argument1);
     CallSetProcessLimit: Result := PerformSetProcessLimit(Argument0, Argument1);
+    CallGetProcessModules: Result := PerformGetProcessModules(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
   else

@@ -39,6 +39,7 @@
     sysdir.inc    directories
     systhrd.inc   the thread manager
     sysdl.inc     libraries loaded at run time
+    syscrash.inc  crash reports naming each address's module
 
   Processor exceptions (an access violation, a division by zero, a
   floating point exception) are passed to the program by the kernel: the
@@ -162,6 +163,7 @@ procedure OsSetupEntryInformation(constref Information: TEntryInformation); forw
 {$I sysheapcheckreport.inc}
 {$I sysheapquarantine.inc}
 {$I sysheapcheck.inc}
+{$I syscrash.inc}
 
 {*****************************************************************************
                                 Entry and exit
@@ -241,6 +243,7 @@ end;
 
 procedure System_exit;
 begin
+  WriteCrashModuleList;
   RunFinalizers;
   while True do
     SystemCall(CallExit, QWord(LongWord(ExitCode)), 0, 0, 0, 0, 0);
@@ -381,6 +384,7 @@ begin
     heap's header, or none has. }
   InitHeapChecks;
   SysInitExceptions;
+  BackTraceStrFunc := @ModuleBackTraceStr;
   InitUnicodeStringManager;
   { Text is UTF-8 everywhere: file names, the console, files. }
   DefaultSystemCodePage := CP_UTF8;

@@ -540,10 +540,17 @@ test: aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# Panics on purpose (the testpanic kernel option) and checks the back
+# trace; also run by make test. Works for ARCH=arm64 too.
+.PHONY: panic-trace-test
+panic-trace-test: esp
+	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 
 # Not part of make test (it takes a minute a round under TCG): suspends
 # and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,

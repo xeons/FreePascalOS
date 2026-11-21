@@ -79,6 +79,8 @@ type
   TLoadedModule = record
     Name: array[0..ModuleNameLength - 1] of Char;
     Base: QWord;
+    { The end of its mapped pages (crash reports, CallGetProcessModules). }
+    Limit: QWord;
     EntryPoint: QWord;
     ProgramHeaderAddress: QWord;
     ProgramHeaderCount: LongWord;
@@ -835,6 +837,7 @@ begin
   begin
     CopyText(@Module^.Name[0], FileNameOf(KernelPath), ModuleNameLength);
     Module^.Base := Bias;
+    Module^.Limit := Bias + HighestPageEnd;
     Module^.EntryPoint := Bias + Image.Header^.EntryPoint;
     Module^.ProgramHeaderAddress := Bias + LowestPage + Image.Header^.ProgramHeaderOffset;
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;

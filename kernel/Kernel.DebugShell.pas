@@ -33,6 +33,8 @@
     volumes           the mounted volumes
     disks             the block devices
     ps                the user processes
+    trace [THREAD]    kernel stack traces: of the thread with that id, or
+                      of every thread
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
@@ -80,6 +82,7 @@ uses
   Io.PlatformDevices,
   Drivers.RaspberryPiBoard,
   Io.Watchdog,
+  Processes.ThreadTraces,
   Debug.Output;
 
 const
@@ -130,7 +133,7 @@ end;
 
 procedure ShowHelp;
 begin
-  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
+  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, trace [THREAD], mem, cache,');
   WriteLine('netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
 end;
 
@@ -286,6 +289,30 @@ begin
   DebugEndMessage;
 end;
 
+{ "trace" writes every thread's trace, "trace ID" one thread's. }
+procedure ShowThreadTraces(Arguments: PChar);
+var
+  ThreadId: QWord;
+  Index: Integer;
+begin
+  if Arguments^ = #0 then
+  begin
+    WriteThreadTraces(AllThreads);
+    Exit;
+  end;
+  ThreadId := 0;
+  Index := 0;
+  while Arguments[Index] in ['0'..'9'] do
+  begin
+    ThreadId := ThreadId * 10 + QWord(Ord(Arguments[Index]) - Ord('0'));
+    Inc(Index);
+  end;
+  if (Index = 0) or not (Arguments[Index] in [#0, ' ']) then
+    WriteLine('trace: give a thread id (a number), or nothing for every thread')
+  else if not WriteThreadTraces(ThreadId) then
+    WriteLine('trace: there is no thread with that id');
+end;
+
 { Carries out one line; returns False for "exit". }
 function RunCommand(Line: PChar): Boolean;
 var
@@ -310,6 +337,8 @@ begin
     ShowDisks
   else if TextIsEqual(@Command[0], 'ps') then
     ShowProcesses
+  else if TextIsEqual(@Command[0], 'trace') then
+    ShowThreadTraces(Arguments)
   else if TextIsEqual(@Command[0], 'mem') then
   begin
     WritePhysicalMemorySummary;
