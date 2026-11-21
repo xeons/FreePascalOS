@@ -40,7 +40,10 @@ unit Web.Script.Frames;
 interface
 
 uses
+  SysUtils,
+  Css.MediaQueries,
   Web.Dom,
+  Web.Storage,
   Web.ScriptEnvironment,
   Web.Bindings.Context;
 
@@ -71,6 +74,15 @@ type
     procedure SetCookie(Context: TObject; const Url, Cookie: string); override;
     function UserAgent: string; override;
     function Language: string; override;
+    function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
+    procedure StorageChanged(Context: TObject; Area: TWebStorageArea); override;
+    function MediaEnvironment: TCssMediaEnvironment; override;
+    function ScreenWidth: Integer; override;
+    function ScreenHeight: Integer; override;
+    procedure SendBeacon(Context: TObject; const Url: string; const Body: TBytes; const ContentType: string); override;
+    function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
+      override;
+    procedure CancelFetch(Context: TObject; Handle: TObject); override;
   end;
 
 { The insertion and removal steps of iframe elements in Context's
@@ -84,7 +96,6 @@ function OriginUrlOf(Context: TBindingContext): string;
 implementation
 
 uses
-  SysUtils,
   Web.Atoms,
   Web.Namespaces,
   Web.Dom.Events,
@@ -223,6 +234,50 @@ end;
 function TFrameEnvironment.Language: string;
 begin
   Result := FParent.Language;
+end;
+
+function TFrameEnvironment.StorageArea(Context: TObject; Session: Boolean): TWebStorageArea;
+begin
+  Result := FParent.StorageArea(Context, Session);
+end;
+
+procedure TFrameEnvironment.StorageChanged(Context: TObject; Area: TWebStorageArea);
+begin
+  FParent.StorageChanged(Context, Area);
+end;
+
+function TFrameEnvironment.MediaEnvironment: TCssMediaEnvironment;
+begin
+  Result := FParent.MediaEnvironment;
+  Result.Width := DefaultFrameWidth;
+  Result.Height := DefaultFrameHeight;
+end;
+
+function TFrameEnvironment.ScreenWidth: Integer;
+begin
+  Result := FParent.ScreenWidth;
+end;
+
+function TFrameEnvironment.ScreenHeight: Integer;
+begin
+  Result := FParent.ScreenHeight;
+end;
+
+procedure TFrameEnvironment.SendBeacon(Context: TObject; const Url: string; const Body: TBytes;
+  const ContentType: string);
+begin
+  FParent.SendBeacon(Context, Url, Body, ContentType);
+end;
+
+function TFrameEnvironment.StartFetch(Context: TObject; const Request: TScriptFetchRequest;
+  Sink: TScriptFetchSink): TObject;
+begin
+  Result := FParent.StartFetch(Context, Request, Sink);
+end;
+
+procedure TFrameEnvironment.CancelFetch(Context: TObject; Handle: TObject);
+begin
+  FParent.CancelFetch(Context, Handle);
 end;
 
 { Frames }

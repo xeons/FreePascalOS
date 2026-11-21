@@ -55,10 +55,14 @@ interface
 uses
   SysUtils,
   Classes,
+  Css.MediaQueries,
   Web.Dom,
   Web.EventLoop,
+  Web.Storage,
   Web.ScriptEnvironment,
+  Web.Script.PageFetch,
   Js.Engine,
+  Web.Bindings.Context,
   Web.Script.Context,
   Web.Loading.Scripts,
   Web.Navigation.Navigables;
@@ -77,7 +81,17 @@ type
     FTimers: TList;
     FPendingTraversal: Integer;
     FUserAgent: string;
+    FLocalStorage: TWebStorageRegistry;
+    FOwnsLocalStorage: Boolean;
+    FSessionStorage: TWebStorageRegistry;
+    FSaveScheduled: Boolean;
+    FSaveTask: QWord;
+    FFetches: TScriptFetches;
+    FScreenWidth: Integer;
+    FScreenHeight: Integer;
     function FindTimer(Context: TObject; TimerId: Integer): Integer;
+    function LoaderOf(Context: TObject): TObject;
+    procedure SetLocalStorage(Value: TWebStorageRegistry);
     procedure TraverseTask;
     procedure ReloadTask;
   public
@@ -106,7 +120,26 @@ type
     procedure SetCookie(Context: TObject; const Url, Cookie: string); override;
     function UserAgent: string; override;
     function Language: string; override;
+    function NavigationTiming(Context: TObject): TScriptNavigationTiming; override;
+    function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
+    procedure StorageChanged(Context: TObject; Area: TWebStorageArea); override;
+    function MediaEnvironment: TCssMediaEnvironment; override;
+    function ScreenWidth: Integer; override;
+    function ScreenHeight: Integer; override;
+    function RequestAnimationFrame(Context: TObject): Boolean; override;
+    procedure SendBeacon(Context: TObject; const Url: string; const Body: TBytes; const ContentType: string); override;
+    function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
+      override;
+    procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    { Writes the local storage that changed. }
+    procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;
+    { Where localStorage lives (the host's, shared by its pages; the page
+      keeps one in memory when none is set). }
+    property LocalStorage: TWebStorageRegistry read FLocalStorage write SetLocalStorage;
+    { The screen in CSS pixels (0: the viewport's size). }
+    property ScreenWidthValue: Integer read FScreenWidth write FScreenWidth;
+    property ScreenHeightValue: Integer read FScreenHeight write FScreenHeight;
   end;
 
   { A context's module graph: specifiers resolved against the
@@ -156,6 +189,7 @@ type
     function SupportsModules: Boolean; override;
     procedure ExecuteScript(Script: TPendingScript); override;
     procedure DocumentStarted(Loader: TObject); override;
+    procedure DocumentTimed(Loader: TObject); override;
     procedure DocumentStopped(Loader: TObject); override;
     procedure DocumentFreed(Loader: TObject); override;
     { The live context of Document, nil if none. }
@@ -176,6 +210,10 @@ implementation
 
 uses
   DateUtils,
+  Js.Values,
+  Web.EventLoop.AnimationFrames,
+  Web.Navigation.Windows,
+  Web.Script.Frames,
   Url.Records,
   Url.Parser,
   Url.Origins,
@@ -219,12 +257,19 @@ begin
   FExecutor := Executor;
   FTimers := TList.Create;
   FUserAgent := DefaultScriptUserAgent;
+  FSessionStorage := TWebStorageRegistry.Create('');
+  FFetches := TScriptFetches.Create;
 end;
 
 destructor TPageScriptEnvironment.Destroy;
 begin
   ForgetTimers;
   FTimers.Free;
+  FFetches.Free;
+  SaveStorage;
+  if FOwnsLocalStorage then
+    FLocalStorage.Free;
+  FSessionStorage.Free;
   inherited Destroy;
 end;
 
@@ -481,6 +526,8 @@ begin
     Result := 'en-US';
 end;
 
+{$I Web.Script.PageServices.inc}
+
 { ---- modules ---- }
 
 type
@@ -625,9 +672,19 @@ end;
 function TPageScriptExecutor.IsLiveContext(Context: TObject): Boolean;
 var
   Index: Integer;
+  Top: TObject;
 begin
+  Top := Context;
   for Index := 0 to High(FContexts) do
-    if (FContexts[Index].Context = Context) and not FContexts[Index].Stopped then
+    if FContexts[Index].Context = Context then
+      Exit(not FContexts[Index].Stopped);
+  { A frame's window lives while it is open and its page does. }
+  if (Context is TBindingContext) and not TBindingContext(Context).Closed then
+    Top := TBindingContext(Context).TopContext;
+  if Top = Context then
+    Exit(False);
+  for Index := 0 to High(FContexts) do
+    if (FContexts[Index].Context = Top) and not FContexts[Index].Stopped then
       Exit(True);
   Result := False;
 end;
@@ -667,6 +724,15 @@ begin
   FContexts[High(FContexts)].Stopped := False;
 end;
 
+procedure TPageScriptExecutor.DocumentTimed(Loader: TObject);
+var
+  Index: Integer;
+begin
+  Index := IndexOfLoader(Loader);
+  if Index >= 0 then
+    FContexts[Index].Context.SetTimeOrigin(TDocumentLoader(Loader).Times.NavigationStart);
+end;
+
 procedure TPageScriptExecutor.DocumentStopped(Loader: TObject);
 var
   Index: Integer;
@@ -674,6 +740,7 @@ begin
   Index := IndexOfLoader(Loader);
   if (Index < 0) or FContexts[Index].Stopped then
     Exit;
+  FEnvironment.FFetches.CancelLoader(TDocumentLoader(Loader));
   FContexts[Index].Stopped := True;
   FContexts[Index].Modules.Stopped := True;
   FContexts[Index].Context.AttachParser(nil);

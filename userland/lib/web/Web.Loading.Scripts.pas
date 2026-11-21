@@ -97,6 +97,9 @@ type
       document's global (event handler attributes need it even without
       script elements). }
     procedure DocumentStarted(Loader: TObject); virtual;
+    { The navigation's times are in the loader's Times (the navigable sets
+      them right after making the loader, before any content). }
+    procedure DocumentTimed(Loader: TObject); virtual;
     { The loader stopped (aborted: the document is being left): timers
       stop, nothing more runs. Called again when it is freed. }
     procedure DocumentStopped(Loader: TObject); virtual;
@@ -249,6 +252,10 @@ begin
 end;
 
 procedure TScriptExecutor.DocumentStarted(Loader: TObject);
+begin
+end;
+
+procedure TScriptExecutor.DocumentTimed(Loader: TObject);
 begin
 end;
 

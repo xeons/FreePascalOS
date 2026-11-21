@@ -466,6 +466,7 @@ var
 begin
   if FAborted or (Count = 0) then
     Exit;
+  Inc(Times.BytesReceived, Count);
   case FContentKind of
     ContentText:
       AppendTextContent(Data, Count, False);
@@ -508,6 +509,8 @@ begin
   if FAborted or FInputEnded then
     Exit;
   FInputEnded := True;
+  if Times.ResponseEnd = 0 then
+    Times.ResponseEnd := GetTickCount64;
   case FContentKind of
     ContentHtml:
       begin
@@ -600,6 +603,7 @@ begin
   if FParsingDone or FAborted then
     Exit;
   FParsingDone := True;
+  Times.DomInteractive := GetTickCount64;
   FDocument.ReadyState := ReadyStateInteractive;
   FIcons.Activate;
   if FScripts.Executor <> nil then
@@ -618,7 +622,9 @@ begin
   if FAborted or FDomContentLoadedFired then
     Exit;
   FDomContentLoadedFired := True;
+  Times.DomContentLoadedStart := GetTickCount64;
   FireEvent(FDocument, 'DOMContentLoaded', True);
+  Times.DomContentLoadedEnd := GetTickCount64;
   if Assigned(FOnDomContentLoaded) then
     FOnDomContentLoaded(Self);
   CheckLoadComplete;
@@ -645,9 +651,12 @@ begin
   if FAborted or FLoadFired then
     Exit;
   FLoadFired := True;
+  Times.DomComplete := GetTickCount64;
   FDocument.ReadyState := ReadyStateComplete;
+  Times.LoadEventStart := GetTickCount64;
   if FWindow <> nil then
     FireEvent(FWindow, 'load');
+  Times.LoadEventEnd := GetTickCount64;
   FPreloads.DropUnclaimed;
   FImages.LoadEventFired;
   if FWindow <> nil then

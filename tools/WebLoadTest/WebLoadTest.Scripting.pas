@@ -147,9 +147,95 @@ begin
   end;
 end;
 
+function OutputHas(Navigable: TNavigable; const Marker: string): Boolean;
+var
+  Output: TElement;
+begin
+  Result := False;
+  if Navigable.ActiveDocument = nil then
+    Exit;
+  Output := Navigable.ActiveDocument.GetElementById('out');
+  Result := (Output <> nil) and (Pos(Marker, Output.TextContent) > 0);
+end;
+
+type
+  TFetchConditions = class(TScriptConditions)
+  public
+    function Done: Boolean;
+  end;
+
+function TFetchConditions.Done: Boolean;
+begin
+  Result := OutputHas(Navigable, 'done');
+end;
+
+{ fetch(), XMLHttpRequest, CORS for script, navigation timing and
+  localStorage through a real loader and the in-process server. }
+procedure CheckScriptFetches;
+var
+  Environment: TTestEnvironment;
+  Conditions: TFetchConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Jar: TCookieJar;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TFetchConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Jar := TCookieJar.Create;
+  Environment.Client.Cookies := Jar;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  try
+    Environment.Site.AddRoute('f.test/page.html', 200, 'Content-Type: text/html|Set-Cookie: c=1',
+      '<!DOCTYPE html><p id="out">x</p><script>var parts = [];' +
+      'fetch("/data.json").then(function (r) { parts.push(r.status + " " + r.headers.get("x-custom") + " " +' +
+      ' r.headers.get("set-cookie")); return r.json(); }).then(function (v) { parts.push("json " + v.n);' +
+      ' return fetch("https://other.test/cors.txt"); }).then(function (r) { parts.push("cors " + r.type + " " +' +
+      ' r.headers.get("x-hidden")); return r.text(); }).then(function (t) { parts.push(t);' +
+      ' return fetch("https://other.test/closed.txt").catch(function (e) { parts.push("blocked " + e.name); }); })' +
+      '.then(function () { var x = new XMLHttpRequest(); x.open("POST", "/echo"); x.onload = function () {' +
+      ' parts.push("xhr " + x.status + " " + x.responseText); var t = performance.timing;' +
+      ' parts.push("timing " + (t.responseStart >= t.navigationStart) + " " +' +
+      ' (performance.getEntriesByType("navigation")[0].responseStart >= 0));' +
+      ' localStorage.setItem("k", "v"); parts.push("storage " + localStorage.getItem("k"));' +
+      ' document.getElementById("out").textContent = parts.join("|") + "|done"; };' +
+      ' x.send("hello"); });</script>');
+    Environment.Site.AddRoute('f.test/data.json', 200, 'Content-Type: application/json|X-Custom: yes|Set-Cookie: d=2',
+      '{"n":5}');
+    Environment.Site.AddRoute('other.test/cors.txt', 200,
+      'Content-Type: text/plain|Access-Control-Allow-Origin: https://f.test|X-Hidden: 1', 'cross');
+    Environment.Site.AddRoute('other.test/closed.txt', 200, 'Content-Type: text/plain', 'closed');
+    Environment.Site.AddRoute('f.test/echo', 200, 'Content-Type: text/plain', 'echoed');
+    Navigable.NavigateTo('https://f.test/page.html');
+    Check(Environment.RunUntil(@Conditions.Done), 'script fetches: the chain finished (' +
+      Trim(Conditions.Console) + ')');
+    if Navigable.ActiveDocument.GetElementById('out') <> nil then
+      Text := Navigable.ActiveDocument.GetElementById('out').TextContent
+    else
+      Text := '';
+    Check(Text = '200 yes null|json 5|cors cors null|cross|blocked TypeError|xhr 200 echoed|timing true true|' +
+      'storage v|done', 'script fetches: statuses, filtered headers, CORS, XHR, timing, storage (' + Text + ')');
+  finally
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Environment.Client.Cookies := nil;
+    Jar.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
   CheckScriptedPage;
+  CheckScriptFetches;
 end;
 
 end.

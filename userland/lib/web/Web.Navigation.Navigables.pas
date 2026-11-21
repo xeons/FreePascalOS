@@ -141,6 +141,8 @@ type
     FConsumer: TNavigationConsumer;
     FNavigationJob: TFetchJob;
     FNavigationHandling: THistoryHandling;
+    { Navigation Timing of the navigation in progress. }
+    FNavigationTimes: TDocumentTimes;
     FTraverseIndex: Integer;
     FNextDocumentId: QWord;
     FCurrentDocumentId: QWord;
@@ -529,6 +531,15 @@ begin
       Request.Headers.SetValue('content-type', Options.ContentType);
   end;
   FNavigationHandling := Handling;
+  FNavigationTimes := Default(TDocumentTimes);
+  FNavigationTimes.NavigationStart := GetTickCount64;
+  FNavigationTimes.FetchStart := FNavigationTimes.NavigationStart;
+  case Handling of
+    HistoryReload: FNavigationTimes.Kind := 'reload';
+    HistoryTraverse: FNavigationTimes.Kind := 'back_forward';
+  else
+    FNavigationTimes.Kind := 'navigate';
+  end;
   FNavigationJob := FFetcher.Fetch(Request, FConsumer, Self);
   SetState(LoadingRequesting);
 end;
@@ -602,6 +613,17 @@ begin
   FWindow.Navigable := Self;
   TopOrigin := OriginOfUrl(Url);
   FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, FExecutor, @TopOrigin);
+  FLoader.Times := FNavigationTimes;
+  if FLoader.Times.NavigationStart = 0 then
+  begin
+    FLoader.Times.NavigationStart := GetTickCount64;
+    FLoader.Times.FetchStart := FLoader.Times.NavigationStart;
+    FLoader.Times.ResponseStart := FLoader.Times.NavigationStart;
+    FLoader.Times.Kind := 'navigate';
+  end;
+  FNavigationTimes := Default(TDocumentTimes);
+  if FExecutor <> nil then
+    FExecutor.DocumentTimed(FLoader);
   Document.Release;
   HookLoader(FLoader);
   CommitHistory(Url);
@@ -736,6 +758,10 @@ begin
       SetState(LoadingComplete);
     Exit;
   end;
+  FNavigationTimes.ResponseStart := GetTickCount64;
+  FNavigationTimes.Protocol := Response.Protocol;
+  FNavigationTimes.Status := Response.Status;
+  FNavigationTimes.RedirectCount := Job.Request.RedirectCount;
   CommitDocument(Url, Kind, Response.Charset);
   if Kind = ContentImage then
   begin
