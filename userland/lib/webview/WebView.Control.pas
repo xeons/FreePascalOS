@@ -92,6 +92,7 @@ uses
   Web.Layout.Document,
   Web.Paint.Painter,
   WebView.TextIndex,
+  WebView.FieldEditing,
   WebView.Elements;
 
 const
@@ -213,6 +214,8 @@ type
     FSelecting: Boolean;
     FSelectionAnchor, FSelectionFocus: TTextPosition;
     FFindText: string;
+    { Typing into the focused text field. }
+    FFieldEditor: TTextFieldEditor;
     { A select's pop-up. }
     FSelectMenu: TMenuItem;
     FSelectElement: TElement;
@@ -303,11 +306,15 @@ type
     procedure SubmitImplicitly(Field: TElement);
     { Form controls (WebView.Control.Forms.inc). }
     procedure ClickElement(Element: TElement);
+    procedure ActOnClick(Element: TElement);
     procedure ActivateControl(Control: TElement);
     procedure SubmitForm(Form, Submitter: TElement);
     procedure OpenSelectMenu(Select: TElement);
     procedure SelectOptionChosen(Item: TMenuItem);
     function TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
+    procedure FieldSelectionMoved(Element: TElement);
+    function ReadClipboard: string;
+    procedure WriteClipboard(const Value: string);
     procedure ControlEdited(Element: TElement);
     { Selection (WebView.Control.Selection.inc). }
     procedure EnsureTextIndex;

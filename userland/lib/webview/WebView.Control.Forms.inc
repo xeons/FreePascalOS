@@ -79,166 +79,82 @@ begin
 end;
 
 { The editing a key does in the focused text control (after the page let
-  its keydown through): characters, Backspace and Delete (Ctrl: a word),
-  the arrows, Home and End (Shift extends the selection), Ctrl+A, Ctrl+C,
-  Ctrl+X and Ctrl+V, Enter (a line break in a text area, the form's
-  submission in a field). }
+  its keydown through), as a WebView.FieldEditing action: characters,
+  Backspace and Delete (Ctrl: a word), the arrows, Home and End (Shift
+  extends the selection), Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V, Enter (a line
+  break in a text area, the form's submission in a field). }
 function TWebView.TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
 var
-  Kind: TFormControlKind;
-  Element: TElement;
-  Edit: TTextEdit;
-  Start, Finish, MaximumLength: Integer;
-  Direction, Before: string;
-  Control, Shift, MultiLine, ReadOnly: Boolean;
-
-  procedure Commit(const InputType, Data: string);
-  begin
-    if Edit.Value <> Before then
-      SetTextControlValue(Element, Edit.Value);
-    SetTextSelection(Element, Edit.SelectionStart, Edit.SelectionEnd, Edit.Direction);
-    if Edit.Value <> Before then
-      FireInputEvent(Element, InputType, Data)
-    else
-    begin
-      InvalidateViewport;
-      RequestFrame;
-    end;
-  end;
-
-  procedure InsertText(const Text, InputType: string);
-  begin
-    if ReadOnly then
-      Exit;
-    if (MaximumLength >= 0) and (Utf16CountOf(Edit.Value) - (Edit.SelectionEnd - Edit.SelectionStart) +
-      Utf16CountOf(Text) > MaximumLength) then
-      Exit;
-    Edit.Insert(Text, MultiLine);
-    Commit(InputType, Text);
-  end;
-
+  Action: TFieldAction;
+  Options: TFieldActionOptions;
+  Typed: string;
 begin
   Result := False;
-  Element := FFocusedElement;
-  if (Element = nil) or not IsTextControl(Element) or IsDisabledControl(Element) then
+  if not IsEditableTextField(FFocusedElement) then
     Exit;
-  Kind := FormControlKindOf(Element);
-  MultiLine := Kind = FormControlTextArea;
-  ReadOnly := Element.HasAttribute('readonly');
-  MaximumLength := -1;
-  if Element.HasAttribute('maxlength') then
-    MaximumLength := StrToIntDef(Element.GetAttribute('maxlength'), -1);
-  Control := (Modifiers and ModifierControl) <> 0;
-  Shift := (Modifiers and ModifierShift) <> 0;
-  Edit.Value := TextControlValue(Element);
-  Before := Edit.Value;
-  GetTextSelection(Element, Start, Finish, Direction);
-  Edit.SetSelection(Start, Finish, Direction);
-  Result := True;
-  if Control then
+  Options := [];
+  if (Modifiers and ModifierControl) <> 0 then
+    Include(Options, FieldByWord);
+  if (Modifiers and ModifierShift) <> 0 then
+    Include(Options, FieldExtend);
+  Typed := '';
+  if FieldByWord in Options then
   begin
     case Code of
-      KeyA:
-        begin
-          Edit.Move(MoveAll, False);
-          Commit('', '');
-        end;
-      KeyC:
-        if Edit.HasSelectedText and (Kind <> FormControlPassword) then
-          SetClipboardText(Edit.SelectedText);
-      KeyX:
-        if Edit.HasSelectedText and not ReadOnly and (Kind <> FormControlPassword) then
-        begin
-          SetClipboardText(Edit.SelectedText);
-          Edit.DeleteBackward(False);
-          Commit('deleteByCut', '');
-        end;
-      KeyV:
-        InsertText(ClipboardText, 'insertFromPaste');
-      KeyBackspace:
-        if not ReadOnly and Edit.DeleteBackward(True) then
-          Commit('deleteWordBackward', '');
-      KeyDelete:
-        if not ReadOnly and Edit.DeleteForward(True) then
-          Commit('deleteWordForward', '');
-      KeyArrowLeft:
-        begin
-          Edit.Move(MoveWordLeft, Shift);
-          Commit('', '');
-        end;
-      KeyArrowRight:
-        begin
-          Edit.Move(MoveWordRight, Shift);
-          Commit('', '');
-        end;
-      KeyHome:
-        begin
-          Edit.SetSelection(0, 0, 'none');
-          Commit('', '');
-        end;
-      KeyEnd:
-        begin
-          Edit.SetSelection(Utf16CountOf(Edit.Value), Utf16CountOf(Edit.Value), 'none');
-          Commit('', '');
-        end;
+      KeyA: Action := FieldSelectAll;
+      KeyC: Action := FieldCopy;
+      KeyX: Action := FieldCut;
+      KeyV: Action := FieldPaste;
+      KeyBackspace: Action := FieldDeleteBackward;
+      KeyDelete: Action := FieldDeleteForward;
+      KeyArrowLeft: Action := FieldMoveLeft;
+      KeyArrowRight: Action := FieldMoveRight;
+      KeyHome: Action := FieldValueStart;
+      KeyEnd: Action := FieldValueEnd;
     else
-      Result := False;
+      Exit;
     end;
-    Exit;
-  end;
-  case Code of
-    KeyBackspace:
-      if not ReadOnly and Edit.DeleteBackward(False) then
-        Commit('deleteContentBackward', '');
-    KeyDelete:
-      if not ReadOnly and Edit.DeleteForward(False) then
-        Commit('deleteContentForward', '');
-    KeyArrowLeft:
+  end
+  else
+    case Code of
+      KeyBackspace: Action := FieldDeleteBackward;
+      KeyDelete: Action := FieldDeleteForward;
+      KeyArrowLeft: Action := FieldMoveLeft;
+      KeyArrowRight: Action := FieldMoveRight;
+      KeyArrowUp: Action := FieldMoveUp;
+      KeyArrowDown: Action := FieldMoveDown;
+      KeyHome: Action := FieldLineStart;
+      KeyEnd: Action := FieldLineEnd;
+      KeyTab, KeyEscape:
+        Exit;
+    else
+      if IsEnterKey(Code) then
+        Action := FieldLineBreak
+      else if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
       begin
-        Edit.Move(MoveCharacterLeft, Shift);
-        Commit('', '');
-      end;
-    KeyArrowRight:
-      begin
-        Edit.Move(MoveCharacterRight, Shift);
-        Commit('', '');
-      end;
-    KeyHome:
-      begin
-        Edit.Move(MoveLineStart, Shift);
-        Commit('', '');
-      end;
-    KeyEnd:
-      begin
-        Edit.Move(MoveLineEnd, Shift);
-        Commit('', '');
-      end;
-    KeyArrowUp, KeyArrowDown:
-      if MultiLine then
-      begin
-        if Code = KeyArrowUp then
-          Edit.Move(MoveLineUp, Shift)
-        else
-          Edit.Move(MoveLineDown, Shift);
-        Commit('', '');
+        Action := FieldTypeText;
+        Typed := CodePointText(Character);
       end
       else
-        Result := False;
-    KeyTab, KeyEscape:
-      Result := False;
-  else
-    if IsEnterKey(Code) then
-    begin
-      if MultiLine then
-        InsertText(#10, 'insertLineBreak')
-      else
-        SubmitImplicitly(Element);
-    end
-    else if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
-      InsertText(CodePointText(Character), 'insertText')
-    else
-      Result := False;
-  end;
+        Exit;
+    end;
+  Result := FFieldEditor.Perform(FFocusedElement, Action, Typed, Options);
+end;
+
+procedure TWebView.FieldSelectionMoved(Element: TElement);
+begin
+  InvalidateViewport;
+  RequestFrame;
+end;
+
+function TWebView.ReadClipboard: string;
+begin
+  Result := ClipboardText;
+end;
+
+procedure TWebView.WriteClipboard(const Value: string);
+begin
+  SetClipboardText(Value);
 end;
 
 procedure TWebView.ActivateControl(Control: TElement);
@@ -254,26 +170,35 @@ begin
     InvalidateViewport;
     Exit;
   end;
-  if not FireEvent(Control, 'click', True, True) then
-    Exit;
-  case Kind of
-    FormControlCheckbox:
-      begin
-        ToggleCheckbox(Control);
-        ControlEdited(Control);
-        FireEvent(Control, 'change', True);
-      end;
-    FormControlRadio:
-      if not Control.HasAttribute('checked') then
-      begin
-        CheckRadioButton(Control);
-        ControlEdited(Control);
-        FireEvent(Control, 'change', True);
-      end;
-    FormControlSubmit:
-      SubmitForm(FormOwnerOf(Control), Control);
-    FormControlSelect:
-      OpenSelectMenu(Control);
+  { The click's listeners may remove the control or move the focus away
+    (which releases the focused element): it is held until its
+    activation is done. }
+  Control.Retain;
+  try
+    if not FireEvent(Control, 'click', True, True) then
+      Exit;
+    case Kind of
+      FormControlCheckbox:
+        begin
+          ToggleCheckbox(Control);
+          ControlEdited(Control);
+          FireEvent(Control, 'change', True);
+        end;
+      FormControlRadio:
+        if not Control.HasAttribute('checked') then
+        begin
+          CheckRadioButton(Control);
+          ControlEdited(Control);
+          FireEvent(Control, 'change', True);
+        end;
+      FormControlSubmit:
+        SubmitForm(FormOwnerOf(Control), Control);
+      FormControlSelect:
+        if Control.IsConnected then
+          OpenSelectMenu(Control);
+    end;
+  finally
+    Control.Release;
   end;
   PostWake;
 end;
@@ -281,13 +206,23 @@ end;
 { A click on something that is not a link or a control: a label acts on
   its control, a summary opens or closes its details. }
 procedure TWebView.ClickElement(Element: TElement);
+begin
+  Element.Retain;
+  try
+    if FireEvent(Element, 'click', True, True) then
+      ActOnClick(Element);
+  finally
+    Element.Release;
+  end;
+  PostWake;
+end;
+
+procedure TWebView.ActOnClick(Element: TElement);
 var
   Node, Inner: TNode;
   Target: TElement;
   Id: string;
 begin
-  if not FireEvent(Element, 'click', True, True) then
-    Exit;
   Node := Element;
   while Node <> nil do
   begin
@@ -332,7 +267,6 @@ begin
     end;
     Node := Node.ParentNode;
   end;
-  PostWake;
 end;
 
 procedure TWebView.SubmitForm(Form, Submitter: TElement);
@@ -343,10 +277,22 @@ var
 begin
   if (Form = nil) or (FPage = nil) or (FPage.Navigable.Loader = nil) then
     Exit;
-  if not FireEvent(Form, 'submit', True, True) then
-    Exit;
-  if not BuildFormSubmission(Form, Submitter, FPage.Navigable.Loader, Target, Options) then
-    Exit;
+  { The submit event's listeners may take the form (and the submitter)
+    out of the document. }
+  Form.Retain;
+  if Submitter <> nil then
+    Submitter.Retain;
+  try
+    if not FireEvent(Form, 'submit', True, True) then
+      Exit;
+    if (FPage.Navigable.Loader = nil) or
+      not BuildFormSubmission(Form, Submitter, FPage.Navigable.Loader, Target, Options) then
+      Exit;
+  finally
+    if Submitter <> nil then
+      Submitter.Release;
+    Form.Release;
+  end;
   Options.Source := FPage.Navigable.Loader;
   FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
   FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
