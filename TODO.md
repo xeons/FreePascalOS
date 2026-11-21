@@ -41,7 +41,13 @@ how the existing pieces fit together.
 - [ ] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
 - [ ] Priority boosting for threads woken from waits
-- [ ] Stack back trace in the panic screen
+- [x] Stack back trace in the panic screen (frame pointer walk, kernel
+      symbol table made at build time, also over netlog; testpanic option)
+- [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
+- [x] Crash reports with module names and load bases
+      (CallGetProcessModules, symbolize.py --report)
+- [ ] Back traces of user programs from the kernel's own crash report
+      (walk the program's frames; most user code omits frame pointers)
 
 ## Memory management
 

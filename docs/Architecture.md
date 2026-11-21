@@ -12029,6 +12029,117 @@ a region per block, but first-fit reuse would not keep freed addresses
 unused; it needs a reserve / commit / decommit system call first (see
 TODO.md).
 
+## Back traces and crash reports
+
+**Kernel back traces.** A panic ends with the chain of calls that led
+to it, on the screen, the serial port and the network log (the trace is
+ordinary kernel log, so `FlushNetworkLogAtPanic` sends it with the rest):
+
+```
+Back trace:
+  #0 0xFFFFFFFF800779FB Kernel.PanicTest.PanicTestInnermost+0x3B
+  #1 0xFFFFFFFF80077A19 Kernel.PanicTest.PanicTestMiddle+0x9
+  #2 0xFFFFFFFF80077A39 Kernel.PanicTest.PanicTestOutermost+0x9
+  ...
+```
+
+The kernel is compiled with `-OoNOSTACKFRAME` (and its RTL too), so
+every routine keeps a frame and the frame pointer chain is complete: on
+both processors a frame is the caller's frame pointer with the return
+address above it (x86-64: CALL then PUSH RBP; AArch64: STP X29, X30).
+`Debug.StackTrace` walks it, trusting nothing: each frame must lie in
+the stack being walked (the thread's kernel stack, or a 32 KiB window
+above the first frame when there is no thread yet or the frame is
+elsewhere), above the frame before it, with a return address in the
+kernel's code; it stops after 32 frames, and at a frame whose saved
+frame pointer is 0 (a thread's first routine, which nobody called). A
+return address is named by the call before it (address - 1). Where the
+trace starts: for a processor exception at the interrupted instruction
+and frame (`SetPanicTraceStart` from both architectures' exception
+handlers), otherwise at the caller of `BeginKernelPanic` - so a failed
+`KernelAssert` shows `Kernel.Panic.KernelAssert` and then the code that
+asserted.
+
+**The symbol table** comes from the build. The kernel is linked twice:
+first with an empty table, then `scripts/make-kernel-symbols.py` reads
+that image's code symbols with nm and writes the table as an assembly
+file, and the second link puts it at the end of `.rodata`
+(`KernelSymbolTable`, about 140 KiB for 4700 routines). The code comes
+before the read-only data, so it cannot move between the links, and the
+script checks that it did not. The table holds the routines' start
+addresses (offsets from the image start, sorted) with their unit's and
+their own names, each unit name once; Free Pascal's decorated upper
+case names (`KERNEL.PANIC_$$_KERNELASSERT$BOOLEAN$PCHAR`) are written as
+in the sources (`Kernel.Panic`, `KernelAssert`), the spelling taken from
+the declarations in the kernel's source folders; nested routines are
+`Outer.Inner`. `Debug.KernelSymbols` finds an address's routine by a
+binary search, without locks or memory, so it works in a panic. The
+native AArch64 image keeps the table (it is loaded data, not debug
+information). Because compiler options are not part of what Free
+Pascal checks to decide whether a unit is up to date, the Makefile
+keeps the kernel's options in `build/ARCH/kernel/flags.stamp` and
+compiles every unit again when they change.
+
+The same traces are used elsewhere: the hang watch writes each thread's
+kernel stack (see "Diagnosing hangs"), and the debug shell's `trace`
+command any thread's. For a thread that is not running the walk starts
+from the state its last switch saved (`ArchSwitchFramePointers`: the
+saved RBP and return address on x86-64, X29 and X30 on AArch64); one
+running on another processor is only named, its stack changing under
+the walk.
+
+**Testing it:** the kernel option `testpanic` (or `testpanic=fault`)
+makes phase 1 fault on purpose three calls deep, `testpanic=assert`
+fail an assertion there (`Kernel.PanicTest`); with `netlog` it first
+waits for the network log to reach its listener.
+`scripts/test-panic-trace.sh ARCH ESP` (`make panic-trace-test`, part
+of `make test`; `make ARCH=arm64 panic-trace-test`) boots both and
+checks that the trace names the chain in order, in the serial log and
+in what `scripts/netlog.py` received.
+
+**User crash reports.** A program's addresses mean something only
+together with the module they lie in and where it was loaded, which
+will differ between runs once modules load at random addresses. The
+kernel keeps each module's load bias and the end of its pages
+(`TLoadedModule.Base`, `Limit`) and hands the list to the process with
+`CallGetProcessModules` (136, `TAbiModuleInformation`:
+Base, Limit, Name). The runtime (`rtl/fpc/syscrash.inc`) replaces Free
+Pascal's `BackTraceStrFunc`, so every back trace address - of an
+unhandled exception, a runtime error, a heap check report - names its
+module and offset, and a process that ends with an error after writing a
+back trace lists its modules on the error output as its last words:
+
+```
+An unhandled exception occurred at $0000000000407AB6:
+EAccessViolation: Access violation
+  $0000000000407AB6  coretest+$7AB6
+  $00007F0000204E5D  libsystem.so+$1BCE5D
+
+Modules:
+  $0000000000400000-$000000000041C000 coretest
+  $00007F0000048000-$00007F0000357000 libsystem.so
+```
+
+The kernel's own report of a program it ends (no dispatcher, the
+dispatcher failed) does the same in the kernel log
+(`Processes.LoadedModules`):
+
+```
+[process] coretest (44): page fault at 0x0000000000407AB6 (coretest+0x7AB6) accessing 0x0000000000000000, terminated
+[process]   module coretest at 0x0000000000400000-0x000000000041C000
+```
+
+`scripts/symbolize.py --report REPORT build/ARCH/user` reads either form
+(or a whole serial log, report by report), takes the bases from the
+report, finds each module's file by name under the given folders and
+names the routines (addr2line, the names demangled to `UNIT.ROUTINE`);
+`symbolize.py PROGRAM LIBRARY_DIRECTORY ADDRESS...` still lays the
+modules out at the fixed addresses for an old report.
+`scripts/test-symbolize.py`, run by `test-qemu.sh`, symbolizes the
+kernel's report of `coretest --crash-without-dispatcher` from the test
+run's serial log, and again with every module moved elsewhere in both
+report forms; a coretest line checks the runtime's report format.
+
 ## Diagnosing hangs
 
 With the kernel option `hangdump=SECONDS`, a system thread
@@ -12037,8 +12148,10 @@ happens for that long while user processes exist, it writes every user
 thread to the kernel log - process, state, whether it waits on a list or
 with a timeout, alertable, suspended, priority, last processor, run time,
 where in the program it last entered the kernel (from the register frame
-at the top of its kernel stack) and the system call it is in - and what
-each processor runs. The tests set `hangdump=20`, so a hung
+at the top of its kernel stack), the system call it is in and its kernel
+stack trace (where in the kernel it waits; see "Back traces and crash
+reports") - and what each processor runs, with the routine it was
+interrupted in. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
 
 Without the option the same thread still watches endings: a process
@@ -12183,7 +12296,9 @@ so ordinary boots do not wait for it.
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
 once the system is up, before the first program: `help`, `echo`, `ls`,
-`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`,
+`cat`, `volumes`, `disks`, `ps`, `trace [THREAD]` (the kernel stack
+trace of the thread with that id, or of every thread, each named with
+its state and process), `mem`, `cache`, `netcards`, `interrupts`,
 `devices` (the ACPI platform devices: ids, resources, DMA, driver),
 `board` (the Raspberry Pi's model, revision, serial, firmware, clocks
 and temperature, from the VideoCore mailbox), `uptime`, `watchdog` (the

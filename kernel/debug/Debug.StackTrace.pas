@@ -67,6 +67,13 @@ type
 procedure WriteStackTrace(ProgramCounter, FramePointer: QWord;
   const Bounds: TStackTraceBounds; Indent: PChar);
 
+{ One step of the walk: the return address of the frame at FramePointer
+  and, in FramePointer, its caller's frame. False where the walk ends
+  (the frame is outside Bounds, the return address outside the kernel's
+  code, or the frame is a thread's first). }
+function StepToCallerFrame(var FramePointer: QWord; const Bounds: TStackTraceBounds;
+  out ReturnAddress: QWord): Boolean;
+
 { The stack a walk starting at FramePointer may read: the running
   thread's kernel stack if the frame is on it, otherwise a window above
   the frame. }
@@ -138,12 +145,35 @@ begin
     (FramePointer <= Bounds.High - FrameRecordBytes) and (Bounds.High > FrameRecordBytes);
 end;
 
+function StepToCallerFrame(var FramePointer: QWord; const Bounds: TStackTraceBounds;
+  out ReturnAddress: QWord): Boolean;
+var
+  NextFrame: QWord;
+begin
+  ReturnAddress := 0;
+  Result := False;
+  if not FrameIsInside(FramePointer, Bounds) then
+    Exit;
+  NextFrame := PQWord(FramePointer)[0];
+  ReturnAddress := PQWord(FramePointer)[1];
+  { A frame whose caller has none is a thread's first routine: it was
+    not called, so the word above is no return address (on AArch64 the
+    switch's jump into it leaves the routine's own start there). }
+  if (NextFrame = 0) or not IsKernelCodeAddress(ReturnAddress) then
+    Exit;
+  { Callers' frames lie higher up; anything else is a loop, and the walk
+    ends after this frame (FramePointer then fails the next check). }
+  if NextFrame <= FramePointer then
+    NextFrame := 0;
+  FramePointer := NextFrame;
+  Result := True;
+end;
+
 procedure WriteStackTrace(ProgramCounter, FramePointer: QWord;
   const Bounds: TStackTraceBounds; Indent: PChar);
 var
   Depth: LongWord;
   ReturnAddress: QWord;
-  NextFrame: QWord;
 begin
   Depth := 0;
   if ProgramCounter <> 0 then
@@ -153,21 +183,10 @@ begin
   end;
   while Depth < MaximumTraceDepth do
   begin
-    if not FrameIsInside(FramePointer, Bounds) then
-      Exit;
-    NextFrame := PQWord(FramePointer)[0];
-    ReturnAddress := PQWord(FramePointer)[1];
-    { A frame whose caller has none is a thread's first routine: it was
-      not called, so the word above is no return address (on AArch64 the
-      switch's jump into it leaves the routine's own start there). }
-    if (NextFrame = 0) or not IsKernelCodeAddress(ReturnAddress) then
+    if not StepToCallerFrame(FramePointer, Bounds, ReturnAddress) then
       Exit;
     WriteFrameLine(Depth, ReturnAddress, True, Indent);
     Inc(Depth);
-    { Callers' frames lie higher up; anything else is the end or a loop. }
-    if NextFrame <= FramePointer then
-      Exit;
-    FramePointer := NextFrame;
   end;
   DebugBeginMessage;
   DebugWrite(Indent);

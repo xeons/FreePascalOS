@@ -106,6 +106,7 @@ uses
   Kernel.IoSelfTest,
   Kernel.WatchdogSelfTest,
   Kernel.PanicTest,
+  Kernel.StackTraceSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -330,6 +331,7 @@ begin
   RunPanicTestIfAsked;
 
   RunKernelSelfTests;
+  RunStackTraceSelfTest;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
   RunWatchdogSelfTest;
