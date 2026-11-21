@@ -32,8 +32,21 @@ srcdoc.srcdoc = "<p id=x>hello</p><script>var fromSrcdoc = document.getElementBy
 document.body.appendChild(srcdoc);
 check("srcdoc parsed with its scripts", srcdoc.contentDocument.URL === "about:srcdoc" &&
   srcdoc.contentWindow.fromSrcdoc === "hello" && window.length === 2);
+var received = null;
+var target = srcdoc.contentWindow;
+target.addEventListener("message", function (event) { received = event; });
+target.postMessage({ hello: [1, 2] }, "*");
+var channelData = null;
+var channel = new MessageChannel();
+channel.port2.onmessage = function (event) { channelData = event.data; };
+channel.port1.postMessage("through the channel");
 frame.remove();
 check("removal closes the window", frame.contentWindow === null && window.length === 1);
 check("what the parent kept still works", child.String.prototype.toUpperCase.call("ok") === "OK");
 gc();
 check("collection after closing", child.Math.max(1, 2) === 2);
+function after() {
+  check("postMessage to a frame: cloned data, the sender as source", received !== null && received.data.hello[1] === 2 &&
+    received.source === window && received.origin === "https://example.test" && received instanceof target.MessageEvent);
+  check("MessageChannel", channelData === "through the channel");
+}

@@ -56,6 +56,7 @@ uses
 
 type
   TTestTimer = record
+    Context: TObject;
     Id: Integer;
     Due: Int64;
     Interval: Integer;
@@ -181,6 +182,7 @@ procedure TTestEnvironment.StartTimer(Context: TObject; TimerId: Integer; Millis
 var
   Timer: TTestTimer;
 begin
+  Timer.Context := Context;
   Timer.Id := TimerId;
   Timer.Due := Clock + Milliseconds;
   Timer.Interval := Milliseconds;
@@ -195,7 +197,7 @@ var
   Index: Integer;
 begin
   for Index := 0 to High(Timers) do
-    if Timers[Index].Id = TimerId then
+    if (Timers[Index].Id = TimerId) and (Timers[Index].Context = Context) then
       Timers[Index].Active := False;
 end;
 
@@ -284,7 +286,11 @@ begin
     Timers[Best].Due := Clock + Timers[Best].Interval + 1
   else
     Timers[Best].Active := False;
-  Context.FireTimer(Timers[Best].Id);
+  if Timers[Best].Context is TScriptContext then
+    TScriptContext(Timers[Best].Context).FireTimer(Timers[Best].Id)
+  else
+    Context.FireTimer(Timers[Best].Id);
+  Context.PerformMicrotaskCheckpoint;
   Result := True;
 end;
 

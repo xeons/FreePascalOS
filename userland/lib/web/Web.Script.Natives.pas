@@ -288,6 +288,18 @@ begin
   Result := JsBoolean(SupportsConditionText('(' + Text + ')'));
 end;
 
+{ The window whose script called into this realm (postMessage's source):
+  the calling realm's global, else this one's. }
+function NativeIncumbentWindow(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Realm: TJsRealm;
+begin
+  Realm := Context.Engine.Realm.CallerRealm;
+  if (Realm = nil) or (Realm.GlobalObject = nil) or Realm.Detached then
+    Realm := Context.Engine.Realm;
+  Result := JsObjectValue(Realm.GlobalObject);
+end;
+
 function NativeDigest(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Name: string;
@@ -342,7 +354,7 @@ begin
 end;
 
 const
-  NativeCount = 19;
+  NativeCount = 20;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -362,8 +374,9 @@ const
     'digest',
     'randomFill',
     'beacon',
-    'cssSupports');
-  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1);
+    'cssSupports',
+    'incumbentWindow');
+  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -383,7 +396,8 @@ const
     @NativeDigest,
     @NativeRandomFill,
     @NativeBeacon,
-    @NativeCssSupports);
+    @NativeCssSupports,
+    @NativeIncumbentWindow);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

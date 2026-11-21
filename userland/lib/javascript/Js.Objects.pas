@@ -279,6 +279,9 @@ type
     { The shared runtime was freed before this realm (nothing of the heap
       may be touched). }
     HeapGone: Boolean;
+    { While a function of this realm runs because another realm called
+      it: that realm (the incumbent, for postMessage's source). }
+    CallerRealm: TJsRealm;
     constructor Create(ARuntime: TJsRuntime);
     destructor Destroy; override;
     { The realm's engine goes but its runtime stays (other realms use it):

@@ -173,6 +173,8 @@ type
     function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
     { Another live realm (a function of it runs there). }
     function IsForeign(Realm: TJsRealm): Boolean; inline;
+    { Calls F in Realm, noting this realm as its caller. }
+    function ForeignCall(Realm: TJsRealm; F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
   public
@@ -1004,6 +1006,19 @@ begin
   Result := (Realm <> Self) and (Realm <> nil) and not Realm.Detached;
 end;
 
+function TJsInterpreterRealm.ForeignCall(Realm: TJsRealm; F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
+var
+  Saved: TJsRealm;
+begin
+  Saved := Realm.CallerRealm;
+  Realm.CallerRealm := Self;
+  try
+    Result := Realm.Call(F, This, Args, Count);
+  finally
+    Realm.CallerRealm := Saved;
+  end;
+end;
+
 function TJsInterpreterRealm.Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
 var
   Target: TJsObject;
@@ -1018,14 +1033,14 @@ begin
   if Target is TJsClosure then
   begin
     if IsForeign(TJsClosure(Target).Realm) then
-      Exit(TJsClosure(Target).Realm.Call(F, This, Args, Count));
+      Exit(ForeignCall(TJsClosure(Target).Realm, F, This, Args, Count));
     Exit(CallClosure(TJsClosure(Target), This, Args, Count, JsUndefined, False));
   end;
   if Target is TJsNativeFunction then
   begin
     Native := TJsNativeFunction(Target);
     if IsForeign(Native.Realm) then
-      Exit(Native.Realm.Call(F, This, Args, Count));
+      Exit(ForeignCall(Native.Realm, F, This, Args, Count));
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
