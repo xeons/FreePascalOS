@@ -518,6 +518,8 @@ type
     FContentType: string;
     FCharacterSet: string;
     FUrl: string;
+    FReferrer: string;
+    FLastModified: string;
     FObservers: TDocumentObserverArray;
     FIdMap: TObject;
     FTemplateContentsOwner: TDocument;
@@ -617,6 +619,11 @@ type
     property ContentType: string read FContentType write FContentType;
     property CharacterSet: string read FCharacterSet write FCharacterSet;
     property Url: string read FUrl write FUrl;
+    { The URL of the document that led here ('' none), and the
+      response's Last-Modified field as sent ('' none): set by the
+      navigation that made the document. }
+    property Referrer: string read FReferrer write FReferrer;
+    property LastModified: string read FLastModified write FLastModified;
     property DocumentElement: TElement read GetDocumentElement;
     property Doctype: TDocumentType read GetDoctype;
     property Head: TElement read GetHead;

@@ -51,19 +51,36 @@ const
   KeyZ = $2C;
   KeyD = $20;
   KeyL = $26;
+  KeyB = $30;
   KeyE = $12;
+  KeyI = $17;
+  KeyJ = $24;
+  KeyK = $25;
+  KeyM = $32;
   KeyP = $19;
+  KeyQ = $10;
   KeyR = $13;
   KeyT = $14;
+  KeyU = $16;
   KeyW = $11;
-  { The digits of the main keys, 1 to 9 one after another. }
+  { The digits above the letters: Key1 to Key9 are $02 to $0A. }
   Key1 = $02;
   Key9 = $0A;
+  Key0 = $0B;
+  KeyMinus = $0C;
+  KeyEquals = $0D;
+  KeyNumpadMinus = $4A;
+  KeyNumpadPlus = $4E;
+  KeyF1 = $3B;
   KeyF2 = $3C;
   KeyF3 = $3D;
   KeyF4 = $3E;
   KeyF5 = $3F;
+  KeyF6 = $40;
+  KeyF7 = $41;
   KeyF10 = $44;
+  KeyF11 = $57;
+  KeyF12 = $58;
   KeyNumpadEnter = $1C or KeyCodeExtended;
   KeyHome = $47 or KeyCodeExtended;
   KeyArrowUp = $48 or KeyCodeExtended;

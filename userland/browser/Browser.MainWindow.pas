@@ -17,16 +17,25 @@
 }
 
 {
-  The browser's window, top to bottom: the menu bar, the tab strip,
-  the navigation bar (back, forward, reload or stop, home; the address
-  bar; the bookmark button), the bookmarks bar, the pages (a web view
-  per tab, the chosen one shown), the find bar and the status bar (the
-  hovered link, the zoom). Its parts:
+  A browser window, laid out as browsers were before they hid their
+  menus, top to bottom: the menu bar (Browser.MenuBar; View > Toolbars
+  hides it, Alt shows it again for a moment), the Navigation Toolbar and
+  the Bookmarks Toolbar (Browser.Toolbars, customizable), the palette
+  while customizing, the tab strip (Browser.TabStrip, under the
+  toolbars), the sidebar (bookmarks or history) beside the pages, the
+  pages (a web view per tab), the find bar and the status bar
+  (Browser.StatusBar). The window's title is the page's, with
+  "(Private Browsing)" while browsing privately.
 
-  - Browser.MainWindow.Menus.inc: the menus, their keys and commands;
+  Its parts:
+  - Browser.MainWindow.Tabs.inc: opening, closing, moving and choosing
+    tabs, undoing a close, the session of the window;
+  - Browser.MainWindow.Commands.inc: the commands (Browser.Commands)
+    the menus, buttons and keys run, and what the menus show as they
+    open (the history, bookmarks, recently closed tabs and windows);
   - Browser.MainWindow.Views.inc: what the web views tell (title,
-    address, loading, icon, links for new tabs, downloads, prompts,
-    console, context menus).
+    address, loading, icon, links for new tabs, downloads, the console,
+    context menus) and the tab context menu.
 }
 unit Browser.MainWindow;
 
@@ -42,124 +51,143 @@ uses
   Controls.Base,
   Controls.Window,
   Controls.Panels,
-  Controls.EditBox,
-  Controls.ToolBar,
-  Controls.ImageList,
-  Controls.StatusBar,
   Controls.Menus,
+  Controls.Splitter,
+  Controls.SuggestionPopup,
   Web.Navigation.Navigables,
   WebView.Control,
+  WebView.Types,
   Browser.Settings,
-  Browser.Stores,
+  Browser.SessionStore,
   Browser.Downloads,
-  Browser.AboutPages,
+  Browser.Bookmarks,
   Browser.Tabs,
   Browser.TabStrip,
   Browser.FindBar,
-  Browser.BookmarksBar;
+  Browser.MenuBar,
+  Browser.Toolbars,
+  Browser.LocationBar,
+  Browser.SearchBar,
+  Browser.BookmarksToolbar,
+  Browser.StatusBar,
+  Browser.Sidebar;
 
 const
-  MessageDownloadChanged = MessageUser + 1;
+  MessageEndCustomize = MessageUser + 10;
+  MessageCloseTabLater = MessageUser + 11;
 
 type
   TBrowserWindow = class(TControlWindow)
   private
-    FSettings: TBrowserSettings;
-    FHistory: THistoryStore;
-    FBookmarks: TBookmarkStore;
-    FDownloads: TDownloadManager;
-    FAboutPages: TAboutPages;
     FTabs: TList;
     FActive: Integer;
-    FMenuBar: TMenuBar;
+    FMenus: TBrowserMenus;
+    FToolbars: TBrowserToolbars;
     FTabStrip: TTabStrip;
-    FNavigationBar: TPanel;
-    FToolImages: TImageList;
-    FToolBar: TToolBar;
-    FBackButton: TToolButton;
-    FForwardButton: TToolButton;
-    FReloadButton: TToolButton;
-    FHomeButton: TToolButton;
-    FAddress: TEditBox;
-    FBookmarkBar: TToolBar;
-    FBookmarkButton: TToolButton;
-    FBookmarksBar: TBookmarksBar;
+    FSidebar: TBrowserSidebar;
+    FSidebarSplitter: TSplitter;
     FContent: TPanel;
     FFindBar: TFindBar;
-    FStatusBar: TStatusBar;
+    FStatusBar: TBrowserStatusBar;
     FContextMenu: TMenuItem;
-    FContextLink: string;
-    FBookmarksMenu: TMenuItem;
-    FBookmarksBarItem: TMenuItem;
-    FReloadImage, FStopImage: LongInt;
+    { Items that only carry keys (AddKey): never shown. }
+    FKeyItems: TMenuItem;
+    FContext: TWebContextInfo;
+    FContextView: TWebView;
+    FTabMenuIndex: Integer;
+    FFullScreen: Boolean;
+    FClosing: Boolean;
+    FLastFindText: string;
     { Building. }
-    procedure BuildMenus;
-    procedure BuildNavigationBar;
-    procedure PlaceStatusPanels;
-    { Tabs. }
-    function TabCount: Integer;
+    procedure BuildLayout;
+    procedure AddKeys;
+    procedure ItemMade(const ItemId: string; Control: TControl);
+    procedure ToolbarsChanged(Sender: TControl);
+    procedure CustomizeDone(Sender: TControl);
+    procedure UpdateBarsVisible;
+    { Tabs (Browser.MainWindow.Tabs.inc). }
     function TabAt(Index: Integer): TBrowserTab;
     function ActiveTab: TBrowserTab;
-    function ActiveView: TWebView;
     function TabOfView(View: TWebView): Integer;
+    function NewTab(Index: Integer): TBrowserTab;
     procedure ActivateTab(Index: Integer);
     procedure CloseTab(Index: Integer);
+    procedure MoveTab(FromIndex, ToIndex: Integer);
+    procedure UndoCloseTab(Index: Integer);
     procedure TabSelected(Sender: TObject; Index: Integer);
     procedure TabClosed(Sender: TObject; Index: Integer);
+    procedure TabMoved(Sender: TObject; FromIndex, ToIndex: Integer);
+    procedure TabTornOff(Sender: TObject; Index: Integer);
+    procedure TabMenuRequested(Sender: TObject; Index: Integer; X, Y: LongInt);
     procedure NewTabClicked(Sender: TControl);
     procedure RefreshTab(Index: Integer);
+    function CaptureTab(Index: Integer): TSessionTab;
+    procedure RestoreTab(Tab: TBrowserTab; constref Saved: TSessionTab);
+    { The chrome. }
     procedure RefreshChrome;
+    procedure RefreshLocation;
     procedure ShowStatus(const Text: string);
-    { The address bar. }
-    procedure AddressKey(Sender: TControl; Code, Character, Modifiers: LongWord; var Handled: Boolean);
-    procedure AddressChanged(Sender: TControl);
-    procedure GoToAddress(const Text: string);
+    function TabIsLoading(Tab: TBrowserTab): Boolean;
+    { The location bar and the search bar. }
+    procedure LocationNavigate(Sender: TLocationBar; const Text: string; InNewTab: Boolean);
+    procedure LocationSuggest(Sender: TLocationBar; const Typed: string; out Rows: TSuggestionRows;
+      out Urls: TStringArray);
+    procedure LocationDropDown(Sender: TLocationBar; const Typed: string; out Rows: TSuggestionRows;
+      out Urls: TStringArray);
+    procedure LocationRevert(Sender: TControl);
+    procedure LocationEdited(Sender: TControl);
+    procedure IdentityClicked(Sender: TControl);
+    procedure StarClicked(Sender: TControl);
+    procedure SearchRequested(Sender: TSearchBar; const Words: string; InNewTab: Boolean);
+    procedure EngineChosen(Sender: TSearchBar; const Name: string);
+    procedure ManageEnginesRequested(Sender: TControl);
     procedure GoToAddressIn(Tab: TBrowserTab; const Text: string);
-    { Toolbar. }
-    procedure BackClicked(Sender: TControl);
-    procedure ForwardClicked(Sender: TControl);
-    procedure ReloadClicked(Sender: TControl);
-    procedure HomeClicked(Sender: TControl);
-    procedure BookmarkClicked(Sender: TControl);
-    procedure BookmarkOpened(const Url: string; NewTab: Boolean);
-    procedure BookmarksChanged(Sender: TControl);
+    { Bookmarks toolbar and sidebar. }
+    procedure BookmarkOpened(const Url: string; Disposition: TLinkDisposition);
+    procedure BookmarkAddRequested(Kind: TBookmarkKind; Folder: TBookmarkNode; Index: Integer);
+    procedure BookmarkEditRequested(Node: TBookmarkNode);
+    procedure BookmarkFolderOpened(Folder: TBookmarkNode);
+    procedure SidebarClosed(Sender: TControl);
+    procedure ShowSidebar(Kind: TSidebarKind);
+    { Find. }
     procedure FindRequested(const Text: string; Forward, MatchCase, FromStart: Boolean);
+    procedure HighlightRequested(const Text: string; MatchCase, TurnedOn: Boolean);
     procedure FindClosed(Sender: TControl);
-    { Menus and keys (Browser.MainWindow.Menus.inc). }
-    procedure AddKey(Menu: TMenuItem; const Text: string; Handler: TMenuItemEvent; const Shortcut: string;
-      Code, Modifiers: LongWord);
-    procedure NewTabChosen(Item: TMenuItem);
-    procedure CloseTabChosen(Item: TMenuItem);
-    procedure OpenFileChosen(Item: TMenuItem);
-    procedure ExitChosen(Item: TMenuItem);
-    procedure CopyChosen(Item: TMenuItem);
-    procedure SelectAllChosen(Item: TMenuItem);
-    procedure FindChosen(Item: TMenuItem);
-    procedure FindNextChosen(Item: TMenuItem);
-    procedure ReloadChosen(Item: TMenuItem);
-    procedure StopChosen(Item: TMenuItem);
-    procedure ZoomInChosen(Item: TMenuItem);
-    procedure ZoomOutChosen(Item: TMenuItem);
-    procedure ActualSizeChosen(Item: TMenuItem);
-    procedure BookmarksBarChosen(Item: TMenuItem);
-    procedure BackChosen(Item: TMenuItem);
-    procedure ForwardChosen(Item: TMenuItem);
-    procedure HomeChosen(Item: TMenuItem);
-    procedure HistoryChosen(Item: TMenuItem);
-    procedure BookmarkPageChosen(Item: TMenuItem);
-    procedure ShowBookmarksChosen(Item: TMenuItem);
+    { Status bar. }
+    procedure LockClicked(Sender: TControl);
+    procedure DownloadsClicked(Sender: TControl);
+    { Commands and menus (Browser.MainWindow.Commands.inc). }
+    procedure MenuCommand(Item: TMenuItem);
+    function CommandEnabled(Command: LongInt): Boolean;
+    function CommandChecked(Command: LongInt): Boolean;
+    procedure UpdateMenu(Menu: TMenuItem);
+    procedure MenuOpening(Item: TMenuItem);
+    procedure HistoryMenuOpening(Item: TMenuItem);
     procedure BookmarksMenuOpening(Item: TMenuItem);
+    procedure ClosedTabsOpening(Item: TMenuItem);
+    procedure ClosedWindowsOpening(Item: TMenuItem);
+    procedure ToolbarFolderOpening(Item: TMenuItem);
+    procedure RecentlyBookmarkedOpening(Item: TMenuItem);
+    procedure RecentTagsOpening(Item: TMenuItem);
+    procedure EncodingOpening(Item: TMenuItem);
+    procedure HistoryItemChosen(Item: TMenuItem);
     procedure BookmarkItemChosen(Item: TMenuItem);
-    procedure DownloadsChosen(Item: TMenuItem);
-    procedure SettingsChosen(Item: TMenuItem);
-    procedure AboutChosen(Item: TMenuItem);
-    procedure FocusAddress(Sender: TControlWindow);
-    procedure NextTab(Sender: TControlWindow);
-    procedure PreviousTab(Sender: TControlWindow);
-    procedure ReloadKey(Sender: TControlWindow);
-    procedure BookmarkKey(Sender: TControlWindow);
-    procedure ZoomInKey(Sender: TControlWindow);
-    procedure ApplySettings;
+    procedure TagItemChosen(Item: TMenuItem);
+    procedure ClosedTabChosen(Item: TMenuItem);
+    procedure ClosedWindowChosen(Item: TMenuItem);
+    procedure EncodingChosen(Item: TMenuItem);
+    procedure BackMenuOpening(Sender: TControl);
+    procedure ForwardMenuOpening(Sender: TControl);
+    procedure HistoryOffsetChosen(Item: TMenuItem);
+    procedure AddKey(Command: LongInt; Code, Modifiers: LongWord);
+    procedure BookmarkThisPage;
+    procedure BookmarkAllTabs;
+    procedure OpenLocation;
+    procedure SaveUrl(const Url, SuggestedName: string);
+    procedure SetDesktopBackground(const Url: string);
+    procedure ToggleFullScreen;
+    procedure ZoomView(Command: LongInt);
+    procedure WebSearch(const Words: string; InNewTab: Boolean);
     { What the views tell (Browser.MainWindow.Views.inc). }
     procedure HookView(View: TWebView);
     procedure ViewTitleChanged(Sender: TWebView; const Text: string);
@@ -174,16 +202,21 @@ type
     procedure ViewNavigationFailed(Sender: TWebView; const Url, Reason: string);
     procedure ViewContextMenu(Sender: TWebView; constref Info: TWebContextInfo; var Handled: Boolean);
     procedure ContextMenuChosen(Item: TMenuItem);
+    procedure TabMenuChosen(Item: TMenuItem);
     procedure ViewDialog(Sender: TWebView; const Kind, Message: string);
     procedure ViewConsole(Sender: TWebView; const Level, Text: string);
     procedure ViewFindResult(Sender: TWebView; const Needle: string; Found: Boolean);
+    procedure ViewFindDetails(Sender: TWebView; const Needle: string; Found, Wrapped: Boolean; MatchCount: Integer);
     procedure ViewProcessEvent(Sender: TWebView; const What: string; Value: Int64);
-    { about:crash and about:hang (tests): False for other addresses. }
+    procedure ViewPopupBlocked(Sender: TWebView; const Url: string);
+    procedure ViewPageInfo(Sender: TWebView; constref Info: TWebPageInfo);
+    procedure ApplyViewSettings(View: TWebView);
+    { about:crash, about:kill and about:hang (tests): False for others. }
     function RunDebugAddress(Tab: TBrowserTab; const Text: string): Boolean;
     function AboutPage(const Path: string; out Html: string): Boolean;
   protected
-    procedure Resized; override;
     procedure CloseRequested; override;
+    procedure ActiveChanged; override;
   public
     constructor Create;
     destructor Destroy; override;
@@ -191,6 +224,27 @@ type
     { Opens Url (as typed: Browser.Addresses) in a new tab after the
       chosen one; Bringing shows it. }
     function OpenTab(const Url: string; Bringing: Boolean): TBrowserTab;
+    { A tab per address, the first shown. }
+    procedure OpenAddresses(const Addresses: TStringArray);
+    { Url here, in a new tab, a background tab or a new window. }
+    procedure OpenUrl(const Url: string; Disposition: TLinkDisposition);
+    procedure GoToAddress(const Text: string);
+    function ActiveView: TWebView;
+    function TabCount: Integer;
+    function TabUrl(Index: Integer): string;
+    { The window's session, and the window from one. }
+    function CaptureSession: TSessionWindow;
+    procedure RestoreSession(constref Saved: TSessionWindow);
+    { Closes without asking or remembering (the browser is ending). }
+    procedure CloseQuietly;
+    procedure ApplySettings;
+    procedure BookmarksChanged;
+    procedure SearchEnginesChanged;
+    procedure DownloadChanged(Item: TDownloadItem);
+    procedure RunCommand(Command: LongInt);
+    { Prints where the bars are (tests): "layout menu Y toolbars Y tabs Y
+      content Y status Y", pixels from the client area's top. }
+    procedure ReportLayout;
   end;
 
 implementation
@@ -203,80 +257,54 @@ uses
   Windowing.Windows,
   Windowing.Connection,
   Controls.Dialogs,
+  Controls.EditBox,
   Controls.Keys,
   Controls.Clipboard,
-  Controls.IconTheme,
-  Controls.LayoutRules,
   Controls.MessageBoxes,
   Controls.FileDialog,
-  Web.Navigation.Pages,
+  Controls.ImageList,
+  Controls.ToolBar,
+  Configuration.Settings,
+  Configuration.Locations,
   WebView.Network,
   WebView.Zoom,
+  Browser.Commands,
   Browser.Addresses,
-  Browser.SettingsDialog,
-  Browser.Output;
+  Browser.Keywords,
+  Browser.History,
+  Browser.AwesomeBar,
+  Browser.SearchEngines,
+  Browser.BookmarkMenus,
+  Browser.ViewSupport,
+  Browser.Application,
+  Browser.AboutPages,
+  Browser.Output,
+  Browser.InputDialog,
+  Browser.Options,
+  Browser.LibraryWindow,
+  Browser.PageInfo,
+  Browser.PageSource,
+  Browser.ErrorConsole,
+  Browser.ClearHistory,
+  Browser.BookmarkPanel,
+  Browser.BookmarkDialogs,
+  Browser.IdentityPopup,
+  Browser.AboutDialog,
+  Browser.SearchEngineDialog;
 
 const
   ProgramName = 'Browser';
-  ToolIconSize = 16;
-  StatusZoomWidth = 170;
-  KeyT = $14;
-  KeyW = $11;
-  KeyO = $18;
-  KeyD = $20;
-  KeyH = $23;
-  KeyJ = $24;
-  KeyL = $26;
-  KeyR = $13;
-  KeyEquals = $0D;
-  KeyMinus = $0C;
-  KeyZero = $0B;
-  KeyNumpadPlus = $4E;
-  KeyNumpadMinus = $4A;
-  KeyF = $21;
 
 constructor TBrowserWindow.Create;
-var
-  Folder: string;
 begin
-  inherited Create(ProgramName, 60, 40, 1000, 680);
+  inherited Create(ProgramName, 60, 40, 1000, 700);
   IconName := 'app-web-browser';
-  FSettings := LoadBrowserSettings;
-  SetHttp3Allowed(FSettings.Http3);
-  Folder := BrowserProfileFolder;
-  SetWebStorageFolder(Folder + '/storage');
-  FHistory := THistoryStore.Create(Folder + '/history.txt');
-  FHistory.Load;
-  FBookmarks := TBookmarkStore.Create(Folder + '/bookmarks.txt');
-  FBookmarks.Load;
-  FDownloads := TDownloadManager.Create(Self, MessageDownloadChanged);
-  FAboutPages := TAboutPages.Create(FHistory, FBookmarks, FDownloads);
   FTabs := TList.Create;
   FActive := -1;
-  BuildMenus;
-  FTabStrip := TTabStrip.Create(Root);
-  FTabStrip.Align := AlignTop;
-  FTabStrip.AutoSize := True;
-  FTabStrip.OnSelect := @TabSelected;
-  FTabStrip.OnClose := @TabClosed;
-  FTabStrip.OnNewTab := @NewTabClicked;
-  BuildNavigationBar;
-  FBookmarksBar := TBookmarksBar.Create(Root, FBookmarks);
-  FBookmarksBar.Align := AlignTop;
-  FBookmarksBar.AutoSize := True;
-  FBookmarksBar.OnOpen := @BookmarkOpened;
-  FBookmarksBar.OnChanged := @BookmarksChanged;
-  FBookmarksBar.Visible := FSettings.BookmarksBar;
-  FBookmarksBarItem.Checked := FSettings.BookmarksBar;
-  FStatusBar := TStatusBar.Create(Root);
-  FFindBar := TFindBar.Create(Root);
-  FFindBar.Align := AlignBottom;
-  FFindBar.AutoSize := True;
-  FFindBar.OnFind := @FindRequested;
-  FFindBar.OnClosed := @FindClosed;
-  FContent := TPanel.Create(Root);
-  FContent.Align := AlignClient;
-  PlaceStatusPanels;
+  FTabMenuIndex := -1;
+  BuildLayout;
+  AddKeys;
+  ApplySettings;
 end;
 
 destructor TBrowserWindow.Destroy;
@@ -287,216 +315,299 @@ begin
     TBrowserTab(FTabs[Index]).Free;
   FTabs.Free;
   FContextMenu.Free;
-  FDownloads.Free;
-  FAboutPages.Free;
-  FHistory.Free;
-  FBookmarks.Free;
-  FToolImages.Free;
+  FKeyItems.Free;
+  FToolbars.Free;
   inherited Destroy;
 end;
 
-procedure TBrowserWindow.BuildNavigationBar;
+procedure TBrowserWindow.BuildLayout;
 begin
-  FNavigationBar := TPanel.Create(Root);
-  FNavigationBar.Align := AlignTop;
-  FNavigationBar.SetBounds(0, 0, 400, 36);
-  FToolImages := TImageList.Create(ToolIconSize, ToolIconSize);
-  FToolBar := TToolBar.Create(FNavigationBar);
-  FToolBar.Images := FToolImages;
-  FToolBar.Align := AlignLeft;
-  FToolBar.AutoSize := True;
-  FToolBar.Margins := MakeSpacing(2, 2, 2, 2);
-  FBackButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'action-back'), '', 'Back (Alt+Left)', 32,
-    @BackClicked);
-  FForwardButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'action-forward'), '', 'Forward (Alt+Right)', 32,
-    @ForwardClicked);
-  FReloadImage := AddThemeIcon(FToolImages, 'action-refresh');
-  FStopImage := AddThemeIcon(FToolImages, 'action-stop');
-  FReloadButton := FToolBar.AddImageButton(FReloadImage, '', 'Reload (F5)', 32, @ReloadClicked);
-  FHomeButton := FToolBar.AddImageButton(AddThemeIcon(FToolImages, 'home'), '', 'Home page (Alt+Home)', 32,
-    @HomeClicked);
-  FBookmarkBar := TToolBar.Create(FNavigationBar);
-  FBookmarkBar.Images := FToolImages;
-  FBookmarkBar.Align := AlignRight;
-  FBookmarkBar.AutoSize := True;
-  FBookmarkBar.Margins := MakeSpacing(2, 2, 2, 2);
-  FBookmarkButton := FBookmarkBar.AddImageButton(AddThemeIcon(FToolImages, 'favourites'), '',
-    'Bookmark this page (Ctrl+D)', 32, @BookmarkClicked);
-  FAddress := TEditBox.Create(FNavigationBar);
-  FAddress.Align := AlignClient;
-  FAddress.Margins := MakeSpacing(4, 6, 4, 6);
-  FAddress.Hint := 'Type an address (Ctrl+L)';
-  FAddress.OnKeyDown := @AddressKey;
-  FAddress.OnChange := @AddressChanged;
+  BuildBrowserMenus(Self, Root, @MenuCommand, FMenus);
+  FMenus.Bar.DockOrder := 0;
+  FMenus.FileMenu.OnOpening := @MenuOpening;
+  FMenus.EditMenu.OnOpening := @MenuOpening;
+  FMenus.ViewMenu.OnOpening := @MenuOpening;
+  FMenus.ToolbarsMenu.OnOpening := @MenuOpening;
+  FMenus.SidebarMenu.OnOpening := @MenuOpening;
+  FMenus.ZoomMenu.OnOpening := @MenuOpening;
+  FMenus.PageStyleMenu.OnOpening := @MenuOpening;
+  FMenus.EncodingMenu.OnOpening := @EncodingOpening;
+  FMenus.HistoryMenu.OnOpening := @HistoryMenuOpening;
+  FMenus.BookmarksMenu.OnOpening := @BookmarksMenuOpening;
+  FMenus.ToolsMenu.OnOpening := @MenuOpening;
+  FMenus.HelpMenu.OnOpening := @MenuOpening;
+  FMenus.ClosedTabsMenu.OnOpening := @ClosedTabsOpening;
+  FMenus.ClosedWindowsMenu.OnOpening := @ClosedWindowsOpening;
+  FMenus.ToolbarFolderMenu.OnOpening := @ToolbarFolderOpening;
+  FMenus.RecentlyBookmarkedMenu.OnOpening := @RecentlyBookmarkedOpening;
+  FMenus.RecentTagsMenu.OnOpening := @RecentTagsOpening;
+  { Submenus filled as they open need an item to show as submenus. }
+  FMenus.ClosedTabsMenu.Add('(Empty)').Enabled := False;
+  FMenus.ClosedWindowsMenu.Add('(Empty)').Enabled := False;
+  FMenus.ToolbarFolderMenu.Add('(Empty)').Enabled := False;
+  FMenus.RecentlyBookmarkedMenu.Add('(Empty)').Enabled := False;
+  FMenus.RecentTagsMenu.Add('(Empty)').Enabled := False;
+  FToolbars := TBrowserToolbars.Create(Root, BrowserApp.Bookmarks);
+  FToolbars.Toolbox.DockOrder := 1;
+  FToolbars.OnCommand := @RunCommand;
+  FToolbars.OnItemMade := @ItemMade;
+  FToolbars.OnBackMenu := @BackMenuOpening;
+  FToolbars.OnForwardMenu := @ForwardMenuOpening;
+  FToolbars.OnChanged := @ToolbarsChanged;
+  FToolbars.OnCustomizeDone := @CustomizeDone;
+  FToolbars.Load(BrowserApp.Settings);
+  FTabStrip := TTabStrip.Create(Root);
+  FTabStrip.Align := AlignTop;
+  FTabStrip.DockOrder := 3;
+  FTabStrip.AutoSize := True;
+  FTabStrip.OnSelect := @TabSelected;
+  FTabStrip.OnClose := @TabClosed;
+  FTabStrip.OnNewTab := @NewTabClicked;
+  FTabStrip.OnMove := @TabMoved;
+  FTabStrip.OnTearOff := @TabTornOff;
+  FTabStrip.OnTabMenu := @TabMenuRequested;
+  FStatusBar := TBrowserStatusBar.Create(Root);
+  FStatusBar.DockOrder := 0;
+  FStatusBar.OnLockClick := @LockClicked;
+  FStatusBar.OnDownloadsClick := @DownloadsClicked;
+  FFindBar := TFindBar.Create(Root);
+  FFindBar.Align := AlignBottom;
+  FFindBar.DockOrder := 1;
+  FFindBar.AutoSize := True;
+  FFindBar.OnFind := @FindRequested;
+  FFindBar.OnHighlight := @HighlightRequested;
+  FFindBar.OnClosed := @FindClosed;
+  FContent := TPanel.Create(Root);
+  FContent.Align := AlignClient;
 end;
 
-procedure TBrowserWindow.PlaceStatusPanels;
+{ A key running Command without an item in the menus. }
+procedure TBrowserWindow.AddKey(Command: LongInt; Code, Modifiers: LongWord);
+var
+  Item: TMenuItem;
 begin
-  if FStatusBar <> nil then
-    FStatusBar.SetPanels([Max(1, ClientWidth - StatusZoomWidth), StatusZoomWidth]);
+  Item := FKeyItems.Add('', @MenuCommand);
+  Item.Tag := Command;
+  AddItemAccelerator(Self, Item, Code, Modifiers);
 end;
 
-procedure TBrowserWindow.Resized;
+{ Keys without a menu item of their own. }
+procedure TBrowserWindow.AddKeys;
+var
+  Digit: LongWord;
 begin
-  inherited Resized;
-  PlaceStatusPanels;
+  FKeyItems := TMenuItem.Create('');
+  AddKey(CommandFocusLocation, KeyL, ModifierControl);
+  AddKey(CommandFocusLocation, KeyD, ModifierAlt);
+  AddKey(CommandFocusLocation, KeyF6, 0);
+  AddKey(CommandNextTab, KeyTab, ModifierControl);
+  AddKey(CommandNextTab, KeyPageDown, ModifierControl);
+  AddKey(CommandPreviousTab, KeyTab, ModifierControl or ModifierShift);
+  AddKey(CommandPreviousTab, KeyPageUp, ModifierControl);
+  AddKey(CommandReload, KeyR, ModifierControl);
+  AddKey(CommandReloadBypassCache, KeyR, ModifierControl or ModifierShift);
+  AddKey(CommandReloadBypassCache, KeyF5, ModifierControl);
+  AddKey(CommandCloseTab, KeyF4, ModifierControl);
+  AddKey(CommandUndoCloseTab, KeyT, ModifierControl or ModifierShift);
+  AddKey(CommandFindAgain, KeyG, ModifierControl);
+  AddKey(CommandFindPrevious, KeyF3, ModifierShift);
+  AddKey(CommandFindPrevious, KeyG, ModifierControl or ModifierShift);
+  AddKey(CommandZoomIn, KeyNumpadPlus, ModifierControl);
+  AddKey(CommandZoomIn, KeyEquals, ModifierControl or ModifierShift);
+  AddKey(CommandZoomOut, KeyNumpadMinus, ModifierControl);
+  AddKey(CommandWebSearch, KeyE, ModifierControl);
+  for Digit := Key1 to Key9 - 1 do
+    AddKey(CommandSelectTab + LongInt(Digit - Key1), Digit, ModifierControl);
+  AddKey(CommandLastTab, Key9, ModifierControl);
+end;
+
+procedure TBrowserWindow.ItemMade(const ItemId: string; Control: TControl);
+begin
+  if Control is TLocationBar then
+  begin
+    TLocationBar(Control).OnNavigate := @LocationNavigate;
+    TLocationBar(Control).OnSuggest := @LocationSuggest;
+    TLocationBar(Control).OnDropDown := @LocationDropDown;
+    TLocationBar(Control).OnRevert := @LocationRevert;
+    TLocationBar(Control).OnEdited := @LocationEdited;
+    TLocationBar(Control).OnIdentityClick := @IdentityClicked;
+    TLocationBar(Control).OnStarClick := @StarClicked;
+    TLocationBar(Control).Images := FToolbars.SmallImages;
+  end
+  else if Control is TSearchBar then
+  begin
+    TSearchBar(Control).Engines := BrowserApp.Engines;
+    TSearchBar(Control).EngineName := BrowserApp.Settings.SearchEngine;
+    TSearchBar(Control).OnSearch := @SearchRequested;
+    TSearchBar(Control).OnChooseEngine := @EngineChosen;
+    TSearchBar(Control).OnManage := @ManageEnginesRequested;
+  end
+  else if Control is TBookmarksToolbar then
+  begin
+    TBookmarksToolbar(Control).OnOpen := @BookmarkOpened;
+    TBookmarksToolbar(Control).OnAdd := @BookmarkAddRequested;
+    TBookmarksToolbar(Control).OnEdit := @BookmarkEditRequested;
+    TBookmarksToolbar(Control).OnOpenAll := @BookmarkFolderOpened;
+  end;
+end;
+
+procedure TBrowserWindow.ToolbarsChanged(Sender: TControl);
+var
+  Settings: TBrowserSettings;
+begin
+  Settings := BrowserApp.Settings;
+  FToolbars.Store(Settings);
+  BrowserApp.Settings := Settings;
+  BrowserApp.SaveSettings;
+  RefreshChrome;
+  RefreshLocation;
+end;
+
+procedure TBrowserWindow.CustomizeDone(Sender: TControl);
+begin
+  { The palette's own button: it goes once the click is over. }
+  PostMessage(Self, MessageEndCustomize);
+end;
+
+procedure TBrowserWindow.UpdateBarsVisible;
+var
+  Settings: TBrowserSettings;
+begin
+  Settings := BrowserApp.Settings;
+  FMenus.Bar.Visible := Settings.MenuBar and not FFullScreen;
+  FToolbars.Navigation.Visible := Settings.NavigationToolbar or FToolbars.Customizing;
+  FToolbars.BookmarksBar.Visible := (Settings.BookmarksToolbar and not FFullScreen) or FToolbars.Customizing;
+  FStatusBar.Visible := Settings.StatusBar and not FFullScreen;
+  FTabStrip.Visible := Settings.AlwaysShowTabBar or (FTabs.Count > 1);
+end;
+
+procedure TBrowserWindow.ApplySettings;
+var
+  Index: Integer;
+begin
+  UpdateBarsVisible;
+  for Index := 0 to FTabs.Count - 1 do
+    ApplyViewSettings(TabAt(Index).View);
+  SearchEnginesChanged;
+  RefreshChrome;
+end;
+
+procedure TBrowserWindow.ApplyViewSettings(View: TWebView);
+begin
+  View.ScriptingEnabled := BrowserApp.Settings.JavaScript;
+  View.ImagesEnabled := BrowserApp.Settings.LoadImages;
+  View.PopupsBlocked := BrowserApp.Settings.BlockPopups;
+end;
+
+procedure TBrowserWindow.BookmarksChanged;
+begin
+  if FToolbars.BookmarksItems <> nil then
+    FToolbars.BookmarksItems.BookmarksChanged;
+  if FSidebar <> nil then
+    FSidebar.Refresh;
+  RefreshChrome;
+end;
+
+procedure TBrowserWindow.SearchEnginesChanged;
+begin
+  if FToolbars.SearchBar <> nil then
+    FToolbars.SearchBar.EngineName := BrowserApp.Settings.SearchEngine;
+end;
+
+procedure TBrowserWindow.DownloadChanged(Item: TDownloadItem);
+var
+  Running: Integer;
+begin
+  Running := BrowserApp.Downloads.RunningCount;
+  if Running = 0 then
+    FStatusBar.DownloadsText := ''
+  else if Running = 1 then
+    FStatusBar.DownloadsText := '1 download'
+  else
+    FStatusBar.DownloadsText := IntToStr(Running) + ' downloads';
+  if ActiveTab <> nil then
+    case Item.State of
+      DownloadRunning:
+        ShowStatus('Downloading ' + Item.FileName + ': ' + SizeText(Item.Received));
+      DownloadDone:
+        ShowStatus('Downloaded ' + Item.FileName + ' to ' + Item.Path);
+      DownloadFailed:
+        ShowStatus('Download of ' + Item.FileName + ' failed: ' + Item.ErrorText);
+    end;
 end;
 
 procedure TBrowserWindow.CloseRequested;
+var
+  Answer: LongInt;
 begin
-  Say('exit');
-  QuitMessageLoop(0);
+  if FClosing then
+    Exit;
+  if BrowserApp.WindowCount <= 1 then
+  begin
+    BrowserApp.Quit;
+    Exit;
+  end;
+  if BrowserApp.Settings.WarnClosingTabs and (FTabs.Count > 1) then
+  begin
+    Answer := ShowMessageBox('Confirm close', 'You are about to close ' + IntToStr(FTabs.Count) +
+      ' tabs. Are you sure you want to continue?', MessageOkCancel, SignWarning, Self);
+    if Answer <> ResultOk then
+      Exit;
+  end;
+  FClosing := True;
+  BrowserApp.WindowClosed(Self);
+  Hide;
+  PostMessage(BrowserApp, MessageCloseWindowLater, PtrInt(Self));
+end;
+
+procedure TBrowserWindow.CloseQuietly;
+begin
+  FClosing := True;
+  Hide;
+  PostMessage(BrowserApp, MessageCloseWindowLater, PtrInt(Self));
+end;
+
+procedure TBrowserWindow.ActiveChanged;
+begin
+  inherited ActiveChanged;
+  if Active then
+    BrowserApp.ActiveWindow := Self;
 end;
 
 procedure TBrowserWindow.ShowStatus(const Text: string);
 begin
-  FStatusBar.PanelText[0] := ' ' + Text;
+  FStatusBar.Status := Text;
 end;
 
-{ ---- tabs ---- }
-
-function TBrowserWindow.TabCount: Integer;
+function TBrowserWindow.TabIsLoading(Tab: TBrowserTab): Boolean;
 begin
-  Result := FTabs.Count;
+  Result := (Tab <> nil) and (Tab.View.LoadingState in [LoadingRequesting, LoadingReceiving, LoadingInteractive]);
 end;
 
-function TBrowserWindow.TabAt(Index: Integer): TBrowserTab;
-begin
-  Result := TBrowserTab(FTabs[Index]);
-end;
-
-function TBrowserWindow.ActiveTab: TBrowserTab;
-begin
-  if (FActive < 0) or (FActive >= FTabs.Count) then
-    Result := nil
-  else
-    Result := TabAt(FActive);
-end;
-
-function TBrowserWindow.ActiveView: TWebView;
-begin
-  if ActiveTab = nil then
-    Result := nil
-  else
-    Result := ActiveTab.View;
-end;
-
-function TBrowserWindow.TabOfView(View: TWebView): Integer;
+{ The location bar shows the chosen tab's address, icon, security and
+  whether it is bookmarked. }
+procedure TBrowserWindow.RefreshLocation;
 var
-  Index: Integer;
-begin
-  for Index := 0 to FTabs.Count - 1 do
-    if TabAt(Index).View = View then
-      Exit(Index);
-  Result := -1;
-end;
-
-function TBrowserWindow.OpenTab(const Url: string; Bringing: Boolean): TBrowserTab;
-var
-  Index: Integer;
-begin
-  Result := TBrowserTab.Create;
-  Result.View := TWebView.Create(FContent);
-  Result.View.Align := AlignClient;
-  Result.View.Visible := False;
-  Result.View.ScriptingEnabled := FSettings.JavaScript;
-  HookView(Result.View);
-  if FActive < 0 then
-    Index := FTabs.Count
-  else
-    Index := FActive + 1;
-  FTabs.Insert(Index, Result);
-  FTabStrip.Insert(Index, 'New Tab');
-  if (FActive >= Index) then
-    Inc(FActive);
-  Result.View.AboutPageProvider := @AboutPage;
-  Say('tabs ' + IntToStr(FTabs.Count));
-  if Bringing or (FActive < 0) then
-    ActivateTab(Index);
-  RefreshTab(Index);
-  GoToAddressIn(Result, Url);
-  { A page asked for gets the keys; a new tab's home page leaves them
-    in the address bar. }
-  if Bringing and (Url <> FSettings.HomePage) and (Url <> 'about:home') and (Url <> 'about:blank') then
-    FocusControl(Result.View);
-end;
-
-procedure TBrowserWindow.ActivateTab(Index: Integer);
-var
-  Index_: Integer;
+  Bar: TLocationBar;
   Tab: TBrowserTab;
+  Host: string;
 begin
-  if (Index < 0) or (Index >= FTabs.Count) then
+  Bar := FToolbars.LocationBar;
+  Tab := ActiveTab;
+  if (Bar = nil) or (Tab = nil) then
     Exit;
-  FActive := Index;
-  for Index_ := 0 to FTabs.Count - 1 do
-    TabAt(Index_).View.Visible := Index_ = Index;
-  FTabStrip.ActiveIndex := Index;
-  Tab := TabAt(Index);
   if Tab.Typing then
-    FAddress.Text := Tab.TypedAddress
+    Bar.Address := Tab.TypedAddress
   else
-    FAddress.Text := ShownAddress(Tab.View.Url);
-  if (Tab.View.Url = '') or (ShownAddress(Tab.View.Url) = '') then
-    FocusControl(FAddress)
-  else
-    FocusControl(Tab.View);
-  RefreshChrome;
-end;
-
-procedure TBrowserWindow.CloseTab(Index: Integer);
-var
-  Tab: TBrowserTab;
-begin
-  if (Index < 0) or (Index >= FTabs.Count) then
-    Exit;
-  if FTabs.Count = 1 then
-  begin
-    CloseRequested;
-    Exit;
-  end;
-  Tab := TabAt(Index);
-  FTabs.Delete(Index);
-  FTabStrip.Delete(Index);
-  if FActive > Index then
-    Dec(FActive)
-  else if FActive = Index then
-    FActive := Min(Index, FTabs.Count - 1);
-  Tab.View.Free;
-  Tab.Free;
-  FActive := EnsureRange(FActive, 0, FTabs.Count - 1);
-  ActivateTab(FActive);
-  Say('tabs ' + IntToStr(FTabs.Count));
-end;
-
-procedure TBrowserWindow.TabSelected(Sender: TObject; Index: Integer);
-begin
-  ActivateTab(Index);
-end;
-
-procedure TBrowserWindow.TabClosed(Sender: TObject; Index: Integer);
-begin
-  CloseTab(Index);
-end;
-
-procedure TBrowserWindow.NewTabClicked(Sender: TControl);
-begin
-  OpenTab(FSettings.HomePage, True);
-end;
-
-procedure TBrowserWindow.RefreshTab(Index: Integer);
-var
-  Tab: TBrowserTab;
-  Item: TTabStripItem;
-begin
-  if (Index < 0) or (Index >= FTabs.Count) then
-    Exit;
-  Tab := TabAt(Index);
-  Item := FTabStrip.Items[Index];
-  Item.Title := Tab.Caption;
-  Item.Icon := Tab.Icon;
-  Item.Loading := Tab.View.LoadingState in [LoadingRequesting, LoadingReceiving, LoadingInteractive];
-  FTabStrip.ItemChanged(Index);
+    Bar.Address := ShownAddress(Tab.View.Url);
+  Bar.Favicon := Tab.Icon;
+  Bar.PageUrl := Tab.View.Url;
+  Bar.PageTitle := Tab.Caption;
+  Host := '';
+  if Pos('https://', LowerCase(Tab.View.Url)) = 1 then
+    Host := HostOfUrl(Tab.View.Url);
+  Bar.SecureHost := Host;
+  Bar.Bookmarked := BrowserApp.Bookmarks.IsBookmarked(Tab.View.Url);
 end;
 
 { The window's title, the buttons and the status bar follow the chosen tab. }
@@ -504,63 +615,177 @@ procedure TBrowserWindow.RefreshChrome;
 var
   View: TWebView;
   Loading: Boolean;
+  Button: TToolButton;
+  Caption: string;
 begin
   View := ActiveView;
   if View = nil then
     Exit;
-  Title := ActiveTab.Caption + ' - ' + ProgramName;
-  FBackButton.Enabled := View.CanGoBack;
-  FForwardButton.Enabled := View.CanGoForward;
-  Loading := View.LoadingState in [LoadingRequesting, LoadingReceiving, LoadingInteractive];
+  Caption := ActiveTab.Caption + ' - ' + ProgramName;
+  if BrowserApp.PrivateBrowsing then
+    Caption := Caption + ' (Private Browsing)';
+  Title := Caption;
+  Loading := TabIsLoading(ActiveTab);
+  Button := FToolbars.Button('back');
+  if Button <> nil then
+    Button.Enabled := View.CanGoBack;
+  Button := FToolbars.Button('forward');
+  if Button <> nil then
+    Button.Enabled := View.CanGoForward;
+  Button := FToolbars.Button('stop');
+  if Button <> nil then
+    Button.Enabled := Loading;
   if Loading then
-  begin
-    FReloadButton.ImageIndex := FStopImage;
-    FReloadButton.Hint := 'Stop';
-  end
+    FStatusBar.Progress := 50
   else
-  begin
-    FReloadButton.ImageIndex := FReloadImage;
-    FReloadButton.Hint := 'Reload (F5)';
-  end;
-  FBookmarkButton.Down := (View.Url <> '') and (FBookmarks.IndexOf(View.Url) >= 0);
-  if Loading then
-    FStatusBar.PanelText[1] := ' Loading...  ' + ZoomText(View.Zoom)
+    FStatusBar.Progress := -1;
+  if Abs(View.Zoom - 1) < 0.001 then
+    FStatusBar.ZoomText := ''
   else
-    FStatusBar.PanelText[1] := ' ' + ZoomText(View.Zoom);
-  ShowStatus(View.StatusText);
+    FStatusBar.ZoomText := ZoomText(View.Zoom);
+  FStatusBar.Secure := Pos('https://', LowerCase(View.Url)) = 1;
+  FStatusBar.Offline := WorkOffline;
+  if View.StatusText <> '' then
+    ShowStatus(View.StatusText)
+  else if Loading then
+    ShowStatus('Loading ' + View.Url + '...')
+  else
+    ShowStatus('Done');
+  RefreshLocation;
 end;
 
-{ ---- the address bar ---- }
+{ ---- the location bar and the search bar ---- }
 
-procedure TBrowserWindow.AddressKey(Sender: TControl; Code, Character, Modifiers: LongWord; var Handled: Boolean);
+procedure TBrowserWindow.LocationNavigate(Sender: TLocationBar; const Text: string; InNewTab: Boolean);
+var
+  Tab: TBrowserTab;
 begin
-  if IsEnterKey(Code) then
+  if Trim(Text) = '' then
+    Exit;
+  if InNewTab then
   begin
-    Handled := True;
-    if (Modifiers and ModifierAlt) <> 0 then
-      OpenTab(FAddress.Text, True)
-    else
-      GoToAddress(FAddress.Text);
-  end
-  else if Code = KeyEscape then
+    OpenTab(Text, True);
+    Exit;
+  end;
+  GoToAddress(Text);
+  Tab := ActiveTab;
+  if Tab <> nil then
+    FocusControl(Tab.View);
+end;
+
+procedure TBrowserWindow.LocationSuggest(Sender: TLocationBar; const Typed: string; out Rows: TSuggestionRows;
+  out Urls: TStringArray);
+const
+  Behaviours: array[TLocationSuggest] of TSuggestBehaviour = (SuggestHistoryAndBookmarks, SuggestHistory,
+    SuggestBookmarks, SuggestNothing);
+var
+  Found: TSuggestions;
+  Index: Integer;
+begin
+  Rows := nil;
+  Urls := nil;
+  Found := SuggestPlaces(Typed, BrowserApp.History, BrowserApp.Bookmarks, BrowserApp.NowUnix,
+    Behaviours[BrowserApp.Settings.LocationSuggest]);
+  SetLength(Rows, Length(Found));
+  SetLength(Urls, Length(Found));
+  for Index := 0 to High(Found) do
   begin
-    Handled := True;
-    if ActiveTab <> nil then
-    begin
-      ActiveTab.Typing := False;
-      FAddress.Text := ShownAddress(ActiveView.Url);
-      FAddress.SelectAll;
-    end;
+    Rows[Index].Title := Found[Index].Title;
+    if Rows[Index].Title = '' then
+      Rows[Index].Title := Found[Index].Url;
+    Rows[Index].Detail := Found[Index].Url;
+    Rows[Index].ImageIndex := -1;
+    Rows[Index].Marked := Found[Index].Bookmarked;
+    Rows[Index].Note := string.Join(', ', Found[Index].Tags);
+    Urls[Index] := Found[Index].Url;
+  end;
+  Say('suggest ' + Typed + ' ' + IntToStr(Length(Found)));
+end;
+
+procedure TBrowserWindow.LocationDropDown(Sender: TLocationBar; const Typed: string; out Rows: TSuggestionRows;
+  out Urls: TStringArray);
+var
+  Places: THistoryPlaceList;
+  Index: Integer;
+begin
+  Places := BrowserApp.History.RecentPlaces(12);
+  Rows := nil;
+  Urls := nil;
+  SetLength(Rows, Length(Places));
+  SetLength(Urls, Length(Places));
+  for Index := 0 to High(Places) do
+  begin
+    Rows[Index].Title := Places[Index].Title;
+    if Rows[Index].Title = '' then
+      Rows[Index].Title := Places[Index].Url;
+    Rows[Index].Detail := Places[Index].Url;
+    Rows[Index].ImageIndex := -1;
+    Rows[Index].Marked := BrowserApp.Bookmarks.IsBookmarked(Places[Index].Url);
+    Urls[Index] := Places[Index].Url;
   end;
 end;
 
-procedure TBrowserWindow.AddressChanged(Sender: TControl);
+procedure TBrowserWindow.LocationRevert(Sender: TControl);
 begin
-  if (ActiveTab <> nil) and FAddress.Focused then
+  if ActiveTab = nil then
+    Exit;
+  ActiveTab.Typing := False;
+  RefreshLocation;
+  if FToolbars.LocationBar <> nil then
+    FToolbars.LocationBar.Edit.SelectAll;
+end;
+
+procedure TBrowserWindow.LocationEdited(Sender: TControl);
+begin
+  if (ActiveTab <> nil) and (FToolbars.LocationBar <> nil) and FToolbars.LocationBar.Edit.Focused then
   begin
     ActiveTab.Typing := True;
-    ActiveTab.TypedAddress := FAddress.Text;
+    ActiveTab.TypedAddress := FToolbars.LocationBar.Address;
   end;
+end;
+
+procedure TBrowserWindow.IdentityClicked(Sender: TControl);
+begin
+  if ActiveView <> nil then
+    ShowIdentityPopup(Self, FToolbars.LocationBar.Identity, ActiveView);
+end;
+
+procedure TBrowserWindow.StarClicked(Sender: TControl);
+begin
+  BookmarkThisPage;
+end;
+
+procedure TBrowserWindow.SearchRequested(Sender: TSearchBar; const Words: string; InNewTab: Boolean);
+begin
+  WebSearch(Words, InNewTab);
+end;
+
+procedure TBrowserWindow.WebSearch(const Words: string; InNewTab: Boolean);
+var
+  Url: string;
+begin
+  if BrowserApp.Settings.SearchUrl = '' then
+  begin
+    if FToolbars.SearchBar <> nil then
+      FToolbars.SearchBar.OpenEngineMenu;
+    Exit;
+  end;
+  Url := BuildSearchUrl(BrowserApp.Settings.SearchUrl, Words);
+  Say('search ' + Words);
+  if InNewTab then
+    OpenTab(Url, True)
+  else
+    GoToAddress(Url);
+end;
+
+procedure TBrowserWindow.EngineChosen(Sender: TSearchBar; const Name: string);
+begin
+  BrowserApp.ChooseSearchEngine(Name);
+end;
+
+procedure TBrowserWindow.ManageEnginesRequested(Sender: TControl);
+begin
+  ManageSearchEngines(Self);
 end;
 
 procedure TBrowserWindow.GoToAddress(const Text: string);
@@ -571,7 +796,6 @@ begin
   if Tab = nil then
     Exit;
   GoToAddressIn(Tab, Text);
-  FocusControl(Tab.View);
 end;
 
 procedure TBrowserWindow.GoToAddressIn(Tab: TBrowserTab; const Text: string);
@@ -581,7 +805,7 @@ begin
   Tab.Typing := False;
   if RunDebugAddress(Tab, Text) then
     Exit;
-  case InterpretAddress(Text, FSettings.SearchUrl, Url) of
+  case ResolveLocation(Text, BrowserApp.Settings.SearchUrl, BrowserApp.Bookmarks, BrowserApp.Engines, Url) of
     AddressUrl, AddressSearch:
       begin
         Say('go ' + Url);
@@ -594,62 +818,101 @@ begin
   end;
 end;
 
-{ ---- toolbar and bars ---- }
+{ ---- bookmarks toolbar and sidebar ---- }
 
-procedure TBrowserWindow.BackClicked(Sender: TControl);
+procedure TBrowserWindow.BookmarkOpened(const Url: string; Disposition: TLinkDisposition);
 begin
-  if ActiveView <> nil then
-    ActiveView.GoBack;
+  OpenUrl(Url, Disposition);
 end;
 
-procedure TBrowserWindow.ForwardClicked(Sender: TControl);
+procedure TBrowserWindow.BookmarkAddRequested(Kind: TBookmarkKind; Folder: TBookmarkNode; Index: Integer);
 begin
-  if ActiveView <> nil then
-    ActiveView.GoForward;
+  NewBookmarkNode(Self, Kind, Folder, Index, '', '');
 end;
 
-procedure TBrowserWindow.ReloadClicked(Sender: TControl);
+procedure TBrowserWindow.BookmarkEditRequested(Node: TBookmarkNode);
+begin
+  EditBookmarkProperties(Self, Node);
+end;
+
+procedure TBrowserWindow.BookmarkFolderOpened(Folder: TBookmarkNode);
 var
-  View: TWebView;
+  Index: Integer;
+  First: Boolean;
 begin
-  View := ActiveView;
-  if View = nil then
+  First := True;
+  for Index := 0 to Folder.Count - 1 do
+    if Folder[Index].Kind = BookmarkItem then
+    begin
+      OpenTab(Folder[Index].Url, First);
+      First := False;
+    end;
+end;
+
+procedure TBrowserWindow.ShowSidebar(Kind: TSidebarKind);
+begin
+  if (FSidebar <> nil) and (FSidebar.Kind = Kind) and FSidebar.Visible then
+  begin
+    SidebarClosed(FSidebar);
     Exit;
-  if View.LoadingState in [LoadingRequesting, LoadingReceiving, LoadingInteractive] then
-    View.Stop
-  else
-    View.Reload;
+  end;
+  if FSidebar = nil then
+  begin
+    FSidebar := TBrowserSidebar.Create(Root);
+    FSidebar.Align := AlignLeft;
+    FSidebar.DockOrder := 5;
+    FSidebar.SetBounds(0, 0, 220, 300);
+    FSidebar.OnOpen := @BookmarkOpened;
+    FSidebar.OnClose := @SidebarClosed;
+    FSidebarSplitter := TSplitter.Create(Root);
+    FSidebarSplitter.Align := AlignLeft;
+    FSidebarSplitter.DockOrder := 5;
+  end;
+  FSidebar.Kind := Kind;
+  FSidebar.Visible := True;
+  FSidebarSplitter.Visible := True;
+  FSidebar.FocusSearch;
 end;
 
-procedure TBrowserWindow.HomeClicked(Sender: TControl);
+procedure TBrowserWindow.SidebarClosed(Sender: TControl);
 begin
-  GoToAddress(FSettings.HomePage);
+  if FSidebar = nil then
+    Exit;
+  FSidebar.Visible := False;
+  FSidebarSplitter.Visible := False;
+  if ActiveView <> nil then
+    FocusControl(ActiveView);
 end;
 
-procedure TBrowserWindow.BookmarkClicked(Sender: TControl);
-begin
-  BookmarkPageChosen(nil);
-end;
+{ ---- find ---- }
 
-procedure TBrowserWindow.BookmarkOpened(const Url: string; NewTab: Boolean);
-begin
-  if NewTab then
-    OpenTab(Url, False)
-  else
-    GoToAddress(Url);
-end;
-
-procedure TBrowserWindow.BookmarksChanged(Sender: TControl);
-begin
-  RefreshChrome;
-end;
-
-{ The answer comes to ViewFindResult (from the page's process). }
+{ The answer comes to ViewFindDetails (from the page's process). }
 procedure TBrowserWindow.FindRequested(const Text: string; Forward, MatchCase, FromStart: Boolean);
 begin
   if ActiveView = nil then
     Exit;
+  FLastFindText := Text;
+  if Text = '' then
+  begin
+    ActiveView.ClearSelection;
+    FFindBar.ShowResult(True, False);
+    Exit;
+  end;
   ActiveView.FindText(Text, Forward, MatchCase);
+end;
+
+procedure TBrowserWindow.HighlightRequested(const Text: string; MatchCase, TurnedOn: Boolean);
+begin
+  if ActiveView = nil then
+    Exit;
+  if TurnedOn then
+    SetViewFindHighlight(ActiveView, Text, MatchCase)
+  else
+    SetViewFindHighlight(ActiveView, '', MatchCase);
+  if TurnedOn then
+    Say('highlight ' + Text)
+  else
+    Say('highlight off');
 end;
 
 procedure TBrowserWindow.FindClosed(Sender: TControl);
@@ -658,42 +921,55 @@ begin
     FocusControl(ActiveView);
 end;
 
+procedure TBrowserWindow.LockClicked(Sender: TControl);
+begin
+  if ActiveView <> nil then
+    ShowPageInfo(ActiveView, Self, PageInfoSecurity);
+end;
+
+procedure TBrowserWindow.DownloadsClicked(Sender: TControl);
+begin
+  BrowserApp.ShowDownloadsWindow(True);
+end;
+
 procedure TBrowserWindow.ReceiveMessage(var Message: TPostedMessage);
 var
-  Item: TDownloadItem;
-const
-  StateNames: array[TDownloadState] of string = ('running', 'done', 'failed', 'cancelled');
+  Settings: TBrowserSettings;
 begin
-  if Message.Code = MessageDownloadChanged then
+  if Message.Code = MessageEndCustomize then
   begin
-    Item := TDownloadItem(Message.Parameter1);
-    case Item.State of
-      DownloadRunning:
-        ShowStatus('Downloading ' + Item.FileName + ': ' + IntToStr(Item.Received div 1024) + ' KiB');
-      DownloadDone:
-        ShowStatus('Downloaded ' + Item.FileName + ' to ' + Item.Path);
-      DownloadFailed:
-        ShowStatus('Download of ' + Item.FileName + ' failed: ' + Item.ErrorText);
-      DownloadCancelled:
-        ShowStatus('Download of ' + Item.FileName + ' cancelled');
-    end;
-    if (Item.State <> DownloadRunning) and not Item.EndReported then
-    begin
-      Item.EndReported := True;
-      Say('download ' + Item.FileName + ' ' + StateNames[Item.State]);
-      FDownloads.Reap;
-    end;
+    FToolbars.EndCustomize;
+    Settings := BrowserApp.Settings;
+    FToolbars.Store(Settings);
+    BrowserApp.Settings := Settings;
+    BrowserApp.SaveSettings;
+    UpdateBarsVisible;
+    RefreshChrome;
+    Say('customize done ' + Settings.NavigationItems);
+    Exit;
+  end;
+  if Message.Code = MessageCloseTabLater then
+  begin
+    CloseTab(Message.Parameter1);
     Exit;
   end;
   inherited ReceiveMessage(Message);
 end;
 
-function TBrowserWindow.AboutPage(const Path: string; out Html: string): Boolean;
+procedure TBrowserWindow.ReportLayout;
 begin
-  Result := FAboutPages.Provide(Path, Html);
+  Say('layout menu ' + IntToStr(FMenus.Bar.PixelBounds.Top) + ' toolbars ' +
+    IntToStr(FToolbars.Toolbox.PixelBounds.Top) + ' tabs ' + IntToStr(FTabStrip.PixelBounds.Top) + ' content ' +
+    IntToStr(FContent.PixelBounds.Top) + ' status ' + IntToStr(FStatusBar.PixelBounds.Top));
 end;
 
-{$I Browser.MainWindow.Menus.inc}
+function TBrowserWindow.AboutPage(const Path: string; out Html: string): Boolean;
+begin
+  Result := BrowserApp.AboutPages.Provide(Path, Html);
+end;
+
+{$I Browser.MainWindow.Tabs.inc}
+{$I Browser.MainWindow.Commands.inc}
 {$I Browser.MainWindow.Views.inc}
 
 end.

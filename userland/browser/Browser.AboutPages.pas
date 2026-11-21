@@ -19,8 +19,11 @@
 {
   The browser's own pages, made as they are asked for (the fetcher's
   about: provider): about:home (the start page: bookmarks and recent
-  pages), about:history, about:bookmarks, about:downloads, and the page
-  shown for text that is not an address. They take the theme's colours
+  pages), about:history, about:bookmarks, about:downloads, about:help
+  (Help Contents), about:support (Troubleshooting Information: the
+  browser, the engine, the processes), about:addons (none yet),
+  about:privatebrowsing, about:license, and the page shown for text
+  that is not an address. They take the theme's colours
   (the golden header band, the face, the selection), so they match the
   window in either theme.
 }
@@ -32,7 +35,8 @@ unit Browser.AboutPages;
 interface
 
 uses
-  Browser.Stores,
+  Browser.History,
+  Browser.Bookmarks,
   Browser.Downloads;
 
 type
@@ -45,6 +49,11 @@ type
     function HistoryPage: string;
     function BookmarksPage: string;
     function DownloadsPage: string;
+    function HelpPage: string;
+    function SupportPage: string;
+    function AddonsPage: string;
+    function PrivatePage: string;
+    function LicensePage: string;
   public
     constructor Create(History: THistoryStore; Bookmarks: TBookmarkStore; Downloads: TDownloadManager);
     { The fetcher's provider: the HTML for about:Path. }
@@ -62,9 +71,14 @@ implementation
 
 uses
   SysUtils,
+  Math,
   DateUtils,
   Drawing.Colors,
-  Windowing.Theme;
+  Windowing.Theme,
+  WebIpc.Messages,
+  WebView.Network,
+  WebView.ContentProcesses,
+  Browser.Profile;
 
 const
   RecentCount = 8;
@@ -126,9 +140,11 @@ function InvalidAddressPage(const Text: string): string;
 begin
   Result := ThemedPage('Not an address',
     '<header><h1>Not an address</h1><p>' + EscapeHtml(Text) + '</p></header><main>' +
-    '<p>The text typed in the address bar is not a web address, and no search engine is set.</p>' +
+    '<p>The text typed in the location bar is not a web address, and no search engine is chosen, so it was not ' +
+    'sent anywhere.</p>' +
     '<p>Type an address such as <b>example.com</b>, <b>https://example.com/</b> or <b>/home/user/page.html</b>, ' +
-    'or set a search URL in Tools &gt; Settings.</p></main>');
+    'or choose a search engine in the search bar''s menu (beside the location bar) or in Tools &gt; Options &gt; ' +
+    'Main to search for words typed here.</p></main>');
 end;
 
 constructor TAboutPages.Create(History: THistoryStore; Bookmarks: TBookmarkStore; Downloads: TDownloadManager);
@@ -150,6 +166,16 @@ begin
     Html := BookmarksPage
   else if Path = 'downloads' then
     Html := DownloadsPage
+  else if (Path = 'help') or (Copy(Path, 1, 5) = 'help#') then
+    Html := HelpPage
+  else if Path = 'support' then
+    Html := SupportPage
+  else if Path = 'addons' then
+    Html := AddonsPage
+  else if Path = 'privatebrowsing' then
+    Html := PrivatePage
+  else if Path = 'license' then
+    Html := LicensePage
   else
   begin
     Html := '';
@@ -171,37 +197,37 @@ end;
 function TAboutPages.HomePage: string;
 var
   Body: string;
-  Index, Shown: Integer;
-  Seen: string;
+  Index: Integer;
+  Places: THistoryPlaceList;
+  Toolbar: TBookmarkNode;
+  Shown: Integer;
 begin
   Body := '<header><h1>Browser</h1><p>FreePascalOS</p></header><main>' +
     '<p class="links"><a href="about:bookmarks">Bookmarks</a><a href="about:history">History</a>' +
-    '<a href="about:downloads">Downloads</a></p>';
-  Body := Body + '<h2>Bookmarks</h2>';
-  if FBookmarks.Count = 0 then
-    Body := Body + '<p class="quiet">No bookmarks yet: press Ctrl+D on a page to keep it here.</p>'
-  else
-  begin
-    Body := Body + '<div class="tiles">';
-    for Index := 0 to FBookmarks.Count - 1 do
-      Body := Body + Tile(FBookmarks.Items[Index].Url, FBookmarks.Items[Index].Title);
-    Body := Body + '</div>';
-  end;
-  Body := Body + '<h2>Recently visited</h2>';
+    '<a href="about:downloads">Downloads</a><a href="about:help">Help</a></p>';
+  Body := Body + '<h2>Bookmarks Toolbar</h2>';
+  Toolbar := FBookmarks.ToolbarFolder;
   Shown := 0;
-  Seen := #10;
-  Index := FHistory.Count - 1;
   Body := Body + '<div class="tiles">';
-  while (Index >= 0) and (Shown < RecentCount) do
-  begin
-    if (Pos(#10 + FHistory.Entries[Index].Url + #10, Seen) = 0) and (Pos('about:', FHistory.Entries[Index].Url) <> 1) then
+  for Index := 0 to Toolbar.Count - 1 do
+    if Toolbar[Index].Kind = BookmarkItem then
     begin
-      Body := Body + Tile(FHistory.Entries[Index].Url, FHistory.Entries[Index].Title);
-      Seen := Seen + FHistory.Entries[Index].Url + #10;
+      Body := Body + Tile(Toolbar[Index].Url, Toolbar[Index].Title);
       Inc(Shown);
     end;
-    Dec(Index);
-  end;
+  Body := Body + '</div>';
+  if Shown = 0 then
+    Body := Body + '<p class="quiet">No bookmarks on the toolbar yet: press Ctrl+D on a page, or drag a page''s ' +
+      'icon from the location bar to the bookmarks toolbar.</p>';
+  Body := Body + '<h2>Recently visited</h2><div class="tiles">';
+  Shown := 0;
+  Places := FHistory.RecentPlaces(RecentCount * 2);
+  for Index := 0 to High(Places) do
+    if (Shown < RecentCount) and (Pos('about:', Places[Index].Url) <> 1) then
+    begin
+      Body := Body + Tile(Places[Index].Url, Places[Index].Title);
+      Inc(Shown);
+    end;
   Body := Body + '</div>';
   if Shown = 0 then
     Body := Body + '<p class="quiet">Pages you visit will be listed here.</p>';
@@ -218,26 +244,25 @@ end;
 function TAboutPages.HistoryPage: string;
 var
   Body, Title: string;
-  Index, Shown: Integer;
+  Places: THistoryPlaceList;
+  Index: Integer;
 begin
-  Body := '<header><h1>History</h1><p>' + IntToStr(FHistory.Count) + ' visits</p></header><main>';
-  if FHistory.Count = 0 then
+  Places := FHistory.Places;
+  Body := '<header><h1>History</h1><p>' + IntToStr(Length(Places)) + ' pages (Ctrl+Shift+H shows them in the ' +
+    'Library)</p></header><main>';
+  if Length(Places) = 0 then
     Body := Body + '<p class="quiet">No pages visited yet.</p>'
   else
   begin
-    Body := Body + '<table><tr><th>Time</th><th>Page</th></tr>';
-    Shown := 0;
-    Index := FHistory.Count - 1;
-    while (Index >= 0) and (Shown < HistoryPageLimit) do
+    Body := Body + '<table><tr><th>Last visit</th><th>Page</th><th>Visits</th></tr>';
+    for Index := 0 to Min(High(Places), HistoryPageLimit - 1) do
     begin
-      Title := FHistory.Entries[Index].Title;
+      Title := Places[Index].Title;
       if Title = '' then
-        Title := FHistory.Entries[Index].Url;
-      Body := Body + '<tr><td class="quiet">' + FormatVisitTime(FHistory.Entries[Index].Time) + '</td><td><a href="' +
-        EscapeHtml(FHistory.Entries[Index].Url) + '">' + EscapeHtml(Title) + '</a><br><small class="quiet">' +
-        EscapeHtml(FHistory.Entries[Index].Url) + '</small></td></tr>';
-      Inc(Shown);
-      Dec(Index);
+        Title := Places[Index].Url;
+      Body := Body + '<tr><td class="quiet">' + FormatVisitTime(Places[Index].LastVisit) + '</td><td><a href="' +
+        EscapeHtml(Places[Index].Url) + '">' + EscapeHtml(Title) + '</a><br><small class="quiet">' +
+        EscapeHtml(Places[Index].Url) + '</small></td><td>' + IntToStr(Places[Index].VisitCount) + '</td></tr>';
     end;
     Body := Body + '</table>';
   end;
@@ -247,36 +272,30 @@ end;
 function TAboutPages.BookmarksPage: string;
 var
   Body: string;
+  Marks: TBookmarkNodeList;
   Index: Integer;
 begin
-  Body := '<header><h1>Bookmarks</h1><p>' + IntToStr(FBookmarks.Count) + ' pages</p></header><main>';
-  if FBookmarks.Count = 0 then
+  Marks := FBookmarks.AllBookmarks;
+  Body := '<header><h1>Bookmarks</h1><p>' + IntToStr(Length(Marks)) + ' pages (Ctrl+Shift+B organizes them)</p>' +
+    '</header><main>';
+  if Length(Marks) = 0 then
     Body := Body + '<p class="quiet">No bookmarks yet: press Ctrl+D on a page.</p>'
   else
   begin
-    Body := Body + '<table><tr><th>Page</th><th>Address</th></tr>';
-    for Index := 0 to FBookmarks.Count - 1 do
-      Body := Body + '<tr><td><a href="' + EscapeHtml(FBookmarks.Items[Index].Url) + '">' +
-        EscapeHtml(FBookmarks.Items[Index].Title) + '</a></td><td class="quiet">' +
-        EscapeHtml(FBookmarks.Items[Index].Url) + '</td></tr>';
+    Body := Body + '<table><tr><th>Page</th><th>Folder</th><th>Tags</th></tr>';
+    for Index := 0 to High(Marks) do
+      Body := Body + '<tr><td><a href="' + EscapeHtml(Marks[Index].Url) + '">' +
+        EscapeHtml(Marks[Index].ShownTitle) + '</a><br><small class="quiet">' + EscapeHtml(Marks[Index].Url) +
+        '</small></td><td>' + EscapeHtml(Marks[Index].Parent.ShownTitle) + '</td><td class="quiet">' +
+        EscapeHtml(Marks[Index].TagText) + '</td></tr>';
     Body := Body + '</table>';
   end;
   Result := ThemedPage('Bookmarks', Body + '</main>');
 end;
 
-function SizeText(Bytes: Int64): string;
-begin
-  if Bytes < 1024 then
-    Result := IntToStr(Bytes) + ' bytes'
-  else if Bytes < 1024 * 1024 then
-    Result := FormatFloat('0.0', Bytes / 1024) + ' KiB'
-  else
-    Result := FormatFloat('0.0', Bytes / (1024 * 1024)) + ' MiB';
-end;
-
 function TAboutPages.DownloadsPage: string;
 const
-  StateNames: array[TDownloadState] of string = ('Downloading', 'Done', 'Failed', 'Cancelled');
+  StateNames: array[TDownloadState] of string = ('Downloading', 'Done', 'Failed', 'Cancelled', 'Paused');
 var
   Body, State: string;
   Index: Integer;
@@ -301,6 +320,116 @@ begin
     Body := Body + '</table>';
   end;
   Result := ThemedPage('Downloads', Body + '</main>');
+end;
+
+function TAboutPages.HelpPage: string;
+
+  function Keys(const Rows: array of string): string;
+  var
+    Index: Integer;
+  begin
+    Result := '<table>';
+    Index := 0;
+    while Index < High(Rows) do
+    begin
+      Result := Result + '<tr><td><b>' + EscapeHtml(Rows[Index]) + '</b></td><td>' + EscapeHtml(Rows[Index + 1]) +
+        '</td></tr>';
+      Inc(Index, 2);
+    end;
+    Result := Result + '</table>';
+  end;
+
+begin
+  Result := ThemedPage('Browser Help',
+    '<header><h1>Browser Help</h1><p>Getting around the browser</p></header><main>' +
+    '<h2>The window</h2><p>From the top: the menu bar (View &gt; Toolbars hides it; Alt shows it again), the ' +
+    'Navigation Toolbar (Back and Forward - hold them or right-click for the pages before and after; Reload, Stop, ' +
+    'Home; the location bar; the search bar), the Bookmarks Toolbar, the tabs, the page, the find bar and the ' +
+    'status bar. View &gt; Toolbars &gt; Customize... lets you drag buttons to and from the toolbars.</p>' +
+    '<h2>The location bar</h2><p>Type an address, or words from the title, address or tags of a page you have ' +
+    'visited or bookmarked: matching pages are suggested as you type. A first word that is a bookmark''s or a ' +
+    'search engine''s keyword goes there. Special words narrow the suggestions: ^ history, * bookmarks, + tagged ' +
+    'pages, @ addresses only, # titles only.</p>' +
+    '<h2>Searching</h2><p>No search engine is chosen at first, so nothing you type is sent anywhere. Pick one in ' +
+    'the search bar''s menu (the button at its left) or in Tools &gt; Options &gt; Main; Manage Search Engines... ' +
+    'adds, removes, orders them and gives them keywords.</p>' +
+    '<h2>Keys</h2>' + Keys(['Ctrl+T', 'New tab', 'Ctrl+W', 'Close tab', 'Ctrl+Shift+T', 'Undo close tab',
+    'Ctrl+Tab, Ctrl+Shift+Tab', 'Next and previous tab', 'Ctrl+1 to Ctrl+9', 'Choose a tab (9: the last)',
+    'Ctrl+N', 'New window', 'Ctrl+L, F6, Alt+D', 'Location bar', 'Ctrl+K', 'Search bar', 'Ctrl+D',
+    'Bookmark this page', 'Ctrl+Shift+D', 'Bookmark all tabs', 'Ctrl+B', 'Bookmarks sidebar', 'Ctrl+H',
+    'History sidebar', 'Ctrl+Shift+B', 'Organize bookmarks', 'Ctrl+Shift+H', 'Show all history', 'Ctrl+J',
+    'Downloads', 'Ctrl+U', 'Page source', 'Ctrl+I', 'Page info', 'Ctrl+F, F3, Shift+F3', 'Find, again, previous',
+    'F5, Ctrl+F5', 'Reload, reload past the cache', 'Alt+Left, Alt+Right, Alt+Home', 'Back, forward, home',
+    'Ctrl++, Ctrl+-, Ctrl+0', 'Zoom in, out, reset', 'F11', 'Full screen', 'Ctrl+Shift+P', 'Private browsing',
+    'Ctrl+Shift+Del', 'Clear recent history', 'Ctrl+Shift+J', 'Error console']) +
+    '<h2 id="options">Options</h2><p>Tools &gt; Options...: Main (start-up, home page, downloads, search engine), ' +
+    'Tabs, Content (pop-ups, images, JavaScript, fonts, languages), Applications (what downloads do), Privacy ' +
+    '(history, cookies, clearing, location bar suggestions), Security (passwords) and Advanced (accessibility, ' +
+    'network and cache, encryption and certificates).</p></main>');
+end;
+
+function TAboutPages.SupportPage: string;
+var
+  Rows: string;
+
+  procedure Row(const Name, Value: string);
+  begin
+    Rows := Rows + '<tr><td>' + EscapeHtml(Name) + '</td><td>' + EscapeHtml(Value) + '</td></tr>';
+  end;
+
+begin
+  Rows := '';
+  Row('Name', 'Browser');
+  Row('Version', '2.0');
+  Row('User agent', WebViewUserAgent);
+  Row('Profile folder', BrowserProfileFolder);
+  Row('Content processes', IntToStr(ContentProcesses.ProcessCount) + ' (one per site, at most 30)');
+  Row('Sandboxed', BoolToStr(ContentProcesses.Sandboxed, 'yes', 'no'));
+  Row('Process protocol', 'version ' + IntToStr(WebIpcProtocolVersion));
+  Row('HTTP/3', BoolToStr(Http3Allowed, 'allowed', 'off'));
+  Row('Private browsing', BoolToStr(PrivateBrowsing, 'on', 'off'));
+  Row('Working offline', BoolToStr(WorkOffline, 'yes', 'no'));
+  Row('HTTP cache', IntToStr(HttpCacheBytes div 1024) + ' KiB');
+  Row('Cookies', IntToStr(Length(ListCookies)));
+  Row('History', IntToStr(FHistory.Count) + ' visits');
+  Row('Bookmarks', IntToStr(Length(FBookmarks.AllBookmarks)));
+  Row('Downloads', IntToStr(FDownloads.Count));
+  Result := ThemedPage('Troubleshooting Information',
+    '<header><h1>Troubleshooting Information</h1><p>What the browser is running on, for when something goes ' +
+    'wrong</p></header><main><h2>Application basics</h2><table>' + Rows + '</table>' +
+    '<h2>Engine</h2><table><tr><td>Layout and scripts</td><td>libweb, libcss, libjavascript</td></tr>' +
+    '<tr><td>Network</td><td>libhttp (HTTP/1.1, HTTP/2), libquic (HTTP/3), libtls (TLS 1.2, 1.3)</td></tr>' +
+    '<tr><td>Pictures</td><td>libimage, libsvg</td></tr></table></main>');
+end;
+
+function TAboutPages.AddonsPage: string;
+begin
+  Result := ThemedPage('Add-ons Manager',
+    '<header><h1>Add-ons</h1><p>Extensions, themes and plugins</p></header><main>' +
+    '<h2>Extensions</h2><p class="quiet">No extensions are installed.</p>' +
+    '<h2>Themes</h2><p class="quiet">The browser follows the system''s theme (Sunrise or Classic: Control Panel ' +
+    '&gt; Appearance).</p><h2>Plugins</h2><p class="quiet">No plugins are installed.</p></main>');
+end;
+
+function TAboutPages.PrivatePage: string;
+begin
+  Result := ThemedPage('Private Browsing',
+    '<header><h1>Private Browsing</h1><p>The browser will not remember any history for this session</p></header>' +
+    '<main><p>In a private browsing session, the browser keeps no browser history, search history, download ' +
+    'history, web form history, cookies or temporary internet files once it ends. Bookmarks you make are kept.</p>' +
+    '<p>To stop private browsing, choose Tools &gt; Stop Private Browsing: your windows and tabs from before come ' +
+    'back.</p></main>');
+end;
+
+function TAboutPages.LicensePage: string;
+begin
+  Result := ThemedPage('Licence',
+    '<header><h1>Licence</h1><p>Browser and FreePascalOS</p></header><main>' +
+    '<p>This program is free software: you can redistribute it and/or modify it under the terms of the GNU General ' +
+    'Public License as published by the Free Software Foundation, either version 3 of the License, or (at your ' +
+    'option) any later version.</p><p>This program is distributed in the hope that it will be useful, but WITHOUT ' +
+    'ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See ' +
+    'the GNU General Public License for more details.</p></main>');
 end;
 
 end.

@@ -57,6 +57,8 @@ begin
   FEngine.OnScriptConfirm := @EngineScriptConfirm;
   FEngine.OnScriptPrompt := @EngineScriptPrompt;
   FEngine.OnConsoleMessage := @EngineConsole;
+  FEngine.OnPopupBlocked := @EnginePopupBlocked;
+  ApplyEngineOptions;
   if FZoom <> 1 then
     FEngine.Zoom := FZoom;
   FEngine.Navigable.Fetcher.AboutPageProvider := FAboutPageProvider;
@@ -67,6 +69,9 @@ end;
 procedure TWebView.EngineTitleChanged(Sender: TWebEngineView; const Value: string);
 begin
   TellTitle(Value);
+  { The current entry's title is in HistoryEntries now (as a content
+    process tells it with its history). }
+  TellHistory;
 end;
 
 procedure TWebView.EngineLocationChanged(Sender: TWebEngineView; const Value: string);

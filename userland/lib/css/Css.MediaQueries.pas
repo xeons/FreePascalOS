@@ -72,6 +72,10 @@ type
     Update: TCssKeyword;
     { The initial font size, what em means in a media query. }
     FontSize: Double;
+    { Text zoom (a browser's "zoom text only"): what absolute font sizes
+      are multiplied by, lengths and media features staying; 0 or 1
+      for none. }
+    TextZoom: Double;
   end;
 
   TCssMediaConditionKind = (mcAnd, mcOr, mcNot, mcFeature, mcUnknown);

@@ -71,6 +71,8 @@ uses
 
 type
   TScriptAlertEvent = procedure(const Message: string) of object;
+  { window.open (Url absolute): True when the host opened something. }
+  TScriptOpenWindowEvent = function(const Url, Target, Features: string): Boolean of object;
   TScriptConfirmEvent = function(const Message: string): Boolean of object;
   TScriptPromptEvent = function(const Message, Default: string; out Answer: string): Boolean of object;
   TScriptConsoleEvent = procedure(const Level, Text: string) of object;
@@ -114,6 +116,7 @@ type
     procedure HistoryGo(Context: TObject; Delta: Integer); override;
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure Alert(Context: TObject; const Message: string); override;
+    function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; override;
     function Confirm(Context: TObject; const Message: string): Boolean; override;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; override;
     function ViewportWidth: Integer; override;
@@ -181,6 +184,7 @@ type
     FEnvironment: TPageScriptEnvironment;
     FContexts: array of TPageContextRecord;
     FOnAlert: TScriptAlertEvent;
+    FOnOpenWindow: TScriptOpenWindowEvent;
     FOnConfirm: TScriptConfirmEvent;
     FOnPrompt: TScriptPromptEvent;
     FOnConsoleMessage: TScriptConsoleEvent;
@@ -208,6 +212,7 @@ type
     property Navigable: TNavigable read FNavigable;
     property Environment: TPageScriptEnvironment read FEnvironment;
     property OnAlert: TScriptAlertEvent read FOnAlert write FOnAlert;
+    property OnOpenWindow: TScriptOpenWindowEvent read FOnOpenWindow write FOnOpenWindow;
     property OnConfirm: TScriptConfirmEvent read FOnConfirm write FOnConfirm;
     property OnPrompt: TScriptPromptEvent read FOnPrompt write FOnPrompt;
     property OnConsoleMessage: TScriptConsoleEvent read FOnConsoleMessage write FOnConsoleMessage;
@@ -457,6 +462,11 @@ var
 begin
   if ParseUrl(Url, Target) then
     FExecutor.FNavigable.ChangeUrlFromScript(Target, ReplaceEntry);
+end;
+
+function TPageScriptEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
+begin
+  Result := Assigned(FExecutor.FOnOpenWindow) and FExecutor.FOnOpenWindow(Url, Target, Features);
 end;
 
 procedure TPageScriptEnvironment.Alert(Context: TObject; const Message: string);

@@ -1515,8 +1515,42 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Web view: drawing a field's selection, dragging the bars of inner
       scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
-- [ ] Browser: session restore, per-site settings, a downloads window with
-      cancel buttons, separate windows (Shift+click opens a tab), tab drag
+- [x] Web view: what the Firefox 3.6 chrome needs - session history lists,
+      going several entries at once and session restore across processes,
+      find with wrap and match count and highlight all, Page Info, context
+      menu details, images off, text-only zoom, No Style, the encoding
+      override, pop-up blocking (window.open), private browsing, offline,
+      the cache's size, cookies and their policy, connection security and
+      the trust store's certificates (protocol version 2)
+- [ ] Web view: a WindowProxy for windows window.open made (it returns
+      null); text zoom, No Style and the encoding override in frames;
+      connection security of HTTP/3 connections; Page Info of frames
+- [x] Browser laid out and used as browsers were before they hid their
+      menus: the full menu bar (File, Edit, View, History, Bookmarks,
+      Tools, Help, with their access keys and shortcuts; hidden, Alt shows
+      it), customizable Navigation and Bookmarks toolbars (palette, icons
+      or text, small icons), Back and Forward with their history, the
+      location bar (site identity and its pop-up, star and its panel,
+      suggestions from history and bookmarks as you type), the search bar
+      with an engine menu (none chosen until the user picks one), tabs
+      under the toolbars (scroll arrows, list of tabs, drag to reorder,
+      drag out to a window, context menu), status bar, find bar with
+      highlight all and wrap messages; Options (Main, Tabs, Content,
+      Applications, Privacy, Security, Advanced), Library, Downloads
+      window (pause, resume, cancel, retry, open, show in folder), Page
+      Info, Page Source, Error Console, Clear Recent History, Manage Search
+      Engines, bookmark folders, tags and keywords, several windows,
+      private browsing, session restore with recently closed tabs and
+      windows; host test (make browser-test) and test-input checks
+- [ ] Browser: printing (File > Print shows it is not available), feeds,
+      spelling, add-ons, update checks and forgery reports (stubs); the
+      saved-passwords list is never filled (no form capture yet) and is
+      not encrypted; the proxy settings, default font and the advanced
+      JavaScript switches are kept but not applied; Import from HTML
+- [ ] Browser: a dragged-out tab loads its page again in the new window
+      (views cannot move between windows); Restore Session page after a
+      crash (the session is restored at once); per-site pop-up and image
+      exceptions
 - [x] webbrowse (make webbrowse): the engine on real sites from the host
       (PNG, layout, DOM, console, network log, phase times, memory, hover
       timing, a sampling profiler, a watchdog with stacks)

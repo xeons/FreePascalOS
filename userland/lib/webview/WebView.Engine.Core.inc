@@ -28,6 +28,8 @@ begin
   inherited Create(AParent);
   CanFocus := True;
   FScriptingEnabled := True;
+  FImagesEnabled := True;
+  FAuthorStylesEnabled := True;
   FZoom := 1;
   FState := LoadingIdle;
   FSink := TLayoutResourceSink.Create;
@@ -118,7 +120,9 @@ begin
     TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;
     TPageScriptExecutor(FExecutor).OnPrompt := @ScriptPrompt;
     TPageScriptExecutor(FExecutor).OnConsoleMessage := @ScriptConsole;
+    TPageScriptExecutor(FExecutor).OnOpenWindow := @ScriptOpenWindow;
   end;
+  ApplyLoadingSettings;
   if FScriptingEnabled then
     FPage.Navigable.Executor := FExecutor;
   FObserver := TViewObserver.Create;
@@ -187,6 +191,10 @@ begin
   FDocument := nil;
   FBackingValid := False;
   FFixedChecked := False;
+  { The find highlight goes with its document. }
+  FHighlightNeedle := '';
+  FHighlights := nil;
+  FHighlightsValid := False;
 end;
 
 procedure TWebEngineView.AdoptDocument(Document: TDocument);
@@ -208,6 +216,7 @@ begin
   FSelection.Attach(Document, FLayout, FPainter);
   TDocumentScriptLayout(FScriptLayout).Layout := FLayout;
   TDocumentScriptLayout(FScriptLayout).Painter := FPainter;
+  ApplyDocumentOptions;
   ApplyViewport;
   RequestFrame;
   InvalidateViewport;
@@ -356,9 +365,14 @@ end;
 
 { ---- geometry ---- }
 
+{ Zooming the text only leaves CSS pixels at the display's scale (the
+  layout multiplies the font sizes instead). }
 function TWebEngineView.DeviceScale: Double;
 begin
-  Result := DeviceScaleFor(Scaled(1000) / 1000, FZoom);
+  if FTextOnlyZoom then
+    Result := DeviceScaleFor(Scaled(1000) / 1000, 1)
+  else
+    Result := DeviceScaleFor(Scaled(1000) / 1000, FZoom);
 end;
 
 function TWebEngineView.ViewportPixelWidth: LongInt;
@@ -597,6 +611,7 @@ begin
   end;
   FZoom := Value;
   ApplyViewport;
+  ApplyDocumentOptions;
   if FLayout <> nil then
   begin
     UpdateLayout(True);

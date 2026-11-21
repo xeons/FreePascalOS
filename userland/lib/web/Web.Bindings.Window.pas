@@ -217,6 +217,31 @@ begin
   Result := Text(Call, Answer);
 end;
 
+{ window.open: _self navigates this window (and gives it back); any
+  other target is the host's (a new tab, a named frame or tab), which
+  may refuse a pop-up; null then, and when the window is another
+  process's anyway. }
+function Window_open(var Call: TBindingCall): TJsValue;
+var
+  UrlText, Target, Resolved: string;
+begin
+  UrlText := Call.Text(0);
+  if UrlText = '' then
+    UrlText := 'about:blank';
+  if not ResolveUrlText(Context(Call).Document, UrlText, Resolved) then
+    RaiseDomError(SyntaxError, '''' + UrlText + ''' is not a valid URL');
+  Target := Call.Text(1);
+  if Target = '' then
+    Target := '_blank';
+  if LowerCase(Target) = '_self' then
+  begin
+    Context(Call).Environment.Navigate(Context(Call), Resolved, False);
+    Exit(GlobalValue(Call));
+  end;
+  Context(Call).Environment.OpenWindow(Context(Call), Resolved, Target, Call.Text(2));
+  Result := JsNull;
+end;
+
 function Window_print(var Call: TBindingCall): TJsValue;
 begin
   Result := JsUndefined;

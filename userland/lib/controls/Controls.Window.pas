@@ -88,6 +88,8 @@ type
   { What a window needs of its menu bar (Controls.Menus has the real one):
     the keyboard mode that F10 and Alt start. }
   TWindowMenuBar = class(TControl)
+  private
+    FAutoReveal: Boolean;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
@@ -97,6 +99,10 @@ type
     procedure LeaveMenuMode; virtual; abstract;
     { A heading picked or its menu open. }
     function InMenuMode: Boolean; virtual; abstract;
+    { While hidden (Visible False), Alt, F10 or a heading's mnemonic
+      show it for as long as a menu is in use (a browser's hidden menu
+      bar). }
+    property AutoReveal: Boolean read FAutoReveal write FAutoReveal;
   end;
 
   TAcceleratorEvent = procedure(Sender: TControlWindow) of object;
@@ -520,6 +526,10 @@ begin
      ((Modifiers and (ModifierControl or ModifierAltGr)) <> 0) then
     Exit;
   Control := FindMnemonicControl(FRoot, Character);
+  { A hidden menu bar that shows itself for its menus. }
+  if (Control = nil) and (FMenuBar <> nil) and not FMenuBar.Visible and FMenuBar.AutoReveal and
+     FMenuBar.Enabled and FMenuBar.MatchesMnemonic(Character) then
+    Control := FMenuBar;
   if Control = nil then
     Exit;
   Control.ActivateMnemonic(Character);
@@ -532,7 +542,7 @@ begin
     Exit;
   if FMenuBar.InMenuMode then
     FMenuBar.LeaveMenuMode
-  else if (FPopup = nil) and FMenuBar.Visible and FMenuBar.Enabled then
+  else if (FPopup = nil) and (FMenuBar.Visible or FMenuBar.AutoReveal) and FMenuBar.Enabled then
     FMenuBar.EnterMenuMode;
 end;
 

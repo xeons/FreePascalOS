@@ -51,7 +51,7 @@ uses
 const
   { Changed whenever a message's payload changes: the content process
     refuses a browser of another version (they come from one build). }
-  WebIpcProtocolVersion = 1;
+  WebIpcProtocolVersion = 2;
 
   { ---- either side ---- }
   { Content process to browser, first: protocol version, process id. }
@@ -86,7 +86,7 @@ const
   IpcSetZoom = 111;
   { TIpcInputEvent. }
   IpcInput = 112;
-  { Needle, forward, match case (a request: the reply says if found). }
+  { TIpcFindRequest (a request: the reply is a TIpcFindResult). }
   IpcFind = 113;
   IpcSelectAll = 114;
   IpcCopySelection = 115;
@@ -102,6 +102,19 @@ const
   IpcSetScripting = 121;
   { A command of the view's own context menu (WebView.Types). }
   IpcViewCommand = 122;
+  { Payload: an offset in the session history (-2: two back). }
+  IpcGoToHistoryOffset = 123;
+  { TIpcHistoryState (the flags unused): the view's history becomes
+    these entries and the current one is loaded (session restore). }
+  IpcRestoreHistory = 124;
+  { TIpcFindRequest (Forward unused): every match painted highlighted
+    ('' clears). }
+  IpcSetFindHighlight = 125;
+  { A request: the reply is a TIpcPageInfo. }
+  IpcRequestPageInfo = 126;
+  { TIpcDisplayOptions: images, text-only zoom, author styles, pop-ups,
+    the encoding override. }
+  IpcSetDisplayOptions = 127;
 
   { ---- content process to browser ---- }
   { A new surface (a section handle comes with it): TIpcSurfaceInfo. }
@@ -114,7 +127,8 @@ const
   { Width, height, then the pixels (32-bit ARGB), or 0 x 0 for none. }
   IpcFaviconChanged = 205;
   IpcStatusText = 206;
-  { Can go back, can go forward. }
+  { TIpcHistoryState: can go back and forward, the entries, the current
+    one (sent when the history or the current entry's title changed). }
   IpcHistoryState = 207;
   IpcZoomChanged = 208;
   { The pointer shape over the view. }
@@ -153,6 +167,9 @@ const
   IpcKeyUnhandled = 224;
   { The text of the whole page (a reply to IpcViewCommand PageText). }
   IpcPageText = 225;
+  { A pop-up the page asked for without a user gesture was refused:
+    its URL. }
+  IpcPopupBlocked = 226;
 
   { ---- the network service ---- }
   { Content to browser: TIpcHopRequest (HopId is the content process's). }
@@ -224,6 +241,15 @@ begin
     IpcFramePresented: Result := 'frame';
     IpcSurfaceCreated: Result := 'surface';
     IpcOpenUrl: Result := 'open-url';
+    IpcFind: Result := 'find';
+    IpcGoToHistoryOffset: Result := 'go-to-history-offset';
+    IpcRestoreHistory: Result := 'restore-history';
+    IpcSetFindHighlight: Result := 'set-find-highlight';
+    IpcRequestPageInfo: Result := 'request-page-info';
+    IpcSetDisplayOptions: Result := 'set-display-options';
+    IpcHistoryState: Result := 'history-state';
+    IpcContextMenu: Result := 'context-menu';
+    IpcPopupBlocked: Result := 'popup-blocked';
     IpcHopStart: Result := 'hop-start';
     IpcHopHead: Result := 'hop-head';
     IpcHopData: Result := 'hop-data';

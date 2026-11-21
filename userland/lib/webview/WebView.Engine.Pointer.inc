@@ -389,6 +389,7 @@ var
   Path: TFramePath;
 begin
   inherited PointerDown(X, Y, Button);
+  NoteUserGesture;
   SetFocus;
   FLastPointerX := X;
   FLastPointerY := Y;
@@ -562,6 +563,7 @@ var
   Scale: Double;
   Path: TFramePath;
 begin
+  NoteUserGesture;
   inherited PointerUp(X, Y, Button);
   FLastPointerX := X;
   FLastPointerY := Y;
@@ -656,6 +658,7 @@ begin
   Info.Y := Y;
   Info.FromKeyboard := FromKeyboard;
   Info.SelectedText := SelectedText;
+  Info.CanCopy := Info.SelectedText <> '';
   if FPainter <> nil then
   begin
     Scale := DeviceScale;
@@ -670,12 +673,18 @@ begin
         Info.LinkUrl := ResolveLink(Link);
         Info.LinkText := Trim(Link.TextContent);
       end;
-      if (Hit.Element <> nil) and (Hit.Element.LocalName = 'img') and (FPage <> nil) and
-         (FPage.Navigable.Loader <> nil) then
-        Info.ImageUrl := Hit.Element.GetAttribute('src');
+      if (Hit.Element <> nil) and (Hit.Element.LocalName = 'img') then
+        Info.ImageUrl := ResolvedAttribute(Hit.Element, 'src');
       Control := FormControlOf(Hit.Node);
       Info.InTextField := (Control <> nil) and (FormControlKindOf(Control) in [FormControlText, FormControlPassword,
         FormControlTextArea]);
+      if Hit.Element <> nil then
+      begin
+        Info.IsEditable := Info.InTextField or IsEditableElement(Hit.Element);
+        Info.BackgroundImageUrl := NearestBackgroundImageUrl(LayoutForDocument(Hit.Element.NodeDocument), Hit.Element);
+        if Hit.Element.NodeDocument <> FDocument then
+          Info.FrameUrl := Hit.Element.NodeDocument.Url;
+      end;
     finally
       ReleaseHit(Hit);
     end;

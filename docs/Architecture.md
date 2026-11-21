@@ -12699,61 +12699,325 @@ contextmenu, with client coordinates in the target document's own
 viewport, page offsets, offsetX/Y, button, buttons, detail and
 modifiers); a cancelled mousedown keeps the focus and selection.
 
+**What a browser's menus and dialogs ask** (for the Firefox 3.6 style
+chrome; every one works in both process models, through the protocol's
+version 2 messages in a content process, on `TWebEngineView` in the
+program; the types are in `WebView.Types`, re-exported by
+`WebView.Control`):
+
+- **Session history.** `HistoryEntries: TWebHistoryList` (`Url`,
+  `Title`, oldest first) and `HistoryIndex` (the current entry's index,
+  -1 none), up to date when `OnHistoryChanged` fires (which a title
+  change fires too); `GoToHistoryOffset(-2)` goes two back, across
+  sites and processes; `RestoreHistory(Entries, Index)` restores a
+  session into a fresh view (`Entries[Index]` is loaded, the others
+  load when gone to). In a content process the view's history is the
+  entries of the sites it left (`FBackEntries`), the process's own
+  session history (all of one site, the entries and current index
+  coming with every `IpcHistoryState`) and the entries it left going
+  back (`FForwardEntries`) (`WebView.Control.History.inc`). An offset
+  within the process's own history is its traversal
+  (`IpcGoToHistoryOffset`); any other is a jump: the run of entries of
+  the target's site around it goes to a view of that site's process
+  (`IpcRestoreHistory`: libweb's new `TNavigable.RestoreSession` makes
+  them the history, with no documents yet, and loads the target as a
+  traversal), the rest become the back and forward lists. Reload after
+  a crash restores the history it had that way. The entries of sites
+  left are not documents kept alive (no back-forward cache): going back
+  to one loads it again, its scroll position and pushState state lost.
+- **Find.** `OnFindDetails(Needle, Found, Wrapped, MatchCount)` fires
+  with `OnFindResult`: whether the search went past the end (or the
+  start) and on from the other end, and the matches in the page (-1
+  past 100000; `TPageTextIndex.FindWrapping`, `AllMatches`).
+  `SetFindHighlight(Needle, MatchCase)` paints every match in a soft
+  yellow under the selection (`WebView.Engine.Find.inc`: the matches
+  are found again whenever the text index is built again, and only
+  those on the screen are measured; device pixels from the CSS
+  rectangles at the device scale); '' or a new document clears it.
+- **Context menus.** `TWebContextInfo` gained `BackgroundImageUrl` (the
+  nearest background-image of the element or its ancestors, resolved),
+  `IsEditable` (a text field, a text area or contenteditable content),
+  `FrameUrl` (the frame document's URL when the point is in a frame)
+  and `CanCopy`; `ImageUrl` is resolved now.
+- **Page Info.** `RequestPageInfo` answers once on `OnPageInfo` with a
+  `TWebPageInfo` (`WebView.PageInfo`, no controls): URL, title,
+  referrer, content type, encoding, the rendering mode ('Standards
+  compliance mode' or 'Quirks mode'), Last-Modified as sent, the meta
+  elements (name, http-equiv, property or charset with the content),
+  the media (`Image` with its alt text, `Background`, `Icon`, `Input
+  image`, with their sizes as laid out in CSS pixels) and the counts of
+  forms and links. libweb's documents now keep their referrer (also
+  `document.referrer`) and Last-Modified, and a text or image
+  document's content type is the response's.
+- **Display options.** `ImagesEnabled` (from the next document: the
+  navigable's `LoadImages`), `TextOnlyZoom` (Zoom scales font sizes, not
+  CSS pixels: libcss's media environment has a `TextZoom` that
+  multiplies the absolute part of every font size - lengths and
+  keywords - while em, percentages and rem follow the zoomed sizes;
+  `TDocumentLayout.SetTextZoom`), `AuthorStylesEnabled` (False is "No
+  Style": the document's sheets and style attributes are not used, the
+  user agent's sheet and presentational hints are;
+  `TDocumentStyler.AuthorStylesEnabled`, `TDocumentLayout.SetAuthorStylesEnabled`;
+  applies at once), `EncodingOverride` (an encoding label, '' to
+  detect: the navigable's `EncodingOverride` is taken as the response's
+  charset, so it is certain and a meta charset does not change it; a
+  byte order mark still wins; setting it reloads) and
+  `SupportedEncodings` (libweb's `SelectableEncodingNames`: every
+  encoding it decodes but replacement and x-user-defined, UTF-8 first).
+  These apply to the top document's layout; frames keep their own.
+- **Pop-ups.** libweb now has `window.open(url, target, features)`:
+  `_self` navigates the window; a named frame or `_top`/`_parent` is
+  navigated by the engine; anything else goes to the host as a link for
+  a new tab (a new window when features were given) through
+  `OnLinkClicked`. It returns null even when a tab was opened (the new
+  tab may be another process's: no WindowProxy across them); a
+  sandboxed frame needs allow-popups. With `PopupsBlocked` a window.open
+  without a user gesture (a click or a key in the last second, one
+  window per gesture) is refused and its URL told to `OnPopupBlocked`.
+- **The network** (`WebView.Network`, the browser process's, so for
+  every view): `SetPrivateBrowsing` (a fresh cookie jar, HTTP cache,
+  HSTS store and local storage in memory; turning it off empties them
+  and brings the usual ones back; pages open across the switch keep
+  what they already read, so a browser closes or reloads them),
+  `SetWorkOffline` (every exchange fails at once with 'offline', in
+  libhttp's client; fresh cache entries are still served),
+  `ClearHttpCache`, `HttpCacheBytes`, `SetHttpCacheLimit`, `ListCookies`
+  (`TCookieInfo`: host, name, value, path, expiry, Secure, HttpOnly),
+  `RemoveCookie`, `ClearCookies`, `SetCookiePolicy` (accept, refuse,
+  refuse third-party, with allowed and blocked hosts that cover their
+  subdomains, the longest matching one deciding, a blocked one winning
+  a tie: libhttp's `Http.CookiePolicies`, applied by the jar when
+  storing and when sending), `ClearWebStorage`, `ClearHsts`,
+  `ConnectionSecurityOf(Url)` (the protocol, cipher and certificate
+  chain of the last TLS connection to its host and port: libhttp's
+  `Http.ConnectionSecurity`, recorded by every TLS handshake; not yet
+  for HTTP/3) and `SystemTrustSummaries` (the system trust store's
+  certificates; libtls's `Tls.SystemTrust.SystemTrustSummaries`).
+  Certificates are `TCertificateSummary` (libtls's
+  `Tls.CertificateSummaries`): subject and issuer as distinguished
+  names, common name, organization, validity, serial number and SHA-256
+  fingerprint.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing, text selection inside frames, Tab moving into frames.
+printing, text selection inside frames, Tab moving into frames;
+WindowProxy objects for windows window.open made; text zoom, No Style
+and the encoding override in frames.
 
 ## Browser
 
 `browser` (`userland/browser`, installed as `/app/browser`: "Browser"
 in the Internet category with the `app-web-browser` icon) is a web
-browser on libwebview, linked with libquic for HTTP/3:
+browser on libwebview (its pages in content processes: "Browser process
+model" below), linked with libquic for HTTP/3. Its chrome - the windows,
+menus, toolbars, dialogs, history, bookmarks, downloads and settings -
+lives in the browser process, laid out and used as browsers were before
+they folded their menus away, in the system's own artwork and both
+themes (Sunrise's golden bands, Classic's raised faces).
 
-- The window (`Browser.MainWindow`, its menus and keys in
-  `Browser.MainWindow.Menus.inc`, what the views tell in
-  `Browser.MainWindow.Views.inc`): the menu bar (File, Edit, View,
-  History, Bookmarks, Tools, Help), the tab strip (`Browser.TabStrip`:
-  each tab's icon, or a turning ring while it loads, its title cut with
-  "...", a close button; "+" for a new tab; a middle click closes; the
-  chosen tab in the theme's header band in Sunrise, raised in Classic),
-  the navigation bar (back, forward, reload or stop, home from the icon
-  theme; the address bar; the bookmark button), the bookmarks bar
-  (`Browser.BookmarksBar`), a web view per tab (`Browser.Tabs`), the
-  find bar (`Browser.FindBar`: incremental, Enter and Shift+Enter, match
-  case) and the status bar (the hovered link, downloads, the zoom). The
-  window's title is the page's.
-- The address bar (`Browser.Addresses`, plain logic): a URL with a known
-  scheme as it is, an absolute path as a file, something like a host (a
-  dot, a port, localhost) as https:// (http:// for IP addresses and
-  localhost), anything else searched with the search URL setting ("%s"
-  for the form-encoded words), and with none set a page saying it is not
-  an address. Escape puts the page's address back; Alt+Enter opens it
-  in a new tab.
-- Keys: Ctrl+L (and Alt+D), Ctrl+T, Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab
-  (and Ctrl+Page Down/Up), F5 and Ctrl+R, Alt+Left and Alt+Right,
-  Alt+Home, Ctrl+F and F3, Ctrl++ Ctrl+- Ctrl+0, Ctrl+D, Ctrl+H, Ctrl+J,
-  Ctrl+O (a file).
-- The browser's own pages (`Browser.AboutPages`, through the fetcher's
-  `AboutPageProvider`, for navigations the browser itself starts):
-  about:home (the start page: bookmarks and recently visited pages),
-  about:history, about:bookmarks, about:downloads, in the theme's
-  colours.
-- Kept in the user's settings folder (`Browser.Stores`,
-  ~/.settings/browser): the history (history.txt: time, URL, title; at
-  most 2000 visits) and the bookmarks (bookmarks.txt).
-- Downloads (`Browser.Downloads`): what a page cannot show is fetched
-  again on a thread of its own over the shared client (a local file is
-  copied) into ~/Downloads under a name not taken yet; the status bar
-  follows it.
-- Settings (`Browser.Settings`, group Browser; Tools > Settings,
-  `Browser.SettingsDialog`): the home page, the search URL, HTTP/3,
-  JavaScript, the bookmarks bar. A page's prompts are message boxes and
-  a text dialog (`Browser.PromptDialog`).
-- It prints what happens, a line each (`browser.pas` lists them: tabs,
-  locations, titles, loading states, finds, zoom, bookmarks, downloads,
-  prompts, the console), which `scripts/test-input.py` reads: it shows a
-  local page and checks its title, that it loaded, that its script
-  logged, and its background on the screen.
+**The window** (`Browser.MainWindow`, its parts in
+`Browser.MainWindow.Tabs.inc`, `.Commands.inc` and `.Views.inc`), top
+to bottom:
+
+- the menu bar (`Browser.MenuBar`): File, Edit, View, History,
+  Bookmarks, Tools and Help with the items, access keys and shortcuts of
+  old (listed in the unit); View > Toolbars hides it, and while hidden
+  Alt, F10 or a heading's access key shows it for as long as a menu is
+  in use (libcontrols' `TMenuBar.AutoReveal`);
+- the Navigation Toolbar and the Bookmarks Toolbar (`Browser.Toolbars`
+  over libcontrols' `TToolbox`): Back and Forward (a held or right press
+  drops their entries down: `DropDownOnHold`), Reload, Stop, Home, the
+  location bar, the search bar; the bookmarks toolbar's items
+  (`Browser.BookmarksToolbar`: the Bookmarks Toolbar folder, folders as
+  menus, a ">>" menu for what does not fit, drag a page's site button
+  or a URL onto it to bookmark it, drag a bookmark along it to move it,
+  a context menu with New Bookmark/Folder/Separator, Delete,
+  Properties). View > Toolbars > Customize... shows the palette under
+  the toolbars: every item is dragged between the toolbars and the
+  palette (Downloads, Print, New Tab, New Window, History, Bookmarks,
+  Cut, Copy, Paste, Zoom In and Out, Full Screen, separators, spaces);
+  Show: Icons / Icons and Text / Text, Use Small Icons, Restore Default
+  Set; the arrangement is the settings NavigationItems and
+  BookmarksItems;
+- the tab strip under the toolbars (`Browser.TabStrip`): icon or a
+  turning ring, title, close button; the new tab button after the last
+  tab, the list of all tabs at the right, arrows and the wheel when
+  tabs no longer fit at 100 units; drag a tab along to reorder it, down
+  off the window to give it a window of its own (its entries go along;
+  the page loads again there); a double click on the empty part opens a
+  tab; the tab context menu (New Tab, Reload Tab, Reload All Tabs, Close
+  Other Tabs, Bookmark This Tab, Bookmark All Tabs..., Undo Close Tab,
+  Close Tab);
+- the sidebar (`Browser.Sidebar`, Ctrl+B and Ctrl+H): the bookmarks or
+  the history by day, with a search box;
+- the pages (a web view per tab), the find bar (`Browser.FindBar`: close,
+  Find, Next, Previous, Highlight all, Match case, "Phrase not found",
+  "Reached end of page, continued from top") and the status bar
+  (`Browser.StatusBar`: link targets and what is loading, a progress
+  meter, Offline, the downloads running, the zoom when not 100 %, the
+  lock of a secure page).
+
+The title is the page's, with "(Private Browsing)" while browsing
+privately. Every command has a number (`Browser.Commands`) that menu
+items, toolbar buttons, keys and context menus run
+(`TBrowserWindow.RunCommand`); menus check and enable their items as
+they open. Keys without an item are hidden items with accelerators
+(Ctrl+Tab, Ctrl+1 to 9, Ctrl+L, F6, Alt+D, Ctrl+K, Ctrl+R, Ctrl+F5,
+Ctrl+Shift+T, Ctrl+G, Shift+F3...).
+
+**The location bar** (`Browser.LocationBar`): the site identity button
+(the page's icon; for https a lock and the host on a band; a click
+opens `Browser.IdentityPopup`, who verified the site from the browser's
+own TLS connection, with More Information... to Page Info; dragging it
+drags the page's address), the address, the drop-down of pages visited
+last, the star (filled when bookmarked: a click bookmarks the page in
+Unsorted Bookmarks and opens `Browser.BookmarkPanel` - name, folder,
+tags, Remove Bookmark, Done). Typing shows the suggestions
+(libcontrols' `TSuggestionPopup`: title over address, a star and the
+tags of bookmarks), ranked by `Browser.AwesomeBar` (every word in the
+title, address or tags; frecency from the visits and their age,
+bookmarks weighed up, words at word starts and typed text an address
+begins with ranked first; ^ * + @ # narrow them; the Privacy setting
+chooses history, bookmarks, both or nothing). Up and Down walk them,
+Enter goes (Alt+Enter in a new tab, Ctrl+Enter www.-.com,
+Shift+Enter .net). A first word that is a bookmark's or an engine's
+keyword goes there (`Browser.Keywords`), else `Browser.Addresses`
+decides.
+
+**Searching** (`Browser.SearchEngines`, `Browser.SearchBar`,
+`Browser.SearchEngineDialog`): DuckDuckGo, Wikipedia (English), Google
+and Bing ship with the browser, but none is chosen until the user picks
+one in the search bar's menu or Options > Main, so nothing typed is
+sent anywhere by default: the search bar opens its engine menu instead
+of searching, and words in the location bar give a page saying they
+are not an address and how to choose an engine. Manage Search Engines
+orders, removes (shipped ones are remembered as removed), adds (name
+and a URL with %s) and gives keywords, kept in searchengines.txt; the
+chosen engine is Browser/SearchEngine, its URL Browser/SearchUrl.
+
+**What the windows share** (`Browser.Application`, `BrowserApp`): the
+settings, history, bookmarks, downloads, engines, saved passwords, the
+console log and the about pages; the windows (New Window, a window
+from a torn-off tab or a closed one brought back; the last one closed
+ends the browser, after asking about several tabs; a request to end
+from the system ends it without asking); the session.
+
+**Kept in the profile** (~/.settings/browser, `Browser.Profile`; files
+written whole through a temporary file, `Browser.TextFiles`):
+
+- history.txt (`Browser.History`): a line per visit; places grouped by
+  URL with visit counts, search, since a time, recent, forget a page, a
+  site or everything since a time, age groups (Today, Yesterday...);
+- bookmarks.txt (`Browser.Bookmarks`, format 2): the Bookmarks Toolbar,
+  Bookmarks Menu and Unsorted Bookmarks folders and their folders,
+  bookmarks (name, URL, tags, keyword, description, when made) and
+  separators; the old format is read into the toolbar folder;
+- session.txt (`Browser.SessionStore`): the windows (place, tabs with
+  their entries and zoom, the chosen tab), the recently closed tabs (10)
+  and windows (3), and whether the browser was running: saved two
+  seconds after a change and at the end; at the next start a session
+  left running (a crash) or the startup setting "Show my windows and
+  tabs from last time" brings it back (`TWebView.RestoreHistory`);
+- downloads.txt, searchengines.txt, passwords.txt
+  (`Browser.Passwords`; not encrypted), storage/ (local storage).
+
+**Private browsing** is the whole browser's, as it was then: Tools >
+Start Private Browsing puts the session aside, closes the windows,
+switches the network to in-memory cookies, cache, HSTS and storage
+(`SetPrivateBrowsing`) and keeps no history; Stop drops all that and
+brings the session back. "Automatically start in a private browsing
+session" starts that way.
+
+**Windows and dialogs:**
+
+- Options (`Browser.Options`, libcontrols' `TPreferencesWindow`: a row
+  of pane icons, OK, Cancel, Help) with the panes `Browser.Options.Main`
+  (startup, home pages with Use Current Pages and Use Bookmark...,
+  downloads folder, Downloads window, the search engine),
+  `.Tabs`, `.Content` (pop-ups, images, JavaScript and its Advanced
+  switches, default font, languages), `.Applications` (what downloads
+  of each type do: save or ask), `.Privacy` (remember, never or custom
+  history; cookies with exceptions and Show Cookies...; clearing on
+  close and what; location bar suggestions), `.Security` (passwords,
+  Saved Passwords...), `.Advanced` (General, Network with Connection
+  Settings, HTTP/3 and the cache with Clear Now, Update, Encryption with
+  View Certificates: libtls's trust store); the sub-dialogs are in
+  `Browser.Options.Dialogs`. Every option is a setting of group Browser
+  (`Browser.Settings` lists them); OK applies them to every window at
+  once (scripts, images, pop-ups, HTTP/3, cookie policy, cache size).
+- the Library (`Browser.LibraryWindow`): Back and Forward, Organize,
+  Views, Import and Backup (export to the HTML bookmarks format, backup
+  and restore), search; the tree (History and its days, Tags, All
+  Bookmarks with its folders), the list with columns (Name, Tags,
+  Location, Most Recent Visit, Visit Count; sorted by a header click),
+  the details (name, location, tags, keyword, description) kept as
+  typed; bookmarks dragged onto a folder move there.
+- Downloads (`Browser.DownloadsWindow`, `Browser.Downloads`): newest
+  first with progress, speed and time left; Pause and Resume (a Range
+  request; a server sending everything starts again), Cancel, Retry,
+  Open, Show in Folder (the file manager, `Browser.Launch`), Remove,
+  Clear List, search; the list survives restarts.
+- Page Info (`Browser.PageInfo`): General (address, type, render mode,
+  encoding, referrer, modified, meta tags, forms and links), Media
+  (images with a preview and Save As...), Permissions (cookies for the
+  site), Security (identity, visits, cookies, passwords, the connection,
+  View Certificate); the page's process answers `RequestPageInfo`.
+- Page Source (`Browser.PageSource`, `Browser.SourceColoring`): the
+  source fetched again (from the cache when it is fresh) and coloured,
+  in a web view of the browser's own; wrap long lines, save.
+- Error Console (`Browser.ErrorConsole`, `Browser.ConsoleLog`): every
+  tab's console messages and script errors, All/Errors/Warnings/Messages,
+  a filter box, Clear.
+- Clear Recent History (`Browser.ClearHistory`), the bookmark dialogs
+  (`Browser.BookmarkDialogs`: Properties, New Bookmark, New Folder,
+  Bookmark All Tabs), About Browser (`Browser.AboutDialog`), Open
+  Location when the location bar is hidden (`Browser.InputDialog`).
+- The browser's own pages (`Browser.AboutPages`): about:home,
+  about:history, about:bookmarks, about:downloads, about:help (Help
+  Contents), about:support (Troubleshooting Information: version, user
+  agent, content processes, sandbox, protocol version, network state),
+  about:addons, about:privatebrowsing, about:license.
+
+**Context menus** (`Browser.MainWindow.Views.inc`): links (Open Link in
+New Window and Tab, Bookmark This Link, Save Link As..., Copy Link
+Location), images (View Image, Copy Image Location, Save Image As...,
+Set As Desktop Background: saved to ~/Pictures and written to
+Desktop/Wallpaper, which the desktop watches), a selection (Copy, Select
+All, Search for "...", View Selection Source), form fields (spelling,
+Undo, Cut, Copy, Paste, Delete, Select All), the page (Back, Forward,
+Reload or Stop, Bookmark This Page, Save Page As..., Send Link..., View
+Background Image, Select All, View Page Source, View Page Info).
+Printing, Page Setup and Print Preview say printing is not available;
+Subscribe, Import, Report Web Forgery and Check for Updates are stubs.
+
+**libcontrols gained** for it: `TToolButton` drop-down menus
+(`DropDownOnHold`, `DropDownArrow`, `DropDownWhole`), its own image
+list, icon size and caption below; `Controls.CustomToolBars` (the
+toolbox, customizable toolbars, flexible items) and
+`Controls.ToolbarPalette`; `Controls.PreferencesWindow`;
+`Controls.SuggestionPopup` (a pop-up that leaves the keys to its edit
+box: `TPopupWindow.TakesKeys`); `TEditBox.Borderless` and
+`Placeholder`; `TMenuBar.AutoReveal`; `TMenuItem.DeleteFrom`;
+`TTreeView.OnActivate`; more key codes in `Controls.Keys`.
+
+**What it prints**, a line each, for tests (`browser.pas` lists the
+older ones): tabs, tab, windows, go, location, title, state, loaded,
+link, found / not-found, find-wrapped, highlight, zoom, bookmarked,
+download, suggest TEXT N, back-menu N, options open / saved, library
+..., customize / customize done ITEMS, page-info, page-source,
+error-console N, search-engine, private on/off, session restored,
+layout menu Y toolbars Y tabs Y content Y status Y, exit.
+
+**Tests**: `make browser-test` (`tools/BrowserTest`: addresses and
+keywords, the history's queries, bookmark folders, tags and both file
+formats, the suggestions' matching and ranking, the session file and
+closed tabs and windows, the search engines, the console log, source
+colouring, passwords); `scripts/test-input.py`'s browser part shows a
+local page (title, script, background), then checks the chrome: the
+menu bar, toolbars, tabs and page in that order, Tools > Options...
+changing a setting from the keyboard, the Library, the location bar's
+suggestions and the find bar with Highlight all; then the process model
+checks.
 
 ## Browser process model
 
@@ -12844,21 +13108,34 @@ format (`WebIpc.Wire`: little-endian fixed-width integers, doubles,
 length-prefixed UTF-8 strings and byte arrays; a reader never reads
 past its data, and a payload that does not parse raises `EIpcMalformed`,
 which breaks the channel: a renderer sending garbage is not trusted).
-Kinds (`WebIpc.Messages`, protocol version 1): 1-99 either way (hello,
+Kinds (`WebIpc.Messages`, protocol version 2): 1-99 either way (hello,
 ping, pong, reply, shutdown), 100-199 browser to renderer (create and
 destroy a view, navigate, load HTML, back, forward, reload, stop,
 resize with the scale and DPI, visible, focus, zoom, input, find,
 select all, copy, clear selection, scroll, frame acknowledgements, menu
-answers, scripting, view commands), 200-299 renderer to browser
+answers, scripting, view commands; version 2: 123 go to a history
+offset, 124 restore a history, 125 the find highlight, 126 Page Info
+(a request), 127 display options), 200-299 renderer to browser
 (surface, frame, title, location, loading state, favicon, status text,
 history state, zoom, cursor, link, download, navigation failure,
 context menu, pop-up menu, console, script dialog, beforeunload,
 clipboard write and read, selection, open URL, script interrupted,
-input handled, unhandled key, page text), 300-399 the network service
+input handled, unhandled key, page text; version 2: 226 a pop-up
+blocked), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
 storage load, set, remove, clear; about pages). Records with encoders
 and decoders for the larger payloads are in `WebIpc.ViewMessages` and
-`WebIpc.NetworkMessages`. A channel message holds at most 16 KiB, so a
+`WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
+state is a `TIpcHistoryState` (can go back and forward, the entries'
+URLs and titles, the current index; also what `IpcRestoreHistory`
+carries; at most 1000 entries, the index checked against them), find
+asks with a `TIpcFindRequest` and is answered with a `TIpcFindResult`
+(found, wrapped, the match count, -1 unknown), and the context menu's
+`TIpcContextInfo` has the background image, editable, frame URL and
+can-copy fields; new are `TIpcDisplayOptions` (images, text-only zoom,
+author styles, pop-ups blocked, the encoding label, at most 64 bytes)
+and `TIpcPageInfo` (seven texts, the meta and media lists, the form and
+link counts). A view sends its display options right after it is made. A channel message holds at most 16 KiB, so a
 protocol message goes in pieces with a 16-byte header each
 (`WebIpc.Fragments`: kind, first/last flags, view, request, the whole
 length; handles with the first piece; at most 256 MiB). An endpoint
@@ -12990,7 +13267,17 @@ control, as before; it is also what a view falls back to when
 (nil otherwise); the browser sets its about pages with the new
 `AboutPageProvider`. New: `OnFindResult`, `OnScriptDialog`,
 `OnProcessEvent`, `ContentProcessId`, `TerminateContentProcess`,
-`CrashContentProcess`, `HangContentProcess`. The engine gained hooks for
+`CrashContentProcess`, `HangContentProcess`; for the Firefox 3.6 style
+chrome (see "Web view (libwebview)"): `HistoryEntries`, `HistoryIndex`,
+`GoToHistoryOffset`, `RestoreHistory`, `OnFindDetails`,
+`SetFindHighlight`, `RequestPageInfo`, `OnPageInfo`, `ImagesEnabled`,
+`TextOnlyZoom`, `AuthorStylesEnabled`, `EncodingOverride`,
+`SupportedEncodings`, `PopupsBlocked`, `OnPopupBlocked`, the new
+`TWebContextInfo` fields, and the network's private browsing, offline,
+cache, cookie, storage, HSTS and TLS functions in `WebView.Network` (the
+network service takes the local storage lock of `WebView.Network`,
+`EnterLocalStorage`, so the GUI thread can clear or switch it). The
+engine gained hooks for
 a host that is not its window: `OnPopupMenu`, `OnReadClipboard`,
 `OnWriteClipboard`, `OnSelectionChanged`, `OnNavigationRequest`,
 `NetworkContext`, `LocalStorage`, `NavigateWith`, `GetScrollState`.
@@ -13000,7 +13287,16 @@ libweb gained the transport (`Web.Fetch.Transports`:
 local files read through it (`TFetcher.StartRemoteLocalFile`) and a
 storage backend (`TWebStorageBackend`, `TWebStorageArea.LoadPair`).
 
-**Tests.** `make web-ipc-test` (the protocol, on the host);
+**Tests.** `make web-ipc-test` (the protocol, on the host; version 2's
+payloads both ways and refused when cut short at every length or when
+their counts or indexes lie, `WebIpcTest.PagePayloads`); `make
+web-load-test`'s browser features (`WebLoadTest.BrowserFeatures`: Page
+Info of a served page, find's counts and wrapping, text-only zoom, No
+Style, the encoding override, session restore and two back at once,
+window.open reaching the host); `make http-test` (cookie policies and
+their exceptions, removing a cookie, the cache's limit, offline);
+`make tls-test` (certificate summaries); `make web-test` (the
+selectable encodings);
 `restricttest` (a coretest line: every restriction, inheritance, never
 lifted); `scripts/test-input.py`'s browser part: two local pages share
 one renderer and a page served from the test (another site) gets its

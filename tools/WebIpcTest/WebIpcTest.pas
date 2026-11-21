@@ -21,7 +21,9 @@
   the wire format (every type both ways, and that a message cut short
   or claiming too much is refused), messages in pieces (lengths around
   the piece size, the header kept, handles on the first piece, pieces
-  that do not fit together refused) and every typed payload both ways.
+  that do not fit together refused) and every typed payload both ways
+  (version 2's history, find, display options and Page Info refused
+  when cut short or lying).
 
     WebIpcTest
 }
@@ -35,11 +37,13 @@ uses
   TestChecks,
   WebIpcTest.Wire,
   WebIpcTest.Fragments,
-  WebIpcTest.Payloads;
+  WebIpcTest.Payloads,
+  WebIpcTest.PagePayloads;
 
 begin
   RunWireChecks;
   RunFragmentChecks;
   RunPayloadChecks;
+  RunPagePayloadChecks;
   FinishChecks('WEB IPC TEST');
 end.

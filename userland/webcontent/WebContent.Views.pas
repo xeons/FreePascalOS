@@ -99,6 +99,10 @@ type
     procedure ChooseMenuItem(MenuId: LongWord; Tag: LongInt);
     procedure NavigateTo(const Payload: TBytes);
     procedure Find(Message: TIpcMessage);
+    procedure AnswerPageInfo(Message: TIpcMessage);
+    procedure RestoreHistory(const Payload: TBytes);
+    procedure SetFindHighlight(const Payload: TBytes);
+    procedure ApplyDisplayOptions(const Payload: TBytes);
     procedure SendHistory;
     procedure CheckCursor;
     { What the engine tells. }
@@ -126,6 +130,7 @@ type
     function EngineNavigationRequest(Sender: TWebEngineView; constref Url: TUrlRecord;
       constref Options: TNavigateOptions; AtResponse: Boolean): Boolean;
     function ProvideAboutPage(const Path: string; out Html: string): Boolean;
+    procedure EnginePopupBlocked(Sender: TWebEngineView; const Url: string);
   public
     constructor Create(Context: TContentContext; ViewId: LongWord; constref Setup: TIpcViewSetup);
     destructor Destroy; override;
@@ -193,6 +198,7 @@ begin
   FEngine.OnWriteClipboard := @EngineWriteClipboard;
   FEngine.OnSelectionChanged := @EngineSelectionChanged;
   FEngine.OnNavigationRequest := @EngineNavigationRequest;
+  FEngine.OnPopupBlocked := @EnginePopupBlocked;
   FEngine.Navigable.Fetcher.AboutPageProvider := @ProvideAboutPage;
   if Setup.Zoom <> 1 then
     FEngine.Zoom := Setup.Zoom;
@@ -315,6 +321,11 @@ begin
       end;
     IpcSetScripting: FEngine.ScriptingEnabled := DecodeFlag(Message.Payload);
     IpcViewCommand: HandleCommand(DecodeNumber(Message.Payload));
+    IpcGoToHistoryOffset: FEngine.GoToHistoryOffset(DecodeNumber(Message.Payload));
+    IpcRestoreHistory: RestoreHistory(Message.Payload);
+    IpcSetFindHighlight: SetFindHighlight(Message.Payload);
+    IpcRequestPageInfo: AnswerPageInfo(Message);
+    IpcSetDisplayOptions: ApplyDisplayOptions(Message.Payload);
   end;
 end;
 
@@ -341,19 +352,87 @@ end;
 
 procedure TContentView.Find(Message: TIpcMessage);
 var
-  Reader: TIpcReader;
-  Needle: string;
-  Forward, MatchCase: Boolean;
+  Request: TIpcFindRequest;
+  Answer: TIpcFindResult;
+  MatchCount: Integer;
 begin
-  Reader := TIpcReader.Create(Message.Payload);
-  try
-    Needle := Reader.ReadString;
-    Forward := Reader.ReadBoolean;
-    MatchCase := Reader.ReadBoolean;
-  finally
-    Reader.Free;
+  Request := DecodeFindRequest(Message.Payload);
+  Answer.Found := FEngine.FindTextDetailed(Request.Needle, Request.Forward, Request.MatchCase, Answer.Wrapped,
+    MatchCount);
+  Answer.MatchCount := MatchCount;
+  FContext.Connection.Reply(Message, EncodeFindResult(Answer));
+end;
+
+procedure TContentView.SetFindHighlight(const Payload: TBytes);
+var
+  Request: TIpcFindRequest;
+begin
+  Request := DecodeFindRequest(Payload);
+  FEngine.SetFindHighlight(Request.Needle, Request.MatchCase);
+end;
+
+procedure TContentView.RestoreHistory(const Payload: TBytes);
+var
+  State: TIpcHistoryState;
+  Entries: TWebHistoryList;
+  Index: Integer;
+begin
+  State := DecodeHistoryState(Payload);
+  Entries := nil;
+  SetLength(Entries, Length(State.Entries));
+  for Index := 0 to High(State.Entries) do
+  begin
+    Entries[Index].Url := State.Entries[Index].Url;
+    Entries[Index].Title := State.Entries[Index].Title;
   end;
-  FContext.Connection.Reply(Message, EncodeFlag(FEngine.FindText(Needle, Forward, MatchCase)));
+  FEngine.RestoreHistory(Entries, State.Index);
+end;
+
+procedure TContentView.ApplyDisplayOptions(const Payload: TBytes);
+var
+  Options: TIpcDisplayOptions;
+begin
+  Options := DecodeDisplayOptions(Payload);
+  FEngine.ImagesEnabled := Options.ImagesEnabled;
+  FEngine.TextOnlyZoom := Options.TextOnlyZoom;
+  FEngine.AuthorStylesEnabled := Options.AuthorStylesEnabled;
+  FEngine.PopupsBlocked := Options.PopupsBlocked;
+  FEngine.EncodingOverride := Options.EncodingOverride;
+end;
+
+procedure TContentView.AnswerPageInfo(Message: TIpcMessage);
+var
+  Info: TWebPageInfo;
+  Wire: TIpcPageInfo;
+  Index: Integer;
+begin
+  Info := FEngine.PageInfo;
+  Wire := Default(TIpcPageInfo);
+  Wire.Url := Info.Url;
+  Wire.Title := Info.Title;
+  Wire.Referrer := Info.Referrer;
+  Wire.ContentType := Info.ContentType;
+  Wire.Encoding := Info.Encoding;
+  Wire.RenderMode := Info.RenderMode;
+  Wire.LastModified := Info.LastModified;
+  SetLength(Wire.Meta, Length(Info.Meta));
+  for Index := 0 to High(Info.Meta) do
+  begin
+    Wire.Meta[Index].Name := Info.Meta[Index].Name;
+    Wire.Meta[Index].Content := Info.Meta[Index].Content;
+  end;
+  SetLength(Wire.Media, Length(Info.Media));
+  for Index := 0 to High(Info.Media) do
+  begin
+    Wire.Media[Index].Url := Info.Media[Index].Url;
+    Wire.Media[Index].Kind := Info.Media[Index].Kind;
+    Wire.Media[Index].AltText := Info.Media[Index].AltText;
+    Wire.Media[Index].Width := Info.Media[Index].Width;
+    Wire.Media[Index].Height := Info.Media[Index].Height;
+  end;
+  Wire.FormCount := Info.FormCount;
+  Wire.LinkCount := Info.LinkCount;
+  FContext.Connection.Reply(Message, EncodePageInfo(Wire));
 end;
 
 procedure TContentView.HandleCommand(Command: LongInt);
@@ -543,14 +622,40 @@ end;
 
 { ---- what the engine tells ---- }
 
+{ The history with its entries, so the browser's drop-downs and its
+  session store need not ask (sent again when a title changes). }
 procedure TContentView.SendHistory;
+var
+  State: TIpcHistoryState;
+  Entries: TWebHistoryList;
+  Index: Integer;
 begin
-  Send(IpcHistoryState, EncodeFlags(FEngine.CanGoBack, FEngine.CanGoForward));
+  State := Default(TIpcHistoryState);
+  State.CanGoBack := FEngine.CanGoBack;
+  State.CanGoForward := FEngine.CanGoForward;
+  Entries := FEngine.HistoryEntries;
+  SetLength(State.Entries, Length(Entries));
+  for Index := 0 to High(Entries) do
+  begin
+    State.Entries[Index].Url := Entries[Index].Url;
+    State.Entries[Index].Title := Entries[Index].Title;
+  end;
+  if Length(Entries) = 0 then
+    State.Index := -1
+  else
+    State.Index := FEngine.HistoryIndex;
+  Send(IpcHistoryState, EncodeHistoryState(State));
 end;
 
 procedure TContentView.EngineTitleChanged(Sender: TWebEngineView; const Value: string);
 begin
   Send(IpcTitleChanged, EncodeText(Value));
+  SendHistory;
+end;
+
+procedure TContentView.EnginePopupBlocked(Sender: TWebEngineView; const Url: string);
+begin
+  Send(IpcPopupBlocked, EncodeText(Url));
 end;
 
 procedure TContentView.EngineLocationChanged(Sender: TWebEngineView; const Value: string);
@@ -647,6 +752,10 @@ begin
   Wire.ImageUrl := Info.ImageUrl;
   Wire.SelectedText := Info.SelectedText;
   Wire.InTextField := Info.InTextField;
+  Wire.BackgroundImageUrl := Info.BackgroundImageUrl;
+  Wire.IsEditable := Info.IsEditable;
+  Wire.FrameUrl := Info.FrameUrl;
+  Wire.CanCopy := Info.CanCopy;
   Send(IpcContextMenu, EncodeContextInfo(Wire));
   { The browser shows its menu (or the view's own). }
   Handled := True;

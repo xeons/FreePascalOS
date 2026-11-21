@@ -40,8 +40,13 @@ uses
   Http.AltServices,
   Http.Cache,
   Http.Connections,
+  Http.Client,
+  Http.Connectors,
+  Http.CookiePolicies,
   Http.Cookies,
   Http.HeaderFields,
+  Http.Messages,
+  Http.Transports,
   Http.Observers,
   Http.PublicSuffixes,
   Http.Results,
@@ -280,8 +285,162 @@ begin
   end;
 end;
 
+
+procedure TestCookieExceptions;
+var
+  Policy: TCookieUsePolicy;
+begin
+  Check(HostMatchesException('www.example.com', 'example.com') and HostMatchesException('EXAMPLE.com', '.example.COM') and
+    not HostMatchesException('badexample.com', 'example.com') and not HostMatchesException('example.com', 'www.example.com'),
+    'cookie policies: a host or a parent domain');
+  Check(HostMatchesException('10.0.0.1', '10.0.0.1') and not HostMatchesException('1.10.0.0.1', '10.0.0.1'),
+    'cookie policies: an address only exactly');
+  Policy := DefaultCookieUsePolicy;
+  Check(CookieUseAllowed(Policy, 'a.example', True) and CookieUseAllowed(Policy, 'a.example', False),
+    'cookie policies: everything accepted by default');
+  Policy.Acceptance := CookieRefuseThirdParty;
+  Check(not CookieUseAllowed(Policy, 'a.example', True) and CookieUseAllowed(Policy, 'a.example', False),
+    'cookie policies: third parties refused');
+  Policy.Acceptance := CookieRefuseAll;
+  Policy.AllowedHosts := ['example.com'];
+  Check(CookieUseAllowed(Policy, 'mail.example.com', True) and not CookieUseAllowed(Policy, 'other.org', False),
+    'cookie policies: an allowed parent domain over refusing all');
+  Policy.Acceptance := CookieAcceptAll;
+  Policy.BlockedHosts := ['ads.example.com'];
+  Check(not CookieUseAllowed(Policy, 'x.ads.example.com', False) and CookieUseAllowed(Policy, 'www.example.com', False),
+    'cookie policies: the longer blocked exception wins');
+  Policy.AllowedHosts := ['x.ads.example.com'];
+  Check(CookieUseAllowed(Policy, 'x.ads.example.com', False), 'cookie policies: the longer allowed exception wins');
+  Policy.BlockedHosts := ['x.ads.example.com'];
+  Check(not CookieUseAllowed(Policy, 'x.ads.example.com', False), 'cookie policies: a tie blocks');
+end;
+
+procedure TestJarPolicy;
+var
+  Jar: TCookieJar;
+  Secure: TCookieRequestContext;
+  Policy: TCookieUsePolicy;
+  Cookies: TCookieArray;
+begin
+  Jar := TCookieJar.Create;
+  Secure := DirectRequestContext(True);
+  try
+    Check(Jar.SetCookieFromResponse(UrlOf('https://example.com/'), 'kept=1', Secure, Now) and
+      Jar.SetCookieFromResponse(UrlOf('https://example.com/a/'), 'pathy=1; Path=/a', Secure, Now),
+      'cookie policies: stored while accepted');
+    Policy := DefaultCookieUsePolicy;
+    Policy.BlockedHosts := ['example.com'];
+    Jar.SetPolicy(Policy);
+    Check((Length(Jar.Policy.BlockedHosts) = 1) and (Jar.Policy.BlockedHosts[0] = 'example.com'),
+      'cookie policies: the jar keeps its policy');
+    Check(not Jar.SetCookieFromResponse(UrlOf('https://example.com/'), 'new=1', Secure, Now) and
+      not Jar.SetDocumentCookie(UrlOf('https://www.example.com/'), 'doc=1', Secure, Now) and
+      not Jar.ReceiveSetCookie('old=1', 'example.com', '/', Now),
+      'cookie policies: a blocked host stores nothing');
+    Check((Jar.CookieFieldFor(UrlOf('https://example.com/'), Secure, Now) = '') and
+      (Jar.DocumentCookie(UrlOf('https://example.com/'), Secure, Now) = '') and
+      (Jar.CookieHeaderFor('example.com', '/', True, Now) = ''), 'cookie policies: a blocked host gets nothing');
+    Policy := DefaultCookieUsePolicy;
+    Policy.Acceptance := CookieRefuseThirdParty;
+    Jar.SetPolicy(Policy);
+    Check((Jar.CookieFieldFor(UrlOf('https://example.com/'), CrossSite(False), Now) = '') and
+      not Jar.SetCookieFromResponse(UrlOf('https://example.com/'), 'third=1; SameSite=None; Secure', CrossSite(False),
+      Now), 'cookie policies: a third party neither gets nor stores');
+    Check(Pos('kept=1', Jar.CookieFieldFor(UrlOf('https://example.com/'), Secure, Now)) > 0,
+      'cookie policies: the first party gets its cookies');
+    Check(not Jar.RemoveCookie('example.com', 'kept', '/a') and Jar.RemoveCookie('example.com', 'kept', '/'),
+      'cookies: removed by domain, name and path');
+    Cookies := Jar.Snapshot;
+    Check((Length(Cookies) = 1) and (Cookies[0].Name = 'pathy') and (Cookies[0].Path = '/a'),
+      'cookies: the snapshot after a removal');
+  finally
+    Jar.Free;
+  end;
+end;
+
+procedure TestCacheLimit;
+var
+  Cache: THttpCache;
+  Request: THttpHeaders;
+  Entry: THttpCacheEntry;
+  Body: TBytes;
+  Index: Integer;
+begin
+  Cache := THttpCache.Create(1024 * 1024);
+  Request := THttpHeaders.Create;
+  try
+    Body := nil;
+    SetLength(Body, 10000);
+    for Index := 1 to 5 do
+      Cache.Store(UrlOf('https://example.com/' + IntToStr(Index)), Request, 200, 'OK',
+        Fields(['cache-control', 'max-age=600']), Body, Now, Now);
+    { The first is used again: the second is the least recently used. }
+    if Cache.Lookup(UrlOf('https://example.com/1'), Request, Now, Entry) = CacheFresh then
+      Entry.Free;
+    Check(Cache.MemoryUsed > 40000, 'cache: entries stored');
+    Cache.SetMemoryLimit(Cache.MemoryUsed - 1);
+    Check(Cache.MemoryUsed <= Cache.MemoryLimit, 'cache: a lower limit is kept at once');
+    Check(Cache.Lookup(UrlOf('https://example.com/2'), Request, Now, Entry) = CacheMiss,
+      'cache: a lower limit drops the least recently used');
+    Entry.Free;
+    Check(Cache.Lookup(UrlOf('https://example.com/1'), Request, Now, Entry) <> CacheMiss,
+      'cache: the recently used one stays');
+    Entry.Free;
+    Cache.SetMemoryLimit(0);
+    Check(Cache.MemoryUsed = 0, 'cache: a limit of nothing empties it');
+  finally
+    Request.Free;
+    Cache.Free;
+  end;
+end;
+
+type
+  { Fails the test if anything connects. }
+  TForbiddenConnector = class(THttpConnector)
+  public
+    Called: Boolean;
+    function Connect(constref Url: TUrlRecord; constref Settings: THttpClientSettings; Observer: THttpClientObserver;
+      out Transport: THttpTransport): THttpResult; override;
+  end;
+
+function TForbiddenConnector.Connect(constref Url: TUrlRecord; constref Settings: THttpClientSettings;
+  Observer: THttpClientObserver; out Transport: THttpTransport): THttpResult;
+begin
+  Called := True;
+  Transport := nil;
+  Result := HttpFailure(HttpConnectFailed, 'connected');
+end;
+
+procedure TestOffline;
+var
+  Connector: TForbiddenConnector;
+  Client: THttpClient;
+  Request: THttpRequest;
+  Response: THttpResponse;
+  Outcome: THttpResult;
+begin
+  Connector := TForbiddenConnector.Create;
+  Client := THttpClient.Create(DefaultClientSettings, Connector, False);
+  Request := THttpRequest.Create('GET', UrlOf('https://example.com/'));
+  try
+    Client.Offline := True;
+    Outcome := Client.Execute(Request, Response);
+    Check((Outcome.Code = HttpConnectFailed) and (Outcome.Text = 'offline') and not Connector.Called and
+      (Response = nil), 'client: offline fails at once');
+    Response.Free;
+  finally
+    Request.Free;
+    Client.Free;
+    Connector.Free;
+  end;
+end;
+
 procedure TestCookiesAndCache(const WorkDirectory: string);
 begin
+  TestCookieExceptions;
+  TestJarPolicy;
+  TestCacheLimit;
+  TestOffline;
   TestPublicSuffixes;
   TestCookieRules;
   TestFreshness;

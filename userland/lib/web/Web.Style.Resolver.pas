@@ -76,6 +76,9 @@ type
     FOnChildrenChanged: TNodeChangedEvent;
     FOnElementAttributeChanged: TNodeChangedEvent;
     FStylesComputed: Int64;
+    FAuthorStylesDisabled: Boolean;
+    procedure SetAuthorStylesEnabled(Value: Boolean);
+    function GetAuthorStylesEnabled: Boolean;
     procedure ResourcesChanged(Change: TResourceChange);
     procedure DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
     procedure UpdateSheets;
@@ -122,6 +125,10 @@ type
     { The sheets changed (one loaded, was added or removed) and are
       collected again at the next update. }
     property SheetsDirty: Boolean read FSheetsDirty;
+    { The document's own sheets and style attributes count (on unless
+      turned off: then only the user agent's sheet and presentational
+      hints style the page). }
+    property AuthorStylesEnabled: Boolean read GetAuthorStylesEnabled write SetAuthorStylesEnabled;
     property OnStyleChanged: TStyleChangedEvent read FOnStyleChanged write FOnStyleChanged;
     property OnTextChanged: TNodeChangedEvent read FOnTextChanged write FOnTextChanged;
     property OnNodeRemoved: TNodeChangedEvent read FOnNodeRemoved write FOnNodeRemoved;
@@ -264,7 +271,10 @@ var
   Same: Boolean;
 begin
   FSheetsDirty := False;
-  Sheets := FSheetList.Collect;
+  if FAuthorStylesDisabled then
+    Sheets := nil
+  else
+    Sheets := FSheetList.Collect;
   Same := (Length(Sheets) = Length(FActiveSheets)) and not FSheetContentsChanged;
   FSheetContentsChanged := False;
   if Same then
@@ -283,6 +293,42 @@ begin
   FEngine.Prepare;
   DocumentSheetsOf(FDocument).FreeRetired;
   MarkSubtreeStyleDirty(FDocument);
+end;
+
+function TDocumentStyler.GetAuthorStylesEnabled: Boolean;
+begin
+  Result := not FAuthorStylesDisabled;
+end;
+
+procedure MarkStyleAttributesDirty(Node: TNode);
+var
+  Child: TNode;
+  Data: PNodeData;
+begin
+  if Node.IsElement then
+  begin
+    Data := ExistingNodeData(Node);
+    if Data <> nil then
+      Include(Data^.Flags, ndStyleAttributeDirty);
+  end;
+  Child := Node.FirstChild;
+  while Child <> nil do
+  begin
+    MarkStyleAttributesDirty(Child);
+    Child := Child.NextSibling;
+  end;
+end;
+
+procedure TDocumentStyler.SetAuthorStylesEnabled(Value: Boolean);
+begin
+  if Value = not FAuthorStylesDisabled then
+    Exit;
+  FAuthorStylesDisabled := not Value;
+  { The style attributes are parsed again (or dropped) and every sheet
+    taken again. }
+  MarkStyleAttributesDirty(FDocument);
+  FSheetContentsChanged := True;
+  InvalidateAll;
 end;
 
 procedure TDocumentStyler.InvalidateAll;
@@ -363,7 +409,7 @@ begin
   begin
     Data^.StyleAttribute.Free;
     Data^.StyleAttribute := nil;
-    if Element.HasAttributeAtom(AtomStyleAttribute) then
+    if Element.HasAttributeAtom(AtomStyleAttribute) and not FAuthorStylesDisabled then
     begin
       Source := Element.AttributeValueOf(AtomStyleAttribute);
       if Source <> '' then

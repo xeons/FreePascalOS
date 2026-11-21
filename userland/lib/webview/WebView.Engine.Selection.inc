@@ -16,7 +16,8 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Engine: the text index, selection, copying and finding. }
+{ WebView.Engine: the text index, selection and copying (finding is in
+  WebView.Engine.Find.inc). }
 
 { The index follows the display list of the layout as it is now
   (TPageSelection rebuilds it when the layout changed and takes the
@@ -157,39 +158,4 @@ begin
     Exit;
   EnsureTextIndex;
   Result := FSelection.Index.AllText;
-end;
-
-function TWebEngineView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
-var
-  From, MatchStart, MatchEnd, Anchor, Focus: TTextPosition;
-  Rectangles: TTextRectangleArray;
-begin
-  Result := False;
-  if (FLayout = nil) or (Needle = '') then
-    Exit;
-  EnsureTextIndex;
-  From := TextPosition(-1, 0);
-  if FSelection.HasSelection then
-  begin
-    Anchor := FSelection.Anchor;
-    Focus := FSelection.Focus;
-    { Again: after the match shown (or before it). }
-    if Forward = (TPageTextIndex.Compare(Anchor, Focus) < 0) then
-      From := Focus
-    else
-      From := Anchor;
-    if (Needle <> FFindText) then
-      if TPageTextIndex.Compare(Anchor, Focus) < 0 then
-        From := Anchor
-      else
-        From := Focus;
-  end;
-  FFindText := Needle;
-  if not FSelection.Index.Find(Needle, From, Forward, MatchCase, MatchStart, MatchEnd) then
-    Exit;
-  SetSelection(MatchStart, MatchEnd);
-  Rectangles := FSelection.Index.RangeRectangles(MatchStart, MatchEnd, TextViewport);
-  if (Length(Rectangles) > 0) and not Rectangles[0].Fixed then
-    ScrollRectangleIntoView(Rectangles[0].X, Rectangles[0].Y, Rectangles[0].Width, Rectangles[0].Height);
-  Result := True;
 end;

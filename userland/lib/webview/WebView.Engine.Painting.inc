@@ -128,39 +128,13 @@ begin
 end;
 
 procedure TWebEngineView.PaintSelection(var Canvas: TCanvas);
-var
-  Rectangles: TTextRectangleArray;
-  Index: Integer;
-  Scale: Double;
-  ScrollX, ScrollY: Single;
-  OffsetX, OffsetY: Double;
-  Area: TRectangle;
-  View: TTextViewport;
 begin
   if FLayout = nil then
     Exit;
   { The index as the layout is now (the backing was painted from it). }
   FSelection.Refresh;
-  View := TextViewport;
-  Rectangles := FSelection.Rectangles(View);
-  Scale := DeviceScale;
-  ScrollX := View.ScrollX;
-  ScrollY := View.ScrollY;
-  for Index := 0 to High(Rectangles) do
-  begin
-    OffsetX := ScrollX;
-    OffsetY := ScrollY;
-    if Rectangles[Index].Fixed then
-    begin
-      OffsetX := 0;
-      OffsetY := 0;
-    end;
-    Area.Left := Floor((Rectangles[Index].X - OffsetX) * Scale);
-    Area.Top := Floor((Rectangles[Index].Y - OffsetY) * Scale);
-    Area.Right := Ceil((Rectangles[Index].X + Rectangles[Index].Width - OffsetX) * Scale);
-    Area.Bottom := Ceil((Rectangles[Index].Y + Rectangles[Index].Height - OffsetY) * Scale);
-    FillRectangle(Canvas, Area, WithAlpha(Theme.Selection, SelectionAlpha));
-  end;
+  PaintFindHighlights(Canvas);
+  PaintTextRectangles(Canvas, FSelection.Rectangles(TextViewport), WithAlpha(Theme.Selection, SelectionAlpha));
 end;
 
 { A text field with the focus shows its caret where its selection's

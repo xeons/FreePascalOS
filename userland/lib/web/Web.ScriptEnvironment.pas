@@ -190,6 +190,10 @@ type
     procedure Alert(Context: TObject; const Message: string); virtual;
     function Confirm(Context: TObject; const Message: string): Boolean; virtual;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; virtual;
+    { window.open of Url (absolute) for Target (a name, _blank, _top,
+      _parent) with Features: True when the host opened or navigated
+      something (a host may refuse a pop-up nobody asked for). }
+    function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; virtual;
 
     { The viewport, in CSS pixels, and the device pixel ratio. }
     function ViewportWidth: Integer; virtual;
@@ -315,6 +319,11 @@ end;
 
 procedure TScriptEnvironment.Alert(Context: TObject; const Message: string);
 begin
+end;
+
+function TScriptEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
+begin
+  Result := False;
 end;
 
 function TScriptEnvironment.Confirm(Context: TObject; const Message: string): Boolean;

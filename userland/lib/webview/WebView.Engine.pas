@@ -233,6 +233,23 @@ type
       triple click): the word, then the line. }
     FClickCount: Integer;
     FFindText: string;
+    { Every match of a needle painted highlighted (WebView.Engine.Find.inc),
+      found again whenever the text index is built again. }
+    FHighlightNeedle: string;
+    FHighlightMatchCase: Boolean;
+    FHighlights: TTextMatchArray;
+    FHighlightGeneration: LongWord;
+    FHighlightsValid: Boolean;
+    { Display options (WebView.Engine.Options.inc). }
+    FImagesEnabled: Boolean;
+    FTextOnlyZoom: Boolean;
+    FAuthorStylesEnabled: Boolean;
+    FPopupsBlocked: Boolean;
+    FEncodingOverride: string;
+    { When the user last clicked or typed (GetTickCount64): window.open
+      within a second of it is not a pop-up nobody asked for. }
+    FLastUserGesture: QWord;
+    FOnPopupBlocked: TWebEngineViewTextEvent;
     { Typing into the focused text field. }
     FFieldEditor: TTextFieldEditor;
     { A select's pop-up. }
@@ -303,6 +320,20 @@ type
     procedure InvalidateViewport;
     function PageHasFixedBoxes: Boolean;
     procedure PaintSelection(var Canvas: TCanvas);
+    { Find (WebView.Engine.Find.inc). }
+    procedure EnsureHighlights;
+    procedure PaintFindHighlights(var Canvas: TCanvas);
+    procedure PaintTextRectangles(var Canvas: TCanvas; constref Rectangles: TTextRectangleArray; Color: LongWord);
+    { Display options and pop-ups (WebView.Engine.Options.inc). }
+    procedure ApplyDocumentOptions;
+    procedure ApplyLoadingSettings;
+    procedure SetImagesEnabled(Value: Boolean);
+    procedure SetTextOnlyZoom(Value: Boolean);
+    procedure SetAuthorStylesEnabled(Value: Boolean);
+    procedure SetEncodingOverride(const Value: string);
+    procedure NoteUserGesture;
+    function HasUserGesture: Boolean;
+    function ScriptOpenWindow(const Url, Target, Features: string): Boolean;
     procedure PaintCaret(var Canvas: TCanvas);
     function ShowsAt(Container: TNode; X, Y: Single): Boolean;
     procedure PaintInnerScrollBars(var Canvas: TCanvas);
@@ -435,6 +466,24 @@ type
     { Finds Text after the selection (or before it), selects it and
       scrolls to it; False when the page has no such text. }
     function FindText(const Needle: string; Forward: Boolean = True; MatchCase: Boolean = False): Boolean;
+    { The same, and whether the search wrapped around the end (or the
+      start), and how many matches the page has (-1 unknown). }
+    function FindTextDetailed(const Needle: string; Forward, MatchCase: Boolean; out Wrapped: Boolean;
+      out MatchCount: Integer): Boolean;
+    { Paints every match of Needle highlighted ('' clears); kept until
+      cleared or the document goes. }
+    procedure SetFindHighlight(const Needle: string; MatchCase: Boolean);
+    { The session history (oldest first) and the current entry's index
+      in it (WebView.Engine.History.inc). }
+    function HistoryEntries: TWebHistoryList;
+    function HistoryIndex: Integer;
+    { Goes Offset entries back (negative) or forward. }
+    procedure GoToHistoryOffset(Offset: Integer);
+    { The history becomes Entries and Entries[Index] is loaded (session
+      restore; the other entries load when gone to). }
+    procedure RestoreHistory(const Entries: TWebHistoryList; Index: Integer);
+    { Page Info of the document shown. }
+    function PageInfo: TWebPageInfo;
     procedure ClearSelection;
     procedure SelectAll;
     function SelectedText: string;
@@ -503,6 +552,20 @@ type
     property LocalStorage: TWebStorageRegistry read FLocalStorage write FLocalStorage;
     { Script prompts are open (the page waits for their answers). }
     property ModalDepth: Integer read FModalDepth;
+    { Images load (on unless turned off; from the next document). }
+    property ImagesEnabled: Boolean read FImagesEnabled write SetImagesEnabled;
+    { Zoom scales the text (font sizes) only, not images and boxes. }
+    property TextOnlyZoom: Boolean read FTextOnlyZoom write SetTextOnlyZoom;
+    { False: author style sheets and style attributes are ignored (the
+      user agent's sheet only); applies at once. }
+    property AuthorStylesEnabled: Boolean read FAuthorStylesEnabled write SetAuthorStylesEnabled;
+    { An encoding label documents are decoded with ('': detect); setting
+      another reloads the document. }
+    property EncodingOverride: string read FEncodingOverride write SetEncodingOverride;
+    { window.open without a user gesture (a click or key in the last
+      second) is refused, and told to OnPopupBlocked with its URL. }
+    property PopupsBlocked: Boolean read FPopupsBlocked write FPopupsBlocked;
+    property OnPopupBlocked: TWebEngineViewTextEvent read FOnPopupBlocked write FOnPopupBlocked;
   end;
 
 var
@@ -541,6 +604,9 @@ uses
   WebView.Forms,
   WebView.KeyNames,
   WebView.TextEditing,
+  WebView.PageInfo,
+  Web.Navigation.SessionHistory,
+  Web.Loading.Contexts,
   Web.Script.Layout;
 
 type
@@ -571,5 +637,8 @@ end;
 {$I WebView.Engine.Keyboard.inc}
 {$I WebView.Engine.Forms.inc}
 {$I WebView.Engine.Selection.inc}
+{$I WebView.Engine.Find.inc}
+{$I WebView.Engine.History.inc}
+{$I WebView.Engine.Options.inc}
 
 end.

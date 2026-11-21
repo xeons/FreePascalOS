@@ -78,6 +78,7 @@ type
     FViewportScrolls: LongWord;
     FFixedBoxes: TPositionedList;
     FDarkScheme: Boolean;
+    FTextZoom: Double;
     procedure StyleChanged(Element: TElement; Change: TStyleChangeKind);
     procedure TextChanged(Node: TNode);
     procedure NodeRemoved(Node: TNode);
@@ -101,6 +102,12 @@ type
     { The viewport in CSS pixels and the device scale. }
     procedure SetViewport(Width, Height, Scale: Single);
     procedure SetDarkColorScheme(Dark: Boolean);
+    { Text zoom ("zoom text only"): absolute font sizes are multiplied by
+      Zoom (1: none); the page is styled again. }
+    procedure SetTextZoom(Zoom: Double);
+    { Author style sheets and style attributes (False: the user agent's
+      sheet only, a browser's "No Style"); the page is styled again. }
+    procedure SetAuthorStylesEnabled(Enabled: Boolean);
     { Brings style, boxes and layout up to date. }
     procedure Update;
     { Whether Update has work to do. }
@@ -168,6 +175,7 @@ begin
   FViewportWidth := 800;
   FViewportHeight := 600;
   FScale := 1;
+  FTextZoom := 1;
   FFullRebuild := True;
   FLayoutDirty := True;
   ApplyEnvironment;
@@ -195,6 +203,7 @@ begin
   Environment.DeviceHeight := FViewportHeight;
   Environment.Resolution := FScale;
   Environment.DarkColorScheme := FDarkScheme;
+  Environment.TextZoom := FTextZoom;
   FStyler.SetEnvironment(Environment);
 end;
 
@@ -217,6 +226,29 @@ begin
     Exit;
   FDarkScheme := Dark;
   ApplyEnvironment;
+end;
+
+procedure TDocumentLayout.SetTextZoom(Zoom: Double);
+begin
+  if Zoom <= 0 then
+    Zoom := 1;
+  if Zoom = FTextZoom then
+    Exit;
+  FTextZoom := Zoom;
+  ApplyEnvironment;
+  FLayoutDirty := True;
+  if FRoot <> nil then
+    FRoot.MarkNeedsLayout;
+end;
+
+procedure TDocumentLayout.SetAuthorStylesEnabled(Enabled: Boolean);
+begin
+  if Enabled = FStyler.AuthorStylesEnabled then
+    Exit;
+  FStyler.AuthorStylesEnabled := Enabled;
+  FLayoutDirty := True;
+  if FRoot <> nil then
+    FRoot.MarkNeedsLayout;
 end;
 
 procedure TDocumentLayout.SetElementStates(Element: TElement; States: TCssElementStates);
