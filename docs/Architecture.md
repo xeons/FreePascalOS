@@ -314,8 +314,8 @@ their own level, so higher-priority interrupts nest naturally.
 
 Rules that follow from this:
 
-- Mutexes may only be used at `PassiveLevel`; they put the thread to
-  sleep instead of spinning.
+- Mutexes, shared locks and semaphore waits may only be used at
+  `PassiveLevel`; they put the thread to sleep instead of spinning.
 - Spin locks are acquired at `DispatchLevel` or above. A lock that an
   interrupt handler takes must be acquired at that handler's level.
 - Raising to a lower level, or acquiring a dispatch-level lock while at a
@@ -350,8 +350,35 @@ Rules that follow from this:
   software interrupt (a self-IPI on the dispatch vector), which the APIC
   delivers as soon as the processor drops below `DispatchLevel`. The same
   mechanism handles a thread becoming ready at a higher priority.
-- The dispatcher lock protects all scheduler state and wait queues. It is
-  held across a context switch and released by the thread that runs next.
+- **Locks.** Two kinds, both spin locks at DispatchLevel, always taken
+  in this order:
+  1. the *dispatcher lock*: every wait queue (events, mutexes, shared
+     locks, semaphores), the per-processor sleep queues of timed waits,
+     alerts, the list of exited threads, and a thread's change into or
+     out of the waiting state;
+  2. each processor's *scheduling lock* (`Kernel.ReadyQueues`): its run
+     queues, the thread it runs and at what priority, its time slice and
+     its processor time. A processor holding its own takes another's
+     only if it is free at that moment (`TryLockProcessor`), so no two
+     processors ever wait for each other.
+
+  Time slices, preemption by a more important thread and yields take
+  only the processor's own lock; waits and wake-ups take the dispatcher
+  lock and then the lock of the processor the woken thread goes to.
+  The processor's lock is held across a context switch, and so is the
+  dispatcher lock when the old thread blocks or exits; the thread that
+  runs next releases them (`FinishThreadSwitch`). So a thread never runs
+  elsewhere before its registers are saved: it sits in a queue that is
+  locked, or is blocked and cannot be woken while the dispatcher lock
+  is held, or - preempted while it should go to another processor (its
+  affinity changed, or one it may run on is idle) - is in no queue
+  until the next thread places it once the switch is over.
+- **Work stealing.** Taking a thread from another processor's queues
+  (more important than its own best, or any when its own are empty) is
+  done only if that queue's lock is free; when it was taken and might
+  have held something, the processor remembers it, and its idle loop
+  pulls the thread over (waiting for that lock, holding no other)
+  instead of halting.
 - Exited threads are put on a list and cleaned up by the idle thread
   (stack freed, object dereferenced).
 - Processor time is taken at every switch (`Kernel.ProcessorTime`): each
@@ -368,14 +395,91 @@ Rules that follow from this:
   ready and folds it into three exponentially decayed averages (1, 5 and
   15 minutes, fixed point with 11 fraction bits, as in Unix load
   averages). The run queues keep a count of their threads for this.
-  Only the dispatcher lock is still shared by all processors.
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
-  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
-  ready thread to the run queue of its new priority.
+  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` sets a
+  thread's base priority (ending any boost) and moves a ready thread to
+  the run queue of its new priority.
 - Floating point and SSE registers belong to threads: the switch saves the
   old thread's (FXSAVE) and loads the new one's (FXRSTOR). The kernel
   itself uses no such registers (the build checks), so interrupts and
   system calls need not save them.
+
+### Priority boosts
+
+Priorities 1-15 are the *variable class*, 16-31 the *real-time class*
+(`Kernel.PriorityBoosts`). A thread has a base priority (what
+`SetThreadPriority` set) and a current one, which it is queued and run
+at; only threads of the variable class are ever boosted, and a boost
+never takes a thread past 15.
+
+- **Wake boost.** A thread whose wait ends because what it waited for
+  happened is raised above its base by an amount set by what woke it,
+  the sizes other systems use: keyboard or mouse input +6
+  (`Io.InputEvents`, terminal input), an audio stream's room to write
+  +8, data from the network +2 (sockets), the display answering +2
+  (virtio-gpu), an I/O completion +1 (`CompleteRequest`; drivers may
+  pass another with `CompleteRequestWithBoost`), another thread's event,
+  semaphore or address wake +1 (`SignalEvent`; `SignalEventWithBoost`
+  for others). A boost never lowers a higher current priority. A wait
+  that ends by its timeout or an alert gets nothing; nor does a mutex
+  or shared lock handed over.
+- **Decay.** Each time slice the thread uses up, its current priority
+  drops one level, back to its base. A thread that waits again before
+  its slice ends keeps its boost, so interactive threads (that wait
+  often) stay ahead of computing ones of the same base priority: woken,
+  they preempt them at once instead of after their time slice.
+- **Starvation boost.** About once a second the dispatch interrupt looks
+  through the run queues (at most 16 threads at a time) for threads of
+  the variable class that have been ready for 4 seconds without running
+  (`ReadySince`), and raises each to 15 for one time slice, after which
+  it drops straight back to its base (also if it waits first). So a
+  thread kept off the processor by busier ones of higher priority still
+  makes progress, and releases what locks it holds.
+
+The rules are pure functions checked on the host
+(`tools/SchedulerPolicyTest`); the kernel self tests check that an event
+wakes a thread beside a busy one at once, and `schedtest` (in coretest)
+both that and the starvation boost from user mode.
+
+### Locks and synchronization objects
+
+All at `PassiveLevel`, all sleeping rather than spinning, and all built
+on the dispatcher lock and its wait queues:
+
+- **Events** (`Kernel.Events`): notification (stay signaled, release
+  everyone) or synchronization (release one, reset). A thread may wait
+  for any or all of up to 64.
+- **Mutexes** (`Kernel.Mutex`): an owner, recursive, handed directly to
+  the first waiter.
+- **Semaphores** (`Kernel.Semaphores`): a count from 0 to a limit. A
+  wait takes one; a release gives back one or more (failing, and
+  changing nothing, past the limit) and releases waiters in the order
+  they came. A semaphore is an event of kind `EventKindSemaphore`,
+  signaled while its count is above zero, so it is waited on with the
+  other events, in a wait for any or a wait for all (which takes one
+  only when all are signaled); releasing works at DispatchLevel too.
+- **Shared locks** (`Kernel.SharedLocks`): reader/writer locks. Any
+  number of holders shared or one exclusively. Writers come first: a
+  thread asking for the lock shared waits while a writer holds it or
+  waits for it, so readers that keep coming cannot keep a writer out;
+  and when a writer releases it, every reader waiting then gets it
+  together before the next writer, so readers are not starved either.
+  Ownership is handed over by the releasing thread. The exclusive
+  holder may acquire the lock again either way (each counts as another
+  exclusive hold); a shared holder must not acquire it again at all (a
+  writer waiting in between would deadlock it, and holders are not
+  recorded per thread to catch it). `TryAcquire...` versions never
+  wait. The volume list (`FileSystem.Volumes`) uses one: every path
+  lookup reads it shared, mounting and removing a disk change it
+  exclusively.
+
+Kernel self tests (`Kernel.SynchronizationSelfTest`) run on every boot:
+semaphore counts, limits and consumers in several threads; readers and
+writers of a shared lock in several threads (no reader sees a write half
+done, writers are alone, readers really share, a writer gets in while
+readers keep coming); the wake boost; and a stress of threads in a ring
+waking each other across processors while another thread keeps moving
+them between processors and changing their priorities.
 
 ## The clock and timers
 
@@ -455,16 +559,19 @@ Rules that follow from this:
   always swaps). The running thread is read with one GS-relative load, so
   `CurrentThread` cannot be torn by a move to another processor; anything
   else in a block is only used at DispatchLevel or above.
-- **Scheduling.** Each processor has its own run queues (see Scheduling);
-  the dispatcher lock is shared. Each
+- **Scheduling.** Each processor has its own run queues and its own
+  scheduling lock (see Scheduling); the dispatcher lock, for wait queues,
+  is shared. Each
   processor has its own one-shot clock interrupt for its time slices, its
   timers and its threads' timeouts (see The clock and timers). When a
   thread becomes ready, an
   idle processor (or the one running the least important thread, if that
   is less important) is sent its dispatch interrupt as an IPI. The handoff
-  of the dispatcher lock across a switch also guarantees that a thread
-  which just switched away is not picked up elsewhere before its registers
-  are saved, and that a terminated thread's stack is not freed too early.
+  of the processor's lock (and of the dispatcher lock, when the old
+  thread blocked or exited) across a switch also guarantees that a
+  thread which just switched away is not picked up elsewhere before its
+  registers are saved, and that a terminated thread's stack is not freed
+  too early.
 - **TLB shootdown.** After removing a mapping, the page table code
   invalidates it locally and, outside its lock, calls
   `InvalidateRemoteTranslations` (`Kernel.InterProcessor`): every other
@@ -7252,6 +7359,7 @@ test copies to an unmapped user address.
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
+| Semaphores (140-142; 143-147 reserved) | CreateSemaphore, ReleaseSemaphore, GetSemaphoreCount (see "Objects for programs that work together") |
 | Memory | AllocateMemory, FreeMemory |
 | Libraries | LoadLibrary, FindSymbol |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
@@ -7685,6 +7793,16 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
 
 - **Events** (`Objects.Events`): kernel events a program creates
   (`CallCreateEvent`, manual or automatic reset), sets and resets.
+- **Semaphores** (`Objects.Semaphores`): kernel semaphores
+  (`Kernel.Semaphores`) a program creates with a count and a limit
+  (`CallCreateSemaphore`, 140), releases (`CallReleaseSemaphore`, 141:
+  returns the count before, `ErrorOverflow` past the limit) and reads
+  (`CallGetSemaphoreCount`, 142); a wait on the handle takes one,
+  alone, among others or in a wait for all. There are no named objects
+  yet, so no call opens one by name: the handle is passed on like any
+  other. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
+  `GetSemaphoreCount` (`Sys.Objects`) and a `TSemaphore` class
+  (`Sys.Semaphores`).
 - **Timers** (`Objects.Timers`): an event signaled when a time comes,
   once or periodically (`CallSetTimer`), to well under a millisecond; a
   periodic timer counts each time from when the last was due, so
@@ -7712,7 +7830,8 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
   the pair), so a server can decide what a client may ask for.
 
 `CallWaitForHandles` waits for the first of up to 64 handles to be ready,
-with a timeout: an event or timer signaled, a process or thread ended, a
+with a timeout: an event or timer signaled, a semaphore's count above
+zero (the wait takes one), a process or thread ended, a
 pipe's read end or a channel readable (data, or the other end gone), a
 pipe's write end writable (room, or no reader left), a port with a
 connection waiting, a watch with change records waiting, a device with

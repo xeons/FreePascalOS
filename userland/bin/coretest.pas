@@ -30,7 +30,8 @@
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
     * events, timers, waiting on several handles, channels, ports and a
-      section shared between two processes (ipctest),
+      section shared between two processes (ipctest), scheduler fairness
+      and wake-ups across processors (schedtest),
     * watching files and folders for changes made by other processes,
       on several file system types (watchtest), and the permission a
       watch needs,
@@ -125,7 +126,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..397] of TCommandTest = (
+  CommandTests: array[0..398] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -684,7 +685,12 @@ const
     (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0),
     { Process limits (limittest): thousands of threads, regions and handles,
       a child given 600 handles, and every count back to its baseline. }
-    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Scheduler fairness (schedtest): an interactive thread beside a busy
+      one is woken at once (wake boost), a starved one runs at last
+      (starvation boost), and threads waking each other across
+      processors lose nothing. }
+    (Command: 'schedtest > sched.log; echo $?; grep FAIL sched.log; tail -n 1 sched.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

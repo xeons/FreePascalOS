@@ -28,7 +28,8 @@ how the existing pieces fit together.
 - [x] Save and restore floating point / SSE registers at thread switches
 - [x] Per-processor run queues; placement by last processor, idle processors
       take work from busy ones
-- [ ] Split the dispatcher lock (per-processor scheduling locks)
+- [x] Split the dispatcher lock (per-processor scheduling locks; the dispatcher
+      lock keeps only wait queues; work stealing by try-lock, idle pull)
 - [x] Device interrupts spread over the processors (round robin, not the boot one)
 - [x] Batched TLB shootdowns for large unmaps (one interrupt per 32-page run)
 - [x] Processor affinity for threads and processes (taskset)
@@ -37,10 +38,15 @@ how the existing pieces fit together.
 
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
-- [ ] Semaphores and reader/writer locks
-- [ ] Wait on multiple objects
+- [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
+      calls 140-142, waitable with wait-for-all)
+- [ ] Named objects (open a semaphore or event by name)
+- [ ] Use shared locks for more read-mostly lookups (open file and node tables,
+      handle table reads)
+- [x] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
-- [ ] Priority boosting for threads woken from waits
+- [x] Priority boosting for threads woken from waits (by wake reason, decay per
+      time slice, starvation boost; never the real-time class)
 - [ ] Stack back trace in the panic screen
 
 ## Memory management
