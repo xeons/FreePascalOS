@@ -140,7 +140,7 @@ var
   end;
 
 begin
-  inherited Create('Downloads', 200, 120, 560, 380);
+  inherited Create('Downloads', 200, 120, 680, 400);
   IconName := 'folder-downloads';
   FManager := Manager;
   Top := TPanel.Create(Root);

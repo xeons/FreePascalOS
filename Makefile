@@ -939,7 +939,8 @@ BROWSER_TEST_SOURCES := tools/BrowserTest/BrowserTest.pas userland/browser/Brows
 	userland/browser/Browser.Addresses.pas userland/browser/Browser.History.pas \
 	userland/browser/Browser.Bookmarks.pas userland/browser/Browser.AwesomeBar.pas \
 	userland/browser/Browser.SessionStore.pas userland/browser/Browser.SearchEngines.pas \
-	userland/browser/Browser.Keywords.pas
+	userland/browser/Browser.Keywords.pas userland/browser/Browser.ConsoleLog.pas \
+	userland/browser/Browser.SourceColoring.pas userland/browser/Browser.Passwords.pas
 
 $(BROWSER_TEST): $(BROWSER_TEST_SOURCES)
 	@mkdir -p build/tools/browser-test-units

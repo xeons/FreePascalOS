@@ -860,11 +860,13 @@ begin
   begin
     FSidebar := TBrowserSidebar.Create(Root);
     FSidebar.Align := AlignLeft;
+    FSidebar.DockOrder := 5;
     FSidebar.SetBounds(0, 0, 220, 300);
     FSidebar.OnOpen := @BookmarkOpened;
     FSidebar.OnClose := @SidebarClosed;
     FSidebarSplitter := TSplitter.Create(Root);
     FSidebarSplitter.Align := AlignLeft;
+    FSidebarSplitter.DockOrder := 5;
   end;
   FSidebar.Kind := Kind;
   FSidebar.Visible := True;

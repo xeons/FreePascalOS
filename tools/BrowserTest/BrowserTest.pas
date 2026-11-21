@@ -22,7 +22,9 @@
   queries, the bookmarks' folders, tags, keywords and file format (and
   the old one), the location bar's suggestions (matching, the special
   words, ranking), the session file and the closed tabs and windows,
-  and the search engine list. Files go to a folder under /tmp.
+  the search engine list, the Error Console's log and filters, the page
+  source's colouring and saved passwords. Files go to a folder under
+  /tmp.
 }
 program BrowserTest;
 
@@ -39,7 +41,10 @@ uses
   Browser.AwesomeBar,
   Browser.SessionStore,
   Browser.SearchEngines,
-  Browser.Keywords;
+  Browser.Keywords,
+  Browser.ConsoleLog,
+  Browser.SourceColoring,
+  Browser.Passwords;
 
 var
   Checks, Failures: Integer;
@@ -434,6 +439,58 @@ begin
   end;
 end;
 
+procedure TestConsoleAndSource;
+var
+  Log: TConsoleLog;
+  Colored: string;
+  Store: TPasswordStore;
+begin
+  Log := TConsoleLog.Create;
+  try
+    Log.Add('log', 'hello world', 'file:///a.html', Now);
+    Log.Add('error', 'Uncaught TypeError', 'https://b.example/', Now);
+    Log.Add('warn', 'deprecated thing', 'https://b.example/', Now);
+    Check('console: levels become severities', (Log.Entries[0].Severity = SeverityMessage) and
+      (Log.Entries[1].Severity = SeverityError) and (Log.Entries[2].Severity = SeverityWarning));
+    Check('console: filters', (Length(Log.Filtered(FilterAll, '')) = 3) and (Length(Log.Filtered(FilterErrors, '')) = 1)
+      and (Length(Log.Filtered(FilterWarnings, '')) = 1) and (Length(Log.Filtered(FilterMessages, '')) = 1));
+    Check('console: search by text or source', (Length(Log.Filtered(FilterAll, 'TYPEERROR')) = 1) and
+      (Length(Log.Filtered(FilterAll, 'b.example')) = 2));
+    Log.Clear;
+    Check('console: clear', Log.Count = 0);
+  finally
+    Log.Free;
+  end;
+  Colored := ColorSource('<!DOCTYPE html><a href="x&y">A &amp; B</a><!-- c -->');
+  Check('source: the doctype', Pos('<span class="doctype">&lt;!DOCTYPE html&gt;</span>', Colored) > 0);
+  Check('source: a tag and its attribute', (Pos('<span class="tag">&lt;a</span>', Colored) > 0) and
+    (Pos('<span class="attribute">href</span>', Colored) > 0) and
+    (Pos('<span class="value">&quot;x&amp;y&quot;</span>', Colored) > 0));
+  Check('source: a character reference', Pos('<span class="entity">&amp;amp;</span>', Colored) > 0);
+  Check('source: a comment', Pos('<span class="comment">&lt;!-- c --&gt;</span>', Colored) > 0);
+  Check('source: text is escaped', Pos('A ', Colored) > 0);
+  Check('source: a whole page', Pos('<pre>', ColoredSourcePage('x', 'T', True)) > 0);
+  Store := TPasswordStore.Create(Folder + '/passwords.txt');
+  try
+    Store.Remember('https://a.example', 'me', 'secret');
+    Store.Remember('https://a.example', 'me', 'newer');
+    Store.Remember('https://b.example', 'you', 'pw');
+    Check('passwords: one per site and user, replaced', (Store.Count = 2) and (Store.Logins[0].Password = 'newer'));
+  finally
+    Store.Free;
+  end;
+  Store := TPasswordStore.Create(Folder + '/passwords.txt');
+  try
+    Store.Load;
+    Check('passwords: read back', (Store.Count = 2) and (Store.IndexOf('https://B.example', 'you') = 1));
+    Store.Remove(0);
+    Check('passwords: removed', Store.Count = 1);
+  finally
+    Store.Free;
+  end;
+  DeleteFile(Folder + '/passwords.txt');
+end;
+
 begin
   Folder := GetTempDir(False) + 'browser-test-' + IntToStr(GetProcessID);
   ForceDirectories(Folder);
@@ -443,6 +500,7 @@ begin
   TestAwesomeBar;
   TestSession;
   TestSearchEngines;
+  TestConsoleAndSource;
   DeleteFile(Folder + '/history.txt');
   DeleteFile(Folder + '/bookmarks.txt');
   DeleteFile(Folder + '/old-bookmarks.txt');
