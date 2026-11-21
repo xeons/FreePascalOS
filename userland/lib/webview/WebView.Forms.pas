@@ -65,11 +65,19 @@ procedure ChooseSelectOption(Select, Option: TElement);
 { The navigation a form's submission makes; False when it makes none. }
 function BuildFormSubmission(Form, Submitter: TElement; Context: TLoadingContext; out Url: TUrlRecord;
   out Options: TNavigateOptions): Boolean;
+{ HTML 4.10.21.2: the form's default button (its first submit button in
+  tree order), nil without one. }
+function DefaultButtonOf(Form: TElement): TElement;
+{ Submits Form in Navigable: the submit event (cancelable), then the
+  navigation its entries make; False when nothing was submitted. Form
+  and Submitter are held while the page's listeners run. }
+function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
 
 implementation
 
 uses
   Web.Dom.FormControls,
+  Web.Navigation.Events,
   Url.Parser,
   Url.FormEncoding,
   Web.Atoms,
@@ -293,6 +301,52 @@ begin
   Result := True;
 end;
 
+function DefaultButtonOf(Form: TElement): TElement;
+var
+  Node: TNode;
+begin
+  Result := nil;
+  if Form = nil then
+    Exit;
+  Node := Form.NextInTree(Form);
+  while Node <> nil do
+  begin
+    if Node.IsElement and (FormControlKindOf(TElement(Node)) = FormControlSubmit) and
+      (FormOwnerOf(TElement(Node)) = Form) then
+      Exit(TElement(Node));
+    Node := Node.NextInTree(Form);
+  end;
+end;
+
+function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
+var
+  Target: TUrlRecord;
+  Options: TNavigateOptions;
+begin
+  Result := False;
+  if (Form = nil) or (Navigable = nil) or (Navigable.Loader = nil) then
+    Exit;
+  { The submit event's listeners may take the form (and the submitter)
+    out of the document. }
+  Form.Retain;
+  if Submitter <> nil then
+    Submitter.Retain;
+  try
+    if not FireEvent(Form, 'submit', True, True) then
+      Exit;
+    if (Navigable.Loader = nil) or not BuildFormSubmission(Form, Submitter, Navigable.Loader, Target, Options) then
+      Exit;
+  finally
+    if Submitter <> nil then
+      Submitter.Release;
+    Form.Release;
+  end;
+  Options.Source := Navigable.Loader;
+  Navigable.Navigate(Target, Options);
+  Result := True;
+end;
+
 initialization
   MakeAtoms;
+
 end.

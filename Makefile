@@ -1337,7 +1337,8 @@ web-load-test: $(WEB_LOAD_TEST)
 # (build/tools/webbrowse -o page.png -n -p https://example.com/).
 WEB_BROWSE := build/tools/webbrowse
 WEB_BROWSE_UNITS := build/tools/webbrowse-units
-WEB_BROWSE_SOURCES := $(wildcard tools/WebBrowse/*.pas) tools/TlsTest/Crypto.Random.pas $(WEB_LOAD_TEST_SOURCES)
+WEB_BROWSE_SOURCES := $(wildcard tools/WebBrowse/*.pas) tools/TlsTest/Crypto.Random.pas $(WEB_LOAD_TEST_SOURCES) \
+	$(wildcard userland/lib/webview/WebView.*.pas)
 
 $(WEB_BROWSE_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
 		$(WEB_BINDING_SOURCES)
@@ -1350,7 +1351,7 @@ $(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
 	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fuuserland/lib/webview -Fuuserland/lib/windowing -Fushared -Fishared \
 		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WebBrowse/WebBrowse.pas
 
 webbrowse: $(WEB_BROWSE)

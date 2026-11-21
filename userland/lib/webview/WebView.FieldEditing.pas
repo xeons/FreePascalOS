@@ -90,6 +90,14 @@ type
 
 { A connected text field that is not disabled. }
 function IsEditableTextField(Element: TElement): Boolean;
+{ The action a key press (a set 1 scan code with KeyCodeExtended for the
+  E0 keys, the character it types, the system's modifier bits) is in a
+  text field: characters, Backspace and Delete (Ctrl: a word), the arrows,
+  Home and End (Shift extends the selection), Ctrl+A, Ctrl+C, Ctrl+X,
+  Ctrl+V, Enter; False for the keys a field leaves alone (Tab, Escape,
+  other Ctrl and Alt keys). Text is the typed character as UTF-8. }
+function FieldActionOfKey(ScanCode, Character, Modifiers: LongWord; out Action: TFieldAction;
+  out Options: TFieldActionOptions; out Text: string): Boolean;
 
 implementation
 
@@ -97,7 +105,76 @@ uses
   SysUtils,
   Web.Dom.FormControls,
   WebView.Elements,
+  WebView.KeyNames,
   WebView.TextEditing;
+
+const
+  { The system's key codes (set 1 scan codes; $100 marks the E0 keys)
+    and modifier bits. }
+  ScanBackspace = $0E;
+  ScanEnter = $1C;
+  ScanNumpadEnter = $11C;
+  ScanA = $1E;
+  ScanC = $2E;
+  ScanV = $2F;
+  ScanX = $2D;
+  ScanHome = $147;
+  ScanArrowUp = $148;
+  ScanArrowLeft = $14B;
+  ScanArrowRight = $14D;
+  ScanEnd = $14F;
+  ScanArrowDown = $150;
+  ScanDelete = $153;
+  ModifierShiftBit = $01;
+  ModifierControlBit = $02;
+  ModifierAltBit = $04;
+
+function FieldActionOfKey(ScanCode, Character, Modifiers: LongWord; out Action: TFieldAction;
+  out Options: TFieldActionOptions; out Text: string): Boolean;
+begin
+  Result := True;
+  Action := FieldTypeText;
+  Text := '';
+  Options := [];
+  if (Modifiers and ModifierControlBit) <> 0 then
+    Include(Options, FieldByWord);
+  if (Modifiers and ModifierShiftBit) <> 0 then
+    Include(Options, FieldExtend);
+  if FieldByWord in Options then
+  begin
+    case ScanCode of
+      ScanA: Action := FieldSelectAll;
+      ScanC: Action := FieldCopy;
+      ScanX: Action := FieldCut;
+      ScanV: Action := FieldPaste;
+      ScanBackspace: Action := FieldDeleteBackward;
+      ScanDelete: Action := FieldDeleteForward;
+      ScanArrowLeft: Action := FieldMoveLeft;
+      ScanArrowRight: Action := FieldMoveRight;
+      ScanHome: Action := FieldValueStart;
+      ScanEnd: Action := FieldValueEnd;
+    else
+      Result := False;
+    end;
+    Exit;
+  end;
+  case ScanCode of
+    ScanBackspace: Action := FieldDeleteBackward;
+    ScanDelete: Action := FieldDeleteForward;
+    ScanArrowLeft: Action := FieldMoveLeft;
+    ScanArrowRight: Action := FieldMoveRight;
+    ScanArrowUp: Action := FieldMoveUp;
+    ScanArrowDown: Action := FieldMoveDown;
+    ScanHome: Action := FieldLineStart;
+    ScanEnd: Action := FieldLineEnd;
+    ScanEnter, ScanNumpadEnter: Action := FieldLineBreak;
+  else
+    if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAltBit) = 0) then
+      Text := CodePointText(Character)
+    else
+      Result := False;
+  end;
+end;
 
 function IsEditableTextField(Element: TElement): Boolean;
 begin

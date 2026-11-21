@@ -57,25 +57,16 @@ end;
   first submit button) or, without one, submits the form. }
 procedure TWebView.SubmitImplicitly(Field: TElement);
 var
-  Form: TElement;
-  Node: TNode;
+  Form, Button: TElement;
 begin
   Form := FormOwnerOf(Field);
   if Form = nil then
     Exit;
-  Node := Form.NextInTree(Form);
-  while Node <> nil do
-  begin
-    if Node.IsElement and (FormControlKindOf(TElement(Node)) = FormControlSubmit) and
-      (FormOwnerOf(TElement(Node)) = Form) then
-    begin
-      if not IsDisabledControl(TElement(Node)) then
-        ActivateControl(TElement(Node));
-      Exit;
-    end;
-    Node := Node.NextInTree(Form);
-  end;
-  SubmitForm(Form, nil);
+  Button := DefaultButtonOf(Form);
+  if Button = nil then
+    SubmitForm(Form, nil)
+  else if not IsDisabledControl(Button) then
+    ActivateControl(Button);
 end;
 
 { The editing a key does in the focused text control (after the page let
@@ -89,56 +80,8 @@ var
   Options: TFieldActionOptions;
   Typed: string;
 begin
-  Result := False;
-  if not IsEditableTextField(FFocusedElement) then
-    Exit;
-  Options := [];
-  if (Modifiers and ModifierControl) <> 0 then
-    Include(Options, FieldByWord);
-  if (Modifiers and ModifierShift) <> 0 then
-    Include(Options, FieldExtend);
-  Typed := '';
-  if FieldByWord in Options then
-  begin
-    case Code of
-      KeyA: Action := FieldSelectAll;
-      KeyC: Action := FieldCopy;
-      KeyX: Action := FieldCut;
-      KeyV: Action := FieldPaste;
-      KeyBackspace: Action := FieldDeleteBackward;
-      KeyDelete: Action := FieldDeleteForward;
-      KeyArrowLeft: Action := FieldMoveLeft;
-      KeyArrowRight: Action := FieldMoveRight;
-      KeyHome: Action := FieldValueStart;
-      KeyEnd: Action := FieldValueEnd;
-    else
-      Exit;
-    end;
-  end
-  else
-    case Code of
-      KeyBackspace: Action := FieldDeleteBackward;
-      KeyDelete: Action := FieldDeleteForward;
-      KeyArrowLeft: Action := FieldMoveLeft;
-      KeyArrowRight: Action := FieldMoveRight;
-      KeyArrowUp: Action := FieldMoveUp;
-      KeyArrowDown: Action := FieldMoveDown;
-      KeyHome: Action := FieldLineStart;
-      KeyEnd: Action := FieldLineEnd;
-      KeyTab, KeyEscape:
-        Exit;
-    else
-      if IsEnterKey(Code) then
-        Action := FieldLineBreak
-      else if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
-      begin
-        Action := FieldTypeText;
-        Typed := CodePointText(Character);
-      end
-      else
-        Exit;
-    end;
-  Result := FFieldEditor.Perform(FFocusedElement, Action, Typed, Options);
+  Result := IsEditableTextField(FFocusedElement) and FieldActionOfKey(Code, Character, Modifiers, Action, Options,
+    Typed) and FFieldEditor.Perform(FFocusedElement, Action, Typed, Options);
 end;
 
 procedure TWebView.FieldSelectionMoved(Element: TElement);
@@ -271,32 +214,16 @@ end;
 
 procedure TWebView.SubmitForm(Form, Submitter: TElement);
 var
-  Target: TUrlRecord;
-  Options: TNavigateOptions;
   ScrollX, ScrollY: Single;
 begin
-  if (Form = nil) or (FPage = nil) or (FPage.Navigable.Loader = nil) then
+  if (Form = nil) or (FPage = nil) then
     Exit;
-  { The submit event's listeners may take the form (and the submitter)
-    out of the document. }
-  Form.Retain;
-  if Submitter <> nil then
-    Submitter.Retain;
-  try
-    if not FireEvent(Form, 'submit', True, True) then
-      Exit;
-    if (FPage.Navigable.Loader = nil) or
-      not BuildFormSubmission(Form, Submitter, FPage.Navigable.Loader, Target, Options) then
-      Exit;
-  finally
-    if Submitter <> nil then
-      Submitter.Release;
-    Form.Release;
+  if FLayout <> nil then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
   end;
-  Options.Source := FPage.Navigable.Loader;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
-  FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
-  FPage.Navigable.Navigate(Target, Options);
+  SubmitFormIn(FPage.Navigable, Form, Submitter);
   PostWake;
 end;
 
