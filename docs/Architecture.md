@@ -10773,8 +10773,24 @@ location (a view whose href may be set and replace() called),
 postMessage, close, focus and blur, undefined for then and the three
 symbols, a SecurityError for anything else; contentDocument and
 frameElement are null across origins. postMessage through a view calls
-the target's own and turns its exceptions into the caller's realm's;
-ports are passed only between windows of one origin. A frame's window
+the target's own and turns its exceptions into the caller's realm's.
+MessagePorts go between realms of any origins without carrying their
+realm: the receiving realm's postMessage asks the caller's realm (the
+native `exportPorts`, its `CallerRealm`'s platform callback) for
+endpoints of the transferred ports, frozen objects without a prototype
+whose functions clone what they are given into their own realm; the
+sending port stays behind as a relay and the receiver gets a port of
+its own realm (`platform/60-messaging.js`). Within one realm a
+transferred port is replaced by a new object and the old one is dead
+(a second transfer is a DataCloneError). Workers' and ports' own
+postMessage carry ports too. reCAPTCHA needs both: its anchor frame
+talks to its worker and to the page through ports, and timed out after
+5 and 15 s showing "Could not connect to the reCAPTCHA service" when
+they did not arrive (on the host as well as in QEMU: webbrowse quit
+before the timeouts). Frames are also found by name: window[name] and
+frames[name] (`UpdateFrameIndices` defines them below the window's own
+properties; cross-origin views answer them), which reCAPTCHA's challenge
+frame uses to reach its anchor. A frame's window
 is closed when its document is left (contentWindow is then the next
 document's) and freed with its top-level context. The global object's
 index properties follow its frames (`UpdateFrameIndices`). A
@@ -10835,6 +10851,8 @@ error) over `TScriptEnvironment`:
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
 | 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects, client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
+| 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
 
 The environment hooks they use (`Web.ScriptEnvironment`):
@@ -10909,15 +10927,76 @@ search, hash) navigate, so window.location = url works. HTML's cloning
 steps: a cloned script that already ran does not run again, cloned
 inputs and textareas keep their value and checkedness.
 
+**Ranges and the selection** (`Web.Dom.Ranges.inc`, `Web.Dom.Selection.inc`,
+`Web.Dom.RangeContents`, `Web.Bindings.Ranges`). A `TLiveRange` is two
+boundary points kept valid by the mutation algorithms: the document
+lists its live ranges and insert, remove, replace data (and setting the
+data), splitText and normalize adjust them as the DOM Standard says (a
+document with no ranges pays one comparison). Ranges are reference
+counted; they hold references to their boundary nodes, except the
+document's selection range, which is always in its document (the
+document must not keep itself alive through it; when the document goes
+the range lets go of its nodes). Range has the boundary setters and
+checks (IndexSizeError, InvalidNodeTypeError), collapse, selectNode(Contents),
+compareBoundaryPoints, comparePoint, isPointInRange, intersectsNode,
+cloneContents, extractContents, deleteContents, insertNode,
+surroundContents, cloneRange, createContextualFragment and its text;
+StaticRange its points. A range has one wrapper (the selection's range
+read twice is the same object). The document's `TDocumentSelection` is
+one range or none and a direction: getSelection (window and document)
+gives the window's one Selection with anchor and focus, type,
+direction, getRangeAt, addRange (the range itself becomes the
+selection's), removeRange, removeAllRanges, collapse, setPosition,
+collapseToStart/End, extend, setBaseAndExtent, selectAllChildren,
+containsNode, deleteFromDocument and toString (modify does nothing yet).
+Every change tells the document's observers (`SelectionChanged`): the
+script context queues selectionchange, the web view repaints. The web
+view's text selection is the document's: the user's selection becomes
+a DOM range and a range script makes is painted (`WebView.SelectionMapping`
+maps a place in the painted text to a node and offset and back;
+`Web.Layout.TextOffsets` walks a text node's data against its box's
+rendered text across collapsed white space).
+
+**The CSSOM** (`Web.Bindings.StyleSheets`, `Web.Style.DocumentSheets`).
+Script and styling share the sheet objects: a document's
+`TDocumentSheets` (made on demand, freed with the document) parses each
+`<style>`'s sheet when first asked for (script right after inserting
+the element, or the styler) and again when its text or media changes,
+mirrors the `<link>` sheets the resources own, and keeps the sheets
+script makes and the adopted ones (which come after the document's).
+document.styleSheets, a style or link element's sheet, CSSStyleSheet
+(cssRules, insertRule, deleteRule, the legacy rules, addRule and
+removeRule, replaceSync, replace, the constructor with baseURL, media
+and disabled), adoptedStyleSheets (a plain array: assigning it takes
+effect, changing it in place does not), StyleSheet's ownerNode, href,
+title, media and disabled, MediaList, CSSRuleList, and CSSRule with
+cssText, parentRule, parentStyleSheet and type; CSSStyleRule
+(selectorText, style), CSSGroupingRule (cssRules, insertRule,
+deleteRule), CSSMediaRule, CSSSupportsRule, CSSLayerBlockRule,
+CSSImportRule, CSSNamespaceRule, CSSFontFaceRule, CSSKeyframesRule
+(name, cssRules, appendRule, deleteRule, findRule) and CSSKeyframeRule
+(keyText, style). A sheet's or rule's one wrapper is in its HostData;
+libcss tells the wrapper when the object is freed (`CssHostDataFreed`).
+Changes go to the document's sheets: a rule inserted at the end of a
+sheet (what emotion and styled-components do, rule after rule) is
+indexed at once when that sheet is the last in effect
+(`TCssStyleEngine.AppendRule` adds its selectors after every other
+entry), anything else has the sheets indexed again before the next
+style; either way the document is restyled. A rule's style changes its
+declaration block in place (the index points at it). Removed rules,
+replaced selectors and sheets of removed or reparsed `<style>` elements
+are retired and freed once the engine has indexed again.
+
 **Not done yet**: import maps, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), the unhandledrejection
-event, XML parsing (DOMParser, XHR's responseXML), shadow DOM, Range and
-Selection, TreeWalker, `<object>` and `<embed>` documents, frameset
+event, XML parsing (DOMParser, XHR's responseXML), shadow DOM,
+TreeWalker, `<object>` and `<embed>` documents, frameset
 layout (`<frame>` loads but is laid out as an inline replaced box),
 shared and service workers, synchronous
-XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
-insertRule), the storage event between windows, images'
-natural size for script.
+XMLHttpRequest, Web Animations (CSS animations and transitions run, see
+Styling), Selection.modify, @import in insertRule loading its sheet,
+ObservableArray for adoptedStyleSheets, the storage event between
+windows, images' natural size for script.
 
 ### Tests
 
@@ -11004,6 +11083,38 @@ interned, so pointers compare) and reports the kind of change to the
 layout: boxes (display, position, float, generated content, lists),
 layout, or paint (the boxes then take the new styles and nothing is laid
 out again); a changed inherited group restyles the children.
+
+**Animations and transitions** (`Web.Style.Animations`, libcss's
+`Css.Interpolation`, `Css.Easing`, `Css.TransformMatrices`). The styler
+hands each element's cascaded style to `TStyleAnimations.Animate`,
+which keeps the element's CSS animations (animation-name and the other
+animation properties, each name's @keyframes rule; duration, delay,
+iteration count, direction, fill mode, play state, easing) and its
+transitions (started when a transitioned property's cascaded value
+changes, from the value shown at that moment; a new change cancels and
+replaces one), and returns the style to show: the cascaded style with
+the animated values over it (only the structs that change are copied).
+Keyframe values are computed from each keyframe's block alone under the
+parent's style (`TCssStyleEngine.ComputeBlockStyle`); missing 0% and
+100% frames are the cascaded value. Values interpolate by the
+property table's animation type: numbers, integers, lengths and
+percentages (mixed ones as length-percentages), colors in
+premultiplied sRGB, visibility, font weights, transforms (function by
+function when the lists match, none as the other list's identity
+functions, otherwise through 2D matrix decomposition); anything else
+flips half way. Transitions win over animations. While an element has
+effects its cascaded style is kept in its node data (`BaseStyle`); each
+frame the owner calls `TDocumentLayout.AdvanceAnimations`, which marks
+the elements with running effects `ndAnimationDirty`, and the styler
+makes their styles again from the kept base without cascading. Time
+is the layout's animation clock (`SetAnimationClock`; GetTickCount64 by
+default; the tests set fixed times). Events (animationstart, end,
+iteration, cancel; transitionrun, start, end, cancel) are collected
+while styling and queued by the owner as tasks
+(`Web.Layout.AnimationEvents`: AnimationEvent and TransitionEvent,
+bubbling, at elements still in the document). The web view and
+webbrowse advance animations and queue their events every frame, and
+the view asks for frames while any runs.
 
 ### Text (Web.Text)
 
@@ -11173,7 +11284,22 @@ over a later z-index: 1 box). A transform's translations (translate(),
 translateX/Y, translate3d, a matrix that only translates, the translate
 property; percentages of the border box) move the box like a relative
 offset (`Web.Layout.Transforms`), so it is painted, hit and measured
-there; a change of them lays the box out again (scMove). Overflow clips become clip
+there; a change of them lays the box out again (scMove). Any other
+transform (scale, rotate, skew, matrix, the rotate and scale
+properties, 3D functions flattened to the plane by
+`Css.TransformMatrices`: matrix3d's 2D part, rotateX/Y as the squash
+their projection gives, translateZ and perspective dropped) is one
+matrix about transform-origin (of the border box) and the box's
+stacking context is a transform group (`diPushTransform`, the matrix in
+the list's `Transforms`; its bounds: what the group draws). The raster
+draws the group untransformed into a surface covering only what can
+show through the clip (the clip mapped back through the matrix, within
+the bounds, at most 8192 px a side) and composites it through the
+matrix with libdrawing's pattern fill (sampled between pixels unless the
+matrix is a whole-pixel translation). Hit testing maps the point
+through the inverse (clips outside the group are tested where they
+were pushed), and getBoundingClientRect gives the bounds of the box
+after its and its ancestors' transforms (`TransformRectangle`). Overflow clips become clip
 pairs (rounded with border-radius), scroll containers move their
 contents, opacity becomes a group, fixed boxes are marked to ignore the
 viewport's scroll. Sticky boxes (`Web.Paint.Sticky`, CSS Positioned
@@ -11375,7 +11501,7 @@ spacing), multi-column layout, writing modes and bidirectional text
 scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
-transforms other than translations (scale, rotate, skew), filters, blend modes, clip-path, border-image, conic
+perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, incremental display list updates
 (it is rebuilt whole when anything changes; scrolling the viewport does
@@ -11511,7 +11637,15 @@ with the document's resources before the document goes).
   positions from the font's glyph placement, a text-shadow copy once),
   which selection, copying (`SelectedText`, `PageText`) and find
   (`FindText`: after the selection, wrapping, ASCII case folded;
-  scrolled into view) use.
+  scrolled into view) use. The selection is the document's
+  (`TDocumentSelection`): what the user selects becomes a DOM range
+  (script's getSelection sees it, selectionchange fires) and a range
+  script selects is painted (`WebView.SelectionMapping`); after the
+  display list changes the painted selection is found again from the
+  DOM range, which the DOM kept up to date.
+- **Animations**: each frame advances the layout's CSS animations and
+  transitions and queues their events; the view asks for frames while
+  any runs.
 - **The keyboard and forms** (`WebView.Elements`, `WebView.Forms`): Tab
   and Shift+Tab move the page's focus between links and controls
   (:focus, :focus-visible, :focus-within), Enter follows a link or
