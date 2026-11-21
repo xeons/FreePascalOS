@@ -126,6 +126,7 @@ var
   Options: string;
   Source: string;
   Target: string;
+  VolumeLabel: string;
   Error: LongInt;
 begin
   All := False;
@@ -167,8 +168,12 @@ begin
           (Copy(Source, 1, 9) <> '/volumes/') and (Copy(Source, 1, 6) <> 'LABEL=') then
     Halt(MountFromTable(Source));
 
-  if (Copy(Source, 1, 6) = 'LABEL=') and not FindLabelledVolume(Copy(Source, 7, Length(Source)), Source) then
-    Fail(1, Format('no volume is labelled %s', [Copy(Source, 7, Length(Source))]));
+  if Copy(Source, 1, 6) = 'LABEL=' then
+  begin
+    VolumeLabel := Copy(Source, 7, Length(Source));
+    if not FindLabelledVolume(VolumeLabel, Source) then
+      Fail(1, Format('no volume is labelled %s', [VolumeLabel]));
+  end;
   Error := MountVolume(Source, Target, FileSystemType, Options);
   if Error = ErrorInvalidArgument then
     Fail(1, Format('cannot mount %s: wrong option, type or source', [Source]));

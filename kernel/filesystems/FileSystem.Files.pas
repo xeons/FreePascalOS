@@ -465,11 +465,12 @@ function ResolveInVolume(var Volume: PVolume; RelativePath: PChar; FollowFinalLi
   Depth: Integer; Trail: PNodeTrail; Crossing: Boolean; out Found: PNode): TFileSystemStatus; forward;
 
 { Builds the path that results from replacing component LinkIndex of
-  Split by the target of LinkNode (whose reference this gives back),
+  Split by the target of LinkNode (whose reference this gives back;
+  the components from FirstIndex on are those on Volume),
   and resolves it from the root of the volume at the top of Volume's
   chain of mounts: a relative target with Volume's own mount point path
   in front, so ".." may lead out of a mounted volume. }
-function FollowLink(var Volume: PVolume; LinkNode: PNode; Split: PSplitPath; LinkIndex: Integer;
+function FollowLink(var Volume: PVolume; LinkNode: PNode; Split: PSplitPath; FirstIndex, LinkIndex: Integer;
   FollowFinalLink: Boolean; Depth: Integer; Trail: PNodeTrail; Crossing: Boolean;
   out Found: PNode): TFileSystemStatus;
 var
@@ -504,7 +505,7 @@ begin
     if Target[0] <> '/' then
     begin
       CopyVolumeMountPath(Volume, NewPath, MaximumPathBytes);
-      for ComponentIndex := 0 to LinkIndex - 1 do
+      for ComponentIndex := FirstIndex to LinkIndex - 1 do
         AppendComponent(NewPath, Split^.Components[ComponentIndex]);
     end;
     AppendComponent(NewPath, Target);
@@ -534,6 +535,8 @@ var
   NextNode: PNode;
   MountedVolume: PVolume;
   ComponentIndex: Integer;
+  { The first component looked up on Volume (after a mount point). }
+  FirstIndex: Integer;
   IsFinalComponent: Boolean;
 begin
   Found := nil;
@@ -545,6 +548,7 @@ begin
   Node := Volume^.RootNode;
   ReferenceNode(Node);
   ComponentIndex := 0;
+  FirstIndex := 0;
   if Trail <> nil then
     StartTrail(Trail, Node^.Information.NodeNumber);
 
@@ -571,8 +575,8 @@ begin
     if (NextNode^.Information.Kind = NodeKindSymbolicLink) and
        ((not IsFinalComponent) or FollowFinalLink) then
     begin
-      Result := FollowLink(Volume, NextNode, Split, ComponentIndex, FollowFinalLink, Depth, Trail,
-        Crossing, Node);
+      Result := FollowLink(Volume, NextNode, Split, FirstIndex, ComponentIndex, FollowFinalLink, Depth,
+        Trail, Crossing, Node);
       FreeKernelMemory(Split);
       if Result = StatusSuccess then
         Found := Node;
@@ -597,6 +601,7 @@ begin
         Break;
       Node := Volume^.RootNode;
       ReferenceNode(Node);
+      FirstIndex := ComponentIndex;
       if Trail <> nil then
         StartTrail(Trail, Node^.Information.NodeNumber);
       Continue;

@@ -204,11 +204,10 @@ begin
   Result := RenamePath(@Source[0], @Target[0]);
 end;
 
-{ ext compares names exactly; FAT and exFAT ignore letter case. }
+{ ext and tmpfs compare names exactly; FAT and exFAT ignore letter case. }
 function VolumeIgnoresCase: Boolean;
 begin
-  Result := not ((CurrentVolume^.TypeName[0] = 'e') and (CurrentVolume^.TypeName[1] = 'x') and
-    (CurrentVolume^.TypeName[2] = 't'));
+  Result := CurrentVolume^.Driver^.HasNoOwners;
 end;
 
 function BigFileByte(Position: QWord): Byte;
