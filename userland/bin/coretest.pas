@@ -125,7 +125,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..397] of TCommandTest = (
+  CommandTests: array[0..399] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -684,7 +684,14 @@ const
     (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0),
     { Process limits (limittest): thousands of threads, regions and handles,
       a child given 600 handles, and every count back to its baseline. }
-    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { The clocks (timetest): nanosecond clocks that never go back, sleeps
+      neither early nor late with idle processors' ticks stopped, Now in
+      milliseconds, stepping and slewing the wall clock. }
+    (Command: 'timetest > time.log; echo $?; grep FAIL time.log; tail -n 1 time.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Tickless idle: processors idle for 3 seconds take fewer than 5 clock
+      interrupts a second each (100 with the old periodic tick). }
+    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log'; ExpectedOutput: '0'#10; ExpectedStatus: 0)
   );
 
 var
