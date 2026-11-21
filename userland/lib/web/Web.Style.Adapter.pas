@@ -75,7 +75,8 @@ function ElementIdAtom(Element: TElement): TCssAtom;
 implementation
 
 uses
-  Web.Style.Atoms, Web.Style.NodeData;
+  Web.Style.Atoms, Web.Style.NodeData,
+  Web.Dom.FormControls;
 
 var
   AtomLangAttribute, AtomDirAttribute, AtomOpenAttribute: TAtom;
@@ -282,12 +283,14 @@ begin
   if Name = AtomInput then
   begin
     InputType := AsciiLowerCase(Node.AttributeValueOf(AtomType));
-    if ((InputType = 'checkbox') or (InputType = 'radio')) and Node.HasAttributeAtom(AtomChecked) then
+    if ((InputType = 'checkbox') or (InputType = 'radio')) and Web.Dom.FormControls.InputChecked(Node) then
       Include(Result, esChecked);
-    if Node.HasAttributeAtom(AtomPlaceholder) and (Node.AttributeValueOf(AtomValue) = '') then
+    if Node.HasAttributeAtom(AtomPlaceholder) and IsTextControl(Node) and (TextControlValue(Node) = '') then
       Include(Result, esPlaceholderShown);
   end
-  else if (Name = AtomOption) and Node.HasAttributeAtom(AtomSelected) then
+  else if (Name = AtomTextarea) and Node.HasAttributeAtom(AtomPlaceholder) and (TextAreaValue(Node) = '') then
+    Include(Result, esPlaceholderShown)
+  else if (Name = AtomOption) and OptionSelected(Node) then
     Include(Result, esChecked)
   else if ((Name = AtomDetails) or (Name = AtomDialog)) and Node.HasAttributeAtom(AtomOpenAttribute) then
     Include(Result, esOpen);

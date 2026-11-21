@@ -101,6 +101,7 @@ type
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
+    procedure ControlStateChanged(Element: TElement); override;
     property Document: TDocument read FDocument;
     property Engine: TCssStyleEngine read FEngine;
     property Adapter: TDomElementAdapter read FAdapter;
@@ -508,6 +509,19 @@ begin
     if IsStyleSheetOwner(Element) then
       FSheetsDirty := True;
   end;
+  if Assigned(FOnElementAttributeChanged) then
+    FOnElementAttributeChanged(Element);
+end;
+
+procedure TDocumentStyler.ControlStateChanged(Element: TElement);
+begin
+  if not Element.IsConnected then
+    Exit;
+  FTreeChanged := True;
+  { :checked, :placeholder-shown and their sibling combinators. }
+  MarkSubtreeStyleDirty(Element);
+  if Element.ParentNode <> nil then
+    MarkSiblingsDirty(Element.ParentNode);
   if Assigned(FOnElementAttributeChanged) then
     FOnElementAttributeChanged(Element);
 end;

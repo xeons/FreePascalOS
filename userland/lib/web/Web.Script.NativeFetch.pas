@@ -25,7 +25,7 @@
     natives.fetchAbort(id)          cancels it
 
   and what comes back as natives.onFetchEvent(id, kind, ...):
-  ('response', status, statusText, headers, url, {type, redirected}),
+  ('response', status, statusText, headers, url, details: type and redirected),
   ('data', Uint8Array), ('end') or ('error', message). A context's
   fetches are cancelled when it goes.
 }

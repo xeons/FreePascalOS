@@ -109,17 +109,30 @@ begin
 end;
 
 procedure TWebView.SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+begin
+  if (Element = FFocusedElement) and (ShowFocus = FFocusVisible) then
+    Exit;
+  FFocusVisible := ShowFocus;
+  { The focusing steps fire the events; the document tells FocusMoved. }
+  if Element <> nil then
+    FocusElement(Element)
+  else if FFocusedElement <> nil then
+    UnfocusElement(FFocusedElement);
+  if (FDocument <> nil) and (FDocument.FocusedElement <> FFocusedElement) then
+    FocusMoved(FDocument.FocusedElement)
+  else
+    FocusMoved(FFocusedElement);
+end;
+
+procedure TWebView.FocusMoved(Element: TElement);
 var
   Old: TElement;
   Node: TNode;
 begin
-  if (Element = FFocusedElement) and (ShowFocus = FFocusVisible) then
-    Exit;
   Old := FFocusedElement;
-  FFocusedElement := Element;
-  FFocusVisible := ShowFocus;
   if Element <> nil then
     Element.Retain;
+  FFocusedElement := Element;
   if Old <> nil then
   begin
     { The old one and its ancestors lose :focus and :focus-within. }
@@ -130,10 +143,12 @@ begin
         ApplyStates(TElement(Node));
       Node := Node.ParentNode;
     end;
-    if Old.IsConnected then
-      FireEvent(Old, 'blur');
+    if (Old <> Element) and Old.IsConnected and IsTextControl(Old) and (TextControlValue(Old) <> FFocusValue) then
+      FireEvent(Old, 'change', True);
     Old.Release;
   end;
+  if (Element <> nil) and IsTextControl(Element) and (Element <> Old) then
+    FFocusValue := TextControlValue(Element);
   Node := Element;
   while Node <> nil do
   begin
@@ -141,8 +156,6 @@ begin
       ApplyStates(TElement(Node));
     Node := Node.ParentNode;
   end;
-  if Element <> nil then
-    FireEvent(Element, 'focus');
   RequestFrame;
   InvalidateViewport;
   PostWake;

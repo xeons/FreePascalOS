@@ -54,7 +54,8 @@ implementation
 uses
   Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
-  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Image.Model;
+  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Image.Model,
+  Web.Dom.FormControls;
 
 type
   TClipEntry = record
@@ -599,6 +600,17 @@ begin
   Entry^.Index := Builder.List.AddBorder(Sides);
 end;
 
+{ A password's characters as bullets (one per character). }
+function MaskedText(const Text: string): string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  for Index := 1 to Length(Text) do
+    if (Ord(Text[Index]) and $C0) <> $80 then
+      Result := Result + #$E2#$80#$A2;
+end;
+
 procedure PaintReplacedContent(var Builder: TBuilder; Box: TReplacedBox; X, Y: Single);
 var
   ContentX, ContentY, ContentWidth, ContentHeight, DrawWidth, DrawHeight, Ratio: Single;
@@ -618,12 +630,19 @@ begin
     Entry := Builder.List.Add(diControl, ContentX, ContentY, ContentWidth, ContentHeight, Box);
     Entry^.Index := Box.ControlKind;
     Entry^.Color := ToColor(Box.Style.Color);
-    if (Box.Node <> nil) and Box.Node.IsElement and TElement(Box.Node).HasAttributeAtom(AtomChecked) then
+    if (Box.Node <> nil) and Box.Node.IsElement and TElement(Box.Node).IsHtmlElement(AtomInput) and
+      Web.Dom.FormControls.InputChecked(TElement(Box.Node)) then
       Entry^.Value := 1;
     if (Box.ControlKind in [ControlTextField, ControlTextArea]) and (Box.Node <> nil) and Box.Node.IsElement then
     begin
       if Box.ControlKind = ControlTextArea then
-        Text := DescendantTextContent(Box.Node)
+        Text := TextAreaValue(TElement(Box.Node))
+      else if IsTextControl(TElement(Box.Node)) then
+      begin
+        Text := InputValue(TElement(Box.Node));
+        if InputType(TElement(Box.Node)) = 'password' then
+          Text := MaskedText(Text);
+      end
       else if TElement(Box.Node).HasAttributeAtom(AtomValue) then
         Text := TElement(Box.Node).AttributeValueOf(AtomValue)
       else

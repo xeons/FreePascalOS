@@ -151,6 +151,9 @@ begin
   FSelectionFocus := FSelectionAnchor;
   FreeAndNil(FPainter);
   FreeAndNil(FLayout);
+  if (FDocument <> nil) and (FDocumentObserver <> nil) then
+    FDocument.RemoveObserver(FDocumentObserver);
+  FreeAndNil(FDocumentObserver);
   if FDocument <> nil then
   begin
     FSink.DocumentGoing(FDocument);
@@ -172,6 +175,9 @@ begin
   if Document = nil then
     Exit;
   FSink.PrepareDocument(Document);
+  FDocumentObserver := TViewDocumentObserver.Create;
+  TViewDocumentObserver(FDocumentObserver).View := Self;
+  Document.AddObserver(FDocumentObserver);
   FLayout := TDocumentLayout.Create(Document);
   FPainter := TDocumentPainter.Create(FLayout);
   ApplyViewport;

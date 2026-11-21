@@ -169,6 +169,11 @@ type
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); virtual;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); virtual;
+    { A form control's value, checkedness, selectedness or selection
+      changed (state that is not in its attributes). }
+    procedure ControlStateChanged(Element: TElement); virtual;
+    { The document's focused element changed (either may be nil). }
+    procedure FocusChanged(Old, New: TElement); virtual;
   end;
 
   TDocumentObserverArray = array of TDocumentObserver;
@@ -211,6 +216,10 @@ type
     property RareData: TNodeRareData read GetRareData;
   public
     destructor Destroy; override;
+    { The form control state object of the node (nil if none); the node
+      owns it (Web.Dom.FormControls keeps it). }
+    function FormStateObject: TObject;
+    procedure SetFormStateObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
     { References: see the unit's description. }
@@ -512,6 +521,7 @@ type
     FReadyState: TDocumentReadyState;
     FDefaultView: TEventTarget;
     FTargetElement: TElement;
+    FFocusedElement: TElement;
     FBrowsingContext: TObject;
     FOnReadyStateChange: TDocumentNotifyEvent;
     procedure SetReadyState(Value: TDocumentReadyState);
@@ -541,6 +551,8 @@ type
     function CloneSelf(Document: TDocument): TNode; override;
     function GetTheParent(Event: TEvent): TEventTarget; override;
   public
+    { Tells the observers a form control's state changed (Web.Dom.FormControls). }
+    procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }
     constructor CreateDocument(HtmlDocument: Boolean = True);
     destructor Destroy; override;
@@ -592,6 +604,11 @@ type
     property DefaultView: TEventTarget read FDefaultView write FDefaultView;
     { The element the URL's fragment indicates (:target), or nil. }
     property TargetElement: TElement read FTargetElement write FTargetElement;
+    { The focused area of the document (HTML 6.6.4: nil is its viewport);
+      Web.Dom.Focus runs the focusing steps. A focused element that
+      leaves the document is unfocused (the focus fixup). }
+    property FocusedElement: TElement read FFocusedElement;
+    procedure SetFocusedElementOnly(Element: TElement);
     { The loading side's object for this document (Web.Loading). }
     property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
     { Called after ReadyState changed (and readystatechange fired). }
@@ -717,6 +734,8 @@ type
     AttributeMap: TNamedNodeMap;
     TemplateContent: TDocumentFragment;
     ElementState: Word;
+    { A form control's state beyond its attributes (Web.Dom.FormControls). }
+    FormState: TObject;
     destructor Destroy; override;
   end;
 

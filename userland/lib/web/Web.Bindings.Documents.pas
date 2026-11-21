@@ -519,12 +519,17 @@ end;
 
 function Document_hasFocus(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsFalse;
+  Result := JsTrue;
 end;
 
 function Document_get_activeElement(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).WrapNode(ThisDocument(Call).Body);
+  if ThisDocument(Call).FocusedElement <> nil then
+    Result := Context(Call).WrapNode(ThisDocument(Call).FocusedElement)
+  else if ThisDocument(Call).Body <> nil then
+    Result := Context(Call).WrapNode(ThisDocument(Call).Body)
+  else
+    Result := JsNull;
 end;
 
 function Document_get_hidden(var Call: TBindingCall): TJsValue;

@@ -28,6 +28,17 @@ const
   { CSS pixels an arrow key scrolls. }
   ArrowStep = 40;
 
+procedure TWebView.KeyUp(Code, Modifiers: LongWord);
+var
+  Character: LongWord;
+begin
+  Character := 0;
+  if Code <= High(FKeyCharacters) then
+    Character := FKeyCharacters[Code];
+  DispatchKeyboardEvent('keyup', Code, Character, Modifiers);
+  inherited KeyUp(Code, Modifiers);
+end;
+
 function TWebView.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Control: Boolean;
@@ -37,6 +48,15 @@ var
 begin
   Result := True;
   Control := (Modifiers and ModifierControl) <> 0;
+  if Code <= High(FKeyCharacters) then
+    FKeyCharacters[Code] := Character;
+  { The page sees the key first (keydown, then keypress for a character);
+    cancelling either stops what the key would do. }
+  if not DispatchKeyboardEvent('keydown', Code, Character, Modifiers) then
+    Exit;
+  if (Character >= 32) and (Character <> 127) and not Control and ((Modifiers and ModifierAlt) = 0) and
+    not DispatchKeyboardEvent('keypress', Code, Character, Modifiers) then
+    Exit;
   { A text field with the focus takes what it types. }
   if TypeIntoField(Code, Character, Modifiers) then
     Exit;

@@ -184,6 +184,13 @@ type
     FActiveChain: TElementChain;
     FFocusedElement: TElement;
     FFocusVisible: Boolean;
+    { The value a focused text control had when it got the focus (change
+      fires when it leaves with another). }
+    FFocusValue: string;
+    { Hears the document's focus changes (script's focus() too). }
+    FDocumentObserver: TDocumentObserver;
+    { The character each key typed when pressed (keyup's key). }
+    FKeyCharacters: array[0..511] of LongWord;
     FPressedLink: TElement;
     FPressedControl: TElement;
     FPressButton: LongWord;
@@ -273,6 +280,16 @@ type
     procedure ActivateLink(Link: TElement; Disposition: TLinkDisposition);
     function DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
     procedure SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+    { The document's focus moved to Element (nil: the viewport). }
+    procedure FocusMoved(Element: TElement);
+    { A KeyboardEvent at the focused element (or the body); False when the
+      page cancelled it. }
+    function DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
+    { An InputEvent after an edit of a text control. }
+    procedure FireInputEvent(Element: TElement; const InputType, Data: string);
+    { Implicit submission (Enter in a field): the form's default button,
+      else the form. }
+    procedure SubmitImplicitly(Field: TElement);
     { Form controls (WebView.Control.Forms.inc). }
     procedure ClickElement(Element: TElement);
     procedure ActivateControl(Control: TElement);
@@ -313,6 +330,7 @@ type
     procedure PointerLeave; override;
     procedure Wheel(Steps: LongInt); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    procedure KeyUp(Code, Modifiers: LongWord); override;
     procedure FocusChanged; override;
     procedure ContextMenu(X, Y: LongInt; FromKeyboard: Boolean); override;
   public
@@ -413,9 +431,26 @@ uses
   Web.Paint.DisplayList,
   Web.Text.FontInstances,
   Web.Script.PageScripting,
+  Web.Dom.Focus,
+  Web.Dom.FormControls,
   WebView.Network,
   WebView.Zoom,
-  WebView.Forms;
+  WebView.Forms,
+  WebView.KeyNames,
+  WebView.TextEditing;
+
+type
+  { The view's ear on its document. }
+  TViewDocumentObserver = class(TDocumentObserver)
+  public
+    View: TWebView;
+    procedure FocusChanged(Old, New: TElement); override;
+  end;
+
+procedure TViewDocumentObserver.FocusChanged(Old, New: TElement);
+begin
+  View.FocusMoved(New);
+end;
 
 {$I WebView.Control.Observer.inc}
 {$I WebView.Control.Core.inc}

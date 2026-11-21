@@ -219,6 +219,44 @@
     }
   };
 
+  // The CSS namespace (CSSOM 9.1, CSS Conditional 3): supports() through
+  // the engine's parser, escape() as CSSOM serializes identifiers.
+  const CSSNamespace = {
+    supports: function supports(conditionOrProperty, value) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'supports' on 'CSS': 1 argument required.");
+      if (arguments.length >= 2) {
+        const property = String(conditionOrProperty).trim();
+        if (property.indexOf("--") === 0) return true;
+        return natives.cssSupports("(" + property + ": " + String(value) + ")");
+      }
+      return natives.cssSupports(String(conditionOrProperty));
+    },
+    escape: function escape(ident) {
+      const text = String(ident);
+      let result = "";
+      for (let index = 0; index < text.length; index++) {
+        const code = text.charCodeAt(index);
+        const character = text.charAt(index);
+        if (code === 0) result += "\uFFFD";
+        else if ((code >= 1 && code <= 0x1f) || code === 0x7f ||
+          (index === 0 && code >= 0x30 && code <= 0x39) ||
+          (index === 1 && code >= 0x30 && code <= 0x39 && text.charCodeAt(0) === 0x2d))
+          result += "\\" + code.toString(16) + " ";
+        else if (index === 0 && text.length === 1 && code === 0x2d) result += "\\" + character;
+        else if (code >= 0x80 || code === 0x2d || code === 0x5f || (code >= 0x30 && code <= 0x39) ||
+          (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) result += character;
+        else result += "\\" + character;
+      }
+      return result;
+    },
+    registerProperty: function registerProperty(definition) {
+      if (definition === null || typeof definition !== "object" || definition.name === undefined)
+        throw new TypeError("Failed to execute 'registerProperty' on 'CSS': required member name is undefined.");
+    }
+  };
+  Object.defineProperty(CSSNamespace, Symbol.toStringTag, { value: "CSS", configurable: true });
+  define(global, "CSS", CSSNamespace);
+
   // Web Cryptography: getRandomValues, randomUUID and subtle.digest.
   const integerArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
     BigInt64Array, BigUint64Array];

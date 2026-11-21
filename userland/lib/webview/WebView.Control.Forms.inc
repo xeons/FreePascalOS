@@ -18,19 +18,6 @@
 
 { WebView.Control: form controls, labels and details. }
 
-function CodePointToUtf8(CodePoint: LongWord): string;
-begin
-  if CodePoint < $80 then
-    Result := Chr(CodePoint)
-  else if CodePoint < $800 then
-    Result := Chr($C0 or (CodePoint shr 6)) + Chr($80 or (CodePoint and $3F))
-  else if CodePoint < $10000 then
-    Result := Chr($E0 or (CodePoint shr 12)) + Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F))
-  else
-    Result := Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
-      Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
-end;
-
 procedure TWebView.ControlEdited(Element: TElement);
 begin
   FireEvent(Element, 'input', True);
@@ -39,76 +26,218 @@ begin
   PostWake;
 end;
 
+procedure TWebView.FireInputEvent(Element: TElement; const InputType, Data: string);
+begin
+  DispatchInputEvent(Element, InputType, Data, (InputType = 'insertText') or (InputType = 'insertFromPaste'));
+  InvalidateViewport;
+  RequestFrame;
+  PostWake;
+end;
+
+function TWebView.DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
+var
+  Target: TObject;
+begin
+  Result := True;
+  if FDocument = nil then
+    Exit;
+  if (FFocusedElement <> nil) and FFocusedElement.IsConnected then
+    Target := FFocusedElement
+  else if FDocument.Body <> nil then
+    Target := FDocument.Body
+  else if FDocument.DocumentElement <> nil then
+    Target := FDocument.DocumentElement
+  else
+    Target := FDocument;
+  Result := DispatchKeyEvent(Target, EventType, Code, Character, Modifiers);
+  PostWake;
+end;
+
+{ HTML 4.10.21.2: Enter in a field presses the form's default button (its
+  first submit button) or, without one, submits the form. }
+procedure TWebView.SubmitImplicitly(Field: TElement);
+var
+  Form: TElement;
+  Node: TNode;
+begin
+  Form := FormOwnerOf(Field);
+  if Form = nil then
+    Exit;
+  Node := Form.NextInTree(Form);
+  while Node <> nil do
+  begin
+    if Node.IsElement and (FormControlKindOf(TElement(Node)) = FormControlSubmit) and
+      (FormOwnerOf(TElement(Node)) = Form) then
+    begin
+      if not IsDisabledControl(TElement(Node)) then
+        ActivateControl(TElement(Node));
+      Exit;
+    end;
+    Node := Node.NextInTree(Form);
+  end;
+  SubmitForm(Form, nil);
+end;
+
+{ The editing a key does in the focused text control (after the page let
+  its keydown through): characters, Backspace and Delete (Ctrl: a word),
+  the arrows, Home and End (Shift extends the selection), Ctrl+A, Ctrl+C,
+  Ctrl+X and Ctrl+V, Enter (a line break in a text area, the form's
+  submission in a field). }
 function TWebView.TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
 var
   Kind: TFormControlKind;
-  Value, Pasted: string;
   Element: TElement;
+  Edit: TTextEdit;
+  Start, Finish, MaximumLength: Integer;
+  Direction, Before: string;
+  Control, Shift, MultiLine, ReadOnly: Boolean;
+
+  procedure Commit(const InputType, Data: string);
+  begin
+    if Edit.Value <> Before then
+      SetTextControlValue(Element, Edit.Value);
+    SetTextSelection(Element, Edit.SelectionStart, Edit.SelectionEnd, Edit.Direction);
+    if Edit.Value <> Before then
+      FireInputEvent(Element, InputType, Data)
+    else
+    begin
+      InvalidateViewport;
+      RequestFrame;
+    end;
+  end;
+
+  procedure InsertText(const Text, InputType: string);
+  begin
+    if ReadOnly then
+      Exit;
+    if (MaximumLength >= 0) and (Utf16CountOf(Edit.Value) - (Edit.SelectionEnd - Edit.SelectionStart) +
+      Utf16CountOf(Text) > MaximumLength) then
+      Exit;
+    Edit.Insert(Text, MultiLine);
+    Commit(InputType, Text);
+  end;
+
 begin
   Result := False;
   Element := FFocusedElement;
-  if Element = nil then
+  if (Element = nil) or not IsTextControl(Element) or IsDisabledControl(Element) then
     Exit;
   Kind := FormControlKindOf(Element);
-  if not (Kind in [FormControlText, FormControlPassword, FormControlTextArea]) then
-    Exit;
-  if Element.HasAttribute('readonly') or IsDisabledControl(Element) then
-    Exit;
-  Value := ControlValue(Element);
-  if (Modifiers and ModifierControl) <> 0 then
+  MultiLine := Kind = FormControlTextArea;
+  ReadOnly := Element.HasAttribute('readonly');
+  MaximumLength := -1;
+  if Element.HasAttribute('maxlength') then
+    MaximumLength := StrToIntDef(Element.GetAttribute('maxlength'), -1);
+  Control := (Modifiers and ModifierControl) <> 0;
+  Shift := (Modifiers and ModifierShift) <> 0;
+  Edit.Value := TextControlValue(Element);
+  Before := Edit.Value;
+  GetTextSelection(Element, Start, Finish, Direction);
+  Edit.SetSelection(Start, Finish, Direction);
+  Result := True;
+  if Control then
   begin
-    if Code = KeyV then
-    begin
-      Pasted := ClipboardText;
-      if Kind <> FormControlTextArea then
-      begin
-        if Pos(#10, Pasted) > 0 then
-          Pasted := Copy(Pasted, 1, Pos(#10, Pasted) - 1);
-        Pasted := StringReplace(Pasted, #13, '', [rfReplaceAll]);
-      end;
-      SetControlValue(Element, Value + Pasted);
-      ControlEdited(Element);
-      Exit(True);
-    end;
-    Exit;
-  end;
-  if Code = KeyTab then
-    Exit;
-  if Code = KeyBackspace then
-  begin
-    if Value <> '' then
-    begin
-      SetControlValue(Element, WithoutLastCharacter(Value));
-      ControlEdited(Element);
-    end;
-    Exit(True);
-  end;
-  if Code = KeyEscape then
-  begin
-    SetFocusedElement(nil, False);
-    Exit(True);
-  end;
-  if IsEnterKey(Code) then
-  begin
-    if Kind = FormControlTextArea then
-    begin
-      SetControlValue(Element, Value + #10);
-      ControlEdited(Element);
-    end
+    case Code of
+      KeyA:
+        begin
+          Edit.Move(MoveAll, False);
+          Commit('', '');
+        end;
+      KeyC:
+        if Edit.HasSelectedText and (Kind <> FormControlPassword) then
+          SetClipboardText(Edit.SelectedText);
+      KeyX:
+        if Edit.HasSelectedText and not ReadOnly and (Kind <> FormControlPassword) then
+        begin
+          SetClipboardText(Edit.SelectedText);
+          Edit.DeleteBackward(False);
+          Commit('deleteByCut', '');
+        end;
+      KeyV:
+        InsertText(ClipboardText, 'insertFromPaste');
+      KeyBackspace:
+        if not ReadOnly and Edit.DeleteBackward(True) then
+          Commit('deleteWordBackward', '');
+      KeyDelete:
+        if not ReadOnly and Edit.DeleteForward(True) then
+          Commit('deleteWordForward', '');
+      KeyArrowLeft:
+        begin
+          Edit.Move(MoveWordLeft, Shift);
+          Commit('', '');
+        end;
+      KeyArrowRight:
+        begin
+          Edit.Move(MoveWordRight, Shift);
+          Commit('', '');
+        end;
+      KeyHome:
+        begin
+          Edit.SetSelection(0, 0, 'none');
+          Commit('', '');
+        end;
+      KeyEnd:
+        begin
+          Edit.SetSelection(Utf16CountOf(Edit.Value), Utf16CountOf(Edit.Value), 'none');
+          Commit('', '');
+        end;
     else
-    begin
-      FireEvent(Element, 'change', True);
-      SubmitForm(FormOwnerOf(Element), nil);
+      Result := False;
     end;
-    Exit(True);
+    Exit;
   end;
-  if (Code = KeyArrowLeft) or (Code = KeyArrowRight) or (Code = KeyHome) or (Code = KeyEnd) or (Code = KeyDelete) then
-    Exit(True);
-  if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
-  begin
-    SetControlValue(Element, Value + CodePointToUtf8(Character));
-    ControlEdited(Element);
-    Exit(True);
+  case Code of
+    KeyBackspace:
+      if not ReadOnly and Edit.DeleteBackward(False) then
+        Commit('deleteContentBackward', '');
+    KeyDelete:
+      if not ReadOnly and Edit.DeleteForward(False) then
+        Commit('deleteContentForward', '');
+    KeyArrowLeft:
+      begin
+        Edit.Move(MoveCharacterLeft, Shift);
+        Commit('', '');
+      end;
+    KeyArrowRight:
+      begin
+        Edit.Move(MoveCharacterRight, Shift);
+        Commit('', '');
+      end;
+    KeyHome:
+      begin
+        Edit.Move(MoveLineStart, Shift);
+        Commit('', '');
+      end;
+    KeyEnd:
+      begin
+        Edit.Move(MoveLineEnd, Shift);
+        Commit('', '');
+      end;
+    KeyArrowUp, KeyArrowDown:
+      if MultiLine then
+      begin
+        if Code = KeyArrowUp then
+          Edit.Move(MoveLineUp, Shift)
+        else
+          Edit.Move(MoveLineDown, Shift);
+        Commit('', '');
+      end
+      else
+        Result := False;
+    KeyTab, KeyEscape:
+      Result := False;
+  else
+    if IsEnterKey(Code) then
+    begin
+      if MultiLine then
+        InsertText(#10, 'insertLineBreak')
+      else
+        SubmitImplicitly(Element);
+    end
+    else if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
+      InsertText(CodePointText(Character), 'insertText')
+    else
+      Result := False;
   end;
 end;
 

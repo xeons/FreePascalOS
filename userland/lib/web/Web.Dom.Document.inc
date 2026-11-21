@@ -526,6 +526,27 @@ begin
     FObservers[Index - 1].AttributeChanged(Element, LocalAtom, Namespace, OldValue, HadValue);
 end;
 
+procedure TDocument.SetFocusedElementOnly(Element: TElement);
+var
+  Old: TElement;
+  Index: Integer;
+begin
+  if Element = FFocusedElement then
+    Exit;
+  Old := FFocusedElement;
+  FFocusedElement := Element;
+  for Index := 1 to System.Length(FObservers) do
+    FObservers[Index - 1].FocusChanged(Old, Element);
+end;
+
+procedure TDocument.NotifyControlStateChanged(Element: TElement);
+var
+  Index: Integer;
+begin
+  for Index := 1 to System.Length(FObservers) do
+    FObservers[Index - 1].ControlStateChanged(Element);
+end;
+
 procedure TDocument.NotifyCharacterDataChanged(Node: TCharacterData; const OldValue: string);
 var
   Index: Integer;
@@ -584,6 +605,8 @@ begin
       UnregisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
     if Node = FTargetElement then
       FTargetElement := nil;
+    if Node = FFocusedElement then
+      SetFocusedElementOnly(nil);
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
     Node := Node.NextInTree(Root);

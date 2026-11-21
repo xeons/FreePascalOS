@@ -168,6 +168,7 @@ interface HTMLInputElement : HTMLElement {
   undefined select();
   attribute unsigned long? selectionStart;
   attribute unsigned long? selectionEnd;
+  attribute DOMString? selectionDirection;
   undefined setSelectionRange(unsigned long start, unsigned long end, optional DOMString direction);
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString useMap;
@@ -214,6 +215,10 @@ interface HTMLTextAreaElement : HTMLElement {
   boolean reportValidity();
   undefined setCustomValidity(DOMString error);
   undefined select();
+  attribute unsigned long selectionStart;
+  attribute unsigned long selectionEnd;
+  attribute DOMString selectionDirection;
+  undefined setSelectionRange(unsigned long start, unsigned long end, optional DOMString direction);
 };
 
 [Exposed=Window, LocalNames=(select)]

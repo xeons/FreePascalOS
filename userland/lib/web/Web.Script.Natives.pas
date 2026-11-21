@@ -59,6 +59,7 @@ uses
   Js.Functions,
   Js.Engine,
   Css.MediaQueries,
+  Css.Supports,
   Crypto.Digests,
   Crypto.Random,
   Web.Storage,
@@ -276,6 +277,17 @@ begin
   end;
 end;
 
+function NativeCssSupports(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Text: string;
+begin
+  Text := ArgText(Context, Args, ArgCount, 0);
+  if SupportsConditionText(Text) then
+    Exit(JsTrue);
+  { A bare declaration ("display: grid") is tested in parentheses. }
+  Result := JsBoolean(SupportsConditionText('(' + Text + ')'));
+end;
+
 function NativeDigest(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Name: string;
@@ -330,7 +342,7 @@ begin
 end;
 
 const
-  NativeCount = 18;
+  NativeCount = 19;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -349,8 +361,9 @@ const
     'normalizeMedia',
     'digest',
     'randomFill',
-    'beacon');
-  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3);
+    'beacon',
+    'cssSupports');
+  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -369,7 +382,8 @@ const
     @NativeNormalizeMedia,
     @NativeDigest,
     @NativeRandomFill,
-    @NativeBeacon);
+    @NativeBeacon,
+    @NativeCssSupports);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

@@ -157,17 +157,19 @@ begin
   end;
 end;
 
-{ A text field with the focus shows a caret after its text. }
+{ A text field with the focus shows its caret where its selection's
+  focus is (on its line in a text area). }
 procedure TWebView.PaintCaret(var Canvas: TCanvas);
 var
   Box: TLayoutBox;
-  BoxX, BoxY, TextWidth: Single;
+  BoxX, BoxY, TextWidth, LineHeight: Single;
   ScrollX, ScrollY: Single;
   Scale: Double;
-  Value: string;
+  Value, Before, Direction: string;
   Left, Top, Bottom: LongInt;
   Font: TTextFont;
   Kind: TFormControlKind;
+  Start, Finish, Caret, LineIndex, Index: Integer;
 begin
   if (FLayout = nil) or (FFocusedElement = nil) or not Focused then
     Exit;
@@ -179,28 +181,34 @@ begin
     Exit;
   Box.AbsolutePosition(BoxX, BoxY);
   Value := ControlValue(FFocusedElement);
+  GetTextSelection(FFocusedElement, Start, Finish, Direction);
+  if Direction = 'backward' then
+    Caret := Start
+  else
+    Caret := Finish;
+  Before := Copy(Value, 1, ByteIndexOfUtf16(Value, Caret) - 1);
+  LineIndex := 0;
   if Kind = FormControlTextArea then
   begin
-    { The last line's text. }
-    if LastDelimiter(#10, Value) > 0 then
-      Value := Copy(Value, LastDelimiter(#10, Value) + 1, MaxInt);
+    for Index := 1 to Length(Before) do
+      if Before[Index] = #10 then
+        Inc(LineIndex);
+    if LastDelimiter(#10, Before) > 0 then
+      Before := Copy(Before, LastDelimiter(#10, Before) + 1, MaxInt);
   end
   else if Kind = FormControlPassword then
-    Value := StringOfChar('*', Length(Value));
+    Before := StringOfChar('*', Utf16CountOf(Before));
   Font := TextFontOf(Box.Style);
   TextWidth := 0;
-  if Value <> '' then
-    TextWidth := Font.MeasureText(Value, 1, Length(Value));
+  if Before <> '' then
+    TextWidth := Font.MeasureText(Before, 1, Length(Before));
+  LineHeight := Font.Ascent + Font.Descent + 2;
   FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
   Scale := DeviceScale;
   Left := Round((BoxX + Box.ContentLeft + Min(TextWidth, Box.ContentWidth) - ScrollX) * Scale);
-  Top := Round((BoxY + Box.ContentTop - ScrollY) * Scale);
-  Bottom := Round((BoxY + Box.ContentTop + Min(Box.ContentHeight, Font.Ascent + Font.Descent + 2) - ScrollY) * Scale);
-  if Kind = FormControlTextArea then
-  begin
-    Top := Round((BoxY + Box.ContentTop + Box.ContentHeight - Font.Ascent - Font.Descent - 2 - ScrollY) * Scale);
-    Bottom := Round((BoxY + Box.ContentTop + Box.ContentHeight - ScrollY) * Scale);
-  end;
+  Top := Round((BoxY + Box.ContentTop + LineIndex * LineHeight - ScrollY) * Scale);
+  Bottom := Round((BoxY + Box.ContentTop + LineIndex * LineHeight + Min(Box.ContentHeight, LineHeight) - ScrollY) *
+    Scale);
   FillRectangle(Canvas, MakeRectangle(Left, Top, Max(1, Round(Scale)), Max(1, Bottom - Top)), ColorBlack);
 end;
 

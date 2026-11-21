@@ -94,6 +94,7 @@ uses
   Web.Dom.Exceptions,
   Web.Dom,
   Web.Dom.UiEvents,
+  Web.Dom.FormControls,
   Web.Bindings.Types,
   Web.Bindings.Strings,
   Web.Bindings.Listeners,
@@ -148,20 +149,7 @@ type
     time an interface is needed). }
   TInterfaceInstaller = procedure(Context: TBindingContext; InterfaceId: Integer);
 
-  { The state of a form control that is not in its attributes (HTML
-    Standard 4.10.17): value and checkedness with their dirty flags,
-    selectedness of options, indeterminate, the custom validity message. }
-  TFormControlState = class
-  public
-    Value: string;
-    ValueDirty: Boolean;
-    Checked: Boolean;
-    CheckedDirty: Boolean;
-    Selected: Boolean;
-    SelectedDirty: Boolean;
-    Indeterminate: Boolean;
-    CustomValidity: string;
-  end;
+  TFormControlState = Web.Dom.FormControls.TFormControlState;
 
   { Objects a window has one of. }
   TWindowSingleton = (SingletonLocation, SingletonNavigator, SingletonHistory, SingletonHistoryState,
@@ -171,7 +159,6 @@ type
   { Where console messages go (Level: 'log', 'error'). }
   TConsoleMessageEvent = procedure(const Level, Text: string) of object;
 
-  TFormStateMap = specialize TFPGMap<Pointer, TFormControlState>;
 
   TBindingContext = class(TBindingListenerOwner)
   private
@@ -198,7 +185,6 @@ type
     FTimeOriginUnix: Double;
     FSingletons: array[TWindowSingleton] of TJsValue;
     FCurrentScript: TElement;
-    FFormStates: TFormStateMap;
     FParentContext: TBindingContext;
     FFrameElement: TElement;
     FChildFrames: array of TBindingContext;
@@ -211,7 +197,6 @@ type
     procedure RegisterWrapper(var List: TBindingWrapperArray; var Count: Integer; Wrapper: TBindingWrapper);
     procedure UnregisterWrapper(var List: TBindingWrapperArray; var Count: Integer; Wrapper: TBindingWrapper);
     procedure WriteConsole(const Text: string; IsError: Boolean);
-    procedure FreeFormStates;
     function NewWrapper(WrapperClass: TBindingWrapperClass; Native: TObject; InterfaceId: Integer;
       Owned: Boolean; Prototype: TJsObject): TJsValue;
   protected
@@ -343,8 +328,8 @@ type
     { Runs the microtasks (promise jobs, mutation observers). }
     procedure PerformMicrotaskCheckpoint; virtual;
 
-    { A form control's state (made on first use, kept while the element
-      has its wrapper), or nil if it has none. }
+    { A form control's state (Web.Dom.FormControls: made on first use,
+      kept with the element), or nil if it has none. }
     function FormState(Element: TElement): TFormControlState;
     function FindFormState(Element: TElement): TFormControlState;
 
@@ -669,7 +654,6 @@ begin
   FreeAndNil(FDocumentObserver);
   if FOwnsWindow then
     FWindow.Free;
-  FreeFormStates;
   FDocument.Release;
   if FOwnsEnvironment then
     FEnvironment.Free;
@@ -739,54 +723,22 @@ begin
     Result := Result.FParentContext;
 end;
 
-procedure TBindingContext.FreeFormStates;
-var
-  Index: Integer;
-begin
-  if FFormStates = nil then
-    Exit;
-  for Index := 0 to FFormStates.Count - 1 do
-    FFormStates.Data[Index].Free;
-  FreeAndNil(FFormStates);
-end;
-
 procedure TBindingContext.NodeWrapped(Node: TNode);
 begin
 end;
 
 procedure TBindingContext.NodeWrapperDying(Node: TNode);
-var
-  Index: Integer;
 begin
-  if (FFormStates <> nil) and FFormStates.Find(Node, Index) then
-  begin
-    FFormStates.Data[Index].Free;
-    FFormStates.Delete(Index);
-  end;
 end;
 
 function TBindingContext.FindFormState(Element: TElement): TFormControlState;
-var
-  Index: Integer;
 begin
-  Result := nil;
-  if (FFormStates <> nil) and FFormStates.Find(Element, Index) then
-    Result := FFormStates.Data[Index];
+  Result := FindFormControlState(Element);
 end;
 
 function TBindingContext.FormState(Element: TElement): TFormControlState;
 begin
-  if FFormStates = nil then
-  begin
-    FFormStates := TFormStateMap.Create;
-    FFormStates.Sorted := True;
-  end;
-  Result := FindFormState(Element);
-  if Result = nil then
-  begin
-    Result := TFormControlState.Create;
-    FFormStates.Add(Element, Result);
-  end;
+  Result := FormControlState(Element);
 end;
 
 procedure TBindingContext.WriteConsole(const Text: string; IsError: Boolean);
