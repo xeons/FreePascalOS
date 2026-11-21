@@ -12088,6 +12088,64 @@ about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
 style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
 ms each. A pointer move over an article costs about 2 ms.
 
+More `--do` steps drive the pointer and the viewport
+(`WebBrowse.Pointer`, as the web view does them): `scroll:Y` (or `top`,
+`bottom`), `scrollby:DY`, `hover:SELECTOR` (mouseout, mouseover and
+mousemove, :hover on the chain), `hoverat:X,Y` (hit tested),
+`drag:X1,Y1,X2,Y2` (pressed, moved, released; the text between selected
+through libwebview's text index and `Selection.setBaseAndExtent`),
+`back` and `forward`. `--patience MS` is how long a step waits for quiet
+before it goes on (10 s); an endless animation alone does not keep a
+page from being quiet.
+
+#### Comparing common sites with a reference browser
+
+`scripts/compare-sites.py` (not in `make test`: it needs the network)
+takes the pages of `scripts/compare-sites.list` (about 27 common pages
+that need no login: Wikipedia, search engines, news sites, shops,
+project sites) and, for each, at 1280x800 and 400x800:
+
+- renders it with webbrowse (`--webbrowse BINARY`: a copy keeps runs
+  apart from builds) and records the load time, console errors, failed
+  requests, crashes (a signal, a run-time error, an engine exception
+  in the output), hangs (the watchdog, or no end within the time-out
+  and a grace) and time-outs;
+- renders it with the installed Firefox (`scripts/firefox_reference.py`,
+  driven over its Marionette protocol with no extra packages: headless,
+  a profile and port per worker, overlay scroll bars so the page gets
+  the whole width, the window grown until the viewport is exactly the
+  size asked, a narrower viewport than the window allows made by
+  narrowing the page's browser element, the page left 3 s after its
+  load to settle). The pictures are kept between runs
+  (`--refresh-reference` makes them again), so runs before and after a
+  change compare against the same pictures;
+- scores the difference (Pillow: both pictures in gray, per 16 px block
+  the difference of the means and of the contrast; 0 alike, 100 nothing
+  alike; also per region of a 3 x 3 grid) and writes a heat map;
+- drives the page like a user in webbrowse (the smoke test): marks up
+  to six visible links and buttons, three same-site links and the first
+  search box with a script, scrolls down to the bottom in steps and back
+  up, hovers the marked elements and a grid of points, drags a
+  selection, types into the search box, follows each marked link,
+  scrolls and hovers there and goes back. A crash or hang fails it.
+
+Everything goes into the folder given with `--out` (outside the
+repository: nothing it fetched is committed): the pictures, the logs,
+`results.json`, and `report.txt` / `report.html` with the pages by
+score (`--baseline OLD/results.json` puts the earlier scores beside
+them). Problems found are reduced to small cases in the host tests
+(tools/WebTest/render, WebLayoutTest, WebScriptTest, WebLoadTest,
+JavaScriptTest).
+
+`scripts/qemu-browser-smoke.py ESP SYSTEM-DISK OUT [NAME ...]` does the
+user's part with the real browser: it boots the system under QEMU (KVM
+with `ACCEL=kvm`), waits for the network, starts the display server,
+and for each page opens `/app/browser/browser` on it, scrolls with the
+wheel, moves the tablet over a grid of points, drags a selection,
+clicks three points and goes back with Alt+Left, then checks the
+browser still runs and nothing panicked; it keeps a screen dump of each
+page after loading and after the steps.
+
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
@@ -12095,7 +12153,8 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
+scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
+unicode-range), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic

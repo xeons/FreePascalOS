@@ -267,7 +267,7 @@ def drive_page(machine, name, url, out):
     machine.screendump(os.path.join(out, name + '-after.ppm'))
     probe = len(machine.received)
     machine.type('if kill -0 $! 2>/dev/null; then m=ALIVE; else m=GONE; fi; echo BROWSER-$m; '
-                 'kill $!; wait; cat /tmp/b.log; m=END; echo LOG-$m\r')
+                 'kill $!; wait $!; cat /tmp/b.log; m=END; echo LOG-$m\r')
     alive = machine.wait_for('BROWSER-ALIVE', 15, probe)
     machine.wait_for('LOG-END', 20, probe)
     log = bytes(machine.received[probe:]).decode('utf-8', 'replace')

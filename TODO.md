@@ -1497,6 +1497,26 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       running longer than 10 s on the page thread is stopped
 - [x] CSS animation frames paced by their cost (at most half the GUI
       thread)
+- [x] scripts/compare-sites.py: ~27 common pages rendered by webbrowse
+      and by Firefox (Marionette) at 1280x800 and 400x800, scored, with a
+      smoke test (scrolling, hovering, a drag, typing, links and Back);
+      scripts/qemu-browser-smoke.py does the user's part with the real
+      browser under QEMU
+- [x] Fixes from it: inline element geometry (getBoundingClientRect,
+      getClientRects), <center> centring tables, empty lines around a
+      block in a link, lazy async arrows, await in async arrows in class
+      fields, import maps, module graph and module loader crashes,
+      performance.measure, TreeWalker / NodeIterator, unicode-range and
+      the fallback font, column flex items' min/max width, calc() in
+      media queries, details/summary
+- [ ] Custom elements (customElements is missing: reddit, MDN's widgets,
+      YouTube) and shadow DOM (attachShadow: lit components, archive.org)
+- [ ] WOFF2 web fonts (only the .woff and TrueType sources load today)
+- [ ] A metric-compatible sans-serif (Liberation Sans or Arimo): DejaVu
+      Sans is about 10% wider than Arial, so lines break differently from
+      the reference on most pages (a font decision for the coordinator)
+- [ ] The details element's toggle event, and its default summary
+- [ ] A NodeIterator moved when the node it rests on is removed
 - [ ] Parse large scripts off the GUI thread (Wikipedia's 790 KB module
       bundle holds the window about 7 s under TCG, half of it parsing)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
