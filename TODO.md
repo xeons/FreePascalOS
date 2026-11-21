@@ -45,9 +45,17 @@ how the existing pieces fit together.
 
 ## Memory management
 
-- [ ] Reclaim the loader's boot data pages once the kernel no longer needs them
-- [ ] Unmap the kernel image's padding and map .text/.rodata with no-execute
-      where appropriate (verify W^X across the whole kernel)
+- [x] Reclaim the loader's boot data pages once the kernel no longer needs them
+      (all but the boot stack and the device tree, after phase 1's self tests)
+- [x] Map .text/.rodata/.data by their permissions with no-execute (EFER.NXE
+      in the loader; the window, heap, stacks and devices no-execute; the
+      window's view of the code and read-only data read-only), verified by a
+      page table walk at every start (W^X) and by deliberate violations
+      (`selftest=nx|textwrite|userexec|useraccess|pagepoison`)
+- [x] SMEP and UMIP on x86-64, PAN on AArch64 (with SMAP and PXN: the kernel
+      never runs user code and reaches user memory only through the copy
+      routines)
+- [x] Object reference counts saturate (with a warning) instead of wrapping
 - [ ] Contiguous physical allocations (for DMA buffers)
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
@@ -72,8 +80,8 @@ how the existing pieces fit together.
       their addresses kept from reuse. Needs a reserve / commit / decommit
       call and keeping freed addresses from first-fit reuse (the region
       tree holds a region per block now)
-- [ ] Heap checking for the physical page allocator (fill freed pages, keep
-      them from reuse for a while)
+- [x] Heap checking for the physical page allocator (fill freed pages, keep
+      them from reuse for a while, check them when they leave the quarantine)
 
 ## Objects and processes
 

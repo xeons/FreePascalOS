@@ -33,6 +33,10 @@
   extra holder takes a reference (ReferencePhysicalPage); freeing the
   page drops one, and only the last holder's free returns it to the free
   list.
+
+  With the heap checks' quarantine on ("heapchecks"), a freed page is
+  filled and held back from reuse for a while, and checked for writes
+  after the free when it is let go (Memory.PageQuarantine).
 }
 unit Memory.PhysicalPages;
 
@@ -66,7 +70,10 @@ type
     { Memory shared between processes (Objects.Sections). }
     PageUsageSection,
     { Disk blocks kept in memory (Io.BlockCache). }
-    PageUsageBlockCache
+    PageUsageBlockCache,
+    { Freed, filled, and held back from reuse for a while
+      (Memory.PageQuarantine, with "heapchecks"). }
+    PageUsageQuarantined
   );
 
   { How many pages each use has, for the system's memory figures. }
@@ -121,6 +128,10 @@ procedure GetPageUsageCounts(out Counts: TPageUsageCounts);
 
 procedure WritePhysicalMemorySummary;
 
+{ For the self tests: the offset of the first byte of a quarantined page
+  that is no longer the fill, or NoDamage. }
+function QuarantinedPageDamage(PhysicalAddress: TPhysicalAddress): Int64;
+
 implementation
 
 uses
@@ -128,6 +139,8 @@ uses
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Panic,
+  Memory.HeapChecks,
+  Memory.PageQuarantine,
   Debug.Output;
 
 const
@@ -156,6 +169,8 @@ var
   DatabaseLock: TSpinLock;
   { Kept with every change of a page's use, under the database lock. }
   UsageCounts: TPageUsageCounts;
+  { Freed pages held back (under the database lock). }
+  FreedPageQuarantine: TPageQuarantine;
 
 { Counts every page's use once the database is built; from then on the
   counts follow each change. }
@@ -356,14 +371,33 @@ begin
 
   BuildFreeList;
   CountFrameUsages;
+  ClearPageQuarantine(FreedPageQuarantine);
+end;
+
+{ A quarantined frame, checked, goes to the free list (database lock
+  held). Held back pages count as free already. }
+procedure ReleaseQuarantinedFrameLocked(Frame: QWord);
+var
+  Damage: Int64;
+begin
+  Damage := FindFreedPageDamage(PhysicalToVirtual(Frame shl PageShift));
+  if Damage <> NoDamage then
+    ReportFreedPageDamage(Frame shl PageShift, Damage);
+  ChangeFrameUsage(Frame, PageUsageFree);
+  Dec(FreePageCount);
+  PushFreeFrame(Frame);
 end;
 
 function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
+  Released: QWord;
 begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
+  { Out of free pages: the oldest held back one goes first. }
+  if (FreeListHead = NoNextFrame) and ReleaseOldestFrame(FreedPageQuarantine, Released) then
+    ReleaseQuarantinedFrameLocked(Released);
 
   Frame := FreeListHead;
   if Frame = NoNextFrame then
@@ -505,10 +539,46 @@ begin
     ZeroMemory(PhysicalToVirtual(Result), PageCount * PageSize);
 end;
 
+{ The last holder freed Frame (now PageUsageQuarantined, database lock
+  not held): fills it, puts it in the quarantine and lets the oldest
+  page there go back to the free list once its fill checked out. }
+procedure QuarantineFreedFrame(Frame: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+  Released: QWord;
+  WasReleased: Boolean;
+  Damage: Int64;
+begin
+  FillFreedPage(PhysicalToVirtual(Frame shl PageShift));
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  WasReleased := QuarantineFrame(FreedPageQuarantine, Frame, Released);
+  { Held back pages count as free memory. }
+  Inc(FreePageCount);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if not WasReleased then
+    Exit;
+  { Checked outside the lock; the frame is still PageUsageQuarantined,
+    so nobody else takes it meanwhile. }
+  Damage := FindFreedPageDamage(PhysicalToVirtual(Released shl PageShift));
+  if Damage <> NoDamage then
+    ReportFreedPageDamage(Released shl PageShift, Damage);
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  ChangeFrameUsage(Released, PageUsageFree);
+  Dec(FreePageCount);
+  PushFreeFrame(Released);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function QuarantinedPageDamage(PhysicalAddress: TPhysicalAddress): Int64;
+begin
+  Result := FindFreedPageDamage(PhysicalToVirtual(PhysicalAddress and not PageOffsetMask));
+end;
+
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
 var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
+  MustQuarantine: Boolean;
 begin
   Frame := PhysicalAddress shr PageShift;
   if (Frame >= FrameCount) or ((PhysicalAddress and PageOffsetMask) <> 0) then
@@ -518,7 +588,7 @@ begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
 
   case FrameDatabase[Frame].Usage of
-    PageUsageFree:
+    PageUsageFree, PageUsageQuarantined:
       begin
         ReleaseSpinLock(DatabaseLock, PreviousLevel);
         KernelPanicWithCode(PanicOutOfPhysicalMemory,
@@ -533,14 +603,22 @@ begin
       end;
   end;
 
+  MustQuarantine := False;
   if FrameDatabase[Frame].ExtraReferences > 0 then
     Dec(FrameDatabase[Frame].ExtraReferences)
+  else if KernelHeapCheckLevel = HeapChecksQuarantine then
+  begin
+    ChangeFrameUsage(Frame, PageUsageQuarantined);
+    MustQuarantine := True;
+  end
   else
   begin
     ChangeFrameUsage(Frame, PageUsageFree);
     PushFreeFrame(Frame);
   end;
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if MustQuarantine then
+    QuarantineFreedFrame(Frame);
 end;
 
 function CheckedFrame(PhysicalAddress: TPhysicalAddress): QWord;
@@ -558,7 +636,7 @@ var
 begin
   Frame := CheckedFrame(PhysicalAddress);
   PreviousLevel := AcquireSpinLock(DatabaseLock);
-  if FrameDatabase[Frame].Usage = PageUsageFree then
+  if FrameDatabase[Frame].Usage in [PageUsageFree, PageUsageQuarantined] then
   begin
     ReleaseSpinLock(DatabaseLock, PreviousLevel);
     KernelPanicWithCode(PanicOutOfPhysicalMemory,

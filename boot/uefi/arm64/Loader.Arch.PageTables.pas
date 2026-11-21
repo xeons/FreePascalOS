@@ -23,7 +23,8 @@
 
   - The kernel's (TTBR1_EL1, the upper half), the one the kernel keeps:
     the physical memory window over every range of real memory in the
-    firmware's memory map (normal cached memory), the framebuffer
+    firmware's memory map (normal cached memory, never executable; the
+    kernel's code and read-only data read-only there too), the framebuffer
     (normal non-cacheable) and the firmware's debug UART (device
     memory), and the kernel image at its linked address with 4 KiB pages
     and per-segment permissions.
@@ -153,6 +154,7 @@ begin
   MapFramebuffer(Roots.Kernel, BootInformation.Framebuffer);
   MapDebugPort(Roots.Kernel, BootInformation.AcpiRootPointer);
   MapKernelImage(Roots.Kernel, KernelImage);
+  ProtectKernelImageInWindow(Builder, Roots.Kernel, PhysicalMemoryWindowBase, KernelImage);
   if Builder.OutOfMemory then
     Exit(0);
 

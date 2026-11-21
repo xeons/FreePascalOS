@@ -124,9 +124,9 @@ System unit provides too.
      "Network boot") and copies the kernel's segments into one
      physically contiguous block,
    - allocates the boot information record and a 64 KiB boot stack,
-   - builds page tables: the physical memory window, an identity mapping of
-     the same range, and the kernel image (4 KiB pages, per-segment
-     permissions),
+   - builds page tables: the physical memory window (never executable),
+     an identity mapping of the same range, and the kernel image (4 KiB
+     pages, per-segment permissions: see "Kernel memory protection"),
    - captures the memory map into the boot information record and exits
      boot services,
    - loads CR3, switches to the boot stack and jumps to the kernel.
@@ -148,6 +148,17 @@ System unit provides too.
 The loader tags its own allocations with OS-reserved UEFI memory types
 (`0x80000001`-`0x80000004`), so the memory map tells the kernel exactly which
 pages hold the kernel image, boot data, page tables and the RAM disk.
+
+The boot data pages hold the boot information record (with the memory
+map), the boot stack and, after a native boot, a copy of the device tree.
+Once phase 1 has run the self tests, everything start-up needed from the
+record has been copied or used (options, memory map, firmware tables,
+framebuffer, RAM disk; the AArch64 clock copies the firmware's time at
+its first reading), so `Memory.BootDataReclaim` gives the boot data pages
+back to the page allocator - all but the boot stack, which is the boot
+processor's idle thread's for good, and the device tree, which the
+drivers keep using (`[memory] Boot data given back: 16 KiB (kept: boot
+stack 64 KiB)`). The boot information must not be used after that.
 
 ### Network boot
 
@@ -295,6 +306,87 @@ FFFF_FFFF_8000_0000 - FFFF_FFFF_FFFF_FFFF   kernel image
 The physical memory window maps all RAM (and at least the first 4 GiB, for
 devices) at a fixed offset with 2 MiB pages. Page tables, page frames and
 device registers are reached through it with `PhysicalToVirtual`.
+
+## Kernel memory protection
+
+**W^X.** No kernel page is both writable and executable, on both
+architectures, from the first instruction of the kernel on:
+
+- The linker scripts (`kernel/link/*.ld`) start `.text`, `.rodata` and
+  `.data`/`.bss` on pages of their own, each in its own program header,
+  and name the boundaries (`KernelTextStart`, `KernelReadOnlyDataStart`,
+  ...). The loaders map the code read-only and executable, the read-only
+  data read-only and no-execute, the data writable and no-execute. On
+  x86-64 the loader turns EFER.NXE on first (`Loader.Arch.NoExecute`,
+  when CPUID says the processor has the bit; without NXE the bit is
+  reserved and faults); on AArch64 the code is UXN and everything else
+  PXN and UXN (`Boot.TranslationTableBuilder`, shared with the native
+  boot stub).
+- The physical memory window is never executable: on x86-64 through the
+  no-execute bit of its top level entries (the identity mapping the
+  hand-off runs on shares the window's lower tables but not those
+  entries, so it stays executable until the kernel removes it), on
+  AArch64 in every block and page.
+- The window's view of the kernel's code and read-only data is read-only
+  too (those 2 MiB pages are split into 4 KiB pages; on AArch64 the
+  window is mapped over again for them), so the code cannot be changed
+  through its other address either.
+- Everything the kernel maps later - the heap, stacks, device registers,
+  DMA buffers - is no-execute unless asked for (`MappingExecutable`,
+  which only user mappings use).
+- User pages are never executable by the kernel: on AArch64 every user
+  mapping is PXN, on x86-64 SMEP enforces it.
+
+**The processor's protections** (`Kernel.Arch.ProcessorProtection`,
+turned on in phase 0 before the other processors start, which copy the
+boot processor's settings; logged as `[cpu]`):
+
+| | x86-64 | AArch64 |
+|---|---|---|
+| The kernel never runs user code | SMEP (CPUID 7 EBX bit 7) | PXN on every user page |
+| The kernel reaches user memory only through the copy routines | SMAP (CPUID 7 EBX bit 20; STAC/CLAC around the copy) | PAN (ARMv8.1, ID_AA64MMFR1_EL1.PAN; PSTATE.PAN cleared around the copy) |
+| Programs cannot read the descriptor tables' addresses | UMIP (CPUID 7 ECX bit 2: SGDT, SIDT, SLDT, SMSW and STR fault in user mode) | - |
+
+On AArch64, SCTLR_EL1.SPAN is cleared so every exception taken to EL1
+sets PAN again whatever the interrupted code had, and the exception
+return restores it; a copy that faults (memory another thread freed)
+leaves through `ArchUserCopyFault` with PAN set again in the saved state.
+MSR PAN does not exist on ARMv8.0, so the copy routines test
+`ArchPanEnabled` first. The Cortex-A72 (QEMU's default here, the
+Raspberry Pi 4) has no PAN; the Pi 5's Cortex-A76 and QEMU's "max"
+processor have it (`CPU=max scripts/run-qemu-arm64.sh`; the AArch64 boot
+test boots it once). Every system call reaches user memory through
+`Processes.UserAccess` (`CopyFromUser`, `CopyToUser`,
+`CopyStringFromUser`, the transfer buffers) or through the physical
+memory window (`ReadFromAddressSpace`, the image loader), never through
+a user pointer: the x86-64 test runs coretest under SMAP (QEMU's "max"),
+and coretest passes under PAN with `CPU=max
+scripts/test-qemu-arm64-user.sh` (the native boot test's Cortex-A76 has
+PAN too).
+
+**Tests.** `Kernel.ProtectionSelfTest` runs at every start: it walks the
+kernel's page tables (`Memory.Arch.MappingAudit`, honouring the rights
+every level takes away) and finds no page both writable and executable;
+checks each page of the kernel's code (read-only, executable), read-only
+data (read-only, not executable) and data (not executable), and the
+window's view of each; builds a small user address space
+(`Kernel.TestUserSpace`) whose pages must not be executable by the
+kernel; copies to and from it with SMAP or PAN on (and from a missing
+page, which must fail and leave the protection on). Deliberate
+violations, one per boot, are chosen with `selftest=KIND`
+(`Kernel.ProtectionFaultTest`) and must stop the system with the right
+report; `scripts/test-protection-faults.sh amd64|arm64 ESP` boots each:
+
+| Kind | Does | Report |
+|---|---|---|
+| `nx` | runs a return instruction placed in the kernel's `.bss` | `Instruction fetch from ... (protection violation` |
+| `textwrite` | writes into the kernel's code | `Write to ... (protection violation` |
+| `userexec` | calls code on a user page | `Instruction fetch from ... (protection violation` |
+| `useraccess` | reads a user page without a copy routine | `Read from ... (protection violation` |
+| `pagepoison` | writes into a freed, held back physical page (with `heapchecks`) | `physical page written after it was freed` |
+
+Where the processor lacks a protection, the test stops with an assertion
+that says so instead.
 
 ## Interrupt priority levels
 
@@ -7074,6 +7166,13 @@ deleted, through its type's delete routine, when its last reference is
 dropped. Named objects live in a flat namespace (`LookupObjectByName`).
 Thread objects embed the scheduler's thread control block.
 
+A reference count never wraps: one that reaches
+`ObjectReferenceCountLimit` (2^40, which only a reference leak gets to)
+stays there, the log says so (`[object] Warning: the reference count of
+... saturated`), and the object is never deleted - a leak instead of a use
+after free. A self test takes a count to the limit
+(`SetObjectReferenceCountForTest`) and checks it stays.
+
 ## User mode
 
 ### Processes and address spaces
@@ -7237,9 +7336,10 @@ the exception handler makes the routine return -1 by setting RAX and
 popping its return address, and the call fails with `ErrorBadAddress`.
 Drivers and file systems never see user pointers: reads and writes go
 through a kernel transfer buffer of up to 16 KiB at a time. With that in
-place SMAP is switched on when the processor has it, and the copy routines
-allow user accesses only for their own duration (STAC/CLAC), so a stray
-direct access anywhere else in the kernel faults at once. A kernel self
+place SMAP (x86-64) or PAN (AArch64) is switched on when the processor has
+it, and the copy routines allow user accesses only for their own duration
+(STAC/CLAC, clearing PSTATE.PAN), so a stray direct access anywhere else in
+the kernel faults at once (see "Kernel memory protection"). A kernel self
 test copies to an unmapped user address.
 
 | Area | Calls |
@@ -11059,7 +11159,9 @@ write-back (index 0), device-nGnRE (1, `MapDeviceMemory`), normal
 non-cacheable (2, write-combining: framebuffers) and device-nGnRnE (3).
 Unlike x86-64 the window holds no devices: device registers mapped as
 normal memory could be read speculatively, so every device is mapped on
-demand with device attributes.
+demand with device attributes. The window is execute-never, user pages are
+always PXN, and with PAN (ARMv8.1) the kernel reaches user pages only
+inside the copy routines (see "Kernel memory protection").
 
 A user address space is only a TTBR0 table; the "kernel address space"
 loads an empty one. Kernel mappings are global and user mappings are not:
@@ -11995,13 +12097,20 @@ reported as one (runtime error 218); anything else is an access violation
 - The heap may be used at dispatch level, so the quarantine is a fixed
   table under a spin lock of its own (no memory of its own, no sleeping);
   the heap lock and the quarantine lock are never held together.
-- Not covered: the physical page allocator (`Memory.PhysicalPages`: page
-  tables, DMA buffers, user pages, kernel stacks - stacks have guard pages
-  of their own), device mappings, and memory programs allocate with system
-  calls directly (the heap's own chunks, threadvar blocks, sections). DMA
-  buffers come from the page allocator, so filling heap blocks never changes
-  memory a device is using; a device that writes into a freed heap block is
-  caught as a write after free.
+- Physical pages (`Memory.PhysicalPages`, `Memory.PageQuarantine`; with
+  the quarantine level): a page whose last holder frees it - a page
+  table, a DMA buffer, a user page, a kernel stack - is filled with `$F7`
+  and held back in a ring of the last 256 freed pages (1 MiB) with the use
+  `PageUsageQuarantined`, so freeing it again is a double free. When it
+  leaves the ring, just before it can be handed out again, its fill is
+  checked: a changed byte stops the system with the page and the offset
+  (`physical page written after it was freed`) - a device still writing
+  into a buffer its driver gave back, a stale translation. Held back
+  pages count as free memory, and when the free list runs dry the oldest
+  one is let go early, so the checks never make memory run out.
+- Not covered: device mappings. DMA buffers come from the page allocator,
+  so filling heap blocks never changes memory a device is using; a device
+  that writes into a freed heap block is caught as a write after free.
 
 **Tests.** `heaptest` checks the promises (fills, zeroed memory,
 `ReAllocMem`, `MemSize`, threads allocating at once) and makes each mistake
