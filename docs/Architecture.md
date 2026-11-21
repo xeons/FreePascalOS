@@ -2633,6 +2633,66 @@ place them in their `Layout` with `AssignBounds` (which, unlike
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
 
+**Navigation controls** (a file manager's or a browser's window, in
+either theme; their plain arithmetic in units of its own, checked on
+the host by `make navigation-controls-test`, and their glyphs and flat
+hot faces in `Controls.PartPainting`):
+
+`Controls.TabStrip`: `TTabStrip`, a row of document tabs along the top
+of a window, holding no pages (the program shows what the active tab
+stands for). A tab has a caption, a picture of `Images`, a hint and
+`Data`; `AddTab`, `InsertTab`, `DeleteTab`, `MoveTab`, `ActiveIndex`
+(the user's choices give `OnChange`). The tabs share the width between
+a minimum and 240 logical units (below the minimum only when they would
+not fit; `Controls.TabStripLayout`), captions cut with "...". A "+"
+button after the last tab (`OnNewTab`), a close button on the active
+and the hovered tab and a middle click (`OnCloseTab`), a tab dragged
+sideways moving among the others as it goes (`OnTabMoved`), dragged
+out above or below the strip and let go there (`OnTabDraggedOut`, with
+the screen point, logical units, for a new window), a right click
+(`OnTabContextMenu`). With header bands the strip is recessed and the
+active tab is the face running into the content below with a gold line
+on top; the classic look has bevelled tabs. `TabBounds`,
+`CloseButtonBounds`, `NewTabButtonBounds` (pixels) are for tests.
+
+`Controls.BreadcrumbBar`: `TBreadcrumbBar`, an address bar that looks
+like an edit field: `SetSegments` (captions and the paths they stand
+for), an optional picture first (`RootImageIndex`). A segment is a flat
+button (`OnNavigate`), its chevron a pop-up menu of the folders inside
+(`OnListChildren`; the chevron points down while it is open, from the
+menu list's new `OnClosed`), choosing one navigates into it
+(`JoinChildPath` in `Controls.BreadcrumbLayout`). Segments that do not
+fit collapse from the left into an overflow button listing the hidden
+ancestors. A click on the empty part (or `BeginEditing`) swaps in an
+edit box with `EditText` selected: Enter gives `OnPathEntered`, Escape
+or losing the focus goes back. Every change asks `OnComplete` for
+suggestions, shown under the bar by `Controls.SuggestionList` (a pop-up
+list that leaves the typing to the field: Up and Down move, Enter or a
+click takes one, Tab completes). `SegmentBounds`, `ChevronBounds`,
+`OverflowBounds`, `EmptyAreaPoint`, `IsEditing`.
+
+`Controls.CommandBar`: `TCommandBar`, a strip of flat command buttons
+(`TCommandButton`: a 16-unit picture of `Images` and its caption, or
+the picture alone; `Enabled`, `Visible`, `IsToggle`/`Down`, `Hint`,
+`Tag`, `AlignRight` for the far end). `AddCommand`, `AddDropDown` (its
+menu filled by the program each time, `OnOpening`, and popped up under
+it), `AddSeparator`. An overflow button ("...") ends the commands: what
+does not fit moves into its menu from the end (`Controls.CommandLayout`)
+as items doing what the buttons do, then the program's own
+(`OnOverflowOpening`). `ButtonBounds` in pixels.
+
+`Controls.ProgressDialog`: `TProgressDialog`, a non-modal dialog for a
+long operation: a heading (`SetHeading`), "34% complete", a bar, Pause
+and Resume (`OnPauseChanged`) and Cancel (`OnCancel`, as is its close
+button); "More details" (`Controls.DisclosureButton`) opens a graph of
+the speed over the operation with the current speed as a line
+(`Controls.ThroughputGraph`, drawn with libdrawing's anti-aliased
+shapes) and the speed, the item, the time left and the items left. The
+program calls `UpdateProgress` as it goes; `Controls.TransferRates`
+turns its samples into a smoothed rate (the plain average for the first
+seconds, then an exponential moving average; paused time skipped), a
+time left ("About 2 minutes") and sizes ("34 MB").
+
 **Layout without positions.** A control's place comes from its parent's
 `Layout`, which calls `PlaceChildren` with the parent's client area
 (its pixels less its `ContentPadding`). Docked children (`Align`) take

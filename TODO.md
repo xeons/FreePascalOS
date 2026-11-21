@@ -573,6 +573,12 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
+- [x] Controls for a tabbed file manager in libcontrols: a tab strip
+      (reordered by dragging, dragged out into a window), a breadcrumb
+      address bar (chevron menus, overflow, editing with suggestions), a
+      command bar (drop-downs, an overflow menu), a progress dialog (pause,
+      cancel, a speed graph; transfer rates checked on the host) and their
+      icons
 - [x] Control Panel: display, mouse, keyboard layout, sound, date and time,
       network, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every
