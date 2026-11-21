@@ -38,8 +38,9 @@ interface
 function AddRestrictions(Value: QWord): Int64;
 { The calling user process has any of Flags. }
 function CallerRestricted(Flags: LongWord): Boolean;
-{ A path (as the kernel sees it, absolute) a process restricted to
-  reading the system's files may open or look at. }
+{ A path as the kernel sees it (the system volume's name first) that a
+  process restricted to reading the system's files may open or look at:
+  /lib and /etc of the system volume, nothing of other volumes. }
 function RestrictedPathReadable(Path: PChar): Boolean;
 { A device (its name under /dev) such a process may open. }
 function RestrictedDeviceReadable(Name: PChar): Boolean;
@@ -50,6 +51,8 @@ implementation
 
 uses
   Runtime.Text,
+  Runtime.Memory,
+  Processes.Paths,
   Abi.SystemCalls,
   Kernel.Mutex,
   Processes.Process,
@@ -84,15 +87,16 @@ begin
     Result := ErrorNone;
 end;
 
-{ Path is Prefix itself or something under it. }
-function PathIsUnder(Path: PChar; const Prefix: ShortString): Boolean;
+{ Path (a kernel path) is the system volume's Folder itself or
+  something under it. }
+function PathIsUnder(Path: PChar; Folder: PChar): Boolean;
 var
-  Index: Integer;
+  Prefix: array[0..127] of Char;
+  Length_: PtrUInt;
 begin
-  for Index := 1 to Length(Prefix) do
-    if Path[Index - 1] <> Prefix[Index] then
-      Exit(False);
-  Result := (Path[Length(Prefix)] = #0) or (Path[Length(Prefix)] = '/');
+  SystemVolumePath(Folder, @Prefix[0], SizeOf(Prefix));
+  Length_ := TextLength(@Prefix[0]);
+  Result := MemoryIsEqual(Path, @Prefix[0], Length_) and ((Path[Length_] = #0) or (Path[Length_] = '/'));
 end;
 
 { A ".." anywhere could climb out of the allowed folders (the path is

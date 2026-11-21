@@ -1517,4 +1517,23 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one
       piece of work on the GUI thread)
+- [x] Browser process model: pages in content processes (/bin/webcontent),
+      process per site (registrable domain), libwebipc (typed messages in
+      pieces over channels, WebIpcTest), frames through shared sections
+      with damage and acknowledgements, an IPC thread and a network
+      service in the browser (cookies, storage, local files and about
+      pages refused to other sites' processes, HSTS), cross-site
+      navigations moving the tab, async scrolling of the last frame
+- [x] Crashed tab page with Reload, "not responding" bar with Wait and
+      Stop (pings, repeated watchdog stops), about:crash, about:kill,
+      about:hang; dialogs modal per tab
+- [x] Kernel process restrictions (ProcessLimitRestrictions: no sockets,
+      no file writes, reads only under /lib and /etc, no processes, no
+      ports, no control of others; inherited, never lifted); renderers
+      sandboxed, memory-limited, background ones first to go when memory
+      runs out
+- [ ] Out-of-process iframes (cross-site frames still render in their
+      embedder's process; plan in "Browser process model")
+- [ ] A separate network process; IME text and drag and drop through the
+      content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout

@@ -84,8 +84,9 @@ uses
   WebView.RecoveryPanels;
 
 const
-  { A sheet that was answered is freed (posted to the view). }
-  MessageWebViewReleaseSheet = $0F03;
+  { A child the view no longer shows (a sheet, a bar, the crashed page)
+    is freed after the event that hid it (posted to the view). }
+  MessageWebViewReleaseChild = $0F03;
 
 type
   TWebView = class;
@@ -297,6 +298,9 @@ type
     procedure OpenSheet(Kind: TPromptSheetKind; const Message, Default: string; RequestId: LongWord; RequestKind: Word);
     procedure SheetAnswered(Sheet: TPromptSheet; Accepted: Boolean; const Value: string);
     procedure CloseSheet;
+    { Hides Child and frees it once the event now running is over (it may
+      be a button of Child's that is being clicked). }
+    procedure ReleaseChildLater(Child: TControl);
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure Layout; override;

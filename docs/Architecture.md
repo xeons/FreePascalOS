@@ -7857,8 +7857,10 @@ starts one (default 4096, at most 65536; root's are not counted; one too
 many fails with `ErrorWouldBlock`), and `ProcessLimitOomScoreAdjust` (5),
 how willingly the process is ended when memory runs out, passed as the
 adjustment plus `OomScoreAdjustOffset` (1000) so it is never negative
-(see "Memory pressure and running out"). And
-`CallGetProcessResources(ProcessId, Address)` (130) reports what a
+(see "Memory pressure and running out"). `ProcessLimitRestrictions`
+(6) is a sandbox a process puts itself in: flags only ever added,
+inherited by what it starts (see "Browser process model", the sandbox).
+And `CallGetProcessResources(ProcessId, Address)` (130) reports what a
 process holds as a `TAbiProcessResources`: regions, handles and threads
 against the limits, the regions' size and its committed, peak and
 shared pages (`Processes.LimitCalls`). `ps -o regions,handles` shows the
@@ -12181,9 +12183,12 @@ freed object fails instead of finding stale contents.
 ## Web view (libwebview)
 
 libwebview (`userland/lib/webview`, `libwebview.so`, units `WebView.*`)
-is `TWebView` (`WebView.Control`, its parts in
-`WebView.Control.*.inc`), a libcontrols control any program embeds to
-show web pages:
+is `TWebView` (`WebView.Control`), a libcontrols control any program
+embeds to show web pages. By default its pages run in content processes
+and it shows their frames (see "Browser process model" below); the page
+engine described in this section is `TWebEngineView` (`WebView.Engine`,
+its parts in `WebView.Engine.*.inc`), which a content process hosts, or
+the view itself as a child control in ProcessModelInProcess:
 
     View := TWebView.Create(Root);
     View.Align := AlignClient;
@@ -12383,6 +12388,259 @@ browser on libwebview, linked with libquic for HTTP/3:
   prompts, the console), which `scripts/test-input.py` reads: it shows a
   local page and checks its title, that it loaded, that its script
   logged, and its background on the screen.
+
+## Browser process model
+
+A page that crashes or loops for ever takes only its own tabs with it:
+the pages run in **content processes** (renderers), the browser's
+windows, tabs and network in the **browser process**, as in the other
+browsers.
+
+```
+browser process (/app/browser)                       content processes (/bin/webcontent)
++---------------------------------------------+       +-----------------------------------+
+| GUI thread: windows, tabs, TWebView facades |       | page thread: TWebEngineView in a  |
+|   paints frames from shared sections,       | chan- |   window-less control host:       |
+|   sends input, shows dialogs and menus      | nels  |   parse, style, layout, paint,    |
+| IPC thread (WebView.ContentIo): every       |<----->|   scripts (libweb, libjavascript) |
+|   channel and process handle; pings, the    |       | no sockets, no files: it asks     |
+|   network service, queue to the GUI         |       |   the browser (transport)         |
+| network threads: one per HTTP exchange      |       | sandboxed (kernel restrictions)   |
++---------------------------------------------+       +-----------------------------------+
+         ^ shared section per view: the frame (no pixels through the channel)
+```
+
+**Processes.** The browser process keeps the user interface (chrome,
+tabs, the address bar), the network stack - libhttp's client and its
+connections, the cookie jar, the HTTP cache, HSTS - local storage,
+history, bookmarks and downloads: the single authority for anything
+that touches the network or the disk. The network runs as a *service
+in the browser process* (`WebView.NetworkService`) rather than a
+network process of its own: the browser already owns the profile, the
+client and cookie jar are thread safe, and the service runs on the IPC
+thread and per-exchange threads, never on the GUI thread, so a busy
+window does not hold loads up; a separate process would add a hop and
+a process to watch for a robustness the browser gets anyway (a network
+crash would end the browser either way while the UI and the network
+share the profile). Splitting it out later needs only another endpoint
+for the same messages.
+
+Content processes are `/bin/webcontent` (`userland/bin/webcontent.pas`,
+units in `userland/webcontent`), started by libwebview's process manager
+(`WebView.ContentProcesses`) with its end of a channel passed as a
+handle (`ProcessPassHandles`) and its options on the command line
+(`--channel`, `--site`, `--scale`, `--script-limit`, `--memory-limit`,
+`--theme`, `--sandbox`). **Process per site:** a site is a scheme and a
+registrable domain (`WebView.Sites`, libhttp's public suffix rules:
+`https://www.example.com` and `https://mail.example.com` are one site),
+an IP address or a host without one its own; all local files are the
+site `file:`, the browser's pages `about:`; about:blank, data: and
+javascript: take their opener's. Views of one site share a process up
+to `MaximumViewsPerProcess` (4), two sites never; at most 30 processes
+(two of the IPC thread's 64 wait handles each), past that a view runs
+its page in the browser. A process without views is asked to end
+(`IpcShutdown`).
+
+**Navigation across sites.** The engine asks its host before every
+top-level navigation and again when a redirect ended on another URL
+(`TNavigableObserver.NavigationAllowed`, libweb). In a content process a
+navigation to another site than the process's is not started: it goes
+to the browser (`IpcOpenUrl`, with a form's method and body), and the
+view moves to a process of that site (`TWebView.NavigateRemote`): the
+old view in the old process is destroyed, the last frame stays on the
+screen until the new process paints. Back and forward within a site are
+the process's session history; across sites the view keeps the URLs it
+left (`FBackUrls`, `FForwardUrls`) and loads them again (no page state
+kept, unlike a back-forward cache).
+
+**Cross-site iframes stay in their embedder's process** in this pass:
+a frame of another site is laid out, painted and scripted by the
+embedding page's renderer, which therefore may hold another site's
+documents (the network service still refuses it that site's cookies
+and storage by its lock, so document.cookie in such a frame is empty).
+Out-of-process iframes are the next step: libweb lays a remote frame out
+as an empty replaced box and reports its rectangle; the frame gets a
+view of its own in its site's process (`IpcCreateView` with a parent
+view and a frame token), whose frames the browser composites into the
+parent's at that rectangle, clipped by its ancestors' clips; input is
+routed by the browser's hit test of the frame rectangles (the frame's
+process gets pointer events in its coordinates, the focused frame the
+keys); `postMessage`, `window.parent`, `frames[]` and `location` across
+processes go through proxies forwarding to the other renderer through
+the browser, and frame navigation of a remote frame is a browser
+message.
+
+**The protocol** (libwebipc, `userland/lib/webipc`, `libwebipc.so`,
+units `WebIpc.*`, depends on libsystem and libdrawing). A message has a
+kind, a view id (0: the process), a request id (0 for an event; a reply
+has the kind `IpcReply` and the request's id) and a payload in the wire
+format (`WebIpc.Wire`: little-endian fixed-width integers, doubles,
+length-prefixed UTF-8 strings and byte arrays; a reader never reads
+past its data, and a payload that does not parse raises `EIpcMalformed`,
+which breaks the channel: a renderer sending garbage is not trusted).
+Kinds (`WebIpc.Messages`, protocol version 1): 1-99 either way (hello,
+ping, pong, reply, shutdown), 100-199 browser to renderer (create and
+destroy a view, navigate, load HTML, back, forward, reload, stop,
+resize with the scale and DPI, visible, focus, zoom, input, find,
+select all, copy, clear selection, scroll, frame acknowledgements, menu
+answers, scripting, view commands), 200-299 renderer to browser
+(surface, frame, title, location, loading state, favicon, status text,
+history state, zoom, cursor, link, download, navigation failure,
+context menu, pop-up menu, console, script dialog, beforeunload,
+clipboard write and read, selection, open URL, script interrupted,
+input handled, unhandled key, page text), 300-399 the network service
+(hop start, cancel, head, data, done; local file; cookie get and set;
+storage load, set, remove, clear; about pages). Records with encoders
+and decoders for the larger payloads are in `WebIpc.ViewMessages` and
+`WebIpc.NetworkMessages`. A channel message holds at most 16 KiB, so a
+protocol message goes in pieces with a 16-byte header each
+(`WebIpc.Fragments`: kind, first/last flags, view, request, the whole
+length; handles with the first piece; at most 256 MiB). An endpoint
+(`WebIpc.Endpoints`) never waits to send: what the channel refuses
+(the other side has 64 messages queued) is kept, in order, and sent by
+`Flush`, which the browser's IPC thread and the renderer's loop call
+every few milliseconds while something waits; sending is thread safe,
+handles given to `Send` are closed once the kernel took its own
+reference. `tools/WebIpcTest` (`make web-ipc-test`) checks the wire
+format both ways and against short and lying input, pieces around the
+piece size and pieces that do not fit together, and every payload.
+
+**Frames.** A content process paints each view into a section shared
+with the browser (`WebIpc.SharedSurfaces`: `CreateSection`,
+`MapSection`; the handle travels once with `IpcSurfaceCreated`, a new
+one with every new size). After each turn of its loop a view with
+something invalidated, whose last frame the browser has taken, paints
+the damaged rectangle (the engine and its scroll bars, `PaintAll`
+through a canvas clipped to it) and sends `IpcFramePresented`: the
+frame number, the damage, the viewport's scroll position and the
+document's size in device pixels, whether fixed boxes are on it, and
+how far it got with input. The browser copies the damage into the
+view's own picture on its GUI thread and acknowledges (`IpcFrameAck`);
+only then may the next frame be painted, so the two never touch the
+same pixels at once and a slow browser slows the renderer, not the
+other way round. The browser always has a whole last frame to show.
+
+**Threads and never waiting.** The browser's GUI thread never waits for
+a renderer: everything it sends is queued if need be, every answer it
+needs comes later (find: `OnFindResult`; selected text, page text: the
+last told). The IPC thread (`WebView.ContentIo`) waits on every
+channel and process handle; it notes pongs, answers the network
+service's requests on the spot, and queues everything for a view to the
+GUI thread, woken by one posted message however much waits. A renderer
+may wait for the browser (`TContentConnection.Call`: an alert's answer,
+the clipboard, a cookie, a local file, an about page); while it does
+it answers pings and puts other messages aside. In the content process
+the page thread runs scripts, layout and painting; image decoding and
+other workers stay on their threads; it has no network threads of its
+own (the network service has them).
+
+**Async scrolling.** Input carries a sequence number; frames and
+`IpcInputHandled` say how far the renderer got. When input has gone
+unanswered for 120 ms (a long layout, a busy script, a hung page), the
+wheel moves the last frame in the browser itself, within the document's
+size the last frame gave, and paints white where nothing is known yet;
+the renderer's next frame that handled that input takes over. The
+scroll bars stay where they were meanwhile.
+
+**Input and the rest of the UI.** The facade sends pointer events (with
+the held modifiers; `SetHeldModifiers` in libwindowing lets the content
+process answer `HeldModifiers` as a window would), the wheel, keys and
+context menu requests; the content host (`WebContent.Host`, a
+`TControlHost` without a window) gives them to the engine and its scroll
+bars as a window does (the pressed control keeps the pointer, hover
+enter and leave). The pointer shape comes back (`IpcCursorChanged`).
+The window's accelerators run before a view gets a key, so the
+browser's shortcuts work whatever the page does. Pop-up menus (a
+select's options) are described to the browser and shown there
+(`IpcPopupMenu`, the answer `IpcMenuChosen`); context menus go to the
+host's `OnContextMenuRequested`, else the facade's own menu. The
+clipboard is the browser's. A page's alert, confirm, prompt and
+beforeunload go to the host's handlers if it set them, else to a sheet
+across the top of that view (`WebView.PromptSheet`), modal for that tab
+only: the renderer waits, the browser and its other tabs go on.
+
+**Crashes and hangs.** A content process that ends without being asked
+(a crash, killed for memory, `about:crash`) is seen by the IPC thread
+when its channel breaks or its process handle signals; its exit status
+comes with the end. Each of its views shows "This tab crashed" with the
+reason and Reload (`WebView.RecoveryPanels`), which loads the page again
+in a new process; other tabs are not touched. The manager pings every
+process once a second; one that has not answered for
+`HangTimeoutMilliseconds` (setting `Browser/HangTimeout`, 8 s) shows a
+bar in its views, "This page is not responding", with Wait (asked again
+after another timeout) and Stop page (ends the process: the crashed
+page). The slow script watchdog ending scripts three times within a
+minute (`IpcScriptInterrupted`) shows the same bar. The browser prints
+`process started PID`, `crashed STATUS`, `hung`, `responsive`, `wait`,
+`stop` and `script-interrupted N` lines with the tab.
+
+**The sandbox.** Before it runs any page a content process restricts
+itself (`WebContent.Sandbox`) with a new kernel facility, **process
+restrictions**: `CallSetProcessLimit(ProcessLimitRestrictions, Flags)`
+(limit 6) adds `Restrict*` flags to the caller, which are never taken
+away - not even by root - and are inherited by every process it starts
+(`Processes.Restrictions`; libsystem's `Sys.Restrictions`:
+`RestrictThisProcess`, `ThisProcessRestrictions`,
+`LimitCommittedMemory`). `RestrictNetwork` refuses sockets,
+`RestrictFileWrites` opening for writing, creating, truncating,
+removing, renaming, linking, making directories and FIFOs and changing
+attributes (also through the VFS access hook, so root too),
+`RestrictFileReads` opening or looking at any path outside `/lib` and
+`/etc` (libraries, fonts, the system's settings) and any device but
+`/dev/null`, `/dev/random` and `/dev/urandom`, `RestrictProcessCreation`
+starting programs, `RestrictPortConnections` making or connecting to
+named ports (the display server, services), `RestrictProcessControl`
+ending, stopping or asking any other process to end. Refusals are
+`ErrorAccessDenied`. Handles it already holds (its channel, standard
+output) keep working. A renderer also lowers the memory it may commit
+(`--memory-limit`, 1 GiB by default; only root could raise it again)
+and sets its out-of-memory adjustment to 700 while none of its views is
+shown and 300 while one is, so a background renderer is ended before
+the browser (0) when memory runs out. The browser's setting
+`Browser/Sandbox` turns the restrictions off for debugging.
+
+**What the browser refuses a renderer.** The network service knows the
+site each process is locked to and does not take a renderer's word for
+anything: document.cookie and local storage only of URLs and origins of
+that site (others are refused and logged, `[network] refused ...`),
+local files only to the `file:` process, the browser's about pages only
+to the `about:` process, only http and https exchanges; whether a
+request is same-site for its cookies it decides itself. HSTS is the
+browser's (an http:// request to a known host gets a 307 to https:// as
+an internal redirect; Strict-Transport-Security is learned from every
+response). CORS, mixed content, CSP and the referrer stay the
+renderer's decisions about what its own page may see. Storage written
+by a renderer is saved by the browser every 5 s.
+
+**libwebview's API.** `TWebView` (`WebView.Control`) kept its public
+API; the page engine that was the control is now `TWebEngineView`
+(`WebView.Engine`, its parts in `WebView.Engine.*.inc`), which a content
+process hosts and a view may host itself: `ProcessModel :=
+ProcessModelInProcess` (or `DefaultWebViewProcessModel`, the browser's
+`Browser/SeparateProcesses`) runs the engine in the program as a child
+control, as before; it is also what a view falls back to when
+`/bin/webcontent` is missing or no process can be started. `Page`,
+`Navigable`, `Document` and `DocumentLayout` reach the engine only then
+(nil otherwise); the browser sets its about pages with the new
+`AboutPageProvider`. New: `OnFindResult`, `OnScriptDialog`,
+`OnProcessEvent`, `ContentProcessId`, `TerminateContentProcess`,
+`CrashContentProcess`, `HangContentProcess`. The engine gained hooks for
+a host that is not its window: `OnPopupMenu`, `OnReadClipboard`,
+`OnWriteClipboard`, `OnSelectionChanged`, `OnNavigationRequest`,
+`NetworkContext`, `LocalStorage`, `NavigateWith`, `GetScrollState`.
+libweb gained the transport (`Web.Fetch.Transports`:
+`TNetworkTransport`, `THopResultSink`; `TNetworkContext.CreateForTransport`,
+`DocumentCookie`, `SetDocumentCookie`; `THopRunner` sends through it),
+local files read through it (`TFetcher.StartRemoteLocalFile`) and a
+storage backend (`TWebStorageBackend`, `TWebStorageArea.LoadPair`).
+
+**Not yet.** Out-of-process iframes (above); a network process; IME
+text (`InputText` is in the protocol, not used); drag and drop into and
+out of pages; the selection's text in a context menu before the
+renderer told it; per-page attribution of watchdog interrupts (all views
+of the process hear them); cross-process `storage` events; dragging the
+scroll bars while the renderer is hung; GPU compositing (frames are
+CPU copies of the damage).
 
 ## The AArch64 port
 

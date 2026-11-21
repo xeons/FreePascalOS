@@ -99,7 +99,7 @@ begin
   FDetail := TLabel.Create(Self);
   FDetail.ShowsMnemonic := False;
   FDetail.Text := 'The page''s process ended. Other tabs are not affected.';
-  FDetail.SetBounds(40, 60 + LineHeight + 4, 500, LineHeight);
+  FDetail.SetBounds(40, 60 + LineHeight + 4, 900, LineHeight);
   FReload := TButton.Create(Self);
   FReload.Text := '&Reload';
   FReload.SetBounds(40, 60 + 2 * LineHeight + 16, ButtonWidth, ButtonHeight);

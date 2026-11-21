@@ -41,7 +41,8 @@ procedure TWebView.HideCrashPanel;
 begin
   if FCrashPanel = nil then
     Exit;
-  FreeAndNil(FCrashPanel);
+  ReleaseChildLater(FCrashPanel);
+  FCrashPanel := nil;
   RequestLayout;
   Invalidate;
 end;
@@ -70,7 +71,8 @@ procedure TWebView.HideHangBar;
 begin
   if FHangBar = nil then
     Exit;
-  FreeAndNil(FHangBar);
+  ReleaseChildLater(FHangBar);
+  FHangBar := nil;
   RequestLayout;
   Invalidate;
 end;
@@ -212,9 +214,8 @@ begin
   SendToProcess(IpcReply, EncodeDialogAnswer(Answer), FSheetRequestId);
   FSheetRequestId := 0;
   { Not freed from inside its own event: released after it returns. }
-  FSheet.Visible := False;
   FSheet := nil;
-  PostMessage(Self, MessageWebViewReleaseSheet, PtrInt(Sheet), 0);
+  ReleaseChildLater(Sheet);
   RequestLayout;
   SetFocus;
   Invalidate;
@@ -222,7 +223,7 @@ end;
 
 procedure TWebView.ReceiveMessage(var Message: TPostedMessage);
 begin
-  if Message.Code = MessageWebViewReleaseSheet then
+  if Message.Code = MessageWebViewReleaseChild then
   begin
     TObject(Message.Parameter1).Free;
     RequestLayout;
@@ -231,11 +232,19 @@ begin
   inherited ReceiveMessage(Message);
 end;
 
+procedure TWebView.ReleaseChildLater(Child: TControl);
+begin
+  Child.Visible := False;
+  { A view freed first frees its children and drops this message. }
+  PostMessage(Self, MessageWebViewReleaseChild, PtrInt(Child), 0);
+end;
+
 procedure TWebView.CloseSheet;
 begin
   if FSheet = nil then
     Exit;
-  FreeAndNil(FSheet);
+  ReleaseChildLater(FSheet);
+  FSheet := nil;
   FSheetRequestId := 0;
   RequestLayout;
   Invalidate;
