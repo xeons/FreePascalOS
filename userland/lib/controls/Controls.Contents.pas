@@ -144,7 +144,19 @@ uses
   Controls.IconFiles,
   Controls.IconTheme,
   Controls.WindowIcons,
-  Controls.FileTypeIcons;
+  Controls.FileTypeIcons,
+  Controls.PartPainting,
+  Controls.TabStripLayout,
+  Controls.TabStrip,
+  Controls.SuggestionList,
+  Controls.BreadcrumbLayout,
+  Controls.BreadcrumbBar,
+  Controls.CommandLayout,
+  Controls.CommandBar,
+  Controls.TransferRates,
+  Controls.ThroughputGraph,
+  Controls.DisclosureButton,
+  Controls.ProgressDialog;
 
 implementation
 
