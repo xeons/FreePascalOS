@@ -1423,9 +1423,11 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       translations of transforms,
       z-index auto layers, computed shorthands, positioned boxes not left
       due, for-of over Map iterators, lone surrogates in case mapping)
-- [ ] DuckDuckGo: following a result on the main results page posts the
-      link to its hidden /post3.html iframe (needs iframes with src
-      documents); html.duckduckgo.com's results follow
+- [x] DuckDuckGo: following a result on the main results page (its hidden
+      /post3.html iframe, then /l/ to the site); html.duckduckgo.com's
+      results follow too
+- [ ] window.getSelection (DuckDuckGo's click handler calls it; Selection
+      is not done)
 - [ ] Transforms beyond translation (scale, rotate, skew) in painting and
       hit testing
 - [ ] Large pages in QEMU need the kernel's growable address-space region
