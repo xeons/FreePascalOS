@@ -1247,7 +1247,8 @@ Part 2, loading side (event loop, fetch, loading, navigation):
 - [x] history.pushState/replaceState (TNavigable.ChangeUrlFromScript)
 - [ ] bfcache; popstate's state object across documents
 - [x] Form submission from the web view (GET and POST, urlencoded)
-- [ ] iframes and nested navigables; multipart/form-data
+- [x] iframes and nested navigables (child navigables, joint session history)
+- [ ] multipart/form-data
 - [ ] Animated images (only the first frame goes to the sink); decoding
       images progressively as they arrive
 - [ ] ORB (opaque response blocking) for no-cors responses; blob: URLs
@@ -1307,8 +1308,14 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       ResizeObserver, FontFace, CSS.supports/escape, Image/Option
 - [x] iframes: about:blank and srcdoc windows in a realm of the parent's
       engine (libjavascript: several realms per runtime)
-- [ ] iframes with src documents: loading, layout, painting, input
-      (Google's CAPTCHA page needs them for reCAPTCHA)
+- [x] iframes with src documents: loading (sandbox, X-Frame-Options,
+      frame-ancestors, lazy), layout, painting, input, cross-origin views,
+      postMessage across origins; dedicated workers
+- [ ] `<object>`/`<embed>` documents; frameset layout; a WindowProxy for
+      sandboxed frames without scripts; Permissions Policy (allow)
+- [ ] reCAPTCHA in the OS: the anchor renders, but in QEMU it showed
+      "Could not connect to the reCAPTCHA service" (on the host the
+      widget initializes); find out what times out
 - [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
       (document.styleSheets, insertRule), Web Animations, synchronous XHR
 - [x] Brotli and zstd content codings (Accept-Encoding offers gzip,

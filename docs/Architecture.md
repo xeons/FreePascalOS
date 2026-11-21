@@ -10054,7 +10054,7 @@ waits for work itself (programs without a GUI loop).
 
 Not yet: CSP enforcement and Subresource Integrity (both are stored on
 the request), ORB, bfcache, pushState/replaceState (the entries have the
-slot), iframes (one navigable per page), form submission, Service
+slot), `<object>`/`<embed>` documents, form submission, Service
 Workers, blob: URLs, animated images (the first frame is shown).
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
@@ -10308,8 +10308,104 @@ detached; what the parent kept still works, running in the caller's
 realm). Frames are freed with their top-level context, after its engine
 (their cells live in its runtime). `TFrameEnvironment` forwards timers,
 prompts, cookies, storage, fetches and the user agent to the parent's
-environment. Not yet: frames do not load `src` documents, are not laid
-out or painted, and get no input (reCAPTCHA's widget stays empty).
+environment. That is the script-only path (an environment that does not
+manage frames: tests, `ParseDocument`); a page's frames are child
+navigables (below).
+
+**Frames of a page** (`Web.Navigation.Navigables.Frames.inc`,
+`Web.Navigation.FramePolicy`, `Web.Script.FrameNavigables`,
+`Web.Bindings.CrossOrigin`, `Web.Frames.Views`). Each `<iframe>` and
+`<frame>` that becomes connected in a navigable's active document gets a
+child `TNavigable` (`CreateChild`) at once - the loader's observer
+reports frame elements (`OnFrameInserted`, `OnFrameChanged` for src,
+srcdoc and name, `OnFrameRemoved`) - with an initial about:blank
+document of the parent's origin, so contentWindow works right after the
+insertion; then the iframe's attributes are processed as the HTML
+Standard says: srcdoc navigates to about:srcdoc in a task, src to its
+URL against the parent's base URL (about:blank at the first insertion
+only fires load, at once), `loading=lazy` waits for the parent's load
+event, a URL of an ancestor's document or a ninth level is not loaded.
+The navigation request is the parent document's (its client: origin,
+referrer and policy, the top-level site that SameSite cookies are
+judged by), destination iframe or frame, the element's referrerpolicy;
+a response that X-Frame-Options (DENY, SAMEORIGIN against every
+ancestor) or an enforced CSP `frame-ancestors` (which decides when
+present) keeps out shows an error page. The sandbox attribute as it is
+at each navigation: without allow-scripts the document gets no script
+executor, without allow-same-origin an opaque origin (no cookies, no
+storage), without allow-modals no prompts; nested frames keep their
+ancestors' restrictions; `allow` is kept, not enforced. While a child
+loads it delays its parent's load event (lazy ones do not); when its
+document has loaded, load fires at the element. Documents carry their
+origin when it is not their URL's (`TDocument.OriginText`,
+`Web.Origins`: about:blank and srcdoc documents their creator's, opaque
+ones stable per document). A navigation while the child or its parent
+is still loading replaces the child's entry; a later one adds one to
+the child's history and one naming the child (`FrameId`, `FrameIndex`)
+to the top-level history, the joint session history: Back and Forward
+over such entries traverse the child (`TraverseFrames`), history.length
+and history.go in a frame are the joint history's. The element leaving
+or its document being unloaded detaches the child at once (loading
+stopped, its windows closed, its rendering withdrawn) and frees it in a
+later task. `ChooseNavigable` gives a link's or form's target (_self,
+_parent, _top, a frame's name; nil for _blank or an unknown name, a new
+tab).
+
+A child document's script context is made by the page's executor with
+`CreateFrame` in a realm of its parent's engine and the child's window
+(`TNavigableFrameEnvironment`: the page's environment for timers,
+cookies, storage, fetches and prompts with the frame's own context, the
+child navigable for location, navigation, pushState, the viewport and
+media queries, a `TFrameScriptLayout` for geometry). Cross-origin frames
+share the heap too (one runtime per page: objects cannot be passed
+between heaps, and postMessage's source, frames[i] and parent stay plain
+references); what keeps origins apart is that a window's global object
+is never handed to script of another origin: contentWindow, parent,
+top, frames[i] and a message's source go through `WindowValueFor`,
+which gives a cross-origin view (`TCrossOriginWindowView`, an exotic
+object of the asking realm, cached per pair) answering only window,
+self, frames, top, parent, opener, closed, length, the frames by index,
+location (a view whose href may be set and replace() called),
+postMessage, close, focus and blur, undefined for then and the three
+symbols, a SecurityError for anything else; contentDocument and
+frameElement are null across origins. postMessage through a view calls
+the target's own and turns its exceptions into the caller's realm's;
+ports are passed only between windows of one origin. A frame's window
+is closed when its document is left (contentWindow is then the next
+document's) and freed with its top-level context. The global object's
+index properties follow its frames (`UpdateFrameIndices`). A
+sandboxed frame without scripts has no window object (frames.length
+does not count it).
+
+Rendering: `TLayoutResourceSink.CreateChildSink` gives each child a
+rendering sink and a `TFrameView` (its navigable observer): per
+document a `TDocumentLayout` and `TDocumentPainter`, registered in the
+parent document's resources under the element as a `TEmbeddedContent`
+(`Web.Layout.EmbeddedContent`). The parent's layout gives it the
+frame's content box (300 by 150 without a ratio by default; width,
+height, CSS, the UA sheet's 2px inset border, `frameborder=0`) and its
+scale (zoom and DPI inherited) and brings it up to date after its own
+layout; its paint version includes the frames'. The builder emits a
+`diFrame` item and the raster asks the frame to paint itself into the
+visible part of its box (`PaintShifted`: the view's `ShiftX`/`ShiftY`),
+with a thin scroll bar when the document overflows (not with
+`scrolling="no"`). `HitTestThroughFrames` descends into frames and
+`DocumentViewportOrigin` says where a frame's viewport is. With a null
+sink (tests) children load without views.
+
+**Workers** (`platform/65-workers.js`, `Web.Script.NativeWorkers`).
+`new Worker(url)` fetches the script and runs it in a bare realm of the
+window's runtime (its own built-ins, no DOM: `TBindingContext.
+WorkerEngines`, whose jobs run at the window's checkpoints) on the
+window's thread. The scope has self, location, navigator, name,
+postMessage, close, the listener methods and onmessage, and the
+window's timers, fetch, crypto, performance, console, encoders, URLs,
+blobs, streams and messaging classes; messages are structured clones in
+tasks; uncaught errors fire error at the Worker. importScripts cannot
+wait for a fetch on this thread: one with scripts not yet fetched stops
+the worker's script, fetches them (through fetch(), so CORS applies) and
+runs the script again from the start in a new scope (reCAPTCHA's
+webworker.js is one importScripts line).
 
 **Platform scripts** (`Web.Script.Natives`, `userland/lib/web/platform/*.js`).
 Interfaces that are mostly object juggling and promises over a few engine
@@ -10394,8 +10490,9 @@ traffic", /sorry/index), whose reCAPTCHA widget needs src iframes.
 
 **Not done yet**: import maps, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), document.open on a loaded
-document, shadow DOM, Range and Selection, TreeWalker, iframes with src
-documents (loading, layout, painting, input), synchronous
+document, shadow DOM, Range and Selection, TreeWalker, `<object>` and
+`<embed>` documents, frameset layout (`<frame>` loads but is laid out as
+an inline replaced box), shared and service workers, synchronous
 XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
 insertRule), the storage event between windows, images'
 natural size for script.
@@ -11000,9 +11097,23 @@ asked again after it handled a move (`TControlWindow`), and
   view's layout and painter (getBoundingClientRect, scrolling,
   elementFromPoint, getComputedStyle).
 
+Frames (`WebView.Control.Frames.inc`): the pointer is hit tested through
+frames (`HitTestThroughFrames`), so hover (up through the iframe into
+the parent), active, cursors, link status, clicks, focus, the caret,
+keys and the text editor work on the frame's document, each element's
+states going to its own document's layout; links and forms in a frame
+navigate the navigable their target chooses (the frame itself by
+default; _top, _parent, a name; _blank or an unknown name a new tab);
+the wheel scrolls the innermost container, then the frame's viewport,
+then outwards. The view fires MouseEvents (`WebView.MouseEvents`:
+mousedown, mouseup, click, mousemove, mouseover, mouseout,
+contextmenu, with client coordinates in the target document's own
+viewport, page offsets, offsetX/Y, button, buttons, detail and
+modifiers); a cancelled mousedown keeps the focus and selection.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing.
+printing, text selection inside frames, Tab moving into frames.
 
 ## Browser
 
