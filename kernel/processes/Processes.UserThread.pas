@@ -90,7 +90,8 @@ uses
   Kernel.Scheduler,
   Kernel.Events,
   Processes.AddressSpace,
-  Processes.ThreadStorage;
+  Processes.ThreadStorage,
+  Processes.UserProcess;
 
 type
   TUserThreadStart = record
@@ -125,6 +126,13 @@ begin
   Thread^.UserStackStart := Start.StackStart;
   Thread^.ThreadDataStart := Start.ThreadDataStart;
   RecordThreadId(Thread^.Process, Start.ThreadPointer, Thread^.ControlBlock.ThreadId);
+
+  { A thread started while its process is being ended never runs: the
+    alert that ends the others' waits may have gone out before it was
+    listed, and its first wait would then never end. Listed before it
+    started, it is alerted by any request made after this check. }
+  if Thread^.Process^.TerminationRequested then
+    ExitCurrentThread(Thread^.Process^.TerminationCode);
 
   SetOwnThreadPointer(Start.ThreadPointer);
   ArchEnterUserMode(Start.EntryPoint, Start.StackPointer, Start.Argument);
