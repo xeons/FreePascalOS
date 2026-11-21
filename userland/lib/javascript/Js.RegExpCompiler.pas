@@ -125,7 +125,8 @@ function CategoryMask(Code: LongWord): LongWord;
 implementation
 
 uses
-  Character;
+  Character,
+  Js.CaseMapping;
 
 const
   { Scripts by their blocks (an approximation of the Script property:
@@ -248,7 +249,7 @@ begin
       Exit(Code - 32);
     Exit(Code);
   end;
-  if Code > $FFFF then
+  if (Code > $FFFF) or IsSurrogateUnit(Code) then
     Exit(Code);
   if Unicode then
   begin
@@ -1352,7 +1353,7 @@ begin
         Code := Target.Ranges[Index].First;
         while Code <= Target.Ranges[Index].Last do
         begin
-          if Code <= $FFFF then
+          if (Code <= $FFFF) and not IsSurrogateUnit(Code) then
           begin
             Mapped := TCharacter.ToUpper(UnicodeString(WideChar(Code)));
             if Length(Mapped) = 1 then

@@ -208,6 +208,9 @@ type
     { Runs the job queue (promise reactions) until it is empty. }
     procedure RunJobs;
     function PendingJobs: Integer;
+    { The reasons of the promises rejected with no handler since the last
+      call (HTML's "notify about rejected promises" reports them). }
+    function TakeUnhandledRejections: TJsValueList;
 
     function GlobalObject: TJsObject;
     function NewObject: TJsObject;
@@ -614,6 +617,24 @@ end;
 function TJsEngine.PendingJobs: Integer;
 begin
   Result := FRealm.PendingJobCount;
+end;
+
+function TJsEngine.TakeUnhandledRejections: TJsValueList;
+var
+  Index: Integer;
+  Promise: TJsObject;
+begin
+  Result := nil;
+  SetLength(Result, Length(FRealm.UnhandledRejections));
+  for Index := 0 to High(FRealm.UnhandledRejections) do
+  begin
+    Promise := JsAsObject(FRealm.UnhandledRejections[Index]);
+    if Promise is TJsPromise then
+      Result[Index] := TJsPromise(Promise).Value
+    else
+      Result[Index] := JsUndefined;
+  end;
+  FRealm.UnhandledRejections := nil;
 end;
 
 function TJsEngine.GlobalObject: TJsObject;

@@ -318,6 +318,7 @@ type
     { Takes the pending exception and reports it. }
     procedure ReportPendingException(const Where: string = '');
     procedure Console(const Level, Text: string);
+    procedure ReportUnhandledRejections;
 
     { Calling script from native code. }
     procedure EnterScript;
@@ -1429,6 +1430,34 @@ begin
   end;
 end;
 
+{ HTML 8.1.4.7: promises rejected with nobody to handle them are
+  reported at the end of a microtask checkpoint (the unhandledrejection
+  event is not fired yet). }
+procedure TBindingContext.ReportUnhandledRejections;
+var
+  Reasons: TJsValueList;
+  Index, Handle: Integer;
+  Text: string;
+  Data: TObject;
+begin
+  Reasons := FEngine.TakeUnhandledRejections;
+  for Index := 0 to High(Reasons) do
+  begin
+    { Its text may run script (an error's stack getter): kept meanwhile. }
+    Handle := FEngine.Protect(Reasons[Index]);
+    try
+      Data := Unwrap(Reasons[Index], InterfaceDOMException);
+      if Data <> nil then
+        Text := TDomExceptionData(Data).Name + ': ' + TDomExceptionData(Data).Message
+      else
+        Text := FEngine.ErrorText(Reasons[Index]);
+    finally
+      FEngine.Unprotect(Handle);
+    end;
+    Console('error', 'Uncaught (in promise) ' + Text);
+  end;
+end;
+
 procedure TBindingContext.PerformMicrotaskCheckpoint;
 var
   Index: Integer;
@@ -1453,6 +1482,7 @@ begin
           Again := True;
         end;
     until not Again;
+    ReportUnhandledRejections;
   finally
     FCheckpointRunning := False;
   end;
