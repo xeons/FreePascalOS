@@ -63,7 +63,7 @@ Window includes WindowEventHandlers;
 
 [Exposed=Window]
 interface Location {
-  stringifier readonly attribute USVString href;
+  stringifier attribute USVString href;
   readonly attribute USVString origin;
   readonly attribute USVString protocol;
   readonly attribute USVString host;

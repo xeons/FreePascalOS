@@ -978,10 +978,11 @@ begin
     Exit;
   SetState(LoadingComplete);
   StartLazyFrames;
-  if FParent <> nil then
+  { A frame's initial about:blank loading says nothing of the navigation
+    that may be on its way. }
+  if (FParent <> nil) and not FInitialAboutBlank then
   begin
-    if not FInitialAboutBlank then
-      FireContainerLoad;
+    FireContainerLoad;
     UndelayParentLoad;
   end;
   Entry := FHistory.Current;

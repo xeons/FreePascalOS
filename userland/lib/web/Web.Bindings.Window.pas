@@ -505,6 +505,11 @@ begin
   Result := JsUndefined;
 end;
 
+function Location_set_href(var Call: TBindingCall): TJsValue;
+begin
+  Result := NavigateTo(Call, False);
+end;
+
 function Location_assign(var Call: TBindingCall): TJsValue;
 begin
   Result := NavigateTo(Call, False);
