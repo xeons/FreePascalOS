@@ -12689,6 +12689,16 @@ libweb gained the transport (`Web.Fetch.Transports`:
 local files read through it (`TFetcher.StartRemoteLocalFile`) and a
 storage backend (`TWebStorageBackend`, `TWebStorageArea.LoadPair`).
 
+**Tests.** `make web-ipc-test` (the protocol, on the host);
+`restricttest` (a coretest line: every restriction, inheritance, never
+lifted); `scripts/test-input.py`'s browser part: two local pages share
+one renderer and a page served from the test (another site) gets its
+own (two webcontent processes), the served page loops with the
+watchdog off and gets the "not responding" bar, Stop ends its renderer
+(the tab shows it crashed), about:crash crashes the local renderer
+(both its tabs show it), Reload brings the page back in a new process
+and the browser lives on.
+
 **Not yet.** Out-of-process iframes (above); a network process; IME
 text (`InputText` is in the protocol, not used); drag and drop into and
 out of pages; the selection's text in a context menu before the
