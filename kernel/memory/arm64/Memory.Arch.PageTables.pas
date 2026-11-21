@@ -230,6 +230,7 @@ begin
   KernelTopLevelTablePhysical := ArchReadKernelTableRoot and DescriptorAddressMask;
   KernelTopLevelTable := TableFromRoot(KernelTopLevelTablePhysical);
   CurrentProcessor^.ActiveAddressSpace := KernelTopLevelTablePhysical;
+  InitializeAddressSpaceIds;
 end;
 
 procedure RemoveBootIdentityMapping;
