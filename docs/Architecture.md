@@ -11421,7 +11421,14 @@ text, display changes, :hover, the viewport size) give the tree a fresh
 layout gives and skip clean boxes; hit testing; painting (known pixels:
 backgrounds, borders, canvas, z-order, opacity, clipping, scrolling, the
 device scale; a damaged rectangle painted alone equal to the full
-paint); and reports the speed and memory of a 1000 paragraph page (on
+paint); CSSOM changes restyling (an appended rule indexed at once, a
+rule changed in place, a deleted rule, an adopted sheet); transforms
+(rotation, scale, skew and a flattened 3D turn by their pixels, hit
+testing through them, transformed bounds); animations and transitions
+sampled at fixed times of an injected clock (opacity half way and three
+quarters, kept at the end, a spinner's quarter turn, a color transition
+from the old value through the middle to the new, their end events);
+and reports the speed and memory of a 1000 paragraph page (on
 the build machine about 30 ms to lay out 8000 nodes, one box per node,
 10 display items per paragraph).
 
@@ -11566,7 +11573,9 @@ with `check()`: tree changes and serialization, events (order, once,
 stopping, canceling, handlers, the window in the path, exceptions in
 listeners), wrapper identity and prototype chains, selectors,
 reflection and form controls, parsing with scripts and document.write,
-MutationObserver records and their microtask, TextEncoder/TextDecoder,
+MutationObserver records and their microtask, ranges (live adjustment,
+the content operations) and the selection, the CSSOM, MessagePorts
+between realms and frames by name, TextEncoder/TextDecoder,
 atob/btoa, structuredClone, URL and URLSearchParams, the window and the
 timers. The Pascal side checks that unreachable wrappers are collected
 and their nodes freed, that expandos and listeners live while their node
