@@ -135,7 +135,10 @@ uses
   Controls.IconFiles,
   Controls.IconTheme,
   Controls.WindowIcons,
-  Controls.FileTypeIcons;
+  Controls.FileTypeIcons,
+  Controls.PartPainting,
+  Controls.TabStripLayout,
+  Controls.TabStrip;
 
 implementation
 
