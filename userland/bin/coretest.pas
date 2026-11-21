@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..419] of TCommandTest = (
+  CommandTests: array[0..420] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -756,7 +756,9 @@ const
     (Command: 'echo a > mnt/ro.txt; chmod a-w mnt/ro.txt; stat -c %a mnt/ro.txt; chmod u+w mnt/ro.txt; stat -c %a mnt/ro.txt; rm mnt/ro.txt'; ExpectedOutput: '555'#10'755'#10; ExpectedStatus: 0),
     (Command: 'src=$(mount | grep " on /tmp/coretest/mnt " | cut -d " " -f 1); sleep 2 < mnt/hello.txt & sleep 0.5; umount mnt 2>&1; wait; cd mnt && umount /tmp/coretest/mnt 2>&1; cd ..; umount mnt && echo unmounted; ls mnt | grep -c .; mount $src && cat /volumes/$(basename $src)/hello.txt'; ExpectedOutput: 'umount: mnt: target is busy'#10'umount: /tmp/coretest/mnt: target is busy'#10'unmounted'#10'0'#10'Hello from FreePascalOS!'#10; ExpectedStatus: 0),
     (Command: 'touch -m -t 202301010000 t; touch -a -t 202401010000 t; test $(stat -c %X t) -gt $(stat -c %Y t) && echo access-later; ls -l --time=atime t | grep -c 2024; ls -lu t | grep -c 2024; ls -l t | grep -c 2023; stat -c %W t | grep -c "^0$"; stat t | grep -c "Birth: [0-9]"'; ExpectedOutput: 'access-later'#10'1'#10'1'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Process restrictions (the browser's renderer sandbox). }
+    (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0)
   );
 
 var

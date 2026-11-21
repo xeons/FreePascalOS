@@ -61,6 +61,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Abi.SystemCalls,
   Kernel.Threads,
   FileSystem.Security,
   Processes.Thread;
@@ -131,6 +132,10 @@ begin
   Process := CurrentProcess;
   if not Process^.IsUserProcess then
     Exit(True);
+  { Restricted from writing (Processes.Restrictions): no write access,
+    which also refuses creating, removing and renaming in a directory. }
+  if ((Process^.Restrictions and RestrictFileWrites) <> 0) and ((Access and AccessWrite) <> 0) then
+    Exit(False);
   Result := CredentialsMayAccess(Process^.Credentials, Information, Access);
 end;
 
@@ -167,6 +172,9 @@ var
 begin
   if not Caller^.IsUserProcess then
     Exit(True);
+  { A restricted process (a renderer) controls nobody but itself. }
+  if ((Caller^.Restrictions and RestrictProcessControl) <> 0) and (Caller <> Target) then
+    Exit(False);
   UserId := Caller^.Credentials.EffectiveUserId;
   Result := (UserId = RootUserId) or (UserId = Target^.Credentials.RealUserId) or
     (Caller^.Credentials.RealUserId = Target^.Credentials.RealUserId);

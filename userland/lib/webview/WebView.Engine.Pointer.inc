@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: the pointer, element states, links, the focus, context menus. }
+{ WebView.Engine: the pointer, element states, links, the focus, context menus. }
 
 const
   { Logical units the pointer moves, button held, before it drags. }
@@ -33,7 +33,7 @@ begin
   Result := False;
 end;
 
-function TWebView.StatesOf(Element: TElement): TCssElementStates;
+function TWebEngineView.StatesOf(Element: TElement): TCssElementStates;
 var
   Node: TNode;
 begin
@@ -63,7 +63,7 @@ begin
   end;
 end;
 
-procedure TWebView.ApplyStates(Element: TElement);
+procedure TWebEngineView.ApplyStates(Element: TElement);
 var
   TargetLayout: TDocumentLayout;
 begin
@@ -77,7 +77,7 @@ end;
 
 { Chain becomes Element and its ancestors; every element that joined or
   left gets its states again. }
-procedure TWebView.SetChain(var Chain: TElementChain; Element: TElement);
+procedure TWebEngineView.SetChain(var Chain: TElementChain; Element: TElement);
 var
   OldChain, NewChain: TElementChain;
   Node: TNode;
@@ -114,7 +114,7 @@ begin
   RequestFrame;
 end;
 
-procedure TWebView.SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+procedure TWebEngineView.SetFocusedElement(Element: TElement; ShowFocus: Boolean);
 begin
   if (Element = FFocusedElement) and (ShowFocus = FFocusVisible) then
     Exit;
@@ -133,7 +133,7 @@ begin
     FocusMoved(FFocusedElement);
 end;
 
-procedure TWebView.FocusMoved(Element: TElement);
+procedure TWebEngineView.FocusMoved(Element: TElement);
 var
   Old: TElement;
   Node: TNode;
@@ -170,7 +170,7 @@ begin
   PostWake;
 end;
 
-procedure TWebView.SetStatus(const Value: string);
+procedure TWebEngineView.SetStatus(const Value: string);
 begin
   if Value = FStatusText then
     Exit;
@@ -198,7 +198,7 @@ begin
     Hit.Node.Release;
 end;
 
-procedure TWebView.UpdateHover(CssX, CssY: Double);
+procedure TWebEngineView.UpdateHover(CssX, CssY: Double);
 var
   Hit: THitTestResult;
   Link, Control, Old: TElement;
@@ -262,13 +262,13 @@ begin
   PointerShape := Shape;
 end;
 
-procedure TWebView.ClearHover;
+procedure TWebEngineView.ClearHover;
 begin
   SetChain(FHoverChain, nil);
   SetStatus('');
 end;
 
-function TWebView.ResolveLink(Link: TElement): string;
+function TWebEngineView.ResolveLink(Link: TElement): string;
 var
   Target: TUrlRecord;
   Source: TNavigable;
@@ -284,7 +284,7 @@ begin
     Result := SerializeUrl(Target);
 end;
 
-function TWebView.DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
+function TWebEngineView.DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
 var
   Target: string;
 begin
@@ -302,7 +302,7 @@ begin
   end;
 end;
 
-procedure TWebView.ActivateLink(Link: TElement; Disposition: TLinkDisposition);
+procedure TWebEngineView.ActivateLink(Link: TElement; Disposition: TLinkDisposition);
 var
   UrlText: string;
   Target: TUrlRecord;
@@ -382,7 +382,7 @@ begin
     Result := 2;
 end;
 
-procedure TWebView.PointerDown(X, Y: LongInt; Button: LongWord);
+procedure TWebEngineView.PointerDown(X, Y: LongInt; Button: LongWord);
 var
   Hit: THitTestResult;
   Scale: Double;
@@ -410,7 +410,7 @@ end;
 
 { The left button pressed again soon at the same place: a double, then a
   triple click (MouseEvent.detail); any other press starts again. }
-procedure TWebView.CountClick(X, Y: LongInt; Button: LongWord);
+procedure TWebEngineView.CountClick(X, Y: LongInt; Button: LongWord);
 var
   Now: QWord;
 begin
@@ -427,7 +427,7 @@ begin
   FLastClickY := Y;
 end;
 
-procedure TWebView.PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
+procedure TWebEngineView.PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
 var
   Control, Link: TElement;
   Position: TTextPosition;
@@ -504,7 +504,7 @@ begin
   SetSelection(Position, Position);
 end;
 
-procedure TWebView.PointerMove(X, Y: LongInt; Buttons: LongWord);
+procedure TWebEngineView.PointerMove(X, Y: LongInt; Buttons: LongWord);
 var
   Scale: Double;
 begin
@@ -536,7 +536,7 @@ end;
 
 { mousemove at the element under the pointer, held while it is
   dispatched; nothing of the hit is used after it. }
-procedure TWebView.FireMoveWhilePressed(CssX, CssY: Double);
+procedure TWebEngineView.FireMoveWhilePressed(CssX, CssY: Double);
 var
   Hit: THitTestResult;
   Path: TFramePath;
@@ -556,7 +556,7 @@ begin
   end;
 end;
 
-procedure TWebView.PointerUp(X, Y: LongInt; Button: LongWord);
+procedure TWebEngineView.PointerUp(X, Y: LongInt; Button: LongWord);
 var
   Hit: THitTestResult;
   Scale: Double;
@@ -578,7 +578,7 @@ begin
   end;
 end;
 
-procedure TWebView.ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
+procedure TWebEngineView.ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
 var
   Link, Control, Target: TElement;
 begin
@@ -627,14 +627,14 @@ begin
   end;
 end;
 
-procedure TWebView.PointerLeave;
+procedure TWebEngineView.PointerLeave;
 begin
   inherited PointerLeave;
   if FPressButton = 0 then
     ClearHover;
 end;
 
-procedure TWebView.FocusChanged;
+procedure TWebEngineView.FocusChanged;
 begin
   inherited FocusChanged;
   InvalidateViewport;
@@ -642,7 +642,7 @@ end;
 
 { ---- context menus ---- }
 
-procedure TWebView.ContextMenu(X, Y: LongInt; FromKeyboard: Boolean);
+procedure TWebEngineView.ContextMenu(X, Y: LongInt; FromKeyboard: Boolean);
 var
   Info: TWebContextInfo;
   Hit: THitTestResult;
@@ -695,14 +695,23 @@ const
   CommandCopyLink = 5;
   CommandSelectAll = 6;
 
-procedure TWebView.ShowOwnContextMenu(constref Info: TWebContextInfo);
+procedure TWebEngineView.PopupMenu(Menu: TMenuItem; X, Y: LongInt; OnChosen: TMenuItemEvent);
 var
   Window: TControlWindow;
-  Item: TMenuItem;
 begin
+  if Assigned(FOnPopupMenu) and FOnPopupMenu(Self, Menu, X, Y, OnChosen) then
+    Exit;
   if (Host = nil) or not (Host.OwnerWindow is TControlWindow) then
     Exit;
   Window := TControlWindow(Host.OwnerWindow);
+  ShowPopupMenu(Window, Menu, Window.ScreenLeft + Unscaled(PixelBounds.Left + X),
+    Window.ScreenTop + Unscaled(PixelBounds.Top + Y), OnChosen);
+end;
+
+procedure TWebEngineView.ShowOwnContextMenu(constref Info: TWebContextInfo);
+var
+  Item: TMenuItem;
+begin
   FOwnMenu.Free;
   FOwnMenu := TMenuItem.Create('');
   FMenuLink := Info.LinkUrl;
@@ -725,11 +734,10 @@ begin
   end;
   Item := FOwnMenu.Add('Select &All', nil, 'Ctrl+A');
   Item.Tag := CommandSelectAll;
-  ShowPopupMenu(Window, FOwnMenu, Window.ScreenLeft + Unscaled(PixelBounds.Left + Info.X),
-    Window.ScreenTop + Unscaled(PixelBounds.Top + Info.Y), @OwnMenuChosen);
+  PopupMenu(FOwnMenu, Info.X, Info.Y, @OwnMenuChosen);
 end;
 
-procedure TWebView.OwnMenuChosen(Item: TMenuItem);
+procedure TWebEngineView.OwnMenuChosen(Item: TMenuItem);
 begin
   case Item.Tag of
     CommandBack:
@@ -741,7 +749,7 @@ begin
     CommandCopy:
       CopySelection;
     CommandCopyLink:
-      SetClipboardText(FMenuLink);
+      WriteClipboard(FMenuLink);
     CommandSelectAll:
       SelectAll;
   end;

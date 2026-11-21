@@ -182,6 +182,9 @@ type
     { The most processes its user may run while it starts one
       (ProcessLimitProcesses); 0 for the default. Inherited. }
     ProcessCountLimit: LongWord;
+    { Restrict* flags the process put on itself (Processes.Restrictions):
+      only ever added. Inherited. }
+    Restrictions: LongWord;
   end;
 
 var

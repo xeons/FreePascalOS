@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: keys. }
+{ WebView.Engine: keys. }
 
 const
   { Scan codes (set 1) the view looks at beyond Controls.Keys'. }
@@ -28,7 +28,7 @@ const
   { CSS pixels an arrow key scrolls. }
   ArrowStep = 40;
 
-procedure TWebView.KeyUp(Code, Modifiers: LongWord);
+procedure TWebEngineView.KeyUp(Code, Modifiers: LongWord);
 var
   Character: LongWord;
 begin
@@ -39,7 +39,7 @@ begin
   inherited KeyUp(Code, Modifiers);
 end;
 
-function TWebView.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
+function TWebEngineView.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Control: Boolean;
   Kind: TFormControlKind;

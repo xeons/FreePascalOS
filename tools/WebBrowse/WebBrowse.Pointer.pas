@@ -20,7 +20,7 @@
   The web view's pointer handling without the control, for host tools
   (webbrowse's scroll, drag, click and copy steps; the web load test's
   pointer fuzz): the same steps in the same order as
-  WebView.Control.Pointer.inc - the hover's chain and the pointer shape
+  WebView.Engine.Pointer.inc - the hover's chain and the pointer shape
   read from the hit before the page's events, every element an event is
   fired at held while it is dispatched, nothing of a hit used after an
   event, the place in the text looked up again (WebView.PageSelection,

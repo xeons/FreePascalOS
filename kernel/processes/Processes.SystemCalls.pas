@@ -76,6 +76,7 @@ uses
   Processes.UserAccess,
   Processes.Termination,
   Processes.FileCalls,
+  Processes.Restrictions,
   Processes.ThreadCalls,
   Processes.TerminalCalls,
   Io.Manager,
@@ -306,6 +307,8 @@ begin
     Error := CopyStringFromUser(QWord(Creation.Path), @UserPath[0], ProcessPathCapacity);
   if Error <> ErrorNone then
     Exit(Failure(Error));
+  if CallerRestricted(RestrictProcessCreation) then
+    Exit(Failure(ErrorAccessDenied));
 
   Caller := CurrentProcess;
   Error := TranslateUserPath(Caller, @UserPath[0], @KernelPath[0], ProcessPathCapacity);
@@ -388,6 +391,7 @@ begin
   Startup.CommitLimitPages := Caller^.AddressSpace^.CommitLimitPages;
   Startup.ProcessCountLimit := Caller^.ProcessCountLimit;
   Startup.OomScoreAdjust := Caller^.OomScoreAdjust;
+  Startup.Restrictions := Caller^.Restrictions;
   ReleaseMutex(Caller^.Lock);
   Error := ErrorNone;
   if (Creation.Flags and ProcessPassHandles) <> 0 then

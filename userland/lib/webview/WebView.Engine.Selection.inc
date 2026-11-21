@@ -16,30 +16,37 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: the text index, selection, copying and finding. }
+{ WebView.Engine: the text index, selection, copying and finding. }
 
 { The index follows the display list of the layout as it is now
   (TPageSelection rebuilds it when the layout changed and takes the
   selection from the document's again). }
-procedure TWebView.EnsureTextIndex;
+procedure TWebEngineView.EnsureTextIndex;
 begin
   if (FLayout <> nil) and FLayout.NeedsUpdate then
     UpdateLayout;
   FSelection.Refresh;
 end;
 
-function TWebView.TextViewport: TTextViewport;
+function TWebEngineView.TextViewport: TTextViewport;
 begin
   Result := ViewportOfLayout(FLayout);
 end;
 
-procedure TWebView.DocumentSelectionChanged;
+procedure TWebEngineView.DocumentSelectionChanged;
 begin
   if FSelection.DocumentSelectionChanged then
     InvalidateViewport;
+  SelectionChanged;
 end;
 
-function TWebView.TextPositionAt(X, Y: LongInt): TTextPosition;
+procedure TWebEngineView.SelectionChanged;
+begin
+  if Assigned(FOnSelectionChanged) then
+    FOnSelectionChanged(Self);
+end;
+
+function TWebEngineView.TextPositionAt(X, Y: LongInt): TTextPosition;
 var
   Scale: Double;
   View: TTextViewport;
@@ -53,13 +60,16 @@ begin
   Result := FSelection.PositionAt(X / Scale + View.ScrollX, Y / Scale + View.ScrollY, View);
 end;
 
-procedure TWebView.SetSelection(constref Anchor, Focus: TTextPosition);
+procedure TWebEngineView.SetSelection(constref Anchor, Focus: TTextPosition);
 begin
   if FSelection.Select(Anchor, Focus) then
+  begin
     InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
-procedure TWebView.ExtendSelectionTo(X, Y: LongInt);
+procedure TWebEngineView.ExtendSelectionTo(X, Y: LongInt);
 var
   Focus: TTextPosition;
 begin
@@ -67,10 +77,13 @@ begin
     the one the index (rebuilt if the layout changed) has now. }
   Focus := TextPositionAt(X, Y);
   if (Focus.Run >= 0) and FSelection.Extend(Focus) then
+  begin
     InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
-function TWebView.AutoscrollSelection: Boolean;
+function TWebEngineView.AutoscrollSelection: Boolean;
 var
   Scale: Double;
   Delta: Double;
@@ -91,29 +104,35 @@ begin
   Result := True;
 end;
 
-procedure TWebView.ClearSelection;
+procedure TWebEngineView.ClearSelection;
 begin
   if FSelection.Clear then
+  begin
     InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
-procedure TWebView.SelectAll;
+procedure TWebEngineView.SelectAll;
 begin
   if FLayout = nil then
     Exit;
   EnsureTextIndex;
   if FSelection.SelectAll then
+  begin
     InvalidateViewport;
+    SelectionChanged;
+  end;
 end;
 
-function TWebView.HasSelection: Boolean;
+function TWebEngineView.HasSelection: Boolean;
 begin
   if FLayout <> nil then
     EnsureTextIndex;
   Result := FSelection.HasSelection;
 end;
 
-function TWebView.SelectedText: string;
+function TWebEngineView.SelectedText: string;
 begin
   Result := '';
   if FLayout = nil then
@@ -122,16 +141,16 @@ begin
   Result := FSelection.SelectedText;
 end;
 
-procedure TWebView.CopySelection;
+procedure TWebEngineView.CopySelection;
 var
   Chosen: string;
 begin
   Chosen := SelectedText;
   if Chosen <> '' then
-    SetClipboardText(Chosen);
+    WriteClipboard(Chosen);
 end;
 
-function TWebView.PageText: string;
+function TWebEngineView.PageText: string;
 begin
   Result := '';
   if FLayout = nil then
@@ -140,7 +159,7 @@ begin
   Result := FSelection.Index.AllText;
 end;
 
-function TWebView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
+function TWebEngineView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
 var
   From, MatchStart, MatchEnd, Anchor, Focus: TTextPosition;
   Rectangles: TTextRectangleArray;

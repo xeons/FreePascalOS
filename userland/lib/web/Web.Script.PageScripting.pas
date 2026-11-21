@@ -505,28 +505,24 @@ end;
 function TPageScriptEnvironment.GetCookies(Context: TObject; const Url: string): string;
 var
   Target: TUrlRecord;
-  Jar: TCookieJar;
 begin
   Result := '';
-  Jar := FExecutor.FNavigable.Fetcher.Network.Client.Cookies;
-  if (Jar = nil) or not ParseUrl(Url, Target) then
+  if not ParseUrl(Url, Target) then
     Exit;
   if (Target.Scheme <> 'http') and (Target.Scheme <> 'https') then
     Exit;
-  Result := Jar.DocumentCookie(Target, ScriptCookieContext(Target), UnixTimeNow);
+  Result := FExecutor.FNavigable.Fetcher.Network.DocumentCookie(Target, ScriptCookieContext(Target).IsSecure);
 end;
 
 procedure TPageScriptEnvironment.SetCookie(Context: TObject; const Url, Cookie: string);
 var
   Target: TUrlRecord;
-  Jar: TCookieJar;
 begin
-  Jar := FExecutor.FNavigable.Fetcher.Network.Client.Cookies;
-  if (Jar = nil) or not ParseUrl(Url, Target) then
+  if not ParseUrl(Url, Target) then
     Exit;
   if (Target.Scheme <> 'http') and (Target.Scheme <> 'https') then
     Exit;
-  Jar.SetDocumentCookie(Target, Cookie, ScriptCookieContext(Target), UnixTimeNow);
+  FExecutor.FNavigable.Fetcher.Network.SetDocumentCookie(Target, Cookie, ScriptCookieContext(Target).IsSecure);
 end;
 
 function TPageScriptEnvironment.UserAgent: string;

@@ -1679,6 +1679,75 @@ checks.append(('browser: a local page loads (title, loaded), its script runs, it
                browser_ok and b'title Browser test' in browser_log and
                b'loaded file:///tmp/browser-test.html' in browser_log and b'console log script ran 42' in browser_log and
                browser_colour_near(browser_screen(500, 500), 'ff8000')))
+# The browser's process model: pages run in content processes, one per
+# site. Two local pages (the site file:) share one renderer, a page
+# served from here (http://10.0.2.2, another site) gets its own: two
+# webcontent processes. The served page loops for ever (the slow script
+# watchdog off, Browser/ScriptRunLimit 0): its tab gets the "not
+# responding" bar (Browser/HangTimeout 4 s) and Stop page ends its
+# process (the tab shows it crashed). about:crash crashes the local
+# pages' renderer: both its tabs show "This tab crashed", Reload brings
+# the page back in a new process, and the browser itself lives on.
+import functools
+import http.server
+import threading
+served_directory = os.path.join(work, 'served')
+os.makedirs(served_directory, exist_ok=True)
+with open(os.path.join(served_directory, 'hang.html'), 'w') as page:
+    page.write('<!DOCTYPE html><title>Hang</title><body style="background:#0080ff"><p>This page will hang</p>'
+               '<script>setTimeout(function(){ while(true){} }, 4000)</script>')
+served = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=served_directory))
+threading.Thread(target=served.serve_forever, daemon=True).start()
+served_port = served.server_address[1]
+type_on_serial(b"printf '<!DOCTYPE html><title>Local A</title><body style=\"background:#ff8000\"><h1>A</h1>' > /tmp/pa.html; "
+               b"printf '<!DOCTYPE html><title>Local B</title><body style=\"background:#ffff00\"><h1>B</h1>' > /tmp/pb.html; "
+               b"settings set Browser/ScriptRunLimit 0; settings set Browser/HangTimeout 4\r")
+time.sleep(1)
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(('/app/browser/browser file:///tmp/pa.html http://10.0.2.2:' + str(served_port) +
+                '/hang.html file:///tmp/pb.html > /tmp/procs.log 2>&1 &\r').encode())
+time.sleep(14)
+processes_from = len(received)
+type_on_serial(b'm=DONE; echo RENDERERS $(ps | grep -c /bin/webcontent) $m\r')
+wait_for('RENDERERS', 10)
+processes_two = re.search(rb'RENDERERS 2 DONE', bytes(received[processes_from:])) is not None
+# The served tab is the last (the third address opened after the first).
+press('ctrl-tab')
+time.sleep(0.5)
+press('ctrl-tab')
+time.sleep(8)
+hung_screen = take_screen()
+click_at(590, 171)
+time.sleep(3)
+press('ctrl-tab')
+time.sleep(1)
+press('ctrl-l')
+for character in 'about:crash':
+    press({':': 'shift-semicolon'}.get(character, character))
+press('ret')
+time.sleep(4)
+crashed_screen = take_screen()
+click_at(105, 278)
+time.sleep(6)
+reloaded_screen = take_screen()
+procs_from = len(received)
+type_on_serial(b'kill %2; wait %2; cat /tmp/procs.log; settings delete Browser; rm -r /.settings/browser; kill %1; wait; '
+               b'm=DONE; echo PROCS $m\r')
+procs_ok = wait_for('PROCS DONE', 30)
+served.shutdown()
+procs_log = bytes(received[procs_from:])
+checks.append(('browser processes: one renderer per site (two for three tabs)', processes_two))
+checks.append(('browser processes: the looping page is "not responding", Stop ends its renderer and its tab shows '
+               'it crashed',
+               procs_ok and re.search(rb'process hung 1 tab 2', procs_log) is not None and
+               b'process stop 0 tab 2' in procs_log and re.search(rb'process crashed 137 tab 2', procs_log) is not None))
+checks.append(('browser processes: about:crash crashes the local pages\' renderer (both its tabs), the served tab is '
+               'untouched, Reload starts the page in a new renderer, the browser lives on',
+               procs_ok and len(re.findall(rb'process crashed \d+ tab [01]', procs_log)) == 2 and
+               procs_log.count(b'loaded file:///tmp/pa.html') >= 2 and b'exit' in procs_log and
+               browser_colour_near(reloaded_screen(500, 400), 'ff8000')))
 # Paint on a new picture (480x320, white): the rectangle tool picked by
 # its button in the tool box, a rectangle dragged with the pointer from
 # (20, 20) to (120, 80) of the picture (Paint prints where its top left

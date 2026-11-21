@@ -16,14 +16,14 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: the page, its document, the event loop, navigation. }
+{ WebView.Engine: the page, its document, the event loop, navigation. }
 
 const
   { Milliseconds of tasks run per turn of the program's message loop. }
   TaskBudgetMilliseconds = 12;
   FrameIntervalMilliseconds = 16;
 
-constructor TWebView.Create(AParent: TControl);
+constructor TWebEngineView.Create(AParent: TControl);
 begin
   inherited Create(AParent);
   CanFocus := True;
@@ -55,7 +55,7 @@ begin
   FFrameTimer.OnTimer := @FrameTimerFired;
 end;
 
-destructor TWebView.Destroy;
+destructor TWebEngineView.Destroy;
 begin
   FLoopTimer.Free;
   FFrameTimer.Free;
@@ -82,20 +82,23 @@ begin
   inherited Destroy;
 end;
 
-procedure TWebView.ScriptScrolled;
+procedure TWebEngineView.ScriptScrolled;
 begin
   UpdateScrollBars;
   InvalidateViewport;
   RequestFrame;
 end;
 
-procedure TWebView.EnsurePage;
+procedure TWebEngineView.EnsurePage;
 var
   Factory: TScriptExecutorFactory;
 begin
   if FPage <> nil then
     Exit;
-  FPage := TWebPage.Create(SharedNetworkContext, FSink, nil);
+  if FNetworkContext <> nil then
+    FPage := TWebPage.Create(FNetworkContext, FSink, nil)
+  else
+    FPage := TWebPage.Create(SharedNetworkContext, FSink, nil);
   FSink.AttachNavigable(FPage.Navigable);
   Factory := FScriptExecutorFactory;
   if not Assigned(Factory) then
@@ -106,7 +109,10 @@ begin
   begin
     FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
     TPageScriptExecutor(FExecutor).Environment.UserAgentText := WebViewUserAgent;
-    TPageScriptExecutor(FExecutor).Environment.LocalStorage := SharedLocalStorage;
+    if FLocalStorage <> nil then
+      TPageScriptExecutor(FExecutor).Environment.LocalStorage := FLocalStorage
+    else
+      TPageScriptExecutor(FExecutor).Environment.LocalStorage := SharedLocalStorage;
     TPageScriptExecutor(FExecutor).Environment.Layout := TDocumentScriptLayout(FScriptLayout);
     TPageScriptExecutor(FExecutor).OnAlert := @ScriptAlert;
     TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;
@@ -123,14 +129,14 @@ begin
   AdoptDocument(FPage.Navigable.ActiveDocument);
 end;
 
-function TWebView.GetNavigable: TNavigable;
+function TWebEngineView.GetNavigable: TNavigable;
 begin
   EnsurePage;
   Result := FPage.Navigable;
 end;
 
 { Element pointers die with their document: drop every one held. }
-procedure TWebView.ForgetElements;
+procedure TWebEngineView.ForgetElements;
 var
   Index: Integer;
 begin
@@ -161,7 +167,7 @@ begin
   FHasPendingFragment := False;
 end;
 
-procedure TWebView.ReleaseDocument;
+procedure TWebEngineView.ReleaseDocument;
 begin
   ForgetElements;
   FSelection.Attach(nil, nil, nil);
@@ -183,7 +189,7 @@ begin
   FFixedChecked := False;
 end;
 
-procedure TWebView.AdoptDocument(Document: TDocument);
+procedure TWebEngineView.AdoptDocument(Document: TDocument);
 begin
   if Document = FDocument then
     Exit;
@@ -210,19 +216,19 @@ end;
 { ---- the event loop ---- }
 
 { Any thread: the page has work. }
-procedure TWebView.PageWake(Sender: TObject);
+procedure TWebEngineView.PageWake(Sender: TObject);
 begin
   PostWake;
 end;
 
-procedure TWebView.PostWake;
+procedure TWebEngineView.PostWake;
 begin
   if InterlockedExchange(FWakePending, 1) = 0 then
     if not PostMessage(Self, MessageWebViewWake) then
       FWakePending := 0;
 end;
 
-procedure TWebView.ReceiveMessage(var Message: TPostedMessage);
+procedure TWebEngineView.ReceiveMessage(var Message: TPostedMessage);
 begin
   if Message.Code = MessageWebViewWake then
   begin
@@ -240,7 +246,7 @@ begin
   inherited ReceiveMessage(Message);
 end;
 
-procedure TWebView.PumpEventLoop;
+procedure TWebEngineView.PumpEventLoop;
 var
   Delay: Double;
 begin
@@ -267,20 +273,20 @@ begin
   RequestFrame;
 end;
 
-procedure TWebView.LoopTimerFired(Sender: TTimer);
+procedure TWebEngineView.LoopTimerFired(Sender: TTimer);
 begin
   FLoopTimer.Enabled := False;
   PumpEventLoop;
 end;
 
-procedure TWebView.RenderingRequested(Sender: TObject);
+procedure TWebEngineView.RenderingRequested(Sender: TObject);
 begin
   RequestFrame;
 end;
 
 { A frame soon: something changed (input, a task, a layout). A frame
   put off by RequestAnimationFrame is brought forward. }
-procedure TWebView.RequestFrame;
+procedure TWebEngineView.RequestFrame;
 begin
   if FFrameTimer.Enabled and (FFrameTimer.Interval = FrameIntervalMilliseconds) then
     Exit;
@@ -291,7 +297,7 @@ end;
 { The next frame of running CSS animations: no sooner than twice what the
   last frame and paint cost, so the animations take at most half the GUI
   thread on a slow machine or a heavy page. }
-procedure TWebView.RequestAnimationFrame;
+procedure TWebEngineView.RequestAnimationFrame;
 begin
   if FFrameTimer.Enabled then
     Exit;
@@ -299,13 +305,13 @@ begin
   FFrameTimer.Enabled := True;
 end;
 
-procedure TWebView.FrameTimerFired(Sender: TTimer);
+procedure TWebEngineView.FrameTimerFired(Sender: TTimer);
 begin
   FFrameTimer.Enabled := False;
   RenderFrame;
 end;
 
-procedure TWebView.RenderFrame;
+procedure TWebEngineView.RenderFrame;
 var
   Started: QWord;
 begin
@@ -323,7 +329,7 @@ begin
     RequestAnimationFrame;
 end;
 
-procedure TWebView.RenderFrameSteps;
+procedure TWebEngineView.RenderFrameSteps;
 begin
   FPage.RenderingOpportunity;
   if FLayout = nil then
@@ -350,12 +356,12 @@ end;
 
 { ---- geometry ---- }
 
-function TWebView.DeviceScale: Double;
+function TWebEngineView.DeviceScale: Double;
 begin
   Result := DeviceScaleFor(Scaled(1000) / 1000, FZoom);
 end;
 
-function TWebView.ViewportPixelWidth: LongInt;
+function TWebEngineView.ViewportPixelWidth: LongInt;
 begin
   Result := RectangleWidth(PixelBounds);
   if FVerticalBar.Visible then
@@ -364,7 +370,7 @@ begin
     Result := 1;
 end;
 
-function TWebView.ViewportPixelHeight: LongInt;
+function TWebEngineView.ViewportPixelHeight: LongInt;
 begin
   Result := RectangleHeight(PixelBounds);
   if FHorizontalBar.Visible then
@@ -373,17 +379,17 @@ begin
     Result := 1;
 end;
 
-function TWebView.ViewportCssWidth: Double;
+function TWebEngineView.ViewportCssWidth: Double;
 begin
   Result := ViewportPixelWidth / DeviceScale;
 end;
 
-function TWebView.ViewportCssHeight: Double;
+function TWebEngineView.ViewportCssHeight: Double;
 begin
   Result := ViewportPixelHeight / DeviceScale;
 end;
 
-function TWebView.HasRoom: Boolean;
+function TWebEngineView.HasRoom: Boolean;
 var
   Control: TControl;
 begin
@@ -397,7 +403,7 @@ begin
   Result := (RectangleWidth(PixelBounds) > 1) and (RectangleHeight(PixelBounds) > 1);
 end;
 
-procedure TWebView.ApplyViewport;
+procedure TWebEngineView.ApplyViewport;
 begin
   if not HasRoom then
     Exit;
@@ -413,7 +419,7 @@ const
 { Whether a layout may run now: a slow one (a long page loading on a slow
   machine) waits until the GUI had twice its time to itself since the
   last, so input and painting go on between them. }
-function TWebView.LayoutDue: Boolean;
+function TWebEngineView.LayoutDue: Boolean;
 begin
   Result := (FLayoutCost < QuickLayoutMilliseconds) or (GetTickCount64 - FLayoutDoneAt >= 2 * FLayoutCost);
 end;
@@ -421,7 +427,7 @@ end;
 { Lays the page out, and again if the scroll bars came or went. Unless
   Force, a layout that is not due (LayoutDue) is left for a later frame:
   what is shown and hit tested meanwhile is the last layout. }
-procedure TWebView.UpdateLayout(Force: Boolean);
+procedure TWebEngineView.UpdateLayout(Force: Boolean);
 var
   Started: QWord;
 begin
@@ -441,7 +447,7 @@ begin
   end;
 end;
 
-procedure TWebView.UpdateLayoutRounds;
+procedure TWebEngineView.UpdateLayoutRounds;
 var
   Round_: Integer;
   HadVertical, HadHorizontal: Boolean;
@@ -461,7 +467,7 @@ begin
   end;
 end;
 
-procedure TWebView.Layout;
+procedure TWebEngineView.Layout;
 begin
   inherited Layout;
   ApplyViewport;
@@ -470,7 +476,7 @@ begin
 end;
 
 { The scroll bars along the right and bottom edges (the theme's width). }
-procedure TWebView.PlaceChildren(const Area: TRectangle);
+procedure TWebEngineView.PlaceChildren(const Area: TRectangle);
 var
   BarWidth, BottomRoom, RightRoom: LongInt;
 begin
@@ -491,7 +497,7 @@ end;
 
 { ---- navigation ---- }
 
-function TWebView.Navigate(const Address: string): Boolean;
+function TWebEngineView.Navigate(const Address: string): Boolean;
 var
   ScrollX, ScrollY: Single;
 begin
@@ -505,7 +511,21 @@ begin
   PostWake;
 end;
 
-procedure TWebView.LoadHtml(const Html, BaseUrl: string);
+procedure TWebEngineView.NavigateWith(constref Url: TUrlRecord; constref Options: TNavigateOptions);
+var
+  ScrollX, ScrollY: Single;
+begin
+  EnsurePage;
+  if FLayout <> nil then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
+  end;
+  FPage.Navigable.Navigate(Url, Options);
+  PostWake;
+end;
+
+procedure TWebEngineView.LoadHtml(const Html, BaseUrl: string);
 var
   Base: TUrlRecord;
 begin
@@ -516,28 +536,28 @@ begin
   PostWake;
 end;
 
-procedure TWebView.GoBack;
+procedure TWebEngineView.GoBack;
 begin
   EnsurePage;
   FPage.Navigable.Back;
   PostWake;
 end;
 
-procedure TWebView.GoForward;
+procedure TWebEngineView.GoForward;
 begin
   EnsurePage;
   FPage.Navigable.Forward;
   PostWake;
 end;
 
-procedure TWebView.Reload(BypassCache: Boolean);
+procedure TWebEngineView.Reload(BypassCache: Boolean);
 begin
   EnsurePage;
   FPage.Navigable.Reload(BypassCache);
   PostWake;
 end;
 
-procedure TWebView.Stop;
+procedure TWebEngineView.Stop;
 begin
   if FPage = nil then
     Exit;
@@ -545,19 +565,19 @@ begin
   PostWake;
 end;
 
-function TWebView.GetCanGoBack: Boolean;
+function TWebEngineView.GetCanGoBack: Boolean;
 begin
   Result := (FPage <> nil) and FPage.Navigable.History.CanGoBack;
 end;
 
-function TWebView.GetCanGoForward: Boolean;
+function TWebEngineView.GetCanGoForward: Boolean;
 begin
   Result := (FPage <> nil) and FPage.Navigable.History.CanGoForward;
 end;
 
 { ---- zoom ---- }
 
-procedure TWebView.SetZoom(Value: Double);
+procedure TWebEngineView.SetZoom(Value: Double);
 var
   ScrollX, ScrollY: Single;
   Ratio: Double;
@@ -587,38 +607,38 @@ begin
     FOnZoomChanged(Self);
 end;
 
-procedure TWebView.ZoomIn;
+procedure TWebEngineView.ZoomIn;
 begin
   SetZoom(ZoomedIn(FZoom));
 end;
 
-procedure TWebView.ZoomOut;
+procedure TWebEngineView.ZoomOut;
 begin
   SetZoom(ZoomedOut(FZoom));
 end;
 
-procedure TWebView.ResetZoom;
+procedure TWebEngineView.ResetZoom;
 begin
   SetZoom(1);
 end;
 
 { ---- what the navigable tells ---- }
 
-procedure TWebView.NavigableLocationChanged(const Url: string);
+procedure TWebEngineView.NavigableLocationChanged(const Url: string);
 begin
   FUrl := Url;
   if Assigned(FOnLocationChanged) then
     FOnLocationChanged(Self, Url);
 end;
 
-procedure TWebView.NavigableTitleChanged(const Title: string);
+procedure TWebEngineView.NavigableTitleChanged(const Title: string);
 begin
   FTitle := Title;
   if Assigned(FOnTitleChanged) then
     FOnTitleChanged(Self, Title);
 end;
 
-procedure TWebView.NavigableLoadingStateChanged(State: TLoadingState);
+procedure TWebEngineView.NavigableLoadingStateChanged(State: TLoadingState);
 begin
   FState := State;
   if Assigned(FOnLoadingStateChanged) then
@@ -626,7 +646,7 @@ begin
   RequestFrame;
 end;
 
-procedure TWebView.NavigableFaviconChanged(Image: TImage);
+procedure TWebEngineView.NavigableFaviconChanged(Image: TImage);
 begin
   FFavicon.Free;
   FFavicon := Image;
@@ -634,13 +654,13 @@ begin
     FOnFaviconChanged(Self);
 end;
 
-procedure TWebView.NavigableHistoryChanged;
+procedure TWebEngineView.NavigableHistoryChanged;
 begin
   if Assigned(FOnHistoryChanged) then
     FOnHistoryChanged(Self);
 end;
 
-procedure TWebView.NavigableScrollToFragment(Element: TElement);
+procedure TWebEngineView.NavigableScrollToFragment(Element: TElement);
 begin
   if FPendingFragment <> nil then
     FPendingFragment.Release;
@@ -651,7 +671,7 @@ begin
   RequestFrame;
 end;
 
-procedure TWebView.NavigableRestoreScrollPosition(X, Y: Double);
+procedure TWebEngineView.NavigableRestoreScrollPosition(X, Y: Double);
 begin
   FHasPendingRestore := True;
   FPendingRestoreX := X;
@@ -659,7 +679,7 @@ begin
   RequestFrame;
 end;
 
-function TWebView.NavigableConfirmUnload: Boolean;
+function TWebEngineView.NavigableConfirmUnload: Boolean;
 begin
   if Assigned(FOnConfirmUnload) then
     Result := FOnConfirmUnload(Self)
@@ -667,13 +687,22 @@ begin
     Result := True;
 end;
 
-procedure TWebView.NavigableDownloadRequested(constref Download: TDownloadInfo);
+function TWebEngineView.NavigableNavigationAllowed(constref Url: TUrlRecord; constref Options: TNavigateOptions;
+  AtResponse: Boolean): Boolean;
+begin
+  if Assigned(FOnNavigationRequest) then
+    Result := FOnNavigationRequest(Self, Url, Options, AtResponse)
+  else
+    Result := True;
+end;
+
+procedure TWebEngineView.NavigableDownloadRequested(constref Download: TDownloadInfo);
 begin
   if Assigned(FOnDownloadRequested) then
     FOnDownloadRequested(Self, Download);
 end;
 
-procedure TWebView.NavigableFailed(const Url, Reason: string);
+procedure TWebEngineView.NavigableFailed(const Url, Reason: string);
 begin
   if Assigned(FOnNavigationFailed) then
     FOnNavigationFailed(Self, Url, Reason);
@@ -681,7 +710,7 @@ end;
 
 { ---- scripting ---- }
 
-procedure TWebView.SetScriptingEnabled(Value: Boolean);
+procedure TWebEngineView.SetScriptingEnabled(Value: Boolean);
 begin
   FScriptingEnabled := Value;
   if FPage = nil then
@@ -692,7 +721,7 @@ begin
     FPage.Navigable.Executor := nil;
 end;
 
-procedure TWebView.ScriptAlert(const Message: string);
+procedure TWebEngineView.ScriptAlert(const Message: string);
 begin
   if not Assigned(FOnScriptAlert) then
     Exit;
@@ -704,7 +733,7 @@ begin
   end;
 end;
 
-function TWebView.ScriptConfirm(const Message: string): Boolean;
+function TWebEngineView.ScriptConfirm(const Message: string): Boolean;
 begin
   Result := False;
   if not Assigned(FOnScriptConfirm) then
@@ -717,7 +746,7 @@ begin
   end;
 end;
 
-function TWebView.ScriptPrompt(const Message, Default: string; out Answer: string): Boolean;
+function TWebEngineView.ScriptPrompt(const Message, Default: string; out Answer: string): Boolean;
 begin
   Result := False;
   Answer := '';
@@ -731,7 +760,7 @@ begin
   end;
 end;
 
-procedure TWebView.ScriptConsole(const Level, Line: string);
+procedure TWebEngineView.ScriptConsole(const Level, Line: string);
 begin
   if Assigned(FOnConsoleMessage) then
     FOnConsoleMessage(Self, Level, Line);

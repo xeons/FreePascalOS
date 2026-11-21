@@ -70,7 +70,8 @@ uses
   Processes.Process,
   Processes.Thread,
   Processes.UserAccess,
-  Processes.Channels;
+  Processes.Channels,
+  Processes.Restrictions;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -221,6 +222,8 @@ var
   Port: PPort;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictPortConnections) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchPortName(NameAddress, @Name[0]);
   if Error = ErrorNone then
     Error := CreatePort(@Name[0], Port);
@@ -249,6 +252,8 @@ var
   Channel: PChannelEnd;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictPortConnections) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchPortName(NameAddress, @Name[0]);
   DescribeCaller(Holder);
   if Error = ErrorNone then

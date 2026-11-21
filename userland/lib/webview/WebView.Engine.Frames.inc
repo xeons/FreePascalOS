@@ -16,11 +16,11 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: frames - the pointer goes into them (hit testing
+{ WebView.Engine: frames - the pointer goes into them (hit testing
   through their documents), each document's own layout and navigable,
   where a frame's viewport is in the view's, and the mouse events. }
 
-function TWebView.HitTestDeep(CssX, CssY: Double; out Path: TFramePath): THitTestResult;
+function TWebEngineView.HitTestDeep(CssX, CssY: Double; out Path: TFramePath): THitTestResult;
 begin
   Path := nil;
   Result := Default(THitTestResult);
@@ -29,7 +29,7 @@ begin
   Result := HitTestThroughFrames(FPainter, FLayout, CssX, CssY, Path);
 end;
 
-function TWebView.LayoutForDocument(Document: TDocument): TDocumentLayout;
+function TWebEngineView.LayoutForDocument(Document: TDocument): TDocumentLayout;
 var
   View: TFrameView;
 begin
@@ -42,7 +42,7 @@ begin
     Result := nil;
 end;
 
-function TWebView.NavigableForNode(Node: TNode): TNavigable;
+function TWebEngineView.NavigableForNode(Node: TNode): TNavigable;
 begin
   Result := nil;
   if Node <> nil then
@@ -51,7 +51,7 @@ begin
     Result := FPage.Navigable;
 end;
 
-function TWebView.ViewportOriginOf(Document: TDocument; out X, Y: Single): Boolean;
+function TWebEngineView.ViewportOriginOf(Document: TDocument; out X, Y: Single): Boolean;
 var
   TargetLayout: TDocumentLayout;
 begin
@@ -77,7 +77,7 @@ begin
 end;
 
 { The pointer as Target's document sees it, for its mouse events. }
-procedure TWebView.FillMouseInit(Target: TNode; out Init: TMouseEventInit);
+procedure TWebEngineView.FillMouseInit(Target: TNode; out Init: TMouseEventInit);
 var
   OriginX, OriginY, ScrollX, ScrollY, BoxX, BoxY, BoxWidth, BoxHeight: Single;
   TargetLayout: TDocumentLayout;
@@ -115,7 +115,7 @@ begin
   end;
 end;
 
-function TWebView.FireMouse(Target: TNode; const EventType: string; Button: SmallInt; Detail: LongInt): Boolean;
+function TWebEngineView.FireMouse(Target: TNode; const EventType: string; Button: SmallInt; Detail: LongInt): Boolean;
 var
   Init: TMouseEventInit;
 begin
@@ -129,7 +129,7 @@ begin
   PostWake;
 end;
 
-function TWebView.FireClick(Element: TElement): Boolean;
+function TWebEngineView.FireClick(Element: TElement): Boolean;
 begin
   Result := FireMouse(Element, 'click', 0, 1);
 end;
@@ -137,7 +137,7 @@ end;
 { The innermost scroll container under the pointer scrolls, else the
   frame's viewport, then the same outwards: the frames the pointer is in,
   innermost first, then the page. }
-function TWebView.ScrollThroughFrames(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
+function TWebEngineView.ScrollThroughFrames(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
 var
   Path: TFramePath;
   Hit: THitTestResult;
