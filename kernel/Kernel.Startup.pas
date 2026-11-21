@@ -237,6 +237,11 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
+    { A thread this processor may run can be left in another's queue
+      when that queue's lock was taken just as it looked: it looks again
+      rather than halting. }
+    if IdleProcessorFoundWork then
+      Continue;
     { Interrupts are enabled, so the next interrupt ends the halt. If it
       made a thread ready, the dispatch interrupt switches to it. }
     HaltProcessor;

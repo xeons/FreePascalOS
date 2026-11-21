@@ -28,7 +28,11 @@
       in while readers keep coming;
     * wake boosts: a thread woken by an event on a processor that a
       thread of the same priority keeps busy runs at once instead of
-      after that thread's time slice.
+      after that thread's time slice;
+    * the per-processor scheduling locks under stress: threads in a ring
+      waking each other across processors while another thread keeps
+      moving them (affinity) and changing their priorities, and busy
+      threads yield - every hand-over must arrive.
 
   The starvation boost needs seconds and is checked in user mode
   (schedtest).
@@ -56,6 +60,8 @@ uses
   Kernel.Timers,
   Kernel.Processors,
   Kernel.SelfTest,
+  Kernel.Arch.Cpu,
+  Objects.Manager,
   Processes.Thread;
 
 const
@@ -442,11 +448,149 @@ begin
   ReportPassed('wake boost (an event wakes a thread at once)');
 end;
 
+{ --- Scheduler stress ------------------------------------------------------ }
+
+const
+  RingSize = 8;
+  RingRounds = 500;
+  YielderCount = 2;
+
+var
+  RingEvents: array[0..RingSize - 1] of TEvent;
+  RingPasses: array[0..RingSize - 1] of Int64;
+  RingThreads: array[0..RingSize - 1] of PThread;
+  RingFinished: Int64;
+  AllRingFinished: TEvent;
+  StopMeddling: PtrUInt;
+  MeddlerStopped: TEvent;
+  StopYielders: PtrUInt;
+  YieldersStopped: Int64;
+  AllYieldersStopped: TEvent;
+  MeddleCount: Int64;
+
+{ Waits for its event and signals the next one's, RingRounds times (the
+  test signals member 0's first). }
+procedure RingMemberMain(Context: Pointer);
+var
+  Index: PtrUInt;
+  Round: Integer;
+begin
+  Index := PtrUInt(Context);
+  for Round := 1 to RingRounds do
+  begin
+    WaitForEvent(RingEvents[Index]);
+    AtomicIncrement(RingPasses[Index]);
+    if not ((Index = RingSize - 1) and (Round = RingRounds)) then
+      SignalEvent(RingEvents[(Index + 1) mod RingSize]);
+  end;
+  if AtomicIncrement(RingFinished) = RingSize then
+    SignalEvent(AllRingFinished);
+end;
+
+function OnlineProcessorMask: QWord;
+var
+  Index: LongWord;
+begin
+  Result := 0;
+  for Index := 0 to ProcessorTotal - 1 do
+    if ProcessorByIndex(Index)^.IsOnline then
+      Result := Result or (QWord(1) shl Index);
+end;
+
+{ Keeps moving the ring's threads between processors and changing their
+  priorities, whatever state they are in. }
+procedure MeddlerMain(Context: Pointer);
+var
+  Seed: QWord;
+  Online: QWord;
+  Mask: QWord;
+  Member: Integer;
+begin
+  Seed := ClockNanoseconds or 1;
+  Online := OnlineProcessorMask;
+  while AtomicLoad(StopMeddling) = 0 do
+  begin
+    Seed := Seed * 6364136223846793005 + 1442695040888963407;
+    Member := Integer((Seed shr 33) mod RingSize);
+    Mask := (Seed shr 13) and Online;
+    if Mask = 0 then
+      Mask := AllProcessors;
+    SetThreadAffinity(@RingThreads[Member]^.ControlBlock, Mask);
+    SetThreadPriority(@RingThreads[Member]^.ControlBlock,
+      DefaultThreadPriority - 1 + LongWord((Seed shr 40) mod 3));
+    AtomicIncrement(MeddleCount);
+    if (MeddleCount and 7) = 0 then
+      SleepMilliseconds(1)
+    else
+      YieldExecution;
+  end;
+  SignalEvent(MeddlerStopped);
+end;
+
+procedure YielderMain(Context: Pointer);
+var
+  Spins: Integer;
+begin
+  while AtomicLoad(StopYielders) = 0 do
+  begin
+    for Spins := 1 to 200 do
+      CpuRelax;
+    YieldExecution;
+  end;
+  if AtomicIncrement(YieldersStopped) = YielderCount then
+    SignalEvent(AllYieldersStopped);
+end;
+
+procedure TestSchedulerStress;
+var
+  Index: Integer;
+  Total: Int64;
+begin
+  RingFinished := 0;
+  MeddleCount := 0;
+  StopMeddling := 0;
+  StopYielders := 0;
+  YieldersStopped := 0;
+  InitializeEvent(AllRingFinished, EventKindNotification, False);
+  InitializeEvent(MeddlerStopped, EventKindNotification, False);
+  InitializeEvent(AllYieldersStopped, EventKindNotification, False);
+  for Index := 0 to RingSize - 1 do
+  begin
+    InitializeEvent(RingEvents[Index], EventKindSynchronization, False);
+    RingPasses[Index] := 0;
+  end;
+  for Index := 1 to YielderCount do
+    StartWorker(@YielderMain, nil, 'StressYielder');
+  for Index := 0 to RingSize - 1 do
+  begin
+    RingThreads[Index] := CreateSystemThread(@RingMemberMain, Pointer(PtrUInt(Index)),
+      DefaultThreadPriority, 'StressRing', True);
+    Check(RingThreads[Index] <> nil, 'could not create a scheduler stress thread');
+  end;
+  StartWorker(@MeddlerMain, nil, 'StressMeddler');
+  SignalEvent(RingEvents[0]);
+  WaitForWorkers(AllRingFinished, 'threads waking each other across processors lost a wake-up');
+  AtomicStore(StopMeddling, 1);
+  WaitForWorkers(MeddlerStopped, 'the scheduler stress meddler did not stop');
+  AtomicStore(StopYielders, 1);
+  WaitForWorkers(AllYieldersStopped, 'the scheduler stress yielders did not stop');
+  Total := 0;
+  for Index := 0 to RingSize - 1 do
+  begin
+    Total := Total + RingPasses[Index];
+    DereferenceObject(RingThreads[Index]);
+  end;
+  Check(Total = RingSize * RingRounds, 'a scheduler stress ring lost a pass');
+  Check(MeddleCount > 0, 'the scheduler stress meddler never ran');
+  ReportPassed('scheduler stress (wake-ups across processors, moves, priorities)');
+end;
+
 procedure RunSynchronizationSelfTests;
 begin
   TestSemaphores;
   TestSharedLocks;
   TestWakeBoost;
+  TestSchedulerStress;
 end;
 
 end.

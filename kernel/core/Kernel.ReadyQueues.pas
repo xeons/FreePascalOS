@@ -17,10 +17,20 @@
 }
 
 {
-  Run queues: one set per processor.
+  Run queues: one set per processor, each with its own lock.
 
-  Every processor has a run queue per priority level. A thread that
-  becomes ready is placed (ChooseProcessorFor) on
+  Every processor has a run queue per priority level and a lock (the
+  processor's scheduling lock) that protects them, which thread it runs
+  and at what priority, its time slice and its processor time. The lock
+  is taken at DispatchLevel. Kernel.Scheduler holds it across a thread
+  switch on that processor; the thread that runs next releases it.
+
+  Lock order (see Kernel.Scheduler): the dispatcher lock (wait queues)
+  comes before any processor's scheduling lock; a processor holding one
+  scheduling lock only ever TRIES to take another (TryLockProcessor), so
+  no two processors can wait for each other.
+
+  A thread that becomes ready is placed (ChooseProcessorFor) on
 
     1. the processor it last ran on, if that one is idle (its data may
        still be in that processor's cache),
@@ -29,18 +39,24 @@
        less important than this one,
     4. else again the processor it last ran on.
 
+  This reads the other processors' running priorities without their
+  locks (RunningPriority, kept by the scheduler for this): a hint that
+  may be a moment old, never a pointer to follow.
+
   A processor choosing its next thread (TakeReadyThreadFor) takes the
   most important thread of its own queues, unless another processor's
   queues hold a more important one that may run here - or, when its own
-  queues are empty, any one that may run here. So no processor idles or
-  runs something less important while a thread it could run waits
-  elsewhere, and threads still mostly stay where they are.
+  queues are empty, any one that may run here (work stealing). Those
+  queues are taken only if their lock is free at that moment; if one was
+  busy and might have held something, StealWasRefused is set, so an idle
+  processor tries again (PullThreadForIdleProcessor) instead of halting.
+
+  A thread taken out of a queue (to run, or to move) is in no queue for
+  a while: its QueuedProcessorIndex is NotQueued then.
 
   The affinity mask of a thread limits it to some processors (bit N for
   the processor with index N). A mask that allows no online processor
   allows them all.
-
-  Everything here runs under the dispatcher lock (Kernel.Scheduler).
 }
 unit Kernel.ReadyQueues;
 
@@ -49,52 +65,89 @@ unit Kernel.ReadyQueues;
 interface
 
 uses
+  Kernel.PriorityLevel,
   Kernel.Threads,
   Kernel.Processors;
 
+const
+  { QueuedProcessorIndex of a ready thread that is in no queue. }
+  NotQueued = High(LongWord);
+
 procedure InitializeReadyQueues;
 
+{ The processor's scheduling lock, at DispatchLevel or above. }
+procedure LockProcessor(Processor: PProcessor);
+procedure UnlockProcessor(Processor: PProcessor);
+function TryLockProcessor(Processor: PProcessor): Boolean;
+{ The same from any level up to DispatchLevel (raises to it). }
+function LockProcessorAtDispatchLevel(Processor: PProcessor): TPriorityLevel;
+procedure UnlockProcessorAndLower(Processor: PProcessor; PreviousLevel: TPriorityLevel);
+
+{ The priority of the thread Processor runs, kept under its lock
+  (SetRunningPriority) and read by anyone without it. }
+procedure SetRunningPriority(Processor: PProcessor; Priority: LongWord);
+function RunningPriorityOf(Processor: PProcessor): LongWord;
+
 function ThreadMayRunOn(Thread: PThreadControlBlock; Processor: PProcessor): Boolean;
-{ Where a thread that becomes ready should go; see the unit comment. }
+{ Where a thread that becomes ready should go; see the unit comment.
+  No lock needed. }
 function ChooseProcessorFor(Thread: PThreadControlBlock): PProcessor;
-
-procedure EnqueueReadyThread(Thread: PThreadControlBlock; Processor: PProcessor);
-{ Takes a ready thread out of whichever queue it is in. }
-procedure RemoveReadyThread(Thread: PThreadControlBlock);
-
-{ The priority of the thread TakeReadyThreadFor would return, or -1. }
-function BestReadyPriorityFor(Processor: PProcessor): Integer;
-{ The next thread for Processor, taken out of its queue; nil if none. }
-function TakeReadyThreadFor(Processor: PProcessor): PThreadControlBlock;
-
-{ An idle processor (other than Exclude) that Thread may run on, or nil. }
+{ An idle processor (other than Exclude) that Thread may run on, or nil.
+  No lock needed. }
 function FindIdleProcessorFor(Thread: PThreadControlBlock; Exclude: PProcessor): PProcessor;
 
+{ Processor's lock held. }
+procedure EnqueueReadyThread(Thread: PThreadControlBlock; Processor: PProcessor);
+{ Takes a ready thread out of its queue; the lock of the processor
+  whose queue it is in (QueuedProcessorIndex) held. }
+procedure RemoveReadyThread(Thread: PThreadControlBlock);
+
+{ The next thread for Processor of at least MinimumPriority, taken out
+  of its queue, or nil; Processor's lock held. }
+function TakeReadyThreadFor(Processor: PProcessor; MinimumPriority: Integer): PThreadControlBlock;
+
+{ For an idle processor that holds no scheduling lock: moves the most
+  important thread it may run from another processor's queue into its
+  own (waiting for that queue's lock), if a steal was refused since the
+  last time. True if it moved one (the caller asks for a dispatch). }
+function PullThreadForIdleProcessor(Processor: PProcessor): Boolean;
+function StealWasRefused(Processor: PProcessor): Boolean;
+
+{ Threads in all queues (read without locks: a moment's figure). }
 function ReadyThreadTotal: LongWord;
 
 { A ready thread that has waited long enough for the starvation boost
-  by Now (Kernel.PriorityBoosts), or nil. }
-function FindStarvedReadyThread(Now: QWord): PThreadControlBlock;
+  by Now (Kernel.PriorityBoosts), taken out of its queue, or nil. Takes
+  each processor's lock in turn, so the caller holds none. }
+function TakeStarvedReadyThread(Now: QWord): PThreadControlBlock;
 
 implementation
 
 uses
   Runtime.LinkedList,
+  Runtime.Atomic,
+  Kernel.SpinLock,
   Kernel.Clock,
   Kernel.PriorityBoosts;
 
 type
   TReadyQueue = record
+    Lock: TSpinLock;
     Queues: array[0..PriorityCount - 1] of TListEntry;
-    { Bit N is set when Queues[N] is not empty. }
+    { Bit N is set when Queues[N] is not empty. Changed under the lock,
+      read by other processors without it to see where to look. }
     PriorityMask: LongWord;
     Count: LongWord;
+    { The priority of the thread the processor runs (0 when idle). }
+    RunningPriority: LongWord;
+    { A steal from another queue found its lock taken (see the unit
+      comment); 1 or 0. }
+    StealRefused: PtrUInt;
   end;
   PReadyQueue = ^TReadyQueue;
 
 var
   ReadyQueues: array[0..MaximumProcessors - 1] of TReadyQueue;
-  TotalReady: LongWord;
 
 procedure InitializeReadyQueues;
 var
@@ -103,13 +156,59 @@ var
 begin
   for Index := 0 to MaximumProcessors - 1 do
   begin
+    InitializeSpinLock(ReadyQueues[Index].Lock);
     for Priority := 0 to PriorityCount - 1 do
       InitializeListHead(ReadyQueues[Index].Queues[Priority]);
     ReadyQueues[Index].PriorityMask := 0;
     ReadyQueues[Index].Count := 0;
+    ReadyQueues[Index].RunningPriority := IdlePriority;
+    ReadyQueues[Index].StealRefused := 0;
   end;
-  TotalReady := 0;
 end;
+
+function QueueOf(Processor: PProcessor): PReadyQueue;
+begin
+  Result := @ReadyQueues[Processor^.Index];
+end;
+
+{ --- Locks ----------------------------------------------------------------- }
+
+procedure LockProcessor(Processor: PProcessor);
+begin
+  AcquireSpinLockAtCurrentLevel(QueueOf(Processor)^.Lock);
+end;
+
+procedure UnlockProcessor(Processor: PProcessor);
+begin
+  ReleaseSpinLockAtCurrentLevel(QueueOf(Processor)^.Lock);
+end;
+
+function TryLockProcessor(Processor: PProcessor): Boolean;
+begin
+  Result := TryAcquireSpinLockAtCurrentLevel(QueueOf(Processor)^.Lock);
+end;
+
+function LockProcessorAtDispatchLevel(Processor: PProcessor): TPriorityLevel;
+begin
+  Result := AcquireSpinLock(QueueOf(Processor)^.Lock);
+end;
+
+procedure UnlockProcessorAndLower(Processor: PProcessor; PreviousLevel: TPriorityLevel);
+begin
+  ReleaseSpinLock(QueueOf(Processor)^.Lock, PreviousLevel);
+end;
+
+procedure SetRunningPriority(Processor: PProcessor; Priority: LongWord);
+begin
+  QueueOf(Processor)^.RunningPriority := Priority;
+end;
+
+function RunningPriorityOf(Processor: PProcessor): LongWord;
+begin
+  Result := QueueOf(Processor)^.RunningPriority;
+end;
+
+{ --- Placement --------------------------------------------------------------- }
 
 function OnlineProcessorMask: QWord;
 var
@@ -164,9 +263,9 @@ begin
     Candidate := ProcessorByIndex(Index);
     if not UsableProcessor(Thread, Candidate) then
       Continue;
-    if Candidate^.RunningThread^.Priority >= Thread^.Priority then
+    if RunningPriorityOf(Candidate) >= Thread^.Priority then
       Continue;
-    if (Result = nil) or (Candidate^.RunningThread^.Priority < Result^.RunningThread^.Priority) then
+    if (Result = nil) or (RunningPriorityOf(Candidate) < RunningPriorityOf(Result)) then
       Result := Candidate;
   end;
 end;
@@ -200,18 +299,19 @@ begin
   Result := CurrentProcessor;
 end;
 
+{ --- The queues ------------------------------------------------------------- }
+
 procedure EnqueueReadyThread(Thread: PThreadControlBlock; Processor: PProcessor);
 var
   Queue: PReadyQueue;
 begin
-  Queue := @ReadyQueues[Processor^.Index];
+  Queue := QueueOf(Processor);
   Thread^.State := ThreadStateReady;
   Thread^.ReadySince := ClockNanoseconds;
   Thread^.QueuedProcessorIndex := Processor^.Index;
   InsertAtTail(Queue^.Queues[Thread^.Priority], @Thread^.SchedulerLink);
   Queue^.PriorityMask := Queue^.PriorityMask or (LongWord(1) shl Thread^.Priority);
   Inc(Queue^.Count);
-  Inc(TotalReady);
 end;
 
 procedure RemoveReadyThread(Thread: PThreadControlBlock);
@@ -223,7 +323,7 @@ begin
   if ListIsEmpty(Queue^.Queues[Thread^.Priority]) then
     Queue^.PriorityMask := Queue^.PriorityMask and not (LongWord(1) shl Thread^.Priority);
   Dec(Queue^.Count);
-  Dec(TotalReady);
+  Thread^.QueuedProcessorIndex := NotQueued;
 end;
 
 function HighestPriorityIn(Mask: LongWord): Integer;
@@ -253,108 +353,189 @@ begin
   Result := nil;
 end;
 
-{ The most important thread in another processor's queues that may run
-  on Processor, with a priority of at least Floor; nil if none. }
-function FindThreadToTake(Processor: PProcessor; Floor: Integer): PThreadControlBlock;
+{ The most important thread in Queue of at least Floor that may run on
+  Processor (Queue's lock held), or nil. }
+function BestRunnableIn(Queue: PReadyQueue; Processor: PProcessor; Floor: Integer): PThreadControlBlock;
+var
+  Priority: Integer;
+begin
+  for Priority := HighestThreadPriority downto Floor do
+  begin
+    if (Queue^.PriorityMask and (LongWord(1) shl Priority)) = 0 then
+      Continue;
+    Result := FirstRunnableAt(Queue, Priority, Processor);
+    if Result <> nil then
+      Exit;
+  end;
+  Result := nil;
+end;
+
+{ The other processor whose queues look (without their locks) to hold
+  the most important thread of at least Floor, skipping those in
+  Tried; nil if none. }
+function MostPromisingVictim(Processor: PProcessor; Floor: Integer; Tried: QWord): PProcessor;
 var
   Index: LongWord;
-  Queue: PReadyQueue;
-  Priority: Integer;
-  Candidate: PThreadControlBlock;
+  Highest: Integer;
+  BestPriority: Integer;
+  Mask: LongWord;
 begin
   Result := nil;
+  BestPriority := Floor - 1;
   for Index := 0 to ProcessorTotal - 1 do
   begin
-    if Index = Processor^.Index then
+    if (Index = Processor^.Index) or ((Tried and (QWord(1) shl Index)) <> 0) then
       Continue;
-    Queue := @ReadyQueues[Index];
-    if Queue^.Count = 0 then
+    Mask := ReadyQueues[Index].PriorityMask;
+    if Mask = 0 then
       Continue;
-    for Priority := HighestThreadPriority downto Floor do
+    Highest := HighestPriorityIn(Mask);
+    if Highest > BestPriority then
     begin
-      if (Result <> nil) and (Priority <= Integer(Result^.Priority)) then
-        Break;
-      if (Queue^.PriorityMask and (LongWord(1) shl Priority)) = 0 then
-        Continue;
-      Candidate := FirstRunnableAt(Queue, Priority, Processor);
-      if Candidate <> nil then
-      begin
-        Result := Candidate;
-        Break;
-      end;
+      BestPriority := Highest;
+      Result := ProcessorByIndex(Index);
     end;
   end;
 end;
 
-{ The next thread for Processor without taking it out. }
-function PeekReadyThreadFor(Processor: PProcessor): PThreadControlBlock;
+{ Takes from another processor's queues the most important thread of at
+  least Floor that may run on Processor (Processor's lock held, the
+  others only tried); nil if none could be had. }
+function StealThreadFor(Processor: PProcessor; Floor: Integer): PThreadControlBlock;
 var
-  Own: PReadyQueue;
-  OwnPriority: Integer;
-  Other: PThreadControlBlock;
+  Tried: QWord;
+  Victim: PProcessor;
+  VictimQueue: PReadyQueue;
 begin
-  Own := @ReadyQueues[Processor^.Index];
-  OwnPriority := HighestPriorityIn(Own^.PriorityMask);
-  { Only a more important thread is worth taking from elsewhere. }
-  if OwnPriority < 0 then
-    Other := FindThreadToTake(Processor, LowestThreadPriority)
-  else
-    Other := FindThreadToTake(Processor, OwnPriority + 1);
-  if Other <> nil then
-    Exit(Other);
-  if OwnPriority < 0 then
-    Exit(nil);
-  Result := ThreadFromSchedulerLink(Own^.Queues[OwnPriority].Next);
+  Result := nil;
+  Tried := 0;
+  if Floor < LowestThreadPriority then
+    Floor := LowestThreadPriority;
+  repeat
+    Victim := MostPromisingVictim(Processor, Floor, Tried);
+    if Victim = nil then
+      Exit;
+    Tried := Tried or (QWord(1) shl Victim^.Index);
+    if not TryLockProcessor(Victim) then
+    begin
+      AtomicStore(QueueOf(Processor)^.StealRefused, 1);
+      Continue;
+    end;
+    VictimQueue := QueueOf(Victim);
+    Result := BestRunnableIn(VictimQueue, Processor, Floor);
+    if Result <> nil then
+      RemoveReadyThread(Result);
+    UnlockProcessor(Victim);
+  until Result <> nil;
 end;
 
-function BestReadyPriorityFor(Processor: PProcessor): Integer;
+function TakeReadyThreadFor(Processor: PProcessor; MinimumPriority: Integer): PThreadControlBlock;
 var
+  Own: PThreadControlBlock;
+  Floor: Integer;
+begin
+  if MinimumPriority > HighestThreadPriority then
+    Exit(nil);
+  if MinimumPriority < LowestThreadPriority then
+    MinimumPriority := LowestThreadPriority;
+  Own := BestRunnableIn(QueueOf(Processor), Processor, MinimumPriority);
+  { Only a more important thread is worth taking from elsewhere. }
+  if Own = nil then
+    Floor := MinimumPriority
+  else
+    Floor := Integer(Own^.Priority) + 1;
+  Result := nil;
+  if Floor <= HighestThreadPriority then
+    Result := StealThreadFor(Processor, Floor);
+  if Result <> nil then
+    Exit;
+  if Own <> nil then
+    RemoveReadyThread(Own);
+  Result := Own;
+end;
+
+function PullThreadForIdleProcessor(Processor: PProcessor): Boolean;
+var
+  Tried: QWord;
+  Victim: PProcessor;
   Thread: PThreadControlBlock;
 begin
-  Thread := PeekReadyThreadFor(Processor);
-  if Thread = nil then
-    Exit(-1);
-  Result := Integer(Thread^.Priority);
+  Result := False;
+  if AtomicExchange(QueueOf(Processor)^.StealRefused, 0) = 0 then
+    Exit;
+  Tried := 0;
+  repeat
+    Victim := MostPromisingVictim(Processor, LowestThreadPriority, Tried);
+    if Victim = nil then
+      Exit;
+    Tried := Tried or (QWord(1) shl Victim^.Index);
+    { No other scheduling lock is held here, so this one may be waited
+      for. }
+    LockProcessor(Victim);
+    Thread := BestRunnableIn(QueueOf(Victim), Processor, LowestThreadPriority);
+    if Thread <> nil then
+      RemoveReadyThread(Thread);
+    UnlockProcessor(Victim);
+  until Thread <> nil;
+  LockProcessor(Processor);
+  EnqueueReadyThread(Thread, Processor);
+  UnlockProcessor(Processor);
+  Result := True;
 end;
 
-function TakeReadyThreadFor(Processor: PProcessor): PThreadControlBlock;
+function StealWasRefused(Processor: PProcessor): Boolean;
 begin
-  Result := PeekReadyThreadFor(Processor);
-  if Result <> nil then
-    RemoveReadyThread(Result);
+  Result := AtomicLoad(QueueOf(Processor)^.StealRefused) <> 0;
 end;
 
 function ReadyThreadTotal: LongWord;
+var
+  Index: LongWord;
 begin
-  Result := TotalReady;
+  Result := 0;
+  for Index := 0 to ProcessorTotal - 1 do
+    Result := Result + ReadyQueues[Index].Count;
 end;
 
 { Only the queues below the top of the variable class can hold one. }
-function FindStarvedReadyThread(Now: QWord): PThreadControlBlock;
+function StarvedThreadIn(Queue: PReadyQueue; Now: QWord): PThreadControlBlock;
 var
-  Index: LongWord;
-  Queue: PReadyQueue;
   Priority: Integer;
   Entry: PListEntry;
 begin
+  for Priority := LowestThreadPriority to HighestVariablePriority - 1 do
+  begin
+    if (Queue^.PriorityMask and (LongWord(1) shl Priority)) = 0 then
+      Continue;
+    Entry := Queue^.Queues[Priority].Next;
+    while Entry <> @Queue^.Queues[Priority] do
+    begin
+      Result := ThreadFromSchedulerLink(Entry);
+      if HasStarved(Result^.BasePriority, Result^.Priority, Result^.ReadySince, Now) then
+        Exit;
+      Entry := Entry^.Next;
+    end;
+  end;
+  Result := nil;
+end;
+
+function TakeStarvedReadyThread(Now: QWord): PThreadControlBlock;
+var
+  Index: LongWord;
+  Processor: PProcessor;
+begin
   for Index := 0 to ProcessorTotal - 1 do
   begin
-    Queue := @ReadyQueues[Index];
-    if Queue^.Count = 0 then
+    if ReadyQueues[Index].Count = 0 then
       Continue;
-    for Priority := LowestThreadPriority to HighestVariablePriority - 1 do
-    begin
-      if (Queue^.PriorityMask and (LongWord(1) shl Priority)) = 0 then
-        Continue;
-      Entry := Queue^.Queues[Priority].Next;
-      while Entry <> @Queue^.Queues[Priority] do
-      begin
-        Result := ThreadFromSchedulerLink(Entry);
-        if HasStarved(Result^.BasePriority, Result^.Priority, Result^.ReadySince, Now) then
-          Exit;
-        Entry := Entry^.Next;
-      end;
-    end;
+    Processor := ProcessorByIndex(Index);
+    LockProcessor(Processor);
+    Result := StarvedThreadIn(@ReadyQueues[Index], Now);
+    if Result <> nil then
+      RemoveReadyThread(Result);
+    UnlockProcessor(Processor);
+    if Result <> nil then
+      Exit;
   end;
   Result := nil;
 end;

@@ -67,8 +67,8 @@ type
     ApicId: LongWord;
     IsOnline: Boolean;
     IdleThread: PThreadControlBlock;
-    { Set by the clock interrupt; read and cleared under the dispatcher
-      lock by the dispatch interrupt (Kernel.Scheduler). }
+    { Set by the clock interrupt; read and cleared under the processor's
+      scheduling lock by the dispatch interrupt (Kernel.Scheduler). }
     QuantumHasExpired: Boolean;
     { Its clock (Kernel.Clock): when its next 10 ms tick is due and when
       its clock interrupt is set to come (High(QWord): not set), in
@@ -97,7 +97,7 @@ type
     { Processor time (Kernel.ProcessorTime), in clock nanoseconds:
       since when the running thread runs, and the time spent idle (in
       the idle thread) and busy so far. Changed at every switch, under
-      the dispatcher lock. }
+      the processor's scheduling lock (Kernel.ReadyQueues). }
     RunningSince: QWord;
     IdleNanoseconds: QWord;
     BusyNanoseconds: QWord;

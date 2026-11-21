@@ -65,9 +65,9 @@ const
   StarvationWaitMilliseconds = 9000;
 
   RingThreadCount = 12;
-  RingRounds = 400;
+  RingRounds = 1000;
   PingPongPairs = 3;
-  PingPongRounds = 2000;
+  PingPongRounds = 5000;
   StressWaitMilliseconds = 120000;
 
 var
