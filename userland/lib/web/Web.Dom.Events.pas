@@ -103,8 +103,10 @@ type
   private
     FEventType: TAtom;
     FTarget: TEventTarget;
+    FTargetHeld: Boolean;
     FCurrentTarget: TEventTarget;
     FRelatedTarget: TEventTarget;
+    FRelatedTargetHeld: Boolean;
     FPhase: TEventPhase;
     FBubbles: Boolean;
     FCancelable: Boolean;
@@ -174,6 +176,12 @@ type
   public
     procedure RetainTarget; virtual;
     procedure ReleaseTarget; virtual;
+    { Whether events hold the target (RetainTarget and ReleaseTarget):
+      nodes. Other targets (the window, XMLHttpRequest, AbortSignal ...)
+      belong to their wrappers, which the event's wrapper keeps alive;
+      an event never calls them back, since it may go after them when a
+      heap is freed whole. }
+    function HeldByEvents: Boolean; virtual;
     function AddEventListener(const TypeName: string; Callback: TEventListener;
       const Options: TEventListenerOptions): Boolean; overload;
     function AddEventListener(const TypeName: string; Callback: TEventListener;
@@ -356,25 +364,33 @@ begin
 end;
 
 procedure TEvent.SetTarget(NewTarget: TEventTarget);
+var
+  Held: Boolean;
 begin
   if NewTarget = FTarget then
     Exit;
-  if NewTarget <> nil then
+  Held := (NewTarget <> nil) and NewTarget.HeldByEvents;
+  if Held then
     NewTarget.RetainTarget;
-  if FTarget <> nil then
+  if FTargetHeld then
     FTarget.ReleaseTarget;
   FTarget := NewTarget;
+  FTargetHeld := Held;
 end;
 
 procedure TEvent.SetRelatedTarget(NewTarget: TEventTarget);
+var
+  Held: Boolean;
 begin
   if NewTarget = FRelatedTarget then
     Exit;
-  if NewTarget <> nil then
+  Held := (NewTarget <> nil) and NewTarget.HeldByEvents;
+  if Held then
     NewTarget.RetainTarget;
-  if FRelatedTarget <> nil then
+  if FRelatedTargetHeld then
     FRelatedTarget.ReleaseTarget;
   FRelatedTarget := NewTarget;
+  FRelatedTargetHeld := Held;
 end;
 
 function TEvent.GetEventTypeName: string;
@@ -461,6 +477,11 @@ end;
 
 procedure TEventTarget.ReleaseTarget;
 begin
+end;
+
+function TEventTarget.HeldByEvents: Boolean;
+begin
+  Result := False;
 end;
 
 function TEventTarget.AddEventListener(const TypeName: string; Callback: TEventListener;
@@ -586,7 +607,8 @@ begin
     if Count >= Length(Path) then
       SetLength(Path, Count * 2 + 8);
     Path[Count] := Parent;
-    Parent.RetainTarget;
+    if Parent.HeldByEvents then
+      Parent.RetainTarget;
     Inc(Count);
     Parent := Parent.GetTheParent(Event);
   end;
@@ -623,7 +645,8 @@ begin
     Event.FStopPropagation := False;
     Event.FStopImmediatePropagation := False;
     for Index := 1 to Count do
-      Path[Index - 1].ReleaseTarget;
+      if Path[Index - 1].HeldByEvents then
+        Path[Index - 1].ReleaseTarget;
   end;
   Result := not Event.FCanceled;
 end;

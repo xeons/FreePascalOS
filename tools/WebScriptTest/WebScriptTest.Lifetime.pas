@@ -199,6 +199,15 @@ begin
       'readystatechange:true,readystatechange:true,change:true',
       'kept events: events the engine fired outlive their dispatch in a listener''s hands (' +
       Bed.Evaluate('kept.map(function (e) { return e.type + ":" + e.isTrusted; }).join(",")') + ')');
+    { An event of a target that is not a node keeps the target's wrapper;
+      freeing the heap whole (the bed going) frees them in any order. }
+    Bed.Run('var target = new EventTarget(); target.addEventListener("ping", function (e) { window.pinged = e; });' +
+      ' target.dispatchEvent(new Event("ping")); target = null;');
+    Collect(Bed);
+    Bed.Evaluate('for (var n = 0; n < 2000; n++) kept.push({ n: n }); kept.length = 3;');
+    Collect(Bed);
+    Check(Bed.Evaluate('(pinged.target instanceof EventTarget) + ":" + pinged.type') = 'true:ping',
+      'kept events: an event keeps a target that is not a node');
   finally
     Bed.Free;
   end;

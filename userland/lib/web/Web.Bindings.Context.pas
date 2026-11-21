@@ -497,6 +497,16 @@ begin
   Cache[Slot] := Value;
 end;
 
+{ An event keeps the wrapper of a target that is not a node (an
+  XMLHttpRequest, an AbortSignal ...): the event does not hold it, and
+  script may still ask for event.target. }
+procedure TraceEventTarget(Target: TEventTarget; Tracer: TJsTracer);
+begin
+  if (Target <> nil) and not Target.HeldByEvents and (Target is TStandaloneEventTarget) and
+    (TStandaloneEventTarget(Target).ScriptWrapper <> nil) then
+    Tracer.MarkCell(TBindingWrapper(TStandaloneEventTarget(Target).ScriptWrapper));
+end;
+
 procedure TBindingWrapper.Trace(Tracer: TJsTracer);
 var
   Index: Integer;
@@ -505,7 +515,14 @@ begin
   for Index := 0 to High(Cache) do
     Tracer.MarkValue(Cache[Index]);
   Tracer.MarkValue(Owner);
-  if (NativeData <> nil) and (TObject(NativeData) is TEventTarget) then
+  if NativeData = nil then
+    Exit;
+  if (WrapperFlags and WrapperIsEvent) <> 0 then
+  begin
+    TraceEventTarget(TEvent(NativeData).Target, Tracer);
+    TraceEventTarget(TEvent(NativeData).RelatedTarget, Tracer);
+  end
+  else if TObject(NativeData) is TEventTarget then
     TraceListeners(TEventTarget(NativeData).ListenerList(False), Tracer);
 end;
 

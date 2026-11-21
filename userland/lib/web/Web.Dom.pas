@@ -222,6 +222,7 @@ type
     procedure SetFormStateObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
+    function HeldByEvents: Boolean; override;
     { References: see the unit's description. }
     procedure Retain;
     procedure Release;
