@@ -499,7 +499,7 @@ $(DYNPASCAL_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/dynpascal/*.pas)
 	@mkdir -p $(USER_BUILD_DIRECTORY)/dynpascal
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/dynpascal \
 		-FU$(USER_BUILD_DIRECTORY)/dynpascal -FE$(USER_BUILD_DIRECTORY)/dynpascal userland/lib/dynpascal/DynPascal.pas
-	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdynpascal.so -init FPC_SHARED_LIB_START -fini FPOS_LIBRARY_EXIT \
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libdynpascal.so -init FPC_SHARED_LIB_START -fini FPC_LIB_EXIT \
 		-o $@ $(USER_BUILD_DIRECTORY)/dynpascal/*.o $(RTL_USER_DIRECTORY)/si_dll.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 $(USER_PROGRAM_OUTPUT)/dynlibtest: $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY)

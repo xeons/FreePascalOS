@@ -21,7 +21,7 @@
   LoadLibrary, with threadvars and a unit initialization of its own
   (DynPascalState). Built from this "library" source with the startup
   unit si_dll, linked with -init FPC_SHARED_LIB_START and -fini
-  FPOS_LIBRARY_EXIT (userland.mk).
+  FPC_LIB_EXIT (userland.mk).
 }
 library DynPascal;
 

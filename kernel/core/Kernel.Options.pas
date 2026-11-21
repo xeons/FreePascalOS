@@ -54,6 +54,8 @@
                 The decompressed size of a compressed RAM disk image, for a
                 gzip image whose trailer cannot say it (over 4 GiB);
                 otherwise the image states it (Drivers.RamDiskDecompression).
+    aslr=off    Every process gets the fixed address space layout instead
+                of a random one (Processes.AddressLayout), for debugging.
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by

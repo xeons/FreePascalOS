@@ -85,6 +85,11 @@ var
   Checks: Integer = 0;
   Failures: Integer = 0;
   Gate: TLock;
+  { Held until every thread has reported, so that none ends (and gives
+    its blocks back, whose addresses a later thread could get) before
+    the addresses are compared. }
+  EndGate: TLock;
+  ReportedCount: LongInt = 0;
   ElfCounterAddress: TAddressFunction;
   ElfCounterAddressSlow: TAddressFunction;
   ElfInitialAddress: TAddressFunction;
@@ -122,7 +127,10 @@ begin
   Report^.ElfInitial := ElfInitialAddress();
   Report^.ElfPathsAgree := (Report^.ElfCounter <> nil) and (ElfCounterAddressSlow() = Report^.ElfCounter);
   if (Report^.ElfCounter = nil) or (Report^.ElfInitial = nil) then
+  begin
+    AtomicAdd32(ReportedCount, 1);
     Exit(1);
+  end;
   Report^.ElfCounterSeen := Report^.ElfCounter^;
   Report^.ElfInitialSeen := Report^.ElfInitial^;
   Report^.PascalCounter := PascalCounterAddress();
@@ -139,6 +147,9 @@ begin
   end;
   Report^.ElfKept := (ElfCounterAddress()^ = CounterIncrements) and (ElfInitialAddress()^ = 5000 + Report^.Index);
   Report^.PascalKept := PascalCounterAddress()^ = 100 * Report^.Index;
+  AtomicAdd32(ReportedCount, 1);
+  AcquireLock(EndGate);
+  ReleaseLock(EndGate);
   Result := 0;
 end;
 
@@ -220,9 +231,12 @@ var
   AllEnded: Boolean;
   MainElfCounter: PInt64;
   MainPascalCounter: PInt64;
+  StartedCount: LongInt;
 begin
   InitializeLock(Gate);
+  InitializeLock(EndGate);
   AcquireLock(Gate);
+  AcquireLock(EndGate);
   for Index := 0 to EarlyThreadCount - 1 do
     Handles[Index] := StartThread(Index);
 
@@ -243,6 +257,13 @@ begin
   ReleaseLock(Gate);
   for Index := EarlyThreadCount to ThreadCount - 1 do
     Handles[Index] := StartThread(Index);
+  StartedCount := 0;
+  for Index := 0 to ThreadCount - 1 do
+    if Handles[Index] >= 0 then
+      Inc(StartedCount);
+  while ReportedCount < StartedCount do
+    YieldThread;
+  ReleaseLock(EndGate);
   AllEnded := True;
   for Index := 0 to ThreadCount - 1 do
   begin

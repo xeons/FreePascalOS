@@ -91,10 +91,21 @@ how the existing pieces fit together.
 - [x] User-mode locks: atomic fast path, CallWaitOnAddress / CallWakeAddress
 - [x] Exception fixups for kernel accesses to user memory (fault-tolerant copy
       routines, transfer buffers for reads and writes, SMAP when available)
-- [ ] Libraries loaded with LoadLibrary that have thread-local storage or
-      initializers (now ErrorUnsupported): dynamic TLS, running their initializers
+- [x] Libraries loaded with LoadLibrary that have thread-local storage or
+      initializers: dynamic TLS (per-thread blocks made on first touch, for
+      ELF TLS and the threadvars of Free Pascal libraries), DT_INIT /
+      DT_INIT_ARRAY before LoadLibrary returns, DT_FINI_ARRAY / DT_FINI at
+      the end, Free Pascal libraries' own unit initialization (si_dll)
+- [ ] Resource strings of Free Pascal libraries loaded at run time; initial
+      and local exec TLS accesses into them (no surplus static TLS)
 - [x] Thread priorities set by programs (offsets from the process's)
-- [ ] Thread names
+- [x] Thread names (CallSetThreadName, CallListThreads; TThread, hang
+      reports, the debug shell's threads command, ps -L/-T, the task
+      manager's properties)
+- [x] Address space layout randomization: the program, each library, the
+      allocation area, thread stacks and data, the main stack (aslr=off for
+      the old fixed layout); Kernel.Random (ChaCha20, hardware and boot
+      entropy)
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ending a stuck program always works: checked for spinning threads,
       every kind of kernel wait, deadlocks, sockets and windows that stop

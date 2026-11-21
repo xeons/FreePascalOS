@@ -23,7 +23,7 @@
 
   The compiler puts the library's unit tables into the library itself.
   Linked with "ld -shared -init FPC_SHARED_LIB_START -fini
-  FPOS_LIBRARY_EXIT", the library's DT_INIT hands them to System in
+  FPC_LIB_EXIT", the library's DT_INIT hands them to System in
   libsystem (SysRegisterLibrary: the threadvars and initialization of
   the units the program does not have already, rtl/fpc/syslibraries.inc)
   and its DT_FINI finalizes those units again when the program ends. The
@@ -47,7 +47,7 @@ begin
   Registration := SysRegisterLibrary(@InitFinalTable, @ThreadvarTablesTable);
 end;
 
-procedure LibraryExit; cdecl; [public, alias: 'FPOS_LIBRARY_EXIT'];
+procedure LibraryExit; cdecl; [public, alias: 'FPC_LIB_EXIT'];
 begin
   SysUnregisterLibrary(Registration);
   Registration := nil;
