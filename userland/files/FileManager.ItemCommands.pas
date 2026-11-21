@@ -197,10 +197,11 @@ var
 begin
   Path := '';
   Result := False;
-  Reader := OpenArchiveCached(FView.Location.Path, Problem);
+  { (The entry's own archive: a search result may be shown elsewhere.) }
+  Reader := OpenArchiveCached(Entry.ArchivePath, Problem);
   if (Reader = nil) or (Entry.ArchiveIndex < 0) then
     Exit;
-  Folder := CombinePath(HomeFolder, '.cache/files-open/' + LastPartOf(FView.Location.Path));
+  Folder := CombinePath(HomeFolder, '.cache/files-open/' + LastPartOf(Entry.ArchivePath));
   ForceDirectories(Folder);
   Path := CombinePath(Folder, Entry.Item.Name);
   try
@@ -265,7 +266,9 @@ begin
     EntryArchived:
       if Entry.IsFolder then
       begin
-        Location := FView.Location;
+        Location := Default(TLocation);
+        Location.Kind := LocationArchive;
+        Location.Path := Entry.ArchivePath;
         Location.InnerPath := Entry.InnerPath;
         ShowLocationIn(Self, Location, Place);
       end

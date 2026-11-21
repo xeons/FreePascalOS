@@ -931,12 +931,15 @@ FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Contro
 	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
 	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
 	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
-	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas
+	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas \
+	userland/files/FileManager.ArchiveSearch.pas tools/FilesTest/FilesTest.ArchiveSearch.pas \
+	$(wildcard userland/lib/archive/*.pas)
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
 		-Fuuserland/lib/configuration -Fiuserland/lib/configuration -Fuuserland/lib/coreutils \
+		-Fuuserland/lib/archive -Fuuserland/lib/compression \
 		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
 
 files-test: $(FILES_TEST)

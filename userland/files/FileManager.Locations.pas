@@ -90,6 +90,10 @@ function ParseAddress(const Text, Current: string; out Location: TLocation): Boo
 function ParentLocation(const Location: TLocation; out Parent: TLocation): Boolean;
 { Whether the location is a real folder (one can make things in it). }
 function IsFileSystemLocation(const Location: TLocation): Boolean;
+{ Whether Path (or a folder above it) is an archive file; Archive and
+  Inner the split. A search's scope is such a path when it searches
+  inside an archive. }
+function SplitArchivePath(const Path: string; out Archive, Inner: string): Boolean;
 
 function HomeFolder: string;
 function StandardFolderPath(Folder: TStandardFolder): string;
@@ -306,8 +310,6 @@ begin
   end;
 end;
 
-{ Whether Path (or a folder above it) is an archive file; Archive and
-  Inner the split. }
 function SplitArchivePath(const Path: string; out Archive, Inner: string): Boolean;
 var
   Current: string;
@@ -402,7 +404,10 @@ begin
         else
           Parent.InnerPath := Copy(Location.InnerPath, 1, Slash - 1);
       end;
-    LocationSearch: Parent := FolderLocation(Location.Path);
+    LocationSearch:
+      { The folder searched, or the folder of an archive searched. }
+      if not ParseAddress(Location.Path, '/', Parent) then
+        Parent := FolderLocation(Location.Path);
     LocationGallery, LocationTrash, LocationNetwork: Parent := PageLocation(LocationHome);
   else
     Exit(False);

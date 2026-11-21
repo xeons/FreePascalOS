@@ -23,6 +23,10 @@
   Each item whose name and properties match the query (FileManager.
   SearchQuery) is a result; with content terms a file's first
   MostContentBytes are read too and must hold every term (any case).
+  A scope inside an archive file ("/a/b.zip" or "/a/b.zip/docs")
+  searches the archive's items below it (FileManager.ArchiveSearch),
+  read with a reader of the thread's own; its members are taken out
+  into memory for content terms (up to MostArchivedContentBytes).
   Symbolic links to folders are not followed (no loops), hidden items
   only on request. Found items gather under a lock; the window's thread
   is told with a message (at most one waiting) and takes them all
@@ -39,6 +43,7 @@ interface
 uses
   Classes,
   SysUtils,
+  Archive.Readers,
   Windowing.Messages,
   FileManager.SearchQuery,
   FileManager.Entries;
@@ -46,6 +51,7 @@ uses
 const
   MessageSearchResults = MessageUser + 42;
   MostContentBytes = 1024 * 1024;
+  MostArchivedContentBytes = 64 * 1024 * 1024;
   MostResults = 20000;
 
 type
@@ -68,8 +74,11 @@ type
     FOnResults: TSearchResultsEvent;
     FOnFinished: TSearchEvent;
     procedure Walk(const Folder: string; Depth: LongInt);
+    procedure SearchArchive(const Archive, Inner: string);
     procedure AddResult(Entry: TFolderEntry);
+    function HoldsContentTerms(const Text: string): Boolean;
     function ContentMatches(const Path: string): Boolean;
+    function ArchivedContentMatches(Reader: TArchiveReader; Index: LongInt): Boolean;
     procedure Deliver;
     procedure WaitForThread;
   public
@@ -89,10 +98,15 @@ implementation
 
 uses
   Abi.SystemCalls,
+  Sys.Files,
   Sys.Threads,
+  Archive.Folders,
   Controls.FileNames,
   FileManager.Items,
-  FileManager.FolderReading;
+  FileManager.FolderReading,
+  FileManager.Locations,
+  FileManager.Sources,
+  FileManager.ArchiveSearch;
 
 function RunSearch(Argument: Pointer): LongInt;
 begin
@@ -175,7 +189,6 @@ var
   Stream: TFileStream;
   Text: string;
   Count: LongInt;
-  Term: string;
 begin
   Result := False;
   Text := '';
@@ -195,11 +208,49 @@ begin
     on Exception do
       Exit(False);
   end;
-  Text := LowerCase(Text);
+  Result := HoldsContentTerms(Text);
+end;
+
+function TFolderSearcher.HoldsContentTerms(const Text: string): Boolean;
+var
+  Lowered: string;
+  Term: string;
+begin
+  Lowered := LowerCase(Text);
   for Term in FQuery.ContentTerms do
-    if Pos(LowerCase(Term), Text) = 0 then
+    if Pos(LowerCase(Term), Lowered) = 0 then
       Exit(False);
   Result := True;
+end;
+
+function TFolderSearcher.ArchivedContentMatches(Reader: TArchiveReader; Index: LongInt): Boolean;
+var
+  Stream: TMemoryStream;
+  Text: string;
+  Count: Int64;
+begin
+  Result := False;
+  if (Index < 0) or (Reader.Entries[Index].Size > MostArchivedContentBytes) then
+    Exit;
+  Text := '';
+  Stream := TMemoryStream.Create;
+  try
+    try
+      Reader.ExtractToStream(Index, Stream);
+    except
+      on Exception do
+        Exit(False);
+    end;
+    Count := Stream.Size;
+    if Count > MostContentBytes then
+      Count := MostContentBytes;
+    SetLength(Text, Count);
+    if Count > 0 then
+      Move(Stream.Memory^, Text[1], Count);
+  finally
+    Stream.Free;
+  end;
+  Result := HoldsContentTerms(Text);
 end;
 
 procedure TFolderSearcher.AddResult(Entry: TFolderEntry);
@@ -247,9 +298,46 @@ begin
   end;
 end;
 
-procedure TFolderSearcher.Run;
+procedure TFolderSearcher.SearchArchive(const Archive, Inner: string);
+var
+  Reader: TArchiveReader;
+  ArchiveFile: TFileInformation;
+  Found: TArchiveFolderItems;
+  Index: LongInt;
 begin
-  Walk(FScope, 0);
+  if GetFileInformation(PChar(Archive), ArchiveFile) <> ErrorNone then
+    Exit;
+  try
+    Reader := OpenArchive(Archive);
+  except
+    on Exception do
+      Exit;
+  end;
+  try
+    Found := FindInArchive(Reader, Inner, FQuery, FIncludeHidden);
+    for Index := 0 to High(Found) do
+    begin
+      if FCancelled or (FResultCount >= MostResults) then
+        Exit;
+      if (Length(FQuery.ContentTerms) > 0) and
+         (Found[Index].IsFolder or not ArchivedContentMatches(Reader, Found[Index].EntryIndex)) then
+        Continue;
+      AddResult(ArchivedEntry(Reader, Archive, Found[Index], ArchiveFile.ModificationTime));
+    end;
+  finally
+    Reader.Free;
+  end;
+end;
+
+procedure TFolderSearcher.Run;
+var
+  Archive: string;
+  Inner: string;
+begin
+  if not IsDirectory(PChar(FScope)) and SplitArchivePath(FScope, Archive, Inner) then
+    SearchArchive(Archive, Inner)
+  else
+    Walk(FScope, 0);
   EnterCriticalSection(FLock);
   FFinished := True;
   if not FMessagePosted then

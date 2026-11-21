@@ -44,6 +44,7 @@ interface
 uses
   Classes,
   Archive.Readers,
+  Archive.Folders,
   FileManager.Entries,
   FileManager.Locations;
 
@@ -65,6 +66,11 @@ function EntryForPath(const Path: string): TFolderEntry;
   (nil and Error if it cannot be read). }
 function OpenArchiveCached(const Path: string; out Error: string): TArchiveReader;
 procedure ForgetCachedArchive;
+{ An entry for an item of the archive at ArchivePath (Reader has it
+  open); ArchiveTime is the archive file's own modification time, for
+  folders only names below them make. }
+function ArchivedEntry(Reader: TArchiveReader; const ArchivePath: string; const Item: TArchiveFolderItem;
+  ArchiveTime: Int64): TFolderEntry;
 
 implementation
 
@@ -76,7 +82,6 @@ uses
   Sys.Mounts,
   Util.Trash,
   Archive.Entries,
-  Archive.Folders,
   Controls.FileNames,
   FileManager.Items,
   FileManager.Paths,
@@ -307,14 +312,51 @@ begin
   Result := CachedArchive;
 end;
 
+function ArchivedEntry(Reader: TArchiveReader; const ArchivePath: string; const Item: TArchiveFolderItem;
+  ArchiveTime: Int64): TFolderEntry;
+var
+  Information: TArchiveEntry;
+  Slash: LongInt;
+begin
+  Result := TFolderEntry.Create;
+  Result.Kind := EntryArchived;
+  Result.ArchivePath := ArchivePath;
+  Result.Item.Name := Item.Name;
+  Result.ArchiveIndex := Item.EntryIndex;
+  Result.InnerPath := Item.Path;
+  while (Result.InnerPath <> '') and (Result.InnerPath[Length(Result.InnerPath)] = '/') do
+    Delete(Result.InnerPath, Length(Result.InnerPath), 1);
+  Result.FullPath := ArchivePath + '/' + Result.InnerPath;
+  { The folder it is in: the archive itself or a folder inside it. }
+  Slash := Length(Result.InnerPath);
+  while (Slash > 0) and (Result.InnerPath[Slash] <> '/') do
+    Dec(Slash);
+  if Slash = 0 then
+    Result.Folder := ArchivePath
+  else
+    Result.Folder := ArchivePath + '/' + Copy(Result.InnerPath, 1, Slash - 1);
+  if Item.IsFolder then
+    Result.Item.Kind := ItemFolder
+  else
+    Result.Item.Kind := ItemFile;
+  Result.Item.ModificationTime := ArchiveTime;
+  if Result.ArchiveIndex >= 0 then
+  begin
+    Information := Reader.Entries[Result.ArchiveIndex];
+    Result.Item.SizeInBytes := Information.Size;
+    Result.Item.ModificationTime := Information.ModificationTime;
+    Result.Item.Mode := Information.Mode;
+    Result.Item.IsLink := Information.IsLink;
+    Result.Item.LinkTarget := Information.LinkTarget;
+  end;
+end;
+
 function ReadArchive(const Location: TLocation; Entries: TList): LongInt;
 var
   Reader: TArchiveReader;
   Problem: string;
   Items: TArchiveFolderItems;
   Index: LongInt;
-  Entry: TFolderEntry;
-  Information: TArchiveEntry;
   ArchiveFile: TFileInformation;
 begin
   Reader := OpenArchiveCached(Location.Path, Problem);
@@ -323,32 +365,7 @@ begin
   GetFileInformation(PChar(Location.Path), ArchiveFile);
   Items := ListArchiveFolder(Reader, Location.InnerPath);
   for Index := 0 to High(Items) do
-  begin
-    Entry := TFolderEntry.Create;
-    Entry.Kind := EntryArchived;
-    Entry.Item.Name := Items[Index].Name;
-    Entry.ArchiveIndex := Items[Index].EntryIndex;
-    Entry.InnerPath := Items[Index].Path;
-    while (Entry.InnerPath <> '') and (Entry.InnerPath[Length(Entry.InnerPath)] = '/') do
-      Delete(Entry.InnerPath, Length(Entry.InnerPath), 1);
-    Entry.FullPath := Location.Path + '/' + Entry.InnerPath;
-    if Items[Index].IsFolder then
-      Entry.Item.Kind := ItemFolder
-    else
-      Entry.Item.Kind := ItemFile;
-    Entry.Item.ModificationTime := ArchiveFile.ModificationTime;
-    if Entry.ArchiveIndex >= 0 then
-    begin
-      Information := Reader.Entries[Entry.ArchiveIndex];
-      Entry.Item.SizeInBytes := Information.Size;
-      Entry.Item.ModificationTime := Information.ModificationTime;
-      Entry.Item.Mode := Information.Mode;
-      Entry.Item.IsLink := Information.IsLink;
-      Entry.Item.LinkTarget := Information.LinkTarget;
-    end;
-    Entry.Folder := Location.Path;
-    Entries.Add(Entry);
-  end;
+    Entries.Add(ArchivedEntry(Reader, Location.Path, Items[Index], ArchiveFile.ModificationTime));
   Result := ErrorNone;
 end;
 
