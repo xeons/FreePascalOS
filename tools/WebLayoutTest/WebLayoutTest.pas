@@ -36,7 +36,7 @@ program WebLayoutTest;
 
 uses
   SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting,
-  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms;
+  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Geometry;
 
 var
   Update: Boolean;
@@ -60,6 +60,7 @@ begin
   CheckStyleSheetChanges;
   CheckTransforms;
   CheckAnimations;
+  CheckElementGeometry;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

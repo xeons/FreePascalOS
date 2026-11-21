@@ -115,7 +115,8 @@ type
     procedure GetScrollOffset(Node: TNode; out X, Y: Single);
     { The element's principal box (nil if it has none). }
     function BoxOf(Node: TNode): TLayoutBox;
-    { The border box of a node's box in document coordinates. }
+    { The border box of a node's box in document coordinates (an inline
+      box: the union of its line fragments). }
     function NodeBounds(Node: TNode; out X, Y, Width, Height: Single): Boolean;
     { Sets dynamic states (hover, focus ...) for :hover and friends. }
     procedure SetElementStates(Element: TElement; States: TCssElementStates);
@@ -146,7 +147,7 @@ implementation
 uses
   Web.Profiling,
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
-  Web.Layout.Positioned, Web.Text.FontInstances, Web.Svg.InlineImages;
+  Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -854,12 +855,7 @@ begin
   Y := 0;
   Width := 0;
   Height := 0;
-  Result := Box <> nil;
-  if not Result then
-    Exit;
-  Box.AbsolutePosition(X, Y);
-  Width := Box.Width;
-  Height := Box.Height;
+  Result := (Box <> nil) and BoxBounds(Box, X, Y, Width, Height);
 end;
 
 end.

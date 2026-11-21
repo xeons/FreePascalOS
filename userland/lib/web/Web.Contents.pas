@@ -96,6 +96,7 @@ uses
   Web.Layout.Table,
   Web.Layout.Positioned,
   Web.Layout.Transforms,
+  Web.Layout.BoxGeometry,
   Web.Layout.Dispatch,
   Web.Layout.Document,
   Web.Layout.Dump,
