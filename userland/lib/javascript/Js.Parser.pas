@@ -2612,10 +2612,11 @@ begin
             Fail('Invalid left-hand side expression in prefix operation');
         end;
     else
+      { A class field's initializer is not async (FInAsync is off in
+        it): await there can only be in an async arrow inside it, where
+        it is that arrow's. }
       if IsContextual('await') and (FInAsync or ((FFunction.Kind = fkScript) and False)) then
       begin
-        if FInClassField then
-          Fail('await is not allowed here');
         if FFunction.Kind = fkModule then
           FFunction.IsAsync := True;
         Next;
