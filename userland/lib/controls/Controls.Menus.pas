@@ -105,6 +105,9 @@ type
     { Frees every item below this one (a menu filled again in its
       OnOpening; none of them may have an accelerator). }
     procedure Clear;
+    { Frees the items from Index on (the part of a menu filled again in
+      its OnOpening, after items that keep their accelerators). }
+    procedure DeleteFrom(Index: LongInt);
     { The text as shown ("Open..." for "&Open..."). }
     function Caption: string;
     { The image list its picture is in: its menu's, or the nearest one
@@ -308,6 +311,17 @@ begin
   for Index := 0 to FItems.Count - 1 do
     TMenuItem(FItems[Index]).Free;
   FItems.Clear;
+end;
+
+procedure TMenuItem.DeleteFrom(Index: LongInt);
+begin
+  if Index < 0 then
+    Index := 0;
+  while FItems.Count > Index do
+  begin
+    TMenuItem(FItems[FItems.Count - 1]).Free;
+    FItems.Delete(FItems.Count - 1);
+  end;
 end;
 
 function TMenuItem.GetItem(Index: LongInt): TMenuItem;
