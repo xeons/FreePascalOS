@@ -343,7 +343,7 @@ def problems_of(record):
 def write_reports(records, options, baseline):
     records = sorted(records, key=worst_score, reverse=True)
     sizes = ['%dx%d' % size for size in options.sizes]
-    lines = ['%-20s %s %8s %6s %6s %5s  %s' % ('page', ' '.join('%9s' % size for size in sizes), 'load ms', 'errors',
+    lines = ['%-20s %s %8s %6s %6s %5s  %s' % ('page', ' '.join('%11s' % size for size in sizes), 'load ms', 'errors',
                                                'netbad', 'smoke', 'problems')]
     for record in records:
         scores = []
@@ -352,8 +352,8 @@ def write_reports(records, options, baseline):
             score = entry.get('score')
             text = '%5.1f' % score if score is not None else '    -'
             old = baseline.get(record['name'], {}).get('sizes', {}).get(size, {}).get('score')
-            text += ('<%4.1f' % old) if old is not None else '     '
-            scores.append(text[:9].rjust(9))
+            text += ('<%5.1f' % old) if old is not None else '      '
+            scores.append(text.rjust(11))
         first = record['sizes'].get(sizes[0], {}).get('engine') or {}
         smoke = record.get('smoke')
         smoke_text = '-' if smoke is None else ('FAIL' if smoke.get('failed') else 'ok')
