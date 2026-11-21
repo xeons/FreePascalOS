@@ -85,11 +85,11 @@ var
   Options: TProcessOptions;
   Handle: Int64;
 begin
-  Arguments[0] := PChar(ParamStr(0));
+  Arguments[0] := '/bin/restricttest';
   Arguments[1] := '--child';
   Arguments[2] := nil;
   DefaultProcessOptions(Options);
-  Handle := StartProgram(PChar(ParamStr(0)), @Arguments[0], Options);
+  Handle := StartProgram('/bin/restricttest', @Arguments[0], Options);
   if Handle < 0 then
     Exit(LongInt(Handle));
   Result := WaitForProgram(Handle);

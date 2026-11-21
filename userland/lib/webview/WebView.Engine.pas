@@ -17,9 +17,12 @@
 }
 
 {
-  TWebEngineView: a control that shows web pages, for any program with
-  controls (libcontrols). It owns a page (libweb's TWebPage: event
-  loop, fetcher over the program's shared network, navigable), the
+  TWebEngineView: the page engine behind TWebView (WebView.Control), a
+  control hosted by a browser's content process (/bin/webcontent, in a
+  control host without a window) or by a view in the program itself.
+  It owns a page (libweb's TWebPage: event loop, fetcher over its
+  network context - the program's, or a content process's transport -
+  navigable), the
   resource sink that hands loaded sheets, images and fonts to layout,
   and the active document's layout and painter.
 

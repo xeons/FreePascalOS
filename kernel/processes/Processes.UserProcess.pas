@@ -378,6 +378,8 @@ begin
     not go idle for a long time; starting a process is a good moment to
     catch up, so finished processes do not pile up. }
   ReapTerminatedThreads;
+  { Freed whatever step fails, so empty until collected. }
+  FillMemory(@Lists, SizeOf(Lists), 0);
 
   Process := CreateProcessObject(Startup.Name);
   if Process = nil then
