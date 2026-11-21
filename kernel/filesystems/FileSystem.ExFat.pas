@@ -414,6 +414,7 @@ begin
   Driver.GetFreeSpace := @ExFatGetFreeSpace;
   Driver.RemoveOpenNode := @ExFatRemoveOpenNode;
   Driver.FinishRemoval := @ExFatFinishRemoval;
+  Driver.HasNoOwners := True;
   Result := @Driver;
 end;
 
