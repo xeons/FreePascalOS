@@ -65,6 +65,7 @@ uses
   Css.Parser,
   Css.UserAgentStyleSheet,
   Css.RuleIndex,
+  Css.StateInvalidation,
   Css.Cascade,
   Css.ComputedValues,
   Css.StyleStructs,

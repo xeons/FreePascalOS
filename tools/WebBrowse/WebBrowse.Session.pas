@@ -53,6 +53,11 @@ type
     FontDirectory: string;
     EvalSource: string;
     Verbose: Boolean;
+    { Sample the page thread's stack every millisecond and print where
+      the time went. }
+    Profile: Boolean;
+    { Moves of the pointer down the viewport once quiet (hover). }
+    HoverMoves: Integer;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -95,8 +100,10 @@ uses
   Web.Script.PageScripting,
   Web.Text.Fonts,
   Web.Profiling,
+  Css.ElementAdapter,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
+  WebBrowse.Sampler,
   WebBrowse.Watchdog;
 
 const
@@ -138,6 +145,7 @@ type
     procedure Report;
     procedure PaintPng;
     procedure RunEval;
+    procedure SweepHover;
   public
     constructor Create(const Options: TBrowseOptions);
     destructor Destroy; override;
@@ -327,6 +335,66 @@ begin
     not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate);
 end;
 
+{ The pointer moved down the middle of the viewport in HoverMoves steps,
+  :hover set on the chain under it as the web view does, the page laid
+  out and painted after each move: how long the GUI would be busy. }
+procedure TBrowseSession.SweepHover;
+var
+  Move, Index: Integer;
+  Hit: THitTestResult;
+  Node: TNode;
+  Previous, Current: array of TElement;
+  Began, Took, Longest, Total: Double;
+
+  function Contains(const Chain: array of TElement; Element: TElement): Boolean;
+  var
+    Item: Integer;
+  begin
+    for Item := 0 to High(Chain) do
+      if Chain[Item] = Element then
+        Exit(True);
+    Result := False;
+  end;
+
+begin
+  if (FOptions.HoverMoves <= 0) or (FLayout = nil) then
+    Exit;
+  Previous := nil;
+  Longest := 0;
+  Total := 0;
+  for Move := 0 to FOptions.HoverMoves - 1 do
+  begin
+    Began := Clock;
+    Hit := FFramePainter.HitTest(FOptions.Width * (0.2 + 0.6 * (Move mod 7) / 6),
+      FOptions.Height * (Move + 0.5) / FOptions.HoverMoves);
+    Current := nil;
+    Node := Hit.Element;
+    while Node <> nil do
+    begin
+      if Node.IsElement then
+      begin
+        SetLength(Current, Length(Current) + 1);
+        Current[High(Current)] := TElement(Node);
+      end;
+      Node := Node.ParentNode;
+    end;
+    for Index := 0 to High(Previous) do
+      if not Contains(Current, Previous[Index]) then
+        FLayout.SetElementStates(Previous[Index], []);
+    for Index := 0 to High(Current) do
+      if not Contains(Previous, Current[Index]) then
+        FLayout.SetElementStates(Current[Index], [esHover]);
+    Previous := Current;
+    Frame;
+    Took := Clock - Began;
+    Total := Total + Took;
+    if Took > Longest then
+      Longest := Took;
+  end;
+  WriteLn(Format('hover: %d moves, %.1f ms on average, %.1f ms the longest', [FOptions.HoverMoves,
+    Total / FOptions.HoverMoves, Longest]));
+end;
+
 procedure TBrowseSession.RunEval;
 var
   Context: TScriptContext;
@@ -440,6 +508,7 @@ begin
     end;
   end;
   Frame;
+  SweepHover;
   Report;
   PaintPng;
 end;
@@ -570,10 +639,15 @@ begin
     ResetWebFontLibrary;
   end;
   StartProfiling(@MonotonicMicroseconds);
+  PrepareSampling;
   StartWatchdog(Options.StallSeconds, Max(60, Round(Options.TimeoutSeconds) + 60));
   Session := TBrowseSession.Create(Options);
   try
+    if Options.Profile then
+      StartProfiler(1000);
     Result := Session.Run;
+    if Options.Profile then
+      StopProfiler(40);
   finally
     StopWatchdog;
     Session.Free;

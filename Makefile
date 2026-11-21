@@ -1308,7 +1308,7 @@ $(WEB_BROWSE_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userl
 	@touch $@
 
 $(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
-	fpc -Mobjfpc -O2 -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
+	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
 		-Fuuserland/lib/javascript -Fushared -Fishared \

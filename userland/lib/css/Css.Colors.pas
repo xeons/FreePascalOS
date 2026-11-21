@@ -567,10 +567,29 @@ begin
     Alpha := Clip01(Color.Alpha);
 end;
 
+{ A component in [0, 1] to 0..255, rounded (no Floor of an Extended). }
+function ToByte(Value: Double): Byte; inline;
+begin
+  if not (Value > 0) then
+    Exit(0);
+  if Value >= 1 then
+    Exit(255);
+  Result := Trunc(Value * 255 + 0.5);
+end;
+
 function ColorToRgba8(const Color: TCssColor): TCssRgba8;
 var
   Red, Green, Blue, Alpha: Double;
 begin
+  { The common case (every color painted asks): sRGB as it is. }
+  if (Color.Space = csSrgb) and (Color.MissingMask = 0) then
+  begin
+    Result.Red := ToByte(Color.Components[0]);
+    Result.Green := ToByte(Color.Components[1]);
+    Result.Blue := ToByte(Color.Components[2]);
+    Result.Alpha := ToByte(Color.Alpha);
+    Exit;
+  end;
   ColorToSrgb(Color, Red, Green, Blue, Alpha);
   Result.Red := Floor(Red * 255 + 0.5);
   Result.Green := Floor(Green * 255 + 0.5);

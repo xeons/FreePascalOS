@@ -227,7 +227,7 @@ begin
     Info := Containers[Index];
     if (Info.Height <= 0) or (Info.Width <= 0) then
       Continue;
-    if Info.ScrollHeight > Info.Height + 0.5 then
+    if Info.BarY and (Info.ScrollHeight > Info.Height + 0.5) then
     begin
       Track := MakeRectangle(Round((Info.X + Info.Width - ScrollX) * Scale) - Thickness,
         Round((Info.Y - ScrollY) * Scale), Thickness, Round(Info.Height * Scale));
@@ -238,7 +238,7 @@ begin
       Thumb := MakeRectangle(Track.Left, Track.Top + ThumbStart, Thickness, ThumbLength);
       FillRectangle(Canvas, Thumb, Theme.Shadow);
     end;
-    if Info.ScrollWidth > Info.Width + 0.5 then
+    if Info.BarX and (Info.ScrollWidth > Info.Width + 0.5) then
     begin
       Track := MakeRectangle(Round((Info.X - ScrollX) * Scale), Round((Info.Y + Info.Height - ScrollY) * Scale) -
         Thickness, Round(Info.Width * Scale), Thickness);

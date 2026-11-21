@@ -53,6 +53,10 @@ type
     X, Y, Width, Height: Single;
     ScrollWidth, ScrollHeight: Single;
     ScrollX, ScrollY: Single;
+    { Whether it shows a scroll bar along that axis: overflow auto or
+      scroll there, and the box is visible (visibility, no transparent
+      ancestor). overflow: hidden scrolls only from script. }
+    BarX, BarY: Boolean;
   end;
   TScrollContainerArray = array of TScrollContainerInfo;
 
@@ -128,7 +132,7 @@ implementation
 
 uses
   Web.Profiling,
-  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
+  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
   Web.Layout.Positioned, Web.Text.FontInstances;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
@@ -599,14 +603,22 @@ begin
     Result := FRoot.ScrollHeight;
 end;
 
-procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer);
+function ShowsBar(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
+begin
+  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]);
+end;
+
+procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer;
+  Transparent: Boolean);
 var
   Child: TLayoutBox;
   X, Y: Single;
+  Hidden, Shown: Boolean;
 begin
   Child := Box.FirstChild;
   while Child <> nil do
   begin
+    Hidden := Transparent or ((Child.Style <> nil) and (Child.Style.Value(cpOpacity)^.Number <= 0));
     if bfScrollContainer in Child.Flags then
     begin
       if Count >= Length(List) then
@@ -622,9 +634,12 @@ begin
       List[Count].ScrollHeight := Child.ScrollHeight;
       List[Count].ScrollX := Child.ScrollX;
       List[Count].ScrollY := Child.ScrollY;
+      Shown := not Hidden and (Child.Style <> nil) and (Child.Style.Keyword(cpVisibility) = kwVisible);
+      List[Count].BarX := Shown and ShowsBar(Child.Style, cpOverflowX);
+      List[Count].BarY := Shown and ShowsBar(Child.Style, cpOverflowY);
       Inc(Count);
     end;
-    CollectScrollers(Child, List, Count);
+    CollectScrollers(Child, List, Count, Hidden);
     Child := Child.NextSibling;
   end;
 end;
@@ -647,8 +662,10 @@ begin
   Result[0].ScrollHeight := FRoot.ScrollHeight;
   Result[0].ScrollX := FRoot.ScrollX;
   Result[0].ScrollY := FRoot.ScrollY;
+  Result[0].BarX := True;
+  Result[0].BarY := True;
   Count := 1;
-  CollectScrollers(FRoot, Result, Count);
+  CollectScrollers(FRoot, Result, Count, False);
   SetLength(Result, Count);
 end;
 

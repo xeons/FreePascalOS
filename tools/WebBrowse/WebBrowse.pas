@@ -45,6 +45,10 @@
     --no-script    scripting off
     -e JS          evaluate JS once the page is quiet; print the result
     -f FONTDIR     font directory (userland/fonts)
+    --hover N      once quiet, move the pointer down the viewport in N steps
+                   (:hover on the chain under it) and time each move
+    --profile      sample the page thread every millisecond; print the
+                   functions it spent its time in
     -v             progress on standard error
 
   Exit status: 0 loaded, 1 navigation failed, 2 timed out, 3 hung
@@ -130,6 +134,10 @@ begin
       Options.EvalSource := NextArgument
     else if Argument = '-f' then
       Options.FontDirectory := NextArgument
+    else if Argument = '--hover' then
+      Options.HoverMoves := StrToIntDef(NextArgument, 0)
+    else if Argument = '--profile' then
+      Options.Profile := True
     else if Argument = '-v' then
       Options.Verbose := True
     else if (Argument <> '') and (Argument[1] = '-') then
