@@ -28,7 +28,8 @@
   the hover's chain and pointer shape read from the hit before the
   page's events, the hit's element held while its events are
   dispatched, the selection kept by WebView.PageSelection (the web
-  view's own) and its places looked up again after every event. The
+  view's own) and its places looked up again after every event
+  (WebBrowse.Pointer). The
   page's listeners lay the page out inside the events, remove, split,
   merge and hide the text under the pointer and in the selection, set
   the selection (also out of the document) and scroll. Between steps
@@ -81,42 +82,13 @@ uses
   WebView.TextGroups,
   WebView.TextIndex,
   WebView.PageSelection,
+  WebBrowse.Pointer,
   WebLoadTest.Server;
 
 const
   PageUrl = 'https://e.test/pointer.html';
 
 type
-  TPointerRun = class;
-
-  { The web view's pointer handling, without the control: the same
-    steps in the same order (WebView.Control.Pointer.inc). }
-  TPointerDriver = class
-  private
-    FRun: TPointerRun;
-    FHover: array of TElement;
-    FPressed: Boolean;
-    FDragged: Boolean;
-    FSelecting: Boolean;
-    FPressX, FPressY: Single;
-    FPointerX, FPointerY: Single;
-    procedure SetHover(Element: TElement);
-    procedure Fire(Target: TNode; const EventType: string; Button: SmallInt; Detail: LongInt);
-    function HitAt(X, Y: Single): THitTestResult;
-    procedure ExtendTo(X, Y: Single);
-    procedure Autoscroll;
-  public
-    Shapes: Integer;
-    constructor Create(Run: TPointerRun);
-    destructor Destroy; override;
-    procedure MoveTo(X, Y: Single);
-    procedure Press(X, Y: Single; ClickCount: Integer);
-    procedure Release(X, Y: Single; ClickCount: Integer);
-    procedure Wheel(Delta: Single);
-    procedure Frame;
-    procedure LetGo;
-  end;
-
   TPointerRun = class
   public
     Page: TWebPage;
@@ -126,7 +98,7 @@ type
     Layout: TDocumentLayout;
     Painter: TDocumentPainter;
     Selection: TPageSelection;
-    Driver: TPointerDriver;
+    Driver: TPagePointer;
     LaidOut: TDocument;
     Width, Height: Single;
     procedure ConsoleMessage(const Level, Text: string);
@@ -135,6 +107,8 @@ type
     { The layout brought up to date, or (a slow layout in the web view)
       left as it is unless Force. }
     procedure MaybeLayOut(Force: Boolean);
+    { Asked by the pointer before it reads the layout. }
+    procedure PointerLayOut(Force: Boolean);
     function View: TTextViewport;
   end;
 
@@ -162,7 +136,7 @@ end;
 procedure TPointerRun.DropLayout;
 begin
   if Driver <> nil then
-    Driver.LetGo;
+    Driver.Attach(nil, nil, nil, nil);
   if Selection <> nil then
     Selection.Attach(nil, nil, nil);
   ScriptLayout.Layout := nil;
@@ -200,293 +174,14 @@ begin
     Layout.Update;
 end;
 
+procedure TPointerRun.PointerLayOut(Force: Boolean);
+begin
+  MaybeLayOut(Force);
+end;
+
 function TPointerRun.View: TTextViewport;
 begin
   Result := ViewportOfLayout(Layout);
-end;
-
-{ TPointerDriver }
-
-constructor TPointerDriver.Create(Run: TPointerRun);
-begin
-  inherited Create;
-  FRun := Run;
-end;
-
-destructor TPointerDriver.Destroy;
-begin
-  LetGo;
-  inherited Destroy;
-end;
-
-procedure TPointerDriver.LetGo;
-begin
-  SetHover(nil);
-  FPressed := False;
-  FSelecting := False;
-end;
-
-{ The chain under the pointer, each element retained, with :hover. }
-procedure TPointerDriver.SetHover(Element: TElement);
-var
-  Old: array of TElement;
-  Node: TNode;
-  Index: Integer;
-begin
-  Old := FHover;
-  FHover := nil;
-  Node := Element;
-  while Node <> nil do
-  begin
-    if Node.IsElement then
-    begin
-      SetLength(FHover, Length(FHover) + 1);
-      FHover[High(FHover)] := TElement(Node);
-      TElement(Node).Retain;
-    end;
-    Node := Node.ParentNode;
-  end;
-  for Index := 0 to High(Old) do
-  begin
-    if (FRun.Layout <> nil) and Old[Index].IsConnected and (Old[Index].NodeDocument = FRun.LaidOut) then
-      FRun.Layout.SetElementStates(Old[Index], []);
-    Old[Index].Release;
-  end;
-  for Index := 0 to High(FHover) do
-    if (FRun.Layout <> nil) and FHover[Index].IsConnected and (FHover[Index].NodeDocument = FRun.LaidOut) then
-      FRun.Layout.SetElementStates(FHover[Index], [esHover]);
-end;
-
-procedure TPointerDriver.Fire(Target: TNode; const EventType: string; Button: SmallInt; Detail: LongInt);
-var
-  Init: TMouseEventInit;
-begin
-  if Target = nil then
-    Exit;
-  Init := Default(TMouseEventInit);
-  Init.ClientX := FPointerX;
-  Init.ClientY := FPointerY;
-  Init.Button := Button;
-  if FPressed then
-    Init.Buttons := 1;
-  Init.Detail := Detail;
-  Target.Retain;
-  try
-    DispatchMouseEvent(Target, EventType, Init);
-  finally
-    Target.Release;
-  end;
-end;
-
-function TPointerDriver.HitAt(X, Y: Single): THitTestResult;
-begin
-  Result := Default(THitTestResult);
-  if FRun.Painter = nil then
-    Exit;
-  FRun.MaybeLayOut(False);
-  Result := FRun.Painter.HitTest(X, Y);
-end;
-
-procedure TPointerDriver.ExtendTo(X, Y: Single);
-var
-  View: TTextViewport;
-  Focus: TTextPosition;
-begin
-  if FRun.Layout = nil then
-    Exit;
-  FRun.MaybeLayOut(False);
-  View := FRun.View;
-  Focus := FRun.Selection.PositionAt(X + View.ScrollX, Y + View.ScrollY, View);
-  if Focus.Run >= 0 then
-    FRun.Selection.Extend(Focus);
-end;
-
-procedure TPointerDriver.Autoscroll;
-var
-  ScrollX, ScrollY: Single;
-begin
-  if not (FSelecting and FDragged) or (FRun.Layout = nil) then
-    Exit;
-  if (FPointerY >= 0) and (FPointerY <= FRun.Height) then
-    Exit;
-  FRun.Layout.GetScrollOffset(nil, ScrollX, ScrollY);
-  if FPointerY < 0 then
-    FRun.Layout.SetScrollOffset(nil, ScrollX, ScrollY + FPointerY)
-  else
-    FRun.Layout.SetScrollOffset(nil, ScrollX, ScrollY + FPointerY - FRun.Height);
-  ExtendTo(FPointerX, FPointerY);
-end;
-
-procedure TPointerDriver.MoveTo(X, Y: Single);
-var
-  Hit: THitTestResult;
-  Old, Target: TElement;
-begin
-  FPointerX := X;
-  FPointerY := Y;
-  if FPressed then
-  begin
-    if (Abs(X - FPressX) > 3) or (Abs(Y - FPressY) > 3) then
-      FDragged := True;
-    Hit := HitAt(X, Y);
-    Target := Hit.Element;
-    Hit := Default(THitTestResult);
-    Fire(Target, 'mousemove', 0, 0);
-    if FSelecting and FDragged and FPressed then
-    begin
-      if (Y < 0) or (Y > FRun.Height) then
-        Autoscroll
-      else
-        ExtendTo(X, Y);
-    end;
-    Exit;
-  end;
-  Hit := HitAt(X, Y);
-  Old := nil;
-  if Length(FHover) > 0 then
-  begin
-    Old := FHover[0];
-    Old.Retain;
-  end;
-  SetHover(Hit.Element);
-  { As the web view: what the hit shows is read before any event. }
-  if (Hit.Box <> nil) and (Hit.Box.Style <> nil) and (Hit.Box.Style.Keyword(cpCursor) <> kwAuto) then
-    Inc(Shapes);
-  Target := Hit.Element;
-  Hit := Default(THitTestResult);
-  if Target <> nil then
-    Target.Retain;
-  try
-    if Old <> Target then
-    begin
-      Fire(Old, 'mouseout', 0, 0);
-      Fire(Target, 'mouseover', 0, 0);
-    end;
-    Fire(Target, 'mousemove', 0, 0);
-  finally
-    if Old <> nil then
-      Old.Release;
-    if Target <> nil then
-      Target.Release;
-  end;
-end;
-
-procedure TPointerDriver.Press(X, Y: Single; ClickCount: Integer);
-var
-  Hit: THitTestResult;
-  Target: TElement;
-  View: TTextViewport;
-  Position: TTextPosition;
-  Proceed: Boolean;
-  Init: TMouseEventInit;
-begin
-  FPointerX := X;
-  FPointerY := Y;
-  Hit := HitAt(X, Y);
-  Target := Hit.Element;
-  Hit := Default(THitTestResult);
-  FPressed := True;
-  FPressX := X;
-  FPressY := Y;
-  FDragged := False;
-  FSelecting := False;
-  Proceed := True;
-  if Target <> nil then
-  begin
-    Target.Retain;
-    try
-      Init := Default(TMouseEventInit);
-      Init.ClientX := X;
-      Init.ClientY := Y;
-      Init.Buttons := 1;
-      Init.Detail := ClickCount;
-      Proceed := DispatchMouseEvent(Target, 'mousedown', Init);
-    finally
-      Target.Release;
-    end;
-  end;
-  if not Proceed or (FRun.Layout = nil) then
-    Exit;
-  { The handlers may have laid out or changed the document: the place in
-    the text is found now. }
-  FRun.MaybeLayOut(False);
-  View := FRun.View;
-  Position := FRun.Selection.PositionAt(X + View.ScrollX, Y + View.ScrollY, View);
-  if (ClickCount = 2) and (Position.Run >= 0) then
-    FRun.Selection.SelectWordAt(Position)
-  else if (ClickCount = 3) and (Position.Run >= 0) then
-    FRun.Selection.SelectLineAt(Position)
-  else
-  begin
-    FSelecting := True;
-    FRun.Selection.Select(Position, Position);
-  end;
-end;
-
-procedure TPointerDriver.Release(X, Y: Single; ClickCount: Integer);
-var
-  Hit: THitTestResult;
-  Target: TElement;
-begin
-  FPointerX := X;
-  FPointerY := Y;
-  Hit := HitAt(X, Y);
-  Target := Hit.Element;
-  Hit := Default(THitTestResult);
-  if Target <> nil then
-    Target.Retain;
-  try
-    Fire(Target, 'mouseup', 0, ClickCount);
-    FPressed := False;
-    FSelecting := False;
-    if not FDragged and (Target <> nil) then
-    begin
-      Fire(Target, 'click', 0, ClickCount);
-      if (ClickCount = 2) and Target.IsConnected then
-        Fire(Target, 'dblclick', 0, 2);
-    end;
-  finally
-    if Target <> nil then
-      Target.Release;
-  end;
-end;
-
-procedure TPointerDriver.Wheel(Delta: Single);
-var
-  Hit: THitTestResult;
-  Box: TLayoutBox;
-  ScrollX, ScrollY: Single;
-  Scrolled: Boolean;
-begin
-  if FRun.Layout = nil then
-    Exit;
-  { The innermost scroll container under the pointer, read from the hit
-    at once (no script runs in between). }
-  Hit := HitAt(FPointerX, FPointerY);
-  Box := Hit.Box;
-  Scrolled := False;
-  while (Box <> nil) and not Scrolled do
-  begin
-    if (bfScrollContainer in Box.Flags) and (Box.Kind <> bkViewport) and (Box.Node <> nil) then
-    begin
-      FRun.Layout.SetScrollOffset(Box.Node, Box.ScrollX, Box.ScrollY + Delta);
-      Scrolled := True;
-    end;
-    Box := Box.Parent;
-  end;
-  if not Scrolled then
-  begin
-    FRun.Layout.GetScrollOffset(nil, ScrollX, ScrollY);
-    FRun.Layout.SetScrollOffset(nil, ScrollX, ScrollY + Delta);
-  end;
-  if FSelecting and FDragged and FPressed then
-    ExtendTo(FPointerX, FPointerY);
-end;
-
-procedure TPointerDriver.Frame;
-begin
-  if FPressed then
-    Autoscroll;
 end;
 
 function ReadTextFile(const Path: string): string;
@@ -572,7 +267,8 @@ begin
   Observer.Run := Run;
   Run.Page.Navigable.ObserverObject := Observer;
   Run.Selection := TPageSelection.Create;
-  Run.Driver := TPointerDriver.Create(Run);
+  Run.Driver := TPagePointer.Create;
+  Run.Driver.OnLayOut := @Run.PointerLayOut;
   DocumentObserver := TPointerDocumentObserver.Create;
   DocumentObserver.Run := Run;
   Surface := Default(TSurface);
@@ -595,6 +291,8 @@ begin
     Run.ScriptLayout.Layout := Run.Layout;
     Run.ScriptLayout.Painter := Run.Painter;
     Run.Selection.Attach(Document, Run.Layout, Run.Painter);
+    Run.Driver.Attach(Document, Run.Layout, Run.Painter, Run.Selection);
+    Run.Driver.ViewportHeight := Run.Height;
     Document.AddObserver(DocumentObserver);
     Run.Layout.Update;
     CreateSurface(Surface, Round(Run.Width), Round(Run.Height), ColorWhite);
@@ -659,6 +357,7 @@ begin
         Run.Height := 150 + Random(350);
         Run.Layout.SetViewport(Run.Width, Run.Height, 1);
         Run.Sink.SetViewport(Run.Width, Run.Height, 1);
+        Run.Driver.ViewportHeight := Run.Height;
       end
       else if Choice < 74 then
       begin
