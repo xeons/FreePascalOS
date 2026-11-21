@@ -6765,6 +6765,97 @@ decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
 
+### Archives (libarchive)
+
+**libarchive** (`userland/lib/archive`, units `Archive.*`) reads zip,
+tar and tar.gz files, writes zip files, extracts archives into folders
+and lists an archive's folders for browsing. It is built over
+libcompression (deflate, gzip, CRC-32) and libsystem, and its core
+units also build on the host. The file manager uses it for compressed
+folders.
+
+```
+  Archive.Readers     TArchiveReader (Count, Entries[], IndexOf,
+                      ExtractToStream/ToFile), OpenArchive,
+                      DetectArchiveFormat, IsArchiveFile
+  Archive.Extraction  ExtractAll: safe names only, links last
+  Archive.Folders     ListArchiveFolder: children, implied folders too
+  Archive.ZipWriter   TZipWriter: AddFile/AddStream/AddFolder/AddLink, Finish
+=========== formats =========================================================
+  Archive.ZipReader   central directory, ZIP64, stored/deflated, CRC check
+  Archive.ZipEndRecord  Archive.ZipExtraFields  Archive.ZipFormat
+  Archive.TarReader   ustar, v7, GNU 'L'/'K', pax; hard links as copies
+  Archive.TarFormat   Archive.RewindingStreams (tar.gz, seekable forward)
+  Archive.Detection   by content, not by name
+=========== shared ==========================================================
+  Archive.Entries (TArchiveEntry, SafeEntryPath)  Archive.Times
+  Archive.Progress  Archive.Cp437  Archive.FileSystem (Sys.Files / host)
+```
+
+**Entries.** A member is a `TArchiveEntry`: its UTF-8 name with '/'
+between the parts (a folder's ends with '/'), whether it is a folder or
+a symbolic link (and its target), sizes, the modification time in Unix
+seconds (UTC), Unix mode bits with the file type (0 when the archive
+has none), whether it is encrypted, the method and the CRC-32. Zip
+names are UTF-8 when flag 11 says so, else Info-ZIP's Unicode path
+field when its CRC matches, else code page 437; the time is the
+extended timestamp field's when there is one, else the DOS time taken
+as UTC; modes come from the external attributes of members made on
+Unix. Errors are `EArchiveError`; a progress callback
+(`TArchiveProgressEvent`, uncompressed bytes so far) can cancel, which
+raises `EArchiveCancelled`.
+
+**Reading.** `OpenArchive` tells the format by content: a zip by a
+local header at the start or its end of central directory record
+(searched for backwards past a comment; data before the zip is allowed
+for), gzip magic with a tar header inside, or a tar header ("ustar" or
+a right checksum). The zip reader lists members from the central
+directory (ZIP64 locator and extra fields included), so data
+descriptors need nothing special; extraction inflates through
+`TInflater` while computing the CRC-32 and refuses a wrong CRC or
+size, encrypted members (flag 0 or AES) and other methods. The tar
+reader walks the headers once when opened (pax `path`, `linkpath`,
+`size`, `mtime`; GNU long names and links; base-256 numbers). A
+.tar.gz is read through `TRewindingGzipStream`, which decompresses
+forwards and starts again only to go back, so listing and extracting in
+order decompresses it once per pass.
+
+**Writing.** `TZipWriter` streams each member through `TDeflater`
+(level 6) while computing its CRC-32, then writes the local header again
+with the sizes (the output must be seekable); data that deflate does
+not shrink is written again stored when the source can be reread. Names
+get the UTF-8 flag when they are not ASCII, every member the extended
+timestamp, "made by" Unix with the mode. A member expected near 4 GiB
+gets a ZIP64 local header, and the central directory and end records
+use ZIP64 when sizes, offsets or more than 65535 members need it, or
+always with `ForceZip64`. Without `Finish` the file has no directory:
+the caller deletes it.
+
+**Extracting.** `SafeEntryPath` gives the relative path a name may be
+extracted to: '\' taken as '/', '.' and empty parts dropped, and ''
+for absolute names, drive letters, '..' parts and control characters.
+`ExtractAll` leaves those out (and counts them), creates folders, writes
+files, makes symbolic links only after every file (so nothing is written
+through a link a member made), and sets folder times last. Times, modes
+and links go through `Archive.FileSystem`, which calls libsystem on the
+system and the host's Unix calls in the host test.
+
+**Tests.** `make archive-test` builds the core units on the host with
+range checks. `tools/ArchiveTest/make-fixtures.py` makes zip files with
+Python's zipfile (stored, deflated, folders, a Unicode name, an empty
+file, a link, data over 64 KiB, an extended timestamp, data
+descriptors, forced ZIP64, 65540 members) and patches some by hand (a
+CP437 name, the encrypted flag, a wrong CRC, unsafe names), and tar
+files with tarfile (ustar, GNU, pax, tar.gz) plus an old v7 one. The
+test checks every member's fields and data, extraction into folders
+(modes, times, links, nothing outside), random access in a .tar.gz,
+folder listing and cancelling; then writes zips (an empty file, folders,
+a Unicode name, big and incompressible data, a link, a time before
+1980; forced ZIP64; from files on disk; 65537 members), reads them back
+and has `check-written.py` check them with Python's zipfile (testzip,
+names, data, modes, DOS and extended times, ZIP64 end records).
+7z is not read (TODO.md).
+
 ## JavaScript engine
 
 libjavascript (`userland/lib/javascript`, units `Js.*`, built as
