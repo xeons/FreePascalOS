@@ -33,15 +33,13 @@ begin
   FSink := TLayoutResourceSink.Create;
   FScriptLayout := TDocumentScriptLayout.Create;
   TDocumentScriptLayout(FScriptLayout).OnScrolled := @ScriptScrolled;
-  FTextIndex := TPageTextIndex.Create;
+  FSelection := TPageSelection.Create;
   FFieldEditor := TTextFieldEditor.Create;
   FFieldEditor.OnEdited := @FireInputEvent;
   FFieldEditor.OnSelectionMoved := @FieldSelectionMoved;
   FFieldEditor.OnSubmit := @SubmitImplicitly;
   FFieldEditor.OnReadClipboard := @ReadClipboard;
   FFieldEditor.OnWriteClipboard := @WriteClipboard;
-  FSelectionAnchor := TextPosition(-1, 0);
-  FSelectionFocus := FSelectionAnchor;
   FVerticalBar := TScrollBar.Create(Self);
   FVerticalBar.Kind := ScrollVertical;
   FVerticalBar.Visible := False;
@@ -75,7 +73,7 @@ begin
   FObserver.Free;
   FSink.Free;
   FScriptLayout.Free;
-  FTextIndex.Free;
+  FSelection.Free;
   FFieldEditor.Free;
   FFavicon.Free;
   FSelectMenu.Free;
@@ -166,10 +164,8 @@ end;
 procedure TWebView.ReleaseDocument;
 begin
   ForgetElements;
-  FTextIndex.Clear;
-  FTextIndexValid := False;
-  FSelectionAnchor := TextPosition(-1, 0);
-  FSelectionFocus := FSelectionAnchor;
+  FSelection.Attach(nil, nil, nil);
+  FSelecting := False;
   TDocumentScriptLayout(FScriptLayout).Layout := nil;
   TDocumentScriptLayout(FScriptLayout).Painter := nil;
   FreeAndNil(FPainter);
@@ -203,6 +199,7 @@ begin
   Document.AddObserver(FDocumentObserver);
   FLayout := TDocumentLayout.Create(Document);
   FPainter := TDocumentPainter.Create(FLayout);
+  FSelection.Attach(Document, FLayout, FPainter);
   TDocumentScriptLayout(FScriptLayout).Layout := FLayout;
   TDocumentScriptLayout(FScriptLayout).Painter := FPainter;
   ApplyViewport;
@@ -341,6 +338,9 @@ begin
   UpdateLayout;
   QueueAnimationEvents(FPage.Loop, FDocument, FLayout.TakeAnimationEvents);
   ApplyPendingScroll;
+  { A selection dragged past the viewport's edge scrolls on by itself. }
+  if AutoscrollSelection then
+    RequestFrame;
   if not FBackingValid or (FLayout.PaintVersion <> FBackingVersion) then
     InvalidateViewport;
   { Tasks the frame queued (animation frame callbacks, events). }

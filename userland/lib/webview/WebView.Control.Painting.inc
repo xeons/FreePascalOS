@@ -135,20 +135,17 @@ var
   ScrollX, ScrollY: Single;
   OffsetX, OffsetY: Double;
   Area: TRectangle;
+  View: TTextViewport;
 begin
   if FLayout = nil then
     Exit;
-  if FSelectionFromDocument then
-  begin
-    EnsureTextIndex;
-    PullSelectionFromDocument;
-  end;
-  if (FSelectionAnchor.Run < 0) or (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) = 0) then
-    Exit;
-  EnsureTextIndex;
-  Rectangles := FTextIndex.RangeRectangles(FSelectionAnchor, FSelectionFocus);
+  { The index as the layout is now (the backing was painted from it). }
+  FSelection.Refresh;
+  View := TextViewport;
+  Rectangles := FSelection.Rectangles(View);
   Scale := DeviceScale;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  ScrollX := View.ScrollX;
+  ScrollY := View.ScrollY;
   for Index := 0 to High(Rectangles) do
   begin
     OffsetX := ScrollX;

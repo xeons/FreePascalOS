@@ -72,6 +72,8 @@ uses
   Web.Layout.BoxGeometry,
   Web.Layout.TextOffsets,
   Web.Layout.Transforms,
+  Web.Paint.DisplayList,
+  Web.Paint.Sticky,
   Web.Text.FontInstances,
   Web.Style.NodeData;
 
@@ -91,7 +93,38 @@ end;
   relative (its own and its ancestors'), by the scroll offsets of the
   scroll containers it is in, and not by the viewport's when it is
   fixed (the caller takes the viewport's scroll off everything). }
-procedure DrawnOffset(Layout: TDocumentLayout; Box: TLayoutBox; out OffsetX, OffsetY: Single);
+{ How far a position: sticky box under the viewport is moved at the
+  scroll offset now, found from its run in the display list the way
+  painting, hit testing and the web view's text groups find it. }
+procedure AddStickyOffset(Layout: TDocumentLayout; Painter: TDocumentPainter; Box: TLayoutBox;
+  var OffsetX, OffsetY: Single);
+var
+  List: TDisplayList;
+  Index: Integer;
+  Item: PDisplayItem;
+  ScrollX, ScrollY, StickyX, StickyY: Single;
+begin
+  if Painter = nil then
+    Exit;
+  Painter.Refresh;
+  List := Painter.DisplayList;
+  Layout.GetScrollOffset(nil, ScrollX, ScrollY);
+  for Index := 0 to List.Count - 1 do
+  begin
+    Item := @List.Items[Index];
+    if (Item^.Kind = diPushSticky) and (Item^.Box = Box) then
+    begin
+      StickyOffset(List.Stickies[Item^.Index], Item^.X, Item^.Y, Item^.Width, Item^.Height, ScrollX, ScrollY,
+        Layout.ViewportWidth, Layout.ViewportHeight, StickyX, StickyY);
+      OffsetX := OffsetX + StickyX;
+      OffsetY := OffsetY + StickyY;
+      Exit;
+    end;
+  end;
+end;
+
+procedure DrawnOffset(Layout: TDocumentLayout; Painter: TDocumentPainter; Box: TLayoutBox;
+  out OffsetX, OffsetY: Single);
 var
   Current: TLayoutBox;
   ViewportX, ViewportY: Single;
@@ -115,6 +148,8 @@ begin
     end;
     if bfFixed in Current.Flags then
       Fixed := True;
+    if bfSticky in Current.Flags then
+      AddStickyOffset(Layout, Painter, Current, OffsetX, OffsetY);
     Current := Current.Parent;
   end;
   if Fixed then
@@ -139,7 +174,7 @@ begin
   if Box = nil then
     Exit;
   Rectangles := BoxRectangles(Box);
-  DrawnOffset(Layout, Box, OffsetX, OffsetY);
+  DrawnOffset(Layout, Painter, Box, OffsetX, OffsetY);
   SetLength(Result, Length(Rectangles));
   for Index := 0 to High(Rectangles) do
   begin
@@ -166,7 +201,7 @@ begin
   Result := Ready and Layout.NodeBounds(Element, BoxX, BoxY, BoxWidth, BoxHeight);
   if Result then
   begin
-    DrawnOffset(Layout, Layout.BoxOf(Element), OffsetX, OffsetY);
+    DrawnOffset(Layout, Painter, Layout.BoxOf(Element), OffsetX, OffsetY);
     BoxX := BoxX + OffsetX;
     BoxY := BoxY + OffsetY;
     { Scaled, turned or skewed: the bounds of what is drawn. }

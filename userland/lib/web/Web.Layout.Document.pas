@@ -354,13 +354,21 @@ var
   Box, Next: TLayoutBox;
 begin
   { The boxes stay until their parent's children are built again; they
-    must not reach the node, which may be freed before that. }
+    must not reach the node, which may be freed before that, nor what
+    the document's resources kept for it (a frame's document, an image),
+    which go with it: a display list built from them meanwhile (a layout
+    put off) draws nothing there. }
   Box := BoxOf(Node);
   while Box <> nil do
   begin
     Next := Box.NextForNode;
     Box.Node := nil;
     Box.NextForNode := nil;
+    if Box is TReplacedBox then
+    begin
+      TReplacedBox(Box).Content := nil;
+      TReplacedBox(Box).Image := nil;
+    end;
     Box := Next;
   end;
   Inc(FPaintVersion);

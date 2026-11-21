@@ -772,6 +772,10 @@ type
     procedure SetBoundary(IsStart: Boolean; Node: TNode; Offset: Integer);
     procedure SetRetainsNodes(Value: Boolean);
     procedure Changed;
+    { After a boundary point was set: a selection's range taken out of
+      its document's tree stops being the selection (it does not hold
+      its nodes while it is one), then Changed. }
+    procedure Moved;
     function GetCollapsed: Boolean;
   public
     { The script binding's wrapper (Web.Bindings.Ranges), nil if none. }

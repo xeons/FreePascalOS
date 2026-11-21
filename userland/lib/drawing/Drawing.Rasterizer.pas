@@ -343,9 +343,11 @@ var
   SecondArea: Double;
   RunningArea: Double;
   Cell: LongInt;
+  Limit: Double;
 begin
-  if FromY = ToY then
+  if (FromY = ToY) or IsNan(FromX) or IsNan(FromY) or IsNan(ToX) or IsNan(ToY) then
     Exit;
+  Limit := RectangleWidth(Accumulation.Area);
   Direction := 1;
   if FromY > ToY then
   begin
@@ -393,6 +395,14 @@ begin
       Left := NextX;
       Right := X;
     end;
+    { Rounding may take a steep edge a hair past the buffer's sides:
+      the cells are 0 to Width + 1. }
+    if Left < 0 then
+      Left := 0;
+    if Right > Limit then
+      Right := Limit;
+    if Left > Right then
+      Left := Right;
     LeftFloor := FloorOf(Left);
     LeftCell := LongInt(Trunc(LeftFloor));
     RightCell := CeilingOf(Right);
