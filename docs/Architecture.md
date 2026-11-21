@@ -6503,6 +6503,24 @@ words, sentences), ListFormat; Number, BigInt and Date toLocaleString
 use them. `Js.Inspect` prints values as Node's util.inspect does, on
 one line.
 
+**Several realms.** `TJsEngine.CreateSharing(Parent)` makes another
+realm in a runtime (an iframe's window): one heap, objects passed
+freely. Closures and native functions carry their `Realm` and every
+call is dispatched to it (the interpreter's fast paths fall back to
+`Call` for a foreign function; the callee realm notes the caller in
+`CallerRealm`, which postMessage takes as its source). `Detach` stops a
+sharing realm's roots (its window closed; its functions then run in the
+caller's realm); a sharing engine is freed after the runtime's owner, or
+its realm and host classes are kept until then.
+`EvaluateBuiltin` compiles an embedder's built-ins written in
+JavaScript (their sources are marked `Builtin`: Function.prototype.
+toString gives native code). A not-a-function error names the callee
+as V8 does ("a.b.c is not a function"), from the source text at the
+call. Math.floor, ceil and round work on the whole double range (the
+runtime's Floor gives 32 bits), and assigning an object or array
+literal that reads the variable no longer builds it in that variable's
+register first (`b = {x: b}`).
+
 Not there yet: structuredClone (a host matter), private names inside
 direct eval code, locales other than en-US, the full Unicode tables for
 normalization and RegExp scripts; there is no JIT, and the collector's
@@ -9944,7 +9962,8 @@ HTML context element).
 `Web.Bindings*` and `Web.Script*` give page scripts the DOM and the
 window through libjavascript's embedding API (host classes; plus the
 engine's object model for exotic objects and a weak processor of its
-heap; nothing was added to libjavascript).
+heap; libjavascript gained several realms per runtime and built-ins written
+in JavaScript for them).
 
 **Tables from WebIDL.** The interfaces are written in WebIDL
 (`userland/lib/web/bindings/*.webidl`, close to the standards' text) and
@@ -10167,13 +10186,115 @@ units. querySelector, matches and closest match through the style
 system's element adapter (`Web.Style.Adapter`), so script sees the
 hover, active and focus states the web view sets.
 
-**Not done yet**: import maps, ErrorEvent and onerror's arguments, the event handler scope
-chain (form, document), document.open on a loaded document, shadow DOM,
-Range and Selection, TreeWalker, Blob, FormData, fetch and
-XMLHttpRequest, Storage, iframes and postMessage; getComputedStyle
-gives the inline declarations (read only) and layout metrics are 0 (the
-web view's layout could answer both through an environment hook);
-images have no natural size for script. TextEncoder gives a Uint8Array.
+**Nested windows (iframes)** (`Web.Script.Frames`). An iframe element
+that becomes connected in a scripted document gets a window of its own:
+a `TScriptContext` made with `CreateFrame`, whose engine is another
+realm in the parent's runtime (`TJsEngine.CreateSharing`). Objects and
+functions pass freely between the realms, and each function runs in the
+realm it was made in (libjavascript dispatches calls on a function's
+`Realm`; a built-in made in a frame creates its objects there, an
+`Array` species of another realm makes an array of the current one).
+The first document is about:blank (html, head and body, the parent's
+origin and cookies) or the srcdoc markup parsed with its scripts; the
+iframe's load event fires then. contentWindow, contentDocument,
+window.parent, top, frameElement and length follow; removing the
+element closes the window (`Close`: its realm stops being a root and is
+detached; what the parent kept still works, running in the caller's
+realm). Frames are freed with their top-level context, after its engine
+(their cells live in its runtime). `TFrameEnvironment` forwards timers,
+prompts, cookies, storage, fetches and the user agent to the parent's
+environment. Not yet: frames do not load `src` documents, are not laid
+out or painted, and get no input (reCAPTCHA's widget stays empty).
+
+**Platform scripts** (`Web.Script.Natives`, `userland/lib/web/platform/*.js`).
+Interfaces that are mostly object juggling and promises over a few engine
+services are written in JavaScript: `make-bindings.py` turns the files
+into `Web.Script.PlatformSources.inc`, and every window runs them in file
+name order, as built-ins (`TJsEngine.EvaluateBuiltin`: their functions
+read as `function f() { [native code] }`). Each is a function of the
+natives object, the global object and a shared `internal` object;
+classes come out WebIDL-like (`internal.finishInterface`: accessors and
+methods on the prototype, a toStringTag, "Illegal constructor" for
+interfaces script cannot make). The natives are Pascal routines of the
+window's context (a guarded table: a Pascal exception becomes a script
+error) over `TScriptEnvironment`:
+
+| File | What it gives |
+|---|---|
+| 00-base | the helpers; event handler attributes of platform interfaces; ProgressEvent |
+| 10-performance | Performance (now, timeOrigin, timing, navigation, entries, marks, measures), PerformanceObserver, PerformanceNavigationTiming from the loader's moments |
+| 20-storage | Storage, localStorage and sessionStorage: a proxy over the environment's `TWebStorageArea` (named properties, `in`, Object.keys, the 5 MiB quota) |
+| 30-window | Image, Option and Audio factories; requestAnimationFrame at the window's rendering opportunities (a 16 ms beat without them); requestIdleCallback; Screen; matchMedia with change events; the CSS namespace (supports through libcss, escape); Crypto (getRandomValues, randomUUID, subtle.digest with libcryptography); navigator plugins, mime types, permissions, sendBeacon |
+| 35-fonts | FontFace, FontFaceSet, document.fonts (settled at once: style sheets' fonts are the loader's) |
+| 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
+| 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
+| 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
+| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects, client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
+
+The environment hooks they use (`Web.ScriptEnvironment`):
+`NavigationTiming`, `StorageArea` and `StorageChanged`,
+`MediaEnvironment`, `ScreenWidth`/`ScreenHeight`,
+`RequestAnimationFrame`, `SendBeacon`, `StartFetch`/`CancelFetch` with a
+`TScriptFetchSink`, and `Layout`, a `TScriptLayout` that answers geometry
+and computed values (`Web.Script.Layout` answers from a
+`TDocumentLayout` after bringing it up to date; the web view and
+webbrowse set one). The page environment implements them: navigation
+timing from `TLoadingContext.Times` (the navigable notes the navigation
+start, response start and protocol, the loader DOM interactive, the
+DOMContentLoaded and load events; the window's time origin is the
+navigation start); local storage per origin from the host's
+`TWebStorageRegistry` (a file per origin, saved a second after a change;
+the browser keeps it in ~/.settings/browser/storage), session storage
+per page; script fetches over the loader's fetch layer
+(`Web.Script.PageFetch`: CORS, credentials, cookies, the cache; the
+response filtered as the Fetch Standard says: no Set-Cookie, CORS
+responses with the safelisted and exposed headers only, opaque ones with
+status 0 and no headers); beacons as keepalive no-cors POSTs outside the
+document's fetch group; animation frames as the window's frame
+callbacks.
+
+**Forms and focus in the DOM.** A form control's state that is not in
+its attributes (value and its dirty flag, checkedness, selectedness, the
+text selection) lives with the element (`Web.Dom.FormControls`, in the
+node's rare data), so the bindings, the web view and the styler see one
+value; changing it tells the document's observers
+(`ControlStateChanged`: :checked and :placeholder-shown restyle, the
+painter shows the value). Inputs and text areas have selectionStart,
+selectionEnd, selectionDirection, setSelectionRange and select(). Focus
+is the document's (`TDocument.FocusedElement`, `Web.Dom.Focus`: which
+elements are focusable areas, and the focusing steps with blur,
+focusout, focus and focusin carrying relatedTarget); focus(), blur(),
+document.activeElement and the web view all go through it, and the
+view follows the document (`FocusChanged`).
+
+The user agent is `Mozilla/5.0 (X11; FreePascalOS x86_64)
+AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 Safari/537.36`
+(aarch64 on ARM; `WebView.Network`, the script environment's default
+the same): it names the platform and the engine, and carries the
+compatibility tokens every engine sends, without which sites send
+reduced pages (Google answers a bare "libweb" with its basic page and
+"Update your browser" for search).
+
+**Google search.** The home page loads without script errors; typing
+in the search box (Google's textarea, focused by its script) and Enter
+go through its keydown handler and form submission; the results URL
+answers with the "SearchGuard" challenge, whose BotGuard program runs
+(it needs an about:blank iframe's realm for pristine built-ins). With
+the same clock, random numbers and cookies the challenge's token is byte
+for byte the token Firefox computes (checked on the host with an
+instrumented copy of the page, the engine and Firefox side by side);
+Google then redirects this engine to its CAPTCHA page ("unusual
+traffic", /sorry/index), whose reCAPTCHA widget needs src iframes.
+
+**Not done yet**: import maps, ErrorEvent and onerror's arguments, the
+event handler scope chain (form, document), document.open on a loaded
+document, shadow DOM, Range and Selection, TreeWalker, iframes with src
+documents (loading, layout, painting, input), synchronous
+XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
+insertRule), Brotli and zstd content codings (Accept-Encoding offers
+gzip and deflate only), the storage event between windows, images'
+natural size for script.
 
 ### Tests
 
@@ -10755,9 +10876,29 @@ libcontrols gained what the view needed: a control's pointer shape is
 asked again after it handled a move (`TControlWindow`), and
 `TMenuItem.Clear`.
 
-Not yet: a caret that moves and selects within a text field (typing
-appends), dragging the bars of inner scroll containers, drag and drop,
-lazy images near the viewport, printing.
+- **Keys to the page**: every key press is a KeyboardEvent first
+  (`WebView.KeyNames`: key, code, keyCode, location and modifiers from
+  the set 1 scan code and the character): keydown, keypress for a
+  character, keyup on release, at the focused element (else the body);
+  cancelling keydown or keypress stops what the key would do.
+- **Text fields** (`WebView.TextEditing`): the value and its selection
+  live in the DOM's form control state; characters replace the
+  selection at the caret, Backspace and Delete (with Ctrl a word), the
+  arrows (Ctrl by word), Home and End (in a text area by line; Up and
+  Down move between lines), Shift extends the selection, Ctrl+A, Ctrl+C,
+  Ctrl+X and Ctrl+V, maxlength and readonly; each edit fires an
+  InputEvent with its inputType; Enter in a field is implicit
+  submission (the form's first submit button, else the form), in a
+  text area a line break; change fires when the focus leaves a field
+  whose value changed; the caret is drawn where the selection's focus
+  is.
+- **Script's layout questions** go to a `TDocumentScriptLayout` over the
+  view's layout and painter (getBoundingClientRect, scrolling,
+  elementFromPoint, getComputedStyle).
+
+Not yet: drawing a text field's selection, dragging the bars of inner
+scroll containers, drag and drop, lazy images near the viewport,
+printing.
 
 ## Browser
 

@@ -1291,14 +1291,30 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Event handler scope (form and document in the scope chain: needs the
       with statement or an environment hook in libjavascript), onerror's
       five arguments, body/frameset handlers forwarding to the window
-- [ ] getComputedStyle from the style system (inline declarations, read
-      only, today); layout answers (offset*, client*, getBoundingClientRect)
-- [ ] AbortSignal for addEventListener's signal option; focus tracking
-      (document.activeElement, focus events from the input code)
+- [x] getComputedStyle from the style system; layout answers (offset*,
+      client*, scroll*, getBoundingClientRect, elementFromPoint) through
+      `TScriptLayout`
+- [x] Focus tracking (document.activeElement, Web.Dom.Focus's focusing
+      steps from script and the input code)
+- [ ] AbortSignal for addEventListener's signal option
 - [x] Typed arrays: TextEncoder.encode gives a Uint8Array (checked in the
       browser)
-- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, Blob/File,
-      FormData, fetch() and XMLHttpRequest, Storage, postMessage, iframes
+- [x] Platform scripts (built-in JavaScript over natives): Performance,
+      Storage, fetch/Request/Response/Headers, AbortController,
+      XMLHttpRequest, Blob/File/FileReader/FormData, streams, crypto,
+      matchMedia, screen, animation frames, idle callbacks, postMessage,
+      MessageChannel, BroadcastChannel, IntersectionObserver,
+      ResizeObserver, FontFace, CSS.supports/escape, Image/Option
+- [x] iframes: about:blank and srcdoc windows in a realm of the parent's
+      engine (libjavascript: several realms per runtime)
+- [ ] iframes with src documents: loading, layout, painting, input
+      (Google's CAPTCHA page needs them for reCAPTCHA)
+- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
+      (document.styleSheets, insertRule), Web Animations, synchronous XHR
+- [ ] Brotli and zstd content codings (Accept-Encoding offers gzip and
+      deflate only)
+- [ ] Google search: the challenge runs (its token equals Firefox's for
+      the same inputs) but Google sends this engine to its CAPTCHA page
 - [ ] A cheaper interface object: native accessors keyed by property in
       libjavascript would let one getter serve every attribute (a window
       costs about 420 KB of script heap over the bare realm today)
@@ -1314,9 +1330,11 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       menu, history and about pages, downloads to ~/Downloads, find bar,
       zoom, settings (home page, search URL, HTTP/3, JavaScript); in
       test-input
-- [ ] Web view: caret movement and selection inside text fields (typing
-      appends at the end), text field values kept in the value attribute,
-      dragging the bars of inner scroll containers, drag and drop, IME
+- [x] Web view: KeyboardEvents to the page, a text editor in fields
+      (caret, selection, word moves, clipboard, input events, implicit
+      submission, change on blur); values in the DOM's control state
+- [ ] Web view: drawing a field's selection, dragging the bars of inner
+      scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
 - [ ] Browser: session restore, per-site settings, a downloads window with
       cancel buttons, separate windows (Shift+click opens a tab), tab drag
@@ -1327,11 +1345,11 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       renders: grid minmax(0, 1fr), sticky contents, masked icons, no
       crash on resize or on a layout before the first bytes; bounded HTTP
       and decode threads; slow layouts throttled in the web view
-- [ ] Wikipedia's JavaScript (ResourceLoader's startup stops at its
-      compatibility check: no localStorage); TOC and menus as with JS
+- [x] Wikipedia's JavaScript gets past ResourceLoader's compatibility
+      check (localStorage, IntersectionObserver)
+- [ ] Wikipedia's TOC and menus as with JS (check in the browser)
 - [ ] Large pages in QEMU need the kernel's growable address-space region
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one
       piece of work on the GUI thread)
-- [ ] getComputedStyle and layout metrics from the web view's layout (a
-      `TScriptEnvironment` hook the view could answer)
+- [x] getComputedStyle and layout metrics from the web view's layout
