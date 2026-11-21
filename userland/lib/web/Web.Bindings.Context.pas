@@ -230,6 +230,8 @@ type
     { How many index properties (window[0] ...) the global object has
       for its frames. }
     FrameIndexCount: Integer;
+    { The frame names it defined on the global object (window[name]). }
+    FrameNameKeys: array of string;
     { The realms of its dedicated workers (Web.Script.NativeWorkers):
       engines sharing its runtime, their jobs run at its microtask
       checkpoints, freed after its engine. }
@@ -252,6 +254,9 @@ type
     { The live child windows in the order their elements were inserted. }
     function FrameCount: Integer;
     function FrameAt(Index: Integer): TBindingContext;
+    { The first open child window whose name (window.name) is Name, nil
+      if none (window[name], frames[name]). }
+    function FrameNamed(const Name: string): TBindingContext;
     { The frame element went from the document: its window closes (no
       longer reachable as contentWindow; its realm stops being a root). }
     procedure Close;
@@ -725,6 +730,22 @@ begin
   for Index := 0 to High(FChildFrames) do
     if not FChildFrames[Index].FClosed then
       Inc(Result);
+end;
+
+function TBindingContext.FrameNamed(const Name: string): TBindingContext;
+var
+  Index: Integer;
+  Candidate: TBindingContext;
+begin
+  Result := nil;
+  if Name = '' then
+    Exit;
+  for Index := 0 to FrameCount - 1 do
+  begin
+    Candidate := FrameAt(Index);
+    if (Candidate <> nil) and (ValueToText(Candidate.Engine.Realm, Candidate.Singleton(SingletonWindowName)) = Name) then
+      Exit(Candidate);
+  end;
 end;
 
 { The open frames in the tree order of their elements (window.frames). }

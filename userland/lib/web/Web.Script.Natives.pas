@@ -318,6 +318,32 @@ begin
   Result := JsObjectValue(Answer);
 end;
 
+{ The MessagePorts a script of another realm transferred to this
+  realm's postMessage: that realm's endpoints for them (its platform
+  script's onExportPorts), or undefined when the caller is this realm. }
+function NativeExportPorts(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Realm: TJsRealm;
+  Incumbent: TBindingContext;
+  Natives, Callback, Outcome: TJsValue;
+begin
+  Realm := Context.Engine.Realm.CallerRealm;
+  if (Realm = nil) or (Realm.GlobalObject = nil) or Realm.Detached then
+    Exit(JsUndefined);
+  Incumbent := ContextOfRealm(Realm);
+  if (Incumbent = nil) or (Incumbent = Context) then
+    Exit(JsUndefined);
+  Result := Context.NewArray([]);
+  Natives := Incumbent.Singleton(SingletonPlatformNatives);
+  if not JsIsObject(Natives) then
+    Exit;
+  Callback := Incumbent.Engine.GetProperty(Natives, 'onExportPorts');
+  if JsIsCallable(Callback) and
+    Incumbent.CallFunction(Callback, JsUndefined, [Arg(Args, ArgCount, 0)], Outcome, 'postMessage') and
+    JsIsObject(Outcome) then
+    Result := Outcome;
+end;
+
 { Layout (CSSOM View): the environment's TScriptLayout answers. }
 
 function ElementArgument(Context: TBindingContext; Args: PJsValueArray; ArgCount, Index: Integer): TElement;
@@ -477,7 +503,7 @@ begin
 end;
 
 const
-  NativeCount = 27;
+  NativeCount = 28;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -505,8 +531,10 @@ const
     'viewportScroll',
     'elementAtPoint',
     'computedValue',
-    'computedNames');
-  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0);
+    'computedNames',
+    'exportPorts');
+  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0,
+    1);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -534,7 +562,8 @@ const
     @NativeViewportScroll,
     @NativeElementAtPoint,
     @NativeComputedValue,
-    @NativeComputedNames);
+    @NativeComputedNames,
+    @NativeExportPorts);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }
