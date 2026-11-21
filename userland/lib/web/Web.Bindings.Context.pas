@@ -88,6 +88,7 @@ uses
   Js.Operations,
   Js.Interpreter,
   Js.Engine,
+  Web.Script.Watchdog,
   Web.Atoms,
   Web.Namespaces,
   Web.Dom.Events,
@@ -181,6 +182,11 @@ type
     FLiveGroups: array of TNode;
     FLiveGroupCount: Integer;
     FCallDepth: Integer;
+    { Entries into script still running, counting the microtask
+      checkpoint after the outermost; the slow script watchdog's slot
+      while it is above zero. }
+    FWatchedDepth: Integer;
+    FWatchdogSlot: Integer;
     FOnConsoleMessage: TConsoleMessageEvent;
     FDestroying: Boolean;
     FWindowHandlers: TJsValue;
@@ -1492,10 +1498,16 @@ begin
   ReportException(Value, Where);
 end;
 
+{ The outermost entry arms the slow script watchdog (Web.Script.Watchdog):
+  a script that runs too long - with the promise jobs it queues - is
+  interrupted rather than freezing the page thread. }
 procedure TBindingContext.EnterScript;
 begin
   EnterPhase(PhaseScript);
   Inc(FCallDepth);
+  Inc(FWatchedDepth);
+  if FWatchedDepth = 1 then
+    FWatchdogSlot := ArmScriptWatchdog(FEngine.Runtime);
 end;
 
 procedure TBindingContext.LeaveScript;
@@ -1505,6 +1517,11 @@ begin
     if FCallDepth = 0 then
       PerformMicrotaskCheckpoint;
   finally
+    Dec(FWatchedDepth);
+    if FWatchedDepth = 0 then
+      if DisarmScriptWatchdog(FWatchdogSlot) then
+        Console('error', 'A script ran longer than ' + IntToStr(ScriptRunLimitMilliseconds div 1000) +
+          ' seconds and was stopped');
     LeavePhase;
   end;
 end;

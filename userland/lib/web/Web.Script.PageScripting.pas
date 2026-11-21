@@ -624,7 +624,9 @@ begin
     Inc(FInlineCount);
     Key := TDocumentLoader(FLoader).Document.Url + '#module' + IntToStr(FInlineCount);
   end;
-  EnterPhase(PhaseScript);
+  { EnterScript arms the slow script watchdog; LeaveScript runs the
+    microtask checkpoint. }
+  FContext.EnterScript;
   try
     SetPhaseDetail(Key);
     try
@@ -633,9 +635,8 @@ begin
       on Error: EJsError do
         FContext.Console('error', 'Uncaught ' + Error.Message);
     end;
-    FContext.PerformMicrotaskCheckpoint;
   finally
-    LeavePhase;
+    FContext.LeaveScript;
   end;
 end;
 

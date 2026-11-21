@@ -36,12 +36,15 @@ program WebScriptTest;
 
 uses
   WebScriptTest.Poison,
+  { The slow script watchdog runs a thread. }
+  {$ifdef unix}cthreads,{$endif}
   SysUtils,
   Classes,
   TestChecks,
   Web.Bindings.Context,
   WebScriptTest.Harness,
-  WebScriptTest.Lifetime;
+  WebScriptTest.Lifetime,
+  WebScriptTest.Watchdog;
 
 procedure RunScripts(const Directory: string);
 var
@@ -91,5 +94,6 @@ begin
   else
     RunScripts('tools/WebScriptTest/scripts');
   RunLifetimeTests;
+  RunWatchdogTests;
   FinishChecks('web script test');
 end.
