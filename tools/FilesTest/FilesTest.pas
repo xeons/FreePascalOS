@@ -49,7 +49,8 @@ uses
   FileManager.FileTypes,
   FileManager.ItemOrder,
   FileManager.Permissions,
-  FileManager.DropRules;
+  FileManager.DropRules,
+  FilesTest.Explorer;
 
 type
   { Names taken, for FirstFreeName; names for TypeAheadFind. }
@@ -326,6 +327,7 @@ begin
   TestDropRules;
   TestFileLists;
   TestTypeAhead;
+  TestExplorerLogic(@Check);
   WriteLn('[files] ', Checks - Failures, ' of ', Checks, ' checks passed');
   if Failures > 0 then
     Halt(1);

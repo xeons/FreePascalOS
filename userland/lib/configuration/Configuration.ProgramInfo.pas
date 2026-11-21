@@ -32,6 +32,10 @@
     Version = 1.0                        optional
     Hidden = false                       optional: true keeps it out
                                          of the menu and the desktop
+    Extensions = ["txt", "md"]           optional: the file name
+                                         extensions it opens (no dot)
+    MimeTypes = ["text/plain"]           optional: the media types it
+                                         opens ("image/*" for a family)
 
   Name, Category and Executable are required; Icon is app-generic
   without one. The category names and keys are case-insensitive when
@@ -75,6 +79,10 @@ type
     Keywords: TStringArray;
     Version: string;
     Hidden: Boolean;
+    { The files it opens: extensions in small letters without the dot,
+      media types in small letters ("text/plain", "image/*"). }
+    Extensions: TStringArray;
+    MimeTypes: TStringArray;
   end;
 
 const
@@ -101,8 +109,8 @@ uses
   Configuration.Documents;
 
 const
-  KnownKeys: array[0..8] of string = ('Name', 'Description', 'Category', 'Icon', 'Executable', 'Keywords',
-    'Version', 'Hidden', 'NoMenu');
+  KnownKeys: array[0..10] of string = ('Name', 'Description', 'Category', 'Icon', 'Executable', 'Keywords',
+    'Version', 'Hidden', 'NoMenu', 'Extensions', 'MimeTypes');
 
 procedure AddProblem(var Problems: TStringArray; const Text: string);
 begin
@@ -177,8 +185,9 @@ begin
     Text := Trim(Text);
 end;
 
-{ Keywords: a list, or one string of words separated by ";" or ",". }
-function ReadKeywords(Document: TSettingsDocument; const Keys: TStringArray): TStringArray;
+{ A list of words (Keywords, Extensions, MimeTypes): a list, or one
+  string of words separated by ";" or ",". }
+function ReadWordList(Document: TSettingsDocument; const Keys: TStringArray; const Key: string): TStringArray;
 var
   Written: string;
   Value: TSettingValue;
@@ -188,7 +197,7 @@ var
   Word: string;
 begin
   Result := nil;
-  Written := KeyAsWritten(Keys, 'Keywords');
+  Written := KeyAsWritten(Keys, Key);
   if (Written = '') or not Document.GetValue(ProgramInfoSection, Written, Value, Fixed) then
     Exit;
   if SettingAsList(Value, Words) then
@@ -210,6 +219,21 @@ begin
       SetLength(Result, Length(Result) + 1);
       Result[High(Result)] := Trim(Word);
     end;
+end;
+
+{ Words in small letters (a leading dot taken off an extension). }
+function LowerCaseWords(const Words: TStringArray; StripDot: Boolean): TStringArray;
+var
+  Index: Integer;
+begin
+  Result := nil;
+  SetLength(Result, Length(Words));
+  for Index := 0 to High(Words) do
+  begin
+    Result[Index] := LowerCase(Words[Index]);
+    if StripDot and (Copy(Result[Index], 1, 1) = '.') then
+      Delete(Result[Index], 1, 1);
+  end;
 end;
 
 { A flag that is false unless written true; a value that is not a
@@ -301,7 +325,9 @@ begin
       AddProblem(Problems, 'Icon is not an icon name: ' + Info.Icon);
       Info.Icon := DefaultProgramIcon;
     end;
-    Info.Keywords := ReadKeywords(Document, Keys);
+    Info.Keywords := ReadWordList(Document, Keys, 'Keywords');
+    Info.Extensions := LowerCaseWords(ReadWordList(Document, Keys, 'Extensions'), True);
+    Info.MimeTypes := LowerCaseWords(ReadWordList(Document, Keys, 'MimeTypes'), False);
     Info.Hidden := ReadFlag(Document, Keys, 'Hidden', Problems) or ReadFlag(Document, Keys, 'NoMenu', Problems);
   finally
     Document.Free;

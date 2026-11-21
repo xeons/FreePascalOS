@@ -9,3 +9,5 @@ Icon = app-text-editor
 Executable = notepad
 Keywords = ["text", "editor", "write"]
 Version = 1.0
+Extensions = ["txt", "text", "md", "markdown", "log", "ini", "conf", "cfg", "info", "json", "xml", "csv", "pas", "pp", "inc", "lpr", "c", "h", "cpp", "hpp", "py", "sh", "js", "css", "html", "htm", "svg", "yaml", "yml", "toml", "mk", "s", "asm"]
+MimeTypes = ["text/*"]

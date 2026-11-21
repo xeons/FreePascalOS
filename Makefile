@@ -917,11 +917,17 @@ FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Contro
 	userland/files/FileManager.Paths.pas userland/files/FileManager.ConflictNames.pas \
 	userland/files/FileManager.History.pas userland/files/FileManager.FileTypes.pas \
 	userland/files/FileManager.ItemOrder.pas userland/files/FileManager.Permissions.pas \
-	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas
+	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas tools/FilesTest/FilesTest.Explorer.pas \
+	userland/lib/controls/Controls.NaturalOrder.pas userland/lib/coreutils/Util.TrashInfo.pas \
+	userland/files/FileManager.FileKinds.pas userland/files/FileManager.CivilDates.pas \
+	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
+	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
+	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
+		-Fuuserland/lib/configuration -Fiuserland/lib/configuration -Fuuserland/lib/coreutils \
 		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
 
 files-test: $(FILES_TEST)
