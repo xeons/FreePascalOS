@@ -126,6 +126,7 @@ uses
   Processes.Thread,
   Processes.UserThread,
   Processes.UserExceptions,
+  Processes.LoadedModules,
   Debug.Output;
 
 const
@@ -174,6 +175,7 @@ begin
   DebugWrite(Description);
   DebugWrite(' at ');
   DebugWriteAddress(TrapFrameInstructionPointer(Frame));
+  WriteModuleOfAddress(Process, TrapFrameInstructionPointer(Frame));
   if TrapFrameVector(Frame) = VectorPageFault then
   begin
     DebugWrite(' accessing ');
@@ -184,8 +186,11 @@ begin
   DebugWriteLine(', terminated');
   DebugEndMessage;
 
-  { Exceptions arrive with interrupts off; ending the process may block. }
+  { Exceptions arrive with interrupts off; ending the process may block,
+    and so may the module list's lock. Where the modules were loaded
+    makes the addresses above meaningful (scripts/symbolize.py). }
   EnableInterrupts;
+  WriteProcessModules(Process, 'process');
   ExitCurrentProcess(ExitStatusException);
 end;
 

@@ -467,7 +467,19 @@ const
     or for an unknown limit. Returns the previous value. }
   CallSetProcessLimit = 131;
 
-  CallCount = 132;
+  { --- Crash reports ---------------------------------------------------- }
+
+  { (BufferAddress, Capacity): the caller's loaded modules - the program
+    and its libraries, in load order - as up to Capacity
+    TAbiModuleInformation records; returns how many there are (which may
+    be more than Capacity). The runtime's crash reports name them, so the
+    addresses in a report can be symbolized wherever the modules were
+    loaded (scripts/symbolize.py). }
+  CallGetProcessModules = 136;
+
+  CallCount = 137;
+
+  AbiModuleNameCapacity = 64;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
@@ -1129,6 +1141,19 @@ type
     Identification: QWord;
   end;
   PAbiProcessorDescription = ^TAbiProcessorDescription;
+
+  TAbiModuleInformation = record
+    { The load bias: a symbol's address in the process is Base plus its
+      value in the module's file (for a position independent module,
+      where its first page was put). }
+    Base: QWord;
+    { The end of the module's mapped pages: an address belongs to the
+      module if it lies from Base up to Limit. }
+    Limit: QWord;
+    { The file's name ("files", "libsystem.so"). }
+    Name: array[0..AbiModuleNameCapacity - 1] of Char;
+  end;
+  PAbiModuleInformation = ^TAbiModuleInformation;
 
   TAbiSystemInformation = record
     SystemName: array[0..AbiTextCapacity - 1] of Char;
