@@ -138,7 +138,10 @@ uses
   Controls.FileTypeIcons,
   Controls.PartPainting,
   Controls.TabStripLayout,
-  Controls.TabStrip;
+  Controls.TabStrip,
+  Controls.SuggestionList,
+  Controls.BreadcrumbLayout,
+  Controls.BreadcrumbBar;
 
 implementation
 
