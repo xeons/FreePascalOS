@@ -46,7 +46,7 @@ interface
 uses
   Web.Atoms, Web.Namespaces, Web.Dom, Css.ComputedStyle, Css.StyleEngine, Css.MediaQueries,
   Css.ElementAdapter, Css.Selectors, Web.Style.NodeData, Web.Style.Adapter, Web.Style.Sheets,
-  Web.Layout.Resources;
+  Web.Layout.Resources, Css.Stylesheets, Web.Style.DocumentSheets;
 
 type
   { scMove: painting and the box's translation (transform, translate),
@@ -76,6 +76,7 @@ type
     FOnElementAttributeChanged: TNodeChangedEvent;
     FStylesComputed: Int64;
     procedure ResourcesChanged(Change: TResourceChange);
+    procedure DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
     procedure UpdateSheets;
     procedure PrepareElement(Element: TElement; Data: PNodeData);
     procedure StyleChildren(Parent: TNode; ParentStyle: TCssComputedStyle; Force: Boolean);
@@ -209,6 +210,7 @@ begin
   FSheetsDirty := True;
   if FResources <> nil then
     FResources.AddListener(@ResourcesChanged);
+  DocumentSheetsOf(Document).AddListener(@DocumentSheetsChanged);
   Document.AddObserver(Self);
   MarkSubtreeStyleDirty(Document);
 end;
@@ -218,6 +220,8 @@ begin
   FDocument.RemoveObserver(Self);
   if FResources <> nil then
     FResources.RemoveListener(@ResourcesChanged);
+  if ExistingDocumentSheets(FDocument) <> nil then
+    ExistingDocumentSheets(FDocument).RemoveListener(@DocumentSheetsChanged);
   FreeSubtreeData(FDocument);
   FEngine.Free;
   FSheetList.Free;
@@ -232,6 +236,19 @@ begin
     FSheetsDirty := True;
     FSheetContentsChanged := True;
   end;
+end;
+
+{ Script changed the sheets (CSSOM): a rule appended at the end of the
+  last sheet is indexed at once; anything else indexes them again. }
+procedure TDocumentStyler.DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
+begin
+  if (Change = scRuleAppended) and not FSheetsDirty and FEngine.AppendRule(Sheet, Rule) then
+  begin
+    MarkSubtreeStyleDirty(FDocument);
+    Exit;
+  end;
+  FSheetsDirty := True;
+  FSheetContentsChanged := True;
 end;
 
 procedure TDocumentStyler.UpdateSheets;
@@ -256,6 +273,9 @@ begin
     FEngine.AddStyleSheet(Sheets[Index]);
   FActiveSheets := Sheets;
   FEngine.Invalidate;
+  { Indexed now, so the sheets and rules the CSSOM took out can go. }
+  FEngine.Prepare;
+  DocumentSheetsOf(FDocument).FreeRetired;
   MarkSubtreeStyleDirty(FDocument);
 end;
 

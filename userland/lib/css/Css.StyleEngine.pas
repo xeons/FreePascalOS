@@ -115,6 +115,12 @@ type
     procedure RemoveStyleSheet(Sheet: TCssStyleSheet);
     { Style sheets or rules changed: rebuild before the next style. }
     procedure Invalidate;
+    { Rule was just appended to Sheet: indexed at once when Sheet is the
+      last sheet in effect (else False: Invalidate). The host restyles. }
+    function AppendRule(Sheet: TCssStyleSheet; Rule: TCssRule): Boolean;
+    { Builds the index now if it is out of date (after which the engine no
+      longer refers to rules of sheets it was told were removed). }
+    procedure Prepare;
     procedure SetEnvironment(const Environment: TCssMediaEnvironment);
     { The tree changed (elements moved, attributes or states changed):
       forget sibling positions and shared styles. }
@@ -259,6 +265,29 @@ begin
   FComputer := TCssStyleComputer.Create(FStructCache, FIndex, FEnvironment);
   FMatcher.Refresh;
   FDirty := False;
+end;
+
+procedure TCssStyleEngine.Prepare;
+begin
+  EnsureIndex;
+end;
+
+function TCssStyleEngine.AppendRule(Sheet: TCssStyleSheet; Rule: TCssRule): Boolean;
+begin
+  Result := False;
+  if FDirty or (Length(FSheets) = 0) or (FSheets[High(FSheets)] <> Sheet) or (Sheet.Origin <> coAuthor) or
+    Sheet.Disabled or (Rule.Parent <> nil) then
+    Exit;
+  if (Sheet.Media <> nil) and not Sheet.Media.Matches(FEnvironment) then
+    Exit;
+  if (Length(Sheet.Rules) = 0) or (Sheet.Rules[High(Sheet.Rules)] <> Rule) then
+    Exit;
+  if not FIndex.AppendAuthorRule(Rule) then
+    Exit;
+  FStateDependencies.Build(FIndex);
+  ClearSharing;
+  FMatcher.Refresh;
+  Result := True;
 end;
 
 { ---- the sharing cache ---- }

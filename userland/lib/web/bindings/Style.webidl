@@ -22,6 +22,3 @@ interface CSSStyleDeclaration {
 interface CSSStyleProperties : CSSStyleDeclaration {
   attribute [LegacyNullToEmptyString] DOMString cssFloat;
 };
-
-[Exposed=Window]
-interface CSSRule { };

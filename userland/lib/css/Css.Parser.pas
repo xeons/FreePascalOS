@@ -38,6 +38,9 @@ uses
   Css.Tokens, Css.Declarations, Css.Stylesheets;
 
 function ParseStyleSheet(const Source: string; Origin: TCssOrigin; const Href: string = ''): TCssStyleSheet;
+{ CSSOM's "parse a CSS rule": exactly one rule in Source, else nil.
+  The rule belongs to no sheet yet. }
+function ParseSingleRule(const Source: string; Origin: TCssOrigin; const Href: string = ''): TCssRule;
 { A style attribute's (or any declaration list's) declarations. }
 function ParseStyleAttribute(const Source: string): TCssDeclarationBlock;
 { Declarations from Cursor's range into Block (no nested rules). }
@@ -941,6 +944,24 @@ begin
     end;
   end;
   Result := Parser.Sheet;
+end;
+
+function ParseSingleRule(const Source: string; Origin: TCssOrigin; const Href: string): TCssRule;
+var
+  Sheet: TCssStyleSheet;
+begin
+  Result := nil;
+  Sheet := ParseStyleSheet(Source, Origin, Href);
+  try
+    if Length(Sheet.Rules) = 1 then
+    begin
+      Result := Sheet.Rules[0];
+      Sheet.Rules := nil;
+      SetRuleSheet(Result, nil);
+    end;
+  finally
+    Sheet.Free;
+  end;
 end;
 
 function ParseStyleAttribute(const Source: string): TCssDeclarationBlock;

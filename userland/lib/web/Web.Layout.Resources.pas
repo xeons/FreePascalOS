@@ -156,6 +156,9 @@ procedure NotifyFontsChanged;
 
 implementation
 
+uses
+  Web.Style.DocumentSheets;
+
 var
   AllResources: array of TDocumentResources;
 
@@ -204,6 +207,9 @@ var
   Index: Integer;
 begin
   for Index := 0 to High(FElementSheets) do
+    if ExistingDocumentSheets(FDocument) <> nil then
+      ExistingDocumentSheets(FDocument).SetLinkSheet(FElementSheets[Index].Owner, nil);
+  for Index := 0 to High(FElementSheets) do
     FElementSheets[Index].Sheet.Free;
   for Index := 0 to High(FUserSheets) do
     FUserSheets[Index].Free;
@@ -226,6 +232,7 @@ procedure TDocumentResources.SetElementStyleSheet(Owner: TElement; Sheet: TCssSt
 var
   Index: Integer;
 begin
+  DocumentSheetsOf(FDocument).SetLinkSheet(Owner, Sheet);
   for Index := 0 to High(FElementSheets) do
     if FElementSheets[Index].Owner = Owner then
     begin
@@ -500,6 +507,7 @@ begin
   for Index := 0 to High(FElementSheets) do
     if FElementSheets[Index].Owner = Element then
     begin
+      DocumentSheetsOf(FDocument).SetLinkSheet(Element, nil);
       FElementSheets[Index].Sheet.Free;
       FElementSheets[Index] := FElementSheets[High(FElementSheets)];
       SetLength(FElementSheets, Length(FElementSheets) - 1);

@@ -50,7 +50,11 @@ type
     Kind: TCssRuleKind;
     Parent: TCssRule;
     Sheet: TCssStyleSheet;
+    { The host's object for the rule (a CSSOM wrapper), told when the
+      rule goes (CssHostDataFreed). }
+    HostData: Pointer;
     constructor Create(AKind: TCssRuleKind);
+    destructor Destroy; override;
     function Serialize(const Indent: string = ''): string; virtual; abstract;
   end;
 
@@ -60,6 +64,10 @@ type
     Rules: TCssRuleArray;
     destructor Destroy; override;
     procedure AddRule(Rule: TCssRule);
+    { CSSOM: Rule (parented here) at Index; the rule at Index taken out
+      (the caller frees it). }
+    procedure InsertRuleAt(Rule: TCssRule; Index: Integer);
+    function ExtractRuleAt(Index: Integer): TCssRule;
     function SerializeChildren(const Indent: string): string;
   end;
 
@@ -201,11 +209,23 @@ type
     Disabled: Boolean;
     { The media the sheet applies to (a link's media attribute), nil: all. }
     Media: TCssMediaQueryList;
+    { The host's object for the sheet (a CSSOM wrapper), told when the
+      sheet goes (CssHostDataFreed). }
+    HostData: Pointer;
     constructor Create(AOrigin: TCssOrigin);
     destructor Destroy; override;
     procedure AddRule(Rule: TCssRule);
+    procedure InsertRuleAt(Rule: TCssRule; Index: Integer);
+    function ExtractRuleAt(Index: Integer): TCssRule;
     function Serialize: string;
   end;
+
+var
+  { Called with a rule's or sheet's HostData as it is freed. }
+  CssHostDataFreed: procedure(HostData: Pointer) = nil;
+
+{ Sets the sheet of Rule and of every rule inside it. }
+procedure SetRuleSheet(Rule: TCssRule; Sheet: TCssStyleSheet);
 
 implementation
 
@@ -218,6 +238,59 @@ constructor TCssRule.Create(AKind: TCssRuleKind);
 begin
   inherited Create;
   Kind := AKind;
+end;
+
+destructor TCssRule.Destroy;
+begin
+  if (HostData <> nil) and Assigned(CssHostDataFreed) then
+    CssHostDataFreed(HostData);
+  inherited Destroy;
+end;
+
+procedure SetRuleSheet(Rule: TCssRule; Sheet: TCssStyleSheet);
+var
+  Index: Integer;
+begin
+  Rule.Sheet := Sheet;
+  if Rule is TCssGroupingRule then
+    for Index := 0 to High(TCssGroupingRule(Rule).Rules) do
+      SetRuleSheet(TCssGroupingRule(Rule).Rules[Index], Sheet);
+end;
+
+procedure InsertIntoArray(var Rules: TCssRuleArray; Rule: TCssRule; Index: Integer);
+var
+  Position: Integer;
+begin
+  SetLength(Rules, Length(Rules) + 1);
+  Position := High(Rules);
+  while Position > Index do
+  begin
+    Rules[Position] := Rules[Position - 1];
+    Dec(Position);
+  end;
+  Rules[Index] := Rule;
+end;
+
+function ExtractFromArray(var Rules: TCssRuleArray; Index: Integer): TCssRule;
+var
+  Position: Integer;
+begin
+  Result := Rules[Index];
+  for Position := Index to High(Rules) - 1 do
+    Rules[Position] := Rules[Position + 1];
+  SetLength(Rules, Length(Rules) - 1);
+end;
+
+procedure TCssGroupingRule.InsertRuleAt(Rule: TCssRule; Index: Integer);
+begin
+  Rule.Parent := Self;
+  SetRuleSheet(Rule, Sheet);
+  InsertIntoArray(Rules, Rule, Index);
+end;
+
+function TCssGroupingRule.ExtractRuleAt(Index: Integer): TCssRule;
+begin
+  Result := ExtractFromArray(Rules, Index);
 end;
 
 destructor TCssGroupingRule.Destroy;
@@ -530,11 +603,25 @@ destructor TCssStyleSheet.Destroy;
 var
   Index: Integer;
 begin
+  if (HostData <> nil) and Assigned(CssHostDataFreed) then
+    CssHostDataFreed(HostData);
   for Index := 0 to High(Rules) do
     Rules[Index].Free;
   Namespaces.Free;
   Media.Free;
   inherited Destroy;
+end;
+
+procedure TCssStyleSheet.InsertRuleAt(Rule: TCssRule; Index: Integer);
+begin
+  Rule.Parent := nil;
+  SetRuleSheet(Rule, Self);
+  InsertIntoArray(Rules, Rule, Index);
+end;
+
+function TCssStyleSheet.ExtractRuleAt(Index: Integer): TCssRule;
+begin
+  Result := ExtractFromArray(Rules, Index);
 end;
 
 procedure TCssStyleSheet.AddRule(Rule: TCssRule);

@@ -28,6 +28,7 @@ uses
   WebView.Network,
   WebView.Zoom,
   WebView.TextIndex,
+  WebView.SelectionMapping,
   WebView.Elements,
   WebView.Forms,
   WebView.Control;

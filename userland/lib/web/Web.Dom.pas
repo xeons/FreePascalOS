@@ -535,6 +535,7 @@ type
     FLiveRanges: array of TLiveRange;
     FLiveRangeCount: Integer;
     FSelection: TDocumentSelection;
+    FStyleSheets: TObject;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
     function GetDocumentElement: TElement;
@@ -574,6 +575,9 @@ type
     procedure NotifySelectionChanged;
     { The document's selection (made when first asked for). }
     property Selection: TDocumentSelection read GetSelection;
+    { The document's style sheet objects (Web.Style.DocumentSheets makes
+      them); freed with the document. }
+    property StyleSheets: TObject read FStyleSheets write FStyleSheets;
     { Tells the observers a form control's state changed (Web.Dom.FormControls). }
     procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }

@@ -19,10 +19,10 @@
 {
   The document's style sheets in effect, in tree order.
 
-  Each <style> element's sheet is parsed here and kept with the text it
-  came from, so it is parsed again only when that text changes; a
+  Each <style> element's sheet comes from Web.Style.DocumentSheets
+  (parsed again only when its text changes, shared with the CSSOM); a
   <link rel=stylesheet>'s sheet is the one the loader gave the
-  document's resources. A media attribute becomes the sheet's media
+  document's resources; adopted sheets (adoptedStyleSheets) come last. A media attribute becomes the sheet's media
   list; alternate style sheets and disabled links do not apply. The
   user sheets of the resources come first (user origin).
 }
@@ -37,28 +37,16 @@ uses
   Web.Dom, Css.Stylesheets, Web.Layout.Resources;
 
 type
-  TStyleElementSheet = record
-    Owner: TElement;
-    Source: string;
-    Media: string;
-    Sheet: TCssStyleSheet;
-    Used: Boolean;
-  end;
-
   TCssStyleSheetArray = array of TCssStyleSheet;
 
   TDocumentSheetList = class
   private
     FDocument: TDocument;
     FResources: TDocumentResources;
-    FStyleSheets: array of TStyleElementSheet;
-    function SheetForStyleElement(Element: TElement): TCssStyleSheet;
-    procedure DropUnused;
   public
     constructor Create(Document: TDocument; Resources: TDocumentResources);
-    destructor Destroy; override;
     { Every sheet that applies now, user sheets first, then the author
-      sheets in tree order. }
+      sheets in tree order, then the adopted ones. }
     function Collect: TCssStyleSheetArray;
   end;
 
@@ -69,8 +57,7 @@ function IsStyleSheetOwner(Element: TElement): Boolean;
 implementation
 
 uses
-  Web.Profiling,
-  SysUtils, Web.Atoms, Css.Parser, Css.MediaQueries;
+  SysUtils, Web.Atoms, Web.Style.DocumentSheets;
 
 function IsStyleSheetOwner(Element: TElement): Boolean;
 begin
@@ -102,82 +89,8 @@ begin
   inherited Create;
   FDocument := Document;
   FResources := Resources;
-end;
-
-destructor TDocumentSheetList.Destroy;
-var
-  Index: Integer;
-begin
-  for Index := 0 to High(FStyleSheets) do
-    FStyleSheets[Index].Sheet.Free;
-  inherited Destroy;
-end;
-
-function TDocumentSheetList.SheetForStyleElement(Element: TElement): TCssStyleSheet;
-var
-  Index, Found: Integer;
-  Source, Media: string;
-  Rule: Integer;
-  HasImports: Boolean;
-begin
-  Source := DescendantTextContent(Element);
-  Media := Element.AttributeValueOf(AtomMedia);
-  Found := -1;
-  for Index := 0 to High(FStyleSheets) do
-    if FStyleSheets[Index].Owner = Element then
-    begin
-      Found := Index;
-      Break;
-    end;
-  if Found >= 0 then
-  begin
-    FStyleSheets[Found].Used := True;
-    if (FStyleSheets[Found].Source = Source) and (FStyleSheets[Found].Media = Media) then
-      Exit(FStyleSheets[Found].Sheet);
-    FStyleSheets[Found].Sheet.Free;
-    FStyleSheets[Found].Sheet := nil;
-  end;
-  EnterPhase(PhaseStyleSheetParse);
-  try
-    Result := ParseStyleSheet(Source, coAuthor, FDocument.Url);
-  finally
-    LeavePhase;
-  end;
-  if Trim(Media) <> '' then
-    Result.Media := ParseMediaQueryText(Media);
-  Index := Found;
-  if Index < 0 then
-  begin
-    SetLength(FStyleSheets, Length(FStyleSheets) + 1);
-    Index := High(FStyleSheets);
-    FStyleSheets[Index].Owner := Element;
-  end;
-  FStyleSheets[Index].Source := Source;
-  FStyleSheets[Index].Media := Media;
-  FStyleSheets[Index].Sheet := Result;
-  FStyleSheets[Index].Used := True;
-  HasImports := False;
-  for Rule := 0 to High(Result.Rules) do
-    if Result.Rules[Rule].Kind = rkImport then
-      HasImports := True;
-  if HasImports and (FResources <> nil) then
-    FResources.RequestImports(Result, Element);
-end;
-
-procedure TDocumentSheetList.DropUnused;
-var
-  Index: Integer;
-begin
-  Index := 0;
-  while Index < Length(FStyleSheets) do
-    if not FStyleSheets[Index].Used then
-    begin
-      FStyleSheets[Index].Sheet.Free;
-      FStyleSheets[Index] := FStyleSheets[High(FStyleSheets)];
-      SetLength(FStyleSheets, Length(FStyleSheets) - 1);
-    end
-    else
-      Inc(Index);
+  if Resources <> nil then
+    DocumentSheetsOf(Document).OnSheetParsed := @Resources.RequestImports;
 end;
 
 function TDocumentSheetList.Collect: TCssStyleSheetArray;
@@ -186,6 +99,7 @@ var
   Node: TNode;
   Element: TElement;
   Sheet: TCssStyleSheet;
+  Sheets: TDocumentSheets;
 
   procedure Add(Item: TCssStyleSheet);
   begin
@@ -200,8 +114,7 @@ var
 begin
   Result := nil;
   Count := 0;
-  for Index := 0 to High(FStyleSheets) do
-    FStyleSheets[Index].Used := False;
+  Sheets := DocumentSheetsOf(FDocument);
   if FResources <> nil then
     for Index := 0 to FResources.UserStyleSheetCount - 1 do
       Add(FResources.UserStyleSheet(Index));
@@ -212,7 +125,7 @@ begin
     begin
       Element := TElement(Node);
       if Element.IsHtmlElement(AtomStyle) then
-        Add(SheetForStyleElement(Element))
+        Add(Sheets.StyleElementSheet(Element))
       else if Element.IsHtmlElement(AtomLink) and (FResources <> nil) then
       begin
         Sheet := FResources.ElementStyleSheet(Element);
@@ -229,8 +142,9 @@ begin
     end;
     Node := Node.NextInTree(FDocument);
   end;
+  for Index := 0 to High(Sheets.AdoptedSheets) do
+    Add(Sheets.AdoptedSheets[Index]);
   SetLength(Result, Count);
-  DropUnused;
 end;
 
 end.

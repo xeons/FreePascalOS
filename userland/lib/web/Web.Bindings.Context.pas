@@ -106,6 +106,9 @@ const
   WrapperIsNode = 2;
   WrapperIsEvent = 4;
   WrapperIsRange = 8;
+  { The native object is a libcss rule or sheet whose HostData is this
+    wrapper (Web.Bindings.StyleSheets). }
+  WrapperIsCssObject = 16;
 
 type
   TBindingContext = class;
@@ -414,7 +417,8 @@ implementation
 uses
   DateUtils,
   Web.Profiling,
-  Js.Inspect;
+  Js.Inspect,
+  Css.Stylesheets;
 
 var
   Contexts: array of TBindingContext;
@@ -568,6 +572,13 @@ begin
       Context.NodeWrapperDying(TNode(Native));
       DisableListeners(TNode(Native).ListenerList(False), Context);
       TNode(Native).Release;
+    end
+    else if (WrapperFlags and WrapperIsCssObject) <> 0 then
+    begin
+      if Native is TCssRule then
+        TCssRule(Native).HostData := nil
+      else if Native is TCssStyleSheet then
+        TCssStyleSheet(Native).HostData := nil;
     end
     else if (WrapperFlags and WrapperIsRange) <> 0 then
     begin
