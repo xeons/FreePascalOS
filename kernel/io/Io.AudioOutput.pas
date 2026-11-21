@@ -307,7 +307,15 @@ begin
   Played := State^.Played;
   { Fell behind: the hardware is past what was mixed. }
   if State^.Mixed <= Played then
+  begin
+    DebugBeginMessage;
+    DebugWriteTag('audio');
+    DebugWrite('the mixer fell behind by ');
+    DebugWriteDecimal(Played + 1 - State^.Mixed);
+    DebugWriteLine(' periods (they played what the ring held)');
+    DebugEndMessage;
     State^.Mixed := Played + 1;
+  end;
   while State^.Mixed < Played + MixAheadPeriods do
   begin
     MixPeriod(Output, State^.Mixed);

@@ -508,7 +508,7 @@ const
     (Command: 'networktest > net.log; echo $?; grep FAIL net.log; tail -n 1 net.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'su user -c "networktest --unprivileged" > netu.log; echo $?; grep FAIL netu.log; tail -n 1 netu.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { wget and libtls against the test web servers on the host. }
-    (Command: 'wgettest > wget.log; echo $?; grep FAIL wget.log; tail -n 1 wget.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'wgettest > wget.log; echo $?; grep -e FAIL -e ''  expected'' -e ''  got'' wget.log; tail -n 1 wget.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'ifconfig lo | head -n 4'; ExpectedOutput: 'lo: flags=<UP,LOOPBACK,RUNNING>  mtu 1500'#10'        inet 127.0.0.1  netmask 255.0.0.0'#10'        inet6 ::1  prefixlen 128  scopeid 0x10<host>'#10'        loop'#10; ExpectedStatus: 0),
     { eth0's IPv6 addresses: the link-local and a stable one in fec0::/64,
       both stable-privacy (RFC 7217, not the EUI-64 ...5054:ff:fe12:3456),

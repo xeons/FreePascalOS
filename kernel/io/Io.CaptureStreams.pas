@@ -46,7 +46,10 @@ uses
   Kernel.Events;
 
 const
-  CaptureQueueBytes = 65536;
+  { A quarter of a second of 96 kHz, 6 channels of float samples (28 ms
+    with 64 KiB, which a reader on an emulated AArch64 machine fell
+    behind by, dropping samples from its recording). }
+  CaptureQueueBytes = 512 * 1024;
 
 type
   PSmallInt = ^SmallInt;
@@ -156,6 +159,26 @@ end;
 
 { --- Encoding samples -------------------------------------------------------- }
 
+{ The number of the highest bit set in Value (not 0), by halving: the
+  mixer converts every sample of every recording, and a bit by bit
+  search cost an emulated AArch64 machine whole periods. }
+function HighestSetBit(Value: QWord): Integer;
+var
+  Width: Integer;
+begin
+  Result := 0;
+  Width := 32;
+  while Width > 0 do
+  begin
+    if (Value shr Width) <> 0 then
+    begin
+      Value := Value shr Width;
+      Result := Result + Width;
+    end;
+    Width := Width div 2;
+  end;
+end;
+
 { The IEEE single for Value / 2^31. }
 function SampleToFloatBits(Value: LongInt): LongWord;
 var
@@ -173,9 +196,7 @@ begin
     Sign := LongWord($80000000);
     Magnitude := QWord(-Int64(Value));
   end;
-  Highest := 63;
-  while (Magnitude and (QWord(1) shl Highest)) = 0 do
-    Dec(Highest);
+  Highest := HighestSetBit(Magnitude);
   { The leading bit is implied; 23 bits follow it. }
   if Highest >= 23 then
     Mantissa := Magnitude shr (Highest - 23)
@@ -247,8 +268,11 @@ begin
     EncodeSample(Stream^.Kind, Value, @Frame[Channel * SampleBytes]);
   end;
   Tail := (Stream^.Head + Stream^.Count) mod CaptureQueueBytes;
-  for Index := 0 to Stream^.BytesPerFrame - 1 do
-    Stream^.Queue[(Tail + Index) mod CaptureQueueBytes] := Frame[Index];
+  if Tail + Stream^.BytesPerFrame <= CaptureQueueBytes then
+    Move(Frame[0], Stream^.Queue[Tail], Stream^.BytesPerFrame)
+  else
+    for Index := 0 to Stream^.BytesPerFrame - 1 do
+      Stream^.Queue[(Tail + Index) mod CaptureQueueBytes] := Frame[Index];
   Stream^.Count := Stream^.Count + Stream^.BytesPerFrame;
 end;
 
