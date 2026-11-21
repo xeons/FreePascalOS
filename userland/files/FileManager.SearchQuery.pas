@@ -92,6 +92,7 @@ function ParseSize(const Text: string; out Size: QWord): Boolean;
 implementation
 
 uses
+  FileManager.Paths,
   FileManager.CivilDates;
 
 const

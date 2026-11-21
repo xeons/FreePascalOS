@@ -39,7 +39,9 @@
   again, keeping the row chosen and what was typed. If the folder itself
   goes away, the root is shown instead.
 
-  ChooseFileToOpen and ChooseFileToSave do it all in one call; the
+  The folder dialog (ChooseFolder) takes the folder shown, or one named
+  in the name box. ChooseFileToOpen and ChooseFileToSave do it all in
+  one call; the
   classes are there for a program that wants more (OnFolderShown, say,
   to know when the list changed).
 }
@@ -125,6 +127,14 @@ type
     function AcceptFile(const APath: string): Boolean; override;
   end;
 
+  { Choosing a folder: OK takes the folder shown, or the folder named
+    in the name box. }
+  TChooseFolderDialog = class(TFileDialog)
+  protected
+    function Accept: Boolean; override;
+    function AcceptFile(const APath: string): Boolean; override;
+  end;
+
   TSaveFileDialog = class(TFileDialog)
   protected
     function AcceptFile(const APath: string): Boolean; override;
@@ -134,6 +144,8 @@ type
   files that fit Filter; True and the file's absolute path if one was
   chosen. }
 function ChooseFileToOpen(const Title, StartFolder, Filter: string; out Path: string): Boolean;
+{ Shows a folder dialog at StartFolder; True and the folder chosen. }
+function ChooseFolder(const Title, StartFolder: string; out Path: string): Boolean;
 { The same for saving: the file may be new; replacing one is asked
   first. InitialName starts in the name box (selected, so typing
   replaces it). }
@@ -473,6 +485,43 @@ begin
   Result := PathExists(PChar(APath));
   if not Result then
     ShowMessageBox(Title, 'The file ' + APath + ' does not exist.', MessageOk, SignWarning);
+end;
+
+function TChooseFolderDialog.Accept: Boolean;
+var
+  Typed: string;
+  Chosen: string;
+begin
+  Typed := Trim(NameEdit.Text);
+  if Typed = '' then
+    Chosen := Folder
+  else
+    Chosen := CombinePath(Folder, Typed);
+  Result := AcceptFile(Chosen);
+  if Result then
+    FPath := Chosen;
+end;
+
+function TChooseFolderDialog.AcceptFile(const APath: string): Boolean;
+begin
+  Result := IsDirectory(PChar(APath));
+  if not Result then
+    ShowMessageBox(Title, 'The folder ' + APath + ' does not exist.', MessageOk, SignWarning);
+end;
+
+function ChooseFolder(const Title, StartFolder: string; out Path: string): Boolean;
+var
+  Dialog: TChooseFolderDialog;
+begin
+  Path := '';
+  Dialog := TChooseFolderDialog.CreateFileDialog(Title, StartFolder, '');
+  try
+    Result := Dialog.Execute;
+    if Result then
+      Path := Dialog.Path;
+  finally
+    Dialog.Free;
+  end;
 end;
 
 function TSaveFileDialog.AcceptFile(const APath: string): Boolean;

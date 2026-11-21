@@ -44,9 +44,6 @@ const
   FileKindTitles: array[TFileKind] of string = ('Folders', 'Pictures', 'Music', 'Videos', 'Documents', 'Text',
     'Web pages', 'Compressed', 'Programs', 'Other');
 
-{ The extension of Name in small letters without its dot ('' for none;
-  a name whose only dot starts it has none). }
-function ExtensionOf(const Name: string): string;
 { The kind of a file named Name (not a folder: the caller knows those). }
 function FileKindOfName(const Name: string): TFileKind;
 function FileKindOfExtension(const Extension: string): TFileKind;
@@ -66,7 +63,8 @@ function IsBrowsableArchiveExtension(const Name: string): Boolean;
 implementation
 
 uses
-  SysUtils;
+  SysUtils,
+  FileManager.Paths;
 
 type
   TExtensionEntry = record
@@ -164,18 +162,6 @@ const
     (Word: 'archive'; Kind: FileKindArchive), (Word: 'compressed'; Kind: FileKindArchive),
     (Word: 'zip'; Kind: FileKindArchive), (Word: 'program'; Kind: FileKindProgram),
     (Word: 'app'; Kind: FileKindProgram), (Word: 'other'; Kind: FileKindOther));
-
-function ExtensionOf(const Name: string): string;
-var
-  Dot: LongInt;
-begin
-  Result := '';
-  Dot := Length(Name);
-  while (Dot > 1) and (Name[Dot] <> '.') and (Name[Dot] <> '/') do
-    Dec(Dot);
-  if (Dot > 1) and (Name[Dot] = '.') and (Name[Dot - 1] <> '/') then
-    Result := LowerCase(Copy(Name, Dot + 1, Length(Name)));
-end;
 
 function FindExtension(const Extension: string): LongInt;
 var

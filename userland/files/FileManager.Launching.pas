@@ -39,6 +39,10 @@ function RunProgramFile(const Path: string; Owner: TWindow): Boolean;
 function OpenWithNotepad(const Path: string; Owner: TWindow): Boolean;
 { Opens Path in the image viewer. }
 function OpenWithImageViewer(const Path: string; Owner: TWindow): Boolean;
+{ Opens Path with the program at ProgramPath (its name for messages). }
+function OpenWithProgram(const ProgramPath, ProgramName, Path: string; Owner: TWindow): Boolean;
+{ Another file manager window (a process of its own) at Address. }
+function OpenNewWindow(const Address: string): Boolean;
 
 implementation
 
@@ -53,6 +57,7 @@ uses
   FileManager.Output;
 
 const
+  OwnProgramPath = '/app/files/files';
   NotepadCommand = 'notepad';
   ImageViewerCommand = 'imageviewer';
 
@@ -120,6 +125,42 @@ begin
     Say('error cannot start imageviewer');
     ShowMessageBox('Files', 'The image viewer could not be started to open ' + LastPartOf(Path) + '.', MessageOk,
       SignError, Owner);
+  end;
+end;
+
+function OpenWithProgram(const ProgramPath, ProgramName, Path: string; Owner: TWindow): Boolean;
+begin
+  Result := Start(ProgramPath, Path);
+  if Result then
+    Say('opened-with ' + ProgramName + ' ' + Path)
+  else
+  begin
+    Say('error cannot start ' + ProgramPath);
+    ShowMessageBox('Files', ProgramName + ' could not be started to open ' + LastPartOf(Path) + '.', MessageOk,
+      SignError, Owner);
+  end;
+end;
+
+function OpenNewWindow(const Address: string): Boolean;
+var
+  Arguments: TTextVector;
+  Options: TProcessOptions;
+  Process: Int64;
+  ProgramPath: string;
+begin
+  ProgramPath := ParamStr(0);
+  if (ProgramPath = '') or (ProgramPath[1] <> '/') then
+    ProgramPath := OwnProgramPath;
+  Arguments := TextVector([ProgramPath, Address]);
+  DefaultProcessOptions(Options);
+  Options.GroupId := GroupNew;
+  Options.WorkingDirectory := '/';
+  Process := StartProgram(PChar(ProgramPath), @Arguments[0], Options);
+  Result := Process >= 0;
+  if Result then
+  begin
+    CloseHandle(Process);
+    Say('new-window ' + Address);
   end;
 end;
 

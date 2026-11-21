@@ -17,24 +17,28 @@
 }
 
 {
-  The list of a folder's items: a list view showing them as large
-  icons, a list, or details (name, size, type, modified, permissions,
-  owner), sorted by any column either way round (FileManager.ItemOrder),
-  with hidden items or without.
+  The page shown: an item view (Controls.ItemView) of a location's
+  entries (FileManager.Sources; search results stream in from
+  FileManager.Searcher) in the view, order, grouping and columns of its
+  view settings, filtered by kind or date if asked (a query of the
+  search syntax), extensions and hidden items shown or not.
 
-  The folder shown is watched (Sys.FileWatches): when any program
-  changes it, it is read again, keeping the selection, the focused item
-  and the scrolling where they were (by name), and "refreshed" is
-  printed (and OnRefreshed told). Changes that come within RefreshDelay
-  of the first are taken in one reading (a copy writes a file in many
-  pieces: the folder is not read again for each), and none happens
-  under a rename in place (it waits until the rename is over). If the folder itself goes away (removed, renamed, or its
-  volume unplugged) OnFolderGone says so.
+  * Pages group by their own sections (Home, Computer), the gallery by
+    month; a folder by what Group by says. Folders come first.
+  * The details header's context menu chooses the columns.
+  * Pictures get thumbnails (Controls.ThumbnailLoader) in the views big
+    enough for them, and their dimensions when the column is shown.
+  * A folder (or the recycle bin) is watched (Sys.FileWatches): changes
+    made by any program read it again after RefreshDelay, keeping the
+    selection, the focus and the scrolling; no reading under a rename in
+    place; OnFolderGone when the folder itself goes.
+  * Items are dragged as a file list; a drop on a folder item goes into
+    it, elsewhere into the folder shown (OnDropFiles, with what
+    FileManager.DropRules says it does).
+  * Cut items are drawn dimmed until pasted (MarkCut).
 
-  Items are dragged as a file list (Controls.FileLists); files dragged
-  over a folder item drop into it, elsewhere into the folder shown
-  (unless that is where they came from); OnDropFiles hears of a drop,
-  with what it should do (FileManager.DropRules).
+  It prints "refreshed", "view ...", "sort ...", "group ...", "search-
+  result N" and "search-done N", and where the items are (TellPlaces).
 }
 unit FileManager.FolderView;
 
@@ -45,55 +49,84 @@ interface
 
 uses
   Classes,
+  Drawing.Surfaces,
   Controls.Base,
   Controls.DragData,
-  Controls.Icons,
-  Controls.ListItems,
-  Controls.ListView,
+  Controls.Menus,
+  Controls.ItemViewItems,
+  Controls.ItemViewLayout,
+  Controls.ItemView,
+  Controls.ThumbnailLoader,
   FileManager.Items,
-  FileManager.ItemOrder;
+  FileManager.Entries,
+  FileManager.Locations,
+  FileManager.ItemColumns,
+  FileManager.Grouping,
+  FileManager.SearchQuery,
+  FileManager.Searcher,
+  FileManager.Settings;
 
 type
-  { One item shown: what the list item's Data points at. }
-  TFolderEntry = class
-  public
-    Item: TFolderItem;
-  end;
-
   TDropFilesEvent = procedure(Sender: TControl; Paths: TStrings; const TargetFolder: string;
     Effect: TDropEffect) of object;
 
-  TFolderView = class(TListView)
+  TFolderView = class(TItemView)
   private
-    FFolder: string;
+    FLocation: TLocation;
+    FEntries: TList;
+    FSettings: TFolderViewSettings;
+    FViewKey: string;
     FShowHidden: Boolean;
-    FOrderColumn: TSortColumn;
-    FOrderAscending: Boolean;
+    FShowExtensions: Boolean;
+    FShowRecent: Boolean;
+    FShowFavorites: Boolean;
+    FFilter: TSearchQuery;
+    FFilterText: string;
+    FCutPaths: TStringList;
     FWatch: Int64;
-    { A timer object the message loop watches: due RefreshDelay after
-      the first change of a burst. }
     FRefreshTimer: Int64;
     FRefreshDue: Boolean;
     FRefreshWanted: Boolean;
     FLastError: LongInt;
+    FThumbnails: TThumbnailLoader;
+    FSearcher: TFolderSearcher;
+    FSearchCount: LongInt;
+    FHeaderMenu: TMenuItem;
     FOnFolderGone: TControlEvent;
     FOnRefreshed: TControlEvent;
-    FOnOrderChanged: TControlEvent;
+    FOnSettingsChanged: TControlEvent;
     FOnDropFiles: TDropFilesEvent;
-    procedure WatchFolder;
+    FOnSearchFinished: TControlEvent;
+    FOnPictureMeasured: TControlEvent;
+    procedure WatchLocation;
     procedure StopWatching;
-    procedure FolderChanged(Handle: Int64);
+    procedure LocationChanged(Handle: Int64);
     procedure RefreshTimerFired(Handle: Int64);
     procedure FreeEntries;
-    procedure AddItemRow(const Item: TFolderItem);
-    function CompareRows(First, Second: TListItem): LongInt;
-    function CompareForHeader(Sender: TListView; First, Second: TListItem; Column: LongInt): LongInt;
-    function OwnerNameOf(OwnerId: LongWord): string;
-    procedure HeaderClicked(Sender: TListView; Column: LongInt);
+    procedure Rebuild;
+    procedure AddEntryItem(Entry: TFolderEntry);
+    procedure FillCells(Item: TItemViewItem; Entry: TFolderEntry);
+    function DisplayName(Entry: TFolderEntry): string;
+    procedure ApplyColumns;
+    procedure ApplyGroups;
+    function CompareItems(First, Second: TItemViewItem): LongInt;
     procedure ApplyOrder;
-    procedure StartDragging(Sender: TListView; var Data: TDragData);
+    function PassesFilter(Entry: TFolderEntry): Boolean;
+    procedure RequestThumbnails;
+    function WantsThumbnails: Boolean;
+    procedure ThumbnailReady(Sender: TObject; const Path: string; const Picture: TSurface;
+      OriginalWidth, OriginalHeight: LongInt);
+    procedure SearchResults(Sender: TObject; Found: TList);
+    procedure SearchFinished(Sender: TObject);
+    procedure HeaderClicked(Sender: TItemView; Column: LongInt);
+    procedure HeaderMenu(Sender: TItemView; X, Y: LongInt);
+    procedure ColumnChosen(Item: TMenuItem);
+    procedure ColumnResized(Sender: TItemView; Column: LongInt);
+    procedure StartDragging(Sender: TItemView; var Data: TDragData);
     function DropFolderAt(X, Y: LongInt; Data: TDragData; out Index: LongInt): string;
-    procedure SetShowHidden(Value: Boolean);
+    procedure SettingsChanged;
+    function DefaultsFor(const Location: TLocation): TFolderViewSettings;
+    function ColumnShown(Column: TColumnKind): Boolean;
   protected
     function DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect; override;
     procedure DragLeave; override;
@@ -102,94 +135,147 @@ type
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
-    { Shows Folder; ErrorNone or why it cannot be read (the list is then
-      empty). }
-    function ShowFolder(const AFolder: string): LongInt;
-    { Reads the folder shown again, keeping what was selected. }
+    { Shows Location; ErrorNone or why it cannot be read. }
+    function ShowLocation(const ALocation: TLocation): LongInt;
+    { Searches Scope and below for Text (the search syntax), results
+      coming in as they are found. }
+    procedure StartSearch(const Scope, QueryText: string);
+    procedure CancelSearch;
+    function Searching: Boolean;
+    { Reads the location again, keeping what was selected. }
     procedure Refresh;
-    procedure SortBy(Column: TSortColumn; Ascending: Boolean);
+    procedure SetMode(Value: TItemViewMode);
+    procedure SetSort(Column: TColumnKind; Ascending: Boolean);
+    procedure SetGroupBy(Value: TGroupBy);
+    procedure SetColumnShown(Column: TColumnKind; Shown: Boolean);
+    { A filter in the search syntax ('' for none: everything). }
+    procedure SetFilter(const Filter: string);
+    procedure SetShowHidden(Value: Boolean);
+    procedure SetShowExtensions(Value: Boolean);
+    procedure SetHomeSections(ShowRecent, ShowFavorites: Boolean);
+    procedure MarkCut(Paths: TStrings);
     function EntryAt(Index: LongInt): TFolderEntry;
     function PathOf(Index: LongInt): string;
     function IndexOfName(const Name: string): LongInt;
-    { The selected items' paths (in the order shown). }
-    procedure GetSelectedPaths(Paths: TStrings);
+    function IndexOfPath(const Path: string): LongInt;
+    { The selected entries' full paths (real files only unless Any). }
+    procedure GetSelectedPaths(Paths: TStrings; Any: Boolean = False);
+    procedure GetSelectedEntries(List: TList);
     function SelectedTotalSize: QWord;
-    { Selects only the items with these names (any not there are left
-      out); the first becomes the focused one. }
+    function FocusedEntry: TFolderEntry;
     procedure SelectNames(Names: TStrings);
-    { Says where the items are on the screen (place item-NAME X Y). }
+    procedure SelectPaths(Paths: TStrings);
+    { Says where the items and the header are (place NAME X Y). }
     procedure TellPlaces;
-    property Folder: string read FFolder;
-    property ShowHidden: Boolean read FShowHidden write SetShowHidden;
-    property OrderColumn: TSortColumn read FOrderColumn;
-    property OrderAscending: Boolean read FOrderAscending;
+    { The folder shown ('' on a page that is not a folder). }
+    function Folder: string;
+    property Location: TLocation read FLocation;
+    property Settings: TFolderViewSettings read FSettings;
+    property ShowHidden: Boolean read FShowHidden;
+    property ShowExtensions: Boolean read FShowExtensions;
+    property FilterText: string read FFilterText;
     property LastError: LongInt read FLastError;
+    property SearchCount: LongInt read FSearchCount;
     property OnFolderGone: TControlEvent read FOnFolderGone write FOnFolderGone;
-    { The folder was read again (it changed, or Refresh). }
     property OnRefreshed: TControlEvent read FOnRefreshed write FOnRefreshed;
-    { The order was changed by a click on a column's header. }
-    property OnOrderChanged: TControlEvent read FOnOrderChanged write FOnOrderChanged;
+    { The view, order, grouping or columns changed (remembered here for
+      the folder; the window updates its menus). }
+    property OnSettingsChanged: TControlEvent read FOnSettingsChanged write FOnSettingsChanged;
     property OnDropFiles: TDropFilesEvent read FOnDropFiles write FOnDropFiles;
+    property OnSearchFinished: TControlEvent read FOnSearchFinished write FOnSearchFinished;
+    { A thumbnail told a picture's size (the details pane may show it). }
+    property OnPictureMeasured: TControlEvent read FOnPictureMeasured write FOnPictureMeasured;
   end;
 
-{ The stock icon for an item. }
-function IconOfItem(const Item: TFolderItem): TStockIcon;
+{ The icon of an entry: a theme icon's name ('' for a stock icon). }
+function EntryIconName(Entry: TFolderEntry): string;
 
 implementation
 
 uses
   SysUtils,
   Abi.SystemCalls,
-  Windowing.Connection,
   Sys.Objects,
   Sys.FileWatches,
+  Sys.Time,
+  Sys.LocalTime,
   Drawing.Rectangles,
   Windowing.Windows,
+  Windowing.Connection,
   Windowing.HandleWatches,
+  Controls.ItemViewBase,
+  Controls.Window,
+  Controls.Icons,
   Controls.FileNames,
-  Controls.FolderListing,
   Controls.FileLists,
   Controls.FileTypeIcons,
-  Util.Accounts,
+  Controls.NaturalOrder,
+  Util.Trash,
+  FileManager.FileKinds,
   FileManager.FileTypes,
-  FileManager.TimeTexts,
-  FileManager.Permissions,
   FileManager.FolderReading,
   FileManager.DropRules,
+  FileManager.Paths,
+  FileManager.Sources,
   FileManager.TestPlaces,
   FileManager.Output;
 
 const
-  { Milliseconds a burst of changes is gathered before the folder is
-    read again. }
   RefreshDelay = 300;
-  { The columns, in order. }
-  ColumnName = 0;
-  ColumnSize = 1;
-  ColumnType = 2;
-  ColumnModified = 3;
-  ColumnPermissions = 4;
-  ColumnOwner = 5;
-  { Items whose places are told (a test needs the first few). }
   MostPlacesTold = 60;
 
-{ The kind's icon; folders named for what they hold and files whose
-  extension tells their kind get that one's (Controls.FileTypeIcons). }
-function IconOfItem(const Item: TFolderItem): TStockIcon;
+{ --- Icons ------------------------------------------------------------------------------------ }
+
+function EntryIconName(Entry: TFolderEntry): string;
+var
+  Folder: TStandardFolder;
 begin
-  case FileTypeOf(Item) of
-    FileTypeFolder: Result := IconForFolderName(Item.Name);
-    FileTypeProgram: Result := StockIconProgram;
-    FileTypeText: Result := IconForFileName(Item.Name, StockIconDocument);
-    FileTypeBrokenLink: Result := StockIconUnknown;
+  if Entry.IconName <> '' then
+    Exit(Entry.IconName);
+  if Entry.IsFolder then
+  begin
+    if Entry.Kind = EntryFile then
+    begin
+      if Entry.FullPath = HomeFolder then
+        Exit('home');
+      if StandardFolderAt(Entry.FullPath, Folder) then
+        Exit(StandardFolderIcons[Folder]);
+    end;
+    Exit(StockIconNames[IconForFolderName(Entry.Item.Name)]);
+  end;
+  if IsBrowsableArchiveExtension(Entry.Item.Name) then
+    Exit('folder-compressed');
+  case FileTypeOf(Entry.Item) of
+    FileTypeProgram: Result := StockIconNames[StockIconProgram];
+    FileTypeText: Result := StockIconNames[IconForFileName(Entry.Item.Name, StockIconDocument)];
+    FileTypeBrokenLink: Result := StockIconNames[StockIconUnknown];
   else
-    Result := IconForFileName(Item.Name, StockIconFile);
+    Result := StockIconNames[IconForFileName(Entry.Item.Name, StockIconFile)];
   end;
 end;
 
+function LocalOffsetNow: LongInt;
+var
+  Local: TLocalTime;
+begin
+  DecodeLocalTime(CurrentTime, Local);
+  Result := Local.Offset;
+end;
+
+{ --- Making and freeing ----------------------------------------------------------------------- }
+
 constructor TFolderView.Create(AParent: TControl);
+var
+  Column: TColumnKind;
+  Alignment: LongInt;
 begin
   inherited Create(AParent);
+  FEntries := TList.Create;
+  FCutPaths := TStringList.Create;
+  FCutPaths.Sorted := True;
+  FShowExtensions := True;
+  FShowRecent := True;
+  FShowFavorites := True;
   FWatch := -1;
   FRefreshTimer := CreateTimer(False);
   if (FRefreshTimer >= 0) and not WatchHandle(FRefreshTimer, @RefreshTimerFired) then
@@ -197,18 +283,24 @@ begin
     CloseHandle(FRefreshTimer);
     FRefreshTimer := -1;
   end;
-  FOrderAscending := True;
-  MultiSelect := True;
+  FThumbnails := TThumbnailLoader.Create;
+  FThumbnails.OnThumbnail := @ThumbnailReady;
+  FSearcher := TFolderSearcher.Create;
+  FSearcher.OnResults := @SearchResults;
+  FSearcher.OnFinished := @SearchFinished;
+  for Column := Low(TColumnKind) to High(TColumnKind) do
+  begin
+    Alignment := ColumnAlignLeft;
+    if Column in NumericColumns then
+      Alignment := ColumnAlignRight;
+    AddColumn(ColumnCaptions[Column], ColumnWidths[Column], Alignment, Column in DefaultColumns, Ord(Column));
+  end;
   DragEnabled := True;
-  IconsInDetails := True;
-  AddColumn('Name', 170);
-  AddColumn('Size', 70);
-  AddColumn('Type', 105);
-  AddColumn('Modified', 122);
-  AddColumn('Permissions', 80);
-  AddColumn('Owner', 60);
+  EmptyText := 'This folder is empty.';
+  FSettings := DefaultViewSettings(ItemViewDetails);
   OnColumnClick := @HeaderClicked;
-  OnCompare := @CompareForHeader;
+  OnHeaderContextMenu := @HeaderMenu;
+  OnColumnResized := @ColumnResized;
   OnStartDrag := @StartDragging;
 end;
 
@@ -220,101 +312,474 @@ begin
     StopWatchingHandle(FRefreshTimer);
     CloseHandle(FRefreshTimer);
   end;
+  FSearcher.Free;
+  { The items point at the thumbnails: they go first. }
+  Clear;
+  FThumbnails.Free;
   FreeEntries;
+  FEntries.Free;
+  FCutPaths.Free;
+  FHeaderMenu.Free;
   inherited Destroy;
 end;
 
-{ --- Reading ------------------------------------------------------------------------- }
-
 procedure TFolderView.FreeEntries;
 var
-  Row: LongInt;
-begin
-  for Row := 0 to RowCount - 1 do
-  begin
-    TFolderEntry(Items[Row].Data).Free;
-    Items[Row].Data := nil;
-  end;
-end;
-
-function TFolderView.OwnerNameOf(OwnerId: LongWord): string;
-begin
-  if not FindUserName(OwnerId, Result) or (Result = '') then
-    Result := IntToStr(OwnerId);
-end;
-
-procedure TFolderView.AddItemRow(const Item: TFolderItem);
-var
-  Entry: TFolderEntry;
-  Row: LongInt;
-  SizeColumn: string;
-begin
-  Entry := TFolderEntry.Create;
-  Entry.Item := Item;
-  SizeColumn := '';
-  if Item.Kind = ItemFile then
-    SizeColumn := SizeText(Item.SizeInBytes);
-  Row := AddRow([Item.Name, SizeColumn, TypeTextOf(Item), TimeText(Item.ModificationTime),
-    PermissionText(Item.Mode), OwnerNameOf(Item.OwnerId)]);
-  Items[Row].Data := Entry;
-  Items[Row].IconKind := IconOfItem(Item);
-  if Item.IsLink then
-    Items[Row].Overlay := OverlayLink;
-end;
-
-function TFolderView.ShowFolder(const AFolder: string): LongInt;
-var
-  FolderItems: TFolderItems;
   Index: LongInt;
 begin
-  EndEditing(False);
-  FRefreshWanted := False;
-  Result := ReadFolderItems(AFolder, FShowHidden, FolderItems);
-  FLastError := Result;
-  if AFolder <> FFolder then
+  for Index := 0 to FEntries.Count - 1 do
+    TFolderEntry(FEntries[Index]).Free;
+  FEntries.Clear;
+end;
+
+{ --- Settings ---------------------------------------------------------------------------------- }
+
+function TFolderView.DefaultsFor(const Location: TLocation): TFolderViewSettings;
+var
+  Standard: TStandardFolder;
+begin
+  case Location.Kind of
+    LocationHome, LocationComputer: Result := DefaultViewSettings(ItemViewTiles);
+    LocationGallery:
+      begin
+        Result := DefaultViewSettings(ItemViewLargeIcons);
+        Result.GroupBy := GroupByMonth;
+        Result.SortColumn := ColumnModified;
+        Result.SortAscending := False;
+      end;
+    LocationTrash:
+      begin
+        Result := DefaultViewSettings(ItemViewDetails);
+        Result.Columns := [ColumnName, ColumnOriginalLocation, ColumnDeleted, ColumnSize, ColumnType];
+        Result.SortColumn := ColumnDeleted;
+        Result.SortAscending := False;
+      end;
+    LocationSearch:
+      begin
+        Result := DefaultViewSettings(ItemViewDetails);
+        Result.Columns := [ColumnName, ColumnFolder, ColumnModified, ColumnType, ColumnSize];
+      end;
+  else
+    if (Location.Kind = LocationFolder) and StandardFolderAt(Location.Path, Standard) and
+       (Standard in [FolderPictures, FolderVideos]) then
+      Result := DefaultViewSettings(ItemViewLargeIcons)
+    else
+      Result := DefaultViewSettings(ItemViewDetails);
+  end;
+end;
+
+function ViewKeyOf(const Location: TLocation): string;
+begin
+  case Location.Kind of
+    LocationFolder: Result := ViewKeyOfPath(Location.Path);
+    LocationArchive: Result := 'archive';
+    LocationSearch: Result := 'search';
+  else
+    Result := LowerCase(StringReplace(LocationAddress(Location), ' ', '', [rfReplaceAll]));
+  end;
+end;
+
+function TFolderView.ColumnShown(Column: TColumnKind): Boolean;
+var
+  Each: TColumnKind;
+begin
+  for Each in FSettings.Columns do
+    if Each = Column then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TFolderView.SettingsChanged;
+begin
+  RememberView(FViewKey, FSettings);
+  if Assigned(FOnSettingsChanged) then
+    FOnSettingsChanged(Self);
+end;
+
+procedure TFolderView.ApplyColumns;
+var
+  Column: TColumnKind;
+begin
+  for Column := Low(TColumnKind) to High(TColumnKind) do
+    SetColumnVisible(Ord(Column), (Column = ColumnName) or ColumnShown(Column));
+  if FLocation.Kind = LocationComputer then
+    SetTileColumns([Ord(ColumnFreeSpace)])
+  else if FMode = ItemViewContent then
+    SetTileColumns([Ord(ColumnType), Ord(ColumnModified), Ord(ColumnSize)])
+  else
+    SetTileColumns([Ord(ColumnType), Ord(ColumnSize)]);
+  ShowSortArrow(Ord(FSettings.SortColumn), FSettings.SortAscending);
+end;
+
+procedure TFolderView.SetMode(Value: TItemViewMode);
+begin
+  FSettings.Mode := Value;
+  Mode := Value;
+  ApplyColumns;
+  RequestThumbnails;
+  Say('view ' + ViewModeKeys[Value]);
+  SettingsChanged;
+end;
+
+procedure TFolderView.SetSort(Column: TColumnKind; Ascending: Boolean);
+begin
+  FSettings.SortColumn := Column;
+  FSettings.SortAscending := Ascending;
+  ApplyOrder;
+  if Ascending then
+    Say('sort ' + ColumnKeys[Column] + ' ascending')
+  else
+    Say('sort ' + ColumnKeys[Column] + ' descending');
+  SettingsChanged;
+end;
+
+procedure TFolderView.SetGroupBy(Value: TGroupBy);
+begin
+  FSettings.GroupBy := Value;
+  ApplyGroups;
+  ApplyOrder;
+  Say('group ' + GroupByKeys[Value]);
+  SettingsChanged;
+end;
+
+procedure TFolderView.SetColumnShown(Column: TColumnKind; Shown: Boolean);
+var
+  Kept: array of TColumnKind;
+  Each: TColumnKind;
+  Index: LongInt;
+begin
+  if Column = ColumnName then
+    Exit;
+  Kept := nil;
+  for Each in FSettings.Columns do
+    if Each <> Column then
+    begin
+      SetLength(Kept, Length(Kept) + 1);
+      Kept[High(Kept)] := Each;
+    end;
+  if Shown then
   begin
-    FFolder := AFolder;
-    WatchFolder;
+    SetLength(Kept, Length(Kept) + 1);
+    Kept[High(Kept)] := Column;
+  end;
+  FSettings.Columns := Kept;
+  BeginUpdate;
+  for Index := 0 to Count - 1 do
+    FillCells(Items[Index], TFolderEntry(Items[Index].Data));
+  EndUpdate;
+  ApplyColumns;
+  if Column = ColumnDimensions then
+    RequestThumbnails;
+  SettingsChanged;
+end;
+
+procedure TFolderView.SetFilter(const Filter: string);
+begin
+  FFilterText := Trim(Filter);
+  FFilter := ParseSearchQuery(FFilterText, CurrentTime, LocalOffsetNow);
+  Rebuild;
+  Say('filter ' + FFilterText);
+end;
+
+procedure TFolderView.SetShowHidden(Value: Boolean);
+begin
+  if Value = FShowHidden then
+    Exit;
+  FShowHidden := Value;
+  if FLocation.Kind = LocationFolder then
+    Refresh;
+end;
+
+procedure TFolderView.SetShowExtensions(Value: Boolean);
+var
+  Index: LongInt;
+begin
+  if Value = FShowExtensions then
+    Exit;
+  FShowExtensions := Value;
+  for Index := 0 to Count - 1 do
+    Items[Index].Cells[0] := DisplayName(TFolderEntry(Items[Index].Data));
+end;
+
+procedure TFolderView.SetHomeSections(ShowRecent, ShowFavorites: Boolean);
+begin
+  FShowRecent := ShowRecent;
+  FShowFavorites := ShowFavorites;
+  if FLocation.Kind = LocationHome then
+    Refresh;
+end;
+
+{ --- Reading ------------------------------------------------------------------------------------ }
+
+function TFolderView.DisplayName(Entry: TFolderEntry): string;
+var
+  Extension: string;
+begin
+  Result := Entry.Item.Name;
+  if FShowExtensions or Entry.IsFolder or not (Entry.Kind in [EntryFile, EntryTrashed, EntryArchived]) then
+    Exit;
+  Extension := ExtensionOf(Result);
+  if Extension <> '' then
+    Result := Copy(Result, 1, Length(Result) - Length(Extension) - 1);
+end;
+
+procedure TFolderView.FillCells(Item: TItemViewItem; Entry: TFolderEntry);
+var
+  Column: TColumnKind;
+begin
+  Item.Cells[0] := DisplayName(Entry);
+  for Column := Succ(ColumnName) to High(TColumnKind) do
+    if ColumnShown(Column) or (Column in [ColumnType, ColumnSize, ColumnModified, ColumnFreeSpace]) then
+      Item.Cells[Ord(Column)] := ColumnText(Entry, Column)
+    else
+      Item.Cells[Ord(Column)] := '';
+end;
+
+function TFolderView.PassesFilter(Entry: TFolderEntry): Boolean;
+begin
+  if FFilterText = '' then
+    Exit(True);
+  Result := MatchesQuery(FFilter, Entry.Item.Name, Entry.IsFolder, Entry.Item.SizeInBytes,
+    Entry.Item.ModificationTime);
+end;
+
+procedure TFolderView.AddEntryItem(Entry: TFolderEntry);
+var
+  Item: TItemViewItem;
+begin
+  if not PassesFilter(Entry) then
+    Exit;
+  Item := AddItem(DisplayName(Entry));
+  Item.Data := Entry;
+  FillCells(Item, Entry);
+  Item.IconName := EntryIconName(Entry);
+  if Entry.Item.IsLink then
+    Item.Overlay := OverlayLink;
+  if Entry.Kind = EntryVolume then
+  begin
+    if Entry.TotalBytes > 0 then
+      Item.Meter := LongInt((Entry.TotalBytes - Entry.FreeBytes) * 1000 div Entry.TotalBytes)
+    else
+      Item.Meter := 0;
+  end;
+  Item.Dimmed := ((Entry.Kind = EntryFile) and IsHiddenName(Entry.Item.Name)) or
+    (FCutPaths.IndexOf(Entry.FullPath) >= 0);
+end;
+
+procedure TFolderView.ApplyGroups;
+var
+  Captions: TStringList;
+  Orders: array of Int64;
+  Index: LongInt;
+  Entry: TFolderEntry;
+  Caption: string;
+  Position: LongInt;
+  Order: Int64;
+  NowTime: Int64;
+  Offset: LongInt;
+  GroupBy: TGroupBy;
+  Sorted: array of string;
+  Other: LongInt;
+  Swap: string;
+  SwapOrder: Int64;
+  Names: array of string;
+begin
+  NowTime := CurrentTime;
+  Offset := LocalOffsetNow;
+  GroupBy := FSettings.GroupBy;
+  if FLocation.Kind in [LocationHome, LocationComputer] then
+    GroupBy := GroupNone;
+  Captions := TStringList.Create;
+  try
+    Orders := nil;
+    for Index := 0 to Count - 1 do
+    begin
+      Entry := TFolderEntry(Items[Index].Data);
+      if FLocation.Kind in [LocationHome, LocationComputer] then
+      begin
+        Caption := Entry.Section;
+        Order := 0;
+      end
+      else if GroupBy = GroupNone then
+        Caption := ''
+      else
+      begin
+        Caption := GroupCaption(GroupBy, Entry.Item.Name, EntryTypeText(Entry), Entry.IsFolder,
+          Entry.Item.SizeInBytes, Entry.Item.ModificationTime, NowTime, Offset);
+        Order := GroupOrder(GroupBy, Caption, Entry.Item.ModificationTime);
+      end;
+      if Caption = '' then
+      begin
+        Items[Index].Group := -1;
+        Continue;
+      end;
+      Position := Captions.IndexOf(Caption);
+      if Position < 0 then
+      begin
+        Position := Captions.Add(Caption);
+        SetLength(Orders, Length(Orders) + 1);
+        Orders[Position] := Order;
+      end
+      else if Order < Orders[Position] then
+        Orders[Position] := Order;
+      Items[Index].Group := Position;
+    end;
+    if Captions.Count = 0 then
+    begin
+      ClearGroups;
+      Exit;
+    end;
+    { The groups in their order (sections as met, which is their order;
+      types by name), and the items told their new places. }
+    Sorted := nil;
+    SetLength(Sorted, Captions.Count);
+    for Index := 0 to Captions.Count - 1 do
+      Sorted[Index] := Captions[Index];
+    if not (FLocation.Kind in [LocationHome, LocationComputer]) then
+      for Index := 1 to High(Sorted) do
+      begin
+        Other := Index;
+        while (Other > 0) and ((Orders[Other] < Orders[Other - 1]) or ((Orders[Other] = Orders[Other - 1]) and
+          (NaturalCompare(Sorted[Other], Sorted[Other - 1]) < 0))) do
+        begin
+          Swap := Sorted[Other];
+          Sorted[Other] := Sorted[Other - 1];
+          Sorted[Other - 1] := Swap;
+          SwapOrder := Orders[Other];
+          Orders[Other] := Orders[Other - 1];
+          Orders[Other - 1] := SwapOrder;
+          Dec(Other);
+        end;
+      end;
+    for Index := 0 to Count - 1 do
+      if Items[Index].Group >= 0 then
+        for Other := 0 to High(Sorted) do
+          if Sorted[Other] = Captions[Items[Index].Group] then
+          begin
+            Items[Index].Group := Other;
+            Break;
+          end;
+    Names := Sorted;
+    SetGroups(Names);
+  finally
+    Captions.Free;
+  end;
+end;
+
+function TFolderView.CompareItems(First, Second: TItemViewItem): LongInt;
+var
+  FirstEntry: TFolderEntry;
+  SecondEntry: TFolderEntry;
+begin
+  FirstEntry := TFolderEntry(First.Data);
+  SecondEntry := TFolderEntry(Second.Data);
+  { Pages keep their own order (pinned folders, recent files). }
+  if (FLocation.Kind in [LocationHome, LocationComputer]) and (FirstEntry.Section = SecondEntry.Section) then
+    Exit(FEntries.IndexOf(FirstEntry) - FEntries.IndexOf(SecondEntry));
+  Result := CompareEntries(FirstEntry, SecondEntry, FSettings.SortColumn, FSettings.SortAscending);
+end;
+
+procedure TFolderView.ApplyOrder;
+begin
+  SortItems(@CompareItems);
+  ShowSortArrow(Ord(FSettings.SortColumn), FSettings.SortAscending);
+end;
+
+procedure TFolderView.Rebuild;
+var
+  Index: LongInt;
+begin
+  BeginUpdate;
+  try
+    Clear;
+    for Index := 0 to FEntries.Count - 1 do
+      AddEntryItem(TFolderEntry(FEntries[Index]));
+    ApplyGroups;
+    ApplyOrder;
+  finally
+    EndUpdate;
+  end;
+  RequestThumbnails;
+end;
+
+function TFolderView.ShowLocation(const ALocation: TLocation): LongInt;
+var
+  SameFolder: Boolean;
+begin
+  EndEditing(False);
+  CancelSearch;
+  FRefreshWanted := False;
+  SameFolder := SameLocation(ALocation, FLocation);
+  if not SameFolder then
+  begin
+    FLocation := ALocation;
+    FViewKey := ViewKeyOf(FLocation);
+    FSettings := RememberedView(FViewKey, DefaultsFor(FLocation));
+    Mode := FSettings.Mode;
+    FFilterText := '';
+    FCutPaths.Clear;
+    Clear;
+    FThumbnails.Clear;
+    WatchLocation;
+  end;
+  case FLocation.Kind of
+    LocationNetwork: EmptyText := 'No network places have been set up yet.';
+    LocationTrash: EmptyText := 'The recycle bin is empty.';
+    LocationSearch: EmptyText := 'Searching...';
+    LocationHome: EmptyText := 'Pin folders to see them here.';
+  else
+    EmptyText := 'This folder is empty.';
   end;
   FreeEntries;
-  Clear;
-  for Index := 0 to High(FolderItems) do
-    AddItemRow(FolderItems[Index]);
-  ApplyOrder;
+  if FLocation.Kind = LocationSearch then
+    Result := ErrorNone
+  else
+    Result := ReadLocationEntries(FLocation, FShowHidden, FShowRecent, FShowFavorites, FEntries);
+  FLastError := Result;
+  ApplyColumns;
+  Rebuild;
 end;
 
 procedure TFolderView.Refresh;
 var
-  SelectedNames: TStringList;
-  FocusedName: string;
-  Row: LongInt;
-  FirstShown: LongInt;
+  SelectedPaths: TStringList;
+  FocusedPath: string;
+  OldScrollY: LongInt;
+  Index: LongInt;
 begin
   if IsEditing then
   begin
     FRefreshWanted := True;
     Exit;
   end;
-  SelectedNames := TStringList.Create;
+  if FLocation.Kind = LocationSearch then
+    Exit;
+  SelectedPaths := TStringList.Create;
   try
-    for Row := 0 to RowCount - 1 do
-      if Selected[Row] then
-        SelectedNames.Add(Items[Row].Caption);
-    FocusedName := '';
-    if ItemIndex >= 0 then
-      FocusedName := Items[ItemIndex].Caption;
-    FirstShown := FFirstLine;
-    ShowFolder(FFolder);
-    SelectNames(SelectedNames);
-    if FocusedName <> '' then
-    begin
-      Row := IndexOfName(FocusedName);
-      if Row >= 0 then
-        FItemIndex := Row;
-    end;
-    SetFirstLine(FirstShown);
+    GetSelectedPaths(SelectedPaths, True);
+    FocusedPath := '';
+    if FocusedEntry <> nil then
+      FocusedPath := FocusedEntry.FullPath;
+    OldScrollY := FScrollY;
+    FreeEntries;
+    FLastError := ReadLocationEntries(FLocation, FShowHidden, FShowRecent, FShowFavorites, FEntries);
+    { The thumbnails stay (the items are made again, pointing at them). }
+    BeginUpdate;
+    Clear;
+    for Index := 0 to FEntries.Count - 1 do
+      AddEntryItem(TFolderEntry(FEntries[Index]));
+    ApplyGroups;
+    ApplyOrder;
+    EndUpdate;
+    FThumbnails.Clear;
+    RequestThumbnails;
+    SelectPaths(SelectedPaths);
+    Index := IndexOfPath(FocusedPath);
+    if Index >= 0 then
+      FItemIndex := Index;
+    SetScroll(FScrollX, OldScrollY);
   finally
-    SelectedNames.Free;
+    SelectedPaths.Free;
   end;
   Say('refreshed');
   TellPlaces;
@@ -325,27 +790,136 @@ end;
 procedure TFolderView.EditingEnded;
 begin
   if FRefreshWanted then
+  begin
+    FRefreshWanted := False;
     Refresh;
+  end;
 end;
 
-procedure TFolderView.SetShowHidden(Value: Boolean);
+{ --- Searching ----------------------------------------------------------------------------------- }
+
+procedure TFolderView.StartSearch(const Scope, QueryText: string);
+var
+  Query: TSearchQuery;
 begin
-  if Value = FShowHidden then
-    Exit;
-  FShowHidden := Value;
-  if FFolder <> '' then
-    Refresh;
+  ShowLocation(SearchLocation(Scope, QueryText));
+  FSearchCount := 0;
+  Query := ParseSearchQuery(QueryText, CurrentTime, LocalOffsetNow);
+  FSearcher.Start(Scope, Query, FShowHidden);
 end;
 
-{ --- Watching ------------------------------------------------------------------------ }
+procedure TFolderView.CancelSearch;
+begin
+  if FSearcher.Running then
+    FSearcher.Cancel;
+end;
 
-procedure TFolderView.WatchFolder;
+function TFolderView.Searching: Boolean;
+begin
+  Result := FSearcher.Running;
+end;
+
+procedure TFolderView.SearchResults(Sender: TObject; Found: TList);
+var
+  Index: LongInt;
+begin
+  if FLocation.Kind <> LocationSearch then
+  begin
+    for Index := 0 to Found.Count - 1 do
+      TFolderEntry(Found[Index]).Free;
+    Exit;
+  end;
+  BeginUpdate;
+  for Index := 0 to Found.Count - 1 do
+  begin
+    FEntries.Add(Found[Index]);
+    AddEntryItem(TFolderEntry(Found[Index]));
+  end;
+  ApplyGroups;
+  ApplyOrder;
+  EndUpdate;
+  FSearchCount := FSearchCount + Found.Count;
+  Say('search-result ' + IntToStr(FSearchCount));
+  RequestThumbnails;
+  if Assigned(FOnRefreshed) then
+    FOnRefreshed(Self);
+end;
+
+procedure TFolderView.SearchFinished(Sender: TObject);
+begin
+  if FLocation.Kind <> LocationSearch then
+    Exit;
+  EmptyText := 'No items match your search.';
+  Say('search-done ' + IntToStr(FSearchCount));
+  TellPlaces;
+  if Assigned(FOnSearchFinished) then
+    FOnSearchFinished(Self);
+end;
+
+{ --- Thumbnails ---------------------------------------------------------------------------------- }
+
+function TFolderView.WantsThumbnails: Boolean;
+begin
+  Result := (FMode in [ItemViewExtraLargeIcons, ItemViewLargeIcons, ItemViewMediumIcons, ItemViewTiles,
+    ItemViewContent]) or ColumnShown(ColumnDimensions);
+end;
+
+procedure TFolderView.RequestThumbnails;
+var
+  Index: LongInt;
+  Entry: TFolderEntry;
+begin
+  if not WantsThumbnails then
+    Exit;
+  { Last first: the loader does the newest request first, so the top
+    of the page comes first. }
+  Index := Count - 1;
+  while Index >= 0 do
+  begin
+    Entry := TFolderEntry(Items[Index].Data);
+    if (Entry.Kind = EntryFile) and (Entry.Item.Kind = ItemFile) and HasThumbnail(ExtensionOf(Entry.Item.Name)) and
+       not Items[Index].HasThumbnail then
+      FThumbnails.Request(Entry.FullPath, Entry.Item.ModificationTime, Entry.Item.SizeInBytes);
+    Dec(Index);
+  end;
+end;
+
+procedure TFolderView.ThumbnailReady(Sender: TObject; const Path: string; const Picture: TSurface;
+  OriginalWidth, OriginalHeight: LongInt);
+var
+  Index: LongInt;
+  Entry: TFolderEntry;
+begin
+  Index := IndexOfPath(Path);
+  if Index < 0 then
+    Exit;
+  Entry := TFolderEntry(Items[Index].Data);
+  Entry.PictureWidth := OriginalWidth;
+  Entry.PictureHeight := OriginalHeight;
+  Items[Index].Cells[Ord(ColumnDimensions)] := ColumnText(Entry, ColumnDimensions);
+  if Picture.Pixels <> nil then
+    Items[Index].Thumbnail := Picture;
+  if Assigned(FOnPictureMeasured) then
+    FOnPictureMeasured(Self);
+end;
+
+{ --- Watching ------------------------------------------------------------------------------------- }
+
+procedure TFolderView.WatchLocation;
+var
+  Path: string;
 begin
   StopWatching;
-  FWatch := WatchPath(PChar(FFolder), WatchNames or WatchContents or WatchAttributes);
+  case FLocation.Kind of
+    LocationFolder: Path := FLocation.Path;
+    LocationTrash: Path := HomeTrashFolder + '/files';
+  else
+    Exit;
+  end;
+  FWatch := WatchPath(PChar(Path), WatchNames or WatchContents or WatchAttributes);
   if FWatch < 0 then
     FWatch := -1
-  else if not WatchHandle(FWatch, @FolderChanged) then
+  else if not WatchHandle(FWatch, @LocationChanged) then
     StopWatching;
 end;
 
@@ -358,7 +932,7 @@ begin
   FWatch := -1;
 end;
 
-procedure TFolderView.FolderChanged(Handle: Int64);
+procedure TFolderView.LocationChanged(Handle: Int64);
 var
   Reader: TFileChangeReader;
   Change: TFileChange;
@@ -371,15 +945,13 @@ begin
     if (Change.Kind = FileChangeWatchedItemRemoved) or (Change.Kind = FileChangeVolumeGone) or
        (Change.Kind = FileChangeWatchedItemMoved) then
       Gone := True;
-  if Gone then
+  if Gone and (FLocation.Kind = LocationFolder) then
   begin
     StopWatching;
     if Assigned(FOnFolderGone) then
       FOnFolderGone(Self);
     Exit;
   end;
-  { Many changes come at once (a copy writes a file in pieces): one
-    reading for all of them, a moment after the first. }
   if FRefreshDue then
     Exit;
   FRefreshDue := True;
@@ -394,147 +966,244 @@ begin
     Refresh;
 end;
 
-{ --- Order ----------------------------------------------------------------------------- }
+{ --- The header ----------------------------------------------------------------------------------- }
 
-function TFolderView.CompareRows(First, Second: TListItem): LongInt;
+procedure TFolderView.HeaderClicked(Sender: TItemView; Column: LongInt);
+var
+  Kind: TColumnKind;
 begin
-  Result := CompareFolderItems(TFolderEntry(First.Data).Item, TFolderEntry(Second.Data).Item, FOrderColumn,
-    FOrderAscending, @OwnerNameOf);
-end;
-
-{ Sorting through the list view's own (for the header's arrow): the
-  direction is applied in CompareFolderItems, which keeps folders first
-  either way, so the list view's own turning round is undone here. }
-function TFolderView.CompareForHeader(Sender: TListView; First, Second: TListItem; Column: LongInt): LongInt;
-begin
-  Result := CompareRows(First, Second);
-  if not FOrderAscending then
-    Result := -Result;
-end;
-
-procedure TFolderView.ApplyOrder;
-begin
-  SortByColumn(Ord(FOrderColumn), FOrderAscending);
-end;
-
-procedure TFolderView.SortBy(Column: TSortColumn; Ascending: Boolean);
-begin
-  FOrderColumn := Column;
-  FOrderAscending := Ascending;
-  ApplyOrder;
-end;
-
-procedure TFolderView.HeaderClicked(Sender: TListView; Column: LongInt);
-begin
-  if (Column < Ord(Low(TSortColumn))) or (Column > Ord(High(TSortColumn))) then
+  if (Column < 0) or (Column > Ord(High(TColumnKind))) then
     Exit;
-  if TSortColumn(Column) = FOrderColumn then
-    SortBy(FOrderColumn, not FOrderAscending)
+  Kind := TColumnKind(Column);
+  if Kind = FSettings.SortColumn then
+    SetSort(Kind, not FSettings.SortAscending)
   else
-    SortBy(TSortColumn(Column), True);
-  { Tell whoever shows the order (a menu's check marks, the settings). }
-  if Assigned(FOnOrderChanged) then
-    FOnOrderChanged(Self);
+    SetSort(Kind, True);
 end;
 
-{ --- Items ------------------------------------------------------------------------------ }
+procedure TFolderView.ColumnResized(Sender: TItemView; Column: LongInt);
+begin
+  { Widths are the view's own; nothing to remember per folder yet. }
+end;
+
+procedure TFolderView.HeaderMenu(Sender: TItemView; X, Y: LongInt);
+var
+  Column: TColumnKind;
+  Item: TMenuItem;
+  Window: TControlWindow;
+begin
+  if not (Host.OwnerWindow is TControlWindow) then
+    Exit;
+  Window := TControlWindow(Host.OwnerWindow);
+  FHeaderMenu.Free;
+  FHeaderMenu := TMenuItem.Create('');
+  for Column := Succ(ColumnName) to High(TColumnKind) do
+  begin
+    if (Column in [ColumnOriginalLocation, ColumnDeleted]) and (FLocation.Kind <> LocationTrash) then
+      Continue;
+    if (Column in [ColumnFreeSpace, ColumnFileSystem]) and (FLocation.Kind <> LocationComputer) then
+      Continue;
+    Item := FHeaderMenu.Add(ColumnCaptions[Column], @ColumnChosen);
+    Item.Tag := Ord(Column);
+    Item.Checked := ColumnShown(Column);
+  end;
+  Say('context-menu columns');
+  ShowPopupMenu(Window, FHeaderMenu, Window.ScreenLeft + Unscaled(PixelBounds.Left + X),
+    Window.ScreenTop + Unscaled(PixelBounds.Top + Y));
+end;
+
+procedure TFolderView.ColumnChosen(Item: TMenuItem);
+var
+  Column: TColumnKind;
+begin
+  Column := TColumnKind(Item.Tag);
+  SetColumnShown(Column, not ColumnShown(Column));
+  if ColumnShown(Column) then
+    Say('column shown ' + ColumnKeys[Column])
+  else
+    Say('column hidden ' + ColumnKeys[Column]);
+  TellPlaces;
+end;
+
+{ --- Items ----------------------------------------------------------------------------------------- }
+
+function TFolderView.Folder: string;
+begin
+  if FLocation.Kind = LocationFolder then
+    Result := FLocation.Path
+  else
+    Result := '';
+end;
 
 function TFolderView.EntryAt(Index: LongInt): TFolderEntry;
 begin
-  if (Index < 0) or (Index >= RowCount) then
+  if (Index < 0) or (Index >= Count) then
     Exit(nil);
   Result := TFolderEntry(Items[Index].Data);
 end;
 
+function TFolderView.FocusedEntry: TFolderEntry;
+begin
+  Result := EntryAt(ItemIndex);
+end;
+
 function TFolderView.PathOf(Index: LongInt): string;
 begin
-  Result := CombinePath(FFolder, Items[Index].Caption);
+  if EntryAt(Index) = nil then
+    Exit('');
+  Result := EntryAt(Index).FullPath;
 end;
 
 function TFolderView.IndexOfName(const Name: string): LongInt;
 var
-  Row: LongInt;
+  Index: LongInt;
 begin
-  for Row := 0 to RowCount - 1 do
-    if Items[Row].Caption = Name then
-      Exit(Row);
+  for Index := 0 to Count - 1 do
+    if EntryAt(Index).Item.Name = Name then
+      Exit(Index);
   Result := -1;
 end;
 
-procedure TFolderView.GetSelectedPaths(Paths: TStrings);
+function TFolderView.IndexOfPath(const Path: string): LongInt;
 var
-  Row: LongInt;
+  Index: LongInt;
+begin
+  if Path = '' then
+    Exit(-1);
+  for Index := 0 to Count - 1 do
+    if EntryAt(Index).FullPath = Path then
+      Exit(Index);
+  Result := -1;
+end;
+
+procedure TFolderView.GetSelectedPaths(Paths: TStrings; Any: Boolean);
+var
+  Index: LongInt;
 begin
   Paths.Clear;
-  for Row := 0 to RowCount - 1 do
-    if Selected[Row] then
-      Paths.Add(PathOf(Row));
+  for Index := 0 to Count - 1 do
+    if Selected[Index] and (Any or EntryAt(Index).IsRealFile) then
+      Paths.Add(EntryAt(Index).FullPath);
+end;
+
+procedure TFolderView.GetSelectedEntries(List: TList);
+var
+  Index: LongInt;
+begin
+  List.Clear;
+  for Index := 0 to Count - 1 do
+    if Selected[Index] then
+      List.Add(EntryAt(Index));
 end;
 
 function TFolderView.SelectedTotalSize: QWord;
 var
-  Row: LongInt;
+  Index: LongInt;
 begin
   Result := 0;
-  for Row := 0 to RowCount - 1 do
-    if Selected[Row] and (EntryAt(Row).Item.Kind = ItemFile) then
-      Result := Result + EntryAt(Row).Item.SizeInBytes;
+  for Index := 0 to Count - 1 do
+    if Selected[Index] and (EntryAt(Index).Item.Kind = ItemFile) then
+      Result := Result + EntryAt(Index).Item.SizeInBytes;
 end;
 
 procedure TFolderView.SelectNames(Names: TStrings);
 var
   Index: LongInt;
   Row: LongInt;
-  First: LongInt;
+  First: Boolean;
 begin
   ClearSelection;
-  First := -1;
+  First := True;
   for Index := 0 to Names.Count - 1 do
   begin
     Row := IndexOfName(Names[Index]);
     if Row < 0 then
       Continue;
-    if First < 0 then
+    if First then
     begin
-      First := Row;
       ItemIndex := Row;
+      First := False;
     end
     else
       Selected[Row] := True;
   end;
 end;
 
+procedure TFolderView.SelectPaths(Paths: TStrings);
+var
+  Index: LongInt;
+  Row: LongInt;
+  First: Boolean;
+begin
+  ClearSelection;
+  First := True;
+  for Index := 0 to Paths.Count - 1 do
+  begin
+    Row := IndexOfPath(Paths[Index]);
+    if Row < 0 then
+      Continue;
+    if First then
+    begin
+      ItemIndex := Row;
+      First := False;
+    end
+    else
+      Selected[Row] := True;
+  end;
+end;
+
+procedure TFolderView.MarkCut(Paths: TStrings);
+var
+  Index: LongInt;
+begin
+  FCutPaths.Clear;
+  if Paths <> nil then
+    FCutPaths.AddStrings(Paths);
+  for Index := 0 to Count - 1 do
+    Items[Index].Dimmed := ((EntryAt(Index).Kind = EntryFile) and IsHiddenName(EntryAt(Index).Item.Name)) or
+      (FCutPaths.IndexOf(EntryAt(Index).FullPath) >= 0);
+end;
+
 procedure TFolderView.TellPlaces;
 var
-  Row: LongInt;
+  Index: LongInt;
   Box: TRectangle;
-  Column: LongInt;
-  Left: LongInt;
+  Column: TColumnKind;
 begin
-  if ViewMode = ViewDetails then
+  if Mode = ItemViewDetails then
+    for Column := Low(TColumnKind) to High(TColumnKind) do
+      if (Column = ColumnName) or ColumnShown(Column) then
+      begin
+        Box := ColumnHeaderBounds(Ord(Column));
+        if RectangleWidth(Box) > 0 then
+          TellPlace('header-' + ColumnKeys[Column], Self, Box.Left + RectangleWidth(Box) div 2,
+            Box.Top + RectangleHeight(Box) div 2);
+      end;
+  Index := 0;
+  while (Index < Count) and (Index < MostPlacesTold) do
   begin
-    Left := 2;
-    for Column := 0 to ColumnCount - 1 do
+    if IsItemShown(Index) then
     begin
-      TellPlace('header-' + LowerCase(FCaptions[Column]), Self, Left + Scaled(ColumnWidth(Column)) div 2, HeaderMiddle);
-      Left := Left + Scaled(ColumnWidth(Column));
+      Box := NameBounds(Index);
+      if (Box.Bottom > 0) and (Box.Top < RectangleHeight(PixelBounds)) then
+        TellPlace('item-' + EntryAt(Index).Item.Name, Self, Box.Left + Scaled(12),
+          Box.Top + RectangleHeight(Box) div 2);
     end;
+    Inc(Index);
   end;
-  Row := 0;
-  while (Row < RowCount) and (Row < MostPlacesTold) do
+  for Index := 0 to GroupCount - 1 do
   begin
-    Box := CaptionBounds(Row);
-    if (Box.Bottom > 0) and (Box.Top < RectangleHeight(PixelBounds)) then
-      TellPlace('item-' + Items[Row].Caption, Self, Box.Left + RectangleWidth(Box) div 2,
-        Box.Top + RectangleHeight(Box) div 2);
-    Inc(Row);
+    Box := GroupBounds(Index);
+    if RectangleWidth(Box) > 0 then
+      TellPlace('group-' + StringReplace(LowerCase(Groups[Index].Caption), ' ', '-', [rfReplaceAll]), Self,
+        Box.Left + Scaled(30), Box.Top + RectangleHeight(Box) div 2);
   end;
   TellPlace('folder-empty-space', Self, RectangleWidth(PixelBounds) - 30, RectangleHeight(PixelBounds) - 30);
 end;
 
-{ --- Dragging ---------------------------------------------------------------------------- }
+{ --- Dragging -------------------------------------------------------------------------------------- }
 
-procedure TFolderView.StartDragging(Sender: TListView; var Data: TDragData);
+procedure TFolderView.StartDragging(Sender: TItemView; var Data: TDragData);
 var
   Paths: TStringList;
 begin
@@ -548,15 +1217,17 @@ begin
   end;
 end;
 
-{ The folder a drop at (X, Y) goes into: a folder item under the pointer
-  (Index; not one being dragged), else the folder shown (Index -1). }
 function TFolderView.DropFolderAt(X, Y: LongInt; Data: TDragData; out Index: LongInt): string;
+var
+  Entry: TFolderEntry;
 begin
   Index := ItemAt(X, Y);
-  if (Index >= 0) and IsFolderItem(EntryAt(Index).Item) and not ((Data.Source = Self) and Selected[Index]) then
-    Exit(PathOf(Index));
+  Entry := EntryAt(Index);
+  if (Entry <> nil) and Entry.IsFolder and (Entry.Kind in [EntryFile, EntryPlace, EntryVolume]) and
+     not ((Data.Source = Self) and Selected[Index]) then
+    Exit(Entry.FullPath);
   Index := -1;
-  Result := FFolder;
+  Result := Folder;
 end;
 
 function TFolderView.DragOver(Data: TDragData; X, Y: LongInt; Modifiers: LongWord): TDropEffect;
@@ -568,14 +1239,14 @@ var
 begin
   Result := DropNone;
   DropTarget := -1;
-  if (Data.Format <> DragFormatFileList) or (FFolder = '') then
+  if Data.Format <> DragFormatFileList then
     Exit;
   Paths := TStringList.Create;
   try
-    if not DecodeFileList(Data.Text, Action, Paths) then
+    if not DecodeFileList(Data.Text, Action, Paths) or (Paths.Count = 0) then
       Exit;
     Target := DropFolderAt(X, Y, Data, Index);
-    if not CanDropInto(Paths, Target) then
+    if (Target = '') or not CanDropInto(Paths, Target) then
       Exit;
     Result := DropEffectFor(VolumeNumberOf(Paths[0]), VolumeNumberOf(Target), (Modifiers and ModifierControl) <> 0,
       (Modifiers and ModifierShift) <> 0);
@@ -597,12 +1268,13 @@ var
   Target: string;
   Index: LongInt;
 begin
+  DropTarget := -1;
   Paths := TStringList.Create;
   try
     if not DecodeFileList(Data.Text, Action, Paths) then
       Exit;
     Target := DropFolderAt(X, Y, Data, Index);
-    if Assigned(FOnDropFiles) and CanDropInto(Paths, Target) then
+    if (Target <> '') and Assigned(FOnDropFiles) and CanDropInto(Paths, Target) then
       FOnDropFiles(Self, Paths, Target, Effect);
   finally
     Paths.Free;

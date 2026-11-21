@@ -53,6 +53,7 @@ type
     FLock: TLock;
     FState: TProgressSnapshot;
     FCancelled: LongInt;
+    FPaused: LongInt;
   public
     procedure SetTotals(Files, Bytes: QWord);
     procedure AddDone(Files, Bytes: QWord);
@@ -60,6 +61,9 @@ type
     function Snapshot: TProgressSnapshot;
     procedure Cancel;
     function IsCancelled: Boolean;
+    { Paused: the worker waits at its next piece until resumed. }
+    procedure SetPaused(Value: Boolean);
+    function IsPaused: Boolean;
   end;
 
 implementation
@@ -106,6 +110,19 @@ end;
 function TOperationProgress.IsCancelled: Boolean;
 begin
   Result := AtomicCompareExchange32(FCancelled, 0, 0) <> 0;
+end;
+
+procedure TOperationProgress.SetPaused(Value: Boolean);
+begin
+  if Value then
+    AtomicExchange32(FPaused, 1)
+  else
+    AtomicExchange32(FPaused, 0);
+end;
+
+function TOperationProgress.IsPaused: Boolean;
+begin
+  Result := AtomicCompareExchange32(FPaused, 0, 0) <> 0;
 end;
 
 end.

@@ -44,6 +44,7 @@ interface
 uses
   Classes,
   Drawing.Canvas,
+  Drawing.Surfaces,
   Controls.Base,
   Controls.Icons;
 
@@ -81,6 +82,7 @@ type
     FIconKind: TStockIcon;
     FNames: TStringList;
     FValues: TStringList;
+    FPicture: TSurface;
   protected
     procedure Paint(var Canvas: TCanvas); override;
   public
@@ -88,6 +90,9 @@ type
     destructor Destroy; override;
     procedure SetTitle(const Title, IconName: string; IconKind: TStockIcon);
     procedure AddLine(const Name, Value: string);
+    { A picture (a thumbnail) drawn instead of the icon; the summary
+      does not own it. }
+    procedure SetPicture(const Picture: TSurface);
   end;
 
   TPreviewHost = class(TControl)
@@ -124,6 +129,7 @@ uses
   SysUtils,
   Drawing.Rectangles,
   Drawing.Colors,
+  Drawing.Scaling,
   Windowing.Theme,
   Windowing.Connection,
   Controls.Text,
@@ -139,6 +145,7 @@ const
   NothingSelectedText = 'Select a file to preview.';
   NoPreviewText = 'No preview available.';
   SummaryIconSize = 64;
+  SummaryPictureSize = 180;
 
 function ReadFileStart(const Path: string; Limit: LongInt): TBytes;
 var
@@ -286,6 +293,12 @@ begin
   Invalidate;
 end;
 
+procedure TPreviewSummary.SetPicture(const Picture: TSurface);
+begin
+  FPicture := Picture;
+  Invalidate;
+end;
+
 procedure TPreviewSummary.Paint(var Canvas: TCanvas);
 var
   Width: LongInt;
@@ -299,10 +312,26 @@ var
 begin
   Width := RectangleWidth(PixelBounds);
   FillRectangle(Canvas, MakeRectangle(0, 0, Width, RectangleHeight(PixelBounds)), Theme.Field);
-  Size := Scaled(SummaryIconSize);
-  Icon := MakeRectangle((Width - Size) div 2, Scaled(16), Size, Size);
-  if (FIconName = '') or not DrawThemeIcon(Canvas, FIconName, Icon) then
-    DrawStockIcon(Canvas, FIconKind, Icon);
+  if (FPicture.Pixels <> nil) and (FPicture.Width > 0) and (FPicture.Height > 0) then
+  begin
+    Size := Scaled(SummaryPictureSize);
+    if Size > Width - Scaled(16) then
+      Size := Width - Scaled(16);
+    if FPicture.Width >= FPicture.Height then
+      Icon := MakeRectangle(0, 0, Size, Size * FPicture.Height div FPicture.Width)
+    else
+      Icon := MakeRectangle(0, 0, Size * FPicture.Width div FPicture.Height, Size);
+    Icon := OffsetRectangle(Icon, (Width - RectangleWidth(Icon)) div 2, Scaled(16));
+    DrawSurfaceScaled(Canvas, FPicture, SurfaceBounds(FPicture), Icon, True);
+    DrawRectangleOutline(Canvas, InflateRectangle(Icon, 1), Theme.Shadow);
+  end
+  else
+  begin
+    Size := Scaled(SummaryIconSize);
+    Icon := MakeRectangle((Width - Size) div 2, Scaled(16), Size, Size);
+    if (FIconName = '') or not DrawThemeIcon(Canvas, FIconName, Icon) then
+      DrawStockIcon(Canvas, FIconKind, Icon);
+  end;
   Y := Icon.Bottom + Scaled(10);
   LineHeight := TextHeight(ControlFace) + Scaled(4);
   DrawTextInBox(Canvas, ControlBoldFace, FTitle, MakeRectangle(Scaled(8), Y, Width - Scaled(16), LineHeight),
@@ -362,6 +391,7 @@ procedure TPreviewHost.ShowControl(Control: TControl);
 begin
   if Control <> FPreview then
     DropPreview;
+  FPath := '';
   FPreview := Control;
   if FPreview <> nil then
   begin
@@ -402,6 +432,7 @@ begin
     if Made <> nil then
     begin
       ShowControl(Made);
+      FPath := Path;
       Exit(True);
     end;
   end;

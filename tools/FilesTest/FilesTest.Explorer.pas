@@ -47,6 +47,7 @@ uses
   Util.TrashInfo,
   FileManager.Items,
   FileManager.OperationTypes,
+  FileManager.Paths,
   FileManager.FileKinds,
   FileManager.CivilDates,
   FileManager.SearchQuery,

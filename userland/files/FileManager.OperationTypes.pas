@@ -32,14 +32,23 @@ uses
   FileManager.Items;
 
 type
-  TOperationKind = (OperationCopy, OperationMove, OperationDelete);
+  TOperationKind = (OperationCopy, OperationMove, OperationDelete, OperationTrash, OperationRestore,
+    OperationCompress, OperationExtract);
 
   { What is asked for: Sources (absolute paths) copied or moved into
-    TargetFolder, or deleted (TargetFolder unused). }
+    TargetFolder, deleted for good or moved to the trash (TargetFolder
+    unused), restored from the trash (Sources: the items' places in it;
+    TargetFolder unused: each goes back where it was), compressed into
+    one ZIP file (TargetFolder: the archive's path), or extracted
+    (Sources[0]: the archive, any more: the entries inside it to take,
+    all if none; TargetFolder: where to). }
   TOperationRequest = record
     Kind: TOperationKind;
     Sources: array of string;
     TargetFolder: string;
+    { Done to undo or redo something: not itself added to the undo
+      history. }
+    FromHistory: Boolean;
   end;
 
   TQuestionKind = (QuestionConflict, QuestionError);
@@ -78,6 +87,11 @@ type
     Errors: LongInt;
     { Stopped by the user (Cancel, or Stop in a question). }
     Stopped: Boolean;
+    { Each top-level item done whole: where it was and where it went
+      (a copy's or an extraction's copy, a move's new place, the place
+      in the trash, the place restored to): for undo. }
+    DoneSources: array of string;
+    DoneTargets: array of string;
   end;
 
 function OperationVerb(Kind: TOperationKind): string;
@@ -85,24 +99,20 @@ function OperationPastTense(Kind: TOperationKind): string;
 
 implementation
 
+const
+  Verbs: array[TOperationKind] of string = ('Copying', 'Moving', 'Deleting', 'Deleting', 'Restoring',
+    'Compressing', 'Extracting');
+  PastTenses: array[TOperationKind] of string = ('copied', 'moved', 'deleted', 'trashed', 'restored', 'compressed',
+    'extracted');
+
 function OperationVerb(Kind: TOperationKind): string;
 begin
-  case Kind of
-    OperationCopy: Result := 'Copying';
-    OperationMove: Result := 'Moving';
-  else
-    Result := 'Deleting';
-  end;
+  Result := Verbs[Kind];
 end;
 
 function OperationPastTense(Kind: TOperationKind): string;
 begin
-  case Kind of
-    OperationCopy: Result := 'copied';
-    OperationMove: Result := 'moved';
-  else
-    Result := 'deleted';
-  end;
+  Result := PastTenses[Kind];
 end;
 
 end.

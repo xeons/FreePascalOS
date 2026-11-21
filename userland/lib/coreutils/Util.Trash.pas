@@ -62,6 +62,9 @@ function TrashFolderFor(const Path: string; out Folder: string): LongInt;
 function MoveToTrash(const Path: string; out Item: TTrashItem): LongInt;
 { Every item in every trash folder, the newest first. }
 function ListTrash: TTrashItems;
+{ The trash item whose place in the trash (files/NAME) is ItemPath,
+  its info read; False if it is not one. }
+function TrashItemAt(const ItemPath: string; out Item: TTrashItem): Boolean;
 { The item's place in the trash (files/NAME) and its info file. }
 function TrashItemPath(const Item: TTrashItem): string;
 function TrashInfoPath(const Item: TTrashItem): string;
@@ -348,6 +351,21 @@ begin
       Dec(Other);
     end;
   end;
+end;
+
+function TrashItemAt(const ItemPath: string; out Item: TTrashItem): Boolean;
+var
+  FilesFolder: string;
+  Text: string;
+begin
+  Item := Default(TTrashItem);
+  FilesFolder := ExtractFileDir(ItemPath);
+  if ExtractFileName(FilesFolder) <> FilesFolderName then
+    Exit(False);
+  Item.TrashFolder := ExtractFileDir(FilesFolder);
+  Item.Name := ExtractFileName(ItemPath);
+  Result := ReadTextFile(TrashInfoPath(Item), Text) and ParseTrashInfo(Text, Item.OriginalPath,
+    Item.DeletionLocalTime);
 end;
 
 function RestoreFromTrash(const Item: TTrashItem; const TargetPath: string): LongInt;

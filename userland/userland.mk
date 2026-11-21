@@ -540,7 +540,7 @@ $(USER_PROGRAM_OUTPUT)/dynlibtest: $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY)
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
 GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest sessionmanager sysinfo hangtest) \
-	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad files terminal taskmanager calculator imageviewer paint)
+	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad terminal taskmanager calculator imageviewer paint)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
 	-ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
@@ -591,6 +591,17 @@ $(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(W
 	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 	-Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
 $(BROWSER_PROGRAMS): $(WEBVIEW_LIBRARY) $(QUIC_LIBRARY) $(wildcard userland/browser/*.inc)
+# The file manager: previews web pages in a web view (libwebview) and
+# browses, makes and extracts archives (libarchive).
+FILES_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,files)
+$(FILES_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lweb -lsvg -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
+	-lconfiguration -lfont -larchive -limage -lcompression -ldrawing -ltls
+$(FILES_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) \
+	-Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
+	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) \
+	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(ARCHIVE_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
+$(FILES_PROGRAMS): $(WEBVIEW_LIBRARY) $(QUIC_LIBRARY) $(ARCHIVE_LIBRARY)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)

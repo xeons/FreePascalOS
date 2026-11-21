@@ -17,17 +17,17 @@
 }
 
 {
-  The window showing how a long copy, move or delete is getting on:
-  what is being done and where to, the file it is on, a bar, the files
-  and bytes done out of all, and Cancel.
+  How a long operation is getting on, in libcontrols' progress dialog
+  (Controls.ProgressDialog: a heading, the percentage, a bar, Pause and
+  Cancel, and "More details" with the speed, the time left, the item
+  being done, what is left and a graph of the speed).
 
   It is made hidden when the operation starts and shows itself only
   once the operation has run for a while (the user's ProgressDelay), so
-  a quick one never flashes a window. It is not modal: the file manager
-  stays usable meanwhile. It looks at the operation's progress a few
-  times a second (FileManager.OperationProgress); Cancel and its close
-  button ask the operation to stop, which it does at the next piece of
-  work.
+  a quick one never flashes a window. It is not modal. It looks at the
+  operation's progress a few times a second (FileManager.
+  OperationProgress); Pause holds the worker at its next piece of work,
+  Cancel (and the close button) asks it to stop there.
 }
 unit FileManager.ProgressWindow;
 
@@ -38,38 +38,29 @@ interface
 
 uses
   Windowing.Windows,
-  Controls.Base,
-  Controls.Window,
-  Controls.Labels,
-  Controls.Buttons,
-  Controls.ProgressBar,
+  Controls.ProgressDialog,
   FileManager.OperationTypes,
   FileManager.OperationProgress;
 
 type
-  TProgressWindow = class(TControlWindow)
+  TProgressWindow = class(TProgressDialog)
   private
     FProgress: TOperationProgress;
     FKind: TOperationKind;
     FStartTime: QWord;
     FDelay: LongWord;
     FShown: Boolean;
-    FWhatLabel: TLabel;
-    FNameLabel: TLabel;
-    FAmountLabel: TLabel;
-    FBar: TProgressBar;
-    FCancelButton: TButton;
-    procedure CancelClicked(Sender: TControl);
     procedure ShowProgress;
     procedure ShowWhenDue;
+    procedure Paused(Sender: TProgressDialog; IsPaused: Boolean);
+    procedure Cancelled(Sender: TProgressDialog);
   protected
     procedure TimerFired(TimerId: LongWord); override;
-    procedure CloseRequested; override;
   public
-    { For an operation of Kind into TargetFolder ('' for a delete), shown
-      after Delay milliseconds. }
-    constructor CreateFor(AOwner: TWindow; AKind: TOperationKind; const TargetFolder: string; ItemCount: LongInt;
-      AProgress: TOperationProgress; ADelay: LongWord);
+    { For an operation of Kind on ItemCount items from SourceFolder into
+      TargetFolder (either may be ''), shown after Delay milliseconds. }
+    constructor CreateFor(AOwner: TWindow; AKind: TOperationKind; const SourceFolder, TargetFolder: string;
+      ItemCount: LongInt; AProgress: TOperationProgress; ADelay: LongWord);
     procedure StopUpdating;
   end;
 
@@ -78,18 +69,14 @@ implementation
 uses
   SysUtils,
   Sys.Time,
-  Windowing.Protocol,
+  Drawing.Rectangles,
   Controls.FileNames,
-  Controls.FolderListing,
   FileManager.TestPlaces,
   FileManager.Output;
 
 const
   UpdateTimer = 1;
-  UpdateMilliseconds = 150;
-  WindowWidth = 420;
-  WindowHeight = 150;
-  BarSteps = 1000;
+  UpdateMilliseconds = 250;
 
 function ItemsText(Count: LongInt): string;
 begin
@@ -99,42 +86,31 @@ begin
     Result := IntToStr(Count) + ' items';
 end;
 
-constructor TProgressWindow.CreateFor(AOwner: TWindow; AKind: TOperationKind; const TargetFolder: string;
-  ItemCount: LongInt; AProgress: TOperationProgress; ADelay: LongWord);
-var
-  Left: LongInt;
-  Top: LongInt;
-  What: string;
+function FolderName(const Path: string): string;
 begin
-  Left := AOwner.ScreenLeft + (AOwner.ClientWidth - WindowWidth) div 2;
-  Top := AOwner.ScreenTop + (AOwner.ClientHeight - WindowHeight) div 2;
-  inherited Create(OperationVerb(AKind), Left, Top, WindowWidth, WindowHeight, WindowFramed, AOwner);
+  Result := LastPartOf(Path);
+  if Result = '' then
+    Result := Path;
+end;
+
+constructor TProgressWindow.CreateFor(AOwner: TWindow; AKind: TOperationKind; const SourceFolder,
+  TargetFolder: string; ItemCount: LongInt; AProgress: TOperationProgress; ADelay: LongWord);
+var
+  Heading: string;
+begin
+  inherited CreateProgress(AOwner, OperationVerb(AKind));
   FProgress := AProgress;
   FKind := AKind;
   FDelay := ADelay;
   FStartTime := UptimeMilliseconds;
-  What := OperationVerb(AKind) + ' ' + ItemsText(ItemCount);
+  Heading := OperationVerb(AKind) + ' ' + ItemsText(ItemCount);
+  if SourceFolder <> '' then
+    Heading := Heading + ' from ' + FolderName(SourceFolder);
   if TargetFolder <> '' then
-    What := What + ' to ' + TargetFolder;
-  FWhatLabel := TLabel.Create(Root);
-  FWhatLabel.ShowsMnemonic := False;
-  FWhatLabel.Text := What;
-  FWhatLabel.SetBounds(12, 12, WindowWidth - 24, 18);
-  FNameLabel := TLabel.Create(Root);
-  FNameLabel.ShowsMnemonic := False;
-  FNameLabel.SetBounds(12, 34, WindowWidth - 24, 18);
-  FBar := TProgressBar.Create(Root);
-  FBar.Maximum := BarSteps;
-  FBar.SetBounds(12, 58, WindowWidth - 24, 18);
-  FAmountLabel := TLabel.Create(Root);
-  FAmountLabel.ShowsMnemonic := False;
-  FAmountLabel.SetBounds(12, 82, WindowWidth - 24, 18);
-  FCancelButton := TButton.Create(Root);
-  FCancelButton.Text := 'Cancel';
-  FCancelButton.SetBounds(WindowWidth - 12 - 75, WindowHeight - 12 - 23, 75, 23);
-  FCancelButton.OnClick := @CancelClicked;
-  CancelControl := FCancelButton;
-  FocusControl(FCancelButton);
+    Heading := Heading + ' to ' + FolderName(TargetFolder);
+  SetHeading(Heading);
+  OnPauseChanged := @Paused;
+  OnCancel := @Cancelled;
   StartTimer(UpdateTimer, UpdateMilliseconds);
   ShowProgress;
   ShowWhenDue;
@@ -148,64 +124,58 @@ end;
 procedure TProgressWindow.ShowProgress;
 var
   State: TProgressSnapshot;
-  Steps: QWord;
 begin
   State := FProgress.Snapshot;
   if State.Phase = PhaseCounting then
   begin
-    FNameLabel.Text := 'Counting the files...';
+    UpdateProgress(0, 0, 0, 0, 'Counting the items...');
     Exit;
   end;
-  if not FProgress.IsCancelled then
-    FNameLabel.Text := State.CurrentName;
-  { Bytes give the bar when there are any to speak of, files otherwise. }
-  if State.TotalBytes > 0 then
-    Steps := State.DoneBytes * BarSteps div State.TotalBytes
-  else if State.TotalFiles > 0 then
-    Steps := State.DoneFiles * BarSteps div State.TotalFiles
-  else
-    Steps := 0;
-  if Steps > BarSteps then
-    Steps := BarSteps;
-  FBar.Position := Steps;
-  FAmountLabel.Text := Format('%d of %d files, %s of %s', [State.DoneFiles, State.TotalFiles,
-    SizeText(State.DoneBytes), SizeText(State.TotalBytes)]);
+  UpdateProgress(State.DoneBytes, State.TotalBytes, State.DoneFiles, State.TotalFiles, State.CurrentName);
 end;
 
 procedure TProgressWindow.TimerFired(TimerId: LongWord);
 begin
   if TimerId <> UpdateTimer then
+  begin
+    inherited TimerFired(TimerId);
     Exit;
+  end;
   ShowProgress;
   ShowWhenDue;
 end;
 
-{ Shows the window once the operation has run for the delay (at once
-  for none). }
 procedure TProgressWindow.ShowWhenDue;
+var
+  Box: TRectangle;
 begin
-  if not FShown and (UptimeMilliseconds - FStartTime >= FDelay) then
-  begin
-    FShown := True;
-    Show;
-    Say('progress-shown ' + LowerCase(OperationVerb(FKind)));
-    TellControlPlace('progress-cancel', FCancelButton);
-  end;
-end;
-
-procedure TProgressWindow.CancelClicked(Sender: TControl);
-begin
-  if FProgress.IsCancelled then
+  if FShown or (UptimeMilliseconds - FStartTime < FDelay) then
     Exit;
-  FProgress.Cancel;
-  FNameLabel.Text := 'Stopping...';
-  FCancelButton.Enabled := False;
-  Say('progress-cancelled');
+  FShown := True;
+  Show;
+  Say('progress-shown ' + LowerCase(OperationVerb(FKind)));
+  Box := CancelButtonBounds;
+  TellPlace('progress-cancel', Root, Box.Left + RectangleWidth(Box) div 2, Box.Top + RectangleHeight(Box) div 2);
+  Box := PauseButtonBounds;
+  TellPlace('progress-pause', Root, Box.Left + RectangleWidth(Box) div 2, Box.Top + RectangleHeight(Box) div 2);
+  Box := DetailsToggleBounds;
+  TellPlace('progress-details', Root, Box.Left + RectangleWidth(Box) div 2, Box.Top + RectangleHeight(Box) div 2);
 end;
 
-procedure TProgressWindow.CloseRequested;
+procedure TProgressWindow.Paused(Sender: TProgressDialog; IsPaused: Boolean);
 begin
-  CancelClicked(nil);
+  FProgress.SetPaused(IsPaused);
+  if IsPaused then
+    Say('progress-paused')
+  else
+    Say('progress-resumed');
+end;
+
+procedure TProgressWindow.Cancelled(Sender: TProgressDialog);
+begin
+  FProgress.SetPaused(False);
+  FProgress.Cancel;
+  Say('progress-cancelled');
 end;
 
 end.
