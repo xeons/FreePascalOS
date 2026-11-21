@@ -51,16 +51,25 @@ uses
 
 var
   ArchBootInformation: PBootInformation; external name 'ArchBootInformation';
+  { Copied at the first reading (during start-up, Kernel.Clock): the boot
+    information's pages are given back later (Memory.BootDataReclaim). }
+  FirmwareTime: Int64 = 0;
+  FirmwareTimeIsCopied: Boolean = False;
 
 function ReadRealTimeClock: TUnixTime;
 var
   Frequency: QWord;
 begin
   Result := 0;
-  if (ArchBootInformation = nil) or (ArchBootInformation^.FirmwareTime = 0) then
+  if not FirmwareTimeIsCopied and (ArchBootInformation <> nil) then
+  begin
+    FirmwareTime := ArchBootInformation^.FirmwareTime;
+    FirmwareTimeIsCopied := True;
+  end;
+  if FirmwareTime = 0 then
     Exit;
   Frequency := ReadCounterFrequency;
-  Result := TUnixTime(ArchBootInformation^.FirmwareTime);
+  Result := TUnixTime(FirmwareTime);
   if Frequency <> 0 then
     Result := Result + TUnixTime(ReadTimeStampCounter div Frequency);
 end;
