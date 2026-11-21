@@ -69,6 +69,7 @@ type
     FSelected: Boolean;
     FDimmed: Boolean;
     FGroup: LongInt;
+    FMeter: LongInt;
     FData: Pointer;
     function GetCell(Column: LongInt): string;
     procedure SetCell(Column: LongInt; const Value: string);
@@ -79,6 +80,7 @@ type
     procedure SetThumbnail(const Value: TSurface);
     procedure SetSelected(Value: Boolean);
     procedure SetDimmed(Value: Boolean);
+    procedure SetMeter(Value: LongInt);
     procedure Changed(SelectionChanged: Boolean);
   public
     constructor Create(AOwner: TItemViewOwner);
@@ -96,6 +98,9 @@ type
     property Dimmed: Boolean read FDimmed write SetDimmed;
     { Set before the items are laid out (the view sorts by group). }
     property Group: LongInt read FGroup write FGroup;
+    { A bar under the name in tiles and content (a disk's space used),
+      0 to 1000; -1 (the default) for none. }
+    property Meter: LongInt read FMeter write SetMeter;
     property Data: Pointer read FData write FData;
     property Owner: TItemViewOwner read FOwner;
   end;
@@ -126,6 +131,7 @@ begin
   FCells := TStringList.Create;
   FIconKind := StockIconFile;
   FGroup := -1;
+  FMeter := -1;
 end;
 
 destructor TItemViewItem.Destroy;
@@ -211,6 +217,14 @@ begin
   if FDimmed = Value then
     Exit;
   FDimmed := Value;
+  Changed(False);
+end;
+
+procedure TItemViewItem.SetMeter(Value: LongInt);
+begin
+  if Value > 1000 then
+    Value := 1000;
+  FMeter := Value;
   Changed(False);
 end;
 

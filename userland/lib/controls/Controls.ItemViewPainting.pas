@@ -120,6 +120,7 @@ const
   IconTextGap = 4;
   CheckBoxRoom = 18;
   TileWidth = 250;
+  MeterHeight = 6;
   { Weight of the selection colour in a hover tint (of 255). }
   HotTint = 60;
 
@@ -442,6 +443,26 @@ begin
     DrawFocusFrame(Canvas, Row, Color);
 end;
 
+{ A meter: a sunken well filled to Permille (the theme's progress
+  colours; nearly full turns to the error colour, as a disk almost full
+  should catch the eye). }
+procedure PaintMeter(const Canvas: TCanvas; const Box: TRectangle; Permille: LongInt);
+var
+  Filled: TRectangle;
+  Color: TColor;
+begin
+  FillRectangle(Canvas, Box, Theme.ProgressTrough);
+  DrawRectangleOutline(Canvas, Box, Theme.Shadow);
+  Filled := InflateRectangle(Box, -1);
+  Filled.Right := Filled.Left + RectangleWidth(Filled) * Permille div 1000;
+  if Permille >= 900 then
+    Color := Theme.Error
+  else
+    Color := Theme.ProgressBlock;
+  if Filled.Right > Filled.Left then
+    FillRectangle(Canvas, Filled, Color);
+end;
+
 procedure PaintTileItem(const Canvas: TCanvas; Item: TItemViewItem; Mode: TItemViewMode; const Cell: TRectangle;
   const State: TItemPaintState; const TileColumns: array of LongInt);
 var
@@ -449,6 +470,7 @@ var
   LineHeight: LongInt;
   Index: LongInt;
   Line: TRectangle;
+  Top: LongInt;
 begin
   PaintBackground(Canvas, InflateRectangle(Cell, -Scaled(1)), State);
   PaintCheck(Canvas, Mode, Cell, State);
@@ -457,9 +479,16 @@ begin
   LineHeight := TextHeight(ControlFace);
   if not State.NameHidden then
     DrawTextInBox(Canvas, ControlFace, Item.Caption, NameBox, AlignTextLeft, TextColorFor(State, Item.Dimmed));
+  Top := NameBox.Bottom;
+  if Item.Meter >= 0 then
+  begin
+    PaintMeter(Canvas, MakeRectangle(NameBox.Left, Top + Scaled(2), RectangleWidth(NameBox), Scaled(MeterHeight)),
+      Item.Meter);
+    Top := Top + Scaled(MeterHeight + 4);
+  end;
   for Index := 0 to High(TileColumns) do
   begin
-    Line := MakeRectangle(NameBox.Left, NameBox.Bottom + Index * LineHeight, RectangleWidth(NameBox), LineHeight);
+    Line := MakeRectangle(NameBox.Left, Top + Index * LineHeight, RectangleWidth(NameBox), LineHeight);
     DrawTextInBox(Canvas, ControlFace, Item.Cells[TileColumns[Index]], Line, AlignTextLeft, QuieterColorFor(State));
   end;
   if State.Focused then
