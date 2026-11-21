@@ -1771,7 +1771,8 @@ type_on_serial(('/app/browser/browser file:///tmp/pa.html http://10.0.2.2:' + st
                 '/hang.html file:///tmp/pb.html > /tmp/procs.log 2>&1 &\r').encode())
 time.sleep(14)
 processes_from = len(received)
-type_on_serial(b'm=DONE; echo RENDERERS $(ps | grep -c /bin/webcontent) $m\r')
+# (pgrep never counts itself; ps | grep counted the grep too.)
+type_on_serial(b'm=DONE; echo RENDERERS $(pgrep -c webcontent) $m\r')
 wait_for('RENDERERS', 10)
 processes_two = re.search(rb'RENDERERS 2 DONE', bytes(received[processes_from:])) is not None
 # The served tab is the last (the third address opened after the first).
@@ -1899,11 +1900,12 @@ def files_log(marker):
     return files_log_text
 
 
-def wait_for_files_log(texts, seconds):
+def wait_for_files_log(texts, seconds, since=None):
     # The log until every text has come since the last look (the log
-    # only grows, so what is past the last look's length is new):
-    # operations run in the background, and under TCG take a while.
-    seen = len(files_log_text)
+    # only grows, so what is past the last look's length is new), or
+    # since the length given: operations run in the background, and
+    # under TCG take a while.
+    seen = len(files_log_text) if since is None else since
     deadline = time.time() + seconds
     attempt = 0
     while time.time() < deadline:
@@ -2122,10 +2124,14 @@ if zipped_ok:
     double_click_at(*places()['item-tree.zip'])
     zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1', 'place item-tree'], 20)
 if zipped_ok:
+    # Up again, the archive selected (Up selects the folder it came
+    # from, which shows Extract all at once; a click on it then changes
+    # nothing, so its place may already have come with the folder).
+    up_from = len(files_log_text)
     press('alt-up')
     wait_for_files_log(['folder /tmp/fm '], 15)
     click_at(*places()['item-tree.zip'])
-    if wait_for_files_log(['place command-extract'], 15):
+    if wait_for_files_log(['place command-extract'], 15, since=up_from):
         click_at(*places()['command-extract'])
         if wait_for_files_log(['extract-dialog /tmp/fm/tree', 'place extract-go'], 15):
             click_at(*places()['extract-go'])
@@ -2919,9 +2925,21 @@ checks.append(('no heap check failed' + ''.join('\n    ' + report.decode(errors=
                                                  for report in heap_reports),
                not heap_reports))
 
-# A program that dies of an exception prints it on the console; no
-# check here makes one do that on purpose.
-crash_reports = re.findall(rb'An unhandled exception occurred[^\r\n]*\r?\n[^\r\n]*', bytes(received))
+# A program that dies of an exception prints it on the console. One
+# check makes one do that on purpose: about:crash crashes the renderer
+# of the browser's local pages (its report, in the browser's log, comes
+# right after "go about:crash" and starts in webcontent); that one is
+# left out, and nothing else.
+def is_deliberate_crash(match):
+    before = bytes(received[max(0, match.start() - 200):match.start()])
+    first_frame = bytes(received[match.end():match.end() + 100])
+    return before.rstrip().endswith(b'go about:crash') and \
+        re.match(rb'\r?\n\s*\$[0-9A-F]+\s+webcontent\+\$', first_frame) is not None
+
+
+crash_matches = list(re.finditer(rb'An unhandled exception occurred[^\r\n]*\r?\n[^\r\n]*', bytes(received)))
+deliberate = [match for match in crash_matches if is_deliberate_crash(match)][:1]
+crash_reports = [match.group(0) for match in crash_matches if match not in deliberate]
 checks.append(('no program died of an unhandled exception' +
                ''.join('\n    ' + report.decode(errors='replace').replace('\r', '').replace('\n', ' ')
                        for report in crash_reports),
