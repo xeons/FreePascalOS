@@ -131,8 +131,9 @@ type
     constructor Create(const TypeName: string; CanBubble: Boolean = False; IsCancelable: Boolean = False);
     destructor Destroy; override;
     { References: the creator holds the first; Release frees the event at
-      the last (the script bindings hold one per wrapper). Free still
-      works for an event nothing else holds. }
+      the last (the script bindings hold one per wrapper). Native code
+      always releases an event it dispatched, never frees it: a listener
+      may have made a wrapper that outlives the dispatch. }
     procedure Retain;
     procedure Release;
     procedure StopPropagation;

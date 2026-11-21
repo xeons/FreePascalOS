@@ -485,7 +485,7 @@ begin
     FWindow.DispatchEvent(Event);
     Asked := Event.DefaultPrevented or (Event.UnloadReturnValue <> '');
   finally
-    Event.Free;
+    Event.Release;
   end;
   if Asked and (FObserver <> nil) then
     Result := FObserver.ConfirmUnload(Self);
