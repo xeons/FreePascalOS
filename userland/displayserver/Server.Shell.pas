@@ -138,6 +138,8 @@ begin
     Result := Result or ShellWindowMaximized;
   if (Window.Flags and WindowResizable) <> 0 then
     Result := Result or ShellWindowResizable;
+  if Window.NotResponding then
+    Result := Result or ShellWindowNotResponding;
 end;
 
 procedure TellWindowGone(Window: TServerWindow);

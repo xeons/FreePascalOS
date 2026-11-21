@@ -53,6 +53,9 @@ uses
   Windowing.Protocol,
   Server.Screen;
 
+const
+  { After the title of a window whose program does not respond. }
+  NotRespondingTitleSuffix = ' (Not responding)';
 
 type
   { A rectangle of a client area with a pointer shape of its own. }
@@ -67,6 +70,9 @@ type
     Id: LongWord;
     { The program that made it (a TClient, Server.Clients). }
     Client: TObject;
+    { Its program has stopped answering pings (Server.Responsiveness):
+      NotRespondingTitleSuffix follows the title. }
+    NotResponding: Boolean;
     { The window it belongs to, kept above (nil: none). }
     OwnerWindow: TServerWindow;
     Flags: LongWord;

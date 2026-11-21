@@ -90,7 +90,8 @@ uses
   Server.PointerPictures,
   Server.RememberedSettings,
   Server.LiveSettings,
-  Server.WindowMoves;
+  Server.WindowMoves,
+  Server.Responsiveness;
 
 const
   Usage: PChar = 'Usage: displayserver [--check-moves]'#10 +
@@ -102,6 +103,16 @@ var
   Error: LongInt;
   PointerFilesRead: LongInt;
   PointerPicturesRead: LongInt;
+
+{ The shorter of two waits (InfiniteWait is the longest). }
+function SoonerWaitTime(First, Second: Int64): Int64;
+begin
+  if First = InfiniteWait then
+    Exit(Second);
+  if (Second = InfiniteWait) or (First < Second) then
+    Exit(First);
+  Result := Second;
+end;
 
 procedure ServeForever;
 var
@@ -122,7 +133,7 @@ begin
     end;
     ClientsEnd := Count;
     AddSettingsHandles(Handles, Count);
-    Ready := WaitForHandles(Slice(Handles, Count), SettingsWaitTime);
+    Ready := WaitForHandles(Slice(Handles, Count), SoonerWaitTime(SettingsWaitTime, ResponsivenessWaitTime));
     if Ready = 0 then
       ProcessInput
     else if Ready = 1 then
@@ -134,6 +145,7 @@ begin
     else if Ready = -ErrorInterrupted then
       Break;
     DeliverSettingsChanges;
+    CheckClientsResponding;
     TellShellAboutWindows;
     RefreshPointerShape;
     Compose;

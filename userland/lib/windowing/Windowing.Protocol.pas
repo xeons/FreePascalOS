@@ -130,7 +130,8 @@ const
 
   { --- Requests: program to server ------------------------------------- }
 
-  { Value: ProtocolVersion. Answered by EventWelcome. }
+  { Value: ProtocolVersion; Flags: HelloAnswersPings if the program
+    answers EventPing from its message loop. Answered by EventWelcome. }
   RequestHello = 1;
   { Left, Top: where (logical units, the client area's top left);
     SurfaceWidth, SurfaceHeight: the client area's size in pixels; Flags:
@@ -321,6 +322,10 @@ const
     Code: what the drop does (a DropEffect*, 0: refused). The window the
     drag came from hears it (EventDragFinished). }
   RequestFinishDrop = 36;
+  { Window 0; Value: the number of the EventPing answered. Sent by the
+    message loop, so an answer means the program still serves its
+    windows. }
+  RequestAnswerPing = 46;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -466,6 +471,14 @@ const
     file); Handle: a section of Width x Height pixels (blue, green, red,
     alpha), the program's to close. }
   EventWindowIconDescribed = 142;
+  { Window 0; Value: a number for RequestAnswerPing to give back. Sent
+    now and then to programs that said they answer (HelloAnswersPings):
+    one that has not answered for a while is not responding (its
+    windows' titles say so, ShellWindowNotResponding). }
+  EventPing = 143;
+
+  { RequestHello's Flags. }
+  HelloAnswersPings = $01;
 
   DisplayExists = $01;
   DisplayModeCurrent = $01;
@@ -551,6 +564,9 @@ const
   ShellWindowActive = $04;
   ShellWindowMaximized = $08;
   ShellWindowResizable = $10;
+  { Its program has not answered the server's EventPing for a while: it
+    has stopped serving its windows (busy or stuck). }
+  ShellWindowNotResponding = $20;
 
   { What a notification icon shows (drawn by the shell; a click on a
     volume picture opens the shell's volume control, on a network
