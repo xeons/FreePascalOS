@@ -965,7 +965,8 @@ const
   ProcessHandleLimitCeiling = 65536;
   { The most pages a process may have committed (heap, stacks, thread
     data, committed reservations, writable images and copy on write file
-    mappings); 0, the default, is no limit. }
+    mappings); 0, the default, is no limit. Once there is a limit, only
+    root may raise it or take it away. }
   ProcessLimitCommit = 3;
 
   { Protections (CallCommitMemory, CallProtectMemory, TAbiMemoryInformation). }

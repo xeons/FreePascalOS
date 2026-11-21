@@ -389,7 +389,7 @@ var
   Taken: PMappedFile;
   Next: PMappedFile;
 begin
-  if PendingReleases = nil then
+  if (PendingReleases = nil) or (CurrentPriorityLevel <> PassiveLevel) then
     Exit;
   PreviousLevel := AcquireSpinLock(PendingLock);
   Taken := PendingReleases;
