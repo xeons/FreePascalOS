@@ -62,6 +62,7 @@ program WebBrowse;
 uses
   cthreads,
   SysUtils,
+  Web.Bindings.Context,
   WebBrowse.Session;
 
 var
@@ -150,5 +151,9 @@ begin
   end;
   if Options.Url = '' then
     Usage;
+  { JS_GC_STRESS: the script engines collect every 16 KiB (finds values
+    the collector does not see). }
+  if GetEnvironmentVariable('JS_GC_STRESS') <> '' then
+    ContextHeapThreshold := 16 * 1024;
   Halt(RunBrowse(Options));
 end.

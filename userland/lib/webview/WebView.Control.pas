@@ -194,6 +194,8 @@ type
     FFocusValue: string;
     { Hears the document's focus changes (script's focus() too). }
     FDocumentObserver: TDocumentObserver;
+    { Script's layout questions (getBoundingClientRect ...). }
+    FScriptLayout: TObject;
     { The character each key typed when pressed (keyup's key). }
     FKeyCharacters: array[0..511] of LongWord;
     FPressedLink: TElement;
@@ -287,6 +289,8 @@ type
     procedure ActivateLink(Link: TElement; Disposition: TLinkDisposition);
     function DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
     procedure SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+    { Script scrolled the viewport or a scroll container. }
+    procedure ScriptScrolled;
     { The document's focus moved to Element (nil: the viewport). }
     procedure FocusMoved(Element: TElement);
     { A KeyboardEvent at the focused element (or the body); False when the
@@ -444,7 +448,8 @@ uses
   WebView.Zoom,
   WebView.Forms,
   WebView.KeyNames,
-  WebView.TextEditing;
+  WebView.TextEditing,
+  Web.Script.Layout;
 
 type
   { The view's ear on its document. }

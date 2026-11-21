@@ -532,15 +532,17 @@ begin
       TEvent(Native).ScriptWrapper := nil;
       TEvent(Native).Release;
     end
-    else
+    else if (WrapperFlags and WrapperOwnsNative) <> 0 then
     begin
+      { Only owned natives are looked at: one a node owns may be gone
+        already when the heap is freed whole (its node's wrapper went
+        first). Standalone event targets are owned by their wrappers. }
       if Native is TStandaloneEventTarget then
       begin
         TStandaloneEventTarget(Native).ScriptWrapper := nil;
         DisableListeners(TStandaloneEventTarget(Native).Listeners, Context);
       end;
-      if (WrapperFlags and WrapperOwnsNative) <> 0 then
-        Native.Free;
+      Native.Free;
     end;
     NativeData := nil;
   end;

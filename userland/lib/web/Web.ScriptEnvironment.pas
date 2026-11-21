@@ -118,8 +118,34 @@ type
     procedure Finished(Success: Boolean; const ErrorText: string); virtual; abstract;
   end;
 
+  { What script asks of the layout (CSSOM View, getComputedStyle), in
+    CSS pixels; whoever lays the document out answers (the web view),
+    bringing its layout up to date first. Positions are in the
+    document's coordinates (the initial containing block's origin). }
+  TScriptLayout = class
+  public
+    { The border box of Element (the union of its fragments); False when
+      it has no box. }
+    function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; virtual; abstract;
+    { The border widths (clientLeft, clientTop), the padding box's size
+      less scroll bars (clientWidth, clientHeight), the scrollable
+      overflow's size and the scroll offset. }
+    function ScrollGeometry(Element: TElement; out ClientLeft, ClientTop, ClientWidth, ClientHeight, ScrollWidth,
+      ScrollHeight, ScrollLeft, ScrollTop: Double): Boolean; virtual; abstract;
+    { Element nil: the viewport. }
+    procedure ScrollTo(Element: TElement; Left, Top: Double); virtual; abstract;
+    procedure ViewportScroll(out Left, Top: Double); virtual; abstract;
+    { The topmost element at a point of the viewport, nil if none. }
+    function ElementAtPoint(X, Y: Double): TElement; virtual; abstract;
+    { The computed value of a property ('' when the element is not
+      rendered and has no style). }
+    function ComputedValue(Element: TElement; const PropertyName: string): string; virtual; abstract;
+  end;
+
   TScriptEnvironment = class
   public
+    { The layout's answers (nil: elements have no boxes). }
+    Layout: TScriptLayout;
     { Timers: StartTimer asks for Context.FireTimer(TimerId) after
       Milliseconds (again every Milliseconds when Repeating, until
       StopTimer). Context is the TScriptContext. }

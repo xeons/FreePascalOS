@@ -61,6 +61,7 @@ uses
   Web.Storage,
   Web.ScriptEnvironment,
   Web.Script.PageFetch,
+  Web.Script.Layout,
   Js.Engine,
   Web.Bindings.Context,
   Web.Script.Context,

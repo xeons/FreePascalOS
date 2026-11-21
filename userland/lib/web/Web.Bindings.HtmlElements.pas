@@ -445,30 +445,6 @@ begin
   Result := Nothing;
 end;
 
-function HTMLElement_get_offsetParent(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsNull;
-end;
-
-function HTMLElement_get_offsetTop(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetLeft(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetWidth(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetHeight(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
 
 { HTMLHyperlinkElementUtils: the URL of the href attribute. }
 

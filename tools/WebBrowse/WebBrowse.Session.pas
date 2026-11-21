@@ -84,6 +84,7 @@ uses
   Image.StandardCodecs,
   Js.Engine,
   Js.Values,
+  Web.Script.Layout,
   Web.Dom,
   Web.Html.Serializer,
   Web.Fetch.NetworkContexts,
@@ -123,6 +124,7 @@ type
     FLog: TNetworkLog;
     FDocument: TDocument;
     FLayout: TDocumentLayout;
+    FScriptLayout: TDocumentScriptLayout;
     { Frames paint the viewport here as the web view does (url() images
       are asked for when the display list is built). }
     FFramePainter: TDocumentPainter;
@@ -215,6 +217,8 @@ begin
   FSink.SetViewport(Options.Width, Options.Height, Options.Scale);
   FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
   FExecutor.Environment.UserAgentText := UserAgentText;
+  FScriptLayout := TDocumentScriptLayout.Create;
+  FExecutor.Environment.Layout := FScriptLayout;
   FExecutor.OnConsoleMessage := @ConsoleMessage;
   if Options.Scripting then
     FPage.Navigable.Executor := FExecutor;
@@ -238,6 +242,7 @@ begin
   ReleaseDocument;
   FPage.Free;
   FExecutor.Free;
+  FScriptLayout.Free;
   FSink.Free;
   FNetwork.Free;
   FLog.Free;
@@ -264,6 +269,11 @@ end;
 
 procedure TBrowseSession.ReleaseDocument;
 begin
+  if FScriptLayout <> nil then
+  begin
+    FScriptLayout.Layout := nil;
+    FScriptLayout.Painter := nil;
+  end;
   FreeAndNil(FFramePainter);
   FreeAndNil(FLayout);
   if FDocument <> nil then
@@ -289,6 +299,11 @@ begin
   FFramePainter := TDocumentPainter.Create(FLayout);
   FPaintedVersion := High(LongWord);
   FLayout.SetViewport(FOptions.Width, FOptions.Height, FOptions.Scale);
+  if FScriptLayout <> nil then
+  begin
+    FScriptLayout.Layout := FLayout;
+    FScriptLayout.Painter := FFramePainter;
+  end;
 end;
 
 { What the web view does on its frame timer. }

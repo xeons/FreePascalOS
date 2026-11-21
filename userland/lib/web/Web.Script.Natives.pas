@@ -60,6 +60,10 @@ uses
   Js.Engine,
   Css.MediaQueries,
   Css.Supports,
+  Css.PropertyIds,
+  Css.Properties,
+  Web.Dom,
+  Web.Bindings.Types,
   Crypto.Digests,
   Crypto.Random,
   Web.Storage,
@@ -300,6 +304,111 @@ begin
   Result := JsObjectValue(Realm.GlobalObject);
 end;
 
+{ Layout (CSSOM View): the environment's TScriptLayout answers. }
+
+function ElementArgument(Context: TBindingContext; Args: PJsValueArray; ArgCount, Index: Integer): TElement;
+begin
+  Result := TElement(Context.Unwrap(Arg(Args, ArgCount, Index), InterfaceElement));
+end;
+
+function NumberArray(Context: TBindingContext; const Values: array of Double): TJsValue;
+var
+  Items: array of TJsValue;
+  Index: Integer;
+begin
+  Items := nil;
+  SetLength(Items, Length(Values));
+  for Index := 0 to High(Values) do
+    Items[Index] := JsNumber(Values[Index]);
+  Result := Context.NewArray(Items);
+end;
+
+function NativeElementBox(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Element: TElement;
+  X, Y, Width, Height: Double;
+begin
+  Element := ElementArgument(Context, Args, ArgCount, 0);
+  if (Element = nil) or (Context.Environment.Layout = nil) or not Element.IsConnected or
+    not Context.Environment.Layout.BorderBox(Element, X, Y, Width, Height) then
+    Exit(JsNull);
+  Result := NumberArray(Context, [X, Y, Width, Height]);
+end;
+
+function NativeScrollGeometry(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Element: TElement;
+  Values: array[0..7] of Double;
+begin
+  Element := ElementArgument(Context, Args, ArgCount, 0);
+  if (Element = nil) or (Context.Environment.Layout = nil) or not Element.IsConnected or
+    not Context.Environment.Layout.ScrollGeometry(Element, Values[0], Values[1], Values[2], Values[3], Values[4],
+    Values[5], Values[6], Values[7]) then
+    Exit(JsNull);
+  Result := NumberArray(Context, Values);
+end;
+
+function NativeScrollTo(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  if Context.Environment.Layout <> nil then
+    Context.Environment.Layout.ScrollTo(ElementArgument(Context, Args, ArgCount, 0),
+      Context.Engine.ToNumber(Arg(Args, ArgCount, 1)), Context.Engine.ToNumber(Arg(Args, ArgCount, 2)));
+  Result := JsUndefined;
+end;
+
+function NativeViewportScroll(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Left, Top: Double;
+begin
+  Left := 0;
+  Top := 0;
+  if Context.Environment.Layout <> nil then
+    Context.Environment.Layout.ViewportScroll(Left, Top);
+  Result := NumberArray(Context, [Left, Top]);
+end;
+
+function NativeElementAtPoint(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Element: TElement;
+begin
+  if Context.Environment.Layout = nil then
+    Exit(JsNull);
+  Element := Context.Environment.Layout.ElementAtPoint(Context.Engine.ToNumber(Arg(Args, ArgCount, 0)),
+    Context.Engine.ToNumber(Arg(Args, ArgCount, 1)));
+  if (Element = nil) or (Element.NodeDocument <> Context.Document) then
+    Exit(JsNull);
+  Result := Context.WrapNode(Element);
+end;
+
+function NativeComputedValue(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Element: TElement;
+begin
+  Element := ElementArgument(Context, Args, ArgCount, 0);
+  if (Element = nil) or (Context.Environment.Layout = nil) then
+    Exit(Context.TextValue(''));
+  Result := Context.TextValue(Context.Environment.Layout.ComputedValue(Element, ArgText(Context, Args, ArgCount, 1)));
+end;
+
+function NativeComputedNames(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Names: array of string;
+  Id: TCssPropertyId;
+  Name: string;
+begin
+  Names := nil;
+  for Id := Succ(Low(TCssPropertyId)) to High(TCssPropertyId) do
+  begin
+    Name := PropertyName(Id);
+    if (Name <> '') and (Name[1] <> '-') then
+    begin
+      SetLength(Names, Length(Names) + 1);
+      Names[High(Names)] := Name;
+    end;
+  end;
+  Result := Context.StringArray(Names);
+end;
+
 function NativeDigest(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Name: string;
@@ -354,7 +463,7 @@ begin
 end;
 
 const
-  NativeCount = 20;
+  NativeCount = 27;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -375,8 +484,15 @@ const
     'randomFill',
     'beacon',
     'cssSupports',
-    'incumbentWindow');
-  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0);
+    'incumbentWindow',
+    'elementBox',
+    'scrollGeometry',
+    'scrollTo',
+    'viewportScroll',
+    'elementAtPoint',
+    'computedValue',
+    'computedNames');
+  NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -397,7 +513,14 @@ const
     @NativeRandomFill,
     @NativeBeacon,
     @NativeCssSupports,
-    @NativeIncumbentWindow);
+    @NativeIncumbentWindow,
+    @NativeElementBox,
+    @NativeScrollGeometry,
+    @NativeScrollTo,
+    @NativeViewportScroll,
+    @NativeElementAtPoint,
+    @NativeComputedValue,
+    @NativeComputedNames);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

@@ -31,6 +31,8 @@ begin
   FZoom := 1;
   FState := LoadingIdle;
   FSink := TLayoutResourceSink.Create;
+  FScriptLayout := TDocumentScriptLayout.Create;
+  TDocumentScriptLayout(FScriptLayout).OnScrolled := @ScriptScrolled;
   FTextIndex := TPageTextIndex.Create;
   FSelectionAnchor := TextPosition(-1, 0);
   FSelectionFocus := FSelectionAnchor;
@@ -66,12 +68,20 @@ begin
   FExecutor.Free;
   FObserver.Free;
   FSink.Free;
+  FScriptLayout.Free;
   FTextIndex.Free;
   FFavicon.Free;
   FSelectMenu.Free;
   FOwnMenu.Free;
   FreeSurface(FBacking);
   inherited Destroy;
+end;
+
+procedure TWebView.ScriptScrolled;
+begin
+  UpdateScrollBars;
+  InvalidateViewport;
+  RequestFrame;
 end;
 
 procedure TWebView.EnsurePage;
@@ -92,6 +102,7 @@ begin
     FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
     TPageScriptExecutor(FExecutor).Environment.UserAgentText := WebViewUserAgent;
     TPageScriptExecutor(FExecutor).Environment.LocalStorage := SharedLocalStorage;
+    TPageScriptExecutor(FExecutor).Environment.Layout := TDocumentScriptLayout(FScriptLayout);
     TPageScriptExecutor(FExecutor).OnAlert := @ScriptAlert;
     TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;
     TPageScriptExecutor(FExecutor).OnPrompt := @ScriptPrompt;
@@ -149,6 +160,8 @@ begin
   FTextIndexValid := False;
   FSelectionAnchor := TextPosition(-1, 0);
   FSelectionFocus := FSelectionAnchor;
+  TDocumentScriptLayout(FScriptLayout).Layout := nil;
+  TDocumentScriptLayout(FScriptLayout).Painter := nil;
   FreeAndNil(FPainter);
   FreeAndNil(FLayout);
   if (FDocument <> nil) and (FDocumentObserver <> nil) then
@@ -180,6 +193,8 @@ begin
   Document.AddObserver(FDocumentObserver);
   FLayout := TDocumentLayout.Create(Document);
   FPainter := TDocumentPainter.Create(FLayout);
+  TDocumentScriptLayout(FScriptLayout).Layout := FLayout;
+  TDocumentScriptLayout(FScriptLayout).Painter := FPainter;
   ApplyViewport;
   RequestFrame;
   InvalidateViewport;

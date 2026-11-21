@@ -48,11 +48,8 @@ interface HTMLElement : Element {
   [SameObject] readonly attribute DOMStringMap dataset;
   [SameObject, PutForwards=cssText] readonly attribute CSSStyleDeclaration style;
 
-  readonly attribute Element? offsetParent;
-  readonly attribute long offsetTop;
-  readonly attribute long offsetLeft;
-  readonly attribute long offsetWidth;
-  readonly attribute long offsetHeight;
+  // offsetParent, offsetTop, offsetLeft, offsetWidth and offsetHeight come
+  // from platform/70-geometry.js (the layout answers them).
 };
 HTMLElement includes GlobalEventHandlers;
 
