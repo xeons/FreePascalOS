@@ -879,7 +879,25 @@ addresses.
 Block devices are objects of type `BlockDevice`. All file system metadata
 and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
 device, evicts least recently used first, and lets callers read any byte
-range regardless of the device's block size.
+range regardless of the device's block size. Its size follows the memory
+there is (see "The block cache" under File systems).
+
+**Discarding.** A disk that can be told its blocks hold nothing says so
+(`TBlockDevice.SupportsDiscard`, `MaximumDiscardBlocks`), and
+`DiscardBlocks` sends it `IoFunctionDiscard` requests (whole blocks, at
+most 1 GiB each; a partition's are shifted onto its disk);
+`Io.BlockCache.DiscardDeviceRange` first forgets the cache lines lying
+wholly inside the range. NVMe controllers that report Dataset Management
+(ONCS bit 2) get a Dataset Management command with the deallocate
+attribute, one range each; AHCI disks reporting TRIM (IDENTIFY word 169)
+a DATA SET MANAGEMENT command with the TRIM feature, its ranges (up to
+64 of 65535 sectors) in a 512-byte block of the bounce buffer, run alone
+like a flush; virtio disks offering VIRTIO_BLK_F_DISCARD a discard
+request (header, one segment, status) of at most max_discard_sectors;
+and the RAM disk gives every page of the image wholly inside the range
+back to the page allocator (it keeps a table of its pages: a discarded
+one reads as zeros until a write gives it a fresh page). The disk
+statistics count discards and their bytes.
 
 ## The I/O manager: drivers, devices, requests
 
@@ -7233,12 +7251,53 @@ the open file while it runs, since another thread may close the handle
 during a long wait. The settings library takes its writers' lock this
 way (see "Settings").
 
-The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
+### The block cache
+
+**Size.** The block cache (`Io.BlockCache`, 4 KiB lines) starts at its
+minimum and takes a new line for a miss, instead of reusing the least
+recently used one, while it is below its maximum and twice the low
+watermark of memory is free (see "Memory pressure and running out"). By
+default the maximum is half the memory free when the cache starts and
+the minimum 4 MiB (a sixteenth of the free memory on a machine with very
+little, at least 256 KiB); the kernel options `blockcache=MIB`
+(maximum), `blockcachemin=MIB` and `blockcacheshare=PERCENT` change
+that, and the maximum stays below 90% of the free memory
+(`Io.BlockCacheSizing`, checked on the host by `CachePolicyTest`). Under
+memory pressure its shrinker gives clean lines back, least recently used
+first, down to the minimum; asked hard it writes the dirty ones back
+first. Line records come in chunks of 256 (`Io.BlockCacheLines`), a
+chunk freed once none of its records holds a page; the hash table is
+sized for the maximum. No kernel heap memory is allocated with the cache
+lock held, so an allocation that must reclaim never finds the cache
+locked by itself. None of the file systems relies on the cache's size:
+they hold lines only for the length of a call, and the ext journal keeps
+its own copies.
+
+**Pages for mappings.** `PinCachedPage` hands out a line's page itself,
+pinned and locked (for file mappings that page in through the cache): a
+mapping takes a reference to the physical page, and the cache never
+reuses a page someone else holds - such a line gets a fresh page and the
+cache drops its own reference.
+
+**Reports.** The kernel shell's `cache` shows the size, its bounds, the
+dirty lines, hits and misses with the hit rate, lines grown, given back
+and discarded; `CallGetBlockCacheStatistics` (169) gives the same as a
+`TAbiBlockCacheStatistics` (with the bytes the file systems queued for
+discarding and the disks were told to discard), which `free` and
+`sysinfo` ("Disk cache") show.
+
+The block cache writes back:
 
 - **Writes** only dirty a line. Dirty lines reach the disk when
   `FlushCachedDevice` is called (which then also sends the disk a flush),
   when the background writer (the `CacheWriter` thread) finds them dirty
-  for more than a second, or before their line is reused. Everything
+  for more than a second, before their line is reused, or when the
+  shrinker needs their memory. Dirty lines are kept on a list in the
+  order they became dirty, so the writer looks at no clean line, and a
+  flush writes only the lines dirty when it began (never waiting on
+  lines dirtied while it runs). A batch is one device's lines in
+  ascending order, which is also the order their locks are taken in.
+  Everything
   that needs data durable or ordered flushes: the ext journal around its
   commit blocks, exFAT after marking the volume dirty, syncing (including
   before `test-exit`), and raw disk access.
@@ -7250,6 +7309,36 @@ The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
   reuse never waits.
 - **Reading ahead.** Read misses on consecutive lines of a device read up
   to 16 more lines in the same request.
+
+### Discarding freed space
+
+When the ext, FAT or exFAT driver frees blocks or clusters it queues their
+byte range (`FileSystem.Discards`); ranges are batched per volume, merged
+when they touch (`FileSystem.DiscardRanges`, 128 a batch), and sent by
+the cache writer each round (about twice a second), when volumes are
+synced, and when a batch fills. A block must never be discarded while
+the disk could still name it in use after a crash, so a batch goes out
+only after the cache was flushed (the metadata that freed it is durable),
+and on a journaled ext volume a range waits until the transaction that
+freed it has committed (a failed transaction drops it). A block freed
+and allocated again before its discard went out must not be discarded:
+every allocation cancels its range first, under the volume's discard
+lock, which is held while a batch goes out (sending never takes a volume
+lock). Before the disk gets a range, the cache forgets the lines lying
+wholly inside it, dirty or not. Volumes discard if their disk can and
+the kernel option `discard=off` is not given (`TVolume.Discards` is nil
+otherwise).
+
+`fstrim [-v] MOUNTPOINT...` (`CallTrimVolume`, 168, root only;
+`FileSystem.Trim`) discards all of a volume's free space: with the
+volume locked, synced and the cache flushed, the driver walks its free
+space (`TFileSystemDriver.TrimFreeSpace`: the ext block bitmaps, groups
+whose bitmap is still uninitialized left alone; the FAT; the exFAT
+allocation bitmap) and every free run goes to the disk.
+`scripts/test-memory-pressure.sh` checks that the sparse image files of
+an NVMe disk (ext4, batched discards) and a virtio disk (FAT16, fstrim)
+attached with `discard=unmap` shrink back after a 24 MiB file was
+written and removed.
 
 ext volumes are mounted read-only if they use features the
 driver cannot keep consistent (bigalloc, quota, encryption, case folding,
@@ -7522,7 +7611,14 @@ Every process has a region limit and a handle limit (by default 65536
 regions and 16384 handles, at most 1048576 and 65536), inherited by the
 processes it starts. `CallSetProcessLimit(Limit, Value)` (131) changes
 the caller's (`ProcessLimitRegions`, `ProcessLimitHandles`; lowering is
-always allowed, raising above the default is root's) and
+always allowed, raising above the default is root's). Two more settings
+go through it, inherited the same way: `ProcessLimitProcesses` (4), the
+most processes the caller's real user may run at once when this process
+starts one (default 4096, at most 65536; root's are not counted; one too
+many fails with `ErrorWouldBlock`), and `ProcessLimitOomScoreAdjust` (5),
+how willingly the process is ended when memory runs out, passed as the
+adjustment plus `OomScoreAdjustOffset` (1000) so it is never negative
+(see "Memory pressure and running out"). And
 `CallGetProcessResources(ProcessId, Address)` (130) reports what a
 process holds as a `TAbiProcessResources`: regions, handles and threads
 against the limits, the regions' size and its committed, peak and
@@ -7832,6 +7928,66 @@ who sees whose command line. `burn` (threads spinning, memory taken
 and touched, `-i` to ignore requests to end) is the busy program the
 tests use.
 
+### Memory pressure and running out
+
+**Watermarks.** The page allocator (`Memory.PhysicalPages`) has a low
+and a critical watermark of free pages: 1/64 of RAM (at least 1 MiB, at
+most 64 MiB) and half of that. When an allocation leaves fewer free
+pages than the low one, or fails, it calls back once (until the pressure
+is acknowledged); every failed allocation is counted
+(`FailedPageAllocationCount`).
+
+**Shrinkers.** Caches register a shrinker with `Memory.Pressure`: the
+heap check quarantine (with `heapchecks`) and the block cache. The
+allocator's callback only queues a deferred call, which wakes the
+`MemoryPressure` system thread: it asks the shrinkers (gently, or hard
+below the critical watermark: dirty data written back first) until free
+memory is half the low watermark above it, and also looks once a second.
+A caller that needs a page now and may wait reclaims itself
+(`ReclaimMemory`): a kernel heap allocation that failed at passive level
+with interrupts on reclaims and tries once more before returning nil
+(kernel allocations fail cleanly, they never end a process), and so does
+a user page fault.
+
+**Running out** (`Processes.OutOfMemory`). A user page fault that found
+no page even after reclaiming chooses a process to end
+(`Processes.OutOfMemoryScores`): its score is its share of memory in
+thousandths - resident plus committed pages (`Processes.MemoryCharges`;
+the virtual memory calls feed commitments in through
+`SetCommitCounters`, until then a process is charged with what it has
+resident) - plus its adjustment (-1000 to 1000). The highest score goes,
+on equal scores the larger. Never chosen unless it is the culprit (the
+process whose fault failed): the initial program (the service manager),
+a process with the adjustment -1000 (the display server sets it on
+itself; lowering below 0 is root's), and one already being ended; the
+culprit goes if nobody else may. The chosen process is ended with exit
+status 137 (`ExitStatusOutOfMemory`), with a kernel log line ("Out of
+memory: ended NAME (PID), SIZE resident and committed, ...") and a
+`NotificationProcessEndedForMemory` (Value: its id) to every process
+that selected `NotifyProcessEndedForMemory`. If it is the culprit, its
+failing allocation ends it right there; any other faulting thread waits
+for it to end and its memory to come back, then tries again. While one
+chosen process is still ending (up to 5 s), no second one is chosen. The
+pressure thread calls the same policy (without a culprit) when memory
+stays critical while allocations keep failing. A fault taken by the
+kernel itself while copying for a system call fails instead (locks may
+be held).
+
+**Reports.** `CallGetMemoryPressure` (170) gives a `TAbiMemoryPressure`:
+the pages, free pages, watermarks, level, how often memory was short,
+the reclaim calls and pages they freed, failed allocations, the pages
+committed, and the processes ended (the last one's id and name). `free`
+shows the memory (total, used, free, cache, available), the cache and
+the pressure; the kernel shell's `mem` and `cache` the watermarks and
+counts. `memorytest cache` (a coretest line) reads /bin until the cache
+has grown, then has a hog take memory until it is short while reading
+on: the cache must give lines back, every read work and nobody be
+ended. `scripts/test-memory-pressure.sh` (in `make test`) boots a
+256 MiB guest with `memorytest` as the first program: a hog without end
+must be ended with 137 while a bystander and the system live on, and a
+small process with the adjustment 1000 must be ended before a hog;
+then the discards above.
+
 ### Processor exceptions
 
 A processor exception in user mode that the kernel does not resolve
@@ -7960,12 +8116,13 @@ caller's queue, ready while a notification waits. A program's message
 loop, a shell's prompt or a service's main wait simply includes it, and
 reads what came with `CallReceiveNotification` (92), a
 `TAbiNotification`: a kind, a reason, the sending process (0 for the
-system) and a value. Two kinds exist:
+system) and a value. Three kinds exist:
 
 | Kind | Reason / value | Sent by |
 |---|---|---|
 | end requested | asked, service stop, shutdown, log off, hang-up, interrupt | `CallRequestEnd`, the shutdown, a terminal's hang-up and Ctrl-C |
 | terminal resized | rows shl 16 or columns | `ControlSetConsoleSize` on the process's terminal, to its foreground group |
+| process ended for memory | the ended process's id | the out-of-memory policy, to every process that selected it |
 
 A process **selects** what it takes itself (`CallSelectNotifications`
 (91): a mask with a bit per end reason and one for the terminal's

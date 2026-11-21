@@ -37,8 +37,9 @@
                       of every thread
     threads           the user processes with their threads (id, state, priority, name)
     modules ID        a process's program and libraries: load bias, span, name
-    mem               physical memory, kernel heap and objects
-    cache             the block cache and the disks' statistics
+    mem               physical memory, memory pressure, kernel heap and objects
+    cache             the block cache (size, bounds, hit rate), memory pressure,
+                      the disks' statistics
     uptime            time since boot
     watchdog          the hardware watchdog: which, armed, timeout, pets
     suspend           suspends to RAM (ACPI S3) until woken
@@ -72,6 +73,7 @@ uses
   Io.Console,
   Io.BlockDevice,
   Io.BlockCache,
+  Memory.Pressure,
   FileSystem.Types,
   FileSystem.Volumes,
   FileSystem.Files,
@@ -437,12 +439,14 @@ begin
   else if TextIsEqual(@Command[0], 'mem') then
   begin
     WritePhysicalMemorySummary;
+    WriteMemoryPressureSummary;
     WriteKernelHeapSummary;
     WriteObjectManagerSummary;
   end
   else if TextIsEqual(@Command[0], 'cache') then
   begin
     WriteBlockCacheSummary;
+    WriteMemoryPressureSummary;
     WriteDiskStatistics;
   end
   else if TextIsEqual(@Command[0], 'netcards') then

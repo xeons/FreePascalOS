@@ -128,7 +128,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..403] of TCommandTest = (
+  CommandTests: array[0..405] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -710,7 +710,13 @@ const
     (Command: 'timetest > time.log; echo $?; grep FAIL time.log; tail -n 1 time.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Tickless idle: processors idle for 3 seconds take fewer than 5 clock
       interrupts a second each (100 with the old periodic tick). }
-    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0),
+    { free: the memory, the block cache and memory pressure. }
+    (Command: 'free | head -n 1 | tr -s " "; free -h | grep -c -e "^Mem: " -e "^Cache: " -e "^Pressure: none"'; ExpectedOutput: ' total used free cache available'#10'3'#10; ExpectedStatus: 0),
+    { The block cache under memory pressure (memorytest cache): it grows
+      as /bin is read, then gives lines back while a hog takes memory
+      until it is short, every read working meanwhile, nobody ended. }
+    (Command: 'memorytest cache > memory.log; echo $?; grep FAIL memory.log; tail -n 1 memory.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

@@ -116,6 +116,12 @@ how the existing pieces fit together.
       (CallGetProcessResources, CallSetProcessLimit), inherited by children
 - [x] Passing more handles than the standard three to a new process
       (ProcessPassHandles)
+- [x] Out-of-memory policy: the largest process by resident and committed pages ends
+      with 137 (OOM score adjustment, the initial program and adjustment -1000 spared
+      unless asking, kernel log and NotificationProcessEndedForMemory); per-user process
+      limit (ProcessLimitProcesses); CallGetMemoryPressure, free
+- [ ] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
+      the reserve/commit work)
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -251,6 +257,17 @@ how the existing pieces fit together.
   - [ ] USB Attached SCSI (UAS) for USB 3 disks
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead
+- [x] Block cache sized from RAM (blockcache=, blockcachemin=, blockcacheshare=): grows
+      on misses while memory is plentiful, gives lines back under memory pressure;
+      dirty list, page lookup for file mappings (PinCachedPage)
+- [x] Memory pressure: low and critical watermarks in the page allocator, shrinkers
+      (block cache, heap check quarantine), the MemoryPressure thread; the kernel heap
+      reclaims before failing
+- [x] Discard: NVMe Dataset Management, AHCI TRIM, virtio-blk DISCARD, the RAM disk
+      frees pages; ext/FAT/exFAT discard what they free (batched, after the metadata is
+      durable, ext after its commit; discard=off); fstrim (CallTrimVolume)
+- [ ] Discard on USB disks (SCSI UNMAP) and SD cards (ERASE); a nodiscard mount option
+      once mount options exist; shrinking the image section cache under pressure
 
 ## Network cards
 
