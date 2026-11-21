@@ -141,7 +141,9 @@ uses
   Controls.TabStrip,
   Controls.SuggestionList,
   Controls.BreadcrumbLayout,
-  Controls.BreadcrumbBar;
+  Controls.BreadcrumbBar,
+  Controls.CommandLayout,
+  Controls.CommandBar;
 
 implementation
 
