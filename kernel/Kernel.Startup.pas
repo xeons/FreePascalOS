@@ -105,6 +105,7 @@ uses
   Io.DeviceFiles,
   Kernel.IoSelfTest,
   Kernel.WatchdogSelfTest,
+  Kernel.PanicTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -326,6 +327,7 @@ begin
   StartAudioThreads;
   StartTerminalSignalHandler;
   StartHangWatch;
+  RunPanicTestIfAsked;
 
   RunKernelSelfTests;
   RunHeapCheckSelfTest;

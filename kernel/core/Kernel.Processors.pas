@@ -134,6 +134,8 @@ function CurrentProcessorIndex: LongWord;
 function CurrentProcessorIndexOrZero: LongWord;
 { Called once the boot processor's block is current. }
 procedure MarkProcessorBlocksReady;
+{ Whether the processor blocks are in place (CurrentProcessor works). }
+function ProcessorBlocksAreReady: Boolean;
 { Processors that have been started (online or about to be). }
 function ProcessorTotal: LongWord;
 function OnlineProcessorCount: LongWord;
@@ -196,6 +198,11 @@ end;
 function CurrentProcessorIndex: LongWord;
 begin
   Result := CurrentProcessor^.Index;
+end;
+
+function ProcessorBlocksAreReady: Boolean;
+begin
+  Result := BlocksAreReady;
 end;
 
 function CurrentProcessorIndexOrZero: LongWord;

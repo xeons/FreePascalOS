@@ -107,6 +107,7 @@ FPC ?= fpc
 LD ?= ld
 OBJCOPY ?= objcopy
 OBJDUMP ?= objdump
+NM ?= nm
 
 BUILD_DIRECTORY := build/$(ARCH)
 ESP_DIRECTORY := $(BUILD_DIRECTORY)/esp
@@ -128,6 +129,7 @@ else ifeq ($(ARCH),arm64)
   LD := $(CROSS_PREFIX)ld
   OBJCOPY := $(CROSS_PREFIX)objcopy
   OBJDUMP := $(CROSS_PREFIX)objdump
+  NM := $(CROSS_PREFIX)nm
   # Both are compiled for linux (AAPCS64, which is also the UEFI calling
   # convention on AArch64); the loader is linked as a position
   # independent ELF and converted to a PE image (see boot/uefi/arm64).
@@ -186,7 +188,9 @@ LOADER_FLAGS := $(COMMON_FLAGS) $(LOADER_TARGET) -WR -Xs \
 # -g      debug information (for GDB through QEMU)
 # -Cg-    no position independent code
 # -Cn     compile only, the kernel is linked with ld below
-KERNEL_FLAGS := $(COMMON_FLAGS) $(KERNEL_TARGET) -g -Cg- -Cn \
+# -OoNOSTACKFRAME  every routine keeps its frame pointer (RBP, X29), so
+#         a panic can walk the frames for its back trace
+KERNEL_FLAGS := $(COMMON_FLAGS) $(KERNEL_TARGET) -g -Cg- -Cn -OoNOSTACKFRAME \
 	-Fu$(RTL_KERNEL_DIRECTORY) $(addprefix -Fu,$(KERNEL_UNIT_DIRECTORIES)) \
 	-FU$(KERNEL_OBJECT_DIRECTORY)
 
@@ -221,7 +225,7 @@ $(RTL_LOADER_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
 	$(call build-rtl,$(RTL_LOADER_DIRECTORY),rtl/freestanding,$(LOADER_TARGET))
 
 $(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
-	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET))
+	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET) -OoNOSTACKFRAME)
 
 # --- Cross compiler ----------------------------------------------------------
 
@@ -282,12 +286,37 @@ $(KERNEL_OBJECT_DIRECTORY)/%.o: kernel/core/$(ARCH)/%.s
 	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
 	$(TARGET_AS) -o $@ $<
 
-$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
-	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
-	$(TARGET_FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+# The kernel's symbol table (scripts/make-kernel-symbols.py) for its back
+# traces: the kernel is linked with an empty table, the table is made
+# from that image's symbols, and the kernel is linked again with it. The
+# table goes after the code, which does not move (the script checks).
+KERNEL_SYMBOLS_DIRECTORY := $(BUILD_DIRECTORY)/kernel-symbols
+KERNEL_UNSYMBOLIZED_ELF := $(KERNEL_SYMBOLS_DIRECTORY)/kernel-unsymbolized.elf
+KERNEL_SYMBOL_SOURCES := $(KERNEL_UNIT_DIRECTORIES) rtl/freestanding rtl/common
+# Compiler options are not part of what Free Pascal checks to decide
+# whether a unit is up to date: when they change, every unit is compiled
+# again.
+KERNEL_FLAGS_STAMP := $(KERNEL_OBJECT_DIRECTORY)/flags.stamp
+
+define link-kernel
 	$(LD) -nostdlib -static --gc-sections -z max-page-size=4096 \
-		-T $(KERNEL_LINKER_SCRIPT) -o $@ \
-		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o
+		-T $(KERNEL_LINKER_SCRIPT) -o $(1) \
+		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o $(2)
+endef
+
+$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
+	@mkdir -p $(KERNEL_OBJECT_DIRECTORY) $(KERNEL_SYMBOLS_DIRECTORY)
+	@if [ "$$(cat $(KERNEL_FLAGS_STAMP) 2> /dev/null)" != "$(KERNEL_FLAGS)" ]; then \
+		rm -f $(KERNEL_OBJECT_DIRECTORY)/*.ppu; echo "$(KERNEL_FLAGS)" > $(KERNEL_FLAGS_STAMP); fi
+	$(TARGET_FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+	python3 scripts/make-kernel-symbols.py --empty $(KERNEL_SYMBOLS_DIRECTORY)/empty.s
+	$(TARGET_AS) -o $(KERNEL_SYMBOLS_DIRECTORY)/empty.o $(KERNEL_SYMBOLS_DIRECTORY)/empty.s
+	$(call link-kernel,$(KERNEL_UNSYMBOLIZED_ELF),$(KERNEL_SYMBOLS_DIRECTORY)/empty.o)
+	python3 scripts/make-kernel-symbols.py --nm $(NM) $(addprefix --source ,$(KERNEL_SYMBOL_SOURCES)) \
+		$(KERNEL_UNSYMBOLIZED_ELF) $(KERNEL_SYMBOLS_DIRECTORY)/symbols.s
+	$(TARGET_AS) -o $(KERNEL_SYMBOLS_DIRECTORY)/symbols.o $(KERNEL_SYMBOLS_DIRECTORY)/symbols.s
+	$(call link-kernel,$@,$(KERNEL_SYMBOLS_DIRECTORY)/symbols.o)
+	python3 scripts/make-kernel-symbols.py --nm $(NM) --verify $(KERNEL_UNSYMBOLIZED_ELF) $@
 	@$(MAKE) --no-print-directory check-kernel
 
 # The kernel does not save floating point / SIMD registers on interrupts or
