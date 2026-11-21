@@ -36,7 +36,8 @@ implementation
 
 uses
   SysUtils, TestChecks, Web.Dom, Web.Atoms, Web.Html.Serializer, Web.Layout.Document, Web.Layout.Dump,
-  Web.Layout.Dispatch, Web.Layout.Boxes, Web.Paint.Painter, Css.ElementAdapter, WebLayoutTest.Pages;
+  Web.Layout.Dispatch, Web.Layout.Boxes, Web.Layout.Resources, Web.Paint.Painter, Css.ElementAdapter, Css.Parser,
+  Css.Stylesheets, WebLayoutTest.Pages;
 
 const
   DynamicPage =
@@ -155,6 +156,22 @@ begin
     CheckSame(Layout, Document, 'hover gone');
     Layout.SetViewport(320, 600, 1);
     CheckSame(Layout, Document, 'narrower viewport');
+  finally
+    FreeLayout(Layout, Document);
+    Document := nil;
+  end;
+  { A linked sheet that arrives after the first layout makes layout due
+    (it applied only when something else changed: html.duckduckgo.com's
+    home stayed unstyled). }
+  Layout := LayoutText('<link id=sheet rel=stylesheet href=late.css><body><p id=late>text</p></body>', 600,
+    Document);
+  try
+    Check(not Layout.NeedsUpdate, 'incremental: nothing due before the sheet arrives');
+    Layout.Resources.SetElementStyleSheet(Document.GetElementById('sheet'),
+      ParseStyleSheet('#late { padding-top: 7px }', coAuthor, 'late.css'));
+    Check(Layout.NeedsUpdate, 'incremental: a sheet that arrived makes layout due');
+    Layout.Update;
+    Check(Layout.BoxOf(Document.GetElementById('late')).Padding[sideTop] = 7, 'incremental: the late sheet applies');
   finally
     FreeLayout(Layout, Document);
     Document := nil;

@@ -459,7 +459,7 @@ var
   Data: PNodeData;
 begin
   Data := ExistingNodeData(FDocument);
-  Result := FFullRebuild or FBoxesChanged or FLayoutDirty or (FRoot = nil) or
+  Result := FFullRebuild or FBoxesChanged or FLayoutDirty or (FRoot = nil) or FStyler.SheetsDirty or
     ((Data <> nil) and ((ndDescendantStyleDirty in Data^.Flags) or (ndDescendantBoxesDirty in Data^.Flags)));
   if (FRoot <> nil) and ([bfNeedsLayout, bfChildNeedsLayout] * FRoot.Flags <> []) then
     Result := True;
