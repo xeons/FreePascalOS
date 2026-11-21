@@ -46,7 +46,9 @@ const
   { (Length, Flags): Length bytes of fresh zeroed memory (whole pages);
     returns its address. Flags: 0, or AllocateForThread. }
   CallAllocateMemory = 17;
-  { (Address): frees memory from CallAllocateMemory or CallMapHandle. }
+  { (Address): frees memory from CallAllocateMemory, CallReserveMemory
+    (the whole reservation, committed or not) or CallMapHandle; Address
+    is the start the call returned. }
   CallFreeMemory = 18;
   CallCreateProcess = 19;
   CallWaitForProcess = 20;
@@ -175,11 +177,18 @@ const
   { (): suspends to RAM (ACPI S3) and returns once the machine woke: 0,
     or ErrorUnsupported (no S3), ErrorBusy. Root only. }
   CallSuspend = 71;
-  { (Handle, Offset, Length): maps Length bytes at Offset (page aligned)
-    of what Handle stands for into the program: a device offering memory
-    (/dev/display: the framebuffer). Returns the address; writable if the
-    handle was opened for writing. Unmapped with CallFreeMemory.
-    ErrorUnsupported if the handle has no memory to map. }
+  { (Handle, Offset, Length, Flags): maps Length bytes at Offset (page
+    aligned) of what Handle stands for into the program: a device
+    offering memory (/dev/display: the framebuffer; writable if the
+    handle was opened for writing, Flags ignored), a section, or a
+    regular file opened for reading (Length 0: to its end; Flags Map*:
+    read-only shared by default, MapPrivate for copy on write, which
+    MapWritable makes writable; MapExecutable). The file's pages are
+    read when first touched and shared with every other mapping of it
+    and with read(). A shared writable mapping is refused
+    (ErrorUnsupported: nothing writes pages back to files yet). Returns
+    the address. Unmapped with CallFreeMemory. ErrorUnsupported if the
+    handle has no memory to map. }
   CallMapHandle = 72;
 
   { --- Objects for programs that work together ---------------------------
@@ -322,6 +331,10 @@ const
     process was in its foreground group: Value is rows shl 16 or
     columns. Nothing happens for processes that do not select it. }
   NotificationTerminalResized = 2;
+  { A process was ended because memory ran out: Value is its id, the
+    sender 0 (the system). Sent to every process that selected it (a
+    desktop shows it). }
+  NotificationProcessEndedForMemory = 3;
 
   { Reasons of an end request (TAbiNotification.Reason). }
   { Someone asked (kill, the default). }
@@ -350,6 +363,7 @@ const
     a terminal: what a program with windows takes. }
   NotifyEndRequests = NotifyEndAsked or NotifyEndServiceStop or NotifyEndShutdown or NotifyEndLogOff;
   NotifyTerminalResized = $10000;
+  NotifyProcessEndedForMemory = $20000;
   NotifyEverything = NotifyEndRequests or NotifyEndHangUp or NotifyEndInterrupt or NotifyTerminalResized;
 
   { Targets of CallRequestEnd. }
@@ -467,6 +481,22 @@ const
     or for an unknown limit. Returns the previous value. }
   CallSetProcessLimit = 131;
 
+  { --- Semaphores (140-147) ---------------------------------------------- }
+
+  { (InitialCount, Limit): a new semaphore, a handle like an event's: a
+    count between 0 and Limit (1 to MaximumSemaphoreLimit). It is
+    signaled while the count is above zero, and a wait it ends
+    (CallWaitForHandles, alone, among others or with WaitForAll) takes
+    one. ErrorInvalidArgument for a count or limit out of range. }
+  CallCreateSemaphore = 140;
+  { (Handle, ReleaseCount): gives back ReleaseCount (at least 1),
+    releasing waiters in the order they came. Returns the count before;
+    ErrorOverflow (and no change) if the count would pass the limit. }
+  CallReleaseSemaphore = 141;
+  { (Handle): the semaphore's count now. }
+  CallGetSemaphoreCount = 142;
+  { 143-147: reserved for more synchronization objects. }
+
   { --- Crash reports ---------------------------------------------------- }
 
   { (BufferAddress, Capacity): the caller's loaded modules - the program
@@ -540,7 +570,96 @@ const
   CallListBatteries = 156;
   { 157-159 are kept for this group. }
 
-  CallCount = 160;
+  { --- Virtual memory (160-167) --------------------------------------------- }
+
+  { (Length, Flags): reserves Length bytes (whole pages) of address space
+    without memory; returns its address. Nothing there may be touched
+    until committed. Flags: 0. Freed, all of it, with CallFreeMemory. }
+  CallReserveMemory = 160;
+  { (Address, Length, Protection): commits the pages of [Address,
+    Address + Length), which must lie in one reservation or allocation,
+    with a Memory* protection: they are counted against the commit
+    limit (ErrorOutOfMemory past it) and filled with zeros when first
+    touched. Committed pages only get the new protection. }
+  CallCommitMemory = 161;
+  { (Address, Length): decommits those pages: their memory goes, they
+    stay reserved and may not be touched until committed again. }
+  CallDecommitMemory = 162;
+  { (Address, Length, Protection): changes the protection of committed
+    pages (of reservations, allocations and file mappings) and returns
+    the previous protection of the first. Writable and executable at
+    once is refused (ErrorAccessDenied), and so is executable without
+    MemoryPolicyAllowDynamicCode. }
+  CallProtectMemory = 163;
+  { (Address, InformationAddress): describes the address as a
+    TAbiMemoryInformation: the run of pages around it that are alike. }
+  CallQueryMemory = 164;
+  { (Flags): MemoryPolicy* for the calling process (not inherited);
+    returns the previous flags. }
+  CallSetMemoryPolicy = 165;
+  { 166-167 are kept for this group. }
+
+  { --- Memory pressure and storage -------------------------------------- }
+
+  { (PathAddress): discards all the free space of the volume holding the
+    path (fstrim): the disk is told that its free blocks hold nothing.
+    Root only (ErrorNotPermitted). Returns the bytes discarded;
+    ErrorUnsupported if the volume is read-only, its disk cannot discard
+    or its file system cannot walk its free space. }
+  CallTrimVolume = 168;
+  { (StatisticsAddress): the block cache as a TAbiBlockCacheStatistics.
+    Anyone may ask. }
+  CallGetBlockCacheStatistics = 169;
+  { (PressureAddress): free memory against its watermarks, what the
+    caches gave back and the processes ended for want of memory, as a
+    TAbiMemoryPressure. Anyone may ask. }
+  CallGetMemoryPressure = 170;
+  { 171 is kept for this group. }
+
+  { --- Mounting volumes and file times (172-175) -------------------------- }
+
+  { (RequestAddress): mounts a volume as a TAbiMountRequest says: a
+    disk partition (Source "/dev/disk1p2" or "disk1p2"), a volume on the
+    list (Source "/volumes/NAME") or a new memory volume (FileSystemType
+    "tmpfs"), at the directory Target, with the mount options of Options
+    ("ro,noexec,uid=1000,umask=022,size=64m", see FileSystem.MountOptions
+    in the kernel). A volume already on the list takes the new options
+    (a read-only one stays read-only) and is mounted at Target; an empty
+    Target only mounts it (at /volumes/NAME). Root only
+    (ErrorNotPermitted). ErrorInvalidArgument for an option it does not
+    know, ErrorNotFound for no such device or folder, ErrorBusy if the
+    volume is mounted at a directory already, something is mounted on
+    Target or the device's last volume still has open files,
+    ErrorUnsupported if no file system on the device is known. }
+  CallMountVolume = 172;
+  { (PathAddress, Flags): unmounts the volume mounted at Path (a mount
+    point, or /volumes/NAME): writes it back, takes it off /volumes and
+    from its directory. ErrorBusy while one of its files or folders is
+    open, a program works in it, or a volume is mounted on it, unless
+    Flags has UnmountForce (its open files then fail with ErrorNoDevice).
+    The system volume is never unmounted (ErrorBusy). Root only. }
+  CallUnmountVolume = 173;
+  { (Index, InformationAddress): the Index-th mounted volume (from 0; the
+    order of /volumes) as a TAbiMountInformation; returns 1, or 0 after
+    the last. Anyone may list them. }
+  CallListMounts = 174;
+  { (PathAddress or 0, Handle, Flags, TimesAddress): the four times of
+    the file at Path (or, with PathAddress 0, behind Handle) to the
+    nanosecond, as a TAbiFileTimes: what CallGetPathInformation gives in
+    whole seconds, and the time it was made (birth) where the file
+    system keeps it. Flags: FileTimesFollowLinks for Path. }
+  CallGetFileTimes = 175;
+
+  CallCount = 176;
+
+  { CallUnmountVolume flags. }
+  UnmountForce = $01;
+  { CallGetFileTimes flags. }
+  FileTimesFollowLinks = $01;
+  { TAbiFileTimes.Flags: the birth time is known. }
+  FileTimesHasBirthTime = $01;
+
+  AbiMountTextCapacity = 256;
 
   AbiModuleNameCapacity = 64;
 
@@ -599,6 +718,8 @@ const
   EventSignaled = $02;
   TimerManualReset = $01;
   MaximumWaitHandles = 64;
+  { The highest limit a semaphore may have. }
+  MaximumSemaphoreLimit = $7FFFFFFF;
   { CallWaitForHandles: every handle at once. }
   WaitForAll = $01;
   MaximumPortNameLength = 24;
@@ -612,6 +733,9 @@ const
 
   { Exit status of a process ended by an exception nobody dispatched. }
   ExitStatusException = 139;
+  { Exit status of a process ended because memory ran out (as by
+    SIGKILL). }
+  ExitStatusOutOfMemory = 137;
 
   { TAbiExceptionRecord.Code }
   ExceptionAccessViolation = 1;
@@ -627,6 +751,9 @@ const
   { The stack ran into its reserve; the reserve now holds the record and
     is armed again once the stack is well clear of it. }
   ExceptionStackOverflow = 11;
+  { The first touch of a guard page (MemoryGuard); the guard is gone
+    from that page now. The runtime raises it as an access violation. }
+  ExceptionGuardPage = 12;
   { TAbiExceptionRecord.Access for access violations }
   AccessKindRead = 0;
   AccessKindWrite = 1;
@@ -918,10 +1045,66 @@ const
     may have, by default and at most. }
   ProcessLimitRegions = 1;
   ProcessLimitHandles = 2;
+  { The most processes the caller's real user may run at once while
+    this process starts one (root's are not counted). Starting one more
+    fails with ErrorWouldBlock. }
+  ProcessLimitProcesses = 4;
+  { How willingly the process is ended when memory runs out, as the
+    adjustment plus OomScoreAdjustOffset (0 to 2000): the adjustment
+    (-1000 to 1000) is added to its share of memory in thousandths, so
+    1000 makes it the first chosen and -1000 never chosen unless it is
+    the one asking. Raising it is always allowed, lowering below the
+    default needs root. Inherited like the other limits. }
+  ProcessLimitOomScoreAdjust = 5;
+  OomScoreAdjustOffset = 1000;
+  OomScoreAdjustNever = -1000;
+  DefaultProcessCountLimit = 4096;
+  ProcessCountLimitCeiling = 65536;
   DefaultProcessRegionLimit = 65536;
   ProcessRegionLimitCeiling = 1048576;
   DefaultProcessHandleLimit = 16384;
   ProcessHandleLimitCeiling = 65536;
+  { The most pages a process may have committed (heap, stacks, thread
+    data, committed reservations, writable images and copy on write file
+    mappings); 0, the default, is no limit. Once there is a limit, only
+    root may raise it or take it away. }
+  ProcessLimitCommit = 3;
+
+  { Protections (CallCommitMemory, CallProtectMemory, TAbiMemoryInformation). }
+  MemoryNoAccess = 0;
+  MemoryRead = 1;
+  MemoryWrite = 2;
+  MemoryExecute = 4;
+  MemoryReadWrite = MemoryRead or MemoryWrite;
+  MemoryReadExecute = MemoryRead or MemoryExecute;
+  { With another protection: the first touch raises ExceptionGuardPage
+    and takes the guard off the page. }
+  MemoryGuard = $100;
+
+  { CallSetMemoryPolicy: memory may be made executable (CallProtectMemory
+    after writing code into it, as a compiler at run time does). }
+  MemoryPolicyAllowDynamicCode = $01;
+
+  { CallMapHandle's flags for files. }
+  MapPrivate = $01;
+  MapWritable = $02;
+  MapExecutable = $04;
+
+  { TAbiMemoryInformation.State. }
+  MemoryStateFree = 0;
+  MemoryStateReserved = 1;
+  MemoryStateCommitted = 2;
+
+  { TAbiMemoryInformation.Kind. }
+  MemoryKindNone = 0;
+  MemoryKindPrivate = 1;
+  MemoryKindImage = 2;
+  MemoryKindFileMapping = 3;
+  MemoryKindStack = 4;
+  MemoryKindThreadData = 5;
+  MemoryKindDevice = 6;
+  MemoryKindSection = 7;
+  MemoryKindStackGuard = 8;
 
   { Flags of TAbiProcessCreation. }
   { The new process leads a new session: it and the processes it starts
@@ -1030,6 +1213,8 @@ const
   ErrorHostUnreachable = 113;
   ErrorAlreadyInProgress = 114;
   ErrorInProgress = 115;
+  { A semaphore released past its limit. }
+  ErrorOverflow = 75;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -1081,6 +1266,7 @@ const
   HandleKindWatch = 13;
   { A network socket (Abi.Networking.inc). }
   HandleKindSocket = 14;
+  HandleKindSemaphore = 15;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -1312,6 +1498,62 @@ type
   end;
 
   { What CallGetProcessorPower gives. }
+  { What CallGetBlockCacheStatistics gives. }
+  TAbiBlockCacheStatistics = record
+    LineBytes: QWord;
+    { Lines now, the bounds it moves between, and the dirty ones. }
+    LineCount: QWord;
+    MinimumLines: QWord;
+    MaximumLines: QWord;
+    DirtyLines: QWord;
+    Hits: QWord;
+    Misses: QWord;
+    ReadAhead: QWord;
+    WrittenBack: QWord;
+    { Lines added as it grew, given back under memory pressure, and
+      forgotten because their blocks were discarded. }
+    LinesGrown: QWord;
+    LinesShrunk: QWord;
+    LinesDiscarded: QWord;
+    { What file systems freed and queued for discarding, and what the
+      disks were told to discard (fstrim included). }
+    BytesQueuedForDiscard: QWord;
+    BytesDiscarded: QWord;
+  end;
+  PAbiBlockCacheStatistics = ^TAbiBlockCacheStatistics;
+
+  { CallGetMemoryPressure: TAbiMemoryPressure.Level }
+const
+  AbiMemoryPressureNone = 0;
+  AbiMemoryPressureLow = 1;
+  AbiMemoryPressureCritical = 2;
+
+type
+  TAbiMemoryPressure = record
+    TotalPages: QWord;
+    FreePages: QWord;
+    { Fewer free pages than these: memory is short, very short. }
+    LowWatermarkPages: QWord;
+    CriticalWatermarkPages: QWord;
+    { AbiMemoryPressure*. }
+    Level: LongWord;
+    Reserved: LongWord;
+    { Times memory was found short, calls asking the caches for memory
+      and the pages they gave back, page allocations that failed. }
+    PressureEvents: QWord;
+    ReclaimCalls: QWord;
+    ReclaimedPages: QWord;
+    FailedAllocations: QWord;
+    { Pages promised to processes (resident plus committed, as far as
+      the kernel counts commitments). }
+    CommittedPages: QWord;
+    { Processes ended because memory ran out, and the last of them. }
+    ProcessesEnded: QWord;
+    LastEndedProcessId: QWord;
+    LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
+  end;
+  PAbiMemoryPressure = ^TAbiMemoryPressure;
+
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;
     ProcessorCount: LongWord;
@@ -1411,6 +1653,50 @@ type
   end;
   PAbiVolumeInformation = ^TAbiVolumeInformation;
 
+  { Arguments of CallMountVolume. }
+  TAbiMountRequest = record
+    { A device ("/dev/disk1p2", "disk1p2"), a volume ("/volumes/NAME") or
+      "tmpfs" (with that FileSystemType). }
+    Source: array[0..AbiMountTextCapacity - 1] of Char;
+    { The directory to mount at; empty: on /volumes only. }
+    Target: array[0..AbiMountTextCapacity - 1] of Char;
+    { Empty, or the type the volume must have ("tmpfs" makes one). }
+    FileSystemType: array[0..AbiTextCapacity - 1] of Char;
+    { Comma separated mount options. }
+    Options: array[0..AbiMountTextCapacity - 1] of Char;
+  end;
+  PAbiMountRequest = ^TAbiMountRequest;
+
+  { One mounted volume (CallListMounts). }
+  TAbiMountInformation = record
+    { The volume's name in /volumes ("disk1p2", "tmpfs1"). }
+    Name: array[0..AbiTextCapacity - 1] of Char;
+    { Its device ("/dev/disk1p2"), or the type for a memory volume. }
+    Source: array[0..AbiTextCapacity - 1] of Char;
+    FileSystemType: array[0..AbiTextCapacity - 1] of Char;
+    { Where the caller sees it: the mount point ("/tmp"), else
+      "/volumes/NAME" ("/" for the system volume). }
+    MountPoint: array[0..AbiMountTextCapacity - 1] of Char;
+    { Its options as mount lists them ("rw,nosuid,uid=1000,..."). }
+    Options: array[0..AbiMountTextCapacity - 1] of Char;
+    VolumeNumber: LongWord;
+    { Mounted at a directory (not only at /volumes). }
+    IsAtDirectory: LongWord;
+  end;
+  PAbiMountInformation = ^TAbiMountInformation;
+
+  { CallGetFileTimes. }
+  TAbiFileTimes = record
+    Access: TAbiPreciseTime;
+    Modification: TAbiPreciseTime;
+    Change: TAbiPreciseTime;
+    Birth: TAbiPreciseTime;
+    { FileTimesHasBirthTime. }
+    Flags: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiFileTimes = ^TAbiFileTimes;
+
   { One change record of a watch (CallReadWatch). The name follows the
     record, then (renames) the old name, each ended by a zero. }
   TAbiWatchRecord = record
@@ -1478,8 +1764,30 @@ type
     CommittedPages: QWord;
     PeakCommittedPages: QWord;
     SharedPages: QWord;
+    { The commit charge (pages it may come to use: see
+      ProcessLimitCommit) and its limit (0: none); the resident pages
+      of mapped files (programs, libraries, file mappings) that another
+      mapping maps too; the system's commit charge. }
+    CommitChargePages: QWord;
+    CommitLimitPages: QWord;
+    PagesMappedElsewhere: QWord;
+    SystemCommitChargePages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { What CallQueryMemory gives: the run of alike pages from BaseAddress
+    for Length bytes, in the allocation (reservation, mapping, image
+    segment run) starting at AllocationBase (0 when free). }
+  TAbiMemoryInformation = record
+    BaseAddress: QWord;
+    Length: QWord;
+    AllocationBase: QWord;
+    State: LongWord;
+    Protection: LongWord;
+    Kind: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiMemoryInformation = ^TAbiMemoryInformation;
 
   { One thread, as CallListThreads describes it. }
   TAbiThreadDetails = record

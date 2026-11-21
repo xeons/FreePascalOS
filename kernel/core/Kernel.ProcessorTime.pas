@@ -28,8 +28,8 @@
   counted in 10 ms ticks: a thread that runs in short bursts between
   ticks is charged what it ran, and one the tick always catches is not
   charged whole ticks it did not use. Reading a time adds the run going
-  on now, under the dispatcher lock, so a busy thread's time grows
-  smoothly.
+  on now, under the processor's scheduling lock (Kernel.ReadyQueues), so
+  a busy thread's time grows smoothly.
 
   How the run time divides between user mode and the kernel is sampled
   by the clock tick instead (UserTicks, KernelTicks: where the tick
@@ -55,7 +55,7 @@ type
   end;
   PThreadTimes = ^TThreadTimes;
 
-{ Part of a switch (dispatcher lock held): charges the time since the
+{ Part of a switch (the processor's scheduling lock held): charges the time since the
   running thread began running on Processor to it and to the processor,
   and times the next run from Now. }
 procedure ChargeRunningThreadLocked(Processor: PProcessor; Now: QWord);
@@ -81,7 +81,7 @@ implementation
 uses
   Kernel.PriorityLevel,
   Kernel.Clock,
-  Kernel.Scheduler;
+  Kernel.ReadyQueues;
 
 { Time from Since to Now, never negative: the counters of the processors
   run together, but one may read a few cycles behind another. }
@@ -129,15 +129,21 @@ var
   PreviousLevel: TPriorityLevel;
   Processor: PProcessor;
 begin
-  PreviousLevel := AcquireDispatcherLock;
-  Times.RunNanoseconds := Thread^.RunNanoseconds;
-  if Thread^.State = ThreadStateRunning then
+  { The processor it ran on last charges it when it switches away, and
+    knows since when it runs if it still does. }
+  Processor := ProcessorByIndex(Thread^.LastProcessorIndex);
+  if Processor = nil then
   begin
-    Processor := ProcessorByIndex(Thread^.LastProcessorIndex);
-    if (Processor <> nil) and (Processor^.RunningThread = Thread) then
-      Times.RunNanoseconds := Times.RunNanoseconds + ElapsedSince(Processor^.RunningSince, ClockNanoseconds);
+    Times.RunNanoseconds := Thread^.RunNanoseconds;
+    Times.UserTicks := Thread^.UserTicks;
+    Times.KernelTicks := Thread^.KernelTicks;
+    Exit;
   end;
-  ReleaseDispatcherLock(PreviousLevel);
+  PreviousLevel := LockProcessorAtDispatchLevel(Processor);
+  Times.RunNanoseconds := Thread^.RunNanoseconds;
+  if (Thread^.State = ThreadStateRunning) and (Processor^.RunningThread = Thread) then
+    Times.RunNanoseconds := Times.RunNanoseconds + ElapsedSince(Processor^.RunningSince, ClockNanoseconds);
+  UnlockProcessorAndLower(Processor, PreviousLevel);
   Times.UserTicks := Thread^.UserTicks;
   Times.KernelTicks := Thread^.KernelTicks;
 end;
@@ -177,7 +183,7 @@ begin
   Processor := ProcessorByIndex(Index);
   if (Processor = nil) or not Processor^.IsOnline then
     Exit;
-  PreviousLevel := AcquireDispatcherLock;
+  PreviousLevel := LockProcessorAtDispatchLevel(Processor);
   BusyNanoseconds := Processor^.BusyNanoseconds;
   IdleNanoseconds := Processor^.IdleNanoseconds;
   Current := ElapsedSince(Processor^.RunningSince, ClockNanoseconds);
@@ -185,7 +191,7 @@ begin
     IdleNanoseconds := IdleNanoseconds + Current
   else
     BusyNanoseconds := BusyNanoseconds + Current;
-  ReleaseDispatcherLock(PreviousLevel);
+  UnlockProcessorAndLower(Processor, PreviousLevel);
 end;
 
 end.

@@ -55,6 +55,26 @@
   (MappingDevice): unmapping it frees nothing. The program frees it like
   memory it allocated.
 
+  Run time allocations, reservations (Processes.VirtualMemory) and file
+  mappings may be split into several regions - pieces committed,
+  decommitted or given another protection apart from the rest
+  (Processes.RegionEditing) - all with the allocation's start as their
+  AllocationBase; freeing that start frees every piece. A page the
+  program may not touch (no access, a guard) stays mapped for the kernel
+  only (MappingNoAccess), so changing the protection back finds it.
+
+  File backed regions (images, file mappings: Backing, a TMappedFile of
+  Processes.MappedFiles) get their pages from the file's mapped pages
+  when first touched; reading a page the file has not read yet sleeps,
+  so the fault resolver leaves the spin lock for it and the touch is
+  tried again. Private ones map the pages copy on write.
+
+  Commit charge: the pages of private memory the space may come to use
+  (RegionChargePages: committed allocations, stacks, thread data,
+  writable images, writable private file mappings) are counted in
+  CommitChargePages, against CommitLimitPages (0: none), and in the
+  system's total (Memory.CommitCharge).
+
   A section (memory shared between processes, Objects.Sections) is
   mapped the same way, its pages mapped at once, each with a reference
   of its own: unmapping gives the references back, and the pages go once
@@ -129,6 +149,13 @@ type
     CommittedPages: QWord;
     SharedPages: QWord;
     PeakCommittedPages: QWord;
+    { The commit charge (see above), and its limit (0: none). }
+    CommitChargePages: QWord;
+    CommitLimitPages: QWord;
+    { Memory may be made executable after it was written
+      (CallSetMemoryPolicy); without it nothing but program images and
+      files mapped executable is. }
+    AllowsDynamicCode: Boolean;
     { The threads of a process share the space: region changes, page
       commits and lookups happen under this lock (held briefly, at
       dispatch level, so no thread is preempted halfway through). }
@@ -144,6 +171,8 @@ type
     PeakResidentPages: QWord;
     RegionCount: LongWord;
     RegionLimit: LongWord;
+    CommitChargePages: QWord;
+    CommitLimitPages: QWord;
   end;
 
 { All routines returning LongInt return 0 on success or an Abi error code. }
@@ -160,8 +189,21 @@ procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsa
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+{ Adds a region as Template describes it (file backed ones: the region
+  holds the caller's reference to the backing on success). }
+function AddRegionRecord(Space: PAddressSpace; const Template: TUserRegion): LongInt;
 { Changes the most regions Space may have (existing ones stay). }
 procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);
+{ Changes the most pages Space may have committed (0: no limit; what is
+  committed already stays). }
+procedure SetCommitLimit(Space: PAddressSpace; LimitPages: QWord);
+{ The space's commit charge, in pages (for a policy on running out of
+  memory, with Memory.CommitCharge's total). }
+function CommitChargeOf(Space: PAddressSpace): QWord;
+{ The resident pages of file backed regions that some other mapping
+  maps too (another process running the same program, say). Walks the
+  page tables: for diagnostics, not for every snapshot. }
+function CountPagesMappedElsewhere(Space: PAddressSpace): QWord;
 
 { Finds room for Length bytes at or above Base and below Limit. }
 function FindFreeRange(Space: PAddressSpace; Length: QWord; Base, Limit: QWord;
@@ -229,6 +271,13 @@ function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysical
 
 { Called on a page fault in user space; True if a page was provided. }
 function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
+{ The same, also telling whether the fault was the first touch of a
+  guard page (HitGuard; the guard is gone from the page then). }
+function ResolveUserPageFaultWithGuard(Space: PAddressSpace; Address: QWord; ErrorCode: QWord;
+  out HitGuard: Boolean): Boolean;
+{ Makes sure the page of a file backed region holding Address has been
+  read from its file (it may sleep). 0 or an Abi error. }
+function PageInBackedAddress(Space: PAddressSpace; Address: QWord): LongInt;
 
 { True if [Address, Address + Length) lies entirely in regions of Space,
   writable ones if NeedWrite is set. }
@@ -246,6 +295,36 @@ function ReadFromAddressSpace(Space: PAddressSpace; Address: QWord; Destination:
   long as nothing unmaps the page. }
 function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
 
+{ --- For Processes.VirtualMemory: the caller holds Space^.Lock --------- }
+
+function FindRegionLocked(Space: PAddressSpace; Address: QWord): PUserRegion;
+function FindRegionAtOrAboveLocked(Space: PAddressSpace; Address: QWord): PUserRegion;
+{ Room in the run time allocation area. }
+function FindAllocationRangeLocked(Space: PAddressSpace; Length, Hint: QWord; out Start: QWord): Boolean;
+{ Adds a region as Template describes it, charged (ErrorOutOfMemory
+  over the commit or region limit). On success the region holds the
+  reference to Template.Backing the caller had. }
+function AddRegionRecordLocked(Space: PAddressSpace; const Template: TUserRegion): LongInt;
+{ Removes the region starting at Start, or every piece of the
+  allocation starting there. False if there is none. }
+function RemoveAllocationLocked(Space: PAddressSpace; Start: QWord): Boolean;
+{ Cuts the region holding Address there (nothing if it starts there or
+  no region holds it). ErrorOutOfMemory over the region limit. }
+function SplitRegionLocked(Space: PAddressSpace; Address: QWord): LongInt;
+{ Joins alike pieces in and next to [First, Finish). }
+procedure MergeRegionsLocked(Space: PAddressSpace; First, Finish: QWord);
+{ The pages Region counts against the commit charge. }
+function RegionChargePages(const Region: TUserRegion): QWord;
+{ Counts Pages more against the charge; ErrorOutOfMemory over the
+  limit (nothing counted then). }
+function ChargeCommitLocked(Space: PAddressSpace; Pages: QWord): LongInt;
+procedure UnchargeCommitLocked(Space: PAddressSpace; Pages: QWord);
+{ Unmaps and gives back the pages of [Start, Start + Length). }
+procedure ReleaseRegionPagesLocked(Space: PAddressSpace; Start, Length: QWord);
+{ Maps the present pages of [Start, Start + Length), which lies in one
+  region, again with that region's protection. }
+procedure ApplyRegionProtectionLocked(Space: PAddressSpace; Start, Length: QWord);
+
 implementation
 
 uses
@@ -255,11 +334,20 @@ uses
   Kernel.PriorityLevel,
   Memory.PhysicalPages,
   Memory.KernelHeap,
-  Memory.Arch.PageTables;
+  Memory.CommitCharge,
+  Memory.Arch.PageTables,
+  Kernel.Arch.Cpu,
+  Processes.RegionEditing,
+  Processes.MappedFiles;
 
 const
   PageFaultWasPresent = 1;
   PageFaultWasWrite = 2;
+  PageFaultFromUser = 4;
+  PageFaultWasFetch = 16;
+  { PageInWindow: the page must be read from its file first, which the
+    caller does without the spin lock. }
+  PageInNeeded = -1;
 
 { --- Creation and destruction ---------------------------------------- }
 
@@ -270,9 +358,19 @@ begin
     Space^.PeakCommittedPages := Space^.CommittedPages;
 end;
 
+{ Gives a node up with the reference its region held to its backing
+  (Processes.MappedFiles defers the destruction at dispatch level). }
 procedure FreeRegionNode(Node: PRegionNode);
 begin
+  if Node^.Region.Backing <> nil then
+    ReleaseMappedFile(PMappedFile(Node^.Region.Backing), Node^.Region.BackingIsPrivate);
   FreeKernelMemory(Node);
+end;
+
+{ True if a thread may sleep here (reading a file's page). }
+function CanSleep: Boolean;
+begin
+  Result := (CurrentPriorityLevel = PassiveLevel) and InterruptsAreEnabled;
 end;
 
 type
@@ -327,7 +425,9 @@ begin
   { Every user page and page table is released along with the root. }
   DestroyAddressSpaceRoot(Space^.Root);
   ClearRegionTree(Space^.Regions, @FreeRegionNode);
+  ChangeSystemCommitCharge(-Int64(Space^.CommitChargePages));
   FreeKernelMemory(Space);
+  DrainMappedFileReleases;
 end;
 
 procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
@@ -341,7 +441,103 @@ begin
   Usage.PeakResidentPages := Space^.PeakCommittedPages;
   Usage.RegionCount := Space^.Regions.Count;
   Usage.RegionLimit := Space^.RegionLimit;
+  Usage.CommitChargePages := Space^.CommitChargePages;
+  Usage.CommitLimitPages := Space^.CommitLimitPages;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+procedure SetCommitLimit(Space: PAddressSpace; LimitPages: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Space^.CommitLimitPages := LimitPages;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function CommitChargeOf(Space: PAddressSpace): QWord;
+begin
+  Result := Space^.CommitChargePages;
+end;
+
+type
+  TElsewhereCount = record
+    Space: PAddressSpace;
+    Count: QWord;
+  end;
+  PElsewhereCount = ^TElsewhereCount;
+
+procedure CountRegionPagesMappedElsewhere(Region: PUserRegion; Context: Pointer);
+var
+  Counter: PElsewhereCount;
+  Offset: QWord;
+  Physical: TPhysicalAddress;
+begin
+  if Region^.Backing = nil then
+    Exit;
+  Counter := PElsewhereCount(Context);
+  Offset := 0;
+  while Offset < Region^.Length do
+  begin
+    { The mapped file holds one reference, this mapping another. }
+    if TranslateInAddressSpace(Counter^.Space^.Root, Region^.Start + Offset, Physical) and
+       (PageUsageOf(Physical) = PageUsageProgramImage) and (PhysicalPageHolderCount(Physical) >= 3) then
+      Inc(Counter^.Count);
+    Offset := Offset + PageSize;
+  end;
+end;
+
+function CountPagesMappedElsewhere(Space: PAddressSpace): QWord;
+var
+  PreviousLevel: TPriorityLevel;
+  Counter: TElsewhereCount;
+begin
+  Counter.Space := Space;
+  Counter.Count := 0;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  VisitRegions(Space^.Regions, @CountRegionPagesMappedElsewhere, @Counter);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  Result := Counter.Count;
+end;
+
+{ --- Commit charge ---------------------------------------------------- }
+
+function RegionChargePages(const Region: TUserRegion): QWord;
+var
+  Pages: QWord;
+begin
+  Pages := Region.Length div PageSize;
+  Result := 0;
+  case Region.Kind of
+    RegionKindAllocation, RegionKindStack, RegionKindThreadData:
+      if Region.CommitsOnDemand then
+        Result := Pages;
+    RegionKindImage:
+      if (Region.Attributes and RegionWritable) <> 0 then
+        Result := Pages;
+    RegionKindFileMapping:
+      if Region.BackingIsPrivate and ((Region.Attributes and RegionWritable) <> 0) then
+        Result := Pages;
+  end;
+end;
+
+function ChargeCommitLocked(Space: PAddressSpace; Pages: QWord): LongInt;
+begin
+  if Pages = 0 then
+    Exit(ErrorNone);
+  if (Space^.CommitLimitPages <> 0) and (Space^.CommitChargePages + Pages > Space^.CommitLimitPages) then
+    Exit(ErrorOutOfMemory);
+  Space^.CommitChargePages := Space^.CommitChargePages + Pages;
+  ChangeSystemCommitCharge(Int64(Pages));
+  Result := ErrorNone;
+end;
+
+procedure UnchargeCommitLocked(Space: PAddressSpace; Pages: QWord);
+begin
+  if Pages > Space^.CommitChargePages then
+    Pages := Space^.CommitChargePages;
+  Space^.CommitChargePages := Space^.CommitChargePages - Pages;
+  ChangeSystemCommitCharge(-Int64(Pages));
 end;
 
 procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);
@@ -359,6 +555,11 @@ end;
 function FindRegionLocked(Space: PAddressSpace; Address: QWord): PUserRegion;
 begin
   Result := FindRegion(Space^.Regions, Address);
+end;
+
+function FindRegionAtOrAboveLocked(Space: PAddressSpace; Address: QWord): PUserRegion;
+begin
+  Result := FindRegionAtOrAbove(Space^.Regions, Address);
 end;
 
 { The region starting exactly at Start, or nil. Caller holds the lock. }
@@ -379,11 +580,14 @@ begin
     Result := PageSize;
 end;
 
-function AddRegionLocked(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
-  Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+function AddRegionRecordLocked(Space: PAddressSpace; const Template: TUserRegion): LongInt;
 var
   Node: PRegionNode;
+  Start: QWord;
+  Length: QWord;
 begin
+  Start := Template.Start;
+  Length := Template.Length;
   if (Length = 0) or ((Start and PageOffsetMask) <> 0) or ((Length and PageOffsetMask) <> 0) or
      (Start >= UserSpaceLimit) or (Length > UserSpaceLimit - Start) or (Start = 0) then
     Exit(ErrorInvalidArgument);
@@ -395,17 +599,33 @@ begin
   Node := PRegionNode(AllocateZeroedKernelMemory(SizeOf(TRegionNode)));
   if Node = nil then
     Exit(ErrorOutOfMemory);
-  Node^.Region.Start := Start;
-  Node^.Region.Length := Length;
-  Node^.Region.Attributes := Attributes;
-  Node^.Region.Kind := Kind;
-  Node^.Region.CommitsOnDemand := CommitsOnDemand;
-  if (Kind = RegionKindStack) and CommitsOnDemand then
+  Node^.Region := Template;
+  if (Template.Kind = RegionKindStack) and Template.CommitsOnDemand then
     Node^.Region.ReserveBytes := StackReserveFor(Length);
+  Result := ChargeCommitLocked(Space, RegionChargePages(Node^.Region));
+  if Result <> ErrorNone then
+  begin
+    FreeKernelMemory(Node);
+    Exit;
+  end;
   InsertRegionNode(Space^.Regions, Node);
-  if Kind <> RegionKindStackGuard then
+  if Template.Kind <> RegionKindStackGuard then
     Space^.VirtualBytes := Space^.VirtualBytes + Length;
   Result := ErrorNone;
+end;
+
+function AddRegionLocked(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
+  Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+var
+  Template: TUserRegion;
+begin
+  FillMemory(@Template, SizeOf(Template), 0);
+  Template.Start := Start;
+  Template.Length := Length;
+  Template.Attributes := Attributes;
+  Template.Kind := Kind;
+  Template.CommitsOnDemand := CommitsOnDemand;
+  Result := AddRegionRecordLocked(Space, Template);
 end;
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
@@ -415,6 +635,15 @@ var
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Result := AddRegionLocked(Space, Start, Length, Attributes, Kind, CommitsOnDemand);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function AddRegionRecord(Space: PAddressSpace; const Template: TUserRegion): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := AddRegionRecordLocked(Space, Template);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
@@ -447,13 +676,15 @@ begin
 end;
 
 { Unmaps and frees the pages of [Start, Start + Length); returns how
-  many there were. }
+  many there were. Pages of mapped files and sections were counted as
+  shared. }
 function ReleaseRegionPages(Space: PAddressSpace; Start, Length: QWord): QWord;
 var
   Offset: QWord;
   RunLength: LongWord;
   RunIndex: LongWord;
   PhysicalPages: TPhysicalPageRun;
+  Usage: TPageUsage;
 begin
   Result := 0;
   Offset := 0;
@@ -466,6 +697,9 @@ begin
     for RunIndex := 0 to RunLength - 1 do
       if PhysicalPages[RunIndex] <> 0 then
       begin
+        Usage := PageUsageOf(PhysicalPages[RunIndex]);
+        if ((Usage = PageUsageProgramImage) or (Usage = PageUsageSection)) and (Space^.SharedPages > 0) then
+          Dec(Space^.SharedPages);
         FreePhysicalPage(PhysicalPages[RunIndex]);
         Dec(Space^.CommittedPages);
         Inc(Result);
@@ -474,24 +708,74 @@ begin
   end;
 end;
 
+procedure ReleaseRegionPagesLocked(Space: PAddressSpace; Start, Length: QWord);
+begin
+  ReleaseRegionPages(Space, Start, Length);
+end;
+
 { Gives back the pages of the region starting at Start and takes it out
   of the tree (nothing if there is none). Caller holds the lock. }
 procedure RemoveRegionLocked(Space: PAddressSpace; Start: QWord);
 var
   Node: PRegionNode;
-  Released: QWord;
 begin
   Node := RemoveRegionNode(Space^.Regions, Start);
   if Node = nil then
     Exit;
-  Released := ReleaseRegionPages(Space, Node^.Region.Start, Node^.Region.Length);
-  { A section's pages were all counted as shared. (Image regions, the
-    other shared kind, go only with the whole address space.) }
-  if Node^.Region.Kind = RegionKindSection then
-    Space^.SharedPages := Space^.SharedPages - Released;
+  ReleaseRegionPages(Space, Node^.Region.Start, Node^.Region.Length);
+  UnchargeCommitLocked(Space, RegionChargePages(Node^.Region));
   if Node^.Region.Kind <> RegionKindStackGuard then
     Space^.VirtualBytes := Space^.VirtualBytes - Node^.Region.Length;
   FreeRegionNode(Node);
+end;
+
+function RemoveAllocationLocked(Space: PAddressSpace; Start: QWord): Boolean;
+var
+  Region: PUserRegion;
+  Position: QWord;
+begin
+  Region := RegionStartingAtLocked(Space, Start);
+  if Region = nil then
+    Exit(False);
+  Result := True;
+  if Region^.AllocationBase <> Start then
+  begin
+    RemoveRegionLocked(Space, Start);
+    Exit;
+  end;
+  { The pieces lie one after another. }
+  Position := Start;
+  repeat
+    Region := RegionStartingAtLocked(Space, Position);
+    if (Region = nil) or (Region^.AllocationBase <> Start) then
+      Break;
+    Position := Region^.Start + Region^.Length;
+    RemoveRegionLocked(Space, Region^.Start);
+  until False;
+end;
+
+function SplitRegionLocked(Space: PAddressSpace; Address: QWord): LongInt;
+var
+  Region: PUserRegion;
+  Node: PRegionNode;
+begin
+  Region := FindRegionLocked(Space, Address);
+  if (Region = nil) or (Region^.Start = Address) then
+    Exit(ErrorNone);
+  if Space^.Regions.Count >= Space^.RegionLimit then
+    Exit(ErrorOutOfMemory);
+  Node := PRegionNode(AllocateZeroedKernelMemory(SizeOf(TRegionNode)));
+  if Node = nil then
+    Exit(ErrorOutOfMemory);
+  SplitRegionAt(Space^.Regions, Address, Node);
+  if Node^.Region.Backing <> nil then
+    ReferenceMappedFile(PMappedFile(Node^.Region.Backing), Node^.Region.BackingIsPrivate);
+  Result := ErrorNone;
+end;
+
+procedure MergeRegionsLocked(Space: PAddressSpace; First, Finish: QWord);
+begin
+  MergeRange(Space^.Regions, First, Finish, @FreeRegionNode);
 end;
 
 function AddStackGuardLocked(Space: PAddressSpace; StackStart: QWord): LongInt; forward;
@@ -526,6 +810,9 @@ begin
   begin
     Start := Start + GuardBytes;
     Result := AddRegionLocked(Space, Start, Length, RegionReadable or RegionWritable, Kind, True);
+    { Heap memory may be decommitted or protected in parts. }
+    if (Result = ErrorNone) and (Kind = RegionKindAllocation) then
+      RegionStartingAtLocked(Space, Start)^.AllocationBase := Start;
     if (Result = ErrorNone) and (Kind = RegionKindStack) then
     begin
       Result := AddStackGuardLocked(Space, Start);
@@ -574,14 +861,15 @@ begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Region := RegionStartingAtLocked(Space, Start);
   if (Region = nil) or
-     (not AnyKind and not (Region^.Kind in [RegionKindAllocation, RegionKindDevice, RegionKindSection])) then
+     (not AnyKind and not (Region^.Kind in [RegionKindAllocation, RegionKindDevice, RegionKindSection,
+       RegionKindFileMapping])) then
   begin
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
     Exit(ErrorInvalidArgument);
   end;
 
   IsStack := Region^.Kind = RegionKindStack;
-  RemoveRegionLocked(Space, Start);
+  RemoveAllocationLocked(Space, Start);
   { A stack's guard goes with it. }
   if IsStack and (Start >= StackGuardSize) then
   begin
@@ -591,6 +879,8 @@ begin
       RemoveRegionLocked(Space, Start - StackGuardSize);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if CurrentPriorityLevel = PassiveLevel then
+    DrainMappedFileReleases;
   Result := ErrorNone;
 end;
 
@@ -609,7 +899,7 @@ begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Region := RegionStartingAtLocked(Space, Start);
   if (Region <> nil) and (Region^.Kind = RegionKindAllocation) and (Region^.OwnerThreadId = OwnerThreadId) then
-    RemoveRegionLocked(Space, Start);
+    RemoveAllocationLocked(Space, Start);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
@@ -630,6 +920,7 @@ var
 begin
   Search := POwnedRegionSearch(Context);
   if (Region^.Kind = RegionKindAllocation) and (Region^.OwnerThreadId = Search^.OwnerThreadId) and
+     ((Region^.AllocationBase = 0) or (Region^.AllocationBase = Region^.Start)) and
      (Search^.Count < OwnedRegionBatch) then
   begin
     Search^.Starts[Search^.Count] := Region^.Start;
@@ -652,7 +943,7 @@ begin
     PreviousLevel := AcquireSpinLock(Space^.Lock);
     VisitRegions(Space^.Regions, @NoteOwnedRegion, @Search);
     for Index := 0 to Search.Count - 1 do
-      RemoveRegionLocked(Space, Search.Starts[Index]);
+      RemoveAllocationLocked(Space, Search.Starts[Index]);
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
   until Search.Count < OwnedRegionBatch;
 end;
@@ -768,33 +1059,25 @@ begin
     Result := Result or MappingExecutable;
 end;
 
-function CommitPageLocked(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
-var
-  PageAddress: QWord;
-  PhysicalAddress: TPhysicalAddress;
-  ExistingPhysical: TPhysicalAddress;
-  Region: PUserRegion;
+{ How a page of Region is mapped: as its attributes say, or for the
+  kernel only when the program may not touch it. }
+function RegionMapping(Region: PUserRegion): LongWord;
 begin
-  PageAddress := RoundDownToPage(Address);
+  if Region^.IsGuard or ((Region^.Attributes and RegionReadable) = 0) then
+    Result := MappingUser or MappingNoAccess
+  else
+    Result := MappingAttributesFor(Region^.Attributes);
+end;
 
-  if TranslateInAddressSpace(Space^.Root, PageAddress, ExistingPhysical) then
-  begin
-    { Already there (two image segments sharing a page): widen the
-      attributes to cover both. }
-    Region := FindRegionLocked(Space, PageAddress);
-    if Region <> nil then
-      Attributes := Attributes or Region^.Attributes;
-    UnmapPageInAddressSpace(Space^.Root, PageAddress);
-    if not MapPageInAddressSpace(Space^.Root, PageAddress, ExistingPhysical,
-      MappingAttributesFor(Attributes)) then
-      Exit(ErrorOutOfMemory);
-    Exit(ErrorNone);
-  end;
-
+{ Maps a fresh zero filled page for Region at PageAddress. }
+function CommitPageLocked(Space: PAddressSpace; PageAddress: QWord; Region: PUserRegion): LongInt;
+var
+  PhysicalAddress: TPhysicalAddress;
+begin
   PhysicalAddress := AllocateZeroedPhysicalPage(PageUsageUserMemory);
   if PhysicalAddress = 0 then
     Exit(ErrorOutOfMemory);
-  if not MapPageInAddressSpace(Space^.Root, PageAddress, PhysicalAddress, MappingAttributesFor(Attributes)) then
+  if not MapPageInAddressSpace(Space^.Root, PageAddress, PhysicalAddress, RegionMapping(Region)) then
   begin
     FreePhysicalPage(PhysicalAddress);
     Exit(ErrorOutOfMemory);
@@ -807,10 +1090,50 @@ end;
 function CommitPage(Space: PAddressSpace; Address: QWord; Attributes: LongWord): LongInt;
 var
   PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
+  Existing: TPhysicalAddress;
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Result := CommitPageLocked(Space, Address, Attributes);
+  Region := FindRegionLocked(Space, Address);
+  if Region = nil then
+    Result := ErrorBadAddress
+  else if TranslateInAddressSpace(Space^.Root, RoundDownToPage(Address), Existing) then
+    Result := ErrorNone
+  else
+    Result := CommitPageLocked(Space, RoundDownToPage(Address), Region);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+{ Maps the file's page Physical for the backed Region at PageAddress,
+  taking a reference to it: copy on write if the region is private (the
+  mark stays when it is read-only, so a later change of protection
+  still copies), read-only shared otherwise. }
+function MapBackedPageLocked(Space: PAddressSpace; PageAddress: QWord; Region: PUserRegion;
+  Physical: TPhysicalAddress): LongInt;
+var
+  Mapping: LongWord;
+begin
+  Mapping := RegionMapping(Region);
+  if Region^.BackingIsPrivate then
+    Mapping := (Mapping and not MappingWritable) or MappingCopyOnWrite
+  else
+    Mapping := Mapping and not MappingWritable;
+  ReferencePhysicalPage(Physical);
+  if not MapPageInAddressSpace(Space^.Root, PageAddress, Physical, Mapping) then
+  begin
+    FreePhysicalPage(Physical);
+    Exit(ErrorOutOfMemory);
+  end;
+  Inc(Space^.CommittedPages);
+  Inc(Space^.SharedPages);
+  NoteCommittedPagesGrew(Space);
+  Result := ErrorNone;
+end;
+
+{ The file page behind PageAddress of the backed Region. }
+function BackingPageIndex(Region: PUserRegion; PageAddress: QWord): QWord;
+begin
+  Result := (Region^.BackingOffset + (PageAddress - Region^.Start)) div PageSize;
 end;
 
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
@@ -838,20 +1161,22 @@ begin
     FreePhysicalPage(Physical);
 end;
 
-{ Gives the process its own, writable copy of a copy on write page
-  (or, if nobody else holds the page any more, just makes it writable). }
+{ Gives the process its own, writable copy of a copy on write page (or,
+  if it is a private page nobody else holds any more, just makes it
+  writable). A page of a mapped file or image section is always copied,
+  so a process's own pages are always PageUsageUserMemory. }
 function BreakCopyOnWriteLocked(Space: PAddressSpace; PageAddress: QWord;
   Shared: TPhysicalAddress): LongInt;
 var
   Region: PUserRegion;
-  Attributes: LongWord;
   Copy: TPhysicalAddress;
+  WasShared: Boolean;
 begin
   Region := FindRegionLocked(Space, PageAddress);
   if Region = nil then
     Exit(ErrorBadAddress);
-  Attributes := Region^.Attributes;
-  if PhysicalPageIsShared(Shared) then
+  WasShared := PageUsageOf(Shared) <> PageUsageUserMemory;
+  if WasShared or PhysicalPageIsShared(Shared) then
   begin
     Copy := AllocatePhysicalPage(PageUsageUserMemory);
     if Copy = 0 then
@@ -866,8 +1191,9 @@ begin
   if Copy <> Shared then
     FreePhysicalPage(Shared);
   { The process's own page from now on, whether copied or not. }
-  Dec(Space^.SharedPages);
-  if not MapPageInAddressSpace(Space^.Root, PageAddress, Copy, MappingAttributesFor(Attributes)) then
+  if WasShared and (Space^.SharedPages > 0) then
+    Dec(Space^.SharedPages);
+  if not MapPageInAddressSpace(Space^.Root, PageAddress, Copy, RegionMapping(Region)) then
   begin
     FreePhysicalPage(Copy);
     Dec(Space^.CommittedPages);
@@ -876,71 +1202,188 @@ begin
   Result := ErrorNone;
 end;
 
-function RegionIsWritableLocked(Space: PAddressSpace; Address: QWord): Boolean;
+procedure ApplyRegionProtectionLocked(Space: PAddressSpace; Start, Length: QWord);
 var
   Region: PUserRegion;
-begin
-  Region := FindRegionLocked(Space, Address);
-  Result := (Region <> nil) and ((Region^.Attributes and RegionWritable) <> 0);
-end;
-
-function ResolveCopyOnWriteFault(Space: PAddressSpace; Address: QWord): Boolean;
-var
-  PreviousLevel: TPriorityLevel;
+  Mapping: LongWord;
+  PageMapping: LongWord;
+  Offset: QWord;
   Physical: TPhysicalAddress;
   IsCopyOnWrite: Boolean;
 begin
-  Result := False;
-  PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if QueryPageInAddressSpace(Space^.Root, RoundDownToPage(Address), Physical, IsCopyOnWrite) then
+  Region := FindRegionLocked(Space, Start);
+  if (Region = nil) or (Region^.Kind = RegionKindDevice) then
+    Exit;
+  Mapping := RegionMapping(Region);
+  Offset := 0;
+  while Offset < Length do
   begin
-    if not IsCopyOnWrite then
-      { Another thread of the process copied it meanwhile (the page of a
-        writable region is now writable): the write can be retried. }
-      Result := RegionIsWritableLocked(Space, Address)
-    else
-      Result := BreakCopyOnWriteLocked(Space, RoundDownToPage(Address),
-        RoundDownToPage(Physical)) = ErrorNone;
+    if QueryPageInAddressSpace(Space^.Root, Start + Offset, Physical, IsCopyOnWrite) then
+    begin
+      Physical := RoundDownToPage(Physical);
+      PageMapping := Mapping;
+      { A shared page stays marked, so a write still copies it. }
+      if IsCopyOnWrite then
+        PageMapping := (PageMapping and not MappingWritable) or MappingCopyOnWrite
+      else if (Region^.Backing <> nil) and not Region^.BackingIsPrivate then
+        PageMapping := PageMapping and not MappingWritable;
+      UnmapPageInAddressSpace(Space^.Root, Start + Offset);
+      if not MapPageInAddressSpace(Space^.Root, Start + Offset, Physical, PageMapping) then
+      begin
+        { No page table for it any more cannot happen (the page was
+          just there); count it gone rather than leak the count. }
+        FreePhysicalPage(Physical);
+        Dec(Space^.CommittedPages);
+      end;
+    end;
+    Offset := Offset + PageSize;
   end;
-  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
-function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
+{ True if the region allows the access the fault code describes. }
+function AccessAllowed(Region: PUserRegion; ErrorCode: QWord): Boolean;
+begin
+  Result := not Region^.IsGuard and ((Region^.Attributes and RegionReadable) <> 0) and
+    (((ErrorCode and PageFaultWasWrite) = 0) or ((Region^.Attributes and RegionWritable) <> 0)) and
+    (((ErrorCode and PageFaultWasFetch) = 0) or ((Region^.Attributes and RegionExecutable) <> 0));
+end;
+
+{ Takes the guard off the page at PageAddress (the whole region if it
+  cannot be split for lack of regions). }
+procedure ClearGuardLocked(Space: PAddressSpace; PageAddress: QWord);
+var
+  Region: PUserRegion;
+begin
+  if (SplitRegionLocked(Space, PageAddress) = ErrorNone) and
+     (SplitRegionLocked(Space, PageAddress + PageSize) = ErrorNone) then
+  begin
+    Region := FindRegionLocked(Space, PageAddress);
+    Region^.IsGuard := False;
+    ApplyRegionProtectionLocked(Space, PageAddress, PageSize);
+  end
+  else
+  begin
+    Region := FindRegionLocked(Space, PageAddress);
+    Region^.IsGuard := False;
+    ApplyRegionProtectionLocked(Space, Region^.Start, Region^.Length);
+  end;
+  MergeRegionsLocked(Space, PageAddress, PageAddress + PageSize);
+end;
+
+function ResolveUserPageFaultWithGuard(Space: PAddressSpace; Address: QWord; ErrorCode: QWord;
+  out HitGuard: Boolean): Boolean;
 var
   Region: PUserRegion;
   PreviousLevel: TPriorityLevel;
   PhysicalAddress: TPhysicalAddress;
+  PageAddress: QWord;
+  IsCopyOnWrite: Boolean;
+  Backing: PMappedFile;
+  BackingIsPrivate: Boolean;
+  PageIndex: QWord;
 begin
   Result := False;
+  HitGuard := False;
   if (Space = nil) or (Address >= UserSpaceLimit) then
     Exit;
-  { A write to a present page is fine if it is a copy on write one; any
-    other fault on a present page is a protection violation. }
-  if (ErrorCode and PageFaultWasPresent) <> 0 then
-  begin
-    if (ErrorCode and PageFaultWasWrite) <> 0 then
-      Result := ResolveCopyOnWriteFault(Space, Address);
-    Exit;
-  end;
+  PageAddress := RoundDownToPage(Address);
+  Backing := nil;
+  BackingIsPrivate := False;
+  PageIndex := 0;
 
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  { Another thread of the process may have provided the page meanwhile. }
-  if TranslateInAddressSpace(Space^.Root, RoundDownToPage(Address), PhysicalAddress) then
-    Result := True
-  else
+  Region := FindRegionLocked(Space, Address);
+  if Region = nil then
+    { Nothing there. }
+  else if Region^.IsGuard then
   begin
-    Region := FindRegionLocked(Space, Address);
-    if Region <> nil then
+    { A guard's first touch by the program: the exception tells it, and
+      the page is an ordinary one from now on. }
+    if (ErrorCode and PageFaultFromUser) <> 0 then
     begin
-      { An armed stack reserve is not provided: that is a stack overflow,
-        for the exception dispatcher. }
-      if Region^.CommitsOnDemand and (((ErrorCode and PageFaultWasWrite) = 0) or
-         ((Region^.Attributes and RegionWritable) <> 0)) and
-         ((Address >= Region^.Start + Region^.ReserveBytes) or Region^.ReserveInUse) then
-        Result := CommitPageLocked(Space, Address, Region^.Attributes) = ErrorNone;
+      ClearGuardLocked(Space, PageAddress);
+      HitGuard := True;
     end;
+  end
+  else if not AccessAllowed(Region, ErrorCode) then
+    { A protection violation. }
+  else if (ErrorCode and PageFaultWasPresent) <> 0 then
+  begin
+    { A write to a present page is fine if it is a copy on write one
+      (or another thread just copied it). }
+    if ((ErrorCode and PageFaultWasWrite) <> 0) and
+       QueryPageInAddressSpace(Space^.Root, PageAddress, PhysicalAddress, IsCopyOnWrite) then
+    begin
+      if IsCopyOnWrite then
+        Result := BreakCopyOnWriteLocked(Space, PageAddress, RoundDownToPage(PhysicalAddress)) = ErrorNone
+      else
+        Result := True;
+    end;
+  end
+  else if TranslateInAddressSpace(Space^.Root, PageAddress, PhysicalAddress) then
+    { Another thread of the process provided the page meanwhile. }
+    Result := True
+  else if Region^.Backing <> nil then
+  begin
+    PageIndex := BackingPageIndex(Region, PageAddress);
+    if ResidentMappedFilePage(PMappedFile(Region^.Backing), PageIndex, PhysicalAddress) then
+      Result := MapBackedPageLocked(Space, PageAddress, Region, PhysicalAddress) = ErrorNone
+    else
+    begin
+      { Read from the file without the lock; the touch is then tried
+        again and finds the page. }
+      Backing := PMappedFile(Region^.Backing);
+      BackingIsPrivate := Region^.BackingIsPrivate;
+      ReferenceMappedFile(Backing, BackingIsPrivate);
+    end;
+  end
+  { An armed stack reserve is not provided: that is a stack overflow,
+    for the exception dispatcher. }
+  else if Region^.CommitsOnDemand and
+     ((Address >= Region^.Start + Region^.ReserveBytes) or Region^.ReserveInUse) then
+    Result := CommitPageLocked(Space, PageAddress, Region) = ErrorNone;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+
+  if Backing <> nil then
+  begin
+    if CanSleep then
+      Result := LoadMappedFilePage(Backing, PageIndex) = ErrorNone;
+    ReleaseMappedFile(Backing, BackingIsPrivate);
+  end;
+end;
+
+function ResolveUserPageFault(Space: PAddressSpace; Address: QWord; ErrorCode: QWord): Boolean;
+var
+  HitGuard: Boolean;
+begin
+  Result := ResolveUserPageFaultWithGuard(Space, Address, ErrorCode, HitGuard);
+end;
+
+function PageInBackedAddress(Space: PAddressSpace; Address: QWord): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
+  Backing: PMappedFile;
+  BackingIsPrivate: Boolean;
+  PageIndex: QWord;
+begin
+  Backing := nil;
+  BackingIsPrivate := False;
+  PageIndex := 0;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Region := FindRegionLocked(Space, Address);
+  if (Region <> nil) and (Region^.Backing <> nil) then
+  begin
+    Backing := PMappedFile(Region^.Backing);
+    BackingIsPrivate := Region^.BackingIsPrivate;
+    PageIndex := BackingPageIndex(Region, RoundDownToPage(Address));
+    ReferenceMappedFile(Backing, BackingIsPrivate);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if Backing = nil then
+    Exit(ErrorBadAddress);
+  Result := LoadMappedFilePage(Backing, PageIndex);
+  ReleaseMappedFile(Backing, BackingIsPrivate);
 end;
 
 function ValidateUserRange(Space: PAddressSpace; Address, Length: QWord; NeedWrite: Boolean): Boolean;
@@ -965,7 +1408,9 @@ begin
   while Position < Finish do
   begin
     Region := FindRegionLocked(Space, Position);
-    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) or
+    { Stack guards, reserved and no-access pages and guards have no
+      read access. }
+    if (Region = nil) or Region^.IsGuard or ((Region^.Attributes and RegionReadable) = 0) or
        (NeedWrite and ((Region^.Attributes and RegionWritable) = 0)) then
     begin
       Result := False;
@@ -978,7 +1423,8 @@ end;
 
 { Returns a kernel pointer to Address in Space, providing the page if it
   is an on-demand page that has not been touched yet, and giving the
-  process its own copy first if it is to be written and copy on write. }
+  process its own copy first if it is to be written and copy on write.
+  PageInNeeded if the page must be read from its file first. }
 function PageInWindow(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
   out Window: PByte): LongInt;
 var
@@ -1000,9 +1446,21 @@ begin
   end;
   if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
   begin
-    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) then
+    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) or
+       ((Region^.Backing = nil) and not Region^.CommitsOnDemand and (Region^.Kind = RegionKindAllocation)) then
       Exit(ErrorBadAddress);
-    Result := CommitPageLocked(Space, Address, Region^.Attributes);
+    if Region^.Backing <> nil then
+    begin
+      if not ResidentMappedFilePage(PMappedFile(Region^.Backing),
+         BackingPageIndex(Region, RoundDownToPage(Address)), PhysicalAddress) then
+        Exit(PageInNeeded);
+      Result := MapBackedPageLocked(Space, RoundDownToPage(Address), Region, PhysicalAddress);
+      if Result <> ErrorNone then
+        Exit;
+      { Mapped copy on write: a write copies it now. }
+      Exit(PageInWindow(Space, Address, ForWrite, Window));
+    end;
+    Result := CommitPageLocked(Space, RoundDownToPage(Address), Region);
     if Result <> ErrorNone then
       Exit;
     if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
@@ -1010,6 +1468,26 @@ begin
   end;
   Window := PByte(PhysicalToVirtual(PhysicalAddress));
   Result := ErrorNone;
+end;
+
+{ PageInWindow under the lock, reading the page from its file without
+  the lock when it must (and if this thread may sleep). Returns with the
+  lock held on success. }
+function PageInWindowLocking(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
+  out Window: PByte; out PreviousLevel: TPriorityLevel): LongInt;
+begin
+  repeat
+    PreviousLevel := AcquireSpinLock(Space^.Lock);
+    Result := PageInWindow(Space, Address, ForWrite, Window);
+    if Result = ErrorNone then
+      Exit;
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
+    if Result <> PageInNeeded then
+      Exit;
+    if not CanSleep then
+      Exit(ErrorBadAddress);
+    Result := PageInBackedAddress(Space, Address);
+  until Result <> ErrorNone;
 end;
 
 function TransferWithAddressSpace(Space: PAddressSpace; Address: QWord; KernelBuffer: PByte;
@@ -1025,23 +1503,19 @@ begin
     if ChunkBytes > Length then
       ChunkBytes := Length;
     { The page must not go away while it is being copied. }
-    PreviousLevel := AcquireSpinLock(Space^.Lock);
-    Result := PageInWindow(Space, Address, IsWrite, Window);
-    if Result = ErrorNone then
-    begin
-      if IsWrite then
-      begin
-        if KernelBuffer <> nil then
-          CopyMemory(Window, KernelBuffer, ChunkBytes)
-        else
-          ZeroMemory(Window, ChunkBytes);
-      end
-      else
-        CopyMemory(KernelBuffer, Window, ChunkBytes);
-    end;
-    ReleaseSpinLock(Space^.Lock, PreviousLevel);
+    Result := PageInWindowLocking(Space, Address, IsWrite, Window, PreviousLevel);
     if Result <> ErrorNone then
       Exit;
+    if IsWrite then
+    begin
+      if KernelBuffer <> nil then
+        CopyMemory(Window, KernelBuffer, ChunkBytes)
+      else
+        ZeroMemory(Window, ChunkBytes);
+    end
+    else
+      CopyMemory(KernelBuffer, Window, ChunkBytes);
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
     if KernelBuffer <> nil then
       KernelBuffer := KernelBuffer + ChunkBytes;
     Address := Address + ChunkBytes;
@@ -1066,9 +1540,9 @@ function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PB
 var
   PreviousLevel: TPriorityLevel;
 begin
-  PreviousLevel := AcquireSpinLock(Space^.Lock);
-  Result := PageInWindow(Space, RoundDownToPage(Address), True, Window);
-  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  Result := PageInWindowLocking(Space, RoundDownToPage(Address), True, Window, PreviousLevel);
+  if Result = ErrorNone then
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function OpenStackReserve(Space: PAddressSpace; Address: QWord; StackStart: QWord;

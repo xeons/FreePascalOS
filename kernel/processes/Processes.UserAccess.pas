@@ -164,6 +164,7 @@ begin
     StatusInUse: Result := ErrorBusy;
     StatusAccessDenied: Result := ErrorAccessDenied;
     StatusVolumeGone: Result := ErrorNoDevice;
+    StatusCrossesVolumes: Result := ErrorCrossVolume;
   else
     Result := ErrorIo;
   end;

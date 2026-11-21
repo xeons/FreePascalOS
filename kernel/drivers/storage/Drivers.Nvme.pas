@@ -34,6 +34,10 @@
 
   One command is in flight per controller; requests for all its
   namespaces wait in one queue.
+
+  Discard requests become Dataset Management commands with the
+  deallocate attribute, one range each, on controllers that report the
+  command (ONCS bit 2).
 }
 unit Drivers.Nvme;
 
@@ -104,6 +108,10 @@ const
   CommandFlush = $00;
   CommandWrite = $01;
   CommandRead = $02;
+  CommandDatasetManagement = $09;
+  DatasetManagementDeallocate = $4;
+  { Blocks one range of a Dataset Management command may cover. }
+  LargestDeallocateBlocks = $FFFFFFFF;
 
   QueuePhysicallyContiguous = $1;
   QueueInterruptsEnabled = $2;
@@ -129,6 +137,8 @@ type
     { Bytes per command: the bounce pages, or less if the controller
       says so. }
     MaximumTransfer: QWord;
+    { The controller takes Dataset Management (deallocate). }
+    SupportsDeallocate: Boolean;
     Model: array[0..40] of Char;
     ScratchPage: PByte;
     ScratchPagePhysical: QWord;
@@ -248,10 +258,40 @@ end;
 { --- I/O commands ------------------------------------------------------------ }
 
 function PieceLength(Controller: PNvmeController; Request: PIoRequest; Done: QWord): QWord;
+var
+  Namespace: PNvmeNamespace;
 begin
   Result := Request^.Length - Done;
+  if Request^.Operation = IoFunctionDiscard then
+  begin
+    { No data moves: only the range's length is limited. }
+    Namespace := PNvmeNamespace(Request^.Device^.Extension);
+    if Result div Namespace^.BlockSize > LargestDeallocateBlocks then
+      Result := LargestDeallocateBlocks * Namespace^.BlockSize;
+    Exit;
+  end;
   if Result > Controller^.MaximumTransfer then
     Result := Controller^.MaximumTransfer;
+end;
+
+{ A Dataset Management command deallocating Piece bytes at Offset: its
+  one range goes in the first bounce page. }
+procedure BuildDeallocate(Controller: PNvmeController; Namespace: PNvmeNamespace; Offset, Piece: QWord;
+  var Command: TNvmeCommand);
+var
+  Range: PLongWord;
+  FirstBlock: QWord;
+begin
+  FirstBlock := Offset div Namespace^.BlockSize;
+  Range := PLongWord(Controller^.BouncePages[0]);
+  ZeroMemory(Range, 16);
+  { Context attributes, length in blocks, starting block. }
+  Range[1] := LongWord(Piece div Namespace^.BlockSize);
+  PQWord(@Range[2])^ := FirstBlock;
+  Command.OpcodeAndIdentifier := CommandDatasetManagement;
+  Command.CommandDword10 := 0;
+  Command.CommandDword11 := DatasetManagementDeallocate;
+  Command.DataPointer1 := Controller^.BouncePagesPhysical[0];
 end;
 
 { Submits the command for Piece bytes of Request, Done bytes in. }
@@ -269,6 +309,8 @@ begin
   PageCount := Integer((Piece + PageBytes - 1) div PageBytes);
   if Request^.Operation = IoFunctionFlush then
     Command.OpcodeAndIdentifier := CommandFlush
+  else if Request^.Operation = IoFunctionDiscard then
+    BuildDeallocate(Controller, Namespace, Request^.Offset + Done, Piece, Command)
   else
   begin
     if Request^.Operation = IoFunctionWrite then
@@ -462,6 +504,7 @@ begin
   Dispatch[IoFunctionRead] := @TransferNvme;
   Dispatch[IoFunctionWrite] := @TransferNvme;
   Dispatch[IoFunctionFlush] := @TransferNvme;
+  Dispatch[IoFunctionDiscard] := @TransferNvme;
   NvmeDriver := CreateDriver('nvme', Dispatch);
 end;
 
@@ -558,6 +601,8 @@ const
   ModelOffset = 24;
   ModelLength = 40;
   MaximumTransferOffset = 77;
+  OptionalCommandsOffset = 520;
+  OptionalDatasetManagement = $4;
 var
   Index: Integer;
   Exponent: Byte;
@@ -569,6 +614,8 @@ begin
   while (Index > 0) and (Controller^.Model[Index - 1] in [' ', #0]) do
     Dec(Index);
   Controller^.Model[Index] := #0;
+  Controller^.SupportsDeallocate :=
+    (PWord(Controller^.ScratchPage + OptionalCommandsOffset)^ and OptionalDatasetManagement) <> 0;
   Controller^.MaximumTransfer := BouncePageCount * PageBytes;
   Exponent := Controller^.ScratchPage[MaximumTransferOffset];
   if (Exponent <> 0) and (Exponent < 20) then
@@ -623,6 +670,8 @@ begin
   BlockDevice^.BlockSize := Namespace^.BlockSize;
   BlockDevice^.BlockCount := Namespace^.BlockCount;
   BlockDevice^.StorageDevice := Namespace^.Device;
+  BlockDevice^.SupportsDiscard := Controller^.SupportsDeallocate;
+  BlockDevice^.MaximumDiscardBlocks := LargestDeallocateBlocks;
   RegisterBlockDevice(BlockDevice);
   WriteBlockDeviceDescription(BlockDevice);
   Result := True;
@@ -638,9 +687,12 @@ begin
   DebugWrite(' namespaces, ');
   DebugWriteDecimal(Controller^.MaximumTransfer div 1024);
   if Controller^.UsesInterrupts then
-    DebugWriteLine(' KiB per command, interrupts')
+    DebugWrite(' KiB per command, interrupts')
   else
-    DebugWriteLine(' KiB per command, polled');
+    DebugWrite(' KiB per command, polled');
+  if Controller^.SupportsDeallocate then
+    DebugWrite(', deallocates');
+  DebugWriteLine('');
   DebugEndMessage;
 end;
 

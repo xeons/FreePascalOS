@@ -88,12 +88,15 @@ uses
   Processes.SecurityCalls,
   Processes.AffinityCalls,
   Processes.LimitCalls,
+  Processes.MemoryCalls,
+  Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
   Processes.Shutdown,
   Processes.Suspend,
   Processes.ThreadControl,
   Processes.FileAttributeCalls,
+  Processes.MountCalls,
   Processes.UserExceptions,
   { Job control. }
   Processes.Stopping,
@@ -201,8 +204,9 @@ const
   ModeSetUserId = $800;
   ModeSetGroupId = $400;
 
-{ Running a program needs execute permission (root: any execute bit). A
-  set-user-ID or set-group-ID program runs as its owner or group. }
+{ Running a program needs execute permission (root: any execute bit) and
+  a volume not mounted noexec. A set-user-ID or set-group-ID program
+  runs as its owner or group, unless its volume is mounted nosuid. }
 function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
   var Credentials: TProcessCredentials): LongInt;
 var
@@ -215,8 +219,11 @@ begin
   if DescribePath(KernelPath, True, Information) <> StatusSuccess then
     Exit;
   if (Information.Kind <> NodeKindFile) or
+     ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
      not CredentialsMayAccess(Credentials, Information, AccessExecute) then
     Exit(ErrorAccessDenied);
+  if (Information.VolumeFlags and VolumeFlagNoSetId) <> 0 then
+    Exit;
   if (Information.Mode and ModeSetUserId) <> 0 then
   begin
     Credentials.EffectiveUserId := Information.OwnerId;
@@ -378,6 +385,9 @@ begin
   { The child starts with the caller's limits. }
   Startup.HandleLimit := Caller^.Handles.Limit;
   Startup.RegionLimit := Caller^.AddressSpace^.RegionLimit;
+  Startup.CommitLimitPages := Caller^.AddressSpace^.CommitLimitPages;
+  Startup.ProcessCountLimit := Caller^.ProcessCountLimit;
+  Startup.OomScoreAdjust := Caller^.OomScoreAdjust;
   ReleaseMutex(Caller^.Lock);
   Error := ErrorNone;
   if (Creation.Flags and ProcessPassHandles) <> 0 then
@@ -404,7 +414,11 @@ begin
     Startup.ControllingTerminal := NewTerminal;
   end;
 
-  Error := CreateUserProcess(Startup, Child);
+  { Its user may run only so many processes at once. }
+  if not UserMayStartProcess(Startup.Credentials.RealUserId, Caller^.ProcessCountLimit) then
+    Error := ErrorWouldBlock
+  else
+    Error := CreateUserProcess(Startup, Child);
   if (Error = ErrorNone) and (NewTerminal <> nil) then
     SetTerminalForegroundGroup(PLineDiscipline(PDeviceObject(NewTerminal)^.Terminal)^, Child^.GroupId);
 
@@ -782,7 +796,7 @@ begin
     CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
     CallShutdown: Result := PerformShutdown(Argument0);
     CallSuspend: Result := PerformSuspend;
-    CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2);
+    CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2, Argument3);
 
     { Objects for programs that work together (Processes.ObjectCalls,
       Processes.WaitCalls). }
@@ -790,6 +804,9 @@ begin
     CallSetEvent: Result := PerformSetEvent(Int64(Argument0), True);
     CallResetEvent: Result := PerformSetEvent(Int64(Argument0), False);
     CallCreateTimer: Result := PerformCreateTimer(Argument0);
+    CallCreateSemaphore: Result := PerformCreateSemaphore(Int64(Argument0), Int64(Argument1));
+    CallReleaseSemaphore: Result := PerformReleaseSemaphore(Int64(Argument0), Int64(Argument1));
+    CallGetSemaphoreCount: Result := PerformGetSemaphoreCount(Int64(Argument0));
     CallSetTimer: Result := PerformSetTimer(Int64(Argument0), Argument1, Argument2);
     CallWaitForHandles: Result := PerformWaitForHandles(Argument0, Argument1, Int64(Argument2), Argument3);
     CallCreateSection: Result := PerformCreateSection(Argument0);
@@ -878,6 +895,20 @@ begin
     CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
     CallGetModuleTls: Result := PerformGetModuleTls(Int64(Argument0), Argument1);
     CallTakeModuleInitializers: Result := PerformTakeModuleInitializers(Int64(Argument0), Argument1);
+    { --- Virtual memory (Processes.VirtualMemoryCalls) --- }
+    CallReserveMemory: Result := PerformReserveMemory(Argument0, Argument1);
+    CallCommitMemory: Result := PerformCommitMemory(Argument0, Argument1, Argument2);
+    CallDecommitMemory: Result := PerformDecommitMemory(Argument0, Argument1);
+    CallProtectMemory: Result := PerformProtectMemory(Argument0, Argument1, Argument2);
+    CallQueryMemory: Result := PerformQueryMemory(Argument0, Argument1);
+    CallSetMemoryPolicy: Result := PerformSetMemoryPolicy(Argument0);
+    CallTrimVolume: Result := PerformTrimVolume(Argument0);
+    CallGetBlockCacheStatistics: Result := PerformGetBlockCacheStatistics(Argument0);
+    CallGetMemoryPressure: Result := PerformGetMemoryPressure(Argument0);
+    CallMountVolume: Result := PerformMountVolume(Argument0);
+    CallUnmountVolume: Result := PerformUnmountVolume(Argument0, Argument1);
+    CallListMounts: Result := PerformListMounts(Argument0, Argument1);
+    CallGetFileTimes: Result := PerformGetFileTimes(Argument0, Int64(Argument1), Argument2, Argument3);
   else
     Result := Failure(ErrorNotImplemented);
   end;

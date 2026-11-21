@@ -47,6 +47,7 @@ uses
   Abi.SystemCalls,
   Sys.Information,
   Sys.SystemUsage,
+  Sys.MemoryStatus,
   Sys.Processor,
   Sys.Volumes,
   Sys.LocalTime,
@@ -96,6 +97,19 @@ begin
     Exit('');
   Percent := Used * 100 div Total;
   Result := SizeText(Used) + ' / ' + SizeText(Total) + ' (' + IntToStr(Percent) + '%)';
+end;
+
+{ "38 MiB, 97.5% hits" (the block cache), empty if not known. }
+function CacheText: string;
+var
+  Statistics: TBlockCacheStatistics;
+  Tenths: LongWord;
+begin
+  Result := '';
+  if GetBlockCacheStatistics(Statistics) <> 0 then
+    Exit;
+  Tenths := CacheHitTenths(Statistics);
+  Result := SizeText(CacheBytes(Statistics)) + Format(', %d.%d%% hits', [Tenths div 10, Tenths mod 10]);
 end;
 
 function PluralText(Count: QWord; const Singular: string): string;
@@ -303,6 +317,8 @@ begin
   if HaveUsage then
   begin
     AddFact(Result, 'Memory', UsageText(UsedMemory(Usage), Usage.TotalMemory));
+    if CacheText <> '' then
+      AddFact(Result, 'Disk cache', CacheText);
     AddFact(Result, 'Processes', IntToStr(Usage.ProcessCount) + ' (' + PluralText(Usage.ThreadCount, 'thread') + ')');
   end
   else

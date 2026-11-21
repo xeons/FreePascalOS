@@ -171,7 +171,8 @@ uses
   Memory.KernelHeap,
   Io.BlockCache,
   Kernel.Clock,
-  FileSystem.Ext.Structures;
+  FileSystem.Ext.Structures,
+  FileSystem.Discards;
 
 const
   { The log space used (journals can be much larger; the rest stays
@@ -300,6 +301,9 @@ begin
   Journal^.BlockCount := 0;
   Journal^.RevokedCount := 0;
   Journal^.LastFound := 0;
+  { Released already if it committed; otherwise its frees did not happen. }
+  if Journal^.Volume <> nil then
+    DropUncommittedDiscards(Journal^.Volume);
 end;
 
 procedure FreeJournal(Journal: PExtJournal);
@@ -645,6 +649,8 @@ begin
     DropTransaction(Journal);
     Exit(StatusIoError);
   end;
+  { Committed: what it freed may be discarded. }
+  ReleaseCommittedDiscards(Journal^.Volume);
 
   if Journal^.StopBeforeCheckpoint then
   begin

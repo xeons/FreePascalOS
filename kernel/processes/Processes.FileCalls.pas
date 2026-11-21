@@ -706,6 +706,7 @@ begin
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
     HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
+    HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -1086,21 +1087,6 @@ begin
   FreeKernelMemory(KernelPath);
 end;
 
-{ True if two kernel paths start with the same volume name. }
-function OnSameVolume(First, Second: PChar): Boolean;
-var
-  Index: PtrUInt;
-begin
-  Index := 1;
-  while (First[Index] <> '/') and (First[Index] <> #0) do
-  begin
-    if First[Index] <> Second[Index] then
-      Exit(False);
-    Inc(Index);
-  end;
-  Result := (Second[Index] = '/') or (Second[Index] = #0);
-end;
-
 function PerformCreateHardLink(ExistingAddress: QWord; NewAddress: QWord): Int64;
 var
   ExistingPath: PPathBuffer;
@@ -1116,10 +1102,8 @@ begin
     FreeKernelMemory(ExistingPath);
     Exit(Failure(Error));
   end;
-  if not OnSameVolume(@ExistingPath^[0], @NewPath^[0]) then
-    Result := Failure(ErrorCrossVolume)
-  else
-    Result := -Int64(ErrorFromStatus(CreateHardLink(@ExistingPath^[0], @NewPath^[0])));
+  { Two volumes (mount points included) are refused with ErrorCrossVolume. }
+  Result := -Int64(ErrorFromStatus(CreateHardLink(@ExistingPath^[0], @NewPath^[0])));
   FreeKernelMemory(ExistingPath);
   FreeKernelMemory(NewPath);
 end;

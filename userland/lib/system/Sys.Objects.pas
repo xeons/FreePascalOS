@@ -17,8 +17,14 @@
 }
 
 {
-  Objects for programs that work together: events, timers, waiting on
-  several handles, shared memory sections, ports and channels.
+  Objects for programs that work together: events, semaphores, timers,
+  waiting on several handles, shared memory sections, ports and
+  channels.
+
+  A semaphore holds a count from 0 to its limit. A wait on its handle
+  (WaitForHandle, WaitForHandles, WaitForAllHandles) takes one, waiting
+  while there are none; ReleaseSemaphore gives some back. Sys.Semaphores
+  wraps one in a class.
 
   Every routine returning LongInt returns ErrorNone or an error code;
   those returning Int64 a handle (or index) or minus an error code. The
@@ -44,6 +50,14 @@ procedure CloseHandle(Handle: Int64);
 function CreateEvent(ManualReset, Signaled: Boolean): Int64;
 function SetEvent(Handle: Int64): LongInt;
 function ResetEvent(Handle: Int64): LongInt;
+{ A semaphore counting from InitialCount, at most Limit (1 to
+  MaximumSemaphoreLimit). }
+function CreateSemaphore(InitialCount, Limit: LongInt): Int64;
+{ Gives back ReleaseCount; PreviousCount is the count before.
+  ErrorOverflow, changing nothing, past the limit. }
+function ReleaseSemaphore(Handle: Int64; ReleaseCount: LongInt; out PreviousCount: LongInt): LongInt;
+{ The count now, or minus an error. }
+function GetSemaphoreCount(Handle: Int64): Int64;
 function CreateTimer(ManualReset: Boolean): Int64;
 { Due in DueMilliseconds, then every PeriodMilliseconds (0: once). }
 function SetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): LongInt;
@@ -113,6 +127,27 @@ end;
 function ResetEvent(Handle: Int64): LongInt;
 begin
   Result := ErrorCodeOf(KernelResetEvent(Handle));
+end;
+
+function CreateSemaphore(InitialCount, Limit: LongInt): Int64;
+begin
+  Result := KernelCreateSemaphore(InitialCount, Limit);
+end;
+
+function ReleaseSemaphore(Handle: Int64; ReleaseCount: LongInt; out PreviousCount: LongInt): LongInt;
+var
+  CallResult: Int64;
+begin
+  PreviousCount := 0;
+  CallResult := KernelReleaseSemaphore(Handle, ReleaseCount);
+  if CallResult >= 0 then
+    PreviousCount := LongInt(CallResult);
+  Result := ErrorCodeOf(CallResult);
+end;
+
+function GetSemaphoreCount(Handle: Int64): Int64;
+begin
+  Result := KernelGetSemaphoreCount(Handle);
 end;
 
 function CreateTimer(ManualReset: Boolean): Int64;

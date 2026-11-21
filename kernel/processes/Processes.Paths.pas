@@ -88,7 +88,16 @@ const
 var
   SystemVolume: array[0..VolumeNameLength - 1] of Char;
 
+function FindSystemVolume: Boolean; forward;
+
 function SelectSystemVolume: Boolean;
+begin
+  Result := FindSystemVolume;
+  if Result then
+    SetSystemVolume(FindVolumeByName(@SystemVolume[0]));
+end;
+
+function FindSystemVolume: Boolean;
 var
   RequestedName: array[0..VolumeNameLength - 1] of Char;
   Index: Integer;

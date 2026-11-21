@@ -30,6 +30,10 @@
   One request runs at a time; others wait in a queue. Completion comes by
   MSI-X interrupt, finished by a deferred call; a device without MSI-X
   is polled.
+
+  A device offering VIRTIO_BLK_F_DISCARD takes discard requests: the
+  header (type discard) is followed by one segment (first sector,
+  sector count) instead of data, at most max_discard_sectors a request.
 }
 unit Drivers.VirtioBlock;
 
@@ -73,13 +77,19 @@ const
 
   FeatureReadOnly = 5;
   FeatureFlush = 9;
+  FeatureDiscard = 13;
 
   RequestTypeRead = 0;
   RequestTypeWrite = 1;
   RequestTypeFlush = 4;
+  RequestTypeDiscard = 11;
   RequestStatusOk = 0;
 
+  SegmentOffsetInHeaderPage = 64;
   StatusOffsetInHeaderPage = 256;
+  { Where the device configuration says how many sectors a discard may
+    cover. }
+  ConfigurationMaximumDiscardSectors = 36;
 
 type
   TBlockRequestHeader = packed record
@@ -89,6 +99,14 @@ type
   end;
   PBlockRequestHeader = ^TBlockRequestHeader;
 
+  { struct virtio_blk_discard_write_zeroes }
+  TDiscardSegment = packed record
+    Sector: QWord;
+    SectorCount: LongWord;
+    Flags: LongWord;
+  end;
+  PDiscardSegment = ^TDiscardSegment;
+
   PVirtioDisk = ^TVirtioDisk;
   TVirtioDisk = record
     Virtio: TVirtioDevice;
@@ -96,6 +114,8 @@ type
     Device: PDeviceObject;
     SectorCount: QWord;
     SupportsFlush: Boolean;
+    SupportsDiscard: Boolean;
+    MaximumDiscardSectors: QWord;
     HeaderPage: PByte;
     HeaderPagePhysical: QWord;
     BouncePages: array[0..BouncePageCount - 1] of PByte;
@@ -122,10 +142,51 @@ begin
 end;
 
 function PieceLength(Request: PIoRequest; Done: QWord): QWord;
+var
+  Disk: PVirtioDisk;
 begin
   Result := Request^.Length - Done;
+  if Request^.Operation = IoFunctionDiscard then
+  begin
+    Disk := DiskOf(Request^.Device);
+    if Result div SectorSize > Disk^.MaximumDiscardSectors then
+      Result := Disk^.MaximumDiscardSectors * SectorSize;
+    Exit;
+  end;
   if Result > BouncePageCount * PageBytes then
     Result := BouncePageCount * PageBytes;
+end;
+
+{ The chain of a discard: header, segment, status. }
+procedure SubmitDiscard(Disk: PVirtioDisk; Request: PIoRequest; Done, Piece: QWord);
+var
+  Header: PBlockRequestHeader;
+  Segment: PDiscardSegment;
+  Descriptor: PVirtqueueDescriptor;
+begin
+  Header := PBlockRequestHeader(Disk^.HeaderPage);
+  Header^.RequestType := RequestTypeDiscard;
+  Header^.Reserved := 0;
+  Header^.Sector := 0;
+  Segment := PDiscardSegment(Disk^.HeaderPage + SegmentOffsetInHeaderPage);
+  Segment^.Sector := (Request^.Offset + Done) div SectorSize;
+  Segment^.SectorCount := LongWord(Piece div SectorSize);
+  Segment^.Flags := 0;
+  Disk^.HeaderPage[StatusOffsetInHeaderPage] := $FF;
+  Descriptor := Disk^.Queue.Descriptors;
+  Descriptor[0].Address := Disk^.HeaderPagePhysical;
+  Descriptor[0].Length := SizeOf(TBlockRequestHeader);
+  Descriptor[0].Flags := VirtqueueDescriptorNext;
+  Descriptor[0].Next := 1;
+  Descriptor[1].Address := Disk^.HeaderPagePhysical + SegmentOffsetInHeaderPage;
+  Descriptor[1].Length := SizeOf(TDiscardSegment);
+  Descriptor[1].Flags := VirtqueueDescriptorNext;
+  Descriptor[1].Next := 2;
+  Descriptor[2].Address := Disk^.HeaderPagePhysical + StatusOffsetInHeaderPage;
+  Descriptor[2].Length := 1;
+  Descriptor[2].Flags := VirtqueueDescriptorWrite;
+  Descriptor[2].Next := 0;
+  SubmitVirtqueueChain(Disk^.Queue);
 end;
 
 { Builds and submits the chain for the next Piece bytes of Request,
@@ -140,6 +201,11 @@ var
   Chunk: QWord;
   IsRead: Boolean;
 begin
+  if Request^.Operation = IoFunctionDiscard then
+  begin
+    SubmitDiscard(Disk, Request, Done, Piece);
+    Exit;
+  end;
   Header := PBlockRequestHeader(Disk^.HeaderPage);
   IsRead := Request^.Operation = IoFunctionRead;
   case Request^.Operation of
@@ -321,6 +387,8 @@ function RequestIsValid(Disk: PVirtioDisk; var Request: TIoRequest): Boolean;
 begin
   if Request.Operation = IoFunctionFlush then
     Exit(Request.Length = 0);
+  if (Request.Operation = IoFunctionDiscard) and not Disk^.SupportsDiscard then
+    Exit(False);
   Result := (Request.Length > 0) and (Request.Length mod SectorSize = 0) and
     (Request.Offset mod SectorSize = 0) and (Request.Offset div SectorSize < Disk^.SectorCount) and
     (Request.Length div SectorSize <= Disk^.SectorCount - Request.Offset div SectorSize);
@@ -352,6 +420,7 @@ begin
   Dispatch[IoFunctionRead] := @TransferVirtioBlock;
   Dispatch[IoFunctionWrite] := @TransferVirtioBlock;
   Dispatch[IoFunctionFlush] := @TransferVirtioBlock;
+  Dispatch[IoFunctionDiscard] := @TransferVirtioBlock;
   VirtioBlockDriver := CreateDriver('virtio-blk', Dispatch);
 end;
 
@@ -397,7 +466,8 @@ begin
   if not OpenVirtioDevice(Pci, Disk^.Virtio) then
     Exit;
   if not NegotiateVirtioFeatures(Disk^.Virtio,
-       (QWord(1) shl FeatureReadOnly) or (QWord(1) shl FeatureFlush), Accepted) or
+       (QWord(1) shl FeatureReadOnly) or (QWord(1) shl FeatureFlush) or (QWord(1) shl FeatureDiscard),
+       Accepted) or
      not AllocateDiskPages(Disk) or not SetUpVirtqueue(Disk^.Virtio, 0, Disk^.Queue) then
   begin
     FailVirtioDevice(Disk^.Virtio);
@@ -405,6 +475,14 @@ begin
   end;
   Disk^.SupportsFlush := (Accepted and (QWord(1) shl FeatureFlush)) <> 0;
   Disk^.SectorCount := PQWord(Disk^.Virtio.DeviceConfiguration)^;
+  Disk^.SupportsDiscard := (Accepted and (QWord(1) shl FeatureDiscard)) <> 0;
+  if Disk^.SupportsDiscard then
+  begin
+    Disk^.MaximumDiscardSectors :=
+      PLongWord(PByte(Disk^.Virtio.DeviceConfiguration) + ConfigurationMaximumDiscardSectors)^;
+    if Disk^.MaximumDiscardSectors = 0 then
+      Disk^.SupportsDiscard := False;
+  end;
 
   InitializeSpinLock(Disk^.StateLock);
   InitializeMutex(Disk^.PollingLock);
@@ -428,6 +506,8 @@ begin
   BlockDevice^.BlockCount := Disk^.SectorCount;
   BlockDevice^.WriteProtected := (Accepted and (QWord(1) shl FeatureReadOnly)) <> 0;
   BlockDevice^.StorageDevice := Disk^.Device;
+  BlockDevice^.SupportsDiscard := Disk^.SupportsDiscard;
+  BlockDevice^.MaximumDiscardBlocks := Disk^.MaximumDiscardSectors;
   RegisterBlockDevice(BlockDevice);
   WriteBlockDeviceDescription(BlockDevice);
 
@@ -440,6 +520,8 @@ begin
     DebugWrite(': polled');
   if Disk^.SupportsFlush then
     DebugWrite(', write cache flushed on request');
+  if Disk^.SupportsDiscard then
+    DebugWrite(', discards');
   DebugWriteLine('');
   DebugEndMessage;
   RegisterPowerHandler('virtio block', PowerStageDevices, nil, @ResumeDisk, Disk);

@@ -34,7 +34,7 @@
     sysheap.inc   memory for the heap manager
     sysheapcheck.inc  heap checking (HEAP_CHECKS), with
                   sysheapchecklevel.inc, sysheapcheckreport.inc and
-                  sysheapquarantine.inc
+                  sysheapquarantine.inc; syspageheap.inc the page heap
     sysfile.inc   file handles: open, read, write, seek, ...
     sysdir.inc    directories
     systhrd.inc   the thread manager
@@ -175,6 +175,7 @@ procedure OsSetupEntryInformation(constref Information: TEntryInformation); forw
 {$I sysheapchecklevel.inc}
 {$I sysheapcheckreport.inc}
 {$I sysheapquarantine.inc}
+{$I syspageheap.inc}
 {$I sysheapcheck.inc}
 {$I syscrash.inc}
 
@@ -302,7 +303,7 @@ end;
 function RuntimeErrorFor(const ExceptionRecord: TAbiExceptionRecord): LongInt;
 begin
   case ExceptionRecord.Code of
-    ExceptionAccessViolation, ExceptionIllegalInstruction: RuntimeErrorFor := 216;
+    ExceptionAccessViolation, ExceptionIllegalInstruction, ExceptionGuardPage: RuntimeErrorFor := 216;
     ExceptionPrivilegedOperation: RuntimeErrorFor := 218;
     ExceptionIntegerDivide: RuntimeErrorFor := 200;
     ExceptionIntegerOverflow: RuntimeErrorFor := 215;

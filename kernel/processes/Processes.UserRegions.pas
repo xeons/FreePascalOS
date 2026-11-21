@@ -36,7 +36,10 @@ type
     { Device memory, mapped when the region was made. }
     RegionKindDevice,
     { A section's pages, mapped when the region was made. }
-    RegionKindSection);
+    RegionKindSection,
+    { A file mapped with CallMapHandle: its pages come from the file
+      (Backing) when first touched. }
+    RegionKindFileMapping);
 
   TUserRegion = record
     Start: QWord;
@@ -52,6 +55,23 @@ type
       the id of that thread, which gives the region back if it ends
       without having freed it. 0 for every other region. }
     OwnerThreadId: QWord;
+    { Run time allocations, reservations and file mappings, which may be
+      split into several regions (pages committed, decommitted or
+      protected apart from the rest): the start of the allocation the
+      region is part of (the address the program frees). 0 for regions
+      that are never split. }
+    AllocationBase: QWord;
+    { A one-shot guard: the first touch raises ExceptionGuardPage and
+      takes the guard off the page touched. }
+    IsGuard: Boolean;
+    { Pages from a file (a TMappedFile, Processes.MappedFiles) instead
+      of zero filled ones: the region's first page is the file's page at
+      BackingOffset. The region holds a reference to it. }
+    Backing: Pointer;
+    BackingOffset: QWord;
+    { Writes go to a copy of the page (copy on write), never to the
+      file. }
+    BackingIsPrivate: Boolean;
   end;
   PUserRegion = ^TUserRegion;
 

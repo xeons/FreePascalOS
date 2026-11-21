@@ -406,8 +406,8 @@ their own level, so higher-priority interrupts nest naturally.
 
 Rules that follow from this:
 
-- Mutexes may only be used at `PassiveLevel`; they put the thread to
-  sleep instead of spinning.
+- Mutexes, shared locks and semaphore waits may only be used at
+  `PassiveLevel`; they put the thread to sleep instead of spinning.
 - Spin locks are acquired at `DispatchLevel` or above. A lock that an
   interrupt handler takes must be acquired at that handler's level.
 - Raising to a lower level, or acquiring a dispatch-level lock while at a
@@ -442,8 +442,35 @@ Rules that follow from this:
   software interrupt (a self-IPI on the dispatch vector), which the APIC
   delivers as soon as the processor drops below `DispatchLevel`. The same
   mechanism handles a thread becoming ready at a higher priority.
-- The dispatcher lock protects all scheduler state and wait queues. It is
-  held across a context switch and released by the thread that runs next.
+- **Locks.** Two kinds, both spin locks at DispatchLevel, always taken
+  in this order:
+  1. the *dispatcher lock*: every wait queue (events, mutexes, shared
+     locks, semaphores), the per-processor sleep queues of timed waits,
+     alerts, the list of exited threads, and a thread's change into or
+     out of the waiting state;
+  2. each processor's *scheduling lock* (`Kernel.ReadyQueues`): its run
+     queues, the thread it runs and at what priority, its time slice and
+     its processor time. A processor holding its own takes another's
+     only if it is free at that moment (`TryLockProcessor`), so no two
+     processors ever wait for each other.
+
+  Time slices, preemption by a more important thread and yields take
+  only the processor's own lock; waits and wake-ups take the dispatcher
+  lock and then the lock of the processor the woken thread goes to.
+  The processor's lock is held across a context switch, and so is the
+  dispatcher lock when the old thread blocks or exits; the thread that
+  runs next releases them (`FinishThreadSwitch`). So a thread never runs
+  elsewhere before its registers are saved: it sits in a queue that is
+  locked, or is blocked and cannot be woken while the dispatcher lock
+  is held, or - preempted while it should go to another processor (its
+  affinity changed, or one it may run on is idle) - is in no queue
+  until the next thread places it once the switch is over.
+- **Work stealing.** Taking a thread from another processor's queues
+  (more important than its own best, or any when its own are empty) is
+  done only if that queue's lock is free; when it was taken and might
+  have held something, the processor remembers it, and its idle loop
+  pulls the thread over (waiting for that lock, holding no other)
+  instead of halting.
 - Exited threads are put on a list and cleaned up by the idle thread
   (stack freed, object dereferenced).
 - Processor time is taken at every switch (`Kernel.ProcessorTime`): each
@@ -461,14 +488,91 @@ Rules that follow from this:
   number of threads running or ready and folds it into three
   exponentially decayed averages (1, 5 and 15 minutes, fixed point with
   11 fraction bits, as in Unix load averages). The run queues keep a count of their threads for this.
-  Only the dispatcher lock is still shared by all processors.
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
-  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
-  ready thread to the run queue of its new priority.
+  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` sets a
+  thread's base priority (ending any boost) and moves a ready thread to
+  the run queue of its new priority.
 - Floating point and SSE registers belong to threads: the switch saves the
   old thread's (FXSAVE) and loads the new one's (FXRSTOR). The kernel
   itself uses no such registers (the build checks), so interrupts and
   system calls need not save them.
+
+### Priority boosts
+
+Priorities 1-15 are the *variable class*, 16-31 the *real-time class*
+(`Kernel.PriorityBoosts`). A thread has a base priority (what
+`SetThreadPriority` set) and a current one, which it is queued and run
+at; only threads of the variable class are ever boosted, and a boost
+never takes a thread past 15.
+
+- **Wake boost.** A thread whose wait ends because what it waited for
+  happened is raised above its base by an amount set by what woke it,
+  the sizes other systems use: keyboard or mouse input +6
+  (`Io.InputEvents`, terminal input), an audio stream's room to write
+  +8, data from the network +2 (sockets), the display answering +2
+  (virtio-gpu), an I/O completion +1 (`CompleteRequest`; drivers may
+  pass another with `CompleteRequestWithBoost`), another thread's event,
+  semaphore or address wake +1 (`SignalEvent`; `SignalEventWithBoost`
+  for others). A boost never lowers a higher current priority. A wait
+  that ends by its timeout or an alert gets nothing; nor does a mutex
+  or shared lock handed over.
+- **Decay.** Each time slice the thread uses up, its current priority
+  drops one level, back to its base. A thread that waits again before
+  its slice ends keeps its boost, so interactive threads (that wait
+  often) stay ahead of computing ones of the same base priority: woken,
+  they preempt them at once instead of after their time slice.
+- **Starvation boost.** About once a second the dispatch interrupt looks
+  through the run queues (at most 16 threads at a time) for threads of
+  the variable class that have been ready for 4 seconds without running
+  (`ReadySince`), and raises each to 15 for one time slice, after which
+  it drops straight back to its base (also if it waits first). So a
+  thread kept off the processor by busier ones of higher priority still
+  makes progress, and releases what locks it holds.
+
+The rules are pure functions checked on the host
+(`tools/SchedulerPolicyTest`); the kernel self tests check that an event
+wakes a thread beside a busy one at once, and `schedtest` (in coretest)
+both that and the starvation boost from user mode.
+
+### Locks and synchronization objects
+
+All at `PassiveLevel`, all sleeping rather than spinning, and all built
+on the dispatcher lock and its wait queues:
+
+- **Events** (`Kernel.Events`): notification (stay signaled, release
+  everyone) or synchronization (release one, reset). A thread may wait
+  for any or all of up to 64.
+- **Mutexes** (`Kernel.Mutex`): an owner, recursive, handed directly to
+  the first waiter.
+- **Semaphores** (`Kernel.Semaphores`): a count from 0 to a limit. A
+  wait takes one; a release gives back one or more (failing, and
+  changing nothing, past the limit) and releases waiters in the order
+  they came. A semaphore is an event of kind `EventKindSemaphore`,
+  signaled while its count is above zero, so it is waited on with the
+  other events, in a wait for any or a wait for all (which takes one
+  only when all are signaled); releasing works at DispatchLevel too.
+- **Shared locks** (`Kernel.SharedLocks`): reader/writer locks. Any
+  number of holders shared or one exclusively. Writers come first: a
+  thread asking for the lock shared waits while a writer holds it or
+  waits for it, so readers that keep coming cannot keep a writer out;
+  and when a writer releases it, every reader waiting then gets it
+  together before the next writer, so readers are not starved either.
+  Ownership is handed over by the releasing thread. The exclusive
+  holder may acquire the lock again either way (each counts as another
+  exclusive hold); a shared holder must not acquire it again at all (a
+  writer waiting in between would deadlock it, and holders are not
+  recorded per thread to catch it). `TryAcquire...` versions never
+  wait. The volume list (`FileSystem.Volumes`) uses one: every path
+  lookup reads it shared, mounting and removing a disk change it
+  exclusively.
+
+Kernel self tests (`Kernel.SynchronizationSelfTest`) run on every boot:
+semaphore counts, limits and consumers in several threads; readers and
+writers of a shared lock in several threads (no reader sees a write half
+done, writers are alone, readers really share, a writer gets in while
+readers keep coming); the wake boost; and a stress of threads in a ring
+waking each other across processors while another thread keeps moving
+them between processors and changing their priorities.
 
 ## The clock and timers
 
@@ -687,16 +791,19 @@ replaces it.
   always swaps). The running thread is read with one GS-relative load, so
   `CurrentThread` cannot be torn by a move to another processor; anything
   else in a block is only used at DispatchLevel or above.
-- **Scheduling.** Each processor has its own run queues (see Scheduling);
-  the dispatcher lock is shared. Each
+- **Scheduling.** Each processor has its own run queues and its own
+  scheduling lock (see Scheduling); the dispatcher lock, for wait queues,
+  is shared. Each
   processor has its own one-shot clock interrupt for its time slices, its
   timers and its threads' timeouts (see The clock and timers). When a
   thread becomes ready, an
   idle processor (or the one running the least important thread, if that
   is less important) is sent its dispatch interrupt as an IPI. The handoff
-  of the dispatcher lock across a switch also guarantees that a thread
-  which just switched away is not picked up elsewhere before its registers
-  are saved, and that a terminated thread's stack is not freed too early.
+  of the processor's lock (and of the dispatcher lock, when the old
+  thread blocked or exited) across a switch also guarantees that a
+  thread which just switched away is not picked up elsewhere before its
+  registers are saved, and that a terminated thread's stack is not freed
+  too early.
 - **TLB shootdown.** After removing a mapping, the page table code
   invalidates it locally and, outside its lock, calls
   `InvalidateRemoteTranslations` (`Kernel.InterProcessor`): every other
@@ -879,7 +986,25 @@ addresses.
 Block devices are objects of type `BlockDevice`. All file system metadata
 and data reads go through `Io.BlockCache`, which caches 4 KiB lines per
 device, evicts least recently used first, and lets callers read any byte
-range regardless of the device's block size.
+range regardless of the device's block size. Its size follows the memory
+there is (see "The block cache" under File systems).
+
+**Discarding.** A disk that can be told its blocks hold nothing says so
+(`TBlockDevice.SupportsDiscard`, `MaximumDiscardBlocks`), and
+`DiscardBlocks` sends it `IoFunctionDiscard` requests (whole blocks, at
+most 1 GiB each; a partition's are shifted onto its disk);
+`Io.BlockCache.DiscardDeviceRange` first forgets the cache lines lying
+wholly inside the range. NVMe controllers that report Dataset Management
+(ONCS bit 2) get a Dataset Management command with the deallocate
+attribute, one range each; AHCI disks reporting TRIM (IDENTIFY word 169)
+a DATA SET MANAGEMENT command with the TRIM feature, its ranges (up to
+64 of 65535 sectors) in a 512-byte block of the bounce buffer, run alone
+like a flush; virtio disks offering VIRTIO_BLK_F_DISCARD a discard
+request (header, one segment, status) of at most max_discard_sectors;
+and the RAM disk gives every page of the image wholly inside the range
+back to the page allocator (it keeps a table of its pages: a discarded
+one reads as zeros until a write gives it a fresh page). The disk
+statistics count discards and their bytes.
 
 ## The I/O manager: drivers, devices, requests
 
@@ -3528,7 +3653,13 @@ not asked at all: End (on either tab) offers to end it outright at
 once. Any other is asked and watched; if it is still there (and not
 already being ended) 10 seconds later, the task manager offers to end
 it outright - once, in one question for all that are overdue, checked
-every second whatever the update speed. Ending outright is
+every second whatever the update speed, and held back while another
+question of the task manager's is on the screen. Such an offer
+(`TaskManager.OfferBox`) is taken down as No (`offer withdrawn`) at the
+first look after none of its processes runs any more - they finished
+ending, or the user ended them another way (End now from a menu still
+open) - so it never stays up, modal, with nothing left to answer; a Yes
+ends only the ones still running. Ending outright is
 `TerminateProcess`, which the kernel carries out whatever the program
 is doing.
 
@@ -7180,7 +7311,11 @@ The namespace is a single tree. The root lists the mounted volumes, each a
 directory named after its block device: `/disk1p7/docs/readme.txt`. Paths
 are absolute; `.` and `..` are resolved textually first. Symbolic links are
 followed up to 8 deep, and an absolute link target is resolved from the
-root of the link's own volume.
+root of the link's own volume (for a volume mounted at a directory: of
+the volume at the top of its chain of mounts, normally the system
+volume, so `/bin/sh` in a link on `/tmp` means the system's). The system
+volume is also found by the name `system` (`/system/...` in the kernel,
+`/volumes/system/...` for programs), an alias that is not listed.
 
 Drivers (each split into Structures / Volume / Write units plus a main
 unit; ext also has Blocks and Directories):
@@ -7233,12 +7368,53 @@ the open file while it runs, since another thread may close the handle
 during a long wait. The settings library takes its writers' lock this
 way (see "Settings").
 
-The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
+### The block cache
+
+**Size.** The block cache (`Io.BlockCache`, 4 KiB lines) starts at its
+minimum and takes a new line for a miss, instead of reusing the least
+recently used one, while it is below its maximum and twice the low
+watermark of memory is free (see "Memory pressure and running out"). By
+default the maximum is half the memory free when the cache starts and
+the minimum 4 MiB (a sixteenth of the free memory on a machine with very
+little, at least 256 KiB); the kernel options `blockcache=MIB`
+(maximum), `blockcachemin=MIB` and `blockcacheshare=PERCENT` change
+that, and the maximum stays below 90% of the free memory
+(`Io.BlockCacheSizing`, checked on the host by `CachePolicyTest`). Under
+memory pressure its shrinker gives clean lines back, least recently used
+first, down to the minimum; asked hard it writes the dirty ones back
+first. Line records come in chunks of 256 (`Io.BlockCacheLines`), a
+chunk freed once none of its records holds a page; the hash table is
+sized for the maximum. No kernel heap memory is allocated with the cache
+lock held, so an allocation that must reclaim never finds the cache
+locked by itself. None of the file systems relies on the cache's size:
+they hold lines only for the length of a call, and the ext journal keeps
+its own copies.
+
+**Pages for mappings.** `PinCachedPage` hands out a line's page itself,
+pinned and locked (for file mappings that page in through the cache): a
+mapping takes a reference to the physical page, and the cache never
+reuses a page someone else holds - such a line gets a fresh page and the
+cache drops its own reference.
+
+**Reports.** The kernel shell's `cache` shows the size, its bounds, the
+dirty lines, hits and misses with the hit rate, lines grown, given back
+and discarded; `CallGetBlockCacheStatistics` (169) gives the same as a
+`TAbiBlockCacheStatistics` (with the bytes the file systems queued for
+discarding and the disks were told to discard), which `free` and
+`sysinfo` ("Disk cache") show.
+
+The block cache writes back:
 
 - **Writes** only dirty a line. Dirty lines reach the disk when
   `FlushCachedDevice` is called (which then also sends the disk a flush),
   when the background writer (the `CacheWriter` thread) finds them dirty
-  for more than a second, or before their line is reused. Everything
+  for more than a second, before their line is reused, or when the
+  shrinker needs their memory. Dirty lines are kept on a list in the
+  order they became dirty, so the writer looks at no clean line, and a
+  flush writes only the lines dirty when it began (never waiting on
+  lines dirtied while it runs). A batch is one device's lines in
+  ascending order, which is also the order their locks are taken in.
+  Everything
   that needs data durable or ordered flushes: the ext journal around its
   commit blocks, exFAT after marking the volume dirty, syncing (including
   before `test-exit`), and raw disk access.
@@ -7250,6 +7426,36 @@ The block cache (`Io.BlockCache`, 1024 lines of 4 KiB) writes back:
   reuse never waits.
 - **Reading ahead.** Read misses on consecutive lines of a device read up
   to 16 more lines in the same request.
+
+### Discarding freed space
+
+When the ext, FAT or exFAT driver frees blocks or clusters it queues their
+byte range (`FileSystem.Discards`); ranges are batched per volume, merged
+when they touch (`FileSystem.DiscardRanges`, 128 a batch), and sent by
+the cache writer each round (about twice a second), when volumes are
+synced, and when a batch fills. A block must never be discarded while
+the disk could still name it in use after a crash, so a batch goes out
+only after the cache was flushed (the metadata that freed it is durable),
+and on a journaled ext volume a range waits until the transaction that
+freed it has committed (a failed transaction drops it). A block freed
+and allocated again before its discard went out must not be discarded:
+every allocation cancels its range first, under the volume's discard
+lock, which is held while a batch goes out (sending never takes a volume
+lock). Before the disk gets a range, the cache forgets the lines lying
+wholly inside it, dirty or not. Volumes discard if their disk can and
+the kernel option `discard=off` is not given (`TVolume.Discards` is nil
+otherwise).
+
+`fstrim [-v] MOUNTPOINT...` (`CallTrimVolume`, 168, root only;
+`FileSystem.Trim`) discards all of a volume's free space: with the
+volume locked, synced and the cache flushed, the driver walks its free
+space (`TFileSystemDriver.TrimFreeSpace`: the ext block bitmaps, groups
+whose bitmap is still uninitialized left alone; the FAT; the exFAT
+allocation bitmap) and every free run goes to the disk.
+`scripts/test-memory-pressure.sh` checks that the sparse image files of
+an NVMe disk (ext4, batched discards) and a virtio disk (FAT16, fstrim)
+attached with `discard=unmap` shrink back after a 24 MiB file was
+written and removed.
 
 ext volumes are mounted read-only if they use features the
 driver cannot keep consistent (bigalloc, quota, encryption, case folding,
@@ -7377,6 +7583,128 @@ program's message loop waits on it like on any handle
 in another process, on the system volume (ext4) and on the FAT16,
 exFAT and ext2 test volumes; `watch` prints the changes of any path and
 `volumes -w` the volumes coming and going.
+
+### Mount points
+
+A volume may also be mounted on a directory of another one
+(`FileSystem.Mounts`, the table in `FileSystem.MountTable`): a memory
+volume on `/tmp`, a USB disk on `/mnt/usb`. It stays in `/volumes` as
+well.
+
+- **Resolution.** The table names the volume holding the mount point,
+  the mount point's node number (the record keeps a reference to the
+  node, so its volume is busy and the folder can be neither removed nor
+  renamed: `StatusInUse`), the volume mounted there, and the mount
+  point's path from the root of the volume at the top of the chain
+  ("/tmp"). `ResolveInVolume` looks each directory it passes up in the
+  table (only on volumes with `MountsOnVolume` > 0) and goes on at the
+  mounted volume's root, moving the operation's lock from one volume
+  to the other: two volume locks are never held at once, and the
+  operation goes on with the volume it ended on (`var Volume`). Being
+  by node number, letter case, symbolic and hard links lead in as
+  well. `..` of a path is textual, so `/tmp/x/../..` leaves the mounted
+  volume; a symbolic link is resolved afresh from the top volume's root
+  with the mount point's path in front of a relative target, so `..` in
+  a link leads out just the same.
+- **Two names at once.** Rename and hard links locate both parents first
+  (`LocatePath`, `LocateParent`: the volume and the path there) and
+  refuse with `StatusCrossesVolumes` (`ErrorCrossVolume`, 18; `mv`
+  copies then) when the volumes differ; then they resolve on that one
+  volume without crossing.
+- **Mounting** (`MountAtDirectory`) needs a folder that is not a
+  volume's root, nothing mounted on it already, and the volume not
+  mounted elsewhere nor above the folder (no cycles); mounting a volume
+  where it is mounted already only changes its options. 32 mounts at
+  most.
+- **Unmounting** (`UnmountVolume`) is refused while a node of the volume
+  besides its root is in use (an open file or folder, a mount point of
+  another volume on it) or its root is open, and (`CallUnmountVolume`)
+  while a program's current directory is in it, unless forced. It
+  writes the volume back (driver `Sync`, then the disk is flushed),
+  takes it off the list and from its folder, and marks it gone as an
+  unplugged disk's volumes are (below): a forced unmount's open files
+  fail with `ErrorNoDevice` from then on, and the driver data goes
+  when the last is closed. Its device cannot be mounted again until
+  then (`DeviceHasLingeringVolume`). The system volume is never
+  unmounted. A disk unplugged takes its volumes' mounts, and the mounts
+  on them, with it (`ForgetMountsOfVolume`).
+- **Options** (`FileSystem.MountOptions`, kept in `TVolume.Options`):
+  `ro`/`rw`, `noexec` (programs on it do not start: `CheckMayExecute`
+  sees `TNodeInformation.VolumeFlags`), `nosuid` (set-id bits ignored
+  when they start), `discard` (kept for drivers that tell the disk
+  which blocks were freed), `uid=`, `gid=`, `umask=`, `fmask=`,
+  `dmask=` (below), `size=` and `mode=` (memory volumes), and
+  `defaults`, `atime`, `noatime`, `relatime` (ignored). New options on a
+  mounted volume apply at once; `ro` writes it back first; a read-only
+  volume stays read-only until it is unmounted (ext replays its journal
+  only when mounted writable).
+
+The calls (172-175): `CallMountVolume` (a `TAbiMountRequest`: a device
+`/dev/disk1p2`, a volume `/volumes/NAME` or `tmpfs`, the folder, the
+type, the options; root only), `CallUnmountVolume` (a mount point or
+`/volumes/NAME`; `UnmountForce`), `CallListMounts` (a
+`TAbiMountInformation`: name, device, type, where programs see it, the
+options as `mount` lists them) and `CallGetFileTimes` (below);
+`Sys.Mounts` wraps them. `mount` lists the mounts, mounts (`-t`, `-o`,
+`LABEL=NAME`, `-a` for `/etc/fstab`) and `umount [-f]` unmounts; `df`
+shows each volume where it is mounted.
+
+**/etc/fstab** (`Sys.MountTable`: `SOURCE DIRECTORY TYPE OPTIONS [DUMP
+PASS]`, `#` comments, `LABEL=`, the table's own `noauto` and `nofail`)
+is mounted by the first service manager before any service starts
+(`Services.Mounts`), by coretest, which runs as the first program in
+the tests, and by `mount -a` (`Sys.MountAll`: an entry whose folder has
+a volume mounted on it already is left alone). The system's table
+mounts a memory volume on `/tmp` (`mode=1777,size=50%`); before that,
+and on a system without the table, `/tmp` is the system volume's own
+sticky folder.
+
+### Memory volumes (tmpfs)
+
+`FileSystem.Memory` keeps a volume in RAM: files, folders, symbolic and
+hard links, named pipes, owners, permissions and the four times to the
+nanosecond (reading does not move the access time). A file's contents
+are whole pages from the physical page allocator
+(`FileSystem.Memory.Storage`: a page map per file, holes read as zeros),
+counted against `size=` (bytes, k, m, g, or a share of the RAM; half by
+default; `StatusNoSpace` past it), and counted by the kernel as
+drivers' memory. Folders are lists of entries with a serial number each,
+which a listing's cursor keeps (`FileSystem.Memory.Nodes`). A file's
+pages go back when it is shortened, when its last name goes (or, if it
+is open, when it is closed for the last time) and when the volume is
+unmounted. Memory volumes are made by `MountMemoryVolume`
+(`CallMountVolume` with type `tmpfs`), named `tmpfs1`, `tmpfs2`, ...;
+the root gets `mode=` (rwxrwxrwt by default).
+
+### Owners on FAT and exFAT
+
+FAT and exFAT have no owners or permission bits
+(`TFileSystemDriver.HasNoOwners`). Every node gets the owner and group of
+the mount options (`uid=`, `gid=`; root without them) and rwxrwxrwx less
+`fmask=` (files; 0133 by default, so rw-r--r--) or `dmask=` (folders;
+0022, rwxr-xr-x); `umask=` sets both (as on Linux, files then get the
+execute bits too). The read-only attribute takes a file's write bits
+away (not a folder's: Windows marks customized folders read-only), and
+chmod without write bits sets it (`FileSystem.OwnerMapping`,
+`FileSystem.Security.MapOwnerlessNode`, applied as nodes enter the node
+cache and after every attribute change; options changed on a mounted
+volume remap the cached nodes). chown and chgrp succeed only to the
+owner and group the node shows already. So with `uid=1000`, user 1000
+may write there, and without it others may only read.
+
+### File times
+
+`TNodeInformation` has the access, modification and change times and
+the time a node was made (birth, 0 where the format does not keep it),
+each with nanoseconds. ext reads the extra fields of large inodes
+(nanoseconds and two more bits of seconds after each time, `i_crtime`);
+FAT has the creation time to 10 ms and the access date; exFAT the
+creation and access times and 10 ms steps; memory volumes keep all
+four exactly. `TAbiFileInformation` is unchanged (whole seconds);
+`CallGetFileTimes` (175) gives a `TAbiFileTimes` for a path or a handle.
+`stat` shows the times to the nanosecond and the birth (`%w`, `%W`),
+`ls -l --time=atime|ctime|birth` (`-u`, `-c`) shows and sorts by
+another time, `touch -a` and `-m` set one of them.
 
 ### Volumes going away
 
@@ -7522,7 +7850,14 @@ Every process has a region limit and a handle limit (by default 65536
 regions and 16384 handles, at most 1048576 and 65536), inherited by the
 processes it starts. `CallSetProcessLimit(Limit, Value)` (131) changes
 the caller's (`ProcessLimitRegions`, `ProcessLimitHandles`; lowering is
-always allowed, raising above the default is root's) and
+always allowed, raising above the default is root's). Two more settings
+go through it, inherited the same way: `ProcessLimitProcesses` (4), the
+most processes the caller's real user may run at once when this process
+starts one (default 4096, at most 65536; root's are not counted; one too
+many fails with `ErrorWouldBlock`), and `ProcessLimitOomScoreAdjust` (5),
+how willingly the process is ended when memory runs out, passed as the
+adjustment plus `OomScoreAdjustOffset` (1000) so it is never negative
+(see "Memory pressure and running out"). And
 `CallGetProcessResources(ProcessId, Address)` (130) reports what a
 process holds as a `TAbiProcessResources`: regions, handles and threads
 against the limits, the regions' size and its committed, peak and
@@ -7532,6 +7867,13 @@ ends 200 more from outside while they wait, holds 5000 regions and 3000
 handles (pipes, events, sockets) at once, lowers both limits, passes
 600 handles to a child, and checks every count comes back to its
 baseline.
+
+Run time allocations, reservations and file mappings may be split into
+several regions - pieces committed, decommitted or protected apart from
+the rest (`Processes.RegionEditing`), all carrying the allocation's
+start as their `AllocationBase` so freeing that start frees every piece,
+and joined again once alike. See "Virtual memory: reserving, committing,
+protecting, mapping files" below.
 
 Device memory is mapped into a process with `CallMapHandle(Handle,
 Offset, Length)`: the handle's driver says which physical memory that is
@@ -7544,6 +7886,125 @@ address space hands them to the page allocator, and the kernel never
 reaches them through its physical memory window. Write-combining is the
 page attribute table's entry 4, which the kernel sets at start (and
 every processor takes on as it starts or wakes).
+
+### Virtual memory: reserving, committing, protecting, mapping files
+
+Programs manage their address space with six calls (160-165,
+`Processes.VirtualMemoryCalls`, the work in `Processes.VirtualMemory`; libsystem's
+`Sys.Memory`: `ReserveMemory`, `CommitMemory`, `DecommitMemory`,
+`ReleaseMemory`, `ProtectMemory`, `QueryMemory`, `AllowDynamicCode`,
+`MapFile`):
+
+- **`CallReserveMemory` (Length, Flags)**: address space without memory,
+  in the run time allocation area: a region with no access that is not
+  committed. Freed whole with `CallFreeMemory`.
+- **`CallCommitMemory` (Address, Length, Protection)**: pages of one
+  reservation (or allocation) become ordinary on-demand pages with a
+  protection (`MemoryRead`, `MemoryReadWrite`, `MemoryReadExecute`,
+  `MemoryNoAccess`, any of them with `MemoryGuard`), zero when first
+  touched, counted against the commit limit first (all or nothing).
+- **`CallDecommitMemory` (Address, Length)**: their pages go, they are
+  reserved again.
+- **`CallProtectMemory` (Address, Length, Protection)**: committed pages
+  of reservations, allocations and file mappings get another protection;
+  returns the first page's previous one.
+- **`CallQueryMemory` (Address, InformationAddress)**: a
+  `TAbiMemoryInformation`: the run of alike pages around the address,
+  its allocation's start, state (free, reserved, committed), protection
+  and kind (private, image, file mapping, stack, thread data, device,
+  section, stack guard).
+- **`CallSetMemoryPolicy` (Flags)**: `MemoryPolicyAllowDynamicCode`.
+
+Committing or protecting part of a region splits it where the change
+begins and ends and joins alike neighbours again
+(`Processes.RegionEditing`, tested on the host by `RegionTreeTest`
+against a model of every page). Run time allocations (`CallAllocateMemory`)
+are reservations committed whole, so the heap's memory may be decommitted
+and protected in parts too. Protection is per region: changing it maps
+the pages already there again. A page the program may not touch (no
+access, a guard) stays where it is, mapped for the kernel only
+(`MappingNoAccess`: no user bit on x86-64, EL1-only with UXN and PXN and
+an ASID on AArch64), so making it accessible again finds its contents;
+`ValidateUserRange` refuses system call buffers in such pages, as in
+reserved ones.
+
+**User W^X.** No user page is writable and executable at once
+(`ErrorAccessDenied`), and anonymous memory becomes executable only in a
+process that asked for it (`CallSetMemoryPolicy` with
+`MemoryPolicyAllowDynamicCode`, for a compiler at run time: write the
+code into read-write pages, then protect them read-execute). Program
+images, and files mapped executable and read-only (`MapExecutable`), are
+code from files and need no permission. The policy is not inherited.
+
+**Guard pages.** `MemoryGuard` makes a one-shot trap: the first touch by
+the program raises `ExceptionGuardPage` (the fault resolver takes the
+guard off just that page and marks the thread, `GuardPageHit`, for the
+exception dispatcher) and the page is an ordinary one from then on. The
+runtime raises it as an access violation (runtime error 216,
+`EAccessViolation`); an exception filter sees the code.
+
+**Commit charge.** Each address space counts the pages of private memory
+it may come to use, touched or not (`RegionChargePages`): committed
+allocations and reservation parts, stacks, thread data, writable image
+regions and writable private file mappings. It is checked against the
+process's commit limit (`CallSetProcessLimit(ProcessLimitCommit,
+Pages)`, 0 = none, the default; inherited by children; only root may
+raise it or take it away) and added to the system's total
+(`Memory.CommitCharge`). For a policy on running out of memory the
+kernel API is `CommitChargeOf(Space)` (per process) and
+`SystemCommittedPages` (all of them); `CallGetProcessResources` shows
+both (`CommitChargePages`, `CommitLimitPages`,
+`SystemCommitChargePages`). The out-of-memory policy
+(`Processes.MemoryCharges`) gets them through `SetCommitCounters`
+(`InitializeVirtualMemory`): a process's commitment beyond its resident
+private pages, and the system's total.
+
+**File mappings.** `CallMapHandle(Handle, Offset, Length, Flags)` on a
+regular file opened for reading maps it (Length 0: to its end):
+read-only shared by default, `MapPrivate` for copy on write (writable
+with `MapWritable`), `MapExecutable`. A shared writable mapping is
+refused with `ErrorUnsupported`: nothing writes dirty pages back to the
+file yet. The pages are a **mapped file**'s (`Processes.MappedFiles`):
+one per file (volume and node number, found in a registry), holding the
+pages of the file read so far in a two-level table, each read once -
+`ReadFromFileAt` through the file system and its block cache - when some
+process first touches it. Reading sleeps, so the fault resolver leaves
+the address space's spin lock for it (with a reference to the mapped
+file) and lets the touch happen again; a fault that may not sleep (a
+copy at raised level) fails instead, and `WaitOnAddress` reads the word
+once before its spin lock. Every mapping, in every process, maps those
+same pages, each with a reference of its own; the region holds a
+reference to the mapped file. A mapped file keeps an open file of its
+own (`DuplicateOpenFileForReading`), so the mapping outlives the
+program's handle and the file's name. Unmapping (`CallFreeMemory`) and
+the end of the process give the references back; the last one destroys
+the mapped file, deferred to passive level when it goes under a spin
+lock (`DrainMappedFileReleases`).
+
+When the file changes, the file system tells the mapped files twice
+(`AddFileChangingHook`, `AddFileChangedHook`). Before the change lands,
+with the volume's lock held, a mapped file with private users (copy on
+write mappings, program images) reads every page it has not read yet
+and leaves the registry: those mappings keep exactly what they were
+mapped with, and writing a running program's file does not change the
+program. After a change, a mapped file with only shared mappings reads
+the pages the change touched again, in place, so a shared read-only
+mapping shows what `read()` shows; a page read while the file changed is
+read again (`ChangeCount`). `maptest` checks all of this: protection
+faults are catchable `EAccessViolation`s at the byte touched, commit and
+decommit (and the charge), W^X and the policy (a `ret` written and run),
+guard pages, a file seen through a mapping and through `read()`, a
+`write()` seen through a shared mapping, two private mappings keeping
+their writes apart and a private one keeping the old contents, the
+commit limit, and that the library pages it maps are mapped by other
+processes too (`PagesMappedElsewhere` in `CallGetProcessResources`:
+resident file pages with more holders than the mapped file and this
+mapping).
+
+The runtime's heap still takes its chunks with `CallAllocateMemory`:
+those pages are already provided only when touched, so reserving and
+committing would only add system calls. The page heap uses the new calls
+(see "Heap checking").
 
 ### Threads
 
@@ -7715,10 +8176,13 @@ test copies to an unmapped user address.
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
+| Semaphores (140-142; 143-147 reserved) | CreateSemaphore, ReleaseSemaphore, GetSemaphoreCount (see "Objects for programs that work together") |
 | Memory | AllocateMemory, FreeMemory |
+| Virtual memory (160-165) | ReserveMemory, CommitMemory, DecommitMemory, ProtectMemory, QueryMemory, SetMemoryPolicy (see "Virtual memory: reserving, committing, protecting, mapping files") |
 | Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
+| Mounts and file times (172-175) | MountVolume, UnmountVolume (root only), ListMounts, GetFileTimes (see "Mount points") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
 | Clock, time zone, keyboard (98-103) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
 | Sockets (104-115) | CreateSocket, BindSocket, ListenSocket, AcceptSocket, ConnectSocket, SendSocket, ReceiveSocket, ShutdownSocket, Get/SetSocketOption, GetSocketAddress, WaitForSocket (see "Networking") |
@@ -7831,6 +8295,66 @@ columns (a `burn` busy loop above 10% CPU with its 8 MiB resident) and
 who sees whose command line. `burn` (threads spinning, memory taken
 and touched, `-i` to ignore requests to end) is the busy program the
 tests use.
+
+### Memory pressure and running out
+
+**Watermarks.** The page allocator (`Memory.PhysicalPages`) has a low
+and a critical watermark of free pages: 1/64 of RAM (at least 1 MiB, at
+most 64 MiB) and half of that. When an allocation leaves fewer free
+pages than the low one, or fails, it calls back once (until the pressure
+is acknowledged); every failed allocation is counted
+(`FailedPageAllocationCount`).
+
+**Shrinkers.** Caches register a shrinker with `Memory.Pressure`: the
+heap check quarantine (with `heapchecks`) and the block cache. The
+allocator's callback only queues a deferred call, which wakes the
+`MemoryPressure` system thread: it asks the shrinkers (gently, or hard
+below the critical watermark: dirty data written back first) until free
+memory is half the low watermark above it, and also looks once a second.
+A caller that needs a page now and may wait reclaims itself
+(`ReclaimMemory`): a kernel heap allocation that failed at passive level
+with interrupts on reclaims and tries once more before returning nil
+(kernel allocations fail cleanly, they never end a process), and so does
+a user page fault.
+
+**Running out** (`Processes.OutOfMemory`). A user page fault that found
+no page even after reclaiming chooses a process to end
+(`Processes.OutOfMemoryScores`): its score is its share of memory in
+thousandths - resident plus committed pages (`Processes.MemoryCharges`;
+the virtual memory calls feed commitments in through
+`SetCommitCounters`, until then a process is charged with what it has
+resident) - plus its adjustment (-1000 to 1000). The highest score goes,
+on equal scores the larger. Never chosen unless it is the culprit (the
+process whose fault failed): the initial program (the service manager),
+a process with the adjustment -1000 (the display server sets it on
+itself; lowering below 0 is root's), and one already being ended; the
+culprit goes if nobody else may. The chosen process is ended with exit
+status 137 (`ExitStatusOutOfMemory`), with a kernel log line ("Out of
+memory: ended NAME (PID), SIZE resident and committed, ...") and a
+`NotificationProcessEndedForMemory` (Value: its id) to every process
+that selected `NotifyProcessEndedForMemory`. If it is the culprit, its
+failing allocation ends it right there; any other faulting thread waits
+for it to end and its memory to come back, then tries again. While one
+chosen process is still ending (up to 5 s), no second one is chosen. The
+pressure thread calls the same policy (without a culprit) when memory
+stays critical while allocations keep failing. A fault taken by the
+kernel itself while copying for a system call fails instead (locks may
+be held).
+
+**Reports.** `CallGetMemoryPressure` (170) gives a `TAbiMemoryPressure`:
+the pages, free pages, watermarks, level, how often memory was short,
+the reclaim calls and pages they freed, failed allocations, the pages
+committed, and the processes ended (the last one's id and name). `free`
+shows the memory (total, used, free, cache, available), the cache and
+the pressure; the kernel shell's `mem` and `cache` the watermarks and
+counts. `memorytest cache` (a coretest line) reads /bin until the cache
+has grown, then has a hog take memory until it is short while reading
+on: the cache must give lines back, every read work and nobody be
+ended. `scripts/test-memory-pressure.sh` (in `make test`) boots a
+256 MiB guest with `memorytest` as the first program: a hog without end
+must be ended with 137 while a bystander and the system live on, and a
+small process with the adjustment 1000 must be ended before a hog;
+then the discards above.
 
 ### Processor exceptions
 
@@ -7960,12 +8484,13 @@ caller's queue, ready while a notification waits. A program's message
 loop, a shell's prompt or a service's main wait simply includes it, and
 reads what came with `CallReceiveNotification` (92), a
 `TAbiNotification`: a kind, a reason, the sending process (0 for the
-system) and a value. Two kinds exist:
+system) and a value. Three kinds exist:
 
 | Kind | Reason / value | Sent by |
 |---|---|---|
 | end requested | asked, service stop, shutdown, log off, hang-up, interrupt | `CallRequestEnd`, the shutdown, a terminal's hang-up and Ctrl-C |
 | terminal resized | rows shl 16 or columns | `ControlSetConsoleSize` on the process's terminal, to its foreground group |
+| process ended for memory | the ended process's id | the out-of-memory policy, to every process that selected it |
 
 A process **selects** what it takes itself (`CallSelectNotifications`
 (91): a mask with a bit per end reason and one for the terminal's
@@ -8048,9 +8573,11 @@ that take requests and programs that do not.
 ### File attributes
 
 Drivers may implement `SetAttributes` (mode, owner, group, modification and
-access time), `CreateHardLink` and `GetFreeSpace`. ext2/3/4 supports all of
-them. FAT and exFAT map the mode onto the read-only attribute, store times
-in their own resolution and refuse owners other than 0 and hard links.
+access time), `CreateHardLink` and `GetFreeSpace`. ext2/3/4 and memory
+volumes support all of them. FAT and exFAT map the mode onto the
+read-only attribute, store times in their own resolution and refuse hard
+links and owners other than the ones the mount options give (see "Owners
+on FAT and exFAT").
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
 
@@ -8126,7 +8653,9 @@ Kernel threads act as root and keep the driver defaults. The checks:
 
 Root passes every check except the last. New nodes get the effective user
 and group and mode 0666 (files) or 0777 (directories) less the umask; on
-FAT and exFAT, which have no owners, only the mode is applied. Refusals
+FAT and exFAT, which have no owners, only the mode is applied (no write
+bit: the read-only attribute) and the owner comes from the mount
+options. Refusals
 from the mode bits are `ErrorAccessDenied` (13, "Permission denied");
 refusals of chmod, chown, set-id calls and priorities are
 `ErrorNotPermitted`.
@@ -8148,6 +8677,16 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
 
 - **Events** (`Objects.Events`): kernel events a program creates
   (`CallCreateEvent`, manual or automatic reset), sets and resets.
+- **Semaphores** (`Objects.Semaphores`): kernel semaphores
+  (`Kernel.Semaphores`) a program creates with a count and a limit
+  (`CallCreateSemaphore`, 140), releases (`CallReleaseSemaphore`, 141:
+  returns the count before, `ErrorOverflow` past the limit) and reads
+  (`CallGetSemaphoreCount`, 142); a wait on the handle takes one,
+  alone, among others or in a wait for all. There are no named objects
+  yet, so no call opens one by name: the handle is passed on like any
+  other. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
+  `GetSemaphoreCount` (`Sys.Objects`) and a `TSemaphore` class
+  (`Sys.Semaphores`).
 - **Timers** (`Objects.Timers`): an event signaled when a time comes,
   once or periodically (`CallSetTimer`), to well under a millisecond; a
   periodic timer counts each time from when the last was due, so
@@ -8175,7 +8714,8 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
   the pair), so a server can decide what a client may ask for.
 
 `CallWaitForHandles` waits for the first of up to 64 handles to be ready,
-with a timeout: an event or timer signaled, a process or thread ended, a
+with a timeout: an event or timer signaled, a semaphore's count above
+zero (the wait takes one), a process or thread ended, a
 pipe's read end or a channel readable (data, or the other end gone), a
 pipe's write end writable (room, or no reader left), a port with a
 connection waiting, a watch with change records waiting, a device with
@@ -8782,7 +9322,9 @@ reader is left.
 Programs see a Unix style tree: `/` is the root of the system volume (the
 one labelled `FPOSROOT`, or named by `root=`), and `/volumes/<name>`
 leads to every mounted volume, also those of disks plugged in later
-(and they leave it when unplugged). `/dev` holds the devices (see "The
+(and they leave it when unplugged); `/volumes/system` is always the
+system volume. Volumes mounted at folders (`/tmp`, see "Mount points")
+appear there as well. `/dev` holds the devices (see "The
 I/O manager").
 `Processes.Paths` normalizes a path against the current directory and
 translates it to the kernel's namespace.
@@ -8874,21 +9416,49 @@ Libraries are linked with `-Bsymbolic`, so references to their own
 symbols are bound when they are linked and need no lookup (libsystem has
 only RELATIVE relocations). Relocations are applied page by page.
 
-Images are read once and kept as **image sections**
-(`Processes.ImageSections`, up to 32, least recently used dropped first):
-the file's bytes for the loader, and its memory image in physical pages.
-A process maps a section's pages instead of copies: read-only pages are
-shared, writable ones are copy on write. Physical pages carry reference
-counts (`ReferencePhysicalPage`; freeing drops one); a copy on write page
-is mapped read-only with a software bit in its page table entry, and the
+Images are **mapped from their files**, not copied. Each segment page
+comes from the file's mapped file (`Processes.MappedFiles`, see "Virtual
+memory: reserving, committing, protecting, mapping files"): a region of
+the image is backed by the file at the right offset, and a page is read
+from the file - through the file system and its block cache - only when
+some process first touches it. Every process running the program or
+library maps the same physical pages: read-only ones shared outright,
+writable ones copy on write. The loader classifies each page of the
+memory image (`ClassifyPage`): the file's page when exactly one segment
+covers it and the file holds what it must; zero filled on demand for bss
+alone; and *built* where two segments share a page or a segment's file
+data ends inside a page whose rest must be zero (bss). Built pages - a
+few per image - are made once and kept in the image's section with the
+ELF header and program headers. Physical pages carry reference counts
+(`ReferencePhysicalPage`; freeing drops one); a copy on write page is
+mapped read-only with a software bit in its page table entry, and the
 first write - by the program, or by the kernel writing into the process
-(relocations, system call results) - gives the process its own copy, or
-simply makes the page writable if nobody else holds it. A section enters
-the cache only once its pages are filled. The file system reports every
-write to or resize of a file (`SetFileChangedHook`), which drops that
-file's sections (one still in use by a load is marked stale and goes when
-the load is done); the volume, node number, size and modification time are
-also compared on every use.
+(relocations, system call results) - gives the process its own copy (a
+page of a file or a section is always copied, so a process's own pages
+are always `PageUsageUserMemory`). Symbol, string, hash and relocation
+tables and the dynamic section are read through the file's pages too.
+
+**Image sections** (`Processes.ImageSections`, up to 32, least recently
+used dropped first) keep, per path, what the loader needs again: the
+headers, the span of the memory image, the built pages and a private
+reference to the file's mapped file (so its pages stay cached while the
+section does, and a write to the file never changes a running program -
+see below). A section enters the cache only once its built pages are
+made. The file system reports every write to or resize of a file
+(`AddFileChangedHook`), which drops that file's sections (one still in
+use by a load is marked stale and goes when the load is done); the
+volume, node number, size and modification time are also compared on
+every use.
+
+Measured on a desktop session (autologin, QEMU/KVM, 1 GiB, `free` and
+`ps -eo pid,rss,vsz,comm` from a serial root shell after the desktop
+settled), copying images in versus mapping them: memory in use 78.6 MiB
+-> 66.3 MiB; kernel heap 28.5 -> 18.5 MiB (the sections no longer hold a
+copy of each file); program and library pages ("mapped files") 7.5 -> 5.3
+MiB (pages nobody touched are never read); resident sets e.g.
+servicemanager 4088 -> 1344 KiB, displayserver 16868 -> 11920, desktop
+19252 -> 14468, sh 3816 -> 960 (a process maps only the library pages it
+touched).
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
 Each library goes to a random place of the library window (see "Address
@@ -12677,6 +13247,25 @@ anything is allocated (right after `InitHeap` in System's initialization,
 reading the environment in place and the options into a stack buffer), so
 every block of a program carries the checking header, and no block from
 before the checks can be taken for a bad one.
+
+**The page heap** (`HEAP_CHECKS=pages`, user programs only, from the
+environment only: `rtl/fpc/syspageheap.inc`) puts every block on pages
+of its own: a reservation (`CallReserveMemory`) of the pages for a
+16-byte header and the block, committed read-write, and one more page
+left reserved after them. The block ends where its last page does (after
+rounding to the heap's 16-byte alignment; those few bytes hold `$FD` and
+are checked when the block is freed), so a read or write past the end
+touches the reserved page and faults at once, at the instruction that
+did it and the byte it touched: `EAccessViolation` with the program's
+own back trace, not a report much later. A freed block's pages are
+decommitted at once, so a use after free faults the same way, and its
+reservation waits among the 1024 most recently freed before it is
+released, so its addresses are not reused soon. A double free or a stray
+pointer finds no committed header (`CallQueryMemory`) and is reported
+like the checking heap's mistakes. `ReAllocMem` always moves. Every
+block costs two pages of address space, a page of memory and a few
+system calls: it is for finding a bug. `heaptest --pages` and
+`--overrun-page` check it (coretest).
 
 **Patterns** (the same in the kernel and in user mode; each repeated over
 eight bytes is a non-canonical address, so a pointer read from such memory

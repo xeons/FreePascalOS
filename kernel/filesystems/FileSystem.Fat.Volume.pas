@@ -124,6 +124,8 @@ function CountFreeClusters(Volume: PVolume): TFileSystemStatus;
 function AllocateCluster(Volume: PVolume; PreviousCluster: LongWord; out Cluster: LongWord): TFileSystemStatus;
 { Frees the chain starting at FirstCluster. }
 function FreeClusterChain(Volume: PVolume; FirstCluster: LongWord): TFileSystemStatus;
+{ fstrim: discards every run of free clusters. }
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
 
 { Directory record access by index within a directory. }
 function DirectoryRecordOffset(Directory: PFatNode; Index: QWord; out Offset: QWord): TFileSystemStatus;
@@ -150,7 +152,8 @@ uses
   Runtime.Time,
   Memory.KernelHeap,
   Kernel.Clock,
-  FileSystem.Fat.Names;
+  FileSystem.Fat.Names,
+  FileSystem.Discards;
 
 function FatVolumeOf(Node: PNode): PFatVolume;
 begin
@@ -397,6 +400,8 @@ begin
     begin
       if not WriteFatEntry(Volume, Candidate, Fat^.EndOfChainMarker) then
         Exit(StatusIoError);
+      { Its discard, if still waiting, must not reach what goes in now. }
+      CancelVolumeDiscard(Volume, ClusterOffset(Fat, Candidate), Fat^.BytesPerCluster);
       if not VolumeWriteZeros(Volume, ClusterOffset(Fat, Candidate), Fat^.BytesPerCluster) then
         Exit(StatusIoError);
       if PreviousCluster <> 0 then
@@ -433,6 +438,7 @@ begin
       Exit(StatusIoError);
     if not WriteFatEntry(Volume, Cluster, 0) then
       Exit(StatusIoError);
+    QueueVolumeDiscard(Volume, ClusterOffset(Fat, Cluster), Fat^.BytesPerCluster, False);
     Inc(Fat^.FreeClusterCount);
     Inc(Freed);
     if Cluster < Fat^.NextFreeHint then
@@ -442,6 +448,41 @@ begin
     Cluster := NextCluster;
   end;
   Result := StatusSuccess;
+end;
+
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+var
+  Fat: PFatVolume;
+  Cluster: LongWord;
+  RunStart: LongWord;
+  Value: LongWord;
+  LastCluster: LongWord;
+begin
+  Fat := PFatVolume(Volume^.DriverData);
+  Result := StatusSuccess;
+  LastCluster := Fat^.ClusterCount + 1;
+  Cluster := 2;
+  while Cluster <= LastCluster do
+  begin
+    if not ReadFatEntry(Volume, Cluster, Value) then
+      Exit(StatusIoError);
+    if Value <> 0 then
+    begin
+      Inc(Cluster);
+      Continue;
+    end;
+    RunStart := Cluster;
+    repeat
+      Inc(Cluster);
+      if Cluster > LastCluster then
+        Break;
+      if not ReadFatEntry(Volume, Cluster, Value) then
+        Exit(StatusIoError);
+    until Value <> 0;
+    if not TrimFreeRange(Volume, ClusterOffset(Fat, RunStart), QWord(Cluster - RunStart) * Fat^.BytesPerCluster,
+      Discarded) then
+      Result := StatusIoError;
+  end;
 end;
 
 { --- Directory records ----------------------------------------------- }
@@ -585,6 +626,17 @@ begin
   { FAT keeps only the date of the last access, and no change time. }
   Node^.Common.Information.AccessTime := DosDateTimeToUnixTime(DirectoryRecord.LastAccessDate, 0);
   Node^.Common.Information.ChangeTime := Node^.Common.Information.ModificationTime;
+  { When it was made, to 10 ms (the tenths field counts 10 ms steps on
+    top of the two second time). }
+  Node^.Common.Information.BirthTime :=
+    DosDateTimeToUnixTime(DirectoryRecord.CreationDate, DirectoryRecord.CreationTime);
+  Node^.Common.Information.BirthNanoseconds := 0;
+  if (Node^.Common.Information.BirthTime <> 0) and (DirectoryRecord.CreationTimeTenths <= 199) then
+  begin
+    Node^.Common.Information.BirthTime := Node^.Common.Information.BirthTime +
+      DirectoryRecord.CreationTimeTenths div 100;
+    Node^.Common.Information.BirthNanoseconds := LongWord(DirectoryRecord.CreationTimeTenths mod 100) * 10000000;
+  end;
   if (DirectoryRecord.Attributes and AttributeReadOnly) <> 0 then
     Node^.Common.Information.Mode := $124  { r--r--r-- }
   else

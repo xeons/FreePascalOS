@@ -50,6 +50,7 @@ interface
 uses
   Kernel.Mutex,
   Kernel.Events,
+  Kernel.PriorityBoosts,
   Kernel.DeferredCalls,
   Drivers.VirtioPci,
   Drivers.VirtioGpuProtocol;
@@ -124,7 +125,8 @@ const
 
 procedure SignalAnswered(Context: Pointer);
 begin
-  SignalEvent(PGpuDevice(Context)^.Answered);
+  { A display wait: the waiter gets the display boost. }
+  SignalEventWithBoost(PGpuDevice(Context)^.Answered, BoostDisplay);
 end;
 
 procedure HandleGpuInterrupt(Frame: PTrapFrame; Context: Pointer);

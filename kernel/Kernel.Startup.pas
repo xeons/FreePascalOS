@@ -49,6 +49,7 @@ uses
   Kernel.IdleStates,
   Io.AcpiPower,
   Objects.Events,
+  Objects.Semaphores,
   Objects.Timers,
   Objects.Sections,
   Processes.Channels,
@@ -71,6 +72,7 @@ uses
   Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.SynchronizationSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
   Kernel.ProtectionFaultTest,
@@ -88,6 +90,7 @@ uses
   Kernel.NetworkShell,
   Kernel.NetworkSelfTest,
   Io.BlockCache,
+  Memory.Pressure,
   Io.AudioOutput,
   Io.AudioInput,
   Io.AcpiNamespace,
@@ -118,6 +121,8 @@ uses
   Kernel.Arch.PlatformSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
+  Processes.MappedFiles,
+  Processes.VirtualMemory,
   Processes.HangWatch,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
@@ -225,6 +230,8 @@ begin
   InitializeFileObjects;
   InitializeWatches;
   InitializeImageSections;
+  InitializeMappedFiles;
+  InitializeVirtualMemory;
   InitializeTerminalSignals;
   InitializeConsole;
   InitializeIoManager;
@@ -234,6 +241,7 @@ begin
   InitializePseudoTerminalDevices;
   InitializePipes;
   InitializeEventObjects;
+  InitializeSemaphoreObjects;
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;
@@ -245,6 +253,11 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
+    { A thread this processor may run can be left in another's queue
+      when that queue's lock was taken just as it looked: it looks again
+      rather than halting. }
+    if IdleProcessorFoundWork then
+      Continue;
     { Interrupts are enabled, so the next interrupt ends the wait. If it
       made a thread ready, the dispatch interrupt switches to it. }
     IdleProcessor;
@@ -334,6 +347,8 @@ begin
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
+  if CreateSystemThread(@RunMemoryPressureWatcher, nil, PhaseOneThreadPriority, 'MemoryPressure', False) = nil then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the memory pressure thread', 0, 0, 0, 0);
   if (XhciControllerCount > 0) and
      (CreateSystemThread(@RunUsbPortWatcher, nil, PhaseOneThreadPriority, 'UsbPorts', False) = nil) then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the USB port watcher', 0, 0, 0, 0);
@@ -343,6 +358,7 @@ begin
   RunPanicTestIfAsked;
 
   RunKernelSelfTests;
+  RunSynchronizationSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
   RunPlatformSelfTest;
@@ -463,6 +479,8 @@ begin
   InitializeDeferredCalls;
   InitializeTimers;
   InitializeScheduler(@IdleThread^.ControlBlock);
+  { Caches shrink when memory runs short (deferred calls are ready). }
+  InitializeMemoryPressure;
 
   StartPhaseOne(BootInformation);
 

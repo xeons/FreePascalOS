@@ -28,7 +28,8 @@ how the existing pieces fit together.
 - [x] Save and restore floating point / SSE registers at thread switches
 - [x] Per-processor run queues; placement by last processor, idle processors
       take work from busy ones
-- [ ] Split the dispatcher lock (per-processor scheduling locks)
+- [x] Split the dispatcher lock (per-processor scheduling locks; the dispatcher
+      lock keeps only wait queues; work stealing by try-lock, idle pull)
 - [x] Device interrupts spread over the processors (round robin, not the boot one)
 - [x] Batched TLB shootdowns for large unmaps (one interrupt per 32-page run)
 - [x] Processor affinity for threads and processes (taskset)
@@ -37,10 +38,15 @@ how the existing pieces fit together.
 
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
-- [ ] Semaphores and reader/writer locks
-- [ ] Wait on multiple objects
+- [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
+      calls 140-142, waitable with wait-for-all)
+- [ ] Named objects (open a semaphore or event by name)
+- [ ] Use shared locks for more read-mostly lookups (open file and node tables,
+      handle table reads)
+- [x] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
-- [ ] Priority boosting for threads woken from waits
+- [x] Priority boosting for threads woken from waits (by wake reason, decay per
+      time slice, starvation boost; never the real-time class)
 - [x] Stack back trace in the panic screen (frame pointer walk, kernel
       symbol table made at build time, also over netlog; testpanic option)
 - [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
@@ -90,7 +96,24 @@ how the existing pieces fit together.
       data however a thread ends, threadvar blocks of threads ended from
       outside (AllocateForThread), heap chunks of ended threads kept by the
       heap check quarantine; checked by limittest
-- [ ] Demand paging from files (map executables instead of copying them in)
+- [x] Demand paging from files (map executables instead of copying them in):
+      program and library pages come from the file's mapped pages
+      (Processes.MappedFiles) on first touch, shared between processes;
+      image sections keep only headers and the few built pages
+- [x] Reserve / commit / decommit / protect / query (CallReserveMemory 160 ..
+      CallSetMemoryPolicy 165), user W^X with a dynamic code opt-in, one-shot
+      guard pages, commit charge per process (ProcessLimitCommit) and system
+      wide (Memory.CommitCharge)
+- [x] File mappings (CallMapHandle on regular files): read-only shared and
+      private copy on write, coherent with write() for shared mappings,
+      private ones keeping what they saw; maptest
+- [ ] Shared writable file mappings (write-back of dirty pages through the
+      file write path; refused with ErrorUnsupported for now)
+- [ ] Evicting mapped file pages under memory pressure (they stay while the
+      file is mapped or its image section is cached; package 7's shrinker
+      could drop pages no process maps)
+- [ ] Mapped file pages and the block cache hold the same data twice; read()
+      could be served from the mapped file's pages when they are resident
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
 - [ ] Keep relocated copies of image pages per load address, so loading a
@@ -99,11 +122,9 @@ how the existing pieces fit together.
       `heapchecks`, `HEAP_CHECKS`): fill patterns that make freed pointers
       non-canonical, guards after blocks, double free detection, a quarantine
       checked when blocks leave it; on in every test boot
-- [ ] Page heap (opt-in per program): every block on pages of its own,
-      end-aligned against an unmapped guard page, freed pages unmapped and
-      their addresses kept from reuse. Needs a reserve / commit / decommit
-      call and keeping freed addresses from first-fit reuse (the region
-      tree holds a region per block now)
+- [x] Page heap (HEAP_CHECKS=pages): every block on pages of its own,
+      end-aligned against a reserved page, freed pages decommitted and their
+      reservations kept back (the last 1024) from reuse
 - [x] Heap checking for the physical page allocator (fill freed pages, keep
       them from reuse for a while, check them when they leave the quarantine)
 
@@ -116,6 +137,12 @@ how the existing pieces fit together.
       (CallGetProcessResources, CallSetProcessLimit), inherited by children
 - [x] Passing more handles than the standard three to a new process
       (ProcessPassHandles)
+- [x] Out-of-memory policy: the largest process by resident and committed pages ends
+      with 137 (OOM score adjustment, the initial program and adjustment -1000 spared
+      unless asking, kernel log and NotificationProcessEndedForMemory); per-user process
+      limit (ProcessLimitProcesses); CallGetMemoryPressure, free
+- [ ] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
+      the reserve/commit work)
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -159,7 +186,8 @@ how the existing pieces fit together.
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
 - [x] Sticky directories (/tmp: only the owner may remove or replace a name)
-- [ ] Permission checks on FAT and exFAT beyond their read-only attribute
+- [x] Permission checks on FAT and exFAT beyond their read-only attribute (uid=, gid=, umask=,
+      fmask=, dmask= mount options; the read-only attribute kept)
 - [x] Process list (ps, pgrep, pkill), per-thread CPU time
 
 ## I/O
@@ -251,6 +279,17 @@ how the existing pieces fit together.
   - [ ] USB Attached SCSI (UAS) for USB 3 disks
 - [x] Block cache: write-back with flush and a background writer, a lock per line
       (no lock held across I/O, devices work in parallel), read-ahead
+- [x] Block cache sized from RAM (blockcache=, blockcachemin=, blockcacheshare=): grows
+      on misses while memory is plentiful, gives lines back under memory pressure;
+      dirty list, page lookup for file mappings (PinCachedPage)
+- [x] Memory pressure: low and critical watermarks in the page allocator, shrinkers
+      (block cache, heap check quarantine), the MemoryPressure thread; the kernel heap
+      reclaims before failing
+- [x] Discard: NVMe Dataset Management, AHCI TRIM, virtio-blk DISCARD, the RAM disk
+      frees pages; ext/FAT/exFAT discard what they free (batched, after the metadata is
+      durable, ext after its commit; discard=off); fstrim (CallTrimVolume)
+- [ ] Discard on USB disks (SCSI UNMAP) and SD cards (ERASE); a nodiscard mount option
+      once mount options exist; shrinking the image section cache under pressure
 
 ## Network cards
 
@@ -295,8 +334,14 @@ how the existing pieces fit together.
 - [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
       metadata checksum verification
 - [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
-- [ ] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
-- [ ] File timestamps beyond modification time; ext4 nanosecond timestamps
+- [x] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
+      (/volumes/system); mount, umount, /etc/fstab read by the service manager
+- [x] tmpfs (FileSystem.Memory) on /tmp, pages from the page allocator, size= limit
+- [ ] Mount namespaces / bind mounts; mount propagation; remounting read-only to read-write
+- [ ] Watches across mount points (a subtree watch stops at a mounted volume)
+- [ ] Setting times with nanoseconds (utimensat); ext nanoseconds kept when stamping (now cleared)
+- [x] File timestamps beyond modification time; ext4 nanosecond timestamps (access, change,
+      birth; CallGetFileTimes, stat, ls --time=)
 
 ## User mode
 

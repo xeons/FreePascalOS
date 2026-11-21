@@ -30,6 +30,11 @@
 
   Without hooks (early startup, kernel threads) everything is allowed and
   new nodes keep the driver's defaults.
+
+  Formats without owners (FAT, exFAT) get theirs from the mount options
+  (FileSystem.OwnerMapping): MapOwnerlessNode gives a node the owner,
+  group and mode those say, and FilterOwnerlessChanges lets chown and
+  chgrp through only to the owner and group the node already shows.
 }
 unit FileSystem.Security;
 
@@ -74,7 +79,21 @@ function MayAccess(const Information: TNodeInformation; Access: LongWord): Boole
   without owners keep their own. }
 procedure ApplyCreationAttributes(Node: PNode; DefaultMode: LongWord; UseMask: Boolean);
 
+{ On a volume whose format has no owners: gives Node the owner, group
+  and mode of the volume's mount options. FromDriver: the driver has
+  just described the node (its mode shows the read-only attribute). }
+procedure MapOwnerlessNode(Node: PNode; FromDriver: Boolean);
+
+{ Changes for a node on a volume without owners: an owner or group the
+  node already shows is dropped (nothing to store), another one is
+  StatusUnsupported. Other volumes' changes pass unchanged. }
+function FilterOwnerlessChanges(Node: PNode; const Changes: TAttributeChanges;
+  out Filtered: TAttributeChanges): TFileSystemStatus;
+
 implementation
+
+uses
+  FileSystem.OwnerMapping;
 
 var
   AccessHook: TAccessCheck = nil;
@@ -114,6 +133,22 @@ begin
     Exit;
   if not CreationHook(OwnerId, GroupId, Mask) then
     Exit;
+  if Node^.Volume^.Driver^.HasNoOwners then
+  begin
+    { Only the read-only attribute can be stored: a mode without write
+      permission sets it. }
+    Changes.Fields := AttributeChangeMode;
+    Changes.Mode := DefaultMode;
+    if UseMask then
+      Changes.Mode := DefaultMode and not Mask;
+    Changes.OwnerId := 0;
+    Changes.GroupId := 0;
+    Changes.ModificationTime := 0;
+    Changes.AccessTime := 0;
+    if Node^.Volume^.Driver^.SetAttributes(Node, Changes) = StatusSuccess then
+      MapOwnerlessNode(Node, True);
+    Exit;
+  end;
   Changes.Fields := AttributeChangeMode or AttributeChangeOwner or AttributeChangeGroup;
   Changes.Mode := DefaultMode;
   if UseMask then
@@ -127,6 +162,43 @@ begin
     { FAT and exFAT have no owners: set the mode alone. }
     Changes.Fields := AttributeChangeMode;
     Node^.Volume^.Driver^.SetAttributes(Node, Changes);
+  end;
+end;
+
+procedure MapOwnerlessNode(Node: PNode; FromDriver: Boolean);
+var
+  Volume: PVolume;
+  IsDirectory: Boolean;
+begin
+  Volume := Node^.Volume;
+  if not Volume^.Driver^.HasNoOwners then
+    Exit;
+  IsDirectory := Node^.Information.Kind = NodeKindDirectory;
+  if FromDriver then
+    Node^.HasReadOnlyAttribute := ModeMeansReadOnly(Node^.Information.Mode);
+  Node^.Information.OwnerId := Volume^.Options.OwnerId;
+  Node^.Information.GroupId := Volume^.Options.GroupId;
+  Node^.Information.Mode := OwnerlessMode(IsDirectory, Node^.HasReadOnlyAttribute, Volume^.Options);
+end;
+
+function FilterOwnerlessChanges(Node: PNode; const Changes: TAttributeChanges;
+  out Filtered: TAttributeChanges): TFileSystemStatus;
+begin
+  Filtered := Changes;
+  Result := StatusSuccess;
+  if not Node^.Volume^.Driver^.HasNoOwners then
+    Exit;
+  if (Changes.Fields and AttributeChangeOwner) <> 0 then
+  begin
+    if Changes.OwnerId <> Node^.Information.OwnerId then
+      Exit(StatusUnsupported);
+    Filtered.Fields := Filtered.Fields and not AttributeChangeOwner;
+  end;
+  if (Changes.Fields and AttributeChangeGroup) <> 0 then
+  begin
+    if Changes.GroupId <> Node^.Information.GroupId then
+      Exit(StatusUnsupported);
+    Filtered.Fields := Filtered.Fields and not AttributeChangeGroup;
   end;
 end;
 

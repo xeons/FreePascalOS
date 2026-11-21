@@ -147,12 +147,17 @@ function GroupOfBlock(Ext: PExtVolume; Block: QWord): LongWord;
 { Brings the superblock's free counters and checksum up to date. }
 function SyncSuperblock(Volume: PVolume): TFileSystemStatus;
 
+{ fstrim: discards every run of free blocks (groups whose block bitmap
+  is still uninitialized are left alone). }
+function TrimFreeBlocks(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+
 implementation
 
 uses
   Runtime.Memory,
   Runtime.Checksums,
-  Memory.KernelHeap;
+  Memory.KernelHeap,
+  FileSystem.Discards;
 
 function ExtVolumeOf(Node: PNode): PExtVolume;
 begin
@@ -423,6 +428,66 @@ begin
     Result := Blocks * 512;
 end;
 
+const
+  { The extra time fields of a large inode: nanoseconds (bits 2-31)
+    and two more bits of seconds (0-1) after each 32-bit time. }
+  InodeChangeTimeExtra = $84;
+  InodeModificationTimeExtra = $88;
+  InodeAccessTimeExtra = $8C;
+  InodeCreationTimeExtra = $94;
+
+{ True if the inode is large enough to hold the 32-bit field at
+  FieldOffset. }
+function InodeHasField(Node: PExtNode; FieldOffset: LongWord): Boolean;
+var
+  ExtraSize: Word;
+begin
+  if ExtVolumeOf(@Node^.Common)^.InodeSize <= GoodOldInodeSize then
+    Exit(False);
+  ExtraSize := PWord(@Node^.InodeBytes[InodeExtraSizeOffset])^;
+  Result := GoodOldInodeSize + ExtraSize >= FieldOffset + 4;
+end;
+
+{ Applies an extra time field to Seconds (from the base field) and
+  gives its nanoseconds. }
+procedure ApplyExtraTime(Node: PExtNode; ExtraOffset: LongWord; var Seconds: Int64;
+  out Nanoseconds: LongWord);
+var
+  Extra: LongWord;
+begin
+  Nanoseconds := 0;
+  if not InodeHasField(Node, ExtraOffset) then
+    Exit;
+  Extra := PLongWord(@Node^.InodeBytes[ExtraOffset])^;
+  Nanoseconds := Extra shr 2;
+  if Nanoseconds > 999999999 then
+    Nanoseconds := 0;
+  if (Extra and 3) <> 0 then
+    Seconds := Int64(LongInt(LongWord(Seconds))) + (Int64(Extra and 3) shl 32);
+end;
+
+{ The nanoseconds and the time the inode was made (crtime), where the
+  inode is large enough to have them. }
+procedure RefreshExtraTimes(Node: PExtNode);
+var
+  Information: ^TNodeInformation;
+  Birth: Int64;
+begin
+  Information := @Node^.Common.Information;
+  ApplyExtraTime(Node, InodeChangeTimeExtra, Information^.ChangeTime, Information^.ChangeNanoseconds);
+  ApplyExtraTime(Node, InodeModificationTimeExtra, Information^.ModificationTime,
+    Information^.ModificationNanoseconds);
+  ApplyExtraTime(Node, InodeAccessTimeExtra, Information^.AccessTime, Information^.AccessNanoseconds);
+  Information^.BirthTime := 0;
+  Information^.BirthNanoseconds := 0;
+  if InodeHasField(Node, InodeCreationTimeOffset) then
+  begin
+    Birth := PLongWord(@Node^.InodeBytes[InodeCreationTimeOffset])^;
+    ApplyExtraTime(Node, InodeCreationTimeExtra, Birth, Information^.BirthNanoseconds);
+    Information^.BirthTime := Birth;
+  end;
+end;
+
 procedure RefreshNodeInformation(Node: PExtNode);
 var
   Inode: PInode;
@@ -445,6 +510,7 @@ begin
   Node^.Common.Information.ModificationTime := Inode^.ModificationTime;
   Node^.Common.Information.AccessTime := Inode^.AccessTime;
   Node^.Common.Information.ChangeTime := Inode^.ChangeTime;
+  RefreshExtraTimes(Node);
   Node^.Common.Information.AllocatedBytes := AllocatedBytesOf(Node);
 end;
 
@@ -638,6 +704,8 @@ begin
     begin
       Dec(Ext^.FreeBlockCount);
       Ext^.SuperblockNeedsWriting := True;
+      { Its discard, if still waiting, must not reach what goes in now. }
+      CancelVolumeDiscard(Volume, Block * Ext^.BlockSize, Ext^.BlockSize);
       { A data write: the block may become file data, which is never
         journaled; metadata written to it later is. }
       if not ExtWriteData(Volume, Block * Ext^.BlockSize, Ext^.BlockSize, nil) then
@@ -694,8 +762,71 @@ begin
     Result := WriteGroupDescriptor(Volume, Group, @Descriptor[0]);
     Inc(Ext^.FreeBlockCount);
     Ext^.SuperblockNeedsWriting := True;
+    { On a journaled volume only once the transaction has committed. }
+    QueueVolumeDiscard(Volume, Block * Ext^.BlockSize, Ext^.BlockSize, Ext^.Journal <> nil);
   end;
   FreeKernelMemory(Bitmap);
+end;
+
+{ Discards the free runs of one group's block bitmap. }
+function TrimGroup(Volume: PVolume; Group: LongWord; var Discarded: QWord): TFileSystemStatus;
+var
+  Ext: PExtVolume;
+  Descriptor: array[0..MaximumDescriptorSize - 1] of Byte;
+  BitmapBlock: QWord;
+  Bitmap: PByte;
+  Limit: LongWord;
+  Index: LongWord;
+  RunStart: LongWord;
+  GroupFirst: QWord;
+begin
+  Ext := PExtVolume(Volume^.DriverData);
+  Result := ReadGroupDescriptor(Volume, Group, @Descriptor[0]);
+  if Result <> StatusSuccess then
+    Exit;
+  if (PWord(@Descriptor[DescriptorOffsetFlags])^ and GroupFlagBlocksUninitialized) <> 0 then
+    Exit(StatusSuccess);
+  BitmapBlock := DescriptorValue(Ext, @Descriptor[0], DescriptorOffsetBlockBitmapLow,
+    DescriptorOffsetBlockBitmapHigh, True);
+  Result := LoadBitmap(Volume, BitmapBlock, Bitmap);
+  if Result <> StatusSuccess then
+    Exit;
+  GroupFirst := QWord(Ext^.FirstDataBlock) + QWord(Group) * Ext^.BlocksPerGroup;
+  Limit := BlocksInGroup(Ext, Group);
+  Index := 0;
+  while Index < Limit do
+  begin
+    if BitIsSet(Bitmap, Index) then
+    begin
+      Inc(Index);
+      Continue;
+    end;
+    RunStart := Index;
+    while (Index < Limit) and not BitIsSet(Bitmap, Index) do
+      Inc(Index);
+    if not TrimFreeRange(Volume, (GroupFirst + RunStart) * Ext^.BlockSize,
+      QWord(Index - RunStart) * Ext^.BlockSize, Discarded) then
+      Result := StatusIoError;
+  end;
+  FreeKernelMemory(Bitmap);
+end;
+
+function TrimFreeBlocks(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+var
+  Ext: PExtVolume;
+  Group: LongWord;
+  Status: TFileSystemStatus;
+begin
+  Ext := PExtVolume(Volume^.DriverData);
+  Result := StatusSuccess;
+  Group := 0;
+  while Group < Ext^.GroupCount do
+  begin
+    Status := TrimGroup(Volume, Group, Discarded);
+    if Status <> StatusSuccess then
+      Result := Status;
+    Inc(Group);
+  end;
 end;
 
 function TryAllocateInodeInGroup(Volume: PVolume; Group: LongWord; IsDirectory: Boolean;

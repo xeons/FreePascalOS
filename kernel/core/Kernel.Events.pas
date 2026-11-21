@@ -27,6 +27,10 @@
                               releases every waiting thread.
     EventKindSynchronization  Releases exactly one waiting thread and
                               resets itself automatically.
+    EventKindSemaphore        Holds a count (SignalCount) and is
+                              signaled while it is above zero; each
+                              waiter it releases takes one. Only
+                              Kernel.Semaphores makes these.
 
   A thread may wait on several events at once and wake when any one of
   them is signaled (WaitForAnyEvent): it is linked into each one's
@@ -42,6 +46,10 @@
   then a signaled synchronization event stays signaled and may release
   another waiter instead.
 
+  A thread woken by a signal gets a priority boost (Kernel.PriorityBoosts):
+  BoostEvent from SignalEvent, or what SignalEventWithBoost is given (an
+  input driver gives BoostInput, for example).
+
   Events are protected by the dispatcher lock, like all wait queues.
 }
 unit Kernel.Events;
@@ -56,17 +64,26 @@ uses
   Kernel.Threads;
 
 type
-  TEventKind = (EventKindNotification, EventKindSynchronization);
+  TEventKind = (EventKindNotification, EventKindSynchronization, EventKindSemaphore);
 
   TEvent = record
     Kind: TEventKind;
     IsSignaled: Boolean;
+    { A semaphore's count (IsSignaled while above zero); unused by the
+      other kinds. }
+    SignalCount: LongInt;
     Waiters: TListEntry;
   end;
   PEvent = ^TEvent;
 
 procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled: Boolean);
 procedure SignalEvent(var Event: TEvent);
+{ Signals the event; the threads it releases are boosted by Boost. }
+procedure SignalEventWithBoost(var Event: TEvent; Boost: LongWord);
+{ Releases what waiters a signaled event (or a semaphore whose count
+  just went up) can release, boosting them by Boost; dispatcher lock
+  held. For Kernel.Semaphores. }
+procedure ReleaseEventWaitersLocked(var Event: TEvent; Boost: LongWord);
 procedure ResetEvent(var Event: TEvent);
 procedure WaitForEvent(var Event: TEvent);
 { Waits at most TimeoutMilliseconds (or InfiniteTimeout); an alertable
@@ -97,21 +114,35 @@ implementation
 
 uses
   Kernel.PriorityLevel,
+  Kernel.PriorityBoosts,
   Kernel.Scheduler;
 
 procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled: Boolean);
 begin
   Event.Kind := Kind;
   Event.IsSignaled := InitiallySignaled;
+  if InitiallySignaled then
+    Event.SignalCount := 1
+  else
+    Event.SignalCount := 0;
   InitializeListHead(Event.Waiters);
 end;
 
 { Takes the signal a released waiter used: a synchronization event
-  resets itself. }
+  resets itself, a semaphore gives one of its count. (A semaphore listed
+  twice in one wait for all is taken once if it holds only one.) }
 procedure ConsumeSignalLocked(Event: PEvent);
 begin
-  if Event^.Kind = EventKindSynchronization then
-    Event^.IsSignaled := False;
+  case Event^.Kind of
+    EventKindSynchronization:
+      Event^.IsSignaled := False;
+    EventKindSemaphore:
+      begin
+        if Event^.SignalCount > 0 then
+          Dec(Event^.SignalCount);
+        Event^.IsSignaled := Event^.SignalCount > 0;
+      end;
+  end;
 end;
 
 function AllEventsSignaledLocked(Events: PPEvent; Count: LongInt): Boolean;
@@ -144,8 +175,9 @@ begin
     Result := True;
 end;
 
-{ Ends the wait of Block's thread, consuming what satisfied it. }
-procedure SatisfyWaitLocked(Block: PWaitBlock);
+{ Ends the wait of Block's thread, consuming what satisfied it, and
+  boosts it by Boost. }
+procedure SatisfyWaitLocked(Block: PWaitBlock; Boost: LongWord);
 var
   Thread: PThreadControlBlock;
   Position: LongInt;
@@ -163,7 +195,7 @@ begin
     Thread^.SatisfiedWaitIndex := Block^.Index;
   end;
   { Takes every block of the thread off its event, this one included. }
-  WakeWaitingThreadLocked(Thread, WaitSignaled);
+  WakeWaitingThreadWithBoostLocked(Thread, WaitSignaled, Boost);
 end;
 
 { The first waiter of a signaled event that it may release, or nil. }
@@ -185,7 +217,7 @@ end;
   signaled: a notification event releases everyone it can, a
   synchronization event the first it can (which consumes it). Waiters
   for all whose other events are not signaled stay. }
-procedure ReleaseWaitersLocked(var Event: TEvent);
+procedure ReleaseEventWaitersLocked(var Event: TEvent; Boost: LongWord);
 var
   Block: PWaitBlock;
 begin
@@ -194,17 +226,22 @@ begin
     Block := FirstSatisfiedWaiterLocked(Event);
     if Block = nil then
       Break;
-    SatisfyWaitLocked(Block);
+    SatisfyWaitLocked(Block, Boost);
   end;
 end;
 
 procedure SignalEvent(var Event: TEvent);
+begin
+  SignalEventWithBoost(Event, BoostEvent);
+end;
+
+procedure SignalEventWithBoost(var Event: TEvent; Boost: LongWord);
 var
   PreviousLevel: TPriorityLevel;
 begin
   PreviousLevel := AcquireDispatcherLock;
   Event.IsSignaled := True;
-  ReleaseWaitersLocked(Event);
+  ReleaseEventWaitersLocked(Event, Boost);
   ReleaseDispatcherLock(PreviousLevel);
 end;
 

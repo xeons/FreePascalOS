@@ -80,6 +80,7 @@ uses
   Services.Control,
   Services.Launch,
   Services.Logs,
+  Services.Mounts,
   Services.Manager;
 
 const
@@ -252,6 +253,9 @@ begin
   if Error <> ErrorNone then
     FailWithError(1, Error, 'the port ' + ControlPortName);
   ShutdownEvent := WatchForShutdown;
+  { The first manager mounts what /etc/fstab says before any service. }
+  if ShutdownEvent <> NoHandle then
+    MountFileSystems;
   Say('boot mode ' + BootMode + ', ' + IntToStr(Length(ServiceTable)) + ' services in ' + ServiceDirectory);
   RunServices(BootMode, ShutdownEvent);
   Halt(0);

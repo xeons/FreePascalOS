@@ -54,6 +54,9 @@ procedure NoticeEndedProcesses(Sampler: TUsageSampler);
 { The processes asked to end whose wait is over and that still run
   (not even being ended), each handed back only once. }
 function TakeOverdueRequests: TProcessTargets;
+{ Whether ProcessId is still there and not being ended by the kernel
+  already. }
+function IsStillRunning(ProcessId: QWord): Boolean;
 
 implementation
 
@@ -138,8 +141,7 @@ begin
   end;
 end;
 
-{ Still there and not being ended by the kernel already. }
-function StillRuns(ProcessId: QWord): Boolean;
+function IsStillRunning(ProcessId: QWord): Boolean;
 var
   Details: TProcessDetails;
 begin
@@ -158,7 +160,7 @@ begin
     if (Watched[Index].AskedAt = 0) or (Now - Watched[Index].AskedAt < EndAskWaitMilliseconds) then
       Continue;
     Watched[Index].AskedAt := 0;
-    if StillRuns(Watched[Index].Target.ProcessId) then
+    if IsStillRunning(Watched[Index].Target.ProcessId) then
       AddTarget(Result, Watched[Index].Target);
   end;
 end;

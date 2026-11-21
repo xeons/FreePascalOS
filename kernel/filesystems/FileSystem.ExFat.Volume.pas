@@ -101,6 +101,12 @@ type
     ValidDataLength: QWord;
     LastModifiedTimestamp: LongWord;
     LastModifiedUtcOffset: Byte;
+    LastModified10ms: Byte;
+    CreateTimestamp: LongWord;
+    CreateUtcOffset: Byte;
+    Create10ms: Byte;
+    LastAccessedTimestamp: LongWord;
+    LastAccessedUtcOffset: Byte;
     SetIndex: QWord;
     SetEntryCount: Integer;
     SetEntryOffsets: array[0..MaximumEntrySetSize - 1] of QWord;
@@ -126,6 +132,8 @@ function CountNodeClusters(Node: PExFatNode; out ClusterCount: LongWord;
 function CountFreeClusters(Volume: PVolume): TFileSystemStatus;
 function ClusterIsFree(Volume: PVolume; Cluster: LongWord; out IsFree: Boolean): TFileSystemStatus;
 function MarkCluster(Volume: PVolume; Cluster: LongWord; Allocated: Boolean): TFileSystemStatus;
+{ fstrim: discards every run of free clusters. }
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
 function FindFreeCluster(Volume: PVolume; out Cluster: LongWord): TFileSystemStatus;
 
 { Directory entries by index within a directory. }
@@ -156,7 +164,8 @@ uses
   Runtime.Memory,
   Runtime.Time,
   Memory.KernelHeap,
-  Kernel.Clock;
+  Kernel.Clock,
+  FileSystem.Discards;
 
 function ExFatVolumeOf(Node: PNode): PExFatVolume;
 begin
@@ -423,6 +432,8 @@ begin
   begin
     Value := Value or BitmapMaskOf(Cluster);
     Dec(ExFat^.FreeClusterCount);
+    { Its discard, if still waiting, must not reach what goes in now. }
+    CancelVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster);
   end
   else
   begin
@@ -432,6 +443,67 @@ begin
       ExFat^.NextFreeHint := Cluster;
   end;
   Result := WriteNodeBytes(ExFat^.Bitmap, BitmapByteOf(Cluster), 1, @Value);
+  if (Result = StatusSuccess) and not Allocated then
+    QueueVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster, False);
+end;
+
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+const
+  ChunkBytes = 4096;
+var
+  ExFat: PExFatVolume;
+  Chunk: array[0..ChunkBytes - 1] of Byte;
+  ChunkStart: QWord;
+  Index: LongWord;
+  RunStart: LongWord;
+  InRun: Boolean;
+  IsFree: Boolean;
+  Cluster: LongWord;
+  ByteIndex: QWord;
+  BitmapBytes: QWord;
+  Length: QWord;
+begin
+  ExFat := PExFatVolume(Volume^.DriverData);
+  Result := StatusSuccess;
+  BitmapBytes := (QWord(ExFat^.ClusterCount) + 7) div 8;
+  ChunkStart := High(QWord);
+  InRun := False;
+  RunStart := 2;
+  Index := 0;
+  while Index <= ExFat^.ClusterCount do
+  begin
+    { One past the last cluster ends the last run. }
+    IsFree := False;
+    if Index < ExFat^.ClusterCount then
+    begin
+      ByteIndex := Index div 8;
+      if (ChunkStart = High(QWord)) or (ByteIndex < ChunkStart) or (ByteIndex >= ChunkStart + ChunkBytes) then
+      begin
+        ChunkStart := ByteIndex - ByteIndex mod ChunkBytes;
+        Length := BitmapBytes - ChunkStart;
+        if Length > ChunkBytes then
+          Length := ChunkBytes;
+        Result := ReadNodeBytes(ExFat^.Bitmap, ChunkStart, Length, @Chunk[0]);
+        if Result <> StatusSuccess then
+          Exit;
+      end;
+      IsFree := (Chunk[ByteIndex - ChunkStart] and (1 shl (Index mod 8))) = 0;
+    end;
+    Cluster := Index + 2;
+    if IsFree and not InRun then
+    begin
+      InRun := True;
+      RunStart := Cluster;
+    end
+    else if not IsFree and InRun then
+    begin
+      InRun := False;
+      if not TrimFreeRange(Volume, ClusterOffset(ExFat, RunStart), QWord(Cluster - RunStart) * ExFat^.BytesPerCluster,
+        Discarded) then
+        Result := StatusIoError;
+    end;
+    Inc(Index);
+  end;
 end;
 
 function FindFreeCluster(Volume: PVolume; out Cluster: LongWord): TFileSystemStatus;
@@ -628,6 +700,12 @@ begin
   Entry.Attributes := FileEntry^.FileAttributes;
   Entry.LastModifiedTimestamp := FileEntry^.LastModifiedTimestamp;
   Entry.LastModifiedUtcOffset := FileEntry^.LastModifiedUtcOffset;
+  Entry.LastModified10ms := FileEntry^.LastModified10ms;
+  Entry.CreateTimestamp := FileEntry^.CreateTimestamp;
+  Entry.CreateUtcOffset := FileEntry^.CreateUtcOffset;
+  Entry.Create10ms := FileEntry^.Create10ms;
+  Entry.LastAccessedTimestamp := FileEntry^.LastAccessedTimestamp;
+  Entry.LastAccessedUtcOffset := FileEntry^.LastAccessedUtcOffset;
   Entry.SetIndex := Index;
   Result := True;
 end;
@@ -679,6 +757,16 @@ begin
   end;
 end;
 
+{ The 10 ms field of a timestamp (0-199) on top of its even seconds. }
+procedure AddHundredths(var Seconds: TUnixTime; out Nanoseconds: LongWord; Hundredths: Byte);
+begin
+  Nanoseconds := 0;
+  if (Seconds = 0) or (Hundredths > 199) then
+    Exit;
+  Seconds := Seconds + Hundredths div 100;
+  Nanoseconds := LongWord(Hundredths mod 100) * 10000000;
+end;
+
 function CurrentTimestamp: LongWord;
 var
   DateWord: Word;
@@ -717,8 +805,19 @@ begin
   Result^.Common.Information.LinkCount := 1;
   Result^.Common.Information.ModificationTime :=
     TimestampToUnixTime(Entry.LastModifiedTimestamp, Entry.LastModifiedUtcOffset);
-  Result^.Common.Information.AccessTime := Result^.Common.Information.ModificationTime;
+  AddHundredths(Result^.Common.Information.ModificationTime,
+    Result^.Common.Information.ModificationNanoseconds, Entry.LastModified10ms);
+  { exFAT keeps the last access to two seconds and when it was made;
+    it has no change time. }
+  Result^.Common.Information.AccessTime :=
+    TimestampToUnixTime(Entry.LastAccessedTimestamp, Entry.LastAccessedUtcOffset);
+  if Result^.Common.Information.AccessTime = 0 then
+    Result^.Common.Information.AccessTime := Result^.Common.Information.ModificationTime;
+  Result^.Common.Information.BirthTime := TimestampToUnixTime(Entry.CreateTimestamp, Entry.CreateUtcOffset);
+  AddHundredths(Result^.Common.Information.BirthTime, Result^.Common.Information.BirthNanoseconds,
+    Entry.Create10ms);
   Result^.Common.Information.ChangeTime := Result^.Common.Information.ModificationTime;
+  Result^.Common.Information.ChangeNanoseconds := Result^.Common.Information.ModificationNanoseconds;
   if (Entry.Attributes and AttributeReadOnly) <> 0 then
     Result^.Common.Information.Mode := $124
   else

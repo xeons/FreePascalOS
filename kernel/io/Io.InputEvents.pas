@@ -53,6 +53,7 @@ uses
   Runtime.Memory,
   Runtime.Atomic,
   Kernel.Events,
+  Kernel.PriorityBoosts,
   Kernel.PriorityLevel,
   Kernel.Arch.Cpu,
   Kernel.SpinLock,
@@ -118,7 +119,7 @@ begin
     RestoreInterrupts(WereEnabled);
     if Request = nil then
       Break;
-    CompleteRequest(Request^, ErrorNone);
+    CompleteRequestWithBoost(Request^, ErrorNone, BoostInput);
   until False;
   { Interrupt handlers add events but cannot signal (above dispatch
     level): it is done here, and reset by the reader that empties the
@@ -126,7 +127,7 @@ begin
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(Lock);
   if RingCount > 0 then
-    SignalEvent(Ready);
+    SignalEventWithBoost(Ready, BoostInput);
   ReleaseSpinLockAtCurrentLevel(Lock);
   RestoreInterrupts(WereEnabled);
 end;

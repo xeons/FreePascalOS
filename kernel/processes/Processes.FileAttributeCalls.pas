@@ -135,7 +135,7 @@ begin
   Information.HasFreeSpace := Ord(GetVolumeFreeSpace(Volume, Information.FreeBytes));
   Information.IsReadOnly := Ord(Volume^.IsReadOnly);
   Information.IsSystemVolume := Ord(TextIsEqual(@Volume^.Name[0], SystemVolumeName));
-  Information.IsRemovable := Ord(BlockDeviceIsRemovable(Volume^.Device));
+  Information.IsRemovable := Ord((Volume^.Device <> nil) and BlockDeviceIsRemovable(Volume^.Device));
 end;
 
 function PerformSetHandleAttributes(Handle: Int64; ChangesAddress: QWord): Int64;
@@ -168,25 +168,14 @@ begin
   Result := -Int64(ErrorFromStatus(SetFileAttributes(POpenFile(ObjectBody), Changes)));
 end;
 
-{ The volume name a kernel path starts with: "/disk2p1/bin" gives
-  "disk2p1"; "/" names no volume. }
+{ The volume a kernel path leads to, through mount points ("/" names
+  no volume). }
 function VolumeOfKernelPath(Path: PChar): PVolume;
 var
-  Name: array[0..AbiTextCapacity - 1] of Char;
-  Length: Integer;
+  RelativePath: TPathBuffer;
 begin
-  Length := 0;
-  if Path[0] = '/' then
-    Inc(Path);
-  while (Path[Length] <> '/') and (Path[Length] <> #0) and (Length < AbiTextCapacity - 1) do
-  begin
-    Name[Length] := Path[Length];
-    Inc(Length);
-  end;
-  Name[Length] := #0;
-  if Length = 0 then
-    Exit(nil);
-  Result := FindVolumeByName(@Name[0]);
+  if LocatePath(Path, True, Result, @RelativePath[0], SizeOf(RelativePath)) <> StatusSuccess then
+    Result := nil;
 end;
 
 function PerformGetVolumeInformation(PathAddress: QWord; InformationAddress: QWord): Int64;

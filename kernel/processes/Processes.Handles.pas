@@ -71,7 +71,9 @@ type
     { A watch on a folder or file (Processes.WatchCalls). }
     HandleKindWatch,
     { A network socket (Processes.SocketCalls). }
-    HandleKindSocket
+    HandleKindSocket,
+    { A semaphore (Processes.ObjectCalls). }
+    HandleKindSemaphore
   );
 
   THandleEntry = record

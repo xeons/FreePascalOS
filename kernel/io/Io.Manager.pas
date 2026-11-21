@@ -101,7 +101,12 @@ type
     IoFunctionControl, IoFunctionFlush,
     { Which memory of the device a program may map: Offset and Length
       (page aligned) in, MapPhysical and MapWriteCombining out. }
-    IoFunctionMap);
+    IoFunctionMap,
+    { Block devices: the Length bytes at Offset (whole blocks) hold
+      nothing worth keeping (TRIM, deallocate, unmap); they may read
+      back as anything afterwards. No buffer. Only sent to disks that
+      said they take it (TBlockDevice.SupportsDiscard). }
+    IoFunctionDiscard);
 
   TDeviceKind = (DeviceKindCharacter, DeviceKindBlock);
 
@@ -263,8 +268,12 @@ function ForwardRequest(Lower: PDeviceObject; var Request: TIoRequest;
   queued) and then waits for it to complete. }
 function CallDriverAndWait(Device: PDeviceObject; var Request: TIoRequest;
   Alertable: Boolean): LongInt;
-{ For drivers: finishes a request they returned StatusPending for. }
+{ For drivers: finishes a request they returned StatusPending for. A
+  thread waiting for it gets the BoostIoCompletion priority boost. }
 procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
+{ The same with another boost (Kernel.PriorityBoosts): input drivers
+  give BoostInput. }
+procedure CompleteRequestWithBoost(var Request: TIoRequest; Status: LongInt; Boost: LongWord);
 
 procedure InitializeRequestQueue(out Queue: TRequestQueue);
 { Adds Request at the end of Queue. Returns False, and leaves it out, if
@@ -286,6 +295,7 @@ uses
   Memory.KernelHeap,
   Kernel.Threads,
   Kernel.Scheduler,
+  Kernel.PriorityBoosts,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Panic;
@@ -420,6 +430,11 @@ end;
 
 procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
 begin
+  CompleteRequestWithBoost(Request, Status, BoostIoCompletion);
+end;
+
+procedure CompleteRequestWithBoost(var Request: TIoRequest; Status: LongInt; Boost: LongWord);
+begin
   Request.Status := Status;
   while Request.LayerCount > 0 do
   begin
@@ -431,7 +446,7 @@ begin
   if Assigned(Request.CompletionRoutine) then
     Request.CompletionRoutine(@Request)
   else if Request.CompletionEvent <> nil then
-    SignalEvent(Request.CompletionEvent^);
+    SignalEventWithBoost(Request.CompletionEvent^, Boost);
 end;
 
 function AttachDevice(Filter, Target: PDeviceObject): PDeviceObject;
