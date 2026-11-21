@@ -244,9 +244,12 @@ begin
   if FrameIsPageFault(Frame) then
   begin
     Access := PageFaultAccessKind(Frame);
-    if OpenOwnStackReserve(FaultAddress) or
+    if CurrentThreadObject^.GuardPageHit then
+      Code := ExceptionGuardPage
+    else if OpenOwnStackReserve(FaultAddress) or
        OpenReserveForLargeFrame(FaultAddress, TrapFrameStackPointer(Frame)) then
       Code := ExceptionStackOverflow;
+    CurrentThreadObject^.GuardPageHit := False;
   end
   else
   begin

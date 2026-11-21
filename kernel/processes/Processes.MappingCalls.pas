@@ -26,7 +26,10 @@
   the pages go into a device region of the address space
   (Processes.AddressSpace), writable if the handle was opened for
   writing. A section's pages are mapped writable, each with a reference
-  of its own. The program unmaps it with
+  of its own. A regular file is mapped through its mapped file
+  (Processes.MappedFiles): read-only shared, or copy on write
+  (MapPrivate, writable with MapWritable), its pages read when first
+  touched (Processes.VirtualMemory). The program unmaps it with
   CallFreeMemory, and it goes with the address space otherwise; the
   device's memory is never freed by either.
 }
@@ -36,7 +39,7 @@ unit Processes.MappingCalls;
 
 interface
 
-function PerformMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
+function PerformMapHandle(Handle: Int64; Offset, Length, Flags: QWord): Int64;
 
 implementation
 
@@ -52,6 +55,9 @@ uses
   Processes.Thread,
   Processes.AddressSpace,
   Processes.ObjectCalls,
+  Processes.MappedFiles,
+  Processes.VirtualMemory,
+  FileSystem.Files,
   Objects.Sections;
 
 function Failure(Error: LongInt): Int64;
@@ -99,15 +105,49 @@ begin
   Result := Int64(Start);
 end;
 
-function PerformMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
+{ A regular file: its mapped file's pages. }
+function MapFile(OpenedFile: POpenFile; Offset, Length, Flags: QWord): Int64;
+var
+  MappedFile: PMappedFile;
+  IsPrivate: Boolean;
+  Error: LongInt;
+  Start: QWord;
+begin
+  if Flags > High(LongWord) then
+    Exit(Failure(ErrorInvalidArgument));
+  IsPrivate := (Flags and MapPrivate) <> 0;
+  Error := AcquireMappedFile(OpenedFile, IsPrivate, MappedFile);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Error := MapFileIntoAddressSpace(CurrentProcess^.AddressSpace, MappedFile, Offset, Length,
+    LongWord(Flags), Start);
+  if Error <> ErrorNone then
+  begin
+    ReleaseMappedFile(MappedFile, IsPrivate);
+    Exit(Failure(Error));
+  end;
+  Result := Int64(Start);
+end;
+
+function PerformMapHandle(Handle: Int64; Offset, Length, Flags: QWord): Int64;
 var
   OpenFile: PDeviceFile;
+  OpenedFile: POpenFile;
   Physical: QWord;
   WriteCombining: Boolean;
   Error: LongInt;
   Start: QWord;
 begin
-  if (Length = 0) or ((Offset and PageOffsetMask) <> 0) then
+  if (Offset and PageOffsetMask) <> 0 then
+    Exit(Failure(ErrorInvalidArgument));
+  OpenedFile := POpenFile(ReferenceHandleOfKind(Handle, HandleKindFile));
+  if OpenedFile <> nil then
+  begin
+    Result := MapFile(OpenedFile, Offset, Length, Flags);
+    DereferenceObject(OpenedFile);
+    Exit;
+  end;
+  if Length = 0 then
     Exit(Failure(ErrorInvalidArgument));
   Length := RoundUpToPage(Length);
   OpenFile := ReferenceDeviceFile(Handle);

@@ -302,7 +302,7 @@ end;
 function RuntimeErrorFor(const ExceptionRecord: TAbiExceptionRecord): LongInt;
 begin
   case ExceptionRecord.Code of
-    ExceptionAccessViolation, ExceptionIllegalInstruction: RuntimeErrorFor := 216;
+    ExceptionAccessViolation, ExceptionIllegalInstruction, ExceptionGuardPage: RuntimeErrorFor := 216;
     ExceptionPrivilegedOperation: RuntimeErrorFor := 218;
     ExceptionIntegerDivide: RuntimeErrorFor := 200;
     ExceptionIntegerOverflow: RuntimeErrorFor := 215;

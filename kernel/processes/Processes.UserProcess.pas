@@ -74,6 +74,8 @@ type
     { Its limits (see Processes.LimitCalls); 0 for the default. }
     RegionLimit: LongWord;
     HandleLimit: LongWord;
+    { 0: none. }
+    CommitLimitPages: QWord;
     { More handles it gets, with their numbers (after the standard ones,
       so a passed 0, 1 or 2 replaces one). }
     PassedHandles: TPassedHandles;
@@ -147,6 +149,7 @@ const
 function ResolvePageFault(FaultAddress: QWord; ErrorCode: QWord): Boolean;
 var
   Process: PProcess;
+  HitGuard: Boolean;
 begin
   Process := CurrentProcess;
   if (Process = nil) or not Process^.IsUserProcess then
@@ -155,7 +158,9 @@ begin
     open it, so the call can complete, and raise the overflow after. }
   if ((ErrorCode and PageFaultFromUserMode) = 0) and (FaultAddress < UserSpaceLimit) then
     NoteKernelAccessToStack(FaultAddress);
-  Result := ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
+  Result := ResolveUserPageFaultWithGuard(Process^.AddressSpace, FaultAddress, ErrorCode, HitGuard);
+  if HitGuard then
+    CurrentThreadObject^.GuardPageHit := True;
 end;
 
 procedure HandleUserException(Frame: PTrapFrame; Description: PChar; FaultAddress: QWord);
@@ -382,6 +387,7 @@ begin
   begin
     if Startup.RegionLimit <> 0 then
       SetRegionLimit(Process^.AddressSpace, Startup.RegionLimit);
+    SetCommitLimit(Process^.AddressSpace, Startup.CommitLimitPages);
     Process^.PageTableRoot := Process^.AddressSpace^.Root;
     StackStart := Process^.AddressSpace^.Layout.StackTop - UserStackReserve;
     Result := AddRegion(Process^.AddressSpace, StackStart, UserStackReserve,

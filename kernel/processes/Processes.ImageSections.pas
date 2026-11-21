@@ -118,12 +118,12 @@ var
   Sections: array[0..MaximumSections - 1] of PImageSection;
   SectionsLock: TMutex;
 
-procedure FileChanged(Volume: PVolume; NodeNumber: QWord); forward;
+procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord); forward;
 
 procedure InitializeImageSections;
 begin
   InitializeMutex(SectionsLock);
-  SetFileChangedHook(@FileChanged);
+  AddFileChangedHook(@FileChanged);
 end;
 
 procedure DestroySection(Section: PImageSection);
@@ -160,7 +160,7 @@ begin
   Sections[Index] := nil;
 end;
 
-procedure FileChanged(Volume: PVolume; NodeNumber: QWord);
+procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord);
 var
   Index: Integer;
 begin

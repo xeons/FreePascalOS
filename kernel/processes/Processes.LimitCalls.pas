@@ -21,7 +21,8 @@
   CallSetProcessLimit).
 
   A process may have at most so many regions in its address space
-  (Processes.AddressSpace) and so many handles (Processes.Handles). The
+  (Processes.AddressSpace), so many handles (Processes.Handles) and so
+  many pages committed (its commit charge; no limit by default). The
   limits are generous by default; a process may lower its own (a
   service that should never need many), and root may raise them up to
   their ceilings. The processes it starts inherit them
@@ -47,6 +48,7 @@ uses
   Objects.Manager,
   Processes.Process,
   Processes.Thread,
+  Memory.CommitCharge,
   Processes.AddressSpace,
   Processes.Handles,
   Processes.SecurityCalls,
@@ -76,7 +78,11 @@ begin
     Resources.CommittedPages := Usage.ResidentPages;
     Resources.PeakCommittedPages := Usage.PeakResidentPages;
     Resources.SharedPages := Usage.SharedPages;
+    Resources.CommitChargePages := Usage.CommitChargePages;
+    Resources.CommitLimitPages := Usage.CommitLimitPages;
+    Resources.PagesMappedElsewhere := CountPagesMappedElsewhere(Process^.AddressSpace);
   end;
+  Resources.SystemCommitChargePages := SystemCommittedPages;
   ReleaseMutex(Process^.Lock);
 end;
 
@@ -111,6 +117,12 @@ begin
         Default := DefaultHandleLimit;
         Ceiling := HandleLimitCeiling;
       end;
+    ProcessLimitCommit:
+      begin
+        { 0 is no limit, which is also the default. }
+        Default := 0;
+        Ceiling := High(Int64);
+      end;
   else
     Exit(Failure(ErrorInvalidArgument));
   end;
@@ -119,19 +131,26 @@ begin
 
   Process := CurrentProcess;
   AcquireMutex(Process^.Lock);
-  if Limit = ProcessLimitRegions then
-    Previous := Process^.AddressSpace^.RegionLimit
+  case Limit of
+    ProcessLimitRegions: Previous := Process^.AddressSpace^.RegionLimit;
+    ProcessLimitCommit: Previous := Process^.AddressSpace^.CommitLimitPages;
   else
     Previous := Process^.Handles.Limit;
-  if (Value > Previous) and (Value > Default) and (Process^.Credentials.EffectiveUserId <> RootUserId) then
+  end;
+  { Only root may raise a commit limit or take it away (0). }
+  if (Process^.Credentials.EffectiveUserId <> RootUserId) and
+     (((Limit <> ProcessLimitCommit) and (Value > Previous) and (Value > Default)) or
+      ((Limit = ProcessLimitCommit) and (Previous <> 0) and ((Value = 0) or (Value > Previous)))) then
   begin
     ReleaseMutex(Process^.Lock);
     Exit(Failure(ErrorNotPermitted));
   end;
-  if Limit = ProcessLimitRegions then
-    SetRegionLimit(Process^.AddressSpace, LongWord(Value))
+  case Limit of
+    ProcessLimitRegions: SetRegionLimit(Process^.AddressSpace, LongWord(Value));
+    ProcessLimitCommit: SetCommitLimit(Process^.AddressSpace, Value);
   else
     SetHandleLimit(Process^.Handles, LongWord(Value));
+  end;
   ReleaseMutex(Process^.Lock);
   Result := Int64(Previous);
 end;

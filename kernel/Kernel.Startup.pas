@@ -117,6 +117,7 @@ uses
   Kernel.RandomSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
+  Processes.MappedFiles,
   Processes.HangWatch,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
@@ -224,6 +225,7 @@ begin
   InitializeFileObjects;
   InitializeWatches;
   InitializeImageSections;
+  InitializeMappedFiles;
   InitializeTerminalSignals;
   InitializeConsole;
   InitializeIoManager;

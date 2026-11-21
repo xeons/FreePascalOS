@@ -104,12 +104,28 @@ type
 
 procedure InitializeFileObjects;
 
-type
-  { Told after the contents of a file changed (written to, resized), so
-    copies of it elsewhere (image sections) can be dropped. }
-  TFileChangedHook = procedure(Volume: PVolume; NodeNumber: QWord);
+const
+  { The most hooks of each kind. }
+  MaximumFileChangeHooks = 4;
+  { A change's Length when everything from its Offset on may have
+    changed (the file was resized). }
+  FileChangeToEnd = High(QWord);
 
-procedure SetFileChangedHook(Hook: TFileChangedHook);
+type
+  { Told after the contents of a file changed (written to, resized):
+    Length bytes from Offset (Length FileChangeToEnd: the file was
+    resized), so copies of it elsewhere (image sections, mapped file
+    pages) can be dropped or brought up to date. Called without the
+    volume's lock. }
+  TFileChangedHook = procedure(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord);
+  { Told just before the contents of a file change, with the volume's
+    lock held (so the change waits for it): what must keep the old
+    contents (copy on write mappings of the file) reads them now. The
+    hook may read the file (the lock is recursive), nothing else. }
+  TFileChangingHook = procedure(Volume: PVolume; NodeNumber: QWord);
+
+procedure AddFileChangedHook(Hook: TFileChangedHook);
+procedure AddFileChangingHook(Hook: TFileChangingHook);
 
 { Called by the volume manager after a successful mount. }
 procedure RegisterRootNode(Volume: PVolume);
@@ -121,6 +137,14 @@ procedure CloseFile(OpenedFile: POpenFile);
 
 function ReadFromFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesRead: QWord): TFileSystemStatus;
+{ Reads at Offset, leaving the file's position alone (several readers
+  of one open file: mapped file pages). }
+function ReadFromFileAt(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesRead: QWord): TFileSystemStatus;
+{ A new open file for reading of the same file as OpenedFile, with a
+  position, lock and trail of its own (what keeps a mapped file
+  readable after the program closed its handle). }
+function DuplicateOpenFileForReading(OpenedFile: POpenFile; out Copy: POpenFile): TFileSystemStatus;
 function WriteToFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesWritten: QWord): TFileSystemStatus;
 function ChangeFileSize(OpenedFile: POpenFile; NewSize: QWord): TFileSystemStatus;
@@ -792,11 +816,42 @@ begin
 end;
 
 var
-  FileChangedHook: TFileChangedHook = nil;
+  FileChangedHooks: array[0..MaximumFileChangeHooks - 1] of TFileChangedHook;
+  FileChangedHookCount: Integer = 0;
+  FileChangingHooks: array[0..MaximumFileChangeHooks - 1] of TFileChangingHook;
+  FileChangingHookCount: Integer = 0;
 
-procedure SetFileChangedHook(Hook: TFileChangedHook);
+procedure AddFileChangedHook(Hook: TFileChangedHook);
 begin
-  FileChangedHook := Hook;
+  if FileChangedHookCount >= MaximumFileChangeHooks then
+    Exit;
+  FileChangedHooks[FileChangedHookCount] := Hook;
+  Inc(FileChangedHookCount);
+end;
+
+procedure AddFileChangingHook(Hook: TFileChangingHook);
+begin
+  if FileChangingHookCount >= MaximumFileChangeHooks then
+    Exit;
+  FileChangingHooks[FileChangingHookCount] := Hook;
+  Inc(FileChangingHookCount);
+end;
+
+procedure CallFileChangedHooks(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord);
+var
+  Index: Integer;
+begin
+  for Index := 0 to FileChangedHookCount - 1 do
+    FileChangedHooks[Index](Volume, NodeNumber, Offset, Length);
+end;
+
+{ Caller holds the volume's lock. }
+procedure CallFileChangingHooks(Volume: PVolume; NodeNumber: QWord);
+var
+  Index: Integer;
+begin
+  for Index := 0 to FileChangingHookCount - 1 do
+    FileChangingHooks[Index](Volume, NodeNumber);
 end;
 
 function OpenFile(Path: PChar; Flags: LongWord; out OpenedFile: POpenFile): TFileSystemStatus;
@@ -851,6 +906,7 @@ begin
     if (Result = StatusSuccess) and ((Flags and OpenTruncate) <> 0) and
        (Node^.Information.SizeInBytes <> 0) then
     begin
+      CallFileChangingHooks(Volume, Node^.Information.NodeNumber);
       Result := Volume^.Driver^.SetFileSize(Node, 0);
       if (Result = StatusSuccess) and (Trail <> nil) and WatchesExist then
       begin
@@ -876,8 +932,8 @@ begin
       FreeKernelMemory(SavedTrail);
       Exit;
     end;
-    if ((Flags and OpenTruncate) <> 0) and Assigned(FileChangedHook) then
-      FileChangedHook(Volume, Node^.Information.NodeNumber);
+    if (Flags and OpenTruncate) <> 0 then
+      CallFileChangedHooks(Volume, Node^.Information.NodeNumber, 0, FileChangeToEnd);
   end;
 
   OpenedFile := POpenFile(CreateObject(FileObjectType, nil));
@@ -936,10 +992,49 @@ begin
   ReleaseMutex(Volume^.Lock);
 end;
 
-procedure NoteFileChanged(OpenedFile: POpenFile);
+function ReadFromFileAt(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesRead: QWord): TFileSystemStatus;
+var
+  Volume: PVolume;
 begin
-  if Assigned(FileChangedHook) then
-    FileChangedHook(OpenedFile^.Volume, OpenedFile^.Node^.Information.NodeNumber);
+  BytesRead := 0;
+  if IsRootDirectory(OpenedFile) or (OpenedFile^.Node^.Information.Kind = NodeKindDirectory) then
+    Exit(StatusIsADirectory);
+  Volume := OpenedFile^.Volume;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := Volume^.Driver^.ReadFile(OpenedFile^.Node, Offset, Buffer, ByteCount, BytesRead);
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function DuplicateOpenFileForReading(OpenedFile: POpenFile; out Copy: POpenFile): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  Copy := nil;
+  if IsRootDirectory(OpenedFile) then
+    Exit(StatusIsADirectory);
+  Copy := POpenFile(CreateObject(FileObjectType, nil));
+  if Copy = nil then
+    Exit(StatusOutOfMemory);
+  Volume := OpenedFile^.Volume;
+  { The copy holds a node reference of its own (given back when it is
+    deleted, like any open file's). }
+  AcquireMutex(Volume^.Lock);
+  Inc(OpenedFile^.Node^.ReferenceCount);
+  ReleaseMutex(Volume^.Lock);
+  Copy^.Volume := Volume;
+  Copy^.Node := OpenedFile^.Node;
+  Copy^.Flags := OpenForReading;
+  Copy^.Position := 0;
+  Copy^.Trail := nil;
+  Result := StatusSuccess;
+end;
+
+procedure NoteFileChanged(OpenedFile: POpenFile; Offset, Length: QWord);
+begin
+  CallFileChangedHooks(OpenedFile^.Volume, OpenedFile^.Node^.Information.NodeNumber, Offset, Length);
   ReportOpenFileChange(OpenedFile, WatchChangeWritten);
 end;
 
@@ -947,6 +1042,7 @@ function WriteToFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesWritten: QWord): TFileSystemStatus;
 var
   Volume: PVolume;
+  WriteOffset: QWord;
 begin
   BytesWritten := 0;
   if IsRootDirectory(OpenedFile) or (OpenedFile^.Node^.Information.Kind = NodeKindDirectory) then
@@ -962,12 +1058,14 @@ begin
     Exit;
   if (OpenedFile^.Flags and OpenAppend) <> 0 then
     OpenedFile^.Position := OpenedFile^.Node^.Information.SizeInBytes;
+  WriteOffset := OpenedFile^.Position;
+  CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber);
   Result := Volume^.Driver^.WriteFile(OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
     BytesWritten);
   OpenedFile^.Position := OpenedFile^.Position + BytesWritten;
   ReleaseMutex(Volume^.Lock);
   if BytesWritten > 0 then
-    NoteFileChanged(OpenedFile);
+    NoteFileChanged(OpenedFile, WriteOffset, BytesWritten);
 end;
 
 function ChangeFileSize(OpenedFile: POpenFile; NewSize: QWord): TFileSystemStatus;
@@ -983,9 +1081,10 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
+  CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber);
   Result := Volume^.Driver^.SetFileSize(OpenedFile^.Node, NewSize);
   ReleaseMutex(Volume^.Lock);
-  NoteFileChanged(OpenedFile);
+  NoteFileChanged(OpenedFile, 0, FileChangeToEnd);
 end;
 
 procedure SetFilePosition(OpenedFile: POpenFile; Position: QWord);
