@@ -41,6 +41,7 @@ interface
 
 uses
   SysUtils,
+  Drawing.Colors,
   Drawing.Canvas,
   Drawing.Rectangles,
   Image.Model,
@@ -125,7 +126,7 @@ type
     procedure SetBookmarked(Value: Boolean);
     procedure SetSecureHost(const Value: string);
     procedure SetFavicon(Value: TImage);
-    procedure Go(const Text: string; NewTab: Boolean);
+    procedure Go(const Typed: string; NewTab: Boolean);
     function GetImages: TImageList;
     procedure SetImages(Value: TImageList);
   protected
@@ -139,7 +140,7 @@ type
     procedure CloseSuggestions;
     { Shows the pages visited last under the bar. }
     procedure DropDown;
-    property Text: string read GetText write SetText;
+    property Address: string read GetText write SetText;
     property Edit: TEditBox read FEdit;
     property Identity: TIdentityButton read FIdentity;
     property StarButton: TLocationGlyph read FStar;
@@ -172,8 +173,9 @@ implementation
 uses
   Math,
   Abi.SystemCalls,
-  Drawing.Colors,
+  Drawing.Scaling,
   Drawing.SmoothLines,
+  Windowing.Windows,
   Image.Surfaces,
   Image.Scalable,
   Windowing.Theme,
@@ -552,11 +554,11 @@ begin
   ShowRows(Rows, Urls);
 end;
 
-procedure TLocationBar.Go(const Text: string; NewTab: Boolean);
+procedure TLocationBar.Go(const Typed: string; NewTab: Boolean);
 begin
   FPopup.Close;
   if Assigned(FOnNavigate) then
-    FOnNavigate(Self, Text, NewTab);
+    FOnNavigate(Self, Typed, NewTab);
 end;
 
 procedure TLocationBar.SuggestionChosen(Sender: TObject; Index: LongInt);
@@ -566,7 +568,7 @@ begin
   if (Index < 0) or (Index > High(FUrls)) then
     Exit;
   Url := FUrls[Index];
-  Text := Url;
+  Address := Url;
   Go(Url, (HeldModifiers and ModifierControl) <> 0);
 end;
 

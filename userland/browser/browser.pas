@@ -21,8 +21,9 @@
 
   browser [ADDRESS...]
 
-  A tab per ADDRESS (as typed in the address bar: a URL, a host, a
-  path), else the home page (about:home unless set). Tabs (Ctrl+T,
+  A tab per ADDRESS (as typed in the location bar: a URL, a host, a
+  path), else the home page (about:home unless set), or the session of
+  last time after a crash or when the startup setting says so. Tabs (Ctrl+T,
   Ctrl+W, Ctrl+Tab, a middle click on a link), the address bar
   (Ctrl+L; not an address: the search URL if one is set, else a page
   saying so), back, forward, reload and stop, home, the bookmarks bar
@@ -66,6 +67,7 @@ program Browser;
 {$H+}
 
 uses
+  SysUtils,
   Windowing.Windows,
   Http3.SystemConnections,
   WebView.Types,
@@ -73,12 +75,12 @@ uses
   WebView.Control,
   WebView.ContentProcesses,
   Browser.Settings,
-  Browser.MainWindow;
+  Browser.Application;
 
 var
-  Window: TBrowserWindow;
   Index: Integer;
   Settings: TBrowserSettings;
+  Addresses: TStringArray;
 begin
   EnableHttp3;
   Settings := LoadBrowserSettings;
@@ -87,14 +89,13 @@ begin
   ContentProcesses.Sandboxed := Settings.Sandbox;
   ContentProcesses.HangTimeoutMilliseconds := QWord(Settings.HangTimeoutSeconds) * 1000;
   ContentProcesses.ScriptRunLimitMilliseconds := QWord(Settings.ScriptRunLimitSeconds) * 1000;
-  Window := TBrowserWindow.Create;
-  if ParamCount = 0 then
-    Window.OpenTab(LoadBrowserSettings.HomePage, True)
-  else
-    for Index := 1 to ParamCount do
-      Window.OpenTab(ParamStr(Index), Index = 1);
-  Window.Show;
+  BrowserApp := TBrowserApplication.Create;
+  Addresses := nil;
+  SetLength(Addresses, ParamCount);
+  for Index := 1 to ParamCount do
+    Addresses[Index - 1] := ParamStr(Index);
+  BrowserApp.Start(Addresses);
+  BrowserApp.ApplySettings;
   RunMessageLoop;
-  Window.Free;
   FreeContentProcesses;
 end.

@@ -112,6 +112,7 @@ function DraggedLink(Data: TDragData; out Url, Title: string): Boolean;
 implementation
 
 uses
+  Windowing.Windows,
   SysUtils,
   DateUtils,
   Math,

@@ -144,6 +144,7 @@ type
 implementation
 
 uses
+  Windowing.Windows,
   SysUtils,
   Math,
   Abi.SystemCalls,

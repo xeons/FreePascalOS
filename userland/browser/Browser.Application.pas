@@ -80,6 +80,7 @@ type
     FSaveTimer: TTimer;
     FQuitting: Boolean;
     FDownloadsWindow: TObject;
+    FActiveWindow: TObject;
     procedure SaveTimerFired(Sender: TTimer);
     procedure StoresChanged(Sender: TObject);
     function CaptureSession: TSession;
@@ -122,6 +123,10 @@ type
     { Starts a download and shows it as the settings say. }
     function StartDownload(const Url, FileName: string; const TargetPath: string = ''): TDownloadItem;
     function NowUnix: Int64;
+    { Url in a new tab of the window used last (a new window if none). }
+    procedure OpenInActiveWindow(const Url: string);
+    { The browser window used last (nil: none). }
+    property ActiveWindow: TObject read FActiveWindow write FActiveWindow;
     property Settings: TBrowserSettings read FSettings write FSettings;
     property History: THistoryStore read FHistory;
     property Bookmarks: TBookmarkStore read FBookmarks;
@@ -144,6 +149,7 @@ uses
   DateUtils,
   Windowing.Windows,
   Controls.MessageBoxes,
+  Controls.Dialogs,
   WebView.Network,
   Browser.Profile,
   Browser.Output,
@@ -240,6 +246,7 @@ var
 begin
   Window := TBrowserWindow.Create;
   FWindows.Add(Window);
+  FActiveWindow := Window;
   Pages := Addresses;
   if Length(Pages) = 0 then
   begin
@@ -329,6 +336,12 @@ begin
   if not FQuitting and (FWindows.Count > 1) and not FPrivate then
     RememberClosedWindow(FSession, TBrowserWindow(Window).CaptureSession, NowUnix);
   FWindows.Delete(Index);
+  if FActiveWindow = Window then
+  begin
+    FActiveWindow := nil;
+    if FWindows.Count > 0 then
+      FActiveWindow := TObject(FWindows[0]);
+  end;
   Say('windows ' + IntToStr(FWindows.Count));
   if (FWindows.Count = 0) and not FQuitting then
     Quit
@@ -378,12 +391,31 @@ procedure TBrowserApplication.CloseAllWindows;
 var
   Window: TBrowserWindow;
 begin
+  FActiveWindow := nil;
   while FWindows.Count > 0 do
   begin
     Window := TBrowserWindow(FWindows[FWindows.Count - 1]);
     FWindows.Delete(FWindows.Count - 1);
     Window.CloseQuietly;
   end;
+end;
+
+procedure TBrowserApplication.OpenInActiveWindow(const Url: string);
+var
+  Pages: TStringArray;
+begin
+  if (FActiveWindow = nil) and (FWindows.Count > 0) then
+    FActiveWindow := TObject(FWindows[0]);
+  if FActiveWindow = nil then
+  begin
+    Pages := nil;
+    SetLength(Pages, 1);
+    Pages[0] := Url;
+    NewWindow(Pages);
+    Exit;
+  end;
+  TBrowserWindow(FActiveWindow).OpenTab(Url, True);
+  TBrowserWindow(FActiveWindow).Activate;
 end;
 
 procedure TBrowserApplication.Quit;
@@ -581,6 +613,12 @@ var
   Item: TDownloadItem;
   Index: Integer;
 begin
+  if Message.Code = MessageCloseWindowLater then
+  begin
+    { A window that closed (its own events are over by now). }
+    TObject(Message.Parameter1).Free;
+    Exit;
+  end;
   if Message.Code = MessageDownloadChanged then
   begin
     Item := TDownloadItem(Message.Parameter1);

@@ -98,6 +98,7 @@ type
 implementation
 
 uses
+  Windowing.Windows,
   Math,
   Abi.SystemCalls,
   Drawing.Colors,

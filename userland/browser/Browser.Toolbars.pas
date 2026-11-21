@@ -257,7 +257,7 @@ end;
 
 function TBrowserToolbars.CreateItem(Toolbar: TCustomToolBar; const Id: string): TControl;
 var
-  Button: TToolButton;
+  Made: TToolButton;
 begin
   if Id = 'location' then
     Result := TLocationBar.Create(Toolbar)
@@ -267,23 +267,23 @@ begin
     Result := TBookmarksToolbar.CreateFor(Toolbar, FStore)
   else
   begin
-    Button := MakeButton(Toolbar, Id);
-    if Button <> nil then
+    Made := MakeButton(Toolbar, Id);
+    if Made <> nil then
     begin
       if Id = 'back' then
       begin
-        Button.DropDownKind := DropDownOnHold;
-        Button.DropDownMenu := FBackMenu;
-        Button.OnDropDown := @BackDropDown;
+        Made.DropDownKind := DropDownOnHold;
+        Made.DropDownMenu := FBackMenu;
+        Made.OnDropDown := @BackDropDown;
       end
       else if Id = 'forward' then
       begin
-        Button.DropDownKind := DropDownOnHold;
-        Button.DropDownMenu := FForwardMenu;
-        Button.OnDropDown := @ForwardDropDown;
+        Made.DropDownKind := DropDownOnHold;
+        Made.DropDownMenu := FForwardMenu;
+        Made.OnDropDown := @ForwardDropDown;
       end;
     end;
-    Result := Button;
+    Result := Made;
   end;
   if (Result <> nil) and Assigned(FOnItemMade) then
     FOnItemMade(Id, Result);

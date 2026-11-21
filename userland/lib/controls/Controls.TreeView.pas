@@ -117,6 +117,7 @@ type
     FDropTarget: TTreeNode;
     FImages: TImageList;
     FOnExpandChanged: TTreeNodeEvent;
+    FOnActivate: TTreeNodeEvent;
     procedure SetImages(Value: TImageList);
     procedure SetDropTarget(Value: TTreeNode);
     procedure Rebuild;
@@ -168,6 +169,9 @@ type
       own it). }
     property Images: TImageList read FImages write SetImages;
     property OnExpandChanged: TTreeNodeEvent read FOnExpandChanged write FOnExpandChanged;
+    { A node without children double-clicked, or Enter on it (an item to
+      open). }
+    property OnActivate: TTreeNodeEvent read FOnActivate write FOnActivate;
   end;
 
 implementation
@@ -711,7 +715,10 @@ begin
   if (Node = FLastClickNode) and (Now - FLastClickTime <= DoubleClickMilliseconds) then
   begin
     FLastClickNode := nil;
-    Node.Expanded := not Node.Expanded;
+    if (Node.Count = 0) and Assigned(FOnActivate) then
+      FOnActivate(Self, Node)
+    else
+      Node.Expanded := not Node.Expanded;
     Exit;
   end;
   FLastClickNode := Node;
@@ -749,7 +756,9 @@ begin
         else if (FSelected.Parent <> nil) and (FSelected.Parent <> FRoots) then
           Selected := FSelected.Parent;
   else
-    if IsEnterKey(Code) and (FSelected <> nil) then
+    if IsEnterKey(Code) and (FSelected <> nil) and (FSelected.Count = 0) and Assigned(FOnActivate) then
+      FOnActivate(Self, FSelected)
+    else if IsEnterKey(Code) and (FSelected <> nil) then
       FSelected.Expanded := not FSelected.Expanded
     else
       Result := False;
