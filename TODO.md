@@ -1310,7 +1310,18 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] iframes with src documents: loading, layout, painting, input
       (Google's CAPTCHA page needs them for reCAPTCHA)
 - [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
-      (document.styleSheets, insertRule), Web Animations, synchronous XHR
+      (document.styleSheets, insertRule: CSS-in-JS libraries need them),
+      Web Animations, synchronous XHR, XML parsing (DOMParser's XML types,
+      responseXML), the unhandledrejection event
+- [x] DOMParser (text/html), SVGElement/SVGGraphicsElement/SVGSVGElement,
+      document.open/write/close outside the parser, Location's setters,
+      HTML's cloning steps (scripts that ran, control values), isTrusted
+      kept for the engine's events, unhandled rejections on the console
+- [x] Event lifetime: engine events released, not freed (the DuckDuckGo
+      crash); events hold only node targets
+- [ ] Pascal exceptions raised inside the interpreter loop (by built-ins)
+      are not turned into JavaScript errors; a stray one unwinds past the
+      script's frames
 - [ ] Brotli and zstd content codings (Accept-Encoding offers gzip and
       deflate only)
 - [ ] Google search: the challenge runs (its token equals Firefox's for
@@ -1333,6 +1344,9 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [x] Web view: KeyboardEvents to the page, a text editor in fields
       (caret, selection, word moves, clipboard, input events, implicit
       submission, change on blur); values in the DOM's control state
+- [x] Editing without libcontrols (WebView.FieldEditing) and a fuzz test
+      typing into a page that replaces its fields under the editor
+      (WebLoadTest.Editing); elements held across click and submit events
 - [ ] Web view: drawing a field's selection, dragging the bars of inner
       scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
@@ -1348,6 +1362,16 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [x] Wikipedia's JavaScript gets past ResourceLoader's compatibility
       check (localStorage, IntersectionObserver)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
+- [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
+      the results page (main and html.duckduckgo.com/html/), later
+      searches; no crash (released events, translations of transforms,
+      z-index auto layers, computed shorthands, positioned boxes not left
+      due, for-of over Map iterators, lone surrogates in case mapping)
+- [ ] DuckDuckGo: following a result on the main results page posts the
+      link to its hidden /post3.html iframe (needs iframes with src
+      documents); html.duckduckgo.com's results follow
+- [ ] Transforms beyond translation (scale, rotate, skew) in painting and
+      hit testing
 - [ ] Large pages in QEMU need the kernel's growable address-space region
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one

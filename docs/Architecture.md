@@ -6320,7 +6320,10 @@ byte per unit when Latin-1 and two otherwise; concatenations longer than
 40 units make ropes, flattened (iteratively, never recursively) on first
 read. Property keys are atoms (`Js.Atoms`: interned strings, compared by
 pointer; the table is weak) or symbols, or int32 values for array indices
-below 2^31.
+below 2^31. Case mapping (`Js.CaseMapping`: toLowerCase, toUpperCase,
+localeCompare's folding, case-insensitive regular expression classes)
+maps runs of well-formed text and leaves lone surrogates as they are
+(the run-time library raises on them).
 
 **Objects** (`Js.Objects`, `Js.Shapes`) have a shape (hidden class: a
 parent plus one property, with transitions to children that are weak and
@@ -9356,7 +9359,11 @@ variables (the host can set them), a value that fails after
 substitution is invalid at computed-value time and acts as unset, and a
 shorthand with var() is expanded once its tokens are known. Registered
 custom properties (@property) can be non-inherited and give initial
-values.
+values. A style serializes any property (`SerializeProperty`, what
+getComputedStyle answers): a logical longhand as its physical one in
+the style's writing mode and direction, a shorthand from its longhands
+when they can be written as it (the box sides, pairs, a border side,
+flex), else as their common value or empty.
 
 Computed values are stored in style structs (`Css.StyleStructs`): one
 reference counted block per property group, like Gecko's and Servo's
@@ -10082,7 +10089,7 @@ form.elements and GET submission (`Web.Bindings.FormControls`); NodeList,
 HTMLCollection, HTMLOptionsCollection, NamedNodeMap, DOMTokenList,
 DOMStringMap, DOMException; Window (window, self, document, location,
 history, navigator, the prompts, viewport metrics, origin, atob, btoa,
-the timers, structuredClone, getComputedStyle), Location (read only),
+the timers, structuredClone, getComputedStyle), Location (its setters navigate),
 History and Navigator; TextEncoder and TextDecoder over libweb's decoders
 (fatal, ignoreBOM, streaming); URL and URLSearchParams over libhttp's
 `Url.*`; MutationObserver and MutationRecord. console and queueMicrotask
@@ -10116,8 +10123,13 @@ checkpoint (the job queue, mutation observers included; at script depth
 0 only, as in "clean up after running script"). document.write goes to
 the active parser at its insertion point (the parser now saves the old
 insertion point and limit of nested scripts and writes, so scripts
-written by scripts write in the right place); after loading it is a
-NotSupportedError rather than a silent document.open. Event handler IDL
+written by scripts write in the right place). Outside the parser
+document.open empties the document and starts a script-created parser
+that document.write feeds and document.close finishes (readyState,
+DOMContentLoaded and load follow; its scripts run in that document's
+window even under a loader): an iframe's about:blank document written
+by its parent, as DuckDuckGo does to follow some links; a write after
+loading opens the document anew, as in other engines. Event handler IDL
 attributes and content attributes (`Web.Bindings.EventHandlers`) keep
 their functions in the target wrapper's handler slot; a content
 attribute is compiled as the body of `function on<type>(event)` when
@@ -10287,9 +10299,26 @@ instrumented copy of the page, the engine and Firefox side by side);
 Google then redirects this engine to its CAPTCHA page ("unusual
 traffic", /sorry/index), whose reCAPTCHA widget needs src iframes.
 
+Events the engine fires are released, never freed (a listener that
+touches one makes a wrapper holding a reference: the collector read
+freed events, the DuckDuckGo crash), keep isTrusted (only script's
+dispatchEvent clears it), and hold only node targets: the window,
+XMLHttpRequest, AbortSignal and other targets belong to their wrappers,
+which the event's wrapper keeps alive (an event freed after its target
+called it back). Promises rejected with no handler are reported to the
+console ("Uncaught (in promise) ...") after a microtask checkpoint.
+DOMParser parses text/html without scripting (the XML types give a
+parsererror document); elements in the SVG namespace are SVGElement,
+SVGGraphicsElement or SVGSVGElement with style, dataset, tabIndex,
+focus and blur (the HTMLOrSVGElement and ElementCSSInlineStyle mixins).
+Location's setters (href, protocol, host, hostname, port, pathname,
+search, hash) navigate, so window.location = url works. HTML's cloning
+steps: a cloned script that already ran does not run again, cloned
+inputs and textareas keep their value and checkedness.
+
 **Not done yet**: import maps, ErrorEvent and onerror's arguments, the
-event handler scope chain (form, document), document.open on a loaded
-document, shadow DOM, Range and Selection, TreeWalker, iframes with src
+event handler scope chain (form, document), the unhandledrejection
+event, XML parsing (DOMParser, XHR's responseXML), shadow DOM, Range and Selection, TreeWalker, iframes with src
 documents (loading, layout, painting, input), synchronous
 XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
 insertRule), Brotli and zstd content codings (Accept-Encoding offers
@@ -10540,8 +10569,15 @@ backgrounds in tree order, floats, inline content (inline boxes'
 backgrounds and borders on each line, text with decorations and a
 text-shadow copy, atomic inlines, replaced content), positioned
 descendants with z-index auto/0 in tree order, positive z-index, then
-outlines. Positioned boxes with z-index auto, floats and atomic inlines
-paint as if they were stacking contexts. Overflow clips become clip
+outlines. Floats and atomic inlines paint as if they were stacking
+contexts; positioned boxes with z-index auto paint their own content
+there, while their positioned descendants are layers of the enclosing
+stacking context (a z-index: 100 menu inside position: relative goes
+over a later z-index: 1 box). A transform's translations (translate(),
+translateX/Y, translate3d, a matrix that only translates, the translate
+property; percentages of the border box) move the box like a relative
+offset (`Web.Layout.Transforms`), so it is painted, hit and measured
+there; a change of them lays the box out again (scMove). Overflow clips become clip
 pairs (rounded with border-radius), scroll containers move their
 contents, opacity becomes a group, fixed boxes are marked to ignore the
 viewport's scroll. Sticky boxes (`Web.Paint.Sticky`, CSS Positioned
@@ -10689,8 +10725,8 @@ ready task, no layout due for `-q` ms) or the timeout:
 
     webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y SCROLL] [--full]
       [--resize WxH] [-l LAYOUT|-] [--dom HTML|-] [-c] [-n] [--live] [-p] [-m]
-      [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--hover N]
-      [--profile] [-f FONTDIR] [-v] URL
+      [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--do STEP]...
+      [--hover N] [--profile] [-f FONTDIR] [-v] URL
 
 `-n` prints every request (start, time to the head, total, status,
 protocol, destination, bytes, outcome) from a fetch monitor
@@ -10702,8 +10738,21 @@ nested phases are charged their own time only; off unless a program
 starts profiling with a fine clock); `-c` console messages; `-m` peak
 memory; `--hover N` moves the pointer over the page as the web view
 does (:hover on the chain under it) and times each move; `--resize`
-changes the viewport once quiet; `-e` evaluates script once quiet. A
-watchdog thread (`WebBrowse.Watchdog`) reports a page thread making no
+changes the viewport once quiet; `-e` evaluates script once quiet;
+`--do` steps are what a user does then, each once the page is quiet
+again (or after 10 s): `eval:JS`, `type:TEXT` (`\n` is Enter; a key
+every 60 ms), `key:NAME` (KeyboardEvent codes with `ctrl+`, `shift+`,
+`alt+`), `click:SELECTOR`, `wait:MS`, `shot:FILE.png`. Keys and clicks
+go through `WebBrowse.Input` the way the web view gives them (keydown,
+keypress, `WebView.FieldEditing`, keyup; Enter submits implicitly;
+links followed), so a search can be typed, suggested, submitted and a
+result clicked on the host:
+
+    webbrowse -c -n --do 'type:free pascal' --do 'shot:typed.png' \
+      --do 'key:Enter' --do 'shot:results.png' https://duckduckgo.com/
+
+It sends the browser's user agent (`Web.UserAgent`). A timeout says why
+the page never went quiet (a task ready, layout due). A watchdog thread (`WebBrowse.Watchdog`) reports a page thread making no
 progress for `--stall` seconds: its phase stack and detail (the script
 or sheet being worked on) and its stack, sampled by interrupting it
 with SIGUSR1 and walking its frame pointers (`WebBrowse.Sampler`,
@@ -10730,7 +10779,7 @@ spacing), multi-column layout, writing modes and bidirectional text
 scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
-transforms, filters, blend modes, clip-path, border-image, conic
+transforms other than translations (scale, rotate, skew), filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, incremental display list updates
 (it is rebuilt whole when anything changes; scrolling the viewport does
@@ -10767,6 +10816,25 @@ DOMContentLoaded and load at the page's listeners and handlers,
 setTimeout, document.cookie without the HttpOnly cookie, readyState and
 location, an onclick attribute, alert and pushState.
 
+Then a fuzz test of editing (`WebLoadTest.Editing`): a hostile page
+(`tools/WebLoadTest/editing-fuzz.html`) whose listeners replace,
+remove, move, hide, retype and disable the fields being typed into,
+rebuild forms, clone its body and move the focus during keydown,
+keypress, keyup, input, focus and change events (and in microtasks,
+timers and frames after them) is given 2500 seeded random key presses,
+edits and clicks the way the web view gives them (webbrowse's
+`TPageInput`: keydown, keypress, `WebView.FieldEditing`, keyup;
+mousedown, focus, mouseup, click; change when the focus leaves a
+changed field), with layout, painting, hit testing, the caret's reads
+and both collectors between steps. It passes when it survives with
+every field's selection within its value, the document whole, the page
+not navigated (every submission cancelled or of a detached form) and no
+uncaught script errors. `WebLoadTest editing` runs it alone,
+`WEB_EDITING_VERBOSE=1` prints a line a step, `JS_GC_STRESS=1` makes
+the engines collect every 16 KiB. It found the script clones that ran
+again, a detached form submitting, and empty root arrays failing range
+checks in the collector.
+
 `make web-script-test` (in `make test`) builds `tools/WebScriptTest`
 with libjavascript, libcss and libhttp's URL units. Each
 `scripts/*.js` runs in a fresh window over its `scripts/*.html` page (or
@@ -10781,8 +10849,12 @@ atob/btoa, structuredClone, URL and URLSearchParams, the window and the
 timers. The Pascal side checks that unreachable wrappers are collected
 and their nodes freed, that expandos and listeners live while their node
 is in the document, that detached cycles go in one collection, events
-made by native code, fetched scripts in parser order, a document
-outliving its context, and prints the bytes per wrapper.
+made by native code, events the engine fired kept by a listener past
+their dispatch and a collection (the DuckDuckGo crash) and an event
+keeping a target that is not a node, fetched scripts in parser order, a
+document outliving its context, and prints the bytes per wrapper. Freed
+memory is overwritten first (`WebScriptTest.Poison`), so a read of a
+freed object fails instead of finding stale contents.
 `JS_GC_STRESS=1` makes the engines collect every 16 KiB.
 
 ## Web view (libwebview)
@@ -10881,20 +10953,28 @@ asked again after it handled a move (`TControlWindow`), and
   the set 1 scan code and the character): keydown, keypress for a
   character, keyup on release, at the focused element (else the body);
   cancelling keydown or keypress stops what the key would do.
-- **Text fields** (`WebView.TextEditing`): the value and its selection
+- **Text fields** (`WebView.TextEditing`, the actions keys map to in
+  `WebView.FieldEditing`, which has no libcontrols in it so host tools
+  and tests type the same way): the value and its selection
   live in the DOM's form control state; characters replace the
   selection at the caret, Backspace and Delete (with Ctrl a word), the
   arrows (Ctrl by word), Home and End (in a text area by line; Up and
   Down move between lines), Shift extends the selection, Ctrl+A, Ctrl+C,
   Ctrl+X and Ctrl+V, maxlength and readonly; each edit fires an
   InputEvent with its inputType; Enter in a field is implicit
-  submission (the form's first submit button, else the form), in a
-  text area a line break; change fires when the focus leaves a field
+  submission (the form's first submit button, else the form:
+  `DefaultButtonOf`, `SubmitFormIn` in `WebView.Forms`; a form out of
+  the document is not submitted), in a text area a line break; change fires when the focus leaves a field
   whose value changed; the caret is drawn where the selection's focus
   is.
 - **Script's layout questions** go to a `TDocumentScriptLayout` over the
   view's layout and painter (getBoundingClientRect, scrolling,
   elementFromPoint, getComputedStyle).
+
+A control, a clicked element and a submitted form are held across their
+click and submit events (the page's listeners may remove them or move
+the focus, which releases the focused element); the field being edited
+is held for the length of an edit.
 
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
