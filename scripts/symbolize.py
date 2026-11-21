@@ -55,6 +55,7 @@ import sys
 
 
 def load_kernel_symbols_script():
+    sys.dont_write_bytecode = True
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'make-kernel-symbols.py')
     specification = importlib.util.spec_from_file_location('make_kernel_symbols', path)
     module = importlib.util.module_from_spec(specification)
