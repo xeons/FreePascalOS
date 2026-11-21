@@ -29,7 +29,9 @@
 
   Columns: pid ppid pgid uid user ruid ruser ni (nice) pri stat (s)
   nlwp (thcount) vsz rss (both KiB) %cpu %mem time etime stime (start)
-  tty comm (ucomm), cmd (args, command).
+  tty comm (ucomm), cmd (args, command), handles and regions (the
+  ranges of its address space: program and library segments, stacks,
+  allocations, mappings).
 
   %cpu is the processor time over the time since the process started
   (100 is one processor kept busy all along), time the processor time
@@ -60,7 +62,8 @@ const
     '  -A, -e             select all processes'#10 +
     '  -f                 full format listing'#10 +
     '  -o, --format=LIST  user defined format: pid,ppid,pgid,uid,user,ruid,ruser,'#10 +
-    '                     ni,pri,stat,nlwp,vsz,rss,%cpu,%mem,time,etime,stime,tty,comm'#10 +
+    '                     ni,pri,stat,nlwp,vsz,rss,%cpu,%mem,time,etime,stime,tty,comm,'#10 +
+    '                     handles,regions'#10 +
     '  -p, --pid=LIST     select by process ID'#10 +
     '  -u, --user=LIST    select by effective user ID or name'#10 +
     '      --no-headers   do not print a header line'#10 +
@@ -77,7 +80,7 @@ type
   TColumnKind = (ColumnPid, ColumnParent, ColumnGroup, ColumnUid, ColumnUser, ColumnRealUid,
     ColumnRealUser, ColumnNice, ColumnPriority, ColumnState, ColumnThreads, ColumnVirtual,
     ColumnResident, ColumnCpuPercent, ColumnMemoryPercent, ColumnTime, ColumnElapsed,
-    ColumnStart, ColumnTerminal, ColumnCommand, ColumnArguments, ColumnCpu);
+    ColumnStart, ColumnTerminal, ColumnCommand, ColumnArguments, ColumnCpu, ColumnHandles, ColumnRegions);
 
   TColumn = record
     Kind: TColumnKind;
@@ -95,7 +98,7 @@ type
   end;
 
 const
-  ColumnNames: array[0..35] of TColumnName = (
+  ColumnNames: array[0..37] of TColumnName = (
     (Name: 'pid'; Kind: ColumnPid; Header: 'PID'; Width: 7; LeftAligned: False),
     (Name: 'ppid'; Kind: ColumnParent; Header: 'PPID'; Width: 7; LeftAligned: False),
     (Name: 'pgid'; Kind: ColumnGroup; Header: 'PGID'; Width: 7; LeftAligned: False),
@@ -131,7 +134,9 @@ const
     (Name: 'cmd'; Kind: ColumnArguments; Header: 'CMD'; Width: 0; LeftAligned: True),
     (Name: 'args'; Kind: ColumnArguments; Header: 'COMMAND'; Width: 0; LeftAligned: True),
     (Name: 'command'; Kind: ColumnArguments; Header: 'COMMAND'; Width: 0; LeftAligned: True),
-    (Name: 'c'; Kind: ColumnCpu; Header: 'C'; Width: 2; LeftAligned: False));
+    (Name: 'c'; Kind: ColumnCpu; Header: 'C'; Width: 2; LeftAligned: False),
+    (Name: 'handles'; Kind: ColumnHandles; Header: 'HANDLES'; Width: 7; LeftAligned: False),
+    (Name: 'regions'; Kind: ColumnRegions; Header: 'REGIONS'; Width: 7; LeftAligned: False));
 
 var
   Columns: array of TColumn;
@@ -304,6 +309,17 @@ begin
   Result := IntToStr(Tenths div 10) + '.' + IntToStr(Tenths mod 10);
 end;
 
+{ How many regions the process has ("-" if it has ended meanwhile). }
+function RegionCountText(ProcessId: QWord): string;
+var
+  Resources: TAbiProcessResources;
+begin
+  if KernelGetProcessResources(ProcessId, Resources) < 0 then
+    Result := '-'
+  else
+    Result := IntToStr(Resources.RegionCount);
+end;
+
 function CellText(Kind: TColumnKind; const Information: TProcessDetails): string;
 var
   Elapsed: QWord;
@@ -369,6 +385,8 @@ begin
       end;
     ColumnCommand: Result := PChar(@Information.Name[0]);
     ColumnArguments: Result := ArgumentsText(Information);
+    ColumnHandles: Result := IntToStr(Information.HandleCount);
+    ColumnRegions: Result := RegionCountText(Information.ProcessId);
   end;
 end;
 

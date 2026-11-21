@@ -66,7 +66,8 @@ type
   { 16 bytes, so blocks keep the heap's alignment. }
   THeapCheckHeader = record
     Magic: LongWord;
-    Reserved: LongWord;
+    { The thread whose heap it is from (HeapCheckOwnerTag). }
+    Owner: LongWord;
     RequestedSize: PtrUInt;
   end;
   PHeapCheckHeader = ^THeapCheckHeader;
@@ -109,6 +110,15 @@ begin
   HeapCheckFindChangedByte := Index;
 end;
 
+{ Tells the blocks of one running thread from another's: the address of
+  its threadvar block (0 for the main thread before it has one). The
+  number of a thread that has ended may come again for a new one, which
+  only makes that one's ending release the old blocks early too. }
+function HeapCheckOwnerTag: LongWord;
+begin
+  HeapCheckOwnerTag := LongWord(PtrUInt(ReadRuntimeWord) shr 4);
+end;
+
 { A block from the heap with a header for Size bytes; the bytes are not
   filled. Nil if the heap returns nil. }
 function AllocateCheckedBlock(Size: PtrUInt): Pointer;
@@ -121,7 +131,8 @@ begin
   if Header = nil then
     Exit(nil);
   Header^.Magic := HeapCheckMagicAllocated;
-  Header^.Reserved := 0;
+  { Which thread's heap the block is from. }
+  Header^.Owner := HeapCheckOwnerTag;
   Header^.RequestedSize := Size;
   AllocateCheckedBlock := HeapCheckBlockOf(Header);
 end;
@@ -198,6 +209,7 @@ begin
   HeapCheckHeaderOf(Block)^.Magic := HeapCheckMagicQuarantined;
   Entry.Block := Block;
   Entry.ByteCount := Capacity;
+  Entry.Owner := HeapCheckHeaderOf(Block)^.Owner;
   Entry.FreedBy := NoFreedBy;
   { Skips this procedure and HeapCheckFreeMem: the code that freed. }
   CaptureBacktrace(2, HeapCheckFreedByDepth, @Entry.FreedBy[0]);
@@ -205,6 +217,26 @@ begin
     ReleaseQuarantinedBlock(Leaving);
   if AddToQuarantine(Entry, Leaving) then
     ReleaseQuarantinedBlock(Leaving);
+end;
+
+{ Called by a thread about to end, before the heap gives up its chunks:
+  releases the blocks of this thread waiting in the quarantine, so that
+  the chunks holding them are free and go back to the kernel. }
+procedure ReleaseQuarantineOfEndingThread;
+var
+  Taken: array[0..31] of TQuarantineEntry;
+  Count: SizeInt;
+  Index: SizeInt;
+  Owner: LongWord;
+begin
+  if HeapCheckLevel <> HeapChecksQuarantine then
+    Exit;
+  Owner := HeapCheckOwnerTag;
+  repeat
+    Count := TakeQuarantinedBlocksOf(Owner, @Taken[0], Length(Taken));
+    for Index := 0 to Count - 1 do
+      ReleaseQuarantinedBlock(Taken[Index]);
+  until Count < Length(Taken);
 end;
 
 { --- The memory manager ------------------------------------------------ }

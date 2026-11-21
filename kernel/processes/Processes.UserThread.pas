@@ -31,7 +31,9 @@
       reached through the thread pointer (%fs base), which the scheduler
       loads on every switch to the thread.
 
-  Ending: a thread that exits releases its user stack and thread data,
+  Ending: a thread that exits releases its user stack (and the stack's
+  guard), its thread data and the memory it allocated for itself
+  (AllocateForThread: the runtime's threadvar block),
   leaves the address space and wakes those waiting for it. The process
   counts its active threads; the thread that brings the count to zero is
   the last one and ends the process (Processes.UserProcess). Ending the
@@ -208,8 +210,12 @@ begin
   if Thread^.UserStackStart <> 0 then
     ReleaseUserRegion(Process^.AddressSpace, Thread^.UserStackStart);
   ReleaseThreadStorage(Process, Thread^.ThreadDataStart);
+  { The threadvar block, if the runtime did not free it (the thread was
+    ended from outside, which skips the runtime's own ending). }
+  ReleaseThreadOwnedMemory(Process^.AddressSpace, Thread^.OwnedAllocationStart, Thread^.ControlBlock.ThreadId);
   Thread^.UserStackStart := 0;
   Thread^.ThreadDataStart := 0;
+  Thread^.OwnedAllocationStart := 0;
   LeaveAddressSpace;
 
   Thread^.ExitCode := ExitCode;

@@ -103,8 +103,9 @@ begin
   if ReadRuntimeWord <> nil then
     Exit;
   { From the kernel, not the heap: the heap itself uses threadvars. Fresh
-    pages are zero, as threadvars start out. }
-  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, 0, 0, 0, 0, 0);
+    pages are zero, as threadvars start out. The kernel frees the block
+    if the thread is ended without coming back here to free it. }
+  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, AllocateForThread, 0, 0, 0, 0);
   if Address <= 0 then
     RunError(226);
   WriteRuntimeWord(Pointer(Address));
@@ -155,8 +156,13 @@ type
     StackSize: PtrUInt;
   end;
 
+procedure ReleaseQuarantineOfEndingThread; forward;
+
 procedure SysEndThread(ExitCode: DWord);
 begin
+  { Before DoneThread, where the heap gives up this thread's chunks:
+    blocks waiting in the heap check quarantine would keep them. }
+  ReleaseQuarantineOfEndingThread;
   DoneThread;
   while True do
     SystemCall(CallExitThread, QWord(ExitCode), 0, 0, 0, 0, 0);

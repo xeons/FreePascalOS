@@ -50,6 +50,11 @@ type
     { The program leads a session of its own (ProcessNewSession), which
       EndSession ends as a whole. }
     NewSession: Boolean;
+    { More handles of this program the new one gets, with the same
+      numbers (ProcessPassHandles): PassedHandleCount of them at
+      PassedHandles. }
+    PassedHandles: PInt64;
+    PassedHandleCount: LongWord;
   end;
 
 { Options with the standard handles and environment of this program. }
@@ -135,6 +140,8 @@ begin
   Options.GroupId := GroupInherit;
   Options.Identity := nil;
   Options.NewSession := False;
+  Options.PassedHandles := nil;
+  Options.PassedHandleCount := 0;
 end;
 
 function IsProgramFile(const Path: string): Boolean;
@@ -203,6 +210,10 @@ begin
     Creation.Flags := ProcessNewSession
   else
     Creation.Flags := 0;
+  Creation.PassedHandles := Options.PassedHandles;
+  Creation.PassedHandleCount := Options.PassedHandleCount;
+  if Options.PassedHandleCount > 0 then
+    Creation.Flags := Creation.Flags or ProcessPassHandles;
   Result := KernelCreateProcess(Creation);
 end;
 

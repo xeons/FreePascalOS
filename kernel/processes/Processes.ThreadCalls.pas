@@ -54,6 +54,7 @@ uses
   Objects.Manager,
   Processes.Process,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.Handles,
   Processes.Thread,
   Processes.UserThread,

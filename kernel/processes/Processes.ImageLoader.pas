@@ -149,6 +149,7 @@ uses
   FileSystem.Types,
   FileSystem.Files,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.ImageSections,
   Processes.Paths,
   Processes.Arch.ImageFormat;

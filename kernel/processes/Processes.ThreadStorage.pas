@@ -60,6 +60,7 @@ uses
   Memory.KernelHeap,
   Kernel.Mutex,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.ImageLoader,
   Processes.Arch.ImageFormat;
 
