@@ -47,6 +47,7 @@ implementation
 
 uses
   Kernel.IdleStates,
+  Io.AcpiPower,
   Objects.Events,
   Objects.Timers,
   Objects.Sections,
@@ -310,6 +311,9 @@ begin
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
+  { Thermal zones, batteries and _CST's idle states, read on a thread of
+    their own. }
+  StartAcpiPower;
   InitializeIoSystem;
   { The network adapters registered with the drivers above. }
   StartNetworking;

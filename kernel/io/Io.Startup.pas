@@ -114,6 +114,7 @@ uses
   Drivers.DiskStatistics,
   Drivers.VideoCoreMailbox,
   Drivers.RaspberryPiBoard,
+  Power.BoardClocks,
   Drivers.Bcm2835Watchdog,
   Drivers.I6300EsbWatchdog,
   Io.Watchdog;
@@ -212,7 +213,11 @@ begin
   { The Raspberry Pi's firmware first: the drivers ask it for clocks and
     addresses. }
   if InitializeVideoCoreMailbox then
+  begin
     WriteBoardInformation;
+    { The ARM clock's scaling, its thermal limit and the fan. }
+    StartBoardPower;
+  end;
   { The hardware watchdog as early as it can be found (the Pi 3/4's
     needs the mailbox), armed if the options or its driver say so;
     a device tree's is armed already (InitializeBuses). }

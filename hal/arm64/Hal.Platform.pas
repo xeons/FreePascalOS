@@ -42,6 +42,9 @@ procedure InitializeHal;
 { --- The clock (see the x86-64 Hal.Platform) --- }
 function HalClockNanoseconds: QWord;
 procedure HalStartClockOnThisProcessor;
+{ What the clock is read from ("time stamp counter", "KVM paravirtual
+  clock", "generic timer"). }
+function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
 procedure HalEndOfInterrupt;
 procedure HalRequestSoftwareInterrupt(Level: TPriorityLevel);
@@ -149,6 +152,11 @@ begin
     an interrupt never comes early by it. }
   Ticks := (Nanoseconds * CounterFrequency + NanosecondsPerSecond - 1) div NanosecondsPerSecond;
   SetTimerInterruptIn(Ticks);
+end;
+
+function HalClockSourceName: PChar;
+begin
+  Result := 'generic timer';
 end;
 
 procedure HalEndOfInterrupt;

@@ -42,6 +42,7 @@ uses
   Processes.ProcessDetails,
   Processes.SystemUsage,
   Processes.ClockCalls,
+  Processes.PowerCalls,
   Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
@@ -809,6 +810,12 @@ begin
     CallSetWallClock: Result := PerformSetWallClock(Int64(Argument0));
     CallGetTimeZone: Result := PerformGetTimeZone(Argument0, Argument1);
     CallSetTimeZone: Result := PerformSetTimeZone(Argument0);
+    CallGetPreciseTime: Result := PerformGetPreciseTime(Argument0, Argument1);
+    CallAdjustWallClock: Result := PerformAdjustWallClock(Int64(Argument0), Argument1, Argument2);
+    { Power (Processes.PowerCalls). }
+    CallGetProcessorPower: Result := PerformGetProcessorPower(Argument0);
+    CallListThermalZones: Result := PerformListThermalZones(Argument0, Argument1);
+    CallListBatteries: Result := PerformListBatteries(Argument0, Argument1);
     CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
     CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
     CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);

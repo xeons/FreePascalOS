@@ -44,6 +44,9 @@ function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
 { Waits in State until an interrupt (interrupts enabled), on the
   processor numbered ProcessorIndex. }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
+{ ACPI's _CST states are x86-64's: none is taken here. }
+function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+  out State: TIdleState): Boolean;
 
 implementation
 
@@ -124,6 +127,13 @@ procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWor
 begin
   if (State.Method <> IdleMethodFirmwareSuspend) or not PsciSuspendProcessor(State.Parameter) then
     HaltProcessor;
+end;
+
+function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+  out State: TIdleState): Boolean;
+begin
+  ZeroMemory(@State, SizeOf(State));
+  Result := False;
 end;
 
 end.

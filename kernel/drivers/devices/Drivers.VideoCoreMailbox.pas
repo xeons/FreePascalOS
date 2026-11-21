@@ -64,6 +64,11 @@ const
   FirmwareTagSetPowerState = $00028001;
   FirmwareTagClockRate = $00030002;
   FirmwareTagMaximumClockRate = $00030004;
+  FirmwareTagMinimumClockRate = $00030007;
+  FirmwareTagSetClockRate = $00038002;
+  { Under-voltage, frequency capping and throttling, now and since
+    start (bits 0-3 and 16-19). }
+  FirmwareTagThrottledState = $00030046;
   FirmwareTagTemperature = $00030006;
   FirmwareTagMaximumTemperature = $0003000A;
   FirmwareTagNotifyXhciReset = $00030058;
@@ -105,6 +110,10 @@ function QueryFirmwareTag(Tag: LongWord; Words: PLongWord; RequestWords, ValueWo
 function QueryFirmwareWord(Tag: LongWord; out Value: LongWord): Boolean;
 function QueryClockRate(ClockId: LongWord; out Hertz: LongWord): Boolean;
 function QueryMaximumClockRate(ClockId: LongWord; out Hertz: LongWord): Boolean;
+function QueryMinimumClockRate(ClockId: LongWord; out Hertz: LongWord): Boolean;
+{ Asks the firmware to run clock ClockId at Hertz (it picks the nearest
+  rate it can, and the voltage for it); Actual is the rate it set. }
+function SetClockRate(ClockId: LongWord; Hertz: LongWord; out Actual: LongWord): Boolean;
 { Thousandths of a degree Celsius. }
 function QueryTemperature(out MilliCelsius: LongWord): Boolean;
 function QueryBoardSerial(out Serial: QWord): Boolean;
@@ -277,6 +286,25 @@ end;
 function QueryMaximumClockRate(ClockId: LongWord; out Hertz: LongWord): Boolean;
 begin
   Result := QueryIdAndValue(FirmwareTagMaximumClockRate, ClockId, Hertz) and (Hertz <> 0);
+end;
+
+function QueryMinimumClockRate(ClockId: LongWord; out Hertz: LongWord): Boolean;
+begin
+  Result := QueryIdAndValue(FirmwareTagMinimumClockRate, ClockId, Hertz) and (Hertz <> 0);
+end;
+
+function SetClockRate(ClockId: LongWord; Hertz: LongWord; out Actual: LongWord): Boolean;
+var
+  Words: array[0..2] of LongWord;
+  AnswerBytes: LongWord;
+begin
+  Words[0] := ClockId;
+  Words[1] := Hertz;
+  { 0: let the firmware set the turbo state (and voltage) to go with it. }
+  Words[2] := 0;
+  Result := QueryFirmwareTag(FirmwareTagSetClockRate, @Words[0], 3, 3, AnswerBytes) and (AnswerBytes >= 8) and
+    (Words[0] = ClockId) and (Words[1] <> 0);
+  Actual := Words[1];
 end;
 
 function QueryTemperature(out MilliCelsius: LongWord): Boolean;

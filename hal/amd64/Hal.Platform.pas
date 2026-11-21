@@ -52,6 +52,9 @@ procedure HalStartClockOnThisProcessor;
   Nanoseconds (0: right away), replacing the one set before. It comes
   no earlier; a very long time is cut to what the timer can count. Call
   with interrupts disabled. }
+{ What the clock is read from ("time stamp counter", "KVM paravirtual
+  clock", "generic timer"). }
+function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
 
 { Signals the end of the interrupt currently being serviced. }
@@ -220,6 +223,14 @@ begin
   if Count > High(LongWord) then
     Count := High(LongWord);
   SetLocalApicTimerCount(LongWord(Count));
+end;
+
+function HalClockSourceName: PChar;
+begin
+  if UsesParavirtualClock then
+    Result := 'KVM paravirtual clock'
+  else
+    Result := 'time stamp counter';
 end;
 
 procedure HalEndOfInterrupt;

@@ -79,6 +79,7 @@ uses
   Io.InterruptRouting,
   Io.PlatformDevices,
   Drivers.RaspberryPiBoard,
+  Power.Summary,
   Io.Watchdog,
   Debug.Output;
 
@@ -131,7 +132,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
+  WriteLine('netcards, interrupts, devices, board, power, uptime, watchdog, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -329,6 +330,8 @@ begin
     WritePlatformDeviceSummary
   else if TextIsEqual(@Command[0], 'board') then
     WriteBoardInformation
+  else if TextIsEqual(@Command[0], 'power') then
+    WritePowerSummary
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
   else if TextIsEqual(@Command[0], 'watchdog') then

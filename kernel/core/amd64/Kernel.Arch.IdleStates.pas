@@ -54,10 +54,10 @@ function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
 { Waits in State until an interrupt (interrupts enabled), on the
   processor numbered ProcessorIndex. }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
-{ The deepest MWAIT C-state that may be used (maxcstate=, 0 for none). }
-function ArchDeepestAllowedCState: LongWord;
-{ Whether MONITOR/MWAIT may be used at all (for _CST's hints). }
-function ArchMonitorWaitIsUsable: Boolean;
+{ A state the firmware lists (ACPI _CST: its C-state type, MWAIT hint
+  and exit latency) as one of ours; False if it may not be used. }
+function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+  out State: TIdleState): Boolean;
 
 implementation
 
@@ -203,14 +203,27 @@ begin
     HaltProcessor;
 end;
 
-function ArchDeepestAllowedCState: LongWord;
+function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+  out State: TIdleState): Boolean;
+var
+  Number: LongWord;
 begin
-  Result := DeepestAllowed;
-end;
-
-function ArchMonitorWaitIsUsable: Boolean;
-begin
-  Result := MonitorWaitUsable;
+  ZeroMemory(@State, SizeOf(State));
+  Number := ((Hint shr 4) and $F) + 1;
+  Result := MonitorWaitUsable and (CStateType >= 2) and (Number >= 2) and (Number <= DeepestAllowed);
+  if not Result then
+    Exit;
+  NameState(State, Number);
+  State.Name[4] := 'A';
+  State.Name[5] := 'C';
+  State.Name[6] := 'P';
+  State.Name[7] := 'I';
+  State.Name[8] := ')';
+  State.Name[9] := #0;
+  State.Method := IdleMethodMonitorWait;
+  State.Parameter := Hint;
+  State.ExitLatencyNanoseconds := QWord(LatencyMicroseconds) * NanosecondsPerMicrosecond;
+  State.TargetResidencyNanoseconds := State.ExitLatencyNanoseconds * ResidencyFactor;
 end;
 
 end.
