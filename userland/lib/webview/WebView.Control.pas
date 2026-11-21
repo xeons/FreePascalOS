@@ -97,6 +97,13 @@ type
   TLinkDisposition = WebView.Types.TLinkDisposition;
   TWebContextInfo = WebView.Types.TWebContextInfo;
   TWebViewProcessModel = WebView.Types.TWebViewProcessModel;
+  TWebHistoryEntry = WebView.Types.TWebHistoryEntry;
+  TWebHistoryList = WebView.Types.TWebHistoryList;
+  TWebMediaItem = WebView.Types.TWebMediaItem;
+  TWebMediaList = WebView.Types.TWebMediaList;
+  TWebMetaItem = WebView.Types.TWebMetaItem;
+  TWebMetaList = WebView.Types.TWebMetaList;
+  TWebPageInfo = WebView.Types.TWebPageInfo;
 
 const
   { The values of the types above, for programs that use only this unit. }
@@ -123,6 +130,12 @@ type
     of object;
   TWebViewConsoleEvent = procedure(Sender: TWebView; const Level, Value: string) of object;
   TWebViewFindEvent = procedure(Sender: TWebView; const Needle: string; Found: Boolean) of object;
+  { Wrapped: the search went past the end (or the start) and went on
+    from the other end; MatchCount: the matches in the page (-1
+    unknown). }
+  TWebViewFindDetailsEvent = procedure(Sender: TWebView; const Needle: string; Found, Wrapped: Boolean;
+    MatchCount: Integer) of object;
+  TWebViewPageInfoEvent = procedure(Sender: TWebView; constref Info: TWebPageInfo) of object;
   { Kind: 'alert', 'confirm', 'prompt' or 'leave'. }
   TWebViewDialogEvent = procedure(Sender: TWebView; const Kind, Message: string) of object;
   { Crashed: the process ended (ExitCode); Hung: stopped answering
@@ -171,12 +184,22 @@ type
     FHangBar: THangBar;
     FHangWaitUntil: QWord;
     FInterruptTimes: array of QWord;
-    { Sites left behind by navigations to other sites (back and
-      forward across processes). }
-    FBackUrls: TStringList;
-    FForwardUrls: TStringList;
+    { Entries of other sites left behind by navigations to other sites
+      (back and forward across processes; the nearest last), around the
+      content process's own session history (WebView.Control.History.inc). }
+    FBackEntries: TWebHistoryList;
+    FForwardEntries: TWebHistoryList;
+    FRemoteEntries: TWebHistoryList;
+    FRemoteIndex: Integer;
     FRemoteCanGoBack: Boolean;
     FRemoteCanGoForward: Boolean;
+    FPageInfoRequestId: LongWord;
+    { Display options (WebView.Control.Options.inc). }
+    FImagesEnabled: Boolean;
+    FTextOnlyZoom: Boolean;
+    FAuthorStylesEnabled: Boolean;
+    FPopupsBlocked: Boolean;
+    FEncodingOverride: string;
     FSelectedText: string;
     FPageText: string;
     FScriptingEnabled: Boolean;
@@ -206,6 +229,9 @@ type
     FOnScriptPrompt: TWebViewScriptPromptEvent;
     FOnConsoleMessage: TWebViewConsoleEvent;
     FOnFindResult: TWebViewFindEvent;
+    FOnFindDetails: TWebViewFindDetailsEvent;
+    FOnPageInfo: TWebViewPageInfoEvent;
+    FOnPopupBlocked: TWebViewTextEvent;
     FOnScriptDialog: TWebViewDialogEvent;
     FOnProcessEvent: TWebViewProcessEvent;
     function GetPage: TWebPage;
@@ -234,7 +260,25 @@ type
     procedure TellDownload(constref Download: TDownloadInfo);
     procedure TellFailure(const Url, Reason: string);
     procedure TellConsole(const Level, Value: string);
-    procedure TellFindResult(const Needle: string; Found: Boolean);
+    procedure TellFindResult(const Needle: string; Found: Boolean; Wrapped: Boolean = False; MatchCount: Integer = -1);
+    procedure TellPageInfo(constref Info: TWebPageInfo);
+    procedure TellPopupBlocked(const Url: string);
+    { The session history across processes (WebView.Control.History.inc). }
+    procedure CombinedHistory(out Entries: TWebHistoryList; out Current: Integer);
+    procedure JumpToHistoryEntry(const Entries: TWebHistoryList; Target: Integer);
+    procedure TakeHistoryState(Message: TIpcMessage);
+    procedure LeaveSiteHistory(NewEntry: Boolean);
+    { Options and Page Info (WebView.Control.Options.inc). }
+    procedure SendDisplayOptions;
+    procedure ApplyEngineOptions;
+    procedure SetImagesEnabled(Value: Boolean);
+    procedure SetTextOnlyZoom(Value: Boolean);
+    procedure SetAuthorStylesEnabled(Value: Boolean);
+    procedure SetPopupsBlocked(Value: Boolean);
+    procedure SetEncodingOverride(const Value: string);
+    procedure TakeFindResult(Message: TIpcMessage);
+    procedure TakePageInfo(Message: TIpcMessage);
+    procedure EnginePopupBlocked(Sender: TWebEngineView; const Value: string);
     procedure TellProcessEvent(const What: string; Value: Int64);
     { In the program (WebView.Control.Local.inc). }
     procedure EnsureEngine;
@@ -340,6 +384,22 @@ type
     function SelectedText: string;
     function HasSelection: Boolean;
     procedure CopySelection;
+    { Paints every match of Needle highlighted ('' clears); it stays
+      until cleared or the document changes. }
+    procedure SetFindHighlight(const Needle: string; MatchCase: Boolean);
+    { The session history, oldest first, the entries of other sites this
+      view left included; and the current entry's index in it (-1 when
+      there is none). Up to date when OnHistoryChanged fires. }
+    function HistoryEntries: TWebHistoryList;
+    function HistoryIndex: Integer;
+    { Goes Offset entries back (negative) or forward, across sites and
+      processes too. }
+    procedure GoToHistoryOffset(Offset: Integer);
+    { A fresh view's session restore: Entries[Index] is loaded, the
+      others become its back and forward entries (loaded when gone to). }
+    procedure RestoreHistory(const Entries: TWebHistoryList; Index: Integer);
+    { Page Info of the page shown: answered once, on OnPageInfo. }
+    procedure RequestPageInfo;
     { The page's whole text as shown (in a content process: the last
       the process told; asking refreshes it). }
     function PageText: string;
@@ -396,8 +456,29 @@ type
     { The page asked to stay (beforeunload): True leaves it. }
     property OnConfirmUnload: TWebViewConfirmEvent read FOnConfirmUnload write FOnConfirmUnload;
     property OnFindResult: TWebViewFindEvent read FOnFindResult write FOnFindResult;
+    { Fired with OnFindResult. }
+    property OnFindDetails: TWebViewFindDetailsEvent read FOnFindDetails write FOnFindDetails;
+    property OnPageInfo: TWebViewPageInfoEvent read FOnPageInfo write FOnPageInfo;
+    { Images load (on unless turned off): from the next document. }
+    property ImagesEnabled: Boolean read FImagesEnabled write SetImagesEnabled;
+    { Zoom scales the text (font sizes) only, not images and boxes. }
+    property TextOnlyZoom: Boolean read FTextOnlyZoom write SetTextOnlyZoom;
+    { False: "No Style" - the page's style sheets and style attributes
+      are ignored (the user agent's sheet only); applies at once. }
+    property AuthorStylesEnabled: Boolean read FAuthorStylesEnabled write SetAuthorStylesEnabled;
+    { An encoding label ('': detect); setting another reloads the
+      document decoded with it. SupportedEncodings lists the choices. }
+    property EncodingOverride: string read FEncodingOverride write SetEncodingOverride;
+    { window.open without a user gesture (a click or key in the last
+      second) is refused while True, and its URL told to OnPopupBlocked. }
+    property PopupsBlocked: Boolean read FPopupsBlocked write SetPopupsBlocked;
+    property OnPopupBlocked: TWebViewTextEvent read FOnPopupBlocked write FOnPopupBlocked;
     property OnProcessEvent: TWebViewProcessEvent read FOnProcessEvent write FOnProcessEvent;
   end;
+
+{ The encodings a page can be decoded with (canonical names, UTF-8
+  first): the choices for EncodingOverride. }
+function SupportedEncodings: TStringArray;
 
 var
   { A program's own script engine for every view in the program (nil:
@@ -420,6 +501,7 @@ uses
   Controls.Window,
   Controls.Keys,
   Controls.Clipboard,
+  Web.Encoding.Labels,
   WebIpc.Wire,
   WebView.Zoom,
   WebView.Sites,
@@ -461,8 +543,9 @@ begin
   FScriptingEnabled := True;
   FZoom := 1;
   FState := LoadingIdle;
-  FBackUrls := TStringList.Create;
-  FForwardUrls := TStringList.Create;
+  FRemoteIndex := -1;
+  FImagesEnabled := True;
+  FAuthorStylesEnabled := True;
   FStateTimer := TTimer.Create(Self);
   FStateTimer.Interval := StateTimerMilliseconds;
   FStateTimer.OnTimer := @StateTimerFired;
@@ -479,8 +562,6 @@ begin
   FFavicon.Free;
   FPopupMenu.Free;
   FDefaultMenu.Free;
-  FBackUrls.Free;
-  FForwardUrls.Free;
   inherited Destroy;
 end;
 
@@ -542,15 +623,17 @@ begin
   if FEngine <> nil then
     Result := FEngine.CanGoBack
   else
-    Result := FRemoteCanGoBack or (FBackUrls.Count > 0);
+    Result := FRemoteCanGoBack or (HistoryIndex > 0);
 end;
 
 function TWebView.GetCanGoForward: Boolean;
+var
+  Index: Integer;
 begin
   if FEngine <> nil then
-    Result := FEngine.CanGoForward
-  else
-    Result := FRemoteCanGoForward or (FForwardUrls.Count > 0);
+    Exit(FEngine.CanGoForward);
+  Index := HistoryIndex;
+  Result := FRemoteCanGoForward or ((Index >= 0) and (Index < High(HistoryEntries)));
 end;
 
 procedure TWebView.SetAboutPageProvider(Value: TAboutPageProvider);
@@ -644,11 +727,25 @@ begin
     FOnConsoleMessage(Self, Level, Value);
 end;
 
-procedure TWebView.TellFindResult(const Needle: string; Found: Boolean);
+procedure TWebView.TellFindResult(const Needle: string; Found: Boolean; Wrapped: Boolean; MatchCount: Integer);
 begin
   FLastFindResult := Found;
   if Assigned(FOnFindResult) then
     FOnFindResult(Self, Needle, Found);
+  if Assigned(FOnFindDetails) then
+    FOnFindDetails(Self, Needle, Found, Wrapped, MatchCount);
+end;
+
+procedure TWebView.TellPageInfo(constref Info: TWebPageInfo);
+begin
+  if Assigned(FOnPageInfo) then
+    FOnPageInfo(Self, Info);
+end;
+
+procedure TWebView.TellPopupBlocked(const Url: string);
+begin
+  if Assigned(FOnPopupBlocked) then
+    FOnPopupBlocked(Self, Url);
 end;
 
 procedure TWebView.TellProcessEvent(const What: string; Value: Int64);
@@ -702,63 +799,26 @@ begin
 end;
 
 procedure TWebView.GoBack;
-var
-  Open: TIpcOpenUrl;
 begin
   if FEngine <> nil then
-  begin
-    FEngine.GoBack;
-    Exit;
-  end;
-  if FRemoteCanGoBack then
-  begin
-    SendToProcess(IpcGoBack, nil);
-    Exit;
-  end;
-  if FBackUrls.Count = 0 then
-    Exit;
-  { Back to the page of another site this view came from. }
-  Open := Default(TIpcOpenUrl);
-  Open.Url := FBackUrls[FBackUrls.Count - 1];
-  FBackUrls.Delete(FBackUrls.Count - 1);
-  if FUrl <> '' then
-    FForwardUrls.Add(FUrl);
-  Open.Method := 'GET';
-  Open.UserInitiated := True;
-  Open.Replace := True;
-  NavigateRemote(Open);
+    FEngine.GoBack
+  else
+    GoToHistoryOffset(-1);
 end;
 
 procedure TWebView.GoForward;
-var
-  Open: TIpcOpenUrl;
 begin
   if FEngine <> nil then
-  begin
-    FEngine.GoForward;
-    Exit;
-  end;
-  if FRemoteCanGoForward then
-  begin
-    SendToProcess(IpcGoForward, nil);
-    Exit;
-  end;
-  if FForwardUrls.Count = 0 then
-    Exit;
-  Open := Default(TIpcOpenUrl);
-  Open.Url := FForwardUrls[FForwardUrls.Count - 1];
-  FForwardUrls.Delete(FForwardUrls.Count - 1);
-  if FUrl <> '' then
-    FBackUrls.Add(FUrl);
-  Open.Method := 'GET';
-  Open.UserInitiated := True;
-  Open.Replace := True;
-  NavigateRemote(Open);
+    FEngine.GoForward
+  else
+    GoToHistoryOffset(1);
 end;
 
 procedure TWebView.Reload(BypassCache: Boolean);
 var
   Open: TIpcOpenUrl;
+  Entries: TWebHistoryList;
+  Current: Integer;
 begin
   if FEngine <> nil then
   begin
@@ -767,7 +827,14 @@ begin
   end;
   if (FProcess = nil) and (FUrl <> '') then
   begin
-    { After a crash: the page again, in a new process. }
+    { After a crash: the page again, in a new process, with the history
+      it had. }
+    CombinedHistory(Entries, Current);
+    if Current >= 0 then
+    begin
+      JumpToHistoryEntry(Entries, Current);
+      Exit;
+    end;
     Open := Default(TIpcOpenUrl);
     Open.Url := FUrl;
     Open.Method := 'GET';
@@ -836,12 +903,14 @@ end;
 
 function TWebView.FindText(const Needle: string; Forward: Boolean; MatchCase: Boolean): Boolean;
 var
-  Writer: TIpcWriter;
+  Request: TIpcFindRequest;
+  Wrapped: Boolean;
+  MatchCount: Integer;
 begin
   if FEngine <> nil then
   begin
-    Result := FEngine.FindText(Needle, Forward, MatchCase);
-    TellFindResult(Needle, Result);
+    Result := FEngine.FindTextDetailed(Needle, Forward, MatchCase, Wrapped, MatchCount);
+    TellFindResult(Needle, Result, Wrapped, MatchCount);
     Exit;
   end;
   Result := FLastFindResult;
@@ -849,15 +918,10 @@ begin
     Exit;
   FFindRequestId := NextRequestId;
   FFindNeedle := Needle;
-  Writer := TIpcWriter.Create;
-  try
-    Writer.WriteString(Needle);
-    Writer.WriteBoolean(Forward);
-    Writer.WriteBoolean(MatchCase);
-    SendToProcess(IpcFind, Writer.Data, FFindRequestId);
-  finally
-    Writer.Free;
-  end;
+  Request.Needle := Needle;
+  Request.Forward := Forward;
+  Request.MatchCase := MatchCase;
+  SendToProcess(IpcFind, EncodeFindRequest(Request), FFindRequestId);
 end;
 
 procedure TWebView.ClearSelection;
@@ -928,5 +992,7 @@ end;
 {$I WebView.Control.Remote.inc}
 {$I WebView.Control.RemoteInput.inc}
 {$I WebView.Control.Recovery.inc}
+{$I WebView.Control.History.inc}
+{$I WebView.Control.Options.inc}
 
 end.

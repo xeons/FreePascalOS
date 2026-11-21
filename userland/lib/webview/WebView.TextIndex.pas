@@ -74,6 +74,12 @@ type
   end;
   TTextRectangleArray = array of TTextRectangle;
 
+  { A match of find: [Start, Finish]. }
+  TTextMatch = record
+    Start, Finish: TTextPosition;
+  end;
+  TTextMatchArray = array of TTextMatch;
+
   TPageTextIndex = class
   private
     FRuns: array of TTextRunEntry;
@@ -113,6 +119,13 @@ type
       [MatchStart, MatchEnd]; wraps around once. }
     function Find(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
       out MatchStart, MatchEnd: TTextPosition): Boolean;
+    { The same, and whether it wrapped: the match is before From
+      (forward) or after it (backward), found from the other end. }
+    function FindWrapping(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
+      out MatchStart, MatchEnd: TTextPosition; out Wrapped: Boolean): Boolean;
+    { Every match of Needle in the page (not overlapping), in order; at
+      most Limit of them. }
+    function AllMatches(const Needle: string; MatchCase: Boolean; Limit: Integer): TTextMatchArray;
     { The whole page's text. }
     function AllText: string;
     function FirstPosition: TTextPosition;
@@ -493,10 +506,58 @@ end;
 function TPageTextIndex.Find(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
   out MatchStart, MatchEnd: TTextPosition): Boolean;
 var
+  Wrapped: Boolean;
+begin
+  Result := FindWrapping(Needle, From, Forward, MatchCase, MatchStart, MatchEnd, Wrapped);
+end;
+
+{ The match at a flat index (0 based) of Count bytes, a match ending
+  where a run starts ending at the end of the run before. }
+procedure MatchAt(Index: TPageTextIndex; FlatIndex, Count: Integer; out MatchStart, MatchEnd: TTextPosition);
+begin
+  MatchStart := Index.FlatToPosition(FlatIndex);
+  MatchEnd := Index.FlatToPosition(FlatIndex + Count);
+  if (MatchEnd.Offset = 0) and (MatchEnd.Run > MatchStart.Run) then
+    MatchEnd := TextPosition(MatchEnd.Run - 1, Index.FRuns[MatchEnd.Run - 1].TextLength);
+end;
+
+function TPageTextIndex.AllMatches(const Needle: string; MatchCase: Boolean; Limit: Integer): TTextMatchArray;
+var
+  Haystack, Wanted: string;
+  Found, MatchCount: Integer;
+begin
+  Result := nil;
+  if (Needle = '') or (FCount = 0) or (Limit <= 0) then
+    Exit;
+  EnsureFlat;
+  Haystack := FFlat;
+  Wanted := Needle;
+  if not MatchCase then
+  begin
+    Haystack := LowerCase(Haystack);
+    Wanted := LowerCase(Wanted);
+  end;
+  MatchCount := 0;
+  Found := Pos(Wanted, Haystack);
+  while (Found > 0) and (MatchCount < Limit) do
+  begin
+    if MatchCount = Length(Result) then
+      SetLength(Result, MatchCount * 2 + 8);
+    MatchAt(Self, Found - 1, Length(Wanted), Result[MatchCount].Start, Result[MatchCount].Finish);
+    Inc(MatchCount);
+    Found := Pos(Wanted, Haystack, Found + Length(Wanted));
+  end;
+  SetLength(Result, MatchCount);
+end;
+
+function TPageTextIndex.FindWrapping(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
+  out MatchStart, MatchEnd: TTextPosition; out Wrapped: Boolean): Boolean;
+var
   Haystack, Wanted: string;
   Start, Found, Candidate: Integer;
 begin
   Result := False;
+  Wrapped := False;
   MatchStart := TextPosition(-1, 0);
   MatchEnd := MatchStart;
   if (Needle = '') or (FCount = 0) then
@@ -521,7 +582,10 @@ begin
     { Pos is 1 based; Start is the 0 based index matches may begin at. }
     Found := Pos(Wanted, Haystack, Start + 1);
     if Found = 0 then
+    begin
       Found := Pos(Wanted, Haystack);
+      Wrapped := (Found > 0) and (From.Run >= 0);
+    end;
   end
   else
   begin
@@ -532,19 +596,18 @@ begin
       Candidate := Pos(Wanted, Haystack, Candidate + 1);
     end;
     if Found = 0 then
+    begin
       while Candidate > 0 do
       begin
         Found := Candidate;
         Candidate := Pos(Wanted, Haystack, Candidate + 1);
       end;
+      Wrapped := (Found > 0) and (From.Run >= 0);
+    end;
   end;
   if Found = 0 then
     Exit;
-  MatchStart := FlatToPosition(Found - 1);
-  MatchEnd := FlatToPosition(Found - 1 + Length(Wanted));
-  { A match ending where a run starts ends at the end of the one before. }
-  if (MatchEnd.Offset = 0) and (MatchEnd.Run > MatchStart.Run) then
-    MatchEnd := TextPosition(MatchEnd.Run - 1, FRuns[MatchEnd.Run - 1].TextLength);
+  MatchAt(Self, Found - 1, Length(Wanted), MatchStart, MatchEnd);
   Result := True;
 end;
 

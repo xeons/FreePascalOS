@@ -46,6 +46,7 @@ type
     FClient: THttpClient;
     FOwnsClient: Boolean;
     FHsts: THstsStore;
+    FOwnHsts: THstsStore;
     FPreflightCache: TCorsPreflightCache;
     FOwnedCookies: TCookieJar;
     FOwnedCache: THttpCache;
@@ -67,6 +68,10 @@ type
     property Client: THttpClient read FClient;
     property Transport: TNetworkTransport read FTransport;
     property Hsts: THstsStore read FHsts;
+    { Another HSTS store in use instead of the context's own (not owned;
+      it must outlive its use); nil: the own one again. A browser's
+      private browsing. }
+    procedure UseHstsStore(Store: THstsStore);
     property PreflightCache: TCorsPreflightCache read FPreflightCache;
     property AcceptLanguage: string read FAcceptLanguage write FAcceptLanguage;
     { file: URLs may be opened (the browser; a web view may refuse). }
@@ -98,7 +103,8 @@ begin
   inherited Create;
   FClient := Client;
   FOwnsClient := OwnsClient;
-  FHsts := THstsStore.Create;
+  FOwnHsts := THstsStore.Create;
+  FHsts := FOwnHsts;
   FPreflightCache := TCorsPreflightCache.Create;
   FAcceptLanguage := 'en-US,en;q=0.9';
   FAllowFileAccess := True;
@@ -118,7 +124,8 @@ constructor TNetworkContext.CreateForTransport(Transport: TNetworkTransport);
 begin
   inherited Create;
   FTransport := Transport;
-  FHsts := THstsStore.Create;
+  FOwnHsts := THstsStore.Create;
+  FHsts := FOwnHsts;
   FPreflightCache := TCorsPreflightCache.Create;
   FAcceptLanguage := 'en-US,en;q=0.9';
   FAllowFileAccess := True;
@@ -141,6 +148,14 @@ begin
     FClient.Cookies.SetDocumentCookie(Url, Cookie, ScriptCookieContext(Secure), UnixTimeNow);
 end;
 
+procedure TNetworkContext.UseHstsStore(Store: THstsStore);
+begin
+  if Store = nil then
+    FHsts := FOwnHsts
+  else
+    FHsts := Store;
+end;
+
 destructor TNetworkContext.Destroy;
 begin
   FTransport.Free;
@@ -152,7 +167,7 @@ begin
     FClient.Free;
   FOwnedCookies.Free;
   FOwnedCache.Free;
-  FHsts.Free;
+  FOwnHsts.Free;
   FPreflightCache.Free;
   inherited Destroy;
 end;

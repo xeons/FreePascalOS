@@ -107,6 +107,9 @@ type
     function SessionArea(const Origin: string): TWebStorageArea;
     { Writes the local areas that changed. }
     procedure SaveAll;
+    { Empties the local storage of every origin (the areas in use and
+      the files of the others) and the session storage. }
+    procedure ClearAll;
     { The file name for an origin (https://example.com:8443 becomes
       https_example.com_8443.txt). }
     class function OriginFileName(const Origin: string): string;
@@ -468,6 +471,30 @@ begin
     Exit(TWebStorageArea(FSession.Objects[Position]));
   Result := TWebStorageArea.Create;
   FSession.AddObject(Origin, Result);
+end;
+
+procedure TWebStorageRegistry.ClearAll;
+var
+  Index: Integer;
+  Found: TSearchRec;
+  FolderPath: string;
+begin
+  for Index := 0 to FLocal.Count - 1 do
+    TWebStorageArea(FLocal.Objects[Index]).Clear;
+  for Index := 0 to FSession.Count - 1 do
+    TWebStorageArea(FSession.Objects[Index]).Clear;
+  SaveAll;
+  if FFolder = '' then
+    Exit;
+  FolderPath := IncludeTrailingPathDelimiter(FFolder);
+  if FindFirst(FolderPath + '*.txt', faAnyFile, Found) = 0 then
+  begin
+    repeat
+      if (Found.Attr and faDirectory) = 0 then
+        DeleteFile(FolderPath + Found.Name);
+    until FindNext(Found) <> 0;
+    FindClose(Found);
+  end;
 end;
 
 procedure TWebStorageRegistry.SaveAll;

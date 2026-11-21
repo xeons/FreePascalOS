@@ -111,9 +111,6 @@ const
   DataPieceBytes = 60 * 1024;
   LocalFileLimit = 256 * 1024 * 1024;
 
-var
-  StorageLock: TRTLCriticalSection;
-
 type
   THopEntry = class
   public
@@ -518,7 +515,7 @@ begin
   Pairs := Default(TIpcStoragePairs);
   if UrlOfOwnSite(Origin) then
   begin
-    EnterCriticalSection(StorageLock);
+    EnterLocalStorage;
     try
       Area := SharedLocalStorage.LocalArea(Origin);
       SetLength(Pairs.Keys, Area.Count);
@@ -530,7 +527,7 @@ begin
         Pairs.Values[Index] := Value;
       end;
     finally
-      LeaveCriticalSection(StorageLock);
+      LeaveLocalStorage;
     end;
   end;
   Reply(Message, EncodeStoragePairs(Pairs));
@@ -544,7 +541,7 @@ begin
   DecodeStorageChange(Message.Payload, Origin, Key, Value);
   if not UrlOfOwnSite(Origin) then
     Exit;
-  EnterCriticalSection(StorageLock);
+  EnterLocalStorage;
   try
     Area := SharedLocalStorage.LocalArea(Origin);
     case Message.Kind of
@@ -553,24 +550,18 @@ begin
       IpcStorageClear: Area.Clear;
     end;
   finally
-    LeaveCriticalSection(StorageLock);
+    LeaveLocalStorage;
   end;
 end;
 
 procedure SaveServiceStorage;
 begin
-  EnterCriticalSection(StorageLock);
+  EnterLocalStorage;
   try
     SharedLocalStorage.SaveAll;
   finally
-    LeaveCriticalSection(StorageLock);
+    LeaveLocalStorage;
   end;
 end;
-
-initialization
-  InitCriticalSection(StorageLock);
-
-finalization
-  DoneCriticalSection(StorageLock);
 
 end.
