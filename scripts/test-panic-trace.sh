@@ -19,10 +19,14 @@
 # with the testpanic kernel option (Kernel.PanicTest), once for a page
 # fault and once for a failed assertion, each three calls deep, and
 # checks that the panic's "Back trace:" in the serial log names the
-# routines of the call chain, innermost first.
+# routines of the call chain, innermost first. The kernel log also goes
+# over the network (netlog, to scripts/netlog.py on the host: QEMU's user
+# networking hands 10.0.2.2 to the host's loopback), and the trace must
+# arrive there too: the panic sends it straight through the driver.
 #   test-panic-trace.sh <arch> <esp-directory>
 # (make panic-trace-test, or make ARCH=arm64 panic-trace-test.) The
-# serial logs stay in the build directory as test-panic-<kind>.log.
+# logs stay in the build directory as test-panic-<kind>.log and
+# test-panic-<kind>-netlog.log.
 
 set -uo pipefail
 
@@ -43,6 +47,8 @@ find_first_existing_file() {
     return 1
 }
 
+netlog_port=$((40000 + $$ % 20000))
+
 # Boots with the given testpanic value; the serial log goes to $2.
 # Returns QEMU's exit status (3: the kernel panicked).
 boot_with_panic() {
@@ -50,7 +56,7 @@ boot_with_panic() {
     local serial_log="$2"
     rm -rf "$test_esp_directory"
     cp -r "$esp_directory" "$test_esp_directory"
-    echo "test-exit testpanic=$kind" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit testpanic=$kind netlog=10.0.2.2:$netlog_port" > "$test_esp_directory/FreePascalOS/options.txt"
     rm -f "$serial_log"
     case "$architecture" in
         amd64)
@@ -70,6 +76,7 @@ boot_with_panic() {
                 -drive if=pflash,format=raw,file="$build_directory/panic-test-OVMF_VARS.fd" \
                 -drive format=raw,file=fat:rw:"$test_esp_directory" \
                 -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+                -netdev user,id=net0 -device e1000,netdev=net0 \
                 -serial file:"$serial_log" \
                 -display none -no-reboot \
                 < /dev/null > /dev/null 2>&1
@@ -78,6 +85,7 @@ boot_with_panic() {
             rm -f "$build_directory/QEMU_VARS.fd"
             SEMIHOSTING=1 PROCESSORS=2 AUDIO=none \
                 timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
+                -- -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
                 < /dev/null > "$serial_log" 2>&1
             ;;
         *)
@@ -88,7 +96,8 @@ boot_with_panic() {
 }
 
 # Whether the lines after "Back trace:" in the log name the routines
-# given, in that order (other frames may come between them).
+# given, in that order (other frames may come between them). A log
+# netlog.py wrote has "SOURCE SEQUENCE UPTIME " before each line.
 trace_names_in_order() {
     python3 - "$@" <<'CHECK'
 import re
@@ -98,6 +107,9 @@ log_path, wanted = sys.argv[1], sys.argv[2:]
 with open(log_path, 'rb') as log:
     text = log.read().decode('ascii', 'replace')
 text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text).replace('\r', '')
+if log_path.endswith('-netlog.log'):
+    text = '\n'.join(line.split(' ', 3)[3] if len(line.split(' ', 3)) == 4 else ''
+                      for line in text.splitlines() if not line.startswith('#'))
 if 'Back trace:' not in text:
     print('  no "Back trace:" in the log')
     sys.exit(1)
@@ -124,10 +136,21 @@ chain=(Kernel.PanicTest.PanicTestInnermost Kernel.PanicTest.PanicTestMiddle
        Kernel.PanicTest.PanicTestOutermost Kernel.PanicTest.RunPanicTestIfAsked)
 
 overall=0
+netlog_process=""
+trap '[[ -n "$netlog_process" ]] && kill "$netlog_process" 2> /dev/null' EXIT
 for kind in fault assert; do
     serial_log="$build_directory/test-panic-$kind.log"
+    netlog_received="$build_directory/test-panic-$kind-netlog.log"
+    rm -f "$netlog_received"
+    python3 -I "$script_directory/netlog.py" --bind 127.0.0.1 --port "$netlog_port" \
+        --output "$netlog_received" > /dev/null 2>&1 &
+    netlog_process=$!
     boot_with_panic "$kind" "$serial_log"
     status=$?
+    # The last datagrams may still be on their way.
+    sleep 1
+    kill "$netlog_process" 2> /dev/null
+    netlog_process=""
     expected=("${chain[@]}")
     if [[ "$kind" == assert ]]; then
         expected=(Kernel.Panic.KernelAssert "${chain[@]}")
@@ -137,6 +160,8 @@ for kind in fault assert; do
         result="failed (QEMU exit status $status, expected 3: a panic)"
     elif ! trace_names_in_order "$serial_log" "${expected[@]}"; then
         result="failed (the back trace does not name the call chain)"
+    elif ! trace_names_in_order "$netlog_received" "${expected[@]}"; then
+        result="failed (the back trace did not arrive over the network log)"
     fi
     echo "PANIC TRACE TEST ($architecture, $kind): $result ($serial_log)"
     [[ "$result" == passed ]] || overall=1

@@ -25,10 +25,12 @@
     testpanic=assert    a failed assertion, three calls deep: the trace
                         of the code that called the panic
 
-  the system panics once start-up has its threads (and the network log)
-  going. scripts/test-panic-trace.sh boots each and checks that the
-  serial log names PanicTestInnermost, PanicTestMiddle, PanicTestOutermost
-  and RunPanicTestIfAsked, in that order.
+  the system panics once start-up has its threads going - with the
+  netlog option, once the network log has found its listener (at most
+  NetworkLogWaitSeconds), so the trace reaches it as well.
+  scripts/test-panic-trace.sh boots each and checks that the serial log
+  (and the network log) name PanicTestInnermost, PanicTestMiddle,
+  PanicTestOutermost and RunPanicTestIfAsked, in that order.
 }
 unit Kernel.PanicTest;
 
@@ -45,10 +47,14 @@ uses
   Runtime.Text,
   Kernel.Options,
   Kernel.Panic,
+  Kernel.Scheduler,
+  Network.LogStreaming,
   Debug.Output;
 
 const
   OptionPanicTest = 'testpanic';
+  NetworkLogWaitSeconds = 60;
+  WaitStepMilliseconds = 100;
 
 type
   TPanicKind = (PanicKindFault, PanicKindAssertion);
@@ -81,6 +87,20 @@ begin
   Inc(LevelsPassed);
 end;
 
+procedure WaitForNetworkLog;
+var
+  Waited: QWord;
+begin
+  if not NetworkLogIsWanted then
+    Exit;
+  Waited := 0;
+  while not NetworkLogHasRoute and (Waited < NetworkLogWaitSeconds * 1000) do
+  begin
+    SleepMilliseconds(WaitStepMilliseconds);
+    Inc(Waited, WaitStepMilliseconds);
+  end;
+end;
+
 procedure RunPanicTestIfAsked;
 var
   Value: array[0..31] of Char;
@@ -97,6 +117,7 @@ begin
   end
   else
     Exit;
+  WaitForNetworkLog;
   DebugBeginMessage;
   DebugWriteTag('testpanic');
   if Kind = PanicKindAssertion then
