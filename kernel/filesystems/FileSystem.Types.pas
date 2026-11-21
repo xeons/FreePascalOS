@@ -60,7 +60,8 @@ uses
   Runtime.Time,
   Runtime.LinkedList,
   Kernel.Mutex,
-  Io.BlockDevice;
+  Io.BlockDevice,
+  FileSystem.MountOptions;
 
 const
   { A 255 character name can take up to three bytes per character in
@@ -77,6 +78,10 @@ const
   AttributeChangeGroup = $04;
   AttributeChangeModificationTime = $08;
   AttributeChangeAccessTime = $10;
+
+  { TNodeInformation.VolumeFlags }
+  VolumeFlagNoExecute = $01;
+  VolumeFlagNoSetId = $02;
 
 type
   TFileSystemStatus = (
@@ -99,8 +104,12 @@ type
     StatusInUse,
     StatusInvalidName,
     StatusAccessDenied,
-    { The volume went away (its disk was unplugged). }
-    StatusVolumeGone
+    { The volume went away (its disk was unplugged, or it was
+      unmounted). }
+    StatusVolumeGone,
+    { The operation would join two volumes (a rename or a hard link
+      from one to another). }
+    StatusCrossesVolumes
   );
 
   { The advisory lock an open file holds (FileSystem.Locks). }
@@ -132,11 +141,23 @@ type
     AccessTime: TUnixTime;
     { When the node's information last changed. }
     ChangeTime: TUnixTime;
+    { When the node was made; 0 where the format does not keep it. }
+    BirthTime: TUnixTime;
+    { The parts of a second of the four times, where the format keeps
+      them (0 otherwise). }
+    ModificationNanoseconds: LongWord;
+    AccessNanoseconds: LongWord;
+    ChangeNanoseconds: LongWord;
+    BirthNanoseconds: LongWord;
     { Space the node takes up on the volume. }
     AllocatedBytes: QWord;
     { The volume's Number: filled in when the information is described
       to a caller (drivers leave it alone). }
     VolumeNumber: LongWord;
+    { The volume's mount options that matter to callers
+      (VolumeFlagNoExecute, VolumeFlagNoSetId): filled in like
+      VolumeNumber. }
+    VolumeFlags: LongWord;
   end;
 
   { Which fields of TAttributeChanges apply. }
@@ -165,6 +186,10 @@ type
     { Advisory locks held on the file (FileSystem.Locks), nil while
       nobody holds or waits for one. Drivers hand nodes out zeroed. }
     LockState: Pointer;
+    { On formats without owners (TFileSystemDriver.HasNoOwners): the
+      driver reported the read-only attribute, which the permissions
+      made up from the mount options keep (FileSystem.Security). }
+    HasReadOnlyAttribute: Boolean;
   end;
 
   { Position within a directory listing. Its meaning belongs to the
@@ -270,6 +295,14 @@ type
       the disk took to Discarded. The volume lock is held and the cache
       flushed. }
     TrimFreeSpace: function(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+    { The format has no owners and no permission bits (FAT, exFAT): the
+      VFS makes them up from the mount options (uid, gid, umask, fmask,
+      dmask), keeping the driver's read-only attribute. }
+    HasNoOwners: Boolean;
+    { The format lives in memory, not on a block device (tmpfs): its
+      volumes are made by FileSystem.Volumes.MountMemoryVolume, never
+      probed. }
+    IsVirtual: Boolean;
   end;
 
   TVolume = record
@@ -303,6 +336,20 @@ type
     { Freed ranges waiting to be discarded (FileSystem.Discards); nil
       when the volume does not discard. }
     Discards: Pointer;
+    { How it was mounted (FileSystem.MountOptions): read-only, noexec,
+      nosuid, discard, and the owners and masks of formats without
+      owners. }
+    Options: TMountOptions;
+    { The driver and device allow writing: a volume mounted read-only on
+      request may be made writable again. }
+    CanWrite: Boolean;
+    { How many volumes are mounted on directories of this one
+      (FileSystem.Mounts); path resolution only looks for mount points
+      while there are any. Changed with Lock held. }
+    MountsOnVolume: LongInt;
+    { The mount record when the volume is mounted at a directory of
+      another one (FileSystem.Mounts), else nil. }
+    MountRecord: Pointer;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;
@@ -346,6 +393,7 @@ begin
     StatusInvalidName: Result := 'invalid name';
     StatusAccessDenied: Result := 'access denied';
     StatusVolumeGone: Result := 'volume gone';
+    StatusCrossesVolumes: Result := 'crosses volumes';
   else
     Result := 'unknown status';
   end;

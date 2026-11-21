@@ -200,7 +200,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -537,7 +537,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -636,6 +636,21 @@ $(SCHEDULER_POLICY_TEST): tools/SchedulerPolicyTest/SchedulerPolicyTest.pas kern
 
 scheduler-policy-test: $(SCHEDULER_POLICY_TEST)
 	$(SCHEDULER_POLICY_TEST)
+
+# Mount options, owners of FAT and exFAT, the mount table and /etc/fstab
+# (FileSystem.MountOptions, .OwnerMapping, .MountTable, Sys.MountTable)
+# on the host.
+MOUNT_TEST := build/tools/MountTest
+
+$(MOUNT_TEST): tools/MountTest/MountTest.pas kernel/filesystems/FileSystem.MountOptions.pas \
+		kernel/filesystems/FileSystem.OwnerMapping.pas kernel/filesystems/FileSystem.MountTable.pas \
+		userland/lib/system/Sys.MountTable.pas
+	@mkdir -p build/tools/mount-test-units
+	$(FPC) -O2 -Cr -Co -Fukernel/filesystems -Fuuserland/lib/system -FEbuild/tools \
+		-FUbuild/tools/mount-test-units $<
+
+mount-test: $(MOUNT_TEST)
+	$(MOUNT_TEST)
 
 # The kernel's random number core (ChaCha20, against RFC 8439) and the
 # randomized address space layouts (Processes.AddressLayout) on the host.

@@ -125,7 +125,8 @@ begin
   for Index := 0 to VolumeCount - 1 do
   begin
     Volume := VolumeAt(Index);
-    if (Volume <> nil) and ((Volume^.Device = Disk) or (Volume^.Device^.Parent = Disk)) then
+    if (Volume <> nil) and (Volume^.Device <> nil) and
+       ((Volume^.Device = Disk) or (Volume^.Device^.Parent = Disk)) then
       Exit(True);
   end;
   Result := False;

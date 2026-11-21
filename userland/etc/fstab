@@ -1,0 +1,14 @@
+# /etc/fstab: what is mounted where at start (the service manager, and
+# "mount -a"). One mount per line:
+#
+#   SOURCE  DIRECTORY  TYPE  OPTIONS  [DUMP PASS]
+#
+# SOURCE: /dev/DEVICE, /volumes/NAME, LABEL=NAME, or a word for tmpfs.
+# TYPE: tmpfs, vfat, exfat, ext2, ext3, ext4 or auto.
+# OPTIONS: defaults, ro, noexec, nosuid, discard, uid=, gid=, umask=,
+# fmask=, dmask= (FAT, exFAT), size=, mode= (tmpfs), and noauto (only
+# by hand) and nofail (no complaint if the source is missing).
+#
+# Every other volume is mounted at /volumes/NAME by itself.
+
+tmpfs   /tmp    tmpfs   mode=1777,size=50%   0 0

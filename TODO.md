@@ -186,7 +186,8 @@ how the existing pieces fit together.
       groups, umask, set-user-ID programs; open, create, remove, rename, search,
       chmod, chown, times and execute are checked
 - [x] Sticky directories (/tmp: only the owner may remove or replace a name)
-- [ ] Permission checks on FAT and exFAT beyond their read-only attribute
+- [x] Permission checks on FAT and exFAT beyond their read-only attribute (uid=, gid=, umask=,
+      fmask=, dmask= mount options; the read-only attribute kept)
 - [x] Process list (ps, pgrep, pkill), per-thread CPU time
 
 ## I/O
@@ -333,8 +334,14 @@ how the existing pieces fit together.
 - [ ] ext4: inline data larger than the inode, encrypted and case-folded directories,
       metadata checksum verification
 - [ ] exFAT / FAT: verify and use the backup boot sector when the main one is damaged
-- [ ] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
-- [ ] File timestamps beyond modification time; ext4 nanosecond timestamps
+- [x] Hierarchical mount points (mount a volume at any directory) and a boot volume alias
+      (/volumes/system); mount, umount, /etc/fstab read by the service manager
+- [x] tmpfs (FileSystem.Memory) on /tmp, pages from the page allocator, size= limit
+- [ ] Mount namespaces / bind mounts; mount propagation; remounting read-only to read-write
+- [ ] Watches across mount points (a subtree watch stops at a mounted volume)
+- [ ] Setting times with nanoseconds (utimensat); ext nanoseconds kept when stamping (now cleared)
+- [x] File timestamps beyond modification time; ext4 nanosecond timestamps (access, change,
+      birth; CallGetFileTimes, stat, ls --time=)
 
 ## User mode
 

@@ -28,7 +28,21 @@
 
   "." and ".." are resolved textually before the lookup starts. Symbolic
   links are followed (up to MaximumSymbolicLinkDepth deep); an absolute
-  link target is taken relative to the root of the link's own volume.
+  link target is taken relative to the root of the link's own volume,
+  or, on a volume mounted at a directory, of the volume at the top of
+  its chain of mounts.
+
+  Mount points
+    A volume may be mounted on a directory of another (FileSystem.Mounts).
+    Resolution recognizes the directory by its node number and goes on
+    at the mounted volume's root, moving the operation's lock from one
+    volume to the other (never holding two). A symbolic link is resolved
+    afresh from the top volume's root with the mount point's path in
+    front, so ".." in a link target leads out of a mounted volume as
+    the textual ".." of a path does. Operations that work on two names
+    at once (rename, hard links) find both volumes first and refuse
+    with StatusCrossesVolumes if they differ; a mount point itself
+    cannot be removed or renamed (StatusInUse).
 
   Node cache
     Every node handed out by a driver passes through InternNode, which
@@ -169,7 +183,7 @@ function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
 function CreateFifo(Path: PChar): TFileSystemStatus;
 { Removes a file, symbolic link or empty directory. }
 function RemovePath(Path: PChar): TFileSystemStatus;
-{ Moves or renames within one volume. The target must not exist. }
+{ Moves or renames within one volume (StatusCrossesVolumes otherwise). }
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
 
 { Writes summary information of every writable volume to disk. }
@@ -198,6 +212,29 @@ procedure MarkVolumeGone(Volume: PVolume);
 
 procedure SyncAllVolumes;
 
+{ --- For the mount table (FileSystem.Mounts) and the system calls --- }
+
+{ Resolves Path (following links, crossing mount points) and returns the
+  volume it ends on and its path there from the volume's root,
+  normalized ("/a/b"; "" for the root). No lock is held on return. }
+function LocatePath(Path: PChar; FollowFinalLink: Boolean; out Volume: PVolume;
+  RelativePath: PChar; Capacity: PtrUInt): TFileSystemStatus;
+{ The directory at Path, for mounting a volume on it: its volume, its
+  node (one reference for the caller, to give back with
+  ReleaseNodeOfVolume) and its path from the volume's root. }
+function ResolveDirectoryForMount(Path: PChar; out Volume: PVolume; out Node: PNode;
+  RelativePath: PChar; Capacity: PtrUInt): TFileSystemStatus;
+procedure ReleaseNodeOfVolume(Volume: PVolume; Node: PNode);
+{ True while a node of Volume besides its root is in use, or its root
+  is open. }
+function VolumeIsBusy(Volume: PVolume): Boolean;
+{ Writes what the driver keeps in memory to the disk and flushes it. }
+function SyncVolume(Volume: PVolume): TFileSystemStatus;
+{ Gives every node of a volume without owners in the node cache the
+  owner and mode of its mount options again (they changed). Volume
+  lock held. }
+procedure RemapOwnerlessNodes(Volume: PVolume);
+
 implementation
 
 uses
@@ -211,6 +248,7 @@ uses
   Io.BlockCache,
   FileSystem.Discards,
   FileSystem.Volumes,
+  FileSystem.Mounts,
   FileSystem.Security,
   FileSystem.Locks;
 
@@ -272,6 +310,7 @@ begin
   end;
 
   Fresh^.ReferenceCount := 1;
+  MapOwnerlessNode(Fresh, True);
   InsertAtTail(Volume^.NodeCache, @Fresh^.CacheLink);
   Inc(Volume^.NodesInUse);
   Result := Fresh;
@@ -338,7 +377,36 @@ procedure RegisterRootNode(Volume: PVolume);
 begin
   { The volume itself keeps this reference for as long as it is mounted. }
   Volume^.RootNode^.ReferenceCount := 1;
+  MapOwnerlessNode(Volume^.RootNode, True);
   InsertAtTail(Volume^.NodeCache, @Volume^.RootNode^.CacheLink);
+end;
+
+{ Moves an operation's lock from Volume to Next when a path leads from
+  one to the other (no two volume locks are ever held at once). On
+  return Next's lock is held and Volume is Next, also when it fails
+  because Next went away. Without Crossing, leaving Volume is refused
+  (StatusCrossesVolumes, Volume's lock still held). }
+function SwitchVolume(var Volume: PVolume; Next: PVolume; Crossing: Boolean): TFileSystemStatus;
+begin
+  if Next <> Volume then
+  begin
+    if not Crossing then
+      Exit(StatusCrossesVolumes);
+    ReleaseMutex(Volume^.Lock);
+    AcquireMutex(Next^.Lock);
+    Volume := Next;
+  end;
+  if Volume^.IsGone then
+    Exit(StatusVolumeGone);
+  Result := StatusSuccess;
+end;
+
+{ The volume mounted on Node, or nil. Volume lock held. }
+function VolumeMountedOn(Volume: PVolume; Node: PNode): PVolume;
+begin
+  if (Volume^.MountsOnVolume = 0) or (Node^.Information.Kind <> NodeKindDirectory) then
+    Exit(nil);
+  Result := MountedVolumeAt(Volume, Node^.Information.NodeNumber);
 end;
 
 function LookupAndIntern(Directory: PNode; Name: PChar; out Found: PNode): TFileSystemStatus;
@@ -418,41 +486,51 @@ end;
 
 { --- Resolution within a volume (volume lock held) -------------------- }
 
-function ResolveInVolume(Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
-  Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus; forward;
+function ResolveInVolume(var Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
+  Depth: Integer; Trail: PNodeTrail; Crossing: Boolean; out Found: PNode): TFileSystemStatus; forward;
 
 { Builds the path that results from replacing component LinkIndex of
-  Split by the link target, and resolves it. }
-function FollowLink(Volume: PVolume; LinkNode: PNode; Split: PSplitPath; LinkIndex: Integer;
-  FollowFinalLink: Boolean; Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus;
+  Split by the target of LinkNode (whose reference this gives back;
+  the components from FirstIndex on are those on Volume),
+  and resolves it from the root of the volume at the top of Volume's
+  chain of mounts: a relative target with Volume's own mount point path
+  in front, so ".." may lead out of a mounted volume. }
+function FollowLink(var Volume: PVolume; LinkNode: PNode; Split: PSplitPath; FirstIndex, LinkIndex: Integer;
+  FollowFinalLink: Boolean; Depth: Integer; Trail: PNodeTrail; Crossing: Boolean;
+  out Found: PNode): TFileSystemStatus;
 var
   Target: PChar;
   NewPath: PChar;
   ComponentIndex: Integer;
+  TopVolume: PVolume;
 begin
   Found := nil;
+  Target := nil;
+  NewPath := nil;
   if Depth >= MaximumSymbolicLinkDepth then
-    Exit(StatusTooManyLinks);
-  if not Assigned(Volume^.Driver^.ReadSymbolicLink) then
-    Exit(StatusUnsupported);
-
-  Target := PChar(AllocateKernelMemory(MaximumPathBytes));
-  NewPath := PChar(AllocateKernelMemory(MaximumPathBytes));
-  if (Target = nil) or (NewPath = nil) then
+    Result := StatusTooManyLinks
+  else if not Assigned(Volume^.Driver^.ReadSymbolicLink) then
+    Result := StatusUnsupported
+  else
   begin
-    FreeKernelMemory(Target);
-    FreeKernelMemory(NewPath);
-    Exit(StatusOutOfMemory);
+    Target := PChar(AllocateKernelMemory(MaximumPathBytes));
+    NewPath := PChar(AllocateKernelMemory(MaximumPathBytes));
+    if (Target = nil) or (NewPath = nil) then
+      Result := StatusOutOfMemory
+    else
+      Result := Volume^.Driver^.ReadSymbolicLink(LinkNode, Target, MaximumPathBytes);
   end;
+  ReleaseNodeReference(Volume, LinkNode);
 
-  Result := Volume^.Driver^.ReadSymbolicLink(LinkNode, Target, MaximumPathBytes);
   if Result = StatusSuccess then
   begin
+    TopVolume := TopVolumeOfVolume(Volume);
     NewPath[0] := #0;
     { A relative target is resolved from the directory holding the link. }
     if Target[0] <> '/' then
     begin
-      for ComponentIndex := 0 to LinkIndex - 1 do
+      CopyVolumeMountPath(Volume, NewPath, MaximumPathBytes);
+      for ComponentIndex := FirstIndex to LinkIndex - 1 do
         AppendComponent(NewPath, Split^.Components[ComponentIndex]);
     end;
     AppendComponent(NewPath, Target);
@@ -460,22 +538,30 @@ begin
       AppendComponent(NewPath, Split^.Components[ComponentIndex]);
 
     { The path is resolved afresh from the root, and so is the trail. }
-    Result := ResolveInVolume(Volume, NewPath, FollowFinalLink, Depth + 1, Trail, Found);
+    Result := SwitchVolume(Volume, TopVolume, Crossing);
+    if Result = StatusSuccess then
+      Result := ResolveInVolume(Volume, NewPath, FollowFinalLink, Depth + 1, Trail, Crossing, Found);
   end;
 
   FreeKernelMemory(Target);
   FreeKernelMemory(NewPath);
 end;
 
-{ Resolves RelativePath from the volume's root. Trail (if not nil)
-  receives the nodes passed through, ending with Found. }
-function ResolveInVolume(Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
-  Depth: Integer; Trail: PNodeTrail; out Found: PNode): TFileSystemStatus;
+{ Resolves RelativePath from the volume's root, going on into volumes
+  mounted on directories it passes (Volume then names the volume Found
+  is on, whose lock is held instead; see SwitchVolume). Trail (if not
+  nil) receives the nodes passed through on that volume, ending with
+  Found. }
+function ResolveInVolume(var Volume: PVolume; RelativePath: PChar; FollowFinalLink: Boolean;
+  Depth: Integer; Trail: PNodeTrail; Crossing: Boolean; out Found: PNode): TFileSystemStatus;
 var
   Split: PSplitPath;
   Node: PNode;
   NextNode: PNode;
+  MountedVolume: PVolume;
   ComponentIndex: Integer;
+  { The first component looked up on Volume (after a mount point). }
+  FirstIndex: Integer;
   IsFinalComponent: Boolean;
 begin
   Found := nil;
@@ -487,6 +573,7 @@ begin
   Node := Volume^.RootNode;
   ReferenceNode(Node);
   ComponentIndex := 0;
+  FirstIndex := 0;
   if Trail <> nil then
     StartTrail(Trail, Node^.Information.NodeNumber);
 
@@ -513,8 +600,8 @@ begin
     if (NextNode^.Information.Kind = NodeKindSymbolicLink) and
        ((not IsFinalComponent) or FollowFinalLink) then
     begin
-      Result := FollowLink(Volume, NextNode, Split, ComponentIndex, FollowFinalLink, Depth, Trail, Node);
-      ReleaseNodeReference(Volume, NextNode);
+      Result := FollowLink(Volume, NextNode, Split, FirstIndex, ComponentIndex, FollowFinalLink, Depth,
+        Trail, Crossing, Node);
       FreeKernelMemory(Split);
       if Result = StatusSuccess then
         Found := Node;
@@ -522,9 +609,30 @@ begin
     end;
 
     Node := NextNode;
-    if Trail <> nil then
-      ExtendTrail(Trail, Node^.Information.NodeNumber, Split^.Components[ComponentIndex]);
     Inc(ComponentIndex);
+    MountedVolume := VolumeMountedOn(Volume, Node);
+    if MountedVolume <> nil then
+    begin
+      { A mount point: go on at the root of the volume mounted there. }
+      if not Crossing then
+      begin
+        Result := StatusCrossesVolumes;
+        Break;
+      end;
+      ReleaseNodeReference(Volume, Node);
+      Node := nil;
+      Result := SwitchVolume(Volume, MountedVolume, True);
+      if Result <> StatusSuccess then
+        Break;
+      Node := Volume^.RootNode;
+      ReferenceNode(Node);
+      FirstIndex := ComponentIndex;
+      if Trail <> nil then
+        StartTrail(Trail, Node^.Information.NodeNumber);
+      Continue;
+    end;
+    if Trail <> nil then
+      ExtendTrail(Trail, Node^.Information.NodeNumber, Split^.Components[ComponentIndex - 1]);
   end;
 
   FreeKernelMemory(Split);
@@ -584,8 +692,10 @@ begin
 end;
 
 { Resolves everything but the last component of RemainingPath (with the
-  volume lock held). The last component becomes Target^.Name. }
-function ResolveParent(Volume: PVolume; RemainingPath: PChar; Target: PParentAndName): TFileSystemStatus;
+  volume lock held; Volume becomes the volume the parent is on, see
+  ResolveInVolume). The last component becomes Target^.Name. }
+function ResolveParent(var Volume: PVolume; RemainingPath: PChar; Target: PParentAndName;
+  Crossing: Boolean): TFileSystemStatus;
 var
   Split: PSplitPath;
   ParentPath: array[0..MaximumPathBytes - 1] of Char;
@@ -625,7 +735,8 @@ begin
   if Result <> StatusSuccess then
     Exit;
 
-  Result := ResolveInVolume(Volume, @ParentPath[0], True, 0, Target^.Trail, Target^.Parent);
+  Result := ResolveInVolume(Volume, @ParentPath[0], True, 0, Target^.Trail, Crossing, Target^.Parent);
+  Target^.Volume := Volume;
   if (Result = StatusSuccess) and (Target^.Parent^.Information.Kind <> NodeKindDirectory) then
   begin
     ReleaseNodeReference(Volume, Target^.Parent);
@@ -741,9 +852,10 @@ begin
   Result := (Flags and (OpenForWriting or OpenCreate or OpenTruncate or OpenAppend)) <> 0;
 end;
 
-{ Finds or creates the file for OpenFile. Volume lock held. Trail (if
-  not nil) receives the trail of the node. }
-function ResolveForOpen(Volume: PVolume; RemainingPath: PChar; Flags: LongWord; Trail: PNodeTrail;
+{ Finds or creates the file for OpenFile. Volume lock held (Volume
+  becomes the volume the file is on). Trail (if not nil) receives the
+  trail of the node. }
+function ResolveForOpen(var Volume: PVolume; RemainingPath: PChar; Flags: LongWord; Trail: PNodeTrail;
   out Node: PNode; out WasCreated: Boolean): TFileSystemStatus;
 var
   Target: PParentAndName;
@@ -752,14 +864,14 @@ begin
   Node := nil;
   WasCreated := False;
   if (Flags and OpenCreate) = 0 then
-    Exit(ResolveInVolume(Volume, RemainingPath, True, 0, Trail, Node));
+    Exit(ResolveInVolume(Volume, RemainingPath, True, 0, Trail, True, Node));
 
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   if Target = nil then
     Exit(StatusOutOfMemory);
 
   Target^.Trail := Trail;
-  Result := ResolveParent(Volume, RemainingPath, Target);
+  Result := ResolveParent(Volume, RemainingPath, Target, True);
   if Result = StatusSuccess then
   begin
     Result := LookupAndIntern(Target^.Parent, @Target^.Name[0], Node);
@@ -771,19 +883,24 @@ begin
         Node := nil;
         Result := StatusAlreadyExists;
       end
-      else if Node^.Information.Kind = NodeKindSymbolicLink then
+      else if (Node^.Information.Kind = NodeKindSymbolicLink) or (VolumeMountedOn(Volume, Node) <> nil) then
       begin
-        { Open what the link points at. }
+        { Open what the link points at, or the root of the volume
+          mounted there. }
+        ReleaseNodeReference(Volume, Target^.Parent);
+        Target^.Parent := nil;
         ReleaseNodeReference(Volume, Node);
         Node := nil;
-        Result := ResolveInVolume(Volume, RemainingPath, True, 0, Trail, Node);
+        Result := ResolveInVolume(Volume, RemainingPath, True, 0, Trail, True, Node);
       end
       else if Trail <> nil then
         ExtendTrail(Trail, Node^.Information.NodeNumber, @Target^.Name[0]);
     end
     else if Result = StatusNotFound then
     begin
-      if not MayChangeDirectory(Target^.Parent) then
+      if Volume^.IsReadOnly then
+        Result := StatusReadOnly
+      else if not MayChangeDirectory(Target^.Parent) then
         Result := StatusAccessDenied
       else
       begin
@@ -878,18 +995,9 @@ begin
   end
   else
   begin
-    if WantsWriteAccess(Flags) and Volume^.IsReadOnly then
-      Exit(StatusReadOnly);
-
-    { Nothing on a read-only volume changes, so there is nothing to
-      report about the file. }
-    Trail := nil;
-    if not Volume^.IsReadOnly then
-    begin
-      Trail := AllocateTrail;
-      if Trail = nil then
-        Exit(StatusOutOfMemory);
-    end;
+    Trail := AllocateTrail;
+    if Trail = nil then
+      Exit(StatusOutOfMemory);
     Result := LockVolume(Volume);
     if Result <> StatusSuccess then
     begin
@@ -897,9 +1005,18 @@ begin
       Exit;
     end;
     Result := ResolveForOpen(Volume, RemainingPath, Flags, Trail, Node, WasCreated);
+    { Nothing on a read-only volume changes, so there is nothing to
+      report about the file. }
+    if Volume^.IsReadOnly then
+    begin
+      FreeTrail(Trail);
+      Trail := nil;
+    end;
     if (Result = StatusSuccess) and WantsWriteAccess(Flags) and
        (Node^.Information.Kind = NodeKindDirectory) then
       Result := StatusIsADirectory;
+    if (Result = StatusSuccess) and WantsWriteAccess(Flags) and Volume^.IsReadOnly then
+      Result := StatusReadOnly;
     { The creator of a file may open it whatever mode it got. }
     if (Result = StatusSuccess) and not WasCreated and
        not MayAccess(Node^.Information, AccessForFlags(Flags)) then
@@ -1137,6 +1254,17 @@ begin
   Information.LinkCount := 1;
 end;
 
+{ What file information tells about the volume a node is on. }
+procedure AddVolumeDetails(Volume: PVolume; var Information: TNodeInformation);
+begin
+  Information.VolumeNumber := Volume^.Number;
+  Information.VolumeFlags := 0;
+  if Volume^.Options.NoExecute then
+    Information.VolumeFlags := Information.VolumeFlags or VolumeFlagNoExecute;
+  if Volume^.Options.NoSetId then
+    Information.VolumeFlags := Information.VolumeFlags or VolumeFlagNoSetId;
+end;
+
 function GetFileInformation(OpenedFile: POpenFile; out Information: TNodeInformation): TFileSystemStatus;
 begin
   if IsRootDirectory(OpenedFile) then
@@ -1146,7 +1274,7 @@ begin
     { The node's information stays readable on a gone volume. }
     AcquireMutex(OpenedFile^.Volume^.Lock);
     Information := OpenedFile^.Node^.Information;
-    Information.VolumeNumber := OpenedFile^.Volume^.Number;
+    AddVolumeDetails(OpenedFile^.Volume, Information);
     ReleaseMutex(OpenedFile^.Volume^.Lock);
   end;
   Result := StatusSuccess;
@@ -1171,11 +1299,11 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, nil, Node);
+  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, nil, True, Node);
   if Result = StatusSuccess then
   begin
     Information := Node^.Information;
-    Information.VolumeNumber := Volume^.Number;
+    AddVolumeDetails(Volume, Information);
     ReleaseNodeReference(Volume, Node);
   end;
   ReleaseMutex(Volume^.Lock);
@@ -1206,7 +1334,7 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  Result := ResolveInVolume(Volume, RemainingPath, False, 0, nil, Node);
+  Result := ResolveInVolume(Volume, RemainingPath, False, 0, nil, True, Node);
   if Result = StatusSuccess then
   begin
     if Node^.Information.Kind <> NodeKindSymbolicLink then
@@ -1222,9 +1350,9 @@ end;
 
 { --- Namespace changes ----------------------------------------------- }
 
-{ Prepares a name changing operation: selects a writable volume, takes
-  its lock and resolves the parent directory. On success the caller must
-  call FinishNameOperation. }
+{ Prepares a name changing operation: takes the lock of the volume the
+  parent directory is on and resolves the parent, which must be on a
+  writable volume. On success the caller must call FinishNameOperation. }
 function BeginNameOperation(Path: PChar; Target: PParentAndName): TFileSystemStatus;
 var
   Volume: PVolume;
@@ -1238,20 +1366,53 @@ begin
     Exit;
   if Volume = nil then
     Exit(StatusInvalidPath);
-  if Volume^.IsReadOnly then
-    Exit(StatusReadOnly);
 
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
   Target^.Trail := TrailForReporting;
-  Result := ResolveParent(Volume, RemainingPath, Target);
+  Result := ResolveParent(Volume, RemainingPath, Target, True);
+  if (Result = StatusSuccess) and Volume^.IsReadOnly then
+  begin
+    ReleaseNodeReference(Volume, Target^.Parent);
+    Target^.Parent := nil;
+    Result := StatusReadOnly;
+  end;
   if Result <> StatusSuccess then
   begin
     FreeTrail(Target^.Trail);
     Target^.Trail := nil;
     ReleaseMutex(Volume^.Lock);
   end;
+end;
+
+{ Like BeginNameOperation for a path already located on Volume (its
+  path from the volume's root, LocateParent), not leaving the volume. }
+function BeginLocatedNameOperation(Volume: PVolume; RelativePath: PChar;
+  Target: PParentAndName): TFileSystemStatus;
+begin
+  Target^.Volume := Volume;
+  Target^.Parent := nil;
+  Target^.Trail := nil;
+  if Volume^.IsReadOnly then
+    Exit(StatusReadOnly);
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Target^.Trail := TrailForReporting;
+  Result := ResolveParent(Volume, RelativePath, Target, False);
+  if Result <> StatusSuccess then
+  begin
+    FreeTrail(Target^.Trail);
+    Target^.Trail := nil;
+    ReleaseMutex(Volume^.Lock);
+  end;
+end;
+
+{ True if a volume is mounted on Node. Volume lock held. }
+function IsMountPoint(Volume: PVolume; Node: PNode): Boolean;
+begin
+  Result := (Node <> nil) and (VolumeMountedOn(Volume, Node) <> nil);
 end;
 
 procedure FinishNameOperation(Target: PParentAndName);
@@ -1332,6 +1493,8 @@ function RemoveName(Volume: PVolume; Parent: PNode; Name: PChar; Node: PNode): T
 begin
   if not MayChangeDirectory(Parent) or not MayRemoveFromDirectory(Parent, Node) then
     Exit(StatusAccessDenied);
+  if IsMountPoint(Volume, Node) then
+    Exit(StatusInUse);
   if Node^.ReferenceCount <= 1 then
     Exit(Volume^.Driver^.RemoveNode(Parent, Name, Node));
   if (Node^.Information.Kind = NodeKindDirectory) or not Assigned(Volume^.Driver^.RemoveOpenNode) then
@@ -1428,37 +1591,84 @@ begin
   ReportChange(Report);
 end;
 
+{ The volume the parent of Path is on, and Path from that volume's root
+  (its parent located, its last name kept): what rename and hard links
+  compare and resolve. }
+function LocateParent(Path: PChar; out Volume: PVolume; RelativePath: PChar): TFileSystemStatus;
+var
+  Split: PSplitPath;
+  ParentPath: PChar;
+  Name: PChar;
+  ComponentIndex: Integer;
+begin
+  Volume := nil;
+  RelativePath[0] := #0;
+  Split := PSplitPath(AllocateKernelMemory(SizeOf(TSplitPath)));
+  ParentPath := PChar(AllocateKernelMemory(MaximumPathBytes));
+  if (Split = nil) or (ParentPath = nil) then
+  begin
+    FreeKernelMemory(Split);
+    FreeKernelMemory(ParentPath);
+    Exit(StatusOutOfMemory);
+  end;
+  Result := SplitPath(Path, Split);
+  { The first component names a volume, whose root has no parent. }
+  if (Result = StatusSuccess) and (Split^.ComponentCount < 2) then
+    Result := StatusInvalidPath;
+  if Result = StatusSuccess then
+  begin
+    ParentPath[0] := #0;
+    for ComponentIndex := 0 to Split^.ComponentCount - 2 do
+      AppendComponent(ParentPath, Split^.Components[ComponentIndex]);
+    Name := Split^.Components[Split^.ComponentCount - 1];
+    Result := LocatePath(ParentPath, True, Volume, RelativePath, MaximumPathBytes);
+    if Result = StatusSuccess then
+      AppendComponent(RelativePath, Name);
+  end;
+  FreeKernelMemory(Split);
+  FreeKernelMemory(ParentPath);
+end;
+
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
 var
   Source: PParentAndName;
   Target: PParentAndName;
+  SourceVolume: PVolume;
   TargetVolume: PVolume;
-  RemainingTargetPath: PChar;
+  SourceLocation: PChar;
+  TargetLocation: PChar;
   Node: PNode;
   Existing: PNode;
   OldNodeNumber: QWord;
 begin
   Source := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
-  if (Source = nil) or (Target = nil) then
+  SourceLocation := PChar(AllocateKernelMemory(MaximumPathBytes));
+  TargetLocation := PChar(AllocateKernelMemory(MaximumPathBytes));
+  if (Source = nil) or (Target = nil) or (SourceLocation = nil) or (TargetLocation = nil) then
   begin
     FreeKernelMemory(Source);
     FreeKernelMemory(Target);
+    FreeKernelMemory(SourceLocation);
+    FreeKernelMemory(TargetLocation);
     Exit(StatusOutOfMemory);
   end;
 
-  Result := BeginNameOperation(SourcePath, Source);
+  { Both names are found first: a rename cannot move between volumes
+    (that means copying), mount points included. }
+  Result := LocateParent(SourcePath, SourceVolume, SourceLocation);
+  if Result = StatusSuccess then
+    Result := LocateParent(TargetPath, TargetVolume, TargetLocation);
+  if (Result = StatusSuccess) and (SourceVolume <> TargetVolume) then
+    Result := StatusCrossesVolumes;
+  if Result = StatusSuccess then
+    Result := BeginLocatedNameOperation(SourceVolume, SourceLocation, Source);
   if Result = StatusSuccess then
   begin
-    Result := SelectVolume(TargetPath, TargetVolume, RemainingTargetPath);
-    if (Result = StatusSuccess) and (TargetVolume <> Source^.Volume) then
-      Result := StatusUnsupported; { moving between volumes means copying }
-
     Target^.Trail := nil;
-    if (Result = StatusSuccess) and (Source^.Trail <> nil) then
+    if Source^.Trail <> nil then
       Target^.Trail := AllocateTrail;
-    if Result = StatusSuccess then
-      Result := ResolveParent(Source^.Volume, RemainingTargetPath, Target);
+    Result := ResolveParent(SourceVolume, TargetLocation, Target, False);
 
     if Result = StatusSuccess then
     begin
@@ -1473,6 +1683,8 @@ begin
         if not MayChangeDirectory(Source^.Parent) or not MayChangeDirectory(Target^.Parent) or
            not MayRemoveFromDirectory(Source^.Parent, Node) then
           Result := StatusAccessDenied
+        else if IsMountPoint(Source^.Volume, Node) or IsMountPoint(Source^.Volume, Existing) then
+          Result := StatusInUse
         else if (Existing = Node) and TextIsEqual(@Source^.Name[0], @Target^.Name[0]) then
           Result := StatusSuccess { renaming something onto itself }
         else if (Node^.Information.Kind = NodeKindDirectory) and
@@ -1502,6 +1714,25 @@ begin
 
   FreeKernelMemory(Source);
   FreeKernelMemory(Target);
+  FreeKernelMemory(SourceLocation);
+  FreeKernelMemory(TargetLocation);
+end;
+
+{ Changes the attributes of Node; on formats without owners, owners are
+  filtered (FilterOwnerlessChanges) and the made-up owner and mode put
+  back afterwards. Volume lock held. }
+function ChangeNodeAttributes(Volume: PVolume; Node: PNode; const Changes: TAttributeChanges): TFileSystemStatus;
+var
+  Filtered: TAttributeChanges;
+begin
+  Result := FilterOwnerlessChanges(Node, Changes, Filtered);
+  if Result <> StatusSuccess then
+    Exit;
+  if Filtered.Fields = 0 then
+    Exit(StatusSuccess);
+  Result := Volume^.Driver^.SetAttributes(Node, Filtered);
+  if Result = StatusSuccess then
+    MapOwnerlessNode(Node, (Filtered.Fields and AttributeChangeMode) <> 0);
 end;
 
 function SetPathAttributes(Path: PChar; FollowLinks: Boolean;
@@ -1517,19 +1748,20 @@ begin
     Exit;
   if Volume = nil then
     Exit(StatusUnsupported); { the namespace root is not a real directory }
-  if Volume^.IsReadOnly then
-    Exit(StatusReadOnly);
-  if not Assigned(Volume^.Driver^.SetAttributes) then
-    Exit(StatusUnsupported);
 
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
   Trail := TrailForReporting;
-  Result := ResolveInVolume(Volume, RemainingPath, FollowLinks, 0, Trail, Node);
+  Result := ResolveInVolume(Volume, RemainingPath, FollowLinks, 0, Trail, True, Node);
   if Result = StatusSuccess then
   begin
-    Result := Volume^.Driver^.SetAttributes(Node, Changes);
+    if Volume^.IsReadOnly then
+      Result := StatusReadOnly
+    else if not Assigned(Volume^.Driver^.SetAttributes) then
+      Result := StatusUnsupported
+    else
+      Result := ChangeNodeAttributes(Volume, Node, Changes);
     if (Result = StatusSuccess) and (Trail <> nil) then
       ReportNodeChange(Volume, Trail, WatchChangeAttributes, Node);
     ReleaseNodeReference(Volume, Node);
@@ -1552,7 +1784,7 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  Result := Volume^.Driver^.SetAttributes(OpenedFile^.Node, Changes);
+  Result := ChangeNodeAttributes(Volume, OpenedFile^.Node, Changes);
   ReleaseMutex(Volume^.Lock);
   if Result = StatusSuccess then
     ReportOpenFileChange(OpenedFile, WatchChangeAttributes);
@@ -1562,29 +1794,39 @@ function CreateHardLink(ExistingPath: PChar; NewPath: PChar): TFileSystemStatus;
 var
   Target: PParentAndName;
   ExistingVolume: PVolume;
-  RemainingExistingPath: PChar;
+  NewVolume: PVolume;
+  ExistingLocation: PChar;
+  NewLocation: PChar;
   Node: PNode;
   Occupant: PNode;
 begin
-  Result := SelectVolume(ExistingPath, ExistingVolume, RemainingExistingPath);
-  if Result <> StatusSuccess then
-    Exit;
-  if ExistingVolume = nil then
-    Exit(StatusIsADirectory);
-
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
-  if Target = nil then
+  ExistingLocation := PChar(AllocateKernelMemory(MaximumPathBytes));
+  NewLocation := PChar(AllocateKernelMemory(MaximumPathBytes));
+  if (Target = nil) or (ExistingLocation = nil) or (NewLocation = nil) then
+  begin
+    FreeKernelMemory(Target);
+    FreeKernelMemory(ExistingLocation);
+    FreeKernelMemory(NewLocation);
     Exit(StatusOutOfMemory);
-  Result := BeginNameOperation(NewPath, Target);
+  end;
+  { Links cannot cross volumes, mount points included. }
+  Result := LocateParent(ExistingPath, ExistingVolume, ExistingLocation);
+  if Result = StatusInvalidPath then
+    Result := StatusIsADirectory; { a volume's root }
+  if Result = StatusSuccess then
+    Result := LocateParent(NewPath, NewVolume, NewLocation);
+  if (Result = StatusSuccess) and (NewVolume <> ExistingVolume) then
+    Result := StatusCrossesVolumes;
+  if Result = StatusSuccess then
+    Result := BeginLocatedNameOperation(NewVolume, NewLocation, Target);
   if Result = StatusSuccess then
   begin
-    if Target^.Volume <> ExistingVolume then
-      Result := StatusUnsupported { links cannot cross volumes }
-    else if not Assigned(Target^.Volume^.Driver^.CreateHardLink) then
+    if not Assigned(Target^.Volume^.Driver^.CreateHardLink) then
       Result := StatusUnsupported
     else
     begin
-      Result := ResolveInVolume(ExistingVolume, RemainingExistingPath, False, 0, nil, Node);
+      Result := ResolveInVolume(ExistingVolume, ExistingLocation, False, 0, nil, False, Node);
       if Result = StatusSuccess then
       begin
         if Node^.Information.Kind = NodeKindDirectory then
@@ -1608,6 +1850,8 @@ begin
     FinishNameOperation(Target);
   end;
   FreeKernelMemory(Target);
+  FreeKernelMemory(ExistingLocation);
+  FreeKernelMemory(NewLocation);
 end;
 
 function GetVolumeFreeSpace(Volume: PVolume; out FreeBytes: QWord): Boolean;
@@ -1655,7 +1899,7 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  Result := ResolveInVolume(Volume, RemainingPath, True, 0, nil, Node);
+  Result := ResolveInVolume(Volume, RemainingPath, True, 0, nil, True, Node);
   if Result = StatusSuccess then
   begin
     Result := WatchNode(Volume, Node, Flags, Watch);
@@ -1694,6 +1938,135 @@ begin
     freed is discarded. }
   FlushAllCachedDevices;
   SendAllVolumeDiscards;
+end;
+
+{ --- For the mount table and the system calls ------------------------- }
+
+{ Copies the trail's path ("/a/b", "" at the root) into Path. }
+procedure CopyTrailPath(Trail: PNodeTrail; Path: PChar; Capacity: PtrUInt);
+begin
+  CopyTrailPathBelow(Trail, 0, Path, Capacity);
+  if (Path[0] <> #0) and (Path[0] <> '/') and (TextLength(Path) + 2 <= Capacity) then
+  begin
+    { CopyTrailPathBelow gives "a/b"; ours start with a separator. }
+    MoveMemory(Path + 1, Path, TextLength(Path) + 1);
+    Path[0] := '/';
+  end;
+end;
+
+{ Resolves Path and keeps the node and its trail. Volume lock held on
+  success (of the returned Volume). }
+function ResolveWithTrail(Path: PChar; FollowFinalLink: Boolean; out Volume: PVolume;
+  out Node: PNode; Trail: PNodeTrail): TFileSystemStatus;
+var
+  RemainingPath: PChar;
+begin
+  Node := nil;
+  Result := SelectVolume(Path, Volume, RemainingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if Volume = nil then
+    Exit(StatusInvalidPath); { the list of volumes is on no volume }
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ResolveInVolume(Volume, RemainingPath, FollowFinalLink, 0, Trail, True, Node);
+  if Result <> StatusSuccess then
+    ReleaseMutex(Volume^.Lock);
+end;
+
+function LocatePath(Path: PChar; FollowFinalLink: Boolean; out Volume: PVolume;
+  RelativePath: PChar; Capacity: PtrUInt): TFileSystemStatus;
+var
+  Trail: PNodeTrail;
+  Node: PNode;
+begin
+  RelativePath[0] := #0;
+  Trail := AllocateTrail;
+  if Trail = nil then
+  begin
+    Volume := nil;
+    Exit(StatusOutOfMemory);
+  end;
+  Result := ResolveWithTrail(Path, FollowFinalLink, Volume, Node, Trail);
+  if Result = StatusSuccess then
+  begin
+    CopyTrailPath(Trail, RelativePath, Capacity);
+    ReleaseNodeReference(Volume, Node);
+    ReleaseMutex(Volume^.Lock);
+  end;
+  FreeTrail(Trail);
+end;
+
+function ResolveDirectoryForMount(Path: PChar; out Volume: PVolume; out Node: PNode;
+  RelativePath: PChar; Capacity: PtrUInt): TFileSystemStatus;
+var
+  Trail: PNodeTrail;
+begin
+  RelativePath[0] := #0;
+  Node := nil;
+  Trail := AllocateTrail;
+  if Trail = nil then
+  begin
+    Volume := nil;
+    Exit(StatusOutOfMemory);
+  end;
+  Result := ResolveWithTrail(Path, True, Volume, Node, Trail);
+  if Result = StatusSuccess then
+  begin
+    if Node^.Information.Kind <> NodeKindDirectory then
+      Result := StatusNotADirectory
+    else if Node = Volume^.RootNode then
+      Result := StatusInUse { a volume's root: mount on a folder of it }
+    else
+      CopyTrailPath(Trail, RelativePath, Capacity);
+    if Result <> StatusSuccess then
+    begin
+      ReleaseNodeReference(Volume, Node);
+      Node := nil;
+    end;
+    ReleaseMutex(Volume^.Lock);
+  end;
+  FreeTrail(Trail);
+end;
+
+procedure ReleaseNodeOfVolume(Volume: PVolume; Node: PNode);
+begin
+  AcquireMutex(Volume^.Lock);
+  ReleaseNodeReference(Volume, Node);
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function VolumeIsBusy(Volume: PVolume): Boolean;
+begin
+  AcquireMutex(Volume^.Lock);
+  Result := (Volume^.NodesInUse > 0) or
+    ((Volume^.RootNode <> nil) and (Volume^.RootNode^.ReferenceCount > 1));
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function SyncVolume(Volume: PVolume): TFileSystemStatus;
+begin
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  if not Volume^.IsReadOnly and Assigned(Volume^.Driver^.Sync) then
+    Result := Volume^.Driver^.Sync(Volume);
+  ReleaseMutex(Volume^.Lock);
+  if (Volume^.Device <> nil) and not FlushCachedDevice(Volume^.Device) and (Result = StatusSuccess) then
+    Result := StatusIoError;
+end;
+
+procedure RemapOwnerlessNodes(Volume: PVolume);
+var
+  Entry: PListEntry;
+begin
+  Entry := Volume^.NodeCache.Next;
+  while Entry <> @Volume^.NodeCache do
+  begin
+    MapOwnerlessNode(NodeFromCacheLink(Entry), False);
+    Entry := Entry^.Next;
+  end;
 end;
 
 end.

@@ -24,7 +24,8 @@
   FORMAT conversions: %n name  %s size  %F file type  %i node number
   %h link count  %a mode in octal  %A mode as text  %u %g owner and group
   ids  %U %G their names  %x %y %z access, modification and change time
-  %X %Y %Z the same in seconds since 1970  %b allocated blocks  %B the
+  %X %Y %Z the same in seconds since 1970  %w %W the time it was made
+  (birth; "-" and 0 where the file system does not keep it)  %b allocated blocks  %B the
   size of those blocks (512)  %d the volume's number (two files are on
   one volume when their numbers are equal)  %%
 }
@@ -39,6 +40,7 @@ uses
   Sys.Files,
   Sys.Time,
   Sys.LocalTime,
+  Sys.Mounts,
   Util.Accounts,
   Util.CommandLine,
   Util.Messages,
@@ -55,7 +57,7 @@ const
     '                        output a newline after each use of FORMAT'#10 +
     '  -t, --terse           print the information in terse form'#10 +
     #10 +
-    'FORMAT: %n %s %F %i %h %a %A %u %U %g %G %x %X %y %Y %z %Z %b %B %%'#10;
+    'FORMAT: %n %s %F %i %h %a %A %u %U %g %G %x %X %y %Y %z %Z %w %W %b %B %%'#10;
 
   OptionDereference = 1;
   OptionFormat = 2;
@@ -112,6 +114,29 @@ begin
     DateTime.Hour, DateTime.Minute, DateTime.Second, FormatUtcOffset(Local.Offset)]);
 end;
 
+{ A time to the nanosecond, as the default view shows them. }
+function PreciseTimeText(const Time: TAbiPreciseTime): string;
+var
+  Local: TLocalTime;
+  DateTime: Sys.Time.TDateTime;
+begin
+  DecodeLocalTime(Time.Seconds, Local);
+  DateTime := Local.DateTime;
+  Result := Format('%.4d-%.2d-%.2d %.2d:%.2d:%.2d.%.9d %s', [DateTime.Year, DateTime.Month, DateTime.Day,
+    DateTime.Hour, DateTime.Minute, DateTime.Second, Time.Nanoseconds, FormatUtcOffset(Local.Offset)]);
+end;
+
+var
+  { The times of the file being described, for %w %W and the default
+    view; HaveTimes is False where they could not be read. }
+  CurrentTimes: TFileTimes;
+  HaveTimes: Boolean;
+
+function HasBirthTime: Boolean;
+begin
+  Result := HaveTimes and ((CurrentTimes.Flags and FileTimesHasBirthTime) <> 0);
+end;
+
 function UserNameOrUnknown(UserId: LongWord): string;
 begin
   if not FindUserName(UserId, Result) then
@@ -152,6 +177,16 @@ begin
     'y': Result := TimeText(Information.ModificationTime);
     'Z': Result := IntToStr(Information.ChangeTime);
     'z': Result := TimeText(Information.ChangeTime);
+    'W':
+      if HasBirthTime then
+        Result := IntToStr(CurrentTimes.Birth.Seconds)
+      else
+        Result := '0';
+    'w':
+      if HasBirthTime then
+        Result := TimeText(CurrentTimes.Birth.Seconds)
+      else
+        Result := '-';
     '%': Result := '%';
   else
     Result := '%' + Conversion;
@@ -194,9 +229,20 @@ begin
   PrintStringLine(Format('Access: (%s/%s)  Uid: (%5d/%8s)   Gid: (%5d/%8s)', [OctalModeText(Information, 4),
     ModeText(Information), Information.OwnerId, UserNameOrUnknown(Information.OwnerId),
     Information.GroupId, GroupNameOrUnknown(Information.GroupId)]));
-  PrintStringLine('Access: ' + TimeText(Information.AccessTime));
-  PrintStringLine('Modify: ' + TimeText(Information.ModificationTime));
-  PrintStringLine('Change: ' + TimeText(Information.ChangeTime));
+  if not HaveTimes then
+  begin
+    PrintStringLine('Access: ' + TimeText(Information.AccessTime));
+    PrintStringLine('Modify: ' + TimeText(Information.ModificationTime));
+    PrintStringLine('Change: ' + TimeText(Information.ChangeTime));
+    Exit;
+  end;
+  PrintStringLine('Access: ' + PreciseTimeText(CurrentTimes.Access));
+  PrintStringLine('Modify: ' + PreciseTimeText(CurrentTimes.Modification));
+  PrintStringLine('Change: ' + PreciseTimeText(CurrentTimes.Change));
+  if HasBirthTime then
+    PrintStringLine(' Birth: ' + PreciseTimeText(CurrentTimes.Birth))
+  else
+    PrintStringLine(' Birth: -');
 end;
 
 var
@@ -240,6 +286,7 @@ begin
       ExitStatus := 1;
       Continue;
     end;
+    HaveTimes := GetFileTimes(Operand, Dereference, CurrentTimes) = ErrorNone;
     if UseFormat then
       WriteWithFormat(FormatText, Operand, Information)
     else

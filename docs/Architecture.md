@@ -7311,7 +7311,11 @@ The namespace is a single tree. The root lists the mounted volumes, each a
 directory named after its block device: `/disk1p7/docs/readme.txt`. Paths
 are absolute; `.` and `..` are resolved textually first. Symbolic links are
 followed up to 8 deep, and an absolute link target is resolved from the
-root of the link's own volume.
+root of the link's own volume (for a volume mounted at a directory: of
+the volume at the top of its chain of mounts, normally the system
+volume, so `/bin/sh` in a link on `/tmp` means the system's). The system
+volume is also found by the name `system` (`/system/...` in the kernel,
+`/volumes/system/...` for programs), an alias that is not listed.
 
 Drivers (each split into Structures / Volume / Write units plus a main
 unit; ext also has Blocks and Directories):
@@ -7579,6 +7583,128 @@ program's message loop waits on it like on any handle
 in another process, on the system volume (ext4) and on the FAT16,
 exFAT and ext2 test volumes; `watch` prints the changes of any path and
 `volumes -w` the volumes coming and going.
+
+### Mount points
+
+A volume may also be mounted on a directory of another one
+(`FileSystem.Mounts`, the table in `FileSystem.MountTable`): a memory
+volume on `/tmp`, a USB disk on `/mnt/usb`. It stays in `/volumes` as
+well.
+
+- **Resolution.** The table names the volume holding the mount point,
+  the mount point's node number (the record keeps a reference to the
+  node, so its volume is busy and the folder can be neither removed nor
+  renamed: `StatusInUse`), the volume mounted there, and the mount
+  point's path from the root of the volume at the top of the chain
+  ("/tmp"). `ResolveInVolume` looks each directory it passes up in the
+  table (only on volumes with `MountsOnVolume` > 0) and goes on at the
+  mounted volume's root, moving the operation's lock from one volume
+  to the other: two volume locks are never held at once, and the
+  operation goes on with the volume it ended on (`var Volume`). Being
+  by node number, letter case, symbolic and hard links lead in as
+  well. `..` of a path is textual, so `/tmp/x/../..` leaves the mounted
+  volume; a symbolic link is resolved afresh from the top volume's root
+  with the mount point's path in front of a relative target, so `..` in
+  a link leads out just the same.
+- **Two names at once.** Rename and hard links locate both parents first
+  (`LocatePath`, `LocateParent`: the volume and the path there) and
+  refuse with `StatusCrossesVolumes` (`ErrorCrossVolume`, 18; `mv`
+  copies then) when the volumes differ; then they resolve on that one
+  volume without crossing.
+- **Mounting** (`MountAtDirectory`) needs a folder that is not a
+  volume's root, nothing mounted on it already, and the volume not
+  mounted elsewhere nor above the folder (no cycles); mounting a volume
+  where it is mounted already only changes its options. 32 mounts at
+  most.
+- **Unmounting** (`UnmountVolume`) is refused while a node of the volume
+  besides its root is in use (an open file or folder, a mount point of
+  another volume on it) or its root is open, and (`CallUnmountVolume`)
+  while a program's current directory is in it, unless forced. It
+  writes the volume back (driver `Sync`, then the disk is flushed),
+  takes it off the list and from its folder, and marks it gone as an
+  unplugged disk's volumes are (below): a forced unmount's open files
+  fail with `ErrorNoDevice` from then on, and the driver data goes
+  when the last is closed. Its device cannot be mounted again until
+  then (`DeviceHasLingeringVolume`). The system volume is never
+  unmounted. A disk unplugged takes its volumes' mounts, and the mounts
+  on them, with it (`ForgetMountsOfVolume`).
+- **Options** (`FileSystem.MountOptions`, kept in `TVolume.Options`):
+  `ro`/`rw`, `noexec` (programs on it do not start: `CheckMayExecute`
+  sees `TNodeInformation.VolumeFlags`), `nosuid` (set-id bits ignored
+  when they start), `discard` (kept for drivers that tell the disk
+  which blocks were freed), `uid=`, `gid=`, `umask=`, `fmask=`,
+  `dmask=` (below), `size=` and `mode=` (memory volumes), and
+  `defaults`, `atime`, `noatime`, `relatime` (ignored). New options on a
+  mounted volume apply at once; `ro` writes it back first; a read-only
+  volume stays read-only until it is unmounted (ext replays its journal
+  only when mounted writable).
+
+The calls (172-175): `CallMountVolume` (a `TAbiMountRequest`: a device
+`/dev/disk1p2`, a volume `/volumes/NAME` or `tmpfs`, the folder, the
+type, the options; root only), `CallUnmountVolume` (a mount point or
+`/volumes/NAME`; `UnmountForce`), `CallListMounts` (a
+`TAbiMountInformation`: name, device, type, where programs see it, the
+options as `mount` lists them) and `CallGetFileTimes` (below);
+`Sys.Mounts` wraps them. `mount` lists the mounts, mounts (`-t`, `-o`,
+`LABEL=NAME`, `-a` for `/etc/fstab`) and `umount [-f]` unmounts; `df`
+shows each volume where it is mounted.
+
+**/etc/fstab** (`Sys.MountTable`: `SOURCE DIRECTORY TYPE OPTIONS [DUMP
+PASS]`, `#` comments, `LABEL=`, the table's own `noauto` and `nofail`)
+is mounted by the first service manager before any service starts
+(`Services.Mounts`), by coretest, which runs as the first program in
+the tests, and by `mount -a` (`Sys.MountAll`: an entry whose folder has
+a volume mounted on it already is left alone). The system's table
+mounts a memory volume on `/tmp` (`mode=1777,size=50%`); before that,
+and on a system without the table, `/tmp` is the system volume's own
+sticky folder.
+
+### Memory volumes (tmpfs)
+
+`FileSystem.Memory` keeps a volume in RAM: files, folders, symbolic and
+hard links, named pipes, owners, permissions and the four times to the
+nanosecond (reading does not move the access time). A file's contents
+are whole pages from the physical page allocator
+(`FileSystem.Memory.Storage`: a page map per file, holes read as zeros),
+counted against `size=` (bytes, k, m, g, or a share of the RAM; half by
+default; `StatusNoSpace` past it), and counted by the kernel as
+drivers' memory. Folders are lists of entries with a serial number each,
+which a listing's cursor keeps (`FileSystem.Memory.Nodes`). A file's
+pages go back when it is shortened, when its last name goes (or, if it
+is open, when it is closed for the last time) and when the volume is
+unmounted. Memory volumes are made by `MountMemoryVolume`
+(`CallMountVolume` with type `tmpfs`), named `tmpfs1`, `tmpfs2`, ...;
+the root gets `mode=` (rwxrwxrwt by default).
+
+### Owners on FAT and exFAT
+
+FAT and exFAT have no owners or permission bits
+(`TFileSystemDriver.HasNoOwners`). Every node gets the owner and group of
+the mount options (`uid=`, `gid=`; root without them) and rwxrwxrwx less
+`fmask=` (files; 0133 by default, so rw-r--r--) or `dmask=` (folders;
+0022, rwxr-xr-x); `umask=` sets both (as on Linux, files then get the
+execute bits too). The read-only attribute takes a file's write bits
+away (not a folder's: Windows marks customized folders read-only), and
+chmod without write bits sets it (`FileSystem.OwnerMapping`,
+`FileSystem.Security.MapOwnerlessNode`, applied as nodes enter the node
+cache and after every attribute change; options changed on a mounted
+volume remap the cached nodes). chown and chgrp succeed only to the
+owner and group the node shows already. So with `uid=1000`, user 1000
+may write there, and without it others may only read.
+
+### File times
+
+`TNodeInformation` has the access, modification and change times and
+the time a node was made (birth, 0 where the format does not keep it),
+each with nanoseconds. ext reads the extra fields of large inodes
+(nanoseconds and two more bits of seconds after each time, `i_crtime`);
+FAT has the creation time to 10 ms and the access date; exFAT the
+creation and access times and 10 ms steps; memory volumes keep all
+four exactly. `TAbiFileInformation` is unchanged (whole seconds);
+`CallGetFileTimes` (175) gives a `TAbiFileTimes` for a path or a handle.
+`stat` shows the times to the nanosecond and the birth (`%w`, `%W`),
+`ls -l --time=atime|ctime|birth` (`-u`, `-c`) shows and sorts by
+another time, `touch -a` and `-m` set one of them.
 
 ### Volumes going away
 
@@ -8056,6 +8182,7 @@ test copies to an unmapped user address.
 | Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
+| Mounts and file times (172-175) | MountVolume, UnmountVolume (root only), ListMounts, GetFileTimes (see "Mount points") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
 | Clock, time zone, keyboard (98-103) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
 | Sockets (104-115) | CreateSocket, BindSocket, ListenSocket, AcceptSocket, ConnectSocket, SendSocket, ReceiveSocket, ShutdownSocket, Get/SetSocketOption, GetSocketAddress, WaitForSocket (see "Networking") |
@@ -8446,9 +8573,11 @@ that take requests and programs that do not.
 ### File attributes
 
 Drivers may implement `SetAttributes` (mode, owner, group, modification and
-access time), `CreateHardLink` and `GetFreeSpace`. ext2/3/4 supports all of
-them. FAT and exFAT map the mode onto the read-only attribute, store times
-in their own resolution and refuse owners other than 0 and hard links.
+access time), `CreateHardLink` and `GetFreeSpace`. ext2/3/4 and memory
+volumes support all of them. FAT and exFAT map the mode onto the
+read-only attribute, store times in their own resolution and refuse hard
+links and owners other than the ones the mount options give (see "Owners
+on FAT and exFAT").
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
 
@@ -8524,7 +8653,9 @@ Kernel threads act as root and keep the driver defaults. The checks:
 
 Root passes every check except the last. New nodes get the effective user
 and group and mode 0666 (files) or 0777 (directories) less the umask; on
-FAT and exFAT, which have no owners, only the mode is applied. Refusals
+FAT and exFAT, which have no owners, only the mode is applied (no write
+bit: the read-only attribute) and the owner comes from the mount
+options. Refusals
 from the mode bits are `ErrorAccessDenied` (13, "Permission denied");
 refusals of chmod, chown, set-id calls and priorities are
 `ErrorNotPermitted`.
@@ -9191,7 +9322,9 @@ reader is left.
 Programs see a Unix style tree: `/` is the root of the system volume (the
 one labelled `FPOSROOT`, or named by `root=`), and `/volumes/<name>`
 leads to every mounted volume, also those of disks plugged in later
-(and they leave it when unplugged). `/dev` holds the devices (see "The
+(and they leave it when unplugged); `/volumes/system` is always the
+system volume. Volumes mounted at folders (`/tmp`, see "Mount points")
+appear there as well. `/dev` holds the devices (see "The
 I/O manager").
 `Processes.Paths` normalizes a path against the current directory and
 translates it to the kernel's namespace.

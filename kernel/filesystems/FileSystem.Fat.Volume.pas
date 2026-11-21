@@ -626,6 +626,17 @@ begin
   { FAT keeps only the date of the last access, and no change time. }
   Node^.Common.Information.AccessTime := DosDateTimeToUnixTime(DirectoryRecord.LastAccessDate, 0);
   Node^.Common.Information.ChangeTime := Node^.Common.Information.ModificationTime;
+  { When it was made, to 10 ms (the tenths field counts 10 ms steps on
+    top of the two second time). }
+  Node^.Common.Information.BirthTime :=
+    DosDateTimeToUnixTime(DirectoryRecord.CreationDate, DirectoryRecord.CreationTime);
+  Node^.Common.Information.BirthNanoseconds := 0;
+  if (Node^.Common.Information.BirthTime <> 0) and (DirectoryRecord.CreationTimeTenths <= 199) then
+  begin
+    Node^.Common.Information.BirthTime := Node^.Common.Information.BirthTime +
+      DirectoryRecord.CreationTimeTenths div 100;
+    Node^.Common.Information.BirthNanoseconds := LongWord(DirectoryRecord.CreationTimeTenths mod 100) * 10000000;
+  end;
   if (DirectoryRecord.Attributes and AttributeReadOnly) <> 0 then
     Node^.Common.Information.Mode := $124  { r--r--r-- }
   else

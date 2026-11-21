@@ -101,6 +101,12 @@ type
     ValidDataLength: QWord;
     LastModifiedTimestamp: LongWord;
     LastModifiedUtcOffset: Byte;
+    LastModified10ms: Byte;
+    CreateTimestamp: LongWord;
+    CreateUtcOffset: Byte;
+    Create10ms: Byte;
+    LastAccessedTimestamp: LongWord;
+    LastAccessedUtcOffset: Byte;
     SetIndex: QWord;
     SetEntryCount: Integer;
     SetEntryOffsets: array[0..MaximumEntrySetSize - 1] of QWord;
@@ -694,6 +700,12 @@ begin
   Entry.Attributes := FileEntry^.FileAttributes;
   Entry.LastModifiedTimestamp := FileEntry^.LastModifiedTimestamp;
   Entry.LastModifiedUtcOffset := FileEntry^.LastModifiedUtcOffset;
+  Entry.LastModified10ms := FileEntry^.LastModified10ms;
+  Entry.CreateTimestamp := FileEntry^.CreateTimestamp;
+  Entry.CreateUtcOffset := FileEntry^.CreateUtcOffset;
+  Entry.Create10ms := FileEntry^.Create10ms;
+  Entry.LastAccessedTimestamp := FileEntry^.LastAccessedTimestamp;
+  Entry.LastAccessedUtcOffset := FileEntry^.LastAccessedUtcOffset;
   Entry.SetIndex := Index;
   Result := True;
 end;
@@ -745,6 +757,16 @@ begin
   end;
 end;
 
+{ The 10 ms field of a timestamp (0-199) on top of its even seconds. }
+procedure AddHundredths(var Seconds: TUnixTime; out Nanoseconds: LongWord; Hundredths: Byte);
+begin
+  Nanoseconds := 0;
+  if (Seconds = 0) or (Hundredths > 199) then
+    Exit;
+  Seconds := Seconds + Hundredths div 100;
+  Nanoseconds := LongWord(Hundredths mod 100) * 10000000;
+end;
+
 function CurrentTimestamp: LongWord;
 var
   DateWord: Word;
@@ -783,8 +805,19 @@ begin
   Result^.Common.Information.LinkCount := 1;
   Result^.Common.Information.ModificationTime :=
     TimestampToUnixTime(Entry.LastModifiedTimestamp, Entry.LastModifiedUtcOffset);
-  Result^.Common.Information.AccessTime := Result^.Common.Information.ModificationTime;
+  AddHundredths(Result^.Common.Information.ModificationTime,
+    Result^.Common.Information.ModificationNanoseconds, Entry.LastModified10ms);
+  { exFAT keeps the last access to two seconds and when it was made;
+    it has no change time. }
+  Result^.Common.Information.AccessTime :=
+    TimestampToUnixTime(Entry.LastAccessedTimestamp, Entry.LastAccessedUtcOffset);
+  if Result^.Common.Information.AccessTime = 0 then
+    Result^.Common.Information.AccessTime := Result^.Common.Information.ModificationTime;
+  Result^.Common.Information.BirthTime := TimestampToUnixTime(Entry.CreateTimestamp, Entry.CreateUtcOffset);
+  AddHundredths(Result^.Common.Information.BirthTime, Result^.Common.Information.BirthNanoseconds,
+    Entry.Create10ms);
   Result^.Common.Information.ChangeTime := Result^.Common.Information.ModificationTime;
+  Result^.Common.Information.ChangeNanoseconds := Result^.Common.Information.ModificationNanoseconds;
   if (Entry.Attributes and AttributeReadOnly) <> 0 then
     Result^.Common.Information.Mode := $124
   else

@@ -96,6 +96,7 @@ uses
   Processes.Suspend,
   Processes.ThreadControl,
   Processes.FileAttributeCalls,
+  Processes.MountCalls,
   Processes.UserExceptions,
   { Job control. }
   Processes.Stopping,
@@ -203,8 +204,9 @@ const
   ModeSetUserId = $800;
   ModeSetGroupId = $400;
 
-{ Running a program needs execute permission (root: any execute bit). A
-  set-user-ID or set-group-ID program runs as its owner or group. }
+{ Running a program needs execute permission (root: any execute bit) and
+  a volume not mounted noexec. A set-user-ID or set-group-ID program
+  runs as its owner or group, unless its volume is mounted nosuid. }
 function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
   var Credentials: TProcessCredentials): LongInt;
 var
@@ -217,8 +219,11 @@ begin
   if DescribePath(KernelPath, True, Information) <> StatusSuccess then
     Exit;
   if (Information.Kind <> NodeKindFile) or
+     ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
      not CredentialsMayAccess(Credentials, Information, AccessExecute) then
     Exit(ErrorAccessDenied);
+  if (Information.VolumeFlags and VolumeFlagNoSetId) <> 0 then
+    Exit;
   if (Information.Mode and ModeSetUserId) <> 0 then
   begin
     Credentials.EffectiveUserId := Information.OwnerId;
@@ -900,6 +905,10 @@ begin
     CallTrimVolume: Result := PerformTrimVolume(Argument0);
     CallGetBlockCacheStatistics: Result := PerformGetBlockCacheStatistics(Argument0);
     CallGetMemoryPressure: Result := PerformGetMemoryPressure(Argument0);
+    CallMountVolume: Result := PerformMountVolume(Argument0);
+    CallUnmountVolume: Result := PerformUnmountVolume(Argument0, Argument1);
+    CallListMounts: Result := PerformListMounts(Argument0, Argument1);
+    CallGetFileTimes: Result := PerformGetFileTimes(Argument0, Int64(Argument1), Argument2, Argument3);
   else
     Result := Failure(ErrorNotImplemented);
   end;

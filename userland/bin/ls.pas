@@ -42,6 +42,7 @@ uses
   Sys.Time,
   Sys.TimeZones,
   Sys.LocalTime,
+  Sys.Mounts,
   Util.Accounts,
   Util.CommandLine,
   Util.Directories,
@@ -68,7 +69,12 @@ const
     '  -R, --recursive            list subdirectories recursively'#10 +
     '  -s, --size                 print the allocated size of each file, in blocks'#10 +
     '  -S                         sort by file size, largest first'#10 +
-    '  -t                         sort by modification time, newest first'#10 +
+    '  -t                         sort by time (see --time), newest first'#10 +
+    '      --time=WORD            show and sort by this time instead of the'#10 +
+    '                             modification time: atime (access, use),'#10 +
+    '                             ctime (status, change), birth (creation)'#10 +
+    '  -u                         --time=atime'#10 +
+    '  -c                         --time=ctime'#10 +
     '  -1                         list one file per line'#10;
 
   OptionAll = 1;
@@ -85,12 +91,17 @@ const
   OptionOnePerLine = 12;
   OptionNumeric = 13;
   OptionSize = 14;
+  OptionTime = 15;
+  OptionAccessTime = 16;
+  OptionChangeTime = 17;
 
   ScreenWidth = 80;
   SecondsInHalfYear = 183 * 24 * 60 * 60;
 
 type
   TSortOrder = (SortByName, SortBySize, SortByTime);
+  { Which time -l shows and -t sorts by. }
+  TTimeField = (TimeOfModification, TimeOfAccess, TimeOfChange, TimeOfBirth);
 
   { A file to list. }
   TEntry = class
@@ -138,6 +149,7 @@ var
   OnePerLine: Boolean;
   NumericIds: Boolean;
   ShowSizes: Boolean;
+  ShownTime: TTimeField;
   BlockWidth: Integer;
   StartTime: Int64;
   ExitStatus: LongInt;
@@ -190,6 +202,42 @@ begin
     Result.HasLinkTarget := ReadLinkTarget(Path, Result.LinkTarget) = ErrorNone;
 end;
 
+function ParseTimeField(const Word: string): TTimeField;
+begin
+  if (Word = 'atime') or (Word = 'access') or (Word = 'use') then
+    Result := TimeOfAccess
+  else if (Word = 'ctime') or (Word = 'status') or (Word = 'change') then
+    Result := TimeOfChange
+  else if (Word = 'birth') or (Word = 'creation') then
+    Result := TimeOfBirth
+  else if (Word = 'mtime') or (Word = 'modification') then
+    Result := TimeOfModification
+  else
+  begin
+    FailWithUsageHint(Format('invalid argument ''%s'' for ''--time''', [Word]));
+    Result := TimeOfModification;
+  end;
+end;
+
+{ The time shown for Entry (ShownTime). The birth time is asked for
+  separately (0 where the file system does not keep it). }
+function EntryTime(Entry: TEntry): Int64;
+var
+  Times: TFileTimes;
+begin
+  case ShownTime of
+    TimeOfAccess: Result := Entry.Information.AccessTime;
+    TimeOfChange: Result := Entry.Information.ChangeTime;
+    TimeOfBirth:
+      if GetFileTimes(Entry.Path, False, Times) = ErrorNone then
+        Result := Times.Birth.Seconds
+      else
+        Result := 0;
+  else
+    Result := Entry.Information.ModificationTime;
+  end;
+end;
+
 function CompareEntries(First, Second: Pointer): Integer;
 var
   Left: TEntry;
@@ -205,9 +253,9 @@ begin
       else if Left.Information.SizeInBytes < Right.Information.SizeInBytes then
         Result := 1;
     SortByTime:
-      if Left.Information.ModificationTime > Right.Information.ModificationTime then
+      if EntryTime(Left) > EntryTime(Right) then
         Result := -1
-      else if Left.Information.ModificationTime < Right.Information.ModificationTime then
+      else if EntryTime(Left) < EntryTime(Right) then
         Result := 1;
   end;
   if Result = 0 then
@@ -356,7 +404,7 @@ begin
       OwnerWidth, OwnerText(Entry.Information.OwnerId),
       GroupWidth, GroupText(Entry.Information.GroupId)]);
     Line := Line + Format('%*s ', [SizeWidth, SizeText(Entry.Information)]);
-    Line := Line + TimestampText(Entry.Information.ModificationTime) + ' ' + NameText(Entry);
+    Line := Line + TimestampText(EntryTime(Entry)) + ' ' + NameText(Entry);
     if Entry.HasLinkTarget then
       Line := Line + ' -> ' + Entry.LinkTarget;
     PrintStringLine(Line);
@@ -504,6 +552,7 @@ var
   ProgramBase: string;
 begin
   SortOrder := SortByName;
+  ShownTime := TimeOfModification;
   OnePerLine := KernelGetHandleKind(StandardOutputHandle) <> HandleKindConsole;
   ProgramBase := BaseName(string(Argument(0)));
   if ProgramBase = 'dir' then
@@ -526,7 +575,10 @@ begin
     CommandOption('t', '', False, OptionSortTime),
     CommandOption('1', '', False, OptionOnePerLine),
     CommandOption('n', 'numeric-uid-gid', False, OptionNumeric),
-    CommandOption('s', 'size', False, OptionSize)], Usage);
+    CommandOption('s', 'size', False, OptionSize),
+    CommandOption(#0, 'time', True, OptionTime),
+    CommandOption('u', '', False, OptionAccessTime),
+    CommandOption('c', '', False, OptionChangeTime)], Usage);
   while CommandLine.NextOption(Code, Value) do
     case Code of
       OptionAll: ShowAll := True;
@@ -542,6 +594,9 @@ begin
       OptionSortTime: SortOrder := SortByTime;
       OptionOnePerLine: OnePerLine := True;
       OptionSize: ShowSizes := True;
+      OptionTime: ShownTime := ParseTimeField(Value);
+      OptionAccessTime: ShownTime := TimeOfAccess;
+      OptionChangeTime: ShownTime := TimeOfChange;
       OptionNumeric:
         begin
           NumericIds := True;

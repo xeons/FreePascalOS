@@ -152,7 +152,9 @@ procedure AttachVolumeDiscards(Volume: PVolume);
 var
   Discards: PVolumeDiscards;
 begin
-  if not IsInitialized or Volume^.IsReadOnly or not BlockDeviceSupportsDiscard(Volume^.Device) or
+  { Memory volumes (tmpfs) have no device to discard on. }
+  if not IsInitialized or Volume^.IsReadOnly or (Volume^.Device = nil) or
+     not BlockDeviceSupportsDiscard(Volume^.Device) or
      DiscardIsTurnedOff then
     Exit;
   Discards := PVolumeDiscards(AllocateZeroedKernelMemory(SizeOf(TVolumeDiscards)));

@@ -38,6 +38,10 @@
     * watching files and folders for changes made by other processes,
       on several file system types (watchtest), and the permission a
       watch needs,
+    * mounts: the memory volume /etc/fstab puts on /tmp (coretest mounts
+      the table first, as the service manager does), a test volume at a
+      folder with FAT owner options, unmounting busy and idle, renames
+      across refused, tmpfs pages given back, file times (mounttest),
     * pseudo-terminals: a shell on one, typed into through the master
       side, Ctrl-C, Ctrl-D, the window size and the hang-up (ptytest),
     * notifications and requests to end: taken or left to the system,
@@ -95,6 +99,8 @@ uses
   SysUtils,
   Sys.Libraries,
   Sys.Memory,
+  Sys.MountTable,
+  Sys.MountAll,
   Sys.Processes,
   Sys.Streams,
   Sys.Text,
@@ -129,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..411] of TCommandTest = (
+  CommandTests: array[0..419] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -325,7 +331,7 @@ const
     (Command: 'echo secret > s; shred -u s; [ ! -e s ] && echo shredded; printf 0123456789 > s2; shred -n 0 -z -x s2; od -A n -t x1 s2'; ExpectedOutput: 'shredded'#10' 00 00 00 00 00 00 00 00 00 00'#10; ExpectedStatus: 0),
     (Command: 'realpath sub/dir/..; realpath -s dirlink; realpath --relative-to=sub/dir lines.txt'; ExpectedOutput: '/tmp/coretest/sub'#10'/tmp/coretest/dirlink'#10'../../lines.txt'#10; ExpectedStatus: 0),
     (Command: 'pathchk -p "a b" 2>/dev/null; echo $?; pathchk -p ok_name; echo $?'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
-    (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'1029'#9'dutest'#10; ExpectedStatus: 0),
+    (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'65'#9'dutest'#10; ExpectedStatus: 0),
     (Command: 'df | grep " /$" | cut -d " " -f 1'; ExpectedOutput: 'disk2p1'#10; ExpectedStatus: 0),
 
     { --- more text tools --------------------------------------------- }
@@ -450,7 +456,7 @@ const
     (Command: 'expr "$(uptime)" : ''.*up .*load average: [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9]$'' > /dev/null && echo ok'; ExpectedOutput: 'ok'#10; ExpectedStatus: 0),
     (Command: 'mkfifo ff && ls -l ff | cut -c 1 && stat -c %F ff && test -p ff && echo isfifo; head -n 2 lines.txt | tee ff > /dev/null & cat ff; rm ff'; ExpectedOutput: 'p'#10'fifo'#10'isfifo'#10'one'#10'two'#10; ExpectedStatus: 0),
     (Command: 'rm -f /tmp/fifo-check; mknod /tmp/fifo-check p && stat -c %F /tmp/fifo-check; mknod nb b 1 2 2>/dev/null || echo noblock'; ExpectedOutput: 'fifo'#10'noblock'#10; ExpectedStatus: 0),
-    (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '1'#9'a5'#10'14'#9's3k'#10' 1 a5'#10'14 s3k'#10'2 512'#10'2'#9'dutest'#10; ExpectedStatus: 0),
+    (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '4'#9'a5'#10'16'#9's3k'#10' 4 a5'#10'16 s3k'#10'8 512'#10'4'#9'dutest'#10; ExpectedStatus: 0),
 
     { --- job control ------------------------------------------------- }
     (Command: 'sleep 5 & jobs; kill %1; wait %1; echo $?'; ExpectedOutput: '[1]+  Running                 sleep 5 &'#10'143'#10; ExpectedStatus: 0),
@@ -735,7 +741,22 @@ const
     (Command: 'HEAP_CHECKS=pages heaptest --pages > pheap.log; echo $?; grep FAIL pheap.log; tail -n 1 pheap.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=pages heaptest --overrun-page 2>&1 | sed -n 2p; HEAP_CHECKS=pages heaptest --overrun-page 2>/dev/null; echo $?'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=pages heaptest --write-past-end 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err'; ExpectedOutput: '204'#10' memory was written past the end of a block'#10'  offset:    20 holds $00 instead of $FD'#10; ExpectedStatus: 0),
-    (Command: 'HEAP_CHECKS=pages heaptest --double-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2'; ExpectedOutput: '204'#10' freeing a pointer that is not an allocated heap block (freed before, or a stray pointer)'#10; ExpectedStatus: 0)
+    (Command: 'HEAP_CHECKS=pages heaptest --double-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2'; ExpectedOutput: '204'#10' freeing a pointer that is not an allocated heap block (freed before, or a stray pointer)'#10; ExpectedStatus: 0),
+    { Mounts (mounttest and these): /etc/fstab puts a memory volume on
+      /tmp; a test volume mounted at a folder, walked into and back out,
+      its FAT owners and modes from uid=, gid= and umask= (a non-root
+      user allowed, then refused), the read-only attribute kept, an
+      unmount refused while a file is open or a program works in it,
+      done when idle, the volume mounted again at /volumes; times
+      (touch -a, -m, ls --time, a birth time on tmpfs). }
+    (Command: 'mount | grep " on /tmp "; stat -c "%a %U" /tmp'; ExpectedOutput: 'tmpfs on /tmp type tmpfs (rw,size=50%,mode=1777)'#10'1777 root'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p mnt && mount LABEL=FAT16TEST mnt && cd mnt && pwd && cat hello.txt && cd .. && pwd && test "$(stat -c %d mnt)" != "$(stat -c %d .)" && echo other-volume; mount | grep -c " on /tmp/coretest/mnt type fat16 "'; ExpectedOutput: '/tmp/coretest/mnt'#10'Hello from FreePascalOS!'#10'/tmp/coretest'#10'other-volume'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'stat -c "%u %g %a" mnt/hello.txt mnt/docs; mount -o uid=1000,gid=1000,umask=027 LABEL=FAT16TEST mnt; stat -c "%u %g %a" mnt/hello.txt mnt/docs mnt'; ExpectedOutput: '0 0 644'#10'0 0 755'#10'1000 1000 750'#10'1000 1000 750'#10'1000 1000 750'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "echo hi > mnt/mine && cat mnt/mine && rm mnt/mine"; mount -o uid=0,gid=0,umask=022 LABEL=FAT16TEST mnt; su user -c "echo hi > mnt/mine" 2>/dev/null || echo denied'; ExpectedOutput: 'hi'#10'denied'#10; ExpectedStatus: 0),
+    (Command: 'echo a > mnt/ro.txt; chmod a-w mnt/ro.txt; stat -c %a mnt/ro.txt; chmod u+w mnt/ro.txt; stat -c %a mnt/ro.txt; rm mnt/ro.txt'; ExpectedOutput: '555'#10'755'#10; ExpectedStatus: 0),
+    (Command: 'src=$(mount | grep " on /tmp/coretest/mnt " | cut -d " " -f 1); sleep 2 < mnt/hello.txt & sleep 0.5; umount mnt 2>&1; wait; cd mnt && umount /tmp/coretest/mnt 2>&1; cd ..; umount mnt && echo unmounted; ls mnt | grep -c .; mount $src && cat /volumes/$(basename $src)/hello.txt'; ExpectedOutput: 'umount: mnt: target is busy'#10'umount: /tmp/coretest/mnt: target is busy'#10'unmounted'#10'0'#10'Hello from FreePascalOS!'#10; ExpectedStatus: 0),
+    (Command: 'touch -m -t 202301010000 t; touch -a -t 202401010000 t; test $(stat -c %X t) -gt $(stat -c %Y t) && echo access-later; ls -l --time=atime t | grep -c 2024; ls -lu t | grep -c 2024; ls -l t | grep -c 2023; stat -c %W t | grep -c "^0$"; stat t | grep -c "Birth: [0-9]"'; ExpectedOutput: 'access-later'#10'1'#10'1'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var
@@ -900,8 +921,22 @@ begin
   FreeMemory(Grown);
 end;
 
+{ coretest runs as the first program, in place of the service manager:
+  it mounts what /etc/fstab says first, as the manager does (a memory
+  volume on /tmp). }
+procedure MountFileSystems;
+var
+  Messages: TMountMessages;
+  Message: AnsiString;
+begin
+  if MountAllFromTable(MountTablePath, Messages) > 0 then
+    for Message in Messages do
+      WriteString(StandardOutput, Format('[coretest] %s'#10, [Message]));
+end;
+
 procedure PrepareWorkDirectory;
 begin
+  MountFileSystems;
   if PathExists(WorkDirectory) then
     RemoveTree(WorkDirectory);
   if not IsDirectory('/tmp') then
