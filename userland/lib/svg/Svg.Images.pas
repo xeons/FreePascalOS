@@ -49,9 +49,16 @@ type
     FDocument: TSvgDocument;
     FViewportWidth: Double;
     FViewportHeight: Double;
+    procedure Prepare(Document: TSvgDocument);
+  protected
+    procedure RenderBase; override;
   public
     { Takes Document. }
     constructor Create(Document: TSvgDocument);
+    { The same, its own pixels left to be drawn when first asked for
+      (RenderedAt at its size): for embedders that always draw at the
+      size shown (inline SVG). }
+    constructor CreateDeferred(Document: TSvgDocument);
     destructor Destroy; override;
     function Render(RenderWidth, RenderHeight: LongInt): TImage; override;
     property Document: TSvgDocument read FDocument;
@@ -98,11 +105,12 @@ begin
   end;
 end;
 
-constructor TSvgImage.Create(Document: TSvgDocument);
+procedure TSvgImage.Prepare(Document: TSvgDocument);
 var
   ConcreteWidth, ConcreteHeight: Double;
   PixelWidth, PixelHeight: LongInt;
 begin
+  FDocument := Document;
   FHasNaturalWidth := Document.HasNaturalWidth;
   FHasNaturalHeight := Document.HasNaturalHeight;
   if FHasNaturalWidth then
@@ -117,9 +125,24 @@ begin
   PixelWidth := Max(1, Min(MaximumNaturalSide, Round(ConcreteWidth)));
   PixelHeight := Max(1, Min(MaximumNaturalSide, Round(ConcreteHeight)));
   inherited Create(PixelWidth, PixelHeight);
-  FDocument := Document;
   SourceFormatName := 'SVG';
   SourceHasAlpha := True;
+end;
+
+constructor TSvgImage.Create(Document: TSvgDocument);
+begin
+  Prepare(Document);
+  RenderInto(FDocument, Self, FViewportWidth, FViewportHeight);
+end;
+
+constructor TSvgImage.CreateDeferred(Document: TSvgDocument);
+begin
+  Prepare(Document);
+  FBaseRendered := False;
+end;
+
+procedure TSvgImage.RenderBase;
+begin
   RenderInto(FDocument, Self, FViewportWidth, FViewportHeight);
 end;
 

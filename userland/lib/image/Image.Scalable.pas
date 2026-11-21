@@ -67,14 +67,19 @@ type
     FNaturalHeight: Double;
     { Width / height, 0 when there is none. }
     FNaturalRatio: Double;
+    { The own pixels hold their rendering (a subclass that leaves them
+      to be drawn when first asked for clears it and implements
+      RenderBase). }
+    FBaseRendered: Boolean;
+    procedure RenderBase; virtual;
   public
     constructor Create(ImageWidth, ImageHeight: LongInt);
     destructor Destroy; override;
     { A new rendering at Width x Height pixels (the caller owns it). }
     function Render(RenderWidth, RenderHeight: LongInt): TImage; virtual; abstract;
     { A rendering at that size the image keeps (do not free it); the
-      image's own pixels when the size is its own. nil if the size is
-      refused. }
+      image's own pixels when the size is its own (drawn then if they
+      were left for later). nil if the size is refused. }
     function RenderedAt(RenderWidth, RenderHeight: LongInt): TImage;
     { Forget the kept renderings (what the image draws changed). }
     procedure ClearRenderings;
@@ -140,6 +145,11 @@ constructor TScalableImage.Create(ImageWidth, ImageHeight: LongInt);
 begin
   inherited Create(ImageWidth, ImageHeight);
   InitCriticalSection(FLock);
+  FBaseRendered := True;
+end;
+
+procedure TScalableImage.RenderBase;
+begin
 end;
 
 destructor TScalableImage.Destroy;
@@ -169,7 +179,22 @@ var
 begin
   Result := nil;
   if (RenderWidth = Width) and (RenderHeight = Height) then
+  begin
+    if not FBaseRendered then
+    begin
+      EnterCriticalSection(FLock);
+      try
+        if not FBaseRendered then
+        begin
+          FBaseRendered := True;
+          RenderBase;
+        end;
+      finally
+        LeaveCriticalSection(FLock);
+      end;
+    end;
     Exit(Self);
+  end;
   if not ImageSizeAllowed(RenderWidth, RenderHeight) then
     Exit;
   EnterCriticalSection(FLock);

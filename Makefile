@@ -71,6 +71,8 @@
 #   make css-test   Check libcss on the host: tokenizer, parsing and serialization,
 #                   selectors, the cascade, computed values, media queries, colors
 #                   (against Python's conversions), memory and style sharing
+#   make svg-test   Check libsvg on the host: SVG documents drawn and probed pixel by
+#                   pixel (shapes, strokes, paints, clips, masks, text, use, images)
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
@@ -195,7 +197,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test web-test javascript-test web-layout-test webrender web-load-test web-script-test
+	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test
 
 all: esp
 
@@ -506,7 +508,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -906,6 +908,28 @@ css-test: $(CSS_TEST)
 	@grep -a '^info' build/tools/css-test.out | sed 's/^info /  /'
 	@echo "CSS TEST PASSED: $$(tail -n 1 build/tools/css-test.out | cut -d ' ' -f 3-)"
 
+# libsvg on the host (with libcss, libdrawing, libfont and libimage): small
+# SVG documents drawn and their pixels probed where each feature decides
+# the colour, with DejaVu Sans from userland/fonts for text. SvgTest FONTS
+# IN.svg OUT.png W H draws a file, for looking at.
+SVG_TEST := build/tools/SvgTest
+SVG_TEST_UNITS := build/tools/svg-test-units
+SVG_TEST_SOURCES := tools/SvgTest/SvgTest.pas tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Svg.Contents.pas,$(wildcard userland/lib/svg/*.pas)) $(wildcard userland/lib/css/*.pas) \
+	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/font/*.pas) $(wildcard userland/lib/image/*.pas) \
+	$(wildcard userland/lib/compression/*.pas)
+
+$(SVG_TEST): $(SVG_TEST_SOURCES)
+	@mkdir -p $(SVG_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/SvgTest -Futools/CryptoTest -Fuuserland/lib/svg -Fuuserland/lib/css \
+		-Fuuserland/lib/font -Fuuserland/lib/drawing -Fuuserland/lib/image -Fuuserland/lib/compression \
+		-FU$(SVG_TEST_UNITS) -o$@ tools/SvgTest/SvgTest.pas
+
+svg-test: $(SVG_TEST)
+	@$(SVG_TEST) userland/fonts > build/tools/svg-test.out || \
+		{ grep FAIL build/tools/svg-test.out; echo "SVG TEST FAILED (build/tools/svg-test.out)"; exit 1; }
+	@echo "SVG TEST PASSED: $$(tail -n 1 build/tools/svg-test.out | cut -d ' ' -f 3-)"
+
 # libcompression builds for the host too, and is checked there against
 # zlib's own output (made by Python's zlib when the test is built); what
 # it compresses is then decompressed by Python's zlib and gzip.
@@ -1153,9 +1177,9 @@ WEB_LAYOUT_TEST := build/tools/WebLayoutTest
 WEB_LAYOUT_TEST_UNITS := build/tools/web-layout-test-units
 WEB_RENDER_LIBRARY_SOURCES := $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
 	$(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/font/*.pas) $(wildcard userland/lib/drawing/*.pas) \
-	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas)
+	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas)
 WEB_RENDER_UNIT_PATHS := -Fuuserland/lib/web -Fuuserland/lib/css -Fuuserland/lib/font -Fuuserland/lib/drawing \
-	-Fuuserland/lib/image -Fuuserland/lib/compression
+	-Fuuserland/lib/image -Fuuserland/lib/compression -Fuuserland/lib/svg
 WEB_LAYOUT_TEST_SOURCES := $(wildcard tools/WebLayoutTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	$(WEB_RENDER_LIBRARY_SOURCES)
 
@@ -1266,7 +1290,7 @@ WEB_LOAD_TEST_UNITS := build/tools/web-load-test-units
 WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
 	tools/HttpTest/HttpTest.Pipes.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
-	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) \
+	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \
 	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas))
 
@@ -1281,7 +1305,7 @@ $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLoadTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
 		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
 
 web-load-test: $(WEB_LOAD_TEST)

@@ -1,0 +1,31 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x270.17
+    block <body> at (8,16) size 784x246.17
+      block <p> at (8,16) size 784x24
+        line 0 at y 16 height 24 baseline 32.32
+          text "Icons from a sprite: " at (8,17.47) size 160.19x18.62
+          atomic <svg> at (168.19,16) size 24x24
+          text " " at (192.19,17.47) size 5.09x18.62
+          atomic <svg> at (197.27,16) size 24x24
+          text " inline with text." at (221.27,17.47) size 129.33x18.62
+        replaced <svg> at (168.19,16) size 24x24
+        replaced <svg> at (197.27,16) size 24x24
+      block <p> at (8,56) size 784x65.77
+        line 0 at y 56 height 65.77 baseline 118
+          text "Inline drawing: " at (8,103.15) size 123.66x18.62
+          atomic <svg> at (131.66,56) size 102x62
+        replaced <svg> at (131.66,56) size 102x62
+      block <p> at (8,137.77) size 784x43.77
+        line 0 at y 137.77 height 43.77 baseline 177.77
+          text "Sized by CSS only: " at (8,162.92) size 152.52x18.62
+          atomic <svg> at (160.52,137.77) size 40x40
+        replaced <svg> at (160.52,137.77) size 40x40
+      block <p> at (8,197.55) size 784x18.62
+        line 0 at y 197.55 height 18.62 baseline 212.4
+          text "Images: " at (8,197.55) size 68.92x18.62
+          atomic <img> at (76.92,212.4) size 0x0
+          text " " at (76.92,197.55) size 5.09x18.62
+          atomic <img> at (82.01,212.4) size 80x0
+        replaced <img> at (76.92,212.4) size 0x0
+        replaced <img> at (82.01,212.4) size 80x0
+      block <div> at (8,232.17) size 120x30

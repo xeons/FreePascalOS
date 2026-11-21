@@ -127,7 +127,7 @@ implementation
 
 uses
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
-  Web.Layout.Positioned, Web.Text.FontInstances;
+  Web.Layout.Positioned, Web.Text.FontInstances, Web.Svg.InlineImages;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -390,7 +390,8 @@ begin
   begin
     Box := BoxOf(Node);
     if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
-      if TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node)) then
+      if (TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node))) and
+         not IsOutermostSvgElement(TElement(Node)) then
       begin
         TakeElementImage(TReplacedBox(Box), TElement(Node));
         Box.MarkNeedsLayout;
@@ -403,6 +404,9 @@ end;
 procedure TDocumentLayout.TakeElementImage(Box: TReplacedBox; Element: TElement);
 begin
   Box.Image := FResources.ElementImage(Element);
+  { Inline SVG has no loaded image: it draws its own subtree. }
+  if Box.Image = nil then
+    Box.Image := FBuilder.OwnImageOf(Element);
   if not FResources.ElementImageNaturalSize(Element, Box.NaturalWidth, Box.NaturalHeight) then
   begin
     Box.NaturalWidth := 0;

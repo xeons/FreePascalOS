@@ -94,6 +94,10 @@ type
     procedure InvalidateAll;
     { Style of an anonymous box under ParentStyle (a new reference). }
     function AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
+    { The style Element would have under ParentStyle (a new reference),
+      whether or not it is styled in place: for content inline SVG's
+      <use> instantiates, which may sit in a hidden sprite sheet. }
+    function ResolveStyleUnder(Element: TElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { Observer }
     procedure TreeMutated(Target: TNode; const Added, Removed: TNodeArray; PreviousSibling, NextSibling: TNode);
       override;
@@ -277,6 +281,13 @@ end;
 function TDocumentStyler.AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
 begin
   Result := FEngine.AnonymousStyle(ParentStyle);
+end;
+
+function TDocumentStyler.ResolveStyleUnder(Element: TElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
+begin
+  { Its presentational hints and style attribute must be parsed. }
+  PrepareElement(Element, NodeDataOf(Element));
+  Result := FEngine.ResolveStyle(Element, ParentStyle);
 end;
 
 procedure TDocumentStyler.PrepareElement(Element: TElement; Data: PNodeData);

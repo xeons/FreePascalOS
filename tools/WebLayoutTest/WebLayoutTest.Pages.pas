@@ -37,11 +37,13 @@ function ReadTextFile(const Path: string): string;
 implementation
 
 uses
-  SysUtils, Classes, Math, TestChecks, Web.Html.Parser, Web.Text.Fonts, Web.Layout.Dump, Web.Layout.Resources;
+  SysUtils, Classes, Math, TestChecks, Web.Html.Parser, Web.Text.Fonts, Web.Layout.Dump, Web.Layout.Resources,
+  Svg.Fonts;
 
 procedure SetFontDirectory(const Directory: string);
 begin
   WebFontDirectory := Directory;
+  SvgFontDirectory := Directory;
   ResetWebFontLibrary;
 end;
 

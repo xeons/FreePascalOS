@@ -59,7 +59,7 @@ implementation
 
 uses
   Web.Html.Parser, Web.Atoms, Web.Text.Fonts, Web.Layout.Dump, Css.Parser, Css.Stylesheets, Image.Model,
-  Image.Files, Image.StandardCodecs, Image.Codecs, WebRender.Painting;
+  Image.Files, Image.StandardCodecs, Image.Codecs, Svg.Fonts, WebRender.Painting;
 
 function DefaultRenderOptions: TRenderOptions;
 begin
@@ -169,6 +169,7 @@ begin
   if Options.FontDirectory <> '' then
   begin
     WebFontDirectory := Options.FontDirectory;
+    SvgFontDirectory := Options.FontDirectory;
     ResetWebFontLibrary;
   end;
   Document := ParseHtmlDocument(ReadTextFile(Options.InputFile));
