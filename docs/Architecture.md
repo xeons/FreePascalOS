@@ -3296,7 +3296,13 @@ not asked at all: End (on either tab) offers to end it outright at
 once. Any other is asked and watched; if it is still there (and not
 already being ended) 10 seconds later, the task manager offers to end
 it outright - once, in one question for all that are overdue, checked
-every second whatever the update speed. Ending outright is
+every second whatever the update speed, and held back while another
+question of the task manager's is on the screen. Such an offer
+(`TaskManager.OfferBox`) is taken down as No (`offer withdrawn`) at the
+first look after none of its processes runs any more - they finished
+ending, or the user ended them another way (End now from a menu still
+open) - so it never stays up, modal, with nothing left to answer; a Yes
+ends only the ones still running. Ending outright is
 `TerminateProcess`, which the kernel carries out whatever the program
 is doing.
 
