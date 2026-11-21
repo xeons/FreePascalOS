@@ -104,6 +104,7 @@ uses
   TaskManager.EndWatch,
   TaskManager.Targets,
   TaskManager.ProcessActions,
+  TaskManager.OfferBox,
   TaskManager.Output;
 
 const
@@ -282,7 +283,12 @@ procedure TTaskManagerWindow.TimerFired(TimerId: LongWord);
 begin
   case TimerId of
     UpdateTimer: Refresh;
-    EndWatchTimer: OfferToEndOverdue;
+    EndWatchTimer:
+      begin
+        { Every second whatever the update speed (paused too). }
+        WithdrawSettledOffer;
+        OfferToEndOverdue;
+      end;
   end;
 end;
 
@@ -290,7 +296,9 @@ procedure TTaskManagerWindow.OfferToEndOverdue;
 var
   Overdue: TProcessTargets;
 begin
-  if FOffering then
+  { Not over a question already on the screen (the user may be ending
+    the very process another way): once it is answered. }
+  if FOffering or (ModalWindow <> nil) then
     Exit;
   Overdue := TakeOverdueRequests;
   if Length(Overdue) = 0 then

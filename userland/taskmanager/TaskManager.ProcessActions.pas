@@ -90,6 +90,7 @@ uses
   Controls.MessageBoxes,
   TaskManager.EndWatch,
   TaskManager.NotResponding,
+  TaskManager.OfferBox,
   TaskManager.Output;
 
 const
@@ -155,50 +156,46 @@ begin
     Result := 'These ' + IntToStr(Length(Targets)) + ' processes';
 end;
 
-procedure OfferToEndNow(Owner: TWindow; const Targets: TProcessTargets);
+{ Says "not-responding PID" for each target and puts Question to the
+  user (TaskManager.OfferBox: taken down if they all end meanwhile); on
+  Yes, ends those that still run. }
+procedure OfferToEndOutright(Owner: TWindow; const Targets: TProcessTargets; const Question: string);
 var
   Index: LongInt;
-  Question: string;
-  Answer: LongInt;
+begin
+  for Index := 0 to High(Targets) do
+    Say('not-responding ' + IntToStr(Targets[Index].ProcessId));
+  if AskOfferToEnd(Owner, Question, Targets) then
+    EndTargetsNow(Owner, TargetsStillRunning(Targets))
+  else
+    Say('end-now cancelled');
+end;
+
+procedure OfferToEndNow(Owner: TWindow; const Targets: TProcessTargets);
 begin
   if Length(Targets) = 0 then
     Exit;
-  for Index := 0 to High(Targets) do
-    Say('not-responding ' + IntToStr(Targets[Index].ProcessId));
   if Length(Targets) = 1 then
-    Question := DescribeAll(Targets) + ' did not end when asked.' + #10#10 +
-      'It may have stopped responding. End it now?' + #10 + 'Anything it has not saved is lost.'
+    OfferToEndOutright(Owner, Targets, DescribeAll(Targets) + ' did not end when asked.' + #10#10 +
+      'It may have stopped responding. End it now?' + #10 + 'Anything it has not saved is lost.')
   else
-    Question := DescribeAll(Targets) + ' did not end when asked.' + #10#10 +
-      'They may have stopped responding. End them now?' + #10 + 'Anything they have not saved is lost.';
-  Answer := ShowMessageBox(ProgramName, Question, MessageYesNo, SignWarning, Owner);
-  if Answer = ResultYes then
-    EndTargetsNow(Owner, Targets)
-  else
-    Say('end-now cancelled');
+    OfferToEndOutright(Owner, Targets, DescribeAll(Targets) + ' did not end when asked.' + #10#10 +
+      'They may have stopped responding. End them now?' + #10 + 'Anything they have not saved is lost.');
 end;
 
 { Targets not responding: asking them is no use, so the user is offered
   to end them outright at once. }
 procedure OfferToEndUnresponsive(Owner: TWindow; const Targets: TProcessTargets);
-var
-  Index: LongInt;
-  Question: string;
 begin
   if Length(Targets) = 0 then
     Exit;
-  for Index := 0 to High(Targets) do
-    Say('not-responding ' + IntToStr(Targets[Index].ProcessId));
   if Length(Targets) = 1 then
-    Question := DescribeAll(Targets) + ' is not responding, so it cannot be asked to end.' + #10#10 +
-      'End it now?' + #10 + 'Anything it has not saved is lost.'
+    OfferToEndOutright(Owner, Targets, DescribeAll(Targets) + ' is not responding, so it cannot be asked to end.' +
+      #10#10 + 'End it now?' + #10 + 'Anything it has not saved is lost.')
   else
-    Question := DescribeAll(Targets) + ' are not responding, so they cannot be asked to end.' + #10#10 +
-      'End them now?' + #10 + 'Anything they have not saved is lost.';
-  if ShowMessageBox(ProgramName, Question, MessageYesNo, SignWarning, Owner) = ResultYes then
-    EndTargetsNow(Owner, Targets)
-  else
-    Say('end-now cancelled');
+    OfferToEndOutright(Owner, Targets, DescribeAll(Targets) +
+      ' are not responding, so they cannot be asked to end.' + #10#10 + 'End them now?' + #10 +
+      'Anything they have not saved is lost.');
 end;
 
 procedure AskToEnd(Owner: TWindow; const Targets: TProcessTargets);
