@@ -74,6 +74,9 @@ procedure ClearRegionTree(var Tree: TRegionTree; Dispose: TRegionNodeDisposer);
 
 { The region holding Address, or nil. }
 function FindRegion(const Tree: TRegionTree; Address: QWord): PUserRegion;
+{ The region holding Address or, if none does, the lowest one above it;
+  nil if there is neither. }
+function FindRegionAtOrAbove(const Tree: TRegionTree; Address: QWord): PUserRegion;
 { True if [Start, Start + Length) overlaps a region (Length > 0, and
   Start + Length does not wrap). }
 function RangeOverlapsRegion(const Tree: TRegionTree; Start, Length: QWord): Boolean;
@@ -236,6 +239,27 @@ begin
       Node := Node^.Right;
   end;
   Result := nil;
+end;
+
+function FindRegionAtOrAbove(const Tree: TRegionTree; Address: QWord): PUserRegion;
+var
+  Node: PRegionNode;
+begin
+  Result := nil;
+  Node := Tree.Root;
+  while Node <> nil do
+  begin
+    if Address < Node^.Region.Start then
+    begin
+      { A candidate; a lower one may be on the left. }
+      Result := @Node^.Region;
+      Node := Node^.Left;
+    end
+    else if Address - Node^.Region.Start < Node^.Region.Length then
+      Exit(@Node^.Region)
+    else
+      Node := Node^.Right;
+  end;
 end;
 
 { The node of the region starting last below Limit, or nil. }

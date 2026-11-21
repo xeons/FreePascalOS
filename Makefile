@@ -597,7 +597,7 @@ aml-test: $(AML_TEST)
 REGION_TREE_TEST := build/tools/RegionTreeTest
 
 $(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Processes.RegionTree.pas \
-		kernel/processes/Processes.UserRegions.pas
+		kernel/processes/Processes.UserRegions.pas kernel/processes/Processes.RegionEditing.pas
 	@mkdir -p build/tools/region-tree-units
 	$(FPC) -O2 -Cr -Co -Fukernel/processes -FEbuild/tools -FUbuild/tools/region-tree-units $<
 

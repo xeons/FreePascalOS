@@ -26,7 +26,12 @@
   and first-fit searches above random bases, the tree checked after
   every change (order, AVL balance, the subtree figures), then a large
   tree of 200000 regions built in address order (thread stacks, heap
-  chunks) whose height must stay logarithmic, emptied again.
+  chunks) whose height must stay logarithmic, emptied again; then the
+  splitting and joining of an allocation's pieces (Processes.RegionEditing)
+  as committing and protecting page ranges does it, against a model of
+  every page's attributes: the pieces must cover the allocation, carry
+  the right attributes and file offsets, and be joined wherever they are
+  alike, but never with the allocation next door.
 
   Prints every failed check and exits with 1 if there was one.
 }
@@ -37,13 +42,16 @@ program RegionTreeTest;
 uses
   SysUtils,
   Processes.UserRegions,
-  Processes.RegionTree;
+  Processes.RegionTree,
+  Processes.RegionEditing;
 
 const
   PageBytes = 4096;
   SpacePages = 4096;
   RandomRounds = 60000;
   LargeTreeCount = 200000;
+  EditPages = 64;
+  EditRounds = 20000;
 
 type
   TModelRegion = record
@@ -295,6 +303,16 @@ begin
     else
       Check((Found <> nil) and (Found^.Start = Model[Expected].Start), 'the region at $' + IntToHex(Address, 1));
   end;
+  Address := QWord(Random((SpacePages + 16) * PageBytes));
+  Found := FindRegionAtOrAbove(Tree, Address);
+  Expected := 0;
+  while (Expected < ModelCount) and (Model[Expected].Start + Model[Expected].Length <= Address) do
+    Inc(Expected);
+  if Expected >= ModelCount then
+    Check(Found = nil, 'no region at or above $' + IntToHex(Address, 1))
+  else
+    Check((Found <> nil) and (Found^.Start = Model[Expected].Start),
+      'the region at or above $' + IntToHex(Address, 1));
   Base := QWord(Random(SpacePages)) * PageBytes + QWord(Random(2)) * 17;
   Length := QWord(1 + Random(12)) * PageBytes;
   Limit := QWord(SpacePages + 16) * PageBytes - QWord(Random(64)) * PageBytes;
@@ -383,9 +401,173 @@ begin
   Check(RemovedAll and (Tree.Root = nil) and (Tree.Count = 0), 'emptying the large tree');
 end;
 
+{ --- Splitting and joining an allocation's pieces -------------------------- }
+
+const
+  EditBase = QWord($100000);
+  { Where the allocation's backing file offsets start. }
+  EditBackingStart = QWord($40000);
+
+var
+  PageAttributes: array[0..EditPages - 1] of LongWord;
+  EditNodesAlive: Integer = 0;
+
+function NewEditNode: PRegionNode;
+begin
+  New(Result);
+  FillChar(Result^, SizeOf(Result^), 0);
+  Inc(EditNodesAlive);
+end;
+
+procedure DisposeEditNode(Node: PRegionNode);
+begin
+  Dispose(Node);
+  Dec(EditNodesAlive);
+end;
+
+function EditPageAddress(Page: Integer): QWord;
+begin
+  Result := EditBase + QWord(Page) * PageBytes;
+end;
+
+{ Splits at Address, giving the node back if it was not needed. }
+procedure SplitAt(var Tree: TRegionTree; Address: QWord);
+var
+  Node: PRegionNode;
+begin
+  Node := NewEditNode;
+  if not SplitRegionAt(Tree, Address, Node) then
+    DisposeEditNode(Node);
+end;
+
+{ What committing or protecting [First, Last] to Attributes does. }
+procedure ChangePages(var Tree: TRegionTree; First, Last: Integer; Attributes: LongWord);
+var
+  Page: Integer;
+  Region: PUserRegion;
+  Position: QWord;
+begin
+  SplitAt(Tree, EditPageAddress(First));
+  SplitAt(Tree, EditPageAddress(Last + 1));
+  Position := EditPageAddress(First);
+  while Position < EditPageAddress(Last + 1) do
+  begin
+    Region := FindRegion(Tree, Position);
+    Region^.Attributes := Attributes;
+    Position := Region^.Start + Region^.Length;
+  end;
+  for Page := First to Last do
+    PageAttributes[Page] := Attributes;
+  MergeRange(Tree, EditPageAddress(First), EditPageAddress(Last + 1), @DisposeEditNode);
+end;
+
+procedure CheckPieces(const Tree: TRegionTree; const When: string);
+var
+  Position: QWord;
+  Region: PUserRegion;
+  Previous: PUserRegion;
+  Page: Integer;
+  Ok: Boolean;
+begin
+  Ok := True;
+  Previous := nil;
+  Position := EditBase;
+  while Position < EditPageAddress(EditPages) do
+  begin
+    Region := FindRegion(Tree, Position);
+    if (Region = nil) or (Region^.Start <> Position) or (Region^.AllocationBase <> EditBase) or
+       (Region^.BackingOffset <> EditBackingStart + (Position - EditBase)) then
+    begin
+      Ok := False;
+      Break;
+    end;
+    for Page := Integer((Region^.Start - EditBase) div PageBytes) to
+      Integer((Region^.Start + Region^.Length - EditBase) div PageBytes) - 1 do
+      if PageAttributes[Page] <> Region^.Attributes then
+        Ok := False;
+    if (Previous <> nil) and (Previous^.Attributes = Region^.Attributes) then
+      Ok := False; { alike neighbours left apart }
+    Previous := Region;
+    Position := Region^.Start + Region^.Length;
+  end;
+  Check(Ok, 'the allocation''s pieces after ' + When);
+  { The allocations on both sides keep to themselves. }
+  Region := FindRegion(Tree, EditBase - 1);
+  Check((Region <> nil) and (Region^.Start = EditBase - 2 * PageBytes) and (Region^.Length = 2 * PageBytes),
+    'the allocation below after ' + When);
+  Region := FindRegion(Tree, EditPageAddress(EditPages));
+  Check((Region <> nil) and (Region^.Start = EditPageAddress(EditPages)) and (Region^.Length = 2 * PageBytes),
+    'the allocation above after ' + When);
+end;
+
+function NeighbourNode(Start: QWord): PRegionNode;
+begin
+  Result := NewEditNode;
+  Result^.Region.Start := Start;
+  Result^.Region.Length := 2 * PageBytes;
+  Result^.Region.Kind := RegionKindAllocation;
+  Result^.Region.AllocationBase := Start;
+  Result^.Region.Backing := Pointer(1);
+  { Offsets that would follow on from the allocation's. }
+  Result^.Region.BackingOffset := EditBackingStart + Start - EditBase;
+end;
+
+procedure TestSplitAndMerge;
+var
+  Tree: TRegionTree;
+  Node: PRegionNode;
+  Round: Integer;
+  First: Integer;
+  Last: Integer;
+  Swap: Integer;
+  Page: Integer;
+begin
+  RandSeed := 4321;
+  InitializeRegionTree(Tree);
+  { The allocation, file backed (offsets must follow every piece), with
+    alike allocations right below and above it. }
+  InsertRegionNode(Tree, NeighbourNode(EditBase - 2 * PageBytes));
+  InsertRegionNode(Tree, NeighbourNode(EditPageAddress(EditPages)));
+  Node := NewEditNode;
+  Node^.Region.Start := EditBase;
+  Node^.Region.Length := EditPages * PageBytes;
+  Node^.Region.Kind := RegionKindAllocation;
+  Node^.Region.AllocationBase := EditBase;
+  Node^.Region.Backing := Pointer(1);
+  Node^.Region.BackingOffset := EditBackingStart;
+  InsertRegionNode(Tree, Node);
+  for Page := 0 to EditPages - 1 do
+    PageAttributes[Page] := 0;
+  CheckPieces(Tree, 'the start');
+
+  for Round := 1 to EditRounds do
+  begin
+    First := Random(EditPages);
+    Last := Random(EditPages);
+    if Last < First then
+    begin
+      Swap := First;
+      First := Last;
+      Last := Swap;
+    end;
+    { Few distinct attributes, so pieces join often. }
+    ChangePages(Tree, First, Last, LongWord(Random(3)));
+    CheckPieces(Tree, 'round ' + IntToStr(Round));
+    if Failures > 0 then
+      Break;
+  end;
+  { Everything alike again: one piece. }
+  ChangePages(Tree, 0, EditPages - 1, 7);
+  Check(Tree.Count = 3, 'the allocation is one piece again (' + IntToStr(Tree.Count) + ' regions)');
+  Check(not SplitRegionAt(Tree, EditBase, nil), 'no split at a region''s start');
+  ClearRegionTree(Tree, @DisposeEditNode);
+  Check(EditNodesAlive = 0, 'every piece''s node came back');
+end;
+
 begin
   TestRandomChanges;
   TestLargeTree;
+  TestSplitAndMerge;
   if Failures > 0 then
   begin
     WriteLn('REGION TREE TEST FAILED: ', Failures, ' checks');
