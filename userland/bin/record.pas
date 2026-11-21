@@ -27,6 +27,12 @@
   (default 48000), FORMAT u8, s16 (the default), s24, s32 or float,
   CHANNELS 1 to 8 (default 2). If the input had to drop frames because
   they were not read in time, says so.
+
+  A recording of up to 64 MiB is kept in memory and written when it is
+  complete: the input is read all the time, so writing the file (whose
+  disk may make a write wait for its journal) never holds up the reading
+  long enough for the input to drop samples. Longer ones are written as
+  they come.
 }
 { "record" is a reserved word: the program is named for what it does. }
 program RecordSound;
@@ -57,6 +63,7 @@ const
   OptionFormat = 3;
   OptionChannels = 4;
   ChunkBytes = 16384;
+  MaximumBytesInMemory = 64 * 1024 * 1024;
 
 var
   CommandLine: TCommandLine;
@@ -78,6 +85,9 @@ var
   Header: array[0..WaveHeaderSize - 1] of Byte;
   Error: LongInt;
   Dropped: Int64;
+  Recording: array of Byte;
+  Recorded: QWord;
+  KeptInMemory: Boolean;
 begin
   DevicePath := DefaultAudioInput;
   Rate := 48000;
@@ -126,6 +136,11 @@ begin
   MakeWaveHeader(@Header[0], LongWord(Rate), LongWord(Channels), Kind, LongWord(BytesLeft));
   WriteAll(Output, @Header[0], WaveHeaderSize);
 
+  Recording := nil;
+  Recorded := 0;
+  KeptInMemory := BytesLeft <= MaximumBytesInMemory;
+  if KeptInMemory then
+    SetLength(Recording, BytesLeft);
   SetLength(Buffer, ChunkBytes);
   while BytesLeft > 0 do
   begin
@@ -135,10 +150,22 @@ begin
     Got := ReadAudio(Input, @Buffer[0], Wanted);
     if Got <= 0 then
       FailWithError(1, LongInt(-Got), 'reading ' + DevicePath);
-    Error := WriteAll(Output, @Buffer[0], QWord(Got));
+    if KeptInMemory then
+      Move(Buffer[0], Recording[Recorded], Got)
+    else
+    begin
+      Error := WriteAll(Output, @Buffer[0], QWord(Got));
+      if Error <> 0 then
+        FailWithError(1, Error, OutputPath);
+    end;
+    Recorded := Recorded + QWord(Got);
+    BytesLeft := BytesLeft - QWord(Got);
+  end;
+  if KeptInMemory and (Recorded > 0) then
+  begin
+    Error := WriteAll(Output, @Recording[0], Recorded);
     if Error <> 0 then
       FailWithError(1, Error, OutputPath);
-    BytesLeft := BytesLeft - QWord(Got);
   end;
   Dropped := DroppedAudioFrames(Input);
   if Dropped > 0 then
