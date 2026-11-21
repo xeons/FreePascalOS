@@ -201,15 +201,6 @@ var
   { Called when an event with a script wrapper is freed. }
   EventDestroyedHook: procedure(Event: TEvent) = nil;
 
-type
-  { Activation behavior (DOM 2.9, HTML's elements): run after a click
-    event that was not cancelled went through Path (target first). }
-  TActivationBehavior = procedure(Event: TEvent; const Path: TEventTargetArray);
-
-var
-  ActivationBehavior: TActivationBehavior = nil;
-  AtomClickEvent: TAtom = 0;
-
 implementation
 
 uses
@@ -646,8 +637,6 @@ begin
         Break;
       InvokeListeners(Path[Index - 1], Event, ListenerPhaseBubbling);
     end;
-    if not Event.FCanceled and (Event.FEventType = AtomClickEvent) and Assigned(ActivationBehavior) then
-      ActivationBehavior(Event, Path);
   finally
     Event.FPhase := EventPhaseNone;
     Event.FCurrentTarget := nil;
@@ -662,6 +651,4 @@ begin
   Result := not Event.FCanceled;
 end;
 
-initialization
-  AtomClickEvent := Atomize('click');
 end.

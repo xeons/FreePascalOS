@@ -1515,7 +1515,9 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A metric-compatible sans-serif (Liberation Sans or Arimo): DejaVu
       Sans is about 10% wider than Arial, so lines break differently from
       the reference on most pages (a font decision for the coordinator)
-- [ ] The details element's toggle event, and its default summary
+- [ ] details: the summary's activation behavior in the DOM (a script's
+      summary.click() does nothing; libwebview's ActOnClick toggles on a
+      user's click), and the default summary of a details without one
 - [ ] A NodeIterator moved when the node it rests on is removed
 - [ ] Parse large scripts off the GUI thread (Wikipedia's 790 KB module
       bundle holds the window about 7 s under TCG, half of it parsing)

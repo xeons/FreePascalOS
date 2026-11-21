@@ -11260,7 +11260,11 @@ and document.readyState is the document's (`ReadyStateFromDocument`).
 While a parser-inserted script runs, document.write goes to the loader's
 parser (`AttachParser`). Module scripts run through the engine's
 `EvaluateModule` with a resolver (specifiers against the importing
-module's URL; bare ones need an import map, not read yet) and a fetcher
+module's URL; bare ones through the document's import maps,
+`Web.Script.ImportMaps`: imports, "/"-ending prefixes, scopes with the
+most specific covering the referrer first, null entries blocking a
+specifier, maps merged as they arrive with entries already there kept;
+the JSON read with the engine's JSON.parse) and a fetcher
 that asks the loader (`TScriptScheduler.FetchScript`: CORS, UTF-8), one
 pair per context. The loop's microtask checkpoint runs every live
 context's jobs. The environment: timers as the loop's delayed tasks
@@ -11434,7 +11438,8 @@ error) over `TScriptEnvironment`:
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
-| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects, client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 71-traversal | NodeFilter, TreeWalker and NodeIterator (createTreeWalker, createNodeIterator) over the bindings' own tree getters, so a polyfill that redefines firstChild does not change what they walk |
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
@@ -11571,7 +11576,7 @@ declaration block in place (the index points at it). Removed rules,
 replaced selectors and sheets of removed or reparsed `<style>` elements
 are retired and freed once the engine has indexed again.
 
-**Not done yet**: import maps, ErrorEvent and onerror's arguments, the
+**Not done yet**: custom elements, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), the unhandledrejection
 event, XML parsing (DOMParser, XHR's responseXML), shadow DOM,
 TreeWalker, `<object>` and `<embed>` documents, frameset
@@ -11711,6 +11716,12 @@ serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
 Sans Mono; some well-known names too), the face nearest the weight and
 slant is taken, and a character the face lacks takes the nearest face
 of the library that has it (remembered per font).
+
+A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
+a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
+the subset for Latin text and draws any other character with the subset
+that has it; a character no face of the family has comes from the
+default (proportional) family first, then any face that has it.
 
 `TTextFont` (`Web.Text.FontInstances`) is a face at a CSS pixel size,
 one per font style struct. Layout measures with the faces' unhinted
