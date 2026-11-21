@@ -100,6 +100,9 @@ var
   AllowedHertz: LongWord = 0;
   FanOnMilliCelsius: LongInt = DefaultFanOnCelsius * 1000;
   FanRunning: Boolean = False;
+  { The pin has been driven once (until then its state is whatever the
+    firmware left). }
+  FanDriven: Boolean = False;
   LastTemperature: LongInt = NoTripPoint;
   { The clock asked for by the load, before the limit. }
   WantsMaximum: Boolean = True;
@@ -267,9 +270,10 @@ begin
     else if LastTemperature < FanOnMilliCelsius - FanHysteresisCelsius * 1000 then
       Running := False;
   end;
-  if Running = FanRunning then
+  if (Running = FanRunning) and FanDriven then
     Exit;
   FanRunning := Running;
+  FanDriven := True;
   SetRp1FanRunning(Running);
   Report;
   DebugBeginMessage;

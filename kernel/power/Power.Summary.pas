@@ -58,7 +58,13 @@ begin
   DebugWriteDecimal(Index);
   DebugWrite(': ');
   DebugWriteDecimal(Processor^.ClockInterruptCount);
-  DebugWrite(' clock interrupts, busy ');
+  DebugWrite(' clock interrupts (');
+  DebugWriteDecimal(Processor^.TickInterruptCount);
+  DebugWrite(' ticks, ');
+  DebugWriteDecimal(Processor^.TimerInterruptCount);
+  DebugWrite(' timers, ');
+  DebugWriteDecimal(Processor^.WakeUpInterruptCount);
+  DebugWrite(' wake-ups), busy ');
   if Busy + Idle > 0 then
     DebugWriteDecimal(Busy * 100 div (Busy + Idle))
   else

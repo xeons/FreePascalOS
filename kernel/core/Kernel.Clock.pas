@@ -38,7 +38,9 @@
   time slice to end, nothing to charge), so the clock interrupt that
   finds it idle stops the tick (NextTickTime = NeverDue) and the
   processor sleeps until its next due time or a device or another
-  processor wakes it. The switch away from the idle thread starts the
+  processor wakes it. The switch to the idle thread stops it at once
+  (StopClockTick), so a thread that wakes, runs briefly and waits again
+  costs no tick. The switch away from the idle thread starts the
   tick again (RestartClockTick), due a whole tick later, so the thread
   it switches to gets a full time slice. Busy processors keep the
   100 Hz tick. Kernel option tickless=off keeps it on idle ones too.
@@ -98,6 +100,9 @@ procedure RequestClockInterruptBy(Deadline: QWord);
 { From the switch away from the idle thread (dispatcher lock held): the
   executing processor's tick starts again if it was stopped. }
 procedure RestartClockTick;
+{ From the switch to the idle thread: the tick stops at once, and the
+  clock interrupt set for it moves to the next due time. }
+procedure StopClockTick;
 { Whether idle processors stop their tick (not tickless=off). }
 function ClockIsTickless: Boolean;
 
@@ -222,6 +227,12 @@ begin
   WereEnabled := SaveAndDisableInterrupts;
   ElapsedTicks := TakeElapsedTicks(Processor, Now);
   RestoreInterrupts(WereEnabled);
+  if ElapsedTicks > 0 then
+    Inc(Processor^.TickInterruptCount);
+  if Now >= Processor^.NextTimerDueTime then
+    Inc(Processor^.TimerInterruptCount);
+  if Now >= Processor^.NextWakeUpTime then
+    Inc(Processor^.WakeUpInterruptCount);
   ExpireTimers(Now);
   SchedulerClockInterrupt(Now, ElapsedTicks, ArchFrameIsFromUserMode(Frame));
 
@@ -242,6 +253,29 @@ begin
     Processor^.NextTickTime := ClockNanoseconds + NanosecondsPerTick;
     if Processor^.NextTickTime < Processor^.ClockInterruptTime then
       SetClockInterruptFor(Processor, Processor^.NextTickTime, ClockNanoseconds);
+  end;
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure StopClockTick;
+var
+  Processor: PProcessor;
+  WereEnabled: Boolean;
+  Now: QWord;
+  Deadline: QWord;
+begin
+  if not StopsTickWhenIdle then
+    Exit;
+  WereEnabled := SaveAndDisableInterrupts;
+  Processor := CurrentProcessor;
+  if Processor^.NextTickTime <> NeverDue then
+  begin
+    Processor^.NextTickTime := NeverDue;
+    Now := ClockNanoseconds;
+    Deadline := NextClockDeadline(Processor, Now);
+    { Only later: an earlier interrupt (for a timer, a wake-up) stays. }
+    if Deadline > Processor^.ClockInterruptTime then
+      SetClockInterruptFor(Processor, Deadline, Now);
   end;
   RestoreInterrupts(WereEnabled);
 end;

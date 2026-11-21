@@ -1212,6 +1212,11 @@ type
     { Clock interrupts it took, and its busy and idle time, since it
       started (nanoseconds). }
     ClockInterrupts: QWord;
+    { Of those, the ones that found a tick, a timer or a thread's
+      wake-up due (several may be due at once). }
+    TickInterrupts: QWord;
+    TimerInterrupts: QWord;
+    WakeUpInterrupts: QWord;
     BusyNanoseconds: QWord;
     IdleNanoseconds: QWord;
     { How often it entered each idle state. }

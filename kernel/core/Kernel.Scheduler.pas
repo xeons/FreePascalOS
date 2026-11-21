@@ -240,7 +240,9 @@ begin
   Processor^.RunningThread := NextThread;
   { The tick stopped while the processor idled (Kernel.Clock). }
   if (PreviousThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
-    RestartClockTick;
+    RestartClockTick
+  else if (NextThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
+    StopClockTick;
   NextThread^.LastProcessorIndex := Processor^.Index;
   Inc(SwitchCount);
 

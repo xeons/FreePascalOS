@@ -404,14 +404,19 @@ Rules that follow from this:
   `NeverDue`), so an idle processor sleeps until its next timer or
   wake-up, a device interrupt or another processor's dispatch interrupt,
   and at most 4 seconds (the longest the clock interrupt is set for at
-  once). The switch away from the idle thread starts the tick again
+  once). The switch to the idle thread stops it at once
+  (`StopClockTick`, the clock interrupt moved to the next due time), so
+  a thread that wakes, runs briefly and waits again costs no tick; the
+  switch away from the idle thread starts the tick again
   (`RestartClockTick`), a whole tick later, so the thread gets a full
   time slice. Processor time stays exact (it is taken at every switch),
   the uptime and the timers come from the counter, and the load
   averages have a deadline of their own. Busy processors keep the 100 Hz
   tick. Each processor counts its clock interrupts
-  (`ClockInterruptCount`): an idle QEMU guest takes about one a second
-  per idle processor rather than 100. Kernel option `tickless=off` keeps
+  (`ClockInterruptCount`) and of those the ones that found a tick, a
+  timer or a wake-up due: an idle QEMU guest takes about one a second
+  per idle processor rather than 100; what is left is due work (in the
+  test machine, netlog's 100 ms poll and the services' timers). Kernel option `tickless=off` keeps
   the tick on idle processors too.
 - **Timers** (`Kernel.Timers`) go on the queue of the processor that
   sets them; each queue has a lock its clock interrupt takes, and
@@ -556,7 +561,9 @@ writes the same to the log.
 
 **Tests.** coretest runs `powerstat --check-idle 3 5`: the processors
 that stayed idle for 3 seconds (busy under 10 %) must average under 5
-clock interrupts a second (100 with the periodic tick), and `timetest`:
+clock interrupts a second that found no timer or wake-up due (100 with
+the periodic tick; the interrupts for due work, which depend on what
+else runs, are shown with the causes but not counted), and `timetest`:
 the uptime and wall clock nanoseconds never go back over 200000 reads,
 agree with the seconds call, 10 sleeps of 20 ms are never early nor
 more than 80 ms late, `Now` counts milliseconds, a step moves the clock

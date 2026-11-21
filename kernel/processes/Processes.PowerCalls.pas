@@ -84,6 +84,9 @@ begin
     begin
       Usage^.Online := 1;
       Usage^.ClockInterrupts := Processor^.ClockInterruptCount;
+      Usage^.TickInterrupts := Processor^.TickInterruptCount;
+      Usage^.TimerInterrupts := Processor^.TimerInterruptCount;
+      Usage^.WakeUpInterrupts := Processor^.WakeUpInterruptCount;
       for Entry := 0 to AbiIdleStateCapacity - 1 do
         if Entry < MaximumIdleStates then
           Usage^.IdleStateEntries[Entry] := Processor^.IdleStateEntries[Entry];

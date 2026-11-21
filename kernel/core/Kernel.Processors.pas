@@ -82,6 +82,12 @@ type
       so an idle processor takes few), and how often it entered each of
       the idle states (Kernel.IdleStates). }
     ClockInterruptCount: QWord;
+    { Of those, the ones that found a tick, a timer or a wake-up due
+      (several may be due at once; the rest came early or for the
+      longest wait). }
+    TickInterruptCount: QWord;
+    TimerInterruptCount: QWord;
+    WakeUpInterruptCount: QWord;
     IdleStateEntries: array[0..MaximumIdleStates - 1] of QWord;
     { The timers set on it (Kernel.Timers), ordered by due time, the lock
       that protects them (taken with interrupts disabled) and the first

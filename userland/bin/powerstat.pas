@@ -26,8 +26,13 @@
     powerstat --check-idle [SECONDS [LIMIT]]
                            for the tests: over SECONDS (3), the clock
                            interrupts per second of the processors that
-                           were idle (busy under 10 %) must average under
-                           LIMIT (5); exits 1 if not, 2 if no processor
+                           were idle (busy under 10 %) that no timer or
+                           thread's wake-up was due for (the tick, early
+                           or longest-wait interrupts) must average under
+                           LIMIT (5): with the periodic tick it is 100.
+                           Interrupts for due work are shown, not
+                           counted (a test machine has pollers: netlog,
+                           services). Exits 1 if not, 2 if no processor
                            was idle
 }
 program PowerStat;
@@ -70,14 +75,44 @@ begin
     Result := Busy * 100 div (Busy + Idle);
 end;
 
-function InterruptRate(const First, Second: TSample; Index: Integer): Double;
+function PerSecond(const First, Second: TSample; Earlier, Later: QWord): Double;
 var
   Seconds: Double;
 begin
   Seconds := ElapsedSeconds(First, Second);
   if Seconds <= 0 then
     Exit(0);
-  Result := (Second.Power.Processors[Index].ClockInterrupts - First.Power.Processors[Index].ClockInterrupts) / Seconds;
+  Result := (Later - Earlier) / Seconds;
+end;
+
+{ Clock interrupts that found neither a timer nor a wake-up due. }
+function UnexplainedRate(const First, Second: TSample; Index: Integer): Double;
+var
+  All: QWord;
+  ForWork: QWord;
+begin
+  All := Second.Power.Processors[Index].ClockInterrupts - First.Power.Processors[Index].ClockInterrupts;
+  ForWork := (Second.Power.Processors[Index].TimerInterrupts - First.Power.Processors[Index].TimerInterrupts) +
+    (Second.Power.Processors[Index].WakeUpInterrupts - First.Power.Processors[Index].WakeUpInterrupts);
+  if ForWork > All then
+    ForWork := All;
+  Result := PerSecond(First, Second, 0, All - ForWork);
+end;
+
+function InterruptRate(const First, Second: TSample; Index: Integer): Double;
+begin
+  Result := PerSecond(First, Second, First.Power.Processors[Index].ClockInterrupts,
+    Second.Power.Processors[Index].ClockInterrupts);
+end;
+
+{ "ticks 0.0, timers 1.0, wake-ups 0.3" per second. }
+function CauseText(const First, Second: TSample; Index: Integer): string;
+begin
+  Result := Format('ticks %.1f, timers %.1f, wake-ups %.1f',
+    [PerSecond(First, Second, First.Power.Processors[Index].TickInterrupts, Second.Power.Processors[Index].TickInterrupts),
+     PerSecond(First, Second, First.Power.Processors[Index].TimerInterrupts, Second.Power.Processors[Index].TimerInterrupts),
+     PerSecond(First, Second, First.Power.Processors[Index].WakeUpInterrupts,
+       Second.Power.Processors[Index].WakeUpInterrupts)]);
 end;
 
 procedure ShowProcessors(const First, Second: TSample);
@@ -170,6 +205,7 @@ var
   Idle: Integer;
   Total: Double;
   Average: Double;
+  Causes: string;
 begin
   if not TakeSample(First) then
   begin
@@ -180,16 +216,20 @@ begin
   TakeSample(Second);
   Idle := 0;
   Total := 0;
+  Causes := '';
   for Index := 0 to Integer(Second.Power.ProcessorCount) - 1 do
   begin
     if Second.Power.Processors[Index].Online = 0 then
       Continue;
-    WriteLn(Format('powerstat: processor %d: busy %d %%, %.1f clock interrupts per second',
-      [Index, BusyPercent(First, Second, Index), InterruptRate(First, Second, Index)]));
+    WriteLn(Format('powerstat: processor %d: busy %d %%, %.1f clock interrupts per second (%s)',
+      [Index, BusyPercent(First, Second, Index), InterruptRate(First, Second, Index),
+       CauseText(First, Second, Index)]));
     if BusyPercent(First, Second, Index) < IdleBusyPercent then
     begin
       Inc(Idle);
-      Total := Total + InterruptRate(First, Second, Index);
+      Total := Total + UnexplainedRate(First, Second, Index);
+      Causes := Causes + Format('; %d: %.1f (%s)', [Index, InterruptRate(First, Second, Index),
+        CauseText(First, Second, Index)]);
     end;
   end;
   if (Second.Power.Flags and ProcessorPowerTickless) = 0 then
@@ -202,11 +242,12 @@ begin
   Average := Total / Idle;
   if Average >= Limit then
   begin
-    WriteLn(Format('powerstat: FAIL: %.1f clock interrupts per second per idle processor (limit %.1f)',
-      [Average, Limit]));
+    WriteLn(Format('powerstat: FAIL: %.1f clock interrupts per second per idle processor with nothing due (limit %.1f)%s',
+      [Average, Limit, Causes]));
     Exit(1);
   end;
-  WriteLn(Format('powerstat: idle processors take %.1f clock interrupts per second (under %.1f)', [Average, Limit]));
+  WriteLn(Format('powerstat: idle processors take %.1f clock interrupts per second with nothing due (under %.1f)',
+    [Average, Limit]));
   Result := 0;
 end;
 
