@@ -196,7 +196,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-device-test acpi-power-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -508,7 +508,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test acpi-device-test acpi-power-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -583,6 +583,23 @@ $(ACPI_DEVICE_TABLE): tools/AcpiDeviceTest/make-table.py
 
 acpi-device-test: $(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
 	$(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
+
+# Thermal zones, batteries and _CST (kernel/firmware) on the host, over a
+# table tools/AcpiPowerTest/make-table.py assembles (with --ssdt, the
+# same zones and batteries as an SSDT for QEMU's -acpitable).
+ACPI_POWER_TEST := build/tools/AcpiPowerTest
+ACPI_POWER_TABLE := build/tools/acpi-power-test.aml
+
+$(ACPI_POWER_TEST): tools/AcpiPowerTest/AcpiPowerTest.pas $(AML_TEST_SOURCES)
+	@mkdir -p build/tools/acpi-power-units
+	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/acpi-power-units $<
+
+$(ACPI_POWER_TABLE): tools/AcpiPowerTest/make-table.py
+	@mkdir -p build/tools
+	python3 -I $< $@
+
+acpi-power-test: $(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
+	$(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
 
 # The device tree reading (shared/DeviceTree.*, kernel/firmware) on the
 # host, over a tree in the Raspberry Pi 5's layout that
