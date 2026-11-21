@@ -11822,14 +11822,21 @@ program with SP at the argument count, as on x86-64.
   rather than trap, so user code is compiled with `-CE`
   (CHECKFPUEXCEPTIONS, undocumented in Free Pascal 3.2.2 but there): the
   compiler checks FPSR after each floating point operation and calls
-  `FPC_THROWFPUEXCEPTION` (the RTL's rtl/aarch64), which raises the
-  exceptions `SetExceptionMask` leaves unmasked (invalid operation,
+  `FPC_THROWFPUEXCEPTION`, which raises the exceptions
+  `SetExceptionMask` leaves unmasked (invalid operation,
   division by zero, overflow by default, as on x86-64): `1.0 / 0`
   raises `EZeroDivide`, and libjavascript, which masks them all, gets
   its infinities. SysUtils clears the runtime's soft exception flags
   before the exception is raised (`ClearFloatExceptionThenRaise`), as
-  the x86-64 runtime clears MXCSR after a trap. rtltest checks division
-  by zero, overflow, an invalid operation, and masking and unmasking.
+  the x86-64 runtime clears MXCSR after a trap. The compiler keeps the
+  operation's result in its register across that call and expects every
+  floating point register and the flags kept, which the RTL's Pascal
+  routine (rtl/aarch64) does not promise: it is renamed
+  `FPC_THROWFPUEXCEPTION_RAISE` in system.o at the RTL's build, and
+  `rtl/fpc/FloatCheck.aarch64.s` saves the registers around it under the
+  name the compiler calls. The RTL itself is built without `-CE`. rtltest
+  checks division by zero, overflow, an invalid operation, and masking
+  and unmasking.
 - **The processor:** `CallGetProcessorDescription` reads MIDR_EL1 for
   `sysinfo` ("Cortex-A72 r0p3"); `uname -m` says `aarch64`. Without AES
   or RDRAND equivalents used yet, AES runs from tables and random
