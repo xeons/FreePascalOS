@@ -109,7 +109,7 @@ type
     function ShowFile(const Path: string): Boolean;
     { Shows a control made elsewhere (a summary), which the host takes. }
     procedure ShowControl(Control: TControl);
-    procedure ShowMessage(const Text: string);
+    procedure ShowMessage(const MessageText: string);
     property Path: string read FPath;
     property Preview: TControl read FPreview;
   end;
@@ -371,11 +371,11 @@ begin
   Invalidate;
 end;
 
-procedure TPreviewHost.ShowMessage(const Text: string);
+procedure TPreviewHost.ShowMessage(const MessageText: string);
 begin
   DropPreview;
   FPath := '';
-  FMessage := Text;
+  FMessage := MessageText;
   Invalidate;
 end;
 
