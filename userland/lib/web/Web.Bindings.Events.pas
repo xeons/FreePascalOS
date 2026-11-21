@@ -125,6 +125,10 @@ begin
   Event := TEvent(Call.Native(0));
   Event.Retain;
   try
+    { DOM 2.9: an event script dispatches is not trusted (the engine's
+      own dispatches keep the flag their creator set). }
+    if not Event.IsDispatching then
+      Event.IsTrusted := False;
     Result := JsBoolean(ThisTarget(Call).DispatchEvent(Event));
   finally
     Event.Release;

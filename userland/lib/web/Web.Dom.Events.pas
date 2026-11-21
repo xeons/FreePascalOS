@@ -576,7 +576,6 @@ var
 begin
   if Event.FDispatching or not Event.FInitialized then
     RaiseDomError(InvalidStateError, 'the event is being dispatched or was not initialized');
-  Event.FIsTrusted := False;
   Event.FDispatching := True;
   Event.SetTarget(Self);
   Path := nil;
