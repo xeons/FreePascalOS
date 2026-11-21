@@ -22,7 +22,8 @@ server, and for each page opens /app/browser/browser on it, waits for
 it to load, scrolls down with the wheel and back up, moves the pointer
 over a grid of points (hovering), drags a selection, clicks a few
 points (links, most likely) and goes back with Alt+Left, then checks
-that the browser is still running and the kernel did not panic. A
+that the browser is still running, no content process (/bin/webcontent,
+where the pages run) crashed or hung, and the kernel did not panic. A
 screen dump of each page is kept.
 
     qemu-browser-smoke.py ESP-DIRECTORY SYSTEM-DISK OUT-DIRECTORY [NAME ...]
@@ -276,7 +277,10 @@ def drive_page(machine, name, url, out):
     for suffix in ('-loaded', '-after'):
         save_png(os.path.join(out, name + suffix + '.ppm'), os.path.join(out, name + suffix + '.png'))
     panicked = re.search(r'panic|PANIC|Unhandled exception|page fault', log) is not None
-    return alive and not panicked, log
+    # Pages run in content processes: the browser says when one crashed
+    # or stopped answering ("process crashed STATUS tab I").
+    content_failed = re.search(r'process (crashed|hung) ', log) is not None
+    return alive and not panicked and not content_failed, log
 
 
 def main():
