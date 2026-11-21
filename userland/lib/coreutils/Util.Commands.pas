@@ -103,6 +103,7 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Notifications,
+  Sys.ProcessList,
   Sys.Streams,
   Util.Messages,
   Util.Numbers;
@@ -226,7 +227,7 @@ begin
       if Target > 0 then
         Result := TerminateProgram(QWord(Target), 128 + Number)
       else
-        Result := ErrorUnsupported;
+        Result := ErrorCodeOf(TerminateProcessGroup(QWord(-Target), 128 + Number));
   else
     { Nothing happens, but the target must exist: continuing a running
       program changes nothing. }
