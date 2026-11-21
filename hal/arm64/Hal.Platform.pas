@@ -42,6 +42,9 @@ procedure InitializeHal;
 { --- The clock (see the x86-64 Hal.Platform) --- }
 function HalClockNanoseconds: QWord;
 procedure HalStartClockOnThisProcessor;
+{ What the clock is read from ("time stamp counter", "KVM paravirtual
+  clock", "generic timer"). }
+function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
 procedure HalEndOfInterrupt;
 procedure HalRequestSoftwareInterrupt(Level: TPriorityLevel);
@@ -94,8 +97,10 @@ uses
 const
   NanosecondsPerSecond = 1000000000;
   { The longest wait the clock interrupt is set for at once (the kernel
-    asks again when it comes). }
-  LongestClockWaitNanoseconds = NanosecondsPerSecond;
+    asks again when it comes): what an idle processor with nothing due
+    sleeps at most. Times the timer's rate, it stays well within 64
+    bits for timers up to 4 GHz. }
+  LongestClockWaitNanoseconds = 4 * QWord(NanosecondsPerSecond);
   StopInterruptVector = InterProcessorInterruptVector + 1;
 
   SemihostingExitExtended = $20;
@@ -147,6 +152,11 @@ begin
     an interrupt never comes early by it. }
   Ticks := (Nanoseconds * CounterFrequency + NanosecondsPerSecond - 1) div NanosecondsPerSecond;
   SetTimerInterruptIn(Ticks);
+end;
+
+function HalClockSourceName: PChar;
+begin
+  Result := 'generic timer';
 end;
 
 procedure HalEndOfInterrupt;

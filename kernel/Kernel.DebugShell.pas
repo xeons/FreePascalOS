@@ -87,6 +87,7 @@ uses
   Io.InterruptRouting,
   Io.PlatformDevices,
   Drivers.RaspberryPiBoard,
+  Power.Summary,
   Io.Watchdog,
   Processes.ThreadTraces,
   Debug.Output;
@@ -140,7 +141,7 @@ end;
 procedure ShowHelp;
 begin
   WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, threads, modules ID,');
-  WriteLine('trace [THREAD], mem, cache, netcards, interrupts, devices, board, uptime, watchdog, suspend,');
+  WriteLine('trace [THREAD], mem, cache, netcards, interrupts, devices, board, power, uptime, watchdog, suspend,');
   WriteLine('poweroff, reboot, exit');
 end;
 
@@ -452,6 +453,8 @@ begin
     WritePlatformDeviceSummary
   else if TextIsEqual(@Command[0], 'board') then
     WriteBoardInformation
+  else if TextIsEqual(@Command[0], 'power') then
+    WritePowerSummary
   else if TextIsEqual(@Command[0], 'uptime') then
     ShowUptime
   else if TextIsEqual(@Command[0], 'watchdog') then

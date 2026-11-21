@@ -48,6 +48,24 @@ how the existing pieces fit together.
       (CallGetProcessModules, symbolize.py --report)
 - [ ] Back traces of user programs from the kernel's own crash report
       (walk the program's frames; most user code omits frame pointers)
+- [x] Tickless idle: an idle processor's tick stops until its next due
+      time (per-processor clock interrupt counters; coretest checks under
+      5 a second per idle processor)
+- [x] Idle states: MWAIT C-states (CPUID 5, ACPI _CST functional fixed
+      hardware), PSCI CPU_SUSPEND standby states from the device tree
+- [x] Nanosecond wall clock (CallGetPreciseTime), stepped or slewed
+      (CallAdjustWallClock); invariant TSC check, kvmclock under KVM
+- [x] SNTP client service (timesync, off by default)
+- [ ] Dynamic tick for busy processors (no tick while one thread runs
+      alone on a processor)
+- [ ] A shared read-only page with the clock's parameters (vDSO-style) so
+      the runtime reads the time without a system call
+- [ ] Power-down idle states (PSCI CPU_SUSPEND power-down, deep C-states
+      without ARAT) with a broadcast timer; _PDC/_OSC before _CST;
+      ACPI P-states (_PSS/_PCT) or HWP for frequency scaling on PCs
+- [ ] Raspberry Pi 5: the fan through RP1's PWM (with RP1's clock
+      generator) for speeds between off and full; check the clock
+      governor, the fan pin and the thermal limit on the board
 
 ## Memory management
 
@@ -190,8 +208,13 @@ how the existing pieces fit together.
       HD Audio, AC'97, serial, PS/2, display)
 - [ ] Wake sources beyond the power button (RTC alarm, USB, network); MTRRs on
       secondary processors after waking
-- [ ] More from the ACPI namespace: embedded controller regions, battery and
-      thermal zones, processor hotplug (bringing a plugged processor online)
+- [x] ACPI thermal zones (_TMP, _PSV, _CRT, _TZP: passive throttling by
+      clock modulation, clean shutdown at critical) and batteries (_BIF,
+      _BIX, _BST), CallListThermalZones, CallListBatteries, powerstat
+- [ ] More from the ACPI namespace: embedded controller regions (batteries
+      and zones whose methods read them), active cooling (_ACx, fans),
+      thermal notifications (Notify 0x80/0x81), processor hotplug
+      (bringing a plugged processor online)
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads

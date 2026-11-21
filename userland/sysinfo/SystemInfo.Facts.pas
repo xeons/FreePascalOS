@@ -52,6 +52,7 @@ uses
   Sys.LocalTime,
   Sys.TimeZones,
   Sys.Time,
+  Sys.Power,
   Sys.Files,
   Sys.Console,
   Sys.PseudoTerminals,
@@ -245,6 +246,32 @@ begin
   end;
 end;
 
+{ The processors' clock, the hottest temperature and the batteries
+  (each left out where the machine does not tell it). }
+procedure AddPowerFacts(var Facts: TFactList);
+var
+  Power: TAbiProcessorPower;
+  Zones: TThermalZoneArray;
+  Batteries: TBatteryArray;
+  Index: Integer;
+  Name: string;
+begin
+  if GetProcessorPower(Power) = 0 then
+    AddFact(Facts, 'CPU clock', ProcessorClockText(Power));
+  Zones := ListThermalZones;
+  if HottestTemperature(Zones) <> ThermalTripNone then
+    AddFact(Facts, 'Temperature', MilliCelsiusText(HottestTemperature(Zones)));
+  Batteries := ListBatteries;
+  for Index := 0 to High(Batteries) do
+  begin
+    if Length(Batteries) = 1 then
+      Name := 'Battery'
+    else
+      Name := Format('Battery %d', [Index + 1]);
+    AddFact(Facts, Name, BatteryStateText(Batteries[Index]));
+  end;
+end;
+
 function GatherFacts: TFactList;
 var
   Information: TSystemInformation;
@@ -272,6 +299,7 @@ begin
   AddDisplayFacts(Result);
   AddFact(Result, 'Terminal', TerminalText);
   AddFact(Result, 'CPU', ProcessorText(Information.ProcessorCount));
+  AddPowerFacts(Result);
   if HaveUsage then
   begin
     AddFact(Result, 'Memory', UsageText(UsedMemory(Usage), Usage.TotalMemory));

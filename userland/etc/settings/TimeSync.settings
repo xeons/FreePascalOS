@@ -1,0 +1,12 @@
+# The clock synchronization service (/bin/timesync, the timesync
+# service). It asks the servers in turn over SNTP (UDP port 123) once
+# the network is up, steps the clock at its first answer and slews it
+# (0.05 % fast or slow) after that, unless an offset is beyond
+# StepThresholdMilliseconds. Polls every MinimumPollSeconds at first,
+# up to MaximumPollSeconds once the clock holds. The file is read again
+# before every poll; "service restart timesync" applies Enabled at once.
+Enabled = false
+Servers = ["pool.ntp.org"]
+StepThresholdMilliseconds = 128
+MinimumPollSeconds = 64
+MaximumPollSeconds = 1024

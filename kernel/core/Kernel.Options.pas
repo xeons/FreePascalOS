@@ -56,6 +56,19 @@
                 otherwise the image states it (Drivers.RamDiskDecompression).
     aslr=off    Every process gets the fixed address space layout instead
                 of a random one (Processes.AddressLayout), for debugging.
+    tickless=off
+                Idle processors keep their 100 Hz tick (Kernel.Clock).
+    idle=halt|mwait|wfi, maxcstate=N
+                Idle states: only HLT or WFI, MWAIT even under a
+                hypervisor, no deeper than C(N) (Kernel.Arch.IdleStates).
+    clock=tsc|kvmclock
+                The kernel's clock on x86-64 (Hal.Platform).
+    thermal=off The thermal zones are only read, never acted on
+                (Power.ThermalZones).
+    cpufreq=off|max|min, thermallimit=C, thermalcritical=C,
+    fan=on|off, fanon=C
+                The Raspberry Pi's ARM clock scaling, thermal limit and
+                fan (Power.BoardClocks).
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by

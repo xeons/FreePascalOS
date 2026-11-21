@@ -553,7 +553,15 @@ end;
 procedure GetLocalTime(var SystemTime: TSystemTime);
 var
   Seconds: Int64;
+  Precise: TAbiPreciseTime;
 begin
+  { To the millisecond (Now, Time), from the nanosecond wall clock. }
+  if SystemCall(CallGetPreciseTime, TimeWallClock, QWord(@Precise), 0, 0, 0, 0) = 0 then
+  begin
+    DateTimeToSystemTime(UnixDateDelta + Precise.Seconds / SecondsPerDay, SystemTime);
+    SystemTime.MilliSecond := Precise.Nanoseconds div 1000000;
+    Exit;
+  end;
   Seconds := SystemCall(CallGetTime, 0, 0, 0, 0, 0, 0);
   DateTimeToSystemTime(UnixDateDelta + Seconds / SecondsPerDay, SystemTime);
 end;

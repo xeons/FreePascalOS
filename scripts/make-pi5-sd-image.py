@@ -132,6 +132,11 @@ def config_text(with_framebuffer_overlay):
         "# kernel inherits a working link.",
         "pciex4_reset=0",
         "",
+        "# No force_turbo, arm_freq or over_voltage: the firmware keeps its",
+        "# own limits and the kernel scales the ARM clock with the load,",
+        "# holds it back above 80 C and runs the fan (cpufreq=, thermallimit=",
+        "# and fan= in cmdline.txt; see Power.BoardClocks).",
+        "",
     ]
     return "\n".join(lines)
 

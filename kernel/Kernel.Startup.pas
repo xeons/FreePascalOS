@@ -46,6 +46,8 @@ procedure KernelEntryPoint(BootInformation: PBootInformation);
 implementation
 
 uses
+  Kernel.IdleStates,
+  Io.AcpiPower,
   Objects.Events,
   Objects.Timers,
   Objects.Sections,
@@ -242,9 +244,9 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
-    { Interrupts are enabled, so the next interrupt ends the halt. If it
+    { Interrupts are enabled, so the next interrupt ends the wait. If it
       made a thread ready, the dispatch interrupt switches to it. }
-    HaltProcessor;
+    IdleProcessor;
   end;
 end;
 
@@ -317,6 +319,9 @@ begin
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
+  { Thermal zones, batteries and _CST's idle states, read on a thread of
+    their own. }
+  StartAcpiPower;
   InitializeIoSystem;
   { The network adapters registered with the drivers above. }
   StartNetworking;
@@ -447,6 +452,8 @@ begin
 
   InitializeHal;
   HalWriteDescription;
+  InitializeIdleStates;
+  WriteIdleStates;
 
   BootStackBase := QWord(PhysicalToVirtual(BootInformation^.BootStackPhysicalBase));
   IdleThread := CreateIdleThreadFromBootContext(BootStackBase,

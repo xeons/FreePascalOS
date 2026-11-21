@@ -87,6 +87,12 @@ type
 
 { Calls Visit for every present device with a _HID, parents first. }
 procedure WalkAcpiDevices(Visit: TAcpiDeviceVisitor; Context: Pointer);
+{ Evaluates the child Name of Node (not searching upwards). }
+function EvaluateChild(Node: PAmlNode; Name: PChar; out Value: TAmlValue): Boolean;
+{ The integer the child Name of Node evaluates to, or Default. }
+function ChildInteger(Node: PAmlNode; Name: PChar; Default: QWord): QWord;
+{ Node's path, "\_SB_.PCI0.BAT0". }
+procedure BuildPath(Node: PAmlNode; var Path: array of Char);
 
 implementation
 

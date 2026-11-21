@@ -52,6 +52,9 @@ procedure HalStartClockOnThisProcessor;
   Nanoseconds (0: right away), replacing the one set before. It comes
   no earlier; a very long time is cut to what the timer can count. Call
   with interrupts disabled. }
+{ What the clock is read from ("time stamp counter", "KVM paravirtual
+  clock", "generic timer"). }
+function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
 
 { Signals the end of the interrupt currently being serviced. }
@@ -118,7 +121,10 @@ uses
   Hal.LegacyPic,
   Hal.LocalApic,
   Hal.TimeStampClock,
+  Hal.ParavirtualClock,
+  Runtime.Text,
   Kernel.Arch.Cpu,
+  Kernel.Options,
   Kernel.Panic,
   Debug.Output;
 
@@ -129,12 +135,18 @@ const
   MicrosecondsPerSecond = 1000000;
   NanosecondsPerSecond = 1000000000;
   { The longest wait the clock interrupt is set for at once (the kernel
-    asks again when it comes). }
-  LongestClockWaitNanoseconds = NanosecondsPerSecond;
+    asks again when it comes): what an idle processor with nothing due
+    sleeps at most. Times the timer's rate, it stays well within 64
+    bits for timers up to 4 GHz. }
+  LongestClockWaitNanoseconds = 4 * QWord(NanosecondsPerSecond);
 
 var
   TimerTicksPerSecond: QWord;
   CyclesPerSecond: QWord;
+  CounterIsInvariant: Boolean;
+  { The kernel's clock is KVM's paravirtual clock rather than the
+    counter (see ChooseClockSource). }
+  UsesParavirtualClock: Boolean = False;
 
 { Measures the local APIC timer and the time stamp counter over the same
   stretch of the interval timer, so that the ratio between the two (which
@@ -160,16 +172,36 @@ begin
   StartTimeStampClock(CyclesPerSecond);
 end;
 
+{ The time stamp counter, unless it is not invariant and KVM offers its
+  paravirtual clock (clock=tsc keeps the counter, clock=kvmclock takes
+  the paravirtual clock whenever there is one). }
+procedure ChooseClockSource;
+var
+  Value: array[0..15] of Char;
+  Wanted: Boolean;
+begin
+  CounterIsInvariant := TimeStampCounterIsInvariant;
+  Wanted := not CounterIsInvariant;
+  if GetKernelOptionValue('clock', @Value[0], SizeOf(Value)) then
+    Wanted := TextIsEqual(@Value[0], 'kvmclock');
+  if Wanted then
+    UsesParavirtualClock := StartParavirtualClock;
+end;
+
 procedure InitializeHal;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
   MeasureTimerFrequencies;
+  ChooseClockSource;
 end;
 
 function HalClockNanoseconds: QWord;
 begin
-  Result := TimeStampClockNanoseconds;
+  if UsesParavirtualClock then
+    Result := ParavirtualClockNanoseconds
+  else
+    Result := TimeStampClockNanoseconds;
 end;
 
 procedure HalStartClockOnThisProcessor;
@@ -191,6 +223,14 @@ begin
   if Count > High(LongWord) then
     Count := High(LongWord);
   SetLocalApicTimerCount(LongWord(Count));
+end;
+
+function HalClockSourceName: PChar;
+begin
+  if UsesParavirtualClock then
+    Result := 'KVM paravirtual clock'
+  else
+    Result := 'time stamp counter';
 end;
 
 procedure HalEndOfInterrupt;
@@ -225,6 +265,8 @@ procedure HalPrepareForSleep;
 begin
   SaveIoApicEntries;
   PauseTimeStampClock;
+  if UsesParavirtualClock then
+    PauseParavirtualClock;
 end;
 
 procedure HalResumeBootProcessor;
@@ -232,6 +274,8 @@ begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
   ContinueTimeStampClock;
+  if UsesParavirtualClock then
+    ContinueParavirtualClock;
   RestoreIoApicEntries;
 end;
 
@@ -313,7 +357,15 @@ begin
   DebugWriteDecimal(TimerTicksPerSecond div 1000);
   DebugWrite(' kHz, time stamp counter ');
   DebugWriteDecimal(CyclesPerSecond div 1000000);
-  DebugWriteLine(' MHz');
+  if CounterIsInvariant then
+    DebugWrite(' MHz (invariant)')
+  else
+    DebugWrite(' MHz (not invariant)');
+  if UsesParavirtualClock then
+    DebugWrite('; clock: KVM paravirtual clock')
+  else
+    DebugWrite('; clock: time stamp counter');
+  DebugWriteLine('');
   DebugEndMessage;
 end;
 
