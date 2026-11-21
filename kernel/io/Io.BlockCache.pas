@@ -25,28 +25,48 @@
   each block device in memory and lets callers read and write any byte
   range, hiding the device's block size.
 
+  Size. The cache starts at its minimum and takes a new line for a miss,
+  rather than reusing the least recently used one, while it is below its
+  maximum and memory is plentiful (twice the low watermark free); both
+  bounds come from the memory free at start and the kernel options
+  (Io.BlockCacheSizing). Under memory pressure its shrinker
+  (Memory.Pressure) gives clean lines back, least recently used first,
+  down to the minimum - and, asked hard, writes dirty lines back first.
+  The lines' records and bookkeeping are in Io.BlockCacheLines.
+
   Writing back. A write only changes the cached line and marks it dirty.
   Dirty lines reach the device when FlushCachedDevice is called (which
   then also flushes the device's own cache - file systems call it
   whenever something must be durable or ordered, as the ext journal does
   around its commit blocks), when the background writer finds them dirty
-  for more than DirtyLifetimeMilliseconds, or before their line is used
-  for another part of a device.
+  for more than DirtyLifetimeMilliseconds, before their line is used for
+  another part of a device, or when the shrinker needs their memory.
+  Dirty lines are kept on a list in the order they became dirty, so a
+  flush writes only those dirty before it began, and never waits for
+  lines dirtied while it runs. Lines are written in batches of one
+  device, in ascending order (which is also the order their locks are
+  taken in).
 
-  Locking. One mutex (the cache lock) protects the hash table, the
-  recency list and which part of which device each line holds; it is
-  never held across device I/O. Each line has a mutex of its own for its
-  data and its I/O, so different devices - and different lines of one
-  device - are read and written in parallel. A thread takes a line's
-  mutex only while it has the line pinned, so an unpinned line's mutex
-  is always free: choosing a line to reuse never waits.
+  Locking. One mutex (the cache lock) protects the hash table, the lists
+  and which part of which device each line holds; it is never held across
+  device I/O. Each line has a mutex of its own for its data and its I/O,
+  so different devices - and different lines of one device - are read
+  and written in parallel. A thread takes a line's mutex only while it
+  has the line pinned, so an unpinned line's mutex is always free:
+  choosing a line to reuse never waits.
 
   Reading ahead. When reads miss on consecutive lines of a device, the
   next ReadAheadLines lines not yet cached are read along with the one
   asked for, in one device request.
 
-  Lines are found through a hash table and reused least recently used
-  first; a dirty line is written back before it is reused.
+  Pages for mappings. PinCachedPage hands out a line's page itself (for
+  file mappings that page in through the cache): whoever maps it takes a
+  reference to the physical page, and the cache never reuses a page
+  someone else holds - it gives such a line a fresh page instead and
+  drops its own reference.
+
+  Discarding. DiscardCachedRange forgets the lines a discarded range
+  covers whole, dirty or not (freed blocks need not be written).
 }
 unit Io.BlockCache;
 
@@ -56,10 +76,41 @@ unit Io.BlockCache;
 interface
 
 uses
+  Memory.Layout,
   Io.BlockDevice;
 
 const
   CacheLineSize = 4096;
+
+type
+  TBlockCacheStatistics = record
+    { Live lines now, the bounds, the dirty ones, and the records
+      allocated for lines (live and spare). }
+    LineCount: QWord;
+    MinimumLines: QWord;
+    MaximumLines: QWord;
+    DirtyLines: QWord;
+    LineRecords: QWord;
+    Hits: QWord;
+    Misses: QWord;
+    ReadAhead: QWord;
+    WrittenBack: QWord;
+    { Lines added as the cache grew, given back under pressure, and
+      forgotten because their blocks were discarded. }
+    LinesGrown: QWord;
+    LinesShrunk: QWord;
+    LinesDiscarded: QWord;
+  end;
+
+  { A pinned line handed out with its page (PinCachedPage). }
+  TCachedPage = record
+    Line: Pointer;
+    Physical: TPhysicalAddress;
+    Data: PByte;
+  end;
+
+  { Runs on the background writer after each of its rounds. }
+  TCacheWriterTask = procedure;
 
 procedure InitializeBlockCache;
 
@@ -86,52 +137,61 @@ function FlushAllCachedDevices: Boolean;
   is unmounted, and after the device was written around the cache). }
 procedure InvalidateCachedDevice(Device: PBlockDevice);
 
+{ Forgets, without writing them back, the lines that lie wholly inside
+  ByteCount bytes at ByteOffset of Device: the range is being discarded.
+  Lines in use at the moment are left alone. }
+procedure DiscardCachedRange(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord);
+
+{ The page holding the 4 KiB at ByteOffset (a multiple of CacheLineSize)
+  of Device, pinned and locked: loaded if Load, else about to be
+  overwritten whole. Hold it briefly; to keep the page (mapped in a
+  process), take a reference to Page.Physical before releasing it.
+  False on a device error, a range past the end, or a device the cache
+  does not take. }
+function PinCachedPage(Device: PBlockDevice; ByteOffset: QWord; Load: Boolean;
+  out Page: TCachedPage): Boolean;
+{ Lets the page go; Dirtied marks it for writing back. }
+procedure ReleaseCachedPage(var Page: TCachedPage; Dirtied: Boolean);
+
+{ Adds a routine for the background writer to run each round (pending
+  discards, for one). }
+procedure RegisterCacheWriterTask(Task: TCacheWriterTask);
+
 { The background writer: a system thread runs this; it never returns. }
 procedure RunBlockCacheWriter(Context: Pointer);
 
+procedure GetBlockCacheStatistics(out Statistics: TBlockCacheStatistics);
 procedure WriteBlockCacheSummary;
 
 implementation
 
 uses
   Runtime.Memory,
-  Runtime.LinkedList,
-  Memory.Layout,
   Memory.PhysicalPages,
   Memory.KernelHeap,
+  Memory.Pressure,
   Kernel.Mutex,
   Kernel.Clock,
+  Kernel.Options,
   Kernel.Scheduler,
   Kernel.Panic,
+  Io.BlockCacheLines,
+  Io.BlockCacheSizing,
   Debug.Output;
 
 const
-  LineCount = 1024;
-  BucketCount = 1024;
   ReadAheadLines = 16;
   WriterIntervalMilliseconds = 500;
   DirtyLifetimeMilliseconds = 1000;
   MaximumTrackedDevices = 64;
   WriteBatchSize = 32;
+  ShrinkBatchSize = 64;
+  { How far up from the least recently used end the shrinker looks for
+    a clean line. }
+  ShrinkScanLimit = 4096;
+  MaximumWriterTasks = 4;
 
 type
-  PCacheLine = ^TCacheLine;
-  TCacheLine = record
-    { Protected by the cache lock. }
-    Device: PBlockDevice;
-    LineNumber: QWord;
-    InHash: Boolean;
-    PinCount: LongInt;
-    NextInBucket: PCacheLine;
-    RecencyLink: TListEntry;
-    { Protected by the line's own lock. }
-    Lock: TMutex;
-    Data: PByte;
-    IsLoaded: Boolean;
-    IsDirty: Boolean;
-    DirtySince: QWord;
-  end;
-
   { Per device: where the last read miss was, to notice sequential reads. }
   TDeviceHistory = record
     Device: PBlockDevice;
@@ -139,48 +199,96 @@ type
   end;
 
 var
-  Lines: PCacheLine;
-  Buckets: array[0..BucketCount - 1] of PCacheLine;
-  { Most recently used at the head, reuse candidates at the tail. }
-  RecencyList: TListEntry;
-  CacheLock: TMutex;
+  CacheSize: TBlockCacheSize;
   Histories: array[0..MaximumTrackedDevices - 1] of TDeviceHistory;
   HitCount: QWord;
   MissCount: QWord;
   ReadAheadCount: QWord;
   WriteBackCount: QWord;
+  GrownCount: QWord;
+  ShrunkCount: QWord;
+  DiscardedCount: QWord;
+  WriterTasks: array[0..MaximumWriterTasks - 1] of TCacheWriterTask;
+  WriterTaskCount: Integer;
 
-function LineFromRecencyLink(Entry: PListEntry): PCacheLine;
+function ShrinkBlockCache(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord; forward;
+
+{ --- Starting ------------------------------------------------------------ }
+
+procedure ReadSizingOptions(out Options: TBlockCacheSizingOptions);
 begin
-  Result := PCacheLine(ContainingRecord(Entry, FieldOffset(PCacheLine(nil)^.RecencyLink)));
+  if not GetKernelOptionNumber('blockcache', Options.MaximumMegabytes) then
+    Options.MaximumMegabytes := 0;
+  if not GetKernelOptionNumber('blockcachemin', Options.MinimumMegabytes) then
+    Options.MinimumMegabytes := 0;
+  if not GetKernelOptionNumber('blockcacheshare', Options.SharePercent) then
+    Options.SharePercent := 0;
 end;
 
-function BucketIndex(Device: PBlockDevice; LineNumber: QWord): Integer;
+{ Fills the cache to its minimum with lines owning nothing yet. }
+procedure AddFirstLines;
 var
-  Mixed: QWord;
+  Spare: PLineChunk;
+  Line: PCacheLine;
+  Physical: TPhysicalAddress;
 begin
-  Mixed := (QWord(Device) shr 4) xor (LineNumber * QWord($9E3779B97F4A7C15));
-  Result := Integer((Mixed shr 32) mod BucketCount);
+  Spare := nil;
+  while LiveLineCount < CacheSize.MinimumLines do
+  begin
+    LockCache;
+    Line := TakeSpareLineLocked;
+    if (Line = nil) and (Spare <> nil) and AddChunkLocked(Spare) then
+    begin
+      Spare := nil;
+      Line := TakeSpareLineLocked;
+    end;
+    if Line = nil then
+    begin
+      UnlockCache;
+      Spare := AllocateLineChunk;
+      if Spare = nil then
+        Break;
+      Continue;
+    end;
+    Physical := AllocatePhysicalPage(PageUsageBlockCache);
+    if Physical = 0 then
+    begin
+      ReturnSpareLineLocked(Line);
+      UnlockCache;
+      Break;
+    end;
+    { Started unowned: in no hash chain, unpinned, the first to reuse. }
+    StartLineLocked(Line, Physical, nil, 0);
+    ForgetLineLocked(Line);
+    Line^.PinCount := 0;
+    UnlockCache;
+  end;
+  if Spare <> nil then
+    FreeUnusedChunk(Spare);
 end;
 
 procedure InitializeBlockCache;
 var
-  LineIndex: Integer;
-  PagePhysical: QWord;
+  Options: TBlockCacheSizingOptions;
+  Physical: TPhysicalMemoryStatistics;
 begin
-  InitializeMutex(CacheLock);
-  InitializeListHead(RecencyList);
-  Lines := PCacheLine(AllocateZeroedKernelMemory(LineCount * SizeOf(TCacheLine)));
-  if Lines = nil then
+  ReadSizingOptions(Options);
+  GetPhysicalMemoryStatistics(Physical);
+  CacheSize := ChooseBlockCacheSize(Physical.FreePages, Options);
+  if not InitializeCacheLines(CacheSize.MaximumLines) then
     KernelPanic('no memory for the block cache');
-  for LineIndex := 0 to LineCount - 1 do
+  AddFirstLines;
+  if LiveLineCount = 0 then
+    KernelPanic('no memory for block cache pages');
+  RegisterShrinker('block cache', @ShrinkBlockCache);
+end;
+
+procedure RegisterCacheWriterTask(Task: TCacheWriterTask);
+begin
+  if WriterTaskCount < MaximumWriterTasks then
   begin
-    PagePhysical := AllocatePhysicalPage(PageUsageBlockCache);
-    if PagePhysical = 0 then
-      KernelPanic('no memory for block cache pages');
-    Lines[LineIndex].Data := PByte(PhysicalToVirtual(PagePhysical));
-    InitializeMutex(Lines[LineIndex].Lock);
-    InsertAtTail(RecencyList, @Lines[LineIndex].RecencyLink);
+    WriterTasks[WriterTaskCount] := Task;
+    Inc(WriterTaskCount);
   end;
 end;
 
@@ -215,85 +323,32 @@ begin
     Result := Device^.BlockCount - FirstBlock;
 end;
 
-{ --- The hash table and the recency list (cache lock held) -------------- }
-
-function FindLineLocked(Device: PBlockDevice; LineNumber: QWord): PCacheLine;
-begin
-  Result := Buckets[BucketIndex(Device, LineNumber)];
-  while (Result <> nil) and ((Result^.Device <> Device) or (Result^.LineNumber <> LineNumber)) do
-    Result := Result^.NextInBucket;
-end;
-
-procedure RemoveFromBucketLocked(Line: PCacheLine);
-var
-  Bucket: Integer;
-  Previous: PCacheLine;
-  Current: PCacheLine;
-begin
-  if not Line^.InHash then
-    Exit;
-  Bucket := BucketIndex(Line^.Device, Line^.LineNumber);
-  Previous := nil;
-  Current := Buckets[Bucket];
-  while (Current <> nil) and (Current <> Line) do
-  begin
-    Previous := Current;
-    Current := Current^.NextInBucket;
-  end;
-  if Current = nil then
-    Exit;
-  if Previous = nil then
-    Buckets[Bucket] := Line^.NextInBucket
-  else
-    Previous^.NextInBucket := Line^.NextInBucket;
-  Line^.InHash := False;
-end;
-
-procedure InsertIntoBucketLocked(Line: PCacheLine; Device: PBlockDevice; LineNumber: QWord);
-var
-  Bucket: Integer;
-begin
-  Line^.Device := Device;
-  Line^.LineNumber := LineNumber;
-  Bucket := BucketIndex(Device, LineNumber);
-  Line^.NextInBucket := Buckets[Bucket];
-  Buckets[Bucket] := Line;
-  Line^.InHash := True;
-end;
-
-procedure MarkMostRecentlyUsedLocked(Line: PCacheLine);
-begin
-  RemoveListEntry(@Line^.RecencyLink);
-  InsertAtHead(RecencyList, @Line^.RecencyLink);
-end;
-
-{ The least recently used line nobody has pinned; Dirty tells whether it
-  must be written back first. nil if every line is pinned. }
-function ReusableLineLocked(out Dirty: Boolean): PCacheLine;
-var
-  Entry: PListEntry;
-  Line: PCacheLine;
-begin
-  Entry := RecencyList.Previous;
-  while Entry <> @RecencyList do
-  begin
-    Line := LineFromRecencyLink(Entry);
-    if Line^.PinCount = 0 then
-    begin
-      { Unpinned, so nobody holds its lock: IsDirty can be read. }
-      Dirty := Line^.IsDirty;
-      Exit(Line);
-    end;
-    Entry := Entry^.Previous;
-  end;
-  Result := nil;
-end;
+{ --- Pinning ------------------------------------------------------------- }
 
 procedure UnpinLine(Line: PCacheLine);
 begin
-  AcquireMutex(CacheLock);
+  LockCache;
   Dec(Line^.PinCount);
-  ReleaseMutex(CacheLock);
+  UnlockCache;
+end;
+
+{ The line's data became dirty or clean (its lock held). }
+procedure MarkLineDirty(Line: PCacheLine);
+begin
+  if Line^.IsDirty then
+    Exit;
+  Line^.IsDirty := True;
+  LockCache;
+  NoteLineDirtiedLocked(Line, ClockTickCount);
+  UnlockCache;
+end;
+
+procedure MarkLineClean(Line: PCacheLine);
+begin
+  Line^.IsDirty := False;
+  LockCache;
+  NoteLineCleanedLocked(Line);
+  UnlockCache;
 end;
 
 { --- Device I/O for one line (line lock held) --------------------------- }
@@ -319,14 +374,14 @@ begin
     would only have them tried again and again. }
   if BlockDeviceIsRemoved(Line^.Device) then
   begin
-    Line^.IsDirty := False;
+    MarkLineClean(Line);
     Exit(False);
   end;
   Result := WriteBlocks(Line^.Device, Line^.LineNumber * BlocksPerLine(Line^.Device),
     LongWord(BlocksInLine(Line^.Device, Line^.LineNumber)), Line^.Data);
   if Result then
   begin
-    Line^.IsDirty := False;
+    MarkLineClean(Line);
     Inc(WriteBackCount);
   end;
 end;
@@ -340,7 +395,74 @@ begin
   UnpinLine(Line);
 end;
 
+{ --- Growing ------------------------------------------------------------- }
+
+{ True while the cache may take another line: below its maximum, with
+  twice the low watermark of memory free. }
+function CacheMayGrow: Boolean;
+var
+  Physical: TPhysicalMemoryStatistics;
+  Low: QWord;
+  Critical: QWord;
+begin
+  if LiveLineCount >= CacheSize.MaximumLines then
+    Exit(False);
+  GetPhysicalMemoryStatistics(Physical);
+  GetMemoryWatermarks(Low, Critical);
+  Result := Physical.FreePages > 2 * Low;
+end;
+
+{ A new line for LineNumber of Device, pinned (cache lock held); nil if
+  there is no spare record (NeedsChunk: allocate one and try again) or
+  no page. Spare, if not nil, is a chunk to add when records run out. }
+function GrowLineLocked(Device: PBlockDevice; LineNumber: QWord; var Spare: PLineChunk;
+  out NeedsChunk: Boolean): PCacheLine;
+var
+  Physical: TPhysicalAddress;
+begin
+  NeedsChunk := False;
+  Result := TakeSpareLineLocked;
+  if (Result = nil) and (Spare <> nil) and AddChunkLocked(Spare) then
+  begin
+    Spare := nil;
+    Result := TakeSpareLineLocked;
+  end;
+  if Result = nil then
+  begin
+    NeedsChunk := Spare = nil;
+    Exit;
+  end;
+  Physical := AllocatePhysicalPage(PageUsageBlockCache);
+  if Physical = 0 then
+  begin
+    ReturnSpareLineLocked(Result);
+    Exit(nil);
+  end;
+  StartLineLocked(Result, Physical, Device, LineNumber);
+  Inc(GrownCount);
+end;
+
 { --- Finding lines ------------------------------------------------------- }
+
+{ Victim (unpinned, clean) gets a page nobody else holds: False if it
+  was retired instead (no memory for a fresh one); OldPage is a page to
+  free once the cache lock is released (0 for none). }
+function TakeOwnPageLocked(Victim: PCacheLine; out OldPage: TPhysicalAddress): Boolean;
+var
+  Physical: TPhysicalAddress;
+begin
+  OldPage := 0;
+  Result := True;
+  if not PhysicalPageIsShared(Victim^.DataPhysical) then
+    Exit;
+  Physical := AllocatePhysicalPage(PageUsageBlockCache);
+  if Physical = 0 then
+  begin
+    OldPage := RetireLineLocked(Victim);
+    Exit(False);
+  end;
+  OldPage := ReplacePageLocked(Victim, Physical);
+end;
 
 { The line for LineNumber of Device, pinned (not locked, perhaps not
   loaded yet). Fresh tells whether it was not cached; with OnlyIfAbsent
@@ -348,12 +470,19 @@ end;
 function PinLine(Device: PBlockDevice; LineNumber: QWord; OnlyIfAbsent: Boolean;
   out Fresh: Boolean): PCacheLine;
 var
-  Dirty: Boolean;
   Victim: PCacheLine;
+  Spare: PLineChunk;
+  ChunkTried: Boolean;
+  NeedsChunk: Boolean;
+  OldPage: TPhysicalAddress;
+  Usable: Boolean;
 begin
   Fresh := False;
+  Spare := nil;
+  ChunkTried := False;
+  Result := nil;
   repeat
-    AcquireMutex(CacheLock);
+    LockCache;
     Result := FindLineLocked(Device, LineNumber);
     if Result <> nil then
     begin
@@ -364,32 +493,65 @@ begin
         Inc(Result^.PinCount);
         MarkMostRecentlyUsedLocked(Result);
       end;
-      ReleaseMutex(CacheLock);
-      Exit;
+      UnlockCache;
+      Break;
     end;
-    Victim := ReusableLineLocked(Dirty);
+
+    if CacheMayGrow then
+    begin
+      Result := GrowLineLocked(Device, LineNumber, Spare, NeedsChunk);
+      if Result <> nil then
+      begin
+        UnlockCache;
+        Fresh := True;
+        Break;
+      end;
+      if NeedsChunk and not ChunkTried then
+      begin
+        { Chunks are allocated without the cache lock held. }
+        UnlockCache;
+        ChunkTried := True;
+        Spare := AllocateLineChunk;
+        Continue;
+      end;
+    end;
+
+    Victim := ReusableLineLocked(False, High(QWord));
     if Victim = nil then
     begin
-      ReleaseMutex(CacheLock);
-      Exit(nil);
+      UnlockCache;
+      Break;
     end;
-    Inc(Victim^.PinCount);
-    if not Dirty then
+    if Victim^.IsDirty then
     begin
-      RemoveFromBucketLocked(Victim);
-      InsertIntoBucketLocked(Victim, Device, LineNumber);
+      { Written back where it is (so readers of it still find it), then
+        chosen again. }
+      Inc(Victim^.PinCount);
+      UnlockCache;
+      if not CleanPinnedLine(Victim) then
+        Break;
+      Continue;
+    end;
+    Usable := TakeOwnPageLocked(Victim, OldPage);
+    if Usable then
+    begin
+      Inc(Victim^.PinCount);
+      ReassignLineLocked(Victim, Device, LineNumber);
       Victim^.IsLoaded := False;
       MarkMostRecentlyUsedLocked(Victim);
-      ReleaseMutex(CacheLock);
-      Fresh := True;
-      Exit(Victim);
     end;
-    { Written back where it is (so readers of it still find it), then
-      chosen again. }
-    ReleaseMutex(CacheLock);
-    if not CleanPinnedLine(Victim) then
-      Exit(nil);
+    UnlockCache;
+    if OldPage <> 0 then
+      FreePhysicalPage(OldPage);
+    if Usable then
+    begin
+      Fresh := True;
+      Result := Victim;
+      Break;
+    end;
   until False;
+  if Spare <> nil then
+    FreeUnusedChunk(Spare);
 end;
 
 function DeviceHistoryIndex(Device: PBlockDevice): Integer;
@@ -414,12 +576,12 @@ function MissIsSequential(Device: PBlockDevice; LineNumber: QWord): Boolean;
 var
   Index: Integer;
 begin
-  AcquireMutex(CacheLock);
+  LockCache;
   Index := DeviceHistoryIndex(Device);
   Result := (Index >= 0) and (Histories[Index].LastMissLine + 1 = LineNumber);
   if Index >= 0 then
     Histories[Index].LastMissLine := LineNumber;
-  ReleaseMutex(CacheLock);
+  UnlockCache;
 end;
 
 { Loads Line (locked, not loaded) together with the lines after it that
@@ -591,9 +753,7 @@ begin
     else
       ZeroMemory(Line^.Data + OffsetInLine, ChunkBytes);
     Line^.IsLoaded := True;
-    if not Line^.IsDirty then
-      Line^.DirtySince := ClockTickCount;
-    Line^.IsDirty := True;
+    MarkLineDirty(Line);
     ReleaseLine(Line);
     ByteOffset := ByteOffset + ChunkBytes;
     ByteCount := ByteCount - ChunkBytes;
@@ -614,6 +774,43 @@ begin
   Result := WriteIntoCache(Device, ByteOffset, ByteCount, nil);
 end;
 
+function PinCachedPage(Device: PBlockDevice; ByteOffset: QWord; Load: Boolean;
+  out Page: TCachedPage): Boolean;
+var
+  Line: PCacheLine;
+begin
+  Page.Line := nil;
+  Page.Physical := 0;
+  Page.Data := nil;
+  if ((ByteOffset mod CacheLineSize) <> 0) or not RangeIsValid(Device, ByteOffset, 1) then
+    Exit(False);
+  Line := AcquireLine(Device, ByteOffset div CacheLineSize, Load);
+  if Line = nil then
+    Exit(False);
+  if not Load and not Line^.IsLoaded then
+  begin
+    ZeroMemory(Line^.Data, CacheLineSize);
+    Line^.IsLoaded := True;
+  end;
+  Page.Line := Line;
+  Page.Physical := Line^.DataPhysical;
+  Page.Data := Line^.Data;
+  Result := True;
+end;
+
+procedure ReleaseCachedPage(var Page: TCachedPage; Dirtied: Boolean);
+var
+  Line: PCacheLine;
+begin
+  Line := PCacheLine(Page.Line);
+  if Line = nil then
+    Exit;
+  if Dirtied then
+    MarkLineDirty(Line);
+  ReleaseLine(Line);
+  Page.Line := nil;
+end;
+
 { --- Writing back -------------------------------------------------------- }
 
 type
@@ -624,22 +821,18 @@ type
     Count: Integer;
   end;
 
-{ Writes the batch's lines back in one go and lets them go. }
-function WriteBatch(var Batch: TWriteBatch): Boolean;
+{ Writes the batch's lines back in one go (through Writes, room for
+  WriteBatchSize runs, or one at a time if that is nil) and lets them go. }
+function WriteBatch(var Batch: TWriteBatch; Writes: PBlockWrite): Boolean;
 var
-  Writes: PBlockWrite;
   Index: Integer;
   Line: PCacheLine;
 begin
   Result := True;
   if Batch.Count = 0 then
     Exit;
-  Writes := nil;
-  if not BlockDeviceIsRemoved(Batch.Device) then
-    Writes := PBlockWrite(AllocateKernelMemory(Batch.Count * SizeOf(TBlockWrite)));
-  if Writes = nil then
+  if (Writes = nil) or BlockDeviceIsRemoved(Batch.Device) then
   begin
-    { One at a time instead. }
     for Index := 0 to Batch.Count - 1 do
       if not WriteBackLine(Batch.Lines[Index]) then
         Result := False;
@@ -655,58 +848,124 @@ begin
     end;
     Result := WriteBlocksTogether(Batch.Device, Writes, Batch.Count);
     if Result then
+    begin
+      LockCache;
       for Index := 0 to Batch.Count - 1 do
       begin
         Batch.Lines[Index]^.IsDirty := False;
-        Inc(WriteBackCount);
+        NoteLineCleanedLocked(Batch.Lines[Index]);
       end;
-    FreeKernelMemory(Writes);
+      UnlockCache;
+      Inc(WriteBackCount, Batch.Count);
+    end;
   end;
   for Index := 0 to Batch.Count - 1 do
     ReleaseLine(Batch.Lines[Index]);
   Batch.Count := 0;
 end;
 
-{ Writes back the dirty lines of Device (all devices if nil) that have
-  been dirty since at least DirtyBefore ticks, up to WriteBatchSize of a
-  device at once. }
-function WriteBackLines(Device: PBlockDevice; DirtyBefore: QWord): Boolean;
+{ Sorts the batch by line number: the order line locks are taken in. }
+procedure SortBatch(var Batch: TWriteBatch);
 var
-  LineIndex: Integer;
-  Line: PCacheLine;
-  Wanted: Boolean;
-  Batch: TWriteBatch;
+  Index: Integer;
+  Place: Integer;
+  Moving: PCacheLine;
 begin
-  Result := True;
+  for Index := 1 to Batch.Count - 1 do
+  begin
+    Moving := Batch.Lines[Index];
+    Place := Index;
+    while (Place > 0) and (Batch.Lines[Place - 1]^.LineNumber > Moving^.LineNumber) do
+    begin
+      Batch.Lines[Place] := Batch.Lines[Place - 1];
+      Dec(Place);
+    end;
+    Batch.Lines[Place] := Moving;
+  end;
+end;
+
+{ Pins up to WriteBatchSize dirty lines of one device (of Device, if not
+  nil) that became dirty before sequence StopSequence and at or before
+  tick DirtyBefore. }
+procedure GatherBatch(Device: PBlockDevice; StopSequence, DirtyBefore: QWord; out Batch: TWriteBatch);
+var
+  Line: PCacheLine;
+begin
   Batch.Count := 0;
   Batch.Device := nil;
-  for LineIndex := 0 to LineCount - 1 do
+  LockCache;
+  Line := FirstDirtyLineLocked;
+  while (Line <> nil) and (Batch.Count < WriteBatchSize) do
   begin
-    Line := @Lines[LineIndex];
-    AcquireMutex(CacheLock);
-    { IsDirty is only a hint here; it is checked again under the line's
-      lock. Lines in the batch are pinned, so never reused meanwhile. }
-    Wanted := Line^.InHash and Line^.IsDirty and ((Device = nil) or (Line^.Device = Device));
-    if Wanted then
-      Inc(Line^.PinCount);
-    ReleaseMutex(CacheLock);
-    if not Wanted then
-      Continue;
-    AcquireMutex(Line^.Lock);
-    if not Line^.IsDirty or (Line^.DirtySince > DirtyBefore) then
+    { The list is in the order lines became dirty. }
+    if (Line^.DirtySequence >= StopSequence) or (Line^.DirtySince > DirtyBefore) then
+      Break;
+    if ((Device = nil) or (Line^.Device = Device)) and
+       ((Batch.Device = nil) or (Line^.Device = Batch.Device)) then
     begin
-      ReleaseLine(Line);
-      Continue;
+      Inc(Line^.PinCount);
+      Batch.Device := Line^.Device;
+      Batch.Lines[Batch.Count] := Line;
+      Inc(Batch.Count);
     end;
-    if (Batch.Count > 0) and ((Batch.Device <> Line^.Device) or (Batch.Count = WriteBatchSize)) then
-      if not WriteBatch(Batch) then
-        Result := False;
-    Batch.Device := Line^.Device;
-    Batch.Lines[Batch.Count] := Line;
-    Inc(Batch.Count);
+    Line := NextDirtyLineLocked(Line);
   end;
-  if not WriteBatch(Batch) then
-    Result := False;
+  UnlockCache;
+end;
+
+{ Locks the batch's lines; those another thread wrote back meanwhile are
+  let go. }
+procedure LockBatch(var Batch: TWriteBatch);
+var
+  Index: Integer;
+  Kept: Integer;
+  Line: PCacheLine;
+begin
+  SortBatch(Batch);
+  Kept := 0;
+  for Index := 0 to Batch.Count - 1 do
+  begin
+    Line := Batch.Lines[Index];
+    AcquireMutex(Line^.Lock);
+    if Line^.IsDirty then
+    begin
+      Batch.Lines[Kept] := Line;
+      Inc(Kept);
+    end
+    else
+      ReleaseLine(Line);
+  end;
+  Batch.Count := Kept;
+end;
+
+{ Writes back the dirty lines of Device (all devices if nil) that have
+  been dirty since at least DirtyBefore ticks and were dirty when this
+  began, WriteBatchSize of a device at once. }
+function WriteBackLines(Device: PBlockDevice; DirtyBefore: QWord): Boolean;
+var
+  Batch: TWriteBatch;
+  Writes: PBlockWrite;
+  StopSequence: QWord;
+begin
+  Result := True;
+  { Allocated before any line is locked: an allocation that has to
+    reclaim memory may ask this cache to write lines back. }
+  Writes := PBlockWrite(AllocateKernelMemory(WriteBatchSize * SizeOf(TBlockWrite)));
+  LockCache;
+  StopSequence := NextDirtySequenceLocked;
+  UnlockCache;
+  repeat
+    GatherBatch(Device, StopSequence, DirtyBefore, Batch);
+    if Batch.Count = 0 then
+      Break;
+    LockBatch(Batch);
+    if not WriteBatch(Batch, Writes) then
+    begin
+      Result := False;
+      Break;
+    end;
+  until False;
+  FreeKernelMemory(Writes);
 end;
 
 function FlushCachedDevice(Device: PBlockDevice): Boolean;
@@ -720,7 +979,6 @@ var
   Index: Integer;
   Device: PBlockDevice;
 begin
-
   Result := WriteBackLines(nil, High(QWord));
   for Index := 0 to BlockDeviceCount - 1 do
   begin
@@ -731,27 +989,133 @@ begin
   end;
 end;
 
+{ Line (live, unpinned) holds nothing any more: reused first (cache
+  lock held). }
+procedure DropLineLocked(Line: PCacheLine);
+begin
+  ForgetLineLocked(Line);
+  NoteLineCleanedLocked(Line);
+  Line^.IsLoaded := False;
+  Line^.IsDirty := False;
+end;
+
 procedure InvalidateCachedDevice(Device: PBlockDevice);
 var
-  LineIndex: Integer;
+  Slot: QWord;
+  Line: PCacheLine;
 begin
   WriteBackLines(Device, High(QWord));
-  AcquireMutex(CacheLock);
-  for LineIndex := 0 to LineCount - 1 do
-    if Lines[LineIndex].InHash and (Lines[LineIndex].Device = Device) and
-       (Lines[LineIndex].PinCount = 0) then
-    begin
-      RemoveFromBucketLocked(@Lines[LineIndex]);
-      Lines[LineIndex].IsLoaded := False;
-      Lines[LineIndex].IsDirty := False;
-    end;
-  ReleaseMutex(CacheLock);
+  LockCache;
+  Slot := 0;
+  while Slot < SlotCountLocked do
+  begin
+    Line := LineAtSlotLocked(Slot);
+    if (Line <> nil) and Line^.InHash and (Line^.Device = Device) and (Line^.PinCount = 0) then
+      DropLineLocked(Line);
+    Inc(Slot);
+  end;
+  UnlockCache;
 end;
+
+procedure DiscardCachedRange(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord);
+var
+  FirstLine: QWord;
+  EndLine: QWord;
+  LineNumber: QWord;
+  Slot: QWord;
+  Line: PCacheLine;
+begin
+  if (ByteCount = 0) or not DeviceIsCacheable(Device) then
+    Exit;
+  FirstLine := (ByteOffset + CacheLineSize - 1) div CacheLineSize;
+  EndLine := (ByteOffset + ByteCount) div CacheLineSize;
+  if EndLine <= FirstLine then
+    Exit;
+  LockCache;
+  if EndLine - FirstLine <= LiveLineCount then
+  begin
+    LineNumber := FirstLine;
+    while LineNumber < EndLine do
+    begin
+      Line := FindLineLocked(Device, LineNumber);
+      if (Line <> nil) and (Line^.PinCount = 0) then
+      begin
+        DropLineLocked(Line);
+        Inc(DiscardedCount);
+      end;
+      Inc(LineNumber);
+    end;
+  end
+  else
+  begin
+    Slot := 0;
+    while Slot < SlotCountLocked do
+    begin
+      Line := LineAtSlotLocked(Slot);
+      if (Line <> nil) and Line^.InHash and (Line^.Device = Device) and (Line^.PinCount = 0) and
+         (Line^.LineNumber >= FirstLine) and (Line^.LineNumber < EndLine) then
+      begin
+        DropLineLocked(Line);
+        Inc(DiscardedCount);
+      end;
+      Inc(Slot);
+    end;
+  end;
+  UnlockCache;
+end;
+
+{ --- Shrinking ------------------------------------------------------------ }
+
+{ Gives back up to Wanted clean lines, least recently used first, never
+  below the minimum; returns how many. }
+function RetireCleanLines(Wanted: QWord): QWord;
+var
+  Pages: array[0..ShrinkBatchSize - 1] of TPhysicalAddress;
+  Count: Integer;
+  Index: Integer;
+  Line: PCacheLine;
+begin
+  Result := 0;
+  while Result < Wanted do
+  begin
+    Count := 0;
+    LockCache;
+    while (Count < ShrinkBatchSize) and (Result + QWord(Count) < Wanted) and
+          (LiveLineCount > CacheSize.MinimumLines) do
+    begin
+      Line := ReusableLineLocked(True, ShrinkScanLimit);
+      if Line = nil then
+        Break;
+      Pages[Count] := RetireLineLocked(Line);
+      Inc(Count);
+    end;
+    UnlockCache;
+    for Index := 0 to Count - 1 do
+      FreePhysicalPage(Pages[Index]);
+    Result := Result + QWord(Count);
+    if Count = 0 then
+      Break;
+  end;
+  Inc(ShrunkCount, Result);
+end;
+
+function ShrinkBlockCache(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord;
+begin
+  Result := RetireCleanLines(PagesWanted);
+  if (Result < PagesWanted) and (Urgency = ShrinkHard) and (DirtyLineCount > 0) then
+  begin
+    WriteBackLines(nil, High(QWord));
+    Result := Result + RetireCleanLines(PagesWanted - Result);
+  end;
+end;
+
+{ --- The writer and reports ---------------------------------------------- }
 
 procedure RunBlockCacheWriter(Context: Pointer);
 var
   Now: QWord;
   Lifetime: QWord;
+  Index: Integer;
 begin
   Lifetime := MillisecondsToTicks(DirtyLifetimeMilliseconds);
   while True do
@@ -760,25 +1124,68 @@ begin
     Now := ClockTickCount;
     if Now > Lifetime then
       WriteBackLines(nil, Now - Lifetime);
+    for Index := 0 to WriterTaskCount - 1 do
+      WriterTasks[Index]();
   end;
 end;
 
-procedure WriteBlockCacheSummary;
+procedure GetBlockCacheStatistics(out Statistics: TBlockCacheStatistics);
 begin
+  Statistics.LineCount := LiveLineCount;
+  Statistics.MinimumLines := CacheSize.MinimumLines;
+  Statistics.MaximumLines := CacheSize.MaximumLines;
+  Statistics.DirtyLines := DirtyLineCount;
+  Statistics.LineRecords := LineRecordCount;
+  Statistics.Hits := HitCount;
+  Statistics.Misses := MissCount;
+  Statistics.ReadAhead := ReadAheadCount;
+  Statistics.WrittenBack := WriteBackCount;
+  Statistics.LinesGrown := GrownCount;
+  Statistics.LinesShrunk := ShrunkCount;
+  Statistics.LinesDiscarded := DiscardedCount;
+end;
+
+procedure WriteBlockCacheSummary;
+var
+  Lookups: QWord;
+begin
+  Lookups := HitCount + MissCount;
   DebugBeginMessage;
   DebugWriteTag('cache');
-  DebugWriteDecimal(LineCount);
+  DebugWriteDecimal(LiveLineCount);
   DebugWrite(' lines of ');
   DebugWriteDecimal(CacheLineSize);
-  DebugWrite(' bytes, ');
+  DebugWrite(' bytes (');
+  DebugWriteSize(LiveLineCount * CacheLineSize);
+  DebugWrite(', ');
+  DebugWriteSize(CacheSize.MinimumLines * CacheLineSize);
+  DebugWrite(' to ');
+  DebugWriteSize(CacheSize.MaximumLines * CacheLineSize);
+  DebugWrite('), ');
+  DebugWriteDecimal(DirtyLineCount);
+  DebugWriteLine(' dirty');
+  DebugWriteTag('cache');
   DebugWriteDecimal(HitCount);
   DebugWrite(' hits, ');
   DebugWriteDecimal(MissCount);
-  DebugWrite(' misses, ');
+  DebugWrite(' misses');
+  if Lookups > 0 then
+  begin
+    DebugWrite(' (');
+    DebugWriteDecimal(HitCount * 100 div Lookups);
+    DebugWrite('% hits)');
+  end;
+  DebugWrite(', ');
   DebugWriteDecimal(ReadAheadCount);
   DebugWrite(' read ahead, ');
   DebugWriteDecimal(WriteBackCount);
-  DebugWriteLine(' written back');
+  DebugWrite(' written back, ');
+  DebugWriteDecimal(GrownCount);
+  DebugWrite(' grown, ');
+  DebugWriteDecimal(ShrunkCount);
+  DebugWrite(' shrunk, ');
+  DebugWriteDecimal(DiscardedCount);
+  DebugWriteLine(' discarded');
   DebugEndMessage;
 end;
 

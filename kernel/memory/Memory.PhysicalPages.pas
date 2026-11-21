@@ -37,6 +37,16 @@
   With the heap checks' quarantine on ("heapchecks"), a freed page is
   filled and held back from reuse for a while, and checked for writes
   after the free when it is let go (Memory.PageQuarantine).
+
+  Memory pressure. Two watermarks of free pages, low and critical, are
+  set from the RAM there is (SetMemoryWatermarks changes them). When an
+  allocation leaves fewer free pages than the low watermark, or fails,
+  the pressure callback runs once (outside the allocator's lock, at
+  whatever level the allocation ran) until the pressure is acknowledged
+  (AcknowledgeMemoryPressure); Memory.Pressure registers it, and wakes
+  the thread that asks the caches to shrink. Every failed allocation is
+  counted, so a caller can tell whether a failure was for want of
+  memory (FailedPageAllocationCount before and after).
 }
 unit Memory.PhysicalPages;
 
@@ -85,6 +95,16 @@ type
     HighestPageFrameNumber: QWord;
   end;
 
+  { How short of free pages the system is: above the low watermark,
+    below it, below the critical one. }
+  TMemoryPressureLevel = (MemoryPressureNone, MemoryPressureLow, MemoryPressureCritical);
+
+  { Runs when free pages fall below the low watermark or an allocation
+    fails, once until AcknowledgeMemoryPressure. Any priority level up to
+    DispatchLevel (it may be called with spin locks held elsewhere), so
+    it may only queue a deferred call or set a flag. }
+  TMemoryPressureCallback = procedure;
+
 procedure InitializePhysicalMemory(const BootInformation: TBootInformation);
 
 { Returns the physical address of a free page, or zero if none is left. }
@@ -132,6 +152,18 @@ procedure WritePhysicalMemorySummary;
   that is no longer the fill, or NoDamage. }
 function QuarantinedPageDamage(PhysicalAddress: TPhysicalAddress): Int64;
 
+{ The free page counts below which memory is short (low) and very short
+  (critical); Critical is kept at most Low. }
+procedure SetMemoryWatermarks(LowPages, CriticalPages: QWord);
+procedure GetMemoryWatermarks(out LowPages, CriticalPages: QWord);
+function CurrentMemoryPressure: TMemoryPressureLevel;
+procedure SetMemoryPressureCallback(Callback: TMemoryPressureCallback);
+{ The pressure was dealt with: the callback runs again the next time an
+  allocation finds memory short. }
+procedure AcknowledgeMemoryPressure;
+{ Allocations that found no free page, since the start. }
+function FailedPageAllocationCount: QWord;
+
 implementation
 
 uses
@@ -171,6 +203,12 @@ var
   UsageCounts: TPageUsageCounts;
   { Freed pages held back (under the database lock). }
   FreedPageQuarantine: TPageQuarantine;
+  { Memory pressure (see the unit comment). }
+  LowWatermarkPages: QWord;
+  CriticalWatermarkPages: QWord;
+  PressureCallback: TMemoryPressureCallback;
+  PressureSignaled: Boolean;
+  FailedAllocations: QWord;
 
 { Counts every page's use once the database is built; from then on the
   counts follow each change. }
@@ -328,6 +366,24 @@ begin
   end;
 end;
 
+{ The low watermark is 1/64 of RAM, at least 1 MiB and at most 64 MiB;
+  the critical one half of it. }
+procedure ChooseDefaultWatermarks;
+const
+  SmallestLowWatermark = (1024 * 1024) div PageSize;
+  LargestLowWatermark = (64 * 1024 * 1024) div PageSize;
+var
+  Low: QWord;
+begin
+  Low := UsablePageCount div 64;
+  if Low < SmallestLowWatermark then
+    Low := SmallestLowWatermark;
+  if Low > LargestLowWatermark then
+    Low := LargestLowWatermark;
+  LowWatermarkPages := Low;
+  CriticalWatermarkPages := Low div 2;
+end;
+
 procedure InitializePhysicalMemory(const BootInformation: TBootInformation);
 var
   DatabaseBytes: QWord;
@@ -372,6 +428,7 @@ begin
   BuildFreeList;
   CountFrameUsages;
   ClearPageQuarantine(FreedPageQuarantine);
+  ChooseDefaultWatermarks;
 end;
 
 { A quarantined frame, checked, goes to the free list (database lock
@@ -388,11 +445,38 @@ begin
   PushFreeFrame(Frame);
 end;
 
+{ True if the pressure callback should run now: memory is short (or an
+  allocation failed) and it has not run since the last acknowledgement
+  (database lock held). }
+function ShouldSignalPressureLocked(Failed: Boolean): Boolean;
+begin
+  if Failed then
+    Inc(FailedAllocations);
+  Result := False;
+  if PressureSignaled or not Assigned(PressureCallback) then
+    Exit;
+  if Failed or (FreePageCount < LowWatermarkPages) then
+  begin
+    PressureSignaled := True;
+    Result := True;
+  end;
+end;
+
+procedure SignalPressure;
+var
+  Callback: TMemoryPressureCallback;
+begin
+  Callback := PressureCallback;
+  if Assigned(Callback) then
+    Callback;
+end;
+
 function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
   Released: QWord;
+  MustSignal: Boolean;
 begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
   { Out of free pages: the oldest held back one goes first. }
@@ -402,7 +486,10 @@ begin
   Frame := FreeListHead;
   if Frame = NoNextFrame then
   begin
+    MustSignal := ShouldSignalPressureLocked(True);
     ReleaseSpinLock(DatabaseLock, PreviousLevel);
+    if MustSignal then
+      SignalPressure;
     Exit(0);
   end;
 
@@ -411,8 +498,11 @@ begin
   ChangeFrameUsage(Frame, Usage);
   FrameDatabase[Frame].ExtraReferences := 0;
   Dec(FreePageCount);
+  MustSignal := ShouldSignalPressureLocked(False);
 
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if MustSignal then
+    SignalPressure;
   Result := Frame shl PageShift;
 end;
 
@@ -428,6 +518,7 @@ var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
   Previous: QWord;
+  MustSignal: Boolean;
 begin
   Result := 0;
   PreviousLevel := AcquireSpinLock(DatabaseLock);
@@ -451,7 +542,10 @@ begin
     Dec(FreePageCount);
     Result := Frame shl PageShift;
   end;
+  MustSignal := ShouldSignalPressureLocked(Result = 0);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if MustSignal then
+    SignalPressure;
   if Result <> 0 then
     ZeroMemory(PhysicalToVirtual(Result), PageSize);
 end;
@@ -518,6 +612,7 @@ var
   PreviousLevel: TPriorityLevel;
   First: QWord;
   Frame: QWord;
+  MustSignal: Boolean;
 begin
   Result := 0;
   if PageCount = 0 then
@@ -534,7 +629,10 @@ begin
     end;
     Result := First shl PageShift;
   end;
+  MustSignal := ShouldSignalPressureLocked(Result = 0);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+  if MustSignal then
+    SignalPressure;
   if Result <> 0 then
     ZeroMemory(PhysicalToVirtual(Result), PageCount * PageSize);
 end;
@@ -712,6 +810,56 @@ begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
   Counts := UsageCounts;
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+procedure SetMemoryWatermarks(LowPages, CriticalPages: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if CriticalPages > LowPages then
+    CriticalPages := LowPages;
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  LowWatermarkPages := LowPages;
+  CriticalWatermarkPages := CriticalPages;
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+procedure GetMemoryWatermarks(out LowPages, CriticalPages: QWord);
+begin
+  LowPages := LowWatermarkPages;
+  CriticalPages := CriticalWatermarkPages;
+end;
+
+function CurrentMemoryPressure: TMemoryPressureLevel;
+var
+  FreeNow: QWord;
+begin
+  FreeNow := FreePageCount;
+  if FreeNow < CriticalWatermarkPages then
+    Result := MemoryPressureCritical
+  else if FreeNow < LowWatermarkPages then
+    Result := MemoryPressureLow
+  else
+    Result := MemoryPressureNone;
+end;
+
+procedure SetMemoryPressureCallback(Callback: TMemoryPressureCallback);
+begin
+  PressureCallback := Callback;
+end;
+
+procedure AcknowledgeMemoryPressure;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  PressureSignaled := False;
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function FailedPageAllocationCount: QWord;
+begin
+  Result := FailedAllocations;
 end;
 
 procedure WritePhysicalMemorySummary;
