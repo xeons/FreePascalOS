@@ -11262,7 +11262,11 @@ and document.readyState is the document's (`ReadyStateFromDocument`).
 While a parser-inserted script runs, document.write goes to the loader's
 parser (`AttachParser`). Module scripts run through the engine's
 `EvaluateModule` with a resolver (specifiers against the importing
-module's URL; bare ones need an import map, not read yet) and a fetcher
+module's URL; bare ones through the document's import maps,
+`Web.Script.ImportMaps`: imports, "/"-ending prefixes, scopes with the
+most specific covering the referrer first, null entries blocking a
+specifier, maps merged as they arrive with entries already there kept;
+the JSON read with the engine's JSON.parse) and a fetcher
 that asks the loader (`TScriptScheduler.FetchScript`: CORS, UTF-8), one
 pair per context. The loop's microtask checkpoint runs every live
 context's jobs. The environment: timers as the loop's delayed tasks
@@ -11436,7 +11440,8 @@ error) over `TScriptEnvironment`:
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
-| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects, client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 71-traversal | NodeFilter, TreeWalker and NodeIterator (createTreeWalker, createNodeIterator) over the bindings' own tree getters, so a polyfill that redefines firstChild does not change what they walk |
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
@@ -11573,7 +11578,7 @@ declaration block in place (the index points at it). Removed rules,
 replaced selectors and sheets of removed or reparsed `<style>` elements
 are retired and freed once the engine has indexed again.
 
-**Not done yet**: import maps, ErrorEvent and onerror's arguments, the
+**Not done yet**: custom elements, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), the unhandledrejection
 event, XML parsing (DOMParser, XHR's responseXML), shadow DOM,
 TreeWalker, `<object>` and `<embed>` documents, frameset
@@ -11713,6 +11718,12 @@ serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
 Sans Mono; some well-known names too), the face nearest the weight and
 slant is taken, and a character the face lacks takes the nearest face
 of the library that has it (remembered per font).
+
+A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
+a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
+the subset for Latin text and draws any other character with the subset
+that has it; a character no face of the family has comes from the
+default (proportional) family first, then any face that has it.
 
 `TTextFont` (`Web.Text.FontInstances`) is a face at a CSS pixel size,
 one per font style struct. Layout measures with the faces' unhinted
@@ -12090,6 +12101,65 @@ about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
 style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
 ms each. A pointer move over an article costs about 2 ms.
 
+On top of the pointer steps (`WebBrowse.Pointer` over libwebview's
+page selection), two steps also take another shape of argument:
+`scroll:top` and `scroll:bottom` put the viewport there (a number is
+the wheel's DY), and `hover:SELECTOR` moves the pointer to the middle of
+the first element matching, scrolled into view (X,Y is a point).
+`scrollby:DY` scrolls the viewport itself, `hoverat:X,Y` is
+`hover:X,Y`, `back` and `forward` go through the session history.
+`--patience MS` is how long a step waits for quiet before it goes on
+(10 s); an endless animation alone does not keep a page from being
+quiet.
+
+#### Comparing common sites with a reference browser
+
+`scripts/compare-sites.py` (not in `make test`: it needs the network)
+takes the pages of `scripts/compare-sites.list` (about 27 common pages
+that need no login: Wikipedia, search engines, news sites, shops,
+project sites) and, for each, at 1280x800 and 400x800:
+
+- renders it with webbrowse (`--webbrowse BINARY`: a copy keeps runs
+  apart from builds) and records the load time, console errors, failed
+  requests, crashes (a signal, a run-time error, an engine exception
+  in the output), hangs (the watchdog, or no end within the time-out
+  and a grace) and time-outs;
+- renders it with the installed Firefox (`scripts/firefox_reference.py`,
+  driven over its Marionette protocol with no extra packages: headless,
+  a profile and port per worker, overlay scroll bars so the page gets
+  the whole width, the window grown until the viewport is exactly the
+  size asked, a narrower viewport than the window allows made by
+  narrowing the page's browser element, the page left 3 s after its
+  load to settle). The pictures are kept between runs
+  (`--refresh-reference` makes them again), so runs before and after a
+  change compare against the same pictures;
+- scores the difference (Pillow: both pictures in gray, per 16 px block
+  the difference of the means and of the contrast; 0 alike, 100 nothing
+  alike; also per region of a 3 x 3 grid) and writes a heat map;
+- drives the page like a user in webbrowse (the smoke test): marks up
+  to six visible links and buttons, three same-site links and the first
+  search box with a script, scrolls down to the bottom in steps and back
+  up, hovers the marked elements and a grid of points, drags a
+  selection, types into the search box, follows each marked link,
+  scrolls and hovers there and goes back. A crash or hang fails it.
+
+Everything goes into the folder given with `--out` (outside the
+repository: nothing it fetched is committed): the pictures, the logs,
+`results.json`, and `report.txt` / `report.html` with the pages by
+score (`--baseline OLD/results.json` puts the earlier scores beside
+them). Problems found are reduced to small cases in the host tests
+(tools/WebTest/render, WebLayoutTest, WebScriptTest, WebLoadTest,
+JavaScriptTest).
+
+`scripts/qemu-browser-smoke.py ESP SYSTEM-DISK OUT [NAME ...]` does the
+user's part with the real browser: it boots the system under QEMU (KVM
+with `ACCEL=kvm`), waits for the network, starts the display server,
+and for each page opens `/app/browser/browser` on it, scrolls with the
+wheel, moves the tablet over a grid of points, drags a selection,
+clicks three points and goes back with Alt+Left, then checks the
+browser still runs and nothing panicked; it keeps a screen dump of each
+page after loading and after the steps.
+
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
@@ -12097,7 +12167,8 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
+scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
+unicode-range), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic

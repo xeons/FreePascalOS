@@ -62,6 +62,7 @@ uses
   Web.ScriptEnvironment,
   Web.Script.PageFetch,
   Web.Script.Layout,
+  Web.Script.ImportMaps,
   Js.Engine,
   Web.Bindings.Context,
   Web.Script.Context,
@@ -155,12 +156,16 @@ type
     FContext: TScriptContext;
     FLoader: TObject;
     FInlineCount: Integer;
+    FImportMap: TImportMap;
     function Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
     procedure Fetch(Request: TJsModuleFetch);
     procedure FetchDone(const Source: string; Success: Boolean; Data: TObject);
   public
     Stopped: Boolean;
     constructor Create(Context: TScriptContext; Loader: TObject);
+    destructor Destroy; override;
+    { Merges an import map's JSON into the document's. }
+    procedure AddImportMap(const Source: string);
     { Runs a module script (Url '' for an inline one). }
     procedure Run(const Source, Url: string);
   end;
@@ -569,24 +574,88 @@ begin
   FLoader := Loader;
   FContext.Engine.ModuleResolver := @Resolve;
   FContext.Engine.ModuleFetcher := @Fetch;
+  FImportMap := TImportMap.Create;
+end;
+
+destructor TContextModules.Destroy;
+begin
+  FImportMap.Free;
+  inherited Destroy;
+end;
+
+const
+  { The map's entries as text: scope (empty for "imports"), key and
+    value (#2 when not a string), separated by #1, entries by #3; "!"
+    and the message when it is not JSON. }
+  FlattenImportMapSource =
+    '(function (text) { var map; try { map = JSON.parse(text); } catch (e) { return "!" + e.message; }' +
+    ' var out = [], own = Object.prototype.hasOwnProperty;' +
+    ' function add(scope, table) { if (table === null || typeof table !== "object") return;' +
+    '  for (var key in table) if (own.call(table, key))' +
+    '   out.push(scope + "" + key + "" + (typeof table[key] === "string" ? table[key] : "")); }' +
+    ' if (map === null || typeof map !== "object") return "!the import map is not an object";' +
+    ' add("", map.imports);' +
+    ' if (map.scopes !== null && typeof map.scopes === "object")' +
+    '  for (var scope in map.scopes) if (own.call(map.scopes, scope)) add(scope, map.scopes[scope]);' +
+    ' return out.join(""); })';
+
+procedure TContextModules.AddImportMap(const Source: string);
+var
+  Flatten, Value: TJsValue;
+  Text: string;
+  Entries, Parts: TStringArray;
+  Index: Integer;
+  Base: TUrlRecord;
+begin
+  Base := TDocumentLoader(FLoader).BaseUrl;
+  try
+    Flatten := FContext.Engine.EvaluateBuiltin(FlattenImportMapSource, 'importmap');
+    Value := FContext.Engine.Call(Flatten, JsUndefined, [FContext.Engine.NewString(Source)]);
+    Text := FContext.Engine.ToText(Value);
+  except
+    on Error: EJsError do
+    begin
+      FContext.Console('error', 'Uncaught ' + Error.Message);
+      Exit;
+    end;
+  end;
+  if Copy(Text, 1, 1) = '!' then
+  begin
+    FContext.Console('error', 'Uncaught SyntaxError: import map: ' + Copy(Text, 2, MaxInt));
+    Exit;
+  end;
+  if Text = '' then
+    Exit;
+  Entries := Text.Split([#3]);
+  for Index := 0 to High(Entries) do
+  begin
+    Parts := Entries[Index].Split([#1]);
+    if Length(Parts) = 3 then
+      FImportMap.AddEntry(Parts[0], Parts[1], Parts[2], Parts[2] <> #2, Base);
+  end;
 end;
 
 function TContextModules.Resolve(const Specifier, ReferrerKey: string; out Key: string): Boolean;
 var
   Base, Target: TUrlRecord;
+  Referrer: string;
 begin
   Key := '';
-  { Bare specifiers need an import map (not read yet). }
-  if not ((Copy(Specifier, 1, 1) = '/') or (Copy(Specifier, 1, 2) = './') or (Copy(Specifier, 1, 3) = '../')) then
-  begin
-    Result := ParseUrl(Specifier, Target);
-    if Result then
-      Key := SerializeUrl(Target);
-    Exit;
-  end;
   if (ReferrerKey = '') or not ParseUrl(ReferrerKey, Base) then
     Base := TDocumentLoader(FLoader).BaseUrl;
-  Result := ParseUrl(Specifier, Base, Target);
+  if not FImportMap.IsEmpty then
+  begin
+    { An inline module is the document's for the map's scopes. }
+    Referrer := ReferrerKey;
+    if Pos('#module', Referrer) > 0 then
+      Referrer := Copy(Referrer, 1, Pos('#module', Referrer) - 1);
+    if Referrer = '' then
+      Referrer := SerializeUrl(TDocumentLoader(FLoader).BaseUrl);
+    Result := FImportMap.Resolve(Specifier, Referrer, Base, Key) = ImportResolved;
+    Exit;
+  end;
+  { Without an import map a bare specifier resolves only as a URL. }
+  Result := ParseUrlLike(Specifier, Base, Target);
   if Result then
     Key := SerializeUrl(Target);
 end;
@@ -904,6 +973,11 @@ begin
   if Script.Kind = ScriptModule then
   begin
     Modules.Run(Script.Source, Url);
+    Exit;
+  end;
+  if Script.Kind = ScriptImportMap then
+  begin
+    Modules.AddImportMap(Script.Source);
     Exit;
   end;
   if Script.Kind <> ScriptClassic then

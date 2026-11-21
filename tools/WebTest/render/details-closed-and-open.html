@@ -1,0 +1,15 @@
+<!-- width=400 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 16px sans-serif; }
+.box { display: flex; height: 20px; background: #cfc; }
+</style></head>
+<body>
+<!-- A closed details shows only its first summary, even when the page
+     styles the rest (developer.mozilla.org's baseline box and sidebar
+     showed everything); an open one shows all of it. -->
+<details><summary>Closed</summary><div class=box>hidden</div><p>hidden too</p></details>
+<details open><summary>Open</summary><div class=box>shown</div></details>
+<details><p>no summary: nothing shows</p></details>
+<p>after</p>
+</body></html>

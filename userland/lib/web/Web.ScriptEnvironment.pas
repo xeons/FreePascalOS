@@ -135,6 +135,9 @@ type
     { The border box of Element (the union of its fragments); False when
       it has no box. }
     function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; virtual; abstract;
+    { Element's fragments, a rectangle each (getClientRects): an inline
+      box's one per line; by default the border box. }
+    function ClientRects(Element: TElement): TScriptRectArray; virtual;
     { The border widths (clientLeft, clientTop), the padding box's size
       less scroll bars (clientWidth, clientHeight), the scrollable
       overflow's size and the scroll offset. }
@@ -239,6 +242,18 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptLayout.ClientRects(Element: TElement): TScriptRectArray;
+var
+  Rect: TScriptRect;
+begin
+  Result := nil;
+  if BorderBox(Element, Rect.X, Rect.Y, Rect.Width, Rect.Height) then
+  begin
+    SetLength(Result, 1);
+    Result[0] := Rect;
+  end;
 end;
 
 function TScriptLayout.TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray;

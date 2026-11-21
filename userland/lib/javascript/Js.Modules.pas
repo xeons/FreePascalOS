@@ -85,11 +85,20 @@ type
     FRealm: TJsInterpreterRealm;
     FEntries: array of TObject;
     FLoads: array of TObject;
+    { Graphs that finished (failed, or handed to the job that links
+      them) but are not freed yet: a module map entry may still have
+      them waiting, or a caller up the stack may still look at them. }
+    FFinishedLoads: array of TObject;
+    { Entry points of the loader running (Import, EvaluateSource, a
+      fetch finishing); finished graphs are freed when it is 0. }
+    FDepth: Integer;
     FFetches: array of TJsModuleFetch;
     FAsyncCounter: Int64;
     procedure MarkRoots(Tracer: TJsTracer);
     function FindEntry(const Key: string; Json: Boolean; MakeIfMissing: Boolean): TObject;
     procedure RemoveLoad(Load: TObject);
+    procedure Enter;
+    procedure Leave;
     procedure RemoveFetch(Fetch: TJsModuleFetch);
     function NewModule(const Key: string; Json: Boolean): TJsModule;
     procedure RequestModule(Load: TObject; Referrer: TJsModule; Index: Integer; const Key: string; Json: Boolean);
@@ -163,6 +172,8 @@ type
     Promise: TJsPromise;
     { import(): the promise gets the namespace; else undefined. }
     ForImport: Boolean;
+    { Module map entries it waits in. }
+    Waiting: Integer;
     function HasVisited(Module: TJsModule): Boolean;
   end;
 
@@ -367,7 +378,10 @@ destructor TJsModuleLoader.Destroy;
 var
   Index: Integer;
 begin
-  FRealm.Heap.RemoveRootProvider(@MarkRoots);
+  { A realm of an engine that shared its parent's runtime may outlive
+    that runtime's heap (the parent engine went first). }
+  if not FRealm.HeapGone then
+    FRealm.Heap.RemoveRootProvider(@MarkRoots);
   { Fetches the host still holds complete into nothing. }
   for Index := 0 to High(FFetches) do
     FFetches[Index].FLoader := nil;
@@ -375,6 +389,8 @@ begin
     FEntries[Index].Free;
   for Index := 0 to High(FLoads) do
     FLoads[Index].Free;
+  for Index := 0 to High(FFinishedLoads) do
+    FFinishedLoads[Index].Free;
   inherited Destroy;
 end;
 
@@ -437,7 +453,33 @@ begin
       SetLength(FLoads, Last);
       Break;
     end;
-  Load.Free;
+  SetLength(FFinishedLoads, Length(FFinishedLoads) + 1);
+  FFinishedLoads[High(FFinishedLoads)] := Load;
+end;
+
+procedure TJsModuleLoader.Enter;
+begin
+  Inc(FDepth);
+end;
+
+{ Frees the finished graphs nothing waits for any more. }
+procedure TJsModuleLoader.Leave;
+var
+  Index, Kept: Integer;
+begin
+  Dec(FDepth);
+  if FDepth > 0 then
+    Exit;
+  Kept := 0;
+  for Index := 0 to High(FFinishedLoads) do
+    if TGraphLoad(FFinishedLoads[Index]).Waiting > 0 then
+    begin
+      FFinishedLoads[Kept] := FFinishedLoads[Index];
+      Inc(Kept);
+    end
+    else
+      FFinishedLoads[Index].Free;
+  SetLength(FFinishedLoads, Kept);
 end;
 
 procedure TJsModuleLoader.RemoveFetch(Fetch: TJsModuleFetch);
@@ -525,11 +567,19 @@ begin
   MapEntry := TModuleMapEntry(Entry);
   Waiters := MapEntry.Waiters;
   MapEntry.Waiters := nil;
-  for Index := 0 to High(Waiters) do
-    if MapEntry.Failed then
-      FailLoad(Waiters[Index].Load, MapEntry.Error)
-    else
-      DeliverModule(Waiters[Index].Load, Waiters[Index].Referrer, Waiters[Index].Index, MapEntry.Module);
+  Enter;
+  try
+    for Index := 0 to High(Waiters) do
+    begin
+      Dec(TGraphLoad(Waiters[Index].Load).Waiting);
+      if MapEntry.Failed then
+        FailLoad(Waiters[Index].Load, MapEntry.Error)
+      else
+        DeliverModule(Waiters[Index].Load, Waiters[Index].Referrer, Waiters[Index].Index, MapEntry.Module);
+    end;
+  finally
+    Leave;
+  end;
 end;
 
 procedure TJsModuleLoader.RequestModule(Load: TObject; Referrer: TJsModule; Index: Integer; const Key: string;
@@ -555,6 +605,7 @@ begin
   Waiter.Index := Index;
   SetLength(Entry.Waiters, Length(Entry.Waiters) + 1);
   Entry.Waiters[High(Entry.Waiters)] := Waiter;
+  Inc(TGraphLoad(Load).Waiting);
   if Entry.Fetching then
     Exit;
   Entry.Fetching := True;
@@ -625,6 +676,7 @@ var
 begin
   Module := NewModule(Key, False);
   Mark := FRealm.Runtime.PushRoot(JsObjectValue(Module));
+  Enter;
   try
     try
       CompileModule(FRealm, UTF8Decode(Source), Key, Module);
@@ -645,6 +697,7 @@ begin
     Result := JsObjectValue(Graph.Promise);
     InnerModuleLoading(Graph, Module);
   finally
+    Leave;
     FRealm.Runtime.PopRoots(Mark);
   end;
 end;
@@ -655,19 +708,24 @@ var
   Key: string;
   Error: TJsValue;
 begin
-  Graph := TGraphLoad.Create;
-  Graph.Promise := NewPromise(FRealm);
-  Graph.ForImport := True;
-  Graph.Pending := 1;
-  SetLength(FLoads, Length(FLoads) + 1);
-  FLoads[High(FLoads)] := Graph;
-  Result := JsObjectValue(Graph.Promise);
-  if not Resolve(Specifier, ReferrerKey, Key, Error) then
-  begin
-    FailLoad(Graph, Error);
-    Exit;
+  Enter;
+  try
+    Graph := TGraphLoad.Create;
+    Graph.Promise := NewPromise(FRealm);
+    Graph.ForImport := True;
+    Graph.Pending := 1;
+    SetLength(FLoads, Length(FLoads) + 1);
+    FLoads[High(FLoads)] := Graph;
+    Result := JsObjectValue(Graph.Promise);
+    if not Resolve(Specifier, ReferrerKey, Key, Error) then
+    begin
+      FailLoad(Graph, Error);
+      Exit;
+    end;
+    RequestModule(Graph, nil, -1, Key, Json);
+  finally
+    Leave;
   end;
-  RequestModule(Graph, nil, -1, Key, Json);
 end;
 
 { Linking }

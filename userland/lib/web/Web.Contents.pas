@@ -72,6 +72,7 @@ uses
   Web.Style.Animations,
   Web.Style.UserAgent,
   Web.Style.Resolver,
+  Web.Text.UnicodeRanges,
   Web.Text.Fonts,
   Web.Text.FontInstances,
   Web.Text.Breaking,
@@ -96,6 +97,7 @@ uses
   Web.Layout.Table,
   Web.Layout.Positioned,
   Web.Layout.Transforms,
+  Web.Layout.BoxGeometry,
   Web.Layout.Dispatch,
   Web.Layout.Document,
   Web.Layout.Dump,
@@ -154,6 +156,7 @@ uses
   Web.ScriptEnvironment,
   { First of the script units: compiled in the order a program using
     them loads them (the bindings' units use each other in a cycle). }
+  Web.Script.ImportMaps,
   Web.Script.PageScripting,
   Web.Bindings.Types,
   Web.Bindings.Strings,

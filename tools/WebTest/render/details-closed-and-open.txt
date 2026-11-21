@@ -1,0 +1,23 @@
+viewport (anonymous) at (0,0) size 400x600
+  block <html> at (0,0) size 400x115.88
+    block <body> at (8,8) size 384x91.88
+      block <details> at (8,8) size 384x18.62
+        block <summary> at (8,8) size 384x18.62
+          line 0 at y 8 height 18.62 baseline 22.85
+            inline-box ::marker at (8,8) size 13.12x18.62
+            text "▸ " at (8,8) size 13.12x18.62
+            text "Closed" at (21.12,8) size 53.74x18.62
+      block <details> at (8,26.62) size 384x38.62
+        block <summary> at (8,26.62) size 384x18.62
+          line 0 at y 26.62 height 18.62 baseline 41.48
+            inline-box ::marker at (8,26.62) size 13.12x18.62
+            text "▾ " at (8,26.62) size 13.12x18.62
+            text "Open" at (21.12,26.62) size 42.73x18.62
+        flex <div> at (8,45.25) size 384x20
+          block (anonymous) at (8,45.25) size 51.49x20
+            line 0 at y 45.25 height 18.62 baseline 60.1
+              text "shown" at (8,45.25) size 51.49x18.62
+      block <details> at (8,65.25) size 384x0
+      block <p> at (8,81.25) size 384x18.62
+        line 0 at y 81.25 height 18.62 baseline 96.1
+          text "after" at (8,81.25) size 37.85x18.62

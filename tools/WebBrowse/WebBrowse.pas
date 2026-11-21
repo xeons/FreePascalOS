@@ -50,7 +50,10 @@
                    wait:MS, shot:FILE.png; the pointer as the web view
                    moves it (viewport CSS px): scroll:DY, hover:X,Y,
                    press:X,Y, move:X,Y, release:X,Y, drag:X1,Y1,X2,Y2,
-                   dblclick:X,Y, tripleclick:X,Y, selectall, copy
+                   dblclick:X,Y, tripleclick:X,Y, selectall, copy;
+                   scroll:top|bottom, scrollby:DY (the viewport itself),
+                   hover:SELECTOR (to its middle), hoverat:X,Y, back, forward
+    --patience MS  how long a step waits for quiet before it goes on (10000)
     -f FONTDIR     font directory (userland/fonts)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move
@@ -145,6 +148,8 @@ begin
       SetLength(Options.Steps, Length(Options.Steps) + 1);
       Options.Steps[High(Options.Steps)] := NextArgument;
     end
+    else if Argument = '--patience' then
+      Options.StepPatienceMilliseconds := StrToFloatDef(NextArgument, 10000)
     else if Argument = '-f' then
       Options.FontDirectory := NextArgument
     else if Argument = '--hover' then

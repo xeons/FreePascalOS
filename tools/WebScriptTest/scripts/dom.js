@@ -148,3 +148,25 @@ var typedArea = document.createElement("textarea");
 typedArea.textContent = "default";
 typedArea.value = "changed";
 check("a cloned textarea keeps its value", typedArea.cloneNode(true).value === "changed");
+// DOM traversal: TreeWalker and NodeIterator with whatToShow and filters
+// (lit walks its templates with one).
+var walkRoot = document.createElement("div");
+walkRoot.innerHTML = "<p id=w1>a<!--c--><b id=w2>b</b></p><i id=w3>i</i><u id=w4><s id=w5></s></u>";
+var walker = document.createTreeWalker(walkRoot, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_COMMENT);
+var walked = [];
+while (walker.nextNode()) walked.push(walker.currentNode.nodeType === 8 ? "#c" : walker.currentNode.id);
+check("TreeWalker nextNode in tree order", walked.join() === "w1,#c,w2,w3,w4,w5");
+var back = [];
+while (walker.previousNode()) back.push(walker.currentNode.nodeType === 8 ? "#c" : walker.currentNode.id);
+check("TreeWalker previousNode back to the root", back.join() === "w4,w3,w2,#c,w1," && walker.currentNode === walkRoot);
+var skipping = document.createTreeWalker(walkRoot, NodeFilter.SHOW_ELEMENT, function (node) {
+  return node.id === "w1" ? NodeFilter.FILTER_SKIP : node.id === "w4" ? NodeFilter.FILTER_REJECT :
+    NodeFilter.FILTER_ACCEPT;
+});
+check("TreeWalker skip and reject", skipping.firstChild().id === "w2" && skipping.nextSibling().id === "w3" &&
+  skipping.nextSibling() === null && skipping.parentNode() === walkRoot);
+var texts = document.createNodeIterator(walkRoot, NodeFilter.SHOW_TEXT, { acceptNode: function () { return 1; } });
+var found = [];
+for (var textNode = texts.nextNode(); textNode; textNode = texts.nextNode()) found.push(textNode.data);
+check("NodeIterator with an acceptNode object", found.join() === "a,b,i" && texts.previousNode().data === "i" &&
+  texts.pointerBeforeReferenceNode === true && texts instanceof NodeIterator);

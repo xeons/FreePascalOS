@@ -63,7 +63,58 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Sockets,
-  Tls.Errors;
+  Tls.Errors,
+  Tls.Certificates,
+  Tls.CertificateSummaries,
+  Tls.Connections,
+  Http.ConnectionSecurity;
+
+function TlsVersionName(Version: Word): string;
+begin
+  case Version of
+    $0304: Result := 'TLS 1.3';
+    $0303: Result := 'TLS 1.2';
+    $0302: Result := 'TLS 1.1';
+    $0301: Result := 'TLS 1.0';
+  else
+    Result := 'TLS';
+  end;
+end;
+
+{ What the handshake that just succeeded was (Http.ConnectionSecurity). }
+procedure NoteConnectionSecurity(Session: TTlsSocketSession; const ServerName: string; Port: Word);
+var
+  Info: THttpConnectionSecurity;
+  Connection: PTlsConnection;
+  Index, Count: Integer;
+  IssuerSent: Boolean;
+begin
+  Connection := Session.Connection;
+  if Connection = nil then
+    Exit;
+  Info := Default(THttpConnectionSecurity);
+  Info.Secure := True;
+  Info.Host := ServerName;
+  Info.Port := Port;
+  Info.Protocol := TlsVersionName(Connection^.Version);
+  if Session.Client <> nil then
+    Info.Cipher := Session.Client.CipherSuiteName;
+  Count := Length(Connection^.ServerCertificates);
+  IssuerSent := Connection^.ServerIssuer = nil;
+  SetLength(Info.Chain, Count);
+  for Index := 0 to Count - 1 do
+  begin
+    Info.Chain[Index] := SummarizeCertificate(Connection^.ServerCertificates[Index]^);
+    if Connection^.ServerCertificates[Index] = Connection^.ServerIssuer then
+      IssuerSent := True;
+  end;
+  if not IssuerSent then
+  begin
+    SetLength(Info.Chain, Count + 1);
+    Info.Chain[Count] := SummarizeCertificate(Connection^.ServerIssuer^);
+  end;
+  RecordConnectionSecurity(Info);
+end;
 
 const
   TimeoutText = 'Connection timed out';
@@ -112,6 +163,7 @@ begin
     Observer.CertificateNotVerified(ServerName, FSession.DescribeError(Ignored));
   if FSession.Client <> nil then
     FNegotiatedProtocol := FSession.Client.SelectedProtocol;
+  NoteConnectionSecurity(FSession, ServerName, Port);
   Result := HttpOk;
 end;
 

@@ -2392,7 +2392,7 @@ end;
 
 function TJsParser.ParseAssignment(NoIn: Boolean): TJsNode;
 var
-  StartToken, Peeked: TJsToken;
+  StartToken, Peeked, ParameterToken: TJsToken;
   ReferenceMark, ChildMark: Integer;
   OuterScope: TJsScope;
   Left, Node: TJsNode;
@@ -2414,13 +2414,15 @@ begin
       begin
         if (Peeked.Kind = tkIdentifier) then
         begin
+          { The function's source starts at async (toString, and parsing
+            it again when it is compiled lazily). }
           Next;
           ReferenceMark := FScope.ReferenceCount;
           ChildMark := FScope.ChildCount;
           OuterScope := FScope;
-          StartToken := FToken;
+          ParameterToken := FToken;
           Name := BindingIdentifierName;
-          Left := NewIdentifier(Name, StartToken);
+          Left := NewIdentifier(Name, ParameterToken);
           if FToken.Kind <> tkArrow then
             Unexpected;
           Exit(ParseArrowFunction(Left, True, StartToken, ReferenceMark, ChildMark, OuterScope));
@@ -2610,10 +2612,11 @@ begin
             Fail('Invalid left-hand side expression in prefix operation');
         end;
     else
+      { A class field's initializer is not async (FInAsync is off in
+        it): await there can only be in an async arrow inside it, where
+        it is that arrow's. }
       if IsContextual('await') and (FInAsync or ((FFunction.Kind = fkScript) and False)) then
       begin
-        if FInClassField then
-          Fail('await is not allowed here');
         if FFunction.Kind = fkModule then
           FFunction.IsAsync := True;
         Next;

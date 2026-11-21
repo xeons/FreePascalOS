@@ -175,6 +175,9 @@
       return value;
     }
     const name = String(value);
+    // A PerformanceTiming attribute counts from navigationStart, which
+    // is the time origin itself.
+    if (name === "navigationStart") return 0;
     for (let index = userEntries.length - 1; index >= 0; index--)
       if (userEntries[index].entryType === "mark" && userEntries[index].name === name)
         return userEntries[index].startTime;
@@ -282,7 +285,10 @@
       let detail = null;
       if (startOrOptions !== null && typeof startOrOptions === "object") {
         const options = startOrOptions;
-        if (endMark !== undefined) throw new TypeError("end mark given with options");
+        // Options with nothing in them may come with an end mark.
+        const empty = options.start === undefined && options.end === undefined &&
+          options.duration === undefined && options.detail === undefined;
+        if (endMark !== undefined && !empty) throw new TypeError("end mark given with options");
         if (options.start !== undefined && options.end !== undefined && options.duration !== undefined)
           throw new TypeError("start, end and duration cannot all be given");
         if (options.start !== undefined) start = resolveTime(options.start);
