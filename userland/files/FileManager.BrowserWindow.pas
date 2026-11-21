@@ -206,7 +206,9 @@ type
 
 const
   NavigationBarHeight = 36;
-  NavigationButtonsWidth = 4 * 36 + 20;
+  { Four buttons of 32 with their gaps, the padding, and room the bar
+    keeps for its overflow button. }
+  NavigationButtonsWidth = 4 * 34 + 8 + 32 + 4;
   SearchBoxWidth = 220;
   ItemsPanelWidth = 160;
   MostCompletions = 12;

@@ -910,7 +910,9 @@ paint-test: $(PAINT_TEST)
 	@echo "PAINT TEST PASSED: $$(tail -n 1 build/tools/paint-test.out)"
 
 # The file manager's plain logic (paths, numbered names, the history,
-# the order and types of items, permissions, what a drop does) and the
+# the order and types of items, permissions, what a drop does, natural
+# order, the search syntax, batch names, undo, conflicts, type
+# associations, the trash's info files, grouping, WAV headers) and the
 # libraries' file lists and typing to find a name build for the host
 # too, and are checked there.
 FILES_TEST := build/tools/FilesTest
@@ -926,7 +928,8 @@ FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Contro
 	userland/files/FileManager.FileKinds.pas userland/files/FileManager.CivilDates.pas \
 	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
 	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
-	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas
+	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
+	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units

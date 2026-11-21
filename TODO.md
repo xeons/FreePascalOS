@@ -579,6 +579,21 @@ normalized (0-65535), not pixels.
       command bar (drop-downs, an overflow menu), a progress dialog (pause,
       cancel, a speed graph; transfer rates checked on the host) and their
       icons
+- [x] File manager as a tabbed browser: tabs, breadcrumbs with chevrons and
+      completion, search with a query syntax streaming results, a command bar
+      and context menus (the classic menu behind "Show more options"), a
+      navigation pane (Home, Gallery, pinned folders, Computer with volumes
+      and free space, Network, the recycle bin), eight views with groups,
+      chooseable columns, thumbnails and check boxes (libcontrols' item view),
+      details and preview panes (web pages, pictures, text), Home (pinned,
+      favourites, recent) and Gallery pages, the recycle bin with restore
+      (Util.Trash), ZIP and tar archives browsed, made and extracted
+      (libarchive), undo and redo, batch rename, Open with by program.info
+      Extensions/MimeTypes and a default per type, options, properties with
+      General, Security and Details pages, view settings per folder
+- [ ] File manager: Network places (only a placeholder page), MP3 and other
+      sound lengths (only WAV is read), video thumbnails, dragging column
+      headers to reorder them, a real share sheet behind Share
 - [x] Control Panel: display, mouse, keyboard layout, sound, date and time,
       network, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every

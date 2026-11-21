@@ -23,7 +23,8 @@
   SearchQuery), batch renaming (FileManager.BatchNames), undo and redo
   (FileManager.UndoHistory), name conflicts (FileManager.ConflictPolicy),
   which programs open a type (FileManager.TypeAssociations, over
-  program.info texts) and the trash's info files (Util.TrashInfo).
+  program.info texts), the trash's info files (Util.TrashInfo), grouping
+  (FileManager.Grouping) and WAV headers (FileManager.AudioInfo).
 }
 unit FilesTest.Explorer;
 
@@ -54,7 +55,9 @@ uses
   FileManager.BatchNames,
   FileManager.UndoHistory,
   FileManager.ConflictPolicy,
-  FileManager.TypeAssociations;
+  FileManager.TypeAssociations,
+  FileManager.Grouping,
+  FileManager.AudioInfo;
 
 type
   TTakenNames = class
@@ -308,8 +311,77 @@ begin
   end;
 end;
 
+procedure TestGrouping(Check: TCheckProcedure);
+const
+  Noon = 1795262400;
+var
+  Today: Int64;
+begin
+  Today := DaysFromCivil(2026, 11, 21) * SecondsPerDay;
+  Check('groups: names', (GroupCaption(GroupByName, 'apple', '', False, 0, 0, Noon, 0) = 'A - H') and
+    (GroupCaption(GroupByName, '7up', '', False, 0, 0, Noon, 0) = '0-9') and
+    (GroupCaption(GroupByName, '_x', '', False, 0, 0, Noon, 0) = 'Other'));
+  Check('groups: today and yesterday', (GroupCaption(GroupByDate, 'a', '', False, 0, Today + 60, Noon, 0) = 'Today')
+    and (GroupCaption(GroupByDate, 'a', '', False, 0, Today - 60, Noon, 0) = 'Yesterday'));
+  Check('groups: earlier this week (Monday)', GroupCaption(GroupByDate, 'a', '', False, 0,
+    Today - 5 * SecondsPerDay, Noon, 0) = 'Earlier this week');
+  Check('groups: last week', GroupCaption(GroupByDate, 'a', '', False, 0, Today - 8 * SecondsPerDay, Noon, 0) =
+    'Last week');
+  Check('groups: last month', GroupCaption(GroupByDate, 'a', '', False, 0, DaysFromCivil(2026, 10, 3) * SecondsPerDay,
+    Noon, 0) = 'Last month');
+  Check('groups: a long time ago', GroupCaption(GroupByDate, 'a', '', False, 0, 0, Noon, 0) = 'A long time ago');
+  Check('groups: sizes', (GroupCaption(GroupBySize, 'a', '', False, 0, 0, Noon, 0) = 'Empty') and
+    (GroupCaption(GroupBySize, 'a', '', False, 2000000, 0, Noon, 0) = 'Medium') and
+    (GroupCaption(GroupBySize, 'a', '', True, 0, 0, Noon, 0) = 'Folders'));
+  Check('groups: months', GroupCaption(GroupByMonth, 'a', '', False, 0, Noon, Noon, 0) = 'November 2026');
+  Check('groups: date order', GroupOrder(GroupByDate, 'Today', 0) < GroupOrder(GroupByDate, 'Last week', 0));
+  Check('groups: newest month first', GroupOrder(GroupByMonth, 'x', Noon) < GroupOrder(GroupByMonth, 'y', 0));
+  Check('groups: by key', GroupByNamed('size') = GroupBySize);
+end;
+
+procedure TestAudioInfo(Check: TCheckProcedure);
+var
+  Bytes: TBytes;
+  Info: TAudioInfo;
+  procedure Put(Offset: LongInt; const Text: string);
+  var
+    Index: LongInt;
+  begin
+    for Index := 1 to Length(Text) do
+      Bytes[Offset + Index - 1] := Ord(Text[Index]);
+  end;
+  procedure PutLong(Offset: LongInt; Value: LongWord);
+  begin
+    Bytes[Offset] := Value and $FF;
+    Bytes[Offset + 1] := (Value shr 8) and $FF;
+    Bytes[Offset + 2] := (Value shr 16) and $FF;
+    Bytes[Offset + 3] := (Value shr 24) and $FF;
+  end;
+begin
+  Bytes := nil;
+  SetLength(Bytes, 44);
+  Put(0, 'RIFF');
+  Put(8, 'WAVE');
+  Put(12, 'fmt ');
+  PutLong(16, 16);
+  Bytes[20] := 1;
+  Bytes[22] := 2;
+  PutLong(24, 44100);
+  PutLong(28, 44100 * 4);
+  Bytes[32] := 4;
+  Bytes[34] := 16;
+  Put(36, 'data');
+  PutLong(40, 44100 * 4 * 90);
+  Check('audio: a WAV header read', ParseWaveHeader(Bytes, Info) and (Info.SampleRate = 44100) and
+    (Info.Channels = 2) and (Info.BitsPerSample = 16) and (Info.DurationSeconds = 90));
+  Bytes[0] := Ord('X');
+  Check('audio: not a WAV file', not ParseWaveHeader(Bytes, Info));
+end;
+
 procedure TestExplorerLogic(Check: TCheckProcedure);
 begin
+  TestGrouping(Check);
+  TestAudioInfo(Check);
   TestNaturalOrder(Check);
   TestFileKinds(Check);
   TestCivilDates(Check);
