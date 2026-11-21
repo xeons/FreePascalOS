@@ -146,6 +146,11 @@ type
   public
     { The layout's answers (nil: elements have no boxes). }
     Layout: TScriptLayout;
+    { Whether the embedder makes the windows of iframes itself (child
+      navigables with documents of their own, Web.Navigation); False:
+      the script context makes about:blank and srcdoc windows of its
+      own (Web.Script.Frames). }
+    function ManagesFrames: Boolean; virtual;
     { Timers: StartTimer asks for Context.FireTimer(TimerId) after
       Milliseconds (again every Milliseconds when Repeating, until
       StopTimer). Context is the TScriptContext. }
@@ -222,6 +227,11 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptEnvironment.ManagesFrames: Boolean;
+begin
+  Result := False;
 end;
 
 function TScriptEnvironment.SupportsTimers: Boolean;

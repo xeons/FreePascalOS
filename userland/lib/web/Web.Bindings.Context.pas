@@ -223,15 +223,23 @@ type
     MutationObservers: TObject;
     { The window's timers (Web.Script.Timers), freed after the engine. }
     Timers: TObject;
+    { The cross-origin views of other windows made for this window's
+      script (Web.Bindings.CrossOrigin), alive while it is open. }
+    CrossOriginTargets: array of TBindingContext;
+    CrossOriginViews: array of TJsValue;
+    { How many index properties (window[0] ...) the global object has
+      for its frames. }
+    FrameIndexCount: Integer;
     { AWindow: the window event target the loader made (the navigable's
       TWebWindow, whose load event and timers it drives); nil makes one
       of the context's own. }
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget = nil);
     { The window of a nested navigable (an iframe's): a realm in Parent's
       engine, so objects pass between the two. Parent frees it (after its
-      engine). }
+      engine). AWindow: the child navigable's window (nil: one of the
+      context's own). }
     constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
-      AFrameElement: TElement);
+      AFrameElement: TElement; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Nested navigables (iframes) }
@@ -243,6 +251,10 @@ type
     { The frame element went from the document: its window closes (no
       longer reachable as contentWindow; its realm stops being a root). }
     procedure Close;
+    { The window event target it was given goes before the context (a
+      frame's document was left): its listeners are dropped and the
+      context gets a target of its own. }
+    procedure DetachWindow;
     { The top-level window's context. }
     function TopContext: TBindingContext;
     property ParentContext: TBindingContext read FParentContext;
@@ -566,17 +578,15 @@ begin
 end;
 
 constructor TBindingContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
-  Parent: TBindingContext; AFrameElement: TElement);
+  Parent: TBindingContext; AFrameElement: TElement; AWindow: TEventTarget);
 const
   FrameStackCapacity = 64 * 1024;
   FrameMaximumFrames = 2000;
 var
   Singleton_: TWindowSingleton;
   Options: TJsEngineOptions;
-  AWindow: TEventTarget;
 begin
   inherited Create;
-  AWindow := nil;
   Options := TJsEngine.DefaultOptions;
   if ContextHeapThreshold > 0 then
     Options.InitialHeapThreshold := ContextHeapThreshold;
@@ -692,18 +702,33 @@ begin
       Inc(Result);
 end;
 
+{ The open frames in the tree order of their elements (window.frames). }
 function TBindingContext.FrameAt(Index: Integer): TBindingContext;
 var
-  Walk: Integer;
+  Open: array of TBindingContext;
+  Walk, Position: Integer;
+  Candidate: TBindingContext;
 begin
-  for Walk := 0 to High(FChildFrames) do
-    if not FChildFrames[Walk].FClosed then
-    begin
-      if Index = 0 then
-        Exit(FChildFrames[Walk]);
-      Dec(Index);
-    end;
   Result := nil;
+  Open := nil;
+  for Walk := 0 to High(FChildFrames) do
+  begin
+    Candidate := FChildFrames[Walk];
+    if Candidate.FClosed then
+      Continue;
+    { Insertion sort by the elements' places in the document. }
+    SetLength(Open, Length(Open) + 1);
+    Position := High(Open);
+    while (Position > 0) and ((Candidate.FFrameElement.CompareDocumentPosition(Open[Position - 1].FFrameElement) and
+      DocumentPositionFollowing) <> 0) do
+    begin
+      Open[Position] := Open[Position - 1];
+      Dec(Position);
+    end;
+    Open[Position] := Candidate;
+  end;
+  if (Index >= 0) and (Index <= High(Open)) then
+    Result := Open[Index];
 end;
 
 procedure TBindingContext.Close;
@@ -713,10 +738,22 @@ begin
   if FClosed or (FParentContext = nil) then
     Exit;
   FClosed := True;
+  CrossOriginTargets := nil;
+  CrossOriginViews := nil;
   for Index := 0 to High(FChildFrames) do
     FChildFrames[Index].Close;
   FEngine.Runtime.Heap.RemoveRootProvider(@MarkRoots);
   FEngine.Detach;
+end;
+
+procedure TBindingContext.DetachWindow;
+begin
+  if FOwnsWindow then
+    Exit;
+  if FWindow.ListenerList(False) <> nil then
+    DisableListeners(FWindow.ListenerList(False), Self);
+  FWindow := TWindowTarget.Create;
+  FOwnsWindow := True;
 end;
 
 function TBindingContext.TopContext: TBindingContext;
@@ -773,6 +810,8 @@ begin
     Tracer.MarkValue(FSingletons[Kind]);
   Tracer.MarkValue(FWindowHandlers);
   TraceListeners(FWindow.ListenerList(False), Tracer);
+  for Index := 0 to High(CrossOriginViews) do
+    Tracer.MarkValue(CrossOriginViews[Index]);
   { The window's document: every wrapper of a connected node lives. }
   if FDocument.ScriptWrapper <> nil then
     Tracer.MarkCell(TBindingWrapper(FDocument.ScriptWrapper));

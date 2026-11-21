@@ -85,6 +85,8 @@ type
     FAttached: TDocument;
     FStyleImages: TList;
     FLoadedFontKeys: TStringList;
+    { A child sink's frame view (owned). }
+    FFrameView: TObject;
     function Accepts(Document: TDocument): Boolean;
     procedure Attach(Document: TDocument);
     procedure UrlImageNeeded(const Url, BaseUrl: string);
@@ -120,6 +122,10 @@ type
     procedure FontFailed(Rule: TCssFontFaceRule; const Family: string); override;
     function FontFormatSupported(const Format: string): Boolean; override;
     function MediaEnvironment: TCssMediaEnvironment; override;
+    { A rendering sink for an iframe's navigable, with the frame view
+      (Web.Frames.Views) that lays it out and paints it into the frame. }
+    function CreateChildSink(Navigable: TObject): TResourceSink; override;
+    function NavigableObserver: TObject; override;
     { url() images still being fetched. }
     function PendingStyleImageCount: Integer;
     property Navigable: TNavigable read FNavigable;
@@ -144,7 +150,8 @@ uses
   Web.Layout.Resources,
   Web.Text.Fonts,
   Web.Text.FontInstances,
-  Web.Text.Woff;
+  Web.Text.Woff,
+  Web.Frames.Views;
 
 function FontFaceWeight(const Text: string): Integer;
 var
@@ -186,6 +193,7 @@ end;
 
 destructor TLayoutResourceSink.Destroy;
 begin
+  FFrameView.Free;
   CancelStyleImages(nil);
   FStyleImages.Free;
   FLoadedFontKeys.Free;
@@ -259,6 +267,26 @@ end;
 function TLayoutResourceSink.MediaEnvironment: TCssMediaEnvironment;
 begin
   Result := FEnvironment;
+end;
+
+function TLayoutResourceSink.CreateChildSink(Navigable: TObject): TResourceSink;
+var
+  Child: TLayoutResourceSink;
+begin
+  Child := TLayoutResourceSink.Create;
+  Child.FEnvironment := ScreenMediaEnvironment(300, 150, FEnvironment.Resolution);
+  Child.FEnvironment.DarkColorScheme := FEnvironment.DarkColorScheme;
+  Child.AttachNavigable(TNavigable(Navigable));
+  Child.FFrameView := TFrameView.Create(TNavigable(Navigable), Child);
+  Result := Child;
+end;
+
+function TLayoutResourceSink.NavigableObserver: TObject;
+begin
+  if FFrameView = nil then
+    Result := nil
+  else
+    Result := TFrameView(FFrameView).Observer;
 end;
 
 { ---- style sheets ---- }

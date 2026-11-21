@@ -256,6 +256,9 @@ type
     IntrinsicRatio: Single;
     { Form controls drawn by the painter. }
     ControlKind: Integer;
+    { A frame's document (a TEmbeddedContent of the document's
+      resources), nil for other replaced elements. }
+    Content: TObject;
   end;
 
   TTableCellBox = class(TLayoutBox)

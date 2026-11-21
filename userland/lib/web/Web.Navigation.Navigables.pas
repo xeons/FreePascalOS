@@ -43,6 +43,13 @@
     requests and downloads.
   - <meta http-equiv=refresh> navigates (replacing the entry) after its
     delay once the document has loaded.
+  - Child navigables (7.3.1, Web.Navigation.Navigables.Frames.inc): each
+    iframe and frame element of the active document gets one, with its
+    own documents, loaders, windows and session history; made when the
+    element becomes connected (its initial about:blank document at
+    once, so script sees contentWindow), navigated by its src or srcdoc,
+    dropped when the element leaves or the document goes. Its entries
+    join the top-level navigable's history.
 }
 unit Web.Navigation.Navigables;
 
@@ -57,6 +64,7 @@ uses
   Url.Records,
   Url.Origins,
   Image.Model,
+  Web.Atoms,
   Web.Dom,
   Web.EventLoop,
   Web.Fetch.Requests,
@@ -69,7 +77,8 @@ uses
   Web.Loading.Scripts,
   Web.Loading.Documents,
   Web.Navigation.Windows,
-  Web.Navigation.SessionHistory;
+  Web.Navigation.SessionHistory,
+  Web.Navigation.FramePolicy;
 
 type
   TNavigable = class;
@@ -153,6 +162,22 @@ type
     FHasRefresh: Boolean;
     FRefreshDelay: Double;
     FInitialAboutBlank: Boolean;
+    { Child navigables (Web.Navigation.Navigables.Frames.inc). }
+    FParent: TNavigable;
+    FContainer: TElement;
+    FChildren: TList;
+    FFrameName: string;
+    FOwnsSink: Boolean;
+    FId: QWord;
+    FAllowances: TFrameAllowances;
+    FSandboxed: Boolean;
+    FAllowAttribute: string;
+    FDelayedLoader: TDocumentLoader;
+    FLazyPending: Boolean;
+    FLazyUrl: TUrlRecord;
+    FDetached: Boolean;
+    FChildOrigin: TUrlOrigin;
+    FHasChildOrigin: Boolean;
     procedure SetState(State: TLoadingState);
     procedure CreateInitialDocument;
     function PromptToUnload: Boolean;
@@ -180,10 +205,49 @@ type
     procedure CollectGarbage;
     procedure Discard(Thing: TObject);
     procedure HookLoader(Loader: TDocumentLoader);
+    { Frames (Web.Navigation.Navigables.Frames.inc). }
+    procedure LoaderFrameInserted(Loader: TDocumentLoader; Element: TElement; Attribute: TAtom);
+    procedure LoaderFrameChanged(Loader: TDocumentLoader; Element: TElement; Attribute: TAtom);
+    procedure LoaderFrameRemoved(Loader: TDocumentLoader; Element: TElement; Attribute: TAtom);
+    procedure DetachChildren;
+    procedure Detach;
+    procedure ProcessFrameAttributes(Initial: Boolean);
+    procedure NavigateToSrcdoc(const Html: string);
+    procedure FireContainerLoad;
+    procedure DelayParentLoad;
+    procedure UndelayParentLoad;
+    procedure StartLazyFrames;
+    procedure TakeContainerSandbox;
+    function FrameHistoryHandling(Requested: THistoryHandling): THistoryHandling;
+    function ResponseMayBeFramed(Response: TFetchResponse; constref Url: TUrlRecord): Boolean;
+    function HostObserver: TNavigableObserver;
+    procedure AddFrameEntry(Frame: TNavigable);
+    function FindById(Id: QWord): TNavigable;
+    function TraverseFrames(TargetIndex: Integer): Boolean;
+    procedure TraverseToIndex(TargetIndex: Integer);
+    function DocumentOriginForCommit(constref Url: TUrlRecord; out Origin: TUrlOrigin): Boolean;
   public
     constructor Create(Fetcher: TFetcher; Sink: TResourceSink; constref Settings: TLoadingSettings;
       Executor: TScriptExecutor = nil);
+    { A child navigable for a frame element of AParent's active
+      document (AParent makes them). }
+    constructor CreateChild(AParent: TNavigable; AContainer: TElement);
     destructor Destroy; override;
+    { The navigable showing Document (through its loader), nil if none. }
+    class function OfDocument(Document: TDocument): TNavigable;
+    function Top: TNavigable;
+    function ChildCount: Integer;
+    function Child(Index: Integer): TNavigable;
+    { The child navigable of a frame element of the active document. }
+    function ChildFor(Element: TElement): TNavigable;
+    { A navigable of the page by its target name (an iframe's name), nil
+      if none. }
+    function FindByName(const Name: string): TNavigable;
+    { The navigable a link or form with this target navigates, as the
+      HTML Standard's "rules for choosing a navigable" say ('', _self:
+      this one; _parent, _top; a name); nil for a new one (_blank, a
+      name not found). }
+    function ChooseNavigable(const Target: string): TNavigable;
     { Starts a navigation; False when Text is not a URL. }
     function NavigateTo(const Text: string; UserInitiated: Boolean = True): Boolean;
     procedure Navigate(constref Url: TUrlRecord; constref Options: TNavigateOptions);
@@ -218,6 +282,19 @@ type
     property Settings: TLoadingSettings read FSettings write FSettings;
     { Not owned. }
     property ObserverObject: TNavigableObserver read FObserver write FObserver;
+    { A child navigable's parent and frame element (nil for a top-level
+      one). }
+    property Parent: TNavigable read FParent;
+    property Container: TElement read FContainer;
+    property FrameName: string read FFrameName write FFrameName;
+    property Id: QWord read FId;
+    { The frame's sandbox (as of its last navigation): whether it is
+      sandboxed, and what it still allows. }
+    property Sandboxed: Boolean read FSandboxed;
+    property Allowances: TFrameAllowances read FAllowances;
+    { The iframe's allow attribute (Permissions Policy; kept, not
+      enforced). }
+    property AllowAttribute: string read FAllowAttribute;
   end;
 
 function DefaultNavigateOptions: TNavigateOptions;
@@ -225,22 +302,32 @@ function DefaultNavigateOptions: TNavigateOptions;
 implementation
 
 uses
+  Math,
   Url.Parser,
   Url.PercentEncoding,
   Http.Priorities,
-  Web.Atoms,
   Web.EventLoop.Tasks,
   Web.Fetch.MimeTypes,
   Web.Loading.Priorities,
   Web.Loading.Srcset,
   Web.Navigation.Events,
-  Web.Navigation.ErrorPages;
+  Web.Navigation.ErrorPages,
+  Web.Origins;
 
 function DefaultNavigateOptions: TNavigateOptions;
 begin
   Result := Default(TNavigateOptions);
   Result.Method := 'GET';
   Result.ReferrerPolicy := ReferrerPolicyEmpty;
+end;
+
+var
+  LastNavigableId: QWord = 0;
+
+function NewNavigableId: QWord;
+begin
+  Inc(LastNavigableId);
+  Result := LastNavigableId;
 end;
 
 { ---- the observer's defaults ---- }
@@ -324,6 +411,9 @@ begin
   FConsumer.Navigable := Self;
   FGarbage := TList.Create;
   FTraverseIndex := -1;
+  FChildren := TList.Create;
+  FId := NewNavigableId;
+  FAllowances := AllFrameAllowances;
   CreateInitialDocument;
 end;
 
@@ -331,13 +421,21 @@ destructor TNavigable.Destroy;
 begin
   CancelNavigation;
   CancelRefresh;
+  DetachChildren;
+  if FParent <> nil then
+    Detach;
   FLoop.DiscardTasks(Self);
   FLoader.Free;
   FWindow.Free;
   CollectGarbage;
   FGarbage.Free;
+  FChildren.Free;
   FConsumer.Free;
   FHistory.Free;
+  if FOwnsSink then
+    FSink.Free;
+  if FContainer <> nil then
+    FContainer.Release;
   inherited Destroy;
 end;
 
@@ -357,6 +455,9 @@ begin
   Loader.OnLoaded := @LoaderLoaded;
   Loader.OnRefresh := @LoaderRefresh;
   Loader.OnIconChanged := @LoaderIcon;
+  Loader.OnFrameInserted := @LoaderFrameInserted;
+  Loader.OnFrameChanged := @LoaderFrameChanged;
+  Loader.OnFrameRemoved := @LoaderFrameRemoved;
 end;
 
 procedure TNavigable.CreateInitialDocument;
@@ -364,12 +465,24 @@ var
   Document: TDocument;
   Url: TUrlRecord;
   Entry: TSessionHistoryEntry;
+  DocumentExecutor: TScriptExecutor;
 begin
   ParseUrl('about:blank', Url);
   Document := TDocument.CreateDocument(True);
   FWindow := TWebWindow.Create(FLoop, Document);
   FWindow.Navigable := Self;
-  FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, FExecutor);
+  { A frame's initial about:blank has its creator's origin. }
+  if FParent <> nil then
+    SetDocumentOrigin(Document, DocumentOrigin(FContainer.NodeDocument));
+  DocumentExecutor := FExecutor;
+  if FSandboxed and not (AllowScripts in FAllowances) then
+    DocumentExecutor := nil;
+  FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, DocumentExecutor);
+  if FParent <> nil then
+  begin
+    FLoader.SetOrigin(DocumentOrigin(FContainer.NodeDocument));
+    HookLoader(FLoader);
+  end;
   Document.Release;
   FLoader.BeginContent(ContentHtml, 'utf-8');
   FLoader.EndOfInput;
@@ -380,6 +493,8 @@ begin
   Entry.DocumentId := FCurrentDocumentId;
   FHistory.Push(Entry);
   FInitialAboutBlank := True;
+  if FObserver <> nil then
+    FObserver.DocumentChanged(Self, Document, FWindow);
 end;
 
 procedure TNavigable.Discard(Thing: TObject);
@@ -460,6 +575,11 @@ begin
     Handling := HistoryReplace
   else
     Handling := HistoryPush;
+  if FParent <> nil then
+  begin
+    Handling := FrameHistoryHandling(Handling);
+    FLazyPending := False;
+  end;
   Current := FLoader.DocumentUrl;
   if Url.HasFragment and ((Options.Method = '') or (Options.Method = 'GET')) and
      (SerializeUrl(Url, True) = SerializeUrl(Current, True)) and not FInitialAboutBlank then
@@ -487,8 +607,8 @@ begin
   finally
     Event.Free;
   end;
-  if Asked and (FObserver <> nil) then
-    Result := FObserver.ConfirmUnload(Self);
+  if Asked and (HostObserver <> nil) then
+    Result := HostObserver.ConfirmUnload(Self);
 end;
 
 procedure TNavigable.CancelNavigation;
@@ -516,6 +636,15 @@ begin
   Request := TFetchRequest.Create(Method, Url);
   Request.Mode := FetchModeNavigate;
   Request.Destination := DestinationDocument;
+  if FParent <> nil then
+  begin
+    if FContainer.IsHtmlElement(AtomFrame) then
+      Request.Destination := DestinationFrame
+    else
+      Request.Destination := DestinationIframe;
+    TakeContainerSandbox;
+    DelayParentLoad;
+  end;
   Request.Credentials := FetchCredentialsInclude;
   Request.Redirect := FetchRedirectFollow;
   Request.CacheMode := CacheMode;
@@ -567,6 +696,7 @@ begin
   end;
   if OldLoader <> nil then
     OldLoader.Abort;
+  DetachChildren;
   FWindow := nil;
   FLoader := nil;
   Discard(OldLoader);
@@ -602,7 +732,11 @@ begin
     if FNavigationHandling = HistoryReplace then
       FHistory.ReplaceCurrent(Entry)
     else
+    begin
       FHistory.Push(Entry);
+      if FParent <> nil then
+        Top.AddFrameEntry(Self);
+    end;
   end;
   FInitialAboutBlank := False;
 end;
@@ -610,14 +744,27 @@ end;
 procedure TNavigable.CommitDocument(constref Url: TUrlRecord; Kind: TDocumentContentKind; const Charset: string);
 var
   Document: TDocument;
-  TopOrigin: TUrlOrigin;
+  TopOrigin, Origin: TUrlOrigin;
+  DocumentExecutor: TScriptExecutor;
+  HasOrigin: Boolean;
 begin
   UnloadActiveDocument;
   Document := TDocument.CreateDocument(True);
   FWindow := TWebWindow.Create(FLoop, Document);
   FWindow.Navigable := Self;
-  TopOrigin := OriginOfUrl(Url);
-  FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, FExecutor, @TopOrigin);
+  if FParent <> nil then
+    TopOrigin := DocumentOrigin(Top.ActiveDocument)
+  else
+    TopOrigin := OriginOfUrl(Url);
+  HasOrigin := DocumentOriginForCommit(Url, Origin);
+  if HasOrigin then
+    SetDocumentOrigin(Document, Origin);
+  DocumentExecutor := FExecutor;
+  if FSandboxed and not (AllowScripts in FAllowances) then
+    DocumentExecutor := nil;
+  FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, DocumentExecutor, @TopOrigin);
+  if HasOrigin then
+    FLoader.SetOrigin(Origin);
   FLoader.Times := FNavigationTimes;
   if FLoader.Times.NavigationStart = 0 then
   begin
@@ -657,6 +804,8 @@ begin
     Entry.Url := Url;
     Entry.DocumentId := FCurrentDocumentId;
     FHistory.Push(Entry);
+    if FParent <> nil then
+      Top.AddFrameEntry(Self);
   end;
   FLoader.ChangeDocumentUrl(Url);
   if FObserver <> nil then
@@ -736,6 +885,14 @@ begin
     FNavigationJob := nil;
     FFetcher.Cancel(Job);
     SetState(LoadingComplete);
+    UndelayParentLoad;
+    Exit;
+  end;
+  if (FParent <> nil) and not ResponseMayBeFramed(Response, Url) then
+  begin
+    FNavigationJob := nil;
+    FFetcher.Cancel(Job);
+    ShowErrorPage(Url, NetworkErrorPage(SerializeUrl(Url), 'the page refuses to be shown in a frame of this site'));
     Exit;
   end;
   Essence := Response.ComputedEssence;
@@ -755,12 +912,15 @@ begin
     Download.Url := SerializeUrl(Url);
     Download.MimeType := Essence;
     Download.FileName := DispositionFileName(Response.Headers.Value('content-disposition'), Url.Path);
-    if FObserver <> nil then
-      FObserver.DownloadRequested(Self, Download);
-    if FInitialAboutBlank then
+    if HostObserver <> nil then
+      HostObserver.DownloadRequested(Self, Download);
+    if FInitialAboutBlank and (FParent = nil) then
       ShowErrorPage(Url, CannotDisplayPage(SerializeUrl(Url), Essence))
     else
+    begin
       SetState(LoadingComplete);
+      UndelayParentLoad;
+    end;
     Exit;
   end;
   FNavigationTimes.ResponseStart := GetTickCount64;
@@ -817,6 +977,13 @@ begin
   if Loader <> FLoader then
     Exit;
   SetState(LoadingComplete);
+  StartLazyFrames;
+  if FParent <> nil then
+  begin
+    if not FInitialAboutBlank then
+      FireContainerLoad;
+    UndelayParentLoad;
+  end;
   Entry := FHistory.Current;
   if (FNavigationHandling in [HistoryTraverse, HistoryReload]) and (Entry <> nil) and Entry.HasScrollPosition and
      (FObserver <> nil) then
@@ -973,7 +1140,11 @@ begin
     if Handling = HistoryReplace then
       FHistory.ReplaceCurrent(Entry)
     else
+    begin
       FHistory.Push(Entry);
+      if FParent <> nil then
+        Top.AddFrameEntry(Self);
+    end;
   end;
   FLoader.ChangeDocumentUrl(Url);
   if FObserver <> nil then
@@ -1015,6 +1186,9 @@ begin
     Exit;
   TargetIndex := FHistory.Index + Delta;
   Target := FHistory[TargetIndex];
+  { Steps of child navigables only: they traverse, this document stays. }
+  if (FParent = nil) and TraverseFrames(TargetIndex) then
+    Exit;
   if Target.DocumentId = FCurrentDocumentId then
   begin
     CancelNavigation;
@@ -1084,10 +1258,14 @@ begin
   Entry.ScrollY := Y;
 end;
 
+{$I Web.Navigation.Navigables.Frames.inc}
+
 initialization
   HashChangeFirer := THashChangeFirer.Create;
+  SrcdocNavigator := TSrcdocNavigator.Create;
 
 finalization
   HashChangeFirer.Free;
+  SrcdocNavigator.Free;
 
 end.

@@ -69,7 +69,9 @@ uses
   Web.Storage,
   Web.ScriptEnvironment,
   Web.Script.PlatformSources,
-  Web.Script.NativeFetch;
+  Web.Script.NativeFetch,
+  Web.Origins,
+  Web.Bindings.CrossOrigin;
 
 const
   LocalKind = 0;
@@ -294,14 +296,25 @@ end;
 
 { The window whose script called into this realm (postMessage's source):
   the calling realm's global, else this one's. }
+{ The window that called (postMessage's source) as this window may see
+  it, and its origin: an object of the two. }
 function NativeIncumbentWindow(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Realm: TJsRealm;
+  Incumbent: TBindingContext;
+  Answer: TJsObject;
 begin
   Realm := Context.Engine.Realm.CallerRealm;
   if (Realm = nil) or (Realm.GlobalObject = nil) or Realm.Detached then
     Realm := Context.Engine.Realm;
-  Result := JsObjectValue(Realm.GlobalObject);
+  Incumbent := ContextOfRealm(Realm);
+  if Incumbent = nil then
+    Incumbent := Context;
+  Answer := Context.Engine.NewObject;
+  Answer.DefineData(Context.Engine.Realm, Context.Engine.Realm.Intern('window'), WindowValueFor(Context, Incumbent));
+  Answer.DefineData(Context.Engine.Realm, Context.Engine.Realm.Intern('origin'),
+    Context.TextValue(DocumentOriginText(Incumbent.Document)));
+  Result := JsObjectValue(Answer);
 end;
 
 { Layout (CSSOM View): the environment's TScriptLayout answers. }
