@@ -170,6 +170,18 @@ type
     { Links running user processes, so they can be found by id. }
     RunningLink: TListEntry;
     IsRegistered: Boolean;
+
+    { --- Memory running out (Processes.OutOfMemory) --- }
+    { Added to its share of memory when a process to end is chosen
+      (-1000 to 1000; OomScoreAdjustNever: never chosen unless it is the
+      one asking). Inherited. }
+    OomScoreAdjust: LongInt;
+    { The initial program: never chosen unless it is the one asking. Not
+      inherited. }
+    NeverEndForMemory: Boolean;
+    { The most processes its user may run while it starts one
+      (ProcessLimitProcesses); 0 for the default. Inherited. }
+    ProcessCountLimit: LongWord;
   end;
 
 var

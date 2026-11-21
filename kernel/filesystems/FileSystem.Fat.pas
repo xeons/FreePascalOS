@@ -398,6 +398,7 @@ begin
   Driver.RemoveNode := @FatRemoveNode;
   Driver.RenameNode := @FatRenameNode;
   Driver.Sync := @FatSync;
+  Driver.TrimFreeSpace := @TrimFreeClusters;
   Driver.SetAttributes := @FatSetAttributes;
   Driver.GetFreeSpace := @FatGetFreeSpace;
   Driver.RemoveOpenNode := @FatRemoveOpenNode;

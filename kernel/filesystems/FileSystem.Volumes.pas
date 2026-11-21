@@ -88,6 +88,7 @@ uses
   FileSystem.Fat,
   FileSystem.ExFat,
   FileSystem.Ext,
+  FileSystem.Discards,
   Debug.Output;
 
 var
@@ -116,6 +117,7 @@ begin
   MountedVolumeCount := 0;
   InitializeMutex(VolumeListLock);
   InitializeBlockCache;
+  InitializeVolumeDiscards;
 
   RegisterFileSystemDriver(FatFileSystemDriver);
   RegisterFileSystemDriver(ExFatFileSystemDriver);
@@ -194,6 +196,7 @@ begin
     end;
 
     RegisterRootNode(Volume);
+    AttachVolumeDiscards(Volume);
 
     AcquireMutex(VolumeListLock);
     if MountedVolumeCount < MaximumVolumes then

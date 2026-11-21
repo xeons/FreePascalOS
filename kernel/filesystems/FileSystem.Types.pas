@@ -264,6 +264,12 @@ type
       another onto its name. }
     BeginAtomicChange: procedure(Volume: PVolume);
     EndAtomicChange: function(Volume: PVolume): TFileSystemStatus;
+
+    { Optional: discards every free block or cluster of the volume
+      (fstrim) through FileSystem.Discards.TrimFreeRange, adding what
+      the disk took to Discarded. The volume lock is held and the cache
+      flushed. }
+    TrimFreeSpace: function(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
   end;
 
   TVolume = record
@@ -294,6 +300,9 @@ type
     { Unique since the system started (1, 2, ...): what file information
       reports as the volume a node is on. }
     Number: LongWord;
+    { Freed ranges waiting to be discarded (FileSystem.Discards); nil
+      when the volume does not discard. }
+    Discards: Pointer;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;

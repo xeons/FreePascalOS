@@ -168,6 +168,10 @@ begin
   { The first program owns the console: Ctrl-C ends its group. }
   if Error = ErrorNone then
     SetTerminalForegroundGroup(ConsoleTerminal^, Process^.GroupId);
+  { The service manager (or whatever runs first) is ended for want of
+    memory only if it is the one asking (Processes.OutOfMemory). }
+  if Error = ErrorNone then
+    Process^.NeverEndForMemory := True;
   if Error <> ErrorNone then
   begin
     DebugBeginMessage;

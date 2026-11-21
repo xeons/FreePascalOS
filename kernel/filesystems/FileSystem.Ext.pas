@@ -729,6 +729,7 @@ begin
   Driver.RemoveNode := @JournaledRemoveNode;
   Driver.RenameNode := @JournaledRenameNode;
   Driver.Sync := @JournaledSync;
+  Driver.TrimFreeSpace := @TrimFreeBlocks;
   Driver.SetAttributes := @JournaledSetAttributes;
   Driver.CreateHardLink := @JournaledCreateHardLink;
   Driver.GetFreeSpace := @ExtGetFreeSpace;

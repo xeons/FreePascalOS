@@ -88,6 +88,7 @@ uses
   Processes.SecurityCalls,
   Processes.AffinityCalls,
   Processes.LimitCalls,
+  Processes.MemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
   Processes.Shutdown,
@@ -378,6 +379,8 @@ begin
   { The child starts with the caller's limits. }
   Startup.HandleLimit := Caller^.Handles.Limit;
   Startup.RegionLimit := Caller^.AddressSpace^.RegionLimit;
+  Startup.ProcessCountLimit := Caller^.ProcessCountLimit;
+  Startup.OomScoreAdjust := Caller^.OomScoreAdjust;
   ReleaseMutex(Caller^.Lock);
   Error := ErrorNone;
   if (Creation.Flags and ProcessPassHandles) <> 0 then
@@ -404,7 +407,11 @@ begin
     Startup.ControllingTerminal := NewTerminal;
   end;
 
-  Error := CreateUserProcess(Startup, Child);
+  { Its user may run only so many processes at once. }
+  if not UserMayStartProcess(Startup.Credentials.RealUserId, Caller^.ProcessCountLimit) then
+    Error := ErrorWouldBlock
+  else
+    Error := CreateUserProcess(Startup, Child);
   if (Error = ErrorNone) and (NewTerminal <> nil) then
     SetTerminalForegroundGroup(PLineDiscipline(PDeviceObject(NewTerminal)^.Terminal)^, Child^.GroupId);
 
@@ -878,6 +885,9 @@ begin
     CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
     CallGetModuleTls: Result := PerformGetModuleTls(Int64(Argument0), Argument1);
     CallTakeModuleInitializers: Result := PerformTakeModuleInitializers(Int64(Argument0), Argument1);
+    CallTrimVolume: Result := PerformTrimVolume(Argument0);
+    CallGetBlockCacheStatistics: Result := PerformGetBlockCacheStatistics(Argument0);
+    CallGetMemoryPressure: Result := PerformGetMemoryPressure(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;

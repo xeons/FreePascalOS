@@ -147,12 +147,17 @@ function GroupOfBlock(Ext: PExtVolume; Block: QWord): LongWord;
 { Brings the superblock's free counters and checksum up to date. }
 function SyncSuperblock(Volume: PVolume): TFileSystemStatus;
 
+{ fstrim: discards every run of free blocks (groups whose block bitmap
+  is still uninitialized are left alone). }
+function TrimFreeBlocks(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+
 implementation
 
 uses
   Runtime.Memory,
   Runtime.Checksums,
-  Memory.KernelHeap;
+  Memory.KernelHeap,
+  FileSystem.Discards;
 
 function ExtVolumeOf(Node: PNode): PExtVolume;
 begin
@@ -638,6 +643,8 @@ begin
     begin
       Dec(Ext^.FreeBlockCount);
       Ext^.SuperblockNeedsWriting := True;
+      { Its discard, if still waiting, must not reach what goes in now. }
+      CancelVolumeDiscard(Volume, Block * Ext^.BlockSize, Ext^.BlockSize);
       { A data write: the block may become file data, which is never
         journaled; metadata written to it later is. }
       if not ExtWriteData(Volume, Block * Ext^.BlockSize, Ext^.BlockSize, nil) then
@@ -694,8 +701,71 @@ begin
     Result := WriteGroupDescriptor(Volume, Group, @Descriptor[0]);
     Inc(Ext^.FreeBlockCount);
     Ext^.SuperblockNeedsWriting := True;
+    { On a journaled volume only once the transaction has committed. }
+    QueueVolumeDiscard(Volume, Block * Ext^.BlockSize, Ext^.BlockSize, Ext^.Journal <> nil);
   end;
   FreeKernelMemory(Bitmap);
+end;
+
+{ Discards the free runs of one group's block bitmap. }
+function TrimGroup(Volume: PVolume; Group: LongWord; var Discarded: QWord): TFileSystemStatus;
+var
+  Ext: PExtVolume;
+  Descriptor: array[0..MaximumDescriptorSize - 1] of Byte;
+  BitmapBlock: QWord;
+  Bitmap: PByte;
+  Limit: LongWord;
+  Index: LongWord;
+  RunStart: LongWord;
+  GroupFirst: QWord;
+begin
+  Ext := PExtVolume(Volume^.DriverData);
+  Result := ReadGroupDescriptor(Volume, Group, @Descriptor[0]);
+  if Result <> StatusSuccess then
+    Exit;
+  if (PWord(@Descriptor[DescriptorOffsetFlags])^ and GroupFlagBlocksUninitialized) <> 0 then
+    Exit(StatusSuccess);
+  BitmapBlock := DescriptorValue(Ext, @Descriptor[0], DescriptorOffsetBlockBitmapLow,
+    DescriptorOffsetBlockBitmapHigh, True);
+  Result := LoadBitmap(Volume, BitmapBlock, Bitmap);
+  if Result <> StatusSuccess then
+    Exit;
+  GroupFirst := QWord(Ext^.FirstDataBlock) + QWord(Group) * Ext^.BlocksPerGroup;
+  Limit := BlocksInGroup(Ext, Group);
+  Index := 0;
+  while Index < Limit do
+  begin
+    if BitIsSet(Bitmap, Index) then
+    begin
+      Inc(Index);
+      Continue;
+    end;
+    RunStart := Index;
+    while (Index < Limit) and not BitIsSet(Bitmap, Index) do
+      Inc(Index);
+    if not TrimFreeRange(Volume, (GroupFirst + RunStart) * Ext^.BlockSize,
+      QWord(Index - RunStart) * Ext^.BlockSize, Discarded) then
+      Result := StatusIoError;
+  end;
+  FreeKernelMemory(Bitmap);
+end;
+
+function TrimFreeBlocks(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+var
+  Ext: PExtVolume;
+  Group: LongWord;
+  Status: TFileSystemStatus;
+begin
+  Ext := PExtVolume(Volume^.DriverData);
+  Result := StatusSuccess;
+  Group := 0;
+  while Group < Ext^.GroupCount do
+  begin
+    Status := TrimGroup(Volume, Group, Discarded);
+    if Status <> StatusSuccess then
+      Result := Status;
+    Inc(Group);
+  end;
 end;
 
 function TryAllocateInodeInGroup(Volume: PVolume; Group: LongWord; IsDirectory: Boolean;

@@ -74,6 +74,8 @@ type
     { Its limits (see Processes.LimitCalls); 0 for the default. }
     RegionLimit: LongWord;
     HandleLimit: LongWord;
+    ProcessCountLimit: LongWord;
+    OomScoreAdjust: LongInt;
     { More handles it gets, with their numbers (after the standard ones,
       so a passed 0, 1 or 2 replaces one). }
     PassedHandles: TPassedHandles;
@@ -127,6 +129,8 @@ uses
   Processes.UserThread,
   Processes.UserExceptions,
   Processes.LoadedModules,
+  Processes.OutOfMemory,
+  Memory.PhysicalPages,
   Debug.Output;
 
 const
@@ -147,6 +151,7 @@ const
 function ResolvePageFault(FaultAddress: QWord; ErrorCode: QWord): Boolean;
 var
   Process: PProcess;
+  Failures: QWord;
 begin
   Process := CurrentProcess;
   if (Process = nil) or not Process^.IsUserProcess then
@@ -155,7 +160,14 @@ begin
     open it, so the call can complete, and raise the overflow after. }
   if ((ErrorCode and PageFaultFromUserMode) = 0) and (FaultAddress < UserSpaceLimit) then
     NoteKernelAccessToStack(FaultAddress);
+  Failures := FailedPageAllocationCount;
   Result := ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
+  { No page for a program's own fault: the caches shrink, or a process
+    is ended (Processes.OutOfMemory). A fault of the kernel's (copying
+    for a system call) fails instead: locks may be held. }
+  if not Result and ((ErrorCode and PageFaultFromUserMode) <> 0) and
+     (FailedPageAllocationCount <> Failures) and InterruptsAreEnabled then
+    Result := ResolveFaultWithoutMemory(Process, FaultAddress, ErrorCode);
 end;
 
 procedure HandleUserException(Frame: PTrapFrame; Description: PChar; FaultAddress: QWord);
@@ -197,6 +209,7 @@ end;
 procedure InitializeUserProcesses;
 begin
   SetPageFaultResolver(@ResolvePageFault);
+  InitializeOutOfMemoryPolicy;
   SetUserExceptionHandler(@HandleUserException);
 end;
 
@@ -377,6 +390,8 @@ begin
 
   if Startup.HandleLimit <> 0 then
     SetHandleLimit(Process^.Handles, Startup.HandleLimit);
+  Process^.ProcessCountLimit := Startup.ProcessCountLimit;
+  Process^.OomScoreAdjust := Startup.OomScoreAdjust;
   Result := CreateAddressSpace(Process^.AddressSpace);
   if Result = ErrorNone then
   begin

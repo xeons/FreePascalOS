@@ -322,6 +322,10 @@ const
     process was in its foreground group: Value is rows shl 16 or
     columns. Nothing happens for processes that do not select it. }
   NotificationTerminalResized = 2;
+  { A process was ended because memory ran out: Value is its id, the
+    sender 0 (the system). Sent to every process that selected it (a
+    desktop shows it). }
+  NotificationProcessEndedForMemory = 3;
 
   { Reasons of an end request (TAbiNotification.Reason). }
   { Someone asked (kill, the default). }
@@ -350,6 +354,7 @@ const
     a terminal: what a program with windows takes. }
   NotifyEndRequests = NotifyEndAsked or NotifyEndServiceStop or NotifyEndShutdown or NotifyEndLogOff;
   NotifyTerminalResized = $10000;
+  NotifyProcessEndedForMemory = $20000;
   NotifyEverything = NotifyEndRequests or NotifyEndHangUp or NotifyEndInterrupt or NotifyTerminalResized;
 
   { Targets of CallRequestEnd. }
@@ -540,7 +545,24 @@ const
   CallListBatteries = 156;
   { 157-159 are kept for this group. }
 
-  CallCount = 160;
+  { --- Memory pressure and storage -------------------------------------- }
+
+  { (PathAddress): discards all the free space of the volume holding the
+    path (fstrim): the disk is told that its free blocks hold nothing.
+    Root only (ErrorNotPermitted). Returns the bytes discarded;
+    ErrorUnsupported if the volume is read-only, its disk cannot discard
+    or its file system cannot walk its free space. }
+  CallTrimVolume = 168;
+  { (StatisticsAddress): the block cache as a TAbiBlockCacheStatistics.
+    Anyone may ask. }
+  CallGetBlockCacheStatistics = 169;
+  { (PressureAddress): free memory against its watermarks, what the
+    caches gave back and the processes ended for want of memory, as a
+    TAbiMemoryPressure. Anyone may ask. }
+  CallGetMemoryPressure = 170;
+  { 171 is kept for this group. }
+
+  CallCount = 172;
 
   AbiModuleNameCapacity = 64;
 
@@ -612,6 +634,9 @@ const
 
   { Exit status of a process ended by an exception nobody dispatched. }
   ExitStatusException = 139;
+  { Exit status of a process ended because memory ran out (as by
+    SIGKILL). }
+  ExitStatusOutOfMemory = 137;
 
   { TAbiExceptionRecord.Code }
   ExceptionAccessViolation = 1;
@@ -918,6 +943,21 @@ const
     may have, by default and at most. }
   ProcessLimitRegions = 1;
   ProcessLimitHandles = 2;
+  { The most processes the caller's real user may run at once while
+    this process starts one (root's are not counted). Starting one more
+    fails with ErrorWouldBlock. }
+  ProcessLimitProcesses = 4;
+  { How willingly the process is ended when memory runs out, as the
+    adjustment plus OomScoreAdjustOffset (0 to 2000): the adjustment
+    (-1000 to 1000) is added to its share of memory in thousandths, so
+    1000 makes it the first chosen and -1000 never chosen unless it is
+    the one asking. Raising it is always allowed, lowering below the
+    default needs root. Inherited like the other limits. }
+  ProcessLimitOomScoreAdjust = 5;
+  OomScoreAdjustOffset = 1000;
+  OomScoreAdjustNever = -1000;
+  DefaultProcessCountLimit = 4096;
+  ProcessCountLimitCeiling = 65536;
   DefaultProcessRegionLimit = 65536;
   ProcessRegionLimitCeiling = 1048576;
   DefaultProcessHandleLimit = 16384;
@@ -1312,6 +1352,62 @@ type
   end;
 
   { What CallGetProcessorPower gives. }
+  { What CallGetBlockCacheStatistics gives. }
+  TAbiBlockCacheStatistics = record
+    LineBytes: QWord;
+    { Lines now, the bounds it moves between, and the dirty ones. }
+    LineCount: QWord;
+    MinimumLines: QWord;
+    MaximumLines: QWord;
+    DirtyLines: QWord;
+    Hits: QWord;
+    Misses: QWord;
+    ReadAhead: QWord;
+    WrittenBack: QWord;
+    { Lines added as it grew, given back under memory pressure, and
+      forgotten because their blocks were discarded. }
+    LinesGrown: QWord;
+    LinesShrunk: QWord;
+    LinesDiscarded: QWord;
+    { What file systems freed and queued for discarding, and what the
+      disks were told to discard (fstrim included). }
+    BytesQueuedForDiscard: QWord;
+    BytesDiscarded: QWord;
+  end;
+  PAbiBlockCacheStatistics = ^TAbiBlockCacheStatistics;
+
+  { CallGetMemoryPressure: TAbiMemoryPressure.Level }
+const
+  AbiMemoryPressureNone = 0;
+  AbiMemoryPressureLow = 1;
+  AbiMemoryPressureCritical = 2;
+
+type
+  TAbiMemoryPressure = record
+    TotalPages: QWord;
+    FreePages: QWord;
+    { Fewer free pages than these: memory is short, very short. }
+    LowWatermarkPages: QWord;
+    CriticalWatermarkPages: QWord;
+    { AbiMemoryPressure*. }
+    Level: LongWord;
+    Reserved: LongWord;
+    { Times memory was found short, calls asking the caches for memory
+      and the pages they gave back, page allocations that failed. }
+    PressureEvents: QWord;
+    ReclaimCalls: QWord;
+    ReclaimedPages: QWord;
+    FailedAllocations: QWord;
+    { Pages promised to processes (resident plus committed, as far as
+      the kernel counts commitments). }
+    CommittedPages: QWord;
+    { Processes ended because memory ran out, and the last of them. }
+    ProcessesEnded: QWord;
+    LastEndedProcessId: QWord;
+    LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
+  end;
+  PAbiMemoryPressure = ^TAbiMemoryPressure;
+
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;
     ProcessorCount: LongWord;
