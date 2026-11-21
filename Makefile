@@ -1095,11 +1095,13 @@ web-test: $(WEB_TEST)
 # over their .html pages, then wrapper lifetime and bytes per wrapper.
 WEB_SCRIPT_TEST := build/tools/WebScriptTest
 WEB_SCRIPT_TEST_UNITS := build/tools/web-script-test-units
-WEB_BINDING_SOURCES := userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl)
+WEB_BINDING_SOURCES := userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl) \
+	$(wildcard userland/lib/web/platform/*.js)
 WEB_SCRIPT_TEST_SOURCES := $(wildcard tools/WebScriptTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	$(filter-out %/Web.Contents.pas,$(wildcard userland/lib/web/*.pas)) $(wildcard userland/lib/web/*.inc) \
 	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
-	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/Url.*.pas)
+	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/Url.*.pas) \
+	tools/TlsTest/Crypto.Random.pas userland/lib/cryptography/Crypto.Digests.pas
 
 $(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
 		$(WEB_BINDING_SOURCES)
@@ -1110,7 +1112,8 @@ $(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard 
 
 $(WEB_SCRIPT_TEST): $(WEB_SCRIPT_TEST_SOURCES) $(WEB_SCRIPT_TEST_UNITS)/.generated
 	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
-	fpc -Mobjfpc -O2 -vew -Futools/WebScriptTest -Futools/CryptoTest -Fuuserland/lib/web -Fuuserland/lib/javascript \
+	fpc -Mobjfpc -O2 -vew -Futools/WebScriptTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/cryptography -Fushared -Fishared \
+		-Fuuserland/lib/web -Fuuserland/lib/javascript \
 		-Fuuserland/lib/css -Fuuserland/lib/http -Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
 		tools/WebScriptTest/WebScriptTest.pas
 

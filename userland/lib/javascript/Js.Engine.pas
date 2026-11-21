@@ -168,6 +168,7 @@ type
       after the runtime. }
     FOrphans: array of TObject;
     procedure AdoptOrphan(Child: TJsEngine);
+    function EvaluateCode(const Source, FileName: string; Builtin: Boolean): TJsValue;
     procedure MarkRoots(Tracer: TJsTracer);
     procedure RaiseException;
     function GetMemoryLimit: Int64;
@@ -197,6 +198,9 @@ type
 
     { Runs a script; raises EJsError when it throws. }
     function Evaluate(const Source: string; const FileName: string = '<eval>'): TJsValue;
+    { The same for an embedder's built-ins written in JavaScript: their
+      functions read as native code. }
+    function EvaluateBuiltin(const Source: string; const FileName: string): TJsValue;
     { False and the error's text when it throws or does not parse. }
     function TryEvaluate(const Source, FileName: string; out Value: TJsValue; out ErrorText: string): Boolean;
     function Call(F, This: TJsValue; const Args: array of TJsValue): TJsValue;
@@ -528,12 +532,24 @@ begin
 end;
 
 function TJsEngine.Evaluate(const Source: string; const FileName: string): TJsValue;
+begin
+  Result := EvaluateCode(Source, FileName, False);
+end;
+
+function TJsEngine.EvaluateBuiltin(const Source: string; const FileName: string): TJsValue;
+begin
+  Result := EvaluateCode(Source, FileName, True);
+end;
+
+function TJsEngine.EvaluateCode(const Source, FileName: string; Builtin: Boolean): TJsValue;
 var
   Code: TJsCode;
   Error: EJsError;
 begin
   try
     Code := CompileScript(FRealm, UTF8Decode(Source), FileName);
+    if Builtin and (Code.Source <> nil) then
+      Code.Source.Builtin := True;
   except
     on Syntax: EJsSyntaxError do
     begin

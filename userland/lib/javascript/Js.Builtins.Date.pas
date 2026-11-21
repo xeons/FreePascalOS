@@ -91,7 +91,7 @@ end;
 
 function Day(T: Double): Double;
 begin
-  Result := Floor(T / MillisecondsPerDay);
+  Result := FloorDouble(T / MillisecondsPerDay);
 end;
 
 function TimeWithinDay(T: Double): Double;
@@ -115,7 +115,7 @@ end;
 
 function DayFromYear(Year: Double): Double;
 begin
-  Result := 365 * (Year - 1970) + Floor((Year - 1969) / 4) - Floor((Year - 1901) / 100) + Floor((Year - 1601) / 400);
+  Result := 365 * (Year - 1970) + FloorDouble((Year - 1969) / 4) - FloorDouble((Year - 1901) / 100) + FloorDouble((Year - 1601) / 400);
 end;
 
 function TimeFromYear(Year: Double): Double;
@@ -127,7 +127,7 @@ function YearFromTime(T: Double): Double;
 var
   Year: Double;
 begin
-  Year := Floor(T / (MillisecondsPerDay * 365.2425)) + 1970;
+  Year := FloorDouble(T / (MillisecondsPerDay * 365.2425)) + 1970;
   while TimeFromYear(Year) > T do
     Year := Year - 1;
   while TimeFromYear(Year + 1) <= T do
@@ -220,10 +220,10 @@ begin
   Year := Int(Year);
   Month := Int(Month);
   Date := Int(Date);
-  Y := Year + Floor(Month / 12);
+  Y := Year + FloorDouble(Month / 12);
   if Abs(Y) > 400000 then
     Exit(NaN_);
-  M := Month - Floor(Month / 12) * 12;
+  M := Month - FloorDouble(Month / 12) * 12;
   MonthIndex := Trunc(M);
   Leap := DaysInYear(Y) = 366;
   Result := DayFromYear(Y) + MonthStart(MonthIndex, Leap) + Date - 1;

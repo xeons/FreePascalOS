@@ -51,6 +51,7 @@ uses
   Web.Dom,
   Web.Html.Parser,
   Web.ScriptEnvironment,
+  Web.Storage,
   Web.Script.Context;
 
 type
@@ -62,7 +63,20 @@ type
     Active: Boolean;
   end;
 
+  { A fetch the environment answers in a later turn: /data.json is JSON,
+    /missing a 404, other hosts a network error. }
+  TTestDelivery = class
+  public
+    Sink: TScriptFetchSink;
+    Url: string;
+    Canceled: Boolean;
+  end;
+
   TTestEnvironment = class(TScriptEnvironment)
+  private
+    FStorage: TWebStorageRegistry;
+    FDeliveries: TList;
+    procedure Deliver(Delivery: TTestDelivery);
   public
     Timers: array of TTestTimer;
     Clock: Int64;
@@ -79,6 +93,10 @@ type
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     function ViewportWidth: Integer; override;
     function ViewportHeight: Integer; override;
+    function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
+    function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
+      override;
+    procedure CancelFetch(Context: TObject; Handle: TObject); override;
     { Fires the earliest due timer; False when none is left. }
     function RunNextTimer(Context: TScriptContext): Boolean;
   end;
@@ -137,10 +155,18 @@ begin
   inherited Create;
   Scripts := TStringList.Create;
   Navigations := TStringList.Create;
+  FStorage := TWebStorageRegistry.Create('');
+  FDeliveries := TList.Create;
 end;
 
 destructor TTestEnvironment.Destroy;
+var
+  Index: Integer;
 begin
+  for Index := 0 to FDeliveries.Count - 1 do
+    TTestDelivery(FDeliveries[Index]).Free;
+  FDeliveries.Free;
+  FStorage.Free;
   Scripts.Free;
   Navigations.Free;
   inherited Destroy;
@@ -173,10 +199,80 @@ begin
       Timers[Index].Active := False;
 end;
 
+function TTestEnvironment.StorageArea(Context: TObject; Session: Boolean): TWebStorageArea;
+begin
+  if Session then
+    Result := FStorage.SessionArea('https://example.test')
+  else
+    Result := FStorage.LocalArea('https://example.test');
+end;
+
+function TTestEnvironment.StartFetch(Context: TObject; const Request: TScriptFetchRequest;
+  Sink: TScriptFetchSink): TObject;
+var
+  Delivery: TTestDelivery;
+begin
+  Delivery := TTestDelivery.Create;
+  Delivery.Sink := Sink;
+  Delivery.Url := Request.Url;
+  FDeliveries.Add(Delivery);
+  Result := Delivery;
+end;
+
+procedure TTestEnvironment.CancelFetch(Context: TObject; Handle: TObject);
+begin
+  TTestDelivery(Handle).Canceled := True;
+end;
+
+procedure TTestEnvironment.Deliver(Delivery: TTestDelivery);
+const
+  Json = '{"ok":true}';
+var
+  Headers: TScriptFetchHeaders;
+  Body: string;
+begin
+  Headers := nil;
+  SetLength(Headers, 1);
+  Headers[0].Name := 'Content-Type';
+  if Pos('https://example.test/', Delivery.Url) <> 1 then
+    Delivery.Sink.Finished(False, 'no route')
+  else
+  begin
+    if Pos('/data.json', Delivery.Url) > 0 then
+    begin
+      Headers[0].Value := 'application/json';
+      Body := Json;
+      Delivery.Sink.ResponseArrived(200, 'OK', Delivery.Url, 'basic', False, Headers);
+    end
+    else
+    begin
+      Headers[0].Value := 'text/plain';
+      Body := 'not found';
+      Delivery.Sink.ResponseArrived(404, 'Not Found', Delivery.Url, 'basic', False, Headers);
+    end;
+    if not Delivery.Canceled then
+      Delivery.Sink.DataArrived(@Body[1], Length(Body));
+    if not Delivery.Canceled then
+      Delivery.Sink.Finished(True, '');
+  end;
+end;
+
 function TTestEnvironment.RunNextTimer(Context: TScriptContext): Boolean;
 var
   Index, Best: Integer;
+  Delivery: TTestDelivery;
 begin
+  { Network results come before timers (as networking tasks would). }
+  if FDeliveries.Count > 0 then
+  begin
+    Delivery := TTestDelivery(FDeliveries[0]);
+    FDeliveries.Delete(0);
+    if not Delivery.Canceled then
+      Deliver(Delivery);
+    Delivery.Free;
+    Context.PerformMicrotaskCheckpoint;
+    Exit(True);
+  end;
   Best := -1;
   for Index := 0 to High(Timers) do
     if Timers[Index].Active and ((Best < 0) or (Timers[Index].Due < Timers[Best].Due)) then

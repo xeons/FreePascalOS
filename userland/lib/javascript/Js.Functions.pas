@@ -113,6 +113,9 @@ type
   public
     FileName: string;
     Text: UnicodeString;
+    { Built-ins an embedder wrote in JavaScript: their functions show as
+      native code (Function.prototype.toString). }
+    Builtin: Boolean;
     function MemorySize: SizeInt; override;
   end;
 

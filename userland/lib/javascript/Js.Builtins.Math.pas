@@ -80,7 +80,7 @@ begin
     Exit(-0.0);
   if Abs(X) >= 4503599627370496.0 then
     Exit(X);
-  Lower := Floor(X);
+  Lower := FloorDouble(X);
   if X - Lower >= 0.5 then
     Result := Lower + 1
   else
@@ -163,7 +163,7 @@ begin
       else if (X < 0) and (X > -1) then
         Result := JsDouble(-0.0)
       else
-        Result := JsNumber(Ceil(X));
+        Result := JsNumber(CeilDouble(X));
     FnCos: Result := JsNumber(Cos(X));
     FnCosh: Result := JsNumber(Cosh(X));
     FnExp:
@@ -184,7 +184,7 @@ begin
       if IsNaNDouble(X) or not IsFiniteDouble(X) or (X = 0) then
         Result := JsDouble(X)
       else
-        Result := JsNumber(Floor(X));
+        Result := JsNumber(FloorDouble(X));
     FnFround: Result := JsDouble(Single(X));
     FnF16round: Result := JsNumber(HalfToDouble(DoubleToHalf(X)));
     FnLog:

@@ -354,7 +354,7 @@ begin
   if (Value >= -2147483648.0) and (Value <= 2147483647.0) then
     Exit(Trunc(Value));
   Truncated := Int(Value);
-  Modulus := Truncated - Floor(Truncated / 4294967296.0) * 4294967296.0;
+  Modulus := Truncated - FloorDouble(Truncated / 4294967296.0) * 4294967296.0;
   Result := LongInt(LongWord(Trunc(Modulus)));
 end;
 

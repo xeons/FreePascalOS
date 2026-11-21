@@ -164,8 +164,26 @@ function DoubleBits(Value: Double): QWord; inline;
 function BitsDouble(Bits: QWord): Double; inline;
 function IsNaNDouble(Value: Double): Boolean; inline;
 function IsFiniteDouble(Value: Double): Boolean; inline;
+{ Floor and ceiling as doubles (the runtime's Floor and Ceil give a
+  32-bit integer). }
+function FloorDouble(Value: Double): Double; inline;
+function CeilDouble(Value: Double): Double; inline;
 
 implementation
+
+function FloorDouble(Value: Double): Double;
+begin
+  Result := Int(Value);
+  if Result > Value then
+    Result := Result - 1;
+end;
+
+function CeilDouble(Value: Double): Double;
+begin
+  Result := Int(Value);
+  if Result < Value then
+    Result := Result + 1;
+end;
 
 function DoubleBits(Value: Double): QWord;
 begin

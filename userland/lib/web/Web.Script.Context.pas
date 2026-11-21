@@ -144,6 +144,7 @@ uses
   Web.Bindings.UrlResolution,
   Web.Script.Timers,
   Web.Script.Prelude,
+  Web.Script.Natives,
   Web.Script.Frames;
 
 type
@@ -250,6 +251,7 @@ begin
   FReadyState := 'complete';
   FDocumentObserver := TScriptDocumentObserver.Create(Self);
   InstallBindings(Self);
+  InstallPlatform(Self);
   ObserveDocument(Document);
   Global := Engine.GlobalObject;
   if not Environment.SupportsTimers then

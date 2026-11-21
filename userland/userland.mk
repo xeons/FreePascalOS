@@ -329,7 +329,8 @@ $(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
 # by make-bindings.py.
 WEB_GENERATED := $(USER_BUILD_DIRECTORY)/web-generated
 WEB_TABLE_SOURCES := userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
-	userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl)
+	userland/lib/web/make-bindings.py $(wildcard userland/lib/web/bindings/*.webidl) \
+	$(wildcard userland/lib/web/platform/*.js)
 
 $(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
 	@rm -rf $(WEB_GENERATED)

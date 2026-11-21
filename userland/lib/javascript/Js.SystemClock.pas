@@ -19,6 +19,7 @@ implementation
 
 uses
   Math,
+  Js.Values,
   Runtime.Time,
   Sys.Time,
   Sys.TimeZones,
@@ -56,14 +57,14 @@ function SystemLocalOffset(UtcMilliseconds: Double): Double;
 begin
   if IsNan(UtcMilliseconds) then
     Exit(0);
-  Result := ZoneOffsetAt(ProgramZone, Floor(UtcMilliseconds / 1000.0)).Offset * 1000.0;
+  Result := ZoneOffsetAt(ProgramZone, Trunc(FloorDouble(UtcMilliseconds / 1000.0))).Offset * 1000.0;
 end;
 
 function SystemZoneName(UtcMilliseconds: Double): string;
 var
   Abbreviation: PChar;
 begin
-  Abbreviation := ZoneOffsetAt(ProgramZone, Floor(UtcMilliseconds / 1000.0)).Abbreviation;
+  Abbreviation := ZoneOffsetAt(ProgramZone, Trunc(FloorDouble(UtcMilliseconds / 1000.0))).Abbreviation;
   if Abbreviation = nil then
     Exit('UTC');
   Result := Abbreviation;

@@ -165,7 +165,8 @@ type
 
   { Objects a window has one of. }
   TWindowSingleton = (SingletonLocation, SingletonNavigator, SingletonHistory, SingletonHistoryState,
-    SingletonScrollRestoration, SingletonWindowName, SingletonStructuredClone);
+    SingletonScrollRestoration, SingletonWindowName, SingletonStructuredClone, SingletonPlatformNatives,
+    SingletonPlatformInternal);
 
   { Where console messages go (Level: 'log', 'error'). }
   TConsoleMessageEvent = procedure(const Level, Text: string) of object;
@@ -194,6 +195,7 @@ type
     FWindowHandlers: TJsValue;
     FCheckpointRunning: Boolean;
     FTimeOrigin: QWord;
+    FTimeOriginUnix: Double;
     FSingletons: array[TWindowSingleton] of TJsValue;
     FCurrentScript: TElement;
     FFormStates: TFormStateMap;
@@ -302,8 +304,17 @@ type
     { Gives a node made by a constructor the prototype of a subclass's
       new.target. }
     procedure AdjustConstructedPrototype(Value: TJsValue; const Call: TBindingCall);
-    { Milliseconds since the context was made (DOMHighResTimeStamp). }
+    { Milliseconds since the time origin (DOMHighResTimeStamp). }
     function Now: Double;
+    { The time origin: GetTickCount64 milliseconds, and milliseconds since
+      1970 (performance.timeOrigin). The navigation's start when the
+      loader sets it, else when the context was made. }
+    procedure SetTimeOrigin(Ticks: QWord);
+    property TimeOriginTicks: QWord read FTimeOrigin;
+    property TimeOriginUnix: Double read FTimeOriginUnix;
+    { Calls natives[Name] of the platform scripts (Web.Script.Natives)
+      if one set it; False if not set or it threw (reported). }
+    function CallPlatform(const Name: string; const Args: array of TJsValue): Boolean;
 
     { Results }
     function TextValue(const Text: string): TJsValue; inline;
@@ -373,6 +384,13 @@ var
     libjavascript's default); tests make it small to collect often. }
   ContextHeapThreshold: Int64 = 0;
 
+type
+  TContextGoingHook = procedure(Context: TBindingContext);
+
+{ Hooks called at the start of every context's destruction (units with
+  per-context state register one). }
+procedure AddContextGoingHook(Hook: TContextGoingHook);
+
 { The context of a realm (natives get the realm). }
 function ContextOfRealm(R: TJsRealm): TBindingContext;
 { The script context of a call. }
@@ -383,11 +401,19 @@ function ValueToText(R: TJsRealm; Value: TJsValue): string;
 implementation
 
 uses
+  DateUtils,
   Js.Inspect;
 
 var
   Contexts: array of TBindingContext;
   LastContext: TBindingContext;
+  ContextGoingHooks: array of TContextGoingHook;
+
+procedure AddContextGoingHook(Hook: TContextGoingHook);
+begin
+  SetLength(ContextGoingHooks, Length(ContextGoingHooks) + 1);
+  ContextGoingHooks[High(ContextGoingHooks)] := Hook;
+end;
 
 function ContextOfRealm(R: TJsRealm): TBindingContext;
 var
@@ -593,7 +619,7 @@ begin
     FWindow := TWindowTarget.Create;
   FDocument.DefaultView := FWindow;
   FWindowHandlers := JsUndefined;
-  FTimeOrigin := GetTickCount64;
+  SetTimeOrigin(GetTickCount64);
   for Singleton_ := Low(TWindowSingleton) to High(TWindowSingleton) do
     FSingletons[Singleton_] := JsUndefined;
   FEngine.Runtime.Heap.AddRootProvider(@MarkRoots);
@@ -611,6 +637,8 @@ var
   Index: Integer;
 begin
   FDestroying := True;
+  for Index := 0 to High(ContextGoingHooks) do
+    ContextGoingHooks[Index](Self);
   UnregisterListenerOwner(Self);
   if FWindow.ListenerList(False) <> nil then
     DisableListeners(FWindow.ListenerList(False), Self);
@@ -1120,6 +1148,26 @@ end;
 function TBindingContext.Now: Double;
 begin
   Result := GetTickCount64 - FTimeOrigin;
+end;
+
+procedure TBindingContext.SetTimeOrigin(Ticks: QWord);
+begin
+  FTimeOrigin := Ticks;
+  FTimeOriginUnix := Round((LocalTimeToUniversal(SysUtils.Now) - UnixEpoch) * MSecsPerDay) -
+    (Int64(GetTickCount64) - Int64(Ticks));
+end;
+
+function TBindingContext.CallPlatform(const Name: string; const Args: array of TJsValue): Boolean;
+var
+  Natives, Callback, Outcome: TJsValue;
+begin
+  Natives := FSingletons[SingletonPlatformNatives];
+  if not JsIsObject(Natives) then
+    Exit(False);
+  Callback := FEngine.GetProperty(Natives, Name);
+  if not JsIsCallable(Callback) then
+    Exit(False);
+  Result := CallFunction(Callback, JsUndefined, Args, Outcome, Name);
 end;
 
 function TBindingContext.PrototypeForConstruct(const Call: TBindingCall): TJsObject;
