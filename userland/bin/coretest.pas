@@ -29,6 +29,9 @@
       the exit status must match (those using su run commands as the
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
+      libraries with thread-local storage and initializers loaded at run
+      time (dynlibtest), thread names (threadnametest), address space
+      layout randomization (aslrtest),
     * events, timers, waiting on several handles, channels, ports and a
       section shared between two processes (ipctest),
     * watching files and folders for changes made by other processes,
@@ -125,7 +128,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..396] of TCommandTest = (
+  CommandTests: array[0..403] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -578,7 +581,7 @@ const
     (Command: 'settings set Test/Name "two words"; settings set Test/Count 7; settings set -t list Test/List a "b c"; settings get Test/Name; settings get Test/Count; settings get Test/List; settings list Test'; ExpectedOutput: 'two words'#10'7'#10'a'#10'b c'#10'Name = "two words"'#10'Count = 7'#10'List = ["a", "b c"]'#10; ExpectedStatus: 0),
     (Command: 'settings set -s Test/Count 3; settings set -s -f Test/Fixed true; settings set Test/Fixed false; settings get Test/Count; settings get Test/Fixed; settings get -s Test/Count; settings list -s Test; stat -c %a /etc/settings /etc/settings/Test.settings /.settings /.settings/Test.settings'; ExpectedOutput: '7'#10'true'#10'3'#10'Count = 3'#10'fixed Fixed = true'#10'755'#10'644'#10'700'#10'600'#10; ExpectedStatus: 0),
     (Command: 'su user -c "settings set -s Test/Count 1" 2>&1; echo $?; su user -c "settings get Test/Count; settings set Test/Count 9; settings get Test/Count; stat -c %a /home/user/.settings /home/user/.settings/Test.settings; settings delete Test"; su user -c "cat /.settings/Test.settings" > /dev/null 2>&1; echo $?'; ExpectedOutput: 'settings: /etc/settings: Permission denied'#10'1'#10'3'#10'9'#10'700'#10'600'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'settings delete Test/Count; settings get Test/Count; settings delete -s Test; settings get Test/Count 2>&1; echo $?; ls /etc/settings; settings get Bad 2>&1; echo $?'; ExpectedOutput: '3'#10'settings: Test/Count is not set'#10'1'#10'Network.settings'#10'settings: Bad: not the path of a setting (GROUP/KEY)'#10'2'#10; ExpectedStatus: 0),
+    (Command: 'settings delete Test/Count; settings get Test/Count; settings delete -s Test; settings get Test/Count 2>&1; echo $?; ls /etc/settings; settings get Bad 2>&1; echo $?'; ExpectedOutput: '3'#10'settings: Test/Count is not set'#10'1'#10'Network.settings'#10'TimeSync.settings'#10'settings: Bad: not the path of a setting (GROUP/KEY)'#10'2'#10; ExpectedStatus: 0),
     (Command: 'printf ''Good = 1\nbroken line\n'' > /.settings/Damaged.settings; settings get Damaged/Good; settings check Damaged; echo $?; settings set Damaged/More 2; cat /.settings/Damaged.settings; settings delete Damaged; settings delete Test; ls /.settings | wc -l'; ExpectedOutput: '1'#10'line 2: broken line'#10'1'#10'Good = 1'#10'More = 2'#10'broken line'#10'0'#10; ExpectedStatus: 0),
     { Settings changes heard as they happen (settings watch): the user's
       value, a comment and a system value under the user's changing
@@ -681,7 +684,33 @@ const
       a while, as the task manager does, and a group ended as a whole
       (kill -9 of a group). And "$@" with no parameters makes no field. }
     (Command: 'hangtest --check > hang.log; echo $?; grep FAIL hang.log; tail -n 1 hang.log | cut -d " " -f 2-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
-    (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0)
+    (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0),
+    { Process limits (limittest): thousands of threads, regions and handles,
+      a child given 600 handles, and every count back to its baseline. }
+    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { A crash report names each address's module and offset, and ends
+      with the modules' load addresses (rtl/fpc/syscrash.inc). }
+    (Command: '/bin/coretest --crash-on-purpose 2> crash.log; sed -n 3p crash.log | grep -c "^  [$][0-9A-F]*  coretest+[$][0-9A-F]*$"; grep -c "^  [$][0-9A-F]*-[$][0-9A-F]* libsystem.so$" crash.log'; ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
+    { Address space layout randomization: two runs of a program have its
+      code, a library's, the stack, the heap and a thread's stack in
+      other places (booted with aslr=off, the same command prints
+      "aslrtest: aslr=off, the addresses are the same"). }
+    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, library, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
+    { Libraries with thread-local storage, threadvars and initializers
+      loaded with LoadLibrary by a program running threads (dynlibtest):
+      per-thread values in old and new threads, initializers once, the
+      finalizers at the end, newest library first. }
+    (Command: 'dynlibtest > dynlib.log; echo $?; grep FAIL dynlib.log; grep -e failed -e finalized -e "finalizer ran" dynlib.log'; ExpectedOutput: '0'#10'dynlibtest: 48 checks, 0 failed'#10'dynpascal: unit finalized'#10'dyntls: library finalizer ran'#10; ExpectedStatus: 0),
+    { Thread names: set by TThread.NameThreadForDebugging and by id,
+      listed by the kernel and shown by ps -L. }
+    (Command: 'threadnametest'; ExpectedOutput: 'threadnametest: names listed'#10'namer'#10'worker-plain'#10'worker-tthread'#10; ExpectedStatus: 0),
+    { The clocks (timetest): nanosecond clocks that never go back, sleeps
+      neither early nor late with idle processors' ticks stopped, Now in
+      milliseconds, stepping and slewing the wall clock. }
+    (Command: 'timetest > time.log; echo $?; grep FAIL time.log; tail -n 1 time.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Tickless idle: processors idle for 3 seconds take fewer than 5 clock
+      interrupts a second each (100 with the old periodic tick). }
+    (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0)
   );
 
 var

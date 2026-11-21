@@ -46,7 +46,9 @@ interface
 
 uses
   SysUtils,
-  Web.Dom;
+  Css.MediaQueries,
+  Web.Dom,
+  Web.Storage;
 
 type
   EScriptEnvironmentUnsupported = class(Exception);
@@ -58,8 +60,97 @@ type
     there. }
   TScriptFetchMode = (ScriptFetchParserBlocking, ScriptFetchDeferred, ScriptFetchInOrder, ScriptFetchAsync);
 
+  { Navigation Timing's moments of the current document, as
+    GetTickCount64 milliseconds (0: not yet, or unknown). }
+  TScriptNavigationTiming = record
+    { 'navigate', 'reload' or 'back_forward'. }
+    Kind: string;
+    RedirectCount: Integer;
+    NavigationStart, FetchStart, RequestStart, ResponseStart, ResponseEnd: QWord;
+    DomInteractive, DomContentLoadedEventStart, DomContentLoadedEventEnd, DomComplete: QWord;
+    LoadEventStart, LoadEventEnd: QWord;
+    { 'http/1.1', 'h2', 'h3' or ''. }
+    NextHopProtocol: string;
+    TransferSize, EncodedBodySize, DecodedBodySize: Int64;
+    ResponseStatus: Integer;
+  end;
+
+  TScriptFetchHeader = record
+    Name: string;
+    Value: string;
+  end;
+  TScriptFetchHeaders = array of TScriptFetchHeader;
+
+  { A fetch() or XMLHttpRequest request (Fetch Standard 5.4: the
+    enumerations as their IDL strings). }
+  TScriptFetchRequest = record
+    Method: string;
+    Url: string;
+    Headers: TScriptFetchHeaders;
+    Body: TBytes;
+    HasBody: Boolean;
+    { 'same-origin', 'no-cors' or 'cors'. }
+    Mode: string;
+    { 'omit', 'same-origin' or 'include'. }
+    Credentials: string;
+    Cache: string;
+    { 'follow', 'error' or 'manual'. }
+    Redirect: string;
+    { 'about:client', 'no-referrer' or a URL. }
+    Referrer: string;
+    ReferrerPolicy: string;
+    Priority: string;
+    Destination: string;
+    Integrity: string;
+    Keepalive: Boolean;
+  end;
+
+  { Where a script fetch's results go, on the page thread and never from
+    inside StartFetch: ResponseArrived once (unless the fetch fails
+    first), DataArrived per piece of the body, then Finished once. }
+  TScriptFetchSink = class
+  public
+    { ResponseType: 'basic', 'cors' or 'opaque' (status 0 and no
+      headers then); Headers are the ones script may read. }
+    procedure ResponseArrived(Status: Integer; const StatusText, Url, ResponseType: string; Redirected: Boolean;
+      const Headers: TScriptFetchHeaders); virtual; abstract;
+    procedure DataArrived(Data: Pointer; Count: PtrUInt); virtual; abstract;
+    procedure Finished(Success: Boolean; const ErrorText: string); virtual; abstract;
+  end;
+
+  { What script asks of the layout (CSSOM View, getComputedStyle), in
+    CSS pixels; whoever lays the document out answers (the web view),
+    bringing its layout up to date first. Positions are in the
+    document's coordinates (the initial containing block's origin). }
+  TScriptLayout = class
+  public
+    { The border box of Element (the union of its fragments); False when
+      it has no box. }
+    function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; virtual; abstract;
+    { The border widths (clientLeft, clientTop), the padding box's size
+      less scroll bars (clientWidth, clientHeight), the scrollable
+      overflow's size and the scroll offset. }
+    function ScrollGeometry(Element: TElement; out ClientLeft, ClientTop, ClientWidth, ClientHeight, ScrollWidth,
+      ScrollHeight, ScrollLeft, ScrollTop: Double): Boolean; virtual; abstract;
+    { Element nil: the viewport. }
+    procedure ScrollTo(Element: TElement; Left, Top: Double); virtual; abstract;
+    procedure ViewportScroll(out Left, Top: Double); virtual; abstract;
+    { The topmost element at a point of the viewport, nil if none. }
+    function ElementAtPoint(X, Y: Double): TElement; virtual; abstract;
+    { The computed value of a property ('' when the element is not
+      rendered and has no style). }
+    function ComputedValue(Element: TElement; const PropertyName: string): string; virtual; abstract;
+  end;
+
   TScriptEnvironment = class
   public
+    { The layout's answers (nil: elements have no boxes). }
+    Layout: TScriptLayout;
+    { Whether the embedder makes the windows of iframes itself (child
+      navigables with documents of their own, Web.Navigation); False:
+      the script context makes about:blank and srcdoc windows of its
+      own (Web.Script.Frames). }
+    function ManagesFrames: Boolean; virtual;
     { Timers: StartTimer asks for Context.FireTimer(TimerId) after
       Milliseconds (again every Milliseconds when Repeating, until
       StopTimer). Context is the TScriptContext. }
@@ -100,6 +191,33 @@ type
 
     function UserAgent: string; virtual;
     function Language: string; virtual;
+
+    { performance.timing and the navigation entry (all zero: unknown). }
+    function NavigationTiming(Context: TObject): TScriptNavigationTiming; virtual;
+    { Web Storage: the context's local or session storage area for its
+      origin, nil when it has none (storage is then a SecurityError).
+      StorageChanged follows a change (a local area is saved soon). }
+    function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; virtual;
+    procedure StorageChanged(Context: TObject; Area: TWebStorageArea); virtual;
+    { What media queries see (matchMedia); by default a screen of the
+      viewport's size. }
+    function MediaEnvironment: TCssMediaEnvironment; virtual;
+    { The screen in CSS pixels (by default the viewport). }
+    function ScreenWidth: Integer; virtual;
+    function ScreenHeight: Integer; virtual;
+    { requestAnimationFrame: True when the environment will call
+      Context.RunAnimationFrames at its next rendering opportunity; False
+      lets the window use a 16 ms timer. }
+    function RequestAnimationFrame(Context: TObject): Boolean; virtual;
+    { navigator.sendBeacon: a POST that outlives the page (Body may be
+      empty, ContentType '' for none). }
+    procedure SendBeacon(Context: TObject; const Url: string; const Body: TBytes; const ContentType: string); virtual;
+    { fetch() and XMLHttpRequest: starts Request for the context's
+      document and returns a handle for CancelFetch, or nil when the
+      environment cannot fetch (the script sees a network error). }
+    function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject; virtual;
+    { No more calls to the sink of Handle. }
+    procedure CancelFetch(Context: TObject; Handle: TObject); virtual;
   end;
 
 procedure RaiseUnsupported(const What: string);
@@ -109,6 +227,11 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptEnvironment.ManagesFrames: Boolean;
+begin
+  Result := False;
 end;
 
 function TScriptEnvironment.SupportsTimers: Boolean;
@@ -209,6 +332,62 @@ end;
 function TScriptEnvironment.Language: string;
 begin
   Result := 'en-US';
+end;
+
+function TScriptEnvironment.NavigationTiming(Context: TObject): TScriptNavigationTiming;
+begin
+  Result := Default(TScriptNavigationTiming);
+  Result.Kind := 'navigate';
+end;
+
+function TScriptEnvironment.StorageArea(Context: TObject; Session: Boolean): TWebStorageArea;
+begin
+  Result := nil;
+end;
+
+procedure TScriptEnvironment.StorageChanged(Context: TObject; Area: TWebStorageArea);
+begin
+end;
+
+function TScriptEnvironment.MediaEnvironment: TCssMediaEnvironment;
+begin
+  Result := DefaultMediaEnvironment;
+  if ViewportWidth > 0 then
+  begin
+    Result.Width := ViewportWidth;
+    Result.Height := ViewportHeight;
+  end;
+  Result.Resolution := DevicePixelRatio;
+end;
+
+function TScriptEnvironment.ScreenWidth: Integer;
+begin
+  Result := ViewportWidth;
+end;
+
+function TScriptEnvironment.ScreenHeight: Integer;
+begin
+  Result := ViewportHeight;
+end;
+
+function TScriptEnvironment.RequestAnimationFrame(Context: TObject): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TScriptEnvironment.SendBeacon(Context: TObject; const Url: string; const Body: TBytes;
+  const ContentType: string);
+begin
+end;
+
+function TScriptEnvironment.StartFetch(Context: TObject; const Request: TScriptFetchRequest;
+  Sink: TScriptFetchSink): TObject;
+begin
+  Result := nil;
+end;
+
+procedure TScriptEnvironment.CancelFetch(Context: TObject; Handle: TObject);
+begin
 end;
 
 end.

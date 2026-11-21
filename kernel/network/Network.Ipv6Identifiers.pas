@@ -58,7 +58,7 @@ uses
   Runtime.Memory,
   Io.NetworkAdapters,
   Network.InterfaceIdentifiers,
-  Network.RandomNumbers;
+  Kernel.Random;
 
 var
   StableSecret: array[0..StableSecretBytes - 1] of Byte;
@@ -68,7 +68,7 @@ procedure EnsureStableSecret;
 begin
   if StableSecretIsReady then
     Exit;
-  FillNetworkRandom(@StableSecret[0], StableSecretBytes);
+  FillRandom(@StableSecret[0], StableSecretBytes);
   StableSecretIsReady := True;
 end;
 
@@ -122,7 +122,7 @@ var
 begin
   Result := Ipv6PrefixOf(Prefix, 64);
   repeat
-    IsUsable := MakeTemporaryInterfaceIdentifier(NetworkRandom, Identifier);
+    IsUsable := MakeTemporaryInterfaceIdentifier(RandomQWord, Identifier);
   until IsUsable;
   PutIdentifier(Result, Identifier);
 end;

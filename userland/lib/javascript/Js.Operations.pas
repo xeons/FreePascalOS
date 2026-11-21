@@ -655,10 +655,12 @@ begin
   if not JsIsObject(Iterator) then
     Exit;
   Method := GetMethod(R, Iterator, R.Atom(anReturn));
+  { ECMA-262 7.4.11: no return method, nothing to do (the completion
+    stands; a missing method is not a non-object result). }
+  if Method = JsUndefined then
+    Exit(True);
   if Method = JsException then
     Outcome := JsException
-  else if Method = JsUndefined then
-    Outcome := JsUndefined
   else
     Outcome := R.Call(Method, Iterator, nil, 0);
   if Quiet then
@@ -903,6 +905,7 @@ begin
   Result := TJsNativeFunction(R.NewObjectOfClass(TJsNativeFunction, R.Intrinsics[inFunctionPrototype], ocFunction));
   Result.ObjectFlags := Result.ObjectFlags or ObjectCallable;
   Result.Callback := Callback;
+  Result.Realm := R;
   Result.Magic := Magic;
   Result.Data := JsUndefined;
   Result.Data2 := JsUndefined;

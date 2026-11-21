@@ -41,16 +41,55 @@ how the existing pieces fit together.
 - [ ] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
 - [ ] Priority boosting for threads woken from waits
-- [ ] Stack back trace in the panic screen
+- [x] Stack back trace in the panic screen (frame pointer walk, kernel
+      symbol table made at build time, also over netlog; testpanic option)
+- [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
+- [x] Crash reports with module names and load bases
+      (CallGetProcessModules, symbolize.py --report)
+- [ ] Back traces of user programs from the kernel's own crash report
+      (walk the program's frames; most user code omits frame pointers)
+- [x] Tickless idle: an idle processor's tick stops until its next due
+      time (per-processor clock interrupt counters; coretest checks under
+      5 a second per idle processor)
+- [x] Idle states: MWAIT C-states (CPUID 5, ACPI _CST functional fixed
+      hardware), PSCI CPU_SUSPEND standby states from the device tree
+- [x] Nanosecond wall clock (CallGetPreciseTime), stepped or slewed
+      (CallAdjustWallClock); invariant TSC check, kvmclock under KVM
+- [x] SNTP client service (timesync, off by default)
+- [ ] Dynamic tick for busy processors (no tick while one thread runs
+      alone on a processor)
+- [ ] A shared read-only page with the clock's parameters (vDSO-style) so
+      the runtime reads the time without a system call
+- [ ] Power-down idle states (PSCI CPU_SUSPEND power-down, deep C-states
+      without ARAT) with a broadcast timer; _PDC/_OSC before _CST;
+      ACPI P-states (_PSS/_PCT) or HWP for frequency scaling on PCs
+- [ ] Raspberry Pi 5: the fan through RP1's PWM (with RP1's clock
+      generator) for speeds between off and full; check the clock
+      governor, the fan pin and the thermal limit on the board
 
 ## Memory management
 
-- [ ] Reclaim the loader's boot data pages once the kernel no longer needs them
-- [ ] Unmap the kernel image's padding and map .text/.rodata with no-execute
-      where appropriate (verify W^X across the whole kernel)
+- [x] Reclaim the loader's boot data pages once the kernel no longer needs them
+      (all but the boot stack and the device tree, after phase 1's self tests)
+- [x] Map .text/.rodata/.data by their permissions with no-execute (EFER.NXE
+      in the loader; the window, heap, stacks and devices no-execute; the
+      window's view of the code and read-only data read-only), verified by a
+      page table walk at every start (W^X) and by deliberate violations
+      (`selftest=nx|textwrite|userexec|useraccess|pagepoison`)
+- [x] SMEP and UMIP on x86-64, PAN on AArch64 (with SMAP and PXN: the kernel
+      never runs user code and reaches user memory only through the copy
+      routines)
+- [x] Object reference counts saturate (with a warning) instead of wrapping
 - [ ] Contiguous physical allocations (for DMA buffers)
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
+- [x] Growable region table: an address space's regions in a balanced tree
+      (logarithmic fault lookup, overlap check and first-fit search) instead
+      of a fixed 1024-entry table, bounded by a per-process region limit
+- [x] Every region released with its owner: thread stacks, guards and thread
+      data however a thread ends, threadvar blocks of threads ended from
+      outside (AllocateForThread), heap chunks of ended threads kept by the
+      heap check quarantine; checked by limittest
 - [ ] Demand paging from files (map executables instead of copying them in)
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
@@ -63,15 +102,20 @@ how the existing pieces fit together.
 - [ ] Page heap (opt-in per program): every block on pages of its own,
       end-aligned against an unmapped guard page, freed pages unmapped and
       their addresses kept from reuse. Needs a reserve / commit / decommit
-      call and an address space that is not a 1024-entry region table with
-      first-fit reuse
-- [ ] Heap checking for the physical page allocator (fill freed pages, keep
-      them from reuse for a while)
+      call and keeping freed addresses from first-fit reuse (the region
+      tree holds a region per block now)
+- [x] Heap checking for the physical page allocator (fill freed pages, keep
+      them from reuse for a while, check them when they leave the quarantine)
 
 ## Objects and processes
 
 - [ ] Hierarchical object namespace (directories, e.g. `\Device\Keyboard`)
 - [x] Per-process handle tables
+- [x] Growable handle tables (two levels, lowest free number first) up to a
+      per-process handle limit; limits for regions and handles
+      (CallGetProcessResources, CallSetProcessLimit), inherited by children
+- [x] Passing more handles than the standard three to a new process
+      (ProcessPassHandles)
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -79,10 +123,21 @@ how the existing pieces fit together.
 - [x] User-mode locks: atomic fast path, CallWaitOnAddress / CallWakeAddress
 - [x] Exception fixups for kernel accesses to user memory (fault-tolerant copy
       routines, transfer buffers for reads and writes, SMAP when available)
-- [ ] Libraries loaded with LoadLibrary that have thread-local storage or
-      initializers (now ErrorUnsupported): dynamic TLS, running their initializers
+- [x] Libraries loaded with LoadLibrary that have thread-local storage or
+      initializers: dynamic TLS (per-thread blocks made on first touch, for
+      ELF TLS and the threadvars of Free Pascal libraries), DT_INIT /
+      DT_INIT_ARRAY before LoadLibrary returns, DT_FINI_ARRAY / DT_FINI at
+      the end, Free Pascal libraries' own unit initialization (si_dll)
+- [ ] Resource strings of Free Pascal libraries loaded at run time; initial
+      and local exec TLS accesses into them (no surplus static TLS)
 - [x] Thread priorities set by programs (offsets from the process's)
-- [ ] Thread names
+- [x] Thread names (CallSetThreadName, CallListThreads; TThread, hang
+      reports, the debug shell's threads command, ps -L/-T, the task
+      manager's properties)
+- [x] Address space layout randomization: the program, each library, the
+      allocation area, thread stacks and data, the main stack (aslr=off for
+      the old fixed layout); Kernel.Random (ChaCha20, hardware and boot
+      entropy)
 - [x] Ending another program (TerminateProcess; kill, timeout)
 - [x] Ending a stuck program always works: checked for spinning threads,
       every kind of kernel wait, deadlocks, sockets and windows that stop
@@ -153,8 +208,13 @@ how the existing pieces fit together.
       HD Audio, AC'97, serial, PS/2, display)
 - [ ] Wake sources beyond the power button (RTC alarm, USB, network); MTRRs on
       secondary processors after waking
-- [ ] More from the ACPI namespace: embedded controller regions, battery and
-      thermal zones, processor hotplug (bringing a plugged processor online)
+- [x] ACPI thermal zones (_TMP, _PSV, _CRT, _TZP: passive throttling by
+      clock modulation, clean shutdown at critical) and batteries (_BIF,
+      _BIX, _BST), CallListThermalZones, CallListBatteries, powerstat
+- [ ] More from the ACPI namespace: embedded controller regions (batteries
+      and zones whose methods read them), active cooling (_ACx, fans),
+      thermal notifications (Notify 0x80/0x81), processor hotplug
+      (bringing a plugged processor online)
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads
@@ -700,9 +760,9 @@ normalized (0-65535), not pixels.
       certificate under the test root); libquic's own waits (a full send
       buffer, MAX_STREAMS) to wait in slices too, so a large upload does
       not hold the connection's lock
-- [ ] libhttp: Brotli (needs RFC
-      7932's dictionary in the tree) and zstd, proxies (http_proxy,
-      CONNECT), 100-continue, a PING keep-alive and idle timeout for
+- [x] libhttp: Brotli and zstd content codings, decoded in pieces as
+      the body arrives (libcompression's streaming decoders)
+- [ ] libhttp: proxies (http_proxy, CONNECT), 100-continue, a PING keep-alive and idle timeout for
       HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
       suffix list on the system disk, a persistent cookie store for the
       browser, HSTS, CORS and the rest of Fetch's request modes (libweb)
@@ -1235,7 +1295,8 @@ Part 2, loading side (event loop, fetch, loading, navigation):
 - [x] history.pushState/replaceState (TNavigable.ChangeUrlFromScript)
 - [ ] bfcache; popstate's state object across documents
 - [x] Form submission from the web view (GET and POST, urlencoded)
-- [ ] iframes and nested navigables; multipart/form-data
+- [x] iframes and nested navigables (child navigables, joint session history)
+- [ ] multipart/form-data
 - [ ] Animated images (only the first frame goes to the sink); decoding
       images progressively as they arrive
 - [ ] ORB (opaque response blocking) for no-cors responses; blob: URLs
@@ -1279,14 +1340,47 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Event handler scope (form and document in the scope chain: needs the
       with statement or an environment hook in libjavascript), onerror's
       five arguments, body/frameset handlers forwarding to the window
-- [ ] getComputedStyle from the style system (inline declarations, read
-      only, today); layout answers (offset*, client*, getBoundingClientRect)
-- [ ] AbortSignal for addEventListener's signal option; focus tracking
-      (document.activeElement, focus events from the input code)
+- [x] getComputedStyle from the style system; layout answers (offset*,
+      client*, scroll*, getBoundingClientRect, elementFromPoint) through
+      `TScriptLayout`
+- [x] Focus tracking (document.activeElement, Web.Dom.Focus's focusing
+      steps from script and the input code)
+- [ ] AbortSignal for addEventListener's signal option
 - [x] Typed arrays: TextEncoder.encode gives a Uint8Array (checked in the
       browser)
-- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, Blob/File,
-      FormData, fetch() and XMLHttpRequest, Storage, postMessage, iframes
+- [x] Platform scripts (built-in JavaScript over natives): Performance,
+      Storage, fetch/Request/Response/Headers, AbortController,
+      XMLHttpRequest, Blob/File/FileReader/FormData, streams, crypto,
+      matchMedia, screen, animation frames, idle callbacks, postMessage,
+      MessageChannel, BroadcastChannel, IntersectionObserver,
+      ResizeObserver, FontFace, CSS.supports/escape, Image/Option
+- [x] iframes: about:blank and srcdoc windows in a realm of the parent's
+      engine (libjavascript: several realms per runtime)
+- [x] iframes with src documents: loading (sandbox, X-Frame-Options,
+      frame-ancestors, lazy), layout, painting, input, cross-origin views,
+      postMessage across origins; dedicated workers
+- [ ] `<object>`/`<embed>` documents; frameset layout; a WindowProxy for
+      sandboxed frames without scripts; Permissions Policy (allow)
+- [ ] reCAPTCHA in the OS: the anchor renders, but in QEMU it showed
+      "Could not connect to the reCAPTCHA service" (on the host the
+      widget initializes); find out what times out
+- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
+      (document.styleSheets, insertRule: CSS-in-JS libraries need them),
+      Web Animations, synchronous XHR, XML parsing (DOMParser's XML types,
+      responseXML), the unhandledrejection event
+- [x] DOMParser (text/html), SVGElement/SVGGraphicsElement/SVGSVGElement,
+      document.open/write/close outside the parser, Location's setters,
+      HTML's cloning steps (scripts that ran, control values), isTrusted
+      kept for the engine's events, unhandled rejections on the console
+- [x] Event lifetime: engine events released, not freed (the DuckDuckGo
+      crash); events hold only node targets
+- [ ] Pascal exceptions raised inside the interpreter loop (by built-ins)
+      are not turned into JavaScript errors; a stray one unwinds past the
+      script's frames
+- [x] Brotli and zstd content codings (Accept-Encoding offers gzip,
+      deflate, br and zstd)
+- [ ] Google search: the challenge runs (its token equals Firefox's for
+      the same inputs) but Google sends this engine to its CAPTCHA page
 - [ ] A cheaper interface object: native accessors keyed by property in
       libjavascript would let one getter serve every attribute (a window
       costs about 420 KB of script heap over the bare realm today)
@@ -1302,9 +1396,14 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       menu, history and about pages, downloads to ~/Downloads, find bar,
       zoom, settings (home page, search URL, HTTP/3, JavaScript); in
       test-input
-- [ ] Web view: caret movement and selection inside text fields (typing
-      appends at the end), text field values kept in the value attribute,
-      dragging the bars of inner scroll containers, drag and drop, IME
+- [x] Web view: KeyboardEvents to the page, a text editor in fields
+      (caret, selection, word moves, clipboard, input events, implicit
+      submission, change on blur); values in the DOM's control state
+- [x] Editing without libcontrols (WebView.FieldEditing) and a fuzz test
+      typing into a page that replaces its fields under the editor
+      (WebLoadTest.Editing); elements held across click and submit events
+- [ ] Web view: drawing a field's selection, dragging the bars of inner
+      scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
 - [ ] Browser: session restore, per-site settings, a downloads window with
       cancel buttons, separate windows (Shift+click opens a tab), tab drag
@@ -1315,11 +1414,24 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       renders: grid minmax(0, 1fr), sticky contents, masked icons, no
       crash on resize or on a layout before the first bytes; bounded HTTP
       and decode threads; slow layouts throttled in the web view
-- [ ] Wikipedia's JavaScript (ResourceLoader's startup stops at its
-      compatibility check: no localStorage); TOC and menus as with JS
+- [x] Wikipedia's JavaScript gets past ResourceLoader's compatibility
+      check (localStorage, IntersectionObserver)
+- [ ] Wikipedia's TOC and menus as with JS (check in the browser)
+- [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
+      the results page (main and html.duckduckgo.com/html/, whose late
+      sheet now restyles), later searches; no crash (released events,
+      translations of transforms,
+      z-index auto layers, computed shorthands, positioned boxes not left
+      due, for-of over Map iterators, lone surrogates in case mapping)
+- [x] DuckDuckGo: following a result on the main results page (its hidden
+      /post3.html iframe, then /l/ to the site); html.duckduckgo.com's
+      results follow too
+- [ ] window.getSelection (DuckDuckGo's click handler calls it; Selection
+      is not done)
+- [ ] Transforms beyond translation (scale, rotate, skew) in painting and
+      hit testing
 - [ ] Large pages in QEMU need the kernel's growable address-space region
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one
       piece of work on the GUI thread)
-- [ ] getComputedStyle and layout metrics from the web view's layout (a
-      `TScriptEnvironment` hook the view could answer)
+- [x] getComputedStyle and layout metrics from the web view's layout

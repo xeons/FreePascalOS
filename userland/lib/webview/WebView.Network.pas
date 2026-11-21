@@ -35,10 +35,13 @@ unit WebView.Network;
 interface
 
 uses
-  Web.Fetch.NetworkContexts;
+  Web.Fetch.NetworkContexts,
+  Web.Storage,
+  Web.UserAgent;
 
 const
-  WebViewUserAgent = 'Mozilla/5.0 (FreePascalOS) libweb/1.0';
+  { What the web views say they are (libweb's). }
+  WebViewUserAgent = EngineUserAgent;
 
 { The program's shared network context. }
 function SharedNetworkContext: TNetworkContext;
@@ -48,6 +51,11 @@ function Http3Allowed: Boolean;
 procedure SetHttp3Allowed(Allowed: Boolean);
 { Frees the shared context (at the program's end; web views must be gone). }
 procedure FreeSharedNetworkContext;
+{ Where localStorage is kept, a file per origin (set before the first
+  page; '' keeps it in memory). }
+procedure SetWebStorageFolder(const Folder: string);
+{ The program's local storage, shared by its web views. }
+function SharedLocalStorage: TWebStorageRegistry;
 
 implementation
 
@@ -63,6 +71,20 @@ var
   SharedCookies: TCookieJar = nil;
   SharedCache: THttpCache = nil;
   AllowHttp3: Boolean = True;
+  StorageFolder: string = '';
+  SharedStorage: TWebStorageRegistry = nil;
+
+procedure SetWebStorageFolder(const Folder: string);
+begin
+  StorageFolder := Folder;
+end;
+
+function SharedLocalStorage: TWebStorageRegistry;
+begin
+  if SharedStorage = nil then
+    SharedStorage := TWebStorageRegistry.Create(StorageFolder);
+  Result := SharedStorage;
+end;
 
 function SharedNetworkContext: TNetworkContext;
 var
@@ -111,6 +133,8 @@ begin
   SharedCookies := nil;
   SharedCache.Free;
   SharedCache := nil;
+  SharedStorage.Free;
+  SharedStorage := nil;
 end;
 
 end.

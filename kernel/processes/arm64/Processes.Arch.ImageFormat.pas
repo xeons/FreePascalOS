@@ -29,8 +29,13 @@
   model. A module's TlsOffset is the distance from the thread pointer up
   to its block.
 
-      region start = thread pointer
-      | control block | program TLS block | ... library TLS blocks ... |
+      region start           thread pointer
+      | (alignment) runtime word | control block | program TLS block | ... |
+
+  The word just below the thread pointer belongs to the user runtime
+  (ThreadBlockDynamicVectorOffset: its dynamic TLS vector); the thread
+  pointer lies the largest TLS alignment (at least 16 bytes) into the
+  region, which starts on a page, so it stays aligned for every block.
 
   TLS descriptors (R_AARCH64_TLSDESC, what C compilers use for the
   general dynamic model) get libsystem's static resolver, which returns
@@ -50,6 +55,9 @@ const
   ImageMachine = ElfMachineAarch64;
   { The resolver for TLS descriptors of static TLS, in libsystem. }
   TlsDescriptorResolverName = '__tlsdesc_static';
+  { The resolver for TLS descriptors of libraries loaded late (dynamic
+    TLS: the runtime makes each thread's block when first touched). }
+  TlsDynamicDescriptorResolverName = '__tlsdesc_dynamic';
 
 type
   { What a relocation does, whatever its number on this processor. }
@@ -123,12 +131,15 @@ end;
 
 procedure LayOutThreadRegion(StaticTlsSize, Alignment: QWord; out RegionSize, ThreadPointerOffset: QWord);
 begin
-  { The region starts on a page and alignments are at most a page, so
-    the thread pointer at its start is aligned for every block. }
+  { The region starts on a page and alignments are at most a page, so a
+    thread pointer Alignment bytes in is aligned for every block, with
+    room below it for the runtime's word. }
   if StaticTlsSize < ThreadBlockSize then
     StaticTlsSize := ThreadBlockSize;
-  RegionSize := (StaticTlsSize + 15) and not QWord(15);
-  ThreadPointerOffset := 0;
+  if Alignment < 16 then
+    Alignment := 16;
+  ThreadPointerOffset := Alignment;
+  RegionSize := (ThreadPointerOffset + StaticTlsSize + 15) and not QWord(15);
 end;
 
 end.

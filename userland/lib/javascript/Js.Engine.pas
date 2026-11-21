@@ -159,6 +159,16 @@ type
     FRoots: TJsValueList;
     FFreeRoots: array of Integer;
     FHostClasses: array of TJsHostClass;
+    FOwnsRuntime: Boolean;
+    FParent: TJsEngine;
+    FChildren: array of TJsEngine;
+    FDetached: Boolean;
+    FRuntimeGone: Boolean;
+    { Realms and host classes of sharing engines freed early, freed
+      after the runtime. }
+    FOrphans: array of TObject;
+    procedure AdoptOrphan(Child: TJsEngine);
+    function EvaluateCode(const Source, FileName: string; Builtin: Boolean): TJsValue;
     procedure MarkRoots(Tracer: TJsTracer);
     procedure RaiseException;
     function GetMemoryLimit: Int64;
@@ -173,11 +183,24 @@ type
   public
     constructor Create;
     constructor Create(const Options: TJsEngineOptions);
+    { Another realm in Parent's runtime (an iframe's window): objects and
+      functions pass freely between the two, and each function runs in
+      the realm it was made in. Free it after Parent; its objects live
+      until Parent's runtime goes. }
+    constructor CreateSharing(Parent: TJsEngine; const Options: TJsEngineOptions);
     destructor Destroy; override;
+    { A sharing engine's realm is no longer used (its window closed): its
+      roots stop being marked, so what nothing else holds is collected;
+      its functions still reachable run in their callers' realms. }
+    procedure Detach;
+    property Detached: Boolean read FDetached;
     class function DefaultOptions: TJsEngineOptions;
 
     { Runs a script; raises EJsError when it throws. }
     function Evaluate(const Source: string; const FileName: string = '<eval>'): TJsValue;
+    { The same for an embedder's built-ins written in JavaScript: their
+      functions read as native code. }
+    function EvaluateBuiltin(const Source: string; const FileName: string): TJsValue;
     { False and the error's text when it throws or does not parse. }
     function TryEvaluate(const Source, FileName: string; out Value: TJsValue; out ErrorText: string): Boolean;
     function Call(F, This: TJsValue; const Args: array of TJsValue): TJsValue;
@@ -185,6 +208,9 @@ type
     { Runs the job queue (promise reactions) until it is empty. }
     procedure RunJobs;
     function PendingJobs: Integer;
+    { The reasons of the promises rejected with no handler since the last
+      call (HTML's "notify about rejected promises" reports them). }
+    function TakeUnhandledRejections: TJsValueList;
 
     function GlobalObject: TJsObject;
     function NewObject: TJsObject;
@@ -352,6 +378,7 @@ begin
   { JavaScript arithmetic gives NaN and infinities, never traps. }
   SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide, exOverflow, exUnderflow, exPrecision]);
   FRuntime := TJsRuntime.Create;
+  FOwnsRuntime := True;
   FRuntime.Heap.MinimumThreshold := Options.InitialHeapThreshold;
   FRuntime.Heap.Threshold := Options.InitialHeapThreshold;
   FRuntime.Heap.MemoryLimit := Options.MemoryLimit;
@@ -360,22 +387,98 @@ begin
   CreateIntrinsics(FRealm);
 end;
 
+constructor TJsEngine.CreateSharing(Parent: TJsEngine; const Options: TJsEngineOptions);
+begin
+  inherited Create;
+  { The runtime's owner keeps the list (nested frames included). }
+  while Parent.FParent <> nil do
+    Parent := Parent.FParent;
+  FRuntime := Parent.FRuntime;
+  FParent := Parent;
+  SetLength(Parent.FChildren, Length(Parent.FChildren) + 1);
+  Parent.FChildren[High(Parent.FChildren)] := Self;
+  FRealm := TJsInterpreterRealm.Create(FRuntime, Options.StackCapacity, Options.MaximumFrames);
+  FRuntime.Heap.AddRootProvider(@MarkRoots);
+  CreateIntrinsics(FRealm);
+end;
+
+procedure TJsEngine.Detach;
+begin
+  if FDetached or FOwnsRuntime then
+    Exit;
+  FDetached := True;
+  if not FRuntimeGone then
+    FRuntime.Heap.RemoveRootProvider(@MarkRoots);
+  FRealm.Detach;
+end;
+
 destructor TJsEngine.Destroy;
 var
   Index: Integer;
 begin
-  FRealm.Free;
-  FRuntime.Free;
+  if FOwnsRuntime then
+  begin
+    FRealm.Free;
+    FRuntime.Free;
+    { The sharing engines' cells went with the runtime. }
+    for Index := 0 to High(FChildren) do
+    begin
+      FChildren[Index].FRuntimeGone := True;
+      FChildren[Index].FRealm.HeapGone := True;
+      FChildren[Index].FParent := nil;
+    end;
+  end
+  else
+  begin
+    if not FRuntimeGone then
+    begin
+      { Freed before its parent: the cells stay in the runtime, so the
+        realm and host classes they point to must too. }
+      Detach;
+      if FParent <> nil then
+        FParent.AdoptOrphan(Self);
+      FRealm := nil;
+      FHostClasses := nil;
+    end;
+    FRealm.Free;
+  end;
   for Index := 0 to High(FHostClasses) do
     FHostClasses[Index].Free;
+  for Index := 0 to High(FOrphans) do
+  begin
+    if FOrphans[Index] is TJsRealm then
+      TJsRealm(FOrphans[Index]).HeapGone := True;
+    FOrphans[Index].Free;
+  end;
   inherited Destroy;
+end;
+
+procedure TJsEngine.AdoptOrphan(Child: TJsEngine);
+var
+  Index: Integer;
+begin
+  SetLength(FOrphans, Length(FOrphans) + 1);
+  FOrphans[High(FOrphans)] := Child.FRealm;
+  for Index := 0 to High(Child.FHostClasses) do
+  begin
+    SetLength(FOrphans, Length(FOrphans) + 1);
+    FOrphans[High(FOrphans)] := Child.FHostClasses[Index];
+  end;
+  for Index := 0 to High(FChildren) do
+    if FChildren[Index] = Child then
+    begin
+      FChildren[Index] := FChildren[High(FChildren)];
+      SetLength(FChildren, High(FChildren));
+      Break;
+    end;
 end;
 
 procedure TJsEngine.MarkRoots(Tracer: TJsTracer);
 var
   Index: Integer;
 begin
-  Tracer.MarkValues(@FRoots[0], Length(FRoots));
+  if Length(FRoots) > 0 then
+    Tracer.MarkValues(@FRoots[0], Length(FRoots));
   for Index := 0 to High(FHostClasses) do
   begin
     Tracer.MarkCell(FHostClasses[Index].Prototype);
@@ -433,12 +536,24 @@ begin
 end;
 
 function TJsEngine.Evaluate(const Source: string; const FileName: string): TJsValue;
+begin
+  Result := EvaluateCode(Source, FileName, False);
+end;
+
+function TJsEngine.EvaluateBuiltin(const Source: string; const FileName: string): TJsValue;
+begin
+  Result := EvaluateCode(Source, FileName, True);
+end;
+
+function TJsEngine.EvaluateCode(const Source, FileName: string; Builtin: Boolean): TJsValue;
 var
   Code: TJsCode;
   Error: EJsError;
 begin
   try
     Code := CompileScript(FRealm, UTF8Decode(Source), FileName);
+    if Builtin and (Code.Source <> nil) then
+      Code.Source.Builtin := True;
   except
     on Syntax: EJsSyntaxError do
     begin
@@ -503,6 +618,24 @@ end;
 function TJsEngine.PendingJobs: Integer;
 begin
   Result := FRealm.PendingJobCount;
+end;
+
+function TJsEngine.TakeUnhandledRejections: TJsValueList;
+var
+  Index: Integer;
+  Promise: TJsObject;
+begin
+  Result := nil;
+  SetLength(Result, Length(FRealm.UnhandledRejections));
+  for Index := 0 to High(FRealm.UnhandledRejections) do
+  begin
+    Promise := JsAsObject(FRealm.UnhandledRejections[Index]);
+    if Promise is TJsPromise then
+      Result[Index] := TJsPromise(Promise).Value
+    else
+      Result[Index] := JsUndefined;
+  end;
+  FRealm.UnhandledRejections := nil;
 end;
 
 function TJsEngine.GlobalObject: TJsObject;

@@ -21,7 +21,7 @@
   turns elements becoming connected or disconnected and their attribute
   and child changes into calls on whoever loads for them (style sheet
   and icon links, preload links, images and picture sources, scripts,
-  base, meta, title). It only dispatches; TLoadingEvents is implemented
+  base, meta, title, iframes and frames). It only dispatches; TLoadingEvents is implemented
   by the document loader.
 }
 unit Web.Loading.Observers;
@@ -48,6 +48,11 @@ type
     procedure BaseChanged; virtual; abstract;
     procedure MetaInserted(Element: TElement); virtual; abstract;
     procedure TitleMayHaveChanged; virtual; abstract;
+    { An iframe or frame became connected (Inserted), had an attribute
+      that matters change (src, srcdoc, name, ...: Attribute), or left. }
+    procedure FrameInserted(Element: TElement); virtual; abstract;
+    procedure FrameAttributeChanged(Element: TElement; Attribute: TAtom); virtual; abstract;
+    procedure FrameRemoved(Element: TElement); virtual; abstract;
   end;
 
   TLoadingObserver = class(TDocumentObserver)
@@ -124,6 +129,7 @@ begin
     AtomBase: FEvents.BaseChanged;
     AtomMeta: FEvents.MetaInserted(Element);
     AtomTitle: FEvents.TitleMayHaveChanged;
+    AtomIframe, AtomFrame: FEvents.FrameInserted(Element);
     AtomSource:
       begin
         Parent := Element.ParentElement;
@@ -147,6 +153,7 @@ begin
     AtomImg: FEvents.ImageRemoved(Element);
     AtomBase: FEvents.BaseChanged;
     AtomTitle: FEvents.TitleMayHaveChanged;
+    AtomIframe, AtomFrame: FEvents.FrameRemoved(Element);
   end;
 end;
 
@@ -179,6 +186,9 @@ begin
     AtomBase:
       if LocalName = AtomHref then
         FEvents.BaseChanged;
+    AtomIframe, AtomFrame:
+      if (LocalName = AtomSrc) or (LocalName = AtomSrcdoc) or (LocalName = AtomName) then
+        FEvents.FrameAttributeChanged(Element, LocalName);
   end;
 end;
 

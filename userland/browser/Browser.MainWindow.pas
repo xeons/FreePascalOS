@@ -243,6 +243,7 @@ begin
   FSettings := LoadBrowserSettings;
   SetHttp3Allowed(FSettings.Http3);
   Folder := BrowserProfileFolder;
+  SetWebStorageFolder(Folder + '/storage');
   FHistory := THistoryStore.Create(Folder + '/history.txt');
   FHistory.Load;
   FBookmarks := TBookmarkStore.Create(Folder + '/bookmarks.txt');

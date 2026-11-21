@@ -389,7 +389,8 @@ var
 begin
   inherited Trace(Tracer);
   Tracer.MarkCell(Module);
-  Tracer.MarkValues(@Names[0], Length(Names));
+  if Length(Names) > 0 then
+    Tracer.MarkValues(@Names[0], Length(Names));
   for Index := 0 to High(Bindings) do
     Tracer.MarkCell(Bindings[Index].Module);
 end;

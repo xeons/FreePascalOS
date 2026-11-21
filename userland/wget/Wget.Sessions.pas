@@ -101,7 +101,7 @@ begin
   Result.CipherSuites := Settings.CipherSuites;
   Result.AllowHttp2 := Settings.Http2;
   Result.AllowHttp3 := Settings.Http3;
-  { wget asks for gzip itself, and only with --compression. }
+  { wget asks for codings itself, and only with --compression. }
   Result.AcceptEncoding := '';
 end;
 

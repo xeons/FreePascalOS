@@ -42,6 +42,7 @@ uses
   Processes.ProcessDetails,
   Processes.SystemUsage,
   Processes.ClockCalls,
+  Processes.PowerCalls,
   Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
@@ -49,6 +50,8 @@ uses
   Processes.SocketCalls,
   Processes.NetworkCalls,
   Processes.NodeName,
+  Processes.ThreadNames,
+  Processes.ModuleCalls,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -84,6 +87,9 @@ uses
   Processes.Security,
   Processes.SecurityCalls,
   Processes.AffinityCalls,
+  Processes.LimitCalls,
+  Processes.LoadedModules,
+  Processes.HandlePassing,
   Processes.Shutdown,
   Processes.Suspend,
   Processes.ThreadControl,
@@ -258,6 +264,11 @@ begin
   Result := ErrorNone;
 end;
 
+const
+  { The bytes of TAbiProcessCreation up to Flags: the whole record as
+    programs from before ProcessPassHandles know it. }
+  CreationBaseSize = 10 * SizeOf(QWord);
+
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
   Credentials: TProcessCredentials;
@@ -277,7 +288,13 @@ var
   Error: LongInt;
   NewTerminal: Pointer;
 begin
-  Error := CopyFromUser(@Creation, CreationAddress, SizeOf(Creation));
+  { Programs from before ProcessPassHandles pass a record ending at
+    Flags: the rest is read only when the flag says it is there. }
+  FillMemory(@Creation, SizeOf(Creation), 0);
+  Error := CopyFromUser(@Creation, CreationAddress, CreationBaseSize);
+  if (Error = ErrorNone) and ((Creation.Flags and ProcessPassHandles) <> 0) then
+    Error := CopyFromUser(PByte(@Creation) + CreationBaseSize, CreationAddress + CreationBaseSize,
+      SizeOf(Creation) - CreationBaseSize);
   if Error = ErrorNone then
     Error := CopyStringFromUser(QWord(Creation.Path), @UserPath[0], ProcessPathCapacity);
   if Error <> ErrorNone then
@@ -358,7 +375,23 @@ begin
       { Keep the objects alive while the child is being set up. }
       ReferenceObject(Startup.StandardObjects[StandardIndex]);
   end;
+  { The child starts with the caller's limits. }
+  Startup.HandleLimit := Caller^.Handles.Limit;
+  Startup.RegionLimit := Caller^.AddressSpace^.RegionLimit;
   ReleaseMutex(Caller^.Lock);
+  Error := ErrorNone;
+  if (Creation.Flags and ProcessPassHandles) <> 0 then
+    Error := CollectPassedHandles(Caller, QWord(Creation.PassedHandles), Creation.PassedHandleCount,
+      Startup.PassedHandles);
+  if Error <> ErrorNone then
+  begin
+    for StandardIndex := 0 to 2 do
+      if Startup.StandardObjects[StandardIndex] <> nil then
+        DereferenceObject(Startup.StandardObjects[StandardIndex]);
+    FreeStringList(Arguments);
+    FreeStringList(Environment);
+    Exit(Failure(Error));
+  end;
   { A group for the foreground: of the terminal that is its standard
     input, which becomes its controlling terminal (a terminal window's
     shell), or else of the one it inherits. }
@@ -380,6 +413,7 @@ begin
     if Startup.StandardObjects[StandardIndex] <> nil then
       DereferenceObject(Startup.StandardObjects[StandardIndex]);
   end;
+  ReleasePassedHandles(Startup.PassedHandles);
   FreeStringList(Arguments);
   FreeStringList(Environment);
   if Error <> ErrorNone then
@@ -491,16 +525,33 @@ end;
 
 { --- Memory ---------------------------------------------------------- }
 
-function PerformAllocateMemory(Length: QWord): Int64;
+{ The address space has a lock of its own, and stays while one of its
+  threads runs, so these do not take the process's lock. }
+function PerformAllocateMemory(Length, Flags: QWord): Int64;
 var
   Process: PProcess;
+  Thread: PThread;
   Start: QWord;
   Error: LongInt;
 begin
+  if (Flags and not QWord(AllocateForThread)) <> 0 then
+    Exit(Failure(ErrorInvalidArgument));
   Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Error := AllocateUserMemory(Process^.AddressSpace, Length, Start);
-  ReleaseMutex(Process^.Lock);
+  if (Flags and AllocateForThread) <> 0 then
+  begin
+    Thread := CurrentThreadObject;
+    Error := AllocateThreadOwnedUserMemory(Process^.AddressSpace, Length, Thread^.ControlBlock.ThreadId, Start);
+    if Error = ErrorNone then
+    begin
+      { More than one (dynamic TLS blocks besides the threadvar block):
+        an ending thread then looks for all of them. }
+      if Thread^.OwnedAllocationStart <> 0 then
+        Thread^.HasSeveralOwnedAllocations := True;
+      Thread^.OwnedAllocationStart := Start;
+    end;
+  end
+  else
+    Error := AllocateUserMemory(Process^.AddressSpace, Length, Start);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := Int64(Start);
@@ -508,12 +559,12 @@ end;
 
 function PerformFreeMemory(Address: QWord): Int64;
 var
-  Process: PProcess;
+  Thread: PThread;
 begin
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Result := -Int64(FreeUserMemory(Process^.AddressSpace, Address));
-  ReleaseMutex(Process^.Lock);
+  Thread := CurrentThreadObject;
+  if (Address <> 0) and (Thread^.OwnedAllocationStart = Address) then
+    Thread^.OwnedAllocationStart := 0;
+  Result := -Int64(FreeUserMemory(CurrentProcess^.AddressSpace, Address));
 end;
 
 { --- Libraries ------------------------------------------------------- }
@@ -547,6 +598,9 @@ begin
 
   AcquireMutex(Process^.Lock);
   Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+  { Its initializers wait for the runtime (CallTakeModuleInitializers). }
+  if Error = ErrorNone then
+    Error := NoteLibraryInitializers(Process, ModuleHandle);
   ReleaseMutex(Process^.Lock);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -678,7 +732,7 @@ begin
     CallSetFileSize: Result := PerformSetFileSize(Int64(Argument0), Argument1);
     CallGetCurrentDirectory: Result := PerformGetCurrentDirectory(Argument0, Argument1);
     CallSetCurrentDirectory: Result := PerformSetCurrentDirectory(Argument0);
-    CallAllocateMemory: Result := PerformAllocateMemory(Argument0);
+    CallAllocateMemory: Result := PerformAllocateMemory(Argument0, Argument1);
     CallFreeMemory: Result := PerformFreeMemory(Argument0);
     CallCreateProcess: Result := PerformCreateProcess(Argument0);
     CallWaitForProcess: Result := PerformWaitForProcess(Int64(Argument0), Int64(Argument1));
@@ -768,6 +822,12 @@ begin
     CallSetWallClock: Result := PerformSetWallClock(Int64(Argument0));
     CallGetTimeZone: Result := PerformGetTimeZone(Argument0, Argument1);
     CallSetTimeZone: Result := PerformSetTimeZone(Argument0);
+    CallGetPreciseTime: Result := PerformGetPreciseTime(Argument0, Argument1);
+    CallAdjustWallClock: Result := PerformAdjustWallClock(Int64(Argument0), Argument1, Argument2);
+    { Power (Processes.PowerCalls). }
+    CallGetProcessorPower: Result := PerformGetProcessorPower(Argument0);
+    CallListThermalZones: Result := PerformListThermalZones(Argument0, Argument1);
+    CallListBatteries: Result := PerformListBatteries(Argument0, Argument1);
     CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
     CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
     CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);
@@ -809,8 +869,15 @@ begin
     CallSetNodeName: Result := PerformSetNodeName(Argument0);
     CallGetProcessorDescription: Result := PerformGetProcessorDescription(Argument0);
     CallGetMachineModel: Result := PerformGetMachineModel(Argument0, Argument1);
+    CallGetProcessResources: Result := PerformGetProcessResources(Argument0, Argument1);
+    CallSetProcessLimit: Result := PerformSetProcessLimit(Argument0, Argument1);
+    CallGetProcessModules: Result := PerformGetProcessModules(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
+    CallSetThreadName: Result := PerformSetThreadName(Int64(Argument0), Argument1);
+    CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
+    CallGetModuleTls: Result := PerformGetModuleTls(Int64(Argument0), Argument1);
+    CallTakeModuleInitializers: Result := PerformTakeModuleInitializers(Int64(Argument0), Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;

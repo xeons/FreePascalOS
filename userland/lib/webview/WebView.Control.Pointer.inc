@@ -58,15 +58,21 @@ begin
         Include(Result, esFocusWithin);
         Break;
       end;
-      Node := Node.ParentNode;
+      Node := NodeAbove(Node);
     end;
   end;
 end;
 
 procedure TWebView.ApplyStates(Element: TElement);
+var
+  TargetLayout: TDocumentLayout;
 begin
-  if (FLayout <> nil) and (Element <> nil) and Element.IsConnected then
-    FLayout.SetElementStates(Element, StatesOf(Element));
+  if (Element = nil) or not Element.IsConnected then
+    Exit;
+  { An element of a frame's document: that document's layout. }
+  TargetLayout := LayoutForDocument(Element.NodeDocument);
+  if TargetLayout <> nil then
+    TargetLayout.SetElementStates(Element, StatesOf(Element));
 end;
 
 { Chain becomes Element and its ancestors; every element that joined or
@@ -87,7 +93,7 @@ begin
       NewChain[High(NewChain)] := TElement(Node);
       TElement(Node).Retain;
     end;
-    Node := Node.ParentNode;
+    Node := NodeAbove(Node);
   end;
   if (Length(NewChain) = Length(Chain)) and ((Length(Chain) = 0) or (NewChain[0] = Chain[0])) then
   begin
@@ -109,17 +115,33 @@ begin
 end;
 
 procedure TWebView.SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+begin
+  if (Element = FFocusedElement) and (ShowFocus = FFocusVisible) then
+    Exit;
+  FFocusVisible := ShowFocus;
+  { The focusing steps fire the events; the document tells FocusMoved.
+    Moving into another document (a frame) blurs the old one's first. }
+  if (FFocusedElement <> nil) and ((Element = nil) or (Element.NodeDocument <> FFocusedElement.NodeDocument)) then
+    UnfocusElement(FFocusedElement);
+  if Element <> nil then
+    FocusElement(Element);
+  if (Element <> nil) and (Element.NodeDocument.FocusedElement <> FFocusedElement) then
+    FocusMoved(Element.NodeDocument.FocusedElement)
+  else if (Element = nil) and (FDocument <> nil) and (FDocument.FocusedElement <> FFocusedElement) then
+    FocusMoved(FDocument.FocusedElement)
+  else
+    FocusMoved(FFocusedElement);
+end;
+
+procedure TWebView.FocusMoved(Element: TElement);
 var
   Old: TElement;
   Node: TNode;
 begin
-  if (Element = FFocusedElement) and (ShowFocus = FFocusVisible) then
-    Exit;
   Old := FFocusedElement;
-  FFocusedElement := Element;
-  FFocusVisible := ShowFocus;
   if Element <> nil then
     Element.Retain;
+  FFocusedElement := Element;
   if Old <> nil then
   begin
     { The old one and its ancestors lose :focus and :focus-within. }
@@ -128,21 +150,21 @@ begin
     begin
       if Node.IsElement then
         ApplyStates(TElement(Node));
-      Node := Node.ParentNode;
+      Node := NodeAbove(Node);
     end;
-    if Old.IsConnected then
-      FireEvent(Old, 'blur');
+    if (Old <> Element) and Old.IsConnected and IsTextControl(Old) and (TextControlValue(Old) <> FFocusValue) then
+      FireEvent(Old, 'change', True);
     Old.Release;
   end;
+  if (Element <> nil) and IsTextControl(Element) and (Element <> Old) then
+    FFocusValue := TextControlValue(Element);
   Node := Element;
   while Node <> nil do
   begin
     if Node.IsElement then
       ApplyStates(TElement(Node));
-    Node := Node.ParentNode;
+    Node := NodeAbove(Node);
   end;
-  if Element <> nil then
-    FireEvent(Element, 'focus');
   RequestFrame;
   InvalidateViewport;
   PostWake;
@@ -160,15 +182,35 @@ end;
 procedure TWebView.UpdateHover(CssX, CssY: Double);
 var
   Hit: THitTestResult;
-  Link, Control: TElement;
+  Link, Control, Old: TElement;
   Shape: LongWord;
+  Path: TFramePath;
 begin
   if FPainter = nil then
     Exit;
   if FLayout.NeedsUpdate then
     UpdateLayout;
-  Hit := FPainter.HitTest(CssX, CssY);
+  Hit := HitTestDeep(CssX, CssY, Path);
+  Old := nil;
+  if Length(FHoverChain) > 0 then
+  begin
+    Old := FHoverChain[0];
+    Old.Retain;
+  end;
   SetChain(FHoverChain, Hit.Element);
+  { mouseout and mouseover where the element under the pointer changed,
+    then mousemove at it. }
+  if Old <> Hit.Element then
+  begin
+    if Old <> nil then
+      FireMouse(Old, 'mouseout', 0, 0);
+    if Hit.Element <> nil then
+      FireMouse(Hit.Element, 'mouseover', 0, 0);
+  end;
+  if Old <> nil then
+    Old.Release;
+  if Hit.Element <> nil then
+    FireMouse(Hit.Element, 'mousemove', 0, 0);
   Link := LinkElementOf(Hit.Node);
   if Link <> nil then
     SetStatus(ResolveLink(Link))
@@ -194,11 +236,16 @@ end;
 function TWebView.ResolveLink(Link: TElement): string;
 var
   Target: TUrlRecord;
+  Source: TNavigable;
 begin
   Result := '';
-  if (Link = nil) or (FPage = nil) or (FPage.Navigable.Loader = nil) then
+  if Link = nil then
     Exit;
-  if FPage.Navigable.Loader.ResolveUrl(Trim(Link.GetAttribute('href')), Target) then
+  { Against the base URL of the link's own document (a frame's too). }
+  Source := NavigableForNode(Link);
+  if (Source = nil) or (Source.Loader = nil) then
+    Exit;
+  if Source.Loader.ResolveUrl(Trim(Link.GetAttribute('href')), Target) then
     Result := SerializeUrl(Target);
 end;
 
@@ -213,9 +260,9 @@ begin
     Result := LinkInNewWindow
   else if Link <> nil then
   begin
-    Target := LowerCase(Trim(Link.GetAttribute('target')));
-    if (Target = '_blank') or ((Target <> '') and (Target <> '_self') and (Target <> '_top') and
-       (Target <> '_parent')) then
+    { _blank, or a name no navigable of the page has. }
+    Target := Trim(Link.GetAttribute('target'));
+    if (NavigableForNode(Link) <> nil) and (NavigableForNode(Link).ChooseNavigable(Target) = nil) then
       Result := LinkInNewTab;
   end;
 end;
@@ -227,14 +274,28 @@ var
   Options: TNavigateOptions;
   Handled: Boolean;
   ScrollX, ScrollY: Single;
+  Source, Destination: TNavigable;
 begin
   UrlText := ResolveLink(Link);
   if UrlText = '' then
     Exit;
-  if (Disposition = LinkInView) and not FireEvent(Link, 'click', True, True) then
+  if (Disposition = LinkInView) and not FireClick(Link) then
     Exit;
   if not ParseUrl(UrlText, Target) or (Target.Scheme = 'javascript') then
     Exit;
+  { The link's target chooses the navigable: its own (a frame's), the
+    parent, the top, a frame by name. }
+  Source := NavigableForNode(Link);
+  Destination := Source.ChooseNavigable(Trim(Link.GetAttribute('target')));
+  if (Destination <> nil) and (Destination.Parent <> nil) and (Disposition = LinkInView) then
+  begin
+    Options := DefaultNavigateOptions;
+    Options.UserInitiated := True;
+    Options.Source := Source.Loader;
+    Destination.Navigate(Target, Options);
+    PostWake;
+    Exit;
+  end;
   Handled := False;
   if Assigned(FOnLinkClicked) then
     FOnLinkClicked(Self, UrlText, Disposition, Handled);
@@ -242,7 +303,7 @@ begin
     Exit;
   Options := DefaultNavigateOptions;
   Options.UserInitiated := True;
-  Options.Source := FPage.Navigable.Loader;
+  Options.Source := Source.Loader;
   FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
   FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
   FPage.Navigable.Navigate(Target, Options);
@@ -266,6 +327,26 @@ begin
   Slot := Element;
 end;
 
+function DomButtonOf(Button: LongWord): SmallInt;
+begin
+  if Button = ButtonMiddle then
+    Result := 1
+  else if Button = ButtonLeft then
+    Result := 0
+  else
+    Result := 2;
+end;
+
+function ButtonsBitOf(Button: LongWord): Word;
+begin
+  if Button = ButtonMiddle then
+    Result := 4
+  else if Button = ButtonLeft then
+    Result := 1
+  else
+    Result := 2;
+end;
+
 procedure TWebView.PointerDown(X, Y: LongInt; Button: LongWord);
 var
   Hit: THitTestResult;
@@ -273,6 +354,8 @@ var
   Position, WordStart, WordEnd: TTextPosition;
   Now: QWord;
   Scale: Double;
+  Path: TFramePath;
+  Proceed: Boolean;
 begin
   inherited PointerDown(X, Y, Button);
   SetFocus;
@@ -283,7 +366,10 @@ begin
   if FLayout.NeedsUpdate then
     UpdateLayout;
   Scale := DeviceScale;
-  Hit := FPainter.HitTest(X / Scale, Y / Scale);
+  Hit := HitTestDeep(X / Scale, Y / Scale, Path);
+  FButtonsHeld := FButtonsHeld or ButtonsBitOf(Button);
+  { A cancelled mousedown keeps the focus and the selection as they are. }
+  Proceed := FireMouse(Hit.Element, 'mousedown', DomButtonOf(Button), 1);
   if Button = ButtonMiddle then
   begin
     FPressButton := ButtonMiddle;
@@ -292,6 +378,17 @@ begin
   end;
   if Button <> ButtonLeft then
     Exit;
+  HoldElement(FPressedTarget, Hit.Element);
+  if not Proceed then
+  begin
+    FPressButton := ButtonLeft;
+    FPressX := X;
+    FPressY := Y;
+    FDragged := False;
+    HoldElement(FPressedLink, LinkElementOf(Hit.Node));
+    HoldElement(FPressedControl, FormControlOf(Hit.Node));
+    Exit;
+  end;
   FPressButton := ButtonLeft;
   FPressX := X;
   FPressY := Y;
@@ -311,6 +408,14 @@ begin
   if Link <> nil then
   begin
     SetFocusedElement(Link, False);
+    Exit;
+  end;
+  { Inside a frame its document has the focus (no element of it); its
+    text is not selected. }
+  if Length(Path) > 0 then
+  begin
+    SetFocusedElement(nil, False);
+    ClearSelection;
     Exit;
   end;
   SetFocusedElement(nil, False);
@@ -365,12 +470,19 @@ var
   Hit: THitTestResult;
   Scale: Double;
   Link, Control: TElement;
+  Path: TFramePath;
 begin
   inherited PointerUp(X, Y, Button);
-  if (FPainter = nil) or (Button <> FPressButton) then
+  FLastPointerX := X;
+  FLastPointerY := Y;
+  FButtonsHeld := FButtonsHeld and not ButtonsBitOf(Button);
+  if FPainter = nil then
     Exit;
   Scale := DeviceScale;
-  Hit := FPainter.HitTest(X / Scale, Y / Scale);
+  Hit := HitTestDeep(X / Scale, Y / Scale, Path);
+  FireMouse(Hit.Element, 'mouseup', DomButtonOf(Button), 1);
+  if Button <> FPressButton then
+    Exit;
   Link := FPressedLink;
   Control := FPressedControl;
   FPressButton := 0;
@@ -389,11 +501,12 @@ begin
       ActivateControl(Control)
     else if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
       ActivateLink(Link, DispositionFor(ButtonLeft, HeldModifiers, Link))
-    else if Hit.Element <> nil then
+    else if (Hit.Element <> nil) and (Hit.Element = FPressedTarget) then
       ClickElement(Hit.Element);
   end;
   HoldElement(FPressedLink, nil);
   HoldElement(FPressedControl, nil);
+  HoldElement(FPressedTarget, nil);
 end;
 
 procedure TWebView.PointerLeave;
@@ -418,6 +531,7 @@ var
   Link, Control: TElement;
   Handled: Boolean;
   Scale: Double;
+  Path: TFramePath;
 begin
   Info := Default(TWebContextInfo);
   Info.X := X;
@@ -427,7 +541,9 @@ begin
   if FPainter <> nil then
   begin
     Scale := DeviceScale;
-    Hit := FPainter.HitTest(X / Scale, Y / Scale);
+    Hit := HitTestDeep(X / Scale, Y / Scale, Path);
+    if not FromKeyboard and not FireMouse(Hit.Element, 'contextmenu', 2, 0) then
+      Exit;
     Link := LinkElementOf(Hit.Node);
     if Link <> nil then
     begin

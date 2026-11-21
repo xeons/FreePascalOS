@@ -18,16 +18,20 @@
 
 {
   Content codings (RFC 9110 section 8.4.1) undone as the content
-  arrives, through libcompression's TInflater:
+  arrives, in pieces, through libcompression's streaming decoders:
 
     gzip, x-gzip   gzip members (several in a row are taken)
     deflate        zlib data; raw deflate data (which some servers send
                    for "deflate") when the first two bytes are not a
                    zlib header
+    br             brotli (RFC 7932), TBrotliDecoder
+    zstd           Zstandard frames (RFC 8878, several in a row are
+                   taken), TZstdDecoder
     identity       nothing to do
 
-  Brotli ("br") is not offered: its decoder needs the 122 KiB static
-  dictionary of RFC 7932, which is not in the tree yet; zstd neither.
+  SupportedAcceptEncoding lists exactly the codings compiled in (the
+  DecodeBrotli and DecodeZstandard switches below); a coding left out is
+  neither offered nor accepted.
 
   A coding list ("gzip, deflate" as applied) is undone last first, each
   decoder a sink in front of the next.
@@ -42,27 +46,32 @@ unit Http.ContentDecoding;
 
 interface
 
+{$define DecodeBrotli}
+{$define DecodeZstandard}
+
 uses
-  Compression.Inflater,
+  Compression.StreamingDecoders,
   Http.BodySinks;
 
 const
-  { What a client sends as Accept-Encoding. }
-  SupportedAcceptEncoding = 'gzip, deflate';
+  { What a client sends as Accept-Encoding: the codings undone here. }
+  SupportedAcceptEncoding = 'gzip, deflate'
+    {$ifdef DecodeBrotli} + ', br' {$endif}
+    {$ifdef DecodeZstandard} + ', zstd' {$endif};
 
 type
-  TContentCoding = (CodingIdentity, CodingGzip, CodingDeflate, CodingUnknown);
+  TContentCoding = (CodingIdentity, CodingGzip, CodingDeflate, CodingBrotli, CodingZstandard, CodingUnknown);
 
   THttpDecodingSink = class(THttpBodySink)
   private
     FNext: THttpBodySink;
     FOwnsNext: Boolean;
     FCoding: TContentCoding;
-    FInflater: TInflater;
+    FDecoder: TStreamingDecoder;
     FHeader: array[0..1] of Byte;
     FHeaderCount: Integer;
-    function StartInflater: Boolean;
-    function Inflate(Data: Pointer; Count: PtrUInt): Boolean;
+    function StartDeflate: Boolean;
+    function Decode(Data: Pointer; Count: PtrUInt): Boolean;
     function PassOn(Data: Pointer; Count: PtrUInt): Boolean;
   public
     constructor Create(Next: THttpBodySink; Coding: TContentCoding; OwnsNext: Boolean = False);
@@ -85,10 +94,13 @@ implementation
 uses
   SysUtils,
   Compression.Formats,
+  Compression.InflatingDecoders,
+  {$ifdef DecodeBrotli} Compression.BrotliDecoder, {$endif}
+  {$ifdef DecodeZstandard} Compression.ZstdDecoder, {$endif}
   Http.FieldValues;
 
 const
-  InflateBufferSize = 32 * 1024;
+  DecodeBufferSize = 32 * 1024;
 
 function ContentCodingOf(const Name: string): TContentCoding;
 var
@@ -101,6 +113,14 @@ begin
     Result := CodingGzip
   else if Lower = 'deflate' then
     Result := CodingDeflate
+  {$ifdef DecodeBrotli}
+  else if Lower = 'br' then
+    Result := CodingBrotli
+  {$endif}
+  {$ifdef DecodeZstandard}
+  else if Lower = 'zstd' then
+    Result := CodingZstandard
+  {$endif}
   else
     Result := CodingUnknown;
 end;
@@ -141,16 +161,26 @@ begin
   FNext := Next;
   FOwnsNext := OwnsNext;
   FCoding := Coding;
-  if Coding = CodingGzip then
-  begin
-    FInflater := TInflater.Create(FormatGzip);
-    FInflater.ConcatenatedMembers := True;
+  case Coding of
+    CodingGzip:
+      FDecoder := TInflatingDecoder.Create(FormatGzip);
+    {$ifdef DecodeBrotli}
+    CodingBrotli:
+      FDecoder := TBrotliDecoder.Create;
+    {$endif}
+    {$ifdef DecodeZstandard}
+    CodingZstandard:
+      FDecoder := TZstdDecoder.Create;
+    {$endif}
+  else
+    { deflate: made when its first two bytes have come. }
+    FDecoder := nil;
   end;
 end;
 
 destructor THttpDecodingSink.Destroy;
 begin
-  FInflater.Free;
+  FDecoder.Free;
   if FOwnsNext then
     FNext.Free;
   inherited Destroy;
@@ -171,32 +201,34 @@ end;
 
 { "deflate": zlib when the first two bytes make a zlib header (method 8,
   the check bits right), raw deflate otherwise. }
-function THttpDecodingSink.StartInflater: Boolean;
+function THttpDecodingSink.StartDeflate: Boolean;
 var
   IsZlib: Boolean;
 begin
   IsZlib := ((FHeader[0] and $0F) = 8) and ((FHeader[0] shr 4) <= 7) and
     (((LongWord(FHeader[0]) shl 8) or FHeader[1]) mod 31 = 0);
   if IsZlib then
-    FInflater := TInflater.Create(FormatZlib)
+    FDecoder := TInflatingDecoder.Create(FormatZlib)
   else
-    FInflater := TInflater.Create(FormatRaw);
-  Result := Inflate(@FHeader[0], FHeaderCount);
+    FDecoder := TInflatingDecoder.Create(FormatRaw);
+  Result := Decode(@FHeader[0], FHeaderCount);
 end;
 
-function THttpDecodingSink.Inflate(Data: Pointer; Count: PtrUInt): Boolean;
+{ After the end of zlib, raw deflate or brotli data the rest is left
+  alone; gzip members and zstd frames may follow one another. }
+function THttpDecodingSink.Decode(Data: Pointer; Count: PtrUInt): Boolean;
 var
-  Buffer: array[0..InflateBufferSize - 1] of Byte;
+  Buffer: array[0..DecodeBufferSize - 1] of Byte;
   Produced: SizeInt;
-  Outcome: TInflateResult;
+  Outcome: TDecompressResult;
 begin
   Result := True;
-  if (Count = 0) or FInflater.Finished then
+  if (Count = 0) or (FDecoder.Finished and (FCoding in [CodingDeflate, CodingBrotli])) then
     Exit;
-  FInflater.SetInput(Data, Count);
+  FDecoder.SetInput(Data, Count);
   repeat
-    Outcome := FInflater.Decompress(@Buffer[0], SizeOf(Buffer), Produced);
-    if Outcome = InflateFailed then
+    Outcome := FDecoder.Decompress(@Buffer[0], SizeOf(Buffer), Produced);
+    if Outcome = DecompressFailed then
     begin
       FDamagedData := True;
       FErrorText := 'damaged compressed data';
@@ -204,7 +236,7 @@ begin
     end;
     if (Produced > 0) and not PassOn(@Buffer[0], Produced) then
       Exit(False);
-  until Outcome <> InflateOutputFull;
+  until Outcome <> DecompressOutputFull;
 end;
 
 function THttpDecodingSink.Write(Data: Pointer; Count: PtrUInt): Boolean;
@@ -213,8 +245,8 @@ var
 begin
   if FCoding = CodingIdentity then
     Exit(PassOn(Data, Count));
-  if FInflater <> nil then
-    Exit(Inflate(Data, Count));
+  if FDecoder <> nil then
+    Exit(Decode(Data, Count));
   { deflate: the first two bytes decide which. }
   Bytes := Data;
   while (Count > 0) and (FHeaderCount < 2) do
@@ -226,16 +258,16 @@ begin
   end;
   if FHeaderCount < 2 then
     Exit(True);
-  Result := StartInflater and Inflate(Bytes, Count);
+  Result := StartDeflate and Decode(Bytes, Count);
 end;
 
 function THttpDecodingSink.Finish: Boolean;
 begin
   if FCoding <> CodingIdentity then
   begin
-    if (FInflater = nil) and (FHeaderCount > 0) then
-      StartInflater;
-    if (FInflater = nil) or not FInflater.Finished then
+    if (FDecoder = nil) and (FHeaderCount > 0) then
+      StartDeflate;
+    if (FDecoder = nil) or not FDecoder.Finished then
     begin
       FDamagedData := True;
       FErrorText := 'the compressed data ended early';

@@ -80,6 +80,11 @@ interface Document : Node {
   attribute EventHandler onreadystatechange;
   attribute EventHandler onvisibilitychange;
 };
+
+// The legacy interface of HTML documents (HTML Standard 3.1.1): what a
+// page's document is an instance of.
+[Exposed=Window]
+interface HTMLDocument : Document { };
 Document includes NonElementParentNode;
 Document includes ParentNode;
 Document includes GlobalEventHandlers;
@@ -93,4 +98,21 @@ interface DOMImplementation {
                                        optional DocumentType? doctype = null);
   [NewObject] Document createHTMLDocument(optional DOMString title);
   boolean hasFeature();
+};
+
+// HTML 8.5.1: DOMParser. Text is parsed as an HTML document without
+// scripting; the XML types give a document holding a parsererror element
+// (there is no XML parser yet).
+enum DOMParserSupportedType {
+  "text/html",
+  "text/xml",
+  "application/xml",
+  "application/xhtml+xml",
+  "image/svg+xml"
+};
+
+[Exposed=Window]
+interface DOMParser {
+  constructor();
+  [NewObject] Document parseFromString(DOMString string, DOMParserSupportedType type);
 };

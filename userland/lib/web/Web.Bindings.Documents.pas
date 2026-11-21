@@ -48,6 +48,7 @@ uses
   Web.Dom.Events,
   Web.Dom.UiEvents,
   Web.Dom.Exceptions,
+  Web.Html.Markup,
   Web.Bindings.Context,
   Web.Bindings.UrlResolution;
 
@@ -519,12 +520,17 @@ end;
 
 function Document_hasFocus(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsFalse;
+  Result := JsTrue;
 end;
 
 function Document_get_activeElement(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).WrapNode(ThisDocument(Call).Body);
+  if ThisDocument(Call).FocusedElement <> nil then
+    Result := Context(Call).WrapNode(ThisDocument(Call).FocusedElement)
+  else if ThisDocument(Call).Body <> nil then
+    Result := Context(Call).WrapNode(ThisDocument(Call).Body)
+  else
+    Result := JsNull;
 end;
 
 function Document_get_hidden(var Call: TBindingCall): TJsValue;
@@ -598,6 +604,22 @@ end;
 function DOMImplementation_hasFeature(var Call: TBindingCall): TJsValue;
 begin
   Result := JsTrue;
+end;
+
+type
+  { DOMParser keeps no state. }
+  TDomParserData = class
+  end;
+
+function DOMParser_constructor(var Call: TBindingCall): TJsValue;
+begin
+  Result := Context(Call).ConstructedObject(Call, TDomParserData.Create);
+end;
+
+function DOMParser_parseFromString(var Call: TBindingCall): TJsValue;
+begin
+  Result := AdoptNewDocument(Call, ParseMarkupDocument(Call.Text(0), Call.Text(1),
+    DocumentUrlText(Context(Call).Document)));
 end;
 
 end.

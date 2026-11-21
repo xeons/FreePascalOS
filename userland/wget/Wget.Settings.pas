@@ -50,8 +50,9 @@ const
 
 type
   { --compression: none asks for and decodes nothing (the default, as
-    GNU wget's); auto and gzip ask for gzip and decode it, auto not for
-    files that are gzip files themselves (.gz, .tgz). }
+    GNU wget's); auto asks for every coding libhttp undoes (gzip,
+    deflate, br, zstd) and gzip for gzip alone, both decode what comes,
+    auto not for files that are gzip files themselves (.gz, .tgz). }
   TCompressionChoice = (CompressionNone, CompressionAuto, CompressionGzip);
 
   TWgetSettings = record

@@ -55,10 +55,15 @@ interface
 uses
   SysUtils,
   Classes,
+  Css.MediaQueries,
   Web.Dom,
   Web.EventLoop,
+  Web.Storage,
   Web.ScriptEnvironment,
+  Web.Script.PageFetch,
+  Web.Script.Layout,
   Js.Engine,
+  Web.Bindings.Context,
   Web.Script.Context,
   Web.Loading.Scripts,
   Web.Navigation.Navigables;
@@ -77,7 +82,17 @@ type
     FTimers: TList;
     FPendingTraversal: Integer;
     FUserAgent: string;
+    FLocalStorage: TWebStorageRegistry;
+    FOwnsLocalStorage: Boolean;
+    FSessionStorage: TWebStorageRegistry;
+    FSaveScheduled: Boolean;
+    FSaveTask: QWord;
+    FFetches: TScriptFetches;
+    FScreenWidth: Integer;
+    FScreenHeight: Integer;
     function FindTimer(Context: TObject; TimerId: Integer): Integer;
+    function LoaderOf(Context: TObject): TObject;
+    procedure SetLocalStorage(Value: TWebStorageRegistry);
     procedure TraverseTask;
     procedure ReloadTask;
   public
@@ -87,6 +102,7 @@ type
     procedure ForgetContext(Context: TObject);
     procedure ForgetTimers;
     procedure TimerDue(Context: TObject; TimerId, Milliseconds: Integer; Repeating: Boolean);
+    function ManagesFrames: Boolean; override;
     function SupportsTimers: Boolean; override;
     procedure StartTimer(Context: TObject; TimerId: Integer; Milliseconds: Integer; Repeating: Boolean); override;
     procedure StopTimer(Context: TObject; TimerId: Integer); override;
@@ -106,7 +122,26 @@ type
     procedure SetCookie(Context: TObject; const Url, Cookie: string); override;
     function UserAgent: string; override;
     function Language: string; override;
+    function NavigationTiming(Context: TObject): TScriptNavigationTiming; override;
+    function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
+    procedure StorageChanged(Context: TObject; Area: TWebStorageArea); override;
+    function MediaEnvironment: TCssMediaEnvironment; override;
+    function ScreenWidth: Integer; override;
+    function ScreenHeight: Integer; override;
+    function RequestAnimationFrame(Context: TObject): Boolean; override;
+    procedure SendBeacon(Context: TObject; const Url: string; const Body: TBytes; const ContentType: string); override;
+    function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
+      override;
+    procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    { Writes the local storage that changed. }
+    procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;
+    { Where localStorage lives (the host's, shared by its pages; the page
+      keeps one in memory when none is set). }
+    property LocalStorage: TWebStorageRegistry read FLocalStorage write SetLocalStorage;
+    { The screen in CSS pixels (0: the viewport's size). }
+    property ScreenWidthValue: Integer read FScreenWidth write FScreenWidth;
+    property ScreenHeightValue: Integer read FScreenHeight write FScreenHeight;
   end;
 
   { A context's module graph: specifiers resolved against the
@@ -145,6 +180,9 @@ type
     FOnPrompt: TScriptPromptEvent;
     FOnConsoleMessage: TScriptConsoleEvent;
     function IndexOfLoader(Loader: TObject): Integer;
+    { Drops the records of the frames' windows inside Context (they go
+      with it). }
+    procedure ForgetFramesOf(Context: TBindingContext);
     procedure MicrotaskCheckpoint(Sender: TObject);
     procedure ConsoleMessage(const Level, Text: string);
   public
@@ -156,6 +194,7 @@ type
     function SupportsModules: Boolean; override;
     procedure ExecuteScript(Script: TPendingScript); override;
     procedure DocumentStarted(Loader: TObject); override;
+    procedure DocumentTimed(Loader: TObject); override;
     procedure DocumentStopped(Loader: TObject); override;
     procedure DocumentFreed(Loader: TObject); override;
     { The live context of Document, nil if none. }
@@ -170,18 +209,31 @@ type
   end;
 
 const
-  DefaultScriptUserAgent = 'Mozilla/5.0 (FreePascalOS) libweb/1.0';
+{$ifdef CPUAARCH64}
+  DefaultScriptUserAgent = 'Mozilla/5.0 (X11; FreePascalOS aarch64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
+    'Safari/537.36';
+{$else}
+  DefaultScriptUserAgent = 'Mozilla/5.0 (X11; FreePascalOS x86_64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
+    'Safari/537.36';
+{$endif}
 
 implementation
 
 uses
   Web.Profiling,
   DateUtils,
+  Js.Values,
+  Web.EventLoop.AnimationFrames,
+  Web.Navigation.Windows,
+  Web.Script.Frames,
+  Web.Script.FrameNavigables,
+  Web.Bindings.CrossOrigin,
   Url.Records,
   Url.Parser,
   Url.Origins,
   Http.Cookies,
   Web.EventLoop.Tasks,
+  Web.Origins,
   Web.Loading.Documents;
 
 type
@@ -220,12 +272,19 @@ begin
   FExecutor := Executor;
   FTimers := TList.Create;
   FUserAgent := DefaultScriptUserAgent;
+  FSessionStorage := TWebStorageRegistry.Create('');
+  FFetches := TScriptFetches.Create;
 end;
 
 destructor TPageScriptEnvironment.Destroy;
 begin
   ForgetTimers;
   FTimers.Free;
+  FFetches.Free;
+  SaveStorage;
+  if FOwnsLocalStorage then
+    FLocalStorage.Free;
+  FSessionStorage.Free;
   inherited Destroy;
 end;
 
@@ -266,6 +325,11 @@ begin
   FTimers.Clear;
   if FExecutor.FLoop <> nil then
     FExecutor.FLoop.DiscardTasks(Self);
+end;
+
+function TPageScriptEnvironment.ManagesFrames: Boolean;
+begin
+  Result := True;
 end;
 
 function TPageScriptEnvironment.SupportsTimers: Boolean;
@@ -482,6 +546,8 @@ begin
     Result := 'en-US';
 end;
 
+{$I Web.Script.PageServices.inc}
+
 { ---- modules ---- }
 
 type
@@ -593,8 +659,11 @@ begin
   begin
     FEnvironment.ForgetContext(FContexts[Index].Context);
     FContexts[Index].Modules.Free;
-    FContexts[Index].Context.Free;
   end;
+  { Top-level contexts free their frames' windows. }
+  for Index := 0 to High(FContexts) do
+    if FContexts[Index].Context.ParentContext = nil then
+      FContexts[Index].Context.Free;
   FContexts := nil;
   FEnvironment.Free;
   inherited Destroy;
@@ -632,9 +701,19 @@ end;
 function TPageScriptExecutor.IsLiveContext(Context: TObject): Boolean;
 var
   Index: Integer;
+  Top: TObject;
 begin
+  Top := Context;
   for Index := 0 to High(FContexts) do
-    if (FContexts[Index].Context = Context) and not FContexts[Index].Stopped then
+    if FContexts[Index].Context = Context then
+      Exit(not FContexts[Index].Stopped);
+  { A frame's window lives while it is open and its page does. }
+  if (Context is TBindingContext) and not TBindingContext(Context).Closed then
+    Top := TBindingContext(Context).TopContext;
+  if Top = Context then
+    Exit(False);
+  for Index := 0 to High(FContexts) do
+    if (FContexts[Index].Context = Top) and not FContexts[Index].Stopped then
       Exit(True);
   Result := False;
 end;
@@ -658,12 +737,36 @@ end;
 procedure TPageScriptExecutor.DocumentStarted(Loader: TObject);
 var
   DocumentLoader: TDocumentLoader;
-  Context: TScriptContext;
+  Context, ParentContext: TScriptContext;
+  Child: TNavigable;
+  FrameEnvironment: TNavigableFrameEnvironment;
 begin
   if IndexOfLoader(Loader) >= 0 then
     Exit;
   DocumentLoader := TDocumentLoader(Loader);
-  Context := TScriptContext.Create(DocumentLoader.Document, FEnvironment, DocumentLoader.Window);
+  Child := nil;
+  if (DocumentLoader.Window <> nil) and (DocumentLoader.Window.Navigable is TNavigable) and
+     (TNavigable(DocumentLoader.Window.Navigable).Parent <> nil) then
+    Child := TNavigable(DocumentLoader.Window.Navigable);
+  if Child <> nil then
+  begin
+    { A frame's document: a realm in its parent's engine (objects pass
+      between them), with the child navigable's window. }
+    ParentContext := ContextOf(Child.Container.NodeDocument);
+    FrameEnvironment := TNavigableFrameEnvironment.Create(FEnvironment, ParentContext, Child, DocumentLoader.Document);
+    if ParentContext <> nil then
+      Context := TScriptContext.CreateFrame(DocumentLoader.Document, FrameEnvironment, ParentContext, Child.Container,
+        DocumentLoader.Window)
+    else
+      Context := TScriptContext.Create(DocumentLoader.Document, FrameEnvironment, DocumentLoader.Window);
+    Context.OwnsEnvironment := True;
+    if Child.FrameName <> '' then
+      Context.SetSingleton(SingletonWindowName, Context.TextValue(Child.FrameName));
+    if ParentContext <> nil then
+      UpdateFrameIndices(ParentContext);
+  end
+  else
+    Context := TScriptContext.Create(DocumentLoader.Document, FEnvironment, DocumentLoader.Window);
   Context.PreparesScripts := False;
   Context.ReadyStateFromDocument := True;
   Context.OnConsoleMessage := @ConsoleMessage;
@@ -674,6 +777,15 @@ begin
   FContexts[High(FContexts)].Stopped := False;
 end;
 
+procedure TPageScriptExecutor.DocumentTimed(Loader: TObject);
+var
+  Index: Integer;
+begin
+  Index := IndexOfLoader(Loader);
+  if Index >= 0 then
+    FContexts[Index].Context.SetTimeOrigin(TDocumentLoader(Loader).Times.NavigationStart);
+end;
+
 procedure TPageScriptExecutor.DocumentStopped(Loader: TObject);
 var
   Index: Integer;
@@ -681,10 +793,54 @@ begin
   Index := IndexOfLoader(Loader);
   if (Index < 0) or FContexts[Index].Stopped then
     Exit;
+  FEnvironment.FFetches.CancelLoader(TDocumentLoader(Loader));
   FContexts[Index].Stopped := True;
   FContexts[Index].Modules.Stopped := True;
   FContexts[Index].Context.AttachParser(nil);
   FEnvironment.ForgetContext(FContexts[Index].Context);
+  { A frame's window closes when its document is left (contentWindow is
+      the next document's). }
+  if FContexts[Index].Context.Environment is TNavigableFrameEnvironment then
+    TNavigableFrameEnvironment(FContexts[Index].Context.Environment).Disconnect;
+  if FContexts[Index].Context.ParentContext <> nil then
+  begin
+    FContexts[Index].Context.Close;
+    UpdateFrameIndices(FContexts[Index].Context.ParentContext);
+  end;
+end;
+
+procedure TPageScriptExecutor.ForgetFramesOf(Context: TBindingContext);
+var
+  Index: Integer;
+  Walk: TBindingContext;
+  Inside: Boolean;
+begin
+  Index := High(FContexts);
+  while Index >= 0 do
+  begin
+    Walk := FContexts[Index].Context.ParentContext;
+    Inside := False;
+    while Walk <> nil do
+    begin
+      if Walk = Context then
+      begin
+        Inside := True;
+        Break;
+      end;
+      Walk := Walk.ParentContext;
+    end;
+    if Inside then
+    begin
+      FEnvironment.ForgetContext(FContexts[Index].Context);
+      FContexts[Index].Modules.Free;
+      FContexts[Index] := FContexts[High(FContexts)];
+      SetLength(FContexts, Length(FContexts) - 1);
+      if Index > High(FContexts) then
+        Index := High(FContexts);
+      Continue;
+    end;
+    Dec(Index);
+  end;
 end;
 
 procedure TPageScriptExecutor.DocumentFreed(Loader: TObject);
@@ -700,7 +856,18 @@ begin
   FContexts[Index] := FContexts[High(FContexts)];
   SetLength(FContexts, Length(FContexts) - 1);
   FEnvironment.ForgetContext(Context);
-  Context.Free;
+  { The frames' windows inside go with this context (their parent frees
+    them, after its engine). }
+  ForgetFramesOf(Context);
+  if Context.ParentContext <> nil then
+  begin
+    { The loader's window goes now; the window lives on (its parent
+      frees it). }
+    Context.DetachWindow;
+    Context.Close;
+  end
+  else
+    Context.Free;
 end;
 
 procedure TPageScriptExecutor.ExecuteScript(Script: TPendingScript);

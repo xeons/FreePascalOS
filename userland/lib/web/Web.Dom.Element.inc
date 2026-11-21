@@ -401,6 +401,12 @@ begin
   for Index := 1 to System.Length(FAttributes) do
     Copy.FAttributes[Index - 1] := FAttributes[Index - 1];
   Copy.FFlags := Copy.FFlags or (FFlags and (NodeFlagHasId or NodeFlagHasClass));
+  { HTML's cloning steps: a script that already started does not run
+    again as a copy; form controls keep what was typed. }
+  if IsHtmlElement(AtomScript) then
+    Copy.ElementState := ElementState and ElementStateAlreadyStarted;
+  if (FormStateObject <> nil) and Assigned(FormStateCloning) then
+    FormStateCloning(Self, Copy);
   Result := Copy;
 end;
 

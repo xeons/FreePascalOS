@@ -45,8 +45,11 @@ uses
 implementation
 
 uses
+  Web.Dom.FormControls,
+  Web.Dom.Focus,
   SysUtils,
   Math,
+  Js.Objects,
   Js.Conversions,
   Url.Records,
   Url.Parser,
@@ -65,6 +68,7 @@ uses
   Web.Bindings.Reflection,
   Web.Bindings.Style,
   Web.Bindings.UrlResolution,
+  Web.Bindings.CrossOrigin,
   Web.ScriptEnvironment;
 
 type
@@ -258,31 +262,15 @@ begin
   end;
 end;
 
-procedure FireFocusEvent(Element: TElement; const EventType: string; Bubbles: Boolean);
-var
-  Event: TFocusEvent;
+function HTMLOrSVGElement_focus(var Call: TBindingCall): TJsValue;
 begin
-  Event := TFocusEvent.Create(EventType, Bubbles, False);
-  try
-    Event.Composed := True;
-    Event.HasView := True;
-    Element.DispatchEvent(Event);
-  finally
-    Event.Release;
-  end;
-end;
-
-function HTMLElement_focus(var Call: TBindingCall): TJsValue;
-begin
-  FireFocusEvent(ThisElement(Call), 'focus', False);
-  FireFocusEvent(ThisElement(Call), 'focusin', True);
+  FocusElement(ThisElement(Call));
   Result := Nothing;
 end;
 
-function HTMLElement_blur(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_blur(var Call: TBindingCall): TJsValue;
 begin
-  FireFocusEvent(ThisElement(Call), 'blur', False);
-  FireFocusEvent(ThisElement(Call), 'focusout', True);
+  UnfocusElement(ThisElement(Call));
   Result := Nothing;
 end;
 
@@ -338,12 +326,12 @@ begin
   Result := JsFalse;
 end;
 
-function HTMLElement_get_dataset(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_dataset(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).WrapObject(ThisElement(Call), InterfaceDOMStringMap, False, Call.This);
 end;
 
-function HTMLElement_get_style(var Call: TBindingCall): TJsValue;
+function ElementCSSInlineStyle_get_style(var Call: TBindingCall): TJsValue;
 begin
   Result := InlineStyleObject(Context(Call), ThisElement(Call), Call.This);
 end;
@@ -408,7 +396,7 @@ begin
     (Element.LocalNameAtom = AtomIframe) or (Element.LocalNameAtom = AtomSummary));
 end;
 
-function HTMLElement_get_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_tabIndex(var Call: TBindingCall): TJsValue;
 var
   Value: Int64;
 begin
@@ -422,7 +410,7 @@ begin
     Result := JsInteger(-1);
 end;
 
-function HTMLElement_set_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_set_tabIndex(var Call: TBindingCall): TJsValue;
 begin
   ThisElement(Call).SetAttributeAtom(AtomTabindex, NamespaceNone, IntToStr(Call.Int(0)));
   Result := Nothing;
@@ -458,30 +446,6 @@ begin
   Result := Nothing;
 end;
 
-function HTMLElement_get_offsetParent(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsNull;
-end;
-
-function HTMLElement_get_offsetTop(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetLeft(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetWidth(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
-
-function HTMLElement_get_offsetHeight(var Call: TBindingCall): TJsValue;
-begin
-  Result := JsInteger(0);
-end;
 
 { HTMLHyperlinkElementUtils: the URL of the href attribute. }
 
@@ -644,14 +608,45 @@ begin
   Result := TokenList(Call, 'sandbox');
 end;
 
+function FrameContentDocument(var Call: TBindingCall): TJsValue;
+var
+  Frame: TBindingContext;
+begin
+  Frame := Context(Call).FrameOf(ThisElement(Call));
+  { Not across origins. }
+  if (Frame = nil) or not SameOriginContexts(Context(Call), Frame) then
+    Exit(JsNull);
+  Result := Frame.WrapNode(Frame.Document);
+end;
+
+function FrameContentWindow(var Call: TBindingCall): TJsValue;
+var
+  Frame: TBindingContext;
+begin
+  Frame := Context(Call).FrameOf(ThisElement(Call));
+  if Frame = nil then
+    Exit(JsNull);
+  Result := WindowValueFor(Context(Call), Frame);
+end;
+
 function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsNull;
+  Result := FrameContentDocument(Call);
 end;
 
 function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsNull;
+  Result := FrameContentWindow(Call);
+end;
+
+function HTMLFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentDocument(Call);
+end;
+
+function HTMLFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentWindow(Call);
 end;
 
 function HTMLStyleElement_get_blocking(var Call: TBindingCall): TJsValue;
@@ -806,47 +801,115 @@ begin
   Result := SetCustomValidity(Call);
 end;
 
-function HTMLInputElement_select(var Call: TBindingCall): TJsValue;
+function HasSelection(Element: TElement): Boolean;
 begin
-  Result := Nothing;
+  Result := IsTextControl(Element);
 end;
 
-function HasSelection(Element: TElement): Boolean;
-var
-  TypeName: string;
+procedure SelectAllText(Element: TElement);
 begin
-  TypeName := InputType(Element);
-  Result := (TypeName = 'text') or (TypeName = 'search') or (TypeName = 'url') or (TypeName = 'tel') or
-    (TypeName = 'password');
+  SetTextSelection(Element, 0, Utf16Length(TextControlValue(Element)), 'none');
+end;
+
+function SelectionPart(var Call: TBindingCall; Part: Integer): TJsValue;
+var
+  Start, Finish: Integer;
+  Direction: string;
+begin
+  if not HasSelection(ThisElement(Call)) then
+    Exit(JsNull);
+  GetTextSelection(ThisElement(Call), Start, Finish, Direction);
+  case Part of
+    0: Result := JsInteger(Start);
+    1: Result := JsInteger(Finish);
+  else
+    Result := Text(Call, Direction);
+  end;
+end;
+
+procedure SetSelectionPart(var Call: TBindingCall; Part: Integer);
+var
+  Start, Finish: Integer;
+  Direction: string;
+begin
+  if not HasSelection(ThisElement(Call)) then
+    RaiseDomError(InvalidStateError, 'this element has no selection');
+  GetTextSelection(ThisElement(Call), Start, Finish, Direction);
+  case Part of
+    0:
+      begin
+        Start := Integer(Call.Int(0));
+        if Finish < Start then
+          Finish := Start;
+      end;
+    1:
+      begin
+        Finish := Integer(Call.Int(0));
+        if Start > Finish then
+          Start := Finish;
+      end;
+  else
+    Direction := Call.Text(0);
+  end;
+  SetTextSelection(ThisElement(Call), Start, Finish, Direction);
+end;
+
+procedure SetSelectionRangeOf(var Call: TBindingCall);
+var
+  Direction: string;
+begin
+  if not HasSelection(ThisElement(Call)) then
+    RaiseDomError(InvalidStateError, 'this element has no selection');
+  Direction := 'none';
+  if Call.Present(2) then
+    Direction := Call.Text(2);
+  SetTextSelection(ThisElement(Call), Integer(Call.Int(0)), Integer(Call.Int(1)), Direction);
+end;
+
+function HTMLInputElement_select(var Call: TBindingCall): TJsValue;
+begin
+  if HasSelection(ThisElement(Call)) then
+    SelectAllText(ThisElement(Call));
+  Result := Nothing;
 end;
 
 function HTMLInputElement_get_selectionStart(var Call: TBindingCall): TJsValue;
 begin
-  if not HasSelection(ThisElement(Call)) then
-    Exit(JsNull);
-  Result := JsInteger(Utf16Length(InputValue(Context(Call), ThisElement(Call))));
+  Result := SelectionPart(Call, 0);
 end;
 
 function HTMLInputElement_set_selectionStart(var Call: TBindingCall): TJsValue;
 begin
-  if not HasSelection(ThisElement(Call)) then
-    RaiseDomError(InvalidStateError, 'this input has no selection');
+  SetSelectionPart(Call, 0);
   Result := Nothing;
 end;
 
 function HTMLInputElement_get_selectionEnd(var Call: TBindingCall): TJsValue;
 begin
-  Result := HTMLInputElement_get_selectionStart(Call);
+  Result := SelectionPart(Call, 1);
 end;
 
 function HTMLInputElement_set_selectionEnd(var Call: TBindingCall): TJsValue;
 begin
-  Result := HTMLInputElement_set_selectionStart(Call);
+  SetSelectionPart(Call, 1);
+  Result := Nothing;
+end;
+
+function HTMLInputElement_get_selectionDirection(var Call: TBindingCall): TJsValue;
+begin
+  Result := SelectionPart(Call, 2);
+end;
+
+function HTMLInputElement_set_selectionDirection(var Call: TBindingCall): TJsValue;
+begin
+  SetSelectionPart(Call, 2);
+  Result := Nothing;
 end;
 
 function HTMLInputElement_setSelectionRange(var Call: TBindingCall): TJsValue;
 begin
-  Result := HTMLInputElement_set_selectionStart(Call);
+  SetSelectionRangeOf(Call);
+  Result := Nothing;
 end;
 
 { HTMLButtonElement }
@@ -937,6 +1000,46 @@ end;
 
 function HTMLTextAreaElement_select(var Call: TBindingCall): TJsValue;
 begin
+  SelectAllText(ThisElement(Call));
+  Result := Nothing;
+end;
+
+function HTMLTextAreaElement_get_selectionStart(var Call: TBindingCall): TJsValue;
+begin
+  Result := SelectionPart(Call, 0);
+end;
+
+function HTMLTextAreaElement_set_selectionStart(var Call: TBindingCall): TJsValue;
+begin
+  SetSelectionPart(Call, 0);
+  Result := Nothing;
+end;
+
+function HTMLTextAreaElement_get_selectionEnd(var Call: TBindingCall): TJsValue;
+begin
+  Result := SelectionPart(Call, 1);
+end;
+
+function HTMLTextAreaElement_set_selectionEnd(var Call: TBindingCall): TJsValue;
+begin
+  SetSelectionPart(Call, 1);
+  Result := Nothing;
+end;
+
+function HTMLTextAreaElement_get_selectionDirection(var Call: TBindingCall): TJsValue;
+begin
+  Result := SelectionPart(Call, 2);
+end;
+
+function HTMLTextAreaElement_set_selectionDirection(var Call: TBindingCall): TJsValue;
+begin
+  SetSelectionPart(Call, 2);
+  Result := Nothing;
+end;
+
+function HTMLTextAreaElement_setSelectionRange(var Call: TBindingCall): TJsValue;
+begin
+  SetSelectionRangeOf(Call);
   Result := Nothing;
 end;
 

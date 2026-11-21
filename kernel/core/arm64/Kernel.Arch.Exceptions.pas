@@ -354,6 +354,7 @@ begin
     Exit;
   end;
 
+  SetPanicTraceStart(TrapFrameInstructionPointer(Frame), TrapFrameFramePointer(Frame));
   BeginKernelPanic(PanicUnhandledProcessorException, 'unhandled processor exception');
   DebugWrite('  ');
   DebugWrite(ExceptionName(Vector));
@@ -373,6 +374,7 @@ procedure HandleFatalException(Frame: PTrapFrame; Kind: QWord);
 begin
   { Another processor panicked and stops this one (Kernel.Panic sends
     the stop as an interrupt; see Hal.Platform). }
+  SetPanicTraceStart(TrapFrameInstructionPointer(Frame), TrapFrameFramePointer(Frame));
   BeginKernelPanic(PanicUnhandledProcessorException, 'unexpected exception');
   DebugWrite('  ');
   case Kind of

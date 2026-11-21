@@ -44,6 +44,7 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Time,
+  Sys.Threads,
   Controls.Labels,
   Controls.Dialogs,
   TaskManager.Formatting,
@@ -57,7 +58,7 @@ const
   RowHeight = 18;
   ButtonWidth = 75;
   ButtonHeight = 23;
-  RowCount = 17;
+  RowCount = 18;
 
 type
   TPropertiesDialog = class(TDialog)
@@ -93,6 +94,24 @@ begin
     Result := '(another user''s)'
   else
     Result := StrPas(@Details.CommandLine[0]);
+end;
+
+{ The names of the process's threads (CallSetThreadName), as the kernel
+  lists them. }
+function ThreadNamesText(const Details: TProcessDetails): string;
+var
+  Threads: TThreadDetailsList;
+  Index: Integer;
+begin
+  Result := '';
+  if ListThreads(Details.ProcessId, Threads) < 0 then
+    Exit('(ended)');
+  for Index := 0 to High(Threads) do
+  begin
+    if Index > 0 then
+      Result := Result + ', ';
+    Result := Result + Threads[Index].Name;
+  end;
 end;
 
 function TerminalText(const Details: TProcessDetails): string;
@@ -143,6 +162,7 @@ begin
   AddRow('State:', ProcessStateName(Details.State));
   AddRow('Started:', StartedText(Details));
   AddRow('Threads, handles:', IntToStr(Details.ThreadCount) + ', ' + IntToStr(Details.HandleCount));
+  AddRow('Thread names:', ThreadNamesText(Details));
   AddRow('Priority:', IntToStr(Details.Priority) + ' (nice ' + IntToStr(Details.Nice) + ')');
   AddRow('Processor time:', FormatProcessorTime(Details.ProcessorNanoseconds));
   AddRow('  in the program:', FormatProcessorTime(Details.UserNanoseconds));

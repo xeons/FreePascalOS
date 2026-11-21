@@ -94,7 +94,7 @@ devices+=(-nic none -netdev "user,id=net0,$forwards" -device virtio-net-pci,netd
     -netdev user,id=net1 -device e1000e,netdev=net1)
 
 rm -f "$build_directory/QEMU_VARS.fd"
-VIRTUALIZATION=1 PROCESSORS=4 MEMORY=1G SEMIHOSTING=1 SERIAL=file:"$serial_log" \
+AUDIO=none VIRTUALIZATION=1 PROCESSORS=4 MEMORY=1G SEMIHOSTING=1 SERIAL=file:"$serial_log" \
     timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
     -- "${devices[@]}" < /dev/null > /dev/null 2>&1
 status=$?

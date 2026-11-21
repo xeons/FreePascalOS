@@ -272,8 +272,21 @@ type
     LengthKey: TJsValue;
     PrototypeKey: TJsValue;
     ConstructorKey: TJsValue;
+    { A realm whose engine went while others share its runtime: its
+      roots are no longer marked and its functions run in the caller's
+      realm. }
+    Detached: Boolean;
+    { The shared runtime was freed before this realm (nothing of the heap
+      may be touched). }
+    HeapGone: Boolean;
+    { While a function of this realm runs because another realm called
+      it: that realm (the incumbent, for postMessage's source). }
+    CallerRealm: TJsRealm;
     constructor Create(ARuntime: TJsRuntime);
     destructor Destroy; override;
+    { The realm's engine goes but its runtime stays (other realms use it):
+      functions of this realm may still be reachable from them. }
+    procedure Detach; virtual;
     { Calls F (any value: not callable throws a TypeError). }
     function Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue; virtual; abstract;
     function Construct(F: TJsValue; Args: PJsValue; Count: Integer; NewTarget: TJsValue): TJsValue; virtual; abstract;
@@ -1603,13 +1616,23 @@ end;
 
 destructor TJsRealm.Destroy;
 begin
-  Heap.RemoveRootProvider(@MarkRoots);
+  if not HeapGone then
+    Heap.RemoveRootProvider(@MarkRoots);
   inherited Destroy;
 end;
 
 procedure TJsRealm.MarkRoots(Tracer: TJsTracer);
 begin
-  TraceRealm(Tracer);
+  if not Detached then
+    TraceRealm(Tracer);
+end;
+
+procedure TJsRealm.Detach;
+begin
+  Detached := True;
+  FJobCount := 0;
+  FJobHead := 0;
+  FJobs := nil;
 end;
 
 procedure TJsRealm.TraceRealm(Tracer: TJsTracer);

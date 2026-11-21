@@ -32,11 +32,6 @@ interface HTMLElement : Element {
   [Reflect] attribute DOMString autocapitalize;
   [Reflect] attribute DOMString enterKeyHint;
   [Reflect] attribute DOMString inputMode;
-  [Reflect] attribute DOMString nonce;
-  [Reflect] attribute boolean autofocus;
-  attribute long tabIndex;
-  undefined focus(optional FocusOptions options = {});
-  undefined blur();
 
   [LegacyNullToEmptyString] attribute DOMString innerText;
   [LegacyNullToEmptyString] attribute DOMString outerText;
@@ -45,16 +40,27 @@ interface HTMLElement : Element {
   readonly attribute boolean isContentEditable;
   [Reflect] attribute DOMString popover;
 
-  [SameObject] readonly attribute DOMStringMap dataset;
-  [SameObject, PutForwards=cssText] readonly attribute CSSStyleDeclaration style;
-
-  readonly attribute Element? offsetParent;
-  readonly attribute long offsetTop;
-  readonly attribute long offsetLeft;
-  readonly attribute long offsetWidth;
-  readonly attribute long offsetHeight;
+  // offsetParent, offsetTop, offsetLeft, offsetWidth and offsetHeight come
+  // from platform/70-geometry.js (the layout answers them).
 };
 HTMLElement includes GlobalEventHandlers;
+HTMLElement includes HTMLOrSVGElement;
+HTMLElement includes ElementCSSInlineStyle;
+
+// What HTML and SVG elements share (SVGElement includes them too).
+interface mixin HTMLOrSVGElement {
+  [SameObject] readonly attribute DOMStringMap dataset;
+  [Reflect] attribute DOMString nonce;
+  [Reflect] attribute boolean autofocus;
+  attribute long tabIndex;
+  undefined focus(optional FocusOptions options = {});
+  undefined blur();
+};
+
+// CSSOM: the style attribute's declarations.
+interface mixin ElementCSSInlineStyle {
+  [SameObject, PutForwards=cssText] readonly attribute CSSStyleDeclaration style;
+};
 
 [Exposed=Window]
 interface HTMLUnknownElement : HTMLElement { };
@@ -168,6 +174,7 @@ interface HTMLInputElement : HTMLElement {
   undefined select();
   attribute unsigned long? selectionStart;
   attribute unsigned long? selectionEnd;
+  attribute DOMString? selectionDirection;
   undefined setSelectionRange(unsigned long start, unsigned long end, optional DOMString direction);
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString useMap;
@@ -214,6 +221,10 @@ interface HTMLTextAreaElement : HTMLElement {
   boolean reportValidity();
   undefined setCustomValidity(DOMString error);
   undefined select();
+  attribute unsigned long selectionStart;
+  attribute unsigned long selectionEnd;
+  attribute DOMString selectionDirection;
+  undefined setSelectionRange(unsigned long start, unsigned long end, optional DOMString direction);
 };
 
 [Exposed=Window, LocalNames=(select)]
@@ -695,6 +706,8 @@ interface HTMLFrameSetElement : HTMLElement {
 interface HTMLFrameElement : HTMLElement {
   [Reflect] attribute DOMString name;
   [ReflectURL] attribute USVString src;
+  readonly attribute Document? contentDocument;
+  readonly attribute Window? contentWindow;
 };
 
 [Exposed=Window, LocalNames=(marquee)]

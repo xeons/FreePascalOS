@@ -269,6 +269,14 @@ begin
     Check(Abs(Leaf.Style.Length(cpWidth, 100) - 5) < 1E-4, 'min(10px, 5%) resolves against 100px to 5px');
     Check(Abs(Outer.Style.Length(cpWidth, 200) - 52) < 1E-4, 'calc(50% - 48px) resolves against 200px to 52px');
     Check(Inner.Style.CustomProperty('--double') = 'calc(1rem * 2)', 'custom properties hold substituted tokens');
+    { Shorthands and logical properties (getComputedStyle asks for any). }
+    CheckComputed(Outer, 'padding', '20px 40px', 'a shorthand from its longhands');
+    CheckComputed(Outer, 'border-top', '3px solid rgb(10, 20, 30)', 'a border side');
+    CheckComputed(Outer, 'border', '', 'a shorthand that cannot be written is empty');
+    CheckComputed(Leaf, 'margin', '20px', 'four equal sides');
+    CheckComputed(Outer, 'overflow', 'visible', 'a pair of equal values');
+    CheckComputed(Inner, 'margin-inline-end', '20px', 'a logical longhand is its physical one');
+    CheckComputed(Inner, 'padding-inline', 'calc(5% + 10px) 0px', 'a logical pair');
   finally
     StopStyler(S);
   end;

@@ -39,6 +39,7 @@
     sysdir.inc    directories
     systhrd.inc   the thread manager
     sysdl.inc     libraries loaded at run time
+    syscrash.inc  crash reports naming each address's module
 
   Processor exceptions (an access violation, a division by zero, a
   floating point exception) are passed to the program by the kernel: the
@@ -134,6 +135,19 @@ procedure SetLastSystemError(Error: LongInt);
 { Called by the startup code (si_prc). }
 procedure SysEntry(constref Information: TEntryInformation);
 
+{ Called by the startup code of a Free Pascal library loaded at run time
+  (si_dll, its DT_INIT) with its unit tables (INITFINAL,
+  FPC_THREADVARTABLES): gives its own units' threadvars their blocks and
+  initializes those units. Returns what SysUnregisterLibrary (its
+  DT_FINI) takes to finalize them. }
+function SysRegisterLibrary(InitFinalTable, ThreadvarTables: Pointer): Pointer;
+
+{ Loads a library (CallLoadLibrary) and runs the initializers it brought
+  in, as LoadLibrary does: the kernel's handle, or a negative Abi error
+  code. }
+function SysLoadLibraryHandle(Name: PChar): Int64;
+procedure SysUnregisterLibrary(Registration: Pointer);
+
 type
   { Sees every processor exception (with a PAbiExceptionRecord, see
     Abi.SystemCalls) before it becomes a runtime error. Returning True
@@ -162,6 +176,7 @@ procedure OsSetupEntryInformation(constref Information: TEntryInformation); forw
 {$I sysheapcheckreport.inc}
 {$I sysheapquarantine.inc}
 {$I sysheapcheck.inc}
+{$I syscrash.inc}
 
 {*****************************************************************************
                                 Entry and exit
@@ -241,6 +256,7 @@ end;
 
 procedure System_exit;
 begin
+  WriteCrashModuleList;
   RunFinalizers;
   while True do
     SystemCall(CallExit, QWord(LongWord(ExitCode)), 0, 0, 0, 0, 0);
@@ -252,9 +268,12 @@ begin
 end;
 
 { ELF thread-local storage of libraries, for code using the general
-  dynamic model: the kernel lays it out statically next to the thread
-  pointer (below it on x86-64, variant II; above it on AArch64, variant
-  I) and makes a module's id its offset from it. }
+  dynamic model. The program's and its startup libraries' storage is
+  laid out statically next to the thread pointer (below it on x86-64,
+  variant II; above it on AArch64, variant I), and such a module's id is
+  its offset from it. A library loaded later has dynamic TLS: its id is
+  TlsDynamicModuleTag plus its module handle, and its blocks are made
+  per thread (sysdyntls.inc). }
 type
   PTlsIndex = ^TTlsIndex;
   TTlsIndex = record
@@ -262,9 +281,17 @@ type
     Offset: QWord;
   end;
 
+const
+  { The bits that tell a dynamic module's id from a static offset (a
+    static offset is small, or negative on x86-64). }
+  TlsDynamicModuleTagMask = QWord($C000000000000000);
+
 function TlsGetAddress(Index: PTlsIndex): Pointer; [public, alias: '__tls_get_addr'];
 begin
-  TlsGetAddress := Pointer(PtrUInt(ThreadPointer) + Index^.Module + Index^.Offset);
+  if (Index^.Module and TlsDynamicModuleTagMask) = TlsDynamicModuleTag then
+    TlsGetAddress := DynamicTlsAddress(PtrUInt(Index^.Module and TlsDynamicHandleMask), PtrUInt(Index^.Offset))
+  else
+    TlsGetAddress := Pointer(PtrUInt(ThreadPointer) + Index^.Module + Index^.Offset);
 end;
 
 {*****************************************************************************
@@ -381,6 +408,7 @@ begin
     heap's header, or none has. }
   InitHeapChecks;
   SysInitExceptions;
+  BackTraceStrFunc := @ModuleBackTraceStr;
   InitUnicodeStringManager;
   { Text is UTF-8 everywhere: file names, the console, files. }
   DefaultSystemCodePage := CP_UTF8;

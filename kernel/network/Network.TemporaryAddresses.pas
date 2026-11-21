@@ -76,7 +76,7 @@ uses
   Network.Core,
   Network.Ipv6AddressList,
   Network.Ipv6Identifiers,
-  Network.RandomNumbers;
+  Kernel.Random;
 
 const
   NanosecondsPerSecond = QWord(1000) * 1000 * 1000;
@@ -135,7 +135,7 @@ var
   Error: LongInt;
   Entry: PIpv6InterfaceAddress;
 begin
-  Desync := NetworkRandomBelow(MaximumDesyncSeconds) * NanosecondsPerSecond;
+  Desync := RandomBelow(MaximumDesyncSeconds) * NanosecondsPerSecond;
   ValidLimit := Now + QWord(TemporaryValidSeconds) * NanosecondsPerSecond;
   PreferredLimit := Now + QWord(TemporaryPreferredSeconds) * NanosecondsPerSecond - Desync;
   PreferredUntil := Earlier(PrefixPreferredUntil, PreferredLimit);

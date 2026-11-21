@@ -37,6 +37,11 @@
   Codes are checked as zlib checks them: never over-subscribed; complete,
   except that a literal/length or distance code may be a single code of
   one bit, or have no codes at all.
+
+  Brotli's prefix codes (RFC 7932 section 3) are canonical codes sent
+  the same way, over alphabets of up to 704 symbols; they must be
+  complete (CodeKindCodeLengths), and a code of one symbol takes no bits
+  (SingleSymbolEntry fills a root with it).
 }
 unit Compression.HuffmanDecoding;
 
@@ -59,6 +64,10 @@ const
   LiteralLengthTableSize = 1536;
   DistanceTableSize = 512;
   CodeLengthTableSize = 1 shl CodeLengthRootBits;
+
+  { The widest alphabet a table can be built for (brotli's insert and
+    copy length codes). }
+  MaximumTableSymbols = 704;
 
   EntryKindSymbol = 0;
   EntryKindLink = 1;
@@ -84,7 +93,13 @@ type
   not make a valid code. }
 function BuildDecodeTable(Lengths: PByte; Count: Integer; RootBits: Integer; Table: PDecodeEntry;
   TableSize: Integer; Kind: TCodeKind): Boolean;
+{ The same, saying how many entries (root and subtables) it filled. }
+function BuildDecodeTableCounted(Lengths: PByte; Count: Integer; RootBits: Integer; Table: PDecodeEntry;
+  TableSize: Integer; Kind: TCodeKind; out UsedEntries: Integer): Boolean;
 
+{ The entry of a code of one symbol that takes no bits: every root entry
+  of its table. }
+function SingleSymbolEntry(Symbol: Integer): TDecodeEntry;
 { The parts of an entry. }
 function EntryValue(Entry: TDecodeEntry): Integer; inline;
 function EntryLength(Entry: TDecodeEntry): Integer; inline;
@@ -176,14 +191,27 @@ begin
   end;
 end;
 
+function SingleSymbolEntry(Symbol: Integer): TDecodeEntry;
+begin
+  Result := MakeEntry(EntryKindSymbol, Symbol, 0, 0);
+end;
+
 function BuildDecodeTable(Lengths: PByte; Count: Integer; RootBits: Integer; Table: PDecodeEntry;
   TableSize: Integer; Kind: TCodeKind): Boolean;
+var
+  UsedEntries: Integer;
+begin
+  Result := BuildDecodeTableCounted(Lengths, Count, RootBits, Table, TableSize, Kind, UsedEntries);
+end;
+
+function BuildDecodeTableCounted(Lengths: PByte; Count: Integer; RootBits: Integer; Table: PDecodeEntry;
+  TableSize: Integer; Kind: TCodeKind; out UsedEntries: Integer): Boolean;
 var
   LengthCounts: array[0..MaximumCodeLength] of Integer;
   Remaining: array[0..MaximumCodeLength] of Integer;
   NextCode: array[0..MaximumCodeLength] of LongWord;
   Offsets: array[0..MaximumCodeLength + 1] of Integer;
-  SortedSymbols: array[0..LiteralLengthSymbols - 1] of Word;
+  SortedSymbols: array[0..MaximumTableSymbols - 1] of Word;
   Symbol: Integer;
   CodeLength: Integer;
   MaximumLength: Integer;
@@ -199,7 +227,8 @@ var
   Position: Integer;
 begin
   Result := False;
-  if (Count > LiteralLengthSymbols) or (RootBits > MaximumCodeLength) then
+  UsedEntries := 0;
+  if (Count > MaximumTableSymbols) or (RootBits > MaximumCodeLength) then
     Exit;
   RootEntries := 1 shl RootBits;
   if TableSize < RootEntries then
@@ -219,6 +248,7 @@ begin
       MaximumLength := CodeLength;
 
   FillEntries(Table, 0, RootEntries, MakeEntry(EntryKindInvalid, 0, RootBits, 0));
+  UsedEntries := RootEntries;
   if MaximumLength = 0 then
   begin
     Result := True;
@@ -291,6 +321,7 @@ begin
     end;
     Dec(Remaining[CodeLength]);
   end;
+  UsedEntries := TableEnd;
   Result := True;
 end;
 

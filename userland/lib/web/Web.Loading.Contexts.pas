@@ -65,6 +65,19 @@ type
     MaximumImportDepth: Integer;
   end;
 
+  { The moments of a document's navigation and loading (Navigation
+    Timing), as GetTickCount64 milliseconds; 0 for not yet. }
+  TDocumentTimes = record
+    { 'navigate', 'reload' or 'back_forward'. }
+    Kind: string;
+    RedirectCount: Integer;
+    NavigationStart, FetchStart, ResponseStart, ResponseEnd: QWord;
+    DomInteractive, DomContentLoadedStart, DomContentLoadedEnd, DomComplete, LoadEventStart, LoadEventEnd: QWord;
+    Protocol: string;
+    Status: Integer;
+    BytesReceived: Int64;
+  end;
+
   TLoadingContext = class
   private
     FBaseUrl: TUrlRecord;
@@ -81,6 +94,8 @@ type
     FDocumentUrl: TUrlRecord;
     FSettings: TLoadingSettings;
   public
+    { Filled by the navigable and the loader as the document loads. }
+    Times: TDocumentTimes;
     { The document URL as parsed. }
     property DocumentUrl: TUrlRecord read FDocumentUrl;
     procedure DelayLoad;

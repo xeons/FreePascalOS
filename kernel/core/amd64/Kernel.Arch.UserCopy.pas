@@ -56,6 +56,12 @@ function ArchCopyUserString(Destination, Source: PChar; Capacity: QWord): Int64;
 
 { Turns SMAP on if the processor has it (once, at start). }
 procedure InitializeUserCopy;
+{ True if the processor refuses kernel accesses to user pages outside
+  the copy routines (SMAP). }
+function UserMemoryIsProtected: Boolean;
+{ False only while this processor has the window to user memory open
+  (RFLAGS.AC set under SMAP). }
+function UserMemoryProtectionIsOnHere: Boolean;
 
 { For the page fault handler: if the current thread faulted on a user
   address inside a copy routine, redirects it and returns True. }
@@ -95,6 +101,24 @@ begin
   DebugWriteTag('cpu');
   DebugWriteLine('SMAP on: the kernel reaches user memory only through checked copies');
   DebugEndMessage;
+end;
+
+function UserMemoryIsProtected: Boolean;
+begin
+  Result := SmapEnabled <> 0;
+end;
+
+function ReadFlags: QWord; assembler; nostackframe;
+asm
+  pushfq
+  pop rax
+end;
+
+function UserMemoryProtectionIsOnHere: Boolean;
+const
+  FlagsAlignmentCheck = QWord($40000);
+begin
+  Result := (SmapEnabled = 0) or ((ReadFlags and FlagsAlignmentCheck) = 0);
 end;
 
 { RDI = Destination, RSI = Source, RDX = Length. }

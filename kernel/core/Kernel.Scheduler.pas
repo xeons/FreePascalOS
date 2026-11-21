@@ -55,6 +55,7 @@ interface
 
 uses
   Kernel.PriorityLevel,
+  Kernel.Processors,
   Kernel.Threads;
 
 const
@@ -121,6 +122,10 @@ function TakeTerminatedThread: PThreadControlBlock;
   the running thread and its time slice, and asks the dispatch interrupt
   to wake the threads whose timeout is due. }
 procedure SchedulerClockInterrupt(Now: QWord; ElapsedTicks: QWord; InUserMode: Boolean);
+{ When Processor's clock interrupt must come for the scheduler's own
+  work even with its tick stopped (the boot processor samples the load
+  averages every 5 seconds); NeverDue for none. }
+function SchedulerHousekeepingTime(Processor: PProcessor): QWord;
 
 { Building blocks for synchronization objects. All "Locked" routines
   require the dispatcher lock to be held. }
@@ -163,7 +168,6 @@ uses
   Kernel.Interrupts,
   Kernel.Clock,
   Kernel.DeferredCalls,
-  Kernel.Processors,
   Kernel.InterProcessor,
   Kernel.ReadyQueues,
   Kernel.ProcessorTime,
@@ -179,7 +183,9 @@ var
   { Exponentially decayed run queue lengths, fixed point with
     LoadFractionBits bits after the point. }
   LoadAverage: array[0..2] of QWord;
-  NextLoadSampleTick: QWord;
+  { Clock nanoseconds of the next sample (taken by the boot processor's
+    clock interrupt, which comes for it even while that one idles). }
+  NextLoadSampleTime: QWord;
 
 const
   LoadFractionBits = 11;
@@ -232,6 +238,11 @@ begin
   NextThread^.State := ThreadStateRunning;
   NextThread^.QuantumRemaining := QuantumTicks;
   Processor^.RunningThread := NextThread;
+  { The tick stopped while the processor idled (Kernel.Clock). }
+  if (PreviousThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
+    RestartClockTick
+  else if (NextThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
+    StopClockTick;
   NextThread^.LastProcessorIndex := Processor^.Index;
   Inc(SwitchCount);
 
@@ -443,15 +454,16 @@ begin
   Processor := CurrentProcessor;
   DispatchNeeded := Now >= Processor^.NextWakeUpTime;
 
+  if (Processor^.Index = 0) and (Now >= NextLoadSampleTime) then
+  begin
+    SampleLoad;
+    NextLoadSampleTime := Now + LoadSampleMilliseconds * NanosecondsPerMillisecond;
+  end;
+
   if ElapsedTicks > 0 then
   begin
     Thread := Processor^.RunningThread;
     ChargeClockTicks(Thread, ElapsedTicks, InUserMode);
-    if (Processor^.Index = 0) and (ClockTickCount >= NextLoadSampleTick) then
-    begin
-      SampleLoad;
-      NextLoadSampleTick := ClockTickCount + MillisecondsToTicks(LoadSampleMilliseconds);
-    end;
     if Thread <> Processor^.IdleThread then
     begin
       Thread^.QuantumRemaining := Thread^.QuantumRemaining - LongInt(ElapsedTicks);
@@ -465,6 +477,14 @@ begin
 
   if DispatchNeeded then
     HalRequestSoftwareInterrupt(DispatchLevel);
+end;
+
+function SchedulerHousekeepingTime(Processor: PProcessor): QWord;
+begin
+  if Processor^.Index = 0 then
+    Result := NextLoadSampleTime
+  else
+    Result := NeverDue;
 end;
 
 { --- Thread start and exit ------------------------------------------- }

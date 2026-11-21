@@ -43,6 +43,10 @@ var getterOnly = { get v() { return 1; } };
 getterOnly.v = 2;
 console.log(getterOnly.v);
 console.log(Object.groupBy([1, 2, 3, 4], n => (n % 2 ? "odd" : "even")));
+function selfObject(b) { b = { plb: b, Fp: 2 }; return typeof b.plb; }
+function selfArray(b) { b = [b, 1]; return typeof b[0]; }
+function selfVar(b) { var b = { p: b }; return typeof b.p; }
+console.log(selfObject("s"), selfArray("s"), selfVar("s"));
 /* expected
 [ '1', '2', 'a', 'b-c', 'dyn1', 'g' ] 10
 5 50 true false true
@@ -66,4 +70,5 @@ true false true
 [ 'x' ] false
 1
 [Object: null prototype] { odd: [ 1, 3 ], even: [ 2, 4 ] }
+string string string
 */

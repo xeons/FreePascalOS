@@ -91,8 +91,11 @@ uses
   Web.Loading.LayoutSink,
   Web.Layout.Document,
   Web.Paint.Painter,
+  Web.Frames.Views,
   WebView.TextIndex,
-  WebView.Elements;
+  WebView.FieldEditing,
+  WebView.Elements,
+  WebView.MouseEvents;
 
 const
   { The web view's own messages (below MessageUser: a library's). }
@@ -189,8 +192,21 @@ type
     FActiveChain: TElementChain;
     FFocusedElement: TElement;
     FFocusVisible: Boolean;
+    { The value a focused text control had when it got the focus (change
+      fires when it leaves with another). }
+    FFocusValue: string;
+    { Hears the document's focus changes (script's focus() too). }
+    FDocumentObserver: TDocumentObserver;
+    { Script's layout questions (getBoundingClientRect ...). }
+    FScriptLayout: TObject;
+    { The character each key typed when pressed (keyup's key). }
+    FKeyCharacters: array[0..511] of LongWord;
     FPressedLink: TElement;
     FPressedControl: TElement;
+    { The element the left button went down on (click goes to it when it
+      comes up there), the buttons held (MouseEvent.buttons). }
+    FPressedTarget: TElement;
+    FButtonsHeld: Word;
     FPressButton: LongWord;
     FPressX, FPressY: LongInt;
     FDragged: Boolean;
@@ -204,6 +220,8 @@ type
     FSelecting: Boolean;
     FSelectionAnchor, FSelectionFocus: TTextPosition;
     FFindText: string;
+    { Typing into the focused text field. }
+    FFieldEditor: TTextFieldEditor;
     { A select's pop-up. }
     FSelectMenu: TMenuItem;
     FSelectElement: TElement;
@@ -260,6 +278,7 @@ type
     function PageHasFixedBoxes: Boolean;
     procedure PaintSelection(var Canvas: TCanvas);
     procedure PaintCaret(var Canvas: TCanvas);
+    function ShowsAt(Container: TNode; X, Y: Single): Boolean;
     procedure PaintInnerScrollBars(var Canvas: TCanvas);
     { Scrolling (WebView.Control.Scrolling.inc). }
     procedure UpdateScrollBars;
@@ -280,13 +299,40 @@ type
     procedure ActivateLink(Link: TElement; Disposition: TLinkDisposition);
     function DispositionFor(Button, Modifiers: LongWord; Link: TElement): TLinkDisposition;
     procedure SetFocusedElement(Element: TElement; ShowFocus: Boolean);
+    { Script scrolled the viewport or a scroll container. }
+    procedure ScriptScrolled;
+    { The document's focus moved to Element (nil: the viewport). }
+    procedure FocusMoved(Element: TElement);
+    { A KeyboardEvent at the focused element (or the body); False when the
+      page cancelled it. }
+    function DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
+    { An InputEvent after an edit of a text control. }
+    procedure FireInputEvent(Element: TElement; const InputType, Data: string);
+    { Implicit submission (Enter in a field): the form's default button,
+      else the form. }
+    procedure SubmitImplicitly(Field: TElement);
+    { Frames (WebView.Control.Frames.inc). }
+    function HitTestDeep(CssX, CssY: Double; out Path: TFramePath): THitTestResult;
+    function LayoutForDocument(Document: TDocument): TDocumentLayout;
+    function NavigableForNode(Node: TNode): TNavigable;
+    function ViewportOriginOf(Document: TDocument; out X, Y: Single): Boolean;
+    procedure FillMouseInit(Target: TNode; out Init: TMouseEventInit);
+    function FireMouse(Target: TNode; const EventType: string; Button: SmallInt; Detail: LongInt): Boolean;
+    { A trusted click (a MouseEvent) at Element; False when cancelled. }
+    function FireClick(Element: TElement): Boolean;
+    function ScrollThroughFrames(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
+    function ScrollBoxChain(DocumentLayout: TDocumentLayout; Box: TLayoutBox; DeltaX, DeltaY: Double): Boolean;
     { Form controls (WebView.Control.Forms.inc). }
     procedure ClickElement(Element: TElement);
+    procedure ActOnClick(Element: TElement);
     procedure ActivateControl(Control: TElement);
     procedure SubmitForm(Form, Submitter: TElement);
     procedure OpenSelectMenu(Select: TElement);
     procedure SelectOptionChosen(Item: TMenuItem);
     function TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
+    procedure FieldSelectionMoved(Element: TElement);
+    function ReadClipboard: string;
+    procedure WriteClipboard(const Value: string);
     procedure ControlEdited(Element: TElement);
     { Selection (WebView.Control.Selection.inc). }
     procedure EnsureTextIndex;
@@ -320,6 +366,7 @@ type
     procedure PointerLeave; override;
     procedure Wheel(Steps: LongInt); override;
     function KeyDown(Code, Character, Modifiers: LongWord): Boolean; override;
+    procedure KeyUp(Code, Modifiers: LongWord); override;
     procedure FocusChanged; override;
     procedure ContextMenu(X, Y: LongInt; FromKeyboard: Boolean); override;
   public
@@ -420,10 +467,29 @@ uses
   Web.Paint.DisplayList,
   Web.Text.FontInstances,
   Web.Script.PageScripting,
+  Web.Dom.Focus,
+  Web.Dom.FormControls,
   WebView.Network,
   WebView.Zoom,
-  WebView.Forms;
+  WebView.Forms,
+  WebView.KeyNames,
+  WebView.TextEditing,
+  Web.Script.Layout;
 
+type
+  { The view's ear on its document. }
+  TViewDocumentObserver = class(TDocumentObserver)
+  public
+    View: TWebView;
+    procedure FocusChanged(Old, New: TElement); override;
+  end;
+
+procedure TViewDocumentObserver.FocusChanged(Old, New: TElement);
+begin
+  View.FocusMoved(New);
+end;
+
+{$I WebView.Control.Frames.inc}
 {$I WebView.Control.Observer.inc}
 {$I WebView.Control.Core.inc}
 {$I WebView.Control.Painting.inc}

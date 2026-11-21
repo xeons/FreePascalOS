@@ -58,6 +58,11 @@ type
     Profile: Boolean;
     { Moves of the pointer down the viewport once quiet (hover). }
     HoverMoves: Integer;
+    { What a user does once the page is quiet (after -e), each step when
+      the page is quiet again (or ten seconds on): "eval:JS",
+      "type:TEXT" (\n is Enter), "key:NAME" ("Enter", "ctrl+KeyA"),
+      "click:SELECTOR", "wait:MS", "shot:FILE.png". }
+    Steps: array of string;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -84,6 +89,7 @@ uses
   Image.StandardCodecs,
   Js.Engine,
   Js.Values,
+  Web.Script.Layout,
   Web.Dom,
   Web.Html.Serializer,
   Web.Fetch.NetworkContexts,
@@ -101,6 +107,9 @@ uses
   Web.Text.Fonts,
   Web.Profiling,
   Css.ElementAdapter,
+  Web.Bindings.Selectors,
+  Web.UserAgent,
+  WebBrowse.Input,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
   WebBrowse.Sampler,
@@ -109,7 +118,11 @@ uses
 const
   SliceMilliseconds = 12;
   FrameMilliseconds = 16;
-  UserAgentText = 'Mozilla/5.0 (FreePascalOS) libweb/1.0';
+  { Between typed characters, and the longest wait for quiet before a step. }
+  KeyMilliseconds = 60;
+  StepPatienceMilliseconds = 10000;
+  { The browser's. }
+  UserAgentText = EngineUserAgent;
 
 type
   TBrowseSession = class
@@ -123,6 +136,7 @@ type
     FLog: TNetworkLog;
     FDocument: TDocument;
     FLayout: TDocumentLayout;
+    FScriptLayout: TDocumentScriptLayout;
     { Frames paint the viewport here as the web view does (url() images
       are asked for when the display list is built). }
     FFramePainter: TDocumentPainter;
@@ -136,6 +150,12 @@ type
     FFrames: Integer;
     FLoadedAt, FFirstLayoutAt: Double;
     FFailure: string;
+    FInput: TPageInput;
+    FStepIndex: Integer;
+    FStepReadyAt: Double;
+    FTyping: string;
+    FNextKeyAt: Double;
+    FWaitUntil: Double;
     procedure ConsoleMessage(const Level, Text: string);
     procedure AdoptDocument(Document: TDocument);
     procedure ReleaseDocument;
@@ -145,7 +165,12 @@ type
     procedure Report;
     procedure PaintPng;
     procedure RunEval;
+    procedure Evaluate(const Source: string);
     procedure SweepHover;
+    procedure SavePng(const FileName: string);
+    function StepsBusy: Boolean;
+    procedure TypeNextCharacter;
+    procedure RunStep(const Step: string);
   public
     constructor Create(const Options: TBrowseOptions);
     destructor Destroy; override;
@@ -213,8 +238,11 @@ begin
   FPage.Fetcher.Monitor := FLog;
   FSink.AttachNavigable(FPage.Navigable);
   FSink.SetViewport(Options.Width, Options.Height, Options.Scale);
+  FInput := TPageInput.Create(FPage.Navigable);
   FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
   FExecutor.Environment.UserAgentText := UserAgentText;
+  FScriptLayout := TDocumentScriptLayout.Create;
+  FExecutor.Environment.Layout := FScriptLayout;
   FExecutor.OnConsoleMessage := @ConsoleMessage;
   if Options.Scripting then
     FPage.Navigable.Executor := FExecutor;
@@ -238,6 +266,8 @@ begin
   ReleaseDocument;
   FPage.Free;
   FExecutor.Free;
+  FInput.Free;
+  FScriptLayout.Free;
   FSink.Free;
   FNetwork.Free;
   FLog.Free;
@@ -264,6 +294,11 @@ end;
 
 procedure TBrowseSession.ReleaseDocument;
 begin
+  if FScriptLayout <> nil then
+  begin
+    FScriptLayout.Layout := nil;
+    FScriptLayout.Painter := nil;
+  end;
   FreeAndNil(FFramePainter);
   FreeAndNil(FLayout);
   if FDocument <> nil then
@@ -289,6 +324,11 @@ begin
   FFramePainter := TDocumentPainter.Create(FLayout);
   FPaintedVersion := High(LongWord);
   FLayout.SetViewport(FOptions.Width, FOptions.Height, FOptions.Scale);
+  if FScriptLayout <> nil then
+  begin
+    FScriptLayout.Layout := FLayout;
+    FScriptLayout.Painter := FFramePainter;
+  end;
 end;
 
 { What the web view does on its frame timer. }
@@ -396,12 +436,17 @@ begin
 end;
 
 procedure TBrowseSession.RunEval;
+begin
+  Evaluate(FOptions.EvalSource);
+end;
+
+procedure TBrowseSession.Evaluate(const Source: string);
 var
   Context: TScriptContext;
   Value: TJsValue;
   ErrorText: string;
 begin
-  if (FOptions.EvalSource = '') or (FDocument = nil) then
+  if (Source = '') or (FDocument = nil) then
     Exit;
   Context := FExecutor.ContextOf(FDocument);
   if Context = nil then
@@ -411,13 +456,99 @@ begin
   end;
   Context.EnterScript;
   try
-    if Context.Engine.TryEvaluate(FOptions.EvalSource, '<webbrowse>', Value, ErrorText) then
+    if Context.Engine.TryEvaluate(Source, '<webbrowse>', Value, ErrorText) then
       WriteLn('eval: ', Context.Engine.Inspect(Value))
     else
       WriteLn('eval: error: ', ErrorText);
   finally
     Context.LeaveScript;
   end;
+end;
+
+{ Typing or waiting: the page is not left alone yet. }
+function TBrowseSession.StepsBusy: Boolean;
+begin
+  Result := (FTyping <> '') or (Clock < FWaitUntil);
+end;
+
+procedure TBrowseSession.TypeNextCharacter;
+var
+  Length_: Integer;
+  Lead: Byte;
+  Character: LongWord;
+begin
+  Lead := Ord(FTyping[1]);
+  if Lead < $80 then
+  begin
+    Length_ := 1;
+    Character := Lead;
+  end
+  else if Lead < $E0 then
+  begin
+    Length_ := 2;
+    Character := Lead and $1F;
+  end
+  else if Lead < $F0 then
+  begin
+    Length_ := 3;
+    Character := Lead and $0F;
+  end
+  else
+  begin
+    Length_ := 4;
+    Character := Lead and $07;
+  end;
+  while Length_ > 1 do
+  begin
+    Delete(FTyping, 1, 1);
+    Dec(Length_);
+    if FTyping = '' then
+      Exit;
+    Character := (Character shl 6) or (Ord(FTyping[1]) and $3F);
+  end;
+  Delete(FTyping, 1, 1);
+  if FOptions.Verbose then
+    WriteLn(StdErr, Format('%8.0f type %d', [Clock, Character]));
+  FInput.TypeCharacter(FDocument, Character);
+  FNextKeyAt := Clock + KeyMilliseconds;
+end;
+
+procedure TBrowseSession.RunStep(const Step: string);
+var
+  Kind, Argument: string;
+  Element: TElement;
+begin
+  Kind := Copy(Step, 1, Pos(':', Step) - 1);
+  Argument := Copy(Step, Pos(':', Step) + 1, MaxInt);
+  WriteLn(Format('%8.0f step %s', [Clock, Step]));
+  if Kind = 'eval' then
+    Evaluate(Argument)
+  else if Kind = 'type' then
+  begin
+    FTyping := StringReplace(Argument, '\n', #10, [rfReplaceAll]);
+    FNextKeyAt := Clock;
+  end
+  else if Kind = 'key' then
+  begin
+    if not FInput.PressNamedKey(FDocument, Argument) then
+      WriteLn('step: no key named ', Argument);
+  end
+  else if Kind = 'click' then
+  begin
+    Element := nil;
+    if FDocument <> nil then
+      Element := QuerySelector(FDocument, Argument);
+    if Element = nil then
+      WriteLn('step: nothing matches ', Argument)
+    else
+      FInput.Click(Element);
+  end
+  else if Kind = 'wait' then
+    FWaitUntil := Clock + StrToFloatDef(Argument, 0)
+  else if Kind = 'shot' then
+    SavePng(Argument)
+  else
+    WriteLn('step: unknown ', Step);
 end;
 
 function TBrowseSession.Run: Integer;
@@ -433,6 +564,7 @@ begin
   end;
   Deadline := FOptions.TimeoutSeconds * 1000;
   Evaluated := FOptions.EvalSource = '';
+  FStepReadyAt := 0;
   Resized := FOptions.ResizeWidth <= 0;
   while True do
   begin
@@ -453,7 +585,18 @@ begin
       if FOptions.Verbose then
         WriteLn(StdErr, Format('%8.0f load event', [FLoadedAt]));
     end;
-    if Quiet then
+    if (FTyping <> '') and (Clock >= FNextKeyAt) then
+      TypeNextCharacter;
+    if Evaluated and (FStepIndex < Length(FOptions.Steps)) and not StepsBusy and Loaded and
+      (Clock - FStepReadyAt >= StepPatienceMilliseconds) then
+    begin
+      { Not quiet for this long: the next step goes on anyway. }
+      RunStep(FOptions.Steps[FStepIndex]);
+      Inc(FStepIndex);
+      FStepReadyAt := Clock;
+      FQuietSince := -1;
+    end;
+    if Quiet and not StepsBusy then
     begin
       if FQuietSince < 0 then
         FQuietSince := Clock;
@@ -475,10 +618,19 @@ begin
           FQuietSince := -1;
           Continue;
         end;
-        if Evaluated then
+        if Evaluated and (FStepIndex >= Length(FOptions.Steps)) then
           Break;
-        RunEval;
-        Evaluated := True;
+        if not Evaluated then
+        begin
+          RunEval;
+          Evaluated := True;
+        end
+        else
+        begin
+          RunStep(FOptions.Steps[FStepIndex]);
+          Inc(FStepIndex);
+        end;
+        FStepReadyAt := Clock;
         FQuietSince := -1;
       end;
     end
@@ -491,9 +643,10 @@ begin
     end;
     if Clock >= Deadline then
     begin
-      WriteLn(StdErr, Format('webbrowse: timed out after %.0f s (state %d, %d fetches active, %d url() images pending)',
-        [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State), FPage.Fetcher.ActiveJobCount,
-        FSink.PendingStyleImageCount]));
+      WriteLn(StdErr, Format('webbrowse: timed out after %.0f s (state %d, %d fetches active, %d url() images pending, ' +
+        'a task ready: %s, layout due: %s)', [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State),
+        FPage.Fetcher.ActiveJobCount, FSink.PendingStyleImageCount, BoolToStr(FPage.Loop.HasReadyTask, 'yes', 'no'),
+        BoolToStr((FLayout <> nil) and FLayout.NeedsUpdate, 'yes', 'no')]));
       Result := 2;
       Break;
     end;
@@ -590,6 +743,12 @@ begin
 end;
 
 procedure TBrowseSession.PaintPng;
+begin
+  if FOptions.PngFile <> '' then
+    SavePng(FOptions.PngFile);
+end;
+
+procedure TBrowseSession.SavePng(const FileName: string);
 var
   Painter: TDocumentPainter;
   Surface: TSurface;
@@ -597,7 +756,7 @@ var
   Image: TImage;
   Began: Double;
 begin
-  if (FOptions.PngFile = '') or (FLayout = nil) then
+  if (FileName = '') or (FLayout = nil) then
     Exit;
   Began := Clock;
   if FOptions.WholePage and (FLayout.DocumentHeight > FLayout.ViewportHeight) then
@@ -620,7 +779,7 @@ begin
     WriteLn(Format('paint: %.1f ms (%d x %d)', [Clock - Began, Width, Height]));
     Image := ImageTakingSurface(Surface);
     try
-      SaveImage(Image, FOptions.PngFile, ImageFormatPng);
+      SaveImage(Image, FileName, ImageFormatPng);
     finally
       Image.Free;
     end;

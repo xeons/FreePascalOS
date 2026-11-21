@@ -115,6 +115,7 @@ type
     procedure AddRootProvider(Provider: TJsRootProvider);
     procedure RemoveRootProvider(Provider: TJsRootProvider);
     procedure AddWeakProcessor(Processor: TJsWeakProcessor);
+    procedure RemoveWeakProcessor(Processor: TJsWeakProcessor);
     function ShouldCollect: Boolean; inline;
     { A collection; Incremental leaves the sweep to SweepSome. }
     procedure Collect(Incremental: Boolean = False);
@@ -225,6 +226,26 @@ procedure TJsHeap.AddWeakProcessor(Processor: TJsWeakProcessor);
 begin
   SetLength(FWeakProcessors, Length(FWeakProcessors) + 1);
   FWeakProcessors[High(FWeakProcessors)] := Processor;
+end;
+
+procedure TJsHeap.RemoveWeakProcessor(Processor: TJsWeakProcessor);
+var
+  Index, Last: Integer;
+begin
+  Last := High(FWeakProcessors);
+  Index := 0;
+  while (Index <= Last) and not ((TMethod(FWeakProcessors[Index]).Code = TMethod(Processor).Code) and
+    (TMethod(FWeakProcessors[Index]).Data = TMethod(Processor).Data)) do
+    Inc(Index);
+  if Index > Last then
+    Exit;
+  { The order stays (processors may depend on each other's marks). }
+  while Index < Last do
+  begin
+    FWeakProcessors[Index] := FWeakProcessors[Index + 1];
+    Inc(Index);
+  end;
+  SetLength(FWeakProcessors, Last);
 end;
 
 function TJsHeap.ShouldCollect: Boolean;

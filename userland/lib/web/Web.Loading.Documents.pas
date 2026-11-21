@@ -56,6 +56,7 @@ uses
   Image.Model,
   Css.Stylesheets,
   Web.TextBuffers,
+  Web.Atoms,
   Web.Dom,
   Web.Html.Parser,
   Web.Encoding.Labels,
@@ -84,6 +85,9 @@ type
   TLoaderEvent = procedure(Loader: TDocumentLoader) of object;
   TRefreshEvent = procedure(Loader: TDocumentLoader; DelaySeconds: Double; constref Url: TUrlRecord) of object;
   TLoaderIconEvent = procedure(Loader: TDocumentLoader; const Url: string; Image: TImage) of object;
+  { An iframe or frame of the document: inserted, an attribute changed
+    (Attribute: its atom), or removed. }
+  TLoaderFrameEvent = procedure(Loader: TDocumentLoader; Element: TElement; Attribute: TAtom) of object;
 
   TDocumentLoader = class(TLoadingContext)
   private
@@ -122,6 +126,9 @@ type
     FOnRefresh: TRefreshEvent;
     FOnIconChanged: TLoaderIconEvent;
     FOnRestarted: TLoaderEvent;
+    FOnFrameInserted: TLoaderFrameEvent;
+    FOnFrameChanged: TLoaderFrameEvent;
+    FOnFrameRemoved: TLoaderFrameEvent;
     procedure ParserCall(Bytes: PByte; Count: SizeInt; Finish, Resume: Boolean);
     procedure CheckRestart;
     procedure ScanIfBlocked;
@@ -149,6 +156,7 @@ type
     procedure HandleLinkRemoved(Element: TElement);
     procedure HandleMeta(Element: TElement);
     procedure HandleTitleMayHaveChanged;
+    procedure HandleFrame(Event: TLoaderFrameEvent; Element: TElement; Attribute: TAtom);
   public
     { Loads into Document (shown in Window) from DocumentUrl. Executor:
       nil for scripting off. }
@@ -189,6 +197,14 @@ type
     property OnIconChanged: TLoaderIconEvent read FOnIconChanged write FOnIconChanged;
     { The document started over in another encoding. }
     property OnRestarted: TLoaderEvent read FOnRestarted write FOnRestarted;
+    { Frames (the navigable makes and drops child navigables). }
+    property OnFrameInserted: TLoaderFrameEvent read FOnFrameInserted write FOnFrameInserted;
+    property OnFrameChanged: TLoaderFrameEvent read FOnFrameChanged write FOnFrameChanged;
+    property OnFrameRemoved: TLoaderFrameEvent read FOnFrameRemoved write FOnFrameRemoved;
+    { The document's origin is not its URL's (about:blank and srcdoc
+      documents: their creator's; sandboxed ones: opaque): the client's
+      and the document's. }
+    procedure SetOrigin(constref Origin: TUrlOrigin);
   end;
 
 implementation
@@ -196,13 +212,13 @@ implementation
 uses
   Web.Profiling,
   Url.Parser,
-  Web.Atoms,
   Web.Namespaces,
   Web.EventLoop.Tasks,
   Web.Encoding.Sniffing,
   Web.Encoding.DecoderFactory,
   Web.Fetch.ReferrerPolicy,
-  Web.Navigation.Events;
+  Web.Navigation.Events,
+  Web.Origins;
 
 type
   { The observer's calls, forwarded to the loader. }
@@ -219,6 +235,9 @@ type
     procedure BaseChanged; override;
     procedure MetaInserted(Element: TElement); override;
     procedure TitleMayHaveChanged; override;
+    procedure FrameInserted(Element: TElement); override;
+    procedure FrameAttributeChanged(Element: TElement; Attribute: TAtom); override;
+    procedure FrameRemoved(Element: TElement); override;
   end;
 
 constructor TLoaderEvents.Create(Loader: TDocumentLoader);
@@ -269,6 +288,21 @@ begin
   FLoader.HandleTitleMayHaveChanged;
 end;
 
+procedure TLoaderEvents.FrameInserted(Element: TElement);
+begin
+  FLoader.HandleFrame(FLoader.FOnFrameInserted, Element, AtomNone);
+end;
+
+procedure TLoaderEvents.FrameAttributeChanged(Element: TElement; Attribute: TAtom);
+begin
+  FLoader.HandleFrame(FLoader.FOnFrameChanged, Element, Attribute);
+end;
+
+procedure TLoaderEvents.FrameRemoved(Element: TElement);
+begin
+  FLoader.HandleFrame(FLoader.FOnFrameRemoved, Element, AtomNone);
+end;
+
 constructor TDocumentLoader.Create(ADocument: TDocument; AWindow: TWebWindow; AFetcher: TFetcher; ASink: TResourceSink;
   constref ADocumentUrl: TUrlRecord; constref ASettings: TLoadingSettings; Executor: TScriptExecutor;
   TopLevelOrigin: PUrlOrigin);
@@ -290,6 +324,10 @@ begin
   end;
   FClient.SetDocumentUrl(ADocumentUrl);
   FDocument.Url := SerializeUrl(ADocumentUrl);
+  { An opaque origin (file:, data:) stays the same one for the document
+    (its about:blank frames get it). }
+  if FClient.Origin.Opaque then
+    SetDocumentOrigin(FDocument, FClient.Origin);
   FDocument.BrowsingContext := Self;
   FDocument.ScriptingEnabled := Executor <> nil;
   OnLoadDelaysGone := @LoadDelaysGone;
@@ -469,6 +507,7 @@ var
 begin
   if FAborted or (Count = 0) then
     Exit;
+  Inc(Times.BytesReceived, Count);
   case FContentKind of
     ContentText:
       AppendTextContent(Data, Count, False);
@@ -511,6 +550,8 @@ begin
   if FAborted or FInputEnded then
     Exit;
   FInputEnded := True;
+  if Times.ResponseEnd = 0 then
+    Times.ResponseEnd := GetTickCount64;
   case FContentKind of
     ContentHtml:
       begin
@@ -603,6 +644,7 @@ begin
   if FParsingDone or FAborted then
     Exit;
   FParsingDone := True;
+  Times.DomInteractive := GetTickCount64;
   FDocument.ReadyState := ReadyStateInteractive;
   FIcons.Activate;
   if FScripts.Executor <> nil then
@@ -621,7 +663,9 @@ begin
   if FAborted or FDomContentLoadedFired then
     Exit;
   FDomContentLoadedFired := True;
+  Times.DomContentLoadedStart := GetTickCount64;
   FireEvent(FDocument, 'DOMContentLoaded', True);
+  Times.DomContentLoadedEnd := GetTickCount64;
   if Assigned(FOnDomContentLoaded) then
     FOnDomContentLoaded(Self);
   CheckLoadComplete;
@@ -648,9 +692,12 @@ begin
   if FAborted or FLoadFired then
     Exit;
   FLoadFired := True;
+  Times.DomComplete := GetTickCount64;
   FDocument.ReadyState := ReadyStateComplete;
+  Times.LoadEventStart := GetTickCount64;
   if FWindow <> nil then
     FireEvent(FWindow, 'load');
+  Times.LoadEventEnd := GetTickCount64;
   FPreloads.DropUnclaimed;
   FImages.LoadEventFired;
   if FWindow <> nil then
@@ -763,6 +810,19 @@ begin
     if Assigned(FOnRefresh) then
       FOnRefresh(Self, Delay, Target);
   end;
+end;
+
+procedure TDocumentLoader.HandleFrame(Event: TLoaderFrameEvent; Element: TElement; Attribute: TAtom);
+begin
+  if Assigned(Event) and (not FAborted or (Event = FOnFrameRemoved)) then
+    Event(Self, Element, Attribute);
+end;
+
+procedure TDocumentLoader.SetOrigin(constref Origin: TUrlOrigin);
+begin
+  FClient.Origin := Origin;
+  FClient.IsSecureContext := OriginIsPotentiallyTrustworthy(Origin);
+  SetDocumentOrigin(FDocument, Origin);
 end;
 
 procedure TDocumentLoader.HandleTitleMayHaveChanged;

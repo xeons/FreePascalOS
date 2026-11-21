@@ -18,19 +18,6 @@
 
 { WebView.Control: form controls, labels and details. }
 
-function CodePointToUtf8(CodePoint: LongWord): string;
-begin
-  if CodePoint < $80 then
-    Result := Chr(CodePoint)
-  else if CodePoint < $800 then
-    Result := Chr($C0 or (CodePoint shr 6)) + Chr($80 or (CodePoint and $3F))
-  else if CodePoint < $10000 then
-    Result := Chr($E0 or (CodePoint shr 12)) + Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F))
-  else
-    Result := Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
-      Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
-end;
-
 procedure TWebView.ControlEdited(Element: TElement);
 begin
   FireEvent(Element, 'input', True);
@@ -39,77 +26,78 @@ begin
   PostWake;
 end;
 
+procedure TWebView.FireInputEvent(Element: TElement; const InputType, Data: string);
+begin
+  DispatchInputEvent(Element, InputType, Data, (InputType = 'insertText') or (InputType = 'insertFromPaste'));
+  InvalidateViewport;
+  RequestFrame;
+  PostWake;
+end;
+
+function TWebView.DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
+var
+  Target: TObject;
+begin
+  Result := True;
+  if FDocument = nil then
+    Exit;
+  if (FFocusedElement <> nil) and FFocusedElement.IsConnected then
+    Target := FFocusedElement
+  else if FDocument.Body <> nil then
+    Target := FDocument.Body
+  else if FDocument.DocumentElement <> nil then
+    Target := FDocument.DocumentElement
+  else
+    Target := FDocument;
+  Result := DispatchKeyEvent(Target, EventType, Code, Character, Modifiers);
+  PostWake;
+end;
+
+{ HTML 4.10.21.2: Enter in a field presses the form's default button (its
+  first submit button) or, without one, submits the form. }
+procedure TWebView.SubmitImplicitly(Field: TElement);
+var
+  Form, Button: TElement;
+begin
+  Form := FormOwnerOf(Field);
+  if Form = nil then
+    Exit;
+  Button := DefaultButtonOf(Form);
+  if Button = nil then
+    SubmitForm(Form, nil)
+  else if not IsDisabledControl(Button) then
+    ActivateControl(Button);
+end;
+
+{ The editing a key does in the focused text control (after the page let
+  its keydown through), as a WebView.FieldEditing action: characters,
+  Backspace and Delete (Ctrl: a word), the arrows, Home and End (Shift
+  extends the selection), Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V, Enter (a line
+  break in a text area, the form's submission in a field). }
 function TWebView.TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
 var
-  Kind: TFormControlKind;
-  Value, Pasted: string;
-  Element: TElement;
+  Action: TFieldAction;
+  Options: TFieldActionOptions;
+  Typed: string;
 begin
-  Result := False;
-  Element := FFocusedElement;
-  if Element = nil then
-    Exit;
-  Kind := FormControlKindOf(Element);
-  if not (Kind in [FormControlText, FormControlPassword, FormControlTextArea]) then
-    Exit;
-  if Element.HasAttribute('readonly') or IsDisabledControl(Element) then
-    Exit;
-  Value := ControlValue(Element);
-  if (Modifiers and ModifierControl) <> 0 then
-  begin
-    if Code = KeyV then
-    begin
-      Pasted := ClipboardText;
-      if Kind <> FormControlTextArea then
-      begin
-        if Pos(#10, Pasted) > 0 then
-          Pasted := Copy(Pasted, 1, Pos(#10, Pasted) - 1);
-        Pasted := StringReplace(Pasted, #13, '', [rfReplaceAll]);
-      end;
-      SetControlValue(Element, Value + Pasted);
-      ControlEdited(Element);
-      Exit(True);
-    end;
-    Exit;
-  end;
-  if Code = KeyTab then
-    Exit;
-  if Code = KeyBackspace then
-  begin
-    if Value <> '' then
-    begin
-      SetControlValue(Element, WithoutLastCharacter(Value));
-      ControlEdited(Element);
-    end;
-    Exit(True);
-  end;
-  if Code = KeyEscape then
-  begin
-    SetFocusedElement(nil, False);
-    Exit(True);
-  end;
-  if IsEnterKey(Code) then
-  begin
-    if Kind = FormControlTextArea then
-    begin
-      SetControlValue(Element, Value + #10);
-      ControlEdited(Element);
-    end
-    else
-    begin
-      FireEvent(Element, 'change', True);
-      SubmitForm(FormOwnerOf(Element), nil);
-    end;
-    Exit(True);
-  end;
-  if (Code = KeyArrowLeft) or (Code = KeyArrowRight) or (Code = KeyHome) or (Code = KeyEnd) or (Code = KeyDelete) then
-    Exit(True);
-  if (Character >= 32) and (Character <> 127) and ((Modifiers and ModifierAlt) = 0) then
-  begin
-    SetControlValue(Element, Value + CodePointToUtf8(Character));
-    ControlEdited(Element);
-    Exit(True);
-  end;
+  Result := IsEditableTextField(FFocusedElement) and FieldActionOfKey(Code, Character, Modifiers, Action, Options,
+    Typed) and FFieldEditor.Perform(FFocusedElement, Action, Typed, Options);
+end;
+
+procedure TWebView.FieldSelectionMoved(Element: TElement);
+begin
+  InvalidateViewport;
+  RequestFrame;
+end;
+
+function TWebView.ReadClipboard: string;
+begin
+  Result := ClipboardText;
+end;
+
+procedure TWebView.WriteClipboard(const Value: string);
+begin
+  SetClipboardText(Value);
 end;
 
 procedure TWebView.ActivateControl(Control: TElement);
@@ -125,26 +113,35 @@ begin
     InvalidateViewport;
     Exit;
   end;
-  if not FireEvent(Control, 'click', True, True) then
-    Exit;
-  case Kind of
-    FormControlCheckbox:
-      begin
-        ToggleCheckbox(Control);
-        ControlEdited(Control);
-        FireEvent(Control, 'change', True);
-      end;
-    FormControlRadio:
-      if not Control.HasAttribute('checked') then
-      begin
-        CheckRadioButton(Control);
-        ControlEdited(Control);
-        FireEvent(Control, 'change', True);
-      end;
-    FormControlSubmit:
-      SubmitForm(FormOwnerOf(Control), Control);
-    FormControlSelect:
-      OpenSelectMenu(Control);
+  { The click's listeners may remove the control or move the focus away
+    (which releases the focused element): it is held until its
+    activation is done. }
+  Control.Retain;
+  try
+    if not FireClick(Control) then
+      Exit;
+    case Kind of
+      FormControlCheckbox:
+        begin
+          ToggleCheckbox(Control);
+          ControlEdited(Control);
+          FireEvent(Control, 'change', True);
+        end;
+      FormControlRadio:
+        if not Control.HasAttribute('checked') then
+        begin
+          CheckRadioButton(Control);
+          ControlEdited(Control);
+          FireEvent(Control, 'change', True);
+        end;
+      FormControlSubmit:
+        SubmitForm(FormOwnerOf(Control), Control);
+      FormControlSelect:
+        if Control.IsConnected then
+          OpenSelectMenu(Control);
+    end;
+  finally
+    Control.Release;
   end;
   PostWake;
 end;
@@ -152,13 +149,23 @@ end;
 { A click on something that is not a link or a control: a label acts on
   its control, a summary opens or closes its details. }
 procedure TWebView.ClickElement(Element: TElement);
+begin
+  Element.Retain;
+  try
+    if FireClick(Element) then
+      ActOnClick(Element);
+  finally
+    Element.Release;
+  end;
+  PostWake;
+end;
+
+procedure TWebView.ActOnClick(Element: TElement);
 var
   Node, Inner: TNode;
   Target: TElement;
   Id: string;
 begin
-  if not FireEvent(Element, 'click', True, True) then
-    Exit;
   Node := Element;
   while Node <> nil do
   begin
@@ -168,8 +175,8 @@ begin
       begin
         Target := nil;
         Id := TElement(Node).GetAttribute('for');
-        if (Id <> '') and (FDocument <> nil) then
-          Target := FDocument.GetElementById(Id)
+        if Id <> '' then
+          Target := Node.NodeDocument.GetElementById(Id)
         else
         begin
           Inner := Node.NextInTree(Node);
@@ -203,25 +210,26 @@ begin
     end;
     Node := Node.ParentNode;
   end;
-  PostWake;
 end;
 
 procedure TWebView.SubmitForm(Form, Submitter: TElement);
 var
-  Target: TUrlRecord;
-  Options: TNavigateOptions;
   ScrollX, ScrollY: Single;
+  Source, Destination: TNavigable;
 begin
-  if (Form = nil) or (FPage = nil) or (FPage.Navigable.Loader = nil) then
+  { A form in a frame submits from (and by default into) its frame. }
+  if (Form = nil) or (FPage = nil) then
     Exit;
-  if not FireEvent(Form, 'submit', True, True) then
+  Source := NavigableForNode(Form);
+  if Source = nil then
     Exit;
-  if not BuildFormSubmission(Form, Submitter, FPage.Navigable.Loader, Target, Options) then
-    Exit;
-  Options.Source := FPage.Navigable.Loader;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
-  FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
-  FPage.Navigable.Navigate(Target, Options);
+  Destination := Source.ChooseNavigable(Trim(Form.GetAttribute('target')));
+  if ((Destination = nil) or (Destination = FPage.Navigable)) and (FLayout <> nil) then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
+  end;
+  SubmitFormIn(Source, Form, Submitter);
   PostWake;
 end;
 

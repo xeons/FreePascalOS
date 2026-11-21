@@ -64,18 +64,27 @@ type
   TScriptContext = class(TBindingContext)
   private
     FActiveParser: THtmlParser;
+    { The script-created parser document.open made (owned until
+      document.close or the context goes). }
+    FOpenedParser: THtmlParser;
     FReadyState: string;
     FScriptCount: Integer;
     FObservedDocuments: array of TDocument;
     FPreparesScripts: Boolean;
     FReadyStateFromDocument: Boolean;
     procedure ObserveDocument(Target: TDocument);
+    procedure WriteToOpenedParser(const Text: string; Finish: Boolean);
+    procedure DropOpenedParser;
     procedure FireSimpleEvent(Target: TEventTarget; const EventType: string; Bubbles: Boolean);
     function ScriptSource(Script: TElement): string;
+    procedure Setup;
   protected
     procedure NodeWrapped(Node: TNode); override;
   public
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment = nil; AWindow: TEventTarget = nil);
+    { An iframe's window (Web.Script.Frames makes them). }
+    constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
+      AFrameElement: TElement; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Runs a classic script (an inline one, or an external one the
@@ -140,7 +149,9 @@ uses
   Web.Bindings.MutationObservers,
   Web.Bindings.UrlResolution,
   Web.Script.Timers,
-  Web.Script.Prelude;
+  Web.Script.Prelude,
+  Web.Script.Natives,
+  Web.Script.Frames;
 
 type
   { Forwards the document's changes to event handlers, script elements
@@ -154,6 +165,7 @@ type
       PreviousSibling, NextSibling: TNode); override;
     procedure ChildrenChanged(Parent: TNode); override;
     procedure NodeConnected(Node: TNode); override;
+    procedure NodeDisconnected(Node: TNode); override;
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
@@ -187,10 +199,20 @@ begin
     FContext.PrepareScript(TElement(Parent), nil);
 end;
 
+procedure TScriptDocumentObserver.NodeDisconnected(Node: TNode);
+begin
+  if (Node.NodeType = NodeTypeElement) and TElement(Node).IsHtmlElement(AtomIframe) and
+     not FContext.Environment.ManagesFrames then
+    FrameElementDisconnected(FContext, TElement(Node));
+end;
+
 procedure TScriptDocumentObserver.NodeConnected(Node: TNode);
 begin
   if Node.NodeType <> NodeTypeElement then
     Exit;
+  if TElement(Node).IsHtmlElement(AtomIframe) and (Node.OwnerDocument = FContext.Document) and
+     not FContext.Environment.ManagesFrames then
+    FrameElementConnected(FContext, TElement(Node));
   if TElement(Node).HasAttributes then
     ActivateEventHandlerAttributes(FContext, TElement(Node));
   if IsPendingScript(Node) then
@@ -216,16 +238,29 @@ end;
 { TScriptContext }
 
 constructor TScriptContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
+begin
+  inherited Create(ADocument, AEnvironment, AWindow);
+  Setup;
+end;
+
+constructor TScriptContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
+  Parent: TBindingContext; AFrameElement: TElement; AWindow: TEventTarget);
+begin
+  inherited CreateFrame(ADocument, AEnvironment, Parent, AFrameElement, AWindow);
+  Setup;
+end;
+
+procedure TScriptContext.Setup;
 var
   Global: TJsObject;
   Clone: TJsValue;
 begin
-  inherited Create(ADocument, AEnvironment, AWindow);
   FPreparesScripts := True;
   FReadyState := 'complete';
   FDocumentObserver := TScriptDocumentObserver.Create(Self);
   InstallBindings(Self);
-  ObserveDocument(ADocument);
+  InstallPlatform(Self);
+  ObserveDocument(Document);
   Global := Engine.GlobalObject;
   if not Environment.SupportsTimers then
   begin
@@ -238,13 +273,14 @@ begin
   SetSingleton(SingletonStructuredClone, Clone);
   { The document's wrapper is a root: every wrapper of its tree lives
     with it. }
-  WrapNode(ADocument);
+  WrapNode(Document);
 end;
 
 destructor TScriptContext.Destroy;
 var
   Index: Integer;
 begin
+  DropOpenedParser;
   for Index := 0 to High(FObservedDocuments) do
     if FObservedDocuments[Index] <> Document then
     begin
@@ -501,11 +537,67 @@ begin
     TScriptTimers(Timers).Fire(TimerId);
 end;
 
+procedure TScriptContext.DropOpenedParser;
+var
+  Host: TScriptHost;
+begin
+  if FOpenedParser = nil then
+    Exit;
+  if FActiveParser = FOpenedParser then
+    FActiveParser := nil;
+  Host := FOpenedParser.ScriptHost;
+  FOpenedParser.ScriptHost := nil;
+  Host.Free;
+  FreeAndNil(FOpenedParser);
+end;
+
+{ Text into the script-created parser; its scripts run as the parser
+  reaches them (under a loader too, which only runs the scripts of its
+  own parser). }
+procedure TScriptContext.WriteToOpenedParser(const Text: string; Finish: Boolean);
+var
+  Saved: Boolean;
+  Parser: THtmlParser;
+begin
+  Parser := FOpenedParser;
+  Saved := FPreparesScripts;
+  FPreparesScripts := True;
+  try
+    if Text <> '' then
+      Parser.WriteText(Text);
+    while Parser.Paused do
+      Parser.Resume;
+    if Finish then
+    begin
+      Parser.Finish;
+      while Parser.Paused do
+        Parser.Resume;
+    end;
+  finally
+    FPreparesScripts := Saved;
+  end;
+end;
+
+{ HTML 8.4.1, the document open steps: in a script the parser runs,
+  nothing; else the document's children go and a script-created parser
+  takes what is written until document.close (an iframe's about:blank
+  document written by its parent, a page writing itself anew). }
 procedure TScriptContext.DocumentOpen(Target: TDocument);
+var
+  Parser: THtmlParser;
 begin
   if (Target = Document) and (FActiveParser <> nil) and (FActiveParser.ScriptNestingLevel > 0) then
     Exit;
-  RaiseUnsupported('document.open replacing a loaded document');
+  if Target <> Document then
+    RaiseUnsupported('document.open of a document without its own window');
+  if (FActiveParser <> nil) and (FActiveParser <> FOpenedParser) then
+    RaiseUnsupported('document.open while the document loads');
+  DropOpenedParser;
+  while Document.FirstChild <> nil do
+    Document.RemoveChild(Document.FirstChild);
+  Parser := THtmlParser.Create(Document);
+  FOpenedParser := Parser;
+  BeginParsing(Parser);
 end;
 
 procedure TScriptContext.DocumentWrite(Target: TDocument; const Text: string);
@@ -515,16 +607,29 @@ begin
     FActiveParser.DocumentWrite(Text);
     Exit;
   end;
+  if (Target = Document) and (FOpenedParser <> nil) and (FActiveParser = FOpenedParser) then
+  begin
+    WriteToOpenedParser(Text, False);
+    Exit;
+  end;
   if (Target = Document) and (FActiveParser <> nil) then
   begin
     Console('warn', 'document.write from an asynchronous script was ignored');
     Exit;
   end;
-  RaiseUnsupported('document.write after the document was parsed (it would replace the document)');
+  { After the document was parsed: an implicit document.open. }
+  DocumentOpen(Target);
+  WriteToOpenedParser(Text, False);
 end;
 
 procedure TScriptContext.DocumentClose(Target: TDocument);
 begin
+  if (Target <> Document) or (FOpenedParser = nil) or (FActiveParser <> FOpenedParser) then
+    Exit;
+  WriteToOpenedParser('', True);
+  FinishParsing;
+  DropOpenedParser;
+  DocumentLoaded;
 end;
 
 function TScriptContext.ReadyState(Target: TDocument): string;

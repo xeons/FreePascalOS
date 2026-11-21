@@ -65,10 +65,21 @@ procedure ChooseSelectOption(Select, Option: TElement);
 { The navigation a form's submission makes; False when it makes none. }
 function BuildFormSubmission(Form, Submitter: TElement; Context: TLoadingContext; out Url: TUrlRecord;
   out Options: TNavigateOptions): Boolean;
+{ HTML 4.10.21.2: the form's default button (its first submit button in
+  tree order), nil without one. }
+function DefaultButtonOf(Form: TElement): TElement;
+{ Submits Form from Navigable (the form's own): the submit event
+  (cancelable), then the navigation its entries make, into the navigable
+  its target attribute chooses (Navigable itself when there is none or
+  it names no navigable); False when nothing was submitted. Form and
+  Submitter are held while the page's listeners run. }
+function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
 
 implementation
 
 uses
+  Web.Dom.FormControls,
+  Web.Navigation.Events,
   Url.Parser,
   Url.FormEncoding,
   Web.Atoms,
@@ -98,18 +109,12 @@ end;
 
 function ControlValue(Element: TElement): string;
 begin
-  if FormControlKindOf(Element) = FormControlTextArea then
-    Result := Element.TextContent
-  else
-    Result := Element.AttributeValueOf(AtomValue);
+  Result := TextControlValue(Element);
 end;
 
 procedure SetControlValue(Element: TElement; const Value: string);
 begin
-  if FormControlKindOf(Element) = FormControlTextArea then
-    Element.TextContent := Value
-  else
-    Element.SetAttributeAtom(AtomValue, 0, Value);
+  SetTextControlValue(Element, Value);
 end;
 
 function WithoutLastCharacter(const Value: string): string;
@@ -125,42 +130,12 @@ end;
 
 procedure ToggleCheckbox(Element: TElement);
 begin
-  if Element.HasAttributeAtom(AtomChecked) then
-    Element.RemoveAttributeAtom(AtomChecked)
-  else
-    Element.SetAttributeAtom(AtomChecked, 0, '');
+  SetInputChecked(Element, not InputChecked(Element));
 end;
 
 procedure CheckRadioButton(Element: TElement);
-var
-  Name: string;
-  Owner: TElement;
-  Root, Node: TNode;
-  Other: TElement;
 begin
-  Name := Element.AttributeValueOf(AtomName);
-  Owner := FormOwnerOf(Element);
-  if Name <> '' then
-  begin
-    if Owner <> nil then
-      Root := Owner
-    else
-      Root := Element.OwnerDocument;
-    Node := Root;
-    while Node <> nil do
-    begin
-      if Node.IsElement and (Node <> Element) then
-      begin
-        Other := TElement(Node);
-        if (FormControlKindOf(Other) = FormControlRadio) and (Other.AttributeValueOf(AtomName) = Name) and
-           (FormOwnerOf(Other) = Owner) then
-          Other.RemoveAttributeAtom(AtomChecked);
-      end;
-      Node := Node.NextInTree(Root);
-    end;
-  end;
-  if not Element.HasAttributeAtom(AtomChecked) then
-    Element.SetAttributeAtom(AtomChecked, 0, '');
+  SetInputChecked(Element, True);
 end;
 
 function OptionText(Option: TElement): string;
@@ -188,7 +163,7 @@ begin
       SetLength(Result, Count + 1);
       Result[Count].Element := Option;
       Result[Count].Text := OptionText(Option);
-      Result[Count].Selected := Option.HasAttributeAtom(AtomSelected);
+      Result[Count].Selected := OptionSelected(Option);
       Result[Count].Disabled := Option.HasAttributeAtom(AtomDisabled) or
         ((Option.ParentElement <> nil) and Option.ParentElement.IsHtmlElement(AtomOptgroup) and
          Option.ParentElement.HasAttributeAtom(AtomDisabled));
@@ -199,19 +174,8 @@ begin
 end;
 
 procedure ChooseSelectOption(Select, Option: TElement);
-var
-  Options: TSelectOptionArray;
-  Index: Integer;
 begin
-  Options := SelectOptions(Select);
-  for Index := 0 to High(Options) do
-    if Options[Index].Element <> Option then
-    begin
-      if Options[Index].Selected then
-        Options[Index].Element.RemoveAttributeAtom(AtomSelected);
-    end
-    else if not Options[Index].Selected then
-      Options[Index].Element.SetAttributeAtom(AtomSelected, 0, '');
+  SetOptionSelected(Option, True);
 end;
 
 function OptionValue(Option: TElement): string;
@@ -277,7 +241,7 @@ begin
          (FormOwnerOf(Element) = Form) then
         case Kind of
           FormControlCheckbox, FormControlRadio:
-            if Element.HasAttributeAtom(AtomChecked) then
+            if InputChecked(Element) then
             begin
               if Element.HasAttributeAtom(AtomValue) then
                 AddEntry(Result, Name, Element.AttributeValueOf(AtomValue))
@@ -290,9 +254,9 @@ begin
           FormControlSelect:
             AddSelectEntries(Result, Element, Name);
           FormControlTextArea:
-            AddEntry(Result, Name, StringReplace(Element.TextContent, #10, #13#10, [rfReplaceAll]));
+            AddEntry(Result, Name, StringReplace(TextAreaValue(Element), #10, #13#10, [rfReplaceAll]));
         else
-          AddEntry(Result, Name, Element.AttributeValueOf(AtomValue));
+          AddEntry(Result, Name, InputValue(Element));
         end;
     end;
     Node := Node.NextInTree(Document);
@@ -339,6 +303,58 @@ begin
   Result := True;
 end;
 
+function DefaultButtonOf(Form: TElement): TElement;
+var
+  Node: TNode;
+begin
+  Result := nil;
+  if Form = nil then
+    Exit;
+  Node := Form.NextInTree(Form);
+  while Node <> nil do
+  begin
+    if Node.IsElement and (FormControlKindOf(TElement(Node)) = FormControlSubmit) and
+      (FormOwnerOf(TElement(Node)) = Form) then
+      Exit(TElement(Node));
+    Node := Node.NextInTree(Form);
+  end;
+end;
+
+function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
+var
+  Destination: TNavigable;
+  Target: TUrlRecord;
+  Options: TNavigateOptions;
+begin
+  Result := False;
+  { HTML 4.10.21.3: a form that is not in a document cannot navigate
+    (before the submit event and after it). }
+  if (Form = nil) or not Form.IsConnected or (Navigable = nil) or (Navigable.Loader = nil) then
+    Exit;
+  { The submit event's listeners may take the form (and the submitter)
+    out of the document. }
+  Form.Retain;
+  if Submitter <> nil then
+    Submitter.Retain;
+  try
+    if not FireEvent(Form, 'submit', True, True) or not Form.IsConnected then
+      Exit;
+    if (Navigable.Loader = nil) or not BuildFormSubmission(Form, Submitter, Navigable.Loader, Target, Options) then
+      Exit;
+  finally
+    if Submitter <> nil then
+      Submitter.Release;
+    Form.Release;
+  end;
+  Options.Source := Navigable.Loader;
+  Destination := Navigable.ChooseNavigable(Trim(Form.GetAttribute('target')));
+  if Destination = nil then
+    Destination := Navigable;
+  Destination.Navigate(Target, Options);
+  Result := True;
+end;
+
 initialization
   MakeAtoms;
+
 end.

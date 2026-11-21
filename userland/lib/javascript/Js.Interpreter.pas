@@ -164,9 +164,17 @@ type
     function ForInNext(Iterator: TJsForInIterator; out Key: TJsValue): Integer;
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
+    { The source text of the callee of the call the running frame is at
+      ("a.b.c" of "a.b.c(x)"), '' when it is not a plain name or member
+      chain. }
+    function CurrentCalleeText: string;
     function TypedArrayLengthIntact(Target: TJsObject): Boolean; inline;
     function DynamicHas(Target: TJsObject; Key: TJsValue; Kind: Integer): Integer;
     function IsPlainTypedArrayIteration(Value: TJsValue): Boolean;
+    { Another live realm (a function of it runs there). }
+    function IsForeign(Realm: TJsRealm): Boolean; inline;
+    { Calls F in Realm, noting this realm as its caller. }
+    function ForeignCall(Realm: TJsRealm; F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
   protected
     procedure TraceRealm(Tracer: TJsTracer); override;
   public
@@ -354,6 +362,7 @@ begin
   else
     Prototype := Intrinsics[inFunctionPrototype];
   Result := TJsClosure.Create;
+  Result.Realm := Self;
   Heap.Register(Result, ckObject);
   Result.Shape := FunctionShape;
   Result.Proto := Prototype;
@@ -478,8 +487,75 @@ begin
 end;
 
 function TJsInterpreterRealm.NotCallable(Value: TJsValue): TJsValue;
+var
+  Callee: string;
 begin
-  Result := ThrowTypeError(ValueToPascal(Self, Value) + ' is not a function');
+  Callee := CurrentCalleeText;
+  if Callee = '' then
+    Callee := ValueToPascal(Self, Value);
+  Result := ThrowTypeError(Callee + ' is not a function');
+end;
+
+function TJsInterpreterRealm.CurrentCalleeText: string;
+const
+  MaximumCalleeLength = 120;
+var
+  Frame: PJsFrame;
+  Text: UnicodeString;
+  Line, Column, Offset, Start, Depth: Integer;
+  Character: WideChar;
+begin
+  Result := '';
+  if FFrameCount = 0 then
+    Exit;
+  Frame := @FFrames^[FFrameCount - 1];
+  if (Frame^.Code = nil) or (Frame^.Code.Source = nil) or Frame^.Code.Source.Builtin then
+    Exit;
+  Line := Frame^.Code.LineAt(Frame^.PC, Column);
+  if (Line <= 0) or (Column <= 0) then
+    Exit;
+  Text := Frame^.Code.Source.Text;
+  Offset := 1;
+  while (Line > 1) and (Offset <= Length(Text)) do
+  begin
+    if Text[Offset] = #10 then
+      Dec(Line);
+    Inc(Offset);
+  end;
+  Offset := Offset + Column - 1;
+  Start := Offset;
+  Depth := 0;
+  while (Offset <= Length(Text)) and (Offset - Start < MaximumCalleeLength) do
+  begin
+    Character := Text[Offset];
+    if Depth > 0 then
+    begin
+      if Character = '[' then
+        Inc(Depth)
+      else if Character = ']' then
+        Dec(Depth)
+      else if (Character = #10) or (Character = '(') then
+        Exit;
+    end
+    else if Character = '[' then
+      Inc(Depth)
+    else if not ((Character = '.') or (Character = '_') or (Character = '$') or (Character = '?') or
+      ((Character >= 'a') and (Character <= 'z')) or ((Character >= 'A') and (Character <= 'Z')) or
+      ((Character >= '0') and (Character <= '9'))) then
+      Break;
+    Inc(Offset);
+  end;
+  if (Offset > Length(Text)) or (Offset = Start) or (Depth <> 0) then
+    Exit;
+  { The chain must end where the arguments begin. }
+  Depth := Offset;
+  while (Depth <= Length(Text)) and ((Text[Depth] = ' ') or (Text[Depth] = #9)) do
+    Inc(Depth);
+  if (Depth > Length(Text)) or (Text[Depth] <> '(') then
+    Exit;
+  Result := UTF8Encode(Copy(Text, Start, Offset - Start));
+  if (Result <> '') and (Result[Length(Result)] in ['.', '?']) then
+    Result := '';
 end;
 
 { Errors }
@@ -925,6 +1001,24 @@ begin
     Suspension.State := ssCompleted;
 end;
 
+function TJsInterpreterRealm.IsForeign(Realm: TJsRealm): Boolean;
+begin
+  Result := (Realm <> Self) and (Realm <> nil) and not Realm.Detached;
+end;
+
+function TJsInterpreterRealm.ForeignCall(Realm: TJsRealm; F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
+var
+  Saved: TJsRealm;
+begin
+  Saved := Realm.CallerRealm;
+  Realm.CallerRealm := Self;
+  try
+    Result := Realm.Call(F, This, Args, Count);
+  finally
+    Realm.CallerRealm := Saved;
+  end;
+end;
+
 function TJsInterpreterRealm.Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
 var
   Target: TJsObject;
@@ -937,10 +1031,16 @@ begin
     Exit(NotCallable(F));
   Target := JsAsObject(F);
   if Target is TJsClosure then
+  begin
+    if IsForeign(TJsClosure(Target).Realm) then
+      Exit(ForeignCall(TJsClosure(Target).Realm, F, This, Args, Count));
     Exit(CallClosure(TJsClosure(Target), This, Args, Count, JsUndefined, False));
+  end;
   if Target is TJsNativeFunction then
   begin
     Native := TJsNativeFunction(Target);
+    if IsForeign(Native.Realm) then
+      Exit(ForeignCall(Native.Realm, F, This, Args, Count));
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
@@ -985,10 +1085,16 @@ begin
     Exit(ThrowTypeError(ValueToPascal(Self, F) + ' is not a constructor'));
   Target := JsAsObject(F);
   if Target is TJsClosure then
+  begin
+    if IsForeign(TJsClosure(Target).Realm) then
+      Exit(TJsClosure(Target).Realm.Construct(F, Args, Count, NewTarget));
     Exit(CallClosure(TJsClosure(Target), JsUndefined, Args, Count, NewTarget, True));
+  end;
   if Target is TJsNativeFunction then
   begin
     Native := TJsNativeFunction(Target);
+    if IsForeign(Native.Realm) then
+      Exit(Native.Realm.Construct(F, Args, Count, NewTarget));
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
@@ -2861,7 +2967,8 @@ DispatchLoop:
           begin
             Target := JsAsObject(Callee);
             if (Target is TJsClosure) and ((TJsClosure(Target).Code.Flags and
-              (CodeGenerator or CodeAsync or CodeClassConstructor)) = 0) then
+              (CodeGenerator or CodeAsync or CodeClassConstructor)) = 0) and
+              not IsForeign(TJsClosure(Target).Realm) then
             begin
               Frame^.PC := PC + 4;
               if not EnterFrame(TJsClosure(Target), Frame^.Base + Index + 2, Count, JsUndefined, 0,
@@ -2877,7 +2984,7 @@ DispatchLoop:
                   goto Unwind;
               goto ReloadFrame;
             end;
-            if Target is TJsNativeFunction then
+            if (Target is TJsNativeFunction) and not IsForeign(TJsNativeFunction(Target).Realm) then
             begin
               Native := TJsNativeFunction(Target);
               Inc(FRunDepth);
@@ -2927,7 +3034,8 @@ DispatchLoop:
           Count := Code[PC + 3];
           if JsIsObject(Callee) and (JsAsObject(Callee) is TJsClosure) and
             ((TJsClosure(JsAsObject(Callee)).Code.Flags and (CodeConstructor or CodeDerivedConstructor or
-            CodeGenerator or CodeAsync)) = CodeConstructor) and JsIsConstructor(Callee) then
+            CodeGenerator or CodeAsync)) = CodeConstructor) and JsIsConstructor(Callee) and
+            not IsForeign(TJsClosure(JsAsObject(Callee)).Realm) then
           begin
             Closure := TJsClosure(JsAsObject(Callee));
             FStackTop := Frame^.Base + CodeObject.RegisterCount;

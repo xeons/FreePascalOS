@@ -49,7 +49,9 @@ uses
   Web.Layout.Resources;
 
 type
-  TStyleChangeKind = (scNone, scPaint, scLayout, scBoxes);
+  { scMove: painting and the box's translation (transform, translate),
+    which layout keeps as an offset of the box. }
+  TStyleChangeKind = (scNone, scPaint, scMove, scLayout, scBoxes);
 
   TStyleChangedEvent = procedure(Element: TElement; Change: TStyleChangeKind) of object;
   TNodeChangedEvent = procedure(Node: TNode) of object;
@@ -106,11 +108,15 @@ type
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
+    procedure ControlStateChanged(Element: TElement); override;
     property Document: TDocument read FDocument;
     property Engine: TCssStyleEngine read FEngine;
     property Adapter: TDomElementAdapter read FAdapter;
     property Resources: TDocumentResources read FResources;
     property StylesComputed: Int64 read FStylesComputed;
+    { The sheets changed (one loaded, was added or removed) and are
+      collected again at the next update. }
+    property SheetsDirty: Boolean read FSheetsDirty;
     property OnStyleChanged: TStyleChangedEvent read FOnStyleChanged write FOnStyleChanged;
     property OnTextChanged: TNodeChangedEvent read FOnTextChanged write FOnTextChanged;
     property OnNodeRemoved: TNodeChangedEvent read FOnNodeRemoved write FOnNodeRemoved;
@@ -160,6 +166,8 @@ begin
         Exit(scLayout);
       Result := scPaint;
     end;
+  if (Result = scPaint) and (not SameValue(Old, New, cpTransform) or not SameValue(Old, New, cpTranslate)) then
+    Result := scMove;
 end;
 
 { display: list-item in its two value forms (inline list-item). }
@@ -544,6 +552,19 @@ begin
     if IsStyleSheetOwner(Element) then
       FSheetsDirty := True;
   end;
+  if Assigned(FOnElementAttributeChanged) then
+    FOnElementAttributeChanged(Element);
+end;
+
+procedure TDocumentStyler.ControlStateChanged(Element: TElement);
+begin
+  if not Element.IsConnected then
+    Exit;
+  FTreeChanged := True;
+  { :checked, :placeholder-shown and their sibling combinators. }
+  MarkSubtreeStyleDirty(Element);
+  if Element.ParentNode <> nil then
+    MarkSiblingsDirty(Element.ParentNode);
   if Assigned(FOnElementAttributeChanged) then
     FOnElementAttributeChanged(Element);
 end;

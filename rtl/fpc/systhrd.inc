@@ -26,7 +26,11 @@
   globals. BeginThread then gives every thread its own zeroed block
   (copying the main thread's values into the main thread's block), kept
   in the runtime word of the thread control block (ThreadBlockRuntimeOffset). A thread that
-  touches a threadvar without one gets it then.
+  touches a threadvar without one gets it then. The threadvars of Free
+  Pascal libraries loaded later (SysRegisterLibrary) have offsets marked
+  with ThreadvarDynamicFlag and live in blocks of their own, made when a
+  thread first touches them (sysdyntls.inc), as do the thread-local
+  variables of ELF libraries loaded later.
 
   BeginThread returns the thread's handle (what WaitForThreadTerminate
   and CloseThread take) and passes back its id (what GetCurrentThreadId
@@ -86,6 +90,8 @@ begin
     WakeWaiters(State, 1);
 end;
 
+{$i sysdyntls.inc}
+
 { --- Threadvars ------------------------------------------------------------ }
 
 procedure SysInitThreadVar(var Offset: DWord; Size: DWord);
@@ -103,8 +109,9 @@ begin
   if ReadRuntimeWord <> nil then
     Exit;
   { From the kernel, not the heap: the heap itself uses threadvars. Fresh
-    pages are zero, as threadvars start out. }
-  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, 0, 0, 0, 0, 0);
+    pages are zero, as threadvars start out. The kernel frees the block
+    if the thread is ended without coming back here to free it. }
+  Address := SystemCall(CallAllocateMemory, ThreadVarBlockSize + 16, AllocateForThread, 0, 0, 0, 0);
   if Address <= 0 then
     RunError(226);
   WriteRuntimeWord(Pointer(Address));
@@ -114,6 +121,11 @@ function SysRelocateThreadVar(Offset: DWord): Pointer;
 var
   Block: Pointer;
 begin
+  if (Offset and ThreadvarDynamicFlag) <> 0 then
+  begin
+    SysRelocateThreadVar := ThreadvarLibraryAddress(Offset);
+    Exit;
+  end;
   Block := ReadRuntimeWord;
   if Block = nil then
   begin
@@ -129,6 +141,7 @@ procedure SysReleaseThreadVars;
 var
   Block: Pointer;
 begin
+  ReleaseDynamicTls;
   Block := ReadRuntimeWord;
   if Block = nil then
     Exit;
@@ -136,12 +149,16 @@ begin
   SystemCall(CallFreeMemory, QWord(Block), 0, 0, 0, 0, 0);
 end;
 
+procedure CopyThreadvarLibraryValues; forward;
+
 { Switches the threadvars from globals to per-thread blocks, once. }
 procedure InitMultithreading;
 begin
   if fpc_threadvar_relocate_proc <> nil then
     Exit;
   InitThreadVars(@SysRelocateThreadVar);
+  { The threadvars of libraries loaded so far keep their values too. }
+  CopyThreadvarLibraryValues;
   IsMultiThread := True;
 end;
 
@@ -155,8 +172,13 @@ type
     StackSize: PtrUInt;
   end;
 
+procedure ReleaseQuarantineOfEndingThread; forward;
+
 procedure SysEndThread(ExitCode: DWord);
 begin
+  { Before DoneThread, where the heap gives up this thread's chunks:
+    blocks waiting in the heap check quarantine would keep them. }
+  ReleaseQuarantineOfEndingThread;
   DoneThread;
   while True do
     SystemCall(CallExitThread, QWord(ExitCode), 0, 0, 0, 0, 0);
@@ -282,12 +304,24 @@ begin
   SysGetCurrentThreadId := TThreadID(KernelThreadId);
 end;
 
+{ Names a thread of this process for hang reports, ps -L and the task
+  manager. The "handle" is a thread id (what TThread.ThreadID and
+  GetCurrentThreadId give), or TThreadID(-1) for the calling thread, as
+  TThread.NameThreadForDebugging passes by default. }
 procedure SysSetThreadDebugNameA(ThreadHandle: TThreadID; const ThreadName: AnsiString);
+var
+  Selector: Int64;
 begin
+  if ThreadHandle = TThreadID(-1) then
+    Selector := CurrentThreadHandle
+  else
+    Selector := Int64(ThreadHandle);
+  SystemCall(CallSetThreadName, QWord(Selector), QWord(PChar(ThreadName)), 0, 0, 0, 0);
 end;
 
 procedure SysSetThreadDebugNameU(ThreadHandle: TThreadID; const ThreadName: UnicodeString);
 begin
+  SysSetThreadDebugNameA(ThreadHandle, AnsiString(ThreadName));
 end;
 
 { --- Critical sections ------------------------------------------------------ }

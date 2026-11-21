@@ -29,8 +29,9 @@
        pages are shared by every process that maps it, writable ones
        copy on write.
     2. For every needed library not loaded yet, find it in /lib of the
-       system volume and map it at the next free library address; repeat
-       for its own needs.
+       system volume and map it at a random free place of the library
+       window (Processes.AddressLayout; with aslr=off, at the next free
+       library address); repeat for its own needs.
     3. Apply every relocation of every newly loaded module. Symbols are
        looked up in load order (the program first, then libraries in the
        order they were loaded), the same "global scope" rule a Unix
@@ -39,25 +40,41 @@
   LoadLibraryImage does steps 2 and 3 for a library requested at run time
   (dlopen), and FindExportedSymbol looks a symbol up in it (dlsym).
 
-  Thread-local storage (PT_TLS) uses the static model: the TLS blocks of
-  the program and of the libraries loaded with it sit at fixed offsets
-  from each thread's thread pointer, in load order (the program's block
-  nearest to it, as the linker expects) - below it on x86-64 (variant
-  II), above it on AArch64 (variant I); Processes.Arch.ImageFormat has
-  the layout and the relocation numbers of the processor. The layout is
-  fixed once the program is loaded; a library with a TLS
-  segment (or with initializers, which only the startup code runs) can
-  then no longer be loaded and LoadLibraryImage returns ErrorUnsupported.
-  Processes.ThreadStorage builds each thread's copy of the blocks.
-
-  The "module id" of a TLS relocation (DTPMOD64) is the module's offset
-  from the thread pointer, so __tls_get_addr in libsystem simply adds the
-  thread pointer, that offset and the variable's offset. A TLS
+  Thread-local storage (PT_TLS) of the program and of the libraries
+  loaded with it uses the static model: their TLS blocks sit at fixed
+  offsets from each thread's thread pointer, in load order (the
+  program's block nearest to it, as the linker expects) - below it on
+  x86-64 (variant II), above it on AArch64 (variant I);
+  Processes.Arch.ImageFormat has the layout and the relocation numbers
+  of the processor. Processes.ThreadStorage builds each thread's copy of
+  the blocks. The "module id" of such a module (DTPMOD64) is its offset
+  from the thread pointer, so __tls_get_addr in libsystem simply adds
+  the thread pointer, that offset and the variable's offset; a TLS
   descriptor (AArch64) gets libsystem's static resolver and the
   variable's offset from the thread pointer.
 
+  The static layout is fixed once the program is loaded, so a library
+  with a TLS segment loaded after that (LoadLibraryImage) gets dynamic
+  TLS instead: its module id is TlsDynamicModuleTag plus its module
+  handle, a TLS descriptor gets libsystem's dynamic resolver (and the
+  tag, the handle and the offset as its argument), and the user runtime
+  makes each thread's block the first time the thread touches it, from
+  what CallGetModuleTls says (Processes.ModuleCalls). Initial and local
+  exec accesses (TPOFF relocations) cannot reach such a block and fail
+  the load. The initializers and finalizers of libraries loaded late
+  are collected for the runtime to call (CallTakeModuleInitializers).
+
   Each module keeps kernel copies of its symbol, string and hash tables
   so symbols can be found later without touching user memory.
+
+  Where everything went: the process's module list (Process^.Modules, a
+  TModuleList) holds every loaded module in load order - the program
+  first - with its file name, its Base (the load bias: an address in
+  the process is the address the module was linked for plus Base,
+  which is what a symbolizer subtracts) and the span its segments
+  cover (ImageStart, ImageEnd). With address space randomization these
+  differ from process to process, so crash reports must state them
+  (scripts/symbolize.py takes them).
 }
 unit Processes.ImageLoader;
 
@@ -78,7 +95,13 @@ type
   PLoadedModule = ^TLoadedModule;
   TLoadedModule = record
     Name: array[0..ModuleNameLength - 1] of Char;
+    { The load bias: link address + Base = address in the process. }
     Base: QWord;
+    { The end of its mapped pages (crash reports, CallGetProcessModules). }
+    Limit: QWord;
+    { The pages its loadable segments cover in the process. }
+    ImageStart: QWord;
+    ImageEnd: QWord;
     EntryPoint: QWord;
     ProgramHeaderAddress: QWord;
     ProgramHeaderCount: LongWord;
@@ -109,6 +132,12 @@ type
     TlsAlignment: QWord;
     TlsOffset: QWord;
 
+    { Its index in the module list: the handle LoadLibraryImage gives. }
+    Handle: Integer;
+    { Loaded after the program started: its TLS block is made per thread
+      by the user runtime (TlsOffset is unused). }
+    HasDynamicTls: Boolean;
+
     { Initializers and finalizers (user addresses; 0 if absent). }
     InitFunction: QWord;
     InitArray: QWord;
@@ -116,6 +145,16 @@ type
     FiniFunction: QWord;
     FiniArray: QWord;
     FiniArrayCount: QWord;
+    { Its initializers were handed out already (to the program's
+      startup, or for a library loaded late to the runtime). }
+    InitializersTaken: Boolean;
+    { A library loaded late: the initializers and finalizers of it and
+      of the libraries loaded with it, until the runtime takes them
+      (kernel arrays, nil when there are none). }
+    PendingInitializers: PQWord;
+    PendingInitializerCount: QWord;
+    PendingFinalizers: PQWord;
+    PendingFinalizerCount: QWord;
   end;
 
   PModuleList = ^TModuleList;
@@ -149,6 +188,8 @@ uses
   FileSystem.Types,
   FileSystem.Files,
   Processes.AddressSpace,
+  Processes.AddressLayout,
+  Processes.UserRegions,
   Processes.ImageSections,
   Processes.Paths,
   Processes.Arch.ImageFormat;
@@ -509,15 +550,22 @@ begin
      (Segment^.FileSize > Segment^.MemorySize) or (Segment^.MemorySize > MaximumStaticTlsSize) then
     Exit(ErrorBadExecutable);
 
-  StaticTlsSize := List^.StaticTlsSize;
-  Offset := PlaceStaticTlsBlock(StaticTlsSize, Segment^.MemorySize, Alignment);
-  if StaticTlsSize > MaximumStaticTlsSize then
-    Exit(ErrorOutOfMemory);
   Module^.HasThreadLocalStorage := True;
   Module^.TlsImageAddress := Bias + Segment^.VirtualAddress;
   Module^.TlsImageSize := Segment^.FileSize;
   Module^.TlsSize := Segment^.MemorySize;
   Module^.TlsAlignment := Alignment;
+  { Too late for the static area: the runtime makes its blocks. }
+  if List^.StartupComplete then
+  begin
+    Module^.HasDynamicTls := True;
+    Exit(ErrorNone);
+  end;
+
+  StaticTlsSize := List^.StaticTlsSize;
+  Offset := PlaceStaticTlsBlock(StaticTlsSize, Segment^.MemorySize, Alignment);
+  if StaticTlsSize > MaximumStaticTlsSize then
+    Exit(ErrorOutOfMemory);
   Module^.TlsOffset := Offset;
   List^.StaticTlsSize := StaticTlsSize;
   if Alignment > List^.StaticTlsAlignment then
@@ -691,6 +739,8 @@ procedure FreeModule(Module: PLoadedModule);
 begin
   if Module = nil then
     Exit;
+  FreeKernelMemory(Module^.PendingInitializers);
+  FreeKernelMemory(Module^.PendingFinalizers);
   if Module^.Buckets <> nil then
     FreeKernelMemory(Module^.Buckets - 2);
   FreeKernelMemory(Module^.Symbols);
@@ -701,20 +751,6 @@ end;
 
 function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt; forward;
-
-{ Once the program runs, the static TLS layout is fixed and nobody would
-  call a new library's initializers. }
-function CheckLateLoadable(List: PModuleList; const Image: TImageFile;
-  const Dynamic: TDynamicInformation): LongInt;
-begin
-  Result := ErrorNone;
-  if not List^.StartupComplete then
-    Exit;
-  if (FindThreadLocalSegment(Image) <> nil) or (Dynamic.InitFunction <> 0) or
-     (Dynamic.InitArraySize <> 0) or (Dynamic.FiniFunction <> 0) or
-     (Dynamic.FiniArraySize <> 0) or Dynamic.HasPreinitArray then
-    Result := ErrorUnsupported;
-end;
 
 function NoteInitializers(Module: PLoadedModule; const Dynamic: TDynamicInformation;
   Bias: QWord): LongInt;
@@ -768,6 +804,28 @@ begin
   end;
 end;
 
+{ Finds room for a library of Length bytes: at a random page of the
+  library window (anywhere in it if nothing fits above that page), or
+  without randomization after the library loaded last. }
+function PlaceLibrary(Space: PAddressSpace; Length: QWord; out Start: QWord): Boolean;
+var
+  Layout: PAddressLayout;
+  Hint: QWord;
+begin
+  Layout := @Space^.Layout;
+  if not Layout^.IsRandomized then
+  begin
+    Result := FindFreeRange(Space, Length, Space^.NextLibraryAddress, Layout^.LibraryWindowEnd, Start);
+    if Result then
+      Space^.NextLibraryAddress := Start + Length + PageSize;
+    Exit;
+  end;
+  Hint := ChooseLibraryAddress(Layout^, Length, @LayoutRandom);
+  Result := FindFreeRange(Space, Length, Hint, Layout^.LibraryWindowEnd, Start);
+  if not Result then
+    Result := FindFreeRange(Space, Length, Layout^.LibraryWindowStart, Layout^.LibraryWindowEnd, Start);
+end;
+
 function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt;
 var
@@ -797,8 +855,6 @@ begin
     Result := ErrorBadExecutable;
   if Result = ErrorNone then
     Result := ReadDynamicSection(Image, Dynamic);
-  if Result = ErrorNone then
-    Result := CheckLateLoadable(List, Image, Dynamic);
 
   { Choose where the module goes. }
   if Result = ErrorNone then
@@ -806,18 +862,11 @@ begin
     if Image.Header^.FileType = ElfTypeExecutable then
       Bias := 0 { linked for a fixed address }
     else if IsProgram then
-      Bias := UserImageBase - LowestPage
+      Bias := Space^.Layout.ImageBase - LowestPage
+    else if not PlaceLibrary(Space, HighestPageEnd - LowestPage, Bias) then
+      Result := ErrorOutOfMemory
     else
-    begin
-      if not FindFreeRange(Space, HighestPageEnd - LowestPage, Space^.NextLibraryAddress,
-        UserStackTop - UserStackReserve, Bias) then
-        Result := ErrorOutOfMemory
-      else
-      begin
-        Space^.NextLibraryAddress := Bias + (HighestPageEnd - LowestPage) + PageSize;
-        Bias := Bias - LowestPage;
-      end;
-    end;
+      Bias := Bias - LowestPage;
   end;
 
   if Result = ErrorNone then
@@ -834,6 +883,9 @@ begin
   begin
     CopyText(@Module^.Name[0], FileNameOf(KernelPath), ModuleNameLength);
     Module^.Base := Bias;
+    Module^.Limit := Bias + HighestPageEnd;
+    Module^.ImageStart := Bias + LowestPage;
+    Module^.ImageEnd := Bias + HighestPageEnd;
     Module^.EntryPoint := Bias + Image.Header^.EntryPoint;
     Module^.ProgramHeaderAddress := Bias + LowestPage + Image.Header^.ProgramHeaderOffset;
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
@@ -855,6 +907,7 @@ begin
   { Register the module before loading its needs, so a dependency cycle
     finds it already loaded. }
   ModuleIndex := List^.Count;
+  Module^.Handle := ModuleIndex;
   List^.Modules[List^.Count] := Module;
   Inc(List^.Count);
 
@@ -932,6 +985,30 @@ begin
   Result := False;
 end;
 
+{ The TLS relocations against a module with dynamic TLS: its id is the
+  tag plus its handle; a descriptor's argument carries the handle and
+  the offset; nothing is at a fixed distance from the thread pointer. }
+function DynamicTlsRelocationValue(Kind: TRelocationKind; DefiningModule: PLoadedModule; Offset: QWord;
+  out Value: QWord): LongInt;
+begin
+  Value := 0;
+  case Kind of
+    RelocationKindTlsModule:
+      Value := TlsDynamicModuleTag or QWord(DefiningModule^.Handle);
+    RelocationKindTlsOffset:
+      Value := Offset;
+    RelocationKindTlsDescriptor:
+      begin
+        if Offset > High(LongWord) then
+          Exit(ErrorBadExecutable);
+        Value := TlsDynamicModuleTag or (QWord(DefiningModule^.Handle) shl TlsDynamicHandleShift) or Offset;
+      end;
+  else
+    Exit(ErrorUnsupported); { initial or local exec into a library loaded late }
+  end;
+  Result := ErrorNone;
+end;
+
 { The TLS relocations: Offset is the variable's offset in the TLS block
   of DefiningModule. A descriptor's value is its argument, the
   variable's offset from the thread pointer. }
@@ -943,6 +1020,8 @@ begin
   Value := 0;
   if (DefiningModule = nil) or not DefiningModule^.HasThreadLocalStorage then
     Exit(ErrorBadExecutable);
+  if DefiningModule^.HasDynamicTls then
+    Exit(DynamicTlsRelocationValue(Kind, DefiningModule, Offset, Value));
   Displacement := QWord(TlsBlockDisplacement(DefiningModule^.TlsOffset));
   case Kind of
     RelocationKindTlsModule:
@@ -992,15 +1071,22 @@ begin
   Result := ErrorNone;
 end;
 
-{ A TLS descriptor: the static resolver (in libsystem) and Argument. }
-function WriteTlsDescriptor(List: PModuleList; var Writer: TRelocationWriter; Target, Argument: QWord): LongInt;
+{ A TLS descriptor: libsystem's resolver (the static one, or the dynamic
+  one for a module whose blocks the runtime makes) and Argument. }
+function WriteTlsDescriptor(List: PModuleList; var Writer: TRelocationWriter; Target, Argument: QWord;
+  IsDynamic: Boolean): LongInt;
 var
   Descriptor: array[0..1] of QWord;
   ResolverSize: QWord;
   ResolverModule: PLoadedModule;
+  ResolverName: PChar;
 begin
-  if (TlsDescriptorResolverName = '') or
-     not ResolveSymbol(List, TlsDescriptorResolverName, Descriptor[0], ResolverSize, nil, ResolverModule) then
+  if IsDynamic then
+    ResolverName := TlsDynamicDescriptorResolverName
+  else
+    ResolverName := TlsDescriptorResolverName;
+  if (ResolverName = nil) or (ResolverName^ = #0) or
+     not ResolveSymbol(List, ResolverName, Descriptor[0], ResolverSize, nil, ResolverModule) then
     Exit(ErrorBadExecutable);
   Descriptor[1] := Argument;
   Result := WriteRelocatedValue(Writer, Target, @Descriptor[0], SizeOf(Descriptor));
@@ -1073,7 +1159,7 @@ begin
           SymbolAddress + QWord(Relocation.Addend), Value);
         if Result <> ErrorNone then
           Exit;
-        Exit(WriteTlsDescriptor(List, Writer, Target, Value));
+        Exit(WriteTlsDescriptor(List, Writer, Target, Value, DefiningModule^.HasDynamicTls));
       end;
     RelocationKindThreadPointerOffset32:
       begin

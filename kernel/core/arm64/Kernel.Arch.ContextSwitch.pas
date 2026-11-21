@@ -47,6 +47,11 @@ function ArchPrepareInitialStack(StackTop: QWord; EntryPoint: Pointer): QWord;
   mode, Kernel.Arch.UserMode). }
 procedure ArchSetThreadInterruptStack(StackTop: QWord);
 
+{ Where a thread that is not running stopped, from the state the switch
+  saved on its stack (SavedStackPointer): the address it resumes at and
+  its frame pointer, so its back trace can be walked. }
+procedure ArchSwitchFramePointers(SavedStackPointer: QWord; out ProgramCounter, FramePointer: QWord);
+
 { Loads the user thread pointer: TPIDR_EL0, which user code reads for
   its thread-local storage. }
 procedure ArchSetUserThreadPointer(ThreadPointer: QWord);
@@ -66,12 +71,19 @@ uses
 
 const
   SwitchFrameSize = 112;
+  SavedFramePointerSlot = 10;
   SavedLinkRegisterSlot = 11;
   SavedInterruptMaskSlot = 12;
   { D, A, I and F masked. }
   InitialInterruptMask = QWord($3C0);
 
 procedure ArchWriteUserThreadPointer(ThreadPointer: QWord); external name 'ArchWriteUserThreadPointer';
+
+procedure ArchSwitchFramePointers(SavedStackPointer: QWord; out ProgramCounter, FramePointer: QWord);
+begin
+  FramePointer := PQWord(SavedStackPointer)[SavedFramePointerSlot];
+  ProgramCounter := PQWord(SavedStackPointer)[SavedLinkRegisterSlot];
+end;
 
 function ArchPrepareInitialStack(StackTop: QWord; EntryPoint: Pointer): QWord;
 var

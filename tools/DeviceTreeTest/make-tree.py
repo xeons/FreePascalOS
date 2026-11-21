@@ -100,6 +100,21 @@ TREE = node('', [
             ('device_type', text('cpu')), ('compatible', text('arm,cortex-a76')),
             ('reg', cells(index * 0x100)), ('enable-method', text('psci')),
         ]) for index in range(4)
+    ] + [
+        # Not in the Pi 5's tree (it has none): a standby state and a
+        # power-down state whose timer stops, for the idle state reading.
+        node('idle-states', [('entry-method', text('psci'))], [
+            node('cpu-standby', [
+                ('compatible', text('arm,idle-state')), ('arm,psci-suspend-param', cells(0x1)),
+                ('entry-latency-us', cells(20)), ('exit-latency-us', cells(40)),
+                ('min-residency-us', cells(100)),
+            ]),
+            node('cpu-off', [
+                ('compatible', text('arm,idle-state')), ('arm,psci-suspend-param', cells(0x10000)),
+                ('entry-latency-us', cells(200)), ('exit-latency-us', cells(400)),
+                ('min-residency-us', cells(2000)), ('local-timer-stop', b''),
+            ]),
+        ]),
     ]),
     node('psci', [('compatible', strings('arm,psci-1.0', 'arm,psci-0.2')), ('method', text('smc'))]),
     node('timer', [

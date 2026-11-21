@@ -24,8 +24,9 @@
   user processes exist, it writes every user thread to the kernel log -
   its process, name, state, what it waits on, how long it has run, where
   in the program it last entered the kernel and the system call it is
-  in - and what every processor is running, then waits for progress
-  again.
+  in, and its kernel stack trace (Debug.StackTrace: where in the kernel
+  it waits) - and what every processor is running, then waits for
+  progress again.
   The tests turn it on, so a hang explains itself in the log.
 
   Whether the option is given or not, it also watches processes that
@@ -57,6 +58,8 @@ uses
   Kernel.Clock,
   Processes.Process,
   Processes.Thread,
+  Debug.KernelSymbols,
+  Debug.StackTrace,
   Debug.Output;
 
 const
@@ -118,7 +121,9 @@ begin
   DebugWriteTag('hang');
   DebugWrite('    thread ');
   DebugWriteDecimal(Block^.ThreadId);
-  DebugWrite(' ');
+  DebugWrite(' "');
+  DebugWrite(@Block^.Name[0]);
+  DebugWrite('" ');
   DebugWrite(StateName(Block^.State));
   if Block^.IsOnWaitList then
     DebugWrite(', on a wait list');
@@ -142,6 +147,7 @@ begin
   DebugEndMessage;
   if Thread^.IsUserThread then
     DescribeUserState(Thread);
+  WriteThreadStackTrace(Block, '[hang]       ');
 end;
 
 procedure DescribeProcess(Process: PProcess; Context: Pointer);
@@ -211,6 +217,11 @@ begin
     DebugWriteDecimal(Processor^.RunningThread^.RunTicks);
     DebugWrite(' ticks), last at 0x');
     DebugWriteHex(Processor^.InterruptedAddress, 1);
+    if IsKernelCodeAddress(Processor^.InterruptedAddress) then
+    begin
+      DebugWrite(' ');
+      DebugWriteKernelSymbol(Processor^.InterruptedAddress);
+    end;
     WriteLikelyCallers(Processor);
     DebugWriteLine('');
   end;

@@ -46,6 +46,7 @@ uses
   Web.Dom.UiEvents,
   Web.Bindings.Context,
   Web.Script.Context,
+  Web.Navigation.Events,
   WebScriptTest.Harness;
 
 procedure Collect(Bed: TTestBed);
@@ -176,6 +177,42 @@ begin
   end;
 end;
 
+{ The engine's own events (readystatechange, those FireEvent makes:
+  change, load ...) kept by a listener: the wrapper holds a reference,
+  so the event outlives its dispatch and a collection (the browser
+  crashed on DuckDuckGo when the collector read such an event freed). }
+procedure TestKeptEvents;
+var
+  Bed: TTestBed;
+begin
+  Bed := TTestBed.Create('kept events', '<!DOCTYPE html><body><input id=i></body>');
+  try
+    Bed.Run('var kept = []; document.addEventListener("readystatechange", function (e) { kept.push(e); });' +
+      ' document.getElementById("i").addEventListener("change", function (e) { kept.push(e); });');
+    Bed.Document.ReadyState := ReadyStateInteractive;
+    Bed.Document.ReadyState := ReadyStateComplete;
+    FireEvent(Bed.Document.GetElementById('i'), 'change', True);
+    Collect(Bed);
+    Bed.Evaluate('for (var n = 0; n < 2000; n++) kept.push({ n: n, s: "x" + n }); kept.length = 3;');
+    Collect(Bed);
+    Check(Bed.Evaluate('kept.map(function (e) { return e.type + ":" + e.isTrusted; }).join(",")') =
+      'readystatechange:true,readystatechange:true,change:true',
+      'kept events: events the engine fired outlive their dispatch in a listener''s hands (' +
+      Bed.Evaluate('kept.map(function (e) { return e.type + ":" + e.isTrusted; }).join(",")') + ')');
+    { An event of a target that is not a node keeps the target's wrapper;
+      freeing the heap whole (the bed going) frees them in any order. }
+    Bed.Run('var target = new EventTarget(); target.addEventListener("ping", function (e) { window.pinged = e; });' +
+      ' target.dispatchEvent(new Event("ping")); target = null;');
+    Collect(Bed);
+    Bed.Evaluate('for (var n = 0; n < 2000; n++) kept.push({ n: n }); kept.length = 3;');
+    Collect(Bed);
+    Check(Bed.Evaluate('(pinged.target instanceof EventTarget) + ":" + pinged.type') = 'true:ping',
+      'kept events: an event keeps a target that is not a node');
+  finally
+    Bed.Free;
+  end;
+end;
+
 procedure TestExternalScripts;
 var
   Document: TDocument;
@@ -270,6 +307,7 @@ begin
   TestUnreachableWrappers;
   TestWrapperBytes;
   TestNativeEvents;
+  TestKeptEvents;
   TestExternalScripts;
   TestContextGoesFirst;
 end;

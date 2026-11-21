@@ -146,7 +146,7 @@ begin
   if Target is TJsClosure then
   begin
     Code := TJsClosure(Target).Code;
-    if (Code.Source <> nil) and (Code.SourceFinish > Code.SourceStart) then
+    if (Code.Source <> nil) and not Code.Source.Builtin and (Code.SourceFinish > Code.SourceStart) then
       Exit(JsStringValue(NewStringFromUnicode(R.Heap, Copy(Code.Source.Text, Code.SourceStart,
         Code.SourceFinish - Code.SourceStart))));
   end;

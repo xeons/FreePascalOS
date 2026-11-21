@@ -277,10 +277,35 @@ begin
   Result := JsBoolean(ThisTokens(Call).Replace(Call.Text(0), Call.Text(1)));
 end;
 
-function DOMTokenList_supports(var Call: TBindingCall): TJsValue;
+{ The supported tokens of rel on link, a and area, and of sandbox (HTML
+  4.6.6 and 4.8.5). }
+function SupportedTokens(Tokens: TDomTokenList; out List: string): Boolean;
+var
+  Name, Attribute: string;
 begin
-  Result := JsUndefined;
-  raise EBindingTypeError.Create('this token list has no supported tokens');
+  Result := True;
+  Name := Tokens.Element.LocalName;
+  Attribute := NameOfAtom(Tokens.AttributeName);
+  if (Attribute = 'rel') and (Name = 'link') then
+    List := ' alternate dns-prefetch expect icon manifest modulepreload next pingback preconnect prefetch preload ' +
+      'search stylesheet '
+  else if (Attribute = 'rel') and ((Name = 'a') or (Name = 'area') or (Name = 'form')) then
+    List := ' noreferrer noopener opener '
+  else if (Attribute = 'sandbox') and (Name = 'iframe') then
+    List := ' allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups ' +
+      'allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts ' +
+      'allow-top-navigation allow-top-navigation-by-user-activation allow-top-navigation-to-custom-protocols '
+  else
+    Result := False;
+end;
+
+function DOMTokenList_supports(var Call: TBindingCall): TJsValue;
+var
+  List: string;
+begin
+  if not SupportedTokens(ThisTokens(Call), List) then
+    raise EBindingTypeError.Create('this token list has no supported tokens');
+  Result := JsBoolean(Pos(' ' + LowerCase(Call.Text(0)) + ' ', List) > 0);
 end;
 
 function DOMTokenList_get_value(var Call: TBindingCall): TJsValue;

@@ -22,7 +22,8 @@
 
   Every user thread gets one region holding the TLS blocks of the program
   and its startup libraries and the thread control block, which the
-  thread pointer points at. On x86-64 (%fs base, "variant II") the
+  thread pointer points at. (Libraries loaded later have dynamic TLS:
+  the user runtime makes their blocks, Processes.ImageLoader.) On x86-64 (%fs base, "variant II") the
   blocks lie below the control block; on AArch64 (TPIDR_EL0, "variant
   I") they follow it (Processes.Arch.ImageFormat has the layout). Each
   block starts as a fresh copy of the module's TLS image (.tdata)
@@ -60,6 +61,7 @@ uses
   Memory.KernelHeap,
   Kernel.Mutex,
   Processes.AddressSpace,
+  Processes.UserRegions,
   Processes.ImageLoader,
   Processes.Arch.ImageFormat;
 
@@ -96,7 +98,7 @@ begin
   begin
     for Index := 0 to List^.Count - 1 do
     begin
-      if not List^.Modules[Index]^.HasThreadLocalStorage then
+      if not List^.Modules[Index]^.HasThreadLocalStorage or List^.Modules[Index]^.HasDynamicTls then
         Continue;
       Result := CopyTlsImage(Process^.AddressSpace, List^.Modules[Index], ThreadPointer);
       if Result <> ErrorNone then

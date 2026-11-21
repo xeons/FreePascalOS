@@ -48,10 +48,19 @@ procedure TDocumentObserver.CharacterDataChanged(Node: TCharacterData; const Old
 begin
 end;
 
+procedure TDocumentObserver.ControlStateChanged(Element: TElement);
+begin
+end;
+
+procedure TDocumentObserver.FocusChanged(Old, New: TElement);
+begin
+end;
+
 destructor TNodeRareData.Destroy;
 var
   Index: Integer;
 begin
+  FormState.Free;
   Listeners.Free;
   ChildNodeList.Free;
   if ChildrenCollection <> nil then
@@ -107,6 +116,22 @@ begin
   if FRareData = nil then
     FRareData := TNodeRareData.Create;
   Result := FRareData;
+end;
+
+function TNode.FormStateObject: TObject;
+begin
+  if FRareData = nil then
+    Exit(nil);
+  Result := FRareData.FormState;
+end;
+
+procedure TNode.SetFormStateObject(Value: TObject);
+begin
+  if (Value = nil) and (FRareData = nil) then
+    Exit;
+  if RareData.FormState <> Value then
+    RareData.FormState.Free;
+  RareData.FormState := Value;
 end;
 
 function TNode.GetSubtreeReferences: LongWord;

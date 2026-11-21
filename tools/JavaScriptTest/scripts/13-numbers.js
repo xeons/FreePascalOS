@@ -27,6 +27,7 @@ console.log([3n, 1n, 2n].sort((a, b) => (a < b ? -1 : 1)), new Map([[1n, "big"]]
 console.log(Number(123n), parseInt("123n"), BigInt(Number.MAX_VALUE).toString().length, (2n ** 200n).toString().length);
 const num = new Number(5);
 console.log(typeof num, num + 1, num.valueOf() === 5, Object.prototype.toString.call(num), (12.5).toLocaleString());
+console.log(Math.floor(1795219420216.7), Math.ceil(-4294967296.5), Math.round(1795219420216.5), Math.floor(-1e15 - 0.5), Math.trunc(2 ** 40 + 0.5));
 /* expected
 1234.57 1 2 3 1.00 -2 1e+21
 123.5 0.00012 1.2e+5 2 100
@@ -54,4 +55,5 @@ RangeError Division by zero
 [ 1n, 2n, 3n ] big {"n":1} 376n
 123 123 309 61
 object 6 true [object Number] 12.5
+1795219420216 -4294967296 1795219420217 -1000000000000001 1099511627776
 */

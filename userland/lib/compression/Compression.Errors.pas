@@ -60,7 +60,21 @@ type
     CompressionErrorInvalidArgument,
     CompressionErrorOutputLimit,
     { Preset dictionaries (zlib). }
-    CompressionErrorDictionaryMismatch
+    CompressionErrorDictionaryMismatch,
+    { Brotli (RFC 7932) and Zstandard (RFC 8878). }
+    CompressionErrorInvalidWindowSize,
+    CompressionErrorWindowTooLarge,
+    CompressionErrorInvalidPrefixCode,
+    CompressionErrorInvalidContextMap,
+    CompressionErrorInvalidBlockSwitch,
+    CompressionErrorInvalidDictionaryWord,
+    CompressionErrorInvalidPadding,
+    CompressionErrorLengthBeyondBlock,
+    CompressionErrorInvalidFrameHeader,
+    CompressionErrorDictionaryNeeded,
+    CompressionErrorInvalidEntropyTable,
+    CompressionErrorCorruptBlock,
+    CompressionErrorChecksumMismatch
   );
 
   { Raised by the convenience layer: the code and its message. }
@@ -107,6 +121,19 @@ begin
     CompressionErrorInvalidArgument: Result := 'invalid argument';
     CompressionErrorOutputLimit: Result := 'the decompressed data is larger than allowed';
     CompressionErrorDictionaryMismatch: Result := 'the preset dictionary is not the one the data needs';
+    CompressionErrorInvalidWindowSize: Result := 'invalid window size';
+    CompressionErrorWindowTooLarge: Result := 'the window the data needs is larger than allowed';
+    CompressionErrorInvalidPrefixCode: Result := 'invalid prefix code';
+    CompressionErrorInvalidContextMap: Result := 'invalid context map';
+    CompressionErrorInvalidBlockSwitch: Result := 'invalid block type or count';
+    CompressionErrorInvalidDictionaryWord: Result := 'invalid static dictionary reference';
+    CompressionErrorInvalidPadding: Result := 'padding or reserved bits are not zero';
+    CompressionErrorLengthBeyondBlock: Result := 'the data runs past the end of its block';
+    CompressionErrorInvalidFrameHeader: Result := 'invalid frame header';
+    CompressionErrorDictionaryNeeded: Result := 'the data needs a dictionary';
+    CompressionErrorInvalidEntropyTable: Result := 'invalid entropy table';
+    CompressionErrorCorruptBlock: Result := 'corrupt compressed block';
+    CompressionErrorChecksumMismatch: Result := 'content checksum mismatch';
   else
     Result := 'unknown error';
   end;

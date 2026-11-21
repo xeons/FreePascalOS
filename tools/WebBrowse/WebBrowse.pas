@@ -44,6 +44,10 @@
     --stall SECONDS  the watchdog reports a page thread stuck this long (5)
     --no-script    scripting off
     -e JS          evaluate JS once the page is quiet; print the result
+    --do STEP      then what a user does, each step once the page is quiet
+                   again (or after 10 s): eval:JS, type:TEXT (\n is Enter),
+                   key:NAME (Enter, ArrowDown, ctrl+KeyA), click:SELECTOR,
+                   wait:MS, shot:FILE.png
     -f FONTDIR     font directory (userland/fonts)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move
@@ -62,6 +66,7 @@ program WebBrowse;
 uses
   cthreads,
   SysUtils,
+  Web.Bindings.Context,
   WebBrowse.Session;
 
 var
@@ -72,7 +77,7 @@ var
 procedure Usage;
 begin
   WriteLn(StdErr, 'usage: webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y Y] [--full] [-l FILE] [--dom FILE] [-c] [-n]');
-  WriteLn(StdErr, '         [--live] [-p] [-m] [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [-f FONTDIR] [-v] URL');
+  WriteLn(StdErr, '         [--live] [-p] [-m] [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--do STEP]... [-f FONTDIR] [-v] URL');
   Halt(2);
 end;
 
@@ -132,6 +137,11 @@ begin
       Options.Scripting := False
     else if Argument = '-e' then
       Options.EvalSource := NextArgument
+    else if Argument = '--do' then
+    begin
+      SetLength(Options.Steps, Length(Options.Steps) + 1);
+      Options.Steps[High(Options.Steps)] := NextArgument;
+    end
     else if Argument = '-f' then
       Options.FontDirectory := NextArgument
     else if Argument = '--hover' then
@@ -150,5 +160,9 @@ begin
   end;
   if Options.Url = '' then
     Usage;
+  { JS_GC_STRESS: the script engines collect every 16 KiB (finds values
+    the collector does not see). }
+  if GetEnvironmentVariable('JS_GC_STRESS') <> '' then
+    ContextHeapThreshold := 16 * 1024;
   Halt(RunBrowse(Options));
 end.

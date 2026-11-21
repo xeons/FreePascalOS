@@ -261,6 +261,7 @@ begin
     Exit;
   end;
 
+  SetPanicTraceStart(TrapFrameInstructionPointer(Frame), TrapFrameFramePointer(Frame));
   BeginKernelPanic(PanicUnhandledProcessorException, 'unhandled processor exception');
   DebugWrite('  ');
   DebugWrite(ExceptionNames[Vector]);

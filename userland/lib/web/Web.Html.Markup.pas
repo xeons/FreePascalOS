@@ -39,6 +39,10 @@ function GetOuterHtml(Element: TElement): string;
 procedure SetOuterHtml(Element: TElement; const Markup: string);
 { Position: beforebegin, afterbegin, beforeend or afterend. }
 procedure InsertAdjacentHtml(Element: TElement; const Position, Markup: string);
+{ DOMParser's parseFromString: a new document (the caller's reference) of
+  ContentType at Url. HTML is parsed without scripting; the XML types give
+  a document whose element is a parsererror (no XML parser yet). }
+function ParseMarkupDocument(const Markup, ContentType, Url: string): TDocument;
 
 implementation
 
@@ -149,6 +153,25 @@ begin
     Element.AppendChild(Fragment)
   else
     Element.ParentNode.InsertBefore(Fragment, Element.NextSibling);
+end;
+
+function ParseMarkupDocument(const Markup, ContentType, Url: string): TDocument;
+const
+  ParserErrorNamespace = 'http://www.mozilla.org/newlayout/xml/parsererror.xml';
+var
+  Error: TElement;
+begin
+  if ContentType = 'text/html' then
+    Result := ParseHtmlText(Markup, False)
+  else
+  begin
+    Result := TDocument.CreateDocument(False);
+    Error := Result.CreateElementNS(ParserErrorNamespace, 'parsererror');
+    Result.AppendChild(Error);
+    Error.AppendChild(Result.CreateTextNode('XML documents are not supported'));
+  end;
+  Result.ContentType := ContentType;
+  Result.Url := Url;
 end;
 
 end.

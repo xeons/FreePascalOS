@@ -67,6 +67,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Arch.DescriptorTables,
   Kernel.Arch.ProcessorBlock,
+  Kernel.Arch.ProcessorProtection,
   Hal.Platform;
 
 type
@@ -166,6 +167,7 @@ begin
   InitializeDescriptorTables(Processor^.DescriptorTables, Processor^.InterruptStackArea);
   { Off the start-up identity mapping, onto an empty user half. }
   ActivateAddressSpace(0);
+  EnableProcessorProtectionOnThisProcessor;
   HalInitializeSecondaryProcessor;
 end;
 
@@ -179,6 +181,7 @@ begin
   ArchSetProcessorBlock(Processor);
   ReloadDescriptorTables(Processor^.DescriptorTables);
   ActivateAddressSpace(Processor^.ActiveAddressSpace);
+  EnableProcessorProtectionOnThisProcessor;
 end;
 
 end.

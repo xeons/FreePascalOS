@@ -124,8 +124,21 @@ function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64
   records filled at most). }
 function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
 function KernelGetSystemUsage(out Usage: TAbiSystemUsage): Int64;
+{ What a process (0: this one) holds against its limits. }
+function KernelGetProcessResources(ProcessId: QWord; out Resources: TAbiProcessResources): Int64;
+{ Sets one of this process's limits (ProcessLimit*); returns the old one. }
+function KernelSetProcessLimit(Limit: LongWord; Value: QWord): Int64;
 { The clock, the time zone and the keyboards (changes are root's). }
 function KernelSetWallClock(Time: Int64): Int64;
+{ The time to the nanosecond (TimeWallClock or TimeUptimeNanoseconds). }
+function KernelGetPreciseTime(Which: LongWord; out Time: TAbiPreciseTime): Int64;
+{ Moves the wall clock by OffsetNanoseconds (Adjust* flags); Remaining
+  gets what a gradual adjustment still has to move. }
+function KernelAdjustWallClock(OffsetNanoseconds: Int64; Flags: LongWord; out Remaining: Int64): Int64;
+{ Power: the processors, the thermal zones, the batteries. }
+function KernelGetProcessorPower(out Information: TAbiProcessorPower): Int64;
+function KernelListThermalZones(Zones: PAbiThermalZone; Capacity: QWord): Int64;
+function KernelListBatteries(Batteries: PAbiBattery; Capacity: QWord): Int64;
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
 function KernelSetTimeZone(Name: PChar): Int64;
 function KernelGetKeyboardSettings(out Settings: TAbiKeyboardSettings): Int64;
@@ -522,6 +535,16 @@ begin
   Result := SystemCall(CallReadWatch, QWord(Handle), QWord(Buffer), Capacity, 0, 0, 0);
 end;
 
+function KernelGetProcessResources(ProcessId: QWord; out Resources: TAbiProcessResources): Int64;
+begin
+  Result := SystemCall(CallGetProcessResources, ProcessId, QWord(@Resources), 0, 0, 0, 0);
+end;
+
+function KernelSetProcessLimit(Limit: LongWord; Value: QWord): Int64;
+begin
+  Result := SystemCall(CallSetProcessLimit, Limit, Value, 0, 0, 0, 0);
+end;
+
 function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallListProcessDetails, QWord(Buffer), Capacity, 0, 0, 0, 0);
@@ -535,6 +558,32 @@ end;
 function KernelSetWallClock(Time: Int64): Int64;
 begin
   Result := SystemCall(CallSetWallClock, QWord(Time), 0, 0, 0, 0, 0);
+end;
+
+function KernelGetPreciseTime(Which: LongWord; out Time: TAbiPreciseTime): Int64;
+begin
+  Result := SystemCall(CallGetPreciseTime, Which, QWord(@Time), 0, 0, 0, 0);
+end;
+
+function KernelAdjustWallClock(OffsetNanoseconds: Int64; Flags: LongWord; out Remaining: Int64): Int64;
+begin
+  Remaining := 0;
+  Result := SystemCall(CallAdjustWallClock, QWord(OffsetNanoseconds), Flags, QWord(@Remaining), 0, 0, 0);
+end;
+
+function KernelGetProcessorPower(out Information: TAbiProcessorPower): Int64;
+begin
+  Result := SystemCall(CallGetProcessorPower, QWord(@Information), 0, 0, 0, 0, 0);
+end;
+
+function KernelListThermalZones(Zones: PAbiThermalZone; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListThermalZones, QWord(Zones), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelListBatteries(Batteries: PAbiBattery; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListBatteries, QWord(Batteries), Capacity, 0, 0, 0, 0);
 end;
 
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;

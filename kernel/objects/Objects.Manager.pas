@@ -29,6 +29,11 @@
   Named objects are entered in a single, flat namespace and can be found
   by name. A hierarchical namespace can be layered on top later.
 
+  A reference count never wraps: one that reaches ObjectReferenceCountLimit
+  (only a reference leak gets there) stays there, with a warning in the
+  log, and the object is never deleted - a leak instead of a use after
+  free.
+
   Memory layout of an object:
 
     +----------------+  <- allocation
@@ -50,6 +55,8 @@ uses
 
 const
   ObjectNameLength = 32;
+  { Where a reference count saturates. }
+  ObjectReferenceCountLimit = Int64(1) shl 40;
 
 type
   TObjectDeleteRoutine = procedure(ObjectBody: Pointer);
@@ -87,6 +94,10 @@ function ObjectTypeOf(ObjectBody: Pointer): PObjectType;
 function ObjectNameOf(ObjectBody: Pointer): PChar;
 function ObjectReferenceCount(ObjectBody: Pointer): Int64;
 
+{ For the self tests only: puts an object's count at Count, so the
+  saturation can be reached without 2^40 references. }
+procedure SetObjectReferenceCountForTest(ObjectBody: Pointer; Count: Int64);
+
 procedure WriteObjectManagerSummary;
 
 implementation
@@ -99,7 +110,8 @@ uses
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Panic,
-  Debug.Output;
+  Debug.Output,
+  Debug.FramebufferConsole;
 
 const
   ObjectHeaderSignature = LongWord($4A424F46); { 'FOBJ' }
@@ -231,12 +243,46 @@ begin
   Result := BodyOf(Header);
 end;
 
+procedure WarnReferenceCountSaturated(Header: PObjectHeader);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('object');
+  DebugSetColor(ColorYellow);
+  DebugWrite('Warning: ');
+  DebugResetColor;
+  DebugWrite('the reference count of ');
+  DebugWrite(@Header^.ObjectType^.Name[0]);
+  DebugWrite(' object ');
+  DebugWriteAddress(QWord(BodyOf(Header)));
+  if Header^.Name[0] <> #0 then
+  begin
+    DebugWrite(' (');
+    DebugWrite(@Header^.Name[0]);
+    DebugWrite(')');
+  end;
+  DebugWriteLine(' saturated (a reference leak); the object is kept for good');
+  DebugEndMessage;
+end;
+
+{ Adds a reference and returns the new count, which stays at the limit
+  once it got there. }
+function TakeReference(Header: PObjectHeader): Int64;
+begin
+  Result := AtomicIncrement(Header^.ReferenceCount);
+  if Result < ObjectReferenceCountLimit then
+    Exit;
+  if Result = ObjectReferenceCountLimit then
+    WarnReferenceCountSaturated(Header)
+  else
+    AtomicDecrement(Header^.ReferenceCount);
+end;
+
 procedure ReferenceObject(ObjectBody: Pointer);
 var
   Header: PObjectHeader;
 begin
   Header := HeaderOf(ObjectBody);
-  if AtomicIncrement(Header^.ReferenceCount) <= 1 then
+  if TakeReference(Header) <= 1 then
     KernelPanicWithCode(PanicObjectReferenceFailure,
       'referencing an object that is being deleted', QWord(ObjectBody), 0, 0, 0);
 end;
@@ -269,6 +315,9 @@ var
   RemainingReferences: Int64;
 begin
   Header := HeaderOf(ObjectBody);
+  { A saturated count no longer counts: the object stays. }
+  if Header^.ReferenceCount >= ObjectReferenceCountLimit then
+    Exit;
   RemainingReferences := AtomicDecrement(Header^.ReferenceCount);
   if RemainingReferences < 0 then
     KernelPanicWithCode(PanicObjectReferenceFailure,
@@ -290,7 +339,7 @@ begin
   begin
     { Taking the reference under the lock keeps the object alive even if
       its last other reference is dropped right after we unlock. }
-    if AtomicIncrement(Header^.ReferenceCount) > 1 then
+    if TakeReference(Header) > 1 then
       Result := BodyOf(Header)
     else
       AtomicDecrement(Header^.ReferenceCount);
@@ -312,6 +361,11 @@ end;
 function ObjectReferenceCount(ObjectBody: Pointer): Int64;
 begin
   Result := HeaderOf(ObjectBody)^.ReferenceCount;
+end;
+
+procedure SetObjectReferenceCountForTest(ObjectBody: Pointer; Count: Int64);
+begin
+  HeaderOf(ObjectBody)^.ReferenceCount := Count;
 end;
 
 procedure WriteObjectManagerSummary;

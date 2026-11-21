@@ -111,6 +111,7 @@ begin
     MapTranslationRange(Builder, KernelRoot, PhysicalMemoryWindowBase + UartPhysical, UartPhysical,
       NativePageSize, DataAttributes(MemoryTypeDevice));
   MapKernelImage(KernelImage);
+  ProtectKernelImageInWindow(Builder, KernelRoot, PhysicalMemoryWindowBase, KernelImage);
   if Builder.OutOfMemory then
     Exit;
   Result := KernelRoot;

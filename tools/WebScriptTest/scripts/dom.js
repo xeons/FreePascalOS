@@ -133,3 +133,18 @@ check("createDocument", xml.documentElement.namespaceURI === "http://www.w3.org/
 var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg:circle");
 check("createElementNS", svg.prefix === "svg" && svg.localName === "circle" && svg instanceof Element &&
   !(svg instanceof HTMLElement));
+// HTML's cloning steps: a script that ran does not run again as a copy;
+// an input and a textarea keep what was typed (the dirty value).
+window.cloneRuns = 0;
+var ran = document.createElement("script");
+ran.textContent = "window.cloneRuns++;";
+document.body.appendChild(ran);
+document.body.appendChild(ran.cloneNode(true));
+check("a cloned script that already ran does not run again", window.cloneRuns === 1);
+var typedInput = document.createElement("input");
+typedInput.value = "typed";
+check("a cloned input keeps its value", typedInput.cloneNode().value === "typed");
+var typedArea = document.createElement("textarea");
+typedArea.textContent = "default";
+typedArea.value = "changed";
+check("a cloned textarea keeps its value", typedArea.cloneNode(true).value === "changed");

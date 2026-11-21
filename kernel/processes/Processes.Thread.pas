@@ -60,6 +60,12 @@ type
     IsUserThread: Boolean;
     UserStackStart: QWord;
     ThreadDataStart: QWord;
+    { Its latest CallAllocateMemory with AllocateForThread (its threadvar
+      block), released when it exits unless freed before. }
+    OwnedAllocationStart: QWord;
+    { It made more than one such allocation (dynamic TLS blocks): all of
+      them are looked for when it exits. }
+    HasSeveralOwnedAllocations: Boolean;
     { Set when the thread has exited; waiting on a thread handle waits
       for ExitEvent and then reads ExitCode. }
     ExitCode: LongInt;

@@ -186,6 +186,7 @@ var
   Timer: TDeviceTreeTimer;
   Psci: TDeviceTreePsci;
   Affinities: array[0..7] of LongWord;
+  IdleStates: array[0..3] of TDeviceTreeIdleState;
 begin
   Check(DescribeDeviceTreeGic(Gic), 'the GIC');
   CheckNumber(Gic.Version, 2, 'the GIC version');
@@ -199,6 +200,13 @@ begin
   CheckNumber(Psci.CpuOnFunction, $C4000003, 'the CPU_ON function');
   CheckNumber(ListDeviceTreeProcessors(Affinities), 4, 'the processors');
   CheckNumber(Affinities[3], $300, 'the fourth processor''s affinity');
+  CheckNumber(ListDeviceTreeIdleStates(IdleStates), 2, 'the idle states');
+  CheckNumber(IdleStates[0].PowerState, 1, 'the standby state''s power state');
+  CheckNumber(IdleStates[0].ExitLatencyMicroseconds, 40, 'its exit latency');
+  CheckNumber(IdleStates[0].MinimumResidencyMicroseconds, 100, 'its minimum residency');
+  Check(not IdleStates[0].StopsLocalTimer, 'its timer keeps running');
+  CheckNumber(IdleStates[1].PowerState, $10000, 'the power-down state''s power state');
+  Check(IdleStates[1].StopsLocalTimer, 'its timer stops');
 end;
 
 procedure TestInterrupts;

@@ -25,16 +25,27 @@
   10 ms ticks) is derived from it.
 
   Every processor has a one-shot clock interrupt, set each time for the
-  first of three things: its next 10 ms tick (time slices, and the time
+  first of four things: its next 10 ms tick (time slices, and the time
   charged to the running thread), the first of the timers set on it
-  (Kernel.Timers) and the first wake-up of the threads that began a
-  timed wait on it (Kernel.Scheduler). A timer or a timeout therefore
-  ends as soon as it is due rather than at the next tick, while the
-  scheduler keeps its steady 100 Hz tick. Whoever adds an earlier due
-  time asks for an earlier interrupt (RequestClockInterruptBy).
+  (Kernel.Timers), the first wake-up of the threads that began a timed
+  wait on it (Kernel.Scheduler) and, on the boot processor, the next
+  sample of the load averages. A timer or a timeout therefore ends as
+  soon as it is due rather than at the next tick. Whoever adds an
+  earlier due time asks for an earlier interrupt
+  (RequestClockInterruptBy).
 
-  Wall clock time is the real-time clock reading taken at startup plus
-  the uptime, in whole seconds.
+  Tickless idle: a processor running its idle thread needs no tick (no
+  time slice to end, nothing to charge), so the clock interrupt that
+  finds it idle stops the tick (NextTickTime = NeverDue) and the
+  processor sleeps until its next due time or a device or another
+  processor wakes it. The switch to the idle thread stops it at once
+  (StopClockTick), so a thread that wakes, runs briefly and waits again
+  costs no tick. The switch away from the idle thread starts the
+  tick again (RestartClockTick), due a whole tick later, so the thread
+  it switches to gets a full time slice. Busy processors keep the
+  100 Hz tick. Kernel option tickless=off keeps it on idle ones too.
+
+  The wall clock is Kernel.WallClock's.
 }
 unit Kernel.Clock;
 
@@ -71,10 +82,9 @@ procedure ResynchronizeWallClock;
 { Sets the date and time (CallSetWallClock) and writes it to the battery
   backed clock for the next boot. }
 procedure SetWallClockTime(Time: TUnixTime);
-
-{ Current date and time as Unix time (UTC). }
+{ Current date and time as Unix time (UTC), in whole seconds
+  (Kernel.WallClock has it to the nanosecond). }
 function CurrentWallClockTime: TUnixTime;
-
 { Converts a duration to clock ticks, rounding up so that a wait for
   that many ticks never ends early. }
 function MillisecondsToTicks(Milliseconds: QWord): QWord;
@@ -87,12 +97,19 @@ function DeadlineAfterMilliseconds(Milliseconds: QWord): QWord;
   then that was just added on this processor. Any level up to
   DispatchLevel. }
 procedure RequestClockInterruptBy(Deadline: QWord);
+{ From the switch away from the idle thread (dispatcher lock held): the
+  executing processor's tick starts again if it was stopped. }
+procedure RestartClockTick;
+{ From the switch to the idle thread: the tick stops at once, and the
+  clock interrupt set for it moves to the next due time. }
+procedure StopClockTick;
+{ Whether idle processors stop their tick (not tickless=off). }
+function ClockIsTickless: Boolean;
 
 implementation
 
 uses
   Hal.Platform,
-  Hal.RealTimeClock,
   Kernel.Arch.Cpu,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.UserMode,
@@ -100,13 +117,15 @@ uses
   Kernel.Scheduler,
   Kernel.Processors,
   Kernel.Timers,
+  Kernel.Options,
+  Kernel.WallClock,
   Kernel.Panic;
 
 const
   NanosecondsPerSecond = 1000000000;
 
 var
-  WallClockAtStart: TUnixTime;
+  StopsTickWhenIdle: Boolean = True;
 
 { Where the clock found the processor, for the hang dump: the address,
   and in kernel mode the top of the stack (within the running thread's
@@ -153,12 +172,45 @@ end;
   next wake-up itself, and until it runs (the processor may stay above
   DispatchLevel for a while) the clock must not keep interrupting. }
 function NextClockDeadline(Processor: PProcessor; Now: QWord): QWord;
+var
+  Housekeeping: QWord;
 begin
   Result := Processor^.NextTickTime;
   if (Processor^.NextTimerDueTime < Result) and (Processor^.NextTimerDueTime > Now) then
     Result := Processor^.NextTimerDueTime;
   if (Processor^.NextWakeUpTime < Result) and (Processor^.NextWakeUpTime > Now) then
     Result := Processor^.NextWakeUpTime;
+  Housekeeping := SchedulerHousekeepingTime(Processor);
+  if Housekeeping < Result then
+    Result := Housekeeping;
+  if Result <= Now then
+    Result := Now + 1;
+end;
+
+{ The ticks that passed by Now, the tick schedule moved on past them.
+  None while the processor idles: its tick stops (or stays stopped)
+  instead. }
+function TakeElapsedTicks(Processor: PProcessor; Now: QWord): QWord;
+begin
+  Result := 0;
+  if StopsTickWhenIdle and (Processor^.RunningThread = Processor^.IdleThread) then
+  begin
+    Processor^.NextTickTime := NeverDue;
+    Exit;
+  end;
+  if Processor^.NextTickTime = NeverDue then
+  begin
+    { Busy, but the switch from the idle thread has not started the
+      tick again yet (it is about to). }
+    Processor^.NextTickTime := Now + NanosecondsPerTick;
+    Exit;
+  end;
+  if Now >= Processor^.NextTickTime then
+  begin
+    { Normally one; more if the interrupt came late. }
+    Result := (Now - Processor^.NextTickTime) div NanosecondsPerTick + 1;
+    Processor^.NextTickTime := Processor^.NextTickTime + Result * NanosecondsPerTick;
+  end;
 end;
 
 procedure HandleClockInterrupt(Frame: PTrapFrame; Context: Pointer);
@@ -170,20 +222,67 @@ var
 begin
   RecordInterruptedPlace(Frame);
   Processor := CurrentProcessor;
+  Inc(Processor^.ClockInterruptCount);
   Now := ClockNanoseconds;
-  ElapsedTicks := 0;
-  if Now >= Processor^.NextTickTime then
-  begin
-    { Normally one; more if the interrupt came late. }
-    ElapsedTicks := (Now - Processor^.NextTickTime) div NanosecondsPerTick + 1;
-    Processor^.NextTickTime := Processor^.NextTickTime + ElapsedTicks * NanosecondsPerTick;
-  end;
+  WereEnabled := SaveAndDisableInterrupts;
+  ElapsedTicks := TakeElapsedTicks(Processor, Now);
+  RestoreInterrupts(WereEnabled);
+  if ElapsedTicks > 0 then
+    Inc(Processor^.TickInterruptCount);
+  if Now >= Processor^.NextTimerDueTime then
+    Inc(Processor^.TimerInterruptCount);
+  if Now >= Processor^.NextWakeUpTime then
+    Inc(Processor^.WakeUpInterruptCount);
   ExpireTimers(Now);
   SchedulerClockInterrupt(Now, ElapsedTicks, ArchFrameIsFromUserMode(Frame));
 
   WereEnabled := SaveAndDisableInterrupts;
   SetClockInterruptFor(Processor, NextClockDeadline(Processor, Now), Now);
   RestoreInterrupts(WereEnabled);
+end;
+
+procedure RestartClockTick;
+var
+  Processor: PProcessor;
+  WereEnabled: Boolean;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  Processor := CurrentProcessor;
+  if Processor^.NextTickTime = NeverDue then
+  begin
+    Processor^.NextTickTime := ClockNanoseconds + NanosecondsPerTick;
+    if Processor^.NextTickTime < Processor^.ClockInterruptTime then
+      SetClockInterruptFor(Processor, Processor^.NextTickTime, ClockNanoseconds);
+  end;
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure StopClockTick;
+var
+  Processor: PProcessor;
+  WereEnabled: Boolean;
+  Now: QWord;
+  Deadline: QWord;
+begin
+  if not StopsTickWhenIdle then
+    Exit;
+  WereEnabled := SaveAndDisableInterrupts;
+  Processor := CurrentProcessor;
+  if Processor^.NextTickTime <> NeverDue then
+  begin
+    Processor^.NextTickTime := NeverDue;
+    Now := ClockNanoseconds;
+    Deadline := NextClockDeadline(Processor, Now);
+    { Only later: an earlier interrupt (for a timer, a wake-up) stays. }
+    if Deadline > Processor^.ClockInterruptTime then
+      SetClockInterruptFor(Processor, Deadline, Now);
+  end;
+  RestoreInterrupts(WereEnabled);
+end;
+
+function ClockIsTickless: Boolean;
+begin
+  Result := StopsTickWhenIdle;
 end;
 
 procedure StartClockOnThisProcessor;
@@ -201,8 +300,13 @@ begin
 end;
 
 procedure StartSystemClock;
+var
+  Value: array[0..7] of Char;
 begin
-  WallClockAtStart := ReadRealTimeClock;
+  if GetKernelOptionValue('tickless', @Value[0], SizeOf(Value)) and
+     (Value[0] = 'o') and (Value[1] = 'f') then
+    StopsTickWhenIdle := False;
+  StartWallClock;
   if not RegisterInterruptHandler(HalClockInterruptVector, @HandleClockInterrupt, nil) then
     KernelPanic('clock interrupt vector is already in use');
   StartClockOnThisProcessor;
@@ -227,20 +331,19 @@ begin
   Result := HalClockNanoseconds;
 end;
 
-function UptimeSeconds: QWord;
-begin
-  Result := ClockNanoseconds div NanosecondsPerSecond;
-end;
-
 procedure ResynchronizeWallClock;
 begin
-  WallClockAtStart := ReadRealTimeClock - TUnixTime(UptimeSeconds);
+  ReadWallClockFromHardware;
 end;
 
 procedure SetWallClockTime(Time: TUnixTime);
 begin
-  WallClockAtStart := Time - TUnixTime(UptimeSeconds);
-  WriteRealTimeClock(Time);
+  StepWallClockTo(Time);
+end;
+
+function CurrentWallClockTime: TUnixTime;
+begin
+  Result := WallClockSeconds;
 end;
 
 function ClockTickCount: QWord;
@@ -251,11 +354,6 @@ end;
 function UptimeMilliseconds: QWord;
 begin
   Result := ClockNanoseconds div NanosecondsPerMillisecond;
-end;
-
-function CurrentWallClockTime: TUnixTime;
-begin
-  Result := WallClockAtStart + TUnixTime(UptimeSeconds);
 end;
 
 function MillisecondsToTicks(Milliseconds: QWord): QWord;
