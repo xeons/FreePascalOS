@@ -254,7 +254,7 @@ begin
     InvalidateViewport;
     Exit;
   end;
-  if not FireEvent(Control, 'click', True, True) then
+  if not FireClick(Control) then
     Exit;
   case Kind of
     FormControlCheckbox:
@@ -286,7 +286,7 @@ var
   Target: TElement;
   Id: string;
 begin
-  if not FireEvent(Element, 'click', True, True) then
+  if not FireClick(Element) then
     Exit;
   Node := Element;
   while Node <> nil do
@@ -297,8 +297,8 @@ begin
       begin
         Target := nil;
         Id := TElement(Node).GetAttribute('for');
-        if (Id <> '') and (FDocument <> nil) then
-          Target := FDocument.GetElementById(Id)
+        if Id <> '' then
+          Target := Node.NodeDocument.GetElementById(Id)
         else
         begin
           Inner := Node.NextInTree(Node);
@@ -340,17 +340,26 @@ var
   Target: TUrlRecord;
   Options: TNavigateOptions;
   ScrollX, ScrollY: Single;
+  Source, Destination: TNavigable;
 begin
-  if (Form = nil) or (FPage = nil) or (FPage.Navigable.Loader = nil) then
+  { A form in a frame submits from (and by default into) its frame. }
+  Source := NavigableForNode(Form);
+  if (Form = nil) or (Source = nil) or (Source.Loader = nil) then
     Exit;
   if not FireEvent(Form, 'submit', True, True) then
     Exit;
-  if not BuildFormSubmission(Form, Submitter, FPage.Navigable.Loader, Target, Options) then
+  if not BuildFormSubmission(Form, Submitter, Source.Loader, Target, Options) then
     Exit;
-  Options.Source := FPage.Navigable.Loader;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
-  FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
-  FPage.Navigable.Navigate(Target, Options);
+  Options.Source := Source.Loader;
+  Destination := Source.ChooseNavigable(Trim(Form.GetAttribute('target')));
+  if Destination = nil then
+    Destination := Source;
+  if Destination = FPage.Navigable then
+  begin
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+    FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
+  end;
+  Destination.Navigate(Target, Options);
   PostWake;
 end;
 

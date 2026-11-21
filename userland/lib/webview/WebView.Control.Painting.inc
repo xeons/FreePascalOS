@@ -170,13 +170,18 @@ var
   Font: TTextFont;
   Kind: TFormControlKind;
   Start, Finish, Caret, LineIndex, Index: Integer;
+  TargetLayout: TDocumentLayout;
+  OriginX, OriginY: Single;
 begin
   if (FLayout = nil) or (FFocusedElement = nil) or not Focused then
     Exit;
   Kind := FormControlKindOf(FFocusedElement);
   if not (Kind in [FormControlText, FormControlPassword, FormControlTextArea]) then
     Exit;
-  Box := FLayout.BoxOf(FFocusedElement);
+  { A field in a frame: its document's layout, at its frame's place. }
+  if not DocumentViewportOrigin(FLayout, FFocusedElement.NodeDocument, OriginX, OriginY, TargetLayout) then
+    Exit;
+  Box := TargetLayout.BoxOf(FFocusedElement);
   if Box = nil then
     Exit;
   Box.AbsolutePosition(BoxX, BoxY);
@@ -203,7 +208,9 @@ begin
   if Before <> '' then
     TextWidth := Font.MeasureText(Before, 1, Length(Before));
   LineHeight := Font.Ascent + Font.Descent + 2;
-  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  TargetLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  ScrollX := ScrollX - OriginX;
+  ScrollY := ScrollY - OriginY;
   Scale := DeviceScale;
   Left := Round((BoxX + Box.ContentLeft + Min(TextWidth, Box.ContentWidth) - ScrollX) * Scale);
   Top := Round((BoxY + Box.ContentTop + LineIndex * LineHeight - ScrollY) * Scale);

@@ -50,8 +50,12 @@
       targetOrigin = String(targetOriginOrOptions);
       if (transfer !== undefined) ports = Array.from(transfer);
     }
-    const source = natives.incumbentWindow();
-    const sourceOrigin = source.origin;
+    const incumbent = natives.incumbentWindow();
+    const source = incumbent.window;
+    const sourceOrigin = incumbent.origin;
+    // Ports only between windows of one origin (one heap: a port of
+    // another realm would hand over its realm).
+    if (sourceOrigin !== global.origin) ports = [];
     if (targetOrigin === "/") targetOrigin = sourceOrigin;
     else if (targetOrigin !== "*") {
       let parsed;

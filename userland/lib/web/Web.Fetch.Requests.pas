@@ -52,6 +52,7 @@ type
     DestinationEmpty,
     DestinationDocument,
     DestinationIframe,
+    DestinationFrame,
     DestinationScript,
     DestinationStyle,
     DestinationImage,
@@ -208,7 +209,7 @@ end;
 
 function DestinationName(Destination: TFetchDestination): string;
 const
-  Names: array[TFetchDestination] of string = ('', 'document', 'iframe', 'script', 'style', 'image', 'font', 'audio',
+  Names: array[TFetchDestination] of string = ('', 'document', 'iframe', 'frame', 'script', 'style', 'image', 'font', 'audio',
     'video', 'track', 'manifest', 'worker', 'object', 'report');
 begin
   Result := Names[Destination];

@@ -653,6 +653,13 @@ begin
   ContentY := Y + Box.ContentTop;
   ContentWidth := Box.ContentWidth;
   ContentHeight := Box.ContentHeight;
+  if Box.Content <> nil then
+  begin
+    { A frame: its document is painted there (Web.Layout.EmbeddedContent). }
+    Entry := Builder.List.Add(diFrame, ContentX, ContentY, ContentWidth, ContentHeight, Box);
+    Entry^.Index := Builder.List.AddFrame(Box.Content);
+    Exit;
+  end;
   if Box.ControlKind <> ControlImage then
   begin
     Entry := Builder.List.Add(diControl, ContentX, ContentY, ContentWidth, ContentHeight, Box);

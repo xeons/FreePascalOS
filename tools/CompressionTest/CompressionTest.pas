@@ -23,12 +23,14 @@
   members) decompressed whole and in pieces; broken streams refused
   with the right error; damaged streams handled cleanly; round trips at
   every level; sizes against zlib's; the stream adapters; preset
-  dictionaries and sync and full flushes, against zlib's and our own.
+  dictionaries and sync and full flushes, against zlib's and our own;
+  the brotli and Zstandard decoders over make-fixtures.py's fixtures.
 
-    CompressionTest [sample directory]
+    CompressionTest [sample directory [fixture directory]]
 
-  With a directory, it also writes compressed samples there for
-  check-with-zlib.py. Prints one line per check and the totals; exits
+  With a sample directory, it also writes compressed samples there for
+  check-with-zlib.py; with a fixture directory, it decodes the brotli
+  and zstd fixtures there. Prints one line per check and the totals; exits
   with 1 if any failed.
 }
 program CompressionTest;
@@ -40,7 +42,8 @@ uses
   TestChecks,
   CompressionTest.Decoding,
   CompressionTest.Encoding,
-  CompressionTest.Flushing;
+  CompressionTest.Flushing,
+  CompressionTest.Streaming;
 
 begin
   TestChecksums;
@@ -56,10 +59,13 @@ begin
   TestGzipHeaderWriting;
   TestDictionaries;
   TestFlushes;
+  TestStreamingTables;
   if ParamCount >= 1 then
   begin
     WriteSamples(ParamStr(1));
     WriteDictionaryAndFlushSamples(ParamStr(1));
   end;
+  if ParamCount >= 2 then
+    TestStreamingFixtures(ParamStr(2));
   FinishChecks('compression test');
 end.

@@ -35,6 +35,9 @@
     style (background-image, list-style-image, content: SetUrlImage, by
     the URL text as written, with the base it is relative to given in
     OnImageNeeded). Images are owned here.
+  - frames: what an iframe (or frame) shows, a TEmbeddedContent its
+    owner (Web.Frames.Views) sets and takes away (SetElementFrame; not
+    owned here).
 
   DocumentResourcesOf(Document) finds (or makes) a document's object,
   so the loader and the layout need not know about each other.
@@ -47,12 +50,12 @@ unit Web.Layout.Resources;
 interface
 
 uses
-  Web.Dom, Css.Stylesheets, Image.Model;
+  Web.Dom, Css.Stylesheets, Image.Model, Web.Layout.EmbeddedContent;
 
 type
   { rcFonts: the font library gained faces (@font-face): text is
     measured again. }
-  TResourceChange = (rcStyleSheets, rcImages, rcFonts);
+  TResourceChange = (rcStyleSheets, rcImages, rcFonts, rcFrames);
 
   TResourceListener = procedure(Change: TResourceChange) of object;
   { A url() image is wanted (once per URL text): Url as written, BaseUrl
@@ -73,6 +76,11 @@ type
     NaturalWidth, NaturalHeight: Single;
   end;
 
+  TElementFrame = record
+    Element: TElement;
+    Content: TEmbeddedContent;
+  end;
+
   TUrlImage = record
     Url: string;
     Image: TImage;
@@ -86,6 +94,7 @@ type
     FUserSheets: array of TCssStyleSheet;
     FElementImages: array of TElementImage;
     FUrlImages: array of TUrlImage;
+    FFrames: array of TElementFrame;
     FListeners: array of TResourceListener;
     FOnImageNeeded: TImageNeededEvent;
     FOnImportsNeeded: TImportsNeededEvent;
@@ -113,6 +122,12 @@ type
     { The natural size given with the element's image; False when none
       was given (the image's pixel size is its natural size). }
     function ElementImageNaturalSize(Element: TElement; out Width, Height: Single): Boolean;
+    { What a frame element shows (nil: nothing); not taken. }
+    procedure SetElementFrame(Element: TElement; Content: TEmbeddedContent);
+    function ElementFrame(Element: TElement): TEmbeddedContent;
+    function FrameCount: Integer;
+    function FrameElementAt(Index: Integer): TElement;
+    function FrameContentAt(Index: Integer): TEmbeddedContent;
     { The font library changed (web fonts): layouts measure text again. }
     procedure FontsChanged;
     { A url() image by its URL text; takes Image. }
@@ -335,6 +350,58 @@ begin
   Width := FElementImages[Index].NaturalWidth;
   Height := FElementImages[Index].NaturalHeight;
   Result := (Width > 0) and (Height > 0);
+end;
+
+procedure TDocumentResources.SetElementFrame(Element: TElement; Content: TEmbeddedContent);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FFrames) do
+    if FFrames[Index].Element = Element then
+    begin
+      if FFrames[Index].Content = Content then
+        Exit;
+      if Content = nil then
+      begin
+        FFrames[Index] := FFrames[High(FFrames)];
+        SetLength(FFrames, Length(FFrames) - 1);
+      end
+      else
+        FFrames[Index].Content := Content;
+      Notify(rcFrames);
+      Exit;
+    end;
+  if Content = nil then
+    Exit;
+  SetLength(FFrames, Length(FFrames) + 1);
+  FFrames[High(FFrames)].Element := Element;
+  FFrames[High(FFrames)].Content := Content;
+  Notify(rcFrames);
+end;
+
+function TDocumentResources.ElementFrame(Element: TElement): TEmbeddedContent;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FFrames) do
+    if FFrames[Index].Element = Element then
+      Exit(FFrames[Index].Content);
+  Result := nil;
+end;
+
+function TDocumentResources.FrameCount: Integer;
+begin
+  Result := Length(FFrames);
+end;
+
+function TDocumentResources.FrameElementAt(Index: Integer): TElement;
+begin
+  Result := FFrames[Index].Element;
+end;
+
+function TDocumentResources.FrameContentAt(Index: Integer): TEmbeddedContent;
+begin
+  Result := FFrames[Index].Content;
 end;
 
 procedure TDocumentResources.FontsChanged;

@@ -5873,8 +5873,10 @@ become GET without content and its fields, 307/308 keep both,
 credentials only to the same origin, cookies worked out again, at most
 20), 401 answered with credentials (once, again for a stale nonce),
 content decoding (`Http.ContentDecoding`: gzip and x-gzip with
-concatenated members, deflate as zlib or raw; Brotli and zstd are not
-offered - Brotli needs RFC 7932's 122 KiB dictionary in the tree), and
+concatenated members, deflate as zlib or raw, br and zstd (several
+frames), all through libcompression's streaming decoders, in pieces as
+the body arrives; `SupportedAcceptEncoding`, "gzip, deflate, br, zstd",
+names exactly the codings compiled in), and
 the content handed to a sink as it comes; OnHead sees the final head
 first and a cancel token stops it from another thread. `Get` is the
 one-line form; `Http.FetchTasks` runs fetches on threads (OnHead,
@@ -5926,8 +5928,7 @@ thread safe.
   keeps no data of unknown record types.
 
 Not here yet: proxies (wget had none), 100-continue, HTTP/2 PING
-keep-alive, HSTS and CORS (libweb's), Brotli and zstd, the full UTS #46
-table.
+keep-alive, HSTS and CORS (libweb's), the full UTS #46 table.
 
 **Tests** (`make http-test`, tools/HttpTest): the URL Standard (about
 200 cases written from the standard's examples and rules: special and
@@ -6277,8 +6278,10 @@ signatures and the public keys.
 
 **libcompression** (`userland/lib/compression`, units `Compression.*`)
 is deflate (RFC 1951) both ways, with the zlib (RFC 1950) and gzip
-(RFC 1952) wrappers and their checksums. It needs only libsystem.
-libimage uses it for PNG and TIFF, gzip for .gz files.
+(RFC 1952) wrappers and their checksums, and brotli (RFC 7932) and
+Zstandard (RFC 8878) decompression. It needs only libsystem. libimage
+uses it for PNG and TIFF, gzip for .gz files, libhttp for content
+codings.
 
 ```
   Compression.Buffers   CompressZlib, DecompressGzip, ... on TBytes (raise)
@@ -6296,6 +6299,18 @@ libimage uses it for PNG and TIFF, gzip for .gz files.
   Compression.BitWriter  Compression.ZlibFormat  Compression.GzipFormat
   Compression.Checksums (Adler-32, CRC-32)  Compression.DeflateFormat
   Compression.Formats  Compression.Errors
+=========== streaming decoders, one interface ==============================
+  Compression.StreamingDecoders  TStreamingDecoder (TInflater's contract)
+  Compression.InflatingDecoders  TInflatingDecoder: a TInflater behind it
+  Compression.BrotliDecoder   TBrotliDecoder: steps, undone at a short read
+  Compression.BrotliMetaBlocks  BrotliPrefixCodes  BrotliContextMaps
+  Compression.BrotliBitReader  carry for the bytes of an unfinished step
+  Compression.BrotliDictionary (+ BrotliDictionaryData.inc, checked in)
+  Compression.BrotliTransforms  BrotliTables (lengths, context lookup)
+  Compression.ZstdDecoder     TZstdDecoder: frames, skippable, blocks
+  Compression.ZstdLiterals  ZstdHuffman  ZstdSequences  ZstdFrames
+  Compression.FiniteStateEntropy  ZstdBitReaders  XxHash64
+  Compression.OutputWindows   the ring both write into, grown on demand
 =========== libsystem ======================================================
 ```
 
@@ -6362,6 +6377,78 @@ is strict about cut off data and trailing bytes and can be bounded
 (`MaximumSize`). `Compression.Streams` puts both directions behind a
 `TStream`.
 
+**Brotli and Zstandard.** `TBrotliDecoder` and `TZstdDecoder` decompress
+with `TInflater`'s contract behind `TStreamingDecoder` (`SetInput`,
+`Decompress`, `Finished`, `Error`, `InputRemaining`), as does
+`TInflatingDecoder` around a `TInflater`, so libhttp drives all four
+codings alike. Both write into a `TOutputWindow`: a ring that is a
+power of two of at least the stream's window, starting at 64 KiB and
+doubling with the output (only while it has not wrapped, so growing is
+one reallocation), never beyond the window, so a short response never
+takes the 16 MiB a brotli stream may ask for; output leaves it as far
+as the caller's buffer goes, and decoding stops when what is not taken
+would be overwritten.
+
+Brotli is decoded in steps small enough to read again whole: the window
+size, a meta-block header, each block category's type count, codes and
+first count, the distance parameters and context modes, a context map,
+one prefix code, a block switch, a command (its code and both extra
+fields), one literal, a distance. `Compression.BrotliBitReader` reads a
+64-bit buffer refilled eight bytes at a time; a read past the input
+marks the step overrun and gives zeros, and the decoder then puts the
+reader back where the step began and keeps the bytes it had begun on in
+a carry (fewer than one step takes), so the caller's piece is let go
+and the step is read again when more input comes. A literal is decoded
+without that mark while 15 bits are at hand. Copies, dictionary words
+(transformed into a 37-byte buffer) and uncompressed meta-blocks (taken
+straight into the ring) carry on across calls by their remaining
+length. Prefix codes use `Compression.HuffmanDecoding`'s two-level
+tables (8 root bits), all the trees of a group end to end in one array;
+the code length code is a fixed canonical code built once. Checked: the
+window size pattern, reserved and padding bits (after uncompressed and
+metadata headers and at the end of the stream), nibbles and metadata
+lengths without needless zeros, complete codes, repeats within the
+alphabet, context map runs, block types, distances (a special distance
+of 0 or less), copy and insert lengths within the meta-block, and
+dictionary references (length 4 to 24, transform below 121).
+
+The static dictionary (122,784 bytes) is
+`Compression.BrotliDictionaryData.inc`, checked in: it was written once
+by `userland/lib/compression/make-brotli-dictionary.py`, which takes it
+from the host's brotli library (libbrotlicommon's
+`BrotliGetDictionary()` through ctypes) and refuses it unless its size
+and CRC-32 are the RFC's (0x5136cb04); `--check` reads an include back
+and checks it again. It is checked in rather than made at build time
+because a build machine need not have brotli, and every host test that
+compiles libhttp would otherwise need the generated file. The 121
+transforms are a table written from the RFC's appendix B; the test
+checks its CRC-32 (0x3d965f81) as the RFC gives it.
+
+Zstandard: frames follow one another as one output; skippable frames
+are passed over; anything else after a frame fails. The frame header
+is gathered byte by byte (the window size, with the 128 MiB that zstd
+itself allows by default, `MaximumWindowSize`; a dictionary id fails
+with `CompressionErrorDictionaryNeeded`). A raw block is copied as its
+bytes come, an RLE block written at once, a compressed block (at most
+128 KiB) decoded when it is all at hand - straight from the caller's
+piece when that holds all of it, else gathered first - and only once
+the output before it is taken. Literals are raw (used where they are),
+RLE, or Huffman coded (`Compression.ZstdHuffman`: weights direct or FSE
+coded with two states, a single lookup table of up to 11 bits, one or
+four streams, treeless blocks reusing the last tree);
+`Compression.ZstdSequences` reads the three FSE tables (predefined,
+built once per decoder; RLE; sent; repeat), then decodes each sequence
+from the backward bitstream and carries it out at once: literals, then
+the match from the offset (the three repeat offsets kept across the
+frame's blocks). Every length, offset (against the frame's output and
+the window), table and stream end is checked; so are the content size
+when the header gives it and the XXH64 content checksum
+(`Compression.XxHash64`) unless `VerifyChecksum` is off.
+
+On the host (built without range checks) the decoders give roughly 250
+MiB/s (brotli) and 330 MiB/s (zstd) on text at high levels, and over 1
+GiB/s on repetitive data.
+
 `make compression-test` (part of `make test`) builds the library on the
 host as `tools/CompressionTest`, with vectors that
 `tools/CompressionTest/make-vectors.py` makes with Python's zlib when
@@ -6383,8 +6470,26 @@ refused without it or with another; zlib's sync and full flushes
 giving all the input before them at once, and the data after a full
 flush decompressing on its own; the same of the library's own
 dictionaries and flushes at every level, whose samples Python's zlib
-then checks (`zdict`, decompressing up to each flush point). On the
-system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
+then checks (`zdict`, decompressing up to each flush point). The brotli
+and zstd decoders are checked over fixtures that
+`tools/CompressionTest/make-fixtures.py` makes when the test is built,
+with the host's `brotli` and `zstd` programs and Python's
+`compression.zstd`: eight kinds of data (empty, one byte, text, UTF-8
+in several scripts, binary records, noise, zeros, 3 MiB of repetition)
+at brotli qualities 0 to 11 and windows of 2^10 and 2^24, zstd levels
+1 to 22, without a checksum, a 1 KiB window, long distance matching and
+streamed without a content size; several frames, skippable frames, a
+metadata block (a brotli comment); streams made bit by bit (the empty
+stream 06, metadata, an uncompressed meta-block, one-symbol codes,
+dictionary words with and without a transform), each checked with the
+host's decoder first; and broken ones: cut short, changed (brotli has no
+check, so changed brotli data must only not crash), a bad window, bad
+padding, trailing bytes, a bad checksum, magic or reserved bit, a
+dictionary id, a 2 TiB window, a wrong content size. Each is decoded
+whole, in varying pieces and a byte at a time in and out, and the
+dictionary, transforms and context tables are checked against the RFC's
+CRC-32s, XXH64 against known answers; the decoding speed is printed. On
+the system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
 decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
@@ -10173,7 +10278,7 @@ waits for work itself (programs without a GUI loop).
 
 Not yet: CSP enforcement and Subresource Integrity (both are stored on
 the request), ORB, bfcache, pushState/replaceState (the entries have the
-slot), iframes (one navigable per page), form submission, Service
+slot), `<object>`/`<embed>` documents, form submission, Service
 Workers, blob: URLs, animated images (the first frame is shown).
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
@@ -10427,8 +10532,104 @@ detached; what the parent kept still works, running in the caller's
 realm). Frames are freed with their top-level context, after its engine
 (their cells live in its runtime). `TFrameEnvironment` forwards timers,
 prompts, cookies, storage, fetches and the user agent to the parent's
-environment. Not yet: frames do not load `src` documents, are not laid
-out or painted, and get no input (reCAPTCHA's widget stays empty).
+environment. That is the script-only path (an environment that does not
+manage frames: tests, `ParseDocument`); a page's frames are child
+navigables (below).
+
+**Frames of a page** (`Web.Navigation.Navigables.Frames.inc`,
+`Web.Navigation.FramePolicy`, `Web.Script.FrameNavigables`,
+`Web.Bindings.CrossOrigin`, `Web.Frames.Views`). Each `<iframe>` and
+`<frame>` that becomes connected in a navigable's active document gets a
+child `TNavigable` (`CreateChild`) at once - the loader's observer
+reports frame elements (`OnFrameInserted`, `OnFrameChanged` for src,
+srcdoc and name, `OnFrameRemoved`) - with an initial about:blank
+document of the parent's origin, so contentWindow works right after the
+insertion; then the iframe's attributes are processed as the HTML
+Standard says: srcdoc navigates to about:srcdoc in a task, src to its
+URL against the parent's base URL (about:blank at the first insertion
+only fires load, at once), `loading=lazy` waits for the parent's load
+event, a URL of an ancestor's document or a ninth level is not loaded.
+The navigation request is the parent document's (its client: origin,
+referrer and policy, the top-level site that SameSite cookies are
+judged by), destination iframe or frame, the element's referrerpolicy;
+a response that X-Frame-Options (DENY, SAMEORIGIN against every
+ancestor) or an enforced CSP `frame-ancestors` (which decides when
+present) keeps out shows an error page. The sandbox attribute as it is
+at each navigation: without allow-scripts the document gets no script
+executor, without allow-same-origin an opaque origin (no cookies, no
+storage), without allow-modals no prompts; nested frames keep their
+ancestors' restrictions; `allow` is kept, not enforced. While a child
+loads it delays its parent's load event (lazy ones do not); when its
+document has loaded, load fires at the element. Documents carry their
+origin when it is not their URL's (`TDocument.OriginText`,
+`Web.Origins`: about:blank and srcdoc documents their creator's, opaque
+ones stable per document). A navigation while the child or its parent
+is still loading replaces the child's entry; a later one adds one to
+the child's history and one naming the child (`FrameId`, `FrameIndex`)
+to the top-level history, the joint session history: Back and Forward
+over such entries traverse the child (`TraverseFrames`), history.length
+and history.go in a frame are the joint history's. The element leaving
+or its document being unloaded detaches the child at once (loading
+stopped, its windows closed, its rendering withdrawn) and frees it in a
+later task. `ChooseNavigable` gives a link's or form's target (_self,
+_parent, _top, a frame's name; nil for _blank or an unknown name, a new
+tab).
+
+A child document's script context is made by the page's executor with
+`CreateFrame` in a realm of its parent's engine and the child's window
+(`TNavigableFrameEnvironment`: the page's environment for timers,
+cookies, storage, fetches and prompts with the frame's own context, the
+child navigable for location, navigation, pushState, the viewport and
+media queries, a `TFrameScriptLayout` for geometry). Cross-origin frames
+share the heap too (one runtime per page: objects cannot be passed
+between heaps, and postMessage's source, frames[i] and parent stay plain
+references); what keeps origins apart is that a window's global object
+is never handed to script of another origin: contentWindow, parent,
+top, frames[i] and a message's source go through `WindowValueFor`,
+which gives a cross-origin view (`TCrossOriginWindowView`, an exotic
+object of the asking realm, cached per pair) answering only window,
+self, frames, top, parent, opener, closed, length, the frames by index,
+location (a view whose href may be set and replace() called),
+postMessage, close, focus and blur, undefined for then and the three
+symbols, a SecurityError for anything else; contentDocument and
+frameElement are null across origins. postMessage through a view calls
+the target's own and turns its exceptions into the caller's realm's;
+ports are passed only between windows of one origin. A frame's window
+is closed when its document is left (contentWindow is then the next
+document's) and freed with its top-level context. The global object's
+index properties follow its frames (`UpdateFrameIndices`). A
+sandboxed frame without scripts has no window object (frames.length
+does not count it).
+
+Rendering: `TLayoutResourceSink.CreateChildSink` gives each child a
+rendering sink and a `TFrameView` (its navigable observer): per
+document a `TDocumentLayout` and `TDocumentPainter`, registered in the
+parent document's resources under the element as a `TEmbeddedContent`
+(`Web.Layout.EmbeddedContent`). The parent's layout gives it the
+frame's content box (300 by 150 without a ratio by default; width,
+height, CSS, the UA sheet's 2px inset border, `frameborder=0`) and its
+scale (zoom and DPI inherited) and brings it up to date after its own
+layout; its paint version includes the frames'. The builder emits a
+`diFrame` item and the raster asks the frame to paint itself into the
+visible part of its box (`PaintShifted`: the view's `ShiftX`/`ShiftY`),
+with a thin scroll bar when the document overflows (not with
+`scrolling="no"`). `HitTestThroughFrames` descends into frames and
+`DocumentViewportOrigin` says where a frame's viewport is. With a null
+sink (tests) children load without views.
+
+**Workers** (`platform/65-workers.js`, `Web.Script.NativeWorkers`).
+`new Worker(url)` fetches the script and runs it in a bare realm of the
+window's runtime (its own built-ins, no DOM: `TBindingContext.
+WorkerEngines`, whose jobs run at the window's checkpoints) on the
+window's thread. The scope has self, location, navigator, name,
+postMessage, close, the listener methods and onmessage, and the
+window's timers, fetch, crypto, performance, console, encoders, URLs,
+blobs, streams and messaging classes; messages are structured clones in
+tasks; uncaught errors fire error at the Worker. importScripts cannot
+wait for a fetch on this thread: one with scripts not yet fetched stops
+the worker's script, fetches them (through fetch(), so CORS applies) and
+runs the script again from the start in a new scope (reCAPTCHA's
+webworker.js is one importScripts line).
 
 **Platform scripts** (`Web.Script.Natives`, `userland/lib/web/platform/*.js`).
 Interfaces that are mostly object juggling and promises over a few engine
@@ -10513,11 +10714,11 @@ traffic", /sorry/index), whose reCAPTCHA widget needs src iframes.
 
 **Not done yet**: import maps, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), document.open on a loaded
-document, shadow DOM, Range and Selection, TreeWalker, iframes with src
-documents (loading, layout, painting, input), synchronous
+document, shadow DOM, Range and Selection, TreeWalker, `<object>` and
+`<embed>` documents, frameset layout (`<frame>` loads but is laid out as
+an inline replaced box), shared and service workers, synchronous
 XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
-insertRule), Brotli and zstd content codings (Accept-Encoding offers
-gzip and deflate only), the storage event between windows, images'
+insertRule), the storage event between windows, images'
 natural size for script.
 
 ### Tests
@@ -11120,9 +11321,23 @@ asked again after it handled a move (`TControlWindow`), and
   view's layout and painter (getBoundingClientRect, scrolling,
   elementFromPoint, getComputedStyle).
 
+Frames (`WebView.Control.Frames.inc`): the pointer is hit tested through
+frames (`HitTestThroughFrames`), so hover (up through the iframe into
+the parent), active, cursors, link status, clicks, focus, the caret,
+keys and the text editor work on the frame's document, each element's
+states going to its own document's layout; links and forms in a frame
+navigate the navigable their target chooses (the frame itself by
+default; _top, _parent, a name; _blank or an unknown name a new tab);
+the wheel scrolls the innermost container, then the frame's viewport,
+then outwards. The view fires MouseEvents (`WebView.MouseEvents`:
+mousedown, mouseup, click, mousemove, mouseover, mouseout,
+contextmenu, with client coordinates in the target document's own
+viewport, page offsets, offsetX/Y, button, buttons, detail and
+modifiers); a cancelled mousedown keeps the focus and selection.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing.
+printing, text selection inside frames, Tab moving into frames.
 
 ## Browser
 

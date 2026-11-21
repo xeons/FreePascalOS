@@ -54,6 +54,10 @@ type
     ViewportWidth, ViewportHeight: Single;
     { The part of the surface to draw (device pixels). }
     Damage: TRectangle;
+    { The surface's pixel (0, 0) shows the viewport's device pixel
+      (ShiftX, ShiftY) (a frame painted into the visible part of its
+      box); 0 for a whole viewport. }
+    ShiftX, ShiftY: LongInt;
   end;
 
 procedure RasterizeDisplayList(List: TDisplayList; const Surface: TSurface; const View: TRasterView);
@@ -68,7 +72,7 @@ uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
-  Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky;
+  Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent;
 
 type
   { A group: drawn into a surface of its own (as big as the clip when it
@@ -1026,6 +1030,21 @@ begin
   FreeSurface(Group^.Surface);
 end;
 
+{ A frame's document paints itself into the frame's content box, within
+  the clip (rounded clips are taken as their bounds). }
+procedure DrawFrame(var Raster: TRaster; const Item: TDisplayItem);
+var
+  Bounds, Clip: TRectangle;
+  Content: TEmbeddedContent;
+begin
+  Content := TEmbeddedContent(Raster.List.Frames[Item.Index]);
+  Bounds := DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height);
+  Bounds := OffsetRectangle(Bounds, Raster.Canvas.OriginX, Raster.Canvas.OriginY);
+  if not IntersectRectangles(Bounds, RegionBounds(Raster.Canvas.Clip), Clip) then
+    Exit;
+  Content.PaintInto(Raster.Canvas.Surface, Bounds.Left, Bounds.Top, Clip);
+end;
+
 procedure RasterizeDisplayList(List: TDisplayList; const Surface: TSurface; const View: TRasterView);
 var
   Raster: TRaster;
@@ -1044,8 +1063,8 @@ begin
   Raster.OriginY := View.ScrollY;
   Raster.Origins := nil;
   Raster.OriginDepth := 0;
-  Raster.ShiftX := 0;
-  Raster.ShiftY := 0;
+  Raster.ShiftX := View.ShiftX;
+  Raster.ShiftY := View.ShiftY;
   Raster.Glyphs := nil;
   BeginCanvas(Raster.Canvas, Surface);
   SetRegionToRectangle(Region, View.Damage);
@@ -1078,6 +1097,7 @@ begin
         diShadow: DrawShadow(Raster, Item^);
         diControl: DrawControl(Raster, Item^);
         diControlText: DrawControlText(Raster, Item^);
+        diFrame: DrawFrame(Raster, Item^);
       end;
     end;
   end;

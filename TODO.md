@@ -737,9 +737,9 @@ normalized (0-65535), not pixels.
       certificate under the test root); libquic's own waits (a full send
       buffer, MAX_STREAMS) to wait in slices too, so a large upload does
       not hold the connection's lock
-- [ ] libhttp: Brotli (needs RFC
-      7932's dictionary in the tree) and zstd, proxies (http_proxy,
-      CONNECT), 100-continue, a PING keep-alive and idle timeout for
+- [x] libhttp: Brotli and zstd content codings, decoded in pieces as
+      the body arrives (libcompression's streaming decoders)
+- [ ] libhttp: proxies (http_proxy, CONNECT), 100-continue, a PING keep-alive and idle timeout for
       HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
       suffix list on the system disk, a persistent cookie store for the
       browser, HSTS, CORS and the rest of Fetch's request modes (libweb)
@@ -1272,7 +1272,8 @@ Part 2, loading side (event loop, fetch, loading, navigation):
 - [x] history.pushState/replaceState (TNavigable.ChangeUrlFromScript)
 - [ ] bfcache; popstate's state object across documents
 - [x] Form submission from the web view (GET and POST, urlencoded)
-- [ ] iframes and nested navigables; multipart/form-data
+- [x] iframes and nested navigables (child navigables, joint session history)
+- [ ] multipart/form-data
 - [ ] Animated images (only the first frame goes to the sink); decoding
       images progressively as they arrive
 - [ ] ORB (opaque response blocking) for no-cors responses; blob: URLs
@@ -1332,12 +1333,18 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       ResizeObserver, FontFace, CSS.supports/escape, Image/Option
 - [x] iframes: about:blank and srcdoc windows in a realm of the parent's
       engine (libjavascript: several realms per runtime)
-- [ ] iframes with src documents: loading, layout, painting, input
-      (Google's CAPTCHA page needs them for reCAPTCHA)
+- [x] iframes with src documents: loading (sandbox, X-Frame-Options,
+      frame-ancestors, lazy), layout, painting, input, cross-origin views,
+      postMessage across origins; dedicated workers
+- [ ] `<object>`/`<embed>` documents; frameset layout; a WindowProxy for
+      sandboxed frames without scripts; Permissions Policy (allow)
+- [ ] reCAPTCHA in the OS: the anchor renders, but in QEMU it showed
+      "Could not connect to the reCAPTCHA service" (on the host the
+      widget initializes); find out what times out
 - [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
       (document.styleSheets, insertRule), Web Animations, synchronous XHR
-- [ ] Brotli and zstd content codings (Accept-Encoding offers gzip and
-      deflate only)
+- [x] Brotli and zstd content codings (Accept-Encoding offers gzip,
+      deflate, br and zstd)
 - [ ] Google search: the challenge runs (its token equals Firefox's for
       the same inputs) but Google sends this engine to its CAPTCHA page
 - [ ] A cheaper interface object: native accessors keyed by property in

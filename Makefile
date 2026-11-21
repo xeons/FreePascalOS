@@ -991,13 +991,20 @@ svg-test: $(SVG_TEST)
 
 # libcompression builds for the host too, and is checked there against
 # zlib's own output (made by Python's zlib when the test is built); what
-# it compresses is then decompressed by Python's zlib and gzip.
+# it compresses is then decompressed by Python's zlib and gzip. Its brotli
+# and zstd decoders are checked over fixtures make-fixtures.py makes with
+# the host's brotli and zstd programs.
 COMPRESSION_TEST := build/tools/CompressionTest
 COMPRESSION_TEST_UNITS := build/tools/compression-test-units
 COMPRESSION_VECTORS := $(COMPRESSION_TEST_UNITS)/CompressionTest.Vectors.inc
 COMPRESSION_SAMPLES := build/tools/compression-samples
+COMPRESSION_FIXTURES := build/tools/compression-fixtures
 COMPRESSION_TEST_SOURCES := $(wildcard tools/CompressionTest/*.pas) tools/CryptoTest/TestChecks.pas \
-	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	$(wildcard userland/lib/compression/*.inc)
+
+$(COMPRESSION_FIXTURES)/manifest.txt: tools/CompressionTest/make-fixtures.py
+	python3 -I $< $(COMPRESSION_FIXTURES)
 
 $(COMPRESSION_VECTORS): tools/CompressionTest/make-vectors.py
 	@mkdir -p $(COMPRESSION_TEST_UNITS)
@@ -1009,9 +1016,9 @@ $(COMPRESSION_TEST): $(COMPRESSION_TEST_SOURCES) $(COMPRESSION_VECTORS)
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/CompressionTest -Futools/CryptoTest -Fuuserland/lib/compression \
 		-Fi$(COMPRESSION_TEST_UNITS) -FU$(COMPRESSION_TEST_UNITS) -o$@ tools/CompressionTest/CompressionTest.pas
 
-compression-test: $(COMPRESSION_TEST)
+compression-test: $(COMPRESSION_TEST) $(COMPRESSION_FIXTURES)/manifest.txt
 	@mkdir -p $(COMPRESSION_SAMPLES)
-	@$(COMPRESSION_TEST) $(COMPRESSION_SAMPLES) > build/tools/compression-test.out || \
+	@$(COMPRESSION_TEST) $(COMPRESSION_SAMPLES) $(COMPRESSION_FIXTURES) > build/tools/compression-test.out || \
 		{ grep -A2 FAIL build/tools/compression-test.out; echo "COMPRESSION TEST FAILED (build/tools/compression-test.out)"; exit 1; }
 	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
 		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }

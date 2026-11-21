@@ -28,7 +28,8 @@
     /echo          the request's content back (Content-Length or chunked)
     /count         how many requests this connection carried
     /redirect      302 to /hello; /see-other 303 to /hello; /keep 307 to /echo
-    /gzip          gzip coded text; /deflate zlib coded
+    /gzip          gzip coded text; /deflate zlib coded; /br brotli
+                   coded; /zstd Zstandard coded
     /cookie        sets a cookie; /cookie-show the Cookie sent
     /cache         Cache-Control max-age=60 with an ETag; a matching
                    If-None-Match gets 304
@@ -77,6 +78,8 @@ uses
 const
   GzipHex = '1f8b08000000000002ffcb48cdc9c957c84027b9000088590b18000000';
   DeflateHex = '789c4b494dcb492c494d512849ad28e1020028c70529';
+  BrotliHex = '1f1700f8057463fd253de78341100459b014012a16e8dc326dea3101';
+  ZstdHex = '28b52ffd0468b50000807a7374616e646172642074657874200a010022cf3ab6122d9f';
 
 function HeadField(const Head, Name: string): string;
 var
@@ -229,6 +232,10 @@ begin
     Response(Self, '200 OK', 'Content-Encoding: gzip'#13#10, BytesText(GzipHex))
   else if Path = '/deflate' then
     Response(Self, '200 OK', 'Content-Encoding: deflate'#13#10, BytesText(DeflateHex))
+  else if Path = '/br' then
+    Response(Self, '200 OK', 'Content-Encoding: br'#13#10, BytesText(BrotliHex))
+  else if Path = '/zstd' then
+    Response(Self, '200 OK', 'Content-Encoding: zstd'#13#10, BytesText(ZstdHex))
   else if Path = '/cookie' then
     Response(Self, '200 OK', 'Set-Cookie: id=42; Path=/; SameSite=Lax'#13#10 +
       'Set-Cookie: __Host-bad=1; Path=/; Domain=example.com'#13#10, 'set')

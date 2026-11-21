@@ -61,6 +61,10 @@ type
     procedure Refresh;
     { Draws Damage (device pixels of Surface, which shows the viewport). }
     procedure Paint(const Surface: TSurface; const Damage: TRectangle);
+    { The same for a surface whose device pixel (0, 0) shows the
+      viewport's device pixel (ShiftX, ShiftY): a frame's document
+      painted into the part of its box that is visible. }
+    procedure PaintShifted(const Surface: TSurface; const Damage: TRectangle; ShiftX, ShiftY: LongInt);
     { The node at a viewport point (CSS px). }
     function HitTest(X, Y: Single): THitTestResult;
     property DisplayList: TDisplayList read FList;
@@ -102,6 +106,11 @@ begin
 end;
 
 procedure TDocumentPainter.Paint(const Surface: TSurface; const Damage: TRectangle);
+begin
+  PaintShifted(Surface, Damage, 0, 0);
+end;
+
+procedure TDocumentPainter.PaintShifted(const Surface: TSurface; const Damage: TRectangle; ShiftX, ShiftY: LongInt);
 var
   View: TRasterView;
   ScrollX, ScrollY: Single;
@@ -110,6 +119,8 @@ begin
   FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
   View.ScrollX := ScrollX;
   View.ScrollY := ScrollY;
+  View.ShiftX := ShiftX;
+  View.ShiftY := ShiftY;
   View.Scale := FLayout.Scale;
   View.ViewportWidth := FLayout.ViewportWidth;
   View.ViewportHeight := FLayout.ViewportHeight;
