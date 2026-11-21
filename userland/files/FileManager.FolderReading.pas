@@ -48,6 +48,7 @@ uses
   Abi.SystemCalls,
   Sys.Errors,
   Sys.Files,
+  Sys.Mounts,
   Util.Paths,
   Controls.FileNames,
   FileManager.Paths;
@@ -77,6 +78,15 @@ begin
   Item.VolumeNumber := Information.VolumeNumber;
 end;
 
+function BirthTimeOf(const Path: string): Int64;
+var
+  Times: TFileTimes;
+begin
+  Result := 0;
+  if (GetFileTimes(Path, False, Times) = ErrorNone) and ((Times.Flags and FileTimesHasBirthTime) <> 0) then
+    Result := Times.Birth.Seconds;
+end;
+
 function DescribeItem(const Path: string; out Item: TFolderItem): LongInt;
 var
   Information: TFileInformation;
@@ -88,6 +98,7 @@ begin
   if Result <> ErrorNone then
     Exit;
   TakeInformation(Item, Information);
+  Item.BirthTime := BirthTimeOf(Path);
   if Information.Kind <> KindSymbolicLink then
     Exit;
   Item.IsLink := True;

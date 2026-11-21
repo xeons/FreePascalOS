@@ -162,6 +162,7 @@ type
       above a point (its bottom kept there when its size changes). }
     FBand: TMenuBand;
     FOpenedAbove: Boolean;
+    FOnClosed: TMenuListEvent;
     function ItemTop(Index: LongInt): LongInt;
     function ItemAt(Y: LongInt): LongInt;
     procedure Highlight(Index: LongInt);
@@ -183,6 +184,7 @@ type
     procedure PointerMovedOutside(X, Y: LongInt);
     procedure FitToTheme;
     procedure UpdateBand;
+    procedure PopupDismissed(Sender: TControl);
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
@@ -193,6 +195,9 @@ type
     { Closes this menu and every one it came from. }
     procedure CloseAll;
     property Menu: TMenuItem read FMenu;
+    { Its pop-up closed (chosen from or not; before the chosen item's
+      OnClick runs): what opened it may look as it did again. }
+    property OnClosed: TMenuListEvent read FOnClosed write FOnClosed;
   end;
 
   TMenuBar = class(TWindowMenuBar)
@@ -442,6 +447,7 @@ begin
   Popup.OnPressedOutside := @Result.PressedOutside;
   Popup.OnPointerMovedOutside := @Result.PointerMovedOutside;
   Popup.OnThemeChanged := @Result.FitToTheme;
+  Popup.OnDismiss := @Result.PopupDismissed;
   Result.SetFocus;
   Popup.Popup;
   if Assigned(Menu.OnOpened) then
@@ -463,6 +469,12 @@ begin
 end;
 
 { --- TMenuList ------------------------------------------------------------------------ }
+
+procedure TMenuList.PopupDismissed(Sender: TControl);
+begin
+  if Assigned(FOnClosed) then
+    FOnClosed(Self);
+end;
 
 { The band down the side, there and as wide as the theme says. }
 procedure TMenuList.UpdateBand;

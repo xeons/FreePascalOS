@@ -51,6 +51,14 @@ const
   KeyZ = $2C;
   KeyD = $20;
   KeyL = $26;
+  KeyE = $12;
+  KeyP = $19;
+  KeyR = $13;
+  KeyT = $14;
+  KeyW = $11;
+  { The digits of the main keys, 1 to 9 one after another. }
+  Key1 = $02;
+  Key9 = $0A;
   KeyF2 = $3C;
   KeyF3 = $3D;
   KeyF4 = $3E;

@@ -1805,7 +1805,7 @@ checks.append(('paint: kill asks it to end, and with the picture saved it ends b
                paint_ended and b'PAINT-ASKED 0' in received))
 
 # The file manager (files), on a folder made over the serial shell:
-# icon, list and details views; sorting by a column's header; a folder
+# large icon, list and details views (Ctrl+Shift+2, 5, 6); sorting by a column's header; a folder
 # opened with a double click and Back; a new folder (Ctrl+Shift+N)
 # renamed with F2; a file copied with Ctrl+C and pasted with Ctrl+V into
 # another folder (the copy read back the same); a file dragged onto a
@@ -1862,15 +1862,15 @@ wait_for('FILES-PREPARED DONE', 30)
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'files /tmp/fm >> /tmp/f.log &\r')
-files_started = wait_for_files_log(['folder /tmp/fm 4', 'place item-alpha.txt', 'place view-details'], 30)
+files_started = wait_for_files_log(['folder /tmp/fm 4', 'place item-alpha.txt', 'place command-view'], 30)
 checks.append(('files: a folder shown at start (its items, the places to click)', files_started))
 place = places()
 views_ok = sorted_ok = back_ok = new_folder_ok = renamed_ok = False
 if files_started:
-    click_at(*place['view-list'])
-    click_at(*place['view-icons'])
-    click_at(*place['view-details'])
-    views_ok = wait_for_files_log(['view list', 'view icons', 'view details', 'place header-size'], 20)
+    press('ctrl-shift-5')
+    press('ctrl-shift-2')
+    press('ctrl-shift-6')
+    views_ok = wait_for_files_log(['view list', 'view large', 'view details', 'place header-size'], 20)
     place = places()
     # Sorted by size (a header click), then by name again.
     click_at(*place['header-size'])
@@ -1934,9 +1934,22 @@ if 'item-beta.txt' in place:
     press('delete')
     asked = wait_for_files_log(['asking delete 1'], 10)
     press('ret')
-    deleted_ok = asked and wait_for_files_log(['deleted 1', 'refreshed'], 30)
-output = shell_output('test ! -e /tmp/fm/beta.txt && echo DELETED-OK', 'FILES-DELETED')
-checks.append(('files: a file deleted after asking', deleted_ok and b'\nDELETED-OK' in output))
+    deleted_ok = asked and wait_for_files_log(['trashed 1', 'refreshed'], 30)
+output = shell_output('test ! -e /tmp/fm/beta.txt && ls /tmp/.Trash-0/files/beta.txt && echo DELETED-OK',
+                      'FILES-DELETED')
+checks.append(('files: a file moved to the recycle bin after asking (in /tmp/.Trash-0)',
+               deleted_ok and b'\nDELETED-OK' in output))
+# Undo (Ctrl+Z) brings it back from the recycle bin, Redo (Ctrl+Y) sends
+# it there again.
+undo_ok = False
+if deleted_ok:
+    press('ctrl-z')
+    undo_ok = wait_for_files_log(['undo delete', 'restored 1'], 30)
+    output = shell_output('test -f /tmp/fm/beta.txt && echo UNDONE-OK', 'FILES-UNDONE')
+    undo_ok = undo_ok and b'\nUNDONE-OK' in output
+    press('ctrl-y')
+    undo_ok = undo_ok and wait_for_files_log(['redo delete', 'trashed 1'], 30)
+checks.append(('files: Ctrl+Z restores what was deleted, Ctrl+Y deletes it again', undo_ok))
 
 # Another program makes a file: it shows without a refresh.
 type_on_serial(b'echo gamma > /tmp/fm/gamma.txt\r')
@@ -1949,8 +1962,11 @@ place = places()
 if appeared and 'item-gamma.txt' in place:
     click_at(*place['item-gamma.txt'])
     press('alt-ret')
-    properties_ok = wait_for_files_log(['properties /tmp/fm/gamma.txt size 6 mode 0644', 'place permission-group-write'],
-                                       15)
+    properties_ok = wait_for_files_log(['properties /tmp/fm/gamma.txt size 6 mode 0644',
+                                        'place properties-tab-security'], 15)
+    if properties_ok:
+        click_at(*places()['properties-tab-security'])
+        properties_ok = wait_for_files_log(['place permission-group-write'], 15)
     if properties_ok:
         click_at(*places()['permission-group-write'])
         mode_changed = wait_for_files_log(['mode /tmp/fm/gamma.txt 0664'], 15)
@@ -2015,6 +2031,78 @@ if wait_for_files_log(['folder /tmp/fm 4'], 15):
     double_click_at(*places()['item-gamma.txt'])
     notepad_opened = wait_for_files_log(['opened-with-notepad /tmp/fm/gamma.txt', 'title gamma.txt - Notepad'], 30)
 checks.append(('files: a text file opened in Notepad with a double click', notepad_opened))
+type_on_serial(b'kill $(pgrep notepad)\r')
+time.sleep(1)
+
+# Tabs: Ctrl+T opens a new one (at Home), Ctrl+Tab goes back to the
+# first, Ctrl+W closes the second.
+press('ctrl-t')
+tabs_ok = wait_for_files_log(['tab new 2', 'folder Home'], 15)
+press('ctrl-tab')
+tabs_ok = tabs_ok and wait_for_files_log(['tab switch 0', 'folder /tmp/fm 4'], 15)
+press('ctrl-tab')
+wait_for_files_log(['tab switch 1'], 15)
+press('ctrl-w')
+tabs_ok = tabs_ok and wait_for_files_log(['tab close 1', 'folder /tmp/fm 4'], 15)
+checks.append(('files: a new tab (Ctrl+T), switching tabs (Ctrl+Tab) and closing one (Ctrl+W)', tabs_ok))
+
+# Compressed folders: the tree compressed to ZIP from its context menu,
+# browsed like a folder, and extracted again with "Extract all" (the
+# extracted copy the same as the original).
+zipped_ok = extracted_ok = False
+place = places()
+if 'item-tree' in place:
+    click_at(*place['item-tree'])
+    right_click_at(*place['item-tree'])
+    if wait_for_files_log(['context-menu items', 'place context-compress-to-zip-file'], 15):
+        click_at(*places()['context-compress-to-zip-file'])
+        zipped_ok = wait_for_files_log(['compressed 1', 'place item-tree.zip'], 60)
+if zipped_ok:
+    double_click_at(*places()['item-tree.zip'])
+    zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1', 'place item-tree'], 20)
+if zipped_ok:
+    press('alt-up')
+    wait_for_files_log(['folder /tmp/fm '], 15)
+    click_at(*places()['item-tree.zip'])
+    if wait_for_files_log(['place command-extract'], 15):
+        click_at(*places()['command-extract'])
+        if wait_for_files_log(['extract-dialog /tmp/fm/tree', 'place extract-go'], 15):
+            click_at(*places()['extract-go'])
+            extracted_ok = wait_for_files_log(['extracted 1'], 60)
+# (Extracted into a folder named after the archive: the tree itself.)
+output = shell_output('sha256sum /tmp/fm/tree/big.bin /tmp/fm/tree/tree/big.bin; cat /tmp/fm/tree/tree/a/b/deep.txt',
+                      'FILES-ZIP', 30)
+digests = re.findall(rb'([0-9a-f]{64})  /', output)
+checks.append(('files: a folder compressed to ZIP (context menu) and browsed like a folder', zipped_ok))
+checks.append(('files: Extract all brings the same files back', extracted_ok and len(digests) == 2 and
+               digests[0] == digests[1] and b'\ndeep' in output))
+type_on_serial(b'rm -rf /tmp/fm/tree.zip /tmp/fm/tree/tree\r')
+time.sleep(1)
+press('alt-left')
+wait_for_files_log(['folder /tmp/fm '], 15)
+
+# Search: Ctrl+E, a word, Enter: the file deep in the tree is found
+# (results come in as they are found), Escape goes back.
+press('ctrl-e')
+type_on_keyboard('deep')
+press('ret')
+search_ok = wait_for_files_log(['search /tmp/fm deep', 'search-result 1', 'search-done 1', 'place item-deep.txt'], 30)
+press('alt-left')
+wait_for_files_log(['folder /tmp/fm '], 15)
+checks.append(('files: searching the folder (Ctrl+E) finds a file deep inside it', search_ok))
+
+# The preview pane (Alt+P) shows a picture.
+type_on_serial(b'cp /usr/share/icons/app-paint.ico /tmp/fm/picture.ico\r')
+preview_ok = False
+if wait_for_files_log(['refreshed', 'place item-picture.ico'], 20):
+    click_at(*places()['item-picture.ico'])
+    press('alt-p')
+    preview_ok = wait_for_files_log(['pane preview', 'preview image /tmp/fm/picture.ico'], 20)
+    press('alt-p')
+    wait_for_files_log(['pane none'], 10)
+checks.append(('files: the preview pane (Alt+P) shows a picture', preview_ok))
+type_on_serial(b'rm /tmp/fm/picture.ico\r')
+time.sleep(1)
 # The system clipboard and drag and drop between two programs: a second
 # Files window (on /tmp/fm2, its own process) dragged by its title bar
 # onto the second display; a path typed into the first window's address
@@ -2044,12 +2132,12 @@ type_on_serial(b'kill $(pgrep notepad); mkdir -p /tmp/fm2; files /tmp/fm2 > /tmp
 second_output, second_place = b'', {}
 for attempt in range(30):
     second_output, second_place = second_files_places('FILES2-' + str(attempt))
-    if b'folder /tmp/fm2 0' in second_output and 'menu-file' in second_place and 'address' in second_place:
+    if b'folder /tmp/fm2 0' in second_output and 'tab-new' in second_place and 'address' in second_place:
         break
     time.sleep(1)
 second_moved = False
-if 'menu-file' in second_place:
-    title_x, title_y = second_place['menu-file'][0] + 200, second_place['menu-file'][1] - 22
+if 'tab-new' in second_place:
+    title_x, title_y = second_place['tab-new'][0] + 300, second_place['tab-new'][1] - 32
     before = second_place.get('folder-empty-space')
     drag(title_x, title_y, title_x + 1280, title_y)
     time.sleep(1.5)

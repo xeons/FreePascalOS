@@ -573,6 +573,27 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
+- [x] Controls for a tabbed file manager in libcontrols: a tab strip
+      (reordered by dragging, dragged out into a window), a breadcrumb
+      address bar (chevron menus, overflow, editing with suggestions), a
+      command bar (drop-downs, an overflow menu), a progress dialog (pause,
+      cancel, a speed graph; transfer rates checked on the host) and their
+      icons
+- [x] File manager as a tabbed browser: tabs, breadcrumbs with chevrons and
+      completion, search with a query syntax streaming results, a command bar
+      and context menus (the classic menu behind "Show more options"), a
+      navigation pane (Home, Gallery, pinned folders, Computer with volumes
+      and free space, Network, the recycle bin), eight views with groups,
+      chooseable columns, thumbnails and check boxes (libcontrols' item view),
+      details and preview panes (web pages, pictures, text), Home (pinned,
+      favourites, recent) and Gallery pages, the recycle bin with restore
+      (Util.Trash), ZIP and tar archives browsed, made and extracted
+      (libarchive), undo and redo, batch rename, Open with by program.info
+      Extensions/MimeTypes and a default per type, options, properties with
+      General, Security and Details pages, view settings per folder
+- [ ] File manager: Network places (only a placeholder page), MP3 and other
+      sound lengths (only WAV is read), video thumbnails, dragging column
+      headers to reorder them, a real share sheet behind Share
 - [x] Control Panel: display, mouse, keyboard layout, sound, date and time,
       network, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every
@@ -613,7 +634,12 @@ normalized (0-65535), not pixels.
 - [x] libcompression: preset dictionaries (zlib FDICT and raw, both
       ways), flushing mid-stream (sync and full flush points);
       `zcat`/`gunzip` names for gzip; checked against Python's zlib
-- [ ] libcompression: zip archives
+- [x] libarchive: zip reading (ZIP64, stored/deflated, CRC checks, UTF-8
+      and CP437 names, Unix modes, links, data descriptors; encrypted
+      members reported and refused) and writing (deflate or stored,
+      ZIP64 when needed or forced), tar/ustar/GNU/pax and tar.gz reading,
+      ExtractAll with safe names, folder browsing (`make archive-test`)
+- [ ] libarchive: 7z reading
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:

@@ -40,6 +40,8 @@
 #                   plain logic on the host
 #   make controls-test  Check libcontrols' layout arithmetic on the host (anchors,
 #                   docking, flow and table panels, split containers)
+#   make navigation-controls-test  Check the plain logic of libcontrols' tab
+#                   strip, breadcrumb bar, command bar and transfer rates on the host
 #   make settings-test  Check the settings library on the host (files, escaping,
 #                   layering, two writers, damaged files, the network's
 #                   settings and state files)
@@ -48,6 +50,8 @@
 #   make compression-test  Check libcompression on the host against zlib's
 #                   output (made by Python), and have Python's zlib
 #                   decompress what it compresses
+#   make archive-test  Check libarchive on the host: zip and tar files made by
+#                   Python read, and the zips it writes checked by Python's zipfile
 #   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
 #                   exchange hash and keys, host keys and signatures against Python's
 #                   and OpenSSL's answers, and the server against a client in memory
@@ -203,8 +207,8 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test
+	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test
 
 all: esp
 
@@ -551,8 +555,8 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
+test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
@@ -908,7 +912,9 @@ paint-test: $(PAINT_TEST)
 	@echo "PAINT TEST PASSED: $$(tail -n 1 build/tools/paint-test.out)"
 
 # The file manager's plain logic (paths, numbered names, the history,
-# the order and types of items, permissions, what a drop does) and the
+# the order and types of items, permissions, what a drop does, natural
+# order, the search syntax, batch names, undo, conflicts, type
+# associations, the trash's info files, grouping, WAV headers) and the
 # libraries' file lists and typing to find a name build for the host
 # too, and are checked there.
 FILES_TEST := build/tools/FilesTest
@@ -919,11 +925,18 @@ FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Contro
 	userland/files/FileManager.Paths.pas userland/files/FileManager.ConflictNames.pas \
 	userland/files/FileManager.History.pas userland/files/FileManager.FileTypes.pas \
 	userland/files/FileManager.ItemOrder.pas userland/files/FileManager.Permissions.pas \
-	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas
+	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas tools/FilesTest/FilesTest.Explorer.pas \
+	userland/lib/controls/Controls.NaturalOrder.pas userland/lib/coreutils/Util.TrashInfo.pas \
+	userland/files/FileManager.FileKinds.pas userland/files/FileManager.CivilDates.pas \
+	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
+	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
+	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
+	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
+		-Fuuserland/lib/configuration -Fiuserland/lib/configuration -Fuuserland/lib/coreutils \
 		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
 
 files-test: $(FILES_TEST)
@@ -985,6 +998,24 @@ date-controls-test: $(DATE_CONTROLS_TEST)
 	@$(DATE_CONTROLS_TEST) > build/tools/date-controls-test.out || \
 		{ grep FAIL build/tools/date-controls-test.out; echo "DATE CONTROLS TEST FAILED (build/tools/date-controls-test.out)"; exit 1; }
 	@echo "DATE CONTROLS TEST PASSED: $$(tail -n 1 build/tools/date-controls-test.out | cut -d ' ' -f 2-)"
+
+# The plain logic behind libcontrols' tab strip, breadcrumb bar, command
+# bar and progress dialog (where their parts go, transfer rates and
+# their texts) builds for the host too, and is checked there.
+NAVIGATION_CONTROLS_TEST := build/tools/NavigationControlsTest
+NAVIGATION_CONTROLS_TEST_SOURCES := tools/NavigationControlsTest/NavigationControlsTest.pas \
+	userland/lib/controls/Controls.TransferRates.pas userland/lib/controls/Controls.TabStripLayout.pas \
+	userland/lib/controls/Controls.BreadcrumbLayout.pas userland/lib/controls/Controls.CommandLayout.pas
+
+$(NAVIGATION_CONTROLS_TEST): $(NAVIGATION_CONTROLS_TEST_SOURCES)
+	@mkdir -p build/tools/navigation-controls-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NavigationControlsTest -Fuuserland/lib/controls \
+		-FUbuild/tools/navigation-controls-test-units -o$@ tools/NavigationControlsTest/NavigationControlsTest.pas
+
+navigation-controls-test: $(NAVIGATION_CONTROLS_TEST)
+	@$(NAVIGATION_CONTROLS_TEST) > build/tools/navigation-controls-test.out || \
+		{ grep FAIL build/tools/navigation-controls-test.out; echo "NAVIGATION CONTROLS TEST FAILED (build/tools/navigation-controls-test.out)"; exit 1; }
+	@echo "NAVIGATION CONTROLS TEST PASSED: $$(tail -n 1 build/tools/navigation-controls-test.out | cut -d ' ' -f 2-)"
 
 # The settings library (libconfiguration) but for its files builds for
 # the host too, and is checked there over a storage in memory.
@@ -1120,6 +1151,34 @@ compression-test: $(COMPRESSION_TEST) $(COMPRESSION_FIXTURES)/manifest.txt
 	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
 		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }
 	@echo "COMPRESSION TEST PASSED: $$(tail -n 1 build/tools/compression-test.out | cut -d ' ' -f 3-)"
+
+# libarchive builds for the host too (over libcompression): it reads the
+# zip and tar files make-fixtures.py makes with Python's zipfile and
+# tarfile, and the zips it writes are checked by check-written.py with
+# Python's zipfile.
+ARCHIVE_TEST := build/tools/ArchiveTest
+ARCHIVE_TEST_UNITS := build/tools/archive-test-units
+ARCHIVE_FIXTURES := build/tools/archive-fixtures
+ARCHIVE_SAMPLES := build/tools/archive-samples
+ARCHIVE_TEST_SOURCES := $(wildcard tools/ArchiveTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Archive.Contents.pas,$(wildcard userland/lib/archive/*.pas)) \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	$(wildcard userland/lib/compression/*.inc)
+
+$(ARCHIVE_FIXTURES)/manifest.txt: tools/ArchiveTest/make-fixtures.py
+	python3 -I $< $(ARCHIVE_FIXTURES)
+
+$(ARCHIVE_TEST): $(ARCHIVE_TEST_SOURCES)
+	@mkdir -p $(ARCHIVE_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/ArchiveTest -Futools/CryptoTest -Fuuserland/lib/archive \
+		-Fuuserland/lib/compression -FU$(ARCHIVE_TEST_UNITS) -o$@ tools/ArchiveTest/ArchiveTest.pas
+
+archive-test: $(ARCHIVE_TEST) $(ARCHIVE_FIXTURES)/manifest.txt
+	@$(ARCHIVE_TEST) $(ARCHIVE_FIXTURES) $(ARCHIVE_SAMPLES) build/tools/archive-work > build/tools/archive-test.out || \
+		{ grep FAIL build/tools/archive-test.out; echo "ARCHIVE TEST FAILED (build/tools/archive-test.out)"; exit 1; }
+	@python3 -I tools/ArchiveTest/check-written.py $(ARCHIVE_SAMPLES) > build/tools/archive-written.out || \
+		{ cat build/tools/archive-written.out; echo "ARCHIVE TEST FAILED (Python's zipfile disagrees with what was written)"; exit 1; }
+	@echo "ARCHIVE TEST PASSED: $$(tail -n 1 build/tools/archive-test.out | cut -d ' ' -f 3-); $$(tail -n 1 build/tools/archive-written.out)"
 
 # The whole-buffer decoders the kernel unpacks a compressed RAM disk
 # with (xz/LZMA2 and gzip, userland/lib/compression), on the host, over

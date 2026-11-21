@@ -110,6 +110,7 @@ type
 
   TControlWindow = class(TWindow)
   private
+    FLastAcceleratorCode: LongWord;
     FAccelerators: array of TAccelerator;
     FRoot: TControl;
     FHost: TControlHost;
@@ -176,6 +177,9 @@ type
     { Code (a key code, Controls.Keys) with Modifiers (ModifierShift,
       ModifierControl, ModifierAlt) runs Handler. }
     procedure AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
+    { The key of the accelerator running now (one handler for several
+      keys tells them apart by it). }
+    property LastAcceleratorCode: LongWord read FLastAcceleratorCode;
     { Gives the window an icon of its own pictures: one image, or a few
       sizes of it (the server draws the nearest; Controls.WindowIcons).
       For an icon of the theme set IconName instead. False if refused. }
@@ -549,6 +553,7 @@ begin
   for Index := 0 to High(FAccelerators) do
     if (FAccelerators[Index].Code = Code) and (FAccelerators[Index].Modifiers = Held) then
     begin
+      FLastAcceleratorCode := Code;
       FAccelerators[Index].Handler(Self);
       Exit(True);
     end;

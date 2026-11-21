@@ -72,6 +72,7 @@ type
     FHasIcon: Boolean;
     FIconKind: TStockIcon;
     FImageIndex: LongInt;
+    FMayHaveChildren: Boolean;
     function GetHasIcon: Boolean;
     procedure SetImageIndex(Value: LongInt);
     function GetChild(Index: LongInt): TTreeNode;
@@ -82,6 +83,8 @@ type
     constructor Create(ATree: TTreeView; AParent: TTreeNode; const AText: string);
     destructor Destroy; override;
     function Add(const AText: string): TTreeNode;
+    { A child at Position among the others (at the end if past them). }
+    function Insert(Position: LongInt; const AText: string): TTreeNode;
     function Depth: LongInt;
     { Whether another node follows it under the same parent. }
     function HasNextSibling: Boolean;
@@ -89,12 +92,17 @@ type
     procedure SetIcon(Kind: TStockIcon);
     { Whether Node is this node or one below it. }
     function Contains(Node: TTreeNode): Boolean;
+    { Whether it has a box to open it: children, or MayHaveChildren. }
+    function ShowsToggle: Boolean;
     property Text: string read FText write SetText;
     property Parent: TTreeNode read FParent;
     property Count: LongInt read GetCount;
     property Children[Index: LongInt]: TTreeNode read GetChild; default;
     property Expanded: Boolean read FExpanded write SetExpanded;
     property Data: Pointer read FData write FData;
+    { Shows the box before any children are added, for children made
+      when it is first opened (OnExpandChanged): a folder's subfolders. }
+    property MayHaveChildren: Boolean read FMayHaveChildren write FMayHaveChildren;
     { A picture shows before the text (of the image list or a stock icon). }
     property HasIcon: Boolean read GetHasIcon;
     property IconKind: TStockIcon read FIconKind;
@@ -146,6 +154,8 @@ type
     procedure ReceiveMessage(var Message: TPostedMessage); override;
     { A node at the top level. }
     function AddRoot(const AText: string): TTreeNode;
+    { A node at the top level at Position among the others. }
+    function InsertRoot(Position: LongInt; const AText: string): TTreeNode;
     procedure Clear;
     { Takes Node (and the nodes below it) out of the tree and frees it. }
     procedure DeleteNode(Node: TTreeNode);
@@ -215,6 +225,11 @@ begin
   Result := TTreeNode(FChildren[Index]);
 end;
 
+function TTreeNode.ShowsToggle: Boolean;
+begin
+  Result := (FChildren.Count > 0) or FMayHaveChildren;
+end;
+
 function TTreeNode.GetCount: LongInt;
 begin
   Result := FChildren.Count;
@@ -224,6 +239,16 @@ function TTreeNode.Add(const AText: string): TTreeNode;
 begin
   Result := TTreeNode.Create(FTree, Self, AText);
   FChildren.Add(Result);
+  if FTree <> nil then
+    FTree.NodeChanged;
+end;
+
+function TTreeNode.Insert(Position: LongInt; const AText: string): TTreeNode;
+begin
+  if (Position < 0) or (Position > FChildren.Count) then
+    Position := FChildren.Count;
+  Result := TTreeNode.Create(FTree, Self, AText);
+  FChildren.Insert(Position, Result);
   if FTree <> nil then
     FTree.NodeChanged;
 end;
@@ -318,6 +343,11 @@ end;
 function TTreeView.AddRoot(const AText: string): TTreeNode;
 begin
   Result := FRoots.Add(AText);
+end;
+
+function TTreeView.InsertRoot(Position: LongInt; const AText: string): TTreeNode;
+begin
+  Result := FRoots.Insert(Position, AText);
 end;
 
 procedure TTreeView.Clear;
@@ -653,7 +683,7 @@ begin
     { The lines first: a node's box is drawn over where they meet. }
     if FShowLines then
       PaintLines(Inner, Node, Top);
-    if Node.Count > 0 then
+    if Node.ShowsToggle then
     begin
       Toggle := MakeRectangle(Left, Top + (RowHeight - Size) div 2, Size, Size);
       FillRectangle(Inner, Toggle, Theme.Field);
@@ -701,7 +731,7 @@ begin
   if Node = nil then
     Exit;
   Left := BoxRectangleLeft(Node);
-  if (Node.Count > 0) and (X >= Left) and (X < Left + Scaled(BoxSize)) then
+  if Node.ShowsToggle and (X >= Left) and (X < Left + Scaled(BoxSize)) then
   begin
     Node.Expanded := not Node.Expanded;
     Exit;
@@ -738,7 +768,7 @@ begin
     KeyEnd: Selected := VisibleNode(FVisible.Count - 1);
     KeyArrowRight:
       if FSelected <> nil then
-        if (FSelected.Count > 0) and not FSelected.Expanded then
+        if FSelected.ShowsToggle and not FSelected.Expanded then
           FSelected.Expanded := True
         else if FSelected.Count > 0 then
           Selected := FSelected[0];

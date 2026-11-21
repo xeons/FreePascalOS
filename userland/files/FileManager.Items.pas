@@ -52,6 +52,8 @@ type
     ModificationTime: Int64;
     AccessTime: Int64;
     ChangeTime: Int64;
+    { When it was made (0 where the file system does not keep it). }
+    BirthTime: Int64;
     { The volume it is on (TAbiFileInformation.VolumeNumber). }
     VolumeNumber: LongWord;
   end;

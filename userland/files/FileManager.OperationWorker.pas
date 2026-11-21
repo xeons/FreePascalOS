@@ -60,7 +60,8 @@ uses
   FileManager.Items,
   FileManager.OperationTypes,
   FileManager.OperationProgress,
-  FileManager.OperationQuestions;
+  FileManager.OperationQuestions,
+  Archive.Entries;
 
 type
   TOperationWorker = class
@@ -75,6 +76,23 @@ type
     FRenameFolder: string;
     { Bytes of the file being copied that are counted as done already. }
     FFileBytesCounted: QWord;
+    { The next conflict resolved is a top-level item's: where it went is
+      kept (FTopTarget) for undo. }
+    FTopLevel: Boolean;
+    FTopTarget: string;
+    { The archive progress last told (it counts from the start). }
+    FArchiveBytesSeen: QWord;
+    procedure NoteTopTarget(const Target: string);
+    procedure RecordDone(const Source, Target: string);
+    procedure ArchiveProgress(BytesDone: QWord; var Cancel: Boolean);
+    function TrashItem(const Path: string): Boolean;
+    function RestoreItem(const ItemPath: string): Boolean;
+    procedure CompressAll;
+    procedure AddToArchive(Writer: TObject; const Path, NameInArchive: string);
+    procedure ExtractArchive;
+    procedure ExtractEntry(Reader: TObject; Index: LongInt; const TargetPath: string);
+    procedure EntryArriving(const Entry: TArchiveEntry; const TargetPath: string; var Skip: Boolean);
+    procedure CountArchive(var Files, Bytes: QWord);
     function Stopping: Boolean;
     procedure CountItem(const Path: string; var Files, Bytes: QWord);
     procedure CountEverything;
@@ -105,6 +123,11 @@ uses
   Abi.SystemCalls,
   Sys.Files,
   Sys.FileCopies,
+  Sys.Processes,
+  Util.Trash,
+  Archive.Readers,
+  Archive.ZipWriter,
+  Archive.Extraction,
   Controls.FileNames,
   FileManager.Paths,
   FileManager.ConflictNames,
@@ -138,6 +161,7 @@ begin
   inherited Create;
   FRequest.Kind := ARequest.Kind;
   FRequest.TargetFolder := ARequest.TargetFolder;
+  FRequest.FromHistory := ARequest.FromHistory;
   UniqueString(FRequest.TargetFolder);
   SetLength(FRequest.Sources, Length(ARequest.Sources));
   { Copies of their own: the thread must share no strings with the
@@ -160,6 +184,8 @@ end;
 
 function TOperationWorker.Stopping: Boolean;
 begin
+  while FProgress.IsPaused and not FProgress.IsCancelled do
+    SleepMilliseconds(100);
   if not FStopped and FProgress.IsCancelled then
     FStopped := True;
   Result := FStopped;
@@ -188,6 +214,28 @@ begin
     Bytes := Bytes + Item.SizeInBytes;
 end;
 
+procedure TOperationWorker.CountArchive(var Files, Bytes: QWord);
+var
+  Reader: TArchiveReader;
+  Index: LongInt;
+begin
+  try
+    Reader := OpenArchive(FRequest.Sources[0]);
+    try
+      for Index := 0 to Reader.Count - 1 do
+      begin
+        Inc(Files);
+        Bytes := Bytes + Reader.Entries[Index].Size;
+      end;
+    finally
+      Reader.Free;
+    end;
+  except
+    on Exception do
+      Files := 0;
+  end;
+end;
+
 procedure TOperationWorker.CountEverything;
 var
   Files: QWord;
@@ -196,6 +244,17 @@ var
 begin
   Files := 0;
   Bytes := 0;
+  if FRequest.Kind in [OperationTrash, OperationRestore] then
+  begin
+    FProgress.SetTotals(Length(FRequest.Sources), 0);
+    Exit;
+  end;
+  if FRequest.Kind = OperationExtract then
+  begin
+    CountArchive(Files, Bytes);
+    FProgress.SetTotals(Files, Bytes);
+    Exit;
+  end;
   for Index := 0 to High(FRequest.Sources) do
     if (FRequest.Kind = OperationMove) and
        (VolumeNumberOf(FRequest.Sources[Index]) = VolumeNumberOf(FRequest.TargetFolder)) then
@@ -387,6 +446,7 @@ var
   Source: TFolderItem;
   Target: string;
   Error: LongInt;
+  Resolution: LongInt;
 begin
   if Stopping then
     Exit(False);
@@ -397,7 +457,9 @@ begin
     Exit(False);
   end;
   Target := TargetPath;
-  case ResolveConflict(SourcePath, Source, Target) of
+  Resolution := ResolveConflict(SourcePath, Source, Target);
+  NoteTopTarget(Target);
+  case Resolution of
     ResolutionNew:
       if (Source.Kind = ItemFolder) and not Source.IsLink then
         Result := CopyFolder(SourcePath, Target, False)
@@ -430,6 +492,7 @@ var
   Source: TFolderItem;
   Target: string;
   Error: LongInt;
+  Resolution: LongInt;
   Children: TFolderItems;
   Index: LongInt;
 begin
@@ -445,7 +508,9 @@ begin
   end;
   FProgress.SetCurrentName(Source.Name);
   Target := TargetPath;
-  case ResolveConflict(SourcePath, Source, Target) of
+  Resolution := ResolveConflict(SourcePath, Source, Target);
+  NoteTopTarget(Target);
+  case Resolution of
     ResolutionNew, ResolutionReplace:
       begin
         { A rename replaces a file at the target in one step. }
@@ -536,29 +601,297 @@ end;
 
 { --- The whole operation ------------------------------------------------------------------ }
 
+procedure TOperationWorker.NoteTopTarget(const Target: string);
+begin
+  if not FTopLevel then
+    Exit;
+  FTopTarget := Target;
+  FTopLevel := False;
+end;
+
+procedure TOperationWorker.RecordDone(const Source, Target: string);
+begin
+  SetLength(FOutcome.DoneSources, Length(FOutcome.DoneSources) + 1);
+  FOutcome.DoneSources[High(FOutcome.DoneSources)] := Source;
+  SetLength(FOutcome.DoneTargets, Length(FOutcome.DoneTargets) + 1);
+  FOutcome.DoneTargets[High(FOutcome.DoneTargets)] := Target;
+end;
+
+{ --- The trash ----------------------------------------------------------------------------- }
+
+function TOperationWorker.TrashItem(const Path: string): Boolean;
+var
+  Trashed: TTrashItem;
+  Error: LongInt;
+begin
+  FProgress.SetCurrentName(LastPartOf(Path));
+  Error := MoveToTrash(Path, Trashed);
+  FProgress.AddDone(1, 0);
+  Result := Error = ErrorNone;
+  if Result then
+    RecordDone(Path, TrashItemPath(Trashed))
+  else
+    AskAboutError('move to the recycle bin', Path, Error);
+end;
+
+function TOperationWorker.RestoreItem(const ItemPath: string): Boolean;
+var
+  Trashed: TTrashItem;
+  Target: string;
+  Error: LongInt;
+begin
+  FProgress.SetCurrentName(LastPartOf(ItemPath));
+  FProgress.AddDone(1, 0);
+  if not TrashItemAt(ItemPath, Trashed) then
+  begin
+    AskAboutError('restore', ItemPath, ErrorNotFound);
+    Exit(False);
+  end;
+  Target := Trashed.OriginalPath;
+  { Something there meanwhile: both are kept, the restored one numbered. }
+  if PathExists(PChar(Target)) then
+  begin
+    FRenameFolder := ParentFolderOf(Target);
+    Target := CombinePath(FRenameFolder, FirstFreeName(LastPartOf(Target), IsDirectory(PChar(ItemPath)),
+      @NameTakenInRenameFolder));
+  end;
+  Error := RestoreFromTrash(Trashed, Target);
+  Result := Error = ErrorNone;
+  if Result then
+    RecordDone(ItemPath, Target)
+  else
+    AskAboutError('restore', ItemPath, Error);
+end;
+
+{ --- Archives ------------------------------------------------------------------------------ }
+
+procedure TOperationWorker.ArchiveProgress(BytesDone: QWord; var Cancel: Boolean);
+begin
+  if BytesDone < FArchiveBytesSeen then
+    FArchiveBytesSeen := 0;
+  FProgress.AddDone(0, BytesDone - FArchiveBytesSeen);
+  FArchiveBytesSeen := BytesDone;
+  Cancel := Stopping;
+end;
+
+procedure TOperationWorker.AddToArchive(Writer: TObject; const Path, NameInArchive: string);
+var
+  Item: TFolderItem;
+  Children: TFolderItems;
+  Index: LongInt;
+begin
+  if Stopping or (DescribeItem(Path, Item) <> ErrorNone) then
+    Exit;
+  FProgress.SetCurrentName(Item.Name);
+  if (Item.Kind = ItemFolder) and not Item.IsLink then
+  begin
+    TZipWriter(Writer).AddFolder(NameInArchive + '/', Item.ModificationTime, Item.Mode and $FFF);
+    if ReadFolderItems(Path, True, Children) <> ErrorNone then
+      Exit;
+    for Index := 0 to High(Children) do
+      AddToArchive(Writer, CombinePath(Path, Children[Index].Name), NameInArchive + '/' + Children[Index].Name);
+    Exit;
+  end;
+  FArchiveBytesSeen := 0;
+  if Item.IsLink then
+    TZipWriter(Writer).AddLink(NameInArchive, Item.LinkTarget, Item.ModificationTime)
+  else if Item.Kind = ItemFile then
+    TZipWriter(Writer).AddFile(Path, NameInArchive, @ArchiveProgress);
+  FProgress.AddDone(1, 0);
+end;
+
+procedure TOperationWorker.CompressAll;
+var
+  Writer: TZipWriter;
+  Index: LongInt;
+  Target: string;
+begin
+  Target := FRequest.TargetFolder;
+  FProgress.SetCurrentName(LastPartOf(Target));
+  Writer := nil;
+  try
+    try
+      Writer := TZipWriter.Create(Target);
+      for Index := 0 to High(FRequest.Sources) do
+      begin
+        if Stopping then
+          Break;
+        AddToArchive(Writer, FRequest.Sources[Index], LastPartOf(FRequest.Sources[Index]));
+        Inc(FOutcome.ItemsDone);
+      end;
+      if not Stopping then
+      begin
+        Writer.Finish;
+        RecordDone('', Target);
+      end;
+    except
+      on Problem: Exception do
+      begin
+        Inc(FOutcome.Errors);
+        FLog.Add('error compress ' + Target + ': ' + Problem.Message);
+        FStopped := FStopped or Stopping;
+      end;
+    end;
+  finally
+    Writer.Free;
+  end;
+  if Length(FOutcome.DoneTargets) = 0 then
+  begin
+    { Nothing whole to keep. }
+    RemovePath(PChar(Target));
+    FOutcome.ItemsDone := 0;
+  end;
+end;
+
+procedure TOperationWorker.EntryArriving(const Entry: TArchiveEntry; const TargetPath: string; var Skip: Boolean);
+var
+  Question: TOperationQuestion;
+  Answer: TOperationAnswer;
+  Existing: TFolderItem;
+begin
+  FProgress.SetCurrentName(LastPartOf(TargetPath));
+  if Entry.IsFolder or (DescribeItem(TargetPath, Existing) <> ErrorNone) then
+    Exit;
+  Question := Default(TOperationQuestion);
+  Question.Kind := QuestionConflict;
+  Question.Source.Name := LastPartOf(TargetPath);
+  Question.Source.Kind := ItemFile;
+  Question.Source.SizeInBytes := Entry.Size;
+  Question.Source.ModificationTime := Entry.ModificationTime;
+  Question.Target := Existing;
+  Question.SourcePath := Entry.Name;
+  Question.TargetPath := TargetPath;
+  Question.CanReplace := (Existing.Kind <> ItemFolder) or Existing.IsLink;
+  Answer := FQuestions.Ask(Question);
+  case TConflictChoice(Answer.Choice) of
+    ConflictReplace:
+      if Question.CanReplace then
+        RemovePath(PChar(TargetPath))
+      else
+        Skip := True;
+    ConflictStop:
+      begin
+        FStopped := True;
+        FProgress.Cancel;
+        Skip := True;
+      end;
+  else
+    Skip := True;
+  end;
+end;
+
+procedure TOperationWorker.ExtractEntry(Reader: TObject; Index: LongInt; const TargetPath: string);
+var
+  Skip: Boolean;
+  Entry: TArchiveEntry;
+begin
+  Entry := TArchiveReader(Reader).Entries[Index];
+  Skip := False;
+  EntryArriving(Entry, TargetPath, Skip);
+  if Skip or Stopping then
+    Exit;
+  FArchiveBytesSeen := 0;
+  if Entry.IsFolder then
+    ForceDirectories(TargetPath)
+  else
+  begin
+    ForceDirectories(ParentFolderOf(TargetPath));
+    TArchiveReader(Reader).ExtractToFile(Index, TargetPath, @ArchiveProgress);
+  end;
+end;
+
+procedure TOperationWorker.ExtractArchive;
+var
+  Reader: TArchiveReader;
+  Index: LongInt;
+  Wanted: LongInt;
+  Prefix: string;
+  Name: string;
+  Target: string;
+begin
+  Reader := nil;
+  try
+    try
+      Reader := OpenArchive(FRequest.Sources[0]);
+      if not IsDirectory(PChar(FRequest.TargetFolder)) then
+        ForceDirectories(FRequest.TargetFolder);
+      if Length(FRequest.Sources) = 1 then
+      begin
+        FArchiveBytesSeen := 0;
+        ExtractAll(Reader, FRequest.TargetFolder, @ArchiveProgress, @EntryArriving);
+        FOutcome.ItemsDone := 1;
+        RecordDone(FRequest.Sources[0], FRequest.TargetFolder);
+      end
+      else
+        for Wanted := 1 to High(FRequest.Sources) do
+        begin
+          Prefix := FRequest.Sources[Wanted];
+          { Everything at Prefix and below it, under the prefix's last
+            part in the target. }
+          for Index := 0 to Reader.Count - 1 do
+          begin
+            if Stopping then
+              Break;
+            Name := SafeEntryPath(Reader.Entries[Index].Name);
+            if (Name <> Prefix) and (Copy(Name, 1, Length(Prefix) + 1) <> Prefix + '/') then
+              Continue;
+            Target := CombinePath(FRequest.TargetFolder, LastPartOf('/' + Prefix) +
+              Copy(Name, Length(Prefix) + 1, Length(Name)));
+            ExtractEntry(Reader, Index, Target);
+          end;
+          if not Stopping then
+          begin
+            Inc(FOutcome.ItemsDone);
+            RecordDone(FRequest.Sources[0] + '/' + Prefix, CombinePath(FRequest.TargetFolder,
+              LastPartOf('/' + Prefix)));
+          end;
+        end;
+    except
+      on Problem: Exception do
+      begin
+        Inc(FOutcome.Errors);
+        FLog.Add('error extract ' + FRequest.Sources[0] + ': ' + Problem.Message);
+        FStopped := FStopped or Stopping;
+      end;
+    end;
+  finally
+    Reader.Free;
+  end;
+end;
+
+{ --- The whole operation ------------------------------------------------------------------ }
+
 procedure TOperationWorker.DoTopLevelItem(const SourcePath: string);
 var
   TargetPath: string;
   Done: Boolean;
 begin
-  if FRequest.Kind = OperationDelete then
-    Done := DeleteItem(SourcePath, True)
+  FTopLevel := True;
+  FTopTarget := '';
+  case FRequest.Kind of
+    OperationDelete: Done := DeleteItem(SourcePath, True);
+    OperationTrash: Done := TrashItem(SourcePath);
+    OperationRestore: Done := RestoreItem(SourcePath);
   else
-  begin
-    TargetPath := CombinePath(FRequest.TargetFolder, LastPartOf(SourcePath));
-    if IsSameOrInside(FRequest.TargetFolder, SourcePath) and (TargetPath <> SourcePath) then
     begin
-      { A folder into itself would never end. }
-      Inc(FOutcome.Errors);
-      FLog.Add('error ' + LowerCase(OperationVerb(FRequest.Kind)) + ' ' + SourcePath +
-        ': a folder cannot go into itself');
-      Exit;
+      TargetPath := CombinePath(FRequest.TargetFolder, LastPartOf(SourcePath));
+      if IsSameOrInside(FRequest.TargetFolder, SourcePath) and (TargetPath <> SourcePath) then
+      begin
+        { A folder into itself would never end. }
+        Inc(FOutcome.Errors);
+        FLog.Add('error ' + LowerCase(OperationVerb(FRequest.Kind)) + ' ' + SourcePath +
+          ': a folder cannot go into itself');
+        Exit;
+      end;
+      if FRequest.Kind = OperationCopy then
+        Done := CopyItem(SourcePath, TargetPath)
+      else
+        Done := MoveItem(SourcePath, TargetPath);
+      if Done and (FTopTarget <> '') then
+        RecordDone(SourcePath, FTopTarget);
     end;
-    if FRequest.Kind = OperationCopy then
-      Done := CopyItem(SourcePath, TargetPath)
-    else
-      Done := MoveItem(SourcePath, TargetPath);
   end;
+  FTopLevel := False;
   if Done then
     Inc(FOutcome.ItemsDone);
 end;
@@ -569,12 +902,17 @@ var
 begin
   try
     CountEverything;
-    for Index := 0 to High(FRequest.Sources) do
-    begin
-      if Stopping then
-        Break;
-      DoTopLevelItem(FRequest.Sources[Index]);
-    end;
+    if FRequest.Kind = OperationCompress then
+      CompressAll
+    else if FRequest.Kind = OperationExtract then
+      ExtractArchive
+    else
+      for Index := 0 to High(FRequest.Sources) do
+      begin
+        if Stopping then
+          Break;
+        DoTopLevelItem(FRequest.Sources[Index]);
+      end;
   except
     on Problem: Exception do
     begin

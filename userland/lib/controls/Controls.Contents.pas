@@ -74,6 +74,15 @@ uses
   Controls.ListViewPainting,
   Controls.ListViewBase,
   Controls.ListView,
+  Controls.NaturalOrder,
+  Controls.ItemViewItems,
+  Controls.ItemViewLayout,
+  Controls.ItemViewPainting,
+  Controls.ItemViewBase,
+  Controls.ItemView,
+  Controls.ThumbnailCache,
+  Controls.ThumbnailLoader,
+  Controls.PreviewHost,
   Controls.Dialogs,
   Controls.MessageBoxes,
   Controls.Tooltips,
@@ -135,7 +144,19 @@ uses
   Controls.IconFiles,
   Controls.IconTheme,
   Controls.WindowIcons,
-  Controls.FileTypeIcons;
+  Controls.FileTypeIcons,
+  Controls.PartPainting,
+  Controls.TabStripLayout,
+  Controls.TabStrip,
+  Controls.SuggestionList,
+  Controls.BreadcrumbLayout,
+  Controls.BreadcrumbBar,
+  Controls.CommandLayout,
+  Controls.CommandBar,
+  Controls.TransferRates,
+  Controls.ThroughputGraph,
+  Controls.DisclosureButton,
+  Controls.ProgressDialog;
 
 implementation
 

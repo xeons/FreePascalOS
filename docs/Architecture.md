@@ -2633,6 +2633,66 @@ place them in their `Layout` with `AssignBounds` (which, unlike
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
 
+**Navigation controls** (a file manager's or a browser's window, in
+either theme; their plain arithmetic in units of its own, checked on
+the host by `make navigation-controls-test`, and their glyphs and flat
+hot faces in `Controls.PartPainting`):
+
+`Controls.TabStrip`: `TTabStrip`, a row of document tabs along the top
+of a window, holding no pages (the program shows what the active tab
+stands for). A tab has a caption, a picture of `Images`, a hint and
+`Data`; `AddTab`, `InsertTab`, `DeleteTab`, `MoveTab`, `ActiveIndex`
+(the user's choices give `OnChange`). The tabs share the width between
+a minimum and 240 logical units (below the minimum only when they would
+not fit; `Controls.TabStripLayout`), captions cut with "...". A "+"
+button after the last tab (`OnNewTab`), a close button on the active
+and the hovered tab and a middle click (`OnCloseTab`), a tab dragged
+sideways moving among the others as it goes (`OnTabMoved`), dragged
+out above or below the strip and let go there (`OnTabDraggedOut`, with
+the screen point, logical units, for a new window), a right click
+(`OnTabContextMenu`). With header bands the strip is recessed and the
+active tab is the face running into the content below with a gold line
+on top; the classic look has bevelled tabs. `TabBounds`,
+`CloseButtonBounds`, `NewTabButtonBounds` (pixels) are for tests.
+
+`Controls.BreadcrumbBar`: `TBreadcrumbBar`, an address bar that looks
+like an edit field: `SetSegments` (captions and the paths they stand
+for), an optional picture first (`RootImageIndex`). A segment is a flat
+button (`OnNavigate`), its chevron a pop-up menu of the folders inside
+(`OnListChildren`; the chevron points down while it is open, from the
+menu list's new `OnClosed`), choosing one navigates into it
+(`JoinChildPath` in `Controls.BreadcrumbLayout`). Segments that do not
+fit collapse from the left into an overflow button listing the hidden
+ancestors. A click on the empty part (or `BeginEditing`) swaps in an
+edit box with `EditText` selected: Enter gives `OnPathEntered`, Escape
+or losing the focus goes back. Every change asks `OnComplete` for
+suggestions, shown under the bar by `Controls.SuggestionList` (a pop-up
+list that leaves the typing to the field: Up and Down move, Enter or a
+click takes one, Tab completes). `SegmentBounds`, `ChevronBounds`,
+`OverflowBounds`, `EmptyAreaPoint`, `IsEditing`.
+
+`Controls.CommandBar`: `TCommandBar`, a strip of flat command buttons
+(`TCommandButton`: a 16-unit picture of `Images` and its caption, or
+the picture alone; `Enabled`, `Visible`, `IsToggle`/`Down`, `Hint`,
+`Tag`, `AlignRight` for the far end). `AddCommand`, `AddDropDown` (its
+menu filled by the program each time, `OnOpening`, and popped up under
+it), `AddSeparator`. An overflow button ("...") ends the commands: what
+does not fit moves into its menu from the end (`Controls.CommandLayout`)
+as items doing what the buttons do, then the program's own
+(`OnOverflowOpening`). `ButtonBounds` in pixels.
+
+`Controls.ProgressDialog`: `TProgressDialog`, a non-modal dialog for a
+long operation: a heading (`SetHeading`), "34% complete", a bar, Pause
+and Resume (`OnPauseChanged`) and Cancel (`OnCancel`, as is its close
+button); "More details" (`Controls.DisclosureButton`) opens a graph of
+the speed over the operation with the current speed as a line
+(`Controls.ThroughputGraph`, drawn with libdrawing's anti-aliased
+shapes) and the speed, the item, the time left and the items left. The
+program calls `UpdateProgress` as it goes; `Controls.TransferRates`
+turns its samples into a smoothed rate (the plain average for the first
+seconds, then an exponential moving average; paused time skipped), a
+time left ("About 2 minutes") and sizes ("34 MB").
+
 **Layout without positions.** A control's place comes from its parent's
 `Layout`, which calls `PlaceChildren` with the parent's client area
 (its pixels less its `ContentPadding`). Docked children (`Align`) take
@@ -3293,116 +3353,205 @@ a PNG through the save dialog and reads its pixels back with
 
 ### The file manager
 
-`files [FOLDER]` (`userland/files/files.pas` with its units, installed as `/app/files`)
-shows a folder (relative to the current one; the user's home without
-one) in one window that goes from folder to folder:
+`files [PLACE]` (`userland/files/files.pas` with its `FileManager.*`
+units, installed as `/app/files`) is a tabbed browser laid out like the
+file managers people know from other systems, drawn with this system's
+own controls, icons and themes (Sunrise and Classic). PLACE is a folder
+(relative to the current one), a page ("Home", the default; "Gallery",
+"Computer", "Network", "Recycle bin") or a folder inside an archive.
 
-- **The window** (`FileManager.BrowserWindow`): the menu bar, a
-  toolbar (Back, Forward, Up; Icons, List, Details), an address box
-  (type a folder and Enter; Ctrl+L or Alt+D), the places at the left
-  beside the folder's items with a splitter between them, and a status
-  bar (how many items; how many selected and their size). Going to a
-  folder adds it to the history (`FileManager.History`). The title is
-  the folder's name.
-- **The places** (`FileManager.PlacesPane`, a tree view): home, the file
-  system, and Volumes with each volume (label and name; a removable
-  disk's icon for one that can be unplugged). It watches `/volumes`
-  (`Sys.Volumes`): a disk plugged in appears at once, one unplugged
-  goes, and a window showing a folder on it moves to the nearest folder
-  above that is still there (or home), forgetting it from the history.
-- **The items** (`FileManager.FolderView`, a list view): large icons
-  with names (two lines for a long one), a list, or details (name, size,
-  type, modified, permissions, owner), sorted by any column either way
-  round, folders first (`FileManager.ItemOrder`), hidden files (names
-  starting with a dot) on request. Items are read by
-  `FileManager.FolderReading` (a link described by what it points to,
-  with its arrow; a broken one as itself); their type and icon come
-  from `FileManager.FileTypes` (folders, programs: an execute bit, text
-  documents by extension, pipes, devices, other files by extension).
-  The folder shown is watched: any program changing it has it read
-  again (once for changes that come together, never under a rename in
-  place), keeping the selection, the focus and the scrolling by name.
-- **Opening** (`FileManager.Associations`, the one place that decides):
-  a folder is shown; a text document (by its extension) opens in
-  Notepad; a file with an execute bit that is an ELF program or starts
-  with `#!` runs; any other file whose first 4 KiB are UTF-8 without a
-  zero byte opens in Notepad; a picture libimage reads (told by its
-  first bytes, `DetectFileFormat`) opens in the image viewer; anything
-  else says there is no program for it. `FileManager.Launching` starts
-  the program in a process group of its own; "Open with Notepad" opens
-  any file as text.
-- **Commands** (`FileManager.CommandWindow`, from the menus, the keys,
-  the context menus or the mouse): New folder ("New folder", "New
-  folder (2)": `FileManager.ConflictNames`, put up for renaming at
-  once), Rename in place (F2; a name with a slash, ".", ".." or one
-  taken is refused with the reason), Delete (asked first, saying it is
-  permanent: there is no recycle bin), Cut, Copy and Paste (file lists
-  on the clipboard; after a paste of cut files the clipboard is
-  emptied), Select All, Properties, Refresh (F5), and drag and drop:
-  files dropped on a folder item, on the folder shown, or on a place
-  move within a volume and are copied onto another, Ctrl copying and
-  Shift moving (`FileManager.DropRules`; volumes are told apart by the
-  file information's volume number). The keys that edit text act on
-  files only while the items have the focus, so the address box keeps
-  them.
-- **Copy, move and delete** run one after another on a thread of their
-  own (`FileManager.OperationRunner`, `FileManager.OperationWorker`),
-  so the window stays usable. The worker counts what there is to do,
-  then copies folders recursively and files in 64 KiB pieces
-  (`Sys.FileCopies`), keeping permissions and times (and owners, for
-  root) where the file system holds them, links as links, a folder's
-  own permissions and times set after its contents; moves within a
-  volume by renaming, onto another by copying and then removing what
-  was copied whole; deletes everything below a folder, then the folder.
-  A name already taken is a question (`FileManager.OperationQuestions`:
-  the worker posts a message and sleeps on an event until the window's
-  thread answers): Replace, Skip, Rename ("name (2).txt"), Stop, and
-  "do this for every conflict"; a folder onto a folder merges, a copy
-  into its own folder gets a numbered name without asking. An error
-  (`FileManager.ErrorTexts`: no permission, the disk full, the volume
-  unplugged...) asks Skip or Stop ("skip every error"). The progress
-  window (`FileManager.ProgressWindow`, `FileManager.OperationProgress`
-  shared under a lock) shows the file being done, a bar, files and
-  bytes, and Cancel, which stops at the next piece (a file stopped half
-  way is removed); it appears only once an operation has run for
-  `Files/ProgressDelay` milliseconds. Closing the window, or a request
-  to end, while one runs asks whether to stop it; Yes stops it and the
-  window closes once it has stopped cleanly.
-- **Properties** (`FileManager.PropertiesDialog`): name, type, location,
-  size (a folder's added up by `FileManager.FolderSizeCounter` on a
-  thread, the count running), link target, the three times, owner and
-  group, and permissions as check boxes (read, write, execute for the
-  owner, the group and others) that change the mode at once for the
-  owner or root and are greyed for others. A volume's
-  (`FileManager.VolumeProperties`, from its place's context menu):
-  label, file system, where it is, removable, read only, size, free
-  space with a bar.
-- **Settings** (`FileManager.Settings`, group `Files`): the view, the
-  order and hidden files as they are chosen; the window's place and
-  size and the places' width when it closes; the progress window's
-  delay.
+- **The window** (`FileManager.BrowserWindow`), from the top: the tabs
+  (`Controls.TabStrip`: new, close, reorder by dragging, drag one out
+  to open it in a window of its own, duplicate and the rest on its
+  context menu; Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab); Back,
+  Forward, Up and Refresh; the address bar (`Controls.BreadcrumbBar`:
+  a segment's click goes there, its chevron lists the folders inside
+  it, a click on the empty part, Ctrl+L, Alt+D or F4 edits the address
+  as text with completion of folder names and page names); the search
+  box (Ctrl+E, Ctrl+F); the command bar (`FileManager.MainWindow`); the
+  navigation pane, the page, the details or preview pane, with
+  splitters; the status bar (items; how many selected and their size).
+  Every tab (`FileManager.Tabs`) has its own place and Back/Forward
+  history; the controls show the active one. The title is the place's.
+- **Places** (`FileManager.Locations`): a folder, Home, Gallery,
+  Computer, Network, the recycle bin, a folder inside a ZIP or tar
+  archive (`/home/a/src.zip/docs`), or search results. Each has an
+  address, a title, an icon and its breadcrumb segments. The standard
+  folders (Desktop, Documents, Downloads, Pictures, Music, Videos) are
+  made in the home folder if missing.
+- **Pages** (`FileManager.Sources`): Home shows the pinned folders
+  (the standard folders until the user changes the list), the
+  favourite files and the recent files (opened from the file manager)
+  in sections; Gallery every picture under Pictures grouped by month,
+  newest first, as thumbnails; Computer the standard folders and every
+  volume (label, file system, a bar of the space used, "N free of M";
+  a volume mounted on a folder opens there); Network is a placeholder;
+  the recycle bin lists every trash folder's items with where they were
+  and when they were deleted; an archive's folder its entries
+  (libarchive, the archive kept open while shown).
+- **The navigation pane** (`FileManager.NavigationPane`, a tree):
+  Home, Gallery, the pinned folders, Computer (the standard folders and
+  the volumes), Network, Recycle bin (its icon empty or full). Folders
+  open with a box, their subfolders read when first opened (the tree's
+  `MayHaveChildren`). Volumes are watched (`Sys.Volumes`): a disk
+  plugged in appears at once, one unplugged goes and a tab on it moves
+  to the nearest folder still there. Files dropped on a folder go into
+  it; folders dropped on Home are pinned.
+- **The page** (`FileManager.FolderView` on `Controls.ItemView`): eight
+  views (extra large, large, medium and small icons, list, details,
+  tiles, content; Ctrl+Shift+1 to 8, Ctrl with the wheel), compact
+  spacing, item check boxes, file name extensions and hidden items on
+  or off. Details show name, date modified, type and size, and any of
+  date created (the file's birth time), date accessed, owner, group,
+  permissions, dimensions, length, folder, original location, date
+  deleted, free space and file system, chosen on the header's context
+  menu (`FileManager.ItemColumns`). Sorting by any column either way,
+  folders first, names in natural order ("2" before "10",
+  `Controls.NaturalOrder`). Group by name, date, type or size
+  (`FileManager.Grouping`), groups collapsible. A filter by kind or date
+  (the search syntax underneath). Pictures and SVG drawings get
+  thumbnails (`Controls.ThumbnailLoader`, on a thread, kept on disk in
+  `~/.cache/thumbnails/fpos`), which tell their dimensions too. The
+  view, order, grouping and columns are remembered per folder
+  (`Files/Views/KEY`). The folder (or the recycle bin) is watched
+  (`Sys.FileWatches`): changes read it again after 300 ms, keeping the
+  selection and the scrolling, never under a rename in place; a folder
+  that goes away is left for the nearest one above.
+- **The side pane** (`FileManager.SidePane` on `Controls.PreviewHost`),
+  Alt+Shift+P for details, Alt+P for the preview: details show the
+  thumbnail or icon and the properties (type, size, dimensions, a WAV
+  file's format and length from `FileManager.AudioInfo`, the dates,
+  location, owner, permissions); several items their count and size;
+  nothing selected, the page. The preview shows web pages in a web view
+  (libwebview, scripts off), pictures, text and code (read-only text
+  view), sounds and folders as summaries.
+- **Search** (`FileManager.SearchQuery`, `FileManager.Searcher`): the
+  folder shown and everything below it, on a thread, results streaming
+  in (Escape cancels); words in the name (wildcards), quoted phrases,
+  `kind:image`, `ext:pas`, `size:>1MB`, `size:small`, `modified:today`
+  (also yesterday, thisweek, lastweek, thismonth, lastmonth, thisyear,
+  lastyear, dates and ranges), `content:word`. The search history is
+  offered under the box.
+- **Commands** (`FileManager.MenuWindow` carries out every command by
+  its number, `FileManager.Commands`): the command bar has New (folder,
+  text document, Markdown document, web page, empty ZIP folder, and the
+  files in `~/Templates`: `FileManager.Templates`), Cut, Copy, Paste,
+  Rename, Share (copies the path; Send to is the hook), Delete, Sort
+  (and Group by), View, Filter, what the place calls for (Extract all;
+  Restore, Restore all, Empty recycle bin) and "..." (undo and redo,
+  select all, none, invert, compress, extract, pin, copy as path,
+  options, properties), with the details and preview panes at the
+  right. Buttons follow the selection and the place. The context menu
+  of items has Cut, Copy, Rename, Share and Delete first, then Open,
+  Open with, Open in new tab or window, Pin to Home, Add to favourites,
+  Compress to ZIP or Extract all, Copy as path, Properties and "Show
+  more options" (the classic menu: Send to, Delete permanently, Paste
+  into a folder...; Shift with the right click opens it at once); the
+  background's has View, Sort by, Group by, Refresh, Paste, Undo, New
+  and Properties.
+- **Opening** (`FileManager.ItemCommands`, `FileManager.Handlers`): a
+  folder, page or volume is shown (in a new window if the options say
+  so); an archive is browsed; a program runs; any other file opens with
+  its type's default program: the one chosen for the extension
+  (`Files/Defaults/EXTENSION`), else the best match among the program
+  folders' `program.info` (`Extensions` and `MimeTypes` keys, read by
+  `Configuration.ProgramInfo`; `FileManager.TypeAssociations` ranks
+  them: the extension, then the media type, then its family); text
+  without an extension opens in Notepad. Open with lists the programs
+  for the type (`FileManager.OpenWithDialog`, "Always use this
+  program" makes it the default; "Choose a default" from the menu). A
+  file opened goes to the recent files; one inside an archive is
+  extracted to `~/.cache/files-open` first.
+- **File operations** run one after another on a thread
+  (`FileManager.OperationRunner`, `FileManager.OperationWorker`): copy,
+  move (a rename within a volume), delete for good, move to the recycle
+  bin, restore, compress to ZIP (`Archive.ZipWriter`), extract
+  (`Archive.Extraction`, all of an archive or some entries). The
+  progress dialog (`FileManager.ProgressWindow` on
+  `Controls.ProgressDialog`) appears after `ProgressDelay` ms with the
+  heading, percentage, bar, Pause (the worker waits at its next piece),
+  Cancel and "More details" (speed, time left, the item, what is left,
+  a graph of the speed). A name taken asks Replace, Skip, Keep both
+  (numbered) or Stop, comparing the two (`FileManager.ConflictPolicy`),
+  "for all current items"; errors ask Skip or Stop. Undo and redo
+  (Ctrl+Z, Ctrl+Y, `FileManager.UndoHistory`) cover renames, new items,
+  copies, moves, moves to the recycle bin, compressing and extracting.
+  Drag and drop within a window, between tabs (onto the navigation
+  pane) and between windows and programs (the toolkit's system drag)
+  moves within a volume and copies onto another, Ctrl copying and Shift
+  moving (`FileManager.DropRules`). Rename in place (F2); with several
+  selected, all get the name typed, numbered ("Holiday (1).jpg",
+  `FileManager.BatchNames`). New folder: Ctrl+Shift+N.
+- **The recycle bin** (`Util.Trash`, `Util.TrashInfo` in libcoreutils):
+  items go to `~/.local/share/Trash` (files/ and info/NAME.trashinfo
+  with the original path and the deletion time, the layout other
+  desktops use), or on another volume to `.Trash-UID` at the top of
+  that volume, so it is always a rename. Delete asks, then moves to the
+  recycle bin; Shift+Delete deletes for good after asking; in the
+  recycle bin Delete is for good, Restore puts items back (numbered if
+  the name was taken meanwhile).
+- **Properties** (`FileManager.PropertiesDialog`): General (type,
+  location, size and size on disk, what a folder contains, counted on
+  a thread, the dates, read-only and hidden: hidden renames to a leading
+  dot), Security (owner and group, changed with chown by root; the
+  permission check boxes, chmod at once), Details (every property:
+  dimensions, a sound's length, link target, node, links). A volume's
+  properties are `FileManager.VolumeProperties`.
+- **Options** (`FileManager.OptionsDialog`): open folders in the same
+  or a new window, single or double click, show recent files and
+  favourites on Home, clear the recent files, the search history and
+  the thumbnails; hidden items, extensions, check boxes, compact view,
+  the preview or details pane at start, reset every folder's view.
+  Kept in `Files/Options` (`FileManager.Settings`); the lists (pinned,
+  favourites, recent, search history) are `FileManager.UserLists`.
+- **Keys**: Ctrl+C, X, V, A, Z, Y, Shift+Ctrl+C (copy as path), F2,
+  Delete, Shift+Delete, Enter, Ctrl+Enter (a new window), Backspace (up)
+  while the items have the focus; F5, Ctrl+R, Alt+Enter, Alt+Left,
+  Right and Up, Ctrl+L, Alt+D, F4, Ctrl+E, Ctrl+F, Ctrl+T, Ctrl+W,
+  Ctrl+Tab, Ctrl+N, Ctrl+Shift+N, Alt+P, Alt+Shift+P, Ctrl+H, Ctrl+Shift+1
+  to 8 anywhere; typing a name's first letters goes to it; the arrows
+  move by the layout in every view (`Controls.ItemViewLayout`).
 
-It prints what happens (`folder PATH COUNT`, `selected N`, `view ...`,
-`sort ...`, `refreshed`, `new-folder`, `renamed OLD NEW`, `copied N`,
-`moved N`, `deleted N`, `question ...`, `properties ...`, `mode PATH
-OCTAL`, `volume-added NAME`, `volume-removed NAME`, `folder-gone PATH`,
-`error ...`) and where the things to click are (`place NAME X Y`). The
-input test prepares a folder over the serial shell and switches views,
-sorts by a header, opens a subfolder with a double click and goes Back,
-makes a new folder and renames it with F2, copies a file with Ctrl+C and
-Ctrl+V (the copy's digest the same), drags a file onto a folder (moved),
-deletes one after the question, sees a file the serial shell makes
-appear without a refresh, changes a permission in the properties (stat
-reads the new mode), copies a folder tree onto the virtio disk's ext4
-volume with the progress window (read back), answers Skip and then
-Replace to a name already there, opens a text file in Notepad with a
-double click (Notepad's title in the log), and asks it to end; and in
-the USB hot-plug part sees the plugged disk among the places, opens it,
-and sees it go (the window back at `/volumes`) when it is unplugged.
-`make files-test` (part of `make test`) builds the plain logic on the
-host (`tools/FilesTest`): paths, numbered names, the history, the order
-and types of items, permission texts, what a drop does, file lists and
-finding a name by typing.
+The toolkit pieces it is built from are libcontrols' (item views,
+thumbnails, the preview host, the tab strip, breadcrumb bar, command
+bar and progress dialog, a folder chooser `ChooseFolder`, tree nodes
+filled when opened and `InsertRoot`, a window's `LastAcceleratorCode`)
+and libarchive (ZIP with ZIP64, tar, tar.gz). The kernel's image loader
+takes as many directly needed libraries as a process may have modules:
+the file manager links 20.
+
+It prints what happens (`folder ADDRESS COUNT`, `view MODE`, `sort
+COLUMN ascending|descending`, `group BY`, `tab new|switch|close N`,
+`search SCOPE TEXT`, `search-result N`, `search-done N`, `preview
+image|text|web|summary PATH`, `pane preview|details|none`, `new-folder
+NAME`, `renamed OLD NEW`, `clipboard copy|cut N`, `operation VERB N`,
+`progress-shown VERB`, `question conflict NAME`, `copied N`, `moved
+N`, `trashed N`, `restored N`, `compressed N`, `extracted N`, `undo
+WHAT`, `redo WHAT`, `properties ...`, `mode PATH OCTAL`,
+`volume-added NAME`, `folder-gone PATH`, `error ...`; the full list is
+in `files.pas`) and where the things to click are (`place NAME X Y`).
+The input test prepares a folder over the serial shell and switches
+views (Ctrl+Shift+5, 2, 6), sorts by a header, opens a subfolder with a
+double click and goes Back, makes a new folder and renames it with F2,
+copies a file with Ctrl+C and Ctrl+V, drags a file onto a folder,
+deletes one to the recycle bin and undoes and redoes that, sees a file
+the serial shell makes appear, changes a permission on the Security
+page, copies a folder tree onto the virtio disk with the progress
+dialog, answers Skip and then Replace to a name already there, opens a
+text file in Notepad, opens and closes a tab, compresses the tree to ZIP
+from its context menu, browses the ZIP, extracts it with Extract all
+(the same files back), searches the folder, shows a picture in the
+preview pane, drags a second window to the other display and drags a
+file between the two; and in the USB hot-plug part sees the plugged
+disk in the navigation pane, opens it and sees it go. `make files-test`
+(part of `make test`) builds the plain logic on the host
+(`tools/FilesTest`): paths, numbered names, the history, the order and
+types of items, permission texts, drops, file lists, typing to find a
+name, natural order, file kinds, calendar days, the search syntax,
+batch names, undo and redo, conflicts, type associations over
+program.info texts, the trash's info files, grouping and WAV headers;
+`make archive-test` checks the ZIP and tar code against Python's
+zipfile and tarfile.
 
 ### The terminal window
 
@@ -6764,6 +6913,97 @@ the system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
 decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
+
+### Archives (libarchive)
+
+**libarchive** (`userland/lib/archive`, units `Archive.*`) reads zip,
+tar and tar.gz files, writes zip files, extracts archives into folders
+and lists an archive's folders for browsing. It is built over
+libcompression (deflate, gzip, CRC-32) and libsystem, and its core
+units also build on the host. The file manager uses it for compressed
+folders.
+
+```
+  Archive.Readers     TArchiveReader (Count, Entries[], IndexOf,
+                      ExtractToStream/ToFile), OpenArchive,
+                      DetectArchiveFormat, IsArchiveFile
+  Archive.Extraction  ExtractAll: safe names only, links last
+  Archive.Folders     ListArchiveFolder: children, implied folders too
+  Archive.ZipWriter   TZipWriter: AddFile/AddStream/AddFolder/AddLink, Finish
+=========== formats =========================================================
+  Archive.ZipReader   central directory, ZIP64, stored/deflated, CRC check
+  Archive.ZipEndRecord  Archive.ZipExtraFields  Archive.ZipFormat
+  Archive.TarReader   ustar, v7, GNU 'L'/'K', pax; hard links as copies
+  Archive.TarFormat   Archive.RewindingStreams (tar.gz, seekable forward)
+  Archive.Detection   by content, not by name
+=========== shared ==========================================================
+  Archive.Entries (TArchiveEntry, SafeEntryPath)  Archive.Times
+  Archive.Progress  Archive.Cp437  Archive.FileSystem (Sys.Files / host)
+```
+
+**Entries.** A member is a `TArchiveEntry`: its UTF-8 name with '/'
+between the parts (a folder's ends with '/'), whether it is a folder or
+a symbolic link (and its target), sizes, the modification time in Unix
+seconds (UTC), Unix mode bits with the file type (0 when the archive
+has none), whether it is encrypted, the method and the CRC-32. Zip
+names are UTF-8 when flag 11 says so, else Info-ZIP's Unicode path
+field when its CRC matches, else code page 437; the time is the
+extended timestamp field's when there is one, else the DOS time taken
+as UTC; modes come from the external attributes of members made on
+Unix. Errors are `EArchiveError`; a progress callback
+(`TArchiveProgressEvent`, uncompressed bytes so far) can cancel, which
+raises `EArchiveCancelled`.
+
+**Reading.** `OpenArchive` tells the format by content: a zip by a
+local header at the start or its end of central directory record
+(searched for backwards past a comment; data before the zip is allowed
+for), gzip magic with a tar header inside, or a tar header ("ustar" or
+a right checksum). The zip reader lists members from the central
+directory (ZIP64 locator and extra fields included), so data
+descriptors need nothing special; extraction inflates through
+`TInflater` while computing the CRC-32 and refuses a wrong CRC or
+size, encrypted members (flag 0 or AES) and other methods. The tar
+reader walks the headers once when opened (pax `path`, `linkpath`,
+`size`, `mtime`; GNU long names and links; base-256 numbers). A
+.tar.gz is read through `TRewindingGzipStream`, which decompresses
+forwards and starts again only to go back, so listing and extracting in
+order decompresses it once per pass.
+
+**Writing.** `TZipWriter` streams each member through `TDeflater`
+(level 6) while computing its CRC-32, then writes the local header again
+with the sizes (the output must be seekable); data that deflate does
+not shrink is written again stored when the source can be reread. Names
+get the UTF-8 flag when they are not ASCII, every member the extended
+timestamp, "made by" Unix with the mode. A member expected near 4 GiB
+gets a ZIP64 local header, and the central directory and end records
+use ZIP64 when sizes, offsets or more than 65535 members need it, or
+always with `ForceZip64`. Without `Finish` the file has no directory:
+the caller deletes it.
+
+**Extracting.** `SafeEntryPath` gives the relative path a name may be
+extracted to: '\' taken as '/', '.' and empty parts dropped, and ''
+for absolute names, drive letters, '..' parts and control characters.
+`ExtractAll` leaves those out (and counts them), creates folders, writes
+files, makes symbolic links only after every file (so nothing is written
+through a link a member made), and sets folder times last. Times, modes
+and links go through `Archive.FileSystem`, which calls libsystem on the
+system and the host's Unix calls in the host test.
+
+**Tests.** `make archive-test` builds the core units on the host with
+range checks. `tools/ArchiveTest/make-fixtures.py` makes zip files with
+Python's zipfile (stored, deflated, folders, a Unicode name, an empty
+file, a link, data over 64 KiB, an extended timestamp, data
+descriptors, forced ZIP64, 65540 members) and patches some by hand (a
+CP437 name, the encrypted flag, a wrong CRC, unsafe names), and tar
+files with tarfile (ustar, GNU, pax, tar.gz) plus an old v7 one. The
+test checks every member's fields and data, extraction into folders
+(modes, times, links, nothing outside), random access in a .tar.gz,
+folder listing and cancelling; then writes zips (an empty file, folders,
+a Unicode name, big and incompressible data, a link, a time before
+1980; forced ZIP64; from files on disk; 65537 members), reads them back
+and has `check-written.py` check them with Python's zipfile (testzip,
+names, data, modes, DOS and extended times, ZIP64 end records).
+7z is not read (TODO.md).
 
 ## JavaScript engine
 

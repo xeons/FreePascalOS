@@ -28,6 +28,7 @@
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip; brotli, zstd)
+#                  libcompression <- libarchive (zip, tar, tar.gz; the file manager)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
@@ -114,6 +115,7 @@ CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
+ARCHIVE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/archive
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
@@ -136,6 +138,7 @@ CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
+ARCHIVE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libarchive.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
@@ -200,7 +203,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -447,6 +450,16 @@ $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcompression.so -o $@ \
 		$(COMPRESSION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# libarchive: reading zip, tar and tar.gz files, writing zip files,
+# extracting and browsing them (over libcompression).
+$(ARCHIVE_LIBRARY): $(COMPRESSION_LIBRARY) $(wildcard userland/lib/archive/*.pas)
+	@rm -rf $(ARCHIVE_LIBRARY_OBJECTS)
+	@mkdir -p $(ARCHIVE_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/archive -FU$(ARCHIVE_LIBRARY_OBJECTS) userland/lib/archive/Archive.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libarchive.so -o $@ \
+		$(ARCHIVE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcompression -lsystem
+
 # libwindowing: the display server's protocol and windows for programs.
 $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
 	@rm -rf $(WINDOWING_LIBRARY_OBJECTS)
@@ -539,7 +552,7 @@ $(USER_PROGRAM_OUTPUT)/dynlibtest: $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY)
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
 GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest sessionmanager sysinfo hangtest) \
-	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad files terminal taskmanager calculator imageviewer paint)
+	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad terminal taskmanager calculator imageviewer paint)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
 	-ldrawing
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
@@ -601,6 +614,18 @@ $(WEBCONTENT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu
 	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
 $(WEBCONTENT_PROGRAMS): $(WEBVIEW_LIBRARY) $(WEBIPC_LIBRARY)
+
+# The file manager: previews web pages in a web view (libwebview) and
+# browses, makes and extracts archives (libarchive).
+FILES_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,files)
+$(FILES_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lwebipc -lweb -lsvg -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
+	-lconfiguration -lfont -larchive -limage -lcompression -ldrawing -ltls
+$(FILES_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEBIPC_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) \
+	-Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
+	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) \
+	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(ARCHIVE_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
+$(FILES_PROGRAMS): $(WEBVIEW_LIBRARY) $(WEBIPC_LIBRARY) $(QUIC_LIBRARY) $(ARCHIVE_LIBRARY)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)
