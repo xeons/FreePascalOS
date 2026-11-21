@@ -252,6 +252,8 @@ begin
     @UpClicked, False);
   FRefreshButton := FNavigationButtons.AddCommand('Refresh', AddThemeIcon(FCommandImages, 'action-refresh'),
     'Refresh (F5)', @RefreshClicked, False);
+  { Four buttons always fit: no "..." for them. }
+  FNavigationButtons.OverflowButton.Visible := False;
   FSearchBox := TEditBox.Create(FNavigationBar);
   FSearchBox.Align := AlignRight;
   FSearchBox.SetBounds(0, 0, SearchBoxWidth, 24);
