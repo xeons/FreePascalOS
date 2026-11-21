@@ -19,7 +19,7 @@
 {
   Reserving, committing, decommitting and protecting user memory, and
   mapping files (the work behind CallReserveMemory and its group,
-  Processes.MemoryCalls, and CallMapHandle on files).
+  Processes.VirtualMemoryCalls, and CallMapHandle on files).
 
   A reservation is address space without memory: a region of the run
   time allocation area with no access that is not committed. Committing

@@ -7651,7 +7651,7 @@ every processor takes on as it starts or wakes).
 ### Virtual memory: reserving, committing, protecting, mapping files
 
 Programs manage their address space with six calls (160-165,
-`Processes.MemoryCalls`, the work in `Processes.VirtualMemory`; libsystem's
+`Processes.VirtualMemoryCalls`, the work in `Processes.VirtualMemory`; libsystem's
 `Sys.Memory`: `ReserveMemory`, `CommitMemory`, `DecommitMemory`,
 `ReleaseMemory`, `ProtectMemory`, `QueryMemory`, `AllowDynamicCode`,
 `MapFile`):
@@ -7715,7 +7715,10 @@ raise it or take it away) and added to the system's total
 kernel API is `CommitChargeOf(Space)` (per process) and
 `SystemCommittedPages` (all of them); `CallGetProcessResources` shows
 both (`CommitChargePages`, `CommitLimitPages`,
-`SystemCommitChargePages`) and `free` the system's.
+`SystemCommitChargePages`). The out-of-memory policy
+(`Processes.MemoryCharges`) gets them through `SetCommitCounters`
+(`InitializeVirtualMemory`): a process's commitment beyond its resident
+private pages, and the system's total.
 
 **File mappings.** `CallMapHandle(Handle, Offset, Length, Flags)` on a
 regular file opened for reading maps it (Length 0: to its end):
