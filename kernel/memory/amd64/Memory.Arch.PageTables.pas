@@ -64,6 +64,10 @@ const
   { Device memory, not a page of the page allocator: never freed with
     the mapping, and not returned by unmapping. }
   MappingDevice = LongWord(1) shl 6;
+  { A user page the program may not touch at all (no access, or a guard,
+    Processes.VirtualMemory): mapped for the kernel only, so the page
+    stays where it is and a touch from user mode is a protection fault. }
+  MappingNoAccess = LongWord(1) shl 7;
 
   { First address above user space. }
   UserSpaceLimit = QWord($0000800000000000);
@@ -286,9 +290,9 @@ begin
   Result := (PhysicalAddress and EntryAddressMask) or EntryPresent;
   if (Attributes and MappingCopyOnWrite) <> 0 then
     Result := Result or EntryCopyOnWrite
-  else if (Attributes and MappingWritable) <> 0 then
+  else if ((Attributes and MappingWritable) <> 0) and ((Attributes and MappingNoAccess) = 0) then
     Result := Result or EntryWritable;
-  if (Attributes and MappingUser) <> 0 then
+  if ((Attributes and MappingUser) <> 0) and ((Attributes and MappingNoAccess) = 0) then
     Result := Result or EntryUser;
   if (Attributes and MappingUncached) <> 0 then
     Result := Result or EntryCacheDisable or EntryWriteThrough
@@ -296,7 +300,8 @@ begin
     Result := Result or EntryPageAttribute;
   if (Attributes and MappingDevice) <> 0 then
     Result := Result or EntryDevicePage;
-  if ((Attributes and MappingExecutable) = 0) and NoExecuteEnabled then
+  if (((Attributes and MappingExecutable) = 0) or ((Attributes and MappingNoAccess) <> 0)) and
+     NoExecuteEnabled then
     Result := Result or EntryNoExecute;
 end;
 

@@ -74,8 +74,9 @@ type
     { A process's own pages: its heap, stacks, data, the copies it made
       of shared pages it wrote to. }
     PageUsageUserMemory,
-    { The pages of program and library files, shared by every process
-      that loads them (Processes.ImageSections). }
+    { The pages of mapped files - programs, libraries and files mapped
+      with CallMapHandle - shared by every process that maps them
+      (Processes.MappedFiles, Processes.ImageSections). }
     PageUsageProgramImage,
     { Memory shared between processes (Objects.Sections). }
     PageUsageSection,
@@ -133,6 +134,8 @@ procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
 procedure ReferencePhysicalPage(PhysicalAddress: TPhysicalAddress);
 { True if more than one holder has the page. }
 function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;
+{ How many holders the page has (1 for a page with one owner). }
+function PhysicalPageHolderCount(PhysicalAddress: TPhysicalAddress): QWord;
 
 function PageUsageOf(PhysicalAddress: TPhysicalAddress): TPageUsage;
 
@@ -747,6 +750,11 @@ end;
 function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;
 begin
   Result := FrameDatabase[CheckedFrame(PhysicalAddress)].ExtraReferences > 0;
+end;
+
+function PhysicalPageHolderCount(PhysicalAddress: TPhysicalAddress): QWord;
+begin
+  Result := QWord(FrameDatabase[CheckedFrame(PhysicalAddress)].ExtraReferences) + 1;
 end;
 
 function ClaimLowPhysicalPages(PageCount: QWord): TPhysicalAddress;

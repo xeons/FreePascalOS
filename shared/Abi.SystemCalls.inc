@@ -46,7 +46,9 @@ const
   { (Length, Flags): Length bytes of fresh zeroed memory (whole pages);
     returns its address. Flags: 0, or AllocateForThread. }
   CallAllocateMemory = 17;
-  { (Address): frees memory from CallAllocateMemory or CallMapHandle. }
+  { (Address): frees memory from CallAllocateMemory, CallReserveMemory
+    (the whole reservation, committed or not) or CallMapHandle; Address
+    is the start the call returned. }
   CallFreeMemory = 18;
   CallCreateProcess = 19;
   CallWaitForProcess = 20;
@@ -175,11 +177,18 @@ const
   { (): suspends to RAM (ACPI S3) and returns once the machine woke: 0,
     or ErrorUnsupported (no S3), ErrorBusy. Root only. }
   CallSuspend = 71;
-  { (Handle, Offset, Length): maps Length bytes at Offset (page aligned)
-    of what Handle stands for into the program: a device offering memory
-    (/dev/display: the framebuffer). Returns the address; writable if the
-    handle was opened for writing. Unmapped with CallFreeMemory.
-    ErrorUnsupported if the handle has no memory to map. }
+  { (Handle, Offset, Length, Flags): maps Length bytes at Offset (page
+    aligned) of what Handle stands for into the program: a device
+    offering memory (/dev/display: the framebuffer; writable if the
+    handle was opened for writing, Flags ignored), a section, or a
+    regular file opened for reading (Length 0: to its end; Flags Map*:
+    read-only shared by default, MapPrivate for copy on write, which
+    MapWritable makes writable; MapExecutable). The file's pages are
+    read when first touched and shared with every other mapping of it
+    and with read(). A shared writable mapping is refused
+    (ErrorUnsupported: nothing writes pages back to files yet). Returns
+    the address. Unmapped with CallFreeMemory. ErrorUnsupported if the
+    handle has no memory to map. }
   CallMapHandle = 72;
 
   { --- Objects for programs that work together ---------------------------
@@ -545,6 +554,35 @@ const
   CallListBatteries = 156;
   { 157-159 are kept for this group. }
 
+  { --- Virtual memory (160-167) --------------------------------------------- }
+
+  { (Length, Flags): reserves Length bytes (whole pages) of address space
+    without memory; returns its address. Nothing there may be touched
+    until committed. Flags: 0. Freed, all of it, with CallFreeMemory. }
+  CallReserveMemory = 160;
+  { (Address, Length, Protection): commits the pages of [Address,
+    Address + Length), which must lie in one reservation or allocation,
+    with a Memory* protection: they are counted against the commit
+    limit (ErrorOutOfMemory past it) and filled with zeros when first
+    touched. Committed pages only get the new protection. }
+  CallCommitMemory = 161;
+  { (Address, Length): decommits those pages: their memory goes, they
+    stay reserved and may not be touched until committed again. }
+  CallDecommitMemory = 162;
+  { (Address, Length, Protection): changes the protection of committed
+    pages (of reservations, allocations and file mappings) and returns
+    the previous protection of the first. Writable and executable at
+    once is refused (ErrorAccessDenied), and so is executable without
+    MemoryPolicyAllowDynamicCode. }
+  CallProtectMemory = 163;
+  { (Address, InformationAddress): describes the address as a
+    TAbiMemoryInformation: the run of pages around it that are alike. }
+  CallQueryMemory = 164;
+  { (Flags): MemoryPolicy* for the calling process (not inherited);
+    returns the previous flags. }
+  CallSetMemoryPolicy = 165;
+  { 166-167 are kept for this group. }
+
   { --- Memory pressure and storage -------------------------------------- }
 
   { (PathAddress): discards all the free space of the volume holding the
@@ -652,6 +690,9 @@ const
   { The stack ran into its reserve; the reserve now holds the record and
     is armed again once the stack is well clear of it. }
   ExceptionStackOverflow = 11;
+  { The first touch of a guard page (MemoryGuard); the guard is gone
+    from that page now. The runtime raises it as an access violation. }
+  ExceptionGuardPage = 12;
   { TAbiExceptionRecord.Access for access violations }
   AccessKindRead = 0;
   AccessKindWrite = 1;
@@ -962,6 +1003,47 @@ const
   ProcessRegionLimitCeiling = 1048576;
   DefaultProcessHandleLimit = 16384;
   ProcessHandleLimitCeiling = 65536;
+  { The most pages a process may have committed (heap, stacks, thread
+    data, committed reservations, writable images and copy on write file
+    mappings); 0, the default, is no limit. Once there is a limit, only
+    root may raise it or take it away. }
+  ProcessLimitCommit = 3;
+
+  { Protections (CallCommitMemory, CallProtectMemory, TAbiMemoryInformation). }
+  MemoryNoAccess = 0;
+  MemoryRead = 1;
+  MemoryWrite = 2;
+  MemoryExecute = 4;
+  MemoryReadWrite = MemoryRead or MemoryWrite;
+  MemoryReadExecute = MemoryRead or MemoryExecute;
+  { With another protection: the first touch raises ExceptionGuardPage
+    and takes the guard off the page. }
+  MemoryGuard = $100;
+
+  { CallSetMemoryPolicy: memory may be made executable (CallProtectMemory
+    after writing code into it, as a compiler at run time does). }
+  MemoryPolicyAllowDynamicCode = $01;
+
+  { CallMapHandle's flags for files. }
+  MapPrivate = $01;
+  MapWritable = $02;
+  MapExecutable = $04;
+
+  { TAbiMemoryInformation.State. }
+  MemoryStateFree = 0;
+  MemoryStateReserved = 1;
+  MemoryStateCommitted = 2;
+
+  { TAbiMemoryInformation.Kind. }
+  MemoryKindNone = 0;
+  MemoryKindPrivate = 1;
+  MemoryKindImage = 2;
+  MemoryKindFileMapping = 3;
+  MemoryKindStack = 4;
+  MemoryKindThreadData = 5;
+  MemoryKindDevice = 6;
+  MemoryKindSection = 7;
+  MemoryKindStackGuard = 8;
 
   { Flags of TAbiProcessCreation. }
   { The new process leads a new session: it and the processes it starts
@@ -1574,8 +1656,30 @@ type
     CommittedPages: QWord;
     PeakCommittedPages: QWord;
     SharedPages: QWord;
+    { The commit charge (pages it may come to use: see
+      ProcessLimitCommit) and its limit (0: none); the resident pages
+      of mapped files (programs, libraries, file mappings) that another
+      mapping maps too; the system's commit charge. }
+    CommitChargePages: QWord;
+    CommitLimitPages: QWord;
+    PagesMappedElsewhere: QWord;
+    SystemCommitChargePages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { What CallQueryMemory gives: the run of alike pages from BaseAddress
+    for Length bytes, in the allocation (reservation, mapping, image
+    segment run) starting at AllocationBase (0 when free). }
+  TAbiMemoryInformation = record
+    BaseAddress: QWord;
+    Length: QWord;
+    AllocationBase: QWord;
+    State: LongWord;
+    Protection: LongWord;
+    Kind: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiMemoryInformation = ^TAbiMemoryInformation;
 
   { One thread, as CallListThreads describes it. }
   TAbiThreadDetails = record

@@ -94,6 +94,9 @@ type
       stack overflow is raised as the call returns. }
     StackOverflowPending: Boolean;
     PendingOverflowAddress: QWord;
+    { The page fault being handled was the first touch of a guard page:
+      it is raised as ExceptionGuardPage (Processes.UserExceptions). }
+    GuardPageHit: Boolean;
     { The frame of the system call the thread is in (its user registers),
       nil outside system calls. }
     SystemCallFrame: Pointer;

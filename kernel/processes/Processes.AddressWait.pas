@@ -102,6 +102,12 @@ begin
   Waiter.WasWoken := False;
   InitializeEvent(Waiter.Event, EventKindNotification, False);
 
+  { Read once without the lock: a page still to be read from its file
+    (the word in a program's data) is read now, since the read under the
+    spin lock cannot sleep. }
+  Result := ReadFromAddressSpace(Space, Address, @CurrentValue, SizeOf(CurrentValue));
+  if Result <> ErrorNone then
+    Exit;
   PreviousLevel := AcquireSpinLock(WaitLock);
   Result := ReadFromAddressSpace(Space, Address, @CurrentValue, SizeOf(CurrentValue));
   if (Result = ErrorNone) and (CurrentValue <> ExpectedValue) then

@@ -74,6 +74,8 @@ type
     { Its limits (see Processes.LimitCalls); 0 for the default. }
     RegionLimit: LongWord;
     HandleLimit: LongWord;
+    { 0: none. }
+    CommitLimitPages: QWord;
     ProcessCountLimit: LongWord;
     OomScoreAdjust: LongInt;
     { More handles it gets, with their numbers (after the standard ones,
@@ -151,6 +153,7 @@ const
 function ResolvePageFault(FaultAddress: QWord; ErrorCode: QWord): Boolean;
 var
   Process: PProcess;
+  HitGuard: Boolean;
   Failures: QWord;
 begin
   Process := CurrentProcess;
@@ -161,7 +164,12 @@ begin
   if ((ErrorCode and PageFaultFromUserMode) = 0) and (FaultAddress < UserSpaceLimit) then
     NoteKernelAccessToStack(FaultAddress);
   Failures := FailedPageAllocationCount;
-  Result := ResolveUserPageFault(Process^.AddressSpace, FaultAddress, ErrorCode);
+  Result := ResolveUserPageFaultWithGuard(Process^.AddressSpace, FaultAddress, ErrorCode, HitGuard);
+  if HitGuard then
+  begin
+    CurrentThreadObject^.GuardPageHit := True;
+    Exit;
+  end;
   { No page for a program's own fault: the caches shrink, or a process
     is ended (Processes.OutOfMemory). A fault of the kernel's (copying
     for a system call) fails instead: locks may be held. }
@@ -397,6 +405,7 @@ begin
   begin
     if Startup.RegionLimit <> 0 then
       SetRegionLimit(Process^.AddressSpace, Startup.RegionLimit);
+    SetCommitLimit(Process^.AddressSpace, Startup.CommitLimitPages);
     Process^.PageTableRoot := Process^.AddressSpace^.Root;
     StackStart := Process^.AddressSpace^.Layout.StackTop - UserStackReserve;
     Result := AddRegion(Process^.AddressSpace, StackStart, UserStackReserve,

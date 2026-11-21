@@ -7635,6 +7635,13 @@ handles (pipes, events, sockets) at once, lowers both limits, passes
 600 handles to a child, and checks every count comes back to its
 baseline.
 
+Run time allocations, reservations and file mappings may be split into
+several regions - pieces committed, decommitted or protected apart from
+the rest (`Processes.RegionEditing`), all carrying the allocation's
+start as their `AllocationBase` so freeing that start frees every piece,
+and joined again once alike. See "Virtual memory: reserving, committing,
+protecting, mapping files" below.
+
 Device memory is mapped into a process with `CallMapHandle(Handle,
 Offset, Length)`: the handle's driver says which physical memory that is
 and whether writes may be combined (the I/O function IoFunctionMap), and
@@ -7646,6 +7653,125 @@ address space hands them to the page allocator, and the kernel never
 reaches them through its physical memory window. Write-combining is the
 page attribute table's entry 4, which the kernel sets at start (and
 every processor takes on as it starts or wakes).
+
+### Virtual memory: reserving, committing, protecting, mapping files
+
+Programs manage their address space with six calls (160-165,
+`Processes.VirtualMemoryCalls`, the work in `Processes.VirtualMemory`; libsystem's
+`Sys.Memory`: `ReserveMemory`, `CommitMemory`, `DecommitMemory`,
+`ReleaseMemory`, `ProtectMemory`, `QueryMemory`, `AllowDynamicCode`,
+`MapFile`):
+
+- **`CallReserveMemory` (Length, Flags)**: address space without memory,
+  in the run time allocation area: a region with no access that is not
+  committed. Freed whole with `CallFreeMemory`.
+- **`CallCommitMemory` (Address, Length, Protection)**: pages of one
+  reservation (or allocation) become ordinary on-demand pages with a
+  protection (`MemoryRead`, `MemoryReadWrite`, `MemoryReadExecute`,
+  `MemoryNoAccess`, any of them with `MemoryGuard`), zero when first
+  touched, counted against the commit limit first (all or nothing).
+- **`CallDecommitMemory` (Address, Length)**: their pages go, they are
+  reserved again.
+- **`CallProtectMemory` (Address, Length, Protection)**: committed pages
+  of reservations, allocations and file mappings get another protection;
+  returns the first page's previous one.
+- **`CallQueryMemory` (Address, InformationAddress)**: a
+  `TAbiMemoryInformation`: the run of alike pages around the address,
+  its allocation's start, state (free, reserved, committed), protection
+  and kind (private, image, file mapping, stack, thread data, device,
+  section, stack guard).
+- **`CallSetMemoryPolicy` (Flags)**: `MemoryPolicyAllowDynamicCode`.
+
+Committing or protecting part of a region splits it where the change
+begins and ends and joins alike neighbours again
+(`Processes.RegionEditing`, tested on the host by `RegionTreeTest`
+against a model of every page). Run time allocations (`CallAllocateMemory`)
+are reservations committed whole, so the heap's memory may be decommitted
+and protected in parts too. Protection is per region: changing it maps
+the pages already there again. A page the program may not touch (no
+access, a guard) stays where it is, mapped for the kernel only
+(`MappingNoAccess`: no user bit on x86-64, EL1-only with UXN and PXN and
+an ASID on AArch64), so making it accessible again finds its contents;
+`ValidateUserRange` refuses system call buffers in such pages, as in
+reserved ones.
+
+**User W^X.** No user page is writable and executable at once
+(`ErrorAccessDenied`), and anonymous memory becomes executable only in a
+process that asked for it (`CallSetMemoryPolicy` with
+`MemoryPolicyAllowDynamicCode`, for a compiler at run time: write the
+code into read-write pages, then protect them read-execute). Program
+images, and files mapped executable and read-only (`MapExecutable`), are
+code from files and need no permission. The policy is not inherited.
+
+**Guard pages.** `MemoryGuard` makes a one-shot trap: the first touch by
+the program raises `ExceptionGuardPage` (the fault resolver takes the
+guard off just that page and marks the thread, `GuardPageHit`, for the
+exception dispatcher) and the page is an ordinary one from then on. The
+runtime raises it as an access violation (runtime error 216,
+`EAccessViolation`); an exception filter sees the code.
+
+**Commit charge.** Each address space counts the pages of private memory
+it may come to use, touched or not (`RegionChargePages`): committed
+allocations and reservation parts, stacks, thread data, writable image
+regions and writable private file mappings. It is checked against the
+process's commit limit (`CallSetProcessLimit(ProcessLimitCommit,
+Pages)`, 0 = none, the default; inherited by children; only root may
+raise it or take it away) and added to the system's total
+(`Memory.CommitCharge`). For a policy on running out of memory the
+kernel API is `CommitChargeOf(Space)` (per process) and
+`SystemCommittedPages` (all of them); `CallGetProcessResources` shows
+both (`CommitChargePages`, `CommitLimitPages`,
+`SystemCommitChargePages`). The out-of-memory policy
+(`Processes.MemoryCharges`) gets them through `SetCommitCounters`
+(`InitializeVirtualMemory`): a process's commitment beyond its resident
+private pages, and the system's total.
+
+**File mappings.** `CallMapHandle(Handle, Offset, Length, Flags)` on a
+regular file opened for reading maps it (Length 0: to its end):
+read-only shared by default, `MapPrivate` for copy on write (writable
+with `MapWritable`), `MapExecutable`. A shared writable mapping is
+refused with `ErrorUnsupported`: nothing writes dirty pages back to the
+file yet. The pages are a **mapped file**'s (`Processes.MappedFiles`):
+one per file (volume and node number, found in a registry), holding the
+pages of the file read so far in a two-level table, each read once -
+`ReadFromFileAt` through the file system and its block cache - when some
+process first touches it. Reading sleeps, so the fault resolver leaves
+the address space's spin lock for it (with a reference to the mapped
+file) and lets the touch happen again; a fault that may not sleep (a
+copy at raised level) fails instead, and `WaitOnAddress` reads the word
+once before its spin lock. Every mapping, in every process, maps those
+same pages, each with a reference of its own; the region holds a
+reference to the mapped file. A mapped file keeps an open file of its
+own (`DuplicateOpenFileForReading`), so the mapping outlives the
+program's handle and the file's name. Unmapping (`CallFreeMemory`) and
+the end of the process give the references back; the last one destroys
+the mapped file, deferred to passive level when it goes under a spin
+lock (`DrainMappedFileReleases`).
+
+When the file changes, the file system tells the mapped files twice
+(`AddFileChangingHook`, `AddFileChangedHook`). Before the change lands,
+with the volume's lock held, a mapped file with private users (copy on
+write mappings, program images) reads every page it has not read yet
+and leaves the registry: those mappings keep exactly what they were
+mapped with, and writing a running program's file does not change the
+program. After a change, a mapped file with only shared mappings reads
+the pages the change touched again, in place, so a shared read-only
+mapping shows what `read()` shows; a page read while the file changed is
+read again (`ChangeCount`). `maptest` checks all of this: protection
+faults are catchable `EAccessViolation`s at the byte touched, commit and
+decommit (and the charge), W^X and the policy (a `ret` written and run),
+guard pages, a file seen through a mapping and through `read()`, a
+`write()` seen through a shared mapping, two private mappings keeping
+their writes apart and a private one keeping the old contents, the
+commit limit, and that the library pages it maps are mapped by other
+processes too (`PagesMappedElsewhere` in `CallGetProcessResources`:
+resident file pages with more holders than the mapped file and this
+mapping).
+
+The runtime's heap still takes its chunks with `CallAllocateMemory`:
+those pages are already provided only when touched, so reserving and
+committing would only add system calls. The page heap uses the new calls
+(see "Heap checking").
 
 ### Threads
 
@@ -7818,6 +7944,7 @@ test copies to an unmapped user address.
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Memory | AllocateMemory, FreeMemory |
+| Virtual memory (160-165) | ReserveMemory, CommitMemory, DecommitMemory, ProtectMemory, QueryMemory, SetMemoryPolicy (see "Virtual memory: reserving, committing, protecting, mapping files") |
 | Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
@@ -9037,21 +9164,49 @@ Libraries are linked with `-Bsymbolic`, so references to their own
 symbols are bound when they are linked and need no lookup (libsystem has
 only RELATIVE relocations). Relocations are applied page by page.
 
-Images are read once and kept as **image sections**
-(`Processes.ImageSections`, up to 32, least recently used dropped first):
-the file's bytes for the loader, and its memory image in physical pages.
-A process maps a section's pages instead of copies: read-only pages are
-shared, writable ones are copy on write. Physical pages carry reference
-counts (`ReferencePhysicalPage`; freeing drops one); a copy on write page
-is mapped read-only with a software bit in its page table entry, and the
+Images are **mapped from their files**, not copied. Each segment page
+comes from the file's mapped file (`Processes.MappedFiles`, see "Virtual
+memory: reserving, committing, protecting, mapping files"): a region of
+the image is backed by the file at the right offset, and a page is read
+from the file - through the file system and its block cache - only when
+some process first touches it. Every process running the program or
+library maps the same physical pages: read-only ones shared outright,
+writable ones copy on write. The loader classifies each page of the
+memory image (`ClassifyPage`): the file's page when exactly one segment
+covers it and the file holds what it must; zero filled on demand for bss
+alone; and *built* where two segments share a page or a segment's file
+data ends inside a page whose rest must be zero (bss). Built pages - a
+few per image - are made once and kept in the image's section with the
+ELF header and program headers. Physical pages carry reference counts
+(`ReferencePhysicalPage`; freeing drops one); a copy on write page is
+mapped read-only with a software bit in its page table entry, and the
 first write - by the program, or by the kernel writing into the process
-(relocations, system call results) - gives the process its own copy, or
-simply makes the page writable if nobody else holds it. A section enters
-the cache only once its pages are filled. The file system reports every
-write to or resize of a file (`SetFileChangedHook`), which drops that
-file's sections (one still in use by a load is marked stale and goes when
-the load is done); the volume, node number, size and modification time are
-also compared on every use.
+(relocations, system call results) - gives the process its own copy (a
+page of a file or a section is always copied, so a process's own pages
+are always `PageUsageUserMemory`). Symbol, string, hash and relocation
+tables and the dynamic section are read through the file's pages too.
+
+**Image sections** (`Processes.ImageSections`, up to 32, least recently
+used dropped first) keep, per path, what the loader needs again: the
+headers, the span of the memory image, the built pages and a private
+reference to the file's mapped file (so its pages stay cached while the
+section does, and a write to the file never changes a running program -
+see below). A section enters the cache only once its built pages are
+made. The file system reports every write to or resize of a file
+(`AddFileChangedHook`), which drops that file's sections (one still in
+use by a load is marked stale and goes when the load is done); the
+volume, node number, size and modification time are also compared on
+every use.
+
+Measured on a desktop session (autologin, QEMU/KVM, 1 GiB, `free` and
+`ps -eo pid,rss,vsz,comm` from a serial root shell after the desktop
+settled), copying images in versus mapping them: memory in use 78.6 MiB
+-> 66.3 MiB; kernel heap 28.5 -> 18.5 MiB (the sections no longer hold a
+copy of each file); program and library pages ("mapped files") 7.5 -> 5.3
+MiB (pages nobody touched are never read); resident sets e.g.
+servicemanager 4088 -> 1344 KiB, displayserver 16868 -> 11920, desktop
+19252 -> 14468, sh 3816 -> 960 (a process maps only the library pages it
+touched).
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
 Each library goes to a random place of the library window (see "Address
@@ -12763,6 +12918,25 @@ anything is allocated (right after `InitHeap` in System's initialization,
 reading the environment in place and the options into a stack buffer), so
 every block of a program carries the checking header, and no block from
 before the checks can be taken for a bad one.
+
+**The page heap** (`HEAP_CHECKS=pages`, user programs only, from the
+environment only: `rtl/fpc/syspageheap.inc`) puts every block on pages
+of its own: a reservation (`CallReserveMemory`) of the pages for a
+16-byte header and the block, committed read-write, and one more page
+left reserved after them. The block ends where its last page does (after
+rounding to the heap's 16-byte alignment; those few bytes hold `$FD` and
+are checked when the block is freed), so a read or write past the end
+touches the reserved page and faults at once, at the instruction that
+did it and the byte it touched: `EAccessViolation` with the program's
+own back trace, not a report much later. A freed block's pages are
+decommitted at once, so a use after free faults the same way, and its
+reservation waits among the 1024 most recently freed before it is
+released, so its addresses are not reused soon. A double free or a stray
+pointer finds no committed header (`CallQueryMemory`) and is reported
+like the checking heap's mistakes. `ReAllocMem` always moves. Every
+block costs two pages of address space, a page of memory and a few
+system calls: it is for finding a bug. `heaptest --pages` and
+`--overrun-page` check it (coretest).
 
 **Patterns** (the same in the kernel and in user mode; each repeated over
 eight bytes is a non-canonical address, so a pointer read from such memory

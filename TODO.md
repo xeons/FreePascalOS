@@ -90,7 +90,24 @@ how the existing pieces fit together.
       data however a thread ends, threadvar blocks of threads ended from
       outside (AllocateForThread), heap chunks of ended threads kept by the
       heap check quarantine; checked by limittest
-- [ ] Demand paging from files (map executables instead of copying them in)
+- [x] Demand paging from files (map executables instead of copying them in):
+      program and library pages come from the file's mapped pages
+      (Processes.MappedFiles) on first touch, shared between processes;
+      image sections keep only headers and the few built pages
+- [x] Reserve / commit / decommit / protect / query (CallReserveMemory 160 ..
+      CallSetMemoryPolicy 165), user W^X with a dynamic code opt-in, one-shot
+      guard pages, commit charge per process (ProcessLimitCommit) and system
+      wide (Memory.CommitCharge)
+- [x] File mappings (CallMapHandle on regular files): read-only shared and
+      private copy on write, coherent with write() for shared mappings,
+      private ones keeping what they saw; maptest
+- [ ] Shared writable file mappings (write-back of dirty pages through the
+      file write path; refused with ErrorUnsupported for now)
+- [ ] Evicting mapped file pages under memory pressure (they stay while the
+      file is mapped or its image section is cached; package 7's shrinker
+      could drop pages no process maps)
+- [ ] Mapped file pages and the block cache hold the same data twice; read()
+      could be served from the mapped file's pages when they are resident
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
 - [ ] Keep relocated copies of image pages per load address, so loading a
@@ -99,11 +116,9 @@ how the existing pieces fit together.
       `heapchecks`, `HEAP_CHECKS`): fill patterns that make freed pointers
       non-canonical, guards after blocks, double free detection, a quarantine
       checked when blocks leave it; on in every test boot
-- [ ] Page heap (opt-in per program): every block on pages of its own,
-      end-aligned against an unmapped guard page, freed pages unmapped and
-      their addresses kept from reuse. Needs a reserve / commit / decommit
-      call and keeping freed addresses from first-fit reuse (the region
-      tree holds a region per block now)
+- [x] Page heap (HEAP_CHECKS=pages): every block on pages of its own,
+      end-aligned against a reserved page, freed pages decommitted and their
+      reservations kept back (the last 1024) from reuse
 - [x] Heap checking for the physical page allocator (fill freed pages, keep
       them from reuse for a while, check them when they leave the quarantine)
 

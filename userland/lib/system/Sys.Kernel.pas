@@ -102,6 +102,14 @@ function KernelShutdown(Action: QWord): Int64;
 function KernelSuspend: Int64;
 { The address of Length bytes at Offset of Handle's memory, mapped. }
 function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
+{ The same with Map* flags (files). }
+function KernelMapHandleWithFlags(Handle: Int64; Offset, Length: QWord; Flags: LongWord): Int64;
+function KernelReserveMemory(ByteCount: QWord): Int64;
+function KernelCommitMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): Int64;
+function KernelDecommitMemory(Address: Pointer; ByteCount: QWord): Int64;
+function KernelProtectMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): Int64;
+function KernelQueryMemory(Address: Pointer; out Information: TAbiMemoryInformation): Int64;
+function KernelSetMemoryPolicy(Flags: LongWord): Int64;
 function KernelCreateEvent(Flags: LongWord): Int64;
 function KernelSetEvent(Handle: Int64): Int64;
 function KernelResetEvent(Handle: Int64): Int64;
@@ -488,6 +496,41 @@ end;
 function KernelMapHandle(Handle: Int64; Offset, Length: QWord): Int64;
 begin
   Result := SystemCall(CallMapHandle, QWord(Handle), Offset, Length, 0, 0, 0);
+end;
+
+function KernelMapHandleWithFlags(Handle: Int64; Offset, Length: QWord; Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallMapHandle, QWord(Handle), Offset, Length, Flags, 0, 0);
+end;
+
+function KernelReserveMemory(ByteCount: QWord): Int64;
+begin
+  Result := SystemCall(CallReserveMemory, ByteCount, 0, 0, 0, 0, 0);
+end;
+
+function KernelCommitMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): Int64;
+begin
+  Result := SystemCall(CallCommitMemory, QWord(Address), ByteCount, Protection, 0, 0, 0);
+end;
+
+function KernelDecommitMemory(Address: Pointer; ByteCount: QWord): Int64;
+begin
+  Result := SystemCall(CallDecommitMemory, QWord(Address), ByteCount, 0, 0, 0, 0);
+end;
+
+function KernelProtectMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): Int64;
+begin
+  Result := SystemCall(CallProtectMemory, QWord(Address), ByteCount, Protection, 0, 0, 0);
+end;
+
+function KernelQueryMemory(Address: Pointer; out Information: TAbiMemoryInformation): Int64;
+begin
+  Result := SystemCall(CallQueryMemory, QWord(Address), QWord(@Information), 0, 0, 0, 0);
+end;
+
+function KernelSetMemoryPolicy(Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallSetMemoryPolicy, Flags, 0, 0, 0, 0, 0);
 end;
 
 function KernelCreateEvent(Flags: LongWord): Int64;

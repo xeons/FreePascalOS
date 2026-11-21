@@ -89,6 +89,7 @@ uses
   Processes.AffinityCalls,
   Processes.LimitCalls,
   Processes.MemoryCalls,
+  Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
   Processes.Shutdown,
@@ -379,6 +380,7 @@ begin
   { The child starts with the caller's limits. }
   Startup.HandleLimit := Caller^.Handles.Limit;
   Startup.RegionLimit := Caller^.AddressSpace^.RegionLimit;
+  Startup.CommitLimitPages := Caller^.AddressSpace^.CommitLimitPages;
   Startup.ProcessCountLimit := Caller^.ProcessCountLimit;
   Startup.OomScoreAdjust := Caller^.OomScoreAdjust;
   ReleaseMutex(Caller^.Lock);
@@ -789,7 +791,7 @@ begin
     CallSetAffinity: Result := PerformSetAffinity(Argument0, Argument1);
     CallShutdown: Result := PerformShutdown(Argument0);
     CallSuspend: Result := PerformSuspend;
-    CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2);
+    CallMapHandle: Result := PerformMapHandle(Int64(Argument0), Argument1, Argument2, Argument3);
 
     { Objects for programs that work together (Processes.ObjectCalls,
       Processes.WaitCalls). }
@@ -885,6 +887,13 @@ begin
     CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
     CallGetModuleTls: Result := PerformGetModuleTls(Int64(Argument0), Argument1);
     CallTakeModuleInitializers: Result := PerformTakeModuleInitializers(Int64(Argument0), Argument1);
+    { --- Virtual memory (Processes.VirtualMemoryCalls) --- }
+    CallReserveMemory: Result := PerformReserveMemory(Argument0, Argument1);
+    CallCommitMemory: Result := PerformCommitMemory(Argument0, Argument1, Argument2);
+    CallDecommitMemory: Result := PerformDecommitMemory(Argument0, Argument1);
+    CallProtectMemory: Result := PerformProtectMemory(Argument0, Argument1, Argument2);
+    CallQueryMemory: Result := PerformQueryMemory(Argument0, Argument1);
+    CallSetMemoryPolicy: Result := PerformSetMemoryPolicy(Argument0);
     CallTrimVolume: Result := PerformTrimVolume(Argument0);
     CallGetBlockCacheStatistics: Result := PerformGetBlockCacheStatistics(Argument0);
     CallGetMemoryPressure: Result := PerformGetMemoryPressure(Argument0);

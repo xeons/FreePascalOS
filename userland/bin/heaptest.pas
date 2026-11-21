@@ -33,6 +33,21 @@
       after free with runtime error 216 (the method table of a freed
       object is the free fill, not an address), the others with the heap
       check report and exit status 204. coretest runs them.
+
+  HEAP_CHECKS=pages heaptest --pages
+      Checks the page heap: every block ends where its page does (the
+      heap's 16-byte rounding aside), a read or write just past that end
+      raises EAccessViolation at once, at the very byte touched (the
+      exception record's fault address), and so does touching a block
+      after it was freed; contents survive ReAllocMem, MemSize is the
+      size asked for, strings and objects work, threads allocate and
+      free at once.
+
+  HEAP_CHECKS=pages heaptest --overrun-page
+      Writes past the end of a block onto the page after it: runtime
+      error 216 at once (the other mistakes above work under the page
+      heap too: --write-past-end within the rounding and --double-free
+      are reported with exit status 204).
 }
 program heaptest;
 
@@ -41,6 +56,8 @@ program heaptest;
 {$pointermath on}
 
 uses
+  Abi.SystemCalls,
+  Sys.Exceptions,
   Sys.Environment,
   Sys.Memory,
   Sys.Threads,
@@ -53,6 +70,8 @@ const
   FreeFill = Byte($DF);
   ThreadCount = 4;
   RoundsPerThread = 3000;
+  { The page heap makes every block two system calls. }
+  PageHeapRoundsPerThread = 200;
 
 type
   TVictim = class
@@ -63,6 +82,7 @@ type
 
 var
   PassedCount: Integer = 0;
+  ThreadRounds: Integer = RoundsPerThread;
   FailedCount: Integer = 0;
 
 function TVictim.Describe: Integer;
@@ -199,7 +219,7 @@ var
   Index: Integer;
 begin
   Result := 0;
-  for Round := 1 to RoundsPerThread do
+  for Round := 1 to ThreadRounds do
   begin
     for Index := 0 to High(Blocks) do
     begin
@@ -233,6 +253,112 @@ begin
       CloseThreadHandle(Handles[Index]);
   end;
   Check(AllWell, 'threads allocate and free at the same time');
+end;
+
+{ --- The page heap -------------------------------------------------------- }
+
+const
+  PageBytes = 4096;
+
+var
+  FaultAddress: QWord = 0;
+  Sink: Byte;
+
+function NoteFault(var ExceptionRecord: TAbiExceptionRecord): Boolean;
+begin
+  FaultAddress := ExceptionRecord.FaultAddress;
+  Result := False;
+end;
+
+function RoundTo16(Size: PtrUInt): PtrUInt;
+begin
+  Result := (Size + 15) and not PtrUInt(15);
+end;
+
+function ReadFaultsAt(Address: PByte): Boolean;
+begin
+  Result := False;
+  FaultAddress := 0;
+  try
+    Sink := Address^;
+  except
+    on EAccessViolation do
+      Result := FaultAddress = QWord(Address);
+  end;
+end;
+
+function WriteFaultsAt(Address: PByte): Boolean;
+begin
+  Result := False;
+  FaultAddress := 0;
+  try
+    Address^ := 1;
+  except
+    on EAccessViolation do
+      Result := FaultAddress = QWord(Address);
+  end;
+end;
+
+procedure TestPageHeap;
+const
+  Sizes: array[0..5] of PtrUInt = (1, 16, 100, 4000, 4096, 10000);
+var
+  Index: Integer;
+  Block: PByte;
+  AllAtPageEnds: Boolean;
+  AllCaught: Boolean;
+  Size: PtrUInt;
+  Text: string;
+  Victim: TVictim;
+begin
+  SetExceptionFilter(@NoteFault);
+  AllAtPageEnds := True;
+  AllCaught := True;
+  for Index := 0 to High(Sizes) do
+  begin
+    Size := Sizes[Index];
+    Block := GetMem(Size);
+    if ((PtrUInt(Block) + RoundTo16(Size)) mod PageBytes) <> 0 then
+      AllAtPageEnds := False;
+    FillChar(Block^, Size, 1);
+    if not WriteFaultsAt(Block + RoundTo16(Size)) or not ReadFaultsAt(Block + RoundTo16(Size) + 100) then
+      AllCaught := False;
+    FreeMem(Block);
+    if not ReadFaultsAt(Block) then
+      AllCaught := False;
+  end;
+  Check(AllAtPageEnds, 'page heap blocks end where their pages do');
+  Check(AllCaught, 'touching past a block''s end or after its free faults at the byte touched');
+
+  Block := GetMem(300);
+  FillChar(Block^, 300, 7);
+  Check(MemSize(Block) = 300, 'MemSize is the size asked for');
+  ReAllocMem(Block, 9000);
+  Check((Block[0] = 7) and (Block[299] = 7), 'ReAllocMem keeps the contents');
+  Check(WriteFaultsAt(Block + 9008), 'and the moved block ends before a page nobody may touch');
+  FreeMem(Block);
+
+  Block := AllocMem(5000);
+  Check((Block[0] = 0) and (Block[4999] = 0), 'AllocMem still zeroes');
+  FreeMem(Block);
+
+  Text := '';
+  for Index := 1 to 200 do
+    Text := Text + IntToStr(Index);
+  Victim := TVictim.Create;
+  Victim.Value := Length(Text);
+  Check(Victim.Describe = Length(Text), 'strings and objects work on the page heap');
+  Victim.Free;
+  SetExceptionFilter(nil);
+end;
+
+procedure OverrunPage;
+var
+  Block: PByte;
+begin
+  Block := GetMem(100);
+  Block[RoundTo16(100)] := 0;
+  FreeMem(Block);
 end;
 
 { --- Mistakes made on purpose ------------------------------------------ }
@@ -296,6 +422,19 @@ begin
       DoubleFree
     else if TextIsEqual(Argument(1), '--write-past-end') then
       WritePastEnd
+    else if TextIsEqual(Argument(1), '--overrun-page') then
+      OverrunPage
+    else if TextIsEqual(Argument(1), '--pages') then
+    begin
+      TestPageHeap;
+      ThreadRounds := PageHeapRoundsPerThread;
+      TestThreads;
+      WriteString(StandardOutput, Format('heaptest: %d passed, %d failed'#10,
+        [PassedCount, FailedCount]));
+      if FailedCount > 0 then
+        Halt(1);
+      Halt(0);
+    end
     else
     begin
       WriteString(StandardError, Format('heaptest: unknown option %s'#10, [Argument(1)]));
