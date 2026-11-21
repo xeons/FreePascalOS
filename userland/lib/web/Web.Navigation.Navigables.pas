@@ -184,6 +184,7 @@ type
     FDetached: Boolean;
     FChildOrigin: TUrlOrigin;
     FHasChildOrigin: Boolean;
+    FEncodingOverride: string;
     procedure SetState(State: TLoadingState);
     procedure CreateInitialDocument;
     function PromptToUnload: Boolean;
@@ -269,6 +270,10 @@ type
     procedure Back;
     procedure Forward;
     procedure Traverse(Delta: Integer);
+    { Session restore: the history becomes Entries (no documents of
+      their own yet: going to one loads it) and the one at Index is
+      loaded now. }
+    procedure RestoreSession(const Entries: array of TSessionRestoreEntry; Index: Integer);
     procedure Reload(BypassCache: Boolean = False);
     procedure Stop;
     { The web view tells where the current entry is scrolled to. }
@@ -286,6 +291,10 @@ type
     property Sink: TResourceSink read FSink write FSink;
     property Executor: TScriptExecutor read FExecutor write FExecutor;
     property Settings: TLoadingSettings read FSettings write FSettings;
+    { The encoding documents are decoded with whatever they say ('':
+      what the response and the document say); from the next
+      navigation (a reload applies it). }
+    property EncodingOverride: string read FEncodingOverride write FEncodingOverride;
     { Not owned. }
     property ObserverObject: TNavigableObserver read FObserver write FObserver;
     { A child navigable's parent and frame element (nil for a top-level
@@ -957,7 +966,14 @@ begin
   FNavigationTimes.Protocol := Response.Protocol;
   FNavigationTimes.Status := Response.Status;
   FNavigationTimes.RedirectCount := Job.Request.RedirectCount;
-  CommitDocument(Url, Kind, Response.Charset);
+  if FEncodingOverride <> '' then
+    CommitDocument(Url, Kind, FEncodingOverride)
+  else
+    CommitDocument(Url, Kind, Response.Charset);
+  FLoader.Document.Referrer := Job.Referrer;
+  FLoader.Document.LastModified := Response.Headers.Value('last-modified');
+  if Kind in [ContentText, ContentImage] then
+    FLoader.Document.ContentType := Essence;
   if Kind = ContentImage then
   begin
     { The image document's img loads the image itself (from the cache). }
@@ -1251,6 +1267,34 @@ begin
   FTraverseIndex := TargetIndex;
   Options := DefaultNavigateOptions;
   StartNavigation(Target.Url, Options, HistoryTraverse, FetchCacheForceCache);
+end;
+
+procedure TNavigable.RestoreSession(const Entries: array of TSessionRestoreEntry; Index: Integer);
+var
+  NewEntries: array of TSessionHistoryEntry;
+  Position: Integer;
+  Options: TNavigateOptions;
+begin
+  if Length(Entries) = 0 then
+    Exit;
+  NewEntries := nil;
+  SetLength(NewEntries, Length(Entries));
+  for Position := 0 to High(Entries) do
+  begin
+    NewEntries[Position] := TSessionHistoryEntry.Create;
+    NewEntries[Position].Url := Entries[Position].Url;
+    NewEntries[Position].Title := Entries[Position].Title;
+    { No document is any entry's yet (document ids start at 1). }
+    NewEntries[Position].DocumentId := 0;
+  end;
+  CancelNavigation;
+  FHistory.ReplaceAll(NewEntries, Index);
+  if FObserver <> nil then
+    FObserver.HistoryChanged(Self);
+  FTraverseIndex := FHistory.Index;
+  Options := DefaultNavigateOptions;
+  Options.UserInitiated := True;
+  StartNavigation(FHistory.Current.Url, Options, HistoryTraverse, FetchCacheDefault);
 end;
 
 procedure TNavigable.Reload(BypassCache: Boolean);

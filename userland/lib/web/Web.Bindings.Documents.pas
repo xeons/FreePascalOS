@@ -294,7 +294,7 @@ end;
 
 function Document_get_referrer(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).TextValue('');
+  Result := Context(Call).TextValue(ThisDocument(Call).Referrer);
 end;
 
 function Document_get_cookie(var Call: TBindingCall): TJsValue;

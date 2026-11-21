@@ -68,6 +68,7 @@ type
     function HistoryLength(Context: TObject): Integer; override;
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure Alert(Context: TObject; const Message: string); override;
+    function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; override;
     function Confirm(Context: TObject; const Message: string): Boolean; override;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; override;
     function ViewportWidth: Integer; override;
@@ -169,6 +170,13 @@ end;
 function TNavigableFrameEnvironment.ModalsAllowed: Boolean;
 begin
   Result := (FNavigable <> nil) and (not FNavigable.Sandboxed or (AllowModals in FNavigable.Allowances));
+end;
+
+{ A sandboxed frame opens windows only with allow-popups. }
+function TNavigableFrameEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
+begin
+  Result := (FNavigable <> nil) and (not FNavigable.Sandboxed or (AllowPopups in FNavigable.Allowances)) and
+    inherited OpenWindow(Context, Url, Target, Features);
 end;
 
 procedure TNavigableFrameEnvironment.Alert(Context: TObject; const Message: string);
