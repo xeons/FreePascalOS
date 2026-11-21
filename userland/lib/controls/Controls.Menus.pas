@@ -204,6 +204,12 @@ type
     FPickedIndex: LongInt;
     FOpenList: TMenuList;
     FOnChoose: TMenuItemEvent;
+    { Shown by AutoReveal while its menus are in use; what keeps it shown
+      while switching between them. }
+    FRevealed: Boolean;
+    FKeepRevealed: LongInt;
+    procedure Reveal;
+    procedure ConcealIfDone;
     function HeadingAt(X: LongInt): LongInt;
     function HeadingWithMnemonic(Character: LongWord): LongInt;
     function NextHeading(Index, Step: LongInt): LongInt;
@@ -979,6 +985,7 @@ begin
     FMenuBar.FOpenList := nil;
     FMenuBar.FOpenIndex := -1;
     FMenuBar.Invalidate;
+    FMenuBar.ConcealIfDone;
   end;
   FHoverTimer.Free;
   inherited Destroy;
@@ -1184,6 +1191,7 @@ begin
   FPickedIndex := -1;
   if (Index >= 0) and (Index < FMenu.Count) and FMenu[Index].Enabled and (FMenu[Index].Count > 0) then
   begin
+    Reveal;
     Window := TControlWindow(Host.OwnerWindow);
     FOpenIndex := Index;
     FOpenList := OpenMenuList(Window, FMenu[Index],
@@ -1193,6 +1201,24 @@ begin
     FOpenList.FOnChoose := FOnChoose;
   end;
   Invalidate;
+  ConcealIfDone;
+end;
+
+procedure TMenuBar.Reveal;
+begin
+  if Visible or not AutoReveal then
+    Exit;
+  FRevealed := True;
+  Visible := True;
+end;
+
+procedure TMenuBar.ConcealIfDone;
+begin
+  if FRevealed and (FKeepRevealed = 0) and (FOpenIndex < 0) and (FPickedIndex < 0) then
+  begin
+    FRevealed := False;
+    Visible := False;
+  end;
 end;
 
 procedure TMenuBar.OpenMenuWithKeyboard(Index: LongInt);
@@ -1237,7 +1263,9 @@ var
   Index: LongInt;
 begin
   Index := FOpenIndex;
+  Inc(FKeepRevealed);
   OpenMenu(-1);
+  Dec(FKeepRevealed);
   FPickedIndex := Index;
   Invalidate;
 end;
@@ -1246,7 +1274,10 @@ procedure TMenuBar.EnterMenuMode;
 begin
   if FMenu.Count = 0 then
     Exit;
+  Inc(FKeepRevealed);
   OpenMenu(-1);
+  Reveal;
+  Dec(FKeepRevealed);
   { The first enabled heading: the one after the last. }
   FPickedIndex := NextHeading(FMenu.Count - 1, 1);
   Invalidate;
