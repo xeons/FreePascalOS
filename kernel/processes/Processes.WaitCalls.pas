@@ -20,7 +20,8 @@
   Waiting on several handles at once (CallWaitForHandles).
 
   Each handle stands for an event that says it is ready: an event or
-  timer object's own event, a process's or thread's exit event, a pipe
+  timer object's own event, a semaphore's (signaled while its count is
+  above zero; a wait it ends takes one), a process's or thread's exit event, a pipe
   read end's or channel end's Readable event, a pipe write end's
   Writable event, a port's Pending event, a watch's Ready event (change
   records waiting), a socket's Readable event, a device's ReadyEvent (if its
@@ -60,6 +61,7 @@ uses
   Objects.Manager,
   Objects.Events,
   Objects.Timers,
+  Objects.Semaphores,
   Io.Manager,
   Io.Pipes,
   Processes.Handles,
@@ -106,6 +108,8 @@ begin
     HandleKindFile: Result := @AlwaysReadyEvent;
     HandleKindEvent: Result := @PEventObject(ObjectBody)^.Event;
     HandleKindTimer: Result := @PTimerObject(ObjectBody)^.Event;
+    { Signaled while its count is above zero; a wait it ends takes one. }
+    HandleKindSemaphore: Result := @PSemaphoreObject(ObjectBody)^.Semaphore.Event;
     HandleKindProcess: Result := @PProcess(ObjectBody)^.ExitEvent;
     HandleKindThread: Result := @PThread(ObjectBody)^.ExitEvent;
     HandleKindPipeReadEnd: Result := @PPipe(ObjectBody)^.Readable;

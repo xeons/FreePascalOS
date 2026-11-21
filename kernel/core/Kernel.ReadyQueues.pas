@@ -72,10 +72,16 @@ function FindIdleProcessorFor(Thread: PThreadControlBlock; Exclude: PProcessor):
 
 function ReadyThreadTotal: LongWord;
 
+{ A ready thread that has waited long enough for the starvation boost
+  by Now (Kernel.PriorityBoosts), or nil. }
+function FindStarvedReadyThread(Now: QWord): PThreadControlBlock;
+
 implementation
 
 uses
-  Runtime.LinkedList;
+  Runtime.LinkedList,
+  Kernel.Clock,
+  Kernel.PriorityBoosts;
 
 type
   TReadyQueue = record
@@ -200,6 +206,7 @@ var
 begin
   Queue := @ReadyQueues[Processor^.Index];
   Thread^.State := ThreadStateReady;
+  Thread^.ReadySince := ClockNanoseconds;
   Thread^.QueuedProcessorIndex := Processor^.Index;
   InsertAtTail(Queue^.Queues[Thread^.Priority], @Thread^.SchedulerLink);
   Queue^.PriorityMask := Queue^.PriorityMask or (LongWord(1) shl Thread^.Priority);
@@ -320,6 +327,36 @@ end;
 function ReadyThreadTotal: LongWord;
 begin
   Result := TotalReady;
+end;
+
+{ Only the queues below the top of the variable class can hold one. }
+function FindStarvedReadyThread(Now: QWord): PThreadControlBlock;
+var
+  Index: LongWord;
+  Queue: PReadyQueue;
+  Priority: Integer;
+  Entry: PListEntry;
+begin
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Queue := @ReadyQueues[Index];
+    if Queue^.Count = 0 then
+      Continue;
+    for Priority := LowestThreadPriority to HighestVariablePriority - 1 do
+    begin
+      if (Queue^.PriorityMask and (LongWord(1) shl Priority)) = 0 then
+        Continue;
+      Entry := Queue^.Queues[Priority].Next;
+      while Entry <> @Queue^.Queues[Priority] do
+      begin
+        Result := ThreadFromSchedulerLink(Entry);
+        if HasStarved(Result^.BasePriority, Result^.Priority, Result^.ReadySince, Now) then
+          Exit;
+        Entry := Entry^.Next;
+      end;
+    end;
+  end;
+  Result := nil;
 end;
 
 end.

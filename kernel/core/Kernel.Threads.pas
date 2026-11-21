@@ -105,7 +105,16 @@ type
     UserThreadPointer: QWord;
 
     State: TThreadState;
+    { The priority the thread is queued and run at, and the one it was
+      given (SetThreadPriority): Priority is above BasePriority while a
+      boost lasts (Kernel.PriorityBoosts). }
     Priority: LongWord;
+    BasePriority: LongWord;
+    { Since when (clock nanoseconds) the thread is ready without
+      running, for the starvation boost; and whether it has that boost,
+      which lasts one time slice. }
+    ReadySince: QWord;
+    StarvationBoosted: Boolean;
     QuantumRemaining: LongInt;
 
     { The processors the thread may run on, one bit per processor index;

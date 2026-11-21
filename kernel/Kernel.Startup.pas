@@ -47,6 +47,7 @@ implementation
 
 uses
   Objects.Events,
+  Objects.Semaphores,
   Objects.Timers,
   Objects.Sections,
   Processes.Channels,
@@ -68,6 +69,7 @@ uses
   Kernel.Options,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.SynchronizationSelfTest,
   Kernel.HeapCheckTest,
   Kernel.SecondaryProcessors,
   Kernel.FileSystemTest,
@@ -223,6 +225,7 @@ begin
   InitializePseudoTerminalDevices;
   InitializePipes;
   InitializeEventObjects;
+  InitializeSemaphoreObjects;
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;
@@ -328,6 +331,7 @@ begin
   StartHangWatch;
 
   RunKernelSelfTests;
+  RunSynchronizationSelfTests;
   RunHeapCheckSelfTest;
   RunIoSelfTests;
   RunWatchdogSelfTest;

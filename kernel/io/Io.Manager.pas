@@ -263,8 +263,12 @@ function ForwardRequest(Lower: PDeviceObject; var Request: TIoRequest;
   queued) and then waits for it to complete. }
 function CallDriverAndWait(Device: PDeviceObject; var Request: TIoRequest;
   Alertable: Boolean): LongInt;
-{ For drivers: finishes a request they returned StatusPending for. }
+{ For drivers: finishes a request they returned StatusPending for. A
+  thread waiting for it gets the BoostIoCompletion priority boost. }
 procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
+{ The same with another boost (Kernel.PriorityBoosts): input drivers
+  give BoostInput. }
+procedure CompleteRequestWithBoost(var Request: TIoRequest; Status: LongInt; Boost: LongWord);
 
 procedure InitializeRequestQueue(out Queue: TRequestQueue);
 { Adds Request at the end of Queue. Returns False, and leaves it out, if
@@ -286,6 +290,7 @@ uses
   Memory.KernelHeap,
   Kernel.Threads,
   Kernel.Scheduler,
+  Kernel.PriorityBoosts,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Panic;
@@ -420,6 +425,11 @@ end;
 
 procedure CompleteRequest(var Request: TIoRequest; Status: LongInt);
 begin
+  CompleteRequestWithBoost(Request, Status, BoostIoCompletion);
+end;
+
+procedure CompleteRequestWithBoost(var Request: TIoRequest; Status: LongInt; Boost: LongWord);
+begin
   Request.Status := Status;
   while Request.LayerCount > 0 do
   begin
@@ -431,7 +441,7 @@ begin
   if Assigned(Request.CompletionRoutine) then
     Request.CompletionRoutine(@Request)
   else if Request.CompletionEvent <> nil then
-    SignalEvent(Request.CompletionEvent^);
+    SignalEventWithBoost(Request.CompletionEvent^, Boost);
 end;
 
 function AttachDevice(Filter, Target: PDeviceObject): PDeviceObject;

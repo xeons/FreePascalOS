@@ -22,7 +22,9 @@
   ipctest
 
   Events (automatic and manual reset), waiting on several handles and
-  timeouts, waiting for all of several handles (automatic reset ones
+  timeouts, semaphores (counts, the limit, bad arguments, timeouts, one
+  in a wait for all with an event, waiters in other threads woken by a
+  release of several), waiting for all of several handles (automatic reset ones
   consumed only once all are ready), timers (once and periodic, and how
   close to their time they keep at 5 and 15 ms), short sleeps, a pipe's
   read and write ends and the console as waitable handles, channels (data, a handle carried in a message, a message too
@@ -46,7 +48,9 @@ uses
   Sys.Kernel,
   Sys.Objects,
   Sys.Processes,
+  Sys.Semaphores,
   Sys.Streams,
+  Sys.Threads,
   Sys.Time;
 
 const
@@ -73,6 +77,16 @@ begin
     Inc(Failures);
   end;
   FlushStream(StandardOutput);
+end;
+
+function CreateSemaphoreAndClose(InitialCount, Limit: LongInt): Boolean;
+var
+  Semaphore: Int64;
+begin
+  Semaphore := CreateSemaphore(InitialCount, Limit);
+  Result := Semaphore >= 0;
+  if Result then
+    CloseHandle(Semaphore);
 end;
 
 function TimedOut(WaitResult: Int64): Boolean;
@@ -189,6 +203,148 @@ begin
   CloseHandle(Late);
   CloseHandle(Automatic);
   CloseHandle(Manual);
+end;
+
+{ --- Semaphores --- }
+
+const
+  SemaphoreWaiterCount = 3;
+
+var
+  { What the waiter threads saw, by thread. }
+  SemaphoreWaitResults: array[0..SemaphoreWaiterCount - 1] of LongInt;
+  SharedSemaphore: Int64;
+
+function SemaphoreWaiterMain(Argument: Pointer): LongInt;
+var
+  Index: PtrInt;
+begin
+  Index := PtrInt(Argument);
+  SemaphoreWaitResults[Index] := WaitForHandle(SharedSemaphore, 10000);
+  Result := 0;
+end;
+
+function SemaphoreCountIs(Semaphore: Int64; Expected: LongInt): Boolean;
+begin
+  Result := GetSemaphoreCount(Semaphore) = Expected;
+end;
+
+procedure TestSemaphoreCounts;
+var
+  Semaphore: Int64;
+  Event: Int64;
+  Previous: LongInt;
+  Start: Int64;
+begin
+  Semaphore := CreateSemaphore(2, 3);
+  Check('semaphore: created', Semaphore >= 0);
+  Check('semaphore: the handle kind', KernelGetHandleKind(Semaphore) = HandleKindSemaphore);
+  Check('semaphore: starts at its count', SemaphoreCountIs(Semaphore, 2));
+  Check('semaphore: a wait takes one', (WaitForHandle(Semaphore, 0) = ErrorNone) and SemaphoreCountIs(Semaphore, 1));
+  Check('semaphore: and another', (WaitForHandle(Semaphore, 0) = ErrorNone) and SemaphoreCountIs(Semaphore, 0));
+  Check('semaphore: at zero a wait times out', WaitForHandle(Semaphore, 0) = ErrorTimedOut);
+  Start := Int64(UptimeMilliseconds);
+  Check('semaphore: a timed wait times out', WaitForHandle(Semaphore, 30) = ErrorTimedOut);
+  Check('semaphore: after its time', Int64(UptimeMilliseconds) - Start >= 29);
+  Check('semaphore: release one (count was 0)',
+    (ReleaseSemaphore(Semaphore, 1, Previous) = ErrorNone) and (Previous = 0));
+  Check('semaphore: release two (count was 1)',
+    (ReleaseSemaphore(Semaphore, 2, Previous) = ErrorNone) and (Previous = 1) and SemaphoreCountIs(Semaphore, 3));
+  Check('semaphore: past the limit fails', ReleaseSemaphore(Semaphore, 1, Previous) = ErrorOverflow);
+  Check('semaphore: and changes nothing', SemaphoreCountIs(Semaphore, 3));
+  Check('semaphore: a huge release fails', ReleaseSemaphore(Semaphore, MaximumSemaphoreLimit, Previous) = ErrorOverflow);
+  Check('semaphore: release of 0', ReleaseSemaphore(Semaphore, 0, Previous) = ErrorInvalidArgument);
+  Check('semaphore: release of -1', ReleaseSemaphore(Semaphore, -1, Previous) = ErrorInvalidArgument);
+  Check('semaphore: three waits empty it', (WaitForHandle(Semaphore, 0) = ErrorNone) and
+    (WaitForHandle(Semaphore, 0) = ErrorNone) and (WaitForHandle(Semaphore, 0) = ErrorNone) and
+    (WaitForHandle(Semaphore, 0) = ErrorTimedOut));
+
+  Check('semaphore: limit 0 refused', CreateSemaphore(0, 0) = -ErrorInvalidArgument);
+  Check('semaphore: count above the limit refused', CreateSemaphore(4, 3) = -ErrorInvalidArgument);
+  Check('semaphore: negative count refused', CreateSemaphore(-1, 3) = -ErrorInvalidArgument);
+  Check('semaphore: the largest limit', CreateSemaphoreAndClose(MaximumSemaphoreLimit, MaximumSemaphoreLimit));
+  Event := CreateEvent(False, False);
+  Check('semaphore: release of an event handle', ReleaseSemaphore(Event, 1, Previous) = ErrorBadHandle);
+  Check('semaphore: count of an event handle', GetSemaphoreCount(Event) = -ErrorBadHandle);
+  CloseHandle(Event);
+  CloseHandle(Semaphore);
+end;
+
+{ Waiting for a semaphore with an event: one count is taken only when
+  both are ready; waiting for either: the semaphore's place. }
+procedure TestSemaphoreWithEvent;
+var
+  Semaphore: Int64;
+  Event: Int64;
+  Previous: LongInt;
+  Start: Int64;
+begin
+  Semaphore := CreateSemaphore(1, 5);
+  Event := CreateEvent(False, False);
+  Check('semaphore and event: all, the event not signaled', WaitForAllHandles([Semaphore, Event], 0) = ErrorTimedOut);
+  Check('semaphore and event: the count was not taken', SemaphoreCountIs(Semaphore, 1));
+  Start := Int64(UptimeMilliseconds);
+  Check('semaphore and event: all, a timeout', WaitForAllHandles([Semaphore, Event], 30) = ErrorTimedOut);
+  Check('semaphore and event: after its time', Int64(UptimeMilliseconds) - Start >= 29);
+  SetEvent(Event);
+  Check('semaphore and event: all, both ready', WaitForAllHandles([Semaphore, Event], 0) = ErrorNone);
+  Check('semaphore and event: one count taken', SemaphoreCountIs(Semaphore, 0));
+  Check('semaphore and event: the event consumed', TimedOut(WaitForHandles([Event], 0)));
+  SetEvent(Event);
+  Check('semaphore and event: all, the semaphore at zero', WaitForAllHandles([Semaphore, Event], 0) = ErrorTimedOut);
+  Check('semaphore and event: the event left signaled', WaitForHandles([Event], 0) = 0);
+  ReleaseSemaphore(Semaphore, 1, Previous);
+  Check('semaphore and event: any, the semaphore', WaitForHandles([Event, Semaphore], 0) = 1);
+  Check('semaphore and event: any, then neither', TimedOut(WaitForHandles([Event, Semaphore], 0)));
+  CloseHandle(Event);
+  CloseHandle(Semaphore);
+end;
+
+{ Three threads wait on an empty semaphore; one release of three lets
+  all of them through, and the count ends at zero. }
+procedure TestSemaphoreWaiters;
+var
+  Threads: array[0..SemaphoreWaiterCount - 1] of Int64;
+  Index: Integer;
+  ExitCode: LongInt;
+  Previous: LongInt;
+  AllWoke: Boolean;
+  Semaphore: TSemaphore;
+begin
+  SharedSemaphore := CreateSemaphore(0, SemaphoreWaiterCount);
+  for Index := 0 to SemaphoreWaiterCount - 1 do
+  begin
+    SemaphoreWaitResults[Index] := -1;
+    Threads[Index] := CreateThread(@SemaphoreWaiterMain, Pointer(PtrInt(Index)));
+  end;
+  SleepMilliseconds(50);
+  Check('semaphore waiters: still waiting', SemaphoreWaitResults[0] = -1);
+  Check('semaphore waiters: one release of three',
+    (ReleaseSemaphore(SharedSemaphore, SemaphoreWaiterCount, Previous) = ErrorNone) and (Previous = 0));
+  AllWoke := True;
+  for Index := 0 to SemaphoreWaiterCount - 1 do
+  begin
+    if (Threads[Index] < 0) or (WaitForThread(Threads[Index], 10000, ExitCode) <> 0) then
+      AllWoke := False
+    else if SemaphoreWaitResults[Index] <> ErrorNone then
+      AllWoke := False;
+    if Threads[Index] >= 0 then
+      CloseThreadHandle(Threads[Index]);
+  end;
+  Check('semaphore waiters: all three got one', AllWoke);
+  Check('semaphore waiters: none left over', SemaphoreCountIs(SharedSemaphore, 0));
+  CloseHandle(SharedSemaphore);
+
+  Semaphore := TSemaphore.Create(1, 1);
+  try
+    Check('TSemaphore: acquire', Semaphore.Acquire(0));
+    Check('TSemaphore: then empty', not Semaphore.Acquire(10));
+    Check('TSemaphore: release', Semaphore.Release);
+    Check('TSemaphore: not past its limit', not Semaphore.Release);
+    Check('TSemaphore: count', Semaphore.Count = 1);
+  finally
+    Semaphore.Free;
+  end;
 end;
 
 { Timers and sleeps keep to the millisecond rather than to a 10 ms
@@ -427,6 +583,9 @@ begin
     Halt(RunChild);
   TestEvents;
   TestWaitForAll;
+  TestSemaphoreCounts;
+  TestSemaphoreWithEvent;
+  TestSemaphoreWaiters;
   TestTimers;
   TestTimerAccuracy;
   TestPipe;

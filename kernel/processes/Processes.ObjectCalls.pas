@@ -18,8 +18,9 @@
 
 {
   System calls for the objects programs work together with: events,
-  timers, sections, ports and channels (Objects.Events, Objects.Timers,
-  Objects.Sections, Processes.Channels). Waiting for them is in
+  semaphores, timers, sections, ports and channels (Objects.Events,
+  Objects.Semaphores, Objects.Timers, Objects.Sections,
+  Processes.Channels). Waiting for them is in
   Processes.WaitCalls; mapping a section in Processes.MappingCalls.
 }
 unit Processes.ObjectCalls;
@@ -34,6 +35,9 @@ uses
 
 function PerformCreateEvent(Flags: QWord): Int64;
 function PerformSetEvent(Handle: Int64; Signal: Boolean): Int64;
+function PerformCreateSemaphore(InitialCount, Limit: Int64): Int64;
+function PerformReleaseSemaphore(Handle: Int64; ReleaseCount: Int64): Int64;
+function PerformGetSemaphoreCount(Handle: Int64): Int64;
 function PerformCreateTimer(Flags: QWord): Int64;
 function PerformSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
 function PerformCreateSection(Length: QWord): Int64;
@@ -59,6 +63,8 @@ uses
   Kernel.Mutex,
   Objects.Manager,
   Objects.Events,
+  Objects.Semaphores,
+  Kernel.Semaphores,
   Objects.Timers,
   Objects.Sections,
   Processes.Process,
@@ -135,6 +141,46 @@ begin
   DereferenceObject(EventObject);
   Result := 0;
 end;
+
+{ --- Semaphores -------------------------------------------------------------- }
+
+function PerformCreateSemaphore(InitialCount, Limit: Int64): Int64;
+begin
+  if (Limit < 1) or (Limit > MaximumSemaphoreLimit) or (InitialCount < 0) or (InitialCount > Limit) then
+    Exit(Failure(ErrorInvalidArgument));
+  Result := HandleForNewObject(Processes.Handles.HandleKindSemaphore,
+    CreateSemaphoreObject(LongInt(InitialCount), LongInt(Limit)));
+end;
+
+function PerformReleaseSemaphore(Handle: Int64; ReleaseCount: Int64): Int64;
+var
+  SemaphoreObject: PSemaphoreObject;
+  PreviousCount: LongInt;
+begin
+  if (ReleaseCount < 1) or (ReleaseCount > MaximumSemaphoreLimit) then
+    Exit(Failure(ErrorInvalidArgument));
+  SemaphoreObject := PSemaphoreObject(ReferenceHandleOfKind(Handle, Processes.Handles.HandleKindSemaphore));
+  if SemaphoreObject = nil then
+    Exit(Failure(ErrorBadHandle));
+  if ReleaseSemaphore(SemaphoreObject^.Semaphore, LongInt(ReleaseCount), PreviousCount) then
+    Result := PreviousCount
+  else
+    Result := Failure(ErrorOverflow);
+  DereferenceObject(SemaphoreObject);
+end;
+
+function PerformGetSemaphoreCount(Handle: Int64): Int64;
+var
+  SemaphoreObject: PSemaphoreObject;
+begin
+  SemaphoreObject := PSemaphoreObject(ReferenceHandleOfKind(Handle, Processes.Handles.HandleKindSemaphore));
+  if SemaphoreObject = nil then
+    Exit(Failure(ErrorBadHandle));
+  Result := SemaphoreCount(SemaphoreObject^.Semaphore);
+  DereferenceObject(SemaphoreObject);
+end;
+
+{ --- Timers ------------------------------------------------------------------ }
 
 function PerformCreateTimer(Flags: QWord): Int64;
 begin

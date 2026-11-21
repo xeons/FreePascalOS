@@ -777,6 +777,9 @@ begin
     CallSetEvent: Result := PerformSetEvent(Int64(Argument0), True);
     CallResetEvent: Result := PerformSetEvent(Int64(Argument0), False);
     CallCreateTimer: Result := PerformCreateTimer(Argument0);
+    CallCreateSemaphore: Result := PerformCreateSemaphore(Int64(Argument0), Int64(Argument1));
+    CallReleaseSemaphore: Result := PerformReleaseSemaphore(Int64(Argument0), Int64(Argument1));
+    CallGetSemaphoreCount: Result := PerformGetSemaphoreCount(Int64(Argument0));
     CallSetTimer: Result := PerformSetTimer(Int64(Argument0), Argument1, Argument2);
     CallWaitForHandles: Result := PerformWaitForHandles(Argument0, Argument1, Int64(Argument2), Argument3);
     CallCreateSection: Result := PerformCreateSection(Argument0);

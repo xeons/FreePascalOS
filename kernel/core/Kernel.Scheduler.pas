@@ -144,8 +144,14 @@ function WaitCurrentThreadWithOptionsLocked(TimeoutMilliseconds: QWord;
 { Ends the wait of Thread with Result: takes it off its wait list and
   the sleep queue and makes it ready. }
 procedure WakeWaitingThreadLocked(Thread: PThreadControlBlock; Result: TWaitResult);
+{ The same, raising the thread's priority by Boost for a while
+  (Kernel.PriorityBoosts: the Boost* constants say how much for what). }
+procedure WakeWaitingThreadWithBoostLocked(Thread: PThreadControlBlock; Result: TWaitResult;
+  Boost: LongWord);
 
 function ContextSwitchCount: QWord;
+{ How many starvation boosts were given since start. }
+function StarvationBoostTotal: QWord;
 
 implementation
 
@@ -167,6 +173,7 @@ uses
   Kernel.InterProcessor,
   Kernel.ReadyQueues,
   Kernel.ProcessorTime,
+  Kernel.PriorityBoosts,
   Kernel.Arch.ProcessorBlock,
   Kernel.Panic;
 
@@ -175,11 +182,16 @@ var
   TerminatedThreads: TListEntry;
 
   SwitchCount: QWord;
+  StarvationBoostCount: QWord;
 
   { Exponentially decayed run queue lengths, fixed point with
     LoadFractionBits bits after the point. }
   LoadAverage: array[0..2] of QWord;
   NextLoadSampleTick: QWord;
+
+  { When the ready queues are next looked at for starved threads (clock
+    nanoseconds); read without the lock by the clock interrupt. }
+  NextStarvationScanTime: QWord;
 
 const
   LoadFractionBits = 11;
@@ -291,6 +303,19 @@ begin
     RequestDispatchOnProcessor(Idle);
 end;
 
+{ The running thread used up its time slice: a boost loses a level, a
+  starvation boost all of it (Kernel.PriorityBoosts). }
+procedure DecayRunningThreadPriority(Thread: PThreadControlBlock);
+begin
+  if Thread^.StarvationBoosted then
+  begin
+    Thread^.StarvationBoosted := False;
+    Thread^.Priority := Thread^.BasePriority;
+  end
+  else
+    Thread^.Priority := DecayedPriority(Thread^.BasePriority, Thread^.Priority);
+end;
+
 procedure PreemptIfNeededLocked;
 var
   Processor: PProcessor;
@@ -298,6 +323,8 @@ var
   Running: PThreadControlBlock;
 begin
   Processor := CurrentProcessor;
+  if Processor^.QuantumHasExpired and (Processor^.RunningThread <> Processor^.IdleThread) then
+    DecayRunningThreadPriority(Processor^.RunningThread);
   if not RunningThreadShouldBePreempted then
   begin
     if Processor^.QuantumHasExpired then
@@ -385,6 +412,41 @@ begin
   RequestClockInterruptBy(Processor^.NextWakeUpTime);
 end;
 
+{ --- Starvation ------------------------------------------------------- }
+
+{ Gives the threads that have been ready for StarvationNanoseconds
+  without running the top priority of their class for one time slice
+  (Kernel.PriorityBoosts); at most StarvationScanLimit at a time. }
+procedure BoostStarvedThreadsLocked;
+var
+  Now: QWord;
+  Thread: PThreadControlBlock;
+  Boosted: Integer;
+begin
+  Now := ClockNanoseconds;
+  if Now < NextStarvationScanTime then
+    Exit;
+  NextStarvationScanTime := Now + StarvationScanNanoseconds;
+  Boosted := 0;
+  while Boosted < StarvationScanLimit do
+  begin
+    Thread := FindStarvedReadyThread(Now);
+    if Thread = nil then
+      Break;
+    RemoveReadyThread(Thread);
+    Thread^.Priority := HighestVariablePriority;
+    Thread^.StarvationBoosted := True;
+    Inc(StarvationBoostCount);
+    PlaceReadyThreadLocked(Thread);
+    Inc(Boosted);
+  end;
+end;
+
+function StarvationBoostTotal: QWord;
+begin
+  Result := StarvationBoostCount;
+end;
+
 { --- Interrupt handlers ---------------------------------------------- }
 
 procedure HandleDispatchInterrupt(Frame: PTrapFrame; Context: Pointer);
@@ -397,6 +459,7 @@ begin
   RunDeferredCalls;
   AcquireSpinLockAtCurrentLevel(DispatcherLock);
   WakeExpiredSleepersLocked;
+  BoostStarvedThreadsLocked;
   PreemptIfNeededLocked;
   ReleaseSpinLockAtCurrentLevel(DispatcherLock);
 end;
@@ -441,7 +504,7 @@ var
   DispatchNeeded: Boolean;
 begin
   Processor := CurrentProcessor;
-  DispatchNeeded := Now >= Processor^.NextWakeUpTime;
+  DispatchNeeded := (Now >= Processor^.NextWakeUpTime) or (Now >= NextStarvationScanTime);
 
   if ElapsedTicks > 0 then
   begin
@@ -536,6 +599,12 @@ end;
 
 procedure WakeWaitingThreadLocked(Thread: PThreadControlBlock; Result: TWaitResult);
 begin
+  WakeWaitingThreadWithBoostLocked(Thread, Result, BoostNone);
+end;
+
+procedure WakeWaitingThreadWithBoostLocked(Thread: PThreadControlBlock; Result: TWaitResult;
+  Boost: LongWord);
+begin
   if Thread^.IsOnWaitList then
   begin
     RemoveListEntry(@Thread^.SchedulerLink);
@@ -546,6 +615,8 @@ begin
     RemoveFromSleepQueue(Thread);
   Thread^.WaitResult := Result;
   Thread^.WaitIsAlertable := False;
+  if Result = WaitSignaled then
+    Thread^.Priority := BoostedPriority(Thread^.BasePriority, Thread^.Priority, Boost);
   ReadyThreadLocked(Thread);
 end;
 
@@ -590,6 +661,9 @@ begin
   if Priority < LowestThreadPriority then
     Priority := LowestThreadPriority;
   PreviousLevel := AcquireDispatcherLock;
+  { A new base priority ends any boost. }
+  Thread^.BasePriority := Priority;
+  Thread^.StarvationBoosted := False;
   if Thread^.State = ThreadStateReady then
   begin
     { Move it to the queue of its new priority. }
@@ -674,10 +748,19 @@ begin
 end;
 
 procedure WaitCurrentThreadLocked;
+var
+  Thread: PThreadControlBlock;
 begin
-  if CurrentProcessor^.RunningThread = CurrentProcessor^.IdleThread then
+  Thread := CurrentProcessor^.RunningThread;
+  if Thread = CurrentProcessor^.IdleThread then
     KernelPanic('the idle thread tried to wait');
-  CurrentProcessor^.RunningThread^.State := ThreadStateWaiting;
+  { A starvation boost is for one time slice of running only. }
+  if Thread^.StarvationBoosted then
+  begin
+    Thread^.StarvationBoosted := False;
+    Thread^.Priority := Thread^.BasePriority;
+  end;
+  Thread^.State := ThreadStateWaiting;
   SwitchAwayFromBlockedThreadLocked;
 end;
 
@@ -689,9 +772,12 @@ begin
   InitializeListHead(TerminatedThreads);
   CurrentProcessor^.QuantumHasExpired := False;
   SwitchCount := 0;
+  StarvationBoostCount := 0;
+  NextStarvationScanTime := ClockNanoseconds + StarvationScanNanoseconds;
 
   IdleThread^.State := ThreadStateRunning;
   IdleThread^.Priority := IdlePriority;
+  IdleThread^.BasePriority := IdlePriority;
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
   CurrentProcessor^.IdleThread := IdleThread;
   CurrentProcessor^.RunningThread := IdleThread;
@@ -711,6 +797,7 @@ begin
   InitializeSleepQueue(Processor);
   IdleThread^.State := ThreadStateRunning;
   IdleThread^.Priority := IdlePriority;
+  IdleThread^.BasePriority := IdlePriority;
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
   Processor^.QuantumHasExpired := False;
   Processor^.IdleThread := IdleThread;
@@ -731,6 +818,9 @@ begin
   Thread^.StackTop := StackTop;
   Thread^.State := ThreadStateInitialized;
   Thread^.Priority := Priority;
+  Thread^.BasePriority := Priority;
+  Thread^.StarvationBoosted := False;
+  Thread^.ReadySince := 0;
   Thread^.QuantumRemaining := QuantumTicks;
   Thread^.AffinityMask := AllProcessors;
   Thread^.LastProcessorIndex := CurrentProcessorIndexOrZero;

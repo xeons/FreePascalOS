@@ -129,6 +129,7 @@ uses
   Kernel.PriorityLevel,
   Kernel.Threads,
   Kernel.Events,
+  Kernel.PriorityBoosts,
   Kernel.Mutex,
   Io.AudioStreams,
   Io.AudioInput,
@@ -224,7 +225,8 @@ begin
       HadSound := True;
       Stream^.LastSoundPeriod := Index;
     end;
-    SignalEvent(Stream^.SpaceFreed);
+    { A program feeding a stream must be in time: the sound boost. }
+    SignalEventWithBoost(Stream^.SpaceFreed, BoostSound);
     Stream := Stream^.Next;
   end;
   Samples := PSmallInt(Output^.Periods[Index mod AudioPeriodCount]);

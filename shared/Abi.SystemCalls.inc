@@ -467,7 +467,23 @@ const
     or for an unknown limit. Returns the previous value. }
   CallSetProcessLimit = 131;
 
-  CallCount = 132;
+  { --- Semaphores (140-147) ---------------------------------------------- }
+
+  { (InitialCount, Limit): a new semaphore, a handle like an event's: a
+    count between 0 and Limit (1 to MaximumSemaphoreLimit). It is
+    signaled while the count is above zero, and a wait it ends
+    (CallWaitForHandles, alone, among others or with WaitForAll) takes
+    one. ErrorInvalidArgument for a count or limit out of range. }
+  CallCreateSemaphore = 140;
+  { (Handle, ReleaseCount): gives back ReleaseCount (at least 1),
+    releasing waiters in the order they came. Returns the count before;
+    ErrorOverflow (and no change) if the count would pass the limit. }
+  CallReleaseSemaphore = 141;
+  { (Handle): the semaphore's count now. }
+  CallGetSemaphoreCount = 142;
+  { 143-147: reserved for more synchronization objects. }
+
+  CallCount = 148;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
@@ -490,6 +506,8 @@ const
   EventSignaled = $02;
   TimerManualReset = $01;
   MaximumWaitHandles = 64;
+  { The highest limit a semaphore may have. }
+  MaximumSemaphoreLimit = $7FFFFFFF;
   { CallWaitForHandles: every handle at once. }
   WaitForAll = $01;
   MaximumPortNameLength = 24;
@@ -894,6 +912,8 @@ const
   ErrorHostUnreachable = 113;
   ErrorAlreadyInProgress = 114;
   ErrorInProgress = 115;
+  { A semaphore released past its limit. }
+  ErrorOverflow = 75;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -945,6 +965,7 @@ const
   HandleKindWatch = 13;
   { A network socket (Abi.Networking.inc). }
   HandleKindSocket = 14;
+  HandleKindSemaphore = 15;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;

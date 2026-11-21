@@ -81,6 +81,7 @@ uses
   Runtime.Atomic,
   Memory.KernelHeap,
   Kernel.Mutex,
+  Kernel.SharedLocks,
   Kernel.Options,
   FileSystem.Files,
   FileSystem.Watches,
@@ -95,7 +96,9 @@ var
   DriverCount: Integer;
   Volumes: array[0..MaximumVolumes - 1] of PVolume;
   MountedVolumeCount: Integer;
-  VolumeListLock: TMutex;
+  { Held shared to look volumes up (every path does), exclusively to
+    change the list. }
+  VolumeListLock: TSharedLock;
   { The last number given to a volume (TVolume.Number); volumes are
     mounted at boot and by the disk arrival thread, so it is counted
     atomically. }
@@ -114,7 +117,7 @@ procedure InitializeFileSystems;
 begin
   DriverCount := 0;
   MountedVolumeCount := 0;
-  InitializeMutex(VolumeListLock);
+  InitializeSharedLock(VolumeListLock);
   InitializeBlockCache;
 
   RegisterFileSystemDriver(FatFileSystemDriver);
@@ -195,13 +198,13 @@ begin
 
     RegisterRootNode(Volume);
 
-    AcquireMutex(VolumeListLock);
+    AcquireSharedLockExclusive(VolumeListLock);
     if MountedVolumeCount < MaximumVolumes then
     begin
       Volumes[MountedVolumeCount] := Volume;
       Inc(MountedVolumeCount);
     end;
-    ReleaseMutex(VolumeListLock);
+    ReleaseSharedLock(VolumeListLock);
 
     ReportMountedVolume(Volume);
     ReportVolumeArrival(Volume);
@@ -272,7 +275,7 @@ var
   Index: Integer;
   Found: Integer;
 begin
-  AcquireMutex(VolumeListLock);
+  AcquireSharedLockExclusive(VolumeListLock);
   Found := -1;
   for Index := 0 to MountedVolumeCount - 1 do
     if Volumes[Index] = Volume then
@@ -284,7 +287,7 @@ begin
     Dec(MountedVolumeCount);
     Volumes[MountedVolumeCount] := nil;
   end;
-  ReleaseMutex(VolumeListLock);
+  ReleaseSharedLock(VolumeListLock);
   Result := Found >= 0;
 end;
 
@@ -294,7 +297,7 @@ var
   Index: Integer;
   Volume: PVolume;
 begin
-  AcquireMutex(VolumeListLock);
+  AcquireSharedLockShared(VolumeListLock);
   Result := nil;
   for Index := 0 to MountedVolumeCount - 1 do
   begin
@@ -305,7 +308,7 @@ begin
       Break;
     end;
   end;
-  ReleaseMutex(VolumeListLock);
+  ReleaseSharedLock(VolumeListLock);
 end;
 
 procedure RemoveVolumesOfDisk(Disk: PBlockDevice);
@@ -342,7 +345,7 @@ var
   Index: Integer;
 begin
   { Under the lock: the list closes up when a volume goes away. }
-  AcquireMutex(VolumeListLock);
+  AcquireSharedLockShared(VolumeListLock);
   Result := nil;
   for Index := 0 to MountedVolumeCount - 1 do
   begin
@@ -352,7 +355,7 @@ begin
       Break;
     end;
   end;
-  ReleaseMutex(VolumeListLock);
+  ReleaseSharedLock(VolumeListLock);
 end;
 
 
