@@ -108,7 +108,11 @@ type
       constref NotModifiedFields: THttpHeaderFieldArray; RequestTime, ResponseTime: Int64): THttpCacheEntry;
     procedure Invalidate(constref Url: TUrlRecord);
     procedure Clear;
+    { A new limit for the memory the entries take: the least recently
+      used go at once until the rest fit. }
+    procedure SetMemoryLimit(Limit: Int64);
     property MemoryUsed: Int64 read FMemoryUsed;
+    property MemoryLimit: Int64 read FMemoryLimit;
     property Directory: string read FDirectory;
   end;
 
@@ -297,6 +301,19 @@ begin
       if FEntries[Index].LastUsed < FEntries[Oldest].LastUsed then
         Oldest := Index;
     RemoveAt(Oldest);
+  end;
+end;
+
+procedure THttpCache.SetMemoryLimit(Limit: Int64);
+begin
+  if Limit < 0 then
+    Limit := 0;
+  EnterCriticalSection(FLock);
+  try
+    FMemoryLimit := Limit;
+    MakeRoom(0);
+  finally
+    LeaveCriticalSection(FLock);
   end;
 end;
 
