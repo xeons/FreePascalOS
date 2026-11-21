@@ -282,6 +282,8 @@ begin
   end;
   Message := NewMessage(RequestHello, 0);
   Message.Value := ProtocolVersion;
+  { The message loop answers the server's pings (Windowing.Windows). }
+  Message.Flags := HelloAnswersPings;
   SendRequest(Message, -1);
   if not WaitForEvent(EventWelcome, ReplyTimeout, Message) then
   begin

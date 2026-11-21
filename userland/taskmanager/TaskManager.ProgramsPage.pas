@@ -27,7 +27,9 @@
   asks its program to end, as closing it would - a program with
   unsaved work asks what to do with it - and if the program still runs
   a few seconds later, offers to end it outright: it may have stopped
-  responding.
+  responding (TaskManager.ProcessActions). A program the display server
+  marks as not responding shows so in its status, and is offered to be
+  ended outright at once.
 }
 unit TaskManager.ProgramsPage;
 
@@ -58,9 +60,6 @@ type
     { What was told last, so the list is told again only when it
       changes. }
     FToldList: string;
-    { The program End Program asked to end, waited for (0: none). }
-    FPendingProcessId: QWord;
-    FPendingTitle: string;
     function SelectedWindow(out Window: TListedWindow): Boolean;
     function RowIndexOf(WindowId: LongWord): LongInt;
     procedure TellList;
@@ -73,17 +72,8 @@ type
     destructor Destroy; override;
     { Lists the windows again. }
     procedure Update;
-    { The wait for a program asked to end is over: if it still runs,
-      offers to end it outright. }
-    procedure EndWaitIsOver;
     procedure TellPlaces;
   end;
-
-const
-  { How long a program asked to end has before it is offered to end it
-    outright, and the timer that measures it (the main window's). }
-  EndProgramWaitMilliseconds = 5000;
-  EndProgramTimer = 2;
 
 implementation
 
@@ -100,8 +90,9 @@ uses
   Windowing.Shell,
   Controls.Dialogs,
   Controls.MessageBoxes,
+  TaskManager.Targets,
   TaskManager.ProcessActions,
-  TaskManager.EndWatch,
+  TaskManager.NotResponding,
   TaskManager.Output;
 
 const
@@ -124,7 +115,7 @@ begin
   FList.Images := FIcons.Images;
   FList.IconsInDetails := True;
   FList.AddColumn('Program', 300);
-  FList.AddColumn('Status', 90);
+  FList.AddColumn('Status', 110);
   FList.AddColumn('PID', 60);
   FList.SortOnHeaderClick := True;
   FList.OnActivate := @SwitchClicked;
@@ -160,7 +151,9 @@ end;
 
 function StatusOf(Flags: LongWord): string;
 begin
-  if (Flags and ShellWindowMinimized) <> 0 then
+  if (Flags and ShellWindowNotResponding) <> 0 then
+    Result := 'Not responding'
+  else if (Flags and ShellWindowMinimized) <> 0 then
     Result := 'Minimized'
   else if (Flags and ShellWindowVisible) = 0 then
     Result := 'Hidden'
@@ -187,6 +180,7 @@ var
 begin
   if not ListOtherWindows(FWindows) then
     Exit;
+  NoteListedWindows(FWindows);
   for RowIndex := FList.RowCount - 1 downto 0 do
   begin
     Present := False;
@@ -278,46 +272,13 @@ end;
 procedure TProgramsPage.EndClicked(Sender: TControl);
 var
   Window: TListedWindow;
-  Error: LongInt;
+  Targets: TProcessTargets;
 begin
   if not SelectedWindow(Window) then
     Exit;
-  Error := AskProcessToEnd(Window.ProcessId, EndReasonAsked);
-  if Error <> ErrorNone then
-  begin
-    Say('error ' + Window.Title + ': ' + ErrorText(Error));
-    ShowMessageBox('Task Manager', 'Could not end ' + Window.Title + ':'#10#10 + ErrorText(Error),
-      MessageOk, SignError, FWindow);
-    Exit;
-  end;
-  Say('asked ' + IntToStr(Window.ProcessId));
-  WatchForEnd(Window.ProcessId);
-  FPendingProcessId := Window.ProcessId;
-  FPendingTitle := Window.Title;
-  FWindow.StartTimer(EndProgramTimer, EndProgramWaitMilliseconds);
-end;
-
-procedure TProgramsPage.EndWaitIsOver;
-var
-  Details: TProcessDetails;
-begin
-  FWindow.StopTimer(EndProgramTimer);
-  if FPendingProcessId = 0 then
-    Exit;
-  if not GetProcessDetails(FPendingProcessId, Details) or (Details.State = ProcessStateExiting) then
-  begin
-    FPendingProcessId := 0;
-    Exit;
-  end;
-  Say('not-responding ' + IntToStr(FPendingProcessId));
-  if ShowMessageBox('Task Manager', FPendingTitle + ' has not ended.'#10#10 +
-    'It may have stopped responding. End it now?'#10 + 'Anything it has not saved is lost.', MessageYesNo,
-    SignWarning, FWindow) = ResultYes then
-  begin
-    if TerminateProgram(FPendingProcessId, EndedOutrightStatus) = ErrorNone then
-      Say('ended-now ' + IntToStr(FPendingProcessId));
-  end;
-  FPendingProcessId := 0;
+  Targets := nil;
+  AddTarget(Targets, MakeTarget(Window.ProcessId, Window.Title));
+  AskToEnd(FWindow, Targets);
 end;
 
 procedure TProgramsPage.TellPlaces;

@@ -1884,6 +1884,23 @@ another user's titles may say what that user is doing) with
 window 0 that ends the list (`ListOtherWindows` in
 `Windowing.WindowList`).
 
+Programs that stop responding (`Server.Responsiveness`): a program says
+in its hello that its message loop answers pings (`HelloAnswersPings`;
+every libwindowing program does: `Windowing.Connection` sets it and the
+loop's `Dispatch` answers). While it has windows, the server sends it
+an `EventPing` every 2 seconds, the next only once the last was answered
+(`RequestAnswerPing` with the ping's number), so a stuck program's
+queue never fills with them; an answer that is 5 seconds late makes it
+not responding. Its windows' titles then end in " (Not responding)"
+(`NotRespondingTitleSuffix`, drawn by `Server.Frames`), and
+`ShellWindowNotResponding` is in their state for the shell and in the
+window list, which is how the task manager knows; the first answer
+after that makes it responding again. The server never waits for the
+answer: its loop's wait is cut to the next ping or deadline. The
+windows of a program stuck in a handler are still raised and minimized
+by the server, and the kernel ends the program whatever it is doing
+(see "Ending other programs").
+
 Window icons (`Server.WindowIcons`): a program gives its window an icon
 as a name of the icon theme (`RequestSetWindowIcon`; `TWindow.IconName`
 in libwindowing: every program names its `app-*` icon), or as pictures
@@ -1966,7 +1983,7 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
 `RequestRepaintDisplays` = 42; window icons `RequestSetWindowIcon` =
 43, `RequestSetWindowIconPictures` = 44, `RequestDescribeWindowIcon` =
-45; the clipboard and drag and drop 29 to
+45; `RequestAnswerPing` = 46; the clipboard and drag and drop 29 to
 36: `RequestOfferData` = 29, `RequestProvideData` = 30,
 `RequestAskData` = 31, `RequestWatchClipboard` = 32,
 `RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
@@ -1983,7 +2000,7 @@ and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
 `EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
 132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
 135; `EventScreenLock` = 140, `EventIdleDescribed` = 141,
-`EventWindowIconDescribed` = 142).
+`EventWindowIconDescribed` = 142, `EventPing` = 143).
 
 The clipboard (`Server.DataOffers`) is the server's. A program offers
 data in one or more formats (`RequestOfferData` with
@@ -3239,8 +3256,8 @@ status bar shows the number of processes, CPU usage and memory in use.
   for root) by title, with their state and process. Switch To (or a
   double click) activates one (`ManageWindow`); End Program asks its
   process to end (`AskProcessToEnd`) - a program with unsaved work asks
-  what to do with it - and five seconds later, if it still runs, offers
-  to end it outright, as it may have stopped responding.
+  what to do with it. The status is Running, Minimized, Hidden or Not
+  responding (the display server's `ShellWindowNotResponding`).
 - **Processes** (`TaskManager.ProcessesPage`): a list view with name,
   id, user, CPU, memory (private), threads, state and session, sorted by
   any column (the header; CPU, busiest first, to begin with; equal rows
@@ -3258,7 +3275,10 @@ status bar shows the number of processes, CPU usage and memory in use.
   do to another user's processes is greyed out; what fails anyway (only
   root raises a priority) is told in one message box naming each process
   and why (`TaskManager.ProcessActions`). The End Process button and the
-  Delete key ask the selection to end.
+  Delete key ask the selection to end. The state is "not responding"
+  for a process whose windows the display server marks so
+  (`TaskManager.NotResponding`, noted from the Programs tab's list at
+  each look).
 - **Performance** (`TaskManager.PerformancePage`): a graph of all the
   processors, one for each processor, one of the memory in use
   (`TaskManager.UsageGraph`: a chart, `Controls.Charts`, of one area
@@ -3269,6 +3289,17 @@ status bar shows the number of processes, CPU usage and memory in use.
   numbers: processes, threads, up time, processors, context switches,
   and what the memory is used for.
 
+Ending never stops at asking (`TaskManager.ProcessActions`,
+`TaskManager.EndWatch`), since a program that has stopped responding
+takes the request and never acts on it. One that is not responding is
+not asked at all: End (on either tab) offers to end it outright at
+once. Any other is asked and watched; if it is still there (and not
+already being ended) 10 seconds later, the task manager offers to end
+it outright - once, in one question for all that are overdue, checked
+every second whatever the update speed. Ending outright is
+`TerminateProcess`, which the kernel carries out whatever the program
+is doing.
+
 The window's size, the tab, the sort column and order and the update
 speed are kept in the user's settings (group `TaskManager`;
 `TaskManager.Settings`). The desktop opens it with Ctrl+Shift+Escape,
@@ -3277,7 +3308,9 @@ from the Start menu and the taskbar's menu. It prints what happens
 rows after each look, `program WINDOW PID TITLE`, `cpu N% memory N%`,
 `performance ...`, `graph NAME X Y W H`, `sort`, `asked PID`,
 `ended-now PID`, `ended PID` once a process it ended is gone,
-`stopped`, `continued`, `priority`, `properties`, `error TEXT`) and
+`not-responding PID` when it offers to end one outright, `end-now
+cancelled`, `stopped`, `continued`, `priority`, `properties`, `error
+TEXT`) and
 where things are (`place NAME X Y`: the tabs, buttons, the first rows,
 the context menu's items; told again if the server moved the window).
 The input test opens it with Ctrl+Shift+Escape over two `burn` busy
@@ -7362,6 +7395,31 @@ point:
 
 Stopping a program uses the same safe points (see "Job control").
 
+Every wait a stuck program can be in is one of these: spinning in user
+mode in any number of threads (the clock), sleeping, events, timers and
+the notifications (`CallWaitForHandles`), user-mode locks and so
+deadlocks (`WaitOnAddress`), threads and child processes, pipes both
+ways, opening a FIFO nobody opens, file locks, channels (and so the
+display server's connection), suspended and stopped threads, socket
+receives, accepts and connects, and long runs of memory system calls.
+`hangtest` gets stuck in each of these on purpose (and with windows
+that stop being served), and `hangtest --check` (run by coretest) ends
+each outright (137), by asking (143) and by asking, being ignored and
+then ending outright, as the task manager does; and a group as a whole.
+A thread started while its process is being ended exits before it
+first runs (`UserThreadStart`): the alert pass may have gone out before
+it was listed among the process's threads, and its first wait would
+never have ended. What a process held goes with it: its handles are
+closed (sockets, pipes, channels; the display server sees the channel
+break and removes its windows), user-mode locks were in its own memory.
+
+The kernel's remaining non-alertable waits a user thread can reach are
+bounded by hardware: opening and closing a device, block I/O, and the
+wait for a cancelled request to complete. Should one of them never end
+(a driver that loses a request), the hang watch says so: a process
+still there 10 seconds after it was told to end is written to the log
+with where each of its threads is (`[ending]`, see "Diagnosing hangs").
+
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
 shell reports a program killed by that signal. Ending a program outright
 is the last resort: `kill`, the service manager, the session manager and
@@ -7447,7 +7505,9 @@ HUP and INT become end requests with the reasons asked, hang-up and
 interrupt, so a program that takes none of them still ends with 143,
 129 or 130; KILL (`kill -9`) and the other ending signals end the
 program at once whatever it takes; a negative PID asks a whole group
-(`kill -TERM -- -PGID`). `pkill` and `timeout` send the same way.
+(`kill -TERM -- -PGID`), or with KILL ends every process of it
+(`TerminateProcessGroup` in `Sys.ProcessList`, which looks again until
+none is left). `pkill` and `timeout` send the same way.
 
 `notifytest` (run by coretest) checks the program's own queue (empty,
 an end request it sent itself waited for among other handles, a second
@@ -11697,6 +11757,13 @@ where in the program it last entered the kernel (from the register frame
 at the top of its kernel stack) and the system call it is in - and what
 each processor runs. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
+
+Without the option the same thread still watches endings: a process
+that was told to end (killed, crashed, or asked by a request it did
+not take) and is still there 10 seconds later is written to the log
+once, the same way, under `[ending]` - ending takes no longer than
+reaching the next safe point, so such a process is stuck where the
+kernel cannot reach it, and the report says where.
 
 ## Diagnostics over the network
 

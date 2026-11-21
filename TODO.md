@@ -84,6 +84,15 @@ how the existing pieces fit together.
 - [x] Thread priorities set by programs (offsets from the process's)
 - [ ] Thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)
+- [x] Ending a stuck program always works: checked for spinning threads,
+      every kind of kernel wait, deadlocks, sockets and windows that stop
+      being served (hangtest --check); a thread started during the ending
+      never runs; kill -9 of a group; a process still there 10 s after it
+      was told to end is reported with its threads ([ending])
+- [ ] Bound the kernel's remaining non-alertable waits a user thread can
+      reach (device open and close, block I/O, the wait after cancelling a
+      request), so a driver that never completes cannot keep a process
+      from ending
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
 - [x] Asynchronous notifications a program can handle: a notification queue
@@ -465,6 +474,13 @@ normalized (0-65535), not pixels.
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,
       per-process and system memory figures, Ctrl+Shift+Escape)
+- [x] Programs that stop responding: the display server pings each
+      program's message loop and marks one that stops answering ("(Not
+      responding)" after its titles, a flag in window lists); the task
+      manager shows it and ends such a program outright (asked), and offers
+      the same for any process still there when its wait after End is over
+- [ ] The taskbar marking a program that is not responding; its windows'
+      contents faded
 - [x] Graphical login, locking, log off, shut down and suspend from the desktop
       (the lock enforced by the display server; Super+L, Ctrl+Alt+L, the
       Start menu, after idle minutes and before suspending)
