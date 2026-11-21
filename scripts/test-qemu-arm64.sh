@@ -28,10 +28,17 @@
 # firmware runs) and four processors, so the loader's drop from EL2 and
 # PSCI over SMC are covered too; a third boot uses QEMU's "max"
 # processor (ARMv8.1+ with PAN, as the Raspberry Pi 5's Cortex-A76 has),
-# so the kernel runs with PAN on. The kernel ends QEMU through
+# so the kernel runs with PAN on; a fourth boots a GICv3 (redistributors,
+# the system register interface, LPIs through the ITS) at EL2 on "max"
+# with only 16 address space identifiers (asidbits=4: their generations
+# roll over). The first and the fourth also suspend to RAM during
+# start-up (suspendtest; QEMU's PSCI refuses SYSTEM_SUSPEND, so
+# psci-suspend=force tries it anyway and every other processor comes
+# back through CPU_OFF and CPU_ON). The kernel ends QEMU through
 # semihosting: exit status 1 is success, 3 a panic, 5 a failed test;
 # anything else (the timeout) is a failure as well. The serial logs are
-# kept in the build directory (test-arm64-el1.log, test-arm64-el2.log, test-arm64-max.log).
+# kept in the build directory (test-arm64-el1.log, test-arm64-el2.log, test-arm64-max.log,
+# test-arm64-gic3.log).
 #
 # With an SD card image (make-test-disk.sh's test-disk-sdsc.img: an SDSC
 # card holding a copy of the ext4 test partition, with its dirty journal
@@ -42,8 +49,8 @@
 # DMA goes through the cache maintenance and the xHCI and mailbox
 # buffers through uncached mappings.
 #
-# Not part of make test yet (it needs qemu-system-aarch64 and the edk2
-# AArch64 firmware); run it with make arm64-test.
+# Run by make arm64-test, and by make test when qemu-system-aarch64, the
+# edk2 AArch64 firmware and the AArch64 build are there.
 
 set -uo pipefail
 
@@ -67,6 +74,7 @@ run_one() {
     local processors="$3"
     local extra_options="$4"
     local processor="${5:-cortex-a72}"
+    local gic_version="${6:-2}"
     local serial_log="$build_directory/test-arm64-$name.log"
     local sd_card_copy=""
 
@@ -77,7 +85,7 @@ run_one() {
         echo "test-exit heapchecks fstest $extra_options" > "$test_esp_directory/FreePascalOS/options.txt"
     fi
     rm -f "$build_directory/QEMU_VARS.fd"
-    CPU="$processor" VIRTUALIZATION="$virtualization" PROCESSORS="$processors" SEMIHOSTING=1 SD_CARD="$sd_card_copy" \
+    GIC="$gic_version" CPU="$processor" VIRTUALIZATION="$virtualization" PROCESSORS="$processors" SEMIHOSTING=1 SD_CARD="$sd_card_copy" \
         timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
         < /dev/null > "$serial_log" 2>&1
     local status=$?
@@ -91,6 +99,12 @@ run_one() {
         result="failed (see the log)"
     elif [[ $(grep -c "\[selftest\].*: passed" "$serial_log") -lt 10 ]]; then
         result="failed (self tests missing)"
+    elif ! grep -q "\[hal\] GICv$gic_version," "$serial_log"; then
+        result="failed (not driven as a GICv$gic_version)"
+    elif ! grep -q "\[selftest\] AArch64 platform (GIC, ASIDs, PL031): passed" "$serial_log"; then
+        result="failed (the platform self test with the PL031 did not pass)"
+    elif [[ "$extra_options" == *suspendtest* ]] && ! grep -q "\[selftest\] suspend to RAM .*: passed" "$serial_log"; then
+        result="failed (the suspend to RAM self test did not pass)"
     elif ! grep -q "\[smp\] $processors processors running" "$serial_log"; then
         result="failed (not all $processors processors started)"
     elif [[ -n "$sd_card_copy" ]] && ! grep -q '\[sdhci\] disk[0-9]*: SDSC card .*ADMA2.* interrupts' "$serial_log"; then
@@ -106,7 +120,8 @@ run_one() {
 }
 
 overall=0
-run_one el1 0 2 "" || overall=1
+run_one el1 0 2 "suspendtest psci-suspend=force" || overall=1
 run_one el2 1 4 noncoherentdma || overall=1
 run_one max 0 2 "" max || overall=1
+run_one gic3 1 4 "suspendtest psci-suspend=force asidbits=4" max 3 || overall=1
 exit $overall

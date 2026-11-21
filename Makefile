@@ -444,19 +444,31 @@ debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
 	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 endif
 
-# Tests of the AArch64 build in QEMU's virt machine (not part of make
-# test until qemu-system-aarch64 and the edk2 AArch64 firmware are
-# standard requirements): the kernel must reach the end of its start-up
-# with every self test passed, with the firmware at EL1 and at EL2, and
-# run the file system tests on an SD card (SDHCI); coretest must pass
-# (scripts/test-qemu-arm64-user.sh); and the graphical session must come
-# up with a shell on the serial console (scripts/test-arm64-session.py).
-.PHONY: arm64-test
+# Tests of the AArch64 build in QEMU's virt machine: the kernel must
+# reach the end of its start-up with every self test passed, with the
+# firmware at EL1 and at EL2, on GICv2 and GICv3, and run the file system
+# tests on an SD card (SDHCI); coretest must pass on GICv2 and GICv3
+# (scripts/test-qemu-arm64-user.sh); a deliberate panic must show its
+# back trace; and the graphical session must come up with a shell on the
+# serial console (scripts/test-arm64-session.py). make test runs all but
+# the GICv3 coretest and the session (arm64-test-if-available), when
+# scripts/arm64-test-requirements.sh finds the tools.
+.PHONY: arm64-test arm64-test-if-available
 arm64-test:
 	@$(MAKE) --no-print-directory ARCH=arm64 esp test-disk system-disk
 	scripts/test-qemu-arm64.sh build/arm64/esp build/arm64/test-disk-sdsc.img
 	scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img
+	GIC=3 scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img
+	scripts/test-panic-trace.sh arm64 build/arm64/esp
 	scripts/test-arm64-session.py build/arm64/esp build/arm64/system-disk.img
+
+arm64-test-if-available:
+	@if scripts/arm64-test-requirements.sh; then \
+		$(MAKE) --no-print-directory ARCH=arm64 esp test-disk system-disk && \
+		scripts/test-qemu-arm64.sh build/arm64/esp build/arm64/test-disk-sdsc.img && \
+		scripts/test-qemu-arm64-user.sh build/arm64/esp build/arm64/test-disk.img build/arm64/system-disk.img && \
+		scripts/test-panic-trace.sh arm64 build/arm64/esp; \
+	fi
 
 # Network boot of the AArch64 build (docs/Architecture.md, "Trying it on
 # a Raspberry Pi 4"). pi-netboot-serve builds, then serves the boot files
@@ -546,6 +558,7 @@ test: aml-test region-tree-test aslr-test acpi-device-test acpi-power-test sntp-
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	@$(MAKE) --no-print-directory arm64-test-if-available
 
 # Panics on purpose (the testpanic kernel option) and checks the back
 # trace; also run by make test. Works for ARCH=arm64 too.
