@@ -33,6 +33,7 @@ interface
 uses
   Web.TextBuffers,
   Web.Profiling,
+  Web.UserAgent,
   Web.Atoms,
   Web.Namespaces,
   Web.Encoding.Labels,
@@ -87,6 +88,7 @@ uses
   Web.Layout.Grid,
   Web.Layout.Table,
   Web.Layout.Positioned,
+  Web.Layout.Transforms,
   Web.Layout.Dispatch,
   Web.Layout.Document,
   Web.Layout.Dump,

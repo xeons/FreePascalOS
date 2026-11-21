@@ -108,6 +108,7 @@ uses
   Web.Profiling,
   Css.ElementAdapter,
   Web.Bindings.Selectors,
+  Web.UserAgent,
   WebBrowse.Input,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
@@ -120,7 +121,8 @@ const
   { Between typed characters, and the longest wait for quiet before a step. }
   KeyMilliseconds = 60;
   StepPatienceMilliseconds = 10000;
-  UserAgentText = 'Mozilla/5.0 (FreePascalOS) libweb/1.0';
+  { The browser's. }
+  UserAgentText = EngineUserAgent;
 
 type
   TBrowseSession = class
