@@ -168,6 +168,7 @@ implementation
 
 uses
   Kernel.Threads,
+  Kernel.PriorityBoosts,
   Kernel.Scheduler,
   Kernel.Clock,
   Objects.Manager,
@@ -245,10 +246,11 @@ begin
   Result := PSocket(ContainingRecord(Socket^.Link.Next, FieldOffset(PSocket(nil)^.Link)));
 end;
 
+{ Data from the network wakes its waiters with the network boost. }
 procedure SetEventTo(var Event: TEvent; Signaled: Boolean);
 begin
   if Signaled then
-    SignalEvent(Event)
+    SignalEventWithBoost(Event, BoostNetwork)
   else
     ResetEvent(Event);
 end;

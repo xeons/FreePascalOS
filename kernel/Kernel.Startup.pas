@@ -49,6 +49,7 @@ uses
   Kernel.IdleStates,
   Io.AcpiPower,
   Objects.Events,
+  Objects.Semaphores,
   Objects.Timers,
   Objects.Sections,
   Processes.Channels,
@@ -71,6 +72,7 @@ uses
   Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.SynchronizationSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
   Kernel.ProtectionFaultTest,
@@ -238,6 +240,7 @@ begin
   InitializePseudoTerminalDevices;
   InitializePipes;
   InitializeEventObjects;
+  InitializeSemaphoreObjects;
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;
@@ -249,6 +252,11 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
+    { A thread this processor may run can be left in another's queue
+      when that queue's lock was taken just as it looked: it looks again
+      rather than halting. }
+    if IdleProcessorFoundWork then
+      Continue;
     { Interrupts are enabled, so the next interrupt ends the wait. If it
       made a thread ready, the dispatch interrupt switches to it. }
     IdleProcessor;
@@ -349,6 +357,7 @@ begin
   RunPanicTestIfAsked;
 
   RunKernelSelfTests;
+  RunSynchronizationSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
   RunHeapCheckSelfTest;

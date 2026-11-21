@@ -68,6 +68,7 @@ interface
 uses
   Kernel.SpinLock,
   Kernel.Events,
+  Kernel.PriorityBoosts,
   Kernel.DeferredCalls,
   Kernel.Mutex;
 
@@ -247,7 +248,7 @@ begin
   ReleaseSpinLockAtCurrentLevel(Terminal.RingLock);
   RestoreInterrupts(WereEnabled);
   if IsReadable then
-    SignalEvent(Terminal.Readable)
+    SignalEventWithBoost(Terminal.Readable, BoostInput)
   else
     ResetEvent(Terminal.Readable);
   if HasRoom then
@@ -263,7 +264,7 @@ var
   Terminal: PLineDiscipline;
 begin
   Terminal := PLineDiscipline(Context);
-  SignalEvent(Terminal^.InputAvailable);
+  SignalEventWithBoost(Terminal^.InputAvailable, BoostInput);
   UpdateTerminalReadiness(Terminal^);
 end;
 

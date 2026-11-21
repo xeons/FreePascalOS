@@ -706,6 +706,7 @@ begin
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
     HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
+    HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
   else
     Result := Failure(ErrorBadHandle);
   end;

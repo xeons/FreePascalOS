@@ -113,6 +113,10 @@ function KernelSetMemoryPolicy(Flags: LongWord): Int64;
 function KernelCreateEvent(Flags: LongWord): Int64;
 function KernelSetEvent(Handle: Int64): Int64;
 function KernelResetEvent(Handle: Int64): Int64;
+function KernelCreateSemaphore(InitialCount, Limit: LongInt): Int64;
+{ The count before the release, or minus an error (ErrorOverflow). }
+function KernelReleaseSemaphore(Handle: Int64; ReleaseCount: LongInt): Int64;
+function KernelGetSemaphoreCount(Handle: Int64): Int64;
 function KernelCreateTimer(Flags: LongWord): Int64;
 function KernelSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
 { Timeout in milliseconds, or InfiniteWait; Flags 0 or WaitForAll. }
@@ -546,6 +550,21 @@ end;
 function KernelResetEvent(Handle: Int64): Int64;
 begin
   Result := SystemCall(CallResetEvent, QWord(Handle), 0, 0, 0, 0, 0);
+end;
+
+function KernelCreateSemaphore(InitialCount, Limit: LongInt): Int64;
+begin
+  Result := SystemCall(CallCreateSemaphore, QWord(Int64(InitialCount)), QWord(Int64(Limit)), 0, 0, 0, 0);
+end;
+
+function KernelReleaseSemaphore(Handle: Int64; ReleaseCount: LongInt): Int64;
+begin
+  Result := SystemCall(CallReleaseSemaphore, QWord(Handle), QWord(Int64(ReleaseCount)), 0, 0, 0, 0);
+end;
+
+function KernelGetSemaphoreCount(Handle: Int64): Int64;
+begin
+  Result := SystemCall(CallGetSemaphoreCount, QWord(Handle), 0, 0, 0, 0, 0);
 end;
 
 function KernelCreateTimer(Flags: LongWord): Int64;

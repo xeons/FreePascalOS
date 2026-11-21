@@ -64,6 +64,7 @@ uses
   Sys.PseudoTerminals,
   Sys.Display,
   Sys.Objects,
+  Sys.Semaphores,
   Sys.KernelOptions,
   Sys.ServiceControl,
   Sys.SystemSettings,
