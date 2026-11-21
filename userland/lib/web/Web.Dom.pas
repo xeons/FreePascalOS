@@ -695,6 +695,8 @@ type
     procedure Remove(const Tokens: array of string);
     function Toggle(const Token: string; Force: Integer = -1): Boolean;
     function Replace(const Token, NewToken: string): Boolean;
+    property Element: TElement read FElement;
+    property AttributeName: TAtom read FAttributeName;
     property Value: string read GetValue write SetValue;
     property Length: Integer read GetLength;
     property Items[Index: Integer]: string read Item; default;
