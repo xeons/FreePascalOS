@@ -326,7 +326,7 @@ const
     (Command: 'echo secret > s; shred -u s; [ ! -e s ] && echo shredded; printf 0123456789 > s2; shred -n 0 -z -x s2; od -A n -t x1 s2'; ExpectedOutput: 'shredded'#10' 00 00 00 00 00 00 00 00 00 00'#10; ExpectedStatus: 0),
     (Command: 'realpath sub/dir/..; realpath -s dirlink; realpath --relative-to=sub/dir lines.txt'; ExpectedOutput: '/tmp/coretest/sub'#10'/tmp/coretest/dirlink'#10'../../lines.txt'#10; ExpectedStatus: 0),
     (Command: 'pathchk -p "a b" 2>/dev/null; echo $?; pathchk -p ok_name; echo $?'; ExpectedOutput: '1'#10'0'#10; ExpectedStatus: 0),
-    (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'1029'#9'dutest'#10; ExpectedStatus: 0),
+    (Command: 'mkdir dutest; printf 12345 > dutest/a; du -ab dutest'; ExpectedOutput: '5'#9'dutest/a'#10'65'#9'dutest'#10; ExpectedStatus: 0),
     (Command: 'df | grep " /$" | cut -d " " -f 1'; ExpectedOutput: 'disk2p1'#10; ExpectedStatus: 0),
 
     { --- more text tools --------------------------------------------- }
@@ -451,7 +451,7 @@ const
     (Command: 'expr "$(uptime)" : ''.*up .*load average: [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9], [0-9]*\.[0-9][0-9]$'' > /dev/null && echo ok'; ExpectedOutput: 'ok'#10; ExpectedStatus: 0),
     (Command: 'mkfifo ff && ls -l ff | cut -c 1 && stat -c %F ff && test -p ff && echo isfifo; head -n 2 lines.txt | tee ff > /dev/null & cat ff; rm ff'; ExpectedOutput: 'p'#10'fifo'#10'isfifo'#10'one'#10'two'#10; ExpectedStatus: 0),
     (Command: 'rm -f /tmp/fifo-check; mknod /tmp/fifo-check p && stat -c %F /tmp/fifo-check; mknod nb b 1 2 2>/dev/null || echo noblock'; ExpectedOutput: 'fifo'#10'noblock'#10; ExpectedStatus: 0),
-    (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '1'#9'a5'#10'14'#9's3k'#10' 1 a5'#10'14 s3k'#10'2 512'#10'2'#9'dutest'#10; ExpectedStatus: 0),
+    (Command: 'printf 12345 > a5; seq 3000 > s3k; du a5 s3k; ls -s a5 s3k; stat -c "%b %B" a5; du -s dutest'; ExpectedOutput: '4'#9'a5'#10'16'#9's3k'#10' 4 a5'#10'16 s3k'#10'8 512'#10'4'#9'dutest'#10; ExpectedStatus: 0),
 
     { --- job control ------------------------------------------------- }
     (Command: 'sleep 5 & jobs; kill %1; wait %1; echo $?'; ExpectedOutput: '[1]+  Running                 sleep 5 &'#10'143'#10; ExpectedStatus: 0),

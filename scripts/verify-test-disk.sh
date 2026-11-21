@@ -125,6 +125,16 @@ path_exists() {
     debugfs -R "stat \"/$path\"" "$image" 2>&1 | grep -q '^Inode:'
 }
 
+# Whether a file or folder is there (FAT and ext; exFAT never says yes).
+name_exists() {
+    local type="$1" image="$2" path="$3"
+    case "$type" in
+        fat*) mdir -b -i "$image" "::/$path" > /dev/null 2>&1 ;;
+        ext*) path_exists "$image" "$path" ;;
+        *)    return 1 ;;
+    esac
+}
+
 # Replays the journal left by the kernel's simulated crash.
 check_crash_recovery() {
     local type="$1" image="$2" output status
@@ -187,6 +197,15 @@ check_partition() {
     done
     # The original files must be untouched.
     check_contents "$type" "$image" "hello.txt" $'Hello from FreePascalOS!\n'
+    # The mount test (Kernel.MountWriteTest) removes its mount point once
+    # the memory volume mounted there is gone, and coretest (FAT16TEST
+    # mounted at a folder with owner options) leaves no file behind.
+    if name_exists "$type" "$image" "mount-point"; then
+        report_failure "$type: the mount test left mount-point behind"
+    fi
+    if name_exists "$type" "$image" "mine" || name_exists "$type" "$image" "ro.txt"; then
+        report_failure "$type: the coretest mount checks left a file behind"
+    fi
 }
 
 # Extract each GPT partition, named after its file system type.

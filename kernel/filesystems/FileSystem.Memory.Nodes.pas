@@ -23,7 +23,8 @@
   information (kind, mode, owner, times to the nanosecond, the time it
   was made), its contents (FileSystem.Memory.Storage), a link's target,
   and for a folder the list of its entries (name and inode), in the
-  order they were made. Every entry has a serial number that only ever
+  order they were made; a folder's size counts its entries (40 bytes and
+  20 more per entry, as Linux's tmpfs shows). Every entry has a serial number that only ever
   grows, which a listing's cursor holds, so names made or removed
   during a listing do not throw it off.
 
@@ -124,6 +125,11 @@ uses
   Memory.Layout,
   Kernel.WallClock;
 
+const
+  { What a folder's size shows. }
+  EmptyDirectorySize = 40;
+  DirectoryEntrySize = 20;
+
 function InodeFromVolumeLink(Entry: PListEntry): PMemoryInode;
 begin
   Result := PMemoryInode(ContainingRecord(Entry, FieldOffset(PMemoryInode(nil)^.VolumeLink)));
@@ -147,6 +153,11 @@ begin
   end;
 end;
 
+procedure SetDirectorySize(Directory: PMemoryInode);
+begin
+  Directory^.Information.SizeInBytes := EmptyDirectorySize + Directory^.EntryCount * DirectoryEntrySize;
+end;
+
 procedure SetAllocatedBytes(Inode: PMemoryInode);
 begin
   Inode^.Information.AllocatedBytes := Inode^.Storage.PageCount * PageSize;
@@ -165,6 +176,7 @@ begin
       begin
         Result^.Information.Mode := $1ED; { rwxr-xr-x }
         Result^.Information.LinkCount := 2;
+        SetDirectorySize(Result);
       end;
     NodeKindSymbolicLink:
       begin
@@ -248,6 +260,7 @@ begin
     Directory^.LastEntry^.Next := Entry;
   Directory^.LastEntry := Entry;
   Inc(Directory^.EntryCount);
+  SetDirectorySize(Directory);
   Result := True;
 end;
 
@@ -272,6 +285,7 @@ begin
   if Directory^.LastEntry = Entry then
     Directory^.LastEntry := Previous;
   Dec(Directory^.EntryCount);
+  SetDirectorySize(Directory);
   FreeKernelMemory(Entry^.Name);
   FreeKernelMemory(Entry);
 end;
