@@ -11187,7 +11187,21 @@ document.currentScript set, reports an uncaught exception to the
 console with the file and line ("page.html (inline script 3)"), fires
 an external script's load event, and leaves through the microtask
 checkpoint (the job queue, mutation observers included; at script depth
-0 only, as in "clean up after running script"). document.write goes to
+0 only, as in "clean up after running script").
+The outermost entry into script (`EnterScript`, module evaluation too)
+arms the slow script watchdog (`Web.Script.Watchdog`) until it is back
+out after the microtask checkpoint: a page's scripts run on the page
+thread, the GUI thread in a web view, so a script that never ends would
+freeze the window. One thread for the process sleeps while nothing is
+armed and otherwise checks every 100 ms; an entry armed longer than
+`ScriptRunLimitMilliseconds` (10 s; the display server calls a window
+"Not responding" after 5) gets the engine's `InterruptRequested` set,
+again on every check while it stays armed, so the interpreter ends the
+script at its next backward jump or call with an uncatchable
+termination, and the promise jobs it queued end the same way; the
+console says the script was stopped, and the page's next scripts run as
+usual (WebScriptTest checks a loop, one inside try, promise jobs queueing
+each other and a looping timer callback). document.write goes to
 the active parser at its insertion point (the parser now saves the old
 insertion point and limit of nested scripts and writes, so scripts
 written by scripts write in the right place). Outside the parser
@@ -11776,7 +11790,13 @@ its size.
   with vertical-align (baseline, sub, super, text-top, text-bottom,
   middle, lengths, percentages; top and bottom for atomic inlines),
   floats beside or below lines, lines moved below floats too narrow for
-  them, static positions, empty lines after forced breaks.
+  them, static positions, empty lines after forced breaks. A line scanned
+  again (moved down past the floats, or broken before a float it had
+  passed) does not place its floats a second time: the line state keeps
+  the index up to which they are placed. Placing them again once made a
+  line that did not fit beside its own float move down for ever, which
+  froze the browser on www.wikipedia.org's fundraising banner (reference
+  page `floats-wider-than-room`).
 - Intrinsic sizes (`Web.Layout.Sizing`): min-content and max-content of
   inline content, block children, flex containers, tables and replaced
   boxes; shrink-to-fit.
@@ -12189,7 +12209,13 @@ with the document's resources before the document goes).
   its time to itself (`LayoutDue`): while a long page loads on a slow
   machine, input, scrolling, hit testing and painting go on against the
   last layout (boxes keep their styles alive, so the old list paints
-  safely); zooming lays out at once.
+  safely); zooming lays out at once. While CSS animations run, the next
+  frame comes no sooner than twice what the last frame's work and paint
+  took (`RequestAnimationFrame`; 16 ms at least), so a heavy animated
+  page leaves the GUI at least half its time; any other request for a
+  frame (input, a task, the page's requestAnimationFrame) brings it
+  forward. A script cannot hold the thread for more than 10 s (the slow
+  script watchdog, "Scripts").
 - **Painting** into a backing surface of the viewport's size, copied to
   the window; the viewport is painted again only when what is painted
   changed. Scrolling the viewport moves the surface's rows and paints

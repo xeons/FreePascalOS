@@ -1478,6 +1478,15 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       and decode threads; slow layouts throttled in the web view
 - [x] Wikipedia's JavaScript gets past ResourceLoader's compatibility
       check (localStorage, IntersectionObserver)
+- [x] www.wikipedia.org no longer freezes the browser: a line that did not
+      fit beside its own float placed the float again each time it moved
+      down, for ever (the fundraising banner); a float is placed once
+- [x] The slow script watchdog: a script (or a chain of promise jobs)
+      running longer than 10 s on the page thread is stopped
+- [x] CSS animation frames paced by their cost (at most half the GUI
+      thread)
+- [ ] Parse large scripts off the GUI thread (Wikipedia's 790 KB module
+      bundle holds the window about 7 s under TCG, half of it parsing)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
 - [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
       the results page (main and html.duckduckgo.com/html/, whose late

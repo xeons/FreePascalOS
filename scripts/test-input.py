@@ -1648,9 +1648,14 @@ checks.append(('calculator: 12*(3+4) typed on the keyboard and Enter give 84; Ct
 # here): it prints the page's title and that it loaded, the page's
 # script logs to the console (scripting is on), and the page's orange
 # background is on the screen inside the window. Its settings and
-# profile are deleted afterwards.
+# profile are deleted afterwards. The page has a float at the start of a
+# line followed by a word too wide to go beside it, which once made the
+# layout move the line down for ever and froze the browser
+# (www.wikipedia.org's fundraising banner): then nothing was painted.
 type_on_serial(b"printf '<!DOCTYPE html><title>Browser test</title><body style=\"background:#ff8000\">"
-               b"<p>Local page</p><script>console.log(\"script ran \" + (40 + 2))</script>' "
+               b"<p>Local page</p><div style=\"width:300px\"><span style=\"float:left;width:200px;height:20px\">"
+               b"</span>Unbreakablewordwiderthanroom</div>"
+               b"<script>console.log(\"script ran \" + (40 + 2))</script>' "
                b"> /tmp/browser-test.html\r")
 time.sleep(0.5)
 type_on_serial(b'displayserver &\r')
@@ -1669,7 +1674,8 @@ type_on_serial(b'kill %2; wait %2; cat /tmp/browser.log; settings delete Browser
                b'm=DONE; echo BROWSER $m\r')
 browser_ok = wait_for('BROWSER DONE', 30)
 browser_log = bytes(received[browser_from:])
-checks.append(('browser: a local page loads (title, loaded), its script runs, its background is on the screen',
+checks.append(('browser: a local page loads (title, loaded), its script runs, its background is on the screen '
+               '(a float wider than the room beside it does not hang the layout)',
                browser_ok and b'title Browser test' in browser_log and
                b'loaded file:///tmp/browser-test.html' in browser_log and b'console log script ran 42' in browser_log and
                browser_colour_near(browser_screen(500, 500), 'ff8000')))
