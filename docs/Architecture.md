@@ -3431,7 +3431,15 @@ own controls, icons and themes (Sunrise and Classic). PLACE is a folder
   `kind:image`, `ext:pas`, `size:>1MB`, `size:small`, `modified:today`
   (also yesterday, thisweek, lastweek, thismonth, lastmonth, thisyear,
   lastyear, dates and ranges), `content:word`. The search history is
-  offered under the box.
+  offered under the box. In a compressed folder the search goes through
+  the archive's entries below the folder shown, at any depth, with the
+  same syntax (`FileManager.ArchiveSearch` over `Archive.Folders`'
+  `ListArchiveTree`, folders only deeper names make included; the
+  thread opens its own reader, and content terms take members out into
+  memory); the results are archive entries, opened as in the archive
+  (taken out to the cache, or browsed for a folder). A cached archive
+  is checked against its file (node, size, time) each time it is used,
+  so one deleted or changed is not shown from memory.
 - **Commands** (`FileManager.MenuWindow` carries out every command by
   its number, `FileManager.Commands`): the command bar has New (folder,
   text document, Markdown document, web page, empty ZIP folder, and the
