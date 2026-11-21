@@ -12231,7 +12231,10 @@ with the document's resources before the document goes).
 - **The pointer**: hit testing for :hover and :active (an element and
   its ancestors, retained while held), the CSS cursor (the hand over
   links, the text beam over text and text fields), the hovered link's
-  URL in `OnStatusText`; a click follows a link after a cancelable
+  URL in `OnStatusText` (both read from the hit before the page's mouse
+  events: a handler that reads a size lays out again and frees the hit's
+  box and style; pressing and releasing keep the hit's node and element
+  retained while handlers run); a click follows a link after a cancelable
   click event (`OnLinkClicked` first, with the disposition: in the
   view, a new tab for a target, a background tab for a middle click or
   Ctrl+click, a new window for Shift); a label acts on its control, a
