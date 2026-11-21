@@ -602,10 +602,32 @@ begin
   BuildChildren(Box);
 end;
 
+{ A details element that is not open shows only its summary (the first
+  summary child; HTML renders the rest in a slot that is not shown). }
+function IsClosedDetails(Node: TNode): Boolean;
+begin
+  Result := Node.IsElement and TElement(Node).IsHtmlElement(AtomDetails) and
+    not TElement(Node).HasAttribute('open');
+end;
+
+function FirstSummaryOf(Node: TNode): TNode;
+begin
+  Result := Node.FirstChild;
+  while (Result <> nil) and not (Result.IsElement and TElement(Result).IsHtmlElement(AtomSummary)) do
+    Result := Result.NextSibling;
+end;
+
 procedure TBoxTreeBuilder.AddChildrenOf(Parent: TLayoutBox; Node: TNode);
 var
   Child: TNode;
 begin
+  if IsClosedDetails(Node) then
+  begin
+    Child := FirstSummaryOf(Node);
+    if Child <> nil then
+      AddNodeBox(Parent, Child);
+    Exit;
+  end;
   Child := Node.FirstChild;
   while Child <> nil do
   begin

@@ -901,7 +901,9 @@ function CompareBoundaryPoints(NodeA: TNode; OffsetA: Integer; NodeB: TNode; Off
 implementation
 
 uses
-  Web.Encoding.Utf8;
+  Web.Encoding.Utf8,
+  { Its initialization installs the summary's activation behavior. }
+  Web.Dom.Details;
 
 {$I Web.Dom.Lifetime.inc}
 {$I Web.Dom.Node.inc}

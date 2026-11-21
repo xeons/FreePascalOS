@@ -388,7 +388,9 @@ begin
     Box.MarkNeedsLayout;
     FLayoutDirty := True;
   end
-  else if TElement(Node).IsHtmlElement(AtomInput) or TElement(Node).IsHtmlElement(AtomSelect) then
+  else if TElement(Node).IsHtmlElement(AtomInput) or TElement(Node).IsHtmlElement(AtomSelect) or
+    TElement(Node).IsHtmlElement(AtomDetails) then
+    { A control's content, or a details element opened or closed. }
     MarkBoxesOf(Node);
   Inc(FPaintVersion);
 end;

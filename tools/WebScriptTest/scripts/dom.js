@@ -148,6 +148,18 @@ var typedArea = document.createElement("textarea");
 typedArea.textContent = "default";
 typedArea.value = "changed";
 check("a cloned textarea keeps its value", typedArea.cloneNode(true).value === "changed");
+// A click on a details element's summary opens and closes it; not one on
+// a link inside the summary, nor on a second summary.
+var details = document.createElement("details");
+details.innerHTML = "<summary id=s1>s <a id=inner href='#x'>x</a></summary><summary id=s2>t</summary><p>body</p>";
+document.body.appendChild(details);
+details.querySelector("#s1").click();
+var openedBySummary = details.open;
+details.querySelector("#inner").click();
+details.querySelector("#s2").click();
+var keptByOthers = details.open;
+details.querySelector("#s1").click();
+check("summary click toggles its details", openedBySummary && keptByOthers && !details.open);
 // DOM traversal: TreeWalker and NodeIterator with whatToShow and filters
 // (lit walks its templates with one).
 var walkRoot = document.createElement("div");

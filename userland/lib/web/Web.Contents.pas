@@ -47,6 +47,7 @@ uses
   Web.Dom.Exceptions,
   Web.Dom.Events,
   Web.Dom,
+  Web.Dom.Details,
   Web.Dom.RangeContents,
   Web.Origins,
   Web.Html.Tokens,
