@@ -47,6 +47,20 @@ const
   StorageQuota = 5 * 1024 * 1024;
 
 type
+  TWebStorageArea = class;
+
+  { Where local storage really lives when it is not this process's (a
+    browser's content process keeps it in the browser): fills a new
+    area and hears every change made to it. }
+  TWebStorageBackend = class
+  public
+    { Puts the origin's pairs into Area (with Area.LoadPair). }
+    procedure LoadArea(const Origin: string; Area: TWebStorageArea); virtual; abstract;
+    procedure ItemSet(const Origin, Key, Value: string); virtual; abstract;
+    procedure ItemRemoved(const Origin, Key: string); virtual; abstract;
+    procedure Cleared(const Origin: string); virtual; abstract;
+  end;
+
   TWebStorageArea = class
   private
     FKeys: TStringList;
@@ -55,11 +69,15 @@ type
     FUsage: Int64;
     FFileName: string;
     FDirty: Boolean;
+    FBackend: TWebStorageBackend;
+    FOrigin: string;
     function Find(const Key: string): Integer;
     procedure RebuildIndex;
   public
     constructor Create(const AFileName: string = '');
     destructor Destroy; override;
+    { A pair as it was stored, told to nobody (filling the area). }
+    procedure LoadPair(const Key, Value: string);
     function Count: Integer;
     function KeyAt(Index: Integer): string;
     { False when Key is not there. }
@@ -79,6 +97,7 @@ type
     FFolder: string;
     FLocal: TStringList;
     FSession: TStringList;
+    FBackend: TWebStorageBackend;
   public
     { Folder: where local storage is kept ('' keeps it in memory only). }
     constructor Create(const AFolder: string);
@@ -92,6 +111,9 @@ type
       https_example.com_8443.txt). }
     class function OriginFileName(const Origin: string): string;
     property Folder: string read FFolder;
+    { Local areas filled from and changes told to it (not owned; set
+      before the first area is asked for). }
+    property Backend: TWebStorageBackend read FBackend write FBackend;
   end;
 
 { The UTF-16 length of UTF-8 (WTF-8) text. }
@@ -228,6 +250,20 @@ begin
     FIndex.AddObject(FKeys[Index], TObject(PtrInt(Index)));
 end;
 
+procedure TWebStorageArea.LoadPair(const Key, Value: string);
+var
+  Backend: TWebStorageBackend;
+begin
+  Backend := FBackend;
+  FBackend := nil;
+  try
+    SetItem(Key, Value);
+  finally
+    FBackend := Backend;
+  end;
+  FDirty := False;
+end;
+
 function TWebStorageArea.Count: Integer;
 begin
   Result := FKeys.Count;
@@ -278,6 +314,8 @@ begin
   FUsage := NewUsage;
   FDirty := True;
   Result := True;
+  if FBackend <> nil then
+    FBackend.ItemSet(FOrigin, Key, Value);
 end;
 
 procedure TWebStorageArea.RemoveItem(const Key: string);
@@ -292,6 +330,8 @@ begin
   FValues.Delete(Index);
   RebuildIndex;
   FDirty := True;
+  if FBackend <> nil then
+    FBackend.ItemRemoved(FOrigin, Key);
 end;
 
 procedure TWebStorageArea.Clear;
@@ -303,6 +343,8 @@ begin
   FIndex.Clear;
   FUsage := 0;
   FDirty := True;
+  if FBackend <> nil then
+    FBackend.Cleared(FOrigin);
 end;
 
 procedure TWebStorageArea.Load;
@@ -409,6 +451,12 @@ begin
     Path := '';
   Result := TWebStorageArea.Create(Path);
   Result.Load;
+  if FBackend <> nil then
+  begin
+    FBackend.LoadArea(Origin, Result);
+    Result.FOrigin := Origin;
+    Result.FBackend := FBackend;
+  end;
   FLocal.AddObject(Origin, Result);
 end;
 

@@ -126,6 +126,12 @@ type
     function ConfirmUnload(Navigable: TNavigable): Boolean; virtual;
     procedure DownloadRequested(Navigable: TNavigable; constref Download: TDownloadInfo); virtual;
     procedure NavigationFailed(Navigable: TNavigable; const Url, Reason: string); virtual;
+    { A top-level navigation to Url is about to be fetched (AtResponse
+      False), or its response came from Url after redirects (True):
+      False when the host takes it elsewhere (a browser moving the tab
+      to a process of Url's site), and the navigable drops it. }
+    function NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord; constref Options: TNavigateOptions;
+      AtResponse: Boolean): Boolean; virtual;
   end;
 
   TNavigationConsumer = class(TFetchConsumer)
@@ -372,6 +378,12 @@ end;
 
 procedure TNavigableObserver.DownloadRequested(Navigable: TNavigable; constref Download: TDownloadInfo);
 begin
+end;
+
+function TNavigableObserver.NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord;
+  constref Options: TNavigateOptions; AtResponse: Boolean): Boolean;
+begin
+  Result := True;
 end;
 
 procedure TNavigableObserver.NavigationFailed(Navigable: TNavigable; const Url, Reason: string);
@@ -628,6 +640,9 @@ var
 begin
   if not PromptToUnload then
     Exit;
+  if (FParent = nil) and (Handling in [HistoryPush, HistoryReplace]) and (FObserver <> nil) and
+     not FObserver.NavigationAllowed(Self, Url, Options, False) then
+    Exit;
   CancelNavigation;
   CancelRefresh;
   Method := Options.Method;
@@ -860,6 +875,7 @@ end;
 
 procedure TNavigable.HandleResponse(Job: TFetchJob; Response: TFetchResponse);
 var
+  Options: TNavigateOptions;
   Essence, Disposition: string;
   Download: TDownloadInfo;
   Kind: TDocumentContentKind;
@@ -887,6 +903,20 @@ begin
     SetState(LoadingComplete);
     UndelayParentLoad;
     Exit;
+  end;
+  if (FParent = nil) and (FObserver <> nil) and (Length(Job.Request.UrlList) > 1) then
+  begin
+    { Redirected: the page it ends at may be another site's. }
+    Options := DefaultNavigateOptions;
+    Options.Method := Job.Request.Method;
+    Options.UserInitiated := Job.Request.UserInitiated;
+    if not FObserver.NavigationAllowed(Self, Url, Options, True) then
+    begin
+      FNavigationJob := nil;
+      FFetcher.Cancel(Job);
+      SetState(LoadingIdle);
+      Exit;
+    end;
   end;
   if (FParent <> nil) and not ResponseMayBeFramed(Response, Url) then
   begin
