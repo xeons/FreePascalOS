@@ -28,6 +28,7 @@
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
 #                  libsystem <- libcompression (deflate, zlib, gzip; brotli, zstd)
+#                  libcompression <- libarchive (zip, tar, tar.gz; the file manager)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
@@ -114,6 +115,7 @@ CONFIGURATION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/configuration
 TLS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/tls
 IMAGE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/image
 COMPRESSION_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/compression
+ARCHIVE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/archive
 SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
@@ -135,6 +137,7 @@ CONFIGURATION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libconfiguration.so
 TLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtls.so
 IMAGE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libimage.so
 COMPRESSION_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcompression.so
+ARCHIVE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libarchive.so
 SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
@@ -198,7 +201,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -434,6 +437,16 @@ $(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.
 		-FU$(COMPRESSION_LIBRARY_OBJECTS) userland/lib/compression/Compression.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcompression.so -o $@ \
 		$(COMPRESSION_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libarchive: reading zip, tar and tar.gz files, writing zip files,
+# extracting and browsing them (over libcompression).
+$(ARCHIVE_LIBRARY): $(COMPRESSION_LIBRARY) $(wildcard userland/lib/archive/*.pas)
+	@rm -rf $(ARCHIVE_LIBRARY_OBJECTS)
+	@mkdir -p $(ARCHIVE_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/archive -FU$(ARCHIVE_LIBRARY_OBJECTS) userland/lib/archive/Archive.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libarchive.so -o $@ \
+		$(ARCHIVE_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcompression -lsystem
 
 # libwindowing: the display server's protocol and windows for programs.
 $(WINDOWING_LIBRARY): $(FONT_LIBRARY) $(CONFIGURATION_LIBRARY) $(wildcard userland/lib/windowing/*.pas)
