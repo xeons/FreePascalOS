@@ -281,10 +281,25 @@ begin
   RequestFrame;
 end;
 
+{ A frame soon: something changed (input, a task, a layout). A frame
+  put off by RequestAnimationFrame is brought forward. }
 procedure TWebView.RequestFrame;
 begin
-  if not FFrameTimer.Enabled then
-    FFrameTimer.Enabled := True;
+  if FFrameTimer.Enabled and (FFrameTimer.Interval = FrameIntervalMilliseconds) then
+    Exit;
+  FFrameTimer.Interval := FrameIntervalMilliseconds;
+  FFrameTimer.Enabled := True;
+end;
+
+{ The next frame of running CSS animations: no sooner than twice what the
+  last frame and paint cost, so the animations take at most half the GUI
+  thread on a slow machine or a heavy page. }
+procedure TWebView.RequestAnimationFrame;
+begin
+  if FFrameTimer.Enabled then
+    Exit;
+  FFrameTimer.Interval := Max(FrameIntervalMilliseconds, 2 * (FFrameCost + FPaintCost));
+  FFrameTimer.Enabled := True;
 end;
 
 procedure TWebView.FrameTimerFired(Sender: TTimer);
@@ -294,9 +309,25 @@ begin
 end;
 
 procedure TWebView.RenderFrame;
+var
+  Started: QWord;
 begin
   if (FPage = nil) or (FModalDepth > 0) then
     Exit;
+  Started := GetTickCount64;
+  try
+    RenderFrameSteps;
+  finally
+    FFrameCost := GetTickCount64 - Started;
+  end;
+  { Running CSS animations get their next frame, paced by what this one
+    cost. }
+  if (FLayout <> nil) and FLayout.AnimationsRunning and HasRoom then
+    RequestAnimationFrame;
+end;
+
+procedure TWebView.RenderFrameSteps;
+begin
   FPage.RenderingOpportunity;
   if FLayout = nil then
     Exit;
@@ -309,8 +340,6 @@ begin
     FLayout.AdvanceAnimations;
   UpdateLayout;
   QueueAnimationEvents(FPage.Loop, FDocument, FLayout.TakeAnimationEvents);
-  if FLayout.AnimationsRunning then
-    RequestFrame;
   ApplyPendingScroll;
   if not FBackingValid or (FLayout.PaintVersion <> FBackingVersion) then
     InvalidateViewport;

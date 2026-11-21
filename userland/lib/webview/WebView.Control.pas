@@ -165,6 +165,12 @@ type
       to itself (UpdateLayout). }
     FLayoutCost: QWord;
     FLayoutDoneAt: QWord;
+    { How long the last frame's work and the last paint took
+      (milliseconds): while CSS animations run, the next frame waits
+      twice as long as both together (RequestAnimationFrame), so a page
+      whose frames are costly leaves the GUI half its time. }
+    FFrameCost: QWord;
+    FPaintCost: QWord;
     FBackingDirty: TRectangle;
     FListHasFixed: Boolean;
     FFixedCheckedVersion: LongWord;
@@ -264,6 +270,8 @@ type
     procedure FrameTimerFired(Sender: TTimer);
     procedure RenderingRequested(Sender: TObject);
     procedure RequestFrame;
+    procedure RequestAnimationFrame;
+    procedure RenderFrameSteps;
     procedure RenderFrame;
     { Geometry. }
     function DeviceScale: Double;

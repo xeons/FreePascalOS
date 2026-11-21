@@ -101,7 +101,9 @@ var
   Overlay: TCanvas;
   Width, Height: LongInt;
   Corner: TRectangle;
+  Started: QWord;
 begin
+  Started := GetTickCount64;
   { The square between the two scroll bars. }
   if FVerticalBar.Visible and FHorizontalBar.Visible then
   begin
@@ -122,6 +124,7 @@ begin
   PaintSelection(Overlay);
   PaintCaret(Overlay);
   PaintInnerScrollBars(Overlay);
+  FPaintCost := GetTickCount64 - Started;
 end;
 
 procedure TWebView.PaintSelection(var Canvas: TCanvas);
