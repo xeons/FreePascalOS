@@ -191,9 +191,10 @@ const
        'wget -q -O - http://10.0.2.102/basic; wget -q -O - -e netrc=off http://10.0.2.102/basic; echo $?';
      ExpectedOutput: 'basic ok'#10'6'#10; ExpectedStatus: 0),
 
-    { gzip. }
+    { Content codings: --compression=auto asks for every coding libhttp
+      decodes (gzip, deflate, br, zstd), =gzip for gzip alone. }
     (Command: 'wget -q -O - http://10.0.2.102/accept-encoding; wget -q -O - --compression=auto ' +
-       'http://10.0.2.102/accept-encoding'; ExpectedOutput: 'identity'#10'gzip'#10; ExpectedStatus: 0),
+       'http://10.0.2.102/accept-encoding'; ExpectedOutput: 'identity'#10'gzip, deflate, br, zstd'#10; ExpectedStatus: 0),
     (Command: 'wget -q -O plain.txt http://10.0.2.102/gzip.txt; wget -q -O dec.txt --compression=gzip ' +
        'http://10.0.2.102/gzip.txt; wget -q -O chk.txt --compression=auto http://10.0.2.102/gzip-chunked.txt; ' +
        'test "$(sha256sum < plain.txt)" = "$(sha256sum < dec.txt)" && test "$(sha256sum < plain.txt)" = ' +
