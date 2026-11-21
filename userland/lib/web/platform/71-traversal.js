@@ -10,6 +10,17 @@
   const token = internal.token;
   const ACCEPT = 1, REJECT = 2, SKIP = 3;
   const state = new WeakMap();
+  // The tree as the DOM has it, through the bindings' own getters: a
+  // script that redefines firstChild and friends (the shadow DOM
+  // polyfill) does not change what a walker sees.
+  const NodePrototype = global.Node.prototype;
+  function getterOf(name) {
+    return Object.getOwnPropertyDescriptor(NodePrototype, name).get;
+  }
+  const parentOf = getterOf("parentNode"), firstOf = getterOf("firstChild"), lastOf = getterOf("lastChild"),
+    nextOf = getterOf("nextSibling"), previousOf = getterOf("previousSibling"), typeOf = getterOf("nodeType");
+  const parent = node => parentOf.call(node), first = node => firstOf.call(node), last = node => lastOf.call(node);
+  const next = node => nextOf.call(node), previous = node => previousOf.call(node);
 
   const NodeFilter = {
     FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3,
@@ -23,7 +34,7 @@
   // object with acceptNode), not re-entered while it runs.
   function filterNode(data, node) {
     if (data.active) throw internal.domException("The filter is already running.", "InvalidStateError");
-    const bit = 1 << (node.nodeType - 1);
+    const bit = 1 << (typeOf.call(node) - 1);
     if ((data.whatToShow & bit) === 0) return SKIP;
     const filter = data.filter;
     if (filter === null) return ACCEPT;
@@ -62,7 +73,7 @@
       const data = state.get(this);
       let node = data.current;
       while (node !== null && node !== data.root) {
-        node = node.parentNode;
+        node = parent(node);
         if (node !== null && filterNode(data, node) === ACCEPT) {
           data.current = node;
           return node;
@@ -78,22 +89,22 @@
       const data = state.get(this);
       let node = data.current;
       while (node !== data.root) {
-        let sibling = node.previousSibling;
+        let sibling = previous(node);
         while (sibling !== null) {
           node = sibling;
           let result = filterNode(data, node);
-          while (result !== REJECT && node.hasChildNodes()) {
-            node = node.lastChild;
+          while (result !== REJECT && (first(node) !== null)) {
+            node = last(node);
             result = filterNode(data, node);
           }
           if (result === ACCEPT) {
             data.current = node;
             return node;
           }
-          sibling = node.previousSibling;
+          sibling = previous(node);
         }
-        if (node === data.root || node.parentNode === null) return null;
-        node = node.parentNode;
+        if (node === data.root || parent(node) === null) return null;
+        node = parent(node);
         if (filterNode(data, node) === ACCEPT) {
           data.current = node;
           return node;
@@ -106,8 +117,8 @@
       let node = data.current;
       let result = ACCEPT;
       for (;;) {
-        while (result !== REJECT && node.hasChildNodes()) {
-          node = node.firstChild;
+        while (result !== REJECT && (first(node) !== null)) {
+          node = first(node);
           result = filterNode(data, node);
           if (result === ACCEPT) {
             data.current = node;
@@ -118,12 +129,12 @@
         let temporary = node;
         while (temporary !== null) {
           if (temporary === data.root) return null;
-          sibling = temporary.nextSibling;
+          sibling = next(temporary);
           if (sibling !== null) {
             node = sibling;
             break;
           }
-          temporary = temporary.parentNode;
+          temporary = parent(temporary);
         }
         if (temporary === null) return null;
         result = filterNode(data, node);
@@ -136,8 +147,8 @@
   }
   internal.finishInterface(TreeWalker, "TreeWalker");
 
-  function traverseChildren(data, first) {
-    let node = first ? data.current.firstChild : data.current.lastChild;
+  function traverseChildren(data, forward) {
+    let node = forward ? first(data.current) : last(data.current);
     while (node !== null) {
       const result = filterNode(data, node);
       if (result === ACCEPT) {
@@ -145,31 +156,31 @@
         return node;
       }
       if (result === SKIP) {
-        const child = first ? node.firstChild : node.lastChild;
+        const child = forward ? first(node) : last(node);
         if (child !== null) {
           node = child;
           continue;
         }
       }
       while (node !== null) {
-        const sibling = first ? node.nextSibling : node.previousSibling;
+        const sibling = forward ? next(node) : previous(node);
         if (sibling !== null) {
           node = sibling;
           break;
         }
-        const parent = node.parentNode;
-        if (parent === null || parent === data.root || parent === data.current) return null;
-        node = parent;
+        const above = parent(node);
+        if (above === null || above === data.root || above === data.current) return null;
+        node = above;
       }
     }
     return null;
   }
 
-  function traverseSiblings(data, next) {
+  function traverseSiblings(data, forward) {
     let node = data.current;
     if (node === data.root) return null;
     for (;;) {
-      let sibling = next ? node.nextSibling : node.previousSibling;
+      let sibling = forward ? next(node) : previous(node);
       while (sibling !== null) {
         node = sibling;
         const result = filterNode(data, node);
@@ -177,10 +188,10 @@
           data.current = node;
           return node;
         }
-        sibling = next ? node.firstChild : node.lastChild;
-        if (result === REJECT || sibling === null) sibling = next ? node.nextSibling : node.previousSibling;
+        sibling = forward ? first(node) : last(node);
+        if (result === REJECT || sibling === null) sibling = forward ? next(node) : previous(node);
       }
-      node = node.parentNode;
+      node = parent(node);
       if (node === null || node === data.root) return null;
       if (filterNode(data, node) === ACCEPT) return null;
     }
@@ -188,18 +199,18 @@
 
   // The node after (or before) node in tree order, within root.
   function following(node, root) {
-    if (node.firstChild !== null) return node.firstChild;
+    if (first(node) !== null) return first(node);
     while (node !== null && node !== root) {
-      if (node.nextSibling !== null) return node.nextSibling;
-      node = node.parentNode;
+      if (next(node) !== null) return next(node);
+      node = parent(node);
     }
     return null;
   }
   function preceding(node, root) {
     if (node === root) return null;
-    let sibling = node.previousSibling;
-    if (sibling === null) return node.parentNode;
-    while (sibling.lastChild !== null) sibling = sibling.lastChild;
+    let sibling = previous(node);
+    if (sibling === null) return parent(node);
+    while (last(sibling) !== null) sibling = last(sibling);
     return sibling;
   }
 
@@ -221,11 +232,11 @@
   }
   internal.finishInterface(NodeIterator, "NodeIterator");
 
-  function traverseIterator(data, next) {
+  function traverseIterator(data, forward) {
     let node = data.reference;
     let before = data.beforeReference;
     for (;;) {
-      if (next) {
+      if (forward) {
         if (!before) {
           node = following(node, data.root);
           if (node === null) return null;
