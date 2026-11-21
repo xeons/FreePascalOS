@@ -12459,9 +12459,110 @@ contextmenu, with client coordinates in the target document's own
 viewport, page offsets, offsetX/Y, button, buttons, detail and
 modifiers); a cancelled mousedown keeps the focus and selection.
 
+**What a browser's menus and dialogs ask** (for the Firefox 3.6 style
+chrome; every one works in both process models, through the protocol's
+version 2 messages in a content process, on `TWebEngineView` in the
+program; the types are in `WebView.Types`, re-exported by
+`WebView.Control`):
+
+- **Session history.** `HistoryEntries: TWebHistoryList` (`Url`,
+  `Title`, oldest first) and `HistoryIndex` (the current entry's index,
+  -1 none), up to date when `OnHistoryChanged` fires (which a title
+  change fires too); `GoToHistoryOffset(-2)` goes two back, across
+  sites and processes; `RestoreHistory(Entries, Index)` restores a
+  session into a fresh view (`Entries[Index]` is loaded, the others
+  load when gone to). In a content process the view's history is the
+  entries of the sites it left (`FBackEntries`), the process's own
+  session history (all of one site, the entries and current index
+  coming with every `IpcHistoryState`) and the entries it left going
+  back (`FForwardEntries`) (`WebView.Control.History.inc`). An offset
+  within the process's own history is its traversal
+  (`IpcGoToHistoryOffset`); any other is a jump: the run of entries of
+  the target's site around it goes to a view of that site's process
+  (`IpcRestoreHistory`: libweb's new `TNavigable.RestoreSession` makes
+  them the history, with no documents yet, and loads the target as a
+  traversal), the rest become the back and forward lists. Reload after
+  a crash restores the history it had that way. The entries of sites
+  left are not documents kept alive (no back-forward cache): going back
+  to one loads it again, its scroll position and pushState state lost.
+- **Find.** `OnFindDetails(Needle, Found, Wrapped, MatchCount)` fires
+  with `OnFindResult`: whether the search went past the end (or the
+  start) and on from the other end, and the matches in the page (-1
+  past 100000; `TPageTextIndex.FindWrapping`, `AllMatches`).
+  `SetFindHighlight(Needle, MatchCase)` paints every match in a soft
+  yellow under the selection (`WebView.Engine.Find.inc`: the matches
+  are found again whenever the text index is built again, and only
+  those on the screen are measured; device pixels from the CSS
+  rectangles at the device scale); '' or a new document clears it.
+- **Context menus.** `TWebContextInfo` gained `BackgroundImageUrl` (the
+  nearest background-image of the element or its ancestors, resolved),
+  `IsEditable` (a text field, a text area or contenteditable content),
+  `FrameUrl` (the frame document's URL when the point is in a frame)
+  and `CanCopy`; `ImageUrl` is resolved now.
+- **Page Info.** `RequestPageInfo` answers once on `OnPageInfo` with a
+  `TWebPageInfo` (`WebView.PageInfo`, no controls): URL, title,
+  referrer, content type, encoding, the rendering mode ('Standards
+  compliance mode' or 'Quirks mode'), Last-Modified as sent, the meta
+  elements (name, http-equiv, property or charset with the content),
+  the media (`Image` with its alt text, `Background`, `Icon`, `Input
+  image`, with their sizes as laid out in CSS pixels) and the counts of
+  forms and links. libweb's documents now keep their referrer (also
+  `document.referrer`) and Last-Modified, and a text or image
+  document's content type is the response's.
+- **Display options.** `ImagesEnabled` (from the next document: the
+  navigable's `LoadImages`), `TextOnlyZoom` (Zoom scales font sizes, not
+  CSS pixels: libcss's media environment has a `TextZoom` that
+  multiplies the absolute part of every font size - lengths and
+  keywords - while em, percentages and rem follow the zoomed sizes;
+  `TDocumentLayout.SetTextZoom`), `AuthorStylesEnabled` (False is "No
+  Style": the document's sheets and style attributes are not used, the
+  user agent's sheet and presentational hints are;
+  `TDocumentStyler.AuthorStylesEnabled`, `TDocumentLayout.SetAuthorStylesEnabled`;
+  applies at once), `EncodingOverride` (an encoding label, '' to
+  detect: the navigable's `EncodingOverride` is taken as the response's
+  charset, so it is certain and a meta charset does not change it; a
+  byte order mark still wins; setting it reloads) and
+  `SupportedEncodings` (libweb's `SelectableEncodingNames`: every
+  encoding it decodes but replacement and x-user-defined, UTF-8 first).
+  These apply to the top document's layout; frames keep their own.
+- **Pop-ups.** libweb now has `window.open(url, target, features)`:
+  `_self` navigates the window; a named frame or `_top`/`_parent` is
+  navigated by the engine; anything else goes to the host as a link for
+  a new tab (a new window when features were given) through
+  `OnLinkClicked`. It returns null even when a tab was opened (the new
+  tab may be another process's: no WindowProxy across them); a
+  sandboxed frame needs allow-popups. With `PopupsBlocked` a window.open
+  without a user gesture (a click or a key in the last second, one
+  window per gesture) is refused and its URL told to `OnPopupBlocked`.
+- **The network** (`WebView.Network`, the browser process's, so for
+  every view): `SetPrivateBrowsing` (a fresh cookie jar, HTTP cache,
+  HSTS store and local storage in memory; turning it off empties them
+  and brings the usual ones back; pages open across the switch keep
+  what they already read, so a browser closes or reloads them),
+  `SetWorkOffline` (every exchange fails at once with 'offline', in
+  libhttp's client; fresh cache entries are still served),
+  `ClearHttpCache`, `HttpCacheBytes`, `SetHttpCacheLimit`, `ListCookies`
+  (`TCookieInfo`: host, name, value, path, expiry, Secure, HttpOnly),
+  `RemoveCookie`, `ClearCookies`, `SetCookiePolicy` (accept, refuse,
+  refuse third-party, with allowed and blocked hosts that cover their
+  subdomains, the longest matching one deciding, a blocked one winning
+  a tie: libhttp's `Http.CookiePolicies`, applied by the jar when
+  storing and when sending), `ClearWebStorage`, `ClearHsts`,
+  `ConnectionSecurityOf(Url)` (the protocol, cipher and certificate
+  chain of the last TLS connection to its host and port: libhttp's
+  `Http.ConnectionSecurity`, recorded by every TLS handshake; not yet
+  for HTTP/3) and `SystemTrustSummaries` (the system trust store's
+  certificates; libtls's `Tls.SystemTrust.SystemTrustSummaries`).
+  Certificates are `TCertificateSummary` (libtls's
+  `Tls.CertificateSummaries`): subject and issuer as distinguished
+  names, common name, organization, validity, serial number and SHA-256
+  fingerprint.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing, text selection inside frames, Tab moving into frames.
+printing, text selection inside frames, Tab moving into frames;
+WindowProxy objects for windows window.open made; text zoom, No Style
+and the encoding override in frames.
 
 ## Browser
 
@@ -12604,21 +12705,34 @@ format (`WebIpc.Wire`: little-endian fixed-width integers, doubles,
 length-prefixed UTF-8 strings and byte arrays; a reader never reads
 past its data, and a payload that does not parse raises `EIpcMalformed`,
 which breaks the channel: a renderer sending garbage is not trusted).
-Kinds (`WebIpc.Messages`, protocol version 1): 1-99 either way (hello,
+Kinds (`WebIpc.Messages`, protocol version 2): 1-99 either way (hello,
 ping, pong, reply, shutdown), 100-199 browser to renderer (create and
 destroy a view, navigate, load HTML, back, forward, reload, stop,
 resize with the scale and DPI, visible, focus, zoom, input, find,
 select all, copy, clear selection, scroll, frame acknowledgements, menu
-answers, scripting, view commands), 200-299 renderer to browser
+answers, scripting, view commands; version 2: 123 go to a history
+offset, 124 restore a history, 125 the find highlight, 126 Page Info
+(a request), 127 display options), 200-299 renderer to browser
 (surface, frame, title, location, loading state, favicon, status text,
 history state, zoom, cursor, link, download, navigation failure,
 context menu, pop-up menu, console, script dialog, beforeunload,
 clipboard write and read, selection, open URL, script interrupted,
-input handled, unhandled key, page text), 300-399 the network service
+input handled, unhandled key, page text; version 2: 226 a pop-up
+blocked), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
 storage load, set, remove, clear; about pages). Records with encoders
 and decoders for the larger payloads are in `WebIpc.ViewMessages` and
-`WebIpc.NetworkMessages`. A channel message holds at most 16 KiB, so a
+`WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
+state is a `TIpcHistoryState` (can go back and forward, the entries'
+URLs and titles, the current index; also what `IpcRestoreHistory`
+carries; at most 1000 entries, the index checked against them), find
+asks with a `TIpcFindRequest` and is answered with a `TIpcFindResult`
+(found, wrapped, the match count, -1 unknown), and the context menu's
+`TIpcContextInfo` has the background image, editable, frame URL and
+can-copy fields; new are `TIpcDisplayOptions` (images, text-only zoom,
+author styles, pop-ups blocked, the encoding label, at most 64 bytes)
+and `TIpcPageInfo` (seven texts, the meta and media lists, the form and
+link counts). A view sends its display options right after it is made. A channel message holds at most 16 KiB, so a
 protocol message goes in pieces with a 16-byte header each
 (`WebIpc.Fragments`: kind, first/last flags, view, request, the whole
 length; handles with the first piece; at most 256 MiB). An endpoint
@@ -12750,7 +12864,17 @@ control, as before; it is also what a view falls back to when
 (nil otherwise); the browser sets its about pages with the new
 `AboutPageProvider`. New: `OnFindResult`, `OnScriptDialog`,
 `OnProcessEvent`, `ContentProcessId`, `TerminateContentProcess`,
-`CrashContentProcess`, `HangContentProcess`. The engine gained hooks for
+`CrashContentProcess`, `HangContentProcess`; for the Firefox 3.6 style
+chrome (see "Web view (libwebview)"): `HistoryEntries`, `HistoryIndex`,
+`GoToHistoryOffset`, `RestoreHistory`, `OnFindDetails`,
+`SetFindHighlight`, `RequestPageInfo`, `OnPageInfo`, `ImagesEnabled`,
+`TextOnlyZoom`, `AuthorStylesEnabled`, `EncodingOverride`,
+`SupportedEncodings`, `PopupsBlocked`, `OnPopupBlocked`, the new
+`TWebContextInfo` fields, and the network's private browsing, offline,
+cache, cookie, storage, HSTS and TLS functions in `WebView.Network` (the
+network service takes the local storage lock of `WebView.Network`,
+`EnterLocalStorage`, so the GUI thread can clear or switch it). The
+engine gained hooks for
 a host that is not its window: `OnPopupMenu`, `OnReadClipboard`,
 `OnWriteClipboard`, `OnSelectionChanged`, `OnNavigationRequest`,
 `NetworkContext`, `LocalStorage`, `NavigateWith`, `GetScrollState`.
@@ -12760,7 +12884,16 @@ libweb gained the transport (`Web.Fetch.Transports`:
 local files read through it (`TFetcher.StartRemoteLocalFile`) and a
 storage backend (`TWebStorageBackend`, `TWebStorageArea.LoadPair`).
 
-**Tests.** `make web-ipc-test` (the protocol, on the host);
+**Tests.** `make web-ipc-test` (the protocol, on the host; version 2's
+payloads both ways and refused when cut short at every length or when
+their counts or indexes lie, `WebIpcTest.PagePayloads`); `make
+web-load-test`'s browser features (`WebLoadTest.BrowserFeatures`: Page
+Info of a served page, find's counts and wrapping, text-only zoom, No
+Style, the encoding override, session restore and two back at once,
+window.open reaching the host); `make http-test` (cookie policies and
+their exceptions, removing a cookie, the cache's limit, offline);
+`make tls-test` (certificate summaries); `make web-test` (the
+selectable encodings);
 `restricttest` (a coretest line: every restriction, inheritance, never
 lifted); `scripts/test-input.py`'s browser part: two local pages share
 one renderer and a page served from the test (another site) gets its

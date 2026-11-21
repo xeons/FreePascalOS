@@ -1489,6 +1489,16 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Web view: drawing a field's selection, dragging the bars of inner
       scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
+- [x] Web view: what the Firefox 3.6 chrome needs - session history lists,
+      going several entries at once and session restore across processes,
+      find with wrap and match count and highlight all, Page Info, context
+      menu details, images off, text-only zoom, No Style, the encoding
+      override, pop-up blocking (window.open), private browsing, offline,
+      the cache's size, cookies and their policy, connection security and
+      the trust store's certificates (protocol version 2)
+- [ ] Web view: a WindowProxy for windows window.open made (it returns
+      null); text zoom, No Style and the encoding override in frames;
+      connection security of HTTP/3 connections; Page Info of frames
 - [ ] Browser: session restore, per-site settings, a downloads window with
       cancel buttons, separate windows (Shift+click opens a tab), tab drag
 - [x] webbrowse (make webbrowse): the engine on real sites from the host
