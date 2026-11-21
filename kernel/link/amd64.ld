@@ -20,8 +20,11 @@
  * Linker script for the x86-64 kernel image.
  *
  * The kernel runs in the top 2 GiB of the address space. Each kind of
- * section gets its own program header so the loader can map code
- * read-only and data writable.
+ * section gets its own program header, starting on a page of its own, so
+ * the loader can map code read-only and executable, read-only data
+ * read-only and no-execute, and data writable and no-execute (W^X).
+ * The boundaries are named for the kernel's own checks
+ * (Memory.MappingAudit).
  */
 
 OUTPUT_FORMAT("elf64-x86-64")
@@ -42,17 +45,21 @@ SECTIONS
 
     .text ALIGN(4K) :
     {
+        KernelTextStart = .;
         *(.text .text.*)
         KernelTextEnd = .;
     } :text
 
     .rodata ALIGN(4K) :
     {
+        KernelReadOnlyDataStart = .;
         *(.rodata .rodata.*)
+        KernelReadOnlyDataEnd = .;
     } :rodata
 
     .data ALIGN(4K) :
     {
+        KernelDataStart = .;
         *(.data .data.*)
         *(.fpc .fpc.*)
     } :data
