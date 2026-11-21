@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>pointer fuzz</title>
+<style>
+  body { margin: 0; font-size: 13px; line-height: 1.4 }
+  #head { position: sticky; top: 0; background: #ffe; z-index: 3; height: 24px }
+  #foot { position: fixed; bottom: 0; right: 0; width: 120px; background: #eef }
+  h2 { position: sticky; top: 24px; background: #fff; margin: 4px 0; font-size: 15px }
+  .float { float: left; width: 80px; height: 40px; margin: 2px 6px; background: #def }
+  .wide { float: right; width: 260px }
+  .turn { transform: rotate(4deg) translate(6px, 2px) }
+  .grow { transform: scale(1.2) }
+  .move { animation: drift 0.3s linear infinite alternate }
+  .fade { transition: opacity 0.2s, transform 0.2s }
+  .gone { display: none }
+  a { cursor: pointer }
+  p:hover { cursor: text }
+  .stick { position: sticky; top: 30px; background: #fdd }
+  .abs { position: absolute; left: 30px; background: #dfd }
+  #box { height: 90px; overflow: auto; border: 1px solid #888 }
+  @keyframes drift { from { transform: translateX(0) } to { transform: translateX(20px) } }
+</style>
+</head>
+<body>
+<!--
+  A page that fights the pointer: long generated text with a sticky
+  header and sticky section titles, a fixed footer, floats, transformed,
+  animated and absolutely placed paragraphs, an inner scroll container
+  and a frame. Its listeners - on every mouse event, the selection's
+  changes, timers and animation frames - read sizes (which lays the page
+  out again in the middle of the event), remove, replace, split, merge,
+  move and hide the very text under the pointer and in the selection,
+  set the selection themselves (also to nodes out of the document), and
+  scroll (WebLoadTest.Pointer moves, presses, drags, clicks and scrolls
+  at random over it). A seeded generator makes every run the same.
+-->
+<div id="head">Header <b>sticky</b> text</div>
+<div id="foot">Fixed footer text</div>
+<div id="main"></div>
+<div id="box"></div>
+<iframe id="frame" srcdoc="<p>Text in a frame, <b>bold</b> and plain.</p><p>More of it.</p>" width="200" height="60"></iframe>
+<div id="spare"></div>
+<script>
+var seed = 4242;
+function random(n) { seed = (seed * 16807) % 2147483647; return seed % n; }
+var counts = { events: 0, upsets: 0, layouts: 0, selections: 0, selectionchange: 0, exceptions: 0 };
+var lastException = "";
+var words = ["alpha", "beta", "gamma", "delta", "kernel", "Linux", "free", "software", "über", "naïve",
+  "日本", "text", "select", "drag", "sticky", "float", "frame", "scroll"];
+var classes = ["", "", "", "float", "wide", "turn", "grow", "move", "fade", "stick", "abs"];
+function sentence(length) {
+  var parts = [];
+  for (var index = 0; index < length; index++) parts.push(words[random(words.length)]);
+  return parts.join(" ") + ". ";
+}
+function paragraph() {
+  var p = document.createElement("p");
+  p.className = classes[random(classes.length)];
+  var pieces = 1 + random(4);
+  for (var index = 0; index < pieces; index++) {
+    if (random(3) === 0) {
+      var inline = document.createElement(random(2) ? "a" : "b");
+      if (inline.tagName === "A") inline.href = "#p" + random(100);
+      inline.textContent = sentence(1 + random(4));
+      p.appendChild(inline);
+    } else {
+      p.appendChild(document.createTextNode(sentence(3 + random(12))));
+    }
+  }
+  return p;
+}
+function build() {
+  var main = document.getElementById("main");
+  for (var section = 0; section < 12; section++) {
+    var title = document.createElement("h2");
+    title.textContent = "Section " + section + " " + sentence(2);
+    main.appendChild(title);
+    for (var index = 0; index < 10; index++) main.appendChild(paragraph());
+  }
+  var box = document.getElementById("box");
+  for (var line = 0; line < 12; line++) box.appendChild(paragraph());
+}
+build();
+function textNodes() {
+  var all = [];
+  function walk(node) {
+    for (var child = node.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === 3) all.push(child);
+      else if (child.nodeType === 1 && child.tagName !== "SCRIPT" && child.tagName !== "STYLE") walk(child);
+    }
+  }
+  walk(document.body);
+  return all;
+}
+function anyText() { var all = textNodes(); return all.length ? all[random(all.length)] : null; }
+function anyParagraph() {
+  var all = document.querySelectorAll("p, h2, a, b");
+  return all.length ? all[random(all.length)] : null;
+}
+function safe(node) {
+  /* The document's frame, the scripts and the containers stay. */
+  return node && node.parentNode && !/^(HTML|HEAD|BODY|SCRIPT|STYLE|TITLE)$/.test(node.nodeName || "") &&
+    node.id !== "main" && node.id !== "box";
+}
+var depth = 0;
+function upset(target) {
+  if (depth > 2) return;
+  depth++;
+  /* A DOM exception from an odd choice is fine (counted). */
+  try { upsetOnce(target); } catch (error) { counts.exceptions++; lastException = String(error); }
+  finally { depth--; }
+}
+function upsetOnce(target) {
+  counts.upsets++;
+  if (!safe(target)) target = anyParagraph();
+  var selection = getSelection();
+  switch (random(24)) {
+    case 0: case 1: case 2:
+      /* A size read: the page is laid out again inside the event. */
+      counts.layouts++;
+      if (target) { var h = target.offsetHeight + target.getBoundingClientRect().top; }
+      document.body.scrollHeight;
+      break;
+    case 3: if (safe(target)) target.remove(); break;
+    case 4: if (target) target.textContent = sentence(2 + random(6)); break;
+    case 5: if (safe(target)) target.parentNode.insertBefore(paragraph(), target); break;
+    case 6: if (target && target.classList) target.classList.toggle(classes[1 + random(classes.length - 1)] || "gone"); break;
+    case 7: { var text = anyText(); if (text && text.data.length > 2) text.splitText(random(text.data.length)); } break;
+    case 8: { var p = anyParagraph(); if (p) p.normalize(); } break;
+    case 9: selection.removeAllRanges(); break;
+    case 10: {
+      var a = anyText(), b = anyText();
+      if (a && b) selection.setBaseAndExtent(a, random(a.data.length + 1), b, random(b.data.length + 1));
+      counts.selections++;
+    } break;
+    case 11:
+      /* The selection's own range taken out of the document. */
+      if (selection.rangeCount) selection.getRangeAt(0).setStart(document.createTextNode("loose"), 0);
+      break;
+    case 12: { var p2 = anyParagraph(); if (safe(p2)) p2.innerHTML = "<i>" + sentence(3) + "</i> " + sentence(4); } break;
+    case 13: { var into = document.getElementById(random(2) ? "spare" : "main"); if (into && safe(target)) into.appendChild(target); } break;
+    case 14: {
+      var frame = document.getElementById("frame");
+      if (frame && random(2)) frame.remove();
+      else if (!frame) {
+        frame = document.createElement("iframe");
+        frame.id = "frame";
+        frame.srcdoc = "<p>" + sentence(5) + "</p>";
+        document.body.appendChild(frame);
+      }
+    } break;
+    case 15: if (target && target.classList) target.classList.add("move"); break;
+    case 16: window.scrollBy(0, random(400) - 200); break;
+    case 17: { var box = document.getElementById("box"); if (box) box.scrollTop = random(400); } break;
+    case 18: if (selection.rangeCount) selection.deleteFromDocument(); break;
+    case 19: {
+      var anchor = selection.anchorNode;
+      if (anchor && safe(anchor.parentNode)) anchor.parentNode.remove();
+    } break;
+    case 20: {
+      var t = anyText();
+      if (t) t.data = random(2) ? "" : t.data.slice(0, random(t.data.length + 1)) + sentence(1);
+    } break;
+    case 21: if (selection.rangeCount) { var r = selection.getRangeAt(0); r.getClientRects(); r.toString(); } break;
+    case 22: { var grow = document.getElementById("main"); if (grow) grow.appendChild(paragraph()); } break;
+    case 23: { var all = document.querySelectorAll("#main > *"); if (all.length > 60 && safe(all[0])) all[0].remove(); } break;
+  }
+}
+["mouseover", "mouseout", "mousemove", "mousedown", "mouseup", "click", "dblclick"].forEach(function (type) {
+  document.addEventListener(type, function (event) {
+    counts.events++;
+    if (random(3) === 0) upset(event.target);
+    if (type === "mousedown" && random(10) === 0) event.preventDefault();
+  }, true);
+});
+document.addEventListener("selectionchange", function () {
+  counts.selectionchange++;
+  if (random(6) === 0) upset(getSelection().focusNode);
+});
+setInterval(function () {
+  if (random(2)) upset(anyParagraph());
+  /* The page grows back as it is taken apart. */
+  var main = document.getElementById("main");
+  if (!main) {
+    /* Taken away with a selection deleted from the document. */
+    main = document.createElement("div");
+    main.id = "main";
+    document.body.insertBefore(main, document.body.firstChild);
+  }
+  while (main.childNodes.length < 50) main.appendChild(paragraph());
+}, 7);
+function frame() { if (random(5) === 0) upset(anyParagraph()); requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
