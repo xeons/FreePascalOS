@@ -742,6 +742,12 @@ type
     destructor Destroy; override;
   end;
 
+var
+  { Copies a form control's state to its clone (HTML's cloning steps of
+    input and textarea: the value, checkedness and their dirty flags);
+    Web.Dom.FormControls sets it. }
+  FormStateCloning: procedure(Source, Copy: TElement) = nil;
+
 { Frees detached, unreferenced nodes (see the unit's description). }
 procedure CollectGarbage;
 { Bumped by every change (in any document) that can change a live

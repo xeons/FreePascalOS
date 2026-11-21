@@ -573,4 +573,23 @@ begin
   State.HasSelection := True;
 end;
 
+{ The cloning steps of input and textarea. }
+procedure CloneFormControlState(Source, Copy: TElement);
+var
+  State, CopyState: TFormControlState;
+begin
+  if not (Source.IsHtmlElement(AtomInput) or Source.IsHtmlElement(AtomTextarea)) then
+    Exit;
+  State := FindFormControlState(Source);
+  if State = nil then
+    Exit;
+  CopyState := FormControlState(Copy);
+  CopyState.Value := State.Value;
+  CopyState.ValueDirty := State.ValueDirty;
+  CopyState.Checked := State.Checked;
+  CopyState.CheckedDirty := State.CheckedDirty;
+end;
+
+initialization
+  FormStateCloning := @CloneFormControlState;
 end.
