@@ -143,7 +143,11 @@ uses
   Controls.BreadcrumbLayout,
   Controls.BreadcrumbBar,
   Controls.CommandLayout,
-  Controls.CommandBar;
+  Controls.CommandBar,
+  Controls.TransferRates,
+  Controls.ThroughputGraph,
+  Controls.DisclosureButton,
+  Controls.ProgressDialog;
 
 implementation
 
