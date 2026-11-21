@@ -390,8 +390,10 @@ end;
 
 function TBrowseSession.Quiet: Boolean;
 begin
+  { A running animation (an endless spinner) keeps the layout due:
+    that alone does not keep the page from being quiet. }
   Result := Loaded and (FPage.Fetcher.ActiveJobCount = 0) and (FSink.PendingStyleImageCount = 0) and
-    not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate);
+    not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate or FLayout.AnimationsRunning);
 end;
 
 { The pointer moved down the middle of the viewport in HoverMoves steps,
@@ -741,9 +743,10 @@ begin
     if Clock >= Deadline then
     begin
       WriteLn(StdErr, Format('webbrowse: timed out after %.0f s (state %d, %d fetches active, %d url() images pending, ' +
-        'a task ready: %s, layout due: %s)', [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State),
+        'a task ready: %s, layout due: %s, animations: %s)', [FOptions.TimeoutSeconds, Ord(FPage.Navigable.State),
         FPage.Fetcher.ActiveJobCount, FSink.PendingStyleImageCount, BoolToStr(FPage.Loop.HasReadyTask, 'yes', 'no'),
-        BoolToStr((FLayout <> nil) and FLayout.NeedsUpdate, 'yes', 'no')]));
+        BoolToStr((FLayout <> nil) and FLayout.NeedsUpdate, 'yes', 'no'),
+        BoolToStr((FLayout <> nil) and FLayout.AnimationsRunning, 'yes', 'no')]));
       Result := 2;
       Break;
     end;

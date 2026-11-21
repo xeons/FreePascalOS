@@ -19,7 +19,8 @@
 
 For each page in scripts/compare-sites.list (NAME URL per line) it
 renders the page with build/tools/webbrowse (the engine on the host over
-the network) and with headless Firefox at the same viewport sizes,
+the network) and with headless Firefox (over Marionette, given a few
+seconds after the load to settle) at the same viewport sizes,
 scores how different the two pictures look (grayscale, per 16 px block:
 the difference of the block means and of their contrast, 0 = alike,
 100 = nothing alike), and drives the page in webbrowse like a user:
@@ -50,9 +51,13 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 from PIL import Image, ImageChops, ImageOps
+
+sys.dont_write_bytecode = True
+from firefox_reference import ReferenceBrowser  # noqa: E402 (next to this script)
 
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEBBROWSE = os.path.join(REPOSITORY, 'build', 'tools', 'webbrowse')
@@ -206,28 +211,28 @@ def smoke_engine(url, width, height, log):
     return result
 
 
-def firefox_profile(out, worker):
-    profile = os.path.join(out, 'firefox-profiles', 'worker-%d' % worker)
-    os.makedirs(profile, exist_ok=True)
-    with open(os.path.join(profile, 'user.js'), 'w') as prefs:
-        # Overlay scroll bars, so the page gets the whole width as webbrowse's does.
-        prefs.write('user_pref("widget.gtk.overlay-scrollbars.enabled", true);\n')
-        prefs.write('user_pref("ui.useOverlayScrollbars", 1);\n')
-        prefs.write('user_pref("browser.shell.checkDefaultBrowser", false);\n')
-        prefs.write('user_pref("datareporting.policy.dataSubmissionEnabled", false);\n')
-        prefs.write('user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);\n')
-    return profile
+# One reference Firefox per pool thread (each with a profile and a
+# Marionette port of its own), stopped at the end.
+REFERENCE_BROWSERS = []
+REFERENCE_LOCK = threading.Lock()
+REFERENCE_LOCAL = threading.local()
 
 
-def render_reference(url, width, height, png, profile):
+def reference_browser(out):
+    browser = getattr(REFERENCE_LOCAL, 'browser', None)
+    if browser is None:
+        with REFERENCE_LOCK:
+            worker = len(REFERENCE_BROWSERS)
+            browser = ReferenceBrowser(os.path.join(out, 'firefox-profiles', 'worker-%d' % worker), 2900 + worker)
+            REFERENCE_BROWSERS.append(browser)
+        REFERENCE_LOCAL.browser = browser
+    return browser
+
+
+def render_reference(url, width, height, png, out):
     began = time.time()
-    try:
-        subprocess.run(['firefox', '--headless', '-no-remote', '-profile', profile, '--screenshot', png,
-                        '--window-size=%d,%d' % (width, height), url],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-    except subprocess.TimeoutExpired:
-        pass
-    return {'seconds': round(time.time() - began, 1), 'ok': os.path.exists(png)}
+    made = reference_browser(out).screenshot(url, width, height, png)
+    return {'seconds': round(time.time() - began, 1), 'ok': made}
 
 
 def block_statistics(image, columns, rows):
@@ -281,7 +286,7 @@ def difference_score(ours_path, reference_path, heat_path):
     return round(overall, 1), regions
 
 
-def process_site(site, worker, options):
+def process_site(site, options):
     name, url = site
     site_out = os.path.join(options.out, name)
     os.makedirs(site_out, exist_ok=True)
@@ -297,8 +302,7 @@ def process_site(site, worker, options):
                 os.remove(ours)
             entry['engine'] = render_engine(url, width, height, ours)
             if options.refresh_reference or not os.path.exists(reference):
-                entry['reference_run'] = render_reference(url, width, height, reference,
-                                                          firefox_profile(options.out, worker))
+                entry['reference_run'] = render_reference(url, width, height, reference, options.out)
             if os.path.exists(ours) and os.path.exists(reference):
                 entry['score'], entry['regions'] = difference_score(ours, reference, heat)
             else:
@@ -427,14 +431,15 @@ def main():
             baseline = {record['name']: record for record in json.load(source)}
     records = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=options.jobs) as pool:
-        futures = {pool.submit(process_site, site, index % options.jobs, options): site
-                   for index, site in enumerate(sites)}
+        futures = {pool.submit(process_site, site, options): site for site in sites}
         for future in concurrent.futures.as_completed(futures):
             record = future.result()
             print('%-20s %s %s' % (record['name'], ' '.join(
                 str(entry.get('score')) for entry in record['sizes'].values()), '; '.join(problems_of(record))),
                 flush=True)
             records.append(record)
+    for browser in REFERENCE_BROWSERS:
+        browser.stop()
     results_path = os.path.join(options.out, 'results.json')
     if options.only and os.path.exists(results_path):
         with open(results_path) as source:
