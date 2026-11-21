@@ -158,7 +158,7 @@ begin
   FError := CompressionErrorNone;
   FTotalOutput := 0;
   FReader.Reset;
-  FWindow.Start(64);
+  FWindow.Discard;
   FWindowSize := 0;
   FLastMetaBlock := False;
   FMetaBlockRemaining := 0;
@@ -574,6 +574,7 @@ var
   Previous2: Byte;
   Mark: TBrotliReaderMark;
   Symbol: Integer;
+  Tree: PDecodeEntry;
   Stop: TBrotliStop;
 begin
   Category := @FMetaBlock.Categories[BrotliLiteralCategory];
@@ -602,15 +603,21 @@ begin
     Stop := BrotliStopNone;
     while Done < Chunk do
     begin
-      Mark := FReader.Save;
-      Symbol := FReader.ReadSymbol(TreeTable(FMetaBlock.LiteralTrees,
-        ContextMap[Lookup[Previous1] or Lookup[256 + Previous2]]), BrotliRootBits);
-      if FReader.Overrun then
+      Tree := TreeTable(FMetaBlock.LiteralTrees, ContextMap[Lookup[Previous1] or Lookup[256 + Previous2]]);
+      if FReader.HasBits(BrotliLongestCode) then
+        Symbol := FReader.ReadSymbol(Tree, BrotliRootBits)
+      else
       begin
-        FReader.Restore(Mark);
-        FReader.KeepUnread;
-        Stop := BrotliStopNeedsInput;
-        Break;
+        { Near the end of the input: the literal may not all be here. }
+        Mark := FReader.Save;
+        Symbol := FReader.ReadSymbol(Tree, BrotliRootBits);
+        if FReader.Overrun then
+        begin
+          FReader.Restore(Mark);
+          FReader.KeepUnread;
+          Stop := BrotliStopNeedsInput;
+          Break;
+        end;
       end;
       FWindow.PutByte(Symbol);
       Previous2 := Previous1;

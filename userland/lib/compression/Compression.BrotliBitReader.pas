@@ -74,6 +74,9 @@ type
     procedure Reset;
     procedure SetInput(Data: PByte; Count: SizeInt);
     procedure Refill; inline;
+    { Refills; whether Count bits are at hand (a read of that many
+      cannot overrun). }
+    function HasBits(Count: Integer): Boolean; inline;
     function ReadBits(Count: Integer): LongWord; inline;
     { The symbol of the prefix code whose table (root bits RootBits)
       starts at Table. }
@@ -160,6 +163,13 @@ begin
   end
   else
     RefillSlowly;
+end;
+
+function TBrotliBitReader.HasBits(Count: Integer): Boolean;
+begin
+  if FBitCount < Count then
+    Refill;
+  Result := FBitCount >= Count;
 end;
 
 function TBrotliBitReader.ReadBits(Count: Integer): LongWord;

@@ -146,7 +146,7 @@ begin
   FInputCount := 0;
   FInputPosition := 0;
   { Whatever was not taken of an earlier stream is dropped. }
-  FWindow.Start(64);
+  FWindow.Discard;
 end;
 
 procedure TZstdDecoder.SetInput(Data: Pointer; Count: SizeInt);

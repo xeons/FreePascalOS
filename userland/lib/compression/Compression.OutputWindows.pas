@@ -25,7 +25,9 @@
   small and doubles as the output grows (Reserve), up to the size Start
   was given, so a small response never takes the whole window a format
   allows. It grows only while it has not wrapped, so growing is one
-  reallocation that keeps everything where it is.
+  reallocation that keeps everything where it is. The memory is kept
+  for the next stream (Discard, Start) unless that one's window is
+  smaller.
 
   Writes (PutByte, PutBytes, PutRepeated, CopyMatch) need room: Reserve
   first, and never let the bytes not yet delivered exceed the size
@@ -39,13 +41,10 @@ unit Compression.OutputWindows;
 
 interface
 
-uses
-  SysUtils;
-
 type
   TOutputWindow = class
   private
-    FData: TBytes;
+    FData: PByte;
     FCapacity: SizeUInt;
     FMask: SizeUInt;
     FMaximumCapacity: SizeUInt;
@@ -55,9 +54,12 @@ type
     function GetPending: SizeUInt;
     function GetSpace: SizeUInt;
   public
+    destructor Destroy; override;
     { A new stream (or frame) whose window takes at most Maximum bytes
       (rounded up to a power of two). Nothing may be pending. }
     procedure Start(Maximum: SizeUInt);
+    { Drops everything written (taken or not); Start comes next. }
+    procedure Discard;
     { Makes room for Count more bytes. }
     procedure Reserve(Count: SizeUInt);
     procedure PutByte(Value: Byte); inline;
@@ -91,12 +93,20 @@ implementation
 
 const
   SmallestCapacity = 64 * 1024;
+  { Copies up to this long are done in place without a call to Move. }
+  ShortCopy = 64;
 
 function RoundUpToPowerOfTwo(Value: QWord): QWord;
 begin
   Result := 1;
   while Result < Value do
     Result := Result shl 1;
+end;
+
+destructor TOutputWindow.Destroy;
+begin
+  FreeMem(FData);
+  inherited Destroy;
 end;
 
 procedure TOutputWindow.Start(Maximum: SizeUInt);
@@ -109,6 +119,7 @@ begin
   { Keep a ring from an earlier stream if it is not too large. }
   if FCapacity > FMaximumCapacity then
   begin
+    FreeMem(FData);
     FData := nil;
     FCapacity := 0;
   end;
@@ -117,9 +128,16 @@ begin
     FCapacity := SmallestCapacity;
     if FCapacity > FMaximumCapacity then
       FCapacity := FMaximumCapacity;
-    SetLength(FData, FCapacity);
+    FData := GetMem(FCapacity);
   end;
   FMask := FCapacity - 1;
+end;
+
+procedure TOutputWindow.Discard;
+begin
+  FWritten := 0;
+  FDelivered := 0;
+  FMaximumCapacity := 0;
 end;
 
 procedure TOutputWindow.Grow(Needed: QWord);
@@ -131,7 +149,7 @@ begin
     NewCapacity := FMaximumCapacity;
   if NewCapacity <= FCapacity then
     Exit;
-  SetLength(FData, NewCapacity);
+  FData := ReallocMem(FData, NewCapacity);
   FCapacity := NewCapacity;
   FMask := FCapacity - 1;
 end;
@@ -163,7 +181,27 @@ procedure TOutputWindow.PutBytes(Source: PByte; Count: SizeUInt);
 var
   Index: SizeUInt;
   Chunk: SizeUInt;
+  Target: PByte;
 begin
+  Index := FWritten and FMask;
+  { A few bytes away from the ring's end: in place, without Move. }
+  if (Count <= ShortCopy) and (Index + Count <= FCapacity) then
+  begin
+    Target := FData + Index;
+    Chunk := 0;
+    while Chunk + SizeOf(QWord) <= Count do
+    begin
+      PQWord(Target + Chunk)^ := PQWord(Source + Chunk)^;
+      Inc(Chunk, SizeOf(QWord));
+    end;
+    while Chunk < Count do
+    begin
+      Target[Chunk] := Source[Chunk];
+      Inc(Chunk);
+    end;
+    Inc(FWritten, Count);
+    Exit;
+  end;
   while Count > 0 do
   begin
     Index := FWritten and FMask;
@@ -194,15 +232,44 @@ begin
   end;
 end;
 
+{ Count bytes from Source to Target, Distance (Target - Source) apart,
+  neither end wrapping; the copy may read what it writes. }
+procedure CopyForward(Data: PByte; Source: SizeUInt; Target: SizeUInt; Distance: SizeUInt; Count: SizeUInt); inline;
+var
+  Index: SizeUInt;
+begin
+  Index := 0;
+  if Distance >= SizeOf(QWord) then
+    { Eight at a time: each word read lies wholly before its write. }
+    while Index + SizeOf(QWord) <= Count do
+    begin
+      PQWord(Data + Target + Index)^ := PQWord(Data + Source + Index)^;
+      Inc(Index, SizeOf(QWord));
+    end;
+  while Index < Count do
+  begin
+    Data[Target + Index] := Data[Source + Index];
+    Inc(Index);
+  end;
+end;
+
 procedure TOutputWindow.CopyMatch(Distance: SizeUInt; Count: SizeUInt);
 var
   Data: PByte;
   Source: SizeUInt;
   Target: SizeUInt;
   Chunk: SizeUInt;
-  Index: SizeUInt;
 begin
-  Data := @FData[0];
+  Data := FData;
+  Source := (FWritten - Distance) and FMask;
+  Target := FWritten and FMask;
+  { The usual case: a short copy away from the ring's end. }
+  if (Count <= ShortCopy) and (Source + Count <= FCapacity) and (Target + Count <= FCapacity) then
+  begin
+    CopyForward(Data, Source, Target, Distance, Count);
+    Inc(FWritten, Count);
+    Exit;
+  end;
   if Distance = 1 then
   begin
     PutRepeated(Data[(FWritten - 1) and FMask], Count);
@@ -221,15 +288,7 @@ begin
     if Chunk <= Distance then
       Move(Data[Source], Data[Target], Chunk)
     else
-    begin
-      { The copy reads what it writes: byte by byte. }
-      Index := 0;
-      while Index < Chunk do
-      begin
-        Data[Target + Index] := Data[Source + Index];
-        Inc(Index);
-      end;
-    end;
+      CopyForward(Data, Source, Target, Distance, Chunk);
     Inc(FWritten, Chunk);
     Dec(Count, Chunk);
   end;
@@ -243,7 +302,7 @@ begin
   Available := FCapacity - Index;
   if Available > Count then
     Available := Count;
-  Result := @FData[Index];
+  Result := FData + Index;
 end;
 
 procedure TOutputWindow.Advance(Count: SizeUInt);
@@ -288,14 +347,14 @@ var
   Index: SizeUInt;
 begin
   Index := First and FMask;
-  Part1 := @FData[Index];
+  Part1 := FData + Index;
   Count1 := Count;
   Part2 := nil;
   Count2 := 0;
   if Index + Count > FCapacity then
   begin
     Count1 := FCapacity - Index;
-    Part2 := @FData[0];
+    Part2 := FData;
     Count2 := Count - Count1;
   end;
 end;
