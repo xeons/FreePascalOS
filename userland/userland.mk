@@ -182,6 +182,22 @@ OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*.ttf) $(wildcard $(OU
 DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
 DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
 
+# The freely licensed fonts the build machine has (Liberation, more
+# DejaVu, Noto with CJK and colour emoji, Source Sans, Cantarell,
+# Roboto, Open Sans, Hack, Inconsolata, the URW base 35), copied into
+# /lib/fonts with their licences by scripts/collect-host-fonts.py from
+# the list in scripts/host-fonts.list (nothing of them is in git;
+# what the machine lacks is skipped). HOST_FONT_SET: full (the system
+# disk, about 80 MB), core (Liberation, Droid Sans Fallback for CJK and
+# Noto Sans Symbols 2: the default for arm64, whose system image is the
+# Raspberry Pi's RAM disk, served over TFTP) or none.
+ifeq ($(ARCH),arm64)
+HOST_FONT_SET ?= core
+else
+HOST_FONT_SET ?= full
+endif
+HOST_FONTS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-$(HOST_FONT_SET)
+
 # The icon theme (/usr/share/icons/NAME.ico, 16 to 96 pixels) and the
 # pointer's pictures (/lib/pointers/NAME.cur, several sizes): drawn
 # with vector shapes by userland/icons/make-icons.py (pycairo) when
@@ -199,7 +215,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
-	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
+	$(DEJAVU_SANS_STAMP) $(HOST_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
 		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
@@ -474,6 +490,12 @@ $(DEJAVU_SANS_STAMP): $(OUTLINE_FONT_FILES)
 		mkdir -p $(USER_BUILD_DIRECTORY)/fonts/$$family; \
 		cp $(OUTLINE_FONT_SOURCE)/$$family/* $(USER_BUILD_DIRECTORY)/fonts/$$family/; \
 	done
+	@touch $@
+
+$(HOST_FONTS_STAMP): $(DEJAVU_SANS_STAMP) scripts/collect-host-fonts.py scripts/host-fonts.list \
+		$(wildcard scripts/font-licenses/*)
+	@rm -f $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-*
+	python3 -B scripts/collect-host-fonts.py scripts/host-fonts.list $(USER_BUILD_DIRECTORY)/fonts --set $(HOST_FONT_SET)
 	@touch $@
 
 $(ICONS_STAMP): $(ICON_SOURCES)
