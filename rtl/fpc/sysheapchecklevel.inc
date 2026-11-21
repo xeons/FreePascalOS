@@ -21,8 +21,11 @@
   with.
 
   The environment variable HEAP_CHECKS decides: "off" (or 0, none),
-  "fill" (fill patterns, header and guard checks) or "all" (also the
-  quarantine; any other value, or 1, means the same). Without it the
+  "fill" (fill patterns, header and guard checks), "all" (also the
+  quarantine; any other value, or 1, means the same) or "pages" (the
+  page heap, syspageheap.inc: every block on pages of its own before a
+  page nobody may touch; only from the environment, never from the
+  kernel option, since it is slow and costs a page per block). Without it the
   kernel option "heapchecks" (same values, the bare option meaning all)
   is the default, so one option checks the kernel heap and every
   program; HEAP_CHECKS=off in a program's environment still turns it
@@ -39,7 +42,8 @@ type
   THeapCheckLevel = (
     HeapChecksOff,
     HeapChecksFill,
-    HeapChecksQuarantine);
+    HeapChecksQuarantine,
+    HeapChecksPages);
 
 const
   HeapCheckVariableName = 'HEAP_CHECKS';
@@ -70,6 +74,8 @@ begin
     HeapCheckLevelFromText := HeapChecksOff
   else if HeapCheckTextIs(Text, Length, 'fill') then
     HeapCheckLevelFromText := HeapChecksFill
+  else if HeapCheckTextIs(Text, Length, 'pages') then
+    HeapCheckLevelFromText := HeapChecksPages
   else
     HeapCheckLevelFromText := HeapChecksQuarantine;
 end;
@@ -126,6 +132,8 @@ begin
        (Options[WordStart + NameLength] = '=') then
     begin
       Level := HeapCheckLevelFromText(@Options[WordStart + NameLength + 1], WordEnd - WordStart - NameLength - 1);
+      if Level = HeapChecksPages then
+        Level := HeapChecksQuarantine;
       Exit(True);
     end;
     WordStart := WordEnd;

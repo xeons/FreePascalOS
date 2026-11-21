@@ -395,6 +395,8 @@ const
 procedure InitHeapChecks;
 begin
   ChooseHeapCheckLevel;
-  if HeapCheckLevel <> HeapChecksOff then
+  if HeapCheckLevel = HeapChecksPages then
+    SetMemoryManager(PageHeapMemoryManager)
+  else if HeapCheckLevel <> HeapChecksOff then
     SetMemoryManager(CheckingMemoryManager);
 end;

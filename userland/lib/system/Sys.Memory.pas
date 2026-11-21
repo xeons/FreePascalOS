@@ -27,6 +27,14 @@
   As everywhere in Free Pascal, running out of memory ends the program
   with runtime error 203 (or raises EOutOfMemory where SysUtils is used)
   rather than returning nil.
+
+  Below the heap, pages straight from the kernel: address space reserved
+  without memory, committed and decommitted in parts, protected (read,
+  read-write, read-execute, no access, one-shot guards), and files
+  mapped into memory. These return 0 or an error code (Sys.Errors).
+  Memory is never writable and executable at once; making memory
+  executable at all needs AllowDynamicCode first (a compiler at run time
+  writes code into read-write pages, then protects them read-execute).
 }
 unit Sys.Memory;
 
@@ -34,6 +42,9 @@ unit Sys.Memory;
 {$pointermath on}
 
 interface
+
+uses
+  Abi.SystemCalls;
 
 function AllocateMemory(ByteCount: QWord): Pointer;
 function AllocateZeroedMemory(ByteCount: QWord): Pointer;
@@ -46,11 +57,55 @@ function MemoryBlockSize(Block: Pointer): QWord;
 { A heap copy of Text. }
 function DuplicateText(Text: PChar): PChar;
 
+const
+  { Protections (the kernel's Memory* values). }
+  ProtectNoAccess = MemoryNoAccess;
+  ProtectRead = MemoryRead;
+  ProtectReadWrite = MemoryReadWrite;
+  ProtectReadExecute = MemoryReadExecute;
+  { Added to another: the first touch raises an access violation and
+    takes the guard off that page. }
+  ProtectGuard = MemoryGuard;
+
+  { MapFile's flags: shared read-only by default. }
+  MapFilePrivate = MapPrivate;
+  MapFileWritable = MapWritable;
+  MapFileExecutable = MapExecutable;
+
+type
+  TMemoryInformation = TAbiMemoryInformation;
+
+{ Reserves ByteCount bytes (whole pages) of address space without
+  memory. }
+function ReserveMemory(ByteCount: QWord; out Address: Pointer): LongInt;
+{ Commits pages of a reservation with a protection: they count against
+  the commit limit and are zero until written. }
+function CommitMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): LongInt;
+{ Gives the memory of those pages back; they stay reserved. }
+function DecommitMemory(Address: Pointer; ByteCount: QWord): LongInt;
+{ Frees a whole reservation (or allocation, or file mapping) from the
+  address ReserveMemory or MapFile gave. }
+function ReleaseMemory(Address: Pointer): LongInt;
+{ Changes the protection of committed pages; Previous is the first
+  page's. }
+function ProtectMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord; out Previous: LongWord): LongInt;
+{ Describes the run of alike pages around Address. }
+function QueryMemory(Address: Pointer; out Information: TMemoryInformation): LongInt;
+{ Lets this process make memory executable (or not any more). }
+function AllowDynamicCode(Allowed: Boolean): LongInt;
+{ Maps ByteCount bytes (0: to the end) of the file open on Handle from
+  Offset (page aligned). Read-only shared unless Flags say otherwise; a
+  writable mapping must be private (copy on write). Unmapped with
+  ReleaseMemory; it stays valid after the handle is closed. }
+function MapFile(Handle: Int64; Offset, ByteCount: QWord; Flags: LongWord; out Address: Pointer): LongInt;
+
 implementation
 
 uses
   Runtime.Memory,
-  Runtime.Text;
+  Runtime.Text,
+  Sys.Kernel,
+  Sys.Errors;
 
 { A request for nothing still gets a block, which can be freed. }
 function AtLeastOne(ByteCount: QWord): QWord;
@@ -88,6 +143,67 @@ begin
   if Block = nil then
     Exit(0);
   Result := MemSize(Block);
+end;
+
+function ReserveMemory(ByteCount: QWord; out Address: Pointer): LongInt;
+var
+  CallResult: Int64;
+begin
+  Address := nil;
+  CallResult := KernelReserveMemory(ByteCount);
+  Result := ErrorCodeOf(CallResult);
+  if Result = 0 then
+    Address := Pointer(CallResult);
+end;
+
+function CommitMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelCommitMemory(Address, ByteCount, Protection));
+end;
+
+function DecommitMemory(Address: Pointer; ByteCount: QWord): LongInt;
+begin
+  Result := ErrorCodeOf(KernelDecommitMemory(Address, ByteCount));
+end;
+
+function ReleaseMemory(Address: Pointer): LongInt;
+begin
+  Result := ErrorCodeOf(KernelFreeMemory(Address));
+end;
+
+function ProtectMemory(Address: Pointer; ByteCount: QWord; Protection: LongWord; out Previous: LongWord): LongInt;
+var
+  CallResult: Int64;
+begin
+  Previous := 0;
+  CallResult := KernelProtectMemory(Address, ByteCount, Protection);
+  Result := ErrorCodeOf(CallResult);
+  if Result = 0 then
+    Previous := LongWord(CallResult);
+end;
+
+function QueryMemory(Address: Pointer; out Information: TMemoryInformation): LongInt;
+begin
+  Result := ErrorCodeOf(KernelQueryMemory(Address, Information));
+end;
+
+function AllowDynamicCode(Allowed: Boolean): LongInt;
+begin
+  if Allowed then
+    Result := ErrorCodeOf(KernelSetMemoryPolicy(MemoryPolicyAllowDynamicCode))
+  else
+    Result := ErrorCodeOf(KernelSetMemoryPolicy(0));
+end;
+
+function MapFile(Handle: Int64; Offset, ByteCount: QWord; Flags: LongWord; out Address: Pointer): LongInt;
+var
+  CallResult: Int64;
+begin
+  Address := nil;
+  CallResult := KernelMapHandleWithFlags(Handle, Offset, ByteCount, Flags);
+  Result := ErrorCodeOf(CallResult);
+  if Result = 0 then
+    Address := Pointer(CallResult);
 end;
 
 function DuplicateText(Text: PChar): PChar;
