@@ -238,18 +238,26 @@ begin
   Hit.Box := nil;
   Hit.Node := nil;
   { mouseout and mouseover where the element under the pointer changed,
-    then mousemove at it (kept alive by the hover chain). }
-  if Old <> Hit.Element then
-  begin
-    if Old <> nil then
-      FireMouse(Old, 'mouseout', 0, 0);
-    if Hit.Element <> nil then
-      FireMouse(Hit.Element, 'mouseover', 0, 0);
-  end;
-  if Old <> nil then
-    Old.Release;
+    then mousemove at it; it is held here, not only by the hover chain
+    (a handler may make the view let go of the chain: a new document). }
   if Hit.Element <> nil then
-    FireMouse(Hit.Element, 'mousemove', 0, 0);
+    Hit.Element.Retain;
+  try
+    if Old <> Hit.Element then
+    begin
+      if Old <> nil then
+        FireMouse(Old, 'mouseout', 0, 0);
+      if Hit.Element <> nil then
+        FireMouse(Hit.Element, 'mouseover', 0, 0);
+    end;
+    if Hit.Element <> nil then
+      FireMouse(Hit.Element, 'mousemove', 0, 0);
+  finally
+    if Old <> nil then
+      Old.Release;
+    if Hit.Element <> nil then
+      Hit.Element.Release;
+  end;
   SetStatus(Status);
   PointerShape := Shape;
 end;
@@ -391,6 +399,7 @@ begin
   Scale := DeviceScale;
   Hit := HitTestDeep(X / Scale, Y / Scale, Path);
   FButtonsHeld := FButtonsHeld or ButtonsBitOf(Button);
+  CountClick(X, Y, Button);
   RetainHit(Hit);
   try
     PressAt(Hit, Length(Path) > 0, X, Y, Button);
@@ -399,15 +408,33 @@ begin
   end;
 end;
 
+{ The left button pressed again soon at the same place: a double, then a
+  triple click (MouseEvent.detail); any other press starts again. }
+procedure TWebView.CountClick(X, Y: LongInt; Button: LongWord);
+var
+  Now: QWord;
+begin
+  Now := GetTickCount64;
+  if (Button = ButtonLeft) and (FClickCount > 0) and (Now - FLastClickTime < DoubleClickMilliseconds) and
+     not MovedPast(X, Y, FLastClickX, FLastClickY) then
+    Inc(FClickCount)
+  else
+    FClickCount := 1;
+  if FClickCount > 3 then
+    FClickCount := 1;
+  FLastClickTime := Now;
+  FLastClickX := X;
+  FLastClickY := Y;
+end;
+
 procedure TWebView.PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
 var
   Control, Link: TElement;
-  Position, WordStart, WordEnd: TTextPosition;
-  Now: QWord;
+  Position: TTextPosition;
   Proceed: Boolean;
 begin
   { A cancelled mousedown keeps the focus and the selection as they are. }
-  Proceed := FireMouse(Hit.Element, 'mousedown', DomButtonOf(Button), 1);
+  Proceed := FireMouse(Hit.Element, 'mousedown', DomButtonOf(Button), FClickCount);
   if Button = ButtonMiddle then
   begin
     FPressButton := ButtonMiddle;
@@ -457,20 +484,22 @@ begin
     Exit;
   end;
   SetFocusedElement(nil, False);
+  { The handlers above (mousedown, focus and blur) may have changed the
+    document or laid it out: the place in the text is found now, in the
+    index as the layout is now. }
   Position := TextPositionAt(X, Y);
-  Now := GetTickCount64;
-  if (Now - FLastClickTime < DoubleClickMilliseconds) and not MovedPast(X, Y, FLastClickX, FLastClickY) and
-     (Position.Run >= 0) then
+  if (FClickCount >= 2) and (Position.Run >= 0) then
   begin
-    FTextIndex.WordAround(Position, WordStart, WordEnd);
-    SetSelection(WordStart, WordEnd);
-    FLastClickTime := 0;
+    if FClickCount = 2 then
+    begin
+      if FSelection.SelectWordAt(Position) then
+        InvalidateViewport;
+    end
+    else if FSelection.SelectLineAt(Position) then
+      InvalidateViewport;
     FSelecting := False;
     Exit;
   end;
-  FLastClickTime := Now;
-  FLastClickX := X;
-  FLastClickY := Y;
   FSelecting := True;
   SetSelection(Position, Position);
 end;
@@ -489,18 +518,42 @@ begin
   begin
     if not FDragged and MovedPast(X, Y, FPressX, FPressY) then
       FDragged := True;
-    if FSelecting and FDragged then
+    { The page sees the pointer move while the button is held too. }
+    FireMoveWhilePressed(X / Scale, Y / Scale);
+    if FSelecting and FDragged and (FPressButton = ButtonLeft) then
     begin
-      { Dragging past the top or bottom scrolls. }
-      if Y < 0 then
-        ScrollBy(0, Y / Scale)
-      else if Y > ViewportPixelHeight then
-        ScrollBy(0, (Y - ViewportPixelHeight) / Scale);
-      SetSelection(FSelectionAnchor, TextPositionAt(X, Y));
+      { Dragging past the top or bottom scrolls (and goes on scrolling
+        every frame while the pointer stays there). }
+      if not AutoscrollSelection then
+        ExtendSelectionTo(X, Y)
+      else
+        RequestFrame;
     end;
     Exit;
   end;
   UpdateHover(X / Scale, Y / Scale);
+end;
+
+{ mousemove at the element under the pointer, held while it is
+  dispatched; nothing of the hit is used after it. }
+procedure TWebView.FireMoveWhilePressed(CssX, CssY: Double);
+var
+  Hit: THitTestResult;
+  Path: TFramePath;
+  Target: TElement;
+begin
+  if FLayout.NeedsUpdate then
+    UpdateLayout;
+  Hit := HitTestDeep(CssX, CssY, Path);
+  Target := Hit.Element;
+  if Target = nil then
+    Exit;
+  Target.Retain;
+  try
+    FireMouse(Target, 'mousemove', 0, 0);
+  finally
+    Target.Release;
+  end;
 end;
 
 procedure TWebView.PointerUp(X, Y: LongInt; Button: LongWord);
@@ -527,35 +580,51 @@ end;
 
 procedure TWebView.ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
 var
-  Link, Control: TElement;
+  Link, Control, Target: TElement;
 begin
-  FireMouse(Hit.Element, 'mouseup', DomButtonOf(Button), 1);
+  FireMouse(Hit.Element, 'mouseup', DomButtonOf(Button), FClickCount);
   if Button <> FPressButton then
     Exit;
-  Link := FPressedLink;
-  Control := FPressedControl;
-  FPressButton := 0;
-  if Button = ButtonMiddle then
-  begin
-    if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
-      ActivateLink(Link, DispositionFor(ButtonMiddle, HeldModifiers, Link));
+  { Held here while they are acted on: the handlers of the click may make
+    the view let go of the pressed elements. }
+  Link := nil;
+  Control := nil;
+  Target := nil;
+  HoldElement(Link, FPressedLink);
+  HoldElement(Control, FPressedControl);
+  HoldElement(Target, FPressedTarget);
+  try
+    FPressButton := 0;
+    if Button = ButtonMiddle then
+    begin
+      if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
+        ActivateLink(Link, DispositionFor(ButtonMiddle, HeldModifiers, Link));
+      HoldElement(FPressedLink, nil);
+      Exit;
+    end;
+    SetChain(FActiveChain, nil);
+    FSelecting := False;
+    if not FDragged then
+    begin
+      if (Control <> nil) and (FormControlOf(Hit.Node) = Control) then
+        ActivateControl(Control)
+      else if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
+        ActivateLink(Link, DispositionFor(ButtonLeft, HeldModifiers, Link))
+      else if (Hit.Element <> nil) and (Hit.Element = Target) then
+      begin
+        ClickElement(Hit.Element);
+        if (FClickCount = 2) and Hit.Element.IsConnected then
+          FireMouse(Hit.Element, 'dblclick', 0, 2);
+      end;
+    end;
     HoldElement(FPressedLink, nil);
-    Exit;
+    HoldElement(FPressedControl, nil);
+    HoldElement(FPressedTarget, nil);
+  finally
+    HoldElement(Link, nil);
+    HoldElement(Control, nil);
+    HoldElement(Target, nil);
   end;
-  SetChain(FActiveChain, nil);
-  FSelecting := False;
-  if not FDragged then
-  begin
-    if (Control <> nil) and (FormControlOf(Hit.Node) = Control) then
-      ActivateControl(Control)
-    else if (Link <> nil) and (LinkElementOf(Hit.Node) = Link) then
-      ActivateLink(Link, DispositionFor(ButtonLeft, HeldModifiers, Link))
-    else if (Hit.Element <> nil) and (Hit.Element = FPressedTarget) then
-      ClickElement(Hit.Element);
-  end;
-  HoldElement(FPressedLink, nil);
-  HoldElement(FPressedControl, nil);
-  HoldElement(FPressedTarget, nil);
 end;
 
 procedure TWebView.PointerLeave;

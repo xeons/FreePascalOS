@@ -93,7 +93,8 @@ uses
   Web.Paint.Painter,
   Web.Frames.Views,
   WebView.TextIndex,
-  WebView.SelectionMapping,
+  WebView.TextGroups,
+  WebView.PageSelection,
   WebView.FieldEditing,
   WebView.Elements,
   WebView.MouseEvents;
@@ -221,16 +222,13 @@ type
     FLastClickTime: QWord;
     FLastClickX, FLastClickY: LongInt;
     { Selection and find. }
-    FTextIndex: TPageTextIndex;
-    FTextIndexVersion: LongWord;
-    FTextIndexValid: Boolean;
+    { The user's selection over the page's text (the document's
+      Selection both ways). }
+    FSelection: TPageSelection;
     FSelecting: Boolean;
-    FSelectionAnchor, FSelectionFocus: TTextPosition;
-    { The document's selection changed without the view (script): the
-      painted selection is taken from it before it is next used. }
-    FSelectionFromDocument: Boolean;
-    { The view is setting the document's selection itself. }
-    FSettingDocumentSelection: Boolean;
+    { Clicks in a row at one place (1 a click, 2 a double click, 3 a
+      triple click): the word, then the line. }
+    FClickCount: Integer;
     FFindText: string;
     { Typing into the focused text field. }
     FFieldEditor: TTextFieldEditor;
@@ -308,6 +306,8 @@ type
       element retained by the caller). }
     procedure PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
     procedure ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
+    procedure CountClick(X, Y: LongInt; Button: LongWord);
+    procedure FireMoveWhilePressed(CssX, CssY: Double);
     procedure ClearHover;
     procedure SetChain(var Chain: TElementChain; Element: TElement);
     procedure ApplyStates(Element: TElement);
@@ -353,13 +353,17 @@ type
     procedure WriteClipboard(const Value: string);
     procedure ControlEdited(Element: TElement);
     { Selection (WebView.Control.Selection.inc). }
+    { The page laid out (when due) and the text index brought up to its
+      display list. }
     procedure EnsureTextIndex;
+    function TextViewport: TTextViewport;
     function TextPositionAt(X, Y: LongInt): TTextPosition;
     procedure SetSelection(constref Anchor, Focus: TTextPosition);
-    { The user's selection to the document's, and the document's to the
-      painted one. }
-    procedure PushSelectionToDocument;
-    procedure PullSelectionFromDocument;
+    { A drag that selects: the focus to the pointer (control pixels). }
+    procedure ExtendSelectionTo(X, Y: LongInt);
+    { Dragging past an edge of the viewport scrolls it, again every frame
+      while the button is held there. }
+    function AutoscrollSelection: Boolean;
     procedure DocumentSelectionChanged;
     { Context menus. }
     procedure ShowOwnContextMenu(constref Info: TWebContextInfo);
