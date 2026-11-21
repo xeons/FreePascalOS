@@ -36,7 +36,7 @@ unit Web.Paint.DisplayList;
 interface
 
 uses
-  Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles, Css.Values, Css.Keywords,
+  Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles, Css.Values, Css.Keywords, Css.TransformMatrices,
   Image.Model, Web.Layout.Boxes, Web.Text.FontInstances;
 
 type
@@ -76,7 +76,11 @@ type
     diControlText,
     { A frame's document (Index: a TEmbeddedContent in Frames) painted
       into the bounds (the frame's content box). }
-    diFrame);
+    diFrame,
+    { Items up to the pop are drawn through a 2D transform (Index: a
+      matrix in Transforms, of document coordinates); the bounds: what
+      the group draws, before the transform. }
+    diPushTransform, diPopTransform);
 
   TDisplayItem = record
     Kind: TDisplayItemKind;
@@ -160,6 +164,8 @@ type
       their owners; the list is built again when they change). }
     Frames: array of TObject;
     FrameCount: Integer;
+    Transforms: array of TCssMatrix2D;
+    TransformCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
     procedure Clear;
@@ -173,6 +179,7 @@ type
     function AddString(const Value: string): Integer;
     function AddSticky(const Value: TStickyRun): Integer;
     function AddFrame(Content: TObject): Integer;
+    function AddTransform(const Value: TCssMatrix2D): Integer;
     { Bytes the list holds. }
     function MemoryBytes: PtrUInt;
   end;
@@ -191,6 +198,7 @@ begin
   StringCount := 0;
   StickyCount := 0;
   FrameCount := 0;
+  TransformCount := 0;
   CanvasColor := ColorWhite;
 end;
 
@@ -209,6 +217,15 @@ begin
   Result^.Value := 0;
   Result^.Box := Box;
   Inc(Count);
+end;
+
+function TDisplayList.AddTransform(const Value: TCssMatrix2D): Integer;
+begin
+  if TransformCount >= Length(Transforms) then
+    SetLength(Transforms, TransformCount * 2 + 4);
+  Transforms[TransformCount] := Value;
+  Result := TransformCount;
+  Inc(TransformCount);
 end;
 
 function TDisplayList.AddRadii(const Value: TCornerRadii): Integer;

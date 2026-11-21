@@ -69,6 +69,7 @@ uses
   Css.Properties,
   Web.Layout.Boxes,
   Web.Layout.TextOffsets,
+  Web.Layout.Transforms,
   Web.Text.FontInstances,
   Web.Style.NodeData;
 
@@ -95,6 +96,8 @@ begin
   Result := Ready and Layout.NodeBounds(Element, BoxX, BoxY, BoxWidth, BoxHeight);
   if Result then
   begin
+    { Scaled, turned or skewed: the bounds of what is drawn. }
+    TransformRectangle(Layout.BoxOf(Element), BoxX, BoxY, BoxWidth, BoxHeight);
     X := BoxX;
     Y := BoxY;
     Width := BoxWidth;

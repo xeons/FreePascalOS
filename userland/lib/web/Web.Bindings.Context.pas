@@ -475,6 +475,10 @@ begin
     Result := InterfaceUIEvent
   else if Event is TCustomEvent then
     Result := InterfaceCustomEvent
+  else if Event is TAnimationEvent then
+    Result := InterfaceAnimationEvent
+  else if Event is TTransitionEvent then
+    Result := InterfaceTransitionEvent
   else
     Result := InterfaceEvent;
 end;

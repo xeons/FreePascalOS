@@ -43,7 +43,7 @@ interface
 uses
   Web.Dom, Css.ElementAdapter, Css.ComputedStyle, Web.Style.Resolver, Web.Layout.Resources, Web.Layout.Boxes,
   Web.Layout.EmbeddedContent,
-  Web.Layout.TreeBuilder, Web.Layout.Context;
+  Web.Layout.TreeBuilder, Web.Layout.Context, Web.Style.Animations;
 
 type
   TScrollContainerInfo = record
@@ -119,6 +119,13 @@ type
     function NodeBounds(Node: TNode; out X, Y, Width, Height: Single): Boolean;
     { Sets dynamic states (hover, focus ...) for :hover and friends. }
     procedure SetElementStates(Element: TElement; States: TCssElementStates);
+    { CSS animations and transitions: whether any runs (the owner wants
+      a frame), time moved on (each frame, before Update), the events
+      to fire since the last call (the owner queues them as tasks). }
+    function AnimationsRunning: Boolean;
+    procedure AdvanceAnimations;
+    function TakeAnimationEvents: TPendingAnimationEventArray;
+    procedure SetAnimationClock(Clock: TAnimationClock);
     property Document: TDocument read FDocument;
     property Styler: TDocumentStyler read FStyler;
     property Resources: TDocumentResources read FResources;
@@ -537,6 +544,27 @@ begin
     Result := True;
   if not Result and (FResources.FrameCount > 0) then
     Result := FramesNeedUpdate;
+end;
+
+function TDocumentLayout.AnimationsRunning: Boolean;
+begin
+  Result := FStyler.Animations.Running;
+end;
+
+procedure TDocumentLayout.AdvanceAnimations;
+begin
+  if FStyler.Animations.Running then
+    FStyler.Animations.MarkDue;
+end;
+
+function TDocumentLayout.TakeAnimationEvents: TPendingAnimationEventArray;
+begin
+  Result := FStyler.Animations.TakeEvents;
+end;
+
+procedure TDocumentLayout.SetAnimationClock(Clock: TAnimationClock);
+begin
+  FStyler.Animations.Clock := Clock;
 end;
 
 procedure TDocumentLayout.Update;

@@ -265,3 +265,32 @@ interface mixin WindowEventHandlers {
   attribute EventHandler onunhandledrejection;
   attribute EventHandler onunload;
 };
+
+// CSS Animations 1 and CSS Transitions 1.
+dictionary AnimationEventInit : EventInit {
+  DOMString animationName = "";
+  double elapsedTime = 0.0;
+  DOMString pseudoElement = "";
+};
+
+[Exposed=Window]
+interface AnimationEvent : Event {
+  constructor(DOMString type, optional AnimationEventInit animationEventInitDict = {});
+  readonly attribute DOMString animationName;
+  readonly attribute double elapsedTime;
+  readonly attribute DOMString pseudoElement;
+};
+
+dictionary TransitionEventInit : EventInit {
+  DOMString propertyName = "";
+  double elapsedTime = 0.0;
+  DOMString pseudoElement = "";
+};
+
+[Exposed=Window]
+interface TransitionEvent : Event {
+  constructor(DOMString type, optional TransitionEventInit transitionEventInitDict = {});
+  readonly attribute DOMString propertyName;
+  readonly attribute double elapsedTime;
+  readonly attribute DOMString pseudoElement;
+};

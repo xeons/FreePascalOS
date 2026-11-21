@@ -479,6 +479,7 @@ uses
   Web.Paint.DisplayList,
   Web.Text.FontInstances,
   Web.Script.PageScripting,
+  Web.Layout.AnimationEvents,
   Web.Dom.Focus,
   Web.Dom.FormControls,
   WebView.Network,

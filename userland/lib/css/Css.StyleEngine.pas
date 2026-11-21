@@ -121,6 +121,9 @@ type
     { Builds the index now if it is out of date (after which the engine no
       longer refers to rules of sheets it was told were removed). }
     procedure Prepare;
+    { The style one declaration block alone gives an element under
+      Parent (a keyframe's values for an animation); a new reference. }
+    function ComputeBlockStyle(Block: TCssDeclarationBlock; Parent: TCssComputedStyle): TCssComputedStyle;
     procedure SetEnvironment(const Environment: TCssMediaEnvironment);
     { The tree changed (elements moved, attributes or states changed):
       forget sibling positions and shared styles. }
@@ -403,6 +406,21 @@ begin
   else
     Result := wmHorizontalTb;
   end;
+end;
+
+function TCssStyleEngine.ComputeBlockStyle(Block: TCssDeclarationBlock; Parent: TCssComputedStyle): TCssComputedStyle;
+var
+  Items: TCssCascadeItemArray;
+  ItemCount: Integer;
+  Cascaded: TCssCascadedValues;
+begin
+  EnsureIndex;
+  Items := nil;
+  ItemCount := 0;
+  AddCascadeBlock(Items, ItemCount, Block, coAuthor, False, 0, 0, 0);
+  RunCascade(Items, ItemCount, WritingModeOfStyle(Parent), (Parent <> nil) and (Parent.Keyword(cpDirection) = kwRtl),
+    Cascaded);
+  Result := FComputer.Compute(Cascaded, Parent, FRootStyle, False);
 end;
 
 function TCssStyleEngine.Resolve(Element: TCssElement; Parent: TCssComputedStyle; PseudoElement: TCssPseudoElement;
