@@ -33,9 +33,9 @@
     http or https URLs only, the Location resolved against the URL it
     came from; the file keeps the name of the URL first asked for, or
     takes the last one's with --trust-server-names;
-  - with --compression, gzip is asked for (not when continuing) and a
-    gzip or deflate body is decoded on its way to the file (libhttp's
-    decoders);
+  - with --compression, gzip (=gzip) or every coding libhttp undoes
+    (=auto: gzip, deflate, br, zstd) is asked for (not when continuing)
+    and the body is decoded on its way to the file (libhttp's decoders);
   - a transfer that fails part way (a timeout, a connection that breaks
     or ends early) is tried again, up to the number of tries, waiting a
     second more each time (at most ten), and continues where it broke
@@ -543,7 +543,9 @@ function MakeRequest(constref Fetch: TFetch; RangeStart: Int64): THttpRequest;
 begin
   Result := THttpRequest.Create('GET', UrlRecordOf(Fetch.Url));
   Result.DecodeContent := False;
-  if (Fetch.Settings.Compression <> CompressionNone) and (RangeStart = 0) then
+  if (Fetch.Settings.Compression = CompressionAuto) and (RangeStart = 0) then
+    Result.Headers.Add('Accept-Encoding', SupportedAcceptEncoding)
+  else if (Fetch.Settings.Compression = CompressionGzip) and (RangeStart = 0) then
     Result.Headers.Add('Accept-Encoding', 'gzip')
   else
     Result.Headers.Add('Accept-Encoding', 'identity');
