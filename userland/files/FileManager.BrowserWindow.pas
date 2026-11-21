@@ -101,6 +101,7 @@ type
     procedure VolumeRemoved(Sender: TControl; const VolumeName, MountPoint: string);
     procedure FolderGone(Sender: TControl);
     procedure ViewRefreshed(Sender: TControl);
+    procedure PictureMeasured(Sender: TControl);
     procedure TabClicked(Sender: TControl);
     procedure NewTabClicked(Sender: TControl);
     procedure TabCloseClicked(Sender: TControl; Index: LongInt);
@@ -297,6 +298,7 @@ begin
   FView.OnFolderGone := @FolderGone;
   FView.OnRefreshed := @ViewRefreshed;
   FView.OnSearchFinished := @ViewRefreshed;
+  FView.OnPictureMeasured := @PictureMeasured;
   if FOptions.ShowPreviewPane then
     ShowSidePane(SidePanePreview)
   else if FOptions.ShowDetailsPane then
@@ -806,6 +808,14 @@ procedure TBrowserWindow.ViewRefreshed(Sender: TControl);
 begin
   UpdateStatus;
   SelectionShown;
+end;
+
+{ A thumbnail came: the details pane shows it if it is of the one item
+  selected. }
+procedure TBrowserWindow.PictureMeasured(Sender: TControl);
+begin
+  if FSidePane.Visible and (FView.SelectedCount = 1) then
+    SelectionShown;
 end;
 
 procedure TBrowserWindow.VolumeRemoved(Sender: TControl; const VolumeName, MountPoint: string);
