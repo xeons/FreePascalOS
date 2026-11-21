@@ -266,8 +266,8 @@ begin
   FBookmarksBar.AutoSize := True;
   FBookmarksBar.OnOpen := @BookmarkOpened;
   FBookmarksBar.OnChanged := @BookmarksChanged;
-  FBookmarksBar.Visible := FSettings.BookmarksBar;
-  FBookmarksBarItem.Checked := FSettings.BookmarksBar;
+  FBookmarksBar.Visible := FSettings.BookmarksToolbar;
+  FBookmarksBarItem.Checked := FSettings.BookmarksToolbar;
   FStatusBar := TStatusBar.Create(Root);
   FFindBar := TFindBar.Create(Root);
   FFindBar.Align := AlignBottom;

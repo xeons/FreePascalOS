@@ -202,7 +202,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test
 
@@ -551,7 +551,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -930,6 +930,26 @@ files-test: $(FILES_TEST)
 	@$(FILES_TEST) > build/tools/files-test.out || \
 		{ grep FAIL build/tools/files-test.out; echo "FILES TEST FAILED (build/tools/files-test.out)"; exit 1; }
 	@echo "FILES TEST PASSED: $$(tail -n 1 build/tools/files-test.out | cut -d ' ' -f 2-)"
+
+# The browser's plain logic (addresses and keywords, the history's
+# queries, bookmark folders and tags, the location bar's suggestions,
+# the session file, the search engines) builds for the host too.
+BROWSER_TEST := build/tools/BrowserTest
+BROWSER_TEST_SOURCES := tools/BrowserTest/BrowserTest.pas userland/browser/Browser.TextFiles.pas \
+	userland/browser/Browser.Addresses.pas userland/browser/Browser.History.pas \
+	userland/browser/Browser.Bookmarks.pas userland/browser/Browser.AwesomeBar.pas \
+	userland/browser/Browser.SessionStore.pas userland/browser/Browser.SearchEngines.pas \
+	userland/browser/Browser.Keywords.pas
+
+$(BROWSER_TEST): $(BROWSER_TEST_SOURCES)
+	@mkdir -p build/tools/browser-test-units
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/BrowserTest -Fuuserland/browser -FUbuild/tools/browser-test-units -o$@ \
+		tools/BrowserTest/BrowserTest.pas
+
+browser-test: $(BROWSER_TEST)
+	@$(BROWSER_TEST) > build/tools/browser-test.out || \
+		{ grep FAIL build/tools/browser-test.out; echo "BROWSER TEST FAILED (build/tools/browser-test.out)"; exit 1; }
+	@echo "BROWSER TEST PASSED: $$(tail -n 1 build/tools/browser-test.out | cut -d ' ' -f 2-)"
 
 # libcontrols' layout arithmetic (anchors, docking, constraints, flow and
 # table arrangement, split containers, scrolling) builds for the host

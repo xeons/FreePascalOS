@@ -204,7 +204,7 @@ end;
 
 procedure TBrowserWindow.BookmarksBarChosen(Item: TMenuItem);
 begin
-  FSettings.BookmarksBar := not FSettings.BookmarksBar;
+  FSettings.BookmarksToolbar := not FSettings.BookmarksToolbar;
   SaveBrowserSettings(FSettings);
   ApplySettings;
 end;
@@ -272,8 +272,8 @@ var
   Index: Integer;
 begin
   SetHttp3Allowed(FSettings.Http3);
-  FBookmarksBar.Visible := FSettings.BookmarksBar;
-  FBookmarksBarItem.Checked := FSettings.BookmarksBar;
+  FBookmarksBar.Visible := FSettings.BookmarksToolbar;
+  FBookmarksBarItem.Checked := FSettings.BookmarksToolbar;
   for Index := 0 to FTabs.Count - 1 do
     TabAt(Index).View.ScriptingEnabled := FSettings.JavaScript;
 end;

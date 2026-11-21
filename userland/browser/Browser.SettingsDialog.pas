@@ -107,7 +107,7 @@ begin
   Inc(Top, 24);
   FBarBox := TCheckBox.Create(Root);
   FBarBox.Text := 'Show the &bookmarks bar';
-  FBarBox.Checked := Settings.BookmarksBar;
+  FBarBox.Checked := Settings.BookmarksToolbar;
   FBarBox.SetBounds(DialogMargin, Top, DialogWidth - 2 * DialogMargin, 20);
   AddOkAndCancel(DialogWidth, DialogHeight);
 end;
@@ -126,7 +126,7 @@ begin
     Settings.HomePage := DefaultHomePage;
   Settings.SearchUrl := Trim(FSearchEdit.Text);
   Settings.Http3 := FHttp3Box.Checked;
-  Settings.BookmarksBar := FBarBox.Checked;
+  Settings.BookmarksToolbar := FBarBox.Checked;
   Settings.JavaScript := FScriptBox.Checked;
 end;
 
