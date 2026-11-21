@@ -118,7 +118,7 @@ begin
     activation is done. }
   Control.Retain;
   try
-    if not FireEvent(Control, 'click', True, True) then
+    if not FireClick(Control) then
       Exit;
     case Kind of
       FormControlCheckbox:
@@ -152,7 +152,7 @@ procedure TWebView.ClickElement(Element: TElement);
 begin
   Element.Retain;
   try
-    if FireEvent(Element, 'click', True, True) then
+    if FireClick(Element) then
       ActOnClick(Element);
   finally
     Element.Release;
@@ -175,8 +175,8 @@ begin
       begin
         Target := nil;
         Id := TElement(Node).GetAttribute('for');
-        if (Id <> '') and (FDocument <> nil) then
-          Target := FDocument.GetElementById(Id)
+        if Id <> '' then
+          Target := Node.NodeDocument.GetElementById(Id)
         else
         begin
           Inner := Node.NextInTree(Node);
@@ -215,15 +215,21 @@ end;
 procedure TWebView.SubmitForm(Form, Submitter: TElement);
 var
   ScrollX, ScrollY: Single;
+  Source, Destination: TNavigable;
 begin
+  { A form in a frame submits from (and by default into) its frame. }
   if (Form = nil) or (FPage = nil) then
     Exit;
-  if FLayout <> nil then
+  Source := NavigableForNode(Form);
+  if Source = nil then
+    Exit;
+  Destination := Source.ChooseNavigable(Trim(Form.GetAttribute('target')));
+  if ((Destination = nil) or (Destination = FPage.Navigable)) and (FLayout <> nil) then
   begin
     FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
     FPage.Navigable.SaveScrollPosition(ScrollX, ScrollY);
   end;
-  SubmitFormIn(FPage.Navigable, Form, Submitter);
+  SubmitFormIn(Source, Form, Submitter);
   PostWake;
 end;
 

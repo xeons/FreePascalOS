@@ -124,9 +124,9 @@ System unit provides too.
      "Network boot") and copies the kernel's segments into one
      physically contiguous block,
    - allocates the boot information record and a 64 KiB boot stack,
-   - builds page tables: the physical memory window, an identity mapping of
-     the same range, and the kernel image (4 KiB pages, per-segment
-     permissions),
+   - builds page tables: the physical memory window (never executable),
+     an identity mapping of the same range, and the kernel image (4 KiB
+     pages, per-segment permissions: see "Kernel memory protection"),
    - captures the memory map into the boot information record and exits
      boot services,
    - loads CR3, switches to the boot stack and jumps to the kernel.
@@ -148,6 +148,17 @@ System unit provides too.
 The loader tags its own allocations with OS-reserved UEFI memory types
 (`0x80000001`-`0x80000004`), so the memory map tells the kernel exactly which
 pages hold the kernel image, boot data, page tables and the RAM disk.
+
+The boot data pages hold the boot information record (with the memory
+map), the boot stack and, after a native boot, a copy of the device tree.
+Once phase 1 has run the self tests, everything start-up needed from the
+record has been copied or used (options, memory map, firmware tables,
+framebuffer, RAM disk; the AArch64 clock copies the firmware's time at
+its first reading), so `Memory.BootDataReclaim` gives the boot data pages
+back to the page allocator - all but the boot stack, which is the boot
+processor's idle thread's for good, and the device tree, which the
+drivers keep using (`[memory] Boot data given back: 16 KiB (kept: boot
+stack 64 KiB)`). The boot information must not be used after that.
 
 ### Network boot
 
@@ -296,6 +307,87 @@ The physical memory window maps all RAM (and at least the first 4 GiB, for
 devices) at a fixed offset with 2 MiB pages. Page tables, page frames and
 device registers are reached through it with `PhysicalToVirtual`.
 
+## Kernel memory protection
+
+**W^X.** No kernel page is both writable and executable, on both
+architectures, from the first instruction of the kernel on:
+
+- The linker scripts (`kernel/link/*.ld`) start `.text`, `.rodata` and
+  `.data`/`.bss` on pages of their own, each in its own program header,
+  and name the boundaries (`KernelTextStart`, `KernelReadOnlyDataStart`,
+  ...). The loaders map the code read-only and executable, the read-only
+  data read-only and no-execute, the data writable and no-execute. On
+  x86-64 the loader turns EFER.NXE on first (`Loader.Arch.NoExecute`,
+  when CPUID says the processor has the bit; without NXE the bit is
+  reserved and faults); on AArch64 the code is UXN and everything else
+  PXN and UXN (`Boot.TranslationTableBuilder`, shared with the native
+  boot stub).
+- The physical memory window is never executable: on x86-64 through the
+  no-execute bit of its top level entries (the identity mapping the
+  hand-off runs on shares the window's lower tables but not those
+  entries, so it stays executable until the kernel removes it), on
+  AArch64 in every block and page.
+- The window's view of the kernel's code and read-only data is read-only
+  too (those 2 MiB pages are split into 4 KiB pages; on AArch64 the
+  window is mapped over again for them), so the code cannot be changed
+  through its other address either.
+- Everything the kernel maps later - the heap, stacks, device registers,
+  DMA buffers - is no-execute unless asked for (`MappingExecutable`,
+  which only user mappings use).
+- User pages are never executable by the kernel: on AArch64 every user
+  mapping is PXN, on x86-64 SMEP enforces it.
+
+**The processor's protections** (`Kernel.Arch.ProcessorProtection`,
+turned on in phase 0 before the other processors start, which copy the
+boot processor's settings; logged as `[cpu]`):
+
+| | x86-64 | AArch64 |
+|---|---|---|
+| The kernel never runs user code | SMEP (CPUID 7 EBX bit 7) | PXN on every user page |
+| The kernel reaches user memory only through the copy routines | SMAP (CPUID 7 EBX bit 20; STAC/CLAC around the copy) | PAN (ARMv8.1, ID_AA64MMFR1_EL1.PAN; PSTATE.PAN cleared around the copy) |
+| Programs cannot read the descriptor tables' addresses | UMIP (CPUID 7 ECX bit 2: SGDT, SIDT, SLDT, SMSW and STR fault in user mode) | - |
+
+On AArch64, SCTLR_EL1.SPAN is cleared so every exception taken to EL1
+sets PAN again whatever the interrupted code had, and the exception
+return restores it; a copy that faults (memory another thread freed)
+leaves through `ArchUserCopyFault` with PAN set again in the saved state.
+MSR PAN does not exist on ARMv8.0, so the copy routines test
+`ArchPanEnabled` first. The Cortex-A72 (QEMU's default here, the
+Raspberry Pi 4) has no PAN; the Pi 5's Cortex-A76 and QEMU's "max"
+processor have it (`CPU=max scripts/run-qemu-arm64.sh`; the AArch64 boot
+test boots it once). Every system call reaches user memory through
+`Processes.UserAccess` (`CopyFromUser`, `CopyToUser`,
+`CopyStringFromUser`, the transfer buffers) or through the physical
+memory window (`ReadFromAddressSpace`, the image loader), never through
+a user pointer: the x86-64 test runs coretest under SMAP (QEMU's "max"),
+and coretest passes under PAN with `CPU=max
+scripts/test-qemu-arm64-user.sh` (the native boot test's Cortex-A76 has
+PAN too).
+
+**Tests.** `Kernel.ProtectionSelfTest` runs at every start: it walks the
+kernel's page tables (`Memory.Arch.MappingAudit`, honouring the rights
+every level takes away) and finds no page both writable and executable;
+checks each page of the kernel's code (read-only, executable), read-only
+data (read-only, not executable) and data (not executable), and the
+window's view of each; builds a small user address space
+(`Kernel.TestUserSpace`) whose pages must not be executable by the
+kernel; copies to and from it with SMAP or PAN on (and from a missing
+page, which must fail and leave the protection on). Deliberate
+violations, one per boot, are chosen with `selftest=KIND`
+(`Kernel.ProtectionFaultTest`) and must stop the system with the right
+report; `scripts/test-protection-faults.sh amd64|arm64 ESP` boots each:
+
+| Kind | Does | Report |
+|---|---|---|
+| `nx` | runs a return instruction placed in the kernel's `.bss` | `Instruction fetch from ... (protection violation` |
+| `textwrite` | writes into the kernel's code | `Write to ... (protection violation` |
+| `userexec` | calls code on a user page | `Instruction fetch from ... (protection violation` |
+| `useraccess` | reads a user page without a copy routine | `Read from ... (protection violation` |
+| `pagepoison` | writes into a freed, held back physical page (with `heapchecks`) | `physical page written after it was freed` |
+
+Where the processor lacks a protection, the test stops with an assertion
+that says so instead.
+
 ## Interrupt priority levels
 
 | Level | Name                  | Meaning                                      |
@@ -364,10 +456,11 @@ Rules that follow from this:
   tick, and the exact time is split between the two in that proportion,
   rather than timing every system call and interrupt (see "Processor
   time and memory").
-- Every 5 seconds the clock tick samples the number of threads running or
-  ready and folds it into three exponentially decayed averages (1, 5 and
-  15 minutes, fixed point with 11 fraction bits, as in Unix load
-  averages). The run queues keep a count of their threads for this.
+- Every 5 seconds the boot processor's clock interrupt (which comes for
+  it even while that processor idles with its tick stopped) samples the
+  number of threads running or ready and folds it into three
+  exponentially decayed averages (1, 5 and 15 minutes, fixed point with
+  11 fraction bits, as in Unix load averages). The run queues keep a count of their threads for this.
   Only the dispatcher lock is still shared by all processors.
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
   priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
@@ -389,21 +482,34 @@ Rules that follow from this:
   (`ClockNanoseconds`).
 - **One-shot clock interrupts.** Each processor's local APIC timer runs
   in one-shot mode (`Kernel.Clock`). Every time it interrupts, it is set
-  again for the first of three things on that processor: its next 10 ms
-  tick, its first timer, and the first wake-up of the threads that began
-  a timed wait there. Whoever adds an earlier due time on a processor
+  again for the first of four things on that processor: its next 10 ms
+  tick, its first timer, the first wake-up of the threads that began a
+  timed wait there and, on the boot processor, the next load average
+  sample. Whoever adds an earlier due time on a processor
   asks for an earlier interrupt (`RequestClockInterruptBy`, interrupts
   disabled). A late interrupt counts every tick it missed, and the ticks
   keep to their schedule (each is due 10 ms after the last was due).
-- **Why the tick stays.** A fully tickless clock would also have to
-  stop the tick on idle processors and account time slices from
-  timestamps at every switch (processor time already is). The tick is
-  kept for those - time slices (`QuantumTicks`), the split of processor
-  time between user mode and the kernel, the load averages - while
-  everything that waits for a
-  time is taken off the tick: it costs one extra interrupt per due time,
-  is simple to get right, and gives timers and sleeps the precision of
-  the APIC timer.
+- **Tickless idle.** The tick is only needed while a processor runs a
+  thread: time slices (`QuantumTicks`) and the split of processor time
+  between user mode and the kernel. The clock interrupt that finds a
+  processor in its idle thread stops its tick (`NextTickTime` =
+  `NeverDue`), so an idle processor sleeps until its next timer or
+  wake-up, a device interrupt or another processor's dispatch interrupt,
+  and at most 4 seconds (the longest the clock interrupt is set for at
+  once). The switch to the idle thread stops it at once
+  (`StopClockTick`, the clock interrupt moved to the next due time), so
+  a thread that wakes, runs briefly and waits again costs no tick; the
+  switch away from the idle thread starts the tick again
+  (`RestartClockTick`), a whole tick later, so the thread gets a full
+  time slice. Processor time stays exact (it is taken at every switch),
+  the uptime and the timers come from the counter, and the load
+  averages have a deadline of their own. Busy processors keep the 100 Hz
+  tick. Each processor counts its clock interrupts
+  (`ClockInterruptCount`) and of those the ones that found a tick, a
+  timer or a wake-up due: an idle QEMU guest takes about one a second
+  per idle processor rather than 100; what is left is due work (in the
+  test machine, netlog's 100 ms poll and the services' timers). Kernel option `tickless=off` keeps
+  the tick on idle processors too.
 - **Timers** (`Kernel.Timers`) go on the queue of the processor that
   sets them; each queue has a lock its clock interrupt takes, and
   setting or cancelling also takes one shared lock, so that two
@@ -429,6 +535,132 @@ Rules that follow from this:
   on machines with an invariant counter and in virtual machines; under
   emulation (TCG) both the counter and the APIC timer follow the host's
   real time.
+- **Invariant counter and kvmclock.** `Hal.TimeStampClock` checks that
+  the counter is invariant (CPUID 8000_0007h EDX bit 8: the same rate in
+  every power state) and the HAL logs it. One that is not may stop in
+  deep idle states, so the idle states then stay at HLT; under KVM
+  (which does not say its counter is invariant unless asked) the kernel's
+  clock is then KVM's paravirtual clock instead (`Hal.ParavirtualClock`,
+  kvmclock: MSR 4B564D01h, one record for every processor where KVM
+  says it is stable, read with a version count). `clock=tsc` or
+  `clock=kvmclock` chooses. It pauses and continues across suspend to
+  RAM like the counter clock.
+- **The wall clock** (`Kernel.WallClock`) is the uptime plus an offset:
+  the battery backed clock's reading at start, to the nanosecond from
+  then on. It can be stepped (`CallSetWallClock`, `CallAdjustWallClock`
+  at once: the offset changes and the battery backed clock is written)
+  or slewed (`CallAdjustWallClock` with `AdjustGradually`: the offset
+  moves towards the target at 500 parts per million of the time
+  passing, so the clock runs a little fast or slow but never jumps or
+  goes back; a new adjustment replaces what is left of the last). The
+  state is read without a lock under a sequence count, so any level may
+  read the time. `CallGetPreciseTime` gives the wall clock or the uptime
+  as seconds and nanoseconds; `CallGetTime` still gives whole seconds.
+  The runtime's `Now` and `GetLocalTime` use the precise call
+  (milliseconds), `Sys.Time` has `WallClockNanoseconds` and
+  `MonotonicNanoseconds`. Every change of the clock is a line of the
+  kernel log (`[clock] stepped the wall clock by ...`).
+
+## Power, idle states and temperature
+
+**Idle states** (`Kernel.IdleStates`, `Kernel.Arch.IdleStates`). The idle
+thread calls `IdleProcessor`, which picks the deepest of the
+processor's idle states whose target residency fits in the time to its
+next clock interrupt (with the tick stopped, its next due timer), and
+counts each entry (`IdleStateEntries`).
+- x86-64: state 0 is HLT. MWAIT C-states come from CPUID leaf 5 (the
+  sub-states of each C-state; hint `(n - 1) shl 4`) with typical exit
+  latencies, or from ACPI's `_CST` once the namespace is loaded
+  (`Firmware.AcpiProcessorIdle`: functional fixed hardware entries,
+  class 2, whose address is the hint; I/O port entries are not used,
+  and `_PDC`/`_OSC` are not evaluated, so firmware that waits for them
+  answers with what CPUID gives anyway). They are used only where the
+  local APIC timer keeps running in them (ARAT), the counter is
+  invariant, CPUID 5 states its line size and the interrupt break, and
+  not under a hypervisor (QEMU's emulated MWAIT does not sleep with
+  several processors) unless `idle=mwait`. `idle=halt` keeps to HLT,
+  `maxcstate=N` stops at C(N).
+- AArch64: state 0 is WFI. PSCI `CPU_SUSPEND` states come from the device
+  tree's `arm,idle-state` nodes (`ListDeviceTreeIdleStates`: power
+  state, latencies, minimum residency) where the firmware offers
+  `CPU_SUSPEND` (`PSCI_FEATURES`, which also says the power state
+  format). Only standby states are used (they return like WFI):
+  power-down states and those whose timer stops (`local-timer-stop`) are
+  left out. QEMU's virt machine and the Pi 5's tree have none, so WFI it
+  is there; with a tree that has one (tested with QEMU and a dumped tree
+  given one) the standby state is entered. `idle=wfi` keeps to WFI.
+
+**Thermal zones** (`Power.ThermalZones`) are temperatures with a passive
+and a critical trip point, read by a thread ("Thermal", with a large
+stack for AML) as often as each says. Above the passive point the
+processors are slowed a step (10 % of full speed) at every reading, to
+30 % at most, and let up again a step at a time once 3 degrees below
+(the lowest limit any zone asks for holds, `Power.Performance`); two
+readings in a row at the critical point shut the machine down cleanly
+(`RequestShutdown`). `thermal=off` only reads and shows them. The limit
+is carried out by clock modulation on x86-64 (`Hal.ProcessorThrottle`,
+MSR 19Ah, eighths of the time, written on each processor by the thread
+moving itself from processor to processor, `Power.EveryProcessor`), or by
+the Raspberry Pi's clock governor below.
+
+**ACPI** (`Io.AcpiPower`, a thread with a large stack once the namespace
+is loaded): every `ThermalZone` object (`Firmware.AcpiThermal`: `_TMP`,
+`_PSV`, `_CRT`, `_HOT`, `_TZP`, tenths of a kelvin; readings outside
+-73 to 177 C are refused) becomes a thermal zone; batteries (`PNP0C0A`,
+`Firmware.AcpiBatteries`: `_STA` bit 4, `_BIX` or `_BIF`, `_BST`) are read
+then and every 10 seconds, kept for `CallListBatteries` so that no AML
+runs on a caller's small stack; `_CST` as above. QEMU has neither
+thermal zones nor batteries: `make acpi-power-test`
+(`tools/AcpiPowerTest`) reads them from a table `make-table.py`
+assembles (two zones, one with a nonsense `_TMP`; batteries with
+`_BIF`, `_BIX` and an empty slot; a processor's `_CST`), and with
+`--ssdt` the same zones and batteries go into QEMU through
+`-acpitable file=...` (checked by hand: the zones and batteries are
+listed, and a zone above its critical point powers the machine off).
+
+**The Raspberry Pi** (`Power.BoardClocks`, untested on the board). The
+firmware (VideoCore mailbox) tells the ARM clock now, its least and its
+most (`arm_freq_min`, `arm_freq`: 1.5 and 2.4 GHz on a Pi 5) and the
+temperature, and sets the ARM clock (and the voltage for it) when asked
+(`SetClockRate`, tag 38002h); it keeps whatever clock it started with
+otherwise. A thread ("BoardClocks") looks at the busiest processor
+every half second: 60 % busy or more raises the clock to the most
+allowed, three looks in a row under 25 % lower it to the least, in
+between it stays. The temperature is a thermal zone ("soc", read every
+second, passive at 80 C - `thermallimit=` - and critical at 90 C -
+`thermalcritical=`); the passive limit caps the clock (never below the
+firmware's least; the firmware's own 85 C limit stays beneath).
+`cpufreq=off` leaves the clock to the firmware, `cpufreq=max` and
+`cpufreq=min` fix it. The SD image's `config.txt` sets no `force_turbo`,
+`arm_freq` or `over_voltage` (it never did).
+- **The Pi 5's fan.** The firmware does not run it for the operating
+  system: Linux drives it with RP1's PWM1 channel 3 on GPIO 45
+  (`cooling_fan` in the tree, inverted: high stops it). PWM1 needs RP1's
+  clock generator, which nothing sets up here, so `Drivers.Rp1Fan` makes
+  GPIO 45 a plain output (function SYS_RIO, pad driving, no pulls) on
+  RP1's GPIO node and switches the fan fully on at 55 C (`fanon=`) and
+  off below 48 C; `fan=on` keeps it running, `fan=off` leaves it alone.
+
+**Calls and tools.** `CallGetProcessorPower` (154) gives the clock
+source, whether idle is tickless, the idle states and, per processor,
+clock interrupts, busy and idle time and idle state entries, the clock
+rate and its range, the performance limit and the fan;
+`CallListThermalZones` (155) and `CallListBatteries` (156) list the rest
+(`Sys.Power`). `powerstat` prints them, with each processor's clock
+interrupts per second over a second; sysinfo shows the clock rate, the
+hottest temperature and the batteries; the kernel debug shell's `power`
+writes the same to the log.
+
+**Tests.** coretest runs `powerstat --check-idle 3 5`: the processors
+that stayed idle for 3 seconds (busy under 10 %) must average under 5
+clock interrupts a second that found no timer or wake-up due (100 with
+the periodic tick; the interrupts for due work, which depend on what
+else runs, are shown with the causes but not counted), and `timetest`:
+the uptime and wall clock nanoseconds never go back over 200000 reads,
+agree with the seconds call, 10 sleeps of 20 ms are never early nor
+more than 80 ms late, `Now` counts milliseconds, a step moves the clock
+at once and back, a gradual adjustment runs it fast and a new one
+replaces it.
 
 ## Several processors
 
@@ -5781,8 +6013,10 @@ become GET without content and its fields, 307/308 keep both,
 credentials only to the same origin, cookies worked out again, at most
 20), 401 answered with credentials (once, again for a stale nonce),
 content decoding (`Http.ContentDecoding`: gzip and x-gzip with
-concatenated members, deflate as zlib or raw; Brotli and zstd are not
-offered - Brotli needs RFC 7932's 122 KiB dictionary in the tree), and
+concatenated members, deflate as zlib or raw, br and zstd (several
+frames), all through libcompression's streaming decoders, in pieces as
+the body arrives; `SupportedAcceptEncoding`, "gzip, deflate, br, zstd",
+names exactly the codings compiled in), and
 the content handed to a sink as it comes; OnHead sees the final head
 first and a cancel token stops it from another thread. `Get` is the
 one-line form; `Http.FetchTasks` runs fetches on threads (OnHead,
@@ -5834,8 +6068,7 @@ thread safe.
   keeps no data of unknown record types.
 
 Not here yet: proxies (wget had none), 100-continue, HTTP/2 PING
-keep-alive, HSTS and CORS (libweb's), Brotli and zstd, the full UTS #46
-table.
+keep-alive, HSTS and CORS (libweb's), the full UTS #46 table.
 
 **Tests** (`make http-test`, tools/HttpTest): the URL Standard (about
 200 cases written from the standard's examples and rules: special and
@@ -6185,8 +6418,10 @@ signatures and the public keys.
 
 **libcompression** (`userland/lib/compression`, units `Compression.*`)
 is deflate (RFC 1951) both ways, with the zlib (RFC 1950) and gzip
-(RFC 1952) wrappers and their checksums. It needs only libsystem.
-libimage uses it for PNG and TIFF, gzip for .gz files.
+(RFC 1952) wrappers and their checksums, and brotli (RFC 7932) and
+Zstandard (RFC 8878) decompression. It needs only libsystem. libimage
+uses it for PNG and TIFF, gzip for .gz files, libhttp for content
+codings.
 
 ```
   Compression.Buffers   CompressZlib, DecompressGzip, ... on TBytes (raise)
@@ -6204,6 +6439,18 @@ libimage uses it for PNG and TIFF, gzip for .gz files.
   Compression.BitWriter  Compression.ZlibFormat  Compression.GzipFormat
   Compression.Checksums (Adler-32, CRC-32)  Compression.DeflateFormat
   Compression.Formats  Compression.Errors
+=========== streaming decoders, one interface ==============================
+  Compression.StreamingDecoders  TStreamingDecoder (TInflater's contract)
+  Compression.InflatingDecoders  TInflatingDecoder: a TInflater behind it
+  Compression.BrotliDecoder   TBrotliDecoder: steps, undone at a short read
+  Compression.BrotliMetaBlocks  BrotliPrefixCodes  BrotliContextMaps
+  Compression.BrotliBitReader  carry for the bytes of an unfinished step
+  Compression.BrotliDictionary (+ BrotliDictionaryData.inc, checked in)
+  Compression.BrotliTransforms  BrotliTables (lengths, context lookup)
+  Compression.ZstdDecoder     TZstdDecoder: frames, skippable, blocks
+  Compression.ZstdLiterals  ZstdHuffman  ZstdSequences  ZstdFrames
+  Compression.FiniteStateEntropy  ZstdBitReaders  XxHash64
+  Compression.OutputWindows   the ring both write into, grown on demand
 =========== libsystem ======================================================
 ```
 
@@ -6270,6 +6517,78 @@ is strict about cut off data and trailing bytes and can be bounded
 (`MaximumSize`). `Compression.Streams` puts both directions behind a
 `TStream`.
 
+**Brotli and Zstandard.** `TBrotliDecoder` and `TZstdDecoder` decompress
+with `TInflater`'s contract behind `TStreamingDecoder` (`SetInput`,
+`Decompress`, `Finished`, `Error`, `InputRemaining`), as does
+`TInflatingDecoder` around a `TInflater`, so libhttp drives all four
+codings alike. Both write into a `TOutputWindow`: a ring that is a
+power of two of at least the stream's window, starting at 64 KiB and
+doubling with the output (only while it has not wrapped, so growing is
+one reallocation), never beyond the window, so a short response never
+takes the 16 MiB a brotli stream may ask for; output leaves it as far
+as the caller's buffer goes, and decoding stops when what is not taken
+would be overwritten.
+
+Brotli is decoded in steps small enough to read again whole: the window
+size, a meta-block header, each block category's type count, codes and
+first count, the distance parameters and context modes, a context map,
+one prefix code, a block switch, a command (its code and both extra
+fields), one literal, a distance. `Compression.BrotliBitReader` reads a
+64-bit buffer refilled eight bytes at a time; a read past the input
+marks the step overrun and gives zeros, and the decoder then puts the
+reader back where the step began and keeps the bytes it had begun on in
+a carry (fewer than one step takes), so the caller's piece is let go
+and the step is read again when more input comes. A literal is decoded
+without that mark while 15 bits are at hand. Copies, dictionary words
+(transformed into a 37-byte buffer) and uncompressed meta-blocks (taken
+straight into the ring) carry on across calls by their remaining
+length. Prefix codes use `Compression.HuffmanDecoding`'s two-level
+tables (8 root bits), all the trees of a group end to end in one array;
+the code length code is a fixed canonical code built once. Checked: the
+window size pattern, reserved and padding bits (after uncompressed and
+metadata headers and at the end of the stream), nibbles and metadata
+lengths without needless zeros, complete codes, repeats within the
+alphabet, context map runs, block types, distances (a special distance
+of 0 or less), copy and insert lengths within the meta-block, and
+dictionary references (length 4 to 24, transform below 121).
+
+The static dictionary (122,784 bytes) is
+`Compression.BrotliDictionaryData.inc`, checked in: it was written once
+by `userland/lib/compression/make-brotli-dictionary.py`, which takes it
+from the host's brotli library (libbrotlicommon's
+`BrotliGetDictionary()` through ctypes) and refuses it unless its size
+and CRC-32 are the RFC's (0x5136cb04); `--check` reads an include back
+and checks it again. It is checked in rather than made at build time
+because a build machine need not have brotli, and every host test that
+compiles libhttp would otherwise need the generated file. The 121
+transforms are a table written from the RFC's appendix B; the test
+checks its CRC-32 (0x3d965f81) as the RFC gives it.
+
+Zstandard: frames follow one another as one output; skippable frames
+are passed over; anything else after a frame fails. The frame header
+is gathered byte by byte (the window size, with the 128 MiB that zstd
+itself allows by default, `MaximumWindowSize`; a dictionary id fails
+with `CompressionErrorDictionaryNeeded`). A raw block is copied as its
+bytes come, an RLE block written at once, a compressed block (at most
+128 KiB) decoded when it is all at hand - straight from the caller's
+piece when that holds all of it, else gathered first - and only once
+the output before it is taken. Literals are raw (used where they are),
+RLE, or Huffman coded (`Compression.ZstdHuffman`: weights direct or FSE
+coded with two states, a single lookup table of up to 11 bits, one or
+four streams, treeless blocks reusing the last tree);
+`Compression.ZstdSequences` reads the three FSE tables (predefined,
+built once per decoder; RLE; sent; repeat), then decodes each sequence
+from the backward bitstream and carries it out at once: literals, then
+the match from the offset (the three repeat offsets kept across the
+frame's blocks). Every length, offset (against the frame's output and
+the window), table and stream end is checked; so are the content size
+when the header gives it and the XXH64 content checksum
+(`Compression.XxHash64`) unless `VerifyChecksum` is off.
+
+On the host (built without range checks) the decoders give roughly 250
+MiB/s (brotli) and 330 MiB/s (zstd) on text at high levels, and over 1
+GiB/s on repetitive data.
+
 `make compression-test` (part of `make test`) builds the library on the
 host as `tools/CompressionTest`, with vectors that
 `tools/CompressionTest/make-vectors.py` makes with Python's zlib when
@@ -6291,8 +6610,26 @@ refused without it or with another; zlib's sync and full flushes
 giving all the input before them at once, and the data after a full
 flush decompressing on its own; the same of the library's own
 dictionaries and flushes at every level, whose samples Python's zlib
-then checks (`zdict`, decompressing up to each flush point). On the
-system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
+then checks (`zdict`, decompressing up to each flush point). The brotli
+and zstd decoders are checked over fixtures that
+`tools/CompressionTest/make-fixtures.py` makes when the test is built,
+with the host's `brotli` and `zstd` programs and Python's
+`compression.zstd`: eight kinds of data (empty, one byte, text, UTF-8
+in several scripts, binary records, noise, zeros, 3 MiB of repetition)
+at brotli qualities 0 to 11 and windows of 2^10 and 2^24, zstd levels
+1 to 22, without a checksum, a 1 KiB window, long distance matching and
+streamed without a content size; several frames, skippable frames, a
+metadata block (a brotli comment); streams made bit by bit (the empty
+stream 06, metadata, an uncompressed meta-block, one-symbol codes,
+dictionary words with and without a transform), each checked with the
+host's decoder first; and broken ones: cut short, changed (brotli has no
+check, so changed brotli data must only not crash), a bad window, bad
+padding, trailing bytes, a bad checksum, magic or reserved bit, a
+dictionary id, a 2 TiB window, a wrong content size. Each is decoded
+whole, in varying pieces and a byte at a time in and out, and the
+dictionary, transforms and context tables are checked against the RFC's
+CRC-32s, XXH64 against known answers; the decoding speed is printed. On
+the system, `gzip` (`-c`, `-d`, `-f`, `-k`, `-1` to `-9`) compresses and
 decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
@@ -7077,6 +7414,13 @@ deleted, through its type's delete routine, when its last reference is
 dropped. Named objects live in a flat namespace (`LookupObjectByName`).
 Thread objects embed the scheduler's thread control block.
 
+A reference count never wraps: one that reaches
+`ObjectReferenceCountLimit` (2^40, which only a reference leak gets to)
+stays there, the log says so (`[object] Warning: the reference count of
+... saturated`), and the object is never deleted - a leak instead of a use
+after free. A self test takes a count to the limit
+(`SetObjectReferenceCountForTest`) and checks it stays.
+
 ## User mode
 
 ### Processes and address spaces
@@ -7087,8 +7431,11 @@ addresses stay valid in every process; the scheduler loads a thread's
 `AddressSpaceRoot` into CR3 when it switches between processes.
 
 User memory is described by regions (`Processes.AddressSpace`):
-the program image (from 0x400000), shared libraries (from 0x7F00_0000_0000),
-heap allocations and an 8 MiB stack below 0x7FFF_FFFF_F000. Pages are only
+the program image, shared libraries, heap allocations, thread stacks and
+an 8 MiB main stack, each at a random place of its own (see "Address
+space layout randomization" below; with `aslr=off` the program is at
+0x400000, libraries from 0x7F00_0000_0000, allocations from
+0x1000_0000_0000 and the stack below 0x7FFF_FFFF_F000). Pages are only
 mapped when first touched: the page fault handler asks the address space
 whether the address belongs to a region and, if so, maps a zeroed page. A
 fault anywhere else in user mode ends just that process (exit status 139,
@@ -7112,12 +7459,62 @@ list (`tools/RegionTreeTest`, `make region-tree-test`).
 What goes with what: a thread's stack, the stack's guard and its thread
 data go when the thread exits, however it ends (an exit call, the
 process ending, `CallTerminateThread` while it waits); an allocation
-made with `AllocateForThread` (the runtime's threadvar block) goes with
-its thread too unless freed before (the region remembers its owner's
-id, so an address freed and handed out again is never taken by
-mistake); device mappings and sections go with `CallFreeMemory`;
+made with `AllocateForThread` (the runtime's threadvar block, its
+dynamic TLS vector and blocks) goes with its thread too unless freed
+before (the region remembers its owner's id, so an address freed and
+handed out again is never taken by mistake; a thread that made more
+than one has all of them looked for when it ends); device mappings and
+sections go with `CallFreeMemory`;
 libraries are never unloaded, and everything goes with the address
 space.
+
+#### Address space layout randomization
+
+Every process gets its own layout (`Processes.AddressLayout`, chosen in
+`CreateAddressSpace` and kept in the space's `Layout`), each part at a
+random page of a window of its own, so the parts stay out of each
+other's way and each keeps room to grow:
+
+| Part | Where | Entropy |
+|---|---|---|
+| program image | [1 TiB, 2 TiB) | 28 bits |
+| run time allocations (heap chunks, mappings) | first fit upwards from a random page of [16 TiB, 17 TiB) | 28 bits |
+| each thread's stack and thread data | first fit from a random page of [48 TiB, 64 TiB), chosen per thread | 32 bits |
+| each library | a random page of [126 TiB, 127 TiB) | 28 bits |
+| main stack top | a random page of the 64 GiB below 0x7FFF_FFFF_F000; the initial stack pointer a random 16 bytes into a page | 24 + 8 bits |
+
+A range that does not fit above its random start is looked for from the
+start of its window, so randomization never makes memory run out
+sooner. Programs are position independent (`ld -pie`, ET_DYN) and the
+loader relocates them like libraries; an ET_EXEC program would still go
+to its fixed address. The kernel option `aslr=off` gives every process
+the old fixed layout (for debugging: the same addresses in every run).
+
+The random numbers come from `Kernel.Random`: ChaCha20 (RFC 8439,
+`Kernel.ChaCha20`) with fast key erasure - each block gives the next key
+and 32 bytes of output - seeded at boot from RDSEED or RDRAND (RNDRRS or
+RNDR on AArch64 with FEAT_RNG), cycle counter jitter, the boot
+information and the device tree's `/chosen` `rng-seed` and `kaslr-seed`
+(the Raspberry Pi firmware fills them from its hardware generator), with
+a fresh hardware number and the counter stirred into every block. The
+network stack (temporary addresses, stable-privacy secrets, fragment
+identifications, TCP initial sequence numbers), `/dev/random` and made-up
+virtio MAC addresses use it too. `tools/AslrTest` (`make aslr-test`)
+checks ChaCha20 against the RFC's vector and many layouts against their
+windows on the host; `aslrtest` (a coretest line) runs a program twice
+and checks that its code, a library's, its stack, a heap block and a
+thread's stack all moved (booted with `aslr=off`, the same command
+prints "aslrtest: aslr=off, the addresses are the same").
+
+Where the program and its libraries went is kept in the process's module
+list (`Process^.Modules`, a `TModuleList` of `TLoadedModule`): each
+module's file name, its `Base` (the load bias: an address in the process
+is the module's link address plus `Base`) and the span of its segments
+(`ImageStart`, `ImageEnd`). The debug shell's `modules ID` lists them;
+`scripts/symbolize.py` takes them (`--base NAME=HEX`, `--start
+NAME=HEX`, or `--modules FILE` with lines of that listing or of a crash
+report naming a module and its base) and assumes the fixed layout for
+the modules it is not told about.
 
 #### Process limits
 
@@ -7170,6 +7567,21 @@ threads end at their next safe point (see "Ending other programs"). Every
 exiting thread first switches to the kernel's address space, so the last
 one can free the process's while the others are still on their way out.
 
+Every thread has a name (`Name` in its control block, at most 31
+characters): a user thread starts with its process's name, and
+`CallSetThreadName(ThreadId or CurrentThreadHandle, Name)` (148) renames
+a thread of the calling process (an empty name gives back the process's).
+The runtime's `SetThreadDebugName` - what `TThread.NameThreadForDebugging`
+calls - and `Sys.Threads.SetThreadName` use it. `CallListThreads(ProcessId,
+Buffer, Capacity)` (149) describes any process's threads, a
+`TAbiThreadDetails` each (id, name, state, priority, last processor,
+processor time; `Sys.Threads.ListThreads`). The names show in hang
+reports, the debug shell's `threads` command, `ps -L` / `ps -T` (a line
+per thread: `pid,lwp,tty,time,comm` with the thread's name and time) and
+the task manager's process properties. `threadnametest` (a coretest
+line) names threads both ways and reads them back through the kernel
+and through `ps -L`.
+
 User-mode locks (`Sys.Locks`) take and release a free lock with one atomic
 instruction. Only a contended lock enters the kernel: `WaitOnAddress` (45)
 sleeps while a 32-bit word still holds a given value, comparing it under
@@ -7188,11 +7600,28 @@ followed by a word for the user runtime and the thread id
 of the TLS images. The loader handles the TLS relocations DTPMOD64,
 DTPOFF64, TPOFF64 and TPOFF32; a module's "id" is its offset from the
 thread pointer, so `__tls_get_addr` in the System unit is one addition.
-Libraries opened with `LoadLibrary` after startup may not have a TLS
-segment or initializers (`ErrorUnsupported`): the layout is fixed by then.
-On AArch64 the layout is variant I instead (see "The AArch64 port"); the
-processor's layout and relocation numbers are in
+On AArch64 the layout is variant I instead (see "The AArch64 port"),
+with a word below the thread pointer for the runtime; the processor's
+layout and relocation numbers are in
 `kernel/processes/<arch>/Processes.Arch.ImageFormat`.
+
+The static layout is fixed once the program is loaded, so a library
+with a TLS segment opened later with `LoadLibrary` gets **dynamic TLS**:
+its module id is `TlsDynamicModuleTag` plus its module handle (a TLS
+descriptor on AArch64 gets libsystem's `__tlsdesc_dynamic` and the tag,
+the handle and the offset as its argument), and the runtime makes each
+thread's block of it the first time the thread touches it
+(`rtl/fpc/sysdyntls.inc`), from what `CallGetModuleTls(Handle, Address)`
+(150) says: where the image is, the block's size and alignment. Each
+thread has one vector of block pointers (in the control block's
+`ThreadBlockDynamicVectorOffset` word: `%fs:24` on x86-64, below the
+thread pointer on AArch64), entries by module handle; libraries are
+never unloaded, so a filled entry stays valid and needs no generation
+check, and the AArch64 resolver finds it without a call (only the first
+access saves every register and calls Pascal). Vectors and blocks are
+`AllocateForThread` allocations, freed when the thread ends. Initial and
+local exec accesses (TPOFF relocations) cannot reach such a block and
+fail the load (glibc keeps a surplus of static TLS for those).
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
 `FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
@@ -7203,6 +7632,21 @@ libraries included) and gives each thread a zeroed threadvar block, kept
 in the runtime word of its control block. The block is allocated with
 `AllocateForThread`, so the kernel frees it when a thread is ended from
 outside and never runs the runtime's own ending.
+
+A Free Pascal library loaded with `LoadLibrary` brings units the program
+does not have. Compiled from a `library` source with the startup unit
+`si_dll` (`rtl/fpc/si_dll.pas`) and linked with `-init
+FPC_SHARED_LIB_START -fini FPC_LIB_EXIT`, its DT_INIT hands its own unit
+tables to `SysRegisterLibrary` (`rtl/fpc/syslibraries.inc`), which skips
+the units the program or a library registered before already has (System,
+SysUtils, ... live in libsystem and start once), gives the threadvars of
+the rest a block of their own in the dynamic TLS vector (offsets with
+`ThreadvarDynamicFlag`, the library's number and the offset in its
+block; the loading thread keeps their values, other threads start with
+zeros, as in a new thread) and initializes those units; its DT_FINI
+finalizes them. The library's own `begin ... end` block is not run, and
+the resource strings of its units are not set up.
+`userland/lib/dynpascal` shows how such a library is built.
 
 Initialization code runs in user mode. The kernel collects the
 initializers (DT_INIT, then DT_INIT_ARRAY) of the program and its
@@ -7215,6 +7659,21 @@ dependencies, across libraries), then the main block; at exit it runs the
 exit procedures, the unit finalization sections in reverse (`Sys.Streams`
 flushes its buffers in its own) and the finalizers. Symbols stay bound eagerly when the program is loaded; there
 is no lazy PLT binding.
+
+A library loaded later is handled the same way, for itself and the
+libraries it brings in: the kernel collects their entries (each module's
+only once) when `CallLoadLibrary` loads them and keeps them until
+`CallTakeModuleInitializers(Handle, Address)` (151) hands them to the
+runtime, which calls the initializers before `LoadLibrary` returns
+(`Sys.Libraries.LoadLibrary` goes through it too) and keeps the
+finalizers to run as an exit procedure - before the program's units are
+finalized, newest library first. Loading is serialized by a recursive
+lock, as an initializer may load a library itself. `dynlibtest` (a
+coretest line) starts threads, then loads `libdyntls.so` (assembly: ELF
+TLS through `__tls_get_addr` and TLS descriptors, an initializer and a
+finalizer) and `libdynpascal.so` (a Free Pascal library with threadvars
+and a unit initialization), and checks every thread's own values, the
+initial ones, initializers run once and the finalizers' output.
 
 ### System calls
 
@@ -7240,9 +7699,10 @@ the exception handler makes the routine return -1 by setting RAX and
 popping its return address, and the call fails with `ErrorBadAddress`.
 Drivers and file systems never see user pointers: reads and writes go
 through a kernel transfer buffer of up to 16 KiB at a time. With that in
-place SMAP is switched on when the processor has it, and the copy routines
-allow user accesses only for their own duration (STAC/CLAC), so a stray
-direct access anywhere else in the kernel faults at once. A kernel self
+place SMAP (x86-64) or PAN (AArch64) is switched on when the processor has
+it, and the copy routines allow user accesses only for their own duration
+(STAC/CLAC, clearing PSTATE.PAN), so a stray direct access anywhere else in
+the kernel faults at once (see "Kernel memory protection"). A kernel self
 test copies to an unmapped user address.
 
 | Area | Calls |
@@ -7251,12 +7711,12 @@ test copies to an unmapped user address.
 | Terminals | CreatePseudoTerminal (see "Pseudo-terminals") |
 | Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
-| Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
+| Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress, SetThreadName (148), ListThreads (149) |
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Memory | AllocateMemory, FreeMemory |
-| Libraries | LoadLibrary, FindSymbol |
+| Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
@@ -7780,6 +8240,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `systemsettings` | text, graphical | the system settings service: the machine's remembered settings at start, root's changes for the users who may |
 | `network` | text, graphical | the network service: the interfaces' addresses (static or DHCP), routes, DNS servers and host name, kept as Network.settings says (see "Networking") |
 | `sshd` | text, graphical | the SSH server on port 22 (see "The SSH server") |
+| `timesync` | text, graphical | the SNTP client, off by default (see "Time synchronization"; needs `network`) |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
 `userland/etc/services`), lines of `key = value` (`Services.Definitions`):
@@ -7992,6 +8453,33 @@ locks the screen, the machine sleeps (QEMU says so) and wakes
 (`system_wakeup`) with the lock screen showing; the password unlocks
 it and the desktop and its clock are back. The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
+
+### Time synchronization
+
+`timesync` (units in `userland/timesync`, the `timesync` service, which
+needs `network`) keeps the wall clock to time servers over SNTP (RFC
+4330). It is off by default: with `TimeSync/Enabled` false in
+`/etc/settings/TimeSync.settings` it logs so and ends (it stays
+stopped). Otherwise it asks the servers of `TimeSync/Servers`
+(`["pool.ntp.org"]`: names, addresses or `host:port`) in turn, four
+requests each (`TimeSync.Exchange`: UDP to port 123, each timed with
+the nanosecond wall clock), and believes the answer with the shortest
+round trip (`TimeSync.Packets` checks that it is a server's answer to
+that request, refuses a kiss of death and an unsynchronized server,
+and works out offset and delay). The first correction steps the clock
+(`CallAdjustWallClock`, which writes the battery backed clock too);
+later ones slew it unless they are beyond
+`StepThresholdMilliseconds` (128); under 1 ms nothing is done
+(`TimeSync.Corrections`). It polls every `MinimumPollSeconds` (64) at
+first, doubling up to `MaximumPollSeconds` (1024) while no step is
+needed; until the first answer a failed poll is tried again after 2 s,
+then twice as long each time, since the network may still be getting
+its address. The settings are read again before every poll. Its log
+is `/var/log/timesync.log`; `timesync --once [SERVER] [--dry-run]` polls
+once by hand. `make sntp-test` (`tools/SntpTest`) checks the packets and
+corrections on the host and asks a small SNTP server
+(`sntp-server.py` on 127.0.0.1, its clock 1234.5 s ahead, and a second
+port that answers with a kiss of death) over UDP.
 
 ### Time zones
 
@@ -8403,6 +8891,10 @@ the load is done); the volume, node number, size and modification time are
 also compared on every use.
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
+Each library goes to a random place of the library window (see "Address
+space layout randomization"); libraries loaded at run time may have
+thread-local storage and initializers (see "Thread-local storage and
+initialization").
 
 The initial stack holds the argument count, the arguments, the
 environment and an auxiliary vector (program headers, page size, entry
@@ -8735,7 +9227,8 @@ independent) against the Free Pascal runtime library:
 
 Units may have initialization and finalization sections and threadvars
 (see "Thread-local storage and initialization"); the libraries themselves
-have no initialization code of their own.
+have no initialization code of their own, except Free Pascal libraries
+built for `LoadLibrary` with `si_dll`.
 
 ### The runtime library
 
@@ -8753,8 +9246,12 @@ the rest. The generic code comes from the compiler's source tree
   `Assign`/`Reset`/`Rewrite`, `BlockRead`, `MkDir` and so on),
   `systhrd.inc` (the thread manager: kernel threads, threadvars,
   recursive critical sections and events on the wait-on-address call) and
-  `sysdl.inc` (`LoadLibrary`/`GetProcAddress` on the kernel's loader).
-- `si_prc.pas` – program startup.
+  `sysdl.inc` (`LoadLibrary`/`GetProcAddress` on the kernel's loader,
+  running the new libraries' initializers), `sysdyntls.inc` (dynamic
+  thread-local storage of libraries loaded at run time) and
+  `syslibraries.inc` (Free Pascal libraries loaded at run time).
+- `si_prc.pas` – program startup; `si_dll.pas` – the startup of Free
+  Pascal libraries loaded at run time.
 - `sysutils.pp` – files, directories, `FindFirst`, file dates, disks,
   time, environment, `ExecuteProcess` and error messages on the system
   calls; the Unicode string manager (`fpwidestring` with the root
@@ -9956,7 +10453,7 @@ waits for work itself (programs without a GUI loop).
 
 Not yet: CSP enforcement and Subresource Integrity (both are stored on
 the request), ORB, bfcache, pushState/replaceState (the entries have the
-slot), iframes (one navigable per page), form submission, Service
+slot), `<object>`/`<embed>` documents, form submission, Service
 Workers, blob: URLs, animated images (the first frame is shown).
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
@@ -10215,8 +10712,104 @@ detached; what the parent kept still works, running in the caller's
 realm). Frames are freed with their top-level context, after its engine
 (their cells live in its runtime). `TFrameEnvironment` forwards timers,
 prompts, cookies, storage, fetches and the user agent to the parent's
-environment. Not yet: frames do not load `src` documents, are not laid
-out or painted, and get no input (reCAPTCHA's widget stays empty).
+environment. That is the script-only path (an environment that does not
+manage frames: tests, `ParseDocument`); a page's frames are child
+navigables (below).
+
+**Frames of a page** (`Web.Navigation.Navigables.Frames.inc`,
+`Web.Navigation.FramePolicy`, `Web.Script.FrameNavigables`,
+`Web.Bindings.CrossOrigin`, `Web.Frames.Views`). Each `<iframe>` and
+`<frame>` that becomes connected in a navigable's active document gets a
+child `TNavigable` (`CreateChild`) at once - the loader's observer
+reports frame elements (`OnFrameInserted`, `OnFrameChanged` for src,
+srcdoc and name, `OnFrameRemoved`) - with an initial about:blank
+document of the parent's origin, so contentWindow works right after the
+insertion; then the iframe's attributes are processed as the HTML
+Standard says: srcdoc navigates to about:srcdoc in a task, src to its
+URL against the parent's base URL (about:blank at the first insertion
+only fires load, at once), `loading=lazy` waits for the parent's load
+event, a URL of an ancestor's document or a ninth level is not loaded.
+The navigation request is the parent document's (its client: origin,
+referrer and policy, the top-level site that SameSite cookies are
+judged by), destination iframe or frame, the element's referrerpolicy;
+a response that X-Frame-Options (DENY, SAMEORIGIN against every
+ancestor) or an enforced CSP `frame-ancestors` (which decides when
+present) keeps out shows an error page. The sandbox attribute as it is
+at each navigation: without allow-scripts the document gets no script
+executor, without allow-same-origin an opaque origin (no cookies, no
+storage), without allow-modals no prompts; nested frames keep their
+ancestors' restrictions; `allow` is kept, not enforced. While a child
+loads it delays its parent's load event (lazy ones do not); when its
+document has loaded, load fires at the element. Documents carry their
+origin when it is not their URL's (`TDocument.OriginText`,
+`Web.Origins`: about:blank and srcdoc documents their creator's, opaque
+ones stable per document). A navigation while the child or its parent
+is still loading replaces the child's entry; a later one adds one to
+the child's history and one naming the child (`FrameId`, `FrameIndex`)
+to the top-level history, the joint session history: Back and Forward
+over such entries traverse the child (`TraverseFrames`), history.length
+and history.go in a frame are the joint history's. The element leaving
+or its document being unloaded detaches the child at once (loading
+stopped, its windows closed, its rendering withdrawn) and frees it in a
+later task. `ChooseNavigable` gives a link's or form's target (_self,
+_parent, _top, a frame's name; nil for _blank or an unknown name, a new
+tab).
+
+A child document's script context is made by the page's executor with
+`CreateFrame` in a realm of its parent's engine and the child's window
+(`TNavigableFrameEnvironment`: the page's environment for timers,
+cookies, storage, fetches and prompts with the frame's own context, the
+child navigable for location, navigation, pushState, the viewport and
+media queries, a `TFrameScriptLayout` for geometry). Cross-origin frames
+share the heap too (one runtime per page: objects cannot be passed
+between heaps, and postMessage's source, frames[i] and parent stay plain
+references); what keeps origins apart is that a window's global object
+is never handed to script of another origin: contentWindow, parent,
+top, frames[i] and a message's source go through `WindowValueFor`,
+which gives a cross-origin view (`TCrossOriginWindowView`, an exotic
+object of the asking realm, cached per pair) answering only window,
+self, frames, top, parent, opener, closed, length, the frames by index,
+location (a view whose href may be set and replace() called),
+postMessage, close, focus and blur, undefined for then and the three
+symbols, a SecurityError for anything else; contentDocument and
+frameElement are null across origins. postMessage through a view calls
+the target's own and turns its exceptions into the caller's realm's;
+ports are passed only between windows of one origin. A frame's window
+is closed when its document is left (contentWindow is then the next
+document's) and freed with its top-level context. The global object's
+index properties follow its frames (`UpdateFrameIndices`). A
+sandboxed frame without scripts has no window object (frames.length
+does not count it).
+
+Rendering: `TLayoutResourceSink.CreateChildSink` gives each child a
+rendering sink and a `TFrameView` (its navigable observer): per
+document a `TDocumentLayout` and `TDocumentPainter`, registered in the
+parent document's resources under the element as a `TEmbeddedContent`
+(`Web.Layout.EmbeddedContent`). The parent's layout gives it the
+frame's content box (300 by 150 without a ratio by default; width,
+height, CSS, the UA sheet's 2px inset border, `frameborder=0`) and its
+scale (zoom and DPI inherited) and brings it up to date after its own
+layout; its paint version includes the frames'. The builder emits a
+`diFrame` item and the raster asks the frame to paint itself into the
+visible part of its box (`PaintShifted`: the view's `ShiftX`/`ShiftY`),
+with a thin scroll bar when the document overflows (not with
+`scrolling="no"`). `HitTestThroughFrames` descends into frames and
+`DocumentViewportOrigin` says where a frame's viewport is. With a null
+sink (tests) children load without views.
+
+**Workers** (`platform/65-workers.js`, `Web.Script.NativeWorkers`).
+`new Worker(url)` fetches the script and runs it in a bare realm of the
+window's runtime (its own built-ins, no DOM: `TBindingContext.
+WorkerEngines`, whose jobs run at the window's checkpoints) on the
+window's thread. The scope has self, location, navigator, name,
+postMessage, close, the listener methods and onmessage, and the
+window's timers, fetch, crypto, performance, console, encoders, URLs,
+blobs, streams and messaging classes; messages are structured clones in
+tasks; uncaught errors fire error at the Worker. importScripts cannot
+wait for a fetch on this thread: one with scripts not yet fetched stops
+the worker's script, fetches them (through fetch(), so CORS applies) and
+runs the script again from the start in a new scope (reCAPTCHA's
+webworker.js is one importScripts line).
 
 **Platform scripts** (`Web.Script.Natives`, `userland/lib/web/platform/*.js`).
 Interfaces that are mostly object juggling and promises over a few engine
@@ -10318,11 +10911,12 @@ inputs and textareas keep their value and checkedness.
 
 **Not done yet**: import maps, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), the unhandledrejection
-event, XML parsing (DOMParser, XHR's responseXML), shadow DOM, Range and Selection, TreeWalker, iframes with src
-documents (loading, layout, painting, input), synchronous
+event, XML parsing (DOMParser, XHR's responseXML), shadow DOM, Range and
+Selection, TreeWalker, `<object>` and `<embed>` documents, frameset
+layout (`<frame>` loads but is laid out as an inline replaced box),
+shared and service workers, synchronous
 XMLHttpRequest, Web Animations, CSSOM sheets (document.styleSheets,
-insertRule), Brotli and zstd content codings (Accept-Encoding offers
-gzip and deflate only), the storage event between windows, images'
+insertRule), the storage event between windows, images'
 natural size for script.
 
 ### Tests
@@ -10978,9 +11572,23 @@ click and submit events (the page's listeners may remove them or move
 the focus, which releases the focused element); the field being edited
 is held for the length of an edit.
 
+Frames (`WebView.Control.Frames.inc`): the pointer is hit tested through
+frames (`HitTestThroughFrames`), so hover (up through the iframe into
+the parent), active, cursors, link status, clicks, focus, the caret,
+keys and the text editor work on the frame's document, each element's
+states going to its own document's layout; links and forms in a frame
+navigate the navigable their target chooses (the frame itself by
+default; _top, _parent, a name; _blank or an unknown name a new tab);
+the wheel scrolls the innermost container, then the frame's viewport,
+then outwards. The view fires MouseEvents (`WebView.MouseEvents`:
+mousedown, mouseup, click, mousemove, mouseover, mouseout,
+contextmenu, with client coordinates in the target document's own
+viewport, page offsets, offsetX/Y, button, buttons, detail and
+modifiers); a cancelled mousedown keeps the focus and selection.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing.
+printing, text selection inside frames, Tab moving into frames.
 
 ## Browser
 
@@ -11141,7 +11749,9 @@ write-back (index 0), device-nGnRE (1, `MapDeviceMemory`), normal
 non-cacheable (2, write-combining: framebuffers) and device-nGnRnE (3).
 Unlike x86-64 the window holds no devices: device registers mapped as
 normal memory could be read speculatively, so every device is mapped on
-demand with device attributes.
+demand with device attributes. The window is execute-never, user pages are
+always PXN, and with PAN (ARMv8.1) the kernel reaches user pages only
+inside the copy routines (see "Kernel memory protection").
 
 A user address space is only a TTBR0 table; the "kernel address space"
 loads an empty one. Kernel mappings are global and user mappings are not:
@@ -11178,10 +11788,12 @@ program with SP at the argument count, as on x86-64.
   TPIDR_EL0 points at a 16-byte control block (the runtime word at 0,
   the thread id at 8: `ThreadBlock*` in `Abi.SystemCalls`), followed by
   the program's TLS block at `align(16, alignment)` and the libraries'
-  after it. The loader handles R_AARCH64_RELATIVE, ABS64, GLOB_DAT,
+  after it; the word below it is the runtime's (its dynamic TLS vector).
+  The loader handles R_AARCH64_RELATIVE, ABS64, GLOB_DAT,
   JUMP_SLOT, COPY, TLS_DTPMOD64, TLS_DTPREL64, TLS_TPREL64 and TLSDESC
   (descriptors get libsystem's `__tlsdesc_static`, which returns the
-  descriptor's offset from the thread pointer); `libtlstest.so` exercises
+  descriptor's offset from the thread pointer, or for a library loaded
+  later `__tlsdesc_dynamic`); `libtlstest.so` exercises
   the descriptors, `__tls_get_addr` and the initial exec model.
 - **Exceptions:** the record's context is AArch64's (`TAbiContext`: X0-X30,
   SP, PC, PSTATE, of which a context may change only the condition
@@ -12077,13 +12689,20 @@ reported as one (runtime error 218); anything else is an access violation
 - The heap may be used at dispatch level, so the quarantine is a fixed
   table under a spin lock of its own (no memory of its own, no sleeping);
   the heap lock and the quarantine lock are never held together.
-- Not covered: the physical page allocator (`Memory.PhysicalPages`: page
-  tables, DMA buffers, user pages, kernel stacks - stacks have guard pages
-  of their own), device mappings, and memory programs allocate with system
-  calls directly (the heap's own chunks, threadvar blocks, sections). DMA
-  buffers come from the page allocator, so filling heap blocks never changes
-  memory a device is using; a device that writes into a freed heap block is
-  caught as a write after free.
+- Physical pages (`Memory.PhysicalPages`, `Memory.PageQuarantine`; with
+  the quarantine level): a page whose last holder frees it - a page
+  table, a DMA buffer, a user page, a kernel stack - is filled with `$F7`
+  and held back in a ring of the last 256 freed pages (1 MiB) with the use
+  `PageUsageQuarantined`, so freeing it again is a double free. When it
+  leaves the ring, just before it can be handed out again, its fill is
+  checked: a changed byte stops the system with the page and the offset
+  (`physical page written after it was freed`) - a device still writing
+  into a buffer its driver gave back, a stale translation. Held back
+  pages count as free memory, and when the free list runs dry the oldest
+  one is let go early, so the checks never make memory run out.
+- Not covered: device mappings. DMA buffers come from the page allocator,
+  so filling heap blocks never changes memory a device is using; a device
+  that writes into a freed heap block is caught as a write after free.
 
 **Tests.** `heaptest` checks the promises (fills, zeroed memory,
 `ReAllocMem`, `MemSize`, threads allocating at once) and makes each mistake
@@ -12111,6 +12730,117 @@ a region per block, but first-fit reuse would not keep freed addresses
 unused; it needs a reserve / commit / decommit system call first (see
 TODO.md).
 
+## Back traces and crash reports
+
+**Kernel back traces.** A panic ends with the chain of calls that led
+to it, on the screen, the serial port and the network log (the trace is
+ordinary kernel log, so `FlushNetworkLogAtPanic` sends it with the rest):
+
+```
+Back trace:
+  #0 0xFFFFFFFF800779FB Kernel.PanicTest.PanicTestInnermost+0x3B
+  #1 0xFFFFFFFF80077A19 Kernel.PanicTest.PanicTestMiddle+0x9
+  #2 0xFFFFFFFF80077A39 Kernel.PanicTest.PanicTestOutermost+0x9
+  ...
+```
+
+The kernel is compiled with `-OoNOSTACKFRAME` (and its RTL too), so
+every routine keeps a frame and the frame pointer chain is complete: on
+both processors a frame is the caller's frame pointer with the return
+address above it (x86-64: CALL then PUSH RBP; AArch64: STP X29, X30).
+`Debug.StackTrace` walks it, trusting nothing: each frame must lie in
+the stack being walked (the thread's kernel stack, or a 32 KiB window
+above the first frame when there is no thread yet or the frame is
+elsewhere), above the frame before it, with a return address in the
+kernel's code; it stops after 32 frames, and at a frame whose saved
+frame pointer is 0 (a thread's first routine, which nobody called). A
+return address is named by the call before it (address - 1). Where the
+trace starts: for a processor exception at the interrupted instruction
+and frame (`SetPanicTraceStart` from both architectures' exception
+handlers), otherwise at the caller of `BeginKernelPanic` - so a failed
+`KernelAssert` shows `Kernel.Panic.KernelAssert` and then the code that
+asserted.
+
+**The symbol table** comes from the build. The kernel is linked twice:
+first with an empty table, then `scripts/make-kernel-symbols.py` reads
+that image's code symbols with nm and writes the table as an assembly
+file, and the second link puts it at the end of `.rodata`
+(`KernelSymbolTable`, about 140 KiB for 4700 routines). The code comes
+before the read-only data, so it cannot move between the links, and the
+script checks that it did not. The table holds the routines' start
+addresses (offsets from the image start, sorted) with their unit's and
+their own names, each unit name once; Free Pascal's decorated upper
+case names (`KERNEL.PANIC_$$_KERNELASSERT$BOOLEAN$PCHAR`) are written as
+in the sources (`Kernel.Panic`, `KernelAssert`), the spelling taken from
+the declarations in the kernel's source folders; nested routines are
+`Outer.Inner`. `Debug.KernelSymbols` finds an address's routine by a
+binary search, without locks or memory, so it works in a panic. The
+native AArch64 image keeps the table (it is loaded data, not debug
+information). Because compiler options are not part of what Free
+Pascal checks to decide whether a unit is up to date, the Makefile
+keeps the kernel's options in `build/ARCH/kernel/flags.stamp` and
+compiles every unit again when they change.
+
+The same traces are used elsewhere: the hang watch writes each thread's
+kernel stack (see "Diagnosing hangs"), and the debug shell's `trace`
+command any thread's. For a thread that is not running the walk starts
+from the state its last switch saved (`ArchSwitchFramePointers`: the
+saved RBP and return address on x86-64, X29 and X30 on AArch64); one
+running on another processor is only named, its stack changing under
+the walk.
+
+**Testing it:** the kernel option `testpanic` (or `testpanic=fault`)
+makes phase 1 fault on purpose three calls deep, `testpanic=assert`
+fail an assertion there (`Kernel.PanicTest`); with `netlog` it first
+waits for the network log to reach its listener.
+`scripts/test-panic-trace.sh ARCH ESP` (`make panic-trace-test`, part
+of `make test`; `make ARCH=arm64 panic-trace-test`) boots both and
+checks that the trace names the chain in order, in the serial log and
+in what `scripts/netlog.py` received.
+
+**User crash reports.** A program's addresses mean something only
+together with the module they lie in and where it was loaded, which
+will differ between runs once modules load at random addresses. The
+kernel keeps each module's load bias and the end of its pages
+(`TLoadedModule.Base`, `Limit`) and hands the list to the process with
+`CallGetProcessModules` (136, `TAbiModuleInformation`:
+Base, Limit, Name). The runtime (`rtl/fpc/syscrash.inc`) replaces Free
+Pascal's `BackTraceStrFunc`, so every back trace address - of an
+unhandled exception, a runtime error, a heap check report - names its
+module and offset, and a process that ends with an error after writing a
+back trace lists its modules on the error output as its last words:
+
+```
+An unhandled exception occurred at $0000000000407AB6:
+EAccessViolation: Access violation
+  $0000000000407AB6  coretest+$7AB6
+  $00007F0000204E5D  libsystem.so+$1BCE5D
+
+Modules:
+  $0000000000400000-$000000000041C000 coretest
+  $00007F0000048000-$00007F0000357000 libsystem.so
+```
+
+The kernel's own report of a program it ends (no dispatcher, the
+dispatcher failed) does the same in the kernel log
+(`Processes.LoadedModules`):
+
+```
+[process] coretest (44): page fault at 0x0000000000407AB6 (coretest+0x7AB6) accessing 0x0000000000000000, terminated
+[process]   module coretest at 0x0000000000400000-0x000000000041C000
+```
+
+`scripts/symbolize.py --report REPORT build/ARCH/user` reads either form
+(or a whole serial log, report by report), takes the bases from the
+report, finds each module's file by name under the given folders and
+names the routines (addr2line, the names demangled to `UNIT.ROUTINE`);
+`symbolize.py PROGRAM LIBRARY_DIRECTORY ADDRESS...` still lays the
+modules out at the fixed addresses for an old report.
+`scripts/test-symbolize.py`, run by `test-qemu.sh`, symbolizes the
+kernel's report of `coretest --crash-without-dispatcher` from the test
+run's serial log, and again with every module moved elsewhere in both
+report forms; a coretest line checks the runtime's report format.
+
 ## Diagnosing hangs
 
 With the kernel option `hangdump=SECONDS`, a system thread
@@ -12119,8 +12849,10 @@ happens for that long while user processes exist, it writes every user
 thread to the kernel log - process, state, whether it waits on a list or
 with a timeout, alertable, suspended, priority, last processor, run time,
 where in the program it last entered the kernel (from the register frame
-at the top of its kernel stack) and the system call it is in - and what
-each processor runs. The tests set `hangdump=20`, so a hung
+at the top of its kernel stack), the system call it is in and its kernel
+stack trace (where in the kernel it waits; see "Back traces and crash
+reports") - and what each processor runs, with the routine it was
+interrupted in. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
 
 Without the option the same thread still watches endings: a process
@@ -12265,7 +12997,9 @@ so ordinary boots do not wait for it.
 
 With the kernel option `kshell`, `Kernel.DebugShell` runs on the console
 once the system is up, before the first program: `help`, `echo`, `ls`,
-`cat`, `volumes`, `disks`, `ps`, `mem`, `cache`, `netcards`, `interrupts`,
+`cat`, `volumes`, `disks`, `ps`, `trace [THREAD]` (the kernel stack
+trace of the thread with that id, or of every thread, each named with
+its state and process), `mem`, `cache`, `netcards`, `interrupts`,
 `devices` (the ACPI platform devices: ids, resources, DMA, driver),
 `board` (the Raspberry Pi's model, revision, serial, firmware, clocks
 and temperature, from the VideoCore mailbox), `uptime`, `watchdog` (the

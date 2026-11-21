@@ -60,6 +60,10 @@ procedure StartNetworkLog;
 { Whether the netlog option is set. }
 function NetworkLogIsWanted: Boolean;
 
+{ Whether the log has found its way to the listener, so a panic's last
+  lines would reach it too (the testpanic option waits for this). }
+function NetworkLogHasRoute: Boolean;
+
 implementation
 
 uses
@@ -118,6 +122,11 @@ var
   NeighbourIsKnown: Boolean;
   NeighbourWasKnown: Boolean;
   PanicRoute: TPanicRoute;
+
+function NetworkLogHasRoute: Boolean;
+begin
+  Result := PanicRoute.Valid;
+end;
 
 function NetworkLogIsWanted: Boolean;
 var

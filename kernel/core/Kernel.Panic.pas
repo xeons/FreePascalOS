@@ -27,6 +27,11 @@
   architecture specific code (for example the processor exception handler)
   can print extra details such as a register dump in between.
 
+  FinishKernelPanic writes the back trace (Debug.StackTrace): of the
+  interrupted code when the exception handler gave its frame
+  (SetPanicTraceStart), otherwise of the code that called
+  BeginKernelPanic - the routine that panicked and its callers.
+
   FinishKernelPanic then, in this order: lets the reset policy say what
   will happen (Kernel.Watchdog: "resets in N seconds"), lets the network
   log send what it has not sent yet (Network.LogStreaming), runs the panic
@@ -64,6 +69,11 @@ procedure KernelAssert(Condition: Boolean; Description: PChar);
 procedure BeginKernelPanic(Code: QWord; Reason: PChar);
 procedure FinishKernelPanic; noreturn;
 
+{ Makes the panic's back trace start at an interrupted context (an
+  exception handler passes its frame's address and frame pointer) rather
+  than at BeginKernelPanic's caller. Called before BeginKernelPanic. }
+procedure SetPanicTraceStart(ProgramCounter, FramePointer: QWord);
+
 type
   TPanicHook = procedure;
 
@@ -90,7 +100,8 @@ uses
   Debug.Output,
   Debug.FramebufferConsole,
   Hal.Platform,
-  Kernel.Processors;
+  Kernel.Processors,
+  Debug.StackTrace;
 
 var
   PanicCount: Int64 = 0;
@@ -98,6 +109,9 @@ var
   PanicFlushRoutine: TPanicHook = nil;
   PanicResetAnnounce: TPanicHook = nil;
   PanicResetPerform: TPanicHook = nil;
+  TraceProgramCounter: QWord = 0;
+  TraceFramePointer: QWord = 0;
+  TraceStartIsSet: Boolean = False;
 
 procedure SetPanicHook(Hook: TPanicHook);
 begin
@@ -129,8 +143,42 @@ begin
   end;
 end;
 
-procedure BeginKernelPanic(Code: QWord; Reason: PChar);
+procedure SetPanicTraceStart(ProgramCounter, FramePointer: QWord);
 begin
+  if PanicIsInProgress then
+    Exit;
+  TraceProgramCounter := ProgramCounter;
+  TraceFramePointer := FramePointer;
+  TraceStartIsSet := True;
+end;
+
+{ BeginKernelPanic's caller: where it will return to and its frame. }
+procedure NoteCallerForTrace(BeginFrame: QWord);
+begin
+  if TraceStartIsSet or (BeginFrame = 0) then
+    Exit;
+  TraceFramePointer := PQWord(BeginFrame)^;
+  TraceProgramCounter := PQWord(BeginFrame + 8)^;
+  TraceStartIsSet := True;
+end;
+
+procedure WritePanicTrace;
+var
+  Bounds: TStackTraceBounds;
+begin
+  if not TraceStartIsSet then
+    Exit;
+  DebugWriteLine('');
+  DebugWriteLine('Back trace:');
+  FindStackBounds(TraceFramePointer, Bounds);
+  WriteStackTrace(TraceProgramCounter, TraceFramePointer, Bounds, '  ');
+end;
+
+procedure BeginKernelPanic(Code: QWord; Reason: PChar);
+var
+  BeginFrame: QWord;
+begin
+  BeginFrame := QWord(get_frame);
   DisableInterrupts;
   ArchSetPriorityLevel(HighLevel);
 
@@ -138,6 +186,7 @@ begin
     risk making things worse by printing again. }
   if AtomicIncrement(PanicCount) > 1 then
     HaltForever;
+  NoteCallerForTrace(BeginFrame);
 
   { The others may hold the output lock or keep changing what the
     message is about to describe. }
@@ -165,6 +214,7 @@ end;
 
 procedure FinishKernelPanic; noreturn;
 begin
+  WritePanicTrace;
   DebugWriteLine('');
   DebugWriteLine('System halted.');
   if Assigned(PanicResetAnnounce) then

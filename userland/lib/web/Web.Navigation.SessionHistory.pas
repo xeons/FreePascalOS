@@ -25,6 +25,12 @@
   between them does not load anything) and a slot for the serialized
   state of history.pushState. Adding an entry drops the ones after the
   current one; the oldest go beyond MaximumEntries.
+
+  The joint session history of a page lives in its top-level
+  navigable's: a navigation that adds an entry in a child navigable
+  (an iframe) also adds a top-level entry of the same top-level
+  document that names the child (FrameId) and the child's entry index
+  (FrameIndex); traversing over it traverses the child.
 }
 unit Web.Navigation.SessionHistory;
 
@@ -52,6 +58,10 @@ type
     DocumentId: QWord;
     { history.pushState's serialized state (the bindings own it). }
     State: Pointer;
+    { A top-level entry for a child navigable's step: the child's
+      identity (0: a top-level step) and its entry index. }
+    FrameId: QWord;
+    FrameIndex: Integer;
     function UrlText: string;
   end;
 
@@ -70,6 +80,9 @@ type
     { Entry takes the current one's place. }
     procedure ReplaceCurrent(Entry: TSessionHistoryEntry);
     function Current: TSessionHistoryEntry;
+    { Drops the joint entries of a child navigable that went (the
+      current one moves with the entries before it). }
+    procedure RemoveFrameEntries(FrameId: QWord);
     function CanTraverse(Delta: Integer): Boolean;
     function CanGoBack: Boolean;
     function CanGoForward: Boolean;
@@ -144,6 +157,28 @@ begin
   if (FIndex < 0) or (FIndex >= FEntries.Count) then
     Exit(nil);
   Result := TSessionHistoryEntry(FEntries[FIndex]);
+end;
+
+procedure TSessionHistory.RemoveFrameEntries(FrameId: QWord);
+var
+  Position: Integer;
+begin
+  if FrameId = 0 then
+    Exit;
+  Position := FEntries.Count - 1;
+  while Position >= 0 do
+  begin
+    if TSessionHistoryEntry(FEntries[Position]).FrameId = FrameId then
+    begin
+      TSessionHistoryEntry(FEntries[Position]).Free;
+      FEntries.Delete(Position);
+      if FIndex >= Position then
+        Dec(FIndex);
+    end;
+    Dec(Position);
+  end;
+  if (FIndex < 0) and (FEntries.Count > 0) then
+    FIndex := 0;
 end;
 
 function TSessionHistory.CanTraverse(Delta: Integer): Boolean;

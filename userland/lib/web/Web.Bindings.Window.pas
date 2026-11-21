@@ -55,6 +55,8 @@ uses
   Web.Bindings.Context,
   Web.Bindings.Style,
   Web.Bindings.UrlResolution,
+  Web.Bindings.CrossOrigin,
+  Web.Origins,
   Web.Script.Timers;
 
 type
@@ -106,13 +108,13 @@ end;
 
 function Window_get_top(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsObjectValue(Context(Call).TopContext.Engine.GlobalObject);
+  Result := WindowValueFor(Context(Call), Context(Call).TopContext);
 end;
 
 function Window_get_parent(var Call: TBindingCall): TJsValue;
 begin
   if Context(Call).ParentContext <> nil then
-    Result := JsObjectValue(Context(Call).ParentContext.Engine.GlobalObject)
+    Result := WindowValueFor(Context(Call), Context(Call).ParentContext)
   else
     Result := GlobalValue(Call);
 end;
@@ -182,7 +184,9 @@ end;
 
 function Window_get_frameElement(var Call: TBindingCall): TJsValue;
 begin
-  if (Context(Call).ParentContext <> nil) and not Context(Call).Closed then
+  { Not across origins. }
+  if (Context(Call).ParentContext <> nil) and not Context(Call).Closed and
+     SameOriginContexts(Context(Call), Context(Call).ParentContext) then
     Result := Context(Call).ParentContext.WrapNode(Context(Call).FrameElement)
   else
     Result := JsNull;
@@ -259,13 +263,8 @@ begin
 end;
 
 function DocumentOrigin(Document: TDocument): TUrlOrigin;
-var
-  Url: TUrlRecord;
 begin
-  if ParseUrl(DocumentUrlText(Document), Url) then
-    Result := OriginOfUrl(Url)
-  else
-    Result := NewOpaqueOrigin;
+  Result := Web.Origins.DocumentOrigin(Document);
 end;
 
 function Window_get_origin(var Call: TBindingCall): TJsValue;

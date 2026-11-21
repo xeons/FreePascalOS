@@ -84,7 +84,7 @@ type
     constructor Create(ADocument: TDocument; AEnvironment: TScriptEnvironment = nil; AWindow: TEventTarget = nil);
     { An iframe's window (Web.Script.Frames makes them). }
     constructor CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment; Parent: TBindingContext;
-      AFrameElement: TElement);
+      AFrameElement: TElement; AWindow: TEventTarget = nil);
     destructor Destroy; override;
 
     { Runs a classic script (an inline one, or an external one the
@@ -201,7 +201,8 @@ end;
 
 procedure TScriptDocumentObserver.NodeDisconnected(Node: TNode);
 begin
-  if (Node.NodeType = NodeTypeElement) and TElement(Node).IsHtmlElement(AtomIframe) then
+  if (Node.NodeType = NodeTypeElement) and TElement(Node).IsHtmlElement(AtomIframe) and
+     not FContext.Environment.ManagesFrames then
     FrameElementDisconnected(FContext, TElement(Node));
 end;
 
@@ -209,7 +210,8 @@ procedure TScriptDocumentObserver.NodeConnected(Node: TNode);
 begin
   if Node.NodeType <> NodeTypeElement then
     Exit;
-  if TElement(Node).IsHtmlElement(AtomIframe) and (Node.OwnerDocument = FContext.Document) then
+  if TElement(Node).IsHtmlElement(AtomIframe) and (Node.OwnerDocument = FContext.Document) and
+     not FContext.Environment.ManagesFrames then
     FrameElementConnected(FContext, TElement(Node));
   if TElement(Node).HasAttributes then
     ActivateEventHandlerAttributes(FContext, TElement(Node));
@@ -242,9 +244,9 @@ begin
 end;
 
 constructor TScriptContext.CreateFrame(ADocument: TDocument; AEnvironment: TScriptEnvironment;
-  Parent: TBindingContext; AFrameElement: TElement);
+  Parent: TBindingContext; AFrameElement: TElement; AWindow: TEventTarget);
 begin
-  inherited CreateFrame(ADocument, AEnvironment, Parent, AFrameElement);
+  inherited CreateFrame(ADocument, AEnvironment, Parent, AFrameElement, AWindow);
   Setup;
 end;
 

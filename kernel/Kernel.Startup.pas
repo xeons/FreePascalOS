@@ -46,6 +46,8 @@ procedure KernelEntryPoint(BootInformation: PBootInformation);
 implementation
 
 uses
+  Kernel.IdleStates,
+  Io.AcpiPower,
   Objects.Events,
   Objects.Timers,
   Objects.Sections,
@@ -66,9 +68,14 @@ uses
   Kernel.DeferredCalls,
   Kernel.Clock,
   Kernel.Options,
+  Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.HeapCheckTest,
+  Kernel.ProtectionSelfTest,
+  Kernel.ProtectionFaultTest,
+  Kernel.Arch.ProcessorProtection,
+  Memory.BootDataReclaim,
   Kernel.SecondaryProcessors,
   Kernel.FileSystemTest,
   Kernel.FileSystemWriteTest,
@@ -105,6 +112,9 @@ uses
   Io.DeviceFiles,
   Kernel.IoSelfTest,
   Kernel.WatchdogSelfTest,
+  Kernel.PanicTest,
+  Kernel.StackTraceSelfTest,
+  Kernel.RandomSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -234,9 +244,9 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
-    { Interrupts are enabled, so the next interrupt ends the halt. If it
+    { Interrupts are enabled, so the next interrupt ends the wait. If it
       made a thread ready, the dispatch interrupt switches to it. }
-    HaltProcessor;
+    IdleProcessor;
   end;
 end;
 
@@ -309,6 +319,9 @@ begin
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
+  { Thermal zones, batteries and _CST's idle states, read on a thread of
+    their own. }
+  StartAcpiPower;
   InitializeIoSystem;
   { The network adapters registered with the drivers above. }
   StartNetworking;
@@ -326,9 +339,14 @@ begin
   StartAudioThreads;
   StartTerminalSignalHandler;
   StartHangWatch;
+  RunPanicTestIfAsked;
 
   RunKernelSelfTests;
+  RunStackTraceSelfTest;
+  RunRandomSelfTest;
   RunHeapCheckSelfTest;
+  RunProtectionSelfTests;
+  RunProtectionFaultTest;
   RunIoSelfTests;
   RunWatchdogSelfTest;
   RunNetworkSelfTests;
@@ -337,6 +355,9 @@ begin
     journaled ones with a simulated crash that leaves them read-only. }
   if KernelOptionIsSet(OptionFileSystemWriteTests) then
     RunFileSystemWriteTests;
+  { Start-up is done with the boot information (Context): its pages go
+    back to the allocator. }
+  ReclaimBootData(PBootInformation(Context));
   WriteBlockCacheSummary;
   WriteDiskStatistics;
 
@@ -422,11 +443,17 @@ begin
   WriteProcessorDescription;
 
   InitializeMemoryManagement(BootInformation);
+  InitializeRandom(BootInformation^);
+  { SMEP, UMIP, PAN: before the other processors start, which copy the
+    boot processor's settings. }
+  EnableProcessorProtection;
   RecordBootRamDisk(BootInformation^);
   InitializeExecutiveServices;
 
   InitializeHal;
   HalWriteDescription;
+  InitializeIdleStates;
+  WriteIdleStates;
 
   BootStackBase := QWord(PhysicalToVirtual(BootInformation^.BootStackPhysicalBase));
   IdleThread := CreateIdleThreadFromBootContext(BootStackBase,

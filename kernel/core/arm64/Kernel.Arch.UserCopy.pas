@@ -22,9 +22,9 @@
 
   A copy that faults on a user address (memory another thread just
   freed) continues at ArchUserCopyFault, which makes the routine return
-  UserCopyFaulted. The Cortex-A72 (ARMv8.0) has no PAN, the AArch64
-  counterpart of SMAP; with PAN the copies would clear it around the
-  loop.
+  UserCopyFaulted. With PAN, the AArch64 counterpart of SMAP
+  (Kernel.Arch.ProcessorProtection), the copies clear it around the
+  loop, and a faulting copy gets it set again on its way out.
 }
 unit Kernel.Arch.UserCopy;
 
@@ -46,6 +46,12 @@ function ArchCopyUserMemory(Destination, Source: Pointer; Length: QWord): Int64;
   copied without a terminator) or UserCopyFaulted. }
 function ArchCopyUserString(Destination, Source: PChar; Capacity: QWord): Int64;
 procedure InitializeUserCopy;
+{ True if the processor refuses kernel accesses to user pages outside
+  the copy routines (PAN). }
+function UserMemoryIsProtected: Boolean;
+{ False only while this processor has the window to user memory open
+  (PSTATE.PAN clear under PAN). }
+function UserMemoryProtectionIsOnHere: Boolean;
 { For the page fault handler: if the current thread faulted on a user
   address inside a copy routine, redirects it and returns True. }
 function RecoverFromUserCopyFault(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
@@ -58,6 +64,10 @@ uses
 
 const
   UserSpaceLimit = QWord($0000800000000000);
+  SavedStatePan = QWord(1) shl 22;
+
+var
+  ArchPanEnabled: Byte; external name 'ArchPanEnabled';
 
 function ArchUserCopyBytes(Destination, Source: Pointer; Length: QWord): Int64; external name 'ArchUserCopyBytes';
 function ArchUserCopyString(Destination, Source: PChar; Capacity: QWord): Int64;
@@ -70,6 +80,18 @@ procedure ArchUserCopyFault; external name 'ArchUserCopyFault';
 
 procedure InitializeUserCopy;
 begin
+end;
+
+function UserMemoryIsProtected: Boolean;
+begin
+  Result := ArchPanEnabled <> 0;
+end;
+
+function ArchReadPrivilegedAccessNever: QWord; external name 'ArchReadPrivilegedAccessNever';
+
+function UserMemoryProtectionIsOnHere: Boolean;
+begin
+  Result := (ArchPanEnabled = 0) or ((ArchReadPrivilegedAccessNever and SavedStatePan) <> 0);
 end;
 
 function ArchCopyUserMemory(Destination, Source: Pointer; Length: QWord): Int64;
@@ -115,6 +137,9 @@ begin
      not IsInside(Frame^.Elr, @ArchUserCopyStringStart, @ArchUserCopyStringEnd) then
     Exit;
   Frame^.Elr := QWord(@ArchUserCopyFault);
+  { The copy had PAN cleared; the code after it must not. }
+  if ArchPanEnabled <> 0 then
+    Frame^.Spsr := Frame^.Spsr or SavedStatePan;
   Result := True;
 end;
 

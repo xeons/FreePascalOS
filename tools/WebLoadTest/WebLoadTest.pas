@@ -38,6 +38,7 @@ uses
   WebLoadTest.Rendering,
   WebLoadTest.Scripting,
   WebLoadTest.Editing,
+  WebLoadTest.Frames,
   SysUtils,
   Web.Bindings.Context,
   Web.Navigation.Pages;
@@ -59,6 +60,7 @@ begin
   RunLoadingTests;
   RunRenderingTests;
   RunScriptingTests;
+  RunFrameTests;
   RunEditingTests;
   FinishChecks('web load test');
 end.

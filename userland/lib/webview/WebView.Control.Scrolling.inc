@@ -146,14 +146,25 @@ end;
 function TWebView.ScrollInnerContainer(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
 var
   Hit: THitTestResult;
-  Box: TLayoutBox;
-  ClientWidth, ClientHeight, TargetX, TargetY: Single;
 begin
   Result := False;
   if FPainter = nil then
     Exit;
+  { Frames under the pointer first (their containers, their viewports). }
+  if ScrollThroughFrames(CssX, CssY, DeltaX, DeltaY) then
+    Exit(True);
   Hit := FPainter.HitTest(CssX, CssY);
-  Box := Hit.Box;
+  Result := ScrollBoxChain(FLayout, Hit.Box, DeltaX, DeltaY);
+end;
+
+{ The innermost scroll container from Box up that can move that way. }
+function TWebView.ScrollBoxChain(DocumentLayout: TDocumentLayout; Box: TLayoutBox; DeltaX, DeltaY: Double): Boolean;
+var
+  ClientWidth, ClientHeight, TargetX, TargetY: Single;
+begin
+  Result := False;
+  if DocumentLayout = nil then
+    Exit;
   while Box <> nil do
   begin
     if (bfScrollContainer in Box.Flags) and (Box.Kind <> bkViewport) and (Box.Node <> nil) then
@@ -164,7 +175,7 @@ begin
       TargetY := EnsureRange(Box.ScrollY + DeltaY, 0, Max(0, Box.ScrollHeight - ClientHeight));
       if (TargetX <> Box.ScrollX) or (TargetY <> Box.ScrollY) then
       begin
-        FLayout.SetScrollOffset(Box.Node, TargetX, TargetY);
+        DocumentLayout.SetScrollOffset(Box.Node, TargetX, TargetY);
         InvalidateViewport;
         Exit(True);
       end;

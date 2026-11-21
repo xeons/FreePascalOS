@@ -67,6 +67,13 @@ begin
     Result := Default;
 end;
 
+function IsFrameElement(Box: TReplacedBox): Boolean;
+begin
+  Result := (Box.Node <> nil) and Box.Node.IsElement and (TElement(Box.Node).IsHtmlElement(AtomIframe) or
+    TElement(Box.Node).IsHtmlElement(AtomFrame) or TElement(Box.Node).IsHtmlElement(AtomEmbed) or
+    TElement(Box.Node).IsHtmlElement(AtomObject));
+end;
+
 procedure UpdateIntrinsicSize(Box: TReplacedBox);
 var
   Font: TTextFont;
@@ -108,6 +115,10 @@ begin
         Box.IntrinsicHeight := 150;
         Box.HasIntrinsicWidth := True;
         Box.HasIntrinsicHeight := True;
+        { A frame's 300 by 150 has no ratio (a width alone leaves the
+          height at 150). }
+        if IsFrameElement(Box) then
+          Exit;
       end;
     ControlTextField:
       begin

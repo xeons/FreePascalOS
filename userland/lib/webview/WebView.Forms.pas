@@ -68,9 +68,11 @@ function BuildFormSubmission(Form, Submitter: TElement; Context: TLoadingContext
 { HTML 4.10.21.2: the form's default button (its first submit button in
   tree order), nil without one. }
 function DefaultButtonOf(Form: TElement): TElement;
-{ Submits Form in Navigable: the submit event (cancelable), then the
-  navigation its entries make; False when nothing was submitted. Form
-  and Submitter are held while the page's listeners run. }
+{ Submits Form from Navigable (the form's own): the submit event
+  (cancelable), then the navigation its entries make, into the navigable
+  its target attribute chooses (Navigable itself when there is none or
+  it names no navigable); False when nothing was submitted. Form and
+  Submitter are held while the page's listeners run. }
 function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
 
 implementation
@@ -320,6 +322,7 @@ end;
 
 function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean;
 var
+  Destination: TNavigable;
   Target: TUrlRecord;
   Options: TNavigateOptions;
 begin
@@ -344,7 +347,10 @@ begin
     Form.Release;
   end;
   Options.Source := Navigable.Loader;
-  Navigable.Navigate(Target, Options);
+  Destination := Navigable.ChooseNavigable(Trim(Form.GetAttribute('target')));
+  if Destination = nil then
+    Destination := Navigable;
+  Destination.Navigate(Target, Options);
   Result := True;
 end;
 

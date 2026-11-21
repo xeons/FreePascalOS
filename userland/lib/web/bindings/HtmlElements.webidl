@@ -706,6 +706,8 @@ interface HTMLFrameSetElement : HTMLElement {
 interface HTMLFrameElement : HTMLElement {
   [Reflect] attribute DOMString name;
   [ReflectURL] attribute USVString src;
+  readonly attribute Document? contentDocument;
+  readonly attribute Window? contentWindow;
 };
 
 [Exposed=Window, LocalNames=(marquee)]

@@ -107,6 +107,7 @@ FPC ?= fpc
 LD ?= ld
 OBJCOPY ?= objcopy
 OBJDUMP ?= objdump
+NM ?= nm
 
 BUILD_DIRECTORY := build/$(ARCH)
 ESP_DIRECTORY := $(BUILD_DIRECTORY)/esp
@@ -128,6 +129,7 @@ else ifeq ($(ARCH),arm64)
   LD := $(CROSS_PREFIX)ld
   OBJCOPY := $(CROSS_PREFIX)objcopy
   OBJDUMP := $(CROSS_PREFIX)objdump
+  NM := $(CROSS_PREFIX)nm
   # Both are compiled for linux (AAPCS64, which is also the UEFI calling
   # convention on AArch64); the loader is linked as a position
   # independent ELF and converted to a PE image (see boot/uefi/arm64).
@@ -162,6 +164,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/processes kernel/processes/$(ARCH) \
 	kernel/firmware \
 	kernel/io \
+	kernel/power \
 	kernel/network \
 	kernel/drivers/storage \
 	kernel/drivers/virtio \
@@ -186,7 +189,9 @@ LOADER_FLAGS := $(COMMON_FLAGS) $(LOADER_TARGET) -WR -Xs \
 # -g      debug information (for GDB through QEMU)
 # -Cg-    no position independent code
 # -Cn     compile only, the kernel is linked with ld below
-KERNEL_FLAGS := $(COMMON_FLAGS) $(KERNEL_TARGET) -g -Cg- -Cn \
+# -OoNOSTACKFRAME  every routine keeps its frame pointer (RBP, X29), so
+#         a panic can walk the frames for its back trace
+KERNEL_FLAGS := $(COMMON_FLAGS) $(KERNEL_TARGET) -g -Cg- -Cn -OoNOSTACKFRAME \
 	-Fu$(RTL_KERNEL_DIRECTORY) $(addprefix -Fu,$(KERNEL_UNIT_DIRECTORIES)) \
 	-FU$(KERNEL_OBJECT_DIRECTORY)
 
@@ -195,7 +200,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -221,7 +226,7 @@ $(RTL_LOADER_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
 	$(call build-rtl,$(RTL_LOADER_DIRECTORY),rtl/freestanding,$(LOADER_TARGET))
 
 $(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
-	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET))
+	$(call build-rtl,$(RTL_KERNEL_DIRECTORY),rtl/freestanding,$(KERNEL_TARGET) -OoNOSTACKFRAME)
 
 # --- Cross compiler ----------------------------------------------------------
 
@@ -282,12 +287,37 @@ $(KERNEL_OBJECT_DIRECTORY)/%.o: kernel/core/$(ARCH)/%.s
 	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
 	$(TARGET_AS) -o $@ $<
 
-$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
-	@mkdir -p $(KERNEL_OBJECT_DIRECTORY)
-	$(TARGET_FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+# The kernel's symbol table (scripts/make-kernel-symbols.py) for its back
+# traces: the kernel is linked with an empty table, the table is made
+# from that image's symbols, and the kernel is linked again with it. The
+# table goes after the code, which does not move (the script checks).
+KERNEL_SYMBOLS_DIRECTORY := $(BUILD_DIRECTORY)/kernel-symbols
+KERNEL_UNSYMBOLIZED_ELF := $(KERNEL_SYMBOLS_DIRECTORY)/kernel-unsymbolized.elf
+KERNEL_SYMBOL_SOURCES := $(KERNEL_UNIT_DIRECTORIES) rtl/freestanding rtl/common
+# Compiler options are not part of what Free Pascal checks to decide
+# whether a unit is up to date: when they change, every unit is compiled
+# again.
+KERNEL_FLAGS_STAMP := $(KERNEL_OBJECT_DIRECTORY)/flags.stamp
+
+define link-kernel
 	$(LD) -nostdlib -static --gc-sections -z max-page-size=4096 \
-		-T $(KERNEL_LINKER_SCRIPT) -o $@ \
-		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o
+		-T $(KERNEL_LINKER_SCRIPT) -o $(1) \
+		$(KERNEL_OBJECT_DIRECTORY)/*.o $(RTL_KERNEL_DIRECTORY)/system.o $(2)
+endef
+
+$(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FORCE
+	@mkdir -p $(KERNEL_OBJECT_DIRECTORY) $(KERNEL_SYMBOLS_DIRECTORY)
+	@if [ "$$(cat $(KERNEL_FLAGS_STAMP) 2> /dev/null)" != "$(KERNEL_FLAGS)" ]; then \
+		rm -f $(KERNEL_OBJECT_DIRECTORY)/*.ppu; echo "$(KERNEL_FLAGS)" > $(KERNEL_FLAGS_STAMP); fi
+	$(TARGET_FPC) $(KERNEL_FLAGS) kernel/Kernel.Startup.pas
+	python3 scripts/make-kernel-symbols.py --empty $(KERNEL_SYMBOLS_DIRECTORY)/empty.s
+	$(TARGET_AS) -o $(KERNEL_SYMBOLS_DIRECTORY)/empty.o $(KERNEL_SYMBOLS_DIRECTORY)/empty.s
+	$(call link-kernel,$(KERNEL_UNSYMBOLIZED_ELF),$(KERNEL_SYMBOLS_DIRECTORY)/empty.o)
+	python3 scripts/make-kernel-symbols.py --nm $(NM) $(addprefix --source ,$(KERNEL_SYMBOL_SOURCES)) \
+		$(KERNEL_UNSYMBOLIZED_ELF) $(KERNEL_SYMBOLS_DIRECTORY)/symbols.s
+	$(TARGET_AS) -o $(KERNEL_SYMBOLS_DIRECTORY)/symbols.o $(KERNEL_SYMBOLS_DIRECTORY)/symbols.s
+	$(call link-kernel,$@,$(KERNEL_SYMBOLS_DIRECTORY)/symbols.o)
+	python3 scripts/make-kernel-symbols.py --nm $(NM) --verify $(KERNEL_UNSYMBOLIZED_ELF) $@
 	@$(MAKE) --no-print-directory check-kernel
 
 # The kernel does not save floating point / SIMD registers on interrupts or
@@ -507,14 +537,21 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
+	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# Panics on purpose (the testpanic kernel option) and checks the back
+# trace; also run by make test. Works for ARCH=arm64 too.
+.PHONY: panic-trace-test
+panic-trace-test: esp
+	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 
 # Not part of make test (it takes a minute a round under TCG): suspends
 # and wakes the input test's machine ROUNDS times (ACCEL=kvm for KVM,
@@ -567,6 +604,17 @@ $(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Pr
 region-tree-test: $(REGION_TREE_TEST)
 	$(REGION_TREE_TEST)
 
+# The kernel's random number core (ChaCha20, against RFC 8439) and the
+# randomized address space layouts (Processes.AddressLayout) on the host.
+ASLR_TEST := build/tools/AslrTest
+
+$(ASLR_TEST): tools/AslrTest/AslrTest.pas kernel/core/Kernel.ChaCha20.pas kernel/processes/Processes.AddressLayout.pas
+	@mkdir -p build/tools/aslr-units
+	$(FPC) -O2 -Cr -Co -Fukernel/core -Fukernel/processes -FEbuild/tools -FUbuild/tools/aslr-units $<
+
+aslr-test: $(ASLR_TEST)
+	$(ASLR_TEST)
+
 # The platform device walk (kernel/firmware) on the host, over a table
 # tools/AcpiDeviceTest/make-table.py assembles.
 ACPI_DEVICE_TEST := build/tools/AcpiDeviceTest
@@ -582,6 +630,39 @@ $(ACPI_DEVICE_TABLE): tools/AcpiDeviceTest/make-table.py
 
 acpi-device-test: $(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
 	$(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
+
+# Thermal zones, batteries and _CST (kernel/firmware) on the host, over a
+# table tools/AcpiPowerTest/make-table.py assembles (with --ssdt, the
+# same zones and batteries as an SSDT for QEMU's -acpitable).
+ACPI_POWER_TEST := build/tools/AcpiPowerTest
+ACPI_POWER_TABLE := build/tools/acpi-power-test.aml
+
+$(ACPI_POWER_TEST): tools/AcpiPowerTest/AcpiPowerTest.pas $(AML_TEST_SOURCES)
+	@mkdir -p build/tools/acpi-power-units
+	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/acpi-power-units $<
+
+$(ACPI_POWER_TABLE): tools/AcpiPowerTest/make-table.py
+	@mkdir -p build/tools
+	python3 -I $< $@
+
+acpi-power-test: $(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
+	$(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
+
+# The timesync service's SNTP code (userland/timesync) on the host:
+# packets, corrections, and requests over UDP to tools/SntpTest's small
+# server on 127.0.0.1 (its clock 1234.5 s ahead, and a kiss of death).
+SNTP_TEST := build/tools/SntpTest
+SNTP_PORT_FILE := build/tools/sntp-test-ports
+
+$(SNTP_TEST): tools/SntpTest/SntpTest.pas userland/timesync/TimeSync.Packets.pas userland/timesync/TimeSync.Corrections.pas
+	@mkdir -p build/tools/sntp-units
+	$(FPC) -O2 -Cr -Fuuserland/timesync -FEbuild/tools -FUbuild/tools/sntp-units $<
+
+sntp-test: $(SNTP_TEST)
+	@: > $(SNTP_PORT_FILE); \
+	python3 -I tools/SntpTest/sntp-server.py $(SNTP_PORT_FILE) & server=$$!; \
+	for attempt in $$(seq 50); do [ -s $(SNTP_PORT_FILE) ] && break; sleep 0.1; done; \
+	$(SNTP_TEST) $(SNTP_PORT_FILE); status=$$?; kill $$server 2> /dev/null; exit $$status
 
 # The device tree reading (shared/DeviceTree.*, kernel/firmware) on the
 # host, over a tree in the Raspberry Pi 5's layout that
@@ -944,13 +1025,20 @@ svg-test: $(SVG_TEST)
 
 # libcompression builds for the host too, and is checked there against
 # zlib's own output (made by Python's zlib when the test is built); what
-# it compresses is then decompressed by Python's zlib and gzip.
+# it compresses is then decompressed by Python's zlib and gzip. Its brotli
+# and zstd decoders are checked over fixtures make-fixtures.py makes with
+# the host's brotli and zstd programs.
 COMPRESSION_TEST := build/tools/CompressionTest
 COMPRESSION_TEST_UNITS := build/tools/compression-test-units
 COMPRESSION_VECTORS := $(COMPRESSION_TEST_UNITS)/CompressionTest.Vectors.inc
 COMPRESSION_SAMPLES := build/tools/compression-samples
+COMPRESSION_FIXTURES := build/tools/compression-fixtures
 COMPRESSION_TEST_SOURCES := $(wildcard tools/CompressionTest/*.pas) tools/CryptoTest/TestChecks.pas \
-	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas))
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	$(wildcard userland/lib/compression/*.inc)
+
+$(COMPRESSION_FIXTURES)/manifest.txt: tools/CompressionTest/make-fixtures.py
+	python3 -I $< $(COMPRESSION_FIXTURES)
 
 $(COMPRESSION_VECTORS): tools/CompressionTest/make-vectors.py
 	@mkdir -p $(COMPRESSION_TEST_UNITS)
@@ -962,9 +1050,9 @@ $(COMPRESSION_TEST): $(COMPRESSION_TEST_SOURCES) $(COMPRESSION_VECTORS)
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/CompressionTest -Futools/CryptoTest -Fuuserland/lib/compression \
 		-Fi$(COMPRESSION_TEST_UNITS) -FU$(COMPRESSION_TEST_UNITS) -o$@ tools/CompressionTest/CompressionTest.pas
 
-compression-test: $(COMPRESSION_TEST)
+compression-test: $(COMPRESSION_TEST) $(COMPRESSION_FIXTURES)/manifest.txt
 	@mkdir -p $(COMPRESSION_SAMPLES)
-	@$(COMPRESSION_TEST) $(COMPRESSION_SAMPLES) > build/tools/compression-test.out || \
+	@$(COMPRESSION_TEST) $(COMPRESSION_SAMPLES) $(COMPRESSION_FIXTURES) > build/tools/compression-test.out || \
 		{ grep -A2 FAIL build/tools/compression-test.out; echo "COMPRESSION TEST FAILED (build/tools/compression-test.out)"; exit 1; }
 	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
 		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }

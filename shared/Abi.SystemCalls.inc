@@ -467,13 +467,122 @@ const
     or for an unknown limit. Returns the previous value. }
   CallSetProcessLimit = 131;
 
-  CallCount = 132;
+  { --- Crash reports ---------------------------------------------------- }
+
+  { (BufferAddress, Capacity): the caller's loaded modules - the program
+    and its libraries, in load order - as up to Capacity
+    TAbiModuleInformation records; returns how many there are (which may
+    be more than Capacity). The runtime's crash reports name them, so the
+    addresses in a report can be symbolized wherever the modules were
+    loaded (scripts/symbolize.py). }
+  CallGetProcessModules = 136;
+
+  { --- Thread names and libraries loaded at run time (148-151) ------------ }
+
+  { (ThreadId or CurrentThreadHandle, NameAddress): names a thread of the
+    calling process (by its id, as CallGetThreadId gives it), as hang
+    reports, the debug shell, ps and the task manager show it. At most
+    ThreadNameCapacity - 1 characters are kept; an empty name gives the
+    thread its process's name again. ErrorNotFound if the process has
+    no thread with that id. }
+  CallSetThreadName = 148;
+  { (ProcessId (0: the caller), BufferAddress, Capacity): describes the
+    threads of a process, one TAbiThreadDetails each, as many as fit in
+    Capacity records; returns how many there are. Anyone may list any
+    process's threads; ErrorNotFound if no process has that id. }
+  CallListThreads = 149;
+  { (ModuleHandle, AddressOfTAbiModuleTls): the thread-local storage of
+    a library loaded with CallLoadLibrary after the program started (a
+    module whose TLS module id carries TlsDynamicModuleTag): where its
+    initialization image is and how large and aligned each thread's
+    block must be. The user runtime makes a thread's block the first
+    time the thread touches the library's thread-local variables.
+    ErrorNotFound for a module without thread-local storage. }
+  CallGetModuleTls = 150;
+  { (ModuleHandle, AddressOfTAbiModuleInitializers): the initializers
+    (DT_INIT, then DT_INIT_ARRAY, dependencies first) and finalizers
+    (DT_FINI_ARRAY backwards, then DT_FINI, in the reverse order) of the
+    libraries that CallLoadLibrary loaded for ModuleHandle, given once:
+    they are copied into the record's arrays and forgotten, so a second
+    call gets none. The user runtime calls the initializers before
+    LoadLibrary returns and the finalizers when the program exits.
+    ErrorMessageTooLong (with the counts filled in, nothing given) if an
+    array is too small. }
+  CallTakeModuleInitializers = 151;
+
+  { --- Power, idle and time (152-159) ------------------------------------- }
+
+  { (Which, TimeAddress): the time to the nanosecond, as a
+    TAbiPreciseTime: TimeWallClock (since 1970-01-01 00:00:00 UTC) or
+    TimeUptimeNanoseconds (since start, never going back, not counting
+    suspend to RAM). ErrorInvalidArgument for another Which. }
+  CallGetPreciseTime = 152;
+  { (OffsetNanoseconds, Flags, RemainingAddress): moves the wall clock
+    by OffsetNanoseconds (signed): at once (written to the battery
+    backed clock too), or with AdjustGradually by running it 0.05 %
+    fast or slow until it has moved that far (never jumping or going
+    back), replacing what was left of an earlier adjustment. With
+    AdjustQueryOnly nothing changes. If RemainingAddress is not 0, the
+    Int64 there gets what a gradual adjustment still has to move.
+    Root only, except for a query (ErrorNotPermitted). }
+  CallAdjustWallClock = 153;
+  { (InformationAddress): the processors' power: idle states, clock
+    interrupts, clock rate and limits, as a TAbiProcessorPower. }
+  CallGetProcessorPower = 154;
+  { (BufferAddress, Capacity): the thermal zones (ACPI's, the Raspberry
+    Pi's processor temperature) as up to Capacity TAbiThermalZone
+    records; returns how many there are (more than Capacity: only
+    Capacity were written). }
+  CallListThermalZones = 155;
+  { (BufferAddress, Capacity): the batteries (ACPI control method
+    batteries) as up to Capacity TAbiBattery records; returns how many
+    there are. }
+  CallListBatteries = 156;
+  { 157-159 are kept for this group. }
+
+  CallCount = 160;
+
+  AbiModuleNameCapacity = 64;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
   TimeUptimeNanoseconds = 2;
 
   TimeZoneNameCapacity = 48;
+
+  { CallAdjustWallClock flags. }
+  AdjustGradually = $01;
+  AdjustQueryOnly = $02;
+
+  { Power information. }
+  AbiIdleStateCapacity = 8;
+  AbiIdleStateNameCapacity = 16;
+  AbiThermalZoneNameCapacity = 32;
+  AbiBatteryTextCapacity = 32;
+  { TAbiProcessorPower.Flags. }
+  ProcessorPowerTickless = $01;
+  { The clock rate can be changed (the Raspberry Pi's firmware). }
+  ProcessorPowerClockScaling = $02;
+  { A thermal limit holds the processors back now. }
+  ProcessorPowerThrottled = $04;
+  { A fan is driven, and it runs now. }
+  ProcessorPowerFanControlled = $08;
+  ProcessorPowerFanRunning = $10;
+  { TAbiThermalZone.Kind. }
+  ThermalZoneAcpi = 1;
+  ThermalZoneFirmware = 2;
+  { A trip point that is not there. }
+  ThermalTripNone = Low(LongInt);
+  { TAbiBattery.State bits (ACPI _BST). }
+  BatteryDischarging = $01;
+  BatteryCharging = $02;
+  BatteryCritical = $04;
+  { TAbiBattery.PowerUnit: milliwatts and milliwatt-hours, or
+    milliamperes and milliampere-hours. }
+  BatteryUnitPower = 0;
+  BatteryUnitCurrent = 1;
+  { A battery value that is not known. }
+  BatteryValueUnknown = High(LongWord);
   KeyboardLayoutNameCapacity = 16;
   KeyboardLayoutDescriptionCapacity = 48;
   { The key repeat: the delay before a held key repeats, and the rate it
@@ -567,6 +676,10 @@ const
   ThreadBlockRuntimeOffset = 0;
   ThreadBlockIdOffset = 8;
   ThreadBlockSize = 16;
+  { A word below the control block, zero when a thread starts, for the
+    user runtime: libsystem keeps the thread's dynamic thread-local
+    storage vector there (Sys.DynamicTls in rtl/fpc). }
+  ThreadBlockDynamicVectorOffset = -8;
 {$else}
   { The thread control block the thread pointer (%fs base) of every user
     thread points at (x86-64 TLS variant II: static thread-local storage
@@ -576,6 +689,9 @@ const
   ThreadBlockSelfOffset = 0;
   ThreadBlockRuntimeOffset = 8;
   ThreadBlockIdOffset = 16;
+  { A word for the user runtime, zero when a thread starts: libsystem
+    keeps the thread's dynamic thread-local storage vector there. }
+  ThreadBlockDynamicVectorOffset = 24;
   ThreadBlockSize = 64;
 {$endif}
 
@@ -772,11 +888,31 @@ const
   GroupNewInForeground = -2;
 
   { Flags of CallAllocateMemory. }
-  { The memory belongs to the calling thread (a threadvar block): if the
-    thread ends without freeing it (ended by another thread, say), the
-    kernel frees it. Only the latest such allocation of a thread is
-    tracked. }
+  { The memory belongs to the calling thread (a threadvar block, a
+    dynamic thread-local storage block): if the thread ends without
+    freeing it (ended by another thread, say), the kernel frees it. }
   AllocateForThread = $01;
+
+  { The TLS module id (R_*_DTPMOD64) of a library loaded after the
+    program started is this tag plus its module handle, and a TLS
+    descriptor's argument (R_AARCH64_TLSDESC) the tag plus the handle
+    shifted left by TlsDynamicHandleShift plus the variable's offset:
+    such libraries' blocks are made per thread when first touched
+    (CallGetModuleTls). The other ids are offsets from the thread
+    pointer (static TLS), which never carry the tag. }
+  TlsDynamicModuleTag = QWord($4000000000000000);
+  TlsDynamicHandleShift = 32;
+  TlsDynamicHandleMask = QWord($FFFFFF);
+
+  { The longest thread name, with its zero (CallSetThreadName). }
+  ThreadNameCapacity = 32;
+
+  { States of TAbiThreadDetails. }
+  ThreadDetailsRunning = 0;
+  ThreadDetailsReady = 1;
+  ThreadDetailsWaiting = 2;
+  ThreadDetailsSuspended = 3;
+  ThreadDetailsExiting = 4;
 
   { CallSetProcessLimit: the most regions and the most handles a process
     may have, by default and at most. }
@@ -1130,6 +1266,118 @@ type
   end;
   PAbiProcessorDescription = ^TAbiProcessorDescription;
 
+  TAbiModuleInformation = record
+    { The load bias: a symbol's address in the process is Base plus its
+      value in the module's file (for a position independent module,
+      where its first page was put). }
+    Base: QWord;
+    { The end of the module's mapped pages: an address belongs to the
+      module if it lies from Base up to Limit. }
+    Limit: QWord;
+    { The file's name ("files", "libsystem.so"). }
+    Name: array[0..AbiModuleNameCapacity - 1] of Char;
+  end;
+  PAbiModuleInformation = ^TAbiModuleInformation;
+
+  TAbiPreciseTime = record
+    { Whole seconds, and nanoseconds past them (0-999999999). }
+    Seconds: Int64;
+    Nanoseconds: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiPreciseTime = ^TAbiPreciseTime;
+
+  TAbiIdleState = record
+    { "C1 (HLT)", "C6 (MWAIT)", "WFI", "PSCI standby 1"... }
+    Name: array[0..AbiIdleStateNameCapacity - 1] of Char;
+    ExitLatencyNanoseconds: QWord;
+  end;
+
+  TAbiProcessorPowerUsage = record
+    { Clock interrupts it took, and its busy and idle time, since it
+      started (nanoseconds). }
+    ClockInterrupts: QWord;
+    { Of those, the ones that found a tick, a timer or a thread's
+      wake-up due (several may be due at once). }
+    TickInterrupts: QWord;
+    TimerInterrupts: QWord;
+    WakeUpInterrupts: QWord;
+    BusyNanoseconds: QWord;
+    IdleNanoseconds: QWord;
+    { How often it entered each idle state. }
+    IdleStateEntries: array[0..AbiIdleStateCapacity - 1] of QWord;
+    { 1 if it runs. }
+    Online: LongWord;
+    Reserved: LongWord;
+  end;
+
+  { What CallGetProcessorPower gives. }
+  TAbiProcessorPower = record
+    UptimeNanoseconds: QWord;
+    ProcessorCount: LongWord;
+    IdleStateCount: LongWord;
+    { ProcessorPower* flags. }
+    Flags: LongWord;
+    { The highest clock rate the processors may run at now, in percent
+      of their maximum (100 unless a thermal limit holds them back). }
+    PerformanceLimitPercent: LongWord;
+    { The processors' clock rate now and its range, in hertz (0 where
+      the machine does not say: on PCs). }
+    ClockHertz: QWord;
+    MinimumClockHertz: QWord;
+    MaximumClockHertz: QWord;
+    { The kernel's clock: "time stamp counter", "KVM paravirtual clock",
+      "generic timer". }
+    ClockSource: array[0..AbiIdleStateNameCapacity * 2 - 1] of Char;
+    IdleStates: array[0..AbiIdleStateCapacity - 1] of TAbiIdleState;
+    Processors: array[0..AbiMaximumProcessors - 1] of TAbiProcessorPowerUsage;
+  end;
+  PAbiProcessorPower = ^TAbiProcessorPower;
+
+  TAbiThermalZone = record
+    { "\_TZ_.TZ00", "soc" }
+    Name: array[0..AbiThermalZoneNameCapacity - 1] of Char;
+    { ThermalZoneAcpi or ThermalZoneFirmware. }
+    Kind: LongWord;
+    { Thousandths of a degree Celsius; ThermalTripNone where not known
+      or not there. }
+    TemperatureMilliCelsius: LongInt;
+    { Above this the processors are slowed (passive cooling). }
+    PassiveMilliCelsius: LongInt;
+    { Above this the machine shuts down. }
+    CriticalMilliCelsius: LongInt;
+    { How fast the zone lets the processors run now, in percent. }
+    LimitPercent: LongWord;
+    { How often it is read, in milliseconds. }
+    PollMilliseconds: LongWord;
+  end;
+  PAbiThermalZone = ^TAbiThermalZone;
+
+  TAbiBattery = record
+    Name: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Model: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Serial: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Technology: array[0..AbiBatteryTextCapacity - 1] of Char;
+    { BatteryUnitPower or BatteryUnitCurrent: what the capacities and
+      the rate are in (mWh and mW, or mAh and mA). Values not known are
+      BatteryValueUnknown. }
+    PowerUnit: LongWord;
+    { Battery* state bits. }
+    State: LongWord;
+    DesignCapacity: LongWord;
+    FullChargeCapacity: LongWord;
+    RemainingCapacity: LongWord;
+    PresentRate: LongWord;
+    { Millivolts. }
+    PresentVoltage: LongWord;
+    DesignVoltage: LongWord;
+    { Remaining of full, in percent (BatteryValueUnknown if not known). }
+    Percent: LongWord;
+    { 1 if a battery is in the slot. }
+    Present: LongWord;
+  end;
+  PAbiBattery = ^TAbiBattery;
+
   TAbiSystemInformation = record
     SystemName: array[0..AbiTextCapacity - 1] of Char;
     Release: array[0..AbiTextCapacity - 1] of Char;
@@ -1232,6 +1480,45 @@ type
     SharedPages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { One thread, as CallListThreads describes it. }
+  TAbiThreadDetails = record
+    ThreadId: QWord;
+    { Its processor time, in nanoseconds. }
+    ProcessorNanoseconds: QWord;
+    { ThreadDetails*. }
+    State: LongWord;
+    { Its scheduling priority now (1 .. 31). }
+    Priority: LongWord;
+    { The processor it last ran on. }
+    LastProcessor: LongWord;
+    Reserved: LongWord;
+    Name: array[0..ThreadNameCapacity - 1] of Char;
+  end;
+  PAbiThreadDetails = ^TAbiThreadDetails;
+
+  { What CallGetModuleTls gives: each thread's block is BlockSize bytes
+    aligned to Alignment, starting as a copy of the ImageSize bytes at
+    ImageAddress followed by zeros. }
+  TAbiModuleTls = record
+    ImageAddress: QWord;
+    ImageSize: QWord;
+    BlockSize: QWord;
+    Alignment: QWord;
+  end;
+  PAbiModuleTls = ^TAbiModuleTls;
+
+  { CallTakeModuleInitializers: arrays of code addresses the caller
+    provides (address and capacity) and the kernel fills (count). }
+  TAbiModuleInitializers = record
+    Initializers: QWord;
+    InitializerCapacity: QWord;
+    InitializerCount: QWord;
+    Finalizers: QWord;
+    FinalizerCapacity: QWord;
+    FinalizerCount: QWord;
+  end;
+  PAbiModuleInitializers = ^TAbiModuleInitializers;
 
   { Who the other end of a channel is (CallGetChannelPeer). }
   { What CallReceiveNotification gives. }

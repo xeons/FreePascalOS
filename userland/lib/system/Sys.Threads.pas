@@ -48,6 +48,7 @@
 unit Sys.Threads;
 
 {$mode objfpc}
+{$H+}
 
 interface
 
@@ -77,6 +78,33 @@ function GetThreadId(Handle: Int64): Int64;
 
 { Gives up the rest of the time slice. }
 procedure YieldThread;
+
+type
+  { One thread of a process (ListThreads). }
+  TThreadDetails = record
+    ThreadId: QWord;
+    Name: string;
+    { ThreadDetails* in Abi.SystemCalls. }
+    State: LongWord;
+    Priority: LongWord;
+    LastProcessor: LongWord;
+    ProcessorNanoseconds: QWord;
+  end;
+  TThreadDetailsList = array of TThreadDetails;
+
+{ Names a thread of this process (by id; CurrentThreadHandle for the
+  calling thread) for hang reports, ps -L and the task manager: at most
+  31 characters are kept, an empty name means the process's name.
+  Returns 0 or a negative error code. TThread.NameThreadForDebugging
+  does the same. }
+function SetThreadName(const Name: string; ThreadId: Int64 = -1): Int64;
+
+{ The threads of process ProcessId (0: this one). Returns 0 or a
+  negative error code (-ErrorNotFound if there is no such process). }
+function ListThreads(ProcessId: QWord; out Threads: TThreadDetailsList): Int64;
+
+{ "running", "ready", "waiting", "suspended" or "exiting". }
+function ThreadStateText(State: LongWord): string;
 
 implementation
 
@@ -157,6 +185,55 @@ end;
 procedure YieldThread;
 begin
   SystemCall(CallSleep, 0, 0, 0, 0, 0, 0);
+end;
+
+function SetThreadName(const Name: string; ThreadId: Int64): Int64;
+begin
+  Result := SystemCall(CallSetThreadName, QWord(ThreadId), QWord(PChar(Name)), 0, 0, 0, 0);
+end;
+
+function ListThreads(ProcessId: QWord; out Threads: TThreadDetailsList): Int64;
+var
+  Records: array of TAbiThreadDetails;
+  Count: Int64;
+  Index: Integer;
+begin
+  Threads := nil;
+  Records := nil;
+  SetLength(Records, 16);
+  repeat
+    Count := SystemCall(CallListThreads, ProcessId, QWord(PtrUInt(@Records[0])), QWord(Length(Records)),
+      0, 0, 0);
+    if Count < 0 then
+      Exit(Count);
+    if Count <= Length(Records) then
+      Break;
+    SetLength(Records, Count + 8);
+  until False;
+
+  SetLength(Threads, Count);
+  for Index := 0 to Count - 1 do
+  begin
+    Threads[Index].ThreadId := Records[Index].ThreadId;
+    Threads[Index].Name := PChar(@Records[Index].Name[0]);
+    Threads[Index].State := Records[Index].State;
+    Threads[Index].Priority := Records[Index].Priority;
+    Threads[Index].LastProcessor := Records[Index].LastProcessor;
+    Threads[Index].ProcessorNanoseconds := Records[Index].ProcessorNanoseconds;
+  end;
+  Result := 0;
+end;
+
+function ThreadStateText(State: LongWord): string;
+begin
+  case State of
+    ThreadDetailsRunning: Result := 'running';
+    ThreadDetailsReady: Result := 'ready';
+    ThreadDetailsWaiting: Result := 'waiting';
+    ThreadDetailsSuspended: Result := 'suspended';
+  else
+    Result := 'exiting';
+  end;
 end;
 
 end.

@@ -68,6 +68,7 @@ uses
   Web.Bindings.Reflection,
   Web.Bindings.Style,
   Web.Bindings.UrlResolution,
+  Web.Bindings.CrossOrigin,
   Web.ScriptEnvironment;
 
 type
@@ -607,24 +608,45 @@ begin
   Result := TokenList(Call, 'sandbox');
 end;
 
-function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+function FrameContentDocument(var Call: TBindingCall): TJsValue;
 var
   Frame: TBindingContext;
 begin
   Frame := Context(Call).FrameOf(ThisElement(Call));
-  if Frame = nil then
+  { Not across origins. }
+  if (Frame = nil) or not SameOriginContexts(Context(Call), Frame) then
     Exit(JsNull);
   Result := Frame.WrapNode(Frame.Document);
 end;
 
-function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+function FrameContentWindow(var Call: TBindingCall): TJsValue;
 var
   Frame: TBindingContext;
 begin
   Frame := Context(Call).FrameOf(ThisElement(Call));
   if Frame = nil then
     Exit(JsNull);
-  Result := JsObjectValue(Frame.Engine.GlobalObject);
+  Result := WindowValueFor(Context(Call), Frame);
+end;
+
+function HTMLIFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentDocument(Call);
+end;
+
+function HTMLIFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentWindow(Call);
+end;
+
+function HTMLFrameElement_get_contentDocument(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentDocument(Call);
+end;
+
+function HTMLFrameElement_get_contentWindow(var Call: TBindingCall): TJsValue;
+begin
+  Result := FrameContentWindow(Call);
 end;
 
 function HTMLStyleElement_get_blocking(var Call: TBindingCall): TJsValue;

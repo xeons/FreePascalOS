@@ -73,7 +73,10 @@ type
     diHitArea,
     { A control's own text (a text field's value; Index: a string), in
       the box's font, clipped to the bounds. }
-    diControlText);
+    diControlText,
+    { A frame's document (Index: a TEmbeddedContent in Frames) painted
+      into the bounds (the frame's content box). }
+    diFrame);
 
   TDisplayItem = record
     Kind: TDisplayItemKind;
@@ -153,6 +156,10 @@ type
     StringCount: Integer;
     Stickies: array of TStickyRun;
     StickyCount: Integer;
+    { TEmbeddedContent objects (the parent document's resources own
+      their owners; the list is built again when they change). }
+    Frames: array of TObject;
+    FrameCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
     procedure Clear;
@@ -165,6 +172,7 @@ type
     function AddShadow(const Value: TShadowRun): Integer;
     function AddString(const Value: string): Integer;
     function AddSticky(const Value: TStickyRun): Integer;
+    function AddFrame(Content: TObject): Integer;
     { Bytes the list holds. }
     function MemoryBytes: PtrUInt;
   end;
@@ -182,6 +190,7 @@ begin
   ShadowCount := 0;
   StringCount := 0;
   StickyCount := 0;
+  FrameCount := 0;
   CanvasColor := ColorWhite;
 end;
 
@@ -272,6 +281,15 @@ begin
   Stickies[StickyCount] := Value;
   Result := StickyCount;
   Inc(StickyCount);
+end;
+
+function TDisplayList.AddFrame(Content: TObject): Integer;
+begin
+  if FrameCount >= Length(Frames) then
+    SetLength(Frames, FrameCount * 2 + 4);
+  Frames[FrameCount] := Content;
+  Result := FrameCount;
+  Inc(FrameCount);
 end;
 
 function TDisplayList.MemoryBytes: PtrUInt;

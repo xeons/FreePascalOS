@@ -5,6 +5,7 @@ build/
 .claude/worktrees/
 # Hand-written assembly sources are kept.
 !userland/lib/tlstest/*.s
+!userland/lib/dyntls/*.s
 !kernel/core/amd64/*.s
 !kernel/core/arm64/*.s
 !boot/uefi/arm64/*.s

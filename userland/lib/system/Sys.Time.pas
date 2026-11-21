@@ -41,6 +41,10 @@ type
 
 function CurrentTime: TUnixTime;
 function UptimeMilliseconds: QWord;
+{ Nanoseconds since 1970-01-01 00:00:00 UTC (CallGetPreciseTime). }
+function WallClockNanoseconds: Int64;
+{ Nanoseconds since start; never goes back. }
+function MonotonicNanoseconds: QWord;
 procedure DecodeTime(Time: TUnixTime; out DateTime: TDateTime);
 function DayName(DayOfWeek: LongInt): PChar;
 function MonthName(Month: LongInt): PChar;
@@ -48,11 +52,12 @@ function MonthName(Month: LongInt): PChar;
 implementation
 
 uses
+  Abi.SystemCalls,
   Sys.Kernel;
 
 const
-  TimeWallClock = 0;
-  TimeUptime = 1;
+  TimeUptime = TimeUptimeMilliseconds;
+  NanosecondsPerSecond = 1000000000;
 
   DayNames: array[0..6] of PChar = ('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat');
   MonthNames: array[1..12] of PChar = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -66,6 +71,25 @@ end;
 function UptimeMilliseconds: QWord;
 begin
   Result := QWord(KernelGetTime(TimeUptime));
+end;
+
+function PreciseTime(Which: LongWord): Int64;
+var
+  Time: TAbiPreciseTime;
+begin
+  if KernelGetPreciseTime(Which, Time) < 0 then
+    Exit(0);
+  Result := Time.Seconds * NanosecondsPerSecond + Time.Nanoseconds;
+end;
+
+function WallClockNanoseconds: Int64;
+begin
+  Result := PreciseTime(TimeWallClock);
+end;
+
+function MonotonicNanoseconds: QWord;
+begin
+  Result := QWord(PreciseTime(TimeUptimeNanoseconds));
 end;
 
 procedure DecodeTime(Time: TUnixTime; out DateTime: TDateTime);

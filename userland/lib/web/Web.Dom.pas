@@ -524,6 +524,7 @@ type
     FTargetElement: TElement;
     FFocusedElement: TElement;
     FBrowsingContext: TObject;
+    FOriginText: string;
     FOnReadyStateChange: TDocumentNotifyEvent;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
@@ -612,6 +613,10 @@ type
     procedure SetFocusedElementOnly(Element: TElement);
     { The loading side's object for this document (Web.Loading). }
     property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
+    { The document's origin when it is not its URL's (Web.Origins writes
+      and reads it): a creator's (about:blank, srcdoc) or an opaque one
+      (a sandboxed frame); '' for the URL's. }
+    property OriginText: string read FOriginText write FOriginText;
     { Called after ReadyState changed (and readystatechange fired). }
     property OnReadyStateChange: TDocumentNotifyEvent read FOnReadyStateChange write FOnReadyStateChange;
   end;

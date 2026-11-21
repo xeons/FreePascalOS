@@ -35,6 +35,8 @@
 #   MEMORY         memory size (default 1G)
 #   VIRTUALIZATION=1  start the firmware at EL2, as the Pi's firmware
 #                  does, so the loader's drop to EL1 is exercised
+#   CPU            the processor model (default cortex-a72; "max" has
+#                  PAN, ARMv8.1+, like the Raspberry Pi 5's Cortex-A76)
 #   SEMIHOSTING=1  let the kernel end QEMU with an exit status (tests)
 #   SD_CARD=image  an SD card holding the image, on an SD host controller
 #                  (sdhci-pci; the image's size must be a power of two)
@@ -143,7 +145,7 @@ fi
 
 exec "$qemu_binary" \
     -machine "$machine" \
-    -cpu cortex-a72 \
+    -cpu "${CPU:-cortex-a72}" \
     -m "${MEMORY:-1G}" \
     -smp "${PROCESSORS:-2}" \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \

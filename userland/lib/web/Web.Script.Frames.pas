@@ -83,6 +83,8 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    { The environment it forwards to (the parent's). }
+    property Parent: TScriptEnvironment read FParent;
   end;
 
 { The insertion and removal steps of iframe elements in Context's
@@ -99,6 +101,8 @@ uses
   Web.Atoms,
   Web.Namespaces,
   Web.Dom.Events,
+  Web.Bindings.CrossOrigin,
+  Web.Origins,
   Web.Script.Context;
 
 const
@@ -306,6 +310,8 @@ begin
     Exit;
   Document := TDocument.CreateDocument(True);
   try
+    { about:blank and srcdoc documents have their creator's origin. }
+    SetDocumentOrigin(Document, DocumentOrigin(Context.Document));
     Environment := TFrameEnvironment.Create(Context.Environment, Context);
     if Element.HasAttributeAtom(AtomSrcdocName) then
     begin
@@ -320,6 +326,7 @@ begin
     Child := TScriptContext.CreateFrame(Document, Environment, Context, Element);
     Child.OwnsEnvironment := True;
     Child.OnConsoleMessage := Context.OnConsoleMessage;
+    UpdateFrameIndices(Context);
     Child.ParseDocument(Srcdoc);
   finally
     Document.Release;
@@ -333,7 +340,10 @@ var
 begin
   Child := Context.FrameOf(Element);
   if Child <> nil then
+  begin
     Child.Close;
+    UpdateFrameIndices(Context);
+  end;
 end;
 
 initialization

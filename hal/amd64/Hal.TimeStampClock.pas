@@ -25,7 +25,12 @@
   fine clock: the uptime, timers and timeouts are all measured with it.
 
   The counters of all processors are taken to run together (they do on
-  machines with an invariant counter, and in virtual machines). Suspend
+  machines with an invariant counter, and in virtual machines). An
+  invariant counter (CPUID 8000_0007h EDX bit 8) also runs at the same
+  rate in every power state; one that is not may stop in deep idle
+  states, so Kernel.Arch.IdleStates then keeps to HLT, and under KVM
+  the paravirtual clock is the kernel's clock instead (Hal.Platform,
+  Hal.ParavirtualClock). Suspend
   to RAM turns the counter off and may start it again from zero, so the
   clock is paused before sleeping and continues from where it stopped
   after waking: like the uptime, it does not count the time asleep.
@@ -38,6 +43,10 @@ interface
 
 { Starts the clock at zero, with the counter running at CyclesPerSecond. }
 procedure StartTimeStampClock(CyclesPerSecond: QWord);
+
+{ CPUID says the counter is invariant: a constant rate in every
+  power and performance state. }
+function TimeStampCounterIsInvariant: Boolean;
 
 { Nanoseconds since the clock started (0 before it did). }
 function TimeStampClockNanoseconds: QWord;
@@ -61,6 +70,20 @@ var
   StartCount: QWord = 0;
   StartNanoseconds: QWord = 0;
   PausedNanoseconds: QWord = 0;
+
+function TimeStampCounterIsInvariant: Boolean;
+const
+  PowerManagementLeaf = $80000007;
+  InvariantCounterBit = LongWord(1) shl 8;
+var
+  Registers: TCpuidResult;
+begin
+  ExecuteCpuid($80000000, 0, Registers);
+  if Registers.Eax < PowerManagementLeaf then
+    Exit(False);
+  ExecuteCpuid(PowerManagementLeaf, 0, Registers);
+  Result := (Registers.Edx and InvariantCounterBit) <> 0;
+end;
 
 procedure StartTimeStampClock(CyclesPerSecond: QWord);
 begin

@@ -143,7 +143,7 @@ begin
     Exit;
   Name := Element.LocalNameAtom;
   if (Name = AtomImg) or (Name = AtomCanvasElement) or (Name = AtomIframeElement) or (Name = AtomEmbedElement) or
-     (Name = AtomVideoElement) or (Name = AtomObjectElement) then
+     (Name = AtomVideoElement) or (Name = AtomObjectElement) or (Name = AtomFrame) then
     Exit(ControlImage);
   if (Name = AtomAudioElement) and Element.HasAttributeAtom(Atomize('controls')) then
     Exit(ControlImage);
@@ -300,6 +300,8 @@ begin
     end;
     if Replaced.Image = nil then
       Replaced.Image := OwnImageOf(Element);
+    if FResources <> nil then
+      Replaced.Content := FResources.ElementFrame(Element);
     Result := Replaced;
     if not (KeywordIn(Display, [kwBlock, kwListItem, kwFlex, kwGrid, kwTable, kwFlowRoot])) then
       Include(Result.Flags, bfInlineLevel);

@@ -418,6 +418,20 @@ begin
   end;
 end;
 
+{ An iframe whose frameborder is zero (or "no") has no border (HTML
+  15.4.3). }
+procedure MapFrameBorder(var Writer: THintWriter);
+var
+  Value: string;
+  Number: Integer;
+begin
+  if not Attribute(Writer, Atomize('frameborder'), Value) then
+    Exit;
+  Value := AsciiLowerCase(Trim(Value));
+  if (Value = 'no') or (ParseNonNegativeInteger(Value, Number) and (Number = 0)) then
+    AddDeclaration(Writer, 'border', 'none');
+end;
+
 procedure MapHorizontalRule(var Writer: THintWriter);
 var
   Value: string;
@@ -665,7 +679,11 @@ begin
     MapReplaced(Writer, True)
   else if (Name = AtomObject) or (Name = AtomEmbed) or (Name = AtomIframe) or (Name = AtomVideo) or
     (Name = AtomCanvas) then
-    MapReplaced(Writer, Name = AtomObject)
+  begin
+    MapReplaced(Writer, Name = AtomObject);
+    if Name = AtomIframe then
+      MapFrameBorder(Writer);
+  end
   else if Name = AtomHr then
     MapHorizontalRule(Writer)
   else if Name = AtomFont then
