@@ -24,7 +24,7 @@
  * the loader can map code read-only and executable, read-only data
  * read-only and no-execute, and data writable and no-execute (W^X).
  * The boundaries are named for the kernel's own checks
- * (Memory.MappingAudit).
+ * (Kernel.ProtectionSelfTest).
  */
 
 OUTPUT_FORMAT("elf64-x86-64")

@@ -26,10 +26,12 @@
 # It boots twice: with the firmware at EL1 and two processors, and with
 # the firmware at EL2 (virtualization=on, as the Raspberry Pi 4's UEFI
 # firmware runs) and four processors, so the loader's drop from EL2 and
-# PSCI over SMC are covered too. The kernel ends QEMU through
+# PSCI over SMC are covered too; a third boot uses QEMU's "max"
+# processor (ARMv8.1+ with PAN, as the Raspberry Pi 5's Cortex-A76 has),
+# so the kernel runs with PAN on. The kernel ends QEMU through
 # semihosting: exit status 1 is success, 3 a panic, 5 a failed test;
 # anything else (the timeout) is a failure as well. The serial logs are
-# kept in the build directory (test-arm64-el1.log, test-arm64-el2.log).
+# kept in the build directory (test-arm64-el1.log, test-arm64-el2.log, test-arm64-max.log).
 #
 # With an SD card image (make-test-disk.sh's test-disk-sdsc.img: an SDSC
 # card holding a copy of the ext4 test partition, with its dirty journal
@@ -64,6 +66,7 @@ run_one() {
     local virtualization="$2"
     local processors="$3"
     local extra_options="$4"
+    local processor="${5:-cortex-a72}"
     local serial_log="$build_directory/test-arm64-$name.log"
     local sd_card_copy=""
 
@@ -74,7 +77,7 @@ run_one() {
         echo "test-exit heapchecks fstest $extra_options" > "$test_esp_directory/FreePascalOS/options.txt"
     fi
     rm -f "$build_directory/QEMU_VARS.fd"
-    VIRTUALIZATION="$virtualization" PROCESSORS="$processors" SEMIHOSTING=1 SD_CARD="$sd_card_copy" \
+    CPU="$processor" VIRTUALIZATION="$virtualization" PROCESSORS="$processors" SEMIHOSTING=1 SD_CARD="$sd_card_copy" \
         timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
         < /dev/null > "$serial_log" 2>&1
     local status=$?
@@ -105,4 +108,5 @@ run_one() {
 overall=0
 run_one el1 0 2 "" || overall=1
 run_one el2 1 4 noncoherentdma || overall=1
+run_one max 0 2 "" max || overall=1
 exit $overall

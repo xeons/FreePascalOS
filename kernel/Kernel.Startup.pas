@@ -69,6 +69,10 @@ uses
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.HeapCheckTest,
+  Kernel.ProtectionSelfTest,
+  Kernel.ProtectionFaultTest,
+  Kernel.Arch.ProcessorProtection,
+  Memory.BootDataReclaim,
   Kernel.SecondaryProcessors,
   Kernel.FileSystemTest,
   Kernel.FileSystemWriteTest,
@@ -329,6 +333,8 @@ begin
 
   RunKernelSelfTests;
   RunHeapCheckSelfTest;
+  RunProtectionSelfTests;
+  RunProtectionFaultTest;
   RunIoSelfTests;
   RunWatchdogSelfTest;
   RunNetworkSelfTests;
@@ -337,6 +343,9 @@ begin
     journaled ones with a simulated crash that leaves them read-only. }
   if KernelOptionIsSet(OptionFileSystemWriteTests) then
     RunFileSystemWriteTests;
+  { Start-up is done with the boot information (Context): its pages go
+    back to the allocator. }
+  ReclaimBootData(PBootInformation(Context));
   WriteBlockCacheSummary;
   WriteDiskStatistics;
 
@@ -422,6 +431,9 @@ begin
   WriteProcessorDescription;
 
   InitializeMemoryManagement(BootInformation);
+  { SMEP, UMIP, PAN: before the other processors start, which copy the
+    boot processor's settings. }
+  EnableProcessorProtection;
   RecordBootRamDisk(BootInformation^);
   InitializeExecutiveServices;
 
