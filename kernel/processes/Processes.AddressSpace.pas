@@ -179,6 +179,9 @@ function AllocateThreadOwnedUserMemory(Space: PAddressSpace; Length: QWord; Owne
   thread OwnerThreadId (it may have been freed, and its addresses used
   again, since). }
 procedure ReleaseThreadOwnedMemory(Space: PAddressSpace; Start: QWord; OwnerThreadId: QWord);
+{ Frees every allocation that still belongs to the thread OwnerThreadId
+  (a thread that made several: dynamic TLS blocks). }
+procedure ReleaseAllThreadOwnedMemory(Space: PAddressSpace; OwnerThreadId: QWord);
 
 { Allocates Length bytes of on-demand memory of the given kind with an
   unmapped guard page below it (thread stacks). }
@@ -608,6 +611,50 @@ begin
   if (Region <> nil) and (Region^.Kind = RegionKindAllocation) and (Region^.OwnerThreadId = OwnerThreadId) then
     RemoveRegionLocked(Space, Start);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+const
+  OwnedRegionBatch = 32;
+
+type
+  TOwnedRegionSearch = record
+    OwnerThreadId: QWord;
+    Starts: array[0..OwnedRegionBatch - 1] of QWord;
+    Count: Integer;
+  end;
+  POwnedRegionSearch = ^TOwnedRegionSearch;
+
+procedure NoteOwnedRegion(Region: PUserRegion; Context: Pointer);
+var
+  Search: POwnedRegionSearch;
+begin
+  Search := POwnedRegionSearch(Context);
+  if (Region^.Kind = RegionKindAllocation) and (Region^.OwnerThreadId = Search^.OwnerThreadId) and
+     (Search^.Count < OwnedRegionBatch) then
+  begin
+    Search^.Starts[Search^.Count] := Region^.Start;
+    Inc(Search^.Count);
+  end;
+end;
+
+procedure ReleaseAllThreadOwnedMemory(Space: PAddressSpace; OwnerThreadId: QWord);
+var
+  Search: TOwnedRegionSearch;
+  PreviousLevel: TPriorityLevel;
+  Index: Integer;
+begin
+  if OwnerThreadId = 0 then
+    Exit;
+  Search.OwnerThreadId := OwnerThreadId;
+  { The tree must not change while it is walked: a batch at a time. }
+  repeat
+    Search.Count := 0;
+    PreviousLevel := AcquireSpinLock(Space^.Lock);
+    VisitRegions(Space^.Regions, @NoteOwnedRegion, @Search);
+    for Index := 0 to Search.Count - 1 do
+      RemoveRegionLocked(Space, Search.Starts[Index]);
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  until Search.Count < OwnedRegionBatch;
 end;
 
 function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;

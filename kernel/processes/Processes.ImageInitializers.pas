@@ -34,6 +34,12 @@
   initial stack through the auxiliary vector (AuxiliaryInitializers and
   friends in Abi.SystemCalls). The user runtime calls the initializers
   before the program's main block and the finalizers when it exits.
+
+  A library loaded at run time gets the same for itself and the
+  libraries loaded with it (CollectModuleInitializers from its handle);
+  each module's entries are handed out once, so libraries loaded before
+  are left out. Processes.ModuleCalls keeps them until the runtime takes
+  them (CallTakeModuleInitializers).
 }
 unit Processes.ImageInitializers;
 
@@ -58,6 +64,9 @@ type
   Returns ErrorNone or an Abi error code; free the lists with
   FreeInitializerLists either way. }
 function CollectInitializers(Process: PProcess; out Lists: TInitializerLists): LongInt;
+{ The same for the module RootIndex and everything it needs whose
+  entries were not handed out yet (a library loaded at run time). }
+function CollectModuleInitializers(Process: PProcess; RootIndex: Integer; out Lists: TInitializerLists): LongInt;
 procedure FreeInitializerLists(var Lists: TInitializerLists);
 
 implementation
@@ -76,7 +85,9 @@ type
     Visited: array[0..MaximumModules - 1] of Boolean;
   end;
 
-{ Depth first: a module comes after everything it needs. }
+{ Depth first: a module comes after everything it needs. Modules whose
+  entries were handed out before are left out (with what they need,
+  which was loaded and handed out with them). }
 procedure OrderModule(List: PModuleList; ModuleIndex: Integer; var Order: TModuleOrder);
 var
   NeededIndex: Integer;
@@ -86,6 +97,8 @@ begin
     Exit;
   Order.Visited[ModuleIndex] := True;
   Module := List^.Modules[ModuleIndex];
+  if Module^.InitializersTaken then
+    Exit;
   for NeededIndex := 0 to Module^.NeededCount - 1 do
     OrderModule(List, Module^.Needed[NeededIndex], Order);
   Order.Indexes[Order.Count] := ModuleIndex;
@@ -183,7 +196,21 @@ begin
   ReverseEntries(Lists.Finalizers, Lists.FinalizerCount);
 end;
 
+procedure MarkTaken(List: PModuleList; const Order: TModuleOrder);
+var
+  Position: Integer;
+begin
+  for Position := 0 to Order.Count - 1 do
+    List^.Modules[Order.Indexes[Position]]^.InitializersTaken := True;
+end;
+
 function CollectInitializers(Process: PProcess; out Lists: TInitializerLists): LongInt;
+begin
+  { The program is module 0; every startup library is reachable from it. }
+  Result := CollectModuleInitializers(Process, 0, Lists);
+end;
+
+function CollectModuleInitializers(Process: PProcess; RootIndex: Integer; out Lists: TInitializerLists): LongInt;
 var
   List: PModuleList;
   Order: TModuleOrder;
@@ -192,12 +219,12 @@ var
 begin
   FillMemory(@Lists, SizeOf(Lists), 0);
   List := PModuleList(Process^.Modules);
-  if (List = nil) or (List^.Count = 0) then
+  if (List = nil) or (RootIndex < 0) or (RootIndex >= List^.Count) then
     Exit(ErrorNone);
 
   FillMemory(@Order, SizeOf(Order), 0);
-  { The program is module 0; every startup library is reachable from it. }
-  OrderModule(List, 0, Order);
+  OrderModule(List, RootIndex, Order);
+  MarkTaken(List, Order);
   if not CountEntries(List, Order, InitializerTotal, FinalizerTotal) then
     Exit(ErrorNone);
 

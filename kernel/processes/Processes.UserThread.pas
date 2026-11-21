@@ -212,7 +212,10 @@ begin
   ReleaseThreadStorage(Process, Thread^.ThreadDataStart);
   { The threadvar block, if the runtime did not free it (the thread was
     ended from outside, which skips the runtime's own ending). }
-  ReleaseThreadOwnedMemory(Process^.AddressSpace, Thread^.OwnedAllocationStart, Thread^.ControlBlock.ThreadId);
+  if Thread^.HasSeveralOwnedAllocations then
+    ReleaseAllThreadOwnedMemory(Process^.AddressSpace, Thread^.ControlBlock.ThreadId)
+  else
+    ReleaseThreadOwnedMemory(Process^.AddressSpace, Thread^.OwnedAllocationStart, Thread^.ControlBlock.ThreadId);
   Thread^.UserStackStart := 0;
   Thread^.ThreadDataStart := 0;
   Thread^.OwnedAllocationStart := 0;
