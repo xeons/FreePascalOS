@@ -344,9 +344,46 @@ begin
   Check(IsAsciiText('abc') and not IsAsciiText(Text), 'ASCII detection');
 end;
 
+{ The names a browser's Character Encoding menu offers: decodable ones,
+  each a label of itself, without replacement and x-user-defined. }
+procedure TestSelectableEncodings;
+var
+  Names: TEncodingNameArray;
+  Index: Integer;
+  Encoding: TTextEncoding;
+  AllLabels, AllDecodable, HasWindows1252, HasUtf16, HasShiftJis: Boolean;
+begin
+  Names := SelectableEncodingNames;
+  Check((Length(Names) > 30) and (Names[0] = 'UTF-8'), 'selectable encodings: UTF-8 first, '
+    + IntToStr(Length(Names)) + ' in all');
+  AllLabels := True;
+  AllDecodable := True;
+  HasWindows1252 := False;
+  HasUtf16 := False;
+  HasShiftJis := False;
+  for Index := 0 to High(Names) do
+  begin
+    if not EncodingForLabel(Names[Index], Encoding) or (EncodingName(Encoding) <> Names[Index]) then
+      AllLabels := False
+    else if not IsDecodableEncoding(Encoding) or (Encoding in [TextEncodingReplacement, TextEncodingXUserDefined]) then
+      AllDecodable := False;
+    if Names[Index] = 'windows-1252' then
+      HasWindows1252 := True;
+    if Names[Index] = 'UTF-16LE' then
+      HasUtf16 := True;
+    if Names[Index] = 'Shift_JIS' then
+      HasShiftJis := True;
+  end;
+  Check(AllLabels, 'selectable encodings: each name is its own label');
+  Check(AllDecodable, 'selectable encodings: only decodable ones, not replacement or x-user-defined');
+  Check(HasWindows1252 and HasUtf16, 'selectable encodings: windows-1252 and UTF-16LE are there');
+  Check(not HasShiftJis, 'selectable encodings: not Shift_JIS (not decoded yet)');
+end;
+
 procedure RunEncodingTests;
 begin
   TestLabels;
+  TestSelectableEncodings;
   TestUtf8Decoder;
   TestUtf16Decoders;
   TestSingleByteDecoders;

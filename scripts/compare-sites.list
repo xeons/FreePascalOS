@@ -1,0 +1,29 @@
+# Common pages for scripts/compare-sites.py: NAME URL
+# Pages that need no login; the name names the output files.
+wikipedia-main     https://en.wikipedia.org/wiki/Main_Page
+wikipedia-article  https://en.wikipedia.org/wiki/Free_Pascal
+google             https://www.google.com/
+duckduckgo         https://duckduckgo.com/
+duckduckgo-results https://html.duckduckgo.com/html/?q=free+pascal
+youtube            https://www.youtube.com/
+fpc-source-repo    https://github.com/fpc/FPCSource
+stackoverflow      https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array
+mdn-reference      https://developer.mozilla.org/en-US/docs/Web/CSS/display
+hackernews         https://news.ycombinator.com/
+old-reddit         https://old.reddit.com/
+reddit             https://www.reddit.com/
+bbc-news           https://www.bbc.com/news
+cnn                https://www.cnn.com/
+cnn-lite           https://lite.cnn.com/
+nytimes            https://www.nytimes.com/
+amazon             https://www.amazon.com/
+ebay               https://www.ebay.com/
+craigslist         https://www.craigslist.org/
+archive-org        https://archive.org/
+weather-gov        https://www.weather.gov/
+freepascal         https://www.freepascal.org/
+lazarus            https://www.lazarus-ide.org/
+python             https://www.python.org/
+rust-lang          https://www.rust-lang.org/
+w3c                https://www.w3.org/
+apple              https://www.apple.com/

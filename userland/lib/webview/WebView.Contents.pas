@@ -33,6 +33,7 @@ uses
   WebView.SelectionMapping,
   WebView.Elements,
   WebView.Forms,
+  WebView.PageInfo,
   WebView.Engine,
   WebView.ContentProcess,
   WebView.NetworkService,

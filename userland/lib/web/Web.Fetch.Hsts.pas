@@ -77,6 +77,8 @@ type
     procedure ProcessResponseField(constref Url: TUrlRecord; const FieldValue: string);
     procedure AddHost(const Host: string; MaxAgeSeconds: Int64; IncludeSubDomains: Boolean);
     procedure RemoveHost(const Host: string);
+    { Forgets every host learned or added. }
+    procedure Clear;
     { The host or a superdomain with includeSubDomains is known. }
     function IsKnownHost(const Host: string): Boolean;
     { Url upgraded when it should be; True if it was changed. }
@@ -235,6 +237,16 @@ begin
       RemoveEntry(LowerCase(Host))
     else
       SetEntry(LowerCase(Host), Now + MaxAgeSeconds, IncludeSubDomains);
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure THstsStore.Clear;
+begin
+  EnterCriticalSection(FLock);
+  try
+    FEntries.Clear;
   finally
     LeaveCriticalSection(FLock);
   end;

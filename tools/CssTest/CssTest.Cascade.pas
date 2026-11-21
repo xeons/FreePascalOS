@@ -353,6 +353,11 @@ begin
   CheckMedia('(900px > width > 400px)', Environment, True);
   CheckMedia('(max-width: 50em)', Environment, True);
   CheckMedia('(max-width: 49em)', Environment, False);
+  { calc() with relative units (developer.mozilla.org's layout): 50rem
+    is 800px. }
+  CheckMedia('(width < calc(1rem * 2 + 15rem + 2rem + 31rem))', Environment, False);
+  CheckMedia('(width <= calc(1rem * 2 + 15rem + 2rem + 31rem))', Environment, True);
+  CheckMedia('(width < calc(50vw + 401px))', Environment, True);
   CheckMedia('(orientation: landscape)', Environment, True);
   CheckMedia('(aspect-ratio: 4/3)', Environment, True);
   CheckMedia('(min-aspect-ratio: 16/9)', Environment, False);

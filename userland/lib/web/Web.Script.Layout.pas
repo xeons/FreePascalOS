@@ -52,6 +52,7 @@ type
     { The view scrolled (it repaints): called after ScrollTo. }
     OnScrolled: procedure of object;
     function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; override;
+    function ClientRects(Element: TElement): TScriptRectArray; override;
     function ScrollGeometry(Element: TElement; out ClientLeft, ClientTop, ClientWidth, ClientHeight, ScrollWidth,
       ScrollHeight, ScrollLeft, ScrollTop: Double): Boolean; override;
     procedure ScrollTo(Element: TElement; Left, Top: Double); override;
@@ -68,8 +69,11 @@ uses
   Css.PropertyIds,
   Css.Properties,
   Web.Layout.Boxes,
+  Web.Layout.BoxGeometry,
   Web.Layout.TextOffsets,
   Web.Layout.Transforms,
+  Web.Paint.DisplayList,
+  Web.Paint.Sticky,
   Web.Text.FontInstances,
   Web.Style.NodeData;
 
@@ -85,9 +89,110 @@ begin
     Layout.Update;
 end;
 
+{ Where the box is drawn rather than laid out: moved by position:
+  relative (its own and its ancestors'), by the scroll offsets of the
+  scroll containers it is in, and not by the viewport's when it is
+  fixed (the caller takes the viewport's scroll off everything). }
+{ How far a position: sticky box under the viewport is moved at the
+  scroll offset now, found from its run in the display list the way
+  painting, hit testing and the web view's text groups find it. }
+procedure AddStickyOffset(Layout: TDocumentLayout; Painter: TDocumentPainter; Box: TLayoutBox;
+  var OffsetX, OffsetY: Single);
+var
+  List: TDisplayList;
+  Index: Integer;
+  Item: PDisplayItem;
+  ScrollX, ScrollY, StickyX, StickyY: Single;
+begin
+  if Painter = nil then
+    Exit;
+  Painter.Refresh;
+  List := Painter.DisplayList;
+  Layout.GetScrollOffset(nil, ScrollX, ScrollY);
+  for Index := 0 to List.Count - 1 do
+  begin
+    Item := @List.Items[Index];
+    if (Item^.Kind = diPushSticky) and (Item^.Box = Box) then
+    begin
+      StickyOffset(List.Stickies[Item^.Index], Item^.X, Item^.Y, Item^.Width, Item^.Height, ScrollX, ScrollY,
+        Layout.ViewportWidth, Layout.ViewportHeight, StickyX, StickyY);
+      OffsetX := OffsetX + StickyX;
+      OffsetY := OffsetY + StickyY;
+      Exit;
+    end;
+  end;
+end;
+
+procedure DrawnOffset(Layout: TDocumentLayout; Painter: TDocumentPainter; Box: TLayoutBox;
+  out OffsetX, OffsetY: Single);
+var
+  Current: TLayoutBox;
+  ViewportX, ViewportY: Single;
+  Fixed: Boolean;
+begin
+  OffsetX := 0;
+  OffsetY := 0;
+  Fixed := False;
+  Current := Box;
+  while Current <> nil do
+  begin
+    if Current.Kind <> bkInline then
+    begin
+      OffsetX := OffsetX + Current.RelativeX;
+      OffsetY := OffsetY + Current.RelativeY;
+    end;
+    if (Current <> Box) and (bfScrollContainer in Current.Flags) and (Current.Kind <> bkViewport) then
+    begin
+      OffsetX := OffsetX - Current.ScrollX;
+      OffsetY := OffsetY - Current.ScrollY;
+    end;
+    if bfFixed in Current.Flags then
+      Fixed := True;
+    if bfSticky in Current.Flags then
+      AddStickyOffset(Layout, Painter, Current, OffsetX, OffsetY);
+    Current := Current.Parent;
+  end;
+  if Fixed then
+  begin
+    Layout.GetScrollOffset(nil, ViewportX, ViewportY);
+    OffsetX := OffsetX + ViewportX;
+    OffsetY := OffsetY + ViewportY;
+  end;
+end;
+
+function TDocumentScriptLayout.ClientRects(Element: TElement): TScriptRectArray;
+var
+  Box: TLayoutBox;
+  Rectangles: TBoxRectangleArray;
+  OffsetX, OffsetY, RectX, RectY, RectWidth, RectHeight: Single;
+  Index: Integer;
+begin
+  Result := nil;
+  if not Ready then
+    Exit;
+  Box := Layout.BoxOf(Element);
+  if Box = nil then
+    Exit;
+  Rectangles := BoxRectangles(Box);
+  DrawnOffset(Layout, Painter, Box, OffsetX, OffsetY);
+  SetLength(Result, Length(Rectangles));
+  for Index := 0 to High(Rectangles) do
+  begin
+    RectX := Rectangles[Index].X + OffsetX;
+    RectY := Rectangles[Index].Y + OffsetY;
+    RectWidth := Rectangles[Index].Width;
+    RectHeight := Rectangles[Index].Height;
+    TransformRectangle(Box, RectX, RectY, RectWidth, RectHeight);
+    Result[Index].X := RectX;
+    Result[Index].Y := RectY;
+    Result[Index].Width := RectWidth;
+    Result[Index].Height := RectHeight;
+  end;
+end;
+
 function TDocumentScriptLayout.BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean;
 var
-  BoxX, BoxY, BoxWidth, BoxHeight: Single;
+  BoxX, BoxY, BoxWidth, BoxHeight, OffsetX, OffsetY: Single;
 begin
   X := 0;
   Y := 0;
@@ -96,6 +201,9 @@ begin
   Result := Ready and Layout.NodeBounds(Element, BoxX, BoxY, BoxWidth, BoxHeight);
   if Result then
   begin
+    DrawnOffset(Layout, Painter, Layout.BoxOf(Element), OffsetX, OffsetY);
+    BoxX := BoxX + OffsetX;
+    BoxY := BoxY + OffsetY;
     { Scaled, turned or skewed: the bounds of what is drawn. }
     TransformRectangle(Layout.BoxOf(Element), BoxX, BoxY, BoxWidth, BoxHeight);
     X := BoxX;

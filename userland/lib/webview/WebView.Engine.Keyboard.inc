@@ -46,6 +46,7 @@ var
   Next: TElement;
   ViewHeight: Double;
 begin
+  NoteUserGesture;
   Result := True;
   Control := (Modifiers and ModifierControl) <> 0;
   if Code <= High(FKeyCharacters) then

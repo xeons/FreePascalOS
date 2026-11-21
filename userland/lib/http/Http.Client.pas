@@ -105,6 +105,7 @@ type
     FObserver: THttpClientObserver;
     FSilentObserver: THttpClientObserver;
     FClock: THttpClock;
+    FOffline: Boolean;
     function Observer: THttpClientObserver;
     function Now: Int64;
     procedure PrepareHead(Request: THttpRequest; out Head: THttpRequestHead; out SentAuthorization: Boolean);
@@ -149,6 +150,10 @@ type
     { Not owned; nil: nobody is told. }
     property ObserverObject: THttpClientObserver read FObserver write FObserver;
     property Clock: THttpClock read FClock write FClock;
+    { Working offline: every exchange fails at once (HttpConnectFailed,
+      'offline') before any lookup or connection; fresh responses the
+      cache holds are still served by Fetch. }
+    property Offline: Boolean read FOffline write FOffline;
   end;
 
 { Unix time from the RTL's clock (UTC). }
@@ -521,6 +526,8 @@ begin
   Response := nil;
   if (Request.Url.Scheme <> 'http') and (Request.Url.Scheme <> 'https') then
     Exit(HttpFailure(HttpUnsupportedScheme, 'only http and https are supported'));
+  if FOffline then
+    Exit(HttpFailure(HttpConnectFailed, 'offline'));
   PrepareHead(Request, Head, SentAuthorization);
   ForceNew := False;
   Result := HttpOk;

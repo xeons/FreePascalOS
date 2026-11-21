@@ -376,6 +376,31 @@ begin
   Result := NumberArray(Context, [X, Y, Width, Height]);
 end;
 
+{ An element's client rects before scrolling (document CSS px), flat:
+  x, y, width, height of each (Element.getClientRects). }
+function NativeElementRects(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Element: TElement;
+  Rects: TScriptRectArray;
+  Values: array of Double;
+  Index: Integer;
+begin
+  Values := nil;
+  Element := ElementArgument(Context, Args, ArgCount, 0);
+  if (Element = nil) or (Context.Environment.Layout = nil) or not Element.IsConnected then
+    Exit(NumberArray(Context, []));
+  Rects := Context.Environment.Layout.ClientRects(Element);
+  SetLength(Values, Length(Rects) * 4);
+  for Index := 0 to High(Rects) do
+  begin
+    Values[Index * 4] := Rects[Index].X;
+    Values[Index * 4 + 1] := Rects[Index].Y;
+    Values[Index * 4 + 2] := Rects[Index].Width;
+    Values[Index * 4 + 3] := Rects[Index].Height;
+  end;
+  Result := NumberArray(Context, Values);
+end;
+
 { A range's client rects before scrolling (document CSS px), flat:
   x, y, width, height of each (Range.getClientRects). }
 function NativeRangeRects(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
@@ -544,7 +569,7 @@ begin
 end;
 
 const
-  NativeCount = 29;
+  NativeCount = 30;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -574,9 +599,10 @@ const
     'computedValue',
     'computedNames',
     'exportPorts',
-    'rangeRects');
+    'rangeRects',
+    'elementRects');
   NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0,
-    1, 1);
+    1, 1, 1);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -606,7 +632,8 @@ const
     @NativeComputedValue,
     @NativeComputedNames,
     @NativeExportPorts,
-    @NativeRangeRects);
+    @NativeRangeRects,
+    @NativeElementRects);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

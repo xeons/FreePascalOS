@@ -113,6 +113,64 @@ type
     ImageUrl: string;
     SelectedText: string;
     InTextField: Boolean;
+    BackgroundImageUrl: string;
+    IsEditable: Boolean;
+    FrameUrl: string;
+    CanCopy: Boolean;
+  end;
+
+  TIpcHistoryEntry = record
+    Url, Title: string;
+  end;
+
+  { A view's session history (IpcHistoryState), or the one to restore
+    (IpcRestoreHistory: the flags unused). Index: the current entry (-1
+    only when there are none). }
+  TIpcHistoryState = record
+    CanGoBack, CanGoForward: Boolean;
+    Index: LongInt;
+    Entries: array of TIpcHistoryEntry;
+  end;
+
+  { Find (IpcFind) and the highlight of every match (IpcSetFindHighlight:
+    Forward unused). }
+  TIpcFindRequest = record
+    Needle: string;
+    Forward, MatchCase: Boolean;
+  end;
+
+  TIpcFindResult = record
+    Found: Boolean;
+    { The search went past the end (or the start) and went on from the
+      other end. }
+    Wrapped: Boolean;
+    { Matches in the page, -1 unknown. }
+    MatchCount: LongInt;
+  end;
+
+  TIpcDisplayOptions = record
+    ImagesEnabled: Boolean;
+    TextOnlyZoom: Boolean;
+    AuthorStylesEnabled: Boolean;
+    PopupsBlocked: Boolean;
+    { An encoding label, '' to detect. }
+    EncodingOverride: string;
+  end;
+
+  TIpcMetaItem = record
+    Name, Content: string;
+  end;
+
+  TIpcMediaItem = record
+    Url, Kind, AltText: string;
+    Width, Height: LongInt;
+  end;
+
+  TIpcPageInfo = record
+    Url, Title, Referrer, ContentType, Encoding, RenderMode, LastModified: string;
+    Meta: array of TIpcMetaItem;
+    Media: array of TIpcMediaItem;
+    FormCount, LinkCount: LongInt;
   end;
 
   TIpcMenuItem = record
@@ -181,6 +239,16 @@ function EncodeDialogAnswer(constref Value: TIpcDialogAnswer): TBytes;
 function DecodeDialogAnswer(const Payload: TBytes): TIpcDialogAnswer;
 function EncodeFavicon(constref Value: TIpcFavicon): TBytes;
 function DecodeFavicon(const Payload: TBytes): TIpcFavicon;
+function EncodeHistoryState(constref Value: TIpcHistoryState): TBytes;
+function DecodeHistoryState(const Payload: TBytes): TIpcHistoryState;
+function EncodeFindRequest(constref Value: TIpcFindRequest): TBytes;
+function DecodeFindRequest(const Payload: TBytes): TIpcFindRequest;
+function EncodeFindResult(constref Value: TIpcFindResult): TBytes;
+function DecodeFindResult(const Payload: TBytes): TIpcFindResult;
+function EncodeDisplayOptions(constref Value: TIpcDisplayOptions): TBytes;
+function DecodeDisplayOptions(const Payload: TBytes): TIpcDisplayOptions;
+function EncodePageInfo(constref Value: TIpcPageInfo): TBytes;
+function DecodePageInfo(const Payload: TBytes): TIpcPageInfo;
 
 { Payloads of a few plain values. }
 function EncodeText(const Text: string): TBytes;
@@ -437,6 +505,10 @@ begin
     Writer.WriteString(Value.ImageUrl);
     Writer.WriteString(Value.SelectedText);
     Writer.WriteBoolean(Value.InTextField);
+    Writer.WriteString(Value.BackgroundImageUrl);
+    Writer.WriteBoolean(Value.IsEditable);
+    Writer.WriteString(Value.FrameUrl);
+    Writer.WriteBoolean(Value.CanCopy);
     Result := Writer.Data;
   finally
     Writer.Free;
@@ -457,6 +529,10 @@ begin
     Result.ImageUrl := Reader.ReadString;
     Result.SelectedText := Reader.ReadString;
     Result.InTextField := Reader.ReadBoolean;
+    Result.BackgroundImageUrl := Reader.ReadString;
+    Result.IsEditable := Reader.ReadBoolean;
+    Result.FrameUrl := Reader.ReadString;
+    Result.CanCopy := Reader.ReadBoolean;
   finally
     Reader.Free;
   end;
@@ -655,6 +731,258 @@ begin
     SetLength(Result.Pixels, Count);
     if Count > 0 then
       Reader.ReadRaw(@Result.Pixels[0], Count * 4);
+  finally
+    Reader.Free;
+  end;
+end;
+
+{ ---- session history ---- }
+
+const
+  { The most entries a history may have on the wire (libweb keeps 50, a
+    browser its cross-site ones besides). }
+  HistoryEntryLimit = 1000;
+  { The most of each list of Page Info. }
+  PageInfoItemLimit = 100000;
+  EncodingLabelLimit = 64;
+
+function EncodeHistoryState(constref Value: TIpcHistoryState): TBytes;
+var
+  Writer: TIpcWriter;
+  Index: Integer;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteBoolean(Value.CanGoBack);
+    Writer.WriteBoolean(Value.CanGoForward);
+    Writer.WriteLongInt(Value.Index);
+    Writer.WriteLongWord(Length(Value.Entries));
+    for Index := 0 to High(Value.Entries) do
+    begin
+      Writer.WriteString(Value.Entries[Index].Url);
+      Writer.WriteString(Value.Entries[Index].Title);
+    end;
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeHistoryState(const Payload: TBytes): TIpcHistoryState;
+var
+  Reader: TIpcReader;
+  Count, Index: LongWord;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.CanGoBack := Reader.ReadBoolean;
+    Result.CanGoForward := Reader.ReadBoolean;
+    Result.Index := Reader.ReadLongInt;
+    Count := Reader.ReadLongWord;
+    { Each entry takes at least its two lengths. }
+    if (Count > HistoryEntryLimit) or (Count > LongWord(Reader.Remaining) div 8) then
+      raise EIpcMalformed.Create('a history longer than its message');
+    if (Count = 0) and (Result.Index <> -1) or (Count > 0) and ((Result.Index < 0) or
+       (Result.Index >= LongInt(Count))) then
+      raise EIpcMalformed.Create('a history''s current entry out of range');
+    Result.Entries := nil;
+    SetLength(Result.Entries, Count);
+    Index := 0;
+    while Index < Count do
+    begin
+      Result.Entries[Index].Url := Reader.ReadString;
+      Result.Entries[Index].Title := Reader.ReadString;
+      Inc(Index);
+    end;
+  finally
+    Reader.Free;
+  end;
+end;
+
+{ ---- find ---- }
+
+function EncodeFindRequest(constref Value: TIpcFindRequest): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteString(Value.Needle);
+    Writer.WriteBoolean(Value.Forward);
+    Writer.WriteBoolean(Value.MatchCase);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeFindRequest(const Payload: TBytes): TIpcFindRequest;
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.Needle := Reader.ReadString;
+    Result.Forward := Reader.ReadBoolean;
+    Result.MatchCase := Reader.ReadBoolean;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeFindResult(constref Value: TIpcFindResult): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteBoolean(Value.Found);
+    Writer.WriteBoolean(Value.Wrapped);
+    Writer.WriteLongInt(Value.MatchCount);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeFindResult(const Payload: TBytes): TIpcFindResult;
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.Found := Reader.ReadBoolean;
+    Result.Wrapped := Reader.ReadBoolean;
+    Result.MatchCount := Reader.ReadLongInt;
+    if Result.MatchCount < -1 then
+      raise EIpcMalformed.Create('a negative count of matches');
+  finally
+    Reader.Free;
+  end;
+end;
+
+{ ---- display options ---- }
+
+function EncodeDisplayOptions(constref Value: TIpcDisplayOptions): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteBoolean(Value.ImagesEnabled);
+    Writer.WriteBoolean(Value.TextOnlyZoom);
+    Writer.WriteBoolean(Value.AuthorStylesEnabled);
+    Writer.WriteBoolean(Value.PopupsBlocked);
+    Writer.WriteString(Value.EncodingOverride);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeDisplayOptions(const Payload: TBytes): TIpcDisplayOptions;
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.ImagesEnabled := Reader.ReadBoolean;
+    Result.TextOnlyZoom := Reader.ReadBoolean;
+    Result.AuthorStylesEnabled := Reader.ReadBoolean;
+    Result.PopupsBlocked := Reader.ReadBoolean;
+    Result.EncodingOverride := Reader.ReadString;
+    if Length(Result.EncodingOverride) > EncodingLabelLimit then
+      raise EIpcMalformed.Create('an encoding label too long to be one');
+  finally
+    Reader.Free;
+  end;
+end;
+
+{ ---- Page Info ---- }
+
+function EncodePageInfo(constref Value: TIpcPageInfo): TBytes;
+var
+  Writer: TIpcWriter;
+  Index: Integer;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteStrings([Value.Url, Value.Title, Value.Referrer, Value.ContentType, Value.Encoding, Value.RenderMode,
+      Value.LastModified]);
+    Writer.WriteLongWord(Length(Value.Meta));
+    for Index := 0 to High(Value.Meta) do
+    begin
+      Writer.WriteString(Value.Meta[Index].Name);
+      Writer.WriteString(Value.Meta[Index].Content);
+    end;
+    Writer.WriteLongWord(Length(Value.Media));
+    for Index := 0 to High(Value.Media) do
+    begin
+      Writer.WriteString(Value.Media[Index].Url);
+      Writer.WriteString(Value.Media[Index].Kind);
+      Writer.WriteString(Value.Media[Index].AltText);
+      Writer.WriteLongInt(Value.Media[Index].Width);
+      Writer.WriteLongInt(Value.Media[Index].Height);
+    end;
+    Writer.WriteLongInt(Value.FormCount);
+    Writer.WriteLongInt(Value.LinkCount);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodePageInfo(const Payload: TBytes): TIpcPageInfo;
+var
+  Reader: TIpcReader;
+  Texts: TStringArray;
+  Count, Index: LongWord;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Texts := Reader.ReadStrings;
+    if Length(Texts) <> 7 then
+      raise EIpcMalformed.Create('Page Info without its seven texts');
+    Result.Url := Texts[0];
+    Result.Title := Texts[1];
+    Result.Referrer := Texts[2];
+    Result.ContentType := Texts[3];
+    Result.Encoding := Texts[4];
+    Result.RenderMode := Texts[5];
+    Result.LastModified := Texts[6];
+    Count := Reader.ReadLongWord;
+    { A meta item takes at least its two lengths. }
+    if (Count > PageInfoItemLimit) or (Count > LongWord(Reader.Remaining) div 8) then
+      raise EIpcMalformed.Create('meta items longer than their message');
+    Result.Meta := nil;
+    SetLength(Result.Meta, Count);
+    Index := 0;
+    while Index < Count do
+    begin
+      Result.Meta[Index].Name := Reader.ReadString;
+      Result.Meta[Index].Content := Reader.ReadString;
+      Inc(Index);
+    end;
+    Count := Reader.ReadLongWord;
+    { A media item: three lengths and two sizes. }
+    if (Count > PageInfoItemLimit) or (Count > LongWord(Reader.Remaining) div 20) then
+      raise EIpcMalformed.Create('media items longer than their message');
+    Result.Media := nil;
+    SetLength(Result.Media, Count);
+    Index := 0;
+    while Index < Count do
+    begin
+      Result.Media[Index].Url := Reader.ReadString;
+      Result.Media[Index].Kind := Reader.ReadString;
+      Result.Media[Index].AltText := Reader.ReadString;
+      Result.Media[Index].Width := Reader.ReadLongInt;
+      Result.Media[Index].Height := Reader.ReadLongInt;
+      Inc(Index);
+    end;
+    Result.FormCount := Reader.ReadLongInt;
+    Result.LinkCount := Reader.ReadLongInt;
+    if (Result.FormCount < 0) or (Result.LinkCount < 0) then
+      raise EIpcMalformed.Create('a negative count in Page Info');
   finally
     Reader.Free;
   end;

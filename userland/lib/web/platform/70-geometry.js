@@ -113,8 +113,12 @@
     return clientRect(this);
   });
   method(ElementPrototype, "getClientRects", function getClientRects() {
-    const box = natives.elementBox(this);
-    return new DOMRectList(token, box === null ? [] : [clientRect(this)]);
+    const flat = natives.elementRects(this);
+    const scroll = viewportScroll();
+    const rects = [];
+    for (let index = 0; index + 3 < flat.length; index += 4)
+      rects.push(new DOMRect(flat[index] - scroll[0], flat[index + 1] - scroll[1], flat[index + 2], flat[index + 3]));
+    return new DOMRectList(token, rects);
   });
 
   function scrollGeometry(element) {

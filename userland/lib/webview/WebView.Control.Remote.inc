@@ -115,8 +115,11 @@ begin
   FSentVisible := Setup.Visible;
   FSentFocused := Setup.Focused;
   SendToProcess(IpcCreateView, EncodeViewSetup(Setup));
+  SendDisplayOptions;
   FRemoteCanGoBack := False;
   FRemoteCanGoForward := False;
+  FRemoteEntries := nil;
+  FRemoteIndex := -1;
   FInputSequence := 0;
   FFrameInfo := Default(TIpcFrameInfo);
   FScrollShift := 0;
@@ -144,24 +147,24 @@ end;
 procedure TWebView.NavigateRemote(constref Open: TIpcOpenUrl);
 var
   Site: string;
-  Previous: string;
 begin
   Site := SiteOfText(Open.Url);
   if (FProcess = nil) or ((Site <> '') and (Site <> FProcess.Site)) then
   begin
-    Previous := FUrl;
+    { The entries of the site left stay as back (and, for a page that
+      replaces the current one, forward) entries: Back comes here again. }
+    LeaveSiteHistory(not Open.Replace);
     if not EnsureProcessFor(Site) then
     begin
       EnsureEngine;
       FEngine.Navigate(Open.Url);
       Exit;
     end;
-    { A page of another site: Back comes here again. }
-    if (Previous <> '') and not Open.Replace then
-    begin
-      FBackUrls.Add(Previous);
-      FForwardUrls.Clear;
-    end;
+    { The entry on its way, until the process tells its history. }
+    SetLength(FRemoteEntries, 1);
+    FRemoteEntries[0].Url := Open.Url;
+    FRemoteEntries[0].Title := '';
+    FRemoteIndex := 0;
   end;
   SendToProcess(IpcNavigate, EncodeOpenUrl(Open));
 end;
@@ -191,11 +194,8 @@ begin
       end;
     IpcFaviconChanged: TakeFavicon(Message);
     IpcStatusText: TellStatus(DecodeText(Message.Payload));
-    IpcHistoryState:
-      begin
-        DecodeFlags(Message.Payload, FRemoteCanGoBack, FRemoteCanGoForward);
-        TellHistory;
-      end;
+    IpcHistoryState: TakeHistoryState(Message);
+    IpcPopupBlocked: TellPopupBlocked(DecodeText(Message.Payload));
     IpcZoomChanged:
       begin
         Amount := DecodeReal(Message.Payload);
@@ -232,10 +232,9 @@ begin
     IpcAboutPage: AnswerAboutPage(Message);
     IpcReply:
       if (Message.RequestId = FFindRequestId) and (FFindRequestId <> 0) then
-      begin
-        FFindRequestId := 0;
-        TellFindResult(FFindNeedle, DecodeFlag(Message.Payload));
-      end;
+        TakeFindResult(Message)
+      else if (Message.RequestId = FPageInfoRequestId) and (FPageInfoRequestId <> 0) then
+        TakePageInfo(Message);
   end;
 end;
 
@@ -381,6 +380,10 @@ begin
   Info.ImageUrl := Wire.ImageUrl;
   Info.SelectedText := Wire.SelectedText;
   Info.InTextField := Wire.InTextField;
+  Info.BackgroundImageUrl := Wire.BackgroundImageUrl;
+  Info.IsEditable := Wire.IsEditable;
+  Info.FrameUrl := Wire.FrameUrl;
+  Info.CanCopy := Wire.CanCopy;
   FSelectedText := Wire.SelectedText;
   Handled := False;
   if Assigned(FOnContextMenuRequested) then

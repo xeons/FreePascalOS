@@ -135,6 +135,9 @@ type
     { The border box of Element (the union of its fragments); False when
       it has no box. }
     function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; virtual; abstract;
+    { Element's fragments, a rectangle each (getClientRects): an inline
+      box's one per line; by default the border box. }
+    function ClientRects(Element: TElement): TScriptRectArray; virtual;
     { The border widths (clientLeft, clientTop), the padding box's size
       less scroll bars (clientWidth, clientHeight), the scrollable
       overflow's size and the scroll offset. }
@@ -187,6 +190,10 @@ type
     procedure Alert(Context: TObject; const Message: string); virtual;
     function Confirm(Context: TObject; const Message: string): Boolean; virtual;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; virtual;
+    { window.open of Url (absolute) for Target (a name, _blank, _top,
+      _parent) with Features: True when the host opened or navigated
+      something (a host may refuse a pop-up nobody asked for). }
+    function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; virtual;
 
     { The viewport, in CSS pixels, and the device pixel ratio. }
     function ViewportWidth: Integer; virtual;
@@ -235,6 +242,18 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptLayout.ClientRects(Element: TElement): TScriptRectArray;
+var
+  Rect: TScriptRect;
+begin
+  Result := nil;
+  if BorderBox(Element, Rect.X, Rect.Y, Rect.Width, Rect.Height) then
+  begin
+    SetLength(Result, 1);
+    Result[0] := Rect;
+  end;
 end;
 
 function TScriptLayout.TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray;
@@ -300,6 +319,11 @@ end;
 
 procedure TScriptEnvironment.Alert(Context: TObject; const Message: string);
 begin
+end;
+
+function TScriptEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
+begin
+  Result := False;
 end;
 
 function TScriptEnvironment.Confirm(Context: TObject; const Message: string): Boolean;

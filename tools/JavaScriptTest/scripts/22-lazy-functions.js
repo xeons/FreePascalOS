@@ -85,6 +85,14 @@ const nested = (function outer(a) {
   };
 })(1)(2)(3);
 console.log(nested);
+const lateArrow = async value => {
+  // An async arrow with one bare parameter, compiled lazily: parsed again
+  // from "async", so its body may await (www.bbc.com's data hooks).
+  const settled = await value;
+  return settled + " arrow";
+};
+console.log(lateArrow.toString().slice(0, 11));
+lateArrow("async").then(v => console.log(v));
 /* expected
 6 outer c 61 object 8 outer c 81
 3628800
@@ -95,5 +103,7 @@ base derived 4 8
 function shortOne() { return 1; } function makeCounter(start) { 1 makeCounter
 at throwsAtLine (22-lazy-functions.js:73:9)
 6
+async value
 async outer function
+async arrow
 */

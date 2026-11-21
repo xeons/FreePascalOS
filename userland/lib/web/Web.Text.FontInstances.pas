@@ -200,7 +200,10 @@ begin
     if FFallbacks[Index].CodePoint = CodePoint then
       Exit(FFallbacks[Index].Face);
   Library_ := WebFontLibrary;
-  Result := Library_.FallbackFace(CodePoint, FWeight, FItalic);
+  { Another subset (unicode-range) of the same family, then a fallback. }
+  Result := Library_.FindFaceFor(FPrimary.Family, CodePoint, FWeight, FItalic);
+  if Result = nil then
+    Result := Library_.FallbackFace(CodePoint, FWeight, FItalic);
   if Result = nil then
     Result := FPrimary;
   if Length(FFallbacks) < 256 then

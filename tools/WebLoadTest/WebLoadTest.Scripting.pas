@@ -232,10 +232,60 @@ begin
   end;
 end;
 
+{ Import maps: a bare specifier, a prefix ("pkg/"), a scope that maps
+  the same specifier differently for the modules under it, and a
+  specifier mapped to null (blocked). }
+procedure CheckImportMaps;
+var
+  Environment: TTestEnvironment;
+  Conditions: TScriptConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Output: TElement;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TScriptConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  try
+    Environment.Site.AddRoute('m.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><script type="importmap">{"imports": {"lib": "/js/lib.js", "pkg/": "/js/pkg/",' +
+      ' "gone": null}, "scopes": {"/js/pkg/": {"lib": "/js/other.js"}}}</script>' +
+      '<p id="out">x</p><script type="module">import { v } from "lib"; import { w } from "pkg/a.js";' +
+      ' import("gone").catch(function (e) { document.getElementById("out").textContent = v + w + " " + e.name +' +
+      ' " timer"; });</script>');
+    Environment.Site.AddRoute('m.test/js/lib.js', 200, 'Content-Type: text/javascript', 'export const v = "lib";');
+    Environment.Site.AddRoute('m.test/js/other.js', 200, 'Content-Type: text/javascript', 'export const o = "+other";');
+    Environment.Site.AddRoute('m.test/js/pkg/a.js', 200, 'Content-Type: text/javascript',
+      'import { o } from "lib"; export const w = "+a" + o;');
+    Navigable.NavigateTo('https://m.test/page.html');
+    Check(Environment.RunUntil(@Conditions.TimerRan), 'import maps: the module ran');
+    Output := Navigable.ActiveDocument.GetElementById('out');
+    Text := '';
+    if Output <> nil then
+      Text := Output.TextContent;
+    Check(Text = 'lib+a+other TypeError timer', 'import maps: bare, prefix, scoped and blocked specifiers (' +
+      Text + ')');
+  finally
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
   CheckScriptedPage;
   CheckScriptFetches;
+  CheckImportMaps;
 end;
 
 end.

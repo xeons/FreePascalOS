@@ -40,6 +40,15 @@ function IsSingleByteEncoding(Encoding: TTextEncoding): Boolean; inline;
 { Whether libweb can decode it (the multi-byte CJK encodings not yet). }
 function IsDecodableEncoding(Encoding: TTextEncoding): Boolean;
 
+type
+  TEncodingNameArray = array of string;
+
+{ The canonical names of the encodings a user may choose to decode a
+  document with (a browser's Character Encoding menu): every one libweb
+  decodes but replacement and x-user-defined, in the Encoding
+  Standard's order (UTF-8 first). }
+function SelectableEncodingNames: TEncodingNameArray;
+
 implementation
 
 uses
@@ -111,6 +120,19 @@ end;
 function IsSingleByteEncoding(Encoding: TTextEncoding): Boolean;
 begin
   Result := SingleByteIndexOf[Encoding] >= 0;
+end;
+
+function SelectableEncodingNames: TEncodingNameArray;
+var
+  Encoding: TTextEncoding;
+begin
+  Result := nil;
+  for Encoding := Low(TTextEncoding) to High(TTextEncoding) do
+    if IsDecodableEncoding(Encoding) and not (Encoding in [TextEncodingReplacement, TextEncodingXUserDefined]) then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := TextEncodingNames[Encoding];
+    end;
 end;
 
 function IsDecodableEncoding(Encoding: TTextEncoding): Boolean;

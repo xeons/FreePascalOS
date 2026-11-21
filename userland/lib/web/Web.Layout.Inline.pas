@@ -429,7 +429,7 @@ begin
     end;
   end;
   { Is there anything to show? }
-  HasContent := State.OpenCount > 0;
+  HasContent := False;
   for Index := First to Last - 1 do
     case Items.Items[Index].Kind of
       ikText:
