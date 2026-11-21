@@ -37,14 +37,28 @@ uses
   WebLoadTest.Loading,
   WebLoadTest.Rendering,
   WebLoadTest.Scripting,
+  WebLoadTest.Editing,
+  SysUtils,
+  Web.Bindings.Context,
   Web.Navigation.Pages;
 
 begin
+  { JS_GC_STRESS: the script engines collect every 16 KiB. }
+  if GetEnvironmentVariable('JS_GC_STRESS') <> '' then
+    ContextHeapThreshold := 16 * 1024;
+  { "editing": only the editing fuzz test (to debug it). }
+  if ParamStr(1) = 'editing' then
+  begin
+    RunEditingTests;
+    FinishChecks('web load test (editing)');
+    Exit;
+  end;
   RunEventLoopTests;
   RunFetchRuleTests;
   RunFetchingTests;
   RunLoadingTests;
   RunRenderingTests;
   RunScriptingTests;
+  RunEditingTests;
   FinishChecks('web load test');
 end.

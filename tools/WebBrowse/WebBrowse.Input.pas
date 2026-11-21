@@ -45,6 +45,11 @@ type
     FNavigable: TNavigable;
     FEditor: TTextFieldEditor;
     FClipboard: string;
+    { The focused text field and its value when it got the focus (change
+      fires when the focus leaves it changed, as the web view does). }
+    FFocusField: TElement;
+    FFocusValue: string;
+    procedure FocusChecked(Document: TDocument);
     procedure FieldEdited(Element: TElement; const InputType, Data: string);
     procedure FieldSubmitted(Element: TElement);
     function ReadClipboard: string;
@@ -72,6 +77,7 @@ uses
   Web.Dom.Events,
   Web.Dom.UiEvents,
   Web.Dom.Focus,
+  Web.Dom.FormControls,
   Web.Navigation.Events,
   Web.Bindings.UrlResolution,
   WebView.KeyNames,
@@ -98,8 +104,35 @@ end;
 
 destructor TPageInput.Destroy;
 begin
+  if FFocusField <> nil then
+    FFocusField.Release;
   FEditor.Free;
   inherited Destroy;
+end;
+
+procedure TPageInput.FocusChecked(Document: TDocument);
+var
+  Focused, Old: TElement;
+begin
+  Focused := Document.FocusedElement;
+  if Focused = FFocusField then
+    Exit;
+  Old := FFocusField;
+  FFocusField := nil;
+  if Old <> nil then
+  begin
+    if Old.IsConnected and IsTextControl(Old) and (TextControlValue(Old) <> FFocusValue) then
+      FireEvent(Old, 'change', True);
+    Old.Release;
+  end;
+  { The change listeners may have moved the focus again. }
+  Focused := Document.FocusedElement;
+  if (Focused <> nil) and IsTextControl(Focused) then
+  begin
+    Focused.Retain;
+    FFocusField := Focused;
+    FFocusValue := TextControlValue(Focused);
+  end;
 end;
 
 procedure TPageInput.FieldEdited(Element: TElement; const InputType, Data: string);
@@ -167,6 +200,7 @@ begin
     Exit;
   Document.Retain;
   try
+    FocusChecked(Document);
     if DispatchKeyEvent(KeyTarget(Document), 'keydown', ScanCode, Character, Modifiers) and
       (not ((Character >= 32) and (Character <> 127) and ((Modifiers and (SystemControl or SystemAlt)) = 0)) or
       DispatchKeyEvent(KeyTarget(Document), 'keypress', ScanCode, Character, Modifiers)) then
@@ -188,6 +222,7 @@ begin
         Click(Focused);
     end;
     DispatchKeyEvent(KeyTarget(Document), 'keyup', ScanCode, Character, Modifiers);
+    FocusChecked(Document);
   finally
     Document.Release;
   end;
@@ -280,6 +315,8 @@ begin
   try
     if FireMouseEvent(Element, 'mousedown') and IsFocusableArea(Element) then
       FocusElement(Element);
+    if Element.NodeDocument <> nil then
+      FocusChecked(Element.NodeDocument);
     FireMouseEvent(Element, 'mouseup');
     if not FireMouseEvent(Element, 'click') then
       Exit;

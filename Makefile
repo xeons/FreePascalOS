@@ -1307,7 +1307,8 @@ WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/Te
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \
-	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas))
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	tools/WebLoadTest/editing-fuzz.html tools/WebBrowse/WebBrowse.Input.pas $(wildcard userland/lib/webview/WebView.*.pas)
 
 $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
 		$(WEB_BINDING_SOURCES)
@@ -1317,7 +1318,8 @@ $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard us
 	@touch $@
 
 $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLoadTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest \
+	fpc -Mobjfpc -O2 -Cr -gl -vew -Futools/WebLoadTest -Futools/CryptoTest -Futools/TlsTest -Futools/HttpTest \
+		-Futools/WebBrowse -Fuuserland/lib/webview -Fuuserland/lib/windowing \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
 		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
