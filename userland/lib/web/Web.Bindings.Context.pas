@@ -230,6 +230,10 @@ type
     { How many index properties (window[0] ...) the global object has
       for its frames. }
     FrameIndexCount: Integer;
+    { The realms of its dedicated workers (Web.Script.NativeWorkers):
+      engines sharing its runtime, their jobs run at its microtask
+      checkpoints, freed after its engine. }
+    WorkerEngines: array of TJsEngine;
     { AWindow: the window event target the loader made (the navigable's
       TWebWindow, whose load event and timers it drives); nil makes one
       of the context's own. }
@@ -643,6 +647,9 @@ begin
   { The engine's cells go first: the wrappers release their nodes (a
     frame's cells go with the top-level engine, before the frames). }
   FreeAndNil(FEngine);
+  for Index := 0 to High(WorkerEngines) do
+    WorkerEngines[Index].Free;
+  WorkerEngines := nil;
   FreeChildFrames;
   if FFrameElement <> nil then
     FFrameElement.Release;
@@ -1456,6 +1463,13 @@ begin
         begin
           FChildFrames[Index].PerformMicrotaskCheckpoint;
           Again := True;
+        end;
+      for Index := 0 to High(WorkerEngines) do
+        while WorkerEngines[Index].PendingJobs > 0 do
+        begin
+          Again := True;
+          if not WorkerEngines[Index].Realm.RunJobs then
+            ReportPendingException;
         end;
     until not Again;
   finally
