@@ -112,6 +112,10 @@ type
       Processes.Termination). }
     TerminationRequested: Boolean;
     TerminationCode: LongInt;
+    { When it was (UptimeMilliseconds), and whether the hang watch has
+      reported it as overdue (Processes.HangWatch). }
+    TerminationRequestedAt: QWord;
+    OverdueEndingReported: Boolean;
 
     { Processes started together (a shell pipeline) share a group, which
       the console's Ctrl-C ends as a whole. }
