@@ -156,6 +156,11 @@ type
     FBacking: TSurface;
     FBackingVersion: LongWord;
     FBackingValid: Boolean;
+    { How long the last layout took and when it ended (milliseconds):
+      a slow page is laid out again only after the GUI had twice that
+      to itself (UpdateLayout). }
+    FLayoutCost: QWord;
+    FLayoutDoneAt: QWord;
     FBackingDirty: TRectangle;
     FListHasFixed: Boolean;
     FFixedCheckedVersion: LongWord;
@@ -245,7 +250,9 @@ type
     { Shown, with a size: a hidden view is not laid out. }
     function HasRoom: Boolean;
     procedure ApplyViewport;
-    procedure UpdateLayout;
+    procedure UpdateLayout(Force: Boolean = False);
+    function LayoutDue: Boolean;
+    procedure UpdateLayoutRounds;
     { Painting (WebView.Control.Painting.inc). }
     procedure EnsureBacking;
     procedure PaintBacking;
