@@ -540,7 +540,50 @@ const
   CallListBatteries = 156;
   { 157-159 are kept for this group. }
 
-  CallCount = 160;
+  { --- Mounting volumes and file times (172-175) -------------------------- }
+
+  { (RequestAddress): mounts a volume as a TAbiMountRequest says: a
+    disk partition (Source "/dev/disk1p2" or "disk1p2"), a volume on the
+    list (Source "/volumes/NAME") or a new memory volume (FileSystemType
+    "tmpfs"), at the directory Target, with the mount options of Options
+    ("ro,noexec,uid=1000,umask=022,size=64m", see FileSystem.MountOptions
+    in the kernel). A volume already on the list takes the new options
+    (a read-only one stays read-only) and is mounted at Target; an empty
+    Target only mounts it (at /volumes/NAME). Root only
+    (ErrorNotPermitted). ErrorInvalidArgument for an option it does not
+    know, ErrorNotFound for no such device or folder, ErrorBusy if the
+    volume is mounted at a directory already, something is mounted on
+    Target or the device's last volume still has open files,
+    ErrorUnsupported if no file system on the device is known. }
+  CallMountVolume = 172;
+  { (PathAddress, Flags): unmounts the volume mounted at Path (a mount
+    point, or /volumes/NAME): writes it back, takes it off /volumes and
+    from its directory. ErrorBusy while one of its files or folders is
+    open, a program works in it, or a volume is mounted on it, unless
+    Flags has UnmountForce (its open files then fail with ErrorNoDevice).
+    The system volume is never unmounted (ErrorBusy). Root only. }
+  CallUnmountVolume = 173;
+  { (Index, InformationAddress): the Index-th mounted volume (from 0; the
+    order of /volumes) as a TAbiMountInformation; returns 1, or 0 after
+    the last. Anyone may list them. }
+  CallListMounts = 174;
+  { (PathAddress or 0, Handle, Flags, TimesAddress): the four times of
+    the file at Path (or, with PathAddress 0, behind Handle) to the
+    nanosecond, as a TAbiFileTimes: what CallGetPathInformation gives in
+    whole seconds, and the time it was made (birth) where the file
+    system keeps it. Flags: FileTimesFollowLinks for Path. }
+  CallGetFileTimes = 175;
+
+  CallCount = 176;
+
+  { CallUnmountVolume flags. }
+  UnmountForce = $01;
+  { CallGetFileTimes flags. }
+  FileTimesFollowLinks = $01;
+  { TAbiFileTimes.Flags: the birth time is known. }
+  FileTimesHasBirthTime = $01;
+
+  AbiMountTextCapacity = 256;
 
   AbiModuleNameCapacity = 64;
 
@@ -1410,6 +1453,50 @@ type
     IsRemovable: LongWord;
   end;
   PAbiVolumeInformation = ^TAbiVolumeInformation;
+
+  { Arguments of CallMountVolume. }
+  TAbiMountRequest = record
+    { A device ("/dev/disk1p2", "disk1p2"), a volume ("/volumes/NAME") or
+      "tmpfs" (with that FileSystemType). }
+    Source: array[0..AbiMountTextCapacity - 1] of Char;
+    { The directory to mount at; empty: on /volumes only. }
+    Target: array[0..AbiMountTextCapacity - 1] of Char;
+    { Empty, or the type the volume must have ("tmpfs" makes one). }
+    FileSystemType: array[0..AbiTextCapacity - 1] of Char;
+    { Comma separated mount options. }
+    Options: array[0..AbiMountTextCapacity - 1] of Char;
+  end;
+  PAbiMountRequest = ^TAbiMountRequest;
+
+  { One mounted volume (CallListMounts). }
+  TAbiMountInformation = record
+    { The volume's name in /volumes ("disk1p2", "tmpfs1"). }
+    Name: array[0..AbiTextCapacity - 1] of Char;
+    { Its device ("/dev/disk1p2"), or the type for a memory volume. }
+    Source: array[0..AbiTextCapacity - 1] of Char;
+    FileSystemType: array[0..AbiTextCapacity - 1] of Char;
+    { Where the caller sees it: the mount point ("/tmp"), else
+      "/volumes/NAME" ("/" for the system volume). }
+    MountPoint: array[0..AbiMountTextCapacity - 1] of Char;
+    { Its options as mount lists them ("rw,nosuid,uid=1000,..."). }
+    Options: array[0..AbiMountTextCapacity - 1] of Char;
+    VolumeNumber: LongWord;
+    { Mounted at a directory (not only at /volumes). }
+    IsAtDirectory: LongWord;
+  end;
+  PAbiMountInformation = ^TAbiMountInformation;
+
+  { CallGetFileTimes. }
+  TAbiFileTimes = record
+    Access: TAbiPreciseTime;
+    Modification: TAbiPreciseTime;
+    Change: TAbiPreciseTime;
+    Birth: TAbiPreciseTime;
+    { FileTimesHasBirthTime. }
+    Flags: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiFileTimes = ^TAbiFileTimes;
 
   { One change record of a watch (CallReadWatch). The name follows the
     record, then (renames) the old name, each ended by a zero. }

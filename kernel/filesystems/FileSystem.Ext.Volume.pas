@@ -423,6 +423,66 @@ begin
     Result := Blocks * 512;
 end;
 
+const
+  { The extra time fields of a large inode: nanoseconds (bits 2-31)
+    and two more bits of seconds (0-1) after each 32-bit time. }
+  InodeChangeTimeExtra = $84;
+  InodeModificationTimeExtra = $88;
+  InodeAccessTimeExtra = $8C;
+  InodeCreationTimeExtra = $94;
+
+{ True if the inode is large enough to hold the 32-bit field at
+  FieldOffset. }
+function InodeHasField(Node: PExtNode; FieldOffset: LongWord): Boolean;
+var
+  ExtraSize: Word;
+begin
+  if ExtVolumeOf(@Node^.Common)^.InodeSize <= GoodOldInodeSize then
+    Exit(False);
+  ExtraSize := PWord(@Node^.InodeBytes[InodeExtraSizeOffset])^;
+  Result := GoodOldInodeSize + ExtraSize >= FieldOffset + 4;
+end;
+
+{ Applies an extra time field to Seconds (from the base field) and
+  gives its nanoseconds. }
+procedure ApplyExtraTime(Node: PExtNode; ExtraOffset: LongWord; var Seconds: Int64;
+  out Nanoseconds: LongWord);
+var
+  Extra: LongWord;
+begin
+  Nanoseconds := 0;
+  if not InodeHasField(Node, ExtraOffset) then
+    Exit;
+  Extra := PLongWord(@Node^.InodeBytes[ExtraOffset])^;
+  Nanoseconds := Extra shr 2;
+  if Nanoseconds > 999999999 then
+    Nanoseconds := 0;
+  if (Extra and 3) <> 0 then
+    Seconds := Int64(LongInt(LongWord(Seconds))) + (Int64(Extra and 3) shl 32);
+end;
+
+{ The nanoseconds and the time the inode was made (crtime), where the
+  inode is large enough to have them. }
+procedure RefreshExtraTimes(Node: PExtNode);
+var
+  Information: ^TNodeInformation;
+  Birth: Int64;
+begin
+  Information := @Node^.Common.Information;
+  ApplyExtraTime(Node, InodeChangeTimeExtra, Information^.ChangeTime, Information^.ChangeNanoseconds);
+  ApplyExtraTime(Node, InodeModificationTimeExtra, Information^.ModificationTime,
+    Information^.ModificationNanoseconds);
+  ApplyExtraTime(Node, InodeAccessTimeExtra, Information^.AccessTime, Information^.AccessNanoseconds);
+  Information^.BirthTime := 0;
+  Information^.BirthNanoseconds := 0;
+  if InodeHasField(Node, InodeCreationTimeOffset) then
+  begin
+    Birth := PLongWord(@Node^.InodeBytes[InodeCreationTimeOffset])^;
+    ApplyExtraTime(Node, InodeCreationTimeExtra, Birth, Information^.BirthNanoseconds);
+    Information^.BirthTime := Birth;
+  end;
+end;
+
 procedure RefreshNodeInformation(Node: PExtNode);
 var
   Inode: PInode;
@@ -445,6 +505,7 @@ begin
   Node^.Common.Information.ModificationTime := Inode^.ModificationTime;
   Node^.Common.Information.AccessTime := Inode^.AccessTime;
   Node^.Common.Information.ChangeTime := Inode^.ChangeTime;
+  RefreshExtraTimes(Node);
   Node^.Common.Information.AllocatedBytes := AllocatedBytesOf(Node);
 end;
 

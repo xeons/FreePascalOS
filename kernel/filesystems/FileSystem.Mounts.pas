@@ -81,6 +81,9 @@ procedure CopyVolumeMountPath(Volume: PVolume; Path: PChar; Capacity: PtrUInt);
   at the top of the chain and the mount point's path from its root.
   False after the last. }
 function DescribeMount(Index: Integer; out Child, Top: PVolume; Path: PChar; Capacity: PtrUInt): Boolean;
+{ Where Volume is mounted: the volume at the top of its chain and the
+  mount point's path from its root; False if it is mounted nowhere. }
+function FindVolumeMountPoint(Volume: PVolume; out Top: PVolume; Path: PChar; Capacity: PtrUInt): Boolean;
 
 implementation
 
@@ -307,6 +310,26 @@ begin
   else
   begin
     Child := nil;
+    Top := nil;
+    Path[0] := #0;
+  end;
+  ReleaseMutex(MountListLock);
+end;
+
+function FindVolumeMountPoint(Volume: PVolume; out Top: PVolume; Path: PChar; Capacity: PtrUInt): Boolean;
+var
+  MountRecord: PMountRecord;
+begin
+  AcquireMutex(MountListLock);
+  MountRecord := FindMountOf(Table, Volume);
+  Result := MountRecord <> nil;
+  if Result then
+  begin
+    Top := PVolume(MountRecord^.Top);
+    CopyText(Path, @MountRecord^.Path[0], Capacity);
+  end
+  else
+  begin
     Top := nil;
     Path[0] := #0;
   end;
