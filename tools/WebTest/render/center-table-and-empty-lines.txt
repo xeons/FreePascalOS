@@ -1,0 +1,24 @@
+viewport (anonymous) at (0,0) size 400x600
+  block <html> at (0,0) size 400x56.25
+    block <body> at (0,0) size 400x56.25
+      block <center> at (0,0) size 400x19
+        table <table> at (100,0) size 200x19
+          row-group <tbody> at (100,0) size 200x19
+            row <tr> at (100,0) size 200x19
+              cell <td> at (100,0) size 57.98x19
+                block <center> at (100,0) size 57.98x19
+                  block <div> at (123.99,3) size 10x10
+              cell <td> at (157.98,0) size 142.02x19
+                line 0 at y 0.19 height 18.62 baseline 15.04
+                  text "Title" at (157.98,0.19) size 34.29x18.62
+      block <div> at (0,19) size 400x18.62
+        table <table> at (150,19) size 100x18.62
+          row-group <tbody> at (150,19) size 100x18.62
+            row <tr> at (150,19) size 100x18.62
+              cell <td> at (150,19) size 100x18.62
+                line 0 at y 19 height 18.62 baseline 33.85
+                  text "x" at (150,19) size 9.47x18.62
+      block <div> at (0,37.62) size 400x0
+      block <div> at (0,37.62) size 400x18.62
+        line 0 at y 37.62 height 18.62 baseline 52.48
+          text "after" at (0,37.62) size 37.85x18.62

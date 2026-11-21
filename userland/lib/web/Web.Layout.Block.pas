@@ -320,7 +320,13 @@ begin
         Child.Margin[sideLeft] := 0;
     end
     else if (Child.Kind = bkTable) and IsAutoValue(Child.Style, cpMarginLeft) then
-      Child.Margin[sideLeft] := ChildInput.AvailableWidth - Child.Width - Child.Margin[sideRight];
+      Child.Margin[sideLeft] := ChildInput.AvailableWidth - Child.Width - Child.Margin[sideRight]
+    else if (Child.Kind = bkTable) and not IsAutoValue(Child.Style, cpMarginRight) and
+      (Box.Style.Keyword(cpTextAlign) = kwWebkitCenter) and
+      (ChildInput.AvailableWidth - Child.Width - Child.Margin[sideLeft] - Child.Margin[sideRight] > 0) then
+      { In <center> (text-align: -webkit-center) a table is centred too. }
+      Child.Margin[sideLeft] := Child.Margin[sideLeft] +
+        (ChildInput.AvailableWidth - Child.Width - Child.Margin[sideLeft] - Child.Margin[sideRight]) / 2;
     Child.X := Box.ContentLeft + Shift + Child.Margin[sideLeft];
     if FirstInFlow and CollapseTop and not Cleared then
     begin

@@ -34,7 +34,7 @@ page, results.json and report.html / report.txt sorted by score.
 
     scripts/compare-sites.py [--out DIR] [--only NAME,...] [--jobs N]
         [--sizes 1280x800,400x800] [--no-smoke] [--no-render]
-        [--refresh-reference] [--baseline OLD/results.json]
+        [--refresh-reference] [--baseline OLD/results.json] [--webbrowse BINARY]
 
 The reference pictures are kept between runs (--refresh-reference makes
 them again) so runs before and after a change compare against the same
@@ -394,6 +394,7 @@ def write_reports(records, options, baseline):
 
 
 def main():
+    global WEBBROWSE
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--list', default=DEFAULT_LIST)
     parser.add_argument('--out', default=DEFAULT_OUT)
@@ -404,11 +405,13 @@ def main():
     parser.add_argument('--no-render', action='store_true')
     parser.add_argument('--refresh-reference', action='store_true')
     parser.add_argument('--baseline', default='')
+    parser.add_argument('--webbrowse', default=WEBBROWSE, help='the webbrowse binary (a copy keeps runs apart from builds)')
     options = parser.parse_args()
     options.out = os.path.abspath(options.out)
     if options.out.startswith(REPOSITORY + os.sep):
         sys.exit('compare-sites: put the output outside the repository (--out)')
     options.sizes = [parse_size(text) for text in options.sizes.split(',')]
+    WEBBROWSE = os.path.abspath(options.webbrowse)
     if not os.path.exists(WEBBROWSE):
         sys.exit('compare-sites: build webbrowse first (make webbrowse)')
     if shutil.which('firefox') is None and not options.no_render:
