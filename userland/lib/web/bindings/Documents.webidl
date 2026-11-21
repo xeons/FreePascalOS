@@ -99,3 +99,20 @@ interface DOMImplementation {
   [NewObject] Document createHTMLDocument(optional DOMString title);
   boolean hasFeature();
 };
+
+// HTML 8.5.1: DOMParser. Text is parsed as an HTML document without
+// scripting; the XML types give a document holding a parsererror element
+// (there is no XML parser yet).
+enum DOMParserSupportedType {
+  "text/html",
+  "text/xml",
+  "application/xml",
+  "application/xhtml+xml",
+  "image/svg+xml"
+};
+
+[Exposed=Window]
+interface DOMParser {
+  constructor();
+  [NewObject] Document parseFromString(DOMString string, DOMParserSupportedType type);
+};

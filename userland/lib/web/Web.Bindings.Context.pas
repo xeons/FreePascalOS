@@ -946,6 +946,21 @@ begin
   Result := (Pos('-', Name) > 0) and (Name <> '') and (Name[1] in ['a'..'z']);
 end;
 
+{ SVG 2: the svg element, the graphics elements (what is drawn, groups and
+  links), and SVGElement for the rest. }
+function SvgInterfaceOf(Name: TAtom): Integer;
+begin
+  case Name of
+    AtomSvg:
+      Result := InterfaceSVGSVGElement;
+    AtomG, AtomPath, AtomRect, AtomCircle, AtomEllipse, AtomLine, AtomPolyline, AtomPolygon, AtomText, AtomTspan,
+    AtomUse, AtomDefs, AtomImage, AtomForeignObject, AtomA:
+      Result := InterfaceSVGGraphicsElement;
+  else
+    Result := InterfaceSVGElement;
+  end;
+end;
+
 function TBindingContext.InterfaceForNode(Node: TNode): Integer;
 var
   Atom: TAtom;
@@ -953,6 +968,8 @@ begin
   case Node.NodeType of
     NodeTypeElement:
       begin
+        if TElement(Node).NamespaceId = NamespaceSvg then
+          Exit(SvgInterfaceOf(Node.LocalNameAtom));
         if not TElement(Node).IsHtml then
           Exit(InterfaceElement);
         Atom := Node.LocalNameAtom;

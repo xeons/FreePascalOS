@@ -261,13 +261,13 @@ begin
   end;
 end;
 
-function HTMLElement_focus(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_focus(var Call: TBindingCall): TJsValue;
 begin
   FocusElement(ThisElement(Call));
   Result := Nothing;
 end;
 
-function HTMLElement_blur(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_blur(var Call: TBindingCall): TJsValue;
 begin
   UnfocusElement(ThisElement(Call));
   Result := Nothing;
@@ -325,12 +325,12 @@ begin
   Result := JsFalse;
 end;
 
-function HTMLElement_get_dataset(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_dataset(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).WrapObject(ThisElement(Call), InterfaceDOMStringMap, False, Call.This);
 end;
 
-function HTMLElement_get_style(var Call: TBindingCall): TJsValue;
+function ElementCSSInlineStyle_get_style(var Call: TBindingCall): TJsValue;
 begin
   Result := InlineStyleObject(Context(Call), ThisElement(Call), Call.This);
 end;
@@ -395,7 +395,7 @@ begin
     (Element.LocalNameAtom = AtomIframe) or (Element.LocalNameAtom = AtomSummary));
 end;
 
-function HTMLElement_get_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_get_tabIndex(var Call: TBindingCall): TJsValue;
 var
   Value: Int64;
 begin
@@ -409,7 +409,7 @@ begin
     Result := JsInteger(-1);
 end;
 
-function HTMLElement_set_tabIndex(var Call: TBindingCall): TJsValue;
+function HTMLOrSVGElement_set_tabIndex(var Call: TBindingCall): TJsValue;
 begin
   ThisElement(Call).SetAttributeAtom(AtomTabindex, NamespaceNone, IntToStr(Call.Int(0)));
   Result := Nothing;
