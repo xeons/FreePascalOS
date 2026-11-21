@@ -40,6 +40,7 @@ uses
   WebLoadTest.Editing,
   WebLoadTest.Pointer,
   WebLoadTest.Frames,
+  WebLoadTest.BrowserFeatures,
   SysUtils,
   Web.Bindings.Context,
   Web.Navigation.Pages;
@@ -71,5 +72,6 @@ begin
   RunFrameTests;
   RunEditingTests;
   RunPointerTests;
+  RunBrowserFeatureTests;
   FinishChecks('web load test');
 end.
