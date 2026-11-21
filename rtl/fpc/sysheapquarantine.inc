@@ -32,6 +32,12 @@
   The threads of a program share the queue, under its own lock. The
   lock is never held while the heap's own lock is taken: blocks are
   checked and freed after it is released.
+
+  A thread that ends takes its own blocks (those it allocated) out
+  first (TakeQuarantinedBlocksOf): the heap's chunks of an ended thread
+  are given back only if nothing in them is still in use, and a small
+  block waiting here would otherwise keep a whole chunk, and a region of
+  the address space, for every thread a program ever ran.
 }
 
 const
@@ -43,8 +49,11 @@ type
   TQuarantineEntry = record
     Block: Pointer;
     ByteCount: PtrUInt;
+    { The thread that allocated the block (HeapCheckOwnerTag). }
+    Owner: LongWord;
     FreedBy: THeapCheckFreedBy;
   end;
+  PQuarantineEntry = ^TQuarantineEntry;
 
 var
   QuarantineEntries: array[0..QuarantineCapacity - 1] of TQuarantineEntry;
@@ -95,6 +104,38 @@ begin
   QuarantineEntries[Slot] := Entry;
   Inc(QuarantineCount);
   QuarantineBytes := QuarantineBytes + Entry.ByteCount;
+  ReleaseWordLock(QuarantineLock);
+end;
+
+{ Takes up to Capacity entries of blocks Owner allocated out of the
+  queue, into Taken, keeping the others in order; returns how many. }
+function TakeQuarantinedBlocksOf(Owner: LongWord; Taken: PQuarantineEntry; Capacity: SizeInt): SizeInt;
+var
+  Index: SizeInt;
+  Kept: SizeInt;
+  Slot: SizeInt;
+  Entry: TQuarantineEntry;
+begin
+  TakeQuarantinedBlocksOf := 0;
+  AcquireWordLock(QuarantineLock);
+  Kept := 0;
+  for Index := 0 to QuarantineCount - 1 do
+  begin
+    Slot := (QuarantineOldest + Index) mod QuarantineCapacity;
+    Entry := QuarantineEntries[Slot];
+    if (Entry.Owner = Owner) and (TakeQuarantinedBlocksOf < Capacity) then
+    begin
+      Taken[TakeQuarantinedBlocksOf] := Entry;
+      Inc(TakeQuarantinedBlocksOf);
+      QuarantineBytes := QuarantineBytes - Entry.ByteCount;
+    end
+    else
+    begin
+      QuarantineEntries[(QuarantineOldest + Kept) mod QuarantineCapacity] := Entry;
+      Inc(Kept);
+    end;
+  end;
+  QuarantineCount := Kept;
   ReleaseWordLock(QuarantineLock);
 end;
 

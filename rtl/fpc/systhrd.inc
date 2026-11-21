@@ -156,8 +156,13 @@ type
     StackSize: PtrUInt;
   end;
 
+procedure ReleaseQuarantineOfEndingThread; forward;
+
 procedure SysEndThread(ExitCode: DWord);
 begin
+  { Before DoneThread, where the heap gives up this thread's chunks:
+    blocks waiting in the heap check quarantine would keep them. }
+  ReleaseQuarantineOfEndingThread;
   DoneThread;
   while True do
     SystemCall(CallExitThread, QWord(ExitCode), 0, 0, 0, 0, 0);

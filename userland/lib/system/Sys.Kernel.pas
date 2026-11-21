@@ -124,6 +124,10 @@ function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64
   records filled at most). }
 function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
 function KernelGetSystemUsage(out Usage: TAbiSystemUsage): Int64;
+{ What a process (0: this one) holds against its limits. }
+function KernelGetProcessResources(ProcessId: QWord; out Resources: TAbiProcessResources): Int64;
+{ Sets one of this process's limits (ProcessLimit*); returns the old one. }
+function KernelSetProcessLimit(Limit: LongWord; Value: QWord): Int64;
 { The clock, the time zone and the keyboards (changes are root's). }
 function KernelSetWallClock(Time: Int64): Int64;
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
@@ -520,6 +524,16 @@ end;
 function KernelReadWatch(Handle: Int64; Buffer: Pointer; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallReadWatch, QWord(Handle), QWord(Buffer), Capacity, 0, 0, 0);
+end;
+
+function KernelGetProcessResources(ProcessId: QWord; out Resources: TAbiProcessResources): Int64;
+begin
+  Result := SystemCall(CallGetProcessResources, ProcessId, QWord(@Resources), 0, 0, 0, 0);
+end;
+
+function KernelSetProcessLimit(Limit: LongWord; Value: QWord): Int64;
+begin
+  Result := SystemCall(CallSetProcessLimit, Limit, Value, 0, 0, 0, 0);
 end;
 
 function KernelListProcessDetails(Buffer: PAbiProcessDetails; Capacity: QWord): Int64;
