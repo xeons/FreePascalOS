@@ -75,6 +75,8 @@ begin
   Result := GetFPCHeapStatus.CurrHeapUsed;
 end;
 
+procedure CheckTreeDepthLimit; forward;
+
 procedure RunPerformanceTests;
 var
   Markup: string;
@@ -113,6 +115,52 @@ begin
   CollectGarbage;
   Check(LiveNodeCount = NodesBefore, 'freeing the document frees every node');
   Check(HeapInUse - HeapBefore < 64 * 1024, Format('and the heap it used (%d bytes left)', [HeapInUse - HeapBefore]));
+  CheckTreeDepthLimit;
+end;
+
+{ Nesting deeper than the parser's limit (512) goes beside: the tree
+  stays shallow enough for the recursive walks of styling and layout. }
+procedure CheckTreeDepthLimit;
+var
+  Markup: string;
+  Document: TDocument;
+  Node: TNode;
+  Depth, Deepest, Count: Integer;
+begin
+  Markup := '<!DOCTYPE html><body>';
+  for Count := 1 to 5000 do
+    Markup := Markup + '<div>';
+  Markup := Markup + 'deep';
+  Document := ParseHtmlText(Markup);
+  try
+    Deepest := 0;
+    Count := 0;
+    Node := Document;
+    while Node <> nil do
+    begin
+      if Node.IsElement then
+        Inc(Count);
+      Depth := 0;
+      if Node.FirstChild = nil then
+      begin
+        while Node.ParentNode <> nil do
+        begin
+          Inc(Depth);
+          Node := Node.ParentNode;
+          if Node = Document then
+            Break;
+        end;
+        if Depth > Deepest then
+          Deepest := Depth;
+        Break;
+      end;
+      Node := Node.LastChild;
+    end;
+    Check(Deepest <= 515, Format('a 5000 deep nesting is at most 515 deep in the tree (%d)', [Deepest]));
+    Check(Document.Body.TextContent = 'deep', 'and keeps its text');
+  finally
+    Document.Release;
+  end;
 end;
 
 end.

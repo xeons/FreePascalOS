@@ -182,6 +182,10 @@ type
     property OnParseError: TParseErrorEvent read FOnParseError write FOnParseError;
   end;
 
+const
+  { Open elements beyond this depth are inserted beside, not inside. }
+  MaximumTreeDepth = 512;
+
 implementation
 
 uses
@@ -424,6 +428,14 @@ begin
   end
   else
     Parent := Target;
+  { As deep as MaximumTreeDepth at most (as other engines do): deeper
+    elements go beside their would-be parent, so styling, layout and
+    painting, which walk the tree recursively, stay within the stack. }
+  if (OverrideTarget = nil) and (FOpenElements.Count > MaximumTreeDepth) and (Parent.ParentNode <> nil) then
+  begin
+    Parent := Parent.ParentNode;
+    Before := nil;
+  end;
   if (Parent.NodeType = NodeTypeElement) and TElement(Parent).IsHtmlElement(AtomTemplate) then
   begin
     Parent := TElement(Parent).TemplateContent;
