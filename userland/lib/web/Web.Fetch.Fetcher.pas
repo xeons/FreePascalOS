@@ -300,7 +300,7 @@ end;
 function TFetcher.Fetch(Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer): TFetchJob;
 begin
   Inc(FNextJobId);
-  Result := TFetchJob.Create(FNextJobId, Request, Consumer, Group);
+  Result := TFetchJob.Create(FNextJobId, Request, Consumer, Group, @Cancel);
   FJobs.Add(Result.Id, Result);
   if Request.Client <> nil then
     Request.Origin := Request.Client.Origin;

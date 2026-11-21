@@ -65,6 +65,8 @@ type
     FBodyLength: Integer;
     FOnComplete: TBufferedFetchEvent;
     FCompleted: Boolean;
+  protected
+    procedure JobReleased(Job: TFetchJob); override;
   public
     Status: Integer;
     ResponseType: TFetchResponseType;
@@ -133,6 +135,12 @@ procedure TBufferedFetch.Start(Fetcher: TFetcher; Request: TFetchRequest; Group:
 begin
   FFetcher := Fetcher;
   FJob := Fetcher.Fetch(Request, Self, Group);
+end;
+
+procedure TBufferedFetch.JobReleased(Job: TFetchJob);
+begin
+  if Job = FJob then
+    FJob := nil;
 end;
 
 procedure TBufferedFetch.Cancel;

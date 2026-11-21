@@ -135,6 +135,8 @@ type
   end;
 
   TNavigationConsumer = class(TFetchConsumer)
+  protected
+    procedure JobReleased(Job: TFetchJob); override;
   public
     Navigable: TNavigable;
     procedure ProcessResponse(Job: TFetchJob; Response: TFetchResponse); override;
@@ -400,6 +402,12 @@ begin
 end;
 
 { ---- the consumer ---- }
+
+procedure TNavigationConsumer.JobReleased(Job: TFetchJob);
+begin
+  if (Navigable <> nil) and (Navigable.FNavigationJob = Job) then
+    Navigable.FNavigationJob := nil;
+end;
 
 procedure TNavigationConsumer.ProcessResponse(Job: TFetchJob; Response: TFetchResponse);
 begin

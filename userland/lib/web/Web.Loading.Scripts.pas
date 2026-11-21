@@ -122,6 +122,8 @@ type
     FInOrder: TList;
     FAsync: TList;
     FAll: TList;
+    { The fetches of FetchScript still running (their TBufferedFetch). }
+    FTextFetches: TList;
     FRunningDeferred: Boolean;
     FLastError: string;
     FOnDeferredDone: TNotifyEvent;
@@ -130,6 +132,7 @@ type
     function DetermineKind(Element: TElement; out Kind: TScriptKind): Boolean;
     procedure StartFetch(Script: TPendingScript; Element: TElement);
     procedure FetchComplete(Fetch: TBufferedFetch; Success: Boolean);
+    procedure TextFetchComplete(Fetch: TBufferedFetch; Success: Boolean);
     procedure Execute(Script: TPendingScript);
     procedure Forget(Script: TPendingScript);
     procedure ProcessReady;
@@ -152,7 +155,9 @@ type
     procedure StyleSheetsUnblocked;
     { The end: run the deferred scripts in order; OnDeferredDone after. }
     procedure RunDeferredScripts;
-    { For the executor: a module import or other script text. }
+    { For the executor: a module import or other script text. OnDone
+      comes once, in a later task; when the scheduler goes first it
+      never comes and Data is freed. }
     procedure FetchScript(constref Url: TUrlRecord; IsModule: Boolean; OnDone: TScriptTextEvent; Data: TObject);
     function HasParsingBlockingScript: Boolean;
     { Scripts of the async and in-order lists not run yet. }
@@ -199,7 +204,6 @@ type
   TScriptEventFirer = class
   public
     procedure Fire(Data: TObject);
-    procedure TextComplete(Fetch: TBufferedFetch; Success: Boolean);
   end;
 
 var
@@ -216,11 +220,12 @@ begin
   FireEvent(TScriptEvent(Data).Element, TScriptEvent(Data).Name);
 end;
 
-procedure TScriptEventFirer.TextComplete(Fetch: TBufferedFetch; Success: Boolean);
+procedure TScriptScheduler.TextFetchComplete(Fetch: TBufferedFetch; Success: Boolean);
 var
   Request: TScriptTextRequest;
   Text: string;
 begin
+  FTextFetches.Remove(Fetch);
   Request := TScriptTextRequest(Fetch.Data);
   Text := '';
   if Success then
@@ -233,6 +238,17 @@ begin
   Request.OnDone(Text, Success, Request.Data);
   Request.Free;
   Fetch.Free;
+end;
+
+{ A FetchScript fetch that never completed: freeing it cancels its job. }
+procedure FreeTextFetch(Fetch: TBufferedFetch);
+var
+  Request: TScriptTextRequest;
+begin
+  Request := TScriptTextRequest(Fetch.Data);
+  Fetch.Free;
+  Request.Data.Free;
+  Request.Free;
 end;
 
 destructor TPendingScript.Destroy;
@@ -276,6 +292,7 @@ begin
   FInOrder := TList.Create;
   FAsync := TList.Create;
   FAll := TList.Create;
+  FTextFetches := TList.Create;
 end;
 
 destructor TScriptScheduler.Destroy;
@@ -285,6 +302,9 @@ begin
   for Index := 0 to FAll.Count - 1 do
     TPendingScript(FAll[Index]).Free;
   FAll.Free;
+  for Index := 0 to FTextFetches.Count - 1 do
+    FreeTextFetch(TBufferedFetch(FTextFetches[Index]));
+  FTextFetches.Free;
   FDeferred.Free;
   FInOrder.Free;
   FAsync.Free;
@@ -633,8 +653,9 @@ begin
   TextRequest.IsModule := IsModule;
   if not EncodingForLabel(FContext.Document.CharacterSet, TextRequest.Encoding) then
     TextRequest.Encoding := TextEncodingUtf8;
-  Fetch := TBufferedFetch.Create(@ScriptEventFirer.TextComplete);
+  Fetch := TBufferedFetch.Create(@TextFetchComplete);
   Fetch.Data := TextRequest;
+  FTextFetches.Add(Fetch);
   Fetch.Start(FContext.Fetcher, Request, FContext);
 end;
 

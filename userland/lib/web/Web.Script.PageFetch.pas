@@ -26,8 +26,10 @@
   headers.
 
   TScriptFetches keeps the fetches of a page: each one's consumer, freed
-  after its end or when it is cancelled (never inside the fetcher's call
-  into it).
+  after its end or when it is cancelled, at the next Start or with the
+  page. That can be inside the fetcher's call into the consumer (a
+  script's error handler starting another fetch); freeing a consumer
+  cancels and detaches its job, so the fetcher calls it no more.
 }
 unit Web.Script.PageFetch;
 
@@ -86,6 +88,9 @@ type
     Loader: TLoadingContext;
     Job: TFetchJob;
     Finished: Boolean;
+  protected
+    procedure JobReleased(Job_: TFetchJob); override;
+  public
     procedure ProcessResponse(Job_: TFetchJob; Response: TFetchResponse); override;
     procedure ProcessBody(Job_: TFetchJob; Data: Pointer; Count: PtrUInt); override;
     procedure ProcessEndOfBody(Job_: TFetchJob; Success: Boolean); override;
@@ -227,6 +232,12 @@ end;
 
 { TScriptFetchConsumer }
 
+procedure TScriptFetchConsumer.JobReleased(Job_: TFetchJob);
+begin
+  if Job_ = Job then
+    Job := nil;
+end;
+
 procedure TScriptFetchConsumer.ProcessResponse(Job_: TFetchJob; Response: TFetchResponse);
 var
   Status: Integer;
@@ -330,7 +341,8 @@ begin
   Consumer := TScriptFetchConsumer(Handle);
   FActive.Remove(Consumer);
   Consumer.Finished := True;
-  Consumer.Loader.CancelFetch(Consumer.Job);
+  if Consumer.Job <> nil then
+    Consumer.Job.Cancel;
   FDone.Add(Consumer);
 end;
 

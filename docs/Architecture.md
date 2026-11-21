@@ -11093,7 +11093,7 @@ decided on the page thread:
 | `Web.Fetch.Fetcher` | main fetch, scheme fetch, HTTP fetch, redirects, sniffing before delivery |
 | `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks; at most 12 run at once, the others wait (documents, style sheets, scripts and fonts ahead of images); a hop whose thread cannot be made fails like a network error |
 | `Web.Fetch.Monitors` | `TFetchMonitor`: told of each fetch's start, response, failure, end or cancel (a network log; webbrowse -n) |
-| `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks) |
+| `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks). The two know each other: a consumer that is freed, even from inside one of its own calls, cancels its running jobs and detaches all of them (nothing more reaches it); a job that is freed tells its consumer (`JobReleased`) so a kept job pointer is cleared; `TFetchJob.Cancel` stops a job without the fetcher at hand |
 | `Web.Fetch.NetworkContexts` | a profile's libhttp client (connections, cookies, cache), HSTS store, preflight cache, Accept-Language; shared by its pages |
 | `Web.Fetch.MimeTypes` | MIME Sniffing's parser and serializer, Fetch's "extract a MIME type", the type groups |
 | `Web.Fetch.Sniffing` | the MIME type sniffing algorithm, the image context, the Apache bug |
