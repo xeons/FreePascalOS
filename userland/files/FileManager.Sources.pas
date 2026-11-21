@@ -87,6 +87,9 @@ uses
 var
   CachedArchive: TArchiveReader = nil;
   CachedArchivePath: string = '';
+  { What the archive file was when it was opened: a file deleted,
+    replaced or changed since is opened again (or not found). }
+  CachedArchiveFile: TFileInformation;
 
 function EntryForPath(const Path: string): TFolderEntry;
 var
@@ -270,15 +273,30 @@ begin
   CachedArchivePath := '';
 end;
 
+function SameArchiveFile(constref Was, Now: TFileInformation): Boolean;
+begin
+  Result := (Was.NodeNumber = Now.NodeNumber) and (Was.VolumeNumber = Now.VolumeNumber) and
+    (Was.SizeInBytes = Now.SizeInBytes) and (Was.ModificationTime = Now.ModificationTime);
+end;
+
 function OpenArchiveCached(const Path: string; out Error: string): TArchiveReader;
+var
+  ArchiveFile: TFileInformation;
 begin
   Error := '';
-  if (CachedArchive <> nil) and (CachedArchivePath = Path) then
+  if GetFileInformation(PChar(Path), ArchiveFile) <> ErrorNone then
+  begin
+    ForgetCachedArchive;
+    Error := 'The compressed folder is not there any more';
+    Exit(nil);
+  end;
+  if (CachedArchive <> nil) and (CachedArchivePath = Path) and SameArchiveFile(CachedArchiveFile, ArchiveFile) then
     Exit(CachedArchive);
   ForgetCachedArchive;
   try
     CachedArchive := OpenArchive(Path);
     CachedArchivePath := Path;
+    CachedArchiveFile := ArchiveFile;
   except
     on Problem: Exception do
     begin
