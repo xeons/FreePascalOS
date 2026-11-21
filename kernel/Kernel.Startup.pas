@@ -66,6 +66,7 @@ uses
   Kernel.DeferredCalls,
   Kernel.Clock,
   Kernel.Options,
+  Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.HeapCheckTest,
@@ -111,6 +112,7 @@ uses
   Kernel.WatchdogSelfTest,
   Kernel.PanicTest,
   Kernel.StackTraceSelfTest,
+  Kernel.RandomSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
   Processes.HangWatch,
@@ -336,6 +338,7 @@ begin
 
   RunKernelSelfTests;
   RunStackTraceSelfTest;
+  RunRandomSelfTest;
   RunHeapCheckSelfTest;
   RunProtectionSelfTests;
   RunProtectionFaultTest;
@@ -435,6 +438,7 @@ begin
   WriteProcessorDescription;
 
   InitializeMemoryManagement(BootInformation);
+  InitializeRandom(BootInformation^);
   { SMEP, UMIP, PAN: before the other processors start, which copy the
     boot processor's settings. }
   EnableProcessorProtection;

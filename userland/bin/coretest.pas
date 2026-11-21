@@ -29,6 +29,9 @@
       the exit status must match (those using su run commands as the
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
+      libraries with thread-local storage and initializers loaded at run
+      time (dynlibtest), thread names (threadnametest), address space
+      layout randomization (aslrtest),
     * events, timers, waiting on several handles, channels, ports and a
       section shared between two processes (ipctest),
     * watching files and folders for changes made by other processes,
@@ -125,7 +128,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..398] of TCommandTest = (
+  CommandTests: array[0..401] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -687,7 +690,20 @@ const
     (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { A crash report names each address's module and offset, and ends
       with the modules' load addresses (rtl/fpc/syscrash.inc). }
-    (Command: '/bin/coretest --crash-on-purpose 2> crash.log; sed -n 3p crash.log | grep -c "^  [$][0-9A-F]*  coretest+[$][0-9A-F]*$"; grep -c "^  [$][0-9A-F]*-[$][0-9A-F]* libsystem.so$" crash.log'; ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0)
+    (Command: '/bin/coretest --crash-on-purpose 2> crash.log; sed -n 3p crash.log | grep -c "^  [$][0-9A-F]*  coretest+[$][0-9A-F]*$"; grep -c "^  [$][0-9A-F]*-[$][0-9A-F]* libsystem.so$" crash.log'; ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
+    { Address space layout randomization: two runs of a program have its
+      code, a library's, the stack, the heap and a thread's stack in
+      other places (booted with aslr=off, the same command prints
+      "aslrtest: aslr=off, the addresses are the same"). }
+    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, library, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
+    { Libraries with thread-local storage, threadvars and initializers
+      loaded with LoadLibrary by a program running threads (dynlibtest):
+      per-thread values in old and new threads, initializers once, the
+      finalizers at the end, newest library first. }
+    (Command: 'dynlibtest > dynlib.log; echo $?; grep FAIL dynlib.log; grep -e failed -e finalized -e "finalizer ran" dynlib.log'; ExpectedOutput: '0'#10'dynlibtest: 48 checks, 0 failed'#10'dynpascal: unit finalized'#10'dyntls: library finalizer ran'#10; ExpectedStatus: 0),
+    { Thread names: set by TThread.NameThreadForDebugging and by id,
+      listed by the kernel and shown by ps -L. }
+    (Command: 'threadnametest'; ExpectedOutput: 'threadnametest: names listed'#10'namer'#10'worker-plain'#10'worker-tthread'#10; ExpectedStatus: 0)
   );
 
 var

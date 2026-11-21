@@ -25,9 +25,7 @@
     random   reads random bytes; swallows writes
     urandom  the same as random
 
-  Random bytes come from the processor's generator (RDRAND) where there
-  is one; otherwise from a xorshift generator seeded from the time stamp
-  counter, which is unpredictable enough for scrambling but not for keys.
+  Random bytes come from the kernel's generator (Kernel.Random).
 }
 unit Drivers.MemoryDevices;
 
@@ -43,55 +41,13 @@ implementation
 uses
   Runtime.Memory,
   Abi.SystemCalls,
-  Kernel.Arch.Cpu,
-  Kernel.PriorityLevel,
-  Kernel.SpinLock,
+  Kernel.Random,
   Io.Manager,
   Kernel.Panic;
 
 type
   TMemoryDeviceRole = (RoleNull, RoleZero, RoleFull, RoleRandom);
   PMemoryDeviceRole = ^TMemoryDeviceRole;
-
-var
-  FallbackState: QWord;
-  FallbackLock: TSpinLock;
-
-function NextFallbackRandom: QWord;
-var
-  PreviousLevel: TPriorityLevel;
-  State: QWord;
-begin
-  PreviousLevel := AcquireSpinLock(FallbackLock);
-  State := FallbackState xor ReadTimeStampCounter;
-  State := State xor (State shl 13);
-  State := State xor (State shr 7);
-  State := State xor (State shl 17);
-  FallbackState := State;
-  ReleaseSpinLock(FallbackLock, PreviousLevel);
-  Result := State * QWord($2545F4914F6CDD1D);
-end;
-
-procedure FillRandom(Buffer: PByte; Length: QWord);
-var
-  Value: QWord;
-  Index: QWord;
-  Part: Integer;
-begin
-  Index := 0;
-  while Index < Length do
-  begin
-    if not ReadHardwareRandom(Value) then
-      Value := NextFallbackRandom;
-    for Part := 0 to 7 do
-    begin
-      if Index >= Length then
-        Break;
-      Buffer[Index] := Byte(Value shr (Part * 8));
-      Inc(Index);
-    end;
-  end;
-end;
 
 function RoleOf(Device: PDeviceObject): TMemoryDeviceRole;
 begin
@@ -145,8 +101,6 @@ var
   Dispatch: TDispatchTable;
   Driver: PDriverObject;
 begin
-  InitializeSpinLock(FallbackLock);
-  FallbackState := ReadTimeStampCounter or 1;
   FillMemory(@Dispatch, SizeOf(Dispatch), 0);
   Dispatch[IoFunctionRead] := @ReadMemoryDevice;
   Dispatch[IoFunctionWrite] := @WriteMemoryDevice;

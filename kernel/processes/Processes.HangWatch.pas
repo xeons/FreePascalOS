@@ -121,7 +121,9 @@ begin
   DebugWriteTag('hang');
   DebugWrite('    thread ');
   DebugWriteDecimal(Block^.ThreadId);
-  DebugWrite(' ');
+  DebugWrite(' "');
+  DebugWrite(@Block^.Name[0]);
+  DebugWrite('" ');
   DebugWrite(StateName(Block^.State));
   if Block^.IsOnWaitList then
     DebugWrite(', on a wait list');

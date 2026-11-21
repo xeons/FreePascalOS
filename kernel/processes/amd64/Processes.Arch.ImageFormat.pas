@@ -43,6 +43,7 @@ const
   ImageMachine = ElfMachineAmd64;
   { TLS descriptors (R_X86_64_TLSDESC) are not supported on x86-64. }
   TlsDescriptorResolverName = '';
+  TlsDynamicDescriptorResolverName = '';
 
 type
   { What a relocation does, whatever its number on this processor. }

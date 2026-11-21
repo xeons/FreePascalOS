@@ -64,6 +64,22 @@ asm
   ldr x0, [x1, #8]
 end;
 
+{ The thread's dynamic TLS vector (sysdyntls.inc), in the word below the
+  control block (ThreadBlockDynamicVectorOffset). }
+function ReadDynamicVector: Pointer; assembler; nostackframe;
+asm
+  mrs x1, tpidr_el0
+  sub x1, x1, #8
+  ldr x0, [x1]
+end;
+
+procedure WriteDynamicVector(Value: Pointer); assembler; nostackframe;
+asm
+  mrs x1, tpidr_el0
+  sub x1, x1, #8
+  str x0, [x1]
+end;
+
 { The resolver of TLS descriptors (R_AARCH64_TLSDESC): the kernel lays
   thread-local storage out statically, so a descriptor's second word is
   already the variable's offset from the thread pointer. Called with X0
@@ -71,6 +87,106 @@ end;
 procedure ResolveStaticTlsDescriptor; assembler; nostackframe; [public, alias: '__tlsdesc_static'];
 asm
   ldr x0, [x0, #8]
+end;
+
+function ResolveDynamicTlsDescriptor(Argument: QWord): PtrUInt; forward;
+
+{ The resolver of TLS descriptors of libraries loaded after the program
+  started (dynamic TLS, sysdyntls.inc). The descriptor's second word is
+  TlsDynamicModuleTag + (module handle shl 32) + the variable's offset in
+  the module's block; the result is the variable's address minus the
+  thread pointer. Called with X0 = the descriptor; must keep every other
+  register but the flags. The thread's vector entry (indexed by the
+  handle) is found here; only a thread's first access to a library
+  makes the block, in Pascal, around which every register the procedure
+  call standard lets it change is saved (the vector registers encoded by
+  hand: the assembler does not take Q register pairs). }
+procedure ResolveDynamicTlsDescriptorEntry; assembler; nostackframe; [public, alias: '__tlsdesc_dynamic'];
+asm
+  ldr x0, [x0, #8]
+  stp x1, x2, [sp, #-32]!
+  str x3, [sp, #16]
+  mrs x1, tpidr_el0
+  sub x1, x1, #8
+  ldr x2, [x1]
+  cbz x2, .LMakeBlock
+  lsr x3, x0, #32
+  and x3, x3, #0xFFFFFF
+  ldr x1, [x2]
+  cmp x3, x1
+  b.hs .LMakeBlock
+  add x2, x2, x3, lsl #3
+  ldr x2, [x2, #8]
+  cbz x2, .LMakeBlock
+  mov w0, w0
+  add x0, x2, x0
+  mrs x1, tpidr_el0
+  sub x0, x0, x1
+  ldr x3, [sp, #16]
+  ldp x1, x2, [sp], #32
+  ret
+.LMakeBlock:
+  ldr x3, [sp, #16]
+  ldp x1, x2, [sp], #32
+  stp x29, x30, [sp, #-16]!
+  mov x29, sp
+  sub sp, sp, #672
+  stp x1, x2, [sp, #0]
+  stp x3, x4, [sp, #16]
+  stp x5, x6, [sp, #32]
+  stp x7, x8, [sp, #48]
+  stp x9, x10, [sp, #64]
+  stp x11, x12, [sp, #80]
+  stp x13, x14, [sp, #96]
+  stp x15, x16, [sp, #112]
+  stp x17, x18, [sp, #128]
+  .long 0xAD0507E0 { stp q0, q1, [sp, #160] }
+  .long 0xAD060FE2 { stp q2, q3, [sp, #192] }
+  .long 0xAD0717E4 { stp q4, q5, [sp, #224] }
+  .long 0xAD081FE6 { stp q6, q7, [sp, #256] }
+  .long 0xAD0927E8 { stp q8, q9, [sp, #288] }
+  .long 0xAD0A2FEA { stp q10, q11, [sp, #320] }
+  .long 0xAD0B37EC { stp q12, q13, [sp, #352] }
+  .long 0xAD0C3FEE { stp q14, q15, [sp, #384] }
+  .long 0xAD0D47F0 { stp q16, q17, [sp, #416] }
+  .long 0xAD0E4FF2 { stp q18, q19, [sp, #448] }
+  .long 0xAD0F57F4 { stp q20, q21, [sp, #480] }
+  .long 0xAD105FF6 { stp q22, q23, [sp, #512] }
+  .long 0xAD1167F8 { stp q24, q25, [sp, #544] }
+  .long 0xAD126FFA { stp q26, q27, [sp, #576] }
+  .long 0xAD1377FC { stp q28, q29, [sp, #608] }
+  .long 0xAD147FFE { stp q30, q31, [sp, #640] }
+  bl ResolveDynamicTlsDescriptor
+  mrs x1, tpidr_el0
+  sub x0, x0, x1
+  .long 0xAD4507E0 { ldp q0, q1, [sp, #160] }
+  .long 0xAD460FE2 { ldp q2, q3, [sp, #192] }
+  .long 0xAD4717E4 { ldp q4, q5, [sp, #224] }
+  .long 0xAD481FE6 { ldp q6, q7, [sp, #256] }
+  .long 0xAD4927E8 { ldp q8, q9, [sp, #288] }
+  .long 0xAD4A2FEA { ldp q10, q11, [sp, #320] }
+  .long 0xAD4B37EC { ldp q12, q13, [sp, #352] }
+  .long 0xAD4C3FEE { ldp q14, q15, [sp, #384] }
+  .long 0xAD4D47F0 { ldp q16, q17, [sp, #416] }
+  .long 0xAD4E4FF2 { ldp q18, q19, [sp, #448] }
+  .long 0xAD4F57F4 { ldp q20, q21, [sp, #480] }
+  .long 0xAD505FF6 { ldp q22, q23, [sp, #512] }
+  .long 0xAD5167F8 { ldp q24, q25, [sp, #544] }
+  .long 0xAD526FFA { ldp q26, q27, [sp, #576] }
+  .long 0xAD5377FC { ldp q28, q29, [sp, #608] }
+  .long 0xAD547FFE { ldp q30, q31, [sp, #640] }
+  ldp x1, x2, [sp, #0]
+  ldp x3, x4, [sp, #16]
+  ldp x5, x6, [sp, #32]
+  ldp x7, x8, [sp, #48]
+  ldp x9, x10, [sp, #64]
+  ldp x11, x12, [sp, #80]
+  ldp x13, x14, [sp, #96]
+  ldp x15, x16, [sp, #112]
+  ldp x17, x18, [sp, #128]
+  add sp, sp, #672
+  ldp x29, x30, [sp], #16
+  ret
 end;
 
 { --- Processor exceptions ------------------------------------------------ }

@@ -101,6 +101,9 @@ function ReadTimeStampCounter: QWord;
 function HardwareRandomIsAvailable: Boolean;
 { A random number from RDRAND; False if it failed (or is not there). }
 function ReadHardwareRandom(out Value: QWord): Boolean;
+{ A number straight from the entropy source (RDSEED), for seeding a
+  generator; False if it failed or is not there. }
+function ReadHardwareSeed(out Value: QWord): Boolean;
 
 function ReadStackPointer: QWord;
 function ReadFramePointer: QWord;
@@ -253,14 +256,30 @@ asm
   or rax, rdx
 end;
 
+type
+  TFeatureAnswer = (FeatureNotAsked, FeaturePresent, FeatureAbsent);
+
+var
+  { CPUID is slow (in a virtual machine it leaves the guest), so its
+    answers about the generators are kept. }
+  RdrandAnswer: TFeatureAnswer = FeatureNotAsked;
+  RdseedAnswer: TFeatureAnswer = FeatureNotAsked;
+
 function HardwareRandomIsAvailable: Boolean;
 const
   CpuidRdrandBit = LongWord(1) shl 30;
 var
   Registers: TCpuidResult;
 begin
-  ExecuteCpuid(1, 0, Registers);
-  Result := (Registers.Ecx and CpuidRdrandBit) <> 0;
+  if RdrandAnswer = FeatureNotAsked then
+  begin
+    ExecuteCpuid(1, 0, Registers);
+    if (Registers.Ecx and CpuidRdrandBit) <> 0 then
+      RdrandAnswer := FeaturePresent
+    else
+      RdrandAnswer := FeatureAbsent;
+  end;
+  Result := RdrandAnswer = FeaturePresent;
 end;
 
 { RDI = where to store the value. RDRAND may fail for a moment when the
@@ -284,6 +303,50 @@ function ReadHardwareRandom(out Value: QWord): Boolean;
 begin
   Value := 0;
   Result := HardwareRandomIsAvailable and RandomInstruction(@Value);
+end;
+
+function HardwareSeedIsAvailable: Boolean;
+const
+  CpuidRdseedBit = LongWord(1) shl 18;
+var
+  Registers: TCpuidResult;
+begin
+  if RdseedAnswer = FeatureNotAsked then
+  begin
+    RdseedAnswer := FeatureAbsent;
+    ExecuteCpuid(0, 0, Registers);
+    if Registers.Eax >= 7 then
+    begin
+      ExecuteCpuid(7, 0, Registers);
+      if (Registers.Ebx and CpuidRdseedBit) <> 0 then
+        RdseedAnswer := FeaturePresent;
+    end;
+  end;
+  Result := RdseedAnswer = FeaturePresent;
+end;
+
+{ RDI = where to store the value. RDSEED fails more often than RDRAND
+  while the entropy source refills, so it is tried longer. }
+function SeedInstruction(Destination: PQWord): Boolean; assembler; nostackframe;
+asm
+  mov ecx, 100
+@Retry:
+  db $48, $0F, $C7, $F8 { rdseed rax }
+  jc @Got
+  pause
+  dec ecx
+  jnz @Retry
+  xor eax, eax
+  ret
+@Got:
+  mov [rdi], rax
+  mov eax, 1
+end;
+
+function ReadHardwareSeed(out Value: QWord): Boolean;
+begin
+  Value := 0;
+  Result := HardwareSeedIsAvailable and SeedInstruction(@Value);
 end;
 
 procedure InvalidateTlbEntry(VirtualAddress: QWord); assembler; nostackframe;

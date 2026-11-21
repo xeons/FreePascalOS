@@ -41,10 +41,20 @@ At the fixed addresses of a system without load address randomization
 
 PROGRAM is the program's file in the build (e.g.
 build/amd64/user/app/files/files), LIBRARY_DIRECTORY the build's
-libraries (build/amd64/user/lib). The program is linked at 0x400000;
-its libraries load one after another from 0x7F0000000000, depth first
-in DT_NEEDED order, each a page after the last (Processes.ImageLoader),
-which this repeats. A rebuilt library moves everything after it.
+libraries (build/amd64/user/lib). Modules are placed as the fixed
+layout of aslr=off does: the program at 0x400000, its libraries one
+after another from 0x7F0000000000, depth first in DT_NEEDED order, each
+a page after the last (Processes.ImageLoader). A rebuilt library moves
+everything after it. Under address space layout randomization give the
+crashed process's load bases (the kernel keeps them in its module list;
+the debug shell's "modules ID" command shows them):
+
+    --base NAME=HEX     NAME's load bias (address = link address + bias)
+    --start NAME=HEX    the address NAME's lowest segment page was put at
+    --modules FILE      lines naming a module and its bias: the debug
+                        shell's "modules ID" output (BASE START-END NAME),
+                        or any line with NAME and "base" or "bias"
+                        followed by a hexadecimal number
 """
 
 import importlib.util
@@ -124,13 +134,64 @@ def lay_out(program, library_directory):
     return images
 
 
-def symbolize_fixed(program, library_directory, texts):
+HEX = r'(?:0x|\$)?([0-9A-Fa-f]+)'
+
+
+def parse_number(text):
+    return int(text.lstrip('$').replace('0x', '').replace('0X', ''), 16)
+
+
+def read_module_file(path, names, biases):
+    """Biases of the modules named in the lines of a file."""
+    with open(path, encoding='utf-8', errors='replace') as source:
+        for line in source:
+            named = [word.strip('():,"\'') for word in line.split()]
+            for name in names:
+                if name not in named:
+                    continue
+                labelled = re.search(r'(?:base|bias)\s*[=:]?\s*' + HEX, line, re.IGNORECASE)
+                if labelled:
+                    biases[name] = int(labelled.group(1), 16)
+                    continue
+                # The debug shell: BASE START-END NAME.
+                shell = re.match(r'\s*([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+)-([0-9A-Fa-f]+)\s+(\S+)\s*$', line)
+                if shell and shell.group(4) == name:
+                    biases[name] = int(shell.group(1), 16)
+
+
+def symbolize_fixed(program, library_directory, arguments):
+    biases, starts, module_files, texts = {}, {}, [], []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ('--base', '--start', '--modules') and index + 1 < len(arguments):
+            value = arguments[index + 1]
+            index += 2
+            if argument == '--modules':
+                module_files.append(value)
+            else:
+                name, _, number = value.partition('=')
+                (biases if argument == '--base' else starts)[name] = parse_number(number)
+            continue
+        texts.append(argument)
+        index += 1
     images = lay_out(program, library_directory)
-    for name, _path, _bias, start, end in images:
+    names = [image[0] for image in images]
+    for path in module_files:
+        read_module_file(path, names, biases)
+    placed = []
+    for name, path, bias, start, end in images:
+        low = start - bias
+        if name in biases:
+            bias = biases[name]
+        elif name in starts:
+            bias = starts[name] - low
+        placed.append((name, path, bias, low + bias, end - start + low + bias))
+    for name, _path, _bias, start, end in placed:
         print('%-22s %x-%x' % (name, start, end))
     for text in texts:
-        address = int(text.lstrip('$'), 16)
-        for name, path, bias, start, end in images:
+        address = parse_number(text)
+        for name, path, bias, start, end in placed:
             if start <= address < end:
                 print('%x %s+%x %s' % (address, name, address - bias, describe(path, address - bias)))
                 break

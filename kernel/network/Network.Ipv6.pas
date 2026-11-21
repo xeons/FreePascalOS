@@ -117,7 +117,7 @@ uses
   Network.Ipv6Fragments,
   Network.Ipv6DestinationCache,
   Network.FragmentBuilder,
-  Network.RandomNumbers,
+  Kernel.Random,
   Network.NeighborCache,
   Network.Ethernet,
   Network.Loopback,
@@ -374,7 +374,7 @@ begin
     Inc(NetworkStatistics.Ipv6.SendDiscards);
     Exit(ErrorMessageTooLong);
   end;
-  Identification := LongWord(NetworkRandom);
+  Identification := LongWord(RandomQWord);
   Inc(NetworkStatistics.Ipv6.FragmentedDatagrams);
   for Index := 0 to Plan.FragmentCount - 1 do
   begin

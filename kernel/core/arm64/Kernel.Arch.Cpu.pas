@@ -75,6 +75,10 @@ function ReadCounterFrequency: QWord;
 function HardwareRandomIsAvailable: Boolean;
 { A random number from RNDR; False if it failed (or is not there). }
 function ReadHardwareRandom(out Value: QWord): Boolean;
+{ A number from the generator just reseeded from its entropy source
+  (RNDRRS), for seeding a generator; False if it failed or is not
+  there. }
+function ReadHardwareSeed(out Value: QWord): Boolean;
 
 { The caller's stack and frame pointers (the frame pointer leads to the
   frame record: the caller's caller's frame pointer, then its return
@@ -118,6 +122,7 @@ function ArchReadCounter: QWord; external name 'ArchReadCounter';
 function ArchReadCounterFrequency: QWord; external name 'ArchReadCounterFrequency';
 function ArchReadInstructionSetAttributes0: QWord; external name 'ArchReadInstructionSetAttributes0';
 function ArchReadRandomNumber(Value: PQWord): QWord; external name 'ArchReadRandomNumber';
+function ArchReadReseededRandomNumber(Value: PQWord): QWord; external name 'ArchReadReseededRandomNumber';
 procedure ArchDataSynchronizationBarrier; external name 'ArchDataSynchronizationBarrier';
 procedure ArchDataMemoryBarrier; external name 'ArchDataMemoryBarrier';
 procedure ArchInstructionBarrier; external name 'ArchInstructionBarrier';
@@ -222,6 +227,14 @@ begin
   if not HardwareRandomIsAvailable then
     Exit(False);
   Result := ArchReadRandomNumber(@Value) <> 0;
+end;
+
+function ReadHardwareSeed(out Value: QWord): Boolean;
+begin
+  Value := 0;
+  if not HardwareRandomIsAvailable then
+    Exit(False);
+  Result := ArchReadReseededRandomNumber(@Value) <> 0;
 end;
 
 procedure DataSynchronizationBarrier;

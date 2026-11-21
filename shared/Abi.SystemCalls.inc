@@ -477,7 +477,40 @@ const
     loaded (scripts/symbolize.py). }
   CallGetProcessModules = 136;
 
-  CallCount = 137;
+  { --- Thread names and libraries loaded at run time (148-151) ------------ }
+
+  { (ThreadId or CurrentThreadHandle, NameAddress): names a thread of the
+    calling process (by its id, as CallGetThreadId gives it), as hang
+    reports, the debug shell, ps and the task manager show it. At most
+    ThreadNameCapacity - 1 characters are kept; an empty name gives the
+    thread its process's name again. ErrorNotFound if the process has
+    no thread with that id. }
+  CallSetThreadName = 148;
+  { (ProcessId (0: the caller), BufferAddress, Capacity): describes the
+    threads of a process, one TAbiThreadDetails each, as many as fit in
+    Capacity records; returns how many there are. Anyone may list any
+    process's threads; ErrorNotFound if no process has that id. }
+  CallListThreads = 149;
+  { (ModuleHandle, AddressOfTAbiModuleTls): the thread-local storage of
+    a library loaded with CallLoadLibrary after the program started (a
+    module whose TLS module id carries TlsDynamicModuleTag): where its
+    initialization image is and how large and aligned each thread's
+    block must be. The user runtime makes a thread's block the first
+    time the thread touches the library's thread-local variables.
+    ErrorNotFound for a module without thread-local storage. }
+  CallGetModuleTls = 150;
+  { (ModuleHandle, AddressOfTAbiModuleInitializers): the initializers
+    (DT_INIT, then DT_INIT_ARRAY, dependencies first) and finalizers
+    (DT_FINI_ARRAY backwards, then DT_FINI, in the reverse order) of the
+    libraries that CallLoadLibrary loaded for ModuleHandle, given once:
+    they are copied into the record's arrays and forgotten, so a second
+    call gets none. The user runtime calls the initializers before
+    LoadLibrary returns and the finalizers when the program exits.
+    ErrorMessageTooLong (with the counts filled in, nothing given) if an
+    array is too small. }
+  CallTakeModuleInitializers = 151;
+
+  CallCount = 152;
 
   AbiModuleNameCapacity = 64;
 
@@ -579,6 +612,10 @@ const
   ThreadBlockRuntimeOffset = 0;
   ThreadBlockIdOffset = 8;
   ThreadBlockSize = 16;
+  { A word below the control block, zero when a thread starts, for the
+    user runtime: libsystem keeps the thread's dynamic thread-local
+    storage vector there (Sys.DynamicTls in rtl/fpc). }
+  ThreadBlockDynamicVectorOffset = -8;
 {$else}
   { The thread control block the thread pointer (%fs base) of every user
     thread points at (x86-64 TLS variant II: static thread-local storage
@@ -588,6 +625,9 @@ const
   ThreadBlockSelfOffset = 0;
   ThreadBlockRuntimeOffset = 8;
   ThreadBlockIdOffset = 16;
+  { A word for the user runtime, zero when a thread starts: libsystem
+    keeps the thread's dynamic thread-local storage vector there. }
+  ThreadBlockDynamicVectorOffset = 24;
   ThreadBlockSize = 64;
 {$endif}
 
@@ -784,11 +824,31 @@ const
   GroupNewInForeground = -2;
 
   { Flags of CallAllocateMemory. }
-  { The memory belongs to the calling thread (a threadvar block): if the
-    thread ends without freeing it (ended by another thread, say), the
-    kernel frees it. Only the latest such allocation of a thread is
-    tracked. }
+  { The memory belongs to the calling thread (a threadvar block, a
+    dynamic thread-local storage block): if the thread ends without
+    freeing it (ended by another thread, say), the kernel frees it. }
   AllocateForThread = $01;
+
+  { The TLS module id (R_*_DTPMOD64) of a library loaded after the
+    program started is this tag plus its module handle, and a TLS
+    descriptor's argument (R_AARCH64_TLSDESC) the tag plus the handle
+    shifted left by TlsDynamicHandleShift plus the variable's offset:
+    such libraries' blocks are made per thread when first touched
+    (CallGetModuleTls). The other ids are offsets from the thread
+    pointer (static TLS), which never carry the tag. }
+  TlsDynamicModuleTag = QWord($4000000000000000);
+  TlsDynamicHandleShift = 32;
+  TlsDynamicHandleMask = QWord($FFFFFF);
+
+  { The longest thread name, with its zero (CallSetThreadName). }
+  ThreadNameCapacity = 32;
+
+  { States of TAbiThreadDetails. }
+  ThreadDetailsRunning = 0;
+  ThreadDetailsReady = 1;
+  ThreadDetailsWaiting = 2;
+  ThreadDetailsSuspended = 3;
+  ThreadDetailsExiting = 4;
 
   { CallSetProcessLimit: the most regions and the most handles a process
     may have, by default and at most. }
@@ -1257,6 +1317,45 @@ type
     SharedPages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { One thread, as CallListThreads describes it. }
+  TAbiThreadDetails = record
+    ThreadId: QWord;
+    { Its processor time, in nanoseconds. }
+    ProcessorNanoseconds: QWord;
+    { ThreadDetails*. }
+    State: LongWord;
+    { Its scheduling priority now (1 .. 31). }
+    Priority: LongWord;
+    { The processor it last ran on. }
+    LastProcessor: LongWord;
+    Reserved: LongWord;
+    Name: array[0..ThreadNameCapacity - 1] of Char;
+  end;
+  PAbiThreadDetails = ^TAbiThreadDetails;
+
+  { What CallGetModuleTls gives: each thread's block is BlockSize bytes
+    aligned to Alignment, starting as a copy of the ImageSize bytes at
+    ImageAddress followed by zeros. }
+  TAbiModuleTls = record
+    ImageAddress: QWord;
+    ImageSize: QWord;
+    BlockSize: QWord;
+    Alignment: QWord;
+  end;
+  PAbiModuleTls = ^TAbiModuleTls;
+
+  { CallTakeModuleInitializers: arrays of code addresses the caller
+    provides (address and capacity) and the kernel fills (count). }
+  TAbiModuleInitializers = record
+    Initializers: QWord;
+    InitializerCapacity: QWord;
+    InitializerCount: QWord;
+    Finalizers: QWord;
+    FinalizerCapacity: QWord;
+    FinalizerCount: QWord;
+  end;
+  PAbiModuleInitializers = ^TAbiModuleInitializers;
 
   { Who the other end of a channel is (CallGetChannelPeer). }
   { What CallReceiveNotification gives. }

@@ -7183,8 +7183,11 @@ addresses stay valid in every process; the scheduler loads a thread's
 `AddressSpaceRoot` into CR3 when it switches between processes.
 
 User memory is described by regions (`Processes.AddressSpace`):
-the program image (from 0x400000), shared libraries (from 0x7F00_0000_0000),
-heap allocations and an 8 MiB stack below 0x7FFF_FFFF_F000. Pages are only
+the program image, shared libraries, heap allocations, thread stacks and
+an 8 MiB main stack, each at a random place of its own (see "Address
+space layout randomization" below; with `aslr=off` the program is at
+0x400000, libraries from 0x7F00_0000_0000, allocations from
+0x1000_0000_0000 and the stack below 0x7FFF_FFFF_F000). Pages are only
 mapped when first touched: the page fault handler asks the address space
 whether the address belongs to a region and, if so, maps a zeroed page. A
 fault anywhere else in user mode ends just that process (exit status 139,
@@ -7208,12 +7211,62 @@ list (`tools/RegionTreeTest`, `make region-tree-test`).
 What goes with what: a thread's stack, the stack's guard and its thread
 data go when the thread exits, however it ends (an exit call, the
 process ending, `CallTerminateThread` while it waits); an allocation
-made with `AllocateForThread` (the runtime's threadvar block) goes with
-its thread too unless freed before (the region remembers its owner's
-id, so an address freed and handed out again is never taken by
-mistake); device mappings and sections go with `CallFreeMemory`;
+made with `AllocateForThread` (the runtime's threadvar block, its
+dynamic TLS vector and blocks) goes with its thread too unless freed
+before (the region remembers its owner's id, so an address freed and
+handed out again is never taken by mistake; a thread that made more
+than one has all of them looked for when it ends); device mappings and
+sections go with `CallFreeMemory`;
 libraries are never unloaded, and everything goes with the address
 space.
+
+#### Address space layout randomization
+
+Every process gets its own layout (`Processes.AddressLayout`, chosen in
+`CreateAddressSpace` and kept in the space's `Layout`), each part at a
+random page of a window of its own, so the parts stay out of each
+other's way and each keeps room to grow:
+
+| Part | Where | Entropy |
+|---|---|---|
+| program image | [1 TiB, 2 TiB) | 28 bits |
+| run time allocations (heap chunks, mappings) | first fit upwards from a random page of [16 TiB, 17 TiB) | 28 bits |
+| each thread's stack and thread data | first fit from a random page of [48 TiB, 64 TiB), chosen per thread | 32 bits |
+| each library | a random page of [126 TiB, 127 TiB) | 28 bits |
+| main stack top | a random page of the 64 GiB below 0x7FFF_FFFF_F000; the initial stack pointer a random 16 bytes into a page | 24 + 8 bits |
+
+A range that does not fit above its random start is looked for from the
+start of its window, so randomization never makes memory run out
+sooner. Programs are position independent (`ld -pie`, ET_DYN) and the
+loader relocates them like libraries; an ET_EXEC program would still go
+to its fixed address. The kernel option `aslr=off` gives every process
+the old fixed layout (for debugging: the same addresses in every run).
+
+The random numbers come from `Kernel.Random`: ChaCha20 (RFC 8439,
+`Kernel.ChaCha20`) with fast key erasure - each block gives the next key
+and 32 bytes of output - seeded at boot from RDSEED or RDRAND (RNDRRS or
+RNDR on AArch64 with FEAT_RNG), cycle counter jitter, the boot
+information and the device tree's `/chosen` `rng-seed` and `kaslr-seed`
+(the Raspberry Pi firmware fills them from its hardware generator), with
+a fresh hardware number and the counter stirred into every block. The
+network stack (temporary addresses, stable-privacy secrets, fragment
+identifications, TCP initial sequence numbers), `/dev/random` and made-up
+virtio MAC addresses use it too. `tools/AslrTest` (`make aslr-test`)
+checks ChaCha20 against the RFC's vector and many layouts against their
+windows on the host; `aslrtest` (a coretest line) runs a program twice
+and checks that its code, a library's, its stack, a heap block and a
+thread's stack all moved (booted with `aslr=off`, the same command
+prints "aslrtest: aslr=off, the addresses are the same").
+
+Where the program and its libraries went is kept in the process's module
+list (`Process^.Modules`, a `TModuleList` of `TLoadedModule`): each
+module's file name, its `Base` (the load bias: an address in the process
+is the module's link address plus `Base`) and the span of its segments
+(`ImageStart`, `ImageEnd`). The debug shell's `modules ID` lists them;
+`scripts/symbolize.py` takes them (`--base NAME=HEX`, `--start
+NAME=HEX`, or `--modules FILE` with lines of that listing or of a crash
+report naming a module and its base) and assumes the fixed layout for
+the modules it is not told about.
 
 #### Process limits
 
@@ -7266,6 +7319,21 @@ threads end at their next safe point (see "Ending other programs"). Every
 exiting thread first switches to the kernel's address space, so the last
 one can free the process's while the others are still on their way out.
 
+Every thread has a name (`Name` in its control block, at most 31
+characters): a user thread starts with its process's name, and
+`CallSetThreadName(ThreadId or CurrentThreadHandle, Name)` (148) renames
+a thread of the calling process (an empty name gives back the process's).
+The runtime's `SetThreadDebugName` - what `TThread.NameThreadForDebugging`
+calls - and `Sys.Threads.SetThreadName` use it. `CallListThreads(ProcessId,
+Buffer, Capacity)` (149) describes any process's threads, a
+`TAbiThreadDetails` each (id, name, state, priority, last processor,
+processor time; `Sys.Threads.ListThreads`). The names show in hang
+reports, the debug shell's `threads` command, `ps -L` / `ps -T` (a line
+per thread: `pid,lwp,tty,time,comm` with the thread's name and time) and
+the task manager's process properties. `threadnametest` (a coretest
+line) names threads both ways and reads them back through the kernel
+and through `ps -L`.
+
 User-mode locks (`Sys.Locks`) take and release a free lock with one atomic
 instruction. Only a contended lock enters the kernel: `WaitOnAddress` (45)
 sleeps while a 32-bit word still holds a given value, comparing it under
@@ -7284,11 +7352,28 @@ followed by a word for the user runtime and the thread id
 of the TLS images. The loader handles the TLS relocations DTPMOD64,
 DTPOFF64, TPOFF64 and TPOFF32; a module's "id" is its offset from the
 thread pointer, so `__tls_get_addr` in the System unit is one addition.
-Libraries opened with `LoadLibrary` after startup may not have a TLS
-segment or initializers (`ErrorUnsupported`): the layout is fixed by then.
-On AArch64 the layout is variant I instead (see "The AArch64 port"); the
-processor's layout and relocation numbers are in
+On AArch64 the layout is variant I instead (see "The AArch64 port"),
+with a word below the thread pointer for the runtime; the processor's
+layout and relocation numbers are in
 `kernel/processes/<arch>/Processes.Arch.ImageFormat`.
+
+The static layout is fixed once the program is loaded, so a library
+with a TLS segment opened later with `LoadLibrary` gets **dynamic TLS**:
+its module id is `TlsDynamicModuleTag` plus its module handle (a TLS
+descriptor on AArch64 gets libsystem's `__tlsdesc_dynamic` and the tag,
+the handle and the offset as its argument), and the runtime makes each
+thread's block of it the first time the thread touches it
+(`rtl/fpc/sysdyntls.inc`), from what `CallGetModuleTls(Handle, Address)`
+(150) says: where the image is, the block's size and alignment. Each
+thread has one vector of block pointers (in the control block's
+`ThreadBlockDynamicVectorOffset` word: `%fs:24` on x86-64, below the
+thread pointer on AArch64), entries by module handle; libraries are
+never unloaded, so a filled entry stays valid and needs no generation
+check, and the AArch64 resolver finds it without a call (only the first
+access saves every register and calls Pascal). Vectors and blocks are
+`AllocateForThread` allocations, freed when the thread ends. Initial and
+local exec accesses (TPOFF relocations) cannot reach such a block and
+fail the load (glibc keeps a surplus of static TLS for those).
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
 `FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
@@ -7299,6 +7384,21 @@ libraries included) and gives each thread a zeroed threadvar block, kept
 in the runtime word of its control block. The block is allocated with
 `AllocateForThread`, so the kernel frees it when a thread is ended from
 outside and never runs the runtime's own ending.
+
+A Free Pascal library loaded with `LoadLibrary` brings units the program
+does not have. Compiled from a `library` source with the startup unit
+`si_dll` (`rtl/fpc/si_dll.pas`) and linked with `-init
+FPC_SHARED_LIB_START -fini FPC_LIB_EXIT`, its DT_INIT hands its own unit
+tables to `SysRegisterLibrary` (`rtl/fpc/syslibraries.inc`), which skips
+the units the program or a library registered before already has (System,
+SysUtils, ... live in libsystem and start once), gives the threadvars of
+the rest a block of their own in the dynamic TLS vector (offsets with
+`ThreadvarDynamicFlag`, the library's number and the offset in its
+block; the loading thread keeps their values, other threads start with
+zeros, as in a new thread) and initializes those units; its DT_FINI
+finalizes them. The library's own `begin ... end` block is not run, and
+the resource strings of its units are not set up.
+`userland/lib/dynpascal` shows how such a library is built.
 
 Initialization code runs in user mode. The kernel collects the
 initializers (DT_INIT, then DT_INIT_ARRAY) of the program and its
@@ -7311,6 +7411,21 @@ dependencies, across libraries), then the main block; at exit it runs the
 exit procedures, the unit finalization sections in reverse (`Sys.Streams`
 flushes its buffers in its own) and the finalizers. Symbols stay bound eagerly when the program is loaded; there
 is no lazy PLT binding.
+
+A library loaded later is handled the same way, for itself and the
+libraries it brings in: the kernel collects their entries (each module's
+only once) when `CallLoadLibrary` loads them and keeps them until
+`CallTakeModuleInitializers(Handle, Address)` (151) hands them to the
+runtime, which calls the initializers before `LoadLibrary` returns
+(`Sys.Libraries.LoadLibrary` goes through it too) and keeps the
+finalizers to run as an exit procedure - before the program's units are
+finalized, newest library first. Loading is serialized by a recursive
+lock, as an initializer may load a library itself. `dynlibtest` (a
+coretest line) starts threads, then loads `libdyntls.so` (assembly: ELF
+TLS through `__tls_get_addr` and TLS descriptors, an initializer and a
+finalizer) and `libdynpascal.so` (a Free Pascal library with threadvars
+and a unit initialization), and checks every thread's own values, the
+initial ones, initializers run once and the finalizers' output.
 
 ### System calls
 
@@ -7348,12 +7463,12 @@ test copies to an unmapped user address.
 | Terminals | CreatePseudoTerminal (see "Pseudo-terminals") |
 | Paths | GetPathInformation, ReadDirectory, CreateDirectory, Remove, Rename, CreateSymbolicLink, ReadSymbolicLink, CreateHardLink, SetPathAttributes, Get/SetCurrentDirectory, SetRootDirectory |
 | Processes | CreateProcess, WaitForProcess (with a timeout), TerminateProcess, Exit, GetProcessId, CreatePipe, DuplicateHandle, Sleep |
-| Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress |
+| Threads | CreateThread, ExitThread, WaitForThread, GetThreadId, SetThreadPointer, WaitOnAddress, WakeAddress, SetThreadName (148), ListThreads (149) |
 | Users and processes (50-69) | ListProcesses, GetCredentials, SetUserIds, SetGroupIds, SetGroups, SetUmask, GetPriority, SetPriority, CreateFifo |
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Memory | AllocateMemory, FreeMemory |
-| Libraries | LoadLibrary, FindSymbol |
+| Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
 | System | GetTime, GetSystemInformation, ListVolumes, Sync, GetProcessorDescription (128: the processor's maker and model, from CPUID or MIDR_EL1) |
 | Watches (94-95) | CreateWatch, ReadWatch (see "Watching for changes") |
 | Processor time and memory (96-97) | ListProcessDetails, GetSystemUsage (see "Processor time and memory") |
@@ -8500,6 +8615,10 @@ the load is done); the volume, node number, size and modification time are
 also compared on every use.
 `LoadLibrary` uses the same machinery for libraries opened at run time,
 and `FindSymbol` looks a name up in a library and the libraries it needs.
+Each library goes to a random place of the library window (see "Address
+space layout randomization"); libraries loaded at run time may have
+thread-local storage and initializers (see "Thread-local storage and
+initialization").
 
 The initial stack holds the argument count, the arguments, the
 environment and an auxiliary vector (program headers, page size, entry
@@ -8832,7 +8951,8 @@ independent) against the Free Pascal runtime library:
 
 Units may have initialization and finalization sections and threadvars
 (see "Thread-local storage and initialization"); the libraries themselves
-have no initialization code of their own.
+have no initialization code of their own, except Free Pascal libraries
+built for `LoadLibrary` with `si_dll`.
 
 ### The runtime library
 
@@ -8850,8 +8970,12 @@ the rest. The generic code comes from the compiler's source tree
   `Assign`/`Reset`/`Rewrite`, `BlockRead`, `MkDir` and so on),
   `systhrd.inc` (the thread manager: kernel threads, threadvars,
   recursive critical sections and events on the wait-on-address call) and
-  `sysdl.inc` (`LoadLibrary`/`GetProcAddress` on the kernel's loader).
-- `si_prc.pas` – program startup.
+  `sysdl.inc` (`LoadLibrary`/`GetProcAddress` on the kernel's loader,
+  running the new libraries' initializers), `sysdyntls.inc` (dynamic
+  thread-local storage of libraries loaded at run time) and
+  `syslibraries.inc` (Free Pascal libraries loaded at run time).
+- `si_prc.pas` – program startup; `si_dll.pas` – the startup of Free
+  Pascal libraries loaded at run time.
 - `sysutils.pp` – files, directories, `FindFirst`, file dates, disks,
   time, environment, `ExecuteProcess` and error messages on the system
   calls; the Unicode string manager (`fpwidestring` with the root
@@ -11198,10 +11322,12 @@ program with SP at the argument count, as on x86-64.
   TPIDR_EL0 points at a 16-byte control block (the runtime word at 0,
   the thread id at 8: `ThreadBlock*` in `Abi.SystemCalls`), followed by
   the program's TLS block at `align(16, alignment)` and the libraries'
-  after it. The loader handles R_AARCH64_RELATIVE, ABS64, GLOB_DAT,
+  after it; the word below it is the runtime's (its dynamic TLS vector).
+  The loader handles R_AARCH64_RELATIVE, ABS64, GLOB_DAT,
   JUMP_SLOT, COPY, TLS_DTPMOD64, TLS_DTPREL64, TLS_TPREL64 and TLSDESC
   (descriptors get libsystem's `__tlsdesc_static`, which returns the
-  descriptor's offset from the thread pointer); `libtlstest.so` exercises
+  descriptor's offset from the thread pointer, or for a library loaded
+  later `__tlsdesc_dynamic`); `libtlstest.so` exercises
   the descriptors, `__tls_get_addr` and the initial exec model.
 - **Exceptions:** the record's context is AArch64's (`TAbiContext`: X0-X30,
   SP, PC, PSTATE, of which a context may change only the condition

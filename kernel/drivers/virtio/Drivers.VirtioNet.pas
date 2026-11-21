@@ -56,6 +56,7 @@ uses
   Runtime.Atomic,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.Cpu,
+  Kernel.Random,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.DeferredCalls,
@@ -369,8 +370,7 @@ begin
     Exit;
   end;
   { None given: a locally administered one of our own. }
-  if not ReadHardwareRandom(Random) then
-    Random := ReadTimeStampCounter;
+  Random := RandomQWord;
   Card^.Address[0] := $52;
   Card^.Address[1] := $54;
   Card^.Address[2] := $00;
