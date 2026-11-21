@@ -22,6 +22,13 @@
   "%s" stands for the words, percent-encoded), whether HTTP/3 is used,
   whether pages run JavaScript and whether the bookmarks bar shows. Saved when the settings dialog
   is closed with OK.
+
+  How pages run (not in the dialog; for tests and for the curious):
+  SeparateProcesses (pages in content processes, one per site; on),
+  Sandbox (content processes restrict themselves; on), HangTimeout
+  (seconds without an answer before a page is "not responding"; 8, 0
+  never) and ScriptRunLimit (seconds a script may run before the slow
+  script watchdog ends it; 10, 0 never).
 }
 unit Browser.Settings;
 
@@ -40,6 +47,10 @@ type
     Http3: Boolean;
     BookmarksBar: Boolean;
     JavaScript: Boolean;
+    SeparateProcesses: Boolean;
+    Sandbox: Boolean;
+    HangTimeoutSeconds: LongInt;
+    ScriptRunLimitSeconds: LongInt;
   end;
 
 function LoadBrowserSettings: TBrowserSettings;
@@ -57,6 +68,10 @@ const
   Http3Setting = 'Browser/Http3';
   BookmarksBarSetting = 'Browser/BookmarksBar';
   JavaScriptSetting = 'Browser/JavaScript';
+  SeparateProcessesSetting = 'Browser/SeparateProcesses';
+  SandboxSetting = 'Browser/Sandbox';
+  HangTimeoutSetting = 'Browser/HangTimeout';
+  ScriptRunLimitSetting = 'Browser/ScriptRunLimit';
 
 function LoadBrowserSettings: TBrowserSettings;
 var
@@ -71,6 +86,10 @@ begin
     Result.Http3 := Store.ReadBoolean(Http3Setting, True);
     Result.BookmarksBar := Store.ReadBoolean(BookmarksBarSetting, True);
     Result.JavaScript := Store.ReadBoolean(JavaScriptSetting, True);
+    Result.SeparateProcesses := Store.ReadBoolean(SeparateProcessesSetting, True);
+    Result.Sandbox := Store.ReadBoolean(SandboxSetting, True);
+    Result.HangTimeoutSeconds := Store.ReadIntegerWithin(HangTimeoutSetting, 8, 0, 3600);
+    Result.ScriptRunLimitSeconds := Store.ReadIntegerWithin(ScriptRunLimitSetting, 10, 0, 3600);
   finally
     Store.Free;
   end;

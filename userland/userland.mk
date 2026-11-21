@@ -412,7 +412,7 @@ $(WEBIPC_LIBRARY): $(SYSTEM_LIBRARY) $(DRAWING_LIBRARY) $(wildcard userland/lib/
 
 # libwebview: TWebView, the control that shows web pages (libweb in a
 # libcontrols control), for the browser and any program.
-$(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(wildcard userland/lib/webview/*.pas) \
+$(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(WEBIPC_LIBRARY) $(wildcard userland/lib/webview/*.pas) \
 		$(wildcard userland/lib/webview/*.inc)
 	@rm -rf $(WEBVIEW_LIBRARY_OBJECTS)
 	@mkdir -p $(WEBVIEW_LIBRARY_OBJECTS)
@@ -421,10 +421,10 @@ $(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(wildcard userland/lib/w
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
 		-Fu$(SVG_LIBRARY_OBJECTS) \
 		-Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
-		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED) -Fuuserland/lib/webview -FU$(WEBVIEW_LIBRARY_OBJECTS) \
-		userland/lib/webview/WebView.Contents.pas
+		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(WEBIPC_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED) -Fuuserland/lib/webview \
+		-FU$(WEBVIEW_LIBRARY_OBJECTS) userland/lib/webview/WebView.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwebview.so -o $@ \
-		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -lsvg -ljavascript -lcontrols -lwindowing -lconfiguration -lhttp \
+		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -lwebipc -lsvg -ljavascript -lcontrols -lwindowing -lconfiguration -lhttp \
 		-lcss -lfont -limage -ldrawing -ltls -lcompression -lcryptography -lsystem
 
 # libjavascript: the ECMAScript engine (Js.*) and its embedding API.
@@ -582,14 +582,25 @@ $(WEB_PROGRAMS): $(WEB_LIBRARY) $(wildcard userland/webrender/*.pas)
 # The browser: web views (libwebview over libweb and libjavascript), with
 # HTTP/3 from libquic.
 BROWSER_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,browser)
-$(BROWSER_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lweb -lsvg -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
+$(BROWSER_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lwebipc -lweb -lsvg -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
 	-lconfiguration -lfont -limage -lcompression -ldrawing -ltls
-$(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) \
+$(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEBIPC_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) \
 	-Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
 	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) \
 	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 	-Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
 $(BROWSER_PROGRAMS): $(WEBVIEW_LIBRARY) $(QUIC_LIBRARY) $(wildcard userland/browser/*.inc)
+# The browser's content process: the page engine (libwebview) in a
+# sandboxed process of its own, talking to the browser over libwebipc.
+WEBCONTENT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,webcontent)
+$(WEBCONTENT_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lwebipc -lweb -lsvg -ljavascript -lhttp -lcss -lcontrols \
+	-lwindowing -lconfiguration -lfont -limage -lcompression -ldrawing -ltls
+$(WEBCONTENT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEBIPC_LIBRARY_OBJECTS) \
+	-Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
+	-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) \
+	-Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
+$(WEBCONTENT_PROGRAMS): $(WEBVIEW_LIBRARY) $(WEBIPC_LIBRARY)
 SSH_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,sshd sftp-server ssh ssh-keygen ssh-add)
 $(SSH_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lssh
 $(SSH_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(SSH_LIBRARY_OBJECTS)

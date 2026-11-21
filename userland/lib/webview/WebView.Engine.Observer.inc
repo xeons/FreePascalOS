@@ -16,12 +16,12 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: what the navigable tells the view. }
+{ WebView.Engine: what the navigable tells the view. }
 
 type
   TViewObserver = class(TNavigableObserver)
   public
-    View: TWebView;
+    View: TWebEngineView;
     procedure LocationChanged(Navigable: TNavigable; const Url: string); override;
     procedure TitleChanged(Navigable: TNavigable; const Title: string); override;
     procedure LoadingStateChanged(Navigable: TNavigable; State: TLoadingState); override;
@@ -33,6 +33,8 @@ type
     function ConfirmUnload(Navigable: TNavigable): Boolean; override;
     procedure DownloadRequested(Navigable: TNavigable; constref Download: TDownloadInfo); override;
     procedure NavigationFailed(Navigable: TNavigable; const Url, Reason: string); override;
+    function NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord; constref Options: TNavigateOptions;
+      AtResponse: Boolean): Boolean; override;
   end;
 
 procedure TViewObserver.LocationChanged(Navigable: TNavigable; const Url: string);
@@ -88,4 +90,10 @@ end;
 procedure TViewObserver.NavigationFailed(Navigable: TNavigable; const Url, Reason: string);
 begin
   View.NavigableFailed(Url, Reason);
+end;
+
+function TViewObserver.NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord;
+  constref Options: TNavigateOptions; AtResponse: Boolean): Boolean;
+begin
+  Result := View.NavigableNavigationAllowed(Url, Options, AtResponse);
 end;

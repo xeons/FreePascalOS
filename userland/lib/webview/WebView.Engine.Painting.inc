@@ -16,20 +16,20 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: painting through the backing surface. }
+{ WebView.Engine: painting through the backing surface. }
 
 const
   SelectionAlpha = 110;
   InnerBarThickness = 6;
 
-procedure TWebView.InvalidateViewport;
+procedure TWebEngineView.InvalidateViewport;
 begin
   Invalidate;
 end;
 
 { The backing surface has the viewport's size; a new one is painted
   whole. }
-procedure TWebView.EnsureBacking;
+procedure TWebEngineView.EnsureBacking;
 var
   Width, Height: LongInt;
 begin
@@ -43,7 +43,7 @@ begin
   FBackingValid := False;
 end;
 
-function TWebView.PageHasFixedBoxes: Boolean;
+function TWebEngineView.PageHasFixedBoxes: Boolean;
 var
   Index: Integer;
   List: TDisplayList;
@@ -67,7 +67,7 @@ begin
 end;
 
 { Paints what is out of date into the backing surface. }
-procedure TWebView.PaintBacking;
+procedure TWebEngineView.PaintBacking;
 var
   Whole: TRectangle;
   BackingCanvas: TCanvas;
@@ -96,7 +96,7 @@ begin
   FBackingDirty := MakeRectangle(0, 0, 0, 0);
 end;
 
-procedure TWebView.Paint(var Canvas: TCanvas);
+procedure TWebEngineView.Paint(var Canvas: TCanvas);
 var
   Overlay: TCanvas;
   Width, Height: LongInt;
@@ -127,7 +127,7 @@ begin
   FPaintCost := GetTickCount64 - Started;
 end;
 
-procedure TWebView.PaintSelection(var Canvas: TCanvas);
+procedure TWebEngineView.PaintSelection(var Canvas: TCanvas);
 var
   Rectangles: TTextRectangleArray;
   Index: Integer;
@@ -168,7 +168,7 @@ end;
 
 { A text field with the focus shows its caret where its selection's
   focus is (on its line in a text area). }
-procedure TWebView.PaintCaret(var Canvas: TCanvas);
+procedure TWebEngineView.PaintCaret(var Canvas: TCanvas);
 var
   Box: TLayoutBox;
   BoxX, BoxY, TextWidth, LineHeight, LineTop: Single;
@@ -238,7 +238,7 @@ end;
 { Whether what is at the viewport point (CSS px) is Container or inside
   it: a bar under something painted over its container (a pop-up, a
   menu) is not drawn over that. }
-function TWebView.ShowsAt(Container: TNode; X, Y: Single): Boolean;
+function TWebEngineView.ShowsAt(Container: TNode; X, Y: Single): Boolean;
 var
   Node: TNode;
 begin
@@ -256,7 +256,7 @@ end;
 
 { Scroll containers inside the page show a thin bar of the theme's
   colours along their right (and bottom) edge. }
-procedure TWebView.PaintInnerScrollBars(var Canvas: TCanvas);
+procedure TWebEngineView.PaintInnerScrollBars(var Canvas: TCanvas);
 var
   Containers: TScrollContainerArray;
   Index: Integer;

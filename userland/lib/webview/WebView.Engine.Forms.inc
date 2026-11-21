@@ -16,9 +16,9 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: form controls, labels and details. }
+{ WebView.Engine: form controls, labels and details. }
 
-procedure TWebView.ControlEdited(Element: TElement);
+procedure TWebEngineView.ControlEdited(Element: TElement);
 begin
   FireEvent(Element, 'input', True);
   InvalidateViewport;
@@ -26,7 +26,7 @@ begin
   PostWake;
 end;
 
-procedure TWebView.FireInputEvent(Element: TElement; const InputType, Data: string);
+procedure TWebEngineView.FireInputEvent(Element: TElement; const InputType, Data: string);
 begin
   DispatchInputEvent(Element, InputType, Data, (InputType = 'insertText') or (InputType = 'insertFromPaste'));
   InvalidateViewport;
@@ -34,7 +34,7 @@ begin
   PostWake;
 end;
 
-function TWebView.DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
+function TWebEngineView.DispatchKeyboardEvent(const EventType: string; Code, Character, Modifiers: LongWord): Boolean;
 var
   Target: TObject;
 begin
@@ -55,7 +55,7 @@ end;
 
 { HTML 4.10.21.2: Enter in a field presses the form's default button (its
   first submit button) or, without one, submits the form. }
-procedure TWebView.SubmitImplicitly(Field: TElement);
+procedure TWebEngineView.SubmitImplicitly(Field: TElement);
 var
   Form, Button: TElement;
 begin
@@ -74,7 +74,7 @@ end;
   Backspace and Delete (Ctrl: a word), the arrows, Home and End (Shift
   extends the selection), Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V, Enter (a line
   break in a text area, the form's submission in a field). }
-function TWebView.TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
+function TWebEngineView.TypeIntoField(Code, Character, Modifiers: LongWord): Boolean;
 var
   Action: TFieldAction;
   Options: TFieldActionOptions;
@@ -84,23 +84,29 @@ begin
     Typed) and FFieldEditor.Perform(FFocusedElement, Action, Typed, Options);
 end;
 
-procedure TWebView.FieldSelectionMoved(Element: TElement);
+procedure TWebEngineView.FieldSelectionMoved(Element: TElement);
 begin
   InvalidateViewport;
   RequestFrame;
 end;
 
-function TWebView.ReadClipboard: string;
+function TWebEngineView.ReadClipboard: string;
 begin
-  Result := ClipboardText;
+  if Assigned(FOnReadClipboard) then
+    Result := FOnReadClipboard(Self)
+  else
+    Result := ClipboardText;
 end;
 
-procedure TWebView.WriteClipboard(const Value: string);
+procedure TWebEngineView.WriteClipboard(const Value: string);
 begin
-  SetClipboardText(Value);
+  if Assigned(FOnWriteClipboard) then
+    FOnWriteClipboard(Self, Value)
+  else
+    SetClipboardText(Value);
 end;
 
-procedure TWebView.ActivateControl(Control: TElement);
+procedure TWebEngineView.ActivateControl(Control: TElement);
 var
   Kind: TFormControlKind;
 begin
@@ -148,7 +154,7 @@ end;
 
 { A click on something that is not a link or a control: a label acts on
   its control, a summary opens or closes its details. }
-procedure TWebView.ClickElement(Element: TElement);
+procedure TWebEngineView.ClickElement(Element: TElement);
 begin
   Element.Retain;
   try
@@ -160,7 +166,7 @@ begin
   PostWake;
 end;
 
-procedure TWebView.ActOnClick(Element: TElement);
+procedure TWebEngineView.ActOnClick(Element: TElement);
 var
   Node, Inner: TNode;
   Target: TElement;
@@ -212,7 +218,7 @@ begin
   end;
 end;
 
-procedure TWebView.SubmitForm(Form, Submitter: TElement);
+procedure TWebEngineView.SubmitForm(Form, Submitter: TElement);
 var
   ScrollX, ScrollY: Single;
   Source, Destination: TNavigable;
@@ -233,7 +239,7 @@ begin
   PostWake;
 end;
 
-procedure TWebView.OpenSelectMenu(Select: TElement);
+procedure TWebEngineView.OpenSelectMenu(Select: TElement);
 var
   Options: TSelectOptionArray;
   Index: Integer;
@@ -243,11 +249,10 @@ var
   ScrollX, ScrollY: Single;
   Scale: Double;
 begin
-  if (Host = nil) or not (Host.OwnerWindow is TControlWindow) or (FLayout = nil) then
+  if (Host = nil) or (FLayout = nil) then
     Exit;
   if not FLayout.NodeBounds(Select, X, Y, Width, Height) then
     Exit;
-  Window := TControlWindow(Host.OwnerWindow);
   Options := SelectOptions(Select);
   if Length(Options) = 0 then
     Exit;
@@ -263,11 +268,10 @@ begin
   HoldElement(FSelectElement, Select);
   FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
   Scale := DeviceScale;
-  ShowPopupMenu(Window, FSelectMenu, Window.ScreenLeft + Unscaled(PixelBounds.Left + Round((X - ScrollX) * Scale)),
-    Window.ScreenTop + Unscaled(PixelBounds.Top + Round((Y + Height - ScrollY) * Scale)), @SelectOptionChosen);
+  PopupMenu(FSelectMenu, Round((X - ScrollX) * Scale), Round((Y + Height - ScrollY) * Scale), @SelectOptionChosen);
 end;
 
-procedure TWebView.SelectOptionChosen(Item: TMenuItem);
+procedure TWebEngineView.SelectOptionChosen(Item: TMenuItem);
 var
   Options: TSelectOptionArray;
 begin

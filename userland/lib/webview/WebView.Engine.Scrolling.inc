@@ -16,13 +16,13 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: scrolling the viewport and the page's scroll containers. }
+{ WebView.Engine: scrolling the viewport and the page's scroll containers. }
 
 const
   { CSS pixels a wheel step scrolls. }
   WheelStep = 60;
 
-procedure TWebView.UpdateScrollBars;
+procedure TWebEngineView.UpdateScrollBars;
 var
   DocumentWidth, DocumentHeight, ViewWidth, ViewHeight: Double;
   ScrollX, ScrollY: Single;
@@ -62,7 +62,7 @@ begin
   end;
 end;
 
-procedure TWebView.ScrollBarMoved(Bar: TScrollBar);
+procedure TWebEngineView.ScrollBarMoved(Bar: TScrollBar);
 var
   ScrollX, ScrollY: Single;
 begin
@@ -96,7 +96,7 @@ begin
   end;
 end;
 
-procedure TWebView.ScrollViewportTo(X, Y: Double);
+procedure TWebEngineView.ScrollViewportTo(X, Y: Double);
 var
   OldX, OldY, NewX, NewY: Single;
   Pixels: Double;
@@ -126,7 +126,7 @@ begin
   InvalidateViewport;
 end;
 
-procedure TWebView.ScrollBy(DeltaX, DeltaY: Double);
+procedure TWebEngineView.ScrollBy(DeltaX, DeltaY: Double);
 var
   ScrollX, ScrollY: Single;
 begin
@@ -136,14 +136,14 @@ begin
   ScrollViewportTo(ScrollX + DeltaX, ScrollY + DeltaY);
 end;
 
-procedure TWebView.ScrollTo(X, Y: Double);
+procedure TWebEngineView.ScrollTo(X, Y: Double);
 begin
   ScrollViewportTo(X, Y);
 end;
 
 { The innermost scroll container under the point that can still move
   that way takes the scroll. }
-function TWebView.ScrollInnerContainer(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
+function TWebEngineView.ScrollInnerContainer(CssX, CssY, DeltaX, DeltaY: Double): Boolean;
 var
   Hit: THitTestResult;
 begin
@@ -158,7 +158,7 @@ begin
 end;
 
 { The innermost scroll container from Box up that can move that way. }
-function TWebView.ScrollBoxChain(DocumentLayout: TDocumentLayout; Box: TLayoutBox; DeltaX, DeltaY: Double): Boolean;
+function TWebEngineView.ScrollBoxChain(DocumentLayout: TDocumentLayout; Box: TLayoutBox; DeltaX, DeltaY: Double): Boolean;
 var
   ClientWidth, ClientHeight, TargetX, TargetY: Single;
 begin
@@ -184,7 +184,32 @@ begin
   end;
 end;
 
-procedure TWebView.Wheel(Steps: LongInt);
+function TWebEngineView.GetScrollState(out ScrollX, ScrollY, DocumentWidth, DocumentHeight: Double;
+  out ViewportWidth, ViewportHeight: LongInt; out HasFixedBoxes: Boolean): Boolean;
+var
+  OffsetX, OffsetY: Single;
+  Scale: Double;
+begin
+  ScrollX := 0;
+  ScrollY := 0;
+  DocumentWidth := 0;
+  DocumentHeight := 0;
+  ViewportWidth := ViewportPixelWidth;
+  ViewportHeight := ViewportPixelHeight;
+  HasFixedBoxes := False;
+  if FLayout = nil then
+    Exit(False);
+  Scale := DeviceScale;
+  FLayout.GetScrollOffset(nil, OffsetX, OffsetY);
+  ScrollX := OffsetX * Scale;
+  ScrollY := OffsetY * Scale;
+  DocumentWidth := FLayout.DocumentWidth * Scale;
+  DocumentHeight := FLayout.DocumentHeight * Scale;
+  HasFixedBoxes := PageHasFixedBoxes;
+  Result := True;
+end;
+
+procedure TWebEngineView.Wheel(Steps: LongInt);
 var
   CssX, CssY, Delta: Double;
 begin
@@ -210,7 +235,7 @@ begin
     ScrollBy(0, Delta);
 end;
 
-procedure TWebView.ScrollRectangleIntoView(X, Y, Width, Height: Double);
+procedure TWebEngineView.ScrollRectangleIntoView(X, Y, Width, Height: Double);
 var
   ScrollX, ScrollY: Single;
   ViewWidth, ViewHeight, TargetX, TargetY, Margin: Double;
@@ -234,7 +259,7 @@ begin
   ScrollViewportTo(TargetX, TargetY);
 end;
 
-procedure TWebView.ScrollToElement(Element: TElement);
+procedure TWebEngineView.ScrollToElement(Element: TElement);
 var
   X, Y, Width, Height: Single;
 begin
@@ -242,7 +267,7 @@ begin
     ScrollRectangleIntoView(X, Y, Width, Height);
 end;
 
-procedure TWebView.ApplyPendingScroll;
+procedure TWebEngineView.ApplyPendingScroll;
 var
   X, Y, Width, Height: Single;
 begin

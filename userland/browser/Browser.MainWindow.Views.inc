@@ -31,10 +31,12 @@ begin
   View.OnDownloadRequested := @ViewDownloadRequested;
   View.OnNavigationFailed := @ViewNavigationFailed;
   View.OnContextMenuRequested := @ViewContextMenu;
-  View.OnScriptAlert := @ViewAlert;
-  View.OnScriptConfirm := @ViewConfirm;
-  View.OnScriptPrompt := @ViewPrompt;
+  { The page's alert, confirm and prompt: the view's own sheet, modal
+    for that tab only. }
+  View.OnScriptDialog := @ViewDialog;
   View.OnConsoleMessage := @ViewConsole;
+  View.OnFindResult := @ViewFindResult;
+  View.OnProcessEvent := @ViewProcessEvent;
 end;
 
 procedure TBrowserWindow.ViewTitleChanged(Sender: TWebView; const Text: string);
@@ -226,22 +228,49 @@ begin
   end;
 end;
 
-procedure TBrowserWindow.ViewAlert(Sender: TWebView; const Text: string);
+procedure TBrowserWindow.ViewDialog(Sender: TWebView; const Kind, Message: string);
 begin
-  Say('alert ' + Text);
-  ShowMessageBox(ShownAddress(Sender.Url), Text, MessageOk, SignInformation, Self);
+  Say(Kind + ' ' + Message);
 end;
 
-function TBrowserWindow.ViewConfirm(Sender: TWebView; const Message: string): Boolean;
+procedure TBrowserWindow.ViewFindResult(Sender: TWebView; const Needle: string; Found: Boolean);
 begin
-  Say('confirm ' + Message);
-  Result := ShowMessageBox(ShownAddress(Sender.Url), Message, MessageOkCancel, SignQuestion, Self) = ResultOk;
+  if TabOfView(Sender) <> FActive then
+    Exit;
+  FFindBar.ShowResult(Found);
+  if Found then
+    Say('found ' + Needle)
+  else
+    Say('not-found ' + Needle);
 end;
 
-function TBrowserWindow.ViewPrompt(Sender: TWebView; const Message, Default: string; out Answer: string): Boolean;
+procedure TBrowserWindow.ViewProcessEvent(Sender: TWebView; const What: string; Value: Int64);
 begin
-  Say('prompt ' + Message);
-  Result := AskForText(Self, ShownAddress(Sender.Url), Message, Default, Answer);
+  Say('process ' + What + ' ' + IntToStr(Value) + ' tab ' + IntToStr(TabOfView(Sender)));
+  if What = 'crashed' then
+    RefreshTab(TabOfView(Sender));
+end;
+
+function TBrowserWindow.RunDebugAddress(Tab: TBrowserTab; const Text: string): Boolean;
+begin
+  Result := True;
+  if Text = 'about:crash' then
+  begin
+    Say('go about:crash');
+    Tab.View.CrashContentProcess;
+  end
+  else if Text = 'about:kill' then
+  begin
+    Say('go about:kill');
+    Tab.View.TerminateContentProcess;
+  end
+  else if Text = 'about:hang' then
+  begin
+    Say('go about:hang');
+    Tab.View.HangContentProcess;
+  end
+  else
+    Result := False;
 end;
 
 procedure TBrowserWindow.ViewConsole(Sender: TWebView; const Level, Text: string);

@@ -48,7 +48,15 @@
     alert TEXT / confirm TEXT / prompt TEXT   a page's prompts
     console LEVEL TEXT   a page's console
     failed URL REASON    a page could not be loaded
+    process WHAT N tab I a tab's content process: started PID, crashed
+                         STATUS, hung, responsive, wait, stop,
+                         script-interrupted COUNT
     exit                 the browser ends
+
+  Pages run in content processes (/bin/webcontent, one per site,
+  sandboxed). about:crash crashes the tab's process, about:kill ends it
+  and about:hang makes it stop answering: for tests of what the browser
+  does then (the tab shows it crashed, or a bar to wait or stop it).
 
   The units are in userland/browser (Browser.MainWindow and its parts).
 }
@@ -60,15 +68,25 @@ program Browser;
 uses
   Windowing.Windows,
   Http3.SystemConnections,
+  WebView.Types,
   WebView.Network,
+  WebView.Control,
+  WebView.ContentProcesses,
   Browser.Settings,
   Browser.MainWindow;
 
 var
   Window: TBrowserWindow;
   Index: Integer;
+  Settings: TBrowserSettings;
 begin
   EnableHttp3;
+  Settings := LoadBrowserSettings;
+  if not Settings.SeparateProcesses then
+    DefaultWebViewProcessModel := ProcessModelInProcess;
+  ContentProcesses.Sandboxed := Settings.Sandbox;
+  ContentProcesses.HangTimeoutMilliseconds := QWord(Settings.HangTimeoutSeconds) * 1000;
+  ContentProcesses.ScriptRunLimitMilliseconds := QWord(Settings.ScriptRunLimitSeconds) * 1000;
   Window := TBrowserWindow.Create;
   if ParamCount = 0 then
     Window.OpenTab(LoadBrowserSettings.HomePage, True)
@@ -78,4 +96,5 @@ begin
   Window.Show;
   RunMessageLoop;
   Window.Free;
+  FreeContentProcesses;
 end.

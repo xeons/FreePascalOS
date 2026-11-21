@@ -174,10 +174,12 @@ type
     procedure ViewNavigationFailed(Sender: TWebView; const Url, Reason: string);
     procedure ViewContextMenu(Sender: TWebView; constref Info: TWebContextInfo; var Handled: Boolean);
     procedure ContextMenuChosen(Item: TMenuItem);
-    procedure ViewAlert(Sender: TWebView; const Text: string);
-    function ViewConfirm(Sender: TWebView; const Message: string): Boolean;
-    function ViewPrompt(Sender: TWebView; const Message, Default: string; out Answer: string): Boolean;
+    procedure ViewDialog(Sender: TWebView; const Kind, Message: string);
     procedure ViewConsole(Sender: TWebView; const Level, Text: string);
+    procedure ViewFindResult(Sender: TWebView; const Needle: string; Found: Boolean);
+    procedure ViewProcessEvent(Sender: TWebView; const What: string; Value: Int64);
+    { about:crash and about:hang (tests): False for other addresses. }
+    function RunDebugAddress(Tab: TBrowserTab; const Text: string): Boolean;
     function AboutPage(const Path: string; out Html: string): Boolean;
   protected
     procedure Resized; override;
@@ -212,7 +214,6 @@ uses
   WebView.Zoom,
   Browser.Addresses,
   Browser.SettingsDialog,
-  Browser.PromptDialog,
   Browser.Output;
 
 const
@@ -408,7 +409,7 @@ begin
   FTabStrip.Insert(Index, 'New Tab');
   if (FActive >= Index) then
     Inc(FActive);
-  Result.View.Navigable.Fetcher.AboutPageProvider := @AboutPage;
+  Result.View.AboutPageProvider := @AboutPage;
   Say('tabs ' + IntToStr(FTabs.Count));
   if Bringing or (FActive < 0) then
     ActivateTab(Index);
@@ -578,6 +579,8 @@ var
   Url: string;
 begin
   Tab.Typing := False;
+  if RunDebugAddress(Tab, Text) then
+    Exit;
   case InterpretAddress(Text, FSettings.SearchUrl, Url) of
     AddressUrl, AddressSearch:
       begin
@@ -641,18 +644,12 @@ begin
   RefreshChrome;
 end;
 
+{ The answer comes to ViewFindResult (from the page's process). }
 procedure TBrowserWindow.FindRequested(const Text: string; Forward, MatchCase, FromStart: Boolean);
-var
-  Found: Boolean;
 begin
   if ActiveView = nil then
     Exit;
-  Found := ActiveView.FindText(Text, Forward, MatchCase);
-  FFindBar.ShowResult(Found);
-  if Found then
-    Say('found ' + Text)
-  else
-    Say('not-found ' + Text);
+  ActiveView.FindText(Text, Forward, MatchCase);
 end;
 
 procedure TBrowserWindow.FindClosed(Sender: TControl);

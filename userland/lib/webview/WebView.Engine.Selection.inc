@@ -16,7 +16,7 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
 
-{ WebView.Control: the text index, selection, copying and finding. }
+{ WebView.Engine: the text index, selection, copying and finding. }
 
 function ValidPosition(Index: TPageTextIndex; constref Position: TTextPosition): Boolean;
 begin
@@ -26,7 +26,7 @@ end;
 
 { The index follows the display list; a selection that no longer fits
   the new runs goes. }
-procedure TWebView.EnsureTextIndex;
+procedure TWebEngineView.EnsureTextIndex;
 begin
   if FPainter = nil then
   begin
@@ -52,15 +52,22 @@ begin
   PullSelectionFromDocument;
 end;
 
-procedure TWebView.DocumentSelectionChanged;
+procedure TWebEngineView.DocumentSelectionChanged;
 begin
   if FSettingDocumentSelection then
     Exit;
   FSelectionFromDocument := True;
   InvalidateViewport;
+  SelectionChanged;
 end;
 
-procedure TWebView.PushSelectionToDocument;
+procedure TWebEngineView.SelectionChanged;
+begin
+  if Assigned(FOnSelectionChanged) then
+    FOnSelectionChanged(Self);
+end;
+
+procedure TWebEngineView.PushSelectionToDocument;
 var
   AnchorNode, FocusNode: TNode;
   AnchorOffset, FocusOffset: Integer;
@@ -88,7 +95,7 @@ begin
   FSelectionFromDocument := False;
 end;
 
-procedure TWebView.PullSelectionFromDocument;
+procedure TWebEngineView.PullSelectionFromDocument;
 var
   Selection: TDocumentSelection;
 begin
@@ -111,7 +118,7 @@ begin
   end;
 end;
 
-function TWebView.TextPositionAt(X, Y: LongInt): TTextPosition;
+function TWebEngineView.TextPositionAt(X, Y: LongInt): TTextPosition;
 var
   Scale: Double;
   ScrollX, ScrollY: Single;
@@ -125,7 +132,7 @@ begin
   Result := FTextIndex.PositionAt(X / Scale + ScrollX, Y / Scale + ScrollY, ScrollX, ScrollY);
 end;
 
-procedure TWebView.SetSelection(constref Anchor, Focus: TTextPosition);
+procedure TWebEngineView.SetSelection(constref Anchor, Focus: TTextPosition);
 begin
   if (TPageTextIndex.Compare(Anchor, FSelectionAnchor) = 0) and (TPageTextIndex.Compare(Focus, FSelectionFocus) = 0)
      and (Anchor.Run = FSelectionAnchor.Run) then
@@ -134,14 +141,15 @@ begin
   FSelectionFocus := Focus;
   PushSelectionToDocument;
   InvalidateViewport;
+  SelectionChanged;
 end;
 
-procedure TWebView.ClearSelection;
+procedure TWebEngineView.ClearSelection;
 begin
   SetSelection(TextPosition(-1, 0), TextPosition(-1, 0));
 end;
 
-procedure TWebView.SelectAll;
+procedure TWebEngineView.SelectAll;
 begin
   if FLayout = nil then
     Exit;
@@ -149,7 +157,7 @@ begin
   SetSelection(FTextIndex.FirstPosition, FTextIndex.LastPosition);
 end;
 
-function TWebView.HasSelection: Boolean;
+function TWebEngineView.HasSelection: Boolean;
 begin
   if FSelectionFromDocument and (FLayout <> nil) then
     EnsureTextIndex;
@@ -158,7 +166,7 @@ begin
     (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) <> 0);
 end;
 
-function TWebView.SelectedText: string;
+function TWebEngineView.SelectedText: string;
 begin
   Result := '';
   if not HasSelection then
@@ -168,16 +176,16 @@ begin
     Result := FTextIndex.TextBetween(FSelectionAnchor, FSelectionFocus);
 end;
 
-procedure TWebView.CopySelection;
+procedure TWebEngineView.CopySelection;
 var
   Chosen: string;
 begin
   Chosen := SelectedText;
   if Chosen <> '' then
-    SetClipboardText(Chosen);
+    WriteClipboard(Chosen);
 end;
 
-function TWebView.PageText: string;
+function TWebEngineView.PageText: string;
 begin
   Result := '';
   if FLayout = nil then
@@ -186,7 +194,7 @@ begin
   Result := FTextIndex.AllText;
 end;
 
-function TWebView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
+function TWebEngineView.FindText(const Needle: string; Forward, MatchCase: Boolean): Boolean;
 var
   From, MatchStart, MatchEnd: TTextPosition;
   Rectangles: TTextRectangleArray;
