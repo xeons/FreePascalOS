@@ -27,7 +27,7 @@
 #                  libsystem <- libdrawing <- libfont, libconfiguration <- libwindowing
 #                  (programs with windows)
 #                  libsystem <- libcryptography <- libtls (TLS 1.3 and 1.2 client; wget)
-#                  libsystem <- libcompression (deflate, zlib, gzip)
+#                  libsystem <- libcompression (deflate, zlib, gzip; brotli, zstd)
 #                  libsystem <- libcryptography <- libssh (SSH; sshd, ssh)
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
@@ -404,8 +404,9 @@ $(JAVASCRIPT_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/javascript/*.pa
 		$(JAVASCRIPT_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libcompression: deflate compression and decompression, the zlib and
-# gzip wrappers and their checksums.
-$(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas)
+# gzip wrappers and their checksums, brotli and Zstandard decompression.
+$(COMPRESSION_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/compression/*.pas) \
+		$(wildcard userland/lib/compression/*.inc)
 	@rm -rf $(COMPRESSION_LIBRARY_OBJECTS)
 	@mkdir -p $(COMPRESSION_LIBRARY_OBJECTS)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/compression \
