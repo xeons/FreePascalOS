@@ -415,7 +415,7 @@ procedure TestModuleLoading;
 var
   Engine: TJsEngine;
   Host: TDeferredModules;
-  Promise, Namespace: TJsValue;
+  Promise, Namespace, Second: TJsValue;
 begin
   Host := TDeferredModules.Create;
   Engine := TJsEngine.Create;
@@ -441,6 +441,23 @@ begin
     Host.Pending := nil;
     Engine.RunJobs;
     Check(TJsPromise(JsAsObject(Promise)).State = psRejected, 'api: failed fetch rejects');
+    { A graph waiting for two fetches fails at the first; the second
+      arrives later (after another graph started) and must not reach
+      the failed graph's memory (it was freed while the module map still
+      had it waiting: www.github.com crashed hovering links). }
+    Promise := Engine.EvaluateModule('import "./a.mjs"; import "./b.mjs";', 'app/failing.mjs');
+    Check(Length(Host.Pending) = 2, 'api: a graph waits for two fetches');
+    Host.Pending[0].Fail('not found');
+    Second := Engine.EvaluateModule('import "./c.mjs"; globalThis.second = 1;', 'app/second.mjs');
+    Host.Pending[1].Succeed('export const b = 1;');
+    Check(Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'second') = JsUndefined,
+      'api: a late fetch of a failed graph leaves the next graph waiting');
+    Host.Pending[2].Succeed('export const c = 1;');
+    Host.Pending := nil;
+    Engine.RunJobs;
+    Check((TJsPromise(JsAsObject(Promise)).State = psRejected) and (TJsPromise(JsAsObject(Second)).State = psFulfilled)
+      and (Engine.ToNumber(Engine.GetProperty(JsObjectValue(Engine.GlobalObject), 'second')) = 1),
+      'api: the failed graph rejects, the next one runs once its import arrived');
   finally
     Engine.Free;
     Host.Free;
