@@ -1,0 +1,8 @@
+viewport (anonymous) at (0,0) size 1000x600
+  block <html> at (0,0) size 1000x40
+    block <body> at (0,0) size 1000x40
+      flex <main> at (0,0) size 800x40
+        block <div> at (150,0) size 500x10
+        block <div> at (0,10) size 500x10
+        block <div> at (0,20) size 500x10
+        block <div> at (0,30) size 400x10

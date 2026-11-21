@@ -560,6 +560,9 @@ begin
     else
     begin
       Specified := SpecifiedBorderBoxWidth(Item^.Box, Box.ContentWidth);
+      { A width of its own still keeps to min-width and max-width. }
+      if Specified >= 0 then
+        Specified := ClampWidth(Item^.Box, Specified, Box.ContentWidth);
       if (Specified < 0) and (Item^.Align = kwStretch) and not Item^.CrossAutoStart and not Item^.CrossAutoEnd then
         Specified := Max(0, Box.ContentWidth - Item^.CrossMarginStart - Item^.CrossMarginEnd);
       LayItemOut(State, Item^, Item^.Target, Specified);
