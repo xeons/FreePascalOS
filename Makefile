@@ -51,6 +51,8 @@
 #   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
 #                   exchange hash and keys, host keys and signatures against Python's
 #                   and OpenSSL's answers, and the server against a client in memory
+#   make web-ipc-test  Check libwebipc (the browser's process protocol) on the host:
+#                   the wire format, messages in pieces, every typed payload
 #   make web-script-test  Check libweb's script bindings on the host: scripts using
 #                   the DOM, events, selectors, reflection, parsing with scripts,
 #                   MutationObserver, encodings, URLs, the window, and wrapper
@@ -202,7 +204,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
+	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test
 
 all: esp
 
@@ -550,7 +552,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
@@ -1274,6 +1276,24 @@ web-test: $(WEB_TEST)
 		{ grep -A14 FAIL build/tools/web-test.out | head -150; echo "WEB TEST FAILED (build/tools/web-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-test.out || true
 	@echo "WEB TEST PASSED: $$(tail -n 1 build/tools/web-test.out | cut -d ' ' -f 3-)"
+
+# libwebipc, the browser's protocol between its processes: plain logic
+# (the wire format, pieces, payloads), on the host.
+WEB_IPC_TEST := build/tools/WebIpcTest
+WEB_IPC_TEST_UNITS := build/tools/web-ipc-test-units
+WEB_IPC_TEST_SOURCES := $(wildcard tools/WebIpcTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	userland/lib/webipc/WebIpc.Wire.pas userland/lib/webipc/WebIpc.Messages.pas userland/lib/webipc/WebIpc.Fragments.pas \
+	userland/lib/webipc/WebIpc.ViewMessages.pas userland/lib/webipc/WebIpc.NetworkMessages.pas
+
+$(WEB_IPC_TEST): $(WEB_IPC_TEST_SOURCES)
+	@mkdir -p $(WEB_IPC_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebIpcTest -Futools/CryptoTest -Fuuserland/lib/webipc \
+		-FU$(WEB_IPC_TEST_UNITS) -o$@ tools/WebIpcTest/WebIpcTest.pas
+
+web-ipc-test: $(WEB_IPC_TEST)
+	@$(WEB_IPC_TEST) > build/tools/web-ipc-test.out || \
+		{ grep FAIL build/tools/web-ipc-test.out; echo "WEB IPC TEST FAILED (build/tools/web-ipc-test.out)"; exit 1; }
+	@echo "WEB IPC TEST PASSED: $$(tail -n 1 build/tools/web-ipc-test.out | cut -d ' ' -f 4-)"
 
 # libweb's script bindings on the host, with libjavascript, libcss and
 # libhttp's URL units: tools/WebScriptTest/scripts/*.js run in windows
