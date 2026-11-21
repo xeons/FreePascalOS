@@ -78,6 +78,11 @@ type
     { Whole disks: can be unplugged; has been. }
     IsRemovable: Boolean;
     IsRemoved: Boolean;
+    { Whole disks: the driver takes discard requests (TRIM, deallocate,
+      unmap); at most MaximumDiscardBlocks blocks a request (0: no
+      limit of its own). }
+    SupportsDiscard: Boolean;
+    MaximumDiscardBlocks: QWord;
 
     { Partitions only. }
     Parent: PBlockDevice;
@@ -124,6 +129,15 @@ function WriteBlocksTogether(Device: PBlockDevice; Writes: PBlockWrite; Count: I
 { Makes everything written so far durable: the disk writes its volatile
   cache to the medium. True also for disks that have no such cache. }
 function FlushBlockDevice(Device: PBlockDevice): Boolean;
+
+{ Tells the disk that BlockCount blocks from FirstBlock hold nothing
+  worth keeping (they may read back as anything later). True if the
+  disk took it; False for a disk that cannot discard, a bad range or an
+  error. Callers go through Io.BlockCache.DiscardDeviceRange, which
+  also forgets what the cache holds of the range. }
+function DiscardBlocks(Device: PBlockDevice; FirstBlock, BlockCount: QWord): Boolean;
+{ True if Device (or the disk of a partition) takes discards. }
+function BlockDeviceSupportsDiscard(Device: PBlockDevice): Boolean;
 
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;
 function BlockDeviceIsReadOnly(Device: PBlockDevice): Boolean;
@@ -417,6 +431,56 @@ begin
   Status := CallDriverAndWait(Device^.StorageDevice, Request, False);
   LeaveGate;
   Result := (Status = ErrorNone) or (Status = ErrorUnsupported);
+end;
+
+{ The largest discard request: what the disk takes, and never more than
+  1 GiB of bytes, so that no request runs for long. }
+function DiscardPieceBlocks(Disk: PBlockDevice): QWord;
+const
+  LargestDiscardBytes = QWord(1) shl 30;
+begin
+  Result := LargestDiscardBytes div Disk^.BlockSize;
+  if (Disk^.MaximumDiscardBlocks > 0) and (Disk^.MaximumDiscardBlocks < Result) then
+    Result := Disk^.MaximumDiscardBlocks;
+end;
+
+function DiscardBlocks(Device: PBlockDevice; FirstBlock, BlockCount: QWord): Boolean;
+var
+  Request: TIoRequest;
+  Piece: QWord;
+begin
+  if (BlockCount = 0) or (FirstBlock >= Device^.BlockCount) or (BlockCount > Device^.BlockCount - FirstBlock) or
+     BlockDeviceIsReadOnly(Device) or BlockDeviceIsRemoved(Device) or not BlockDeviceSupportsDiscard(Device) then
+    Exit(False);
+  if Device^.Parent <> nil then
+    Exit(DiscardBlocks(Device^.Parent, Device^.FirstBlockOnParent + FirstBlock, BlockCount));
+  Result := True;
+  while BlockCount > 0 do
+  begin
+    Piece := DiscardPieceBlocks(Device);
+    if Piece > BlockCount then
+      Piece := BlockCount;
+    FillMemory(@Request, SizeOf(Request), 0);
+    Request.Operation := IoFunctionDiscard;
+    Request.Offset := FirstBlock * Device^.BlockSize;
+    Request.Length := Piece * Device^.BlockSize;
+    EnterGate;
+    if CallDriverAndWait(Device^.StorageDevice, Request, False) <> ErrorNone then
+      Result := False;
+    LeaveGate;
+    if not Result then
+      Exit;
+    FirstBlock := FirstBlock + Piece;
+    BlockCount := BlockCount - Piece;
+  end;
+end;
+
+function BlockDeviceSupportsDiscard(Device: PBlockDevice): Boolean;
+begin
+  if Device^.Parent <> nil then
+    Result := BlockDeviceSupportsDiscard(Device^.Parent)
+  else
+    Result := Device^.SupportsDiscard and (Device^.StorageDevice <> nil);
 end;
 
 function BlockDeviceIsPartition(Device: PBlockDevice): Boolean;

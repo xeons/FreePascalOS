@@ -142,6 +142,12 @@ procedure InvalidateCachedDevice(Device: PBlockDevice);
   Lines in use at the moment are left alone. }
 procedure DiscardCachedRange(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord);
 
+{ Discards the device blocks lying wholly inside ByteCount bytes at
+  ByteOffset of Device, after forgetting what the cache holds of them
+  (DiscardCachedRange). True if the disk took it (False also for disks
+  that cannot discard). }
+function DiscardDeviceRange(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
+
 { The page holding the 4 KiB at ByteOffset (a multiple of CacheLineSize)
   of Device, pinned and locked: loaded if Load, else about to be
   overwritten whole. Hold it briefly; to keep the page (mapped in a
@@ -1062,6 +1068,21 @@ begin
     end;
   end;
   UnlockCache;
+end;
+
+function DiscardDeviceRange(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
+var
+  FirstBlock: QWord;
+  EndBlock: QWord;
+begin
+  if not BlockDeviceSupportsDiscard(Device) then
+    Exit(False);
+  FirstBlock := (ByteOffset + Device^.BlockSize - 1) div Device^.BlockSize;
+  EndBlock := (ByteOffset + ByteCount) div Device^.BlockSize;
+  if EndBlock <= FirstBlock then
+    Exit(True);
+  DiscardCachedRange(Device, ByteOffset, ByteCount);
+  Result := DiscardBlocks(Device, FirstBlock, EndBlock - FirstBlock);
 end;
 
 { --- Shrinking ------------------------------------------------------------ }

@@ -101,7 +101,12 @@ type
     IoFunctionControl, IoFunctionFlush,
     { Which memory of the device a program may map: Offset and Length
       (page aligned) in, MapPhysical and MapWriteCombining out. }
-    IoFunctionMap);
+    IoFunctionMap,
+    { Block devices: the Length bytes at Offset (whole blocks) hold
+      nothing worth keeping (TRIM, deallocate, unmap); they may read
+      back as anything afterwards. No buffer. Only sent to disks that
+      said they take it (TBlockDevice.SupportsDiscard). }
+    IoFunctionDiscard);
 
   TDeviceKind = (DeviceKindCharacter, DeviceKindBlock);
 

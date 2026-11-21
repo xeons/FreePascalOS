@@ -33,10 +33,18 @@
   A compressed image (xz or gzip: a Raspberry Pi 5 fetches it over slow
   TFTP) is unpacked first, into pages of its own, and the compressed
   copy's pages freed (Drivers.RamDiskDecompression).
+
+  Discarding. The disk takes discard requests: each page of the image
+  wholly inside a discarded range is given back to the page allocator
+  (parts of pages are zeroed), and reads of it see zeros until a write
+  gives it a fresh page. A table of the image's pages (their physical
+  addresses, 0 for one given back) says where each is; one mutex
+  covers every request, which only copy memory.
 }
 unit Drivers.RamDisk;
 
 {$mode objfpc}
+{$pointermath on}
 
 interface
 
@@ -63,6 +71,9 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Memory.Layout,
+  Memory.PhysicalPages,
+  Memory.KernelHeap,
+  Kernel.Mutex,
   Io.Manager,
   Drivers.RamDiskDecompression,
   Debug.Output;
@@ -76,6 +87,11 @@ var
   ImageSizeInBytes: QWord;
   ImageContents: PByte;
   RamDiskDevice: PBlockDevice;
+  { The image's pages (see the unit comment); nil if the image does not
+    start on a page, and then nothing is discarded. }
+  ImagePages: PQWord;
+  ImagePageCount: QWord;
+  TransferLock: TMutex;
 
 procedure RecordBootRamDisk(const BootInformation: TBootInformation);
 var
@@ -110,16 +126,105 @@ var
 begin
   if Request.Operation = IoFunctionFlush then
     Exit(Request.Length = 0);
+  if (Request.Operation = IoFunctionDiscard) and (ImagePages = nil) then
+    Exit(False);
   SectorCount := ImageSizeInBytes div SectorSize;
   Result := (Request.Length > 0) and (Request.Length mod SectorSize = 0) and
     (Request.Offset mod SectorSize = 0) and (Request.Offset div SectorSize < SectorCount) and
     (Request.Length div SectorSize <= SectorCount - Request.Offset div SectorSize);
 end;
 
+{ The page of the image at page Index, given a fresh zeroed one if it
+  was discarded and Create; nil if there is none. }
+function ImagePage(Index: QWord; Create: Boolean): PByte;
+var
+  Physical: TPhysicalAddress;
+begin
+  Physical := ImagePages[Index];
+  if (Physical = 0) and Create then
+  begin
+    Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    ImagePages[Index] := Physical;
+  end;
+  if Physical = 0 then
+    Exit(nil);
+  Result := PByte(PhysicalToVirtual(Physical));
+end;
+
+{ Reads, writes or discards Length bytes at Offset page by page. }
+function TransferThroughPages(var Request: TIoRequest): LongInt;
+var
+  Offset: QWord;
+  Done: QWord;
+  Chunk: QWord;
+  Within: QWord;
+  Page: PByte;
+  Index: QWord;
+begin
+  Result := ErrorNone;
+  Done := 0;
+  while Done < Request.Length do
+  begin
+    Offset := Request.Offset + Done;
+    Index := Offset div PageSize;
+    Within := Offset mod PageSize;
+    Chunk := PageSize - Within;
+    if Chunk > Request.Length - Done then
+      Chunk := Request.Length - Done;
+    case Request.Operation of
+      IoFunctionRead:
+        begin
+          Page := ImagePage(Index, False);
+          if Page = nil then
+            ZeroMemory(PByte(Request.Buffer) + Done, Chunk)
+          else
+            CopyMemory(PByte(Request.Buffer) + Done, Page + Within, Chunk);
+        end;
+      IoFunctionWrite:
+        begin
+          Page := ImagePage(Index, True);
+          if Page = nil then
+          begin
+            Result := ErrorOutOfMemory;
+            Break;
+          end;
+          CopyMemory(Page + Within, PByte(Request.Buffer) + Done, Chunk);
+        end;
+      IoFunctionDiscard:
+        if (Within = 0) and (Chunk = PageSize) then
+        begin
+          if ImagePages[Index] <> 0 then
+            FreePhysicalPage(ImagePages[Index]);
+          ImagePages[Index] := 0;
+        end
+        else
+        begin
+          Page := ImagePage(Index, False);
+          if Page <> nil then
+            ZeroMemory(Page + Within, Chunk);
+        end;
+    end;
+    Done := Done + Chunk;
+  end;
+  Request.Information := Int64(Done);
+end;
+
 function TransferRamDisk(Device: PDeviceObject; var Request: TIoRequest): LongInt;
 begin
   if not RequestIsValid(Request) then
     Exit(ErrorInvalidArgument);
+  if Request.Operation = IoFunctionFlush then
+  begin
+    Request.Information := 0;
+    Exit(ErrorNone);
+  end;
+  if ImagePages <> nil then
+  begin
+    AcquireMutex(TransferLock);
+    Result := TransferThroughPages(Request);
+    ReleaseMutex(TransferLock);
+    Exit;
+  end;
   case Request.Operation of
     IoFunctionRead:
       CopyMemory(Request.Buffer, ImageContents + Request.Offset, Request.Length);
@@ -128,6 +233,27 @@ begin
   end;
   Request.Information := Int64(Request.Length);
   Result := ErrorNone;
+end;
+
+{ The table of the image's pages, for discarding (if the image starts
+  on a page). }
+procedure SetUpImagePages;
+var
+  Index: QWord;
+begin
+  InitializeMutex(TransferLock);
+  if (ImagePhysicalBase mod PageSize) <> 0 then
+    Exit;
+  ImagePageCount := (ImageSizeInBytes + PageSize - 1) div PageSize;
+  ImagePages := PQWord(AllocateKernelMemory(ImagePageCount * SizeOf(QWord)));
+  if ImagePages = nil then
+    Exit;
+  Index := 0;
+  while Index < ImagePageCount do
+  begin
+    ImagePages[Index] := ImagePhysicalBase + Index * PageSize;
+    Inc(Index);
+  end;
 end;
 
 function CreateRamDiskDevice: PDeviceObject;
@@ -139,6 +265,7 @@ begin
   Dispatch[IoFunctionRead] := @TransferRamDisk;
   Dispatch[IoFunctionWrite] := @TransferRamDisk;
   Dispatch[IoFunctionFlush] := @TransferRamDisk;
+  Dispatch[IoFunctionDiscard] := @TransferRamDisk;
   Driver := CreateDriver('ramdisk', Dispatch);
   if Driver = nil then
     Exit(nil);
@@ -157,6 +284,7 @@ begin
   ImagePhysicalBase := BootImage.PhysicalBase;
   ImageSizeInBytes := BootImage.SizeInBytes;
   ImageContents := PByte(PhysicalToVirtual(ImagePhysicalBase));
+  SetUpImagePages;
   Device := CreateRamDiskDevice;
   if Device = nil then
     Exit;
@@ -169,6 +297,7 @@ begin
   RamDiskDevice^.BlockSize := SectorSize;
   RamDiskDevice^.BlockCount := ImageSizeInBytes div SectorSize;
   RamDiskDevice^.StorageDevice := Device;
+  RamDiskDevice^.SupportsDiscard := ImagePages <> nil;
   RegisterBlockDevice(RamDiskDevice);
   WriteBlockDeviceDescription(RamDiskDevice);
 

@@ -44,6 +44,10 @@
   of several queued commands failed is not looked into), and the port is
   reset (RecoverPort) before anything else starts.
 
+  Discard requests become DATA SET MANAGEMENT commands with TRIM on
+  disks that report it: the ranges (up to 64 of 65535 sectors) go in
+  one 512-byte block in the bounce buffer, and the command runs alone.
+
   ATAPI devices (optical drives) are read with SCSI READ(10) commands in
   ATAPI packets, one at a time; they cannot be written, and have nothing
   to flush.
@@ -104,6 +108,12 @@ end;
 function PieceLength(Port: PAhciPort; Request: PIoRequest; Done: QWord): QWord;
 begin
   Result := Request^.Length - Done;
+  if Request^.Operation = IoFunctionDiscard then
+  begin
+    if Result div Port^.BlockSize > TrimRangesPerCommand * TrimSectorsPerRange then
+      Result := QWord(TrimRangesPerCommand * TrimSectorsPerRange) * Port^.BlockSize;
+    Exit;
+  end;
   if Result > MaximumBytesPerCommand then
     Result := MaximumBytesPerCommand - MaximumBytesPerCommand mod Port^.BlockSize;
 end;
@@ -113,6 +123,8 @@ begin
   { A flush moves no data: one command without a transfer. }
   if Request.Operation = IoFunctionFlush then
     Exit(Request.Length = 0);
+  if (Request.Operation = IoFunctionDiscard) and not Port^.SupportsTrim then
+    Exit(False);
   Result := (Request.Length > 0) and (Request.Length mod Port^.BlockSize = 0) and
     (Request.Offset mod Port^.BlockSize = 0) and
     (Request.Offset div Port^.BlockSize < Port^.BlockCount) and
@@ -132,6 +144,59 @@ begin
   else
     DebugWriteLine(', the port did not come back');
   DebugEndMessage;
+end;
+
+{ --- TRIM ------------------------------------------------------------------ }
+
+{ Writes the TRIM ranges for ByteCount bytes at Offset into the first
+  bounce page: one 512-byte block of 48-bit LBAs with 16-bit counts. }
+procedure FillTrimRanges(Port: PAhciPort; Offset, ByteCount: QWord);
+var
+  Ranges: PQWord;
+  Lba: QWord;
+  Remaining: QWord;
+  Count: QWord;
+  Index: Integer;
+begin
+  Ranges := PQWord(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  ZeroMemory(Ranges, 512);
+  Lba := Offset div Port^.BlockSize;
+  Remaining := ByteCount div Port^.BlockSize;
+  Index := 0;
+  while (Remaining > 0) and (Index < TrimRangesPerCommand) do
+  begin
+    Count := Remaining;
+    if Count > TrimSectorsPerRange then
+      Count := TrimSectorsPerRange;
+    Ranges[Index] := (Lba and QWord($FFFFFFFFFFFF)) or (Count shl 48);
+    Lba := Lba + Count;
+    Remaining := Remaining - Count;
+    Inc(Index);
+  end;
+end;
+
+{ Builds the TRIM command for the ranges in the bounce buffer in Slot. }
+procedure BuildTrimCommand(Port: PAhciPort; Slot: LongWord);
+var
+  Segments: TDataSegments;
+begin
+  Segments[0].Physical := Port^.BouncePagesPhysical[0];
+  Segments[0].Length := 512;
+  BuildCommand(Port, Slot, AtaCommandDataSetManagement, 0, 1, Segments, 1, True, False);
+  SetCommandFeatures(Port, Slot, DataSetManagementTrim);
+end;
+
+function TrimPolled(Port: PAhciPort; Offset, ByteCount: QWord): Boolean;
+begin
+  Result := False;
+  if not WaitForRegister(Port^.Registers, PortTaskFileData, TaskFileBusy or TaskFileDataRequest, 0,
+    CommandTimeoutMilliseconds) then
+    Exit;
+  FillTrimRanges(Port, Offset, ByteCount);
+  BuildTrimCommand(Port, 0);
+  WriteRegister(Port^.Registers, PortInterruptStatus, $FFFFFFFF);
+  IssueSlots(Port, 1, False);
+  Result := WaitForCommand(Port);
 end;
 
 { --- Polled requests ------------------------------------------------------ }
@@ -171,7 +236,18 @@ begin
     ReportRecovery(Port, 'flush failed', RecoverPort(Port));
     Result := ErrorIo;
   end;
-  while Done < Request.Length do
+  while (Request.Operation = IoFunctionDiscard) and (Done < Request.Length) do
+  begin
+    Piece := PieceLength(Port, @Request, Done);
+    if not TrimPolled(Port, Request.Offset + Done, Piece) then
+    begin
+      ReportRecovery(Port, 'TRIM failed', RecoverPort(Port));
+      Result := ErrorIo;
+      Break;
+    end;
+    Done := Done + Piece;
+  end;
+  while (Request.Operation <> IoFunctionDiscard) and (Done < Request.Length) do
   begin
     Piece := PieceLength(Port, @Request, Done);
     if IsWrite then
@@ -253,7 +329,8 @@ end;
 { True if Request can only run alone on Port. }
 function NeedsExclusiveUse(Port: PAhciPort; Request: PIoRequest): Boolean;
 begin
-  Result := (Port^.QueueDepth = 0) or (Request^.Operation = IoFunctionFlush);
+  Result := (Port^.QueueDepth = 0) or (Request^.Operation = IoFunctionFlush) or
+    (Request^.Operation = IoFunctionDiscard);
 end;
 
 function ActiveCount(Port: PAhciPort): LongWord;
@@ -294,6 +371,19 @@ var
 begin
   State := @Port^.Slots[Slot];
   Request := State^.Request;
+  if Request^.Operation = IoFunctionDiscard then
+  begin
+    { Runs alone, so the bounce buffer is free. }
+    if Port^.BounceBusy then
+      Exit(False);
+    Port^.BounceBusy := True;
+    State^.UsesBounce := True;
+    FillTrimRanges(Port, Request^.Offset + State^.Done, State^.Piece);
+    BuildTrimCommand(Port, Slot);
+    State^.Deadline := ClockTickCount + MillisecondsToTicks(CommandTimeoutMilliseconds);
+    IssueSlots(Port, LongWord(1) shl Slot, False);
+    Exit(True);
+  end;
   IsWrite := Request^.Operation = IoFunctionWrite;
   State^.UsesBounce := False;
   SegmentCount := 0;
@@ -616,6 +706,7 @@ begin
   Dispatch[IoFunctionRead] := @TransferAhciDevice;
   Dispatch[IoFunctionWrite] := @TransferAhciDevice;
   Dispatch[IoFunctionFlush] := @TransferAhciDevice;
+  Dispatch[IoFunctionDiscard] := @TransferAhciDevice;
   AhciDriver := CreateDriver('ahci', Dispatch);
 end;
 
