@@ -613,9 +613,13 @@ begin
     Result := FRoot.ScrollHeight;
 end;
 
+{ A scroll container shows a bar unless its overflow is hidden or clipped
+  or it asks for none (scrollbar-width: none: the page scrolls it its own
+  way). }
 function ShowsBar(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
 begin
-  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]);
+  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]) and
+    (Style.Keyword(cpScrollbarWidth) <> kwNone);
 end;
 
 procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer;
