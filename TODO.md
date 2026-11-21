@@ -712,9 +712,9 @@ normalized (0-65535), not pixels.
       certificate under the test root); libquic's own waits (a full send
       buffer, MAX_STREAMS) to wait in slices too, so a large upload does
       not hold the connection's lock
-- [ ] libhttp: Brotli (needs RFC
-      7932's dictionary in the tree) and zstd, proxies (http_proxy,
-      CONNECT), 100-continue, a PING keep-alive and idle timeout for
+- [x] libhttp: Brotli and zstd content codings, decoded in pieces as
+      the body arrives (libcompression's streaming decoders)
+- [ ] libhttp: proxies (http_proxy, CONNECT), 100-continue, a PING keep-alive and idle timeout for
       HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
       suffix list on the system disk, a persistent cookie store for the
       browser, HSTS, CORS and the rest of Fetch's request modes (libweb)
@@ -1311,8 +1311,8 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       (Google's CAPTCHA page needs them for reCAPTCHA)
 - [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
       (document.styleSheets, insertRule), Web Animations, synchronous XHR
-- [ ] Brotli and zstd content codings (Accept-Encoding offers gzip and
-      deflate only)
+- [x] Brotli and zstd content codings (Accept-Encoding offers gzip,
+      deflate, br and zstd)
 - [ ] Google search: the challenge runs (its token equals Firefox's for
       the same inputs) but Google sends this engine to its CAPTCHA page
 - [ ] A cheaper interface object: native accessors keyed by property in
