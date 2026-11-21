@@ -19,14 +19,19 @@
 {
   The real-time clock on AArch64.
 
-  The Raspberry Pi 4 has no battery-backed clock (its UEFI firmware
-  keeps the time in a variable; the Pi 5 has one, on its RP1/PMIC);
-  QEMU's virt machine has a PL031, which its ACPI tables do not list.
-  So the time comes from the firmware's GetTime runtime service, which
-  the loader calls before it hands over (TBootInformation.FirmwareTime):
-  the clock reads that time plus the time since the kernel started.
-  Setting it changes nothing kept: the network time (or the user) sets
-  the system's time again after the next start.
+  Where there is a PL031 (QEMU's virt machine; Hal.Pl031) it is the
+  clock: read at start and after waking from suspend, and set whenever
+  the wall clock is stepped (Kernel.WallClock), so the time set survives
+  a restart.
+
+  Otherwise (the Raspberry Pi 4 has no battery-backed clock: its UEFI
+  firmware keeps the time in a variable; the Pi 5's, on its PMIC, has no
+  driver yet) the time comes from the firmware's GetTime runtime
+  service, which the loader calls before it hands over
+  (TBootInformation.FirmwareTime): the clock reads that time plus the
+  time since the kernel started. Setting it then changes nothing kept:
+  the network time (or the user) sets the system's time again after the
+  next start.
 }
 unit Hal.RealTimeClock;
 
@@ -40,14 +45,17 @@ uses
 { Returns the current time, or zero if the clock could not be read. }
 function ReadRealTimeClock: TUnixTime;
 
-{ Does nothing (there is no clock to set). }
+{ Sets the PL031 if there is one; otherwise does nothing. }
 procedure WriteRealTimeClock(Time: TUnixTime);
+{ True if a clock that keeps time (a PL031) was found. }
+function RealTimeClockIsKept: Boolean;
 
 implementation
 
 uses
   Boot.Information,
-  Kernel.Arch.Cpu;
+  Kernel.Arch.Cpu,
+  Hal.Pl031;
 
 var
   ArchBootInformation: PBootInformation; external name 'ArchBootInformation';
@@ -61,6 +69,8 @@ var
   Frequency: QWord;
 begin
   Result := 0;
+  if FindPl031 then
+    Exit(TUnixTime(ReadPl031Seconds));
   if not FirmwareTimeIsCopied and (ArchBootInformation <> nil) then
   begin
     FirmwareTime := ArchBootInformation^.FirmwareTime;
@@ -76,6 +86,14 @@ end;
 
 procedure WriteRealTimeClock(Time: TUnixTime);
 begin
+  { The PL031 counts unsigned 32-bit seconds. }
+  if (Time >= 0) and (Time <= High(LongWord)) and FindPl031 then
+    WritePl031Seconds(QWord(Time));
+end;
+
+function RealTimeClockIsKept: Boolean;
+begin
+  Result := FindPl031;
 end;
 
 end.

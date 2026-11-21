@@ -17,13 +17,24 @@
 }
 
 {
-  Suspend to RAM on AArch64: not supported yet.
+  Saving a processor's state across suspend to RAM on AArch64 (PSCI
+  SYSTEM_SUSPEND, Hal.Platform).
 
-  QEMU's virt machine and the Raspberry Pi 4 have no ACPI S3; on AArch64
-  machines that sleep, it is PSCI SYSTEM_SUSPEND, which would save this
-  context (X19-X30, SP, the system registers) and resume at an entry
-  point much like ArchSecondaryEntry. The ACPI sleep code never finds S3
-  here, so these are never called.
+  ArchSaveSuspendContext works like setjmp (SuspendContext.s): it saves
+  the callee-saved registers X19-X30, the stack pointer, DAIF, the user
+  thread pointer (TPIDR_EL0) and the priority level (the GIC's priority
+  mask), then returns 0. ArchResumeSuspendContext, on the same
+  processor after it was woken through the start-up entry
+  (Kernel.Arch.ProcessorStartup: translation, vectors, then
+  ReinitializeThisProcessor and the HAL), puts the level back and
+  returns from the saving call a second time, with 1. Memory survives,
+  so the stack the context points into is still there. As on x86-64 the
+  level matters: a secondary processor froze inside its dispatch
+  interrupt, at dispatch level, and goes on from there.
+
+  A frozen processor turns itself off (PSCI CPU_OFF) rather than wait:
+  SYSTEM_SUSPEND requires every other processor to be off, and they are
+  started again with CPU_ON.
 }
 unit Kernel.Arch.Suspend;
 
@@ -33,28 +44,48 @@ interface
 
 type
   TArchSuspendContext = record
+    { X19-X30, SP, DAIF, the priority level, TPIDR_EL0. }
     Registers: array[0..15] of QWord;
   end;
   PArchSuspendContext = ^TArchSuspendContext;
 
 { 0 when saving, 1 when resumed. Call with interrupts disabled. }
-function ArchSaveSuspendContext(var Context: TArchSuspendContext): QWord;
+function ArchSaveSuspendContext(var Context: TArchSuspendContext): QWord; external name 'ArchSaveSuspendRegisters';
 { Never returns: the saving call returns again. }
 procedure ArchResumeSuspendContext(var Context: TArchSuspendContext);
+{ Where a frozen processor waits for the machine to sleep: off. }
+procedure ArchParkFrozenProcessor;
 
 implementation
 
 uses
-  Kernel.Panic;
+  Kernel.Arch.Cpu,
+  Kernel.Arch.PriorityLevel,
+  Hal.Psci;
 
-function ArchSaveSuspendContext(var Context: TArchSuspendContext): QWord;
+const
+  LevelIndex = 14;
+
+procedure ArchResumeSuspendRegisters(var Context: TArchSuspendContext); external name 'ArchResumeSuspendRegisters';
+
+procedure ArchNoteSuspendLevel(var Context: TArchSuspendContext); [public, alias: 'ArchNoteSuspendLevel'];
 begin
-  Result := 0;
+  Context.Registers[LevelIndex] := ArchGetPriorityLevel;
 end;
 
 procedure ArchResumeSuspendContext(var Context: TArchSuspendContext);
 begin
-  KernelPanicWithCode(PanicInitializationFailed, 'suspend to RAM is not supported on AArch64 yet', 0, 0, 0, 0);
+  ArchSetPriorityLevel(Byte(Context.Registers[LevelIndex]));
+  ArchResumeSuspendRegisters(Context);
+end;
+
+procedure ArchParkFrozenProcessor;
+begin
+  DataSynchronizationBarrier;
+  PsciTurnOffThisProcessor;
+  { The firmware refused: wait here until started again. }
+  while True do
+    HaltProcessor;
 end;
 
 end.

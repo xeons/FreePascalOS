@@ -40,6 +40,7 @@ uses
 const
   MaximumIoApics = 8;
   MaximumListedProcessors = 64;
+  MaximumRedistributorRegions = 8;
 
 type
   TIoApicDescription = record
@@ -47,6 +48,13 @@ type
     PhysicalAddress: TPhysicalAddress;
     { The first global system interrupt this I/O APIC serves. }
     GlobalInterruptBase: LongWord;
+  end;
+
+  { A GICv3 redistributor region: Length bytes of redistributors one
+    after the other from Base, or (Length 0) a single redistributor. }
+  TRedistributorRegion = record
+    Base: TPhysicalAddress;
+    Length: QWord;
   end;
 
   TIsaInterruptRouting = record
@@ -64,8 +72,13 @@ type
     Version: Byte;
     DistributorAddress: TPhysicalAddress;
     CpuInterfaceAddress: TPhysicalAddress;
-    { GICv3 (from a device tree; the HAL drives only GICv2 so far). }
+    { GICv3: the first redistributor region's start (as a device tree
+      gives it), every region (the MADT's GICR entries, else each
+      processor's GICC redistributor address), and the first ITS. }
     RedistributorAddress: TPhysicalAddress;
+    RedistributorRegionCount: LongWord;
+    RedistributorRegions: array[0..MaximumRedistributorRegions - 1] of TRedistributorRegion;
+    ItsAddress: TPhysicalAddress;
     MessageFrameAddress: TPhysicalAddress;
     MessageFrameFirstSpi: LongWord;
     MessageFrameSpiCount: LongWord;
@@ -107,6 +120,8 @@ const
   EntryTypeGicCpuInterface = $0B;
   EntryTypeGicDistributor = $0C;
   EntryTypeGicMessageFrame = $0D;
+  EntryTypeGicRedistributor = $0E;
+  EntryTypeGicTranslationService = $0F;
 
   { A GIC CPU interface's flags: bit 0 enabled, bit 3 online capable. }
   GicProcessorOnlineCapable = 8;
@@ -213,6 +228,23 @@ type
   end;
   PGicMessageFrameEntry = ^TGicMessageFrameEntry;
 
+  TGicRedistributorEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    DiscoveryRangeBase: QWord;
+    DiscoveryRangeLength: LongWord;
+  end;
+  PGicRedistributorEntry = ^TGicRedistributorEntry;
+
+  TGicTranslationServiceEntry = packed record
+    Header: TEntryHeader;
+    Reserved: Word;
+    TranslationServiceId: LongWord;
+    PhysicalBaseAddress: QWord;
+    Reserved2: LongWord;
+  end;
+  PGicTranslationServiceEntry = ^TGicTranslationServiceEntry;
+
   TOverride = record
     Source: Byte;
     Routing: TIsaInterruptRouting;
@@ -226,6 +258,10 @@ var
   ProcessorApicIds: array[0..MaximumListedProcessors - 1] of LongWord;
   ProcessorTotal: Integer;
   Gic: TGicDescription;
+  { Redistributors named by GICC entries, used where no GICR entry
+    describes the regions. }
+  ProcessorRedistributors: array[0..MaximumRedistributorRegions - 1] of TPhysicalAddress;
+  ProcessorRedistributorCount: Integer;
 
 procedure AddProcessor(ApicId: LongWord; Flags: LongWord);
 var
@@ -244,6 +280,17 @@ begin
   end;
 end;
 
+procedure AddRedistributorRegion(Base: TPhysicalAddress; Length: QWord);
+begin
+  if (Base = 0) or (Gic.RedistributorRegionCount >= MaximumRedistributorRegions) then
+    Exit;
+  Gic.RedistributorRegions[Gic.RedistributorRegionCount].Base := Base;
+  Gic.RedistributorRegions[Gic.RedistributorRegionCount].Length := Length;
+  Inc(Gic.RedistributorRegionCount);
+  if Gic.RedistributorAddress = 0 then
+    Gic.RedistributorAddress := Base;
+end;
+
 procedure AddGicCpuInterface(Entry: PGicCpuInterfaceEntry);
 var
   Flags: LongWord;
@@ -254,6 +301,29 @@ begin
   AddProcessor(LongWord(Entry^.Affinity and AffinityMask), Flags);
   if Gic.CpuInterfaceAddress = 0 then
     Gic.CpuInterfaceAddress := Entry^.PhysicalBaseAddress;
+  if (Entry^.RedistributorAddress <> 0) and (ProcessorRedistributorCount < MaximumRedistributorRegions) then
+  begin
+    ProcessorRedistributors[ProcessorRedistributorCount] := Entry^.RedistributorAddress;
+    Inc(ProcessorRedistributorCount);
+  end;
+end;
+
+procedure AddGicTranslationService(Entry: PGicTranslationServiceEntry);
+begin
+  if Gic.ItsAddress = 0 then
+    Gic.ItsAddress := Entry^.PhysicalBaseAddress;
+end;
+
+{ Without GICR entries each processor's redistributor is a region of
+  its own. }
+procedure UseProcessorRedistributors;
+var
+  Index: Integer;
+begin
+  if Gic.RedistributorRegionCount > 0 then
+    Exit;
+  for Index := 0 to ProcessorRedistributorCount - 1 do
+    AddRedistributorRegion(ProcessorRedistributors[Index], 0);
 end;
 
 procedure AddGicDistributor(Entry: PGicDistributorEntry);
@@ -284,7 +354,8 @@ begin
   Gic.Version := Description.Version;
   Gic.DistributorAddress := Description.DistributorAddress;
   Gic.CpuInterfaceAddress := Description.CpuInterfaceAddress;
-  Gic.RedistributorAddress := Description.RedistributorAddress;
+  AddRedistributorRegion(Description.RedistributorAddress, Description.RedistributorSize);
+  Gic.ItsAddress := Description.ItsAddress;
   Gic.MessageFrameAddress := Description.MessageFrameAddress;
   Gic.MessageFrameFirstSpi := Description.MessageFrameFirstSpi;
   Gic.MessageFrameSpiCount := Description.MessageFrameSpiCount;
@@ -306,6 +377,7 @@ begin
   IoApicTotal := 0;
   OverrideTotal := 0;
   ProcessorTotal := 0;
+  ProcessorRedistributorCount := 0;
   ZeroMemory(@Gic, SizeOf(Gic));
   Table := PMadtHeader(FindAcpiTable('APIC', 0));
   if Table = nil then
@@ -334,6 +406,13 @@ begin
       EntryTypeGicMessageFrame:
         if Entry^.Length >= SizeOf(TGicMessageFrameEntry) then
           AddGicMessageFrame(PGicMessageFrameEntry(Entry));
+      EntryTypeGicRedistributor:
+        if Entry^.Length >= SizeOf(TGicRedistributorEntry) then
+          AddRedistributorRegion(PGicRedistributorEntry(Entry)^.DiscoveryRangeBase,
+            PGicRedistributorEntry(Entry)^.DiscoveryRangeLength);
+      EntryTypeGicTranslationService:
+        if Entry^.Length >= SizeOf(TGicTranslationServiceEntry) then
+          AddGicTranslationService(PGicTranslationServiceEntry(Entry));
       EntryTypeIoApic:
         if (Entry^.Length >= SizeOf(TIoApicEntry)) and (IoApicTotal < MaximumIoApics) then
         begin
@@ -358,6 +437,7 @@ begin
     end;
     Position := Position + Entry^.Length;
   end;
+  UseProcessorRedistributors;
   Result := (IoApicTotal > 0) or (Gic.DistributorAddress <> 0);
 end;
 

@@ -63,8 +63,6 @@ const
 
   SataStatusDetectionMask = $0F;
   SataStatusDevicePresent = $03;
-  SataStatusPowerMask = $F00;
-  SataStatusPowerActive = $100;
 
   SignatureSataDisk = LongWord($00000101);
   SignatureAtapi = LongWord($EB140101);
@@ -237,19 +235,24 @@ begin
   WaitForRegister(Registers, RegisterHandoffControl, HandoffBiosOwnership, 0, 2000);
 end;
 
-{ True if a disk or an ATAPI device is attached and talking; IsPacket
-  tells which. }
+{ True if a device is attached and its link is up. }
+function PortHasLink(PortRegisters: PByte): Boolean;
+begin
+  Result := (ReadRegister(PortRegisters, PortSataStatus) and SataStatusDetectionMask) = SataStatusDevicePresent;
+end;
+
+{ True if the device on a started port is a disk or an ATAPI device;
+  IsPacket tells which. The signature comes from the device's first
+  register FIS, which the port takes in only once FIS receive is on
+  (firmware that never started the port leaves it unset: QEMU's virt
+  machine with edk2), so it is read after starting the port. }
 function PortHasDevice(PortRegisters: PByte; out IsPacket: Boolean): Boolean;
 var
-  SataStatus: LongWord;
   Signature: LongWord;
 begin
-  SataStatus := ReadRegister(PortRegisters, PortSataStatus);
   Signature := ReadRegister(PortRegisters, PortSignature);
   IsPacket := Signature = SignatureAtapi;
-  Result := ((SataStatus and SataStatusDetectionMask) = SataStatusDevicePresent) and
-    ((SataStatus and SataStatusPowerMask) = SataStatusPowerActive) and
-    ((Signature = SignatureSataDisk) or IsPacket);
+  Result := (Signature = SignatureSataDisk) or IsPacket;
 end;
 
 { An ATAPI device: its model, and the size of the medium in it (READ
@@ -288,12 +291,28 @@ begin
   Result := (Device^.BlockSize >= 512) and (Device^.BlockSize <= 4096);
 end;
 
+procedure FreePortMemory(Port: PAhciPort);
+var
+  PageIndex: Integer;
+begin
+  if Port^.ControlPagePhysical <> 0 then
+    FreePhysicalPage(Port^.ControlPagePhysical);
+  for PageIndex := 0 to BounceBufferPages - 1 do
+    if Port^.BouncePagesPhysical[PageIndex] <> 0 then
+      FreePhysicalPage(Port^.BouncePagesPhysical[PageIndex]);
+  for PageIndex := 0 to TablePageCount - 1 do
+    if Port^.TablePagesPhysical[PageIndex] <> 0 then
+      FreePhysicalPage(Port^.TablePagesPhysical[PageIndex]);
+  FreeKernelMemory(Port);
+end;
+
 { Sets up the disk on port PortNumber; returns its port, or nil. }
-function SetUpDisk(Registers: PByte; PortNumber: LongWord; IsPacket: Boolean): PAhciPort;
+function SetUpDisk(Registers: PByte; PortNumber: LongWord): PAhciPort;
 var
   Port: PAhciPort;
   Disk: PBlockDevice;
   Name: array[0..BlockDeviceNameLength - 1] of Char;
+  IsPacket: Boolean;
 begin
   Result := nil;
   Port := PAhciPort(AllocateZeroedKernelMemory(SizeOf(TAhciPort)));
@@ -304,10 +323,17 @@ begin
   Port^.SlotCount := ((ReadRegister(Registers, RegisterCapabilities) shr CapabilityCommandSlotsShift) and
     CapabilityCommandSlotsMask) + 1;
 
-  if not AllocatePortMemory(Port) then
+  if not AllocatePortMemory(Port) or not ConfigurePort(Port) then
+  begin
+    FreePortMemory(Port);
     Exit;
-  if not ConfigurePort(Port) then
+  end;
+  if not PortHasDevice(Port^.Registers, IsPacket) then
+  begin
+    StopPort(Port);
+    FreePortMemory(Port);
     Exit;
+  end;
   if not CreateAhciDevice(Port) then
     Exit;
 
@@ -468,7 +494,6 @@ var
   PortNumber: LongWord;
   PortRegisters: PByte;
   Controller: PAhciController;
-  IsPacket: Boolean;
 begin
   Result := 0;
   if (not PciReadBar(PciDevice, AhciBarIndex, Bar)) or Bar.IsIoPort then
@@ -494,9 +519,9 @@ begin
     if (PortsImplemented and (LongWord(1) shl PortNumber)) = 0 then
       Continue;
     PortRegisters := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
-    if not PortHasDevice(PortRegisters, IsPacket) then
+    if not PortHasLink(PortRegisters) then
       Continue;
-    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber, IsPacket);
+    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber);
     if Controller^.Ports[PortNumber] <> nil then
       Inc(Result);
   end;

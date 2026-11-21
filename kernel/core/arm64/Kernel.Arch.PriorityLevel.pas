@@ -20,7 +20,8 @@
   AArch64 implementation of interrupt priority levels.
 
   The level lives in the GIC CPU interface's priority mask register
-  (GICC_PMR, banked per processor at one address): the GIC signals only
+  (GICv2: GICC_PMR, banked per processor at one address; GICv3: the
+  system register ICC_PMR_EL1, GicSystemRegisters.s): the GIC signals only
   interrupts whose priority value is below the mask, and lower values
   are more urgent. Level L is the mask (15 - L) * 16, and an interrupt
   at level L gets the priority (15 - L) * 16 (Hal.Gic), so it is held off
@@ -49,6 +50,9 @@ function GicPriorityOfLevel(Level: Byte): Byte;
 { Called by the HAL once the CPU interface is mapped: from then on the
   level is the priority mask register at that address. }
 procedure UsePriorityMaskRegister(Register: PLongWord);
+{ Called by the HAL on a GICv3 once this processor's system register
+  interface is on: from then on the level is ICC_PMR_EL1. }
+procedure UseSystemRegisterPriorityMask;
 
 implementation
 
@@ -58,9 +62,16 @@ uses
 const
   HighestLevel = 15;
 
+type
+  TPriorityMaskKind = (MaskNotYetKnown, MaskMemoryMapped, MaskSystemRegister);
+
 var
+  MaskKind: TPriorityMaskKind = MaskNotYetKnown;
   PriorityMaskRegister: PLongWord = nil;
   EarlyLevel: Byte = 0;
+
+function ArchReadGicPriorityMask: QWord; external name 'ArchReadGicPriorityMask';
+procedure ArchWriteGicPriorityMask(Value: QWord); external name 'ArchWriteGicPriorityMask';
 
 function GicPriorityOfLevel(Level: Byte): Byte;
 begin
@@ -69,22 +80,31 @@ end;
 
 function ArchGetPriorityLevel: Byte;
 begin
-  if PriorityMaskRegister = nil then
-    Exit(EarlyLevel);
-  Result := Byte(HighestLevel - ((PriorityMaskRegister^ shr 4) and $F));
+  case MaskKind of
+    MaskMemoryMapped:
+      Result := Byte(HighestLevel - ((PriorityMaskRegister^ shr 4) and $F));
+    MaskSystemRegister:
+      Result := Byte(HighestLevel - ((ArchReadGicPriorityMask shr 4) and $F));
+  else
+    Result := EarlyLevel;
+  end;
 end;
 
 procedure ArchSetPriorityLevel(Level: Byte);
 begin
-  if PriorityMaskRegister = nil then
-  begin
+  case MaskKind of
+    MaskMemoryMapped:
+      begin
+        PriorityMaskRegister^ := GicPriorityOfLevel(Level);
+        { The write must have reached the GIC before the code that
+          relies on the new level runs. }
+        DataSynchronizationBarrier;
+      end;
+    MaskSystemRegister:
+      ArchWriteGicPriorityMask(GicPriorityOfLevel(Level));
+  else
     EarlyLevel := Level;
-    Exit;
   end;
-  PriorityMaskRegister^ := GicPriorityOfLevel(Level);
-  { The write must have reached the GIC before the code that relies on
-    the new level runs. }
-  DataSynchronizationBarrier;
 end;
 
 function ArchPriorityLevelOfVector(Vector: Byte): Byte;
@@ -96,6 +116,15 @@ procedure UsePriorityMaskRegister(Register: PLongWord);
 begin
   Register^ := GicPriorityOfLevel(EarlyLevel);
   PriorityMaskRegister := Register;
+  MaskKind := MaskMemoryMapped;
+end;
+
+procedure UseSystemRegisterPriorityMask;
+begin
+  { Each processor has its own register, set as the memory mapped one
+    is (UsePriorityMaskRegister). }
+  ArchWriteGicPriorityMask(GicPriorityOfLevel(EarlyLevel));
+  MaskKind := MaskSystemRegister;
 end;
 
 end.

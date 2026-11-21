@@ -41,8 +41,12 @@ devices, the GIC, timer and PSCI, every processor, the PCI devices with
 the BARs the kernel assigned, the framebuffer, and the system volume on
 the RAM disk. A compressed system image (.xz or .gz, as make serves it)
 must be unpacked by the kernel, which logs the sizes and the time. Serial logs stay next to the image
-(test-arm64-native-el1.log, -el2.log, -network.log). Not part of make
-test; make arm64-native-test runs it.
+(test-arm64-native-el1.log, -el2.log, -gic3.log, -network.log). The gic3
+case boots on a GICv3 at EL2, all from the tree: the distributor, the
+redistributors and the ITS ("arm,gic-v3-its", message interrupts as
+LPIs), the PL031 ("arm,pl031") and the PCI I/O window from the host's
+"ranges" (an AC'97 card on a line interrupt). Not part of make test;
+make arm64-native-test runs it.
 """
 
 import os
@@ -54,8 +58,8 @@ import time
 TIMEOUT = int(os.environ.get('TIMEOUT', '300'))
 
 
-def qemu_command(image, system_image, options, log, el2=False, extra=()):
-    machine = 'virt,gic-version=2' + (',virtualization=on' if el2 else '')
+def qemu_command(image, system_image, options, log, el2=False, extra=(), gic=2):
+    machine = 'virt,gic-version=%d' % gic + (',virtualization=on' if el2 else '')
     return ['qemu-system-aarch64', '-machine', machine, '-cpu', 'cortex-a76', '-smp', '4', '-m', '2G',
             '-display', 'none', '-monitor', 'none', '-serial', 'file:' + log, '-no-reboot',
             '-semihosting-config', 'enable=on,target=native',
@@ -191,7 +195,7 @@ def network_case(image, system_image, log):
 def main():
     image, system_image = sys.argv[1], sys.argv[2]
     directory = os.path.dirname(os.path.dirname(os.path.abspath(image)))
-    cases = os.environ.get('CASES', 'el1 el2 network').split()
+    cases = os.environ.get('CASES', 'el1 el2 gic3 network').split()
     passed = True
     network = ['-netdev', 'user,id=net0', '-device', 'virtio-net-pci,netdev=net0']
     if 'el1' in cases:
@@ -203,6 +207,18 @@ def main():
         status = run_to_exit(qemu_command(image, system_image, 'test-exit init=/bin/true', log, el2=True,
                                           extra=network))
         passed &= check('EL2', log, boot_expectations('SMC') + unpacking_expectations(system_image), status)
+    if 'gic3' in cases:
+        log = os.path.join(directory, 'test-arm64-native-gic3.log')
+        ac97 = ['-audiodev', 'none,id=native-sound', '-device', 'AC97,audiodev=native-sound']
+        status = run_to_exit(qemu_command(image, system_image, 'test-exit init=/bin/true', log, el2=True,
+                                          extra=network + ac97, gic=3))
+        passed &= check('GICv3', log, boot_expectations('SMC') + [
+            ('a GICv3 from the tree', '[hal] GICv3,'),
+            ('message interrupts through the ITS', 'message interrupts as LPIs through the ITS'),
+            ('the PL031 from the tree', 'AArch64 platform (GIC, ASIDs, PL031): passed'),
+            ('the I/O window from the host\'s ranges', '[pci] I/O ports 0-0xFFFF through the window at'),
+            ('AC\'97 on its line', 'AC\'97 8086:2415, interrupts by line'),
+        ], status)
     if 'network' in cases:
         passed &= network_case(image, system_image, os.path.join(directory, 'test-arm64-native-network.log'))
     sys.exit(0 if passed else 1)
