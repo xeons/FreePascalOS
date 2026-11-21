@@ -495,6 +495,25 @@ begin
 end;
 
 {$ifdef CPUAARCH64}
+procedure OverflowFloat;
+var
+  Value: Double;
+begin
+  Value := 1e300 + Zero;
+  Value := Value * Value;
+  if Value = 0 then
+    Exit;
+end;
+
+procedure TakeRootOfMinusOne;
+var
+  Value: Double;
+begin
+  Value := Sqrt(-1.0 - Zero);
+  if Value = 0 then
+    Exit;
+end;
+
 const
   { FPSR's cumulative division by zero flag. }
   FloatZeroDivideFlag = $02;
@@ -798,6 +817,21 @@ begin
   Check(ExceptionClassOf(@TouchNil) = 'EAccessViolation', 'a nil dereference raises EAccessViolation');
   Check(ExceptionClassOf(@DivideIntegerByZero) = 'EDivByZero', 'integer division by zero raises EDivByZero');
   Raised := ExceptionClassOf(@DivideFloatByZero);
+{$ifdef CPUAARCH64}
+  { Checked in FPSR after the operation (-CE), so always raised. }
+  Check(Raised = 'EZeroDivide', 'floating point division by zero raises EZeroDivide (got ' + Raised + ')');
+  Raised := ExceptionClassOf(@OverflowFloat);
+  Check(Raised = 'EOverflow', 'floating point overflow raises EOverflow (got ' + Raised + ')');
+  Raised := ExceptionClassOf(@TakeRootOfMinusOne);
+  Check(Raised = 'EInvalidOp', 'an invalid floating point operation raises EInvalidOp (got ' + Raised + ')');
+  SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide, exOverflow, exUnderflow, exPrecision]);
+  Raised := ExceptionClassOf(@DivideFloatByZero);
+  Check(Raised = '', 'masked, division by zero raises nothing (got ' + Raised + ')');
+  Check(IsInfinite(1.0 / Zero), 'masked, division by zero gives infinity');
+  SetExceptionMask([exDenormalized, exUnderflow, exPrecision]);
+  Raised := ExceptionClassOf(@DivideFloatByZero);
+  Check(Raised = 'EZeroDivide', 'unmasked again, division by zero raises EZeroDivide (got ' + Raised + ')');
+{$else}
   if (Raised = '') and ((ReadFloatStatus and FloatZeroDivideFlag) <> 0) then
   begin
     { The processor set the flag instead of trapping (QEMU's emulator
@@ -807,6 +841,7 @@ begin
   end
   else
     Check(Raised = 'EZeroDivide', 'SSE division by zero raises EZeroDivide (got ' + Raised + ')');
+{$endif}
   Raised := ExceptionClassOf(@DivideExtendedByZero);
 {$ifdef CPUX86_64}
   Check(Raised = 'EZeroDivide', 'x87 division by zero raises EZeroDivide (got ' + Raised + ')');

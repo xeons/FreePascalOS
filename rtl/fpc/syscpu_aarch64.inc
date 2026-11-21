@@ -204,9 +204,10 @@ asm
 end;
 
 { The runtime error for a floating point exception. Few AArch64
-  processors trap floating point exceptions (the compiler checks FPSR
-  after floating point operations instead), so this is for those that
-  do. }
+  processors trap floating point exceptions: programs are compiled with
+  -CE, so the compiler checks FPSR after floating point operations and
+  FPC_THROWFPUEXCEPTION (rtl/aarch64/aarch64.inc) raises the unmasked
+  ones; this is for processors that do trap. }
 function FloatExceptionRuntimeError(Code: LongWord): LongInt;
 var
   Flags: QWord;
