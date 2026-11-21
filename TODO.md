@@ -613,7 +613,12 @@ normalized (0-65535), not pixels.
 - [x] libcompression: preset dictionaries (zlib FDICT and raw, both
       ways), flushing mid-stream (sync and full flush points);
       `zcat`/`gunzip` names for gzip; checked against Python's zlib
-- [ ] libcompression: zip archives
+- [x] libarchive: zip reading (ZIP64, stored/deflated, CRC checks, UTF-8
+      and CP437 names, Unix modes, links, data descriptors; encrypted
+      members reported and refused) and writing (deflate or stored,
+      ZIP64 when needed or forced), tar/ustar/GNU/pax and tar.gz reading,
+      ExtractAll with safe names, folder browsing (`make archive-test`)
+- [ ] libarchive: 7z reading
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
