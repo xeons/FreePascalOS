@@ -72,6 +72,7 @@ uses
   Web.Style.Animations,
   Web.Style.UserAgent,
   Web.Style.Resolver,
+  Web.Text.UnicodeRanges,
   Web.Text.Fonts,
   Web.Text.FontInstances,
   Web.Text.Breaking,
