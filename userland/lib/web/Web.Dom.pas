@@ -134,6 +134,8 @@ type
   TDomTokenList = class;
   TNamedNodeMap = class;
   TNodeRareData = class;
+  TLiveRange = class;
+  TDocumentSelection = class;
 
   TNodeArray = array of TNode;
   TElementArray = array of TElement;
@@ -174,6 +176,8 @@ type
     procedure ControlStateChanged(Element: TElement); virtual;
     { The document's focused element changed (either may be nil). }
     procedure FocusChanged(Old, New: TElement); virtual;
+    { The document's selection (its range or direction) changed. }
+    procedure SelectionChanged(Document: TDocument); virtual;
   end;
 
   TDocumentObserverArray = array of TDocumentObserver;
@@ -526,6 +530,11 @@ type
     FBrowsingContext: TObject;
     FOriginText: string;
     FOnReadyStateChange: TDocumentNotifyEvent;
+    { The live ranges whose boundary points are in this document's
+      trees (Web.Dom.Ranges.inc). }
+    FLiveRanges: array of TLiveRange;
+    FLiveRangeCount: Integer;
+    FSelection: TDocumentSelection;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
     function GetDocumentElement: TElement;
@@ -546,6 +555,14 @@ type
     procedure RegisterId(Element: TElement; const IdValue: string);
     procedure UnregisterId(Element: TElement; const IdValue: string);
     procedure FreeListedNodes;
+    procedure AddLiveRange(Range: TLiveRange);
+    procedure RemoveLiveRange(Range: TLiveRange);
+    procedure RangesChildrenInserted(Parent: TNode; Index, Count: Integer);
+    procedure RangesNodeRemoving(Node: TNode);
+    procedure RangesDataReplaced(Node: TNode; Offset, Count, InsertedLength: Integer);
+    procedure RangesTextSplit(Node, NewNode: TNode; Offset: Integer);
+    procedure RangesTextMerged(Sibling, Node: TNode; LengthBefore: Integer);
+    function GetSelection: TDocumentSelection;
   protected
     function GetNodeName: string; override;
     function GetTextContent: string; override;
@@ -553,6 +570,10 @@ type
     function CloneSelf(Document: TDocument): TNode; override;
     function GetTheParent(Event: TEvent): TEventTarget; override;
   public
+    { Tells the observers the selection changed. }
+    procedure NotifySelectionChanged;
+    { The document's selection (made when first asked for). }
+    property Selection: TDocumentSelection read GetSelection;
     { Tells the observers a form control's state changed (Web.Dom.FormControls). }
     procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }
@@ -724,6 +745,99 @@ type
     property Items[Index: Integer]: TAttr read Item; default;
   end;
 
+  { A live range (DOM Standard 5.5): two boundary points in one tree,
+    kept valid as the tree changes (the mutation algorithms adjust
+    every live range of the document). Reference counted: script
+    wrappers and the document's selection hold it. It holds references
+    to its boundary nodes, except while it is a document's selection
+    (a selection's range is always in its document, and the document
+    must not keep itself alive through it). Offsets are in UTF-16 code
+    units for character data, children otherwise. }
+  TLiveRange = class
+  private
+    FStartContainer: TNode;
+    FStartOffset: Integer;
+    FEndContainer: TNode;
+    FEndOffset: Integer;
+    FDocument: TDocument;
+    FReferences: Integer;
+    FRetainsNodes: Boolean;
+    FSelection: TDocumentSelection;
+    procedure AttachTo(Document: TDocument);
+    procedure Detach;
+    procedure SetBoundary(IsStart: Boolean; Node: TNode; Offset: Integer);
+    procedure SetRetainsNodes(Value: Boolean);
+    procedure Changed;
+    function GetCollapsed: Boolean;
+  public
+    { The script binding's wrapper (Web.Bindings.Ranges), nil if none. }
+    ScriptWrapper: Pointer;
+    { A range collapsed at the start of Document; the caller holds the
+      first reference. }
+    constructor Create(Document: TDocument);
+    destructor Destroy; override;
+    procedure Retain;
+    procedure Release;
+    { The standard's "set the start or end" (validity checks; the other
+      end follows when the range would be inverted or span two trees). }
+    procedure SetStart(Node: TNode; Offset: Integer);
+    procedure SetEnd(Node: TNode; Offset: Integer);
+    { Both ends, without checks other than Node's kind and offsets. }
+    procedure SetRange(StartNode: TNode; StartOffset: Integer; EndNode: TNode; EndOffset: Integer);
+    procedure Collapse(ToStart: Boolean);
+    procedure SelectNode(Node: TNode);
+    procedure SelectNodeContents(Node: TNode);
+    { The root of the range's tree. }
+    function Root: TNode;
+    property StartContainer: TNode read FStartContainer;
+    property StartOffset: Integer read FStartOffset;
+    property EndContainer: TNode read FEndContainer;
+    property EndOffset: Integer read FEndOffset;
+    property Collapsed: Boolean read GetCollapsed;
+    { The selection it is the range of, nil if none. }
+    property Selection: TDocumentSelection read FSelection;
+  end;
+
+  TSelectionDirection = (SelectionDirectionNone, SelectionDirectionForwards, SelectionDirectionBackwards);
+
+  { A document's selection (Selection API): empty or one range, and a
+    direction; the anchor and focus are the range's ends as the
+    direction says. The document owns it. }
+  TDocumentSelection = class
+  private
+    FDocument: TDocument;
+    FRange: TLiveRange;
+    FDirection: TSelectionDirection;
+    function GetAnchorNode: TNode;
+    function GetAnchorOffset: Integer;
+    function GetFocusNode: TNode;
+    function GetFocusOffset: Integer;
+  public
+    constructor Create(Document: TDocument);
+    destructor Destroy; override;
+    { Makes Range the selection's range (nil empties it). }
+    procedure SetRange(Range: TLiveRange; Direction: TSelectionDirection);
+    procedure RemoveAllRanges;
+    { collapse(): a new collapsed range at the point. }
+    procedure CollapseAt(Node: TNode; Offset: Integer);
+    { setBaseAndExtent(): a new range from the anchor to the focus (in
+      either order) with its direction. }
+    procedure SetBaseAndExtent(AnchorNode: TNode; AnchorOffset: Integer; FocusNode: TNode; FocusOffset: Integer);
+    { extend(): the focus moves, the anchor stays (a new range). }
+    procedure Extend(Node: TNode; Offset: Integer);
+    procedure Changed;
+    { The document goes: the range (which may live on in script) lets
+      go of its nodes without touching them. }
+    procedure OrphanRange;
+    property Document: TDocument read FDocument;
+    property Range: TLiveRange read FRange;
+    property Direction: TSelectionDirection read FDirection;
+    property AnchorNode: TNode read GetAnchorNode;
+    property AnchorOffset: Integer read GetAnchorOffset;
+    property FocusNode: TNode read GetFocusNode;
+    property FocusOffset: Integer read GetFocusOffset;
+  end;
+
   TNodeRareData = class
   public
     ScriptWrapper: Pointer;
@@ -773,6 +887,13 @@ function IsValidDoctypeName(const Name: string): Boolean;
   Text descendants. }
 function DescendantTextContent(Node: TNode): string;
 
+{ A node's length (DOM Standard): characters of character data (UTF-16
+  code units), 0 for a doctype, else its children. }
+function NodeLength(Node: TNode): Integer;
+{ The position of boundary point A against B in one tree: -1 before,
+  0 equal, 1 after. }
+function CompareBoundaryPoints(NodeA: TNode; OffsetA: Integer; NodeB: TNode; OffsetB: Integer): Integer;
+
 implementation
 
 uses
@@ -786,5 +907,7 @@ uses
 {$I Web.Dom.Attributes.inc}
 {$I Web.Dom.Document.inc}
 {$I Web.Dom.Collections.inc}
+{$I Web.Dom.Ranges.inc}
+{$I Web.Dom.Selection.inc}
 
 end.

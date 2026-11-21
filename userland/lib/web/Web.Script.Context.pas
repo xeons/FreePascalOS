@@ -169,9 +169,17 @@ type
     procedure AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
+    procedure SelectionChanged(Document: TDocument); override;
   end;
 
 { TScriptDocumentObserver }
+
+{ The platform script queues selectionchange (platform/72-selection.js). }
+procedure TScriptDocumentObserver.SelectionChanged(Document: TDocument);
+begin
+  if not FContext.Closed then
+    FContext.CallPlatform('onSelectionChange', []);
+end;
 
 constructor TScriptDocumentObserver.Create(Context: TScriptContext);
 begin

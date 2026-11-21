@@ -41,7 +41,70 @@ begin
   FTextIndex.Build(FPainter.DisplayList);
   FTextIndexVersion := FPainter.BuiltVersion;
   FTextIndexValid := True;
+  { The runs changed: the painted selection is found again from the
+    document's, which the DOM kept up to date. }
+  FSelectionFromDocument := True;
   if not ValidPosition(FTextIndex, FSelectionAnchor) or not ValidPosition(FTextIndex, FSelectionFocus) then
+  begin
+    FSelectionAnchor := TextPosition(-1, 0);
+    FSelectionFocus := FSelectionAnchor;
+  end;
+  PullSelectionFromDocument;
+end;
+
+procedure TWebView.DocumentSelectionChanged;
+begin
+  if FSettingDocumentSelection then
+    Exit;
+  FSelectionFromDocument := True;
+  InvalidateViewport;
+end;
+
+procedure TWebView.PushSelectionToDocument;
+var
+  AnchorNode, FocusNode: TNode;
+  AnchorOffset, FocusOffset: Integer;
+begin
+  if FDocument = nil then
+    Exit;
+  FSettingDocumentSelection := True;
+  try
+    try
+      if (FSelectionAnchor.Run >= 0) and
+        TextPositionToDomPoint(FTextIndex, FSelectionAnchor, AnchorNode, AnchorOffset) and
+        TextPositionToDomPoint(FTextIndex, FSelectionFocus, FocusNode, FocusOffset) and
+        (AnchorNode.NodeDocument = FDocument) and (FocusNode.NodeDocument = FDocument) and
+        AnchorNode.IsConnected and FocusNode.IsConnected then
+        FDocument.Selection.SetBaseAndExtent(AnchorNode, AnchorOffset, FocusNode, FocusOffset)
+      else
+        FDocument.Selection.RemoveAllRanges;
+    except
+      on EDomException do
+        FDocument.Selection.RemoveAllRanges;
+    end;
+  finally
+    FSettingDocumentSelection := False;
+  end;
+  FSelectionFromDocument := False;
+end;
+
+procedure TWebView.PullSelectionFromDocument;
+var
+  Selection: TDocumentSelection;
+begin
+  if not FSelectionFromDocument or (FDocument = nil) or not FTextIndexValid then
+    Exit;
+  FSelectionFromDocument := False;
+  Selection := FDocument.Selection;
+  if Selection.Range = nil then
+  begin
+    FSelectionAnchor := TextPosition(-1, 0);
+    FSelectionFocus := FSelectionAnchor;
+    Exit;
+  end;
+  FSelectionAnchor := DomPointToTextPosition(FTextIndex, Selection.AnchorNode, Selection.AnchorOffset);
+  FSelectionFocus := DomPointToTextPosition(FTextIndex, Selection.FocusNode, Selection.FocusOffset);
+  if (FSelectionAnchor.Run < 0) or (FSelectionFocus.Run < 0) then
   begin
     FSelectionAnchor := TextPosition(-1, 0);
     FSelectionFocus := FSelectionAnchor;
@@ -69,6 +132,7 @@ begin
     Exit;
   FSelectionAnchor := Anchor;
   FSelectionFocus := Focus;
+  PushSelectionToDocument;
   InvalidateViewport;
 end;
 
@@ -87,6 +151,9 @@ end;
 
 function TWebView.HasSelection: Boolean;
 begin
+  if FSelectionFromDocument and (FLayout <> nil) then
+    EnsureTextIndex;
+  PullSelectionFromDocument;
   Result := (FSelectionAnchor.Run >= 0) and (FSelectionFocus.Run >= 0) and
     (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) <> 0);
 end;

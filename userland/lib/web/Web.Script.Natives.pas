@@ -72,7 +72,8 @@ uses
   Web.Script.NativeFetch,
   Web.Script.NativeWorkers,
   Web.Origins,
-  Web.Bindings.CrossOrigin;
+  Web.Bindings.CrossOrigin,
+  Web.Dom.RangeContents;
 
 const
   LocalKind = 0;
@@ -375,6 +376,46 @@ begin
   Result := NumberArray(Context, [X, Y, Width, Height]);
 end;
 
+{ A range's client rects before scrolling (document CSS px), flat:
+  x, y, width, height of each (Range.getClientRects). }
+function NativeRangeRects(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Native: TObject;
+  Pieces: TRangePieceArray;
+  Rects: TScriptRectArray;
+  Values: array of Double;
+  Index, RectIndex: Integer;
+  X, Y, Width, Height: Double;
+
+  procedure Add(AX, AY, AWidth, AHeight: Double);
+  begin
+    SetLength(Values, Length(Values) + 4);
+    Values[High(Values) - 3] := AX;
+    Values[High(Values) - 2] := AY;
+    Values[High(Values) - 1] := AWidth;
+    Values[High(Values)] := AHeight;
+  end;
+
+begin
+  Values := nil;
+  Native := Context.Unwrap(Arg(Args, ArgCount, 0), InterfaceRange);
+  if (Native = nil) or (Context.Environment.Layout = nil) or (TLiveRange(Native).StartContainer = nil) then
+    Exit(NumberArray(Context, []));
+  Pieces := RangePieces(RangePoints(TLiveRange(Native)));
+  for Index := 0 to High(Pieces) do
+    if Pieces[Index].Node.IsText then
+    begin
+      Rects := Context.Environment.Layout.TextRects(Pieces[Index].Node, Pieces[Index].StartOffset,
+        Pieces[Index].EndOffset);
+      for RectIndex := 0 to High(Rects) do
+        Add(Rects[RectIndex].X, Rects[RectIndex].Y, Rects[RectIndex].Width, Rects[RectIndex].Height);
+    end
+    else if Pieces[Index].Node.IsElement and
+      Context.Environment.Layout.BorderBox(TElement(Pieces[Index].Node), X, Y, Width, Height) then
+      Add(X, Y, Width, Height);
+  Result := NumberArray(Context, Values);
+end;
+
 function NativeScrollGeometry(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Element: TElement;
@@ -503,7 +544,7 @@ begin
 end;
 
 const
-  NativeCount = 28;
+  NativeCount = 29;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -532,9 +573,10 @@ const
     'elementAtPoint',
     'computedValue',
     'computedNames',
-    'exportPorts');
+    'exportPorts',
+    'rangeRects');
   NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0,
-    1);
+    1, 1);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -563,7 +605,8 @@ const
     @NativeElementAtPoint,
     @NativeComputedValue,
     @NativeComputedNames,
-    @NativeExportPorts);
+    @NativeExportPorts,
+    @NativeRangeRects);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

@@ -105,6 +105,7 @@ const
   WrapperOwnsNative = 1;
   WrapperIsNode = 2;
   WrapperIsEvent = 4;
+  WrapperIsRange = 8;
 
 type
   TBindingContext = class;
@@ -154,7 +155,7 @@ type
   { Objects a window has one of. }
   TWindowSingleton = (SingletonLocation, SingletonNavigator, SingletonHistory, SingletonHistoryState,
     SingletonScrollRestoration, SingletonWindowName, SingletonStructuredClone, SingletonPlatformNatives,
-    SingletonPlatformInternal);
+    SingletonPlatformInternal, SingletonSelection);
 
   { Where console messages go (Level: 'log', 'error'). }
   TConsoleMessageEvent = procedure(const Level, Text: string) of object;
@@ -281,6 +282,9 @@ type
     { Wrappers }
     function WrapNode(Node: TNode): TJsValue;
     function WrapEvent(Event: TEvent): TJsValue;
+    { A live range's wrapper (one per range, holding a reference to it);
+      Prototype nil for the interface's. }
+    function WrapRange(Range: TLiveRange; InterfaceId: Integer; Prototype: TJsObject = nil): TJsValue;
     { A wrapper of an object: Owned (freed with the wrapper), or kept
       alive by OwnerWrapper. }
     function WrapObject(Native: TObject; InterfaceId: Integer; Owned: Boolean;
@@ -564,6 +568,11 @@ begin
       Context.NodeWrapperDying(TNode(Native));
       DisableListeners(TNode(Native).ListenerList(False), Context);
       TNode(Native).Release;
+    end
+    else if (WrapperFlags and WrapperIsRange) <> 0 then
+    begin
+      TLiveRange(Native).ScriptWrapper := nil;
+      TLiveRange(Native).Release;
     end
     else if (WrapperFlags and WrapperIsEvent) <> 0 then
     begin
@@ -1170,6 +1179,23 @@ begin
   Event.Retain;
   Event.ScriptWrapper := Wrapper;
   RegisterWrapper(FEventWrappers, FEventWrapperCount, Wrapper);
+  Result := JsObjectValue(Wrapper);
+end;
+
+function TBindingContext.WrapRange(Range: TLiveRange; InterfaceId: Integer; Prototype: TJsObject): TJsValue;
+var
+  Wrapper: TBindingWrapper;
+begin
+  if Range = nil then
+    Exit(JsNull);
+  if Range.ScriptWrapper <> nil then
+    Exit(JsObjectValue(TBindingWrapper(Range.ScriptWrapper)));
+  if Prototype = nil then
+    Prototype := PrototypeOf(InterfaceId);
+  Wrapper := TBindingWrapper(JsAsObject(WrapObjectWithPrototype(Range, InterfaceId, False, Prototype)));
+  Wrapper.WrapperFlags := WrapperIsRange;
+  Range.Retain;
+  Range.ScriptWrapper := Wrapper;
   Result := JsObjectValue(Wrapper);
 end;
 

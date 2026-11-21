@@ -93,6 +93,7 @@ uses
   Web.Paint.Painter,
   Web.Frames.Views,
   WebView.TextIndex,
+  WebView.SelectionMapping,
   WebView.FieldEditing,
   WebView.Elements,
   WebView.MouseEvents;
@@ -219,6 +220,11 @@ type
     FTextIndexValid: Boolean;
     FSelecting: Boolean;
     FSelectionAnchor, FSelectionFocus: TTextPosition;
+    { The document's selection changed without the view (script): the
+      painted selection is taken from it before it is next used. }
+    FSelectionFromDocument: Boolean;
+    { The view is setting the document's selection itself. }
+    FSettingDocumentSelection: Boolean;
     FFindText: string;
     { Typing into the focused text field. }
     FFieldEditor: TTextFieldEditor;
@@ -338,6 +344,11 @@ type
     procedure EnsureTextIndex;
     function TextPositionAt(X, Y: LongInt): TTextPosition;
     procedure SetSelection(constref Anchor, Focus: TTextPosition);
+    { The user's selection to the document's, and the document's to the
+      painted one. }
+    procedure PushSelectionToDocument;
+    procedure PullSelectionFromDocument;
+    procedure DocumentSelectionChanged;
     { Context menus. }
     procedure ShowOwnContextMenu(constref Info: TWebContextInfo);
     procedure OwnMenuChosen(Item: TMenuItem);
@@ -448,6 +459,7 @@ implementation
 
 uses
   Math,
+  Web.Dom.Exceptions,
   Abi.SystemCalls,
   Url.Records,
   Url.Parser,
@@ -482,11 +494,17 @@ type
   public
     View: TWebView;
     procedure FocusChanged(Old, New: TElement); override;
+    procedure SelectionChanged(Document: TDocument); override;
   end;
 
 procedure TViewDocumentObserver.FocusChanged(Old, New: TElement);
 begin
   View.FocusMoved(New);
+end;
+
+procedure TViewDocumentObserver.SelectionChanged(Document: TDocument);
+begin
+  View.DocumentSelectionChanged;
 end;
 
 {$I WebView.Control.Frames.inc}

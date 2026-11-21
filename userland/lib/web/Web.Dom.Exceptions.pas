@@ -43,6 +43,7 @@ const
   SyntaxError = 'SyntaxError';
   NamespaceError = 'NamespaceError';
   IndexSizeError = 'IndexSizeError';
+  InvalidNodeTypeError = 'InvalidNodeTypeError';
 
 type
   EDomException = class(Exception)
@@ -91,6 +92,8 @@ begin
     Result := 12
   else if FErrorName = NamespaceError then
     Result := 14
+  else if FErrorName = InvalidNodeTypeError then
+    Result := 24
   else
     Result := 0;
 end;

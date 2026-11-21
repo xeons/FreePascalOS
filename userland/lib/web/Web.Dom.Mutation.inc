@@ -20,9 +20,8 @@
   Web.Dom: the tree mutation algorithms of the DOM Standard (4.2.3):
   ensure pre-insertion validity, pre-insert, insert, append, replace,
   replace all, pre-remove, remove, adopt; and the Node, ParentNode and
-  ChildNode methods built on them. Live ranges and node iterators come
-  with the Range work of a later phase; the places they hook in are
-  marked.
+  ChildNode methods built on them, with the live range steps
+  (Web.Dom.Ranges.inc); node iterators would hook in at the same places.
 }
 
 function IsCharacterDataType(NodeKind: Byte): Boolean; inline;
@@ -268,7 +267,9 @@ begin
     Nodes := nil;
     Count := 1;
   end;
-  { Live ranges: the offsets after Child move by Count (later phase). }
+  { Live ranges: the offsets after Child move by Count. }
+  if (Document.FLiveRangeCount > 0) and (Child <> nil) then
+    Document.RangesChildrenInserted(Parent, Child.IndexInParent, Count);
   if Child <> nil then
     PreviousSibling := Child.FPreviousSibling
   else
@@ -308,7 +309,9 @@ begin
   Parent := Node.FParent;
   Document := Parent.FOwnerDocument;
   BumpDomVersion;
-  { Live ranges and node iterators are adjusted here (later phase). }
+  { Live ranges are adjusted here (node iterators: later). }
+  if Document.FLiveRangeCount > 0 then
+    Document.RangesNodeRemoving(Node);
   OldPrevious := Node.FPreviousSibling;
   OldNext := Node.FNextSibling;
   WasConnected := (Node.FFlags and NodeFlagConnected) <> 0;
