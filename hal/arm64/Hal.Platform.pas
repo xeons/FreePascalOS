@@ -94,8 +94,10 @@ uses
 const
   NanosecondsPerSecond = 1000000000;
   { The longest wait the clock interrupt is set for at once (the kernel
-    asks again when it comes). }
-  LongestClockWaitNanoseconds = NanosecondsPerSecond;
+    asks again when it comes): what an idle processor with nothing due
+    sleeps at most. Times the timer's rate, it stays well within 64
+    bits for timers up to 4 GHz. }
+  LongestClockWaitNanoseconds = 4 * QWord(NanosecondsPerSecond);
   StopInterruptVector = InterProcessorInterruptVector + 1;
 
   SemihostingExitExtended = $20;

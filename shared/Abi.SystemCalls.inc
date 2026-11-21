@@ -467,13 +467,77 @@ const
     or for an unknown limit. Returns the previous value. }
   CallSetProcessLimit = 131;
 
-  CallCount = 132;
+  { --- Power, idle and time (152-159) ------------------------------------- }
+
+  { (Which, TimeAddress): the time to the nanosecond, as a
+    TAbiPreciseTime: TimeWallClock (since 1970-01-01 00:00:00 UTC) or
+    TimeUptimeNanoseconds (since start, never going back, not counting
+    suspend to RAM). ErrorInvalidArgument for another Which. }
+  CallGetPreciseTime = 152;
+  { (OffsetNanoseconds, Flags, RemainingAddress): moves the wall clock
+    by OffsetNanoseconds (signed): at once (written to the battery
+    backed clock too), or with AdjustGradually by running it 0.05 %
+    fast or slow until it has moved that far (never jumping or going
+    back), replacing what was left of an earlier adjustment. With
+    AdjustQueryOnly nothing changes. If RemainingAddress is not 0, the
+    Int64 there gets what a gradual adjustment still has to move.
+    Root only, except for a query (ErrorNotPermitted). }
+  CallAdjustWallClock = 153;
+  { (InformationAddress): the processors' power: idle states, clock
+    interrupts, clock rate and limits, as a TAbiProcessorPower. }
+  CallGetProcessorPower = 154;
+  { (BufferAddress, Capacity): the thermal zones (ACPI's, the Raspberry
+    Pi's processor temperature) as up to Capacity TAbiThermalZone
+    records; returns how many there are (more than Capacity: only
+    Capacity were written). }
+  CallListThermalZones = 155;
+  { (BufferAddress, Capacity): the batteries (ACPI control method
+    batteries) as up to Capacity TAbiBattery records; returns how many
+    there are. }
+  CallListBatteries = 156;
+  { 157-159 are kept for this group. }
+
+  CallCount = 160;
 
   TimeWallClock = 0;
   TimeUptimeMilliseconds = 1;
   TimeUptimeNanoseconds = 2;
 
   TimeZoneNameCapacity = 48;
+
+  { CallAdjustWallClock flags. }
+  AdjustGradually = $01;
+  AdjustQueryOnly = $02;
+
+  { Power information. }
+  AbiIdleStateCapacity = 8;
+  AbiIdleStateNameCapacity = 16;
+  AbiThermalZoneNameCapacity = 32;
+  AbiBatteryTextCapacity = 32;
+  { TAbiProcessorPower.Flags. }
+  ProcessorPowerTickless = $01;
+  { The clock rate can be changed (the Raspberry Pi's firmware). }
+  ProcessorPowerClockScaling = $02;
+  { A thermal limit holds the processors back now. }
+  ProcessorPowerThrottled = $04;
+  { A fan is driven, and it runs now. }
+  ProcessorPowerFanControlled = $08;
+  ProcessorPowerFanRunning = $10;
+  { TAbiThermalZone.Kind. }
+  ThermalZoneAcpi = 1;
+  ThermalZoneFirmware = 2;
+  { A trip point that is not there. }
+  ThermalTripNone = Low(LongInt);
+  { TAbiBattery.State bits (ACPI _BST). }
+  BatteryDischarging = $01;
+  BatteryCharging = $02;
+  BatteryCritical = $04;
+  { TAbiBattery.PowerUnit: milliwatts and milliwatt-hours, or
+    milliamperes and milliampere-hours. }
+  BatteryUnitPower = 0;
+  BatteryUnitCurrent = 1;
+  { A battery value that is not known. }
+  BatteryValueUnknown = High(LongWord);
   KeyboardLayoutNameCapacity = 16;
   KeyboardLayoutDescriptionCapacity = 48;
   { The key repeat: the delay before a held key repeats, and the rate it
@@ -1129,6 +1193,100 @@ type
     Identification: QWord;
   end;
   PAbiProcessorDescription = ^TAbiProcessorDescription;
+
+  TAbiPreciseTime = record
+    { Whole seconds, and nanoseconds past them (0-999999999). }
+    Seconds: Int64;
+    Nanoseconds: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiPreciseTime = ^TAbiPreciseTime;
+
+  TAbiIdleState = record
+    { "C1 (HLT)", "C6 (MWAIT)", "WFI", "PSCI standby 1"... }
+    Name: array[0..AbiIdleStateNameCapacity - 1] of Char;
+    ExitLatencyNanoseconds: QWord;
+  end;
+
+  TAbiProcessorPowerUsage = record
+    { Clock interrupts it took, and its busy and idle time, since it
+      started (nanoseconds). }
+    ClockInterrupts: QWord;
+    BusyNanoseconds: QWord;
+    IdleNanoseconds: QWord;
+    { How often it entered each idle state. }
+    IdleStateEntries: array[0..AbiIdleStateCapacity - 1] of QWord;
+    { 1 if it runs. }
+    Online: LongWord;
+    Reserved: LongWord;
+  end;
+
+  { What CallGetProcessorPower gives. }
+  TAbiProcessorPower = record
+    UptimeNanoseconds: QWord;
+    ProcessorCount: LongWord;
+    IdleStateCount: LongWord;
+    { ProcessorPower* flags. }
+    Flags: LongWord;
+    { The highest clock rate the processors may run at now, in percent
+      of their maximum (100 unless a thermal limit holds them back). }
+    PerformanceLimitPercent: LongWord;
+    { The processors' clock rate now and its range, in hertz (0 where
+      the machine does not say: on PCs). }
+    ClockHertz: QWord;
+    MinimumClockHertz: QWord;
+    MaximumClockHertz: QWord;
+    { The kernel's clock: "time stamp counter", "KVM paravirtual clock",
+      "generic timer". }
+    ClockSource: array[0..AbiIdleStateNameCapacity * 2 - 1] of Char;
+    IdleStates: array[0..AbiIdleStateCapacity - 1] of TAbiIdleState;
+    Processors: array[0..AbiMaximumProcessors - 1] of TAbiProcessorPowerUsage;
+  end;
+  PAbiProcessorPower = ^TAbiProcessorPower;
+
+  TAbiThermalZone = record
+    { "\_TZ_.TZ00", "soc" }
+    Name: array[0..AbiThermalZoneNameCapacity - 1] of Char;
+    { ThermalZoneAcpi or ThermalZoneFirmware. }
+    Kind: LongWord;
+    { Thousandths of a degree Celsius; ThermalTripNone where not known
+      or not there. }
+    TemperatureMilliCelsius: LongInt;
+    { Above this the processors are slowed (passive cooling). }
+    PassiveMilliCelsius: LongInt;
+    { Above this the machine shuts down. }
+    CriticalMilliCelsius: LongInt;
+    { How fast the zone lets the processors run now, in percent. }
+    LimitPercent: LongWord;
+    { How often it is read, in milliseconds. }
+    PollMilliseconds: LongWord;
+  end;
+  PAbiThermalZone = ^TAbiThermalZone;
+
+  TAbiBattery = record
+    Name: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Model: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Serial: array[0..AbiBatteryTextCapacity - 1] of Char;
+    Technology: array[0..AbiBatteryTextCapacity - 1] of Char;
+    { BatteryUnitPower or BatteryUnitCurrent: what the capacities and
+      the rate are in (mWh and mW, or mAh and mA). Values not known are
+      BatteryValueUnknown. }
+    PowerUnit: LongWord;
+    { Battery* state bits. }
+    State: LongWord;
+    DesignCapacity: LongWord;
+    FullChargeCapacity: LongWord;
+    RemainingCapacity: LongWord;
+    PresentRate: LongWord;
+    { Millivolts. }
+    PresentVoltage: LongWord;
+    DesignVoltage: LongWord;
+    { Remaining of full, in percent (BatteryValueUnknown if not known). }
+    Percent: LongWord;
+    { 1 if a battery is in the slot. }
+    Present: LongWord;
+  end;
+  PAbiBattery = ^TAbiBattery;
 
   TAbiSystemInformation = record
     SystemName: array[0..AbiTextCapacity - 1] of Char;

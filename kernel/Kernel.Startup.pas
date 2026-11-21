@@ -46,6 +46,7 @@ procedure KernelEntryPoint(BootInformation: PBootInformation);
 implementation
 
 uses
+  Kernel.IdleStates,
   Objects.Events,
   Objects.Timers,
   Objects.Sections,
@@ -234,9 +235,9 @@ begin
   while True do
   begin
     ReapTerminatedThreads;
-    { Interrupts are enabled, so the next interrupt ends the halt. If it
+    { Interrupts are enabled, so the next interrupt ends the wait. If it
       made a thread ready, the dispatch interrupt switches to it. }
-    HaltProcessor;
+    IdleProcessor;
   end;
 end;
 
@@ -427,6 +428,8 @@ begin
 
   InitializeHal;
   HalWriteDescription;
+  InitializeIdleStates;
+  WriteIdleStates;
 
   BootStackBase := QWord(PhysicalToVirtual(BootInformation^.BootStackPhysicalBase));
   IdleThread := CreateIdleThreadFromBootContext(BootStackBase,

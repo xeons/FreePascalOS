@@ -40,6 +40,14 @@ function PsciVersion: LongWord;
 { Starts the processor with affinity ProcessorId at physical address
   EntryPoint with Context in X0. True if the firmware accepted. }
 function PsciStartProcessor(ProcessorId: QWord; EntryPoint, Context: QWord): Boolean;
+{ Suspends this processor in PowerState (a standby state: it returns
+  when an interrupt is pending, as WFI does). True if the firmware took
+  it; False if it refused (the processor did not sleep). }
+function PsciSuspendProcessor(PowerState: LongWord): Boolean;
+{ Whether the firmware offers CPU_SUSPEND (PSCI 1.0 PSCI_FEATURES; taken
+  as offered by a 0.2 firmware), and whether its power states use the
+  extended format (the state type in bit 30 rather than bit 16). }
+function PsciOffersProcessorSuspend(out ExtendedStateFormat: Boolean): Boolean;
 { Never return when they work. }
 procedure PsciPowerOff;
 procedure PsciReset;
@@ -55,6 +63,10 @@ uses
 const
   FunctionVersion = $84000000;
   FunctionCpuOn = $C4000003;
+  FunctionCpuSuspend = $C4000001;
+  FunctionFeatures = $8400000A;
+  FeatureExtendedStateFormat = 2;
+  VersionOnePointZero = $00010000;
   FunctionSystemOff = $84000008;
   FunctionSystemReset = $84000009;
   ResultSuccess = 0;
@@ -128,6 +140,31 @@ begin
     Exit(False);
   Status := CallPsci(CpuOnFunction, ProcessorId, EntryPoint, Context);
   Result := (Status = ResultSuccess) or (Status = ResultAlreadyOn);
+end;
+
+function PsciSuspendProcessor(PowerState: LongWord): Boolean;
+begin
+  if not Available then
+    Exit(False);
+  { A standby state needs no entry point: the call returns. }
+  Result := CallPsci(FunctionCpuSuspend, PowerState, 0, 0) = ResultSuccess;
+end;
+
+function PsciOffersProcessorSuspend(out ExtendedStateFormat: Boolean): Boolean;
+var
+  Features: QWord;
+begin
+  ExtendedStateFormat := False;
+  if not Available or (CpuOnFunction <> FunctionCpuOn) then
+    Exit(False);
+  if PsciVersion < VersionOnePointZero then
+    Exit(PsciVersion <> 0);
+  Features := CallPsci(FunctionFeatures, FunctionCpuSuspend, 0, 0);
+  { Negative: not supported. }
+  if Int64(Features) < 0 then
+    Exit(False);
+  ExtendedStateFormat := (Features and FeatureExtendedStateFormat) <> 0;
+  Result := True;
 end;
 
 procedure PsciPowerOff;

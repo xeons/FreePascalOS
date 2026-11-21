@@ -162,6 +162,7 @@ KERNEL_UNIT_DIRECTORIES := \
 	kernel/processes kernel/processes/$(ARCH) \
 	kernel/firmware \
 	kernel/io \
+	kernel/power \
 	kernel/network \
 	kernel/drivers/storage \
 	kernel/drivers/virtio \

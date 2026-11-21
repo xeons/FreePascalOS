@@ -48,6 +48,8 @@ uses
 
 const
   MaximumProcessors = 32;
+  { Idle states a processor may know (Kernel.IdleStates). }
+  MaximumIdleStates = 8;
 
 type
   PProcessor = ^TProcessor;
@@ -70,11 +72,17 @@ type
     { Set by the clock interrupt; read and cleared under the dispatcher
       lock by the dispatch interrupt (Kernel.Scheduler). }
     QuantumHasExpired: Boolean;
-    { Its clock (Kernel.Clock): when its next 10 ms tick is due and when
-      its clock interrupt is set to come (High(QWord): not set), in
-      clock nanoseconds. }
+    { Its clock (Kernel.Clock): when its next 10 ms tick is due
+      (High(QWord): the tick is stopped, while it idles) and when its
+      clock interrupt is set to come (High(QWord): not set), in clock
+      nanoseconds. }
     NextTickTime: QWord;
     ClockInterruptTime: QWord;
+    { How many clock interrupts it took (its tick stops while it idles,
+      so an idle processor takes few), and how often it entered each of
+      the idle states (Kernel.IdleStates). }
+    ClockInterruptCount: QWord;
+    IdleStateEntries: array[0..MaximumIdleStates - 1] of QWord;
     { The timers set on it (Kernel.Timers), ordered by due time, the lock
       that protects them (taken with interrupts disabled) and the first
       due time (High(QWord): none). }
