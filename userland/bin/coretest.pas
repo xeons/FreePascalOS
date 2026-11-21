@@ -29,6 +29,9 @@
       the exit status must match (those using su run commands as the
       ordinary user "user", to check permissions),
     * threads, thread-local storage and initialization order (threadtest),
+      libraries with thread-local storage and initializers loaded at run
+      time (dynlibtest), thread names (threadnametest), address space
+      layout randomization (aslrtest),
     * events, timers, waiting on several handles, channels, ports and a
       section shared between two processes (ipctest),
     * watching files and folders for changes made by other processes,
@@ -125,7 +128,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..397] of TCommandTest = (
+  CommandTests: array[0..400] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -684,7 +687,20 @@ const
     (Command: 'f() { for a in "$@"; do echo "[$a]"; done; echo $#; }; f; f "" x'; ExpectedOutput: '0'#10'[]'#10'[x]'#10'2'#10; ExpectedStatus: 0),
     { Process limits (limittest): thousands of threads, regions and handles,
       a child given 600 handles, and every count back to its baseline. }
-    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'limittest > limit.log; echo $?; grep FAIL limit.log; tail -n 1 limit.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Address space layout randomization: two runs of a program have its
+      code, a library's, the stack, the heap and a thread's stack in
+      other places (booted with aslr=off, the same command prints
+      "aslrtest: aslr=off, the addresses are the same"). }
+    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, library, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
+    { Libraries with thread-local storage, threadvars and initializers
+      loaded with LoadLibrary by a program running threads (dynlibtest):
+      per-thread values in old and new threads, initializers once, the
+      finalizers at the end, newest library first. }
+    (Command: 'dynlibtest > dynlib.log; echo $?; grep FAIL dynlib.log; grep -e failed -e finalized -e "finalizer ran" dynlib.log'; ExpectedOutput: '0'#10'dynlibtest: 48 checks, 0 failed'#10'dynpascal: unit finalized'#10'dyntls: library finalizer ran'#10; ExpectedStatus: 0),
+    { Thread names: set by TThread.NameThreadForDebugging and by id,
+      listed by the kernel and shown by ps -L. }
+    (Command: 'threadnametest'; ExpectedOutput: 'threadnametest: names listed'#10'namer'#10'worker-plain'#10'worker-tthread'#10; ExpectedStatus: 0)
   );
 
 var

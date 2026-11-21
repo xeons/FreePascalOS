@@ -195,7 +195,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse
 
@@ -507,7 +507,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: aml-test region-tree-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
+test: aml-test region-tree-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -566,6 +566,17 @@ $(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Pr
 
 region-tree-test: $(REGION_TREE_TEST)
 	$(REGION_TREE_TEST)
+
+# The kernel's random number core (ChaCha20, against RFC 8439) and the
+# randomized address space layouts (Processes.AddressLayout) on the host.
+ASLR_TEST := build/tools/AslrTest
+
+$(ASLR_TEST): tools/AslrTest/AslrTest.pas kernel/core/Kernel.ChaCha20.pas kernel/processes/Processes.AddressLayout.pas
+	@mkdir -p build/tools/aslr-units
+	$(FPC) -O2 -Cr -Co -Fukernel/core -Fukernel/processes -FEbuild/tools -FUbuild/tools/aslr-units $<
+
+aslr-test: $(ASLR_TEST)
+	$(ASLR_TEST)
 
 # The platform device walk (kernel/firmware) on the host, over a table
 # tools/AcpiDeviceTest/make-table.py assembles.
