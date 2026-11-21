@@ -112,7 +112,7 @@ const
   AboutBlankHtml = '<html><head></head><body></body></html>';
 
 var
-  AtomIframeName, AtomSrcdocName: TAtom;
+  AtomIframeName, AtomSrcdocName, AtomFrameNameName: TAtom;
 
 function IsAboutDocument(const Url: string): Boolean;
 begin
@@ -326,6 +326,8 @@ begin
     Child := TScriptContext.CreateFrame(Document, Environment, Context, Element);
     Child.OwnsEnvironment := True;
     Child.OnConsoleMessage := Context.OnConsoleMessage;
+    { The browsing context's name is the element's name (window.name). }
+    Child.SetSingleton(SingletonWindowName, Child.TextValue(Element.AttributeValueOf(AtomFrameNameName)));
     UpdateFrameIndices(Context);
     Child.ParseDocument(Srcdoc);
   finally
@@ -349,4 +351,5 @@ end;
 initialization
   AtomIframeName := Atomize('iframe');
   AtomSrcdocName := Atomize('srcdoc');
+  AtomFrameNameName := Atomize('name');
 end.

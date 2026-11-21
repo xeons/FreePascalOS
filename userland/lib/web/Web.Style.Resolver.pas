@@ -46,7 +46,7 @@ interface
 uses
   Web.Atoms, Web.Namespaces, Web.Dom, Css.ComputedStyle, Css.StyleEngine, Css.MediaQueries,
   Css.ElementAdapter, Css.Selectors, Web.Style.NodeData, Web.Style.Adapter, Web.Style.Sheets,
-  Web.Layout.Resources;
+  Web.Layout.Resources, Css.Stylesheets, Web.Style.DocumentSheets, Web.Style.Animations;
 
 type
   { scMove: painting and the box's translation (transform, translate),
@@ -62,6 +62,7 @@ type
     FResources: TDocumentResources;
     FAdapter: TDomElementAdapter;
     FEngine: TCssStyleEngine;
+    FAnimations: TStyleAnimations;
     FSheetList: TDocumentSheetList;
     FActiveSheets: TCssStyleSheetArray;
     FSheetsDirty: Boolean;
@@ -76,10 +77,12 @@ type
     FOnElementAttributeChanged: TNodeChangedEvent;
     FStylesComputed: Int64;
     procedure ResourcesChanged(Change: TResourceChange);
+    procedure DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
     procedure UpdateSheets;
     procedure PrepareElement(Element: TElement; Data: PNodeData);
     procedure StyleChildren(Parent: TNode; ParentStyle: TCssComputedStyle; Force: Boolean);
-    function StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle): Boolean;
+    function StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle;
+      Cascade: Boolean): Boolean;
     procedure ResolvePseudoStyles(Element: TElement; Data: PNodeData; var Change: TStyleChangeKind);
     procedure MarkSiblingsDirty(Parent: TNode);
     procedure MarkLaterSiblingsDirty(Element: TElement);
@@ -111,6 +114,8 @@ type
     procedure ControlStateChanged(Element: TElement); override;
     property Document: TDocument read FDocument;
     property Engine: TCssStyleEngine read FEngine;
+    { Running animations and transitions (Web.Style.Animations). }
+    property Animations: TStyleAnimations read FAnimations;
     property Adapter: TDomElementAdapter read FAdapter;
     property Resources: TDocumentResources read FResources;
     property StylesComputed: Int64 read FStylesComputed;
@@ -203,12 +208,14 @@ begin
   FResources := Resources;
   FAdapter := TDomElementAdapter.Create(Document);
   FEngine := TCssStyleEngine.Create(FAdapter, True);
+  FAnimations := TStyleAnimations.Create(FEngine);
   FSheetList := TDocumentSheetList.Create(Document, Resources);
   { The engine's additions to the user agent sheet come first. }
   FEngine.AddStyleSheet(EngineUserAgentSheet);
   FSheetsDirty := True;
   if FResources <> nil then
     FResources.AddListener(@ResourcesChanged);
+  DocumentSheetsOf(Document).AddListener(@DocumentSheetsChanged);
   Document.AddObserver(Self);
   MarkSubtreeStyleDirty(Document);
 end;
@@ -218,7 +225,10 @@ begin
   FDocument.RemoveObserver(Self);
   if FResources <> nil then
     FResources.RemoveListener(@ResourcesChanged);
+  if ExistingDocumentSheets(FDocument) <> nil then
+    ExistingDocumentSheets(FDocument).RemoveListener(@DocumentSheetsChanged);
   FreeSubtreeData(FDocument);
+  FAnimations.Free;
   FEngine.Free;
   FSheetList.Free;
   FAdapter.Free;
@@ -232,6 +242,19 @@ begin
     FSheetsDirty := True;
     FSheetContentsChanged := True;
   end;
+end;
+
+{ Script changed the sheets (CSSOM): a rule appended at the end of the
+  last sheet is indexed at once; anything else indexes them again. }
+procedure TDocumentStyler.DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
+begin
+  if (Change = scRuleAppended) and not FSheetsDirty and FEngine.AppendRule(Sheet, Rule) then
+  begin
+    MarkSubtreeStyleDirty(FDocument);
+    Exit;
+  end;
+  FSheetsDirty := True;
+  FSheetContentsChanged := True;
 end;
 
 procedure TDocumentStyler.UpdateSheets;
@@ -256,6 +279,9 @@ begin
     FEngine.AddStyleSheet(Sheets[Index]);
   FActiveSheets := Sheets;
   FEngine.Invalidate;
+  { Indexed now, so the sheets and rules the CSSOM took out can go. }
+  FEngine.Prepare;
+  DocumentSheetsOf(FDocument).FreeRetired;
   MarkSubtreeStyleDirty(FDocument);
 end;
 
@@ -377,22 +403,40 @@ begin
   Data^.MarkerStyle := Marker;
 end;
 
-{ Restyles Element; True when its children must be restyled too. }
-function TDocumentStyler.StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle): Boolean;
+{ Restyles Element (Cascade False: only its animations moved on, the
+  kept cascaded style is animated again); True when its children must
+  be restyled too. }
+function TDocumentStyler.StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle;
+  Cascade: Boolean): Boolean;
 var
-  NewStyle: TCssComputedStyle;
+  NewStyle, Base, OldBase, OldShown: TCssComputedStyle;
   Change: TStyleChangeKind;
 begin
   PrepareElement(Element, Data);
-  NewStyle := FEngine.ResolveStyle(Element, ParentStyle);
-  Inc(FStylesComputed);
+  if Cascade or (Data^.BaseStyle = nil) then
+  begin
+    Base := FEngine.ResolveStyle(Element, ParentStyle);
+    Inc(FStylesComputed);
+  end
+  else
+    Base := Data^.BaseStyle.AddRef;
+  OldShown := Data^.Style.AddRef;
+  if Data^.BaseStyle <> nil then
+    OldBase := Data^.BaseStyle.AddRef
+  else
+    OldBase := Data^.Style.AddRef;
+  NewStyle := FAnimations.Animate(Element, OldBase, OldShown, Base, ParentStyle);
+  Base.Release;
+  OldBase.Release;
+  OldShown.Release;
   Change := CompareStyles(Data^.Style, NewStyle);
   Result := InheritedChanged(Data^.Style, NewStyle) or (Data^.Style = nil) or
     (Data^.Style.IsDisplayNone <> NewStyle.IsDisplayNone);
   Data^.Style.Release;
   Data^.Style := NewStyle;
-  ResolvePseudoStyles(Element, Data, Change);
-  Exclude(Data^.Flags, ndStyleDirty);
+  if Cascade or (Change <> scNone) then
+    ResolvePseudoStyles(Element, Data, Change);
+  Data^.Flags := Data^.Flags - [ndStyleDirty, ndAnimationDirty];
   if (Change <> scNone) and Assigned(FOnStyleChanged) then
     FOnStyleChanged(Element, Change);
 end;
@@ -411,7 +455,9 @@ begin
       Data := NodeDataOf(Child);
       ForceChildren := False;
       if Force or (ndStyleDirty in Data^.Flags) then
-        ForceChildren := StyleElement(TElement(Child), Data, ParentStyle);
+        ForceChildren := StyleElement(TElement(Child), Data, ParentStyle, True)
+      else if ndAnimationDirty in Data^.Flags then
+        ForceChildren := StyleElement(TElement(Child), Data, ParentStyle, False);
       if Data^.Style = nil then
         { Under a parent that is not displayed: styled when needed. }
       else if (ForceChildren or (ndDescendantStyleDirty in Data^.Flags)) and not Data^.Style.IsDisplayNone then
@@ -519,6 +565,8 @@ end;
 
 procedure TDocumentStyler.NodeDisconnected(Node: TNode);
 begin
+  if Node.IsElement then
+    FAnimations.ElementRemoved(TElement(Node));
   if Assigned(FOnNodeRemoved) then
     FOnNodeRemoved(Node);
   FreeNodeData(Node);

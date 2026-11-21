@@ -607,6 +607,7 @@ procedure TNode.Normalize;
 var
   Node, Next, Sibling: TNode;
   Combined: string;
+  Length: Integer;
 begin
   Node := GetFirstChild;
   while Node <> nil do
@@ -621,6 +622,21 @@ begin
       Next := Node.NextInTreeSkippingChildren(Self);
       Node.FParent.RemoveChild(Node);
       Node := Next;
+      Continue;
+    end;
+    if Node.FOwnerDocument.FLiveRangeCount > 0 then
+    begin
+      { Each following Text joins in turn, so live ranges in it move
+        into Node (DOM Standard normalize(), steps 6.4 to 6.6). }
+      while IsExclusiveText(Node.FNextSibling) do
+      begin
+        Sibling := Node.FNextSibling;
+        Length := TText(Node).GetLength;
+        TText(Node).ReplaceData(Length, 0, TText(Sibling).FData);
+        Node.FOwnerDocument.RangesTextMerged(Sibling, Node, Length);
+        Node.FParent.RemoveChild(Sibling);
+      end;
+      Node := Node.NextInTreeSkippingChildren(Self);
       Continue;
     end;
     Combined := TText(Node).FData;

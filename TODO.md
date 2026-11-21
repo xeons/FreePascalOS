@@ -1251,8 +1251,9 @@ Part 1 (encodings, HTML parsing, DOM):
       comparison, namespaces, observer hooks, lifetime (references and
       collection)
 - [x] Events: EventTarget, capture/bubble dispatch, once/passive, stop flags
-- [ ] Ranges and StaticRange, NodeIterator/TreeWalker (the mutation algorithms
-      mark where live ranges are adjusted)
+- [x] Ranges and StaticRange (live ranges adjusted by the mutation
+      algorithms), the document's selection
+- [ ] NodeIterator/TreeWalker
 - [x] MutationObserver on the observer hook (the script bindings)
 - [x] HTML fragment serialization, innerHTML/outerHTML/insertAdjacentHTML
 - [x] `htmldump`; host test (`make web-test`) with html5lib-format cases
@@ -1302,9 +1303,17 @@ Part 2 (style, layout, painting):
       composited through the layers' alpha
 - [x] :hover/:focus changes restyle only what selectors reading them reach
       (Css.StateInvalidation); the parser nests at most 512 deep
+- [x] Transforms beyond translation (scale, rotate, skew, matrix, 3D
+      flattened, transform-origin) painted as transform groups, hit
+      tested and measured through them
+- [x] CSS animations and transitions (keyframes, easing, fill modes,
+      iterations, directions, play state; numbers, lengths, colors,
+      transforms) run each frame with an injectable clock; animation and
+      transition events
 - [ ] Inline boxes split around blocks, relative inline boxes,
-      transforms, filters, blend modes, clip-path,
-      border-image, conic gradients, blurred text shadows
+      perspective and preserve-3d, filters, blend modes, clip-path,
+      border-image, conic gradients, blurred text shadows; Web
+      Animations (element.animate)
 - [x] Scrollbars (the web view's: theme bars for the viewport, thin bars in
       scroll containers)
 - [ ] Incremental display list updates
@@ -1406,13 +1415,21 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       postMessage across origins; dedicated workers
 - [ ] `<object>`/`<embed>` documents; frameset layout; a WindowProxy for
       sandboxed frames without scripts; Permissions Policy (allow)
-- [ ] reCAPTCHA in the OS: the anchor renders, but in QEMU it showed
-      "Could not connect to the reCAPTCHA service" (on the host the
-      widget initializes); find out what times out
-- [ ] Shadow DOM interfaces, Range/Selection, TreeWalker, CSSOM sheets
-      (document.styleSheets, insertRule: CSS-in-JS libraries need them),
-      Web Animations, synchronous XHR, XML parsing (DOMParser's XML types,
-      responseXML), the unhandledrejection event
+- [x] reCAPTCHA: MessagePorts between realms (frames of any origin,
+      workers), frames by name; the anchor, worker and challenge frame
+      handshakes complete (they timed out on the host too: webbrowse
+      quit before the 5 and 15 s timeouts); the demo and Google's
+      /sorry/ page show the widget without script errors
+- [ ] reCAPTCHA under TCG (no KVM): its 860 KB script runs three times
+      (page, anchor, challenge frame) and can miss its 15 s handshake
+      timeout before the anchor retries; faster script start-up
+- [x] Range/Selection (window/document.getSelection, selectionchange,
+      tied to the web view's selection), the CSSOM (document.styleSheets,
+      sheets, rules, insertRule appended rules indexed at once,
+      constructable sheets, adoptedStyleSheets)
+- [ ] Shadow DOM interfaces, TreeWalker, Web Animations, synchronous XHR,
+      XML parsing (DOMParser's XML types, responseXML), the
+      unhandledrejection event, Selection.modify
 - [x] DOMParser (text/html), SVGElement/SVGGraphicsElement/SVGSVGElement,
       document.open/write/close outside the parser, Location's setters,
       HTML's cloning steps (scripts that ran, control values), isTrusted
@@ -1471,10 +1488,10 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [x] DuckDuckGo: following a result on the main results page (its hidden
       /post3.html iframe, then /l/ to the site); html.duckduckgo.com's
       results follow too
-- [ ] window.getSelection (DuckDuckGo's click handler calls it; Selection
-      is not done)
-- [ ] Transforms beyond translation (scale, rotate, skew) in painting and
-      hit testing
+- [x] window.getSelection (DuckDuckGo's result clicks no longer log an
+      error)
+- [x] Transforms beyond translation (scale, rotate, skew) in painting and
+      hit testing; CSS animations and transitions in the web view's frames
 - [ ] Large pages in QEMU need the kernel's growable address-space region
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one

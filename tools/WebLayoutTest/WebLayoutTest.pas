@@ -35,7 +35,8 @@ program WebLayoutTest;
 {$H+}
 
 uses
-  SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting;
+  SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting,
+  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms;
 
 var
   Update: Boolean;
@@ -56,6 +57,9 @@ begin
   CheckStickyPainting;
   CheckMaskPainting;
   CheckLayerPainting;
+  CheckStyleSheetChanges;
+  CheckTransforms;
+  CheckAnimations;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

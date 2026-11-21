@@ -100,6 +100,12 @@ type
     { Rebuilds the index from Sheets (in cascade order within each
       origin) for Environment. }
     procedure Build(const Sheets: array of TCssStyleSheet; const Environment: TCssMediaEnvironment);
+    { A rule just appended to the last author sheet (CSSOM insertRule at
+      the end, as CSS-in-JS libraries do): its selectors join the index
+      after every other entry. False (nothing added) for rules that
+      could change the layer order or need the host (@import, @layer,
+      @font-face, @property, @namespace): Build again then. }
+    function AppendAuthorRule(Rule: TCssRule): Boolean;
     { The entries that might match Element: its id's, classes', type's
       buckets and the universal one. }
     procedure Candidates(Adapter: TCssElementAdapter; Element: TCssElement; var List: TCssIntegerArray;
@@ -439,6 +445,39 @@ begin
       if (Sheets[Index] <> nil) and (Sheets[Index].Origin = Origin) then
         AddSheet(Sheets[Index], Origin, FLayerRoots[Origin]);
   RankLayers;
+end;
+
+function AppendableRule(Rule: TCssRule): Boolean;
+var
+  Index: Integer;
+begin
+  case Rule.Kind of
+    rkStyle, rkMedia, rkSupports:
+      begin
+        for Index := 0 to High(TCssGroupingRule(Rule).Rules) do
+          if not AppendableRule(TCssGroupingRule(Rule).Rules[Index]) then
+            Exit(False);
+        Result := True;
+      end;
+    rkNestedDeclarations, rkKeyframes, rkContainer:
+      Result := True;
+  else
+    Result := False;
+  end;
+end;
+
+function TCssRuleIndex.AppendAuthorRule(Rule: TCssRule): Boolean;
+var
+  First, Index: Integer;
+begin
+  Result := False;
+  if (FLayerRoots[coAuthor] = NoLayer) or (Length(FLayerRanks) = 0) or not AppendableRule(Rule) then
+    Exit;
+  First := FCount;
+  AddRule(Rule, coAuthor, FLayerRoots[coAuthor]);
+  for Index := First to FCount - 1 do
+    FEntries[Index].LayerRank := FLayerRanks[FEntries[Index].LayerNode];
+  Result := True;
 end;
 
 procedure TCssRuleIndex.Candidates(Adapter: TCssElementAdapter; Element: TCssElement; var List: TCssIntegerArray;

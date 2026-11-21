@@ -133,8 +133,14 @@ var
   OffsetX, OffsetY: Double;
   Area: TRectangle;
 begin
-  if (FLayout = nil) or (FSelectionAnchor.Run < 0) or (TPageTextIndex.Compare(FSelectionAnchor,
-     FSelectionFocus) = 0) then
+  if FLayout = nil then
+    Exit;
+  if FSelectionFromDocument then
+  begin
+    EnsureTextIndex;
+    PullSelectionFromDocument;
+  end;
+  if (FSelectionAnchor.Run < 0) or (TPageTextIndex.Compare(FSelectionAnchor, FSelectionFocus) = 0) then
     Exit;
   EnsureTextIndex;
   Rectangles := FTextIndex.RangeRectangles(FSelectionAnchor, FSelectionFocus);

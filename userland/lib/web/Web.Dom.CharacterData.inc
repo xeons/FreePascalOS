@@ -107,7 +107,8 @@ begin
   OldValue := FData;
   FData := Copy(OldValue, 1, StartByte) + Text + Copy(OldValue, EndByte + 1, MaxInt);
   FFlags := FFlags and not NodeFlagAsciiKnown;
-  { Live ranges are adjusted here (later phase). }
+  if FOwnerDocument.FLiveRangeCount > 0 then
+    FOwnerDocument.RangesDataReplaced(Self, Offset, Count, Utf16Length(Text));
   if DocumentHasObservers(FOwnerDocument) then
   begin
     FOwnerDocument.NotifyCharacterDataChanged(Self, OldValue);
@@ -119,10 +120,14 @@ end;
 procedure TCharacterData.SetData(const Text: string);
 var
   OldValue: string;
+  OldLength: Integer;
 begin
   OldValue := FData;
+  OldLength := GetLength;
   FData := Text;
   FFlags := FFlags and not NodeFlagAsciiKnown;
+  if FOwnerDocument.FLiveRangeCount > 0 then
+    FOwnerDocument.RangesDataReplaced(Self, 0, OldLength, Utf16Length(Text));
   if DocumentHasObservers(FOwnerDocument) then
   begin
     FOwnerDocument.NotifyCharacterDataChanged(Self, OldValue);
@@ -178,6 +183,8 @@ begin
     Result := FOwnerDocument.CreateTextNode(NewData);
   if FParent <> nil then
     InsertNode(Result, FParent, FNextSibling, False);
+  if FOwnerDocument.FLiveRangeCount > 0 then
+    FOwnerDocument.RangesTextSplit(Self, Result, Offset);
   ReplaceData(Offset, Count, '');
 end;
 

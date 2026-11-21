@@ -72,7 +72,8 @@ uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
-  Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent;
+  Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent, Drawing.Transforms,
+  Drawing.Paints, Drawing.PaintFilling, Css.TransformMatrices;
 
 type
   { A group: drawn into a surface of its own (as big as the clip when it
@@ -86,6 +87,12 @@ type
     MaskSurface: TSurface;
     Left, Top: LongInt;
     Opacity: Byte;
+    { A transform group: its surface holds the content untransformed
+      (device pixels of the surface below, from Left, Top), composited
+      through DeviceTransform (untransformed to transformed device
+      pixels of the surface below). }
+    IsTransform: Boolean;
+    DeviceTransform: TAffineTransform;
   end;
   PGroup = ^TGroup;
 
@@ -894,6 +901,7 @@ begin
   Group^.Opacity := Round(EnsureRange(Item.Value, 0, 1) * 255);
   Group^.MaskSurface.Pixels := nil;
   Group^.Surface.Pixels := nil;
+  Group^.IsTransform := False;
   Bounds := RegionBounds(Raster.Canvas.Clip);
   Group^.Left := Bounds.Left;
   Group^.Top := Bounds.Top;
@@ -972,6 +980,153 @@ begin
       if (Coverage > 0) and (AlphaOf(Source[Column]) > 0) then
         Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Coverage));
     end;
+  end;
+  FreeSurface(Group^.Surface);
+end;
+
+{ ---- transforms ---- }
+
+function AffineOf(const Matrix: TCssMatrix2D): TAffineTransform;
+begin
+  Result := MakeTransform(Matrix.A, Matrix.B, Matrix.C, Matrix.D, Matrix.E, Matrix.F);
+end;
+
+{ A transform of document coordinates as one of device pixels of the
+  surface drawn into: device to document, the transform, back. }
+function DeviceTransformOf(const Raster: TRaster; const Transform: TAffineTransform): TAffineTransform;
+var
+  ToDocument, ToDevice: TAffineTransform;
+  Scale: Double;
+begin
+  Scale := Raster.View.Scale;
+  ToDocument := CombineTransforms(TranslationTransform(Raster.OriginX, Raster.OriginY),
+    CombineTransforms(ScalingTransform(1 / Scale, 1 / Scale), TranslationTransform(Raster.ShiftX, Raster.ShiftY)));
+  ToDevice := CombineTransforms(TranslationTransform(-Raster.ShiftX, -Raster.ShiftY),
+    CombineTransforms(ScalingTransform(Scale, Scale), TranslationTransform(-Raster.OriginX, -Raster.OriginY)));
+  Result := CombineTransforms(ToDevice, CombineTransforms(Transform, ToDocument));
+end;
+
+const
+  { The largest side of a transform group's surface. }
+  MaximumGroupSide = 8192;
+
+{ The content is drawn untransformed into a surface covering what of it
+  can show through the clip (the clip mapped back through the
+  transform, within the group's bounds). }
+procedure PushTransform(var Raster: TRaster; const Item: TDisplayItem);
+var
+  Group: PGroup;
+  Inverse: TAffineTransform;
+  Clip, Content, Area: TRectangle;
+  Point: TPrecisePoint;
+  Corner: Integer;
+  MinX, MinY, MaxX, MaxY: Double;
+  Region: TRegion;
+  Empty: Boolean;
+begin
+  if Raster.GroupDepth >= Length(Raster.Groups) then
+    SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
+  Group := @Raster.Groups[Raster.GroupDepth];
+  Inc(Raster.GroupDepth);
+  Group^.Canvas := Raster.Canvas;
+  Group^.Opacity := 255;
+  Group^.MaskSurface.Pixels := nil;
+  Group^.Surface.Pixels := nil;
+  Group^.IsTransform := True;
+  Group^.DeviceTransform := DeviceTransformOf(Raster, AffineOf(Raster.List.Transforms[Item.Index]));
+  Clip := RegionBounds(Raster.Canvas.Clip);
+  Empty := RectangleIsEmpty(Clip) or not InvertTransform(Group^.DeviceTransform, Inverse);
+  if not Empty then
+  begin
+    MinX := Infinity;
+    MinY := Infinity;
+    MaxX := -Infinity;
+    MaxY := -Infinity;
+    for Corner := 0 to 3 do
+    begin
+      if Corner mod 2 = 0 then
+        Point.X := Clip.Left
+      else
+        Point.X := Clip.Right;
+      if Corner div 2 = 0 then
+        Point.Y := Clip.Top
+      else
+        Point.Y := Clip.Bottom;
+      Point := TransformPoint(Inverse, Point.X, Point.Y);
+      MinX := Min(MinX, Point.X);
+      MinY := Min(MinY, Point.Y);
+      MaxX := Max(MaxX, Point.X);
+      MaxY := Max(MaxY, Point.Y);
+    end;
+    Area := EdgesRectangle(Floor(Max(MinX, -1E7)) - 1, Floor(Max(MinY, -1E7)) - 1, Ceil(Min(MaxX, 1E7)) + 1,
+      Ceil(Min(MaxY, 1E7)) + 1);
+    Content := InflateRectangle(DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height), 2);
+    Empty := not IntersectRectangles(Area, Content, Area);
+  end;
+  if not Empty then
+  begin
+    if RectangleWidth(Area) > MaximumGroupSide then
+      Area.Right := Area.Left + MaximumGroupSide;
+    if RectangleHeight(Area) > MaximumGroupSide then
+      Area.Bottom := Area.Top + MaximumGroupSide;
+  end;
+  if Empty then
+    Area := EdgesRectangle(0, 0, 1, 1);
+  Group^.Left := Area.Left;
+  Group^.Top := Area.Top;
+  if not CreateSurface(Group^.Surface, RectangleWidth(Area), RectangleHeight(Area), ColorTransparent) then
+  begin
+    Group^.Surface.Pixels := nil;
+    Empty := True;
+    Area := EdgesRectangle(0, 0, 1, 1);
+    CreateSurface(Group^.Surface, 1, 1, ColorTransparent);
+  end;
+  BeginCanvas(Raster.Canvas, Group^.Surface);
+  if Empty then
+    SetRegionToRectangle(Region, EdgesRectangle(0, 0, 0, 0))
+  else
+    SetRegionToRectangle(Region, EdgesRectangle(0, 0, RectangleWidth(Area), RectangleHeight(Area)));
+  SetCanvasClip(Raster.Canvas, Region);
+  Inc(Raster.ShiftX, Area.Left);
+  Inc(Raster.ShiftY, Area.Top);
+end;
+
+procedure PopTransform(var Raster: TRaster);
+var
+  Group: PGroup;
+  Inverse, ToTile: TAffineTransform;
+  Corners: array[0..3] of TPrecisePoint;
+  Shape: TCoverageShape;
+  Paint: TPaint;
+  Width, Height: LongInt;
+begin
+  if not LeaveGroup(Raster, Group) then
+    Exit;
+  Width := Group^.Surface.Width;
+  Height := Group^.Surface.Height;
+  if InvertTransform(Group^.DeviceTransform, Inverse) and (Width > 1) then
+  begin
+    { Surface pixels of the canvas below to the group's pixels. }
+    ToTile := CombineTransforms(TranslationTransform(-Group^.Left, -Group^.Top),
+      CombineTransforms(Inverse, TranslationTransform(-Raster.Canvas.OriginX, -Raster.Canvas.OriginY)));
+    Corners[0] := TransformPoint(Group^.DeviceTransform, Group^.Left, Group^.Top);
+    Corners[1] := TransformPoint(Group^.DeviceTransform, Group^.Left + Width, Group^.Top);
+    Corners[2] := TransformPoint(Group^.DeviceTransform, Group^.Left + Width, Group^.Top + Height);
+    Corners[3] := TransformPoint(Group^.DeviceTransform, Group^.Left, Group^.Top + Height);
+    for Width := 0 to 3 do
+    begin
+      Corners[Width].X := Corners[Width].X + Raster.Canvas.OriginX;
+      Corners[Width].Y := Corners[Width].Y + Raster.Canvas.OriginY;
+    end;
+    BeginShape(Shape);
+    AddShapePolygon(Shape, Corners);
+    Paint := PatternPaint(Group^.Surface, ToTile);
+    Paint.TileRepeat := False;
+    Paint.Smooth := not IsAxisAligned(Group^.DeviceTransform) or
+      (Abs(Group^.DeviceTransform.A - 1) > 1E-6) or (Abs(Group^.DeviceTransform.D - 1) > 1E-6) or
+      (Frac(Abs(Group^.DeviceTransform.E)) > 1E-6) or (Frac(Abs(Group^.DeviceTransform.F)) > 1E-6);
+    PreparePaint(Paint);
+    FillShapeWithPaint(Raster.Canvas, Shape, FillRuleNonZero, Paint, 255, nil);
   end;
   FreeSurface(Group^.Surface);
 end;
@@ -1079,6 +1234,8 @@ begin
       diPushOpacity: PushGroup(Raster, Item^);
       diPopOpacity: PopGroup(Raster);
       diPushMask: PushGroup(Raster, Item^);
+      diPushTransform: PushTransform(Raster, Item^);
+      diPopTransform: PopTransform(Raster);
       diMaskContent: BeginMaskContent(Raster);
       diPopMask: PopMask(Raster);
       diPushFixed: PushOrigin(Raster, 0, 0);
@@ -1102,7 +1259,10 @@ begin
     end;
   end;
   while Raster.GroupDepth > 0 do
-    PopGroup(Raster);
+    if Raster.Groups[Raster.GroupDepth - 1].IsTransform then
+      PopTransform(Raster)
+    else
+      PopGroup(Raster);
 end;
 
 end.

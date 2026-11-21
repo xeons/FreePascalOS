@@ -81,6 +81,23 @@ type
     InputType: string;
   end;
 
+  { CSS Animations' and CSS Transitions' events (animationstart,
+    animationend, animationiteration, animationcancel; transitionrun,
+    transitionstart, transitionend, transitioncancel). }
+  TAnimationEvent = class(TEvent)
+  public
+    AnimationName: string;
+    ElapsedTime: Double;
+    PseudoElement: string;
+  end;
+
+  TTransitionEvent = class(TEvent)
+  public
+    PropertyName: string;
+    ElapsedTime: Double;
+    PseudoElement: string;
+  end;
+
 implementation
 
 function TUiEvent.ModifierState(const KeyName: string): Boolean;

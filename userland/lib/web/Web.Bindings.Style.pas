@@ -51,6 +51,15 @@ function InlineStyleObject(Context: TBindingContext; Element: TElement; OwnerWra
 { getComputedStyle's (read only) declaration. }
 function ComputedStyleObject(Context: TBindingContext; Element: TElement; OwnerWrapper: TJsValue): TJsValue;
 
+type
+  { Told after script changed a rule's declarations. }
+  TRuleStyleChanged = procedure(Context: TBindingContext; Rule: TObject);
+
+{ The CSSStyleDeclaration of the style rule (or keyframe) RuleWrapper
+  wraps (CSSStyleRule.style): the rule's own block, changed in place;
+  Changed is called after each change. }
+function RuleStyleObject(Context: TBindingContext; RuleWrapper: TBindingWrapper; Changed: TRuleStyleChanged): TJsValue;
+
 implementation
 
 uses
@@ -68,6 +77,7 @@ uses
   Css.Shorthands,
   Css.Declarations,
   Css.Parser,
+  Css.Stylesheets,
   Web.Atoms,
   Web.Namespaces,
   Web.Dom.Exceptions,
@@ -75,23 +85,50 @@ uses
   Web.Bindings.Exotic;
 
 type
-  TInlineStyle = class
-  private
-    FElement: TElement;
-    FSource: string;
-    FBlock: TCssDeclarationBlock;
+  { What a CSSStyleDeclaration is over: a declaration block it reads and
+    replaces. }
+  TStyleDeclarationData = class
+  protected
     FReadOnly: Boolean;
+    { Takes Updated as the declarations. }
+    procedure ReplaceBlock(Updated: TCssDeclarationBlock); virtual; abstract;
   public
-    constructor Create(Element: TElement; ReadOnly: Boolean);
-    destructor Destroy; override;
-    function Block: TCssDeclarationBlock;
+    function Block: TCssDeclarationBlock; virtual; abstract;
     procedure CheckWritable;
-    procedure WriteBack;
     procedure SetCssText(const Text: string);
     function PropertyValue(const Name: string): string;
     function PropertyPriority(const Name: string): string;
     procedure SetProperty(const Name, Value, Priority: string);
     function RemoveProperty(const Name: string): string;
+  end;
+
+  TInlineStyle = class(TStyleDeclarationData)
+  private
+    FElement: TElement;
+    FSource: string;
+    FBlock: TCssDeclarationBlock;
+  protected
+    procedure ReplaceBlock(Updated: TCssDeclarationBlock); override;
+  public
+    constructor Create(Element: TElement; ReadOnly: Boolean);
+    destructor Destroy; override;
+    function Block: TCssDeclarationBlock; override;
+  end;
+
+  { A style rule's or keyframe's declarations (the rule is the native
+    object of RuleWrapper, nil once the rule is gone). }
+  TRuleStyle = class(TStyleDeclarationData)
+  private
+    FRuleWrapper: TBindingWrapper;
+    FEmpty: TCssDeclarationBlock;
+    FChanged: TRuleStyleChanged;
+    function RuleBlock: TCssDeclarationBlock;
+  protected
+    procedure ReplaceBlock(Updated: TCssDeclarationBlock); override;
+  public
+    constructor Create(RuleWrapper: TBindingWrapper; Changed: TRuleStyleChanged);
+    destructor Destroy; override;
+    function Block: TCssDeclarationBlock; override;
   end;
 
   TStyleDeclarationWrapper = class(TIndexedWrapper)
@@ -132,32 +169,95 @@ begin
   Result := FBlock;
 end;
 
-procedure TInlineStyle.CheckWritable;
+procedure TInlineStyle.ReplaceBlock(Updated: TCssDeclarationBlock);
+begin
+  FBlock.Free;
+  FBlock := Updated;
+  FSource := FBlock.Serialize;
+  FElement.SetAttributeAtom(AtomStyle, NamespaceNone, FSource);
+end;
+
+{ TRuleStyle }
+
+constructor TRuleStyle.Create(RuleWrapper: TBindingWrapper; Changed: TRuleStyleChanged);
+begin
+  inherited Create;
+  FRuleWrapper := RuleWrapper;
+  FChanged := Changed;
+  FEmpty := TCssDeclarationBlock.Create;
+end;
+
+destructor TRuleStyle.Destroy;
+begin
+  FEmpty.Free;
+  inherited Destroy;
+end;
+
+function TRuleStyle.RuleBlock: TCssDeclarationBlock;
+var
+  Rule: TObject;
+begin
+  Result := nil;
+  Rule := TObject(FRuleWrapper.NativeData);
+  if Rule is TCssStyleRule then
+    Result := TCssStyleRule(Rule).Declarations
+  else if Rule is TCssKeyframeRule then
+    Result := TCssKeyframeRule(Rule).Declarations;
+end;
+
+function TRuleStyle.Block: TCssDeclarationBlock;
+begin
+  Result := RuleBlock;
+  if Result = nil then
+    Result := FEmpty;
+end;
+
+{ The rule's block is changed in place: the style engine's index points
+  at it. }
+procedure TRuleStyle.ReplaceBlock(Updated: TCssDeclarationBlock);
+var
+  Target: TCssDeclarationBlock;
+  Index: Integer;
+  Declaration: PCssDeclaration;
+begin
+  try
+    Target := RuleBlock;
+    if Target = nil then
+      Exit;
+    Target.Clear;
+    for Index := 0 to Updated.Count - 1 do
+    begin
+      Declaration := Updated.Item(Index);
+      Target.Add(Declaration^.Id, Declaration^.Value.AddRef, Declaration^.Important, Declaration^.Shorthand,
+        Declaration^.CustomName);
+    end;
+    if Assigned(FChanged) then
+      FChanged(FRuleWrapper.Binding.Context, TObject(FRuleWrapper.NativeData));
+  finally
+    Updated.Free;
+  end;
+end;
+
+{ TStyleDeclarationData }
+
+procedure TStyleDeclarationData.CheckWritable;
 begin
   if FReadOnly then
     RaiseDomError(NoModificationAllowedError, 'this declaration is read only');
 end;
 
-procedure TInlineStyle.WriteBack;
-begin
-  FSource := FBlock.Serialize;
-  FElement.SetAttributeAtom(AtomStyle, NamespaceNone, FSource);
-end;
-
-procedure TInlineStyle.SetCssText(const Text: string);
+procedure TStyleDeclarationData.SetCssText(const Text: string);
 begin
   CheckWritable;
-  FreeAndNil(FBlock);
-  FBlock := ParseStyleAttribute(Text);
-  WriteBack;
+  ReplaceBlock(ParseStyleAttribute(Text));
 end;
 
-function TInlineStyle.PropertyValue(const Name: string): string;
+function TStyleDeclarationData.PropertyValue(const Name: string): string;
 begin
   Result := Block.PropertyValue(Name);
 end;
 
-function TInlineStyle.PropertyPriority(const Name: string): string;
+function TStyleDeclarationData.PropertyPriority(const Name: string): string;
 var
   Id: TCssPropertyId;
   Declaration: PCssDeclaration;
@@ -223,7 +323,7 @@ begin
   end;
 end;
 
-procedure TInlineStyle.SetProperty(const Name, Value, Priority: string);
+procedure TStyleDeclarationData.SetProperty(const Name, Value, Priority: string);
 var
   Parsed, Updated: TCssDeclarationBlock;
   Cursor: TCssTokenCursor;
@@ -252,26 +352,19 @@ begin
       Updated.Add(Declaration^.Id, Declaration^.Value.AddRef, Declaration^.Important, Declaration^.Shorthand,
         Declaration^.CustomName);
     end;
-    FBlock.Free;
-    FBlock := Updated;
-    WriteBack;
+    ReplaceBlock(Updated);
   finally
     Parsed.Free;
   end;
 end;
 
-function TInlineStyle.RemoveProperty(const Name: string): string;
-var
-  Updated: TCssDeclarationBlock;
+function TStyleDeclarationData.RemoveProperty(const Name: string): string;
 begin
   CheckWritable;
   Result := PropertyValue(Name);
   if Result = '' then
     Exit;
-  Updated := BlockWithout(Block, Name);
-  FBlock.Free;
-  FBlock := Updated;
-  WriteBack;
+  ReplaceBlock(BlockWithout(Block, Name));
 end;
 
 { Property names from script: "backgroundColor" is background-color,
@@ -324,7 +417,7 @@ var
   Name: string;
 begin
   if StyleProperty(R, Key, Name) and (Proto.HasProperty(R, Key) = 0) then
-    Exit(Binding.Context.TextValue(TInlineStyle(NativeData).PropertyValue(Name)));
+    Exit(Binding.Context.TextValue(TStyleDeclarationData(NativeData).PropertyValue(Name)));
   Result := inherited Get(R, Key, Receiver);
 end;
 
@@ -342,7 +435,7 @@ begin
     if Text = nil then
       Exit(-1);
     try
-      TInlineStyle(NativeData).SetProperty(Name, JsStringToText(R.Heap, Text), '');
+      TStyleDeclarationData(NativeData).SetProperty(Name, JsStringToText(R.Heap, Text), '');
     except
       on Error: Exception do
       begin
@@ -376,11 +469,17 @@ begin
     InterfaceCSSStyleProperties, True, OwnerWrapper);
 end;
 
+function RuleStyleObject(Context: TBindingContext; RuleWrapper: TBindingWrapper; Changed: TRuleStyleChanged): TJsValue;
+begin
+  Result := Context.WrapObjectAs(TStyleDeclarationWrapper, TRuleStyle.Create(RuleWrapper, Changed),
+    InterfaceCSSStyleProperties, True, JsObjectValue(RuleWrapper));
+end;
+
 { CSSStyleDeclaration }
 
-function ThisStyle(const Call: TBindingCall): TInlineStyle; inline;
+function ThisStyle(const Call: TBindingCall): TStyleDeclarationData; inline;
 begin
-  Result := TInlineStyle(Call.Target);
+  Result := TStyleDeclarationData(Call.Target);
 end;
 
 function Context(const Call: TBindingCall): TBindingContext; inline;
@@ -446,7 +545,10 @@ end;
 
 function CSSStyleDeclaration_get_parentRule(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsNull;
+  if (Call.Target is TRuleStyle) and (TRuleStyle(Call.Target).FRuleWrapper.NativeData <> nil) then
+    Result := JsObjectValue(TRuleStyle(Call.Target).FRuleWrapper)
+  else
+    Result := JsNull;
 end;
 
 function CSSStyleProperties_get_cssFloat(var Call: TBindingCall): TJsValue;

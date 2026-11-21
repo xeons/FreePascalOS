@@ -304,7 +304,13 @@ begin
     and has its size: Layout asks for a frame then. }
   if not HasRoom then
     Exit;
+  { CSS animations and transitions move on with each frame. }
+  if FLayout.AnimationsRunning then
+    FLayout.AdvanceAnimations;
   UpdateLayout;
+  QueueAnimationEvents(FPage.Loop, FDocument, FLayout.TakeAnimationEvents);
+  if FLayout.AnimationsRunning then
+    RequestFrame;
   ApplyPendingScroll;
   if not FBackingValid or (FLayout.PaintVersion <> FBackingVersion) then
     InvalidateViewport;

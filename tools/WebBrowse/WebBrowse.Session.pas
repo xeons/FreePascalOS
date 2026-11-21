@@ -90,6 +90,7 @@ uses
   Js.Engine,
   Js.Values,
   Web.Script.Layout,
+  Web.Layout.AnimationEvents,
   Web.Dom,
   Web.Html.Serializer,
   Web.Fetch.NetworkContexts,
@@ -338,12 +339,16 @@ var
 begin
   Began := Clock;
   FPage.RenderingOpportunity;
+  if FLayout <> nil then
+    FLayout.AdvanceAnimations;
   if (FLayout <> nil) and FLayout.NeedsUpdate then
   begin
     FLayout.Update;
     if FFirstLayoutAt < 0 then
       FFirstLayoutAt := Clock;
   end;
+  if FLayout <> nil then
+    QueueAnimationEvents(FPage.Loop, FLayout.Document, FLayout.TakeAnimationEvents);
   if (FLayout <> nil) and (FLayout.PaintVersion <> FPaintedVersion) then
   begin
     if FFrameSurface.Pixels = nil then

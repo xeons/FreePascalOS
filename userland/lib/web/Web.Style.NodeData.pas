@@ -54,7 +54,10 @@ type
     { Some descendant has ndBoxesDirty. }
     ndDescendantBoxesDirty,
     { The id atom is known. }
-    ndIdKnown);
+    ndIdKnown,
+    { Only time moved for the element's animations and transitions: its
+      style is made again from BaseStyle without cascading. }
+    ndAnimationDirty);
   TNodeDataFlags = set of TNodeDataFlag;
 
   PNodeData = ^TNodeData;
@@ -70,6 +73,10 @@ type
     States: TCssElementStates;
     { The node's principal box (a TLayoutBox), nil when it has none. }
     Box: TObject;
+    { While animations or transitions run (Web.Style.Animations): the
+      cascaded style under the animated Style, and their state (owned). }
+    BaseStyle: TCssComputedStyle;
+    Animations: TObject;
   end;
 
 { The node's data, made (all dirty) when missing. }
@@ -85,6 +92,9 @@ function StyleOf(Node: TNode): TCssComputedStyle;
 
 { Marks Node's style dirty and its ancestors' "descendant dirty". }
 procedure MarkStyleDirty(Node: TNode);
+{ Marks Node's animated style due (time moved) and its ancestors'
+  "descendant dirty". }
+procedure MarkAnimationDirty(Node: TNode);
 { Marks every element of Root's subtree for restyling. }
 procedure MarkSubtreeStyleDirty(Root: TNode);
 { The presentational hints of Root's subtree must be built again. }
@@ -122,6 +132,8 @@ begin
   Data^.BeforeStyle.Release;
   Data^.AfterStyle.Release;
   Data^.MarkerStyle.Release;
+  Data^.BaseStyle.Release;
+  Data^.Animations.Free;
   Data^.StyleAttribute.Free;
   Data^.Hints.Free;
   Dispose(Data);
@@ -164,6 +176,12 @@ begin
     Include(Data^.Flags, Flag);
     Ancestor := Ancestor.ParentNode;
   end;
+end;
+
+procedure MarkAnimationDirty(Node: TNode);
+begin
+  Include(NodeDataOf(Node)^.Flags, ndAnimationDirty);
+  MarkAncestors(Node, ndDescendantStyleDirty);
 end;
 
 procedure MarkStyleDirty(Node: TNode);

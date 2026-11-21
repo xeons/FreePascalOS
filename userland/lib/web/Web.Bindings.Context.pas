@@ -105,6 +105,10 @@ const
   WrapperOwnsNative = 1;
   WrapperIsNode = 2;
   WrapperIsEvent = 4;
+  WrapperIsRange = 8;
+  { The native object is a libcss rule or sheet whose HostData is this
+    wrapper (Web.Bindings.StyleSheets). }
+  WrapperIsCssObject = 16;
 
 type
   TBindingContext = class;
@@ -154,7 +158,7 @@ type
   { Objects a window has one of. }
   TWindowSingleton = (SingletonLocation, SingletonNavigator, SingletonHistory, SingletonHistoryState,
     SingletonScrollRestoration, SingletonWindowName, SingletonStructuredClone, SingletonPlatformNatives,
-    SingletonPlatformInternal);
+    SingletonPlatformInternal, SingletonSelection);
 
   { Where console messages go (Level: 'log', 'error'). }
   TConsoleMessageEvent = procedure(const Level, Text: string) of object;
@@ -230,6 +234,8 @@ type
     { How many index properties (window[0] ...) the global object has
       for its frames. }
     FrameIndexCount: Integer;
+    { The frame names it defined on the global object (window[name]). }
+    FrameNameKeys: array of string;
     { The realms of its dedicated workers (Web.Script.NativeWorkers):
       engines sharing its runtime, their jobs run at its microtask
       checkpoints, freed after its engine. }
@@ -252,6 +258,9 @@ type
     { The live child windows in the order their elements were inserted. }
     function FrameCount: Integer;
     function FrameAt(Index: Integer): TBindingContext;
+    { The first open child window whose name (window.name) is Name, nil
+      if none (window[name], frames[name]). }
+    function FrameNamed(const Name: string): TBindingContext;
     { The frame element went from the document: its window closes (no
       longer reachable as contentWindow; its realm stops being a root). }
     procedure Close;
@@ -276,6 +285,9 @@ type
     { Wrappers }
     function WrapNode(Node: TNode): TJsValue;
     function WrapEvent(Event: TEvent): TJsValue;
+    { A live range's wrapper (one per range, holding a reference to it);
+      Prototype nil for the interface's. }
+    function WrapRange(Range: TLiveRange; InterfaceId: Integer; Prototype: TJsObject = nil): TJsValue;
     { A wrapper of an object: Owned (freed with the wrapper), or kept
       alive by OwnerWrapper. }
     function WrapObject(Native: TObject; InterfaceId: Integer; Owned: Boolean;
@@ -405,7 +417,8 @@ implementation
 uses
   DateUtils,
   Web.Profiling,
-  Js.Inspect;
+  Js.Inspect,
+  Css.Stylesheets;
 
 var
   Contexts: array of TBindingContext;
@@ -462,6 +475,10 @@ begin
     Result := InterfaceUIEvent
   else if Event is TCustomEvent then
     Result := InterfaceCustomEvent
+  else if Event is TAnimationEvent then
+    Result := InterfaceAnimationEvent
+  else if Event is TTransitionEvent then
+    Result := InterfaceTransitionEvent
   else
     Result := InterfaceEvent;
 end;
@@ -559,6 +576,18 @@ begin
       Context.NodeWrapperDying(TNode(Native));
       DisableListeners(TNode(Native).ListenerList(False), Context);
       TNode(Native).Release;
+    end
+    else if (WrapperFlags and WrapperIsCssObject) <> 0 then
+    begin
+      if Native is TCssRule then
+        TCssRule(Native).HostData := nil
+      else if Native is TCssStyleSheet then
+        TCssStyleSheet(Native).HostData := nil;
+    end
+    else if (WrapperFlags and WrapperIsRange) <> 0 then
+    begin
+      TLiveRange(Native).ScriptWrapper := nil;
+      TLiveRange(Native).Release;
     end
     else if (WrapperFlags and WrapperIsEvent) <> 0 then
     begin
@@ -725,6 +754,22 @@ begin
   for Index := 0 to High(FChildFrames) do
     if not FChildFrames[Index].FClosed then
       Inc(Result);
+end;
+
+function TBindingContext.FrameNamed(const Name: string): TBindingContext;
+var
+  Index: Integer;
+  Candidate: TBindingContext;
+begin
+  Result := nil;
+  if Name = '' then
+    Exit;
+  for Index := 0 to FrameCount - 1 do
+  begin
+    Candidate := FrameAt(Index);
+    if (Candidate <> nil) and (ValueToText(Candidate.Engine.Realm, Candidate.Singleton(SingletonWindowName)) = Name) then
+      Exit(Candidate);
+  end;
 end;
 
 { The open frames in the tree order of their elements (window.frames). }
@@ -1149,6 +1194,23 @@ begin
   Event.Retain;
   Event.ScriptWrapper := Wrapper;
   RegisterWrapper(FEventWrappers, FEventWrapperCount, Wrapper);
+  Result := JsObjectValue(Wrapper);
+end;
+
+function TBindingContext.WrapRange(Range: TLiveRange; InterfaceId: Integer; Prototype: TJsObject): TJsValue;
+var
+  Wrapper: TBindingWrapper;
+begin
+  if Range = nil then
+    Exit(JsNull);
+  if Range.ScriptWrapper <> nil then
+    Exit(JsObjectValue(TBindingWrapper(Range.ScriptWrapper)));
+  if Prototype = nil then
+    Prototype := PrototypeOf(InterfaceId);
+  Wrapper := TBindingWrapper(JsAsObject(WrapObjectWithPrototype(Range, InterfaceId, False, Prototype)));
+  Wrapper.WrapperFlags := WrapperIsRange;
+  Range.Retain;
+  Range.ScriptWrapper := Wrapper;
   Result := JsObjectValue(Wrapper);
 end;
 

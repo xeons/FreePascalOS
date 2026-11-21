@@ -55,7 +55,7 @@ uses
   Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
   Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
-  Web.Dom.FormControls;
+  Web.Dom.FormControls, Css.TransformMatrices, Web.Layout.Transforms;
 
 type
   TClipEntry = record
@@ -1333,8 +1333,77 @@ begin
     Builder.List.Add(diPopClip, 0, 0, 0, 0, Box);
 end;
 
+{ A transform group's bounds: what its items draw (a nested group by its
+  transformed bounds). }
+procedure SetTransformBounds(List: TDisplayList; PushIndex: Integer);
+var
+  Index, Depth: Integer;
+  Item: PDisplayItem;
+  Left, Top, Right, Bottom: Single;
+  Matrix: TCssMatrix2D;
+  Corner: Integer;
+  CornerX, CornerY, PointX, PointY: Double;
+
+  procedure Include(X1, Y1, X2, Y2: Single);
+  begin
+    Left := Min(Left, X1);
+    Top := Min(Top, Y1);
+    Right := Max(Right, X2);
+    Bottom := Max(Bottom, Y2);
+  end;
+
+begin
+  Left := Infinity;
+  Top := Infinity;
+  Right := -Infinity;
+  Bottom := -Infinity;
+  Depth := 0;
+  for Index := PushIndex + 1 to List.Count - 1 do
+  begin
+    Item := @List.Items[Index];
+    case Item^.Kind of
+      diPushTransform:
+        begin
+          if Depth = 0 then
+          begin
+            Matrix := List.Transforms[Item^.Index];
+            for Corner := 0 to 3 do
+            begin
+              CornerX := Item^.X + (Corner mod 2) * Item^.Width;
+              CornerY := Item^.Y + (Corner div 2) * Item^.Height;
+              PointX := Matrix.A * CornerX + Matrix.C * CornerY + Matrix.E;
+              PointY := Matrix.B * CornerX + Matrix.D * CornerY + Matrix.F;
+              Include(PointX, PointY, PointX, PointY);
+            end;
+          end;
+          Inc(Depth);
+        end;
+      diPopTransform:
+        Dec(Depth);
+      diPopClip, diPopOpacity, diPopFixed, diPopSticky, diPopMask, diMaskContent, diPushFixed, diPushSticky:
+        ;
+    else
+      if (Depth = 0) and (Item^.Width > 0) and (Item^.Height > 0) then
+        Include(Item^.X, Item^.Y, Item^.X + Item^.Width, Item^.Y + Item^.Height);
+    end;
+  end;
+  Item := @List.Items[PushIndex];
+  if Left > Right then
+  begin
+    Item^.Width := 0;
+    Item^.Height := 0;
+    Exit;
+  end;
+  Item^.X := Left;
+  Item^.Y := Top;
+  Item^.Width := Right - Left;
+  Item^.Height := Bottom - Top;
+end;
+
 procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; WithDescendantLayers: Boolean);
 var
+  TransformIndex: Integer;
+  Transformed: Boolean;
   Masked, MaskClipped: Boolean;
   Layers: TLayerArray;
   Count, Index: Integer;
@@ -1348,6 +1417,15 @@ begin
     Opacity := Box.Style.Value(cpOpacity)^.Number;
   if (Opacity <= 0) and (Box.Kind <> bkViewport) then
     Exit;
+  Transformed := (Box.Kind <> bkViewport) and not (Box.Kind in [bkInline, bkText, bkLineBreak]) and
+    HasPaintTransform(Box.Style);
+  TransformIndex := -1;
+  if Transformed then
+  begin
+    TransformIndex := Builder.List.Count;
+    Entry := Builder.List.Add(diPushTransform, X, Y, Box.Width, Box.Height, Box);
+    Entry^.Index := Builder.List.AddTransform(BoxTransformMatrix(Box.Style, X, Y, Box.Width, Box.Height));
+  end;
   if Opacity < 1 then
   begin
     Entry := Builder.List.Add(diPushOpacity, X, Y, Box.Width, Box.Height, Box);
@@ -1397,6 +1475,11 @@ begin
     PaintOutline(Builder, Box, X, Y);
   if Opacity < 1 then
     Builder.List.Add(diPopOpacity, 0, 0, 0, 0, Box);
+  if Transformed then
+  begin
+    Builder.List.Add(diPopTransform, 0, 0, 0, 0, Box);
+    SetTransformBounds(Builder.List, TransformIndex);
+  end;
 end;
 
 { The box whose background paints the canvas: the root element's, or the

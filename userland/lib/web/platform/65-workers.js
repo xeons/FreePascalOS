@@ -101,8 +101,8 @@
     internal.queueTask(function () {
       state.scheduled = false;
       while (state.pending.length > 0 && !state.terminated) {
-        const data = state.pending.shift();
-        state.host.deliver(new MessageEvent("message", { data: data }));
+        const message = state.pending.shift();
+        state.host.deliver(new MessageEvent("message", { data: message.data, ports: message.ports }));
       }
     });
   }
@@ -160,10 +160,11 @@
     scope.self = scope;
     scope.name = state.name;
     scope.location = locationOf(state.url);
-    scope.postMessage = function postMessage(message) {
+    scope.postMessage = function postMessage(message, transfer) {
+      const ports = internal.transferredPorts(transfer).map(internal.movePort);
       const data = structuredClone(message);
       internal.queueTask(function () {
-        if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data }));
+        if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data, ports: ports }));
       });
     };
     scope.close = function close() {
@@ -225,9 +226,10 @@
     }
     postMessage(message, transfer) {
       const state = workerState(this);
+      const ports = internal.transferredPorts(transfer).map(internal.movePort);
       const data = structuredClone(message);
       if (state.terminated) return;
-      state.pending.push(data);
+      state.pending.push({ data: data, ports: ports });
       flushToWorker(state);
     }
     terminate() {

@@ -76,7 +76,7 @@ implementation
 
 uses
   Web.Profiling,
-  Math, Web.Paint.Builder, Web.Paint.Raster, Web.Paint.Sticky;
+  Math, Css.TransformMatrices, Web.Paint.Builder, Web.Paint.Raster, Web.Paint.Sticky;
 
 constructor TDocumentPainter.Create(Layout: TDocumentLayout);
 begin
@@ -133,6 +133,23 @@ begin
   end;
 end;
 
+function InvertMatrix(const Matrix: TCssMatrix2D; out Inverse: TCssMatrix2D): Boolean;
+var
+  Determinant: Double;
+begin
+  Inverse := IdentityMatrix;
+  Determinant := Matrix.A * Matrix.D - Matrix.B * Matrix.C;
+  Result := Abs(Determinant) > 1E-12;
+  if not Result then
+    Exit;
+  Inverse.A := Matrix.D / Determinant;
+  Inverse.B := -Matrix.B / Determinant;
+  Inverse.C := -Matrix.C / Determinant;
+  Inverse.D := Matrix.A / Determinant;
+  Inverse.E := (Matrix.C * Matrix.F - Matrix.D * Matrix.E) / Determinant;
+  Inverse.F := (Matrix.B * Matrix.E - Matrix.A * Matrix.F) / Determinant;
+end;
+
 function TDocumentPainter.HitTest(X, Y: Single): THitTestResult;
 type
   TClip = record
@@ -141,9 +158,22 @@ type
   TOriginPoint = record
     X, Y: Single;
   end;
+  { A transform group entered: what to restore at its pop. The clips
+    outside it are in other coordinates: whether the point passed them
+    is decided at its push. }
+  TTransformEntry = record
+    Inverse: TCssMatrix2D;
+    ClipBase: Integer;
+    OuterInside: Boolean;
+  end;
 var
   Clips: array of TClip;
   ClipCount, Index: Integer;
+  Transforms: array of TTransformEntry;
+  TransformDepth, ClipBase: Integer;
+  Inverse, Matrix: TCssMatrix2D;
+  OuterInside: Boolean;
+  LocalX, LocalY: Double;
   Origins: array of TOriginPoint;
   OriginDepth: Integer;
   Item: PDisplayItem;
@@ -165,12 +195,48 @@ begin
   OriginX := ScrollX;
   OriginY := ScrollY;
   Box := nil;
+  Transforms := nil;
+  TransformDepth := 0;
+  ClipBase := 0;
+  OuterInside := True;
+  Inverse := IdentityMatrix;
   for Index := 0 to FList.Count - 1 do
   begin
     Item := @FList.Items[Index];
-    PointX := X + OriginX;
-    PointY := Y + OriginY;
+    LocalX := X + OriginX;
+    LocalY := Y + OriginY;
+    PointX := Inverse.A * LocalX + Inverse.C * LocalY + Inverse.E;
+    PointY := Inverse.B * LocalX + Inverse.D * LocalY + Inverse.F;
     case Item^.Kind of
+      diPushTransform:
+        begin
+          if TransformDepth >= Length(Transforms) then
+            SetLength(Transforms, TransformDepth * 2 + 4);
+          Transforms[TransformDepth].Inverse := Inverse;
+          Transforms[TransformDepth].ClipBase := ClipBase;
+          Transforms[TransformDepth].OuterInside := OuterInside;
+          Inc(TransformDepth);
+          if (ClipCount > ClipBase) and not ((PointX >= Clips[ClipCount - 1].Left) and
+            (PointX < Clips[ClipCount - 1].Right) and (PointY >= Clips[ClipCount - 1].Top) and
+            (PointY < Clips[ClipCount - 1].Bottom)) then
+            OuterInside := False;
+          ClipBase := ClipCount;
+          if not InvertMatrix(FList.Transforms[Item^.Index], Matrix) then
+          begin
+            { Flattened to nothing: nothing in it can be hit. }
+            OuterInside := False;
+            Matrix := IdentityMatrix;
+          end;
+          Inverse := MultiplyMatrices(Matrix, Inverse);
+        end;
+      diPopTransform:
+        if TransformDepth > 0 then
+        begin
+          Dec(TransformDepth);
+          Inverse := Transforms[TransformDepth].Inverse;
+          ClipBase := Transforms[TransformDepth].ClipBase;
+          OuterInside := Transforms[TransformDepth].OuterInside;
+        end;
       diPushClip:
         begin
           if ClipCount >= Length(Clips) then
@@ -179,7 +245,7 @@ begin
           Clips[ClipCount].Top := Item^.Y;
           Clips[ClipCount].Right := Item^.X + Item^.Width;
           Clips[ClipCount].Bottom := Item^.Y + Item^.Height;
-          if ClipCount > 0 then
+          if ClipCount > ClipBase then
           begin
             Clips[ClipCount].Left := Max(Clips[ClipCount].Left, Clips[ClipCount - 1].Left);
             Clips[ClipCount].Top := Max(Clips[ClipCount].Top, Clips[ClipCount - 1].Top);
@@ -222,9 +288,9 @@ begin
         ;
     else
       begin
-        Inside := (PointX >= Item^.X) and (PointX < Item^.X + Item^.Width) and (PointY >= Item^.Y) and
+        Inside := OuterInside and (PointX >= Item^.X) and (PointX < Item^.X + Item^.Width) and (PointY >= Item^.Y) and
           (PointY < Item^.Y + Item^.Height);
-        if Inside and (ClipCount > 0) then
+        if Inside and (ClipCount > ClipBase) then
           Inside := (PointX >= Clips[ClipCount - 1].Left) and (PointX < Clips[ClipCount - 1].Right) and
             (PointY >= Clips[ClipCount - 1].Top) and (PointY < Clips[ClipCount - 1].Bottom);
         if Inside and (Item^.Box <> nil) then

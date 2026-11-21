@@ -604,4 +604,58 @@ begin
   Result := CallContext(Call).TextValue(ThisInputEvent(Call).InputType);
 end;
 
+{ CSS Animations and Transitions events }
+
+function AnimationEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TAnimationEvent;
+begin
+  Event := TAnimationEvent.Create(Call.Text(0));
+  Event.AnimationName := Call.Arguments[1].Items[AnimationEventInit_animationName].Text;
+  Event.ElapsedTime := Call.Arguments[1].Items[AnimationEventInit_elapsedTime].Number;
+  Event.PseudoElement := Call.Arguments[1].Items[AnimationEventInit_pseudoElement].Text;
+  Result := StartEvent(Call, Event);
+end;
+
+function AnimationEvent_get_animationName(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(TAnimationEvent(Call.Target).AnimationName);
+end;
+
+function AnimationEvent_get_elapsedTime(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(TAnimationEvent(Call.Target).ElapsedTime);
+end;
+
+function AnimationEvent_get_pseudoElement(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(TAnimationEvent(Call.Target).PseudoElement);
+end;
+
+function TransitionEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TTransitionEvent;
+begin
+  Event := TTransitionEvent.Create(Call.Text(0));
+  Event.PropertyName := Call.Arguments[1].Items[TransitionEventInit_propertyName].Text;
+  Event.ElapsedTime := Call.Arguments[1].Items[TransitionEventInit_elapsedTime].Number;
+  Event.PseudoElement := Call.Arguments[1].Items[TransitionEventInit_pseudoElement].Text;
+  Result := StartEvent(Call, Event);
+end;
+
+function TransitionEvent_get_propertyName(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(TTransitionEvent(Call.Target).PropertyName);
+end;
+
+function TransitionEvent_get_elapsedTime(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(TTransitionEvent(Call.Target).ElapsedTime);
+end;
+
+function TransitionEvent_get_pseudoElement(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(TTransitionEvent(Call.Target).PseudoElement);
+end;
+
 end.

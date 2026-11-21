@@ -122,8 +122,16 @@ type
     CSS pixels; whoever lays the document out answers (the web view),
     bringing its layout up to date first. Positions are in the
     document's coordinates (the initial containing block's origin). }
+  TScriptRect = record
+    X, Y, Width, Height: Double;
+  end;
+  TScriptRectArray = array of TScriptRect;
+
   TScriptLayout = class
   public
+    { The rectangles (document CSS px) the characters StartOffset to
+      EndOffset (UTF-16 code units) of a Text node take, a line each. }
+    function TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray; virtual;
     { The border box of Element (the union of its fragments); False when
       it has no box. }
     function BorderBox(Element: TElement; out X, Y, Width, Height: Double): Boolean; virtual; abstract;
@@ -227,6 +235,11 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptLayout.TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray;
+begin
+  Result := nil;
 end;
 
 function TScriptEnvironment.ManagesFrames: Boolean;

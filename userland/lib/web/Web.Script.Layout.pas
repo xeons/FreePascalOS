@@ -58,6 +58,7 @@ type
     procedure ViewportScroll(out Left, Top: Double); override;
     function ElementAtPoint(X, Y: Double): TElement; override;
     function ComputedValue(Element: TElement; const PropertyName: string): string; override;
+    function TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray; override;
   end;
 
 implementation
@@ -67,6 +68,9 @@ uses
   Css.PropertyIds,
   Css.Properties,
   Web.Layout.Boxes,
+  Web.Layout.TextOffsets,
+  Web.Layout.Transforms,
+  Web.Text.FontInstances,
   Web.Style.NodeData;
 
 procedure TDocumentScriptLayout.Resolve;
@@ -92,6 +96,8 @@ begin
   Result := Ready and Layout.NodeBounds(Element, BoxX, BoxY, BoxWidth, BoxHeight);
   if Result then
   begin
+    { Scaled, turned or skewed: the bounds of what is drawn. }
+    TransformRectangle(Layout.BoxOf(Element), BoxX, BoxY, BoxWidth, BoxHeight);
     X := BoxX;
     Y := BoxY;
     Width := BoxWidth;
@@ -175,6 +181,63 @@ begin
     Exit;
   Painter.Refresh;
   Result := Painter.HitTest(X, Y).Element;
+end;
+
+function TDocumentScriptLayout.TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray;
+var
+  Box: TLayoutBox;
+  TextBox: TTextBox;
+  Container: TLayoutBox;
+  Fragment: PLineFragment;
+  Font: TTextFont;
+  ContainerX, ContainerY: Single;
+  StartByte, EndByte, FragmentStart, FragmentEnd, From, Till, Index: Integer;
+  Left, Right: Double;
+begin
+  Result := nil;
+  if not Ready then
+    Exit;
+  Box := Layout.BoxOf(Node);
+  if not (Box is TTextBox) then
+    Exit;
+  TextBox := TTextBox(Box);
+  Container := Box.Parent;
+  while (Container <> nil) and ((Container.Kind = bkInline) or (Container.Inline = nil)) do
+    Container := Container.Parent;
+  if Container = nil then
+    Exit;
+  Container.AbsolutePosition(ContainerX, ContainerY);
+  StartByte := SourceToRenderedOffset(TextBox.SourceText, TextBox.Text, StartOffset);
+  EndByte := SourceToRenderedOffset(TextBox.SourceText, TextBox.Text, EndOffset);
+  Font := TextFontOf(TextBox.Style);
+  for Index := 0 to Container.Inline.FragmentCount - 1 do
+  begin
+    Fragment := @Container.Inline.Fragments[Index];
+    if (Fragment^.Box <> TObject(TextBox)) or (Fragment^.Kind <> fkText) then
+      Continue;
+    FragmentStart := Fragment^.TextStart - 1;
+    FragmentEnd := FragmentStart + Fragment^.TextLength;
+    From := StartByte;
+    if From < FragmentStart then
+      From := FragmentStart;
+    Till := EndByte;
+    if Till > FragmentEnd then
+      Till := FragmentEnd;
+    if (Till < From) or ((Till = From) and (StartByte <> EndByte)) then
+      Continue;
+    Left := Fragment^.X;
+    Right := Fragment^.X;
+    if Font <> nil then
+    begin
+      Left := Left + Font.MeasureText(TextBox.Text, FragmentStart + 1, From - FragmentStart);
+      Right := Right + Font.MeasureText(TextBox.Text, FragmentStart + 1, Till - FragmentStart);
+    end;
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)].X := ContainerX + Left;
+    Result[High(Result)].Y := ContainerY + Fragment^.Y;
+    Result[High(Result)].Width := Right - Left;
+    Result[High(Result)].Height := Fragment^.Height;
+  end;
 end;
 
 function TDocumentScriptLayout.ComputedValue(Element: TElement; const PropertyName: string): string;

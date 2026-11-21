@@ -160,6 +160,8 @@ var
   Global: TJsObject;
   Realm: TJsRealm;
   Index, Count: Integer;
+  Child: TBindingContext;
+  Name: string;
 begin
   if Context.Closed then
     Exit;
@@ -172,6 +174,23 @@ begin
   for Index := Count to Context.FrameIndexCount - 1 do
     Global.DeleteProperty(Realm, JsInteger(Index));
   Context.FrameIndexCount := Count;
+  { The frames by name (HTML 7.2.2.3, the window's named properties):
+    below every other property of the window, so a name the window
+    has already is left alone. }
+  for Index := 0 to High(Context.FrameNameKeys) do
+    Global.DeleteProperty(Realm, Realm.Intern(Context.FrameNameKeys[Index]));
+  Context.FrameNameKeys := nil;
+  for Index := 0 to Count - 1 do
+  begin
+    Child := Context.FrameAt(Index);
+    Name := ValueToText(Child.Engine.Realm, Child.Singleton(SingletonWindowName));
+    if (Name = '') or (Global.HasProperty(Realm, Realm.Intern(Name)) = 1) then
+      Continue;
+    Global.DefineOwnProperty(Realm, Realm.Intern(Name), DataDescriptor(WindowValueFor(Context, Child),
+      PropertyConfigurable), False);
+    SetLength(Context.FrameNameKeys, Length(Context.FrameNameKeys) + 1);
+    Context.FrameNameKeys[High(Context.FrameNameKeys)] := Name;
+  end;
   if Realm.HasException then
     Realm.Runtime.TakeException;
 end;
@@ -364,6 +383,8 @@ begin
     Value := MemberFunction(View, R, MemberFocus, 'focus', @CrossOriginNothing, 0)
   else if Name = 'blur' then
     Value := MemberFunction(View, R, MemberBlur, 'blur', @CrossOriginNothing, 0)
+  else if Target.FrameNamed(Name) <> nil then
+    Value := WindowValueFor(View.Accessor, Target.FrameNamed(Name))
   else
     Result := False;
 end;

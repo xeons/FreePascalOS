@@ -242,6 +242,12 @@ end;
 
 destructor TDocument.Destroy;
 begin
+  FreeAndNil(FStyleSheets);
+  if FSelection <> nil then
+  begin
+    FSelection.OrphanRange;
+    FreeAndNil(FSelection);
+  end;
   FreeListedNodes;
   FreeChildren(Self);
   FreeAndNil(FRareData);
