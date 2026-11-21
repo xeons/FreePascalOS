@@ -23,7 +23,7 @@
   CSS pixels, a color, the box they come from for hit testing, and an
   index into one of the side arrays for what does not fit: corner radii,
   border sides, text runs, images, gradients, shadows). Clips, opacity
-  groups and fixed-position subtrees are push/pop pairs. The list is
+  groups, fixed-position and sticky subtrees are push/pop pairs. The list is
   built once per layout (Web.Paint.Builder) and kept: painting any
   rectangle of the viewport, at any scroll offset, and hit testing all
   read the same list.
@@ -61,6 +61,14 @@ type
     diPushOpacity, diPopOpacity,
     { Items up to the pop do not move with the viewport's scroll. }
     diPushFixed, diPopFixed,
+    { Items up to the pop move with a position: sticky box (the bounds:
+      its border box; Index: a TStickyRun), by an offset that depends
+      on the viewport's scroll (Web.Paint.Sticky). }
+    diPushSticky, diPopSticky,
+    { A masked subtree (CSS Masking): the items up to diMaskContent draw
+      the mask layers, the ones after it the content, composited at the
+      pop through the layers' alpha. The bounds: the mask's clip. }
+    diPushMask, diMaskContent, diPopMask,
     { Not drawn: where a box is, for hit testing. }
     diHitArea,
     { A control's own text (a text field's value; Index: a string), in
@@ -115,6 +123,16 @@ type
     BoxX, BoxY, BoxWidth, BoxHeight: Single;
   end;
 
+  { A sticky box's constraints, in document CSS pixels: the rectangle
+    its margin box must stay in (its containing block's content box less
+    its margins) and the insets from the viewport's edges it keeps when
+    it can (Has*: not auto). }
+  TStickyRun = record
+    LimitLeft, LimitTop, LimitRight, LimitBottom: Single;
+    InsetLeft, InsetTop, InsetRight, InsetBottom: Single;
+    HasLeft, HasTop, HasRight, HasBottom: Boolean;
+  end;
+
   TDisplayList = class
   public
     Items: array of TDisplayItem;
@@ -133,6 +151,8 @@ type
     ShadowCount: Integer;
     Strings: array of string;
     StringCount: Integer;
+    Stickies: array of TStickyRun;
+    StickyCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
     procedure Clear;
@@ -144,6 +164,7 @@ type
     function AddGradient(const Value: TGradientRun): Integer;
     function AddShadow(const Value: TShadowRun): Integer;
     function AddString(const Value: string): Integer;
+    function AddSticky(const Value: TStickyRun): Integer;
     { Bytes the list holds. }
     function MemoryBytes: PtrUInt;
   end;
@@ -160,6 +181,7 @@ begin
   GradientCount := 0;
   ShadowCount := 0;
   StringCount := 0;
+  StickyCount := 0;
   CanvasColor := ColorWhite;
 end;
 
@@ -243,12 +265,21 @@ begin
   Inc(StringCount);
 end;
 
+function TDisplayList.AddSticky(const Value: TStickyRun): Integer;
+begin
+  if StickyCount >= Length(Stickies) then
+    SetLength(Stickies, StickyCount * 2 + 4);
+  Stickies[StickyCount] := Value;
+  Result := StickyCount;
+  Inc(StickyCount);
+end;
+
 function TDisplayList.MemoryBytes: PtrUInt;
 begin
   Result := PtrUInt(Length(Items)) * SizeOf(TDisplayItem) + PtrUInt(Length(Radii)) * SizeOf(TCornerRadii) +
     PtrUInt(Length(Borders)) * SizeOf(TBorderSides) + PtrUInt(Length(Texts)) * SizeOf(TTextRun) +
     PtrUInt(Length(Images)) * SizeOf(TImageRun) + PtrUInt(Length(Gradients)) * SizeOf(TGradientRun) +
-    PtrUInt(Length(Shadows)) * SizeOf(TShadowRun);
+    PtrUInt(Length(Shadows)) * SizeOf(TShadowRun) + PtrUInt(Length(Stickies)) * SizeOf(TStickyRun);
 end;
 
 end.

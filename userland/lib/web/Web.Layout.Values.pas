@@ -76,11 +76,13 @@ function OverflowClips(Style: TCssComputedStyle): Boolean;
   box, opacity below 1, transform, filter, isolation, ...). }
 function MakesStackingContext(Box: TLayoutBox): Boolean;
 function ZIndexOf(Style: TCssComputedStyle): Integer;
+{ Whether mask-image has a layer other than none. }
+function HasMaskImage(Style: TCssComputedStyle): Boolean;
 
 implementation
 
 uses
-  Web.Text.FontInstances;
+  Css.Values, Web.Text.FontInstances;
 
 function IsAutoValue(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
 begin
@@ -358,6 +360,24 @@ begin
     Result := 0;
 end;
 
+function HasMaskImage(Style: TCssComputedStyle): Boolean;
+var
+  Images: PCssComputedValue;
+  Index: Integer;
+begin
+  Result := False;
+  if Style = nil then
+    Exit;
+  Images := Style.Value(cpMaskImage);
+  if (Images^.Kind <> cvValue) or (Images^.Data = nil) then
+    Exit;
+  if Images^.Data.Kind <> vkList then
+    Exit(Images^.Data.Kind <> vkKeyword);
+  for Index := 0 to Images^.Data.Count - 1 do
+    if Images^.Data.Items[Index].Kind <> vkKeyword then
+      Exit(True);
+end;
+
 function MakesStackingContext(Box: TLayoutBox): Boolean;
 var
   Style: TCssComputedStyle;
@@ -379,6 +399,8 @@ begin
   if Style.Value(cpTransform)^.Kind <> cvKeyword then
     Exit(True);
   if Style.Keyword(cpIsolation) = kwIsolate then
+    Exit(True);
+  if HasMaskImage(Style) then
     Exit(True);
   if Style.Value(cpFilter)^.Kind <> cvKeyword then
     Exit(True);

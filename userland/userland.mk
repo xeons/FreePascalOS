@@ -32,11 +32,13 @@
 #                  libtls, libcompression <- libhttp (URLs, HTTP/1.1 and HTTP/2; wget)
 #                  libtls, libhttp <- libquic (QUIC, QPACK, HTTP/3, and libhttp's
 #                  HTTP/3 connections; h3get, wget)
-#                  libjavascript, libhttp, libcss, libfont, libdrawing, libimage <- libweb (the browser
+#                  libjavascript, libhttp, libcss, libfont, libdrawing, libimage, libsvg <- libweb (the browser
 #                  engine; htmldump, webrender)
 #                  libsystem <- libjavascript (the ECMAScript engine; js)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
+#                  libcss, libfont, libimage <- libsvg (SVG documents and images;
+#                  libweb)
 #                  libweb, libcontrols <- libwebview (the web view control; browser)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
@@ -102,6 +104,7 @@ SSH_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/ssh
 QUIC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/quic
 HTTP_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/http
 CSS_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/css
+SVG_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/svg
 WEB_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/web
 JAVASCRIPT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/javascript
 WEBVIEW_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webview
@@ -122,6 +125,7 @@ SSH_LIBRARY := $(USER_LIBRARY_OUTPUT)/libssh.so
 QUIC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libquic.so
 HTTP_LIBRARY := $(USER_LIBRARY_OUTPUT)/libhttp.so
 CSS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcss.so
+SVG_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsvg.so
 WEB_LIBRARY := $(USER_LIBRARY_OUTPUT)/libweb.so
 JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
 WEBVIEW_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebview.so
@@ -178,7 +182,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
@@ -321,6 +325,18 @@ $(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcss.so -o $@ \
 		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
+# libsvg: SVG documents (XML, styling with libcss), their rendering with
+# libdrawing (text with libfont, images with libimage) and SVG as a
+# scalable image in libimage's codec registry.
+$(SVG_LIBRARY): $(CSS_LIBRARY) $(FONT_LIBRARY) $(IMAGE_LIBRARY) $(wildcard userland/lib/svg/*.pas)
+	@rm -rf $(SVG_LIBRARY_OBJECTS)
+	@mkdir -p $(SVG_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) \
+		-Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
+		-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fuuserland/lib/svg -FU$(SVG_LIBRARY_OBJECTS) userland/lib/svg/Svg.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libsvg.so -o $@ \
+		$(SVG_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lcss -lfont -limage -lcompression -ldrawing -lsystem
+
 # libweb: the browser engine (encodings, the HTML parser, the DOM, the event
 # loop, fetching through libhttp, loading and navigation, styling, layout,
 # painting and the script bindings). Its tables (atoms, encodings, named
@@ -340,12 +356,14 @@ $(WEB_GENERATED)/.generated: $(WEB_TABLE_SOURCES)
 	@touch $@
 
 $(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(JAVASCRIPT_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(FONT_LIBRARY) $(DRAWING_LIBRARY) $(IMAGE_LIBRARY) \
+		$(SVG_LIBRARY) \
 		$(WEB_GENERATED)/.generated $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc)
 	@rm -rf $(WEB_LIBRARY_OBJECTS)
 	@mkdir -p $(WEB_LIBRARY_OBJECTS)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fu$(SVG_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/web -Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Contents.pas
 	@# The bindings' units use each other in a cycle: compiled again from
 	@# the script units' entry, the ones built against an earlier state of
@@ -353,9 +371,10 @@ $(WEB_LIBRARY): $(SYSTEM_LIBRARY) $(JAVASCRIPT_LIBRARY) $(HTTP_LIBRARY) $(CSS_LI
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fu$(SVG_LIBRARY_OBJECTS) \
 		-Fuuserland/lib/web -Fi$(WEB_GENERATED) -FU$(WEB_LIBRARY_OBJECTS) userland/lib/web/Web.Script.PageScripting.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libweb.so -o $@ \
-		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ljavascript -lhttp -lcss -lfont -limage -ldrawing -ltls -lcompression \
+		$(WEB_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -ljavascript -lhttp -lsvg -lcss -lfont -limage -ldrawing -ltls -lcompression \
 		-lcryptography -lsystem
 
 # libwebview: TWebView, the control that shows web pages (libweb in a
@@ -367,11 +386,12 @@ $(WEBVIEW_LIBRARY): $(WEB_LIBRARY) $(CONTROLS_LIBRARY) $(wildcard userland/lib/w
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) \
 		-Fu$(TLS_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 		-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) \
+		-Fu$(SVG_LIBRARY_OBJECTS) \
 		-Fu$(WEB_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) -Fu$(WINDOWING_LIBRARY_OBJECTS) \
 		-Fu$(CONTROLS_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED) -Fuuserland/lib/webview -FU$(WEBVIEW_LIBRARY_OBJECTS) \
 		userland/lib/webview/WebView.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwebview.so -o $@ \
-		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -ljavascript -lcontrols -lwindowing -lconfiguration -lhttp \
+		$(WEBVIEW_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lweb -lsvg -ljavascript -lcontrols -lwindowing -lconfiguration -lhttp \
 		-lcss -lfont -limage -ldrawing -ltls -lcompression -lcryptography -lsystem
 
 # libjavascript: the ECMAScript engine (Js.*) and its embedding API.
@@ -462,7 +482,7 @@ $(TLSTEST_LIBRARY): $(SYSTEM_LIBRARY) $(TLSTEST_SOURCE)
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
 $(USER_PROGRAM_OUTPUT)/threadtest: $(TLSTEST_LIBRARY)
-GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest sessionmanager sysinfo) \
+GRAPHICAL_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,drawtest displayserver displayscale displaymode mousesettings keyboardsettings wintest ownertest sessionmanager sysinfo hangtest) \
 	$(addprefix $(APP_PROGRAM_OUTPUT)/,controlsdemo controlstour dialogtour notepad files terminal taskmanager calculator imageviewer paint)
 $(GRAPHICAL_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcontrols -lwindowing -lconfiguration -lfont -limage -lcompression \
 	-ldrawing
@@ -499,16 +519,16 @@ $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 # htmldump parses HTML through libweb.
 # webrender renders a page to a PNG (or prints its layout) through libweb.
 WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump webrender)
-$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -ljavascript -lhttp -lcss -limage -lfont -ldrawing -ltls -lcompression -lcryptography
-$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
+$(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -lsvg -ljavascript -lhttp -lcss -limage -lfont -ldrawing -ltls -lcompression -lcryptography
+$(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fuuserland/webrender
 $(WEB_PROGRAMS): $(WEB_LIBRARY) $(wildcard userland/webrender/*.pas)
 # The browser: web views (libwebview over libweb and libjavascript), with
 # HTTP/3 from libquic.
 BROWSER_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,browser)
-$(BROWSER_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lweb -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
+$(BROWSER_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lwebview -lweb -lsvg -ljavascript -lquic -lhttp -lcss -lcontrols -lwindowing \
 	-lconfiguration -lfont -limage -lcompression -ldrawing -ltls
-$(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) \
+$(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) \
 	-Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
 	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) \
 	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \

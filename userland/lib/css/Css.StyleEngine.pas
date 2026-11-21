@@ -41,7 +41,7 @@ interface
 uses
   Css.Atoms, Css.Selectors, Css.Declarations, Css.Stylesheets, Css.MediaQueries, Css.ElementAdapter,
   Css.BloomFilter, Css.SelectorMatching, Css.RuleIndex, Css.Cascade, Css.StyleStructs, Css.ComputedStyle,
-  Css.StyleCompute, Css.PropertyIds;
+  Css.StyleCompute, Css.PropertyIds, Css.StateInvalidation;
 
 type
   TCssStyleStatistics = record
@@ -79,6 +79,7 @@ type
     FMatcher: TCssSelectorMatcher;
     FFilter: TCssAncestorFilter;
     FIndex: TCssRuleIndex;
+    FStateDependencies: TCssStateDependencies;
     FStructCache: TCssStructCache;
     FComputer: TCssStyleComputer;
     FSheets: array of TCssStyleSheet;
@@ -140,6 +141,9 @@ type
     property Statistics: TCssStyleStatistics read FStatistics;
     property Environment: TCssMediaEnvironment read FEnvironment;
     property Rules: TCssRuleIndex read FIndex;
+    { What must be styled again when Element's states Changed (the
+      selectors using them decide; Css.StateInvalidation). }
+    function StateInvalidation(Element: TCssElement; Changed: TCssElementStates): TCssStateInvalidation;
     property Matcher: TCssSelectorMatcher read FMatcher;
     property StructCache: TCssStructCache read FStructCache;
   end;
@@ -161,6 +165,7 @@ begin
   FMatcher := TCssSelectorMatcher.Create(Adapter);
   FFilter := TCssAncestorFilter.Create;
   FIndex := TCssRuleIndex.Create;
+  FStateDependencies := TCssStateDependencies.Create;
   FStructCache := TCssStructCache.Create;
   FUseUserAgentSheet := UseUserAgentSheet;
   FEnvironment := DefaultMediaEnvironment;
@@ -174,6 +179,7 @@ begin
   FComputer.Free;
   FStructCache.Free;
   FIndex.Free;
+  FStateDependencies.Free;
   FFilter.Free;
   FMatcher.Free;
   inherited Destroy;
@@ -247,6 +253,7 @@ begin
   end;
   SetLength(Sheets, Count);
   FIndex.Build(Sheets, FEnvironment);
+  FStateDependencies.Build(FIndex);
   ClearSharing;
   FreeAndNil(FComputer);
   FComputer := TCssStyleComputer.Create(FStructCache, FIndex, FEnvironment);
@@ -382,8 +389,9 @@ begin
   EnsureIndex;
   Inc(FStatistics.ElementsStyled);
   IsRoot := (PseudoElement = peNone) and FAdapter.IsRoot(Element);
-  { The ancestor filter is good only while it holds this element's ancestors. }
-  if (FFilter.Depth > 0) and (FFilter.Top = FAdapter.Parent(Element)) and (PseudoElement = peNone) then
+  { The ancestor filter is good only while it holds this element's
+    ancestors (its pseudo-elements' selectors match on it too). }
+  if (FFilter.Depth > 0) and (FFilter.Top = FAdapter.Parent(Element)) then
     FMatcher.Filter := FFilter
   else if (FFilter.Depth = 0) and (FAdapter.Parent(Element) = nil) then
     FMatcher.Filter := FFilter
@@ -487,6 +495,12 @@ function TCssStyleEngine.AnonymousStyle(ParentStyle: TCssComputedStyle): TCssCom
 begin
   EnsureIndex;
   Result := FComputer.AnonymousStyle(ParentStyle);
+end;
+
+function TCssStyleEngine.StateInvalidation(Element: TCssElement; Changed: TCssElementStates): TCssStateInvalidation;
+begin
+  EnsureIndex;
+  Result := FStateDependencies.Invalidation(FAdapter, Element, Changed);
 end;
 
 procedure TCssStyleEngine.PushAncestor(Element: TCssElement);

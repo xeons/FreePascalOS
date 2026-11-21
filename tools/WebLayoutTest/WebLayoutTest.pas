@@ -50,8 +50,11 @@ begin
   SetFontDirectory(ParamStr(2));
   CheckReferencePages(ParamStr(1), Update);
   CheckIncrementalLayout;
+  CheckStateInvalidation;
   CheckHitTesting;
   CheckPainting;
+  CheckStickyPainting;
+  CheckMaskPainting;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

@@ -32,6 +32,7 @@ interface
 
 uses
   Web.TextBuffers,
+  Web.Profiling,
   Web.Atoms,
   Web.Namespaces,
   Web.Encoding.Labels,
@@ -91,6 +92,7 @@ uses
   Web.Layout.Dump,
   Web.Paint.DisplayList,
   Web.Paint.Gradients,
+  Web.Paint.Sticky,
   Web.Paint.Builder,
   Web.Paint.Raster,
   Web.Paint.Painter,
@@ -113,6 +115,7 @@ uses
   Web.Fetch.LocalFiles,
   Web.Fetch.NetworkContexts,
   Web.Fetch.Jobs,
+  Web.Fetch.Monitors,
   Web.Fetch.HttpHops,
   Web.Fetch.Fetcher,
   Web.Navigation.Events,

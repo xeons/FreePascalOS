@@ -394,19 +394,24 @@ end;
 procedure TNavigable.CollectGarbage;
 var
   Index: Integer;
-  Items: TList;
+  Items, Others: TList;
 begin
   Items := FGarbage;
   FGarbage := TList.Create;
+  Others := TList.Create;
   try
-    { Loaders before the windows that their documents point at. }
-    for Index := 0 to Items.Count - 1 do
-      if TObject(Items[Index]) is TDocumentLoader then
-        TObject(Items[Index]).Free;
+    { Loaders before the windows that their documents point at (sorted
+      out first: a freed loader cannot be asked its class). }
     for Index := 0 to Items.Count - 1 do
       if not (TObject(Items[Index]) is TDocumentLoader) then
+        Others.Add(Items[Index]);
+    for Index := 0 to Items.Count - 1 do
+      if Others.IndexOf(Items[Index]) < 0 then
         TObject(Items[Index]).Free;
+    for Index := 0 to Others.Count - 1 do
+      TObject(Others[Index]).Free;
   finally
+    Others.Free;
     Items.Free;
   end;
 end;

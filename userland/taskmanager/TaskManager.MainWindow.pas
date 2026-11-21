@@ -61,12 +61,16 @@ type
       move a new window to fit the display). }
     FToldLeft: LongInt;
     FToldTop: LongInt;
+    { Offering to end processes that did not end when asked (a question
+      is on the screen). }
+    FOffering: Boolean;
     procedure BuildMenus;
     procedure BuildPages;
     procedure PlaceStatusPanels;
     procedure ShowStatus;
     procedure SetUpdateSpeed(Milliseconds: LongWord);
     procedure TellTabPlaces;
+    procedure OfferToEndOverdue;
     procedure TabChanged(Sender: TControl);
     procedure SortChanged(Column: LongInt; Ascending: Boolean);
     procedure ExitChosen(Item: TMenuItem);
@@ -98,11 +102,16 @@ uses
   TaskManager.Settings,
   TaskManager.Formatting,
   TaskManager.EndWatch,
+  TaskManager.Targets,
+  TaskManager.ProcessActions,
   TaskManager.Output;
 
 const
   ProgramName = 'Task Manager';
   UpdateTimer = 1;
+  { Looks for processes that did not end when asked. }
+  EndWatchTimer = 2;
+  EndWatchMilliseconds = 1000;
   { Logical units: the status bar's panels. }
   StatusPanelWidth = 150;
   TabNames: array[0..2] of string = ('programs', 'processes', 'performance');
@@ -251,6 +260,7 @@ begin
   Sleep(100);
   Refresh;
   SetUpdateSpeed(FUpdateMilliseconds);
+  StartTimer(EndWatchTimer, EndWatchMilliseconds);
   Say('tab ' + TabNames[FTabs.PageIndex]);
   TellTabPlaces;
 end;
@@ -272,8 +282,26 @@ procedure TTaskManagerWindow.TimerFired(TimerId: LongWord);
 begin
   case TimerId of
     UpdateTimer: Refresh;
-    EndProgramTimer: FProgramsPage.EndWaitIsOver;
+    EndWatchTimer: OfferToEndOverdue;
   end;
+end;
+
+procedure TTaskManagerWindow.OfferToEndOverdue;
+var
+  Overdue: TProcessTargets;
+begin
+  if FOffering then
+    Exit;
+  Overdue := TakeOverdueRequests;
+  if Length(Overdue) = 0 then
+    Exit;
+  FOffering := True;
+  try
+    OfferToEndNow(Self, Overdue);
+  finally
+    FOffering := False;
+  end;
+  Refresh;
 end;
 
 procedure TTaskManagerWindow.ExitChosen(Item: TMenuItem);

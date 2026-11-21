@@ -40,12 +40,12 @@ type
     or all not inherited, so inheriting one is copying a pointer. }
   TCssPropertyGroup = (pgNone,
     { inherited }
-    pgFont, pgInheritedText, pgInheritedBox, pgInheritedUi, pgList, pgInheritedTable,
+    pgFont, pgInheritedText, pgInheritedBox, pgInheritedUi, pgList, pgInheritedTable, pgInheritedSvg,
     { not inherited }
     pgBox, pgPosition, pgMargin, pgPadding, pgBorder, pgOutline, pgBackground, pgEffects,
-    pgText, pgContent, pgTable, pgColumn, pgUi, pgAnimation);
+    pgText, pgContent, pgTable, pgColumn, pgUi, pgAnimation, pgSvg);
 
-  TCssStructGroup = pgFont..pgAnimation;
+  TCssStructGroup = pgFont..pgSvg;
 
   { How a specified value becomes a computed value. }
   TCssComputeKind = (
@@ -124,6 +124,9 @@ type
     { effects }
     cpOpacity, cpBoxShadow, cpFilter, cpBackdropFilter, cpMixBlendMode, cpIsolation, cpClipPath,
     cpClip,
+    { masking }
+    cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin, cpMaskClip,
+    cpMaskMode,
     { text decoration }
     cpTextDecorationLine, cpTextDecorationStyle, cpTextDecorationColor,
     cpTextDecorationThickness, cpTextUnderlineOffset, cpTextOverflow, cpUnicodeBidi,
@@ -136,6 +139,12 @@ type
     cpColumnSpan, cpColumnFill,
     { user interface }
     cpUserSelect, cpResize, cpTouchAction, cpScrollbarWidth, cpScrollbarGutter, cpScrollbarColor,
+    { SVG painting, inherited }
+    cpFill, cpFillRule, cpFillOpacity, cpStroke, cpStrokeWidth, cpStrokeLinecap, cpStrokeLinejoin,
+    cpStrokeMiterlimit, cpStrokeDasharray, cpStrokeDashoffset, cpStrokeOpacity, cpClipRule, cpTextAnchor,
+    cpPaintOrder,
+    { SVG, not inherited }
+    cpStopColor, cpStopOpacity, cpVectorEffect,
     { transitions and animations }
     cpTransitionProperty, cpTransitionDuration, cpTransitionTimingFunction, cpTransitionDelay,
     cpTransitionBehavior, cpAnimationName, cpAnimationDuration, cpAnimationTimingFunction,
@@ -161,7 +170,7 @@ type
     cpBorderInlineEnd, cpBorderBlockWidth, cpBorderBlockStyle, cpBorderBlockColor,
     cpBorderInlineWidth, cpBorderInlineStyle, cpBorderInlineColor, cpMarginBlock, cpMarginInline,
     cpPaddingBlock, cpPaddingInline, cpInsetBlock, cpInsetInline, cpOutline, cpBackground,
-    cpBackgroundPosition, cpFont, cpFontVariant, cpFlex, cpFlexFlow, cpGrid, cpGridTemplate,
+    cpBackgroundPosition, cpMask, cpMaskPosition, cpFont, cpFontVariant, cpFlex, cpFlexFlow, cpGrid, cpGridTemplate,
     cpGridRow, cpGridColumn, cpGridArea, cpGap, cpPlaceContent, cpPlaceItems, cpPlaceSelf,
     cpOverflow, cpListStyle, cpTextDecoration, cpTransition, cpAnimation, cpColumns,
     cpColumnRule, cpContainer,
@@ -181,7 +190,8 @@ const
   LonghandCount = Ord(Pred(cpMargin));
   PhysicalCount = Ord(cpAnimationComposition);
 
-  InheritedGroups = [pgFont, pgInheritedText, pgInheritedBox, pgInheritedUi, pgList, pgInheritedTable];
+  InheritedGroups = [pgFont, pgInheritedText, pgInheritedBox, pgInheritedUi, pgList, pgInheritedTable,
+    pgInheritedSvg];
 
 type
   TCssPropertyInfo = record

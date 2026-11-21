@@ -84,6 +84,15 @@ how the existing pieces fit together.
 - [x] Thread priorities set by programs (offsets from the process's)
 - [ ] Thread names
 - [x] Ending another program (TerminateProcess; kill, timeout)
+- [x] Ending a stuck program always works: checked for spinning threads,
+      every kind of kernel wait, deadlocks, sockets and windows that stop
+      being served (hangtest --check); a thread started during the ending
+      never runs; kill -9 of a group; a process still there 10 s after it
+      was told to end is reported with its threads ([ending])
+- [ ] Bound the kernel's remaining non-alertable waits a user thread can
+      reach (device open and close, block I/O, the wait after cancelling a
+      request), so a driver that never completes cannot keep a process
+      from ending
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
 - [x] Asynchronous notifications a program can handle: a notification queue
@@ -465,6 +474,13 @@ normalized (0-65535), not pixels.
       process with End / End now / Stop / Continue / Priority / Properties,
       processor and memory graphs; processor time timed at every switch,
       per-process and system memory figures, Ctrl+Shift+Escape)
+- [x] Programs that stop responding: the display server pings each
+      program's message loop and marks one that stops answering ("(Not
+      responding)" after its titles, a flag in window lists); the task
+      manager shows it and ends such a program outright (asked), and offers
+      the same for any process still there when its wait after End is over
+- [ ] The taskbar marking a program that is not responding; its windows'
+      contents faded
 - [x] Graphical login, locking, log off, shut down and suspend from the desktop
       (the lock enforced by the display server; Super+L, Ctrl+Alt+L, the
       Start menu, after idle minutes and before suspending)
@@ -526,6 +542,10 @@ normalized (0-65535), not pixels.
   - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
     through pools; AVIF, the same HEIF container with royalty-free AV1, can
     be added instead if wanted)
+  - [ ] AVIF (HEIF container, AV1 intra frames: a large decoder; until then
+        the browser neither advertises nor accepts image/avif)
+  - [x] Scalable images (`Image.Scalable`): drawn again at any size, the
+        last renderings kept
   - [x] Colour management basics: ICC v2/v4 matrix/TRC, grey and LUT
         (mft1, mft2, mAB) profiles to sRGB with tables, wtpt/chad,
         PNG gAMA/cHRM, CMYK naive (`Image.ColorProfiles`,
@@ -1015,11 +1035,38 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Container queries: evaluate @container once layout knows container sizes
 - [ ] :visited privacy (two styles per link, only color differences shown)
 - [ ] Relative color syntax, light-dark(), @scope, @counter-style,
-      @font-feature-values, SVG presentation properties
+      @font-feature-values
+- [x] SVG painting properties (fill, stroke and its parts, stop-color,
+      stop-opacity, text-anchor, paint-order, vector-effect, clip-rule)
+- [ ] SVG's other properties (marker-*, mask as a property, filters'
+      flood/lighting colours, dominant-baseline, geometry properties)
 - [ ] Run transitions and animations (interpolation per animation type)
 - [ ] Gamut mapping in OKLCh instead of clipping
 - [ ] Incremental restyle (invalidation by changed class, id, attribute or state
       instead of restyling the subtree)
+
+## SVG (libsvg)
+
+- [x] XML parser (namespaces, entities from the internal subset, CDATA),
+      styling with libcss (<style>, presentation attributes, style attribute)
+- [x] Shapes, path data with arcs, fill rules, strokes (width, caps, joins,
+      miter limit, dashes, non-scaling), transforms, viewBox and
+      preserveAspectRatio, nested svg, use and symbol (restyled under the use)
+- [x] Paint servers: linear and radial gradients (units, transforms, spread,
+      href inheritance), patterns; opacity groups, clip paths, masks
+- [x] Text (text, tspan, x/y/dx/dy/rotate, text-anchor, kerning, spacing),
+      <image> with data: URLs (SVG included)
+- [x] SVG as a scalable image in libimage's registry (img, CSS url(),
+      favicons), inline SVG in libweb, drawn at the device size
+- [x] Host test (make svg-test) and a webrender reference page
+- [ ] Markers; textPath along its path; text decorations, vertical and
+      bidirectional text
+- [ ] Filters (feGaussianBlur, feColorMatrix, feOffset, feMerge, ... and CSS
+      filter: url())
+- [ ] SMIL animation; CSS transforms and animations on SVG elements
+- [ ] External references (use and image of other URLs, through the loader),
+      foreignObject's HTML, .svgz without Content-Encoding
+- [ ] Hit testing inside inline SVG (pointer events per element)
 
 ## JavaScript engine
 
@@ -1144,8 +1191,14 @@ Part 2 (style, layout, painting):
 - [ ] Bidi and writing modes, shaping beyond kerning, WOFF2 and CFF web
       fonts (web fonts are process-wide, not per document),
       ::first-line/::first-letter
-- [ ] Inline boxes split around blocks, relative inline boxes, real sticky
-      positioning, transforms, filters, blend modes, clip-path,
+- [x] position: sticky (offsets at painting and hit testing time under
+      the viewport, when the list is built in inner scroll containers)
+- [x] CSS masks (mask-image and friends, -webkit- names, the shorthand),
+      composited through the layers' alpha
+- [x] :hover/:focus changes restyle only what selectors reading them reach
+      (Css.StateInvalidation); the parser nests at most 512 deep
+- [ ] Inline boxes split around blocks, relative inline boxes,
+      transforms, filters, blend modes, clip-path,
       border-image, conic gradients, blurred text shadows
 - [x] Scrollbars (the web view's: theme bars for the viewport, thin bars in
       scroll containers)
@@ -1255,5 +1308,18 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Web view: lazy images near the viewport, animated images, printing
 - [ ] Browser: session restore, per-site settings, a downloads window with
       cancel buttons, separate windows (Shift+click opens a tab), tab drag
+- [x] webbrowse (make webbrowse): the engine on real sites from the host
+      (PNG, layout, DOM, console, network log, phase times, memory, hover
+      timing, a sampling profiler, a watchdog with stacks)
+- [x] Wikipedia (Main Page, articles, search, en.m redirect) loads and
+      renders: grid minmax(0, 1fr), sticky contents, masked icons, no
+      crash on resize or on a layout before the first bytes; bounded HTTP
+      and decode threads; slow layouts throttled in the web view
+- [ ] Wikipedia's JavaScript (ResourceLoader's startup stops at its
+      compatibility check: no localStorage); TOC and menus as with JS
+- [ ] Large pages in QEMU need the kernel's growable address-space region
+      table (1024 regions run out on Wikipedia's Linux article)
+- [ ] Interruptible style and layout (a first layout of a long page is one
+      piece of work on the GUI thread)
 - [ ] getComputedStyle and layout metrics from the web view's layout (a
       `TScriptEnvironment` hook the view could answer)

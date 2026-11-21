@@ -346,14 +346,46 @@ begin
     FLayout.SetViewport(ViewportCssWidth, ViewportCssHeight, DeviceScale);
 end;
 
-{ Lays the page out, and again if the scroll bars came or went. }
-procedure TWebView.UpdateLayout;
+const
+  { Layouts quicker than this always run at once. }
+  QuickLayoutMilliseconds = 25;
+
+{ Whether a layout may run now: a slow one (a long page loading on a slow
+  machine) waits until the GUI had twice its time to itself since the
+  last, so input and painting go on between them. }
+function TWebView.LayoutDue: Boolean;
+begin
+  Result := (FLayoutCost < QuickLayoutMilliseconds) or (GetTickCount64 - FLayoutDoneAt >= 2 * FLayoutCost);
+end;
+
+{ Lays the page out, and again if the scroll bars came or went. Unless
+  Force, a layout that is not due (LayoutDue) is left for a later frame:
+  what is shown and hit tested meanwhile is the last layout. }
+procedure TWebView.UpdateLayout(Force: Boolean);
+var
+  Started: QWord;
+begin
+  if (FLayout = nil) or not HasRoom then
+    Exit;
+  if not Force and FLayout.NeedsUpdate and not LayoutDue then
+  begin
+    RequestFrame;
+    Exit;
+  end;
+  Started := GetTickCount64;
+  try
+    UpdateLayoutRounds;
+  finally
+    FLayoutDoneAt := GetTickCount64;
+    FLayoutCost := FLayoutDoneAt - Started;
+  end;
+end;
+
+procedure TWebView.UpdateLayoutRounds;
 var
   Round_: Integer;
   HadVertical, HadHorizontal: Boolean;
 begin
-  if (FLayout = nil) or not HasRoom then
-    Exit;
   for Round_ := 1 to 3 do
   begin
     ApplyViewport;
@@ -487,7 +519,7 @@ begin
   ApplyViewport;
   if FLayout <> nil then
   begin
-    UpdateLayout;
+    UpdateLayout(True);
     ScrollViewportTo(ScrollX, Ratio * FLayout.DocumentHeight);
   end;
   InvalidateViewport;

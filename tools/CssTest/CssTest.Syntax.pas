@@ -260,6 +260,13 @@ begin
   CheckLonghand('background', 'url(x.png) no-repeat center / cover, blue', 'background-color', 'rgb(0, 0, 255)');
   CheckLonghand('background', 'url(x.png) no-repeat center / cover, blue', 'background-position-x', 'center, 0%');
   CheckLonghand('background', 'red, blue', 'background-color', '');
+  CheckLonghand('mask', 'url(i.svg) no-repeat center / 20px, linear-gradient(red, blue)', 'mask-size', '20px, auto');
+  CheckLonghand('mask', 'url(i.svg) no-repeat center / 20px', 'mask-repeat', 'no-repeat');
+  CheckLonghand('mask', 'url(i.svg) content-box luminance', 'mask-clip', 'content-box');
+  CheckLonghand('mask', 'url(i.svg) content-box luminance', 'mask-mode', 'luminance');
+  CheckLonghand('-webkit-mask', 'url(i.svg) no-repeat', 'mask-repeat', 'no-repeat');
+  CheckLonghand('mask-position', 'right 4px top', 'mask-position-x', 'right 4px');
+  CheckLonghand('-webkit-mask-size', 'contain', 'mask-size', 'contain');
   CheckLonghand('transition', 'opacity 1s ease-in .5s, transform 2s', 'transition-delay', '0.5s, 0s');
   CheckLonghand('transition', 'opacity 1s ease-in .5s, transform 2s', 'transition-property', 'opacity, transform');
   CheckLonghand('animation', 'spin 2s infinite linear', 'animation-iteration-count', 'infinite');

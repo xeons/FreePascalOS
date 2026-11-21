@@ -156,6 +156,9 @@ type
 
 implementation
 
+uses
+  Web.Profiling;
+
 constructor TEventLoop.Create(Clock: TEventLoopClock);
 var
   Source: TTaskSource;
@@ -377,6 +380,7 @@ var
 begin
   Previous := FCurrentTask;
   FCurrentTask := Task;
+  EnterPhase(PhaseTask);
   try
     try
       Task.Run;
@@ -385,6 +389,7 @@ begin
         ReportException(Error);
     end;
   finally
+    LeavePhase;
     FCurrentTask := Previous;
     Task.Free;
   end;

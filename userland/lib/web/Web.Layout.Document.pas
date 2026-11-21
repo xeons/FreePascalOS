@@ -53,6 +53,10 @@ type
     X, Y, Width, Height: Single;
     ScrollWidth, ScrollHeight: Single;
     ScrollX, ScrollY: Single;
+    { Whether it shows a scroll bar along that axis: overflow auto or
+      scroll there, and the box is visible (visibility, no transparent
+      ancestor). overflow: hidden scrolls only from script. }
+    BarX, BarY: Boolean;
   end;
   TScrollContainerArray = array of TScrollContainerInfo;
 
@@ -83,6 +87,7 @@ type
     procedure TakeElementImage(Box: TReplacedBox; Element: TElement);
     procedure TakePaintStyles(Box: TLayoutBox; Element: TElement; Style: TCssComputedStyle);
     procedure RebuildDirtyBoxes(Node: TNode);
+    procedure UpdateBoxes;
     procedure ApplyEnvironment;
     procedure ComputeScrollExtents;
   public
@@ -126,8 +131,9 @@ type
 implementation
 
 uses
-  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
-  Web.Layout.Positioned, Web.Text.FontInstances;
+  Web.Profiling,
+  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
+  Web.Layout.Positioned, Web.Text.FontInstances, Web.Svg.InlineImages;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -390,7 +396,8 @@ begin
   begin
     Box := BoxOf(Node);
     if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
-      if TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node)) then
+      if (TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node))) and
+         not IsOutermostSvgElement(TElement(Node)) then
       begin
         TakeElementImage(TReplacedBox(Box), TElement(Node));
         Box.MarkNeedsLayout;
@@ -403,6 +410,9 @@ end;
 procedure TDocumentLayout.TakeElementImage(Box: TReplacedBox; Element: TElement);
 begin
   Box.Image := FResources.ElementImage(Element);
+  { Inline SVG has no loaded image: it draws its own subtree. }
+  if Box.Image = nil then
+    Box.Image := FBuilder.OwnImageOf(Element);
   if not FResources.ElementImageNaturalSize(Element, Box.NaturalWidth, Box.NaturalHeight) then
   begin
     Box.NaturalWidth := 0;
@@ -452,10 +462,52 @@ end;
 procedure TDocumentLayout.Update;
 var
   Input: TLayoutInput;
-  Data: PNodeData;
   Viewport: TLayoutBox;
 begin
-  FStyler.UpdateStyles;
+  EnterPhase(PhaseStyle);
+  try
+    FStyler.UpdateStyles;
+  finally
+    LeavePhase;
+  end;
+  EnterPhase(PhaseBoxes);
+  try
+    UpdateBoxes;
+  finally
+    LeavePhase;
+  end;
+  Viewport := FRoot;
+  if FLayoutDirty or ([bfNeedsLayout, bfChildNeedsLayout] * Viewport.Flags <> []) then
+  begin
+    EnterPhase(PhaseLayout);
+    try
+      FillChar(Input, SizeOf(Input), 0);
+      Input.AvailableWidth := FViewportWidth;
+      Input.ContainingHeight := FViewportHeight;
+      Input.WidthMode := wmStretch;
+      Input.FixedWidth := -1;
+      Input.FixedHeight := -1;
+      Input.ViewportWidth := FViewportWidth;
+      Input.ViewportHeight := FViewportHeight;
+      FFixedBoxes.Clear;
+      Input.FixedBoxes := FFixedBoxes;
+      LayoutBox(Viewport, Input);
+      LayoutPositionedBoxes(Viewport, FFixedBoxes, Input);
+      ComputeScrollExtents;
+      FLayoutDirty := False;
+      Inc(FPaintVersion);
+    finally
+      LeavePhase;
+    end;
+  end;
+end;
+
+{ The box tree brought up to date with the styles: built whole the first
+  time (and after a full rebuild), else the dirty subtrees again. }
+procedure TDocumentLayout.UpdateBoxes;
+var
+  Data: PNodeData;
+begin
   if FFullRebuild or (FRoot = nil) then
   begin
     FreeBoxTree(FRoot);
@@ -472,25 +524,6 @@ begin
   begin
     ResolveGeneratedContent(FRoot);
     FBoxesChanged := False;
-    Inc(FPaintVersion);
-  end;
-  Viewport := FRoot;
-  if FLayoutDirty or ([bfNeedsLayout, bfChildNeedsLayout] * Viewport.Flags <> []) then
-  begin
-    FillChar(Input, SizeOf(Input), 0);
-    Input.AvailableWidth := FViewportWidth;
-    Input.ContainingHeight := FViewportHeight;
-    Input.WidthMode := wmStretch;
-    Input.FixedWidth := -1;
-    Input.FixedHeight := -1;
-    Input.ViewportWidth := FViewportWidth;
-    Input.ViewportHeight := FViewportHeight;
-    FFixedBoxes.Clear;
-    Input.FixedBoxes := FFixedBoxes;
-    LayoutBox(Viewport, Input);
-    LayoutPositionedBoxes(Viewport, FFixedBoxes, Input);
-    ComputeScrollExtents;
-    FLayoutDirty := False;
     Inc(FPaintVersion);
   end;
 end;
@@ -574,14 +607,22 @@ begin
     Result := FRoot.ScrollHeight;
 end;
 
-procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer);
+function ShowsBar(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
+begin
+  Result := (Style <> nil) and KeywordIn(Style.Keyword(Id), [kwAuto, kwScroll]);
+end;
+
+procedure CollectScrollers(Box: TLayoutBox; var List: TScrollContainerArray; var Count: Integer;
+  Transparent: Boolean);
 var
   Child: TLayoutBox;
   X, Y: Single;
+  Hidden, Shown: Boolean;
 begin
   Child := Box.FirstChild;
   while Child <> nil do
   begin
+    Hidden := Transparent or ((Child.Style <> nil) and (Child.Style.Value(cpOpacity)^.Number <= 0));
     if bfScrollContainer in Child.Flags then
     begin
       if Count >= Length(List) then
@@ -597,9 +638,12 @@ begin
       List[Count].ScrollHeight := Child.ScrollHeight;
       List[Count].ScrollX := Child.ScrollX;
       List[Count].ScrollY := Child.ScrollY;
+      Shown := not Hidden and (Child.Style <> nil) and (Child.Style.Keyword(cpVisibility) = kwVisible);
+      List[Count].BarX := Shown and ShowsBar(Child.Style, cpOverflowX);
+      List[Count].BarY := Shown and ShowsBar(Child.Style, cpOverflowY);
       Inc(Count);
     end;
-    CollectScrollers(Child, List, Count);
+    CollectScrollers(Child, List, Count, Hidden);
     Child := Child.NextSibling;
   end;
 end;
@@ -622,8 +666,10 @@ begin
   Result[0].ScrollHeight := FRoot.ScrollHeight;
   Result[0].ScrollX := FRoot.ScrollX;
   Result[0].ScrollY := FRoot.ScrollY;
+  Result[0].BarX := True;
+  Result[0].BarY := True;
   Count := 1;
-  CollectScrollers(FRoot, Result, Count);
+  CollectScrollers(FRoot, Result, Count, False);
   SetLength(Result, Count);
 end;
 

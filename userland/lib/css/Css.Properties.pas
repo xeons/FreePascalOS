@@ -120,7 +120,15 @@ begin
   else if Lower = '-webkit-box-shadow' then Result := cpBoxShadow
   else if Lower = '-webkit-filter' then Result := cpFilter
   else if Lower = '-webkit-backdrop-filter' then Result := cpBackdropFilter
-  else if Lower = '-webkit-mask-image' then Result := cpInvalid
+  else if Lower = '-webkit-mask-image' then Result := cpMaskImage
+  else if Lower = '-webkit-mask-position' then Result := cpMaskPosition
+  else if Lower = '-webkit-mask-position-x' then Result := cpMaskPositionX
+  else if Lower = '-webkit-mask-position-y' then Result := cpMaskPositionY
+  else if Lower = '-webkit-mask-size' then Result := cpMaskSize
+  else if Lower = '-webkit-mask-repeat' then Result := cpMaskRepeat
+  else if Lower = '-webkit-mask-origin' then Result := cpMaskOrigin
+  else if Lower = '-webkit-mask-clip' then Result := cpMaskClip
+  else if Lower = '-webkit-mask' then Result := cpMask
   else
     Result := cpInvalid;
 end;

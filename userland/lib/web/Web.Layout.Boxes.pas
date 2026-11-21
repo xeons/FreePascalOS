@@ -521,8 +521,9 @@ begin
     { Its inline items hold this box's measurements. }
     if Ancestor.Inline <> nil then
       Ancestor.Inline.ItemsValid := False;
-    if bfChildNeedsLayout in Ancestor.Flags then
-      Break;
+    { All the way up: an ancestor may still carry the flag from a layout
+      that did not reach it (stopping there left the root unaware, and
+      lines kept pointing at boxes that were freed). }
     Include(Ancestor.Flags, bfChildNeedsLayout);
     Ancestor := Ancestor.Parent;
   end;

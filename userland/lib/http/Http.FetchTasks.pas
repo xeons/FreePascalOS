@@ -89,6 +89,9 @@ implementation
 constructor THttpFetchTask.Create(Client: THttpClient; Request: THttpRequest; OnHead: THttpTaskHeadEvent;
   OnData: THttpTaskDataEvent; OnDone: THttpTaskDoneEvent; Tag: PtrInt);
 begin
+  { The token first: when the thread cannot be made the constructor
+    raises and the destructor runs, which cancels through it. }
+  FToken := THttpCancelToken.Create;
   inherited Create(True);
   FreeOnTerminate := False;
   FClient := Client;
@@ -97,23 +100,28 @@ begin
   FOnData := OnData;
   FOnDone := OnDone;
   FTag := Tag;
-  FToken := THttpCancelToken.Create;
   Start;
 end;
 
 destructor THttpFetchTask.Destroy;
 begin
   Cancel;
-  WaitFor;
+  { Not when the thread was never made (the constructor failed; the
+    caller still owns the request then). }
+  if Handle <> 0 then
+  begin
+    WaitFor;
+    FRequest.Free;
+  end;
   FResponse.Free;
-  FRequest.Free;
   FToken.Free;
   inherited Destroy;
 end;
 
 procedure THttpFetchTask.Cancel;
 begin
-  FToken.Cancel;
+  if FToken <> nil then
+    FToken.Cancel;
 end;
 
 function THttpFetchTask.HeadArrived(Response: THttpResponse): Boolean;

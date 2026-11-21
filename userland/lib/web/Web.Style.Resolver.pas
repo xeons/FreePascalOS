@@ -80,6 +80,7 @@ type
     function StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle): Boolean;
     procedure ResolvePseudoStyles(Element: TElement; Data: PNodeData; var Change: TStyleChangeKind);
     procedure MarkSiblingsDirty(Parent: TNode);
+    procedure MarkLaterSiblingsDirty(Element: TElement);
     procedure CheckSheetOwner(Node: TNode);
   public
     constructor Create(Document: TDocument; Resources: TDocumentResources);
@@ -94,6 +95,10 @@ type
     procedure InvalidateAll;
     { Style of an anonymous box under ParentStyle (a new reference). }
     function AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
+    { The style Element would have under ParentStyle (a new reference),
+      whether or not it is styled in place: for content inline SVG's
+      <use> instantiates, which may sit in a hidden sprite sheet. }
+    function ResolveStyleUnder(Element: TElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { Observer }
     procedure TreeMutated(Target: TNode; const Added, Removed: TNodeArray; PreviousSibling, NextSibling: TNode);
       override;
@@ -121,7 +126,7 @@ function CompareStyles(Old, New: TCssComputedStyle): TStyleChangeKind;
 implementation
 
 uses
-  Css.PropertyIds, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent;
+  Css.PropertyIds, Css.StateInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent;
 
 var
   AtomStyleAttribute: TAtom;
@@ -264,20 +269,51 @@ end;
 procedure TDocumentStyler.SetElementStates(Element: TElement; States: TCssElementStates);
 var
   Data: PNodeData;
+  Invalidation: TCssStateInvalidation;
 begin
   Data := NodeDataOf(Element);
   if Data^.States = States then
     Exit;
+  { Only what a selector reading the changed states could now match
+    or stop matching (moving the pointer changes :hover on a chain of
+    ancestors: their subtrees are not all styled again). }
+  Invalidation := FEngine.StateInvalidation(Element, Data^.States >< States);
   Data^.States := States;
+  if Invalidation = [] then
+    Exit;
   FTreeChanged := True;
-  MarkSubtreeStyleDirty(Element);
-  if Element.ParentNode <> nil then
-    MarkSiblingsDirty(Element.ParentNode);
+  if siDescendants in Invalidation then
+    MarkSubtreeStyleDirty(Element)
+  else if siSelf in Invalidation then
+    MarkStyleDirty(Element);
+  if siSiblings in Invalidation then
+    MarkLaterSiblingsDirty(Element);
+end;
+
+{ The element's later siblings and everything in them. }
+procedure TDocumentStyler.MarkLaterSiblingsDirty(Element: TElement);
+var
+  Sibling: TNode;
+begin
+  Sibling := Element.NextSibling;
+  while Sibling <> nil do
+  begin
+    if Sibling.IsElement then
+      MarkSubtreeStyleDirty(Sibling);
+    Sibling := Sibling.NextSibling;
+  end;
 end;
 
 function TDocumentStyler.AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
 begin
   Result := FEngine.AnonymousStyle(ParentStyle);
+end;
+
+function TDocumentStyler.ResolveStyleUnder(Element: TElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
+begin
+  { Its presentational hints and style attribute must be parsed. }
+  PrepareElement(Element, NodeDataOf(Element));
+  Result := FEngine.ResolveStyle(Element, ParentStyle);
 end;
 
 procedure TDocumentStyler.PrepareElement(Element: TElement; Data: PNodeData);

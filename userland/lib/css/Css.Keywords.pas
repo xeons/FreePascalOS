@@ -120,6 +120,9 @@ type
     kwLight, kwDark, kwPanX, kwPanY, kwPinchZoom, kwManipulation, kwScrollPosition,
     kwButton, kwTextfield, kwMenulistButton, kwSearchfield, kwTextarea, kwCheckbox, kwRadio,
     kwMenulist, kwListbox, kwMeter, kwProgressBar, kwPushButton, kwSquareButton, kwBothEdges,
+    { SVG painting }
+    kwNonzero, kwEvenodd, kwButt, kwMiter, kwMiterClip, kwBevel, kwArcs, kwContextFill, kwContextStroke,
+    kwMarkers, kwNonScalingStroke,
     { tables }
     kwSeparate, kwShow, kwHide,
     { transitions and animations }
@@ -130,7 +133,7 @@ type
     { transforms and compositing }
     kwFlat, kwPreserve3d, kwMultiply, kwScreen, kwDarken, kwLighten, kwColorDodge,
     kwColorBurn, kwHardLight, kwSoftLight, kwDifference, kwExclusion, kwSaturation, kwColor,
-    kwLuminosity, kwPlusLighter, kwPlusDarker,
+    kwLuminosity, kwPlusLighter, kwPlusDarker, kwLuminance, kwMatchSource, kwNoClip,
     { media queries }
     kwPrint, kwPortrait, kwLandscape, kwReduce, kwNoPreference, kwFine, kwCoarse,
     kwHover, kwInterlace, kwProgressive, kwFast, kwSlow, kwStandard, kwHigh, kwMore, kwLess,

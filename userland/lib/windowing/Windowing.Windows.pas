@@ -896,11 +896,27 @@ begin
   QuitCode := Code;
 end;
 
+{ The server asks whether the program still serves its windows: it
+  does, since its message loop got this far. }
+procedure AnswerPing(const Ping: TWindowMessage);
+var
+  Answer: TWindowMessage;
+begin
+  Answer := NewMessage(RequestAnswerPing, 0);
+  Answer.Value := Ping.Value;
+  SendRequest(Answer, -1);
+end;
+
 procedure Dispatch(const Message: TWindowMessage);
 var
   Window: TWindow;
   Copied: TWindowMessage;
 begin
+  if Message.Kind = EventPing then
+  begin
+    AnswerPing(Message);
+    Exit;
+  end;
   { For window 0: the first display changed (new windows' scale); each
     window on it hears for itself. }
   if (Message.Kind = EventScaleChanged) and (Message.Window = 0) then

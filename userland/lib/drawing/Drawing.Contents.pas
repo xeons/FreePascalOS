@@ -46,7 +46,13 @@ uses
   Drawing.Curves,
   Drawing.SmoothStrokes,
   Drawing.SmoothRoundedRectangles,
-  Drawing.Bevels;
+  Drawing.Bevels,
+  Drawing.Transforms,
+  Drawing.Paths,
+  Drawing.Stroking,
+  Drawing.Dashing,
+  Drawing.Paints,
+  Drawing.PaintFilling;
 
 implementation
 

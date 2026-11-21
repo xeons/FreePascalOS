@@ -215,6 +215,7 @@ const
 implementation
 
 uses
+  Web.Profiling,
   DateUtils,
   Js.Values,
   Web.EventLoop.AnimationFrames,
@@ -610,13 +611,19 @@ begin
     Inc(FInlineCount);
     Key := TDocumentLoader(FLoader).Document.Url + '#module' + IntToStr(FInlineCount);
   end;
+  EnterPhase(PhaseScript);
   try
-    FContext.Engine.EvaluateModule(Source, Key);
-  except
-    on Error: EJsError do
-      FContext.Console('error', 'Uncaught ' + Error.Message);
+    SetPhaseDetail(Key);
+    try
+      FContext.Engine.EvaluateModule(Source, Key);
+    except
+      on Error: EJsError do
+        FContext.Console('error', 'Uncaught ' + Error.Message);
+    end;
+    FContext.PerformMicrotaskCheckpoint;
+  finally
+    LeavePhase;
   end;
-  FContext.PerformMicrotaskCheckpoint;
 end;
 
 { ---- the executor ---- }

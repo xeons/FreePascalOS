@@ -54,7 +54,7 @@ implementation
 uses
   Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
-  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Image.Model,
+  Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
   Web.Dom.FormControls;
 
 type
@@ -80,6 +80,7 @@ type
     Resources: TDocumentResources;
     CanvasBox: TLayoutBox;
     Order: Integer;
+    ViewportWidth, ViewportHeight: Single;
   end;
 
 procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single); forward;
@@ -251,8 +252,22 @@ begin
   end;
 end;
 
-procedure TileSize(Style: TCssComputedStyle; Layer: Integer; AreaWidth, AreaHeight, ImageWidth,
-  ImageHeight: Single; out Width, Height: Single);
+type
+  { The properties of a list of image layers: backgrounds or masks. }
+  TImageLayerIds = record
+    Image, PositionX, PositionY, Size, Repeating, Origin: TCssPropertyId;
+    DefaultOrigin: TCssKeyword;
+  end;
+
+const
+  BackgroundLayerIds: TImageLayerIds = (Image: cpBackgroundImage; PositionX: cpBackgroundPositionX;
+    PositionY: cpBackgroundPositionY; Size: cpBackgroundSize; Repeating: cpBackgroundRepeat;
+    Origin: cpBackgroundOrigin; DefaultOrigin: kwPaddingBox);
+  MaskLayerIds: TImageLayerIds = (Image: cpMaskImage; PositionX: cpMaskPositionX; PositionY: cpMaskPositionY;
+    Size: cpMaskSize; Repeating: cpMaskRepeat; Origin: cpMaskOrigin; DefaultOrigin: kwBorderBox);
+
+procedure TileSize(Style: TCssComputedStyle; SizeId: TCssPropertyId; Layer: Integer; AreaWidth, AreaHeight,
+  ImageWidth, ImageHeight: Single; out Width, Height: Single);
 var
   Item, First, Second: TCssValue;
   Ratio: Single;
@@ -284,7 +299,7 @@ begin
     Ratio := ImageWidth / ImageHeight
   else
     Ratio := 0;
-  Item := LayerItem(Style.Value(cpBackgroundSize), Layer);
+  Item := LayerItem(Style.Value(SizeId), Layer);
   if Item = nil then
     Exit;
   if Item.Kind = vkKeyword then
@@ -332,19 +347,91 @@ begin
   end;
 end;
 
+{ One image layer (a url() image or a gradient) of a box whose border
+  box is at (X, Y, Width, Height), clipped to the Clip rectangle. }
+procedure PaintImageLayer(var Builder: TBuilder; Box: TLayoutBox; Style: TCssComputedStyle;
+  constref Ids: TImageLayerIds; Layer: Integer; Item: TCssValue; X, Y, Width, Height, ClipX, ClipY, ClipWidth,
+  ClipHeight: Single);
+var
+  Origin, Repeating: TCssKeyword;
+  AreaX, AreaY, AreaWidth, AreaHeight: Single;
+  TileWidth, TileHeight, PositionX, PositionY: Single;
+  ImageRun: TImageRun;
+  GradientRun: TGradientRun;
+  Image: TImage;
+  Entry: PDisplayItem;
+begin
+  Origin := LayerKeyword(Style, Ids.Origin, Layer, Ids.DefaultOrigin);
+  AreaX := X;
+  AreaY := Y;
+  AreaWidth := Width;
+  AreaHeight := Height;
+  if KeywordIn(Origin, [kwPaddingBox, kwContentBox]) then
+  begin
+    AreaX := AreaX + Box.Border[sideLeft];
+    AreaY := AreaY + Box.Border[sideTop];
+    AreaWidth := AreaWidth - Box.Border[sideLeft] - Box.Border[sideRight];
+    AreaHeight := AreaHeight - Box.Border[sideTop] - Box.Border[sideBottom];
+    if Origin = kwContentBox then
+    begin
+      AreaX := AreaX + Box.Padding[sideLeft];
+      AreaY := AreaY + Box.Padding[sideTop];
+      AreaWidth := AreaWidth - Box.Padding[sideLeft] - Box.Padding[sideRight];
+      AreaHeight := AreaHeight - Box.Padding[sideTop] - Box.Padding[sideBottom];
+    end;
+  end;
+  Repeating := LayerKeyword(Style, Ids.Repeating, Layer, kwRepeat);
+  if Item.Kind = vkUrl then
+  begin
+    Image := nil;
+    if Builder.Resources <> nil then
+      Image := Builder.Resources.UrlImage(Item.Text, '');
+    if Image = nil then
+      Exit;
+    TileSize(Style, Ids.Size, Layer, AreaWidth, AreaHeight, Image.Width, Image.Height, TileWidth, TileHeight);
+    PositionX := PositionPart(LayerItem(Style.Value(Ids.PositionX), Layer), AreaWidth - TileWidth);
+    PositionY := PositionPart(LayerItem(Style.Value(Ids.PositionY), Layer), AreaHeight - TileHeight);
+    ImageRun.Image := Image;
+    ImageRun.TileX := AreaX + PositionX;
+    ImageRun.TileY := AreaY + PositionY;
+    ImageRun.TileWidth := TileWidth;
+    ImageRun.TileHeight := TileHeight;
+    ImageRun.RepeatX := KeywordIn(Repeating, [kwRepeat, kwRepeatX, kwSpace, kwRound]);
+    ImageRun.RepeatY := KeywordIn(Repeating, [kwRepeat, kwRepeatY, kwSpace, kwRound]);
+    ImageRun.Pixelated := KeywordIn(Style.Keyword(cpImageRendering), [kwPixelated, kwCrispEdges]);
+    Entry := Builder.List.Add(diImage, ClipX, ClipY, ClipWidth, ClipHeight, Box);
+    Entry^.Index := Builder.List.AddImage(ImageRun);
+  end
+  else if Item.Kind = vkFunction then
+  begin
+    TileSize(Style, Ids.Size, Layer, AreaWidth, AreaHeight, AreaWidth, AreaHeight, TileWidth, TileHeight);
+    PositionX := PositionPart(LayerItem(Style.Value(Ids.PositionX), Layer), AreaWidth - TileWidth);
+    PositionY := PositionPart(LayerItem(Style.Value(Ids.PositionY), Layer), AreaHeight - TileHeight);
+    GradientRun.Gradient := Item;
+    GradientRun.CurrentColor := ToColor(Style.Color);
+    GradientRun.BoxX := AreaX + PositionX;
+    GradientRun.BoxY := AreaY + PositionY;
+    GradientRun.BoxWidth := TileWidth;
+    GradientRun.BoxHeight := TileHeight;
+    if (TileWidth >= AreaWidth - 0.5) and (TileHeight >= AreaHeight - 0.5) or (Repeating = kwNoRepeat) then
+      Entry := Builder.List.Add(diGradient, Max(ClipX, GradientRun.BoxX), Max(ClipY, GradientRun.BoxY),
+        Min(ClipX + ClipWidth, GradientRun.BoxX + TileWidth) - Max(ClipX, GradientRun.BoxX),
+        Min(ClipY + ClipHeight, GradientRun.BoxY + TileHeight) - Max(ClipY, GradientRun.BoxY), Box)
+    else
+      Entry := Builder.List.Add(diGradient, ClipX, ClipY, ClipWidth, ClipHeight, Box);
+    Entry^.Value := Ord(Repeating <> kwNoRepeat);
+    Entry^.Index := Builder.List.AddGradient(GradientRun);
+  end;
+end;
+
 procedure PaintBackgroundLayers(var Builder: TBuilder; Box: TLayoutBox; Style: TCssComputedStyle;
   X, Y, Width, Height: Single; const Outer: TCornerRadii; HasRadii: Boolean);
 var
   Images: PCssComputedValue;
   Count, Layer: Integer;
   Item: TCssValue;
-  Clip, Origin: TCssKeyword;
-  AreaX, AreaY, AreaWidth, AreaHeight, ClipX, ClipY, ClipWidth, ClipHeight: Single;
-  TileWidth, TileHeight, PositionX, PositionY: Single;
-  Repeating: TCssKeyword;
-  ImageRun: TImageRun;
-  GradientRun: TGradientRun;
-  Image: TImage;
+  Clip: TCssKeyword;
+  ClipX, ClipY, ClipWidth, ClipHeight: Single;
   Entry: PDisplayItem;
   Radii: TCornerRadii;
   Color: TColor;
@@ -397,67 +484,8 @@ begin
     Item := LayerItem(Images, Layer);
     if (Item = nil) or (Item.Kind = vkKeyword) then
       Continue;
-    Origin := LayerKeyword(Style, cpBackgroundOrigin, Layer, kwPaddingBox);
-    AreaX := X;
-    AreaY := Y;
-    AreaWidth := Width;
-    AreaHeight := Height;
-    if KeywordIn(Origin, [kwPaddingBox, kwContentBox]) then
-    begin
-      AreaX := AreaX + Box.Border[sideLeft];
-      AreaY := AreaY + Box.Border[sideTop];
-      AreaWidth := AreaWidth - Box.Border[sideLeft] - Box.Border[sideRight];
-      AreaHeight := AreaHeight - Box.Border[sideTop] - Box.Border[sideBottom];
-      if Origin = kwContentBox then
-      begin
-        AreaX := AreaX + Box.Padding[sideLeft];
-        AreaY := AreaY + Box.Padding[sideTop];
-        AreaWidth := AreaWidth - Box.Padding[sideLeft] - Box.Padding[sideRight];
-        AreaHeight := AreaHeight - Box.Padding[sideTop] - Box.Padding[sideBottom];
-      end;
-    end;
-    Repeating := LayerKeyword(Style, cpBackgroundRepeat, Layer, kwRepeat);
-    if Item.Kind = vkUrl then
-    begin
-      Image := nil;
-      if Builder.Resources <> nil then
-        Image := Builder.Resources.UrlImage(Item.Text, '');
-      if Image = nil then
-        Continue;
-      TileSize(Style, Layer, AreaWidth, AreaHeight, Image.Width, Image.Height, TileWidth, TileHeight);
-      PositionX := PositionPart(LayerItem(Style.Value(cpBackgroundPositionX), Layer), AreaWidth - TileWidth);
-      PositionY := PositionPart(LayerItem(Style.Value(cpBackgroundPositionY), Layer), AreaHeight - TileHeight);
-      ImageRun.Image := Image;
-      ImageRun.TileX := AreaX + PositionX;
-      ImageRun.TileY := AreaY + PositionY;
-      ImageRun.TileWidth := TileWidth;
-      ImageRun.TileHeight := TileHeight;
-      ImageRun.RepeatX := KeywordIn(Repeating, [kwRepeat, kwRepeatX, kwSpace, kwRound]);
-      ImageRun.RepeatY := KeywordIn(Repeating, [kwRepeat, kwRepeatY, kwSpace, kwRound]);
-      ImageRun.Pixelated := KeywordIn(Style.Keyword(cpImageRendering), [kwPixelated, kwCrispEdges]);
-      Entry := Builder.List.Add(diImage, ClipX, ClipY, ClipWidth, ClipHeight, Box);
-      Entry^.Index := Builder.List.AddImage(ImageRun);
-    end
-    else if Item.Kind = vkFunction then
-    begin
-      TileSize(Style, Layer, AreaWidth, AreaHeight, AreaWidth, AreaHeight, TileWidth, TileHeight);
-      PositionX := PositionPart(LayerItem(Style.Value(cpBackgroundPositionX), Layer), AreaWidth - TileWidth);
-      PositionY := PositionPart(LayerItem(Style.Value(cpBackgroundPositionY), Layer), AreaHeight - TileHeight);
-      GradientRun.Gradient := Item;
-      GradientRun.CurrentColor := ToColor(Style.Color);
-      GradientRun.BoxX := AreaX + PositionX;
-      GradientRun.BoxY := AreaY + PositionY;
-      GradientRun.BoxWidth := TileWidth;
-      GradientRun.BoxHeight := TileHeight;
-      if (TileWidth >= AreaWidth - 0.5) and (TileHeight >= AreaHeight - 0.5) or (Repeating = kwNoRepeat) then
-        Entry := Builder.List.Add(diGradient, Max(ClipX, GradientRun.BoxX), Max(ClipY, GradientRun.BoxY),
-          Min(ClipX + ClipWidth, GradientRun.BoxX + TileWidth) - Max(ClipX, GradientRun.BoxX),
-          Min(ClipY + ClipHeight, GradientRun.BoxY + TileHeight) - Max(ClipY, GradientRun.BoxY), Box)
-      else
-        Entry := Builder.List.Add(diGradient, ClipX, ClipY, ClipWidth, ClipHeight, Box);
-      Entry^.Value := Ord(Repeating <> kwNoRepeat);
-      Entry^.Index := Builder.List.AddGradient(GradientRun);
-    end;
+    PaintImageLayer(Builder, Box, Style, BackgroundLayerIds, Layer, Item, X, Y, Width, Height, ClipX, ClipY,
+      ClipWidth, ClipHeight);
   end;
   if HasRadii then
     Builder.List.Add(diPopClip, 0, 0, 0, 0, Box);
@@ -1071,6 +1099,118 @@ begin
   end;
 end;
 
+{ Where a box's border box is drawn (scroll offsets of the scroll
+  containers it is in applied, sticky offsets not). }
+procedure DrawnOrigin(Box: TLayoutBox; out X, Y: Single);
+var
+  Parent: TLayoutBox;
+begin
+  X := 0;
+  Y := 0;
+  while (Box <> nil) and (Box.Kind <> bkViewport) do
+  begin
+    X := X + Box.X + Box.RelativeX;
+    Y := Y + Box.Y + Box.RelativeY;
+    Parent := Box.Parent;
+    if (Parent <> nil) and (Parent.Kind <> bkInline) then
+    begin
+      X := X + ScrollShiftX(Parent);
+      Y := Y + ScrollShiftY(Parent);
+    end;
+    while (Parent <> nil) and (Parent.Kind = bkInline) do
+      Parent := Parent.Parent;
+    Box := Parent;
+  end;
+end;
+
+function NearestScrollContainer(Box: TLayoutBox): TLayoutBox;
+begin
+  Result := Box.Parent;
+  while (Result <> nil) and not (bfScrollContainer in Result.Flags) do
+    Result := Result.Parent;
+end;
+
+{ A sticky box's run: the limits from its containing block (the nearest
+  block ancestor's content box, all of its scrollable overflow when it
+  scrolls) less its margins, and its insets (percentages of the
+  scrollport). Box is drawn at (X, Y). }
+function StickyRunOf(Box: TLayoutBox; X, Y, PortWidth, PortHeight: Single): TStickyRun;
+var
+  Block: TLayoutBox;
+  InnerX, InnerY, Left, Top, Width, Height: Single;
+begin
+  Result := Default(TStickyRun);
+  Block := Box.Parent;
+  while (Block <> nil) and (Block.Kind = bkInline) do
+    Block := Block.Parent;
+  { The block's children are placed from (InnerX, InnerY). }
+  InnerX := X - Box.X - Box.RelativeX;
+  InnerY := Y - Box.Y - Box.RelativeY;
+  if (Block = nil) or (Block.Kind = bkViewport) then
+  begin
+    Left := InnerX;
+    Top := InnerY;
+    Width := PortWidth;
+    Height := PortHeight;
+    if Block <> nil then
+    begin
+      Width := Max(Block.Width, Block.ScrollWidth);
+      Height := Max(Block.Height, Block.ScrollHeight);
+    end;
+  end
+  else
+  begin
+    { A scroll container's content box scrolls with its children. }
+    Left :=InnerX + Block.Border[sideLeft] + Block.Padding[sideLeft];
+    Top := InnerY + Block.Border[sideTop] + Block.Padding[sideTop];
+    Width := Block.Width - HorizontalBorderPadding(Block);
+    Height := Block.Height - VerticalBorderPadding(Block);
+    if bfScrollContainer in Block.Flags then
+    begin
+      Width := Max(Width, Block.ScrollWidth - Block.Padding[sideLeft] - Block.Padding[sideRight]);
+      Height := Max(Height, Block.ScrollHeight - Block.Padding[sideTop] - Block.Padding[sideBottom]);
+    end;
+  end;
+  Result.LimitLeft := Left + Box.Margin[sideLeft];
+  Result.LimitTop := Top + Box.Margin[sideTop];
+  Result.LimitRight := Left + Width - Box.Margin[sideRight];
+  Result.LimitBottom := Top + Height - Box.Margin[sideBottom];
+  Result.HasLeft := TryLength(Box.Style, cpLeft, PortWidth, Result.InsetLeft);
+  Result.HasTop := TryLength(Box.Style, cpTop, PortHeight, Result.InsetTop);
+  Result.HasRight := TryLength(Box.Style, cpRight, PortWidth, Result.InsetRight);
+  Result.HasBottom := TryLength(Box.Style, cpBottom, PortHeight, Result.InsetBottom);
+end;
+
+{ Paints a sticky layer: under the viewport inside a push/pop whose
+  offset painting works out; inside an inner scroll container (whose
+  scroll offset is known now) at its offset already. }
+procedure PaintStickyLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
+var
+  Container: TLayoutBox;
+  Run: TStickyRun;
+  Entry: PDisplayItem;
+  PortX, PortY, PortWidth, PortHeight, OffsetX, OffsetY: Single;
+begin
+  Container := NearestScrollContainer(Box);
+  if (Container = nil) or (Container.Kind = bkViewport) then
+  begin
+    Run := StickyRunOf(Box, X, Y, Builder.ViewportWidth, Builder.ViewportHeight);
+    Entry := Builder.List.Add(diPushSticky, X, Y, Box.Width, Box.Height, Box);
+    Entry^.Index := Builder.List.AddSticky(Run);
+    PaintLayer(Builder, Box, X, Y);
+    Builder.List.Add(diPopSticky, 0, 0, 0, 0, Box);
+    Exit;
+  end;
+  DrawnOrigin(Container, PortX, PortY);
+  PortX := PortX + Container.Border[sideLeft];
+  PortY := PortY + Container.Border[sideTop];
+  PortWidth := Container.Width - Container.Border[sideLeft] - Container.Border[sideRight];
+  PortHeight := Container.Height - Container.Border[sideTop] - Container.Border[sideBottom];
+  Run := StickyRunOf(Box, X, Y, PortWidth, PortHeight);
+  StickyOffset(Run, X, Y, Box.Width, Box.Height, PortX, PortY, PortWidth, PortHeight, OffsetX, OffsetY);
+  PaintLayer(Builder, Box, X + OffsetX, Y + OffsetY);
+end;
+
 procedure PaintLayerWithClips(var Builder: TBuilder; const Layer: TLayer);
 var
   Index: Integer;
@@ -1084,15 +1224,86 @@ begin
   end;
   if bfFixed in Layer.Box.Flags then
     Builder.List.Add(diPushFixed, 0, 0, 0, 0, Layer.Box);
-  PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y);
+  if bfSticky in Layer.Box.Flags then
+    PaintStickyLayer(Builder, Layer.Box, Layer.X, Layer.Y)
+  else
+    PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y);
   if bfFixed in Layer.Box.Flags then
     Builder.List.Add(diPopFixed, 0, 0, 0, 0, Layer.Box);
   for Index := 0 to High(Layer.Clips) do
     Builder.List.Add(diPopClip, 0, 0, 0, 0, Layer.Box);
 end;
 
+{ The start of a masked box: the mask's clip (mask-clip of the first
+  layer; no-clip: none), the mask group and its layers (an image not
+  loaded yet, or not decodable, masks everything out as the spec says);
+  the content follows. False when there is no mask. }
+function BeginMask(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; out Clipped: Boolean): Boolean;
+var
+  Style: TCssComputedStyle;
+  Images: PCssComputedValue;
+  Count, Layer: Integer;
+  Item: TCssValue;
+  Clip: TCssKeyword;
+  ClipX, ClipY, ClipWidth, ClipHeight: Single;
+  Entry: PDisplayItem;
+begin
+  Clipped := False;
+  Style := Box.Style;
+  Result := HasMaskImage(Style);
+  if not Result then
+    Exit;
+  ClipX := X;
+  ClipY := Y;
+  ClipWidth := Box.Width;
+  ClipHeight := Box.Height;
+  Clip := LayerKeyword(Style, cpMaskClip, 0, kwBorderBox);
+  if KeywordIn(Clip, [kwPaddingBox, kwContentBox]) then
+  begin
+    ClipX := ClipX + Box.Border[sideLeft];
+    ClipY := ClipY + Box.Border[sideTop];
+    ClipWidth := ClipWidth - Box.Border[sideLeft] - Box.Border[sideRight];
+    ClipHeight := ClipHeight - Box.Border[sideTop] - Box.Border[sideBottom];
+    if Clip = kwContentBox then
+    begin
+      ClipX := ClipX + Box.Padding[sideLeft];
+      ClipY := ClipY + Box.Padding[sideTop];
+      ClipWidth := ClipWidth - Box.Padding[sideLeft] - Box.Padding[sideRight];
+      ClipHeight := ClipHeight - Box.Padding[sideTop] - Box.Padding[sideBottom];
+    end;
+  end;
+  if Clip <> kwNoClip then
+  begin
+    Builder.List.Add(diPushClip, ClipX, ClipY, ClipWidth, ClipHeight, Box);
+    Clipped := True;
+  end;
+  Entry := Builder.List.Add(diPushMask, ClipX, ClipY, ClipWidth, ClipHeight, Box);
+  Entry^.Value := 1;
+  Images := Style.Value(cpMaskImage);
+  if Images^.Data.Kind = vkList then
+    Count := Images^.Data.Count
+  else
+    Count := 1;
+  for Layer := Count - 1 downto 0 do
+  begin
+    Item := LayerItem(Images, Layer);
+    if (Item <> nil) and (Item.Kind <> vkKeyword) then
+      PaintImageLayer(Builder, Box, Style, MaskLayerIds, Layer, Item, X, Y, Box.Width, Box.Height, ClipX, ClipY,
+        ClipWidth, ClipHeight);
+  end;
+  Builder.List.Add(diMaskContent, ClipX, ClipY, 0, 0, nil);
+end;
+
+procedure EndMask(var Builder: TBuilder; Box: TLayoutBox; Clipped: Boolean);
+begin
+  Builder.List.Add(diPopMask, 0, 0, 0, 0, Box);
+  if Clipped then
+    Builder.List.Add(diPopClip, 0, 0, 0, 0, Box);
+end;
+
 procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
 var
+  Masked, MaskClipped: Boolean;
   Layers: TLayerArray;
   Count, Index: Integer;
   Clips: TClipChain;
@@ -1110,6 +1321,7 @@ begin
     Entry := Builder.List.Add(diPushOpacity, X, Y, Box.Width, Box.Height, Box);
     Entry^.Value := Opacity;
   end;
+  Masked := (Box.Kind <> bkViewport) and BeginMask(Builder, Box, X, Y, MaskClipped);
   PaintDecorations(Builder, Box, X, Y);
   Layers := nil;
   Count := 0;
@@ -1146,6 +1358,8 @@ begin
     PaintLayerWithClips(Builder, Layers[Index]);
     Inc(Index);
   end;
+  if Masked then
+    EndMask(Builder, Box, MaskClipped);
   if Box.Kind <> bkViewport then
     PaintOutline(Builder, Box, X, Y);
   if Opacity < 1 then
@@ -1201,6 +1415,8 @@ begin
   Builder.List := List;
   Builder.Resources := Resources;
   Builder.Order := 0;
+  Builder.ViewportWidth := Root.Width;
+  Builder.ViewportHeight := Root.Height;
   Canvas := FindCanvasBox(Root);
   Builder.CanvasBox := Canvas;
   Width := Max(Root.Width, Root.ScrollWidth);

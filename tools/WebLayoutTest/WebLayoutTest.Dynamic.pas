@@ -29,6 +29,7 @@ unit WebLayoutTest.Dynamic;
 interface
 
 procedure CheckIncrementalLayout;
+procedure CheckStateInvalidation;
 procedure CheckHitTesting;
 
 implementation
@@ -47,6 +48,24 @@ const
     '<ul id=list><li>one</li><li>two</li></ul>' +
     '<div id=box class=narrow>Box text</div>' +
     '<section id=many></section></body>';
+
+  { Selectors reading :hover as the subject, from an ancestor, from a
+    previous sibling, inside :is() and inside :has(); elements whose
+    hover none of them reads. }
+  HoverPage =
+    '<!doctype html><style>' +
+    'body { margin: 0; font: 14px sans-serif } .link { display: inline-block } .link:hover { padding-left: 5px }' +
+    '.menu:hover .item { display: block } .item { display: none }' +
+    '.tab:hover + .panel { height: 30px } .panel { height: 10px }' +
+    ':is(.card:hover) .title { margin-top: 7px }' +
+    '</style><body><div id=plain><p id=para>Text</p></div>' +
+    '<a id=link class=link>link</a>' +
+    '<div id=menu class=menu>menu<div id=item class=item>item</div></div>' +
+    '<div id=tab class=tab>tab</div><div id=panel class=panel></div>' +
+    '<div id=card class=card><div id=title class=title>t</div></div>' +
+    '<div class=host><span id=hot class=hot>h</span><div id=flag class=flag>f</div></div></body>';
+  HasPage = '<style>.host:has(.hot:hover) .flag { width: 50px }</style>' +
+    '<div class=host><span id=hot class=hot>h</span><div id=flag class=flag>f</div></div>';
 
 function FreshDump(Document: TDocument; Width: Single): string;
 var
@@ -139,6 +158,63 @@ begin
   finally
     FreeLayout(Layout, Document);
     Document := nil;
+  end;
+end;
+
+procedure CheckStateInvalidation;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  StylesBefore: Int64;
+
+  procedure Hover(const Id: string; On: Boolean);
+  begin
+    if On then
+      Layout.SetElementStates(Document.GetElementById(Id), [esHover])
+    else
+      Layout.SetElementStates(Document.GetElementById(Id), []);
+    Layout.Update;
+  end;
+
+  function Box(const Id: string): TLayoutBox;
+  begin
+    Result := Layout.BoxOf(Document.GetElementById(Id));
+  end;
+
+begin
+  Layout := LayoutText(HoverPage, 600, Document);
+  try
+    StylesBefore := Layout.Styler.StylesComputed;
+    Hover('plain', True);
+    Hover('para', True);
+    Check(Layout.Styler.StylesComputed = StylesBefore, 'states: hover no selector reads styles nothing again');
+    Hover('link', True);
+    Check(Box('link').Padding[sideLeft] = 5, 'states: :hover on the subject');
+    Hover('link', False);
+    Check(Box('link').Padding[sideLeft] = 0, 'states: :hover gone from the subject');
+    Hover('menu', True);
+    Check((Box('item') <> nil) and (Box('item').Height > 0), 'states: :hover on an ancestor shows a descendant');
+    Hover('menu', False);
+    Check(Box('item') = nil, 'states: and hides it again');
+    Hover('tab', True);
+    Check(Box('panel').Height = 30, 'states: :hover on a previous sibling');
+    Hover('tab', False);
+    Check(Box('panel').Height = 10, 'states: and gone');
+    Hover('card', True);
+    Check(Box('title').Margin[sideTop] = 7, 'states: :hover inside :is()');
+    Hover('card', False);
+    CheckSame(Layout, Document, 'states: all hover gone');
+  finally
+    FreeLayout(Layout, Document);
+  end;
+  Layout := LayoutText('<!doctype html>' + HasPage, 600, Document);
+  try
+    Hover('hot', True);
+    Check(Box('flag').Width = 50, 'states: :hover inside :has()');
+    Hover('hot', False);
+    CheckSame(Layout, Document, 'states: :has() hover gone');
+  finally
+    FreeLayout(Layout, Document);
   end;
 end;
 

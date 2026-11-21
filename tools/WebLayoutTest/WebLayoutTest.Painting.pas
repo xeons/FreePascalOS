@@ -30,6 +30,8 @@ unit WebLayoutTest.Painting;
 interface
 
 procedure CheckPainting;
+procedure CheckStickyPainting;
+procedure CheckMaskPainting;
 procedure ReportPerformance;
 
 implementation
@@ -49,6 +51,29 @@ const
     '<div style="height:30px;background:#000000;opacity:0.5"></div>' +
     '<div style="width:60px;height:30px;overflow:hidden"><div style="width:200px;height:30px;background:#ff00ff"></div></div>' +
     '<div style="height:600px"></div></body>';
+
+  { A sticky table of contents in a grid column (as Wikipedia's): it
+    stays at the top while its column is in view, then leaves with it;
+    a sticky header with a bottom inset inside a scroll container. }
+  StickyPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="display:grid;grid-template-columns:100px 1fr">' +
+    '<div style="background:#eeeeee"><div id=toc style="position:sticky;top:10px;height:100px;background:#0000ff"></div></div>' +
+    '<div style="height:2000px"></div></div>' +
+    '<div style="height:1000px;background:#ff8000"></div>' +
+    '<div id=scroller style="position:absolute;left:200px;top:0;width:80px;height:100px;overflow:hidden">' +
+    '<div style="height:300px"></div><div style="position:sticky;bottom:0;height:20px;background:#00ff00"></div>' +
+    '<div style="height:300px"></div></div></body>';
+
+  { Masks: a gradient from opaque to transparent, an image that never
+    loads (masks everything out), and a mask in a translucent group
+    away from the surface's corner (groups are as small as their clip). }
+  MaskPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="width:100px;height:20px;background:#0000ff;mask-image:linear-gradient(to right, black, transparent)"></div>' +
+    '<div style="width:100px;height:20px;background:#0000ff;-webkit-mask-image:url(nowhere.png)"></div>' +
+    '<div style="margin:30px 0 0 150px;width:60px;height:20px;background:#ff0000;opacity:0.5;border-radius:4px"></div>' +
+    '</body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
 begin
@@ -123,6 +148,65 @@ begin
   finally
     FreeSurface(Surface);
     FreeSurface(Partial);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckStickyPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+  Hit: THitTestResult;
+begin
+  Layout := LayoutText(StickyPage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 600, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 600));
+    CheckPixel(Surface, 50, 5, RgbColor(238, 238, 238), 'sticky: above its inset at the top');
+    CheckPixel(Surface, 50, 50, RgbColor(0, 0, 255), 'sticky: in place at the top');
+    CheckPixel(Surface, 240, 90, RgbColor(0, 255, 0), 'sticky: bottom inset in a scroll container');
+    Layout.SetScrollOffset(nil, 0, 1000);
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 600));
+    CheckPixel(Surface, 50, 50, RgbColor(0, 0, 255), 'sticky: stays at its inset when scrolled');
+    CheckPixel(Surface, 50, 200, RgbColor(238, 238, 238), 'sticky: its column below it');
+    Hit := Painter.HitTest(50, 50);
+    Check((Hit.Element <> nil) and (Hit.Element.GetAttribute('id') = 'toc'), 'sticky: hit where it is drawn');
+    Layout.SetScrollOffset(nil, 0, 1950);
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 600));
+    CheckPixel(Surface, 50, 5, RgbColor(0, 0, 255), 'sticky: pushed up by the end of its column');
+    CheckPixel(Surface, 50, 49, RgbColor(0, 0, 255), 'sticky: bottom at the end of its column');
+    CheckPixel(Surface, 50, 52, RgbColor(255, 128, 0), 'sticky: the page after its column');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckMaskPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(MaskPage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 600, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 600));
+    CheckPixel(Surface, 1, 10, RgbColor(2, 2, 255), 'mask: opaque end of a gradient mask');
+    CheckPixel(Surface, 50, 10, RgbColor(126, 126, 255), 'mask: middle of a gradient mask');
+    CheckPixel(Surface, 98, 10, RgbColor(250, 250, 255), 'mask: transparent end of a gradient mask');
+    CheckPixel(Surface, 50, 30, RgbColor(255, 255, 255), 'mask: an image that is not there hides the box');
+    CheckPixel(Surface, 180, 80, RgbColor(255, 128, 128), 'opacity group away from the corner');
+    CheckPixel(Surface, 140, 80, RgbColor(255, 255, 255), 'opacity group: nothing outside it');
+  finally
+    FreeSurface(Surface);
     Painter.Free;
     FreeLayout(Layout, Document);
   end;

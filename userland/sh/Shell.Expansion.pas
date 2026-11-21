@@ -68,6 +68,9 @@ type
     FHasPattern: Boolean;
     { A field exists even if empty (e.g. after ""). }
     FFieldStarted: Boolean;
+    { "$@" expanded to nothing (no positional parameters): quotes holding
+      only that make no field, as "$@" makes none. }
+    FNoParametersInQuotes: Boolean;
     procedure ExpandSingleQuoted(const Word: string; var Position: Integer);
     procedure ExpandDoubleQuoted(const Word: string; var Position: Integer);
     procedure ExpandParenthesized(const Word: string; var Position: Integer; Quoted: Boolean);
@@ -248,6 +251,8 @@ procedure TWordExpander.ExpandAllParameters(AsSeparateFields, Quoted: Boolean);
 var
   Index: Integer;
 begin
+  if AsSeparateFields and Quoted and (PositionalCount = 0) then
+    FNoParametersInQuotes := True;
   for Index := 1 to PositionalCount do
   begin
     if Index > 1 then
@@ -351,9 +356,13 @@ begin
 end;
 
 procedure TWordExpander.ExpandDoubleQuoted(const Word: string; var Position: Integer);
+var
+  WasStarted: Boolean;
 begin
   Inc(Position);
+  WasStarted := FFieldStarted;
   FFieldStarted := True;
+  FNoParametersInQuotes := False;
   while not (CharAt(Word, Position) in ['"', #0]) do
   begin
     if (Word[Position] = '\') and (CharAt(Word, Position + 1) in ['$', '`', '"', '\', #10]) then
@@ -371,6 +380,9 @@ begin
   end;
   if CharAt(Word, Position) = '"' then
     Inc(Position);
+  if FNoParametersInQuotes and not WasStarted and (FText.Value = '') then
+    FFieldStarted := False;
+  FNoParametersInQuotes := False;
 end;
 
 procedure TWordExpander.ExpandWord(const Word: string);

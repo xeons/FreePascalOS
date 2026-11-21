@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!-- A page grid as Wikipedia's Vector skin has it: minmax(0, 1fr) keeps
+     its column inside the container however wide the content is (no
+     automatic minimum), while a plain 1fr column grows to its content's
+     min-content width; grid-template with areas and a / for columns. -->
+<style>
+body { margin: 0; font: 16px DejaVu Sans }
+.page { display: grid; column-gap: 24px; width: 600px;
+  grid-template: min-content 1fr min-content / 100px minmax(0, 1fr);
+  grid-template-areas: 'notice notice' 'start content' 'footer footer' }
+.notice { grid-area: notice }
+.start { grid-area: start }
+.content { grid-area: content }
+.footer { grid-area: footer }
+.wide { width: 900px; height: 10px }
+.auto { display: grid; grid-template-columns: 100px 1fr; width: 600px }
+</style>
+<div class=page>
+  <div class=notice>notice</div>
+  <div class=start>start</div>
+  <div class=content><div class=wide></div>content</div>
+  <div class=footer>footer</div>
+</div>
+<div class=auto>
+  <div>start</div>
+  <div><div class=wide></div></div>
+</div>

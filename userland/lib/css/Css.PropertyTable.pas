@@ -277,6 +277,18 @@ const
     (Group: pgEffects; Initial: 'auto'; Grammar: 'auto | isolate'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgEffects; Initial: 'none'; Grammar: '@clip-path'; Compute: cmpValue; Animation: atByComputedValue),
     (Group: pgEffects; Initial: 'auto'; Grammar: '@clip'; Compute: cmpValue; Animation: atByComputedValue),
+    { masking }
+    (Group: pgEffects; Initial: 'none'; Grammar: '#none | <image>'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: '0%'; Grammar: '@background-position-x'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: '0%'; Grammar: '@background-position-y'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: 'auto'; Grammar: '@background-size'; Compute: cmpValue; Animation: atLength),
+    (Group: pgEffects; Initial: 'repeat'; Grammar: '@background-repeat'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'border-box'; Grammar: '#border-box | padding-box | content-box';
+      Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'border-box'; Grammar: '#border-box | padding-box | content-box | no-clip';
+      Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'match-source'; Grammar: '#alpha | luminance | match-source'; Compute: cmpValue;
+      Animation: atDiscrete),
     { text decoration }
     (Group: pgText; Initial: 'none'; Grammar: 'none | {underline overline line-through blink spelling-error ' +
       'grammar-error}'; Compute: cmpKeyword; Animation: atDiscrete),
@@ -314,6 +326,33 @@ const
     (Group: pgUi; Initial: 'auto'; Grammar: 'auto | thin | none'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgUi; Initial: 'auto'; Grammar: 'auto | {stable both-edges}'; Compute: cmpKeyword; Animation: atDiscrete),
     (Group: pgUi; Initial: 'auto'; Grammar: '@scrollbar-color'; Compute: cmpValue; Animation: atColor),
+    { SVG painting, inherited }
+    (Group: pgInheritedSvg; Initial: 'black'; Grammar: '@paint'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'nonzero'; Grammar: 'nonzero | evenodd'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'none'; Grammar: '@paint'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '1px'; Grammar: '<length-percentage+> | <number+>'; Compute: cmpLength;
+      Animation: atLength),
+    (Group: pgInheritedSvg; Initial: 'butt'; Grammar: 'butt | round | square'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'miter'; Grammar: 'miter | miter-clip | round | bevel | arcs';
+      Compute: cmpKeyword; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '4'; Grammar: '<number+>'; Compute: cmpNumber; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'none'; Grammar: '@stroke-dasharray'; Compute: cmpValue; Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: '0'; Grammar: '<length-percentage> | <number>'; Compute: cmpLength;
+      Animation: atLength),
+    (Group: pgInheritedSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgInheritedSvg; Initial: 'nonzero'; Grammar: 'nonzero | evenodd'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'start'; Grammar: 'start | middle | end'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    (Group: pgInheritedSvg; Initial: 'normal'; Grammar: 'normal | {fill stroke markers}'; Compute: cmpKeyword;
+      Animation: atDiscrete),
+    { SVG, not inherited }
+    (Group: pgSvg; Initial: 'black'; Grammar: '<color>'; Compute: cmpColor; Animation: atColor),
+    (Group: pgSvg; Initial: '1'; Grammar: '<alpha>'; Compute: cmpOpacity; Animation: atNumber),
+    (Group: pgSvg; Initial: 'none'; Grammar: 'none | non-scaling-stroke'; Compute: cmpKeyword; Animation: atDiscrete),
     { transitions and animations }
     (Group: pgAnimation; Initial: 'all'; Grammar: '@transition-property'; Compute: cmpValue; Animation: atNone),
     (Group: pgAnimation; Initial: '0s'; Grammar: '#<time+>'; Compute: cmpValue; Animation: atNone),
@@ -370,6 +409,8 @@ const
     (Group: pgNone; Initial: '0'; Grammar: '@radius-corner'; Compute: cmpValue; Animation: atLength),
 
     { shorthands (Css.Shorthands expands them) }
+    (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
+    (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),
     (Group: pgNone; Initial: ''; Grammar: ''; Compute: cmpKeyword; Animation: atNone),

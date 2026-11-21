@@ -62,7 +62,8 @@ type
     ImageFormatPng,
     ImageFormatTiff,
     ImageFormatWebp,
-    ImageFormatJxl
+    ImageFormatJxl,
+    ImageFormatSvg
   );
 
   TImageDecoder = class
@@ -142,6 +143,7 @@ begin
     ImageFormatTiff: Result := 'TIFF';
     ImageFormatWebp: Result := 'WebP';
     ImageFormatJxl: Result := 'JPEG XL';
+    ImageFormatSvg: Result := 'SVG';
   else
     Result := 'unknown';
   end;
@@ -174,6 +176,8 @@ begin
     Result := ImageFormatWebp
   else if Lower = 'jxl' then
     Result := ImageFormatJxl
+  else if (Lower = 'svg') or (Lower = 'svgz') then
+    Result := ImageFormatSvg
   else
     Result := ImageFormatUnknown;
 end;

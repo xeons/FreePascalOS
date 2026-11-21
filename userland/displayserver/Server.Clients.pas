@@ -59,6 +59,14 @@ type
       connected. }
     ProcessId: QWord;
     UserId: LongWord;
+    { Whether it answers pings (Server.Responsiveness), the one it was
+      sent last, when, whether it is still unanswered, and whether the
+      program has stopped responding. }
+    AnswersPings: Boolean;
+    PingNumber: LongInt;
+    PingSentAt: QWord;
+    PingOutstanding: Boolean;
+    NotResponding: Boolean;
     constructor Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
   end;
 
@@ -102,7 +110,8 @@ uses
   Server.Notifications,
   Server.DataOffers,
   Server.WindowIcons,
-  Server.ScreenLock;
+  Server.ScreenLock,
+  Server.Responsiveness;
 
 constructor TClient.Create(ClientChannel: Int64; ClientProcessId: QWord; ClientUserId: LongWord);
 begin
@@ -370,7 +379,12 @@ begin
   Result := True;
   case Message.Kind of
     RequestHello:
-      SendWelcome(Client);
+      begin
+        Client.AnswersPings := (Message.Flags and HelloAnswersPings) <> 0;
+        SendWelcome(Client);
+      end;
+    RequestAnswerPing:
+      NoteAnswerToPing(Client, Message.Value);
     RequestSetScale:
       begin
         Screen := ScreenByNumber(Message.Value);

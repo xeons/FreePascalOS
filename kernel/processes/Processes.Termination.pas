@@ -79,6 +79,7 @@ uses
   Abi.SystemCalls,
   Kernel.Arch.Cpu,
   Kernel.Arch.TrapFrame,
+  Kernel.Clock,
   Kernel.Interrupts,
   Processes.Thread,
   Processes.UserProcess,
@@ -135,6 +136,7 @@ begin
   if not Process^.TerminationRequested then
   begin
     Process^.TerminationCode := ExitCode;
+    Process^.TerminationRequestedAt := UptimeMilliseconds;
     Process^.TerminationRequested := True;
   end;
   AlertProcessThreads(Process);

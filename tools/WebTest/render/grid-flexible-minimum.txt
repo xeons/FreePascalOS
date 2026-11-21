@@ -1,0 +1,24 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x84.5
+    block <body> at (0,0) size 800x84.5
+      grid <div> at (0,0) size 600x65.88
+        block <div> at (0,0) size 600x18.62
+          line 0 at y 0 height 18.62 baseline 14.85
+            text "notice" at (0,0) size 49.29x18.62
+        block <div> at (0,18.62) size 100x28.62
+          line 0 at y 18.62 height 18.62 baseline 33.48
+            text "start" at (0,18.62) size 37.27x18.62
+        block <div> at (124,18.62) size 476x28.62
+          block <div> at (124,18.62) size 900x10
+          block (anonymous) at (124,28.62) size 476x18.62
+            line 0 at y 28.62 height 18.62 baseline 43.48
+              text "content" at (124,28.62) size 61.26x18.62
+        block <div> at (0,47.25) size 600x18.62
+          line 0 at y 47.25 height 18.62 baseline 62.1
+            text "footer" at (0,47.25) size 47.91x18.62
+      grid <div> at (0,65.88) size 600x18.62
+        block <div> at (0,65.88) size 100x18.62
+          line 0 at y 65.88 height 18.62 baseline 80.73
+            text "start" at (0,65.88) size 37.27x18.62
+        block <div> at (100,65.88) size 900x18.62
+          block <div> at (100,65.88) size 900x10

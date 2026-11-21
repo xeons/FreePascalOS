@@ -69,6 +69,7 @@ uses
   Web.Fetch.Requests,
   Web.Fetch.Responses,
   Web.Fetch.Jobs,
+  Web.Fetch.Monitors,
   Web.Fetch.HttpHops,
   Web.Fetch.NetworkContexts;
 
@@ -105,6 +106,7 @@ type
   TFetcher = class
   private
     FAboutPageProvider: TAboutPageProvider;
+    FMonitor: TFetchMonitor;
     FLoop: TEventLoop;
     FNetwork: TNetworkContext;
     FJobs: TIdMap;
@@ -132,6 +134,7 @@ type
     procedure HandleRedirect(Job: TFetchJob; Message: THopHeadMessage);
     procedure HandleFinalHead(Job: TFetchJob; Message: THopHeadMessage);
     procedure FailJob(Job: TFetchJob; const Reason: string);
+    procedure AdoptResponse(Job: TFetchJob; Response: TFetchResponse);
     procedure DeliverResponse(Job: TFetchJob; Response: TFetchResponse);
     procedure DeliverBody(Job: TFetchJob; Data: Pointer; Count: PtrUInt);
     procedure FinishJob(Job: TFetchJob; Success: Boolean);
@@ -162,6 +165,8 @@ type
       navigations the browser itself starts (no client document, or an
       about: one). }
     property AboutPageProvider: TAboutPageProvider read FAboutPageProvider write FAboutPageProvider;
+    { Told about every fetch (not owned; nil: none). }
+    property Monitor: TFetchMonitor read FMonitor write FMonitor;
   end;
 
 { The Accept value a destination sends. }
@@ -298,6 +303,8 @@ begin
   FJobs.Add(Result.Id, Result);
   if Request.Client <> nil then
     Request.Origin := Request.Client.Origin;
+  if FMonitor <> nil then
+    FMonitor.FetchStarted(Result);
   FLoop.QueueTask(TDataTask.Create(@StartQueued, TJobIdData.Create(Result.Id)), TaskSourceNetworking, Self);
 end;
 
@@ -316,6 +323,8 @@ begin
   Job.State := JobCanceled;
   if Job.CurrentHop <> 0 then
     FRunner.Cancel(Job.CurrentHop);
+  if FMonitor <> nil then
+    FMonitor.FetchCanceled(Job);
   ForgetJob(Job);
 end;
 
@@ -411,6 +420,8 @@ procedure TFetcher.FailJob(Job: TFetchJob; const Reason: string);
 begin
   if not Job.Active then
     Exit;
+  if FMonitor <> nil then
+    FMonitor.FetchFailed(Job, Reason);
   if Job.CurrentHop <> 0 then
     FRunner.Cancel(Job.CurrentHop);
   Job.CurrentHop := 0;
@@ -424,13 +435,21 @@ begin
     FinishJob(Job, False);
 end;
 
+{ The job's response from now on; the monitor hears of it. }
+procedure TFetcher.AdoptResponse(Job: TFetchJob; Response: TFetchResponse);
+begin
+  Job.SetResponse(Response);
+  if FMonitor <> nil then
+    FMonitor.FetchResponded(Job, Response);
+end;
+
 procedure TFetcher.DeliverResponse(Job: TFetchJob; Response: TFetchResponse);
 begin
   if Length(Response.UrlList) = 0 then
     Response.UrlList := Copy(Job.Request.UrlList);
   if Response.ComputedEssence = '' then
     Response.ComputedEssence := MimeEssence(Response.MimeType);
-  Job.SetResponse(Response);
+  AdoptResponse(Job, Response);
   Job.State := JobReceiving;
   if Job.Consumer <> nil then
     Job.Consumer.ProcessResponse(Job, Response);
@@ -490,6 +509,8 @@ begin
     Exit;
   Job.State := JobFinished;
   Job.CurrentHop := 0;
+  if FMonitor <> nil then
+    FMonitor.FetchFinished(Job, Success);
   try
     if Job.Consumer <> nil then
       Job.Consumer.ProcessEndOfBody(Job, Success);
@@ -625,7 +646,7 @@ var
 begin
   Response.UrlList := Copy(Job.Request.UrlList);
   Response.ComputedEssence := MimeEssence(Response.MimeType);
-  Job.SetResponse(Response);
+  AdoptResponse(Job, Response);
   Job.State := JobAwaitingResponse;
   Whole := TWholeBody.Create;
   Whole.JobId := Job.Id;
@@ -693,7 +714,7 @@ begin
   end;
   Response.Headers.Add('content-length', IntToStr(Reader.Stream.Size));
   Response.UrlList := Copy(Job.Request.UrlList);
-  Job.SetResponse(Response);
+  AdoptResponse(Job, Response);
   if Job.Request.SniffContent then
     Job.State := JobSniffing
   else
@@ -877,7 +898,10 @@ begin
     Job.State := JobPreflight
   else
     Job.State := JobAwaitingResponse;
-  FRunner.Start(FNetwork.Client, BuildHttpRequest(Job, Kind), FNextHopId);
+  { What the page cannot show without goes ahead of images. }
+  FRunner.Start(FNetwork.Client, BuildHttpRequest(Job, Kind), FNextHopId,
+    Job.Request.Destination in [DestinationDocument, DestinationIframe, DestinationStyle, DestinationScript,
+    DestinationFont, DestinationEmpty]);
 end;
 
 procedure TFetcher.StartPreflight(Job: TFetchJob);
@@ -1083,7 +1107,7 @@ begin
     FailJob(Job, 'blocked by nosniff: ' + Essence + ' for a ' + DestinationName(Request.Destination));
     Exit;
   end;
-  Job.SetResponse(Response);
+  AdoptResponse(Job, Response);
   if Request.SniffContent and (Response.Status <> 204) and (Response.Status <> 304) and
      SniffingCanChange(Essence, NoSniff, IsApacheBugContentType(Response.Headers.Value('content-type'))) then
     Job.State := JobSniffing

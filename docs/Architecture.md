@@ -1884,6 +1884,23 @@ another user's titles may say what that user is doing) with
 window 0 that ends the list (`ListOtherWindows` in
 `Windowing.WindowList`).
 
+Programs that stop responding (`Server.Responsiveness`): a program says
+in its hello that its message loop answers pings (`HelloAnswersPings`;
+every libwindowing program does: `Windowing.Connection` sets it and the
+loop's `Dispatch` answers). While it has windows, the server sends it
+an `EventPing` every 2 seconds, the next only once the last was answered
+(`RequestAnswerPing` with the ping's number), so a stuck program's
+queue never fills with them; an answer that is 5 seconds late makes it
+not responding. Its windows' titles then end in " (Not responding)"
+(`NotRespondingTitleSuffix`, drawn by `Server.Frames`), and
+`ShellWindowNotResponding` is in their state for the shell and in the
+window list, which is how the task manager knows; the first answer
+after that makes it responding again. The server never waits for the
+answer: its loop's wait is cut to the next ping or deadline. The
+windows of a program stuck in a handler are still raised and minimized
+by the server, and the kernel ends the program whatever it is doing
+(see "Ending other programs").
+
 Window icons (`Server.WindowIcons`): a program gives its window an icon
 as a name of the icon theme (`RequestSetWindowIcon`; `TWindow.IconName`
 in libwindowing: every program names its `app-*` icon), or as pictures
@@ -1966,7 +1983,7 @@ up to `RequestSetScale` = 12; the display requests 13 to 15; then
 their own: `RequestLockScreen` = 40, `RequestDescribeIdle` = 41,
 `RequestRepaintDisplays` = 42; window icons `RequestSetWindowIcon` =
 43, `RequestSetWindowIconPictures` = 44, `RequestDescribeWindowIcon` =
-45; the clipboard and drag and drop 29 to
+45; `RequestAnswerPing` = 46; the clipboard and drag and drop 29 to
 36: `RequestOfferData` = 29, `RequestProvideData` = 30,
 `RequestAskData` = 31, `RequestWatchClipboard` = 32,
 `RequestDescribeClipboard` = 33, `RequestStartDrag` = 34,
@@ -1983,7 +2000,7 @@ and drags' 126 to 135: `EventDataRender` = 126, `EventDataDelivered` =
 `EventClipboardLost` = 130, `EventDragEnter` = 131, `EventDragOver` =
 132, `EventDragLeave` = 133, `EventDrop` = 134, `EventDragFinished` =
 135; `EventScreenLock` = 140, `EventIdleDescribed` = 141,
-`EventWindowIconDescribed` = 142).
+`EventWindowIconDescribed` = 142, `EventPing` = 143).
 
 The clipboard (`Server.DataOffers`) is the server's. A program offers
 data in one or more formats (`RequestOfferData` with
@@ -3239,8 +3256,8 @@ status bar shows the number of processes, CPU usage and memory in use.
   for root) by title, with their state and process. Switch To (or a
   double click) activates one (`ManageWindow`); End Program asks its
   process to end (`AskProcessToEnd`) - a program with unsaved work asks
-  what to do with it - and five seconds later, if it still runs, offers
-  to end it outright, as it may have stopped responding.
+  what to do with it. The status is Running, Minimized, Hidden or Not
+  responding (the display server's `ShellWindowNotResponding`).
 - **Processes** (`TaskManager.ProcessesPage`): a list view with name,
   id, user, CPU, memory (private), threads, state and session, sorted by
   any column (the header; CPU, busiest first, to begin with; equal rows
@@ -3258,7 +3275,10 @@ status bar shows the number of processes, CPU usage and memory in use.
   do to another user's processes is greyed out; what fails anyway (only
   root raises a priority) is told in one message box naming each process
   and why (`TaskManager.ProcessActions`). The End Process button and the
-  Delete key ask the selection to end.
+  Delete key ask the selection to end. The state is "not responding"
+  for a process whose windows the display server marks so
+  (`TaskManager.NotResponding`, noted from the Programs tab's list at
+  each look).
 - **Performance** (`TaskManager.PerformancePage`): a graph of all the
   processors, one for each processor, one of the memory in use
   (`TaskManager.UsageGraph`: a chart, `Controls.Charts`, of one area
@@ -3269,6 +3289,17 @@ status bar shows the number of processes, CPU usage and memory in use.
   numbers: processes, threads, up time, processors, context switches,
   and what the memory is used for.
 
+Ending never stops at asking (`TaskManager.ProcessActions`,
+`TaskManager.EndWatch`), since a program that has stopped responding
+takes the request and never acts on it. One that is not responding is
+not asked at all: End (on either tab) offers to end it outright at
+once. Any other is asked and watched; if it is still there (and not
+already being ended) 10 seconds later, the task manager offers to end
+it outright - once, in one question for all that are overdue, checked
+every second whatever the update speed. Ending outright is
+`TerminateProcess`, which the kernel carries out whatever the program
+is doing.
+
 The window's size, the tab, the sort column and order and the update
 speed are kept in the user's settings (group `TaskManager`;
 `TaskManager.Settings`). The desktop opens it with Ctrl+Shift+Escape,
@@ -3277,7 +3308,9 @@ from the Start menu and the taskbar's menu. It prints what happens
 rows after each look, `program WINDOW PID TITLE`, `cpu N% memory N%`,
 `performance ...`, `graph NAME X Y W H`, `sort`, `asked PID`,
 `ended-now PID`, `ended PID` once a process it ended is gone,
-`stopped`, `continued`, `priority`, `properties`, `error TEXT`) and
+`not-responding PID` when it offers to end one outright, `end-now
+cancelled`, `stopped`, `continued`, `priority`, `properties`, `error
+TEXT`) and
 where things are (`place NAME X Y`: the tabs, buttons, the first rows,
 the context menu's items; told again if the server moved the window).
 The input test opens it with Ctrl+Shift+Escape over two `burn` busy
@@ -7362,6 +7395,31 @@ point:
 
 Stopping a program uses the same safe points (see "Job control").
 
+Every wait a stuck program can be in is one of these: spinning in user
+mode in any number of threads (the clock), sleeping, events, timers and
+the notifications (`CallWaitForHandles`), user-mode locks and so
+deadlocks (`WaitOnAddress`), threads and child processes, pipes both
+ways, opening a FIFO nobody opens, file locks, channels (and so the
+display server's connection), suspended and stopped threads, socket
+receives, accepts and connects, and long runs of memory system calls.
+`hangtest` gets stuck in each of these on purpose (and with windows
+that stop being served), and `hangtest --check` (run by coretest) ends
+each outright (137), by asking (143) and by asking, being ignored and
+then ending outright, as the task manager does; and a group as a whole.
+A thread started while its process is being ended exits before it
+first runs (`UserThreadStart`): the alert pass may have gone out before
+it was listed among the process's threads, and its first wait would
+never have ended. What a process held goes with it: its handles are
+closed (sockets, pipes, channels; the display server sees the channel
+break and removes its windows), user-mode locks were in its own memory.
+
+The kernel's remaining non-alertable waits a user thread can reach are
+bounded by hardware: opening and closing a device, block I/O, and the
+wait for a cancelled request to complete. Should one of them never end
+(a driver that loses a request), the hang watch says so: a process
+still there 10 seconds after it was told to end is written to the log
+with where each of its threads is (`[ending]`, see "Diagnosing hangs").
+
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
 shell reports a program killed by that signal. Ending a program outright
 is the last resort: `kill`, the service manager, the session manager and
@@ -7447,7 +7505,9 @@ HUP and INT become end requests with the reasons asked, hang-up and
 interrupt, so a program that takes none of them still ends with 143,
 129 or 130; KILL (`kill -9`) and the other ending signals end the
 program at once whatever it takes; a negative PID asks a whole group
-(`kill -TERM -- -PGID`). `pkill` and `timeout` send the same way.
+(`kill -TERM -- -PGID`), or with KILL ends every process of it
+(`TerminateProcessGroup` in `Sys.ProcessList`, which looks again until
+none is left). `pkill` and `timeout` send the same way.
 
 `notifytest` (run by coretest) checks the program's own queue (empty,
 an end request it sent itself waited for among other handles, a second
@@ -8368,7 +8428,36 @@ independent) against the Free Pascal runtime library:
   every pixel's coverage, and runs of equal coverage go through
   `FillSpan` with the colour faded by it; quadratic curves
   (`AddShapeQuadratic`, for glyph outlines) become enough edges to stay
-  within a fiftieth of a pixel. `Drawing.CoverageBlending` blends a
+  within a fiftieth of a pixel; under the even-odd rule a pixel's
+  winding counts as far as it is from even (`ShapeCoverageBytes` gives
+  the coverage of an area under either rule, for paints and masks).
+
+  Vector graphics (SVG, and a canvas API later) build on it:
+  `Drawing.Transforms` (2 x 3 affine matrices: combining, inverting,
+  the scale a transform gives lengths), `Drawing.Paths` (subpaths of
+  lines, quadratic and cubic curves and elliptical arcs in SVG's
+  endpoint form, which become cubic curves of at most a quarter turn;
+  rectangles with elliptical corners and ellipses as SVG draws them;
+  flattened through a transform into polylines that stray at most a
+  tolerance from the curves, and bounds), `Drawing.Stroking` (the
+  outline of a stroke as pieces that all turn the same way, so the
+  non-zero rule fills their union and overlaps blend once: a rectangle
+  per segment, a miter within the miter limit or else a bevel, a round
+  join or a bevel at corners, butt, round or square caps, a dot or a
+  square for a subpath of no length; worked in the space the width is
+  given in and transformed after, so skews skew the stroke),
+  `Drawing.Dashing` (dash patterns and offsets, an odd list used twice,
+  every subpath starting the pattern again, closed ones dashed all the
+  way round), `Drawing.Paints` (solid colours, linear gradients,
+  two-circle radial gradients with a focal radius, patterns of a tile
+  surface repeated or not, sampled at the nearest pixel or between
+  four; gradients interpolate premultiplied through a 256 colour table
+  and pad, reflect or repeat; everything sampled at pixel centres
+  through the inverse of what placed it) and `Drawing.PaintFilling`
+  (filling a shape with a paint under either rule at an opacity,
+  through a coverage mask; masks multiply; a layer drawn over a canvas
+  through a mask and an opacity, for group opacity, clip paths and
+  masks). `Drawing.CoverageBlending` blends a
   colour by a coverage gamma-correct (the light of both mixed, gamma
   1.8), a span of coverage bytes at a time: what text is drawn with.
   `Drawing.SmoothLines` draws
@@ -8502,12 +8591,20 @@ independent) against the Free Pascal runtime library:
   scanline fill with a mask), turning, mirroring, inverting and skewing
   (`Image.Transforms`),
   colour management (`Image.ColorProfiles.*`), the
-  codec registry (`Image.Codecs`, `Image.StandardCodecs`) and loading
+  codec registry (`Image.Codecs`, `Image.StandardCodecs`), scalable
+  images (`Image.Scalable`: a TImage whose pixels are a rendering at
+  its natural size and which draws itself again at any other size,
+  keeping the last few renderings; SVG's, from libsvg) and loading
   and saving (`Image.Files`); BMP and DIB (`Image.Bmp.*`), ICO and CUR
   (`Image.Ico.*`), GIF (`Image.Gif.*`), JPEG (`Image.Jpeg.*`), PNG,
   TIFF and JPEG XL (`Image.Jxl.*`, decoding only). It
   needs libdrawing and libsystem; `imageinfo` uses it. It builds on the
-  host too: `make image-test` (part of `make test`).
+  host too: `make image-test` (part of `make test`). SVG files are read
+  by libsvg's codec, which joins the registry in any program that uses
+  libsvg (see "SVG (libsvg)").
+- **libsvg.so** – SVG documents, their rendering and SVG as an image
+  (see "SVG (libsvg)"); it needs libcss, libfont, libimage and
+  libdrawing. libweb uses it; `make svg-test` checks it on the host.
 - **libconfiguration.so** – settings, the user's over the system's (see
   "Settings" below): `Configuration.Names`, `Configuration.Values`,
   `Configuration.Documents`, `Configuration.Storage`,
@@ -9259,10 +9356,111 @@ runs cssdump on three inputs in the system.
 container matches, so their rules do not apply); :visited is matched
 from the adapter's flag, with no privacy split of styles; relative color
 syntax (`rgb(from ...)`), light-dark(), @scope, @counter-style,
-@font-feature-values and SVG properties are not supported; transitions
+@font-feature-values are not supported (of SVG's properties only the
+painting ones are: fill, stroke and their parts, stop-color and
+stop-opacity, text-anchor, paint-order, vector-effect, clip-rule, in two
+groups of their own, one inherited); transitions
 and animations are parsed and stored but not run; gamut mapping is
 clipping; computed colors are 16 bit sRGB; the cascade's sort is an
 insertion sort (fine for the dozens of rules that match one element).
+
+## SVG (libsvg)
+
+libsvg (`userland/lib/svg`, `Svg.*`) draws SVG 2 documents with
+libdrawing. One renderer serves both uses: an SVG file shown as an
+image (an `<img>`, a CSS `url()`, a favicon, the image viewer), parsed
+and styled by libsvg itself, and inline `<svg>` in HTML, whose DOM
+libweb copies into libsvg's nodes with the styles it computed.
+
+**Documents.** `Svg.Xml` reads the XML (UTF-8, UTF-16 by its byte order
+mark; comments, CDATA, processing instructions; a doctype whose
+internal subset declares general entities, expanded with limits on
+depth and size; namespaces with prefixes in scope; a root without a
+namespace taken as SVG) into `TSvgNode`s (`Svg.Nodes`): elements with
+their kind (from the name in the SVG namespace; others are not drawn),
+attributes, text, the computed style and, for an embedder, its own
+node. Malformed XML keeps what came before the error. `Svg.Styling`
+styles a file with libcss: an element adapter over the nodes, the
+`<style>` sheets, the style attribute, and the presentation attributes
+(`Svg.Presentation`, shared with libweb: fill, stroke-width, font-size
+... as declarations below every author rule, a bare number allowed
+for lengths) as presentational hints. libcss knows SVG's painting
+properties (fill, fill-rule, fill-opacity, stroke, stroke-width,
+-linecap, -linejoin, -miterlimit, -dasharray, -dashoffset,
+-opacity, clip-rule, text-anchor, paint-order, stop-color,
+stop-opacity, vector-effect). `TSvgDocument` (`Svg.Document`) keeps the
+tree, the elements by id, the natural size (the root's absolute width
+and height, the viewBox's ratio), the pictures its `<image>`s refer to
+(`Svg.ImageReferences`: data: URLs, decoded by libimage, SVG
+included), how to restyle content a `<use>` instantiates (the styler
+resolves it again with the use's style as the parent, as SVG 2's shadow
+trees inherit from their use) and where its text's glyphs come from
+(`Svg.Fonts`: the system's DejaVu Sans and Sans Mono, bold from 600,
+read once under a lock, for files; libweb's font matching for inline
+SVG). An embedder may also resolve ids the tree does not have.
+
+**Rendering** (`Svg.Renderer`): a walk from the root with the current
+transform, the viewport (percentages) and the parent's style.
+display: none skips a subtree, visibility: hidden an element's own
+painting; transform attributes compose. Shapes (`Svg.Geometry`: rect
+with rx and ry, circle, ellipse, line, polyline, polygon, path with
+the whole path data grammar, `Svg.PathData`) fill under their fill-rule
+and stroke with every stroke property (non-scaling strokes in device
+space), in paint-order, each with a colour (currentColor resolved), a
+linear or radial gradient (gradientUnits, gradientTransform,
+spreadMethod, the attributes and stops inherited along href; a
+bounding-box gradient on a flat shape draws nothing) or a pattern
+(patternUnits, patternContentUnits, patternTransform, viewBox, href;
+the tile drawn at the device's resolution), or the paint's fallback
+colour. Text (`Svg.Text`) lays out text, tspan, a and textPath (as a
+tspan) with x, y, dx, dy and rotate lists, white space collapsed,
+text chunks anchored by text-anchor, kerning, letter- and
+word-spacing, and slants italic type without an italic face; its glyph
+outlines are filled and stroked as paths. `<image>` draws its picture
+by preserveAspectRatio, sampled between pixels (pixelated on request),
+an SVG picture drawn again at the size shown. Groups, `<a>` and the
+first suitable child of `<switch>` draw their children; nested `<svg>`
+and a `<use>` of a symbol open a viewport (viewBox and
+preserveAspectRatio; clipped to its rectangle when the transform keeps
+it one); `<use>` draws its target restyled under it, refusing cycles.
+opacity below 1 (unless a shape paints only one of fill and stroke,
+which then takes it), clip-path and mask draw the element into a
+layer the size of its bounds, put down through the union of the clip
+path's children's coverage (clipPathUnits, clip-rule, a clip path's
+own clip path) and the mask's luminance (maskUnits,
+maskContentUnits, its region; mask-type alpha). Symbols, defs, paint
+servers, clip paths and masks draw nothing themselves.
+
+**As an image** (`Svg.Images`): `TSvgImage` is a scalable image over a
+document; its natural size is the root's width and height, a missing
+one following the viewBox's ratio, and without either CSS's default
+300 x 150 (the ratio contained in it). Drawn at another size, the
+viewport stretches over it and a root with a size but no viewBox
+scales as if its viewBox were 0 0 width height, as browsers draw SVG
+images. Its codec in libimage's registry recognizes SVG by content
+(the first element is svg, after any declaration, comments and
+doctype). Inline SVG makes its images deferred: drawn only when
+painted, at the size shown.
+
+**Not done yet.** Markers; text along a textPath's path, text
+decorations, vertical text and bidirectional reordering; filters;
+SVG animation (SMIL) and CSS transforms or animations on SVG elements;
+external references (other files' elements, `<image>` of other URLs);
+foreignObject's HTML; gzip-compressed files (.svgz served without
+Content-Encoding); `context-fill`/`context-stroke`; miter-clip and
+arcs joins are miters.
+
+**Tests.** `make svg-test` draws small documents and probes the pixels
+each feature decides (172 checks: shapes, path data with arcs and
+implicit commands, fill rules, caps, joins, miter limits, dashes,
+paint order, transforms, viewBox and preserveAspectRatio, nested
+viewports, group and paint opacity, currentColor, the cascade with
+sheets, style attributes and presentation attributes, use and symbols
+with inheritance from the use, gradients and their spreads and
+inheritance, patterns, clips, masks, text and its anchors, images
+from data: URLs including SVG ones, entities and namespaces) and checks
+natural sizes, renderings at other sizes and the sniffing. `SvgTest
+FONTS IN.svg OUT.png W H` draws a file for looking at.
 
 ## Web engine (libweb)
 
@@ -9504,7 +9702,8 @@ decided on the page thread:
 | `Web.Fetch.Requests` | `TFetchRequest` (method, URL, fields, body, destination, mode, credentials, redirect and cache modes, referrer and policy, initiator, parser metadata, fetchpriority and the RFC 9218 priority, URL list, tainting) and `TFetchClient` (a document's URL, origin, referrer policy, CSP list, secure context, top-level origin) |
 | `Web.Fetch.Responses` | `TFetchResponse`: type (basic, cors, opaque, opaqueredirect, error), status, fields, URL list, MIME type and the sniffed one |
 | `Web.Fetch.Fetcher` | main fetch, scheme fetch, HTTP fetch, redirects, sniffing before delivery |
-| `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks |
+| `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks; at most 12 run at once, the others wait (documents, style sheets, scripts and fonts ahead of images); a hop whose thread cannot be made fails like a network error |
+| `Web.Fetch.Monitors` | `TFetchMonitor`: told of each fetch's start, response, failure, end or cancel (a network log; webbrowse -n) |
 | `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks) |
 | `Web.Fetch.NetworkContexts` | a profile's libhttp client (connections, cookies, cache), HSTS store, preflight cache, Accept-Language; shared by its pages |
 | `Web.Fetch.MimeTypes` | MIME Sniffing's parser and serializer, Fetch's "extract a MIME type", the type groups |
@@ -9591,18 +9790,25 @@ Subresources, each delaying the load event while it loads:
   w descriptors, sizes (media conditions; px, em, rem, vw, vh, vmin,
   vmax), `<picture>` sources by media and type, chosen for the device
   pixel ratio; fetched with image sniffing, decoded by libimage on a
-  worker thread (orientation, sRGB), scaled down there when larger than
+  worker thread (at most 3 at once, the rest waiting; on the page thread
+  when no thread can be had) (orientation, sRGB), scaled down there when larger than
   twice the width and height attributes at the pixel ratio (or than
   MaximumImageSide); the natural size is the original's over the chosen
   density. load or error at the element; loading=lazy waits for
   `LoadLazyImage` or the load event. The first six images get the
-  urgency of visible ones.
+  urgency of visible ones. SVG files (found by content, libsvg's codec)
+  come back as scalable images and are never scaled down; srcset and
+  `<picture>` accept image/svg+xml. AVIF is not decoded, and neither
+  the Accept header nor the supported types claim it, so pages fall
+  back to the formats that are.
 - Fonts (`Web.Loading.Fonts`): @font-face src lists (url() and format();
   local() is the sink's), the first supported source fetched in CORS
   mode, the next tried on failure; the bytes go to the sink.
 - The favicon (`Web.Loading.Icons`): after parsing, the link rel=icon
   whose sizes fit 16 CSS pixels at the pixel ratio best (else any, else
-  the last), or /favicon.ico; decoded and handed to the observer.
+  the last), or /favicon.ico; decoded and handed to the observer (an
+  SVG icon as a scalable image, which the browser's tabs draw again at
+  their size).
 - Scripts (`Web.Loading.Scripts`): "prepare the script element" without
   running anything - a `TScriptExecutor` (the JavaScript engine) runs
   them; without one scripting is off and noscript parses as markup.
@@ -9971,15 +10177,27 @@ the table's cellpadding and border; align on p, div, headings and
 captions; img/object/embed/iframe/video/canvas width, height, align,
 border, hspace, vspace; hr's width, size, color, noshade and align;
 font's color, face and size; list types; ol start and li value as the
-list-item counter; br clear.
+list-item counter; br clear. SVG elements take their presentation
+attributes (libsvg's list) as hints, the outermost `<svg>` also its
+width and height (a bare number in pixels), which size its box.
 
 Styling walks the tree top-down with the engine's ancestor bloom filter
 (PushAncestor/PopAncestor), visiting only subtrees whose dirty bits say
 something changed. The styler is a document observer: an inserted
 subtree is marked for styling with its new siblings (structural
 selectors), an attribute change restyles the element's subtree and
-siblings (a style attribute change only the element), states likewise,
-and `<style>`/`<link>` changes mark the sheets dirty. After restyling an
+siblings (a style attribute change only the element), and
+`<style>`/`<link>` changes mark the sheets dirty. A change of states
+(:hover, :focus, :active ...) restyles only what the selectors reading
+those states can reach (libcss's `Css.StateInvalidation`, built with the
+rule index: each compound with a state pseudo-class, keyed by its type,
+id and classes, as the subject - the element -, left of a descendant or
+child combinator - its subtree - or of a sibling combinator - its later
+siblings' subtrees; one inside :is()/:where() keyed by its alternatives,
+one inside :has() restyles all of them). Moving the pointer changes
+:hover on a chain of ancestors, which used to restyle whole subtrees (16
+ms a move over a Wikipedia article on the build machine, 2 ms now).
+Pseudo-elements are matched with the ancestor filter too. After restyling an
 element it compares old and new styles struct by struct (structs are
 interned, so pointers compare) and reports the kind of change to the
 layout: boxes (display, position, float, generated content, lists),
@@ -10019,7 +10237,7 @@ no-break spaces).
 per element that generates one (display's outer and inner types: block
 containers, inline boxes, inline-blocks, flex, grid, the table boxes,
 list items with ::marker boxes; replaced boxes for img, video, canvas,
-iframe, embed, object and the controls the engine draws), one per text
+iframe, embed, object, inline svg and the controls the engine draws), one per text
 node (not per word or line), ::before/::after with generated text,
 `display: contents` giving its children to its parent, `display: none`
 nothing. CSS's anonymous boxes: block containers with both block and
@@ -10085,7 +10303,7 @@ its size.
   nearest positioned block (left/right/width and top/bottom/height
   constraints, static positions, auto margins centering), fixed boxes
   against the viewport; sticky boxes are laid out as relative ones
-  without offsets.
+  without offsets and moved when painted (below).
 - Replaced elements (`Web.Layout.Replaced`): intrinsic sizes from the
   image (or 300x150, or the controls' font-based sizes), the ratio kept
   when one side or a min/max applies; object-fit and object-position
@@ -10119,6 +10337,21 @@ its size.
 `Web.Layout.Dump` writes the layout tree as text (box kind, element,
 border box in document coordinates, lines and fragments) for the tests.
 
+**Inline SVG** (`Web.Svg.InlineImages`): an outermost `<svg>` is a
+replaced box whose image is its subtree drawn by libsvg. The DOM's SVG
+elements and text are copied into libsvg's nodes with the styles libweb
+computed (page sheets, presentation attributes, inheritance from the
+page); libsvg asks back for the styles of content a `<use>`
+instantiates (`TDocumentStyler.ResolveStyleUnder`, which also parses
+the hints of elements in a hidden sprite sheet), for glyphs (libweb's
+font matching) and for elements named by id outside the subtree (a
+page's sprite of symbols). The box tree builder keeps one image per
+element and makes it again when a signature of the subtree (nodes,
+attributes, text, style objects) changes, keeping the replaced one
+until the next replacement; images are drawn when painted, at the size
+shown. Without width and height the box takes the SVG's natural size
+(300 x 150, or the viewBox's ratio within it).
+
 ### Painting and hit testing (Web.Paint)
 
 `Web.Paint.Builder` turns the laid out tree into a display list
@@ -10135,7 +10368,20 @@ outlines. Positioned boxes with z-index auto, floats and atomic inlines
 paint as if they were stacking contexts. Overflow clips become clip
 pairs (rounded with border-radius), scroll containers move their
 contents, opacity becomes a group, fixed boxes are marked to ignore the
-viewport's scroll. The root's (or body's) background paints the canvas.
+viewport's scroll. Sticky boxes (`Web.Paint.Sticky`, CSS Positioned
+Layout 3.4) keep their insets from the scrollport's edges while their
+containing block (its content box less their margins) is in view:
+under the viewport the list holds a sticky push/pop with those limits
+and insets and painting and hit testing work out the offset for the
+scroll offset of the moment; inside an inner scroll container (whose
+offset is known when the list is built) the offset is applied then.
+Masks (`mask-image`, `-position`, `-size`, `-repeat`, `-origin`,
+`-clip`, `-mode`, the `mask` shorthand and the `-webkit-` names) are a
+mask group: its image layers (url() images and gradients, laid out like
+background layers) drawn first, then the content, composited through
+the layers' alpha; an image not loaded (or not decodable) masks
+everything out, as the spec says (Wikipedia's icons are masks of SVG
+images over currentColor). The root's (or body's) background paints the canvas.
 Backgrounds have all their layers: color, url() images (sized with
 background-size auto/cover/contain/lengths, positioned, repeated) and
 gradients (`Web.Paint.Gradients`: linear and radial, repeating,
@@ -10148,15 +10394,18 @@ skipped), at the device scale and the viewport's scroll offset:
 coverage-shaped (anti-aliased) rectangles with elliptical corners (a
 libdrawing addition), borders of every style (solid, dashed, dotted,
 double, groove, ridge, inset, outset; one ring when rounded), glyphs from
-libfont's glyph cache, images scaled and tiled, gradients per pixel, box
+libfont's glyph cache, images scaled and tiled (a scalable image, SVG,
+drawn again at the device size of the tile instead, so it stays crisp at
+any zoom and pixel ratio), gradients per pixel, box
 shadows as a blurred coverage mask (outer and inset), the controls
 (check boxes, radio buttons, meters, text field values), clip regions,
-opacity groups on transparent surfaces and rounded clips composited
-through their coverage.
+opacity groups and masks on transparent surfaces as big as their clip
+(not the whole surface) and rounded clips composited through their
+coverage.
 
 `TDocumentPainter` (`Web.Paint.Painter`) keeps a layout's display list,
 rebuilt when the layout's `PaintVersion` moved, and hit tests on the
-same list (every box adds a hit area; clips and fixed boxes respected):
+same list (every box adds a hit area; clips, fixed and sticky boxes respected):
 the topmost node at a viewport point, its element and box.
 
 ### Resources: what the loader supplies
@@ -10228,7 +10477,8 @@ view only calls Update (and repaints when PaintVersion moved).
 host with libcss, libfont, libdrawing and libimage. It lays out the
 reference pages of `tools/WebTest/render` (block margins, inline text,
 floats, positioning, lists and generated content, flex, grid, tables, replaced
-elements and controls, legacy attributes and overflow, painting) and
+elements and controls, legacy attributes and overflow, painting, inline
+SVG with a sprite of symbols and SVG images) and
 compares their layout tree dumps with the `.txt` files beside them
 (`make web-layout-update` rewrites those; look at the difference and at
 the PNGs before committing); checks that incremental restyle and
@@ -10247,6 +10497,53 @@ build/tools/webrender with `-f userland/fonts`) renders a page to a PNG
 (-t: the whole document) or prints its layout tree (-l); stylesheets and
 images referred to by relative URLs are read from beside the page.
 
+### webbrowse: real sites on the host
+
+`make webbrowse` (not in `make test`) builds `build/tools/webbrowse`
+(tools/WebBrowse): the engine as the browser runs it, on the Linux host.
+A `TWebPage` over a network context whose libhttp client connects with
+the host's sockets (`WebBrowse.HostNetwork`: getaddrinfo, a non-blocking
+connect within the timeout, libtls with `/etc/ssl/certs/ca-certificates.crt`
+and session resumption, ALPN h2), the layout resource sink, page
+scripting, and the event loop driven like the web view drives it (tasks
+in 12 ms slices, a frame every 16 ms: rendering steps, style, layout,
+then the viewport painted, which is when url() images are asked for).
+It runs until the load event and quiet (no fetch, no url() image, no
+ready task, no layout due for `-q` ms) or the timeout:
+
+    webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y SCROLL] [--full]
+      [--resize WxH] [-l LAYOUT|-] [--dom HTML|-] [-c] [-n] [--live] [-p] [-m]
+      [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--hover N]
+      [--profile] [-f FONTDIR] [-v] URL
+
+`-n` prints every request (start, time to the head, total, status,
+protocol, destination, bytes, outcome) from a fetch monitor
+(`Web.Fetch.Monitors`: the fetcher tells a `TFetchMonitor` when a fetch
+starts, responds, fails, ends or is cancelled); `-p` the time in each
+phase (`Web.Profiling`: the engine marks HTML parsing, style sheet
+parsing, style, box building, layout, painting, script and other tasks;
+nested phases are charged their own time only; off unless a program
+starts profiling with a fine clock); `-c` console messages; `-m` peak
+memory; `--hover N` moves the pointer over the page as the web view
+does (:hover on the chain under it) and times each move; `--resize`
+changes the viewport once quiet; `-e` evaluates script once quiet. A
+watchdog thread (`WebBrowse.Watchdog`) reports a page thread making no
+progress for `--stall` seconds: its phase stack and detail (the script
+or sheet being worked on) and its stack, sampled by interrupting it
+with SIGUSR1 and walking its frame pointers (`WebBrowse.Sampler`,
+x86-64; the tool keeps frame pointers and line information), and ends
+the process after a minute more. `--profile` samples that stack every
+millisecond while the page thread works and prints the functions it
+was in (self) and under (total), symbolized from the line information
+and `nm` for the run-time library.
+
+On the build machine Wikipedia's Main Page (1280 px) loads in about 1.3
+s, most of it network: 30 ms of style, 25 ms of layout, longest frame
+about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
+80 ms of layout in all, the longest frame about 90 ms (the first full
+style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
+ms each. A pointer move over an article costs about 2 ms.
+
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
@@ -10256,7 +10553,7 @@ spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
 scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
-instead), relative positioning of inline boxes, true sticky positioning,
+instead), relative positioning of inline boxes,
 transforms, filters, blend modes, clip-path, border-image, conic
 gradients, text-shadow blur, outlines following border radii, the
 `visibility: collapse` of table parts, incremental display list updates
@@ -10338,14 +10635,20 @@ with the document's resources before the document goes).
   again while tasks are ready, sets a `TTimer` for the loop's next
   timer, and asks for a frame (a 16 ms timer): rendering opportunity
   (animation frames), layout, and a repaint when the paint version
-  moved. A hidden view (a background tab) does not lay out.
+  moved. A hidden view (a background tab) does not lay out. A layout
+  that took longer than 25 ms runs again only after the GUI had twice
+  its time to itself (`LayoutDue`): while a long page loads on a slow
+  machine, input, scrolling, hit testing and painting go on against the
+  last layout (boxes keep their styles alive, so the old list paints
+  safely); zooming lays out at once.
 - **Painting** into a backing surface of the viewport's size, copied to
   the window; the viewport is painted again only when what is painted
   changed. Scrolling the viewport moves the surface's rows and paints
-  the strip that came into view, unless the page has fixed boxes or the
+  the strip that came into view, unless the page has fixed or sticky boxes or the
   step is not whole device pixels; the display list is not rebuilt for
   it (`DisplayListVersion`). The selection, a text field's caret and
-  the bars of inner scroll containers are drawn over it.
+  the bars of inner scroll containers (visible ones with overflow auto
+  or scroll only) are drawn over it.
 - **Scrolling**: the theme's `TScrollBar`s for the viewport (placed in
   `PlaceChildren`); the wheel (the scroll container under the pointer
   first; Shift for across; Ctrl zooms), arrows, Page Up and Down, Space,
@@ -11533,6 +11836,13 @@ where in the program it last entered the kernel (from the register frame
 at the top of its kernel stack) and the system call it is in - and what
 each processor runs. The tests set `hangdump=20`, so a hung
 test run leaves its explanation in the log.
+
+Without the option the same thread still watches endings: a process
+that was told to end (killed, crashed, or asked by a request it did
+not take) and is still there 10 seconds later is written to the log
+once, the same way, under `[ending]` - ending takes no longer than
+reaching the next safe point, so such a process is stuck where the
+kernel cannot reach it, and the report says where.
 
 ## Diagnostics over the network
 
