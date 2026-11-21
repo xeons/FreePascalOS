@@ -66,6 +66,7 @@ uses
   Kernel.DeferredCalls,
   Kernel.Clock,
   Kernel.Options,
+  Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.HeapCheckTest,
@@ -422,6 +423,7 @@ begin
   WriteProcessorDescription;
 
   InitializeMemoryManagement(BootInformation);
+  InitializeRandom(BootInformation^);
   RecordBootRamDisk(BootInformation^);
   InitializeExecutiveServices;
 

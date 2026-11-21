@@ -274,6 +274,14 @@ ROUTINE ArchReadRandomNumber
     mov     x0, x2
     ret
 
+// x0 = where the value goes; returns 1 if it worked.
+ROUTINE ArchReadReseededRandomNumber
+    mrs     x1, s3_3_c2_c4_1          // RNDRRS
+    cset    x2, ne
+    str     x1, [x0]
+    mov     x0, x2
+    ret
+
 // --- Caches ---
 
 // Cleans [x0, x0 + x1) to the point of coherency.
