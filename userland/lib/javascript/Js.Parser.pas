@@ -2392,7 +2392,7 @@ end;
 
 function TJsParser.ParseAssignment(NoIn: Boolean): TJsNode;
 var
-  StartToken, Peeked: TJsToken;
+  StartToken, Peeked, ParameterToken: TJsToken;
   ReferenceMark, ChildMark: Integer;
   OuterScope: TJsScope;
   Left, Node: TJsNode;
@@ -2414,13 +2414,15 @@ begin
       begin
         if (Peeked.Kind = tkIdentifier) then
         begin
+          { The function's source starts at async (toString, and parsing
+            it again when it is compiled lazily). }
           Next;
           ReferenceMark := FScope.ReferenceCount;
           ChildMark := FScope.ChildCount;
           OuterScope := FScope;
-          StartToken := FToken;
+          ParameterToken := FToken;
           Name := BindingIdentifierName;
-          Left := NewIdentifier(Name, StartToken);
+          Left := NewIdentifier(Name, ParameterToken);
           if FToken.Kind <> tkArrow then
             Unexpected;
           Exit(ParseArrowFunction(Left, True, StartToken, ReferenceMark, ChildMark, OuterScope));
