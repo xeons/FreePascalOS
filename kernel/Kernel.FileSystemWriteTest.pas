@@ -66,6 +66,10 @@ uses
   FileSystem.Volumes,
   FileSystem.Files,
   FileSystem.Ext,
+  FileSystem.MountOptions,
+  FileSystem.Mounts,
+  FileSystem.Memory.Nodes,
+  Kernel.MountWriteTest,
   Debug.Output,
   Debug.FramebufferConsole;
 
@@ -623,12 +627,46 @@ begin
   Result := GetPathInformation(@Path[0], Information) = StatusSuccess;
 end;
 
+{ The same writes on a fresh memory volume (tmpfs), which must hold no
+  page once its files are gone and give everything back on unmounting. }
+procedure TestMemoryVolume;
+var
+  Options: TMountOptions;
+  ErrorPosition: Integer;
+  Volume: PVolume;
+begin
+  SetDefaultMountOptions(Options);
+  Check(ParseMountOptions('size=8m,mode=0755', Options, ErrorPosition), 'tmpfs options');
+  Volume := MountMemoryVolume(Options);
+  if Volume = nil then
+    FailTest('mounting a memory volume', StatusOutOfMemory, True);
+  CurrentVolume := Volume;
+  TestCreateAndOverwrite;
+  TestBigFile;
+  TestGapsAndSizes;
+  TestRenameAndRemove;
+  TestManyFiles;
+  TestSymbolicLinks;
+  TestSparseFile;
+  TestRemoveWhileOpen;
+  TestRenameOverExisting;
+  Check(MemoryVolumeOf(Volume)^.Budget.PagesUsed > 0, 'tmpfs holds the files written');
+  Check(RemoveTreeForTest(Volume, '') = StatusSuccess, 'removing everything on tmpfs');
+  Check(MemoryVolumeOf(Volume)^.Budget.PagesUsed = 0, 'tmpfs gives every page back when files go');
+  Check(MemoryVolumeOf(Volume)^.InodeCount = 1, 'tmpfs keeps only its root when files go');
+  CheckStatus(UnmountVolume(Volume, False), 'unmounting the memory volume');
+  Check(Volume^.IsUnmounted, 'an idle memory volume is given back at once');
+  ReportPassed(Volume);
+end;
+
 function RunFileSystemWriteTests: Integer;
 var
   VolumeIndex: Integer;
   Volume: PVolume;
+  FirstTestVolume: PVolume;
 begin
   Result := 0;
+  FirstTestVolume := nil;
   for VolumeIndex := 0 to VolumeCount - 1 do
   begin
     Volume := VolumeAt(VolumeIndex);
@@ -636,6 +674,8 @@ begin
       Continue;
 
     CurrentVolume := Volume;
+    if (FirstTestVolume = nil) and not VolumeHasJournal then
+      FirstTestVolume := Volume;
     TestCreateAndOverwrite;
     TestBigFile;
     TestGapsAndSizes;
@@ -650,6 +690,9 @@ begin
     ReportPassed(Volume);
     Inc(Result);
   end;
+  TestMemoryVolume;
+  if FirstTestVolume <> nil then
+    RunMountWriteTests(FirstTestVolume);
   SyncAllVolumes;
 end;
 
