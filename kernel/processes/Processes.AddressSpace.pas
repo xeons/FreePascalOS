@@ -189,6 +189,9 @@ procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsa
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
+{ Adds a region as Template describes it (file backed ones: the region
+  holds the caller's reference to the backing on success). }
+function AddRegionRecord(Space: PAddressSpace; const Template: TUserRegion): LongInt;
 { Changes the most regions Space may have (existing ones stay). }
 procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);
 { Changes the most pages Space may have committed (0: no limit; what is
@@ -632,6 +635,15 @@ var
 begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Result := AddRegionLocked(Space, Start, Length, Attributes, Kind, CommitsOnDemand);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function AddRegionRecord(Space: PAddressSpace; const Template: TUserRegion): LongInt;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Result := AddRegionRecordLocked(Space, Template);
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 

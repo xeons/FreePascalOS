@@ -24,10 +24,15 @@
   section listing the libraries they need (DT_NEEDED), their symbols and
   their relocations. Loading a program means:
 
-    1. Map the program's loadable segments into the process. The image
-       is read once and kept as a section (Processes.ImageSections): its
-       pages are shared by every process that maps it, writable ones
-       copy on write.
+    1. Map the program's loadable segments into the process, from the
+       file's mapped pages (Processes.MappedFiles): read-only pages are
+       shared by every process that maps the file, writable ones copy on
+       write, and a page is read from the file only when some process
+       first touches it. The few pages no file page stands for (two
+       segments in one page, the end of a segment's file data inside a
+       page whose rest is bss) are built once and kept in the image's
+       section (Processes.ImageSections) with its headers; pages of bss
+       alone are zero filled on demand.
     2. For every needed library not loaded yet, find it in /lib of the
        system volume and map it at a random free place of the library
        window (Processes.AddressLayout; with aslr=off, at the next free
@@ -185,30 +190,45 @@ uses
   Abi.SystemCalls,
   Memory.Layout,
   Memory.KernelHeap,
+  Memory.PhysicalPages,
   FileSystem.Types,
   FileSystem.Files,
   Processes.AddressSpace,
   Processes.AddressLayout,
   Processes.UserRegions,
   Processes.ImageSections,
+  Processes.MappedFiles,
   Processes.Paths,
   Processes.Arch.ImageFormat;
 
 const
   MaximumImageSize = 64 * 1024 * 1024;
+  MaximumDynamicSectionSize = 64 * 1024;
+  MaximumProgramHeaders = 64;
   MaximumStaticTlsSize = 1024 * 1024;
   MaximumInitializers = 4096;
   LibraryDirectory = '/lib/';
 
 type
-  { An ELF file in kernel memory while it is being loaded: the bytes of
-    its section, which the load holds a use of. }
+  { An ELF file while it is being loaded: its section, which the load
+    holds a use of, and through it the file's pages. }
   TImageFile = record
-    Contents: PByte;
     Size: QWord;
     Header: PElf64FileHeader;
     Section: PImageSection;
+    MappedFile: PMappedFile;
   end;
+
+  { Where a page of the memory image comes from. }
+  TPageSource = (
+    { No segment covers it. }
+    PageSourceNone,
+    { The file's page at an offset. }
+    PageSourceFile,
+    { Zeros (bss alone). }
+    PageSourceZero,
+    { Built in the section. }
+    PageSourceBuilt);
 
   TDynamicInformation = record
     StringTable: QWord;
@@ -232,21 +252,13 @@ type
 
 { --- Files ----------------------------------------------------------- }
 
-{ Reads the whole file into kernel memory, with its identity. }
-function ReadFileContents(KernelPath: PChar; out Contents: PByte; out Size: QWord;
-  out Identity: TImageIdentity): LongInt;
+{ Opens the file at KernelPath for reading, with its identity. }
+function OpenImageFile(KernelPath: PChar; out OpenedFile: POpenFile; out Identity: TImageIdentity): LongInt;
 var
-  OpenedFile: POpenFile;
   Information: TNodeInformation;
-  Status: TFileSystemStatus;
-  BytesRead: QWord;
 begin
-  Contents := nil;
-  Size := 0;
-  Status := OpenPath(KernelPath, OpenedFile);
-  if Status <> StatusSuccess then
+  if OpenPath(KernelPath, OpenedFile) <> StatusSuccess then
     Exit(ErrorNotFound);
-
   GetFileInformation(OpenedFile, Information);
   Identity.Volume := OpenedFile^.Volume;
   Identity.NodeNumber := Information.NodeNumber;
@@ -256,42 +268,10 @@ begin
      (Information.SizeInBytes > MaximumImageSize) then
   begin
     CloseFile(OpenedFile);
+    OpenedFile := nil;
     Exit(ErrorBadExecutable);
   end;
-
-  Contents := PByte(AllocateKernelMemory(Information.SizeInBytes));
-  if Contents = nil then
-  begin
-    CloseFile(OpenedFile);
-    Exit(ErrorOutOfMemory);
-  end;
-  Status := ReadFromFile(OpenedFile, Contents, Information.SizeInBytes, BytesRead);
-  CloseFile(OpenedFile);
-  if (Status <> StatusSuccess) or (BytesRead <> Information.SizeInBytes) then
-  begin
-    FreeKernelMemory(Contents);
-    Contents := nil;
-    Exit(ErrorIo);
-  end;
-  Size := Information.SizeInBytes;
   Result := ErrorNone;
-end;
-
-{ The identity of the file at KernelPath, without reading it. }
-function ReadIdentity(KernelPath: PChar; out Identity: TImageIdentity): Boolean;
-var
-  OpenedFile: POpenFile;
-  Information: TNodeInformation;
-begin
-  Result := OpenPath(KernelPath, OpenedFile) = StatusSuccess;
-  if not Result then
-    Exit;
-  GetFileInformation(OpenedFile, Information);
-  Identity.Volume := OpenedFile^.Volume;
-  CloseFile(OpenedFile);
-  Identity.NodeNumber := Information.NodeNumber;
-  Identity.SizeInBytes := Information.SizeInBytes;
-  Identity.ModificationTime := Information.ModificationTime;
 end;
 
 function HeaderIsValid(const Image: TImageFile): Boolean;
@@ -308,13 +288,13 @@ end;
 
 function ProgramHeaderAt(const Image: TImageFile; Index: Integer): PElf64ProgramHeader;
 begin
-  Result := PElf64ProgramHeader(Image.Contents + Image.Header^.ProgramHeaderOffset +
-    QWord(Index) * SizeOf(TElf64ProgramHeader));
+  Result := Image.Section^.ProgramHeaders + Index;
 end;
 
-{ Finds the file data behind a virtual address (relative to the image's
-  link address). Returns nil if it is not backed by the file. }
-function FileDataAt(const Image: TImageFile; VirtualAddress: QWord; Length: QWord): PByte;
+{ Copies the file data behind a virtual address (relative to the image's
+  link address) through the file's pages. False if it is not backed by
+  the file (or could not be read). }
+function ReadImageData(const Image: TImageFile; VirtualAddress: QWord; Length: QWord; Destination: Pointer): Boolean;
 var
   Index: Integer;
   ProgramHeader: PElf64ProgramHeader;
@@ -330,9 +310,10 @@ begin
     OffsetInSegment := VirtualAddress - ProgramHeader^.VirtualAddress;
     if (OffsetInSegment < ProgramHeader^.FileSize) and (Length <= ProgramHeader^.FileSize - OffsetInSegment) and
        (ProgramHeader^.FileOffset + OffsetInSegment + Length <= Image.Size) then
-      Exit(Image.Contents + ProgramHeader^.FileOffset + OffsetInSegment);
+      Exit(ReadMappedFileBytes(Image.MappedFile, ProgramHeader^.FileOffset + OffsetInSegment, Destination,
+        Length) = ErrorNone);
   end;
-  Result := nil;
+  Result := False;
 end;
 
 { --- Mapping --------------------------------------------------------- }
@@ -360,40 +341,187 @@ end;
 procedure UseSection(Section: PImageSection; out Image: TImageFile);
 begin
   Image.Section := Section;
-  Image.Contents := Section^.Contents;
-  Image.Size := Section^.Size;
-  Image.Header := PElf64FileHeader(Section^.Contents);
+  Image.Header := @Section^.Header;
+  Image.Size := Section^.Identity.SizeInBytes;
+  Image.MappedFile := Section^.MappedFile;
 end;
 
-{ Copies the file data of every loadable segment into the section's
-  pages (the rest of them stays zero, as bss must). }
-procedure FillSectionPages(const Image: TImageFile);
+{ Where page PageIndex of the memory image comes from, and for a file
+  page the offset of the file's page. A page is the file's when exactly
+  one segment covers it and the file holds what it must: the segment's
+  file data to the end of the page, or the segment ends (no bss) inside
+  it - the bytes outside the segment are nobody's. With bss after the
+  file data inside the page, or with two segments in it, it is built. }
+function ClassifyPage(const Image: TImageFile; PageIndex: QWord; out FileOffset: QWord): TPageSource;
 var
   Index: Integer;
   ProgramHeader: PElf64ProgramHeader;
-  Offset: QWord;
-  Remaining: QWord;
-  Source: PByte;
-  Piece: QWord;
+  Segment: PElf64ProgramHeader;
+  PageStart: QWord;
+  PageEnd: QWord;
+  Covering: Integer;
+  FileDataEnd: QWord;
 begin
+  FileOffset := 0;
+  PageStart := Image.Section^.LowestPage + PageIndex * PageSize;
+  PageEnd := PageStart + PageSize;
+  Covering := 0;
+  Segment := nil;
   for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
   begin
     ProgramHeader := ProgramHeaderAt(Image, Index);
-    if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.FileSize = 0) then
+    if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.MemorySize = 0) then
       Continue;
-    Offset := ProgramHeader^.VirtualAddress - Image.Section^.LowestPage;
-    Source := Image.Contents + ProgramHeader^.FileOffset;
-    Remaining := ProgramHeader^.FileSize;
-    while Remaining > 0 do
+    if (ProgramHeader^.VirtualAddress < PageEnd) and
+       (ProgramHeader^.VirtualAddress + ProgramHeader^.MemorySize > PageStart) then
     begin
-      Piece := PageSize - (Offset and PageOffsetMask);
-      if Piece > Remaining then
-        Piece := Remaining;
-      CopyMemory(SectionPage(Image.Section, Offset div PageSize) + (Offset and PageOffsetMask), Source, Piece);
-      Offset := Offset + Piece;
-      Source := Source + Piece;
-      Remaining := Remaining - Piece;
+      Inc(Covering);
+      Segment := ProgramHeader;
     end;
+  end;
+  if Covering = 0 then
+    Exit(PageSourceNone);
+  if Covering > 1 then
+    Exit(PageSourceBuilt);
+
+  FileDataEnd := Segment^.VirtualAddress + Segment^.FileSize;
+  { No file data in the page: bss alone. }
+  if (Segment^.FileSize = 0) or (FileDataEnd <= PageStart) then
+    Exit(PageSourceZero);
+  { The file's pages must line up with the memory image's. }
+  if ((Segment^.FileOffset - Segment^.VirtualAddress) and PageOffsetMask) <> 0 then
+    Exit(PageSourceBuilt);
+  if Segment^.FileOffset + PageStart < Segment^.VirtualAddress then
+    Exit(PageSourceBuilt);
+  if (FileDataEnd >= PageEnd) or (Segment^.MemorySize <= Segment^.FileSize) then
+  begin
+    FileOffset := Segment^.FileOffset + PageStart - Segment^.VirtualAddress;
+    Exit(PageSourceFile);
+  end;
+  Result := PageSourceBuilt;
+end;
+
+{ Builds the section's pages that no file page stands for: the file
+  data of every segment in them (the rest stays zero, as bss must). }
+function BuildSectionPages(const Image: TImageFile): LongInt;
+var
+  PageIndex: QWord;
+  FileOffset: QWord;
+  Page: TPhysicalAddress;
+  Index: Integer;
+  ProgramHeader: PElf64ProgramHeader;
+  PageStart: QWord;
+  First: QWord;
+  Last: QWord;
+begin
+  PageIndex := 0;
+  while PageIndex < Image.Section^.PageCount do
+  begin
+    if ClassifyPage(Image, PageIndex, FileOffset) = PageSourceBuilt then
+    begin
+      Page := AllocateZeroedPhysicalPage(PageUsageProgramImage);
+      if Page = 0 then
+        Exit(ErrorOutOfMemory);
+      Image.Section^.BuiltPages[PageIndex] := Page;
+      PageStart := Image.Section^.LowestPage + PageIndex * PageSize;
+      for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+      begin
+        ProgramHeader := ProgramHeaderAt(Image, Index);
+        if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.FileSize = 0) then
+          Continue;
+        { The segment's file data inside this page. }
+        First := ProgramHeader^.VirtualAddress;
+        if First < PageStart then
+          First := PageStart;
+        Last := ProgramHeader^.VirtualAddress + ProgramHeader^.FileSize;
+        if Last > PageStart + PageSize then
+          Last := PageStart + PageSize;
+        if Last <= First then
+          Continue;
+        Result := ReadMappedFileBytes(Image.MappedFile,
+          ProgramHeader^.FileOffset + (First - ProgramHeader^.VirtualAddress),
+          PByte(PhysicalToVirtual(Page)) + (First - PageStart), Last - First);
+        if Result <> ErrorNone then
+          Exit;
+      end;
+    end;
+    Inc(PageIndex);
+  end;
+  Result := ErrorNone;
+end;
+
+{ Reads and checks the ELF header and program headers of a file whose
+  mapped file is MappedFile, and makes its section (which takes over
+  the mapped file's reference). }
+function CreateSectionFromFile(KernelPath: PChar; const Identity: TImageIdentity; MappedFile: PMappedFile;
+  out Section: PImageSection): LongInt;
+var
+  Header: TElf64FileHeader;
+  ProgramHeaders: PElf64ProgramHeader;
+  Image: TImageFile;
+  LowestPage: QWord;
+  HighestPageEnd: QWord;
+  Index: Integer;
+  HeaderBytes: QWord;
+begin
+  Section := nil;
+  ProgramHeaders := nil;
+  Result := ReadMappedFileBytes(MappedFile, 0, @Header, SizeOf(Header));
+  if (Result = ErrorNone) and ((Header.ProgramHeaderCount = 0) or
+     (Header.ProgramHeaderCount > MaximumProgramHeaders) or
+     (Header.ProgramHeaderEntrySize <> SizeOf(TElf64ProgramHeader))) then
+    Result := ErrorBadExecutable;
+  if Result = ErrorNone then
+  begin
+    HeaderBytes := QWord(Header.ProgramHeaderCount) * SizeOf(TElf64ProgramHeader);
+    if (Header.ProgramHeaderOffset > Identity.SizeInBytes) or
+       (HeaderBytes > Identity.SizeInBytes - Header.ProgramHeaderOffset) then
+      Result := ErrorBadExecutable;
+  end;
+  if Result = ErrorNone then
+  begin
+    ProgramHeaders := PElf64ProgramHeader(AllocateKernelMemory(HeaderBytes));
+    if ProgramHeaders = nil then
+      Result := ErrorOutOfMemory
+    else
+      Result := ReadMappedFileBytes(MappedFile, Header.ProgramHeaderOffset, ProgramHeaders, HeaderBytes);
+  end;
+  if Result <> ErrorNone then
+  begin
+    FreeKernelMemory(ProgramHeaders);
+    ReleaseMappedFile(MappedFile, True);
+    Exit;
+  end;
+
+  { Checked through a provisional image over the records just read. }
+  Section := CreateImageSection(KernelPath, Identity, MappedFile, Header, ProgramHeaders, 0, 1);
+  if Section = nil then
+    Exit(ErrorOutOfMemory);
+  UseSection(Section, Image);
+  if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) or
+     ((HighestPageEnd - LowestPage) div PageSize > MaximumImageSize div PageSize) then
+    Result := ErrorBadExecutable;
+  for Index := 0 to Header.ProgramHeaderCount - 1 do
+    if (Result = ErrorNone) and (ProgramHeaderAt(Image, Index)^.SegmentType = ProgramHeaderTypeLoad) and
+       ((ProgramHeaderAt(Image, Index)^.FileOffset > Image.Size) or
+        (ProgramHeaderAt(Image, Index)^.FileSize > Image.Size - ProgramHeaderAt(Image, Index)^.FileOffset) or
+        (ProgramHeaderAt(Image, Index)^.FileSize > ProgramHeaderAt(Image, Index)^.MemorySize)) then
+      Result := ErrorBadExecutable;
+  if Result = ErrorNone then
+  begin
+    Section^.LowestPage := LowestPage;
+    Section^.PageCount := (HighestPageEnd - LowestPage) div PageSize;
+    FreeKernelMemory(Section^.BuiltPages);
+    Section^.BuiltPages := PQWord(AllocateZeroedKernelMemory(Section^.PageCount * SizeOf(QWord)));
+    if Section^.BuiltPages = nil then
+      Result := ErrorOutOfMemory;
+  end;
+  if Result = ErrorNone then
+    Result := BuildSectionPages(Image);
+  if Result <> ErrorNone then
+  begin
+    ReleaseImageSection(Section);
+    Section := nil;
   end;
 end;
 
@@ -403,53 +531,30 @@ function AcquireImage(KernelPath: PChar; out Image: TImageFile): LongInt;
 var
   Identity: TImageIdentity;
   Section: PImageSection;
-  Contents: PByte;
-  Size: QWord;
-  LowestPage: QWord;
-  HighestPageEnd: QWord;
-  Index: Integer;
-  ProgramHeader: PElf64ProgramHeader;
+  OpenedFile: POpenFile;
+  MappedFile: PMappedFile;
 begin
-  ZeroMemory(@Image, SizeOf(Image));
-  if not ReadIdentity(KernelPath, Identity) then
-    Exit(ErrorNotFound);
+  FillMemory(@Image, SizeOf(Image), 0);
+  Result := OpenImageFile(KernelPath, OpenedFile, Identity);
+  if Result <> ErrorNone then
+    Exit;
   Section := FindImageSection(KernelPath, Identity);
   if Section <> nil then
   begin
+    CloseFile(OpenedFile);
     UseSection(Section, Image);
     Exit(ErrorNone);
   end;
 
-  Result := ReadFileContents(KernelPath, Contents, Size, Identity);
+  Result := AcquireMappedFile(OpenedFile, True, MappedFile);
+  CloseFile(OpenedFile);
   if Result <> ErrorNone then
     Exit;
-  Image.Contents := Contents;
-  Image.Size := Size;
-  Image.Header := PElf64FileHeader(Contents);
-  if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) then
-  begin
-    FreeKernelMemory(Contents);
-    Exit(ErrorBadExecutable);
-  end;
-  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
-  begin
-    ProgramHeader := ProgramHeaderAt(Image, Index);
-    if (ProgramHeader^.SegmentType = ProgramHeaderTypeLoad) and
-       (ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Size) then
-    begin
-      FreeKernelMemory(Contents);
-      Exit(ErrorBadExecutable);
-    end;
-  end;
-
-  Section := CreateImageSection(KernelPath, Identity, Contents, Size, LowestPage,
-    (HighestPageEnd - LowestPage) div PageSize);
-  if Section = nil then
-    Exit(ErrorOutOfMemory);
+  Result := CreateSectionFromFile(KernelPath, Identity, MappedFile, Section);
+  if Result <> ErrorNone then
+    Exit;
   UseSection(Section, Image);
-  FillSectionPages(Image);
   PublishImageSection(Section);
-  Result := ErrorNone;
 end;
 
 function SegmentAttributes(Flags: LongWord): LongWord;
@@ -461,9 +566,57 @@ begin
     Result := Result or RegionExecutable;
 end;
 
-{ Maps every page of the image, from its section, with exactly the
-  attributes of the segments covering it, creating one region per run of
-  equal pages. }
+{ Adds one region for the run of PageCount pages from page FirstPage of
+  the image (at Address), all from the same source with Attributes. }
+function MapPageRun(Space: PAddressSpace; const Image: TImageFile; Address: QWord; FirstPage, PageCount: QWord;
+  Attributes: LongWord; Source: TPageSource; FileOffset: QWord): LongInt;
+var
+  Template: TUserRegion;
+  Index: QWord;
+begin
+  FillMemory(@Template, SizeOf(Template), 0);
+  Template.Start := Address;
+  Template.Length := PageCount * PageSize;
+  Template.Attributes := Attributes;
+  Template.Kind := RegionKindImage;
+  case Source of
+    PageSourceFile:
+      begin
+        { The file's pages when first touched, copy on write. }
+        Template.CommitsOnDemand := True;
+        Template.Backing := Image.MappedFile;
+        Template.BackingOffset := FileOffset;
+        Template.BackingIsPrivate := True;
+        ReferenceMappedFile(Image.MappedFile, True);
+        Result := AddRegionRecord(Space, Template);
+        if Result <> ErrorNone then
+          ReleaseMappedFile(Image.MappedFile, True);
+      end;
+    PageSourceZero:
+      begin
+        Template.CommitsOnDemand := True;
+        Result := AddRegionRecord(Space, Template);
+      end;
+  else
+    begin
+      { The section's built pages, mapped now. }
+      Result := ErrorNone;
+      Index := 0;
+      while (Index < PageCount) and (Result = ErrorNone) do
+      begin
+        Result := MapSharedPage(Space, Address + Index * PageSize,
+          Image.Section^.BuiltPages[FirstPage + Index], Attributes);
+        Inc(Index);
+      end;
+      if Result = ErrorNone then
+        Result := AddRegionRecord(Space, Template);
+    end;
+  end;
+end;
+
+{ Maps the image with exactly the attributes of the segments covering
+  each page, one region per run of pages alike in attributes and source
+  (and, for the file's pages, following one another in the file). }
 function MapSegments(Space: PAddressSpace; const Image: TImageFile; Bias: QWord;
   LowestPage, HighestPageEnd: QWord): LongInt;
 var
@@ -475,6 +628,10 @@ var
   FirstPage: QWord;
   LastPage: QWord;
   RunStart: QWord;
+  RunSource: TPageSource;
+  RunOffset: QWord;
+  Source: TPageSource;
+  FileOffset: QWord;
 begin
   PageCount := (HighestPageEnd - LowestPage) div PageSize;
   PageAttributes := PLongWord(AllocateZeroedKernelMemory(PageCount * SizeOf(LongWord)));
@@ -492,29 +649,29 @@ begin
       PageAttributes[PageIndex] := PageAttributes[PageIndex] or SegmentAttributes(ProgramHeader^.Flags);
   end;
 
-  { Regions for runs of pages with the same attributes; gaps between
-    segments stay unmapped. }
+  { Gaps between segments stay unmapped. }
   Result := ErrorNone;
   PageIndex := 0;
   while (PageIndex < PageCount) and (Result = ErrorNone) do
   begin
-    if PageAttributes[PageIndex] = 0 then
+    RunSource := ClassifyPage(Image, PageIndex, RunOffset);
+    if (PageAttributes[PageIndex] = 0) or (RunSource = PageSourceNone) then
     begin
       Inc(PageIndex);
       Continue;
     end;
     RunStart := PageIndex;
-    while (PageIndex < PageCount) and (PageAttributes[PageIndex] = PageAttributes[RunStart]) do
+    Inc(PageIndex);
+    while PageIndex < PageCount do
     begin
-      Result := MapSharedPage(Space, Bias + LowestPage + PageIndex * PageSize,
-        Image.Section^.Pages[PageIndex], PageAttributes[PageIndex]);
-      if Result <> ErrorNone then
+      Source := ClassifyPage(Image, PageIndex, FileOffset);
+      if (PageAttributes[PageIndex] <> PageAttributes[RunStart]) or (Source <> RunSource) or
+         ((Source = PageSourceFile) and (FileOffset <> RunOffset + (PageIndex - RunStart) * PageSize)) then
         Break;
       Inc(PageIndex);
     end;
-    if Result = ErrorNone then
-      Result := AddRegion(Space, Bias + LowestPage + RunStart * PageSize, (PageIndex - RunStart) * PageSize,
-        PageAttributes[RunStart], RegionKindImage, False);
+    Result := MapPageRun(Space, Image, Bias + LowestPage + RunStart * PageSize, RunStart, PageIndex - RunStart,
+      PageAttributes[RunStart], RunSource, RunOffset);
   end;
   FreeKernelMemory(PageAttributes);
 end;
@@ -589,11 +746,22 @@ begin
     ProgramHeader := ProgramHeaderAt(Image, Index);
     if ProgramHeader^.SegmentType <> ProgramHeaderTypeDynamic then
       Continue;
-    if ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Image.Size then
+    if (ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Image.Size) or
+       (ProgramHeader^.FileSize > MaximumDynamicSectionSize) then
       Exit(ErrorBadExecutable);
 
-    Entry := PElf64Dynamic(Image.Contents + ProgramHeader^.FileOffset);
     EntryCount := ProgramHeader^.FileSize div SizeOf(TElf64Dynamic);
+    if EntryCount = 0 then
+      Exit(ErrorNone);
+    Entry := PElf64Dynamic(AllocateKernelMemory(EntryCount * SizeOf(TElf64Dynamic)));
+    if Entry = nil then
+      Exit(ErrorOutOfMemory);
+    if ReadMappedFileBytes(Image.MappedFile, ProgramHeader^.FileOffset, Entry,
+       EntryCount * SizeOf(TElf64Dynamic)) <> ErrorNone then
+    begin
+      FreeKernelMemory(Entry);
+      Exit(ErrorIo);
+    end;
     EntryIndex := 0;
     while (EntryIndex < EntryCount) and (Entry[EntryIndex].Tag <> DynamicNull) do
     begin
@@ -622,6 +790,7 @@ begin
       end;
       Inc(EntryIndex);
     end;
+    FreeKernelMemory(Entry);
     Exit(ErrorNone);
   end;
   Result := ErrorNone; { a static program without a dynamic section }
@@ -629,26 +798,27 @@ end;
 
 { Copies a table from the file into a new kernel buffer. }
 function CopyTable(const Image: TImageFile; VirtualAddress, Length: QWord; out Copy: Pointer): Boolean;
-var
-  Source: PByte;
 begin
   Copy := nil;
   if Length = 0 then
     Exit(True);
-  Source := FileDataAt(Image, VirtualAddress, Length);
-  if Source = nil then
+  if Length > MaximumImageSize then
     Exit(False);
   Copy := AllocateKernelMemory(Length);
   if Copy = nil then
     Exit(False);
-  CopyMemory(Copy, Source, Length);
-  Result := True;
+  Result := ReadImageData(Image, VirtualAddress, Length, Copy);
+  if not Result then
+  begin
+    FreeKernelMemory(Copy);
+    Copy := nil;
+  end;
 end;
 
 function CopyDynamicTables(Module: PLoadedModule; const Image: TImageFile;
   const Dynamic: TDynamicInformation): LongInt;
 var
-  HashHeader: PLongWord;
+  HashHeader: array[0..1] of LongWord;
   HashTable: Pointer;
   RelaCopy: Pointer;
   JumpCopy: Pointer;
@@ -660,8 +830,7 @@ begin
   if (Dynamic.Hash = 0) or (Dynamic.StringTable = 0) then
     Exit(ErrorBadExecutable); { link with --hash-style=sysv }
 
-  HashHeader := PLongWord(FileDataAt(Image, Dynamic.Hash, 8));
-  if HashHeader = nil then
+  if not ReadImageData(Image, Dynamic.Hash, SizeOf(HashHeader), @HashHeader[0]) then
     Exit(ErrorBadExecutable);
   Module^.BucketCount := HashHeader[0];
   Module^.SymbolCount := HashHeader[1];
