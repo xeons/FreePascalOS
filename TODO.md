@@ -889,8 +889,11 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] Device interrupts: GIC SPIs, message interrupts through GICv2m
 - [x] Boots to the end of the kernel self tests under QEMU virt, with the
       firmware at EL1 and at EL2 (`make arm64-test`, not in `make test`)
-- [ ] Wire `make arm64-test` into `make test` once qemu-system-aarch64 and
-      edk2-aarch64 are standard requirements
+- [x] The AArch64 boot tests, coretest and panic trace test in `make test`
+      when qemu-system-aarch64, edk2-aarch64, the cross compiler and
+      binutils are there (`scripts/arm64-test-requirements.sh` says what
+      is missing otherwise); `make arm64-test` adds the GICv3 coretest
+      and the session test
 - [x] User mode: an AArch64 exception context in the ABI (X0-X30, SP, PC,
       PSTATE; CallContinue), the user runtime library and programs built for
       AArch64, the ELF loader accepting AArch64 programs (TLS variant I,
@@ -900,21 +903,31 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] Address space identifiers (no TLB flush on every address space switch)
 - [x] Instruction cache synchronized for user code pages
 - [x] The time of day from the firmware's GetTime (passed by the loader)
-- [ ] 16-bit ASIDs where the processor has them (TCR_EL1.AS)
-- [ ] AHCI finds no drives on QEMU's virt machine; PCI line interrupts
-      (INTx: AC'97, e1000) never arrive there (coretest's AC'97 and optical
-      drive checks fail on AArch64 for that)
+- [x] 16-bit ASIDs where the processor has them (TCR_EL1.AS), `asidbits=`
+      for rollover tests
+- [x] AHCI finds no drives on QEMU's virt machine (the port signature was
+      read before FIS receive was on); AC'97 never worked there (its I/O
+      ports had no window, not its line interrupt): coretest has the
+      optical drive on AHCI and AC'97 on AArch64 too
 - [ ] The AES instructions (ARMv8 Crypto Extension, where present: not on
       the Pi 4) and a hardware random seed (RNDR on ARMv8.5, or a kernel
       entropy call) for libcryptography on AArch64
-- [ ] Floating point exceptions on AArch64: check FPSR in the runtime
-      (Free Pascal 3.2.2 does not), so division by zero raises EZeroDivide
-- [ ] Suspend to RAM (PSCI SYSTEM_SUSPEND) and the real-time clock (UEFI
-      runtime GetTime, or PL031 / the Pi 5's RTC)
-- [ ] GICv3 (system register CPU interface, redistributors, ITS) for
-      machines that have it
-- [ ] PCIe I/O space window (`Hal.PortIo.SetPortIoWindow`) from the root
-      bridge's `_CRS`
+- [x] Floating point exceptions on AArch64: user code compiled with `-CE`
+      (the compiler checks FPSR, the RTL raises unmasked ones), so
+      division by zero raises EZeroDivide
+- [x] Suspend to RAM through PSCI SYSTEM_SUSPEND (where PSCI_FEATURES
+      offers it) and the PL031 real-time clock (read, and set when the
+      wall clock is stepped)
+- [ ] Suspend to RAM on a machine whose PSCI really has SYSTEM_SUSPEND
+      (QEMU's has not: only the refused path is tested, with
+      `suspendtest psci-suspend=force`); the Pi 5's RTC (on its PMIC)
+- [x] GICv3 (system register CPU interface, redistributors, affinity
+      routing, LPIs through the ITS) for machines that have it
+- [ ] GICv3: device ids through the IORT's ID mappings (the requester id
+      is taken as the device id, as on QEMU virt), more than one ITS,
+      ITS indirect device tables (device ids above 8191), GICv4
+- [x] PCIe I/O space window (`Hal.PortIo`) from the root bridge's `_CRS`
+      or the device tree host's `ranges` (`Io.PciPortWindow`)
 - [ ] Boot test on a real Raspberry Pi 4
 - Raspberry Pi 4 drivers (its PCIe and these devices are not cache
   coherent, and some reach only the low 1 GiB; none of this has run on a
@@ -1068,12 +1081,11 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
   - [ ] Framebuffer fallback through the VideoCore mailbox (allocate a
         framebuffer as Circle does) when the firmware gives no
         simple-framebuffer
-  - [ ] GICv3 driver (the tree's `arm,gic-v3` is parsed; the HAL drives
-        GICv2 only), spin-table processors, virtio-mmio devices (listed
-        as platform devices, no transport driver)
+  - [x] GICv3 driver (with its ITS, from the tree too)
+  - [ ] Spin-table processors, virtio-mmio devices (listed as platform
+        devices, no transport driver)
   - [ ] PCI bridges below an ECAM root bus get no windows assigned (QEMU
-        virt has none); I/O BARs are assigned but the port window
-        (`Hal.PortIo.SetPortIoWindow`) is not set
+        virt has none); the port window is set from the host's ranges
 
 ## Web platform: style engine (libcss)
 
