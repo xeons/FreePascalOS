@@ -364,10 +364,11 @@ Rules that follow from this:
   tick, and the exact time is split between the two in that proportion,
   rather than timing every system call and interrupt (see "Processor
   time and memory").
-- Every 5 seconds the clock tick samples the number of threads running or
-  ready and folds it into three exponentially decayed averages (1, 5 and
-  15 minutes, fixed point with 11 fraction bits, as in Unix load
-  averages). The run queues keep a count of their threads for this.
+- Every 5 seconds the boot processor's clock interrupt (which comes for
+  it even while that processor idles with its tick stopped) samples the
+  number of threads running or ready and folds it into three
+  exponentially decayed averages (1, 5 and 15 minutes, fixed point with
+  11 fraction bits, as in Unix load averages). The run queues keep a count of their threads for this.
   Only the dispatcher lock is still shared by all processors.
 - User threads run at priority 8 for nice 0; every 4 nice steps move one
   priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` moves a
@@ -389,21 +390,29 @@ Rules that follow from this:
   (`ClockNanoseconds`).
 - **One-shot clock interrupts.** Each processor's local APIC timer runs
   in one-shot mode (`Kernel.Clock`). Every time it interrupts, it is set
-  again for the first of three things on that processor: its next 10 ms
-  tick, its first timer, and the first wake-up of the threads that began
-  a timed wait there. Whoever adds an earlier due time on a processor
+  again for the first of four things on that processor: its next 10 ms
+  tick, its first timer, the first wake-up of the threads that began a
+  timed wait there and, on the boot processor, the next load average
+  sample. Whoever adds an earlier due time on a processor
   asks for an earlier interrupt (`RequestClockInterruptBy`, interrupts
   disabled). A late interrupt counts every tick it missed, and the ticks
   keep to their schedule (each is due 10 ms after the last was due).
-- **Why the tick stays.** A fully tickless clock would also have to
-  stop the tick on idle processors and account time slices from
-  timestamps at every switch (processor time already is). The tick is
-  kept for those - time slices (`QuantumTicks`), the split of processor
-  time between user mode and the kernel, the load averages - while
-  everything that waits for a
-  time is taken off the tick: it costs one extra interrupt per due time,
-  is simple to get right, and gives timers and sleeps the precision of
-  the APIC timer.
+- **Tickless idle.** The tick is only needed while a processor runs a
+  thread: time slices (`QuantumTicks`) and the split of processor time
+  between user mode and the kernel. The clock interrupt that finds a
+  processor in its idle thread stops its tick (`NextTickTime` =
+  `NeverDue`), so an idle processor sleeps until its next timer or
+  wake-up, a device interrupt or another processor's dispatch interrupt,
+  and at most 4 seconds (the longest the clock interrupt is set for at
+  once). The switch away from the idle thread starts the tick again
+  (`RestartClockTick`), a whole tick later, so the thread gets a full
+  time slice. Processor time stays exact (it is taken at every switch),
+  the uptime and the timers come from the counter, and the load
+  averages have a deadline of their own. Busy processors keep the 100 Hz
+  tick. Each processor counts its clock interrupts
+  (`ClockInterruptCount`): an idle QEMU guest takes about one a second
+  per idle processor rather than 100. Kernel option `tickless=off` keeps
+  the tick on idle processors too.
 - **Timers** (`Kernel.Timers`) go on the queue of the processor that
   sets them; each queue has a lock its clock interrupt takes, and
   setting or cancelling also takes one shared lock, so that two
@@ -429,6 +438,130 @@ Rules that follow from this:
   on machines with an invariant counter and in virtual machines; under
   emulation (TCG) both the counter and the APIC timer follow the host's
   real time.
+- **Invariant counter and kvmclock.** `Hal.TimeStampClock` checks that
+  the counter is invariant (CPUID 8000_0007h EDX bit 8: the same rate in
+  every power state) and the HAL logs it. One that is not may stop in
+  deep idle states, so the idle states then stay at HLT; under KVM
+  (which does not say its counter is invariant unless asked) the kernel's
+  clock is then KVM's paravirtual clock instead (`Hal.ParavirtualClock`,
+  kvmclock: MSR 4B564D01h, one record for every processor where KVM
+  says it is stable, read with a version count). `clock=tsc` or
+  `clock=kvmclock` chooses. It pauses and continues across suspend to
+  RAM like the counter clock.
+- **The wall clock** (`Kernel.WallClock`) is the uptime plus an offset:
+  the battery backed clock's reading at start, to the nanosecond from
+  then on. It can be stepped (`CallSetWallClock`, `CallAdjustWallClock`
+  at once: the offset changes and the battery backed clock is written)
+  or slewed (`CallAdjustWallClock` with `AdjustGradually`: the offset
+  moves towards the target at 500 parts per million of the time
+  passing, so the clock runs a little fast or slow but never jumps or
+  goes back; a new adjustment replaces what is left of the last). The
+  state is read without a lock under a sequence count, so any level may
+  read the time. `CallGetPreciseTime` gives the wall clock or the uptime
+  as seconds and nanoseconds; `CallGetTime` still gives whole seconds.
+  The runtime's `Now` and `GetLocalTime` use the precise call
+  (milliseconds), `Sys.Time` has `WallClockNanoseconds` and
+  `MonotonicNanoseconds`. Every change of the clock is a line of the
+  kernel log (`[clock] stepped the wall clock by ...`).
+
+## Power, idle states and temperature
+
+**Idle states** (`Kernel.IdleStates`, `Kernel.Arch.IdleStates`). The idle
+thread calls `IdleProcessor`, which picks the deepest of the
+processor's idle states whose target residency fits in the time to its
+next clock interrupt (with the tick stopped, its next due timer), and
+counts each entry (`IdleStateEntries`).
+- x86-64: state 0 is HLT. MWAIT C-states come from CPUID leaf 5 (the
+  sub-states of each C-state; hint `(n - 1) shl 4`) with typical exit
+  latencies, or from ACPI's `_CST` once the namespace is loaded
+  (`Firmware.AcpiProcessorIdle`: functional fixed hardware entries,
+  class 2, whose address is the hint; I/O port entries are not used,
+  and `_PDC`/`_OSC` are not evaluated, so firmware that waits for them
+  answers with what CPUID gives anyway). They are used only where the
+  local APIC timer keeps running in them (ARAT), the counter is
+  invariant, CPUID 5 states its line size and the interrupt break, and
+  not under a hypervisor (QEMU's emulated MWAIT does not sleep with
+  several processors) unless `idle=mwait`. `idle=halt` keeps to HLT,
+  `maxcstate=N` stops at C(N).
+- AArch64: state 0 is WFI. PSCI `CPU_SUSPEND` states come from the device
+  tree's `arm,idle-state` nodes (`ListDeviceTreeIdleStates`: power
+  state, latencies, minimum residency) where the firmware offers
+  `CPU_SUSPEND` (`PSCI_FEATURES`, which also says the power state
+  format). Only standby states are used (they return like WFI):
+  power-down states and those whose timer stops (`local-timer-stop`) are
+  left out. QEMU's virt machine and the Pi 5's tree have none, so WFI it
+  is there; with a tree that has one (tested with QEMU and a dumped tree
+  given one) the standby state is entered. `idle=wfi` keeps to WFI.
+
+**Thermal zones** (`Power.ThermalZones`) are temperatures with a passive
+and a critical trip point, read by a thread ("Thermal", with a large
+stack for AML) as often as each says. Above the passive point the
+processors are slowed a step (10 % of full speed) at every reading, to
+30 % at most, and let up again a step at a time once 3 degrees below
+(the lowest limit any zone asks for holds, `Power.Performance`); two
+readings in a row at the critical point shut the machine down cleanly
+(`RequestShutdown`). `thermal=off` only reads and shows them. The limit
+is carried out by clock modulation on x86-64 (`Hal.ProcessorThrottle`,
+MSR 19Ah, eighths of the time, written on each processor by the thread
+moving itself from processor to processor, `Power.EveryProcessor`), or by
+the Raspberry Pi's clock governor below.
+
+**ACPI** (`Io.AcpiPower`, a thread with a large stack once the namespace
+is loaded): every `ThermalZone` object (`Firmware.AcpiThermal`: `_TMP`,
+`_PSV`, `_CRT`, `_HOT`, `_TZP`, tenths of a kelvin; readings outside
+-73 to 177 C are refused) becomes a thermal zone; batteries (`PNP0C0A`,
+`Firmware.AcpiBatteries`: `_STA` bit 4, `_BIX` or `_BIF`, `_BST`) are read
+then and every 10 seconds, kept for `CallListBatteries` so that no AML
+runs on a caller's small stack; `_CST` as above. QEMU has neither
+thermal zones nor batteries: `make acpi-power-test`
+(`tools/AcpiPowerTest`) reads them from a table `make-table.py`
+assembles (two zones, one with a nonsense `_TMP`; batteries with
+`_BIF`, `_BIX` and an empty slot; a processor's `_CST`), and with
+`--ssdt` the same zones and batteries go into QEMU through
+`-acpitable file=...` (checked by hand: the zones and batteries are
+listed, and a zone above its critical point powers the machine off).
+
+**The Raspberry Pi** (`Power.BoardClocks`, untested on the board). The
+firmware (VideoCore mailbox) tells the ARM clock now, its least and its
+most (`arm_freq_min`, `arm_freq`: 1.5 and 2.4 GHz on a Pi 5) and the
+temperature, and sets the ARM clock (and the voltage for it) when asked
+(`SetClockRate`, tag 38002h); it keeps whatever clock it started with
+otherwise. A thread ("BoardClocks") looks at the busiest processor
+every half second: 60 % busy or more raises the clock to the most
+allowed, three looks in a row under 25 % lower it to the least, in
+between it stays. The temperature is a thermal zone ("soc", read every
+second, passive at 80 C - `thermallimit=` - and critical at 90 C -
+`thermalcritical=`); the passive limit caps the clock (never below the
+firmware's least; the firmware's own 85 C limit stays beneath).
+`cpufreq=off` leaves the clock to the firmware, `cpufreq=max` and
+`cpufreq=min` fix it. The SD image's `config.txt` sets no `force_turbo`,
+`arm_freq` or `over_voltage` (it never did).
+- **The Pi 5's fan.** The firmware does not run it for the operating
+  system: Linux drives it with RP1's PWM1 channel 3 on GPIO 45
+  (`cooling_fan` in the tree, inverted: high stops it). PWM1 needs RP1's
+  clock generator, which nothing sets up here, so `Drivers.Rp1Fan` makes
+  GPIO 45 a plain output (function SYS_RIO, pad driving, no pulls) on
+  RP1's GPIO node and switches the fan fully on at 55 C (`fanon=`) and
+  off below 48 C; `fan=on` keeps it running, `fan=off` leaves it alone.
+
+**Calls and tools.** `CallGetProcessorPower` (154) gives the clock
+source, whether idle is tickless, the idle states and, per processor,
+clock interrupts, busy and idle time and idle state entries, the clock
+rate and its range, the performance limit and the fan;
+`CallListThermalZones` (155) and `CallListBatteries` (156) list the rest
+(`Sys.Power`). `powerstat` prints them, with each processor's clock
+interrupts per second over a second; sysinfo shows the clock rate, the
+hottest temperature and the batteries; the kernel debug shell's `power`
+writes the same to the log.
+
+**Tests.** coretest runs `powerstat --check-idle 3 5`: the processors
+that stayed idle for 3 seconds (busy under 10 %) must average under 5
+clock interrupts a second (100 with the periodic tick), and `timetest`:
+the uptime and wall clock nanoseconds never go back over 200000 reads,
+agree with the seconds call, 10 sleeps of 20 ms are never early nor
+more than 80 ms late, `Now` counts milliseconds, a step moves the clock
+at once and back, a gradual adjustment runs it fast and a new one
+replaces it.
 
 ## Several processors
 
@@ -7777,6 +7910,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `systemsettings` | text, graphical | the system settings service: the machine's remembered settings at start, root's changes for the users who may |
 | `network` | text, graphical | the network service: the interfaces' addresses (static or DHCP), routes, DNS servers and host name, kept as Network.settings says (see "Networking") |
 | `sshd` | text, graphical | the SSH server on port 22 (see "The SSH server") |
+| `timesync` | text, graphical | the SNTP client, off by default (see "Time synchronization"; needs `network`) |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
 `userland/etc/services`), lines of `key = value` (`Services.Definitions`):
@@ -7989,6 +8123,33 @@ locks the screen, the machine sleeps (QEMU says so) and wakes
 (`system_wakeup`) with the lock screen showing; the password unlocks
 it and the desktop and its clock are back. The input test checks that
 `kill` makes Notepad close its window and end by itself (status 0).
+
+### Time synchronization
+
+`timesync` (units in `userland/timesync`, the `timesync` service, which
+needs `network`) keeps the wall clock to time servers over SNTP (RFC
+4330). It is off by default: with `TimeSync/Enabled` false in
+`/etc/settings/TimeSync.settings` it logs so and ends (it stays
+stopped). Otherwise it asks the servers of `TimeSync/Servers`
+(`["pool.ntp.org"]`: names, addresses or `host:port`) in turn, four
+requests each (`TimeSync.Exchange`: UDP to port 123, each timed with
+the nanosecond wall clock), and believes the answer with the shortest
+round trip (`TimeSync.Packets` checks that it is a server's answer to
+that request, refuses a kiss of death and an unsynchronized server,
+and works out offset and delay). The first correction steps the clock
+(`CallAdjustWallClock`, which writes the battery backed clock too);
+later ones slew it unless they are beyond
+`StepThresholdMilliseconds` (128); under 1 ms nothing is done
+(`TimeSync.Corrections`). It polls every `MinimumPollSeconds` (64) at
+first, doubling up to `MaximumPollSeconds` (1024) while no step is
+needed; until the first answer a failed poll is tried again after 2 s,
+then twice as long each time, since the network may still be getting
+its address. The settings are read again before every poll. Its log
+is `/var/log/timesync.log`; `timesync --once [SERVER] [--dry-run]` polls
+once by hand. `make sntp-test` (`tools/SntpTest`) checks the packets and
+corrections on the host and asks a small SNTP server
+(`sntp-server.py` on 127.0.0.1, its clock 1234.5 s ahead, and a second
+port that answers with a kiss of death) over UDP.
 
 ### Time zones
 
