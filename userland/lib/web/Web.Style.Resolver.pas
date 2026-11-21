@@ -49,7 +49,9 @@ uses
   Web.Layout.Resources;
 
 type
-  TStyleChangeKind = (scNone, scPaint, scLayout, scBoxes);
+  { scMove: painting and the box's translation (transform, translate),
+    which layout keeps as an offset of the box. }
+  TStyleChangeKind = (scNone, scPaint, scMove, scLayout, scBoxes);
 
   TStyleChangedEvent = procedure(Element: TElement; Change: TStyleChangeKind) of object;
   TNodeChangedEvent = procedure(Node: TNode) of object;
@@ -161,6 +163,8 @@ begin
         Exit(scLayout);
       Result := scPaint;
     end;
+  if (Result = scPaint) and (not SameValue(Old, New, cpTransform) or not SameValue(Old, New, cpTranslate)) then
+    Result := scMove;
 end;
 
 { display: list-item in its two value forms (inline list-item). }

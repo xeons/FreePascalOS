@@ -65,7 +65,8 @@ implementation
 
 uses
   Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Block,
-  Web.Layout.Replaced, Web.Layout.Flex, Web.Layout.Grid, Web.Layout.Table, Web.Layout.Positioned;
+  Web.Layout.Replaced, Web.Layout.Flex, Web.Layout.Grid, Web.Layout.Table, Web.Layout.Positioned,
+  Web.Layout.Transforms;
 
 function MakeChildInput(const Parent: TLayoutInput; ContentWidth, ContentHeight: Single;
   Mode: TWidthMode): TLayoutInput;
@@ -184,20 +185,29 @@ end;
 
 procedure ComputeRelativeOffset(Box: TLayoutBox; ContainingWidth, ContainingHeight: Single);
 var
-  Value: Single;
+  Value, TranslateX, TranslateY: Single;
 begin
   Box.RelativeX := 0;
   Box.RelativeY := 0;
-  if not (bfRelative in Box.Flags) or (bfSticky in Box.Flags) then
-    Exit;
-  if TryLength(Box.Style, cpLeft, ContainingWidth, Value) then
-    Box.RelativeX := Value
-  else if TryLength(Box.Style, cpRight, ContainingWidth, Value) then
-    Box.RelativeX := -Value;
-  if TryLength(Box.Style, cpTop, ContainingHeight, Value) then
-    Box.RelativeY := Value
-  else if TryLength(Box.Style, cpBottom, ContainingHeight, Value) then
-    Box.RelativeY := -Value;
+  if (bfRelative in Box.Flags) and not (bfSticky in Box.Flags) then
+  begin
+    if TryLength(Box.Style, cpLeft, ContainingWidth, Value) then
+      Box.RelativeX := Value
+    else if TryLength(Box.Style, cpRight, ContainingWidth, Value) then
+      Box.RelativeX := -Value;
+    if TryLength(Box.Style, cpTop, ContainingHeight, Value) then
+      Box.RelativeY := Value
+    else if TryLength(Box.Style, cpBottom, ContainingHeight, Value) then
+      Box.RelativeY := -Value;
+  end;
+  { A transform's translation moves the box the same way (transforms do
+    not apply to non-atomic inline boxes). }
+  if not (Box.Kind in [bkInline, bkText, bkLineBreak]) and
+    TransformTranslation(Box.Style, Box.Width, Box.Height, TranslateX, TranslateY) then
+  begin
+    Box.RelativeX := Box.RelativeX + TranslateX;
+    Box.RelativeY := Box.RelativeY + TranslateY;
+  end;
 end;
 
 procedure SetOwnCollapsingMargins(Box: TLayoutBox);

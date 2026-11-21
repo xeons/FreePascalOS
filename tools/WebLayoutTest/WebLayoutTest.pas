@@ -55,6 +55,7 @@ begin
   CheckPainting;
   CheckStickyPainting;
   CheckMaskPainting;
+  CheckLayerPainting;
   ReportPerformance;
   FinishChecks('web layout test');
 end.

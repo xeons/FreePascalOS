@@ -70,6 +70,10 @@ type
     Z: Integer;
     Order: Integer;
     Clips: TClipChain;
+    { A positioned box with z-index auto (no stacking context of its
+      own): its positioned descendants are layers of the same stacking
+      context, collected beside it, not painted by it. }
+    Flattened: Boolean;
   end;
   TLayerArray = array of TLayer;
 
@@ -83,7 +87,8 @@ type
     ViewportWidth, ViewportHeight: Single;
   end;
 
-procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single); forward;
+procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single;
+  WithDescendantLayers: Boolean = True); forward;
 
 function ToColor(const Color: TCssColor): TColor;
 var
@@ -1016,7 +1021,23 @@ var
   Child: TLayoutBox;
   ChildX, ChildY, InnerX, InnerY: Single;
   Pushed: Boolean;
-  Radii: TCornerRadii;
+
+  { The clip of a box that clips its overflow, for the layers inside it. }
+  procedure PushClipOf(Clipper: TLayoutBox; ClipperX, ClipperY: Single);
+  var
+    Radii: TCornerRadii;
+  begin
+    SetLength(Clips, Length(Clips) + 1);
+    Clips[High(Clips)].X := ClipperX + Clipper.Border[sideLeft];
+    Clips[High(Clips)].Y := ClipperY + Clipper.Border[sideTop];
+    Clips[High(Clips)].Width := Clipper.Width - Clipper.Border[sideLeft] - Clipper.Border[sideRight];
+    Clips[High(Clips)].Height := Clipper.Height - Clipper.Border[sideTop] - Clipper.Border[sideBottom];
+    Clips[High(Clips)].Radii := -1;
+    if BorderRadii(Clipper, Radii) then
+      Clips[High(Clips)].Radii := Builder.List.AddRadii(InsetRadii(Radii, Clipper.Border[sideTop],
+        Clipper.Border[sideRight], Clipper.Border[sideBottom], Clipper.Border[sideLeft]));
+  end;
+
 begin
   InnerX := X + ScrollShiftX(Box);
   InnerY := Y + ScrollShiftY(Box);
@@ -1043,31 +1064,35 @@ begin
       Layers[Count].Box := Child;
       Layers[Count].X := ChildX;
       Layers[Count].Y := ChildY;
-      if MakesStackingContext(Child) then
-        Layers[Count].Z := ZIndexOf(Child.Style)
+      Layers[Count].Flattened := not MakesStackingContext(Child);
+      if Layers[Count].Flattened then
+        Layers[Count].Z := 0
       else
-        Layers[Count].Z := 0;
+        Layers[Count].Z := ZIndexOf(Child.Style);
       Layers[Count].Order := Count;
       { Absolutely positioned boxes escape the clips of boxes between them
         and their containing block only approximately: all clips apply. }
       Layers[Count].Clips := Copy(Clips);
       Inc(Count);
+      { CSS 2 Appendix E: the positioned descendants of a positioned box
+        with z-index auto take part in the enclosing stacking context
+        (a z-index: 100 menu inside position: relative goes above a later
+        z-index: 1 sibling). }
+      if Layers[Count - 1].Flattened then
+      begin
+        Pushed := bfClipsOverflow in Child.Flags;
+        if Pushed then
+          PushClipOf(Child, ChildX, ChildY);
+        CollectLayers(Builder, Child, ChildX, ChildY, Clips, Layers, Count);
+        if Pushed then
+          SetLength(Clips, Length(Clips) - 1);
+      end;
     end
     else if not Child.IsFloating and not Child.IsAtomicInline then
     begin
       Pushed := bfClipsOverflow in Child.Flags;
       if Pushed then
-      begin
-        SetLength(Clips, Length(Clips) + 1);
-        Clips[High(Clips)].X := ChildX + Child.Border[sideLeft];
-        Clips[High(Clips)].Y := ChildY + Child.Border[sideTop];
-        Clips[High(Clips)].Width := Child.Width - Child.Border[sideLeft] - Child.Border[sideRight];
-        Clips[High(Clips)].Height := Child.Height - Child.Border[sideTop] - Child.Border[sideBottom];
-        Clips[High(Clips)].Radii := -1;
-        if BorderRadii(Child, Radii) then
-          Clips[High(Clips)].Radii := Builder.List.AddRadii(InsetRadii(Radii, Child.Border[sideTop],
-            Child.Border[sideRight], Child.Border[sideBottom], Child.Border[sideLeft]));
-      end;
+        PushClipOf(Child, ChildX, ChildY);
       CollectLayers(Builder, Child, ChildX, ChildY, Clips, Layers, Count);
       if Pushed then
         SetLength(Clips, Length(Clips) - 1);
@@ -1227,7 +1252,7 @@ begin
   if bfSticky in Layer.Box.Flags then
     PaintStickyLayer(Builder, Layer.Box, Layer.X, Layer.Y)
   else
-    PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y);
+    PaintLayer(Builder, Layer.Box, Layer.X, Layer.Y, not Layer.Flattened);
   if bfFixed in Layer.Box.Flags then
     Builder.List.Add(diPopFixed, 0, 0, 0, 0, Layer.Box);
   for Index := 0 to High(Layer.Clips) do
@@ -1301,7 +1326,7 @@ begin
     Builder.List.Add(diPopClip, 0, 0, 0, 0, Box);
 end;
 
-procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
+procedure PaintLayer(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; WithDescendantLayers: Boolean);
 var
   Masked, MaskClipped: Boolean;
   Layers: TLayerArray;
@@ -1336,7 +1361,8 @@ begin
     Clips[0].Height := Box.Height - Box.Border[sideTop] - Box.Border[sideBottom];
     Clips[0].Radii := -1;
   end;
-  CollectLayers(Builder, Box, X, Y, Clips, Layers, Count);
+  if WithDescendantLayers then
+    CollectLayers(Builder, Box, X, Y, Clips, Layers, Count);
   SortLayers(Layers, Count);
   { Negative z-index. }
   Index := 0;

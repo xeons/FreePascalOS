@@ -274,10 +274,16 @@ begin
     Box.Style.Release;
     Box.Style := Data^.Style.AddRef;
   end;
-  if (Change = scPaint) and (Data <> nil) then
+  if (Change in [scPaint, scMove]) and (Data <> nil) then
   begin
-    { Only painting changes: the boxes take the new styles, no layout. }
+    { Only painting changes: the boxes take the new styles, no layout;
+      a new translation lays out the box again (its offset). }
     TakePaintStyles(Box, Element, Data^.Style);
+    if Change = scMove then
+    begin
+      Box.MarkNeedsLayout;
+      FLayoutDirty := True;
+    end;
     Exit;
   end;
   if Box.Kind = bkReplaced then

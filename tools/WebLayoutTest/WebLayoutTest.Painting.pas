@@ -32,6 +32,7 @@ interface
 procedure CheckPainting;
 procedure CheckStickyPainting;
 procedure CheckMaskPainting;
+procedure CheckLayerPainting;
 procedure ReportPerformance;
 
 implementation
@@ -118,7 +119,10 @@ begin
     CheckPixel(Surface, 200, 20, RgbColor(0, 255, 0), 'canvas from the body');
     CheckPixel(Surface, 30, 80, RgbColor(255, 255, 0), 'z-index 2 over z-index 1');
     CheckPixel(Surface, 60, 105, RgbColor(0, 255, 255), 'z-index 1 box');
-    CheckPixel(Surface, 60, 115, RgbColor(0, 127, 127), 'a later stacking context (opacity) over z-index 1');
+    { CSS 2 Appendix E: z-index 1 inside a position: relative box with
+      z-index auto is in the root's stacking context, above the later
+      opacity group (z-index auto). }
+    CheckPixel(Surface, 60, 115, RgbColor(0, 255, 255), 'z-index 1 in a z-index auto box over a later stacking context');
     CheckPixel(Surface, 100, 125, RgbColor(0, 128, 0), 'opacity 0.5 over the canvas');
     CheckPixel(Surface, 30, 155, RgbColor(255, 0, 255), 'inside the overflow clip');
     CheckPixel(Surface, 100, 155, RgbColor(0, 255, 0), 'outside the overflow clip');
@@ -205,6 +209,51 @@ begin
     CheckPixel(Surface, 50, 30, RgbColor(255, 255, 255), 'mask: an image that is not there hides the box');
     CheckPixel(Surface, 180, 80, RgbColor(255, 128, 128), 'opacity group away from the corner');
     CheckPixel(Surface, 140, 80, RgbColor(255, 255, 255), 'opacity group: nothing outside it');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+{ A menu with z-index 100 in a position: relative box (z-index auto) over
+  a later flex item with z-index 1 (DuckDuckGo's suggestions under its
+  page's wave); translations: an off-canvas drawer moved out with
+  translateX(100%), a box centred with translate(-50%, -50%), the
+  translate property; hit testing follows. }
+procedure CheckLayerPainting;
+const
+  LayerPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="position:relative;height:10px"><div id=menu style="position:absolute;z-index:100;top:0;left:0;' +
+    'width:100px;height:100px;background:#ff0000"></div></div>' +
+    '<div style="display:flex;position:relative"><div id=wave style="z-index:1;width:200px;height:50px;' +
+    'background:#0000ff"></div></div>' +
+    '<nav style="position:fixed;right:0;top:0;width:50px;height:300px;background:#00ff00;' +
+    'transform:translateX(100%)"></nav>' +
+    '<div style="position:absolute;left:150px;top:200px;width:40px;height:40px;background:#ff00ff;' +
+    'transform:translate(-50%, -50%)"></div>' +
+    '<div style="position:absolute;left:0;top:250px;width:20px;height:20px;background:#00ffff;translate:30px 5px"></div>' +
+    '</body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(LayerPage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 300, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 300));
+    CheckPixel(Surface, 50, 30, RgbColor(255, 0, 0), 'layers: z-index 100 in a z-index auto box over a later z-index 1');
+    CheckPixel(Surface, 150, 30, RgbColor(0, 0, 255), 'layers: the z-index 1 box beside it');
+    Check(Painter.HitTest(50, 30).Element = Document.GetElementById('menu'), 'layers: the menu is hit over the box');
+    CheckPixel(Surface, 290, 100, RgbColor(255, 255, 255), 'translate: a drawer moved out by translateX(100%)');
+    CheckPixel(Surface, 135, 185, RgbColor(255, 0, 255), 'translate: centred with translate(-50%, -50%)');
+    CheckPixel(Surface, 180, 230, RgbColor(255, 255, 255), 'translate: nothing where it was');
+    CheckPixel(Surface, 40, 260, RgbColor(0, 255, 255), 'translate: the translate property');
+    CheckPixel(Surface, 5, 252, RgbColor(255, 255, 255), 'translate: the translate property moved it');
   finally
     FreeSurface(Surface);
     Painter.Free;
