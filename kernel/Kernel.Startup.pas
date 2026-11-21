@@ -88,6 +88,7 @@ uses
   Kernel.NetworkShell,
   Kernel.NetworkSelfTest,
   Io.BlockCache,
+  Memory.Pressure,
   Io.AudioOutput,
   Io.AudioInput,
   Io.AcpiNamespace,
@@ -118,6 +119,7 @@ uses
   Kernel.Timers,
   Processes.ImageSections,
   Processes.MappedFiles,
+  Processes.VirtualMemory,
   Processes.HangWatch,
   Drivers.MemoryDevices,
   Drivers.ConsoleDevice,
@@ -226,6 +228,7 @@ begin
   InitializeWatches;
   InitializeImageSections;
   InitializeMappedFiles;
+  InitializeVirtualMemory;
   InitializeTerminalSignals;
   InitializeConsole;
   InitializeIoManager;
@@ -335,6 +338,8 @@ begin
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
+  if CreateSystemThread(@RunMemoryPressureWatcher, nil, PhaseOneThreadPriority, 'MemoryPressure', False) = nil then
+    KernelPanicWithCode(PanicInitializationFailed, 'could not create the memory pressure thread', 0, 0, 0, 0);
   if (XhciControllerCount > 0) and
      (CreateSystemThread(@RunUsbPortWatcher, nil, PhaseOneThreadPriority, 'UsbPorts', False) = nil) then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the USB port watcher', 0, 0, 0, 0);
@@ -463,6 +468,8 @@ begin
   InitializeDeferredCalls;
   InitializeTimers;
   InitializeScheduler(@IdleThread^.ControlBlock);
+  { Caches shrink when memory runs short (deferred calls are ready). }
+  InitializeMemoryPressure;
 
   StartPhaseOne(BootInformation);
 

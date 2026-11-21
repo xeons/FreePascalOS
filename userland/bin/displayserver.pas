@@ -71,6 +71,7 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Objects,
+  Sys.MemoryStatus,
   Sys.ServiceControl,
   Sys.Streams,
   Util.CommandLine,
@@ -188,7 +189,18 @@ begin
   CommandLine.Free;
 end;
 
+{ The screen must not go when memory runs out: the kernel ends the
+  display server only if it is the one asking (needs root; otherwise it
+  just stays an ordinary candidate). }
+procedure ProtectFromMemoryShortage;
+var
+  Previous: LongInt;
 begin
+  SetOomScoreAdjust(OomScoreAdjustNever, Previous);
+end;
+
+begin
+  ProtectFromMemoryShortage;
   ReadOptions;
   Error := OpenScreens;
   if Error <> ErrorNone then

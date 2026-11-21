@@ -50,6 +50,7 @@ uses
   Sys.Processor,
   Sys.ProcessList,
   Sys.SystemUsage,
+  Sys.MemoryStatus,
   Sys.Power,
   Sys.Time,
   Sys.TimeZones,

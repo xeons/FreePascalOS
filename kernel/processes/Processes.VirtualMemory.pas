@@ -72,6 +72,11 @@ procedure QueryAddress(Space: PAddressSpace; Address: QWord; out Information: TA
 function MapFileIntoAddressSpace(Space: PAddressSpace; MappedFile: PMappedFile; Offset, Length: QWord;
   Flags: LongWord; out Start: QWord): LongInt;
 
+{ Gives the out-of-memory policy (Processes.MemoryCharges) the commit
+  charge: a process's commitment beyond its resident private pages, and
+  the system's total. }
+procedure InitializeVirtualMemory;
+
 implementation
 
 uses
@@ -80,6 +85,9 @@ uses
   Memory.Arch.PageTables,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
+  Memory.CommitCharge,
+  Processes.Process,
+  Processes.MemoryCharges,
   Processes.UserRegions;
 
 const
@@ -498,6 +506,34 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
   if Result <> ErrorNone then
     Start := 0;
+end;
+
+{ Called with the process registry lock held; the figures are read
+  without the space's lock (a moment's inaccuracy does not matter). }
+function CommitBeyondResident(Process: PProcess): QWord;
+var
+  Space: PAddressSpace;
+  PrivateResident: QWord;
+begin
+  Result := 0;
+  Space := Process^.AddressSpace;
+  if Space = nil then
+    Exit;
+  PrivateResident := 0;
+  if Space^.CommittedPages > Space^.SharedPages then
+    PrivateResident := Space^.CommittedPages - Space^.SharedPages;
+  if Space^.CommitChargePages > PrivateResident then
+    Result := Space^.CommitChargePages - PrivateResident;
+end;
+
+function SystemCommitTotal: QWord;
+begin
+  Result := Memory.CommitCharge.SystemCommittedPages;
+end;
+
+procedure InitializeVirtualMemory;
+begin
+  SetCommitCounters(@CommitBeyondResident, @SystemCommitTotal);
 end;
 
 end.

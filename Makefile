@@ -538,14 +538,22 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test region-tree-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test decompression-test ssh-test netstat-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test esp $(TEST_DISK) \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
+	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# Running out of memory (a process ended with 137, the system alive) and
+# discards reaching the disks (image files shrink) in a 256 MiB guest;
+# also run by make test.
+.PHONY: memory-pressure-test
+memory-pressure-test: esp $(SYSTEM_DISK)
+	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Panics on purpose (the testpanic kernel option) and checks the back
 # trace; also run by make test. Works for ARCH=arm64 too.
@@ -603,6 +611,20 @@ $(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Pr
 
 region-tree-test: $(REGION_TREE_TEST)
 	$(REGION_TREE_TEST)
+
+# The block cache's sizing, the batched discard ranges and the
+# out-of-memory scores on the host.
+CACHE_POLICY_TEST := build/tools/CachePolicyTest
+
+$(CACHE_POLICY_TEST): tools/CachePolicyTest/CachePolicyTest.pas kernel/io/Io.BlockCacheSizing.pas \
+		kernel/filesystems/FileSystem.DiscardRanges.pas kernel/processes/Processes.OutOfMemoryScores.pas
+	@mkdir -p build/tools/cache-policy-units
+	$(FPC) -O2 -Cr -Co -Fukernel/io -Fukernel/filesystems -Fukernel/processes -FEbuild/tools \
+		-FUbuild/tools/cache-policy-units $<
+
+.PHONY: cache-policy-test
+cache-policy-test: $(CACHE_POLICY_TEST)
+	$(CACHE_POLICY_TEST)
 
 # The kernel's random number core (ChaCha20, against RFC 8439) and the
 # randomized address space layouts (Processes.AddressLayout) on the host.

@@ -126,6 +126,8 @@ function CountNodeClusters(Node: PExFatNode; out ClusterCount: LongWord;
 function CountFreeClusters(Volume: PVolume): TFileSystemStatus;
 function ClusterIsFree(Volume: PVolume; Cluster: LongWord; out IsFree: Boolean): TFileSystemStatus;
 function MarkCluster(Volume: PVolume; Cluster: LongWord; Allocated: Boolean): TFileSystemStatus;
+{ fstrim: discards every run of free clusters. }
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
 function FindFreeCluster(Volume: PVolume; out Cluster: LongWord): TFileSystemStatus;
 
 { Directory entries by index within a directory. }
@@ -156,7 +158,8 @@ uses
   Runtime.Memory,
   Runtime.Time,
   Memory.KernelHeap,
-  Kernel.Clock;
+  Kernel.Clock,
+  FileSystem.Discards;
 
 function ExFatVolumeOf(Node: PNode): PExFatVolume;
 begin
@@ -423,6 +426,8 @@ begin
   begin
     Value := Value or BitmapMaskOf(Cluster);
     Dec(ExFat^.FreeClusterCount);
+    { Its discard, if still waiting, must not reach what goes in now. }
+    CancelVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster);
   end
   else
   begin
@@ -432,6 +437,67 @@ begin
       ExFat^.NextFreeHint := Cluster;
   end;
   Result := WriteNodeBytes(ExFat^.Bitmap, BitmapByteOf(Cluster), 1, @Value);
+  if (Result = StatusSuccess) and not Allocated then
+    QueueVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster, False);
+end;
+
+function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
+const
+  ChunkBytes = 4096;
+var
+  ExFat: PExFatVolume;
+  Chunk: array[0..ChunkBytes - 1] of Byte;
+  ChunkStart: QWord;
+  Index: LongWord;
+  RunStart: LongWord;
+  InRun: Boolean;
+  IsFree: Boolean;
+  Cluster: LongWord;
+  ByteIndex: QWord;
+  BitmapBytes: QWord;
+  Length: QWord;
+begin
+  ExFat := PExFatVolume(Volume^.DriverData);
+  Result := StatusSuccess;
+  BitmapBytes := (QWord(ExFat^.ClusterCount) + 7) div 8;
+  ChunkStart := High(QWord);
+  InRun := False;
+  RunStart := 2;
+  Index := 0;
+  while Index <= ExFat^.ClusterCount do
+  begin
+    { One past the last cluster ends the last run. }
+    IsFree := False;
+    if Index < ExFat^.ClusterCount then
+    begin
+      ByteIndex := Index div 8;
+      if (ChunkStart = High(QWord)) or (ByteIndex < ChunkStart) or (ByteIndex >= ChunkStart + ChunkBytes) then
+      begin
+        ChunkStart := ByteIndex - ByteIndex mod ChunkBytes;
+        Length := BitmapBytes - ChunkStart;
+        if Length > ChunkBytes then
+          Length := ChunkBytes;
+        Result := ReadNodeBytes(ExFat^.Bitmap, ChunkStart, Length, @Chunk[0]);
+        if Result <> StatusSuccess then
+          Exit;
+      end;
+      IsFree := (Chunk[ByteIndex - ChunkStart] and (1 shl (Index mod 8))) = 0;
+    end;
+    Cluster := Index + 2;
+    if IsFree and not InRun then
+    begin
+      InRun := True;
+      RunStart := Cluster;
+    end
+    else if not IsFree and InRun then
+    begin
+      InRun := False;
+      if not TrimFreeRange(Volume, ClusterOffset(ExFat, RunStart), QWord(Cluster - RunStart) * ExFat^.BytesPerCluster,
+        Discarded) then
+        Result := StatusIoError;
+    end;
+    Inc(Index);
+  end;
 end;
 
 function FindFreeCluster(Volume: PVolume; out Cluster: LongWord): TFileSystemStatus;

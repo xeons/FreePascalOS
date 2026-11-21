@@ -184,6 +184,8 @@ const
   WordCommandSetsSupported = 83;
   CommandSetLba48 = Word(1) shl 10;
   WordSectorSize = 106;
+  WordDataSetManagement = 169;
+  DataSetManagementTrimSupported = Word(1) shl 0;
   SectorSizeInfoValid = Word(1) shl 14;
   SectorSizeLongLogical = Word(1) shl 12;
 var
@@ -210,6 +212,9 @@ begin
 
   DecodeAtaString(Identify, 27, 20, @Device^.Model[0], BlockDeviceModelLength);
 
+  Port^.SupportsTrim := (Identify[WordDataSetManagement] and DataSetManagementTrimSupported) <> 0;
+  Device^.SupportsDiscard := Port^.SupportsTrim;
+  Device^.MaximumDiscardBlocks := TrimRangesPerCommand * TrimSectorsPerRange;
   Port^.QueueDepth := 0;
   if ControllerQueues and ((Identify[WordSataCapabilities] and SataNativeCommandQueuing) <> 0) and
      (Identify[WordSataCapabilities] <> $FFFF) then

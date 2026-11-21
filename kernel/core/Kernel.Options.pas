@@ -69,6 +69,11 @@
     fan=on|off, fanon=C
                 The Raspberry Pi's ARM clock scaling, thermal limit and
                 fan (Power.BoardClocks).
+    blockcache=MIB, blockcachemin=MIB, blockcacheshare=PERCENT
+                The block cache's largest and smallest size, or its share
+                of the free memory (Io.BlockCacheSizing).
+    discard=off File systems do not discard what they free
+                (FileSystem.Discards); fstrim still works.
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by

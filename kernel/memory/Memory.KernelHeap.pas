@@ -39,7 +39,11 @@
   faults; with the quarantine its address range waits too, so that
   nothing is mapped there again soon.
 
-  The allocator may be called at or below DispatchLevel.
+  The allocator may be called at or below DispatchLevel. When memory
+  runs out, an allocation that may wait (at passive level, interrupts
+  on) asks the reclaimer (Memory.Pressure sets it: the caches shrink)
+  and tries once more; otherwise, and if that fails too, it returns nil
+  and the caller copes.
 }
 unit Memory.KernelHeap;
 
@@ -60,6 +64,13 @@ procedure FreeKernelMemory(Block: Pointer);
 procedure FlushKernelHeapQuarantine;
 
 procedure WriteKernelHeapSummary;
+
+type
+  { Frees memory for an allocation of PageCount pages that failed;
+    returns False where it cannot (wrong level, nothing to free). }
+  TKernelHeapReclaimer = function(PageCount: QWord): Boolean;
+
+procedure SetKernelHeapReclaimer(Reclaimer: TKernelHeapReclaimer);
 
 implementation
 
@@ -91,6 +102,7 @@ var
   HeapLock: TSpinLock;
   LargeAllocationCount: QWord;
   LargeAllocationPages: QWord;
+  HeapReclaimer: TKernelHeapReclaimer;
 
 procedure WriteHeapCheckLevel;
 begin
@@ -261,22 +273,34 @@ begin
   Result := BlockData(Block);
 end;
 
+procedure SetKernelHeapReclaimer(Reclaimer: TKernelHeapReclaimer);
+begin
+  HeapReclaimer := Reclaimer;
+end;
+
+function TryAllocate(ByteCount, TotalBytes: QWord): Pointer;
+begin
+  if TotalBytes <= LargestSmallBlock then
+    Result := AllocateSmallBlock(SizeClassFor(TotalBytes), ByteCount)
+  else
+    Result := AllocateLargeBlock(TotalBytes);
+end;
+
 function AllocateKernelMemory(ByteCount: QWord): Pointer;
 var
   TotalBytes: QWord;
-  ClassIndex: Integer;
+  Reclaimer: TKernelHeapReclaimer;
 begin
   if ByteCount = 0 then
     Exit(nil);
 
   TotalBytes := ByteCount + SizeOf(TBlockHeader);
-  if TotalBytes <= LargestSmallBlock then
-  begin
-    ClassIndex := SizeClassFor(TotalBytes);
-    Result := AllocateSmallBlock(ClassIndex, ByteCount);
-  end
-  else
-    Result := AllocateLargeBlock(TotalBytes);
+  Result := TryAllocate(ByteCount, TotalBytes);
+  if Result <> nil then
+    Exit;
+  Reclaimer := HeapReclaimer;
+  if Assigned(Reclaimer) and Reclaimer(PagesForBytes(TotalBytes) + 1) then
+    Result := TryAllocate(ByteCount, TotalBytes);
 end;
 
 function AllocateZeroedKernelMemory(ByteCount: QWord): Pointer;

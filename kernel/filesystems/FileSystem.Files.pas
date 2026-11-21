@@ -209,6 +209,7 @@ uses
   Objects.Manager,
 
   Io.BlockCache,
+  FileSystem.Discards,
   FileSystem.Volumes,
   FileSystem.Security,
   FileSystem.Locks;
@@ -1689,8 +1690,10 @@ begin
     Volume^.Driver^.Sync(Volume);
     ReleaseMutex(Volume^.Lock);
   end;
-  { Everything written so far reaches the disks. }
+  { Everything written so far reaches the disks; then what the volumes
+    freed is discarded. }
   FlushAllCachedDevices;
+  SendAllVolumeDiscards;
 end;
 
 end.

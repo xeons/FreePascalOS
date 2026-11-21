@@ -126,6 +126,12 @@ const
   AtaCommandWriteFpdmaQueued = $61;
   AtaCommandPacket = $A0;
   AtaCommandIdentifyPacketDevice = $A1;
+  AtaCommandDataSetManagement = $06;
+  DataSetManagementTrim = $01;
+  { TRIM ranges: one 512-byte block of 64 entries a command, each up to
+    65535 sectors. }
+  TrimRangesPerCommand = 64;
+  TrimSectorsPerRange = 65535;
 
   { SCSI commands sent in ATAPI packets. }
   PacketSize = 12;
@@ -181,6 +187,8 @@ type
     QueueDepth: LongWord;
     { An ATAPI device (an optical drive): SCSI commands in packets. }
     IsPacketDevice: Boolean;
+    { The disk takes DATA SET MANAGEMENT with TRIM (IDENTIFY word 169). }
+    SupportsTrim: Boolean;
     BlockSize: LongWord;
     BlockCount: QWord;
     { The disk's device object (Drivers.AhciRequests). }
@@ -244,6 +252,9 @@ procedure BuildCommand(Port: PAhciPort; Slot: LongWord; Command: Byte; Lba: QWor
   const Segments: TDataSegments; SegmentCount: Integer; IsWrite, Queued: Boolean);
 type
   TPacket = array[0..PacketSize - 1] of Byte;
+
+{ Sets the features field of the command built in Slot. }
+procedure SetCommandFeatures(Port: PAhciPort; Slot: LongWord; Features: Byte);
 
 { Fills in Slot with an ATAPI PACKET command carrying the SCSI command
   Packet, reading its data into Segments. }
@@ -405,6 +416,14 @@ begin
   Header^.BytesTransferred := 0;
   Header^.TableAddressLow := LongWord(TablePhysical);
   Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
+end;
+
+procedure SetCommandFeatures(Port: PAhciPort; Slot: LongWord; Features: Byte);
+var
+  Table: PByte;
+begin
+  Table := PByte(PhysicalToVirtual(SlotTablePhysical(Port, Slot)));
+  Table[3] := Features;
 end;
 
 procedure BuildPacketCommand(Port: PAhciPort; Slot: LongWord; const Packet: TPacket;

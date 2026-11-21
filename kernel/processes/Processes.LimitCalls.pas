@@ -29,6 +29,13 @@
   (Processes.UserProcess). CallGetProcessResources shows what a process
   holds against them, which is also how tests see that what a program
   gave back really went.
+
+  Two more settings go through CallSetProcessLimit: how many processes
+  the caller's user may run at once (ProcessLimitProcesses, counted
+  when a process is started: UserMayStartProcess), and how willingly
+  the process is ended when memory runs out (ProcessLimitOomScoreAdjust,
+  Processes.OutOfMemory), passed as the adjustment plus
+  OomScoreAdjustOffset so that it is never negative.
 }
 unit Processes.LimitCalls;
 
@@ -38,6 +45,10 @@ interface
 
 function PerformGetProcessResources(ProcessId: QWord; ResourcesAddress: QWord): Int64;
 function PerformSetProcessLimit(Limit: QWord; Value: QWord): Int64;
+
+{ True if the user may start another process: fewer of its processes
+  run than Limit (0: the default); root always may. }
+function UserMayStartProcess(UserId: LongWord; Limit: LongWord): Boolean;
 
 implementation
 
@@ -82,7 +93,7 @@ begin
     Resources.CommitLimitPages := Usage.CommitLimitPages;
     Resources.PagesMappedElsewhere := CountPagesMappedElsewhere(Process^.AddressSpace);
   end;
-  Resources.SystemCommitChargePages := SystemCommittedPages;
+  Resources.SystemCommitChargePages := Memory.CommitCharge.SystemCommittedPages;
   ReleaseMutex(Process^.Lock);
 end;
 
@@ -99,6 +110,84 @@ begin
   Result := -Int64(CopyToUser(ResourcesAddress, @Resources, SizeOf(Resources)));
 end;
 
+type
+  TUserProcessCount = record
+    UserId: LongWord;
+    Count: LongWord;
+  end;
+  PUserProcessCount = ^TUserProcessCount;
+
+procedure CountProcessOfUser(Process: PProcess; Context: Pointer);
+var
+  Counting: PUserProcessCount;
+begin
+  Counting := PUserProcessCount(Context);
+  if Process^.IsUserProcess and not Process^.HasExited and
+     (Process^.Credentials.RealUserId = Counting^.UserId) then
+    Inc(Counting^.Count);
+end;
+
+function UserMayStartProcess(UserId: LongWord; Limit: LongWord): Boolean;
+var
+  Counting: TUserProcessCount;
+begin
+  if UserId = RootUserId then
+    Exit(True);
+  if Limit = 0 then
+    Limit := DefaultProcessCountLimit;
+  Counting.UserId := UserId;
+  Counting.Count := 0;
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@CountProcessOfUser, @Counting);
+  UnlockProcessRegistry;
+  Result := Counting.Count < Limit;
+end;
+
+function EffectiveProcessCountLimit(Process: PProcess): QWord;
+begin
+  Result := Process^.ProcessCountLimit;
+  if Result = 0 then
+    Result := DefaultProcessCountLimit;
+end;
+
+{ ProcessLimitOomScoreAdjust: Value is the adjustment plus the offset. }
+function SetOomScoreAdjust(Value: QWord): Int64;
+var
+  Process: PProcess;
+  Adjust: LongInt;
+begin
+  if Value > 2 * OomScoreAdjustOffset then
+    Exit(Failure(ErrorInvalidArgument));
+  Adjust := LongInt(Value) - OomScoreAdjustOffset;
+  Process := CurrentProcess;
+  AcquireMutex(Process^.Lock);
+  Result := Int64(Process^.OomScoreAdjust + OomScoreAdjustOffset);
+  { Becoming harder to choose than the default is root's. }
+  if (Adjust < Process^.OomScoreAdjust) and (Adjust < 0) and
+     (Process^.Credentials.EffectiveUserId <> RootUserId) then
+    Result := Failure(ErrorNotPermitted)
+  else
+    Process^.OomScoreAdjust := Adjust;
+  ReleaseMutex(Process^.Lock);
+end;
+
+function SetProcessCountLimit(Value: QWord): Int64;
+var
+  Process: PProcess;
+begin
+  if (Value = 0) or (Value > ProcessCountLimitCeiling) then
+    Exit(Failure(ErrorInvalidArgument));
+  Process := CurrentProcess;
+  AcquireMutex(Process^.Lock);
+  Result := Int64(EffectiveProcessCountLimit(Process));
+  if (Value > QWord(Result)) and (Value > DefaultProcessCountLimit) and
+     (Process^.Credentials.EffectiveUserId <> RootUserId) then
+    Result := Failure(ErrorNotPermitted)
+  else
+    Process^.ProcessCountLimit := LongWord(Value);
+  ReleaseMutex(Process^.Lock);
+end;
+
 function PerformSetProcessLimit(Limit: QWord; Value: QWord): Int64;
 var
   Process: PProcess;
@@ -106,6 +195,10 @@ var
   Ceiling: QWord;
   Previous: QWord;
 begin
+  if Limit = ProcessLimitOomScoreAdjust then
+    Exit(SetOomScoreAdjust(Value));
+  if Limit = ProcessLimitProcesses then
+    Exit(SetProcessCountLimit(Value));
   case Limit of
     ProcessLimitRegions:
       begin

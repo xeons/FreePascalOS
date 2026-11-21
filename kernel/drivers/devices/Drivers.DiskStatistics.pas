@@ -61,6 +61,8 @@ type
     BytesRead: Int64;
     BytesWritten: Int64;
     Flushes: Int64;
+    Discards: Int64;
+    BytesDiscarded: Int64;
     Failures: Int64;
     { Requests sent down and not completed yet, and the most at once. }
     InFlight: Int64;
@@ -89,6 +91,11 @@ begin
   end
   else if Request^.Operation = IoFunctionFlush then
     AtomicIncrement(Statistics^.Flushes)
+  else if Request^.Operation = IoFunctionDiscard then
+  begin
+    AtomicIncrement(Statistics^.Discards);
+    AtomicFetchAndAdd(Statistics^.BytesDiscarded, Request^.Information);
+  end
   else
   begin
     AtomicIncrement(Statistics^.Writes);
@@ -129,6 +136,7 @@ begin
   Dispatch[IoFunctionRead] := @TransferThroughFilter;
   Dispatch[IoFunctionWrite] := @TransferThroughFilter;
   Dispatch[IoFunctionFlush] := @TransferThroughFilter;
+  Dispatch[IoFunctionDiscard] := @TransferThroughFilter;
   Driver := CreateDriver('diskstats', Dispatch);
   for Index := 0 to BlockDeviceCount - 1 do
   begin
@@ -168,6 +176,13 @@ begin
     DebugWrite('), ');
     DebugWriteDecimal(Statistics^.Flushes);
     DebugWrite(' flushes, ');
+    if Statistics^.Discards > 0 then
+    begin
+      DebugWriteDecimal(Statistics^.Discards);
+      DebugWrite(' discards (');
+      DebugWriteSize(Statistics^.BytesDiscarded);
+      DebugWrite('), ');
+    end;
     DebugWriteDecimal(Statistics^.Failures);
     DebugWrite(' failed, at most ');
     DebugWriteDecimal(Statistics^.MostInFlight);

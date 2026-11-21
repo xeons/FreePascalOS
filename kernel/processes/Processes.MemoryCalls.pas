@@ -17,11 +17,10 @@
 }
 
 {
-  System calls of the virtual memory group (160-167): reserving,
-  committing, decommitting, protecting and describing the caller's
-  memory, and its policy on executable memory. The work is
-  Processes.VirtualMemory's; the address space has a lock of its own, so
-  these do not take the process's.
+  System calls about memory pressure and storage (168-170):
+  CallTrimVolume (fstrim, FileSystem.Trim), CallGetBlockCacheStatistics
+  (Io.BlockCache, FileSystem.Discards) and CallGetMemoryPressure
+  (Memory.PhysicalPages, Memory.Pressure, Processes.OutOfMemory).
 }
 unit Processes.MemoryCalls;
 
@@ -29,21 +28,29 @@ unit Processes.MemoryCalls;
 
 interface
 
-function PerformReserveMemory(Length, Flags: QWord): Int64;
-function PerformCommitMemory(Address, Length, Protection: QWord): Int64;
-function PerformDecommitMemory(Address, Length: QWord): Int64;
-function PerformProtectMemory(Address, Length, Protection: QWord): Int64;
-function PerformQueryMemory(Address, InformationAddress: QWord): Int64;
-function PerformSetMemoryPolicy(Flags: QWord): Int64;
+function PerformTrimVolume(PathAddress: QWord): Int64;
+function PerformGetBlockCacheStatistics(StatisticsAddress: QWord): Int64;
+function PerformGetMemoryPressure(PressureAddress: QWord): Int64;
 
 implementation
 
 uses
+  Runtime.Memory,
+  Runtime.Text,
   Abi.SystemCalls,
+  Memory.KernelHeap,
+  Memory.PhysicalPages,
+  Memory.Pressure,
+  Io.BlockCache,
+  FileSystem.Types,
+  FileSystem.Discards,
+  FileSystem.Trim,
   Processes.Process,
   Processes.Thread,
-  Processes.AddressSpace,
-  Processes.VirtualMemory,
+  Processes.Security,
+  Processes.FileCalls,
+  Processes.MemoryCharges,
+  Processes.OutOfMemory,
   Processes.UserAccess;
 
 function Failure(Error: LongInt): Int64;
@@ -51,68 +58,75 @@ begin
   Result := -Int64(Error);
 end;
 
-function CallerSpace: PAddressSpace;
-begin
-  Result := CurrentProcess^.AddressSpace;
-end;
-
-function PerformReserveMemory(Length, Flags: QWord): Int64;
+function PerformTrimVolume(PathAddress: QWord): Int64;
 var
-  Start: QWord;
+  KernelPath: PPathBuffer;
   Error: LongInt;
+  Status: TFileSystemStatus;
+  Discarded: QWord;
 begin
-  if Flags <> 0 then
-    Exit(Failure(ErrorInvalidArgument));
-  Error := ReserveAddressRange(CallerSpace, Length, Start);
+  if CurrentProcess^.Credentials.EffectiveUserId <> RootUserId then
+    Exit(Failure(ErrorNotPermitted));
+  Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Result := Int64(Start);
+  Status := TrimVolumeAtPath(@KernelPath^[0], Discarded);
+  FreeKernelMemory(KernelPath);
+  if Status <> StatusSuccess then
+    Exit(Failure(ErrorFromStatus(Status)));
+  Result := Int64(Discarded);
 end;
 
-function PerformCommitMemory(Address, Length, Protection: QWord): Int64;
-begin
-  if Protection > High(LongWord) then
-    Exit(Failure(ErrorInvalidArgument));
-  Result := Failure(CommitAddressRange(CallerSpace, Address, Length, LongWord(Protection)));
-end;
-
-function PerformDecommitMemory(Address, Length: QWord): Int64;
-begin
-  Result := Failure(DecommitAddressRange(CallerSpace, Address, Length));
-end;
-
-function PerformProtectMemory(Address, Length, Protection: QWord): Int64;
+function PerformGetBlockCacheStatistics(StatisticsAddress: QWord): Int64;
 var
-  Previous: LongWord;
-  Error: LongInt;
+  Cache: TBlockCacheStatistics;
+  Discards: TVolumeDiscardStatistics;
+  Statistics: TAbiBlockCacheStatistics;
 begin
-  if Protection > High(LongWord) then
-    Exit(Failure(ErrorInvalidArgument));
-  Error := ProtectAddressRange(CallerSpace, Address, Length, LongWord(Protection), Previous);
-  if Error <> ErrorNone then
-    Exit(Failure(Error));
-  Result := Int64(Previous);
+  GetBlockCacheStatistics(Cache);
+  GetVolumeDiscardStatistics(Discards);
+  FillMemory(@Statistics, SizeOf(Statistics), 0);
+  Statistics.LineBytes := CacheLineSize;
+  Statistics.LineCount := Cache.LineCount;
+  Statistics.MinimumLines := Cache.MinimumLines;
+  Statistics.MaximumLines := Cache.MaximumLines;
+  Statistics.DirtyLines := Cache.DirtyLines;
+  Statistics.Hits := Cache.Hits;
+  Statistics.Misses := Cache.Misses;
+  Statistics.ReadAhead := Cache.ReadAhead;
+  Statistics.WrittenBack := Cache.WrittenBack;
+  Statistics.LinesGrown := Cache.LinesGrown;
+  Statistics.LinesShrunk := Cache.LinesShrunk;
+  Statistics.LinesDiscarded := Cache.LinesDiscarded;
+  Statistics.BytesQueuedForDiscard := Discards.BytesQueued;
+  Statistics.BytesDiscarded := Discards.BytesDiscarded;
+  Result := -Int64(CopyToUser(StatisticsAddress, @Statistics, SizeOf(Statistics)));
 end;
 
-function PerformQueryMemory(Address, InformationAddress: QWord): Int64;
+function PerformGetMemoryPressure(PressureAddress: QWord): Int64;
 var
-  Information: TAbiMemoryInformation;
+  Physical: TPhysicalMemoryStatistics;
+  Reclaim: TMemoryPressureStatistics;
+  Ended: TOutOfMemoryStatistics;
+  Pressure: TAbiMemoryPressure;
 begin
-  QueryAddress(CallerSpace, Address, Information);
-  Result := Failure(CopyToUser(InformationAddress, @Information, SizeOf(Information)));
-end;
-
-function PerformSetMemoryPolicy(Flags: QWord): Int64;
-var
-  Space: PAddressSpace;
-begin
-  if (Flags and not QWord(MemoryPolicyAllowDynamicCode)) <> 0 then
-    Exit(Failure(ErrorInvalidArgument));
-  Space := CallerSpace;
-  Result := 0;
-  if Space^.AllowsDynamicCode then
-    Result := MemoryPolicyAllowDynamicCode;
-  Space^.AllowsDynamicCode := (Flags and MemoryPolicyAllowDynamicCode) <> 0;
+  GetPhysicalMemoryStatistics(Physical);
+  GetMemoryPressureStatistics(Reclaim);
+  GetOutOfMemoryStatistics(Ended);
+  FillMemory(@Pressure, SizeOf(Pressure), 0);
+  Pressure.TotalPages := Physical.TotalUsablePages;
+  Pressure.FreePages := Physical.FreePages;
+  GetMemoryWatermarks(Pressure.LowWatermarkPages, Pressure.CriticalWatermarkPages);
+  Pressure.Level := LongWord(Ord(CurrentMemoryPressure));
+  Pressure.PressureEvents := Reclaim.PressureEvents;
+  Pressure.ReclaimCalls := Reclaim.ReclaimCalls;
+  Pressure.ReclaimedPages := Reclaim.ReclaimedPages;
+  Pressure.FailedAllocations := Reclaim.FailedAllocations;
+  Pressure.CommittedPages := SystemCommittedPages;
+  Pressure.ProcessesEnded := Ended.ProcessesEnded;
+  Pressure.LastEndedProcessId := Ended.LastEndedProcessId;
+  CopyText(@Pressure.LastEndedName[0], @Ended.LastEndedName[0], SizeOf(Pressure.LastEndedName));
+  Result := -Int64(CopyToUser(PressureAddress, @Pressure, SizeOf(Pressure)));
 end;
 
 end.

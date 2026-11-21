@@ -128,7 +128,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..409] of TCommandTest = (
+  CommandTests: array[0..410] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -711,6 +711,12 @@ const
     { Tickless idle: processors idle for 3 seconds take fewer than 5 clock
       interrupts a second each (100 with the old periodic tick). }
     (Command: 'powerstat --check-idle 3 5 > idle.log; echo $?; grep FAIL idle.log; tail -n 1 idle.log | cut -d " " -f 2-4'; ExpectedOutput: '0'#10'idle processors take'#10; ExpectedStatus: 0),
+    { free: the memory, the block cache and memory pressure. }
+    (Command: 'free | head -n 1 | tr -s " "; free -h | grep -c -e "^Mem: " -e "^Cache: " -e "^Pressure: none"'; ExpectedOutput: ' total used free cache available'#10'3'#10; ExpectedStatus: 0),
+    { The block cache under memory pressure (memorytest cache): it grows
+      as /bin is read, then gives lines back while a hog takes memory
+      until it is short, every read working meanwhile, nobody ended. }
+    (Command: 'memorytest cache > memory.log; echo $?; grep FAIL memory.log; tail -n 1 memory.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Virtual memory (maptest): reservations committed, decommitted and
       protected in parts, W^X and the dynamic code policy, guard pages,
       file mappings shared and private (coherent with read() and write(),
@@ -723,9 +729,7 @@ const
     (Command: 'HEAP_CHECKS=pages heaptest --pages > pheap.log; echo $?; grep FAIL pheap.log; tail -n 1 pheap.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'passed, 0 failed'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=pages heaptest --overrun-page 2>&1 | sed -n 2p; HEAP_CHECKS=pages heaptest --overrun-page 2>/dev/null; echo $?'; ExpectedOutput: 'EAccessViolation: Access violation'#10'217'#10; ExpectedStatus: 0),
     (Command: 'HEAP_CHECKS=pages heaptest --write-past-end 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2; grep "offset:" heap.err'; ExpectedOutput: '204'#10' memory was written past the end of a block'#10'  offset:    20 holds $00 instead of $FD'#10; ExpectedStatus: 0),
-    (Command: 'HEAP_CHECKS=pages heaptest --double-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2'; ExpectedOutput: '204'#10' freeing a pointer that is not an allocated heap block (freed before, or a stray pointer)'#10; ExpectedStatus: 0),
-    { free: the memory by use. }
-    (Command: 'free | head -n 1 | tr -s " "'; ExpectedOutput: ' total used free'#10; ExpectedStatus: 0)
+    (Command: 'HEAP_CHECKS=pages heaptest --double-free 2> heap.err; echo $?; grep "heap check in" heap.err | cut -d: -f2'; ExpectedOutput: '204'#10' freeing a pointer that is not an allocated heap block (freed before, or a stray pointer)'#10; ExpectedStatus: 0)
   );
 
 var
