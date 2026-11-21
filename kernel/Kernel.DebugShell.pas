@@ -34,6 +34,7 @@
     disks             the block devices
     ps                the user processes
     threads           the user processes with their threads (id, state, priority, name)
+    modules ID        a process's program and libraries: load bias, span, name
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
@@ -74,7 +75,9 @@ uses
   FileSystem.Files,
   Processes.Process,
   Processes.Thread,
+  Processes.ImageLoader,
   Kernel.Threads,
+  Kernel.Mutex,
   Processes.Shutdown,
   Processes.Suspend,
   Drivers.DiskStatistics,
@@ -133,8 +136,8 @@ end;
 
 procedure ShowHelp;
 begin
-  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, threads, mem,');
-  WriteLine('cache, netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
+  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, threads, modules ID,');
+  WriteLine('mem, cache, netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -287,6 +290,58 @@ begin
   UnlockProcessRegistry;
 end;
 
+{ The decimal number at the start of Text (0 if there is none). }
+function ParseProcessId(Text: PChar): QWord;
+begin
+  Result := 0;
+  while (Text <> nil) and (Text^ >= '0') and (Text^ <= '9') do
+  begin
+    Result := Result * 10 + QWord(Ord(Text^) - Ord('0'));
+    Inc(Text);
+  end;
+end;
+
+{ The modules of a process: name, load bias (what a symbolizer
+  subtracts from an address) and the span of its segments. }
+procedure ShowModules(Arguments: PChar);
+var
+  Process: PProcess;
+  List: PModuleList;
+  Index: Integer;
+  Module: PLoadedModule;
+begin
+  WriteLine('BASE              START-END                        NAME');
+  LockProcessRegistry;
+  Process := FindRunningProcessLocked(ParseProcessId(Arguments));
+  if (Process = nil) or not Process^.IsUserProcess then
+  begin
+    UnlockProcessRegistry;
+    WriteLine('modules: no such user process');
+    Exit;
+  end;
+  { Kept by a reference, not the registry lock, while its lock is held. }
+  ReferenceObject(Process);
+  UnlockProcessRegistry;
+  AcquireMutex(Process^.Lock);
+  List := PModuleList(Process^.Modules);
+  if List <> nil then
+    for Index := 0 to List^.Count - 1 do
+    begin
+      Module := List^.Modules[Index];
+      DebugBeginMessage;
+      DebugWriteHex(Module^.Base, 16);
+      DebugWrite('  ');
+      DebugWriteHex(Module^.ImageStart, 12);
+      DebugWrite('-');
+      DebugWriteHex(Module^.ImageEnd, 12);
+      DebugWrite('        ');
+      DebugWriteLine(@Module^.Name[0]);
+      DebugEndMessage;
+    end;
+  ReleaseMutex(Process^.Lock);
+  DereferenceObject(Process);
+end;
+
 procedure ShowUptime;
 var
   Milliseconds: QWord;
@@ -346,6 +401,8 @@ begin
     ShowProcesses
   else if TextIsEqual(@Command[0], 'threads') then
     ShowThreads
+  else if TextIsEqual(@Command[0], 'modules') then
+    ShowModules(Arguments)
   else if TextIsEqual(@Command[0], 'mem') then
   begin
     WritePhysicalMemorySummary;

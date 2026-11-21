@@ -34,7 +34,9 @@
   the program or by the kernel (relocations, WriteIntoAddressSpace),
   gives the process its own copy of that page.
 
-  Layout:
+  Layout (with the kernel option aslr=off; otherwise each part lies at
+  a random place of a window of its own, Processes.AddressLayout, kept
+  in the space's Layout):
 
     0000_0000_0040_0000   program image
     0000_1000_0000_0000   memory allocated at run time (heap blocks)
@@ -81,15 +83,17 @@ uses
   Memory.Layout,
   Kernel.SpinLock,
   Processes.UserRegions,
-  Processes.RegionTree;
+  Processes.RegionTree,
+  Processes.AddressLayout;
 
 const
-  UserImageBase = QWord($0000000000400000);
-  UserAllocationBase = QWord($0000100000000000);
-  UserAllocationLimit = QWord($00007E0000000000);
-  UserLibraryBase = QWord($00007F0000000000);
-  UserStackTop = QWord($00007FFFFFFFF000);
-  UserStackReserve = QWord(8) * 1024 * 1024;
+  { The fixed layout (aslr=off); a space's own is in its Layout. }
+  UserImageBase = FixedImageBase;
+  UserAllocationBase = FixedAllocationBase;
+  UserAllocationLimit = AllocationAreaLimit;
+  UserLibraryBase = FixedLibraryBase;
+  UserStackTop = FixedStackTop;
+  UserStackReserve = MainStackReserve;
 
   { The regions a process may have unless it changes its limit, and the
     most any process may set (each costs a little kernel memory). }
@@ -116,6 +120,9 @@ type
     { The regions' sizes, guards left out. }
     VirtualBytes: QWord;
     NextLibraryAddress: QWord;
+    { Where its program, libraries, stacks and allocations go (random
+      unless aslr=off). }
+    Layout: TAddressLayout;
     { The pages mapped (the resident set), the ones among them that are
       shared - mapped from a program image or a section, which other
       processes may map too - and the most there ever were. }
@@ -140,6 +147,12 @@ type
   end;
 
 { All routines returning LongInt return 0 on success or an Abi error code. }
+
+{ False with the kernel option aslr=off: every process then gets the
+  fixed layout. }
+function AddressSpaceRandomizationIsOn: Boolean;
+{ A random number below Limit, for the layout (Kernel.Random). }
+function LayoutRandom(Limit: QWord): QWord;
 
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
 procedure DestroyAddressSpace(Space: PAddressSpace);
@@ -234,6 +247,8 @@ implementation
 
 uses
   Runtime.Memory,
+  Kernel.Options,
+  Kernel.Random,
   Kernel.PriorityLevel,
   Memory.PhysicalPages,
   Memory.KernelHeap,
@@ -257,6 +272,31 @@ begin
   FreeKernelMemory(Node);
 end;
 
+type
+  TRandomizationSetting = (RandomizationNotRead, RandomizationOn, RandomizationOff);
+
+var
+  RandomizationSetting: TRandomizationSetting = RandomizationNotRead;
+
+function AddressSpaceRandomizationIsOn: Boolean;
+var
+  Value: array[0..7] of Char;
+begin
+  if RandomizationSetting = RandomizationNotRead then
+  begin
+    RandomizationSetting := RandomizationOn;
+    if GetKernelOptionValue('aslr', @Value[0], SizeOf(Value)) and
+       ((Value[0] = 'o') and (Value[1] = 'f') and (Value[2] = 'f') and (Value[3] = #0)) then
+      RandomizationSetting := RandomizationOff;
+  end;
+  Result := RandomizationSetting = RandomizationOn;
+end;
+
+function LayoutRandom(Limit: QWord): QWord;
+begin
+  Result := RandomBelow(Limit);
+end;
+
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
 begin
   Space := PAddressSpace(AllocateZeroedKernelMemory(SizeOf(TAddressSpace)));
@@ -271,7 +311,8 @@ begin
   end;
   InitializeRegionTree(Space^.Regions);
   Space^.RegionLimit := DefaultRegionLimit;
-  Space^.NextLibraryAddress := UserLibraryBase;
+  ChooseAddressLayout(AddressSpaceRandomizationIsOn, @LayoutRandom, Space^.Layout);
+  Space^.NextLibraryAddress := Space^.Layout.LibraryWindowStart;
   InitializeSpinLock(Space^.Lock);
   Result := ErrorNone;
 end;
@@ -390,6 +431,18 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
+{ Room in the run time allocation area, first fit from Hint upwards,
+  then from the area's start (a random hint must not make memory run
+  out sooner). Caller holds the lock. }
+function FindAllocationRangeLocked(Space: PAddressSpace; Length, Hint: QWord; out Start: QWord): Boolean;
+begin
+  if (Hint < UserAllocationBase) or (Hint >= UserAllocationLimit) then
+    Hint := UserAllocationBase;
+  Result := FindFreeRangeLocked(Space, Length, Hint, UserAllocationLimit, Start);
+  if not Result and (Hint > UserAllocationBase) then
+    Result := FindFreeRangeLocked(Space, Length, UserAllocationBase, UserAllocationLimit, Start);
+end;
+
 { Unmaps and frees the pages of [Start, Start + Length); returns how
   many there were. }
 function ReleaseRegionPages(Space: PAddressSpace; Start, Length: QWord): QWord;
@@ -447,17 +500,24 @@ function AllocateWithGuard(Space: PAddressSpace; Length, GuardBytes: QWord; Kind
 var
   PreviousLevel: TPriorityLevel;
   Region: PUserRegion;
+  Hint: QWord;
 begin
   Start := 0;
   if (Length = 0) or (Length > UserAllocationLimit - UserAllocationBase) then
     Exit(ErrorInvalidArgument);
   Length := RoundUpToPage(Length);
+  { Thread stacks and thread data each go to a place of their own;
+    heap chunks and the like follow one another from the allocation
+    base. }
+  if Kind in [RegionKindStack, RegionKindThreadData] then
+    Hint := ChooseThreadMemoryAddress(Space^.Layout, @LayoutRandom)
+  else
+    Hint := Space^.Layout.AllocationBase;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   { The guard needs a region too. }
   if (Kind = RegionKindStack) and (Space^.Regions.Count + 1 >= Space^.RegionLimit) then
     Result := ErrorOutOfMemory
-  else if not FindFreeRangeLocked(Space, GuardBytes + Length, UserAllocationBase, UserAllocationLimit,
-    Start) then
+  else if not FindAllocationRangeLocked(Space, GuardBytes + Length, Hint, Start) then
     Result := ErrorOutOfMemory
   else
   begin
@@ -578,7 +638,7 @@ begin
   else
     Mapping := Mapping or MappingUncached;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if not FindFreeRangeLocked(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+  if not FindAllocationRangeLocked(Space, Length, Space^.Layout.AllocationBase, Start) then
     Result := ErrorOutOfMemory
   else
     Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindDevice, False);
@@ -623,7 +683,7 @@ begin
     Mapping := Mapping or MappingWritable;
   end;
   PreviousLevel := AcquireSpinLock(Space^.Lock);
-  if not FindFreeRangeLocked(Space, Length, UserAllocationBase, UserAllocationLimit, Start) then
+  if not FindAllocationRangeLocked(Space, Length, Space^.Layout.AllocationBase, Start) then
     Result := ErrorOutOfMemory
   else
     Result := AddRegionLocked(Space, Start, Length, Attributes, RegionKindSection, False);

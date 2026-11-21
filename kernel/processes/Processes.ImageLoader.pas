@@ -29,8 +29,9 @@
        pages are shared by every process that maps it, writable ones
        copy on write.
     2. For every needed library not loaded yet, find it in /lib of the
-       system volume and map it at the next free library address; repeat
-       for its own needs.
+       system volume and map it at a random free place of the library
+       window (Processes.AddressLayout; with aslr=off, at the next free
+       library address); repeat for its own needs.
     3. Apply every relocation of every newly loaded module. Symbols are
        looked up in load order (the program first, then libraries in the
        order they were loaded), the same "global scope" rule a Unix
@@ -58,6 +59,15 @@
 
   Each module keeps kernel copies of its symbol, string and hash tables
   so symbols can be found later without touching user memory.
+
+  Where everything went: the process's module list (Process^.Modules, a
+  TModuleList) holds every loaded module in load order - the program
+  first - with its file name, its Base (the load bias: an address in
+  the process is the address the module was linked for plus Base,
+  which is what a symbolizer subtracts) and the span its segments
+  cover (ImageStart, ImageEnd). With address space randomization these
+  differ from process to process, so crash reports must state them
+  (scripts/symbolize.py takes them).
 }
 unit Processes.ImageLoader;
 
@@ -78,7 +88,11 @@ type
   PLoadedModule = ^TLoadedModule;
   TLoadedModule = record
     Name: array[0..ModuleNameLength - 1] of Char;
+    { The load bias: link address + Base = address in the process. }
     Base: QWord;
+    { The pages its loadable segments cover in the process. }
+    ImageStart: QWord;
+    ImageEnd: QWord;
     EntryPoint: QWord;
     ProgramHeaderAddress: QWord;
     ProgramHeaderCount: LongWord;
@@ -149,6 +163,7 @@ uses
   FileSystem.Types,
   FileSystem.Files,
   Processes.AddressSpace,
+  Processes.AddressLayout,
   Processes.UserRegions,
   Processes.ImageSections,
   Processes.Paths,
@@ -769,6 +784,28 @@ begin
   end;
 end;
 
+{ Finds room for a library of Length bytes: at a random page of the
+  library window (anywhere in it if nothing fits above that page), or
+  without randomization after the library loaded last. }
+function PlaceLibrary(Space: PAddressSpace; Length: QWord; out Start: QWord): Boolean;
+var
+  Layout: PAddressLayout;
+  Hint: QWord;
+begin
+  Layout := @Space^.Layout;
+  if not Layout^.IsRandomized then
+  begin
+    Result := FindFreeRange(Space, Length, Space^.NextLibraryAddress, Layout^.LibraryWindowEnd, Start);
+    if Result then
+      Space^.NextLibraryAddress := Start + Length + PageSize;
+    Exit;
+  end;
+  Hint := ChooseLibraryAddress(Layout^, Length, @LayoutRandom);
+  Result := FindFreeRange(Space, Length, Hint, Layout^.LibraryWindowEnd, Start);
+  if not Result then
+    Result := FindFreeRange(Space, Length, Layout^.LibraryWindowStart, Layout^.LibraryWindowEnd, Start);
+end;
+
 function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt;
 var
@@ -807,18 +844,11 @@ begin
     if Image.Header^.FileType = ElfTypeExecutable then
       Bias := 0 { linked for a fixed address }
     else if IsProgram then
-      Bias := UserImageBase - LowestPage
+      Bias := Space^.Layout.ImageBase - LowestPage
+    else if not PlaceLibrary(Space, HighestPageEnd - LowestPage, Bias) then
+      Result := ErrorOutOfMemory
     else
-    begin
-      if not FindFreeRange(Space, HighestPageEnd - LowestPage, Space^.NextLibraryAddress,
-        UserStackTop - UserStackReserve, Bias) then
-        Result := ErrorOutOfMemory
-      else
-      begin
-        Space^.NextLibraryAddress := Bias + (HighestPageEnd - LowestPage) + PageSize;
-        Bias := Bias - LowestPage;
-      end;
-    end;
+      Bias := Bias - LowestPage;
   end;
 
   if Result = ErrorNone then
@@ -835,6 +865,8 @@ begin
   begin
     CopyText(@Module^.Name[0], FileNameOf(KernelPath), ModuleNameLength);
     Module^.Base := Bias;
+    Module^.ImageStart := Bias + LowestPage;
+    Module^.ImageEnd := Bias + HighestPageEnd;
     Module^.EntryPoint := Bias + Image.Header^.EntryPoint;
     Module^.ProgramHeaderAddress := Bias + LowestPage + Image.Header^.ProgramHeaderOffset;
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
