@@ -51,9 +51,12 @@ function PrepareProcessorStartup: Boolean;
 procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
 { Called by a secondary processor first thing at its entry point. }
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
-{ Suspend to RAM is not supported on AArch64 yet (Kernel.Arch.Suspend):
-  returns 0. }
+{ Suspend to RAM (PSCI SYSTEM_SUSPEND): the boot processor wakes through
+  the start-up entry as a started processor does, then runs
+  EntryPoint(Processor) on the stack ending at StackTop. Returns the
+  entry's physical address; WakeEntryContext is the X0 to give it. }
 function PrepareWakeEntry(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): QWord;
+function WakeEntryContext: QWord;
 procedure ReinitializeThisProcessor(Processor: PProcessor);
 
 implementation
@@ -174,6 +177,18 @@ end;
 function PrepareWakeEntry(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): QWord;
 begin
   Result := 0;
+  if StartRecord = nil then
+    Exit;
+  StartRecord^.StackTop := StackTop;
+  StartRecord^.Processor := QWord(Processor);
+  StartRecord^.EntryPoint := QWord(EntryPoint);
+  CleanDataCache(StartRecord, SizeOf(TSecondaryStartRecord));
+  Result := EntryPhysical;
+end;
+
+function WakeEntryContext: QWord;
+begin
+  Result := RecordPhysical;
 end;
 
 procedure ReinitializeThisProcessor(Processor: PProcessor);

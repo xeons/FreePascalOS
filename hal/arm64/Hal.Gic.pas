@@ -52,6 +52,11 @@ const
 function InitializeGic: Boolean;
 { Sets up a processor's CPU interface and private interrupts. }
 procedure InitializeGicOnThisProcessor;
+{ After waking from suspend to RAM, on the boot processor: the
+  distributor (and a GICv3's ITS) set up again with every connected
+  interrupt as it was, if they lost their settings, then this
+  processor's interface. }
+procedure RestoreGicAfterSleep;
 
 { 2 or 3; 0 before InitializeGic found one. }
 function GicVersion: Byte;
@@ -122,6 +127,14 @@ begin
   case Version of
     2: InitializeGicV2OnThisProcessor;
     3: InitializeGicV3OnThisProcessor;
+  end;
+end;
+
+procedure RestoreGicAfterSleep;
+begin
+  case Version of
+    2: RestoreGicV2AfterSleep;
+    3: RestoreGicV3AfterSleep;
   end;
 end;
 

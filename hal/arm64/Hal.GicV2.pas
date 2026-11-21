@@ -55,6 +55,9 @@ uses
 function InitializeGicV2(constref Description: TGicDescription): Boolean;
 { Sets up a processor's CPU interface and private interrupts. }
 procedure InitializeGicV2OnThisProcessor;
+{ The distributor again with every SPI as it was connected, if waking
+  reset it, then this processor's interface. }
+procedure RestoreGicV2AfterSleep;
 
 function GicV2InterruptCount: LongWord;
 
@@ -112,6 +115,9 @@ var
   CpuInterface: PByte = nil;
   InterruptTotal: LongWord = 0;
   VectorOfInterrupt: TInterruptVectorTable;
+  { How each SPI was connected, to connect it again after waking. }
+  LevelTriggeredOf: array[0..MaximumInterrupts - 1] of Boolean;
+  TargetOf: array[0..MaximumInterrupts - 1] of LongWord;
   LastAcknowledged: array[0..MaximumProcessors - 1] of LongWord;
   KnownIds: array[0..MaximumKnownProcessors - 1] of LongWord;
   KnownMasks: array[0..MaximumKnownProcessors - 1] of Byte;
@@ -306,6 +312,27 @@ begin
   Result := True;
 end;
 
+procedure RestoreGicV2AfterSleep;
+var
+  Interrupt: LongWord;
+begin
+  if Distributor = nil then
+    Exit;
+  if (ReadDistributor(DistributorControl) and 1) = 0 then
+  begin
+    InitializeDistributor;
+    Interrupt := FirstSharedInterrupt;
+    while Interrupt < InterruptTotal do
+    begin
+      if VectorOfInterrupt[Interrupt] <> SpuriousInterruptVector then
+        ConnectGicV2Interrupt(Interrupt, VectorOfInterrupt[Interrupt], LevelTriggeredOf[Interrupt],
+          TargetOf[Interrupt]);
+      Inc(Interrupt);
+    end;
+  end;
+  InitializeGicV2OnThisProcessor;
+end;
+
 function ConnectGicV2Interrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
   TargetProcessorId: LongWord): Boolean;
 var
@@ -315,6 +342,8 @@ begin
   if (Distributor = nil) or (Interrupt >= InterruptTotal) then
     Exit;
   VectorOfInterrupt[Interrupt] := Vector;
+  LevelTriggeredOf[Interrupt] := LevelTriggered;
+  TargetOf[Interrupt] := TargetProcessorId;
   SetPriority(Interrupt, Vector);
   SetTrigger(Interrupt, LevelTriggered);
   if Interrupt >= FirstSharedInterrupt then

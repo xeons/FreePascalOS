@@ -49,6 +49,7 @@ uses
 
 function InitializeGicV3(constref Description: TGicDescription): Boolean;
 procedure InitializeGicV3OnThisProcessor;
+procedure RestoreGicV3AfterSleep;
 
 function GicV3InterruptCount: LongWord;
 
@@ -120,6 +121,8 @@ var
   Distributor: PByte = nil;
   InterruptTotal: LongWord = 0;
   VectorOfInterrupt: TInterruptVectorTable;
+  LevelTriggeredOf: array[0..MaximumInterrupts - 1] of Boolean;
+  TargetOf: array[0..MaximumInterrupts - 1] of LongWord;
   LastAcknowledged: array[0..MaximumProcessors - 1] of LongWord;
   Redistributors: array[0..MaximumProcessors - 1] of TRedistributor;
 
@@ -314,6 +317,8 @@ begin
   if (Distributor = nil) or (Interrupt >= InterruptTotal) then
     Exit;
   VectorOfInterrupt[Interrupt] := Vector;
+  LevelTriggeredOf[Interrupt] := LevelTriggered;
+  TargetOf[Interrupt] := TargetProcessorId;
   if Interrupt < FirstSharedInterrupt then
   begin
     { Private: this processor's now, the others' as each starts. }
@@ -338,6 +343,28 @@ begin
   PQWord(Distributor + DistributorRouter + Interrupt * 8)^ := RouterValue(TargetProcessorId);
   WriteDistributor(DistributorSetEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
   Result := True;
+end;
+
+procedure RestoreGicV3AfterSleep;
+var
+  Interrupt: LongWord;
+begin
+  if Distributor = nil then
+    Exit;
+  if (ReadDistributor(DistributorControl) and ControlAffinityRouting) = 0 then
+  begin
+    InitializeDistributor;
+    Interrupt := FirstSharedInterrupt;
+    while Interrupt < InterruptTotal do
+    begin
+      if VectorOfInterrupt[Interrupt] <> SpuriousInterruptVector then
+        ConnectGicV3Interrupt(Interrupt, VectorOfInterrupt[Interrupt], LevelTriggeredOf[Interrupt],
+          TargetOf[Interrupt]);
+      Inc(Interrupt);
+    end;
+  end;
+  RestoreTranslationService;
+  InitializeGicV3OnThisProcessor;
 end;
 
 procedure DisableGicV3Interrupt(Interrupt: LongWord);

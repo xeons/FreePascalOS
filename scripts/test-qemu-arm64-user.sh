@@ -66,7 +66,13 @@ fault_rules="$build_directory/test-arm64-fault-disk.conf"
 
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
-echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20" > "$test_esp_directory/FreePascalOS/options.txt"
+# The GICv3 run also uses only 32 address space identifiers, so their
+# generations roll over many times while coretest starts its programs.
+extra_options=""
+if [[ "${GIC:-2}" != 2 ]]; then
+    extra_options="asidbits=5"
+fi
+echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20 $extra_options" > "$test_esp_directory/FreePascalOS/options.txt"
 cp -f "$test_disk_image" "$run_test_disk"
 cp -f "$system_disk_image" "$run_system_disk"
 rm -f "$fault_disk"

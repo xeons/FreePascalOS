@@ -33,6 +33,10 @@
   the machine back in ACPI mode and runs \_WAK(3). S1, S2 and S4 are not
   entered.
 
+  Without ACPI's fixed hardware (hardware-reduced ACPI, a device tree:
+  AArch64) suspend to RAM goes through the HAL instead where it offers
+  it (PSCI SYSTEM_SUSPEND): the same three steps without the AML.
+
   Resetting tries the FADT's reset register, then the legacy ways.
 }
 unit Io.AcpiSleep;
@@ -78,6 +82,8 @@ var
   { S3's types, read before the processors are frozen. }
   SuspendTypeA: Byte;
   SuspendTypeB: Byte;
+  { The HAL suspends (PSCI) rather than ACPI. }
+  SuspendThroughHal: Boolean = False;
 
 function SleepStateIsSupported(State: Integer): Boolean;
 var
@@ -165,8 +171,14 @@ end;
 function PrepareSuspendToRam: Boolean;
 begin
   Result := False;
+  SuspendThroughHal := False;
   if not AcpiNamespaceIsLoaded or not AcpiHardware.Present then
-    Exit;
+  begin
+    SuspendThroughHal := HalOffersSuspendToRam;
+    if not SuspendThroughHal then
+      Report('the firmware offers no suspend to RAM');
+    Exit(SuspendThroughHal);
+  end;
   LockAmlInterpreter;
   if SleepTypeOf(SuspendToRam, SuspendTypeA, SuspendTypeB) then
   begin
@@ -180,6 +192,12 @@ end;
 
 procedure EnterSuspendToRam(WakeVector: QWord);
 begin
+  if SuspendThroughHal then
+  begin
+    { Returns only if the firmware refused. }
+    HalEnterSuspendToRam(WakeVector);
+    Exit;
+  end;
   if not SetFirmwareWakingVector(LongWord(WakeVector)) then
     Exit;
   { The wake status cleared; the power button stays a wake source. }
@@ -196,6 +214,8 @@ var
   Argument: TAmlValue;
   Ignored: TAmlValue;
 begin
+  if SuspendThroughHal then
+    Exit;
   EnableAcpiMode;
   ClearPm1Status(Pm1StatusBits);
   LockAmlInterpreter;

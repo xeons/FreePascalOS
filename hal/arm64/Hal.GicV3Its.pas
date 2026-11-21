@@ -61,6 +61,10 @@ const
   then not available). }
 function InitializeTranslationService(PhysicalAddress: QWord): Boolean;
 function TranslationServiceIsReady: Boolean;
+{ After waking: if the ITS lost its registers, gives it its tables and
+  queue again (their memory kept every mapping) and maps the
+  collections again. }
+procedure RestoreTranslationService;
 { Gives Redistributor the LPI tables and enables LPIs on it (each
   processor's own, once the ITS is set up). }
 procedure EnableLpisOn(constref Redistributor: TRedistributor);
@@ -160,6 +164,9 @@ var
   Devices: array[0..MaximumDevices - 1] of TMappedDevice;
   DeviceCount: LongWord;
   CollectionMapped: array[0..MaximumCollections - 1] of Boolean;
+  CollectionTargets: array[0..MaximumCollections - 1] of TRedistributor;
+  TableValues: array[0..ItsTableCount - 1] of QWord;
+  CommandBaseValue: QWord;
   LpiVectors: array[0..MaximumLpis - 1] of Byte;
   LpiDevices: array[0..MaximumLpis - 1] of LongWord;
   LpiEvents: array[0..MaximumLpis - 1] of LongWord;
@@ -343,6 +350,7 @@ begin
     (Physical and AddressMask) or ShareabilityInner or (ReadIts64(Offset) and (QWord(3) shl TablePageSizeShift)) or
     (Units - 1);
   WriteIts64(Offset, Written);
+  TableValues[Index] := ReadIts64(Offset);
   if (ReadIts64(Offset) and ShareabilityMask) = 0 then
     NotCoherent := True;
   if NotCoherent then
@@ -361,6 +369,7 @@ begin
   CommandWriter := 0;
   WriteIts64(ItsCommandBase, TableValid or (QWord(CacheWriteBack) shl CacheWriteBackShift) or
     (Physical and AddressMask) or ShareabilityInner);
+  CommandBaseValue := ReadIts64(ItsCommandBase);
   if (ReadIts64(ItsCommandBase) and ShareabilityMask) = 0 then
     NotCoherent := True;
   MakeVisible(CommandQueue, CommandQueueBytes);
@@ -415,6 +424,24 @@ begin
   PLongWord(Registers + ItsControl)^ := ItsControlEnabled;
   Ready := True;
   Result := True;
+end;
+
+procedure RestoreTranslationService;
+var
+  Index: LongWord;
+begin
+  if not Ready or ((PLongWord(Registers + ItsControl)^ and ItsControlEnabled) <> 0) then
+    Exit;
+  for Index := 0 to ItsTableCount - 1 do
+    if (TableValues[Index] and TableValid) <> 0 then
+      WriteIts64(ItsTableBase + Index * 8, TableValues[Index]);
+  WriteIts64(ItsCommandBase, CommandBaseValue);
+  CommandWriter := 0;
+  WriteIts64(ItsCommandWriter, 0);
+  PLongWord(Registers + ItsControl)^ := ItsControlEnabled;
+  for Index := 0 to MaximumCollections - 1 do
+    if CollectionMapped[Index] then
+      MapCollection(Index, CollectionTargets[Index]);
 end;
 
 procedure EnableLpisOn(constref Redistributor: TRedistributor);
@@ -493,6 +520,7 @@ begin
      (CollectionMapped[ProcessorIndex] or MapCollection(ProcessorIndex, Target)) then
   begin
     CollectionMapped[ProcessorIndex] := True;
+    CollectionTargets[ProcessorIndex] := Target;
     EventId := Devices[Slot].NextEvent;
     Lpi := NextLpi;
     LpiVectors[Lpi] := Vector;

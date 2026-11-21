@@ -111,9 +111,9 @@ begin
   begin
     FullMemoryBarrier;
     Processor^.Frozen := True;
-    { Until the machine sleeps; INIT ends this. }
-    while True do
-      HaltProcessor;
+    { Until the machine sleeps: halted (INIT ends it), or off (AArch64,
+      PSCI CPU_OFF; CPU_ON starts it again). }
+    ArchParkFrozenProcessor;
   end;
   { Started again after waking: resumed here, inside the dispatch
     interrupt and at its level (the saved state holds the priority

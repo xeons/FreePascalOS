@@ -64,6 +64,14 @@ procedure HalSendRequestInterrupt(ProcessorId: LongWord);
 function HalRequestInterruptVector: Byte;
 { Stops every other processor (used by the panic path). }
 procedure HalHaltOtherProcessors;
+{ True if the machine can suspend to RAM through the HAL (PSCI
+  SYSTEM_SUSPEND; the kernel option psci-suspend=force tries it even
+  where PSCI_FEATURES says no, which tests the way back when the
+  firmware refuses). }
+function HalOffersSuspendToRam: Boolean;
+{ Suspends to RAM, waking at WakeVector (PrepareWakeEntry). Returns only
+  if the firmware refused. }
+procedure HalEnterSuspendToRam(WakeVector: QWord);
 { Resets the machine through PSCI. Returns if that did not work. }
 procedure HalResetMachine;
 { Powers the machine off through PSCI. Returns if that did not work. }
@@ -88,6 +96,8 @@ uses
   Hal.InterruptVectors,
   Kernel.Arch.Cpu,
   Kernel.Arch.Exceptions,
+  Kernel.Arch.ProcessorStartup,
+  Kernel.Options,
   Kernel.Arch.TrapFrame,
   Kernel.Interrupts,
   Kernel.Processors,
@@ -199,7 +209,8 @@ end;
 
 procedure HalResumeBootProcessor;
 begin
-  InitializeGicOnThisProcessor;
+  { The distributor lost its settings if the machine slept. }
+  RestoreGicAfterSleep;
   ContinueGenericTimer;
 end;
 
@@ -226,6 +237,22 @@ end;
 procedure HalHaltOtherProcessors;
 begin
   SendSoftwareInterruptToOthers(SoftwareInterruptStop);
+end;
+
+function HalOffersSuspendToRam: Boolean;
+var
+  Value: array[0..15] of Char;
+begin
+  Result := PsciOffersSystemSuspend;
+  if not Result and GetKernelOptionValue('psci-suspend', @Value[0], SizeOf(Value)) then
+    Result := (Value[0] = 'f') and (Value[1] = 'o') and (Value[2] = 'r') and (Value[3] = 'c') and (Value[4] = 'e');
+end;
+
+procedure HalEnterSuspendToRam(WakeVector: QWord);
+begin
+  if WakeVector = 0 then
+    Exit;
+  PsciSuspendSystem(WakeVector, WakeEntryContext);
 end;
 
 procedure HalResetMachine;
@@ -260,6 +287,8 @@ begin
       DebugWrite(' (HVC)')
     else
       DebugWrite(' (SMC)');
+    if PsciOffersSystemSuspend then
+      DebugWrite(', suspend to RAM');
   end
   else
     DebugWrite('; no PSCI');

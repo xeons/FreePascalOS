@@ -25,7 +25,9 @@
   - address space identifiers: as many bits as the processor offers (or
     asidbits= asks for) are in use, and TCR_EL1.AS matches 16 of them;
   - the real-time clock (a PL031 where there is one): it reads the wall
-    clock's time, and a time written to it reads back.
+    clock's time, and a time written to it reads back;
+  - suspend to RAM, with the kernel option suspendtest
+    (Kernel.Arch.SuspendSelfTest).
 }
 unit Kernel.Arch.PlatformSelfTest;
 
@@ -46,7 +48,8 @@ uses
   Kernel.DeferredCalls,
   Memory.Arch.AddressSpaceIds,
   Hal.Gic,
-  Hal.RealTimeClock;
+  Hal.RealTimeClock,
+  Kernel.Arch.SuspendSelfTest;
 
 const
   TranslationControlWideAsids = QWord(1) shl 36;
@@ -113,6 +116,7 @@ begin
     ReportPassed('AArch64 platform (GIC, ASIDs, PL031)')
   else
     ReportPassed('AArch64 platform (GIC, ASIDs)');
+  RunSuspendSelfTestIfAsked;
 end;
 
 end.
