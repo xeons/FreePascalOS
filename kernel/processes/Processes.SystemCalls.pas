@@ -49,6 +49,7 @@ uses
   Processes.SocketCalls,
   Processes.NetworkCalls,
   Processes.NodeName,
+  Processes.ThreadNames,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -854,6 +855,8 @@ begin
     CallSetProcessLimit: Result := PerformSetProcessLimit(Argument0, Argument1);
     CallWatchNetworkChanges: Result := PerformWatchNetworkChanges;
     CallGetNetworkStatistics: Result := PerformGetNetworkStatistics(Argument0);
+    CallSetThreadName: Result := PerformSetThreadName(Int64(Argument0), Argument1);
+    CallListThreads: Result := PerformListThreads(Argument0, Argument1, Argument2);
   else
     Result := Failure(ErrorNotImplemented);
   end;

@@ -33,6 +33,7 @@
     volumes           the mounted volumes
     disks             the block devices
     ps                the user processes
+    threads           the user processes with their threads (id, state, priority, name)
     mem               physical memory, kernel heap and objects
     cache             the block cache and the disks' statistics
     uptime            time since boot
@@ -72,6 +73,8 @@ uses
   FileSystem.Volumes,
   FileSystem.Files,
   Processes.Process,
+  Processes.Thread,
+  Kernel.Threads,
   Processes.Shutdown,
   Processes.Suspend,
   Drivers.DiskStatistics,
@@ -130,8 +133,8 @@ end;
 
 procedure ShowHelp;
 begin
-  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, mem, cache,');
-  WriteLine('netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
+  WriteLine('Commands: help, echo TEXT, ls [PATH], cat PATH, volumes, disks, ps, threads, mem,');
+  WriteLine('cache, netcards, interrupts, devices, board, uptime, watchdog, suspend, poweroff, reboot, exit');
 end;
 
 procedure ListDirectory(Path: PChar);
@@ -253,6 +256,37 @@ begin
   UnlockProcessRegistry;
 end;
 
+procedure DescribeProcessThread(Thread: PThread; Context: Pointer);
+begin
+  DebugBeginMessage;
+  DebugWrite('    ');
+  DebugWriteDecimal(Thread^.ControlBlock.ThreadId);
+  DebugWrite('  ');
+  DebugWrite(ThreadStateName(Thread^.ControlBlock.State));
+  DebugWrite('  ');
+  DebugWriteDecimal(Thread^.ControlBlock.Priority);
+  DebugWrite('  ');
+  DebugWriteLine(@Thread^.ControlBlock.Name[0]);
+  DebugEndMessage;
+end;
+
+procedure DescribeProcessWithThreads(Process: PProcess; Context: Pointer);
+begin
+  DescribeProcess(Process, Context);
+  if Process^.IsUserProcess then
+    VisitProcessThreads(Process, @DescribeProcessThread, nil);
+end;
+
+{ Every user process with its threads: id, state, priority and name. }
+procedure ShowThreads;
+begin
+  WriteLine('ID  NAME  THREADS');
+  WriteLine('    THREAD  STATE  PRIORITY  NAME');
+  LockProcessRegistry;
+  VisitRunningProcessesLocked(@DescribeProcessWithThreads, nil);
+  UnlockProcessRegistry;
+end;
+
 procedure ShowUptime;
 var
   Milliseconds: QWord;
@@ -310,6 +344,8 @@ begin
     ShowDisks
   else if TextIsEqual(@Command[0], 'ps') then
     ShowProcesses
+  else if TextIsEqual(@Command[0], 'threads') then
+    ShowThreads
   else if TextIsEqual(@Command[0], 'mem') then
   begin
     WritePhysicalMemorySummary;

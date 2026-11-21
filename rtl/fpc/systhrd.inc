@@ -288,12 +288,24 @@ begin
   SysGetCurrentThreadId := TThreadID(KernelThreadId);
 end;
 
+{ Names a thread of this process for hang reports, ps -L and the task
+  manager. The "handle" is a thread id (what TThread.ThreadID and
+  GetCurrentThreadId give), or TThreadID(-1) for the calling thread, as
+  TThread.NameThreadForDebugging passes by default. }
 procedure SysSetThreadDebugNameA(ThreadHandle: TThreadID; const ThreadName: AnsiString);
+var
+  Selector: Int64;
 begin
+  if ThreadHandle = TThreadID(-1) then
+    Selector := CurrentThreadHandle
+  else
+    Selector := Int64(ThreadHandle);
+  SystemCall(CallSetThreadName, QWord(Selector), QWord(PChar(ThreadName)), 0, 0, 0, 0);
 end;
 
 procedure SysSetThreadDebugNameU(ThreadHandle: TThreadID; const ThreadName: UnicodeString);
 begin
+  SysSetThreadDebugNameA(ThreadHandle, AnsiString(ThreadName));
 end;
 
 { --- Critical sections ------------------------------------------------------ }

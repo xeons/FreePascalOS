@@ -19,19 +19,21 @@
 {
   ps - report a snapshot of the current processes
 
-  ps [-eAf] [-o FORMAT] [-p PID[,PID...]] [-u USER[,USER...]]
+  ps [-eAfLT] [-o FORMAT] [-p PID[,PID...]] [-u USER[,USER...]]
   ps aux
 
   Lists the processes of the effective user by default; -e or -A lists
   all of them, -p and -u choose by process or user. -f is the full
   format, -o FORMAT a list of columns (comma or space separated, with
-  NAME=HEADER to rename one), and "aux" the BSD style listing.
+  NAME=HEADER to rename one), and "aux" the BSD style listing. -L (or
+  -T) lists every thread on a line of its own, with its id (lwp, spid,
+  tid) and name (comm), and its own state, priority and time.
 
   Columns: pid ppid pgid uid user ruid ruser ni (nice) pri stat (s)
   nlwp (thcount) vsz rss (both KiB) %cpu %mem time etime stime (start)
   tty comm (ucomm), cmd (args, command), handles and regions (the
   ranges of its address space: program and library segments, stacks,
-  allocations, mappings).
+  allocations, mappings), lwp (spid, tid: the thread id with -L/-T).
 
   %cpu is the processor time over the time since the process started
   (100 is one processor kept busy all along), time the processor time
@@ -50,6 +52,7 @@ uses
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.ProcessList,
+  Sys.Threads,
   Sys.Streams,
   Sys.Time,
   Util.Accounts,
@@ -61,9 +64,10 @@ const
     'Report a snapshot of the current processes.'#10#10 +
     '  -A, -e             select all processes'#10 +
     '  -f                 full format listing'#10 +
+    '  -L, -T             a line per thread (its id and name)'#10 +
     '  -o, --format=LIST  user defined format: pid,ppid,pgid,uid,user,ruid,ruser,'#10 +
     '                     ni,pri,stat,nlwp,vsz,rss,%cpu,%mem,time,etime,stime,tty,comm,'#10 +
-    '                     handles,regions'#10 +
+    '                     handles,regions,lwp,spid,tid'#10 +
     '  -p, --pid=LIST     select by process ID'#10 +
     '  -u, --user=LIST    select by effective user ID or name'#10 +
     '      --no-headers   do not print a header line'#10 +
@@ -75,12 +79,15 @@ const
   OptionPid = 4;
   OptionUser = 5;
   OptionNoHeaders = 6;
+  OptionThreads = 7;
+  OptionThreadsSpid = 8;
 
 type
   TColumnKind = (ColumnPid, ColumnParent, ColumnGroup, ColumnUid, ColumnUser, ColumnRealUid,
     ColumnRealUser, ColumnNice, ColumnPriority, ColumnState, ColumnThreads, ColumnVirtual,
     ColumnResident, ColumnCpuPercent, ColumnMemoryPercent, ColumnTime, ColumnElapsed,
-    ColumnStart, ColumnTerminal, ColumnCommand, ColumnArguments, ColumnCpu, ColumnHandles, ColumnRegions);
+    ColumnStart, ColumnTerminal, ColumnCommand, ColumnArguments, ColumnCpu, ColumnHandles, ColumnRegions,
+    ColumnThreadId);
 
   TColumn = record
     Kind: TColumnKind;
@@ -98,7 +105,7 @@ type
   end;
 
 const
-  ColumnNames: array[0..37] of TColumnName = (
+  ColumnNames: array[0..40] of TColumnName = (
     (Name: 'pid'; Kind: ColumnPid; Header: 'PID'; Width: 7; LeftAligned: False),
     (Name: 'ppid'; Kind: ColumnParent; Header: 'PPID'; Width: 7; LeftAligned: False),
     (Name: 'pgid'; Kind: ColumnGroup; Header: 'PGID'; Width: 7; LeftAligned: False),
@@ -136,7 +143,10 @@ const
     (Name: 'command'; Kind: ColumnArguments; Header: 'COMMAND'; Width: 0; LeftAligned: True),
     (Name: 'c'; Kind: ColumnCpu; Header: 'C'; Width: 2; LeftAligned: False),
     (Name: 'handles'; Kind: ColumnHandles; Header: 'HANDLES'; Width: 7; LeftAligned: False),
-    (Name: 'regions'; Kind: ColumnRegions; Header: 'REGIONS'; Width: 7; LeftAligned: False));
+    (Name: 'regions'; Kind: ColumnRegions; Header: 'REGIONS'; Width: 7; LeftAligned: False),
+    (Name: 'lwp'; Kind: ColumnThreadId; Header: 'LWP'; Width: 7; LeftAligned: False),
+    (Name: 'spid'; Kind: ColumnThreadId; Header: 'SPID'; Width: 7; LeftAligned: False),
+    (Name: 'tid'; Kind: ColumnThreadId; Header: 'TID'; Width: 7; LeftAligned: False));
 
 var
   Columns: array of TColumn;
@@ -147,6 +157,10 @@ var
   { Milliseconds since the system started. }
   Uptime: QWord;
   TotalMemory: QWord;
+  { -L or -T: a line per thread, Thread being the one written now. }
+  ListThreadLines: Boolean;
+  HasThread: Boolean;
+  Thread: TThreadDetails;
 
 { Adds the column called Name; Header replaces its usual header when
   HasHeader. }
@@ -265,8 +279,21 @@ begin
   Result := False;
 end;
 
+function ThreadStateLetter: Char;
+begin
+  case Thread.State of
+    ThreadDetailsRunning, ThreadDetailsReady: Result := 'R';
+    ThreadDetailsSuspended: Result := 'T';
+    ThreadDetailsExiting: Result := 'Z';
+  else
+    Result := 'S';
+  end;
+end;
+
 function StateLetter(const Information: TProcessDetails): Char;
 begin
+  if HasThread then
+    Exit(ThreadStateLetter);
   case Information.State of
     ProcessStateRunning: Result := 'R';
     ProcessStateExiting: Result := 'Z';
@@ -363,7 +390,11 @@ begin
           Tenths := Information.ResidentBytes * 1000 div TotalMemory;
         Result := TenthsText(Tenths);
       end;
-    ColumnTime: Result := DurationText(Information.ProcessorNanoseconds div 1000000000, True);
+    ColumnTime:
+      if HasThread then
+        Result := DurationText(Thread.ProcessorNanoseconds div 1000000000, True)
+      else
+        Result := DurationText(Information.ProcessorNanoseconds div 1000000000, True);
     ColumnElapsed:
       begin
         Elapsed := ElapsedMilliseconds(Information) div 1000;
@@ -383,7 +414,16 @@ begin
         if Result = '' then
           Result := '?';
       end;
-    ColumnCommand: Result := PChar(@Information.Name[0]);
+    ColumnCommand:
+      if HasThread then
+        Result := Thread.Name
+      else
+        Result := PChar(@Information.Name[0]);
+    ColumnThreadId:
+      if HasThread then
+        Result := IntToStr(Thread.ThreadId)
+      else
+        Result := '-';
     ColumnArguments: Result := ArgumentsText(Information);
     ColumnHandles: Result := IntToStr(Information.HandleCount);
     ColumnRegions: Result := RegionCountText(Information.ProcessId);
@@ -411,7 +451,9 @@ var
   FirstArgument: string;
   FullFormat: Boolean;
   BsdStyle: Boolean;
+  ThreadColumnName: string;
 begin
+  ThreadColumnName := 'lwp';
   ShowHeaders := True;
   FullFormat := False;
   BsdStyle := False;
@@ -431,6 +473,8 @@ begin
       CommandOption('A', '', False, OptionAll),
       CommandOption('e', '', False, OptionAll),
       CommandOption('f', '', False, OptionFull),
+      CommandOption('L', '', False, OptionThreads),
+      CommandOption('T', '', False, OptionThreadsSpid),
       CommandOption('o', 'format', True, OptionFormat),
       CommandOption('p', 'pid', True, OptionPid),
       CommandOption('u', 'user', True, OptionUser),
@@ -439,6 +483,14 @@ begin
       case Code of
         OptionAll: SelectAll := True;
         OptionFull: FullFormat := True;
+        OptionThreads, OptionThreadsSpid:
+          begin
+            ListThreadLines := True;
+            if Code = OptionThreads then
+              ThreadColumnName := 'lwp'
+            else
+              ThreadColumnName := 'spid';
+          end;
         OptionFormat: ParseFormat(Value);
         OptionPid: ParseNumberList(Value);
         OptionUser: ParseUserList(Value);
@@ -458,12 +510,20 @@ begin
       ParseFormat('user,pid,%cpu,%mem,vsz,rss,tty,stat,start,time');
       ParseFormat('args=COMMAND');
     end
+    else if FullFormat and ListThreadLines then
+    begin
+      ParseFormat('user=UID');
+      ParseFormat('pid,ppid,' + ThreadColumnName + ',c,nlwp,stime,tty,time');
+      ParseFormat('args=CMD');
+    end
     else if FullFormat then
     begin
       ParseFormat('user=UID');
       ParseFormat('pid,ppid,c,stime,tty,time');
       ParseFormat('args=CMD');
     end
+    else if ListThreadLines then
+      ParseFormat('pid,' + ThreadColumnName + ',tty,time,comm=CMD')
     else
       ParseFormat('pid,tty,time,cmd');
   end;
@@ -488,6 +548,26 @@ begin
     WritePadded(Columns[Column].Header, Columns[Column], Column = High(Columns));
   end;
   WriteCharacter(StandardOutput, #10);
+end;
+
+procedure WriteProcessLine(const Information: TProcessDetails); forward;
+
+{ A line for every thread of the process (it may have ended meanwhile:
+  then there is none). }
+procedure WriteThreadLines(const Information: TProcessDetails);
+var
+  Threads: TThreadDetailsList;
+  Index: Integer;
+begin
+  if ListThreads(Information.ProcessId, Threads) < 0 then
+    Exit;
+  for Index := 0 to High(Threads) do
+  begin
+    Thread := Threads[Index];
+    HasThread := True;
+    WriteProcessLine(Information);
+    HasThread := False;
+  end;
 end;
 
 procedure WriteProcessLine(const Information: TProcessDetails);
@@ -520,5 +600,10 @@ begin
   WriteHeaderLine;
   for ListIndex := 0 to Snapshot.Count - 1 do
     if IsSelected(Snapshot.Entries[ListIndex]) then
-      WriteProcessLine(Snapshot.Entries[ListIndex]);
+    begin
+      if ListThreadLines then
+        WriteThreadLines(Snapshot.Entries[ListIndex])
+      else
+        WriteProcessLine(Snapshot.Entries[ListIndex]);
+    end;
 end.
