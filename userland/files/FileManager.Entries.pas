@@ -59,6 +59,8 @@ type
       implied by deeper names) and its path inside it. }
     ArchiveIndex: LongInt;
     InnerPath: string;
+    { EntryArchived: the archive file it is in. }
+    ArchivePath: string;
     { EntryVolume. }
     VolumeName: string;
     FileSystemType: string;

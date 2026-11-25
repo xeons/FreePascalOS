@@ -29,7 +29,10 @@
   curve are joined by straight lines; a point off the curve between two
   on it is the control point of a quadratic curve, and between two off
   the curve there is an on-curve point implied halfway (TrueType's
-  quadratic B-splines).
+  quadratic B-splines). A point marked Cubic is off the curve too, but
+  one of the two control points of a cubic curve (CFF outlines,
+  Font.CffCharStrings): two such points always come together, between
+  two points on the curve.
 
   A rendered glyph (TGlyphBitmap) is coverage, a byte a pixel, placed
   against the pen on the baseline: its left column Left pixels right of
@@ -47,6 +50,7 @@ type
     X: Double;
     Y: Double;
     OnCurve: Boolean;
+    Cubic: Boolean;
   end;
 
   TGlyphOutline = record
@@ -63,12 +67,17 @@ type
   end;
   TCharacterMappings = array of TCharacterMapping;
 
+  { Coverage for an outline glyph; for a colour glyph (an emoji from a
+    font's colour bitmaps, Font.ColorBitmaps) Colors instead, a colour
+    a pixel ($AARRGGBB, not premultiplied), drawn as it is whatever the
+    text's colour. }
   TGlyphBitmap = record
     Left: LongInt;
     Top: LongInt;
     Width: LongInt;
     Height: LongInt;
     Coverage: array of Byte;
+    Colors: array of LongWord;
   end;
   PGlyphBitmap = ^TGlyphBitmap;
 
@@ -114,8 +123,24 @@ type
       (font units, negative brings them closer). }
     function KerningUnits(LeftGlyph, RightGlyph: LongWord): LongInt; virtual; abstract;
     function HasKerning: Boolean; virtual; abstract;
+    { Whether Glyph is drawn from a colour bitmap rather than its
+      outline, and that bitmap at PixelSize pixels to the em (scaled
+      from the nearest size the font has), placed as a rendered
+      outline is. }
+    function HasColorGlyph(Glyph: LongWord): Boolean; virtual;
+    function RenderColorGlyph(Glyph: LongWord; PixelSize: LongInt; out Bitmap: TGlyphBitmap): Boolean; virtual;
+    { The glyph for CodePoint followed by the variation selector
+      Selector (U+FE00 to U+FE0F, U+E0100 to U+E01EF), from the
+      character map's format 14 subtable; GlyphOf(CodePoint) when the
+      font has no such variant. }
+    function GlyphOfVariation(CodePoint, Selector: LongWord): LongWord; virtual;
+    { Whether its glyphs can be drawn here (a font of colour bitmaps
+      alone cannot without a decoder for them). }
+    function CanDraw: Boolean; virtual;
     { The glyph for CodePoint; 0 (the missing glyph) if it has none. }
     function GlyphOf(CodePoint: LongWord): LongWord;
+    { Whether the font has a glyph for CodePoint. }
+    function HasCharacter(CodePoint: LongWord): Boolean;
     property UnitsPerEm: LongInt read FUnitsPerEm;
     { From the baseline up to the top of the line, and down to its
       bottom (positive both), and the space between lines. }
@@ -139,6 +164,8 @@ function RoundHalfUp(Value: Double): LongInt;
 { An outline with no points. }
 procedure ClearOutline(out Outline: TGlyphOutline);
 procedure AddOutlinePoint(var Outline: TGlyphOutline; X, Y: Double; OnCurve: Boolean);
+{ A control point of a cubic curve (two in a row, then the end). }
+procedure AddCubicControlPoint(var Outline: TGlyphOutline; X, Y: Double);
 { Ends the contour at the last point added. }
 procedure EndOutlineContour(var Outline: TGlyphOutline);
 
@@ -167,7 +194,45 @@ begin
   Outline.Points[Outline.PointCount].X := X;
   Outline.Points[Outline.PointCount].Y := Y;
   Outline.Points[Outline.PointCount].OnCurve := OnCurve;
+  Outline.Points[Outline.PointCount].Cubic := False;
   Inc(Outline.PointCount);
+end;
+
+procedure AddCubicControlPoint(var Outline: TGlyphOutline; X, Y: Double);
+begin
+  AddOutlinePoint(Outline, X, Y, False);
+  Outline.Points[Outline.PointCount - 1].Cubic := True;
+end;
+
+function TOutlineFont.HasColorGlyph(Glyph: LongWord): Boolean;
+begin
+  Result := False;
+end;
+
+function TOutlineFont.RenderColorGlyph(Glyph: LongWord; PixelSize: LongInt; out Bitmap: TGlyphBitmap): Boolean;
+begin
+  Bitmap.Left := 0;
+  Bitmap.Top := 0;
+  Bitmap.Width := 0;
+  Bitmap.Height := 0;
+  Bitmap.Coverage := nil;
+  Bitmap.Colors := nil;
+  Result := False;
+end;
+
+function TOutlineFont.GlyphOfVariation(CodePoint, Selector: LongWord): LongWord;
+begin
+  Result := GlyphOf(CodePoint);
+end;
+
+function TOutlineFont.CanDraw: Boolean;
+begin
+  Result := True;
+end;
+
+function TOutlineFont.HasCharacter(CodePoint: LongWord): Boolean;
+begin
+  Result := GlyphOf(CodePoint) <> 0;
 end;
 
 procedure EndOutlineContour(var Outline: TGlyphOutline);

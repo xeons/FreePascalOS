@@ -2123,6 +2123,25 @@ if 'item-tree' in place:
 if zipped_ok:
     double_click_at(*places()['item-tree.zip'])
     zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1', 'place item-tree'], 20)
+# Searching inside the archive (Ctrl+E there searches its entries, at
+# any depth), and the entry found opened from the results (taken out of
+# the archive into Notepad); Back returns to the archive.
+archive_search_ok = False
+if zipped_ok:
+    press('ctrl-e')
+    type_on_keyboard('deep')
+    press('ret')
+    archive_search_ok = wait_for_files_log(['search /tmp/fm/tree.zip deep', 'search-result 1', 'search-done 1',
+                                            'place item-deep.txt'], 30)
+    if archive_search_ok:
+        double_click_at(*places()['item-deep.txt'])
+        archive_search_ok = wait_for_files_log(['title deep.txt - Notepad'], 30)
+        shell_output('kill $(pgrep notepad); while pgrep notepad > /dev/null; do sleep 0.2; done',
+                     'ARCHIVE-NOTEPAD-ENDED')
+    press('alt-left')
+    zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1'], 15)
+checks.append(('files: searching inside a compressed folder (Ctrl+E) finds an entry deep in it, which opens',
+               archive_search_ok))
 if zipped_ok:
     # Up again, the archive selected (Up selects the folder it came
     # from, which shows Extract all at once; a click on it then changes

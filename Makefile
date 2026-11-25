@@ -836,14 +836,15 @@ FONT_FIXTURES := build/tools/font-fixtures
 FONT_FIXTURES_STAMP := $(FONT_FIXTURES)/.made
 FONT_FIXTURE_SCRIPTS := tools/FontTest/make-font-fixtures.py tools/FontTest/freetypereference.py
 FONT_TEST_SOURCES := $(wildcard tools/FontTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
-	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas)) userland/lib/web/Web.Text.Woff2.pas \
+	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas)
 
 $(FONT_TEST): $(FONT_TEST_SOURCES)
 	@mkdir -p build/tools/font-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font \
-		-FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font -Fuuserland/lib/image \
+		-Fuuserland/lib/compression -Fuuserland/lib/web -FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
 
-$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf)
+$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf) scripts/host-fonts.list
 	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the font test's references (python-pillow)"; exit 1; }
 	@rm -rf $(FONT_FIXTURES)
 	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/fonts
@@ -931,12 +932,15 @@ FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Contro
 	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
 	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
 	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
-	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas
+	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas \
+	userland/files/FileManager.ArchiveSearch.pas tools/FilesTest/FilesTest.ArchiveSearch.pas \
+	$(wildcard userland/lib/archive/*.pas)
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units
 	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
 		-Fuuserland/lib/configuration -Fiuserland/lib/configuration -Fuuserland/lib/coreutils \
+		-Fuuserland/lib/archive -Fuuserland/lib/compression \
 		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
 
 files-test: $(FILES_TEST)
@@ -1458,8 +1462,9 @@ $(WEB_LAYOUT_TEST): $(WEB_LAYOUT_TEST_SOURCES) $(WEB_LAYOUT_TEST_UNITS)/.generat
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLayoutTest -Futools/CryptoTest $(WEB_RENDER_UNIT_PATHS) \
 		-Fi$(WEB_LAYOUT_TEST_UNITS) -FU$(WEB_LAYOUT_TEST_UNITS) -o$@ tools/WebLayoutTest/WebLayoutTest.pas
 
-web-layout-test: $(WEB_LAYOUT_TEST)
-	@$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts > build/tools/web-layout-test.out || \
+web-layout-test: $(WEB_LAYOUT_TEST) $(HOST_FONTS_STAMP)
+	@WEB_HOST_FONTS=$(USER_BUILD_DIRECTORY)/fonts $(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts \
+		> build/tools/web-layout-test.out || \
 		{ grep -B3 -A3 FAIL build/tools/web-layout-test.out | head -80; echo "WEB LAYOUT TEST FAILED (build/tools/web-layout-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-layout-test.out || true
 	@echo "WEB LAYOUT TEST PASSED: $$(tail -n 1 build/tools/web-layout-test.out | cut -d ' ' -f 4-)"

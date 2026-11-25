@@ -184,6 +184,7 @@ begin
   HeldBytes := HeldBytes - Entries[Index].Bytes;
   Entries[Index].Font := nil;
   Entries[Index].Bitmap.Coverage := nil;
+  Entries[Index].Bitmap.Colors := nil;
   if FreeCount = Length(FreeEntries) then
     SetLength(FreeEntries, 2 * FreeCount + 64);
   FreeEntries[FreeCount] := Index;
@@ -241,7 +242,7 @@ begin
   Inc(Misses);
   if not RenderGlyph(Font, Glyph, PixelSize, Subpixel / SubpixelSteps, Hinted, Bitmap) then
     Exit;
-  MakeRoom(Length(Bitmap.Coverage));
+  MakeRoom(Length(Bitmap.Coverage) + 4 * Length(Bitmap.Colors));
   Index := NewEntry;
   Entries[Index].Font := Font;
   Entries[Index].PixelSize := PixelSize;
@@ -249,7 +250,7 @@ begin
   Entries[Index].Subpixel := Subpixel;
   Entries[Index].Hinted := Hinted;
   Entries[Index].Bitmap := Bitmap;
-  Entries[Index].Bytes := Length(Bitmap.Coverage);
+  Entries[Index].Bytes := Length(Bitmap.Coverage) + 4 * Length(Bitmap.Colors);
   Entries[Index].NextInBucket := Buckets[Bucket];
   Buckets[Bucket] := Index;
   LinkAsNewest(Index);

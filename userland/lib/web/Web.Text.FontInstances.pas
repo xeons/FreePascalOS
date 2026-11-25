@@ -28,6 +28,13 @@
   remembered per font. A synthetic bold is drawn when bold is wanted
   and the family has no bold face.
 
+  Variation selectors and joiners (U+200B to U+200F, U+FE00 to U+FE0F,
+  U+E0100 to U+E01EF) take no room and draw nothing; a selector picks
+  the glyph the face's variation sequences give its character (cmap
+  format 14), and U+FE0F (emoji presentation) draws the character
+  from the configuration's emoji family when it has it. Emoji joined
+  by U+200D draw one after another (no ligatures).
+
   TextFontOf(Style) gives the font of a computed style: one per font
   struct (fonts are shared by every style with the same font values),
   kept until ClearTextFonts.
@@ -245,6 +252,17 @@ begin
   FLatinKnown := True;
 end;
 
+function IsInvisible(CodePoint: LongWord): Boolean;
+begin
+  Result := ((CodePoint >= $200B) and (CodePoint <= $200F)) or ((CodePoint >= $FE00) and (CodePoint <= $FE0F)) or
+    ((CodePoint >= $E0100) and (CodePoint <= $E01EF)) or (CodePoint = $FEFF) or (CodePoint = $2060);
+end;
+
+function IsVariationSelector(CodePoint: LongWord): Boolean;
+begin
+  Result := ((CodePoint >= $FE00) and (CodePoint <= $FE0F)) or ((CodePoint >= $E0100) and (CodePoint <= $E01EF));
+end;
+
 function TTextFont.AdvanceOf(CodePoint: LongWord): Double;
 var
   Face: TFontFaceEntry;
@@ -255,6 +273,8 @@ begin
       FillLatinAdvances;
     Exit(FLatinAdvances[CodePoint]);
   end;
+  if IsInvisible(CodePoint) and ((FPrimary = nil) or not FPrimary.HasGlyph(CodePoint)) then
+    Exit(0);
   Face := FaceFor(CodePoint);
   if Face = nil then
     Exit(FSize * 0.5);
@@ -264,8 +284,9 @@ end;
 function TTextFont.PlaceGlyphs(const Text: string; Start, Count: Integer; var Glyphs: TPlacedGlyphArray;
   out GlyphCount: Integer): Double;
 var
-  Cursor, Stop: PChar;
-  CodePoint: LongWord;
+  Cursor, Stop, Ahead: PChar;
+  CodePoint, Selector: LongWord;
+  Emoji: TFontFaceEntry;
   Face, PreviousFace: TFontFaceEntry;
   Glyph, PreviousGlyph: LongWord;
   Outline: TOutlineFont;
@@ -287,13 +308,30 @@ begin
       PreviousFace := nil;
       Continue;
     end;
-    Face := FaceFor(CodePoint);
+    { A selector after the character changes its glyph or face. }
+    Selector := 0;
+    Ahead := Cursor;
+    if (Ahead < Stop) and NextCharacter(Ahead, Selector) and not IsVariationSelector(Selector) then
+      Selector := 0;
+    if IsInvisible(CodePoint) and ((FPrimary = nil) or not FPrimary.HasGlyph(CodePoint)) then
+      Continue;
+    Face := nil;
+    if Selector = $FE0F then
+    begin
+      Emoji := WebFontLibrary.EmojiFace(CodePoint);
+      if Emoji <> nil then
+        Face := Emoji;
+    end;
+    if Face = nil then
+      Face := FaceFor(CodePoint);
     if Face = nil then
     begin
       Pen := Pen + FSize * 0.5;
       Continue;
     end;
     Glyph := Face.GlyphOf(CodePoint);
+    if (Selector <> 0) and (Face.Font <> nil) then
+      Glyph := Face.Font.GlyphOfVariation(CodePoint, Selector);
     Outline := Face.Font;
     if (PreviousFace = Face) and (Outline <> nil) and Outline.HasKerning then
       Pen := Pen + Outline.KerningUnits(PreviousGlyph, Glyph) * FSize / Outline.UnitsPerEm;
@@ -304,7 +342,7 @@ begin
     Glyphs[GlyphCount].CodePoint := CodePoint;
     Glyphs[GlyphCount].X := Pen;
     Inc(GlyphCount);
-    if CodePoint < 256 then
+    if (CodePoint < 256) and (Face = FaceFor(CodePoint)) then
     begin
       if not FLatinKnown then
         FillLatinAdvances;

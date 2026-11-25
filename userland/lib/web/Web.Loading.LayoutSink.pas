@@ -36,12 +36,11 @@
     fetched when the layout first asks for one (OnImageNeeded), no-cors
     with image sniffing through the active document's loader, decoded
     on the page thread and given under the URL text as written.
-  - @font-face sources: TrueType, OpenType with TrueType outlines and
-    WOFF 1 (unwrapped, Web.Text.Woff) are added to the process's font
-    library under the rule's family, weight and style; the fonts made
-    from styles pick their faces again and every layout measures text
-    again. WOFF2 and CFF outlines are not read (FontFormatSupported says
-    so, and the loader tries the next source).
+  - @font-face sources: TrueType, OpenType (TrueType or CFF outlines),
+    collections, WOFF 1 and WOFF2 (unwrapped, Web.Text.Woff) are added
+    to the process's font library under the rule's family, weight and
+    style; the fonts made from styles pick their faces again and every
+    layout measures text again.
   - Deliveries for a document that is no longer the navigable's active
     one are dropped (their objects freed).
 
@@ -448,7 +447,8 @@ end;
 
 function TLayoutResourceSink.FontFormatSupported(const Format: string): Boolean;
 begin
-  Result := (Format = '') or (Format = 'truetype') or (Format = 'opentype') or (Format = 'woff');
+  Result := (Format = '') or (Format = 'truetype') or (Format = 'opentype') or (Format = 'woff') or
+    (Format = 'woff2') or (Format = 'collection');
 end;
 
 procedure TLayoutResourceSink.FontLoaded(Rule: TCssFontFaceRule; const Family: string; const Data: TBytes;

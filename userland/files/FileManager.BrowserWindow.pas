@@ -604,7 +604,10 @@ begin
     Exit;
   Scope := FView.Folder;
   if FView.Location.Kind = LocationSearch then
-    Scope := FView.Location.Path;
+    Scope := FView.Location.Path
+  else if FView.Location.Kind = LocationArchive then
+    { Inside the archive (the searcher reads it). }
+    Scope := LocationAddress(FView.Location);
   if Scope = '' then
     Scope := HomeFolder;
   AddToUserList(ListSearchHistory, Trim(Text));
@@ -774,8 +777,12 @@ end;
 
 procedure TBrowserWindow.SearchSuggestionAccepted(Index: LongInt);
 begin
-  FSearchBox.Text := FSearchSuggestions.ChosenText;
+  { -1: Enter with no suggestion chosen, the text as typed. }
+  if Index >= 0 then
+    FSearchBox.Text := FSearchSuggestions.ChosenText;
+  FSearchSuggestions.Close;
   StartSearch(FSearchBox.Text);
+  FocusControl(FView);
 end;
 
 { --- The panes -------------------------------------------------------------------------------- }

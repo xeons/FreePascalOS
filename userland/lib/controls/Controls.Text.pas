@@ -82,6 +82,8 @@ implementation
 uses
   Font.Text,
   Font.Utf8,
+  Font.ColorBitmaps,
+  Image.PictureColors,
   Controls.TextPositions,
   Windowing.Theme,
   Windowing.Fonts;
@@ -348,4 +350,8 @@ begin
   UnderlineMnemonic(Canvas, Face, Text, Shown, X, Y, Theme.DisabledText);
 end;
 
+initialization
+  { Colour glyphs (emoji) are decoded with libimage. }
+  if ColorBitmapDecoder = nil then
+    ColorBitmapDecoder := @DecodePictureColors;
 end.

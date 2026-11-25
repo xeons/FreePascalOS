@@ -1,0 +1,543 @@
+# The fonts the build copies from the host into /lib/fonts
+# (scripts/collect-host-fonts.py), each family only if its licence
+# lets it be passed on. Nothing here is kept in git: the files come from
+# the build machine's font packages (Arch Linux paths; other machines
+# skip what they lack, and the system works with the DejaVu fonts kept
+# in userland/fonts).
+#
+# A section is a family, named by its directory in /lib/fonts:
+#   name            the family's name (as documents ask for it)
+#   sets            the font sets it is in: "full" (the system disk),
+#                   "core" (the Raspberry Pi's RAM disk, served over
+#                   TFTP, kept small)
+#   package         the host package the files come from
+#   upstream        where the fonts are made
+#   license         the licence (SPDX)
+#   license-files   the licence's full text: the first of these that
+#                   exists (with license-note, a file in the source
+#                   tree, put before it)
+#   license-marker  text the licence file must contain
+#   name-marker     text every font's own copyright or licence
+#                   description (name table, IDs 0 and 13) must contain
+#   files           the font files
+#   core-files      the files the core set takes (default: all)
+#
+# Left out on purpose: the Indic fonts in /usr/share/fonts/TTF from
+# ttf-indic-otf (mixed and unclear provenance), the Nerd Font patched
+# fonts (their own licence is MIT/OFL, but the patched glyphs are not
+# needed), Meslo, and Adwaita (OFL; not needed).
+
+[liberation-sans]
+name = Liberation Sans
+sets = core full
+package = ttf-liberation
+upstream = https://github.com/liberationfonts/liberation-fonts
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-liberation/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/liberation/LiberationSans-Regular.ttf
+    /usr/share/fonts/liberation/LiberationSans-Bold.ttf
+    /usr/share/fonts/liberation/LiberationSans-Italic.ttf
+    /usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf
+core-files =
+    /usr/share/fonts/liberation/LiberationSans-Regular.ttf
+    /usr/share/fonts/liberation/LiberationSans-Bold.ttf
+
+[liberation-serif]
+name = Liberation Serif
+sets = core full
+package = ttf-liberation
+upstream = https://github.com/liberationfonts/liberation-fonts
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-liberation/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/liberation/LiberationSerif-Regular.ttf
+    /usr/share/fonts/liberation/LiberationSerif-Bold.ttf
+    /usr/share/fonts/liberation/LiberationSerif-Italic.ttf
+    /usr/share/fonts/liberation/LiberationSerif-BoldItalic.ttf
+core-files =
+    /usr/share/fonts/liberation/LiberationSerif-Regular.ttf
+    /usr/share/fonts/liberation/LiberationSerif-Bold.ttf
+
+[liberation-mono]
+name = Liberation Mono
+sets = core full
+package = ttf-liberation
+upstream = https://github.com/liberationfonts/liberation-fonts
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-liberation/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/liberation/LiberationMono-Regular.ttf
+    /usr/share/fonts/liberation/LiberationMono-Bold.ttf
+    /usr/share/fonts/liberation/LiberationMono-Italic.ttf
+    /usr/share/fonts/liberation/LiberationMono-BoldItalic.ttf
+core-files =
+    /usr/share/fonts/liberation/LiberationMono-Regular.ttf
+    /usr/share/fonts/liberation/LiberationMono-Bold.ttf
+
+# DejaVu: Sans and Sans Mono regular and bold are in userland/fonts;
+# the host adds their obliques and DejaVu Serif.
+[dejavu-sans]
+name = DejaVu Sans
+sets = full
+package = ttf-dejavu
+upstream = https://dejavu-fonts.github.io
+license = Bitstream-Vera
+license-files = /usr/share/licenses/ttf-dejavu/LICENSE
+license-marker = Bitstream Vera Fonts Copyright
+name-marker = Bitstream
+files =
+    /usr/share/fonts/TTF/DejaVuSans-Oblique.ttf
+    /usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf
+
+[dejavu-sans-mono]
+name = DejaVu Sans Mono
+sets = full
+package = ttf-dejavu
+upstream = https://dejavu-fonts.github.io
+license = Bitstream-Vera
+license-files = /usr/share/licenses/ttf-dejavu/LICENSE
+license-marker = Bitstream Vera Fonts Copyright
+name-marker = Bitstream
+files =
+    /usr/share/fonts/TTF/DejaVuSansMono-Oblique.ttf
+    /usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf
+
+[dejavu-serif]
+name = DejaVu Serif
+sets = full
+package = ttf-dejavu
+upstream = https://dejavu-fonts.github.io
+license = Bitstream-Vera
+license-files = /usr/share/licenses/ttf-dejavu/LICENSE
+license-marker = Bitstream Vera Fonts Copyright
+name-marker = Bitstream
+files =
+    /usr/share/fonts/TTF/DejaVuSerif.ttf
+    /usr/share/fonts/TTF/DejaVuSerif-Bold.ttf
+    /usr/share/fonts/TTF/DejaVuSerif-Italic.ttf
+    /usr/share/fonts/TTF/DejaVuSerif-BoldItalic.ttf
+
+# Noto. The noto-fonts package's LICENSE file is an old Apache 2.0
+# text; its fonts say SIL OFL 1.1 in their name tables (and the package
+# is OFL-1.1), so the OFL text is taken from noto-fonts-cjk.
+[noto-sans]
+name = Noto Sans
+sets = full
+package = noto-fonts
+upstream = https://notofonts.github.io
+license = OFL-1.1
+license-files =
+    /usr/share/licenses/noto-fonts-cjk/LICENSE
+    /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto/NotoSans-Regular.ttf
+    /usr/share/fonts/noto/NotoSans-Bold.ttf
+    /usr/share/fonts/noto/NotoSans-Italic.ttf
+    /usr/share/fonts/noto/NotoSans-BoldItalic.ttf
+
+[noto-serif]
+name = Noto Serif
+sets = full
+package = noto-fonts
+upstream = https://notofonts.github.io
+license = OFL-1.1
+license-files =
+    /usr/share/licenses/noto-fonts-cjk/LICENSE
+    /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto/NotoSerif-Regular.ttf
+    /usr/share/fonts/noto/NotoSerif-Bold.ttf
+    /usr/share/fonts/noto/NotoSerif-Italic.ttf
+    /usr/share/fonts/noto/NotoSerif-BoldItalic.ttf
+
+[noto-sans-mono]
+name = Noto Sans Mono
+sets = full
+package = noto-fonts
+upstream = https://notofonts.github.io
+license = OFL-1.1
+license-files =
+    /usr/share/licenses/noto-fonts-cjk/LICENSE
+    /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto/NotoSansMono-Regular.ttf
+    /usr/share/fonts/noto/NotoSansMono-Bold.ttf
+
+# The scripts' Noto fonts, regular only (bold is drawn synthetically).
+[noto-sans-scripts]
+name = Noto Sans Scripts
+sets = full
+package = noto-fonts
+upstream = https://notofonts.github.io
+license = OFL-1.1
+license-files =
+    /usr/share/licenses/noto-fonts-cjk/LICENSE
+    /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+# Each file is a family of its own: a directory each, named by the file.
+split = yes
+files =
+    /usr/share/fonts/noto/NotoSansArabic-Regular.ttf
+    /usr/share/fonts/noto/NotoSansHebrew-Regular.ttf
+    /usr/share/fonts/noto/NotoSansSyriac-Regular.ttf
+    /usr/share/fonts/noto/NotoSansThaana-Regular.ttf
+    /usr/share/fonts/noto/NotoSansNKo-Regular.ttf
+    /usr/share/fonts/noto/NotoSansAdlam-Regular.ttf
+    /usr/share/fonts/noto/NotoSansDevanagari-Regular.ttf
+    /usr/share/fonts/noto/NotoSansBengali-Regular.ttf
+    /usr/share/fonts/noto/NotoSansGurmukhi-Regular.ttf
+    /usr/share/fonts/noto/NotoSansGujarati-Regular.ttf
+    /usr/share/fonts/noto/NotoSansOriya-Regular.ttf
+    /usr/share/fonts/noto/NotoSansTamil-Regular.ttf
+    /usr/share/fonts/noto/NotoSansTelugu-Regular.ttf
+    /usr/share/fonts/noto/NotoSansKannada-Regular.ttf
+    /usr/share/fonts/noto/NotoSansMalayalam-Regular.ttf
+    /usr/share/fonts/noto/NotoSansSinhala-Regular.ttf
+    /usr/share/fonts/noto/NotoSerifTibetan-Regular.ttf
+    /usr/share/fonts/noto/NotoSansThai-Regular.ttf
+    /usr/share/fonts/noto/NotoSansLao-Regular.ttf
+    /usr/share/fonts/noto/NotoSansKhmer-Regular.ttf
+    /usr/share/fonts/noto/NotoSansMyanmar-Regular.ttf
+    /usr/share/fonts/noto/NotoSansJavanese-Regular.ttf
+    /usr/share/fonts/noto/NotoSansBalinese-Regular.ttf
+    /usr/share/fonts/noto/NotoSansMongolian-Regular.ttf
+    /usr/share/fonts/noto/NotoSansEthiopic-Regular.ttf
+    /usr/share/fonts/noto/NotoSansTifinagh-Regular.ttf
+    /usr/share/fonts/noto/NotoSansVai-Regular.ttf
+    /usr/share/fonts/noto/NotoSansArmenian-Regular.ttf
+    /usr/share/fonts/noto/NotoSansGeorgian-Regular.ttf
+    /usr/share/fonts/noto/NotoSansCherokee-Regular.ttf
+    /usr/share/fonts/noto/NotoSansCanadianAboriginal-Regular.ttf
+    /usr/share/fonts/noto/NotoSansYi-Regular.ttf
+    /usr/share/fonts/noto/NotoSansSymbols-Regular.ttf
+    /usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf
+    /usr/share/fonts/noto/NotoSansMath-Regular.ttf
+
+[noto-sans-symbols-2]
+name = Noto Sans Symbols 2
+sets = core
+package = noto-fonts
+upstream = https://notofonts.github.io
+license = OFL-1.1
+license-files =
+    /usr/share/licenses/noto-fonts-cjk/LICENSE
+    /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf
+
+[noto-color-emoji]
+name = Noto Color Emoji
+sets = full
+package = noto-fonts-emoji
+upstream = https://github.com/googlefonts/noto-emoji
+license = OFL-1.1
+license-files = /usr/share/licenses/noto-fonts-emoji/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto/NotoColorEmoji.ttf
+
+# Noto Sans CJK: collections of the Japanese, Korean, Simplified and
+# Traditional Chinese and Hong Kong faces (the first, JP, is used);
+# regular and bold only (about 20 MB each).
+[noto-sans-cjk]
+name = Noto Sans CJK
+sets = full
+package = noto-fonts-cjk
+upstream = https://github.com/notofonts/noto-cjk
+license = OFL-1.1
+license-files = /usr/share/licenses/noto-fonts-cjk/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+    /usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc
+
+# The core set's CJK font (Han and Hangul; 1.4 MB compressed).
+[droid-sans-fallback]
+name = Droid Sans Fallback
+sets = core
+package = ttf-droid
+upstream = https://android.googlesource.com/platform/frameworks/base/+/master/data/fonts
+license = Apache-2.0
+license-files = /usr/share/licenses/spdx/Apache-2.0.txt
+license-marker = Apache License
+name-marker = Apache License
+files =
+    /usr/share/fonts/droid/DroidSansFallback.ttf
+
+[source-sans-3]
+name = Source Sans 3
+sets = full
+package = adobe-source-sans-fonts
+upstream = https://github.com/adobe-fonts/source-sans
+license = OFL-1.1
+license-files = /usr/share/licenses/adobe-source-sans-fonts/LICENSE.md
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/adobe-source-sans/SourceSans3-Regular.otf
+    /usr/share/fonts/adobe-source-sans/SourceSans3-It.otf
+    /usr/share/fonts/adobe-source-sans/SourceSans3-Bold.otf
+    /usr/share/fonts/adobe-source-sans/SourceSans3-BoldIt.otf
+
+[cantarell]
+name = Cantarell
+sets = full
+package = cantarell-fonts
+upstream = https://gitlab.gnome.org/GNOME/cantarell-fonts
+license = OFL-1.1
+license-files = /usr/share/licenses/cantarell-fonts/COPYING
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/cantarell/Cantarell-VF.otf
+
+[roboto]
+name = Roboto
+sets = full
+package = ttf-roboto
+upstream = https://github.com/googlefonts/roboto-classic
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-roboto/OFL.txt
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/TTF/Roboto-Regular.ttf
+    /usr/share/fonts/TTF/Roboto-Italic.ttf
+    /usr/share/fonts/TTF/Roboto-Bold.ttf
+    /usr/share/fonts/TTF/Roboto-BoldItalic.ttf
+
+[open-sans]
+name = Open Sans
+sets = full
+package = ttf-opensans
+upstream = https://github.com/googlefonts/opensans
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-opensans/OFL.txt
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/TTF/OpenSans-Regular.ttf
+    /usr/share/fonts/TTF/OpenSans-Italic.ttf
+    /usr/share/fonts/TTF/OpenSans-Bold.ttf
+    /usr/share/fonts/TTF/OpenSans-BoldItalic.ttf
+
+[hack]
+name = Hack
+sets = full
+package = ttf-hack
+upstream = https://github.com/source-foundry/Hack
+license = MIT AND Bitstream-Vera
+license-files = /usr/share/licenses/ttf-hack/LICENSE
+license-marker = MIT License
+name-marker = MIT License
+files =
+    /usr/share/fonts/TTF/Hack-Regular.ttf
+    /usr/share/fonts/TTF/Hack-Italic.ttf
+    /usr/share/fonts/TTF/Hack-Bold.ttf
+    /usr/share/fonts/TTF/Hack-BoldItalic.ttf
+
+[inconsolata]
+name = Inconsolata
+sets = full
+package = ttf-inconsolata
+upstream = https://github.com/googlefonts/Inconsolata
+license = OFL-1.1
+license-files = /usr/share/licenses/ttf-inconsolata/LICENSE
+license-marker = SIL OPEN FONT LICENSE
+name-marker = Open Font License
+files =
+    /usr/share/fonts/TTF/Inconsolata-Regular.ttf
+    /usr/share/fonts/TTF/Inconsolata-Bold.ttf
+
+# The URW base 35 fonts (gsfonts): metric-compatible stand-ins for the
+# PostScript core fonts (Nimbus Sans for Helvetica, Nimbus Roman for
+# Times, Nimbus Mono PS for Courier, P052 for Palatino, C059 for New
+# Century Schoolbook, URW Bookman, URW Gothic for Avant Garde, Z003 for
+# Zapf Chancery, Standard Symbols PS, D050000L for Zapf Dingbats). The
+# package has no licence file: its licence is AGPL 3.0 with URW's font
+# exception (the upstream LICENSE note, kept in scripts/font-licenses,
+# and the AGPL text from the host's SPDX licences).
+[nimbus-sans]
+name = Nimbus Sans
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/NimbusSans-Regular.otf
+    /usr/share/fonts/gsfonts/NimbusSans-Italic.otf
+    /usr/share/fonts/gsfonts/NimbusSans-Bold.otf
+    /usr/share/fonts/gsfonts/NimbusSans-BoldItalic.otf
+
+[nimbus-sans-narrow]
+name = Nimbus Sans Narrow
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/NimbusSansNarrow-Regular.otf
+    /usr/share/fonts/gsfonts/NimbusSansNarrow-Oblique.otf
+    /usr/share/fonts/gsfonts/NimbusSansNarrow-Bold.otf
+    /usr/share/fonts/gsfonts/NimbusSansNarrow-BoldOblique.otf
+
+[nimbus-roman]
+name = Nimbus Roman
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/NimbusRoman-Regular.otf
+    /usr/share/fonts/gsfonts/NimbusRoman-Italic.otf
+    /usr/share/fonts/gsfonts/NimbusRoman-Bold.otf
+    /usr/share/fonts/gsfonts/NimbusRoman-BoldItalic.otf
+
+[nimbus-mono-ps]
+name = Nimbus Mono PS
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/NimbusMonoPS-Regular.otf
+    /usr/share/fonts/gsfonts/NimbusMonoPS-Italic.otf
+    /usr/share/fonts/gsfonts/NimbusMonoPS-Bold.otf
+    /usr/share/fonts/gsfonts/NimbusMonoPS-BoldItalic.otf
+
+[p052]
+name = P052
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/P052-Roman.otf
+    /usr/share/fonts/gsfonts/P052-Italic.otf
+    /usr/share/fonts/gsfonts/P052-Bold.otf
+    /usr/share/fonts/gsfonts/P052-BoldItalic.otf
+
+[c059]
+name = C059
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/C059-Roman.otf
+    /usr/share/fonts/gsfonts/C059-Italic.otf
+    /usr/share/fonts/gsfonts/C059-Bold.otf
+    /usr/share/fonts/gsfonts/C059-BdIta.otf
+
+[urw-bookman]
+name = URW Bookman
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/URWBookman-Light.otf
+    /usr/share/fonts/gsfonts/URWBookman-LightItalic.otf
+    /usr/share/fonts/gsfonts/URWBookman-Demi.otf
+    /usr/share/fonts/gsfonts/URWBookman-DemiItalic.otf
+
+[urw-gothic]
+name = URW Gothic
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/URWGothic-Book.otf
+    /usr/share/fonts/gsfonts/URWGothic-BookOblique.otf
+    /usr/share/fonts/gsfonts/URWGothic-Demi.otf
+    /usr/share/fonts/gsfonts/URWGothic-DemiOblique.otf
+
+[z003]
+name = Z003
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/Z003-MediumItalic.otf
+
+[standard-symbols-ps]
+name = Standard Symbols PS
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/StandardSymbolsPS.otf
+
+[d050000l]
+name = D050000L
+sets = full
+package = gsfonts
+upstream = https://github.com/ArtifexSoftware/urw-base35-fonts
+license = AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817
+license-note = scripts/font-licenses/urw-base35-LICENSE
+license-files = /usr/share/licenses/spdx/AGPL-3.0-only.txt
+license-marker = GNU AFFERO GENERAL PUBLIC LICENSE
+name-marker = URW
+files =
+    /usr/share/fonts/gsfonts/D050000L.otf

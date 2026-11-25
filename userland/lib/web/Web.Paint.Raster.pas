@@ -71,7 +71,7 @@ implementation
 uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
-  Font.GlyphCache, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
+  Font.GlyphCache, Font.GlyphDrawing, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
   Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent, Drawing.Transforms,
   Drawing.Paints, Drawing.PaintFilling, Css.TransformMatrices;
 
@@ -458,6 +458,12 @@ begin
   if (Bitmap = nil) or (Bitmap^.Width = 0) then
     Exit;
   BaselinePixel := Floor(BaselineY + 0.5);
+  if IsColorGlyph(Bitmap^) then
+  begin
+    { An emoji: its own colours, never made bold. }
+    DrawGlyphBitmap(Raster.Canvas, Bitmap^, Whole, BaselinePixel, Color, Slant);
+    Exit;
+  end;
   for Row := 0 to Bitmap^.Height - 1 do
   begin
     Shift := Round(-(Bitmap^.Top + Row) * Slant);

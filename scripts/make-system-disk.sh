@@ -44,7 +44,11 @@ set -euo pipefail
 
 user_build_directory="$1"
 output_image="$2"
-image_size_mib=64
+# The image is at least 64 MiB, more when what goes on it needs it (the
+# fonts copied from the build machine, scripts/collect-host-fonts.py):
+# its contents and a seventh more for the file system, with 24 MiB to
+# spare, in whole 8 MiB.
+minimum_image_size_mib=64
 partition_start_sector=2048
 
 script_directory=$(dirname "$0")
@@ -122,6 +126,11 @@ copy_program pgrep pkill
 copy_program gzip gunzip
 copy_program gzip zcat
 
+staged_mib=$(du -sm "$staging_directory" | cut -f1)
+image_size_mib=$(( (staged_mib + staged_mib / 7 + 24 + 2 + 7) / 8 * 8 ))
+if (( image_size_mib < minimum_image_size_mib )); then
+    image_size_mib=$minimum_image_size_mib
+fi
 partition_size_mib=$((image_size_mib - 2))
 rm -f "$partition_image"
 mke2fs -q -t ext4 -L FPOSROOT -d "$staging_directory" -E root_owner=0:0 \
@@ -163,4 +172,4 @@ printf 'label: gpt\nstart=%d, size=%dMiB, type=0FC63DAF-8483-4772-8E79-3D69D8477
 dd if="$partition_image" of="$output_image" bs=512 seek=$partition_start_sector \
     conv=notrunc status=none
 rm -f "$partition_image"
-echo "System disk: $output_image"
+echo "System disk: $output_image (${image_size_mib} MiB, ${staged_mib} MiB of files)"

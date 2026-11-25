@@ -342,7 +342,7 @@ var
 begin
   Paths := TStringList.Create;
   try
-    FView.GetSelectedPaths(Paths, FView.Location.Kind = LocationArchive);
+    FView.GetSelectedPaths(Paths, FView.Location.Kind in [LocationArchive, LocationSearch]);
     if Paths.Count = 0 then
       Exit;
     if Cut and (FView.Location.Kind = LocationFolder) then
