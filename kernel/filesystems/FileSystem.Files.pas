@@ -137,9 +137,16 @@ type
     contents (copy on write mappings of the file) reads them now. The
     hook may read the file (the lock is recursive), nothing else. }
   TFileChangingHook = procedure(Volume: PVolume; NodeNumber: QWord);
+  { Told after a file lost a name (removed, or replaced by a rename onto
+    its name), without the volume's lock: what keeps the file open only
+    to have it at hand later (the image section cache) lets it go, so a
+    file left without names is freed once its last real user closes it,
+    as on Unix. The hook may close files. }
+  TFileRemovedHook = procedure(Volume: PVolume; NodeNumber: QWord);
 
 procedure AddFileChangedHook(Hook: TFileChangedHook);
 procedure AddFileChangingHook(Hook: TFileChangingHook);
+procedure AddFileRemovedHook(Hook: TFileRemovedHook);
 
 { Called by the volume manager after a successful mount. }
 procedure RegisterRootNode(Volume: PVolume);
@@ -168,6 +175,9 @@ function GetFilePosition(OpenedFile: POpenFile): QWord;
 function ReadDirectoryEntry(OpenedFile: POpenFile; out Entry: TDirectoryEntry): TFileSystemStatus;
 
 function GetFileInformation(OpenedFile: POpenFile; out Information: TNodeInformation): TFileSystemStatus;
+{ True once the file OpenedFile is open on has lost its last name (it
+  is freed when its last open file closes). }
+function FileWasRemoved(OpenedFile: POpenFile): Boolean;
 function GetPathInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
 { Like GetPathInformation, but describes a final symbolic link itself. }
 function GetLinkInformation(Path: PChar; out Information: TNodeInformation): TFileSystemStatus;
@@ -938,6 +948,8 @@ var
   FileChangedHookCount: Integer = 0;
   FileChangingHooks: array[0..MaximumFileChangeHooks - 1] of TFileChangingHook;
   FileChangingHookCount: Integer = 0;
+  FileRemovedHooks: array[0..MaximumFileChangeHooks - 1] of TFileRemovedHook;
+  FileRemovedHookCount: Integer = 0;
 
 procedure AddFileChangedHook(Hook: TFileChangedHook);
 begin
@@ -961,6 +973,23 @@ var
 begin
   for Index := 0 to FileChangedHookCount - 1 do
     FileChangedHooks[Index](Volume, NodeNumber, Offset, Length);
+end;
+
+procedure AddFileRemovedHook(Hook: TFileRemovedHook);
+begin
+  if FileRemovedHookCount >= MaximumFileChangeHooks then
+    Exit;
+  FileRemovedHooks[FileRemovedHookCount] := Hook;
+  Inc(FileRemovedHookCount);
+end;
+
+{ Caller holds no volume lock. }
+procedure CallFileRemovedHooks(Volume: PVolume; NodeNumber: QWord);
+var
+  Index: Integer;
+begin
+  for Index := 0 to FileRemovedHookCount - 1 do
+    FileRemovedHooks[Index](Volume, NodeNumber);
 end;
 
 { Caller holds the volume's lock. }
@@ -1265,6 +1294,11 @@ begin
     Information.VolumeFlags := Information.VolumeFlags or VolumeFlagNoSetId;
 end;
 
+function FileWasRemoved(OpenedFile: POpenFile): Boolean;
+begin
+  Result := (OpenedFile <> nil) and (OpenedFile^.Node <> nil) and OpenedFile^.Node^.RemovalPending;
+end;
+
 function GetFileInformation(OpenedFile: POpenFile; out Information: TNodeInformation): TFileSystemStatus;
 begin
   if IsRootDirectory(OpenedFile) then
@@ -1508,11 +1542,15 @@ function RemovePath(Path: PChar): TFileSystemStatus;
 var
   Target: PParentAndName;
   Node: PNode;
+  RemovedVolume: PVolume;
+  RemovedNodeNumber: QWord;
 begin
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   if Target = nil then
     Exit(StatusOutOfMemory);
 
+  RemovedVolume := nil;
+  RemovedNodeNumber := 0;
   Result := BeginNameOperation(Path, Target);
   if Result = StatusSuccess then
   begin
@@ -1521,11 +1559,20 @@ begin
     begin
       Result := RemoveName(Target^.Volume, Target^.Parent, @Target^.Name[0], Node);
       if Result = StatusSuccess then
+      begin
         ReportNameChange(Target, WatchChangeRemoved, Node);
+        if Node^.Information.Kind = NodeKindFile then
+        begin
+          RemovedVolume := Target^.Volume;
+          RemovedNodeNumber := Node^.Information.NodeNumber;
+        end;
+      end;
       ReleaseNodeReference(Target^.Volume, Node);
     end;
     FinishNameOperation(Target);
   end;
+  if RemovedVolume <> nil then
+    CallFileRemovedHooks(RemovedVolume, RemovedNodeNumber);
 
   FreeKernelMemory(Target);
 end;
@@ -1640,7 +1687,11 @@ var
   Node: PNode;
   Existing: PNode;
   OldNodeNumber: QWord;
+  ReplacedVolume: PVolume;
+  ReplacedNodeNumber: QWord;
 begin
+  ReplacedVolume := nil;
+  ReplacedNodeNumber := 0;
   Source := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   Target := PParentAndName(AllocateKernelMemory(SizeOf(TParentAndName)));
   SourceLocation := PChar(AllocateKernelMemory(MaximumPathBytes));
@@ -1693,7 +1744,14 @@ begin
         else
         begin
           if (Existing <> nil) and (Existing <> Node) then
-            Result := ReplaceByRename(Source, Target, Node, Existing)
+          begin
+            Result := ReplaceByRename(Source, Target, Node, Existing);
+            if (Result = StatusSuccess) and (Existing^.Information.Kind = NodeKindFile) then
+            begin
+              ReplacedVolume := Source^.Volume;
+              ReplacedNodeNumber := Existing^.Information.NodeNumber;
+            end;
+          end
           else
             { Includes changing only the letter case of a name on file
               systems that ignore case, where the lookup above finds Node. }
@@ -1711,6 +1769,9 @@ begin
     FreeTrail(Target^.Trail);
     FinishNameOperation(Source);
   end;
+  { The file a rename replaced lost its name. }
+  if ReplacedVolume <> nil then
+    CallFileRemovedHooks(ReplacedVolume, ReplacedNodeNumber);
 
   FreeKernelMemory(Source);
   FreeKernelMemory(Target);

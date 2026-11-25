@@ -41,6 +41,12 @@
       processes too (PagesMappedElsewhere);
     * last, a lowered commit limit turns a commit away.
 
+  maptest --map-removed PATH writes a pattern file at PATH, maps it
+  shared and private, closes its handle and removes it: both mappings
+  still show it, and once they are unmapped nothing keeps the file, so
+  its file system frees it (coretest checks the free space of the
+  system disk around this).
+
   Each check prints a line; the exit status is 1 if any failed.
 }
 program maptest;
@@ -442,8 +448,47 @@ begin
   ReleaseMemory(Base);
 end;
 
+{ --- A mapped file that loses its name ----------------------------------- }
+
+procedure TestMappingOfRemovedFile(const Path: string);
+var
+  Handle: Int64;
+  Data: array of Byte;
+  Index: QWord;
+  Shared: PByte;
+  Private: PByte;
+begin
+  SetLength(Data, FileBytes);
+  for Index := 0 to FileBytes - 1 do
+    Data[Index] := PatternByte(Index);
+  Handle := KernelOpen(PChar(Path), OpenRead or OpenWrite or OpenCreate or OpenTruncate);
+  Check('the file to remove is written', (Handle >= 0) and (KernelWrite(Handle, @Data[0], FileBytes) = FileBytes));
+  if Handle < 0 then
+    Exit;
+  Shared := nil;
+  Private := nil;
+  Check('it is mapped shared and private',
+    (MapFile(Handle, 0, 0, 0, Pointer(Shared)) = 0) and
+    (MapFile(Handle, 0, 0, MapFilePrivate or MapFileWritable, Pointer(Private)) = 0));
+  KernelClose(Handle);
+  Check('the mapped file is removed', DeleteFile(Path) and not FileExists(Path));
+  if (Shared = nil) or (Private = nil) then
+    Exit;
+  Check('the shared mapping still shows it', MatchesPattern(Shared, FileBytes));
+  Check('and so does the private one', MatchesPattern(Private, FileBytes));
+  Check('both are unmapped', (ReleaseMemory(Shared) = 0) and (ReleaseMemory(Private) = 0));
+end;
+
 begin
   SetExceptionFilter(@NoteException);
+  if (ParamCount = 2) and (ParamStr(1) = '--map-removed') then
+  begin
+    TestMappingOfRemovedFile(ParamStr(2));
+    WriteLn('maptest: ', Checks - Failures, ' of ', Checks, ' checks passed');
+    if Failures > 0 then
+      Halt(1);
+    Halt(0);
+  end;
   TestReservation;
   TestProtection;
   TestGuardPage;

@@ -38,7 +38,15 @@
   file's sections, and the identity (volume, node number, size,
   modification time) is also compared on every lookup. A section still
   in use when its file changes is marked stale and goes when that use
-  ends. Up to MaximumSections are kept; when the table is full, the
+  ends.
+
+  A section keeps its file open (through the mapped file), so it must
+  not outlive the file's last name: when a file is removed, or replaced
+  by a rename onto its name (AddFileRemovedHook), its sections are
+  dropped the same way, and a section whose file lost its name while it
+  was being built is never kept. The file system then frees the file
+  once the processes still mapping it (a running program whose file was
+  replaced, a library still loaded) let their mappings go. Up to MaximumSections are kept; when the table is full, the
   least recently used one that is not in use goes. Processes hold
   references of their own to every page they map and to the mapped
   file, so dropping a section never takes anything from under them.
@@ -128,11 +136,13 @@ var
   SectionsLock: TMutex;
 
 procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord); forward;
+procedure FileRemoved(Volume: PVolume; NodeNumber: QWord); forward;
 
 procedure InitializeImageSections;
 begin
   InitializeMutex(SectionsLock);
   AddFileChangedHook(@FileChanged);
+  AddFileRemovedHook(@FileRemoved);
 end;
 
 procedure DestroySection(Section: PImageSection);
@@ -180,6 +190,34 @@ begin
        (Sections[Index]^.Identity.NodeNumber = NodeNumber) then
       DropSlotLocked(Index);
   ReleaseMutex(SectionsLock);
+end;
+
+{ The file of a section lost a name. Unused sections are destroyed
+  after the lock is let go: that closes the file, which may free it. }
+procedure FileRemoved(Volume: PVolume; NodeNumber: QWord);
+var
+  Index: Integer;
+  Unused: array[0..MaximumSections - 1] of PImageSection;
+  UnusedCount: Integer;
+begin
+  UnusedCount := 0;
+  AcquireMutex(SectionsLock);
+  for Index := 0 to MaximumSections - 1 do
+    if (Sections[Index] <> nil) and (Sections[Index]^.Identity.Volume = Pointer(Volume)) and
+       (Sections[Index]^.Identity.NodeNumber = NodeNumber) then
+    begin
+      if Sections[Index]^.Users > 0 then
+        Sections[Index]^.IsStale := True
+      else
+      begin
+        Unused[UnusedCount] := Sections[Index];
+        Inc(UnusedCount);
+      end;
+      Sections[Index] := nil;
+    end;
+  ReleaseMutex(SectionsLock);
+  for Index := 0 to UnusedCount - 1 do
+    DestroySection(Unused[Index]);
 end;
 
 function FindImageSection(KernelPath: PChar; const Identity: TImageIdentity): PImageSection;
@@ -262,7 +300,14 @@ begin
   { Kept if there is room; otherwise it serves this load only and goes
     when the load releases it. }
   AcquireMutex(SectionsLock);
-  Slot := FreeSlotLocked;
+  { A file removed while its section was built: FileRemoved came too
+    early to see the section, and keeping it would keep the file. Its
+    removal is recorded before FileRemoved takes the lock, so one of
+    the two always sees the other. }
+  if FileWasRemoved(Section^.MappedFile^.OpenedFile) then
+    Slot := -1
+  else
+    Slot := FreeSlotLocked;
   if Slot >= 0 then
     Sections[Slot] := Section;
   ReleaseMutex(SectionsLock);
