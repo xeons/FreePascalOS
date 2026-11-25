@@ -57,8 +57,9 @@ USER_LIBRARY_OUTPUT := $(USER_BUILD_DIRECTORY)/lib
 USER_PROGRAM_OUTPUT := $(USER_BUILD_DIRECTORY)/bin
 USER_ROOT_DIRECTORY := $(USER_BUILD_DIRECTORY)/root
 
-# The compiler targets Linux for its ELF output and calling convention;
-# UNIX and LINUX are undefined so no code takes Linux specific paths.
+# The userland is compiled for FreePascalOS (-Tfreepascalos, the target
+# toolchain/fpc adds to the compiler): System V calling convention, ELF,
+# FREEPASCALOS defined and neither UNIX nor LINUX.
 # -OoNOSTACKFRAME: every procedure keeps a frame (the RBP chain), which
 # -O2 would leave out, so that the runtime can find the calling code:
 # the addresses after a runtime error, and where a block was freed in a
@@ -78,7 +79,7 @@ USER_FLOAT_CHECK_FLAGS :=
 ifeq ($(ARCH),arm64)
   USER_FLOAT_CHECK_FLAGS := -CE
 endif
-USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) $(USER_FLOAT_CHECK_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
+USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) $(USER_FLOAT_CHECK_FLAGS) -Tfreepascalos -Cg -Cn -Fishared
 
 # The user runtime library is the Free Pascal RTL: the FreePascalOS parts
 # in rtl/fpc, everything generic from the compiler's source tree.
@@ -92,7 +93,7 @@ else
   FPC_RTL_CPU := x86_64
 endif
 # Upstream sources warn a lot; only errors are shown for them.
-USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
+USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tfreepascalos -Cg -Cn \
 	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/$(FPC_RTL_CPU) \
 	-Fi$(FPC_RTL_SOURCE)/objpas -Fi$(FPC_RTL_SOURCE)/objpas/sysutils -Fi$(FPC_RTL_SOURCE)/objpas/classes \
 	-Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \

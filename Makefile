@@ -119,7 +119,13 @@ BUILD_DIRECTORY := build/$(ARCH)
 ESP_DIRECTORY := $(BUILD_DIRECTORY)/esp
 
 ifeq ($(ARCH),amd64)
-  TARGET_FPC := $(FPC)
+  # Free Pascal with the FreePascalOS target (toolchain/fpc), built from
+  # the compiler sources into the build tree (make toolchain); it
+  # compiles the loader and the kernel for win64 and linux as the
+  # installed compiler would, and the userland for x86_64-freepascalos.
+  CROSS_COMPILER := build/toolchain/ppcx64
+  CROSS_COMPILER_CPU := x86_64
+  TARGET_FPC := $(CROSS_COMPILER)
   TARGET_AS := $(AS) --64
   LOADER_TARGET := -Twin64
   KERNEL_TARGET := -Tlinux
@@ -129,6 +135,7 @@ else ifeq ($(ARCH),arm64)
   # into the build tree (make toolchain ARCH=arm64), and GNU binutils for
   # AArch64 (aarch64-linux-gnu-*), which the compiler runs to assemble.
   CROSS_COMPILER := build/toolchain/ppcrossa64
+  CROSS_COMPILER_CPU := aarch64
   CROSS_PREFIX ?= aarch64-linux-gnu-
   TARGET_FPC := $(CROSS_COMPILER) -XP$(CROSS_PREFIX)
   TARGET_AS := $(CROSS_PREFIX)as
@@ -236,15 +243,17 @@ $(RTL_KERNEL_DIRECTORY)/system.ppu: $(RTL_SOURCES) | $(CROSS_COMPILER)
 
 # --- Cross compiler ----------------------------------------------------------
 
-# Built from the Free Pascal compiler sources with the installed compiler;
-# nothing is installed (only for ARCH=arm64).
+# Built from the Free Pascal compiler sources and the FreePascalOS
+# patches (toolchain/fpc) with the installed compiler; nothing is
+# installed.
 .PHONY: toolchain
 toolchain: $(CROSS_COMPILER)
 
-ifneq ($(CROSS_COMPILER),)
-$(CROSS_COMPILER): scripts/build-cross-compiler.sh
-	scripts/build-cross-compiler.sh aarch64 $@
-endif
+CROSS_COMPILER_SOURCES := scripts/build-cross-compiler.sh toolchain/fpc/prepare-source.sh \
+	$(wildcard toolchain/fpc/patches/*.patch) $(shell find toolchain/fpc/compiler -type f 2>/dev/null)
+
+$(CROSS_COMPILER): $(CROSS_COMPILER_SOURCES)
+	scripts/build-cross-compiler.sh $(CROSS_COMPILER_CPU) $@
 
 # --- Loader ----------------------------------------------------------------
 

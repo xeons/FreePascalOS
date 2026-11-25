@@ -1,0 +1,144 @@
+diff --git a/compiler/ogelf.pas b/compiler/ogelf.pas
+index 8a885a5..b9482fc 100644
+--- a/compiler/ogelf.pas
++++ b/compiler/ogelf.pas
+@@ -310,7 +310,14 @@ interface
+          procedure WriteDynTag(aTag:longword;aValue:longword);
+          procedure WriteDynTag(aTag:longword;aSection:TObjSection;aOffs:aword=0);
+          procedure Do_Mempos;virtual;
++         { A shared library or a position independent executable: linked
++           at address zero, every absolute address gets a RELATIVE
++           dynamic relocation. }
++         function IsPositionIndependent:boolean;
+        public
++         { An executable that is position independent (ET_DYN with an
++           entry point), set by the target's linker. }
++         PositionIndependentExecutable: boolean;
+          constructor Create;override;
+          destructor Destroy;override;
+          procedure Load_Start;override;
+@@ -1813,7 +1820,7 @@ implementation
+           header.e_ident[EI_OSABI]:=ELFOSABI_FREEBSD
+         else if target_info.system in systems_dragonfly then
+           header.e_ident[EI_OSABI]:=ELFOSABI_NONE;
+-        if IsSharedLibrary then
++        if IsPositionIndependent then
+           header.e_type:=ET_DYN
+         else
+           header.e_type:=ET_EXEC;
+@@ -2014,7 +2021,7 @@ implementation
+         { In shared library, every GOT entry needs a RELATIVE dynamic reloc,
+           imported/exported symbols need GLOB_DAT instead. For executables,
+           only the latter applies. }
+-        if IsSharedLibrary or (exesym.dynindex>0) then
++        if IsPositionIndependent or (exesym.dynindex>0) then
+           dynrelocsec.alloc(dynrelocsec.shentsize);
+         result:=true;
+       end;
+@@ -2118,7 +2125,7 @@ implementation
+     procedure TElfExeOutput.Order_Start;
+       begin
+         inherited Order_Start;
+-        dynamiclink:=IsSharedLibrary or (dynsymlist.count>0) or
++        dynamiclink:=IsPositionIndependent or (dynsymlist.count>0) or
+           (
+             (UnresolvedExeSymbols.Count>0) and
+             not (cs_link_staticflag in current_settings.globalswitches)
+@@ -2327,7 +2334,7 @@ implementation
+               continue;
+ 
+             if ((exesym.ObjSymbol.refs and symref_plt)<>0) or
+-              ((exesym.ObjSymbol.typ in [AT_FUNCTION,AT_GNU_IFUNC]) and (not IsSharedLibrary)) then
++              ((exesym.ObjSymbol.typ in [AT_FUNCTION,AT_GNU_IFUNC]) and (not IsPositionIndependent)) then
+               begin
+                 make_dynamic_if_undefweak(exesym);
+ 
+@@ -2345,7 +2352,7 @@ implementation
+                 WritePLTEntry(exesym);
+               end
+             else if ((exesym.ObjSymbol.refs and symref_from_text)<>0) and
+-              (exesym.ObjSymbol.typ<>AT_FUNCTION) and (not IsSharedLibrary) and
++              (exesym.ObjSymbol.typ<>AT_FUNCTION) and (not IsPositionIndependent) and
+               (exesym.state<>symstate_undefweak) then
+               begin
+                 if exesym.ObjSymbol.size=0 then
+@@ -2484,6 +2491,12 @@ implementation
+       end;
+ 
+ 
++    function TElfExeOutput.IsPositionIndependent:boolean;
++      begin
++        result:=IsSharedLibrary or PositionIndependentExecutable;
++      end;
++
++
+     procedure TElfExeOutput.Do_Mempos;
+       var
+         i,j: longint;
+@@ -2492,7 +2505,7 @@ implementation
+         objsec: TObjSection;
+         tempmempos: qword;
+       begin
+-        if IsSharedLibrary then
++        if IsPositionIndependent then
+           CurrMemPos:=0
+         else
+           CurrMemPos:=ElfTarget.exe_image_base;
+@@ -2724,7 +2737,7 @@ implementation
+ 
+     procedure TElfExeOutput.InitDynlink;
+       begin
+-        if not IsSharedLibrary then
++        if not IsSharedLibrary and assigned(interpreter) and (interpreter^<>'') then
+           begin
+             interpobjsec:=internalObjData.createsection('.interp',1,[oso_data,oso_load,oso_keep]);
+             interpobjsec.writestr(interpreter^);
+diff --git a/compiler/x86_64/cpuelf.pas b/compiler/x86_64/cpuelf.pas
+index c064b2b..feb3d29 100644
+--- a/compiler/x86_64/cpuelf.pas
++++ b/compiler/x86_64/cpuelf.pas
+@@ -247,7 +247,7 @@ implementation
+         R_X86_64_GOTPCREL64:
+           begin
+             if AllocGOTSlot(objreloc.symbol) then
+-              if IsSharedLibrary and (objreloc.symbol.exesymbol.dynindex=0) then
++              if IsPositionIndependent and (objreloc.symbol.exesymbol.dynindex=0) then
+                 Inc(relative_reloc_count);
+           end;
+ 
+@@ -257,7 +257,7 @@ implementation
+         R_X86_64_TPOFF32,
+         { R_X86_64_32S cannot be used in DSOs at all }
+         R_X86_64_32S:
+-          if IsSharedLibrary then
++          if IsPositionIndependent then
+             ReportNonDSOReloc(reltyp,objsec,objreloc);
+ 
+         { R_X86_64_32 is processed by rtld, but binutils accept it in data sections only.
+@@ -270,7 +270,7 @@ implementation
+           used in 64-bit code. }
+ 
+         R_X86_64_32:
+-          if IsSharedLibrary then
++          if IsPositionIndependent then
+             begin
+               if (oso_executable in objsec.SecOptions) or
+                 not (oso_write in objsec.SecOptions) then
+@@ -287,7 +287,7 @@ implementation
+               assigned(objreloc.symbol.exesymbol) and
+               (objreloc.symbol.exesymbol.dynindex<>0);
+ 
+-            if IsSharedLibrary then
++            if IsPositionIndependent then
+               begin
+                 if fromtext then
+                   hastextrelocs:=True;
+@@ -339,7 +339,7 @@ implementation
+           if (objsym.exesymbol.dynindex>0) then
+             dynreloclist.Add(TObjRelocation.CreateRaw(tmp,objsym,R_X86_64_GLOB_DAT))
+           else
+-            if IsSharedLibrary then
++            if IsPositionIndependent then
+               WriteDynRelocEntry(tmp,R_X86_64_RELATIVE,0,relocval);
+         end;
+     end;
