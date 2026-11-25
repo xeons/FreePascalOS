@@ -10544,8 +10544,9 @@ The paths are stable (the ports system and anyone else rely on them):
 The compiler is configured `--with-sysroot` (so `-I`/`-L` need nothing
 for the C library), `--enable-default-pie`, `--enable-threads=posix`,
 `--enable-shared`. The patches are small: the OS name in `config.sub`;
-the targets in bfd, gas and ld (the stock `elf_x86_64` and `aarch64elf`
-emulations); in GCC a `config.gcc` entry, `gcc/config/freepascalos.h`
+the targets in bfd, gas and ld (the stock `elf_x86_64` and `aarch64linux`
+emulations, whose linker scripts keep the ELF header loaded for
+`__ehdr_start`); in GCC a `config.gcc` entry, `gcc/config/freepascalos.h`
 (`__freepascalos__` and `unix`, `_GNU_SOURCE` for C++ as on GNU/Linux,
 the start files `crt1.o crti.o crtbegin*.o ... crtend*.o crtn.o`, `-lc`,
 `-dynamic-linker /usr/lib/ld.so`, `--hash-style=both`,
@@ -10751,7 +10752,8 @@ loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a p
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own. `make c-test` boots
-(QEMU, `ACCEL=kvm` for speed) with `init=/usr/bin/ctest` and passes when
+(QEMU, `ACCEL=kvm` for speed; with `ARCH=arm64` QEMU's virt machine) with
+`init=/usr/bin/ctest` and passes when
 every check did (`scripts/test-c-runtime.sh`, log in
 `build/amd64/c-test-serial.log`); a coretest line runs `ctest` when the
 system disk has it.

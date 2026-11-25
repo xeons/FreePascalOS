@@ -1644,8 +1644,9 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       Ctrl-C/hang-up/TERM as signals, faults as SIGSEGV/SIGFPE/SIGILL (186-192)
 - [x] Process groups and sessions, getppid (193-196)
 - [x] C test suite and C++ test (`toolchain/ctest`, `make c-test`, a coretest line)
-- [ ] Build and run the toolchain for arm64 (the patches and sysdeps have
-      the aarch64 pieces; not built or booted yet)
+- [x] Both architectures: the toolchain built and ctest passing on amd64
+      (KVM) and arm64 (QEMU virt)
+- [ ] The C runtime on the Raspberry Pi 5 (built, not tried on the board)
 - [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
 - [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
 - [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)

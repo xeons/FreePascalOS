@@ -51,17 +51,19 @@ diff -ru a/gas/configure.tgt b/gas/configure.tgt
    i386-*-bsd*)				fmt=aout em=386bsd ;;
 diff -ru a/ld/configure.tgt b/ld/configure.tgt
 --- a/ld/configure.tgt	2026-11-24 18:22:30.941829662 -0600
-+++ b/ld/configure.tgt	2026-11-24 18:29:28.681054958 -0600
-@@ -92,7 +92,7 @@
- aarch64-*-freebsd*)	targ_emul=aarch64fbsd
- 			targ_extra_emuls="aarch64fbsdb aarch64elf"
- 			;;
--aarch64-*-fuchsia* | aarch64-*-phoenix*)
-+aarch64-*-fuchsia* | aarch64-*-phoenix* | aarch64-*-freepascalos*)
++++ b/ld/configure.tgt	2026-11-24 19:34:55.989242631 -0600
+@@ -96,6 +96,10 @@
  			targ_emul=aarch64elf
  			targ_extra_emuls="aarch64elfb armelf armelfb"
  			;;
-@@ -964,7 +964,7 @@
++aarch64-*-freepascalos*)
++			targ_emul=aarch64linux
++			targ_extra_emuls="aarch64elf"
++			;;
+ aarch64_be-*-linux-gnu_ilp32)
+ 			targ_emul=aarch64linux32b
+ 			targ_extra_libpath="aarch64linuxb aarch64linux aarch64linux32 armelfb_linux_eabi armelf_linux_eabi"
+@@ -964,7 +968,7 @@
  			tdir_elf_i386=`echo ${targ_alias} | \
  			    sed -e 's/x86_64/i386/' -e 's/aout//'`
  			;;
