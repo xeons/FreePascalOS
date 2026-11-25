@@ -53,11 +53,17 @@ procedure StopCurrentThreadIfRequested;
   (and is not being ended). }
 function CurrentStopIsPending: Boolean;
 
-{ Target > 0 is a process id, Target < 0 a process group (its negation),
-  0 the caller's own group. Returns the number of processes stopped or
-  continued, or a negative Abi error. }
+{ Target > 0 is a process id, Target < -1 a process group (its
+  negation), 0 the caller's own group; -1 and the lowest Int64 (whose
+  negation does not exist) are refused. Returns the number of processes
+  stopped or continued, or a negative Abi error. }
 function StopProcesses(Target: Int64): Int64;
 function ContinueProcesses(Target: Int64): Int64;
+
+{ Asks one process to stop, or lets it go on (kill's SIGSTOP and SIGCONT
+  for each process it reaches). The process registry lock held. }
+procedure StopProcessLocked(Process: PProcess);
+procedure ContinueProcessLocked(Process: PProcess);
 
 { Stops the processes of a group that do not ignore Ctrl-Z; returns how
   many (used for the console's Ctrl-Z). }
@@ -225,6 +231,8 @@ var
   Request: TGroupRequest;
 begin
   Caller := CurrentProcess;
+  if (Target = -1) or (Target = Low(Int64)) then
+    Exit(-ErrorInvalidArgument);
   if Target > 0 then
   begin
     LockProcessRegistry;
@@ -254,6 +262,16 @@ begin
     Result := -ErrorNoSuchProcess;
 end;
 
+procedure StopProcessLocked(Process: PProcess);
+begin
+  RequestStopLocked(Process);
+end;
+
+procedure ContinueProcessLocked(Process: PProcess);
+begin
+  RequestContinueLocked(Process);
+end;
+
 function StopProcesses(Target: Int64): Int64;
 begin
   Result := ApplyToTarget(Target, ActionStop);
@@ -279,7 +297,7 @@ begin
   if Process^.HasExited then
   begin
     { Exit codes are bytes, as on Unix. }
-    Status := Process^.ExitCode and $FF;
+    Status := ReadExitCode(Process) and $FF;
     Exit(True);
   end;
   PreviousLevel := AcquireSpinLock(Process^.StopLock);

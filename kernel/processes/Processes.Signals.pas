@@ -426,7 +426,8 @@ begin
       Process^.Posix.HandlerFlags[Signal] := 0;
       Process^.Posix.HandlerMasks[Signal] := 0;
     end;
-  Process^.Posix.PendingSignals := 0;
+  { Pending signals stay pending (POSIX): the new program gets them as
+    its dispositions say. }
   ReleaseSpinLock(Process^.Posix.SignalLock, PreviousLevel);
 end;
 
@@ -476,31 +477,27 @@ begin
   Inc(Request^.Count);
   if Request^.Signal = 0 then
     Exit;
-  { Stopping and continuing happen after the walk (they take the lock). }
-  case Request^.Signal of
-    SignalStop, SignalContinue: ;
-    SignalTerminalStop, SignalTerminalInput, SignalTerminalOutput:
-      if Process^.Posix.Dispositions[Request^.Signal] = SignalDispositionHandle then
-        PostSignalFromKernelLocked(Process, Request^.Signal, Request^.Caller^.ProcessId);
+  { Each process the walk reaches is handled by its own dispositions:
+    SIGSTOP always stops, SIGCONT continues (and is delivered), and the
+    other stopping signals stop only where their action is the default
+    one, are delivered where they are handled and do nothing where they
+    are ignored. }
+  if Request^.Signal = SignalStop then
+    StopProcessLocked(Process)
+  else if Request^.Signal = SignalContinue then
+  begin
+    ContinueProcessLocked(Process);
+    PostSignalFromKernelLocked(Process, Request^.Signal, Request^.Caller^.ProcessId);
+  end
+  else if DefaultActionOf(Request^.Signal) = ActionStop then
+  begin
+    if Process^.Posix.Dispositions[Request^.Signal] = SignalDispositionDefault then
+      StopProcessLocked(Process)
+    else if Process^.Posix.Dispositions[Request^.Signal] = SignalDispositionHandle then
+      PostSignalFromKernelLocked(Process, Request^.Signal, Request^.Caller^.ProcessId);
+  end
   else
     PostSignalFromKernelLocked(Process, Request^.Signal, Request^.Caller^.ProcessId);
-  end;
-end;
-
-function StopsByDefault(Signal: LongInt; Target: Int64): Boolean;
-var
-  Process: PProcess;
-begin
-  if Signal = SignalStop then
-    Exit(True);
-  if DefaultActionOf(Signal) <> ActionStop then
-    Exit(False);
-  if Target <= 0 then
-    Exit(True);
-  LockProcessRegistry;
-  Process := FindRunningProcessLocked(QWord(Target));
-  Result := (Process <> nil) and (Process^.Posix.Dispositions[Signal] = SignalDispositionDefault);
-  UnlockProcessRegistry;
 end;
 
 function PerformSendSignal(Target: Int64; Signal: QWord): Int64;
@@ -509,6 +506,9 @@ var
 begin
   if Signal > HighestSignal then
     Exit(Failure(ErrorInvalidArgument));
+  { No group has the negation of the lowest Int64 for its id. }
+  if Target = Low(Int64) then
+    Exit(Failure(ErrorNoSuchProcess));
   Request.Caller := CurrentProcess;
   Request.Signal := LongInt(Signal);
   Request.Target := Target;
@@ -522,15 +522,6 @@ begin
     if Request.Denied > 0 then
       Exit(Failure(ErrorNotPermitted));
     Exit(Failure(ErrorNoSuchProcess));
-  end;
-  if StopsByDefault(Request.Signal, Target) then
-    StopProcesses(Target)
-  else if Request.Signal = SignalContinue then
-  begin
-    ContinueProcesses(Target);
-    LockProcessRegistry;
-    VisitRunningProcessesLocked(@SignalVisitedProcess, @Request);
-    UnlockProcessRegistry;
   end;
   Result := 0;
 end;
