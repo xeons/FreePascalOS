@@ -11379,7 +11379,10 @@ members first and each level by name, as WebIDL reads them), enums,
 callbacks, callback interfaces, typedefs, constants, attributes,
 operations with overloads, optional arguments with defaults and variadic
 ones, constructors, static members, getters, setters and deleters,
-`iterable<>` and stringifiers. Reflected attributes need no code: an
+`iterable<>` and stringifiers; an interface with an indexed getter of
+its own and no `iterable<>` iterates as an array (WebIDL: its
+`@@iterator` is `%Array.prototype.values%`), so `for...of` over an
+HTMLCollection or a NamedNodeMap works. Reflected attributes need no code: an
 extended attribute names the content attribute and kind (`[Reflect]`,
 `[Reflect=for]`, `[ReflectURL]`, `[ReflectEnum=(...)]` with
 `[ReflectMissing]`/`[ReflectInvalid]`, `[ReflectDefault]`,
@@ -12119,7 +12122,13 @@ floats and the box's offset in it, the lists absolutely positioned and
 fixed boxes go to); a clean box laid out before for the same input whose
 layout did not depend on outside floats or containing blocks is skipped,
 so relayout after a change touches the changed part and what depends on
-its size.
+its size. A box whose layout put floats into a formatting context outside
+it (`bfHasEscapingFloats`: a float in a block that does not contain it)
+is never skipped: the context is made anew on every layout, and a skipped
+box would leave its floats out of it, so the boxes after it would not
+flow around them (4chan's posts were laid over their thumbnails once an
+icon in them loaded). A block inside an inline box (block-in-inline)
+looks for the floats from its margin edge, as in block flow.
 
 - Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
   8.3.1): widths with auto margins, min/max, box-sizing and percentages;
@@ -12586,7 +12595,10 @@ web view's pointer steps over its `TPageSelection`), with the layout
 brought up to date or left behind (as the web view puts a slow layout
 off), painting, hit testing, the selection's rectangles and both
 collectors between steps; then 600 more with the engines collecting
-every 16 KiB. It passes when the document's selection stays in the
+every 16 KiB; then a wheel storm of 2000 steps, most of them bursts of
+10 to 60 wheel steps both ways with the pointer moving over the page,
+the layout left behind, and tasks, rendering steps, animations, hit
+tests and resizes in between. It passes when the document's selection stays in the
 document, the view's selection in its current index, its text and
 rectangles readable, and no script error is uncaught. `WebLoadTest
 pointer` runs it alone, `WEB_POINTER_VERBOSE=1` prints a line a step.
@@ -13280,7 +13292,14 @@ the page thread runs scripts, layout and painting; image decoding and
 other workers stay on their threads; it has no network threads of its
 own (the network service has them).
 
-**Async scrolling.** Input carries a sequence number; frames and
+**Async scrolling.** The browser's side of a renderer's frames is
+`WebView.RemoteFrames` (the surface, the view's copy of the last frame
+and its shift), apart from the control: it refuses frames of a replaced
+surface or larger than theirs, clips damage and viewports to the frame
+and keeps the renderer's scroll and document sizes within bounds before
+using them; `tools/WebIpcTest` (`WebIpcTest.Frames`) plays a renderer
+that replaces its surface while the browser scrolls and paints, and
+checks that a replaced section is never read. Input carries a sequence number; frames and
 `IpcInputHandled` say how far the renderer got. When input has gone
 unanswered for 120 ms (a long layout, a busy script, a hung page), the
 wheel moves the last frame in the browser itself, within the document's
