@@ -1358,8 +1358,9 @@ $(WEB_LAYOUT_TEST): $(WEB_LAYOUT_TEST_SOURCES) $(WEB_LAYOUT_TEST_UNITS)/.generat
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLayoutTest -Futools/CryptoTest $(WEB_RENDER_UNIT_PATHS) \
 		-Fi$(WEB_LAYOUT_TEST_UNITS) -FU$(WEB_LAYOUT_TEST_UNITS) -o$@ tools/WebLayoutTest/WebLayoutTest.pas
 
-web-layout-test: $(WEB_LAYOUT_TEST)
-	@$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts > build/tools/web-layout-test.out || \
+web-layout-test: $(WEB_LAYOUT_TEST) $(HOST_FONTS_STAMP)
+	@WEB_HOST_FONTS=$(USER_BUILD_DIRECTORY)/fonts $(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts \
+		> build/tools/web-layout-test.out || \
 		{ grep -B3 -A3 FAIL build/tools/web-layout-test.out | head -80; echo "WEB LAYOUT TEST FAILED (build/tools/web-layout-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-layout-test.out || true
 	@echo "WEB LAYOUT TEST PASSED: $$(tail -n 1 build/tools/web-layout-test.out | cut -d ' ' -f 4-)"

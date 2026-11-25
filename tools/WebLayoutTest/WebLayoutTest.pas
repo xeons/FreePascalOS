@@ -27,7 +27,9 @@
   Then: incremental restyle and relayout after DOM changes give the
   same tree as a fresh layout (and skip clean boxes), hit testing,
   painting (pixels of known boxes, a damaged rectangle painted alone
-  matching the full paint), and the speed and memory of a large page.
+  matching the full paint), the speed and memory of a large page, and
+  font matching with the system's fonts and configuration
+  (WebLayoutTest.Fonts; WEB_HOST_FONTS names the fonts directory).
 }
 program WebLayoutTest;
 
@@ -36,7 +38,7 @@ program WebLayoutTest;
 
 uses
   SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting,
-  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms;
+  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Fonts;
 
 var
   Update: Boolean;
@@ -61,5 +63,6 @@ begin
   CheckTransforms;
   CheckAnimations;
   ReportPerformance;
+  CheckSystemFonts;
   FinishChecks('web layout test');
 end.
