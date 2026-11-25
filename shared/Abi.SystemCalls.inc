@@ -872,7 +872,89 @@ const
   CallListPerformanceStates = 232;
   { 233-235 are kept for this group. }
 
-  CallCount = 233;
+  { --- Event descriptors: eventfd, timerfd, signalfd, epoll, inotify (260-269) -- }
+  { The objects behind these handles are ready for CallWaitForHandles
+    (and poll) and can be watched by an event poll; their Event*,
+    Timer*, Signal*, Poll* and GroupWatch* constants and records are in
+    Abi.EventDescriptors.inc. Read and written with CallRead and
+    CallWrite; CallControlHandle's ControlSetNonBlocking makes reads and
+    writes fail with ErrorWouldBlock instead of waiting. }
+
+  { (InitialValue, Flags): an event counter (eventfd): a 64-bit count a
+    read (of 8 bytes at least) takes whole and leaves at zero, or with
+    EventCounterSemaphore takes one from; a read of a zero count waits.
+    A write of 8 bytes adds its value (not $FFFFFFFFFFFFFFFF), waiting
+    while the sum would pass $FFFFFFFFFFFFFFFE. Ready to read while the
+    count is above zero. Flags: EventCounterSemaphore,
+    EventDescriptorNonBlocking. Returns the handle. }
+  CallCreateEventCounter = 260;
+  { (Clock, Flags): a timer descriptor (timerfd) on TimerClockRealTime,
+    TimerClockMonotonic or TimerClockBoot (the Linux clock ids; the
+    monotonic and boot clocks are the uptime). A read of 8 bytes takes
+    how many times it went off since the last read (waiting while
+    none); ErrorCanceled once an absolute real time timer set with
+    TimerCancelOnSet saw the clock set. Flags:
+    EventDescriptorNonBlocking. }
+  CallCreateTimerDescriptor = 261;
+  { (Handle, Flags, NewAddress, OldAddress): timerfd_settime: arms or
+    (a zero first time) stops it with the TAbiTimerSpecification at
+    NewAddress (0: changes nothing, timerfd_gettime), its first time
+    relative or with TimerAbsolute a time of its clock; first writes
+    what was left of the old setting at OldAddress (if not 0). Flags:
+    TimerAbsolute, TimerCancelOnSet (with TimerAbsolute on the real time
+    clock). Setting it again forgets the times it went off. }
+  CallSetTimerDescriptor = 262;
+  { (Handle): what poll says of the handle now, as PollReadable,
+    PollWritable, PollError, PollHangUp bits (the Linux POLL* values);
+    files are always readable and writable. }
+  CallQueryHandleReadiness = 263;
+  { (Handle, Mask, Flags): a signal descriptor (signalfd) for the signals
+    in Mask (bit N - 1 for signal N; SIGKILL and SIGSTOP left out), or
+    with Handle not -1 a new mask for that one. A read (of
+    SizeOf(TAbiSignalDescriptorRecord) bytes at least) takes the waiting
+    signals of the mask (sent to the process, or to the reading thread)
+    as records, waiting while none; signals meant for it are blocked by
+    the program, so they wait instead of being delivered. Ready while
+    one of its signals waits for the process that made it. Flags:
+    EventDescriptorNonBlocking. Returns the handle. }
+  CallSetSignalDescriptor = 264;
+  { (Flags): an event poll (epoll). Flags: none yet (0). }
+  CallCreateEventPoll = 265;
+  { (Poll, Operation, Handle, EventAddress): epoll_ctl: PollAdd,
+    PollModify (with a TAbiPollEvent at EventAddress) or PollRemove the
+    object Handle names. Events: PollReadable, PollWritable (PollError
+    and PollHangUp are always reported), PollEdgeTriggered,
+    PollOneShot, PollExclusive (accepted on PollAdd). ErrorExists,
+    ErrorNotFound, ErrorNotPermitted for files (always ready),
+    ErrorInvalidArgument for the poll itself, ErrorTooManyLinks for
+    polls nested in a loop or more than PollMaximumNesting deep. A
+    registration lasts until removed or until the object's last handle
+    is closed (in any process). }
+  CallControlEventPoll = 266;
+  { (Poll, EventsAddress, Capacity, TimeoutMilliseconds): epoll_wait:
+    up to Capacity (at most PollMaximumEvents per call) TAbiPollEvent
+    records of objects ready for what they were registered for, waiting
+    up to the timeout (-1: no limit, 0: only looks) while none is.
+    Level triggered registrations stay reported while the object is
+    ready; edge triggered ones once per change; one shot ones once
+    until modified. Returns how many; ErrorInterrupted. }
+  CallWaitEventPoll = 267;
+  { (Flags): a watch group (inotify): watches on folders and files whose
+    changes are read from the one handle as TAbiGroupWatchRecord records
+    (the Linux inotify_event layout), waiting while none is queued.
+    Flags: EventDescriptorNonBlocking. }
+  CallCreateWatchGroup = 268;
+  { (Group, Operation, PathOrDescriptor, Mask): GroupWatchAdd: watches the
+    path (an address) for the GroupWatch* events in Mask (with
+    GroupWatchOnlyDirectory, GroupWatchDontFollow, GroupWatchMaskAdd,
+    GroupWatchMaskCreate, GroupWatchOneShot), returning its watch
+    descriptor (the same one again for something watched already, or
+    ErrorExists with GroupWatchMaskCreate); GroupWatchRemove: removes
+    watch descriptor PathOrDescriptor (a GroupWatchIgnored record
+    follows). Needs read permission on what is watched. }
+  CallChangeGroupWatch = 269;
+
+  CallCount = 270;
 
   { CallSyncMemory flags (the Linux MS_* values). }
   SyncMemoryAsync = 1;
@@ -1280,6 +1362,10 @@ const
   FileLockShared = 1;
   FileLockExclusive = 2;
   FileLockNoWait = $100;
+  { Request of CallControlHandle on an event descriptor (event counter,
+    timer, signal descriptor, watch group): Argument 1 makes its reads and
+    writes fail with ErrorWouldBlock instead of waiting, 0 wait again. }
+  ControlSetNonBlocking = 320;
   { Blue, green, red, unused (a little-endian LongWord $00RRGGBB). }
   DisplayFormatBlueGreenRed = 1;
   { Red, green, blue, unused ($00BBGGRR). }
@@ -1488,6 +1574,9 @@ const
 
   { TAbiWatchRecord.Flags: the item is a folder. }
   WatchRecordDirectory = $01;
+  { A name created or removed by a rename (moved in from or out to
+    somewhere not watched by this watch). }
+  WatchRecordMoved = $02;
   { At most this many records wait in a watch; then comes the overflow
     record. }
   MaximumQueuedWatchRecords = 64;
@@ -1548,6 +1637,8 @@ const
   ErrorInProgress = 115;
   { A semaphore released past its limit. }
   ErrorOverflow = 75;
+  { A timer descriptor's timer was canceled by the clock being set. }
+  ErrorCanceled = 125;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -1601,6 +1692,12 @@ const
   HandleKindSocket = 14;
   HandleKindSemaphore = 15;
   HandleKindMutex = 16;
+  { Event descriptors (calls 260-269). }
+  HandleKindEventCounter = 20;
+  HandleKindTimerDescriptor = 21;
+  HandleKindSignalDescriptor = 22;
+  HandleKindEventPoll = 23;
+  HandleKindWatchGroup = 24;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -2507,3 +2604,4 @@ const
   ModifierSuper = $80;
 
 {$include Abi.Networking.inc}
+{$include Abi.EventDescriptors.inc}

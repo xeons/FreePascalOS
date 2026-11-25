@@ -88,6 +88,15 @@ type
     HandleKindSemaphore,
     { A mutex (Processes.ObjectCalls). }
     HandleKindMutex,
+    { Event descriptors (Processes.EventDescriptorCalls): an event
+      counter (eventfd), a timer descriptor (timerfd), a signal
+      descriptor (signalfd), an event poll (epoll) and a watch group
+      (inotify). }
+    HandleKindEventCounter,
+    HandleKindTimerDescriptor,
+    HandleKindSignalDescriptor,
+    HandleKindEventPoll,
+    HandleKindWatchGroup,
     { Held for an object about to be stored (ReserveHandle): taken, but
       not usable and never looked up. }
     HandleKindReserved
@@ -173,7 +182,8 @@ implementation
 uses
   Memory.KernelHeap,
   Objects.Manager,
-  Io.Pipes;
+  Io.Pipes,
+  Processes.EventPolls;
 
 procedure InitializeHandleTable(out Table: THandleTable);
 var
@@ -195,9 +205,12 @@ begin
 end;
 
 { Pipes count their open ends separately from object references, so
-  readers can see end of file once every writer is gone. }
+  readers can see end of file once every writer is gone. Every object
+  counts the handles naming it: the event polls watching it let go of it
+  when the last one closes (before the handle's reference goes). }
 procedure NoteHandleOpened(Kind: THandleKind; ObjectBody: Pointer);
 begin
+  NoteObjectHandleOpened(ObjectBody);
   case Kind of
     HandleKindPipeReadEnd: OpenPipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: OpenPipeEnd(PPipe(ObjectBody), True);
@@ -210,6 +223,8 @@ begin
     HandleKindPipeReadEnd: ClosePipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: ClosePipeEnd(PPipe(ObjectBody), True);
   end;
+  if NoteObjectHandleClosed(ObjectBody) then
+    ForgetObjectInEventPolls(ObjectBody);
 end;
 
 procedure TakeHandleReference(Kind: THandleKind; ObjectBody: Pointer);

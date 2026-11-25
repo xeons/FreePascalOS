@@ -74,6 +74,7 @@ begin
     ErrorAlreadyInProgress: AbiErrorMessage := 'Operation already in progress';
     ErrorInProgress: AbiErrorMessage := 'Operation now in progress';
     ErrorOverflow: AbiErrorMessage := 'Value too large for defined data type';
+    ErrorCanceled: AbiErrorMessage := 'Operation canceled';
   else
     AbiErrorMessage := 'Unknown error';
   end;

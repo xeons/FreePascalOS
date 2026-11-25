@@ -23,6 +23,13 @@ sysdep_supported_options = {
 	'linux': false,
 	'glibc': true,
 	'bsd': true,
+	# The kernel's event descriptors (generic/event-descriptors.cpp,
+	# generic/event-polls.cpp); inotify is ours too (generic/inotify.cpp,
+	# include/sys/inotify.h), as mlibc keeps it in the linux option.
+	'linux-epoll': true,
+	'linux-eventfd': true,
+	'linux-timerfd': true,
+	'linux-signalfd': true,
 }
 
 arch = host_machine.cpu_family()
@@ -49,6 +56,9 @@ libc_sources += files(
 	'generic/terminal.cpp',
 	'generic/signals.cpp',
 	'generic/timers.cpp',
+	'generic/event-descriptors.cpp',
+	'generic/event-polls.cpp',
+	'generic/inotify.cpp',
 	'arch' / arch / 'thread-entry.S',
 )
 
@@ -122,6 +132,10 @@ if not no_headers
 	install_headers(
 		'include/freepascalos/syscall.h',
 		subdir: 'freepascalos',
+	)
+	install_headers(
+		'include/sys/inotify.h',
+		subdir: 'sys',
 	)
 endif
 

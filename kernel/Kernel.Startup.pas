@@ -76,6 +76,7 @@ uses
   Kernel.SelfTest,
   Kernel.MemorySelfTest,
   Kernel.ObjectNamespaceSelfTest,
+  Kernel.EventDescriptorSelfTest,
   Kernel.SynchronizationSelfTest,
   Kernel.SchedulerLatencySelfTest,
   Kernel.ClockSelfTest,
@@ -388,6 +389,7 @@ begin
   RunMemorySelfTests;
   RunSynchronizationSelfTests;
   RunObjectNamespaceSelfTests;
+  RunEventDescriptorSelfTests;
   RunSchedulerLatencySelfTests;
   RunClockSelfTests;
   RunStackTraceSelfTest;
