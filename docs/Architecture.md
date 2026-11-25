@@ -948,7 +948,12 @@ a reader take its copy again if it changed meanwhile.
   interrupts it takes) starts it again with `CPU_ON` through the same
   entry (`WakePoweredDownProcessor`; a wake asked for while it was on
   its way off - a flag, or an interrupt pending in `ISR_EL1` - keeps it
-  on).
+  on; a resumed processor asks itself for a dispatch interrupt, since
+  CPU_ON brings none; a refused CPU_ON is retried by the boot
+  processor's clock a millisecond later). Tested on QEMU's virt machine
+  (GICv3, 4 processors): the self tests, the broadcast self test and
+  timetest pass; `powerstat --check-idle` does not, by design, as the
+  boot processor then starts the others every 20 ms.
 
 **The broadcast timer** (`Kernel.BroadcastTimer`). A processor about to
 enter a state whose timer stops hands its next due time (its clock

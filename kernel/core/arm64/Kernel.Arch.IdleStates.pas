@@ -77,6 +77,7 @@ uses
   Kernel.BroadcastTimer,
   Kernel.InterProcessor,
   Kernel.Options,
+  Kernel.PriorityLevel,
   Firmware.DeviceTreeMachine,
   Hal.FirmwareTables,
   Hal.Platform,
@@ -236,8 +237,13 @@ var
 begin
   Processor := CurrentProcessor;
   if ArchSaveSuspendContext(Processor^.SuspendContext) <> 0 then
-    { Back through the entry: resumed. }
+  begin
+    { Back through the entry: resumed. Whatever woke it may have been
+      a thread made ready for it (the test's CPU_ON sends no dispatch
+      interrupt): the scheduler looks once interrupts are on. }
+    HalRequestSoftwareInterrupt(DispatchLevel);
     Exit;
+  end;
   if State.Parameter = TestPowerDownState then
   begin
     TurnOffForTest(Processor);

@@ -113,6 +113,7 @@ const
   PowerStateOff = 1;
   PowerStateWaking = 2;
   LongestPowerUpNanoseconds = 50 * 1000000;
+  PowerUpRetryNanoseconds = 1000000;
   { The power-down test: a processor that is off takes no device
     interrupt, so it is started again at least this often. }
   LongestTestOffNanoseconds = 20 * 1000000;
@@ -270,6 +271,19 @@ begin
   Result := AtomicCompareExchange(PowerStates[Processor^.Index], PowerStateOn, PowerStateOff) <> PowerStateOff;
 end;
 
+procedure RetryPowerUpLater(Processor: PProcessor);
+var
+  Owner: PProcessor;
+begin
+  if not Initialized then
+    InitializeTable;
+  AtomicStore(DueTimes[Processor^.Index], PtrUInt(ClockNanoseconds + PowerUpRetryNanoseconds));
+  AtomicExchange(ReprogramRequested, 1);
+  Owner := ProcessorByIndex(0);
+  if (Owner <> nil) and (CurrentProcessor <> Owner) then
+    HalRequestDispatchOn(Owner^.ApicId);
+end;
+
 function WakePoweredDownProcessor(Processor: PProcessor): Boolean;
 var
   Deadline: QWord;
@@ -293,8 +307,10 @@ begin
   begin
     if ClockNanoseconds >= Deadline then
     begin
-      { Left for the next waker to try again. }
+      { Tried again soon by the boot processor's clock interrupt (or by
+        the next waker). }
       AtomicStore(PowerStates[Processor^.Index], PowerStateOff);
+      RetryPowerUpLater(Processor);
       Exit;
     end;
     CpuRelax;
