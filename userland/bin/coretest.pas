@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..420] of TCommandTest = (
+  CommandTests: array[0..421] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -758,7 +758,12 @@ const
     (Command: 'touch -m -t 202301010000 t; touch -a -t 202401010000 t; test $(stat -c %X t) -gt $(stat -c %Y t) && echo access-later; ls -l --time=atime t | grep -c 2024; ls -lu t | grep -c 2024; ls -l t | grep -c 2023; stat -c %W t | grep -c "^0$"; stat t | grep -c "Birth: [0-9]"'; ExpectedOutput: 'access-later'#10'1'#10'1'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Process restrictions (the browser's renderer sandbox). }
-    (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0)
+    (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { Native Free Pascal: /bin/fpc compiles a program and a unit of its
+      own (against libsystem, linked by the compiler's internal linker)
+      and the program runs; skipped when the system disk was built with
+      NATIVE_FPC=no. }
+    (Command: 'if test -x /bin/fpc; then printf "unit nativeunit; interface function Answer: LongInt; implementation function Answer: LongInt; begin Answer := 6 * 7 end; end." > nativeunit.pas; printf "program native; uses SysUtils, nativeunit; begin WriteLn(UpperCase(''native fpc''), '' '', Answer) end." > native.pas; fpc native.pas > fpc.log 2>&1 || cat fpc.log; ./native; rm -f native native.o native.pas nativeunit.* fpc.log; else echo "coretest: no /bin/fpc on the system disk, native Free Pascal skipped" >&2; echo "NATIVE FPC 42"; fi'; ExpectedOutput: 'NATIVE FPC 42'#10; ExpectedStatus: 0)
   );
 
 var

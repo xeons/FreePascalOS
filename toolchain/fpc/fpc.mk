@@ -149,3 +149,27 @@ $(NATIVE_FPC_UNITS_STAMP): $(PPUMOVE) $(NATIVE_FPC_LIBRARY_FILES)
 		$(RTL_USER_DIRECTORY)/si_dll.ppu $(RTL_USER_DIRECTORY)/si_dll.o $(NATIVE_FPC_UNIT_ROOT)/rtl/
 	$(foreach library,$(NATIVE_FPC_LIBRARIES),$(call stage-library-units,$(library),$(USER_BUILD_DIRECTORY)/$(library),$(library)))
 	@touch $@
+
+# The host check (make native-fpc-test, part of make test): the staged
+# compiler, driver, configuration and units, and on x86-64 a program the
+# cross compiler linked with its internal ELF linker against them.
+NATIVE_FPC_TEST := build/tools/NativeFpcTest
+ifeq ($(ARCH),amd64)
+  INTERNAL_LINK_SAMPLE := $(NATIVE_FPC_BUILD_DIRECTORY)/sample/InternalLinkSample
+else
+  INTERNAL_LINK_SAMPLE :=
+endif
+
+$(NATIVE_FPC_TEST): tools/NativeFpcTest/NativeFpcTest.pas
+	@mkdir -p build/tools/native-fpc-test-units
+	$(FPC) -O2 -Cr -Co -FEbuild/tools -FUbuild/tools/native-fpc-test-units $<
+
+$(NATIVE_FPC_BUILD_DIRECTORY)/sample/InternalLinkSample: tools/NativeFpcTest/InternalLinkSample.pas $(NATIVE_FPC_UNITS_STAMP)
+	@rm -rf $(dir $@)
+	@mkdir -p $(dir $@)
+	$(TARGET_FPC) -n -Tfreepascalos -XD -OoNOSTACKFRAME -Fu$(NATIVE_FPC_UNIT_ROOT)/rtl -Fl$(USER_LIBRARY_OUTPUT) \
+		-FU$(dir $@) -FE$(dir $@) $<
+
+.PHONY: native-fpc-test
+native-fpc-test: $(NATIVE_FPC_TEST) native-fpc $(INTERNAL_LINK_SAMPLE)
+	$(NATIVE_FPC_TEST) $(FPC_TARGET_CPU) $(NATIVE_FPC_ROOT) $(INTERNAL_LINK_SAMPLE)
