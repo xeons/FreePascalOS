@@ -85,8 +85,15 @@ function BroadcastWakeCount: QWord;
 procedure NotePoweredDown(Processor: PProcessor);
 procedure NotePoweredUp(Processor: PProcessor);
 { Starts Processor again if it is powered down; True if it was (and
-  nothing else needs to be sent to it). }
+  nothing else needs to be sent to it). Notes the request either way. }
 function WakePoweredDownProcessor(Processor: PProcessor): Boolean;
+{ The idle loop, before it decides to wait: requests from before are
+  for work it is about to look at. }
+procedure ClearWakeRequest(Processor: PProcessor);
+{ After NotePoweredDown, just before turning off: False if a wake was
+  asked for meanwhile (or Pending says an interrupt waits), and the
+  processor is back on and must not turn off. }
+function PowerDownMayProceed(Processor: PProcessor; Pending: Boolean): Boolean;
 { Set by the architecture: starts a powered-down processor again;
   False if the firmware refused (still on its way off). }
 type
@@ -113,6 +120,7 @@ const
 var
   DueTimes: array[0..MaximumProcessors - 1] of PtrUInt;
   PowerStates: array[0..MaximumProcessors - 1] of PtrUInt;
+  WakeRequests: array[0..MaximumProcessors - 1] of PtrUInt;
   ReprogramRequested: PtrUInt = 0;
   WakeCount: Int64 = 0;
   Initialized: Boolean = False;
@@ -245,6 +253,23 @@ begin
   AtomicStore(PowerStates[Processor^.Index], PowerStateOn);
 end;
 
+procedure ClearWakeRequest(Processor: PProcessor);
+begin
+  if (PowerUp <> nil) and (Processor^.Index < MaximumProcessors) then
+    AtomicExchange(WakeRequests[Processor^.Index], 0);
+end;
+
+function PowerDownMayProceed(Processor: PProcessor; Pending: Boolean): Boolean;
+begin
+  Result := True;
+  FullMemoryBarrier;
+  if not Pending and (AtomicLoad(WakeRequests[Processor^.Index]) = 0) then
+    Exit;
+  { Asked meanwhile: back on, unless a waker took it already (it starts
+    it again once it is off). }
+  Result := AtomicCompareExchange(PowerStates[Processor^.Index], PowerStateOn, PowerStateOff) <> PowerStateOff;
+end;
+
 function WakePoweredDownProcessor(Processor: PProcessor): Boolean;
 var
   Deadline: QWord;
@@ -252,6 +277,9 @@ begin
   Result := False;
   if (Processor^.Index >= MaximumProcessors) or (PowerUp = nil) then
     Exit;
+  { Noted before the state is read: a processor about to turn off sees
+    it (PowerDownMayProceed). }
+  AtomicExchange(WakeRequests[Processor^.Index], 1);
   if AtomicLoad(PowerStates[Processor^.Index]) = PowerStateOn then
     Exit;
   Result := True;

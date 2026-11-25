@@ -907,24 +907,88 @@ a reader take its copy again if it changed meanwhile.
 - x86-64: state 0 is HLT. MWAIT C-states come from CPUID leaf 5 (the
   sub-states of each C-state; hint `(n - 1) shl 4`) with typical exit
   latencies, or from ACPI's `_CST` once the namespace is loaded
-  (`Firmware.AcpiProcessorIdle`: functional fixed hardware entries,
-  class 2, whose address is the hint; I/O port entries are not used,
-  and `_PDC`/`_OSC` are not evaluated, so firmware that waits for them
-  answers with what CPUID gives anyway). They are used only where the
-  local APIC timer keeps running in them (ARAT), the counter is
-  invariant, CPUID 5 states its line size and the interrupt break, and
-  not under a hypervisor (QEMU's emulated MWAIT does not sleep with
-  several processors) unless `idle=mwait`. `idle=halt` keeps to HLT,
+  (`Firmware.AcpiProcessorIdle`): functional fixed hardware entries
+  (class 2, whose address is the hint) and I/O port entries (the read of
+  the chipset's P_LVLx port enters the state, with interrupts off; the
+  next interrupt ends it). Before `_CST` every processor object is told
+  what the kernel can do (`Firmware.AcpiProcessorControl`: `_OSC` with
+  the processor UUID, else `_PDC`; Intel's capability bits for MWAIT
+  C-states, P-states through the MSR, software coordination), since
+  firmware loads its per-processor tables and answers only then. The
+  deep states are used where the counter is invariant, CPUID 5 states
+  its line size and the interrupt break (MWAIT), and not under a
+  hypervisor (QEMU's emulated MWAIT does not sleep with several
+  processors) unless `idle=mwait` (`idle=port` for port states). Where
+  the local APIC timer does not keep running in them (no ARAT) every
+  state deeper than C1 is marked as stopping it, and the broadcast
+  timer below wakes the processors in them. `idle=halt` keeps to HLT,
   `maxcstate=N` stops at C(N).
 - AArch64: state 0 is WFI. PSCI `CPU_SUSPEND` states come from the device
   tree's `arm,idle-state` nodes (`ListDeviceTreeIdleStates`: power
   state, latencies, minimum residency) where the firmware offers
   `CPU_SUSPEND` (`PSCI_FEATURES`, which also says the power state
-  format). Only standby states are used (they return like WFI):
-  power-down states and those whose timer stops (`local-timer-stop`) are
-  left out. QEMU's virt machine and the Pi 5's tree have none, so WFI it
-  is there; with a tree that has one (tested with QEMU and a dumped tree
-  given one) the standby state is entered. `idle=wfi` keeps to WFI.
+  format). Standby states return like WFI. **Power-down states** lose
+  the processor's registers, timer and GIC interface: its state is saved
+  first (`Kernel.Arch.Suspend`, as for suspend to RAM) and `CPU_SUSPEND`
+  gets the start-up entry and a start-up record of the processor's own
+  (`PrepareIdleWakeEntry`: power-downs come and go on many processors at
+  once, so the shared record will not do; each has a small wake stack
+  too); an interrupt brings it back there, it sets itself up again
+  (translation, vectors, block, GIC) and resumes the saved state inside
+  `ArchEnterIdleState`. Firmware may take a shallower state and return
+  instead, registers kept. Power-down states and standby states marked
+  `local-timer-stop` stop the timer: the broadcast timer wakes them.
+  QEMU's virt machine and the Pi 5's tree have none, so WFI it is there;
+  with a tree that has one (tested with QEMU and a dumped tree given
+  one) the standby state is entered. `idle=wfi` keeps to WFI.
+  `idle=powerdown-test` tests the way back from a lost state on QEMU
+  (whose `CPU_SUSPEND` is a WFI): a made-up power-down state turns the
+  processor off with `CPU_OFF`, and whatever would wake it (its due
+  time, a thread made ready for it, at least every 20 ms for the device
+  interrupts it takes) starts it again with `CPU_ON` through the same
+  entry (`WakePoweredDownProcessor`; a wake asked for while it was on
+  its way off - a flag, or an interrupt pending in `ISR_EL1` - keeps it
+  on).
+
+**The broadcast timer** (`Kernel.BroadcastTimer`). A processor about to
+enter a state whose timer stops hands its next due time (its clock
+interrupt time) to a table, one slot per processor, and marks its own
+timer stale (`ClockInterruptTime` = never: whatever sets it next sets it
+in full, `RearmClockInterrupt`, past due times included). If that time
+is earlier than the boot processor's next clock interrupt, the boot
+processor is asked (a flag and its dispatch interrupt,
+`ServeBroadcastRequest`) to bring its interrupt forward; its clock
+interrupt (`ServeBroadcast`) sends every processor whose time has come
+its dispatch interrupt, and its next one is set for the earliest time
+left in the table (part of its next clock deadline). The slot is written
+before the boot processor's interrupt time is read, and a dispatch
+interrupt sent before the processor waits stays pending, so no wake-up
+is lost. The boot processor never enters these states (it keeps time),
+nor does any processor when it is the only one. `idlebroadcast=off`
+keeps to states whose timer runs; `idlebroadcast=force` treats every
+state of the other processors as stopping the timer and really leaves
+it at its longest (4 s), so only the broadcast wakes them on time: the
+test on machines without such states. The kernel self test does that
+for ten 20 ms sleeps on the last processor (each on time, the broadcast
+counted).
+
+**Performance states on PCs** (`Power.PerformanceStates`). Where the
+processor has hardware P-states (HWP, `Hal.PerformanceControl`: CPUID 6
+EAX bit 7) they are turned on on every processor (`IA32_PM_ENABLE`) and
+given the whole range the processor reports (`IA32_HWP_CAPABILITIES`),
+balanced energy preference; the processor picks its clock itself, and
+the thermal limit lowers the top of the range instead of modulating the
+clock. Otherwise ACPI's `_PSS` (frequencies, power, latency, control
+values), `_PCT` (the performance control MSR, or an I/O port) and `_PPC`
+(the fastest state allowed; read again on the processor's Notify 0x80):
+a governor thread ("Performance") takes the fastest state allowed at
+60 % busy or more and the slowest after three looks under 25 %, half a
+second apart, as the Raspberry Pi's does; the thermal limit caps it (the
+fastest state at or below that share of the top frequency), taking over
+from clock modulation. The MSR is written only where CPUID says it is
+there (Enhanced SpeedStep). `cpufreq=off|max|min` as on the Pi.
+`CallListPerformanceStates` lists the states (the one in use, those not
+allowed); the clock rate and range are in `CallGetProcessorPower`.
 
 **Thermal zones** (`Power.ThermalZones`) are temperatures with a passive
 and a critical trip point, read by a thread ("Thermal", with a large
@@ -939,13 +1003,47 @@ MSR 19Ah, eighths of the time, written on each processor by the thread
 moving itself from processor to processor, `Power.EveryProcessor`), or by
 the Raspberry Pi's clock governor below.
 
+- **Active cooling.** A zone's active trip points (`_AC0`, the hottest,
+  to `_AC9`) each list the cooling devices that must run at or above it
+  (`_ALx`: fans `PNP0C0B`, or power resources). The policy keeps the
+  hottest trip point reached until the zone is 3 degrees below it, and
+  the zone's routine runs the devices of that trip point and of every
+  cooler one (`Io.AcpiPower`: each device once in `Power.Cooling`,
+  running while any zone wants it; `Firmware.AcpiFans`: `_FSL` 100 or 0
+  for a fan with fine control, else its power resources' `_ON`/`_OFF`
+  and `_PS0`/`_PS3`; its speed from `_FST` or the power resource's
+  `_STA`). `CallListCoolingDevices` lists them with their zone and trip
+  point.
+- **Notifications.** A Notify on a zone reaches the policy (it only
+  notes it: AML is running): 0x80 reads the zone at once, 0x81 and 0x82
+  read its trip points (and fans) again first.
+
 **ACPI** (`Io.AcpiPower`, a thread with a large stack once the namespace
 is loaded): every `ThermalZone` object (`Firmware.AcpiThermal`: `_TMP`,
 `_PSV`, `_CRT`, `_HOT`, `_TZP`, tenths of a kelvin; readings outside
 -73 to 177 C are refused) becomes a thermal zone; batteries (`PNP0C0A`,
 `Firmware.AcpiBatteries`: `_STA` bit 4, `_BIX` or `_BIF`, `_BST`) are read
 then and every 10 seconds, kept for `CallListBatteries` so that no AML
-runs on a caller's small stack; `_CST` as above. QEMU has neither
+runs on a caller's small stack; `_OSC`/`_PDC`, `_CST`, `_PSS` as above;
+the wake devices (see Suspend to RAM). It then waits for what the
+firmware's notifications bring:
+- **Processor hotplug.** A Notify 0 or 1 on a processor object (QEMU's
+  `device_add` of a processor: its GPE, `\_SB.CPUS.CSCN`, the Notify):
+  `_STA` says present and enabled, `_MAT` gives its local APIC or
+  x2APIC entry (the id, the enabled flag); it is told the capabilities
+  and brought up like the processors at start
+  (`BringUpPluggedProcessor`, the start-up code prepared first if no
+  processor needed it then). Removal (eject) is not done.
+- **The embedded controller** (`Firmware.AcpiEmbeddedController`,
+  `Io.AcpiEmbeddedController`), connected right after the tables load
+  and before the devices' `_INI`: its ports from the ECDT where there is
+  one, else from the `PNP0C09` device's `_CRS` (data, then command);
+  the EmbeddedControl address space for AML (`RD_EC`/`WR_EC` byte by
+  byte, every wait bounded so a dead controller fails the access instead
+  of hanging); `_REG(3, 1)`; and its GPE taken from the method table
+  (`RegisterGpeHandler`): each event's queries (`QR_EC`) run their
+  `_Qnn`, which is where laptops Notify their zones, batteries and
+  buttons. QEMU has neither
 thermal zones nor batteries: `make acpi-power-test`
 (`tools/AcpiPowerTest`) reads them from a table `make-table.py`
 assembles (two zones, one with a nonsense `_TMP`; batteries with
@@ -971,23 +1069,47 @@ firmware's least; the firmware's own 85 C limit stays beneath).
 `arm_freq` or `over_voltage` (it never did).
 - **The Pi 5's fan.** The firmware does not run it for the operating
   system: Linux drives it with RP1's PWM1 channel 3 on GPIO 45
-  (`cooling_fan` in the tree, inverted: high stops it). PWM1 needs RP1's
-  clock generator, which nothing sets up here, so `Drivers.Rp1Fan` makes
-  GPIO 45 a plain output (function SYS_RIO, pad driving, no pulls) on
-  RP1's GPIO node and switches the fan fully on at 55 C (`fanon=`) and
-  off below 48 C; `fan=on` keeps it running, `fan=off` leaves it alone.
+  (`cooling_fan` in the tree, inverted: high stops it). `Drivers.Rp1Pwm`
+  (untested on the board: built only) sets up RP1's clock generator for
+  it (CLK_PWM1 from the 50 MHz crystal, undivided, enabled; offsets and
+  fields as Linux's clk-rp1) and the channel (range for the tree's
+  41566 ns period, inverted, trailing-edge mark/space, latched with the
+  global update bit), and `Drivers.Rp1Fan` gives GPIO 45 its first
+  function (PWM1 channel 3); the governor runs the fan at 30, 50, 70 and
+  100 % from `fanon=` (55 C), 5, 12 and 20 degrees above it (the tree's
+  cooling levels), each level held until 5 degrees below where it
+  starts. Anything that does not read back as written leaves the PWM
+  unused: GPIO 45 is then a plain output (function SYS_RIO, pad
+  driving, no pulls) and any speed above 0 is full speed, as before; a
+  wrong clock after all would leave the pin at one level, low being
+  full speed, which errs on the cool side. `fan=on` keeps it at full
+  speed, `fan=off` leaves it alone. It is the cooling device "fan".
 
 **Calls and tools.** `CallGetProcessorPower` (154) gives the clock
 source, whether idle is tickless, the idle states and, per processor,
 clock interrupts, busy and idle time and idle state entries, the clock
 rate and its range, the performance limit and the fan;
 `CallListThermalZones` (155) and `CallListBatteries` (156) list the rest
-(`Sys.Power`). `powerstat` prints them, with each processor's clock
+(`Sys.Power`), and calls 228-232 the wake sources and their alarm
+(`CallSetWakeAlarm`, `CallListWakeSources`, `CallSetWakeSource`), the
+cooling devices and the performance states. `powerstat` prints them (and
+the performance states, fans and wake sources; `--wake INDEX on|off`
+changes one), with each processor's clock
 interrupts per second over a second; sysinfo shows the clock rate, the
 hottest temperature and the batteries; the kernel debug shell's `power`
 writes the same to the log.
 
-**Tests.** coretest runs `powerstat --check-idle 3 5`: the processors
+**Tests.** `make acpi-power-test` also reads, from its table, four wake
+devices (`_DSW` and `_PSW` told, a power resource turned on), an
+embedded controller played in memory (bytes, a 16-bit field, `_REG`, a
+query running `_Q42`, a dead controller timing out, a zone reading its
+temperature through it), active trip points with a fan by `_FSL` and
+one by its power resource, `_OSC` and `_PDC` given the capabilities,
+`_PSS`/`_PCT`/`_PPC`, `_MAT` entries and a port C-state. coretest runs
+`powerstat --check-wake` (the alarm listed last, an index past the end
+refused, the alarm turned off and on) and checks that a user may not set
+the wake alarm. The input test wakes the machine by the alarm
+(`suspend -t 6`, no `system_wakeup`) and plugs a processor in. coretest runs `powerstat --check-idle 3 5`: the processors
 that stayed idle for 3 seconds (busy under 10 %) must average under 5
 clock interrupts a second that found no timer or wake-up due (100 with
 the periodic tick; the interrupts for due work, which depend on what
@@ -1615,7 +1737,45 @@ Io.InterruptRouting); the I/O APIC's select/window register pairs are
 used under a lock of their own, and a processor whose x2APIC id is
 above 255, which an I/O APIC entry or an MSI address cannot name
 without interrupt remapping, gets its interrupts routed to the boot
-processor instead. Its handler
+processor instead - unless interrupt remapping is on.
+
+**Interrupt remapping** (`Hal.InterruptRemapping`; `Hal.IntelRemapping`
+for VT-d's DMAR, `Hal.AmdRemapping` for AMD-Vi's IVRS). Each route takes
+an entry of the IOMMU's table holding the vector and the full
+destination (32 bits with x2APIC local APICs: VT-d's extended interrupt
+mode, AMD-Vi's XTEn with 128-bit entries), and the I/O APIC entry or the
+message names the entry instead of a processor:
+- VT-d: one table of 4096 entries for every unit; an entry is given out
+  once and invalidated by index through the unit's invalidation queue
+  (a wait descriptor's status write says it is done); the source id is
+  checked (the requester id; the I/O APIC's from the DMAR's device
+  scope). The I/O APIC entry carries the format bit and the handle, its
+  vector field still the real vector (the I/O APIC matches end-of-
+  interrupt messages against it); a message's address carries them, its
+  data 0.
+- AMD-Vi: a device table covering buses 0 to the MCFG's last, each
+  source's own table of 256 entries made when it first connects (DMA
+  left untranslated: only the interrupt bits are valid); a message's
+  data and an I/O APIC entry's vector field are the index, which for
+  the vector's own slot is the vector itself where it is free (the I/O
+  APIC's end-of-interrupt matching again); a remapped message reaches
+  the local APIC as edge triggered (QEMU's does), which then broadcasts
+  no end of interrupt, so a level triggered line's is written to its
+  I/O APIC's EOI register (`EndRemappedLevelInterrupt`, the vector in
+  service read from the local APIC); the I/O APICs' requester ids
+  from the IVHD's special entries; commands (invalidate the device entry
+  and its table, completion wait storing a word) through the command
+  buffer.
+It is turned on where a listed processor's APIC id is above 255 and an
+IOMMU can do it; `intremap=on` turns it on wherever it can (the tests:
+QEMU's `intel-iommu,intremap=on` and `amd-iommu,intremap=on` with
+`kernel-irqchip=split`: serial and keyboard through the I/O APIC, xHCI
+and AHCI by message, e1000 by a level triggered line), `intremap=off`
+never. After suspend to RAM the IOMMUs are set up again before the I/O
+APIC entries are written back. DMA remapping is not done.
+`make interrupt-remapping-test` (also in `make test`) boots behind each
+IOMMU: the console, the e1000's level line (DHCP, ping), AHCI by
+message, and ping again after an alarm-woken suspend to RAM. Its handler
 runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
@@ -1775,6 +1935,36 @@ for now the routing of PCI interrupt lines.
   to it.
 
 ### Suspend to RAM
+
+**Wake sources** (`Io.AcpiWake`, `Firmware.AcpiWakeDevices`). Devices
+with a `_PRW` (its GPE, or a GPE block device's, the deepest state it
+wakes from, its power resources), classified by id (power and sleep
+buttons, lid) or as PCI functions under a root bridge by class (USB
+controllers, network cards; by the names firmware gives them where the
+class is not known), and the battery backed clock's alarm. Buttons, the
+lid and USB wake by default; network cards and the rest do not
+(`CallSetWakeSource`, `powerstat --wake`). The alarm is a time
+(`CallSetWakeAlarm`, `suspend -t SECONDS`; the CMOS alarm registers,
+matched daily, so within a day on a PC; the PL031's match register on
+AArch64), used once. Going to sleep: before `\_PTS`, each enabled device
+that can wake from S3 gets its power resources on, `_DSW(1, 3, 0)` (or
+`_PSW(1)`) and its PCI function's PME enabled; the alarm is written;
+then, with interrupts off right before the sleep types, every GPE is off
+and cleared but the wake devices', and the fixed power button and (with
+an alarm) the clock's event (`RTC_EN`) are enabled. Waking, before the
+status is cleared, what woke it is noted (the power button, `RTC_STS` or
+the alarm flag, a wake device's GPE status: `[acpi] woken by ...`, and
+`WokeLast` in `CallListWakeSources`), and the devices are disarmed. The
+runtime GPEs come back with ACPI's other enables.
+
+**Memory type ranges** (`Kernel.Arch.MemoryTypeRanges`). The boot
+processor's MTRRs (default type, fixed and variable ranges) are read at
+start; every processor that starts or wakes compares its own with them
+and writes them where they differ, by the manual's procedure (caches
+off and flushed, translations flushed, MTRRs off, written, on again).
+QEMU's firmware leaves them differing on the secondary processors at
+start and cleared on every processor after waking (each a log line,
+`memory type ranges set to the boot processor's`).
 
 S3 turns every processor and device off; only memory keeps its
 contents. Waking, the firmware starts the boot processor at the FACS's

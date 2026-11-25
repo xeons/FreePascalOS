@@ -32,7 +32,9 @@
 
   The destination field is 8 bits (physical mode): a processor whose
   APIC id is above 255 (x2APIC) cannot be named here, and the HAL routes
-  its interrupts to the boot processor instead (Hal.InterruptController).
+  its interrupts to the boot processor instead (Hal.InterruptController)
+  - unless interrupt remapping is on, when the entry names an entry of
+  the IOMMU's table instead (Hal.InterruptRemapping).
 }
 unit Hal.IoApic;
 
@@ -50,7 +52,17 @@ function IoApicInputCount: LongWord;
   Vector, and unmasks it. Returns False if no I/O APIC serves Gsi. }
 function RouteGlobalInterrupt(Gsi: LongWord; Vector: Byte; DestinationApicId: Byte;
   ActiveLow: Boolean; LevelTriggered: Boolean): Boolean;
+{ Writes Gsi's redirection entry as given (Low unmasked: the remapped
+  form, Hal.InterruptRemapping). False if no I/O APIC serves Gsi. }
+function WriteGlobalInterruptEntry(Gsi: LongWord; Low, High: LongWord): Boolean;
+{ The number (in the order added) of the I/O APIC serving Gsi, or -1. }
+function IoApicIndexOfGsi(Gsi: LongWord): Integer;
 procedure MaskGlobalInterrupt(Gsi: LongWord);
+{ Ends a level triggered interrupt with Vector (its entry's vector
+  field) at the I/O APIC serving Gsi through its EOI register (version
+  20h and later): its Remote IRR is cleared without the local APIC's
+  broadcast. }
+procedure EndIoApicInterrupt(Gsi: LongWord; Vector: Byte);
 { Suspend to RAM resets the I/O APICs: every redirection entry is kept
   before, and written back after. }
 procedure SaveIoApicEntries;
@@ -67,6 +79,7 @@ const
 
   RegisterSelectOffset = $00;
   RegisterWindowOffset = $10;
+  EndOfInterruptOffset = $40;
 
   RegisterVersion = $01;
   RedirectionTableBase = $10;
@@ -220,6 +233,24 @@ begin
   Result := True;
 end;
 
+function WriteGlobalInterruptEntry(Gsi: LongWord; Low, High: LongWord): Boolean;
+var
+  Index: Integer;
+  Input: LongWord;
+begin
+  Result := FindIoApic(Gsi, Index, Input);
+  if Result then
+    WriteEntry(IoApics[Index], Input, Low, High);
+end;
+
+function IoApicIndexOfGsi(Gsi: LongWord): Integer;
+var
+  Input: LongWord;
+begin
+  if not FindIoApic(Gsi, Result, Input) then
+    Result := -1;
+end;
+
 procedure MaskGlobalInterrupt(Gsi: LongWord);
 var
   Index: Integer;
@@ -227,6 +258,15 @@ var
 begin
   if FindIoApic(Gsi, Index, Input) then
     WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, EntryMasked);
+end;
+
+procedure EndIoApicInterrupt(Gsi: LongWord; Vector: Byte);
+var
+  Index: Integer;
+  Input: LongWord;
+begin
+  if FindIoApic(Gsi, Index, Input) then
+    PLongWord(IoApics[Index].Registers + EndOfInterruptOffset)^ := Vector;
 end;
 
 procedure SaveIoApicEntries;

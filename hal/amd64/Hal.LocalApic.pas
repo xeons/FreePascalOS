@@ -41,6 +41,8 @@ function LocalApicId: LongWord;
 function LocalApicUsesX2ApicMode: Boolean;
 
 procedure LocalApicEndOfInterrupt;
+{ The vector being serviced now (the highest in service), -1 if none. }
+function LocalApicVectorInService: LongInt;
 procedure LocalApicSendSelfInterrupt(Vector: Byte);
 
 { Inter-processor interrupts, addressed by local APIC id. }
@@ -84,6 +86,7 @@ const
   RegisterId = $020;
   RegisterTaskPriority = $080;
   RegisterEndOfInterrupt = $0B0;
+  RegisterInServiceBase = $100;
   RegisterSpuriousVector = $0F0;
   RegisterInterruptCommandLow = $300;
   RegisterInterruptCommandHigh = $310;
@@ -164,6 +167,25 @@ begin
     Result := ReadApicRegister(RegisterId)
   else
     Result := ReadApicRegister(RegisterId) shr 24;
+end;
+
+function LocalApicVectorInService: LongInt;
+var
+  Word_: Integer;
+  Bits: LongWord;
+  Bit: Integer;
+begin
+  for Word_ := 7 downto 0 do
+  begin
+    Bits := ReadApicRegister(RegisterInServiceBase + LongWord(Word_) * $10);
+    if Bits <> 0 then
+    begin
+      for Bit := 31 downto 0 do
+        if (Bits and (LongWord(1) shl Bit)) <> 0 then
+          Exit(Word_ * 32 + Bit);
+    end;
+  end;
+  Result := -1;
 end;
 
 procedure LocalApicEndOfInterrupt;

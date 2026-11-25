@@ -72,6 +72,7 @@ uses
   Power.Performance,
   Power.ThermalZones,
   Power.ProcessorLoad,
+  Power.Cooling,
   Debug.Output;
 
 type
@@ -87,7 +88,9 @@ const
   DefaultPassiveCelsius = 80;
   DefaultCriticalCelsius = 90;
   DefaultFanOnCelsius = 55;
-  FanHysteresisCelsius = 7;
+  FanHysteresisCelsius = 5;
+  FanLevelOffsets: array[0..3] of LongInt = (0, 5, 12, 20);
+  FanLevelPercent: array[0..3] of LongWord = (30, 50, 70, 100);
   TemperaturePollMilliseconds = 1000;
   GovernorPriority = 20;
 
@@ -101,6 +104,9 @@ var
   AllowedHertz: LongWord = 0;
   FanOnMilliCelsius: LongInt = DefaultFanOnCelsius * 1000;
   FanRunning: Boolean = False;
+  { The fan level in force (-1: off). }
+  FanLevel: Integer = -1;
+  FanCoolingNumber: Integer = -1;
   { The pin has been driven once (until then its state is whatever the
     firmware left). }
   FanDriven: Boolean = False;
@@ -226,37 +232,74 @@ begin
   RegisterThermalZone(Zone);
 end;
 
+{ The fan's speed for a temperature: off below fanon=, then 30, 50, 70
+  and 100 % from fanon, 5, 12 and 20 degrees above it (the Pi 5 device
+  tree's cooling levels and trip points, moved with fanon=). A level
+  holds until the temperature is FanHysteresisCelsius below where it
+  starts. Without the PWM any speed above 0 is full speed. }
+function FanLevelStart(Level: Integer): LongInt;
+begin
+  Result := FanOnMilliCelsius + FanLevelOffsets[Level] * 1000;
+end;
+
+function NextFanLevel(Temperature: LongInt): Integer;
+var
+  Level: Integer;
+begin
+  Result := -1;
+  for Level := 0 to High(FanLevelOffsets) do
+    if Temperature >= FanLevelStart(Level) then
+      Result := Level;
+  if (FanLevel > Result) and (FanLevel >= 0) and
+     (Temperature >= FanLevelStart(FanLevel) - FanHysteresisCelsius * 1000) then
+    Result := FanLevel;
+end;
+
 procedure UpdateFan;
 var
-  Running: Boolean;
+  Level: Integer;
+  Speed: LongWord;
 begin
   if not Rp1FanIsAvailable or (FanMode = FanLeftAlone) then
     Exit;
-  Running := FanRunning;
+  Level := FanLevel;
   if FanMode = FanAlwaysOn then
-    Running := True
+    Level := High(FanLevelOffsets)
   else if LastTemperature <> NoTripPoint then
-  begin
-    if LastTemperature >= FanOnMilliCelsius then
-      Running := True
-    else if LastTemperature < FanOnMilliCelsius - FanHysteresisCelsius * 1000 then
-      Running := False;
-  end;
-  if (Running = FanRunning) and FanDriven then
+    Level := NextFanLevel(LastTemperature);
+  if (Level = FanLevel) and FanDriven then
     Exit;
-  FanRunning := Running;
+  FanLevel := Level;
   FanDriven := True;
-  SetRp1FanRunning(Running);
+  if Level < 0 then
+    Speed := 0
+  else
+    Speed := FanLevelPercent[Level];
+  Speed := SetRp1FanSpeed(Speed);
+  FanRunning := Speed > 0;
+  NoteCoolingDeviceSpeed(FanCoolingNumber, Speed);
   Report;
   DebugBeginMessage;
   DebugWriteTag('fan');
-  if Running then
-    DebugWrite('on at ')
+  if Speed > 0 then
+  begin
+    DebugWrite('at ');
+    DebugWriteDecimal(Speed);
+    DebugWrite(' % at ');
+  end
   else
     DebugWrite('off at ');
   DebugWriteDecimal(QWord(LastTemperature) div 1000);
   DebugWriteLine(' C');
   DebugEndMessage;
+end;
+
+{ Power.Cooling's routine for the board's fan (not used by the thermal
+  policy: the governor drives it). }
+function SetBoardFanSpeed(Context: Pointer; Percent: LongWord): Boolean;
+begin
+  SetRp1FanSpeed(Percent);
+  Result := True;
 end;
 
 procedure RunGovernor(Context: Pointer);
@@ -360,6 +403,8 @@ begin
   ReadTemperature(nil, Temperature);
   ReadOptions;
   InitializeRp1Fan;
+  if Rp1FanIsAvailable then
+    FanCoolingNumber := RegisterCoolingDevice('fan', CoolingBoardFan, @SetBoardFanSpeed, nil);
   Report;
   if Mode <> ScalingOff then
     SetPerformanceLimiter(@LimitArmClock);

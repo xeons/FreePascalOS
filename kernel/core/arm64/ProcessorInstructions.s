@@ -39,6 +39,12 @@ ROUTINE ArchEnableInterrupts
     msr     daifclr, #2
     ret
 
+// ISR_EL1: the interrupts pending at this processor (bit 7 an IRQ),
+// whether masked or not.
+ROUTINE ArchReadPendingInterrupts
+    mrs     x0, isr_el1
+    ret
+
 ROUTINE ArchReadInterruptMask
     mrs     x0, daif
     ret

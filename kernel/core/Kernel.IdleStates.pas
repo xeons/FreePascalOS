@@ -211,6 +211,8 @@ begin
     EnableInterrupts;
     Exit;
   end;
+  { Wake requests from before this look are for work it will see. }
+  ClearWakeRequest(Processor);
   { Its timer stopped in the last wait: set it again first. }
   if Processor^.ClockInterruptTime = NeverDue then
     RearmClockInterrupt;

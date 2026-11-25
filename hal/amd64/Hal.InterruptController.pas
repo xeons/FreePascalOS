@@ -40,6 +40,12 @@ procedure WriteDeviceInterruptRouting;
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
 
+{ After a device interrupt's end at the local APIC: level triggered
+  lines remapped by an AMD IOMMU (whose messages reach the local APIC as
+  edge triggered, so it broadcasts no end of interrupt) get theirs at
+  the I/O APIC. }
+procedure EndRemappedLevelInterrupt;
+
 { What a device writes, and where, to raise Vector on processor
   TargetProcessorId. False if the platform has no message interrupts. }
 function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
@@ -53,6 +59,7 @@ uses
   Firmware.Madt,
   Hal.IoApic,
   Hal.LocalApic,
+  Hal.InterruptRemapping,
   Debug.Output;
 
 const
@@ -67,24 +74,34 @@ const
     processor in 8 bits. }
   HighestReachableApicId = 255;
 
+  MaximumIoApics = 8;
+
 var
   Available: Boolean = False;
+  { The I/O APICs' ids, in the order added (Hal.IoApic's numbers). }
+  IoApicIds: array[0..MaximumIoApics - 1] of Byte;
+  IoApicIdCount: Integer = 0;
+  { Per vector: the GSI of an AMD-remapped level line on it, +1 (0:
+    none), and the I/O APIC entry's vector field. }
+  LevelLineOfVector: array[0..255] of LongWord;
+  LevelEntryVector: array[0..255] of Byte;
+  LevelLinesRemapped: Boolean = False;
   { The boot processor's APIC id: where an interrupt for a processor
     that cannot be named goes instead. }
   FallbackApicId: LongWord = 0;
 
 { TargetProcessorId if a device can name it, else the boot processor
   (an x2APIC id above 255 would be cut to its low 8 bits: another
-  processor, or none). }
+  processor, or none). With interrupt remapping every id can be named. }
 function ReachableApicId(TargetProcessorId: LongWord): LongWord;
 begin
-  if TargetProcessorId <= HighestReachableApicId then
+  if (TargetProcessorId <= HighestReachableApicId) or (InterruptRemappingKind <> RemappingNone) then
     Result := TargetProcessorId
   else
     Result := FallbackApicId;
 end;
 
-procedure AddMappedIoApic(PhysicalAddress: TPhysicalAddress; GlobalInterruptBase: LongWord);
+procedure AddMappedIoApic(PhysicalAddress: TPhysicalAddress; GlobalInterruptBase: LongWord; Id: Byte);
 var
   Registers: Pointer;
 begin
@@ -92,7 +109,14 @@ begin
   if Registers = nil then
     Exit;
   if AddIoApic(Registers, GlobalInterruptBase) then
+  begin
     Available := True;
+    if IoApicIdCount < MaximumIoApics then
+    begin
+      IoApicIds[IoApicIdCount] := Id;
+      Inc(IoApicIdCount);
+    end;
+  end;
 end;
 
 function InitializeDeviceInterruptRouting(MadtWasParsed: Boolean): Boolean;
@@ -106,11 +130,13 @@ begin
     for Index := 0 to IoApicCount - 1 do
     begin
       Description := IoApicDescription(Index);
-      AddMappedIoApic(Description.PhysicalAddress, Description.GlobalInterruptBase);
+      AddMappedIoApic(Description.PhysicalAddress, Description.GlobalInterruptBase, Description.Id);
     end
   else
-    AddMappedIoApic(StandardIoApicAddress, 0);
+    AddMappedIoApic(StandardIoApicAddress, 0, 0);
   Result := Available;
+  if Result then
+    StartInterruptRemapping;
 end;
 
 procedure WriteDeviceInterruptRouting;
@@ -130,14 +156,45 @@ end;
 
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
+var
+  Index: Integer;
+  Low: LongWord;
+  High: LongWord;
 begin
+  if InterruptRemappingKind <> RemappingNone then
+  begin
+    Index := IoApicIndexOfGsi(Gsi);
+    Result := (Index >= 0) and (Index < IoApicIdCount) and
+      RemapIoApicEntry(IoApicIds[Index], Vector, TargetProcessorId, ActiveLow, LevelTriggered, Low, High) and
+      WriteGlobalInterruptEntry(Gsi, Low, High);
+    if Result and LevelTriggered and (InterruptRemappingKind = RemappingAmd) then
+    begin
+      LevelEntryVector[Vector] := Byte(Low);
+      LevelLineOfVector[Vector] := Gsi + 1;
+      LevelLinesRemapped := True;
+    end;
+    Exit;
+  end;
   Result := RouteGlobalInterrupt(Gsi, Vector, Byte(ReachableApicId(TargetProcessorId)), ActiveLow,
     LevelTriggered);
+end;
+
+procedure EndRemappedLevelInterrupt;
+var
+  Vector: LongInt;
+begin
+  if not LevelLinesRemapped then
+    Exit;
+  Vector := LocalApicVectorInService;
+  if (Vector >= 0) and (LevelLineOfVector[Vector] <> 0) then
+    EndIoApicInterrupt(LevelLineOfVector[Vector] - 1, LevelEntryVector[Vector]);
 end;
 
 function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 begin
+  if InterruptRemappingKind <> RemappingNone then
+    Exit(RemapMessage(RequesterId, Vector, TargetProcessorId, Address, Data));
   Address := MessageAddressBase or (QWord(ReachableApicId(TargetProcessorId)) shl MessageDestinationShift);
   Data := Vector;
   Result := True;

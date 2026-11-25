@@ -156,7 +156,7 @@ begin
     States[1].Parameter := TestPowerDownState;
     States[1].Flags := IdleStateStopsTimer or IdleStateLosesContext;
     States[1].ExitLatencyNanoseconds := 100 * NanosecondsPerMicrosecond;
-    States[1].TargetResidencyNanoseconds := 1000 * NanosecondsPerMicrosecond;
+    States[1].TargetResidencyNanoseconds := 10000 * NanosecondsPerMicrosecond;
     Exit(2);
   end;
   if not FirmwareDeviceTreeIsPresent or not PsciOffersProcessorSuspend(Extended) then
@@ -205,11 +205,20 @@ begin
 end;
 
 { The made-up state: the processor turns itself off. }
+function ArchReadPendingInterrupts: QWord; external name 'ArchReadPendingInterrupts';
+
 procedure TurnOffForTest(Processor: PProcessor);
+const
+  PendingIrq = $80;
 begin
   { Shootdowns skip it while off; it flushes its TLB when back. }
   StopAnsweringRequests;
   NotePoweredDown(Processor);
+  if not PowerDownMayProceed(Processor, (ArchReadPendingInterrupts and PendingIrq) <> 0) then
+  begin
+    ResumeAnsweringRequests;
+    Exit;
+  end;
   DataSynchronizationBarrier;
   PsciTurnOffThisProcessor;
   { Refused: still on, state kept. }

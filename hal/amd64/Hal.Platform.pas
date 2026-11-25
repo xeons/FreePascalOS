@@ -124,6 +124,8 @@ implementation
 uses
   Hal.PortIo,
   Hal.IoApic,
+  Hal.InterruptRemapping,
+  Hal.InterruptController,
   Hal.IntervalTimer,
   Hal.InterruptVectors,
   Hal.LegacyPic,
@@ -243,6 +245,8 @@ end;
 
 procedure HalEndOfInterrupt;
 begin
+  { Before the local APIC forgets which vector is in service. }
+  EndRemappedLevelInterrupt;
   LocalApicEndOfInterrupt;
 end;
 
@@ -301,6 +305,8 @@ procedure HalResumeBootProcessor;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
+  { The IOMMU forgot its tables: before the entries that name them. }
+  ResumeInterruptRemapping;
   RestoreIoApicEntries;
 end;
 

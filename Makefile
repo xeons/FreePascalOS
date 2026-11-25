@@ -588,10 +588,18 @@ test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-sys
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-interrupt-remapping.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	@$(MAKE) --no-print-directory arm64-test-if-available
+
+# Interrupt remapping behind QEMU's Intel and AMD IOMMUs (intremap=on):
+# the console, a level triggered line, messages, and after suspend to RAM;
+# also run by make test.
+.PHONY: interrupt-remapping-test
+interrupt-remapping-test: esp $(SYSTEM_DISK)
+	scripts/test-interrupt-remapping.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Running out of memory (a process ended with 137, the system alive) and
 # discards reaching the disks (image files shrink) in a 256 MiB guest;
