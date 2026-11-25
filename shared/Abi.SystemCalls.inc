@@ -937,6 +937,19 @@ const
   AuxiliaryInitializerCount = $1001;
   AuxiliaryFinalizers = $1002;
   AuxiliaryFinalizerCount = $1003;
+  { The address of the clock page (a read-only TAbiClockPage the kernel
+    keeps up to date), so the runtime reads the time without a system
+    call. }
+  AuxiliaryClockPage = $1004;
+
+  { TAbiClockPage.Mode: how the time is read from the page. }
+  { The page cannot give the time (the kernel's clock is not a counter
+    the program may read, such as KVM's paravirtual clock): use
+    CallGetPreciseTime. }
+  ClockPageModeSystemCall = 0;
+  { The processor's counter (RDTSC on x86-64, CNTVCT_EL0 on AArch64)
+    with CounterOrigin, OriginNanoseconds and CounterFrequency. }
+  ClockPageModeCounter = 1;
 
   { Fields of TAbiAttributeChanges that apply. }
   ChangeFieldMode = $01;
@@ -1603,6 +1616,32 @@ type
     Reserved: LongWord;
   end;
   PAbiPreciseTime = ^TAbiPreciseTime;
+
+  { The clock page (AuxiliaryClockPage): the parameters of the kernel's
+    clock, read without a lock. Sequence is odd while the kernel changes
+    the page; a reader copies what it needs and reads again if Sequence
+    was odd or changed meanwhile. With ClockPageModeCounter, for a
+    counter value C:
+      uptime = OriginNanoseconds                       if C <= CounterOrigin
+      uptime = OriginNanoseconds + (C - CounterOrigin) * 10^9 / CounterFrequency
+    (whole seconds and the rest computed apart, so nothing overflows;
+    shared/ClockPageMath.inc), and the wall clock is the uptime plus
+    WallBaseOffset plus the progress of a gradual adjustment: SlewTotal
+    moved at SlewPartsPerMillion of the uptime passed since SlewStart,
+    never past SlewTotal. }
+  TAbiClockPage = record
+    Sequence: LongWord;
+    Mode: LongWord;
+    CounterOrigin: QWord;
+    OriginNanoseconds: QWord;
+    CounterFrequency: QWord;
+    WallBaseOffset: Int64;
+    SlewTotal: Int64;
+    SlewStart: QWord;
+    SlewPartsPerMillion: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiClockPage = ^TAbiClockPage;
 
   TAbiIdleState = record
     { "C1 (HLT)", "C6 (MWAIT)", "WFI", "PSCI standby 1"... }

@@ -37,6 +37,14 @@ asm
   svc #0
 end;
 
+{ The virtual counter the kernel's clock counts (the clock page); the
+  ISB keeps the read from moving ahead of what came before it. }
+function ReadProcessorCounter: QWord; assembler; nostackframe;
+asm
+  isb
+  mrs x0, cntvct_el0
+end;
+
 { --- Thread control block (ThreadBlock* in Abi.SystemCalls) ------------- }
 
 { The thread pointer: TPIDR_EL0, which points at the control block. }

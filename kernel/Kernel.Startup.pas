@@ -73,6 +73,8 @@ uses
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.SynchronizationSelfTest,
+  Kernel.SchedulerLatencySelfTest,
+  Kernel.ClockSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
   Kernel.ProtectionFaultTest,
@@ -364,6 +366,8 @@ begin
 
   RunKernelSelfTests;
   RunSynchronizationSelfTests;
+  RunSchedulerLatencySelfTests;
+  RunClockSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
   RunPlatformSelfTest;

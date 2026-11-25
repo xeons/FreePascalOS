@@ -88,6 +88,14 @@ type
       nanoseconds. }
     NextTickTime: QWord;
     ClockInterruptTime: QWord;
+    { Dynamic tick (Kernel.Clock): while the running thread is alone on
+      the processor (nothing in its queues) the tick waits until this
+      time (a residual tick a second later); 0 while it is not
+      deferred. Changed by the processor itself, under its scheduling
+      lock with interrupts off; read by others under that lock. }
+    TickDeferredUntil: QWord;
+    { How often the tick was deferred so. }
+    TickDeferralCount: QWord;
     { How many clock interrupts it took (its tick stops while it idles,
       so an idle processor takes few), and how often it entered each of
       the idle states (Kernel.IdleStates). }

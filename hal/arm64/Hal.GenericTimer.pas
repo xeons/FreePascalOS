@@ -54,6 +54,13 @@ procedure StopTimer;
 procedure PauseGenericTimer;
 procedure ContinueGenericTimer;
 
+{ The counter value that is time zero now and the counter's rate, for
+  the clock page. False before the timer is set up. }
+function DescribeGenericTimer(out Origin, CountsPerSecond: QWord): Boolean;
+{ Lets user mode read the virtual counter (CNTVCT_EL0) on the executing
+  processor, and nothing else of the timer. }
+procedure AllowUserCounterReads;
+
 implementation
 
 uses
@@ -97,6 +104,7 @@ var
 
 procedure ArchWriteTimerCompare(Value: QWord); external name 'ArchWriteTimerCompare';
 procedure ArchWriteTimerControl(Value: QWord); external name 'ArchWriteTimerControl';
+procedure ArchWriteTimerKernelControl(Value: QWord); external name 'ArchWriteTimerKernelControl';
 
 procedure InitializeGenericTimer;
 var
@@ -156,6 +164,23 @@ end;
 procedure StopTimer;
 begin
   ArchWriteTimerControl(TimerControlMask);
+end;
+
+function DescribeGenericTimer(out Origin, CountsPerSecond: QWord): Boolean;
+begin
+  Origin := CounterOrigin;
+  CountsPerSecond := Frequency;
+  Result := Frequency <> 0;
+end;
+
+procedure AllowUserCounterReads;
+const
+  { CNTKCTL_EL1.EL0VCTEN: CNTVCT_EL0 (and CNTFRQ_EL0) readable at EL0;
+    the physical counter, the event stream and the timers stay the
+    kernel's. }
+  UserVirtualCounterAccess = $2;
+begin
+  ArchWriteTimerKernelControl(UserVirtualCounterAccess);
 end;
 
 procedure PauseGenericTimer;

@@ -125,6 +125,7 @@ procedure SetFreezeStartHook(Hook: TFreezeStartHook);
 implementation
 
 uses
+  Kernel.ClockPage,
   Runtime.Atomic,
   Kernel.Arch.Cpu,
   Kernel.Arch.Suspend,
@@ -297,6 +298,8 @@ begin
   if Processor^.Index = 0 then
   begin
     HalContinueClockAfterSleep;
+    { Programs read the clock's new origin from the clock page. }
+    PublishClockPage;
     HalResumeBootProcessor;
   end
   else
