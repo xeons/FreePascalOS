@@ -1533,8 +1533,34 @@ of their own. `Io.Dma` gives drivers what they need for that:
   `FinishDmaFromDevice` (invalidate; partial lines at the edges are
   cleaned and invalidated, never thrown away) after it wrote. For a
   coherent device these do nothing.
-- Allocations come from below the device's reach and are given to it at
-  their bus address (`TranslateDmaAddress`).
+- Allocations are physically contiguous runs from the page allocator's
+  run search (`AllocatePhysicalRun`, see "Contiguous physical runs"),
+  from the device's lowest DMA window (or below its address limit),
+  page aligned or aligned further (`AllocateAlignedDmaBuffer`) and
+  inside the device's boundary (`LimitDmaBoundary`: xHCI sets 64 KiB,
+  which none of its structures may cross), and are given to it at their
+  bus address (`TranslateDmaAddress`).
+
+**Contiguous physical runs** (`Memory.PhysicalPages`,
+`Memory.FrameRuns`). Next to the page frame database's free list -
+linked both ways, so any free frame can be taken off it in constant
+time - a bitmap with one bit per frame says which frames are free.
+`AllocatePhysicalRun` takes a `TPhysicalRunConstraints` (pages, an
+alignment and a boundary, both powers of two, and an address range) and
+scans the bitmap a 64-frame word at a time: words with no free frame
+are skipped whole, a used frame inside a candidate moves the candidate
+past it to the next aligned frame, and a candidate that would cross a
+boundary moves to the boundary; the lowest run that fits is taken frame
+by frame off the free list. When none fits, the freed pages the heap
+checks hold back are let go and the search is tried once more.
+`FreePhysicalRun` gives a run back; `LongestFreePhysicalRun` measures
+fragmentation. Single pages below an address (32-bit devices) and the
+old `AllocateZeroedContiguousPhysicalPages` use the same search.
+`tools/FrameRunTest` (`make frame-run-test`) compares the search with
+a frame-by-frame one on thousands of random bitmaps and requests; the
+kernel self tests ("contiguous physical runs", "DMA buffers with
+alignment, boundary and windows") allocate runs with 64 KiB and 2 MiB
+alignments, a boundary, a 4 GiB limit and a window at boot.
 - The kernel option `noncoherentdma` treats every device as not
   coherent, which exercises the uncached mappings and the cache
   maintenance under QEMU, whose devices all snoop
@@ -8005,8 +8031,8 @@ adapter that does not exist yet.
 card: descriptor rings are one page; frame buffers are 2 KiB, two to a
 page, so none crosses a page. The RTL8139's receive ring is one 32 KiB
 buffer, from `AllocateZeroedContiguousPhysicalPages` (`Memory.PhysicalPages`:
-a run of free frames below a limit, taken off the free list in one
-walk).
+a run of free frames below a limit, found in the free-frame bitmap; see
+"Contiguous physical runs").
 
 **Rings.** Receive and transmit rings of 128 descriptors with a buffer
 each. Received frames are handed to the network layer from the buffer
@@ -8829,7 +8855,7 @@ other's way and each keeps room to grow:
 | program image | [1 TiB, 2 TiB) | 28 bits |
 | run time allocations (heap chunks, mappings) | first fit upwards from a random page of [16 TiB, 17 TiB) | 28 bits |
 | each thread's stack and thread data | first fit from a random page of [48 TiB, 64 TiB), chosen per thread | 32 bits |
-| each library | a random page of [126 TiB, 127 TiB) | 28 bits |
+| each library | a random page of [126 TiB, 127 TiB), chosen the first time its image section is loaded and kept for every process (see below) | 28 bits |
 | main stack top | a random page of the 64 GiB below 0x7FFF_FFFF_F000; the initial stack pointer a random 16 bytes into a page | 24 + 8 bits |
 
 A range that does not fit above its random start is looked for from the
@@ -8838,6 +8864,18 @@ sooner. Programs are position independent (`ld -pie`, ET_DYN) and the
 loader relocates them like libraries; an ET_EXEC program would still go
 to its fixed address. The kernel option `aslr=off` gives every process
 the old fixed layout (for debugging: the same addresses in every run).
+
+Libraries are placed as Windows places DLLs: the first load of a library
+since its image section was made (a boot, or the file changed) puts it
+at a random page of the library window, which its section remembers
+(`PreferredStart`); later loads, in any process, put it there again if
+that range is free in the process. So a library is at the same address
+in every process, and its relocated pages are the same: they are kept
+with the section and mapped by later loads instead of relocating again
+(see "Relocated copies" below). The program, the heap, the stacks and
+the thread data stay random per process. The kernel option
+`aslr=process` gives each process random places of its own for its
+libraries too (and no relocated copy is ever used for them).
 
 The random numbers come from `Kernel.Random`: ChaCha20 (RFC 8439,
 `Kernel.ChaCha20`) with fast key erasure - each block gives the next key
@@ -8851,9 +8889,52 @@ identifications, TCP initial sequence numbers), `/dev/random` and made-up
 virtio MAC addresses use it too. `tools/AslrTest` (`make aslr-test`)
 checks ChaCha20 against the RFC's vector and many layouts against their
 windows on the host; `aslrtest` (a coretest line) runs a program twice
-and checks that its code, a library's, its stack, a heap block and a
-thread's stack all moved (booted with `aslr=off`, the same command
-prints "aslrtest: aslr=off, the addresses are the same").
+and checks that its code, its stack, a heap block and a thread's stack
+all moved - and a library's too when booted with `aslr=process`
+(booted with `aslr=off`, the same command prints "aslrtest: aslr=off,
+the addresses are the same").
+
+#### Relocated copies
+
+Relocating a library writes into some of its pages (the GOT, data
+pointers, text relocations). Those pages are made by the kernel, not in
+the process (`Processes.ImageLoader`, `Processes.RelocatedCopies`):
+
+- When a module is mapped, the loader notes which pages of its image
+  its relocations write (`PlanRelocatedPages`) and leaves them out of
+  the mapping: their regions get no pages until the module is relocated.
+- Relocating starts by resolving every symbol the relocations name, once
+  each (`BuildResolutionTable`). The resolutions - each symbol's address
+  and size, the TLS placement of its module - with the load bias, the
+  module's own TLS placement and the TLS descriptor resolvers are the
+  key.
+- If the module's image section keeps a relocated copy with that bias
+  and key, its pages are mapped (copy on write, like the section's
+  built pages) and nothing is relocated. Otherwise the relocations are
+  applied into fresh kernel pages - each starting as what the page
+  holds before relocation: the file's page, a built page or zeros - the
+  pages are mapped, and they are kept as a copy of the section under the
+  key (up to `MaximumRelocatedCopies` = 4 per section, the least
+  recently used going first). A program is kept only when it is not at a
+  random address (it would never be there again).
+- A module with copy relocations (a program linked for a fixed address)
+  is relocated in the process as before, after the others, so what it
+  copies is relocated data.
+- Copies go with their section, and a shrinker ("relocated image
+  copies") drops them, oldest first, when memory is short; pages a
+  process maps stay its.
+
+Two loads with equal keys would write exactly the same bytes, so a copy
+is never used where its contents would be wrong; with libraries kept at
+their place (above) every process after the first gets libsystem and
+the others relocated for nothing, sharing the pages until it writes
+them. `CallGetImageCacheStatistics` (208) gives a
+`TAbiImageCacheStatistics`: the sections kept, the copies and their
+pages, the loads that reused a copy, kept a new one or kept none, the
+libraries placed at their section's place, and the copies dropped.
+`latelibtest` (a coretest line) runs two children loading
+libdynpascal.so and checks that relocated copies were reused and that
+both found it at the same address.
 
 Where the program and its libraries went is kept in the process's module
 list (`Process^.Modules`, a `TModuleList` of `TLoadedModule`): each
@@ -9290,9 +9371,25 @@ thread pointer on AArch64), entries by module handle; libraries are
 never unloaded, so a filled entry stays valid and needs no generation
 check, and the AArch64 resolver finds it without a call (only the first
 access saves every register and calls Pascal). Vectors and blocks are
-`AllocateForThread` allocations, freed when the thread ends. Initial and
-local exec accesses (TPOFF relocations) cannot reach such a block and
-fail the load (glibc keeps a surplus of static TLS for those).
+`AllocateForThread` allocations, freed when the thread ends.
+
+Initial and local exec accesses (TPOFF relocations) cannot reach such a
+block, so the static area ends in a **surplus**: when the program is
+loaded, 2048 bytes (`StaticTlsSurplusBytes`, about what glibc keeps) are
+added to it and the thread pointer is aligned to at least 64 bytes. A
+library loaded late whose TLS must be at a fixed distance from the
+thread pointer - marked DF_STATIC_TLS, or with TPOFF relocations of its
+own - gets its block in the surplus if it fits (alignment up to the
+thread pointer's): its module id is then a static one, like the startup
+libraries'. Once the load has succeeded the kernel writes the block's
+initial contents (the TLS image, then zeros) into every thread data
+region of the process - every thread there is, as the layout of those
+regions has not changed since the program was loaded - and threads made
+later get the block like any static one. A failed load gives the
+surplus it took back. A library that needs the surplus when it is used
+up fails to load as before. `latelibtest` loads libstatictls.so (initial
+exec TLS, `userland/lib/statictls`, one assembly source per
+architecture) after starting threads and checks every thread's block.
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
 `FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
@@ -9315,8 +9412,19 @@ the rest a block of their own in the dynamic TLS vector (offsets with
 `ThreadvarDynamicFlag`, the library's number and the offset in its
 block; the loading thread keeps their values, other threads start with
 zeros, as in a new thread) and initializes those units; its DT_FINI
-finalizes them. The library's own `begin ... end` block is not run, and
-the resource strings of its units are not set up.
+finalizes them. The library's own `begin ... end` block is not run.
+Its resource string tables (`FPC_RESOURCESTRINGTABLES`, and
+`FPC_RESSTRINITTABLES` for constants initialized with resource strings)
+go to `SysRegisterLibrary` too: the compiler gives every resource string
+its default value, but ObjPas's `SetResourceStrings`,
+`SetUnitResourceStrings` and `FinalizeResourceTables` walk only the
+table System's `_FPC_ResourceStringTables` points at, the program's. So
+System points it at a merged table: the program's tables followed by
+those of every library's own units (a unit's table is the same records
+whoever lists it, so the units the program has are not listed twice),
+and the same for `_FPC_ResStrInitTables`. A translation made after a
+library was loaded reaches its strings and the constants made from them
+(`latelibtest` checks it with libdynpascal's); one made before does not.
 `userland/lib/dynpascal` shows how such a library is built.
 
 Initialization code runs in user mode. The kernel collects the
@@ -9539,10 +9647,19 @@ a user page fault.
 **Running out** (`Processes.OutOfMemory`). A user page fault that found
 no page even after reclaiming chooses a process to end
 (`Processes.OutOfMemoryScores`): its score is its share of memory in
-thousandths - resident plus committed pages (`Processes.MemoryCharges`;
-the virtual memory calls feed commitments in through
-`SetCommitCounters`, until then a process is charged with what it has
-resident) - plus its adjustment (-1000 to 1000). The highest score goes,
+thousandths - its footprint: resident pages, the sections it made and
+the pages committed to it that are not resident yet
+(`Processes.MemoryCharges`; the virtual memory calls feed commitments in
+through `SetCommitCounters`: its commit charge less its private resident
+pages) - plus its adjustment (-1000 to 1000). So a process that
+committed much and touched little is weighed by what it may come to
+use. `CallGetProcessMemoryCharge` (209) gives any process's
+`TAbiProcessMemoryCharge`: resident and shared pages, commit charge,
+committed but not resident, sections, footprint, its score now
+(`ProcessMemoryNotEligible` if it would not be chosen) and adjustment;
+`memorytest charge` (a coretest line) commits 32 MiB, checks they count
+as committed but not resident and raise the footprint, touches half and
+checks it moved to resident, and reads a hog's charge. The highest score goes,
 on equal scores the larger. Never chosen unless it is the culprit (the
 process whose fault failed): the initial program (the service manager),
 a process with the adjustment -1000 (the display server sets it on

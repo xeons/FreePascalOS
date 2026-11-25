@@ -51,6 +51,15 @@
   references of their own to every page they map and to the mapped
   file, so dropping a section never takes anything from under them.
 
+  Each section also keeps up to MaximumRelocatedCopies relocated copies
+  of its pages (Processes.RelocatedCopies): the pages its relocations
+  wrote at one load address with one set of symbol resolutions, which a
+  later load that matches maps instead of relocating. The least recently
+  used copy goes when a section has no room for another; a shrinker
+  drops copies when memory is short. And a library's section remembers
+  where it was placed first (PreferredStart), so later loads put it
+  there again when that is free in the process (Processes.ImageLoader).
+
   The cache knows nothing about ELF beyond the records it keeps: the
   loader measures, checks and fills.
 }
@@ -65,10 +74,12 @@ uses
   Runtime.Time,
   Elf64,
   Memory.Layout,
-  Processes.MappedFiles;
+  Processes.MappedFiles,
+  Processes.RelocatedCopies;
 
 const
   MaximumSections = 32;
+  MaximumRelocatedCopies = 4;
   SectionPathLength = 256;
 
 type
@@ -100,6 +111,10 @@ type
     { Its file changed while it was in use; not handed out any more. }
     IsStale: Boolean;
     LastUse: QWord;
+    { Relocated copies of its pages (nil where there is none). }
+    Copies: array[0..MaximumRelocatedCopies - 1] of PRelocatedCopy;
+    { Where the library was placed first (0: not yet). }
+    PreferredStart: QWord;
   end;
 
 procedure InitializeImageSections;
@@ -119,17 +134,28 @@ procedure PublishImageSection(Section: PImageSection);
 { Ends a use. }
 procedure ReleaseImageSection(Section: PImageSection);
 
+{ The relocated copy of Section (which the caller uses) made at Bias with
+  Key, referenced for the caller (ReleaseRelocatedCopy), or nil. }
+function FindRelocatedCopy(Section: PImageSection; Bias: QWord; Key: PByte; KeyLength: QWord): PRelocatedCopy;
+{ Keeps Copy with Section (which the caller uses), taking the caller's
+  reference; the least recently used copy goes if there is no room. }
+procedure KeepRelocatedCopy(Section: PImageSection; Copy: PRelocatedCopy);
+{ The sections kept now. }
+function CachedImageSectionCount: QWord;
+
 implementation
 
 uses
   Runtime.Memory,
   Runtime.Text,
+  Runtime.Atomic,
   FileSystem.Types,
   FileSystem.Files,
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Kernel.Mutex,
-  Kernel.Clock;
+  Kernel.Clock,
+  Memory.Pressure;
 
 var
   Sections: array[0..MaximumSections - 1] of PImageSection;
@@ -138,17 +164,27 @@ var
 procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord); forward;
 procedure FileRemoved(Volume: PVolume; NodeNumber: QWord); forward;
 
+function ShrinkRelocatedCopies(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord; forward;
+
 procedure InitializeImageSections;
 begin
   InitializeMutex(SectionsLock);
   AddFileChangedHook(@FileChanged);
   AddFileRemovedHook(@FileRemoved);
+  RegisterShrinker('relocated image copies', @ShrinkRelocatedCopies);
 end;
 
 procedure DestroySection(Section: PImageSection);
 var
   Index: QWord;
+  CopyIndex: Integer;
 begin
+  for CopyIndex := 0 to MaximumRelocatedCopies - 1 do
+    if Section^.Copies[CopyIndex] <> nil then
+    begin
+      ReleaseRelocatedCopy(Section^.Copies[CopyIndex]);
+      Section^.Copies[CopyIndex] := nil;
+    end;
   if Section^.BuiltPages <> nil then
   begin
     for Index := 1 to Section^.PageCount do
@@ -354,6 +390,114 @@ begin
   ReleaseMutex(SectionsLock);
   if Uncached then
     DestroySection(Section);
+end;
+
+function FindRelocatedCopy(Section: PImageSection; Bias: QWord; Key: PByte; KeyLength: QWord): PRelocatedCopy;
+var
+  Index: Integer;
+begin
+  Result := nil;
+  AcquireMutex(SectionsLock);
+  for Index := 0 to MaximumRelocatedCopies - 1 do
+    if (Section^.Copies[Index] <> nil) and RelocatedCopyMatches(Section^.Copies[Index], Bias, Key, KeyLength) then
+    begin
+      Result := Section^.Copies[Index];
+      ReferenceRelocatedCopy(Result);
+      Result^.LastUse := ClockTickCount;
+      Break;
+    end;
+  ReleaseMutex(SectionsLock);
+end;
+
+procedure KeepRelocatedCopy(Section: PImageSection; Copy: PRelocatedCopy);
+var
+  Index: Integer;
+  Slot: Integer;
+  Replaced: PRelocatedCopy;
+begin
+  Replaced := nil;
+  Copy^.LastUse := ClockTickCount;
+  AcquireMutex(SectionsLock);
+  Slot := -1;
+  for Index := 0 to MaximumRelocatedCopies - 1 do
+  begin
+    if Section^.Copies[Index] = nil then
+    begin
+      Slot := Index;
+      Break;
+    end;
+    if (Slot < 0) or (Section^.Copies[Index]^.LastUse < Section^.Copies[Slot]^.LastUse) then
+      Slot := Index;
+  end;
+  Replaced := Section^.Copies[Slot];
+  Section^.Copies[Slot] := Copy;
+  ReleaseMutex(SectionsLock);
+  if Replaced <> nil then
+  begin
+    ReleaseRelocatedCopy(Replaced);
+    AtomicIncrement(RelocatedCopyCounters.Dropped);
+  end;
+end;
+
+function CachedImageSectionCount: QWord;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  AcquireMutex(SectionsLock);
+  for Index := 0 to MaximumSections - 1 do
+    if Sections[Index] <> nil then
+      Inc(Result);
+  ReleaseMutex(SectionsLock);
+end;
+
+{ Drops the least recently used relocated copy of all sections (the
+  table's lock held); nil if there is none. }
+function TakeOldestCopyLocked: PRelocatedCopy;
+var
+  SectionIndex: Integer;
+  CopyIndex: Integer;
+  OldestSection: Integer;
+  OldestCopy: Integer;
+  Candidate: PRelocatedCopy;
+begin
+  OldestSection := -1;
+  OldestCopy := -1;
+  for SectionIndex := 0 to MaximumSections - 1 do
+    if Sections[SectionIndex] <> nil then
+      for CopyIndex := 0 to MaximumRelocatedCopies - 1 do
+      begin
+        Candidate := Sections[SectionIndex]^.Copies[CopyIndex];
+        if (Candidate <> nil) and ((OldestSection < 0) or
+           (Candidate^.LastUse < Sections[OldestSection]^.Copies[OldestCopy]^.LastUse)) then
+        begin
+          OldestSection := SectionIndex;
+          OldestCopy := CopyIndex;
+        end;
+      end;
+  if OldestSection < 0 then
+    Exit(nil);
+  Result := Sections[OldestSection]^.Copies[OldestCopy];
+  Sections[OldestSection]^.Copies[OldestCopy] := nil;
+end;
+
+{ Memory is short: relocated copies only save work, so they go, oldest
+  first (pages processes still map stay theirs). }
+function ShrinkRelocatedCopies(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord;
+var
+  Copy: PRelocatedCopy;
+begin
+  Result := 0;
+  while Result < PagesWanted do
+  begin
+    AcquireMutex(SectionsLock);
+    Copy := TakeOldestCopyLocked;
+    ReleaseMutex(SectionsLock);
+    if Copy = nil then
+      Break;
+    Result := Result + ReleaseRelocatedCopy(Copy);
+    AtomicIncrement(RelocatedCopyCounters.Dropped);
+  end;
 end;
 
 end.

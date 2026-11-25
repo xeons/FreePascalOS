@@ -299,6 +299,10 @@ function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
 function AddressIsInUsableRegion(Space: PAddressSpace; Address: QWord): Boolean;
 { The start of the region holding Address, 0 if none does. }
 function RegionStartOf(Space: PAddressSpace; Address: QWord): QWord;
+{ The first region of Kind at or above Address: its start and length;
+  False if there is none. }
+function FindRegionOfKind(Space: PAddressSpace; Kind: TRegionKind; Address: QWord;
+  out Start, Length: QWord): Boolean;
 { Adds the guard below the stack region starting at StackStart (the
   main thread's; thread stacks get theirs with
   AllocateGuardedUserMemory). }
@@ -1305,6 +1309,28 @@ end;
 function BackingPageIndex(Region: PUserRegion; PageAddress: QWord): QWord;
 begin
   Result := (Region^.BackingOffset + (PageAddress - Region^.Start)) div PageSize;
+end;
+
+function FindRegionOfKind(Space: PAddressSpace; Kind: TRegionKind; Address: QWord;
+  out Start, Length: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
+begin
+  Result := False;
+  Start := 0;
+  Length := 0;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Region := FindRegionAtOrAboveLocked(Space, Address);
+  while (Region <> nil) and (Region^.Kind <> Kind) do
+    Region := FindRegionAtOrAboveLocked(Space, Region^.Start + Region^.Length);
+  if Region <> nil then
+  begin
+    Start := Region^.Start;
+    Length := Region^.Length;
+    Result := True;
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;

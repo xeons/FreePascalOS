@@ -68,6 +68,10 @@ const
   DynamicFiniArraySize = 28;
   DynamicPreinitArray = 32;
   DynamicPreinitArraySize = 33;
+  DynamicFlags = 30;
+  { DT_FLAGS: the module uses the initial exec TLS model (its TLS must
+    be at a fixed distance from the thread pointer). }
+  DynamicFlagStaticTls = $10;
 
   SymbolUndefinedSection = 0;
   SymbolBindingWeak = 2;

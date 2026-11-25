@@ -65,9 +65,6 @@ uses
   Processes.ImageLoader,
   Processes.Arch.ImageFormat;
 
-const
-  MinimumThreadPointerAlignment = 16;
-
 { Copies a module's TLS image from the process's own copy of the module
   into the new thread's block. }
 function CopyTlsImage(Space: PAddressSpace; Module: PLoadedModule; ThreadPointer: QWord): LongInt;
@@ -115,8 +112,6 @@ end;
 function CreateThreadStorage(Process: PProcess; out RegionStart, ThreadPointer: QWord): LongInt;
 var
   List: PModuleList;
-  Alignment: QWord;
-  StaticTlsSize: QWord;
   RegionSize: QWord;
   ThreadPointerOffset: QWord;
 begin
@@ -126,15 +121,7 @@ begin
   { The module list may grow while another thread loads a library. }
   AcquireMutex(Process^.Lock);
   List := PModuleList(Process^.Modules);
-  Alignment := MinimumThreadPointerAlignment;
-  StaticTlsSize := 0;
-  if List <> nil then
-  begin
-    if List^.StaticTlsAlignment > Alignment then
-      Alignment := List^.StaticTlsAlignment;
-    StaticTlsSize := List^.StaticTlsSize;
-  end;
-  LayOutThreadRegion(StaticTlsSize, Alignment, RegionSize, ThreadPointerOffset);
+  GetThreadRegionLayout(List, RegionSize, ThreadPointerOffset);
 
   Result := AllocateGuardedUserMemory(Process^.AddressSpace, RegionSize, RegionKindThreadData, RegionStart);
   if Result = ErrorNone then

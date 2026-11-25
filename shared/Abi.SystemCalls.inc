@@ -716,6 +716,25 @@ const
   CallGetParentProcessId = 196;
   { 197-199 are kept for this block. }
 
+  { --- Memory and the loader (208-213) ------------------------------------ }
+
+  { (StatisticsAddress): the program loader's caches as a
+    TAbiImageCacheStatistics: the image sections kept, the relocated
+    copies of their pages kept per load address, and how often a load
+    used one instead of relocating. Anyone may read them. }
+  CallGetImageCacheStatistics = 208;
+  { (ProcessId (0: the caller), ChargeAddress): what the out-of-memory
+    policy charges the process with, as a TAbiProcessMemoryCharge: its
+    resident pages, its commitments not resident yet, the sections it
+    made, and the score that orders the processes it would end. Anyone
+    may ask about any process; ErrorNotFound if none has that id. }
+  CallGetProcessMemoryCharge = 209;
+  { 210-213 are kept for this block. }
+
+  { TAbiProcessMemoryCharge. }
+  ProcessMemoryNotEligible = Low(Int64);
+  ProcessMemoryProtected = 1;
+
   { --- File mappings (214-219) ----------------------------------------- }
 
   { (Address, Length, Flags): msync: the pages of shared file mappings in
@@ -1968,6 +1987,48 @@ type
     SystemCommitChargePages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { What CallGetImageCacheStatistics gives. }
+  TAbiImageCacheStatistics = record
+    { Image sections kept (programs and libraries between loads), the
+      relocated copies kept with them and the pages those hold. }
+    CachedSections: QWord;
+    RelocatedCopies: QWord;
+    RelocatedPages: QWord;
+    { Modules whose relocated pages came from a kept copy (no relocation
+      work), modules relocated and their copy kept, modules relocated
+      without keeping one (copy relocations, or no room). }
+    RelocationsReused: QWord;
+    RelocationsKept: QWord;
+    RelocationsNotKept: QWord;
+    { Libraries placed at the address their section had before (shared
+      by every process: ImagePlacementShared), and copies dropped to
+      give memory back. }
+    SharedPlacements: QWord;
+    CopiesDropped: QWord;
+  end;
+  PAbiImageCacheStatistics = ^TAbiImageCacheStatistics;
+
+  { What CallGetProcessMemoryCharge gives (pages). }
+  TAbiProcessMemoryCharge = record
+    { Pages mapped, and those of them shared with other processes. }
+    ResidentPages: QWord;
+    SharedPages: QWord;
+    { The commit charge, and the part of it not resident yet. }
+    CommitChargePages: QWord;
+    CommittedNotResidentPages: QWord;
+    { Sections (shared memory) it made, mapped or not. }
+    SectionPages: QWord;
+    { What the policy weighs: resident + sections + committed not resident. }
+    FootprintPages: QWord;
+    { Its score (per mille of RAM plus the adjustment), or
+      ProcessMemoryNotEligible if it would not be chosen. }
+    OomScore: Int64;
+    OomScoreAdjust: LongInt;
+    { ProcessMemoryProtected: never ended for memory unless it asks. }
+    Flags: LongWord;
+  end;
+  PAbiProcessMemoryCharge = ^TAbiProcessMemoryCharge;
 
   { What CallQueryMemory gives: the run of alike pages from BaseAddress
     for Length bytes, in the allocation (reservation, mapping, image

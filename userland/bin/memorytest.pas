@@ -30,6 +30,13 @@
       the hog must be ended with 137, the bystander and this program
       must live on. Then a small process with the OOM score adjustment
       1000 beside a hog: the small one must be ended too.
+  memorytest charge
+      What the out-of-memory policy charges a process with
+      (CallGetProcessMemoryCharge): 32 MiB committed and not touched
+      count as committed but not resident and raise the footprint and
+      the score; touching half of it moves that half to resident; the
+      footprint of another process (a hog holding 8 MiB) can be read
+      too. (A coretest line.)
   memorytest trim
       On the volumes labelled TRIMNVME and TRIMVIRT: writes a 24 MiB
       file, syncs, removes it; on TRIMNVME syncs again (the batched
@@ -58,6 +65,7 @@ uses
   Sys.Errors,
   Sys.Files,
   Sys.Information,
+  Sys.Kernel,
   Sys.Memory,
   Sys.MemoryStatus,
   Sys.Processes,
@@ -363,6 +371,61 @@ begin
   EndAndClose(Bystander);
 end;
 
+{ --- The charge ------------------------------------------------------------ }
+
+procedure TestCharge;
+const
+  CommitMebibytes = 32;
+  CommitPages = CommitMebibytes * Mebibyte div PageBytes;
+var
+  Before: TProcessMemoryCharge;
+  Committed: TProcessMemoryCharge;
+  Touched: TProcessMemoryCharge;
+  Other: TProcessMemoryCharge;
+  Reservation: Int64;
+  Hog: Int64;
+begin
+  Check(GetProcessMemoryCharge(0, Before) = 0, 'the kernel tells this process''s charge');
+  Check(Before.FootprintPages >= Before.ResidentPages, 'the footprint covers the resident pages');
+  Reservation := KernelReserveMemory(CommitMebibytes * Mebibyte);
+  Check(Reservation > 0, 'reserved 32 MiB');
+  if Reservation <= 0 then
+    Exit;
+  Check(KernelCommitMemory(Pointer(PtrUInt(Reservation)), CommitMebibytes * Mebibyte, MemoryReadWrite) >= 0,
+    'committed them');
+  GetProcessMemoryCharge(0, Committed);
+  Check(Committed.CommittedNotResidentPages >= Before.CommittedNotResidentPages + CommitPages,
+    Format('32 MiB committed count as committed, not resident (%d -> %d pages)',
+      [Before.CommittedNotResidentPages, Committed.CommittedNotResidentPages]));
+  Check(Committed.FootprintPages >= Before.FootprintPages + CommitPages,
+    Format('the commitment raises the footprint (%d -> %d pages)', [Before.FootprintPages, Committed.FootprintPages]));
+  Check((Committed.OomScore = ProcessMemoryNotEligible) or (Committed.OomScore > Before.OomScore) or
+    (Before.OomScore = ProcessMemoryNotEligible),
+    Format('and the score (%d -> %d)', [Before.OomScore, Committed.OomScore]));
+
+  TouchPages(PByte(PtrUInt(Reservation)), CommitMebibytes * Mebibyte div 2);
+  GetProcessMemoryCharge(0, Touched);
+  Check(Touched.ResidentPages >= Committed.ResidentPages + CommitPages div 2,
+    Format('touching half makes it resident (%d -> %d pages)', [Committed.ResidentPages, Touched.ResidentPages]));
+  Check(Touched.CommittedNotResidentPages + CommitPages div 2 <= Committed.CommittedNotResidentPages + 64,
+    Format('and no longer committed only (%d -> %d pages)',
+      [Committed.CommittedNotResidentPages, Touched.CommittedNotResidentPages]));
+  Check((Touched.FootprintPages + 64 >= Committed.FootprintPages) and
+    (Touched.FootprintPages <= Committed.FootprintPages + 64), 'the footprint stays the same');
+  KernelFreeMemory(Pointer(PtrUInt(Reservation)));
+
+  Hog := StartSelf(['hog', '--step', '8', '--limit', '8', '--hold', '600']);
+  Check(Hog >= 0, 'started a hog holding 8 MiB');
+  if Hog < 0 then
+    Exit;
+  SleepMilliseconds(1500);
+  Check(GetProcessMemoryCharge(QWord(ProcessIdOf(Hog)), Other) = 0, 'the hog''s charge can be read');
+  Check(Other.ResidentPages >= 8 * Mebibyte div PageBytes,
+    Format('the hog has its 8 MiB resident (%d pages)', [Other.ResidentPages]));
+  EndAndClose(Hog);
+  Check(GetProcessMemoryCharge(999999, Other) <> 0, 'no charge for a process that does not exist');
+end;
+
 { --- Discarding -------------------------------------------------------------- }
 
 { The folder of the volume labelled Labelled, or ''. }
@@ -469,6 +532,8 @@ begin
     TestOutOfMemory
   else if Mode = 'trim' then
     TestTrim
+  else if Mode = 'charge' then
+    TestCharge
   else if Mode = 'suite' then
   begin
     TestOutOfMemory;
@@ -476,7 +541,7 @@ begin
   end
   else
   begin
-    PrintErrorStringLine('Usage: memorytest cache|oom|trim|suite|hog [...]');
+    PrintErrorStringLine('Usage: memorytest cache|oom|charge|trim|suite|hog [...]');
     Halt(2);
   end;
   Finish;

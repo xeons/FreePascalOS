@@ -27,7 +27,9 @@
   libsystem (SysRegisterLibrary: the threadvars and initialization of
   the units the program does not have already, rtl/fpc/syslibraries.inc)
   and its DT_FINI finalizes those units again when the program ends. The
-  library's own begin ... end block is not run.
+  library's own begin ... end block is not run. Its resource string
+  tables (FPC_RESOURCESTRINGTABLES, FPC_RESSTRINITTABLES) go along, so
+  SetResourceStrings and friends reach its units' resource strings too.
 }
 unit si_dll;
 
@@ -40,11 +42,14 @@ implementation
 var
   InitFinalTable: record end; external name 'INITFINAL';
   ThreadvarTablesTable: record end; external name 'FPC_THREADVARTABLES';
+  ResourceStringTables: record end; external name 'FPC_RESOURCESTRINGTABLES';
+  ResourceStringInitTables: record end; external name 'FPC_RESSTRINITTABLES';
   Registration: Pointer = nil;
 
 procedure LibraryStart; cdecl; [public, alias: 'FPC_SHARED_LIB_START'];
 begin
-  Registration := SysRegisterLibrary(@InitFinalTable, @ThreadvarTablesTable);
+  Registration := SysRegisterLibrary(@InitFinalTable, @ThreadvarTablesTable, @ResourceStringTables,
+    @ResourceStringInitTables);
 end;
 
 procedure LibraryExit; cdecl; [public, alias: 'FPC_LIB_EXIT'];

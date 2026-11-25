@@ -91,6 +91,7 @@ uses
   Processes.LimitCalls,
   Processes.MemoryCalls,
   Processes.MappedFileCalls,
+  Processes.MemoryChargeCalls,
   Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
@@ -866,6 +867,9 @@ begin
     CallCreateSession: Result := PerformCreateSession;
     CallGetProcessGroupOf: Result := PerformGetProcessGroupOf(Argument0, Argument1);
     CallGetParentProcessId: Result := Int64(CurrentProcess^.ParentProcessId);
+    { Memory and the loader (208-213). }
+    CallGetProcessMemoryCharge: Result := PerformGetProcessMemoryCharge(Argument0, Argument1);
+    CallGetImageCacheStatistics: Result := PerformGetImageCacheStatistics(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;

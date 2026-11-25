@@ -34,7 +34,9 @@ exports
   DynPascalCounterAddress name 'dynpascal_counter_address',
   DynPascalMark name 'dynpascal_mark',
   DynPascalSetMark name 'dynpascal_set_mark',
-  DynPascalInitializations name 'dynpascal_initializations';
+  DynPascalInitializations name 'dynpascal_initializations',
+  DynPascalGreeting name 'dynpascal_greeting',
+  DynPascalGreetingCopy name 'dynpascal_greeting_copy';
 
 begin
 end.
