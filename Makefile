@@ -230,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -581,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test hpet-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -589,6 +589,7 @@ test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-tes
 	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-interrupt-remapping.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-clock-sources.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-session.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-virtio-gpu.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-ssh.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -600,6 +601,14 @@ test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-tes
 .PHONY: interrupt-remapping-test
 interrupt-remapping-test: esp $(SYSTEM_DISK)
 	scripts/test-interrupt-remapping.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# The timers in several configurations (the HPET as the clock and the
+# broadcast timer, by I/O APIC input, FSB message and legacy replacement,
+# the watchdog's fallback, no HPET nor PIT, KVM), each with timetest,
+# powerstat's checks and a suspend to RAM; also run by make test.
+.PHONY: clock-sources-test
+clock-sources-test: esp $(SYSTEM_DISK)
+	scripts/test-clock-sources.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Running out of memory (a process ended with 137, the system alive) and
 # discards reaching the disks (image files shrink) in a 256 MiB guest;
@@ -724,6 +733,19 @@ $(CLOCK_PAGE_TEST): tools/ClockPageTest/ClockPageTest.pas shared/Runtime.ClockPa
 
 clock-page-test: $(CLOCK_PAGE_TEST)
 	$(CLOCK_PAGE_TEST)
+
+# The x86-64 HAL's timer arithmetic on the host: the ACPI HPET table, the
+# HPET's units and 32-bit wrap, CPUID 15h/16h and kvmclock frequencies and
+# the clock watchdog's rule (Hal.HpetTable, Hal.HpetMath, Hal.TimerFrequencies).
+HPET_TEST := build/tools/HpetTest
+
+$(HPET_TEST): tools/HpetTest/HpetTest.pas hal/amd64/Hal.HpetTable.pas hal/amd64/Hal.HpetMath.pas \
+		hal/amd64/Hal.TimerFrequencies.pas
+	@mkdir -p build/tools/hpet-test-units
+	$(FPC) -O2 -Cr -Co -Fuhal/amd64 -FEbuild/tools -FUbuild/tools/hpet-test-units $<
+
+hpet-test: $(HPET_TEST)
+	$(HPET_TEST)
 
 # The kernel's UTF-8 / UTF-16 conversions for file names (Runtime.Unicode)
 # on the host: malformed UTF-8 (overlongs, surrogates, past U+10FFFF).
