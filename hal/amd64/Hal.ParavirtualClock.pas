@@ -34,6 +34,12 @@
   Like the counter clock, it starts at zero, pauses before suspend to
   RAM and continues from there after waking (the record's address is
   written again: the processor was reset).
+
+  The host may clear the stable flag later (after a suspend its
+  processors' counters may no longer have been matched). The record is
+  then still read from every processor, so each read is also kept from
+  going below the latest time any processor read (LatestNanoseconds, a
+  compare-and-exchange), as Linux does: the uptime never goes back.
 }
 unit Hal.ParavirtualClock;
 
@@ -87,6 +93,8 @@ var
     began. }
   Origin: QWord = 0;
   PausedNanoseconds: QWord = 0;
+  { The latest time read, kept only while the record is not stable. }
+  LatestNanoseconds: PtrUInt = 0;
 
 function HostIsKvm: Boolean;
 var
@@ -111,7 +119,7 @@ begin
   Result := (Cycles shr 32) * Multiplier + (((Cycles and $FFFFFFFF) * Multiplier) shr 32);
 end;
 
-function HostNanoseconds: QWord;
+function HostNanoseconds(out Stable: Boolean): QWord;
 var
   Version: LongWord;
   Timestamp: QWord;
@@ -127,6 +135,7 @@ begin
     SystemTime := TimeRecord^.SystemTime;
     Multiplier := TimeRecord^.CounterToSystemMultiplier;
     Shift := TimeRecord^.CounterShift;
+    Stable := (TimeRecord^.Flags and FlagCounterStable) <> 0;
     Counter := ReadTimeStampCounter;
     FullMemoryBarrier;
   until ((Version and 1) = 0) and (PLongWord(@TimeRecord^.Version)^ = Version);
@@ -144,6 +153,7 @@ end;
 function StartParavirtualClock: Boolean;
 var
   Registers: TCpuidResult;
+  Stable: Boolean;
 begin
   Result := False;
   if not HostIsKvm then
@@ -164,7 +174,7 @@ begin
     WriteModelSpecificRegister(SystemTimeRegister, 0);
     Exit;
   end;
-  Origin := HostNanoseconds;
+  Origin := HostNanoseconds(Stable);
   Running := True;
   Result := True;
 end;
@@ -174,14 +184,31 @@ begin
   Result := Running;
 end;
 
+{ Candidate, or the latest time any processor read if that is later. }
+function NotBelowLatest(Candidate: QWord): QWord;
+var
+  Latest: PtrUInt;
+begin
+  repeat
+    Latest := AtomicLoad(LatestNanoseconds);
+    if Candidate <= Latest then
+      Exit(Latest);
+  until AtomicCompareExchange(LatestNanoseconds, Candidate, Latest) = Latest;
+  Result := Candidate;
+end;
+
 function ParavirtualClockNanoseconds: QWord;
 var
   Now: QWord;
+  Stable: Boolean;
 begin
-  Now := HostNanoseconds;
+  Now := HostNanoseconds(Stable);
   if Now <= Origin then
-    Exit(PausedNanoseconds);
-  Result := Now - Origin;
+    Result := PausedNanoseconds
+  else
+    Result := Now - Origin;
+  if not Stable then
+    Result := NotBelowLatest(Result);
 end;
 
 procedure PauseParavirtualClock;
@@ -190,9 +217,11 @@ begin
 end;
 
 procedure ContinueParavirtualClock;
+var
+  Stable: Boolean;
 begin
   RegisterRecord;
-  Origin := HostNanoseconds - PausedNanoseconds;
+  Origin := HostNanoseconds(Stable) - PausedNanoseconds;
 end;
 
 end.

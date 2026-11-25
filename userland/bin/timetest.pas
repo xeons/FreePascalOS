@@ -206,12 +206,14 @@ const
 var
   Reads: QWord;
   BackSteps: QWord;
+  LargestStep: QWord;
   Previous: QWord;
   Now: QWord;
   Index: Integer;
 begin
   Reads := 0;
   BackSteps := 0;
+  LargestStep := 0;
   Previous := MonotonicNanoseconds;
   while not FileExists(StopFile) do
   begin
@@ -219,14 +221,19 @@ begin
     begin
       Now := MonotonicNanoseconds;
       if Now < Previous then
+      begin
         Inc(BackSteps);
+        if Previous - Now > LargestStep then
+          LargestStep := Previous - Now;
+      end;
       Previous := Now;
     end;
     Inc(Reads, ReadsBetweenLooks);
     { Leave the processor to others now and then. }
     Sleep(1);
   end;
-  WriteLn(Format('timetest: watch: %d uptime reads, %d went back', [Reads, BackSteps]));
+  WriteLn(Format('timetest: watch: %d uptime reads, %d went back (by up to %d ns)',
+    [Reads, BackSteps, LargestStep]));
   if BackSteps > 0 then
     Halt(1);
 end;
