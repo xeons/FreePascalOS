@@ -1392,8 +1392,11 @@ if dialogs_started:
         press('ret')
         time.sleep(1)
         place = dialog_places('ETC')
-    if 'file-passwd' in place:
-        click_at(*place['file-passwd'])
+    # passwd is chosen by typing its name in the list (the list has the
+    # focus, from the click on etc): /etc has more files than the list
+    # shows, and which of them show changes as files are added there.
+    if 'file-ok' in place:
+        type_on_keyboard('passwd')
         click_at(*place['file-ok'])
     time.sleep(1)
     click_at(*place['save-button'])
