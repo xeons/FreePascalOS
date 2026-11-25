@@ -7261,8 +7261,8 @@ overwrite or break it, and replacing the base leaves packages alone;
 `/usr/local` is also every build system's default. `/usr/local/bin` is
 on the default PATH everywhere it is set (the kernel's first process,
 `sh`, logins, the service manager's services, line completion,
-`FindProgramPath`). The loader does not look in `/usr/local/lib` yet, so
-C ports link statically (TODO.md).
+`FindProgramPath`), and the program loader looks for libraries in
+`/usr/local/lib` after `/lib` (see "Executables and shared libraries").
 
 **The tool** is Python (it drives the build machine's own tools, and
 Python's standard library reads TOML, tar in every compression, zip and
@@ -10094,7 +10094,8 @@ for both architectures.
 Programs and libraries are position independent ELF files (`ld -pie` and
 `ld -shared`), linked with `--hash-style=sysv`. The kernel's loader
 (`Processes.ImageLoader`) does the work of a dynamic linker: it maps each
-segment, loads every `DT_NEEDED` library from `/lib` (once per process),
+segment, loads every `DT_NEEDED` library from `/lib`, else from
+`/usr/local/lib` where ported software's libraries go (once per process),
 and applies the relocations (RELATIVE, 64, GLOB_DAT, JUMP_SLOT and COPY),
 binding every symbol at load time by searching the modules in load order.
 Libraries are linked with `-Bsymbolic`, so references to their own

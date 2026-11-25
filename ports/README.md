@@ -57,9 +57,9 @@ refuses a port that tries). The reasons:
   would mix packages with whatever the system grows there later.
 
 `/usr/local/bin` is on every default PATH (the kernel's first process,
-the shell, logins, services). Shared libraries in `/usr/local/lib` are
-not found by the program loader yet (it looks in `/lib` only), so C ports
-link statically for now (TODO.md).
+the shell, logins, services), and the program loader looks for shared
+libraries in `/usr/local/lib` after `/lib` (a library a program needs,
+and LoadLibrary of a bare name).
 
 ## port.toml
 
