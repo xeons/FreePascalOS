@@ -167,6 +167,9 @@ uses
   Kernel.Clock,
   FileSystem.Discards;
 
+const
+  MaximumDirectoryBytes = 256 * 1024 * 1024;
+
 function ExFatVolumeOf(Node: PNode): PExFatVolume;
 begin
   Result := PExFatVolume(Node^.Volume^.DriverData);
@@ -217,9 +220,12 @@ begin
   begin
     if Node^.HasKnownLength and (QWord(Ordinal) * ExFat^.BytesPerCluster >= Node^.DataLength) then
       Exit(StatusEndOfDirectory);
-    Cluster := Node^.FirstCluster + Ordinal;
-    if not IsValidCluster(ExFat, Cluster) then
+    { In 64 bits: a damaged first cluster must not wrap round to a valid
+      one. }
+    if (QWord(Node^.FirstCluster) + Ordinal > High(LongWord)) or
+       not IsValidCluster(ExFat, Node^.FirstCluster + Ordinal) then
       Exit(StatusCorrupted);
+    Cluster := Node^.FirstCluster + Ordinal;
     Exit(StatusSuccess);
   end;
 
@@ -234,7 +240,9 @@ begin
 
   while CurrentOrdinal < Ordinal do
   begin
-    if not IsValidCluster(ExFat, CurrentCluster) then
+    { No chain is longer than the volume: one that is comes back on
+      itself. }
+    if (CurrentOrdinal >= ExFat^.ClusterCount) or not IsValidCluster(ExFat, CurrentCluster) then
       Exit(StatusCorrupted);
     if not ReadFatEntry(Node^.Common.Volume, CurrentCluster, NextCluster) then
       Exit(StatusIoError);
@@ -266,6 +274,8 @@ begin
   Volume := Node^.Common.Volume;
   while Length > 0 do
   begin
+    if Offset div ExFat^.BytesPerCluster >= ExFat^.ClusterCount then
+      Exit(StatusCorrupted);
     Result := FindClusterOfNode(Node, LongWord(Offset div ExFat^.BytesPerCluster), Cluster);
     if Result <> StatusSuccess then
       Exit;
@@ -305,6 +315,7 @@ function CountNodeClusters(Node: PExFatNode; out ClusterCount: LongWord;
   out LastCluster: LongWord): TFileSystemStatus;
 var
   ExFat: PExFatVolume;
+  Clusters: QWord;
   Cluster: LongWord;
   NextCluster: LongWord;
 begin
@@ -316,9 +327,17 @@ begin
 
   if Node^.IsContiguous then
   begin
-    ClusterCount := LongWord((Node^.DataLength + ExFat^.BytesPerCluster - 1) div ExFat^.BytesPerCluster);
+    Clusters := (Node^.DataLength + ExFat^.BytesPerCluster - 1) div ExFat^.BytesPerCluster;
+    if Clusters > ExFat^.ClusterCount then
+      Exit(StatusCorrupted);
+    ClusterCount := LongWord(Clusters);
     if ClusterCount > 0 then
+    begin
+      if (QWord(Node^.FirstCluster) + ClusterCount - 1 > High(LongWord)) or
+         not IsValidCluster(ExFat, Node^.FirstCluster + ClusterCount - 1) then
+        Exit(StatusCorrupted);
       LastCluster := Node^.FirstCluster + ClusterCount - 1;
+    end;
     Exit(StatusSuccess);
   end;
 
@@ -421,6 +440,8 @@ var
   WasAllocated: Boolean;
 begin
   ExFat := PExFatVolume(Volume^.DriverData);
+  if not IsValidCluster(ExFat, Cluster) then
+    Exit(StatusCorrupted);
   Result := ReadNodeBytes(ExFat^.Bitmap, BitmapByteOf(Cluster), 1, @Value);
   if Result <> StatusSuccess then
     Exit;
@@ -429,22 +450,26 @@ begin
     Exit(StatusSuccess);
 
   if Allocated then
+    Value := Value or BitmapMaskOf(Cluster)
+  else
+    Value := Value and not BitmapMaskOf(Cluster);
+  Result := WriteNodeBytes(ExFat^.Bitmap, BitmapByteOf(Cluster), 1, @Value);
+  if Result <> StatusSuccess then
+    Exit;
+  { The free count follows the bitmap as written. }
+  if Allocated then
   begin
-    Value := Value or BitmapMaskOf(Cluster);
     Dec(ExFat^.FreeClusterCount);
     { Its discard, if still waiting, must not reach what goes in now. }
     CancelVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster);
   end
   else
   begin
-    Value := Value and not BitmapMaskOf(Cluster);
     Inc(ExFat^.FreeClusterCount);
     if Cluster < ExFat^.NextFreeHint then
       ExFat^.NextFreeHint := Cluster;
-  end;
-  Result := WriteNodeBytes(ExFat^.Bitmap, BitmapByteOf(Cluster), 1, @Value);
-  if (Result = StatusSuccess) and not Allocated then
     QueueVolumeDiscard(Volume, ClusterOffset(ExFat, Cluster), ExFat^.BytesPerCluster, False);
+  end;
 end;
 
 function TrimFreeClusters(Volume: PVolume; var Discarded: QWord): TFileSystemStatus;
@@ -549,6 +574,10 @@ var
 begin
   ExFat := ExFatVolumeOf(@Directory^.Common);
   Offset := 0;
+  { A directory is at most 256 MiB long; past that its chain is damaged,
+    maybe looping without an end marker. }
+  if Index >= MaximumDirectoryBytes div DirectoryEntrySize then
+    Exit(StatusCorrupted);
   ByteOffset := Index * DirectoryEntrySize;
   if Directory^.HasKnownLength and (ByteOffset + DirectoryEntrySize > Directory^.DataLength) then
     Exit(StatusEndOfDirectory);

@@ -169,7 +169,11 @@ begin
   if Result <> StatusSuccess then
     Exit;
   if not VolumeWriteZeros(Volume, ClusterOffset(ExFat, NewCluster), ExFat^.BytesPerCluster) then
+  begin
+    { Not linked anywhere yet: give it back rather than leak it. }
+    MarkCluster(Volume, NewCluster, False);
     Exit(StatusIoError);
+  end;
 
   if ClusterCount = 0 then
   begin
@@ -294,6 +298,13 @@ begin
     Node^.IsContiguous := False;
   end;
   Result := StatusSuccess;
+end;
+
+{ No file is larger than the whole cluster heap; checking that first
+  keeps cluster counts within 32 bits. }
+function VolumeCapacityBytes(ExFat: PExFatVolume): QWord;
+begin
+  Result := QWord(ExFat^.ClusterCount) * ExFat^.BytesPerCluster;
 end;
 
 function ClustersFor(ExFat: PExFatVolume; ByteCount: QWord): LongWord;
@@ -589,8 +600,10 @@ begin
   BytesWritten := 0;
   ExFatNode := PExFatNode(Node);
   ExFat := ExFatVolumeOf(Node);
+  if ByteCount > High(QWord) - Offset then
+    Exit(StatusNoSpace);
   NewEnd := Offset + ByteCount;
-  if NewEnd < Offset then
+  if NewEnd > VolumeCapacityBytes(ExFat) then
     Exit(StatusNoSpace);
 
   Result := BeginModification(Node^.Volume);
@@ -638,6 +651,8 @@ var
 begin
   ExFatNode := PExFatNode(Node);
   ExFat := ExFatVolumeOf(Node);
+  if NewSize > VolumeCapacityBytes(ExFat) then
+    Exit(StatusNoSpace);
   Result := BeginModification(Node^.Volume);
   if Result <> StatusSuccess then
     Exit;
@@ -799,9 +814,16 @@ begin
 
   if ExFat^.IsMarkedDirty then
   begin
+    { Everything the dirty mark covers must be on the disk before the
+      mark goes, and the cleared mark must be too: the cache writes its
+      lines in no particular order. }
+    if not FlushCachedDevice(Volume^.Device) then
+      Exit(StatusIoError);
     if not ReadVolumeFlags(Volume, Flags) then
       Exit(StatusIoError);
     if not WriteVolumeFlags(Volume, Flags and not VolumeFlagDirty) then
+      Exit(StatusIoError);
+    if not FlushCachedDevice(Volume^.Device) then
       Exit(StatusIoError);
     ExFat^.IsMarkedDirty := False;
   end;
