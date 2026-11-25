@@ -64,6 +64,7 @@ procedure WriteAcpiSummary;
 implementation
 
 uses
+  Firmware.AcpiTableChecks,
   Debug.Output;
 
 const
@@ -91,18 +92,22 @@ var
   Available: Boolean;
   RootRevision: Byte;
 
-function ChecksumIsValid(Data: PByte; Length: LongWord): Boolean;
+{ A table's length is sound (it covers its header) and its checksum
+  adds up (Firmware.AcpiTableChecks). }
+function TableIsSound(Table: PAcpiTableHeader): Boolean;
+begin
+  Result := (Table <> nil) and AcpiTableIsSound(PByte(Table), Table^.Length);
+end;
+
+{ The first 20 bytes of the root pointer (ACPI 1.0's part) add up to 0. }
+function RootPointerChecksumIsValid(Data: PByte): Boolean;
 var
   Sum: Byte;
-  Index: LongWord;
+  Index: Integer;
 begin
   Sum := 0;
-  Index := 0;
-  while Index < Length do
-  begin
+  for Index := 0 to 19 do
     Sum := Byte(Sum + Data[Index]);
-    Inc(Index);
-  end;
   Result := Sum = 0;
 end;
 
@@ -124,7 +129,7 @@ var
   EntryIndex: Integer;
   EntryAddress: PByte;
 begin
-  EntryCount := Integer((RootTable^.Length - SizeOf(TAcpiTableHeader)) div LongWord(EntrySize));
+  EntryCount := AcpiRootEntryCount(RootTable^.Length, EntrySize, MaximumRootEntries);
   EntryAddress := PByte(RootTable) + SizeOf(TAcpiTableHeader);
   TableCount := 0;
 
@@ -136,7 +141,9 @@ begin
       TableAddresses[TableCount] := PQWord(EntryAddress)^
     else
       TableAddresses[TableCount] := PLongWord(EntryAddress)^;
-    Inc(TableCount);
+    { An empty entry names no table. }
+    if TableAddresses[TableCount] <> 0 then
+      Inc(TableCount);
     Inc(EntryAddress, EntrySize);
   end;
 end;
@@ -154,21 +161,21 @@ begin
   RootPointer := PAcpiRootPointer(PhysicalToVirtual(RootPointerPhysical));
   if not SignatureMatches(RootPointer^.Signature, RootPointerSignature) then
     Exit;
-  if not ChecksumIsValid(PByte(RootPointer), 20) then
+  if not RootPointerChecksumIsValid(PByte(RootPointer)) then
     Exit;
 
   RootRevision := RootPointer^.Revision;
   if (RootPointer^.Revision >= 2) and (RootPointer^.XsdtAddress <> 0) then
   begin
     RootTable := PAcpiTableHeader(PhysicalToVirtual(RootPointer^.XsdtAddress));
-    if ChecksumIsValid(PByte(RootTable), RootTable^.Length) then
+    if TableIsSound(RootTable) then
       CollectRootEntries(RootTable, 8);
   end;
 
-  if TableCount = 0 then
+  if (TableCount = 0) and (RootPointer^.RsdtAddress <> 0) then
   begin
     RootTable := PAcpiTableHeader(PhysicalToVirtual(RootPointer^.RsdtAddress));
-    if ChecksumIsValid(PByte(RootTable), RootTable^.Length) then
+    if TableIsSound(RootTable) then
       CollectRootEntries(RootTable, 4);
   end;
 
@@ -192,7 +199,7 @@ begin
     Table := PAcpiTableHeader(PhysicalToVirtual(TableAddresses[TableIndex - 1]));
     if not SignatureMatches(Table^.Signature, Signature) then
       Continue;
-    if not ChecksumIsValid(PByte(Table), Table^.Length) then
+    if not TableIsSound(Table) then
       Continue;
     if MatchesSoFar = Instance then
       Exit(Table);
