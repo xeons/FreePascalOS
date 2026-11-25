@@ -1629,3 +1629,27 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A separate network process; IME text and drag and drop through the
       content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout
+
+## C library and toolchain
+
+- [x] Targets `x86_64-freepascalos` and `aarch64-freepascalos` in binutils
+      2.47 and GCC 16.2 (`toolchain/patches`), built by
+      `toolchain/build-toolchain.sh` (`make c-toolchain`)
+- [x] mlibc 7.0 with FreePascalOS sysdeps (`toolchain/mlibc/sysdeps/freepascalos`)
+- [x] libgcc (shared and static), libstdc++ (shared and static)
+- [x] PT_INTERP: C programs start in mlibc's `ld.so`
+- [x] mmap/munmap with MAP_FIXED, threads on caller-made stacks (180, 181, 185)
+- [x] fork (copy on write), exec in place, waitpid (182-184)
+- [x] POSIX signals: dispositions, masks, handlers, SIGCHLD, SIGPIPE,
+      Ctrl-C/hang-up/TERM as signals, faults as SIGSEGV/SIGFPE/SIGILL (186-192)
+- [x] Process groups and sessions, getppid (193-196)
+- [x] C test suite and C++ test (`toolchain/ctest`, `make c-test`, a coretest line)
+- [ ] Build and run the toolchain for arm64 (the patches and sysdeps have
+      the aarch64 pieces; not built or booted yet)
+- [ ] exec from a process with several threads (refused with EBUSY now)
+- [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
+- [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
+- [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
+- [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
+- [ ] setitimer/alarm, timer_create; CPU-time clocks (they give uptime now)
+- [ ] Clang driver support (`--target=x86_64-freepascalos`)
