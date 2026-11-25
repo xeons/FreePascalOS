@@ -167,29 +167,37 @@ begin
     (Left.SizeInBytes = Right.SizeInBytes) and (Left.ModificationTime = Right.ModificationTime);
 end;
 
-{ Takes the section in slot Index out of the table: destroyed now if
-  nobody uses it, else marked stale and destroyed by its last release. }
-procedure DropSlotLocked(Index: Integer);
+{ Takes the section in slot Index out of the table: returned for the
+  caller to destroy once it let go of the lock (that closes the file) if
+  nobody uses it, else marked stale and destroyed by its last release
+  (nil returned). }
+function DropSlotLocked(Index: Integer): PImageSection;
 begin
+  Result := nil;
   if Sections[Index] = nil then
     Exit;
   if Sections[Index]^.Users > 0 then
     Sections[Index]^.IsStale := True
   else
-    DestroySection(Sections[Index]);
+    Result := Sections[Index];
   Sections[Index] := nil;
 end;
 
 procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord);
 var
   Index: Integer;
+  Unused: array[0..MaximumSections - 1] of PImageSection;
 begin
+  FillMemory(@Unused, SizeOf(Unused), 0);
   AcquireMutex(SectionsLock);
   for Index := 0 to MaximumSections - 1 do
     if (Sections[Index] <> nil) and (Sections[Index]^.Identity.Volume = Pointer(Volume)) and
        (Sections[Index]^.Identity.NodeNumber = NodeNumber) then
-      DropSlotLocked(Index);
+      Unused[Index] := DropSlotLocked(Index);
   ReleaseMutex(SectionsLock);
+  for Index := 0 to MaximumSections - 1 do
+    if Unused[Index] <> nil then
+      DestroySection(Unused[Index]);
 end;
 
 { The file of a section lost a name. Unused sections are destroyed
@@ -223,8 +231,10 @@ end;
 function FindImageSection(KernelPath: PChar; const Identity: TImageIdentity): PImageSection;
 var
   Index: Integer;
+  Dropped: PImageSection;
 begin
   Result := nil;
+  Dropped := nil;
   AcquireMutex(SectionsLock);
   for Index := 0 to MaximumSections - 1 do
   begin
@@ -238,20 +248,24 @@ begin
     end
     else
       { The file changed: its old section is of no use any more. }
-      DropSlotLocked(Index);
+      Dropped := DropSlotLocked(Index);
     Break;
   end;
   ReleaseMutex(SectionsLock);
+  if Dropped <> nil then
+    DestroySection(Dropped);
 end;
 
 { A free slot, making one by dropping the least recently used section
-  nobody uses; -1 if every section is in use. }
-function FreeSlotLocked: Integer;
+  nobody uses (Dropped, for the caller to destroy after the lock); -1 if
+  every section is in use. }
+function FreeSlotLocked(out Dropped: PImageSection): Integer;
 var
   Index: Integer;
   Oldest: Integer;
 begin
   Oldest := -1;
+  Dropped := nil;
   for Index := 0 to MaximumSections - 1 do
   begin
     if Sections[Index] = nil then
@@ -261,7 +275,7 @@ begin
       Oldest := Index;
   end;
   if Oldest >= 0 then
-    DropSlotLocked(Oldest); { unused, so destroyed }
+    Dropped := DropSlotLocked(Oldest); { unused, so destroyed }
   Result := Oldest;
 end;
 
@@ -296,7 +310,9 @@ end;
 procedure PublishImageSection(Section: PImageSection);
 var
   Slot: Integer;
+  Dropped: PImageSection;
 begin
+  Dropped := nil;
   { Kept if there is room; otherwise it serves this load only and goes
     when the load releases it. }
   AcquireMutex(SectionsLock);
@@ -307,10 +323,12 @@ begin
   if FileWasRemoved(Section^.MappedFile^.OpenedFile) then
     Slot := -1
   else
-    Slot := FreeSlotLocked;
+    Slot := FreeSlotLocked(Dropped);
   if Slot >= 0 then
     Sections[Slot] := Section;
   ReleaseMutex(SectionsLock);
+  if Dropped <> nil then
+    DestroySection(Dropped);
 end;
 
 { True if Section is in the table. }

@@ -49,6 +49,13 @@
       shows. A page being read while the change happened is read again
       (ChangeCount), never kept with the old contents.
 
+  A new user joins a mapped file (AcquireMappedFile) under the file's
+  volume lock, which the change holds from the first hook to the end
+  of the write: so a private user never joins between "no private
+  users, nothing to keep" and the write. And a stale mapped file never
+  reads again: a page the first hook could not read (memory ran out)
+  is gone, and touching it fails rather than show the new contents.
+
   Destroying a mapped file closes its open file, which needs passive
   level; the last reference may go at dispatch level (a region removed
   under the address space's spin lock), so such a mapped file waits on a
@@ -252,6 +259,9 @@ begin
   repeat
     if ResidentMappedFilePage(MappedFile, PageIndex, Existing) then
       Exit(ErrorNone);
+    { Its file changed since: what is not here is lost. }
+    if MappedFile^.IsStale then
+      Exit(ErrorIo);
     PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
     Seen := MappedFile^.ChangeCount;
     ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
@@ -476,6 +486,7 @@ end;
 
 function AcquireMappedFile(OpenedFile: POpenFile; IsPrivate: Boolean; out MappedFile: PMappedFile): LongInt;
 var
+  Volume: PVolume;
   Information: TNodeInformation;
   Duplicate: POpenFile;
   Existing: PMappedFile;
@@ -490,9 +501,12 @@ begin
   if Information.SizeInBytes > MaximumMappedFileBytes then
     Exit(ErrorInvalidArgument);
 
+  Volume := PVolume(OpenedFile^.Volume);
+  AcquireMutex(Volume^.Lock);
   AcquireMutex(RegistryLock);
-  MappedFile := FindRegisteredLocked(OpenedFile^.Volume, Information.NodeNumber, IsPrivate);
+  MappedFile := FindRegisteredLocked(Volume, Information.NodeNumber, IsPrivate);
   ReleaseMutex(RegistryLock);
+  ReleaseMutex(Volume^.Lock);
   if MappedFile <> nil then
     Exit(ErrorNone);
 
@@ -510,8 +524,11 @@ begin
   if IsPrivate then
     MappedFile^.PrivateUsers := 1;
 
+  { Under the volume's lock, as a change of the file holds it (see
+    above); the volume's lock comes before the registry's, as there. }
+  AcquireMutex(Volume^.Lock);
   AcquireMutex(RegistryLock);
-  Existing := FindRegisteredLocked(OpenedFile^.Volume, Information.NodeNumber, IsPrivate);
+  Existing := FindRegisteredLocked(Volume, Information.NodeNumber, IsPrivate);
   if Existing = nil then
   begin
     MappedFile^.Next := Registry;
@@ -519,6 +536,7 @@ begin
     MappedFile^.IsRegistered := True;
   end;
   ReleaseMutex(RegistryLock);
+  ReleaseMutex(Volume^.Lock);
   if Existing <> nil then
   begin
     { Made by someone else meanwhile. }

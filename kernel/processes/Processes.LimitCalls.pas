@@ -24,8 +24,10 @@
   (Processes.AddressSpace), so many handles (Processes.Handles) and so
   many pages committed (its commit charge; no limit by default). The
   limits are generous by default; a process may lower its own (a
-  service that should never need many), and root may raise them up to
-  their ceilings. The processes it starts inherit them
+  service that should never need many), and only root may raise them
+  (up to their ceilings): a limit lowered once - by the process or by
+  whoever started it - stays a ceiling for the program and everything
+  it starts, as a hard limit does. The processes it starts inherit them
   (Processes.UserProcess). CallGetProcessResources shows what a process
   holds against them, which is also how tests see that what a program
   gave back really went.
@@ -74,16 +76,20 @@ end;
 procedure DescribeResources(Process: PProcess; out Resources: TAbiProcessResources);
 var
   Usage: TAddressSpaceUsage;
+  Space: PAddressSpace;
 begin
   FillMemory(@Resources, SizeOf(Resources), 0);
   AcquireMutex(Process^.Lock);
   Resources.HandleCount := CountOpenHandles(Process^.Handles);
   Resources.HandleLimit := Process^.Handles.Limit;
   Resources.ThreadCount := Process^.ThreadCount;
-  { Gone once the process has ended. }
-  if Process^.AddressSpace <> nil then
+  ReleaseMutex(Process^.Lock);
+  { Gone once the process has ended; kept by the reference while it is
+    looked at, even if an exec or exit lets it go meanwhile. }
+  Space := ReferencePublishedSpace(Process^.AddressSpace);
+  if Space <> nil then
   begin
-    GetAddressSpaceUsage(Process^.AddressSpace, Usage);
+    GetAddressSpaceUsage(Space, Usage);
     Resources.RegionCount := Usage.RegionCount;
     Resources.RegionLimit := Usage.RegionLimit;
     Resources.VirtualBytes := Usage.VirtualBytes;
@@ -92,10 +98,10 @@ begin
     Resources.SharedPages := Usage.SharedPages;
     Resources.CommitChargePages := Usage.CommitChargePages;
     Resources.CommitLimitPages := Usage.CommitLimitPages;
-    Resources.PagesMappedElsewhere := CountPagesMappedElsewhere(Process^.AddressSpace);
+    Resources.PagesMappedElsewhere := CountPagesMappedElsewhere(Space);
+    ReleaseAddressSpaceReference(Space);
   end;
   Resources.SystemCommitChargePages := Memory.CommitCharge.SystemCommittedPages;
-  ReleaseMutex(Process^.Lock);
 end;
 
 function PerformGetProcessResources(ProcessId: QWord; ResourcesAddress: QWord): Int64;
@@ -181,8 +187,7 @@ begin
   Process := CurrentProcess;
   AcquireMutex(Process^.Lock);
   Result := Int64(EffectiveProcessCountLimit(Process));
-  if (Value > QWord(Result)) and (Value > DefaultProcessCountLimit) and
-     (Process^.Credentials.EffectiveUserId <> RootUserId) then
+  if (Value > QWord(Result)) and (Process^.Credentials.EffectiveUserId <> RootUserId) then
     Result := Failure(ErrorNotPermitted)
   else
     Process^.ProcessCountLimit := LongWord(Value);
@@ -192,7 +197,6 @@ end;
 function PerformSetProcessLimit(Limit: QWord; Value: QWord): Int64;
 var
   Process: PProcess;
-  Default: QWord;
   Ceiling: QWord;
   Previous: QWord;
 begin
@@ -203,22 +207,10 @@ begin
   if Limit = ProcessLimitRestrictions then
     Exit(AddRestrictions(Value));
   case Limit of
-    ProcessLimitRegions:
-      begin
-        Default := DefaultRegionLimit;
-        Ceiling := RegionLimitCeiling;
-      end;
-    ProcessLimitHandles:
-      begin
-        Default := DefaultHandleLimit;
-        Ceiling := HandleLimitCeiling;
-      end;
-    ProcessLimitCommit:
-      begin
-        { 0 is no limit, which is also the default. }
-        Default := 0;
-        Ceiling := High(Int64);
-      end;
+    ProcessLimitRegions: Ceiling := RegionLimitCeiling;
+    ProcessLimitHandles: Ceiling := HandleLimitCeiling;
+    { 0 is no limit, which is also the default. }
+    ProcessLimitCommit: Ceiling := High(Int64);
   else
     Exit(Failure(ErrorInvalidArgument));
   end;
@@ -233,9 +225,9 @@ begin
   else
     Previous := Process^.Handles.Limit;
   end;
-  { Only root may raise a commit limit or take it away (0). }
+  { Only root may raise a limit, or take a commit limit away (0). }
   if (Process^.Credentials.EffectiveUserId <> RootUserId) and
-     (((Limit <> ProcessLimitCommit) and (Value > Previous) and (Value > Default)) or
+     (((Limit <> ProcessLimitCommit) and (Value > Previous)) or
       ((Limit = ProcessLimitCommit) and (Previous <> 0) and ((Value = 0) or (Value > Previous)))) then
   begin
     ReleaseMutex(Process^.Lock);

@@ -25,6 +25,10 @@
   page, so pages live on while any process has them mapped, even after
   the last handle to the section is closed; the section holds one
   reference of its own, given back when it is deleted.
+
+  Its pages are charged to whoever created it (ChargeHolder: a process,
+  Processes.ObjectCalls) for as long as it exists; deleting it gives the
+  charge back through ReleaseCharge.
 }
 unit Objects.Sections;
 
@@ -41,10 +45,16 @@ const
   MaximumSectionBytes = QWord(256) * 1024 * 1024;
 
 type
+  TSectionChargeRelease = procedure(Holder: Pointer; Pages: QWord);
+
   PSectionObject = ^TSectionObject;
   TSectionObject = record
     PageCount: QWord;
     Pages: PPhysicalAddress;
+    { Who its pages are charged to, and how the charge goes back (nil:
+      charged to nobody). }
+    ChargeHolder: Pointer;
+    ReleaseCharge: TSectionChargeRelease;
   end;
 
 procedure InitializeSectionObjects;
@@ -76,8 +86,14 @@ begin
 end;
 
 procedure DeleteSectionObject(ObjectBody: Pointer);
+var
+  Section: PSectionObject;
 begin
-  FreeSectionPages(PSectionObject(ObjectBody));
+  Section := PSectionObject(ObjectBody);
+  FreeSectionPages(Section);
+  if Assigned(Section^.ReleaseCharge) then
+    Section^.ReleaseCharge(Section^.ChargeHolder, Section^.PageCount);
+  Section^.ReleaseCharge := nil;
 end;
 
 procedure InitializeSectionObjects;

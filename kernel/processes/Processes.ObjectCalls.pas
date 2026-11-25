@@ -71,7 +71,11 @@ uses
   Processes.Thread,
   Processes.UserAccess,
   Processes.Channels,
-  Processes.Restrictions;
+  Processes.Restrictions,
+  Runtime.Atomic,
+  Memory.Layout,
+  Memory.CommitCharge,
+  Processes.AddressSpace;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -202,11 +206,57 @@ end;
 
 { --- Sections ------------------------------------------------------------------ }
 
+{ Gives back what a section charged to the process Holder. }
+procedure ReleaseSectionCharge(Holder: Pointer; Pages: QWord);
+var
+  Process: PProcess;
+begin
+  Process := PProcess(Holder);
+  AtomicFetchAndAdd(Process^.SectionChargePages, -Int64(Pages));
+  ChangeSystemCommitCharge(-Int64(Pages));
+  DereferenceObject(Process);
+end;
+
+{ Charges Pages of a new section to the calling process: refused over
+  its commit limit (what its space has charged and its sections
+  together). }
+function ChargeSection(Process: PProcess; Pages: QWord): LongInt;
+var
+  Usage: TAddressSpaceUsage;
+begin
+  GetAddressSpaceUsage(Process^.AddressSpace, Usage);
+  if (Usage.CommitLimitPages <> 0) and
+     (Usage.CommitChargePages + QWord(Process^.SectionChargePages) + Pages > Usage.CommitLimitPages) then
+    Exit(ErrorOutOfMemory);
+  AtomicFetchAndAdd(Process^.SectionChargePages, Int64(Pages));
+  ChangeSystemCommitCharge(Int64(Pages));
+  ReferenceObject(Process);
+  Result := ErrorNone;
+end;
+
 function PerformCreateSection(Length: QWord): Int64;
+var
+  Process: PProcess;
+  Pages: QWord;
+  Section: PSectionObject;
+  Error: LongInt;
 begin
   if (Length = 0) or (Length > MaximumSectionBytes) then
     Exit(Failure(ErrorInvalidArgument));
-  Result := HandleForNewObject(Processes.Handles.HandleKindSection, CreateSectionObject(Length));
+  Process := CurrentProcess;
+  Pages := RoundUpToPage(Length) shr PageShift;
+  Error := ChargeSection(Process, Pages);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  Section := CreateSectionObject(Length);
+  if Section = nil then
+  begin
+    ReleaseSectionCharge(Process, Pages);
+    Exit(Failure(ErrorOutOfMemory));
+  end;
+  Section^.ChargeHolder := Process;
+  Section^.ReleaseCharge := @ReleaseSectionCharge;
+  Result := HandleForNewObject(Processes.Handles.HandleKindSection, Section);
 end;
 
 { --- Ports and channels -------------------------------------------------------- }
@@ -351,6 +401,13 @@ begin
       Body := ReferenceHandle(Handles[Taken], Message^.Kinds[Taken]);
       if Body = nil then
         Error := ErrorBadHandle
+      { A thread handle stands for a thread of the sender: it means
+        nothing to another process (as for fork and passed handles). }
+      else if Message^.Kinds[Taken] = Processes.Handles.HandleKindThread then
+      begin
+        DereferenceObject(Body);
+        Error := ErrorInvalidArgument;
+      end
       else
       begin
         TakeHandleReference(Message^.Kinds[Taken], Body);
