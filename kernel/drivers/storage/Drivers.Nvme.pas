@@ -35,6 +35,21 @@
   One command is in flight per controller; requests for all its
   namespaces wait in one queue.
 
+  A controller that does not answer may only fail requests, never hand
+  one request another's data: only the completion carrying the
+  identifier of the command waited for counts (Drivers.NvmeQueues), and
+  a command that times out (polled, or noticed by a timer when
+  interrupt driven) resets the controller (disabled, its queues emptied
+  and given to it again) before its bounce pages are used for anything
+  else, which ends whatever it still had. The interrupt driven reset
+  runs in a thread of its own (the timer's call runs at dispatch level,
+  and a reset waits for the controller); requests wait meanwhile.
+
+  All memory the controller reaches (queues, bounce pages, PRP list,
+  identify data) is its DMA memory (Io.Dma, shared: uncached for a
+  controller that does not snoop), handed over at bus addresses: behind
+  the Pi 5's PCIe bridge those differ from physical ones.
+
   Discard requests become Dataset Management commands with the
   deallocate attribute, one range each, on controllers that report the
   command (ONCS bit 2).
@@ -67,12 +82,20 @@ uses
   Kernel.PriorityLevel,
   Kernel.DeferredCalls,
   Kernel.Mutex,
+  Kernel.Events,
+  Kernel.Timers,
+  Kernel.Threads,
+  Kernel.Scheduler,
   Kernel.Clock,
+  Processes.Thread,
+  Io.Dma,
   Io.Pci,
   Io.PciMessageInterrupts,
+  Io.PlatformDevices,
   Io.Manager,
   Io.BlockDevice,
   Drivers.NvmeQueues,
+  Drivers.NvmeQueueMemory,
   Debug.Output;
 
 const
@@ -130,6 +153,8 @@ type
 
   TNvmeController = record
     Pci: PPciDevice;
+    { What its DMA reaches and whether it snoops (Io.Dma). }
+    Dma: TDmaAttributes;
     Registers: PByte;
     DoorbellStride: LongWord;
     Admin: TNvmeQueuePair;
@@ -140,12 +165,13 @@ type
     { The controller takes Dataset Management (deallocate). }
     SupportsDeallocate: Boolean;
     Model: array[0..40] of Char;
+    { Bus addresses, as the controller is given them. }
     ScratchPage: PByte;
-    ScratchPagePhysical: QWord;
+    ScratchPageBusAddress: QWord;
     PrpListPage: PQWord;
-    PrpListPagePhysical: QWord;
+    PrpListPageBusAddress: QWord;
     BouncePages: array[0..BouncePageCount - 1] of PByte;
-    BouncePagesPhysical: array[0..BouncePageCount - 1] of QWord;
+    BouncePagesBusAddress: array[0..BouncePageCount - 1] of QWord;
     UsesInterrupts: Boolean;
     { Interrupt driven requests. }
     StateLock: TSpinLock;
@@ -154,7 +180,16 @@ type
     CurrentNamespace: PNvmeNamespace;
     CurrentDone: QWord;
     CurrentPiece: QWord;
+    { The command in flight: its identifier and when it is overdue. }
+    CurrentIdentifier: Word;
+    CurrentDeadline: QWord;
     FinishCommand: TDeferredCall;
+    Timeout: TTimer;
+    TimeoutCall: TDeferredCall;
+    { A command timed out: the recovery thread resets the controller;
+      nothing is submitted or taken meanwhile. }
+    Recovering: Boolean;
+    RecoveryNeeded: TEvent;
     { Polled requests. }
     PollingLock: TMutex;
   end;
@@ -216,6 +251,14 @@ begin
   FillMemory(@Command, SizeOf(Command), 0);
 end;
 
+{ An admin command, polled. }
+function RunAdminCommand(Controller: PNvmeController; var Command: TNvmeCommand): Boolean;
+var
+  TimedOut: Boolean;
+begin
+  Result := ExecuteCommand(Controller^.Admin, Command, AdminTimeoutMilliseconds, TimedOut);
+end;
+
 function Identify(Controller: PNvmeController; Kind, NamespaceId: LongWord): Boolean;
 var
   Command: TNvmeCommand;
@@ -223,9 +266,9 @@ begin
   ClearCommand(Command);
   Command.OpcodeAndIdentifier := AdminIdentify;
   Command.NamespaceId := NamespaceId;
-  Command.DataPointer1 := Controller^.ScratchPagePhysical;
+  Command.DataPointer1 := Controller^.ScratchPageBusAddress;
   Command.CommandDword10 := Kind;
-  Result := ExecuteCommand(Controller^.Admin, Command, AdminTimeoutMilliseconds);
+  Result := RunAdminCommand(Controller, Command);
 end;
 
 function CreateIoQueues(Controller: PNvmeController): Boolean;
@@ -236,23 +279,23 @@ begin
   Command.OpcodeAndIdentifier := AdminSetFeatures;
   Command.CommandDword10 := FeatureNumberOfQueues;
   Command.CommandDword11 := 0; { one submission and one completion queue }
-  ExecuteCommand(Controller^.Admin, Command, AdminTimeoutMilliseconds);
+  RunAdminCommand(Controller, Command);
 
   ClearCommand(Command);
   Command.OpcodeAndIdentifier := AdminCreateCompletionQueue;
-  Command.DataPointer1 := Controller^.Io.CompletionsPhysical;
+  Command.DataPointer1 := Controller^.Io.CompletionsBusAddress;
   Command.CommandDword10 := (LongWord(NvmeQueueEntries - 1) shl 16) or Controller^.Io.Identifier;
   { Interrupt vector 0: the only MSI vector, or MSI-X table entry 0. }
   Command.CommandDword11 := QueuePhysicallyContiguous or QueueInterruptsEnabled;
-  if not ExecuteCommand(Controller^.Admin, Command, AdminTimeoutMilliseconds) then
+  if not RunAdminCommand(Controller, Command) then
     Exit(False);
 
   ClearCommand(Command);
   Command.OpcodeAndIdentifier := AdminCreateSubmissionQueue;
-  Command.DataPointer1 := Controller^.Io.SubmissionsPhysical;
+  Command.DataPointer1 := Controller^.Io.SubmissionsBusAddress;
   Command.CommandDword10 := (LongWord(NvmeQueueEntries - 1) shl 16) or Controller^.Io.Identifier;
   Command.CommandDword11 := (LongWord(Controller^.Io.Identifier) shl 16) or QueuePhysicallyContiguous;
-  Result := ExecuteCommand(Controller^.Admin, Command, AdminTimeoutMilliseconds);
+  Result := RunAdminCommand(Controller, Command);
 end;
 
 { --- I/O commands ------------------------------------------------------------ }
@@ -291,12 +334,13 @@ begin
   Command.OpcodeAndIdentifier := CommandDatasetManagement;
   Command.CommandDword10 := 0;
   Command.CommandDword11 := DatasetManagementDeallocate;
-  Command.DataPointer1 := Controller^.BouncePagesPhysical[0];
+  Command.DataPointer1 := Controller^.BouncePagesBusAddress[0];
 end;
 
-{ Submits the command for Piece bytes of Request, Done bytes in. }
-procedure SubmitPiece(Controller: PNvmeController; Namespace: PNvmeNamespace; Request: PIoRequest;
-  Done, Piece: QWord);
+{ Submits the command for Piece bytes of Request, Done bytes in; returns
+  its identifier. }
+function SubmitPiece(Controller: PNvmeController; Namespace: PNvmeNamespace; Request: PIoRequest;
+  Done, Piece: QWord): Word;
 var
   Command: TNvmeCommand;
   PageCount: Integer;
@@ -331,17 +375,17 @@ begin
     Command.CommandDword10 := LongWord(FirstBlock);
     Command.CommandDword11 := LongWord(FirstBlock shr 32);
     Command.CommandDword12 := LongWord(Piece div Namespace^.BlockSize - 1);
-    Command.DataPointer1 := Controller^.BouncePagesPhysical[0];
+    Command.DataPointer1 := Controller^.BouncePagesBusAddress[0];
     if PageCount = 2 then
-      Command.DataPointer2 := Controller^.BouncePagesPhysical[1]
+      Command.DataPointer2 := Controller^.BouncePagesBusAddress[1]
     else if PageCount > 2 then
     begin
       for PageIndex := 1 to PageCount - 1 do
-        Controller^.PrpListPage[PageIndex - 1] := Controller^.BouncePagesPhysical[PageIndex];
-      Command.DataPointer2 := Controller^.PrpListPagePhysical;
+        Controller^.PrpListPage[PageIndex - 1] := Controller^.BouncePagesBusAddress[PageIndex];
+      Command.DataPointer2 := Controller^.PrpListPageBusAddress;
     end;
   end;
-  SubmitCommand(Controller^.Io, Command);
+  Result := SubmitCommand(Controller^.Io, Command);
 end;
 
 procedure CopyReadData(Controller: PNvmeController; Request: PIoRequest; Done, Piece: QWord);
@@ -363,6 +407,22 @@ begin
   end;
 end;
 
+{ --- Recovery ------------------------------------------------------------------ }
+
+function ResetController(Controller: PNvmeController): Boolean; forward;
+
+procedure ReportReset(Controller: PNvmeController; Succeeded: Boolean);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('nvme');
+  DebugWrite(@Controller^.Model[0]);
+  if Succeeded then
+    DebugWriteLine(': a command timed out; the controller was reset')
+  else
+    DebugWriteLine(': a command timed out; the controller could not be reset');
+  DebugEndMessage;
+end;
+
 { --- Polled requests ------------------------------------------------------- }
 
 function TransferPolled(Namespace: PNvmeNamespace; var Request: TIoRequest): LongInt;
@@ -371,6 +431,7 @@ var
   Done: QWord;
   Piece: QWord;
   Status: Word;
+  Identifier: Word;
   Deadline: QWord;
   Finished: Boolean;
 begin
@@ -380,14 +441,21 @@ begin
   AcquireMutex(Controller^.PollingLock);
   repeat
     Piece := PieceLength(Controller, @Request, Done);
-    SubmitPiece(Controller, Namespace, @Request, Done, Piece);
+    Identifier := SubmitPiece(Controller, Namespace, @Request, Done, Piece);
     Deadline := ClockTickCount + MillisecondsToTicks(IoTimeoutMilliseconds);
     repeat
-      Finished := TakeCompletion(Controller^.Io, Status);
+      Finished := TakeCompletionFor(Controller^.Io, Identifier, Status);
       if not Finished then
         CpuRelax;
     until Finished or (ClockTickCount > Deadline);
-    if not Finished or (Status <> 0) then
+    if not Finished then
+    begin
+      { Ends the command before the bounce pages are used again. }
+      ReportReset(Controller, ResetController(Controller));
+      Result := ErrorIo;
+      Break;
+    end;
+    if Status <> 0 then
     begin
       Result := ErrorIo;
       Break;
@@ -401,6 +469,16 @@ end;
 
 { --- Interrupt driven requests ---------------------------------------------- }
 
+{ Submits the current request's next piece and arms the timeout. Caller
+  holds StateLock. }
+procedure SubmitCurrentPieceLocked(Controller: PNvmeController);
+begin
+  Controller^.CurrentIdentifier := SubmitPiece(Controller, Controller^.CurrentNamespace, Controller^.Current,
+    Controller^.CurrentDone, Controller^.CurrentPiece);
+  Controller^.CurrentDeadline := ClockTickCount + MillisecondsToTicks(IoTimeoutMilliseconds);
+  SetTimer(Controller^.Timeout, IoTimeoutMilliseconds, Controller^.TimeoutCall);
+end;
+
 { Caller holds StateLock. }
 procedure BeginRequestLocked(Controller: PNvmeController; Request: PIoRequest);
 begin
@@ -408,7 +486,7 @@ begin
   Controller^.CurrentNamespace := PNvmeNamespace(Request^.Device^.Extension);
   Controller^.CurrentDone := 0;
   Controller^.CurrentPiece := PieceLength(Controller, Request, 0);
-  SubmitPiece(Controller, Controller^.CurrentNamespace, Request, 0, Controller^.CurrentPiece);
+  SubmitCurrentPieceLocked(Controller);
 end;
 
 procedure FinishCommand(Context: Pointer);
@@ -422,11 +500,15 @@ begin
   Controller := PNvmeController(Context);
   PreviousLevel := AcquireSpinLock(Controller^.StateLock);
   Request := Controller^.Current;
-  if (Request = nil) or not TakeCompletion(Controller^.Io, Status) then
+  { Only the current command's own completion counts; others (late ones
+    of a command given up) are dropped. }
+  if (Request = nil) or Controller^.Recovering or
+     not TakeCompletionFor(Controller^.Io, Controller^.CurrentIdentifier, Status) then
   begin
     ReleaseSpinLock(Controller^.StateLock, PreviousLevel);
     Exit;
   end;
+  CancelTimer(Controller^.Timeout);
   if Status = 0 then
   begin
     CopyReadData(Controller, Request, Controller^.CurrentDone, Controller^.CurrentPiece);
@@ -434,8 +516,7 @@ begin
     if Controller^.CurrentDone < Request^.Length then
     begin
       Controller^.CurrentPiece := PieceLength(Controller, Request, Controller^.CurrentDone);
-      SubmitPiece(Controller, Controller^.CurrentNamespace, Request, Controller^.CurrentDone,
-        Controller^.CurrentPiece);
+      SubmitCurrentPieceLocked(Controller);
       ReleaseSpinLock(Controller^.StateLock, PreviousLevel);
       Exit;
     end;
@@ -451,6 +532,57 @@ begin
   CompleteRequest(Request^, Outcome);
 end;
 
+{ Timer call: the current command is overdue (it may have finished
+  meanwhile, or the timer been set again for a later piece). }
+procedure HandleCommandTimeout(Context: Pointer);
+var
+  Controller: PNvmeController;
+  PreviousLevel: TPriorityLevel;
+  Overdue: Boolean;
+begin
+  Controller := PNvmeController(Context);
+  PreviousLevel := AcquireSpinLock(Controller^.StateLock);
+  Overdue := (Controller^.Current <> nil) and not Controller^.Recovering and
+    (ClockTickCount >= Controller^.CurrentDeadline);
+  if Overdue then
+    Controller^.Recovering := True
+  else if (Controller^.Current <> nil) and not Controller^.Recovering then
+    SetTimer(Controller^.Timeout, IoTimeoutMilliseconds div 5, Controller^.TimeoutCall);
+  ReleaseSpinLock(Controller^.StateLock, PreviousLevel);
+  if Overdue then
+    SignalEvent(Controller^.RecoveryNeeded);
+end;
+
+{ The recovery thread: resets the controller after a timeout, fails the
+  request that timed out and starts the next one. }
+procedure RunNvmeRecovery(Context: Pointer);
+var
+  Controller: PNvmeController;
+  PreviousLevel: TPriorityLevel;
+  Request: PIoRequest;
+  Done: QWord;
+begin
+  Controller := PNvmeController(Context);
+  while True do
+  begin
+    WaitForEventWithOptions(Controller^.RecoveryNeeded, InfiniteTimeout, False);
+    ReportReset(Controller, ResetController(Controller));
+    PreviousLevel := AcquireSpinLock(Controller^.StateLock);
+    Request := Controller^.Current;
+    Done := Controller^.CurrentDone;
+    Controller^.Recovering := False;
+    Controller^.Current := TakeQueuedRequest(Controller^.Waiting);
+    if Controller^.Current <> nil then
+      BeginRequestLocked(Controller, Controller^.Current);
+    ReleaseSpinLock(Controller^.StateLock, PreviousLevel);
+    if Request <> nil then
+    begin
+      Request^.Information := Int64(Done);
+      CompleteRequest(Request^, ErrorIo);
+    end;
+  end;
+end;
+
 procedure HandleNvmeInterrupt(Frame: PTrapFrame; Context: Pointer);
 begin
   QueueDeferredCall(PNvmeController(Context)^.FinishCommand);
@@ -462,7 +594,7 @@ var
 begin
   Result := StatusPending;
   PreviousLevel := AcquireSpinLock(Controller^.StateLock);
-  if Controller^.Current = nil then
+  if (Controller^.Current = nil) and not Controller^.Recovering then
     BeginRequestLocked(Controller, @Request)
   else if not QueueRequest(Controller^.Waiting, Request) then
     Result := ErrorInterrupted;
@@ -510,24 +642,29 @@ end;
 
 { --- Starting a controller ---------------------------------------------------- }
 
-function AllocatePage(out Physical: QWord): Pointer;
+{ A page of the controller's DMA memory (shared: uncached if it does
+  not snoop, so no cache maintenance is needed around transfers). }
+function AllocatePage(Controller: PNvmeController; out BusAddress: QWord): Pointer;
+var
+  Buffer: TDmaBuffer;
 begin
-  Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Physical = 0 then
+  BusAddress := 0;
+  if not AllocateDmaBuffer(Controller^.Dma, PageBytes, DmaShared, Buffer) then
     Exit(nil);
-  Result := PhysicalToVirtual(Physical);
+  BusAddress := Buffer.DeviceAddress;
+  Result := Buffer.Address;
 end;
 
 function AllocateControllerPages(Controller: PNvmeController): Boolean;
 var
   Index: Integer;
 begin
-  Controller^.ScratchPage := PByte(AllocatePage(Controller^.ScratchPagePhysical));
-  Controller^.PrpListPage := PQWord(AllocatePage(Controller^.PrpListPagePhysical));
+  Controller^.ScratchPage := PByte(AllocatePage(Controller, Controller^.ScratchPageBusAddress));
+  Controller^.PrpListPage := PQWord(AllocatePage(Controller, Controller^.PrpListPageBusAddress));
   Result := (Controller^.ScratchPage <> nil) and (Controller^.PrpListPage <> nil);
   for Index := 0 to BouncePageCount - 1 do
   begin
-    Controller^.BouncePages[Index] := PByte(AllocatePage(Controller^.BouncePagesPhysical[Index]));
+    Controller^.BouncePages[Index] := PByte(AllocatePage(Controller, Controller^.BouncePagesBusAddress[Index]));
     if Controller^.BouncePages[Index] = nil then
       Result := False;
   end;
@@ -541,8 +678,8 @@ begin
     Exit(False);
   WriteRegister32(Controller, RegisterAdminQueueAttributes,
     (LongWord(NvmeQueueEntries - 1) shl 16) or (NvmeQueueEntries - 1));
-  WriteRegister64(Controller, RegisterAdminSubmissionQueue, Controller^.Admin.SubmissionsPhysical);
-  WriteRegister64(Controller, RegisterAdminCompletionQueue, Controller^.Admin.CompletionsPhysical);
+  WriteRegister64(Controller, RegisterAdminSubmissionQueue, Controller^.Admin.SubmissionsBusAddress);
+  WriteRegister64(Controller, RegisterAdminCompletionQueue, Controller^.Admin.CompletionsBusAddress);
   WriteRegister32(Controller, RegisterConfiguration, ConfigurationQueueEntrySizes or ConfigurationEnable);
   Result := WaitForReady(Controller, True);
 end;
@@ -553,8 +690,10 @@ var
 begin
   Capabilities := ReadCapabilities(Controller);
   Controller^.DoorbellStride := LongWord(4) shl ((Capabilities shr 32) and $F);
-  if not AllocateQueuePair(0, Controller^.Registers, Controller^.DoorbellStride, Controller^.Admin) or
-     not AllocateQueuePair(1, Controller^.Registers, Controller^.DoorbellStride, Controller^.Io) then
+  if not AllocateQueuePair(Controller^.Dma, 0, Controller^.Registers, Controller^.DoorbellStride,
+       Controller^.Admin) or
+     not AllocateQueuePair(Controller^.Dma, 1, Controller^.Registers, Controller^.DoorbellStride,
+       Controller^.Io) then
     Exit(False);
   Result := ProgramAdminQueue(Controller);
 end;
@@ -583,17 +722,22 @@ begin
     CpuRelax;
 end;
 
-{ Waking reset it: empty queues, the admin queue, then the I/O queues
-  again (the namespaces and everything else are still known). }
-procedure ResumeController(Context: Pointer);
-var
-  Controller: PNvmeController;
+{ Empty queues, the admin queue (disabling the controller first, which
+  ends every command it had), then the I/O queues again (the namespaces
+  and everything else are still known). }
+function ResetController(Controller: PNvmeController): Boolean;
 begin
-  Controller := PNvmeController(Context);
+  WriteRegister32(Controller, RegisterConfiguration, 0);
+  WaitForReady(Controller, False);
   ResetQueuePair(Controller^.Admin);
   ResetQueuePair(Controller^.Io);
-  if ProgramAdminQueue(Controller) then
-    CreateIoQueues(Controller);
+  Result := ProgramAdminQueue(Controller) and CreateIoQueues(Controller);
+end;
+
+{ Waking reset it: set up again as after a timeout. }
+procedure ResumeController(Context: Pointer);
+begin
+  ResetController(PNvmeController(Context));
 end;
 
 procedure ReadControllerIdentity(Controller: PNvmeController);
@@ -710,19 +854,26 @@ begin
   if Controller = nil then
     Exit;
   Controller^.Pci := Pci;
+  GetPciDmaAttributes(Pci, Controller^.Dma);
   PciEnableDevice(Pci, True);
   Controller^.Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
   InitializeSpinLock(Controller^.StateLock);
   InitializeMutex(Controller^.PollingLock);
   InitializeRequestQueue(Controller^.Waiting);
   InitializeDeferredCall(Controller^.FinishCommand, @FinishCommand, Controller);
+  InitializeTimer(Controller^.Timeout);
+  InitializeDeferredCall(Controller^.TimeoutCall, @HandleCommandTimeout, Controller);
+  InitializeEvent(Controller^.RecoveryNeeded, EventKindSynchronization, False);
   if (Controller^.Registers = nil) or not AllocateControllerPages(Controller) or
      not EnableController(Controller) or not Identify(Controller, IdentifyController, 0) then
     Exit;
   ReadControllerIdentity(Controller);
   if not CreateIoQueues(Controller) then
     Exit;
-  Controller^.UsesInterrupts := ConnectPciInterrupt(Pci, @HandleNvmeInterrupt, Controller) <> PciInterruptNone;
+  { Interrupt driven requests need the recovery thread (else they are
+    polled, and recovered from in place). }
+  if CreateSystemThread(@RunNvmeRecovery, Controller, DefaultThreadPriority + 4, 'NvmeRecovery', False) <> nil then
+    Controller^.UsesInterrupts := ConnectPciInterrupt(Pci, @HandleNvmeInterrupt, Controller) <> PciInterruptNone;
 
   if not Identify(Controller, IdentifyActiveNamespaces, 0) then
     Exit;
