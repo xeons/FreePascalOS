@@ -1,0 +1,313 @@
+diff -ruN a/config.sub b/config.sub
+--- a/config.sub	2026-11-24 18:24:23.714719543 -0600
++++ b/config.sub	2026-11-24 18:24:41.353639372 -0600
+@@ -1735,7 +1735,7 @@
+ 	     | bosx* | nextstep* | cxux* | aout* | elf* | oabi* \
+ 	     | ptx* | coff* | ecoff* | winnt* | domain* | vsta* \
+ 	     | udi* | lites* | ieee* | go32* | aux* | hcos* \
+-	     | chorusrdb* | cegcc* | glidix* | serenity* \
++	     | chorusrdb* | cegcc* | glidix* | serenity* | freepascalos* \
+ 	     | cygwin* | msys* | pe* | moss* | proelf* | rtems* \
+ 	     | midipix* | mingw32* | mingw64* | mint* \
+ 	     | uxpv* | beos* | mpeix* | udk* | moxiebox* \
+diff -ruN a/gcc/config/freepascalos.h b/gcc/config/freepascalos.h
+--- a/gcc/config/freepascalos.h	1969-12-31 18:00:00.000000000 -0600
++++ b/gcc/config/freepascalos.h	2026-11-24 18:47:35.191304351 -0600
+@@ -0,0 +1,84 @@
++/* Definitions for FreePascalOS targets (x86_64-freepascalos and
++   aarch64-freepascalos), whose C library is mlibc.
++   Copyright (C) 2026 Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++/* Programs are position independent ELF files (PIE by default when
++   GCC is configured with --enable-default-pie). A dynamically linked
++   program names mlibc's dynamic linker as its interpreter; the kernel
++   maps the program and the interpreter and starts the interpreter,
++   which loads libc.so and the other libraries from /usr/lib. A static
++   program (-static) is an ordinary executable the kernel starts
++   directly.  */
++
++#undef  TARGET_OS_CPP_BUILTINS
++#define TARGET_OS_CPP_BUILTINS()			\
++  do							\
++    {							\
++      builtin_define ("__freepascalos__");		\
++      builtin_define_std ("unix");			\
++      builtin_assert ("system=freepascalos");		\
++      builtin_assert ("system=unix");			\
++      builtin_assert ("system=posix");			\
++      /* libstdc++ needs the GNU extensions of the C	\
++	 library, as on GNU/Linux.  */			\
++      if (c_dialect_cxx ())				\
++	builtin_define ("_GNU_SOURCE");			\
++    }							\
++  while (0)
++
++#define FREEPASCALOS_DYNAMIC_LINKER "/usr/lib/ld.so"
++
++#undef  CPP_SPEC
++#define CPP_SPEC "%{pthread:-D_REENTRANT}"
++
++#undef  STARTFILE_SPEC
++#define STARTFILE_SPEC \
++  "%{shared:;:crt1.o%s} crti.o%s " \
++  "%{static:crtbeginT.o%s;shared|static-pie|" PIE_SPEC ":crtbeginS.o%s;" \
++  ":crtbegin.o%s}"
++
++#undef  ENDFILE_SPEC
++#define ENDFILE_SPEC \
++  "%{Ofast|ffast-math|funsafe-math-optimizations:%{!shared:crtfastmath.o%s}} " \
++  "%{static:crtend.o%s;shared|static-pie|" PIE_SPEC ":crtendS.o%s;" \
++  ":crtend.o%s} crtn.o%s"
++
++#undef  LIB_SPEC
++#define LIB_SPEC "%{pthread:-lpthread} -lc"
++
++#undef  LINK_SPEC
++#define LINK_SPEC \
++  "-z max-page-size=4096 --hash-style=both " \
++  "%{shared:-shared} %{static:-static} %{rdynamic:-export-dynamic} " \
++  "%{!static:%{!static-pie:%{!shared:-dynamic-linker " \
++  FREEPASCALOS_DYNAMIC_LINKER "}}} " \
++  "%{static-pie:-static -pie --no-dynamic-linker -z text} " \
++  "%{!static:%{!static-pie:--eh-frame-hdr}}"
++
++/* Each object file says its stack need not be executable.  */
++#undef  TARGET_ASM_FILE_END
++#ifdef GCC_AARCH64_ELF_H
++#define TARGET_ASM_FILE_END aarch64_file_end_indicate_exec_stack
++#else
++#define TARGET_ASM_FILE_END file_end_indicate_exec_stack
++#endif
++
++/* mlibc provides the C99 and later math functions and sincos.  */
++#undef  TARGET_LIBC_HAS_FUNCTION
++#define TARGET_LIBC_HAS_FUNCTION gnu_libc_has_function
+diff -ruN a/gcc/config.gcc b/gcc/config.gcc
+--- a/gcc/config.gcc	2026-11-24 18:24:23.717265106 -0600
++++ b/gcc/config.gcc	2026-11-24 19:16:29.222274466 -0600
+@@ -932,6 +932,19 @@
+   rust_target_objs="${rust_target_objs} freebsd-rust.o"
+   target_has_targetrustm=yes
+   ;;
++*-*-freepascalos*)
++  # -pthread and -rdynamic, as on GNU systems.
++  extra_options="$extra_options gnu-user.opt"
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  use_gcc_stdint=wrap
++  native_system_header_dir=/usr/include
++  case ${enable_threads} in
++    "" | yes | posix) thread_file='posix' ;;
++  esac
++  tmake_file="${tmake_file} t-slibgcc"
++  ;;
+ *-*-fuchsia*)
+   native_system_header_dir=/include
+   tmake_file="t-fuchsia"
+@@ -1236,6 +1249,12 @@
+ esac
+ 
+ case ${target} in
++aarch64*-*-freepascalos*)
++	tm_file="${tm_file} elfos.h glibc-stdint.h"
++	tm_file="${tm_file} aarch64/aarch64-elf.h aarch64/aarch64-errata.h freepascalos.h"
++	tmake_file="${tmake_file} aarch64/t-aarch64"
++	tm_defines="${tm_defines} TARGET_DEFAULT_ASYNC_UNWIND_TABLES=1"
++	;;
+ aarch64*-*-elf | aarch64*-*-fuchsia* | aarch64*-*-rtems*)
+ 	tm_file="${tm_file} elfos.h newlib-stdint.h"
+ 	tm_file="${tm_file} aarch64/aarch64-elf.h aarch64/aarch64-errata.h aarch64/aarch64-elf-raw.h"
+@@ -2373,6 +2392,9 @@
+ 			;;
+ 	esac
+ 	;;
++x86_64-*-freepascalos*)
++	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h glibc-stdint.h i386/i386elf.h i386/x86-64.h freepascalos.h"
++	;;
+ x86_64-*-fuchsia*)
+ 	tmake_file="${tmake_file} i386/t-x86_64-elf"
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h fuchsia.h"
+diff -ruN a/libgcc/config.host b/libgcc/config.host
+--- a/libgcc/config.host	2026-11-24 18:24:23.720422861 -0600
++++ b/libgcc/config.host	2026-11-24 18:24:41.355421832 -0600
+@@ -293,6 +293,10 @@
+       ;;
+   esac
+   ;;
++*-*-freepascalos*)
++  tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver"
++  extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++  ;;
+ *-*-fuchsia*)
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
+   extra_parts="crtbegin.o crtend.o"
+@@ -416,6 +420,14 @@
+ 	md_unwind_def_header=aarch64/aarch64-unwind-def.h
+ 	md_unwind_header=aarch64/aarch64-unwind.h
+ 	;;
++aarch64*-*-freepascalos*)
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
++	tmake_file="${tmake_file} t-dfprules"
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	;;
+ aarch64*-*-fuchsia*)
+ 	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
+ 	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
+@@ -754,6 +766,11 @@
+ 	    ;;
+ 	esac
+ 	;;
++x86_64-*-freepascalos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	tmake_file="${tmake_file} t-crtfm i386/t-crtstuff t-dfprules"
++	tm_file="${tm_file} i386/elf-lib.h"
++	;;
+ x86_64-*-fuchsia*)
+ 	tmake_file="$tmake_file t-libgcc-pic"
+ 	;;
+diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
+--- a/libstdc++-v3/configure	2026-11-24 18:24:23.726545699 -0600
++++ b/libstdc++-v3/configure	2026-11-24 19:11:36.660834208 -0600
+@@ -6999,7 +6999,7 @@
+   ;;
+ 
+ # This must be Linux ELF.
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos* | uclinuxfdpiceabi)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -9776,7 +9776,7 @@
+       lt_prog_compiler_static='-non_shared'
+       ;;
+ 
+-    linux* | k*bsd*-gnu | kopensolaris*-gnu)
++    linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+       case $cc_basename in
+       # old Intel for x86_64 which still supported -KPIC.
+       ecc*)
+@@ -11953,7 +11953,7 @@
+ # project, but have not yet been accepted: they are GCC-local changes
+ # for the time being.  (See
+ # https://lists.gnu.org/archive/html/libtool-patches/2018-05/msg00000.html)
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos* | gnu* | uclinuxfdpiceabi)
+   version_type=linux
+   need_lib_prefix=no
+   need_version=no
+@@ -13948,7 +13948,7 @@
+         inherit_rpath_CXX=yes
+         ;;
+ 
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+         case $cc_basename in
+           KCC*)
+ 	    # Kuck and Associates, Inc. (KAI) C++ Compiler
+@@ -14787,7 +14787,7 @@
+ 	    ;;
+ 	esac
+ 	;;
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+ 	case $cc_basename in
+ 	  KCC*)
+ 	    # KAI C++ Compiler
+@@ -15703,7 +15703,7 @@
+ # project, but have not yet been accepted: they are GCC-local changes
+ # for the time being.  (See
+ # https://lists.gnu.org/archive/html/libtool-patches/2018-05/msg00000.html)
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos* | gnu* | uclinuxfdpiceabi)
+   version_type=linux
+   need_lib_prefix=no
+   need_version=no
+@@ -39204,7 +39204,7 @@
+ 
+   fi
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-freepascalos*)
+ 
+   # All these tests are for C++; save the language and the compiler flags.
+   # The CXXFLAGS thing is suspicious, but based on similar bits previously
+diff -ruN a/libstdc++-v3/crossconfig.m4 b/libstdc++-v3/crossconfig.m4
+--- a/libstdc++-v3/crossconfig.m4	2026-11-24 18:24:23.723535712 -0600
++++ b/libstdc++-v3/crossconfig.m4	2026-11-24 18:24:41.355470502 -0600
+@@ -174,7 +174,7 @@
+ 
+     GCC_CHECK_TLS
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-freepascalos*)
+     GLIBCXX_CHECK_COMPILER_FEATURES
+     GLIBCXX_CHECK_LINKER_FEATURES
+     GLIBCXX_CHECK_MATH_SUPPORT
+diff -ruN a/libtool.m4 b/libtool.m4
+--- a/libtool.m4	2026-11-24 19:11:36.653647016 -0600
++++ b/libtool.m4	2026-11-24 19:11:36.662834211 -0600
+@@ -2539,7 +2539,7 @@
+ # project, but have not yet been accepted: they are GCC-local changes
+ # for the time being.  (See
+ # https://lists.gnu.org/archive/html/libtool-patches/2018-05/msg00000.html)
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos* | gnu* | uclinuxfdpiceabi)
+   version_type=linux
+   need_lib_prefix=no
+   need_version=no
+@@ -3198,7 +3198,7 @@
+   ;;
+ 
+ # This must be Linux ELF.
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos* | uclinuxfdpiceabi)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -3856,7 +3856,7 @@
+ 	    ;;
+ 	esac
+ 	;;
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+ 	case $cc_basename in
+ 	  KCC*)
+ 	    # KAI C++ Compiler
+@@ -4154,7 +4154,7 @@
+       _LT_TAGVAR(lt_prog_compiler_static, $1)='-non_shared'
+       ;;
+ 
+-    linux* | k*bsd*-gnu | kopensolaris*-gnu)
++    linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+       case $cc_basename in
+       # old Intel for x86_64 which still supported -KPIC.
+       ecc*)
+@@ -6068,7 +6068,7 @@
+         _LT_TAGVAR(inherit_rpath, $1)=yes
+         ;;
+ 
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | freepascalos*)
+         case $cc_basename in
+           KCC*)
+ 	    # Kuck and Associates, Inc. (KAI) C++ Compiler
