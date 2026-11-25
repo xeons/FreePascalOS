@@ -1650,3 +1650,102 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A separate network process; IME text and drag and drop through the
       content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout
+
+## Planned: driver model (loading only the drivers the machine needs)
+
+Today every driver is compiled into the kernel and `Io.Startup` calls each
+one's initializer in turn (`InitializeAhciControllers`,
+`InitializeE1000Adapters`, ...); each scans for its own hardware. Options,
+in the order they would be built:
+
+- [ ] **A. Match tables and a device manager (first step, small).** Every
+      driver declares what it drives: PCI vendor/device or class/subclass,
+      USB class/vendor/product, ACPI `_HID`/`_CID`, device tree
+      `compatible` strings, platform names. The buses enumerate devices
+      once and a device manager (an NT "Plug and Play manager"-like role)
+      binds each device to the best-matching driver, calling the driver's
+      `AddDevice`/start routine only for devices that exist. Removal and
+      hot plug (USB, PCIe hot plug, Thunderbolt later) go through the same
+      path. Drivers stay compiled in, but nothing initializes for absent
+      hardware, and boot order follows device dependencies instead of a
+      fixed list.
+- [ ] **B. Loadable driver modules (the main step).** Drivers built as
+      separate kernel modules (relocatable ELF or shared objects linked
+      against an exported kernel interface with versioned symbols),
+      kept in `/lib/drivers/` with a small `.info` manifest each (name,
+      version, match IDs, load group: boot / system / on demand,
+      dependencies). The build generates a match index; the device
+      manager loads a module the first time a matching device appears and
+      can unload it when its last device goes. Boot-critical drivers
+      (storage and the file system holding /lib/drivers, the display)
+      come from the boot image (the ESP or the RAM disk) so the root
+      volume can be reached; everything else loads from disk.
+      Needs: a stable kernel driver interface (versioned), a module
+      loader with relocations and symbol resolution, signature checks
+      (optional, Ed25519 as for packages), `driverctl list|load|unload|
+      info`, and Task Manager / sysinfo showing devices and their drivers.
+- [ ] **C. User-mode drivers (later, for isolation).** Selected classes
+      (USB HID, audio, printers, scanners, some network cards) run as
+      processes: the kernel maps the device's MMIO/ports into the
+      process, forwards its interrupts as events, and restricts DMA
+      (IOMMU when available). A crashing driver is restarted without
+      taking the system down. The process restrictions added for the
+      browser sandbox are a starting point.
+- [ ] Recommendation: A now, then B with A's match tables as the
+      manifests' content, then C for classes where a crash matters more
+      than speed.
+
+## Planned: 3D graphics (OpenGL and Vulkan)
+
+- [ ] **Kernel GPU interface** (a DRM/KMS-like role, generic names):
+      display modes and outputs (scanout, page flips, vblank events,
+      hot-plugged monitors via EDID), GPU memory objects (allocate, map,
+      share between processes by handle), command submission with fences
+      and sync objects, per-process GPU contexts, and a device file per
+      GPU. Drivers: virtio-gpu 3D first (QEMU: virgl for OpenGL, venus
+      for Vulkan), then real hardware (Intel, AMD) much later.
+- [ ] **libgl / libvulkan via Mesa** (through the ports system, once the C
+      toolchain and mlibc work): a FreePascalOS window-system layer for
+      EGL and the Vulkan WSI (surfaces backed by the display server's
+      shared-memory windows today, GPU buffers when the kernel interface
+      exists); software rendering first (softpipe without LLVM; llvmpipe
+      and lavapipe once LLVM is ported), then virgl/venus, then hardware
+      drivers. Pascal bindings (OpenGL and Vulkan headers for FPC) so
+      Pascal programs can use them.
+- [ ] Display server: GPU-composited windows (optional; keep the CPU path),
+      a way for a window's content to be a GPU buffer, and vsync'd
+      presentation.
+- [ ] WebGL in the browser on top of libgl (later).
+- [ ] Demos and tests: glxgears-like and vkcube-like programs, conformance
+      subsets (piglit / VK-GL-CTS pieces) run in QEMU with virtio-gpu.
+
+## Planned: installer image
+
+- [ ] A bootable installer image (UEFI, hybrid ISO + USB image; an SD
+      image for the Raspberry Pi) running a live session with the
+      installer program, and a text-mode fallback.
+- [ ] Steps: language, region and time zone, keyboard layout (with a test
+      field), network (optional; for package repositories and time),
+      disk setup (guided "erase disk" and manual partitioning: GPT
+      tables, create, delete, resize where the file system allows,
+      format ext4 / FAT32 / exFAT, the EFI system partition, swap later,
+      mount points written to /etc/fstab), user account (name, login,
+      password, administrator rights, automatic login), computer name,
+      optional packages from the ports repository, a summary, then the
+      installation with progress and a log.
+- [ ] Installing: copy the system, write fstab and settings (keyboard,
+      locale, time zone, hostname), create the user and home folder, and
+      install the boot loader: the ESP files plus a UEFI boot entry
+      through the runtime variable services (needs SetVariable support
+      in the kernel), or the Pi's boot partition and config.txt.
+- [ ] Libraries/tools it needs: a partitioning library (GPT/MBR reading
+      and writing, alignment, resize checks), mkfs tools for ext4, FAT
+      and exFAT inside the OS (check which exist), file system resize
+      (ext4 grow/shrink, FAT), UEFI variable access, and a keyboard
+      layout system (layouts as data files, a setting, switching in the
+      display server and the console).
+- [ ] First-boot setup for preinstalled images (the same steps without
+      disk setup), and an "upgrade an existing installation" path.
+- [ ] Tests: a scripted install in QEMU onto an empty virtual disk
+      (guided and manual), then booting the installed system and checking
+      the user, settings and boot entry.
