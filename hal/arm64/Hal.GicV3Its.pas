@@ -82,6 +82,7 @@ procedure DisableLpi(IntId: LongWord);
 implementation
 
 uses
+  Runtime.Memory,
   Memory.Layout,
   Memory.PhysicalPages,
   Memory.DeviceMapping,
@@ -92,6 +93,8 @@ uses
   Hal.InterruptVectors;
 
 const
+  { One pending table per processor's redistributor. }
+  MaximumPendingTables = 64;
   ItsRegisterBytes = $20000;
   ItsControl = $0000;
   ItsType = $0008;
@@ -172,6 +175,12 @@ var
   LpiEvents: array[0..MaximumLpis - 1] of LongWord;
   NextLpi: LongWord = 0;
   IttEntryBytes: LongWord;
+  { Each redistributor's LPI pending table, kept across suspend to RAM:
+    waking turns LPIs off, and turning them on again reuses the table
+    rather than taking a new page each time. }
+  PendingRedistributors: array[0..MaximumPendingTables - 1] of QWord;
+  PendingTables: array[0..MaximumPendingTables - 1] of QWord;
+  PendingTableCount: LongWord = 0;
 
 function TranslationServiceIsReady: Boolean;
 begin
@@ -444,6 +453,32 @@ begin
       MapCollection(Index, CollectionTargets[Index]);
 end;
 
+{ Redistributor's pending table: the one it had before (cleared), or a
+  new one. 0 if memory ran out. }
+function PendingTableOf(constref Redistributor: TRedistributor): QWord;
+var
+  Index: LongWord;
+begin
+  Index := 0;
+  while Index < PendingTableCount do
+  begin
+    if PendingRedistributors[Index] = Redistributor.PhysicalAddress then
+    begin
+      { Nothing is pending after waking: the table says so again. }
+      ZeroMemory(PhysicalToVirtual(PendingTables[Index]), PageSize);
+      Exit(PendingTables[Index]);
+    end;
+    Inc(Index);
+  end;
+  Result := AllocateAlignedPages(1, PendingAlignmentPages);
+  if (Result <> 0) and (PendingTableCount < MaximumPendingTables) then
+  begin
+    PendingRedistributors[PendingTableCount] := Redistributor.PhysicalAddress;
+    PendingTables[PendingTableCount] := Result;
+    Inc(PendingTableCount);
+  end;
+end;
+
 procedure EnableLpisOn(constref Redistributor: TRedistributor);
 var
   Pending: QWord;
@@ -454,7 +489,7 @@ begin
   Control := ReadRedistributor(Redistributor, RedistributorControl);
   if (Control and RedistributorControlEnableLpis) <> 0 then
     Exit;
-  Pending := AllocateAlignedPages(1, PendingAlignmentPages);
+  Pending := PendingTableOf(Redistributor);
   if Pending = 0 then
     Exit;
   MakeVisible(PhysicalToVirtual(Pending), PageSize);

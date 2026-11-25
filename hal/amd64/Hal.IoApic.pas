@@ -25,7 +25,14 @@
   entry: vector, destination, polarity, trigger mode and a mask bit.
 
   The registers are reached indirectly: write a register number to
-  IOREGSEL, then read or write IOWIN.
+  IOREGSEL, then read or write IOWIN. The pair must not be split by
+  another processor (or an interrupt) choosing another register in
+  between, so each access takes RegisterLock with interrupts off; a
+  redirection entry is written as one locked step too.
+
+  The destination field is 8 bits (physical mode): a processor whose
+  APIC id is above 255 (x2APIC) cannot be named here, and the HAL routes
+  its interrupts to the boot processor instead (Hal.InterruptController).
 }
 unit Hal.IoApic;
 
@@ -50,6 +57,10 @@ procedure SaveIoApicEntries;
 procedure RestoreIoApicEntries;
 
 implementation
+
+uses
+  Kernel.Arch.Cpu,
+  Kernel.SpinLock;
 
 const
   MaximumIoApics = 8;
@@ -80,17 +91,62 @@ var
   IoApics: array[0..MaximumIoApics - 1] of TIoApic;
   IoApicTotal: Integer = 0;
   SavedEntries: array[0..MaximumIoApics - 1, 0..MaximumInputs - 1] of QWord;
+  RegisterLock: TSpinLock;
 
-function ReadRegister(const IoApic: TIoApic; Register: LongWord): LongWord;
+function LockRegisters: Boolean;
+begin
+  Result := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(RegisterLock);
+end;
+
+procedure UnlockRegisters(InterruptsWereEnabled: Boolean);
+begin
+  ReleaseSpinLockAtCurrentLevel(RegisterLock);
+  RestoreInterrupts(InterruptsWereEnabled);
+end;
+
+{ The unlocked accesses: the caller holds RegisterLock. }
+function ReadRegisterLocked(const IoApic: TIoApic; Register: LongWord): LongWord;
 begin
   PLongWord(IoApic.Registers + RegisterSelectOffset)^ := Register;
   Result := PLongWord(IoApic.Registers + RegisterWindowOffset)^;
 end;
 
-procedure WriteRegister(const IoApic: TIoApic; Register: LongWord; Value: LongWord);
+procedure WriteRegisterLocked(const IoApic: TIoApic; Register: LongWord; Value: LongWord);
 begin
   PLongWord(IoApic.Registers + RegisterSelectOffset)^ := Register;
   PLongWord(IoApic.Registers + RegisterWindowOffset)^ := Value;
+end;
+
+function ReadRegister(const IoApic: TIoApic; Register: LongWord): LongWord;
+var
+  InterruptsWereEnabled: Boolean;
+begin
+  InterruptsWereEnabled := LockRegisters;
+  Result := ReadRegisterLocked(IoApic, Register);
+  UnlockRegisters(InterruptsWereEnabled);
+end;
+
+procedure WriteRegister(const IoApic: TIoApic; Register: LongWord; Value: LongWord);
+var
+  InterruptsWereEnabled: Boolean;
+begin
+  InterruptsWereEnabled := LockRegisters;
+  WriteRegisterLocked(IoApic, Register, Value);
+  UnlockRegisters(InterruptsWereEnabled);
+end;
+
+{ Writes redirection entry Input as one step: masked while the
+  destination goes in, then the low half (which may unmask it). }
+procedure WriteEntry(const IoApic: TIoApic; Input: LongWord; Low, High: LongWord);
+var
+  InterruptsWereEnabled: Boolean;
+begin
+  InterruptsWereEnabled := LockRegisters;
+  WriteRegisterLocked(IoApic, RedirectionTableBase + 2 * Input, EntryMasked);
+  WriteRegisterLocked(IoApic, RedirectionTableBase + 2 * Input + 1, High);
+  WriteRegisterLocked(IoApic, RedirectionTableBase + 2 * Input, Low);
+  UnlockRegisters(InterruptsWereEnabled);
 end;
 
 function AddIoApic(Registers: Pointer; GlobalInterruptBase: LongWord): Boolean;
@@ -100,6 +156,8 @@ var
 begin
   if IoApicTotal = MaximumIoApics then
     Exit(False);
+  if IoApicTotal = 0 then
+    InitializeSpinLock(RegisterLock);
   IoApic := @IoApics[IoApicTotal];
   IoApic^.Registers := PByte(Registers);
   IoApic^.GlobalInterruptBase := GlobalInterruptBase;
@@ -158,8 +216,7 @@ begin
   if LevelTriggered then
     Low := Low or EntryLevelTriggered;
   { Destination first, so the entry is complete when it is unmasked. }
-  WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input + 1, LongWord(DestinationApicId) shl 24);
-  WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, Low);
+  WriteEntry(IoApics[Index], Input, Low, LongWord(DestinationApicId) shl 24);
   Result := True;
 end;
 
@@ -193,11 +250,8 @@ begin
     for Input := 0 to IoApics[Index].InputCount - 1 do
       if Input < MaximumInputs then
       begin
-        { Masked while the destination goes in, then the entry itself. }
-        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, EntryMasked);
-        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input + 1,
+        WriteEntry(IoApics[Index], Input, LongWord(SavedEntries[Index, Input]),
           LongWord(SavedEntries[Index, Input] shr 32));
-        WriteRegister(IoApics[Index], RedirectionTableBase + 2 * Input, LongWord(SavedEntries[Index, Input]));
       end;
 end;
 

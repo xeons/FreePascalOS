@@ -52,6 +52,7 @@ uses
   Memory.DeviceMapping,
   Firmware.Madt,
   Hal.IoApic,
+  Hal.LocalApic,
   Debug.Output;
 
 const
@@ -62,8 +63,26 @@ const
   MessageAddressBase = $FEE00000;
   MessageDestinationShift = 12;
 
+  { Without interrupt remapping, I/O APIC entries and messages name a
+    processor in 8 bits. }
+  HighestReachableApicId = 255;
+
 var
   Available: Boolean = False;
+  { The boot processor's APIC id: where an interrupt for a processor
+    that cannot be named goes instead. }
+  FallbackApicId: LongWord = 0;
+
+{ TargetProcessorId if a device can name it, else the boot processor
+  (an x2APIC id above 255 would be cut to its low 8 bits: another
+  processor, or none). }
+function ReachableApicId(TargetProcessorId: LongWord): LongWord;
+begin
+  if TargetProcessorId <= HighestReachableApicId then
+    Result := TargetProcessorId
+  else
+    Result := FallbackApicId;
+end;
 
 procedure AddMappedIoApic(PhysicalAddress: TPhysicalAddress; GlobalInterruptBase: LongWord);
 var
@@ -81,6 +100,8 @@ var
   Index: Integer;
   Description: TIoApicDescription;
 begin
+  { On the boot processor. }
+  FallbackApicId := LocalApicId;
   if MadtWasParsed then
     for Index := 0 to IoApicCount - 1 do
     begin
@@ -110,13 +131,14 @@ end;
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
 begin
-  Result := RouteGlobalInterrupt(Gsi, Vector, Byte(TargetProcessorId), ActiveLow, LevelTriggered);
+  Result := RouteGlobalInterrupt(Gsi, Vector, Byte(ReachableApicId(TargetProcessorId)), ActiveLow,
+    LevelTriggered);
 end;
 
 function ComposeMessageInterrupt(RequesterId: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   out Address: QWord; out Data: LongWord): Boolean;
 begin
-  Address := MessageAddressBase or (QWord(TargetProcessorId and $FF) shl MessageDestinationShift);
+  Address := MessageAddressBase or (QWord(ReachableApicId(TargetProcessorId)) shl MessageDestinationShift);
   Data := Vector;
   Result := True;
 end;
