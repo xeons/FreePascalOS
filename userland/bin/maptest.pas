@@ -35,8 +35,9 @@
       writes, and read() of the same file agrees; a write() to the file
       shows in it; two private mappings each keep their own writes, and
       the file and the other mapping keep theirs; a private mapping keeps
-      what it saw when the file is written; a shared writable mapping is
-      refused; a mapping outlives its handle and faults once unmapped;
+      what it saw when the file is written; a shared writable mapping
+      through a read-only handle is refused (filemaptest tests the
+      writable ones); a mapping outlives its handle and faults once unmapped;
     * the pages of libsystem this program maps are mapped by other
       processes too (PagesMappedElsewhere);
     * last, a lowered commit limit turns a commit away.
@@ -388,8 +389,8 @@ begin
   Check('the file is mapped private twice',
     (MapFile(Handle, 0, 0, MapFilePrivate or MapFileWritable, Pointer(First)) = 0) and
     (MapFile(Handle, 0, 0, MapFilePrivate or MapFileWritable, Pointer(Second)) = 0));
-  Check('a shared writable mapping is refused', MapFile(Handle, 0, 0, MapFileWritable, Pointer(Shared)) =
-    ErrorUnsupported);
+  Check('a shared writable mapping through a read-only handle is refused',
+    MapFile(Handle, 0, 0, MapFileWritable, Pointer(Shared)) = ErrorAccessDenied);
   KernelClose(Handle);
   if (First = nil) or (Second = nil) then
     Exit;

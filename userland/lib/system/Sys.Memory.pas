@@ -95,9 +95,22 @@ function QueryMemory(Address: Pointer; out Information: TMemoryInformation): Lon
 function AllowDynamicCode(Allowed: Boolean): LongInt;
 { Maps ByteCount bytes (0: to the end) of the file open on Handle from
   Offset (page aligned). Read-only shared unless Flags say otherwise; a
-  writable mapping must be private (copy on write). Unmapped with
+  writable shared mapping needs a handle open for writing, and what is
+  written to it reaches the file (SyncMemory, unmapping, or within
+  seconds); a private one is copy on write. Unmapped with
   ReleaseMemory; it stays valid after the handle is closed. }
 function MapFile(Handle: Int64; Offset, ByteCount: QWord; Flags: LongWord; out Address: Pointer): LongInt;
+{ Writes what was written to the shared file mappings of the pages
+  [Address, Address + ByteCount) back to their files; with
+  SyncMemoryWait in Flags it is on the disk when this returns. }
+function SyncMemory(Address: Pointer; ByteCount: QWord; Flags: LongWord): LongInt;
+{ One byte of PageResidency* bits per page of [Address, Address +
+  ByteCount) into Vector. }
+function QueryMemoryResidency(Address: Pointer; ByteCount: QWord; Vector: PByte): LongInt;
+function GetMappedFileStatistics(out Statistics: TAbiMappedFileStatistics): LongInt;
+{ Drops up to PagesWanted pages of mapped files (TrimMappedPagesToo:
+  mapped ones too); the pages freed, or a negative error. Root only. }
+function TrimMappedFiles(PagesWanted: QWord; Flags: LongWord): Int64;
 
 implementation
 
@@ -204,6 +217,27 @@ begin
   Result := ErrorCodeOf(CallResult);
   if Result = 0 then
     Address := Pointer(CallResult);
+end;
+
+function SyncMemory(Address: Pointer; ByteCount: QWord; Flags: LongWord): LongInt;
+begin
+  Result := ErrorCodeOf(SystemCall(CallSyncMemory, QWord(Address), ByteCount, Flags, 0, 0, 0));
+end;
+
+function QueryMemoryResidency(Address: Pointer; ByteCount: QWord; Vector: PByte): LongInt;
+begin
+  Result := ErrorCodeOf(SystemCall(CallQueryMemoryResidency, QWord(Address), ByteCount, QWord(Vector), 0, 0, 0));
+end;
+
+function GetMappedFileStatistics(out Statistics: TAbiMappedFileStatistics): LongInt;
+begin
+  FillChar(Statistics, SizeOf(Statistics), 0);
+  Result := ErrorCodeOf(SystemCall(CallGetMappedFileStatistics, QWord(@Statistics), 0, 0, 0, 0, 0));
+end;
+
+function TrimMappedFiles(PagesWanted: QWord; Flags: LongWord): Int64;
+begin
+  Result := SystemCall(CallTrimMappedFiles, PagesWanted, Flags, 0, 0, 0, 0);
 end;
 
 function DuplicateText(Text: PChar): PChar;

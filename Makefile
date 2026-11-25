@@ -230,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -581,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test native-fpc-test aml-test region-tree-test mapped-file-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -667,6 +667,18 @@ $(REGION_TREE_TEST): tools/RegionTreeTest/RegionTreeTest.pas kernel/processes/Pr
 
 region-tree-test: $(REGION_TREE_TEST)
 	$(REGION_TREE_TEST)
+
+# The arithmetic of mapped files (page table entries, change and
+# write-back ranges: Processes.MappedPageEntries, Processes.MappedFileRanges)
+# on the host.
+MAPPED_FILE_TEST := build/tools/MappedFileTest
+
+$(MAPPED_FILE_TEST): tools/MappedFileTest/MappedFileTest.pas kernel/processes/Processes.MappedPageEntries.pas 		kernel/processes/Processes.MappedFileRanges.pas
+	@mkdir -p build/tools/mapped-file-units
+	$(FPC) -O2 -Cr -Co -Fukernel/processes -FEbuild/tools -FUbuild/tools/mapped-file-units $<
+
+mapped-file-test: $(MAPPED_FILE_TEST)
+	$(MAPPED_FILE_TEST)
 
 # The block cache's sizing, the batched discard ranges and the
 # out-of-memory scores on the host.

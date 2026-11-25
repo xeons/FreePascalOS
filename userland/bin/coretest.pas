@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..436] of TCommandTest = (
+  CommandTests: array[0..437] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -815,7 +815,14 @@ const
       user, a set-user-ID program swapped through a link while it starts
       and a lowered limit raised again. }
     (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { File mappings (filemaptest): shared writable mappings (only through
+      a writable handle) seen by other mappings and read() at once,
+      dirty until msync, written back on unmap; write() keeps a
+      mapping's bytes; a private mapping a write changes reads one page
+      as its snapshot; trimming unmaps and drops clean mapped pages,
+      which read the same again, and leaves dirty ones. }
+    (Command: 'filemaptest > filemap.log; echo $?; grep FAIL filemap.log; tail -n 1 filemap.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var
