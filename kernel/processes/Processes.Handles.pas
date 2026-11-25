@@ -35,6 +35,17 @@
   passed over whole. The table's limit (a process limit,
   DefaultHandleLimit unless changed with CallSetProcessLimit) bounds the
   numbers handed out, up to HandleLimitCeiling.
+
+  Locking: whoever changes a table holds its process's lock and, while
+  the entries change, the table's EntryLock exclusively (taken here).
+  Lookups take EntryLock shared, so they need not hold the process's
+  lock: threads of one process looking up handles (every read, write
+  and wait does) run side by side, and never wait behind a long
+  holder of the process lock. A reference taken under the shared lock
+  (ReferenceHandleEntry) keeps the object alive after it, even if the
+  handle is closed at once. Objects are released after EntryLock is
+  given back, so a close that ends in a long delete routine does not
+  hold up lookups.
 }
 unit Processes.Handles;
 
@@ -43,7 +54,8 @@ unit Processes.Handles;
 interface
 
 uses
-  Abi.SystemCalls;
+  Abi.SystemCalls,
+  Kernel.SharedLocks;
 
 const
   HandlesPerChunk = 256;
@@ -100,6 +112,8 @@ type
     OpenCount: LongWord;
     { Every handle below this one is open. }
     LowestFree: LongWord;
+    { Exclusive while entries change, shared for lookups. }
+    EntryLock: TSharedLock;
   end;
   PHandleTable = ^THandleTable;
 
@@ -131,8 +145,15 @@ function ReserveHandle(var Table: THandleTable): Integer;
 procedure FillReservedHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer);
 procedure CancelReservedHandle(var Table: THandleTable; Handle: Integer);
 
+{ What Handle holds (taking the table's lock shared): the object is not
+  referenced, so the caller must hold the process's lock while it uses
+  it, or use ReferenceHandleEntry. }
 function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
   out ObjectBody: Pointer): Boolean;
+{ The object behind Handle, referenced (the caller drops the reference),
+  and its kind; nil if the handle is not open. Takes only the table's
+  lock, shared. }
+function ReferenceHandleEntry(var Table: THandleTable; Handle: Int64; out Kind: THandleKind): Pointer;
 
 function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
 { Closes every handle and frees the chunks (the table stays usable). }
@@ -163,6 +184,7 @@ begin
   Table.Limit := DefaultHandleLimit;
   Table.OpenCount := 0;
   Table.LowestFree := 0;
+  InitializeSharedLock(Table.EntryLock);
 end;
 
 procedure SetHandleLimit(var Table: THandleTable; Limit: LongWord);
@@ -243,7 +265,7 @@ begin
     Table.LowestFree := Handle + 1;
 end;
 
-function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;
+function InsertHandleLocked(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;
   FirstSlot: Integer): Integer;
 var
   Handle: LongWord;
@@ -280,20 +302,44 @@ begin
   Result := -1;
 end;
 
+function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Pointer;
+  FirstSlot: Integer): Integer;
+begin
+  AcquireSharedLockExclusive(Table.EntryLock);
+  Result := InsertHandleLocked(Table, Kind, ObjectBody, FirstSlot);
+  ReleaseSharedLock(Table.EntryLock);
+end;
+
+{ Takes what Handle holds out of the table (EntryLock held exclusively):
+  False if it held nothing; else its kind and object, whose release
+  (ReleaseTakenEntry) is the caller's once the lock is given back. }
+function TakeEntryLocked(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
+  out ObjectBody: Pointer): Boolean; forward;
+procedure ReleaseTakenEntry(Kind: THandleKind; ObjectBody: Pointer); forward;
+
 { SetHandle below Bound. }
 function StoreHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer;
   Bound: LongWord): Boolean;
 var
   Chunk: PHandleChunk;
+  OldKind: THandleKind;
+  OldBody: Pointer;
+  HadEntry: Boolean;
 begin
   if (Handle < 0) or (LongWord(Handle) >= Bound) then
     Exit(False);
+  AcquireSharedLockExclusive(Table.EntryLock);
+  HadEntry := False;
   Chunk := ChunkFor(Table, LongWord(Handle));
-  if Chunk = nil then
-    Exit(False);
-  CloseHandle(Table, Handle);
-  FillEntry(Table, Chunk, LongWord(Handle), Kind, ObjectBody);
-  Result := True;
+  Result := Chunk <> nil;
+  if Result then
+  begin
+    HadEntry := TakeEntryLocked(Table, Handle, OldKind, OldBody);
+    FillEntry(Table, Chunk, LongWord(Handle), Kind, ObjectBody);
+  end;
+  ReleaseSharedLock(Table.EntryLock);
+  if HadEntry then
+    ReleaseTakenEntry(OldKind, OldBody);
 end;
 
 function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
@@ -340,13 +386,16 @@ procedure FillReservedHandle(var Table: THandleTable; Handle: Integer; Kind: THa
 var
   Entry: PHandleEntry;
 begin
+  AcquireSharedLockExclusive(Table.EntryLock);
   Entry := ReservedEntry(Table, Handle);
-  if Entry = nil then
-    Exit;
-  ReferenceObject(ObjectBody);
-  NoteHandleOpened(Kind, ObjectBody);
-  Entry^.ObjectBody := ObjectBody;
-  Entry^.Kind := Kind;
+  if Entry <> nil then
+  begin
+    ReferenceObject(ObjectBody);
+    NoteHandleOpened(Kind, ObjectBody);
+    Entry^.ObjectBody := ObjectBody;
+    Entry^.Kind := Kind;
+  end;
+  ReleaseSharedLock(Table.EntryLock);
 end;
 
 procedure CancelReservedHandle(var Table: THandleTable; Handle: Integer);
@@ -354,19 +403,23 @@ var
   Entry: PHandleEntry;
   Chunk: PHandleChunk;
 begin
+  AcquireSharedLockExclusive(Table.EntryLock);
   Entry := ReservedEntry(Table, Handle);
-  if Entry = nil then
-    Exit;
-  Chunk := Table.Chunks[Handle div HandlesPerChunk];
-  Entry^.Kind := HandleKindFree;
-  Entry^.ObjectBody := nil;
-  Dec(Chunk^.OpenCount);
-  Dec(Table.OpenCount);
-  if LongWord(Handle) < Table.LowestFree then
-    Table.LowestFree := LongWord(Handle);
+  if Entry <> nil then
+  begin
+    Chunk := Table.Chunks[Handle div HandlesPerChunk];
+    Entry^.Kind := HandleKindFree;
+    Entry^.ObjectBody := nil;
+    Dec(Chunk^.OpenCount);
+    Dec(Table.OpenCount);
+    if LongWord(Handle) < Table.LowestFree then
+      Table.LowestFree := LongWord(Handle);
+  end;
+  ReleaseSharedLock(Table.EntryLock);
 end;
 
-function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
+{ LookupHandle with EntryLock held (either way). }
+function LookupHandleLocked(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
   out ObjectBody: Pointer): Boolean;
 var
   Chunk: PHandleChunk;
@@ -387,13 +440,30 @@ begin
   Result := Kind <> HandleKindFree;
 end;
 
-function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
+function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
+  out ObjectBody: Pointer): Boolean;
+begin
+  AcquireSharedLockShared(Table.EntryLock);
+  Result := LookupHandleLocked(Table, Handle, Kind, ObjectBody);
+  ReleaseSharedLock(Table.EntryLock);
+end;
+
+function ReferenceHandleEntry(var Table: THandleTable; Handle: Int64; out Kind: THandleKind): Pointer;
+begin
+  AcquireSharedLockShared(Table.EntryLock);
+  if LookupHandleLocked(Table, Handle, Kind, Result) then
+    ReferenceObject(Result)
+  else
+    Result := nil;
+  ReleaseSharedLock(Table.EntryLock);
+end;
+
+function TakeEntryLocked(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
+  out ObjectBody: Pointer): Boolean;
 var
   Chunk: PHandleChunk;
-  Kind: THandleKind;
-  ObjectBody: Pointer;
 begin
-  if not LookupHandle(Table, Handle, Kind, ObjectBody) then
+  if not LookupHandleLocked(Table, Handle, Kind, ObjectBody) then
     Exit(False);
   Chunk := Table.Chunks[Handle div HandlesPerChunk];
   Chunk^.Entries[Handle mod HandlesPerChunk].Kind := HandleKindFree;
@@ -402,9 +472,25 @@ begin
   Dec(Table.OpenCount);
   if Handle < Table.LowestFree then
     Table.LowestFree := LongWord(Handle);
+  Result := True;
+end;
+
+procedure ReleaseTakenEntry(Kind: THandleKind; ObjectBody: Pointer);
+begin
   NoteHandleClosed(Kind, ObjectBody);
   DereferenceObject(ObjectBody);
-  Result := True;
+end;
+
+function CloseHandle(var Table: THandleTable; Handle: Int64): Boolean;
+var
+  Kind: THandleKind;
+  ObjectBody: Pointer;
+begin
+  AcquireSharedLockExclusive(Table.EntryLock);
+  Result := TakeEntryLocked(Table, Handle, Kind, ObjectBody);
+  ReleaseSharedLock(Table.EntryLock);
+  if Result then
+    ReleaseTakenEntry(Kind, ObjectBody);
 end;
 
 procedure CloseAllHandles(var Table: THandleTable);
@@ -426,6 +512,7 @@ begin
       Inc(EntryIndex);
     end;
   end;
+  AcquireSharedLockExclusive(Table.EntryLock);
   for ChunkIndex := 0 to HandleChunkCount - 1 do
   begin
     FreeKernelMemory(Table.Chunks[ChunkIndex]);
@@ -433,6 +520,7 @@ begin
   end;
   Table.OpenCount := 0;
   Table.LowestFree := 0;
+  ReleaseSharedLock(Table.EntryLock);
 end;
 
 function CountOpenHandles(const Table: THandleTable): LongWord;

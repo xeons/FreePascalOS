@@ -144,7 +144,7 @@ begin
     Limit := DefaultProcessCountLimit;
   Counting.UserId := UserId;
   Counting.Count := 0;
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   VisitRunningProcessesLocked(@CountProcessOfUser, @Counting);
   UnlockProcessRegistry;
   Result := Counting.Count < Limit;

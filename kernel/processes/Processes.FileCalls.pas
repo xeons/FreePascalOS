@@ -230,13 +230,10 @@ begin
 end;
 
 function LookupCurrentHandle(Handle: Int64; out Kind: THandleKind; out ObjectBody: Pointer): Boolean;
-var
-  Process: PProcess;
 begin
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Result := LookupHandle(Process^.Handles, Handle, Kind, ObjectBody);
-  ReleaseMutex(Process^.Lock);
+  { The handle table's shared lock: lookups of a process's threads run
+    side by side (Processes.Handles). }
+  Result := LookupHandle(CurrentProcess^.Handles, Handle, Kind, ObjectBody);
 end;
 
 function InsertCurrentHandle(Kind: THandleKind; ObjectBody: Pointer): Int64;

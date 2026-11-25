@@ -87,16 +87,9 @@ begin
 end;
 
 function ReferenceHandle(Handle: Int64; out Kind: THandleKind): Pointer;
-var
-  Process: PProcess;
 begin
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  if not LookupHandle(Process^.Handles, Handle, Kind, Result) then
-    Result := nil
-  else
-    ReferenceObject(Result);
-  ReleaseMutex(Process^.Lock);
+  { The handle table's shared lock is enough (Processes.Handles). }
+  Result := ReferenceHandleEntry(CurrentProcess^.Handles, Handle, Kind);
 end;
 
 function ReferenceHandleOfKind(Handle: Int64; Kind: THandleKind): Pointer;

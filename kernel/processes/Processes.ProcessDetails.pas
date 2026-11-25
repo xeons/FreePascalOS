@@ -164,7 +164,7 @@ begin
   Listing.CallerUserId := CurrentProcess^.Credentials.EffectiveUserId;
   Listing.Count := 0;
   Listing.Error := ErrorNone;
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   VisitRunningProcessesLocked(@ListOne, @Listing);
   UnlockProcessRegistry;
   if Listing.Error <> ErrorNone then

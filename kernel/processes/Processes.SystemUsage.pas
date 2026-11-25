@@ -76,7 +76,7 @@ end;
 
 procedure CountProcesses(var Usage: TAbiSystemUsage);
 begin
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   VisitRunningProcessesLocked(@CountOne, @Usage);
   UnlockProcessRegistry;
   { The kernel's own threads (the idle threads among them). }

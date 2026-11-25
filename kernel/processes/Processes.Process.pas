@@ -227,9 +227,16 @@ procedure RegisterRunningProcess(Process: PProcess);
   progress, for the hang watch). }
 function ProcessChangeCount: QWord;
 procedure UnregisterRunningProcess(Process: PProcess);
+{ The registry's lock is a shared lock: LockProcessRegistry takes it
+  exclusively (to register, or to change what the processes say of
+  their groups and sessions), LockProcessRegistryShared only to look
+  (finding a process by id, listing them), so lookups of many threads
+  run side by side. A shared holder must not take it again in any way.
+  UnlockProcessRegistry gives up either. }
 procedure LockProcessRegistry;
+procedure LockProcessRegistryShared;
 procedure UnlockProcessRegistry;
-{ Requires the registry lock. Returns nil if no such process runs. }
+{ Requires the registry lock (either way). Returns nil if no such process runs. }
 function FindRunningProcessLocked(ProcessId: QWord): PProcess;
 
 type
@@ -241,6 +248,7 @@ procedure VisitRunningProcessesLocked(Visit: TProcessVisitor; Context: Pointer);
 implementation
 
 uses
+  Kernel.SharedLocks,
   Runtime.Atomic,
   Runtime.Text,
   Kernel.Clock,
@@ -251,7 +259,7 @@ uses
 var
   TheSystemProcess: PProcess;
   NextId: Int64;
-  RegistryLock: TMutex;
+  RegistryLock: TSharedLock;
   RunningProcesses: TListEntry;
 
 procedure MarkProcessExited(Process: PProcess; ExitCode: LongInt);
@@ -317,7 +325,7 @@ end;
 procedure InitializeProcessManager;
 begin
   NextId := 0;
-  InitializeMutex(RegistryLock);
+  InitializeSharedLock(RegistryLock);
   InitializeListHead(RunningProcesses);
   RegisterObjectType(ProcessObjectType, 'Process', SizeOf(TProcess), @DeleteProcess);
 
@@ -352,33 +360,38 @@ end;
 
 procedure RegisterRunningProcess(Process: PProcess);
 begin
-  AcquireMutex(RegistryLock);
+  AcquireSharedLockExclusive(RegistryLock);
   Inc(Changes);
   InsertAtTail(RunningProcesses, @Process^.RunningLink);
   Process^.IsRegistered := True;
-  ReleaseMutex(RegistryLock);
+  ReleaseSharedLock(RegistryLock);
 end;
 
 procedure UnregisterRunningProcess(Process: PProcess);
 begin
-  AcquireMutex(RegistryLock);
+  AcquireSharedLockExclusive(RegistryLock);
   Inc(Changes);
   if Process^.IsRegistered then
   begin
     RemoveListEntry(@Process^.RunningLink);
     Process^.IsRegistered := False;
   end;
-  ReleaseMutex(RegistryLock);
+  ReleaseSharedLock(RegistryLock);
 end;
 
 procedure LockProcessRegistry;
 begin
-  AcquireMutex(RegistryLock);
+  AcquireSharedLockExclusive(RegistryLock);
+end;
+
+procedure LockProcessRegistryShared;
+begin
+  AcquireSharedLockShared(RegistryLock);
 end;
 
 procedure UnlockProcessRegistry;
 begin
-  ReleaseMutex(RegistryLock);
+  ReleaseSharedLock(RegistryLock);
 end;
 
 procedure VisitRunningProcessesLocked(Visit: TProcessVisitor; Context: Pointer);

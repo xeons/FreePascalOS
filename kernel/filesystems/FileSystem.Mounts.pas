@@ -27,7 +27,10 @@
   mount lasts, so the volume holding it is busy and the directory
   cannot be removed or renamed (FileSystem.Files).
 
-  Locking: MountListLock serializes mounting and unmounting. A record
+  Locking: MountListLock (a shared lock) serializes mounting and
+  unmounting, which hold it exclusively; describing the mounts and
+  finding a volume's mount point (mount, df, a path's mount) only read
+  the table and hold it shared, side by side. A record
   is entered and taken out with the lock of the volume holding the
   mount point held too, so path resolution, which holds that volume's
   lock while it looks for mount points (MountedVolumeAt), never sees a
@@ -93,6 +96,7 @@ implementation
 uses
   Runtime.Text,
   Kernel.Mutex,
+  Kernel.SharedLocks,
   FileSystem.Files,
   FileSystem.Volumes,
   FileSystem.Watches,
@@ -100,12 +104,12 @@ uses
 
 var
   Table: TMountTable;
-  MountListLock: TMutex;
+  MountListLock: TSharedLock;
 
 procedure InitializeMounts;
 begin
   InitializeMountTable(Table);
-  InitializeMutex(MountListLock);
+  InitializeSharedLock(MountListLock);
 end;
 
 function MountedVolumeAt(Parent: PVolume; NodeNumber: QWord): PVolume;
@@ -251,9 +255,9 @@ begin
   Result := ResolveDirectoryForMount(Path, Parent, MountPointNode, @RelativePath[0], MaximumMountPathBytes);
   if Result <> StatusSuccess then
     Exit;
-  AcquireMutex(MountListLock);
+  AcquireSharedLockShared(MountListLock);
   Result := EnterMount(Child, Parent, MountPointNode, @RelativePath[0]);
-  ReleaseMutex(MountListLock);
+  ReleaseSharedLock(MountListLock);
   if Result <> StatusSuccess then
     ReleaseNodeOfVolume(Parent, MountPointNode);
 end;
@@ -288,12 +292,12 @@ var
 begin
   if Volume = SystemVolume then
     Exit(StatusInUse);
-  AcquireMutex(MountListLock);
+  AcquireSharedLockShared(MountListLock);
   { Mounts on the volume are made and undone under MountListLock, so
     none appears meanwhile. }
   if CountMountsOn(Table, Volume) > 0 then
   begin
-    ReleaseMutex(MountListLock);
+    ReleaseSharedLock(MountListLock);
     Exit(StatusInUse);
   end;
   { The idle check and marking the volume gone happen in one hold of its
@@ -301,7 +305,7 @@ begin
   Result := RetireVolume(Volume, Force, Busy);
   if Result <> StatusSuccess then
   begin
-    ReleaseMutex(MountListLock);
+    ReleaseSharedLock(MountListLock);
     { Gone already (its disk was unplugged): nothing left to do. }
     if Result = StatusVolumeGone then
       Result := StatusSuccess;
@@ -310,7 +314,7 @@ begin
   MountRecord := FindMountOf(Table, Volume);
   if MountRecord <> nil then
     DetachMount(MountRecord);
-  ReleaseMutex(MountListLock);
+  ReleaseSharedLock(MountListLock);
 
   if RemoveVolumeFromList(Volume) then
   begin
@@ -325,7 +329,7 @@ var
   Index: Integer;
   MountRecord: PMountRecord;
 begin
-  AcquireMutex(MountListLock);
+  AcquireSharedLockExclusive(MountListLock);
   MountRecord := FindMountOf(Table, Volume);
   if MountRecord <> nil then
     DetachMount(MountRecord);
@@ -335,14 +339,14 @@ begin
     if MountRecord^.InUse and (MountRecord^.Parent = Pointer(Volume)) then
       DetachMount(MountRecord);
   end;
-  ReleaseMutex(MountListLock);
+  ReleaseSharedLock(MountListLock);
 end;
 
 function DescribeMount(Index: Integer; out Child, Top: PVolume; Path: PChar; Capacity: PtrUInt): Boolean;
 var
   MountRecord: PMountRecord;
 begin
-  AcquireMutex(MountListLock);
+  AcquireSharedLockExclusive(MountListLock);
   MountRecord := MountAt(Table, Index);
   Result := MountRecord <> nil;
   if Result then
@@ -357,14 +361,14 @@ begin
     Top := nil;
     Path[0] := #0;
   end;
-  ReleaseMutex(MountListLock);
+  ReleaseSharedLock(MountListLock);
 end;
 
 function FindVolumeMountPoint(Volume: PVolume; out Top: PVolume; Path: PChar; Capacity: PtrUInt): Boolean;
 var
   MountRecord: PMountRecord;
 begin
-  AcquireMutex(MountListLock);
+  AcquireSharedLockExclusive(MountListLock);
   MountRecord := FindMountOf(Table, Volume);
   Result := MountRecord <> nil;
   if Result then
@@ -377,7 +381,7 @@ begin
     Top := nil;
     Path[0] := #0;
   end;
-  ReleaseMutex(MountListLock);
+  ReleaseSharedLock(MountListLock);
 end;
 
 end.
