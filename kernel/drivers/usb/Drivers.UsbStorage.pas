@@ -133,6 +133,10 @@ type
     BlockDevice: PBlockDevice;
     { Unplugged: requests fail. }
     IsGone: Boolean;
+    { A transfer timed out: a device that does not answer is not one
+      that is still getting ready, and probing it stops (the probe runs
+      in the port watcher thread, which waits for it). }
+    TimedOut: Boolean;
   end;
 
 var
@@ -167,6 +171,8 @@ begin
     UsbClearEndpointHalt(Disk^.Usb, Disk^.BulkIn);
     Outcome := UsbBulkTransfer(Disk^.Usb, Disk^.BulkIn, @Status, CommandStatusSize, Transferred);
   end;
+  if Outcome = UsbTransferTimedOut then
+    Disk^.TimedOut := True;
   Result := (Outcome = UsbTransferDone) and (Transferred = CommandStatusSize);
 end;
 
@@ -192,9 +198,11 @@ begin
     Block.Flags := DirectionIn;
   Block.CommandLength := CommandLength;
   CopyMemory(@Block.Command[0], @Command[0], CommandLength);
-  if (UsbBulkTransfer(Disk^.Usb, Disk^.BulkOut, @Block, CommandBlockSize, Transferred) <> UsbTransferDone) or
-     (Transferred <> CommandBlockSize) then
+  Outcome := UsbBulkTransfer(Disk^.Usb, Disk^.BulkOut, @Block, CommandBlockSize, Transferred);
+  if (Outcome <> UsbTransferDone) or (Transferred <> CommandBlockSize) then
   begin
+    if Outcome = UsbTransferTimedOut then
+      Disk^.TimedOut := True;
     ResetRecovery(Disk);
     Exit(False);
   end;
@@ -210,6 +218,8 @@ begin
       UsbClearEndpointHalt(Disk^.Usb, Endpoint)
     else if Outcome <> UsbTransferDone then
     begin
+      if Outcome = UsbTransferTimedOut then
+        Disk^.TimedOut := True;
       ResetRecovery(Disk);
       Exit(False);
     end;
@@ -258,8 +268,11 @@ var
   Sense: array[0..17] of Byte;
   Attempt: Integer;
 begin
+  Disk^.TimedOut := False;
   for Attempt := 1 to ReadyAttempts do
   begin
+    if Disk^.TimedOut or Disk^.Usb^.IsGone then
+      Exit(False);
     ClearCommand(Command);
     Command[0] := ScsiTestUnitReady;
     if RunScsiCommand(Disk, Command, 6, nil, 0, False) then
