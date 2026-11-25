@@ -222,8 +222,9 @@ begin
   Housekeeping := SchedulerHousekeepingTime(Processor);
   if Housekeeping < Result then
     Result := Housekeeping;
-  { The boot processor wakes those whose timer stops while idle. }
-  if Processor^.Index = 0 then
+  { The boot processor wakes those whose timer stops while idle (unless
+    the platform's timer does, Kernel.BroadcastTimer). }
+  if (Processor^.Index = 0) and not BroadcastUsesDevice then
   begin
     Housekeeping := NextBroadcastDue(Now);
     if Housekeeping < Result then
@@ -301,7 +302,7 @@ begin
   RestoreInterrupts(WereEnabled);
   if ElapsedTicks > 0 then
     Inc(Processor^.TickInterruptCount);
-  if Processor^.Index = 0 then
+  if (Processor^.Index = 0) and not BroadcastUsesDevice then
     ServeBroadcast(Now);
   if Now >= Processor^.NextTimerDueTime then
     Inc(Processor^.TimerInterruptCount);
