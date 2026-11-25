@@ -1278,7 +1278,7 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       install-to-image; options and flavours; a build log per port;
       reproducible packages; cookies and rebuilds when a port changes
 - [x] Build systems: autotools, meson (cross file), cmake (toolchain file;
-      skipped while the build machine has no cmake), make, fpc (the
+      skipped on a build machine without cmake), make, fpc (the
       build's compiler and runtime, as userland.mk), custom, none
 - [x] C ports skipped (not failed) while the C toolchain is missing;
       a sysroot per port with its build dependencies' packages
@@ -1302,7 +1302,6 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       link statically
 - [ ] Ported graphical programs: a package installing a program folder the
       desktop finds (/usr/local/app or a second program folder root)
-- [ ] cmake on the build machine (or a port of it), then cmake ports
 - [ ] pkg: autoremove (packages installed as dependencies nothing needs
       any more), pkg fetch, a progress line while downloading
 - [ ] A public package repository with a signing key the system disk carries

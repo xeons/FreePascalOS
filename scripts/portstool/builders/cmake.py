@@ -15,8 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """CMake: a toolchain file made for the target, cmake -S -B, cmake
---build, cmake --install with DESTDIR. The build machine has no cmake
-yet; such ports are then skipped (require() names what is missing)."""
+--build, cmake --install with DESTDIR. On a build machine without cmake
+such ports are skipped (require() names what is missing)."""
 
 import os
 

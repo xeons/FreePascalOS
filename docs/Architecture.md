@@ -7226,7 +7226,7 @@ extraction, patches and makepatch, manifests, packages (layout, byte
 for byte reproducibility, damaged ones found), install-to-image,
 repositories, Ed25519 against RFC 8032 and OpenSSL, and whole builds
 through `scripts/ports.py` in a ports tree of its own, including
-autotools and meson cross builds with the build machine's gcc behind
+autotools, meson and cmake cross builds with the build machine's gcc behind
 x86_64-freepascalos names and a build dependency unpacked into the
 sysroot, the skip without a toolchain, signatures, and refusals.
 `make pkg-test` (tools/PkgTest) builds pkg's units on the host (all but

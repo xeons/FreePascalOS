@@ -207,8 +207,8 @@ is bootstrapped with autoreconf. meson gets a cross file
 (`WORK/meson-cross.ini`: the compilers, `--sysroot`, pkg-config's
 folders, `host_machine` system freepascalos) and `--wrap-mode=nodownload
 -Ddefault_library=static`. cmake gets a toolchain file
-(`CMAKE_SYSTEM_NAME FreePascalOS`, `CMAKE_SYSROOT`, find modes); the
-build machine has no cmake yet, so cmake ports are skipped. make gets
+(`CMAKE_SYSTEM_NAME FreePascalOS`, `CMAKE_SYSROOT`, find modes); on a
+build machine without cmake, cmake ports are skipped. make gets
 CC, AR, RANLIB, STRIP and PREFIX on its command line.
 
 **While the C toolchain is missing** every port that needs it is
@@ -407,7 +407,7 @@ extraction, patches and makepatch, manifests, packages (layout,
 reproducibility, damage found), install-to-image, repositories,
 Ed25519 against RFC 8032 and OpenSSL, and whole builds through
 `scripts/ports.py` in a ports tree and build tree of their own
-(including autotools and meson cross builds with a stand-in toolchain,
+(including autotools, meson and cmake cross builds with a stand-in toolchain,
 the build machine's gcc behind x86_64-freepascalos names). `make
 pkg-test` runs pkg's units on the host over packages and an index the
 ports tool made (`tools/PkgTest`). coretest installs pkg-selftest on

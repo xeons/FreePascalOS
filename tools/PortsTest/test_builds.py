@@ -18,7 +18,7 @@
 of the test's own: phases and cookies, a port rebuilt when it changes,
 reproducible packages, the skip while the C toolchain is missing, cross
 builds with a stand-in C toolchain (the build machine's gcc behind
-x86_64-freepascalos-* names) for autotools and meson with the build
+x86_64-freepascalos-* names) for autotools, meson and cmake with the build
 dependencies unpacked into the sysroot, install-to-image, repo and lint."""
 
 import hashlib
@@ -70,6 +70,12 @@ GREET_C = '#include <stdio.h>\n#include "greeting.h"\nint main(void) { puts(GREE
 
 MESON_BUILD = """project('mgreet', 'c')
 executable('mgreet', 'mgreet.c', install: true)
+"""
+
+CMAKE_LISTS = """cmake_minimum_required(VERSION 3.10)
+project(cgreet C)
+add_executable(cgreet cgreet.c)
+install(TARGETS cgreet DESTINATION bin)
 """
 
 WRAPPER = """#!/bin/sh
@@ -278,6 +284,9 @@ class BuildTests(support.ScratchTestCase):
             files = {"configure": (CONFIGURE_SCRIPT, 0o755), "Makefile.in": (MAKEFILE_IN, 0o644),
                      "greet.c": (GREET_C, 0o644)}
             name = "greet"
+        elif system == "cmake":
+            files = {"CMakeLists.txt": (CMAKE_LISTS, 0o644), "cgreet.c": (GREET_C, 0o644)}
+            name = "cgreet"
         else:
             files = {"meson.build": (MESON_BUILD, 0o644), "mgreet.c": (GREET_C, 0o644)}
             name = "mgreet"
@@ -322,6 +331,19 @@ class BuildTests(support.ScratchTestCase):
         with open(cross_file) as stream:
             text = stream.read()
         self.assertIn("system = 'freepascalos'", text)
+        self.assertIn("x86_64-freepascalos-gcc", text)
+
+    @unittest.skipUnless(HAVE_GCC and shutil.which("cmake"), "cmake and gcc are needed")
+    def test_cmake_cross_build(self):
+        name = self.library_and_program("cmake")
+        self.ports("package", name)
+        reader = PackageReader(self.package_path(name))
+        self.assertIn("usr/local/bin/cgreet", [entry.path for entry in reader.manifest.files])
+        reader.close()
+        toolchain_file = os.path.join(self.build_root, "amd64", "ports", name, "cmake-toolchain.cmake")
+        with open(toolchain_file) as stream:
+            text = stream.read()
+        self.assertIn("set(CMAKE_SYSTEM_NAME FreePascalOS)", text)
         self.assertIn("x86_64-freepascalos-gcc", text)
 
     def test_cmake_missing_is_a_skip(self):
