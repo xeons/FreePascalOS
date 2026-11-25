@@ -209,6 +209,21 @@ library that names them. On the host both are checked on every build
 of the test (`native-fpc-test` links with the internal linker; GNU ld
 was checked by hand on both processors).
 
+In the guest, `as` and `ld` are the `binutils` port (`ports/devel/
+binutils`, on the system disk through `ports/image.list`): binutils 2.47
+built by the C toolchain with host = target = the system's own triplet,
+from the same release and the same patch as the cross binutils (the
+port's patch is a symbolic link to `toolchain/patches/binutils`),
+linked against mlibc's `libc.so`, without plugins, NLS, gprof(ng) or
+the debugger. It installs `as`, `ld`, `ar`, `ranlib`, `nm`, `objcopy`,
+`objdump`, `readelf`, `size`, `strings` and `strip` in `/usr/local/bin`,
+which `fpc.cfg` names with `-FD` (and which is on every `PATH`). On
+AArch64 native Free Pascal assembles and links with them; on x86-64 the
+internal assembler and linker stay the default and these serve C work.
+A checkout without the C toolchain makes a system disk without them,
+and the coretest line that compiles in the guest is then skipped on
+AArch64 (it checks for `/usr/local/bin/as`).
+
 ### Units in libraries
 
 The runtime library and the Sys.* units are in `libsystem.so`, not
@@ -11158,7 +11173,7 @@ into it). Before an autotools port is configured
 patched binutils), and its libtool learns the target: `freepascalos*`
 joins libtool's Linux cases in `configure`, `libtool.m4`, `ltmain.sh`
 and `aclocal.m4`, so shared libraries are built and named as on Linux.
-zlib, lua, sqlite3 and bash are built this way and tried on the system
+zlib, lua, sqlite3, bash and binutils are built this way and tried on the system
 (their `[test]` commands through `pkg test`, and a few uses of each);
 `C_TEST_INIT=/usr/bin/PROGRAM scripts/test-c-runtime.sh` boots a disk with
 another first program for such tries.

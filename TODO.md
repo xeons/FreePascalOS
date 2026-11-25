@@ -107,6 +107,11 @@ how the existing pieces fit together.
 - [x] File mappings (CallMapHandle on regular files): read-only shared and
       private copy on write, coherent with write() for shared mappings,
       private ones keeping what they saw; maptest
+- [x] A removed or replaced file is freed once nothing maps it: the image
+      section cache drops a file's sections when it loses a name
+      (AddFileRemovedHook), so a removed library or a program replaced
+      while running no longer leaves an orphan inode at unmount; coretest
+      checks the system disk's used space around it (and e2fsck after)
 - [ ] Shared writable file mappings (write-back of dirty pages through the
       file write path; refused with ErrorUnsupported for now)
 - [ ] Evicting mapped file pages under memory pressure (they stay while the
@@ -1307,8 +1312,10 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] fcl-process (TProcess, pipe streams) for FreePascalOS
 - [x] Tests: a coretest line (compile and run in the guest), native-fpc-test
       on the host
-- [ ] AArch64 in the guest: needs GNU as and ld for *-freepascalos (the
-      binutils port); ppca64 already runs and writes assembly
+- [x] AArch64 in the guest: GNU as and ld for *-freepascalos from the
+      binutils port (ports/devel/binutils, on the system disk with the C
+      toolchain; also on x86-64 for C work); the coretest line compiles and
+      runs a program there, and skips without /usr/local/bin/as
 - [ ] An `as`/`ld`-free AArch64 (an internal assembler and ELF linker for
       AArch64 are only in FPC trunk)
 - [ ] Express it as a port once the ports framework lands (ports/, pkg)
