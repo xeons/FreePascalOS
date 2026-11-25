@@ -9874,39 +9874,57 @@ independent) against the Free Pascal runtime library:
   licences: `terminus`, Terminus in heights 12 to 32, regular and bold,
   the console's and the terminal's font, monospaced, a face standing for
   an em six sevenths of its height, so faces of both kinds picked for
-  one size match; the fonts the build copies from the build machine
-  (see "Fonts" below); `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
-  DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
-  `userland/fonts` and copied by the build). Listing a family reads
+  one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
+  DejaVu Sans Mono 2.37, TrueType, regular and bold (with obliques in
+  the full set); the other outline fonts, see "Fonts" below; all of them
+  kept in `userland/fonts` and put in by the build). Listing a family reads
   only the start of each file, its size and weight (for a TrueType font
   its table directory, head and OS/2); a face's glyphs are read the
   first time it is picked, so a program does not load every size. Sizes
   are in points, so text is the same size on any display.
 
-  Fonts. Besides Terminus and DejaVu (kept in the repository), the build
-  copies the freely licensed fonts the build machine has into
-  /lib/fonts: `scripts/host-fonts.list` names each family, its files,
-  the host package, upstream and licence, and
-  `scripts/collect-host-fonts.py` copies a family only when its licence
-  file is there and says what the list expects (SIL OFL, Apache 2.0,
-  MIT and Bitstream Vera, AGPL with URW's font exception) and every
-  font's own name table (copyright, licence description) agrees,
-  writing `/lib/fonts/<family>/LICENSE` (where the fonts come from,
-  their copyright and licence as they state them, the licence's full
-  text) and `/lib/fonts/MANIFEST` (family, directory, files, licence,
-  package); anything missing is skipped with a message, so the build
-  works with the repository's fonts alone. Nothing of them is in git.
-  `HOST_FONT_SET=full` (amd64's default, about 80 MB: Liberation Sans,
-  Serif and Mono, metric-compatible with Arial, Times New Roman and
-  Courier New; DejaVu's obliques and Serif; Noto Sans, Serif and Mono;
+  Fonts. The outline fonts are all freely licensed and kept in the
+  repository, in `userland/fonts/<family>/`, each family with its
+  `LICENSE` (where the fonts come from, their copyright and licence as
+  they state them, the licence's full text) and a `SOURCE` line
+  (upstream, version, the Arch Linux package they were taken from);
+  `userland/fonts/MANIFEST` lists them all (family, directory, files,
+  licence, version, package). Licences: SIL OFL 1.1 (Liberation, Noto
+  with CJK and colour emoji, Source Sans 3, Cantarell, Roboto, Open
+  Sans, Inconsolata), Bitstream Vera with DejaVu's public-domain
+  changes, MIT and Bitstream Vera (Hack), AGPL 3.0 with URW's font
+  exception (the URW base 35), Apache 2.0 (Droid Sans Fallback); about
+  85 MB, the Noto CJK collections and Noto Color Emoji the largest
+  (`.gitattributes` marks font files binary). `scripts/fonts.list`
+  names each family, its files, sets, package, upstream and licence.
+  The build takes the fonts from the repository only, never from the
+  build machine: `scripts/install-fonts.py` puts the set `FONT_SET`
+  names into /lib/fonts (a section's `sets`, and its `core-files` or
+  `base-files` when the set takes only some of its files), with each
+  family's LICENSE and SOURCE and the set's rows of the MANIFEST.
+  `make update-fonts` (`scripts/update-fonts.py`, run by hand) refreshes
+  `userland/fonts` from the build machine's packages, taking a family
+  only when all its files are there, its licence file says what the
+  list expects and every font's own name table (copyright, licence
+  description) agrees; anything else is skipped with a message and
+  the repository's copy kept.
+  `FONT_SET=full` (amd64's default, about 80 MB: DejaVu Sans and Sans
+  Mono; Liberation Sans, Serif and Mono, metric-compatible with Arial,
+  Times New Roman and Courier New; DejaVu's obliques and Serif; Noto Sans, Serif and Mono;
   Noto Sans for 34 scripts with Symbols, Symbols 2 and Math; Noto Color
   Emoji; Noto Sans CJK regular and bold; Source Sans 3; Cantarell;
   Roboto; Open Sans; Hack; Inconsolata; the URW base 35: Nimbus Sans,
   Sans Narrow, Roman and Mono PS, P052, C059, URW Bookman, URW Gothic,
   Z003, Standard Symbols PS, D050000L), `core` (arm64's default, 6.7 MB,
-  1.4 MB of it Droid Sans Fallback for CJK: Liberation regular and
-  bold, Noto Sans Symbols 2; the system image is the Raspberry Pi's
-  RAM disk, served xz-compressed over TFTP) or `none`. The system disk
+  1.4 MB of it Droid Sans Fallback for CJK: DejaVu Sans and Sans Mono
+  and Liberation regular and bold, Noto Sans Symbols 2; the system
+  image is the Raspberry Pi's RAM disk, served xz-compressed over TFTP)
+  or `base` (DejaVu Sans and Sans Mono regular and bold: what the host
+  tests lay pages out with, in build/tools/base-fonts, so their expected
+  layouts do not change when fonts are added; the web layout test's
+  system font matching uses all of `userland/fonts`, and the font
+  test's CFF, collection, variable and emoji fixtures are made from the
+  repository's files). The system disk
   grows with its contents (at least 64 MiB; 160 MiB with the full set).
   The interface keeps DejaVu Sans; a family a program lists (the font
   dialog) may be any of them. A family's italic faces are left out of

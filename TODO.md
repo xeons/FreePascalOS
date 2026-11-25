@@ -693,12 +693,17 @@ normalized (0-65535), not pixels.
       variable fonts' default instance), TrueType collections (.ttc, a face by
       index), CBDT/CBLC colour emoji scaled from the nearest strike (PNG through
       libimage's decoder hook), cmap format 14 and symbol maps
-- [x] The build machine's freely licensed fonts copied into /lib/fonts with
-      their licences and a MANIFEST (scripts/host-fonts.list,
-      scripts/collect-host-fonts.py; full set on amd64, core set for the Pi's
-      RAM disk): Liberation (Arial/Times New Roman/Courier New metrics),
-      DejaVu, Noto with 34 scripts, CJK and colour emoji, Source Sans 3,
-      Cantarell, Roboto, Open Sans, Hack, Inconsolata, the URW base 35
+- [x] Freely licensed fonts in /lib/fonts with their licences and a MANIFEST
+      (scripts/fonts.list; full set on amd64, core set for the Pi's RAM disk):
+      Liberation (Arial/Times New Roman/Courier New metrics), DejaVu, Noto
+      with 34 scripts, CJK and colour emoji, Source Sans 3, Cantarell, Roboto,
+      Open Sans, Hack, Inconsolata, the URW base 35, Droid Sans Fallback
+- [x] The fonts kept in the repository (userland/fonts/<family>/ with LICENSE
+      and SOURCE, MANIFEST); the build installs them from there
+      (scripts/install-fonts.py, FONT_SET full/core/base), never from the
+      host; make update-fonts (scripts/update-fonts.py) refreshes them from
+      the host packages with the licence checks; font-test and
+      web-layout-test take their fonts from the repository
 - [x] Font configuration (/etc/fonts.conf, Font.Configuration): generic
       families and common names to installed faces, per-script fallback
       chains; per-character fallback in libweb and in the toolkit's text
