@@ -50,6 +50,7 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Kernel.Mutex,
+  Processes.AddressSpace,
   Kernel.Scheduler,
   Kernel.Clock,
   Kernel.ProcessorTime,
@@ -79,6 +80,7 @@ type
 procedure DescribeProcess(Process: PProcess; out Information: TAbiProcessInformation);
 var
   Times: TThreadTimes;
+  Usage: TAddressSpaceUsage;
 begin
   FillMemory(@Information, SizeOf(Information), 0);
   Information.ProcessId := Process^.ProcessId;
@@ -97,8 +99,9 @@ begin
     Information.State := ProcessStateRunning
   else
     Information.State := ProcessStateSleeping;
-  if Process^.AddressSpace <> nil then
-    Information.MemoryPages := Process^.AddressSpace^.CommittedPages;
+  { Read under the slot's lock: an exec or exit may replace the space. }
+  if ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
+    Information.MemoryPages := Usage.ResidentPages;
   GetProcessTimes(Process, Times);
   Information.CpuMilliseconds := Times.RunNanoseconds div NanosecondsPerMillisecond;
   Information.StartTime := Process^.StartTime;

@@ -84,9 +84,8 @@ procedure DescribeMemory(Process: PProcess; var Details: TAbiProcessDetails);
 var
   Usage: TAddressSpaceUsage;
 begin
-  if Process^.AddressSpace = nil then
+  if not ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
     Exit;
-  GetAddressSpaceUsage(Process^.AddressSpace, Usage);
   Details.VirtualBytes := Usage.VirtualBytes;
   Details.ResidentBytes := Usage.ResidentPages * PageSize;
   Details.SharedBytes := Usage.SharedPages * PageSize;

@@ -509,21 +509,20 @@ begin
 end;
 
 { Called with the process registry lock held; the figures are read
-  without the space's lock (a moment's inaccuracy does not matter). }
+  under the slot's lock (an exec or exit may replace the space). }
 function CommitBeyondResident(Process: PProcess): QWord;
 var
-  Space: PAddressSpace;
+  Usage: TAddressSpaceUsage;
   PrivateResident: QWord;
 begin
   Result := 0;
-  Space := Process^.AddressSpace;
-  if Space = nil then
+  if not ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
     Exit;
   PrivateResident := 0;
-  if Space^.CommittedPages > Space^.SharedPages then
-    PrivateResident := Space^.CommittedPages - Space^.SharedPages;
-  if Space^.CommitChargePages > PrivateResident then
-    Result := Space^.CommitChargePages - PrivateResident;
+  if Usage.ResidentPages > Usage.SharedPages then
+    PrivateResident := Usage.ResidentPages - Usage.SharedPages;
+  if Usage.CommitChargePages > PrivateResident then
+    Result := Usage.CommitChargePages - PrivateResident;
 end;
 
 function SystemCommitTotal: QWord;

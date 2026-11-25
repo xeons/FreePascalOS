@@ -67,10 +67,15 @@ begin
 end;
 
 function ProcessFootprintPages(Process: PProcess): QWord;
+var
+  Usage: TAddressSpaceUsage;
 begin
   Result := 0;
-  if Process^.AddressSpace <> nil then
-    Result := Process^.AddressSpace^.CommittedPages;
+  if ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
+    Result := Usage.ResidentPages;
+  { The sections it made, mapped or not. }
+  if Process^.SectionChargePages > 0 then
+    Result := Result + QWord(Process^.SectionChargePages);
   if Assigned(ProcessCommits) then
     Result := Result + ProcessCommits(Process);
 end;

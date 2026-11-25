@@ -105,6 +105,8 @@ type
       from the real root, normally "/" itself (see chroot). }
     RootDirectory: array[0..ProcessPathCapacity - 1] of Char;
 
+    { Set by MarkProcessExited (the code first: a reader that sees
+      HasExited reads the code after ReadExitCode's barrier). }
     ExitCode: LongInt;
     HasExited: Boolean;
     ExitEvent: TEvent;
@@ -183,6 +185,10 @@ type
     { The most processes its user may run while it starts one
       (ProcessLimitProcesses); 0 for the default. Inherited. }
     ProcessCountLimit: LongWord;
+    { The pages of the sections it created that still exist (each holds
+      a reference to the process): counted in its commit charge's limit
+      and its footprint (Processes.ObjectCalls). }
+    SectionChargePages: Int64;
     { Restrict* flags the process put on itself (Processes.Restrictions):
       only ever added. Inherited. }
     Restrictions: LongWord;
@@ -195,6 +201,13 @@ var
   ProcessObjectType: TObjectType;
 
 procedure InitializeProcessManager;
+
+{ Records the exit code, then that the process ended, with a barrier
+  between: other processors never see the end without the code. }
+procedure MarkProcessExited(Process: PProcess; ExitCode: LongInt);
+{ The exit code of a process seen to have ended (HasExited), read after
+  a barrier. }
+function ReadExitCode(Process: PProcess): LongInt;
 
 function SystemProcess: PProcess;
 
@@ -237,9 +250,23 @@ var
   RegistryLock: TMutex;
   RunningProcesses: TListEntry;
 
+procedure MarkProcessExited(Process: PProcess; ExitCode: LongInt);
+begin
+  Process^.ExitCode := ExitCode;
+  FullMemoryBarrier;
+  Process^.HasExited := True;
+end;
+
+function ReadExitCode(Process: PProcess): LongInt;
+begin
+  FullMemoryBarrier;
+  Result := Process^.ExitCode;
+end;
+
 procedure DeleteProcess(ObjectBody: Pointer);
 var
   Process: PProcess;
+  Space: PAddressSpace;
 begin
   Process := PProcess(ObjectBody);
   if not Process^.IsUserProcess then
@@ -248,8 +275,8 @@ begin
   { Normally released when the program exits; this covers a process that
     never started. }
   CloseAllHandles(Process^.Handles);
-  DestroyAddressSpace(Process^.AddressSpace);
-  Process^.AddressSpace := nil;
+  PublishAddressSpace(Process^.AddressSpace, nil, Space);
+  DestroyAddressSpace(Space);
 end;
 
 function AllocateProcessOrThreadId: QWord;

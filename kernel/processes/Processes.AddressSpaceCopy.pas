@@ -20,13 +20,15 @@
   Copying an address space for fork (Processes.Fork).
 
   The copy has the same layout and the same regions; no page is copied.
-  A page the source may write privately (heap, stacks, thread data,
-  writable image pages, private file mappings) is mapped copy on write
-  in both spaces, each holding a reference, so the first write of either
-  side gives that side its own copy (BreakCopyOnWriteLocked). Read-only
-  pages and the pages of sections and shared file mappings are mapped
-  as they are, with a reference more. Pages not touched yet stay so in
-  both. Device memory is not copied: the child has none of it.
+  Every page of a private region (heap, stacks, thread data, images,
+  private file mappings) is mapped copy on write in both spaces, each
+  holding a reference, whatever its protection now: a page read-only or
+  inaccessible today may be made writable later (mprotect), and that
+  must not write the other side's memory. The first write of either side
+  gives that side its own copy (BreakCopyOnWriteLocked). The pages of
+  sections and shared file mappings are mapped as they are, with a
+  reference more. Pages not touched yet stay so in both. Device memory
+  is not copied: the child has none of it.
 }
 unit Processes.AddressSpaceCopy;
 
@@ -102,14 +104,12 @@ begin
       if (Region^.Kind = RegionKindFileMapping) then
         PageMapping := PageMapping and not MappingWritable;
     end
-    else if IsCopyOnWrite or ((Mapping and MappingWritable) <> 0) then
+    else
     begin
       PageMapping := (Mapping and not MappingWritable) or MappingCopyOnWrite;
       if not IsCopyOnWrite then
         MarkSourcePageCopyOnWrite(Context^.Source, Address, Physical, PageMapping);
-    end
-    else
-      PageMapping := Mapping;
+    end;
     ReferencePhysicalPage(Physical);
     if not MapPageInAddressSpace(Context^.Target^.Root, Address, Physical, PageMapping) then
     begin

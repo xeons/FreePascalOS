@@ -144,9 +144,12 @@ var
   Search: PVictimSearch;
   Candidate: TOomCandidate;
   Score: Int64;
+  Usage: TAddressSpaceUsage;
 begin
   Search := PVictimSearch(Context);
-  if not Process^.IsUserProcess or Process^.HasExited or (Process^.AddressSpace = nil) then
+  { One whose space is gone already frees nothing. }
+  if not Process^.IsUserProcess or Process^.HasExited or
+     not ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
     Exit;
   Candidate.FootprintPages := ProcessFootprintPages(Process);
   Candidate.ScoreAdjust := Process^.OomScoreAdjust;
