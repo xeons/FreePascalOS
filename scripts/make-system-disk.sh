@@ -33,6 +33,9 @@
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes (its
 #                   pictures too, from <user-build-directory>/pointers)
 #   /usr/share/icons   the icon theme (from <user-build-directory>/icons)
+#   /usr/lib, /usr/bin  the C runtime (mlibc's ld.so and libc.so,
+#                   libgcc_s, libstdc++) and the C test programs (from
+#                   <user-build-directory>/usr, see toolchain/c-runtime.mk)
 #   /lib/firmware   firmware devices load (from firmware/, with its
 #                   vendors' licences and WHENCE)
 #   /tmp, /home
@@ -62,6 +65,12 @@ if [[ -n "${AUTHORIZED_KEYS:-}" ]]; then
 fi
 cp "$user_build_directory"/bin/* "$staging_directory/bin/"
 cp "$user_build_directory"/lib/*.so "$staging_directory/lib/"
+# The C runtime and the C test programs (/usr/lib, /usr/bin), when the
+# C toolchain is built (make c-runtime).
+if [[ -d "$user_build_directory/usr" ]]; then
+    mkdir -p "$staging_directory/usr"
+    cp -r "$user_build_directory"/usr/* "$staging_directory/usr/"
+fi
 # The graphical programs, each in a folder of its own (/app/NAME: the
 # executable, program.info and its own icons), without the build's
 # stamps.
