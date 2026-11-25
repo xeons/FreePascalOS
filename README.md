@@ -350,6 +350,22 @@ For the AArch64 (Raspberry Pi 4) build, `ARCH=arm64`, also:
 
 On Arch based systems: `pacman -S aarch64-linux-gnu-binutils qemu-system-aarch64 edk2-aarch64`.
 
+For C and C++ programs (optional; the source releases are downloaded
+into `~/Downloads/sources` and checked against pinned checksums):
+
+- `make c-toolchain ARCH=amd64|arm64` (binutils, GCC, mlibc and
+  libstdc++ for `x86_64-freepascalos` / `aarch64-freepascalos`): curl, a
+  host C and C++ compiler, GNU make, Meson and Ninja; about six minutes
+  per architecture
+- `make clang-toolchain` (Clang and lld with both freepascalos targets,
+  on top of the GCC toolchain's libgcc and libstdc++): CMake, Ninja,
+  Python 3 and a host C++ compiler; it takes long (around half an hour on
+  20 threads, `JOBS=` limits the parallel jobs) and about 4 GiB in
+  `build/`. Then `build/toolchain/llvm/bin/clang --target=x86_64-freepascalos`
+  (or `x86_64-freepascalos-clang`) compiles for the system
+
+On Arch based systems: `pacman -S cmake ninja meson python`.
+
 ## Building and running
 
 ```

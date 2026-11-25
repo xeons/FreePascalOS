@@ -116,7 +116,7 @@
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_FREEPASCALOS_H
 --- a/clang/lib/Driver/ToolChains/FreePascalOS.cpp
 +++ b/clang/lib/Driver/ToolChains/FreePascalOS.cpp
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,258 @@
 +//===--- FreePascalOS.cpp - FreePascalOS ToolChain Implementation ---------===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -132,6 +132,7 @@
 +#include "clang/Options/Options.h"
 +#include "llvm/Option/ArgList.h"
 +#include "llvm/Support/Path.h"
++#include "llvm/Support/VirtualFileSystem.h"
 +
 +using namespace clang::driver;
 +using namespace clang::driver::toolchains;
@@ -350,7 +351,8 @@
 +    return;
 +
 +  if (!DriverArgs.hasArg(options::OPT_nostdlibinc))
-+    addSystemInclude(DriverArgs, CC1Args, concat(SysRoot, "/usr/local/include"));
++    addSystemInclude(DriverArgs, CC1Args,
++                     concat(SysRoot, "/usr/local/include"));
 +
 +  // Clang's own headers (stddef.h, stdarg.h, the intrinsics), in the place
 +  // of GCC's private include directory.
@@ -363,7 +365,8 @@
 +  if (DriverArgs.hasArg(options::OPT_nostdlibinc))
 +    return;
 +
-+  addExternCSystemInclude(DriverArgs, CC1Args, concat(SysRoot, "/usr/include"));
++  addExternCSystemInclude(DriverArgs, CC1Args,
++                          concat(SysRoot, "/usr/include"));
 +}
 +
 +void FreePascalOS::addLibStdCxxIncludePaths(const ArgList &DriverArgs,

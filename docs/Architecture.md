@@ -11864,8 +11864,7 @@ through `dl_iterate_phdr`), and libtool's knowledge of the OS (in
 libstdc++'s configure: shared libraries named and versioned as on
 Linux). A port's own libtool needs the same: `freepascalos*` added to
 the `linux* | k*bsd*-gnu | kopensolaris*-gnu` cases of its configure.
-Clang with `--target=x86_64-freepascalos` is not done (it would need a
-driver toolchain class).
+Clang can compile for the system too (next section).
 
 `make c-runtime` (part of `make system-disk` when the toolchain is
 there; nothing otherwise) strips the runtime into the userland build's
@@ -11874,6 +11873,66 @@ there; nothing otherwise) strips the runtime into the userland build's
 `libstdc++.so.6` (about 4.5 MiB together, libstdc++ 2.7 of them) - and
 builds the test programs into `usr/bin`; `make-system-disk.sh` copies
 `usr` to the system disk's `/usr`.
+
+### Clang
+
+`make clang-toolchain` (optional and long, not part of `make
+c-toolchain`; CMake, Ninja and Python 3 on the host) runs
+`toolchain/build-clang.sh`: it downloads the official llvm-project
+23.1.6 source release into `~/Downloads/sources` (SHA-256 pinned in the
+script), applies `toolchain/patches/llvm-23.1.6` and builds a release
+Clang and lld with the X86 and AArch64 back ends - one build for both
+architectures - into `build/toolchain/llvm` (steps fetch, unpack,
+configure, build, targets with stamps in `build/toolchain/work/llvm`, as
+in the GCC script; `JOBS` and `LINK_JOBS` limit the parallelism). The
+patches, one concern each:
+
+| Patch | What |
+|---|---|
+| 0001-triple-freepascalos-os | `Triple::FreePascalOS` (OS name `freepascalos`, `isOSFreePascalOS()`) in LLVM's target triple, with a unit test |
+| 0002-clang-freepascalos-target-info | `FreePascalOSTargetInfo` for x86-64 and AArch64: `__freepascalos__`, `unix`, `_REENTRANT` with `-pthread`, `_GNU_SOURCE` for C++, `__float128` on x86-64 - what GCC's `freepascalos.h` defines; the default include paths left to the driver |
+| 0003-clang-freepascalos-driver | the toolchain class `toolchains::FreePascalOS` and its linker (`clang/lib/Driver/ToolChains/FreePascalOS.cpp`) |
+
+The driver does what the GCC specs do. Headers: Clang's resource
+directory, then `<sysroot>/usr/include`; for C++ libstdc++'s headers
+from the GCC installation (`<gcc>/<triple>/include/c++/16.2.0` and its
+target directory). Programs are PIE by default (`-fPIE`, `-pie`).
+Linking (GNU ld from the binutils beside the GCC by default, `ld.lld`
+with `-fuse-ld=lld`): `-m elf_x86_64` / `aarch64linux`, `-z
+max-page-size=4096 --hash-style=both --eh-frame-hdr`, `-dynamic-linker
+/usr/lib/ld.so`; `crt1.o` (for PIE too - mlibc has no `Scrt1.o`),
+`crti.o`, `crtbegin.o`/`crtbeginS.o`/`crtbeginT.o` (normal, PIE or
+shared, static) from the GCC installation, ..., `-lgcc --as-needed
+-lgcc_s --no-as-needed -lc`, `crtend*.o`, `crtn.o`; `-static` takes
+`--start-group -lgcc -lgcc_eh -lc --end-group`, `-static-pie` and
+`-shared` as with GCC, C++ adds `-lstdc++ -lm`. The runtime defaults are
+libgcc and libstdc++ from the GCC build; `-rtlib=compiler-rt`,
+`--unwindlib=libunwind` and `-stdlib=libc++` select LLVM's runtimes
+(their crtbegin/crtend and `<sysroot>/usr/include/c++/v1`), which are
+not built here.
+
+Where the system root and the GCC are comes from configuration files
+beside the binary, which Clang reads for the target:
+`build/toolchain/llvm/bin/x86_64-freepascalos.cfg` (and `aarch64-...`)
+hold `--sysroot=<CFGDIR>/../../../sysroot/<arch>` and
+`--gcc-toolchain=<CFGDIR>/../../<triple>`, with the normalized names
+(`x86_64-unknown-freepascalos.cfg`, what `--target=x86_64-freepascalos`
+looks for) linked to them; `x86_64-freepascalos-clang` and `-clang++`
+are links to `clang` that pick the target from their name. So:
+
+    build/toolchain/llvm/bin/clang --target=x86_64-freepascalos -O2 -o hello hello.c
+    build/toolchain/llvm/bin/aarch64-freepascalos-clang++ -o test test.cpp -fuse-ld=lld
+
+When Clang is there, `make c-runtime` also builds `ctest-clang` (the C
+suite, GNU ld), `cxxtest-clang` (libstdc++) and `hello-clang-static`
+(static, `ld.lld`) into `/usr/bin`, which `ctest` runs (next sections).
+`make clang-driver-test` (part of `make test`; skipped without Clang,
+`scripts/test-clang-driver.sh`) checks the driver on the host for both
+targets: the predefined macros, the compiler's and the linker's command
+lines with `-###` for the default PIE, `-no-pie`, `-static`,
+`-static-pie`, `-shared`, C++, `-pthread`, `-fuse-ld=lld` and the
+prefixed name, and - where the system root is built - real programs
+linked by ld.bfd and ld.lld whose interpreter is `/usr/lib/ld.so`.
 
 ### How a C program starts
 
@@ -12080,7 +12139,10 @@ SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
 loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; 410
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
-mutexes, atomics, chrono) as programs of their own. `make c-test` boots
+mutexes, atomics, chrono) as programs of their own; with Clang (`make
+clang-toolchain`) also `ctest-clang --groups-only` (every group again,
+compiled by Clang), `cxxtest-clang` and `hello-clang-static` (printed as
+skipped when the disk lacks them). `make c-test` boots
 (QEMU, `ACCEL=kvm` for speed; with `ARCH=arm64` QEMU's virt machine) with
 `init=/usr/bin/ctest` and passes when
 every check did (`scripts/test-c-runtime.sh`, log in

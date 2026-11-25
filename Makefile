@@ -101,6 +101,8 @@
 #                   (build/toolchain/<triplet>, sysroot build/sysroot/<arch>)
 #   make c-test     Boot with the C test suite (/usr/bin/ctest) as the first
 #                   program: stdio, threads, fork/exec, signals, sockets, C++
+#   make clang-toolchain  Build Clang and lld with the freepascalos targets
+#                   (build/toolchain/llvm; optional, long)
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make update-fonts  Refresh the outline fonts in userland/fonts from the
@@ -582,7 +584,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: unicode-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
