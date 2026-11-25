@@ -23,7 +23,9 @@
   the piece size, the header kept, handles on the first piece, pieces
   that do not fit together refused) and every typed payload both ways
   (version 2's history, find, display options and Page Info refused
-  when cut short or lying).
+  when cut short or lying), and the browser's side of a renderer's
+  frames against a fake renderer that replaces its surface while the
+  browser scrolls (WebIpcTest.Frames).
 
     WebIpcTest
 }
@@ -38,12 +40,14 @@ uses
   WebIpcTest.Wire,
   WebIpcTest.Fragments,
   WebIpcTest.Payloads,
-  WebIpcTest.PagePayloads;
+  WebIpcTest.PagePayloads,
+  WebIpcTest.Frames;
 
 begin
   RunWireChecks;
   RunFragmentChecks;
   RunPayloadChecks;
   RunPagePayloadChecks;
+  RunFrameChecks;
   FinishChecks('WEB IPC TEST');
 end.

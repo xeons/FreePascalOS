@@ -41,6 +41,7 @@ uses
   WebView.ContentProcesses,
   WebView.PromptSheet,
   WebView.RecoveryPanels,
+  WebView.RemoteFrames,
   WebView.Control;
 
 implementation
