@@ -1,0 +1,67 @@
+--- a/clang/lib/Basic/Targets/OSTargets.h
++++ b/clang/lib/Basic/Targets/OSTargets.h
+@@ -423,6 +423,32 @@
+   }
+ };
+ 
++// FreePascalOS Target (C library: mlibc)
++template <typename Target>
++class LLVM_LIBRARY_VISIBILITY FreePascalOSTargetInfo
++    : public OSTargetInfo<Target> {
++protected:
++  void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
++                    MacroBuilder &Builder) const override {
++    DefineStd(Builder, "unix", Opts);
++    Builder.defineMacro("__freepascalos__");
++    if (Opts.POSIXThreads)
++      Builder.defineMacro("_REENTRANT");
++    // libstdc++ needs the GNU extensions of the C library, as with GCC.
++    if (Opts.CPlusPlus)
++      Builder.defineMacro("_GNU_SOURCE");
++    if (this->HasFloat128)
++      Builder.defineMacro("__FLOAT128__");
++  }
++
++public:
++  FreePascalOSTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
++      : OSTargetInfo<Target>(Triple, Opts) {
++    if (Triple.getArch() == llvm::Triple::x86_64)
++      this->HasFloat128 = true;
++  }
++};
++
+ // Managarm Target
+ template <typename Target>
+ class LLVM_LIBRARY_VISIBILITY ManagarmTargetInfo : public OSTargetInfo<Target> {
+--- a/clang/lib/Basic/Targets.cpp
++++ b/clang/lib/Basic/Targets.cpp
+@@ -170,6 +170,9 @@
+     case llvm::Triple::Managarm:
+       return std::make_unique<ManagarmTargetInfo<AArch64leTargetInfo>>(Triple,
+                                                                        Opts);
++    case llvm::Triple::FreePascalOS:
++      return std::make_unique<FreePascalOSTargetInfo<AArch64leTargetInfo>>(
++          Triple, Opts);
+     case llvm::Triple::NetBSD:
+       return std::make_unique<NetBSDTargetInfo<AArch64leTargetInfo>>(Triple,
+                                                                      Opts);
+@@ -690,6 +693,9 @@
+     case llvm::Triple::Managarm:
+       return std::make_unique<ManagarmTargetInfo<X86_64TargetInfo>>(Triple,
+                                                                     Opts);
++    case llvm::Triple::FreePascalOS:
++      return std::make_unique<FreePascalOSTargetInfo<X86_64TargetInfo>>(Triple,
++                                                                        Opts);
+     case llvm::Triple::Serenity:
+       return std::make_unique<SerenityTargetInfo<X86_64TargetInfo>>(Triple,
+                                                                     Opts);
+--- a/clang/lib/Lex/InitHeaderSearch.cpp
++++ b/clang/lib/Lex/InitHeaderSearch.cpp
+@@ -216,6 +216,7 @@
+   case llvm::Triple::ELFIAMCU:
+   case llvm::Triple::Emscripten:
+   case llvm::Triple::FreeBSD:
++  case llvm::Triple::FreePascalOS:
+   case llvm::Triple::Fuchsia:
+   case llvm::Triple::Haiku:
+   case llvm::Triple::Hurd:
