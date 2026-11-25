@@ -103,6 +103,11 @@ type
       from the defaults. }
     HasCoherencyObject: Boolean;
     HasDmaObject: Boolean;
+    { A bus node with "dma-ranges" of its own (a device tree PCI host,
+      say): what the devices below it see, its inbound windows and
+      coherency, rather than what the node itself sees. }
+    HasChildDma: Boolean;
+    ChildDma: TDmaAttributes;
     { What _DSD returned (AmlNone if nothing); kept for the drivers. }
     Properties: TAmlValue;
     { PCI root bridges: their segment (_SEG, linux,pci-domain). }
@@ -150,8 +155,12 @@ function ConnectPlatformInterrupt(Device: PPlatformDevice; Index: Integer; Handl
 { The interrupt's number (for the start-up lines), or -1 if none. }
 function PlatformInterruptNumber(Device: PPlatformDevice; Index: Integer): Int64;
 
-{ The DMA attributes of a PCI device: those of the ACPI root bridge of
-  its segment (_CCA, _DMA), else the architecture's defaults. }
+{ The DMA attributes of a PCI device: those of the host bridge of its
+  segment: an ACPI root bridge (_CCA, _DMA), a generic ECAM host or a
+  Broadcom STB PCIe root complex (the Raspberry Pi 5's) from the device
+  tree, whose own "dma-ranges" (its inbound windows: bus addresses are
+  not physical ones) and coherency are what the devices below it see;
+  else the architecture's defaults. }
 procedure GetPciDmaAttributes(Pci: PPciDevice; out Attributes: TDmaAttributes);
 
 { Every platform device: its path, ids, resources, DMA and driver (the
@@ -333,6 +342,13 @@ begin
   Result := Device^.Resources.Interrupts[Index].Number;
 end;
 
+function IsPciHostBridge(Device: PPlatformDevice): Boolean;
+begin
+  Result := PlatformDeviceHasId(Device, 'PNP0A08') or PlatformDeviceHasId(Device, 'PNP0A03') or
+    PlatformDeviceHasId(Device, 'pci-host-ecam-generic') or PlatformDeviceHasId(Device, 'brcm,bcm2712-pcie') or
+    PlatformDeviceHasId(Device, 'brcm,bcm2711-pcie');
+end;
+
 procedure GetPciDmaAttributes(Pci: PPciDevice; out Attributes: TDmaAttributes);
 var
   Index: Integer;
@@ -341,11 +357,12 @@ begin
   for Index := 0 to DeviceCount - 1 do
   begin
     Device := Devices[Index];
-    if (PlatformDeviceHasId(Device, 'PNP0A08') or PlatformDeviceHasId(Device, 'PNP0A03') or
-        PlatformDeviceHasId(Device, 'pci-host-ecam-generic')) and
-       (Device^.Segment = Pci^.Segment) then
+    if IsPciHostBridge(Device) and (Device^.Segment = Pci^.Segment) then
     begin
-      Attributes := Device^.Dma;
+      if Device^.HasChildDma then
+        Attributes := Device^.ChildDma
+      else
+        Attributes := Device^.Dma;
       Exit;
     end;
   end;
