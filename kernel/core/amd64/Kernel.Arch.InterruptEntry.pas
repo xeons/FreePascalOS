@@ -29,6 +29,11 @@
   An interrupt from user mode swaps in the kernel's GS base on the way in
   and the user's on the way out (Kernel.Arch.ProcessorBlock); the saved
   code selector says where the interrupt came from.
+
+  With SMAP on, an interrupt in the middle of a user copy arrives with
+  RFLAGS.AC set (the copy's window to user memory); the entry clears it
+  (CLAC), so the handler runs with user memory protected. IRETQ gives
+  the copy its flags back.
 }
 unit Kernel.Arch.InterruptEntry;
 
@@ -43,6 +48,9 @@ implementation
 
 uses
   Kernel.Interrupts;
+
+var
+  SmapEnabled: Byte; external name 'ArchSmapEnabled';
 
 procedure CommonInterruptEntry; assembler; nostackframe;
 asm
@@ -72,6 +80,10 @@ asm
     quadwords, so the stack is still 16-byte aligned for the call. }
   mov rdi, rsp
   cld
+  cmp byte ptr [rip + SmapEnabled], 0
+  je @UserMemoryClosed
+  db $0F, $01, $CA { clac }
+@UserMemoryClosed:
   call DispatchInterrupt
 
   pop r15
