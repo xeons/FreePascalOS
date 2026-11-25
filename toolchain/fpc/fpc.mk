@@ -135,7 +135,7 @@ $(NATIVE_FPC_CONFIGURATION): toolchain/fpc/fpc.cfg
 # objects.
 define stage-library-units
 	@mkdir -p $(NATIVE_FPC_UNIT_ROOT)/$(1)
-	cp $(filter-out %/buildrtl.ppu %/si_prc.ppu %/si_dll.ppu,$(wildcard $(2)/*.ppu)) $(NATIVE_FPC_UNIT_ROOT)/$(1)/
+	@cp $(filter-out %/buildrtl.ppu %/si_prc.ppu %/si_dll.ppu,$(wildcard $(2)/*.ppu)) $(NATIVE_FPC_UNIT_ROOT)/$(1)/
 	cd $(NATIVE_FPC_BUILD_DIRECTORY)/ppumove && $(abspath $(PPUMOVE)) -q -b -o $(3) \
 		-i $(abspath $(NATIVE_FPC_UNIT_ROOT)/$(1)) $$(cd $(abspath $(NATIVE_FPC_UNIT_ROOT)/$(1)) && ls *.ppu)
 

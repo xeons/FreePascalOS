@@ -48,7 +48,7 @@ unit i_fpos;
                             tf_has_winlike_resources,tf_safecall_exceptions,tf_safecall_clearstack,
                             tf_pic_default];
             cpu          : cpu_x86_64;
-            unit_env     : 'FREEPASCALOSUNITS';
+            unit_env     : 'FPOSUNITS';
             extradefines : '';
             exeext       : '';
             defext       : '.def';
@@ -119,7 +119,7 @@ unit i_fpos;
                             tf_has_winlike_resources,
                             tf_pic_default];
             cpu          : cpu_aarch64;
-            unit_env     : 'FREEPASCALOSUNITS';
+            unit_env     : 'FPOSUNITS';
             extradefines : '';
             exeext       : '';
             defext       : '.def';

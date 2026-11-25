@@ -380,6 +380,9 @@ implementation
         { Programs are position independent and need no interpreter. }
         TElfExeOutput(exeoutput).interpreter:=stringdup('');
         TElfExeOutput(exeoutput).PositionIndependentExecutable:=not IsSharedLibrary;
+        { Segments are aligned to the page size, as GNU ld's
+          -z max-page-size=4096 does for the system's own files. }
+        ElfTarget.max_page_size:=$1000;
 
         ScriptAddSourceStatements(false);
         while not SharedLibFiles.Empty do
@@ -394,9 +397,9 @@ implementation
       end;
 
 
-    { The layout GNU ld gives position independent files, in the order
-      the kernel's loader expects nothing in particular of: read-only
-      parts first, then the writable ones. }
+    { The layout of the output: the read-only parts (headers, dynamic
+      symbols, relocations, code, constants) in the first segment, the
+      writable ones in the second, as for Linux. }
     procedure TInternalLinkerFreePascalOS.AddSectionStatements;
       var
         relprefix : TCmdStr;
