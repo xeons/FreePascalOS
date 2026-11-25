@@ -27,9 +27,10 @@ runtime's ("An unhandled exception occurred at $...", "Runtime error
 216 at $...", then one address per line, each with its module and
 offset, and the "Modules:" list after it, rtl/fpc/syscrash.inc), or the
 kernel's for a program it had to end ("[process] coretest (12): page
-fault at 0x... (coretest+0x7AB6) ..." and "[process]   module NAME at
-0xBASE-0xLIMIT" lines, Processes.LoadedModules), or a whole serial log
-holding one. The modules' load addresses come from the report, so it
+fault at 0x... (coretest+0x7AB6) ...", its back trace's "[process]   #N
+0xADDRESS NAME+0xOFFSET ROUTINE+0x..." lines, Processes.UserBackTrace,
+and "[process]   module NAME at 0xBASE-0xLIMIT" lines,
+Processes.LoadedModules), or a whole serial log holding one. The modules' load addresses come from the report, so it
 does not matter where they were loaded. Each module's file is looked
 for by its name under the DIRECTORY arguments (e.g. build/amd64/user);
 use the build that produced the crash.
@@ -83,6 +84,7 @@ RUNTIME_MODULE_LINE = re.compile(r'^\s*\$([0-9A-Fa-f]+)-\$([0-9A-Fa-f]+) (\S+)\s
 KERNEL_MODULE_LINE = re.compile(r'module (\S+) at 0x([0-9A-Fa-f]+)-0x([0-9A-Fa-f]+)')
 TRACE_LINE = re.compile(r'^\s*\$([0-9A-Fa-f]+)(?:\s+(\S+)\+\$([0-9A-Fa-f]+))?\s*$')
 RUNTIME_HEADER = re.compile(r'(?:An unhandled exception occurred|Runtime error \d+) at \$')
+KERNEL_TRACE_LINE = re.compile(r'\[process\]   #(\d+) 0x([0-9A-Fa-f]+)(?: (\S+)\+0x([0-9A-Fa-f]+))?')
 KERNEL_FAULT_LINE = re.compile(r'\[process\] \S+ \(\d+\): .*? at 0x([0-9A-Fa-f]+)(?: \((\S+)\+0x([0-9A-Fa-f]+)\))?')
 TERMINAL_CODES = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
@@ -271,6 +273,14 @@ def parse_reports(text):
         match = KERNEL_MODULE_LINE.search(line)
         if match:
             modules[match.group(1)] = (int(match.group(2), 16), int(match.group(3), 16))
+            continue
+        trace = KERNEL_TRACE_LINE.search(line)
+        if trace:
+            address = int(trace.group(2), 16)
+            # Frame 0 is the fault address, listed already.
+            if trace.group(1) != '0' or not addresses or addresses[-1][0] != address:
+                offset = int(trace.group(4), 16) if trace.group(4) else None
+                addresses.append((address, trace.group(3), offset))
             continue
         match = fault or TRACE_LINE.match(line)
         if match:

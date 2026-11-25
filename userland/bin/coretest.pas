@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..442] of TCommandTest = (
+  CommandTests: array[0..443] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -838,7 +838,12 @@ const
       surplus for threads started before and after, resource strings of
       a Free Pascal library translated, relocated copies reused by later
       processes with the library at the same place. }
-    (Command: 'latelibtest > latelib.log; echo $?; grep FAIL latelib.log; tail -n 1 latelib.log'; ExpectedOutput: '0'#10'latelibtest: 36 checks, 0 failed'#10; ExpectedStatus: 0)
+    (Command: 'latelibtest > latelib.log; echo $?; grep FAIL latelib.log; tail -n 1 latelib.log'; ExpectedOutput: '0'#10'latelibtest: 36 checks, 0 failed'#10; ExpectedStatus: 0),
+    { Dynamic tick: a processor busy with one spinning thread takes
+      fewer than 20 ticks in its quietest second (100 with the periodic
+      tick; its own sampling thread, pinned there too, wakes once a
+      second). }
+    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
   );
 
 var

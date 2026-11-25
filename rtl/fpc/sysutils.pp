@@ -541,7 +541,11 @@ begin
 end;
 
 function GetTickCount64: QWord;
+var
+  Nanoseconds: Int64;
 begin
+  if ReadClockPageTime(TimeUptimeNanoseconds, Nanoseconds) then
+    Exit(QWord(Nanoseconds) div 1000000);
   Result := QWord(SystemCall(CallGetTime, 1, 0, 0, 0, 0, 0));
 end;
 
@@ -552,10 +556,25 @@ end;
 
 procedure GetLocalTime(var SystemTime: TSystemTime);
 var
+  Nanoseconds: Int64;
   Seconds: Int64;
   Precise: TAbiPreciseTime;
 begin
-  { To the millisecond (Now, Time), from the nanosecond wall clock. }
+  { To the millisecond (Now, Time), from the nanosecond wall clock: the
+    clock page, else the system call. }
+  if ReadClockPageTime(TimeWallClock, Nanoseconds) then
+  begin
+    Precise.Seconds := Nanoseconds div 1000000000;
+    Precise.Nanoseconds := LongWord(Nanoseconds mod 1000000000);
+    if Nanoseconds < 0 then
+    begin
+      Precise.Seconds := Precise.Seconds - 1;
+      Precise.Nanoseconds := LongWord(Nanoseconds mod 1000000000 + 1000000000);
+    end;
+    DateTimeToSystemTime(UnixDateDelta + Precise.Seconds / SecondsPerDay, SystemTime);
+    SystemTime.MilliSecond := Precise.Nanoseconds div 1000000;
+    Exit;
+  end;
   if SystemCall(CallGetPreciseTime, TimeWallClock, QWord(@Precise), 0, 0, 0, 0) = 0 then
   begin
     DateTimeToSystemTime(UnixDateDelta + Precise.Seconds / SecondsPerDay, SystemTime);

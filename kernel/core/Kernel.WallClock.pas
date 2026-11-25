@@ -75,19 +75,22 @@ procedure StepWallClockTo(Time: TUnixTime);
 function AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean): Boolean;
 { What a gradual adjustment still has to move the clock by. }
 function WallClockAdjustmentRemaining: Int64;
+{ The offset from the uptime and the gradual adjustment (its total and
+  since when), consistent with each other: for the clock page. Any
+  level. }
+procedure ReadWallClockState(out Offset, Total: Int64; out Start: QWord);
 
 implementation
 
 uses
   Hal.RealTimeClock,
   Runtime.Atomic,
+  Runtime.ClockPage,
+  Kernel.ClockPage,
   Kernel.Arch.Cpu,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Clock;
-
-const
-  MicrosecondsPerSecond = 1000000;
 
 var
   { Changes take the lock; Sequence is odd while they are made. }
@@ -104,29 +107,11 @@ var
   SlewStart: QWord = 0;
 
 { How far a slew begun at Start has moved the clock by Now (always
-  towards Total, never past it). }
+  towards Total, never past it): the clock page's arithmetic, so that
+  programs reading the time from the page agree with the kernel. }
 function SlewProgress(Total: Int64; Start, Now: QWord): Int64;
-var
-  Elapsed: QWord;
-  Moved: QWord;
-  Magnitude: QWord;
 begin
-  if (Total = 0) or (Now <= Start) then
-    Exit(0);
-  Elapsed := Now - Start;
-  { In two parts, so the product cannot overflow. }
-  Moved := (Elapsed div MicrosecondsPerSecond) * SlewPartsPerMillion +
-    ((Elapsed mod MicrosecondsPerSecond) * SlewPartsPerMillion) div MicrosecondsPerSecond;
-  if Total < 0 then
-    Magnitude := QWord(-Total)
-  else
-    Magnitude := QWord(Total);
-  if Moved > Magnitude then
-    Moved := Magnitude;
-  if Total < 0 then
-    Result := -Int64(Moved)
-  else
-    Result := Int64(Moved);
+  Result := ClockSlewProgress(Total, Start, Now, SlewPartsPerMillion);
 end;
 
 procedure BeginChange(out PreviousLevel: TPriorityLevel);
@@ -143,6 +128,8 @@ begin
   AtomicStore(Sequence, Sequence + 1);
   RestoreInterrupts(InterruptsWereEnabled);
   ReleaseSpinLock(Lock, PreviousLevel);
+  { Programs read the wall clock from the clock page. }
+  PublishClockPage;
 end;
 
 { Folds the slew's progress so far into the base (lock held). }
@@ -177,6 +164,24 @@ end;
 procedure ReadWallClockFromHardware;
 begin
   SetFromHardware;
+end;
+
+procedure ReadWallClockState(out Offset, Total: Int64; out Start: QWord);
+var
+  Before: PtrUInt;
+begin
+  repeat
+    Before := AtomicLoad(Sequence);
+    if (Before and 1) <> 0 then
+    begin
+      CpuRelax;
+      Continue;
+    end;
+    Offset := BaseOffset;
+    Total := SlewTotal;
+    Start := SlewStart;
+    FullMemoryBarrier;
+  until AtomicLoad(Sequence) = Before;
 end;
 
 function WallClockNanoseconds: Int64;

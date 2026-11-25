@@ -41,7 +41,8 @@ type
 
 function CurrentTime: TUnixTime;
 function UptimeMilliseconds: QWord;
-{ Nanoseconds since 1970-01-01 00:00:00 UTC (CallGetPreciseTime). }
+{ Nanoseconds since 1970-01-01 00:00:00 UTC: from the clock page
+  (System.ReadClockPageTime), else CallGetPreciseTime. }
 function WallClockNanoseconds: Int64;
 { Nanoseconds since start; never goes back. }
 function MonotonicNanoseconds: QWord;
@@ -69,7 +70,11 @@ begin
 end;
 
 function UptimeMilliseconds: QWord;
+var
+  Nanoseconds: Int64;
 begin
+  if System.ReadClockPageTime(TimeUptimeNanoseconds, Nanoseconds) then
+    Exit(QWord(Nanoseconds) div 1000000);
   Result := QWord(KernelGetTime(TimeUptime));
 end;
 
@@ -77,6 +82,9 @@ function PreciseTime(Which: LongWord): Int64;
 var
   Time: TAbiPreciseTime;
 begin
+  { The clock page needs no system call. }
+  if System.ReadClockPageTime(Which, Result) then
+    Exit;
   if KernelGetPreciseTime(Which, Time) < 0 then
     Exit(0);
   Result := Time.Seconds * NanosecondsPerSecond + Time.Nanoseconds;

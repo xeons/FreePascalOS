@@ -34,6 +34,17 @@
                            counted (a test machine has pollers: netlog,
                            services). Exits 1 if not, 2 if no processor
                            was idle
+    powerstat --check-busy [SECONDS [LIMIT]]
+                           for the tests: the dynamic tick. Pins itself
+                           to the last processor, spins there in a
+                           thread of its own for SECONDS (3) one-second
+                           stretches and checks that the processor,
+                           busy all the while, took under LIMIT (5)
+                           ticks in the quietest of them (100 with the
+                           periodic tick; work pinned to the processor
+                           now and then brings the tick back for a
+                           while, as it should). Exits 1 if not, 2 if
+                           there is only one processor
 }
 program PowerStat;
 
@@ -42,6 +53,8 @@ program PowerStat;
 uses
   SysUtils,
   Abi.SystemCalls,
+  Sys.Kernel,
+  Sys.Threads,
   Sys.Power;
 
 const
@@ -252,14 +265,102 @@ begin
 end;
 
 var
+  StopSpinning: LongInt = 0;
+
+function Spin(Argument: Pointer): LongInt;
+begin
+  while InterlockedCompareExchange(StopSpinning, 0, 0) = 0 do
+    ;
+  Result := 0;
+end;
+
+function CheckBusy(Seconds: LongInt; Limit: Double): LongInt;
+var
+  First: TSample;
+  Second: TSample;
+  Last: Integer;
+  Index: Integer;
+  Spinner: Int64;
+  ExitCode: LongInt;
+  Ticks: Double;
+  Rate: Double;
+  Stretch: LongInt;
+  Busy: LongWord;
+begin
+  if not TakeSample(First) then
+  begin
+    WriteLn('powerstat: FAIL: no power information');
+    Exit(1);
+  end;
+  Last := -1;
+  for Index := 0 to Integer(First.Power.ProcessorCount) - 1 do
+    if First.Power.Processors[Index].Online <> 0 then
+      Last := Index;
+  if Last < 1 then
+  begin
+    WriteLn('powerstat: one processor: no dynamic tick to check');
+    Exit(2);
+  end;
+  if KernelSetAffinity(0, QWord(1) shl Last) < 0 then
+  begin
+    WriteLn('powerstat: FAIL: could not keep to the last processor');
+    Exit(1);
+  end;
+  Spinner := CreateThread(@Spin, nil);
+  if Spinner < 0 then
+  begin
+    WriteLn('powerstat: FAIL: could not start the spinning thread');
+    Exit(1);
+  end;
+  { Let the tick settle, then watch one-second stretches, keeping the
+    quietest (this thread sleeps through each). }
+  Sleep(500);
+  Ticks := 1e9;
+  Busy := 100;
+  for Stretch := 1 to Seconds do
+  begin
+    TakeSample(First);
+    Sleep(1000);
+    TakeSample(Second);
+    WriteLn(Format('powerstat: processor %d: busy %d %%, %.1f clock interrupts per second (%s)',
+      [Last, BusyPercent(First, Second, Last), InterruptRate(First, Second, Last), CauseText(First, Second, Last)]));
+    if BusyPercent(First, Second, Last) < Busy then
+      Busy := BusyPercent(First, Second, Last);
+    Rate := PerSecond(First, Second, First.Power.Processors[Last].TickInterrupts,
+      Second.Power.Processors[Last].TickInterrupts);
+    if Rate < Ticks then
+      Ticks := Rate;
+  end;
+  InterlockedExchange(StopSpinning, 1);
+  WaitForThread(Spinner, -1, ExitCode);
+  CloseThreadHandle(Spinner);
+  if Busy < 90 then
+  begin
+    WriteLn('powerstat: FAIL: the spinning thread did not keep its processor busy');
+    Exit(1);
+  end;
+  if Ticks >= Limit then
+  begin
+    WriteLn(Format('powerstat: FAIL: a processor running one thread took %.1f ticks per second (limit %.1f)',
+      [Ticks, Limit]));
+    Exit(1);
+  end;
+  WriteLn(Format('powerstat: a busy processor running one thread takes %.1f ticks per second (under %.1f)',
+    [Ticks, Limit]));
+  Result := 0;
+end;
+
+var
   First: TSample;
   Second: TSample;
 begin
   if (ParamCount >= 1) and (ParamStr(1) = '--check-idle') then
     Halt(CheckIdle(StrToIntDef(ParamStr(2), 3), StrToFloatDef(ParamStr(3), 5)));
+  if (ParamCount >= 1) and (ParamStr(1) = '--check-busy') then
+    Halt(CheckBusy(StrToIntDef(ParamStr(2), 3), StrToFloatDef(ParamStr(3), 5)));
   if (ParamCount >= 1) and ((ParamStr(1) = '--help') or (ParamStr(1) = '-h')) then
   begin
-    WriteLn('usage: powerstat [--check-idle [SECONDS [LIMIT]]]');
+    WriteLn('usage: powerstat [--check-idle [SECONDS [LIMIT]] | --check-busy [SECONDS [LIMIT]]]');
     Halt(0);
   end;
   if not TakeSample(First) then

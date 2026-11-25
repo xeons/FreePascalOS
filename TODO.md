@@ -57,8 +57,12 @@ how the existing pieces fit together.
 - [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
 - [x] Crash reports with module names and load bases
       (CallGetProcessModules, symbolize.py --report)
-- [ ] Back traces of user programs from the kernel's own crash report
-      (walk the program's frames; most user code omits frame pointers)
+- [x] Back traces of user programs from the kernel's own crash report
+      (call frame information: loaded .eh_frame through .eh_frame_hdr,
+      Free Pascal's .debug_frame from the module file; frame pointers
+      elsewhere; named from .symtab or the dynamic symbols)
+- [ ] User back traces through libraries a C program's dynamic linker
+      maps itself (not in the kernel's module list: bare addresses)
 - [x] Tickless idle: an idle processor's tick stops until its next due
       time (per-processor clock interrupt counters; coretest checks under
       5 a second per idle processor)
@@ -67,10 +71,17 @@ how the existing pieces fit together.
 - [x] Nanosecond wall clock (CallGetPreciseTime), stepped or slewed
       (CallAdjustWallClock); invariant TSC check, kvmclock under KVM
 - [x] SNTP client service (timesync, off by default)
-- [ ] Dynamic tick for busy processors (no tick while one thread runs
-      alone on a processor)
-- [ ] A shared read-only page with the clock's parameters (vDSO-style) so
-      the runtime reads the time without a system call
+- [x] Dynamic tick for busy processors (no tick while one thread runs
+      alone on a processor: a residual tick a second; a thread queued
+      there, a switch or an alert brings it back; dynamictick=off;
+      powerstat --check-busy in coretest)
+- [x] A shared read-only page with the clock's parameters (vDSO-style) so
+      the runtime reads the time without a system call (TAbiClockPage,
+      AuxiliaryClockPage; RDTSC / CNTVCT_EL0; Sys.Time, Now,
+      GetTickCount64; ClockPageTest, timetest)
+- [ ] The clock page under KVM's paravirtual clock (per-processor
+      pvclock records mapped for programs; they make the system call
+      for now)
 - [ ] Power-down idle states (PSCI CPU_SUSPEND power-down, deep C-states
       without ARAT) with a broadcast timer; _PDC/_OSC before _CST;
       ACPI P-states (_PSS/_PCT) or HWP for frequency scaling on PCs
@@ -86,8 +97,10 @@ how the existing pieces fit together.
       trace; strict UTF-8 decoding; bounded wall clock adjustments
 - [ ] Interrupt remapping (VT-d / AMD-Vi) so device interrupts can reach
       x2APIC ids above 255 (they go to the boot processor for now)
-- [ ] A regression test for the idle lost wakeup and for priority lowering
-      latency (both are timing windows that QEMU does not hit reliably)
+- [x] A regression test for the idle lost wakeup and for priority lowering
+      latency (Kernel.SchedulerLatencySelfTest: the idle window hook holds
+      a processor between check and wait for a wake-up and a refused
+      steal; an endless time slice for the priority lowering)
 
 ## Memory management
 
@@ -222,10 +235,11 @@ how the existing pieces fit together.
       being served (hangtest --check); a thread started during the ending
       never runs; kill -9 of a group; a process still there 10 s after it
       was told to end is reported with its threads ([ending])
-- [ ] Bound the kernel's remaining non-alertable waits a user thread can
+- [x] Bound the kernel's remaining non-alertable waits a user thread can
       reach (device open and close, block I/O, the wait after cancelling a
       request), so a driver that never completes cannot keep a process
-      from ending
+      from ending (Io.BoundedRequests: given up 5 s after a cancel or
+      once the thread must end; audio drain stops on a stalled device)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
 - [x] Asynchronous notifications a program can handle: a notification queue

@@ -46,6 +46,12 @@ procedure HalStartClockOnThisProcessor;
   clock", "generic timer"). }
 function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
+{ The clock as programs may read it themselves (the clock page,
+  Kernel.ClockPage): the counter value at which it read
+  OriginNanoseconds and the counter's rate. False if programs cannot
+  read the kernel's clock (KVM's paravirtual clock). }
+function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+
 procedure HalEndOfInterrupt;
 procedure HalRequestSoftwareInterrupt(Level: TPriorityLevel);
 function HalClockInterruptVector: Byte;
@@ -157,8 +163,17 @@ begin
   Result := GenericTimerNanoseconds;
 end;
 
+function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+begin
+  Result := DescribeGenericTimer(Origin, CountsPerSecond);
+  OriginNanoseconds := 0;
+end;
+
 procedure HalStartClockOnThisProcessor;
 begin
+  { Programs read the virtual counter for the clock page (CNTKCTL_EL1
+    may have been reset by a power-down). }
+  AllowUserCounterReads;
   SetTimerInterruptIn(0);
 end;
 

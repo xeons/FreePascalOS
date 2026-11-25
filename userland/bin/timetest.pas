@@ -24,6 +24,10 @@
   - Sleeps (with the tick stopped on idle processors): never early,
     and not late by more than the slack an emulator needs.
   - Now has milliseconds.
+  - The clock page (System.ReadClockPageTime, what Sys.Time and Now
+    use): a page read falls between two system calls read around it,
+    for the uptime and the wall clock, also while a gradual adjustment
+    runs and after a step; reading the page is faster than the call.
   - CallAdjustWallClock: a query without root's right is allowed and
     changing is not; a step moves the clock at once (and back); a
     gradual adjustment runs it fast (what is left shrinks) and a new
@@ -199,6 +203,81 @@ begin
   Check(Abs(WallClockNanoseconds - Before) < NanosecondsPerSecond, 'the refused ones left the clock alone');
 end;
 
+function SystemCallTime(Which: LongWord): Int64;
+var
+  Precise: TAbiPreciseTime;
+begin
+  if KernelGetPreciseTime(Which, Precise) <> 0 then
+    Exit(0);
+  Result := Precise.Seconds * NanosecondsPerSecond + Precise.Nanoseconds;
+end;
+
+{ How many page reads of Which over Rounds did not fall between the
+  system calls read before and after them. }
+function PageReadsOutOfOrder(Which: LongWord; Rounds: Integer): Integer;
+var
+  Round: Integer;
+  Before: Int64;
+  FromPage: Int64;
+  After: Int64;
+begin
+  Result := 0;
+  for Round := 1 to Rounds do
+  begin
+    Before := SystemCallTime(Which);
+    if not ReadClockPageTime(Which, FromPage) then
+      Exit(Rounds);
+    After := SystemCallTime(Which);
+    if (FromPage < Before) or (FromPage > After) then
+      Inc(Result);
+  end;
+end;
+
+procedure TestClockPage;
+const
+  OrderRounds = 20000;
+  SpeedRounds = 100000;
+var
+  Value: Int64;
+  Remaining: Int64;
+  Start: QWord;
+  Index: Integer;
+  PageTime: QWord;
+  CallTime: QWord;
+begin
+  if not ReadClockPageTime(TimeUptimeNanoseconds, Value) then
+  begin
+    { KVM's paravirtual clock: programs make the system call. }
+    Check(not ReadClockPageTime(TimeWallClock, Value) and (MonotonicNanoseconds > 0),
+      'clock page: the kernel''s clock is not a counter programs read; the system call serves');
+    Exit;
+  end;
+  Check(PageReadsOutOfOrder(TimeUptimeNanoseconds, OrderRounds) = 0,
+    Format('clock page: %d uptime reads fall between the system calls around them', [OrderRounds]));
+  Check(PageReadsOutOfOrder(TimeWallClock, OrderRounds) = 0,
+    'clock page: so do wall clock reads');
+  KernelAdjustWallClock(5 * NanosecondsPerMillisecond, AdjustGradually, Remaining);
+  Sleep(20);
+  Check(PageReadsOutOfOrder(TimeWallClock, OrderRounds) = 0,
+    'clock page: and while a gradual adjustment runs');
+  KernelAdjustWallClock(0, AdjustGradually, Remaining);
+  KernelAdjustWallClock(NanosecondsPerSecond, 0, Remaining);
+  Check(PageReadsOutOfOrder(TimeWallClock, 1000) = 0, 'clock page: and right after a step');
+  KernelAdjustWallClock(-NanosecondsPerSecond, 0, Remaining);
+  Check(PageReadsOutOfOrder(TimeWallClock, 1000) = 0, 'clock page: and after the step back');
+  Check(ReadClockPageTime(7, Value) = False, 'clock page: an unknown clock is refused');
+  Start := MonotonicNanoseconds;
+  for Index := 1 to SpeedRounds do
+    ReadClockPageTime(TimeUptimeNanoseconds, Value);
+  PageTime := MonotonicNanoseconds - Start;
+  Start := MonotonicNanoseconds;
+  for Index := 1 to SpeedRounds do
+    SystemCallTime(TimeUptimeNanoseconds);
+  CallTime := MonotonicNanoseconds - Start;
+  Check(PageTime < CallTime, Format('clock page: a read takes %d ns, the system call %d ns',
+    [PageTime div SpeedRounds, CallTime div SpeedRounds]));
+end;
+
 { Counts the uptime reads that went back until StopFile appears. }
 procedure WatchUptime(const StopFile: string);
 const
@@ -248,6 +327,7 @@ begin
   TestSleeps;
   TestNow;
   TestAdjust;
+  TestClockPage;
   WriteLn(Format('timetest: %d of %d checks passed', [Checks - Failures, Checks]));
   if Failures > 0 then
     Halt(1);

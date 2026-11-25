@@ -71,6 +71,16 @@ function GetIdleState(Index: Integer; out State: TIdleState): Boolean;
 procedure SetFirmwareIdleStates(constref States: array of TIdleState; Count: Integer);
 procedure WriteIdleStates;
 
+type
+  { Runs in the idle thread between the check for work and the wait,
+    interrupts disabled, with the processor's index. }
+  TIdleWindowHook = procedure(ProcessorIndex: LongWord);
+
+{ For the self tests only: widens the window between deciding to wait
+  and waiting, so that a wake-up can be sent into it on purpose (nil
+  takes the hook away). }
+procedure SetIdleWindowHookForTest(Hook: TIdleWindowHook);
+
 implementation
 
 uses
@@ -92,6 +102,7 @@ var
     under ChangeLock). }
   TableSequence: PtrUInt = 0;
   ChangeLock: TSpinLock;
+  IdleWindowHook: TIdleWindowHook = nil;
 
 procedure InitializeIdleStates;
 begin
@@ -164,8 +175,16 @@ begin
     Expected := 0;
   Chosen := TakeState(Expected, State);
   Inc(Processor^.IdleStateEntries[Chosen]);
+  if Assigned(IdleWindowHook) then
+    IdleWindowHook(Processor^.Index);
   { Enables interrupts as it waits. }
   ArchEnterIdleState(State, Processor^.Index);
+end;
+
+procedure SetIdleWindowHookForTest(Hook: TIdleWindowHook);
+begin
+  IdleWindowHook := Hook;
+  FullMemoryBarrier;
 end;
 
 function IdleStateCount: Integer;

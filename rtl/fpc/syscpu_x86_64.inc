@@ -38,6 +38,16 @@ asm
   syscall
 end;
 
+{ The time stamp counter the kernel's clock counts (the clock page);
+  the LFENCE keeps the read from moving ahead of what came before it. }
+function ReadProcessorCounter: QWord; assembler; nostackframe;
+asm
+  lfence
+  rdtsc
+  shlq $32, %rdx
+  orq %rdx, %rax
+end;
+
 { --- Thread control block (ThreadBlock* in Abi.SystemCalls) ------------- }
 
 { The thread pointer: the control block's self pointer at %fs:0. }

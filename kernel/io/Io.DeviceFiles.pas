@@ -24,7 +24,10 @@
   pointer of the driver's. Reads, writes and control requests on it are
   sent to the device's driver as requests (Io.Manager) and waited for;
   those waits are alertable, so a program blocked on a device can be
-  ended or stopped (its request is cancelled).
+  ended or stopped (its request is cancelled). Every request goes
+  through Io.BoundedRequests, so a driver that never completes one -
+  an open, a close, a cancelled read - keeps a thread that must end
+  waiting only RequestGraceMilliseconds.
 
   Opening the /dev directory gives a device file too, with no device,
   for listing the devices.
@@ -67,6 +70,7 @@ implementation
 uses
   Runtime.Memory,
   Abi.SystemCalls,
+  Io.BoundedRequests,
   Kernel.PriorityLevel,
   Kernel.SpinLock;
 
@@ -106,7 +110,7 @@ begin
   FillMemory(@Request, SizeOf(Request), 0);
   Request.Operation := IoFunctionClose;
   Request.OpenFile := OpenFile;
-  CallDriverAndWait(OpenFile^.Device, Request, False);
+  CallDriverAndWaitBounded(OpenFile^.Device, Request, False);
   UncountOpen(OpenFile^.Device);
 end;
 
@@ -134,7 +138,7 @@ begin
   Request.Operation := IoFunctionOpen;
   Request.OpenFile := OpenFile;
   Request.OpenFlags := Flags;
-  Result := CallDriverAndWait(Device, Request, False);
+  Result := CallDriverAndWaitBounded(Device, Request, False);
   if Result <> ErrorNone then
   begin
     { Not opened, so the driver must not see a close. }
@@ -168,7 +172,7 @@ begin
   Request.Buffer := Buffer;
   Request.Length := Length;
   Request.Offset := OpenFile^.Position;
-  Error := CallDriverAndWait(OpenFile^.Device, Request, True);
+  Error := CallDriverAndWaitBounded(OpenFile^.Device, Request, True);
   if Error <> ErrorNone then
     Exit(-Int64(Error));
   if OpenFile^.Device^.Kind = DeviceKindBlock then
@@ -198,7 +202,7 @@ begin
   Request.OpenFile := OpenFile;
   Request.ControlCode := Code;
   Request.ControlArgument := Argument;
-  Error := CallDriverAndWait(OpenFile^.Device, Request, True);
+  Error := CallDriverAndWaitBounded(OpenFile^.Device, Request, True);
   if Error <> ErrorNone then
     Exit(-Int64(Error));
   Result := Request.Information;
@@ -220,7 +224,7 @@ begin
   Request.OpenFile := OpenFile;
   Request.Offset := Offset;
   Request.Length := Length;
-  Result := CallDriverAndWait(OpenFile^.Device, Request, True);
+  Result := CallDriverAndWaitBounded(OpenFile^.Device, Request, True);
   if Result <> ErrorNone then
     Exit;
   Physical := Request.MapPhysical;

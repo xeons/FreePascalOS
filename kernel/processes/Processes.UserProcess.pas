@@ -136,6 +136,7 @@ function WaitForProcessExit(Process: PProcess; TimeoutMilliseconds: QWord;
 implementation
 
 uses
+  Kernel.ClockPage,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -159,6 +160,7 @@ uses
   Processes.UserThread,
   Processes.UserExceptions,
   Processes.LoadedModules,
+  Processes.UserBackTrace,
   Processes.OutOfMemory,
   Memory.PhysicalPages,
   Kernel.Random,
@@ -180,7 +182,7 @@ const
   AuxiliarySecure = 23;
   AuxiliaryRandomBytes = 25;
   AuxiliaryProgramName = 31;
-  AuxiliaryEntryCount = 18;
+  AuxiliaryEntryCount = 19;
   ProgramHeaderSize = 56;
   { AT_RANDOM: bytes for the C library's stack protector and hashing. }
   RandomByteCount = 16;
@@ -247,9 +249,12 @@ begin
   DebugEndMessage;
 
   { Exceptions arrive with interrupts off; ending the process may block,
-    and so may the module list's lock. Where the modules were loaded
-    makes the addresses above meaningful (scripts/symbolize.py). }
+    and so may the module list's lock and the back trace's file reads.
+    The chain of calls (Processes.UserBackTrace), then where the modules
+    were loaded, which makes the addresses meaningful
+    (scripts/symbolize.py). }
   EnableInterrupts;
+  WriteUserBackTrace(Process, Frame, 'process');
   WriteProcessModules(Process, 'process');
   { As a process killed by SIGSEGV, for a parent's waitpid. }
   Process^.Posix.EndSignal := SignalSegmentation;
@@ -310,6 +315,19 @@ begin
     (Credentials.RealGroupId <> Credentials.EffectiveGroupId);
 end;
 
+{ Maps the clock page (Kernel.ClockPage) read-only into Space, for the
+  runtime to read the time from (AuxiliaryClockPage). }
+function MapClockPage(Space: PAddressSpace; out Address: QWord): LongInt;
+var
+  Physical: TPhysicalAddress;
+begin
+  Address := 0;
+  Physical := ClockPagePhysicalAddress;
+  if Physical = 0 then
+    Exit(ErrorNone);
+  Result := MapPagesIntoAddressSpace(Space, @Physical, 1, False, Address);
+end;
+
 function BuildInitialStack(Space: PAddressSpace; const Startup: TProcessStartup;
   MainModule, Interpreter: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
 var
@@ -331,6 +349,7 @@ var
   ProgramName: PChar;
   ProgramNamePosition: QWord;
   InterpreterBase: QWord;
+  ClockPageAddress: QWord;
 
   procedure PutSlot(Value: QWord);
   begin
@@ -379,6 +398,9 @@ begin
   if StackTop - StackPointer > UserStackReserve div 2 then
     Exit(ErrorNameTooLong); { arguments and environment are too large }
 
+  Result := MapClockPage(Space, ClockPageAddress);
+  if Result <> ErrorNone then
+    Exit;
   Image := PByte(AllocateZeroedKernelMemory(ImageSize));
   if Image = nil then
     Exit(ErrorOutOfMemory);
@@ -440,6 +462,8 @@ begin
   PutSlot(PlaceList(Lists.Finalizers, Lists.FinalizerCount));
   PutSlot(Abi.SystemCalls.AuxiliaryFinalizerCount);
   PutSlot(Lists.FinalizerCount);
+  PutSlot(Abi.SystemCalls.AuxiliaryClockPage);
+  PutSlot(ClockPageAddress);
   PutSlot(AuxiliaryNull);
   PutSlot(0);
 
