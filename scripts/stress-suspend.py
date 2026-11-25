@@ -26,6 +26,10 @@ tablet still deliver input events. With LOAD=1, background shell loops
 start and end programs all the time, also across each suspend: every
 program that ends frees kernel memory, so processors that wake shoot
 down translations at once, while the others are still being woken.
+A background "timetest --watch" reads the uptime all the time across
+every suspend; at the end it must report that no read went back (the
+uptime pauses while asleep, and must continue from no earlier than
+the last time it gave).
 
     stress-suspend.py <esp-directory> <system-disk-image> [rounds]
 
@@ -227,6 +231,9 @@ if os.environ.get('LOAD') == '1':
         type_on_serial(b'sh -c "while true; do /bin/true; done" &\r')
         collect(0.5)
 
+type_on_serial(b'rm -f /tmp/watch-stop; timetest --watch /tmp/watch-stop &\r')
+collect(0.5)
+
 delays = [0, 0.1, 2]
 pointer_failures = 0
 woken = 0
@@ -276,6 +283,23 @@ for round_number in range(rounds):
     print('serial log in ' + serial_log)
     print('SUSPEND STRESS FAILED: %d of %d rounds woke' % (woken, round_number + 1))
     finish(1)
+
+start = len(received)
+type_on_serial(b'touch /tmp/watch-stop\r')
+watch_report = re.compile(rb'timetest: watch: (\d+) uptime reads, (\d+) went back')
+match = None
+deadline = time.time() + 30
+while match is None and time.time() < deadline:
+    collect(0.2)
+    match = watch_report.search(bytes(received), start)
+if match is None:
+    print('SUSPEND STRESS FAILED: the uptime watch did not report')
+    finish(1)
+if int(match.group(2)) != 0:
+    print('SUSPEND STRESS FAILED: the uptime went back %s times in %s reads across the suspends' %
+          (match.group(2).decode(), match.group(1).decode()))
+    finish(1)
+print('uptime: %s reads across the suspends, none went back' % match.group(1).decode())
 
 if pointer_failures > 0:
     print('SUSPEND STRESS FAILED: the mouse or tablet failed after %d of %d wakes' % (pointer_failures, rounds))

@@ -189,7 +189,8 @@ begin
   begin
     if not CallerIsRoot then
       Exit(Failure(ErrorNotPermitted));
-    AdjustWallClock(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
+    if not AdjustWallClock(OffsetNanoseconds, (Flags and AdjustGradually) <> 0) then
+      Exit(Failure(ErrorInvalidArgument));
     ReportAdjustment(OffsetNanoseconds, (Flags and AdjustGradually) <> 0);
   end;
   Result := 0;

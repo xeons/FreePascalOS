@@ -27,9 +27,15 @@
   - CallAdjustWallClock: a query without root's right is allowed and
     changing is not; a step moves the clock at once (and back); a
     gradual adjustment runs it fast (what is left shrinks) and a new
-    one replaces it.
+    one replaces it; steps out of 1970-2200 and gradual adjustments
+    over an hour are refused.
   Prints a line per check (FAIL for a failed one) and the count last;
   exits 1 if one failed.
+
+  timetest --watch STOPFILE: reads the uptime over and over until
+  STOPFILE exists (stress-suspend.py runs it in the background across
+  many suspends to RAM), then says how many reads went back; exits 1 if
+  any did.
 }
 program TimeTest;
 
@@ -181,9 +187,56 @@ begin
     Format('runs the clock fast (%d us left)', [Left div 1000]));
   KernelAdjustWallClock(0, AdjustGradually, Remaining);
   Check(Remaining = 0, 'a new adjustment replaces it');
+  { Out of range: the clock must not overflow (nor go to the battery
+    backed clock). }
+  Before := WallClockNanoseconds;
+  Check(KernelAdjustWallClock(High(Int64) - 1, 0, Remaining) = -ErrorInvalidArgument,
+    'a step past the year 2200 is refused');
+  Check(KernelAdjustWallClock(-Before - NanosecondsPerSecond, 0, Remaining) = -ErrorInvalidArgument,
+    'a step before 1970 is refused');
+  Check(KernelAdjustWallClock(Int64(2) * 3600 * NanosecondsPerSecond, AdjustGradually, Remaining) =
+    -ErrorInvalidArgument, 'a gradual adjustment of two hours is refused');
+  Check(Abs(WallClockNanoseconds - Before) < NanosecondsPerSecond, 'the refused ones left the clock alone');
+end;
+
+{ Counts the uptime reads that went back until StopFile appears. }
+procedure WatchUptime(const StopFile: string);
+const
+  ReadsBetweenLooks = 20000;
+var
+  Reads: QWord;
+  BackSteps: QWord;
+  Previous: QWord;
+  Now: QWord;
+  Index: Integer;
+begin
+  Reads := 0;
+  BackSteps := 0;
+  Previous := MonotonicNanoseconds;
+  while not FileExists(StopFile) do
+  begin
+    for Index := 1 to ReadsBetweenLooks do
+    begin
+      Now := MonotonicNanoseconds;
+      if Now < Previous then
+        Inc(BackSteps);
+      Previous := Now;
+    end;
+    Inc(Reads, ReadsBetweenLooks);
+    { Leave the processor to others now and then. }
+    Sleep(1);
+  end;
+  WriteLn(Format('timetest: watch: %d uptime reads, %d went back', [Reads, BackSteps]));
+  if BackSteps > 0 then
+    Halt(1);
 end;
 
 begin
+  if (ParamCount = 2) and (ParamStr(1) = '--watch') then
+  begin
+    WatchUptime(ParamStr(2));
+    Exit;
+  end;
   TestMonotonic;
   TestSleeps;
   TestNow;
