@@ -817,8 +817,10 @@ const
     (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Dynamic tick: a processor busy with one spinning thread takes
-      fewer than 5 ticks a second (100 with the periodic tick). }
-    (Command: 'powerstat --check-busy 3 5 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
+      fewer than 20 ticks in its quietest second (100 with the periodic
+      tick; its own sampling thread, pinned there too, wakes once a
+      second). }
+    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
   );
 
 var

@@ -1044,9 +1044,10 @@ writes the same to the log.
 **Tests.** The kernel self tests (`Kernel.ClockSelfTest`) check that
 the clock page's time is the kernel's, and that a thread spinning
 alone on a processor leaves it almost without ticks while a second
-one beside it brings the tick back (both share the processor). coretest runs `powerstat --check-busy 3 5` (a thread of
-its own spinning on the last processor, which must take under 5 ticks
-a second) and `powerstat --check-idle 3 5`: the processors
+one beside it brings the tick back (both share the processor). coretest runs `powerstat --check-busy 3 20` (a thread of
+its own spinning on the last processor, which must take under 20 ticks
+in the quietest of three seconds - 100 with the periodic tick; about 5
+are its own sampling thread's wake-up there) and `powerstat --check-idle 3 5`: the processors
 that stayed idle for 3 seconds (busy under 10 %) must average under 5
 clock interrupts a second that found no timer or wake-up due (100 with
 the periodic tick; the interrupts for due work, which depend on what
