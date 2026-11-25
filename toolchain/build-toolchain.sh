@@ -137,15 +137,25 @@ apply_patches() {
   done
 }
 
+# The checksum of a package's patches: a tree patched with others is
+# unpacked again.
+patches_checksum() {
+  cat "$ROOT/toolchain/patches/$1"/*.patch 2> /dev/null | sha256sum | cut -d ' ' -f 1
+}
+
+tree_is_current() {
+  [ -f "$SRC/.patched-$1" ] && [ "$(cat "$SRC/.patched-$1")" = "$(patches_checksum "$2")" ]
+}
+
 step_unpack() {
   mkdir -p "$SRC"
-  if [ ! -f "$SRC/.patched-$BINUTILS" ]; then
+  if ! tree_is_current "$BINUTILS" binutils; then
     rm -rf "$SRC/$BINUTILS"
     unpack_archive "$BINUTILS.tar.xz" "$BINUTILS"
     apply_patches "$SRC/$BINUTILS" binutils
-    touch "$SRC/.patched-$BINUTILS"
+    patches_checksum binutils > "$SRC/.patched-$BINUTILS"
   fi
-  if [ ! -f "$SRC/.patched-$GCC" ]; then
+  if ! tree_is_current "$GCC" gcc; then
     rm -rf "$SRC/$GCC"
     unpack_archive "$GCC.tar.xz" "$GCC"
     unpack_archive "$GMP.tar.xz" "$GMP"
@@ -155,7 +165,7 @@ step_unpack() {
     ln -sfn "../$MPFR" "$SRC/$GCC/mpfr"
     ln -sfn "../$MPC" "$SRC/$GCC/mpc"
     apply_patches "$SRC/$GCC" gcc
-    touch "$SRC/.patched-$GCC"
+    patches_checksum gcc > "$SRC/.patched-$GCC"
   fi
   # mlibc is unpacked fresh whenever the sysdeps or patches change, so
   # the tree always matches the repository.
