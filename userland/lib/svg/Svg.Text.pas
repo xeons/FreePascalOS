@@ -398,7 +398,8 @@ begin
   end;
 end;
 
-{ A TrueType glyph's quadratic contours, transformed, added to Path. }
+{ A glyph's contours (TrueType's quadratic curves, CFF's cubic ones),
+  transformed, added to Path. }
 procedure AddGlyphOutline(var Path: TPath; constref Outline: TGlyphOutline; const Transform: TAffineTransform);
 var
   Contour: Integer;
@@ -408,7 +409,9 @@ var
   StartX, StartY: Double;
   P: TPrecisePoint;
   Control: TPrecisePoint;
+  SecondControl: TPrecisePoint;
   StartIndex: Integer;
+  Skip: Integer;
 
   function Mapped(X, Y: Double): TPrecisePoint;
   begin
@@ -449,11 +452,28 @@ begin
     end;
     P := Mapped(StartX, StartY);
     PathMoveTo(Path, P.X, P.Y);
+    Skip := 0;
     for Step := 1 to Count do
     begin
       Index := First + (StartIndex - First + Step) mod Count;
       Point := Outline.Points[Index];
-      if Point.OnCurve then
+      if Skip > 0 then
+      begin
+        Dec(Skip);
+        Continue;
+      end;
+      if Point.Cubic then
+      begin
+        { Two control points of a cubic curve (CFF), then its end. }
+        NextPoint := Outline.Points[First + (Index - First + 1) mod Count];
+        Control := Mapped(Point.X, Point.Y);
+        SecondControl := Mapped(NextPoint.X, NextPoint.Y);
+        NextPoint := Outline.Points[First + (Index - First + 2) mod Count];
+        P := Mapped(NextPoint.X, NextPoint.Y);
+        PathCubicTo(Path, Control.X, Control.Y, SecondControl.X, SecondControl.Y, P.X, P.Y);
+        Skip := 2;
+      end
+      else if Point.OnCurve then
       begin
         P := Mapped(Point.X, Point.Y);
         PathLineTo(Path, P.X, P.Y);
