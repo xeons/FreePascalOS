@@ -800,13 +800,21 @@ hdmi-audio-test: $(HDMI_AUDIO_TEST)
 
 # USB configuration descriptors walked into interfaces, and HID report
 # descriptors and reports routed by id (Drivers.UsbDescriptors,
-# Drivers.HidReports), over a keyboard and mouse receiver's descriptors.
+# Drivers.HidReports), over a keyboard and mouse receiver's descriptors;
+# hostile and fuzzed descriptors read from guarded buffers; the xHCI
+# ring and transfer bookkeeping (Drivers.XhciTrbs, Drivers.XhciTransfers).
 USB_DESCRIPTOR_TEST := build/tools/UsbDescriptorTest
+# The host's runtime units (Runtime.Atomic: barriers) for host tests of
+# kernel code that uses them.
+HOST_RUNTIME_ARCH := $(if $(filter aarch64 arm64,$(shell uname -m)),arm64,amd64)
 
 $(USB_DESCRIPTOR_TEST): tools/UsbDescriptorTest/UsbDescriptorTest.pas kernel/drivers/usb/Drivers.UsbDescriptors.pas \
-		kernel/drivers/usb/Drivers.HidReports.pas shared/Runtime.Memory.pas
+		kernel/drivers/usb/Drivers.HidReports.pas kernel/drivers/usb/Drivers.XhciTrbs.pas \
+		kernel/drivers/usb/Drivers.XhciTransfers.pas shared/Runtime.Memory.pas \
+		$(wildcard tools/UsbDescriptorTest/*.pas)
 	@mkdir -p build/tools/usb-descriptor-units
-	$(FPC) -O2 -Cr -Fukernel/drivers/usb -Fushared -FEbuild/tools -FUbuild/tools/usb-descriptor-units $<
+	$(FPC) -O2 -Cr -Fukernel/drivers/usb -Fushared -Fukernel/runtime/$(HOST_RUNTIME_ARCH) \
+		-Futools/UsbDescriptorTest -FEbuild/tools -FUbuild/tools/usb-descriptor-units $<
 
 usb-descriptor-test: $(USB_DESCRIPTOR_TEST)
 	$(USB_DESCRIPTOR_TEST)

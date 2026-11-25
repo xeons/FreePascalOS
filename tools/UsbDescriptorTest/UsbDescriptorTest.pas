@@ -31,6 +31,14 @@
   keyboard reporting a bitmap of keys, an audio function with
   alternate settings, and a configuration cut short.
 
+  Then what a broken or hostile device may send (UsbHostileDescriptorTests:
+  endpoints 0, 80h and repeated addresses, report counts and sizes whose
+  offsets wrap 32 bits, huge key arrays, descriptors cut short at every
+  length), random mutations of the descriptors above
+  (UsbDescriptorFuzzTests), all read from guarded buffers so a read past
+  their end crashes the test, and the xHCI driver's ring and transfer
+  bookkeeping (XhciBookkeepingTests).
+
   Prints every failed check and exits with 1 if there was one.
 }
 program UsbDescriptorTest;
@@ -40,7 +48,11 @@ program UsbDescriptorTest;
 uses
   SysUtils,
   Drivers.UsbDescriptors,
-  Drivers.HidReports;
+  Drivers.HidReports,
+  UsbTestChecks,
+  UsbHostileDescriptorTests,
+  UsbDescriptorFuzzTests,
+  XhciBookkeepingTests;
 
 const
   { HID specification, appendix E.6: the boot keyboard (63 bytes). }
@@ -125,23 +137,6 @@ const
     $09, $05, $01, $09, $C0, $00, $01, $00, $00,     { endpoint 01h isochronous OUT, 192 bytes }
     $09, $04, $02, $00, $01, $FF, $00, $00, $00,     { interface 2: vendor specific }
     $07, $05, $83, $02, $40, $00, $00);              { endpoint 83h bulk IN, 64 bytes }
-
-var
-  Failures: Integer = 0;
-
-procedure Check(Condition: Boolean; const What: string);
-begin
-  if not Condition then
-  begin
-    WriteLn('USB DESCRIPTOR TEST: failed: ', What);
-    Inc(Failures);
-  end;
-end;
-
-procedure CheckNumber(Actual, Expected: Int64; const What: string);
-begin
-  Check(Actual = Expected, What + ' is ' + IntToStr(Actual) + ', expected ' + IntToStr(Expected));
-end;
 
 procedure CheckBoot(const Boot: TBootKeyboardReport; const Expected: array of Byte; const What: string);
 var
@@ -406,6 +401,16 @@ begin
   TestBitmapKeyboard;
   TestBootMouse;
   TestModes;
+  TestHostileConfigurations;
+  TestHostileReportDescriptors;
+  FuzzConfiguration(@ReceiverConfiguration[0], Length(ReceiverConfiguration));
+  FuzzConfiguration(@AudioConfiguration[0], Length(AudioConfiguration));
+  FuzzReportDescriptor(@KeyboardReportDescriptor[0], Length(KeyboardReportDescriptor));
+  FuzzReportDescriptor(@ReceiverMouseReportDescriptor[0], Length(ReceiverMouseReportDescriptor));
+  FuzzReportDescriptor(@CombinedReportDescriptor[0], Length(CombinedReportDescriptor));
+  FuzzReportDescriptor(@BitmapKeyboardReportDescriptor[0], Length(BitmapKeyboardReportDescriptor));
+  FuzzReportDescriptor(@BootMouseReportDescriptor[0], Length(BootMouseReportDescriptor));
+  TestXhciBookkeeping;
   if Failures > 0 then
   begin
     WriteLn('USB DESCRIPTOR TEST FAILED: ', Failures, ' checks');

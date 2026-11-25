@@ -44,7 +44,7 @@ interface
 
 uses
   Io.Dma,
-  Drivers.XhciRings;
+  Drivers.XhciTrbs;
 
 const
   PacketsInFlight = 24;

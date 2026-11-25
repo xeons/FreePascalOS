@@ -32,6 +32,21 @@
   the thread that sends them, one at a time, up to UsbMaximumTransfer
   bytes per command.
 
+  Errors are recovered as the Bulk-Only Transport specification says
+  (section 5.3): a stalled data stage has its endpoint's halt cleared
+  and the status is still read; a stalled status read is cleared and
+  tried once more; anything else (a failed or timed out command or
+  status, a status that is not one or not this command's) gets reset
+  recovery: the class's Bulk-Only Mass Storage Reset, then both bulk
+  endpoints' halts cleared. So one stall or one confused command fails
+  that command, not the disk.
+
+  The capacity the device reports must be usable: a block size that is
+  a power of two from 512 to 4096 bytes (so 64 KiB pieces hold whole
+  blocks), and at most 2^32 - 1 blocks (READ(10) addresses 32 bits: a
+  device reporting FFFFFFFFh as its last block is larger, and only that
+  much of it is used).
+
   A disk plugged in after startup is announced (Io.DiskArrival), which
   mounts its volumes. When it is unplugged, its requests fail from then
   on and its removal is announced, which takes its volumes away.
@@ -107,6 +122,7 @@ type
   PUsbDisk = ^TUsbDisk;
   TUsbDisk = record
     Usb: PUsbDevice;
+    InterfaceNumber: Byte;
     BulkIn: Byte;
     BulkOut: Byte;
     NextTag: LongWord;
@@ -124,9 +140,40 @@ var
 
 { --- Bulk-Only Transport ------------------------------------------------------ }
 
+{ Reset recovery: the device's Bulk-Only state machine reset, and both
+  endpoints' halts cleared (the controller's side of each is reset by
+  the clearing's own stall recovery, if they stalled). }
+procedure ResetRecovery(Disk: PUsbDisk);
+const
+  ClassToInterface = $21;
+  RequestBulkOnlyReset = $FF;
+begin
+  UsbControlTransfer(Disk^.Usb, ClassToInterface, RequestBulkOnlyReset, 0, Disk^.InterfaceNumber, nil, 0);
+  UsbClearEndpointHalt(Disk^.Usb, Disk^.BulkIn);
+  UsbClearEndpointHalt(Disk^.Usb, Disk^.BulkOut);
+end;
+
+{ Reads the status wrapper; a stall is cleared and the read tried once
+  more. }
+function ReadCommandStatus(Disk: PUsbDisk; out Status: TCommandStatus): Boolean;
+var
+  Transferred: LongWord;
+  Outcome: TUsbTransferStatus;
+begin
+  FillMemory(@Status, SizeOf(Status), 0);
+  Outcome := UsbBulkTransfer(Disk^.Usb, Disk^.BulkIn, @Status, CommandStatusSize, Transferred);
+  if Outcome = UsbTransferStalled then
+  begin
+    UsbClearEndpointHalt(Disk^.Usb, Disk^.BulkIn);
+    Outcome := UsbBulkTransfer(Disk^.Usb, Disk^.BulkIn, @Status, CommandStatusSize, Transferred);
+  end;
+  Result := (Outcome = UsbTransferDone) and (Transferred = CommandStatusSize);
+end;
+
 { Runs one SCSI command: Command (CommandLength bytes), then DataLength
   bytes in (IsIn) or out of Data, then the status. True if the device
-  reports success. }
+  reports success. A failure is recovered from (see the unit's header)
+  before returning. }
 function RunScsiCommand(Disk: PUsbDisk; const Command: TScsiCommand; CommandLength: Byte;
   Data: Pointer; DataLength: LongWord; IsIn: Boolean): Boolean;
 var
@@ -134,6 +181,7 @@ var
   Status: TCommandStatus;
   Transferred: LongWord;
   Endpoint: Byte;
+  Outcome: TUsbTransferStatus;
 begin
   FillMemory(@Block, SizeOf(Block), 0);
   Inc(Disk^.NextTag);
@@ -144,23 +192,42 @@ begin
     Block.Flags := DirectionIn;
   Block.CommandLength := CommandLength;
   CopyMemory(@Block.Command[0], @Command[0], CommandLength);
-  if not UsbBulkTransfer(Disk^.Usb, Disk^.BulkOut, @Block, CommandBlockSize, Transferred) or
+  if (UsbBulkTransfer(Disk^.Usb, Disk^.BulkOut, @Block, CommandBlockSize, Transferred) <> UsbTransferDone) or
      (Transferred <> CommandBlockSize) then
+  begin
+    ResetRecovery(Disk);
     Exit(False);
+  end;
   if DataLength > 0 then
   begin
     if IsIn then
       Endpoint := Disk^.BulkIn
     else
       Endpoint := Disk^.BulkOut;
-    if not UsbBulkTransfer(Disk^.Usb, Endpoint, Data, DataLength, Transferred) then
+    Outcome := UsbBulkTransfer(Disk^.Usb, Endpoint, Data, DataLength, Transferred);
+    if Outcome = UsbTransferStalled then
+      { The device ends the data stage early: its status still follows. }
+      UsbClearEndpointHalt(Disk^.Usb, Endpoint)
+    else if Outcome <> UsbTransferDone then
+    begin
+      ResetRecovery(Disk);
       Exit(False);
+    end;
   end;
-  if not UsbBulkTransfer(Disk^.Usb, Disk^.BulkIn, @Status, CommandStatusSize, Transferred) or
-     (Transferred <> CommandStatusSize) then
+  if not ReadCommandStatus(Disk, Status) or (Status.Signature <> CommandStatusSignature) or
+     (Status.Tag <> Block.Tag) or (Status.Status > 1) then
+  begin
+    { No status, not a status, not this command's, or a phase error. }
+    ResetRecovery(Disk);
     Exit(False);
-  Result := (Status.Signature = CommandStatusSignature) and (Status.Tag = Block.Tag) and
-    (Status.Status = 0) and (Status.Residue = 0);
+  end;
+  Result := (Status.Status = 0) and (Status.Residue = 0);
+end;
+
+{ A power of two from 512 to 4096: whole blocks fit every piece. }
+function UsbBlockSizeIsUsable(BlockSize: LongWord): Boolean;
+begin
+  Result := (BlockSize >= 512) and (BlockSize <= 4096) and ((BlockSize and (BlockSize - 1)) = 0);
 end;
 
 procedure ClearCommand(out Command: TScsiCommand);
@@ -216,9 +283,13 @@ begin
   Result := RunScsiCommand(Disk, Command, 10, @Capacity[0], SizeOf(Capacity), True);
   if not Result then
     Exit;
-  Disk^.BlockCount := QWord(GetBigEndian32(@Capacity[0])) + 1;
+  { A last block of FFFFFFFFh means more than READ(10) reaches: only
+    what it reaches is used. }
+  Disk^.BlockCount := GetBigEndian32(@Capacity[0]);
+  if Disk^.BlockCount <> $FFFFFFFF then
+    Inc(Disk^.BlockCount);
   Disk^.BlockSize := GetBigEndian32(@Capacity[4]);
-  Result := (Disk^.BlockSize >= 512) and (Disk^.BlockSize <= 4096);
+  Result := UsbBlockSizeIsUsable(Disk^.BlockSize);
 end;
 
 { Appends the Count characters at Source, without trailing spaces, to
@@ -384,6 +455,7 @@ begin
   if Disk = nil then
     Exit;
   Disk^.Usb := Usb;
+  Disk^.InterfaceNumber := UsbInterface^.Number;
   Disk^.BulkIn := BulkIn.Address;
   Disk^.BulkOut := BulkOut.Address;
   Result := True;
