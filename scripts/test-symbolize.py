@@ -23,7 +23,10 @@ address and modules, Processes.LoadedModules).
 
     test-symbolize.py SERIAL_LOG USER_BUILD_DIRECTORY
 
-The report must name coretest's CrashOnPurpose. Then the same report is
+The report must name coretest's CrashOnPurpose, and its back trace
+(Processes.UserBackTrace, unwound and named by the kernel itself) the
+chain of calls that led there in order: CrashOnPurpose, the main
+program, the runtime's SysEntry in libsystem.so. Then the same report is
 moved, as if its modules had been loaded elsewhere (each by its own
 page-aligned distance, as load address randomization would), and
 written once more in the runtime's form (rtl/fpc/syscrash.inc): both
@@ -39,27 +42,57 @@ import sys
 
 SYMBOLIZE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'symbolize.py')
 FAULT_LINE = re.compile(r'\[process\] coretest \((\d+)\): page fault at 0x([0-9A-Fa-f]+) \(coretest\+0x[0-9A-Fa-f]+\)')
+TRACE_LINE = re.compile(r'\[process\]   #(\d+) 0x([0-9A-Fa-f]+)(?: (\S+)\+0x[0-9A-Fa-f]+(?: (\S+)\+0x[0-9A-Fa-f]+)?)?')
+# The calls the trace must show, innermost first: each entry's names
+# are alternatives (Free Pascal's main program is both main and
+# PASCALMAIN).
+EXPECTED_CHAIN = [('CORETEST.CRASHONPURPOSE',), ('main', 'PASCALMAIN'), ('SYSTEM.SYSENTRY',)]
 MODULE_LINE = re.compile(r'\[process\]   module (\S+) at 0x([0-9A-Fa-f]+)-0x([0-9A-Fa-f]+)')
 EXPECTED = 'CORETEST.CRASHONPURPOSE'
 PAGE_SIZE = 4096
 
 
 def find_report(log_text):
-    """The fault address and the modules of the last coretest report."""
+    """The fault address, the modules and the back trace (frames as
+    (module, routine)) of the last coretest report."""
     lines = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', log_text).replace('\r', '').splitlines()
     report = None
     for index, line in enumerate(lines):
         match = FAULT_LINE.search(line)
         if match:
             modules = []
+            frames = []
             for following in lines[index + 1:]:
                 module = MODULE_LINE.search(following)
+                frame = TRACE_LINE.search(following)
                 if module:
                     modules.append((module.group(1), int(module.group(2), 16), int(module.group(3), 16)))
+                elif frame and not modules and int(frame.group(1)) == len(frames):
+                    frames.append((frame.group(3), frame.group(4)))
                 elif modules:
                     break
-            report = (int(match.group(2), 16), modules)
+            report = (int(match.group(2), 16), modules, frames)
     return report
+
+
+def check_back_trace(frames):
+    """The kernel's own trace names the expected calls in order."""
+    routines = [routine for _module, routine in frames]
+    position = 0
+    for alternatives in EXPECTED_CHAIN:
+        while position < len(routines) and routines[position] not in alternatives:
+            position += 1
+        if position == len(routines):
+            print('SYMBOLIZE TEST FAILED (back trace): expected the calls %s in order, got:'
+                  % ' <- '.join('/'.join(names) for names in EXPECTED_CHAIN))
+            for number, (module, routine) in enumerate(frames):
+                print('  #%d %s %s' % (number, module, routine))
+            return False
+        position += 1
+    if routines[0] != EXPECTED_CHAIN[0][0]:
+        print('SYMBOLIZE TEST FAILED (back trace): frame 0 is %s, not %s' % (routines[0], EXPECTED_CHAIN[0][0]))
+        return False
+    return True
 
 
 def symbolize(report_text, user_directory):
@@ -117,8 +150,9 @@ def main():
         print('SYMBOLIZE TEST FAILED: no report of coretest --crash-without-dispatcher with modules in %s'
               % log_path)
         sys.exit(1)
-    address, modules = report
-    passed = check('the report as written', symbolize(kernel_form(address, modules), user_directory))
+    address, modules, frames = report
+    passed = check_back_trace(frames)
+    passed = check('the report as written', symbolize(kernel_form(address, modules), user_directory)) and passed
     new_address, new_modules = moved(address, modules)
     passed = check('moved modules, kernel form',
                    symbolize(kernel_form(new_address, new_modules), user_directory)) and passed
@@ -126,7 +160,8 @@ def main():
                    symbolize(runtime_form(new_address, new_modules), user_directory)) and passed
     if not passed:
         sys.exit(1)
-    print('symbolize test: passed (coretest crash at 0x%x named %s)' % (address, EXPECTED))
+    print('symbolize test: passed (coretest crash at 0x%x named %s; back trace %s)'
+          % (address, EXPECTED, ' <- '.join(routine or '?' for _module, routine in frames)))
 
 
 if __name__ == '__main__':

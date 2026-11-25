@@ -52,8 +52,12 @@ how the existing pieces fit together.
 - [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
 - [x] Crash reports with module names and load bases
       (CallGetProcessModules, symbolize.py --report)
-- [ ] Back traces of user programs from the kernel's own crash report
-      (walk the program's frames; most user code omits frame pointers)
+- [x] Back traces of user programs from the kernel's own crash report
+      (call frame information: loaded .eh_frame through .eh_frame_hdr,
+      Free Pascal's .debug_frame from the module file; frame pointers
+      elsewhere; named from .symtab or the dynamic symbols)
+- [ ] User back traces through libraries a C program's dynamic linker
+      maps itself (not in the kernel's module list: bare addresses)
 - [x] Tickless idle: an idle processor's tick stops until its next due
       time (per-processor clock interrupt counters; coretest checks under
       5 a second per idle processor)
