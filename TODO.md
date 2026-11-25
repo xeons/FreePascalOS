@@ -123,13 +123,27 @@ how the existing pieces fit together.
       (AddFileRemovedHook), so a removed library or a program replaced
       while running no longer leaves an orphan inode at unmount; coretest
       checks the system disk's used space around it (and e2fsck after)
-- [ ] Shared writable file mappings (write-back of dirty pages through the
-      file write path; refused with ErrorUnsupported for now)
-- [ ] Evicting mapped file pages under memory pressure (they stay while the
-      file is mapped or its image section is cached; package 7's shrinker
-      could drop pages no process maps)
-- [ ] Mapped file pages and the block cache hold the same data twice; read()
-      could be served from the mapped file's pages when they are resident
+- [x] Shared writable file mappings (through a handle open for writing):
+      pages marked dirty on the first write, write access taken from every
+      mapping before a write-back, written back on CallSyncMemory (214),
+      unmap and process end, sync, after 5 s on the background writer and
+      when the mapped file goes; write() copies only the changed bytes into
+      resident pages; filemaptest, mapped file self test
+- [x] Evicting mapped file pages under memory pressure: the "mapped files"
+      shrinker drops clean pages nobody maps, and (hard) unmaps clean mapped
+      ones through the mapped file's list of mapping regions to read them
+      again on the next touch; preserved snapshot pages and dirty pages stay;
+      CallTrimMappedFiles (217), CallQueryMemoryResidency (215),
+      CallGetMappedFileStatistics (216)
+- [x] read() is served from a mapped file's resident pages (it also sees
+      what a shared writable mapping wrote before it is written back)
+- [ ] Mapped file pages could be the block cache's line pages themselves
+      (PinCachedPage, needs a file-page-to-disk-block query from each file
+      system and care when blocks move, e.g. after a truncate): a page read
+      for a mapping is still in the cache too until the cache drops it
+- [ ] A mapped file's page table does not grow: a file that grew after it was
+      first mapped can be mapped only up to its old size until every mapping
+      of it is gone
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
 - [ ] Keep relocated copies of image pages per load address, so loading a
@@ -213,10 +227,11 @@ how the existing pieces fit together.
       limits, signals per process, pending signals kept across exec, hard
       process limits, sections charged to their creator, handle reserved
       before a thread starts, mapped files joined under the volume lock
-- [ ] A private mapping of a large file another program writes: the first
-      write reads the whole file (up to 16 GiB) under the volume lock; copy
-      only the pages written instead (needs the file system to report the
-      range before the write)
+- [x] A private mapping of a large file another program writes: the file
+      system reports the range before each change (TFileChangingHook), and a
+      private mapped file becomes a snapshot that reads only the pages a
+      change touches (marked preserved), not the whole file; filemaptest
+      checks one page read for a 1 MiB file
 - [ ] Executing a program the caller may run but not read (mode 0711): the
       loader opens it with the caller's read permission
 - [ ] Spawn joins any group number it is given (CallCreateProcess GroupId);

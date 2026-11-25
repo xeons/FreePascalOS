@@ -177,6 +177,8 @@ var
   MappedMappingsDropped: QWord = 0;
   MappedSnapshotPagesRead: QWord = 0;
   MappedBytesReadFromPages: QWord = 0;
+  { Some mapped file waits for a write-back (WriteBackPending). }
+  MappedFileWriteBackRequested: Boolean = False;
 
 procedure InitializeMappedFiles;
 procedure SetMappedPageProtector(Protector: TMappedPageProtector);
@@ -625,7 +627,10 @@ var
 begin
   PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
   if MappedFile^.DirtyPages > 0 then
+  begin
     MappedFile^.WriteBackPending := True;
+    MappedFileWriteBackRequested := True;
+  end;
   ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
 end;
 

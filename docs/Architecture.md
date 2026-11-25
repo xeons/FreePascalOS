@@ -8928,8 +8928,8 @@ Int64 is no target. Exec keeps pending signals. A section is charged
 to its creator's commit limit and counted in its footprint for as long
 as it exists. A mapped file is joined under its volume's lock, which a
 change of the file holds from its first hook to the end of the write,
-so a private user never joins in between; a stale mapped file never
-reads its file again.
+so a private user never joins in between; a snapshot reads the pages
+each later change touches before it lands.
 
 `loadertest` (two coretest lines) runs the crafted files of
 `/usr/lib/loadertest`, written at build time by
@@ -9074,45 +9074,142 @@ private pages, and the system's total.
 
 **File mappings.** `CallMapHandle(Handle, Offset, Length, Flags)` on a
 regular file opened for reading maps it (Length 0: to its end):
-read-only shared by default, `MapPrivate` for copy on write (writable
-with `MapWritable`), `MapExecutable`. A shared writable mapping is
-refused with `ErrorUnsupported`: nothing writes dirty pages back to the
-file yet. The pages are a **mapped file**'s (`Processes.MappedFiles`):
-one per file (volume and node number, found in a registry), holding the
-pages of the file read so far in a two-level table, each read once -
-`ReadFromFileAt` through the file system and its block cache - when some
-process first touches it. Reading sleeps, so the fault resolver leaves
-the address space's spin lock for it (with a reference to the mapped
-file) and lets the touch happen again; a fault that may not sleep (a
-copy at raised level) fails instead, and `WaitOnAddress` reads the word
-once before its spin lock. Every mapping, in every process, maps those
-same pages, each with a reference of its own; the region holds a
-reference to the mapped file. A mapped file keeps an open file of its
-own (`DuplicateOpenFileForReading`), so the mapping outlives the
-program's handle and the file's name. Unmapping (`CallFreeMemory`) and
-the end of the process give the references back; the last one destroys
-the mapped file, deferred to passive level when it goes under a spin
-lock (`DrainMappedFileReleases`).
+read-only shared by default, `MapWritable` for a shared writable mapping
+(only through a handle opened for writing, else `ErrorAccessDenied`),
+`MapPrivate` for copy on write (writable with `MapWritable`),
+`MapExecutable`. `CallMapMemory` (mmap) does the same with the Linux
+`MAP_SHARED`/`MAP_PRIVATE` and `PROT_*` values; a shared mapping made
+through a writable handle may also be made writable later
+(`CallProtectMemory`; the region's `BackingIsWritable`). The pages are a
+**mapped file**'s (`Processes.MappedFiles`): it holds the pages of the
+file read so far in a two-level table, each read once - `ReadFromFileAt`
+through the file system and its block cache - when some process first
+touches it. Reading sleeps, so the fault resolver leaves the address
+space's spin lock for it (with a reference to the mapped file) and lets
+the touch happen again; a fault that may not sleep (a copy at raised
+level) fails instead, and `WaitOnAddress` reads the word once before its
+spin lock. Every mapping, in every process, maps those same pages, each
+with a reference of its own taken under the mapped file's lock
+(`AcquireResidentMappedFilePage`); the region holds a reference to the
+mapped file. A mapped file keeps an open file of its own
+(`DuplicateOpenFileForReading`, and `DuplicateOpenFileForWriting` once a
+shared writable mapping is made), so the mapping outlives the program's
+handle and the file's name. Unmapping (`CallFreeMemory`, munmap) and the
+end of the process give the references back; the last one writes the
+dirty pages back and destroys the mapped file, deferred
+(`DrainMappedFileReleases`) when it goes under a spin lock or on the
+thread reclaiming memory. A node with mapped files counts them
+(`TNode.MappedFileCount`).
 
-When the file changes, the file system tells the mapped files twice
-(`AddFileChangingHook`, `AddFileChangedHook`). Before the change lands,
-with the volume's lock held, a mapped file with private users (copy on
-write mappings, program images) reads every page it has not read yet
-and leaves the registry: those mappings keep exactly what they were
-mapped with, and writing a running program's file does not change the
-program. After a change, a mapped file with only shared mappings reads
-the pages the change touched again, in place, so a shared read-only
-mapping shows what `read()` shows; a page read while the file changed is
-read again (`ChangeCount`). `maptest` checks all of this: protection
-faults are catchable `EAccessViolation`s at the byte touched, commit and
-decommit (and the charge), W^X and the policy (a `ret` written and run),
-guard pages, a file seen through a mapping and through `read()`, a
-`write()` seen through a shared mapping, two private mappings keeping
-their writes apart and a private one keeping the old contents, the
-commit limit, and that the library pages it maps are mapped by other
-processes too (`PagesMappedElsewhere` in `CallGetProcessResources`:
-resident file pages with more holders than the mapped file and this
-mapping).
+Page table entries carry flags (`Processes.MappedPageEntries`): *dirty*
+(written through a shared writable mapping, not written back yet) and
+*preserved* (a snapshot's page, see below). There are two kinds of
+mapped file, each found again by later mappings of the same file in a
+registry (a spin-locked list, volume and node number):
+
+- **Shared** ones, for shared mappings, always show the file. A shared
+  writable mapping maps the pages read-only at first; the first write
+  faults, marks the page dirty and maps it writable
+  (`MarkMappedFilePageDirty`; the kernel's own writes through the
+  physical window do the same). Dirty pages are written back
+  (`WriteBackMappedFile`, one at a time per mapped file) through
+  `WriteToFileWithinSize`, which never makes the file longer, on
+  `CallSyncMemory` (msync; `SyncMemoryWait` also flushes the volume),
+  when a writable mapping is unmapped or its process ends
+  (`MarkMappedFileWriteBackPending`, then
+  `FlushPendingMappedFileWriteBacks`), before a volume is written back
+  (`sync`, `AddVolumeSyncHook`), on the block cache's background writer
+  once a page has been dirty for 5 s, and when the mapped file goes.
+  Before a batch is written, its pages lose write access in every
+  mapping (the page protector of `Processes.MappedFileMappings`), so a
+  later write marks the page dirty again and is never lost.
+- **Private** ones, for copy on write mappings and program images, keep
+  what the file held when they were mapped. Before the file changes for
+  the first time while they have users, they become **snapshots**
+  (`IsStale`: later mappings get a new mapped file), and before each
+  change from then on every snapshot reads the pages the change touches
+  - only those - and marks them preserved; pages no change touched are
+  still read from the file when first needed. Writing a few bytes of a
+  large file another program maps privately costs a page, not the file,
+  and writing a running program's file does not change the program. A
+  snapshot that cannot read a page it must keep (memory ran out) is
+  damaged: its missing pages fail. Before a private mapped file is found
+  or made, the shared one's dirty pages are written back, so a copy on
+  write mapping starts from what shared mappings wrote.
+
+The file system reports changes around the write with the range
+(`Processes.MappedFileChanges`): before it (`AddFileChangingHook`, volume
+lock held, Offset and Length - `WriteToFile`, `ChangeFileSize` from the
+shorter size, truncation on open from 0) for the snapshots, and right
+after it with the lock still held (`AddFileWrittenHook`), when the
+resident pages of the mapped files that are not snapshots get only the
+changed bytes read into them, so what a shared writable mapping wrote
+elsewhere in the same page stays; a mapped file's own write-back is not
+read back into it. A page read while the file changed is read again
+(`ChangeCount`). `read()` of a file with mapped files copies what lies
+in their resident pages (the shared one first) instead of going through
+the file system (`SetResidentFileReader`, `ReadThroughMappedPages`): it
+sees a mapping's writes before they are written back, and a page held
+twice - mapped and in the block cache - is read from neither. A mapped
+file's page that the block cache holds too is still two copies; what
+`read()` reads from mapped pages no longer pulls lines into the cache.
+
+Each mapped file lists the region nodes mapping it, with their address
+spaces (`AttachMappedFileMapper` from `AddRegionRecordLocked` and
+`SplitRegionLocked`, detached in `FreeRegionNode`; the links are in
+`TRegionNode`, whose address never changes). `VisitMappings`
+(`Processes.MappedFileMappings`) takes a reference to each live space on
+the list (`TryReferenceAddressSpace`) and, holding one space's lock and
+the mapped file's at a time, hands every region to a visitor: taking
+write access before a write-back, or removing the entries that map
+pages being evicted. Fork holds the child's lock as well as the parent's
+while it copies, since the child's regions are on those lists already.
+
+**Eviction.** The shrinker "mapped files"
+(`Processes.MappedFileEviction`, `Memory.Pressure`) drops clean pages
+that can be read again - not dirty, not preserved, not of a damaged
+snapshot - from each mapped file's eviction cursor on: gently only those
+nobody maps (nothing but the mapped file holds them: a library nobody
+runs, pages an image section keeps), hard also mapped ones, whose
+mappings are removed first so the next touch reads them again
+(`TakeEvictionCandidates`, `UnmapMappedPages`, `DropEvictionCandidate`,
+which frees a page only when the mapped file and the shrinker are its
+last holders). It never takes a volume lock or writes anything.
+`CallTrimMappedFiles` (root) runs it on demand.
+
+**System calls 214-217.** `CallSyncMemory(Address, Length, Flags)`
+(msync, `SyncMemoryAsync`/`Invalidate`/`Wait`, the Linux values),
+`CallQueryMemoryResidency(Address, Length, Vector)` (mincore: a byte per
+page, `PageResidencyResident`, `-Mapped`, `-Dirty`),
+`CallGetMappedFileStatistics` (`TAbiMappedFileStatistics`: mapped files,
+snapshots, resident and dirty pages, pages written back, evicted,
+mappings dropped, snapshot pages read, bytes `read()` copied from mapped
+pages) and `CallTrimMappedFiles(PagesWanted, Flags)`
+(`TrimMappedPagesToo`); 218-219 are kept. In `Sys.Memory`: `SyncMemory`,
+`QueryMemoryResidency`, `GetMappedFileStatistics`, `TrimMappedFiles`.
+
+Tests: the mapped file self test (`Kernel.MappedFileSelfTest`, every
+boot, on a memory volume of its own: a dirty page seen by `read()` and
+not by the file system until written back, a `write()` into a dirty page
+keeping the mapping's bytes, a private mapped file becoming a snapshot
+that reads only the written page, eviction dropping clean unmapped pages
+but not a preserved one); `filemaptest` (a coretest line: shared
+writable mappings only through writable handles, seen at once by other
+mappings and `read()`, dirty until msync, written back on unmap and
+munmap, `write()` into a dirty page, a snapshot of a 1 MiB file reading
+one page, trimming unmapping clean pages that read the same again and
+leaving a dirty one); `MappedFileTest` on the host (`make
+mapped-file-test`: entry flags, change spans and in-page byte ranges
+against a byte model, write-back lengths, mapping overlaps). `maptest`
+checks the rest: protection faults are catchable `EAccessViolation`s at
+the byte touched, commit and decommit (and the charge), W^X and the
+policy (a `ret` written and run), guard pages, a file seen through a
+mapping and through `read()`, a `write()` seen through a shared mapping,
+two private mappings keeping their writes apart and a private one
+keeping the old contents, the commit limit, and that the library pages
+it maps are mapped by other processes too (`PagesMappedElsewhere` in
+`CallGetProcessResources`: resident file pages with more holders than
+the mapped file and this mapping).
 
 The runtime's heap still takes its chunks with `CallAllocateMemory`:
 those pages are already provided only when touched, so reserving and

@@ -306,6 +306,9 @@ begin
   if not CanReclaimMemoryHere then
     Exit;
   DrainMappedFileReleases;
+  if not MappedFileWriteBackRequested then
+    Exit;
+  MappedFileWriteBackRequested := False;
   WriteBackChosen(nil, WriteBackPending);
 end;
 
