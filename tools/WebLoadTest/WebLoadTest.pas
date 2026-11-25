@@ -38,7 +38,9 @@ uses
   WebLoadTest.Rendering,
   WebLoadTest.Scripting,
   WebLoadTest.Editing,
+  WebLoadTest.Pointer,
   WebLoadTest.Frames,
+  WebLoadTest.BrowserFeatures,
   SysUtils,
   Web.Bindings.Context,
   Web.Navigation.Pages;
@@ -54,6 +56,13 @@ begin
     FinishChecks('web load test (editing)');
     Exit;
   end;
+  { "pointer": only the pointer fuzz test. }
+  if ParamStr(1) = 'pointer' then
+  begin
+    RunPointerTests;
+    FinishChecks('web load test (pointer)');
+    Exit;
+  end;
   RunEventLoopTests;
   RunFetchRuleTests;
   RunFetchingTests;
@@ -62,5 +71,7 @@ begin
   RunScriptingTests;
   RunFrameTests;
   RunEditingTests;
+  RunPointerTests;
+  RunBrowserFeatureTests;
   FinishChecks('web load test');
 end.

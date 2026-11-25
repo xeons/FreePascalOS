@@ -53,7 +53,9 @@ uses
   Util.Logins,
   Sys.Streams,
   Util.CommandLine,
-  Util.Numbers;
+  Util.Numbers,
+  Util.TrashInfo,
+  Util.Trash;
 
 implementation
 

@@ -43,7 +43,8 @@ uses
   Http.Connections,
   Http.Results,
   Web.EventLoop.Tasks,
-  Web.EventLoop;
+  Web.EventLoop,
+  Web.Fetch.Transports;
 
 type
   THopHeadMessage = class
@@ -86,9 +87,12 @@ type
     MaximumRunningHops run at once, each on a thread of its own; the
     others wait in order (urgent ones - documents, style sheets,
     scripts, fonts - ahead of the rest). A hop whose thread cannot be
-    made fails like a network error. }
-  THopRunner = class
+    made fails like a network error. With a transport (the network in
+    another process) hops go to it at once instead, and come back to
+    the Hop* methods from its thread. }
+  THopRunner = class(THopResultSink)
   private
+    FTransport: TNetworkTransport;
     FLoop: TEventLoop;
     FGroup: Pointer;
     FOnHead: THopHeadEvent;
@@ -110,7 +114,7 @@ type
     function FindTask(HopId: QWord): THttpFetchTask;
   public
     constructor Create(Loop: TEventLoop; Group: Pointer; OnHead: THopHeadEvent; OnData: THopDataEvent;
-      OnDone: THopDoneEvent);
+      OnDone: THopDoneEvent; Transport: TNetworkTransport = nil);
     { Cancels and frees every task (waiting for their threads). }
     destructor Destroy; override;
     { Starts Request (taken over) on Client as hop HopId, or queues it. }
@@ -120,6 +124,11 @@ type
     { After its done message: the task's thread is over, free it. }
     procedure Release(HopId: QWord);
     function RunningCount: Integer;
+    { THopResultSink: a transport's results (any thread). }
+    procedure HopHead(HopId: QWord; Status: Integer; const Reason: string; const Fields: THttpHeaderFieldArray;
+      constref Url: TUrlRecord; FromCache: Boolean; const Protocol: string); override;
+    procedure HopData(HopId: QWord; Data: Pointer; Count: PtrUInt); override;
+    procedure HopDone(HopId: QWord; constref Outcome: THttpResult); override;
   end;
 
 const
@@ -141,9 +150,10 @@ begin
 end;
 
 constructor THopRunner.Create(Loop: TEventLoop; Group: Pointer; OnHead: THopHeadEvent; OnData: THopDataEvent;
-  OnDone: THopDoneEvent);
+  OnDone: THopDoneEvent; Transport: TNetworkTransport);
 begin
   inherited Create;
+  FTransport := Transport;
   FLoop := Loop;
   FGroup := Group;
   FOnHead := OnHead;
@@ -159,6 +169,8 @@ var
   Index: Integer;
   Tasks: array of THttpFetchTask;
 begin
+  if FTransport <> nil then
+    FTransport.ForgetSink(Self);
   EnterCriticalSection(FLock);
   try
     Tasks := nil;
@@ -221,6 +233,11 @@ procedure THopRunner.Start(Client: THttpClient; Request: THttpRequest; HopId: QW
 var
   Queued: THopQueued;
 begin
+  if FTransport <> nil then
+  begin
+    FTransport.StartHop(Request, HopId, Urgent, Self);
+    Exit;
+  end;
   if (RunningCount < MaximumRunningHops) and (FQueue.Count = 0) then
   begin
     Launch(Client, Request, HopId);
@@ -271,6 +288,11 @@ var
   Task: THttpFetchTask;
   Index: Integer;
 begin
+  if FTransport <> nil then
+  begin
+    FTransport.CancelHop(Self, HopId);
+    Exit;
+  end;
   for Index := 0 to FQueue.Count - 1 do
     if THopQueued(FQueue[Index]).HopId = HopId then
     begin
@@ -297,6 +319,8 @@ procedure THopRunner.Release(HopId: QWord);
 var
   Task: THttpFetchTask;
 begin
+  if FTransport <> nil then
+    Exit;
   EnterCriticalSection(FLock);
   try
     Task := FindTask(HopId);
@@ -345,6 +369,40 @@ begin
   SetLength(Message.Bytes, Count);
   Move(Data^, Message.Bytes[0], Count);
   FLoop.PostMethod(@DeliverData, Message, TaskSourceNetworking, FGroup);
+end;
+
+procedure THopRunner.HopHead(HopId: QWord; Status: Integer; const Reason: string; const Fields: THttpHeaderFieldArray;
+  constref Url: TUrlRecord; FromCache: Boolean; const Protocol: string);
+var
+  Message: THopHeadMessage;
+begin
+  Message := THopHeadMessage.Create;
+  Message.HopId := HopId;
+  Message.Status := Status;
+  Message.Reason := Reason;
+  Message.Fields := Fields;
+  Message.Url := Url;
+  Message.FromCache := FromCache;
+  Message.Protocol := Protocol;
+  FLoop.PostMethod(@DeliverHead, Message, TaskSourceNetworking, FGroup);
+end;
+
+procedure THopRunner.HopData(HopId: QWord; Data: Pointer; Count: PtrUInt);
+var
+  Message: THopDataMessage;
+begin
+  if Count = 0 then
+    Exit;
+  Message := THopDataMessage.Create;
+  Message.HopId := HopId;
+  SetLength(Message.Bytes, Count);
+  Move(Data^, Message.Bytes[0], Count);
+  FLoop.PostMethod(@DeliverData, Message, TaskSourceNetworking, FGroup);
+end;
+
+procedure THopRunner.HopDone(HopId: QWord; constref Outcome: THttpResult);
+begin
+  PostDone(HopId, Outcome);
 end;
 
 procedure THopRunner.TaskDone(Task: THttpFetchTask; constref Outcome: THttpResult);

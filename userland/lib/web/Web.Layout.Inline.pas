@@ -90,6 +90,12 @@ type
     SplitHappened: Boolean;
     DeferredFloats: array of TLayoutBox;
     DeferredCount: Integer;
+    { Floats among the items before this index are placed (or deferred
+      to the end of the line): a line scanned again - moved down past
+      floats, or broken before a float it had passed - must not place
+      them a second time, or each new copy narrows the line again and
+      the line moves down forever. }
+    FloatsPlacedBefore: Integer;
   end;
 
 function InlineItemsOf(Container: TLayoutBox): TInlineItems;
@@ -252,6 +258,8 @@ begin
   Items.Items[Index].TrailingSpace := 0;
   Items.Items[Index].CanBreakAfter := True;
   State.SplitHappened := True;
+  if State.FloatsPlacedBefore > Index + 1 then
+    Inc(State.FloatsPlacedBefore);
   if Length(State.Positions) < Items.Count then
     SetLength(State.Positions, Items.Count + 16);
 end;
@@ -421,7 +429,7 @@ begin
     end;
   end;
   { Is there anything to show? }
-  HasContent := State.OpenCount > 0;
+  HasContent := False;
   for Index := First to Last - 1 do
     case Items.Items[Index].Kind of
       ikText:
@@ -782,6 +790,7 @@ begin
   State.Y := 0;
   State.SplitHappened := False;
   State.DeferredCount := 0;
+  State.FloatsPlacedBefore := 0;
   Container.FirstBaseline := -1;
   Container.LastBaseline := -1;
   StrutHeight := UsedLineHeight(Container.Style);
@@ -874,17 +883,22 @@ begin
           begin
             Box := Item^.Box;
             Inc(Index);
-            if HasContent then
+            { A float placed when this line was scanned before stays. }
+            if Index > State.FloatsPlacedBefore then
             begin
-              if State.DeferredCount >= Length(State.DeferredFloats) then
-                SetLength(State.DeferredFloats, State.DeferredCount * 2 + 4);
-              State.DeferredFloats[State.DeferredCount] := Box;
-              Inc(State.DeferredCount);
-            end
-            else
-            begin
-              PlaceFloat(State, Box, State.Y);
-              LineBand(State, State.Y, StrutHeight, LineLeft, LineRight);
+              State.FloatsPlacedBefore := Index;
+              if HasContent then
+              begin
+                if State.DeferredCount >= Length(State.DeferredFloats) then
+                  SetLength(State.DeferredFloats, State.DeferredCount * 2 + 4);
+                State.DeferredFloats[State.DeferredCount] := Box;
+                Inc(State.DeferredCount);
+              end
+              else
+              begin
+                PlaceFloat(State, Box, State.Y);
+                LineBand(State, State.Y, StrutHeight, LineLeft, LineRight);
+              end;
             end;
           end;
         ikAbsolute:

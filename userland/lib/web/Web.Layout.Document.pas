@@ -78,6 +78,7 @@ type
     FViewportScrolls: LongWord;
     FFixedBoxes: TPositionedList;
     FDarkScheme: Boolean;
+    FTextZoom: Double;
     procedure StyleChanged(Element: TElement; Change: TStyleChangeKind);
     procedure TextChanged(Node: TNode);
     procedure NodeRemoved(Node: TNode);
@@ -101,6 +102,12 @@ type
     { The viewport in CSS pixels and the device scale. }
     procedure SetViewport(Width, Height, Scale: Single);
     procedure SetDarkColorScheme(Dark: Boolean);
+    { Text zoom ("zoom text only"): absolute font sizes are multiplied by
+      Zoom (1: none); the page is styled again. }
+    procedure SetTextZoom(Zoom: Double);
+    { Author style sheets and style attributes (False: the user agent's
+      sheet only, a browser's "No Style"); the page is styled again. }
+    procedure SetAuthorStylesEnabled(Enabled: Boolean);
     { Brings style, boxes and layout up to date. }
     procedure Update;
     { Whether Update has work to do. }
@@ -115,7 +122,8 @@ type
     procedure GetScrollOffset(Node: TNode; out X, Y: Single);
     { The element's principal box (nil if it has none). }
     function BoxOf(Node: TNode): TLayoutBox;
-    { The border box of a node's box in document coordinates. }
+    { The border box of a node's box in document coordinates (an inline
+      box: the union of its line fragments). }
     function NodeBounds(Node: TNode; out X, Y, Width, Height: Single): Boolean;
     { Sets dynamic states (hover, focus ...) for :hover and friends. }
     procedure SetElementStates(Element: TElement; States: TCssElementStates);
@@ -146,7 +154,7 @@ implementation
 uses
   Web.Profiling,
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
-  Web.Layout.Positioned, Web.Text.FontInstances, Web.Svg.InlineImages;
+  Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -167,6 +175,7 @@ begin
   FViewportWidth := 800;
   FViewportHeight := 600;
   FScale := 1;
+  FTextZoom := 1;
   FFullRebuild := True;
   FLayoutDirty := True;
   ApplyEnvironment;
@@ -194,6 +203,7 @@ begin
   Environment.DeviceHeight := FViewportHeight;
   Environment.Resolution := FScale;
   Environment.DarkColorScheme := FDarkScheme;
+  Environment.TextZoom := FTextZoom;
   FStyler.SetEnvironment(Environment);
 end;
 
@@ -216,6 +226,29 @@ begin
     Exit;
   FDarkScheme := Dark;
   ApplyEnvironment;
+end;
+
+procedure TDocumentLayout.SetTextZoom(Zoom: Double);
+begin
+  if Zoom <= 0 then
+    Zoom := 1;
+  if Zoom = FTextZoom then
+    Exit;
+  FTextZoom := Zoom;
+  ApplyEnvironment;
+  FLayoutDirty := True;
+  if FRoot <> nil then
+    FRoot.MarkNeedsLayout;
+end;
+
+procedure TDocumentLayout.SetAuthorStylesEnabled(Enabled: Boolean);
+begin
+  if Enabled = FStyler.AuthorStylesEnabled then
+    Exit;
+  FStyler.AuthorStylesEnabled := Enabled;
+  FLayoutDirty := True;
+  if FRoot <> nil then
+    FRoot.MarkNeedsLayout;
 end;
 
 procedure TDocumentLayout.SetElementStates(Element: TElement; States: TCssElementStates);
@@ -353,13 +386,21 @@ var
   Box, Next: TLayoutBox;
 begin
   { The boxes stay until their parent's children are built again; they
-    must not reach the node, which may be freed before that. }
+    must not reach the node, which may be freed before that, nor what
+    the document's resources kept for it (a frame's document, an image),
+    which go with it: a display list built from them meanwhile (a layout
+    put off) draws nothing there. }
   Box := BoxOf(Node);
   while Box <> nil do
   begin
     Next := Box.NextForNode;
     Box.Node := nil;
     Box.NextForNode := nil;
+    if Box is TReplacedBox then
+    begin
+      TReplacedBox(Box).Content := nil;
+      TReplacedBox(Box).Image := nil;
+    end;
     Box := Next;
   end;
   Inc(FPaintVersion);
@@ -387,7 +428,9 @@ begin
     Box.MarkNeedsLayout;
     FLayoutDirty := True;
   end
-  else if TElement(Node).IsHtmlElement(AtomInput) or TElement(Node).IsHtmlElement(AtomSelect) then
+  else if TElement(Node).IsHtmlElement(AtomInput) or TElement(Node).IsHtmlElement(AtomSelect) or
+    TElement(Node).IsHtmlElement(AtomDetails) then
+    { A control's content, or a details element opened or closed. }
     MarkBoxesOf(Node);
   Inc(FPaintVersion);
 end;
@@ -854,12 +897,7 @@ begin
   Y := 0;
   Width := 0;
   Height := 0;
-  Result := Box <> nil;
-  if not Result then
-    Exit;
-  Box.AbsolutePosition(X, Y);
-  Width := Box.Width;
-  Height := Box.Height;
+  Result := (Box <> nil) and BoxBounds(Box, X, Y, Width, Height);
 end;
 
 end.

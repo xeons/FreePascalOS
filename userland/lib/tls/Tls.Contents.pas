@@ -39,6 +39,7 @@ uses
   Tls.ObjectIdentifiers,
   Tls.Pem,
   Tls.Certificates,
+  Tls.CertificateSummaries,
   Tls.CertificateExtensions,
   Tls.NameConstraints,
   Tls.HostNames,

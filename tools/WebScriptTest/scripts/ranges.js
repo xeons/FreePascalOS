@@ -146,6 +146,14 @@ selection.deleteFromDocument();
 selection.setBaseAndExtent(p.firstChild, 0, p.firstChild, 7);
 selection.deleteFromDocument();
 check("deleteFromDocument", p.textContent === "me please");
+selection.setBaseAndExtent(p.firstChild, 0, p.firstChild, 2);
+var taken = selection.getRangeAt(0);
+var loose = document.createTextNode("loose");
+taken.setStart(loose, 1);
+check("the selection's range moved out of the document is the selection no more",
+  selection.rangeCount === 0 && taken.startContainer === loose && taken.endContainer === loose &&
+  taken.startOffset === 1);
+selection.setBaseAndExtent(p.firstChild, 0, p.firstChild, 2);
 
 function after() {
   check("selectionchange fired once for the changes of a task", changes === 1);

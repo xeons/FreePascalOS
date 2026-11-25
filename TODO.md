@@ -573,6 +573,27 @@ normalized (0-65535), not pixels.
       ended after its stop-timeout); log off and shutdown ask first too
 - [x] File manager: folders, icon and list views, copy, move, delete, rename,
       properties
+- [x] Controls for a tabbed file manager in libcontrols: a tab strip
+      (reordered by dragging, dragged out into a window), a breadcrumb
+      address bar (chevron menus, overflow, editing with suggestions), a
+      command bar (drop-downs, an overflow menu), a progress dialog (pause,
+      cancel, a speed graph; transfer rates checked on the host) and their
+      icons
+- [x] File manager as a tabbed browser: tabs, breadcrumbs with chevrons and
+      completion, search with a query syntax streaming results, a command bar
+      and context menus (the classic menu behind "Show more options"), a
+      navigation pane (Home, Gallery, pinned folders, Computer with volumes
+      and free space, Network, the recycle bin), eight views with groups,
+      chooseable columns, thumbnails and check boxes (libcontrols' item view),
+      details and preview panes (web pages, pictures, text), Home (pinned,
+      favourites, recent) and Gallery pages, the recycle bin with restore
+      (Util.Trash), ZIP and tar archives browsed, made and extracted
+      (libarchive), undo and redo, batch rename, Open with by program.info
+      Extensions/MimeTypes and a default per type, options, properties with
+      General, Security and Details pages, view settings per folder
+- [ ] File manager: Network places (only a placeholder page), MP3 and other
+      sound lengths (only WAV is read), video thumbnails, dragging column
+      headers to reorder them, a real share sheet behind Share
 - [x] Control Panel: display, mouse, keyboard layout, sound, date and time,
       network, users
 - [x] Task Manager: processes, CPU and memory (programs with windows, every
@@ -613,7 +634,12 @@ normalized (0-65535), not pixels.
 - [x] libcompression: preset dictionaries (zlib FDICT and raw, both
       ways), flushing mid-stream (sync and full flush points);
       `zcat`/`gunzip` names for gzip; checked against Python's zlib
-- [ ] libcompression: zip archives
+- [x] libarchive: zip reading (ZIP64, stored/deflated, CRC checks, UTF-8
+      and CP437 names, Unix modes, links, data descriptors; encrypted
+      members reported and refused) and writing (deflate or stored,
+      ZIP64 when needed or forced), tar/ustar/GNU/pax and tar.gz reading,
+      ExtractAll with safe names, folder browsing (`make archive-test`)
+- [ ] libarchive: 7z reading
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
       (magic bytes) rather than file name:
@@ -1476,11 +1502,55 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [x] Editing without libcontrols (WebView.FieldEditing) and a fuzz test
       typing into a page that replaces its fields under the editor
       (WebLoadTest.Editing); elements held across click and submit events
+- [x] No crash selecting text after scrolling (Wikipedia's Linux article):
+      the pointer path holds what it fires events at and looks boxes and
+      places up again after them (WebView.PageSelection); triple click,
+      mousemove while pressed, dblclick, autoscroll, the wheel during a
+      drag; sticky and transformed text selected where it is shown; a
+      pointer fuzz test (WebLoadTest.Pointer) and webbrowse pointer steps
+- [ ] DOM: TreeWalker, NodeIterator and NodeFilter (document.createTreeWalker
+      is missing)
+- [ ] Web view: selecting text inside frames (a press in a frame clears the
+      selection)
 - [ ] Web view: drawing a field's selection, dragging the bars of inner
       scroll containers, drag and drop, IME
 - [ ] Web view: lazy images near the viewport, animated images, printing
-- [ ] Browser: session restore, per-site settings, a downloads window with
-      cancel buttons, separate windows (Shift+click opens a tab), tab drag
+- [x] Web view: what the Firefox 3.6 chrome needs - session history lists,
+      going several entries at once and session restore across processes,
+      find with wrap and match count and highlight all, Page Info, context
+      menu details, images off, text-only zoom, No Style, the encoding
+      override, pop-up blocking (window.open), private browsing, offline,
+      the cache's size, cookies and their policy, connection security and
+      the trust store's certificates (protocol version 2)
+- [ ] Web view: a WindowProxy for windows window.open made (it returns
+      null); text zoom, No Style and the encoding override in frames;
+      connection security of HTTP/3 connections; Page Info of frames
+- [x] Browser laid out and used as browsers were before they hid their
+      menus: the full menu bar (File, Edit, View, History, Bookmarks,
+      Tools, Help, with their access keys and shortcuts; hidden, Alt shows
+      it), customizable Navigation and Bookmarks toolbars (palette, icons
+      or text, small icons), Back and Forward with their history, the
+      location bar (site identity and its pop-up, star and its panel,
+      suggestions from history and bookmarks as you type), the search bar
+      with an engine menu (none chosen until the user picks one), tabs
+      under the toolbars (scroll arrows, list of tabs, drag to reorder,
+      drag out to a window, context menu), status bar, find bar with
+      highlight all and wrap messages; Options (Main, Tabs, Content,
+      Applications, Privacy, Security, Advanced), Library, Downloads
+      window (pause, resume, cancel, retry, open, show in folder), Page
+      Info, Page Source, Error Console, Clear Recent History, Manage Search
+      Engines, bookmark folders, tags and keywords, several windows,
+      private browsing, session restore with recently closed tabs and
+      windows; host test (make browser-test) and test-input checks
+- [ ] Browser: printing (File > Print shows it is not available), feeds,
+      spelling, add-ons, update checks and forgery reports (stubs); the
+      saved-passwords list is never filled (no form capture yet) and is
+      not encrypted; the proxy settings, default font and the advanced
+      JavaScript switches are kept but not applied; Import from HTML
+- [ ] Browser: a dragged-out tab loads its page again in the new window
+      (views cannot move between windows); Restore Session page after a
+      crash (the session is restored at once); per-site pop-up and image
+      exceptions
 - [x] webbrowse (make webbrowse): the engine on real sites from the host
       (PNG, layout, DOM, console, network log, phase times, memory, hover
       timing, a sampling profiler, a watchdog with stacks)
@@ -1490,6 +1560,37 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       and decode threads; slow layouts throttled in the web view
 - [x] Wikipedia's JavaScript gets past ResourceLoader's compatibility
       check (localStorage, IntersectionObserver)
+- [x] www.wikipedia.org no longer freezes the browser: a line that did not
+      fit beside its own float placed the float again each time it moved
+      down, for ever (the fundraising banner); a float is placed once
+- [x] The slow script watchdog: a script (or a chain of promise jobs)
+      running longer than 10 s on the page thread is stopped
+- [x] CSS animation frames paced by their cost (at most half the GUI
+      thread)
+- [x] scripts/compare-sites.py: ~27 common pages rendered by webbrowse
+      and by Firefox (Marionette) at 1280x800 and 400x800, scored, with a
+      smoke test (scrolling, hovering, a drag, typing, links and Back);
+      scripts/qemu-browser-smoke.py does the user's part with the real
+      browser under QEMU
+- [x] Fixes from it: inline element geometry (getBoundingClientRect,
+      getClientRects), <center> centring tables, empty lines around a
+      block in a link, lazy async arrows, await in async arrows in class
+      fields, import maps, module graph and module loader crashes,
+      performance.measure, TreeWalker / NodeIterator, unicode-range and
+      the fallback font, column flex items' min/max width, calc() in
+      media queries, details/summary
+- [ ] Custom elements (customElements is missing: reddit, MDN's widgets,
+      YouTube) and shadow DOM (attachShadow: lit components, archive.org)
+- [ ] WOFF2 web fonts (only the .woff and TrueType sources load today)
+- [ ] A metric-compatible sans-serif (Liberation Sans or Arimo): DejaVu
+      Sans is about 10% wider than Arial, so lines break differently from
+      the reference on most pages (a font decision for the coordinator)
+- [ ] details: the summary's activation behavior in the DOM (a script's
+      summary.click() does nothing; libwebview's ActOnClick toggles on a
+      user's click), and the default summary of a details without one
+- [ ] A NodeIterator moved when the node it rests on is removed
+- [ ] Parse large scripts off the GUI thread (Wikipedia's 790 KB module
+      bundle holds the window about 7 s under TCG, half of it parsing)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
 - [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
       the results page (main and html.duckduckgo.com/html/, whose late
@@ -1508,4 +1609,23 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       table (1024 regions run out on Wikipedia's Linux article)
 - [ ] Interruptible style and layout (a first layout of a long page is one
       piece of work on the GUI thread)
+- [x] Browser process model: pages in content processes (/bin/webcontent),
+      process per site (registrable domain), libwebipc (typed messages in
+      pieces over channels, WebIpcTest), frames through shared sections
+      with damage and acknowledgements, an IPC thread and a network
+      service in the browser (cookies, storage, local files and about
+      pages refused to other sites' processes, HSTS), cross-site
+      navigations moving the tab, async scrolling of the last frame
+- [x] Crashed tab page with Reload, "not responding" bar with Wait and
+      Stop (pings, repeated watchdog stops), about:crash, about:kill,
+      about:hang; dialogs modal per tab
+- [x] Kernel process restrictions (ProcessLimitRestrictions: no sockets,
+      no file writes, reads only under /lib and /etc, no processes, no
+      ports, no control of others; inherited, never lifted); renderers
+      sandboxed, memory-limited, background ones first to go when memory
+      runs out
+- [ ] Out-of-process iframes (cross-site frames still render in their
+      embedder's process; plan in "Browser process model")
+- [ ] A separate network process; IME text and drag and drop through the
+      content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout

@@ -9,3 +9,5 @@ Icon = app-image-viewer
 Executable = imageviewer
 Keywords = ["pictures", "photos", "images"]
 Version = 1.0
+Extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "jxl", "tif", "tiff"]
+MimeTypes = ["image/*"]

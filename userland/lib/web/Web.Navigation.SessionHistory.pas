@@ -65,6 +65,12 @@ type
     function UrlText: string;
   end;
 
+  { An entry given back to a navigable (session restore). }
+  TSessionRestoreEntry = record
+    Url: TUrlRecord;
+    Title: string;
+  end;
+
   TSessionHistory = class
   private
     FEntries: TList;
@@ -80,6 +86,9 @@ type
     { Entry takes the current one's place. }
     procedure ReplaceCurrent(Entry: TSessionHistoryEntry);
     function Current: TSessionHistoryEntry;
+    { The entries become these (owned from now on; the old ones are
+      freed), Index the current one. }
+    procedure ReplaceAll(const NewEntries: array of TSessionHistoryEntry; NewIndex: Integer);
     { Drops the joint entries of a child navigable that went (the
       current one moves with the entries before it). }
     procedure RemoveFrameEntries(FrameId: QWord);
@@ -157,6 +166,31 @@ begin
   if (FIndex < 0) or (FIndex >= FEntries.Count) then
     Exit(nil);
   Result := TSessionHistoryEntry(FEntries[FIndex]);
+end;
+
+procedure TSessionHistory.ReplaceAll(const NewEntries: array of TSessionHistoryEntry; NewIndex: Integer);
+var
+  Position: Integer;
+begin
+  for Position := 0 to FEntries.Count - 1 do
+    TSessionHistoryEntry(FEntries[Position]).Free;
+  FEntries.Clear;
+  for Position := 0 to High(NewEntries) do
+    FEntries.Add(NewEntries[Position]);
+  while FEntries.Count > MaximumSessionHistoryEntries do
+  begin
+    TSessionHistoryEntry(FEntries[0]).Free;
+    FEntries.Delete(0);
+    Dec(NewIndex);
+  end;
+  if FEntries.Count = 0 then
+    FIndex := -1
+  else if NewIndex < 0 then
+    FIndex := 0
+  else if NewIndex >= FEntries.Count then
+    FIndex := FEntries.Count - 1
+  else
+    FIndex := NewIndex;
 end;
 
 procedure TSessionHistory.RemoveFrameEntries(FrameId: QWord);

@@ -518,6 +518,8 @@ type
     FContentType: string;
     FCharacterSet: string;
     FUrl: string;
+    FReferrer: string;
+    FLastModified: string;
     FObservers: TDocumentObserverArray;
     FIdMap: TObject;
     FTemplateContentsOwner: TDocument;
@@ -617,6 +619,11 @@ type
     property ContentType: string read FContentType write FContentType;
     property CharacterSet: string read FCharacterSet write FCharacterSet;
     property Url: string read FUrl write FUrl;
+    { The URL of the document that led here ('' none), and the
+      response's Last-Modified field as sent ('' none): set by the
+      navigation that made the document. }
+    property Referrer: string read FReferrer write FReferrer;
+    property LastModified: string read FLastModified write FLastModified;
     property DocumentElement: TElement read GetDocumentElement;
     property Doctype: TDocumentType read GetDoctype;
     property Head: TElement read GetHead;
@@ -772,6 +779,10 @@ type
     procedure SetBoundary(IsStart: Boolean; Node: TNode; Offset: Integer);
     procedure SetRetainsNodes(Value: Boolean);
     procedure Changed;
+    { After a boundary point was set: a selection's range taken out of
+      its document's tree stops being the selection (it does not hold
+      its nodes while it is one), then Changed. }
+    procedure Moved;
     function GetCollapsed: Boolean;
   public
     { The script binding's wrapper (Web.Bindings.Ranges), nil if none. }

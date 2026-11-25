@@ -25,12 +25,22 @@ unit WebView.Contents;
 interface
 
 uses
+  WebView.Types,
   WebView.Network,
   WebView.Zoom,
+  WebView.Sites,
   WebView.TextIndex,
   WebView.SelectionMapping,
   WebView.Elements,
   WebView.Forms,
+  WebView.PageInfo,
+  WebView.Engine,
+  WebView.ContentProcess,
+  WebView.NetworkService,
+  WebView.ContentIo,
+  WebView.ContentProcesses,
+  WebView.PromptSheet,
+  WebView.RecoveryPanels,
   WebView.Control;
 
 implementation

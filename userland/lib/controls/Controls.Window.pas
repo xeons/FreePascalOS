@@ -88,6 +88,8 @@ type
   { What a window needs of its menu bar (Controls.Menus has the real one):
     the keyboard mode that F10 and Alt start. }
   TWindowMenuBar = class(TControl)
+  private
+    FAutoReveal: Boolean;
   public
     constructor Create(AParent: TControl); override;
     destructor Destroy; override;
@@ -97,6 +99,10 @@ type
     procedure LeaveMenuMode; virtual; abstract;
     { A heading picked or its menu open. }
     function InMenuMode: Boolean; virtual; abstract;
+    { While hidden (Visible False), Alt, F10 or a heading's mnemonic
+      show it for as long as a menu is in use (a browser's hidden menu
+      bar). }
+    property AutoReveal: Boolean read FAutoReveal write FAutoReveal;
   end;
 
   TAcceleratorEvent = procedure(Sender: TControlWindow) of object;
@@ -110,6 +116,7 @@ type
 
   TControlWindow = class(TWindow)
   private
+    FLastAcceleratorCode: LongWord;
     FAccelerators: array of TAccelerator;
     FRoot: TControl;
     FHost: TControlHost;
@@ -176,6 +183,9 @@ type
     { Code (a key code, Controls.Keys) with Modifiers (ModifierShift,
       ModifierControl, ModifierAlt) runs Handler. }
     procedure AddAccelerator(Code, Modifiers: LongWord; Handler: TAcceleratorEvent);
+    { The key of the accelerator running now (one handler for several
+      keys tells them apart by it). }
+    property LastAcceleratorCode: LongWord read FLastAcceleratorCode;
     { Gives the window an icon of its own pictures: one image, or a few
       sizes of it (the server draws the nearest; Controls.WindowIcons).
       For an icon of the theme set IconName instead. False if refused. }
@@ -516,6 +526,10 @@ begin
      ((Modifiers and (ModifierControl or ModifierAltGr)) <> 0) then
     Exit;
   Control := FindMnemonicControl(FRoot, Character);
+  { A hidden menu bar that shows itself for its menus. }
+  if (Control = nil) and (FMenuBar <> nil) and not FMenuBar.Visible and FMenuBar.AutoReveal and
+     FMenuBar.Enabled and FMenuBar.MatchesMnemonic(Character) then
+    Control := FMenuBar;
   if Control = nil then
     Exit;
   Control.ActivateMnemonic(Character);
@@ -528,7 +542,7 @@ begin
     Exit;
   if FMenuBar.InMenuMode then
     FMenuBar.LeaveMenuMode
-  else if (FPopup = nil) and FMenuBar.Visible and FMenuBar.Enabled then
+  else if (FPopup = nil) and (FMenuBar.Visible or FMenuBar.AutoReveal) and FMenuBar.Enabled then
     FMenuBar.EnterMenuMode;
 end;
 
@@ -549,6 +563,7 @@ begin
   for Index := 0 to High(FAccelerators) do
     if (FAccelerators[Index].Code = Code) and (FAccelerators[Index].Modifiers = Held) then
     begin
+      FLastAcceleratorCode := Code;
       FAccelerators[Index].Handler(Self);
       Exit(True);
     end;

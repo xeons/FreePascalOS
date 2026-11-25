@@ -30,7 +30,8 @@ unit Tls.SystemTrust;
 interface
 
 uses
-  Tls.TrustStore;
+  Tls.TrustStore,
+  Tls.CertificateSummaries;
 
 const
   SystemTrustBundlePath = '/etc/ssl/certs/ca-certificates.crt';
@@ -39,6 +40,9 @@ const
   or TlsErrorNoTrustStore when it cannot be read or holds none. }
 function LoadTrustStoreFile(const Path: string; out Store: PTlsTrustStore): LongInt;
 function LoadSystemTrustStore(out Store: PTlsTrustStore): LongInt;
+{ Every certificate of the system trust store as text, in file order
+  (empty when it cannot be read): a browser's certificate viewer. }
+function SystemTrustSummaries: TTlsCertificateSummaryList;
 
 implementation
 
@@ -97,6 +101,23 @@ end;
 function LoadSystemTrustStore(out Store: PTlsTrustStore): LongInt;
 begin
   Result := LoadTrustStoreFile(SystemTrustBundlePath, Store);
+end;
+
+function SystemTrustSummaries: TTlsCertificateSummaryList;
+var
+  Store: PTlsTrustStore;
+  Index: Integer;
+begin
+  Result := nil;
+  if LoadSystemTrustStore(Store) <> TlsErrorNone then
+    Exit;
+  try
+    SetLength(Result, Store^.Count);
+    for Index := 0 to Store^.Count - 1 do
+      Result[Index] := SummarizeCertificate(TrustedCertificate(Store, Index)^);
+  finally
+    FreeTrustStore(Store);
+  end;
 end;
 
 end.

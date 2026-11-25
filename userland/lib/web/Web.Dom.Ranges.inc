@@ -180,6 +180,18 @@ begin
     FSelection.Changed;
 end;
 
+procedure TLiveRange.Moved;
+begin
+  if (FSelection <> nil) and (Root <> FSelection.Document) then
+  begin
+    { Letting go holds the nodes again and tells the selection's
+      observers that it is empty now. }
+    FSelection.SetRange(nil, SelectionDirectionNone);
+    Exit;
+  end;
+  Changed;
+end;
+
 function TLiveRange.GetCollapsed: Boolean;
 begin
   Result := (FStartContainer = FEndContainer) and (FStartOffset = FEndOffset);
@@ -207,7 +219,7 @@ begin
   SetBoundary(True, StartNode, StartOffset);
   SetBoundary(False, EndNode, EndOffset);
   AttachTo(StartNode.FOwnerDocument);
-  Changed;
+  Moved;
 end;
 
 procedure TLiveRange.SetStart(Node: TNode; Offset: Integer);
@@ -218,7 +230,7 @@ begin
     SetBoundary(False, Node, Offset);
   SetBoundary(True, Node, Offset);
   AttachTo(Node.FOwnerDocument);
-  Changed;
+  Moved;
 end;
 
 procedure TLiveRange.SetEnd(Node: TNode; Offset: Integer);
@@ -229,7 +241,7 @@ begin
     SetBoundary(True, Node, Offset);
   SetBoundary(False, Node, Offset);
   AttachTo(Node.FOwnerDocument);
-  Changed;
+  Moved;
 end;
 
 procedure TLiveRange.Collapse(ToStart: Boolean);
@@ -240,7 +252,7 @@ begin
     SetBoundary(False, FStartContainer, FStartOffset)
   else
     SetBoundary(True, FEndContainer, FEndOffset);
-  Changed;
+  Moved;
 end;
 
 procedure TLiveRange.SelectNode(Node: TNode);
@@ -255,7 +267,7 @@ begin
   SetBoundary(True, Parent, Index);
   SetBoundary(False, Parent, Index + 1);
   AttachTo(Parent.FOwnerDocument);
-  Changed;
+  Moved;
 end;
 
 procedure TLiveRange.SelectNodeContents(Node: TNode);
@@ -265,7 +277,7 @@ begin
   SetBoundary(True, Node, 0);
   SetBoundary(False, Node, NodeLength(Node));
   AttachTo(Node.FOwnerDocument);
-  Changed;
+  Moved;
 end;
 
 { The document's list of live ranges and the mutation algorithms' steps. }

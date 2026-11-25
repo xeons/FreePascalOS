@@ -29,7 +29,7 @@
   painting (pixels of known boxes, a damaged rectangle painted alone
   matching the full paint), the speed and memory of a large page, and
   font matching with the system's fonts and configuration
-  (WebLayoutTest.Fonts; WEB_HOST_FONTS names the fonts directory).
+  (WebLayoutTest.SystemFonts; WEB_HOST_FONTS names the fonts directory).
 }
 program WebLayoutTest;
 
@@ -38,7 +38,7 @@ program WebLayoutTest;
 
 uses
   SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting,
-  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Fonts;
+  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Geometry, WebLayoutTest.Fonts, WebLayoutTest.SystemFonts;
 
 var
   Update: Boolean;
@@ -62,6 +62,8 @@ begin
   CheckStyleSheetChanges;
   CheckTransforms;
   CheckAnimations;
+  CheckElementGeometry;
+  CheckFontChoice;
   ReportPerformance;
   CheckSystemFonts;
   FinishChecks('web layout test');

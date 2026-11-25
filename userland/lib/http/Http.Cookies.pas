@@ -59,7 +59,8 @@ unit Http.Cookies;
 interface
 
 uses
-  Url.Records;
+  Url.Records,
+  Http.CookiePolicies;
 
 const
   MaximumCookiesPerDomain = 50;
@@ -108,6 +109,8 @@ type
     FCookies: TCookieArray;
     FNextOrder: Int64;
     FLock: TRTLCriticalSection;
+    FPolicy: TCookieUsePolicy;
+    function UseAllowed(const Host: string; constref Context: TCookieRequestContext): Boolean;
     function FindCookie(const Name, Domain, Path: string): Integer;
     procedure RemoveAt(Index: Integer);
     procedure EnforceLimits(const Domain: string);
@@ -140,6 +143,14 @@ type
     { Drops session cookies (when a browsing session ends). }
     procedure RemoveSessionCookies;
     procedure Clear;
+    { Drops the cookie stored with exactly this domain (lower case, no
+      leading dot), name and path; True if there was one. }
+    function RemoveCookie(const Domain, Name, Path: string): Boolean;
+    { Which hosts may store and get cookies (Http.CookiePolicies;
+      DefaultCookieUsePolicy until set). A request that is not same-site
+      is a third party's. }
+    procedure SetPolicy(constref Policy: TCookieUsePolicy);
+    function Policy: TCookieUsePolicy;
     { A copy of every cookie (for saving or showing). }
     function Snapshot: TCookieArray;
     property Count: Integer read GetCount;
@@ -418,6 +429,56 @@ constructor TCookieJar.Create;
 begin
   inherited Create;
   InitCriticalSection(FLock);
+  FPolicy := DefaultCookieUsePolicy;
+end;
+
+procedure TCookieJar.SetPolicy(constref Policy: TCookieUsePolicy);
+begin
+  EnterCriticalSection(FLock);
+  try
+    FPolicy.Acceptance := Policy.Acceptance;
+    FPolicy.AllowedHosts := Copy(Policy.AllowedHosts, 0, Length(Policy.AllowedHosts));
+    FPolicy.BlockedHosts := Copy(Policy.BlockedHosts, 0, Length(Policy.BlockedHosts));
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+function TCookieJar.Policy: TCookieUsePolicy;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Result.Acceptance := FPolicy.Acceptance;
+    Result.AllowedHosts := Copy(FPolicy.AllowedHosts, 0, Length(FPolicy.AllowedHosts));
+    Result.BlockedHosts := Copy(FPolicy.BlockedHosts, 0, Length(FPolicy.BlockedHosts));
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+function TCookieJar.UseAllowed(const Host: string; constref Context: TCookieRequestContext): Boolean;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Result := CookieUseAllowed(FPolicy, Host, not Context.SameSite);
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+function TCookieJar.RemoveCookie(const Domain, Name, Path: string): Boolean;
+var
+  Index: Integer;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Index := FindCookie(Name, Domain, Path);
+    Result := Index >= 0;
+    if Result then
+      RemoveAt(Index);
+  finally
+    LeaveCriticalSection(FLock);
+  end;
 end;
 
 destructor TCookieJar.Destroy;
@@ -537,6 +598,8 @@ var
   Existing: Integer;
 begin
   Result := False;
+  if not UseAllowed(Host, Context) then
+    Exit;
   if not ParseSetCookie(Header, Now, Cookie, HasDomain) then
     Exit;
   LowerHost := LowerCase(Host);
@@ -668,6 +731,8 @@ var
 begin
   Result := '';
   Chosen := nil;
+  if not UseAllowed(Host, Context) then
+    Exit;
   LowerHost := LowerCase(Host);
   Path := PathOnly(RequestPath);
   if Path = '' then

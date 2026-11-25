@@ -108,6 +108,8 @@ uses
   Drawing.Rectangles,
   FileManager.Items,
   FileManager.TimeTexts,
+  FileManager.Paths,
+  FileManager.ConflictPolicy,
   FileManager.ErrorTexts,
   FileManager.TestPlaces,
   FileManager.Output;
@@ -169,11 +171,20 @@ begin
   FProgress := TOperationProgress.Create;
   FQuestions := TQuestionChannel.Create(Self);
   FWorker := TOperationWorker.Create(Request, FProgress, FQuestions);
-  if Request.Kind = OperationDelete then
-    FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, '', Length(Request.Sources), FProgress, FProgressDelay)
+  case Request.Kind of
+    OperationDelete, OperationTrash, OperationRestore:
+      FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, ParentFolderOf(Request.Sources[0]), '',
+        Length(Request.Sources), FProgress, FProgressDelay);
+    OperationCompress:
+      FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, ParentFolderOf(Request.Sources[0]),
+        Request.TargetFolder, Length(Request.Sources), FProgress, FProgressDelay);
+    OperationExtract:
+      FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, Request.Sources[0], Request.TargetFolder, 1,
+        FProgress, FProgressDelay);
   else
-    FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, Request.TargetFolder, Length(Request.Sources),
-      FProgress, FProgressDelay);
+    FWindow := TProgressWindow.CreateFor(FOwner, Request.Kind, ParentFolderOf(Request.Sources[0]),
+      Request.TargetFolder, Length(Request.Sources), FProgress, FProgressDelay);
+  end;
   Say('operation ' + LowerCase(OperationVerb(Request.Kind)) + ' ' + IntToStr(Length(Request.Sources)));
   FThread := CreateThread(@RunWorker, FWorker);
   if FThread < 0 then
@@ -292,17 +303,20 @@ begin
   if Question.CanReplace then
     AddChoice('&Replace', ConflictReplace);
   AddChoice('&Skip', ConflictSkip);
-  AddChoice('Re&name', ConflictRename);
+  AddChoice('&Keep both', ConflictRename);
   AddChoice('Stop', ConflictStop);
   Options.CancelIndex := High(Choices);
-  Options.CheckBoxText := '&Do this for every conflict';
+  Options.CheckBoxText := '&Do this for all current items';
   Options.OnShowing := @TellQuestionPlaces;
-  Text := '"' + LastPartOf(Question.TargetPath) + '" is already in ' + ParentFolderOf(Question.TargetPath) + '.' +
-    #10#10 + 'There now: ' + ItemSummary(Question.Target) + #10 + 'Arriving: ' + ItemSummary(Question.Source);
+  { The two compared, as the question's "compare info" part. }
+  Text := 'The destination already has an item named "' + LastPartOf(Question.TargetPath) + '"' + #10 + '(' +
+    ParentFolderOf(Question.TargetPath) + ').' + #10#10 + 'In the destination: ' + ItemSummary(Question.Target) +
+    #10 + 'Arriving: ' + ItemSummary(Question.Source) + #10 + CompareText(Question.Source, Question.Target);
   if Question.CanReplace then
-    Text := Text + #10#10 + 'Replace it, skip it, or give the new one another name?'
+    Text := Text + #10#10 + 'Replace the item in the destination, skip this item, or keep both (the arriving one ' +
+      'numbered)?'
   else
-    Text := Text + #10#10 + 'A folder cannot be replaced: skip it, or give the new one another name?';
+    Text := Text + #10#10 + 'A folder cannot be replaced: skip this item, or keep both?';
   Say('question conflict ' + LastPartOf(Question.TargetPath));
   Chosen := ShowChoiceBox('Name already used', Text, Options, SignQuestion, QuestionOwner);
   Result.Choice := Ord(Choices[Chosen]);

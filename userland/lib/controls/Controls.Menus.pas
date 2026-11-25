@@ -105,6 +105,9 @@ type
     { Frees every item below this one (a menu filled again in its
       OnOpening; none of them may have an accelerator). }
     procedure Clear;
+    { Frees the items from Index on (the part of a menu filled again in
+      its OnOpening, after items that keep their accelerators). }
+    procedure DeleteFrom(Index: LongInt);
     { The text as shown ("Open..." for "&Open..."). }
     function Caption: string;
     { The image list its picture is in: its menu's, or the nearest one
@@ -162,6 +165,7 @@ type
       above a point (its bottom kept there when its size changes). }
     FBand: TMenuBand;
     FOpenedAbove: Boolean;
+    FOnClosed: TMenuListEvent;
     function ItemTop(Index: LongInt): LongInt;
     function ItemAt(Y: LongInt): LongInt;
     procedure Highlight(Index: LongInt);
@@ -183,6 +187,7 @@ type
     procedure PointerMovedOutside(X, Y: LongInt);
     procedure FitToTheme;
     procedure UpdateBand;
+    procedure PopupDismissed(Sender: TControl);
   protected
     procedure Paint(var Canvas: TCanvas); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
@@ -193,6 +198,9 @@ type
     { Closes this menu and every one it came from. }
     procedure CloseAll;
     property Menu: TMenuItem read FMenu;
+    { Its pop-up closed (chosen from or not; before the chosen item's
+      OnClick runs): what opened it may look as it did again. }
+    property OnClosed: TMenuListEvent read FOnClosed write FOnClosed;
   end;
 
   TMenuBar = class(TWindowMenuBar)
@@ -204,6 +212,12 @@ type
     FPickedIndex: LongInt;
     FOpenList: TMenuList;
     FOnChoose: TMenuItemEvent;
+    { Shown by AutoReveal while its menus are in use; what keeps it shown
+      while switching between them. }
+    FRevealed: Boolean;
+    FKeepRevealed: LongInt;
+    procedure Reveal;
+    procedure ConcealIfDone;
     function HeadingAt(X: LongInt): LongInt;
     function HeadingWithMnemonic(Character: LongWord): LongInt;
     function NextHeading(Index, Step: LongInt): LongInt;
@@ -302,6 +316,17 @@ begin
   for Index := 0 to FItems.Count - 1 do
     TMenuItem(FItems[Index]).Free;
   FItems.Clear;
+end;
+
+procedure TMenuItem.DeleteFrom(Index: LongInt);
+begin
+  if Index < 0 then
+    Index := 0;
+  while FItems.Count > Index do
+  begin
+    TMenuItem(FItems[FItems.Count - 1]).Free;
+    FItems.Delete(FItems.Count - 1);
+  end;
 end;
 
 function TMenuItem.GetItem(Index: LongInt): TMenuItem;
@@ -442,6 +467,7 @@ begin
   Popup.OnPressedOutside := @Result.PressedOutside;
   Popup.OnPointerMovedOutside := @Result.PointerMovedOutside;
   Popup.OnThemeChanged := @Result.FitToTheme;
+  Popup.OnDismiss := @Result.PopupDismissed;
   Result.SetFocus;
   Popup.Popup;
   if Assigned(Menu.OnOpened) then
@@ -463,6 +489,12 @@ begin
 end;
 
 { --- TMenuList ------------------------------------------------------------------------ }
+
+procedure TMenuList.PopupDismissed(Sender: TControl);
+begin
+  if Assigned(FOnClosed) then
+    FOnClosed(Self);
+end;
 
 { The band down the side, there and as wide as the theme says. }
 procedure TMenuList.UpdateBand;
@@ -979,6 +1011,7 @@ begin
     FMenuBar.FOpenList := nil;
     FMenuBar.FOpenIndex := -1;
     FMenuBar.Invalidate;
+    FMenuBar.ConcealIfDone;
   end;
   FHoverTimer.Free;
   inherited Destroy;
@@ -1184,6 +1217,7 @@ begin
   FPickedIndex := -1;
   if (Index >= 0) and (Index < FMenu.Count) and FMenu[Index].Enabled and (FMenu[Index].Count > 0) then
   begin
+    Reveal;
     Window := TControlWindow(Host.OwnerWindow);
     FOpenIndex := Index;
     FOpenList := OpenMenuList(Window, FMenu[Index],
@@ -1193,6 +1227,24 @@ begin
     FOpenList.FOnChoose := FOnChoose;
   end;
   Invalidate;
+  ConcealIfDone;
+end;
+
+procedure TMenuBar.Reveal;
+begin
+  if Visible or not AutoReveal then
+    Exit;
+  FRevealed := True;
+  Visible := True;
+end;
+
+procedure TMenuBar.ConcealIfDone;
+begin
+  if FRevealed and (FKeepRevealed = 0) and (FOpenIndex < 0) and (FPickedIndex < 0) then
+  begin
+    FRevealed := False;
+    Visible := False;
+  end;
 end;
 
 procedure TMenuBar.OpenMenuWithKeyboard(Index: LongInt);
@@ -1237,7 +1289,9 @@ var
   Index: LongInt;
 begin
   Index := FOpenIndex;
+  Inc(FKeepRevealed);
   OpenMenu(-1);
+  Dec(FKeepRevealed);
   FPickedIndex := Index;
   Invalidate;
 end;
@@ -1246,7 +1300,10 @@ procedure TMenuBar.EnterMenuMode;
 begin
   if FMenu.Count = 0 then
     Exit;
+  Inc(FKeepRevealed);
   OpenMenu(-1);
+  Reveal;
+  Dec(FKeepRevealed);
   { The first enabled heading: the one after the last. }
   FPickedIndex := NextHeading(FMenu.Count - 1, 1);
   Invalidate;

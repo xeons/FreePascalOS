@@ -20,8 +20,8 @@
   The fetcher against the in-process site: the fields it sends,
   redirects, CORS with and without preflights (and the preflight cache),
   mixed content, HSTS, no-cors opaque responses, sniffing, nosniff,
-  data: and about:blank, file: URLs, bodies arriving in pieces, and
-  cancelling.
+  data: and about:blank, file: URLs, bodies arriving in pieces,
+  cancelling, and consumers freed while their jobs still run.
 }
 unit WebLoadTest.Fetching;
 
@@ -70,8 +70,48 @@ type
     function HasPiece: Boolean;
   end;
 
+  { Frees itself when a network error reaches it (as a script fetch's
+    consumer may, from inside the call); counts what it heard. }
+  TSelfFreeingConsumer = class(TFetchConsumer)
+  public
+    procedure ProcessResponse(Job: TFetchJob; Response: TFetchResponse); override;
+    procedure ProcessEndOfBody(Job: TFetchJob; Success: Boolean); override;
+  end;
+
 var
   Environment: TTestEnvironment;
+  SelfFreeingResponses: Integer;
+  SelfFreeingEnds: Integer;
+
+procedure TSelfFreeingConsumer.ProcessResponse(Job: TFetchJob; Response: TFetchResponse);
+begin
+  Inc(SelfFreeingResponses);
+  if Response.IsNetworkError then
+    Free;
+end;
+
+procedure TSelfFreeingConsumer.ProcessEndOfBody(Job: TFetchJob; Success: Boolean);
+begin
+  Inc(SelfFreeingEnds);
+end;
+
+type
+  TFreedConsumerWatch = class
+  public
+    Key: string;
+    function RequestSeen: Boolean;
+    function SelfFreeingHeard: Boolean;
+  end;
+
+function TFreedConsumerWatch.RequestSeen: Boolean;
+begin
+  Result := Environment.Site.RequestCount(Key) > 0;
+end;
+
+function TFreedConsumerWatch.SelfFreeingHeard: Boolean;
+begin
+  Result := SelfFreeingResponses > 0;
+end;
 
 procedure TRecordingConsumer.ProcessResponse(Job: TFetchJob; Response: TFetchResponse);
 begin
@@ -371,6 +411,44 @@ begin
   Consumer.Free;
 end;
 
+{ A consumer freed while its job waits for the head, then a head that
+  fails the CORS check; and a consumer that frees itself from inside
+  the network error's ProcessResponse (the fetcher must not go on to
+  its ProcessEndOfBody). }
+procedure CheckFreedConsumers(Client: TFetchClient);
+var
+  Consumer: TRecordingConsumer;
+  Route: TTestRoute;
+  Watch: TFreedConsumerWatch;
+  Job: TFetchJob;
+begin
+  Route := Environment.Site.AddRoute('api.test/late-closed', 200, 'Content-Type: text/plain', 'secret');
+  Route.HeadGate := TEvent.Create(nil, True, False, '');
+  Watch := TFreedConsumerWatch.Create;
+  Watch.Key := 'GET https://api.test/late-closed';
+  Consumer := TRecordingConsumer.Create;
+  Job := Environment.Fetcher.Fetch(NewRequest('https://api.test/late-closed', Client, FetchModeCors,
+    DestinationEmpty), Consumer);
+  Check(Environment.RunUntil(@Watch.RequestSeen) and (Job.State = JobAwaitingResponse),
+    'freed consumer: the request is waiting for its head');
+  Consumer.Free;
+  Check(not Job.Active and (Job.Consumer = nil), 'freed consumer: its job is cancelled and detached');
+  Route.HeadGate.SetEvent;
+  Environment.RunFor(200);
+  Check(Environment.Fetcher.ActiveJobCount = 0, 'freed consumer: the late CORS failure reaches no one');
+
+  SelfFreeingResponses := 0;
+  SelfFreeingEnds := 0;
+  Environment.Fetcher.Fetch(NewRequest('https://api.test/closed', Client, FetchModeCors, DestinationEmpty),
+    TSelfFreeingConsumer.Create);
+  Check(Environment.RunUntil(@Watch.SelfFreeingHeard), 'self-freeing consumer: the CORS failure arrives');
+  Environment.RunFor(50);
+  Check((SelfFreeingResponses = 1) and (SelfFreeingEnds = 0) and (Environment.Fetcher.ActiveJobCount = 0),
+    'self-freeing consumer: nothing after it freed itself (' + IntToStr(SelfFreeingResponses) + ' ' +
+    IntToStr(SelfFreeingEnds) + ')');
+  Watch.Free;
+end;
+
 procedure RunFetchingTests;
 var
   Client, FileClient: TFetchClient;
@@ -385,6 +463,7 @@ begin
     CheckMixedContentAndHsts(Client);
     CheckSchemesAndSniffing(Client, FileClient);
     CheckPiecesAndCancel(Client);
+    CheckFreedConsumers(Client);
   finally
     Environment.Free;
     Client.Free;

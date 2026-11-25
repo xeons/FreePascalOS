@@ -61,6 +61,7 @@ type
     FOnPointerMovedOutside: TPointerMovedEvent;
     FOnThemeChanged: TPopupThemeChangedEvent;
     FClosing: Boolean;
+    FTakesKeys: Boolean;
     { How many of its event methods are running (nested loops inside
       them), and whether it is to be freed when the last one ends. }
     FEventDepth: LongInt;
@@ -96,6 +97,10 @@ type
     property OnDismiss: TControlEvent read FOnDismiss write FOnDismiss;
     { It was dismissed (and waits to be freed). }
     property Closing: Boolean read FClosing;
+    { Whether its owner gives it the keys while it is open (True unless
+      set): False for a list of suggestions under an edit box, which goes
+      on taking the typing. }
+    property TakesKeys: Boolean read FTakesKeys write FTakesKeys;
     { Lets what the pop-up shows decide what a press outside it means (a
       menu passes a press on its menu bar's headings on, and closes the
       menus it came from too). }
@@ -169,6 +174,7 @@ constructor TPopupWindow.CreatePopup(AOwner: TControlWindow; Left, Top, Width, H
 begin
   { Owned by the window it pops up from, which it stays above. }
   inherited Create('', Left, Top, Width, Height, WindowTopmost or WindowNoActivate, AOwner);
+  FTakesKeys := True;
 end;
 
 destructor TPopupWindow.Destroy;
@@ -190,7 +196,7 @@ end;
 
 procedure TPopupWindow.Popup;
 begin
-  if OwnerWindow <> nil then
+  if FTakesKeys and (OwnerWindow <> nil) then
     OwnerWindow.Popup := Self;
   Show;
   SetCapture(True);

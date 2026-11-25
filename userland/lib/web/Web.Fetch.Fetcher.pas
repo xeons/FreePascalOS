@@ -95,7 +95,7 @@ type
   TLocalFileReader = class
   public
     JobId: QWord;
-    Stream: TFileStream;
+    Stream: TStream;
     destructor Destroy; override;
   end;
 
@@ -142,6 +142,7 @@ type
     procedure CompleteWithBody(Job: TFetchJob; Response: TFetchResponse; const Body: string);
     procedure DeliverWholeBody(Data: TObject);
     procedure StartLocalFile(Job: TFetchJob);
+    procedure StartRemoteLocalFile(Job: TFetchJob; Response: TFetchResponse; const Path: string);
     procedure ReadLocalChunk(Data: TObject);
     procedure ForgetJob(Job: TFetchJob);
     procedure CollectGarbage;
@@ -253,7 +254,7 @@ begin
   FNetwork := Network;
   FJobs := TIdMap.Create;
   FHops := TIdMap.Create;
-  FRunner := THopRunner.Create(Loop, Self, @HandleHead, @HandleData, @HandleDone);
+  FRunner := THopRunner.Create(Loop, Self, @HandleHead, @HandleData, @HandleDone, Network.Transport);
   FGarbage := TList.Create;
   FFileReaders := TList.Create;
 end;
@@ -299,7 +300,7 @@ end;
 function TFetcher.Fetch(Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer): TFetchJob;
 begin
   Inc(FNextJobId);
-  Result := TFetchJob.Create(FNextJobId, Request, Consumer, Group);
+  Result := TFetchJob.Create(FNextJobId, Request, Consumer, Group, @Cancel);
   FJobs.Add(Result.Id, Result);
   if Request.Client <> nil then
     Request.Origin := Request.Client.Origin;
@@ -686,6 +687,11 @@ begin
   Response.ResponseType := ResponseTypeBasic;
   Response.StatusText := 'OK';
   Response.Protocol := 'file';
+  if FNetwork.Transport <> nil then
+  begin
+    StartRemoteLocalFile(Job, Response, Path);
+    Exit;
+  end;
   if DirectoryExists(Path) then
   begin
     Response.Headers.Add('content-type', 'text/html;charset=utf-8');
@@ -706,6 +712,53 @@ begin
       Exit;
     end;
   end;
+  Essence := MimeTypeForFileName(Path);
+  if Essence <> '' then
+  begin
+    Response.Headers.Add('content-type', Essence);
+    Response.MimeType := ParseMimeType(Essence);
+  end;
+  Response.Headers.Add('content-length', IntToStr(Reader.Stream.Size));
+  Response.UrlList := Copy(Job.Request.UrlList);
+  AdoptResponse(Job, Response);
+  if Job.Request.SniffContent then
+    Job.State := JobSniffing
+  else
+    Job.State := JobAwaitingResponse;
+  FFileReaders.Add(Reader);
+  FLoop.QueueTask(TDataTask.Create(@ReadLocalChunk, TJobIdData.Create(Job.Id)), TaskSourceNetworking, Self);
+end;
+
+{ The file comes whole from the process that may read files (the
+  browser's network service), then goes out in pieces as a file read
+  here would. }
+procedure TFetcher.StartRemoteLocalFile(Job: TFetchJob; Response: TFetchResponse; const Path: string);
+var
+  Contents: TBytes;
+  IsFolder: Boolean;
+  Error, Essence, Html: string;
+  Reader: TLocalFileReader;
+begin
+  if not FNetwork.Transport.ReadLocalFile(Job.Request.CurrentUrl, Contents, IsFolder, Error) then
+  begin
+    Response.Free;
+    FailJob(Job, 'cannot open ' + Path + ': ' + Error);
+    Exit;
+  end;
+  if IsFolder then
+  begin
+    Response.Headers.Add('content-type', 'text/html;charset=utf-8');
+    Response.MimeType := ParseMimeType('text/html;charset=utf-8');
+    Html := '';
+    SetLength(Html, Length(Contents));
+    if Length(Contents) > 0 then
+      Move(Contents[0], Html[1], Length(Contents));
+    CompleteWithBody(Job, Response, Html);
+    Exit;
+  end;
+  Reader := TLocalFileReader.Create;
+  Reader.JobId := Job.Id;
+  Reader.Stream := TBytesStream.Create(Contents);
   Essence := MimeTypeForFileName(Path);
   if Essence <> '' then
   begin

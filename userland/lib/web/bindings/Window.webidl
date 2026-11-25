@@ -35,6 +35,9 @@ interface Window : EventTarget {
   boolean confirm(optional DOMString message = "");
   DOMString? prompt(optional DOMString message = "", optional DOMString default = "");
   undefined print();
+  // A new top-level window or tab is the host's (a browser's tab, maybe in
+  // another process): open() returns null even when one was opened.
+  Window? open(optional USVString url = "", optional DOMString target = "_blank", optional DOMString features = "");
 
   // CSSOM View basics
   [Replaceable] readonly attribute long innerWidth;

@@ -47,7 +47,8 @@ uses
   TlsTest.Fixtures,
   TlsTest.KeySchedule,
   TlsTest.Resumption,
-  TlsTest.Retry;
+  TlsTest.Retry,
+  TlsTest.Summaries;
 
 var
   Settings: TInteropSettings;
@@ -91,6 +92,8 @@ begin
   TestRfc8448Resumption;
   TestSessionCache;
   TestTestCertificates(ParamStr(1));
+  TestCertificateSummaries(ParamStr(1));
+  TestBundleSummaries(ParamStr(2));
   TestMozillaBundle(ParamStr(2));
   TestNameConstraintRules;
   TestFixtureChains(ParamStr(1), ParamStr(3));

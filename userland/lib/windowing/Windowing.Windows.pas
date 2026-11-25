@@ -267,6 +267,10 @@ procedure RunModal(Window: TWindow; var Done: Boolean);
 { The modifiers (ModifierShift, ModifierControl, ...) held at the newest
   key or pointer event: what a click was made with (a Ctrl+click). }
 function HeldModifiers: LongWord;
+{ For a program that hears its input from elsewhere rather than from
+  the display server (a browser's content process): the modifiers held
+  with the input it is handling now. }
+procedure SetHeldModifiers(Modifiers: LongWord);
 { Asks every window that no other window owns to close, as its close
   button would (CloseRequested): what a request to end the program does
   by default. }
@@ -316,6 +320,11 @@ var
 function HeldModifiers: LongWord;
 begin
   Result := NewestModifiers;
+end;
+
+procedure SetHeldModifiers(Modifiers: LongWord);
+begin
+  NewestModifiers := Modifiers;
 end;
 
 function WindowById(Id: LongWord): TWindow;

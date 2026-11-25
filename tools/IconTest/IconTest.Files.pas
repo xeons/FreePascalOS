@@ -79,6 +79,12 @@ const
     'status-ac-power', 'status-security-ok', 'status-security-warning', 'status-notification',
     'device-printer', 'device-scanner', 'device-camera', 'device-webcam', 'device-audio', 'device-keyboard',
     'device-mouse', 'device-display', 'status-battery-empty', 'status-battery-charging');
+  { The file manager's commands and places (iconkit/browsing.py). }
+  RequiredBrowsingIcons: array[0..23] of string = ('action-rename', 'action-share', 'action-sort', 'action-view',
+    'action-filter', 'action-more', 'action-pin', 'action-unpin', 'action-star', 'action-compress', 'action-extract',
+    'action-properties', 'action-select-all', 'action-new-folder', 'action-new-tab', 'action-close',
+    'action-preview-pane', 'action-details-pane', 'action-undo-history', 'folder-desktop', 'gallery', 'recent',
+    'drive-network', 'network-share');
   RequiredPointers: array[0..10] of string = ('arrow', 'resize-horizontal', 'resize-vertical',
     'resize-diagonal-down', 'resize-diagonal-up', 'text-beam', 'busy', 'hand', 'move', 'not-allowed', 'crosshair');
 
@@ -263,6 +269,12 @@ begin
       if Names.IndexOf(RequiredStatusAndDevices[Index]) < 0 then
       begin
         WriteLn('     not in the index: ', RequiredStatusAndDevices[Index]);
+        Inc(Missing);
+      end;
+    for Index := 0 to High(RequiredBrowsingIcons) do
+      if Names.IndexOf(RequiredBrowsingIcons[Index]) < 0 then
+      begin
+        WriteLn('     not in the index: ', RequiredBrowsingIcons[Index]);
         Inc(Missing);
       end;
     CheckEqual(Missing, 0, 'every icon the system draws is in the theme');

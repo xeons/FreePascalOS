@@ -28,7 +28,9 @@
   painting order, with a line break where a run starts a new line.
   Character places within a run come from the font's glyph placement
   (kerning included) plus the run's letter and word spacing, as the
-  painter draws them.
+  painter draws them. Text in a transformed or sticky group is placed
+  where it is shown (WebView.TextGroups): the pointer is mapped into the
+  group to find a place, and a range's rectangles out of it.
 }
 unit WebView.TextIndex;
 
@@ -41,7 +43,8 @@ uses
   SysUtils,
   Web.Layout.Boxes,
   Web.Text.FontInstances,
-  Web.Paint.DisplayList;
+  Web.Paint.DisplayList,
+  WebView.TextGroups;
 
 type
   TTextPosition = record
@@ -57,6 +60,8 @@ type
     X, Y, Width, Height: Single;
     SpaceExtra, LetterExtra: Single;
     Fixed: Boolean;
+    { The innermost transform or sticky group (TTextGroups), -1: none. }
+    Group: Integer;
     { Where each byte offset starts (relative to X), made when first
       needed: TextLength + 1 entries. }
     Places: array of Single;
@@ -69,6 +74,12 @@ type
   end;
   TTextRectangleArray = array of TTextRectangle;
 
+  { A match of find: [Start, Finish]. }
+  TTextMatch = record
+    Start, Finish: TTextPosition;
+  end;
+  TTextMatchArray = array of TTextMatch;
+
   TPageTextIndex = class
   private
     FRuns: array of TTextRunEntry;
@@ -76,19 +87,23 @@ type
     FFlat: string;
     FFlatStarts: array of Integer;
     FFlatValid: Boolean;
+    FGroups: TTextGroups;
     procedure AddRun(List: TDisplayList; constref Item: TDisplayItem; Fixed: Boolean);
     procedure EnsurePlaces(Index: Integer);
     procedure EnsureFlat;
     function StartsLine(Index: Integer): Boolean;
     function FlatToPosition(FlatIndex: Integer): TTextPosition;
   public
+    constructor Create;
+    destructor Destroy; override;
     procedure Clear;
     { Lists the text runs of List. }
     procedure Build(List: TDisplayList);
     { The nearest place in the text to a document point (CSS px; fixed
-      runs are compared at the point less the scroll offset). Run -1
-      when the page has no text. }
-    function PositionAt(X, Y, ScrollX, ScrollY: Single): TTextPosition;
+      runs are compared at the point less the scroll offset, grouped
+      runs in their group's coordinates). Run -1 when the page has no
+      text. }
+    function PositionAt(X, Y: Single; constref View: TTextViewport): TTextPosition;
     { The X of a byte offset of a run, relative to the run's X. }
     function OffsetPlace(Run, Offset: Integer): Single;
     function Run(Index: Integer): PTextRunEntry;
@@ -97,18 +112,29 @@ type
     class function Compare(constref A, B: TTextPosition): Integer; static;
     { The text from A to B (in either order), lines broken. }
     function TextBetween(constref A, B: TTextPosition): string;
-    { The rectangles (document CSS px) A to B covers, one per run. }
-    function RangeRectangles(constref A, B: TTextPosition): TTextRectangleArray;
+    { The rectangles (document CSS px; viewport px for fixed runs) A to
+      B covers, one per run, where View shows them. }
+    function RangeRectangles(constref A, B: TTextPosition; constref View: TTextViewport): TTextRectangleArray;
     { The first match of Needle after From (forward) or before it, as
       [MatchStart, MatchEnd]; wraps around once. }
     function Find(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
       out MatchStart, MatchEnd: TTextPosition): Boolean;
+    { The same, and whether it wrapped: the match is before From
+      (forward) or after it (backward), found from the other end. }
+    function FindWrapping(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
+      out MatchStart, MatchEnd: TTextPosition; out Wrapped: Boolean): Boolean;
+    { Every match of Needle in the page (not overlapping), in order; at
+      most Limit of them. }
+    function AllMatches(const Needle: string; MatchCase: Boolean; Limit: Integer): TTextMatchArray;
     { The whole page's text. }
     function AllText: string;
     function FirstPosition: TTextPosition;
     function LastPosition: TTextPosition;
     { The word around a position (double click). }
     procedure WordAround(constref Position: TTextPosition; out WordStart, WordEnd: TTextPosition);
+    { The line around a position (triple click): the runs from the last
+      one starting a line at or before it to the one before the next. }
+    procedure LineAround(constref Position: TTextPosition; out LineStart, LineEnd: TTextPosition);
     property Count: Integer read FCount;
   end;
 
@@ -140,8 +166,21 @@ begin
     Result := 1;
 end;
 
+constructor TPageTextIndex.Create;
+begin
+  inherited Create;
+  FGroups := TTextGroups.Create;
+end;
+
+destructor TPageTextIndex.Destroy;
+begin
+  FGroups.Free;
+  inherited Destroy;
+end;
+
 procedure TPageTextIndex.Clear;
 begin
+  FGroups.Clear;
   FRuns := nil;
   FCount := 0;
   FFlat := '';
@@ -175,6 +214,7 @@ begin
   Entry^.SpaceExtra := TextRun.SpaceExtra;
   Entry^.LetterExtra := TextRun.LetterExtra;
   Entry^.Fixed := Fixed;
+  Entry^.Group := FGroups.Current;
   Entry^.Places := nil;
   Inc(FCount);
 end;
@@ -195,6 +235,12 @@ begin
       diPopFixed:
         if FixedDepth > 0 then
           Dec(FixedDepth);
+      diPushTransform:
+        FGroups.PushTransform(List.Transforms[Item^.Index]);
+      diPushSticky:
+        FGroups.PushSticky(List.Stickies[Item^.Index], Item^.X, Item^.Y, Item^.Width, Item^.Height, FixedDepth > 0);
+      diPopTransform, diPopSticky:
+        FGroups.Pop;
       diText:
         AddRun(List, Item^, FixedDepth > 0);
     end;
@@ -258,15 +304,16 @@ begin
   Result := FRuns[Run].Places[Offset];
 end;
 
-function TPageTextIndex.PositionAt(X, Y, ScrollX, ScrollY: Single): TTextPosition;
+function TPageTextIndex.PositionAt(X, Y: Single; constref View: TTextViewport): TTextPosition;
 var
   Index, Best, Offset, Bytes: Integer;
   Entry: PTextRunEntry;
-  PointX, PointY, Distance, BestDistance, DeltaX, DeltaY, Middle: Single;
+  PointX, PointY, Distance, BestDistance, DeltaX, DeltaY, Middle, BestX: Single;
   Text: string;
 begin
   Result := TextPosition(-1, 0);
   Best := -1;
+  BestX := X;
   BestDistance := MaxSingle;
   for Index := 0 to FCount - 1 do
   begin
@@ -275,9 +322,11 @@ begin
     PointY := Y;
     if Entry^.Fixed then
     begin
-      PointX := X - ScrollX;
-      PointY := Y - ScrollY;
+      PointX := X - View.ScrollX;
+      PointY := Y - View.ScrollY;
     end;
+    if (Entry^.Group >= 0) and not FGroups.ToGroup(Entry^.Group, View, PointX, PointY) then
+      Continue;
     DeltaY := 0;
     if PointY < Entry^.Y then
       DeltaY := Entry^.Y - PointY
@@ -294,6 +343,7 @@ begin
     begin
       BestDistance := Distance;
       Best := Index;
+      BestX := PointX;
       if Distance = 0 then
         Break;
     end;
@@ -301,9 +351,7 @@ begin
   if Best < 0 then
     Exit;
   Entry := @FRuns[Best];
-  PointX := X;
-  if Entry^.Fixed then
-    PointX := X - ScrollX;
+  PointX := BestX;
   EnsurePlaces(Best);
   Text := Entry^.Box.Text;
   Offset := 0;
@@ -372,7 +420,8 @@ begin
   end;
 end;
 
-function TPageTextIndex.RangeRectangles(constref A, B: TTextPosition): TTextRectangleArray;
+function TPageTextIndex.RangeRectangles(constref A, B: TTextPosition; constref View: TTextViewport):
+  TTextRectangleArray;
 var
   First, Last: TTextPosition;
   Index, FromOffset, ToOffset, Used: Integer;
@@ -410,6 +459,9 @@ begin
     Result[Used].Width := Right - Left;
     Result[Used].Height := FRuns[Index].Height;
     Result[Used].Fixed := FRuns[Index].Fixed;
+    if FRuns[Index].Group >= 0 then
+      FGroups.RectangleToPage(FRuns[Index].Group, View, Result[Used].X, Result[Used].Y, Result[Used].Width,
+        Result[Used].Height);
     Inc(Used);
   end;
   SetLength(Result, Used);
@@ -454,10 +506,58 @@ end;
 function TPageTextIndex.Find(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
   out MatchStart, MatchEnd: TTextPosition): Boolean;
 var
+  Wrapped: Boolean;
+begin
+  Result := FindWrapping(Needle, From, Forward, MatchCase, MatchStart, MatchEnd, Wrapped);
+end;
+
+{ The match at a flat index (0 based) of Count bytes, a match ending
+  where a run starts ending at the end of the run before. }
+procedure MatchAt(Index: TPageTextIndex; FlatIndex, Count: Integer; out MatchStart, MatchEnd: TTextPosition);
+begin
+  MatchStart := Index.FlatToPosition(FlatIndex);
+  MatchEnd := Index.FlatToPosition(FlatIndex + Count);
+  if (MatchEnd.Offset = 0) and (MatchEnd.Run > MatchStart.Run) then
+    MatchEnd := TextPosition(MatchEnd.Run - 1, Index.FRuns[MatchEnd.Run - 1].TextLength);
+end;
+
+function TPageTextIndex.AllMatches(const Needle: string; MatchCase: Boolean; Limit: Integer): TTextMatchArray;
+var
+  Haystack, Wanted: string;
+  Found, MatchCount: Integer;
+begin
+  Result := nil;
+  if (Needle = '') or (FCount = 0) or (Limit <= 0) then
+    Exit;
+  EnsureFlat;
+  Haystack := FFlat;
+  Wanted := Needle;
+  if not MatchCase then
+  begin
+    Haystack := LowerCase(Haystack);
+    Wanted := LowerCase(Wanted);
+  end;
+  MatchCount := 0;
+  Found := Pos(Wanted, Haystack);
+  while (Found > 0) and (MatchCount < Limit) do
+  begin
+    if MatchCount = Length(Result) then
+      SetLength(Result, MatchCount * 2 + 8);
+    MatchAt(Self, Found - 1, Length(Wanted), Result[MatchCount].Start, Result[MatchCount].Finish);
+    Inc(MatchCount);
+    Found := Pos(Wanted, Haystack, Found + Length(Wanted));
+  end;
+  SetLength(Result, MatchCount);
+end;
+
+function TPageTextIndex.FindWrapping(const Needle: string; constref From: TTextPosition; Forward, MatchCase: Boolean;
+  out MatchStart, MatchEnd: TTextPosition; out Wrapped: Boolean): Boolean;
+var
   Haystack, Wanted: string;
   Start, Found, Candidate: Integer;
 begin
   Result := False;
+  Wrapped := False;
   MatchStart := TextPosition(-1, 0);
   MatchEnd := MatchStart;
   if (Needle = '') or (FCount = 0) then
@@ -482,7 +582,10 @@ begin
     { Pos is 1 based; Start is the 0 based index matches may begin at. }
     Found := Pos(Wanted, Haystack, Start + 1);
     if Found = 0 then
+    begin
       Found := Pos(Wanted, Haystack);
+      Wrapped := (Found > 0) and (From.Run >= 0);
+    end;
   end
   else
   begin
@@ -493,19 +596,18 @@ begin
       Candidate := Pos(Wanted, Haystack, Candidate + 1);
     end;
     if Found = 0 then
+    begin
       while Candidate > 0 do
       begin
         Found := Candidate;
         Candidate := Pos(Wanted, Haystack, Candidate + 1);
       end;
+      Wrapped := (Found > 0) and (From.Run >= 0);
+    end;
   end;
   if Found = 0 then
     Exit;
-  MatchStart := FlatToPosition(Found - 1);
-  MatchEnd := FlatToPosition(Found - 1 + Length(Wanted));
-  { A match ending where a run starts ends at the end of the one before. }
-  if (MatchEnd.Offset = 0) and (MatchEnd.Run > MatchStart.Run) then
-    MatchEnd := TextPosition(MatchEnd.Run - 1, FRuns[MatchEnd.Run - 1].TextLength);
+  MatchAt(Self, Found - 1, Length(Wanted), MatchStart, MatchEnd);
   Result := True;
 end;
 
@@ -555,6 +657,24 @@ begin
     Inc(Last);
   WordStart := TextPosition(Position.Run, First);
   WordEnd := TextPosition(Position.Run, Last);
+end;
+
+procedure TPageTextIndex.LineAround(constref Position: TTextPosition; out LineStart, LineEnd: TTextPosition);
+var
+  First, Last: Integer;
+begin
+  LineStart := Position;
+  LineEnd := Position;
+  if (Position.Run < 0) or (Position.Run >= FCount) then
+    Exit;
+  First := Position.Run;
+  while (First > 0) and not StartsLine(First) do
+    Dec(First);
+  Last := Position.Run;
+  while (Last + 1 < FCount) and not StartsLine(Last + 1) do
+    Inc(Last);
+  LineStart := TextPosition(First, 0);
+  LineEnd := TextPosition(Last, FRuns[Last].TextLength);
 end;
 
 end.

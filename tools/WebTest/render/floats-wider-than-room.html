@@ -1,0 +1,21 @@
+<!-- width=400 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 16px sans-serif; }
+.box { width: 300px; background: #def; margin-bottom: 8px; }
+.l { float: left; width: 200px; height: 20px; background: #fcc; }
+.r { float: right; width: 200px; height: 30px; background: #cfc; }
+.word { font-size: 20px; }
+</style></head>
+<body>
+<!-- A float at the start of a line, then a word too wide for the room
+     beside it: the word goes below the float, which is placed once (it
+     used to be placed again each time the line moved down, narrowing the
+     line again, for ever: www.wikipedia.org's fundraising banner). -->
+<div class=box><span class=l></span><span class=word>Unbreakablewordwiderthanroom</span></div>
+<div class=box><span class=r></span><span class=l></span><span class=word>Unbreakablewordwiderthanroom</span></div>
+<div class=box><span><span class=r></span></span> <span class=word>Unbreakablewordwiderthanroom</span> after</div>
+<!-- A float passed by a line that then breaks before it: placed once,
+     after that line. -->
+<div class=box>Some words before <span class=r></span>averyveryverylongword that wraps.</div>
+</body></html>

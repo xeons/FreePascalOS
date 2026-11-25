@@ -96,7 +96,8 @@ uses
   Processes.TerminalCalls,
   Processes.FileAttributeCalls,
   Processes.FileLockCalls,
-  Processes.SocketCalls;
+  Processes.SocketCalls,
+  Processes.Restrictions;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -333,11 +334,20 @@ var
   Status: TFileSystemStatus;
   Error: LongInt;
 begin
+  if ((Flags and (OpenWrite or OpenCreate or OpenTruncate or OpenAppend)) <> 0) and
+     CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   case ClassifyDevicePath(PathAddress, @DeviceName[0]) of
     DeviceDirectory:
-      Exit(OpenDeviceForHandle(nil, Flags));
+      begin
+        if CallerRestricted(RestrictFileReads) then
+          Exit(Failure(ErrorAccessDenied));
+        Exit(OpenDeviceForHandle(nil, Flags));
+      end;
     DeviceEntry:
       begin
+        if CallerRestricted(RestrictFileReads) and not RestrictedDeviceReadable(@DeviceName[0]) then
+          Exit(Failure(ErrorAccessDenied));
         Device := FindDevice(@DeviceName[0]);
         { /dev/tty is the program's own terminal. }
         if TextIsEqual(@DeviceName[0], ControllingTerminalName) then
@@ -350,6 +360,11 @@ begin
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
+  if CallerRestricted(RestrictFileReads) and not RestrictedPathReadable(@KernelPath^[0]) then
+  begin
+    FreeKernelMemory(KernelPath);
+    Exit(Failure(ErrorAccessDenied));
+  end;
   { The Abi open flags have the same values as the VFS ones. }
   Status := OpenFile(@KernelPath^[0], LongWord(Flags), OpenedFile);
   FreeKernelMemory(KernelPath);
@@ -651,6 +666,8 @@ var
   Kind: THandleKind;
   ObjectBody: Pointer;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   if not LookupCurrentHandle(Handle, Kind, ObjectBody) or (Kind <> HandleKindFile) then
     Exit(Failure(ErrorBadHandle));
   Result := -Int64(ErrorFromStatus(ChangeFileSize(POpenFile(ObjectBody), Size)));
@@ -745,6 +762,11 @@ begin
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
+  if CallerRestricted(RestrictFileReads) and not RestrictedPathReadable(@KernelPath^[0]) then
+  begin
+    FreeKernelMemory(KernelPath);
+    Exit(Failure(ErrorAccessDenied));
+  end;
   if FollowLinks <> 0 then
     Status := GetPathInformation(@KernelPath^[0], Information)
   else
@@ -819,6 +841,8 @@ var
   KernelPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -831,6 +855,8 @@ var
   KernelPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -845,6 +871,8 @@ var
   Error: LongInt;
   Status: TFileSystemStatus;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchKernelPath(SourceAddress, SourcePath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -868,6 +896,8 @@ var
   KernelPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := CopyStringFromUser(TargetAddress, @Target[0], PathCapacity);
   if Error = ErrorNone then
     Error := FetchKernelPath(PathAddress, KernelPath);
@@ -1031,6 +1061,8 @@ var
   KernelPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));
@@ -1073,6 +1105,8 @@ var
   KernelPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
   if Error = ErrorNone then
     Error := FetchKernelPath(PathAddress, KernelPath);
@@ -1093,6 +1127,8 @@ var
   NewPath: PPathBuffer;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictFileWrites) then
+    Exit(Failure(ErrorAccessDenied));
   Error := FetchKernelPath(ExistingAddress, ExistingPath);
   if Error <> ErrorNone then
     Exit(Failure(Error));

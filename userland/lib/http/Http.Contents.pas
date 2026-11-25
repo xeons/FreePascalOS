@@ -73,6 +73,7 @@ uses
   Http.AltServices,
   Http.CookieDates,
   Http.PublicSuffixes,
+  Http.CookiePolicies,
   Http.Cookies,
   Http.CookieFiles,
   Http.Challenges,
@@ -85,6 +86,7 @@ uses
   Http.Messages,
   Http.Client,
   Http.FetchTasks,
+  Http.ConnectionSecurity,
   Http.SocketTransports,
   Http.SocketConnector;
 

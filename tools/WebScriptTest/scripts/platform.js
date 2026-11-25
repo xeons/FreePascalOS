@@ -18,6 +18,9 @@ check("marks", mark instanceof PerformanceMark && mark.detail.a === 1 &&
   performance.getEntriesByName("start", "mark")[0] === mark);
 var measure = performance.measure("span", "start");
 check("measures", measure.entryType === "measure" && measure.duration >= 0 && measure.startTime === mark.startTime);
+check("measure from navigationStart, empty options with an end mark",
+  performance.measure("load", "navigationStart", "start").startTime === 0 &&
+  performance.measure("empty", {}, "start").duration === mark.startTime);
 performance.clearMarks("start");
 check("clearMarks", performance.getEntriesByType("mark").length === 0);
 check("toStringTag", Object.prototype.toString.call(performance) === "[object Performance]" &&

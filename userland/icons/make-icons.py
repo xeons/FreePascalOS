@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from iconkit import catalog, icofile, cursors  # noqa: E402
 from iconkit import places, folders, filetypes, programs, actions, status, devices, overlays  # noqa: E402,F401
+from iconkit import browsing  # noqa: E402,F401
 
 
 def write_icons(directory):

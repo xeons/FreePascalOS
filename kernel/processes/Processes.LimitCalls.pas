@@ -63,7 +63,8 @@ uses
   Processes.AddressSpace,
   Processes.Handles,
   Processes.SecurityCalls,
-  Processes.UserAccess;
+  Processes.UserAccess,
+  Processes.Restrictions;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -199,6 +200,8 @@ begin
     Exit(SetOomScoreAdjust(Value));
   if Limit = ProcessLimitProcesses then
     Exit(SetProcessCountLimit(Value));
+  if Limit = ProcessLimitRestrictions then
+    Exit(AddRestrictions(Value));
   case Limit of
     ProcessLimitRegions:
       begin

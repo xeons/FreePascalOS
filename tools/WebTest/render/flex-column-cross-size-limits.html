@@ -1,0 +1,14 @@
+<!-- width=1000 -->
+<!doctype html>
+<html><body style="margin:0">
+<!-- A column flex container's items with a width of their own still keep
+     to max-width and min-width, and auto margins centre the clamped
+     item (www.rust-lang.org's page body: width:100%, max-width, margin
+     auto in a column flexbox). -->
+<main style="display:flex;flex-direction:column;width:800px">
+<div style="width:100%;max-width:500px;margin-left:auto;margin-right:auto;height:10px;background:red;box-sizing:border-box;padding:0 12px"></div>
+<div style="max-width:500px;height:10px;background:blue"></div>
+<div style="width:100%;max-width:500px;height:10px;background:green"></div>
+<div style="width:300px;min-width:400px;height:10px;background:black"></div>
+</main>
+</body></html>

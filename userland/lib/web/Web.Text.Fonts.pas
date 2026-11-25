@@ -51,7 +51,7 @@ unit Web.Text.Fonts;
 interface
 
 uses
-  SysUtils, Font.Outlines, Font.Configuration;
+  SysUtils, Font.Outlines, Font.Configuration, Web.Text.UnicodeRanges;
 
 type
   TFontFaceEntry = class
@@ -67,13 +67,17 @@ type
     FLatinGlyphs: array[0..255] of LongWord;
     function GetFont: TOutlineFont;
   public
+    { A web font's unicode-range (nil: every character). }
+    Ranges: TUnicodeRangeArray;
     constructor Create(const Family, Path: string; Weight: Integer; Italic: Boolean; FaceIndex: Integer = 0);
     constructor CreateFromFont(const Family: string; Font: TOutlineFont; Weight: Integer; Italic: Boolean);
     destructor Destroy; override;
     function Load: Boolean;
     { The glyph of a character, 0 when the face has none. }
     function GlyphOf(CodePoint: LongWord): LongWord;
+    { The face has the character and its unicode-range takes it. }
     function HasGlyph(CodePoint: LongWord): Boolean;
+    function Covers(CodePoint: LongWord): Boolean;
     { Family name, lowercase. }
     property Family: string read FFamily;
     property Path: string read FPath;
@@ -115,6 +119,10 @@ type
     function ResolveFamily(const Name: string; Generic: Boolean): string;
     { The face of Family nearest Weight and Italic; nil if no such family. }
     function FindFace(const Family: string; Weight: Integer; Italic: Boolean): TFontFaceEntry;
+    { The face of Family nearest Weight and Italic that has CodePoint
+      (a web font family split into unicode-range subsets; of the
+      system's families only faces already read); nil if none. }
+    function FindFaceFor(const Family: string; CodePoint: LongWord; Weight: Integer; Italic: Boolean): TFontFaceEntry;
     { The face that draws CodePoint when the chosen face lacks it: from
       the families the configuration lists for it (nearest Weight),
       nil if none has it. }
@@ -262,7 +270,12 @@ end;
 
 function TFontFaceEntry.HasGlyph(CodePoint: LongWord): Boolean;
 begin
-  Result := GlyphOf(CodePoint) <> 0;
+  Result := RangesCover(Ranges, CodePoint) and (GlyphOf(CodePoint) <> 0);
+end;
+
+function TFontFaceEntry.Covers(CodePoint: LongWord): Boolean;
+begin
+  Result := RangesCover(Ranges, CodePoint);
 end;
 
 constructor TFontLibrary.Create;
@@ -450,6 +463,9 @@ begin
         if Seen then
           Continue;
         Distance := WeightDistance(FFaces[Index], Weight, Italic);
+        { Of a family split into subsets, the one for Latin text leads. }
+        if not FFaces[Index].Covers(Ord('a')) then
+          Inc(Distance, 5);
         if Distance < BestDistance then
         begin
           BestDistance := Distance;
@@ -463,6 +479,26 @@ begin
     SetLength(Tried, Length(Tried) + 1);
     Tried[High(Tried)] := Candidate;
   until False;
+end;
+
+function TFontLibrary.FindFaceFor(const Family: string; CodePoint: LongWord; Weight: Integer;
+  Italic: Boolean): TFontFaceEntry;
+var
+  Index, Distance, BestDistance: Integer;
+begin
+  Result := nil;
+  BestDistance := MaxInt;
+  for Index := 0 to High(FFaces) do
+    if (FFaces[Index].Family = Family) and ((FFaces[Index].Path = '') or FFaces[Index].IsLoaded) and
+       FFaces[Index].HasGlyph(CodePoint) then
+    begin
+      Distance := WeightDistance(FFaces[Index], Weight, Italic);
+      if Distance < BestDistance then
+      begin
+        BestDistance := Distance;
+        Result := FFaces[Index];
+      end;
+    end;
 end;
 
 function TFontLibrary.FallbackFace(CodePoint: LongWord; Weight: Integer; Italic: Boolean): TFontFaceEntry;

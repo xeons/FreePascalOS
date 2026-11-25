@@ -2633,6 +2633,66 @@ place them in their `Layout` with `AssignBounds` (which, unlike
 own children's notifications (a scroll bar's) out of `OnNotify` by
 overriding `ReceiveMessage`.
 
+**Navigation controls** (a file manager's or a browser's window, in
+either theme; their plain arithmetic in units of its own, checked on
+the host by `make navigation-controls-test`, and their glyphs and flat
+hot faces in `Controls.PartPainting`):
+
+`Controls.TabStrip`: `TTabStrip`, a row of document tabs along the top
+of a window, holding no pages (the program shows what the active tab
+stands for). A tab has a caption, a picture of `Images`, a hint and
+`Data`; `AddTab`, `InsertTab`, `DeleteTab`, `MoveTab`, `ActiveIndex`
+(the user's choices give `OnChange`). The tabs share the width between
+a minimum and 240 logical units (below the minimum only when they would
+not fit; `Controls.TabStripLayout`), captions cut with "...". A "+"
+button after the last tab (`OnNewTab`), a close button on the active
+and the hovered tab and a middle click (`OnCloseTab`), a tab dragged
+sideways moving among the others as it goes (`OnTabMoved`), dragged
+out above or below the strip and let go there (`OnTabDraggedOut`, with
+the screen point, logical units, for a new window), a right click
+(`OnTabContextMenu`). With header bands the strip is recessed and the
+active tab is the face running into the content below with a gold line
+on top; the classic look has bevelled tabs. `TabBounds`,
+`CloseButtonBounds`, `NewTabButtonBounds` (pixels) are for tests.
+
+`Controls.BreadcrumbBar`: `TBreadcrumbBar`, an address bar that looks
+like an edit field: `SetSegments` (captions and the paths they stand
+for), an optional picture first (`RootImageIndex`). A segment is a flat
+button (`OnNavigate`), its chevron a pop-up menu of the folders inside
+(`OnListChildren`; the chevron points down while it is open, from the
+menu list's new `OnClosed`), choosing one navigates into it
+(`JoinChildPath` in `Controls.BreadcrumbLayout`). Segments that do not
+fit collapse from the left into an overflow button listing the hidden
+ancestors. A click on the empty part (or `BeginEditing`) swaps in an
+edit box with `EditText` selected: Enter gives `OnPathEntered`, Escape
+or losing the focus goes back. Every change asks `OnComplete` for
+suggestions, shown under the bar by `Controls.SuggestionList` (a pop-up
+list that leaves the typing to the field: Up and Down move, Enter or a
+click takes one, Tab completes). `SegmentBounds`, `ChevronBounds`,
+`OverflowBounds`, `EmptyAreaPoint`, `IsEditing`.
+
+`Controls.CommandBar`: `TCommandBar`, a strip of flat command buttons
+(`TCommandButton`: a 16-unit picture of `Images` and its caption, or
+the picture alone; `Enabled`, `Visible`, `IsToggle`/`Down`, `Hint`,
+`Tag`, `AlignRight` for the far end). `AddCommand`, `AddDropDown` (its
+menu filled by the program each time, `OnOpening`, and popped up under
+it), `AddSeparator`. An overflow button ("...") ends the commands: what
+does not fit moves into its menu from the end (`Controls.CommandLayout`)
+as items doing what the buttons do, then the program's own
+(`OnOverflowOpening`). `ButtonBounds` in pixels.
+
+`Controls.ProgressDialog`: `TProgressDialog`, a non-modal dialog for a
+long operation: a heading (`SetHeading`), "34% complete", a bar, Pause
+and Resume (`OnPauseChanged`) and Cancel (`OnCancel`, as is its close
+button); "More details" (`Controls.DisclosureButton`) opens a graph of
+the speed over the operation with the current speed as a line
+(`Controls.ThroughputGraph`, drawn with libdrawing's anti-aliased
+shapes) and the speed, the item, the time left and the items left. The
+program calls `UpdateProgress` as it goes; `Controls.TransferRates`
+turns its samples into a smoothed rate (the plain average for the first
+seconds, then an exponential moving average; paused time skipped), a
+time left ("About 2 minutes") and sizes ("34 MB").
+
 **Layout without positions.** A control's place comes from its parent's
 `Layout`, which calls `PlaceChildren` with the parent's client area
 (its pixels less its `ContentPadding`). Docked children (`Align`) take
@@ -3293,116 +3353,213 @@ a PNG through the save dialog and reads its pixels back with
 
 ### The file manager
 
-`files [FOLDER]` (`userland/files/files.pas` with its units, installed as `/app/files`)
-shows a folder (relative to the current one; the user's home without
-one) in one window that goes from folder to folder:
+`files [PLACE]` (`userland/files/files.pas` with its `FileManager.*`
+units, installed as `/app/files`) is a tabbed browser laid out like the
+file managers people know from other systems, drawn with this system's
+own controls, icons and themes (Sunrise and Classic). PLACE is a folder
+(relative to the current one), a page ("Home", the default; "Gallery",
+"Computer", "Network", "Recycle bin") or a folder inside an archive.
 
-- **The window** (`FileManager.BrowserWindow`): the menu bar, a
-  toolbar (Back, Forward, Up; Icons, List, Details), an address box
-  (type a folder and Enter; Ctrl+L or Alt+D), the places at the left
-  beside the folder's items with a splitter between them, and a status
-  bar (how many items; how many selected and their size). Going to a
-  folder adds it to the history (`FileManager.History`). The title is
-  the folder's name.
-- **The places** (`FileManager.PlacesPane`, a tree view): home, the file
-  system, and Volumes with each volume (label and name; a removable
-  disk's icon for one that can be unplugged). It watches `/volumes`
-  (`Sys.Volumes`): a disk plugged in appears at once, one unplugged
-  goes, and a window showing a folder on it moves to the nearest folder
-  above that is still there (or home), forgetting it from the history.
-- **The items** (`FileManager.FolderView`, a list view): large icons
-  with names (two lines for a long one), a list, or details (name, size,
-  type, modified, permissions, owner), sorted by any column either way
-  round, folders first (`FileManager.ItemOrder`), hidden files (names
-  starting with a dot) on request. Items are read by
-  `FileManager.FolderReading` (a link described by what it points to,
-  with its arrow; a broken one as itself); their type and icon come
-  from `FileManager.FileTypes` (folders, programs: an execute bit, text
-  documents by extension, pipes, devices, other files by extension).
-  The folder shown is watched: any program changing it has it read
-  again (once for changes that come together, never under a rename in
-  place), keeping the selection, the focus and the scrolling by name.
-- **Opening** (`FileManager.Associations`, the one place that decides):
-  a folder is shown; a text document (by its extension) opens in
-  Notepad; a file with an execute bit that is an ELF program or starts
-  with `#!` runs; any other file whose first 4 KiB are UTF-8 without a
-  zero byte opens in Notepad; a picture libimage reads (told by its
-  first bytes, `DetectFileFormat`) opens in the image viewer; anything
-  else says there is no program for it. `FileManager.Launching` starts
-  the program in a process group of its own; "Open with Notepad" opens
-  any file as text.
-- **Commands** (`FileManager.CommandWindow`, from the menus, the keys,
-  the context menus or the mouse): New folder ("New folder", "New
-  folder (2)": `FileManager.ConflictNames`, put up for renaming at
-  once), Rename in place (F2; a name with a slash, ".", ".." or one
-  taken is refused with the reason), Delete (asked first, saying it is
-  permanent: there is no recycle bin), Cut, Copy and Paste (file lists
-  on the clipboard; after a paste of cut files the clipboard is
-  emptied), Select All, Properties, Refresh (F5), and drag and drop:
-  files dropped on a folder item, on the folder shown, or on a place
-  move within a volume and are copied onto another, Ctrl copying and
-  Shift moving (`FileManager.DropRules`; volumes are told apart by the
-  file information's volume number). The keys that edit text act on
-  files only while the items have the focus, so the address box keeps
-  them.
-- **Copy, move and delete** run one after another on a thread of their
-  own (`FileManager.OperationRunner`, `FileManager.OperationWorker`),
-  so the window stays usable. The worker counts what there is to do,
-  then copies folders recursively and files in 64 KiB pieces
-  (`Sys.FileCopies`), keeping permissions and times (and owners, for
-  root) where the file system holds them, links as links, a folder's
-  own permissions and times set after its contents; moves within a
-  volume by renaming, onto another by copying and then removing what
-  was copied whole; deletes everything below a folder, then the folder.
-  A name already taken is a question (`FileManager.OperationQuestions`:
-  the worker posts a message and sleeps on an event until the window's
-  thread answers): Replace, Skip, Rename ("name (2).txt"), Stop, and
-  "do this for every conflict"; a folder onto a folder merges, a copy
-  into its own folder gets a numbered name without asking. An error
-  (`FileManager.ErrorTexts`: no permission, the disk full, the volume
-  unplugged...) asks Skip or Stop ("skip every error"). The progress
-  window (`FileManager.ProgressWindow`, `FileManager.OperationProgress`
-  shared under a lock) shows the file being done, a bar, files and
-  bytes, and Cancel, which stops at the next piece (a file stopped half
-  way is removed); it appears only once an operation has run for
-  `Files/ProgressDelay` milliseconds. Closing the window, or a request
-  to end, while one runs asks whether to stop it; Yes stops it and the
-  window closes once it has stopped cleanly.
-- **Properties** (`FileManager.PropertiesDialog`): name, type, location,
-  size (a folder's added up by `FileManager.FolderSizeCounter` on a
-  thread, the count running), link target, the three times, owner and
-  group, and permissions as check boxes (read, write, execute for the
-  owner, the group and others) that change the mode at once for the
-  owner or root and are greyed for others. A volume's
-  (`FileManager.VolumeProperties`, from its place's context menu):
-  label, file system, where it is, removable, read only, size, free
-  space with a bar.
-- **Settings** (`FileManager.Settings`, group `Files`): the view, the
-  order and hidden files as they are chosen; the window's place and
-  size and the places' width when it closes; the progress window's
-  delay.
+- **The window** (`FileManager.BrowserWindow`), from the top: the tabs
+  (`Controls.TabStrip`: new, close, reorder by dragging, drag one out
+  to open it in a window of its own, duplicate and the rest on its
+  context menu; Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab); Back,
+  Forward, Up and Refresh; the address bar (`Controls.BreadcrumbBar`:
+  a segment's click goes there, its chevron lists the folders inside
+  it, a click on the empty part, Ctrl+L, Alt+D or F4 edits the address
+  as text with completion of folder names and page names); the search
+  box (Ctrl+E, Ctrl+F); the command bar (`FileManager.MainWindow`); the
+  navigation pane, the page, the details or preview pane, with
+  splitters; the status bar (items; how many selected and their size).
+  Every tab (`FileManager.Tabs`) has its own place and Back/Forward
+  history; the controls show the active one. The title is the place's.
+- **Places** (`FileManager.Locations`): a folder, Home, Gallery,
+  Computer, Network, the recycle bin, a folder inside a ZIP or tar
+  archive (`/home/a/src.zip/docs`), or search results. Each has an
+  address, a title, an icon and its breadcrumb segments. The standard
+  folders (Desktop, Documents, Downloads, Pictures, Music, Videos) are
+  made in the home folder if missing.
+- **Pages** (`FileManager.Sources`): Home shows the pinned folders
+  (the standard folders until the user changes the list), the
+  favourite files and the recent files (opened from the file manager)
+  in sections; Gallery every picture under Pictures grouped by month,
+  newest first, as thumbnails; Computer the standard folders and every
+  volume (label, file system, a bar of the space used, "N free of M";
+  a volume mounted on a folder opens there); Network is a placeholder;
+  the recycle bin lists every trash folder's items with where they were
+  and when they were deleted; an archive's folder its entries
+  (libarchive, the archive kept open while shown).
+- **The navigation pane** (`FileManager.NavigationPane`, a tree):
+  Home, Gallery, the pinned folders, Computer (the standard folders and
+  the volumes), Network, Recycle bin (its icon empty or full). Folders
+  open with a box, their subfolders read when first opened (the tree's
+  `MayHaveChildren`). Volumes are watched (`Sys.Volumes`): a disk
+  plugged in appears at once, one unplugged goes and a tab on it moves
+  to the nearest folder still there. Files dropped on a folder go into
+  it; folders dropped on Home are pinned.
+- **The page** (`FileManager.FolderView` on `Controls.ItemView`): eight
+  views (extra large, large, medium and small icons, list, details,
+  tiles, content; Ctrl+Shift+1 to 8, Ctrl with the wheel), compact
+  spacing, item check boxes, file name extensions and hidden items on
+  or off. Details show name, date modified, type and size, and any of
+  date created (the file's birth time), date accessed, owner, group,
+  permissions, dimensions, length, folder, original location, date
+  deleted, free space and file system, chosen on the header's context
+  menu (`FileManager.ItemColumns`). Sorting by any column either way,
+  folders first, names in natural order ("2" before "10",
+  `Controls.NaturalOrder`). Group by name, date, type or size
+  (`FileManager.Grouping`), groups collapsible. A filter by kind or date
+  (the search syntax underneath). Pictures and SVG drawings get
+  thumbnails (`Controls.ThumbnailLoader`, on a thread, kept on disk in
+  `~/.cache/thumbnails/fpos`), which tell their dimensions too. The
+  view, order, grouping and columns are remembered per folder
+  (`Files/Views/KEY`). The folder (or the recycle bin) is watched
+  (`Sys.FileWatches`): changes read it again after 300 ms, keeping the
+  selection and the scrolling, never under a rename in place; a folder
+  that goes away is left for the nearest one above.
+- **The side pane** (`FileManager.SidePane` on `Controls.PreviewHost`),
+  Alt+Shift+P for details, Alt+P for the preview: details show the
+  thumbnail or icon and the properties (type, size, dimensions, a WAV
+  file's format and length from `FileManager.AudioInfo`, the dates,
+  location, owner, permissions); several items their count and size;
+  nothing selected, the page. The preview shows web pages in a web view
+  (libwebview, scripts off), pictures, text and code (read-only text
+  view), sounds and folders as summaries.
+- **Search** (`FileManager.SearchQuery`, `FileManager.Searcher`): the
+  folder shown and everything below it, on a thread, results streaming
+  in (Escape cancels); words in the name (wildcards), quoted phrases,
+  `kind:image`, `ext:pas`, `size:>1MB`, `size:small`, `modified:today`
+  (also yesterday, thisweek, lastweek, thismonth, lastmonth, thisyear,
+  lastyear, dates and ranges), `content:word`. The search history is
+  offered under the box. In a compressed folder the search goes through
+  the archive's entries below the folder shown, at any depth, with the
+  same syntax (`FileManager.ArchiveSearch` over `Archive.Folders`'
+  `ListArchiveTree`, folders only deeper names make included; the
+  thread opens its own reader, and content terms take members out into
+  memory); the results are archive entries, opened as in the archive
+  (taken out to the cache, or browsed for a folder). A cached archive
+  is checked against its file (node, size, time) each time it is used,
+  so one deleted or changed is not shown from memory.
+- **Commands** (`FileManager.MenuWindow` carries out every command by
+  its number, `FileManager.Commands`): the command bar has New (folder,
+  text document, Markdown document, web page, empty ZIP folder, and the
+  files in `~/Templates`: `FileManager.Templates`), Cut, Copy, Paste,
+  Rename, Share (copies the path; Send to is the hook), Delete, Sort
+  (and Group by), View, Filter, what the place calls for (Extract all;
+  Restore, Restore all, Empty recycle bin) and "..." (undo and redo,
+  select all, none, invert, compress, extract, pin, copy as path,
+  options, properties), with the details and preview panes at the
+  right. Buttons follow the selection and the place. The context menu
+  of items has Cut, Copy, Rename, Share and Delete first, then Open,
+  Open with, Open in new tab or window, Pin to Home, Add to favourites,
+  Compress to ZIP or Extract all, Copy as path, Properties and "Show
+  more options" (the classic menu: Send to, Delete permanently, Paste
+  into a folder...; Shift with the right click opens it at once); the
+  background's has View, Sort by, Group by, Refresh, Paste, Undo, New
+  and Properties.
+- **Opening** (`FileManager.ItemCommands`, `FileManager.Handlers`): a
+  folder, page or volume is shown (in a new window if the options say
+  so); an archive is browsed; a program runs; any other file opens with
+  its type's default program: the one chosen for the extension
+  (`Files/Defaults/EXTENSION`), else the best match among the program
+  folders' `program.info` (`Extensions` and `MimeTypes` keys, read by
+  `Configuration.ProgramInfo`; `FileManager.TypeAssociations` ranks
+  them: the extension, then the media type, then its family); text
+  without an extension opens in Notepad. Open with lists the programs
+  for the type (`FileManager.OpenWithDialog`, "Always use this
+  program" makes it the default; "Choose a default" from the menu). A
+  file opened goes to the recent files; one inside an archive is
+  extracted to `~/.cache/files-open` first.
+- **File operations** run one after another on a thread
+  (`FileManager.OperationRunner`, `FileManager.OperationWorker`): copy,
+  move (a rename within a volume), delete for good, move to the recycle
+  bin, restore, compress to ZIP (`Archive.ZipWriter`), extract
+  (`Archive.Extraction`, all of an archive or some entries). The
+  progress dialog (`FileManager.ProgressWindow` on
+  `Controls.ProgressDialog`) appears after `ProgressDelay` ms with the
+  heading, percentage, bar, Pause (the worker waits at its next piece),
+  Cancel and "More details" (speed, time left, the item, what is left,
+  a graph of the speed). A name taken asks Replace, Skip, Keep both
+  (numbered) or Stop, comparing the two (`FileManager.ConflictPolicy`),
+  "for all current items"; errors ask Skip or Stop. Undo and redo
+  (Ctrl+Z, Ctrl+Y, `FileManager.UndoHistory`) cover renames, new items,
+  copies, moves, moves to the recycle bin, compressing and extracting.
+  Drag and drop within a window, between tabs (onto the navigation
+  pane) and between windows and programs (the toolkit's system drag)
+  moves within a volume and copies onto another, Ctrl copying and Shift
+  moving (`FileManager.DropRules`). Rename in place (F2); with several
+  selected, all get the name typed, numbered ("Holiday (1).jpg",
+  `FileManager.BatchNames`). New folder: Ctrl+Shift+N.
+- **The recycle bin** (`Util.Trash`, `Util.TrashInfo` in libcoreutils):
+  items go to `~/.local/share/Trash` (files/ and info/NAME.trashinfo
+  with the original path and the deletion time, the layout other
+  desktops use), or on another volume to `.Trash-UID` at the top of
+  that volume, so it is always a rename. Delete asks, then moves to the
+  recycle bin; Shift+Delete deletes for good after asking; in the
+  recycle bin Delete is for good, Restore puts items back (numbered if
+  the name was taken meanwhile).
+- **Properties** (`FileManager.PropertiesDialog`): General (type,
+  location, size and size on disk, what a folder contains, counted on
+  a thread, the dates, read-only and hidden: hidden renames to a leading
+  dot), Security (owner and group, changed with chown by root; the
+  permission check boxes, chmod at once), Details (every property:
+  dimensions, a sound's length, link target, node, links). A volume's
+  properties are `FileManager.VolumeProperties`.
+- **Options** (`FileManager.OptionsDialog`): open folders in the same
+  or a new window, single or double click, show recent files and
+  favourites on Home, clear the recent files, the search history and
+  the thumbnails; hidden items, extensions, check boxes, compact view,
+  the preview or details pane at start, reset every folder's view.
+  Kept in `Files/Options` (`FileManager.Settings`); the lists (pinned,
+  favourites, recent, search history) are `FileManager.UserLists`.
+- **Keys**: Ctrl+C, X, V, A, Z, Y, Shift+Ctrl+C (copy as path), F2,
+  Delete, Shift+Delete, Enter, Ctrl+Enter (a new window), Backspace (up)
+  while the items have the focus; F5, Ctrl+R, Alt+Enter, Alt+Left,
+  Right and Up, Ctrl+L, Alt+D, F4, Ctrl+E, Ctrl+F, Ctrl+T, Ctrl+W,
+  Ctrl+Tab, Ctrl+N, Ctrl+Shift+N, Alt+P, Alt+Shift+P, Ctrl+H, Ctrl+Shift+1
+  to 8 anywhere; typing a name's first letters goes to it; the arrows
+  move by the layout in every view (`Controls.ItemViewLayout`).
 
-It prints what happens (`folder PATH COUNT`, `selected N`, `view ...`,
-`sort ...`, `refreshed`, `new-folder`, `renamed OLD NEW`, `copied N`,
-`moved N`, `deleted N`, `question ...`, `properties ...`, `mode PATH
-OCTAL`, `volume-added NAME`, `volume-removed NAME`, `folder-gone PATH`,
-`error ...`) and where the things to click are (`place NAME X Y`). The
-input test prepares a folder over the serial shell and switches views,
-sorts by a header, opens a subfolder with a double click and goes Back,
-makes a new folder and renames it with F2, copies a file with Ctrl+C and
-Ctrl+V (the copy's digest the same), drags a file onto a folder (moved),
-deletes one after the question, sees a file the serial shell makes
-appear without a refresh, changes a permission in the properties (stat
-reads the new mode), copies a folder tree onto the virtio disk's ext4
-volume with the progress window (read back), answers Skip and then
-Replace to a name already there, opens a text file in Notepad with a
-double click (Notepad's title in the log), and asks it to end; and in
-the USB hot-plug part sees the plugged disk among the places, opens it,
-and sees it go (the window back at `/volumes`) when it is unplugged.
-`make files-test` (part of `make test`) builds the plain logic on the
-host (`tools/FilesTest`): paths, numbered names, the history, the order
-and types of items, permission texts, what a drop does, file lists and
-finding a name by typing.
+The toolkit pieces it is built from are libcontrols' (item views,
+thumbnails, the preview host, the tab strip, breadcrumb bar, command
+bar and progress dialog, a folder chooser `ChooseFolder`, tree nodes
+filled when opened and `InsertRoot`, a window's `LastAcceleratorCode`)
+and libarchive (ZIP with ZIP64, tar, tar.gz). The kernel's image loader
+takes as many directly needed libraries as a process may have modules:
+the file manager links 20.
+
+It prints what happens (`folder ADDRESS COUNT`, `view MODE`, `sort
+COLUMN ascending|descending`, `group BY`, `tab new|switch|close N`,
+`search SCOPE TEXT`, `search-result N`, `search-done N`, `preview
+image|text|web|summary PATH`, `pane preview|details|none`, `new-folder
+NAME`, `renamed OLD NEW`, `clipboard copy|cut N`, `operation VERB N`,
+`progress-shown VERB`, `question conflict NAME`, `copied N`, `moved
+N`, `trashed N`, `restored N`, `compressed N`, `extracted N`, `undo
+WHAT`, `redo WHAT`, `properties ...`, `mode PATH OCTAL`,
+`volume-added NAME`, `folder-gone PATH`, `error ...`; the full list is
+in `files.pas`) and where the things to click are (`place NAME X Y`).
+The input test prepares a folder over the serial shell and switches
+views (Ctrl+Shift+5, 2, 6), sorts by a header, opens a subfolder with a
+double click and goes Back, makes a new folder and renames it with F2,
+copies a file with Ctrl+C and Ctrl+V, drags a file onto a folder,
+deletes one to the recycle bin and undoes and redoes that, sees a file
+the serial shell makes appear, changes a permission on the Security
+page, copies a folder tree onto the virtio disk with the progress
+dialog, answers Skip and then Replace to a name already there, opens a
+text file in Notepad, opens and closes a tab, compresses the tree to ZIP
+from its context menu, browses the ZIP, extracts it with Extract all
+(the same files back), searches the folder, shows a picture in the
+preview pane, drags a second window to the other display and drags a
+file between the two; and in the USB hot-plug part sees the plugged
+disk in the navigation pane, opens it and sees it go. `make files-test`
+(part of `make test`) builds the plain logic on the host
+(`tools/FilesTest`): paths, numbered names, the history, the order and
+types of items, permission texts, drops, file lists, typing to find a
+name, natural order, file kinds, calendar days, the search syntax,
+batch names, undo and redo, conflicts, type associations over
+program.info texts, the trash's info files, grouping and WAV headers;
+`make archive-test` checks the ZIP and tar code against Python's
+zipfile and tarfile.
 
 ### The terminal window
 
@@ -6765,6 +6922,97 @@ decompresses files; started as `gunzip` it decompresses and as `zcat`
 it decompresses to standard output (copies made by
 make-system-disk.sh); coretest checks it.
 
+### Archives (libarchive)
+
+**libarchive** (`userland/lib/archive`, units `Archive.*`) reads zip,
+tar and tar.gz files, writes zip files, extracts archives into folders
+and lists an archive's folders for browsing. It is built over
+libcompression (deflate, gzip, CRC-32) and libsystem, and its core
+units also build on the host. The file manager uses it for compressed
+folders.
+
+```
+  Archive.Readers     TArchiveReader (Count, Entries[], IndexOf,
+                      ExtractToStream/ToFile), OpenArchive,
+                      DetectArchiveFormat, IsArchiveFile
+  Archive.Extraction  ExtractAll: safe names only, links last
+  Archive.Folders     ListArchiveFolder: children, implied folders too
+  Archive.ZipWriter   TZipWriter: AddFile/AddStream/AddFolder/AddLink, Finish
+=========== formats =========================================================
+  Archive.ZipReader   central directory, ZIP64, stored/deflated, CRC check
+  Archive.ZipEndRecord  Archive.ZipExtraFields  Archive.ZipFormat
+  Archive.TarReader   ustar, v7, GNU 'L'/'K', pax; hard links as copies
+  Archive.TarFormat   Archive.RewindingStreams (tar.gz, seekable forward)
+  Archive.Detection   by content, not by name
+=========== shared ==========================================================
+  Archive.Entries (TArchiveEntry, SafeEntryPath)  Archive.Times
+  Archive.Progress  Archive.Cp437  Archive.FileSystem (Sys.Files / host)
+```
+
+**Entries.** A member is a `TArchiveEntry`: its UTF-8 name with '/'
+between the parts (a folder's ends with '/'), whether it is a folder or
+a symbolic link (and its target), sizes, the modification time in Unix
+seconds (UTC), Unix mode bits with the file type (0 when the archive
+has none), whether it is encrypted, the method and the CRC-32. Zip
+names are UTF-8 when flag 11 says so, else Info-ZIP's Unicode path
+field when its CRC matches, else code page 437; the time is the
+extended timestamp field's when there is one, else the DOS time taken
+as UTC; modes come from the external attributes of members made on
+Unix. Errors are `EArchiveError`; a progress callback
+(`TArchiveProgressEvent`, uncompressed bytes so far) can cancel, which
+raises `EArchiveCancelled`.
+
+**Reading.** `OpenArchive` tells the format by content: a zip by a
+local header at the start or its end of central directory record
+(searched for backwards past a comment; data before the zip is allowed
+for), gzip magic with a tar header inside, or a tar header ("ustar" or
+a right checksum). The zip reader lists members from the central
+directory (ZIP64 locator and extra fields included), so data
+descriptors need nothing special; extraction inflates through
+`TInflater` while computing the CRC-32 and refuses a wrong CRC or
+size, encrypted members (flag 0 or AES) and other methods. The tar
+reader walks the headers once when opened (pax `path`, `linkpath`,
+`size`, `mtime`; GNU long names and links; base-256 numbers). A
+.tar.gz is read through `TRewindingGzipStream`, which decompresses
+forwards and starts again only to go back, so listing and extracting in
+order decompresses it once per pass.
+
+**Writing.** `TZipWriter` streams each member through `TDeflater`
+(level 6) while computing its CRC-32, then writes the local header again
+with the sizes (the output must be seekable); data that deflate does
+not shrink is written again stored when the source can be reread. Names
+get the UTF-8 flag when they are not ASCII, every member the extended
+timestamp, "made by" Unix with the mode. A member expected near 4 GiB
+gets a ZIP64 local header, and the central directory and end records
+use ZIP64 when sizes, offsets or more than 65535 members need it, or
+always with `ForceZip64`. Without `Finish` the file has no directory:
+the caller deletes it.
+
+**Extracting.** `SafeEntryPath` gives the relative path a name may be
+extracted to: '\' taken as '/', '.' and empty parts dropped, and ''
+for absolute names, drive letters, '..' parts and control characters.
+`ExtractAll` leaves those out (and counts them), creates folders, writes
+files, makes symbolic links only after every file (so nothing is written
+through a link a member made), and sets folder times last. Times, modes
+and links go through `Archive.FileSystem`, which calls libsystem on the
+system and the host's Unix calls in the host test.
+
+**Tests.** `make archive-test` builds the core units on the host with
+range checks. `tools/ArchiveTest/make-fixtures.py` makes zip files with
+Python's zipfile (stored, deflated, folders, a Unicode name, an empty
+file, a link, data over 64 KiB, an extended timestamp, data
+descriptors, forced ZIP64, 65540 members) and patches some by hand (a
+CP437 name, the encrypted flag, a wrong CRC, unsafe names), and tar
+files with tarfile (ustar, GNU, pax, tar.gz) plus an old v7 one. The
+test checks every member's fields and data, extraction into folders
+(modes, times, links, nothing outside), random access in a .tar.gz,
+folder listing and cancelling; then writes zips (an empty file, folders,
+a Unicode name, big and incompressible data, a link, a time before
+1980; forced ZIP64; from files on disk; 65537 members), reads them back
+and has `check-written.py` check them with Python's zipfile (testzip,
+names, data, modes, DOS and extended times, ZIP64 end records).
+7z is not read (TODO.md).
+
 ## JavaScript engine
 
 libjavascript (`userland/lib/javascript`, units `Js.*`, built as
@@ -7857,8 +8105,10 @@ starts one (default 4096, at most 65536; root's are not counted; one too
 many fails with `ErrorWouldBlock`), and `ProcessLimitOomScoreAdjust` (5),
 how willingly the process is ended when memory runs out, passed as the
 adjustment plus `OomScoreAdjustOffset` (1000) so it is never negative
-(see "Memory pressure and running out"). And
-`CallGetProcessResources(ProcessId, Address)` (130) reports what a
+(see "Memory pressure and running out"). `ProcessLimitRestrictions`
+(6) is a sandbox a process puts itself in: flags only ever added,
+inherited by what it starts (see "Browser process model", the sandbox).
+And `CallGetProcessResources(ProcessId, Address)` (130) reports what a
 process holds as a `TAbiProcessResources`: regions, handles and threads
 against the limits, the regions' size and its committed, peak and
 shared pages (`Processes.LimitCalls`). `ps -o regions,handles` shows the
@@ -10851,7 +11101,7 @@ decided on the page thread:
 | `Web.Fetch.Fetcher` | main fetch, scheme fetch, HTTP fetch, redirects, sniffing before delivery |
 | `Web.Fetch.HttpHops` | one exchange on a libhttp fetch task thread; its head, data and outcome posted back as networking tasks; at most 12 run at once, the others wait (documents, style sheets, scripts and fonts ahead of images); a hop whose thread cannot be made fails like a network error |
 | `Web.Fetch.Monitors` | `TFetchMonitor`: told of each fetch's start, response, failure, end or cancel (a network log; webbrowse -n) |
-| `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks) |
+| `Web.Fetch.Jobs` | a fetch in progress and its consumer (`ProcessResponse`, `ProcessBody`, `ProcessEndOfBody`, always in later tasks). The two know each other: a consumer that is freed, even from inside one of its own calls, cancels its running jobs and detaches all of them (nothing more reaches it); a job that is freed tells its consumer (`JobReleased`) so a kept job pointer is cleared; `TFetchJob.Cancel` stops a job without the fetcher at hand |
 | `Web.Fetch.NetworkContexts` | a profile's libhttp client (connections, cookies, cache), HSTS store, preflight cache, Accept-Language; shared by its pages |
 | `Web.Fetch.MimeTypes` | MIME Sniffing's parser and serializer, Fetch's "extract a MIME type", the type groups |
 | `Web.Fetch.Sniffing` | the MIME type sniffing algorithm, the image context, the Apache bug |
@@ -11187,7 +11437,21 @@ document.currentScript set, reports an uncaught exception to the
 console with the file and line ("page.html (inline script 3)"), fires
 an external script's load event, and leaves through the microtask
 checkpoint (the job queue, mutation observers included; at script depth
-0 only, as in "clean up after running script"). document.write goes to
+0 only, as in "clean up after running script").
+The outermost entry into script (`EnterScript`, module evaluation too)
+arms the slow script watchdog (`Web.Script.Watchdog`) until it is back
+out after the microtask checkpoint: a page's scripts run on the page
+thread, the GUI thread in a web view, so a script that never ends would
+freeze the window. One thread for the process sleeps while nothing is
+armed and otherwise checks every 100 ms; an entry armed longer than
+`ScriptRunLimitMilliseconds` (10 s; the display server calls a window
+"Not responding" after 5) gets the engine's `InterruptRequested` set,
+again on every check while it stays armed, so the interpreter ends the
+script at its next backward jump or call with an uncatchable
+termination, and the promise jobs it queued end the same way; the
+console says the script was stopped, and the page's next scripts run as
+usual (WebScriptTest checks a loop, one inside try, promise jobs queueing
+each other and a looping timer callback). document.write goes to
 the active parser at its insertion point (the parser now saves the old
 insertion point and limit of nested scripts and writes, so scripts
 written by scripts write in the right place). Outside the parser
@@ -11246,7 +11510,11 @@ and document.readyState is the document's (`ReadyStateFromDocument`).
 While a parser-inserted script runs, document.write goes to the loader's
 parser (`AttachParser`). Module scripts run through the engine's
 `EvaluateModule` with a resolver (specifiers against the importing
-module's URL; bare ones need an import map, not read yet) and a fetcher
+module's URL; bare ones through the document's import maps,
+`Web.Script.ImportMaps`: imports, "/"-ending prefixes, scopes with the
+most specific covering the referrer first, null entries blocking a
+specifier, maps merged as they arrive with entries already there kept;
+the JSON read with the engine's JSON.parse) and a fetcher
 that asks the loader (`TScriptScheduler.FetchScript`: CORS, UTF-8), one
 pair per context. The loop's microtask checkpoint runs every live
 context's jobs. The environment: timers as the loop's delayed tasks
@@ -11420,7 +11688,8 @@ error) over `TScriptEnvironment`:
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
-| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects, client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 71-traversal | NodeFilter, TreeWalker and NodeIterator (createTreeWalker, createNodeIterator) over the bindings' own tree getters, so a polyfill that redefines firstChild does not change what they walk |
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
@@ -11557,7 +11826,7 @@ declaration block in place (the index points at it). Removed rules,
 replaced selectors and sheets of removed or reparsed `<style>` elements
 are retired and freed once the engine has indexed again.
 
-**Not done yet**: import maps, ErrorEvent and onerror's arguments, the
+**Not done yet**: custom elements, ErrorEvent and onerror's arguments, the
 event handler scope chain (form, document), the unhandledrejection
 event, XML parsing (DOMParser, XHR's responseXML), shadow DOM,
 TreeWalker, `<object>` and `<embed>` documents, frameset
@@ -11698,6 +11967,12 @@ Sans Mono; some well-known names too), the face nearest the weight and
 slant is taken, and a character the face lacks takes the nearest face
 of the library that has it (remembered per font).
 
+A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
+a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
+the subset for Latin text and draws any other character with the subset
+that has it; a character no face of the family has comes from the
+default (proportional) family first, then any face that has it.
+
 `TTextFont` (`Web.Text.FontInstances`) is a face at a CSS pixel size,
 one per font style struct. Layout measures with the faces' unhinted
 advances and kerning scaled exactly, in CSS pixels, so a text has the
@@ -11776,7 +12051,13 @@ its size.
   with vertical-align (baseline, sub, super, text-top, text-bottom,
   middle, lengths, percentages; top and bottom for atomic inlines),
   floats beside or below lines, lines moved below floats too narrow for
-  them, static positions, empty lines after forced breaks.
+  them, static positions, empty lines after forced breaks. A line scanned
+  again (moved down past the floats, or broken before a float it had
+  passed) does not place its floats a second time: the line state keeps
+  the index up to which they are placed. Placing them again once made a
+  line that did not fit beside its own float move down for ever, which
+  froze the browser on www.wikipedia.org's fundraising banner (reference
+  page `floats-wider-than-room`).
 - Intrinsic sizes (`Web.Layout.Sizing`): min-content and max-content of
   inline content, block children, flex containers, tables and replaced
   boxes; shrink-to-fit.
@@ -12068,6 +12349,65 @@ about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
 style and layout); the Linux article (34000 px, 2 MB of HTML) about 110
 ms each. A pointer move over an article costs about 2 ms.
 
+On top of the pointer steps (`WebBrowse.Pointer` over libwebview's
+page selection), two steps also take another shape of argument:
+`scroll:top` and `scroll:bottom` put the viewport there (a number is
+the wheel's DY), and `hover:SELECTOR` moves the pointer to the middle of
+the first element matching, scrolled into view (X,Y is a point).
+`scrollby:DY` scrolls the viewport itself, `hoverat:X,Y` is
+`hover:X,Y`, `back` and `forward` go through the session history.
+`--patience MS` is how long a step waits for quiet before it goes on
+(10 s); an endless animation alone does not keep a page from being
+quiet.
+
+#### Comparing common sites with a reference browser
+
+`scripts/compare-sites.py` (not in `make test`: it needs the network)
+takes the pages of `scripts/compare-sites.list` (about 27 common pages
+that need no login: Wikipedia, search engines, news sites, shops,
+project sites) and, for each, at 1280x800 and 400x800:
+
+- renders it with webbrowse (`--webbrowse BINARY`: a copy keeps runs
+  apart from builds) and records the load time, console errors, failed
+  requests, crashes (a signal, a run-time error, an engine exception
+  in the output), hangs (the watchdog, or no end within the time-out
+  and a grace) and time-outs;
+- renders it with the installed Firefox (`scripts/firefox_reference.py`,
+  driven over its Marionette protocol with no extra packages: headless,
+  a profile and port per worker, overlay scroll bars so the page gets
+  the whole width, the window grown until the viewport is exactly the
+  size asked, a narrower viewport than the window allows made by
+  narrowing the page's browser element, the page left 3 s after its
+  load to settle). The pictures are kept between runs
+  (`--refresh-reference` makes them again), so runs before and after a
+  change compare against the same pictures;
+- scores the difference (Pillow: both pictures in gray, per 16 px block
+  the difference of the means and of the contrast; 0 alike, 100 nothing
+  alike; also per region of a 3 x 3 grid) and writes a heat map;
+- drives the page like a user in webbrowse (the smoke test): marks up
+  to six visible links and buttons, three same-site links and the first
+  search box with a script, scrolls down to the bottom in steps and back
+  up, hovers the marked elements and a grid of points, drags a
+  selection, types into the search box, follows each marked link,
+  scrolls and hovers there and goes back. A crash or hang fails it.
+
+Everything goes into the folder given with `--out` (outside the
+repository: nothing it fetched is committed): the pictures, the logs,
+`results.json`, and `report.txt` / `report.html` with the pages by
+score (`--baseline OLD/results.json` puts the earlier scores beside
+them). Problems found are reduced to small cases in the host tests
+(tools/WebTest/render, WebLayoutTest, WebScriptTest, WebLoadTest,
+JavaScriptTest).
+
+`scripts/qemu-browser-smoke.py ESP SYSTEM-DISK OUT [NAME ...]` does the
+user's part with the real browser: it boots the system under QEMU (KVM
+with `ACCEL=kvm`), waits for the network, starts the display server,
+and for each page opens `/app/browser/browser` on it, scrolls with the
+wheel, moves the tablet over a grid of points, drags a selection,
+clicks three points and goes back with Alt+Left, then checks the
+browser still runs and nothing panicked; it keeps a screen dump of each
+page after loading and after the steps.
+
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
@@ -12075,7 +12415,8 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts, ::first-line and ::first-letter, inline boxes
+scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
+unicode-range), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic
@@ -12134,6 +12475,33 @@ the engines collect every 16 KiB. It found the script clones that ran
 again, a detached form submitting, and empty root arrays failing range
 checks in the collector.
 
+And a fuzz test of the pointer (`WebLoadTest.Pointer`): a long generated
+page (`tools/WebLoadTest/pointer-fuzz.html`: a sticky header and
+section titles, a fixed footer, floats, transformed, animated and
+absolutely placed paragraphs, an inner scroll container, a frame) whose
+listeners on every mouse event, selectionchange, timer and animation
+frame read sizes (laying the page out inside the event), remove,
+replace, split, merge, move and hide the text under the pointer and in
+the selection, set the selection (also into a detached tree), delete it
+from the document and scroll, is given 3000 seeded random moves,
+presses, drags (past the viewport's edges, the wheel turned in the
+middle), releases, double and triple clicks, wheel steps, resizes,
+copies and select-alls through `TPagePointer` (`WebBrowse.Pointer`: the
+web view's pointer steps over its `TPageSelection`), with the layout
+brought up to date or left behind (as the web view puts a slow layout
+off), painting, hit testing, the selection's rectangles and both
+collectors between steps; then 600 more with the engines collecting
+every 16 KiB. It passes when the document's selection stays in the
+document, the view's selection in its current index, its text and
+rectangles readable, and no script error is uncaught. `WebLoadTest
+pointer` runs it alone, `WEB_POINTER_VERBOSE=1` prints a line a step.
+It found a removed frame's freed document painted from a stale box and
+a steep edge rounded to cell -1 in libdrawing's rasterizer.
+webbrowse's `--do` drives the same pointer on real sites: `scroll:DY`,
+`hover:X,Y`, `press:X,Y`, `move:X,Y`, `release:X,Y`,
+`drag:X1,Y1,X2,Y2`, `dblclick:X,Y`, `tripleclick:X,Y`, `selectall` and
+`copy` (prints the selected text).
+
 `make web-script-test` (in `make test`) builds `tools/WebScriptTest`
 with libjavascript, libcss and libhttp's URL units. Each
 `scripts/*.js` runs in a fresh window over its `scripts/*.html` page (or
@@ -12161,9 +12529,12 @@ freed object fails instead of finding stale contents.
 ## Web view (libwebview)
 
 libwebview (`userland/lib/webview`, `libwebview.so`, units `WebView.*`)
-is `TWebView` (`WebView.Control`, its parts in
-`WebView.Control.*.inc`), a libcontrols control any program embeds to
-show web pages:
+is `TWebView` (`WebView.Control`), a libcontrols control any program
+embeds to show web pages. By default its pages run in content processes
+and it shows their frames (see "Browser process model" below); the page
+engine described in this section is `TWebEngineView` (`WebView.Engine`,
+its parts in `WebView.Engine.*.inc`), which a content process hosts, or
+the view itself as a child control in ProcessModelInProcess:
 
     View := TWebView.Create(Root);
     View.Align := AlignClient;
@@ -12189,7 +12560,13 @@ with the document's resources before the document goes).
   its time to itself (`LayoutDue`): while a long page loads on a slow
   machine, input, scrolling, hit testing and painting go on against the
   last layout (boxes keep their styles alive, so the old list paints
-  safely); zooming lays out at once.
+  safely); zooming lays out at once. While CSS animations run, the next
+  frame comes no sooner than twice what the last frame's work and paint
+  took (`RequestAnimationFrame`; 16 ms at least), so a heavy animated
+  page leaves the GUI at least half its time; any other request for a
+  frame (input, a task, the page's requestAnimationFrame) brings it
+  forward. A script cannot hold the thread for more than 10 s (the slow
+  script watchdog, "Scripts").
 - **Painting** into a backing surface of the viewport's size, copied to
   the window; the viewport is painted again only when what is painted
   changed. Scrolling the viewport moves the surface's rows and paints
@@ -12205,12 +12582,19 @@ with the document's resources before the document goes).
 - **The pointer**: hit testing for :hover and :active (an element and
   its ancestors, retained while held), the CSS cursor (the hand over
   links, the text beam over text and text fields), the hovered link's
-  URL in `OnStatusText`; a click follows a link after a cancelable
+  URL in `OnStatusText` (both read from the hit before the page's mouse
+  events: a handler that reads a size lays out again and frees the hit's
+  box and style; pressing and releasing keep the hit's node and element
+  retained while handlers run); a click follows a link after a cancelable
   click event (`OnLinkClicked` first, with the disposition: in the
   view, a new tab for a target, a background tab for a middle click or
   Ctrl+click, a new window for Shift); a label acts on its control, a
   summary opens its details. Dragging selects text (a double click a
-  word), Ctrl+C copies it to the system clipboard, Ctrl+A selects all.
+  word, a triple click the line), Ctrl+C copies it to the system
+  clipboard, Ctrl+A selects all; a drag held past the top or bottom
+  scrolls on every frame, the wheel during a drag moves its focus. The
+  page gets mousemove while a button is held, the click count in
+  mousedown and mouseup (`detail`), and dblclick.
   The text the page shows is indexed from the display list
   (`WebView.TextIndex`: each text run with its place, character
   positions from the font's glyph placement, a text-shadow copy once),
@@ -12221,7 +12605,31 @@ with the document's resources before the document goes).
   (script's getSelection sees it, selectionchange fires) and a range
   script selects is painted (`WebView.SelectionMapping`); after the
   display list changes the painted selection is found again from the
-  DOM range, which the DOM kept up to date.
+  DOM range, which the DOM kept up to date. Text in a position: sticky
+  or transformed box is placed where it is shown (`WebView.TextGroups`:
+  the display list's sticky and transform groups; the pointer is mapped
+  into a run's group, a range's rectangles out of it at the scroll
+  offset now).
+  The selection lives in `TPageSelection` (`WebView.PageSelection`, no
+  controls: host tools drive the same code). Its index points at the
+  layout's text boxes, which a layout frees (a page's handler that reads
+  a size, an animation, a frame), so the index is only read while it was
+  built from the display list of the layout as it is now
+  (`IndexCurrent`); a place from an older index is dropped and the
+  selection found again from the DOM range. The rule for the whole
+  pointer path: nothing of a hit (its box, a text run, a place in the
+  text) is used after an event was fired, every element an event is
+  fired at is held (retained) while it is dispatched (the hover's
+  target, the target of mousemove while pressed, the pressed link,
+  control and target through the click), and boxes and places are
+  looked up again afterwards. (The crash after scrolling Wikipedia's
+  Linux article and moving to select text was the hover reading the
+  hit's box style after the link previews' mouseover handler had laid
+  the page out and freed it.) A selection's range moved by script out of
+  its document's tree stops being the selection (`TLiveRange.Moved`: it
+  does not hold its nodes while it is one), and a removed frame's or
+  image's box lets go of its content at once (a display list built from
+  it while a slow layout waits drew a freed frame).
 - **Animations**: each frame advances the layout's CSS animations and
   transitions and queues their events; the view asks for frames while
   any runs.
@@ -12299,61 +12707,620 @@ contextmenu, with client coordinates in the target document's own
 viewport, page offsets, offsetX/Y, button, buttons, detail and
 modifiers); a cancelled mousedown keeps the focus and selection.
 
+**What a browser's menus and dialogs ask** (for the Firefox 3.6 style
+chrome; every one works in both process models, through the protocol's
+version 2 messages in a content process, on `TWebEngineView` in the
+program; the types are in `WebView.Types`, re-exported by
+`WebView.Control`):
+
+- **Session history.** `HistoryEntries: TWebHistoryList` (`Url`,
+  `Title`, oldest first) and `HistoryIndex` (the current entry's index,
+  -1 none), up to date when `OnHistoryChanged` fires (which a title
+  change fires too); `GoToHistoryOffset(-2)` goes two back, across
+  sites and processes; `RestoreHistory(Entries, Index)` restores a
+  session into a fresh view (`Entries[Index]` is loaded, the others
+  load when gone to). In a content process the view's history is the
+  entries of the sites it left (`FBackEntries`), the process's own
+  session history (all of one site, the entries and current index
+  coming with every `IpcHistoryState`) and the entries it left going
+  back (`FForwardEntries`) (`WebView.Control.History.inc`). An offset
+  within the process's own history is its traversal
+  (`IpcGoToHistoryOffset`); any other is a jump: the run of entries of
+  the target's site around it goes to a view of that site's process
+  (`IpcRestoreHistory`: libweb's new `TNavigable.RestoreSession` makes
+  them the history, with no documents yet, and loads the target as a
+  traversal), the rest become the back and forward lists. Reload after
+  a crash restores the history it had that way. The entries of sites
+  left are not documents kept alive (no back-forward cache): going back
+  to one loads it again, its scroll position and pushState state lost.
+- **Find.** `OnFindDetails(Needle, Found, Wrapped, MatchCount)` fires
+  with `OnFindResult`: whether the search went past the end (or the
+  start) and on from the other end, and the matches in the page (-1
+  past 100000; `TPageTextIndex.FindWrapping`, `AllMatches`).
+  `SetFindHighlight(Needle, MatchCase)` paints every match in a soft
+  yellow under the selection (`WebView.Engine.Find.inc`: the matches
+  are found again whenever the text index is built again, and only
+  those on the screen are measured; device pixels from the CSS
+  rectangles at the device scale); '' or a new document clears it.
+- **Context menus.** `TWebContextInfo` gained `BackgroundImageUrl` (the
+  nearest background-image of the element or its ancestors, resolved),
+  `IsEditable` (a text field, a text area or contenteditable content),
+  `FrameUrl` (the frame document's URL when the point is in a frame)
+  and `CanCopy`; `ImageUrl` is resolved now.
+- **Page Info.** `RequestPageInfo` answers once on `OnPageInfo` with a
+  `TWebPageInfo` (`WebView.PageInfo`, no controls): URL, title,
+  referrer, content type, encoding, the rendering mode ('Standards
+  compliance mode' or 'Quirks mode'), Last-Modified as sent, the meta
+  elements (name, http-equiv, property or charset with the content),
+  the media (`Image` with its alt text, `Background`, `Icon`, `Input
+  image`, with their sizes as laid out in CSS pixels) and the counts of
+  forms and links. libweb's documents now keep their referrer (also
+  `document.referrer`) and Last-Modified, and a text or image
+  document's content type is the response's.
+- **Display options.** `ImagesEnabled` (from the next document: the
+  navigable's `LoadImages`), `TextOnlyZoom` (Zoom scales font sizes, not
+  CSS pixels: libcss's media environment has a `TextZoom` that
+  multiplies the absolute part of every font size - lengths and
+  keywords - while em, percentages and rem follow the zoomed sizes;
+  `TDocumentLayout.SetTextZoom`), `AuthorStylesEnabled` (False is "No
+  Style": the document's sheets and style attributes are not used, the
+  user agent's sheet and presentational hints are;
+  `TDocumentStyler.AuthorStylesEnabled`, `TDocumentLayout.SetAuthorStylesEnabled`;
+  applies at once), `EncodingOverride` (an encoding label, '' to
+  detect: the navigable's `EncodingOverride` is taken as the response's
+  charset, so it is certain and a meta charset does not change it; a
+  byte order mark still wins; setting it reloads) and
+  `SupportedEncodings` (libweb's `SelectableEncodingNames`: every
+  encoding it decodes but replacement and x-user-defined, UTF-8 first).
+  These apply to the top document's layout; frames keep their own.
+- **Pop-ups.** libweb now has `window.open(url, target, features)`:
+  `_self` navigates the window; a named frame or `_top`/`_parent` is
+  navigated by the engine; anything else goes to the host as a link for
+  a new tab (a new window when features were given) through
+  `OnLinkClicked`. It returns null even when a tab was opened (the new
+  tab may be another process's: no WindowProxy across them); a
+  sandboxed frame needs allow-popups. With `PopupsBlocked` a window.open
+  without a user gesture (a click or a key in the last second, one
+  window per gesture) is refused and its URL told to `OnPopupBlocked`.
+- **The network** (`WebView.Network`, the browser process's, so for
+  every view): `SetPrivateBrowsing` (a fresh cookie jar, HTTP cache,
+  HSTS store and local storage in memory; turning it off empties them
+  and brings the usual ones back; pages open across the switch keep
+  what they already read, so a browser closes or reloads them),
+  `SetWorkOffline` (every exchange fails at once with 'offline', in
+  libhttp's client; fresh cache entries are still served),
+  `ClearHttpCache`, `HttpCacheBytes`, `SetHttpCacheLimit`, `ListCookies`
+  (`TCookieInfo`: host, name, value, path, expiry, Secure, HttpOnly),
+  `RemoveCookie`, `ClearCookies`, `SetCookiePolicy` (accept, refuse,
+  refuse third-party, with allowed and blocked hosts that cover their
+  subdomains, the longest matching one deciding, a blocked one winning
+  a tie: libhttp's `Http.CookiePolicies`, applied by the jar when
+  storing and when sending), `ClearWebStorage`, `ClearHsts`,
+  `ConnectionSecurityOf(Url)` (the protocol, cipher and certificate
+  chain of the last TLS connection to its host and port: libhttp's
+  `Http.ConnectionSecurity`, recorded by every TLS handshake; not yet
+  for HTTP/3) and `SystemTrustSummaries` (the system trust store's
+  certificates; libtls's `Tls.SystemTrust.SystemTrustSummaries`).
+  Certificates are `TCertificateSummary` (libtls's
+  `Tls.CertificateSummaries`): subject and issuer as distinguished
+  names, common name, organization, validity, serial number and SHA-256
+  fingerprint.
+
 Not yet: drawing a text field's selection, dragging the bars of inner
 scroll containers, drag and drop, lazy images near the viewport,
-printing, text selection inside frames, Tab moving into frames.
+printing, text selection inside frames, Tab moving into frames;
+WindowProxy objects for windows window.open made; text zoom, No Style
+and the encoding override in frames.
 
 ## Browser
 
 `browser` (`userland/browser`, installed as `/app/browser`: "Browser"
 in the Internet category with the `app-web-browser` icon) is a web
-browser on libwebview, linked with libquic for HTTP/3:
+browser on libwebview (its pages in content processes: "Browser process
+model" below), linked with libquic for HTTP/3. Its chrome - the windows,
+menus, toolbars, dialogs, history, bookmarks, downloads and settings -
+lives in the browser process, laid out and used as browsers were before
+they folded their menus away, in the system's own artwork and both
+themes (Sunrise's golden bands, Classic's raised faces).
 
-- The window (`Browser.MainWindow`, its menus and keys in
-  `Browser.MainWindow.Menus.inc`, what the views tell in
-  `Browser.MainWindow.Views.inc`): the menu bar (File, Edit, View,
-  History, Bookmarks, Tools, Help), the tab strip (`Browser.TabStrip`:
-  each tab's icon, or a turning ring while it loads, its title cut with
-  "...", a close button; "+" for a new tab; a middle click closes; the
-  chosen tab in the theme's header band in Sunrise, raised in Classic),
-  the navigation bar (back, forward, reload or stop, home from the icon
-  theme; the address bar; the bookmark button), the bookmarks bar
-  (`Browser.BookmarksBar`), a web view per tab (`Browser.Tabs`), the
-  find bar (`Browser.FindBar`: incremental, Enter and Shift+Enter, match
-  case) and the status bar (the hovered link, downloads, the zoom). The
-  window's title is the page's.
-- The address bar (`Browser.Addresses`, plain logic): a URL with a known
-  scheme as it is, an absolute path as a file, something like a host (a
-  dot, a port, localhost) as https:// (http:// for IP addresses and
-  localhost), anything else searched with the search URL setting ("%s"
-  for the form-encoded words), and with none set a page saying it is not
-  an address. Escape puts the page's address back; Alt+Enter opens it
-  in a new tab.
-- Keys: Ctrl+L (and Alt+D), Ctrl+T, Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab
-  (and Ctrl+Page Down/Up), F5 and Ctrl+R, Alt+Left and Alt+Right,
-  Alt+Home, Ctrl+F and F3, Ctrl++ Ctrl+- Ctrl+0, Ctrl+D, Ctrl+H, Ctrl+J,
-  Ctrl+O (a file).
-- The browser's own pages (`Browser.AboutPages`, through the fetcher's
-  `AboutPageProvider`, for navigations the browser itself starts):
-  about:home (the start page: bookmarks and recently visited pages),
-  about:history, about:bookmarks, about:downloads, in the theme's
-  colours.
-- Kept in the user's settings folder (`Browser.Stores`,
-  ~/.settings/browser): the history (history.txt: time, URL, title; at
-  most 2000 visits) and the bookmarks (bookmarks.txt).
-- Downloads (`Browser.Downloads`): what a page cannot show is fetched
-  again on a thread of its own over the shared client (a local file is
-  copied) into ~/Downloads under a name not taken yet; the status bar
-  follows it.
-- Settings (`Browser.Settings`, group Browser; Tools > Settings,
-  `Browser.SettingsDialog`): the home page, the search URL, HTTP/3,
-  JavaScript, the bookmarks bar. A page's prompts are message boxes and
-  a text dialog (`Browser.PromptDialog`).
-- It prints what happens, a line each (`browser.pas` lists them: tabs,
-  locations, titles, loading states, finds, zoom, bookmarks, downloads,
-  prompts, the console), which `scripts/test-input.py` reads: it shows a
-  local page and checks its title, that it loaded, that its script
-  logged, and its background on the screen.
+**The window** (`Browser.MainWindow`, its parts in
+`Browser.MainWindow.Tabs.inc`, `.Commands.inc` and `.Views.inc`), top
+to bottom:
+
+- the menu bar (`Browser.MenuBar`): File, Edit, View, History,
+  Bookmarks, Tools and Help with the items, access keys and shortcuts of
+  old (listed in the unit); View > Toolbars hides it, and while hidden
+  Alt, F10 or a heading's access key shows it for as long as a menu is
+  in use (libcontrols' `TMenuBar.AutoReveal`);
+- the Navigation Toolbar and the Bookmarks Toolbar (`Browser.Toolbars`
+  over libcontrols' `TToolbox`): Back and Forward (a held or right press
+  drops their entries down: `DropDownOnHold`), Reload, Stop, Home, the
+  location bar, the search bar; the bookmarks toolbar's items
+  (`Browser.BookmarksToolbar`: the Bookmarks Toolbar folder, folders as
+  menus, a ">>" menu for what does not fit, drag a page's site button
+  or a URL onto it to bookmark it, drag a bookmark along it to move it,
+  a context menu with New Bookmark/Folder/Separator, Delete,
+  Properties). View > Toolbars > Customize... shows the palette under
+  the toolbars: every item is dragged between the toolbars and the
+  palette (Downloads, Print, New Tab, New Window, History, Bookmarks,
+  Cut, Copy, Paste, Zoom In and Out, Full Screen, separators, spaces);
+  Show: Icons / Icons and Text / Text, Use Small Icons, Restore Default
+  Set; the arrangement is the settings NavigationItems and
+  BookmarksItems;
+- the tab strip under the toolbars (`Browser.TabStrip`): icon or a
+  turning ring, title, close button; the new tab button after the last
+  tab, the list of all tabs at the right, arrows and the wheel when
+  tabs no longer fit at 100 units; drag a tab along to reorder it, down
+  off the window to give it a window of its own (its entries go along;
+  the page loads again there); a double click on the empty part opens a
+  tab; the tab context menu (New Tab, Reload Tab, Reload All Tabs, Close
+  Other Tabs, Bookmark This Tab, Bookmark All Tabs..., Undo Close Tab,
+  Close Tab);
+- the sidebar (`Browser.Sidebar`, Ctrl+B and Ctrl+H): the bookmarks or
+  the history by day, with a search box;
+- the pages (a web view per tab), the find bar (`Browser.FindBar`: close,
+  Find, Next, Previous, Highlight all, Match case, "Phrase not found",
+  "Reached end of page, continued from top") and the status bar
+  (`Browser.StatusBar`: link targets and what is loading, a progress
+  meter, Offline, the downloads running, the zoom when not 100 %, the
+  lock of a secure page).
+
+The title is the page's, with "(Private Browsing)" while browsing
+privately. Every command has a number (`Browser.Commands`) that menu
+items, toolbar buttons, keys and context menus run
+(`TBrowserWindow.RunCommand`); menus check and enable their items as
+they open. Keys without an item are hidden items with accelerators
+(Ctrl+Tab, Ctrl+1 to 9, Ctrl+L, F6, Alt+D, Ctrl+K, Ctrl+R, Ctrl+F5,
+Ctrl+Shift+T, Ctrl+G, Shift+F3...).
+
+**The location bar** (`Browser.LocationBar`): the site identity button
+(the page's icon; for https a lock and the host on a band; a click
+opens `Browser.IdentityPopup`, who verified the site from the browser's
+own TLS connection, with More Information... to Page Info; dragging it
+drags the page's address), the address, the drop-down of pages visited
+last, the star (filled when bookmarked: a click bookmarks the page in
+Unsorted Bookmarks and opens `Browser.BookmarkPanel` - name, folder,
+tags, Remove Bookmark, Done). Typing shows the suggestions
+(libcontrols' `TSuggestionPopup`: title over address, a star and the
+tags of bookmarks), ranked by `Browser.AwesomeBar` (every word in the
+title, address or tags; frecency from the visits and their age,
+bookmarks weighed up, words at word starts and typed text an address
+begins with ranked first; ^ * + @ # narrow them; the Privacy setting
+chooses history, bookmarks, both or nothing). Up and Down walk them,
+Enter goes (Alt+Enter in a new tab, Ctrl+Enter www.-.com,
+Shift+Enter .net). A first word that is a bookmark's or an engine's
+keyword goes there (`Browser.Keywords`), else `Browser.Addresses`
+decides.
+
+**Searching** (`Browser.SearchEngines`, `Browser.SearchBar`,
+`Browser.SearchEngineDialog`): DuckDuckGo, Wikipedia (English), Google
+and Bing ship with the browser, but none is chosen until the user picks
+one in the search bar's menu or Options > Main, so nothing typed is
+sent anywhere by default: the search bar opens its engine menu instead
+of searching, and words in the location bar give a page saying they
+are not an address and how to choose an engine. Manage Search Engines
+orders, removes (shipped ones are remembered as removed), adds (name
+and a URL with %s) and gives keywords, kept in searchengines.txt; the
+chosen engine is Browser/SearchEngine, its URL Browser/SearchUrl.
+
+**What the windows share** (`Browser.Application`, `BrowserApp`): the
+settings, history, bookmarks, downloads, engines, saved passwords, the
+console log and the about pages; the windows (New Window, a window
+from a torn-off tab or a closed one brought back; the last one closed
+ends the browser, after asking about several tabs; a request to end
+from the system ends it without asking); the session.
+
+**Kept in the profile** (~/.settings/browser, `Browser.Profile`; files
+written whole through a temporary file, `Browser.TextFiles`):
+
+- history.txt (`Browser.History`): a line per visit; places grouped by
+  URL with visit counts, search, since a time, recent, forget a page, a
+  site or everything since a time, age groups (Today, Yesterday...);
+- bookmarks.txt (`Browser.Bookmarks`, format 2): the Bookmarks Toolbar,
+  Bookmarks Menu and Unsorted Bookmarks folders and their folders,
+  bookmarks (name, URL, tags, keyword, description, when made) and
+  separators; the old format is read into the toolbar folder;
+- session.txt (`Browser.SessionStore`): the windows (place, tabs with
+  their entries and zoom, the chosen tab), the recently closed tabs (10)
+  and windows (3), and whether the browser was running: saved two
+  seconds after a change and at the end; at the next start a session
+  left running (a crash) or the startup setting "Show my windows and
+  tabs from last time" brings it back (`TWebView.RestoreHistory`);
+- downloads.txt, searchengines.txt, passwords.txt
+  (`Browser.Passwords`; not encrypted), storage/ (local storage).
+
+**Private browsing** is the whole browser's, as it was then: Tools >
+Start Private Browsing puts the session aside, closes the windows,
+switches the network to in-memory cookies, cache, HSTS and storage
+(`SetPrivateBrowsing`) and keeps no history; Stop drops all that and
+brings the session back. "Automatically start in a private browsing
+session" starts that way.
+
+**Windows and dialogs:**
+
+- Options (`Browser.Options`, libcontrols' `TPreferencesWindow`: a row
+  of pane icons, OK, Cancel, Help) with the panes `Browser.Options.Main`
+  (startup, home pages with Use Current Pages and Use Bookmark...,
+  downloads folder, Downloads window, the search engine),
+  `.Tabs`, `.Content` (pop-ups, images, JavaScript and its Advanced
+  switches, default font, languages), `.Applications` (what downloads
+  of each type do: save or ask), `.Privacy` (remember, never or custom
+  history; cookies with exceptions and Show Cookies...; clearing on
+  close and what; location bar suggestions), `.Security` (passwords,
+  Saved Passwords...), `.Advanced` (General, Network with Connection
+  Settings, HTTP/3 and the cache with Clear Now, Update, Encryption with
+  View Certificates: libtls's trust store); the sub-dialogs are in
+  `Browser.Options.Dialogs`. Every option is a setting of group Browser
+  (`Browser.Settings` lists them); OK applies them to every window at
+  once (scripts, images, pop-ups, HTTP/3, cookie policy, cache size).
+- the Library (`Browser.LibraryWindow`): Back and Forward, Organize,
+  Views, Import and Backup (export to the HTML bookmarks format, backup
+  and restore), search; the tree (History and its days, Tags, All
+  Bookmarks with its folders), the list with columns (Name, Tags,
+  Location, Most Recent Visit, Visit Count; sorted by a header click),
+  the details (name, location, tags, keyword, description) kept as
+  typed; bookmarks dragged onto a folder move there.
+- Downloads (`Browser.DownloadsWindow`, `Browser.Downloads`): newest
+  first with progress, speed and time left; Pause and Resume (a Range
+  request; a server sending everything starts again), Cancel, Retry,
+  Open, Show in Folder (the file manager, `Browser.Launch`), Remove,
+  Clear List, search; the list survives restarts.
+- Page Info (`Browser.PageInfo`): General (address, type, render mode,
+  encoding, referrer, modified, meta tags, forms and links), Media
+  (images with a preview and Save As...), Permissions (cookies for the
+  site), Security (identity, visits, cookies, passwords, the connection,
+  View Certificate); the page's process answers `RequestPageInfo`.
+- Page Source (`Browser.PageSource`, `Browser.SourceColoring`): the
+  source fetched again (from the cache when it is fresh) and coloured,
+  in a web view of the browser's own; wrap long lines, save.
+- Error Console (`Browser.ErrorConsole`, `Browser.ConsoleLog`): every
+  tab's console messages and script errors, All/Errors/Warnings/Messages,
+  a filter box, Clear.
+- Clear Recent History (`Browser.ClearHistory`), the bookmark dialogs
+  (`Browser.BookmarkDialogs`: Properties, New Bookmark, New Folder,
+  Bookmark All Tabs), About Browser (`Browser.AboutDialog`), Open
+  Location when the location bar is hidden (`Browser.InputDialog`).
+- The browser's own pages (`Browser.AboutPages`): about:home,
+  about:history, about:bookmarks, about:downloads, about:help (Help
+  Contents), about:support (Troubleshooting Information: version, user
+  agent, content processes, sandbox, protocol version, network state),
+  about:addons, about:privatebrowsing, about:license.
+
+**Context menus** (`Browser.MainWindow.Views.inc`): links (Open Link in
+New Window and Tab, Bookmark This Link, Save Link As..., Copy Link
+Location), images (View Image, Copy Image Location, Save Image As...,
+Set As Desktop Background: saved to ~/Pictures and written to
+Desktop/Wallpaper, which the desktop watches), a selection (Copy, Select
+All, Search for "...", View Selection Source), form fields (spelling,
+Undo, Cut, Copy, Paste, Delete, Select All), the page (Back, Forward,
+Reload or Stop, Bookmark This Page, Save Page As..., Send Link..., View
+Background Image, Select All, View Page Source, View Page Info).
+Printing, Page Setup and Print Preview say printing is not available;
+Subscribe, Import, Report Web Forgery and Check for Updates are stubs.
+
+**libcontrols gained** for it: `TToolButton` drop-down menus
+(`DropDownOnHold`, `DropDownArrow`, `DropDownWhole`), its own image
+list, icon size and caption below; `Controls.CustomToolBars` (the
+toolbox, customizable toolbars, flexible items) and
+`Controls.ToolbarPalette`; `Controls.PreferencesWindow`;
+`Controls.SuggestionPopup` (a pop-up that leaves the keys to its edit
+box: `TPopupWindow.TakesKeys`); `TEditBox.Borderless` and
+`Placeholder`; `TMenuBar.AutoReveal`; `TMenuItem.DeleteFrom`;
+`TTreeView.OnActivate`; more key codes in `Controls.Keys`.
+
+**What it prints**, a line each, for tests (`browser.pas` lists the
+older ones): tabs, tab, windows, go, location, title, state, loaded,
+link, found / not-found, find-wrapped, highlight, zoom, bookmarked,
+download, suggest TEXT N, back-menu N, options open / saved, library
+..., customize / customize done ITEMS, page-info, page-source,
+error-console N, search-engine, private on/off, session restored,
+layout menu Y toolbars Y tabs Y content Y status Y, exit.
+
+**Tests**: `make browser-test` (`tools/BrowserTest`: addresses and
+keywords, the history's queries, bookmark folders, tags and both file
+formats, the suggestions' matching and ranking, the session file and
+closed tabs and windows, the search engines, the console log, source
+colouring, passwords); `scripts/test-input.py`'s browser part shows a
+local page (title, script, background), then checks the chrome: the
+menu bar, toolbars, tabs and page in that order, Tools > Options...
+changing a setting from the keyboard, the Library, the location bar's
+suggestions and the find bar with Highlight all; then the process model
+checks.
+
+## Browser process model
+
+A page that crashes or loops for ever takes only its own tabs with it:
+the pages run in **content processes** (renderers), the browser's
+windows, tabs and network in the **browser process**, as in the other
+browsers.
+
+```
+browser process (/app/browser)                       content processes (/bin/webcontent)
++---------------------------------------------+       +-----------------------------------+
+| GUI thread: windows, tabs, TWebView facades |       | page thread: TWebEngineView in a  |
+|   paints frames from shared sections,       | chan- |   window-less control host:       |
+|   sends input, shows dialogs and menus      | nels  |   parse, style, layout, paint,    |
+| IPC thread (WebView.ContentIo): every       |<----->|   scripts (libweb, libjavascript) |
+|   channel and process handle; pings, the    |       | no sockets, no files: it asks     |
+|   network service, queue to the GUI         |       |   the browser (transport)         |
+| network threads: one per HTTP exchange      |       | sandboxed (kernel restrictions)   |
++---------------------------------------------+       +-----------------------------------+
+         ^ shared section per view: the frame (no pixels through the channel)
+```
+
+**Processes.** The browser process keeps the user interface (chrome,
+tabs, the address bar), the network stack - libhttp's client and its
+connections, the cookie jar, the HTTP cache, HSTS - local storage,
+history, bookmarks and downloads: the single authority for anything
+that touches the network or the disk. The network runs as a *service
+in the browser process* (`WebView.NetworkService`) rather than a
+network process of its own: the browser already owns the profile, the
+client and cookie jar are thread safe, and the service runs on the IPC
+thread and per-exchange threads, never on the GUI thread, so a busy
+window does not hold loads up; a separate process would add a hop and
+a process to watch for a robustness the browser gets anyway (a network
+crash would end the browser either way while the UI and the network
+share the profile). Splitting it out later needs only another endpoint
+for the same messages.
+
+Content processes are `/bin/webcontent` (`userland/bin/webcontent.pas`,
+units in `userland/webcontent`), started by libwebview's process manager
+(`WebView.ContentProcesses`) with its end of a channel passed as a
+handle (`ProcessPassHandles`) and its options on the command line
+(`--channel`, `--site`, `--scale`, `--script-limit`, `--memory-limit`,
+`--theme`, `--sandbox`). **Process per site:** a site is a scheme and a
+registrable domain (`WebView.Sites`, libhttp's public suffix rules:
+`https://www.example.com` and `https://mail.example.com` are one site),
+an IP address or a host without one its own; all local files are the
+site `file:`, the browser's pages `about:`; about:blank, data: and
+javascript: take their opener's. Views of one site share a process up
+to `MaximumViewsPerProcess` (4), two sites never; at most 30 processes
+(two of the IPC thread's 64 wait handles each), past that a view runs
+its page in the browser. A process without views is asked to end
+(`IpcShutdown`).
+
+**Navigation across sites.** The engine asks its host before every
+top-level navigation and again when a redirect ended on another URL
+(`TNavigableObserver.NavigationAllowed`, libweb). In a content process a
+navigation to another site than the process's is not started: it goes
+to the browser (`IpcOpenUrl`, with a form's method and body), and the
+view moves to a process of that site (`TWebView.NavigateRemote`): the
+old view in the old process is destroyed, the last frame stays on the
+screen until the new process paints. Back and forward within a site are
+the process's session history; across sites the view keeps the URLs it
+left (`FBackUrls`, `FForwardUrls`) and loads them again (no page state
+kept, unlike a back-forward cache).
+
+**Cross-site iframes stay in their embedder's process** in this pass:
+a frame of another site is laid out, painted and scripted by the
+embedding page's renderer, which therefore may hold another site's
+documents (the network service still refuses it that site's cookies
+and storage by its lock, so document.cookie in such a frame is empty).
+Out-of-process iframes are the next step: libweb lays a remote frame out
+as an empty replaced box and reports its rectangle; the frame gets a
+view of its own in its site's process (`IpcCreateView` with a parent
+view and a frame token), whose frames the browser composites into the
+parent's at that rectangle, clipped by its ancestors' clips; input is
+routed by the browser's hit test of the frame rectangles (the frame's
+process gets pointer events in its coordinates, the focused frame the
+keys); `postMessage`, `window.parent`, `frames[]` and `location` across
+processes go through proxies forwarding to the other renderer through
+the browser, and frame navigation of a remote frame is a browser
+message.
+
+**The protocol** (libwebipc, `userland/lib/webipc`, `libwebipc.so`,
+units `WebIpc.*`, depends on libsystem and libdrawing). A message has a
+kind, a view id (0: the process), a request id (0 for an event; a reply
+has the kind `IpcReply` and the request's id) and a payload in the wire
+format (`WebIpc.Wire`: little-endian fixed-width integers, doubles,
+length-prefixed UTF-8 strings and byte arrays; a reader never reads
+past its data, and a payload that does not parse raises `EIpcMalformed`,
+which breaks the channel: a renderer sending garbage is not trusted).
+Kinds (`WebIpc.Messages`, protocol version 2): 1-99 either way (hello,
+ping, pong, reply, shutdown), 100-199 browser to renderer (create and
+destroy a view, navigate, load HTML, back, forward, reload, stop,
+resize with the scale and DPI, visible, focus, zoom, input, find,
+select all, copy, clear selection, scroll, frame acknowledgements, menu
+answers, scripting, view commands; version 2: 123 go to a history
+offset, 124 restore a history, 125 the find highlight, 126 Page Info
+(a request), 127 display options), 200-299 renderer to browser
+(surface, frame, title, location, loading state, favicon, status text,
+history state, zoom, cursor, link, download, navigation failure,
+context menu, pop-up menu, console, script dialog, beforeunload,
+clipboard write and read, selection, open URL, script interrupted,
+input handled, unhandled key, page text; version 2: 226 a pop-up
+blocked), 300-399 the network service
+(hop start, cancel, head, data, done; local file; cookie get and set;
+storage load, set, remove, clear; about pages). Records with encoders
+and decoders for the larger payloads are in `WebIpc.ViewMessages` and
+`WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
+state is a `TIpcHistoryState` (can go back and forward, the entries'
+URLs and titles, the current index; also what `IpcRestoreHistory`
+carries; at most 1000 entries, the index checked against them), find
+asks with a `TIpcFindRequest` and is answered with a `TIpcFindResult`
+(found, wrapped, the match count, -1 unknown), and the context menu's
+`TIpcContextInfo` has the background image, editable, frame URL and
+can-copy fields; new are `TIpcDisplayOptions` (images, text-only zoom,
+author styles, pop-ups blocked, the encoding label, at most 64 bytes)
+and `TIpcPageInfo` (seven texts, the meta and media lists, the form and
+link counts). A view sends its display options right after it is made. A channel message holds at most 16 KiB, so a
+protocol message goes in pieces with a 16-byte header each
+(`WebIpc.Fragments`: kind, first/last flags, view, request, the whole
+length; handles with the first piece; at most 256 MiB). An endpoint
+(`WebIpc.Endpoints`) never waits to send: what the channel refuses
+(the other side has 64 messages queued) is kept, in order, and sent by
+`Flush`, which the browser's IPC thread and the renderer's loop call
+every few milliseconds while something waits; sending is thread safe,
+handles given to `Send` are closed once the kernel took its own
+reference. `tools/WebIpcTest` (`make web-ipc-test`) checks the wire
+format both ways and against short and lying input, pieces around the
+piece size and pieces that do not fit together, and every payload.
+
+**Frames.** A content process paints each view into a section shared
+with the browser (`WebIpc.SharedSurfaces`: `CreateSection`,
+`MapSection`; the handle travels once with `IpcSurfaceCreated`, a new
+one with every new size). After each turn of its loop a view with
+something invalidated, whose last frame the browser has taken, paints
+the damaged rectangle (the engine and its scroll bars, `PaintAll`
+through a canvas clipped to it) and sends `IpcFramePresented`: the
+frame number, the damage, the viewport's scroll position and the
+document's size in device pixels, whether fixed boxes are on it, and
+how far it got with input. The browser copies the damage into the
+view's own picture on its GUI thread and acknowledges (`IpcFrameAck`);
+only then may the next frame be painted, so the two never touch the
+same pixels at once and a slow browser slows the renderer, not the
+other way round. The browser always has a whole last frame to show.
+
+**Threads and never waiting.** The browser's GUI thread never waits for
+a renderer: everything it sends is queued if need be, every answer it
+needs comes later (find: `OnFindResult`; selected text, page text: the
+last told). The IPC thread (`WebView.ContentIo`) waits on every
+channel and process handle; it notes pongs, answers the network
+service's requests on the spot, and queues everything for a view to the
+GUI thread, woken by one posted message however much waits. A renderer
+may wait for the browser (`TContentConnection.Call`: an alert's answer,
+the clipboard, a cookie, a local file, an about page); while it does
+it answers pings and puts other messages aside. In the content process
+the page thread runs scripts, layout and painting; image decoding and
+other workers stay on their threads; it has no network threads of its
+own (the network service has them).
+
+**Async scrolling.** Input carries a sequence number; frames and
+`IpcInputHandled` say how far the renderer got. When input has gone
+unanswered for 120 ms (a long layout, a busy script, a hung page), the
+wheel moves the last frame in the browser itself, within the document's
+size the last frame gave, and paints white where nothing is known yet;
+the renderer's next frame that handled that input takes over. The
+scroll bars stay where they were meanwhile.
+
+**Input and the rest of the UI.** The facade sends pointer events (with
+the held modifiers; `SetHeldModifiers` in libwindowing lets the content
+process answer `HeldModifiers` as a window would), the wheel, keys and
+context menu requests; the content host (`WebContent.Host`, a
+`TControlHost` without a window) gives them to the engine and its scroll
+bars as a window does (the pressed control keeps the pointer, hover
+enter and leave). The pointer shape comes back (`IpcCursorChanged`).
+The window's accelerators run before a view gets a key, so the
+browser's shortcuts work whatever the page does. Pop-up menus (a
+select's options) are described to the browser and shown there
+(`IpcPopupMenu`, the answer `IpcMenuChosen`); context menus go to the
+host's `OnContextMenuRequested`, else the facade's own menu. The
+clipboard is the browser's. A page's alert, confirm, prompt and
+beforeunload go to the host's handlers if it set them, else to a sheet
+across the top of that view (`WebView.PromptSheet`), modal for that tab
+only: the renderer waits, the browser and its other tabs go on.
+
+**Crashes and hangs.** A content process that ends without being asked
+(a crash, killed for memory, `about:crash`) is seen by the IPC thread
+when its channel breaks or its process handle signals; its exit status
+comes with the end. Each of its views shows "This tab crashed" with the
+reason and Reload (`WebView.RecoveryPanels`), which loads the page again
+in a new process; other tabs are not touched. The manager pings every
+process once a second; one that has not answered for
+`HangTimeoutMilliseconds` (setting `Browser/HangTimeout`, 8 s) shows a
+bar in its views, "This page is not responding", with Wait (asked again
+after another timeout) and Stop page (ends the process: the crashed
+page). The slow script watchdog ending scripts three times within a
+minute (`IpcScriptInterrupted`) shows the same bar. The browser prints
+`process started PID`, `crashed STATUS`, `hung`, `responsive`, `wait`,
+`stop` and `script-interrupted N` lines with the tab.
+
+**The sandbox.** Before it runs any page a content process restricts
+itself (`WebContent.Sandbox`) with a new kernel facility, **process
+restrictions**: `CallSetProcessLimit(ProcessLimitRestrictions, Flags)`
+(limit 6) adds `Restrict*` flags to the caller, which are never taken
+away - not even by root - and are inherited by every process it starts
+(`Processes.Restrictions`; libsystem's `Sys.Restrictions`:
+`RestrictThisProcess`, `ThisProcessRestrictions`,
+`LimitCommittedMemory`). `RestrictNetwork` refuses sockets,
+`RestrictFileWrites` opening for writing, creating, truncating,
+removing, renaming, linking, making directories and FIFOs and changing
+attributes (also through the VFS access hook, so root too),
+`RestrictFileReads` opening or looking at any path outside `/lib` and
+`/etc` (libraries, fonts, the system's settings) and any device but
+`/dev/null`, `/dev/random` and `/dev/urandom`, `RestrictProcessCreation`
+starting programs, `RestrictPortConnections` making or connecting to
+named ports (the display server, services), `RestrictProcessControl`
+ending, stopping or asking any other process to end. Refusals are
+`ErrorAccessDenied`. Handles it already holds (its channel, standard
+output) keep working. A renderer also lowers the memory it may commit
+(`--memory-limit`, 1 GiB by default; only root could raise it again)
+and sets its out-of-memory adjustment to 700 while none of its views is
+shown and 300 while one is, so a background renderer is ended before
+the browser (0) when memory runs out. The browser's setting
+`Browser/Sandbox` turns the restrictions off for debugging.
+
+**What the browser refuses a renderer.** The network service knows the
+site each process is locked to and does not take a renderer's word for
+anything: document.cookie and local storage only of URLs and origins of
+that site (others are refused and logged, `[network] refused ...`),
+local files only to the `file:` process, the browser's about pages only
+to the `about:` process, only http and https exchanges; whether a
+request is same-site for its cookies it decides itself. HSTS is the
+browser's (an http:// request to a known host gets a 307 to https:// as
+an internal redirect; Strict-Transport-Security is learned from every
+response). CORS, mixed content, CSP and the referrer stay the
+renderer's decisions about what its own page may see. Storage written
+by a renderer is saved by the browser every 5 s.
+
+**libwebview's API.** `TWebView` (`WebView.Control`) kept its public
+API; the page engine that was the control is now `TWebEngineView`
+(`WebView.Engine`, its parts in `WebView.Engine.*.inc`), which a content
+process hosts and a view may host itself: `ProcessModel :=
+ProcessModelInProcess` (or `DefaultWebViewProcessModel`, the browser's
+`Browser/SeparateProcesses`) runs the engine in the program as a child
+control, as before; it is also what a view falls back to when
+`/bin/webcontent` is missing or no process can be started. `Page`,
+`Navigable`, `Document` and `DocumentLayout` reach the engine only then
+(nil otherwise); the browser sets its about pages with the new
+`AboutPageProvider`. New: `OnFindResult`, `OnScriptDialog`,
+`OnProcessEvent`, `ContentProcessId`, `TerminateContentProcess`,
+`CrashContentProcess`, `HangContentProcess`; for the Firefox 3.6 style
+chrome (see "Web view (libwebview)"): `HistoryEntries`, `HistoryIndex`,
+`GoToHistoryOffset`, `RestoreHistory`, `OnFindDetails`,
+`SetFindHighlight`, `RequestPageInfo`, `OnPageInfo`, `ImagesEnabled`,
+`TextOnlyZoom`, `AuthorStylesEnabled`, `EncodingOverride`,
+`SupportedEncodings`, `PopupsBlocked`, `OnPopupBlocked`, the new
+`TWebContextInfo` fields, and the network's private browsing, offline,
+cache, cookie, storage, HSTS and TLS functions in `WebView.Network` (the
+network service takes the local storage lock of `WebView.Network`,
+`EnterLocalStorage`, so the GUI thread can clear or switch it). The
+engine gained hooks for
+a host that is not its window: `OnPopupMenu`, `OnReadClipboard`,
+`OnWriteClipboard`, `OnSelectionChanged`, `OnNavigationRequest`,
+`NetworkContext`, `LocalStorage`, `NavigateWith`, `GetScrollState`.
+libweb gained the transport (`Web.Fetch.Transports`:
+`TNetworkTransport`, `THopResultSink`; `TNetworkContext.CreateForTransport`,
+`DocumentCookie`, `SetDocumentCookie`; `THopRunner` sends through it),
+local files read through it (`TFetcher.StartRemoteLocalFile`) and a
+storage backend (`TWebStorageBackend`, `TWebStorageArea.LoadPair`).
+
+**Tests.** `make web-ipc-test` (the protocol, on the host; version 2's
+payloads both ways and refused when cut short at every length or when
+their counts or indexes lie, `WebIpcTest.PagePayloads`); `make
+web-load-test`'s browser features (`WebLoadTest.BrowserFeatures`: Page
+Info of a served page, find's counts and wrapping, text-only zoom, No
+Style, the encoding override, session restore and two back at once,
+window.open reaching the host); `make http-test` (cookie policies and
+their exceptions, removing a cookie, the cache's limit, offline);
+`make tls-test` (certificate summaries); `make web-test` (the
+selectable encodings);
+`restricttest` (a coretest line: every restriction, inheritance, never
+lifted); `scripts/test-input.py`'s browser part: two local pages share
+one renderer and a page served from the test (another site) gets its
+own (two webcontent processes), the served page loops with the
+watchdog off and gets the "not responding" bar, Stop ends its renderer
+(the tab shows it crashed), about:crash crashes the local renderer
+(both its tabs show it), Reload brings the page back in a new process
+and the browser lives on.
+
+**Not yet.** Out-of-process iframes (above); a network process; IME
+text (`InputText` is in the protocol, not used); drag and drop into and
+out of pages; the selection's text in a context menu before the
+renderer told it; per-page attribution of watchdog interrupts (all views
+of the process hear them); cross-process `storage` events; dragging the
+scroll bars while the renderer is hung; GPU compositing (frames are
+CPU copies of the damage).
 
 ## The AArch64 port
 

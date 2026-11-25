@@ -35,8 +35,10 @@ uses
   Http.Client,
   Http.Cookies,
   Http.Cache,
+  Url.Records,
   Web.Fetch.Hsts,
-  Web.Fetch.Cors;
+  Web.Fetch.Cors,
+  Web.Fetch.Transports;
 
 type
   TNetworkContext = class
@@ -44,18 +46,32 @@ type
     FClient: THttpClient;
     FOwnsClient: Boolean;
     FHsts: THstsStore;
+    FOwnHsts: THstsStore;
     FPreflightCache: TCorsPreflightCache;
     FOwnedCookies: TCookieJar;
     FOwnedCache: THttpCache;
     FAcceptLanguage: string;
     FAllowFileAccess: Boolean;
+    FTransport: TNetworkTransport;
   public
     { Client: the HTTP client (owned when OwnsClient). A client without
       a cookie jar or cache gets one of the context's. }
     constructor Create(Client: THttpClient; OwnsClient: Boolean = True);
+    { The network of another process (a renderer's): no client here,
+      every exchange, local file and cookie through Transport (owned). }
+    constructor CreateForTransport(Transport: TNetworkTransport);
     destructor Destroy; override;
+    { document.cookie of a document at Url (Secure: its context is). }
+    function DocumentCookie(constref Url: TUrlRecord; Secure: Boolean): string;
+    procedure SetDocumentCookie(constref Url: TUrlRecord; const Cookie: string; Secure: Boolean);
+    { nil when the network is another process's (Transport). }
     property Client: THttpClient read FClient;
+    property Transport: TNetworkTransport read FTransport;
     property Hsts: THstsStore read FHsts;
+    { Another HSTS store in use instead of the context's own (not owned;
+      it must outlive its use); nil: the own one again. A browser's
+      private browsing. }
+    procedure UseHstsStore(Store: THstsStore);
     property PreflightCache: TCorsPreflightCache read FPreflightCache;
     property AcceptLanguage: string read FAcceptLanguage write FAcceptLanguage;
     { file: URLs may be opened (the browser; a web view may refuse). }
@@ -64,12 +80,31 @@ type
 
 implementation
 
+uses
+  DateUtils;
+
+function UnixTimeNow: Int64;
+begin
+  Result := DateTimeToUnix(LocalTimeToUniversal(Now));
+end;
+
+{ What document.cookie reads and writes under (not an HTTP API). }
+function ScriptCookieContext(Secure: Boolean): TCookieRequestContext;
+begin
+  Result := Default(TCookieRequestContext);
+  Result.IsSecure := Secure;
+  Result.SameSite := True;
+  Result.SafeMethod := True;
+  Result.HttpApi := False;
+end;
+
 constructor TNetworkContext.Create(Client: THttpClient; OwnsClient: Boolean);
 begin
   inherited Create;
   FClient := Client;
   FOwnsClient := OwnsClient;
-  FHsts := THstsStore.Create;
+  FOwnHsts := THstsStore.Create;
+  FHsts := FOwnHsts;
   FPreflightCache := TCorsPreflightCache.Create;
   FAcceptLanguage := 'en-US,en;q=0.9';
   FAllowFileAccess := True;
@@ -85,8 +120,45 @@ begin
   end;
 end;
 
+constructor TNetworkContext.CreateForTransport(Transport: TNetworkTransport);
+begin
+  inherited Create;
+  FTransport := Transport;
+  FOwnHsts := THstsStore.Create;
+  FHsts := FOwnHsts;
+  FPreflightCache := TCorsPreflightCache.Create;
+  FAcceptLanguage := 'en-US,en;q=0.9';
+  FAllowFileAccess := True;
+end;
+
+function TNetworkContext.DocumentCookie(constref Url: TUrlRecord; Secure: Boolean): string;
+begin
+  Result := '';
+  if FTransport <> nil then
+    Result := FTransport.DocumentCookie(Url, Secure)
+  else if (FClient <> nil) and (FClient.Cookies <> nil) then
+    Result := FClient.Cookies.DocumentCookie(Url, ScriptCookieContext(Secure), UnixTimeNow);
+end;
+
+procedure TNetworkContext.SetDocumentCookie(constref Url: TUrlRecord; const Cookie: string; Secure: Boolean);
+begin
+  if FTransport <> nil then
+    FTransport.SetDocumentCookie(Url, Cookie, Secure)
+  else if (FClient <> nil) and (FClient.Cookies <> nil) then
+    FClient.Cookies.SetDocumentCookie(Url, Cookie, ScriptCookieContext(Secure), UnixTimeNow);
+end;
+
+procedure TNetworkContext.UseHstsStore(Store: THstsStore);
+begin
+  if Store = nil then
+    FHsts := FOwnHsts
+  else
+    FHsts := Store;
+end;
+
 destructor TNetworkContext.Destroy;
 begin
+  FTransport.Free;
   if FOwnedCookies <> nil then
     FClient.Cookies := nil;
   if FOwnedCache <> nil then
@@ -95,7 +167,7 @@ begin
     FClient.Free;
   FOwnedCookies.Free;
   FOwnedCache.Free;
-  FHsts.Free;
+  FOwnHsts.Free;
   FPreflightCache.Free;
   inherited Destroy;
 end;

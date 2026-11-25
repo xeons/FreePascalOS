@@ -17,15 +17,11 @@
 }
 
 {
-  Font matching with the system's fonts and configuration: the fonts
-  the build copied from the build machine (the directory in
-  WEB_HOST_FONTS, build/ARCH/user/fonts) and userland/etc/fonts.conf.
-  Arial must be Liberation Sans with Arial's advances, Times New Roman
-  Liberation Serif, monospace Liberation Mono, system-ui DejaVu Sans;
-  text mixing Latin, Japanese and emoji must find a face with a glyph
-  for every character (Noto Sans CJK, Noto Color Emoji drawn in
-  colour), and painting it must put colour on the page. Skipped, with a
-  message, on a machine without those fonts.
+  Font choice: the unicode-range descriptor read, a face restricted to
+  its range, a family split into subsets drawing Latin text with the
+  Latin subset, and a character the face lacks drawn with the default
+  (proportional) family rather than the first face listed (the
+  monospace one): www.rust-lang.org was drawn all in DejaVu Sans Mono.
 }
 unit WebLayoutTest.Fonts;
 
@@ -34,106 +30,64 @@ unit WebLayoutTest.Fonts;
 
 interface
 
-procedure CheckSystemFonts;
+procedure CheckFontChoice;
 
 implementation
 
 uses
-  SysUtils, TestChecks, Font.Configuration, Font.Outlines, Font.GlyphCache, Font.GlyphRendering,
-  Web.Text.Fonts, Web.Text.FontInstances, WebLayoutTest.Pages;
+  SysUtils, Classes, TestChecks, Font.TrueType, Web.Text.Fonts, Web.Text.UnicodeRanges;
 
-procedure CheckMatching;
+function ReadFile(const Path: string): TBytes;
 var
-  Font: TTextFont;
-  Glyphs: TPlacedGlyphArray;
-  Count, Index: Integer;
-  AllFound, AnyCjk, AnyEmoji: Boolean;
-  Width: Double;
-  Bitmap: TGlyphBitmap;
+  Stream: TFileStream;
 begin
-  Font := MakeTextFont(['Arial', 'sans-serif'], 2048, 400, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation sans'), 'fonts: Arial is Liberation Sans');
-  Check(Abs(Font.AdvanceOf(Ord('A')) - 1366) < 0.01, 'fonts: Arial''s A is 1366 units wide');
-  Width := Font.MeasureText('Arial', 1, 5);
-  Check(Abs(Width - (1366 + 682 + 455 + 1139 + 455)) < 0.5, Format('fonts: "Arial" measures as in Arial (%.1f)', [Width]));
-  Font := MakeTextFont(['Helvetica'], 16, 700, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation sans') and (Font.Primary.Weight = 700),
-    'fonts: bold Helvetica is Liberation Sans Bold');
-  Font := MakeTextFont(['Times New Roman', 'serif'], 16, 400, True);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation serif') and Font.Primary.Italic,
-    'fonts: italic Times New Roman is Liberation Serif Italic');
-  Font := MakeTextFont(['monospace'], 16, 400, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation mono'), 'fonts: monospace is Liberation Mono');
-  Font := MakeTextFont(['system-ui'], 16, 400, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'dejavu sans'), 'fonts: system-ui stays DejaVu Sans');
-  Font := MakeTextFont(['Courier New'], 16, 400, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation mono'), 'fonts: Courier New is Liberation Mono');
-  { Mixed scripts: every character a face with its glyph. }
-  Font := MakeTextFont(['sans-serif'], 16, 400, False);
-  Glyphs := nil;
-  Font.PlaceGlyphs('Wiki 日本語 Ελληνικά العربية हिन्दी 한국어 ☺😀👍', 1,
-    Length('Wiki 日本語 Ελληνικά العربية हिन्दी 한국어 ☺😀👍'), Glyphs, Count);
-  AllFound := Count > 20;
-  AnyCjk := False;
-  AnyEmoji := False;
-  for Index := 0 to Count - 1 do
-  begin
-    if Glyphs[Index].CodePoint = 32 then
-      Continue;
-    if (Glyphs[Index].Face = nil) or (Glyphs[Index].Glyph = 0) then
-    begin
-      AllFound := False;
-      WriteLn('no glyph for U+', IntToHex(Glyphs[Index].CodePoint, 4));
-    end
-    else
-    begin
-      if (Glyphs[Index].CodePoint = $65E5) and (Glyphs[Index].Face.Family = 'noto sans cjk') then
-        AnyCjk := True;
-      if (Glyphs[Index].CodePoint = $1F600) and (Glyphs[Index].Face.Family = 'noto color emoji') then
-        AnyEmoji := True;
-    end;
+  Result := nil;
+  Stream := TFileStream.Create(Path, fmOpenRead or fmShareDenyNone);
+  try
+    SetLength(Result, Stream.Size);
+    if Stream.Size > 0 then
+      Stream.ReadBuffer(Result[0], Stream.Size);
+  finally
+    Stream.Free;
   end;
-  Check(AllFound, 'fonts: Latin, Japanese, Greek, Arabic, Devanagari, Korean and emoji all have glyphs (no boxes)');
-  Check(AnyCjk, 'fonts: 日 is drawn from Noto Sans CJK');
-  Check(AnyEmoji, 'fonts: 😀 is drawn from Noto Color Emoji');
-  for Index := 0 to Count - 1 do
-    if Glyphs[Index].CodePoint = $1F600 then
-    begin
-      Check(RenderGlyph(Glyphs[Index].Face.Font, Glyphs[Index].Glyph, 20, 0, False, Bitmap) and
-        (Length(Bitmap.Colors) > 100), 'fonts: 😀 renders in colour');
-      Break;
-    end;
-  { U+FE0F asks for emoji presentation; the selector itself takes no room. }
-  Glyphs := nil;
-  Font.PlaceGlyphs('☺'#$EF#$B8#$8F, 1, 6, Glyphs, Count);
-  Check((Count = 1) and (Glyphs[0].Face <> nil) and (Glyphs[0].Face.Family = 'noto color emoji'),
-    'fonts: ☺ with U+FE0F is the colour emoji, the selector placed nowhere');
 end;
 
-procedure CheckSystemFonts;
-var
-  Directory: string;
+function FamilyOf(Face: TFontFaceEntry): string;
 begin
-  Directory := GetEnvironmentVariable('WEB_HOST_FONTS');
-  if (Directory = '') or not DirectoryExists(IncludeTrailingPathDelimiter(Directory) + 'liberation-sans') or
-     not DirectoryExists(IncludeTrailingPathDelimiter(Directory) + 'noto-sans-cjk') or
-     not DirectoryExists(IncludeTrailingPathDelimiter(Directory) + 'noto-color-emoji') then
-  begin
-    WriteLn('skipped: the system fonts (WEB_HOST_FONTS=', Directory, ' lacks Liberation, Noto Sans CJK or emoji)');
-    Exit;
-  end;
-  ClearTextFonts;
-  FontConfigurationPath := 'userland/etc/fonts.conf';
-  ResetSystemFontConfiguration;
-  SetFontDirectory(Directory);
-  try
-    CheckMatching;
-  finally
-    ClearTextFonts;
-    ClearGlyphCache;
-    FontConfigurationPath := '/etc/fonts.conf';
-    ResetSystemFontConfiguration;
-  end;
+  if Face = nil then
+    Result := 'none'
+  else
+    Result := Face.Family;
+end;
+
+procedure CheckFontChoice;
+var
+  Ranges: TUnicodeRangeArray;
+  Library_: TFontLibrary;
+  Latin, Cyrillic, Face: TFontFaceEntry;
+  Data: TBytes;
+begin
+  Ranges := ParseUnicodeRanges('U+0000-00FF, U+0131, U+4??, bogus, U+1F600');
+  Check((Length(Ranges) = 4) and RangesCover(Ranges, $41) and RangesCover(Ranges, $131) and
+    RangesCover(Ranges, $4AB) and not RangesCover(Ranges, $500) and RangesCover(Ranges, $1F600) and
+    not RangesCover(Ranges, $132), 'fonts: unicode-range items, a wildcard, a bad item skipped');
+  Check(RangesCover(nil, $10000), 'fonts: no unicode-range covers everything');
+  Library_ := WebFontLibrary;
+  Face := Library_.FallbackFace(Ord('a'), 400, False);
+  Check((Face <> nil) and (Face.Family = Library_.DefaultFamily),
+    'fonts: a fallback character comes from the default family (' + FamilyOf(Face) + ')');
+  { A web family in two subsets (made of the same file). }
+  Data := ReadFile(IncludeTrailingPathDelimiter(WebFontDirectory) + 'dejavu-sans' + PathDelim + 'DejaVuSans.ttf');
+  Cyrillic := TFontFaceEntry.CreateFromFont('subset test', LoadTrueTypeFont(Data), 400, False);
+  Cyrillic.Ranges := ParseUnicodeRanges('U+0400-04FF');
+  Library_.AddFace(Cyrillic);
+  Latin := TFontFaceEntry.CreateFromFont('subset test', LoadTrueTypeFont(Data), 400, False);
+  Latin.Ranges := ParseUnicodeRanges('U+0000-00FF');
+  Library_.AddFace(Latin);
+  Check(not Cyrillic.HasGlyph(Ord('a')) and Cyrillic.HasGlyph($416), 'fonts: a face draws only its range');
+  Check(Library_.FindFace('subset test', 400, False) = Latin, 'fonts: the Latin subset leads its family');
+  Check(Library_.FindFaceFor('subset test', $416, 400, False) = Cyrillic,
+    'fonts: a character outside it comes from the subset that has it');
 end;
 
 end.

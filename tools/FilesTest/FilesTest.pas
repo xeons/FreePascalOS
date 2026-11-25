@@ -26,7 +26,8 @@
   the order items are shown in (FileManager.ItemOrder) and their types
   (FileManager.FileTypes), permission texts (FileManager.Permissions),
   what a drop does (FileManager.DropRules), file lists on the clipboard
-  (Controls.FileLists) and finding a name by typing (Controls.TypeAhead).
+  (Controls.FileLists), finding a name by typing (Controls.TypeAhead)
+  and searching inside an archive (FileManager.ArchiveSearch).
   Every check prints a line; the exit code is 1 if any failed.
 
   This is a host tool, built with the normal Free Pascal runtime library.
@@ -49,7 +50,9 @@ uses
   FileManager.FileTypes,
   FileManager.ItemOrder,
   FileManager.Permissions,
-  FileManager.DropRules;
+  FileManager.DropRules,
+  FilesTest.Explorer,
+  FilesTest.ArchiveSearch;
 
 type
   { Names taken, for FirstFreeName; names for TypeAheadFind. }
@@ -326,6 +329,8 @@ begin
   TestDropRules;
   TestFileLists;
   TestTypeAhead;
+  TestExplorerLogic(@Check);
+  TestArchiveSearch(@Check);
   WriteLn('[files] ', Checks - Failures, ' of ', Checks, ' checks passed');
   if Failures > 0 then
     Halt(1);

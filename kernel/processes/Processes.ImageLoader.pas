@@ -94,7 +94,10 @@ uses
 const
   MaximumModules = 32;
   ModuleNameLength = 64;
-  MaximumNeededLibraries = 16;
+  { As many as a process may have modules: a program linking more
+    libraries than this directly would lose the rest (the file manager
+    names 20). }
+  MaximumNeededLibraries = MaximumModules;
 
 type
   PLoadedModule = ^TLoadedModule;

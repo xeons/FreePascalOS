@@ -126,9 +126,17 @@ type
     function ConfirmUnload(Navigable: TNavigable): Boolean; virtual;
     procedure DownloadRequested(Navigable: TNavigable; constref Download: TDownloadInfo); virtual;
     procedure NavigationFailed(Navigable: TNavigable; const Url, Reason: string); virtual;
+    { A top-level navigation to Url is about to be fetched (AtResponse
+      False), or its response came from Url after redirects (True):
+      False when the host takes it elsewhere (a browser moving the tab
+      to a process of Url's site), and the navigable drops it. }
+    function NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord; constref Options: TNavigateOptions;
+      AtResponse: Boolean): Boolean; virtual;
   end;
 
   TNavigationConsumer = class(TFetchConsumer)
+  protected
+    procedure JobReleased(Job: TFetchJob); override;
   public
     Navigable: TNavigable;
     procedure ProcessResponse(Job: TFetchJob; Response: TFetchResponse); override;
@@ -178,6 +186,7 @@ type
     FDetached: Boolean;
     FChildOrigin: TUrlOrigin;
     FHasChildOrigin: Boolean;
+    FEncodingOverride: string;
     procedure SetState(State: TLoadingState);
     procedure CreateInitialDocument;
     function PromptToUnload: Boolean;
@@ -263,6 +272,10 @@ type
     procedure Back;
     procedure Forward;
     procedure Traverse(Delta: Integer);
+    { Session restore: the history becomes Entries (no documents of
+      their own yet: going to one loads it) and the one at Index is
+      loaded now. }
+    procedure RestoreSession(const Entries: array of TSessionRestoreEntry; Index: Integer);
     procedure Reload(BypassCache: Boolean = False);
     procedure Stop;
     { The web view tells where the current entry is scrolled to. }
@@ -280,6 +293,10 @@ type
     property Sink: TResourceSink read FSink write FSink;
     property Executor: TScriptExecutor read FExecutor write FExecutor;
     property Settings: TLoadingSettings read FSettings write FSettings;
+    { The encoding documents are decoded with whatever they say ('':
+      what the response and the document say); from the next
+      navigation (a reload applies it). }
+    property EncodingOverride: string read FEncodingOverride write FEncodingOverride;
     { Not owned. }
     property ObserverObject: TNavigableObserver read FObserver write FObserver;
     { A child navigable's parent and frame element (nil for a top-level
@@ -374,11 +391,23 @@ procedure TNavigableObserver.DownloadRequested(Navigable: TNavigable; constref D
 begin
 end;
 
+function TNavigableObserver.NavigationAllowed(Navigable: TNavigable; constref Url: TUrlRecord;
+  constref Options: TNavigateOptions; AtResponse: Boolean): Boolean;
+begin
+  Result := True;
+end;
+
 procedure TNavigableObserver.NavigationFailed(Navigable: TNavigable; const Url, Reason: string);
 begin
 end;
 
 { ---- the consumer ---- }
+
+procedure TNavigationConsumer.JobReleased(Job: TFetchJob);
+begin
+  if (Navigable <> nil) and (Navigable.FNavigationJob = Job) then
+    Navigable.FNavigationJob := nil;
+end;
 
 procedure TNavigationConsumer.ProcessResponse(Job: TFetchJob; Response: TFetchResponse);
 begin
@@ -628,6 +657,9 @@ var
 begin
   if not PromptToUnload then
     Exit;
+  if (FParent = nil) and (Handling in [HistoryPush, HistoryReplace]) and (FObserver <> nil) and
+     not FObserver.NavigationAllowed(Self, Url, Options, False) then
+    Exit;
   CancelNavigation;
   CancelRefresh;
   Method := Options.Method;
@@ -860,6 +892,7 @@ end;
 
 procedure TNavigable.HandleResponse(Job: TFetchJob; Response: TFetchResponse);
 var
+  Options: TNavigateOptions;
   Essence, Disposition: string;
   Download: TDownloadInfo;
   Kind: TDocumentContentKind;
@@ -887,6 +920,20 @@ begin
     SetState(LoadingComplete);
     UndelayParentLoad;
     Exit;
+  end;
+  if (FParent = nil) and (FObserver <> nil) and (Length(Job.Request.UrlList) > 1) then
+  begin
+    { Redirected: the page it ends at may be another site's. }
+    Options := DefaultNavigateOptions;
+    Options.Method := Job.Request.Method;
+    Options.UserInitiated := Job.Request.UserInitiated;
+    if not FObserver.NavigationAllowed(Self, Url, Options, True) then
+    begin
+      FNavigationJob := nil;
+      FFetcher.Cancel(Job);
+      SetState(LoadingIdle);
+      Exit;
+    end;
   end;
   if (FParent <> nil) and not ResponseMayBeFramed(Response, Url) then
   begin
@@ -927,7 +974,14 @@ begin
   FNavigationTimes.Protocol := Response.Protocol;
   FNavigationTimes.Status := Response.Status;
   FNavigationTimes.RedirectCount := Job.Request.RedirectCount;
-  CommitDocument(Url, Kind, Response.Charset);
+  if FEncodingOverride <> '' then
+    CommitDocument(Url, Kind, FEncodingOverride)
+  else
+    CommitDocument(Url, Kind, Response.Charset);
+  FLoader.Document.Referrer := Job.Referrer;
+  FLoader.Document.LastModified := Response.Headers.Value('last-modified');
+  if Kind in [ContentText, ContentImage] then
+    FLoader.Document.ContentType := Essence;
   if Kind = ContentImage then
   begin
     { The image document's img loads the image itself (from the cache). }
@@ -1221,6 +1275,34 @@ begin
   FTraverseIndex := TargetIndex;
   Options := DefaultNavigateOptions;
   StartNavigation(Target.Url, Options, HistoryTraverse, FetchCacheForceCache);
+end;
+
+procedure TNavigable.RestoreSession(const Entries: array of TSessionRestoreEntry; Index: Integer);
+var
+  NewEntries: array of TSessionHistoryEntry;
+  Position: Integer;
+  Options: TNavigateOptions;
+begin
+  if Length(Entries) = 0 then
+    Exit;
+  NewEntries := nil;
+  SetLength(NewEntries, Length(Entries));
+  for Position := 0 to High(Entries) do
+  begin
+    NewEntries[Position] := TSessionHistoryEntry.Create;
+    NewEntries[Position].Url := Entries[Position].Url;
+    NewEntries[Position].Title := Entries[Position].Title;
+    { No document is any entry's yet (document ids start at 1). }
+    NewEntries[Position].DocumentId := 0;
+  end;
+  CancelNavigation;
+  FHistory.ReplaceAll(NewEntries, Index);
+  if FObserver <> nil then
+    FObserver.HistoryChanged(Self);
+  FTraverseIndex := FHistory.Index;
+  Options := DefaultNavigateOptions;
+  Options.UserInitiated := True;
+  StartNavigation(FHistory.Current.Url, Options, HistoryTraverse, FetchCacheDefault);
 end;
 
 procedure TNavigable.Reload(BypassCache: Boolean);

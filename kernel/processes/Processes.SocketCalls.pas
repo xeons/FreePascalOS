@@ -60,6 +60,7 @@ uses
   Processes.Thread,
   Processes.UserAccess,
   Processes.ObjectCalls,
+  Processes.Restrictions,
   Network.Addresses,
   Network.Sockets,
   Network.SocketOperations;
@@ -124,6 +125,8 @@ var
   Socket: PSocket;
   Error: LongInt;
 begin
+  if CallerRestricted(RestrictNetwork) then
+    Exit(Failure(ErrorAccessDenied));
   if (Family > $FFFF) or (Kind > $FFFF) or (Protocol > $FF) then
     Exit(Failure(ErrorInvalidArgument));
   Error := CreateSocket(LongWord(Family), LongWord(Kind), LongWord(Protocol), CallerAsOwner, CallerIsRoot,

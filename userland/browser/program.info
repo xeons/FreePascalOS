@@ -9,3 +9,5 @@ Icon = app-web-browser
 Executable = browser
 Keywords = ["web", "internet", "browser", "http"]
 Version = 1.0
+Extensions = ["html", "htm", "xhtml", "svg"]
+MimeTypes = ["text/html", "application/xhtml+xml"]

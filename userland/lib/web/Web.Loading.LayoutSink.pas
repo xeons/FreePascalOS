@@ -150,6 +150,7 @@ uses
   Web.Text.Fonts,
   Web.Text.FontInstances,
   Web.Text.Woff,
+  Web.Text.UnicodeRanges,
   Web.Frames.Views;
 
 function FontFaceWeight(const Text: string): Integer;
@@ -458,6 +459,7 @@ var
   Weight: Integer;
   Italic: Boolean;
   Key: string;
+  Face: TFontFaceEntry;
 begin
   Weight := FontFaceWeight(Rule.DescriptorText('font-weight'));
   Italic := FontFaceItalic(Rule.DescriptorText('font-style'));
@@ -471,7 +473,9 @@ begin
   if Font = nil then
     Exit;
   FLoadedFontKeys.Add(Key);
-  WebFontLibrary.AddFace(TFontFaceEntry.CreateFromFont(LowerCase(Trim(Family)), Font, Weight, Italic));
+  Face := TFontFaceEntry.CreateFromFont(LowerCase(Trim(Family)), Font, Weight, Italic);
+  Face.Ranges := ParseUnicodeRanges(Rule.DescriptorText('unicode-range'));
+  WebFontLibrary.AddFace(Face);
   if RefreshTextFonts then
     NotifyFontsChanged;
 end;

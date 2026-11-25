@@ -1648,9 +1648,14 @@ checks.append(('calculator: 12*(3+4) typed on the keyboard and Enter give 84; Ct
 # here): it prints the page's title and that it loaded, the page's
 # script logs to the console (scripting is on), and the page's orange
 # background is on the screen inside the window. Its settings and
-# profile are deleted afterwards.
+# profile are deleted afterwards. The page has a float at the start of a
+# line followed by a word too wide to go beside it, which once made the
+# layout move the line down for ever and froze the browser
+# (www.wikipedia.org's fundraising banner): then nothing was painted.
 type_on_serial(b"printf '<!DOCTYPE html><title>Browser test</title><body style=\"background:#ff8000\">"
-               b"<p>Local page</p><script>console.log(\"script ran \" + (40 + 2))</script>' "
+               b"<p>Local page</p><div style=\"width:300px\"><span style=\"float:left;width:200px;height:20px\">"
+               b"</span>Unbreakablewordwiderthanroom</div>"
+               b"<script>console.log(\"script ran \" + (40 + 2))</script>' "
                b"> /tmp/browser-test.html\r")
 time.sleep(0.5)
 type_on_serial(b'displayserver &\r')
@@ -1669,10 +1674,142 @@ type_on_serial(b'kill %2; wait %2; cat /tmp/browser.log; settings delete Browser
                b'm=DONE; echo BROWSER $m\r')
 browser_ok = wait_for('BROWSER DONE', 30)
 browser_log = bytes(received[browser_from:])
-checks.append(('browser: a local page loads (title, loaded), its script runs, its background is on the screen',
+checks.append(('browser: a local page loads (title, loaded), its script runs, its background is on the screen '
+               '(a float wider than the room beside it does not hang the layout)',
                browser_ok and b'title Browser test' in browser_log and
                b'loaded file:///tmp/browser-test.html' in browser_log and b'console log script ran 42' in browser_log and
                browser_colour_near(browser_screen(500, 500), 'ff8000')))
+# The browser's chrome, laid out as browsers were before they hid their
+# menus: the menu bar, then the toolbars, then the tabs under them, then
+# the page (the window prints where each is). From the keyboard: Tools >
+# Options... (Alt+T, O), the Tabs pane (Ctrl+Tab), "Open new windows in a
+# new tab" turned off (Alt+B) and OK (Enter): the setting is kept; the
+# Library (Ctrl+Shift+B, closed with Alt+F4); the location bar (Ctrl+L)
+# suggests the page visited when part of its title is typed, and Down
+# and Enter go to it; the find bar (Ctrl+F) finds text on the page and
+# Highlight all (Alt+A) highlights every match. Its settings and profile
+# are deleted afterwards.
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(b'/app/browser/browser file:///tmp/browser-test.html > /tmp/chrome.log 2>&1 &\r')
+time.sleep(8)
+press('alt-t')
+time.sleep(0.6)
+press('o')
+time.sleep(2)
+press('ctrl-tab')
+time.sleep(0.5)
+press('alt-b')
+time.sleep(0.3)
+press('ret')
+time.sleep(1)
+press('ctrl-shift-b')
+time.sleep(2.5)
+press('alt-f4')
+time.sleep(1)
+press('ctrl-l')
+time.sleep(0.3)
+type_on_keyboard('browser')
+time.sleep(1.5)
+press('down')
+time.sleep(0.3)
+press('ret')
+time.sleep(3)
+press('ctrl-f')
+time.sleep(0.5)
+type_on_keyboard('Local')
+time.sleep(1)
+press('alt-a')
+time.sleep(1)
+chrome_screen = take_screen()
+chrome_from = len(received)
+type_on_serial(b'kill %2; wait %2; cat /tmp/chrome.log; settings get Browser/NewWindowsInTabs; settings delete Browser; '
+               b'rm -r /.settings/browser; kill %1; wait; m=DONE; echo CHROME $m\r')
+chrome_ok = wait_for('CHROME DONE', 30)
+chrome_log = bytes(received[chrome_from:])
+layout = re.search(rb'layout menu (\d+) toolbars (\d+) tabs (\d+) content (\d+)', chrome_log)
+checks.append(('browser chrome: the menu bar, then the toolbars, then the tabs under them, then the page',
+               chrome_ok and layout is not None and
+               int(layout.group(1)) < int(layout.group(2)) < int(layout.group(3)) < int(layout.group(4))))
+checks.append(('browser chrome: Tools > Options... changes a setting from the keyboard and keeps it',
+               chrome_ok and b'options open' in chrome_log and b'options saved' in chrome_log and
+               re.search(rb'\nfalse\r?\n', chrome_log) is not None))
+checks.append(('browser chrome: the Library opens (Ctrl+Shift+B)', chrome_ok and b'library open bookmarks' in chrome_log))
+checks.append(('browser chrome: the location bar suggests a visited page by its title, and goes to it',
+               chrome_ok and re.search(rb'suggest browser [1-9]', chrome_log) is not None and
+               chrome_log.count(b'loaded file:///tmp/browser-test.html') >= 2))
+checks.append(('browser chrome: the find bar finds text and highlights every match',
+               chrome_ok and b'found Local' in chrome_log and b'highlight Local' in chrome_log))
+# The browser's process model: pages run in content processes, one per
+# site. Two local pages (the site file:) share one renderer, a page
+# served from here (http://10.0.2.2, another site) gets its own: two
+# webcontent processes. The served page loops for ever (the slow script
+# watchdog off, Browser/ScriptRunLimit 0): its tab gets the "not
+# responding" bar (Browser/HangTimeout 4 s) and Stop page ends its
+# process (the tab shows it crashed). about:crash crashes the local
+# pages' renderer: both its tabs show "This tab crashed", Reload brings
+# the page back in a new process, and the browser itself lives on.
+import functools
+import http.server
+import threading
+served_directory = os.path.join(work, 'served')
+os.makedirs(served_directory, exist_ok=True)
+with open(os.path.join(served_directory, 'hang.html'), 'w') as page:
+    page.write('<!DOCTYPE html><title>Hang</title><body style="background:#0080ff"><p>This page will hang</p>'
+               '<script>setTimeout(function(){ while(true){} }, 4000)</script>')
+served = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=served_directory))
+threading.Thread(target=served.serve_forever, daemon=True).start()
+served_port = served.server_address[1]
+type_on_serial(b"printf '<!DOCTYPE html><title>Local A</title><body style=\"background:#ff8000\"><h1>A</h1>' > /tmp/pa.html; "
+               b"printf '<!DOCTYPE html><title>Local B</title><body style=\"background:#ffff00\"><h1>B</h1>' > /tmp/pb.html; "
+               b"settings set Browser/ScriptRunLimit 0; settings set Browser/HangTimeout 4\r")
+time.sleep(1)
+type_on_serial(b'displayserver &\r')
+wait_for('displayserver: ready', 20)
+type_on_serial(('/app/browser/browser file:///tmp/pa.html http://10.0.2.2:' + str(served_port) +
+                '/hang.html file:///tmp/pb.html > /tmp/procs.log 2>&1 &\r').encode())
+time.sleep(14)
+processes_from = len(received)
+# (pgrep never counts itself; ps | grep counted the grep too.)
+type_on_serial(b'm=DONE; echo RENDERERS $(pgrep -c webcontent) $m\r')
+wait_for('RENDERERS', 10)
+processes_two = re.search(rb'RENDERERS 2 DONE', bytes(received[processes_from:])) is not None
+# The served tab is the last (the third address opened after the first).
+press('ctrl-tab')
+time.sleep(0.5)
+press('ctrl-tab')
+time.sleep(8)
+hung_screen = take_screen()
+click_at(590, 171)
+time.sleep(3)
+press('ctrl-tab')
+time.sleep(1)
+press('ctrl-l')
+for character in 'about:crash':
+    press({':': 'shift-semicolon'}.get(character, character))
+press('ret')
+time.sleep(4)
+crashed_screen = take_screen()
+click_at(105, 278)
+time.sleep(6)
+reloaded_screen = take_screen()
+procs_from = len(received)
+type_on_serial(b'kill %2; wait %2; cat /tmp/procs.log; settings delete Browser; rm -r /.settings/browser; kill %1; wait; '
+               b'm=DONE; echo PROCS $m\r')
+procs_ok = wait_for('PROCS DONE', 30)
+served.shutdown()
+procs_log = bytes(received[procs_from:])
+checks.append(('browser processes: one renderer per site (two for three tabs)', processes_two))
+checks.append(('browser processes: the looping page is "not responding", Stop ends its renderer and its tab shows '
+               'it crashed',
+               procs_ok and re.search(rb'process hung 1 tab 2', procs_log) is not None and
+               b'process stop 0 tab 2' in procs_log and re.search(rb'process crashed 137 tab 2', procs_log) is not None))
+checks.append(('browser processes: about:crash crashes the local pages\' renderer (both its tabs), the served tab is '
+               'untouched, Reload starts the page in a new renderer, the browser lives on',
+               procs_ok and len(re.findall(rb'process crashed \d+ tab [01]', procs_log)) == 2 and
+               procs_log.count(b'loaded file:///tmp/pa.html') >= 2 and b'exit' in procs_log and
+               browser_colour_near(reloaded_screen(500, 400), 'ff8000')))
 # Paint on a new picture (480x320, white): the rectangle tool picked by
 # its button in the tool box, a rectangle dragged with the pointer from
 # (20, 20) to (120, 80) of the picture (Paint prints where its top left
@@ -1730,7 +1867,7 @@ checks.append(('paint: kill asks it to end, and with the picture saved it ends b
                paint_ended and b'PAINT-ASKED 0' in received))
 
 # The file manager (files), on a folder made over the serial shell:
-# icon, list and details views; sorting by a column's header; a folder
+# large icon, list and details views (Ctrl+Shift+2, 5, 6); sorting by a column's header; a folder
 # opened with a double click and Back; a new folder (Ctrl+Shift+N)
 # renamed with F2; a file copied with Ctrl+C and pasted with Ctrl+V into
 # another folder (the copy read back the same); a file dragged onto a
@@ -1763,11 +1900,12 @@ def files_log(marker):
     return files_log_text
 
 
-def wait_for_files_log(texts, seconds):
+def wait_for_files_log(texts, seconds, since=None):
     # The log until every text has come since the last look (the log
-    # only grows, so what is past the last look's length is new):
-    # operations run in the background, and under TCG take a while.
-    seen = len(files_log_text)
+    # only grows, so what is past the last look's length is new), or
+    # since the length given: operations run in the background, and
+    # under TCG take a while.
+    seen = len(files_log_text) if since is None else since
     deadline = time.time() + seconds
     attempt = 0
     while time.time() < deadline:
@@ -1787,15 +1925,15 @@ wait_for('FILES-PREPARED DONE', 30)
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'files /tmp/fm >> /tmp/f.log &\r')
-files_started = wait_for_files_log(['folder /tmp/fm 4', 'place item-alpha.txt', 'place view-details'], 30)
+files_started = wait_for_files_log(['folder /tmp/fm 4', 'place item-alpha.txt', 'place command-view'], 30)
 checks.append(('files: a folder shown at start (its items, the places to click)', files_started))
 place = places()
 views_ok = sorted_ok = back_ok = new_folder_ok = renamed_ok = False
 if files_started:
-    click_at(*place['view-list'])
-    click_at(*place['view-icons'])
-    click_at(*place['view-details'])
-    views_ok = wait_for_files_log(['view list', 'view icons', 'view details', 'place header-size'], 20)
+    press('ctrl-shift-5')
+    press('ctrl-shift-2')
+    press('ctrl-shift-6')
+    views_ok = wait_for_files_log(['view list', 'view large', 'view details', 'place header-size'], 20)
     place = places()
     # Sorted by size (a header click), then by name again.
     click_at(*place['header-size'])
@@ -1859,9 +1997,22 @@ if 'item-beta.txt' in place:
     press('delete')
     asked = wait_for_files_log(['asking delete 1'], 10)
     press('ret')
-    deleted_ok = asked and wait_for_files_log(['deleted 1', 'refreshed'], 30)
-output = shell_output('test ! -e /tmp/fm/beta.txt && echo DELETED-OK', 'FILES-DELETED')
-checks.append(('files: a file deleted after asking', deleted_ok and b'\nDELETED-OK' in output))
+    deleted_ok = asked and wait_for_files_log(['trashed 1', 'refreshed'], 30)
+output = shell_output('test ! -e /tmp/fm/beta.txt && ls /tmp/.Trash-0/files/beta.txt && echo DELETED-OK',
+                      'FILES-DELETED')
+checks.append(('files: a file moved to the recycle bin after asking (in /tmp/.Trash-0)',
+               deleted_ok and b'\nDELETED-OK' in output))
+# Undo (Ctrl+Z) brings it back from the recycle bin, Redo (Ctrl+Y) sends
+# it there again.
+undo_ok = False
+if deleted_ok:
+    press('ctrl-z')
+    undo_ok = wait_for_files_log(['undo delete', 'restored 1'], 30)
+    output = shell_output('test -f /tmp/fm/beta.txt && echo UNDONE-OK', 'FILES-UNDONE')
+    undo_ok = undo_ok and b'\nUNDONE-OK' in output
+    press('ctrl-y')
+    undo_ok = undo_ok and wait_for_files_log(['redo delete', 'trashed 1'], 30)
+checks.append(('files: Ctrl+Z restores what was deleted, Ctrl+Y deletes it again', undo_ok))
 
 # Another program makes a file: it shows without a refresh.
 type_on_serial(b'echo gamma > /tmp/fm/gamma.txt\r')
@@ -1874,8 +2025,11 @@ place = places()
 if appeared and 'item-gamma.txt' in place:
     click_at(*place['item-gamma.txt'])
     press('alt-ret')
-    properties_ok = wait_for_files_log(['properties /tmp/fm/gamma.txt size 6 mode 0644', 'place permission-group-write'],
-                                       15)
+    properties_ok = wait_for_files_log(['properties /tmp/fm/gamma.txt size 6 mode 0644',
+                                        'place properties-tab-security'], 15)
+    if properties_ok:
+        click_at(*places()['properties-tab-security'])
+        properties_ok = wait_for_files_log(['place permission-group-write'], 15)
     if properties_ok:
         click_at(*places()['permission-group-write'])
         mode_changed = wait_for_files_log(['mode /tmp/fm/gamma.txt 0664'], 15)
@@ -1940,6 +2094,101 @@ if wait_for_files_log(['folder /tmp/fm 4'], 15):
     double_click_at(*places()['item-gamma.txt'])
     notepad_opened = wait_for_files_log(['opened-with-notepad /tmp/fm/gamma.txt', 'title gamma.txt - Notepad'], 30)
 checks.append(('files: a text file opened in Notepad with a double click', notepad_opened))
+type_on_serial(b'kill $(pgrep notepad)\r')
+time.sleep(1)
+
+# Tabs: Ctrl+T opens a new one (at Home), Ctrl+Tab goes back to the
+# first, Ctrl+W closes the second.
+press('ctrl-t')
+tabs_ok = wait_for_files_log(['tab new 2', 'folder Home'], 15)
+press('ctrl-tab')
+tabs_ok = tabs_ok and wait_for_files_log(['tab switch 0', 'folder /tmp/fm 4'], 15)
+press('ctrl-tab')
+wait_for_files_log(['tab switch 1'], 15)
+press('ctrl-w')
+tabs_ok = tabs_ok and wait_for_files_log(['tab close 1', 'folder /tmp/fm 4'], 15)
+checks.append(('files: a new tab (Ctrl+T), switching tabs (Ctrl+Tab) and closing one (Ctrl+W)', tabs_ok))
+
+# Compressed folders: the tree compressed to ZIP from its context menu,
+# browsed like a folder, and extracted again with "Extract all" (the
+# extracted copy the same as the original).
+zipped_ok = extracted_ok = False
+place = places()
+if 'item-tree' in place:
+    click_at(*place['item-tree'])
+    right_click_at(*place['item-tree'])
+    if wait_for_files_log(['context-menu items', 'place context-compress-to-zip-file'], 15):
+        click_at(*places()['context-compress-to-zip-file'])
+        zipped_ok = wait_for_files_log(['compressed 1', 'place item-tree.zip'], 60)
+if zipped_ok:
+    double_click_at(*places()['item-tree.zip'])
+    zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1', 'place item-tree'], 20)
+# Searching inside the archive (Ctrl+E there searches its entries, at
+# any depth), and the entry found opened from the results (taken out of
+# the archive into Notepad); Back returns to the archive.
+archive_search_ok = False
+if zipped_ok:
+    press('ctrl-e')
+    type_on_keyboard('deep')
+    press('ret')
+    archive_search_ok = wait_for_files_log(['search /tmp/fm/tree.zip deep', 'search-result 1', 'search-done 1',
+                                            'place item-deep.txt'], 30)
+    if archive_search_ok:
+        double_click_at(*places()['item-deep.txt'])
+        archive_search_ok = wait_for_files_log(['title deep.txt - Notepad'], 30)
+        shell_output('kill $(pgrep notepad); while pgrep notepad > /dev/null; do sleep 0.2; done',
+                     'ARCHIVE-NOTEPAD-ENDED')
+    press('alt-left')
+    zipped_ok = wait_for_files_log(['folder /tmp/fm/tree.zip 1'], 15)
+checks.append(('files: searching inside a compressed folder (Ctrl+E) finds an entry deep in it, which opens',
+               archive_search_ok))
+if zipped_ok:
+    # Up again, the archive selected (Up selects the folder it came
+    # from, which shows Extract all at once; a click on it then changes
+    # nothing, so its place may already have come with the folder).
+    up_from = len(files_log_text)
+    press('alt-up')
+    wait_for_files_log(['folder /tmp/fm '], 15)
+    click_at(*places()['item-tree.zip'])
+    if wait_for_files_log(['place command-extract'], 15, since=up_from):
+        click_at(*places()['command-extract'])
+        if wait_for_files_log(['extract-dialog /tmp/fm/tree', 'place extract-go'], 15):
+            click_at(*places()['extract-go'])
+            extracted_ok = wait_for_files_log(['extracted 1'], 60)
+# (Extracted into a folder named after the archive: the tree itself.)
+output = shell_output('sha256sum /tmp/fm/tree/big.bin /tmp/fm/tree/tree/big.bin; cat /tmp/fm/tree/tree/a/b/deep.txt',
+                      'FILES-ZIP', 30)
+digests = re.findall(rb'([0-9a-f]{64})  /', output)
+checks.append(('files: a folder compressed to ZIP (context menu) and browsed like a folder', zipped_ok))
+checks.append(('files: Extract all brings the same files back', extracted_ok and len(digests) == 2 and
+               digests[0] == digests[1] and b'\ndeep' in output))
+type_on_serial(b'rm -rf /tmp/fm/tree.zip /tmp/fm/tree/tree\r')
+time.sleep(1)
+press('alt-left')
+wait_for_files_log(['folder /tmp/fm '], 15)
+
+# Search: Ctrl+E, a word, Enter: the file deep in the tree is found
+# (results come in as they are found), Escape goes back.
+press('ctrl-e')
+type_on_keyboard('deep')
+press('ret')
+search_ok = wait_for_files_log(['search /tmp/fm deep', 'search-result 1', 'search-done 1', 'place item-deep.txt'], 30)
+press('alt-left')
+wait_for_files_log(['folder /tmp/fm '], 15)
+checks.append(('files: searching the folder (Ctrl+E) finds a file deep inside it', search_ok))
+
+# The preview pane (Alt+P) shows a picture.
+type_on_serial(b'cp /usr/share/icons/app-paint.ico /tmp/fm/picture.ico\r')
+preview_ok = False
+if wait_for_files_log(['refreshed', 'place item-picture.ico'], 20):
+    click_at(*places()['item-picture.ico'])
+    press('alt-p')
+    preview_ok = wait_for_files_log(['pane preview', 'preview image /tmp/fm/picture.ico'], 20)
+    press('alt-p')
+    wait_for_files_log(['pane none'], 10)
+checks.append(('files: the preview pane (Alt+P) shows a picture', preview_ok))
+type_on_serial(b'rm /tmp/fm/picture.ico\r')
+time.sleep(1)
 # The system clipboard and drag and drop between two programs: a second
 # Files window (on /tmp/fm2, its own process) dragged by its title bar
 # onto the second display; a path typed into the first window's address
@@ -1969,12 +2218,12 @@ type_on_serial(b'kill $(pgrep notepad); mkdir -p /tmp/fm2; files /tmp/fm2 > /tmp
 second_output, second_place = b'', {}
 for attempt in range(30):
     second_output, second_place = second_files_places('FILES2-' + str(attempt))
-    if b'folder /tmp/fm2 0' in second_output and 'menu-file' in second_place and 'address' in second_place:
+    if b'folder /tmp/fm2 0' in second_output and 'tab-new' in second_place and 'address' in second_place:
         break
     time.sleep(1)
 second_moved = False
-if 'menu-file' in second_place:
-    title_x, title_y = second_place['menu-file'][0] + 200, second_place['menu-file'][1] - 22
+if 'tab-new' in second_place:
+    title_x, title_y = second_place['tab-new'][0] + 300, second_place['tab-new'][1] - 32
     before = second_place.get('folder-empty-space')
     drag(title_x, title_y, title_x + 1280, title_y)
     time.sleep(1.5)
@@ -2695,9 +2944,21 @@ checks.append(('no heap check failed' + ''.join('\n    ' + report.decode(errors=
                                                  for report in heap_reports),
                not heap_reports))
 
-# A program that dies of an exception prints it on the console; no
-# check here makes one do that on purpose.
-crash_reports = re.findall(rb'An unhandled exception occurred[^\r\n]*\r?\n[^\r\n]*', bytes(received))
+# A program that dies of an exception prints it on the console. One
+# check makes one do that on purpose: about:crash crashes the renderer
+# of the browser's local pages (its report, in the browser's log, comes
+# right after "go about:crash" and starts in webcontent); that one is
+# left out, and nothing else.
+def is_deliberate_crash(match):
+    before = bytes(received[max(0, match.start() - 200):match.start()])
+    first_frame = bytes(received[match.end():match.end() + 100])
+    return before.rstrip().endswith(b'go about:crash') and \
+        re.match(rb'\r?\n\s*\$[0-9A-F]+\s+webcontent\+\$', first_frame) is not None
+
+
+crash_matches = list(re.finditer(rb'An unhandled exception occurred[^\r\n]*\r?\n[^\r\n]*', bytes(received)))
+deliberate = [match for match in crash_matches if is_deliberate_crash(match)][:1]
+crash_reports = [match.group(0) for match in crash_matches if match not in deliberate]
 checks.append(('no program died of an unhandled exception' +
                ''.join('\n    ' + report.decode(errors='replace').replace('\r', '').replace('\n', ' ')
                        for report in crash_reports),

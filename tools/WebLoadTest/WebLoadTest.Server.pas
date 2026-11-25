@@ -63,6 +63,8 @@ type
     PieceDelay: Integer;
     { When set, the server waits for it after the first piece. }
     Gate: TEvent;
+    { When set, the server waits for it before sending the head. }
+    HeadGate: TEvent;
     destructor Destroy; override;
   end;
 
@@ -146,6 +148,7 @@ end;
 destructor TTestRoute.Destroy;
 begin
   Gate.Free;
+  HeadGate.Free;
   inherited Destroy;
 end;
 
@@ -207,6 +210,8 @@ begin
   end;
   if Method = 'HEAD' then
     Content := '';
+  if (Route <> nil) and (Route.HeadGate <> nil) then
+    Route.HeadGate.WaitFor(10000);
   if (Route = nil) or (Route.Pieces <= 1) then
   begin
     Send('HTTP/1.1 ' + IntToStr(Status) + ' X'#13#10 + Fields + 'Content-Length: ' + IntToStr(Length(Content)) +

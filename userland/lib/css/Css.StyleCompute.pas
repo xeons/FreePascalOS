@@ -423,6 +423,29 @@ begin
     Result := 0;
 end;
 
+{ The font size Value gives under text zoom: its absolute part (lengths,
+  keywords) multiplied by Zoom, the part relative to the parent's or the
+  root's size (em, percentages, larger, rem) left, since those sizes are
+  zoomed already. Font sizes are linear in the parent's and the root's,
+  so computing again with both doubled tells the parts apart. }
+function ZoomedFontSize(Value: TCssValue; var Context: TCssComputeContext; Zoom: Double): Double;
+var
+  Probe: TCssComputeContext;
+  Doubled, AbsolutePart: Double;
+begin
+  Result := ComputeFontSize(Value, Context);
+  if (Zoom <= 0) or (Zoom = 1) then
+    Exit;
+  Probe := Context;
+  Probe.ParentFontSize := Context.ParentFontSize * 2;
+  Probe.RootFontSize := Context.RootFontSize * 2;
+  Doubled := ComputeFontSize(Value, Probe);
+  AbsolutePart := 2 * Result - Doubled;
+  Result := Result + (Zoom - 1) * AbsolutePart;
+  if IsNan(Result) or (Result < 0) then
+    Result := 0;
+end;
+
 { Whether a color-scheme value lets the dark scheme be used. }
 function SchemeIsDark(Value: TCssValue): Boolean;
 var
@@ -846,7 +869,11 @@ var
   FontSizeValue, ColorValue: TCssComputedValue;
   ColorScheme: TCssValue;
   LineHeightValue: TCssComputedValue;
+  TextZoom: Double;
 begin
+  TextZoom := FEnvironment.TextZoom;
+  if TextZoom <= 0 then
+    TextZoom := 1;
   Result := TCssComputedStyle.Create;
   Resolved.Values := nil;
   Resolved.Count := 0;
@@ -883,13 +910,13 @@ begin
     end
     else
     begin
-      Context.ParentFontSize := InitialFontSize;
+      Context.ParentFontSize := InitialFontSize * TextZoom;
       Context.ParentColor := SystemColor(kwCanvastext, Context.EnvironmentDark);
     end;
     if RootStyle <> nil then
       Context.RootFontSize := RootStyle.FontSize
     else
-      Context.RootFontSize := InitialFontSize;
+      Context.RootFontSize := InitialFontSize * TextZoom;
     Context.RootLineHeight := Context.RootFontSize * 1.2;
 
     { color-scheme decides which system colors are used. }
@@ -907,9 +934,9 @@ begin
     if (Value = nil) or IsCssWide(Value, kwInherit) or IsCssWide(Value, kwUnset) then
       Context.FontSize := Context.ParentFontSize
     else if IsCssWide(Value, kwInitial) then
-      Context.FontSize := InitialFontSize
+      Context.FontSize := InitialFontSize * TextZoom
     else
-      Context.FontSize := ComputeFontSize(Value, Context);
+      Context.FontSize := ZoomedFontSize(Value, Context, TextZoom);
     if IsRoot then
       Context.RootFontSize := Context.FontSize;
     FontSizeValue := ComputedLength(Context.FontSize);

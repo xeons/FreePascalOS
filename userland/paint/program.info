@@ -9,3 +9,5 @@ Icon = app-paint
 Executable = paint
 Keywords = ["draw", "picture", "image editor"]
 Version = 1.0
+Extensions = ["png", "bmp", "jpg", "jpeg", "gif", "webp", "ico"]
+MimeTypes = ["image/png", "image/bmp", "image/jpeg", "image/gif", "image/webp"]

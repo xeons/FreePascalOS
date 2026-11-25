@@ -18,12 +18,19 @@
 
 {
   Downloads: what a page cannot show (an attachment, a type the engine
-  does not render) is saved to ~/Downloads under the name the server
-  or the URL gave (with " (2)" and so on when the name is taken). Each
-  download runs on a thread of its own over the browser's shared HTTP
-  client (a local file is copied); it tells the window how it goes with
-  a posted message (Notify, Code; Parameter1 the item), at most four
-  times a second, and when it ends. Cancel stops one.
+  does not render) and what the user saves (Save Page As, Save Link
+  As, Save Image As) is fetched on a thread of its own over the
+  browser's shared HTTP client (a local file is copied) into the
+  downloads folder under the name the server or the URL gave (with
+  " (2)" and so on when the name is taken), or to the path chosen.
+
+  Each download tells the window how it goes with a posted message
+  (Code; Parameter1 the item), at most four times a second, and when it
+  ends. It can be paused (the part fetched is kept) and resumed (asking
+  the server for the rest with a Range header; one that answers with the
+  whole file starts again), cancelled, retried, removed from the list.
+  The list is kept in downloads.txt in the profile (when the Privacy
+  settings remember downloads): URL, path, state, bytes, total, time.
 }
 unit Browser.Downloads;
 
@@ -38,7 +45,7 @@ uses
   Windowing.Messages;
 
 type
-  TDownloadState = (DownloadRunning, DownloadDone, DownloadFailed, DownloadCancelled);
+  TDownloadState = (DownloadRunning, DownloadDone, DownloadFailed, DownloadCancelled, DownloadPaused);
 
   TDownloadManager = class;
 
@@ -53,9 +60,18 @@ type
     Total: Int64;
     ErrorText: string;
     CancelWanted: Boolean;
+    PauseWanted: Boolean;
     { The window told of its end already. }
     EndReported: Boolean;
+    { Unix time it started; for the speed: when and how much at the
+      last measure, and the bytes a second then. }
+    StartedAt: Int64;
+    MeasuredAt: QWord;
+    MeasuredBytes: Int64;
+    BytesPerSecond: Int64;
     Worker: TThread;
+    { Asks for the rest of a paused download. }
+    Resuming: Boolean;
   end;
 
   TDownloadManager = class
@@ -63,18 +79,38 @@ type
     FItems: TList;
     FNotify: TMessageReceiver;
     FCode: LongWord;
+    FListPath: string;
+    FFolder: string;
     function GetItem(Index: Integer): TDownloadItem;
     function GetCount: Integer;
+    procedure StartWorker(Item: TDownloadItem);
   public
     constructor Create(Notify: TMessageReceiver; Code: LongWord);
     destructor Destroy; override;
-    { Starts saving Url as FileName (made unique) in the downloads folder. }
-    function Start(const Url, FileName: string): TDownloadItem;
+    { Starts saving Url as FileName (made unique) in the downloads folder,
+      or to TargetPath when one is given (replacing what is there). }
+    function Start(const Url, FileName: string; const TargetPath: string = ''): TDownloadItem;
     procedure Cancel(Item: TDownloadItem);
-    { Frees the threads of downloads that ended. }
+    procedure Pause(Item: TDownloadItem);
+    procedure Resume(Item: TDownloadItem);
+    { A failed or cancelled download again, from the start. }
+    procedure Retry(Item: TDownloadItem);
+    { Takes an item that is not running off the list. }
+    procedure Remove(Item: TDownloadItem);
+    { Takes every finished, failed and cancelled item off the list. }
+    procedure ClearFinished;
+    { Frees the threads of downloads that ended; notes their speed. }
     procedure Reap;
+    function IndexOf(Item: TDownloadItem): Integer;
+    function RunningCount: Integer;
+    { The list from and to ListPath ('' keeps nothing). }
+    procedure LoadList;
+    procedure SaveList;
     property Count: Integer read GetCount;
     property Items[Index: Integer]: TDownloadItem read GetItem;
+    property ListPath: string read FListPath write FListPath;
+    { Where downloads go ('' the user's Downloads folder). }
+    property Folder: string read FFolder write FFolder;
   end;
 
 { ~/Downloads (made if missing; /tmp without a home). }
@@ -83,10 +119,15 @@ function DownloadsFolder: string;
 function UniqueFilePath(const Folder, Name: string): string;
 { A file name safe to use: no slashes or control characters. }
 function SafeFileName(const Name: string): string;
+{ The file name a URL suggests ("download" for none). }
+function FileNameOfUrl(const Url: string): string;
+{ "1.5 MB", "300 KB", "12 bytes". }
+function SizeText(Bytes: Int64): string;
 
 implementation
 
 uses
+  DateUtils,
   Url.Records,
   Url.Parser,
   Http.Messages,
@@ -95,10 +136,12 @@ uses
   Http.Results,
   Configuration.Locations,
   Web.Fetch.LocalFiles,
-  WebView.Network;
+  WebView.Network,
+  Browser.TextFiles;
 
 const
   NotifyIntervalMilliseconds = 250;
+  StateNames: array[TDownloadState] of string = ('running', 'done', 'failed', 'cancelled', 'paused');
 
 type
   TDownloadThread = class(TThread)
@@ -106,9 +149,12 @@ type
     FItem: TDownloadItem;
     FManager: TDownloadManager;
     FLastNotice: QWord;
+    FAppend: Boolean;
     procedure Tell(Force: Boolean);
     procedure CopyLocalFile(constref Url: TUrlRecord);
     procedure FetchOverHttp(constref Url: TUrlRecord);
+    function HeadArrived(Response: THttpResponse): Boolean;
+    procedure Stopped;
   protected
     procedure Execute; override;
   public
@@ -148,6 +194,36 @@ begin
     Result := 'download';
 end;
 
+function FileNameOfUrl(const Url: string): string;
+var
+  Path: string;
+  Cut: Integer;
+begin
+  Path := Url;
+  Cut := Pos('?', Path);
+  if Cut > 0 then
+    Path := Copy(Path, 1, Cut - 1);
+  Cut := Pos('#', Path);
+  if Cut > 0 then
+    Path := Copy(Path, 1, Cut - 1);
+  if (Pos('://', Path) > 0) and (Pos('/', Copy(Path, Pos('://', Path) + 3, MaxInt)) = 0) then
+    Exit('index.html');
+  Result := Copy(Path, LastDelimiter('/', Path) + 1, MaxInt);
+  if Result = '' then
+    Result := 'index.html';
+  Result := SafeFileName(Result);
+end;
+
+function SizeText(Bytes: Int64): string;
+begin
+  if Bytes < 1024 then
+    Result := IntToStr(Bytes) + ' bytes'
+  else if Bytes < 1024 * 1024 then
+    Result := IntToStr(Bytes div 1024) + ' KB'
+  else
+    Result := FormatFloat('0.0', Bytes / (1024 * 1024)) + ' MB';
+end;
+
 function UniqueFilePath(const Folder, Name: string): string;
 var
   Stem, Extension: string;
@@ -176,11 +252,11 @@ end;
 
 function TDownloadSink.Write(Data: Pointer; Count: PtrUInt): Boolean;
 begin
-  if FThread.FItem.CancelWanted then
+  if FThread.FItem.CancelWanted or FThread.FItem.PauseWanted then
     Exit(False);
   FStream.WriteBuffer(Data^, Count);
   Inc(FWritten, Count);
-  FThread.FItem.Received := FWritten;
+  Inc(FThread.FItem.Received, Count);
   FThread.Tell(False);
   Result := True;
 end;
@@ -201,7 +277,26 @@ begin
   if not Force and (Now - FLastNotice < NotifyIntervalMilliseconds) then
     Exit;
   FLastNotice := Now;
+  if FItem.MeasuredAt = 0 then
+  begin
+    FItem.MeasuredAt := Now;
+    FItem.MeasuredBytes := FItem.Received;
+  end
+  else if Now - FItem.MeasuredAt >= 1000 then
+  begin
+    FItem.BytesPerSecond := (FItem.Received - FItem.MeasuredBytes) * 1000 div Int64(Now - FItem.MeasuredAt);
+    FItem.MeasuredAt := Now;
+    FItem.MeasuredBytes := FItem.Received;
+  end;
   PostMessage(FManager.FNotify, FManager.FCode, PtrInt(FItem));
+end;
+
+procedure TDownloadThread.Stopped;
+begin
+  if FItem.PauseWanted then
+    FItem.State := DownloadPaused
+  else
+    FItem.State := DownloadCancelled;
 end;
 
 procedure TDownloadThread.CopyLocalFile(constref Url: TUrlRecord);
@@ -217,15 +312,16 @@ begin
     FItem.State := DownloadFailed;
     Exit;
   end;
+  FItem.Received := 0;
   Source := TFileStream.Create(SourcePath, fmOpenRead or fmShareDenyNone);
   try
     FItem.Total := Source.Size;
     Target := TFileStream.Create(FItem.Path, fmCreate);
     try
       repeat
-        if FItem.CancelWanted then
+        if FItem.CancelWanted or FItem.PauseWanted then
         begin
-          FItem.State := DownloadCancelled;
+          Stopped;
           Exit;
         end;
         Count := Source.Read(Buffer[0], SizeOf(Buffer));
@@ -245,6 +341,22 @@ begin
   FItem.State := DownloadDone;
 end;
 
+{ The whole file came instead of the rest: start again from nothing. }
+function TDownloadThread.HeadArrived(Response: THttpResponse): Boolean;
+var
+  Length: Int64;
+begin
+  Result := True;
+  if FAppend and (Response.Status <> 206) then
+  begin
+    FAppend := False;
+    FItem.Received := 0;
+  end;
+  Length := StrToInt64Def(Response.Headers.Value('content-length'), -1);
+  if Length >= 0 then
+    FItem.Total := FItem.Received + Length;
+end;
+
 procedure TDownloadThread.FetchOverHttp(constref Url: TUrlRecord);
 var
   Request: THttpRequest;
@@ -254,13 +366,26 @@ var
   Outcome: THttpResult;
 begin
   Response := nil;
-  Target := TFileStream.Create(FItem.Path, fmCreate);
-  Sink := TDownloadSink.Create(Target, Self);
+  FAppend := FItem.Resuming and (FItem.Received > 0) and FileExists(FItem.Path);
+  if not FAppend then
+    FItem.Received := 0;
   Request := THttpRequest.Create('GET', Url);
+  if FAppend then
+    Request.Headers.SetValue('Range', 'bytes=' + IntToStr(FItem.Received) + '-');
+  { Written to memory first would cost too much: the file is opened at
+    once and set back if the server sends everything. }
+  if FAppend then
+  begin
+    Target := TFileStream.Create(FItem.Path, fmOpenReadWrite);
+    Target.Seek(0, soEnd);
+  end
+  else
+    Target := TFileStream.Create(FItem.Path, fmCreate);
+  Sink := TDownloadSink.Create(Target, Self);
   try
-    Outcome := SharedNetworkContext.Client.Fetch(Request, Sink, Response);
-    if FItem.CancelWanted then
-      FItem.State := DownloadCancelled
+    Outcome := SharedNetworkContext.Client.Fetch(Request, Sink, Response, @HeadArrived);
+    if FItem.CancelWanted or FItem.PauseWanted then
+      Stopped
     else if not HttpSucceeded(Outcome) then
     begin
       FItem.ErrorText := Outcome.Text;
@@ -272,7 +397,11 @@ begin
       FItem.State := DownloadFailed;
     end
     else
+    begin
       FItem.State := DownloadDone;
+      if FItem.Total < FItem.Received then
+        FItem.Total := FItem.Received;
+    end;
   finally
     Response.Free;
     Request.Free;
@@ -309,6 +438,7 @@ begin
   end;
   if FItem.State in [DownloadFailed, DownloadCancelled] then
     DeleteFile(FItem.Path);
+  FItem.BytesPerSecond := 0;
   Tell(True);
 end;
 
@@ -327,18 +457,21 @@ var
   Index: Integer;
   Item: TDownloadItem;
 begin
+  { What is still running is paused, so it can go on next time. }
   for Index := 0 to FItems.Count - 1 do
-    TDownloadItem(FItems[Index]).CancelWanted := True;
+    TDownloadItem(FItems[Index]).PauseWanted := True;
   for Index := 0 to FItems.Count - 1 do
   begin
     Item := TDownloadItem(FItems[Index]);
     if Item.Worker <> nil then
     begin
       Item.Worker.WaitFor;
-      Item.Worker.Free;
+      FreeAndNil(Item.Worker);
     end;
-    Item.Free;
   end;
+  SaveList;
+  for Index := 0 to FItems.Count - 1 do
+    TDownloadItem(FItems[Index]).Free;
   FItems.Free;
   inherited Destroy;
 end;
@@ -353,22 +486,120 @@ begin
   Result := FItems.Count;
 end;
 
-function TDownloadManager.Start(const Url, FileName: string): TDownloadItem;
+function TDownloadManager.IndexOf(Item: TDownloadItem): Integer;
+begin
+  Result := FItems.IndexOf(Item);
+end;
+
+function TDownloadManager.RunningCount: Integer;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to FItems.Count - 1 do
+    if Items[Index].State = DownloadRunning then
+      Inc(Result);
+end;
+
+procedure TDownloadManager.StartWorker(Item: TDownloadItem);
+begin
+  Item.CancelWanted := False;
+  Item.PauseWanted := False;
+  Item.EndReported := False;
+  Item.ErrorText := '';
+  Item.State := DownloadRunning;
+  Item.MeasuredAt := 0;
+  Item.BytesPerSecond := 0;
+  if Item.Worker <> nil then
+  begin
+    Item.Worker.WaitFor;
+    FreeAndNil(Item.Worker);
+  end;
+  Item.Worker := TDownloadThread.Create(Self, Item);
+end;
+
+function TDownloadManager.Start(const Url, FileName: string; const TargetPath: string): TDownloadItem;
+var
+  Target: string;
 begin
   Result := TDownloadItem.Create;
   Result.Url := Url;
-  Result.FileName := SafeFileName(FileName);
-  Result.Path := UniqueFilePath(DownloadsFolder, Result.FileName);
+  if TargetPath <> '' then
+    Result.Path := TargetPath
+  else
+  begin
+    Target := FFolder;
+    if Target = '' then
+      Target := DownloadsFolder;
+    ForceDirectories(Target);
+    Result.Path := UniqueFilePath(ExcludeTrailingPathDelimiter(Target), SafeFileName(FileName));
+  end;
   Result.FileName := ExtractFileName(Result.Path);
   Result.Total := -1;
-  Result.State := DownloadRunning;
-  FItems.Add(Result);
-  Result.Worker := TDownloadThread.Create(Self, Result);
+  Result.StartedAt := DateTimeToUnix(LocalTimeToUniversal(Now));
+  FItems.Insert(0, Result);
+  StartWorker(Result);
+  SaveList;
 end;
 
 procedure TDownloadManager.Cancel(Item: TDownloadItem);
 begin
-  Item.CancelWanted := True;
+  if Item.State = DownloadRunning then
+    Item.CancelWanted := True
+  else if Item.State = DownloadPaused then
+  begin
+    DeleteFile(Item.Path);
+    Item.State := DownloadCancelled;
+    PostMessage(FNotify, FCode, PtrInt(Item));
+  end;
+end;
+
+procedure TDownloadManager.Pause(Item: TDownloadItem);
+begin
+  if Item.State = DownloadRunning then
+    Item.PauseWanted := True;
+end;
+
+procedure TDownloadManager.Resume(Item: TDownloadItem);
+begin
+  if Item.State <> DownloadPaused then
+    Exit;
+  Item.Resuming := True;
+  StartWorker(Item);
+end;
+
+procedure TDownloadManager.Retry(Item: TDownloadItem);
+begin
+  if not (Item.State in [DownloadFailed, DownloadCancelled]) then
+    Exit;
+  Item.Resuming := False;
+  Item.Received := 0;
+  Item.Total := -1;
+  StartWorker(Item);
+end;
+
+procedure TDownloadManager.Remove(Item: TDownloadItem);
+begin
+  if Item.State = DownloadRunning then
+    Exit;
+  if Item.Worker <> nil then
+  begin
+    Item.Worker.WaitFor;
+    FreeAndNil(Item.Worker);
+  end;
+  FItems.Remove(Item);
+  Item.Free;
+  SaveList;
+end;
+
+procedure TDownloadManager.ClearFinished;
+var
+  Index: Integer;
+begin
+  for Index := FItems.Count - 1 downto 0 do
+    if Items[Index].State in [DownloadDone, DownloadFailed, DownloadCancelled] then
+      Remove(Items[Index]);
+  SaveList;
 end;
 
 procedure TDownloadManager.Reap;
@@ -384,6 +615,68 @@ begin
       Item.Worker.WaitFor;
       FreeAndNil(Item.Worker);
     end;
+  end;
+  SaveList;
+end;
+
+procedure TDownloadManager.LoadList;
+var
+  Lines: TStringList;
+  Index: Integer;
+  Fields: TStringArray;
+  Item: TDownloadItem;
+  State: TDownloadState;
+begin
+  if FListPath = '' then
+    Exit;
+  Lines := ReadLines(FListPath);
+  try
+    for Index := 0 to Lines.Count - 1 do
+    begin
+      Fields := Lines[Index].Split([#9]);
+      if Length(Fields) < 6 then
+        Continue;
+      Item := TDownloadItem.Create;
+      Item.Url := Fields[0];
+      Item.Path := Fields[1];
+      Item.FileName := ExtractFileName(Item.Path);
+      Item.State := DownloadFailed;
+      for State := Low(TDownloadState) to High(TDownloadState) do
+        if StateNames[State] = Fields[2] then
+          Item.State := State;
+      { One running when the browser ended is paused now. }
+      if Item.State = DownloadRunning then
+        Item.State := DownloadPaused;
+      Item.Received := StrToInt64Def(Fields[3], 0);
+      Item.Total := StrToInt64Def(Fields[4], -1);
+      Item.StartedAt := StrToInt64Def(Fields[5], 0);
+      Item.EndReported := True;
+      FItems.Add(Item);
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure TDownloadManager.SaveList;
+var
+  Lines: TStringList;
+  Index: Integer;
+  Item: TDownloadItem;
+begin
+  if FListPath = '' then
+    Exit;
+  Lines := TStringList.Create;
+  try
+    for Index := 0 to FItems.Count - 1 do
+    begin
+      Item := Items[Index];
+      Lines.Add(JoinFields([Item.Url, Item.Path, StateNames[Item.State], IntToStr(Item.Received),
+        IntToStr(Item.Total), IntToStr(Item.StartedAt)]));
+    end;
+    WriteLines(Lines, FListPath);
+  finally
+    Lines.Free;
   end;
 end;
 

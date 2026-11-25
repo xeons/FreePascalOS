@@ -56,6 +56,10 @@ type
     FMaximumLength: LongInt;
     FReadOnly: Boolean;
     FHidesText: Boolean;
+    FBorderless: Boolean;
+    FPlaceholder: string;
+    procedure SetBorderless(Value: Boolean);
+    procedure SetPlaceholder(const Value: string);
     function TextLeft: LongInt;
     function ShownText: string;
     procedure SetHidesText(Value: Boolean);
@@ -95,6 +99,12 @@ type
     property ReadOnly: Boolean read FReadOnly write FReadOnly;
     { Shows dots instead of the characters (a password box). }
     property HidesText: Boolean read FHidesText write SetHidesText;
+    { No bevel of its own: the field inside a control that draws the
+      frame (an address bar with buttons in it). }
+    property Borderless: Boolean read FBorderless write SetBorderless;
+    { Shown greyed while the box is empty and has not the focus (what
+      a search box searches with). }
+    property Placeholder: string read FPlaceholder write SetPlaceholder;
   end;
 
 implementation
@@ -146,7 +156,22 @@ end;
 
 function TEditBox.TextLeft: LongInt;
 begin
-  Result := Scaled(4);
+  if FBorderless then
+    Result := Scaled(2)
+  else
+    Result := Scaled(4);
+end;
+
+procedure TEditBox.SetBorderless(Value: Boolean);
+begin
+  FBorderless := Value;
+  Invalidate;
+end;
+
+procedure TEditBox.SetPlaceholder(const Value: string);
+begin
+  FPlaceholder := Value;
+  Invalidate;
 end;
 
 const
@@ -434,14 +459,24 @@ begin
     FillRectangle(Canvas, Box, Theme.Field)
   else
     FillRectangle(Canvas, Box, Theme.Face);
-  DrawSunkenBevel(Canvas, Box);
+  if not FBorderless then
+    DrawSunkenBevel(Canvas, Box);
   if ControlFace = nil then
     Exit;
   { Text stays inside the bevel. }
   Inner := Canvas;
-  Face := InflateRectangle(Box, -BevelWidth);
+  if FBorderless then
+    Face := Box
+  else
+    Face := InflateRectangle(Box, -BevelWidth);
   NarrowCanvasClip(Inner, Face);
   TextTop := (RectangleHeight(Box) - TextHeight(ControlFace)) div 2;
+  if (Text = '') and not Focused and (FPlaceholder <> '') then
+  begin
+    DrawTextInBox(Inner, ControlFace, FPlaceholder, MakeRectangle(TextLeft, TextTop, RectangleWidth(Face),
+      TextHeight(ControlFace)), AlignTextLeft, Theme.DisabledText);
+    Exit;
+  end;
   if Enabled then
     DrawTextInBox(Inner, ControlFace, ShownText, MakeRectangle(TextLeft - FScroll, TextTop, 1 shl 20,
       TextHeight(ControlFace)), AlignTextLeft, Theme.FieldText)

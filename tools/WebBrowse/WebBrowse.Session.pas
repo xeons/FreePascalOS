@@ -61,8 +61,20 @@ type
     { What a user does once the page is quiet (after -e), each step when
       the page is quiet again (or ten seconds on): "eval:JS",
       "type:TEXT" (\n is Enter), "key:NAME" ("Enter", "ctrl+KeyA"),
-      "click:SELECTOR", "wait:MS", "shot:FILE.png". }
+      "click:SELECTOR", "wait:MS", "shot:FILE.png"; with the web view's
+      pointer (WebBrowse.Pointer, viewport CSS px): "scroll:DY",
+      "hover:X,Y", "press:X,Y", "move:X,Y", "release:X,Y",
+      "drag:X1,Y1,X2,Y2", "dblclick:X,Y", "tripleclick:X,Y", "selectall",
+      "copy" (prints the selected text). Two of them also take another
+      shape of argument: "scroll:top" and "scroll:bottom" scroll the
+      viewport there (a number is the wheel's DY), "hover:SELECTOR"
+      moves the pointer to the middle of the first element matching
+      (scrolled into view; X,Y is a point). And "scrollby:DY" scrolls
+      the viewport itself by DY, "hoverat:X,Y" is "hover:X,Y", "back"
+      and "forward" go through the session history. }
     Steps: array of string;
+    { How long a step waits for quiet before it goes on anyway. }
+    StepPatienceMilliseconds: Double;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -111,6 +123,8 @@ uses
   Web.Bindings.Selectors,
   Web.UserAgent,
   WebBrowse.Input,
+  WebBrowse.Pointer,
+  WebView.PageSelection,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
   WebBrowse.Sampler,
@@ -121,7 +135,6 @@ const
   FrameMilliseconds = 16;
   { Between typed characters, and the longest wait for quiet before a step. }
   KeyMilliseconds = 60;
-  StepPatienceMilliseconds = 10000;
   { The browser's. }
   UserAgentText = EngineUserAgent;
 
@@ -152,6 +165,10 @@ type
     FLoadedAt, FFirstLayoutAt: Double;
     FFailure: string;
     FInput: TPageInput;
+    { The user's selection and pointer, as the web view has them. }
+    FSelection: TPageSelection;
+    FPointer: TPagePointer;
+    FSelectionObserver: TDocumentObserver;
     FStepIndex: Integer;
     FStepReadyAt: Double;
     FTyping: string;
@@ -172,11 +189,21 @@ type
     function StepsBusy: Boolean;
     procedure TypeNextCharacter;
     procedure RunStep(const Step: string);
+    function RunPointerStep(const Kind, Argument: string): Boolean;
+    procedure ScrollViewport(const Argument: string; Relative: Boolean);
+    procedure HoverElement(const Selector: string);
   public
     constructor Create(const Options: TBrowseOptions);
     destructor Destroy; override;
     function Clock: Double;
     function Run: Integer;
+  end;
+
+  { The document's selection changes reach the session's selection. }
+  TSelectionObserver = class(TDocumentObserver)
+  public
+    Selection: TPageSelection;
+    procedure SelectionChanged(Document: TDocument); override;
   end;
 
   TSessionObserver = class(TNavigableObserver)
@@ -185,6 +212,11 @@ type
     procedure NavigationFailed(Navigable: TNavigable; const Url, Reason: string); override;
     procedure DocumentChanged(Navigable: TNavigable; Document: TDocument; Window: TWebWindow); override;
   end;
+
+procedure TSelectionObserver.SelectionChanged(Document: TDocument);
+begin
+  Selection.DocumentSelectionChanged;
+end;
 
 function MonotonicMicroseconds: Double;
 var
@@ -204,6 +236,7 @@ begin
   Result.TimeoutSeconds := 60;
   Result.QuietMilliseconds := 500;
   Result.StallSeconds := 5;
+  Result.StepPatienceMilliseconds := 10000;
   Result.FontDirectory := 'userland/fonts';
 end;
 
@@ -240,6 +273,10 @@ begin
   FSink.AttachNavigable(FPage.Navigable);
   FSink.SetViewport(Options.Width, Options.Height, Options.Scale);
   FInput := TPageInput.Create(FPage.Navigable);
+  FSelection := TPageSelection.Create;
+  FPointer := TPagePointer.Create;
+  FSelectionObserver := TSelectionObserver.Create;
+  TSelectionObserver(FSelectionObserver).Selection := FSelection;
   FExecutor := TPageScriptExecutor.Create(FPage.Navigable);
   FExecutor.Environment.UserAgentText := UserAgentText;
   FScriptLayout := TDocumentScriptLayout.Create;
@@ -268,6 +305,9 @@ begin
   FPage.Free;
   FExecutor.Free;
   FInput.Free;
+  FPointer.Free;
+  FSelection.Free;
+  FSelectionObserver.Free;
   FScriptLayout.Free;
   FSink.Free;
   FNetwork.Free;
@@ -295,6 +335,10 @@ end;
 
 procedure TBrowseSession.ReleaseDocument;
 begin
+  FPointer.Attach(nil, nil, nil, nil);
+  FSelection.Attach(nil, nil, nil);
+  if FDocument <> nil then
+    FDocument.RemoveObserver(FSelectionObserver);
   if FScriptLayout <> nil then
   begin
     FScriptLayout.Layout := nil;
@@ -330,6 +374,10 @@ begin
     FScriptLayout.Layout := FLayout;
     FScriptLayout.Painter := FFramePainter;
   end;
+  FSelection.Attach(Document, FLayout, FFramePainter);
+  FPointer.Attach(Document, FLayout, FFramePainter, FSelection);
+  FPointer.ViewportHeight := FOptions.Height;
+  Document.AddObserver(FSelectionObserver);
 end;
 
 { What the web view does on its frame timer. }
@@ -376,8 +424,10 @@ end;
 
 function TBrowseSession.Quiet: Boolean;
 begin
+  { A running animation (an endless spinner) keeps the layout due:
+    that alone does not keep the page from being quiet. }
   Result := Loaded and (FPage.Fetcher.ActiveJobCount = 0) and (FSink.PendingStyleImageCount = 0) and
-    not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate);
+    not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate or FLayout.AnimationsRunning);
 end;
 
 { The pointer moved down the middle of the viewport in HoverMoves steps,
@@ -524,6 +574,9 @@ var
   Element: TElement;
 begin
   Kind := Copy(Step, 1, Pos(':', Step) - 1);
+  { A step without an argument ("copy"). }
+  if Pos(':', Step) = 0 then
+    Kind := Step;
   Argument := Copy(Step, Pos(':', Step) + 1, MaxInt);
   WriteLn(Format('%8.0f step %s', [Clock, Step]));
   if Kind = 'eval' then
@@ -552,8 +605,159 @@ begin
     FWaitUntil := Clock + StrToFloatDef(Argument, 0)
   else if Kind = 'shot' then
     SavePng(Argument)
-  else
+  else if (Kind = 'scroll') and ((Argument = 'top') or (Argument = 'bottom')) then
+    ScrollViewport(Argument, False)
+  else if Kind = 'scrollby' then
+    ScrollViewport(Argument, True)
+  else if (Kind = 'hover') and (Argument <> '') and not (Argument[1] in ['0'..'9', '-', '.']) then
+    HoverElement(Argument)
+  else if Kind = 'hoverat' then
+    RunPointerStep('hover', Argument)
+  else if Kind = 'back' then
+    FPage.Navigable.Back
+  else if Kind = 'forward' then
+    FPage.Navigable.Forward
+  else if not RunPointerStep(Kind, Argument) then
     WriteLn('step: unknown ', Step);
+end;
+
+{ The viewport scrolled to the top or the bottom, or by Argument CSS px. }
+procedure TBrowseSession.ScrollViewport(const Argument: string; Relative: Boolean);
+var
+  ScrollX, ScrollY: Single;
+  Target: Double;
+begin
+  if FLayout = nil then
+    Exit;
+  if FLayout.NeedsUpdate then
+    FLayout.Update;
+  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  if Argument = 'top' then
+    Target := 0
+  else if Argument = 'bottom' then
+    Target := Max(0, FLayout.DocumentHeight - FLayout.ViewportHeight)
+  else
+    Target := ScrollY + StrToFloatDef(Argument, 0);
+  FLayout.SetScrollOffset(nil, ScrollX, Target);
+  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  WriteLn(Format('scrolled to %.0f of %.0f', [ScrollY, FLayout.DocumentHeight]));
+end;
+
+{ The pointer moved to the middle of the first element matching Selector,
+  the viewport scrolled first when it is out of view. }
+procedure TBrowseSession.HoverElement(const Selector: string);
+var
+  Element: TElement;
+  X, Y, Width, Height: Double;
+  ScrollX, ScrollY: Single;
+begin
+  if (FDocument = nil) or (FLayout = nil) then
+    Exit;
+  Element := QuerySelector(FDocument, Selector);
+  if Element = nil then
+  begin
+    WriteLn('step: nothing matches ', Selector);
+    Exit;
+  end;
+  if not FScriptLayout.BorderBox(Element, X, Y, Width, Height) then
+  begin
+    WriteLn('step: no box for ', Selector);
+    Exit;
+  end;
+  FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  if (Y + Height / 2 < ScrollY) or (Y + Height / 2 > ScrollY + FLayout.ViewportHeight) then
+  begin
+    FLayout.SetScrollOffset(nil, ScrollX, Y + Height / 2 - FLayout.ViewportHeight / 2);
+    FLayout.GetScrollOffset(nil, ScrollX, ScrollY);
+  end;
+  RunPointerStep('hover', Format('%.1f,%.1f', [X + Width / 2 - ScrollX, Y + Height / 2 - ScrollY],
+    DefaultFormatSettings));
+end;
+
+{ The pointer steps; the numbers of Argument are viewport CSS px. }
+function TBrowseSession.RunPointerStep(const Kind, Argument: string): Boolean;
+var
+  Numbers: array of Single;
+  Parts: TStringArray;
+  Index: Integer;
+  Copied: string;
+
+  function Need(Count: Integer): Boolean;
+  begin
+    Result := Length(Numbers) >= Count;
+    if not Result then
+      WriteLn('step: ', Kind, ' needs ', Count, ' numbers');
+  end;
+
+begin
+  Result := True;
+  Numbers := nil;
+  Parts := Argument.Split([',']);
+  for Index := 0 to High(Parts) do
+    if Trim(Parts[Index]) <> '' then
+    begin
+      SetLength(Numbers, Length(Numbers) + 1);
+      Numbers[High(Numbers)] := StrToFloatDef(Trim(Parts[Index]), 0);
+    end;
+  if not ((Kind = 'scroll') or (Kind = 'hover') or (Kind = 'press') or (Kind = 'move') or (Kind = 'release') or
+     (Kind = 'drag') or (Kind = 'dblclick') or (Kind = 'tripleclick') or (Kind = 'selectall') or
+     (Kind = 'copy')) then
+    Exit(False);
+  if FLayout = nil then
+  begin
+    WriteLn('step: no layout for ', Kind);
+    Exit;
+  end;
+  if Kind = 'scroll' then
+  begin
+    if Need(1) then
+      FPointer.Wheel(Numbers[0]);
+  end
+  else if (Kind = 'hover') or (Kind = 'move') then
+  begin
+    if Need(2) then
+      FPointer.MoveTo(Numbers[0], Numbers[1]);
+  end
+  else if Kind = 'press' then
+  begin
+    if Need(2) then
+      FPointer.Press(Numbers[0], Numbers[1], 1);
+  end
+  else if Kind = 'release' then
+  begin
+    if Need(2) then
+      FPointer.Release(Numbers[0], Numbers[1], 1);
+  end
+  else if Kind = 'drag' then
+  begin
+    if Need(4) then
+      FPointer.Drag(Numbers[0], Numbers[1], Numbers[2], Numbers[3], 12);
+  end
+  else if Kind = 'dblclick' then
+  begin
+    if Need(2) then
+      FPointer.ClickAt(Numbers[0], Numbers[1], 2);
+  end
+  else if Kind = 'tripleclick' then
+  begin
+    if Need(2) then
+      FPointer.ClickAt(Numbers[0], Numbers[1], 3);
+  end
+  else if Kind = 'selectall' then
+  begin
+    if FLayout.NeedsUpdate then
+      FLayout.Update;
+    FSelection.SelectAll;
+  end
+  else
+  begin
+    if FLayout.NeedsUpdate then
+      FLayout.Update;
+    FSelection.Refresh;
+    Copied := FSelection.SelectedText;
+    WriteLn('copy: ', Length(Copied), ' bytes');
+    WriteLn(Copied);
+  end;
 end;
 
 function TBrowseSession.Run: Integer;
@@ -593,7 +797,7 @@ begin
     if (FTyping <> '') and (Clock >= FNextKeyAt) then
       TypeNextCharacter;
     if Evaluated and (FStepIndex < Length(FOptions.Steps)) and not StepsBusy and Loaded and
-      (Clock - FStepReadyAt >= StepPatienceMilliseconds) then
+      (Clock - FStepReadyAt >= FOptions.StepPatienceMilliseconds) then
     begin
       { Not quiet for this long: the next step goes on anyway. }
       RunStep(FOptions.Steps[FStepIndex]);
