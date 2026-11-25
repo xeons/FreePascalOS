@@ -10139,6 +10139,26 @@ use by a load is marked stale and goes when the load is done); the
 volume, node number, size and modification time are also compared on
 every use.
 
+A section keeps its file open (through the mapped file's own open
+file), so it must never outlive the file's last name: the file system
+reports a file that loses a name - `RemovePath`, or a rename onto an
+existing file (`AddFileRemovedHook`, called after the volume's lock is
+let go) - and that drops the file's sections the same way, and a
+section whose file was removed while it was being built
+(`FileWasRemoved` at publication) is never cached. What still keeps the
+file then is what really uses it: the regions of processes mapping it
+(a running program whose file was replaced, a loaded library, a
+`CallMapHandle` mapping), each holding a reference to the mapped file.
+When the last one goes the mapped file closes its open file, the node's
+last reference goes and the driver frees the inode and its blocks
+(`FinishRemoval`; ext takes it off the orphan list), as on Unix. Before
+this, a removed library stayed open in the cache for as long as its
+section was (until 32 newer sections pushed it out), and the system
+disk was left with an orphan e2fsck reported at the next check. A
+coretest line checks the used space of the system disk around a library
+loaded and removed, a running program replaced by `mv`, and a file
+removed while mapped shared and private (`maptest --map-removed`).
+
 Measured on a desktop session (autologin, QEMU/KVM, 1 GiB, `free` and
 `ps -eo pid,rss,vsz,comm` from a serial root shell after the desktop
 settled), copying images in versus mapping them: memory in use 78.6 MiB
