@@ -72,7 +72,9 @@ ports-repo:
 
 ports-image: $(PORTS_IMAGE_STAMP)
 
-$(PORTS_IMAGE_STAMP): userland $(PORTS_FPC_SETTINGS) $(PORTS_SOURCES)
+# The userland comes first (order only: the stamp is made again when the
+# ports or the libraries Pascal ports link against change).
+$(PORTS_IMAGE_STAMP): $(PORTS_FPC_SETTINGS) $(PORTS_SOURCES) $(SYSTEM_LIBRARY) $(CORE_LIBRARY) | userland
 	@rm -rf $(PORTS_IMAGE_ROOT)
 	$(PORTS_TOOL) install-to-image --root $(PORTS_IMAGE_ROOT) --list ports/image.list
 	$(PORTS_TOOL) package pkg-selftest
