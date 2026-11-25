@@ -352,7 +352,7 @@ $(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FOR
 # routines that save and restore a thread's registers at a switch may).
 ifeq ($(ARCH),arm64)
 KERNEL_SIMD_PATTERN := [[:space:],][qdsvbh][0-9]+([].,[:space:]]|$$)
-KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchSuspendTestHoldFpuValues
 else
 KERNEL_SIMD_PATTERN := %(x|y|z)mm[0-9]
 KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchInitializeFpuState

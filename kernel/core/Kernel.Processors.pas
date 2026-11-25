@@ -126,10 +126,10 @@ type
       processor's; the boot processor's are static). }
     InterruptStackArea: Pointer;
     DescriptorTables: TProcessorDescriptorTables;
-    { Suspend to RAM (Kernel.ProcessorPower): asked to freeze, frozen,
-      and the state it froze in. }
-    FreezeRequested: Boolean;
-    Frozen: Boolean;
+    { Suspend to RAM (Kernel.ProcessorPower): where it is in freezing
+      (FreezeState*, changed only by compare-and-exchange or by the one
+      side that owns the state it is in), and the state it froze in. }
+    FreezeState: PtrUInt;
     SuspendContext: TArchSuspendContext;
   end;
 

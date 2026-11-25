@@ -47,8 +47,9 @@ uses
 { Sets up the start-up page. Returns False if no low memory is free. }
 function PrepareProcessorStartup: Boolean;
 { Wakes Processor, which then runs EntryPoint(Processor) on the stack
-  ending at StackTop. }
-procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
+  ending at StackTop. False if it could not be started (the firmware
+  refused, or says it is still on). }
+function StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): Boolean;
 { Called by a secondary processor first thing at its entry point. }
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 
@@ -181,13 +182,15 @@ begin
   Result := StartupPhysical;
 end;
 
-procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
+function StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): Boolean;
 begin
   StartupField(StackTopOffset)^ := StackTop;
   StartupField(ProcessorBlockOffset)^ := QWord(Processor);
   StartupField(EntryPointOffset)^ := QWord(EntryPoint);
   StartupField(StartedOffset)^ := 0;
   HalStartProcessor(Processor^.ApicId, Byte(StartupPhysical shr PageShift));
+  { INIT and STARTUP are not answered. }
+  Result := True;
 end;
 
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
