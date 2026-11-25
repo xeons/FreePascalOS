@@ -337,9 +337,9 @@ var
   Watcher: PEventObject;
   Handle: Int64;
 begin
-  Watcher := CreateNetworkChangeWatcher;
+  Watcher := CreateNetworkChangeWatcher(CurrentProcess^.Credentials.EffectiveUserId);
   if Watcher = nil then
-    Exit(Failure(ErrorOutOfMemory));
+    Exit(Failure(ErrorTooManyHandles));
   Process := CurrentProcess;
   AcquireMutex(Process^.Lock);
   Handle := InsertHandle(Process^.Handles, HandleKindEvent, Watcher, 0);

@@ -128,7 +128,8 @@ const
     the network's configuration from now on: an adapter registered, a
     link that came or went, an interface turned on or off or given an
     address, a route or the DNS servers changed. The watcher looks again
-    (CallListNetworkInterfaces ...) when it is signaled. Anyone. }
+    (CallListNetworkInterfaces ...) when it is signaled. Anyone; a user
+    other than root has at most 8 at once (ErrorTooManyHandles). }
   CallWatchNetworkChanges = 125;
   { (StatisticsAddress): the protocols' counters since the start, a
     TAbiNetworkStatistics (netstat -s). Anyone may read them. }

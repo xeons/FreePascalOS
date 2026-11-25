@@ -32,7 +32,10 @@
   (Debug.Output's output copy) and sent afterwards - the command's
   output, and any other log line written meanwhile; at most 64 KiB per
   command, the rest is cut. "exit" closes the connection; "poweroff" and
-  "reboot" do what they say.
+  "reboot" do what they say. A connection quiet for ten minutes is
+  closed, a peer that stops answering is found by keep-alives within
+  two minutes, and one that stops reading is dropped after a minute, so
+  nobody holds the one connection for ever.
 }
 unit Kernel.NetworkShell;
 
@@ -71,6 +74,11 @@ const
   Greeting = 'FreePascalOS kernel debug shell (unauthenticated; trusted networks only). ' +
     '"help" lists the commands, "exit" closes.';
   CutNotice = '[output cut at 64 KiB]';
+  IdleTimeoutMilliseconds = 10 * 60 * 1000;
+  SendTimeoutMilliseconds = 60 * 1000;
+  KeepAliveIdleSeconds = 60;
+  KeepAliveIntervalSeconds = 10;
+  KeepAliveProbes = 6;
 
 var
   ListenPort: Word;
@@ -309,6 +317,12 @@ begin
       Continue;
     end;
     WriteConnection(Peer, True);
+    SetSocketOption(Connection, SocketOptionReceiveTimeout, IdleTimeoutMilliseconds, True);
+    SetSocketOption(Connection, SocketOptionSendTimeout, SendTimeoutMilliseconds, True);
+    SetSocketOption(Connection, SocketOptionKeepIdle, KeepAliveIdleSeconds, True);
+    SetSocketOption(Connection, SocketOptionKeepInterval, KeepAliveIntervalSeconds, True);
+    SetSocketOption(Connection, SocketOptionKeepCount, KeepAliveProbes, True);
+    SetSocketOption(Connection, SocketOptionKeepAlive, 1, True);
     Serve(Connection);
     ShutdownSocket(Connection, SocketShutdownBoth);
     DereferenceObject(Connection);

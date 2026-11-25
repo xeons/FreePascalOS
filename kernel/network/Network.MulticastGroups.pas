@@ -60,6 +60,12 @@ function JoinMulticastGroup(NetworkInterface: PNetworkInterface; Family: Word; c
   Group4: TIpv4Address): LongInt;
 procedure LeaveMulticastGroup(NetworkInterface: PNetworkInterface; Family: Word; constref Group6: TIpv6Address;
   Group4: TIpv4Address);
+{ The group has an entry on the interface already (joining it again
+  takes no room). }
+function MulticastGroupHasEntry(NetworkInterface: PNetworkInterface; Family: Word; constref Group6: TIpv6Address;
+  Group4: TIpv4Address): Boolean;
+{ Entries of the table not in use. }
+function FreeMulticastGroupEntries: Integer;
 function InterfaceJoinedIpv6Group(NetworkInterface: PNetworkInterface; constref Group: TIpv6Address): Boolean;
 function InterfaceJoinedIpv4Group(NetworkInterface: PNetworkInterface; Group: TIpv4Address): Boolean;
 { The Position-th (from 0) IPv6 group joined on the interface that MLD
@@ -234,6 +240,22 @@ begin
       Exit(ErrorNone);
     end;
   Result := ErrorNoSpace;
+end;
+
+function MulticastGroupHasEntry(NetworkInterface: PNetworkInterface; Family: Word; constref Group6: TIpv6Address;
+  Group4: TIpv4Address): Boolean;
+begin
+  Result := FindGroup(NetworkInterface, Family, Group6, Group4) >= 0;
+end;
+
+function FreeMulticastGroupEntries: Integer;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to MaximumJoinedGroups - 1 do
+    if not Groups[Index].InUse then
+      Inc(Result);
 end;
 
 procedure LeaveMulticastGroup(NetworkInterface: PNetworkInterface; Family: Word; constref Group6: TIpv6Address;
