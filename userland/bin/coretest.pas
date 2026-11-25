@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..420] of TCommandTest = (
+  CommandTests: array[0..425] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -602,7 +602,7 @@ const
       the user's groups (supplementary ones from /etc/group), home and
       environment. }
     (Command: 'printf ''user\nuser\n'' | login -e /bin/id 2>/dev/null; printf ''user\nwrong\n'' | login -e /bin/id 2>/dev/null; echo $?'; ExpectedOutput: 'fpos login: uid=1000(user) gid=1000(user) groups=1000(user)'#10'fpos login: Login incorrect'#10'fpos login: 1'#10; ExpectedStatus: 0),
-    (Command: 'login -f root -e /bin/id; login -f user -e /bin/pwd; login -f user -e /bin/printenv; su user -c "login -f root -e /bin/id" 2>&1; echo $?'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'/home/user'#10'HOME=/home/user'#10'SHELL=/bin/sh'#10'USER=user'#10'LOGNAME=user'#10'PATH=/bin'#10'TERM=console'#10'login: only root may log users in'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'login -f root -e /bin/id; login -f user -e /bin/pwd; login -f user -e /bin/printenv; su user -c "login -f root -e /bin/id" 2>&1; echo $?'; ExpectedOutput: 'uid=0(root) gid=0(root) groups=0(root),10(wheel)'#10'/home/user'#10'HOME=/home/user'#10'SHELL=/bin/sh'#10'USER=user'#10'LOGNAME=user'#10'PATH=/bin:/usr/local/bin'#10'TERM=console'#10'login: only root may log users in'#10'1'#10; ExpectedStatus: 0),
 
     { --- the Control Panel's subsystems ------------------------------- }
     { Time zones (Sys.TimeZones): offsets and abbreviations on both sides
@@ -758,7 +758,16 @@ const
     (Command: 'touch -m -t 202301010000 t; touch -a -t 202401010000 t; test $(stat -c %X t) -gt $(stat -c %Y t) && echo access-later; ls -l --time=atime t | grep -c 2024; ls -lu t | grep -c 2024; ls -l t | grep -c 2023; stat -c %W t | grep -c "^0$"; stat t | grep -c "Birth: [0-9]"'; ExpectedOutput: 'access-later'#10'1'#10'1'#10'1'#10'0'#10'1'#10; ExpectedStatus: 0),
     (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Process restrictions (the browser's renderer sandbox). }
-    (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0)
+    (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { pkg: the system disk carries hello installed (ports/image.list) and
+      the package pkg-selftest as a file; it is installed (with its
+      post-install script), checked, refused twice, found changed by
+      verify, and removed (with its pre-remove script), leaving nothing. }
+    (Command: 'pkg list -q; pkg verify hello; hello pkg; command -v hello'; ExpectedOutput: 'hello'#10'hello 1.0: ok'#10'Hello, pkg!'#10'/usr/local/bin/hello'#10; ExpectedStatus: 0),
+    (Command: 'pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst; echo $?; cat /tmp/pkg-selftest.post-install; cat /usr/local/share/pkg-selftest/latest; tail -n 1 /usr/local/etc/pkg-selftest.conf'; ExpectedOutput: 'installed pkg-selftest 1.0'#10'running the post-install script of pkg-selftest'#10'0'#10'pkg-selftest 1.0 installed'#10'pkg self test: this file was installed by pkg.'#10'greeting = hello'#10; ExpectedStatus: 0),
+    (Command: 'pkg which /usr/local/share/pkg-selftest/message.txt; pkg verify pkg-selftest; pkg test pkg-selftest; pkg info pkg-selftest | head -n 2; pkg list -q'; ExpectedOutput: '/usr/local/share/pkg-selftest/message.txt was installed by pkg-selftest 1.0'#10'pkg-selftest 1.0: ok'#10'pkg-selftest: passed: grep -q ''pkg self test'' /usr/local/share/pkg-selftest/latest'#10'Name:        pkg-selftest'#10'Version:     1.0'#10'hello'#10'pkg-selftest'#10; ExpectedStatus: 0),
+    (Command: 'pkg remove hello 2>&1; echo $?; pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst 2>&1; echo $?; echo x >> /usr/local/etc/pkg-selftest.conf; pkg verify pkg-selftest 2>&1 | grep -c "pkg-selftest.conf: the size is 115, not 113"'; ExpectedOutput: 'pkg: hello is needed by pkg-selftest'#10'1'#10'pkg: pkg-selftest 1.0 is installed already'#10'1'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q; pkg verify; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0)
   );
 
 var
@@ -945,7 +954,7 @@ begin
     CreateDirectory('/tmp');
   CreateDirectory(WorkDirectory);
   ChangeDirectory(WorkDirectory);
-  SetVariable('PATH', '/bin');
+  SetVariable('PATH', '/bin:/usr/local/bin');
   SetVariable('HOME', '/');
 end;
 

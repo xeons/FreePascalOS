@@ -75,7 +75,7 @@ var
   Index: LongInt;
 begin
   Environment.Texts := nil;
-  AddVariable(Environment, 'PATH', '/bin');
+  AddVariable(Environment, 'PATH', '/bin:/usr/local/bin');
   AddVariable(Environment, 'HOME', Account.Home);
   AddVariable(Environment, 'USER', Account.Name);
   AddVariable(Environment, 'LOGNAME', Account.Name);

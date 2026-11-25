@@ -21,7 +21,8 @@
 #                                  (build/ARCH/ports/packages)
 #   make port-NAME                 build one port's package
 #   make ports-lint                check every port without building
-#   make ports-test                the ports tool's and pkg's host tests
+#   make ports-test                the ports tool's host tests
+#   make pkg-test                  pkg's units on the host
 #   make ports-repo                a repository of the packages built
 #                                  (INDEX, signed with PORTS_SIGNING_KEY)
 #
@@ -80,6 +81,39 @@ $(PORTS_IMAGE_STAMP): userland $(PORTS_FPC_SETTINGS) $(PORTS_SOURCES)
 	@touch $@
 
 $(SYSTEM_DISK): $(PORTS_IMAGE_STAMP)
+
+# pkg's units on the host (all but /bin/sh and HTTP, which Pkg.System
+# gives on the system): versions against the ports tool's order,
+# manifests, indexes, the database install-to-image writes, and whole
+# install, upgrade, verify and remove runs and repository updates under
+# a root of the test's own, over packages make-fixtures.py makes with
+# the ports tool. Built without range checks, as CryptoTest builds
+# libcryptography.
+PKG_TEST := build/tools/PkgTest
+PKG_TEST_UNITS := build/tools/pkg-test-units
+PKG_TEST_FIXTURES := build/tools/pkg-fixtures
+PKG_TEST_SOURCES := $(wildcard tools/PkgTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Pkg.System.pas,$(wildcard userland/pkg/*.pas)) \
+	$(filter-out %/Archive.Contents.pas,$(wildcard userland/lib/archive/*.pas)) \
+	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
+	$(filter-out %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
+
+.PHONY: pkg-test
+
+$(PKG_TEST_FIXTURES)/manifest.txt: tools/PkgTest/make-fixtures.py tools/PortsTest/test_dependencies.py \
+		$(wildcard scripts/portstool/*.py)
+	python3 -I $< $(PKG_TEST_FIXTURES)
+
+$(PKG_TEST): $(PKG_TEST_SOURCES)
+	@mkdir -p $(PKG_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/PkgTest -Futools/CryptoTest -Fuuserland/pkg -Fuuserland/lib/archive \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fushared -Fishared -FU$(PKG_TEST_UNITS) \
+		-o$@ tools/PkgTest/PkgTest.pas
+
+pkg-test: $(PKG_TEST) $(PKG_TEST_FIXTURES)/manifest.txt
+	@$(PKG_TEST) $(PKG_TEST_FIXTURES) build/tools/pkg-work > build/tools/pkg-test.out || \
+		{ grep FAIL build/tools/pkg-test.out; echo "PKG TEST FAILED (build/tools/pkg-test.out)"; exit 1; }
+	@echo "PKG TEST PASSED: $$(tail -n 1 build/tools/pkg-test.out | cut -d ' ' -f 3-)"
 
 # The ports tool's host tests (Python unittest: TOML and the schema,
 # licences, versions, dependencies, patches, packages, manifests,

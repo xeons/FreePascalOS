@@ -37,8 +37,8 @@ BUILD_PHASES = ("configure", "build", "stage", "package")
 class Session:
     def __init__(self, arguments):
         self.arguments = arguments
-        self.tree = PortsTree()
-        self.layout = BuildLayout(arguments.arch)
+        self.tree = PortsTree(arguments.ports_root)
+        self.layout = BuildLayout(arguments.arch, arguments.build_root)
         self.options = parse_option_settings(getattr(arguments, "option", None))
 
     def find(self, text):
@@ -46,7 +46,7 @@ class Session:
 
     def build(self, port):
         return PortBuild(port, self.layout, verbose=self.arguments.verbose, jobs=self.arguments.jobs,
-                         offline=self.arguments.offline)
+                         offline=self.arguments.offline, tree=self.tree)
 
 
 def _ports_from(session, names):
@@ -70,7 +70,7 @@ def run_phase(session, phase, names, with_run_dependencies=False, strict=False, 
     blocked = set()
     for port in ordered:
         target = phase if port.name in requested_names else "package"
-        if port.name not in requested_names and session.arguments.reuse_packages:
+        if port.name not in requested_names and getattr(session.arguments, "reuse_packages", False):
             existing = os.path.join(session.layout.packages, port.package_file_name(session.layout.processor))
             if os.path.exists(existing):
                 continue
@@ -313,6 +313,9 @@ def make_parser():
     parser.add_argument("-j", "--jobs", type=int, default=None, help="parallel jobs (default: processors)")
     parser.add_argument("--offline", action="store_true", help="never download; use the distfile cache")
     parser.add_argument("-o", "--option", action="append", metavar="NAME=on|off", help="set a port option")
+    parser.add_argument("--ports-root", default=os.environ.get("PORTS_ROOT"), help="another ports tree (tests)")
+    parser.add_argument("--build-root", default=os.environ.get("PORTS_BUILD_ROOT"),
+                        help="another build tree than build/ (tests)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     for phase in PHASES:

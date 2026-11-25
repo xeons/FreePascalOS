@@ -69,7 +69,7 @@ const
   ProgramPathCapacity = 256;
 
   DefaultEnvironment: array[0..3] of PChar = (
-    'PATH=/bin',
+    'PATH=/bin:/usr/local/bin',
     'HOME=/',
     'TERM=console',
     'SHELL=/bin/sh');

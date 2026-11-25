@@ -29,6 +29,13 @@
 #          definitions in /etc/services and the system's settings in
 #          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
+#   /var/db/pkg, /var/cache/pkg, /etc/pkg/keys   pkg's database, its
+#                   downloads and the keys of its repositories
+#   /usr/local   ported software: the packages ports/image.list names,
+#                   installed (and recorded in /var/db/pkg) by
+#                   scripts/ports.py install-to-image into
+#                   build/ARCH/ports/image-root, copied here with the
+#                   package coretest installs (/var/cache/pkg)
 #   /var/lib/network  the network service's state of each interface
 #   /lib/fonts, /lib/pointers   the fonts and the pointer's shapes (its
 #                   pictures too, from <user-build-directory>/pointers)
@@ -54,6 +61,7 @@ partition_image="$output_image.partition"
 
 rm -rf "$staging_directory"
 mkdir -p "$staging_directory"/{bin,lib,etc,etc/settings,tmp,dev,home/user,var/log,var/lib/network}
+mkdir -p "$staging_directory"/{var/db/pkg,var/cache/pkg,etc/pkg/keys}
 # AUTHORIZED_KEYS (a public key file, e.g. ~/.ssh/id_ed25519.pub) lets
 # that key log in as "user" over SSH: for a board on the desk.
 if [[ -n "${AUTHORIZED_KEYS:-}" ]]; then
@@ -101,6 +109,12 @@ if [[ -d "$source_directory/firmware" ]]; then
 fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
+fi
+# Ported software installed as packages (ports/ports.mk makes this
+# folder: ports/image.list's packages and pkg's database of them).
+ports_image_root="$user_build_directory/../ports/image-root"
+if [[ -d "$ports_image_root" ]]; then
+    cp -a "$ports_image_root"/. "$staging_directory/"
 fi
 # Programs that behave differently by the name they are started as:
 # "[" is test, chgrp is chown, dir and vdir are ls, unexpand is expand,

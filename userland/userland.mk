@@ -579,6 +579,13 @@ $(QUIC_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lquic -lhttp -ltls -lcompression
 $(QUIC_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(QUIC_PROGRAMS): $(QUIC_LIBRARY)
+# pkg installs packages (tar.zst, read by libarchive) and fetches
+# repositories through libhttp; its units are in userland/pkg.
+PKG_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,pkg)
+$(PKG_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -larchive -lhttp -ltls -lcompression
+$(PKG_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(ARCHIVE_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS)
+$(PKG_PROGRAMS): $(ARCHIVE_LIBRARY) $(HTTP_LIBRARY)
 # ss is built on netstat's units (userland/netstat).
 NETSTAT_UNIT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,ss)
 $(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat

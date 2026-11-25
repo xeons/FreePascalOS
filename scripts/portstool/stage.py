@@ -127,8 +127,9 @@ def strip_binaries(context, strip_command, log):
 
 
 def normalize_tree(root, epoch):
-    """Permissions without group/other write or set-id bits, every time
-    the same; checks what may not go in a package."""
+    """Permissions without group/other write or set-id bits (folders
+    open to all), every time the same; checks what may not go in a
+    package."""
     for directory, folders, files in os.walk(root, topdown=False):
         for name in files + folders:
             path = os.path.join(directory, name)
@@ -148,8 +149,6 @@ def normalize_tree(root, epoch):
             mode = stat.S_IMODE(info.st_mode) & ~0o7022
             if stat.S_ISDIR(info.st_mode):
                 mode |= 0o755
-            else:
-                mode |= 0o644
             os.chmod(path, mode)
             os.utime(path, (epoch, epoch))
     os.utime(root, (epoch, epoch))
@@ -194,7 +193,11 @@ def collect_entries(stage_root):
             else:
                 info = os.lstat(path)
                 files.append(FileEntry(relative, stat.S_IMODE(info.st_mode), info.st_size, sha256_file(path)))
-    return directories, files, links
+
+    def by_path(entry):
+        return entry.path
+
+    return sorted(directories, key=by_path), sorted(files, key=by_path), sorted(links, key=by_path)
 
 
 def license_paths(port):

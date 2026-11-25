@@ -287,7 +287,7 @@ begin
   if CurrentDirectoryPath(Directory) = ErrorNone then
     AssignVariable('PWD', Directory);
   if not VariableIsSet('PATH') then
-    SetVariable('PATH', '/bin');
+    SetVariable('PATH', '/bin:/usr/local/bin');
 end;
 
 { The program's arguments from First on. }

@@ -88,7 +88,8 @@ def lint_port(port, tree, allowlist):
 
 def lint(tree, ports=None, toolchain_available=None):
     """Prints the findings; the number of errors."""
-    allowlist = licenses.load_allowlist()
+    tree_allowlist = os.path.join(tree.root, "licenses.txt")
+    allowlist = licenses.load_allowlist(tree_allowlist if os.path.exists(tree_allowlist) else None)
     total_errors = 0
     for directory, why in sorted(tree.failures().items()):
         print(f"ERROR {os.path.relpath(directory, tree.root)}: {why}")

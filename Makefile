@@ -52,6 +52,12 @@
 #                   decompress what it compresses
 #   make archive-test  Check libarchive on the host: zip and tar files made by
 #                   Python read, and the zips it writes checked by Python's zipfile
+#   make ports-test Check the ports tool (scripts/ports.py) on the host: port.toml and
+#                   its schema, licences, dependencies, patches, packages, repositories,
+#                   whole builds in a tree of its own (Python unittest)
+#   make pkg-test   Check pkg's units on the host: install, upgrade, verify, remove and
+#                   repositories over packages the ports tool made
+#   make ports PORTS="NAME ..."  Build ports into packages (ports/README.md)
 #   make ssh-test   Check libssh on the host: packet framing, the ciphers, the key
 #                   exchange hash and keys, host keys and signatures against Python's
 #                   and OpenSSL's answers, and the server against a client in memory
@@ -208,7 +214,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
-	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test
+	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test
 
 all: esp
 
@@ -556,7 +562,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test esp $(TEST_DISK) \
+		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)

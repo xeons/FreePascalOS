@@ -83,7 +83,7 @@ uses
 
 const
   DefaultTerminal = 'console';
-  SearchPath = '/bin';
+  SearchPath = '/bin:/usr/local/bin';
 
 function FindLoginAccount(const Name: string; out Account: TLoginAccount): Boolean;
 var

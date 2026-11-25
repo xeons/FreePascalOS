@@ -80,9 +80,13 @@ def fetch_source(source, log=None, offline=False):
     """The distfile's path once it is in the cache and checks; downloads
     it (trying each URL) when it is missing or wrong."""
     path = distfile_path(source)
-    if os.path.exists(path) and check_distfile(source, path) is None:
-        return path
-    if offline:
+    if os.path.exists(path):
+        problem = check_distfile(source, path)
+        if problem is None:
+            return path
+        if offline:
+            raise FetchError(f"{problem} (offline: not fetched again)")
+    elif offline:
         raise FetchError(f"{source.filename} is not in {paths.distfile_directory()} (offline)")
     failures = []
     for url in source.urls:

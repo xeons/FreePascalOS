@@ -40,9 +40,10 @@ PHASES = ("fetch", "verify", "extract", "patch", "configure", "build", "stage", 
 
 
 class PortBuild:
-    def __init__(self, port, layout, verbose=False, jobs=None, offline=False):
+    def __init__(self, port, layout, verbose=False, jobs=None, offline=False, tree=None):
         self.port = port
         self.layout = layout
+        self.tree = tree
         self.offline = offline
         self.log = BuildLog(layout.log(port.name), verbose=verbose)
         self.context = BuildContext(port, layout, self.log, jobs)
@@ -231,7 +232,7 @@ class PortBuild:
         caller has built first (cli.py builds in dependency order)."""
         from .resolver import Resolver
         from .tree import PortsTree
-        tree = PortsTree()
+        tree = self.tree or PortsTree()
         found = []
         for dependency_port in Resolver(tree, kinds=("build",)).order([self.port])[:-1]:
             path = os.path.join(self.layout.packages, dependency_port.package_file_name(self.layout.processor))
