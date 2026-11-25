@@ -51,6 +51,7 @@ static const struct test_group groups[] = {
 	{"signals", test_signals},
 	{"sockets", test_sockets},
 	{"dlopen", test_dlopen},
+	{"security", test_security},
 };
 
 /* Runs a program of the suite; its exit code 0 is a pass. */
@@ -73,6 +74,13 @@ static void run_program(const char *path, const char *argument) {
 
 int main(int argc, char **argv) {
 	const char *only = argc > 1 ? argv[1] : NULL;
+	/* What the security group runs this program for. */
+	if (only && strcmp(only, "--report-euid") == 0)
+		return ctest_report_effective_user();
+	if (only && strcmp(only, "--check-pending-usr1") == 0)
+		return ctest_check_pending_usr1();
+	if (only && strcmp(only, "--exec-loop") == 0)
+		return ctest_exec_loop(argc > 2 ? argv[2] : "0");
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	printf("ctest: the C library on FreePascalOS\n");
 	for (size_t i = 0; i < sizeof(groups) / sizeof(groups[0]); i++) {

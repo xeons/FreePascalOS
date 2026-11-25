@@ -52,5 +52,11 @@ void test_pipes(void);
 void test_signals(void);
 void test_sockets(void);
 void test_dlopen(void);
+void test_security(void);
+
+/* ctest's helper modes (ctest-security.c), chosen by its first argument. */
+int ctest_report_effective_user(void);
+int ctest_check_pending_usr1(void);
+int ctest_exec_loop(const char *rounds_text);
 
 #endif

@@ -82,6 +82,7 @@ c-runtime-files:
 	$(C_CC) $(C_FLAGS) -o $(C_RUNTIME_OUTPUT)/bin/hello toolchain/ctest/hello.c
 	$(C_CC) $(C_FLAGS) -static -o $(C_RUNTIME_OUTPUT)/bin/hello-static toolchain/ctest/hello.c
 	$(C_CC) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/ctest toolchain/ctest/ctest*.c -lm -ldl
+	$(C_CC) $(C_FLAGS) -o $(C_RUNTIME_OUTPUT)/bin/ctest-suid toolchain/ctest/suidhelper.c -ldl
 	@if [ -f $(C_SYSROOT)/usr/lib/libstdc++.so.6 ]; then \
 		echo "$(C_CXX) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest toolchain/ctest/cxxtest.cpp"; \
 		$(C_CXX) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest toolchain/ctest/cxxtest.cpp; \
