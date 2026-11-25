@@ -702,10 +702,13 @@ $(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% userland/%/program.info $$(w
 	@if [ -d userland/$*/icons ]; then mkdir -p $(APP_OUTPUT)/$*/icons; cp userland/$*/icons/*.ico $(APP_OUTPUT)/$*/icons/; fi
 	@touch $@
 
+# The native Free Pascal compiler, its units and configuration.
+include toolchain/fpc/fpc.mk
+
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
+$(SYSTEM_DISK): userland $(NATIVE_FPC_SYSTEM_DISK_FILES) scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
 		$(wildcard userland/etc/*/*/*) \
 		$(wildcard userland/pointers/*) $(AUTHORIZED_KEYS)
-	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@
+	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" NATIVE_FPC=$(NATIVE_FPC) scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@

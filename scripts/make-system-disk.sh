@@ -99,6 +99,13 @@ if [[ -d "$source_directory/firmware" ]]; then
     mkdir -p "$staging_directory/lib/firmware"
     cp -r "$source_directory"/firmware/* "$staging_directory/lib/firmware/"
 fi
+# The native Free Pascal compiler (/bin/fpc, /bin/ppcx64 or ppca64,
+# /etc/fpc.cfg, the units in /usr/lib/fpc), when it was built
+# (toolchain/fpc/fpc.mk; NATIVE_FPC=no leaves it out).
+if [[ -d "$user_build_directory/fpc-root" && "${NATIVE_FPC:-yes}" == yes ]]; then
+    cp -r "$user_build_directory"/fpc-root/. "$staging_directory/"
+    find "$staging_directory/usr/lib/fpc" -name .staged -delete
+fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
 fi

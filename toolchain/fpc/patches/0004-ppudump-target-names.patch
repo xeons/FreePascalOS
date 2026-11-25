@@ -1,0 +1,15 @@
+diff --git a/compiler/utils/ppuutils/ppudump.pp b/compiler/utils/ppuutils/ppudump.pp
+index 3418e62..8a417dc 100644
+--- a/compiler/utils/ppuutils/ppudump.pp
++++ b/compiler/utils/ppuutils/ppudump.pp
+@@ -215,7 +215,9 @@ const
+   { 100 } 'Android-AArch64',
+   { 101 } 'Android-x86-64',
+   { 102 } 'Haiku-x86-64',
+-  { 111 } 'Darwin-AArch64'
++  { 111 } 'Darwin-AArch64',
++  { 104 } 'FreePascalOS-x86-64',
++  { 105 } 'FreePascalOS-AArch64'
+   );
+ 
+ const
