@@ -54,6 +54,8 @@ uses
   Kernel.Timers,
   Kernel.Clock,
   Io.Pci,
+  Io.Dma,
+  Io.PlatformDevices,
   Io.PciMessageInterrupts,
   Io.AudioOutput,
   Io.AudioInput,
@@ -70,6 +72,14 @@ const
   OutputTag = 1;
   InputTag = 2;
   PollIntervalMilliseconds = 10;
+  { GCAP bit 0: the controller puts out 64-bit addresses. }
+  CapabilityAddresses64Bit = 1;
+  FourGibibytes = QWord($100000000);
+  { The registers up to the last stream descriptor GCAP can describe (15
+    input, 15 output and 30 bidirectional streams at most, but the
+    driver only uses the first input and the first output: 80h + 16
+    descriptors of 20h). }
+  MinimumRegisterBytes = $280;
 
 type
   PHdAudioController = ^THdAudioController;
@@ -92,6 +102,7 @@ type
   THdAudioController = record
     Pci: PPciDevice;
     Registers: PByte;
+    Dma: TDmaAttributes;
     UsesInterrupts: Boolean;
     Playback: TDirection;
     Capture: TDirection;
@@ -105,6 +116,10 @@ var
   Direction: PDirection;
 begin
   Direction := PDirection(Context);
+  { A stream whose list could not be made never runs (it would fetch
+    descriptors from bus address 0). }
+  if Direction^.Stream.List.Address = nil then
+    Exit;
   Direction^.IsRunning := True;
   RunStream(Direction^.Stream);
   if not Direction^.Controller^.UsesInterrupts then
@@ -246,9 +261,10 @@ begin
   Routines.SetVolume := @SetPlaybackVolume;
   Routines.Kind := AudioOutputKindHdAudio;
   Routines.PeriodWritten := nil;
-  Direction^.Output := RegisterAudioOutput(Routines, Direction);
+  Direction^.Output := RegisterAudioOutput(Routines, Direction, @Controller^.Dma);
   if (Direction^.Output = nil) or not PrepareStream(Direction^.Stream, Controller^.Registers,
-    FirstOutputStream(Controller^.Registers), OutputTag, Direction^.Output^.PeriodsPhysical) then
+    FirstOutputStream(Controller^.Registers), OutputTag, Controller^.Dma,
+    Direction^.Output^.PeriodsDeviceAddress) then
     Exit;
   ApplyFormat(Controller, Direction^.Path);
   Result := True;
@@ -272,9 +288,10 @@ begin
   Routines.Stop := @StopDirection;
   Routines.Position := @DirectionPosition;
   Routines.SetGain := @SetCaptureGain;
-  Direction^.Input := RegisterAudioInput(Routines, Direction);
+  Direction^.Input := RegisterAudioInput(Routines, Direction, @Controller^.Dma);
   if (Direction^.Input = nil) or not PrepareStream(Direction^.Stream, Controller^.Registers,
-    FirstInputStream(Controller^.Registers), InputTag, Direction^.Input^.PeriodsPhysical) then
+    FirstInputStream(Controller^.Registers), InputTag, Controller^.Dma,
+    Direction^.Input^.PeriodsDeviceAddress) then
     Exit;
   ApplyFormat(Controller, Direction^.Path);
   Result := True;
@@ -362,9 +379,16 @@ begin
   if Controller = nil then
     Exit;
   Controller^.Pci := Pci;
+  GetPciDmaAttributes(Pci, Controller^.Dma);
   PciEnableDevice(Pci, True);
   Controller^.Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
-  if (Controller^.Registers = nil) or not ResetController(Controller) or not StartPlayback(Controller) then
+  if (Controller^.Registers = nil) or (Bar.SizeInBytes < MinimumRegisterBytes) then
+    Exit;
+  { Without "64-bit addresses supported" the streams and lists stay below
+    4 GiB of bus addresses. }
+  if (Read16(Controller^.Registers, RegisterCapabilities) and CapabilityAddresses64Bit) = 0 then
+    LimitDmaBusAddresses(Controller^.Dma, FourGibibytes);
+  if not ResetController(Controller) or not StartPlayback(Controller) then
     Exit;
   Controller^.HasCapture := StartCapture(Controller);
 

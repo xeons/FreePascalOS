@@ -149,6 +149,13 @@ const
   TagAnswered = LongWord($80000000);
 
   TimeoutMilliseconds = 1000;
+  { Message pages: one is used at a time; one the firmware did not answer
+    in time is set aside until its late answer comes, so a late answer
+    never lands in the next question. }
+  MessagePageCount = 2;
+  { Old answers drained before a question, at most (a mailbox that
+    never reads empty must not hold the processor). }
+  MaximumDrainedAnswers = 64;
 
   { How the GPU sees the low gigabyte of RAM on the BCM2711 (the alias
     that bypasses its L2 cache). }
@@ -158,7 +165,11 @@ const
 var
   Registers: PByte;
   RegistersPhysical: QWord;
+  MessagePages: array[0..MessagePageCount - 1] of TDmaBuffer;
+  { The page asked with now, and the pages set aside. }
   Message: TDmaBuffer;
+  CurrentPage: Integer;
+  SetAside: array[0..MessagePageCount - 1] of Boolean;
   { The mailbox's DMA: never coherent, through the GPU's window. }
   MailboxDma: TDmaAttributes;
   Lock: TMutex;
@@ -191,24 +202,72 @@ begin
   Result := True;
 end;
 
-{ Sends the message and waits for the firmware's answer to it. }
+function RequestWordOf(Page: Integer): LongWord;
+begin
+  Result := LongWord(MessagePages[Page].DeviceAddress and not QWord($F)) or PropertyChannel;
+end;
+
+{ A late answer for a page set aside gives the page back. }
+procedure NoteLateAnswer(Answer: LongWord);
+var
+  Page: Integer;
+begin
+  for Page := 0 to MessagePageCount - 1 do
+    if SetAside[Page] and (Answer = RequestWordOf(Page)) then
+      SetAside[Page] := False;
+end;
+
+{ Old answers nobody waited for are taken (bounded). }
+procedure DrainAnswers;
+var
+  Drained: Integer;
+begin
+  Drained := 0;
+  while ((ReadRegister(MailboxReadStatus) and StatusEmpty) = 0) and (Drained < MaximumDrainedAnswers) do
+  begin
+    NoteLateAnswer(ReadRegister(MailboxRead));
+    Inc(Drained);
+  end;
+end;
+
+{ A page not set aside for the next question; False if every page waits
+  for a late answer. }
+function ChooseMessagePage: Boolean;
+var
+  Page: Integer;
+begin
+  for Page := 0 to MessagePageCount - 1 do
+    if not SetAside[Page] then
+    begin
+      CurrentPage := Page;
+      Message := MessagePages[Page];
+      Exit(True);
+    end;
+  Result := False;
+end;
+
+{ Sends the message (written to the current page) and waits for the
+  firmware's answer to it. A question not answered in time sets its
+  page aside: the firmware may still write it. }
 function Exchange: Boolean;
 var
   Request: LongWord;
   Answer: LongWord;
 begin
   Result := False;
-  { Old answers nobody waited for are dropped. }
-  while (ReadRegister(MailboxReadStatus) and StatusEmpty) = 0 do
-    ReadRegister(MailboxRead);
-  Request := LongWord(Message.DeviceAddress and not QWord($F)) or PropertyChannel;
+  Request := RequestWordOf(CurrentPage);
   if not WaitWhileSet(MailboxWriteStatus, StatusFull) then
     Exit;
   WriteRegister(MailboxWrite, Request);
   repeat
     if not WaitWhileSet(MailboxReadStatus, StatusEmpty) then
+    begin
+      SetAside[CurrentPage] := True;
       Exit;
+    end;
     Answer := ReadRegister(MailboxRead);
+    if Answer <> Request then
+      NoteLateAnswer(Answer);
   until Answer = Request;
   Result := PLongWord(Message.Address)[1] = CodeSuccess;
 end;
@@ -225,6 +284,12 @@ begin
   if not Available or (ValueWords > MaximumTagWords) or (RequestWords > ValueWords) then
     Exit;
   AcquireMutex(Lock);
+  DrainAnswers;
+  if not ChooseMessagePage then
+  begin
+    ReleaseMutex(Lock);
+    Exit;
+  end;
   Body := PLongWord(Message.Address);
   Body[0] := (5 + ValueWords + 1) * 4;
   Body[1] := CodeRequest;
@@ -370,6 +435,7 @@ function ProbeMailbox(Device: PPlatformDevice): Boolean;
 var
   Start: QWord;
   Length: QWord;
+  Page: Integer;
 begin
   Result := False;
   if Available or not PlatformMemoryRange(Device, 0, Start, Length) then
@@ -399,8 +465,10 @@ begin
     MailboxDma.Windows[0].BusStart := DefaultBusOffset;
     MailboxDma.Windows[0].Length := DefaultWindowLength;
   end;
-  if not AllocateDmaBuffer(MailboxDma, (5 + MaximumTagWords + 1) * 4, DmaShared, Message) then
-    Exit;
+  for Page := 0 to MessagePageCount - 1 do
+    if not AllocateDmaBuffer(MailboxDma, (5 + MaximumTagWords + 1) * 4, DmaShared, MessagePages[Page]) then
+      Exit;
+  ChooseMessagePage;
   InitializeMutex(Lock);
   Available := True;
   Result := True;

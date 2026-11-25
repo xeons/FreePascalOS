@@ -1064,7 +1064,11 @@ replaces it.
 Started from phase 1 by `Io.Startup`, in dependency order:
 
 1. **ACPI** (`Firmware.Acpi`) finds the system description tables through
-   the RSDP the loader passed on.
+   the RSDP the loader passed on. A table (the RSDT and XSDT too) is used
+   only if its length covers its 36-byte header and is not absurd and its
+   checksum adds up (`Firmware.AcpiTableChecks`, `make acpi-table-test`),
+   so a root table of length 0 cannot count garbage entries; empty root
+   entries are skipped.
 2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
    Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
    Then the **ACPI namespace** is loaded (see below), which needs PCI
@@ -1086,6 +1090,16 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    that fails or times out fails every request running on the port with
    `ErrorIo`, and the port is reset as the AHCI specification describes
    (stop, clear errors, COMRESET if the device is still busy, start).
+   The reset runs in the port's `AhciRecovery` thread, not the deferred
+   call: it waits for the controller (up to seconds), and the requests
+   only fail once the port stopped, since the controller writes their
+   pages until then. Nothing starts meanwhile; a port that does not come
+   back fails later requests at once. The port's memory (command list,
+   tables, bounce buffer) is DMA memory of the controller (`Io.Dma`), and
+   request pages are given at their bus addresses (a page the controller
+   cannot reach is bounced) with the cache maintenance a non-coherent
+   controller needs; a controller without 64-bit addressing stays below
+   4 GiB.
    ATAPI devices (optical drives, signature EB140101h) are read-only disks
    of their medium's block size: IDENTIFY PACKET DEVICE gives the model,
    SCSI READ CAPACITY(10) the size, and reads are READ(10) commands in
@@ -1111,10 +1125,22 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    of the `nvme` driver with its logical block size. Admin commands are
    polled. I/O commands complete by MSI-X or MSI. Data goes through the
    controller's bounce pages, up to 128 KiB (or the controller's largest
-   transfer) a command, described by PRP entries or a PRP list. The tests
-   attach an NVMe disk holding a copy of the FAT32 test partition.
+   transfer) a command, described by PRP entries or a PRP list. Only the
+   completion carrying the identifier of the command waited for counts:
+   a late one of a command given up is dropped (`TakeCompletionFor`). A
+   command that times out resets the controller (disabled, which ends
+   what it had, queues emptied and created again) before its bounce
+   pages are used again: in place when polled, from the `NvmeRecovery`
+   thread when a timer notices it on an interrupt driven controller
+   (requests wait meanwhile, the timed out one fails). Queues, bounce
+   pages, PRP list and identify data are its DMA memory (`Io.Dma`, at
+   bus addresses). `make nvme-queue-test` plays the controller in memory.
+   The tests attach an NVMe disk holding a copy of the FAT32 test
+   partition.
 
-   USB: xHCI controllers (`Drivers.Xhci`, rings in `Drivers.XhciRings`)
+   USB: xHCI controllers (`Drivers.Xhci`, TRBs and ring bookkeeping in
+   `Drivers.XhciTrbs`, ring memory in `Drivers.XhciRings`, the transfer
+   waited for in `Drivers.XhciTransfers`)
    are taken over from the firmware, reset and given a device context
    array (with scratchpad pages), a command ring and an event ring. Events
    come by MSI-X or MSI (or are polled); a deferred call takes them off
@@ -1169,13 +1195,47 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    request it does not support, like SET_IDLE on many mice), or that
    ends in a babble or transaction error, halts endpoint 0: it is reset
    (Reset Endpoint, then Set TR Dequeue Pointer past the failed
-   request's TRBs) so the next request goes through. USB mass storage (`Drivers.UsbStorage`,
+   request's TRBs) so the next request goes through.
+
+   A broken or hostile device (or a misbehaving controller) may only fail
+   that device, never corrupt kernel memory, hold a processor at dispatch
+   level or wedge the controller. Configuration descriptors leave out
+   endpoints naming endpoint 0 (00h, 80h), with reserved address bits, of
+   the control type, without a packet size or repeating an address; the
+   xHCI driver itself refuses endpoint 0 (whose contexts are the slot's
+   and the control endpoint's) and an endpoint already open. HID report
+   offsets are worked out in 64 bits, a report described as longer than
+   1 KiB is not used, key arrays are read up to 256 entries and every bit
+   is checked against the report's length. A transfer that times out is
+   taken off its endpoint before its DMA pages are reused (Stop Endpoint,
+   or Reset Endpoint if it halted meanwhile, then Set TR Dequeue Pointer
+   past it); if the controller refuses, the device is failed: marked
+   gone, its slot disabled, and taken away by the port watcher (its
+   drivers told) until it is unplugged. A halted bulk endpoint is reset
+   at once and the transfer reports a stall (`UsbTransferStalled`); the
+   class driver clears the device's side (`UsbClearEndpointHalt`). A
+   command that times out is aborted (Command Abort; a controller whose
+   ring does not stop is given up). A device that fails to enumerate
+   gives its slot back (Disable Slot) and its memory, once the controller
+   let go of the slot; one that cannot be set up again after waking is
+   taken away (and enumerated afresh). Event TRBs are read after their
+   cycle bit, residues and interval exponents are clamped. `make
+   usb-descriptor-test` runs crafted and randomly mutated descriptors
+   from buffers that end at a protected page (a read past them crashes
+   the test) and the ring and transfer bookkeeping in memory. USB mass storage (`Drivers.UsbStorage`,
    Bulk-Only Transport) sends SCSI commands in command block wrappers:
    INQUIRY, TEST UNIT READY with REQUEST SENSE, READ CAPACITY(10),
    READ/WRITE(10) and SYNCHRONIZE CACHE(10). Each device becomes a disk of
    the `usb-storage` driver, whose requests run in the caller's thread,
    marked removable. Unplugged, its requests fail and its removal is
-   announced (below). The tests attach a USB stick holding a copy of the
+   announced (below). Errors are recovered from as Bulk-Only Transport
+   says: a stalled data stage is cleared and the status still read, a
+   stalled status read cleared and tried once more, anything else (a
+   failed or timed out command or status, a status that is not this
+   command's, a phase error) gets reset recovery (Bulk-Only Mass Storage
+   Reset, both halts cleared). A probe stops at the first timeout. The
+   capacity must give a power of two block size from 512 to 4096 bytes;
+   a last block of FFFFFFFFh (READ(10)'s limit) uses that much. The tests attach a USB stick holding a copy of the
    exFAT test partition, and the input test plugs a second one in and
    out while the system runs.
 
@@ -1438,16 +1498,68 @@ of their own. `Io.Dma` gives drivers what they need for that:
   their bus address (`TranslateDmaAddress`).
 - The kernel option `noncoherentdma` treats every device as not
   coherent, which exercises the uncached mappings and the cache
-  maintenance under QEMU, whose devices all snoop.
+  maintenance under QEMU, whose devices all snoop
+  (`TEST_KERNEL_OPTIONS=noncoherentdma scripts/test-qemu.sh ...` runs
+  the amd64 test that way).
 
 Converted so far: xHCI (all its memory is shared, uncached for a
 controller that does not snoop; isochronous packets from the audio
 buffers are cleaned and translated before they are queued), SDHCI, the
 VideoCore mailbox, GENET, the Cadence GEM and the BCM2712 DMA (its
 control blocks shared, the HDMI audio slots streaming, cleaned after each
-is written). The other PCI drivers (AHCI, NVMe, virtio,
-e1000, Realtek, HD Audio, AC'97) still assume coherent DMA at physical
-addresses, which holds on every machine they are found on today.
+is written), and every PCI driver: each gets its attributes once at
+probe with `GetPciDmaAttributes`, so a PCIe card behind a bridge with
+inbound windows is given bus addresses. On the Raspberry Pi 5 that bridge
+is the BCM2712's PCIe root complex (`Drivers.BrcmPcie`): a device tree
+bus node's own `dma-ranges` (its inbound windows) and coherency are kept
+as what the devices below it see (`ChildDma` of the platform device),
+and `GetPciDmaAttributes` takes them for `brcm,bcm2712-pcie` (and
+`bcm2711`) hosts as for ECAM and ACPI ones. Untested on the board.
+
+- **AHCI**: command list, received FIS, command tables and bounce buffer
+  are shared buffers; request pages are translated to bus addresses
+  (else bounced) with the cache maintenance a non-coherent controller
+  needs; 32-bit controllers (CAP.S64A clear) stay below 4 GiB.
+- **NVMe**: queues, bounce pages, PRP list and identify data are shared
+  buffers.
+
+- **Network cards** (`Drivers.NetworkBuffers`, shared by e1000/e1000e,
+  RTL8139, RTL8168 and RTL8125 and by virtio-net): descriptor rings
+  and the Realtek tally counters are shared buffers, the 2 KiB frame
+  buffers streaming (`PrepareReceiveBuffer` before a buffer is handed
+  to the card, `FinishReceiveBuffer` before a frame is read,
+  `PrepareTransmitBuffer` after one is copied in). 32-bit DMA
+  (`LimitNetworkCardDma`) for the RTL8139, the conventional PCI e1000
+  parts (as Linux) and the RTL8168B (XID 300h/380h under mask 7C8h);
+  the PCI Express e1000e parts, later RTL8168s and the RTL8125/8126 take
+  64-bit addresses (they must, on the Pi 5, whose PCIe sees RAM at
+  10_0000_0000h).
+- **Virtio** (`Drivers.VirtioPci`): the three parts of every queue are
+  shared buffers; `VIRTIO_F_ACCESS_PLATFORM` is accepted when offered.
+  virtio-blk's header page is shared and its bounce pages streaming;
+  virtio-gpu's command slots and cursor page are shared, its
+  framebuffers and cursor images streaming, cleaned (by the kernel's
+  address, which reaches every mapping of the same memory) for the rows
+  of each flush before the transfer to the host.
+- **Sound**: HD Audio's buffer descriptor lists and AC'97's descriptor
+  list are shared buffers, and `RegisterAudioOutput` /
+  `RegisterAudioInput` take the device's attributes: the ring's periods
+  are then shared buffers (uncached for a device that does not snoop,
+  so the mixer and the capture thread need no maintenance) with their
+  bus addresses in `PeriodsDeviceAddress`. Without attributes (USB
+  audio, which cleans and translates each packet in
+  `Drivers.XhciIsochronous`, and HDMI audio, which copies the ring) the
+  periods are ordinary cached pages as before. HD Audio keeps to 4 GiB
+  without GCAP's 64-bit bit, AC'97 always.
+
+What a virtio device writes into a used ring is checked
+(`Drivers.VirtioUsedRing`, host test `make virtio-used-ring-test`): an
+id that is not a descriptor of the queue is skipped, never indexed;
+virtio-net clamps the reported length to its buffer (and drops one
+shorter than its header); virtio-gpu counts a batch done only when each
+of its own heads came back once; queue sizes are rounded down to a
+power of two. A polled virtio-blk request that times out resets the
+device before the bounce pages are used again.
 
 ## Device interrupts
 
@@ -14706,7 +14818,9 @@ so their drivers bind and connect like any other platform device's.
   revision, serial number, Ethernet address, clock rates (EMMC2's base
   clock), temperature and power domains; `Drivers.RaspberryPiBoard`
   writes the board's line at start-up and for the kernel debug shell's
-  `board`.
+  `board`. A question the firmware does not answer in time sets its
+  message page aside until the late answer comes, and the next question
+  uses a second page, so a late answer never lands in another question.
 - A Raspberry Pi 5 (BCM2712, Cortex-A76) would differ in: most I/O behind
   the RP1 south bridge on PCIe (its own UARTs, Ethernet, USB), so the
   console and devices need RP1 drivers; a different (younger) UEFI port

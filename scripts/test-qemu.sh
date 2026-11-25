@@ -75,14 +75,16 @@ cp -r "$esp_directory" "$test_esp_directory"
 # (QEMU's user networking hands 10.0.2.2 to the host's loopback); the
 # address comes from the network service networktest starts, not from the
 # kernel's own DHCP (netdhcp=0), which would get in its way.
+# TEST_KERNEL_OPTIONS adds options of its own (noncoherentdma, say: every
+# device treated as not cache coherent).
 netlog_port=$((40000 + $$ % 20000))
 netlog_received="$build_directory/test-netlog.log"
 if [[ -n "${system_disk_image:-}" ]]; then
     # hangdump: if the tests stop making progress, the log shows why.
-    echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20 netlog=10.0.2.2:$netlog_port netdhcp=0" \
+    echo "test-exit fstest heapchecks init=/bin/coretest hangdump=20 netlog=10.0.2.2:$netlog_port netdhcp=0 ${TEST_KERNEL_OPTIONS:-}" \
         > "$test_esp_directory/FreePascalOS/options.txt"
 else
-    echo "test-exit fstest heapchecks" > "$test_esp_directory/FreePascalOS/options.txt"
+    echo "test-exit fstest heapchecks ${TEST_KERNEL_OPTIONS:-}" > "$test_esp_directory/FreePascalOS/options.txt"
 fi
 
 firmware_variables="$build_directory/test-OVMF_VARS.fd"

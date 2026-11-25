@@ -41,8 +41,12 @@
 
   Commands have a deadline (5 s). A command that failed or is past its
   deadline fails every request running on the port with ErrorIo (which
-  of several queued commands failed is not looked into), and the port is
-  reset (RecoverPort) before anything else starts.
+  of several queued commands failed is not looked into), once the port
+  was reset (RecoverPort) by the port's recovery thread: resetting
+  waits for the controller (up to seconds), which the deferred call may
+  not do at dispatch level, and the requests' buffers stay the
+  controller's until the port stopped. Nothing else starts meanwhile; a
+  port that did not come back fails later requests at once.
 
   Discard requests become DATA SET MANAGEMENT commands with TRIM on
   disks that report it: the ranges (up to 64 of 65535 sectors) go in
@@ -91,6 +95,11 @@ uses
   Kernel.DeferredCalls,
   Kernel.Timers,
   Kernel.Clock,
+  Kernel.Events,
+  Kernel.Threads,
+  Io.Dma,
+  Kernel.Scheduler,
+  Processes.Thread,
   Debug.Output;
 
 const
@@ -158,7 +167,7 @@ var
   Count: QWord;
   Index: Integer;
 begin
-  Ranges := PQWord(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  Ranges := PQWord(BounceBufferStart(Port));
   ZeroMemory(Ranges, 512);
   Lba := Offset div Port^.BlockSize;
   Remaining := ByteCount div Port^.BlockSize;
@@ -180,7 +189,7 @@ procedure BuildTrimCommand(Port: PAhciPort; Slot: LongWord);
 var
   Segments: TDataSegments;
 begin
-  Segments[0].Physical := Port^.BouncePagesPhysical[0];
+  Segments[0].BusAddress := Port^.BouncePageBuffers[0].DeviceAddress;
   Segments[0].Length := 512;
   BuildCommand(Port, Slot, AtaCommandDataSetManagement, 0, 1, Segments, 1, True, False);
   SetCommandFeatures(Port, Slot, DataSetManagementTrim);
@@ -274,14 +283,17 @@ end;
 
 { --- Building commands ----------------------------------------------------- }
 
-{ The physical pieces of ByteCount bytes at Buffer: one segment per page,
-  pages that follow each other on the disk merged. False if a page
-  cannot be translated, the address is odd, or there are too many. }
-function DescribeBuffer(Buffer: PByte; ByteCount: QWord; out Segments: TDataSegments;
+{ The pieces of ByteCount bytes at Buffer as the controller reaches them
+  (bus addresses, Io.Dma): one segment per page, pages that follow each
+  other merged. False if a page cannot be translated or reached by the
+  controller, the address is odd, or there are too many (the bounce
+  buffer is used then). }
+function DescribeBuffer(Port: PAhciPort; Buffer: PByte; ByteCount: QWord; out Segments: TDataSegments;
   out SegmentCount: Integer): Boolean;
 var
   Address: QWord;
   Physical: TPhysicalAddress;
+  BusAddress: QWord;
   Chunk: QWord;
 begin
   SegmentCount := 0;
@@ -293,16 +305,17 @@ begin
     Chunk := PageSize - (Address and (PageSize - 1));
     if Chunk > ByteCount then
       Chunk := ByteCount;
-    if not TranslateVirtualAddress(Address, Physical) then
+    if not TranslateVirtualAddress(Address, Physical) or
+       not TranslateDmaAddress(Port^.Dma, Physical, Chunk, BusAddress) then
       Exit(False);
     if (SegmentCount > 0) and
-       (Segments[SegmentCount - 1].Physical + Segments[SegmentCount - 1].Length = Physical) then
+       (Segments[SegmentCount - 1].BusAddress + Segments[SegmentCount - 1].Length = BusAddress) then
       Segments[SegmentCount - 1].Length := Segments[SegmentCount - 1].Length + Chunk
     else
     begin
       if SegmentCount = MaximumPrdtEntries then
         Exit(False);
-      Segments[SegmentCount].Physical := Physical;
+      Segments[SegmentCount].BusAddress := BusAddress;
       Segments[SegmentCount].Length := Chunk;
       Inc(SegmentCount);
     end;
@@ -317,7 +330,7 @@ begin
   Result := 0;
   while ByteCount > 0 do
   begin
-    Segments[Result].Physical := Port^.BouncePagesPhysical[Result];
+    Segments[Result].BusAddress := Port^.BouncePageBuffers[Result].DeviceAddress;
     Segments[Result].Length := ByteCount;
     if Segments[Result].Length > PageSize then
       Segments[Result].Length := PageSize;
@@ -388,7 +401,16 @@ begin
   State^.UsesBounce := False;
   SegmentCount := 0;
   if (State^.Piece > 0) and
-     not DescribeBuffer(PByte(Request^.Buffer) + State^.Done, State^.Piece, Segments, SegmentCount) then
+     DescribeBuffer(Port, PByte(Request^.Buffer) + State^.Done, State^.Piece, Segments, SegmentCount) then
+  begin
+    { Straight to the request's pages: through the caches' maintenance
+      for a controller that does not snoop. }
+    if IsWrite then
+      PrepareDmaToDevice(Port^.Dma, PByte(Request^.Buffer) + State^.Done, State^.Piece)
+    else
+      PrepareDmaFromDevice(Port^.Dma, PByte(Request^.Buffer) + State^.Done, State^.Piece);
+  end
+  else if State^.Piece > 0 then
   begin
     if Port^.BounceBusy then
       Exit(False);
@@ -432,7 +454,7 @@ var
   Exclusive: Boolean;
 begin
   Result := False;
-  if Port^.ExclusiveActive or Port^.CommandFailed then
+  if Port^.ExclusiveActive or Port^.CommandFailed or Port^.Recovering then
     Exit;
   Exclusive := NeedsExclusiveUse(Port, Request);
   if Exclusive and (Port^.ActiveSlots <> 0) then
@@ -499,16 +521,22 @@ begin
     Port^.ExclusiveActive := False;
 end;
 
-{ Fails every running request and resets the port. Caller holds
+{ Hands the port to its recovery thread. Caller holds StateLock. }
+procedure BeginRecoveryLocked(Port: PAhciPort);
+begin
+  Port^.CommandFailed := False;
+  if Port^.Recovering then
+    Exit;
+  Port^.Recovering := True;
+  SignalEvent(Port^.RecoveryNeeded);
+end;
+
+{ Fails every running request (the port reset). Caller holds
   StateLock. }
 procedure FailAllLocked(Port: PAhciPort; var Finished: TFinishedRequests);
 var
   Slot: LongWord;
 begin
-  if Port^.CommandTimedOut then
-    ReportRecovery(Port, 'command timed out', RecoverPort(Port))
-  else
-    ReportRecovery(Port, 'command failed', RecoverPort(Port));
   Port^.CommandTimedOut := False;
   Port^.CommandFailed := False;
   for Slot := 0 to MaximumSlots - 1 do
@@ -536,7 +564,9 @@ begin
       Continue;
     State := @Port^.Slots[Slot];
     if State^.UsesBounce and (State^.Request^.Operation = IoFunctionRead) then
-      CopyFromBounceBuffer(Port, PByte(State^.Request^.Buffer) + State^.Done, State^.Piece);
+      CopyFromBounceBuffer(Port, PByte(State^.Request^.Buffer) + State^.Done, State^.Piece)
+    else if (State^.Request^.Operation = IoFunctionRead) and (State^.Piece > 0) then
+      FinishDmaFromDevice(Port^.Dma, PByte(State^.Request^.Buffer) + State^.Done, State^.Piece);
     if State^.UsesBounce then
     begin
       Port^.BounceBusy := False;
@@ -579,12 +609,22 @@ begin
   Finished.Count := 0;
   Seen := TakeSeenStatus(Port);
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
+  if Port^.Recovering then
+  begin
+    { The recovery thread has the port. }
+    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
+    Exit;
+  end;
   if Port^.ActiveSlots <> 0 then
   begin
     if Port^.CommandFailed or ((Seen and PortInterruptErrors) <> 0) then
-      FailAllLocked(Port, Finished)
-    else
-      CollectFinishedLocked(Port, Finished);
+    begin
+      BeginRecoveryLocked(Port);
+      CancelTimer(Port^.Timeout);
+      ReleaseSpinLock(Port^.StateLock, PreviousLevel);
+      Exit;
+    end;
+    CollectFinishedLocked(Port, Finished);
   end;
   Port^.CommandFailed := False;
   if Port^.ActiveSlots = 0 then
@@ -609,6 +649,11 @@ var
 begin
   Port := PAhciPort(Context);
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
+  if Port^.Recovering then
+  begin
+    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
+    Exit;
+  end;
   Now := ClockTickCount;
   Overdue := False;
   Running := ReadRegister(Port^.Registers, PortCommandIssue) or
@@ -634,10 +679,70 @@ begin
   ReleaseSpinLock(Port^.StateLock, PreviousLevel);
 end;
 
+{ A port that did not come back: every waiting request fails. }
+procedure FailWaitingRequests(Port: PAhciPort);
+var
+  PreviousLevel: TPriorityLevel;
+  Request: PIoRequest;
+begin
+  repeat
+    PreviousLevel := AcquireSpinLock(Port^.StateLock);
+    Request := TakeQueuedRequest(Port^.Waiting);
+    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
+    if Request <> nil then
+      CompleteRequest(Request^, ErrorIo);
+  until Request = nil;
+end;
+
+{ The port's recovery thread: resets the port after a failed or timed
+  out command, then fails what was running and starts what waits. }
+procedure RunPortRecovery(Context: Pointer);
+var
+  Port: PAhciPort;
+  PreviousLevel: TPriorityLevel;
+  Finished: TFinishedRequests;
+  Recovered: Boolean;
+  TimedOut: Boolean;
+  Index: Integer;
+begin
+  Port := PAhciPort(Context);
+  while True do
+  begin
+    WaitForEventWithOptions(Port^.RecoveryNeeded, InfiniteTimeout, False);
+    TimedOut := Port^.CommandTimedOut;
+    Recovered := RecoverPort(Port);
+    if TimedOut then
+      ReportRecovery(Port, 'command timed out', Recovered)
+    else
+      ReportRecovery(Port, 'command failed', Recovered);
+    Finished.Count := 0;
+    PreviousLevel := AcquireSpinLock(Port^.StateLock);
+    FailAllLocked(Port, Finished);
+    Port^.IsDead := not Recovered;
+    Port^.Recovering := False;
+    if Port^.IsDead then
+    begin
+      { Everything waiting fails too. }
+      if Port^.Held <> nil then
+        NoteFinished(Finished, Port^.Held, ErrorIo);
+      Port^.Held := nil;
+    end
+    else
+      StartWaitingLocked(Port);
+    ReleaseSpinLock(Port^.StateLock, PreviousLevel);
+    for Index := 0 to Finished.Count - 1 do
+      CompleteRequest(Finished.Requests[Index]^, Finished.Statuses[Index]);
+    if Port^.IsDead then
+      FailWaitingRequests(Port);
+  end;
+end;
+
 function TransferWithInterrupts(Port: PAhciPort; var Request: TIoRequest): LongInt;
 var
   PreviousLevel: TPriorityLevel;
 begin
+  if Port^.IsDead then
+    Exit(ErrorIo);
   Result := StatusPending;
   PreviousLevel := AcquireSpinLock(Port^.StateLock);
   if (Port^.Held <> nil) or not TryStartLocked(Port, @Request) then
@@ -729,6 +834,11 @@ end;
 
 procedure UseInterruptsForPort(Port: PAhciPort);
 begin
+  InitializeEvent(Port^.RecoveryNeeded, EventKindSynchronization, False);
+  { Interrupt driven requests need the recovery thread: without it the
+    port keeps polling (and recovers in place). }
+  if CreateSystemThread(@RunPortRecovery, Port, DefaultThreadPriority + 4, 'AhciRecovery', False) = nil then
+    Exit;
   { Wait for a polled request that is still running. }
   AcquireMutex(Port^.PollingLock);
   Port^.InterruptDriven := True;

@@ -389,8 +389,12 @@ begin
   end;
   ConfigurationMechanismFound := True;
 
-  AllocationCount := (Table^.Length - SizeOf(TAcpiTableHeader) - McfgReservedBytes) div
-    SizeOf(TMcfgAllocation);
+  { A table too short for its own fixed part has no allocations (the
+    subtraction would wrap). }
+  AllocationCount := 0;
+  if Table^.Length >= SizeOf(TAcpiTableHeader) + McfgReservedBytes then
+    AllocationCount := (Table^.Length - SizeOf(TAcpiTableHeader) - McfgReservedBytes) div
+      SizeOf(TMcfgAllocation);
   Allocation := PMcfgAllocation(PByte(Table) + SizeOf(TAcpiTableHeader) + McfgReservedBytes);
 
   AllocationIndex := 0;

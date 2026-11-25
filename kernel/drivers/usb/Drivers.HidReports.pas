@@ -62,6 +62,14 @@ const
   { Reports a descriptor may describe (by id): kept small, the parser
     runs on kernel stacks. }
   MaximumHidReports = 8;
+  { The longest report taken (without its id byte): a report described
+    as longer is a broken or hostile descriptor, and none of its fields
+    are used. Interrupt endpoints move at most 1024 bytes a packet. }
+  MaximumHidReportBytes = 1024;
+  MaximumHidReportBits = MaximumHidReportBytes * 8;
+  { Entries of a key array read: the boot report holds six keys, and a
+    report is read at dispatch level, so a huge array is cut short. }
+  MaximumKeyArrayEntries = 256;
 
 type
   THidField = record
@@ -235,6 +243,8 @@ type
   TReportFields = record
     Id: Byte;
     BitOffset: LongWord;
+    { Its items add up to more than MaximumHidReportBits: not used. }
+    TooLong: Boolean;
     PointerFields: THidPointerLayout;
     KeyboardFields: THidKeyboardLayout;
     HasX: Boolean;
@@ -293,7 +303,7 @@ function UsageAt(const Locals: TLocals; Index: LongWord): LongWord;
 begin
   if Index < LongWord(Locals.UsageCount) then
     Result := Locals.Usages[Index]
-  else if Locals.HasUsageRange and (Locals.UsageMinimum + Index <= Locals.UsageMaximum) then
+  else if Locals.HasUsageRange and (QWord(Locals.UsageMinimum) + Index <= Locals.UsageMaximum) then
     Result := Locals.UsageMinimum + Index
   else if Locals.UsageCount > 0 then
     Result := Locals.Usages[Locals.UsageCount - 1]
@@ -328,8 +338,8 @@ begin
       Keyboard^.KeyBitmapCount := 1;
       Report.HasKeys := True;
     end
-    else if (Field.BitOffset = Keyboard^.KeyBitmapOffset + Keyboard^.KeyBitmapCount) and
-            (Code = Keyboard^.KeyBitmapUsageMinimum + Keyboard^.KeyBitmapCount) then
+    else if (QWord(Field.BitOffset) = QWord(Keyboard^.KeyBitmapOffset) + Keyboard^.KeyBitmapCount) and
+            (QWord(Code) = QWord(Keyboard^.KeyBitmapUsageMinimum) + Keyboard^.KeyBitmapCount) then
       Inc(Keyboard^.KeyBitmapCount);
   end;
 end;
@@ -377,21 +387,40 @@ begin
     Exit;
   FillField(Report.KeyboardFields.KeyArray, Globals, Report.BitOffset, Flags);
   Report.KeyboardFields.KeyArrayCount := Globals.ReportCount;
+  if Report.KeyboardFields.KeyArrayCount > MaximumKeyArrayEntries then
+    Report.KeyboardFields.KeyArrayCount := MaximumKeyArrayEntries;
   Report.KeyboardFields.KeyArrayUsageMinimum := Locals.UsageMinimum and $FFFF;
   Report.HasKeys := True;
 end;
 
-{ An Input item: its fields laid out in its report. }
+{ An Input item: its fields laid out in its report. The item's end is
+  worked out in 64 bits: a report count and size from the descriptor
+  may multiply past 32 bits, and a report that grows past
+  MaximumHidReportBits is marked too long (so no field of it is read,
+  and no offset can wrap). }
 procedure AddInputItem(var Table: TReportTable; const Globals: TGlobals; const Locals: TLocals; Flags: LongWord);
 var
   Report: PReportFields;
   Index: LongWord;
   Usage: LongWord;
   Field: THidField;
+  ItemEnd: QWord;
 begin
   Report := ReportWithId(Table, Globals.ReportId);
-  if (Report = nil) or (Globals.ReportCount = 0) or (Globals.ReportSize = 0) or (Globals.ReportSize > 32) then
+  if (Report = nil) or Report^.TooLong or (Globals.ReportCount = 0) or (Globals.ReportSize = 0) then
     Exit;
+  ItemEnd := QWord(Report^.BitOffset) + QWord(Globals.ReportCount) * Globals.ReportSize;
+  if ItemEnd > MaximumHidReportBits then
+  begin
+    Report^.TooLong := True;
+    Exit;
+  end;
+  if Globals.ReportSize > 32 then
+  begin
+    { Fields this wide are not read, but they take their room. }
+    Report^.BitOffset := LongWord(ItemEnd);
+    Exit;
+  end;
   if ((Flags and InputConstant) = 0) and ((Flags and InputVariable) = 0) then
     NoteKeyArray(Report^, Globals, Locals, Flags)
   else if (Flags and InputConstant) = 0 then
@@ -404,7 +433,7 @@ begin
       else
         NotePointerVariable(Report^, Usage, Field);
     end;
-  Report^.BitOffset := Report^.BitOffset + Globals.ReportCount * Globals.ReportSize;
+  Report^.BitOffset := LongWord(ItemEnd);
 end;
 
 procedure HandleGlobalItem(Tag: Integer; Unsigned: LongWord; Signed: LongInt; var Globals: TGlobals;
@@ -474,6 +503,8 @@ begin
   begin
     Report := @Table.Reports[Index];
     Description.ReportIds[Index] := Report^.Id;
+    if Report^.TooLong then
+      Continue;
     if Report^.HasX and Report^.HasY and not Description.HasPointer then
     begin
       Description.HasPointer := True;
@@ -522,6 +553,8 @@ begin
       { Long items: skipped (their size is in the next byte). }
       if Position + 1 >= Length then
         Break;
+      if QWord(Position) + 3 + Data[Position + 1] >= Length then
+        Break;
       Position := Position + 3 + Data[Position + 1];
       Continue;
     end;
@@ -562,8 +595,8 @@ end;
 function ReadHidField(UsesReportIds: Boolean; const Field: THidField; Report: PByte;
   ReportLength: LongWord): LongInt;
 var
-  Bit: LongWord;
-  Start: LongWord;
+  Bit: QWord;
+  Start: QWord;
   Value: LongWord;
   Index: LongWord;
   Mask: LongWord;
@@ -574,6 +607,7 @@ begin
   Start := Field.BitOffset;
   if UsesReportIds then
     Start := Start + 8;
+  { In 64 bits: no offset can wrap the check. }
   if (Start + Field.BitSize + 7) div 8 > ReportLength then
     Exit;
   Value := 0;
@@ -645,9 +679,9 @@ var
 begin
   Entry := Layout.KeyArray;
   Index := 0;
-  while Index < Layout.KeyArrayCount do
+  while (Index < Layout.KeyArrayCount) and (Index < MaximumKeyArrayEntries) do
   begin
-    Entry.BitOffset := Layout.KeyArray.BitOffset + Index * Entry.BitSize;
+    Entry.BitOffset := LongWord(QWord(Layout.KeyArray.BitOffset) + QWord(Index) * Entry.BitSize);
     Value := ReadHidField(Layout.UsesReportIds, Entry, Report, ReportLength);
     if (Value >= Entry.LogicalMinimum) and (Value <= Entry.LogicalMaximum) then
       AddBootUsage(Boot, LongWord(Int64(Layout.KeyArrayUsageMinimum) + Value - Entry.LogicalMinimum), KeyCount);
@@ -655,18 +689,22 @@ begin
   end;
 end;
 
-procedure ReadKeyBitmap(const Layout: THidKeyboardLayout; Report: PByte; var Boot: TBootKeyboardReport;
-  var KeyCount: Integer);
+{ Every bit is checked against the report's length (in 64 bits), so a
+  bitmap the descriptor put anywhere is never read past the report. }
+procedure ReadKeyBitmap(const Layout: THidKeyboardLayout; Report: PByte; ReportLength: LongWord;
+  var Boot: TBootKeyboardReport; var KeyCount: Integer);
 var
   Index: LongWord;
-  Bit: LongWord;
+  Bit: QWord;
 begin
   Index := 0;
   while Index < Layout.KeyBitmapCount do
   begin
-    Bit := Layout.KeyBitmapOffset + Index;
+    Bit := QWord(Layout.KeyBitmapOffset) + Index;
     if Layout.UsesReportIds then
       Bit := Bit + 8;
+    if Bit div 8 >= ReportLength then
+      Break;
     if (Report[Bit div 8] and (1 shl (Bit mod 8))) <> 0 then
       AddBootUsage(Boot, Layout.KeyBitmapUsageMinimum + Index, KeyCount);
     Inc(Index);
@@ -692,7 +730,7 @@ begin
       Boot[0] := Boot[0] or (1 shl Modifier);
   KeyCount := 0;
   ReadKeyArray(Layout, Report, ReportLength, Boot, KeyCount);
-  ReadKeyBitmap(Layout, Report, Boot, KeyCount);
+  ReadKeyBitmap(Layout, Report, ReportLength, Boot, KeyCount);
   { Too many keys: every slot says so, as in the boot protocol. }
   for Index := 2 to BootKeyboardReportSize - 1 do
     if Boot[Index] = KeyUsageErrorRollOver then

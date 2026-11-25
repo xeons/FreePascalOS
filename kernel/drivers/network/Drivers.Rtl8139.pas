@@ -20,7 +20,8 @@
   Realtek RTL8139 10/100 Ethernet cards (QEMU's rtl8139).
 
   Receiving: the card writes frames one after another into one ring of
-  32 KiB in physically contiguous memory below 4 GiB, each behind a
+  32 KiB of shared DMA memory (Io.Dma; the card puts out 32-bit bus
+  addresses only, so it is below 4 GiB of those), each behind a
   four-byte header (status, length with the check sequence). The
   "wrap" mode lets a frame run on past the end, so the buffer has room
   for one more frame there and a frame is never split. The driver reads
@@ -29,8 +30,8 @@
   header means the receiver lost its place: it is restarted.
 
   Transmitting: four slots, used strictly in turn, each with its own
-  buffer (2 KiB, below 4 GiB); writing a slot's status register with the
-  length starts it, and its "OK", "underrun" or "aborted" bit says when
+  streaming buffer (2 KiB, Drivers.NetworkBuffers); writing a slot's
+  status register with the length starts it, and its "OK", "underrun" or "aborted" bit says when
   it is done.
 
   Interrupts come on the PCI line (shared and level triggered: the
@@ -54,8 +55,6 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Atomic,
-  Memory.Layout,
-  Memory.PhysicalPages,
   Memory.KernelHeap,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.Cpu,
@@ -66,6 +65,8 @@ uses
   Kernel.Clock,
   Hal.PortIo,
   Io.Pci,
+  Io.Dma,
+  Io.PlatformDevices,
   Io.PciLineInterrupts,
   Io.PowerManagement,
   Io.NetworkAdapters,
@@ -100,7 +101,8 @@ type
     IsSuspended: Boolean;
 
     ReceiveRing: PByte;
-    ReceiveRingPhysical: QWord;
+    ReceiveMemory: TDmaBuffer;
+    Dma: TDmaAttributes;
     ReceiveOffset: LongWord;
     ReceiveLock: TSpinLock;
 
@@ -140,7 +142,7 @@ end;
 
 procedure StartReceiver(Card: PRtl8139Card);
 begin
-  WritePortLongWord(Card^.Ports + RegisterReceiveBufferStart, LongWord(Card^.ReceiveRingPhysical));
+  WritePortLongWord(Card^.Ports + RegisterReceiveBufferStart, LongWord(Card^.ReceiveMemory.DeviceAddress));
   WritePortByte(Card^.Ports + RegisterCommand, CommandReceiveEnable or CommandTransmitEnable);
   WritePortLongWord(Card^.Ports + RegisterReceiveConfiguration,
     ReceiveAcceptPhysicalMatch or ReceiveAcceptMulticast or ReceiveAcceptBroadcast or ReceiveWrap or
@@ -161,7 +163,7 @@ begin
     WritePortByte(Card^.Ports + RegisterMulticast + Word(Index), $FF);
   for Index := 0 to TransmitSlotCount - 1 do
     WritePortLongWord(Card^.Ports + RegisterTransmitAddress0 + Word(Index) * 4,
-      LongWord(Card^.TransmitBuffers[Index].Physical));
+      LongWord(Card^.TransmitBuffers[Index].DeviceAddress));
   Card^.TransmitIssued := 0;
   Card^.TransmitFinished := 0;
   StartReceiver(Card);
@@ -294,6 +296,7 @@ begin
         ZeroMemory(Buffer + SentLength, MinimumFrameBytes - SentLength);
         SentLength := MinimumFrameBytes;
       end;
+      PrepareTransmitBuffer(Card^.Dma, Card^.TransmitBuffers[Slot], SentLength);
       FullMemoryBarrier;
       { Writing the length (the "own" bit clear) starts the slot. }
       WritePortLongWord(Card^.Ports + RegisterTransmitStatus0 + Word(Slot) * 4,
@@ -452,12 +455,14 @@ end;
 
 function AllocateMemory(Card: PRtl8139Card): Boolean;
 begin
-  Card^.ReceiveRingPhysical := AllocateZeroedContiguousPhysicalPages(
-    (ReceiveBufferBytes + PageSize - 1) div PageSize, NetworkDmaLimit, PageUsageGeneral);
-  if Card^.ReceiveRingPhysical = 0 then
+  { The card's DMA engine is 32-bit only. }
+  GetPciDmaAttributes(Card^.Pci, Card^.Dma);
+  LimitNetworkCardDma(Card^.Dma);
+  { The card writes the ring while the driver reads it: shared memory. }
+  if not AllocateDmaBuffer(Card^.Dma, ReceiveBufferBytes, DmaShared, Card^.ReceiveMemory) then
     Exit(False);
-  Card^.ReceiveRing := PByte(PhysicalToVirtual(Card^.ReceiveRingPhysical));
-  Result := AllocateNetworkBuffers(@Card^.TransmitBuffers[0], TransmitSlotCount);
+  Card^.ReceiveRing := Card^.ReceiveMemory.Address;
+  Result := AllocateNetworkBuffers(Card^.Dma, @Card^.TransmitBuffers[0], TransmitSlotCount);
 end;
 
 function StartCard(Pci: PPciDevice): Boolean;

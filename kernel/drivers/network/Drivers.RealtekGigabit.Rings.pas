@@ -42,6 +42,7 @@ interface
 
 uses
   Kernel.SpinLock,
+  Io.Dma,
   Drivers.RealtekGigabit.Registers,
   Drivers.NetworkBuffers,
   Drivers.NetworkCards;
@@ -57,16 +58,17 @@ type
     Registers: PByte;
     Card: PNetworkCard;
     TransmitPoll: TRealtekTransmitPoll;
+    Dma: TDmaAttributes;
 
     ReceiveDescriptors: PRealtekDescriptor;
-    ReceiveDescriptorsPhysical: QWord;
+    ReceiveRing: TDmaBuffer;
     ReceiveBuffers: array[0..RealtekReceiveDescriptors - 1] of TNetworkBuffer;
     ReceiveNext: LongWord;
     DroppingPieces: Boolean;
     ReceiveLock: TSpinLock;
 
     TransmitDescriptors: PRealtekDescriptor;
-    TransmitDescriptorsPhysical: QWord;
+    TransmitRing: TDmaBuffer;
     TransmitBuffers: array[0..RealtekTransmitDescriptors - 1] of TNetworkBuffer;
     TransmitTail: LongWord;
     TransmitOldest: LongWord;
@@ -77,7 +79,7 @@ type
   end;
 
 function AllocateRealtekRings(var Rings: TRealtekRings; Registers: PByte; Card: PNetworkCard;
-  TransmitPoll: TRealtekTransmitPoll): Boolean;
+  TransmitPoll: TRealtekTransmitPoll; constref Dma: TDmaAttributes): Boolean;
 { Empties both rings and writes their addresses (the configuration
   registers must be unlocked). }
 procedure ProgramRealtekRings(var Rings: TRealtekRings);
@@ -100,21 +102,24 @@ const
   CheckSequenceBytes = 4;
 
 function AllocateRealtekRings(var Rings: TRealtekRings; Registers: PByte; Card: PNetworkCard;
-  TransmitPoll: TRealtekTransmitPoll): Boolean;
+  TransmitPoll: TRealtekTransmitPoll; constref Dma: TDmaAttributes): Boolean;
 begin
   Result := False;
   Rings.Registers := Registers;
   Rings.Card := Card;
   Rings.TransmitPoll := TransmitPoll;
+  Rings.Dma := Dma;
   Rings.IsStopped := True;
   InitializeSpinLock(Rings.ReceiveLock);
   InitializeSpinLock(Rings.TransmitLock);
-  Rings.ReceiveDescriptors := PRealtekDescriptor(AllocateDescriptorPage(Rings.ReceiveDescriptorsPhysical));
-  Rings.TransmitDescriptors := PRealtekDescriptor(AllocateDescriptorPage(Rings.TransmitDescriptorsPhysical));
-  if (Rings.ReceiveDescriptors = nil) or (Rings.TransmitDescriptors = nil) then
+  { Page-aligned, more than the 256 bytes the chips need. }
+  if not AllocateDescriptorRing(Dma, RealtekReceiveDescriptors * SizeOf(TRealtekDescriptor), Rings.ReceiveRing) or
+     not AllocateDescriptorRing(Dma, RealtekTransmitDescriptors * SizeOf(TRealtekDescriptor), Rings.TransmitRing) then
     Exit;
-  Result := AllocateNetworkBuffers(@Rings.ReceiveBuffers[0], RealtekReceiveDescriptors) and
-    AllocateNetworkBuffers(@Rings.TransmitBuffers[0], RealtekTransmitDescriptors);
+  Rings.ReceiveDescriptors := PRealtekDescriptor(Rings.ReceiveRing.Address);
+  Rings.TransmitDescriptors := PRealtekDescriptor(Rings.TransmitRing.Address);
+  Result := AllocateNetworkBuffers(Dma, @Rings.ReceiveBuffers[0], RealtekReceiveDescriptors) and
+    AllocateNetworkBuffers(Dma, @Rings.TransmitBuffers[0], RealtekTransmitDescriptors);
 end;
 
 { Gives receive descriptor Index (back) to the card. }
@@ -124,8 +129,9 @@ var
   Options: LongWord;
 begin
   Descriptor := @Rings.ReceiveDescriptors[Index];
-  Descriptor^.AddressLow := LongWord(Rings.ReceiveBuffers[Index].Physical);
-  Descriptor^.AddressHigh := LongWord(Rings.ReceiveBuffers[Index].Physical shr 32);
+  PrepareReceiveBuffer(Rings.Dma, Rings.ReceiveBuffers[Index]);
+  Descriptor^.AddressLow := LongWord(Rings.ReceiveBuffers[Index].DeviceAddress);
+  Descriptor^.AddressHigh := LongWord(Rings.ReceiveBuffers[Index].DeviceAddress shr 32);
   Descriptor^.Options2 := 0;
   Options := DescriptorOwnedByCard or NetworkBufferBytes;
   if Index = RealtekReceiveDescriptors - 1 then
@@ -154,10 +160,10 @@ begin
   Rings.TransmitOldest := 0;
   { The high half first: the low write makes the address take effect on
     some chips. }
-  Write32(Rings.Registers, RegisterTransmitDescriptorsHigh, LongWord(Rings.TransmitDescriptorsPhysical shr 32));
-  Write32(Rings.Registers, RegisterTransmitDescriptorsLow, LongWord(Rings.TransmitDescriptorsPhysical));
-  Write32(Rings.Registers, RegisterReceiveDescriptorsHigh, LongWord(Rings.ReceiveDescriptorsPhysical shr 32));
-  Write32(Rings.Registers, RegisterReceiveDescriptorsLow, LongWord(Rings.ReceiveDescriptorsPhysical));
+  Write32(Rings.Registers, RegisterTransmitDescriptorsHigh, LongWord(Rings.TransmitRing.DeviceAddress shr 32));
+  Write32(Rings.Registers, RegisterTransmitDescriptorsLow, LongWord(Rings.TransmitRing.DeviceAddress));
+  Write32(Rings.Registers, RegisterReceiveDescriptorsHigh, LongWord(Rings.ReceiveRing.DeviceAddress shr 32));
+  Write32(Rings.Registers, RegisterReceiveDescriptorsLow, LongWord(Rings.ReceiveRing.DeviceAddress));
   Rings.IsStopped := False;
   ReleaseSpinLock(Rings.TransmitLock, TransmitLevel);
   ReleaseSpinLock(Rings.ReceiveLock, ReceiveLevel);
@@ -202,6 +208,7 @@ begin
   Length := Length - CheckSequenceBytes;
   Inc(Rings.Card^.Statistics.FramesReceived);
   Inc(Rings.Card^.Statistics.BytesReceived, Length);
+  FinishReceiveBuffer(Rings.Dma, Rings.ReceiveBuffers[Index], Length);
   NetworkFrameReceived(Rings.Card^.Adapter, Rings.ReceiveBuffers[Index].Data, Length);
 end;
 
@@ -291,9 +298,10 @@ begin
         ZeroMemory(Buffer + SentLength, MinimumFrameBytes - SentLength);
         SentLength := MinimumFrameBytes;
       end;
+      PrepareTransmitBuffer(Rings.Dma, Rings.TransmitBuffers[Rings.TransmitTail], SentLength);
       Descriptor := @Rings.TransmitDescriptors[Rings.TransmitTail];
-      Descriptor^.AddressLow := LongWord(Rings.TransmitBuffers[Rings.TransmitTail].Physical);
-      Descriptor^.AddressHigh := LongWord(Rings.TransmitBuffers[Rings.TransmitTail].Physical shr 32);
+      Descriptor^.AddressLow := LongWord(Rings.TransmitBuffers[Rings.TransmitTail].DeviceAddress);
+      Descriptor^.AddressHigh := LongWord(Rings.TransmitBuffers[Rings.TransmitTail].DeviceAddress shr 32);
       Descriptor^.Options2 := 0;
       Options := DescriptorOwnedByCard or DescriptorFirstSegment or DescriptorLastSegment or SentLength;
       if Rings.TransmitTail = RealtekTransmitDescriptors - 1 then

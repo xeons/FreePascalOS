@@ -64,10 +64,24 @@ const
   { In units of 128 bytes. }
   MaximumTransmitPacketValue = $3F;
   ReceiveNoFifoThreshold = $0000E000;
+  { The RTL8168B versions (XID 300h and 380h under this mask) are the
+    ones Linux keeps to 32-bit DMA; the RTL8168C and later take 64-bit
+    addresses. }
+  Rtl8168bXidMask = $7C8;
+  Rtl8168bFirstXid = $300;
+  Rtl8168bSecondXid = $380;
 
 procedure PollTransmit(Registers: PByte);
 begin
   Write8(Registers, RegisterTransmitPoll, TransmitPollNormalQueue);
+end;
+
+function Uses32BitDma(Card: PRealtekCard): Boolean;
+var
+  Xid: LongWord;
+begin
+  Xid := (Read32(Card^.Registers, RegisterTransmitConfiguration) shr XidShift) and Rtl8168bXidMask;
+  Result := (Xid = Rtl8168bFirstXid) or (Xid = Rtl8168bSecondXid);
 end;
 
 function BringUp(Card: PRealtekCard): Boolean;
@@ -127,6 +141,7 @@ begin
   Chip.BringUp := @BringUp;
   Chip.ReadLink := @ReadLink;
   Chip.LinkStillDown := nil;
+  Chip.Uses32BitDma := @Uses32BitDma;
   Card := CreateRealtekCard(Pci, Chip, nil);
   if Card = nil then
     Exit;

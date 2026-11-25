@@ -48,11 +48,12 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Memory.Layout,
-  Memory.PhysicalPages,
   Memory.DeviceMapping,
   Memory.KernelHeap,
+  Io.Dma,
   Io.Pci,
   Io.PciMessageInterrupts,
+  Io.PlatformDevices,
   Io.BlockDevice,
   Drivers.AhciPort,
   Drivers.AhciRequests,
@@ -60,6 +61,7 @@ uses
 
 const
   AhciBarIndex = 5;
+  CapabilityAddresses64 = LongWord(1) shl 31;
 
   SataStatusDetectionMask = $0F;
   SataStatusDevicePresent = $03;
@@ -102,45 +104,39 @@ begin
   WriteRegister(Port^.Registers, PortCommand, Command or PortCommandStart);
 end;
 
+{ The port's DMA memory, shared with the controller (uncached if it
+  does not snoop, so none of it needs cache maintenance). }
 function AllocatePortMemory(Port: PAhciPort): Boolean;
 var
   PageIndex: Integer;
 begin
-  Port^.ControlPagePhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Port^.ControlPagePhysical = 0 then
+  if not AllocateDmaBuffer(Port^.Dma, PageSize, DmaShared, Port^.ControlPageBuffer) then
     Exit(False);
-  Port^.ControlPage := PByte(PhysicalToVirtual(Port^.ControlPagePhysical));
-
+  Port^.ControlPage := Port^.ControlPageBuffer.Address;
   for PageIndex := 0 to BounceBufferPages - 1 do
-  begin
-    Port^.BouncePagesPhysical[PageIndex] := AllocateZeroedPhysicalPage(PageUsageGeneral);
-    if Port^.BouncePagesPhysical[PageIndex] = 0 then
+    if not AllocateDmaBuffer(Port^.Dma, PageSize, DmaShared, Port^.BouncePageBuffers[PageIndex]) then
       Exit(False);
-  end;
   for PageIndex := 0 to TablePageCount - 1 do
-  begin
-    Port^.TablePagesPhysical[PageIndex] := AllocateZeroedPhysicalPage(PageUsageGeneral);
-    if Port^.TablePagesPhysical[PageIndex] = 0 then
+    if not AllocateDmaBuffer(Port^.Dma, PageSize, DmaShared, Port^.TablePageBuffers[PageIndex]) then
       Exit(False);
-  end;
   Result := True;
 end;
 
 function ConfigurePort(Port: PAhciPort): Boolean;
 var
-  CommandListPhysical: QWord;
-  FisPhysical: QWord;
+  CommandListBusAddress: QWord;
+  FisBusAddress: QWord;
 begin
   Result := False;
   if not StopPort(Port) then
     Exit;
 
-  CommandListPhysical := Port^.ControlPagePhysical + CommandListOffset;
-  FisPhysical := Port^.ControlPagePhysical + ReceivedFisOffset;
-  WriteRegister(Port^.Registers, PortCommandListBase, LongWord(CommandListPhysical));
-  WriteRegister(Port^.Registers, PortCommandListBaseUpper, LongWord(CommandListPhysical shr 32));
-  WriteRegister(Port^.Registers, PortFisBase, LongWord(FisPhysical));
-  WriteRegister(Port^.Registers, PortFisBaseUpper, LongWord(FisPhysical shr 32));
+  CommandListBusAddress := Port^.ControlPageBuffer.DeviceAddress + CommandListOffset;
+  FisBusAddress := Port^.ControlPageBuffer.DeviceAddress + ReceivedFisOffset;
+  WriteRegister(Port^.Registers, PortCommandListBase, LongWord(CommandListBusAddress));
+  WriteRegister(Port^.Registers, PortCommandListBaseUpper, LongWord(CommandListBusAddress shr 32));
+  WriteRegister(Port^.Registers, PortFisBase, LongWord(FisBusAddress));
+  WriteRegister(Port^.Registers, PortFisBaseUpper, LongWord(FisBusAddress shr 32));
 
   { Interrupts stay off until every disk is identified; clear any stale
     status. }
@@ -194,7 +190,7 @@ begin
   if not ExecuteCommand(Port, AtaCommandIdentifyDevice, 0, 0, 512, False) then
     Exit;
 
-  Identify := PWord(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  Identify := PWord(BounceBufferStart(Port));
 
   if (Identify[WordCommandSetsSupported] and CommandSetLba48) = 0 then
     Exit; { only LBA48 capable disks are supported }
@@ -267,7 +263,7 @@ begin
   Result := False;
   if not ExecuteCommand(Port, AtaCommandIdentifyPacketDevice, 0, 0, 512, False) then
     Exit;
-  Identify := PWord(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  Identify := PWord(BounceBufferStart(Port));
   DecodeAtaString(Identify, 27, 20, @Device^.Model[0], BlockDeviceModelLength);
 
   FillMemory(@Packet[0], PacketSize, 0);
@@ -279,7 +275,7 @@ begin
     if not ExecutePacketCommand(Port, Packet, 8) then
       Exit;
   end;
-  Capacity := PByte(PhysicalToVirtual(Port^.BouncePagesPhysical[0]));
+  Capacity := BounceBufferStart(Port);
   LastBlock := (LongWord(Capacity[0]) shl 24) or (LongWord(Capacity[1]) shl 16) or
     (LongWord(Capacity[2]) shl 8) or Capacity[3];
   Device^.BlockSize := (LongWord(Capacity[4]) shl 24) or (LongWord(Capacity[5]) shl 16) or
@@ -295,19 +291,17 @@ procedure FreePortMemory(Port: PAhciPort);
 var
   PageIndex: Integer;
 begin
-  if Port^.ControlPagePhysical <> 0 then
-    FreePhysicalPage(Port^.ControlPagePhysical);
+  FreeDmaBuffer(Port^.ControlPageBuffer);
   for PageIndex := 0 to BounceBufferPages - 1 do
-    if Port^.BouncePagesPhysical[PageIndex] <> 0 then
-      FreePhysicalPage(Port^.BouncePagesPhysical[PageIndex]);
+    FreeDmaBuffer(Port^.BouncePageBuffers[PageIndex]);
   for PageIndex := 0 to TablePageCount - 1 do
-    if Port^.TablePagesPhysical[PageIndex] <> 0 then
-      FreePhysicalPage(Port^.TablePagesPhysical[PageIndex]);
+    FreeDmaBuffer(Port^.TablePageBuffers[PageIndex]);
   FreeKernelMemory(Port);
 end;
 
-{ Sets up the disk on port PortNumber; returns its port, or nil. }
-function SetUpDisk(Registers: PByte; PortNumber: LongWord): PAhciPort;
+{ Sets up the disk on port PortNumber (Dma: the controller's DMA
+  attributes); returns its port, or nil. }
+function SetUpDisk(Registers: PByte; PortNumber: LongWord; constref Dma: TDmaAttributes): PAhciPort;
 var
   Port: PAhciPort;
   Disk: PBlockDevice;
@@ -320,6 +314,7 @@ begin
     Exit;
   Port^.Registers := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
   Port^.PortNumber := PortNumber;
+  Port^.Dma := Dma;
   Port^.SlotCount := ((ReadRegister(Registers, RegisterCapabilities) shr CapabilityCommandSlotsShift) and
     CapabilityCommandSlotsMask) + 1;
 
@@ -494,6 +489,7 @@ var
   PortNumber: LongWord;
   PortRegisters: PByte;
   Controller: PAhciController;
+  Dma: TDmaAttributes;
 begin
   Result := 0;
   if (not PciReadBar(PciDevice, AhciBarIndex, Bar)) or Bar.IsIoPort then
@@ -512,6 +508,11 @@ begin
   WriteRegister(Registers, RegisterGlobalControl,
     ReadRegister(Registers, RegisterGlobalControl) or GlobalControlAhciEnable);
   PortsImplemented := ReadRegister(Registers, RegisterPortsImplemented);
+  { Where its DMA reaches (behind the Pi 5's PCIe bridge bus addresses
+    are not physical ones); without 64-bit addressing, the low 4 GiB. }
+  GetPciDmaAttributes(PciDevice, Dma);
+  if (ReadRegister(Registers, RegisterCapabilities) and CapabilityAddresses64) = 0 then
+    LimitDmaBusAddresses(Dma, QWord(1) shl 32);
   WriteControllerDescription(PciDevice, ReadRegister(Registers, RegisterVersion), PortsImplemented);
 
   for PortNumber := 0 to MaximumPorts - 1 do
@@ -521,7 +522,7 @@ begin
     PortRegisters := Registers + PortRegisterBase + PortNumber * PortRegisterStride;
     if not PortHasLink(PortRegisters) then
       Continue;
-    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber);
+    Controller^.Ports[PortNumber] := SetUpDisk(Registers, PortNumber, Dma);
     if Controller^.Ports[PortNumber] <> nil then
       Inc(Result);
   end;

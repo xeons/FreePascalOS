@@ -29,9 +29,11 @@
   one before the current entry. The codec plays at its fixed 48 kHz, as
   the framework mixes.
 
-  Descriptors hold 32-bit addresses, so the list and the ring are kept
-  below 4 GiB. The controller signals on its PCI interrupt line (routed
-  by the ACPI namespace, Io.PciLineInterrupts) as each buffer completes;
+  Descriptors hold 32-bit addresses, so the list (shared DMA memory) and
+  the ring (Io.Dma, given to the framework) are kept below 4 GiB of bus
+  addresses; the box is given bus addresses. The controller signals on
+  its PCI interrupt line (routed by the ACPI namespace,
+  Io.PciLineInterrupts) as each buffer completes;
   the line is level triggered and may be shared, so the handler checks
   the box's status and clears it. Without routing, a timer asks where
   the box is.
@@ -51,8 +53,6 @@ implementation
 uses
   Abi.SystemCalls,
   Io.PowerManagement,
-  Memory.Layout,
-  Memory.PhysicalPages,
   Memory.KernelHeap,
   Kernel.Arch.Cpu,
   Kernel.DeferredCalls,
@@ -61,6 +61,8 @@ uses
   Kernel.Arch.TrapFrame,
   Hal.PortIo,
   Io.Pci,
+  Io.Dma,
+  Io.PlatformDevices,
   Io.PciLineInterrupts,
   Io.AudioOutput,
   Debug.Output;
@@ -120,7 +122,8 @@ type
     MixerPorts: Word;
     BusMasterPorts: Word;
     Descriptors: PBufferDescriptor;
-    DescriptorsPhysical: QWord;
+    DescriptorMemory: TDmaBuffer;
+    Dma: TDmaAttributes;
     Output: PAudioOutput;
     IsRunning: Boolean;
     UsesInterrupts: Boolean;
@@ -149,7 +152,7 @@ begin
   while ((ReadPortByte(BoxPort(Controller, BoxControl)) and ControlResetRegisters) <> 0) and
         (ClockTickCount < Deadline) do
     CpuRelax;
-  WritePortLongWord(BoxPort(Controller, BoxDescriptorList), LongWord(Controller^.DescriptorsPhysical));
+  WritePortLongWord(BoxPort(Controller, BoxDescriptorList), LongWord(Controller^.DescriptorMemory.DeviceAddress));
 end;
 
 { Keeps the box from reaching its last valid entry: that is always the
@@ -272,7 +275,7 @@ var
 begin
   for Index := 0 to DescriptorCount - 1 do
   begin
-    Controller^.Descriptors[Index].Address := LongWord(Controller^.Output^.PeriodsPhysical[Index mod AudioPeriodCount]);
+    Controller^.Descriptors[Index].Address := LongWord(Controller^.Output^.PeriodsDeviceAddress[Index mod AudioPeriodCount]);
     Controller^.Descriptors[Index].Control := DescriptorInterruptOnCompletion or SamplesPerPeriod;
   end;
 end;
@@ -312,13 +315,20 @@ begin
   Controller^.Pci := Pci;
   Controller^.MixerPorts := Word(MixerBar.PhysicalAddress);
   Controller^.BusMasterPorts := Word(BusMasterBar.PhysicalAddress);
+  { The bus master puts out 32-bit addresses only. }
+  GetPciDmaAttributes(Pci, Controller^.Dma);
+  LimitDmaBusAddresses(Controller^.Dma, FourGibibytes);
   PciEnableDevice(Pci, True);
-  if not ResetCodec(Controller) then
+  { Nothing was handed to the controller yet: what was taken is given
+    back on failure. }
+  if not ResetCodec(Controller) or
+     not AllocateDmaBuffer(Controller^.Dma, DescriptorCount * SizeOf(TBufferDescriptor), DmaShared,
+       Controller^.DescriptorMemory) then
+  begin
+    FreeKernelMemory(Controller);
     Exit;
-  Controller^.DescriptorsPhysical := AllocateZeroedPhysicalPageBelow(FourGibibytes - 1, PageUsageGeneral);
-  if Controller^.DescriptorsPhysical = 0 then
-    Exit;
-  Controller^.Descriptors := PBufferDescriptor(PhysicalToVirtual(Controller^.DescriptorsPhysical));
+  end;
+  Controller^.Descriptors := PBufferDescriptor(Controller^.DescriptorMemory.Address);
 
   Routines.Start := @StartPlaying;
   Routines.Stop := @StopPlaying;
@@ -328,9 +338,13 @@ begin
   Routines.PeriodWritten := nil;
   InitializeDeferredCall(Controller^.PeriodCall, @PeriodsElapsed, Controller);
   InitializeTimer(Controller^.PollTimer);
-  Controller^.Output := RegisterAudioOutput(Routines, Controller, FourGibibytes - 1);
+  Controller^.Output := RegisterAudioOutput(Routines, Controller, @Controller^.Dma);
   if Controller^.Output = nil then
+  begin
+    FreeDmaBuffer(Controller^.DescriptorMemory);
+    FreeKernelMemory(Controller);
     Exit;
+  end;
   DescribeRing(Controller);
   ResetBox(Controller);
   Controller^.UsesInterrupts := ConnectPciLineInterrupt(Pci, @HandleAc97Interrupt, Controller);

@@ -293,6 +293,23 @@ how the existing pieces fit together.
 - [x] Discard: NVMe Dataset Management, AHCI TRIM, virtio-blk DISCARD, the RAM disk
       frees pages; ext/FAT/exFAT discard what they free (batched, after the metadata is
       durable, ext after its commit; discard=off); fstrim (CallTrimVolume)
+- [x] Hostile or faulty devices fail only themselves (driver audit): HID report
+      offsets in 64 bits, reports over 1 KiB refused, key arrays cut at 256; endpoint
+      0, reserved bits and repeated endpoints refused; xHCI gives up timed out
+      transfers (Stop Endpoint, Set TR Dequeue Pointer, else the slot disabled),
+      recovers halted bulk endpoints, aborts timed out commands, frees the slot and
+      memory of failed enumerations, takes away devices that do not resume; USB storage
+      Bulk-Only reset recovery; NVMe matches completion identifiers and resets the
+      controller on a timeout; AHCI port recovery in a thread; ACPI table lengths
+      checked; usb-descriptor-test (crafted and fuzzed descriptors on guarded
+      pages), nvme-queue-test, acpi-table-test
+- [ ] USB class probes run in the port watcher thread with its port lock held: a
+      slow probe (a disk getting ready) delays unplug handling and suspend (bounded
+      now: a probe stops at the first timeout); bind in a thread of the device's own,
+      with removal racing the probe handled
+- [ ] A coretest that unplugs and replugs a USB disk mid-transfer through QEMU's
+      monitor (test-qemu.sh has no monitor socket yet); a fault-injecting xHCI or
+      NVMe model for the timeout paths
 - [ ] Discard on USB disks (SCSI UNMAP) and SD cards (ERASE); a nodiscard mount option
       once mount options exist; shrinking the image section cache under pressure
 
@@ -1080,8 +1097,10 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         kernel debug shell
   - [ ] VideoCore mailbox: display (framebuffer modes), and the "notify
         xHCI reset" tag should the VL805 ever be reset through PCIe
-  - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
-        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
+  - [x] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
+        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe, and
+        `GetPciDmaAttributes` taking a BrcmPcie host's dma-ranges (untested on
+        the Pi 5; 32-bit-only cards cannot reach its RAM above 4 GiB)
   - [ ] GPIO and the PWM audio jack; HDMI audio on the Pi 4 (the Pi 5's
         driver would carry over: BCM2711 HDMI, legacy DMA channels)
   - [x] Debugging without a serial cable: the kernel log over UDP

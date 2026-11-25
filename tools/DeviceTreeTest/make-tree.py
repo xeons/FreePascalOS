@@ -46,6 +46,8 @@ INTC2 = 2
 RP1 = 3
 MIP = 4
 PHY = 5
+BROKEN_PARENT = 6
+HOSTILE_NEXUS = 7
 
 
 def cells(*values):
@@ -281,6 +283,24 @@ TREE = node('', [
          cells(0x02000000, 0, 0x10000000, 0, 0x10000000, 0, 0x2eff0000) +
          cells(0x03000000, 0x80, 0, 0x80, 0, 0x80, 0)),
         ('dma-coherent', b''),
+    ]),
+    # A nexus whose interrupt-map names a parent with absurd #address-cells
+    # and #interrupt-cells (their sum wraps 32 bits back to the entry's
+    # start): resolving through it must fail, not loop forever.
+    node('broken-parent', [
+        ('#address-cells', cells(0xFFFFFFFF)),
+        ('#interrupt-cells', cells(0xFFFFFFFF)),
+        ('phandle', cells(BROKEN_PARENT)),
+    ]),
+    node('hostile-nexus', [
+        ('#address-cells', cells(0)),
+        ('#interrupt-cells', cells(1)),
+        ('interrupt-map', cells(2, BROKEN_PARENT, 7, 8, 9, 10)),
+        ('phandle', cells(HOSTILE_NEXUS)),
+    ]),
+    node('hostile-device', [
+        ('interrupt-parent', cells(HOSTILE_NEXUS)),
+        ('interrupts', cells(1)),
     ]),
 ])
 
