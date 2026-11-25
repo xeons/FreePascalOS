@@ -66,12 +66,16 @@ how the existing pieces fit together.
       alone on a processor)
 - [ ] A shared read-only page with the clock's parameters (vDSO-style) so
       the runtime reads the time without a system call
-- [ ] Power-down idle states (PSCI CPU_SUSPEND power-down, deep C-states
-      without ARAT) with a broadcast timer; _PDC/_OSC before _CST;
-      ACPI P-states (_PSS/_PCT) or HWP for frequency scaling on PCs
-- [ ] Raspberry Pi 5: the fan through RP1's PWM (with RP1's clock
-      generator) for speeds between off and full; check the clock
-      governor, the fan pin and the thermal limit on the board
+- [x] Power-down idle states (PSCI CPU_SUSPEND power-down through the
+      start-up entry, idle=powerdown-test on QEMU; deep and port C-states
+      without ARAT) with a broadcast timer (boot processor; self test,
+      idlebroadcast=force); _PDC/_OSC before _CST; ACPI P-states
+      (_PSS/_PCT/_PPC, governor thread) or HWP for frequency scaling on PCs
+- [x] Raspberry Pi 5: the fan through RP1's PWM (with RP1's clock
+      generator) for speeds between off and full (built only; falls back
+      to on/off when the PWM does not read back as set)
+- [ ] Raspberry Pi 5: check the fan PWM, the clock governor, the fan pin
+      and the thermal limit on the board
 - [x] Core audit fixes: AArch64 suspend keeps FP/SIMD registers; freeze
       handshake (no processor left frozen); clock paused last; x86 user
       copy recovery bound to the copy routines, CLAC at interrupt entry,
@@ -79,8 +83,10 @@ how the existing pieces fit together.
       priority lowering reschedules; GIC/I/O APIC locks; ITS pending
       tables kept; release/acquire processor table; per-processor panic
       trace; strict UTF-8 decoding; bounded wall clock adjustments
-- [ ] Interrupt remapping (VT-d / AMD-Vi) so device interrupts can reach
-      x2APIC ids above 255 (they go to the boot processor for now)
+- [x] Interrupt remapping (VT-d / AMD-Vi) so device interrupts can reach
+      x2APIC ids above 255 (on where an id is above 255, or intremap=on;
+      make interrupt-remapping-test behind QEMU's intel-iommu and
+      amd-iommu)
 - [ ] A regression test for the idle lost wakeup and for priority lowering
       latency (both are timing windows that QEMU does not hit reliably)
 
@@ -271,15 +277,19 @@ how the existing pieces fit together.
       trampoline, interrupt controllers, PCI configuration and MSI-X restored,
       every driver brought back (AHCI, NVMe, virtio, xHCI and its USB devices,
       HD Audio, AC'97, serial, PS/2, display)
-- [ ] Wake sources beyond the power button (RTC alarm, USB, network); MTRRs on
-      secondary processors after waking
+- [x] Wake sources beyond the power button (RTC alarm, USB, network: _PRW,
+      _DSW/_PSW, PME; calls 228-230, suspend -t, powerstat --wake); MTRRs
+      on secondary processors after waking (and at start)
 - [x] ACPI thermal zones (_TMP, _PSV, _CRT, _TZP: passive throttling by
       clock modulation, clean shutdown at critical) and batteries (_BIF,
       _BIX, _BST), CallListThermalZones, CallListBatteries, powerstat
-- [ ] More from the ACPI namespace: embedded controller regions (batteries
-      and zones whose methods read them), active cooling (_ACx, fans),
-      thermal notifications (Notify 0x80/0x81), processor hotplug
-      (bringing a plugged processor online)
+- [x] More from the ACPI namespace: embedded controller regions (batteries
+      and zones whose methods read them; ECDT, _REG, queries), active
+      cooling (_ACx/_ALx, fans; CallListCoolingDevices), thermal
+      notifications (Notify 0x80/0x81/0x82), processor hotplug (bringing a
+      plugged processor online)
+- [ ] Processor hot removal (ACPI eject); QEMU test of interrupts to an
+      x2APIC id above 255 (needs a guest with that many processors)
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads
