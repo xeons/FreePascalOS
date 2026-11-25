@@ -73,9 +73,13 @@ type
     { A network socket (Processes.SocketCalls). }
     HandleKindSocket,
     { A semaphore (Processes.ObjectCalls). }
-    HandleKindSemaphore
+    HandleKindSemaphore,
+    { Held for an object about to be stored (ReserveHandle): taken, but
+      not usable and never looked up. }
+    HandleKindReserved
   );
 
+  PHandleEntry = ^THandleEntry;
   THandleEntry = record
     Kind: THandleKind;
     ObjectBody: Pointer;
@@ -111,6 +115,19 @@ function InsertHandle(var Table: THandleTable; Kind: THandleKind; ObjectBody: Po
 { Stores into a specific slot (below the limit), closing what was there
   before. False if Handle is out of range or memory ran out. }
 function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
+{ SetHandle for a copied table (fork): any slot below the ceiling, as
+  the source had it even above a limit lowered since. }
+function SetInheritedHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind;
+  ObjectBody: Pointer): Boolean;
+{ Above every open handle: the end of the last chunk there is. }
+function HandleNumberBound(const Table: THandleTable): LongWord;
+
+{ Takes the lowest free number for an object made afterwards (one whose
+  creation cannot be undone, a thread): -1 if the table is full. Fill it
+  with FillReservedHandle or give it back with CancelReservedHandle. }
+function ReserveHandle(var Table: THandleTable): Integer;
+procedure FillReservedHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer);
+procedure CancelReservedHandle(var Table: THandleTable; Handle: Integer);
 
 function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
   out ObjectBody: Pointer): Boolean;
@@ -211,8 +228,11 @@ end;
 procedure FillEntry(var Table: THandleTable; Chunk: PHandleChunk; Handle: LongWord; Kind: THandleKind;
   ObjectBody: Pointer);
 begin
-  ReferenceObject(ObjectBody);
-  NoteHandleOpened(Kind, ObjectBody);
+  if Kind <> HandleKindReserved then
+  begin
+    ReferenceObject(ObjectBody);
+    NoteHandleOpened(Kind, ObjectBody);
+  end;
   Chunk^.Entries[Handle mod HandlesPerChunk].Kind := Kind;
   Chunk^.Entries[Handle mod HandlesPerChunk].ObjectBody := ObjectBody;
   Inc(Chunk^.OpenCount);
@@ -258,11 +278,13 @@ begin
   Result := -1;
 end;
 
-function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
+{ SetHandle below Bound. }
+function StoreHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer;
+  Bound: LongWord): Boolean;
 var
   Chunk: PHandleChunk;
 begin
-  if (Handle < 0) or (LongWord(Handle) >= Table.Limit) then
+  if (Handle < 0) or (LongWord(Handle) >= Bound) then
     Exit(False);
   Chunk := ChunkFor(Table, LongWord(Handle));
   if Chunk = nil then
@@ -270,6 +292,76 @@ begin
   CloseHandle(Table, Handle);
   FillEntry(Table, Chunk, LongWord(Handle), Kind, ObjectBody);
   Result := True;
+end;
+
+function SetHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer): Boolean;
+begin
+  Result := StoreHandle(Table, Handle, Kind, ObjectBody, Table.Limit);
+end;
+
+function SetInheritedHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind;
+  ObjectBody: Pointer): Boolean;
+begin
+  Result := StoreHandle(Table, Handle, Kind, ObjectBody, HandleLimitCeiling);
+end;
+
+function HandleNumberBound(const Table: THandleTable): LongWord;
+var
+  ChunkIndex: LongWord;
+begin
+  Result := 0;
+  ChunkIndex := HandleChunkCount;
+  while ChunkIndex > 0 do
+  begin
+    if Table.Chunks[ChunkIndex - 1] <> nil then
+      Exit(ChunkIndex * HandlesPerChunk);
+    Dec(ChunkIndex);
+  end;
+end;
+
+function ReserveHandle(var Table: THandleTable): Integer;
+begin
+  Result := InsertHandle(Table, HandleKindReserved, nil, 0);
+end;
+
+function ReservedEntry(var Table: THandleTable; Handle: Integer): PHandleEntry;
+var
+  Chunk: PHandleChunk;
+begin
+  Result := nil;
+  Chunk := ExistingChunk(Table, Handle);
+  if (Chunk <> nil) and (Chunk^.Entries[Handle mod HandlesPerChunk].Kind = HandleKindReserved) then
+    Result := @Chunk^.Entries[Handle mod HandlesPerChunk];
+end;
+
+procedure FillReservedHandle(var Table: THandleTable; Handle: Integer; Kind: THandleKind; ObjectBody: Pointer);
+var
+  Entry: PHandleEntry;
+begin
+  Entry := ReservedEntry(Table, Handle);
+  if Entry = nil then
+    Exit;
+  ReferenceObject(ObjectBody);
+  NoteHandleOpened(Kind, ObjectBody);
+  Entry^.ObjectBody := ObjectBody;
+  Entry^.Kind := Kind;
+end;
+
+procedure CancelReservedHandle(var Table: THandleTable; Handle: Integer);
+var
+  Entry: PHandleEntry;
+  Chunk: PHandleChunk;
+begin
+  Entry := ReservedEntry(Table, Handle);
+  if Entry = nil then
+    Exit;
+  Chunk := Table.Chunks[Handle div HandlesPerChunk];
+  Entry^.Kind := HandleKindFree;
+  Entry^.ObjectBody := nil;
+  Dec(Chunk^.OpenCount);
+  Dec(Table.OpenCount);
+  if LongWord(Handle) < Table.LowestFree then
+    Table.LowestFree := LongWord(Handle);
 end;
 
 function LookupHandle(var Table: THandleTable; Handle: Int64; out Kind: THandleKind;
@@ -284,6 +376,12 @@ begin
     Exit(False);
   Kind := Chunk^.Entries[Handle mod HandlesPerChunk].Kind;
   ObjectBody := Chunk^.Entries[Handle mod HandlesPerChunk].ObjectBody;
+  { A reserved slot holds nothing yet. }
+  if Kind = HandleKindReserved then
+  begin
+    Kind := HandleKindFree;
+    ObjectBody := nil;
+  end;
   Result := Kind <> HandleKindFree;
 end;
 

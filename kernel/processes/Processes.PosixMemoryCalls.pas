@@ -101,17 +101,25 @@ begin
   if (EntryPoint = 0) or (EntryPoint >= UserSpaceLimit) or (StackPointer = 0) or
      (StackPointer >= UserSpaceLimit) or ((StackPointer and 15) <> 0) then
     Exit(Failure(ErrorInvalidArgument));
+  { The handle first: a thread, once started, cannot be taken back, so
+    the call must not fail after it. }
+  AcquireMutex(Process^.Lock);
+  Handle := ReserveHandle(Process^.Handles);
+  ReleaseMutex(Process^.Lock);
+  if Handle < 0 then
+    Exit(Failure(ErrorTooManyHandles));
   { The stack is the caller's (StackStart 0): it stays when the thread
     ends. }
   Error := StartUserThread(Process, EntryPoint, StackPointer, Argument, 0, @Process^.Name[0], True, Thread);
+  AcquireMutex(Process^.Lock);
+  if Error = ErrorNone then
+    FillReservedHandle(Process^.Handles, Handle, HandleKindThread, Thread)
+  else
+    CancelReservedHandle(Process^.Handles, Handle);
+  ReleaseMutex(Process^.Lock);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  AcquireMutex(Process^.Lock);
-  Handle := InsertHandle(Process^.Handles, HandleKindThread, Thread, 0);
-  ReleaseMutex(Process^.Lock);
   DereferenceObject(Thread);
-  if Handle < 0 then
-    Exit(Failure(ErrorTooManyHandles));
   Result := Handle;
 end;
 

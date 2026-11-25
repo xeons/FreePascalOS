@@ -120,24 +120,30 @@ begin
     Exit(Failure(ErrorInvalidArgument));
   StackSize := RoundUpToPage(StackSize);
 
-  Error := AllocateGuardedUserMemory(Process^.AddressSpace, StackSize, RegionKindStack, StackStart);
-  if Error <> ErrorNone then
-    Exit(Failure(Error));
-  Error := StartUserThread(Process, EntryPoint, StackStart + StackSize - EntryStackOffset, Argument,
-    StackStart, @Process^.Name[0], True, Thread);
-  if Error <> ErrorNone then
-  begin
-    ReleaseUserRegion(Process^.AddressSpace, StackStart);
-    Exit(Failure(Error));
-  end;
-
+  { The handle first: a thread, once started, cannot be taken back, so
+    the call must not fail after it. }
   AcquireMutex(Process^.Lock);
-  Handle := InsertHandle(Process^.Handles, HandleKindThread, Thread, 0);
+  Handle := ReserveHandle(Process^.Handles);
   ReleaseMutex(Process^.Lock);
-  DereferenceObject(Thread);
-  { The thread runs either way; without a handle nobody can wait for it. }
   if Handle < 0 then
     Exit(Failure(ErrorTooManyHandles));
+  Error := AllocateGuardedUserMemory(Process^.AddressSpace, StackSize, RegionKindStack, StackStart);
+  if Error = ErrorNone then
+  begin
+    Error := StartUserThread(Process, EntryPoint, StackStart + StackSize - EntryStackOffset, Argument,
+      StackStart, @Process^.Name[0], True, Thread);
+    if Error <> ErrorNone then
+      ReleaseUserRegion(Process^.AddressSpace, StackStart);
+  end;
+  AcquireMutex(Process^.Lock);
+  if Error = ErrorNone then
+    FillReservedHandle(Process^.Handles, Handle, HandleKindThread, Thread)
+  else
+    CancelReservedHandle(Process^.Handles, Handle);
+  ReleaseMutex(Process^.Lock);
+  if Error <> ErrorNone then
+    Exit(Failure(Error));
+  DereferenceObject(Thread);
   Result := Handle;
 end;
 
