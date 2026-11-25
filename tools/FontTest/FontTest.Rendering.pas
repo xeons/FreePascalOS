@@ -64,6 +64,14 @@ const
     pixels are edge pixels, that averages up to about 4.3 per pixel
     (measured on DejaVu Sans). Straight-line glyphs agree far closer. }
   GlyphTolerance = 5.0;
+  { Cubic curves (CFF) FreeType cuts more coarsely still (until the
+    control points are within a quarter pixel of the chord), so its
+    round tops and bowls come out a little flatter than ours: up to
+    about 41 in one edge pixel and 6.8 on average for a small glyph
+    (measured on Source Sans 3, Nimbus Sans, Cantarell and Noto Sans
+    CJK); at 100 pixels the areas agree to 0.2 %. }
+  CubicPixelTolerance = 48;
+  CubicGlyphTolerance = 7.5;
 
 type
   TComparison = record
@@ -86,6 +94,8 @@ end;
 
 procedure CompareGlyph(const Reference: TReference; Font: TTrueTypeFont; var Comparison: TComparison);
 var
+  WorstAllowed: LongInt;
+  AverageAllowed: Double;
   Expected: TGlyphBitmap;
   Got: TGlyphBitmap;
   Left: Integer;
@@ -126,7 +136,17 @@ begin
   Comparison.WorstPixel := Max(Comparison.WorstPixel, Worst);
   Comparison.TotalDifference := Comparison.TotalDifference + Total;
   Comparison.Pixels := Comparison.Pixels + Count;
-  if not Rendered or (Worst > PixelTolerance) or ((Count > 0) and (Total / Count > GlyphTolerance)) then
+  if Font.Kind = CffOutlines then
+  begin
+    WorstAllowed := CubicPixelTolerance;
+    AverageAllowed := CubicGlyphTolerance;
+  end
+  else
+  begin
+    WorstAllowed := PixelTolerance;
+    AverageAllowed := GlyphTolerance;
+  end;
+  if not Rendered or (Worst > WorstAllowed) or ((Count > 0) and (Total / Count > AverageAllowed)) then
   begin
     Inc(Comparison.Failed);
     if Comparison.FirstFailure = '' then

@@ -228,7 +228,50 @@ begin
   Result := Problem = '';
 end;
 
-procedure FuzzPointer(const Name: string; StepCount: Integer; StressCollector: Boolean);
+{ A burst of fast wheel input, as a spun wheel or a flicked touchpad
+  gives it: many steps both ways with the pointer moving over the page
+  (hovering what scrolls under it), the layout left behind as a busy web
+  view leaves it, the page's tasks, frames and animations run in
+  between, and now and then a resize in the middle. }
+procedure WheelBurst(Run: TPointerRun);
+var
+  Index, Count: Integer;
+begin
+  Count := 10 + Random(50);
+  Index := 0;
+  while (Index < Count) and (Run.Layout <> nil) do
+  begin
+    if Random(3) = 0 then
+      Run.Driver.MoveTo(Random(Round(Run.Width)), Random(Round(Run.Height)));
+    if Run.Layout = nil then
+      Break;
+    if Random(5) = 0 then
+      Run.Driver.Wheel(-(Random(1200)))
+    else
+      Run.Driver.Wheel(60 + Random(1200));
+    if Run.Layout = nil then
+      Break;
+    case Random(8) of
+      0: Run.Page.Loop.RunPendingTasks;
+      1: Run.Page.RenderingOpportunity;
+      2: if Run.Layout.AnimationsRunning then
+           Run.Layout.AdvanceAnimations;
+      3: Run.MaybeLayOut(False);
+      4: Run.Painter.HitTest(Random(Round(Run.Width)), Random(Round(Run.Height)));
+      5: if Random(6) = 0 then
+         begin
+           Run.Width := 200 + Random(500);
+           Run.Height := 150 + Random(350);
+           Run.Layout.SetViewport(Run.Width, Run.Height, 1);
+           Run.Sink.SetViewport(Run.Width, Run.Height, 1);
+           Run.Driver.ViewportHeight := Run.Height;
+         end;
+    end;
+    Inc(Index);
+  end;
+end;
+
+procedure FuzzPointer(const Name: string; StepCount: Integer; StressCollector, WheelStorm: Boolean);
 var
   Environment: TTestEnvironment;
   Run: TPointerRun;
@@ -308,13 +351,17 @@ begin
         Exit;
       end;
       Choice := Random(100);
+      if WheelStorm and (Choice < 60) then
+        Choice := 1000;
       if Verbose then
       begin
         WriteLn(Format('step %d choice %d nodes %d boxes %d runs %d', [Step, Choice, LiveNodeCount, LiveBoxCount,
           Run.Selection.Index.Count]));
         Flush(Output);
       end;
-      if Choice < 28 then
+      if Choice = 1000 then
+        WheelBurst(Run)
+      else if Choice < 28 then
         Run.Driver.MoveTo(Random(Round(Run.Width)), Random(Round(Run.Height)))
       else if Choice < 40 then
       begin
@@ -451,8 +498,9 @@ end;
 
 procedure RunPointerTests;
 begin
-  FuzzPointer('pointer fuzz', 3000, False);
-  FuzzPointer('pointer fuzz (collector stress)', 600, True);
+  FuzzPointer('pointer fuzz', 3000, False, False);
+  FuzzPointer('pointer fuzz (collector stress)', 600, True, False);
+  FuzzPointer('pointer wheel storm', 2000, False, True);
 end;
 
 end.

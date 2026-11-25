@@ -118,11 +118,11 @@ class _CtypesFace:
         handle.FT_Get_Advance.argtypes = [ctypes.POINTER(_Face), ctypes.c_uint, ctypes.c_int32,
                                           ctypes.POINTER(ctypes.c_long)]
 
-    def __init__(self, data):
+    def __init__(self, data, index=0):
         self._load_library()
         self._data = ctypes.create_string_buffer(data, len(data))
         self._face = ctypes.POINTER(_Face)()
-        if self._library_handle.FT_New_Memory_Face(self._library, self._data, len(data), 0,
+        if self._library_handle.FT_New_Memory_Face(self._library, self._data, len(data), index,
                                                    ctypes.byref(self._face)) != 0:
             raise ValueError('FreeType refuses the font')
 
@@ -167,9 +167,9 @@ class _CtypesFace:
 class _FreetypePyFace:
     """One face through freetype-py."""
 
-    def __init__(self, data):
+    def __init__(self, data, index=0):
         import io
-        self._face = _freetype_py.Face(io.BytesIO(data))
+        self._face = _freetype_py.Face(io.BytesIO(data), index)
 
     def units_per_em(self):
         return self._face.units_per_EM
@@ -200,8 +200,8 @@ class _FreetypePyFace:
                 slot.linearHoriAdvance / 65536.0)
 
 
-def open_face(data):
-    """A FreeType face for the font in data."""
+def open_face(data, index=0):
+    """A FreeType face for the font in data (face index of a collection)."""
     if _freetype_py is not None:
-        return _FreetypePyFace(data)
-    return _CtypesFace(data)
+        return _FreetypePyFace(data, index)
+    return _CtypesFace(data, index)

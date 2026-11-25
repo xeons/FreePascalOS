@@ -10078,22 +10078,105 @@ independent) against the Free Pascal runtime library:
   the console's and the terminal's font, monospaced, a face standing for
   an em six sevenths of its height, so faces of both kinds picked for
   one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
-  DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
-  `userland/fonts` and copied by the build). Listing a family reads
+  DejaVu Sans Mono 2.37, TrueType, regular and bold (with obliques in
+  the full set); the other outline fonts, see "Fonts" below; all of them
+  kept in `userland/fonts` and put in by the build). Listing a family reads
   only the start of each file, its size and weight (for a TrueType font
   its table directory, head and OS/2); a face's glyphs are read the
   first time it is picked, so a program does not load every size. Sizes
   are in points, so text is the same size on any display.
 
+  Fonts. The outline fonts are all freely licensed and kept in the
+  repository, in `userland/fonts/<family>/`, each family with its
+  `LICENSE` (where the fonts come from, their copyright and licence as
+  they state them, the licence's full text) and a `SOURCE` line
+  (upstream, version, the Arch Linux package they were taken from);
+  `userland/fonts/MANIFEST` lists them all (family, directory, files,
+  licence, version, package). Licences: SIL OFL 1.1 (Liberation, Noto
+  with CJK and colour emoji, Source Sans 3, Cantarell, Roboto, Open
+  Sans, Inconsolata), Bitstream Vera with DejaVu's public-domain
+  changes, MIT and Bitstream Vera (Hack), AGPL 3.0 with URW's font
+  exception (the URW base 35), Apache 2.0 (Droid Sans Fallback); about
+  85 MB, the Noto CJK collections and Noto Color Emoji the largest
+  (`.gitattributes` marks font files binary). `scripts/fonts.list`
+  names each family, its files, sets, package, upstream and licence.
+  The build takes the fonts from the repository only, never from the
+  build machine: `scripts/install-fonts.py` puts the set `FONT_SET`
+  names into /lib/fonts (a section's `sets`, and its `core-files` or
+  `base-files` when the set takes only some of its files), with each
+  family's LICENSE and SOURCE and the set's rows of the MANIFEST.
+  `make update-fonts` (`scripts/update-fonts.py`, run by hand) refreshes
+  `userland/fonts` from the build machine's packages, taking a family
+  only when all its files are there, its licence file says what the
+  list expects and every font's own name table (copyright, licence
+  description) agrees; anything else is skipped with a message and
+  the repository's copy kept.
+  `FONT_SET=full` (amd64's default, about 80 MB: DejaVu Sans and Sans
+  Mono; Liberation Sans, Serif and Mono, metric-compatible with Arial,
+  Times New Roman and Courier New; DejaVu's obliques and Serif; Noto Sans, Serif and Mono;
+  Noto Sans for 34 scripts with Symbols, Symbols 2 and Math; Noto Color
+  Emoji; Noto Sans CJK regular and bold; Source Sans 3; Cantarell;
+  Roboto; Open Sans; Hack; Inconsolata; the URW base 35: Nimbus Sans,
+  Sans Narrow, Roman and Mono PS, P052, C059, URW Bookman, URW Gothic,
+  Z003, Standard Symbols PS, D050000L), `core` (arm64's default, 6.7 MB,
+  1.4 MB of it Droid Sans Fallback for CJK: DejaVu Sans and Sans Mono
+  and Liberation regular and bold, Noto Sans Symbols 2; the system
+  image is the Raspberry Pi's RAM disk, served xz-compressed over TFTP)
+  or `base` (DejaVu Sans and Sans Mono regular and bold: what the host
+  tests lay pages out with, in build/tools/base-fonts, so their expected
+  layouts do not change when fonts are added; the web layout test's
+  system font matching uses all of `userland/fonts`, and the font
+  test's CFF, collection, variable and emoji fixtures are made from the
+  repository's files). The system disk
+  grows with its contents (at least 64 MiB; 160 MiB with the full set).
+  The interface keeps DejaVu Sans; a family a program lists (the font
+  dialog) may be any of them. A family's italic faces are left out of
+  its font set (the interface draws upright text).
+
+  `Font.Configuration` reads `/etc/fonts.conf` (userland/etc): in
+  `[families]`, a generic family or font name and the families that
+  stand for it (the first installed taken); in `[fallback]`, the
+  default chain; in `[scripts]`, a script's code point ranges and the
+  families tried first for them (CJK, Arabic, Hebrew, the Indic
+  scripts, Thai, ..., emoji, symbols, math). Without the file, built-in
+  settings give DejaVu Sans and DejaVu Sans Mono. Font.Text measures
+  and draws a character a face lacks with `FallbackFaceFinder`'s face
+  (Font.Files sets it: the configured chain's families, each listed
+  and read when first reached, a face of the same pixel size and
+  weight, the answers remembered), on the same baseline, without
+  kerning to its neighbours; zero-width joiners and variation selectors
+  take no room.
+
   TrueType: `Font.FontData` reads big-endian numbers inside a table,
   every read checked against the table's end in 64-bit arithmetic.
   `Font.TrueType` (`LoadTrueTypeFont`) opens a font: the table
-  directory (every table inside the file; CFF "OTTO" fonts and
-  collections are not read), `head` (units to the em, 16 to 16384; the
+  directory (every table inside the file; a collection's face by its
+  index, `FontFaceCount`), `head` (units to the em, 16 to 16384; the
   loca format; the weight bit), `maxp`, `hhea` and `hmtx` (advances;
   glyphs past the last advance share it), `OS/2` (weight class; the
-  line if hhea has none), `post` (underline), `loca` (in order, inside
-  glyf) and `cmap`; anything wrong refuses the font.
+  line if hhea has none), `post` (underline), the outlines (`loca` and
+  `glyf`, in order; else `CFF ` or `CFF2`; else colour bitmaps alone)
+  and `cmap`; anything wrong refuses the font. A variable font is its
+  default instance (glyf and CFF2 hold it; blends keep their defaults).
+  `Font.CffData` reads CFF INDEXes (16- or 32-bit counts) and DICTs,
+  `Font.CffOutlines` the CFF table (Top DICT, CharStrings, Private DICT
+  and local subroutines; CID-keyed fonts' FDArray and FDSelect formats
+  0 and 3, as Noto CJK has) and CFF2's (FDSelect format 4, the variation
+  store's region counts), and `Font.CffCharStrings` runs Type 2
+  charstrings into cubic outlines (moves, lines, the curve operators
+  and flex family, subroutines with their bias, hints skipped, widths
+  dropped, arithmetic, CFF2's blend and vsindex; ten levels of calls,
+  200000 operators, points within a million units, or the glyph is
+  refused). Cubic control points are marked in the outline
+  (`TOutlinePoint.Cubic`); rendering cuts cubics with libdrawing's
+  `FlattenCubicCurve`. `Font.ColorBitmaps` reads CBLC strikes and index
+  subtables (formats 1 to 5) and CBDT images (formats 17 to 19, PNG),
+  decoded through `ColorBitmapDecoder` (set by the toolkit and libweb to
+  libimage's) and scaled smoothly from the nearest strike to the size;
+  a colour glyph is a bitmap of colours (`TGlyphBitmap.Colors`) cached
+  like coverage. `Font.CharacterMaps` also takes a symbol font's map
+  (3/0, its U+F020 to U+F0FF also at U+0020) and looks variation
+  sequences up in format 14.
   `Font.CharacterMaps` reads the Unicode subtable, format 12 (3/10,
   0/4, 0/6) before format 4 (3/1, 0/0-3), into mappings by code point.
   `Font.GlyphData` reads outlines: simple glyphs (flags with repeats,
@@ -10169,7 +10252,17 @@ independent) against the Free Pascal runtime library:
   average); the hinter (E's and H's bars, baseline, x height and cap
   height on whole pixels, no overshoot at small sizes), the text API,
   gamma-correct blending, subpixel glyphs, the cache's limits and order
-  of use, and font sets giving every size with faces that never move.
+  of use, and font sets giving every size with faces that never move;
+  with the build machine's fonts when it has them (the fixtures name
+  them, else the checks are skipped saying so): Source Sans 3, Nimbus
+  Sans, Cantarell (CFF2) and Noto Sans CJK's first and third faces
+  rendered against FreeType (cubic curves within 48 a pixel and 7.5 on
+  average: FreeType cuts them more coarsely), a collection's faces
+  mapping one character to their own glyphs, Noto Color Emoji drawn in
+  colour through libimage, DejaVu Sans made into WOFF2 by woff2_compress
+  unwrapped glyph for glyph as the original (every truncation refused),
+  randomly damaged CFF data never raising, Liberation Sans with Arial's
+  advances, and userland/etc/fonts.conf read.
   On the system, `drawtest` draws a window on the display in DejaVu
   Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
@@ -11507,7 +11600,10 @@ members first and each level by name, as WebIDL reads them), enums,
 callbacks, callback interfaces, typedefs, constants, attributes,
 operations with overloads, optional arguments with defaults and variadic
 ones, constructors, static members, getters, setters and deleters,
-`iterable<>` and stringifiers. Reflected attributes need no code: an
+`iterable<>` and stringifiers; an interface with an indexed getter of
+its own and no `iterable<>` iterates as an array (WebIDL: its
+`@@iterator` is `%Array.prototype.values%`), so `for...of` over an
+HTMLCollection or a NamedNodeMap works. Reflected attributes need no code: an
 extended attribute names the content attribute and kind (`[Reflect]`,
 `[Reflect=for]`, `[ReflectURL]`, `[ReflectEnum=(...)]` with
 `[ReflectMissing]`/`[ReflectInvalid]`, `[ReflectDefault]`,
@@ -12160,15 +12256,30 @@ the view asks for frames while any runs.
 
 ### Text (Web.Text)
 
-`Web.Text.Fonts` lists the TrueType faces under the font directory
-(/lib/fonts; the host tools point it at userland/fonts): a subdirectory
-per family ("dejavu-sans" is "DejaVu Sans"), weight and slant from the
-file names; a face's file is read when first used. Matching walks the
-font-family list: generic families map to installed ones (sans-serif,
-serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
-Sans Mono; some well-known names too), the face nearest the weight and
-slant is taken, and a character the face lacks takes the nearest face
-of the library that has it (remembered per font).
+`Web.Text.Fonts` lists the faces under the font directory (/lib/fonts;
+the host tools point it at userland/fonts): a subdirectory per family
+("liberation-sans" is "Liberation Sans"), each .ttf, .otf or .ttc file a
+face (a collection's first), weight and slant from its header
+(`Font.Summaries`, a few hundred bytes read), so a face's file is read
+only when it is chosen. Matching walks the font-family list: an
+installed family by its name, else what the system's font configuration
+(/etc/fonts.conf, see "Fonts" under libfont) says stands for the name:
+sans-serif, Arial and Helvetica are Liberation Sans (Arial's metrics),
+serif and Times New Roman Liberation Serif, monospace and Courier New
+Liberation Mono, Palatino P052 and the other PostScript names their URW
+stand-ins, system-ui and -apple-system the interface's DejaVu Sans,
+emoji Noto Color Emoji. The face nearest the weight and slant is picked
+by the headers and read. A character the face lacks walks the
+configured chain for its script (Noto Sans CJK for Han and kana, Noto
+Sans Arabic, ..., Noto Color Emoji for emoji) and then the default
+chain, each family read only when reached, so mixed text draws every
+character (remembered per font and in the library). U+FE0F after a
+character asks for the emoji family; any variation selector picks the
+face's variation glyph (cmap format 14); selectors and zero-width
+joiners take no room (emoji sequences joined by U+200D draw one after
+another: there are no ligatures). Colour glyphs paint in their own
+colours (`Font.GlyphDrawing`); libweb sets libfont's PNG decoder to
+libimage's (`Image.PictureColors`).
 
 A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
 a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
@@ -12232,7 +12343,13 @@ floats and the box's offset in it, the lists absolutely positioned and
 fixed boxes go to); a clean box laid out before for the same input whose
 layout did not depend on outside floats or containing blocks is skipped,
 so relayout after a change touches the changed part and what depends on
-its size.
+its size. A box whose layout put floats into a formatting context outside
+it (`bfHasEscapingFloats`: a float in a block that does not contain it)
+is never skipped: the context is made anew on every layout, and a skipped
+box would leave its floats out of it, so the boxes after it would not
+flow around them (4chan's posts were laid over their thumbnails once an
+icon in them loaded). A block inside an inline box (block-in-inline)
+looks for the floats from its margin edge, as in block flow.
 
 - Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
   8.3.1): widths with auto margins, min/max, box-sizing and percentages;
@@ -12429,14 +12546,18 @@ document's resources (others are dropped): link sheets, the imports of
 since an import hangs on a sheet already in use), images with their
 natural size, url() images fetched when the layout first asks (no-cors,
 sniffed, decoded on the page thread, given under the URL text as
-written), and @font-face sources: TrueType, OpenType with TrueType
-outlines and WOFF 1 (`Web.Text.Woff` unwraps it with libcompression's
-zlib) join the font library under the rule's family, weight and style;
-the fonts made from styles then pick their faces again in place
-(`RefreshTextFonts`: no font object goes, so display lists keep valid
-pointers) and every layout measures again. WOFF2 and CFF outlines are
-refused by `FontFormatSupported`, so the loader tries the next source;
-web fonts are process-wide rather than per document. `SetViewport`
+written), and @font-face sources: TrueType, OpenType (TrueType or CFF
+outlines), collections, WOFF 1 (`Web.Text.Woff` unwraps it with
+libcompression's zlib) and WOFF2 (`Web.Text.Woff2`: libcompression's
+Brotli, then the glyf and loca tables rebuilt from the transformed
+glyf's streams of contour and point counts, flags, coordinate
+triplets, composite data, boxes and instructions, the loca format
+written into head, and hmtx's left side bearings from the glyphs'
+xMin when the transform left them out) join the font library under the
+rule's family, weight and style; the fonts made from styles then pick
+their faces again in place (`RefreshTextFonts`: no font object goes,
+so display lists keep valid pointers) and every layout measures again.
+Web fonts are process-wide rather than per document. `SetViewport`
 gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
@@ -12618,8 +12739,9 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
-unicode-range), ::first-line and ::first-letter, inline boxes
+scripts: Arabic draws unjoined), emoji ZWJ sequences and flags (their
+parts draw one by one), a collection's face chosen by language (its
+first is used), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic
@@ -12694,7 +12816,10 @@ web view's pointer steps over its `TPageSelection`), with the layout
 brought up to date or left behind (as the web view puts a slow layout
 off), painting, hit testing, the selection's rectangles and both
 collectors between steps; then 600 more with the engines collecting
-every 16 KiB. It passes when the document's selection stays in the
+every 16 KiB; then a wheel storm of 2000 steps, most of them bursts of
+10 to 60 wheel steps both ways with the pointer moving over the page,
+the layout left behind, and tasks, rendering steps, animations, hit
+tests and resizes in between. It passes when the document's selection stays in the
 document, the view's selection in its current index, its text and
 rectangles readable, and no script error is uncaught. `WebLoadTest
 pointer` runs it alone, `WEB_POINTER_VERBOSE=1` prints a line a step.
@@ -13388,7 +13513,14 @@ the page thread runs scripts, layout and painting; image decoding and
 other workers stay on their threads; it has no network threads of its
 own (the network service has them).
 
-**Async scrolling.** Input carries a sequence number; frames and
+**Async scrolling.** The browser's side of a renderer's frames is
+`WebView.RemoteFrames` (the surface, the view's copy of the last frame
+and its shift), apart from the control: it refuses frames of a replaced
+surface or larger than theirs, clips damage and viewports to the frame
+and keeps the renderer's scroll and document sizes within bounds before
+using them; `tools/WebIpcTest` (`WebIpcTest.Frames`) plays a renderer
+that replaces its surface while the browser scrolls and paints, and
+checks that a replaced section is never read. Input carries a sequence number; frames and
 `IpcInputHandled` say how far the renderer got. When input has gone
 unanswered for 120 ms (a long layout, a busy script, a hung page), the
 wheel moves the last frame in the browser itself, within the document's

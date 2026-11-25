@@ -26,7 +26,8 @@
   FreeType's and HarfBuzz's answers for those and for DejaVu Sans
   (whose files the references name). Parsing and kerning are checked
   in FontTest.Parsing, rendering and hinting in FontTest.Rendering, the
-  text API, the glyph cache and gamma-correct blending in FontTest.Text.
+  text API, the glyph cache and gamma-correct blending in FontTest.Text, CFF, collections, colour
+  emoji, WOFF2 and the font configuration in FontTest.OpenType.
   Every check prints a line; the exit code is 1 if any failed.
 
   This is a host tool, built with the normal Free Pascal runtime library.
@@ -42,7 +43,8 @@ uses
   FontTest.References,
   FontTest.Parsing,
   FontTest.Rendering,
-  FontTest.Text;
+  FontTest.Text,
+  FontTest.OpenType;
 
 var
   Directory: string;
@@ -62,6 +64,7 @@ begin
   TestParsing(Directory, References, Fonts);
   TestRendering(References, Fonts);
   TestText(References, Fonts);
+  TestOpenType(Directory, References, Fonts);
   WriteLn(Format('[font] %d checks, %d failed', [Checks, Failures]));
   if Failures > 0 then
     Halt(1);

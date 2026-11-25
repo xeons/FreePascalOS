@@ -88,6 +88,8 @@
 #   make system-disk  Build the ext4 system volume with /bin and /lib
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
+#   make update-fonts  Refresh the outline fonts in userland/fonts from the
+#                   build machine's font packages (scripts/fonts.list)
 #   make clean      Remove all build output
 #
 #   make toolchain ARCH=arm64  Build the AArch64 cross compiler from the Free
@@ -215,7 +217,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
-	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test
+	quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -816,6 +818,21 @@ font: $(FONT_TOOL)
 	zcat -f $(FONT_SOURCE) > $(FONT_UNPACKED)
 	$(FONT_TOOL) $(FONT_UNPACKED) kernel/debug/Debug.ConsoleFont.inc
 
+# The fonts the host tests lay pages out with (their expected layouts
+# were made with these): the base set of userland/fonts, DejaVu Sans and
+# Sans Mono regular and bold.
+BASE_FONTS_DIRECTORY := build/tools/base-fonts
+BASE_FONTS_STAMP := $(BASE_FONTS_DIRECTORY)/.installed
+$(BASE_FONTS_STAMP): $(OUTLINE_FONT_FILES) $(FONT_SCRIPTS)
+	python3 -B scripts/install-fonts.py scripts/fonts.list $(OUTLINE_FONT_SOURCE) $(BASE_FONTS_DIRECTORY) --set base
+	@touch $@
+
+# The outline fonts in userland/fonts refreshed from the build machine's
+# font packages, with their licences checked (scripts/update-fonts.py);
+# run by hand, then look at what changed before committing it.
+update-fonts:
+	python3 -B scripts/update-fonts.py scripts/fonts.list $(OUTLINE_FONT_SOURCE)
+
 # libdrawing and libfont are plain Pascal: they build for the host too,
 # and are checked there pixel by pixel (with the system's fonts, Terminus
 # and DejaVu Sans).
@@ -829,7 +846,7 @@ $(DRAWING_TEST): $(DRAWING_TEST_SOURCES)
 		-FUbuild/tools/drawing-test-units \
 		-o$@ tools/DrawingTest/DrawingTest.pas
 
-drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP) $(DEJAVU_SANS_STAMP)
+drawing-test: $(DRAWING_TEST) $(SYSTEM_FONTS_STAMP)
 	@$(DRAWING_TEST) $(SYSTEM_FONT_DIRECTORY) $(DEJAVU_SANS_DIRECTORY) build/tools/drawing-sample.ppm \
 		> build/tools/drawing-test.out || \
 		{ grep FAIL build/tools/drawing-test.out; echo "DRAWING TEST FAILED (build/tools/drawing-test.out)"; exit 1; }
@@ -845,14 +862,15 @@ FONT_FIXTURES := build/tools/font-fixtures
 FONT_FIXTURES_STAMP := $(FONT_FIXTURES)/.made
 FONT_FIXTURE_SCRIPTS := tools/FontTest/make-font-fixtures.py tools/FontTest/freetypereference.py
 FONT_TEST_SOURCES := $(wildcard tools/FontTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
-	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas)) userland/lib/web/Web.Text.Woff2.pas \
+	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas)
 
 $(FONT_TEST): $(FONT_TEST_SOURCES)
 	@mkdir -p build/tools/font-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font \
-		-FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font -Fuuserland/lib/image \
+		-Fuuserland/lib/compression -Fuuserland/lib/web -FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
 
-$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf)
+$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(OUTLINE_FONT_FILES)
 	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the font test's references (python-pillow)"; exit 1; }
 	@rm -rf $(FONT_FIXTURES)
 	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/fonts
@@ -895,7 +913,7 @@ $(CHART_TEST): $(CHART_TEST_SOURCES)
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/ChartTest -Fuuserland/lib/controls -Fuuserland/lib/drawing \
 		-Fuuserland/lib/font -FUbuild/tools/chart-test-units -o$@ tools/ChartTest/ChartTest.pas
 
-chart-test: $(CHART_TEST) $(DEJAVU_SANS_STAMP)
+chart-test: $(CHART_TEST)
 	@$(CHART_TEST) $(DEJAVU_SANS_DIRECTORY) build/tools/chart-sample.ppm > build/tools/chart-test.out || \
 		{ grep FAIL build/tools/chart-test.out; echo "CHART TEST FAILED (build/tools/chart-test.out)"; exit 1; }
 	@echo "CHART TEST PASSED: $$(tail -n 1 build/tools/chart-test.out)"
@@ -1375,12 +1393,13 @@ WEB_IPC_TEST := build/tools/WebIpcTest
 WEB_IPC_TEST_UNITS := build/tools/web-ipc-test-units
 WEB_IPC_TEST_SOURCES := $(wildcard tools/WebIpcTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	userland/lib/webipc/WebIpc.Wire.pas userland/lib/webipc/WebIpc.Messages.pas userland/lib/webipc/WebIpc.Fragments.pas \
-	userland/lib/webipc/WebIpc.ViewMessages.pas userland/lib/webipc/WebIpc.NetworkMessages.pas
+	userland/lib/webipc/WebIpc.ViewMessages.pas userland/lib/webipc/WebIpc.NetworkMessages.pas \
+	userland/lib/webview/WebView.RemoteFrames.pas $(wildcard userland/lib/drawing/*.pas)
 
 $(WEB_IPC_TEST): $(WEB_IPC_TEST_SOURCES)
 	@mkdir -p $(WEB_IPC_TEST_UNITS)
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebIpcTest -Futools/CryptoTest -Fuuserland/lib/webipc \
-		-FU$(WEB_IPC_TEST_UNITS) -o$@ tools/WebIpcTest/WebIpcTest.pas
+		-Fuuserland/lib/drawing -Fuuserland/lib/webview -FU$(WEB_IPC_TEST_UNITS) -o$@ tools/WebIpcTest/WebIpcTest.pas
 
 web-ipc-test: $(WEB_IPC_TEST)
 	@$(WEB_IPC_TEST) > build/tools/web-ipc-test.out || \
@@ -1444,7 +1463,9 @@ javascript-test: $(JAVASCRIPT_TEST)
 # libweb's style, layout and painting on the host (with libcss, libfont,
 # libdrawing and libimage): the reference pages of tools/WebTest/render
 # laid out and their layout tree dumps compared with the .txt files
-# beside them (with DejaVu Sans from userland/fonts), incremental
+# beside them (with DejaVu Sans and Sans Mono, the base set of
+# userland/fonts, in build/tools/base-fonts; the system font matching
+# with all of userland/fonts and userland/etc/fonts.conf), incremental
 # relayout after DOM changes against fresh layouts, hit testing,
 # painting (known pixels, damaged rectangles), and the speed and memory
 # of a large page ("perf" lines). make web-layout-update rewrites the
@@ -1469,14 +1490,15 @@ $(WEB_LAYOUT_TEST): $(WEB_LAYOUT_TEST_SOURCES) $(WEB_LAYOUT_TEST_UNITS)/.generat
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebLayoutTest -Futools/CryptoTest $(WEB_RENDER_UNIT_PATHS) \
 		-Fi$(WEB_LAYOUT_TEST_UNITS) -FU$(WEB_LAYOUT_TEST_UNITS) -o$@ tools/WebLayoutTest/WebLayoutTest.pas
 
-web-layout-test: $(WEB_LAYOUT_TEST)
-	@$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts > build/tools/web-layout-test.out || \
+web-layout-test: $(WEB_LAYOUT_TEST) $(BASE_FONTS_STAMP)
+	@WEB_HOST_FONTS=userland/fonts $(WEB_LAYOUT_TEST) tools/WebTest/render $(BASE_FONTS_DIRECTORY) \
+		> build/tools/web-layout-test.out || \
 		{ grep -B3 -A3 FAIL build/tools/web-layout-test.out | head -80; echo "WEB LAYOUT TEST FAILED (build/tools/web-layout-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-layout-test.out || true
 	@echo "WEB LAYOUT TEST PASSED: $$(tail -n 1 build/tools/web-layout-test.out | cut -d ' ' -f 4-)"
 
-web-layout-update: $(WEB_LAYOUT_TEST)
-	$(WEB_LAYOUT_TEST) tools/WebTest/render userland/fonts --update | tail -n 1
+web-layout-update: $(WEB_LAYOUT_TEST) $(BASE_FONTS_STAMP)
+	$(WEB_LAYOUT_TEST) tools/WebTest/render $(BASE_FONTS_DIRECTORY) --update | tail -n 1
 
 # webrender on the host: renders an HTML file to a PNG or prints its
 # layout tree (build/tools/webrender -f userland/fonts [-l] PAGE.html [OUT.png]).
@@ -1586,7 +1608,7 @@ $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
 		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
 		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
 
-web-load-test: $(WEB_LOAD_TEST)
+web-load-test: $(WEB_LOAD_TEST) $(BASE_FONTS_STAMP)
 	@$(WEB_LOAD_TEST) > build/tools/web-load-test.out || \
 		{ grep -A2 FAIL build/tools/web-load-test.out | head -100; echo "WEB LOAD TEST FAILED (build/tools/web-load-test.out)"; exit 1; }
 	@echo "WEB LOAD TEST PASSED: $$(tail -n 1 build/tools/web-load-test.out | cut -d ' ' -f 4-)"

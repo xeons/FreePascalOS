@@ -93,6 +93,9 @@ interface UIEvent : Event {
   readonly attribute Window? view;
   readonly attribute long detail;
   readonly attribute unsigned long which;
+  // Legacy (UI Events): pages still build synthetic events this way.
+  undefined initUIEvent(DOMString typeArg, optional boolean bubblesArg = false,
+    optional boolean cancelableArg = false, optional Window? viewArg = null, optional long detailArg = 0);
 };
 
 dictionary EventModifierInit : UIEventInit {
@@ -133,6 +136,12 @@ interface MouseEvent : UIEvent {
   readonly attribute unsigned short buttons;
   readonly attribute EventTarget? relatedTarget;
   boolean getModifierState(DOMString keyArg);
+  undefined initMouseEvent(DOMString typeArg, optional boolean bubblesArg = false,
+    optional boolean cancelableArg = false, optional Window? viewArg = null, optional long detailArg = 0,
+    optional long screenXArg = 0, optional long screenYArg = 0, optional long clientXArg = 0,
+    optional long clientYArg = 0, optional boolean ctrlKeyArg = false, optional boolean altKeyArg = false,
+    optional boolean shiftKeyArg = false, optional boolean metaKeyArg = false, optional short buttonArg = 0,
+    optional EventTarget? relatedTargetArg = null);
 };
 
 dictionary KeyboardEventInit : EventModifierInit {

@@ -1,0 +1,1 @@
+upstream https://github.com/source-foundry/Hack; version 3.003-7 (font: Version 3.003;[3114f1256]-release; ttfautohint (v1.7) -l 6 -r 50 -G 200 -x 10 -H 181 -D latn -f latn -m "Hack-Regular-TA.txt" -w G -W -t -X ""); package ttf-hack (Arch Linux)

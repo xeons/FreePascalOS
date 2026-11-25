@@ -354,6 +354,22 @@ begin
     Result := JsInteger(0);
 end;
 
+{ initUIEvent and initMouseEvent (legacy): nothing while the event is
+  being dispatched, as initEvent. }
+procedure InitUiFields(var Call: TBindingCall; Event: TUiEvent);
+begin
+  Event.InitEvent(Call.Text(0), Call.Flag(1), Call.Flag(2));
+  Event.HasView := Call.Arguments[3].Native <> nil;
+  Event.Detail := Trunc(Call.Arguments[4].Number);
+end;
+
+function UIEvent_initUIEvent(var Call: TBindingCall): TJsValue;
+begin
+  if not ThisUiEvent(Call).IsDispatching then
+    InitUiFields(Call, ThisUiEvent(Call));
+  Result := JsUndefined;
+end;
+
 function ThisMouseEvent(const Call: TBindingCall): TMouseEvent; inline;
 begin
   Result := TMouseEvent(Call.Target);
@@ -377,6 +393,34 @@ begin
   if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
     Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
   Result := StartEvent(Call, Event);
+end;
+
+function MouseEvent_initMouseEvent(var Call: TBindingCall): TJsValue;
+var
+  Event: TMouseEvent;
+begin
+  Result := JsUndefined;
+  Event := ThisMouseEvent(Call);
+  if Event.IsDispatching then
+    Exit;
+  InitUiFields(Call, Event);
+  Event.ScreenX := Trunc(Call.Arguments[5].Number);
+  Event.ScreenY := Trunc(Call.Arguments[6].Number);
+  Event.ClientX := Trunc(Call.Arguments[7].Number);
+  Event.ClientY := Trunc(Call.Arguments[8].Number);
+  Event.Modifiers := [];
+  if Call.Flag(9) then
+    Include(Event.Modifiers, ModifierControl);
+  if Call.Flag(10) then
+    Include(Event.Modifiers, ModifierAlt);
+  if Call.Flag(11) then
+    Include(Event.Modifiers, ModifierShift);
+  if Call.Flag(12) then
+    Include(Event.Modifiers, ModifierMeta);
+  Event.Button := Trunc(Call.Arguments[13].Number);
+  Event.RelatedTarget := nil;
+  if Call.Arguments[14].Native <> nil then
+    Event.RelatedTarget := TEventTarget(Call.Arguments[14].Native);
 end;
 
 function MouseEvent_get_screenX(var Call: TBindingCall): TJsValue;
