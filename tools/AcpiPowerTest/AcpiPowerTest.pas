@@ -44,7 +44,8 @@ uses
   Firmware.AmlInterpreter,
   Firmware.AcpiThermal,
   Firmware.AcpiBatteries,
-  Firmware.AcpiProcessorIdle;
+  Firmware.AcpiProcessorIdle,
+  AcpiPowerDeviceTests;
 
 var
   Failures: Integer;
@@ -62,12 +63,12 @@ end;
 function HostRead(Space: Byte; Address: QWord; Width: Byte; out Value: QWord): Boolean;
 begin
   Value := 0;
-  Result := False;
+  Result := (Space = AmlSpaceEmbeddedController) and ReadControllerSpace(Address, Width, Value);
 end;
 
 function HostWrite(Space: Byte; Address: QWord; Width: Byte; Value: QWord): Boolean;
 begin
-  Result := False;
+  Result := (Space = AmlSpaceEmbeddedController) and WriteControllerSpace(Address, Width, Value);
 end;
 
 procedure HostSleep(Milliseconds: QWord);
@@ -144,13 +145,17 @@ end;
 procedure SortZones(var Zones: array of TAcpiThermalZone; Count: Integer);
 var
   Swap: TAcpiThermalZone;
+  Index: Integer;
+  Other: Integer;
 begin
-  if (Count = 2) and (string(PChar(@Zones[0].Path[0])) > string(PChar(@Zones[1].Path[0]))) then
-  begin
-    Swap := Zones[0];
-    Zones[0] := Zones[1];
-    Zones[1] := Swap;
-  end;
+  for Index := 0 to Count - 2 do
+    for Other := Index + 1 to Count - 1 do
+      if string(PChar(@Zones[Index].Path[0])) > string(PChar(@Zones[Other].Path[0])) then
+      begin
+        Swap := Zones[Index];
+        Zones[Index] := Zones[Other];
+        Zones[Other] := Swap;
+      end;
 end;
 
 function FindBattery(const Nodes: array of PAmlNode; Count: Integer; const Path: string): PAmlNode;
@@ -176,7 +181,7 @@ var
   DeciKelvin: LongInt;
 begin
   Count := ListAcpiThermalZones(Zones);
-  CheckNumber(Count, 2, 'thermal zones');
+  CheckNumber(Count, 3, 'thermal zones');
   if Count < 2 then
     Exit;
   SortZones(Zones, Count);
@@ -244,8 +249,8 @@ var
   Count: Integer;
 begin
   Count := ReadAcpiIdleStates(States);
-  CheckNumber(Count, 2, '_CST MWAIT states');
-  if Count < 2 then
+  CheckNumber(Count, 3, '_CST MWAIT and port states');
+  if Count < 3 then
     Exit;
   CheckNumber(States[0].CStateType, 2, 'first state type');
   CheckNumber(States[0].MonitorWaitHint, $10, 'first state hint');
@@ -254,6 +259,9 @@ begin
   CheckNumber(States[1].CStateType, 3, 'second state type');
   CheckNumber(States[1].MonitorWaitHint, $20, 'second state hint');
   CheckNumber(States[1].LatencyMicroseconds, 100, 'second state latency');
+  CheckNumber(States[2].Entry, AcpiIdleEntryPortRead, 'third state read from a port');
+  CheckNumber(States[2].Port, $414, 'its port');
+  CheckNumber(States[2].CStateType, 3, 'its type');
 end;
 
 var
@@ -272,6 +280,8 @@ begin
   CheckThermalZones;
   CheckBatteries;
   CheckIdleStates;
+  RunDeviceTests;
+  Failures := Failures + DeviceFailures;
   if Failures > 0 then
   begin
     WriteLn('ACPI POWER TEST FAILED: ', Failures, ' checks');

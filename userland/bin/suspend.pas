@@ -19,34 +19,58 @@
 {
   suspend - suspend the system to RAM
 
-  suspend
+  suspend [-t SECONDS]
 
   The machine sleeps with its memory kept (ACPI S3) and comes back where
   it was when woken (the power button, or the platform's other wake
-  events); suspend then returns. Only root may.
+  sources: see powerstat); suspend then returns. With -t the battery
+  backed clock's alarm wakes it SECONDS later (CallSetWakeAlarm; at
+  most a day on a PC). Only root may.
 }
 program suspend;
 
 {$mode objfpc}{$H+}
 
 uses
+  SysUtils,
   Sys.Kernel,
   Sys.Errors,
   Util.CommandLine,
   Util.Messages;
 
 const
-  Usage = 'Usage: suspend'#10 +
-    'Suspend the system to RAM until it is woken.'#10;
+  Usage = 'Usage: suspend [-t SECONDS]'#10 +
+    'Suspend the system to RAM until it is woken (with -t, by the clock''s alarm'#10 +
+    'SECONDS later at the latest).'#10;
 
 var
-  CommandLine: TCommandLine;
   Status: Int64;
+  Seconds: Int64;
 begin
-  CommandLine := TCommandLine.Create([], Usage);
-  CommandLine.ReadOperandsOnly;
-  if CommandLine.OperandCount <> 0 then
-    FailWithUsageHint('no arguments are taken');
+  Seconds := 0;
+  if (ParamCount = 2) and (ParamStr(1) = '-t') then
+  begin
+    Seconds := StrToInt64Def(ParamStr(2), -1);
+    if Seconds <= 0 then
+      FailWithUsageHint('-t takes a number of seconds');
+  end
+  else if ParamCount = 1 then
+  begin
+    if (ParamStr(1) = '--help') or (ParamStr(1) = '-h') then
+    begin
+      Write(Usage);
+      Halt(0);
+    end;
+    FailWithUsageHint('unknown argument: ' + ParamStr(1));
+  end
+  else if ParamCount <> 0 then
+    FailWithUsageHint('too many arguments');
+  if Seconds > 0 then
+  begin
+    Status := KernelSetWakeAlarm(QWord(Seconds));
+    if Status < 0 then
+      FailWithError(1, ErrorCodeOf(Status), 'cannot set the wake alarm');
+  end;
   Status := KernelSuspend;
   if Status < 0 then
     FailWithError(1, ErrorCodeOf(Status), 'cannot suspend');

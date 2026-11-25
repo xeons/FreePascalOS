@@ -387,7 +387,7 @@ var
   Found: Boolean;
 begin
   LockAmlInterpreter;
-  FirstProcessor := FirstAcpiProcessor;
+  FirstProcessor := FirstProcessorWith('_PSS');
   Found := ReadAcpiPerformance(FirstProcessor, Performance);
   UnlockAmlInterpreter;
   if Found then

@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..436] of TCommandTest = (
+  CommandTests: array[0..438] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -815,7 +815,12 @@ const
       user, a set-user-ID program swapped through a link while it starts
       and a lowered limit raised again. }
     (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { What may wake the machine (calls 228-230): the alarm listed last, a
+      source past the end refused, the alarm turned off and on; a user
+      may not set the wake alarm. }
+    (Command: 'powerstat --check-wake > wake.log; echo $?; grep FAIL wake.log; tail -n 1 wake.log | cut -d " " -f 3-5'; ExpectedOutput: '0'#10'wake sources, the'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "suspend -t 5" 2> /dev/null; echo $?'; ExpectedOutput: '1'#10; ExpectedStatus: 0)
   );
 
 var

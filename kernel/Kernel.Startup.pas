@@ -49,6 +49,7 @@ uses
   Kernel.IdleStates,
   Io.AcpiPower,
   Power.PerformanceStates,
+  Kernel.BroadcastSelfTest,
   Objects.Events,
   Objects.Semaphores,
   Objects.Timers,
@@ -367,6 +368,7 @@ begin
   RunPanicTestIfAsked;
 
   RunKernelSelfTests;
+  RunBroadcastSelfTest;
   RunSynchronizationSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;

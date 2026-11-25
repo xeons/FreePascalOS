@@ -2962,6 +2962,19 @@ counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)
 checks.append(('keys came from the PS/2 and the USB keyboard',
                counts is not None and int(counts.group(1)) > 0 and int(counts.group(2)) > 0))
 
+# The battery backed clock's alarm wakes the machine by itself (no
+# system_wakeup), and the kernel says so; the processors' memory type
+# ranges are set again as they wake.
+type_on_serial(b'suspend -t 6; echo ALARM-WOKE $?\r')
+alarm_asleep = wait_for('suspending to RAM', 30)
+checks.append(('suspend to RAM: the alarm wakes the machine (suspend -t)',
+               alarm_asleep and wait_for('ALARM-WOKE 0', 90) and b'woken by the alarm' in received))
+
+# A processor plugged in (the free slot): its Notify, _STA and _MAT,
+# and it is brought up.
+send_to_monitor('device_add ' + cpu_model + ',id=hotcpu,socket-id=0,core-id=' + processors + ',thread-id=0\n')
+checks.append(('a processor plugged in is brought up', wait_for('plugged in and running', 60)))
+
 # Every program checks its heap (the kernel option heapchecks); a failed
 # check is reported on the console.
 heap_reports = re.findall(rb'heap check in [^\r\n]*', bytes(received))

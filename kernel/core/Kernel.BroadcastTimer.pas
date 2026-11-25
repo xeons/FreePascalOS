@@ -105,7 +105,7 @@ const
   PowerStateOn = 0;
   PowerStateOff = 1;
   PowerStateWaking = 2;
-  PowerUpTries = 100000;
+  LongestPowerUpNanoseconds = 50 * 1000000;
   { The power-down test: a processor that is off takes no device
     interrupt, so it is started again at least this often. }
   LongestTestOffNanoseconds = 20 * 1000000;
@@ -247,7 +247,7 @@ end;
 
 function WakePoweredDownProcessor(Processor: PProcessor): Boolean;
 var
-  Tries: Integer;
+  Deadline: QWord;
 begin
   Result := False;
   if (Processor^.Index >= MaximumProcessors) or (PowerUp = nil) then
@@ -258,12 +258,18 @@ begin
   { One waker starts it; another finds it waking already. }
   if AtomicCompareExchange(PowerStates[Processor^.Index], PowerStateWaking, PowerStateOff) <> PowerStateOff then
     Exit;
-  { Refused while it is still on its way off. }
-  Tries := 0;
-  while not PowerUp(Processor) and (Tries < PowerUpTries) do
+  { Refused while it is still on its way off (the firmware finishes
+    CPU_OFF on that processor, in its own time). }
+  Deadline := ClockNanoseconds + LongestPowerUpNanoseconds;
+  while not PowerUp(Processor) do
   begin
+    if ClockNanoseconds >= Deadline then
+    begin
+      { Left for the next waker to try again. }
+      AtomicStore(PowerStates[Processor^.Index], PowerStateOff);
+      Exit;
+    end;
     CpuRelax;
-    Inc(Tries);
   end;
 end;
 

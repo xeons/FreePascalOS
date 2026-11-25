@@ -151,6 +151,12 @@ function KernelAdjustWallClock(OffsetNanoseconds: Int64; Flags: LongWord; out Re
 function KernelGetProcessorPower(out Information: TAbiProcessorPower): Int64;
 function KernelListThermalZones(Zones: PAbiThermalZone; Capacity: QWord): Int64;
 function KernelListBatteries(Batteries: PAbiBattery; Capacity: QWord): Int64;
+{ Wake sources, cooling devices and performance states (calls 228-232). }
+function KernelSetWakeAlarm(Seconds: QWord): Int64;
+function KernelListWakeSources(Sources: PAbiWakeSource; Capacity: QWord): Int64;
+function KernelSetWakeSource(Index: QWord; Enabled: Boolean): Int64;
+function KernelListCoolingDevices(Devices: PAbiCoolingDevice; Capacity: QWord): Int64;
+function KernelListPerformanceStates(States: PAbiPerformanceState; Capacity: QWord): Int64;
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
 function KernelSetTimeZone(Name: PChar): Int64;
 function KernelGetKeyboardSettings(out Settings: TAbiKeyboardSettings): Int64;
@@ -646,6 +652,31 @@ end;
 function KernelListBatteries(Batteries: PAbiBattery; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallListBatteries, QWord(Batteries), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelSetWakeAlarm(Seconds: QWord): Int64;
+begin
+  Result := SystemCall(CallSetWakeAlarm, Seconds, 0, 0, 0, 0, 0);
+end;
+
+function KernelListWakeSources(Sources: PAbiWakeSource; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListWakeSources, QWord(Sources), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelSetWakeSource(Index: QWord; Enabled: Boolean): Int64;
+begin
+  Result := SystemCall(CallSetWakeSource, Index, QWord(Ord(Enabled)), 0, 0, 0, 0);
+end;
+
+function KernelListCoolingDevices(Devices: PAbiCoolingDevice; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListCoolingDevices, QWord(Devices), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelListPerformanceStates(States: PAbiPerformanceState; Capacity: QWord): Int64;
+begin
+  Result := SystemCall(CallListPerformanceStates, QWord(States), Capacity, 0, 0, 0, 0);
 end;
 
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;

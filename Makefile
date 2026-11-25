@@ -780,9 +780,9 @@ acpi-device-test: $(ACPI_DEVICE_TEST) $(ACPI_DEVICE_TABLE)
 ACPI_POWER_TEST := build/tools/AcpiPowerTest
 ACPI_POWER_TABLE := build/tools/acpi-power-test.aml
 
-$(ACPI_POWER_TEST): tools/AcpiPowerTest/AcpiPowerTest.pas $(AML_TEST_SOURCES)
+$(ACPI_POWER_TEST): tools/AcpiPowerTest/AcpiPowerTest.pas tools/AcpiPowerTest/AcpiPowerDeviceTests.pas $(AML_TEST_SOURCES)
 	@mkdir -p build/tools/acpi-power-units
-	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/acpi-power-units $<
+	$(FPC) -O2 -Fukernel/firmware -Fushared -Futools/AcpiPowerTest -FEbuild/tools -FUbuild/tools/acpi-power-units $<
 
 $(ACPI_POWER_TABLE): tools/AcpiPowerTest/make-table.py
 	@mkdir -p build/tools

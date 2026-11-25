@@ -34,6 +34,16 @@
                            counted (a test machine has pollers: netlog,
                            services). Exits 1 if not, 2 if no processor
                            was idle
+    powerstat --wake INDEX on|off
+                           lets wake source INDEX (as listed) wake the
+                           machine from suspend to RAM, or not (root)
+    powerstat --check-wake for the tests: the wake sources are listed with
+                           the alarm last, a source past the end is
+                           refused, and the alarm can be turned off and
+                           on again; exits 1 if not
+
+  The default listing also shows the cooling devices (fans), the
+  performance states and what may wake the machine (and what did last).
 }
 program PowerStat;
 
@@ -42,6 +52,7 @@ program PowerStat;
 uses
   SysUtils,
   Abi.SystemCalls,
+  Sys.Kernel,
   Sys.Power;
 
 const
@@ -197,6 +208,122 @@ begin
         CapacityText(FullChargeCapacity, PowerUnit)]));
 end;
 
+procedure ShowCoolingDevices;
+var
+  Devices: TCoolingDeviceArray;
+  Index: Integer;
+  Line: string;
+begin
+  Devices := ListCoolingDevices;
+  if Length(Devices) = 0 then
+    Exit;
+  WriteLn('Cooling devices:');
+  for Index := 0 to High(Devices) do
+  begin
+    Line := Format('  %-28s %s', [PChar(@Devices[Index].Name[0]),
+      BoolToStr(Devices[Index].Running <> 0, Format('running at %d %%', [Devices[Index].SpeedPercent]), 'stopped')]);
+    if Devices[Index].ThermalZone <> High(LongWord) then
+      Line := Line + Format(' (zone %d, active trip point %d)', [Devices[Index].ThermalZone, Devices[Index].ActiveLevel]);
+    WriteLn(Line);
+  end;
+end;
+
+procedure ShowPerformanceStates;
+var
+  States: TPerformanceStateArray;
+  Index: Integer;
+  Line: string;
+begin
+  States := ListPerformanceStates;
+  if Length(States) = 0 then
+    Exit;
+  Line := 'Performance states:';
+  for Index := 0 to High(States) do
+  begin
+    Line := Line + Format(' %d MHz', [States[Index].FrequencyMegahertz]);
+    if (States[Index].Flags and PerformanceStateCurrent) <> 0 then
+      Line := Line + ' (now)';
+    if (States[Index].Flags and PerformanceStateNotAllowed) <> 0 then
+      Line := Line + ' (not allowed)';
+  end;
+  WriteLn(Line);
+end;
+
+procedure ShowWakeSources;
+var
+  Sources: TWakeSourceArray;
+  Index: Integer;
+  Line: string;
+begin
+  Sources := ListWakeSources;
+  if Length(Sources) = 0 then
+    Exit;
+  WriteLn('Wake sources:');
+  for Index := 0 to High(Sources) do
+  begin
+    Line := Format('  %2d %-28s %-12s %s', [Index, PChar(@Sources[Index].Name[0]),
+      WakeSourceKindText(Sources[Index].Kind), BoolToStr(Sources[Index].Enabled <> 0, 'on', 'off')]);
+    if Sources[Index].GpeNumber <> High(LongWord) then
+      Line := Line + Format(', GPE %d, S%d', [Sources[Index].GpeNumber, Sources[Index].DeepestSleepState]);
+    if Sources[Index].AlarmSeconds <> 0 then
+      Line := Line + Format(', in %d s', [Sources[Index].AlarmSeconds]);
+    if Sources[Index].WokeLast <> 0 then
+      Line := Line + ', woke the machine last';
+    WriteLn(Line);
+  end;
+end;
+
+function SetWake(const IndexText, State: string): LongInt;
+var
+  Status: Int64;
+begin
+  if (State <> 'on') and (State <> 'off') then
+  begin
+    WriteLn(StdErr, 'powerstat: --wake takes on or off');
+    Exit(2);
+  end;
+  Status := KernelSetWakeSource(StrToIntDef(IndexText, -1), State = 'on');
+  if Status < 0 then
+  begin
+    WriteLn(StdErr, 'powerstat: cannot change wake source ', IndexText, ' (error ', -Status, ')');
+    Exit(1);
+  end;
+  Result := 0;
+end;
+
+function CheckWake: LongInt;
+var
+  Sources: TWakeSourceArray;
+  Alarm: Integer;
+begin
+  Result := 1;
+  Sources := ListWakeSources;
+  if Length(Sources) = 0 then
+  begin
+    WriteLn('powerstat: FAIL: no wake sources (not even the alarm)');
+    Exit;
+  end;
+  Alarm := High(Sources);
+  if Sources[Alarm].Kind <> WakeSourceAlarm then
+  begin
+    WriteLn('powerstat: FAIL: the alarm is not the last wake source');
+    Exit;
+  end;
+  if KernelSetWakeSource(Length(Sources), True) <> -ErrorInvalidArgument then
+  begin
+    WriteLn('powerstat: FAIL: a wake source past the end was not refused');
+    Exit;
+  end;
+  if (KernelSetWakeSource(Alarm, False) <> 0) or (ListWakeSources[Alarm].Enabled <> 0) or
+     (KernelSetWakeSource(Alarm, True) <> 0) or (ListWakeSources[Alarm].Enabled = 0) then
+  begin
+    WriteLn('powerstat: FAIL: the alarm could not be turned off and on');
+    Exit;
+  end;
+  WriteLn(Format('powerstat: %d wake sources, the alarm last; turned off and on', [Length(Sources)]));
+  Result := 0;
+end;
+
 function CheckIdle(Seconds: LongInt; Limit: Double): LongInt;
 var
   First: TSample;
@@ -257,9 +384,13 @@ var
 begin
   if (ParamCount >= 1) and (ParamStr(1) = '--check-idle') then
     Halt(CheckIdle(StrToIntDef(ParamStr(2), 3), StrToFloatDef(ParamStr(3), 5)));
+  if (ParamCount >= 1) and (ParamStr(1) = '--check-wake') then
+    Halt(CheckWake);
+  if (ParamCount = 3) and (ParamStr(1) = '--wake') then
+    Halt(SetWake(ParamStr(2), ParamStr(3)));
   if (ParamCount >= 1) and ((ParamStr(1) = '--help') or (ParamStr(1) = '-h')) then
   begin
-    WriteLn('usage: powerstat [--check-idle [SECONDS [LIMIT]]]');
+    WriteLn('usage: powerstat [--check-idle [SECONDS [LIMIT]] | --wake INDEX on|off | --check-wake]');
     Halt(0);
   end;
   if not TakeSample(First) then
@@ -270,6 +401,9 @@ begin
   Sleep(1000);
   TakeSample(Second);
   ShowProcessors(First, Second);
+  ShowPerformanceStates;
   ShowThermalZones;
+  ShowCoolingDevices;
   ShowBatteries;
+  ShowWakeSources;
 end.

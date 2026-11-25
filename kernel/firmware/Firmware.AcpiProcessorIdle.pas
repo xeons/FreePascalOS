@@ -74,6 +74,9 @@ function ReadAcpiIdleStates(var States: array of TAcpiIdleState): Integer;
 function FirstAcpiProcessor: PAmlNode;
 { Every processor object (up to Length(Nodes)); returns how many. }
 function ListAcpiProcessors(var Nodes: array of PAmlNode): Integer;
+{ The first processor object (in the namespace's order) that has the
+  object Name; nil if none. }
+function FirstProcessorWith(Name: PChar): PAmlNode;
 
 implementation
 
@@ -182,6 +185,19 @@ begin
   Result := List.Count;
 end;
 
+function FirstProcessorWith(Name: PChar): PAmlNode;
+var
+  Nodes: array[0..MaximumAcpiProcessors - 1] of PAmlNode;
+  Count: Integer;
+  Index: Integer;
+begin
+  Result := nil;
+  Count := ListAcpiProcessors(Nodes);
+  for Index := 0 to Count - 1 do
+    if FindChild(Nodes[Index], SegmentOf(Name)) <> nil then
+      Exit(Nodes[Index]);
+end;
+
 function FirstAcpiProcessor: PAmlNode;
 var
   Search: TProcessorSearch;
@@ -253,7 +269,7 @@ var
   State: TAcpiIdleState;
 begin
   Result := 0;
-  Processor := FirstAcpiProcessor;
+  Processor := FirstProcessorWith('_CST');
   if Processor = nil then
     Exit;
   if not EvaluateChild(Processor, '_CST', Value) or (Value.Kind <> AmlPackage) then

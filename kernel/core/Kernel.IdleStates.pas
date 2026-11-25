@@ -85,6 +85,9 @@ procedure SetFirmwareIdleStates(constref States: array of TIdleState; Count: Int
 procedure WriteIdleStates;
 { Entries into states whose timer stops, on every processor. }
 function BroadcastIdleEntryCount: QWord;
+{ For the self test: as idlebroadcast=force while On. }
+procedure SetForcedBroadcast(On: Boolean);
+function ForcedBroadcastIsOn: Boolean;
 
 implementation
 
@@ -118,6 +121,16 @@ var
 function BroadcastIdleEntryCount: QWord;
 begin
   Result := QWord(AtomicFetchAndAdd(BroadcastEntries, 0));
+end;
+
+procedure SetForcedBroadcast(On: Boolean);
+begin
+  ForceBroadcast := On;
+end;
+
+function ForcedBroadcastIsOn: Boolean;
+begin
+  Result := ForceBroadcast;
 end;
 
 procedure ReadBroadcastOption;

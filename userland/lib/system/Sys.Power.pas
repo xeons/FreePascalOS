@@ -34,10 +34,18 @@ uses
 type
   TThermalZoneArray = array of TAbiThermalZone;
   TBatteryArray = array of TAbiBattery;
+  TWakeSourceArray = array of TAbiWakeSource;
+  TCoolingDeviceArray = array of TAbiCoolingDevice;
+  TPerformanceStateArray = array of TAbiPerformanceState;
 
 function GetProcessorPower(out Information: TAbiProcessorPower): LongInt;
 function ListThermalZones: TThermalZoneArray;
 function ListBatteries: TBatteryArray;
+function ListWakeSources: TWakeSourceArray;
+function ListCoolingDevices: TCoolingDeviceArray;
+function ListPerformanceStates: TPerformanceStateArray;
+{ "USB", "power button", "alarm", ... }
+function WakeSourceKindText(Kind: LongWord): string;
 
 { "47.5 C", or "-" for ThermalTripNone. }
 function MilliCelsiusText(Value: LongInt): string;
@@ -104,6 +112,71 @@ begin
   SetLength(Result, Count);
   for Index := 0 to Count - 1 do
     Result[Index] := Buffer[Index];
+end;
+
+function ListWakeSources: TWakeSourceArray;
+var
+  Buffer: array[0..MaximumListed - 1] of TAbiWakeSource;
+  Count: Int64;
+  Index: Integer;
+begin
+  Result := nil;
+  Count := KernelListWakeSources(@Buffer[0], MaximumListed);
+  if Count <= 0 then
+    Exit;
+  if Count > MaximumListed then
+    Count := MaximumListed;
+  SetLength(Result, Count);
+  for Index := 0 to Count - 1 do
+    Result[Index] := Buffer[Index];
+end;
+
+function ListCoolingDevices: TCoolingDeviceArray;
+var
+  Buffer: array[0..MaximumListed - 1] of TAbiCoolingDevice;
+  Count: Int64;
+  Index: Integer;
+begin
+  Result := nil;
+  Count := KernelListCoolingDevices(@Buffer[0], MaximumListed);
+  if Count <= 0 then
+    Exit;
+  if Count > MaximumListed then
+    Count := MaximumListed;
+  SetLength(Result, Count);
+  for Index := 0 to Count - 1 do
+    Result[Index] := Buffer[Index];
+end;
+
+function ListPerformanceStates: TPerformanceStateArray;
+var
+  Buffer: array[0..MaximumListed - 1] of TAbiPerformanceState;
+  Count: Int64;
+  Index: Integer;
+begin
+  Result := nil;
+  Count := KernelListPerformanceStates(@Buffer[0], MaximumListed);
+  if Count <= 0 then
+    Exit;
+  if Count > MaximumListed then
+    Count := MaximumListed;
+  SetLength(Result, Count);
+  for Index := 0 to Count - 1 do
+    Result[Index] := Buffer[Index];
+end;
+
+function WakeSourceKindText(Kind: LongWord): string;
+begin
+  case Kind of
+    WakeSourcePowerButton: Result := 'power button';
+    WakeSourceSleepButton: Result := 'sleep button';
+    WakeSourceLid: Result := 'lid';
+    WakeSourceUsb: Result := 'USB';
+    WakeSourceNetwork: Result := 'network';
+    WakeSourceAlarm: Result := 'alarm';
+  else
+    Result := 'device';
+  end;
 end;
 
 function MilliCelsiusText(Value: LongInt): string;
