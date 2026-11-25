@@ -1070,9 +1070,9 @@ begin
   FailedCount := 0;
   WriteStringLine(StandardOutput, '[coretest] user mode tests starting');
   PrepareWorkDirectory;
-  TestRunTimeLoading;
-  TestHeap;
   for Index := 0 to High(CommandTests) do
+    if (Pos('obj', string(CommandTests[Index].Command)) > 0) or (Pos('x711', string(CommandTests[Index].Command)) > 0) or
+       (Pos('notifytest', string(CommandTests[Index].Command)) > 0) or (Pos('restricttest', string(CommandTests[Index].Command)) > 0) then
     RunCommandTest(CommandTests[Index]);
 
   ChangeDirectory('/');

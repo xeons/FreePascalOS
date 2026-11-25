@@ -376,6 +376,8 @@ begin
   NameObject(Private, '\Shared\objtest-private', $180);
   Readable := CreateEvent(False, False);
   NameObject(Readable, '\Shared\objtest-public', $1B6);
+  { The umask took the others' write bit: given back. }
+  SetObjectSecurity('\Shared\objtest-public', $1B6, KeepObjectSecurity, KeepObjectSecurity);
   CreateObjectDirectory('\Shared\objtest-closed', $1C0);
   Check(RunSelf('--user', True) = 0, 'what an ordinary user may and may not do');
   RemoveObjectName('\Shared\objtest-closed');
