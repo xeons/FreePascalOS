@@ -1262,6 +1262,36 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
       machines running at once: probably a fixed wait too short under load
 
+## Native Free Pascal
+
+- [x] FPC targets of our own, x86_64-freepascalos and aarch64-freepascalos,
+      as patches against 3.2.2 (toolchain/fpc); the userland compiled for
+      them (code identical to the borrowed linux target)
+- [x] The internal ELF linker writes position independent executables (no
+      binutils needed on x86-64)
+- [x] ppcx64 / ppca64 and the fpc driver as FreePascalOS programs, with
+      fpc.cfg and the units on the system disk (units in libraries marked by
+      ppumove, linked shared with -XD)
+- [x] In the guest: hello, several units, a library (linked and loaded at
+      run time), userland tools against libcoreutils/libcryptography, and the
+      compiler compiling itself
+- [x] fcl-process (TProcess, pipe streams) for FreePascalOS
+- [x] Tests: a coretest line (compile and run in the guest), native-fpc-test
+      on the host
+- [ ] AArch64 in the guest: needs GNU as and ld for *-freepascalos (the
+      binutils port); ppca64 already runs and writes assembly
+- [ ] An `as`/`ld`-free AArch64 (an internal assembler and ELF linker for
+      AArch64 are only in FPC trunk)
+- [ ] Express it as a port once the ports framework lands (ports/, pkg)
+- [ ] More packages for Lazarus: fcl-xml, fcl-json, fcl-image, fcl-res,
+      fcl-registry, paszlib, simpleipc; fpmake/fpcmake knowing the OS
+- [ ] The LCL widget set over libwindowing/libcontrols, then the IDE
+      (see "Towards Lazarus" in docs/Architecture.md)
+- [ ] A debugger for the IDE (GDB port or FpDebug on kernel calls for
+      debugging other processes)
+- [ ] Compiler sources on the system or a package, so `make cycle` can run in
+      the guest without an extra disk
+
 ## Web engine (libweb)
 
 Part 1 (encodings, HTML parsing, DOM):

@@ -78,9 +78,12 @@ release 3.2.2, so two ordinary targets are borrowed:
 
 Both are built against `rtl/freestanding/system.pas`, a minimal System unit
 with only what the compiler insists on. Nothing in the kernel uses the stock
-runtime library. User programs are compiled for `linux` too (with `UNIX` and
-`LINUX` undefined) and get the full Free Pascal runtime library, ported to
-this kernel (see "The runtime library").
+runtime library. User programs are compiled for FreePascalOS itself
+(`-Tfreepascalos`, a target the project adds to the compiler: see "Native
+Free Pascal") and get the full Free Pascal runtime library, ported to this
+kernel (see "The runtime library"). The compiler that does all this is
+built from the Free Pascal 3.2.2 sources with the project's patches
+(`build/toolchain/ppcx64`, `ppcrossa64` for AArch64; `make toolchain`).
 Unit initialization sections are never used; every subsystem has an explicit
 `Initialize...` routine called in a defined order from `Kernel.Startup`.
 
@@ -112,6 +115,206 @@ AArch64 division does not trap, so the compiler checks divisors itself
 and calls `fpc_divbyzero`, which the freestanding System unit provides
 (the kernel panics); it also calls `Move` for large copies, which the
 System unit provides too.
+
+## Native Free Pascal
+
+The system compiles Pascal programs for itself: `/bin/fpc` (the driver)
+and `/bin/ppcx64` (`/bin/ppca64` on AArch64) are Free Pascal 3.2.2 built
+as FreePascalOS programs, with the runtime library and the system's own
+libraries as their units. `fpc hello.pas` in a shell makes a program that
+runs; a program of several units, a `library`, and the system's own tools
+(`userland/bin/wc.pas`, `sha256sum.pas` against libcoreutils and
+libcryptography) build the same way, and the compiler compiles itself
+(about 5.5 s under KVM; the result compiles itself again to the same
+size).
+
+### A target of its own
+
+Release 3.2.2 has no FreePascalOS, so the userland used to borrow the
+`linux` target with `UNIX` and `LINUX` undefined. That works for cross
+compiling, but not for a compiler that runs here: the compiler's idea of
+its own system (`source_info`, its default target, where it looks for
+`fpc.cfg` and the units), the target's name in unit folders
+(`x86_64-linux`), and every build tool keyed on the target's name -
+fpmake's and fpcmake's OS lists, Lazarus's `$(TargetOS)`, its package
+conditions and widget set defaults - would all say Linux, and Linux code
+paths (`BaseUnix`, `/proc`, glibc) would be taken. So the compiler gets
+real targets, `x86_64-freepascalos` and `aarch64-freepascalos`
+(`system_x86_64_freepascalos` = 104, `system_aarch64_freepascalos` =
+105 in the ppu's target field), as a patch set against the 3.2.2 sources
+in `toolchain/fpc`:
+
+- `compiler/systems/i_fpos.pas` (the target records) and `t_fpos.pas`
+  (imports, exports and both linkers), new files laid over the sources;
+- `patches/0001-freepascalos-target.patch`: the targets in `systems.inc`
+  and the system sets of `systems.pas` (each wherever Linux on the same
+  processor is: weak linking, exports from programs, the x87 extended
+  size, AArch64's caller-copied value parameters, the "no executable
+  stack" note), the linkers `ld_freepascalos` and
+  `ld_int_freepascalos`, and the assemblers that may write for it;
+- `0002-elf-position-independent-executables.patch`: the internal ELF
+  linker writes position independent executables (below);
+- `0003-freepascalos-host.patch`: the compiler and the driver running
+  here (`fpc.cfg` in `../etc` beside the executable, `~/.fpc.cfg`, the
+  units in `/usr/lib/fpc/<version>`, programs found through `PATH`, an
+  internally linked program made executable with the umask applied, as
+  GNU ld does);
+- `0004-ppudump-target-names.patch`: ppudump names the new targets;
+- `0005-units-in-shared-libraries.patch`: a unit that lives in a shared
+  library (see below) brings its library into the link.
+
+`toolchain/fpc/prepare-source.sh` copies the compiler sources from
+`FPC_SOURCE` (the fpc-src package, or the official
+`fpc-3.2.2.source.tar.gz` unpacked), lays the new files over them and
+applies the patches; `scripts/build-cross-compiler.sh` builds the host's
+compiler from the result (`build/toolchain/ppcx64`, which also compiles
+the loader for win64 and the kernel for linux, and `ppcrossa64`). The
+whole userland is compiled for the new target. The target defines
+`FREEPASCALOS` and neither `UNIX` nor `LINUX`, makes position
+independent code by default (`tf_pic_default`), starts programs in
+`si_prc` and libraries in `si_dll` (`systems_internal_sysinit`, so the
+compiler adds them itself), defines `FPC_HAS_INDIRECT_ENTRY_INFORMATION`
+on both processors, and takes extra unit folders from `FPOSUNITS`.
+Code generation is Linux's: the runtime library's objects compiled for
+`linux` and for `freepascalos` are byte for byte the same on x86-64; on
+AArch64 only `fpintres` differs, which now finds the resources through
+the entry information as on x86-64.
+
+### Linking
+
+x86-64 programs need no other tool: the compiler's internal assembler
+writes the objects and its internal ELF linker links them. Release 3.2.2
+could link only fixed address executables and shared libraries, so patch
+0002 adds position independent executables (`TElfExeOutput.
+PositionIndependentExecutable`, set by `t_fpos` for programs): ET_DYN,
+linked at address zero, every absolute address and every GOT entry of a
+symbol of its own getting a RELATIVE relocation (as in a shared
+library), functions of libraries called through the PLT without a
+canonical address in the program and no copy relocations (the code is
+position independent, so neither is needed), no interpreter, and an
+entry point. Segments are aligned to 4 KiB (`-z max-page-size=4096`).
+The loader's other needs hold already: a System V hash table, `DT_NEEDED`
+for each library, DT_INIT `FPC_SHARED_LIB_START` and DT_FINI
+`FPC_LIB_EXIT` for libraries, and only the relocation types it applies.
+
+The other linker is GNU ld (`-Xe`; and on AArch64, which has neither an
+internal assembler nor an internal ELF linker in 3.2.2, the compiler
+runs `as` and `ld`): programs `-pie --no-dynamic-linker -e _start`,
+libraries `-shared -Bsymbolic -soname lib<name>.so` with the init and
+fini functions, both `--hash-style=sysv -z max-page-size=4096 -z
+noexecstack` - the same switches the userland's own build uses - with
+the objects and `-l<library>` in an implicit linker script (`link.res`),
+and a version script keeping everything but the `exports` local in a
+library that names them. On the host both are checked on every build
+of the test (`native-fpc-test` links with the internal linker; GNU ld
+was checked by hand on both processors).
+
+### Units in libraries
+
+The runtime library and the Sys.* units are in `libsystem.so`, not
+copied into each program, and the other libraries likewise. A program
+the native compiler links must therefore link against the library rather
+than the units' objects. Free Pascal has the mechanism (ppumove, from
+the days of Linux shared RTLs): a unit's ppu marked "in library" and
+"shared linked" names its library, and a program compiled with `-XD`
+(link shared) links `-l<library>` instead of the unit's object. 3.2.2
+skipped such units altogether (it took them for units of dynamic
+packages), which patch 0005 undoes for units without a package. The
+build runs ppumove (`-b`: the library itself is already made) over
+copies of the userland's ppus, library by library; `si_prc` and
+`si_dll` stay ordinary units with their objects, since they are linked
+into every program and library.
+
+### On the system disk
+
+`toolchain/fpc/fpc.mk` (included by `userland.mk`) stages, in
+`build/<arch>/user/fpc-root`, and `make-system-disk.sh` copies:
+
+| Path | What |
+|---|---|
+| `/bin/fpc` | the driver: runs `ppcx64` / `ppca64` from beside itself or `PATH` |
+| `/bin/ppcx64`, `/bin/ppca64` | the compiler (stripped; about 4.4 MB) |
+| `/etc/fpc.cfg` | `-Fu/usr/lib/fpc/$fpcversion/units/$fpctarget/*`, `-XD`, `-Fl/lib`, `-OoNOSTACKFRAME` (frames for back traces), `-CE` on AArch64, `-l -viwn` |
+| `/usr/lib/fpc/3.2.2/units/<cpu>-freepascalos/rtl` | the runtime library's units (libsystem) and `si_prc`, `si_dll` with their objects |
+| `.../system`, `cryptography`, `coreutils` | the units of those libraries (`NATIVE_FPC_LIBRARIES`, `all` for every library's) |
+| `.../fcl-process` | TProcess and the pipe streams, ordinary units |
+
+About 11 MB in all (the system disk holds 49 of its 62 MB on x86-64);
+`NATIVE_FPC=no` leaves it out. The compiler and the driver are linked
+by GNU ld from the host's cross compilation like the other programs.
+Programs a user compiles are linked by the internal linker on x86-64.
+
+`fcl-process` for FreePascalOS (`toolchain/fpc/packages/fcl-process`)
+starts programs with `Sys.Processes.StartProgram`, giving them the pipes
+of `poUsePipes` (or `/dev/null` for `poNoConsole`) as standard handles,
+an environment and a working folder; it waits on the process handle
+(`WaitForProgramWithTimeout`, so `Running` and `WaitOnExit(Timeout)`
+work), stops, continues and ends programs through the job control and
+end request calls, and a pipe reports something to read when
+`CallWaitForHandles` says so (`NumBytesAvailable` then says 4096: a read
+returns what is there). `RunCommand('fpc', ['-iV'], S)` works, as the
+Lazarus IDE will need.
+
+On AArch64 `ppca64` runs here and writes the assembly and the link
+script, then needs GNU `as` and `ld` in `PATH` (the binutils port for
+`*-freepascalos`); without them `fpc -s` stops after writing
+`ppas.sh`.
+
+### Ports
+
+The ports framework (`ports/`, `scripts/ports.py`, `pkg`) has not
+landed yet, so the port is a self-contained piece for it to wrap:
+inputs `FPC_SOURCE` and the userland's build, `toolchain/fpc/` holding
+the patches and new files, `prepare-source.sh`, `fpc.mk` and the
+configuration, output the staged tree `build/<arch>/user/fpc-root`
+(laid out as installed).
+
+### Tests
+
+A coretest line compiles a program and a unit of its own with `/bin/fpc`
+in the guest and runs the program (it prints the expected line and a
+note on standard error when the system disk has no compiler). On the
+host, `make native-fpc-test` (part of `make test`) checks that the
+staged compiler and driver are programs the loader takes (64-bit ELF
+for the processor, ET_DYN with an entry, no interpreter, needing
+`libsystem.so`, DT_HASH, no text relocations, only RELATIVE, 64,
+GLOB_DAT, JUMP_SLOT and COPY relocations), that `fpc.cfg` links shared
+and finds the units, that System, SysUtils and Sys.Files are
+FreePascalOS units marked as living in their library while `si_prc` is
+not, and links a sample program with the internal linker and checks it
+the same way.
+
+### Towards Lazarus
+
+The IDE and the LCL come later; what they need:
+
+- **A widget set over libwindowing and libcontrols** (`lcl/interfaces/
+  freepascalos`, `LCLPlatform` `lpFreePascalOS`): a `TWidgetSet`
+  descendant and the `TWS*` classes mapping forms to libwindowing's
+  windows and the standard controls to libcontrols' (buttons, edits,
+  memos, lists, trees, menus, dialogs, scroll bars), the LCL's `TCanvas`
+  and GDI calls (`LCLIntf`: device contexts, pens, brushes, fonts,
+  regions, bitmaps) onto libdrawing's surfaces and libfont, the message
+  loop onto the display server's events, the clipboard, timers, the
+  cursor, and DPI from the display's scale. Lazarus itself has to learn
+  the OS name in its target lists (`IDEProcs`, codetools'
+  `DefineTemplates`, `lazbuild`), as fpmake's `TOS` and fpcmake's list
+  have to.
+- **Packages the IDE needs**, compiled as fcl-process is: rtl-objpas,
+  fcl-base, fcl-process (done), fcl-xml (configuration files), fcl-json,
+  fcl-image and fcl-res (icons, resources), fcl-registry (XML
+  registry), fcl-extra, paszlib, fcl-db and fcl-web for packages built
+  on them, simpleipc (one instance), and Lazarus's own LazUtils,
+  CodeTools, SynEdit, IDEIntf and BuildIntf over them; units like
+  `dynlibs` and `fileutil` take their Unix paths unless taught this
+  system.
+- **Debugging**: the IDE's debugger needs either GDB (a port) or FpDebug
+  taught the system's process control: stopping another process,
+  reading and writing its memory and registers, breakpoints and single
+  steps, from kernel calls a debugger may use.
+- **Memory and disk**: the IDE is an executable of tens of MB and its
+  units take hundreds, more than the 64 MB system disk holds; it will be
+  a package on another volume.
 
 ## Boot sequence
 
