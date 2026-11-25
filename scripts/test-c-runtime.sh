@@ -25,7 +25,7 @@
 # The kernel leaves QEMU through the isa-debug-exit device (test-exit):
 # status 1 means the first program ended with 0. The serial log is kept
 # as c-test-serial.log in the build directory. ACCEL=kvm uses the host's
-# processor.
+# processor (amd64); arm64 boots QEMU's virt machine.
 
 set -uo pipefail
 
@@ -39,12 +39,35 @@ test_esp_directory="$build_directory/c-test-esp"
 serial_log="$build_directory/c-test-serial.log"
 run_system_disk_image="$build_directory/c-test-system-disk.img"
 
-if [[ "$architecture" != "amd64" ]]; then
-    echo "test-c-runtime.sh: only amd64 boots here; arm64 runs ctest through its coretest line"
-    exit 1
-fi
 if [[ ! -f "$build_directory/user/usr/bin/ctest" ]]; then
     echo "test-c-runtime.sh: no C runtime in the build (make c-toolchain, then make c-runtime)"
+    exit 1
+fi
+
+rm -rf "$test_esp_directory"
+cp -r "$esp_directory" "$test_esp_directory"
+echo "test-exit init=/usr/bin/ctest" > "$test_esp_directory/FreePascalOS/options.txt"
+cp -f "$system_disk_image" "$run_system_disk_image"
+
+# AArch64: QEMU's virt machine (scripts/run-qemu-arm64.sh), the system
+# disk on AHCI as the arm64 user tests have it.
+if [[ "$architecture" == "arm64" ]]; then
+    script_directory=$(cd "$(dirname "$0")" && pwd)
+    devices=(-device ich9-ahci,id=ahci
+        -drive if=none,id=systemdisk,format=raw,cache=unsafe,file="$run_system_disk_image"
+        -device ide-hd,drive=systemdisk,bus=ahci.0
+        -nic none -netdev user,id=net0 -device virtio-net-pci,netdev=net0)
+    rm -f "$build_directory/QEMU_VARS.fd"
+    AUDIO=none VIRTUALIZATION=1 PROCESSORS=4 MEMORY=1G SEMIHOSTING=1 SERIAL=file:"$serial_log" \
+        timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
+        -- "${devices[@]}" < /dev/null > /dev/null 2>&1
+    qemu_status=$?
+    sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | grep -E "ctest|cxxtest|hello|process |mlibc" | head -200
+    if [[ "$qemu_status" == 1 ]] && grep -q "ctest: all .* checks passed" "$serial_log"; then
+        echo "C TEST PASSED"
+        exit 0
+    fi
+    echo "C TEST FAILED (QEMU status $qemu_status; log in $serial_log)"
     exit 1
 fi
 
@@ -57,12 +80,8 @@ for candidate in /usr/share/OVMF/x64/OVMF_VARS.4m.fd /usr/share/OVMF/OVMF_VARS.f
     [[ -f "$firmware_variables_template" ]] || firmware_variables_template="$candidate"
 done
 
-rm -rf "$test_esp_directory"
-cp -r "$esp_directory" "$test_esp_directory"
-echo "test-exit init=/usr/bin/ctest" > "$test_esp_directory/FreePascalOS/options.txt"
 firmware_variables="$build_directory/c-test-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
-cp -f "$system_disk_image" "$run_system_disk_image"
 
 if [[ "${ACCEL:-}" == kvm ]]; then
     cpu_arguments=(-accel kvm -cpu host)
