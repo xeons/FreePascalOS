@@ -42,6 +42,7 @@ uses
   Abi.SystemCalls,
   Sys.Kernel,
   Sys.Objects,
+  Sys.NamedObjects,
   Sys.Processes,
   Sys.Sockets,
   Sys.Restrictions;
@@ -133,6 +134,8 @@ begin
   Check(StartProgram('/bin/true', @Arguments[0], Options) = -ErrorAccessDenied, 'no program can be started');
   Check(ConnectPort('display') = -ErrorAccessDenied, 'no port can be connected to');
   Check(CreatePort('restricttest') = -ErrorAccessDenied, 'no port can be made');
+  Check(OpenNamedObject('\Shared\restricttest') = -ErrorAccessDenied, 'no named object can be opened');
+  Check(CreateObjectDirectory('\Shared\restricttest') = ErrorAccessDenied, 'nothing can be named');
   Check((Sleeper >= 0) and (TerminateProgram(ProcessIdOf(Sleeper), 143) <> ErrorNone),
     'no other process can be ended');
 end;

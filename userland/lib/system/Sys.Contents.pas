@@ -69,6 +69,7 @@ uses
   Sys.Display,
   Sys.Objects,
   Sys.Semaphores,
+  Sys.NamedObjects,
   Sys.KernelOptions,
   Sys.ServiceControl,
   Sys.SystemSettings,

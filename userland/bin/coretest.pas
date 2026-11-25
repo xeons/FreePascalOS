@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..436] of TCommandTest = (
+  CommandTests: array[0..439] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -759,6 +759,13 @@ const
     (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Process restrictions (the browser's renderer sandbox). }
     (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { The object namespace: named events, semaphores, mutexes and
+      sections, directories, permissions (objtest); objls; and a program
+      its user may run but not read (mode 0711): it runs, with AT_SECURE,
+      and cannot be read; without the execute bit it does not run. }
+    (Command: 'objtest > obj.log; echo $?; grep FAIL obj.log; tail -n 1 obj.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    (Command: 'objls; objls -l ''\Kernel'' | grep Console | tr -s " " | cut -d " " -f 1,2,3,5,6; objls ''\nothing'' 2>/dev/null; echo $?'; ExpectedOutput: 'Device\'#10'Storage\'#10'Kernel\'#10'Ports\'#10'Shared\'#10'-rw------- 0 0 Console Console'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'cp /bin/objtest x711 && chmod 711 x711 && su user -c "./x711 --secure"; su user -c "cat x711 > /dev/null 2>&1 || echo unreadable"; ./x711 --secure; chmod 700 x711; su user -c "./x711 --secure 2>/dev/null || echo refused"; rm x711'; ExpectedOutput: 'secure 1'#10'unreadable'#10'secure 0'#10'refused'#10; ExpectedStatus: 0),
     { Native Free Pascal: /bin/fpc compiles a program and a unit of its
       own (against libsystem, linked by the compiler's internal linker)
       and the program runs; skipped when the system disk was built with

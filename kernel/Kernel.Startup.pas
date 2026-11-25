@@ -72,6 +72,7 @@ uses
   Kernel.Random,
   Kernel.Panic,
   Kernel.SelfTest,
+  Kernel.ObjectNamespaceSelfTest,
   Kernel.SynchronizationSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
@@ -366,6 +367,7 @@ begin
 
   RunKernelSelfTests;
   RunSynchronizationSelfTests;
+  RunObjectNamespaceSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
   RunPlatformSelfTest;
