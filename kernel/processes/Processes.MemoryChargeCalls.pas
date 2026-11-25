@@ -17,6 +17,12 @@
 }
 
 {
+  The block of memory and loader calls (208-213).
+
+  CallGetImageCacheStatistics (208): the loader's image sections and the
+  relocated copies kept with them (Processes.ImageSections,
+  Processes.RelocatedCopies).
+
   CallGetProcessMemoryCharge (209): what the out-of-memory policy
   (Processes.OutOfMemory) charges a process with - its resident pages,
   the sections it made and its commitments not resident yet
@@ -30,6 +36,7 @@ unit Processes.MemoryChargeCalls;
 interface
 
 function PerformGetProcessMemoryCharge(ProcessId: QWord; ChargeAddress: QWord): Int64;
+function PerformGetImageCacheStatistics(StatisticsAddress: QWord): Int64;
 
 implementation
 
@@ -43,6 +50,8 @@ uses
   Processes.MemoryCharges,
   Processes.OutOfMemoryScores,
   Processes.SecurityCalls,
+  Processes.ImageSections,
+  Processes.RelocatedCopies,
   Processes.UserAccess;
 
 procedure DescribeCharge(Process: PProcess; out Charge: TAbiProcessMemoryCharge);
@@ -93,6 +102,29 @@ begin
   DescribeCharge(Target, Charge);
   DereferenceObject(Target);
   Result := -Int64(CopyToUser(ChargeAddress, @Charge, SizeOf(Charge)));
+end;
+
+function CounterValue(Value: Int64): QWord;
+begin
+  if Value < 0 then
+    Exit(0);
+  Result := QWord(Value);
+end;
+
+function PerformGetImageCacheStatistics(StatisticsAddress: QWord): Int64;
+var
+  Statistics: TAbiImageCacheStatistics;
+begin
+  FillMemory(@Statistics, SizeOf(Statistics), 0);
+  Statistics.CachedSections := CachedImageSectionCount;
+  Statistics.RelocatedCopies := CounterValue(RelocatedCopyCounters.Copies);
+  Statistics.RelocatedPages := CounterValue(RelocatedCopyCounters.Pages);
+  Statistics.RelocationsReused := CounterValue(RelocatedCopyCounters.Reused);
+  Statistics.RelocationsKept := CounterValue(RelocatedCopyCounters.Kept);
+  Statistics.RelocationsNotKept := CounterValue(RelocatedCopyCounters.NotKept);
+  Statistics.SharedPlacements := CounterValue(RelocatedCopyCounters.SharedPlacements);
+  Statistics.CopiesDropped := CounterValue(RelocatedCopyCounters.Dropped);
+  Result := -Int64(CopyToUser(StatisticsAddress, @Statistics, SizeOf(Statistics)));
 end;
 
 end.

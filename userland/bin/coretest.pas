@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..436] of TCommandTest = (
+  CommandTests: array[0..438] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -705,9 +705,9 @@ const
     (Command: '/bin/coretest --crash-on-purpose 2> crash.log; sed -n 3p crash.log | grep -c "^  [$][0-9A-F]*  coretest+[$][0-9A-F]*$"; grep -c "^  [$][0-9A-F]*-[$][0-9A-F]* libsystem.so$" crash.log'; ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
     { Address space layout randomization: two runs of a program have its
       code, a library's, the stack, the heap and a thread's stack in
-      other places (booted with aslr=off, the same command prints
+      other places, libraries keeping theirs (booted with aslr=off, the same command prints
       "aslrtest: aslr=off, the addresses are the same"). }
-    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, library, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
     { Libraries with thread-local storage, threadvars and initializers
       loaded with LoadLibrary by a program running threads (dynlibtest):
       per-thread values in old and new threads, initializers once, the
@@ -815,7 +815,16 @@ const
       user, a set-user-ID program swapped through a link while it starts
       and a lowered limit raised again. }
     (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { What the out-of-memory policy charges a process with (memorytest
+      charge): commitments not touched yet count, and move to resident
+      when touched; another process's charge can be read. }
+    (Command: 'memorytest charge > charge.log; echo $?; grep FAIL charge.log; tail -n 1 charge.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Libraries loaded late (latelibtest): initial exec TLS in the static
+      surplus for threads started before and after, resource strings of
+      a Free Pascal library translated, relocated copies reused by later
+      processes with the library at the same place. }
+    (Command: 'latelibtest > latelib.log; echo $?; grep FAIL latelib.log; tail -n 1 latelib.log'; ExpectedOutput: '0'#10'latelibtest: 36 checks, 0 failed'#10; ExpectedStatus: 0)
   );
 
 var

@@ -26,7 +26,10 @@
   (libsystem), the main stack, a heap block and a thread's stack. Two
   runs of the same program are compared with --compare: with
   randomization (the default) every part must be somewhere else in the
-  second run; with the kernel option aslr=off everywhere the same (a
+  second run (libraries keep the place they were given first, shared by
+  every process, so they are not compared - unless the kernel option
+  aslr=process gives each process places of its own for them too); with
+  the kernel option aslr=off everywhere the same (a
   heap block and stacks may move by a little there: only their page
   must match). It prints which and exits with 1 if the expectation was
   not met.
@@ -46,6 +49,7 @@ uses
 const
   PartCount = 5;
   PartNames: array[0..PartCount - 1] of string = ('code', 'library', 'stack', 'heap', 'thread');
+  LibraryPart = 1;
   { Parts that are pages of their own with aslr=off: compared to the
     page, as what lies in them may shift a little. }
   PageMask = not QWord($FFF);
@@ -123,6 +127,7 @@ var
   Index: Integer;
   Same: string;
   Moved: string;
+  LibrariesPerProcess: Boolean;
 begin
   if not ReadParts(FirstName, First) or not ReadParts(SecondName, Second) then
   begin
@@ -130,10 +135,13 @@ begin
     Exit(2);
   end;
   Randomized := not (GetKernelOption('aslr', Value) and (Value = 'off'));
+  LibrariesPerProcess := GetKernelOption('aslr', Value) and (Value = 'process');
   Same := '';
   Moved := '';
   for Index := 0 to PartCount - 1 do
-    if (First[Index] = Second[Index]) or (not Randomized and (Index >= 2) and
+    if Randomized and (Index = LibraryPart) and not LibrariesPerProcess then
+      Continue
+    else if (First[Index] = Second[Index]) or (not Randomized and (Index >= 2) and
        ((First[Index] and PageMask) = (Second[Index] and PageMask))) then
       Same := Same + ' ' + PartNames[Index]
     else
@@ -141,9 +149,14 @@ begin
 
   if Randomized then
   begin
-    if Same = '' then
+    if (Same = '') and LibrariesPerProcess then
     begin
       PrintStringLine('aslrtest: code, library, stack, heap and thread stack addresses differ');
+      Exit(0);
+    end;
+    if Same = '' then
+    begin
+      PrintStringLine('aslrtest: code, stack, heap and thread stack addresses differ');
       Exit(0);
     end;
     PrintStringLine('aslrtest: FAIL: the same in both runs:' + Same);

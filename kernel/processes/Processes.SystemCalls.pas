@@ -863,6 +863,7 @@ begin
     CallGetParentProcessId: Result := Int64(CurrentProcess^.ParentProcessId);
     { Memory and the loader (208-213). }
     CallGetProcessMemoryCharge: Result := PerformGetProcessMemoryCharge(Argument0, Argument1);
+    CallGetImageCacheStatistics: Result := PerformGetImageCacheStatistics(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;

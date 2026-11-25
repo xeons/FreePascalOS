@@ -137,10 +137,13 @@ procedure SysEntry(constref Information: TEntryInformation);
 
 { Called by the startup code of a Free Pascal library loaded at run time
   (si_dll, its DT_INIT) with its unit tables (INITFINAL,
-  FPC_THREADVARTABLES): gives its own units' threadvars their blocks and
-  initializes those units. Returns what SysUnregisterLibrary (its
-  DT_FINI) takes to finalize them. }
-function SysRegisterLibrary(InitFinalTable, ThreadvarTables: Pointer): Pointer;
+  FPC_THREADVARTABLES, FPC_RESOURCESTRINGTABLES, FPC_RESSTRINITTABLES):
+  gives its own units' threadvars their blocks, adds its own units'
+  resource string tables to the program's (so SetResourceStrings reaches
+  them) and initializes those units. Returns what SysUnregisterLibrary
+  (its DT_FINI) takes to finalize them. }
+function SysRegisterLibrary(InitFinalTable, ThreadvarTables, ResourceStringTables,
+  ResourceStringInitTables: Pointer): Pointer;
 
 { Loads a library (CallLoadLibrary) and runs the initializers it brought
   in, as LoadLibrary does: the kernel's handle, or a negative Abi error

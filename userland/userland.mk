@@ -152,6 +152,7 @@ WEBIPC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebipc.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 DYNTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdyntls.so
+STATICTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libstatictls.so
 DYNPASCAL_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdynpascal.so
 
 # Every userland/bin/<name>.pas becomes /bin/<name>. A program made of
@@ -217,7 +218,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 # The compiler and the runtime library's flags: when they change (a new
@@ -574,6 +575,18 @@ $(DYNPASCAL_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/dynpascal/*.pas)
 		-o $@ $(USER_BUILD_DIRECTORY)/dynpascal/*.o $(RTL_USER_DIRECTORY)/si_dll.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 $(USER_PROGRAM_OUTPUT)/dynlibtest: $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY)
+
+# libstatictls.so: thread-local storage reached with the initial exec
+# model (TPOFF relocations, DF_STATIC_TLS), for latelibtest to load late
+# into the static TLS surplus; one source per architecture.
+STATICTLS_SOURCE := $(firstword $(wildcard userland/lib/statictls/StaticTls.$(ARCH).s) userland/lib/statictls/StaticTls.s)
+$(STATICTLS_LIBRARY): $(SYSTEM_LIBRARY) $(STATICTLS_SOURCE)
+	@mkdir -p $(USER_BUILD_DIRECTORY)/statictls
+	$(TARGET_AS) -o $(USER_BUILD_DIRECTORY)/statictls/StaticTls.o $(STATICTLS_SOURCE)
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libstatictls.so -o $@ \
+		$(USER_BUILD_DIRECTORY)/statictls/StaticTls.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+$(USER_PROGRAM_OUTPUT)/latelibtest: $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY)
 
 # Programs that need more libraries than the usual three.
 $(USER_PROGRAM_OUTPUT)/threadtest: EXTRA_PROGRAM_LIBRARIES := -ltlstest
