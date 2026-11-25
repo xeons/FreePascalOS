@@ -72,6 +72,24 @@
   Each module keeps kernel copies of its symbol, string and hash tables
   so symbols can be found later without touching user memory.
 
+  Nothing in the file is trusted: every address the dynamic section,
+  the symbols, the relocations and the TLS segment name must lie in the
+  module's own image (ImageStart, ImageEnd) - a relocation is written
+  there and nowhere else, a copy relocation copies from the defining
+  module's image, the TLS image and the initializer arrays are read
+  from it - and every table is checked against the file and kept
+  whole (string tables end in a zero). A segment must lie in user
+  space. The window into the process (Processes.AddressSpace) refuses
+  anything else again on its own, so a crafted file fails to load
+  rather than reach kernel memory or pages others share.
+
+  Exec loads into an address space the process does not have yet: the
+  routines take a TLoadTarget (the space and the slot of its module
+  list), so nothing half loaded is ever seen through the process. The
+  program's file is opened once by the caller, which checks it (may the
+  caller run it, does it run as its owner) and hands the same open file
+  to the loader, so what runs is what was checked.
+
   Where everything went: the process's module list (Process^.Modules, a
   TModuleList) holds every loaded module in load order - the program
   first - with its file name, its Base (the load bias: an address in
@@ -89,7 +107,9 @@ unit Processes.ImageLoader;
 interface
 
 uses
-  Processes.Process;
+  FileSystem.Files,
+  Processes.Process,
+  Processes.AddressSpace;
 
 const
   MaximumModules = 32;
@@ -110,6 +130,8 @@ type
     { The pages its loadable segments cover in the process. }
     ImageStart: QWord;
     ImageEnd: QWord;
+    { The tag of its regions (TUserRegion.LoadTag). }
+    LoadTag: QWord;
     EntryPoint: QWord;
     ProgramHeaderAddress: QWord;
     ProgramHeaderCount: LongWord;
@@ -181,32 +203,49 @@ type
     StartupComplete: Boolean;
   end;
 
+  { What a program or library is loaded into: an address space and the
+    slot of its module list (a PModuleList, made on first use). }
+  TLoadTarget = record
+    Space: PAddressSpace;
+    Modules: ^Pointer;
+  end;
+
 { All routines return 0 on success or an Abi error code. }
 
-function LoadProgramImage(Process: PProcess; KernelPath: PChar; out MainModule: PLoadedModule): LongInt;
+{ The process's own space and module list. }
+function ProcessLoadTarget(Process: PProcess): TLoadTarget;
+{ Loads the program whose file ProgramFile (open for reading, checked by
+  the caller; still the caller's to close) is, named KernelPath. }
+function LoadProgramImage(const Target: TLoadTarget; ProgramFile: POpenFile; KernelPath: PChar;
+  out MainModule: PLoadedModule): LongInt;
 { The interpreter module of a program that has one (PT_INTERP), else nil. }
-function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
-function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
+function InterpreterOf(const Target: TLoadTarget; MainModule: PLoadedModule): PLoadedModule;
+{ Loads a library at run time from LibraryFile (open, checked by the
+  caller; still the caller's), named KernelPath. }
+function LoadLibraryImage(const Target: TLoadTarget; LibraryFile: POpenFile; KernelPath: PChar;
+  out ModuleHandle: Integer): LongInt;
 { The kernel path of library Name in library folder FolderIndex (0: /lib,
   1: /usr/local/lib) of the system volume; False past the last folder. }
 function LibraryFolderPath(FolderIndex: Integer; Name: PChar; Path: PChar; Capacity: QWord): Boolean;
 function FindExportedSymbol(Process: PProcess; ModuleHandle: Integer; Name: PChar;
   out Address: QWord): LongInt;
 procedure ReleaseModules(Process: PProcess);
+{ Frees the module list in Modules (a load target's). }
+procedure ReleaseModuleList(var Modules: Pointer);
 
 implementation
 
 uses
   Runtime.Memory,
   Runtime.Text,
+  Runtime.Atomic,
   Elf64,
   Abi.SystemCalls,
   Memory.Layout,
   Memory.KernelHeap,
   Memory.PhysicalPages,
+  Memory.Arch.PageTables,
   FileSystem.Types,
-  FileSystem.Files,
-  Processes.AddressSpace,
   Processes.AddressLayout,
   Processes.UserRegions,
   Processes.ImageSections,
@@ -225,6 +264,10 @@ const
   LibraryFolderCount = 2;
   LibraryFolders: array[0..LibraryFolderCount - 1] of PChar = ('/lib/', '/usr/local/lib/');
   MaximumInterpreterPath = 256;
+
+var
+  { The tag of the last load (TUserRegion.LoadTag). }
+  LastLoadTag: Int64 = 0;
 
 type
   { An ELF file while it is being loaded: its section, which the load
@@ -269,13 +312,14 @@ type
 
 { --- Files ----------------------------------------------------------- }
 
-{ Opens the file at KernelPath for reading, with its identity. }
-function OpenImageFile(KernelPath: PChar; out OpenedFile: POpenFile; out Identity: TImageIdentity): LongInt;
+{ The identity of the open file OpenedFile, if it may be an image. }
+function DescribeImageFile(OpenedFile: POpenFile; out Identity: TImageIdentity): LongInt;
 var
   Information: TNodeInformation;
 begin
-  if OpenPath(KernelPath, OpenedFile) <> StatusSuccess then
-    Exit(ErrorNotFound);
+  FillMemory(@Identity, SizeOf(Identity), 0);
+  if (OpenedFile = nil) or (OpenedFile^.Volume = nil) then
+    Exit(ErrorBadExecutable);
   GetFileInformation(OpenedFile, Information);
   Identity.Volume := OpenedFile^.Volume;
   Identity.NodeNumber := Information.NodeNumber;
@@ -283,12 +327,31 @@ begin
   Identity.ModificationTime := Information.ModificationTime;
   if (Information.Kind <> NodeKindFile) or (Information.SizeInBytes < SizeOf(TElf64FileHeader)) or
      (Information.SizeInBytes > MaximumImageSize) then
-  begin
-    CloseFile(OpenedFile);
-    OpenedFile := nil;
     Exit(ErrorBadExecutable);
-  end;
   Result := ErrorNone;
+end;
+
+{ True if [Offset, Offset + Length) lies inside a file of Size bytes
+  (without overflow). }
+function RangeInFile(Offset, Length, Size: QWord): Boolean;
+begin
+  Result := (Offset <= Size) and (Length <= Size - Offset);
+end;
+
+{ True if [Address, Address + Length) lies inside the module's image. }
+function RangeInModule(Module: PLoadedModule; Address, Length: QWord): Boolean;
+begin
+  Result := (Address >= Module^.ImageStart) and (Address <= Module^.ImageEnd) and
+    (Length <= Module^.ImageEnd - Address);
+end;
+
+{ A loadable segment must lie in user space and be no larger than an
+  image may be; then no address computed from it wraps. }
+function SegmentIsPlausible(ProgramHeader: PElf64ProgramHeader): Boolean;
+begin
+  Result := (ProgramHeader^.MemorySize <= MaximumImageSize) and
+    (ProgramHeader^.VirtualAddress < UserSpaceLimit) and
+    (ProgramHeader^.MemorySize <= UserSpaceLimit - ProgramHeader^.VirtualAddress);
 end;
 
 function HeaderIsValid(const Image: TImageFile): Boolean;
@@ -515,15 +578,18 @@ begin
   if Section = nil then
     Exit(ErrorOutOfMemory);
   UseSection(Section, Image);
-  if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) or
-     ((HighestPageEnd - LowestPage) div PageSize > MaximumImageSize div PageSize) then
+  if not HeaderIsValid(Image) then
     Result := ErrorBadExecutable;
   for Index := 0 to Header.ProgramHeaderCount - 1 do
     if (Result = ErrorNone) and (ProgramHeaderAt(Image, Index)^.SegmentType = ProgramHeaderTypeLoad) and
-       ((ProgramHeaderAt(Image, Index)^.FileOffset > Image.Size) or
-        (ProgramHeaderAt(Image, Index)^.FileSize > Image.Size - ProgramHeaderAt(Image, Index)^.FileOffset) or
-        (ProgramHeaderAt(Image, Index)^.FileSize > ProgramHeaderAt(Image, Index)^.MemorySize)) then
+       (not RangeInFile(ProgramHeaderAt(Image, Index)^.FileOffset, ProgramHeaderAt(Image, Index)^.FileSize,
+         Image.Size) or
+        (ProgramHeaderAt(Image, Index)^.FileSize > ProgramHeaderAt(Image, Index)^.MemorySize) or
+        not SegmentIsPlausible(ProgramHeaderAt(Image, Index))) then
       Result := ErrorBadExecutable;
+  if (Result = ErrorNone) and (not MeasureSpan(Image, LowestPage, HighestPageEnd) or
+     ((HighestPageEnd - LowestPage) div PageSize > MaximumImageSize div PageSize)) then
+    Result := ErrorBadExecutable;
   if Result = ErrorNone then
   begin
     Section^.LowestPage := LowestPage;
@@ -542,29 +608,27 @@ begin
   end;
 end;
 
-{ Finds or builds the section of KernelPath; the image then refers to
-  it, with a use held (ReleaseImageSection when done). }
-function AcquireImage(KernelPath: PChar; out Image: TImageFile): LongInt;
+{ Finds or builds the section of the file OpenedFile is open on (named
+  KernelPath); the image then refers to it, with a use held
+  (ReleaseImageSection when done). OpenedFile stays the caller's. }
+function AcquireImageOfFile(OpenedFile: POpenFile; KernelPath: PChar; out Image: TImageFile): LongInt;
 var
   Identity: TImageIdentity;
   Section: PImageSection;
-  OpenedFile: POpenFile;
   MappedFile: PMappedFile;
 begin
   FillMemory(@Image, SizeOf(Image), 0);
-  Result := OpenImageFile(KernelPath, OpenedFile, Identity);
+  Result := DescribeImageFile(OpenedFile, Identity);
   if Result <> ErrorNone then
     Exit;
   Section := FindImageSection(KernelPath, Identity);
   if Section <> nil then
   begin
-    CloseFile(OpenedFile);
     UseSection(Section, Image);
     Exit(ErrorNone);
   end;
 
   Result := AcquireMappedFile(OpenedFile, True, MappedFile);
-  CloseFile(OpenedFile);
   if Result <> ErrorNone then
     Exit;
   Result := CreateSectionFromFile(KernelPath, Identity, MappedFile, Section);
@@ -572,6 +636,19 @@ begin
     Exit;
   UseSection(Section, Image);
   PublishImageSection(Section);
+end;
+
+{ The same for a file of the system's own (a needed library, the
+  interpreter), opened here by name. }
+function AcquireImage(KernelPath: PChar; out Image: TImageFile): LongInt;
+var
+  OpenedFile: POpenFile;
+begin
+  FillMemory(@Image, SizeOf(Image), 0);
+  if OpenPath(KernelPath, OpenedFile) <> StatusSuccess then
+    Exit(ErrorNotFound);
+  Result := AcquireImageOfFile(OpenedFile, KernelPath, Image);
+  CloseFile(OpenedFile);
 end;
 
 function SegmentAttributes(Flags: LongWord): LongWord;
@@ -586,7 +663,7 @@ end;
 { Adds one region for the run of PageCount pages from page FirstPage of
   the image (at Address), all from the same source with Attributes. }
 function MapPageRun(Space: PAddressSpace; const Image: TImageFile; Address: QWord; FirstPage, PageCount: QWord;
-  Attributes: LongWord; Source: TPageSource; FileOffset: QWord): LongInt;
+  Attributes: LongWord; Source: TPageSource; FileOffset: QWord; LoadTag: QWord): LongInt;
 var
   Template: TUserRegion;
   Index: QWord;
@@ -596,6 +673,7 @@ begin
   Template.Length := PageCount * PageSize;
   Template.Attributes := Attributes;
   Template.Kind := RegionKindImage;
+  Template.LoadTag := LoadTag;
   case Source of
     PageSourceFile:
       begin
@@ -616,8 +694,9 @@ begin
       end;
   else
     begin
-      { The section's built pages, mapped now. }
-      Result := ErrorNone;
+      { The section's built pages, mapped now into the region (which
+        must be free first: nothing else is ever replaced). }
+      Result := AddRegionRecord(Space, Template);
       Index := 0;
       while (Index < PageCount) and (Result = ErrorNone) do
       begin
@@ -625,8 +704,8 @@ begin
           Image.Section^.BuiltPages[FirstPage + Index], Attributes);
         Inc(Index);
       end;
-      if Result = ErrorNone then
-        Result := AddRegionRecord(Space, Template);
+      if (Result <> ErrorNone) and (Index > 0) then
+        ReleaseUserRegion(Space, Address);
     end;
   end;
 end;
@@ -635,7 +714,7 @@ end;
   each page, one region per run of pages alike in attributes and source
   (and, for the file's pages, following one another in the file). }
 function MapSegments(Space: PAddressSpace; const Image: TImageFile; Bias: QWord;
-  LowestPage, HighestPageEnd: QWord): LongInt;
+  LowestPage, HighestPageEnd: QWord; LoadTag: QWord): LongInt;
 var
   PageCount: QWord;
   PageAttributes: PLongWord;
@@ -688,7 +767,7 @@ begin
       Inc(PageIndex);
     end;
     Result := MapPageRun(Space, Image, Bias + LowestPage + RunStart * PageSize, RunStart, PageIndex - RunStart,
-      PageAttributes[RunStart], RunSource, RunOffset);
+      PageAttributes[RunStart], RunSource, RunOffset, LoadTag);
   end;
   FreeKernelMemory(PageAttributes);
 end;
@@ -728,7 +807,7 @@ var
   UserPath: array[0..MaximumInterpreterPath - 1] of Char;
 begin
   if (Segment^.FileSize < 2) or (Segment^.FileSize > MaximumInterpreterPath) or
-     (Segment^.FileOffset + Segment^.FileSize > Image.Size) then
+     not RangeInFile(Segment^.FileOffset, Segment^.FileSize, Image.Size) then
     Exit(ErrorBadExecutable);
   if ReadMappedFileBytes(Image.MappedFile, Segment^.FileOffset, @UserPath[0], Segment^.FileSize) <> ErrorNone then
     Exit(ErrorBadExecutable);
@@ -753,6 +832,10 @@ begin
     Alignment := 1;
   if ((Alignment and (Alignment - 1)) <> 0) or (Alignment > PageSize) or
      (Segment^.FileSize > Segment^.MemorySize) or (Segment^.MemorySize > MaximumStaticTlsSize) then
+    Exit(ErrorBadExecutable);
+  { Its initialization image is copied from the module's own pages. }
+  if (Segment^.VirtualAddress >= UserSpaceLimit) or
+     ((Segment^.FileSize > 0) and not RangeInModule(Module, Bias + Segment^.VirtualAddress, Segment^.FileSize)) then
     Exit(ErrorBadExecutable);
 
   Module^.HasThreadLocalStorage := True;
@@ -794,7 +877,7 @@ begin
     ProgramHeader := ProgramHeaderAt(Image, Index);
     if ProgramHeader^.SegmentType <> ProgramHeaderTypeDynamic then
       Continue;
-    if (ProgramHeader^.FileOffset + ProgramHeader^.FileSize > Image.Size) or
+    if not RangeInFile(ProgramHeader^.FileOffset, ProgramHeader^.FileSize, Image.Size) or
        (ProgramHeader^.FileSize > MaximumDynamicSectionSize) then
       Exit(ErrorBadExecutable);
 
@@ -863,6 +946,21 @@ begin
   end;
 end;
 
+{ Copies the string table, with a zero after it: a name at the end of a
+  table that does not end in one stops there, inside the copy. }
+function CopyStringTable(Module: PLoadedModule; const Image: TImageFile; VirtualAddress, Length: QWord): Boolean;
+begin
+  Module^.Strings := nil;
+  Module^.StringsSize := 0;
+  if Length > MaximumImageSize then
+    Exit(False);
+  Module^.Strings := PChar(AllocateZeroedKernelMemory(Length + 1));
+  if Module^.Strings = nil then
+    Exit(False);
+  Module^.StringsSize := Length;
+  Result := (Length = 0) or ReadImageData(Image, VirtualAddress, Length, Module^.Strings);
+end;
+
 function CopyDynamicTables(Module: PLoadedModule; const Image: TImageFile;
   const Dynamic: TDynamicInformation): LongInt;
 var
@@ -890,40 +988,53 @@ begin
 
   if not CopyTable(Image, Dynamic.SymbolTable, QWord(Module^.SymbolCount) * SizeOf(TElf64Symbol), Module^.Symbols) then
     Exit(ErrorBadExecutable);
-  Module^.StringsSize := Dynamic.StringTableSize;
-  if not CopyTable(Image, Dynamic.StringTable, Dynamic.StringTableSize, Pointer(Module^.Strings)) then
+  if not CopyStringTable(Module, Image, Dynamic.StringTable, Dynamic.StringTableSize) then
     Exit(ErrorBadExecutable);
 
   { The ordinary and the procedure linkage relocations are processed the
-    same way, so they are kept in one array. }
+    same way, so they are kept in one array; tables of part records are
+    refused. }
+  if ((Dynamic.RelaSize mod SizeOf(TElf64Rela)) <> 0) or
+     ((Dynamic.JumpRelocationsSize mod SizeOf(TElf64Rela)) <> 0) then
+    Exit(ErrorBadExecutable);
   RelaCount := Dynamic.RelaSize div SizeOf(TElf64Rela);
   JumpCount := Dynamic.JumpRelocationsSize div SizeOf(TElf64Rela);
   Module^.RelocationCount := RelaCount + JumpCount;
-  if Module^.RelocationCount > 0 then
-  begin
-    Module^.Relocations := AllocateKernelMemory(Module^.RelocationCount * SizeOf(TElf64Rela));
-    if Module^.Relocations = nil then
-      Exit(ErrorOutOfMemory);
-    if not CopyTable(Image, Dynamic.Rela, Dynamic.RelaSize, RelaCopy) or
-       not CopyTable(Image, Dynamic.JumpRelocations, Dynamic.JumpRelocationsSize, JumpCopy) then
-      Exit(ErrorBadExecutable);
-    if RelaCount > 0 then
-      CopyMemory(Module^.Relocations, RelaCopy, Dynamic.RelaSize);
-    if JumpCount > 0 then
-      CopyMemory(PElf64Rela(Module^.Relocations) + RelaCount, JumpCopy, Dynamic.JumpRelocationsSize);
-    FreeKernelMemory(RelaCopy);
-    FreeKernelMemory(JumpCopy);
-  end;
+  if Module^.RelocationCount = 0 then
+    Exit(ErrorNone);
+  Module^.Relocations := AllocateKernelMemory(Module^.RelocationCount * SizeOf(TElf64Rela));
+  if Module^.Relocations = nil then
+    Exit(ErrorOutOfMemory);
+  RelaCopy := nil;
+  JumpCopy := nil;
   Result := ErrorNone;
+  if not CopyTable(Image, Dynamic.Rela, RelaCount * SizeOf(TElf64Rela), RelaCopy) or
+     not CopyTable(Image, Dynamic.JumpRelocations, JumpCount * SizeOf(TElf64Rela), JumpCopy) then
+    Result := ErrorBadExecutable;
+  if Result = ErrorNone then
+  begin
+    if RelaCount > 0 then
+      CopyMemory(Module^.Relocations, RelaCopy, RelaCount * SizeOf(TElf64Rela));
+    if JumpCount > 0 then
+      CopyMemory(PElf64Rela(Module^.Relocations) + RelaCount, JumpCopy, JumpCount * SizeOf(TElf64Rela));
+  end;
+  FreeKernelMemory(RelaCopy);
+  FreeKernelMemory(JumpCopy);
 end;
 
 { --- Modules --------------------------------------------------------- }
 
-function ModuleList(Process: PProcess): PModuleList;
+function ProcessLoadTarget(Process: PProcess): TLoadTarget;
 begin
-  if Process^.Modules = nil then
-    Process^.Modules := AllocateZeroedKernelMemory(SizeOf(TModuleList));
-  Result := PModuleList(Process^.Modules);
+  Result.Space := Process^.AddressSpace;
+  Result.Modules := @Process^.Modules;
+end;
+
+function ModuleList(const Target: TLoadTarget): PModuleList;
+begin
+  if Target.Modules^ = nil then
+    Target.Modules^ := AllocateZeroedKernelMemory(SizeOf(TModuleList));
+  Result := PModuleList(Target.Modules^);
 end;
 
 function FindModuleByName(List: PModuleList; Name: PChar): Integer;
@@ -966,7 +1077,7 @@ begin
   FreeKernelMemory(Module);
 end;
 
-function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
+function LoadModule(const Target: TLoadTarget; OpenedFile: POpenFile; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt; forward;
 
 function NoteInitializers(Module: PLoadedModule; const Dynamic: TDynamicInformation;
@@ -987,6 +1098,12 @@ begin
     Module^.InitArray := Bias + Dynamic.InitArray;
   if Module^.FiniArrayCount > 0 then
     Module^.FiniArray := Bias + Dynamic.FiniArray;
+  { The arrays are read from the module's own pages. }
+  if ((Module^.InitArrayCount > 0) and
+      not RangeInModule(Module, Module^.InitArray, Module^.InitArrayCount * SizeOf(QWord))) or
+     ((Module^.FiniArrayCount > 0) and
+      not RangeInModule(Module, Module^.FiniArray, Module^.FiniArrayCount * SizeOf(QWord))) then
+    Exit(ErrorBadExecutable);
   Result := ErrorNone;
 end;
 
@@ -999,9 +1116,23 @@ begin
   Result := True;
 end;
 
+function NameHasSlash(Name: PChar): Boolean;
+var
+  Index: PtrUInt;
+begin
+  Index := 0;
+  while Name[Index] <> #0 do
+  begin
+    if Name[Index] = '/' then
+      Exit(True);
+    Inc(Index);
+  end;
+  Result := False;
+end;
+
 { Loads the libraries a module needs, from /lib of the system volume,
   else from /usr/local/lib. }
-function LoadNeededLibraries(Process: PProcess; Module: PLoadedModule;
+function LoadNeededLibraries(const Target: TLoadTarget; Module: PLoadedModule;
   const Dynamic: TDynamicInformation): LongInt;
 var
   NeededIndex: Integer;
@@ -1017,13 +1148,17 @@ begin
       Exit(ErrorBadExecutable);
     LibraryName := Module^.Strings + Dynamic.NeededOffsets[NeededIndex];
 
-    Existing := FindModuleByName(ModuleList(Process), LibraryName);
+    { A name, not a path: needed libraries come from the library
+      folders only. }
+    if NameHasSlash(LibraryName) then
+      Exit(ErrorBadExecutable);
+    Existing := FindModuleByName(ModuleList(Target), LibraryName);
     if Existing < 0 then
     begin
       FolderIndex := 0;
       repeat
         LibraryFolderPath(FolderIndex, LibraryName, @LibraryPath[0], ProcessPathCapacity);
-        Result := LoadModule(Process, @LibraryPath[0], False, Existing);
+        Result := LoadModule(Target, nil, @LibraryPath[0], False, Existing);
         Inc(FolderIndex);
       until (Result <> ErrorNotFound) or (FolderIndex >= LibraryFolderCount);
       if Result <> ErrorNone then
@@ -1069,15 +1204,15 @@ end;
 
 { Maps the program's interpreter (mlibc's ld.so) as a library, which
   relocates itself. }
-function LoadInterpreter(Process: PProcess; Program_: PLoadedModule; KernelPath: PChar): LongInt;
+function LoadInterpreter(const Target: TLoadTarget; Program_: PLoadedModule; KernelPath: PChar): LongInt;
 var
   InterpreterIndex: Integer;
   Interpreter: PLoadedModule;
 begin
-  Result := LoadModule(Process, KernelPath, False, InterpreterIndex);
+  Result := LoadModule(Target, nil, KernelPath, False, InterpreterIndex);
   if Result <> ErrorNone then
     Exit;
-  Interpreter := ModuleList(Process)^.Modules[InterpreterIndex];
+  Interpreter := ModuleList(Target)^.Modules[InterpreterIndex];
   if Interpreter^.NeededCount <> 0 then
     Exit(ErrorBadExecutable);
   LeaveToInterpreter(Program_);
@@ -1085,7 +1220,9 @@ begin
   Program_^.InterpreterModule := InterpreterIndex;
 end;
 
-function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
+{ Loads the module from OpenedFile, or if that is nil from the system
+  file KernelPath. }
+function LoadModule(const Target: TLoadTarget; OpenedFile: POpenFile; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt;
 var
   List: PModuleList;
@@ -1098,18 +1235,27 @@ var
   Space: PAddressSpace;
   InterpreterPath: array[0..ProcessPathCapacity - 1] of Char;
   HasInterpreter: Boolean;
+  LoadTag: QWord;
+  Mapped: Boolean;
 begin
   HasInterpreter := False;
+  Mapped := False;
+  LowestPage := 0;
+  HighestPageEnd := 0;
+  Bias := 0;
   InterpreterPath[0] := #0;
   ModuleIndex := -1;
-  List := ModuleList(Process);
-  Space := Process^.AddressSpace;
+  List := ModuleList(Target);
+  Space := Target.Space;
   if List = nil then
     Exit(ErrorOutOfMemory);
   if List^.Count >= MaximumModules then
     Exit(ErrorOutOfMemory);
 
-  Result := AcquireImage(KernelPath, Image);
+  if OpenedFile <> nil then
+    Result := AcquireImageOfFile(OpenedFile, KernelPath, Image)
+  else
+    Result := AcquireImage(KernelPath, Image);
   if Result <> ErrorNone then
     Exit;
   Module := nil;
@@ -1137,8 +1283,12 @@ begin
       Bias := Bias - LowestPage;
   end;
 
+  LoadTag := QWord(AtomicIncrement(LastLoadTag));
   if Result = ErrorNone then
-    Result := MapSegments(Space, Image, Bias, LowestPage, HighestPageEnd);
+  begin
+    Result := MapSegments(Space, Image, Bias, LowestPage, HighestPageEnd, LoadTag);
+    Mapped := True;
+  end;
 
   if Result = ErrorNone then
   begin
@@ -1154,6 +1304,7 @@ begin
     Module^.Limit := Bias + HighestPageEnd;
     Module^.ImageStart := Bias + LowestPage;
     Module^.ImageEnd := Bias + HighestPageEnd;
+    Module^.LoadTag := LoadTag;
     Module^.EntryPoint := Bias + Image.Header^.EntryPoint;
     Module^.ProgramHeaderAddress := Bias + LowestPage + Image.Header^.ProgramHeaderOffset;
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
@@ -1170,6 +1321,9 @@ begin
 
   if Result <> ErrorNone then
   begin
+    { What it mapped goes with it. }
+    if Mapped then
+      ReleaseImageRegions(Space, Bias + LowestPage, Bias + HighestPageEnd, LoadTag);
     FreeModule(Module);
     Exit;
   end;
@@ -1182,9 +1336,9 @@ begin
   Inc(List^.Count);
 
   if HasInterpreter then
-    Result := LoadInterpreter(Process, Module, @InterpreterPath[0])
+    Result := LoadInterpreter(Target, Module, @InterpreterPath[0])
   else
-    Result := LoadNeededLibraries(Process, Module, Dynamic);
+    Result := LoadNeededLibraries(Target, Module, Dynamic);
 end;
 
 { --- Symbols and relocation ------------------------------------------ }
@@ -1329,7 +1483,7 @@ function WriteRelocatedValue(var Writer: TRelocationWriter; Target: QWord; Data:
 begin
   { A value across a page boundary takes the general path. }
   if RoundDownToPage(Target) <> RoundDownToPage(Target + Size - 1) then
-    Exit(WriteIntoAddressSpace(Writer.Space, Target, Data, Size));
+    Exit(WriteIntoImage(Writer.Space, Target, Data, Size));
   if RoundDownToPage(Target) <> Writer.PageAddress then
   begin
     Result := WritablePageWindow(Writer.Space, Target, Writer.Window);
@@ -1365,7 +1519,20 @@ begin
   Result := WriteRelocatedValue(Writer, Target, @Descriptor[0], SizeOf(Descriptor));
 end;
 
-function ApplyRelocation(Process: PProcess; Module: PLoadedModule; const Relocation: TElf64Rela;
+{ The bytes a relocation of Kind writes. }
+function RelocationWriteSize(Kind: TRelocationKind; SymbolSize: QWord): QWord;
+begin
+  case Kind of
+    RelocationKindNone: Result := 0;
+    RelocationKindThreadPointerOffset32: Result := SizeOf(LongWord);
+    RelocationKindTlsDescriptor: Result := 2 * SizeOf(QWord);
+    RelocationKindCopy: Result := SymbolSize;
+  else
+    Result := SizeOf(QWord);
+  end;
+end;
+
+function ApplyRelocation(const LoadTarget: TLoadTarget; Module: PLoadedModule; const Relocation: TElf64Rela;
   var Writer: TRelocationWriter): LongInt;
 var
   List: PModuleList;
@@ -1380,7 +1547,7 @@ var
   DefiningModule: PLoadedModule;
   Value32: LongWord;
 begin
-  List := ModuleList(Process);
+  List := ModuleList(LoadTarget);
   { Without a symbol, a TLS relocation refers to the module's own block. }
   DefiningModule := Module;
   Kind := ClassifyRelocation(RelocationType(Relocation));
@@ -1410,9 +1577,17 @@ begin
     end;
   end;
 
+  { What a relocation writes lies in its module's own image, and what a
+    copy relocation copies in the defining module's. }
+  if Kind = RelocationKindNone then
+    Exit(ErrorNone);
+  if not RangeInModule(Module, Target, RelocationWriteSize(Kind, SymbolSize)) then
+    Exit(ErrorBadExecutable);
+  if (Kind = RelocationKindCopy) and
+     ((DefiningModule = nil) or not RangeInModule(DefiningModule, SymbolAddress, SymbolSize)) then
+    Exit(ErrorBadExecutable);
+
   case Kind of
-    RelocationKindNone:
-      Exit(ErrorNone);
     RelocationKindRelative:
       Value := Module^.Base + QWord(Relocation.Addend);
     RelocationKindAbsolute64:
@@ -1448,9 +1623,9 @@ begin
         CopyBuffer := AllocateKernelMemory(SymbolSize);
         if (SymbolSize > 0) and (CopyBuffer = nil) then
           Exit(ErrorOutOfMemory);
-        Result := ReadFromAddressSpace(Process^.AddressSpace, SymbolAddress, CopyBuffer, SymbolSize);
+        Result := ReadFromAddressSpace(LoadTarget.Space, SymbolAddress, CopyBuffer, SymbolSize);
         if Result = ErrorNone then
-          Result := WriteIntoAddressSpace(Process^.AddressSpace, Target, CopyBuffer, SymbolSize);
+          Result := WriteIntoImage(LoadTarget.Space, Target, CopyBuffer, SymbolSize);
         FreeKernelMemory(CopyBuffer);
         Exit;
       end;
@@ -1461,7 +1636,7 @@ begin
   Result := WriteRelocatedValue(Writer, Target, @Value, SizeOf(Value));
 end;
 
-function RelocatePendingModules(Process: PProcess): LongInt;
+function RelocatePendingModules(const Target: TLoadTarget): LongInt;
 var
   List: PModuleList;
   ModuleIndex: Integer;
@@ -1469,17 +1644,17 @@ var
   RelocationIndex: QWord;
   Writer: TRelocationWriter;
 begin
-  List := ModuleList(Process);
+  List := ModuleList(Target);
   for ModuleIndex := 0 to List^.Count - 1 do
   begin
     Module := List^.Modules[ModuleIndex];
     if Module^.IsRelocated then
       Continue;
     RelocationIndex := 0;
-    BeginRelocationWriting(Writer, Process^.AddressSpace);
+    BeginRelocationWriting(Writer, Target.Space);
     while RelocationIndex < Module^.RelocationCount do
     begin
-      Result := ApplyRelocation(Process, Module, PElf64Rela(Module^.Relocations)[RelocationIndex], Writer);
+      Result := ApplyRelocation(Target, Module, PElf64Rela(Module^.Relocations)[RelocationIndex], Writer);
       if Result <> ErrorNone then
         Exit;
       Inc(RelocationIndex);
@@ -1494,42 +1669,74 @@ end;
 
 { --- Public routines ------------------------------------------------- }
 
-function LoadProgramImage(Process: PProcess; KernelPath: PChar; out MainModule: PLoadedModule): LongInt;
+function LoadProgramImage(const Target: TLoadTarget; ProgramFile: POpenFile; KernelPath: PChar;
+  out MainModule: PLoadedModule): LongInt;
 var
   ModuleIndex: Integer;
 begin
   MainModule := nil;
-  Result := LoadModule(Process, KernelPath, True, ModuleIndex);
+  if ProgramFile = nil then
+    Exit(ErrorNotFound);
+  Result := LoadModule(Target, ProgramFile, KernelPath, True, ModuleIndex);
   if Result = ErrorNone then
-    Result := RelocatePendingModules(Process);
+    Result := RelocatePendingModules(Target);
   if Result = ErrorNone then
   begin
-    MainModule := ModuleList(Process)^.Modules[ModuleIndex];
-    ModuleList(Process)^.StartupComplete := True;
+    MainModule := ModuleList(Target)^.Modules[ModuleIndex];
+    ModuleList(Target)^.StartupComplete := True;
   end;
 end;
 
-function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
+function InterpreterOf(const Target: TLoadTarget; MainModule: PLoadedModule): PLoadedModule;
 begin
   if (MainModule = nil) or (MainModule^.InterpreterModule < 0) then
     Exit(nil);
-  Result := ModuleList(Process)^.Modules[MainModule^.InterpreterModule];
+  Result := ModuleList(Target)^.Modules[MainModule^.InterpreterModule];
 end;
 
-function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
+{ Takes back the modules from FirstIndex on (a library load that
+  failed: a module that cannot be relocated must not stay half loaded,
+  nor be tried again by the next load) with the regions they mapped. }
+procedure UnloadModulesFrom(const Target: TLoadTarget; FirstIndex: Integer);
+var
+  List: PModuleList;
+  Module: PLoadedModule;
+begin
+  List := ModuleList(Target);
+  while List^.Count > FirstIndex do
+  begin
+    Module := List^.Modules[List^.Count - 1];
+    ReleaseImageRegions(Target.Space, Module^.ImageStart, Module^.ImageEnd, Module^.LoadTag);
+    FreeModule(Module);
+    List^.Modules[List^.Count - 1] := nil;
+    Dec(List^.Count);
+  end;
+end;
+
+function LoadLibraryImage(const Target: TLoadTarget; LibraryFile: POpenFile; KernelPath: PChar;
+  out ModuleHandle: Integer): LongInt;
 var
   Existing: Integer;
+  FirstNew: Integer;
 begin
   ModuleHandle := -1;
-  Existing := FindModuleByName(ModuleList(Process), FileNameOf(KernelPath));
+  if LibraryFile = nil then
+    Exit(ErrorNotFound);
+  Existing := FindModuleByName(ModuleList(Target), FileNameOf(KernelPath));
   if Existing >= 0 then
   begin
     ModuleHandle := Existing;
     Exit(ErrorNone);
   end;
-  Result := LoadModule(Process, KernelPath, False, ModuleHandle);
+  FirstNew := ModuleList(Target)^.Count;
+  Result := LoadModule(Target, LibraryFile, KernelPath, False, ModuleHandle);
   if Result = ErrorNone then
-    Result := RelocatePendingModules(Process);
+    Result := RelocatePendingModules(Target);
+  if Result <> ErrorNone then
+  begin
+    UnloadModulesFrom(Target, FirstNew);
+    ModuleHandle := -1;
+  end;
 end;
 
 function FindSymbolInModuleTree(List: PModuleList; ModuleHandle: Integer; Name: PChar;
@@ -1564,8 +1771,8 @@ var
   List: PModuleList;
 begin
   Address := 0;
-  List := ModuleList(Process);
-  if (ModuleHandle < 0) or (ModuleHandle >= List^.Count) then
+  List := ModuleList(ProcessLoadTarget(Process));
+  if (List = nil) or (ModuleHandle < 0) or (ModuleHandle >= List^.Count) then
     Exit(ErrorBadHandle);
   if FindSymbolInModuleTree(List, ModuleHandle, Name, 0, Address) then
     Result := ErrorNone
@@ -1573,18 +1780,23 @@ begin
     Result := ErrorNotFound;
 end;
 
-procedure ReleaseModules(Process: PProcess);
+procedure ReleaseModuleList(var Modules: Pointer);
 var
   List: PModuleList;
   Index: Integer;
 begin
-  List := PModuleList(Process^.Modules);
+  List := PModuleList(Modules);
   if List = nil then
     Exit;
+  Modules := nil;
   for Index := 0 to List^.Count - 1 do
     FreeModule(List^.Modules[Index]);
   FreeKernelMemory(List);
-  Process^.Modules := nil;
+end;
+
+procedure ReleaseModules(Process: PProcess);
+begin
+  ReleaseModuleList(Process^.Modules);
 end;
 
 end.

@@ -105,7 +105,7 @@ begin
   Module := ModuleOf(Process, ModuleHandle);
   if Module = nil then
     Exit(ErrorBadHandle);
-  Result := CollectModuleInitializers(Process, ModuleHandle, Lists);
+  Result := CollectModuleInitializers(ProcessLoadTarget(Process), ModuleHandle, Lists);
   if (Result = ErrorNone) and (Lists.InitializerCount + Lists.FinalizerCount > 0) then
   begin
     { Entries from an earlier load nobody took yet come first; the new

@@ -89,7 +89,22 @@
   The kernel reads and writes user memory either directly (for the
   current process, after ValidateUserRange) or through the physical
   memory window (WriteIntoAddressSpace and friends), which works for any
-  address space and is what the program loader uses.
+  address space and is what the program loader uses. The window reaches
+  user addresses only, and only inside a region: reads need a readable
+  one, writes a writable one (the loader, WriteIntoImage, may also write
+  a program image's read-only pages, relocating them). A write never
+  lands in a page anyone else may see: a page that is not the process's
+  own private memory (a file's page, an image section's built page, a
+  page shared since fork) is copied first, and a shared file mapping is
+  never written at all.
+
+  Lifetime: the process owns its space (CreateAddressSpace, and
+  DestroyAddressSpace when it is done with it), and others may look at
+  it through the process's slot. The slot is changed only with
+  PublishAddressSpace, under a lock that readers of another process's
+  space take too (ReadPublishedSpaceUsage, ReferencePublishedSpace): a
+  reference keeps a space alive after its process let it go (exec,
+  exit), and the last one destroys it.
 }
 unit Processes.AddressSpace;
 
@@ -160,6 +175,8 @@ type
       commits and lookups happen under this lock (held briefly, at
       dispatch level, so no thread is preempted halfway through). }
     Lock: TSpinLock;
+    { The owner's reference and those of readers (see above). }
+    References: Int64;
   end;
 
   { What a process's memory amounts to (GetAddressSpaceUsage). }
@@ -184,8 +201,21 @@ function AddressSpaceRandomizationIsOn: Boolean;
 function LayoutRandom(Limit: QWord): QWord;
 
 function CreateAddressSpace(out Space: PAddressSpace): LongInt;
+{ Gives the owner's reference back (the space goes with the last one). }
 procedure DestroyAddressSpace(Space: PAddressSpace);
 procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
+
+{ Puts Space into a process's slot, giving what was there (the caller
+  then destroys it). Readers of the slot never see a space half gone. }
+procedure PublishAddressSpace(var Slot: PAddressSpace; Space: PAddressSpace; out Previous: PAddressSpace);
+{ The space in Slot with a reference of the caller's (nil if there is
+  none); ReleaseAddressSpaceReference gives it back. Passive level for
+  the release (it may destroy the space). }
+function ReferencePublishedSpace(var Slot: PAddressSpace): PAddressSpace;
+procedure ReleaseAddressSpaceReference(Space: PAddressSpace);
+{ The usage of the space in Slot, read under the slot's lock (any level
+  up to dispatch, no reference needed); False if there is none. }
+function ReadPublishedSpaceUsage(var Slot: PAddressSpace; out Usage: TAddressSpaceUsage): Boolean;
 
 function AddRegion(Space: PAddressSpace; Start, Length: QWord; Attributes: LongWord;
   Kind: TRegionKind; CommitsOnDemand: Boolean): LongInt;
@@ -231,6 +261,9 @@ function AllocateGuardedUserMemory(Space: PAddressSpace; Length: QWord; Kind: TR
   out Start: QWord): LongInt;
 { Releases the region starting at Start, whatever its kind. }
 function ReleaseUserRegion(Space: PAddressSpace; Start: QWord): LongInt;
+{ Releases every program image region of [Start, Finish) that the load
+  LoadTag mapped (a load that failed). }
+procedure ReleaseImageRegions(Space: PAddressSpace; Start, Finish: QWord; LoadTag: QWord);
 { Maps Length bytes of device memory at Physical (both page aligned)
   into the run time allocation area, writable if Writable, with writes
   combined if WriteCombining (else uncached). }
@@ -260,12 +293,15 @@ function OpenStackReserveOfRegion(Space: PAddressSpace; StackStart: QWord): Bool
 function StackReserveTop(Space: PAddressSpace; StackStart: QWord): QWord;
 { True if Address lies in a region other than a stack guard. }
 function AddressIsInUsableRegion(Space: PAddressSpace; Address: QWord): Boolean;
+{ The start of the region holding Address, 0 if none does. }
+function RegionStartOf(Space: PAddressSpace; Address: QWord): QWord;
 { Adds the guard below the stack region starting at StackStart (the
   main thread's; thread stacks get theirs with
   AllocateGuardedUserMemory). }
 function AddStackGuard(Space: PAddressSpace; StackStart: QWord): LongInt;
-{ Maps the shared page Physical at Address (taking a reference to it):
-  read-only, or copy on write if Attributes include RegionWritable. }
+{ Maps the shared page Physical at Address, which must lie in a region
+  already (taking a reference to it): read-only, or copy on write if
+  Attributes include RegionWritable. }
 function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysicalAddress;
   Attributes: LongWord): LongInt;
 
@@ -284,15 +320,18 @@ function PageInBackedAddress(Space: PAddressSpace; Address: QWord): LongInt;
 function ValidateUserRange(Space: PAddressSpace; Address, Length: QWord; NeedWrite: Boolean): Boolean;
 
 { Copies between kernel memory and any address space, providing on-demand
-  pages as needed. }
+  pages as needed: user addresses in readable (writable) regions only. }
 function WriteIntoAddressSpace(Space: PAddressSpace; Address: QWord; Source: Pointer;
   Length: QWord): LongInt;
 function ReadFromAddressSpace(Space: PAddressSpace; Address: QWord; Destination: Pointer;
   Length: QWord): LongInt;
-{ A kernel pointer to the page holding Address, made writable (provided
-  if not touched yet, copied if copy on write). For the loader, writing
-  many values into pages it just mapped: the pointer stays valid only as
-  long as nothing unmaps the page. }
+{ WriteIntoAddressSpace for the loader: also into the read-only pages of
+  program images (relocations), each made the process's own copy. }
+function WriteIntoImage(Space: PAddressSpace; Address: QWord; Source: Pointer; Length: QWord): LongInt;
+{ A kernel pointer to the page holding Address, made the process's own
+  and writable for the kernel as WriteIntoImage makes it. For the
+  loader, writing many values into pages it just mapped: the pointer
+  stays valid only as long as nothing unmaps the page. }
 function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
 
 { --- For Processes.VirtualMemory: the caller holds Space^.Lock --------- }
@@ -334,6 +373,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Runtime.Atomic,
   Kernel.Options,
   Kernel.Random,
   Kernel.PriorityLevel,
@@ -353,6 +393,14 @@ const
   { PageInWindow: the page must be read from its file first, which the
     caller does without the spin lock. }
   PageInNeeded = -1;
+
+type
+  { What the kernel does through the physical memory window. }
+  TWindowAccess = (WindowRead, WindowWrite, WindowImageWrite);
+
+var
+  { Guards the processes' space slots (PublishAddressSpace). }
+  PublishedSpacesLock: TSpinLock;
 
 { --- Creation and destruction ---------------------------------------- }
 
@@ -420,12 +468,15 @@ begin
   ChooseAddressLayout(AddressSpaceRandomizationIsOn, @LayoutRandom, Space^.Layout);
   Space^.NextLibraryAddress := Space^.Layout.LibraryWindowStart;
   InitializeSpinLock(Space^.Lock);
+  Space^.References := 1;
   Result := ErrorNone;
 end;
 
 procedure DestroyAddressSpace(Space: PAddressSpace);
 begin
   if Space = nil then
+    Exit;
+  if AtomicDecrement(Space^.References) > 0 then
     Exit;
   { Every user page and page table is released along with the root. }
   DestroyAddressSpaceRoot(Space^.Root);
@@ -449,6 +500,44 @@ begin
   Usage.CommitChargePages := Space^.CommitChargePages;
   Usage.CommitLimitPages := Space^.CommitLimitPages;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+procedure ReleaseAddressSpaceReference(Space: PAddressSpace);
+begin
+  DestroyAddressSpace(Space);
+end;
+
+procedure PublishAddressSpace(var Slot: PAddressSpace; Space: PAddressSpace; out Previous: PAddressSpace);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(PublishedSpacesLock);
+  Previous := Slot;
+  Slot := Space;
+  ReleaseSpinLock(PublishedSpacesLock, PreviousLevel);
+end;
+
+function ReferencePublishedSpace(var Slot: PAddressSpace): PAddressSpace;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(PublishedSpacesLock);
+  Result := Slot;
+  if Result <> nil then
+    AtomicIncrement(Result^.References);
+  ReleaseSpinLock(PublishedSpacesLock, PreviousLevel);
+end;
+
+function ReadPublishedSpaceUsage(var Slot: PAddressSpace; out Usage: TAddressSpaceUsage): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  FillMemory(@Usage, SizeOf(Usage), 0);
+  PreviousLevel := AcquireSpinLock(PublishedSpacesLock);
+  Result := Slot <> nil;
+  if Result then
+    GetAddressSpaceUsage(Slot, Usage);
+  ReleaseSpinLock(PublishedSpacesLock, PreviousLevel);
 end;
 
 procedure SetCommitLimit(Space: PAddressSpace; LimitPages: QWord);
@@ -963,6 +1052,31 @@ begin
   Result := RemoveRegion(Space, Start, True);
 end;
 
+procedure ReleaseImageRegions(Space: PAddressSpace; Start, Finish: QWord; LoadTag: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
+  Position: QWord;
+  RegionStart: QWord;
+begin
+  if LoadTag = 0 then
+    Exit;
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Position := Start;
+  repeat
+    Region := FindRegionAtOrAboveLocked(Space, Position);
+    if (Region = nil) or (Region^.Start >= Finish) then
+      Break;
+    RegionStart := Region^.Start;
+    Position := Region^.Start + Region^.Length;
+    if (Region^.Kind = RegionKindImage) and (Region^.LoadTag = LoadTag) then
+      RemoveRegionLocked(Space, RegionStart);
+  until False;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  if CurrentPriorityLevel = PassiveLevel then
+    DrainMappedFileReleases;
+end;
+
 function MapDeviceIntoAddressSpace(Space: PAddressSpace; Physical: TPhysicalAddress; Length: QWord;
   Writable, WriteCombining: Boolean; out Start: QWord): LongInt;
 var
@@ -1151,12 +1265,21 @@ function MapSharedPage(Space: PAddressSpace; Address: QWord; Physical: TPhysical
 var
   PreviousLevel: TPriorityLevel;
   Mapping: LongWord;
+  Existing: TPhysicalAddress;
 begin
   Mapping := MappingAttributesFor(Attributes);
   if (Attributes and RegionWritable) <> 0 then
     Mapping := Mapping or MappingCopyOnWrite;
-  ReferencePhysicalPage(Physical);
   PreviousLevel := AcquireSpinLock(Space^.Lock);
+  { Only into a region of user space (never a kernel address) that has
+    no page there yet. }
+  if (Address >= UserSpaceLimit) or (FindRegionLocked(Space, Address) = nil) or
+     TranslateInAddressSpace(Space^.Root, RoundDownToPage(Address), Existing) then
+  begin
+    ReleaseSpinLock(Space^.Lock, PreviousLevel);
+    Exit(ErrorBadAddress);
+  end;
+  ReferencePhysicalPage(Physical);
   if MapPageInAddressSpace(Space^.Root, RoundDownToPage(Address), Physical, Mapping) then
   begin
     Inc(Space^.CommittedPages);
@@ -1212,6 +1335,13 @@ begin
   Result := ErrorNone;
 end;
 
+{ True if Physical is memory of this process alone: a user page nobody
+  else holds a reference to. }
+function PageIsPrivatelyOwned(Physical: TPhysicalAddress): Boolean;
+begin
+  Result := (PageUsageOf(Physical) = PageUsageUserMemory) and not PhysicalPageIsShared(Physical);
+end;
+
 procedure ApplyRegionProtectionLocked(Space: PAddressSpace; Start, Length: QWord);
 var
   Region: PUserRegion;
@@ -1232,11 +1362,14 @@ begin
     begin
       Physical := RoundDownToPage(Physical);
       PageMapping := Mapping;
-      { A shared page stays marked, so a write still copies it. }
-      if IsCopyOnWrite then
-        PageMapping := (PageMapping and not MappingWritable) or MappingCopyOnWrite
-      else if (Region^.Backing <> nil) and not Region^.BackingIsPrivate then
-        PageMapping := PageMapping and not MappingWritable;
+      { A shared page stays marked, so a write still copies it; a page
+        that is not the process's own (a file's or image's page, one
+        shared since fork) is marked too before it may be written. }
+      if (Region^.Backing <> nil) and not Region^.BackingIsPrivate then
+        PageMapping := PageMapping and not MappingWritable
+      else if IsCopyOnWrite or
+         ((Region^.Kind <> RegionKindSection) and not PageIsPrivatelyOwned(Physical)) then
+        PageMapping := (PageMapping and not MappingWritable) or MappingCopyOnWrite;
       UnmapPageInAddressSpace(Space^.Root, Start + Offset);
       if not MapPageInAddressSpace(Space^.Root, Start + Offset, Physical, PageMapping) then
       begin
@@ -1431,11 +1564,31 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
+{ Whether the kernel may reach Address of Region for Access: a region of
+  user memory (no guard, no device memory) that is readable, and for a
+  write writable - or, for the loader, a program image - and never a
+  shared file mapping (nothing writes it back, and every mapper sees
+  it). }
+function WindowAllowed(Region: PUserRegion; Access: TWindowAccess): Boolean;
+begin
+  Result := False;
+  if (Region = nil) or Region^.IsGuard or (Region^.Kind in [RegionKindDevice, RegionKindStackGuard]) or
+     ((Region^.Attributes and RegionReadable) = 0) then
+    Exit;
+  if Access = WindowRead then
+    Exit(True);
+  if (Region^.Backing <> nil) and not Region^.BackingIsPrivate then
+    Exit;
+  Result := ((Region^.Attributes and RegionWritable) <> 0) or
+    ((Access = WindowImageWrite) and (Region^.Kind = RegionKindImage));
+end;
+
 { Returns a kernel pointer to Address in Space, providing the page if it
-  is an on-demand page that has not been touched yet, and giving the
-  process its own copy first if it is to be written and copy on write.
+  is an on-demand page that has not been touched yet, and for a write
+  making it the process's own first (a copy on write page, or any page
+  others may hold, is copied; a section's pages are shared on purpose).
   PageInNeeded if the page must be read from its file first. }
-function PageInWindow(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
+function PageInWindow(Space: PAddressSpace; Address: QWord; Access: TWindowAccess;
   out Window: PByte): LongInt;
 var
   PhysicalAddress: TPhysicalAddress;
@@ -1443,21 +1596,24 @@ var
   IsCopyOnWrite: Boolean;
 begin
   Window := nil;
-  { Device memory is not reached through the physical memory window. }
-  Region := FindRegionLocked(Space, Address);
-  if (Region <> nil) and (Region^.Kind = RegionKindDevice) then
+  if Address >= UserSpaceLimit then
     Exit(ErrorBadAddress);
-  if ForWrite and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) and
-     IsCopyOnWrite then
+  Region := FindRegionLocked(Space, Address);
+  if not WindowAllowed(Region, Access) then
+    Exit(ErrorBadAddress);
+  if (Access <> WindowRead) and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) then
   begin
-    Result := BreakCopyOnWriteLocked(Space, RoundDownToPage(Address), RoundDownToPage(PhysicalAddress));
-    if Result <> ErrorNone then
-      Exit;
+    PhysicalAddress := RoundDownToPage(PhysicalAddress);
+    if IsCopyOnWrite or ((Region^.Kind <> RegionKindSection) and not PageIsPrivatelyOwned(PhysicalAddress)) then
+    begin
+      Result := BreakCopyOnWriteLocked(Space, RoundDownToPage(Address), PhysicalAddress);
+      if Result <> ErrorNone then
+        Exit;
+    end;
   end;
   if not TranslateInAddressSpace(Space^.Root, Address, PhysicalAddress) then
   begin
-    if (Region = nil) or (Region^.Kind = RegionKindStackGuard) or
-       ((Region^.Backing = nil) and not Region^.CommitsOnDemand and (Region^.Kind = RegionKindAllocation)) then
+    if ((Region^.Backing = nil) and not Region^.CommitsOnDemand) then
       Exit(ErrorBadAddress);
     if Region^.Backing <> nil then
     begin
@@ -1468,7 +1624,7 @@ begin
       if Result <> ErrorNone then
         Exit;
       { Mapped copy on write: a write copies it now. }
-      Exit(PageInWindow(Space, Address, ForWrite, Window));
+      Exit(PageInWindow(Space, Address, Access, Window));
     end;
     Result := CommitPageLocked(Space, RoundDownToPage(Address), Region);
     if Result <> ErrorNone then
@@ -1483,12 +1639,12 @@ end;
 { PageInWindow under the lock, reading the page from its file without
   the lock when it must (and if this thread may sleep). Returns with the
   lock held on success. }
-function PageInWindowLocking(Space: PAddressSpace; Address: QWord; ForWrite: Boolean;
+function PageInWindowLocking(Space: PAddressSpace; Address: QWord; Access: TWindowAccess;
   out Window: PByte; out PreviousLevel: TPriorityLevel): LongInt;
 begin
   repeat
     PreviousLevel := AcquireSpinLock(Space^.Lock);
-    Result := PageInWindow(Space, Address, ForWrite, Window);
+    Result := PageInWindow(Space, Address, Access, Window);
     if Result = ErrorNone then
       Exit;
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
@@ -1501,22 +1657,24 @@ begin
 end;
 
 function TransferWithAddressSpace(Space: PAddressSpace; Address: QWord; KernelBuffer: PByte;
-  Length: QWord; IsWrite: Boolean): LongInt;
+  Length: QWord; Access: TWindowAccess): LongInt;
 var
   Window: PByte;
   ChunkBytes: QWord;
   PreviousLevel: TPriorityLevel;
 begin
+  if (Space = nil) or (Address >= UserSpaceLimit) or (Length > UserSpaceLimit - Address) then
+    Exit(ErrorBadAddress);
   while Length > 0 do
   begin
     ChunkBytes := PageSize - (Address and PageOffsetMask);
     if ChunkBytes > Length then
       ChunkBytes := Length;
     { The page must not go away while it is being copied. }
-    Result := PageInWindowLocking(Space, Address, IsWrite, Window, PreviousLevel);
+    Result := PageInWindowLocking(Space, Address, Access, Window, PreviousLevel);
     if Result <> ErrorNone then
       Exit;
-    if IsWrite then
+    if Access <> WindowRead then
     begin
       if KernelBuffer <> nil then
         CopyMemory(Window, KernelBuffer, ChunkBytes)
@@ -1537,20 +1695,25 @@ end;
 function WriteIntoAddressSpace(Space: PAddressSpace; Address: QWord; Source: Pointer;
   Length: QWord): LongInt;
 begin
-  Result := TransferWithAddressSpace(Space, Address, PByte(Source), Length, True);
+  Result := TransferWithAddressSpace(Space, Address, PByte(Source), Length, WindowWrite);
+end;
+
+function WriteIntoImage(Space: PAddressSpace; Address: QWord; Source: Pointer; Length: QWord): LongInt;
+begin
+  Result := TransferWithAddressSpace(Space, Address, PByte(Source), Length, WindowImageWrite);
 end;
 
 function ReadFromAddressSpace(Space: PAddressSpace; Address: QWord; Destination: Pointer;
   Length: QWord): LongInt;
 begin
-  Result := TransferWithAddressSpace(Space, Address, PByte(Destination), Length, False);
+  Result := TransferWithAddressSpace(Space, Address, PByte(Destination), Length, WindowRead);
 end;
 
 function WritablePageWindow(Space: PAddressSpace; Address: QWord; out Window: PByte): LongInt;
 var
   PreviousLevel: TPriorityLevel;
 begin
-  Result := PageInWindowLocking(Space, RoundDownToPage(Address), True, Window, PreviousLevel);
+  Result := PageInWindowLocking(Space, RoundDownToPage(Address), WindowImageWrite, Window, PreviousLevel);
   if Result = ErrorNone then
     ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
@@ -1646,6 +1809,20 @@ begin
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   Region := FindRegionLocked(Space, Address);
   Result := (Region <> nil) and (Region^.Kind <> RegionKindStackGuard);
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+end;
+
+function RegionStartOf(Space: PAddressSpace; Address: QWord): QWord;
+var
+  PreviousLevel: TPriorityLevel;
+  Region: PUserRegion;
+begin
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  Region := FindRegionLocked(Space, Address);
+  if Region <> nil then
+    Result := Region^.Start
+  else
+    Result := 0;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 

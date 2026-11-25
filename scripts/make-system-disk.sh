@@ -83,6 +83,15 @@ if [[ -d "$user_build_directory/usr" ]]; then
     mkdir -p "$staging_directory/usr"
     cp -r "$user_build_directory"/usr/* "$staging_directory/usr/"
 fi
+# loadertest's crafted ELF files (scripts/make-crafted-elves.py) and a
+# set-user-ID copy of true for its race through a swapped link.
+if [[ -d "$user_build_directory/loadertest" ]]; then
+    mkdir -p "$staging_directory/usr/lib/loadertest"
+    cp "$user_build_directory"/loadertest/* "$staging_directory/usr/lib/loadertest/"
+    if [[ -f "$staging_directory/bin/true" ]]; then
+        cp "$staging_directory/bin/true" "$staging_directory/usr/lib/loadertest/suid-true"
+    fi
+fi
 # The graphical programs, each in a folder of its own (/app/NAME: the
 # executable, program.info and its own icons), without the build's
 # stamps.
@@ -191,6 +200,13 @@ ownership_script="$partition_image.debugfs"
     echo 'set_inode_field /etc/shadow mode 0100600'
     echo 'set_inode_field /bin/su mode 0104755'
     echo 'set_inode_field /bin/passwd mode 0104755'
+    # loadertest's and ctest's set-user-ID helpers.
+    if [[ -f "$staging_directory/usr/lib/loadertest/suid-true" ]]; then
+        echo 'set_inode_field /usr/lib/loadertest/suid-true mode 0104755'
+    fi
+    if [[ -f "$staging_directory/usr/bin/ctest-suid" ]]; then
+        echo 'set_inode_field /usr/bin/ctest-suid mode 0104755'
+    fi
 } > "$ownership_script"
 debugfs -w -f "$ownership_script" "$partition_image" > /dev/null 2>&1
 rm -f "$ownership_script"

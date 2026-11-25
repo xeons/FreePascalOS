@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..429] of TCommandTest = (
+  CommandTests: array[0..431] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -788,7 +788,15 @@ const
       mapped file removed while mapped. The cached image sections and
       mappings let them go, so the used space comes back to what it was
       (and the disk checks clean afterwards). }
-    (Command: 'mkdir -p /usr/local/lib /usr/local/bin; sync; before=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); cp /lib/libplugin.so /usr/local/lib/libfreedplugin.so; /bin/coretest --load-library libfreedplugin.so; rm /usr/local/lib/libfreedplugin.so; cp /bin/sleep /usr/local/bin/coretest-sleeper; /usr/local/bin/coretest-sleeper 1 & sleep 0.3; cp /bin/true /usr/local/bin/coretest-new; mv /usr/local/bin/coretest-new /usr/local/bin/coretest-sleeper; wait; rm /usr/local/bin/coretest-sleeper; maptest --map-removed /usr/local/lib/maptest-removed.dat | tail -n 1; after=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); test "$before" = "$after" && echo freed || echo "used $before KiB before, $after after"'; ExpectedOutput: 'loaded libfreedplugin.so'#10'maptest: 6 of 6 checks passed'#10'freed'#10; ExpectedStatus: 0)
+    (Command: 'mkdir -p /usr/local/lib /usr/local/bin; sync; before=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); cp /lib/libplugin.so /usr/local/lib/libfreedplugin.so; /bin/coretest --load-library libfreedplugin.so; rm /usr/local/lib/libfreedplugin.so; cp /bin/sleep /usr/local/bin/coretest-sleeper; /usr/local/bin/coretest-sleeper 1 & sleep 0.3; cp /bin/true /usr/local/bin/coretest-new; mv /usr/local/bin/coretest-new /usr/local/bin/coretest-sleeper; wait; rm /usr/local/bin/coretest-sleeper; maptest --map-removed /usr/local/lib/maptest-removed.dat | tail -n 1; after=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); test "$before" = "$after" && echo freed || echo "used $before KiB before, $after after"'; ExpectedOutput: 'loaded libfreedplugin.so'#10'maptest: 6 of 6 checks passed'#10'freed'#10; ExpectedStatus: 0),
+    { The loader and process creation against crafted and racing input
+      (loadertest): crafted ELF programs and libraries refused without
+      reaching kernel memory or shared pages, a mapped set-user-ID file
+      unchanged, fork, thread, channel, section and mapping limits; as a
+      user, a set-user-ID program swapped through a link while it starts
+      and a lowered limit raised again. }
+    (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

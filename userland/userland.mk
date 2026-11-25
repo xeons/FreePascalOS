@@ -738,6 +738,18 @@ $(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% userland/%/program.info $$(w
 # The native Free Pascal compiler, its units and configuration.
 include toolchain/fpc/fpc.mk
 
+# The crafted ELF files loadertest runs (/usr/lib/loadertest on the
+# system disk), made at build time by scripts/make-crafted-elves.py.
+CRAFTED_ELF_DIRECTORY := $(USER_BUILD_DIRECTORY)/loadertest
+CRAFTED_ELF_STAMP := $(CRAFTED_ELF_DIRECTORY)/.made
+
+$(CRAFTED_ELF_STAMP): scripts/make-crafted-elves.py
+	rm -rf $(CRAFTED_ELF_DIRECTORY)
+	python3 scripts/make-crafted-elves.py $(ARCH) $(CRAFTED_ELF_DIRECTORY)
+	@touch $@
+
+$(SYSTEM_DISK): $(CRAFTED_ELF_STAMP)
+
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)
 

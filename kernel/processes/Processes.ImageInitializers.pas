@@ -49,7 +49,7 @@ unit Processes.ImageInitializers;
 interface
 
 uses
-  Processes.Process;
+  Processes.ImageLoader;
 
 type
   TInitializerLists = record
@@ -60,13 +60,14 @@ type
     FinalizerCount: QWord;
   end;
 
-{ Collects the lists for the modules of Process (loaded and relocated).
+{ Collects the lists for the modules of Target (loaded and relocated).
   Returns ErrorNone or an Abi error code; free the lists with
   FreeInitializerLists either way. }
-function CollectInitializers(Process: PProcess; out Lists: TInitializerLists): LongInt;
+function CollectInitializers(const Target: TLoadTarget; out Lists: TInitializerLists): LongInt;
 { The same for the module RootIndex and everything it needs whose
   entries were not handed out yet (a library loaded at run time). }
-function CollectModuleInitializers(Process: PProcess; RootIndex: Integer; out Lists: TInitializerLists): LongInt;
+function CollectModuleInitializers(const Target: TLoadTarget; RootIndex: Integer;
+  out Lists: TInitializerLists): LongInt;
 procedure FreeInitializerLists(var Lists: TInitializerLists);
 
 implementation
@@ -75,8 +76,7 @@ uses
   Runtime.Memory,
   Abi.SystemCalls,
   Memory.KernelHeap,
-  Processes.AddressSpace,
-  Processes.ImageLoader;
+  Processes.AddressSpace;
 
 type
   TModuleOrder = record
@@ -204,13 +204,14 @@ begin
     List^.Modules[Order.Indexes[Position]]^.InitializersTaken := True;
 end;
 
-function CollectInitializers(Process: PProcess; out Lists: TInitializerLists): LongInt;
+function CollectInitializers(const Target: TLoadTarget; out Lists: TInitializerLists): LongInt;
 begin
   { The program is module 0; every startup library is reachable from it. }
-  Result := CollectModuleInitializers(Process, 0, Lists);
+  Result := CollectModuleInitializers(Target, 0, Lists);
 end;
 
-function CollectModuleInitializers(Process: PProcess; RootIndex: Integer; out Lists: TInitializerLists): LongInt;
+function CollectModuleInitializers(const Target: TLoadTarget; RootIndex: Integer;
+  out Lists: TInitializerLists): LongInt;
 var
   List: PModuleList;
   Order: TModuleOrder;
@@ -218,7 +219,7 @@ var
   FinalizerTotal: QWord;
 begin
   FillMemory(@Lists, SizeOf(Lists), 0);
-  List := PModuleList(Process^.Modules);
+  List := PModuleList(Target.Modules^);
   if (List = nil) or (RootIndex < 0) or (RootIndex >= List^.Count) then
     Exit(ErrorNone);
 
@@ -232,7 +233,7 @@ begin
   Lists.Finalizers := PQWord(AllocateZeroedKernelMemory((FinalizerTotal + 1) * SizeOf(QWord)));
   if (Lists.Initializers = nil) or (Lists.Finalizers = nil) then
     Exit(ErrorOutOfMemory);
-  Result := FillLists(Process^.AddressSpace, List, Order, Lists);
+  Result := FillLists(Target.Space, List, Order, Lists);
 end;
 
 procedure FreeInitializerLists(var Lists: TInitializerLists);
