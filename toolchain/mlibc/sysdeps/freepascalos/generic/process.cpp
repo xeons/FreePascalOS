@@ -19,6 +19,7 @@
 
 #include "kernel.hpp"
 #include "descriptors.hpp"
+#include "timers.hpp"
 
 #include <errno.h>
 #include <string.h>
@@ -64,7 +65,11 @@ pid_t Sysdeps<GetPpid>::operator()() {
 }
 
 int Sysdeps<Fork>::operator()(pid_t *child) {
-	return fpos::call_into(child, FPOS_CALL_FORK_PROCESS);
+	if (int e = fpos::call_into(child, FPOS_CALL_FORK_PROCESS))
+		return e;
+	if (*child == 0)
+		fpos::forget_timers_after_fork();
+	return 0;
 }
 
 int Sysdeps<Execve>::operator()(const char *path, char *const argv[], char *const envp[]) {

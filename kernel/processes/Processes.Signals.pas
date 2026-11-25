@@ -175,16 +175,38 @@ begin
     Search^.Chosen := Thread;
 end;
 
-{ Alerts one thread that does not block Signal, so it takes it soon. }
+{ Alerts one thread that does not block Signal, so it takes it soon;
+  none if the sending thread is one of the process's and takes it itself
+  (raise) at the end of this system call. }
 procedure WakeTakerOf(Process: PProcess; Signal: LongInt);
 var
   Search: TTargetSearch;
+  Current: PThread;
 begin
+  Current := CurrentThreadObject;
+  if (Current <> nil) and (Current^.Process = Process) and
+     ((Current^.Posix.SignalMask and SignalBit(Signal)) = 0) then
+    Exit;
   Search.Signal := Signal;
   Search.Chosen := nil;
   VisitProcessThreads(Process, @ConsiderThread, @Search);
   if Search.Chosen <> nil then
+  begin
+    Search.Chosen^.Posix.AlertedForSignal := True;
     AlertThread(@Search.Chosen^.ControlBlock);
+  end;
+end;
+
+{ An alert brought for a signal is spent once the thread is back in user
+  mode, whoever took the signal; later waits wait again (unless the
+  process is being stopped or ended, or the thread asked to stop). }
+procedure GiveUpSignalAlert(Process: PProcess; Thread: PThread);
+begin
+  if not Thread^.Posix.AlertedForSignal then
+    Exit;
+  Thread^.Posix.AlertedForSignal := False;
+  if not Process^.StopRequested and not Process^.TerminationRequested and not CurrentThreadIsAsked then
+    ClearCurrentThreadAlert;
 end;
 
 { True if a thread of Process does not block Signal. }
@@ -342,6 +364,8 @@ begin
   if (Process = nil) or not Process^.IsUserProcess then
     Exit;
   Thread := CurrentThreadObject;
+  if Thread^.Posix.AlertedForSignal then
+    GiveUpSignalAlert(Process, Thread);
   if ((Thread^.Posix.PendingSignals or Process^.Posix.PendingSignals) and not Thread^.Posix.SignalMask) = 0 then
     Exit;
   if Process^.TerminationRequested then
@@ -351,10 +375,6 @@ begin
   Signal := TakePendingSignal(Process, Thread, SenderProcessId);
   if Signal <> 0 then
   begin
-    { The alert that brought the signal is spent; later waits wait
-      again (unless the process is being stopped or ended). }
-    if not Process^.StopRequested and not Process^.TerminationRequested and not CurrentThreadIsAsked then
-      ClearCurrentThreadAlert;
     { One that waited while blocked and is not handled (any more) takes
       its default action now. }
     if (Process^.Posix.Dispositions[Signal] <> SignalDispositionHandle) or

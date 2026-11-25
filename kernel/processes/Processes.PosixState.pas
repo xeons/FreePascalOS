@@ -75,6 +75,9 @@ type
     { sigsuspend: the mask to give back once a signal is taken. }
     SavedSignalMask: QWord;
     HasSavedSignalMask: Boolean;
+    { It was alerted to take a signal (another thread may take it first):
+      the alert is given up at its next return to user mode. }
+    AlertedForSignal: Boolean;
   end;
 
 implementation

@@ -10647,6 +10647,10 @@ headers), so there is no `epoll`, `inotify`, `signalfd`, `timerfd` or
   program says where it faulted and ends as killed by the signal.
   Writing to a pipe nobody reads raises SIGPIPE. `sigaltstack` is
   accepted and ignored (handlers run on the thread's stack).
+  `setitimer(ITIMER_REAL)` and `alarm` are a kernel thread of the
+  process (`timers.cpp`, started with the first timer, all signals
+  blocked, system calls only) sleeping on a word until the timer is due
+  and then sending SIGALRM; a child of fork has none.
 - **Sockets** are the kernel's IPv4 and IPv6 sockets: addresses
   translated from `sockaddr_in`/`sockaddr_in6` (ports in host order in
   the kernel's record), the common `SO_*`, `TCP_*`, `IP_TTL`,
@@ -10718,7 +10722,9 @@ signal; waitpid sees the signal), stopped or continued (`SIGSTOP`,
 dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default, and ignored ones),
 or - handled, or blocked by every thread - left pending, and one thread
 that does not block it is alerted (its wait ends with
-`ErrorInterrupted`, which becomes `EINTR`; there is no `SA_RESTART`).
+`ErrorInterrupted`, which becomes `EINTR`; there is no `SA_RESTART`),
+unless the sending thread takes it itself (`raise`). The alert is given
+up when that thread is back in user mode, whoever took the signal.
 At the thread's next return to user mode (`DeliverPendingSignals`, at
 the end of every system call and in the interrupt return hook) the
 kernel writes a `TAbiSignalRecord` below the red zone, adds the
@@ -10741,7 +10747,7 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
 `popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`); 407
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; 410
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own. `make c-test` boots

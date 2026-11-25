@@ -1650,5 +1650,6 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
 - [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
 - [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
-- [ ] setitimer/alarm, timer_create; CPU-time clocks (they give uptime now)
+- [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
+- [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
 - [ ] Clang driver support (`--target=x86_64-freepascalos`)

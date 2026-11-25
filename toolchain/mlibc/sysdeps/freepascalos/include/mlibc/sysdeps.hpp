@@ -140,6 +140,8 @@ struct FreePascalOsSysdepTags :
 	SetRlimit,
 	GetRusage,
 	Times,
+	GetItimer,
+	SetItimer,
 	// Waiting for descriptors.
 	Poll,
 	Ppoll,

@@ -146,7 +146,7 @@ diff -ruN a/gcc/config.gcc b/gcc/config.gcc
  	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h fuchsia.h"
 diff -ruN a/libgcc/config.host b/libgcc/config.host
 --- a/libgcc/config.host	2026-11-24 18:24:23.720422861 -0600
-+++ b/libgcc/config.host	2026-11-24 18:24:41.355421832 -0600
++++ b/libgcc/config.host	2026-11-24 19:31:56.812981398 -0600
 @@ -293,6 +293,10 @@
        ;;
    esac
@@ -158,7 +158,7 @@ diff -ruN a/libgcc/config.host b/libgcc/config.host
  *-*-fuchsia*)
    tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
    extra_parts="crtbegin.o crtend.o"
-@@ -416,6 +420,14 @@
+@@ -416,6 +420,15 @@
  	md_unwind_def_header=aarch64/aarch64-unwind-def.h
  	md_unwind_header=aarch64/aarch64-unwind.h
  	;;
@@ -169,11 +169,12 @@ diff -ruN a/libgcc/config.host b/libgcc/config.host
 +	tmake_file="${tmake_file} t-dfprules"
 +	extra_parts="$extra_parts crtfastmath.o"
 +	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/aarch64-unwind.h
 +	;;
  aarch64*-*-fuchsia*)
  	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
  	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
-@@ -754,6 +766,11 @@
+@@ -754,6 +767,11 @@
  	    ;;
  	esac
  	;;

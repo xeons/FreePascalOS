@@ -23,6 +23,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -45,6 +46,34 @@ static void on_user1(int signal, siginfo_t *info, void *context) {
 static void on_child(int signal) {
 	(void)signal;
 	child_signals++;
+}
+
+static volatile sig_atomic_t alarms;
+
+static void on_alarm(int signal) {
+	(void)signal;
+	alarms++;
+}
+
+/* alarm, setitimer with a period, and cancelling. */
+static void test_alarms(void) {
+	signal(SIGALRM, on_alarm);
+	alarm(1);
+	alarm(0);
+	struct itimerval timer;
+	memset(&timer, 0, sizeof(timer));
+	timer.it_value.tv_usec = 20000;
+	timer.it_interval.tv_usec = 20000;
+	CHECK(setitimer(ITIMER_REAL, &timer, NULL) == 0, "setitimer");
+	for (int i = 0; i < 300 && alarms < 3; i++)
+		usleep(5000);
+	memset(&timer, 0, sizeof(timer));
+	setitimer(ITIMER_REAL, &timer, NULL);
+	CHECK(alarms >= 3, "a periodic timer fired %d times", (int)alarms);
+	int seen = alarms;
+	usleep(60000);
+	CHECK(alarms == seen, "the timer stopped");
+	signal(SIGALRM, SIG_DFL);
 }
 
 static void on_fault(int signal) {
@@ -144,4 +173,5 @@ void test_signals(void) {
 	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 7,
 		"a blocked SIGTERM waited in the child: %#x", status);
 	CHECK(kill(999999, 0) < 0 && errno == ESRCH, "kill of nobody");
+	test_alarms();
 }
