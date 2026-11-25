@@ -255,6 +255,11 @@ const
   { UDP: 1 (the default): multicast sent to a group this machine joined
     is also delivered here (IPV6_MULTICAST_LOOP, IP_MULTICAST_LOOP). }
   SocketOptionMulticastLoop = 27;
+  { Local sockets, 1: every message received says who sent it
+    (SO_PASSCRED; the credentials come with each message anyway). }
+  SocketOptionPassCredentials = 28;
+  { Read only, local sockets: 1 while it listens (SO_ACCEPTCONN). }
+  SocketOptionListening = 29;
 
   { The groups one socket may join. }
   MaximumSocketMemberships = 8;

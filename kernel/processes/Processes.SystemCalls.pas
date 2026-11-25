@@ -92,6 +92,8 @@ uses
   Processes.LimitCalls,
   Processes.MemoryCalls,
   Processes.MappedFileCalls,
+  Processes.PositionedFileCalls,
+  Processes.LocalSocketCalls,
   Processes.MemoryChargeCalls,
   Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
@@ -818,16 +820,27 @@ begin
     { --- Sockets (Processes.SocketCalls) --- }
     CallCreateSocket: Result := PerformCreateSocket(Argument0, Argument1, Argument2);
     CallBindSocket: Result := PerformBindSocket(Int64(Argument0), Argument1);
-    CallListenSocket: Result := PerformListenSocket(Int64(Argument0), Argument1);
-    CallAcceptSocket: Result := PerformAcceptSocket(Int64(Argument0), Argument1);
-    CallConnectSocket: Result := PerformConnectSocket(Int64(Argument0), Argument1);
-    CallSendSocket: Result := PerformSendSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
-    CallReceiveSocket: Result := PerformReceiveSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
-    CallShutdownSocket: Result := PerformShutdownSocket(Int64(Argument0), Argument1);
-    CallGetSocketOption: Result := PerformGetSocketOption(Int64(Argument0), Argument1);
-    CallSetSocketOption: Result := PerformSetSocketOption(Int64(Argument0), Argument1, Int64(Argument2));
-    CallGetSocketAddress: Result := PerformGetSocketAddress(Int64(Argument0), Argument1, Argument2);
-    CallWaitForSocket: Result := PerformWaitForSocket(Int64(Argument0), Argument1, Int64(Argument2));
+    CallListenSocket, CallAcceptSocket, CallConnectSocket, CallSendSocket, CallReceiveSocket,
+    CallShutdownSocket, CallGetSocketOption, CallSetSocketOption, CallGetSocketAddress, CallWaitForSocket:
+      { The same calls on a local socket (Processes.LocalSocketCalls). }
+      if IsLocalSocketHandle(Int64(Argument0)) then
+        Result := PerformSocketCallOnLocalSocket(Number, Int64(Argument0), Argument1, Argument2, Argument3)
+      else
+        case Number of
+          CallListenSocket: Result := PerformListenSocket(Int64(Argument0), Argument1);
+          CallAcceptSocket: Result := PerformAcceptSocket(Int64(Argument0), Argument1);
+          CallConnectSocket: Result := PerformConnectSocket(Int64(Argument0), Argument1);
+          CallSendSocket:
+            Result := PerformSendSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
+          CallReceiveSocket:
+            Result := PerformReceiveSocket(Int64(Argument0), Argument1, Argument2, Argument3, Argument4);
+          CallShutdownSocket: Result := PerformShutdownSocket(Int64(Argument0), Argument1);
+          CallGetSocketOption: Result := PerformGetSocketOption(Int64(Argument0), Argument1);
+          CallSetSocketOption: Result := PerformSetSocketOption(Int64(Argument0), Argument1, Int64(Argument2));
+          CallGetSocketAddress: Result := PerformGetSocketAddress(Int64(Argument0), Argument1, Argument2);
+        else
+          Result := PerformWaitForSocket(Int64(Argument0), Argument1, Int64(Argument2));
+        end;
     { --- Network configuration (Processes.NetworkCalls) --- }
     CallListNetworkInterfaces: Result := PerformListNetworkInterfaces(Argument0, Argument1);
     CallConfigureNetworkInterface: Result := PerformConfigureNetworkInterface(Argument0);
@@ -897,6 +910,16 @@ begin
     { Memory and the loader (208-213). }
     CallGetProcessMemoryCharge: Result := PerformGetProcessMemoryCharge(Argument0, Argument1);
     CallGetImageCacheStatistics: Result := PerformGetImageCacheStatistics(Argument0);
+    { Files and local sockets (250-259). }
+    CallReadAt: Result := PerformReadAt(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallWriteAt: Result := PerformWriteAt(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallSyncHandle: Result := PerformSyncHandle(Int64(Argument0), Argument1);
+    CallCreateLocalSocket: Result := PerformCreateLocalSocket(Argument0, Argument1, Argument2);
+    CallBindLocalSocket: Result := PerformBindLocalSocket(Int64(Argument0), Argument1);
+    CallConnectLocalSocket: Result := PerformConnectLocalSocket(Int64(Argument0), Argument1);
+    CallSendLocalMessage: Result := PerformSendLocalMessage(Int64(Argument0), Argument1, Argument2);
+    CallReceiveLocalMessage: Result := PerformReceiveLocalMessage(Int64(Argument0), Argument1, Argument2);
+    CallQueryLocalSocket: Result := PerformQueryLocalSocket(Int64(Argument0), Argument1, Argument2);
   else
     Result := Failure(ErrorNotImplemented);
   end;

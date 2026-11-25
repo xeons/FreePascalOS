@@ -97,6 +97,7 @@ uses
   Processes.FileAttributeCalls,
   Processes.FileLockCalls,
   Processes.SocketCalls,
+  Processes.LocalSocketCalls,
   Processes.Restrictions;
 
 const
@@ -256,6 +257,7 @@ begin
     NodeKindDirectory: UserInformation.Kind := KindDirectory;
     NodeKindSymbolicLink: UserInformation.Kind := KindSymbolicLink;
     NodeKindFifo: UserInformation.Kind := KindFifo;
+    NodeKindSocket: UserInformation.Kind := KindSocket;
   else
     UserInformation.Kind := KindOther;
   end;
@@ -533,6 +535,8 @@ begin
       end;
     HandleKindSocket:
       Result := ReadSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindLocalSocket:
+      Result := ReadLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -627,6 +631,8 @@ begin
       Result := WriteInPieces(WriteToPipeTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindSocket:
       Result := WriteSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindLocalSocket:
+      Result := WriteLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -725,7 +731,7 @@ begin
     HandleKindPort: Result := Abi.SystemCalls.HandleKindPort;
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
-    HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
+    HandleKindSocket, HandleKindLocalSocket: Result := Abi.SystemCalls.HandleKindSocket;
     HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
     HandleKindMutex: Result := Abi.SystemCalls.HandleKindMutex;
   else
@@ -1091,7 +1097,7 @@ var
 begin
   if CallerRestricted(RestrictFileWrites) then
     Exit(Failure(ErrorAccessDenied));
-  Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
+  Error := CopyAttributeChangesFromUser(ChangesAddress, UserChanges);
   if Error = ErrorNone then
     Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then

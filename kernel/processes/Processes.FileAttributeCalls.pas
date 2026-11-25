@@ -39,6 +39,9 @@ uses
 function CallerMaySetAnyAttributes: Boolean;
 { The kernel form of Abi attribute changes ("now" times filled in). }
 procedure ConvertAttributeChanges(const UserChanges: TAbiAttributeChanges; out Changes: TAttributeChanges);
+{ A TAbiAttributeChanges from the program: the nanoseconds only when
+  ChangeFieldNanoseconds says they are there. }
+function CopyAttributeChangesFromUser(ChangesAddress: QWord; out UserChanges: TAbiAttributeChanges): LongInt;
 procedure FillVolumeInformation(Volume: PVolume; out Information: TAbiVolumeInformation);
 
 function PerformSetHandleAttributes(Handle: Int64; ChangesAddress: QWord): Int64;
@@ -51,6 +54,7 @@ uses
   Runtime.Text,
   Memory.KernelHeap,
   Kernel.Clock,
+  Kernel.WallClock,
   Kernel.Mutex,
   FileSystem.Files,
   FileSystem.Security,
@@ -79,6 +83,10 @@ begin
 end;
 
 procedure ConvertAttributeChanges(const UserChanges: TAbiAttributeChanges; out Changes: TAttributeChanges);
+const
+  NanosecondsPerSecond = 1000000000;
+var
+  Now: Int64;
 begin
   { The Abi field flags have the same values as the VFS ones. }
   Changes.Fields := UserChanges.Fields;
@@ -87,13 +95,36 @@ begin
   Changes.GroupId := UserChanges.GroupId;
   Changes.ModificationTime := UserChanges.ModificationTime;
   Changes.AccessTime := UserChanges.AccessTime;
+  Changes.ModificationNanoseconds := 0;
+  Changes.AccessNanoseconds := 0;
+  if (UserChanges.Fields and ChangeFieldNanoseconds) <> 0 then
+  begin
+    Changes.ModificationNanoseconds := UserChanges.ModificationNanoseconds mod NanosecondsPerSecond;
+    Changes.AccessNanoseconds := UserChanges.AccessNanoseconds mod NanosecondsPerSecond;
+  end;
   Changes.TimesAreNow := (UserChanges.Fields and ChangeFieldTimesAreNow) <> 0;
   if Changes.TimesAreNow then
   begin
-    Changes.Fields := Changes.Fields and not ChangeFieldTimesAreNow;
-    Changes.ModificationTime := CurrentWallClockTime;
+    Now := WallClockNanoseconds;
+    Changes.Fields := (Changes.Fields and not ChangeFieldTimesAreNow) or ChangeFieldNanoseconds;
+    Changes.ModificationTime := Now div NanosecondsPerSecond;
+    Changes.ModificationNanoseconds := LongWord(Now mod NanosecondsPerSecond);
     Changes.AccessTime := Changes.ModificationTime;
+    Changes.AccessNanoseconds := Changes.ModificationNanoseconds;
   end;
+end;
+
+function CopyAttributeChangesFromUser(ChangesAddress: QWord; out UserChanges: TAbiAttributeChanges): LongInt;
+var
+  BaseSize: QWord;
+begin
+  FillMemory(@UserChanges, SizeOf(UserChanges), 0);
+  { Programs built before the nanoseconds pass the shorter record. }
+  BaseSize := PtrUInt(@UserChanges.ModificationNanoseconds) - PtrUInt(@UserChanges);
+  Result := CopyFromUser(@UserChanges, ChangesAddress, BaseSize);
+  if (Result = ErrorNone) and ((UserChanges.Fields and ChangeFieldNanoseconds) <> 0) then
+    Result := CopyFromUser(@UserChanges.ModificationNanoseconds, ChangesAddress + BaseSize,
+      SizeOf(UserChanges) - BaseSize);
 end;
 
 procedure FillVolumeInformation(Volume: PVolume; out Information: TAbiVolumeInformation);
@@ -117,7 +148,7 @@ var
   Kind: THandleKind;
   Error: LongInt;
 begin
-  Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
+  Error := CopyAttributeChangesFromUser(ChangesAddress, UserChanges);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   { A reference, so that another thread closing the handle meanwhile

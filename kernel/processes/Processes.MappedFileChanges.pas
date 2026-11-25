@@ -266,7 +266,7 @@ end;
 type
   TWriteBackChoice = (WriteBackAll, WriteBackPending, WriteBackAged);
 
-procedure WriteBackChosen(Volume: Pointer; Choice: TWriteBackChoice);
+procedure WriteBackChosen(Volume: Pointer; NodeNumber: QWord; AllOfVolume: Boolean; Choice: TWriteBackChoice);
 var
   Files: PPMappedFile;
   Count: Integer;
@@ -276,7 +276,7 @@ var
   Wanted: Boolean;
   Now: QWord;
 begin
-  if not ListMappedFiles(Volume, 0, True, Files, Count) then
+  if not ListMappedFiles(Volume, NodeNumber, AllOfVolume, Files, Count) then
     Exit;
   Now := UptimeMilliseconds;
   for Index := 0 to Count - 1 do
@@ -309,12 +309,12 @@ begin
   if not MappedFileWriteBackRequested then
     Exit;
   MappedFileWriteBackRequested := False;
-  WriteBackChosen(nil, WriteBackPending);
+  WriteBackChosen(nil, 0, True, WriteBackPending);
 end;
 
 procedure WriteBackMappedFilesOf(Volume: Pointer);
 begin
-  WriteBackChosen(Volume, WriteBackAll);
+  WriteBackChosen(Volume, 0, True, WriteBackAll);
 end;
 
 procedure VolumeSyncing(Volume: PVolume);
@@ -322,11 +322,17 @@ begin
   WriteBackMappedFilesOf(Volume);
 end;
 
+{ fsync of one file: its pages shared writable mappings changed. }
+procedure FileSyncing(Volume: PVolume; NodeNumber: QWord);
+begin
+  WriteBackChosen(Volume, NodeNumber, False, WriteBackAll);
+end;
+
 { Each round of the block cache's background writer. }
 procedure BackgroundRound;
 begin
   DrainMappedFileReleases;
-  WriteBackChosen(nil, WriteBackAged);
+  WriteBackChosen(nil, 0, True, WriteBackAged);
 end;
 
 procedure InitializeMappedFileChanges;
@@ -334,6 +340,7 @@ begin
   AddFileChangingHook(@FileChanging);
   AddFileWrittenHook(@FileWritten);
   AddVolumeSyncHook(@VolumeSyncing);
+  AddFileSyncHook(@FileSyncing);
   SetResidentFileReader(@ReadResidentBytes);
   RegisterCacheWriterTask(@BackgroundRound);
 end;

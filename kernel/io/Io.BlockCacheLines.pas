@@ -74,6 +74,9 @@ type
     { Set as the line joins the dirty list (its lock held too). }
     DirtySequence: QWord;
     DirtySince: QWord;
+    { Whose change dirtied the line (Io.BlockCache's CacheTag*: a
+      file's tag, none, or shared by several); kept with DirtySequence. }
+    DirtyTag: QWord;
     Chunk: PLineChunk;
     { Protected by the line's own lock; the page changes only while the
       line is unpinned, under the cache lock. }

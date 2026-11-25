@@ -170,7 +170,12 @@ type
     file left without names is freed once its last real user closes it,
     as on Unix. The hook may close files. }
   TFileRemovedHook = procedure(Volume: PVolume; NodeNumber: QWord);
+  { Told before one file is written back (SyncFile), without the
+    volume's lock: its pages kept elsewhere (shared writable mappings)
+    are written to it first. }
+  TFileSyncHook = procedure(Volume: PVolume; NodeNumber: QWord);
 
+procedure AddFileSyncHook(Hook: TFileSyncHook);
 procedure AddFileChangedHook(Hook: TFileChangedHook);
 procedure AddFileChangingHook(Hook: TFileChangingHook);
 procedure AddFileWrittenHook(Hook: TFileWrittenHook);
@@ -188,6 +193,21 @@ procedure CloseFile(OpenedFile: POpenFile);
 
 function ReadFromFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesRead: QWord): TFileSystemStatus;
+{ pread and pwrite: like ReadFromFile and WriteToFile at Offset, the
+  file's position left alone (an appending open file writes at Offset
+  too). Each runs under the volume's lock, so it is atomic towards the
+  other calls on the file. }
+function ReadFromFileAtPosition(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesRead: QWord): TFileSystemStatus;
+function WriteToFileAtPosition(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesWritten: QWord): TFileSystemStatus;
+{ fsync: the file's pages in shared writable mappings are written to it
+  (TFileSyncHook), then the block cache writes back the lines the
+  file's changes dirtied (tagged with it, see BeginNodeChange) and those
+  shared with other changes, and flushes the disk. Other files' dirty
+  blocks stay for the background writer. DataOnly (fdatasync) does the
+  same at present. }
+function SyncFile(OpenedFile: POpenFile; DataOnly: Boolean): TFileSystemStatus;
 { Reads at Offset what the file system holds (never from mapped file
   pages, see TResidentFileReader), leaving the file's position alone
   (several readers of one open file: mapped file pages). }
@@ -234,6 +254,9 @@ function CreateDirectory(Path: PChar): TFileSystemStatus;
 function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
 { Creates a named pipe. }
 function CreateFifo(Path: PChar): TFileSystemStatus;
+{ Creates the node a local socket is bound to (FAT and exFAT have
+  none: StatusUnsupported). }
+function CreateSocketNode(Path: PChar): TFileSystemStatus;
 { Removes a file, symbolic link or empty directory. }
 function RemovePath(Path: PChar): TFileSystemStatus;
 { Moves or renames within one volume (StatusCrossesVolumes otherwise). }
@@ -972,7 +995,9 @@ begin
         Result := StatusAccessDenied
       else
       begin
+        BeginNodeChange(Volume, Target^.Parent);
         Result := Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], NodeKindFile, nil, Created);
+        EndNodeChange(Volume);
         if Result = StatusSuccess then
         begin
           Node := InternNode(Volume, Created);
@@ -1014,7 +1039,26 @@ var
   FileWrittenHookCount: Integer = 0;
   VolumeSyncHooks: array[0..MaximumFileChangeHooks - 1] of TVolumeSyncHook;
   VolumeSyncHookCount: Integer = 0;
+  FileSyncHooks: array[0..MaximumFileChangeHooks - 1] of TFileSyncHook;
+  FileSyncHookCount: Integer = 0;
   ResidentFileReader: TResidentFileReader = nil;
+
+procedure AddFileSyncHook(Hook: TFileSyncHook);
+begin
+  if FileSyncHookCount >= MaximumFileChangeHooks then
+    Exit;
+  FileSyncHooks[FileSyncHookCount] := Hook;
+  Inc(FileSyncHookCount);
+end;
+
+{ Caller holds no volume lock. }
+procedure CallFileSyncHooks(Volume: PVolume; NodeNumber: QWord);
+var
+  Index: Integer;
+begin
+  for Index := 0 to FileSyncHookCount - 1 do
+    FileSyncHooks[Index](Volume, NodeNumber);
+end;
 
 procedure AddFileWrittenHook(Hook: TFileWrittenHook);
 begin
@@ -1158,7 +1202,9 @@ begin
        (Node^.Information.SizeInBytes <> 0) then
     begin
       CallFileChangingHooks(Volume, Node^.Information.NodeNumber, 0, FileChangeToEnd);
+      BeginNodeChange(Volume, Node);
       Result := Volume^.Driver^.SetFileSize(Node, 0);
+      EndNodeChange(Volume);
       CallFileWrittenHooks(Volume, Node^.Information.NodeNumber, 0, FileChangeToEnd);
       if (Result = StatusSuccess) and (Trail <> nil) and WatchesExist then
       begin
@@ -1268,6 +1314,20 @@ begin
     Result := StatusSuccess;
 end;
 
+{ Reads at Offset, through the pages mapped files hold. Volume lock
+  held. }
+function ReadNodeLocked(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesRead: QWord): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  Volume := OpenedFile^.Volume;
+  if (OpenedFile^.Node^.MappedFileCount > 0) and Assigned(ResidentFileReader) then
+    Result := ReadThroughMappedPages(Volume, OpenedFile^.Node, Offset, Buffer, ByteCount, BytesRead)
+  else
+    Result := Volume^.Driver^.ReadFile(OpenedFile^.Node, Offset, Buffer, ByteCount, BytesRead);
+end;
+
 function ReadFromFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesRead: QWord): TFileSystemStatus;
 var
@@ -1281,14 +1341,25 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  if (OpenedFile^.Node^.MappedFileCount > 0) and Assigned(ResidentFileReader) then
-    Result := ReadThroughMappedPages(Volume, OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
-      BytesRead)
-  else
-    Result := Volume^.Driver^.ReadFile(OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
-      BytesRead);
+  Result := ReadNodeLocked(OpenedFile, OpenedFile^.Position, Buffer, ByteCount, BytesRead);
   if Result = StatusSuccess then
     OpenedFile^.Position := OpenedFile^.Position + BytesRead;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+function ReadFromFileAtPosition(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesRead: QWord): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  BytesRead := 0;
+  if IsRootDirectory(OpenedFile) or (OpenedFile^.Node^.Information.Kind = NodeKindDirectory) then
+    Exit(StatusIsADirectory);
+  Volume := OpenedFile^.Volume;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ReadNodeLocked(OpenedFile, Offset, Buffer, ByteCount, BytesRead);
   ReleaseMutex(Volume^.Lock);
 end;
 
@@ -1375,6 +1446,22 @@ begin
   ReleaseMutex(OpenedFile^.Volume^.Lock);
 end;
 
+{ Writes at WriteOffset (the file grows as needed), telling the hooks.
+  Volume lock held. }
+function WriteNodeLocked(OpenedFile: POpenFile; WriteOffset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesWritten: QWord): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  Volume := OpenedFile^.Volume;
+  CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, WriteOffset, ByteCount);
+  BeginNodeChange(Volume, OpenedFile^.Node);
+  Result := Volume^.Driver^.WriteFile(OpenedFile^.Node, WriteOffset, Buffer, ByteCount, BytesWritten);
+  EndNodeChange(Volume);
+  if BytesWritten > 0 then
+    CallFileWrittenHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, WriteOffset, BytesWritten);
+end;
+
 function WriteToFile(OpenedFile: POpenFile; Buffer: Pointer; ByteCount: QWord;
   out BytesWritten: QWord): TFileSystemStatus;
 var
@@ -1396,15 +1483,33 @@ begin
   if (OpenedFile^.Flags and OpenAppend) <> 0 then
     OpenedFile^.Position := OpenedFile^.Node^.Information.SizeInBytes;
   WriteOffset := OpenedFile^.Position;
-  CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, WriteOffset, ByteCount);
-  Result := Volume^.Driver^.WriteFile(OpenedFile^.Node, OpenedFile^.Position, Buffer, ByteCount,
-    BytesWritten);
-  if BytesWritten > 0 then
-    CallFileWrittenHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, WriteOffset, BytesWritten);
+  Result := WriteNodeLocked(OpenedFile, WriteOffset, Buffer, ByteCount, BytesWritten);
   OpenedFile^.Position := OpenedFile^.Position + BytesWritten;
   ReleaseMutex(Volume^.Lock);
   if BytesWritten > 0 then
     NoteFileChanged(OpenedFile, WriteOffset, BytesWritten);
+end;
+
+function WriteToFileAtPosition(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
+  out BytesWritten: QWord): TFileSystemStatus;
+var
+  Volume: PVolume;
+begin
+  BytesWritten := 0;
+  if IsRootDirectory(OpenedFile) or (OpenedFile^.Node^.Information.Kind = NodeKindDirectory) then
+    Exit(StatusIsADirectory);
+  if not WantsWriteAccess(OpenedFile^.Flags) then
+    Exit(StatusReadOnly);
+  if ByteCount = 0 then
+    Exit(StatusSuccess);
+  Volume := OpenedFile^.Volume;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := WriteNodeLocked(OpenedFile, Offset, Buffer, ByteCount, BytesWritten);
+  ReleaseMutex(Volume^.Lock);
+  if BytesWritten > 0 then
+    NoteFileChanged(OpenedFile, Offset, BytesWritten);
 end;
 
 function WriteToFileWithinSize(OpenedFile: POpenFile; Offset: QWord; Buffer: Pointer; ByteCount: QWord;
@@ -1430,7 +1535,9 @@ begin
   if ByteCount > 0 then
   begin
     CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, Offset, ByteCount);
+    BeginNodeChange(Volume, OpenedFile^.Node);
     Result := Volume^.Driver^.WriteFile(OpenedFile^.Node, Offset, Buffer, ByteCount, BytesWritten);
+    EndNodeChange(Volume);
     if BytesWritten > 0 then
       CallFileWrittenHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, Offset, BytesWritten);
   end;
@@ -1458,7 +1565,9 @@ begin
   if NewSize < ChangeStart then
     ChangeStart := NewSize;
   CallFileChangingHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, ChangeStart, FileChangeToEnd);
+  BeginNodeChange(Volume, OpenedFile^.Node);
   Result := Volume^.Driver^.SetFileSize(OpenedFile^.Node, NewSize);
+  EndNodeChange(Volume);
   CallFileWrittenHooks(Volume, OpenedFile^.Node^.Information.NodeNumber, ChangeStart, FileChangeToEnd);
   ReleaseMutex(Volume^.Lock);
   NoteFileChanged(OpenedFile, 0, FileChangeToEnd);
@@ -1711,8 +1820,12 @@ begin
       if not MayChangeDirectory(Target^.Parent) then
         Result := StatusAccessDenied
       else
+      begin
+        BeginNodeChange(Target^.Volume, Target^.Parent);
         Result := Target^.Volume^.Driver^.CreateNode(Target^.Parent, @Target^.Name[0], Kind,
           LinkTarget, Created);
+        EndNodeChange(Target^.Volume);
+      end;
       if Result = StatusSuccess then
       begin
         Created := InternNode(Target^.Volume, Created);
@@ -1743,6 +1856,11 @@ begin
   Result := CreateNamedNode(Path, NodeKindFifo, nil);
 end;
 
+function CreateSocketNode(Path: PChar): TFileSystemStatus;
+begin
+  Result := CreateNamedNode(Path, NodeKindSocket, nil);
+end;
+
 function CreateSymbolicLink(Path: PChar; Target: PChar): TFileSystemStatus;
 begin
   if (Target = nil) or (Target^ = #0) or (TextLength(Target) >= MaximumPathBytes) then
@@ -1760,10 +1878,17 @@ begin
   if IsMountPoint(Volume, Node) then
     Exit(StatusInUse);
   if Node^.ReferenceCount <= 1 then
-    Exit(Volume^.Driver^.RemoveNode(Parent, Name, Node));
+  begin
+    BeginNodeChange(Volume, Parent);
+    Result := Volume^.Driver^.RemoveNode(Parent, Name, Node);
+    EndNodeChange(Volume);
+    Exit;
+  end;
   if (Node^.Information.Kind = NodeKindDirectory) or not Assigned(Volume^.Driver^.RemoveOpenNode) then
     Exit(StatusInUse);
+  BeginNodeChange(Volume, Parent);
   Result := Volume^.Driver^.RemoveOpenNode(Parent, Name, Node);
+  EndNodeChange(Volume);
   if (Result = StatusSuccess) and Node^.RemovalPending then
     ForgetRemovedNode(Node);
 end;
@@ -1880,8 +2005,10 @@ begin
   if Result = StatusSuccess then
   begin
     ReportNameChange(Target, WatchChangeRemoved, Existing);
+    BeginSharedChange(Volume);
     Result := Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node, Target^.Parent,
       @Target^.Name[0]);
+    EndNodeChange(Volume);
   end;
   if Assigned(Volume^.Driver^.EndAtomicChange) then
   begin
@@ -2039,8 +2166,12 @@ begin
           else
             { Includes changing only the letter case of a name on file
               systems that ignore case, where the lookup above finds Node. }
+          begin
+            BeginSharedChange(Source^.Volume);
             Result := Source^.Volume^.Driver^.RenameNode(Source^.Parent, @Source^.Name[0], Node,
               Target^.Parent, @Target^.Name[0]);
+            EndNodeChange(Source^.Volume);
+          end;
           if Result = StatusSuccess then
             ReportRename(Source, Target, Node, OldNodeNumber);
         end;
@@ -2075,7 +2206,9 @@ begin
     Exit;
   if Filtered.Fields = 0 then
     Exit(StatusSuccess);
+  BeginNodeChange(Volume, Node);
   Result := Volume^.Driver^.SetAttributes(Node, Filtered);
+  EndNodeChange(Volume);
   if Result = StatusSuccess then
     MapOwnerlessNode(Node, (Filtered.Fields and AttributeChangeMode) <> 0);
 end;
@@ -2194,7 +2327,9 @@ begin
         end
         else
         begin
+          BeginSharedChange(Target^.Volume);
           Result := Target^.Volume^.Driver^.CreateHardLink(Target^.Parent, @Target^.Name[0], Node);
+          EndNodeChange(Target^.Volume);
           if Result = StatusSuccess then
             ReportNameChange(Target, WatchChangeCreated, Node);
         end;
@@ -2444,6 +2579,30 @@ begin
     Result := Volume^.Driver^.Sync(Volume);
   ReleaseMutex(Volume^.Lock);
   if (Volume^.Device <> nil) and not FlushCachedDevice(Volume^.Device) and (Result = StatusSuccess) then
+    Result := StatusIoError;
+end;
+
+function SyncFile(OpenedFile: POpenFile; DataOnly: Boolean): TFileSystemStatus;
+var
+  Volume: PVolume;
+  Tag: QWord;
+begin
+  if IsRootDirectory(OpenedFile) then
+    Exit(StatusSuccess);
+  Volume := OpenedFile^.Volume;
+  CallFileSyncHooks(Volume, OpenedFile^.Node^.Information.NodeNumber);
+  { The volume lock is only taken to see the volume is still there: what
+    the file's changes dirtied is in the cache, and a change made while
+    the lines are written back is not part of this sync. }
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Tag := NodeChangeTag(OpenedFile^.Node);
+  ReleaseMutex(Volume^.Lock);
+  { Memory volumes keep everything where it is. }
+  if Volume^.Device = nil then
+    Exit(StatusSuccess);
+  if not FlushCachedTag(Volume^.Device, Tag) then
     Result := StatusIoError;
 end;
 

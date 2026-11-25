@@ -81,6 +81,10 @@ uses
 
 const
   CacheLineSize = 4096;
+  { Dirty line tags (CachedWriteTagged): no change in particular, and
+    several changes (written back by every FlushCachedTag). }
+  CacheTagNone = 0;
+  CacheTagShared = High(QWord);
 
 type
   TBlockCacheStatistics = record
@@ -123,6 +127,19 @@ function CachedRead(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
   cache (written back later). Returns False on a device error. }
 function CachedWrite(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
   Buffer: Pointer): Boolean;
+{ CachedWrite (zeros if Buffer is nil) for the change Tag stands for
+  (a file's, CacheTagNone, CacheTagShared): the lines it dirties carry
+  the tag - or CacheTagShared once a second one dirties them - so that
+  FlushCachedTag writes back only that file's. }
+function CachedWriteTagged(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer; Tag: QWord): Boolean;
+{ Writes back the dirty lines of Device tagged Tag, and those shared by
+  several changes, then flushes the device. True when all of it is
+  durable. }
+function FlushCachedTag(Device: PBlockDevice; Tag: QWord): Boolean;
+{ Dirty lines of Device tagged Tag (shared ones not counted), for
+  tests. }
+function CountDirtyLinesTagged(Device: PBlockDevice; Tag: QWord): QWord;
 
 { Writes ByteCount zero bytes at ByteOffset. }
 function CachedWriteZeros(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
@@ -339,12 +356,22 @@ begin
 end;
 
 { The line's data became dirty or clean (its lock held). }
-procedure MarkLineDirty(Line: PCacheLine);
+{ Line's lock held. A line dirtied again for another change is shared
+  by both. }
+procedure MarkLineDirty(Line: PCacheLine; Tag: QWord);
 begin
   if Line^.IsDirty then
+  begin
+    if Line^.DirtyTag = Tag then
+      Exit;
+    LockCache;
+    Line^.DirtyTag := CacheTagShared;
+    UnlockCache;
     Exit;
+  end;
   Line^.IsDirty := True;
   LockCache;
+  Line^.DirtyTag := Tag;
   NoteLineDirtiedLocked(Line, ClockTickCount);
   UnlockCache;
 end;
@@ -731,7 +758,7 @@ end;
 
 { Shared by CachedWrite and CachedWriteZeros: Source = nil writes zeros. }
 function WriteIntoCache(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
-  Source: PByte): Boolean;
+  Source: PByte; Tag: QWord): Boolean;
 var
   OffsetInLine: QWord;
   ChunkBytes: QWord;
@@ -759,7 +786,7 @@ begin
     else
       ZeroMemory(Line^.Data + OffsetInLine, ChunkBytes);
     Line^.IsLoaded := True;
-    MarkLineDirty(Line);
+    MarkLineDirty(Line, Tag);
     ReleaseLine(Line);
     ByteOffset := ByteOffset + ChunkBytes;
     ByteCount := ByteCount - ChunkBytes;
@@ -772,12 +799,18 @@ function CachedWrite(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
 begin
   if (Buffer = nil) and (ByteCount > 0) then
     Exit(False);
-  Result := WriteIntoCache(Device, ByteOffset, ByteCount, PByte(Buffer));
+  Result := WriteIntoCache(Device, ByteOffset, ByteCount, PByte(Buffer), CacheTagNone);
 end;
 
 function CachedWriteZeros(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
 begin
-  Result := WriteIntoCache(Device, ByteOffset, ByteCount, nil);
+  Result := WriteIntoCache(Device, ByteOffset, ByteCount, nil, CacheTagNone);
+end;
+
+function CachedWriteTagged(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer; Tag: QWord): Boolean;
+begin
+  Result := WriteIntoCache(Device, ByteOffset, ByteCount, PByte(Buffer), Tag);
 end;
 
 function PinCachedPage(Device: PBlockDevice; ByteOffset: QWord; Load: Boolean;
@@ -812,7 +845,7 @@ begin
   if Line = nil then
     Exit;
   if Dirtied then
-    MarkLineDirty(Line);
+    MarkLineDirty(Line, CacheTagShared);
   ReleaseLine(Line);
   Page.Line := nil;
 end;
@@ -892,8 +925,9 @@ end;
 
 { Pins up to WriteBatchSize dirty lines of one device (of Device, if not
   nil) that became dirty before sequence StopSequence and at or before
-  tick DirtyBefore. }
-procedure GatherBatch(Device: PBlockDevice; StopSequence, DirtyBefore: QWord; out Batch: TWriteBatch);
+  tick DirtyBefore; with ByTag only those tagged Tag or shared. }
+procedure GatherBatch(Device: PBlockDevice; StopSequence, DirtyBefore: QWord; ByTag: Boolean; Tag: QWord;
+  out Batch: TWriteBatch);
 var
   Line: PCacheLine;
 begin
@@ -907,7 +941,8 @@ begin
     if (Line^.DirtySequence >= StopSequence) or (Line^.DirtySince > DirtyBefore) then
       Break;
     if ((Device = nil) or (Line^.Device = Device)) and
-       ((Batch.Device = nil) or (Line^.Device = Batch.Device)) then
+       ((Batch.Device = nil) or (Line^.Device = Batch.Device)) and
+       (not ByTag or (Line^.DirtyTag = Tag) or (Line^.DirtyTag = CacheTagShared)) then
     begin
       Inc(Line^.PinCount);
       Batch.Device := Line^.Device;
@@ -947,7 +982,7 @@ end;
 { Writes back the dirty lines of Device (all devices if nil) that have
   been dirty since at least DirtyBefore ticks and were dirty when this
   began, WriteBatchSize of a device at once. }
-function WriteBackLines(Device: PBlockDevice; DirtyBefore: QWord): Boolean;
+function WriteBackChosenLines(Device: PBlockDevice; DirtyBefore: QWord; ByTag: Boolean; Tag: QWord): Boolean;
 var
   Batch: TWriteBatch;
   Writes: PBlockWrite;
@@ -961,7 +996,7 @@ begin
   StopSequence := NextDirtySequenceLocked;
   UnlockCache;
   repeat
-    GatherBatch(Device, StopSequence, DirtyBefore, Batch);
+    GatherBatch(Device, StopSequence, DirtyBefore, ByTag, Tag, Batch);
     if Batch.Count = 0 then
       Break;
     LockBatch(Batch);
@@ -974,10 +1009,37 @@ begin
   FreeKernelMemory(Writes);
 end;
 
+function WriteBackLines(Device: PBlockDevice; DirtyBefore: QWord): Boolean;
+begin
+  Result := WriteBackChosenLines(Device, DirtyBefore, False, CacheTagNone);
+end;
+
 function FlushCachedDevice(Device: PBlockDevice): Boolean;
 begin
   Result := WriteBackLines(Device, High(QWord));
   Result := FlushBlockDevice(Device) and Result;
+end;
+
+function FlushCachedTag(Device: PBlockDevice; Tag: QWord): Boolean;
+begin
+  Result := WriteBackChosenLines(Device, High(QWord), True, Tag);
+  Result := FlushBlockDevice(Device) and Result;
+end;
+
+function CountDirtyLinesTagged(Device: PBlockDevice; Tag: QWord): QWord;
+var
+  Line: PCacheLine;
+begin
+  Result := 0;
+  LockCache;
+  Line := FirstDirtyLineLocked;
+  while Line <> nil do
+  begin
+    if (Line^.Device = Device) and (Line^.DirtyTag = Tag) then
+      Inc(Result);
+    Line := NextDirtyLineLocked(Line);
+  end;
+  UnlockCache;
 end;
 
 function FlushAllCachedDevices: Boolean;

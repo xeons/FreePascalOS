@@ -57,6 +57,10 @@ function OpenDeviceDirectory(out OpenFile: PDeviceFile): LongInt;
 function ReadDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
 function WriteDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;
 function ControlDevice(OpenFile: PDeviceFile; Code: QWord; Argument: QWord): Int64;
+{ pread and pwrite of a block device: at Offset, its position left
+  alone. ErrorIllegalSeek for other devices. }
+function ReadDeviceAt(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord; Offset: QWord): Int64;
+function WriteDeviceAt(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord; Offset: QWord): Int64;
 { Asks the driver for the device memory a program may map: Length bytes
   at Offset (page aligned). Returns ErrorNone or an Abi error code. }
 function QueryDeviceMapping(OpenFile: PDeviceFile; Offset, Length: QWord; out Physical: QWord;
@@ -159,7 +163,9 @@ begin
   Result := ErrorNone;
 end;
 
-function Transfer(OpenFile: PDeviceFile; Operation: TIoFunction; Buffer: Pointer; Length: QWord): Int64;
+{ One request at Offset; returns the bytes moved or minus an Abi error. }
+function TransferAt(OpenFile: PDeviceFile; Operation: TIoFunction; Buffer: Pointer; Length: QWord;
+  Offset: QWord): Int64;
 var
   Request: TIoRequest;
   Error: LongInt;
@@ -171,13 +177,32 @@ begin
   Request.OpenFile := OpenFile;
   Request.Buffer := Buffer;
   Request.Length := Length;
-  Request.Offset := OpenFile^.Position;
+  Request.Offset := Offset;
   Error := CallDriverAndWaitBounded(OpenFile^.Device, Request, True);
   if Error <> ErrorNone then
     Exit(-Int64(Error));
-  if OpenFile^.Device^.Kind = DeviceKindBlock then
-    OpenFile^.Position := OpenFile^.Position + QWord(Request.Information);
   Result := Request.Information;
+end;
+
+function Transfer(OpenFile: PDeviceFile; Operation: TIoFunction; Buffer: Pointer; Length: QWord): Int64;
+begin
+  Result := TransferAt(OpenFile, Operation, Buffer, Length, OpenFile^.Position);
+  if (Result > 0) and (OpenFile^.Device^.Kind = DeviceKindBlock) then
+    OpenFile^.Position := OpenFile^.Position + QWord(Result);
+end;
+
+function ReadDeviceAt(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord; Offset: QWord): Int64;
+begin
+  if OpenFile^.IsDirectory or (OpenFile^.Device^.Kind <> DeviceKindBlock) then
+    Exit(-Int64(ErrorIllegalSeek));
+  Result := TransferAt(OpenFile, IoFunctionRead, Buffer, Length, Offset);
+end;
+
+function WriteDeviceAt(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord; Offset: QWord): Int64;
+begin
+  if OpenFile^.IsDirectory or (OpenFile^.Device^.Kind <> DeviceKindBlock) then
+    Exit(-Int64(ErrorIllegalSeek));
+  Result := TransferAt(OpenFile, IoFunctionWrite, Buffer, Length, Offset);
 end;
 
 function ReadDevice(OpenFile: PDeviceFile; Buffer: Pointer; Length: QWord): Int64;

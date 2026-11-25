@@ -88,6 +88,9 @@ type
     HandleKindSemaphore,
     { A mutex (Processes.ObjectCalls). }
     HandleKindMutex,
+    { A local (Unix domain) socket (Processes.LocalSockets); told to
+      programs as HandleKindSocket. }
+    HandleKindLocalSocket,
     { Held for an object about to be stored (ReserveHandle): taken, but
       not usable and never looked up. }
     HandleKindReserved
@@ -173,7 +176,8 @@ implementation
 uses
   Memory.KernelHeap,
   Objects.Manager,
-  Io.Pipes;
+  Io.Pipes,
+  Processes.LocalSockets;
 
 procedure InitializeHandleTable(out Table: THandleTable);
 var
@@ -201,6 +205,8 @@ begin
   case Kind of
     HandleKindPipeReadEnd: OpenPipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: OpenPipeEnd(PPipe(ObjectBody), True);
+    { Local sockets too: closing the last one disconnects the peer. }
+    HandleKindLocalSocket: NoteLocalSocketOpened(PLocalSocket(ObjectBody));
   end;
 end;
 
@@ -209,6 +215,7 @@ begin
   case Kind of
     HandleKindPipeReadEnd: ClosePipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: ClosePipeEnd(PPipe(ObjectBody), True);
+    HandleKindLocalSocket: NoteLocalSocketClosed(PLocalSocket(ObjectBody));
   end;
 end;
 

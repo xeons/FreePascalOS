@@ -78,7 +78,8 @@ uses
   Processes.Channels,
   Processes.ObjectCalls,
   FileSystem.Watches,
-  Network.Sockets;
+  Network.Sockets,
+  Processes.LocalSockets;
 
 var
   { Signaled from the start and never reset: what files wait on. }
@@ -128,6 +129,7 @@ begin
     HandleKindWatch: Result := @PWatch(ObjectBody)^.Ready;
     { Data, a connection to accept, the end of the stream or an error. }
     HandleKindSocket: Result := @PSocket(ObjectBody)^.Readable;
+    HandleKindLocalSocket: Result := @PLocalSocket(ObjectBody)^.Readable;
     HandleKindDevice:
       Result := DeviceReadinessEvent(PDeviceFile(ObjectBody));
   else

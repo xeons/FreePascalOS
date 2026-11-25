@@ -77,6 +77,7 @@ const
   ModeTypeRegular = $8000;
   ModeTypeSymbolicLink = $A000;
   ModeTypeFifo = $1000;
+  ModeTypeSocket = $C000;
   ModePermissionMask = $0FFF;
 
   InodeFlagIndexedDirectory = $00001000;
@@ -114,6 +115,7 @@ const
   FileTypeRegular = 1;
   FileTypeDirectory = 2;
   FileTypeFifo = 5;
+  FileTypeSocket = 6;
   FileTypeSymbolicLink = 7;
 
   { Group descriptor layout. }

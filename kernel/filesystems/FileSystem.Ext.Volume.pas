@@ -498,6 +498,7 @@ begin
     ModeTypeRegular: Node^.Common.Information.Kind := NodeKindFile;
     ModeTypeSymbolicLink: Node^.Common.Information.Kind := NodeKindSymbolicLink;
     ModeTypeFifo: Node^.Common.Information.Kind := NodeKindFifo;
+    ModeTypeSocket: Node^.Common.Information.Kind := NodeKindSocket;
   else
     Node^.Common.Information.Kind := NodeKindOther;
   end;
