@@ -28,7 +28,7 @@
   ones both sides know, always including VIRTIO_F_VERSION_1), set up its
   queues, then tell it the driver is ready.
 
-  Queues are "split" virtqueues: a descriptor table of buffers (physical
+  Queues are "split" virtqueues: a descriptor table of buffers (device
   address, length, flags, next), an available ring where the driver puts
   the first descriptor of each request, and a used ring where the device
   puts what it has finished. Each part gets a page of its own (virtio
@@ -37,6 +37,16 @@
   TakeVirtqueueCompletion: the block driver), or offers many chains at
   once and takes each finished one back by its head (OfferVirtqueueChain,
   NotifyVirtqueue, TakeVirtqueueUsedChain: the network driver).
+
+  DMA (Io.Dma): the device's attributes are read when it is opened
+  (Device.Dma); the queue parts are shared DMA memory and the device is
+  given their device addresses. Drivers give it device addresses for
+  their buffers too (AllocateDmaBuffer, or TranslateDmaAddress for
+  memory found some other way) and bracket streaming buffers with the
+  cache maintenance calls. VIRTIO_F_ACCESS_PLATFORM is accepted when
+  offered: the driver does give translated addresses. A used ring entry
+  whose id is not a descriptor of the queue is skipped
+  (Drivers.VirtioUsedRing); the lengths are the drivers' to clamp.
 
   Interrupts come by MSI-X: queue interrupts go through table entry 0,
   and configuration changes too if the driver asks for them (a network
@@ -51,6 +61,7 @@ interface
 
 uses
   Io.Pci,
+  Io.Dma,
   Kernel.Interrupts;
 
 const
@@ -62,6 +73,9 @@ const
   VirtioDeviceTypeGpu = 16;
 
   VirtioFeatureVersion1 = 32;
+  { The device reaches memory the platform's way (translated, behind an
+    IOMMU or bus windows). }
+  VirtioFeatureAccessPlatform = 33;
 
   VirtqueueDescriptorNext = 1;
   VirtqueueDescriptorWrite = 2;
@@ -88,9 +102,9 @@ type
     Used: PByte;
     NotifyAddress: PWord;
     LastSeenUsed: Word;
-    DescriptorsPhysical: QWord;
-    AvailablePhysical: QWord;
-    UsedPhysical: QWord;
+    DescriptorsMemory: TDmaBuffer;
+    AvailableMemory: TDmaBuffer;
+    UsedMemory: TDmaBuffer;
   end;
 
   PPVirtqueue = ^PVirtqueue;
@@ -98,6 +112,8 @@ type
   PVirtioDevice = ^TVirtioDevice;
   TVirtioDevice = record
     Pci: PPciDevice;
+    { What the device reaches by DMA and how (GetPciDmaAttributes). }
+    Dma: TDmaAttributes;
     Common: PByte;
     NotifyBase: PByte;
     NotifyMultiplier: LongWord;
@@ -159,10 +175,11 @@ uses
   Runtime.Memory,
   Runtime.Atomic,
   Kernel.Arch.Cpu,
-  Memory.Layout,
-  Memory.PhysicalPages,
+  Kernel.Clock,
   Memory.DeviceMapping,
-  Io.PciMessageInterrupts;
+  Io.PciMessageInterrupts,
+  Io.PlatformDevices,
+  Drivers.VirtioUsedRing;
 
 const
   PciConfigurationCapabilitiesPointer = $34;
@@ -204,6 +221,13 @@ const
   StatusFailed = 128;
 
   NoVector = $FFFF;
+
+  { A reset (status written 0) must read back as 0 within this. }
+  ResetTimeoutNanoseconds = 1000000000;
+
+  { Each part of a queue (descriptors, available ring, used ring) gets
+    this much; MaximumQueueSize entries of each fit. }
+  QueuePartBytes = 4096;
 
 { --- Register access ------------------------------------------------------ }
 
@@ -272,6 +296,26 @@ begin
     Result := Result + WithinPage;
 end;
 
+{ Resets the device (a bounded wait for it to say so), then acknowledges
+  it. False if the reset did not finish. }
+function ResetAndAcknowledge(var Device: TVirtioDevice): Boolean;
+var
+  Deadline: QWord;
+begin
+  Result := False;
+  Write8(Device.Common, CommonDeviceStatus, 0);
+  Deadline := ClockNanoseconds + ResetTimeoutNanoseconds;
+  while Read8(Device.Common, CommonDeviceStatus) <> 0 do
+  begin
+    if ClockNanoseconds > Deadline then
+      Exit;
+    CpuRelax;
+  end;
+  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge);
+  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge or StatusDriver);
+  Result := True;
+end;
+
 function OpenVirtioDevice(Pci: PPciDevice; out Device: TVirtioDevice): Boolean;
 var
   Capability: Word;
@@ -313,14 +357,9 @@ begin
   if (Device.Common = nil) or (Device.NotifyBase = nil) or (Device.DeviceConfiguration = nil) then
     Exit;
 
+  GetPciDmaAttributes(Pci, Device.Dma);
   PciEnableDevice(Pci, True);
-  { Reset, then acknowledge. }
-  Write8(Device.Common, CommonDeviceStatus, 0);
-  while Read8(Device.Common, CommonDeviceStatus) <> 0 do
-    CpuRelax;
-  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge);
-  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge or StatusDriver);
-  Result := True;
+  Result := ResetAndAcknowledge(Device);
 end;
 
 function NegotiateVirtioFeatures(var Device: TVirtioDevice; Wanted: QWord; out Accepted: QWord): Boolean;
@@ -331,7 +370,8 @@ begin
   Offered := Read32(Device.Common, CommonDeviceFeature);
   Write32(Device.Common, CommonDeviceFeatureSelect, 1);
   Offered := Offered or (QWord(Read32(Device.Common, CommonDeviceFeature)) shl 32);
-  Accepted := Offered and (Wanted or (QWord(1) shl VirtioFeatureVersion1));
+  Accepted := Offered and (Wanted or (QWord(1) shl VirtioFeatureVersion1) or
+    (QWord(1) shl VirtioFeatureAccessPlatform));
   Result := (Accepted and (QWord(1) shl VirtioFeatureVersion1)) <> 0;
   if not Result then
     Exit;
@@ -347,12 +387,12 @@ end;
 
 { --- Queues --------------------------------------------------------------- }
 
-function AllocateQueuePage(out Physical: QWord): Pointer;
+{ One page of zeroed shared DMA memory for a part of a queue. }
+function AllocateQueuePage(var Device: TVirtioDevice; out Memory: TDmaBuffer): Pointer;
 begin
-  Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Physical = 0 then
+  if not AllocateDmaBuffer(Device.Dma, QueuePartBytes, DmaShared, Memory) then
     Exit(nil);
-  Result := PhysicalToVirtual(Physical);
+  Result := Memory.Address;
 end;
 
 { Gives the device Queue's pages and enables it. }
@@ -361,39 +401,44 @@ begin
   Write16(Device.Common, CommonQueueSelect, Queue.Index);
   Write16(Device.Common, CommonQueueSize, Queue.Size);
   Write16(Device.Common, CommonQueueVector, NoVector);
-  Write64(Device.Common, CommonQueueDescriptors, Queue.DescriptorsPhysical);
-  Write64(Device.Common, CommonQueueAvailable, Queue.AvailablePhysical);
-  Write64(Device.Common, CommonQueueUsed, Queue.UsedPhysical);
+  Write64(Device.Common, CommonQueueDescriptors, Queue.DescriptorsMemory.DeviceAddress);
+  Write64(Device.Common, CommonQueueAvailable, Queue.AvailableMemory.DeviceAddress);
+  Write64(Device.Common, CommonQueueUsed, Queue.UsedMemory.DeviceAddress);
   Queue.NotifyAddress := PWord(Device.NotifyBase +
     QWord(Read16(Device.Common, CommonQueueNotifyOffset)) * Device.NotifyMultiplier);
   Write16(Device.Common, CommonQueueEnable, 1);
 end;
 
+procedure FreeQueueMemory(var Queue: TVirtqueue);
+begin
+  FreeDmaBuffer(Queue.DescriptorsMemory);
+  FreeDmaBuffer(Queue.AvailableMemory);
+  FreeDmaBuffer(Queue.UsedMemory);
+  Queue.Descriptors := nil;
+  Queue.Available := nil;
+  Queue.Used := nil;
+end;
+
 function SetUpVirtqueue(var Device: TVirtioDevice; Index: Word; out Queue: TVirtqueue): Boolean;
 var
-  DescriptorsPhysical: QWord;
-  AvailablePhysical: QWord;
-  UsedPhysical: QWord;
   Size: Word;
 begin
   FillMemory(@Queue, SizeOf(Queue), 0);
   Result := False;
   Write16(Device.Common, CommonQueueSelect, Index);
-  Size := Read16(Device.Common, CommonQueueSize);
+  Size := UsableQueueSize(Read16(Device.Common, CommonQueueSize), MaximumQueueSize);
   if Size = 0 then
     Exit;
-  if Size > MaximumQueueSize then
-    Size := MaximumQueueSize;
   Queue.Index := Index;
   Queue.Size := Size;
-  Queue.Descriptors := PVirtqueueDescriptor(AllocateQueuePage(DescriptorsPhysical));
-  Queue.Available := PWord(AllocateQueuePage(AvailablePhysical));
-  Queue.Used := PByte(AllocateQueuePage(UsedPhysical));
+  Queue.Descriptors := PVirtqueueDescriptor(AllocateQueuePage(Device, Queue.DescriptorsMemory));
+  Queue.Available := PWord(AllocateQueuePage(Device, Queue.AvailableMemory));
+  Queue.Used := PByte(AllocateQueuePage(Device, Queue.UsedMemory));
   if (Queue.Descriptors = nil) or (Queue.Available = nil) or (Queue.Used = nil) then
+  begin
+    FreeQueueMemory(Queue);
     Exit;
-  Queue.DescriptorsPhysical := DescriptorsPhysical;
-  Queue.AvailablePhysical := AvailablePhysical;
-  Queue.UsedPhysical := UsedPhysical;
+  end;
   ProgramVirtqueue(Device, Queue);
   Result := True;
 end;
@@ -456,21 +501,17 @@ var
   Index: Integer;
   Queue: PVirtqueue;
 begin
-  Write8(Device.Common, CommonDeviceStatus, 0);
-  while Read8(Device.Common, CommonDeviceStatus) <> 0 do
-    CpuRelax;
-  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge);
-  Write8(Device.Common, CommonDeviceStatus, StatusAcknowledge or StatusDriver);
-  Result := NegotiateVirtioFeatures(Device, Device.AcceptedFeatures, Accepted);
+  Result := ResetAndAcknowledge(Device) and
+    NegotiateVirtioFeatures(Device, Device.AcceptedFeatures, Accepted);
   if not Result then
     Exit;
   for Index := 0 to Count - 1 do
   begin
     Queue := Queues[Index];
     { Empty rings, counted from the start again. }
-    FillMemory(Queue^.Descriptors, 4096, 0);
-    FillMemory(Queue^.Available, 4096, 0);
-    FillMemory(Queue^.Used, 4096, 0);
+    FillMemory(Queue^.Descriptors, QueuePartBytes, 0);
+    FillMemory(Queue^.Available, QueuePartBytes, 0);
+    FillMemory(Queue^.Used, QueuePartBytes, 0);
     Queue^.LastSeenUsed := 0;
     ProgramVirtqueue(Device, Queue^);
     if Device.UsesInterrupts then
@@ -520,20 +561,29 @@ function TakeVirtqueueUsedChain(var Queue: TVirtqueue; out Head: Word; out Lengt
 var
   UsedIndex: Word;
   Entry: PByte;
+  Id: LongWord;
 begin
+  Result := False;
   Head := 0;
   Length := 0;
   FullMemoryBarrier;
   UsedIndex := PWord(Queue.Used + 2)^;
-  Result := UsedIndex <> Queue.LastSeenUsed;
-  if not Result then
-    Exit;
-  { The entry is read after the index that says it is there. }
-  FullMemoryBarrier;
-  Entry := Queue.Used + 4 + QWord(Queue.LastSeenUsed mod Queue.Size) * 8;
-  Head := Word(PLongWord(Entry)^);
-  Length := PLongWord(Entry + 4)^;
-  Queue.LastSeenUsed := Word(Queue.LastSeenUsed + 1);
+  while UsedIndex <> Queue.LastSeenUsed do
+  begin
+    { The entry is read after the index that says it is there. }
+    FullMemoryBarrier;
+    Entry := Queue.Used + 4 + QWord(Queue.LastSeenUsed mod Queue.Size) * 8;
+    Id := PLongWord(Entry)^;
+    Length := PLongWord(Entry + 4)^;
+    Queue.LastSeenUsed := Word(Queue.LastSeenUsed + 1);
+    { An id that is not one of the queue's descriptors is skipped. }
+    if UsedElementIsInRange(Id, Queue.Size) then
+    begin
+      Head := Word(Id);
+      Exit(True);
+    end;
+  end;
+  Length := 0;
 end;
 
 function TakeVirtqueueCompletion(var Queue: TVirtqueue): Boolean;

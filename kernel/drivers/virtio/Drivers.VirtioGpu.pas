@@ -68,7 +68,7 @@ uses
   Abi.SystemCalls,
   Runtime.Memory,
   Memory.Layout,
-  Memory.PhysicalPages,
+  Io.Dma,
   Memory.KernelHeap,
   Kernel.Mutex,
   Io.Pci,
@@ -87,8 +87,6 @@ const
   FallbackWidth = 1024;
   FallbackHeight = 768;
   MaximumScanoutsUsed = 8;
-  PageBytes = 4096;
-  AnyAddress = High(QWord);
   VgaFramebufferBar = 0;
 
 type
@@ -110,6 +108,27 @@ var
 
 { --- Showing ------------------------------------------------------------------- }
 
+{ What was drawn (through the caches, by whoever maps the framebuffer)
+  in Height lines from line Y of a resource Width pixels wide reaches
+  memory before the device copies it (nothing for a device that snoops;
+  the maintenance by the kernel's address reaches every mapping of the
+  same memory). }
+procedure CleanFramebufferRows(Scanout: PGpuScanout; Width, Y, Height: LongWord);
+var
+  Pitch: QWord;
+  Start: QWord;
+  Bytes: QWord;
+begin
+  Pitch := QWord(Width) * BytesPerPixel;
+  Start := QWord(Y) * Pitch;
+  Bytes := QWord(Height) * Pitch;
+  if (Start >= Scanout^.FramebufferBytes) or (Bytes = 0) then
+    Exit;
+  if Bytes > Scanout^.FramebufferBytes - Start then
+    Bytes := Scanout^.FramebufferBytes - Start;
+  PrepareDmaToDevice(Scanout^.Device^.Virtio.Dma, Scanout^.FramebufferMemory.Address + Start, Bytes);
+end;
+
 { Makes a Width x Height resource on the scanout's memory and shows it,
   dropping the one it had. The batch is empty; the lock is held. }
 function ShowNewResource(Scanout: PGpuScanout; Width, Height: LongWord): Boolean;
@@ -121,9 +140,11 @@ begin
   Device := Scanout^.Device;
   ResourceId := NewGpuResourceId(Device);
   OldResourceId := Scanout^.ResourceId;
-  ZeroMemory(PhysicalToVirtual(Scanout^.FramebufferPhysical), QWord(Width) * Height * BytesPerPixel);
+  ZeroMemory(Scanout^.FramebufferMemory.Address, QWord(Width) * Height * BytesPerPixel);
+  CleanFramebufferRows(Scanout, Width, 0, Height);
   Result := BeginCreateResource(Device, ResourceId, GpuFormatBlueGreenRedUnused, Width, Height) and
-    BeginAttachBacking(Device, ResourceId, Scanout^.FramebufferPhysical, QWord(Width) * Height * BytesPerPixel) and
+    BeginAttachBacking(Device, ResourceId, Scanout^.FramebufferMemory.DeviceAddress,
+      QWord(Width) * Height * BytesPerPixel) and
     BeginSetScanout(Device, Scanout^.Index, ResourceId, Width, Height) and
     BeginTransferToHost(Device, ResourceId, Width, 0, 0, Width, Height) and
     BeginFlushResource(Device, ResourceId, 0, 0, Width, Height) and
@@ -161,6 +182,7 @@ begin
   Scanout := PGpuScanout(Adapter^.Context);
   Device := Scanout^.Device;
   AcquireMutex(Device^.Lock);
+  CleanFramebufferRows(Scanout, Scanout^.Width, Y, Height);
   Result := BeginTransferToHost(Device, Scanout^.ResourceId, Scanout^.Width, X, Y, Width, Height) and
     BeginFlushResource(Device, Scanout^.ResourceId, X, Y, Width, Height) and RunGpuCommands(Device);
   ReleaseMutex(Device^.Lock);
@@ -179,9 +201,10 @@ var
   Device: PGpuDevice;
 begin
   Device := Scanout^.Device;
+  CleanFramebufferRows(Scanout, Scanout^.Width, 0, Scanout^.Height);
   if not BeginCreateResource(Device, Scanout^.ResourceId, GpuFormatBlueGreenRedUnused, Scanout^.Width,
        Scanout^.Height) or
-     not BeginAttachBacking(Device, Scanout^.ResourceId, Scanout^.FramebufferPhysical,
+     not BeginAttachBacking(Device, Scanout^.ResourceId, Scanout^.FramebufferMemory.DeviceAddress,
        QWord(Scanout^.Width) * Scanout^.Height * BytesPerPixel) or
      not BeginSetScanout(Device, Scanout^.Index, Scanout^.ResourceId, Scanout^.Width, Scanout^.Height) or
      not BeginTransferToHost(Device, Scanout^.ResourceId, Scanout^.Width, 0, 0, Scanout^.Width, Scanout^.Height) or
@@ -269,10 +292,11 @@ begin
     if (Wanted.Width < Width) or (Wanted.Height < Height) then
       Continue;
     Bytes := RoundUpToPage(QWord(Wanted.Width) * Wanted.Height * BytesPerPixel);
-    Scanout^.FramebufferPhysical := AllocateZeroedContiguousPhysicalPages(Bytes div PageBytes, AnyAddress,
-      PageUsageGeneral);
-    if Scanout^.FramebufferPhysical <> 0 then
+    { Drawn in through the caches: streaming memory, cleaned before each
+      copy to the host. }
+    if AllocateDmaBuffer(Scanout^.Device^.Virtio.Dma, Bytes, DmaStreaming, Scanout^.FramebufferMemory) then
     begin
+      Scanout^.FramebufferPhysical := Scanout^.FramebufferMemory.Physical;
       Scanout^.FramebufferBytes := Bytes;
       MaximumWidth := Wanted.Width;
       MaximumHeight := Wanted.Height;
@@ -365,8 +389,8 @@ begin
   Adapter.Flush := @FlushGpu;
   Adapter.Capabilities := DisplayCapabilityNeedsFlush or DisplayCapabilityMemoryFramebuffer;
   Adapter.Context := Scanout;
-  Scanout^.CursorImagePhysical := AllocateZeroedContiguousPhysicalPages(RoundUpToPage(DisplayCursorImageBytes) div
-    PageBytes, AnyAddress, PageUsageGeneral);
+  if AllocateDmaBuffer(Device^.Virtio.Dma, DisplayCursorImageBytes, DmaStreaming, Scanout^.CursorImageMemory) then
+    Scanout^.CursorImagePhysical := Scanout^.CursorImageMemory.Physical;
   if (Scanout^.CursorImagePhysical <> 0) and SetUpGpuCursor(Scanout) then
   begin
     Adapter.CursorImagePhysical := Scanout^.CursorImagePhysical;

@@ -52,6 +52,7 @@ uses
   Kernel.Events,
   Kernel.PriorityBoosts,
   Kernel.DeferredCalls,
+  Io.Dma,
   Drivers.VirtioPci,
   Drivers.VirtioGpuProtocol;
 
@@ -61,7 +62,8 @@ const
   { The request's room at the start of a slot's page; the answer has the
     rest. }
   GpuRequestRoom = 1024;
-  GpuAnswerRoom = 4096 - GpuRequestRoom;
+  GpuSlotBytes = 4096;
+  GpuAnswerRoom = GpuSlotBytes - GpuRequestRoom;
   GpuCursorCommandRoom = 64;
 
 type
@@ -72,12 +74,12 @@ type
     CursorQueue: TVirtqueue;
     CommandSlotCount: LongInt;
     SlotPages: array[0..GpuCommandSlots - 1] of PByte;
-    SlotPhysical: array[0..GpuCommandSlots - 1] of QWord;
+    SlotMemory: array[0..GpuCommandSlots - 1] of TDmaBuffer;
     { The commands begun in the batch being made. }
     BatchCount: LongInt;
     CursorSlotCount: LongInt;
     CursorPage: PByte;
-    CursorPagePhysical: QWord;
+    CursorPageMemory: TDmaBuffer;
     CursorSlotBusy: array[0..GpuCursorSlots - 1] of Boolean;
     Lock: TMutex;
     Completion: TDeferredCall;
@@ -113,9 +115,7 @@ uses
   Runtime.Memory,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.Cpu,
-  Kernel.Clock,
-  Memory.Layout,
-  Memory.PhysicalPages;
+  Kernel.Clock;
 
 const
   AnswerTimeoutMilliseconds = 2000;
@@ -134,12 +134,13 @@ begin
   QueueDeferredCall(PGpuDevice(Context)^.Completion);
 end;
 
-function AllocatePage(out Physical: QWord): PByte;
+{ A zeroed page of shared DMA memory (requests and answers, read and
+  written by both sides while the device runs). }
+function AllocatePage(Device: PGpuDevice; out Memory: TDmaBuffer): PByte;
 begin
-  Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Physical = 0 then
+  if not AllocateDmaBuffer(Device^.Virtio.Dma, GpuSlotBytes, DmaShared, Memory) then
     Exit(nil);
-  Result := PByte(PhysicalToVirtual(Physical));
+  Result := Memory.Address;
 end;
 
 function SetUpGpuQueues(Device: PGpuDevice): Boolean;
@@ -161,11 +162,11 @@ begin
     Exit;
   for Index := 0 to Device^.CommandSlotCount - 1 do
   begin
-    Device^.SlotPages[Index] := AllocatePage(Device^.SlotPhysical[Index]);
+    Device^.SlotPages[Index] := AllocatePage(Device, Device^.SlotMemory[Index]);
     if Device^.SlotPages[Index] = nil then
       Exit;
   end;
-  Device^.CursorPage := AllocatePage(Device^.CursorPagePhysical);
+  Device^.CursorPage := AllocatePage(Device, Device^.CursorPageMemory);
   if Device^.CursorPage = nil then
     Exit;
   InitializeMutex(Device^.Lock);
@@ -205,15 +206,15 @@ begin
     Exit(nil);
   Slot := Device^.BatchCount;
   Request := Device^.SlotPages[Slot];
-  FillMemory(Request, 4096, 0);
+  FillMemory(Request, GpuSlotBytes, 0);
   PLongWord(Request)^ := CommandType;
   Request0 := @Device^.ControlQueue.Descriptors[Slot * 2];
   Answer := @Device^.ControlQueue.Descriptors[Slot * 2 + 1];
-  Request0^.Address := Device^.SlotPhysical[Slot];
+  Request0^.Address := Device^.SlotMemory[Slot].DeviceAddress;
   Request0^.Length := RequestBytes;
   Request0^.Flags := VirtqueueDescriptorNext;
   Request0^.Next := Word(Slot * 2 + 1);
-  Answer^.Address := Device^.SlotPhysical[Slot] + GpuRequestRoom;
+  Answer^.Address := Device^.SlotMemory[Slot].DeviceAddress + GpuRequestRoom;
   Answer^.Length := GpuAnswerRoom;
   Answer^.Flags := VirtqueueDescriptorWrite;
   Answer^.Next := 0;
@@ -226,21 +227,34 @@ begin
   Result := Device^.SlotPages[Index] + GpuRequestRoom;
 end;
 
-{ Takes finished chains off the used ring until Count were taken. }
+{ Takes finished chains off the used ring until each of the batch's
+  Count chains came back. A head that is not one of the batch's, or one
+  that came back already, is not counted: the batch is only done (and
+  its slots used again) once the device has really answered every
+  command. }
 function WaitForAnswers(Device: PGpuDevice; Count: LongInt): Boolean;
 var
   Deadline: QWord;
   Head: Word;
   Length: LongWord;
   Taken: LongInt;
+  Answered: array[0..GpuCommandSlots - 1] of Boolean;
+  Slot: LongInt;
 begin
   Taken := 0;
+  for Slot := 0 to GpuCommandSlots - 1 do
+    Answered[Slot] := False;
   Deadline := ClockTickCount + MillisecondsToTicks(AnswerTimeoutMilliseconds);
   while Taken < Count do
   begin
     if TakeVirtqueueUsedChain(Device^.ControlQueue, Head, Length) then
     begin
-      Inc(Taken);
+      Slot := Head div 2;
+      if ((Head mod 2) = 0) and (Slot < Count) and not Answered[Slot] then
+      begin
+        Answered[Slot] := True;
+        Inc(Taken);
+      end;
       Continue;
     end;
     if ClockTickCount > Deadline then
@@ -288,7 +302,7 @@ var
   Length: LongWord;
 begin
   while TakeVirtqueueUsedChain(Device^.CursorQueue, Head, Length) do
-    if Head < GpuCursorSlots then
+    if Head < Device^.CursorSlotCount then
       Device^.CursorSlotBusy[Head] := False;
 end;
 
@@ -326,7 +340,7 @@ begin
   end;
   CopyMemory(Device^.CursorPage + Slot * GpuCursorCommandRoom, @Command, SizeOf(Command));
   Descriptor := @Device^.CursorQueue.Descriptors[Slot];
-  Descriptor^.Address := Device^.CursorPagePhysical + QWord(Slot) * GpuCursorCommandRoom;
+  Descriptor^.Address := Device^.CursorPageMemory.DeviceAddress + QWord(Slot) * GpuCursorCommandRoom;
   Descriptor^.Length := SizeOf(Command);
   Descriptor^.Flags := 0;
   Descriptor^.Next := 0;

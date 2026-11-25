@@ -19,8 +19,9 @@
 {
   The receive and transmit descriptor rings of the e1000 driver.
 
-  Each ring is one page below 4 GiB of 128 legacy descriptors, each
-  descriptor with its own 2 KiB buffer (Drivers.NetworkBuffers).
+  Each ring is one page of shared DMA memory holding 128 legacy
+  descriptors, each descriptor with its own 2 KiB streaming buffer
+  (Drivers.NetworkBuffers); the card is given device addresses (Io.Dma).
 
   Receiving: the card owns the descriptors from the head it keeps to the
   tail the driver writes; it fills a buffer and sets the descriptor's
@@ -49,6 +50,7 @@ interface
 
 uses
   Kernel.SpinLock,
+  Io.Dma,
   Drivers.E1000.Registers,
   Drivers.NetworkBuffers,
   Drivers.NetworkCards;
@@ -61,9 +63,10 @@ type
   TE1000Rings = record
     Registers: PByte;
     Card: PNetworkCard;
+    Dma: TDmaAttributes;
 
+    ReceiveRing: TDmaBuffer;
     ReceiveDescriptors: PReceiveDescriptor;
-    ReceiveDescriptorsPhysical: QWord;
     ReceiveBuffers: array[0..E1000ReceiveDescriptors - 1] of TNetworkBuffer;
     { The next descriptor the card will finish. }
     ReceiveNext: LongWord;
@@ -71,8 +74,8 @@ type
     DroppingPieces: Boolean;
     ReceiveLock: TSpinLock;
 
+    TransmitRing: TDmaBuffer;
     TransmitDescriptors: PTransmitDescriptor;
-    TransmitDescriptorsPhysical: QWord;
     TransmitBuffers: array[0..E1000TransmitDescriptors - 1] of TNetworkBuffer;
     { The next free descriptor (the tail the card was given). }
     TransmitTail: LongWord;
@@ -87,8 +90,10 @@ type
     IsStopped: Boolean;
   end;
 
-{ Takes the rings' memory. False if memory is short. }
-function AllocateE1000Rings(var Rings: TE1000Rings; Registers: PByte; Card: PNetworkCard): Boolean;
+{ Takes the rings' memory, memory the card can reach (Dma). False if
+  memory is short. }
+function AllocateE1000Rings(var Rings: TE1000Rings; Registers: PByte; Card: PNetworkCard;
+  constref Dma: TDmaAttributes): Boolean;
 { Empties both rings and gives the card their addresses (receiving and
   transmitting themselves are enabled by the caller). }
 procedure ProgramE1000Rings(var Rings: TE1000Rings);
@@ -115,20 +120,23 @@ uses
 const
   EthernetHeaderBytes = 14;
 
-function AllocateE1000Rings(var Rings: TE1000Rings; Registers: PByte; Card: PNetworkCard): Boolean;
+function AllocateE1000Rings(var Rings: TE1000Rings; Registers: PByte; Card: PNetworkCard;
+  constref Dma: TDmaAttributes): Boolean;
 begin
   Result := False;
   Rings.Registers := Registers;
   Rings.Card := Card;
+  Rings.Dma := Dma;
   InitializeSpinLock(Rings.ReceiveLock);
   InitializeSpinLock(Rings.TransmitLock);
   Rings.IsStopped := True;
-  Rings.ReceiveDescriptors := PReceiveDescriptor(AllocateDescriptorPage(Rings.ReceiveDescriptorsPhysical));
-  Rings.TransmitDescriptors := PTransmitDescriptor(AllocateDescriptorPage(Rings.TransmitDescriptorsPhysical));
-  if (Rings.ReceiveDescriptors = nil) or (Rings.TransmitDescriptors = nil) then
+  if not AllocateDescriptorRing(Dma, E1000ReceiveDescriptors * SizeOf(TReceiveDescriptor), Rings.ReceiveRing) or
+     not AllocateDescriptorRing(Dma, E1000TransmitDescriptors * SizeOf(TTransmitDescriptor), Rings.TransmitRing) then
     Exit;
-  if not AllocateNetworkBuffers(@Rings.ReceiveBuffers[0], E1000ReceiveDescriptors) or
-     not AllocateNetworkBuffers(@Rings.TransmitBuffers[0], E1000TransmitDescriptors) then
+  Rings.ReceiveDescriptors := PReceiveDescriptor(Rings.ReceiveRing.Address);
+  Rings.TransmitDescriptors := PTransmitDescriptor(Rings.TransmitRing.Address);
+  if not AllocateNetworkBuffers(Dma, @Rings.ReceiveBuffers[0], E1000ReceiveDescriptors) or
+     not AllocateNetworkBuffers(Dma, @Rings.TransmitBuffers[0], E1000TransmitDescriptors) then
     Exit;
   Result := True;
 end;
@@ -144,7 +152,8 @@ begin
   for Index := 0 to E1000ReceiveDescriptors - 1 do
   begin
     ZeroMemory(@Rings.ReceiveDescriptors[Index], SizeOf(TReceiveDescriptor));
-    Rings.ReceiveDescriptors[Index].BufferAddress := Rings.ReceiveBuffers[Index].Physical;
+    Rings.ReceiveDescriptors[Index].BufferAddress := Rings.ReceiveBuffers[Index].DeviceAddress;
+    PrepareReceiveBuffer(Rings.Dma, Rings.ReceiveBuffers[Index]);
   end;
   for Index := 0 to E1000TransmitDescriptors - 1 do
     ZeroMemory(@Rings.TransmitDescriptors[Index], SizeOf(TTransmitDescriptor));
@@ -153,16 +162,16 @@ begin
   Rings.TransmitTail := 0;
   Rings.TransmitOldest := 0;
 
-  WriteRegister(Rings.Registers, RegisterReceiveDescriptorBaseLow, LongWord(Rings.ReceiveDescriptorsPhysical));
-  WriteRegister(Rings.Registers, RegisterReceiveDescriptorBaseHigh, LongWord(Rings.ReceiveDescriptorsPhysical shr 32));
+  WriteRegister(Rings.Registers, RegisterReceiveDescriptorBaseLow, LongWord(Rings.ReceiveRing.DeviceAddress));
+  WriteRegister(Rings.Registers, RegisterReceiveDescriptorBaseHigh, LongWord(Rings.ReceiveRing.DeviceAddress shr 32));
   WriteRegister(Rings.Registers, RegisterReceiveDescriptorLength, E1000ReceiveDescriptors * SizeOf(TReceiveDescriptor));
   WriteRegister(Rings.Registers, RegisterReceiveDescriptorHead, 0);
   { Every descriptor but one is the card's: head and tail equal would
     mean none. }
   WriteRegister(Rings.Registers, RegisterReceiveDescriptorTail, E1000ReceiveDescriptors - 1);
 
-  WriteRegister(Rings.Registers, RegisterTransmitDescriptorBaseLow, LongWord(Rings.TransmitDescriptorsPhysical));
-  WriteRegister(Rings.Registers, RegisterTransmitDescriptorBaseHigh, LongWord(Rings.TransmitDescriptorsPhysical shr 32));
+  WriteRegister(Rings.Registers, RegisterTransmitDescriptorBaseLow, LongWord(Rings.TransmitRing.DeviceAddress));
+  WriteRegister(Rings.Registers, RegisterTransmitDescriptorBaseHigh, LongWord(Rings.TransmitRing.DeviceAddress shr 32));
   WriteRegister(Rings.Registers, RegisterTransmitDescriptorLength, E1000TransmitDescriptors * SizeOf(TTransmitDescriptor));
   WriteRegister(Rings.Registers, RegisterTransmitDescriptorHead, 0);
   WriteRegister(Rings.Registers, RegisterTransmitDescriptorTail, 0);
@@ -212,6 +221,7 @@ begin
   end;
   Inc(Rings.Card^.Statistics.FramesReceived);
   Inc(Rings.Card^.Statistics.BytesReceived, Length);
+  FinishReceiveBuffer(Rings.Dma, Rings.ReceiveBuffers[Index], Length);
   NetworkFrameReceived(Rings.Card^.Adapter, Rings.ReceiveBuffers[Index].Data, Length);
 end;
 
@@ -239,6 +249,7 @@ begin
     { The status is read before the rest of what the card wrote. }
     FullMemoryBarrier;
     DeliverDescriptor(Rings, Rings.ReceiveNext);
+    PrepareReceiveBuffer(Rings.Dma, Rings.ReceiveBuffers[Rings.ReceiveNext]);
     Descriptor^.Status := 0;
     Descriptor^.Errors := 0;
     Descriptor^.Length := 0;
@@ -323,8 +334,9 @@ begin
         ZeroMemory(Buffer + SentLength, MinimumFrameBytes - SentLength);
         SentLength := MinimumFrameBytes;
       end;
+      PrepareTransmitBuffer(Rings.Dma, Rings.TransmitBuffers[Rings.TransmitTail], SentLength);
       Descriptor := @Rings.TransmitDescriptors[Rings.TransmitTail];
-      Descriptor^.BufferAddress := Rings.TransmitBuffers[Rings.TransmitTail].Physical;
+      Descriptor^.BufferAddress := Rings.TransmitBuffers[Rings.TransmitTail].DeviceAddress;
       Descriptor^.Length := Word(SentLength);
       Descriptor^.ChecksumOffset := 0;
       Descriptor^.ChecksumStart := 0;

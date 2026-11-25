@@ -1079,8 +1079,10 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         kernel debug shell
   - [ ] VideoCore mailbox: display (framebuffer modes), and the "notify
         xHCI reset" tag should the VL805 ever be reset through PCIe
-  - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
-        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
+  - [x] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
+        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe, and
+        `GetPciDmaAttributes` taking a BrcmPcie host's dma-ranges (untested on
+        the Pi 5; 32-bit-only cards cannot reach its RAM above 4 GiB)
   - [ ] GPIO and the PWM audio jack; HDMI audio on the Pi 4 (the Pi 5's
         driver would carry over: BCM2711 HDMI, legacy DMA channels)
   - [x] Debugging without a serial cable: the kernel log over UDP

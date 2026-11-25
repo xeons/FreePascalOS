@@ -1498,16 +1498,68 @@ of their own. `Io.Dma` gives drivers what they need for that:
   their bus address (`TranslateDmaAddress`).
 - The kernel option `noncoherentdma` treats every device as not
   coherent, which exercises the uncached mappings and the cache
-  maintenance under QEMU, whose devices all snoop.
+  maintenance under QEMU, whose devices all snoop
+  (`TEST_KERNEL_OPTIONS=noncoherentdma scripts/test-qemu.sh ...` runs
+  the amd64 test that way).
 
 Converted so far: xHCI (all its memory is shared, uncached for a
 controller that does not snoop; isochronous packets from the audio
 buffers are cleaned and translated before they are queued), SDHCI, the
 VideoCore mailbox, GENET, the Cadence GEM and the BCM2712 DMA (its
 control blocks shared, the HDMI audio slots streaming, cleaned after each
-is written). The other PCI drivers (AHCI, NVMe, virtio,
-e1000, Realtek, HD Audio, AC'97) still assume coherent DMA at physical
-addresses, which holds on every machine they are found on today.
+is written), and every PCI driver: each gets its attributes once at
+probe with `GetPciDmaAttributes`, so a PCIe card behind a bridge with
+inbound windows is given bus addresses. On the Raspberry Pi 5 that bridge
+is the BCM2712's PCIe root complex (`Drivers.BrcmPcie`): a device tree
+bus node's own `dma-ranges` (its inbound windows) and coherency are kept
+as what the devices below it see (`ChildDma` of the platform device),
+and `GetPciDmaAttributes` takes them for `brcm,bcm2712-pcie` (and
+`bcm2711`) hosts as for ECAM and ACPI ones. Untested on the board.
+
+- **AHCI**: command list, received FIS, command tables and bounce buffer
+  are shared buffers; request pages are translated to bus addresses
+  (else bounced) with the cache maintenance a non-coherent controller
+  needs; 32-bit controllers (CAP.S64A clear) stay below 4 GiB.
+- **NVMe**: queues, bounce pages, PRP list and identify data are shared
+  buffers.
+
+- **Network cards** (`Drivers.NetworkBuffers`, shared by e1000/e1000e,
+  RTL8139, RTL8168 and RTL8125 and by virtio-net): descriptor rings
+  and the Realtek tally counters are shared buffers, the 2 KiB frame
+  buffers streaming (`PrepareReceiveBuffer` before a buffer is handed
+  to the card, `FinishReceiveBuffer` before a frame is read,
+  `PrepareTransmitBuffer` after one is copied in). 32-bit DMA
+  (`LimitNetworkCardDma`) for the RTL8139, the conventional PCI e1000
+  parts (as Linux) and the RTL8168B (XID 300h/380h under mask 7C8h);
+  the PCI Express e1000e parts, later RTL8168s and the RTL8125/8126 take
+  64-bit addresses (they must, on the Pi 5, whose PCIe sees RAM at
+  10_0000_0000h).
+- **Virtio** (`Drivers.VirtioPci`): the three parts of every queue are
+  shared buffers; `VIRTIO_F_ACCESS_PLATFORM` is accepted when offered.
+  virtio-blk's header page is shared and its bounce pages streaming;
+  virtio-gpu's command slots and cursor page are shared, its
+  framebuffers and cursor images streaming, cleaned (by the kernel's
+  address, which reaches every mapping of the same memory) for the rows
+  of each flush before the transfer to the host.
+- **Sound**: HD Audio's buffer descriptor lists and AC'97's descriptor
+  list are shared buffers, and `RegisterAudioOutput` /
+  `RegisterAudioInput` take the device's attributes: the ring's periods
+  are then shared buffers (uncached for a device that does not snoop,
+  so the mixer and the capture thread need no maintenance) with their
+  bus addresses in `PeriodsDeviceAddress`. Without attributes (USB
+  audio, which cleans and translates each packet in
+  `Drivers.XhciIsochronous`, and HDMI audio, which copies the ring) the
+  periods are ordinary cached pages as before. HD Audio keeps to 4 GiB
+  without GCAP's 64-bit bit, AC'97 always.
+
+What a virtio device writes into a used ring is checked
+(`Drivers.VirtioUsedRing`, host test `make virtio-used-ring-test`): an
+id that is not a descriptor of the queue is skipped, never indexed;
+virtio-net clamps the reported length to its buffer (and drops one
+shorter than its header); virtio-gpu counts a batch done only when each
+of its own heads came back once; queue sizes are rounded down to a
+power of two. A polled virtio-blk request that times out resets the
+device before the bounce pages are used again.
 
 ## Device interrupts
 

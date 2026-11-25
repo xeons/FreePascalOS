@@ -49,6 +49,7 @@ interface
 
 uses
   Io.Manager,
+  Io.Dma,
   Io.CaptureStreams;
 
 const
@@ -72,15 +73,21 @@ type
     { The ring (none for a monitor). }
     Periods: array[0..15] of PByte;
     PeriodsPhysical: array[0..15] of QWord;
+    { What the device that fills the ring is given (as for an output's
+      ring, Io.AudioOutput). }
+    PeriodsDeviceAddress: array[0..15] of QWord;
     { Private to this unit. }
     Device: PDeviceObject;
     State: Pointer;
   end;
 
-{ Creates an input with its ring and device file. The ring's pages end
-  at or below HighestAddress. nil if memory is short. }
+{ Creates an input with its ring and device file. With Dma (the
+  attributes of the device that fills the ring) the pages are shared DMA
+  memory it can reach (uncached when it does not snoop, so what it wrote
+  is read without cache maintenance), as for RegisterAudioOutput. nil if
+  memory is short. }
 function RegisterAudioInput(const Routines: TAudioInputRoutines; Context: Pointer;
-  HighestAddress: QWord = High(QWord)): PAudioInput;
+  Dma: PDmaAttributes = nil): PAudioInput;
 { Creates the monitor input of the next output. }
 function RegisterAudioMonitor: PAudioInput;
 { For the driver, at dispatch level or below: the hardware went on. }
@@ -449,27 +456,27 @@ begin
 end;
 
 function RegisterAudioInput(const Routines: TAudioInputRoutines; Context: Pointer;
-  HighestAddress: QWord): PAudioInput;
+  Dma: PDmaAttributes): PAudioInput;
 var
   Name: array[0..23] of Char;
   Index: Integer;
-  Pages: array[0..AudioPeriodCount - 1] of QWord;
+  Pages: array[0..AudioPeriodCount - 1] of PByte;
+  Physical: array[0..AudioPeriodCount - 1] of QWord;
+  DeviceAddresses: array[0..AudioPeriodCount - 1] of QWord;
 begin
   Result := nil;
   for Index := 0 to AudioPeriodCount - 1 do
-  begin
-    Pages[Index] := AllocateZeroedPhysicalPageBelow(HighestAddress, PageUsageGeneral);
-    if Pages[Index] = 0 then
+    if not AllocateAudioPeriod(Dma, Pages[Index], Physical[Index], DeviceAddresses[Index]) then
       Exit;
-  end;
   NumberedName(@Name[0], SizeOf(Name), 'audioin', HardwareInputCount);
   Result := CreateInput(@Name[0], False);
   if Result = nil then
     Exit;
   for Index := 0 to AudioPeriodCount - 1 do
   begin
-    Result^.PeriodsPhysical[Index] := Pages[Index];
-    Result^.Periods[Index] := PByte(PhysicalToVirtual(Pages[Index]));
+    Result^.PeriodsPhysical[Index] := Physical[Index];
+    Result^.PeriodsDeviceAddress[Index] := DeviceAddresses[Index];
+    Result^.Periods[Index] := Pages[Index];
   end;
   Result^.Routines := Routines;
   Result^.Context := Context;

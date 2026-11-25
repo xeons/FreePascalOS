@@ -60,7 +60,8 @@ unit Io.AudioOutput;
 interface
 
 uses
-  Io.Manager;
+  Io.Manager,
+  Io.Dma;
 
 const
   AudioPeriodCount = 16;
@@ -95,17 +96,29 @@ type
     { The ring's pages, for the driver to describe to the hardware. }
     Periods: array[0..AudioPeriodCount - 1] of PByte;
     PeriodsPhysical: array[0..AudioPeriodCount - 1] of QWord;
+    { What the device that plays the ring is given for each page: its
+      bus address (Io.Dma) when the output was registered with the
+      device's DMA attributes, else the physical address. }
+    PeriodsDeviceAddress: array[0..AudioPeriodCount - 1] of QWord;
     { Private to this unit. }
     Device: PDeviceObject;
     State: Pointer;
   end;
 
 { Creates an output with its ring and device file (/dev/audio for the
-  first, audio1, ... after that). The ring's pages end at or below
-  HighestAddress (for hardware with short addresses). nil if memory is
-  short. }
+  first, audio1, ... after that). With Dma (the attributes of the device
+  that reads the ring itself) the pages are shared DMA memory that
+  device can reach (mapped uncached when it does not snoop, so the
+  mixer's writes need no cache maintenance) and PeriodsDeviceAddress
+  holds its bus addresses. Without (nil: a driver that copies the ring,
+  or translates and cleans it itself) they are ordinary cached pages.
+  nil if memory is short. }
 function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer;
-  HighestAddress: QWord = High(QWord)): PAudioOutput;
+  Dma: PDmaAttributes = nil): PAudioOutput;
+{ One zeroed page of a ring, with or without Dma as RegisterAudioOutput
+  says (Io.AudioInput's rings too). False if memory is short. }
+function AllocateAudioPeriod(Dma: PDmaAttributes; out Address: PByte; out Physical: QWord;
+  out DeviceAddress: QWord): Boolean;
 { For the driver, at dispatch level or below: the hardware went on (it
   interrupted). }
 procedure AudioPeriodsElapsed(Output: PAudioOutput);
@@ -181,6 +194,32 @@ begin
 end;
 
 { --- The hardware ring --------------------------------------------------- }
+
+function AllocateAudioPeriod(Dma: PDmaAttributes; out Address: PByte; out Physical: QWord;
+  out DeviceAddress: QWord): Boolean;
+var
+  Buffer: TDmaBuffer;
+begin
+  Result := False;
+  Address := nil;
+  Physical := 0;
+  DeviceAddress := 0;
+  if Dma = nil then
+  begin
+    Physical := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    if Physical = 0 then
+      Exit;
+    Address := PByte(PhysicalToVirtual(Physical));
+    DeviceAddress := Physical;
+    Exit(True);
+  end;
+  if not AllocateDmaBuffer(Dma^, AudioPeriodBytes, DmaShared, Buffer) then
+    Exit;
+  Address := Buffer.Address;
+  Physical := Buffer.Physical;
+  DeviceAddress := Buffer.DeviceAddress;
+  Result := True;
+end;
 
 procedure AudioPeriodsElapsed(Output: PAudioOutput);
 var
@@ -554,7 +593,7 @@ begin
 end;
 
 function RegisterAudioOutput(const Routines: TAudioDriverRoutines; Context: Pointer;
-  HighestAddress: QWord): PAudioOutput;
+  Dma: PDmaAttributes): PAudioOutput;
 const
   EveryoneReadWrite = $1B6; { rw-rw-rw- }
 var
@@ -590,12 +629,9 @@ begin
   if State^.Mix = nil then
     Exit(nil);
   for Index := 0 to AudioPeriodCount - 1 do
-  begin
-    Result^.PeriodsPhysical[Index] := AllocateZeroedPhysicalPageBelow(HighestAddress, PageUsageGeneral);
-    if Result^.PeriodsPhysical[Index] = 0 then
+    if not AllocateAudioPeriod(Dma, Result^.Periods[Index], Result^.PeriodsPhysical[Index],
+         Result^.PeriodsDeviceAddress[Index]) then
       Exit(nil);
-    Result^.Periods[Index] := PByte(PhysicalToVirtual(Result^.PeriodsPhysical[Index]));
-  end;
   Result^.Routines := Routines;
   Result^.Context := Context;
   Result^.State := State;
