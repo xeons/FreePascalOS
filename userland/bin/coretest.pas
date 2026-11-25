@@ -778,7 +778,7 @@ const
     (Command: 'mkdir -p /usr/local/lib; cp /lib/libplugin.so /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; rm /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; echo $?'; ExpectedOutput: 'loaded libportplugin.so'#10'cannot load libportplugin.so'#10'1'#10; ExpectedStatus: 0),
     { The C runtime (mlibc, toolchain/ctest), when the system disk has it:
       stdio, threads, fork/exec, signals, sockets, dlopen, C++. }
-    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest > ctest.log 2>&1; echo $?; grep FAILED ctest.log; else echo 0; fi'; ExpectedOutput: '0'#10; ExpectedStatus: 0)
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest > ctest.log 2>&1; echo $?; grep FAILED ctest.log; tail -n 1 ctest.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var
