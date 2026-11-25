@@ -30,6 +30,7 @@ unit Processes.ProgramArguments;
 interface
 
 uses
+  FileSystem.Files,
   Processes.Process;
 
 const
@@ -49,11 +50,17 @@ procedure FreeStringList(var List: TStringList);
 function CopyStringListFromUser(ListAddress: QWord; out List: TStringList): LongInt;
 { The last part of a path. }
 function FileNameOf(Path: PChar): PChar;
-{ Running a program needs execute permission (root: any execute bit) and
-  a volume not mounted noexec. A set-user-ID or set-group-ID program
-  runs as its owner or group, unless its volume is mounted nosuid. }
-function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
-  var Credentials: TProcessCredentials): LongInt;
+{ Opens the program at KernelPath for running it and checks that file,
+  the one the loader then loads (a name swapped meanwhile changes
+  nothing): running a program needs execute permission (root: any
+  execute bit) and a volume not mounted noexec. A set-user-ID or
+  set-group-ID program runs as its owner or group, unless its volume is
+  mounted nosuid. ProgramFile is the caller's to close (CloseFile). }
+function OpenProgramFile(Caller: PProcess; KernelPath: PChar; var Credentials: TProcessCredentials;
+  out ProgramFile: POpenFile): LongInt;
+{ Opens a library at KernelPath for loading it at run time: it must be
+  a file the caller may read and run, on a volume not mounted noexec. }
+function OpenLibraryFile(Caller: PProcess; KernelPath: PChar; out LibraryFile: POpenFile): LongInt;
 
 implementation
 
@@ -62,7 +69,6 @@ uses
   Abi.SystemCalls,
   Memory.KernelHeap,
   FileSystem.Types,
-  FileSystem.Files,
   FileSystem.Security,
   Processes.UserAccess,
   Processes.Security;
@@ -143,24 +149,43 @@ const
   ModeSetUserId = $800;
   ModeSetGroupId = $400;
 
-{ Running a program needs execute permission (root: any execute bit) and
-  a volume not mounted noexec. A set-user-ID or set-group-ID program
-  runs as its owner or group, unless its volume is mounted nosuid. }
-function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
-  var Credentials: TProcessCredentials): LongInt;
+{ Opens KernelPath for reading (the caller's read permission is the
+  file system's to check), as a file. }
+function OpenRegularFile(KernelPath: PChar; out OpenedFile: POpenFile;
+  out Information: TNodeInformation): LongInt;
+begin
+  OpenedFile := nil;
+  case OpenPath(KernelPath, OpenedFile) of
+    StatusSuccess: ;
+    StatusAccessDenied: Exit(ErrorAccessDenied);
+  else
+    Exit(ErrorNotFound);
+  end;
+  GetFileInformation(OpenedFile, Information);
+  if (OpenedFile^.Volume = nil) or (Information.Kind <> NodeKindFile) then
+  begin
+    CloseFile(OpenedFile);
+    OpenedFile := nil;
+    Exit(ErrorAccessDenied);
+  end;
+  Result := ErrorNone;
+end;
+
+function OpenProgramFile(Caller: PProcess; KernelPath: PChar; var Credentials: TProcessCredentials;
+  out ProgramFile: POpenFile): LongInt;
 var
   Information: TNodeInformation;
 begin
-  Result := ErrorNone;
-  if not Caller^.IsUserProcess then
+  Result := OpenRegularFile(KernelPath, ProgramFile, Information);
+  if (Result <> ErrorNone) or not Caller^.IsUserProcess then
     Exit;
-  { A missing program is reported by the loader. }
-  if DescribePath(KernelPath, True, Information) <> StatusSuccess then
-    Exit;
-  if (Information.Kind <> NodeKindFile) or
-     ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
+  if ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
      not CredentialsMayAccess(Credentials, Information, AccessExecute) then
+  begin
+    CloseFile(ProgramFile);
+    ProgramFile := nil;
     Exit(ErrorAccessDenied);
+  end;
   if (Information.VolumeFlags and VolumeFlagNoSetId) <> 0 then
     Exit;
   if (Information.Mode and ModeSetUserId) <> 0 then
@@ -172,6 +197,22 @@ begin
   begin
     Credentials.EffectiveGroupId := Information.GroupId;
     Credentials.SavedGroupId := Information.GroupId;
+  end;
+end;
+
+function OpenLibraryFile(Caller: PProcess; KernelPath: PChar; out LibraryFile: POpenFile): LongInt;
+var
+  Information: TNodeInformation;
+begin
+  Result := OpenRegularFile(KernelPath, LibraryFile, Information);
+  if (Result <> ErrorNone) or not Caller^.IsUserProcess then
+    Exit;
+  if ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
+     not CredentialsMayAccess(Caller^.Credentials, Information, AccessRead or AccessExecute) then
+  begin
+    CloseFile(LibraryFile);
+    LibraryFile := nil;
+    Result := ErrorAccessDenied;
   end;
 end;
 

@@ -34,6 +34,14 @@
   effective user. Its other threads end first (once the program is known
   to be there), as nothing may run in the old space while the new one is
   set up.
+
+  The program's file is opened once (OpenProgramFile): the permission
+  and set-user-ID checks and the loader all see that same file, so a
+  name swapped in between (a symbolic link) cannot get another program
+  run with the first one's owner. The new space is loaded through a
+  TLoadTarget of its own and is not the process's until the switch
+  (PublishAddressSpace): nobody looking at the process ever sees it half
+  built, and the old one goes when its last reader lets it go.
 }
 unit Processes.Execution;
 
@@ -92,6 +100,8 @@ type
     CloseOnExec: PLongInt;
     CloseOnExecCount: QWord;
     Credentials: TProcessCredentials;
+    { The program's file, checked; closed with the request. }
+    ProgramFile: POpenFile;
   end;
   PExecRequest = ^TExecRequest;
 
@@ -109,6 +119,7 @@ begin
   FreeStringList(Request^.Arguments);
   FreeStringList(Request^.Environment);
   FreeKernelMemory(Request^.CloseOnExec);
+  CloseFile(Request^.ProgramFile);
   FreeKernelMemory(Request);
 end;
 
@@ -127,7 +138,7 @@ begin
   if Result = ErrorNone then
   begin
     InheritCredentials(Caller, Request^.Credentials);
-    Result := CheckMayExecute(Caller, @Request^.KernelPath[0], Request^.Credentials);
+    Result := OpenProgramFile(Caller, @Request^.KernelPath[0], Request^.Credentials, Request^.ProgramFile);
   end;
   if Result = ErrorNone then
     Result := CopyStringListFromUser(QWord(Execution.Arguments), Request^.Arguments);
@@ -155,15 +166,14 @@ begin
   end;
 end;
 
-{ Loads the program into a new address space, which Process holds only
-  for the duration (its old space and modules are given back to it). }
+{ Loads the program into a new address space of its own (the process
+  keeps its old one meanwhile, and nobody sees the new one yet). }
 function LoadNewImage(Process: PProcess; Request: PExecRequest; out Image: TNewImage): LongInt;
 var
-  OldSpace: PAddressSpace;
-  OldModules: Pointer;
   MainModule: PLoadedModule;
   Lists: TInitializerLists;
   Startup: TProcessStartup;
+  Target: TLoadTarget;
 begin
   FillMemory(@Image, SizeOf(Image), 0);
   FillMemory(@Lists, SizeOf(Lists), 0);
@@ -178,14 +188,12 @@ begin
   if Result = ErrorNone then
     Result := AddStackGuard(Image.Space, Image.StackStart);
 
-  OldSpace := Process^.AddressSpace;
-  OldModules := Process^.Modules;
-  Process^.AddressSpace := Image.Space;
-  Process^.Modules := nil;
+  Target.Space := Image.Space;
+  Target.Modules := @Image.Modules;
   if Result = ErrorNone then
-    Result := LoadProgramImage(Process, @Request^.KernelPath[0], MainModule);
+    Result := LoadProgramImage(Target, Request^.ProgramFile, @Request^.KernelPath[0], MainModule);
   if Result = ErrorNone then
-    Result := CollectInitializers(Process, Lists);
+    Result := CollectInitializers(Target, Lists);
   if Result = ErrorNone then
   begin
     FillMemory(@Startup, SizeOf(Startup), 0);
@@ -195,20 +203,17 @@ begin
     Startup.ArgumentCount := Request^.Arguments.Count;
     Startup.Environment := Request^.Environment.Items;
     Startup.EnvironmentCount := Request^.Environment.Count;
-    Result := BuildInitialStack(Process, Startup, MainModule, InterpreterOf(Process, MainModule), Lists,
+    { What the program runs as, set-user-ID applied. }
+    Startup.Credentials := Request^.Credentials;
+    Result := BuildInitialStack(Image.Space, Startup, MainModule, InterpreterOf(Target, MainModule), Lists,
       Image.StackPointer);
   end;
   FreeInitializerLists(Lists);
   if Result = ErrorNone then
-    Image.StartAddress := ProgramStartAddress(Process, MainModule);
-  Image.Modules := Process^.Modules;
-  Process^.AddressSpace := OldSpace;
-  Process^.Modules := OldModules;
+    Image.StartAddress := ProgramStartAddress(Target, MainModule);
   if Result <> ErrorNone then
   begin
-    Process^.Modules := Image.Modules;
-    ReleaseModules(Process);
-    Process^.Modules := OldModules;
+    ReleaseModuleList(Image.Modules);
     DestroyAddressSpace(Image.Space);
     Image.Space := nil;
   end;
@@ -219,17 +224,18 @@ end;
 function SwitchToNewImage(Process: PProcess; Thread: PThread; const Image: TNewImage): LongInt;
 var
   OldSpace: PAddressSpace;
+  OldModules: Pointer;
   ThreadDataStart: QWord;
   ThreadPointer: QWord;
   WereEnabled: Boolean;
 begin
-  OldSpace := Process^.AddressSpace;
-  ReleaseModules(Process);
   AcquireMutex(Process^.Lock);
+  OldModules := Process^.Modules;
   Process^.Modules := Image.Modules;
-  Process^.AddressSpace := Image.Space;
+  PublishAddressSpace(Process^.AddressSpace, Image.Space, OldSpace);
   Process^.PageTableRoot := Image.Space^.Root;
   ReleaseMutex(Process^.Lock);
+  ReleaseModuleList(OldModules);
 
   Result := CreateThreadStorage(Process, ThreadDataStart, ThreadPointer);
   if Result = ErrorNone then
@@ -301,16 +307,6 @@ begin
   Result := True;
 end;
 
-{ The program is there: exec ends the other threads only for a program
-  it can expect to start. }
-function ProgramExists(Request: PExecRequest): Boolean;
-var
-  Information: TNodeInformation;
-begin
-  Result := (DescribePath(@Request^.KernelPath[0], True, Information) = StatusSuccess) and
-    (Information.Kind = NodeKindFile);
-end;
-
 procedure CloseListedHandles(Process: PProcess; Request: PExecRequest);
 var
   Index: QWord;
@@ -356,15 +352,11 @@ begin
   Result := ReadRequest(Process, ExecutionAddress, Request);
   if Result <> ErrorNone then
     Exit;
-  { The other threads end first: nothing may run in the old space while
-    the new one is set up. }
+  { The other threads end first (the program's file is open and checked
+    by now): nothing may run in the old space while the new one is set
+    up. }
   if Process^.ActiveUserThreads > 1 then
   begin
-    if not ProgramExists(Request) then
-    begin
-      FreeRequest(Request);
-      Exit(ErrorNotFound);
-    end;
     if not EndOtherThreads(Process, Thread) then
     begin
       FreeRequest(Request);

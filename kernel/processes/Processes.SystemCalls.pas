@@ -167,24 +167,20 @@ const
     programs from before ProcessPassHandles know it. }
   CreationBaseSize = 10 * SizeOf(QWord);
 
+{ The rest of starting a program, whose file ProgramFile is open and
+  checked. }
+function CreateProcessFromFile(Caller: PProcess; const Creation: TAbiProcessCreation; ProgramFile: POpenFile;
+  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials): Int64; forward;
+
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
   Credentials: TProcessCredentials;
   Creation: TAbiProcessCreation;
   Caller: PProcess;
-  Startup: TProcessStartup;
   UserPath: array[0..ProcessPathCapacity - 1] of Char;
   KernelPath: array[0..ProcessPathCapacity - 1] of Char;
-  WorkingDirectory: array[0..ProcessPathCapacity - 1] of Char;
-  RequestedDirectory: array[0..ProcessPathCapacity - 1] of Char;
-  RootDirectory: array[0..ProcessPathCapacity - 1] of Char;
-  Arguments: TStringList;
-  Environment: TStringList;
-  StandardHandles: array[0..2] of Int64;
-  StandardIndex: Integer;
-  Child: PProcess;
+  ProgramFile: POpenFile;
   Error: LongInt;
-  NewTerminal: Pointer;
 begin
   { Programs from before ProcessPassHandles pass a record ending at
     Flags: the rest is read only when the flag says it is there. }
@@ -208,10 +204,29 @@ begin
   Error := ApplyStartIdentity(Caller, QWord(Creation.Identity), Credentials);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Error := CheckMayExecute(Caller, @KernelPath[0], Credentials);
+  { Checked and loaded from this one open file (Processes.ProgramArguments). }
+  Error := OpenProgramFile(Caller, @KernelPath[0], Credentials, ProgramFile);
   if Error <> ErrorNone then
     Exit(Failure(Error));
+  Result := CreateProcessFromFile(Caller, Creation, ProgramFile, @UserPath[0], @KernelPath[0], Credentials);
+  CloseFile(ProgramFile);
+end;
 
+function CreateProcessFromFile(Caller: PProcess; const Creation: TAbiProcessCreation; ProgramFile: POpenFile;
+  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials): Int64;
+var
+  Startup: TProcessStartup;
+  WorkingDirectory: array[0..ProcessPathCapacity - 1] of Char;
+  RequestedDirectory: array[0..ProcessPathCapacity - 1] of Char;
+  RootDirectory: array[0..ProcessPathCapacity - 1] of Char;
+  Arguments: TStringList;
+  Environment: TStringList;
+  StandardHandles: array[0..2] of Int64;
+  StandardIndex: Integer;
+  Child: PProcess;
+  Error: LongInt;
+  NewTerminal: Pointer;
+begin
   AcquireMutex(Caller^.Lock);
   CopyText(@WorkingDirectory[0], @Caller^.CurrentDirectory[0], ProcessPathCapacity);
   CopyText(@RootDirectory[0], @Caller^.RootDirectory[0], ProcessPathCapacity);
@@ -236,8 +251,9 @@ begin
   end;
 
   FillMemory(@Startup, SizeOf(Startup), 0);
-  Startup.KernelPath := @KernelPath[0];
-  Startup.Name := FileNameOf(@UserPath[0]);
+  Startup.KernelPath := KernelPath;
+  Startup.ProgramFile := ProgramFile;
+  Startup.Name := FileNameOf(UserPath);
   Startup.Arguments := Arguments.Items;
   Startup.ArgumentCount := Arguments.Count;
   Startup.Environment := Environment.Items;
@@ -477,6 +493,21 @@ end;
 
 { --- Libraries ------------------------------------------------------- }
 
+{ Loads the library at KernelPath into the calling process: a file the
+  caller may read and run (OpenLibraryFile), loaded from the very file
+  checked. }
+function LoadCheckedLibrary(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
+var
+  LibraryFile: POpenFile;
+begin
+  ModuleHandle := -1;
+  Result := OpenLibraryFile(Process, KernelPath, LibraryFile);
+  if Result <> ErrorNone then
+    Exit;
+  Result := LoadLibraryImage(ProcessLoadTarget(Process), LibraryFile, KernelPath, ModuleHandle);
+  CloseFile(LibraryFile);
+end;
+
 function PerformLoadLibrary(PathAddress: QWord): Int64;
 var
   UserPath: array[0..ProcessPathCapacity - 1] of Char;
@@ -508,13 +539,13 @@ begin
     FolderIndex := 0;
     repeat
       LibraryFolderPath(FolderIndex, @UserPath[0], @KernelPath[0], ProcessPathCapacity);
-      Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+      Error := LoadCheckedLibrary(Process, @KernelPath[0], ModuleHandle);
       Inc(FolderIndex);
     until (Error <> ErrorNotFound) or not LibraryFolderPath(FolderIndex, @UserPath[0], @KernelPath[0],
       ProcessPathCapacity);
   end
   else
-    Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+    Error := LoadCheckedLibrary(Process, @KernelPath[0], ModuleHandle);
   { Its initializers wait for the runtime (CallTakeModuleInitializers). }
   if Error = ErrorNone then
     Error := NoteLibraryInitializers(Process, ModuleHandle);

@@ -42,7 +42,9 @@ unit Processes.UserProcess;
 interface
 
 uses
+  FileSystem.Files,
   Processes.Process,
+  Processes.AddressSpace,
   Processes.Handles,
   Processes.HandlePassing,
   Processes.ImageLoader,
@@ -51,6 +53,10 @@ uses
 type
   TProcessStartup = record
     KernelPath: PChar;
+    { The program's file, opened and checked by the caller (who closes
+      it): what is loaded. nil: opened here from KernelPath, unchecked
+      (the kernel's own starts, the initial program). }
+    ProgramFile: POpenFile;
     Name: PChar;
     { Strings in kernel memory; copied onto the new process's stack. }
     Arguments: PPChar;
@@ -69,7 +75,8 @@ type
     { The session to join; 0 starts a new session led by the new
       process. }
     SessionId: QWord;
-    { Who the program runs as, and its nice value. }
+    { Who the program runs as (what the program's auxiliary vector
+      tells, AT_SECURE included), and its nice value. }
     Credentials: TProcessCredentials;
     { Its controlling terminal (a PDeviceObject; see TProcess). }
     ControllingTerminal: Pointer;
@@ -90,14 +97,18 @@ type
 procedure InitializeUserProcesses;
 
 { Lays out the initial stack (arguments, environment, auxiliary vector)
-  below the stack top of the process's layout; StackPointer is where the
+  below the stack top of Space's layout; StackPointer is where the
   program starts with it. Interpreter is the program's PT_INTERP module
   or nil. Used by exec too (Processes.Execution). }
-function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
+function BuildInitialStack(Space: PAddressSpace; const Startup: TProcessStartup;
   MainModule, Interpreter: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
 { Where the first thread starts: the program's entry point, or its
   interpreter's (which then starts the program). }
-function ProgramStartAddress(Process: PProcess; MainModule: PLoadedModule): QWord;
+function ProgramStartAddress(const Target: TLoadTarget; MainModule: PLoadedModule): QWord;
+{ True if a program started with Credentials must not trust its
+  environment (AT_SECURE): it runs as another user or group than the
+  one that started it. }
+function CredentialsAreSecure(const Credentials: TProcessCredentials): Boolean;
 { The arguments joined by spaces into Destination (what ps shows). }
 procedure JoinArguments(Arguments: PPChar; Count: Integer; Destination: PChar; Capacity: QWord);
 
@@ -139,7 +150,7 @@ uses
   Kernel.Mutex,
   Kernel.Panic,
   Objects.Manager,
-  Processes.AddressSpace,
+  FileSystem.Types,
   Processes.UserRegions,
   Processes.Thread,
   Processes.UserThread,
@@ -290,7 +301,13 @@ end;
 { Builds the initial stack below the stack top of the process's layout
   (less its random offset) and returns the stack pointer the program
   starts with (pointing at the argument count). }
-function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
+function CredentialsAreSecure(const Credentials: TProcessCredentials): Boolean;
+begin
+  Result := (Credentials.RealUserId <> Credentials.EffectiveUserId) or
+    (Credentials.RealGroupId <> Credentials.EffectiveGroupId);
+end;
+
+function BuildInitialStack(Space: PAddressSpace; const Startup: TProcessStartup;
   MainModule, Interpreter: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
 var
   StringBytes: QWord;
@@ -349,8 +366,8 @@ begin
   PointerSlots := 1 + QWord(Startup.ArgumentCount) + 1 + QWord(Startup.EnvironmentCount) + 1 +
     2 * AuxiliaryEntryCount;
 
-  StackTop := Process^.AddressSpace^.Layout.StackTop;
-  ImageTop := StackTop - Process^.AddressSpace^.Layout.InitialStackOffset;
+  StackTop := Space^.Layout.StackTop;
+  ImageTop := StackTop - Space^.Layout.InitialStackOffset;
   StringsStart := (ImageTop - StringBytes) and not QWord(15);
   ListsStart := (StringsStart - (Lists.InitializerCount + Lists.FinalizerCount) * SizeOf(QWord)) and
     not QWord(15);
@@ -395,16 +412,19 @@ begin
   PutSlot(MainModule^.EntryPoint);
   PutSlot(AuxiliaryInterpreterBase);
   PutSlot(InterpreterBase);
+  { The credentials the program runs with (exec changes them only after
+    this): a set-user-ID program is secure, so its dynamic linker
+    ignores LD_PRELOAD and LD_LIBRARY_PATH. }
   PutSlot(AuxiliaryUserId);
-  PutSlot(Process^.Credentials.RealUserId);
+  PutSlot(Startup.Credentials.RealUserId);
   PutSlot(AuxiliaryEffectiveUserId);
-  PutSlot(Process^.Credentials.EffectiveUserId);
+  PutSlot(Startup.Credentials.EffectiveUserId);
   PutSlot(AuxiliaryGroupId);
-  PutSlot(Process^.Credentials.RealGroupId);
+  PutSlot(Startup.Credentials.RealGroupId);
   PutSlot(AuxiliaryEffectiveGroupId);
-  PutSlot(Process^.Credentials.EffectiveGroupId);
+  PutSlot(Startup.Credentials.EffectiveGroupId);
   PutSlot(AuxiliarySecure);
-  PutSlot(0);
+  PutSlot(Ord(CredentialsAreSecure(Startup.Credentials)));
   PutSlot(AuxiliaryRandomBytes);
   PutSlot(RandomPosition);
   PutSlot(AuxiliaryProgramName);
@@ -420,15 +440,15 @@ begin
   PutSlot(AuxiliaryNull);
   PutSlot(0);
 
-  Result := WriteIntoAddressSpace(Process^.AddressSpace, StackPointer, Image, ImageSize);
+  Result := WriteIntoAddressSpace(Space, StackPointer, Image, ImageSize);
   FreeKernelMemory(Image);
 end;
 
-function ProgramStartAddress(Process: PProcess; MainModule: PLoadedModule): QWord;
+function ProgramStartAddress(const Target: TLoadTarget; MainModule: PLoadedModule): QWord;
 var
   Interpreter: PLoadedModule;
 begin
-  Interpreter := InterpreterOf(Process, MainModule);
+  Interpreter := InterpreterOf(Target, MainModule);
   if Interpreter <> nil then
     Result := Interpreter^.EntryPoint
   else
@@ -443,6 +463,11 @@ var
   Lists: TInitializerLists;
   MainThread: PThread;
   StackStart: QWord;
+  Space: PAddressSpace;
+  Previous: PAddressSpace;
+  Target: TLoadTarget;
+  ProgramFile: POpenFile;
+  OpenedHere: Boolean;
 begin
   { The idle thread normally frees exited threads, but a busy system may
     not go idle for a long time; starting a process is a good moment to
@@ -475,25 +500,38 @@ begin
   Process^.ProcessCountLimit := Startup.ProcessCountLimit;
   Process^.OomScoreAdjust := Startup.OomScoreAdjust;
   Process^.Restrictions := Startup.Restrictions;
-  Result := CreateAddressSpace(Process^.AddressSpace);
+  Result := CreateAddressSpace(Space);
   if Result = ErrorNone then
   begin
+    PublishAddressSpace(Process^.AddressSpace, Space, Previous);
     if Startup.RegionLimit <> 0 then
-      SetRegionLimit(Process^.AddressSpace, Startup.RegionLimit);
-    SetCommitLimit(Process^.AddressSpace, Startup.CommitLimitPages);
-    Process^.PageTableRoot := Process^.AddressSpace^.Root;
-    StackStart := Process^.AddressSpace^.Layout.StackTop - UserStackReserve;
-    Result := AddRegion(Process^.AddressSpace, StackStart, UserStackReserve,
+      SetRegionLimit(Space, Startup.RegionLimit);
+    SetCommitLimit(Space, Startup.CommitLimitPages);
+    Process^.PageTableRoot := Space^.Root;
+    StackStart := Space^.Layout.StackTop - UserStackReserve;
+    Result := AddRegion(Space, StackStart, UserStackReserve,
       RegionReadable or RegionWritable, RegionKindStack, True);
   end;
+  Target := ProcessLoadTarget(Process);
   if Result = ErrorNone then
-    Result := AddStackGuard(Process^.AddressSpace, StackStart);
+    Result := AddStackGuard(Space, StackStart);
+  ProgramFile := Startup.ProgramFile;
+  OpenedHere := False;
+  if (Result = ErrorNone) and (ProgramFile = nil) then
+  begin
+    if OpenPath(Startup.KernelPath, ProgramFile) <> StatusSuccess then
+      Result := ErrorNotFound
+    else
+      OpenedHere := True;
+  end;
   if Result = ErrorNone then
-    Result := LoadProgramImage(Process, Startup.KernelPath, MainModule);
+    Result := LoadProgramImage(Target, ProgramFile, Startup.KernelPath, MainModule);
+  if OpenedHere then
+    CloseFile(ProgramFile);
   if Result = ErrorNone then
-    Result := CollectInitializers(Process, Lists);
+    Result := CollectInitializers(Target, Lists);
   if Result = ErrorNone then
-    Result := BuildInitialStack(Process, Startup, MainModule, InterpreterOf(Process, MainModule), Lists,
+    Result := BuildInitialStack(Space, Startup, MainModule, InterpreterOf(Target, MainModule), Lists,
       StackPointer);
   FreeInitializerLists(Lists);
 
@@ -513,7 +551,7 @@ begin
     { Registered before the thread starts, so it is always found while
       it runs. }
     RegisterRunningProcess(Process);
-    Result := StartUserThread(Process, ProgramStartAddress(Process, MainModule), StackPointer, 0,
+    Result := StartUserThread(Process, ProgramStartAddress(Target, MainModule), StackPointer, 0,
       StackStart, Startup.Name, False, MainThread);
     if Result <> ErrorNone then
       UnregisterRunningProcess(Process);
@@ -538,12 +576,10 @@ var
 begin
   UnregisterRunningProcess(Process);
   AcquireMutex(Process^.Lock);
-  Process^.ExitCode := ExitCode;
-  Process^.HasExited := True;
+  MarkProcessExited(Process, ExitCode);
   CloseAllHandles(Process^.Handles);
   ReleaseModules(Process);
-  Space := Process^.AddressSpace;
-  Process^.AddressSpace := nil;
+  PublishAddressSpace(Process^.AddressSpace, nil, Space);
   ReleaseMutex(Process^.Lock);
 
   DestroyAddressSpace(Space);
@@ -607,7 +643,7 @@ begin
   case WaitForEventWithOptions(Process^.ExitEvent, TimeoutMilliseconds, True) of
     WaitSignaled:
       begin
-        ExitCode := Process^.ExitCode;
+        ExitCode := ReadExitCode(Process);
         Result := ErrorNone;
       end;
     WaitTimedOut: Result := ErrorTimedOut;

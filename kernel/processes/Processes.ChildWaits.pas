@@ -155,19 +155,27 @@ begin
     Result := Child^.GroupId = QWord(-ProcessId);
 end;
 
+{ The status of a child seen to have ended. }
 function StatusOf(Child: PProcess): LongInt;
+var
+  ExitCode: LongInt;
 begin
+  { After the barrier: the end signal and code were set before the
+    child was marked ended. }
+  ExitCode := ReadExitCode(Child);
   if Child^.Posix.EndSignal <> 0 then
     Result := Child^.Posix.EndSignal and $7F
   else
-    Result := (Child^.ExitCode and $FF) shl 8;
+    Result := (ExitCode and $FF) shl 8;
 end;
 
 { Looks once through the caller's children for one to report. Found
   tells whether any child matches at all. Returns the reported child's
-  id (0 if none yet) and its status. Caller holds the process's Lock. }
+  id (0 if none yet) and its status; a reaped child comes back in Reaped
+  for the caller to dereference once it let go of the lock (that may
+  delete it). Caller holds the process's Lock. }
 function ReportChildLocked(Caller: PProcess; ProcessId: Int64; Flags: QWord; out Found: Boolean;
-  out Status: LongInt): QWord;
+  out Status: LongInt; out Reaped: PProcess): QWord;
 var
   Index: LongInt;
   Child: PProcess;
@@ -176,6 +184,7 @@ begin
   Result := 0;
   Found := False;
   Status := 0;
+  Reaped := nil;
   Index := 0;
   while Index < Caller^.Posix.ChildCount do
   begin
@@ -192,7 +201,7 @@ begin
         Caller^.Posix.Children[Index] := Caller^.Posix.Children[Last];
         Caller^.Posix.Children[Last] := nil;
         Caller^.Posix.ChildCount := Last;
-        DereferenceObject(Child);
+        Reaped := Child;
         Exit;
       end;
       if ((Flags and WaitUntraced) <> 0) and Child^.IsStopped and not Child^.Posix.StopReportedToParent then
@@ -213,6 +222,7 @@ var
   Found: Boolean;
   Status: LongInt;
   Reported: QWord;
+  Reaped: PProcess;
 begin
   Caller := CurrentProcess;
   if (Flags and not QWord(WaitNoHang or WaitUntraced or WaitContinued)) <> 0 then
@@ -220,8 +230,10 @@ begin
   repeat
     ResetEvent(Caller^.Posix.ChildChangedEvent);
     AcquireMutex(Caller^.Lock);
-    Reported := ReportChildLocked(Caller, ProcessId, Flags, Found, Status);
+    Reported := ReportChildLocked(Caller, ProcessId, Flags, Found, Status, Reaped);
     ReleaseMutex(Caller^.Lock);
+    if Reaped <> nil then
+      DereferenceObject(Reaped);
     if not Found then
       Exit(Failure(ErrorNoChildProcess));
     if Reported <> 0 then
@@ -253,6 +265,37 @@ begin
   ReleaseMutex(Caller^.Lock);
 end;
 
+type
+  TGroupSearch = record
+    GroupId: QWord;
+    SessionId: QWord;
+    Found: Boolean;
+  end;
+  PGroupSearch = ^TGroupSearch;
+
+procedure NoteGroupMember(Process: PProcess; Context: Pointer);
+var
+  Search: PGroupSearch;
+begin
+  Search := PGroupSearch(Context);
+  if Process^.IsUserProcess and not Process^.HasExited and (Process^.GroupId = Search^.GroupId) and
+     (Process^.SessionId = Search^.SessionId) then
+    Search^.Found := True;
+end;
+
+{ True if a group GroupId has a member in session SessionId (the
+  registry lock held). }
+function GroupExistsInSessionLocked(GroupId, SessionId: QWord): Boolean;
+var
+  Search: TGroupSearch;
+begin
+  Search.GroupId := GroupId;
+  Search.SessionId := SessionId;
+  Search.Found := False;
+  VisitRunningProcessesLocked(@NoteGroupMember, @Search);
+  Result := Search.Found;
+end;
+
 function PerformSetProcessGroup(ProcessId, GroupId: QWord): Int64;
 var
   Caller: PProcess;
@@ -273,6 +316,10 @@ begin
     Result := Failure(ErrorNotPermitted)
   else if Target^.SessionId = Target^.ProcessId then
     { A session leader stays the leader of its own group. }
+    Result := Failure(ErrorNotPermitted)
+  { A process leads a group of its own, or joins one of its session
+    (never one of another session, nor a number nobody has). }
+  else if (GroupId <> ProcessId) and not GroupExistsInSessionLocked(GroupId, Target^.SessionId) then
     Result := Failure(ErrorNotPermitted)
   else
   begin

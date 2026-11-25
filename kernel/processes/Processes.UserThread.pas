@@ -55,6 +55,20 @@ uses
 const
   UserThreadPriority = 8;
 
+type
+  { What the thread of a forked child takes over from the forking thread
+    (its copies in the child's space). }
+  TForkedThreadStart = record
+    ThreadPointer: QWord;
+    ThreadDataStart: QWord;
+    StackStart: QWord;
+    OpenedStackReserve: QWord;
+    SignalMask: QWord;
+    { The thread pointer is the kernel's thread block (in the thread
+      data, not a C library's own control block): it gets the id. }
+    RecordsThreadId: Boolean;
+  end;
+
 { The thread priority for a nice value (-20 .. 19). }
 function ThreadPriorityForNice(Nice: LongInt): LongWord;
 
@@ -69,9 +83,10 @@ function StartUserThread(Process: PProcess; EntryPoint, StackPointer, Argument, 
 
 { Starts the thread of a process fork made: in user mode with Context
   (the parent's registers at its system call, the result already
-  changed) and ThreadPointer (the parent thread's). }
-function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; ThreadPointer: QWord;
-  SignalMask: QWord; Name: PChar; out Thread: PThread): LongInt;
+  changed), with the forking thread's thread pointer, thread data and
+  stack (Fork). Its own id goes into the thread block. }
+function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; const Fork: TForkedThreadStart;
+  Name: PChar; out Thread: PThread): LongInt;
 
 { Ends the user side of the calling thread: releases its stack and
   thread data, leaves the address space and signals its exit. Returns
@@ -114,6 +129,8 @@ type
     HasContext: Boolean;
     Context: TAbiContext;
     ForkedThreadPointer: QWord;
+    ForkedRecordsThreadId: Boolean;
+    OpenedStackReserve: QWord;
     SignalMask: QWord;
   end;
   PUserThreadStart = ^TUserThreadStart;
@@ -139,7 +156,16 @@ begin
   Thread^.IsUserThread := True;
   Thread^.UserStackStart := Start.StackStart;
   Thread^.ThreadDataStart := Start.ThreadDataStart;
-  RecordThreadId(Thread^.Process, Start.ThreadPointer, Thread^.ControlBlock.ThreadId);
+  Thread^.OpenedStackReserve := Start.OpenedStackReserve;
+  { The thread block the thread runs with (a forked thread: its copy of
+    the forking thread's) holds its own id. }
+  if Start.HasContext then
+  begin
+    if Start.ForkedRecordsThreadId then
+      RecordThreadId(Thread^.Process, Start.ForkedThreadPointer, Thread^.ControlBlock.ThreadId);
+  end
+  else
+    RecordThreadId(Thread^.Process, Start.ThreadPointer, Thread^.ControlBlock.ThreadId);
 
   { A thread started while its process is being ended never runs: the
     alert that ends the others' waits may have gone out before it was
@@ -202,8 +228,8 @@ begin
   Result := ErrorNone;
 end;
 
-function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; ThreadPointer: QWord;
-  SignalMask: QWord; Name: PChar; out Thread: PThread): LongInt;
+function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; const Fork: TForkedThreadStart;
+  Name: PChar; out Thread: PThread): LongInt;
 var
   Start: PUserThreadStart;
 begin
@@ -211,23 +237,20 @@ begin
   Start := PUserThreadStart(AllocateZeroedKernelMemory(SizeOf(TUserThreadStart)));
   if Start = nil then
     Exit(ErrorOutOfMemory);
-  Result := CreateThreadStorage(Process, Start^.ThreadDataStart, Start^.ThreadPointer);
-  if Result <> ErrorNone then
-  begin
-    FreeKernelMemory(Start);
-    Exit;
-  end;
   Start^.HasContext := True;
   Start^.Context := Context;
-  Start^.ForkedThreadPointer := ThreadPointer;
-  Start^.SignalMask := SignalMask;
+  Start^.ForkedThreadPointer := Fork.ThreadPointer;
+  Start^.ForkedRecordsThreadId := Fork.RecordsThreadId;
+  Start^.ThreadDataStart := Fork.ThreadDataStart;
+  Start^.StackStart := Fork.StackStart;
+  Start^.OpenedStackReserve := Fork.OpenedStackReserve;
+  Start^.SignalMask := Fork.SignalMask;
   AtomicIncrement(Process^.ActiveUserThreads);
   Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
     ThreadPriorityForNice(Process^.Credentials.Nice), Name, False);
   if Thread = nil then
   begin
     AtomicDecrement(Process^.ActiveUserThreads);
-    ReleaseThreadStorage(Process, Start^.ThreadDataStart);
     FreeKernelMemory(Start);
     Exit(ErrorOutOfMemory);
   end;
