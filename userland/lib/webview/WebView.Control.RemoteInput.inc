@@ -28,46 +28,10 @@ const
   WheelStepCss = 60;
 
 procedure TWebView.Paint(var Canvas: TCanvas);
-var
-  Width, Height, Shift, Shown: LongInt;
-  Source: TRectangle;
 begin
   if FEngine <> nil then
     Exit;
-  Width := RectangleWidth(PixelBounds);
-  Height := RectangleHeight(PixelBounds);
-  if not FHasFrame then
-  begin
-    FillRectangle(Canvas, MakeRectangle(0, 0, Width, Height), ColorWhite);
-    Exit;
-  end;
-  Shift := Round(FScrollShift);
-  if Shift = 0 then
-    DrawSurface(Canvas, FFrame, MakeRectangle(0, 0, FFrame.Width, FFrame.Height), 0, 0, False, 255)
-  else
-  begin
-    { The viewport part moved by the shift; the scroll bars stay. }
-    Shown := Min(FFrameInfo.ViewportWidth, FFrame.Width);
-    if Shift > 0 then
-    begin
-      Source := MakeRectangle(0, Shift, Shown, Max(0, FFrameInfo.ViewportHeight - Shift));
-      DrawSurface(Canvas, FFrame, Source, 0, 0, False, 255);
-      FillRectangle(Canvas, MakeRectangle(0, RectangleHeight(Source), Shown, Shift), ColorWhite);
-    end
-    else
-    begin
-      Source := MakeRectangle(0, 0, Shown, Max(0, FFrameInfo.ViewportHeight + Shift));
-      DrawSurface(Canvas, FFrame, Source, 0, -Shift, False, 255);
-      FillRectangle(Canvas, MakeRectangle(0, 0, Shown, -Shift), ColorWhite);
-    end;
-    if FFrame.Width > Shown then
-      DrawSurface(Canvas, FFrame, MakeRectangle(Shown, 0, FFrame.Width - Shown, FFrame.Height), Shown, 0,
-        False, 255);
-  end;
-  if FFrame.Width < Width then
-    FillRectangle(Canvas, MakeRectangle(FFrame.Width, 0, Width - FFrame.Width, Height), ColorWhite);
-  if FFrame.Height < Height then
-    FillRectangle(Canvas, MakeRectangle(0, FFrame.Height, Width, Height - FFrame.Height), ColorWhite);
+  FFrames.Paint(Canvas, RectangleWidth(PixelBounds), RectangleHeight(PixelBounds));
 end;
 
 procedure TWebView.Layout;
@@ -78,7 +42,7 @@ end;
 
 function TWebView.RendererBusy: Boolean;
 begin
-  Result := (FProcess <> nil) and (FInputSequence <> FFrameInfo.InputHandled) and
+  Result := (FProcess <> nil) and (FInputSequence <> FFrames.Info.InputHandled) and
     (GetTickCount64 - FInputSentAt >= BusyAfterMilliseconds);
 end;
 
@@ -89,7 +53,7 @@ begin
   SendGeometryIfChanged;
   Inc(FInputSequence);
   Input.Sequence := FInputSequence;
-  if FInputSequence - 1 = FFrameInfo.InputHandled then
+  if FInputSequence - 1 = FFrames.Info.InputHandled then
     FInputSentAt := GetTickCount64;
   SendToProcess(IpcInput, EncodeInputEvent(Input));
 end;
@@ -97,19 +61,9 @@ end;
 { Moves the last frame by Pixels (down the page for positive), kept
   within the document as the last frame measured it. }
 procedure TWebView.ShiftLastFrame(Pixels: Double);
-var
-  Lowest, Highest, Shift: Double;
 begin
-  if not FHasFrame then
-    Exit;
-  Lowest := -FFrameInfo.ScrollY;
-  Highest := Max(0, FFrameInfo.DocumentHeight - FFrameInfo.ViewportHeight - FFrameInfo.ScrollY);
-  Shift := EnsureRange(FScrollShift + Pixels, Lowest, Highest);
-  if Shift = FScrollShift then
-    Exit;
-  FScrollShift := Shift;
-  FShiftUntilInput := FInputSequence;
-  Invalidate;
+  if FFrames.Shift(Pixels, FInputSequence) then
+    Invalidate;
 end;
 
 procedure TWebView.PointerDown(X, Y: LongInt; Button: LongWord);

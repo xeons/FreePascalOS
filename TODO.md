@@ -1655,6 +1655,19 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A separate network process; IME text and drag and drop through the
       content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout
+- [x] 4chan's boards: for...of over HTMLCollection (indexed collections
+      iterate as arrays), thumbnails no longer covered by posts once an
+      icon loads (escaping floats never skipped; block-in-inline float
+      edges), quote previews, catalog; initMouseEvent for DuckDuckGo
+- [x] The renderer's frames on the browser's side apart from the control
+      (WebView.RemoteFrames, bounded sizes) with a fake-renderer test;
+      a wheel storm in the pointer fuzz
+- [ ] Fast wheel on Wikipedia reported "Access violation" in QEMU: not
+      reproduced (KVM and TCG wheel storms with resizes, scroll-bar drags,
+      PageDown/End, hovering; host loops); webcontent prints
+      "webcontent: input failed: ..." with a back trace to look for
+- [ ] Named access on the Window object (an element's id as a global)
+- [ ] Margins of blocks inside an inline box collapse with each other
 
 ## Planned: driver model (loading only the drivers the machine needs)
 

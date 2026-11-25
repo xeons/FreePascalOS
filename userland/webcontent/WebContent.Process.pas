@@ -231,7 +231,13 @@ begin
         Dispatch(Message);
       except
         on Error: Exception do
-          WriteLn(StdErr, 'webcontent: ', IpcKindName(Message.Kind), ' failed: ', Error.Message);
+        begin
+          { Where it failed, module and offset per frame (symbolize.py
+            names them): a fault the loop lives through says where. }
+          WriteLn(StdErr, 'webcontent: ', IpcKindName(Message.Kind), ' failed: ', Error.ClassName, ': ',
+            Error.Message);
+          DumpExceptionBackTrace(StdErr);
+        end;
       end;
     finally
       Message.Free;

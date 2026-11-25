@@ -756,8 +756,13 @@ var
   ChildInput: TLayoutInput;
 begin
   ChildInput := MakeChildInput(State.Input, State.ContentWidth, Indefinite, wmStretch);
-  ChildInput.BfcX := State.Input.BfcX + State.Container.ContentLeft;
-  ChildInput.BfcY := State.Input.BfcY + State.Container.ContentTop + State.Y;
+  { Where its border box will be in the formatting context (its margins
+    included, as in block flow): the floats its lines go around are
+    found from there. }
+  ChildInput.BfcX := State.Input.BfcX + State.Container.ContentLeft +
+    LengthOf(Box.Style, cpMarginLeft, State.ContentWidth);
+  ChildInput.BfcY := State.Input.BfcY + State.Container.ContentTop + State.Y +
+    LengthOf(Box.Style, cpMarginTop, State.ContentWidth);
   LayoutBox(Box, ChildInput);
   Box.X := State.Container.ContentLeft + Box.Margin[sideLeft];
   Box.Y := State.Container.ContentTop + State.Y + Box.Margin[sideTop];

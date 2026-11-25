@@ -1384,12 +1384,13 @@ WEB_IPC_TEST := build/tools/WebIpcTest
 WEB_IPC_TEST_UNITS := build/tools/web-ipc-test-units
 WEB_IPC_TEST_SOURCES := $(wildcard tools/WebIpcTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	userland/lib/webipc/WebIpc.Wire.pas userland/lib/webipc/WebIpc.Messages.pas userland/lib/webipc/WebIpc.Fragments.pas \
-	userland/lib/webipc/WebIpc.ViewMessages.pas userland/lib/webipc/WebIpc.NetworkMessages.pas
+	userland/lib/webipc/WebIpc.ViewMessages.pas userland/lib/webipc/WebIpc.NetworkMessages.pas \
+	userland/lib/webview/WebView.RemoteFrames.pas $(wildcard userland/lib/drawing/*.pas)
 
 $(WEB_IPC_TEST): $(WEB_IPC_TEST_SOURCES)
 	@mkdir -p $(WEB_IPC_TEST_UNITS)
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/WebIpcTest -Futools/CryptoTest -Fuuserland/lib/webipc \
-		-FU$(WEB_IPC_TEST_UNITS) -o$@ tools/WebIpcTest/WebIpcTest.pas
+		-Fuuserland/lib/drawing -Fuuserland/lib/webview -FU$(WEB_IPC_TEST_UNITS) -o$@ tools/WebIpcTest/WebIpcTest.pas
 
 web-ipc-test: $(WEB_IPC_TEST)
 	@$(WEB_IPC_TEST) > build/tools/web-ipc-test.out || \

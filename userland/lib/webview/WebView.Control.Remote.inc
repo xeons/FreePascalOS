@@ -121,8 +121,7 @@ begin
   FRemoteEntries := nil;
   FRemoteIndex := -1;
   FInputSequence := 0;
-  FFrameInfo := Default(TIpcFrameInfo);
-  FScrollShift := 0;
+  FFrames.Restart;
   FInterruptTimes := nil;
   HideCrashPanel;
   HideHangBar;
@@ -138,8 +137,7 @@ begin
     Exit;
   ContentProcesses.Detach(FProcess, FLink);
   FProcess := nil;
-  FreeAndNil(FShared);
-  FSharedId := 0;
+  FFrames.TakeSurface(0, nil, Default(TSurface));
 end;
 
 { A navigation from the host or from a page: to the process of its
@@ -225,9 +223,7 @@ begin
     IpcScriptInterrupted: NoteScriptInterrupted;
     IpcInputHandled:
       begin
-        FFrameInfo.InputHandled := LongWord(DecodeNumber(Message.Payload));
-        if FFrameInfo.InputHandled >= FShiftUntilInput then
-          FShiftUntilInput := 0;
+        FFrames.InputHandled(LongWord(DecodeNumber(Message.Payload)));
       end;
     IpcAboutPage: AnswerAboutPage(Message);
     IpcReply:
@@ -241,18 +237,18 @@ end;
 procedure TWebView.TakeSurface(Message: TIpcMessage);
 var
   Info: TIpcSurfaceInfo;
+  Shared: TSharedSurface;
 begin
   if Length(Message.Handles) < 1 then
     Exit;
   Info := DecodeSurfaceInfo(Message.Payload);
-  FreeAndNil(FShared);
-  FShared := TSharedSurface.OpenSection(Message.Handles[0], Info.Width, Info.Height, Info.StrideBytes);
+  { The old section goes first (the frames free it with the new one). }
+  FFrames.TakeSurface(0, nil, Default(TSurface));
+  Shared := TSharedSurface.OpenSection(Message.Handles[0], Info.Width, Info.Height, Info.StrideBytes);
   { The section is the surface's now (or closed). }
   Message.Handles[0] := -1;
-  if FShared <> nil then
-    FSharedId := Info.SurfaceId
-  else
-    FSharedId := 0;
+  if Shared <> nil then
+    FFrames.TakeSurface(Info.SurfaceId, Shared, Shared.Surface);
 end;
 
 { Copies what changed out of the shared surface into the view's own
@@ -262,49 +258,20 @@ procedure TWebView.TakeFrame(Message: TIpcMessage);
 var
   Info: TIpcFrameInfo;
   Damage: TRectangle;
-  Canvas: TCanvas;
+  Taken: Boolean;
 begin
   Info := DecodeFrameInfo(Message.Payload);
-  if (FShared = nil) or (Info.SurfaceId <> FSharedId) or (Info.Width > FShared.Width) or
-     (Info.Height > FShared.Height) then
-  begin
-    SendToProcess(IpcFrameAck, EncodeNumber(LongInt(Info.FrameNumber)));
-    Exit;
-  end;
-  if (FFrame.Width <> Info.Width) or (FFrame.Height <> Info.Height) then
-  begin
-    FreeSurface(FFrame);
-    if not CreateSurface(FFrame, Info.Width, Info.Height, ColorWhite) then
-    begin
-      SendToProcess(IpcFrameAck, EncodeNumber(LongInt(Info.FrameNumber)));
-      Exit;
-    end;
-    Damage := MakeRectangle(0, 0, Info.Width, Info.Height);
-  end
-  else
-    Damage := MakeRectangle(Max(0, Info.DamageLeft), Max(0, Info.DamageTop),
-      Min(Info.Width, Info.DamageRight) - Max(0, Info.DamageLeft),
-      Min(Info.Height, Info.DamageBottom) - Max(0, Info.DamageTop));
-  if (RectangleWidth(Damage) > 0) and (RectangleHeight(Damage) > 0) then
-  begin
-    BeginCanvas(Canvas, FFrame);
-    DrawSurface(Canvas, FShared.Surface, Damage, Damage.Left, Damage.Top, False, 255);
-  end;
+  Taken := FFrames.TakeFrame(Info, Damage);
   SendToProcess(IpcFrameAck, EncodeNumber(LongInt(Info.FrameNumber)));
-  FFrameInfo := Info;
-  FHasFrame := True;
+  if not Taken then
+    Exit;
   FFrameAt := GetTickCount64;
-  { The renderer caught up with the scrolling shown meanwhile. }
-  if (FShiftUntilInput = 0) or (Info.InputHandled >= FShiftUntilInput) then
+  if (Host <> nil) and (FFrames.ScrollShift = 0) then
   begin
-    if FScrollShift <> 0 then
-      Damage := MakeRectangle(0, 0, Info.Width, Info.Height);
-    FScrollShift := 0;
-    FShiftUntilInput := 0;
-  end;
-  if (Host <> nil) and (FScrollShift = 0) then
-    Host.InvalidatePixels(MakeRectangle(PixelBounds.Left + Damage.Left, PixelBounds.Top + Damage.Top,
-      RectangleWidth(Damage), RectangleHeight(Damage)))
+    if (RectangleWidth(Damage) > 0) and (RectangleHeight(Damage) > 0) then
+      Host.InvalidatePixels(MakeRectangle(PixelBounds.Left + Damage.Left, PixelBounds.Top + Damage.Top,
+        RectangleWidth(Damage), RectangleHeight(Damage)));
+  end
   else
     Invalidate;
 end;
@@ -520,8 +487,7 @@ begin
   CloseSheet;
   HideHangBar;
   FProcess := nil;
-  FreeAndNil(FShared);
-  FSharedId := 0;
+  FFrames.TakeSurface(0, nil, Default(TSurface));
   if not Crashed then
     Exit;
   TellProcessEvent('crashed', ExitCode);

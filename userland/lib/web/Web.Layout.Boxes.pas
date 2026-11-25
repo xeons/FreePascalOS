@@ -107,7 +107,11 @@ type
     bfSawOutsideFloats,
     { Absolutely positioned boxes below it have a containing block
       above it (so its layout cannot be skipped). }
-    bfHasEscapingAbsolute);
+    bfHasEscapingAbsolute,
+    { Its layout placed floats in a formatting context outside it: a
+      skipped layout would leave them out of that context, and the boxes
+      after it would not flow around them. }
+    bfHasEscapingFloats);
   TBoxFlags = set of TBoxFlag;
 
   TBoxSide = (sideTop, sideRight, sideBottom, sideLeft);
