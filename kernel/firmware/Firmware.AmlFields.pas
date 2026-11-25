@@ -105,10 +105,18 @@ begin
     Result := PciAddressOf(Region) or (Result and $FFFFFF);
 end;
 
+{ Accesses stay inside the region the table declared: a field defined
+  past its end would otherwise reach memory or ports the region does not
+  name. }
+function AccessIsInRegion(Region: PAmlNode; ByteOffset: QWord; Width: Byte): Boolean;
+begin
+  Result := (ByteOffset <= Region^.RegionLength) and (Width <= Region^.RegionLength - ByteOffset);
+end;
+
 function ReadRegion(Region: PAmlNode; ByteOffset: QWord; Width: Byte; out Value: QWord): Boolean;
 begin
   Value := 0;
-  if (Region = nil) or (Region^.Kind <> NodeRegion) then
+  if (Region = nil) or (Region^.Kind <> NodeRegion) or not AccessIsInRegion(Region, ByteOffset, Width) then
     Exit(False);
   if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration]) then
     { Spaces the kernel has no handler for read as zeros. }
@@ -118,7 +126,7 @@ end;
 
 function WriteRegion(Region: PAmlNode; ByteOffset: QWord; Width: Byte; Value: QWord): Boolean;
 begin
-  if (Region = nil) or (Region^.Kind <> NodeRegion) then
+  if (Region = nil) or (Region^.Kind <> NodeRegion) or not AccessIsInRegion(Region, ByteOffset, Width) then
     Exit(False);
   if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration]) then
     Exit(True);
@@ -207,6 +215,15 @@ begin
     Data[Bit div 8] := Data[Bit div 8] and not (1 shl (Bit mod 8));
 end;
 
+{ A field's bits are at most MaximumFieldBytes long and their end does
+  not wrap; reaching it must not exhaust the stack (an index field whose
+  data field is itself). }
+function FieldIsUsable(Node: PAmlNode): Boolean;
+begin
+  Result := (Node <> nil) and (Node^.BitLength > 0) and (Node^.BitLength <= QWord(MaximumFieldBytes) * 8) and
+    (Node^.BitOffset <= High(QWord) - Node^.BitLength) and not AmlStackExhausted;
+end;
+
 function ReadField(Node: PAmlNode; out Value: TAmlValue): Boolean;
 var
   Width: Byte;
@@ -220,9 +237,9 @@ var
   Number: QWord;
 begin
   ZeroMemory(@Value, SizeOf(Value));
-  Bytes := (Node^.BitLength + 7) div 8;
-  if (Node^.BitLength = 0) or (Bytes > MaximumFieldBytes) then
+  if not FieldIsUsable(Node) then
     Exit(False);
+  Bytes := LongWord((Node^.BitLength + 7) div 8);
   Bits := MakeBuffer(Bytes);
   if Bits.Kind <> AmlBuffer then
     Exit(False);
@@ -272,7 +289,7 @@ var
   Covered: QWord;
   FullMask: QWord;
 begin
-  if Node^.BitLength = 0 then
+  if not FieldIsUsable(Node) then
     Exit(False);
   Source := ValueToBuffer(Value);
   if Source.Kind <> AmlBuffer then

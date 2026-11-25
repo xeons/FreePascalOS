@@ -638,12 +638,20 @@ $(AML_TEST): $(AML_TEST_SOURCES)
 	@mkdir -p build/tools/aml-units
 	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/aml-units $<
 
-aml-test: $(AML_TEST)
+# Malformed tables (make-malformed.py): each must fail cleanly, none may
+# crash, hang or write outside its blocks.
+AML_MALFORMED := build/tools/aml-malformed
+
+$(AML_MALFORMED)/CASES: tools/AmlTest/make-malformed.py
+	python3 -I $< $(AML_MALFORMED)
+
+aml-test: $(AML_TEST) $(AML_MALFORMED)/CASES
 	@for machine in $(AML_TEST_MACHINES); do \
 		$(AML_TEST) tools/AmlTest/qemu-$$machine-dsdt.aml > build/tools/aml-$$machine.out && \
 		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
 		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
 	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
+	timeout 300 $(AML_TEST) --malformed $(AML_MALFORMED)
 
 # The region tree of user address spaces (Processes.RegionTree) on the
 # host, against a plain list doing the same the slow way.

@@ -40,6 +40,15 @@
   hexadecimal, a store to the Debug object.
 
   The output is compared with the expected one by "make aml-test".
+
+    AmlTest --malformed FOLDER
+
+  Runs the malformed tables tools/AmlTest/make-malformed.py writes (huge
+  and misplaced buffer fields, a reference to itself, a package stored
+  into itself, operators nested 600 deep, calls that double at every
+  level, fields past their region or over missing names, a chain of 200
+  index fields): each method must fail, nothing may crash, hang or write
+  outside its blocks.
 }
 program AmlTest;
 
@@ -62,14 +71,59 @@ var
 
 { --- The host ------------------------------------------------------------------ }
 
-function HostAllocate(ByteCount: PtrUInt): Pointer;
+{ Every block has a guard on both sides, checked when it is freed and
+  at the end of the malformed tables: the interpreter must not write
+  outside what it allocated. }
+const
+  GuardBytes = 32;
+  GuardByte = $A5;
+
+var
+  GuardFailures: Integer = 0;
+  LiveBlocks: Integer = 0;
+
+function GuardsAreIntact(Start: PByte): Boolean;
+var
+  Size: PtrUInt;
+  Index: Integer;
 begin
-  Result := AllocMem(ByteCount);
+  Size := PPtrUInt(Start)^;
+  Result := True;
+  for Index := 0 to GuardBytes - 1 do
+    if (Start[SizeOf(PtrUInt) + Index] <> GuardByte) or
+       (Start[SizeOf(PtrUInt) + GuardBytes + Size + Index] <> GuardByte) then
+      Result := False;
+end;
+
+function HostAllocate(ByteCount: PtrUInt): Pointer;
+var
+  Start: PByte;
+begin
+  { As the kernel heap would: a request of gigabytes fails. }
+  if ByteCount > 256 * 1024 * 1024 then
+    Exit(nil);
+  Start := AllocMem(SizeOf(PtrUInt) + 2 * GuardBytes + ByteCount);
+  PPtrUInt(Start)^ := ByteCount;
+  FillChar(Start[SizeOf(PtrUInt)], GuardBytes, GuardByte);
+  FillChar(Start[SizeOf(PtrUInt) + GuardBytes + ByteCount], GuardBytes, GuardByte);
+  Inc(LiveBlocks);
+  Result := Start + SizeOf(PtrUInt) + GuardBytes;
 end;
 
 procedure HostFree(Block: Pointer);
+var
+  Start: PByte;
 begin
-  FreeMem(Block);
+  if Block = nil then
+    Exit;
+  Start := PByte(Block) - GuardBytes - SizeOf(PtrUInt);
+  if not GuardsAreIntact(Start) then
+  begin
+    WriteLn('FAIL a block of ', PPtrUInt(Start)^, ' bytes was written outside its bounds');
+    Inc(GuardFailures);
+  end;
+  Dec(LiveBlocks);
+  FreeMem(Start);
 end;
 
 function ConfigurationByte(Address: QWord; Offset: Integer; out Location: PByte): Boolean;
@@ -298,12 +352,64 @@ begin
   ReleaseValue(Value);
 end;
 
+{ AmlTest --malformed FOLDER: the tables make-malformed.py wrote, listed
+  in FOLDER/CASES; table N defines method \TNNN, which must fail.
+  Nothing may crash or write outside its blocks. }
+procedure RunMalformedTables(const Folder: string);
+var
+  Cases: Text;
+  CaseName: string;
+  Number: Integer;
+  Failures: Integer;
+  MethodPath: array[0..7] of Char;
+  NumberText: string;
+  Value: TAmlValue;
+  Succeeded: Boolean;
+begin
+  Assign(Cases, Folder + '/CASES');
+  Reset(Cases);
+  Number := 0;
+  Failures := 0;
+  while not Eof(Cases) do
+  begin
+    ReadLn(Cases, CaseName);
+    if CaseName = '' then
+      Continue;
+    Inc(Number);
+    LoadAmlTable(LoadTable(Folder + '/' + CaseName + '.aml'));
+    Str(1000 + Number, NumberText);
+    MethodPath := '\T' + Copy(NumberText, 2, 3);
+    Succeeded := EvaluatePath(nil, @MethodPath[0], nil, 0, Value);
+    ReleaseValue(Value);
+    if Succeeded then
+    begin
+      WriteLn('FAIL ', CaseName, ': ', MethodPath, ' ran to its end');
+      Inc(Failures);
+    end;
+  end;
+  Close(Cases);
+  Failures := Failures + GuardFailures;
+  if Failures > 0 then
+  begin
+    WriteLn('AML MALFORMED TEST FAILED: ', Failures);
+    Halt(1);
+  end;
+  WriteLn('AML MALFORMED TEST PASSED: ', Number, ' tables');
+end;
+
 var
   Table: PByte;
 begin
+  if (ParamCount = 2) and (ParamStr(1) = '--malformed') then
+  begin
+    SetUpHost;
+    AmlHost.Log := nil;
+    RunMalformedTables(ParamStr(2));
+    Halt(0);
+  end;
   if ParamCount <> 1 then
   begin
-    WriteLn('usage: AmlTest TABLE.aml');
+    WriteLn('usage: AmlTest TABLE.aml | --malformed FOLDER');
     Halt(2);
   end;
   SetUpHost;
