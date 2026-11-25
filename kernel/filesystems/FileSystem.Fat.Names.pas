@@ -163,6 +163,13 @@ var
 begin
   Part := PLongNameRecord(@DirectoryRecord);
   Ordinal := Part^.Ordinal and LongNameOrdinalMask;
+  { Ordinals count from 1: a part numbered 0 belongs to no name (and
+    would be stored in front of the buffer). }
+  if Ordinal < 1 then
+  begin
+    ResetLongName(Assembly);
+    Exit;
+  end;
 
   if (Part^.Ordinal and LongNameLastEntryFlag) <> 0 then
   begin

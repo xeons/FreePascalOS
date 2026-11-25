@@ -71,6 +71,9 @@ type
     SessionId: QWord;
     { Who the program runs as, and its nice value. }
     Credentials: TProcessCredentials;
+    { The file the permission check looked at (Processes.ProgramArguments.
+      CheckMayExecute); the program loaded must be it. }
+    ProgramIdentity: TProgramIdentity;
     { Its controlling terminal (a PDeviceObject; see TProcess). }
     ControllingTerminal: Pointer;
     { Its limits (see Processes.LimitCalls); 0 for the default. }
@@ -490,6 +493,8 @@ begin
     Result := AddStackGuard(Process^.AddressSpace, StackStart);
   if Result = ErrorNone then
     Result := LoadProgramImage(Process, Startup.KernelPath, MainModule);
+  if (Result = ErrorNone) and not ModuleIsProgram(MainModule, Startup.ProgramIdentity) then
+    Result := ErrorAccessDenied;
   if Result = ErrorNone then
     Result := CollectInitializers(Process, Lists);
   if Result = ErrorNone then

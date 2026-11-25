@@ -60,6 +60,8 @@ type
   TCreationAttributes = function(out OwnerId, GroupId, Mask: LongWord): Boolean;
   { True if the caller is the user OwnerId or may act for anyone. }
   TOwnerCheck = function(OwnerId: LongWord): Boolean;
+  TAttributeChangeCheck = function(const Information: TNodeInformation;
+    const Changes: TAttributeChanges): TFileSystemStatus;
 
 const
   { The sticky bit: in such a directory only the owner of a name (or of
@@ -68,6 +70,15 @@ const
 
 procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes;
   OwnerCheck: TOwnerCheck);
+{ Installs the check of attribute changes (chmod, chown, utimes) that
+  MayChangeAttributes asks. }
+procedure SetAttributeChangeHook(Check: TAttributeChangeCheck);
+{ May the caller make Changes to a node described by Information?
+  StatusSuccess, StatusNotPermitted or StatusAccessDenied. The VFS asks
+  with the node resolved and its volume's lock held, so the node checked
+  is the node changed. }
+function MayChangeAttributes(const Information: TNodeInformation;
+  const Changes: TAttributeChanges): TFileSystemStatus;
 { True if the caller may remove or rename Node in Directory as far as
   the sticky bit goes (write access to Directory is checked apart). }
 function MayRemoveFromDirectory(Directory, Node: PNode): Boolean;
@@ -99,6 +110,7 @@ var
   AccessHook: TAccessCheck = nil;
   CreationHook: TCreationAttributes = nil;
   OwnerHook: TOwnerCheck = nil;
+  AttributeChangeHook: TAttributeChangeCheck = nil;
 
 procedure SetFileSecurityHooks(AccessCheck: TAccessCheck; CreationAttributes: TCreationAttributes;
   OwnerCheck: TOwnerCheck);
@@ -106,6 +118,19 @@ begin
   AccessHook := AccessCheck;
   CreationHook := CreationAttributes;
   OwnerHook := OwnerCheck;
+end;
+
+procedure SetAttributeChangeHook(Check: TAttributeChangeCheck);
+begin
+  AttributeChangeHook := Check;
+end;
+
+function MayChangeAttributes(const Information: TNodeInformation;
+  const Changes: TAttributeChanges): TFileSystemStatus;
+begin
+  if not Assigned(AttributeChangeHook) then
+    Exit(StatusSuccess);
+  Result := AttributeChangeHook(Information, Changes);
 end;
 
 function MayRemoveFromDirectory(Directory, Node: PNode): Boolean;
@@ -133,6 +158,7 @@ begin
     Exit;
   if not CreationHook(OwnerId, GroupId, Mask) then
     Exit;
+  Changes.TimesAreNow := False;
   if Node^.Volume^.Driver^.HasNoOwners then
   begin
     { Only the read-only attribute can be stored: a mode without write

@@ -265,6 +265,17 @@ begin
     Result := Directory^.FirstCluster;
 end;
 
+function IsDotDotRecord(const DirectoryRecord: TDirectoryRecord): Boolean;
+var
+  Index: Integer;
+begin
+  Result := (DirectoryRecord.Name[0] = Ord('.')) and (DirectoryRecord.Name[1] = Ord('.')) and
+    ((DirectoryRecord.Attributes and AttributeDirectory) <> 0);
+  for Index := 2 to 10 do
+    if DirectoryRecord.Name[Index] <> Ord(' ') then
+      Result := False;
+end;
+
 procedure StampRecord(var DirectoryRecord: TDirectoryRecord; Time: TUnixTime);
 var
   DateWord: Word;
@@ -645,11 +656,15 @@ begin
 
   { A directory moved to a new parent must point its ".." there. }
   if (Node^.Information.Kind = NodeKindDirectory) and (Source <> Target) and
-     (FatNode^.FirstCluster <> 0) then
+     IsValidDataCluster(Fat, FatNode^.FirstCluster) then
   begin
     if not VolumeRead(Volume, ClusterOffset(Fat, FatNode^.FirstCluster) + DirectoryEntrySize,
       DirectoryEntrySize, @DotDotRecord) then
       Exit(StatusIoError);
+    { Only a real ".." record is rewritten; a damaged directory keeps
+      what it has rather than losing a record of someone else's. }
+    if not IsDotDotRecord(DotDotRecord) then
+      Exit(StatusCorrupted);
     SetRecordFirstCluster(DotDotRecord, DirectoryClusterForDotDot(Target));
     if not VolumeWrite(Volume, ClusterOffset(Fat, FatNode^.FirstCluster) + DirectoryEntrySize,
       DirectoryEntrySize, @DotDotRecord) then

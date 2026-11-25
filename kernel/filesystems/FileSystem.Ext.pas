@@ -114,6 +114,9 @@ const
     ReadOnlyCompatibleExtraInodeSize or ReadOnlyCompatibleMetadataChecksum;
 
   StateHasErrors = $0002;
+  { The first inode that is not reserved on revision 0 volumes, and the
+    lowest the superblock may name on later ones. }
+  GoodOldFirstInode = 11;
   ChecksumTypeCrc32c = 1;
   ChecksumTypeOffset = $175;
 
@@ -237,12 +240,32 @@ begin
     (Superblock.Magic = ExtMagic);
 end;
 
+{ The superblock's geometry stays within what the driver can work with:
+  blocks of 1 to 64 KiB, groups whose block and inode bitmaps fit in one
+  block (as Linux requires), and the first ordinary inode after the
+  reserved ones. Checked at every mount, also the one after a journal
+  replay (which may have rewritten the superblock). }
+function SuperblockGeometryIsValid(const Superblock: TSuperblock; DeviceBytes: QWord): Boolean;
+var
+  BlockSize: QWord;
+  BitsPerBitmap: QWord;
+begin
+  if Superblock.LogBlockSize > 6 then
+    Exit(False);
+  BlockSize := QWord(1024) shl Superblock.LogBlockSize;
+  BitsPerBitmap := BlockSize * 8;
+  Result := (Superblock.BlocksPerGroup > 0) and (Superblock.BlocksPerGroup <= BitsPerBitmap) and
+    (Superblock.InodesPerGroup > 0) and (Superblock.InodesPerGroup <= BitsPerBitmap) and
+    (DeviceBytes >= BlockSize) and
+    ((Superblock.RevisionLevel = GoodOldRevision) or (Superblock.FirstInode >= GoodOldFirstInode));
+end;
+
 function ExtProbe(Device: PBlockDevice): Boolean;
 var
   Superblock: TSuperblock;
 begin
-  Result := ReadSuperblock(Device, Superblock) and (Superblock.LogBlockSize <= 6) and
-    (Superblock.BlocksPerGroup > 0) and (Superblock.InodesPerGroup > 0);
+  Result := ReadSuperblock(Device, Superblock) and
+    SuperblockGeometryIsValid(Superblock, BlockDeviceSizeInBytes(Device));
 end;
 
 procedure DetermineVariantName(Volume: PVolume; const Superblock: TSuperblock);
@@ -310,10 +333,12 @@ var
   Ext: PExtVolume;
   Descriptor: array[0..MaximumDescriptorSize - 1] of Byte;
   Group: LongWord;
+  FreeInodes: QWord;
 begin
   Ext := PExtVolume(Volume^.DriverData);
   Ext^.FreeBlockCount := 0;
   Ext^.FreeInodeCount := 0;
+  FreeInodes := 0;
   Group := 0;
   while Group < Ext^.GroupCount do
   begin
@@ -322,10 +347,14 @@ begin
       Exit;
     Ext^.FreeBlockCount := Ext^.FreeBlockCount + DescriptorValue(Ext, @Descriptor[0],
       DescriptorOffsetFreeBlocksLow, DescriptorOffsetFreeBlocksHigh, False);
-    Ext^.FreeInodeCount := Ext^.FreeInodeCount + LongWord(DescriptorValue(Ext, @Descriptor[0],
-      DescriptorOffsetFreeInodesLow, DescriptorOffsetFreeInodesHigh, False));
+    FreeInodes := FreeInodes + DescriptorValue(Ext, @Descriptor[0],
+      DescriptorOffsetFreeInodesLow, DescriptorOffsetFreeInodesHigh, False);
     Inc(Group);
   end;
+  { Damaged descriptors may add up to more inodes than there are. }
+  if FreeInodes > High(LongWord) then
+    FreeInodes := High(LongWord);
+  Ext^.FreeInodeCount := LongWord(FreeInodes);
   Result := StatusSuccess;
 end;
 
@@ -452,6 +481,7 @@ var
   Root: PExtNode;
   UnsupportedFeatures: LongWord;
   Replayed: Boolean;
+  GroupCount: QWord;
 begin
   if not CachedRead(Volume^.Device, SuperblockOffset, SuperblockSize, @SuperblockBytes[0]) then
     Exit(StatusIoError);
@@ -462,11 +492,15 @@ begin
   if Superblock.RevisionLevel = GoodOldRevision then
   begin
     Superblock.InodeSize := GoodOldInodeSize;
-    Superblock.FirstInode := 11;
+    Superblock.FirstInode := GoodOldFirstInode;
     Superblock.FeatureIncompatible := 0;
     Superblock.FeatureReadOnlyCompatible := 0;
     Superblock.FeatureCompatible := 0;
   end;
+
+  { Everything below divides by, shifts by or sizes buffers from these. }
+  if not SuperblockGeometryIsValid(Superblock, BlockDeviceSizeInBytes(Volume^.Device)) then
+    Exit(StatusCorrupted);
 
   UnsupportedFeatures := Superblock.FeatureIncompatible and not ReadableIncompatibleFeatures;
   if UnsupportedFeatures <> 0 then
@@ -522,13 +556,21 @@ begin
 
   if (Ext^.InodeSize < GoodOldInodeSize) or (Ext^.InodeSize > MaximumInodeSize) or
      (Ext^.InodeSize > Ext^.BlockSize) or (Ext^.BlockCount <= Ext^.FirstDataBlock) or
-     (Ext^.BlockCount * Ext^.BlockSize > BlockDeviceSizeInBytes(Volume^.Device)) then
+     (Ext^.BlockCount > BlockDeviceSizeInBytes(Volume^.Device) div Ext^.BlockSize) then
   begin
     FreeKernelMemory(Ext);
     Exit(StatusCorrupted);
   end;
-  Ext^.GroupCount := LongWord((Ext^.BlockCount - Ext^.FirstDataBlock + Ext^.BlocksPerGroup - 1) div
-    Ext^.BlocksPerGroup);
+  GroupCount := (Ext^.BlockCount - Ext^.FirstDataBlock + Ext^.BlocksPerGroup - 1) div Ext^.BlocksPerGroup;
+  { Inode numbers are 32 bits, and every inode the superblock counts must
+    have a group (the orphan list and allocation trust that count). }
+  if (GroupCount > High(LongWord)) or (GroupCount * Ext^.InodesPerGroup > High(LongWord)) or
+     (QWord(Superblock.InodesCount) > GroupCount * Ext^.InodesPerGroup) then
+  begin
+    FreeKernelMemory(Ext);
+    Exit(StatusCorrupted);
+  end;
+  Ext^.GroupCount := LongWord(GroupCount);
 
   Volume^.DriverData := Ext;
   Volume^.TotalBytes := Ext^.BlockCount * Ext^.BlockSize;

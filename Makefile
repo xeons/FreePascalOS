@@ -25,6 +25,8 @@
 #                   session as it normally starts; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
+#   make file-system-image-test  The ext, FAT and exFAT drivers on the host against
+#                   disk images damaged on purpose and at random
 #   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
 #   make gem-descriptor-test  The Pi 5 Ethernet's (Cadence GEM) DMA descriptors (host)
 #   make nvme-queue-test      NVMe queue pairs: identifiers, phases, late completions (host)
@@ -579,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: native-fpc-test aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -639,12 +641,20 @@ $(AML_TEST): $(AML_TEST_SOURCES)
 	@mkdir -p build/tools/aml-units
 	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/aml-units $<
 
-aml-test: $(AML_TEST)
+# Malformed tables (make-malformed.py): each must fail cleanly, none may
+# crash, hang or write outside its blocks.
+AML_MALFORMED := build/tools/aml-malformed
+
+$(AML_MALFORMED)/CASES: tools/AmlTest/make-malformed.py
+	python3 -I $< $(AML_MALFORMED)
+
+aml-test: $(AML_TEST) $(AML_MALFORMED)/CASES
 	@for machine in $(AML_TEST_MACHINES); do \
 		$(AML_TEST) tools/AmlTest/qemu-$$machine-dsdt.aml > build/tools/aml-$$machine.out && \
 		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
 		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
 	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
+	timeout 300 $(AML_TEST) --malformed $(AML_MALFORMED)
 
 # The region tree of user address spaces (Processes.RegionTree) on the
 # host, against a plain list doing the same the slow way.
@@ -697,6 +707,34 @@ $(MOUNT_TEST): tools/MountTest/MountTest.pas kernel/filesystems/FileSystem.Mount
 
 mount-test: $(MOUNT_TEST)
 	$(MOUNT_TEST)
+
+# The kernel's ext2/3/4, FAT and exFAT drivers on the host, against disk
+# images damaged on purpose (made by make-images.py with mke2fs, mkfs.fat,
+# mtools and mkfs.exfat) and copies damaged at random: they may refuse,
+# mount read-only or report corruption, never crash, hang, leak or write
+# outside their buffers. The kernel's block cache, heap, clock and mutexes
+# are stood in for (tools/FileSystemImageTest/stubs).
+FILE_SYSTEM_IMAGE_TEST := build/tools/FileSystemImageTest
+FILE_SYSTEM_IMAGES := build/tools/fs-images
+FILE_SYSTEM_FUZZ_ITERATIONS ?= 400
+
+$(FILE_SYSTEM_IMAGE_TEST): tools/FileSystemImageTest/FileSystemImageTest.pas tools/FileSystemImageTest/ImageHarness.pas \
+		tools/FileSystemImageTest/ImageMutations.pas $(wildcard tools/FileSystemImageTest/stubs/*.pas) \
+		$(wildcard kernel/filesystems/FileSystem.Ext*.pas) $(wildcard kernel/filesystems/FileSystem.Fat*.pas) \
+		$(wildcard kernel/filesystems/FileSystem.ExFat*.pas) kernel/filesystems/FileSystem.Types.pas
+	@mkdir -p build/tools/fs-image-units
+	$(FPC) -O1 -gl -Cr -Futools/FileSystemImageTest/stubs -Futools/FileSystemImageTest -Fukernel/filesystems \
+		-Fukernel/runtime -Fushared -FEbuild/tools -FUbuild/tools/fs-image-units $<
+
+$(FILE_SYSTEM_IMAGES)/MANIFEST: tools/FileSystemImageTest/make-images.py
+	python3 -I $< $(FILE_SYSTEM_IMAGES)
+
+.PHONY: file-system-image-test
+file-system-image-test: $(FILE_SYSTEM_IMAGE_TEST) $(FILE_SYSTEM_IMAGES)/MANIFEST
+	$(FILE_SYSTEM_IMAGE_TEST) $(FILE_SYSTEM_IMAGES)/MANIFEST
+	@for image in ext2 ext4 ext4-plain fat12 fat16 exfat; do \
+		$(FILE_SYSTEM_IMAGE_TEST) --fuzz $(FILE_SYSTEM_IMAGES)/$$image.img $(FILE_SYSTEM_FUZZ_ITERATIONS) 1 || exit 1; \
+	done
 
 # The kernel's random number core (ChaCha20, against RFC 8439) and the
 # randomized address space layouts (Processes.AddressLayout) on the host.

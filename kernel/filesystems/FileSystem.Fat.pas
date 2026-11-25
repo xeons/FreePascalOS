@@ -62,6 +62,11 @@ uses
   FileSystem.Fat.Write,
   FileSystem.Fat.Attributes;
 
+const
+  { Clusters 2 .. $0FFFFFF6: from $0FFFFFF7 on, FAT32 entries mean "bad
+    cluster" and "end of chain". }
+  MaximumFat32Clusters = $0FFFFFF5;
+
 var
   Driver: TFileSystemDriver;
 
@@ -257,6 +262,28 @@ begin
   end;
 end;
 
+{ The allocation table must have an entry for every cluster, FAT32
+  cluster numbers must stay below the values that mean "end of chain" or
+  "bad", and the active table of a FAT32 volume that does not mirror its
+  tables must be one of them. Linux refuses such volumes too. }
+function GeometryIsConsistent(Fat: PFatVolume; const BootSector: TBootSector; FatSize: QWord): Boolean;
+var
+  EntryBytesNeeded: QWord;
+  Entries: QWord;
+begin
+  Entries := QWord(Fat^.ClusterCount) + 2;
+  case Fat^.Variant of
+    FatVariant12: EntryBytesNeeded := (Entries * 3 + 1) div 2;
+    FatVariant16: EntryBytesNeeded := Entries * 2;
+  else
+    EntryBytesNeeded := Entries * 4;
+  end;
+  Result := (Fat^.ClusterCount > 0) and (Fat^.ClusterCount <= MaximumFat32Clusters) and
+    (FatSize * Fat^.BytesPerSector >= EntryBytesNeeded);
+  if Result and (Fat^.Variant = FatVariant32) and ((BootSector.ExtendedFlags and $80) <> 0) then
+    Result := (BootSector.ExtendedFlags and $0F) < BootSector.NumberOfFats;
+end;
+
 function FatMount(Volume: PVolume): TFileSystemStatus;
 var
   BootSector: TBootSector;
@@ -305,6 +332,11 @@ begin
   end;
   Fat^.ClusterCount := LongWord((TotalSectors - FirstDataSector) div BootSector.SectorsPerCluster);
   DetermineVariant(Fat);
+  if not GeometryIsConsistent(Fat, BootSector, FatSize) then
+  begin
+    FreeKernelMemory(Fat);
+    Exit(StatusCorrupted);
+  end;
 
   { FAT32 may mirror all tables or use just one active table. }
   Fat^.MirrorFats := True;

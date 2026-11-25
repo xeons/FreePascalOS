@@ -75,6 +75,8 @@ const
   PageMask = QWord($FFF);
   FadtDsdtOffset = 40;
   FadtExtendedDsdtOffset = 140;
+  { No definition block is anywhere near this long. }
+  MaximumAmlTableBytes = 16 * 1024 * 1024;
 
 var
   MappedPhysical: array[0..MappedPageCount - 1] of QWord;
@@ -111,8 +113,9 @@ begin
   Mapping := PByte(MapDeviceMemory(Page, PageMask + 1));
   if Mapping = nil then
     Exit(nil);
-  { Kept mapped; past the cache's size the oldest slot is reused (its
-    mapping stays, unused). }
+  { Kept mapped; past the cache's size the oldest slot is reused and its
+    mapping given back (firmware walking many pages would otherwise use
+    up the device mapping space). }
   if MappedCount < MappedPageCount then
   begin
     Index := MappedCount;
@@ -122,10 +125,50 @@ begin
   begin
     Index := NextMappingSlot;
     NextMappingSlot := (NextMappingSlot + 1) mod MappedPageCount;
+    UnmapDeviceMemory(MappedVirtual[Index], PageMask + 1);
   end;
   MappedPhysical[Index] := Page;
   MappedVirtual[Index] := Mapping;
   Result := Mapping + (Physical and PageMask);
+end;
+
+{ True if an access of Width bits at Address is aligned to its width (so
+  it does not cross a page, and device memory on AArch64 takes it). A
+  region may start anywhere, so its units need not be. }
+function AccessIsAligned(Address: QWord; Width: Byte): Boolean;
+begin
+  Result := (Address and (QWord(Width div 8) - 1)) = 0;
+end;
+
+function ReadMemoryBytes(Address: QWord; Width: Byte; out Value: QWord): Boolean;
+var
+  Index: Integer;
+  Location: PByte;
+begin
+  Value := 0;
+  for Index := Width div 8 - 1 downto 0 do
+  begin
+    Location := MappedAddress(Address + QWord(Index));
+    if Location = nil then
+      Exit(False);
+    Value := (Value shl 8) or Location^;
+  end;
+  Result := True;
+end;
+
+function WriteMemoryBytes(Address: QWord; Width: Byte; Value: QWord): Boolean;
+var
+  Index: Integer;
+  Location: PByte;
+begin
+  for Index := 0 to Width div 8 - 1 do
+  begin
+    Location := MappedAddress(Address + QWord(Index));
+    if Location = nil then
+      Exit(False);
+    Location^ := Byte(Value shr (8 * Index));
+  end;
+  Result := True;
 end;
 
 function ReadMemory(Address: QWord; Width: Byte; out Value: QWord): Boolean;
@@ -133,7 +176,8 @@ var
   Location: PByte;
 begin
   Value := 0;
-  { An access does not cross a page: widths are aligned. }
+  if not AccessIsAligned(Address, Width) then
+    Exit(ReadMemoryBytes(Address, Width, Value));
   Location := MappedAddress(Address);
   Result := Location <> nil;
   if not Result then
@@ -151,6 +195,8 @@ function WriteMemory(Address: QWord; Width: Byte; Value: QWord): Boolean;
 var
   Location: PByte;
 begin
+  if not AccessIsAligned(Address, Width) then
+    Exit(WriteMemoryBytes(Address, Width, Value));
   Location := MappedAddress(Address);
   Result := Location <> nil;
   if not Result then
@@ -326,6 +372,25 @@ end;
 
 { --- Loading ----------------------------------------------------------------------- }
 
+procedure ReportBadDsdt(Text: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('acpi');
+  DebugWriteLine(Text);
+  DebugEndMessage;
+end;
+
+function TableChecksumIsValid(Table: PByte): Boolean;
+var
+  Sum: Byte;
+  Index: LongWord;
+begin
+  Sum := 0;
+  for Index := 0 to PAcpiTableHeader(Table)^.Length - 1 do
+    Sum := Byte(Sum + Table[Index]);
+  Result := Sum = 0;
+end;
+
 { The DSDT, from the FADT (its 64-bit address if it has one). }
 function FindDsdt: PByte;
 var
@@ -339,10 +404,22 @@ begin
   Physical := 0;
   if PAcpiTableHeader(Fadt)^.Length >= FadtExtendedDsdtOffset + 8 then
     Physical := PQWord(Fadt + FadtExtendedDsdtOffset)^;
-  if Physical = 0 then
+  if (Physical = 0) and (PAcpiTableHeader(Fadt)^.Length >= FadtDsdtOffset + 4) then
     Physical := PLongWord(Fadt + FadtDsdtOffset)^;
-  if Physical <> 0 then
-    Result := PByte(PhysicalToVirtual(Physical));
+  if Physical = 0 then
+    Exit;
+  Result := PByte(PhysicalToVirtual(Physical));
+  { What the FADT points at must look like a DSDT; a wrong checksum is
+    only reported (as Linux does), firmware gets that wrong. }
+  if not MemoryIsEqual(Result, PChar('DSDT'), 4) or
+     (PAcpiTableHeader(Result)^.Length < SizeOf(TAcpiTableHeader)) or
+     (PAcpiTableHeader(Result)^.Length > MaximumAmlTableBytes) then
+  begin
+    ReportBadDsdt('not a DSDT where the FADT points');
+    Exit(nil);
+  end;
+  if not TableChecksumIsValid(Result) then
+    ReportBadDsdt('DSDT checksum is wrong (used anyway)');
 end;
 
 procedure ReportLoad(Tables: Integer; Failures: Integer; Routes: Integer);

@@ -67,6 +67,9 @@ uses
 
 const
   SuperblockLastOrphanOffset = $E8;
+  { Orphans are files that were open when the system stopped: a list
+    longer than this is damaged, and the rest is left to e2fsck. }
+  MaximumOrphansAtMount = 65536;
 
 { --- The list head in the superblock ------------------------------------ }
 
@@ -230,21 +233,107 @@ begin
   end;
 end;
 
+{ An orphan list link can only name an ordinary inode the volume has:
+  never a reserved one (the root, the journal), which settling would
+  free. }
+function IsOrphanNumber(Ext: PExtVolume; InodesCount, InodeNumber: LongWord): Boolean;
+begin
+  Result := (InodeNumber >= Ext^.FirstNonReservedInode) and (InodeNumber <= InodesCount);
+end;
+
+{ The orphan after InodeNumber on the list, 0 at its end or where it
+  goes wrong. Reads only. }
+function NextOrphanNumber(Volume: PVolume; InodesCount, InodeNumber: LongWord): LongWord;
+var
+  InodeBytes: array[0..MaximumInodeSize - 1] of Byte;
+begin
+  Result := 0;
+  if not IsOrphanNumber(PExtVolume(Volume^.DriverData), InodesCount, InodeNumber) then
+    Exit;
+  if ReadInodeBytes(Volume, InodeNumber, @InodeBytes[0]) <> StatusSuccess then
+    Exit;
+  Result := PInode(@InodeBytes[0])^.DeletionTime;
+  if not IsOrphanNumber(PExtVolume(Volume^.DriverData), InodesCount, Result) then
+    Result := 0;
+end;
+
+{ How many orphans the list starting at Head holds before it ends or
+  comes back to one already on it (a damaged list may loop), at most
+  MaximumOrphansAtMount. Settling an orphan rewrites its link, so the
+  list is measured first, reading only (tortoise and hare). }
+function CountDistinctOrphans(Volume: PVolume; InodesCount, Head: LongWord): LongWord;
+var
+  Slow: LongWord;
+  Fast: LongWord;
+  Steps: LongWord;
+  LoopStart: LongWord;
+  LoopLength: LongWord;
+begin
+  Result := 0;
+  if not IsOrphanNumber(PExtVolume(Volume^.DriverData), InodesCount, Head) then
+    Exit;
+  Slow := Head;
+  Fast := Head;
+  Steps := 0;
+  repeat
+    Fast := NextOrphanNumber(Volume, InodesCount, Fast);
+    if Fast <> 0 then
+      Fast := NextOrphanNumber(Volume, InodesCount, Fast);
+    Slow := NextOrphanNumber(Volume, InodesCount, Slow);
+    Inc(Steps);
+  until (Fast = 0) or (Fast = Slow) or (Steps > MaximumOrphansAtMount);
+
+  if Fast = 0 then
+  begin
+    { No loop: count to the end. }
+    Fast := Head;
+    while (Fast <> 0) and (Result < MaximumOrphansAtMount) do
+    begin
+      Inc(Result);
+      Fast := NextOrphanNumber(Volume, InodesCount, Fast);
+    end;
+    Exit;
+  end;
+  if Steps > MaximumOrphansAtMount then
+    Exit(MaximumOrphansAtMount);
+
+  { A loop: the part before it, then the loop itself, once. }
+  LoopStart := Head;
+  while LoopStart <> Slow do
+  begin
+    LoopStart := NextOrphanNumber(Volume, InodesCount, LoopStart);
+    Slow := NextOrphanNumber(Volume, InodesCount, Slow);
+    Inc(Result);
+  end;
+  LoopLength := 1;
+  Fast := NextOrphanNumber(Volume, InodesCount, LoopStart);
+  while (Fast <> LoopStart) and (LoopLength < MaximumOrphansAtMount) do
+  begin
+    Inc(LoopLength);
+    Fast := NextOrphanNumber(Volume, InodesCount, Fast);
+  end;
+  Result := Result + LoopLength;
+  if Result > MaximumOrphansAtMount then
+    Result := MaximumOrphansAtMount;
+end;
+
 function ProcessOrphans(Volume: PVolume; out Count: LongWord): TFileSystemStatus;
 var
   InodesCount: LongWord;
   InodeNumber: LongWord;
   Node: PExtNode;
   Next: LongWord;
+  Distinct: LongWord;
 begin
   Count := 0;
   if not ReadLastOrphan(Volume, InodeNumber) or
      not ExtRead(Volume, SuperblockOffset, 4, @InodesCount) then
     Exit(StatusIoError);
   Result := StatusSuccess;
-  { A damaged list (a loop, or numbers out of range) ends where it goes
-    wrong; e2fsck can sort out the rest. }
-  while (InodeNumber <> 0) and (InodeNumber <= InodesCount) and (Count < InodesCount) do
+  { A damaged list (a loop, reserved inodes or numbers out of range)
+    ends where it goes wrong; e2fsck can sort out the rest. }
+  Distinct := CountDistinctOrphans(Volume, InodesCount, InodeNumber);
+  while (Count < Distinct) and IsOrphanNumber(PExtVolume(Volume^.DriverData), InodesCount, InodeNumber) do
   begin
     Result := LoadOrphan(Volume, InodeNumber, Node);
     if Result <> StatusSuccess then
@@ -255,7 +344,7 @@ begin
     Inc(Count);
     InodeNumber := Next;
   end;
-  if Count > 0 then
+  if (Count > 0) or (InodeNumber <> 0) then
     Result := WriteLastOrphan(Volume, 0);
 end;
 

@@ -1078,26 +1078,6 @@ end;
 
 { --- Attributes and links -------------------------------------------- }
 
-{ Who may change what:
-    mode       the owner (or root)
-    owner      root only
-    group      root, or the owner giving it to one of its own groups
-    times      the owner (or root); anyone with write permission may set
-               them to now. }
-function CheckAttributeChanges(Path: PChar; FollowLinks: Boolean; Fields: LongWord;
-  const Changes: TAttributeChanges): LongInt;
-var
-  Information: TNodeInformation;
-  Status: TFileSystemStatus;
-begin
-  if CallerMaySetAnyAttributes then
-    Exit(ErrorNone);
-  Status := DescribePath(Path, FollowLinks, Information);
-  if Status <> StatusSuccess then
-    Exit(ErrorFromStatus(Status));
-  Result := CheckAttributeChangesFor(Information, Fields, Changes);
-end;
-
 function PerformSetPathAttributes(PathAddress: QWord; ChangesAddress: QWord; FollowLinks: QWord): Int64;
 var
   UserChanges: TAbiAttributeChanges;
@@ -1113,11 +1093,9 @@ begin
   if Error <> ErrorNone then
     Exit(Failure(Error));
   ConvertAttributeChanges(UserChanges, Changes);
-  Error := CheckAttributeChanges(@KernelPath^[0], FollowLinks <> 0, UserChanges.Fields, Changes);
-  if Error <> ErrorNone then
-    Result := Failure(Error)
-  else
-    Result := -Int64(ErrorFromStatus(SetPathAttributes(@KernelPath^[0], FollowLinks <> 0, Changes)));
+  { Who may change what is checked on the node itself, with its volume's
+    lock held (Processes.Security.CurrentMayChangeAttributes). }
+  Result := -Int64(ErrorFromStatus(SetPathAttributes(@KernelPath^[0], FollowLinks <> 0, Changes)));
   FreeKernelMemory(KernelPath);
 end;
 

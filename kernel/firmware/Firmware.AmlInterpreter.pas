@@ -66,6 +66,10 @@ function EvaluateInteger(Scope: PAmlNode; Path: PChar; Default: QWord): QWord;
 { Runs \_SB._INI, then every device's _INI where its _STA says it is
   present (the boot time initialization ACPI expects). }
 procedure InitializeAmlDevices;
+{ For field access (Firmware.AmlFields), which may lead through other
+  fields: True, failing the evaluation, once it has used too much of the
+  stack. }
+function AmlStackExhausted: Boolean;
 
 implementation
 
@@ -76,9 +80,17 @@ uses
 
 const
   MaximumCallDepth = 24;
-  { Iterations of all While loops in one evaluation before it is given
-    up as stuck. }
+  { Iterations of all While loops and method calls in one evaluation
+    before it is given up as stuck. }
   LoopBudget = 2000000;
+  { The stack an evaluation may use: AML runs on threads with 256 KiB
+    stacks (the namespace loader, AcpiPower, Thermal). }
+  MaximumStackBytes = 128 * 1024;
+  { References followed by a store (a name holding a reference to a
+    name holding a reference...). }
+  MaximumReferenceHops = 8;
+  { The longest field (Firmware.AmlFields reads at most 4 KiB). }
+  MaximumFieldBits = 4096 * 8;
   MaximumLocals = 8;
   MaximumArguments = 7;
 
@@ -212,6 +224,11 @@ var
   Aborted: Boolean;
   CallDepth: Integer;
   LoopsLeft: QWord;
+  { Entry points (table loads, evaluations) active, nested ones
+    included: the budget and the stack base belong to the outermost. }
+  EvaluationDepth: Integer = 0;
+  { Where the outermost evaluation started on the stack. }
+  EvaluationStackBase: PtrUInt;
 
 { --- Failing -------------------------------------------------------------------- }
 
@@ -220,6 +237,58 @@ begin
   if not Aborted and Assigned(AmlHost.Log) then
     AmlHost.Log(Reason);
   Aborted := True;
+end;
+
+{ --- Nesting ------------------------------------------------------------------- }
+
+{ True (after failing the evaluation) once the evaluation uses more than
+  MaximumStackBytes of the stack: operators nested hundreds deep, fields
+  reached through themselves. Kernel stacks are small. }
+function AmlStackExhausted: Boolean;
+var
+  Marker: Byte;
+  Used: PtrUInt;
+begin
+  Used := 0;
+  if (EvaluationDepth > 0) and (EvaluationStackBase > PtrUInt(@Marker)) then
+    Used := EvaluationStackBase - PtrUInt(@Marker);
+  Result := Used > MaximumStackBytes;
+  if Result then
+    Fail('AML: nested too deeply');
+end;
+
+{ Every table load and evaluation goes between these. The outermost
+  starts afresh (no failure, the whole loop budget, the stack base); a
+  nested one (a field's _ADR asked for while a method runs) shares the
+  budget, so loops cannot get it back by nesting. }
+procedure EnterEvaluation;
+var
+  Marker: Byte;
+begin
+  if EvaluationDepth = 0 then
+  begin
+    Aborted := False;
+    CallDepth := 0;
+    LoopsLeft := LoopBudget;
+    EvaluationStackBase := PtrUInt(@Marker);
+  end;
+  Inc(EvaluationDepth);
+end;
+
+procedure LeaveEvaluation;
+begin
+  Dec(EvaluationDepth);
+end;
+
+{ Takes one step of the loop budget (a While iteration, a method call);
+  False (the evaluation failed) once it is spent. }
+function TakeLoopStep: Boolean;
+begin
+  Result := LoopsLeft > 0;
+  if Result then
+    Dec(LoopsLeft)
+  else
+    Fail('AML: loop does not end');
 end;
 
 { --- Decoding ------------------------------------------------------------------- }
@@ -594,12 +663,17 @@ begin
   Node^.Value := CopyValue(Value);
 end;
 
-function StoreToNode(Node: PAmlNode; const Value: TAmlValue): Boolean;
+function StoreToNodeWithin(Node: PAmlNode; const Value: TAmlValue; HopsLeft: Integer): Boolean;
 begin
   case Node^.Kind of
     NodeName:
       if Node^.Value.Kind = AmlNodeReference then
-        Result := StoreToNode(PAmlNode(Node^.Value.Node), Value)
+      begin
+        { A name may hold a reference to itself, or a ring of them. }
+        if HopsLeft <= 0 then
+          Exit(False);
+        Result := StoreToNodeWithin(PAmlNode(Node^.Value.Node), Value, HopsLeft - 1);
+      end
       else
         Result := StoreToName(Node, Value);
     NodeField, NodeIndexField, NodeBankField, NodeBufferField:
@@ -609,17 +683,27 @@ begin
   end;
 end;
 
+function StoreToNode(Node: PAmlNode; const Value: TAmlValue): Boolean;
+begin
+  Result := StoreToNodeWithin(Node, Value, MaximumReferenceHops);
+end;
+
 function StoreToElement(const Element: TAmlValue; const Value: TAmlValue): Boolean;
 var
   Number: QWord;
+  Copy: TAmlValue;
 begin
   Result := False;
   if Element.Package <> nil then
   begin
     if Element.Integer < Element.Package^.Count then
     begin
+      Copy := CopyValue(Value);
+      { A copy of a package nested too deep is not made. }
+      if (Copy.Kind = AmlNone) and (Value.Kind <> AmlNone) then
+        Exit(False);
       ReleaseValue(Element.Package^.Elements[Element.Integer]);
-      Element.Package^.Elements[Element.Integer] := CopyValue(Value);
+      Element.Package^.Elements[Element.Integer] := Copy;
       Result := True;
     end;
   end
@@ -882,6 +966,26 @@ begin
   Result := True;
 end;
 
+function IsFieldNode(Node: PAmlNode): Boolean;
+begin
+  Result := (Node <> nil) and (Node^.Kind in [NodeField, NodeIndexField, NodeBankField, NodeBufferField]);
+end;
+
+function FieldTemplateIsComplete(const Template: TAmlNode): Boolean;
+begin
+  case Template.Kind of
+    NodeField:
+      Result := (Template.Region <> nil) and (Template.Region^.Kind = NodeRegion);
+    NodeIndexField:
+      Result := IsFieldNode(Template.IndexField) and IsFieldNode(Template.DataField);
+    NodeBankField:
+      Result := (Template.Region <> nil) and (Template.Region^.Kind = NodeRegion) and
+        IsFieldNode(Template.BankField);
+  else
+    Result := False;
+  end;
+end;
+
 function DefineField(var Frame: TAmlFrame; var Position: PByte; Limit: PByte; Kind: TAmlNodeKind): Boolean;
 var
   PackageEnd: PByte;
@@ -916,6 +1020,15 @@ begin
         Template.BankValue := Bank;
       end;
   end;
+  { Fields whose region, index, data or bank field is missing (or not
+    one) are left out: reaching them would follow nothing. }
+  if not FieldTemplateIsComplete(Template) then
+  begin
+    if Assigned(AmlHost.Log) then
+      AmlHost.Log('AML: field over a missing region or field left out');
+    Position := PackageEnd;
+    Exit(True);
+  end;
   if not ReadByte(Position, PackageEnd, Flags) then
     Exit;
   Result := DefineFieldList(Frame, Position, PackageEnd, Template, Flags);
@@ -947,6 +1060,7 @@ end;
 function DefineBufferField(var Frame: TAmlFrame; var Position: PByte; Limit: PByte; Bits: Integer): Boolean;
 var
   Source: TAmlValue;
+  BitOffset: QWord;
   Index: QWord;
   Count: QWord;
   Path: TAmlNamePath;
@@ -969,17 +1083,31 @@ begin
     ReleaseValue(Source);
     Exit;
   end;
+  { Bit fields and CreateField count in bits, the others in bytes. }
+  if Bits in [8, 16, 32, 64] then
+  begin
+    if Index > High(QWord) div 8 then
+      Index := High(QWord) div 8;
+    BitOffset := Index * 8;
+  end
+  else
+    BitOffset := Index;
+  { The field must lie in the buffer (and be one a field may be). }
+  if (Count = 0) or (Count > QWord(MaximumFieldBits)) or
+     (BitOffset > QWord(Source.Bytes^.Length) * 8) or
+     (Count > QWord(Source.Bytes^.Length) * 8 - BitOffset) then
+  begin
+    ReleaseValue(Source);
+    Fail('AML: buffer field past the end of its buffer');
+    Exit;
+  end;
   Node := NewNamed(Frame, Path, NodeBufferField);
   if Node = nil then
   begin
     ReleaseValue(Source);
     Exit;
   end;
-  { Bit fields and CreateField count in bits, the others in bytes. }
-  if Bits in [8, 16, 32, 64] then
-    Node^.BitOffset := Index * 8
-  else
-    Node^.BitOffset := Index;
+  Node^.BitOffset := BitOffset;
   Node^.BitLength := Count;
   Node^.AccessBytes := 1;
   { The field keeps the buffer's storage: its count passes to the node. }
@@ -1154,7 +1282,9 @@ begin
   begin
     Left := ShareValue(First);
     Right := ValueToHexString(Second);
-    Value := MakeString(nil, Left.Bytes^.Length + Right.Bytes^.Length);
+    { The second operand may not convert (a package, a reference). }
+    if (Left.Bytes <> nil) and (Right.Kind = AmlString) and (Right.Bytes <> nil) then
+      Value := MakeString(nil, Left.Bytes^.Length + Right.Bytes^.Length);
   end
   else
   begin
@@ -1379,12 +1509,8 @@ begin
     Exit;
   Start := Position;
   repeat
-    if LoopsLeft = 0 then
-    begin
-      Fail('AML: loop does not end');
+    if not TakeLoopStep then
       Exit;
-    end;
-    Dec(LoopsLeft);
     Cursor := Start;
     if not EvaluateNumber(Frame, Cursor, PackageEnd, Predicate) then
       Exit;
@@ -1569,7 +1695,21 @@ begin
   end;
 end;
 
+function EvaluateOperation(var Frame: TAmlFrame; var Position: PByte; Limit: PByte;
+  out Value: TAmlValue): Boolean; forward;
+
 function Evaluate(var Frame: TAmlFrame; var Position: PByte; Limit: PByte; out Value: TAmlValue): Boolean;
+begin
+  if AmlStackExhausted then
+  begin
+    Value := NoValue;
+    Exit(False);
+  end;
+  Result := EvaluateOperation(Frame, Position, Limit, Value);
+end;
+
+function EvaluateOperation(var Frame: TAmlFrame; var Position: PByte; Limit: PByte;
+  out Value: TAmlValue): Boolean;
 var
   Opcode: Byte;
   Number: QWord;
@@ -2143,6 +2283,9 @@ begin
     Fail('AML: methods nested too deep');
     Exit(False);
   end;
+  { A method calling itself twice, 24 deep, would make 2^24 calls. }
+  if not TakeLoopStep or AmlStackExhausted then
+    Exit(False);
   Frame := PAmlFrame(AmlHost.Allocate(SizeOf(TAmlFrame)));
   if Frame = nil then
   begin
@@ -2216,16 +2359,11 @@ end;
 
 { --- Loading and evaluating -------------------------------------------------------------- }
 
-procedure BeginEvaluation;
-begin
-  Aborted := False;
-  CallDepth := 0;
-  LoopsLeft := LoopBudget;
-end;
 
 function LoadAmlTable(Table: PByte): Boolean;
 const
   HeaderBytes = 36;
+  MaximumTableBytes = 16 * 1024 * 1024;
 var
   Length: LongWord;
   Frame: PAmlFrame;
@@ -2237,7 +2375,8 @@ begin
   if FindChild(NamespaceRoot, SegmentOf('_OSI')) = nil then
     AddNativeMethods;
   Length := PLongWord(Table + 4)^;
-  if Length < HeaderBytes then
+  { A length of gigabytes would have the parser read far past the table. }
+  if (Length < HeaderBytes) or (Length > MaximumTableBytes) then
     Exit;
   { Revision 1 tables have 32-bit integers. }
   if (Table[0] = Ord('D')) and (Table[1] = Ord('S')) then
@@ -2249,8 +2388,9 @@ begin
   if Frame = nil then
     Exit;
   Frame^.Scope := NamespaceRoot;
-  BeginEvaluation;
+  EnterEvaluation;
   Result := ExecuteTermList(Frame^, Table + HeaderBytes, Table + Length);
+  LeaveEvaluation;
   for Index := 0 to MaximumLocals - 1 do
     ReleaseValue(Frame^.Locals[Index]);
   ReleaseValue(Frame^.ReturnValue);
@@ -2258,12 +2398,28 @@ begin
 end;
 
 function EvaluateNode(Node: PAmlNode; Arguments: PAmlValue; Count: Integer; out Value: TAmlValue): Boolean;
+var
+  SavedAborted: Boolean;
+  SavedDepth: Integer;
+  IsNested: Boolean;
 begin
-  BeginEvaluation;
+  { It may be asked for from inside another evaluation (a field's _ADR):
+    then its failure is its own (the outer evaluation goes on, with a
+    default), but the loop budget it spent stays spent. }
+  IsNested := EvaluationDepth > 0;
+  SavedAborted := Aborted;
+  SavedDepth := CallDepth;
+  EnterEvaluation;
   if Node^.Kind = NodeMethod then
     Result := InvokeMethod(Node, Arguments, Count, Value)
   else
     Result := ReadNode(Node, Value);
+  LeaveEvaluation;
+  if IsNested then
+  begin
+    Aborted := SavedAborted;
+    CallDepth := SavedDepth;
+  end;
 end;
 
 function IsSingleSegment(Path: PChar): Boolean;
@@ -2284,9 +2440,6 @@ function EvaluatePath(Scope: PAmlNode; Path: PChar; Arguments: PAmlValue; Count:
   out Value: TAmlValue): Boolean;
 var
   Node: PAmlNode;
-  SavedAborted: Boolean;
-  SavedDepth: Integer;
-  SavedLoops: QWord;
 begin
   Value := NoValue;
   if Scope = nil then
@@ -2298,22 +2451,7 @@ begin
     one found further up. }
   if IsSingleSegment(Path) and (Node^.Parent <> Scope) then
     Exit(False);
-  { It may be asked for from inside another evaluation (a field's _ADR). }
-  SavedAborted := Aborted;
-  SavedDepth := CallDepth;
-  SavedLoops := LoopsLeft;
-  if CallDepth = 0 then
-    Result := EvaluateNode(Node, Arguments, Count, Value)
-  else if Node^.Kind = NodeMethod then
-    Result := InvokeMethod(Node, Arguments, Count, Value)
-  else
-    Result := ReadNode(Node, Value);
-  if SavedDepth > 0 then
-  begin
-    Aborted := SavedAborted;
-    CallDepth := SavedDepth;
-    LoopsLeft := SavedLoops;
-  end;
+  Result := EvaluateNode(Node, Arguments, Count, Value);
 end;
 
 function EvaluateInteger(Scope: PAmlNode; Path: PChar; Default: QWord): QWord;

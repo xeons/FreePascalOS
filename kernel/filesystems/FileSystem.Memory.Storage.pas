@@ -25,7 +25,9 @@
   address of each page of the file, or 0 for a page never written (a
   hole, which reads as zeros). Every page counts against the volume's
   limit (the size= mount option); a write that would pass it fails with
-  StatusNoSpace, as does one the allocator cannot serve. Shortening a
+  StatusNoSpace, as does one the allocator cannot serve, and one that
+  would put a page past the limit's worth of pages (holes included: the
+  page map is as long as the file). Shortening a
   file gives its pages back at once, and so does removing it
   (FileSystem.Memory frees a file's pages once its last name and its
   last open are gone).
@@ -87,6 +89,18 @@ begin
   if PageIndex >= Storage.Capacity then
     Exit(0);
   Result := Storage.Pages[PageIndex];
+end;
+
+function RangeFitsBudget(Budget: PStorageBudget; Offset, ByteCount: QWord): Boolean;
+var
+  LastPage: QWord;
+begin
+  if ByteCount = 0 then
+    Exit(True);
+  if ByteCount > High(QWord) - Offset then
+    Exit(False);
+  LastPage := (Offset + ByteCount - 1) shr PageShift;
+  Result := LastPage < Budget^.PageLimit;
 end;
 
 { Makes room in the page map for PageIndex. }
@@ -182,6 +196,11 @@ var
   Source: PByte;
 begin
   BytesWritten := 0;
+  { The page map is a plain array as long as the file: no file may reach
+    past the volume's whole budget (a write far out would otherwise ask
+    the kernel heap for a map of gigabytes, or wrap round). }
+  if not RangeFitsBudget(Budget, Offset, ByteCount) then
+    Exit(StatusNoSpace);
   Remaining := ByteCount;
   Position := Offset;
   Source := PByte(Buffer);

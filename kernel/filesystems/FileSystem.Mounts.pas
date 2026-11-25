@@ -71,6 +71,9 @@ procedure ForgetMountsOfVolume(Volume: PVolume);
 { For path resolution, with Parent's lock held: the volume mounted on
   node NodeNumber of Parent, or nil. }
 function MountedVolumeAt(Parent: PVolume; NodeNumber: QWord): PVolume;
+{ With Parent's lock held: the path, from Parent's root, of the Index-th
+  mount point on Parent (from 0); False after the last. }
+function MountPointPathOnVolume(Parent: PVolume; Index: Integer; Path: PChar; Capacity: PtrUInt): Boolean;
 { With Volume's lock held: the volume at the top of its chain of mounts
   (itself when it is mounted nowhere), and its root's path from there
   ("" when mounted nowhere). }
@@ -113,6 +116,37 @@ begin
   if MountRecord = nil then
     Exit(nil);
   Result := PVolume(MountRecord^.Child);
+end;
+
+function MountPointPathOnVolume(Parent: PVolume; Index: Integer; Path: PChar; Capacity: PtrUInt): Boolean;
+var
+  RecordIndex: Integer;
+  MountRecord: PMountRecord;
+  RootPathLength: PtrUInt;
+  RootPath: array[0..MaximumMountPathBytes - 1] of Char;
+begin
+  { Records on Parent are entered and taken out with its lock held. }
+  CopyVolumeMountPath(Parent, @RootPath[0], MaximumMountPathBytes);
+  RootPathLength := TextLength(@RootPath[0]);
+  for RecordIndex := 0 to MaximumMounts - 1 do
+  begin
+    MountRecord := @Table.Records[RecordIndex];
+    if not MountRecord^.InUse or (MountRecord^.Parent <> Pointer(Parent)) then
+      Continue;
+    if Index > 0 then
+    begin
+      Dec(Index);
+      Continue;
+    end;
+    { The record's path runs from the top volume: Parent's own mount
+      path comes first. }
+    if TextLength(@MountRecord^.Path[0]) >= RootPathLength then
+      CopyText(Path, @MountRecord^.Path[RootPathLength], Capacity)
+    else
+      CopyText(Path, '', Capacity);
+    Exit(True);
+  end;
+  Result := False;
 end;
 
 function TopVolumeOfVolume(Volume: PVolume): PVolume;
@@ -255,32 +289,35 @@ begin
   if Volume = SystemVolume then
     Exit(StatusInUse);
   AcquireMutex(MountListLock);
+  { Mounts on the volume are made and undone under MountListLock, so
+    none appears meanwhile. }
   if CountMountsOn(Table, Volume) > 0 then
   begin
     ReleaseMutex(MountListLock);
     Exit(StatusInUse);
   end;
-  Busy := VolumeIsBusy(Volume);
-  if Busy and not Force then
+  { The idle check and marking the volume gone happen in one hold of its
+    lock: nothing opened in between slips through. }
+  Result := RetireVolume(Volume, Force, Busy);
+  if Result <> StatusSuccess then
   begin
     ReleaseMutex(MountListLock);
-    Exit(StatusInUse);
+    { Gone already (its disk was unplugged): nothing left to do. }
+    if Result = StatusVolumeGone then
+      Result := StatusSuccess;
+    Exit;
   end;
   MountRecord := FindMountOf(Table, Volume);
   if MountRecord <> nil then
     DetachMount(MountRecord);
   ReleaseMutex(MountListLock);
 
-  { Written back first: a gone volume writes nothing any more. }
-  SyncVolume(Volume);
   if RemoveVolumeFromList(Volume) then
   begin
-    MarkVolumeGone(Volume);
     RememberLingeringVolume(Volume);
     ReportUnmount(Volume, Busy);
     ReportVolumeDeparture(Volume);
   end;
-  Result := StatusSuccess;
 end;
 
 procedure ForgetMountsOfVolume(Volume: PVolume);

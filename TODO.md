@@ -232,6 +232,10 @@ how the existing pieces fit together.
 - [x] ACPI AML interpreter (namespace, methods, fields over memory, I/O and PCI
       configuration space), PCI interrupt routing from _PRT, shared level
       triggered lines; AC'97 on its line
+- [x] AML hardening: field and buffer field bounds, 128 KiB stack budget, reference,
+      package and field nesting limits, calls on the loop budget, table length caps,
+      malformed-table host test (AmlTest --malformed); PCI decoding left off for a BAR
+      that found no window
 - [x] ACPI events: SCI, power and sleep buttons (fixed and control method), GPEs
       with their _Lxx/_Exx methods, Notify; S5 power off; reset; orderly
       shutdown (poweroff, reboot, halt)
@@ -364,6 +368,18 @@ how the existing pieces fit together.
 - [ ] Setting times with nanoseconds (utimensat); ext nanoseconds kept when stamping (now cleared)
 - [x] File timestamps beyond modification time; ext4 nanosecond timestamps (access, change,
       birth; CallGetFileTimes, stat, ls --time=)
+- [x] Damaged and hostile disks (file system audit): ext, FAT and exFAT refuse, mount
+      read-only or report StatusCorrupted instead of overrunning buffers or looping
+      (geometry, names, extent headers, orphan list, cluster chains, journal recovery
+      limits); host test with crafted and fuzzed images (make file-system-image-test)
+- [x] VFS: an open root survives a forced unmount; chmod/chown/utimes checked on the node
+      under its volume's lock; exec checks the file it loads; unmount and rename checks
+      under the lock; renaming a folder with a mount below refused; tmpfs files capped
+- [ ] ext: verify metadata checksums when reading (a damaged inode is only caught where
+      its fields are used)
+- [ ] Discards: a gone volume's batch record stays in the registry (as its TVolume does)
+- [ ] Mount records keep paths as text: renaming above a mount point is refused rather
+      than followed
 
 ## User mode
 

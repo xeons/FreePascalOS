@@ -1644,14 +1644,25 @@ for now the routing of PCI interrupt lines.
 
   Stores follow ACPI's implicit conversions; a store into a named buffer
   keeps its length and storage, so buffer fields over it stay valid.
-  Errors end the evaluation cleanly. So do loops that run too long and
-  calls nested too deep.
+  Errors end the evaluation cleanly. So do loops that run too long,
+  calls nested too deep or too many (calls take from the loop budget),
+  evaluations using more than 128 KiB of stack (operators nested
+  hundreds deep), stores through more than 8 references, and copies of
+  packages nested more than 32 deep. A nested evaluation (a field's
+  `_ADR`) shares the outer one's budget. Tables over 16 MiB are refused;
+  the DSDT must have its signature (a wrong checksum is only reported).
+  `AmlTest --malformed` (part of `make aml-test`) runs tables
+  `tools/AmlTest/make-malformed.py` makes, one per such problem.
 - **Fields** (`Firmware.AmlFields`) read and write bits a unit at a time
   (the access width), following the update rule for the bits around
   them. Plain fields go to their region; bank fields set the bank
   first; index fields go through their index and data fields; buffer
   fields go into a buffer. A PCI configuration region finds its device
-  from the `_ADR` above it and its bus from `_BBN`.
+  from the `_ADR` above it and its bus from `_BBN`. Fields are at most
+  4 KiB, accesses stay inside their region, buffer fields inside their
+  buffer, fields through fields nest at most 8 deep, and index and bank
+  fields over names that are not fields are left out. Unaligned memory
+  accesses go a byte at a time (AArch64 device memory faults on them).
 - **Loading** (`Io.AcpiNamespace`) gives the interpreter the kernel as
   its host and loads the DSDT (through the FADT) and every SSDT. It then
   runs the devices' `_STA` and `_INI`, builds the routing and records
@@ -8340,6 +8351,48 @@ driver cannot keep consistent (bigalloc, quota, encryption, case folding,
 multiple-mount protection). htree indexed directories are read but not
 modified.
 
+**Damaged disks.** USB sticks are mounted as soon as they arrive, so the
+drivers take whatever is on a disk as untrusted: a damaged or hostile
+volume may be refused, mounted read-only or answer `StatusCorrupted`,
+never more. In particular:
+
+- ext: the superblock's geometry is checked at every mount (also the one
+  after a journal replay): blocks of 1 to 64 KiB, block and inode
+  bitmaps of one block (blocks and inodes per group at most 8 x the
+  block size), the first ordinary inode at least 11, inode and block
+  counts that fit the groups and the device. Directory names are at most
+  255 bytes (also on volumes without the file type feature, whose name
+  length has 16 bits); extent headers hold no more entries than their
+  node and no deeper trees; bitmap blocks and inode numbers are range
+  checked; sizes past the last 32-bit block are refused rather than
+  truncated. The orphan list is measured first (tortoise and hare, at
+  most 65536 entries) and never names a reserved inode such as the
+  journal. Journal recovery looks revoked blocks up in a hash table and
+  log blocks by binary search, and refuses journals past 16M blocks.
+- FAT: tables too small for the clusters, a FAT32 active table that does
+  not exist and cluster counts reaching the FAT32 end-of-chain values are
+  refused; a long name part numbered 0 starts no name. exFAT: the boot
+  sector's sector and cluster sizes, cluster count, FAT length and the
+  cluster heap's end on the device are checked at mount, and so is the
+  allocation bitmap's size; contiguous runs are summed in 64 bits and
+  files are no larger than the cluster heap.
+- Both: a cluster chain longer than the volume is `StatusCorrupted`, as
+  is a FAT folder past 65536 records or an exFAT folder past 256 MiB, so
+  a chain that loops without an end marker no longer holds the volume
+  lock for ever. exFAT clears its dirty mark only between two cache
+  flushes.
+
+`make file-system-image-test` (`tools/FileSystemImageTest`) builds the
+three drivers for the host on stand-ins for the block cache, heap, clock
+and mutexes, and runs them on disk images `make-images.py` makes with
+`mke2fs`, `mkfs.fat`, `mtools` and `mkfs.exfat`: valid ones, copies with
+one specific kind of damage each (expected to be refused, read-only or
+`StatusCorrupted`), and copies damaged at random (`--fuzz`, aimed at
+the bytes that are not zero, the images' metadata). Each image is
+mounted, walked, written to, unmounted and mounted again; the heap
+stand-in's guard areas catch writes outside a block, and its count of
+blocks leaks; the cache stand-in reports a loop as a hang.
+
 ### The ext3/ext4 journal
 
 ext3 and ext4 volumes are written through their journal (JBD2, the file of
@@ -8472,7 +8525,8 @@ well.
 - **Resolution.** The table names the volume holding the mount point,
   the mount point's node number (the record keeps a reference to the
   node, so its volume is busy and the folder can be neither removed nor
-  renamed: `StatusInUse`), the volume mounted there, and the mount
+  renamed: `StatusInUse`, and neither can a folder above it, as the
+  record keeps the path as text), the volume mounted there, and the mount
   point's path from the root of the volume at the top of the chain
   ("/tmp"). `ResolveInVolume` looks each directory it passes up in the
   table (only on volumes with `MountsOnVolume` > 0) and goes on at the
@@ -8488,7 +8542,10 @@ well.
   (`LocatePath`, `LocateParent`: the volume and the path there) and
   refuse with `StatusCrossesVolumes` (`ErrorCrossVolume`, 18; `mv`
   copies then) when the volumes differ; then they resolve on that one
-  volume without crossing.
+  volume without crossing. A folder moved below itself is recognized by
+  the nodes the target's parent was found through (its trail, under the
+  volume's lock), so a symbolic link in the target's path does not hide
+  it.
 - **Mounting** (`MountAtDirectory`) needs a folder that is not a
   volume's root, nothing mounted on it already, and the volume not
   mounted elsewhere nor above the folder (no cycles); mounting a volume
@@ -8497,12 +8554,15 @@ well.
 - **Unmounting** (`UnmountVolume`) is refused while a node of the volume
   besides its root is in use (an open file or folder, a mount point of
   another volume on it) or its root is open, and (`CallUnmountVolume`)
-  while a program's current directory is in it, unless forced. It
-  writes the volume back (driver `Sync`, then the disk is flushed),
+  while a program's current directory is in it, unless forced. The idle
+  check, writing the volume back (driver `Sync`) and marking it gone
+  happen in one hold of its lock (`RetireVolume`), then the disk is
+  flushed; it
   takes it off the list and from its folder, and marks it gone as an
   unplugged disk's volumes are (below): a forced unmount's open files
   fail with `ErrorNoDevice` from then on, and the driver data goes
-  when the last is closed. Its device cannot be mounted again until
+  when the last is closed (an open root included: the volume's root
+  node stays until no handle names it). Its device cannot be mounted again until
   then (`DeviceHasLingeringVolume`). The system volume is never
   unmounted. A disk unplugged takes its volumes' mounts, and the mounts
   on them, with it (`ForgetMountsOfVolume`).
@@ -8545,7 +8605,9 @@ nanosecond (reading does not move the access time). A file's contents
 are whole pages from the physical page allocator
 (`FileSystem.Memory.Storage`: a page map per file, holes read as zeros),
 counted against `size=` (bytes, k, m, g, or a share of the RAM; half by
-default; `StatusNoSpace` past it), and counted by the kernel as
+default; `StatusNoSpace` past it; no file reaches past it either,
+holes included, since a page map is as long as its file), and counted
+by the kernel as
 drivers' memory. Folders are lists of entries with a serial number each,
 which a listing's cursor keeps (`FileSystem.Memory.Nodes`). A file's
 pages go back when it is shortened, when its last name goes (or, if it
@@ -9461,6 +9523,15 @@ volumes support all of them. FAT and exFAT map the mode onto the
 read-only attribute, store times in their own resolution and refuse hard
 links and owners other than the ones the mount options give (see "Owners
 on FAT and exFAT").
+Who may change what (the owner the mode, root the owner, the owner a group
+of its own, anyone with write permission the times to now) is checked by
+`FileSystem.Security.MayChangeAttributes` (a hook `Processes.Security`
+installs) on the node being changed, with its volume's lock held, for
+paths and handles alike: a check made apart from the change would let a
+symbolic link swapped in between aim it at someone else's file. Likewise
+exec and process creation remember which file `CheckMayExecute` looked
+at (volume and node, `TProgramIdentity`) and refuse a program loaded from
+another one, so a set-user-ID check cannot be spent on a different file.
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
 

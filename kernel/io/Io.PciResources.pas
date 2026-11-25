@@ -43,6 +43,7 @@ function AssignPciResources: Integer;
 implementation
 
 uses
+  Runtime.Memory,
   DeviceTree.Addresses,
   Firmware.DeviceTree,
   Firmware.DeviceTreePci,
@@ -126,6 +127,19 @@ begin
     Result := PciRead32(Device, Offset + 4) = 0;
 end;
 
+procedure ReportUnplacedBar(Device: PPciDevice);
+begin
+  DebugBeginMessage;
+  DebugWriteTag('pci');
+  DebugWriteHex(Device^.Bus, 2);
+  DebugWrite(':');
+  DebugWriteHex(Device^.Device, 2);
+  DebugWrite('.');
+  DebugWriteDecimal(Device^.FunctionNumber);
+  DebugWriteLine(': a BAR found no room in the host bridge windows; its space is not decoded');
+  DebugEndMessage;
+end;
+
 function AssignFunction(Device: PPciDevice; var Cursors: TCursors): Integer;
 var
   BarIndex: Integer;
@@ -135,8 +149,12 @@ var
   BusAddress: QWord;
   Taken: Boolean;
   Command: Word;
+  MemoryComplete: Boolean;
+  IoComplete: Boolean;
 begin
   Result := 0;
+  MemoryComplete := True;
+  IoComplete := True;
   Command := PciRead16(Device, PciConfigurationCommand);
   PciWrite16(Device, PciConfigurationCommand,
     Command and not (PciCommandIoSpace or PciCommandMemorySpace));
@@ -144,6 +162,7 @@ begin
   while BarIndex < BarCount do
   begin
     Offset := PciConfigurationBar0 + Word(BarIndex) * 4;
+    ZeroMemory(@Bar, SizeOf(Bar));
     if PciReadBar(Device, BarIndex, Bar) and BarIsUnassigned(Device, Offset, Bar.Is64Bit, Bar.IsIoPort) then
     begin
       Size := Bar.SizeInBytes;
@@ -167,13 +186,26 @@ begin
         if Bar.Is64Bit then
           PciWrite32(Device, Offset + 4, LongWord(BusAddress shr 32));
         Inc(Result);
-      end;
+      end
+      else if Bar.IsIoPort then
+        { Left at 0: decoding it would answer at port 0. }
+        IoComplete := False
+      else
+        MemoryComplete := False;
     end;
     if Bar.Is64Bit then
       Inc(BarIndex);
     Inc(BarIndex);
   end;
-  PciWrite16(Device, PciConfigurationCommand, Command or PciCommandMemorySpace or PciCommandIoSpace);
+  { Only the kinds of space whose every BAR has an address are decoded:
+    a BAR left at 0 would claim bus address 0 over whatever is there. }
+  if MemoryComplete then
+    Command := Command or PciCommandMemorySpace;
+  if IoComplete then
+    Command := Command or PciCommandIoSpace;
+  PciWrite16(Device, PciConfigurationCommand, Command);
+  if not (MemoryComplete and IoComplete) then
+    ReportUnplacedBar(Device);
 end;
 
 function AssignHost(constref Host: TDeviceTreePciHost): Integer;

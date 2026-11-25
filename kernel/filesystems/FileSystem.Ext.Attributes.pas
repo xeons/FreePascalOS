@@ -53,8 +53,6 @@ const
   InodeChangeTimeExtraOffset = $84;
   InodeModificationTimeExtraOffset = $88;
   InodeAccessTimeExtraOffset = $8C;
-  { ext4 counts more links than this as "many" (1); stay below it. }
-  MaximumLinkCount = 65000;
 
 { Clears an extra time field if this inode has it. }
 procedure ClearExtraTime(Node: PExtNode; FieldOffset: LongWord);
