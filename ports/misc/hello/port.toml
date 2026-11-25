@@ -1,0 +1,32 @@
+# The smallest port: a Pascal program kept in the port's own files/,
+# built with the system's runtime library. The system disk carries it
+# installed (ports/image.list), so pkg always has a package to list,
+# verify and depend on.
+
+[port]
+name = "hello"
+version = "1.0"
+revision = 0
+summary = "Greets the world, as a package"
+description = """
+A greeting program built from the ports tree with the build machine's
+Free Pascal compiler and the system's runtime library. It exists to
+show the ports framework end to end without a download, and the system
+disk carries it installed so that pkg has a package to work with.
+"""
+homepage = "https://www.freepascal.org/"
+license = "GPL-3.0-or-later"
+license_files = ["port:files/COPYING"]
+maintainer = "FreePascalOS ports"
+categories = ["misc"]
+status = "tested"
+architectures = ["x86_64", "aarch64"]
+
+[build]
+system = "fpc"
+
+[build.fpc]
+programs = [{ source = "port:files/hello.pas" }]
+
+[test]
+system = ["hello | grep -q 'Hello, world!'", "test \"$(hello --version)\" = 'hello 1.0'"]

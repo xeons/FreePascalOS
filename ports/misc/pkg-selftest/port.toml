@@ -1,0 +1,44 @@
+# The package coretest installs, checks, verifies and removes with pkg:
+# files in a folder of its own, a link, install and removal scripts and
+# a run dependency (hello, which the system disk carries). Built by
+# make system-disk and put on the disk as a file
+# (/var/cache/pkg/pkg-selftest-1.0-ARCH.pkg.tar.zst), not installed.
+
+[port]
+name = "pkg-selftest"
+version = "1.0"
+revision = 0
+summary = "Test package for the pkg package manager"
+description = """
+What coretest installs with pkg to check the package manager on the
+system: a few files (one in a folder of its own), a symbolic link, a
+licence text, install and removal scripts that leave marks in /tmp, and
+a dependency on hello.
+"""
+homepage = "https://www.freepascalos.invalid/ports/"
+license = "GPL-3.0-or-later"
+license_files = ["port:files/COPYING"]
+maintainer = "FreePascalOS ports"
+categories = ["misc"]
+status = "tested"
+architectures = ["x86_64", "aarch64"]
+
+[dependencies]
+run = ["hello>=1.0"]
+provides = ["selftest"]
+
+[build]
+system = "none"
+
+[install]
+files = [
+    { from = "port:files/message.txt", to = "share/pkg-selftest/message.txt", mode = "0644" },
+    { from = "port:files/settings.conf", to = "etc/pkg-selftest.conf", mode = "0644" },
+]
+scripts = { post_install = "files/post-install.sh", pre_remove = "files/pre-remove.sh" }
+
+[build.steps]
+post_install = ["ln -s message.txt ${STAGE}${PREFIX}/share/pkg-selftest/latest"]
+
+[test]
+system = ["grep -q 'pkg self test' /usr/local/share/pkg-selftest/latest"]

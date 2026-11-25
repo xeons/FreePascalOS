@@ -1,0 +1,50 @@
+# GNU Bash, the stretch goal: autoconf, termios, job control, signals
+# and a lot of the C library. Built without its own malloc and without
+# native language support. Untested and expected to need patches once
+# the C toolchain and mlibc exist.
+
+[port]
+name = "bash"
+version = "5.3"
+revision = 0
+summary = "GNU Bourne Again SHell"
+description = """
+Bash is the GNU Project's shell, compatible with the Bourne shell (sh)
+and adding useful features from the Korn and C shells: command line
+editing, unlimited history, job control, shell functions and aliases,
+indexed and associative arrays and integer arithmetic. The system's own
+/bin/sh stays the system shell; this port installs /usr/local/bin/bash.
+"""
+homepage = "https://www.gnu.org/software/bash/"
+license = "GPL-3.0-or-later"
+license_files = ["COPYING"]
+maintainer = "FreePascalOS ports"
+categories = ["shells"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+
+[[sources]]
+url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
+mirrors = ["https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz"]
+sha256 = "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
+size = 11355854
+extract_dir = "bash-5.3"
+signature = { url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz.sig", type = "gpg", key = "bash-signing-key.gpg" }
+
+[dependencies]
+host = ["make", "cc"]
+
+[build]
+system = "autotools"
+configure_args = ["--without-bash-malloc", "--disable-nls", "--enable-static-link"]
+
+[options.readline]
+description = "Line editing and history with the bundled readline"
+default = true
+configure_off = ["--disable-readline", "--disable-history"]
+
+[install]
+remove = ["share/info/*", "lib/bash/*"]
+
+[test]
+system = ["bash -c 'echo $((6 * 7))' | grep -qx 42", "bash -c 'a=(1 2 3); echo ${#a[@]}' | grep -qx 3"]

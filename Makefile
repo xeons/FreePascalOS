@@ -589,6 +589,7 @@ suspend-stress: esp $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/stress-suspend.py $(ESP_DIRECTORY) $(SYSTEM_DISK) $(ROUNDS)
 
 include userland/userland.mk
+include ports/ports.mk
 
 # --- Tools -----------------------------------------------------------------
 

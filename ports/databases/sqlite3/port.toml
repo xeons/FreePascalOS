@@ -1,0 +1,60 @@
+# SQLite: the amalgamation's configure (autosetup, which takes --host and
+# --prefix like autoconf), the static library and the sqlite3 shell.
+# Options and a flavour show how they work. Untested: it waits for the C
+# toolchain.
+
+[port]
+name = "sqlite3"
+version = "3.54.1"
+revision = 0
+summary = "Self-contained SQL database engine and its shell"
+description = """
+SQLite is a small, fast, self-contained, high-reliability, full-featured
+SQL database engine. This port installs the sqlite3 command line shell,
+the static library, its header and pkg-config file. FTS5 full-text
+search is an option (on by default); sqlite3@minimal leaves it, JSON and
+the math functions out.
+"""
+homepage = "https://www.sqlite.org/"
+license = "blessing"
+license_files = ["port:files/LICENSE"]
+maintainer = "FreePascalOS ports"
+categories = ["databases"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+
+[[sources]]
+url = "https://www.sqlite.org/2026/sqlite-autoconf-3540100.tar.gz"
+sha256 = "926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e"
+size = 3332984
+extract_dir = "sqlite-autoconf-3540100"
+
+[dependencies]
+host = ["make", "cc"]
+provides = ["libsqlite3"]
+
+[build]
+system = "autotools"
+configure_args = ["--disable-shared", "--disable-load-extension", "--disable-readline", "--disable-threadsafe"]
+
+[options.fts5]
+description = "FTS5 full-text search"
+default = true
+configure_on = ["--fts5"]
+
+[options.json]
+description = "JSON functions"
+default = true
+configure_off = ["--disable-json"]
+
+[options.math]
+description = "SQL math functions"
+default = true
+configure_off = ["--disable-math"]
+
+[flavors.minimal]
+summary = "Self-contained SQL database engine, without FTS5, JSON and math"
+options = { fts5 = false, json = false, math = false }
+
+[test]
+system = ["echo 'select 6*7;' | sqlite3 | grep -qx 42"]

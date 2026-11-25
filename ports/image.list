@@ -1,0 +1,9 @@
+# Ports the system disk carries installed: make system-disk builds their
+# packages and install-to-image puts them on the disk, recorded in
+# /var/db/pkg, so pkg lists, verifies and removes them like any other
+# package. One port a line: name, name@flavor or category/name. A port
+# that needs a download (DISTDIR, ~/Downloads/sources) makes the disk
+# build need it too; one this machine cannot build (no C toolchain yet)
+# is skipped.
+
+hello

@@ -1,0 +1,105 @@
+--- a/utils/ptop.pp
++++ b/utils/ptop.pp
+@@ -39,12 +39,28 @@
+     Procedure Usage(ECode : Word);
+     Procedure GenOpts;
+     Procedure ProcessOpts;
++    Function CheckOptionsAllowingDash : String;
+     Procedure DoVerbose(Sender : TObject; Const Msg : String);
+   Public
+     Procedure DoRun; override;
+   end;
+ 
+ 
++{ Copies all of Source to Dest; Source may be a pipe (no size, no seeking). }
++Procedure CopyAll(Source, Dest : TStream);
++
++Var
++  Buffer : Array[0..4095] of Byte;
++  Got : LongInt;
++
++begin
++  Repeat
++    Got:=Source.Read(Buffer,SizeOf(Buffer));
++    If Got>0 then
++      Dest.WriteBuffer(Buffer,Got);
++  Until Got<=0;
++end;
++
+ Procedure TPToP.DoVerbose(Sender : TObject; Const Msg : String);
+ 
+ begin
+@@ -56,7 +72,7 @@
+ begin
+   Writeln ('ptop : Usage : ');
+   Writeln ('ptop [-v] [-i indent] [-b bufsize ][-c optsfile][-l linesize] infile outfile');
+-  Writeln ('     converts infile to outfile.');
++  Writeln ('     converts infile to outfile ("-": standard input or output).');
+   Writeln ('     -c : read options from optsfile');
+   Writeln ('     -i : Set number of indent spaces.');
+   Writeln ('     -l : Set maximum output linesize.');
+@@ -81,6 +97,31 @@
+   end;
+ end;
+ 
++{ CheckOptions refuses a bare "-"; here it names standard input or
++  output, so what it says about "-" is left out. }
++Function TPToP.CheckOptionsAllowingDash : String;
++
++Var
++  Errors : TStringList;
++  I : Integer;
++
++begin
++  Result:='';
++  Errors:=TStringList.Create;
++  Try
++    Errors.Text:=CheckOptions('icglbhv','',True);
++    For I:=0 to Errors.Count-1 do
++      If (Errors[I]<>'') and (Copy(Errors[I],Length(Errors[I])-2,3)<>'"-"') then
++        begin
++        If Result<>'' then
++          Result:=Result+sLineBreak;
++        Result:=Result+Errors[I];
++        end;
++  Finally
++    Errors.Free;
++  end;
++end;
++
+ Procedure TPToP.ProcessOpts;
+ 
+ Var
+@@ -94,7 +135,7 @@
+   TheBufSize:=255;
+   TheLineSize:=DefLineSize;
+   BeVerbose:=False;
+-  S:=CheckOptions('icglbhv','');
++  S:=CheckOptionsAllowingDash;
+   If (S<>'') then
+     begin
+     Writeln(stderr,S);
+@@ -141,14 +182,20 @@
+     end;
+   Ins:=TMemoryStream.Create;
+   try
+-    F:=TFileStream.Create(InFileName,fmOpenRead);
++    If InFileName='-' then
++      F:=THandleStream.Create(StdInputHandle)
++    else
++      F:=TFileStream.Create(InFileName,fmOpenRead);
+     Try
+-      Ins.CopyFrom(F,0);
++      CopyAll(F,Ins);
+       Ins.Position:=0;
+     Finally
+       F.Free;
+     end;
+-    OutS:=TwriteBufStream.Create(TFileStream.Create(OutFileName,fmCreate));
++    If OutFileName='-' then
++      OutS:=TwriteBufStream.Create(THandleStream.Create(StdOutputHandle))
++    else
++      OutS:=TwriteBufStream.Create(TFileStream.Create(OutFileName,fmCreate));
+     Try
+       If ConfigFile<>'' then
+         CfgS:=TFileStream.Create(ConfigFile,fmOpenRead)
