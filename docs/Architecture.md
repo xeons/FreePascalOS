@@ -16012,15 +16012,77 @@ Modules:
 
 The kernel's own report of a program it ends (no dispatcher, the
 dispatcher failed) does the same in the kernel log
-(`Processes.LoadedModules`):
+(`Processes.LoadedModules`), with the chain of calls that led to the
+fault between the first line and the modules (`Processes.UserBackTrace`):
 
 ```
 [process] coretest (44): page fault at 0x0000000000407AB6 (coretest+0x7AB6) accessing 0x0000000000000000, terminated
+[process]   #0 0x0000000000407AB6 coretest+0x7AB6 CORETEST.CRASHONPURPOSE+0x6
+[process]   #1 0x0000000000407B9B coretest+0x7B9B main+0xEB
+[process]   #2 0x00007F00002F31A6 libsystem.so+0x1AF1A6 SYSTEM.SYSENTRY+0x26
+[process]   #3 0x0000000000408C4E coretest+0x8C4E SI_PRC.ENTERPROGRAM+0x9F
+[process]   #4 0x0000000000408BAB coretest+0x8BAB SI_PRC.PROGRAMENTRY+0xC
 [process]   module coretest at 0x0000000000400000-0x000000000041C000
 ```
 
+**User back traces.** The kernel walks the program's stack itself, in
+the ending thread (passive level, its address space), trusting
+nothing: user memory is read only through the copy routines, so a bad
+pointer ends the trace rather than faulting; each caller's stack
+pointer must lie above its callee's; the walk stops after 32 frames,
+at address 0, or at a return address in no module and no executable
+region (what lies above the outermost frame, `_start`'s). A frame is unwound by DWARF call frame information
+where there is some for its address (`Processes.CallFrameEntries`
+finds and decodes the entries, `Processes.CallFrameRules` runs their
+programs: the advances, offset, register, same value and undefined
+rules, remember and restore state, the CFA definitions; a rule given
+as a DWARF expression makes that register unknown, a CFA given by one
+ends the walk):
+
+- C code (gcc) has its loaded `.eh_frame`, found through the binary
+  search table of the `.eh_frame_hdr` its `PT_GNU_EH_FRAME` names
+  (augmentations z, R, P, L, S; pointers absolute, pc- or
+  data-relative, of any size);
+- Free Pascal writes `.debug_frame` only, which is not loaded: it is
+  read from the module's file (the file of the mapped file behind the
+  module's image regions, `Processes.ModuleFiles`, which stays open
+  even if its name is gone), up to 8 MiB, once per report. Free
+  Pascal's internal assembler writes an FDE's CIE pointer there as 8
+  bytes instead of 4; an FDE's layout is the one that puts its first
+  address inside the module's code. AArch64 Free Pascal code has no
+  call frame information at all.
+
+Everything else steps by the frame pointer (the saved one and the
+return address at it: every routine of the system's Pascal code keeps
+a frame, `-OoNOSTACKFRAME`), which must lie at or above the stack
+pointer and be aligned. Call frame information matters where frames
+are not complete: C code built without frame pointers, and a fault at
+a routine's first instruction or in its epilogue, where the frame
+pointer still is the caller's. A return address is looked up by the
+call before it (address - 1). The routines are named from the module
+file's `.symtab` (one pass over it in chunks for all the trace's
+addresses in that module: the function symbol with the highest value
+at or below the address that covers it, a sized one before an unsized
+one at the same value - main before PASCALMAIN), else from the
+dynamic symbols the loader kept (a stripped library's exports), and
+written as `scripts/symbolize.py` does (`Processes.SymbolNames`).
+Libraries a C program's own dynamic linker maps are not in the
+kernel's module list: their frames show the bare address, stepped by
+the frame pointer. A program run without read permission (mode 0711)
+gets no trace at all ("no back trace: the program may not be read"):
+its stack, image and files stay unread (`ProcessImageIsReadable`).
+`tools/CallFrameInfoTest` (`make
+call-frame-info-test`, part of `make test`) runs the unwinder on the
+host over `.eh_frame`, `.eh_frame_hdr` and `.debug_frame` fixtures
+`make-cfi-fixtures.py` writes (x86-64 and AArch64, both `.debug_frame`
+layouts, hand-made stacks) and checks the names;
+`scripts/test-symbolize.py` checks that the kernel's report of
+`coretest --crash-without-dispatcher` names CrashOnPurpose, the main
+program and the runtime's SysEntry in that order.
+
 `scripts/symbolize.py --report REPORT build/ARCH/user` reads either form
-(or a whole serial log, report by report), takes the bases from the
+(or a whole serial log, report by report; the kernel's back trace lines
+too), takes the bases from the
 report, finds each module's file by name under the given folders and
 names the routines (addr2line, the names demangled to `UNIT.ROUTINE`);
 `symbolize.py PROGRAM LIBRARY_DIRECTORY ADDRESS...` still lays the

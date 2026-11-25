@@ -157,6 +157,7 @@ uses
   Processes.UserThread,
   Processes.UserExceptions,
   Processes.LoadedModules,
+  Processes.UserBackTrace,
   Processes.OutOfMemory,
   Memory.PhysicalPages,
   Kernel.Random,
@@ -245,9 +246,12 @@ begin
   DebugEndMessage;
 
   { Exceptions arrive with interrupts off; ending the process may block,
-    and so may the module list's lock. Where the modules were loaded
-    makes the addresses above meaningful (scripts/symbolize.py). }
+    and so may the module list's lock and the back trace's file reads.
+    The chain of calls (Processes.UserBackTrace), then where the modules
+    were loaded, which makes the addresses meaningful
+    (scripts/symbolize.py). }
   EnableInterrupts;
+  WriteUserBackTrace(Process, Frame, 'process');
   WriteProcessModules(Process, 'process');
   { As a process killed by SIGSEGV, for a parent's waitpid. }
   Process^.Posix.EndSignal := SignalSegmentation;
