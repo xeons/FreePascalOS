@@ -38,6 +38,14 @@
   multicast group or from an address that is not a unicast one. An
   error quotes as much of the datagram as keeps it within the minimum
   MTU (1280 bytes).
+
+  A Packet Too Big about TCP is believed only if it quotes a sequence
+  number the connection has in flight (RFC 5927 4.1); one about
+  anything else only lowers the path MTU in the destination cache (to
+  no less than 1280), and TCP's segments wait for one about TCP. Errors
+  and echo replies sent to other machines, and errors taken in from
+  them, are rate limited by token buckets (RFC 4443 2.4 (f)); this
+  machine's own traffic is not.
 }
 unit Network.Icmpv6;
 
@@ -76,6 +84,8 @@ const
   Icmpv6CodeErroneousField = 0;
   Icmpv6CodeUnknownNextHeader = 1;
   Icmpv6CodeUnknownOption = 2;
+  { RFC 7112: the first fragment does not hold the whole header chain. }
+  Icmpv6CodeIncompleteHeaderChain = 3;
 
 procedure Icmpv6Input(constref Datagram: TIpDatagram; Message: PByte; Length: LongWord);
 { Sends an ICMPv6 error about the datagram at Original (its fixed header
@@ -113,6 +123,8 @@ uses
   Network.Mld,
   Network.Udp,
   Network.TcpInput,
+  Network.TokenBuckets,
+  Network.Core,
   Network.Statistics;
 
 const
@@ -121,6 +133,40 @@ const
   MaximumQuotedBytes = 1280 - 40 - Icmpv6HeaderBytes;
   FixedHeaderBytes = 40;
   QuotedTransportBytes = 8;
+
+const
+  { RFC 4443 2.4 (f): errors (and echo replies) sent to other machines
+    are rate limited; so is what errors that come in may change. }
+  ErrorsPerSecond = 100;
+  ErrorBurst = 50;
+  EchoRepliesPerSecond = 1000;
+  EchoReplyBurst = 200;
+  IncomingErrorsPerSecond = 200;
+  IncomingErrorBurst = 50;
+
+var
+  LimitsReady: Boolean;
+  OutgoingErrors: TTokenBucket;
+  OutgoingEchoReplies: TTokenBucket;
+  IncomingErrors: TTokenBucket;
+
+procedure PrepareLimits;
+begin
+  if LimitsReady then
+    Exit;
+  InitializeTokenBucket(OutgoingErrors, ErrorsPerSecond, ErrorBurst);
+  InitializeTokenBucket(OutgoingEchoReplies, EchoRepliesPerSecond, EchoReplyBurst);
+  InitializeTokenBucket(IncomingErrors, IncomingErrorsPerSecond, IncomingErrorBurst);
+  LimitsReady := True;
+end;
+
+{ True if a message to or from Peer may go (or be taken) now: always
+  for this machine's own addresses, else as Bucket allows. }
+function WithinLimit(var Bucket: TTokenBucket; constref Peer: TIpv6Address): Boolean;
+begin
+  PrepareLimits;
+  Result := IsLocalIpv6Address(Peer) or TakeToken(Bucket, NetworkNow);
+end;
 
 procedure WriteIcmpv6Checksum(Packet: PPacket; constref Source, Destination: TIpv6Address);
 var
@@ -170,7 +216,7 @@ var
   Reply: PByte;
   Source: TIpv6Address;
 begin
-  if Length > PacketCapacity - PacketHeadroom then
+  if (Length > PacketCapacity - PacketHeadroom) or not WithinLimit(OutgoingEchoReplies, Datagram.Source6) then
     Exit;
   Packet := AllocatePacket(PacketHeadroom);
   if Packet = nil then
@@ -197,18 +243,30 @@ begin
   end;
 end;
 
-{ A Packet Too Big about a datagram we sent (Quoted: its header). }
+{ A Packet Too Big about a datagram we sent (Quoted: its header, with
+  at least 8 bytes of what follows). }
 procedure HandlePacketTooBig(constref Datagram: TIpDatagram; Message: PByte; Quoted: PByte);
 var
   QuotedSource: TIpv6Address;
   QuotedDestination: TIpv6Address;
+  QuotedPayload: PByte;
+  ScopeId: LongWord;
+  AboutTcp: Boolean;
 begin
   CopyMemory(@QuotedSource[0], Quoted + 8, Ipv6AddressLength);
   CopyMemory(@QuotedDestination[0], Quoted + 24, Ipv6AddressLength);
   if not IsLocalIpv6Address(QuotedSource) or IsMulticastIpv6Address(QuotedDestination) then
     Exit;
-  if NoteIpv6PacketTooBig(Datagram.ArrivalInterface, QuotedDestination, ReadBigEndian32(Message + 4)) then
-    TcpPathMtuChanged(MakeIpv6Endpoint(QuotedDestination, 0, Datagram.ArrivalInterface^.Index),
+  QuotedPayload := Quoted + FixedHeaderBytes;
+  ScopeId := Datagram.ArrivalInterface^.Index;
+  AboutTcp := Quoted[6] = NextHeaderTcp;
+  if AboutTcp and not TcpQuotedSequenceIsValid(
+       MakeIpv6Endpoint(QuotedSource, ReadBigEndian16(QuotedPayload), ScopeId),
+       MakeIpv6Endpoint(QuotedDestination, ReadBigEndian16(QuotedPayload + 2), ScopeId),
+       ReadBigEndian32(QuotedPayload + 4)) then
+    Exit;
+  if NoteIpv6PacketTooBig(Datagram.ArrivalInterface, QuotedDestination, ReadBigEndian32(Message + 4)) and AboutTcp then
+    TcpPathMtuChanged(MakeIpv6Endpoint(QuotedDestination, 0, ScopeId),
       Ipv6PathMtu(Datagram.ArrivalInterface, QuotedDestination));
 end;
 
@@ -230,6 +288,9 @@ begin
   CopyMemory(@QuotedDestination[0], Quoted + 24, Ipv6AddressLength);
   QuotedPayload := Quoted + FixedHeaderBytes;
   ScopeId := Datagram.ArrivalInterface^.Index;
+  { About a datagram we never sent: forged. }
+  if not IsLocalIpv6Address(QuotedSource) or not WithinLimit(IncomingErrors, Datagram.Source6) then
+    Exit;
   if Message[0] = Icmpv6TypePacketTooBig then
     HandlePacketTooBig(Datagram, Message, Quoted);
   case Quoted[6] of
@@ -310,7 +371,8 @@ begin
   CopyMemory(@OriginalSource[0], Original + 8, Ipv6AddressLength);
   CopyMemory(@OriginalDestination[0], Original + 24, Ipv6AddressLength);
   if IsUnspecifiedIpv6Address(OriginalSource) or IsMulticastIpv6Address(OriginalSource) or
-     IsMulticastIpv6Address(OriginalDestination) or QuotesIcmpv6Error(Original, OriginalLength) then
+     IsMulticastIpv6Address(OriginalDestination) or QuotesIcmpv6Error(Original, OriginalLength) or
+     not WithinLimit(OutgoingErrors, OriginalSource) then
     Exit;
   QuotedLength := OriginalLength;
   if QuotedLength > MaximumQuotedBytes then
