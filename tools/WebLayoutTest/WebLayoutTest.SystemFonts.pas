@@ -18,14 +18,14 @@
 
 {
   Font matching with the system's fonts and configuration: the fonts
-  the build copied from the build machine (the directory in
-  WEB_HOST_FONTS, build/ARCH/user/fonts) and userland/etc/fonts.conf.
+  kept in the source tree (the directory in WEB_HOST_FONTS,
+  userland/fonts) and userland/etc/fonts.conf.
   Arial must be Liberation Sans with Arial's advances, Times New Roman
   Liberation Serif, monospace Liberation Mono, system-ui DejaVu Sans;
   text mixing Latin, Japanese and emoji must find a face with a glyph
   for every character (Noto Sans CJK, Noto Color Emoji drawn in
   colour), and painting it must put colour on the page. Skipped, with a
-  message, on a machine without those fonts.
+  message, when WEB_HOST_FONTS is not set or lacks those fonts.
 }
 unit WebLayoutTest.SystemFonts;
 

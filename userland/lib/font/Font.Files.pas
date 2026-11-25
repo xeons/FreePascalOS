@@ -25,9 +25,9 @@
   the console's and the terminal's font, monospaced), "dejavu-sans"
   (DejaVu Sans, TrueType, regular and bold; proportional, the
   interface's) and "dejavu-sans-mono" (DejaVu Sans Mono, TrueType,
-  regular and bold), and whatever the build copied from the build
-  machine (scripts/host-fonts.list: Liberation, Noto, ...), each family
-  a directory named after it ("liberation-sans"). A family may also
+  regular and bold), and the other outline fonts kept in userland/fonts
+  (scripts/fonts.list: Liberation, Noto, ...; all or a core set), each
+  family a directory named after it ("liberation-sans"). A family may also
   hold coverage fonts (".cvf", Font.Coverage), OpenType fonts (".otf")
   and collections (".ttc": the first face is used).
 

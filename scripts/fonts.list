@@ -1,15 +1,20 @@
-# The fonts the build copies from the host into /lib/fonts
-# (scripts/collect-host-fonts.py), each family only if its licence
-# lets it be passed on. Nothing here is kept in git: the files come from
-# the build machine's font packages (Arch Linux paths; other machines
-# skip what they lack, and the system works with the DejaVu fonts kept
-# in userland/fonts).
+# The outline fonts the system has (/lib/fonts), all freely licensed.
+# They are kept in git, in userland/fonts/<family>/ with a LICENSE (the
+# licence's full text and the copyright as each font states it) and a
+# SOURCE line each, and userland/fonts/MANIFEST lists them all. The
+# build takes them from there (scripts/install-fonts.py), never from
+# the build machine's own fonts. The paths below are where the fonts are
+# on an Arch Linux machine: scripts/update-fonts.py (make update-fonts,
+# run by hand) refreshes userland/fonts from those packages, taking a
+# family only if its licence file and every font's name table say what
+# is expected here.
 #
 # A section is a family, named by its directory in /lib/fonts:
 #   name            the family's name (as documents ask for it)
 #   sets            the font sets it is in: "full" (the system disk),
 #                   "core" (the Raspberry Pi's RAM disk, served over
-#                   TFTP, kept small)
+#                   TFTP, kept small), "base" (DejaVu Sans and Sans Mono, the
+#                   faces the host tests lay pages out with)
 #   package         the host package the files come from
 #   upstream        where the fonts are made
 #   license         the licence (SPDX)
@@ -20,7 +25,8 @@
 #   name-marker     text every font's own copyright or licence
 #                   description (name table, IDs 0 and 13) must contain
 #   files           the font files
-#   core-files      the files the core set takes (default: all)
+#   core-files      the files the core set takes (default: all);
+#   base-files      likewise for the base set
 #
 # Left out on purpose: the Indic fonts in /usr/share/fonts/TTF from
 # ttf-indic-otf (mixed and unclear provenance), the Nerd Font patched
@@ -81,11 +87,11 @@ core-files =
     /usr/share/fonts/liberation/LiberationMono-Regular.ttf
     /usr/share/fonts/liberation/LiberationMono-Bold.ttf
 
-# DejaVu: Sans and Sans Mono regular and bold are in userland/fonts;
-# the host adds their obliques and DejaVu Serif.
+# DejaVu Sans is the interface's font; the core and base sets take
+# Sans and Sans Mono regular and bold only.
 [dejavu-sans]
 name = DejaVu Sans
-sets = full
+sets = base core full
 package = ttf-dejavu
 upstream = https://dejavu-fonts.github.io
 license = Bitstream-Vera
@@ -93,12 +99,20 @@ license-files = /usr/share/licenses/ttf-dejavu/LICENSE
 license-marker = Bitstream Vera Fonts Copyright
 name-marker = Bitstream
 files =
+    /usr/share/fonts/TTF/DejaVuSans.ttf
+    /usr/share/fonts/TTF/DejaVuSans-Bold.ttf
     /usr/share/fonts/TTF/DejaVuSans-Oblique.ttf
     /usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf
+core-files =
+    /usr/share/fonts/TTF/DejaVuSans.ttf
+    /usr/share/fonts/TTF/DejaVuSans-Bold.ttf
+base-files =
+    /usr/share/fonts/TTF/DejaVuSans.ttf
+    /usr/share/fonts/TTF/DejaVuSans-Bold.ttf
 
 [dejavu-sans-mono]
 name = DejaVu Sans Mono
-sets = full
+sets = base core full
 package = ttf-dejavu
 upstream = https://dejavu-fonts.github.io
 license = Bitstream-Vera
@@ -106,8 +120,16 @@ license-files = /usr/share/licenses/ttf-dejavu/LICENSE
 license-marker = Bitstream Vera Fonts Copyright
 name-marker = Bitstream
 files =
+    /usr/share/fonts/TTF/DejaVuSansMono.ttf
+    /usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf
     /usr/share/fonts/TTF/DejaVuSansMono-Oblique.ttf
     /usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf
+core-files =
+    /usr/share/fonts/TTF/DejaVuSansMono.ttf
+    /usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf
+base-files =
+    /usr/share/fonts/TTF/DejaVuSansMono.ttf
+    /usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf
 
 [dejavu-serif]
 name = DejaVu Serif

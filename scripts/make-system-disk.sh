@@ -45,7 +45,7 @@ set -euo pipefail
 user_build_directory="$1"
 output_image="$2"
 # The image is at least 64 MiB, more when what goes on it needs it (the
-# fonts copied from the build machine, scripts/collect-host-fonts.py):
+# fonts, userland/fonts put in by scripts/install-fonts.py):
 # its contents and a seventh more for the file system, with 24 MiB to
 # spare, in whole 8 MiB.
 minimum_image_size_mib=64
