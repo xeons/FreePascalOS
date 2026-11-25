@@ -484,20 +484,18 @@ var
   Process: PProcess;
   ModuleHandle: Integer;
   Error: LongInt;
+  FolderIndex: Integer;
+  BareName: Boolean;
 begin
   Process := CurrentProcess;
   Error := CopyStringFromUser(PathAddress, @UserPath[0], ProcessPathCapacity);
   if Error <> ErrorNone then
     Exit(Failure(Error));
 
-  { A bare name is looked for in /lib, like a needed library. }
-  if (UserPath[0] <> '/') and (UserPath[0] <> '.') then
-  begin
-    SystemVolumePath('/lib/', @KernelPath[0], ProcessPathCapacity);
-    CopyText(@KernelPath[TextLength(@KernelPath[0])], @UserPath[0],
-      ProcessPathCapacity - TextLength(@KernelPath[0]));
-  end
-  else
+  { A bare name is looked for in /lib, then /usr/local/lib, like a
+    needed library. }
+  BareName := (UserPath[0] <> '/') and (UserPath[0] <> '.');
+  if not BareName then
   begin
     Error := TranslateUserPath(Process, @UserPath[0], @KernelPath[0], ProcessPathCapacity);
     if Error <> ErrorNone then
@@ -505,7 +503,18 @@ begin
   end;
 
   AcquireMutex(Process^.Lock);
-  Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+  if BareName then
+  begin
+    FolderIndex := 0;
+    repeat
+      LibraryFolderPath(FolderIndex, @UserPath[0], @KernelPath[0], ProcessPathCapacity);
+      Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
+      Inc(FolderIndex);
+    until (Error <> ErrorNotFound) or not LibraryFolderPath(FolderIndex, @UserPath[0], @KernelPath[0],
+      ProcessPathCapacity);
+  end
+  else
+    Error := LoadLibraryImage(Process, @KernelPath[0], ModuleHandle);
   { Its initializers wait for the runtime (CallTakeModuleInitializers). }
   if Error = ErrorNone then
     Error := NoteLibraryInitializers(Process, ModuleHandle);

@@ -37,7 +37,15 @@
   never moved or freed), so a face picked stays valid however many more
   sizes are picked after it.
 
-  Text is UTF-8. Characters below U+0020 take no room and draw nothing.
+  Text is UTF-8. Characters below U+0020 take no room and draw nothing,
+  nor do the invisible joiners and variation selectors (U+200B to
+  U+200F, U+FE00 to U+FE0F, U+E0100 to U+E01EF) when the face lacks
+  them. A character the face lacks is measured and drawn with a
+  fallback face if the program has a FallbackFaceFinder (Font.Files
+  gives one: the families /etc/fonts.conf lists for the character,
+  Font.Configuration), at the face's size and weight, on the same
+  baseline; no kerning joins it to its neighbours. Colour glyphs
+  (emoji) are drawn in their own colours (Font.GlyphDrawing).
   Every character moves the pen by its glyph's advance, and by the
   face's kerning between it and the character before. Bitmap glyphs
   are drawn in the text colour; coverage glyphs (and outline glyphs,
@@ -72,6 +80,10 @@ type
   { Reads the glyphs of a face known only by its Source; False if it
     cannot. }
   TFaceLoader = function(var Face: TFontFace): Boolean;
+  { A face that has CodePoint, for text in Face (its size and weight);
+    nil if there is none. The face stays valid as long as the program
+    runs. }
+  TFallbackFaceFinder = function(const Face: TFontFace; CodePoint: LongWord): PFontFace;
 
   TFontSet = record
     { Faces[0 .. Count - 1]. }
@@ -82,6 +94,13 @@ type
     Instances: array of PFontFace;
     InstanceCount: LongInt;
   end;
+
+var
+  FallbackFaceFinder: TFallbackFaceFinder = nil;
+
+{ The face CodePoint is drawn with in text of Face when Face lacks it
+  (nil when Face has it, or no other face does). }
+function FallbackFaceFor(const Face: TFontFace; CodePoint: LongWord): PFontFace;
 
 { An empty set (with no loader). }
 procedure ClearFontSet(out FontSet: TFontSet);
@@ -126,6 +145,7 @@ uses
   Font.Outlines,
   Font.OutlineFaces,
   Font.GlyphCache,
+  Font.GlyphDrawing,
   Font.Utf8;
 
 const
@@ -294,10 +314,41 @@ begin
     Result := FontSet.Faces[Index].Size;
 end;
 
-function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
+{ Characters that take no room when the face has no glyph for them:
+  zero width spaces and joiners, direction marks, variation selectors. }
+function IsInvisibleCharacter(CodePoint: LongWord): Boolean;
 begin
-  if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
-    Result := 0
+  Result := ((CodePoint >= $200B) and (CodePoint <= $200F)) or ((CodePoint >= $FE00) and (CodePoint <= $FE0F)) or
+    ((CodePoint >= $E0100) and (CodePoint <= $E01EF)) or (CodePoint = $FEFF) or (CodePoint = $2060);
+end;
+
+function FallbackFaceFor(const Face: TFontFace; CodePoint: LongWord): PFontFace;
+begin
+  Result := nil;
+  if (CodePoint < FirstPrintable) or (FallbackFaceFinder = nil) or HasGlyphFor(Face, CodePoint) or
+     IsInvisibleCharacter(CodePoint) then
+    Exit;
+  Result := FallbackFaceFinder(Face, CodePoint);
+  if (Result <> nil) and not HasGlyphFor(Result^, CodePoint) then
+    Result := nil;
+end;
+
+{ Whether a character takes no room and draws nothing in Face. }
+function TakesNoRoom(const Face: TFontFace; CodePoint: LongWord): Boolean;
+begin
+  Result := (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) or
+    (IsInvisibleCharacter(CodePoint) and not HasGlyphFor(Face, CodePoint));
+end;
+
+function CharacterAdvance(const Face: TFontFace; CodePoint: LongWord): LongInt;
+var
+  Fallback: PFontFace;
+begin
+  if TakesNoRoom(Face, CodePoint) then
+    Exit(0);
+  Fallback := FallbackFaceFor(Face, CodePoint);
+  if Fallback <> nil then
+    Result := CharacterAdvance(Fallback^, CodePoint)
   else if Face.Format = GlyphOutline then
     Result := OutlineAdvance(Face, GlyphFor(Face, CodePoint))
   else
@@ -309,7 +360,8 @@ end;
 function KerningStep(const Face: TFontFace; Previous, CodePoint: LongWord): LongInt;
 begin
   Result := 0;
-  if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and FaceHasKerning(Face) then
+  if (Previous >= FirstPrintable) and (CodePoint >= FirstPrintable) and FaceHasKerning(Face) and
+     HasGlyphFor(Face, Previous) and HasGlyphFor(Face, CodePoint) then
     Result := KerningBetween(Face, Previous, CodePoint);
 end;
 
@@ -363,14 +415,11 @@ procedure DrawOutlineGlyph(const Canvas: TCanvas; const Face: TFontFace; Glyph: 
   Subpixel: LongInt; Color: TColor);
 var
   Bitmap: PGlyphBitmap;
-  Row: LongInt;
 begin
   Bitmap := CachedGlyph(Face.Outlines, Face.Size, Glyph, Subpixel, Face.Hinted);
   if (Bitmap = nil) or (Bitmap^.Width = 0) then
     Exit;
-  for Row := 0 to Bitmap^.Height - 1 do
-    BlendCoverageSpan(Canvas, BaselineY + Bitmap^.Top + Row, PenX + Bitmap^.Left,
-      @Bitmap^.Coverage[Row * Bitmap^.Width], Bitmap^.Width, Color);
+  DrawGlyphBitmap(Canvas, Bitmap^, PenX, BaselineY, Color);
 end;
 
 function DrawCharacter(const Canvas: TCanvas; const Face: TFontFace; X, Y: LongInt; CodePoint: LongWord;
@@ -380,10 +429,14 @@ var
   Row: LongInt;
   Left: LongInt;
   Top: LongInt;
+  Fallback: PFontFace;
 begin
+  if TakesNoRoom(Face, CodePoint) then
+    Exit(0);
+  Fallback := FallbackFaceFor(Face, CodePoint);
+  if Fallback <> nil then
+    Exit(DrawCharacter(Canvas, Fallback^, X, Y + Face.Ascent - Fallback^.Ascent, CodePoint, Color));
   Result := CharacterAdvance(Face, CodePoint);
-  if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
-    Exit;
   Glyph := GlyphFor(Face, CodePoint);
   if Face.Format = GlyphOutline then
   begin
@@ -429,6 +482,7 @@ var
   PreviousGlyph: LongWord;
   Quarters: LongInt;
   WholePixels: LongInt;
+  Fallback: PFontFace;
 begin
   Result := 0;
   Cursor := PChar(Text);
@@ -436,9 +490,22 @@ begin
   PreviousGlyph := 0;
   while NextCharacter(Cursor, CodePoint) do
   begin
-    if (CodePoint < FirstPrintable) or (Face.GlyphCount = 0) then
+    if TakesNoRoom(Face, CodePoint) then
     begin
-      Previous := CodePoint;
+      Previous := 0;
+      Continue;
+    end;
+    Fallback := FallbackFaceFor(Face, CodePoint);
+    if Fallback <> nil then
+    begin
+      { Another face's glyph, at the nearest whole pixel, with no
+        kerning on either side. }
+      if Draw then
+        Result := Result + DrawCharacter(Canvas, Fallback^, X + RoundHalfUp(Result), Y + Face.Ascent - Fallback^.Ascent,
+          CodePoint, Color)
+      else
+        Result := Result + CharacterAdvance(Fallback^, CodePoint);
+      Previous := 0;
       Continue;
     end;
     Glyph := GlyphFor(Face, CodePoint);

@@ -51,8 +51,9 @@ type
   protected
     procedure WriteEntryData(Index: Integer; Destination: TStream; Progress: TProgressCounter); override;
   public
-    constructor Create(const FileName: string; Gzipped: Boolean);
-    constructor Create(Stream: TStream; Gzipped: Boolean; OwnsStream: Boolean = False);
+    { ArchiveFormat is ArchiveTar, ArchiveTarGzip, ArchiveTarZstd or ArchiveTarXz. }
+    constructor Create(const FileName: string; ArchiveFormat: TArchiveFormat);
+    constructor Create(Stream: TStream; ArchiveFormat: TArchiveFormat; OwnsStream: Boolean = False);
     destructor Destroy; override;
   end;
 
@@ -60,14 +61,15 @@ implementation
 
 uses
   Archive.TarFormat,
-  Archive.RewindingStreams;
+  Archive.RewindingStreams,
+  Archive.XzStreams;
 
 const
   CopyBufferSize = 65536;
   { Long names and pax headers larger than this are taken for damage. }
   LargestMetadata = 1024 * 1024;
 
-constructor TTarReader.Create(const FileName: string; Gzipped: Boolean);
+constructor TTarReader.Create(const FileName: string; ArchiveFormat: TArchiveFormat);
 var
   Stream: TFileStream;
 begin
@@ -77,20 +79,27 @@ begin
     on Error: Exception do
       raise EArchiveError.CreateFmt('Cannot open %s: %s', [FileName, Error.Message]);
   end;
-  Create(Stream, Gzipped, True);
+  Create(Stream, ArchiveFormat, True);
 end;
 
-constructor TTarReader.Create(Stream: TStream; Gzipped: Boolean; OwnsStream: Boolean);
+constructor TTarReader.Create(Stream: TStream; ArchiveFormat: TArchiveFormat; OwnsStream: Boolean);
 begin
   inherited Create;
-  if Gzipped then
-  begin
-    FFormat := ArchiveTarGzip;
-    FData := TRewindingGzipStream.Create(Stream, OwnsStream);
-    FOwnsData := True;
-  end
+  FFormat := ArchiveFormat;
+  FOwnsData := True;
+  case ArchiveFormat of
+    ArchiveTarGzip:
+      FData := TRewindingDecoderStream.Create(Stream, RewindingGzip, OwnsStream);
+    ArchiveTarZstd:
+      FData := TRewindingDecoderStream.Create(Stream, RewindingZstd, OwnsStream);
+    ArchiveTarXz:
+      try
+        FData := DecompressXz(Stream);
+      finally
+        if OwnsStream then
+          Stream.Free;
+      end;
   else
-  begin
     FFormat := ArchiveTar;
     FData := Stream;
     FOwnsData := OwnsStream;

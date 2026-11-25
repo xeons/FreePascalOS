@@ -68,7 +68,10 @@ begin
         Path := IncludeTrailingPathDelimiter(Directory) + Path;
       SetLength(Result, Length(Result) + 1);
       Result[High(Result)].Name := References[Index].Name;
-      Result[High(Result)].Font := LoadFontFile(Path);
+      if Length(References[Index].Fields) > 1 then
+        Result[High(Result)].Font := LoadFontFile(Path, StrToIntDef(References[Index].Fields[1], 0))
+      else
+        Result[High(Result)].Font := LoadFontFile(Path);
       Check('opens ' + References[Index].Name, Result[High(Result)].Font <> nil);
     end;
 end;

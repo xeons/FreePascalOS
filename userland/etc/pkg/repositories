@@ -1,0 +1,16 @@
+# Package repositories pkg installs from (pkg update, pkg install NAME,
+# pkg search, pkg upgrade). One a line:
+#
+#   NAME URL                  its INDEX must be signed with the key in
+#                             /etc/pkg/keys/NAME.pub ("ed25519 HEX")
+#   NAME URL key=PATH         ... with the key in PATH
+#   NAME URL signature=none   unsigned (a local folder you trust)
+#
+# URL is http://, https:// (the server's certificate is checked against
+# /etc/ssl/certs), file:///path or /path. A repository is a folder of
+# packages with the INDEX that `scripts/ports.py repo FOLDER --key KEY`
+# writes on the build machine (make ports-repo); make the key with
+# `scripts/ports.py keygen SECRET PUBLIC` and copy PUBLIC here.
+#
+# Example:
+# ports https://packages.example.org/freepascalos/x86_64

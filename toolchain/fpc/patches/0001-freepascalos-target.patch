@@ -1,0 +1,206 @@
+diff --git a/compiler/aarch64/agcpugas.pas b/compiler/aarch64/agcpugas.pas
+index 43272fc..97db5f9 100644
+--- a/compiler/aarch64/agcpugas.pas
++++ b/compiler/aarch64/agcpugas.pas
+@@ -276,7 +276,7 @@ unit agcpugas;
+             idtxt  : 'AS';
+             asmbin : 'as';
+             asmcmd : '-o $OBJ $EXTRAOPT $ASM';
+-            supported_targets : [system_aarch64_linux,system_aarch64_android];
++            supported_targets : [system_aarch64_linux,system_aarch64_android,system_aarch64_freepascalos];
+             flags : [af_needar,af_smartlink_sections];
+             labelprefix : '.L';
+             comment : '// ';
+diff --git a/compiler/aarch64/cputarg.pas b/compiler/aarch64/cputarg.pas
+index 6dfd96b..9e92c36 100644
+--- a/compiler/aarch64/cputarg.pas
++++ b/compiler/aarch64/cputarg.pas
+@@ -38,6 +38,9 @@ implementation
+     {$ifndef NOTARGETLINUX}
+       ,t_linux
+     {$endif}
++    {$ifndef NOTARGETFREEPASCALOS}
++      ,t_fpos
++    {$endif}
+     {$ifndef NOTARGETDARWIN}
+       ,t_darwin
+     {$endif}
+diff --git a/compiler/aasmdata.pas b/compiler/aasmdata.pas
+index e0eac8a..f2d5132 100644
+--- a/compiler/aasmdata.pas
++++ b/compiler/aasmdata.pas
+@@ -543,7 +543,7 @@ implementation
+ 
+     procedure TAsmData.getlabel(out l : TAsmLabel;alt:TAsmLabeltype);
+       begin
+-        if (target_info.system in (systems_linux + systems_bsd + systems_android)) and
++        if (target_info.system in (systems_linux + systems_bsd + systems_android + systems_freepascalos)) and
+            { the next condition was
+              (cs_create_smart in current_settings.moduleswitches) and
+              but if we create_smartlink_sections, this is useless }
+diff --git a/compiler/aggas.pas b/compiler/aggas.pas
+index 8dc0561..c7746cf 100644
+--- a/compiler/aggas.pas
++++ b/compiler/aggas.pas
+@@ -1671,7 +1671,7 @@ implementation
+ 
+       { "no executable stack" marker }
+       { TODO: used by OpenBSD/NetBSD as well? }
+-      if (target_info.system in (systems_linux + systems_android + systems_freebsd + systems_dragonfly)) and
++      if (target_info.system in (systems_linux + systems_android + systems_freebsd + systems_dragonfly + systems_freepascalos)) and
+          not(cs_executable_stack in current_settings.moduleswitches) then
+         begin
+           writer.AsmWriteLn('.section .note.GNU-stack,"",%progbits');
+diff --git a/compiler/ogelf.pas b/compiler/ogelf.pas
+index e467fcc..8a885a5 100644
+--- a/compiler/ogelf.pas
++++ b/compiler/ogelf.pas
+@@ -993,7 +993,7 @@ implementation
+            shstrtabsect:=TElfObjSection.create_ext(data,'.shstrtab',SHT_STRTAB,0,1,0);
+            { "no executable stack" marker }
+            { TODO: used by OpenBSD/NetBSD as well? }
+-           if (target_info.system in (systems_linux + systems_android + systems_freebsd + systems_dragonfly)) and
++           if (target_info.system in (systems_linux + systems_android + systems_freebsd + systems_dragonfly + systems_freepascalos)) and
+               not(cs_executable_stack in current_settings.moduleswitches) then
+              TElfObjSection.create_ext(data,'.note.GNU-stack',SHT_PROGBITS,0,1,0);
+            { symbol for filename }
+diff --git a/compiler/symdef.pas b/compiler/symdef.pas
+index 283270f..c0bf475 100644
+--- a/compiler/symdef.pas
++++ b/compiler/symdef.pas
+@@ -3058,6 +3058,7 @@ implementation
+                   system_i386_iphonesim,system_x86_64_darwin,
+                   system_x86_64_iphonesim,
+                   system_x86_64_linux,system_x86_64_freebsd,
++                  system_x86_64_freepascalos,
+                   system_x86_64_openbsd,system_x86_64_netbsd,
+                   system_x86_64_solaris,system_x86_64_embedded,
+                   system_x86_64_dragonfly] then
+diff --git a/compiler/systems.inc b/compiler/systems.inc
+index 0c36c5c..43a1635 100644
+--- a/compiler/systems.inc
++++ b/compiler/systems.inc
+@@ -187,7 +187,9 @@
+              system_aarch64_android,    { 100 }
+              system_x86_64_android,     { 101 }
+              system_x86_64_haiku,       { 102 }
+-             system_aarch64_darwin      { 111 (in trunk) }
++             system_aarch64_darwin,     { 111 (in trunk) }
++             system_x86_64_freepascalos,{ 104 }
++             system_aarch64_freepascalos { 105 }
+        );
+ 
+      type
+@@ -275,12 +277,14 @@
+              ld_wii,
+              ld_windows,
+              ld_win16,
++             ld_freepascalos,
+              ld_int_go32v2,    { implemented internal linkers }
+              ld_int_linux,
+              ld_int_nativent,
+              ld_int_netware,
+              ld_int_windows,
+-             ld_int_msdos
++             ld_int_msdos,
++             ld_int_freepascalos
+        );
+ 
+        tar = (ar_none
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index e1cce1d..db5b4fa 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -239,6 +239,7 @@ interface
+        systems_linux = [system_i386_linux,system_x86_64_linux,system_powerpc_linux,system_powerpc64_linux,
+                        system_arm_linux,system_sparc_linux,system_sparc64_linux,system_m68k_linux,
+                        system_x86_6432_linux,system_mipseb_linux,system_mipsel_linux,system_aarch64_linux];
++       systems_freepascalos = [system_x86_64_freepascalos,system_aarch64_freepascalos];
+        systems_dragonfly = [system_x86_64_dragonfly];
+        systems_freebsd = [system_i386_freebsd,
+                           system_x86_64_freebsd];
+@@ -333,23 +334,23 @@ interface
+                                          system_i386_netwlibc,
+                                          system_arm_wince,
+                                          system_x86_64_win64,
+-                                         system_i8086_win16]+systems_linux+systems_android;
++                                         system_i8086_win16]+systems_linux+systems_android+systems_freepascalos;
+ 
+        { all systems that reference symbols in other binaries using indirect imports }
+        systems_indirect_var_imports = systems_all_windows+[system_i386_nativent];
+ 
+        { all systems that support indirect entry information }
+-       systems_indirect_entry_information = systems_darwin+[system_i386_win32,system_x86_64_win64,system_x86_64_linux];
++       systems_indirect_entry_information = systems_darwin+[system_i386_win32,system_x86_64_win64,system_x86_64_linux]+systems_freepascalos;
+ 
+        { all systems for which weak linking has been tested/is supported }
+-       systems_weak_linking = systems_darwin + systems_solaris + systems_linux + systems_android + systems_openbsd;
++       systems_weak_linking = systems_darwin + systems_solaris + systems_linux + systems_android + systems_openbsd + systems_freepascalos;
+ 
+        systems_internal_sysinit = [system_i386_win32,system_x86_64_win64,
+                                    system_i386_linux,system_powerpc64_linux,system_sparc64_linux,system_x86_64_linux,
+                                    system_m68k_atari,system_m68k_palmos,
+                                    system_i386_openbsd,system_x86_64_openbsd,
+                                    system_i386_haiku,system_x86_64_haiku
+-                                  ]+systems_darwin+systems_amigalike;
++                                  ]+systems_darwin+systems_amigalike+systems_freepascalos;
+ 
+        { all systems that use garbage collection for reference-counted types }
+        systems_garbage_collected_managed_types = [
+@@ -391,13 +392,13 @@ interface
+ 
+        { all systems where a value parameter passed by reference must be copied
+          on the caller side rather than on the callee side }
+-       systems_caller_copy_addr_value_para = [system_aarch64_ios,system_aarch64_darwin,system_aarch64_linux];
++       systems_caller_copy_addr_value_para = [system_aarch64_ios,system_aarch64_darwin,system_aarch64_linux,system_aarch64_freepascalos];
+ 
+        { pointer checking (requires special code in FPC_CHECKPOINTER,
+          and can never work for libc-based targets or any other program
+          linking to an external library)
+        }
+-       systems_support_checkpointer = systems_linux
++       systems_support_checkpointer = systems_linux + systems_freepascalos
+                              + [system_i386_win32]
+                              + [system_i386_GO32V2]
+                              + [system_i386_os2]
+diff --git a/compiler/x86/agx86att.pas b/compiler/x86/agx86att.pas
+index 54817ee..4337047 100644
+--- a/compiler/x86/agx86att.pas
++++ b/compiler/x86/agx86att.pas
+@@ -383,7 +383,8 @@ interface
+                                  system_x86_64_win64,system_x86_64_embedded,
+                                  system_x86_64_openbsd,system_x86_64_netbsd,
+                                  system_x86_64_dragonfly,system_x86_64_aros,
+-                                 system_x86_64_android,system_x86_64_haiku];
++                                 system_x86_64_android,system_x86_64_haiku,
++                                 system_x86_64_freepascalos];
+             flags : [af_needar,af_smartlink_sections,af_supports_dwarf];
+             labelprefix : '.L';
+             comment : '# ';
+diff --git a/compiler/x86_64/cpuelf.pas b/compiler/x86_64/cpuelf.pas
+index 4c03da5..c064b2b 100644
+--- a/compiler/x86_64/cpuelf.pas
++++ b/compiler/x86_64/cpuelf.pas
+@@ -678,7 +678,7 @@ implementation
+                              system_x86_64_openbsd,system_x86_64_netbsd,
+                              system_x86_64_dragonfly,system_x86_64_solaris,
+                              system_x86_64_aros,system_x86_64_android,
+-                             system_x86_64_haiku];
++                             system_x86_64_haiku,system_x86_64_freepascalos];
+         flags : [af_outputbinary,af_smartlink_sections,af_supports_dwarf];
+         labelprefix : '.L';
+         comment : '';
+diff --git a/compiler/x86_64/cputarg.pas b/compiler/x86_64/cputarg.pas
+index 3092f70..0694e6c 100644
+--- a/compiler/x86_64/cputarg.pas
++++ b/compiler/x86_64/cputarg.pas
+@@ -41,6 +41,9 @@ implementation
+     {$ifndef NOTARGETLINUX}
+       ,t_linux
+     {$endif}
++    {$ifndef NOTARGETFREEPASCALOS}
++      ,t_fpos
++    {$endif}
+     {$ifndef NOTARGETFREEBSD}
+       ,t_bsd
+     {$endif}

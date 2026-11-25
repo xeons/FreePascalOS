@@ -170,7 +170,7 @@ var
   Directory: string;
 begin
   if not FindVariable('PATH', SearchPath) then
-    SearchPath := '/bin';
+    SearchPath := '/bin:/usr/local/bin';
   for Directory in SplitString(SearchPath, ':') do
     if Directory <> '' then
       CollectMatches(Directory, True);

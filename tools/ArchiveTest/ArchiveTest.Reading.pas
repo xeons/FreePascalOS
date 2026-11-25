@@ -78,6 +78,8 @@ begin
     ArchiveZip: Result := 'zip';
     ArchiveTar: Result := 'tar';
     ArchiveTarGzip: Result := 'targz';
+    ArchiveTarZstd: Result := 'tarzst';
+    ArchiveTarXz: Result := 'tarxz';
   else
     Result := 'unknown';
   end;

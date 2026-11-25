@@ -32,7 +32,7 @@ advances, kern table pairs, GPOS kerning, line metrics and glyphs
 rendered unhinted and anti-aliased at several sizes and subpixel
 offsets. One record a line:
 
-    font NAME FILE
+    font NAME FILE [FACE-INDEX]
     cmap NAME CODEPOINT GLYPH
     advance NAME GLYPH UNITS
     kern NAME LEFT-GLYPH RIGHT-GLYPH UNITS            (the kern table)
@@ -41,6 +41,15 @@ offsets. One record a line:
     glyph NAME GLYPH PIXELS OFFSET64 LEFT TOP WIDTH HEIGHT HEX-COVERAGE
     refuse FILE                                       (must not open)
     badglyph NAME GLYPH                               (opens; glyph refused)
+    emoji NAME CODEPOINT                              (a colour glyph)
+    woff2 NAME FILE.woff2                             (font NAME, as WOFF2)
+
+The OpenType fonts the build machine has, when it has them (else they
+are left out and the test says so): Source Sans 3 (CFF), Nimbus Sans
+(CFF), Cantarell (CFF2, a variable font), Noto Sans CJK (a collection
+of CID-keyed CFF fonts: its first and third faces), Liberation Sans
+(Arial's metrics) and Noto Color Emoji (CBDT colour bitmaps); and,
+with woff2_compress, DejaVu Sans as WOFF2.
 """
 
 import os
@@ -399,7 +408,7 @@ def patched(data, position, packed):
 def broken_fonts(good):
     """(name, data) of fonts that must be refused."""
     fonts = []
-    fonts.append(('bad-version', patched(good, 0, b'OTTO')))
+    fonts.append(('bad-version', patched(good, 0, b'wxyz')))
     entry, head, _ = table_entry(good, b'head')
     fonts.append(('bad-head-magic', patched(good, head + 12, struct.pack('>I', 0x12345678))))
     fonts.append(('zero-units-per-em', patched(good, head + 18, struct.pack('>H', 0))))
@@ -462,8 +471,8 @@ def add_glyph(references, name, face, glyph, pixels, offset_64):
     references.add('glyph', name, glyph, pixels, offset_64, left, top, width, height, coverage.hex() or '-')
 
 
-def add_font_references(references, name, data, code_points, glyph_sizes, pairs):
-    face = freetypereference.open_face(data)
+def add_font_references(references, name, data, code_points, glyph_sizes, pairs, index=0):
+    face = freetypereference.open_face(data, index)
     glyph_count = face.glyph_count()
     for code_point in code_points:
         references.add('cmap', name, code_point, face.char_index(code_point))
@@ -498,6 +507,50 @@ def add_layout_references(references, name, path, pairs, sizes):
 
 
 SAMPLE_TEXT = 'AaBbGgHhOoQqRrSsWwXxeg@&%019?.,;'
+
+OPENTYPE_FONTS = [
+    # name, file in the fonts directory (userland/fonts), face index, characters rendered
+    ('source-sans', 'source-sans-3/SourceSans3-Regular.otf', 0, 'AaBbGgOoQqRrSs&@019'),
+    ('nimbus-sans', 'nimbus-sans/NimbusSans-Regular.otf', 0, 'AaGgOoRrSs&@019'),
+    ('cantarell', 'cantarell/Cantarell-VF.otf', 0, 'AaGgOoRrSs&019'),
+    ('cjk-jp', 'noto-sans-cjk/NotoSansCJK-Regular.ttc', 0, 'Ag\u65e5\u672c\u8a9e\u76f4\uac00\u3042'),
+    ('cjk-sc', 'noto-sans-cjk/NotoSansCJK-Regular.ttc', 2, '\u76f4\u8fd4\u9aa8'),
+    ('liberation-sans', 'liberation-sans/LiberationSans-Regular.ttf', 0, 'AaGgOoRrSsW&019'),
+]
+EMOJI_FONT = 'noto-color-emoji/NotoColorEmoji.ttf'
+
+
+def add_opentype_references(references, output, fonts_directory):
+    """The CFF, collection, variable and colour emoji fonts of the fonts
+    directory (skipped when missing) and DejaVu Sans as WOFF2."""
+    import shutil
+    import subprocess
+    for name, file_name, index, characters in OPENTYPE_FONTS:
+        path = os.path.abspath(os.path.join(fonts_directory, file_name))
+        if not os.path.isfile(path):
+            references.add('missing', name, path)
+            continue
+        references.add('font', name, path, index)
+        code_points = [ord(character) for character in characters] + [0x20, 0x41, 0xE9, 0x10FFFF]
+        add_font_references(references, name, open(path, 'rb').read(), code_points,
+                            [(ord(character), [12, 21]) for character in characters], [], index)
+    emoji_path = os.path.abspath(os.path.join(fonts_directory, EMOJI_FONT))
+    if os.path.isfile(emoji_path):
+        references.add('font', 'emoji', emoji_path, 0)
+        face = freetypereference.open_face(open(emoji_path, 'rb').read())
+        for code_point in (0x1F600, 0x1F44D, 0x2764, 0x1F1EF):
+            references.add('cmap', 'emoji', code_point, face.char_index(code_point))
+            references.add('emoji', 'emoji', code_point)
+    else:
+        references.add('missing', 'emoji', emoji_path)
+    compressor = shutil.which('woff2_compress')
+    if compressor is None:
+        references.add('missing', 'woff2', 'woff2_compress')
+        return
+    source = os.path.join(output, 'woff2-source.ttf')
+    shutil.copyfile(os.path.join(fonts_directory, 'dejavu-sans/DejaVuSans.ttf'), source)
+    subprocess.run([compressor, source], check=True, capture_output=True)
+    references.add('woff2', 'sans', 'woff2-source.woff2')
 KERNED_PAIRS = [(ord(left), ord(right)) for left, right in
                 ('AV', 'AT', 'To', 'Ty', 'LT', 'Yo', 'VA', 'P.', 'F,', 'rv', 'av', 'AB', 'HH', 'oo', 'Wa', 'y.')]
 
@@ -545,6 +598,7 @@ def main():
                                 [(ord('m'), [12]), (ord('0'), [12, 15])], KERNED_PAIRS)
             add_layout_references(references, name, path, KERNED_PAIRS, [9, 10, 11, 12, 13, 15, 16, 18, 20, 24,
                                                                         32, 40])
+        add_opentype_references(references, output, fonts_directory)
         references.close()
     except freetypereference.FreeTypeMissing as error:
         sys.exit('make-font-fixtures.py: ' + str(error))

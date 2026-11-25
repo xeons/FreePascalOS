@@ -171,7 +171,7 @@ begin
   end;
 
   if not FindVariable('PATH', SearchPath) then
-    SearchPath := '/bin';
+    SearchPath := '/bin:/usr/local/bin';
 
   Start := 1;
   while Start <= Length(SearchPath) + 1 do

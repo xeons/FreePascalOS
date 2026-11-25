@@ -26,7 +26,7 @@ here, with a manifest of what reading each must give.
     make-fixtures.py <directory>
 
 Manifest lines, fields separated by tabs:
-    format    ARCHIVE  zip|tar|targz|unknown
+    format    ARCHIVE  zip|tar|targz|tarzst|tarxz|unknown
     count     ARCHIVE  NUMBER-OF-MEMBERS
     entry     ARCHIVE  NAME  KIND(f|d|l)  SIZE  CRC32(hex)  MTIME  MODE(octal, 0 for none)  LINK-TARGET
     encrypted ARCHIVE  NAME
@@ -38,6 +38,7 @@ A link's SIZE and CRC32 are those of its target text.
 import calendar
 import gzip
 import io
+import lzma
 import os
 import random
 import struct
@@ -45,6 +46,7 @@ import sys
 import tarfile
 import zipfile
 import zlib
+from compression import zstd
 
 MANIFEST = []
 
@@ -298,7 +300,7 @@ def write_tars(directory):
     note('count', archive, count)
     note('format', archive, 'tar')
 
-    for archive in ('tar-pax.tar', 'tar-pax.tar.gz'):
+    for archive in ('tar-pax.tar', 'tar-pax.tar.gz', 'tar-pax.tar.zst', 'tar-pax.tar.xz'):
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode='w', format=tarfile.PAX_FORMAT, encoding='utf-8') as tar:
             count = write_tar_members(tar, archive, True)
@@ -313,6 +315,14 @@ def write_tars(directory):
         if archive.endswith('.gz'):
             data = gzip.compress(data, mtime=0)
             note('format', archive, 'targz')
+        elif archive.endswith('.zst'):
+            # Two frames, which must read as one stream.
+            half = len(data) // 2
+            data = zstd.compress(data[:half], level=9) + zstd.compress(data[half:], level=3)
+            note('format', archive, 'tarzst')
+        elif archive.endswith('.xz'):
+            data = lzma.compress(data, format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64)
+            note('format', archive, 'tarxz')
         else:
             note('format', archive, 'tar')
         with open(os.path.join(directory, archive), 'wb') as file:

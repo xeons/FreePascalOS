@@ -151,6 +151,13 @@ begin
   end;
 end;
 
+function DefinesOwnIndexedGetter(Info: PBindingInterface): Boolean;
+begin
+  Result := (Info^.Flags and InterfaceIndexed) <> 0;
+  if Result and (Info^.Parent >= 0) then
+    Result := (BindingInterfaces[Info^.Parent].Flags and InterfaceIndexed) = 0;
+end;
+
 procedure InstallIterable(Context: TBindingContext; Info: PBindingInterface; InterfaceId: Integer;
   Prototype: TJsObject);
 const
@@ -183,7 +190,12 @@ begin
       if Index = 0 then
         Prototype.DefineData(R, R.Runtime.SymbolValue(wsIterator), JsObjectValue(Method), PropertyHidden);
     end;
-  end;
+  end
+  else if DefinesOwnIndexedGetter(Info) then
+    { WebIDL: an interface with its own indexed property getter (and a
+      length) iterates as an array does: for...of over an HTMLCollection. }
+    Prototype.DefineData(R, R.Runtime.SymbolValue(wsIterator), JsObjectValue(R.Intrinsics[inArrayValues]),
+      PropertyHidden);
 end;
 
 procedure InstallInterface(Context: TBindingContext; InterfaceId: Integer); forward;

@@ -27,6 +27,15 @@
   (Windows 3/1, Unicode 0/0 to 0/3, format 4: segments of characters,
   each with a delta added to the character or an array of glyphs).
 
+  A symbol font's map (Windows 3/0, format 4: its characters at U+F020
+  to U+F0FF) is taken when there is no Unicode one, its characters also
+  given at U+0020 to U+00FF (as other systems do).
+
+  Variation sequences (format 14, Unicode 0/5): a character followed by
+  a variation selector may have a glyph of its own (a non-default
+  variant), or be the character's usual glyph (a default one);
+  VariationGlyph looks a pair up in place.
+
   The map is read whole, into mappings by increasing code point; a
   character mapped to glyph 0 or to a glyph past the font's is left
   out. A subtable reaching past its table, segments that are not in
@@ -46,6 +55,12 @@ uses
 { The Unicode mappings of the cmap table; False if it has none that can
   be read. }
 function ReadCharacterMap(const Table: TFontTable; GlyphCount: LongWord; out Mappings: TCharacterMappings): Boolean;
+{ The format 14 subtable (missing if there is none). }
+function FindVariationSequences(const Table: TFontTable): TFontTable;
+{ The glyph for CodePoint followed by Selector: True with Glyph for a
+  variant of its own, True with Glyph 0 when the sequence is the
+  character's usual glyph, False when the font does not list it. }
+function VariationGlyph(const Sequences: TFontTable; CodePoint, Selector: LongWord; out Glyph: LongWord): Boolean;
 
 implementation
 
@@ -56,6 +71,9 @@ const
   EncodingWindowsFull = 10;
   UnicodeEncodingFull = 4;
   UnicodeEncodingFullAll = 6;
+  UnicodeEncodingVariations = 5;
+  EncodingWindowsSymbol = 0;
+  SymbolAreaStart = $F000;
   LastUnicodeCodePoint = $10FFFF;
   { At most one mapping a code point. }
   MaximumMappings = LastUnicodeCodePoint + 1;
@@ -210,7 +228,153 @@ begin
     if (PlatformId = PlatformWindows) and (EncodingId = EncodingWindowsBasic) then
       Result := 2
     else if (PlatformId = PlatformUnicode) and (EncodingId <= 3) then
+      Result := 1
+    else if (PlatformId = PlatformWindows) and (EncodingId = EncodingWindowsSymbol) then
       Result := 1;
+  end;
+end;
+
+{ A symbol font's characters, U+F020 to U+F0FF, also at U+0020 to
+  U+00FF (unless the font has those already), kept in order. }
+procedure AddSymbolAliases(var List: TMappingList);
+var
+  Aliases: TMappingList;
+  Merged: TMappingList;
+  Index: LongInt;
+  AliasIndex: LongInt;
+begin
+  Aliases.Items := nil;
+  Aliases.Count := 0;
+  Aliases.GlyphCount := List.GlyphCount;
+  for Index := 0 to List.Count - 1 do
+    if (List.Items[Index].CodePoint >= SymbolAreaStart + $20) and (List.Items[Index].CodePoint <= SymbolAreaStart + $FF) then
+      AddMapping(Aliases, List.Items[Index].CodePoint - SymbolAreaStart, List.Items[Index].Glyph);
+  if Aliases.Count = 0 then
+    Exit;
+  Merged.Items := nil;
+  Merged.Count := 0;
+  Merged.GlyphCount := List.GlyphCount;
+  Index := 0;
+  AliasIndex := 0;
+  while (Index < List.Count) or (AliasIndex < Aliases.Count) do
+    if (AliasIndex >= Aliases.Count) or
+       ((Index < List.Count) and (List.Items[Index].CodePoint <= Aliases.Items[AliasIndex].CodePoint)) then
+    begin
+      if (AliasIndex < Aliases.Count) and (List.Items[Index].CodePoint = Aliases.Items[AliasIndex].CodePoint) then
+        Inc(AliasIndex);
+      AddMapping(Merged, List.Items[Index].CodePoint, List.Items[Index].Glyph);
+      Inc(Index);
+    end
+    else
+    begin
+      AddMapping(Merged, Aliases.Items[AliasIndex].CodePoint, Aliases.Items[AliasIndex].Glyph);
+      Inc(AliasIndex);
+    end;
+  List := Merged;
+end;
+
+function FindVariationSequences(const Table: TFontTable): TFontTable;
+var
+  SubtableCount: LongWord;
+  Index: LongWord;
+  Record_: QWord;
+  Offset: LongWord;
+  Subtable: TFontTable;
+begin
+  Result := MissingTable;
+  if not Has(Table, 0, 4) then
+    Exit;
+  SubtableCount := ReadUnsigned16(Table, 2);
+  if not Has(Table, 4, 8 * QWord(SubtableCount)) then
+    Exit;
+  for Index := 1 to SubtableCount do
+  begin
+    Record_ := 4 + 8 * QWord(Index - 1);
+    if (ReadUnsigned16(Table, Record_) <> PlatformUnicode) or
+       (ReadUnsigned16(Table, Record_ + 2) <> UnicodeEncodingVariations) then
+      Continue;
+    Offset := ReadUnsigned32(Table, Record_ + 4);
+    Subtable := TablePart(Table, Offset);
+    if not Has(Subtable, 0, 10) or (ReadUnsigned16(Subtable, 0) <> 14) or
+       not Has(Subtable, 0, ReadUnsigned32(Subtable, 2)) then
+      Continue;
+    Subtable.Length := ReadUnsigned32(Subtable, 2);
+    Exit(Subtable);
+  end;
+end;
+
+function ReadUnsigned24(const Table: TFontTable; Offset: QWord): LongWord;
+begin
+  Result := (ReadByte(Table, Offset) shl 16) or ReadUnsigned16(Table, Offset + 1);
+end;
+
+function VariationGlyph(const Sequences: TFontTable; CodePoint, Selector: LongWord; out Glyph: LongWord): Boolean;
+var
+  RecordCount: LongWord;
+  Index: LongWord;
+  Record_: QWord;
+  DefaultOffset: LongWord;
+  OtherOffset: LongWord;
+  Count: LongWord;
+  Entry: LongWord;
+  Start: LongWord;
+  Low: LongInt;
+  High: LongInt;
+  Middle: LongInt;
+  Value: LongWord;
+begin
+  Result := False;
+  Glyph := 0;
+  if not Has(Sequences, 0, 10) then
+    Exit;
+  RecordCount := ReadUnsigned32(Sequences, 6);
+  if not Has(Sequences, 10, 11 * QWord(RecordCount)) then
+    Exit;
+  for Index := 1 to RecordCount do
+  begin
+    Record_ := 10 + 11 * QWord(Index - 1);
+    if ReadUnsigned24(Sequences, Record_) <> Selector then
+      Continue;
+    DefaultOffset := ReadUnsigned32(Sequences, Record_ + 3);
+    OtherOffset := ReadUnsigned32(Sequences, Record_ + 7);
+    { Variants of their own: pairs of a character and a glyph. }
+    if (OtherOffset <> 0) and Has(Sequences, OtherOffset, 4) then
+    begin
+      Count := ReadUnsigned32(Sequences, OtherOffset);
+      if Has(Sequences, OtherOffset + 4, 5 * QWord(Count)) then
+      begin
+        Low := 0;
+        High := LongInt(Count) - 1;
+        while Low <= High do
+        begin
+          Middle := (Low + High) div 2;
+          Value := ReadUnsigned24(Sequences, OtherOffset + 4 + 5 * QWord(Middle));
+          if Value = CodePoint then
+          begin
+            Glyph := ReadUnsigned16(Sequences, OtherOffset + 4 + 5 * QWord(Middle) + 3);
+            Exit(True);
+          end;
+          if Value < CodePoint then
+            Low := Middle + 1
+          else
+            High := Middle - 1;
+        end;
+      end;
+    end;
+    { Ranges of characters whose usual glyph the sequence is. }
+    if (DefaultOffset <> 0) and Has(Sequences, DefaultOffset, 4) then
+    begin
+      Count := ReadUnsigned32(Sequences, DefaultOffset);
+      if Has(Sequences, DefaultOffset + 4, 4 * QWord(Count)) then
+        for Entry := 1 to Count do
+        begin
+          Start := ReadUnsigned24(Sequences, DefaultOffset + 4 + 4 * QWord(Entry - 1));
+          if (CodePoint >= Start) and
+             (CodePoint <= Start + ReadByte(Sequences, DefaultOffset + 4 + 4 * QWord(Entry - 1) + 3)) then
+            Exit(True);
+        end;
+    end;
+    Exit;
   end;
 end;
 
@@ -225,6 +389,7 @@ var
   BestRank: LongInt;
   BestOffset: LongWord;
   BestFormat: LongWord;
+  BestIsSymbol: Boolean;
   List: TMappingList;
 begin
   Result := False;
@@ -237,6 +402,7 @@ begin
   BestRank := 0;
   BestOffset := 0;
   BestFormat := 0;
+  BestIsSymbol := False;
   for Index := 1 to SubtableCount do
   begin
     Record_ := 4 + 8 * QWord(Index - 1);
@@ -250,6 +416,8 @@ begin
       BestRank := Rank;
       BestOffset := Offset;
       BestFormat := Format;
+      BestIsSymbol := (ReadUnsigned16(Table, Record_) = PlatformWindows) and
+        (ReadUnsigned16(Table, Record_ + 2) = EncodingWindowsSymbol);
     end;
   end;
   if BestRank = 0 then
@@ -263,6 +431,8 @@ begin
     Result := ReadFormat4(TablePart(Table, BestOffset), List);
   if not Result then
     Exit;
+  if BestIsSymbol then
+    AddSymbolAliases(List);
   { Both formats give characters in increasing order. }
   SetLength(List.Items, List.Count);
   Mappings := List.Items;

@@ -1,0 +1,15 @@
+viewport (anonymous) at (0,0) size 500x600
+  block <html> at (0,0) size 500x183.88
+    block <body> at (8,8) size 484x167.88
+      block <div> at (8,8) size 484x167.88
+        block <div> at (8,8) size 484x0
+          block <a> at (28,11) size 100x100 float
+        block <div> at (8,8) size 484x18.62
+          line 0 at y 8 height 18.62 baseline 22.85
+            text "Name and date" at (148,8) size 123.55x18.62
+        block <blockquote> at (48,42.62) size 404x18.62
+          line 0 at y 42.62 height 18.62 baseline 57.48
+            text "The message, beside the picture." at (148,42.62) size 267.1x18.62
+        block <div> at (8,157.25) size 484x18.62
+          line 0 at y 157.25 height 18.62 baseline 172.1
+            text "Below the picture." at (8,157.25) size 145.54x18.62

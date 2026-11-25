@@ -50,6 +50,11 @@ uses
   Web.Fetch.NetworkContexts,
   Web.Fetch.Fetcher;
 
+const
+  { The fonts pages are laid out with: DejaVu Sans and Sans Mono, regular
+    and bold (the base set of userland/fonts, put there by make). }
+  TestFontDirectory = 'build/tools/base-fonts';
+
 type
   TTestRoute = class
   public

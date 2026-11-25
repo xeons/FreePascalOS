@@ -1,0 +1,17 @@
+<!-- width=500 -->
+<!doctype html>
+<html><head><style>
+body { margin: 8px; font: 16px sans-serif; }
+.post { display: inline; }
+.thumb { float: left; width: 100px; height: 100px; margin: 3px 20px 5px; background: #ccf; }
+blockquote { margin: 16px 40px; }
+.low { margin-top: 80px; }
+</style></head>
+<body>
+<!-- A board's post (4chan's .op): an inline element holding blocks, the
+     picture floated in the first of them. The message's lines start at
+     the float's edge, not 40px past it (its margin is not counted twice),
+     and a block below the float is not narrowed by it. -->
+<div><div class=post><div class=file><a class=thumb></a></div><div>Name and date</div>
+<blockquote>The message, beside the picture.</blockquote><div class=low>Below the picture.</div></div></div>
+</body></html>

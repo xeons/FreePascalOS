@@ -37,6 +37,7 @@ uses
   Image.Frames,
   Image.Surfaces,
   Image.Scalable,
+  Image.PictureColors,
   Image.Compositing,
   Image.Orientation,
   Image.Scaling,

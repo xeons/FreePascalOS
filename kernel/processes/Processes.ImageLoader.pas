@@ -187,6 +187,9 @@ function LoadProgramImage(Process: PProcess; KernelPath: PChar; out MainModule: 
 { The interpreter module of a program that has one (PT_INTERP), else nil. }
 function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
 function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
+{ The kernel path of library Name in library folder FolderIndex (0: /lib,
+  1: /usr/local/lib) of the system volume; False past the last folder. }
+function LibraryFolderPath(FolderIndex: Integer; Name: PChar; Path: PChar; Capacity: QWord): Boolean;
 function FindExportedSymbol(Process: PProcess; ModuleHandle: Integer; Name: PChar;
   out Address: QWord): LongInt;
 procedure ReleaseModules(Process: PProcess);
@@ -217,7 +220,10 @@ const
   MaximumProgramHeaders = 64;
   MaximumStaticTlsSize = 1024 * 1024;
   MaximumInitializers = 4096;
-  LibraryDirectory = '/lib/';
+  { Where libraries named without a folder are looked for, in order:
+    the system's, then ported software's (ports/README.md, "Prefix"). }
+  LibraryFolderCount = 2;
+  LibraryFolders: array[0..LibraryFolderCount - 1] of PChar = ('/lib/', '/usr/local/lib/');
   MaximumInterpreterPath = 256;
 
 type
@@ -984,7 +990,17 @@ begin
   Result := ErrorNone;
 end;
 
-{ Loads the libraries a module needs, from /lib of the system volume. }
+function LibraryFolderPath(FolderIndex: Integer; Name: PChar; Path: PChar; Capacity: QWord): Boolean;
+begin
+  if (FolderIndex < 0) or (FolderIndex >= LibraryFolderCount) then
+    Exit(False);
+  SystemVolumePath(LibraryFolders[FolderIndex], Path, Capacity);
+  CopyText(@Path[TextLength(Path)], Name, Capacity - TextLength(Path));
+  Result := True;
+end;
+
+{ Loads the libraries a module needs, from /lib of the system volume,
+  else from /usr/local/lib. }
 function LoadNeededLibraries(Process: PProcess; Module: PLoadedModule;
   const Dynamic: TDynamicInformation): LongInt;
 var
@@ -992,6 +1008,7 @@ var
   LibraryName: PChar;
   LibraryPath: array[0..ProcessPathCapacity - 1] of Char;
   Existing: Integer;
+  FolderIndex: Integer;
 begin
   Result := ErrorNone;
   for NeededIndex := 0 to Dynamic.NeededCount - 1 do
@@ -1003,10 +1020,12 @@ begin
     Existing := FindModuleByName(ModuleList(Process), LibraryName);
     if Existing < 0 then
     begin
-      SystemVolumePath(LibraryDirectory, @LibraryPath[0], ProcessPathCapacity);
-      CopyText(@LibraryPath[TextLength(@LibraryPath[0])], LibraryName,
-        ProcessPathCapacity - TextLength(@LibraryPath[0]));
-      Result := LoadModule(Process, @LibraryPath[0], False, Existing);
+      FolderIndex := 0;
+      repeat
+        LibraryFolderPath(FolderIndex, LibraryName, @LibraryPath[0], ProcessPathCapacity);
+        Result := LoadModule(Process, @LibraryPath[0], False, Existing);
+        Inc(FolderIndex);
+      until (Result <> ErrorNotFound) or (FolderIndex >= LibraryFolderCount);
       if Result <> ErrorNone then
         Exit;
     end;

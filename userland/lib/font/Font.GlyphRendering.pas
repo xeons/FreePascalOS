@@ -18,8 +18,8 @@
 
 {
   Rendering an outline glyph: its outline scaled to the pixel size,
-  hinted (Font.Hinting) if asked, its quadratic curves and lines handed
-  to libdrawing's rasterizer (Drawing.Rasterizer: exact area coverage,
+  hinted (Font.Hinting) if asked, its quadratic and cubic curves and
+  lines handed to libdrawing's rasterizer (Drawing.Rasterizer: exact area coverage,
   non-zero winding), and the coverage of every pixel it touches kept as
   a bitmap.
 
@@ -27,6 +27,9 @@
   OffsetX pixels right of a pixel's left side (0 to under 1: subpixel
   positioning), so the same glyph can be drawn a fraction of a pixel
   further along.
+
+  A colour glyph (an emoji, TOutlineFont.HasColorGlyph) is its colour
+  bitmap at the pixel size instead, whatever the offset.
 }
 unit Font.GlyphRendering;
 
@@ -55,6 +58,7 @@ uses
   Math,
   Drawing.Rectangles,
   Drawing.Rasterizer,
+  Drawing.Curves,
   Font.Hinting;
 
 procedure ClearBitmap(out Bitmap: TGlyphBitmap);
@@ -64,6 +68,7 @@ begin
   Bitmap.Width := 0;
   Bitmap.Height := 0;
   Bitmap.Coverage := nil;
+  Bitmap.Colors := nil;
 end;
 
 { A coordinate in pixels rounded to 1/64 pixel (half up), the precision
@@ -85,21 +90,38 @@ var
   ControlX: Double;
   ControlY: Double;
   HasControl: Boolean;
+  CubicControls: LongInt;
+  FirstCubicX: Double;
+  FirstCubicY: Double;
   Step: LongInt;
   Steps: LongInt;
   Index: LongInt;
   Skip: LongInt;
   Point: TOutlinePoint;
 
+  procedure CubicTo(X, Y: Double);
+  var
+    Points: TPrecisePoints;
+    Piece: LongInt;
+  begin
+    Points := FlattenCubicCurve(PrecisePoint(CurrentX, CurrentY), PrecisePoint(FirstCubicX, FirstCubicY),
+      PrecisePoint(ControlX, ControlY), PrecisePoint(X, Y));
+    for Piece := 1 to High(Points) do
+      AddShapeEdge(Shape, Points[Piece - 1].X, Points[Piece - 1].Y, Points[Piece].X, Points[Piece].Y);
+  end;
+
   procedure GoTo_(X, Y: Double);
   begin
-    if HasControl then
+    if CubicControls = 2 then
+      CubicTo(X, Y)
+    else if HasControl then
       AddShapeQuadratic(Shape, CurrentX, CurrentY, ControlX, ControlY, X, Y)
     else
       AddShapeEdge(Shape, CurrentX, CurrentY, X, Y);
     CurrentX := X;
     CurrentY := Y;
     HasControl := False;
+    CubicControls := 0;
   end;
 
 begin
@@ -132,6 +154,9 @@ begin
   CurrentX := StartX;
   CurrentY := StartY;
   HasControl := False;
+  CubicControls := 0;
+  FirstCubicX := 0;
+  FirstCubicY := 0;
   ControlX := 0;
   ControlY := 0;
   { Every other point once, in order from the one after the start. }
@@ -148,6 +173,22 @@ begin
     Point := Outline.Points[Index];
     if Point.OnCurve then
       GoTo_(Point.X, Point.Y)
+    else if Point.Cubic then
+    begin
+      { The first control point of a cubic curve, then the second. }
+      if CubicControls = 0 then
+      begin
+        FirstCubicX := Point.X;
+        FirstCubicY := Point.Y;
+        CubicControls := 1;
+      end
+      else
+      begin
+        ControlX := Point.X;
+        ControlY := Point.Y;
+        CubicControls := 2;
+      end;
+    end
     else
     begin
       if HasControl then
@@ -178,7 +219,11 @@ var
 begin
   Result := False;
   ClearBitmap(Bitmap);
-  if (Font = nil) or (PixelSize < 1) or (PixelSize > MaximumRenderedSize) or not Font.LoadOutline(Glyph, Outline) then
+  if (Font = nil) or (PixelSize < 1) or (PixelSize > MaximumRenderedSize) then
+    Exit;
+  if Font.HasColorGlyph(Glyph) and Font.RenderColorGlyph(Glyph, PixelSize, Bitmap) then
+    Exit(True);
+  if not Font.LoadOutline(Glyph, Outline) then
     Exit;
   Result := True;
   if Outline.PointCount = 0 then

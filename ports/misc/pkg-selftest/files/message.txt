@@ -1,0 +1,1 @@
+pkg self test: this file was installed by pkg.

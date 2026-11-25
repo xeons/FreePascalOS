@@ -1,0 +1,49 @@
+# ptop, Free Pascal's source formatter, from the compiler's source
+# release: a real port with a download, a checksum, a patch and units
+# from the same tree (fcl-base's CustApp and bufstream) compiled in.
+
+[port]
+name = "ptop"
+version = "3.2.2"
+revision = 0
+summary = "Pascal source code formatter from Free Pascal"
+description = """
+ptop reformats Pascal source code: indentation, line breaks, the case
+of keywords and the spacing around symbols, as an options file says
+(ptop -g FILE writes the default one). This port builds it from the
+Free Pascal 3.2.2 source release with the system's runtime library and
+adds reading standard input and writing standard output when a file
+name is "-", so ptop works in pipes: ptop - - < old.pas > new.pas.
+"""
+homepage = "https://www.freepascal.org/"
+license = "LGPL-2.1-or-later"
+license_files = ["rtl/COPYING.FPC", "rtl/COPYING.txt"]
+maintainer = "FreePascalOS ports"
+categories = ["devel"]
+status = "tested"
+architectures = ["x86_64", "aarch64"]
+notes = "COPYING.FPC adds a static linking exception to the LGPL."
+
+[[sources]]
+url = "https://downloads.freepascal.org/fpc/dist/3.2.2/source/fpc-3.2.2.source.tar.gz"
+mirrors = ["https://sourceforge.net/projects/freepascal/files/Source/3.2.2/fpc-3.2.2.source.tar.gz/download"]
+filename = "fpc-3.2.2.source.tar.gz"
+sha256 = "d542e349de246843d4f164829953d1f5b864126c5b62fd17c9b45b33e23d2f44"
+size = 52240052
+extract_dir = "fpc-3.2.2"
+
+[build]
+system = "fpc"
+
+[build.fpc]
+programs = [{ source = "utils/ptop.pp" }]
+search_paths = ["utils", "packages/fcl-base/src"]
+include_paths = ["packages/fcl-base/src/dummy"]
+
+[patches]
+strip = 1
+
+[test]
+system = [
+    "printf 'program t;begin writeln(1) end.' | ptop - - | grep -qi 'writeln'",
+]
