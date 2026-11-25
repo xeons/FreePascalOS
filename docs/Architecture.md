@@ -602,6 +602,7 @@ report; `scripts/test-protection-faults.sh amd64|arm64 ESP` boots each:
 | `userexec` | calls code on a user page | `Instruction fetch from ... (protection violation` |
 | `useraccess` | reads a user page without a copy routine | `Read from ... (protection violation` |
 | `pagepoison` | writes into a freed, held back physical page (with `heapchecks`) | `physical page written after it was freed` |
+| `copyfault` | marks a user copy under way and reads an unmapped low address outside the copy routines | `Read from ... (page not present` (not taken for a failed copy) |
 
 Where the processor lacks a protection, the test stops with an assertion
 that says so instead.
@@ -874,7 +875,10 @@ them between processors and changing their priorities.
   or slewed (`CallAdjustWallClock` with `AdjustGradually`: the offset
   moves towards the target at 500 parts per million of the time
   passing, so the clock runs a little fast or slow but never jumps or
-  goes back; a new adjustment replaces what is left of the last). The
+  goes back; a new adjustment replaces what is left of the last). A
+  step that would take the clock outside 1970 to 2200, or a gradual
+  adjustment over an hour, is refused (ErrorInvalidArgument), so the
+  offset cannot overflow nor reach the battery backed clock. The
   state is read without a lock under a sequence count, so any level may
   read the time. `CallGetPreciseTime` gives the wall clock or the uptime
   as seconds and nanoseconds; `CallGetTime` still gives whole seconds.
@@ -889,7 +893,17 @@ them between processors and changing their priorities.
 thread calls `IdleProcessor`, which picks the deepest of the
 processor's idle states whose target residency fits in the time to its
 next clock interrupt (with the tick stopped, its next due timer), and
-counts each entry (`IdleStateEntries`).
+counts each entry (`IdleStateEntries`). Checking and waiting are one
+step: interrupts go off, the processor checks again that no steal was
+refused since it last looked (work left in another queue), and the
+state is entered with interrupts enabled only by the waiting
+instruction (STI;HLT or STI;MWAIT, whose STI takes effect after the
+next instruction; on AArch64 WFI or a PSCI standby state with
+interrupts masked, which still wake for a pending one), so a wake-up
+cannot fall between the check and the wait and leave a processor
+asleep with work to steal. The table is shared and read without a lock;
+a sequence number (odd while `SetFirmwareIdleStates` changes it) makes
+a reader take its copy again if it changed meanwhile.
 - x86-64: state 0 is HLT. MWAIT C-states come from CPUID leaf 5 (the
   sub-states of each C-state; hint `(n - 1) shl 4`) with typical exit
   latencies, or from ACPI's `_CST` once the namespace is loaded
@@ -1000,13 +1014,28 @@ replaces it.
   page table, its own GDT and TSS, its block, the shared IDT, the boot
   processor's PAT, its system call registers and its local APIC and clock,
   and becomes its idle thread. `processors=N` limits how many start.
+  A processor that does not come up within ten seconds is given up on
+  (and no more are started, since they would share its start-up page);
+  giving up and arriving are settled by one compare-and-exchange on the
+  block's `StartClaim`, so one that arrives after it was given up on
+  halts instead of joining. On AArch64, a processor that starts or
+  wakes first turns on a GICv3's system register interface, since its
+  priority level lives in ICC_PMR_EL1.
+- **Publishing a block.** A new block is in the table before the count
+  of started processors is raised (release store; `ProcessorTotal` is
+  an acquire load), and set up before `IsOnline`: AArch64 orders
+  neither by itself.
 - **Per-processor data.** Each block holds the running thread, the idle
   thread, the scheduler's per-processor state, the loaded address space,
   the descriptor tables and the kernel stack for system calls. Kernel code
   reaches its own block through the GS base; user code may change GS, so
   every entry from user mode and every return to it does SWAPGS (the
   interrupt entry checks the saved code selector; the system call entry
-  always swaps). The running thread is read with one GS-relative load, so
+  always swaps). An NMI or machine check may arrive between SYSCALL and
+  its SWAPGS, where the saved selector says kernel but GS is the
+  user's, so for those two vectors the entry reads the GS base MSR
+  instead and swaps only a user base (noting it in the vector's unused
+  error code slot for the way out). The running thread is read with one GS-relative load, so
   `CurrentThread` cannot be torn by a move to another processor; anything
   else in a block is only used at DispatchLevel or above.
 - **Scheduling.** Each processor has its own run queues and its own
@@ -1021,7 +1050,17 @@ replaces it.
   thread blocked or exited) across a switch also guarantees that a
   thread which just switched away is not picked up elsewhere before its
   registers are saved, and that a terminated thread's stack is not freed
-  too early.
+  too early. Exited threads are released by the "ThreadReaper" system
+  thread (`Processes.ThreadReaper`), which the idle thread wakes when
+  the terminated list holds one and which also looks once a second: the
+  last reference to a process deletes it (closing its handles,
+  destroying its address space), which may wait on mutexes, and the
+  idle thread must never wait. Lowering a running thread's priority
+  asks its processor to reschedule; the time slice flag the clock
+  interrupt sets is read and cleared by the dispatch interrupt in one
+  atomic exchange. A deferred call never runs on two processors at
+  once: one queued again while it runs waits in the queue for that run
+  to end and is then run again by the same processor.
 - **TLB shootdown.** After removing a mapping, the page table code
   invalidates it locally and, outside its lock, calls
   `InvalidateRemoteTranslations` (`Kernel.InterProcessor`): every other
@@ -1458,7 +1497,13 @@ interrupt source overrides give the real input, polarity and trigger
 mode, and the driver gets one of the device vectors 0x30-0x3F.
 Io.InterruptRouting picks vectors and processors and shares lines; the
 hardware is the HAL's (Hal.InterruptController: I/O APIC entries and MSI
-addresses on x86-64, GIC SPIs and GICv2m on AArch64). Its handler
+addresses on x86-64, GIC SPIs and GICv2m on AArch64). Connections from
+several drivers at once are serialized (a spin lock in
+Io.InterruptRouting); the I/O APIC's select/window register pairs are
+used under a lock of their own, and a processor whose x2APIC id is
+above 255, which an I/O APIC entry or an MSI address cannot name
+without interrupt remapping, gets its interrupts routed to the boot
+processor instead. Its handler
 runs at device level, where the dispatcher lock cannot be taken, so a
 handler that needs to wake a thread queues a deferred call
 (Kernel.DeferredCalls); queued calls run at dispatch level from the
@@ -1627,11 +1672,29 @@ runs it on a thread pinned to the boot processor:
      holds no spin lock: it stops answering TLB shootdowns (see above),
      saves its state (`Kernel.Arch.Suspend`:
      callee-saved registers, stack, flags, FS and swapped GS bases, the
-     priority level, FPU state, like `setjmp`) and halts.
-   - The boot processor saves the I/O APIC entries, pauses the clock and
-     saves its own state,
+     priority level, FPU state, like `setjmp`) and halts. On AArch64 the
+     saved state holds V0-V31, FPCR and FPSR too: the kernel saves them
+     only at a thread switch, and the thread the processor froze in the
+     middle of would lose them when CPU_OFF turns it off.
+   - Freezing is a handshake on each processor's `FreezeState`: the boot
+     processor asks (Requested); the processor commits by
+     compare-and-exchange (Freezing), then says Frozen. One that does
+     not get to its dispatch interrupt within a second (held at a raised
+     level, say) is called off by the opposite exchange (Requested back
+     to Running), which settles it either way: it never freezes late,
+     or it already committed and is waited for. The suspend is then
+     given up and the processors that did freeze are started again.
+   - A frozen AArch64 processor whose CPU_OFF the firmware refuses says
+     so (HeldOn) and waits in place to be let go; a CPU_ON the firmware
+     refuses (ALREADY_ON while it is still on its way off, which is not
+     a start) is tried again.
+   - The boot processor saves the I/O APIC entries and its own state,
      points the waking vector at the start-up page (the trampoline that
-     starts secondary processors) and writes the sleep registers.
+     starts secondary processors), pauses the clock as the very last
+     step, with interrupts off and the others frozen (nothing reads the
+     clock after the pause, so the uptime it continues from after waking
+     is not behind any time already given out), and writes the sleep
+     registers.
 4. Waking, the trampoline takes the boot processor to 64-bit mode and
    `WakeEntry`.
    - It reloads its page tables, descriptor tables (kept in memory; the
@@ -1643,6 +1706,9 @@ runs it on a thread pinned to the boot processor:
      starts its own as it wakes).
    - It resumes its saved state, then starts each frozen processor
      again (INIT, STARTUP), which resumes inside its dispatch interrupt.
+     They share one wake stack until they resume, so each is waited for
+     (it says Running once off it) before the next is started; one that
+     does not come back within ten seconds is a panic.
      The priority level (CR8, which a woken processor has at 0) comes
      back with the rest: a processor resumed in its dispatch interrupt
      goes on at dispatch level, holding the dispatcher lock and perhaps
@@ -1687,7 +1753,16 @@ the same machine over and over (ROUNDS, 30 by default), waking it at
 once, after a moment or after two seconds, and with POINTERS=1 checks
 the PS/2 mouse and USB tablet after each wake; a wake that does not
 come back is reported with each processor's registers, local APIC and
-stack.
+stack. A background `timetest --watch` reads the uptime all the time
+across every round and must report that no read went back.
+
+On AArch64 the kernel option `suspendtest` (Kernel.Arch.SuspendSelfTest,
+in the arm64 boot tests) also holds the last processor at dispatch level
+past the freeze timeout during a first suspend, which must be called off
+and leave that processor running threads, and keeps distinctive values
+in every FP/SIMD register (and FPCR, FPSR) of a busy thread on processor
+1 across a second one (SuspendSelfTestFpu.s), which must find them all
+unchanged.
 
 `make aml-test` also checks the sleep states (S3, S4, S5 on both QEMU
 machines) and the GPE methods the tables have. The input test plugs a
@@ -8024,6 +8099,12 @@ unit; ext also has Blocks and Directories):
 | `FileSystem.ExFat` | exFAT               | contiguous ("no FAT chain") and chained files, allocation bitmap, entry set checksums and name hashes, up-case table lookup, volume dirty flag |
 | `FileSystem.Ext`   | ext2, ext3, ext4    | block maps and extent trees (writing up to depth 1), 64-bit, flex_bg, META_BG, all metadata checksums, fast and slow symlinks, holes |
 
+FAT long names and exFAT names are UTF-16 on disk; `Runtime.Unicode`
+converts. Malformed UTF-8 in a name (overlong forms, surrogates, code
+points past U+10FFFF, stray or missing continuation bytes) becomes
+U+FFFD, so no lone surrogate reaches the disk (`make unicode-test`, on
+the host).
+
 Removing a file that is still open removes only its name: the open file
 goes on reading and writing, and its storage is freed when it is closed
 for the last time (the driver routines `RemoveOpenNode` and
@@ -8856,8 +8937,15 @@ the copy, so the kernel touches user memory only through two small leaf
 routines (`Kernel.Arch.UserCopy`: a byte copy and a string copy). While a
 thread is inside one it is marked (`UserCopyActive`); a page fault on a
 user address that the fault resolver cannot satisfy then does not panic:
-the exception handler makes the routine return -1 by setting RAX and
-popping its return address, and the call fails with `ErrorBadAddress`.
+the exception handler makes the routine return -1 (it continues at
+`ArchUserCopyFault` with the stack still at the return address), and the
+call fails with `ErrorBadAddress`. Only a fault whose instruction lies
+between a routine's start and end label (`UserAccess.s` on both
+architectures) is recovered: a fault elsewhere while the mark is set, an
+interrupt handler following a bad pointer in the middle of a copy, is
+reported as the kernel bug it is. The x86-64 interrupt entry clears
+RFLAGS.AC (CLAC) when SMAP is on, so a handler that interrupts a copy
+does not run with user memory open; IRETQ gives the copy its flags back.
 Drivers and file systems never see user pointers: reads and writes go
 through a kernel transfer buffer of up to 16 KiB at a time. With that in
 place SMAP (x86-64) or PAN (AArch64) is switched on when the processor has
@@ -14449,7 +14537,9 @@ through the GICv2m frame when there is one (QEMU with GICv2), or as LPIs
 through a GICv3's ITS (`Hal.GicV3Its`: a device table, a collection per
 processor, an interrupt translation table of 32 events per device,
 MAPD/MAPC/MAPTI/INV/SYNC through its command queue, the LPI
-configuration and pending tables of each redistributor; devices are
+configuration and pending tables of each redistributor, a pending
+table kept per redistributor across suspend to RAM rather than a new
+page per wake; devices are
 told apart by their PCI requester id, which `ConnectMessageInterrupt`
 now carries; QEMU maps it one to one, an IORT's mappings are not read).
 Otherwise PCIe devices use their INTx lines (`_PRT` or the tree's
@@ -14491,10 +14581,13 @@ but a frozen processor turns itself off with CPU_OFF
 processor off, and the boot processor wakes at `ArchSecondaryEntry`
 with the start-up record (`PrepareWakeEntry`), as CPU_ON starts the
 others again afterwards. The saved context (`SuspendContext.s`) holds
-X19-X30, SP, DAIF, TPIDR_EL0 and the priority level; the woken
+X19-X30, SP, DAIF, TPIDR_EL0, the priority level and V0-V31, FPCR and
+FPSR (the registers of the thread the processor froze in); the woken
 processors set up their vectors, translation, PAN, their GIC interface
 and clock again, and the boot processor the GIC distributor (and ITS)
-with every connected interrupt if waking reset it. QEMU's PSCI has no
+with every connected interrupt if waking reset it (one a driver masked
+stays masked). The distributor's shared configuration words (GICD_ICFGR,
+sixteen interrupts each) are changed under a lock with interrupts off. QEMU's PSCI has no
 SYSTEM_SUSPEND: the kernel options `suspendtest psci-suspend=force` try
 it anyway during start-up (a self test, in the EL1 and GICv3 boot
 tests), so the firmware refuses and every processor comes back through
@@ -15409,15 +15502,19 @@ every routine keeps a frame and the frame pointer chain is complete: on
 both processors a frame is the caller's frame pointer with the return
 address above it (x86-64: CALL then PUSH RBP; AArch64: STP X29, X30).
 `Debug.StackTrace` walks it, trusting nothing: each frame must lie in
-the stack being walked (the thread's kernel stack, or a 32 KiB window
+the stack being walked (the thread's kernel stack, or up to 32 KiB
 above the first frame when there is no thread yet or the frame is
-elsewhere), above the frame before it, with a return address in the
+elsewhere - but only as far as the pages there are mapped, so the walk
+cannot fault on a guard page while panicking), above the frame before it, with a return address in the
 kernel's code; it stops after 32 frames, and at a frame whose saved
 frame pointer is 0 (a thread's first routine, which nobody called). A
 return address is named by the call before it (address - 1). Where the
 trace starts: for a processor exception at the interrupted instruction
 and frame (`SetPanicTraceStart` from both architectures' exception
-handlers), otherwise at the caller of `BeginKernelPanic` - so a failed
+handlers), otherwise at the caller of `BeginKernelPanic`. Each
+processor notes its own start (two may fault at once, and only the
+first to panic reports), so the trace is always the panicking
+processor's - so a failed
 `KernelAssert` shows `Kernel.Panic.KernelAssert` and then the code that
 asserted.
 
