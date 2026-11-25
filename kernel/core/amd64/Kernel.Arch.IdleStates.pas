@@ -51,8 +51,10 @@ uses
 { Fills States (from index 0) with this processor's idle states;
   returns how many. }
 function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
-{ Waits in State until an interrupt (interrupts enabled), on the
-  processor numbered ProcessorIndex. }
+{ Waits in State until an interrupt, on the processor numbered
+  ProcessorIndex. Called with interrupts disabled; they are enabled by
+  the wait itself, so one that came since the caller disabled them
+  ends it at once (and is taken on return). }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
 { A state the firmware lists (ACPI _CST: its C-state type, MWAIT hint
   and exit latency) as one of ours; False if it may not be used. }
@@ -99,7 +101,10 @@ var
   MonitorWaitUsable: Boolean = False;
   DeepestAllowed: LongWord = 0;
 
-procedure MonitorAndWait(Address: Pointer; Hint: LongWord); assembler; nostackframe;
+{ Called with interrupts disabled: STI takes effect only after the next
+  instruction, so MWAIT starts before any interrupt can be taken, and a
+  pending one ends it. }
+procedure EnableInterruptsMonitorAndWait(Address: Pointer; Hint: LongWord); assembler; nostackframe;
 asm
   mov rax, rdi
   xor ecx, ecx
@@ -108,6 +113,7 @@ asm
   db $0F, $01, $C8
   mov eax, esi
   xor ecx, ecx
+  sti
   { mwait eax, ecx }
   db $0F, $01, $C9
 end;
@@ -198,9 +204,9 @@ end;
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
 begin
   if State.Method = IdleMethodMonitorWait then
-    MonitorAndWait(@MonitorLines[ProcessorIndex and High(MonitorLines)], State.Parameter)
+    EnableInterruptsMonitorAndWait(@MonitorLines[ProcessorIndex and High(MonitorLines)], State.Parameter)
   else
-    HaltProcessor;
+    EnableInterruptsAndHalt;
 end;
 
 function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;

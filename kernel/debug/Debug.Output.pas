@@ -84,6 +84,7 @@ implementation
 
 uses
   Runtime.Text,
+  Runtime.Atomic,
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Processors,
@@ -94,14 +95,19 @@ var
   OutputLock: TSpinLock;
   LockPreviousLevel: TPriorityLevel;
   LockNestingDepth: LongWord;
-  { The processor holding the lock (meaningful while it is held). }
-  LockOwner: LongInt;
+  { The number of the processor holding the lock, plus one; 0 while it
+    is free. Written only by the holder (set after taking the lock,
+    cleared before releasing it), so a processor reads its own number
+    here only while it holds the lock itself: its own writes are never
+    seen out of order by itself, however stale the others' look. }
+  LockHolder: PtrUInt;
   OutputCopy: TDebugOutputCopy = nil;
 
 procedure InitializeDebugOutput;
 begin
   InitializeSpinLock(OutputLock);
   LockNestingDepth := 0;
+  LockHolder := 0;
   InitializeSerialPort;
 end;
 
@@ -114,8 +120,8 @@ end;
 { The lock is recursive on purpose: DebugBeginMessage takes it for a whole
   message and the individual write calls inside take it again. The holder
   runs at HighLevel, so nothing else on its processor gets here; the
-  owner's processor number tells a nested call apart from another
-  processor, which must wait. }
+  holder's processor number (LockHolder) tells a nested call apart from
+  another processor, which must wait. }
 procedure DebugBeginMessage;
 var
   PreviousLevel: TPriorityLevel;
@@ -125,7 +131,7 @@ begin
     reading its number and taking the lock. }
   PreviousLevel := RaisePriorityLevel(HighLevel);
   Number := LongInt(CurrentProcessorIndexOrZero);
-  if (LockNestingDepth > 0) and (LockOwner = Number) then
+  if AtomicLoad(LockHolder) = PtrUInt(Number) + 1 then
   begin
     Inc(LockNestingDepth);
     LowerPriorityLevel(PreviousLevel);
@@ -134,7 +140,7 @@ begin
 
   AcquireSpinLockAtCurrentLevel(OutputLock);
   LockPreviousLevel := PreviousLevel;
-  LockOwner := Number;
+  AtomicStore(LockHolder, PtrUInt(Number) + 1);
   LockNestingDepth := 1;
 end;
 
@@ -144,7 +150,10 @@ begin
     Exit;
   Dec(LockNestingDepth);
   if LockNestingDepth = 0 then
+  begin
+    AtomicStore(LockHolder, 0);
     ReleaseSpinLock(OutputLock, LockPreviousLevel);
+  end;
 end;
 
 procedure SetDebugOutputCopy(Copy: TDebugOutputCopy);
@@ -158,6 +167,7 @@ procedure DebugForceUnlockForPanic;
 begin
   OutputCopy := nil;
   LockNestingDepth := 0;
+  AtomicStore(LockHolder, 0);
   InitializeSpinLock(OutputLock);
   ForceUnlockLogRingForPanic;
 end;

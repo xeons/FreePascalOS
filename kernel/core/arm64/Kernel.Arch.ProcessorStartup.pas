@@ -47,8 +47,9 @@ uses
   out or the firmware cannot start processors. }
 function PrepareProcessorStartup: Boolean;
 { Wakes Processor, which then runs EntryPoint(Processor) on the stack
-  ending at StackTop. }
-procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
+  ending at StackTop. False if it could not be started (the firmware
+  refused, or says it is still on). }
+function StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): Boolean;
 { Called by a secondary processor first thing at its entry point. }
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 { Suspend to RAM (PSCI SYSTEM_SUSPEND): the boot processor wakes through
@@ -155,17 +156,19 @@ begin
   Result := True;
 end;
 
-procedure StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer);
+function StartProcessor(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): Boolean;
 begin
   StartRecord^.StackTop := StackTop;
   StartRecord^.Processor := QWord(Processor);
   StartRecord^.EntryPoint := QWord(EntryPoint);
   CleanDataCache(StartRecord, SizeOf(TSecondaryStartRecord));
-  HalStartProcessorAt(Processor^.ApicId, EntryPhysical, RecordPhysical);
+  Result := HalStartProcessorAt(Processor^.ApicId, EntryPhysical, RecordPhysical);
 end;
 
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 begin
+  { The priority level (a spin lock raises it) needs it on a GICv3. }
+  HalOpenInterruptInterface;
   ArchSetProcessorBlock(Processor);
   InitializeDescriptorTables(Processor^.DescriptorTables, Processor^.InterruptStackArea);
   { Off the start-up identity mapping, onto an empty user half. }
@@ -193,6 +196,7 @@ end;
 
 procedure ReinitializeThisProcessor(Processor: PProcessor);
 begin
+  HalOpenInterruptInterface;
   ArchSetProcessorBlock(Processor);
   ReloadDescriptorTables(Processor^.DescriptorTables);
   ActivateAddressSpace(Processor^.ActiveAddressSpace);

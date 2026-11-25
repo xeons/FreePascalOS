@@ -52,6 +52,10 @@ const
 function InitializeGic: Boolean;
 { Sets up a processor's CPU interface and private interrupts. }
 procedure InitializeGicOnThisProcessor;
+{ First thing on a processor that starts or wakes: a GICv3's system
+  register interface on (ICC_SRE_EL1), before anything sets the priority
+  level, which then lives in ICC_PMR_EL1 (UNDEFINED until it is on). }
+procedure OpenGicSystemRegistersOnThisProcessor;
 { After waking from suspend to RAM, on the boot processor: the
   distributor (and a GICv3's ITS) set up again with every connected
   interrupt as it was, if they lost their settings, then this
@@ -120,6 +124,14 @@ begin
         Version := 3;
   end;
   Result := Version <> 0;
+end;
+
+function ArchEnableGicSystemRegisters: QWord; external name 'ArchEnableGicSystemRegisters';
+
+procedure OpenGicSystemRegistersOnThisProcessor;
+begin
+  if Version = 3 then
+    ArchEnableGicSystemRegisters;
 end;
 
 procedure InitializeGicOnThisProcessor;

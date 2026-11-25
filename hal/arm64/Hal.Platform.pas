@@ -54,8 +54,18 @@ function HalDispatchInterruptVector: Byte;
 { --- Several processors --- }
 function HalCurrentProcessorId: LongWord;
 procedure HalInitializeSecondaryProcessor;
+{ First thing on a processor that starts or wakes, before its priority
+  level may change: what the level needs (a GICv3's system register
+  interface). }
+procedure HalOpenInterruptInterface;
 procedure HalPrepareForSleep;
 procedure HalResumeBootProcessor;
+{ The last step before the machine sleeps (interrupts off, the other
+  processors frozen): the clock remembers where it is. After waking, on
+  the boot processor: it continues from there, so the uptime never
+  steps back nor counts the time asleep. }
+procedure HalPauseClockForSleep;
+procedure HalContinueClockAfterSleep;
 { Starts processor ProcessorId at the physical address EntryPoint (MMU
   off) with Context in X0. False if the firmware refused. }
 function HalStartProcessorAt(ProcessorId: LongWord; EntryPoint, Context: QWord): Boolean;
@@ -202,15 +212,28 @@ begin
   InitializeGicOnThisProcessor;
 end;
 
+procedure HalOpenInterruptInterface;
+begin
+  OpenGicSystemRegistersOnThisProcessor;
+end;
+
 procedure HalPrepareForSleep;
 begin
-  PauseGenericTimer;
 end;
 
 procedure HalResumeBootProcessor;
 begin
   { The distributor lost its settings if the machine slept. }
   RestoreGicAfterSleep;
+end;
+
+procedure HalPauseClockForSleep;
+begin
+  PauseGenericTimer;
+end;
+
+procedure HalContinueClockAfterSleep;
+begin
   ContinueGenericTimer;
 end;
 

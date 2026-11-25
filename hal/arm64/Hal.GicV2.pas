@@ -80,6 +80,7 @@ uses
   Hal.InterruptVectors,
   Kernel.Arch.Cpu,
   Kernel.Arch.PriorityLevel,
+  Kernel.SpinLock,
   Kernel.Processors;
 
 const
@@ -118,6 +119,12 @@ var
   { How each SPI was connected, to connect it again after waking. }
   LevelTriggeredOf: array[0..MaximumInterrupts - 1] of Boolean;
   TargetOf: array[0..MaximumInterrupts - 1] of LongWord;
+  { False once masked (DisableGicV2Interrupt): waking leaves it so. }
+  EnabledOf: array[0..MaximumInterrupts - 1] of Boolean;
+  { Serializes the read-modify-write of the shared configuration
+    registers (GICD_ICFGR: sixteen interrupts a word), taken with
+    interrupts off. }
+  ConfigurationLock: TSpinLock;
   LastAcknowledged: array[0..MaximumProcessors - 1] of LongWord;
   KnownIds: array[0..MaximumKnownProcessors - 1] of LongWord;
   KnownMasks: array[0..MaximumKnownProcessors - 1] of Byte;
@@ -237,6 +244,7 @@ procedure DisableGicV2Interrupt(Interrupt: LongWord);
 begin
   if (Distributor = nil) or (Interrupt >= InterruptTotal) then
     Exit;
+  EnabledOf[Interrupt] := False;
   WriteDistributor(DistributorClearEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
 end;
 
@@ -307,8 +315,47 @@ begin
     Exit;
   end;
 
+  InitializeSpinLock(ConfigurationLock);
   InitializeDistributor;
   InitializeGicV2OnThisProcessor;
+  Result := True;
+end;
+
+{ Writes interrupt Interrupt's priority, trigger and target as recorded,
+  and enables it if Enable. }
+procedure ProgramInterrupt(Interrupt: LongWord; Enable: Boolean);
+var
+  Mask: Byte;
+  InterruptsWereEnabled: Boolean;
+begin
+  InterruptsWereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(ConfigurationLock);
+  SetPriority(Interrupt, VectorOfInterrupt[Interrupt]);
+  SetTrigger(Interrupt, LevelTriggeredOf[Interrupt]);
+  if Interrupt >= FirstSharedInterrupt then
+  begin
+    Mask := CpuMaskOf(TargetOf[Interrupt]);
+    if Mask = 0 then
+      Mask := OwnCpuMask;
+    WriteDistributorByte(DistributorTargets + Interrupt, Mask);
+  end;
+  if Enable then
+    EnableInterrupt(Interrupt);
+  ReleaseSpinLockAtCurrentLevel(ConfigurationLock);
+  RestoreInterrupts(InterruptsWereEnabled);
+end;
+
+function ConnectGicV2Interrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
+  TargetProcessorId: LongWord): Boolean;
+begin
+  Result := False;
+  if (Distributor = nil) or (Interrupt >= InterruptTotal) then
+    Exit;
+  VectorOfInterrupt[Interrupt] := Vector;
+  LevelTriggeredOf[Interrupt] := LevelTriggered;
+  TargetOf[Interrupt] := TargetProcessorId;
+  EnabledOf[Interrupt] := True;
+  ProgramInterrupt(Interrupt, True);
   Result := True;
 end;
 
@@ -325,36 +372,11 @@ begin
     while Interrupt < InterruptTotal do
     begin
       if VectorOfInterrupt[Interrupt] <> SpuriousInterruptVector then
-        ConnectGicV2Interrupt(Interrupt, VectorOfInterrupt[Interrupt], LevelTriggeredOf[Interrupt],
-          TargetOf[Interrupt]);
+        ProgramInterrupt(Interrupt, EnabledOf[Interrupt]);
       Inc(Interrupt);
     end;
   end;
   InitializeGicV2OnThisProcessor;
-end;
-
-function ConnectGicV2Interrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
-  TargetProcessorId: LongWord): Boolean;
-var
-  Mask: Byte;
-begin
-  Result := False;
-  if (Distributor = nil) or (Interrupt >= InterruptTotal) then
-    Exit;
-  VectorOfInterrupt[Interrupt] := Vector;
-  LevelTriggeredOf[Interrupt] := LevelTriggered;
-  TargetOf[Interrupt] := TargetProcessorId;
-  SetPriority(Interrupt, Vector);
-  SetTrigger(Interrupt, LevelTriggered);
-  if Interrupt >= FirstSharedInterrupt then
-  begin
-    Mask := CpuMaskOf(TargetProcessorId);
-    if Mask = 0 then
-      Mask := OwnCpuMask;
-    WriteDistributorByte(DistributorTargets + Interrupt, Mask);
-  end;
-  EnableInterrupt(Interrupt);
-  Result := True;
 end;
 
 function AcknowledgeGicV2Interrupt: Byte;

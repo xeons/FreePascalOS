@@ -55,7 +55,12 @@ procedure AppendAsciiText(var Builder: TUtf8Builder; Text: PChar);
 procedure AppendUtf16(var Builder: TUtf8Builder; Units: PWord; UnitCount: PtrUInt);
 
 { Decodes one code point from UTF-8 text and advances Position past it.
-  Malformed input yields the replacement character. }
+  Malformed input yields the replacement character: a stray or missing
+  continuation byte (Position then stops at the byte that broke the
+  sequence), an overlong form (a code point in more bytes than it
+  needs: C0 AF for "/", say), a surrogate (U+D800-DFFF) or a code point
+  past U+10FFFF. So every code point returned is a Unicode scalar
+  value, which UTF-16 can represent. }
 function DecodeUtf8(Text: PChar; var Position: PtrUInt): LongWord;
 
 { Converts UTF-8 to UTF-16. Returns the number of units written, or -1 if
@@ -105,9 +110,15 @@ begin
     Result := 4;
 end;
 
+function IsScalarValue(CodePoint: LongWord): Boolean;
+begin
+  Result := (CodePoint <= $10FFFF) and ((CodePoint < $D800) or (CodePoint > $DFFF));
+end;
+
 procedure AppendCodePoint(var Builder: TUtf8Builder; CodePoint: LongWord);
 begin
-  if CodePoint > $10FFFF then
+  { No surrogate or out of range value goes into UTF-8. }
+  if not IsScalarValue(CodePoint) then
     CodePoint := ReplacementCharacter;
 
   { Never write half a character. }
@@ -190,6 +201,7 @@ var
   ContinuationCount: Integer;
   ContinuationIndex: Integer;
   NextByte: Byte;
+  Smallest: LongWord;
 begin
   LeadByte := Byte(Text[Position]);
   Inc(Position);
@@ -201,16 +213,19 @@ begin
   begin
     Result := LeadByte and $1F;
     ContinuationCount := 1;
+    Smallest := $80;
   end
   else if (LeadByte and $F0) = $E0 then
   begin
     Result := LeadByte and $0F;
     ContinuationCount := 2;
+    Smallest := $800;
   end
   else if (LeadByte and $F8) = $F0 then
   begin
     Result := LeadByte and $07;
     ContinuationCount := 3;
+    Smallest := $10000;
   end
   else
     Exit(ReplacementCharacter);
@@ -223,6 +238,9 @@ begin
     Result := (Result shl 6) or (NextByte and $3F);
     Inc(Position);
   end;
+
+  if (Result < Smallest) or not IsScalarValue(Result) then
+    Result := ReplacementCharacter;
 end;
 
 function Utf8ToUtf16(Text: PChar; Destination: PWord; Capacity: PtrUInt): PtrInt;

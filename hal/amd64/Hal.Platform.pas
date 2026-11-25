@@ -75,16 +75,20 @@ function HalCurrentProcessorId: LongWord;
 { Prepares the executing secondary processor's interrupt controller (its
   clock is started with HalStartClockOnThisProcessor). }
 procedure HalInitializeSecondaryProcessor;
-{ Before suspend to RAM: keeps the interrupt routing and pauses the
-  clock. }
+{ Before suspend to RAM: keeps the interrupt routing. }
 procedure HalPrepareForSleep;
+{ The last step before the machine sleeps (interrupts off, the other
+  processors frozen): the clock remembers where it is. After waking, on
+  the boot processor and first: it continues from there, so the uptime
+  never steps back nor counts the time asleep. }
+procedure HalPauseClockForSleep;
+procedure HalContinueClockAfterSleep;
 { False: x86-64 machines suspend through ACPI S3 (Io.AcpiSleep), not
   the HAL. }
 function HalOffersSuspendToRam: Boolean;
 procedure HalEnterSuspendToRam(WakeVector: QWord);
 { After waking, on the boot processor: the legacy PICs masked again, its
-  local APIC as before, the interrupt routing put back and the clock
-  continued from where it paused. }
+  local APIC as before and the interrupt routing put back. }
 procedure HalResumeBootProcessor;
 { Wakes the processor with interrupt controller id ProcessorId so that it
   starts in real mode at physical page StartupPage (below 1 MiB). }
@@ -268,9 +272,20 @@ end;
 procedure HalPrepareForSleep;
 begin
   SaveIoApicEntries;
+end;
+
+procedure HalPauseClockForSleep;
+begin
   PauseTimeStampClock;
   if UsesParavirtualClock then
     PauseParavirtualClock;
+end;
+
+procedure HalContinueClockAfterSleep;
+begin
+  ContinueTimeStampClock;
+  if UsesParavirtualClock then
+    ContinueParavirtualClock;
 end;
 
 function HalOffersSuspendToRam: Boolean;
@@ -286,9 +301,6 @@ procedure HalResumeBootProcessor;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
-  ContinueTimeStampClock;
-  if UsesParavirtualClock then
-    ContinueParavirtualClock;
   RestoreIoApicEntries;
 end;
 

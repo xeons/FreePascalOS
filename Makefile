@@ -230,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -357,7 +357,7 @@ $(KERNEL_ELF): $(RTL_KERNEL_DIRECTORY)/system.ppu $(KERNEL_ASSEMBLY_OBJECTS) FOR
 # routines that save and restore a thread's registers at a switch may).
 ifeq ($(ARCH),arm64)
 KERNEL_SIMD_PATTERN := [[:space:],][qdsvbh][0-9]+([].,[:space:]]|$$)
-KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState
+KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchSuspendTestHoldFpuValues
 else
 KERNEL_SIMD_PATTERN := %(x|y|z)mm[0-9]
 KERNEL_FPU_ROUTINES := ArchSaveFpuState|ArchRestoreFpuState|ArchInitializeFpuState
@@ -581,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -692,6 +692,17 @@ $(SCHEDULER_POLICY_TEST): tools/SchedulerPolicyTest/SchedulerPolicyTest.pas kern
 
 scheduler-policy-test: $(SCHEDULER_POLICY_TEST)
 	$(SCHEDULER_POLICY_TEST)
+
+# The kernel's UTF-8 / UTF-16 conversions for file names (Runtime.Unicode)
+# on the host: malformed UTF-8 (overlongs, surrogates, past U+10FFFF).
+UNICODE_TEST := build/tools/UnicodeTest
+
+$(UNICODE_TEST): tools/UnicodeTest/UnicodeTest.pas kernel/runtime/Runtime.Unicode.pas shared/Runtime.Text.pas
+	@mkdir -p build/tools/unicode-test-units
+	$(FPC) -O2 -Cr -Co -Fukernel/runtime -Fushared -FEbuild/tools -FUbuild/tools/unicode-test-units $<
+
+unicode-test: $(UNICODE_TEST)
+	$(UNICODE_TEST)
 
 # Mount options, owners of FAT and exFAT, the mount table and /etc/fstab
 # (FileSystem.MountOptions, .OwnerMapping, .MountTable, Sys.MountTable)

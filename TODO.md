@@ -72,6 +72,17 @@ how the existing pieces fit together.
 - [ ] Raspberry Pi 5: the fan through RP1's PWM (with RP1's clock
       generator) for speeds between off and full; check the clock
       governor, the fan pin and the thermal limit on the board
+- [x] Core audit fixes: AArch64 suspend keeps FP/SIMD registers; freeze
+      handshake (no processor left frozen); clock paused last; x86 user
+      copy recovery bound to the copy routines, CLAC at interrupt entry,
+      NMI/MC GS check; atomic idle check-and-wait; thread reaper thread;
+      priority lowering reschedules; GIC/I/O APIC locks; ITS pending
+      tables kept; release/acquire processor table; per-processor panic
+      trace; strict UTF-8 decoding; bounded wall clock adjustments
+- [ ] Interrupt remapping (VT-d / AMD-Vi) so device interrupts can reach
+      x2APIC ids above 255 (they go to the boot processor for now)
+- [ ] A regression test for the idle lost wakeup and for priority lowering
+      latency (both are timing windows that QEMU does not hit reliably)
 
 ## Memory management
 

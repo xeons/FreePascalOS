@@ -24,7 +24,13 @@
   (with a kernel stack, on which it starts) and stacks for the double
   fault, NMI and machine check exceptions, and is woken; once it reports
   itself online the next one follows. A processor that does not come up
-  within a second is given up on.
+  within StartTimeoutMilliseconds is given up on, and no more are started
+  (they would share its start-up record while it might still read it).
+  Giving up and arriving are settled by one compare-and-exchange on the
+  block (StartClaim): a processor that arrives after it was given up on
+  halts at once instead of joining, and one that claimed its block just
+  before is waited for. The block and stacks of a processor given up on
+  stay allocated, since it might still be running on them.
 
   The kernel option "processors=N" limits how many processors run (1
   keeps the system on the boot processor).
@@ -46,6 +52,7 @@ implementation
 
 uses
   Runtime.Text,
+  Runtime.Atomic,
   Memory.KernelHeap,
   Memory.KernelStacks,
   Memory.Arch.PageTables,
@@ -71,6 +78,14 @@ var
 
 procedure SecondaryProcessorEntry(Processor: PProcessor);
 begin
+  if AtomicCompareExchange(Processor^.StartClaim, ProcessorStartJoined, ProcessorStartPending) <>
+     ProcessorStartPending then
+    { Given up on: too late to join. }
+    while True do
+    begin
+      DisableInterrupts;
+      HaltProcessor;
+    end;
   InitializeThisSecondaryProcessor(Processor);
   InitializeProcessorTimers(Processor);
   StartSchedulingOnThisProcessor(Processor^.IdleThread);
@@ -108,10 +123,21 @@ begin
   IdleThread := CreateIdleThreadFromBootContext(Stack.Base, Stack.Top);
   Processor^.IdleThread := @IdleThread^.ControlBlock;
 
-  StartProcessor(Processor, Stack.Top, @SecondaryProcessorEntry);
+  if not StartProcessor(Processor, Stack.Top, @SecondaryProcessorEntry) then
+    AtomicCompareExchange(Processor^.StartClaim, ProcessorStartAbandoned, ProcessorStartPending);
   Deadline := DeadlineAfterMilliseconds(StartTimeoutMilliseconds);
-  while not Processor^.IsOnline and (ClockNanoseconds < Deadline) do
+  while not Processor^.IsOnline and (ClockNanoseconds < Deadline) and
+    (AtomicLoad(Processor^.StartClaim) <> ProcessorStartAbandoned) do
     SleepMilliseconds(1);
+  if not Processor^.IsOnline and
+     (AtomicCompareExchange(Processor^.StartClaim, ProcessorStartAbandoned, ProcessorStartPending) =
+      ProcessorStartJoined) then
+  begin
+    { It arrived just now: it finishes starting. }
+    Deadline := DeadlineAfterMilliseconds(StartTimeoutMilliseconds);
+    while not Processor^.IsOnline and (ClockNanoseconds < Deadline) do
+      SleepMilliseconds(1);
+  end;
   Result := Processor^.IsOnline;
 end;
 

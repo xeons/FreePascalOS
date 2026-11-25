@@ -35,7 +35,7 @@ esp_directory="$2"
 shift 2
 kinds=("$@")
 if (( ${#kinds[@]} == 0 )); then
-    kinds=(nx textwrite userexec useraccess pagepoison)
+    kinds=(nx textwrite userexec useraccess pagepoison copyfault)
 fi
 build_directory=$(dirname "$esp_directory")
 script_directory=$(cd "$(dirname "$0")" && pwd)
@@ -54,6 +54,7 @@ expected_report() {
                 echo 'Read from .* \(protection violation'
             fi ;;
         pagepoison) echo 'physical page written after it was freed' ;;
+        copyfault) echo 'Read from .* \(page not present' ;;
     esac
 }
 

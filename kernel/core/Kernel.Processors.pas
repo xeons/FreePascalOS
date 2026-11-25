@@ -31,7 +31,12 @@
 
   The boot processor's block is static, so it exists before the kernel
   heap. The blocks of the other processors are allocated as they start
-  (Kernel.Arch.ProcessorStartup).
+  (Kernel.Arch.ProcessorStartup). A new block is filled in and put in
+  the table before the count of started processors is raised, with a
+  release store, and ProcessorTotal reads the count with an acquire
+  load: whoever sees the count sees the block (AArch64 orders neither
+  by itself). IsOnline likewise is set only after everything the block
+  needs to run threads is in place.
 }
 unit Kernel.Processors;
 
@@ -48,6 +53,10 @@ uses
 
 const
   MaximumProcessors = 32;
+  { TProcessor.StartClaim. }
+  ProcessorStartPending = 0;
+  ProcessorStartJoined = 1;
+  ProcessorStartAbandoned = 2;
   { Idle states a processor may know (Kernel.IdleStates). }
   MaximumIdleStates = 8;
 
@@ -69,9 +78,10 @@ type
     ApicId: LongWord;
     IsOnline: Boolean;
     IdleThread: PThreadControlBlock;
-    { Set by the clock interrupt; read and cleared under the processor's
-      scheduling lock by the dispatch interrupt (Kernel.Scheduler). }
-    QuantumHasExpired: Boolean;
+    { 1 once the running thread's time slice is over: set by the clock
+      interrupt, read and cleared in one atomic exchange by the dispatch
+      interrupt (Kernel.Scheduler). }
+    QuantumHasExpired: PtrUInt;
     { Its clock (Kernel.Clock): when its next 10 ms tick is due
       (High(QWord): the tick is stopped, while it idles) and when its
       clock interrupt is set to come (High(QWord): not set), in clock
@@ -126,10 +136,15 @@ type
       processor's; the boot processor's are static). }
     InterruptStackArea: Pointer;
     DescriptorTables: TProcessorDescriptorTables;
-    { Suspend to RAM (Kernel.ProcessorPower): asked to freeze, frozen,
-      and the state it froze in. }
-    FreezeRequested: Boolean;
-    Frozen: Boolean;
+    { Start-up (Kernel.SecondaryProcessors): ProcessorStartPending until
+      the processor claims its block on arrival (ProcessorStartJoined)
+      or the boot processor gives up on it (ProcessorStartAbandoned):
+      one compare-and-exchange each, so a late arrival knows to stop. }
+    StartClaim: PtrUInt;
+    { Suspend to RAM (Kernel.ProcessorPower): where it is in freezing
+      (FreezeState*, changed only by compare-and-exchange or by the one
+      side that owns the state it is in), and the state it froze in. }
+    FreezeState: PtrUInt;
     SuspendContext: TArchSuspendContext;
   end;
 
@@ -167,7 +182,8 @@ uses
 var
   BootProcessorBlock: TProcessor;
   Processors: array[0..MaximumProcessors - 1] of PProcessor;
-  ProcessorsStarted: LongWord = 0;
+  { Raised (AtomicStore) only once the new block is in the table. }
+  ProcessorsStarted: PtrUInt = 0;
   ProcessorsOnline: Int64 = 0;
   BlocksAreReady: Boolean = False;
 
@@ -190,16 +206,20 @@ begin
   if Result = nil then
     Exit;
   Result^.Self := Result;
-  Result^.Index := ProcessorsStarted;
+  Result^.Index := LongWord(ProcessorsStarted);
   Result^.ApicId := ApicId;
   Processors[ProcessorsStarted] := Result;
-  Inc(ProcessorsStarted);
+  FullMemoryBarrier;
+  AtomicStore(ProcessorsStarted, ProcessorsStarted + 1);
 end;
 
 procedure MarkProcessorOnline(Processor: PProcessor);
 begin
   { Its interrupt controller is set up by now. }
   AtomicStore(Processor^.AnswersRequests, 1);
+  { Its idle thread, scheduling state and clock are set up before it is
+    seen online. }
+  FullMemoryBarrier;
   Processor^.IsOnline := True;
   AtomicIncrement(ProcessorsOnline);
 end;
@@ -234,7 +254,7 @@ end;
 
 function ProcessorTotal: LongWord;
 begin
-  Result := ProcessorsStarted;
+  Result := LongWord(AtomicLoad(ProcessorsStarted));
 end;
 
 function OnlineProcessorCount: LongWord;
@@ -244,7 +264,7 @@ end;
 
 function ProcessorByIndex(Index: LongWord): PProcessor;
 begin
-  if Index >= ProcessorsStarted then
+  if Index >= ProcessorTotal then
     Exit(nil);
   Result := Processors[Index];
 end;

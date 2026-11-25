@@ -33,6 +33,12 @@
     pagepoison  writes into a freed physical page held back by the
                 quarantine (with "heapchecks": "physical page written
                 after it was freed")
+    copyfault   faults on an unmapped low address while a user copy is
+                under way, but outside the copy routines (as an
+                interrupt handler following a bad pointer in the middle
+                of a copy would): it must be reported as the kernel bug
+                it is ("Read from ... (page not present"), not taken
+                for a copy that failed
 
   When the processor lacks the protection, the test says so and stops
   the system with an assertion instead, so the report shows what was
@@ -63,6 +69,8 @@ uses
   Memory.Arch.PageTables,
   Memory.Arch.MappingAudit,
   Kernel.Arch.UserCopy,
+  Kernel.Threads,
+  Kernel.Scheduler,
   Kernel.Options,
   Kernel.Panic,
   Kernel.SelfTest,
@@ -173,6 +181,24 @@ begin
   StopUnprotected('selftest=pagepoison: the write into a freed page was not found');
 end;
 
+procedure FaultDuringUserCopy;
+const
+  { Nothing is mapped there in the kernel's own address space. }
+  UnmappedLowAddress = QWord($10000);
+var
+  Thread: PThreadControlBlock;
+  Value: QWord;
+begin
+  AnnounceViolation('copyfault', 'a kernel fault on a low address while a user copy is under way');
+  Thread := CurrentThread;
+  Thread^.UserCopyActive := True;
+  Value := PQWord(UnmappedLowAddress)^;
+  Thread^.UserCopyActive := False;
+  if Value <> 0 then
+    StopUnprotected('selftest=copyfault: the read of an unmapped address returned a value');
+  StopUnprotected('selftest=copyfault: the read of an unmapped address returned');
+end;
+
 procedure RunProtectionFaultTest;
 const
   KindCapacity = 32;
@@ -190,7 +216,9 @@ begin
   else if TextIsEqual(@Kind[0], 'useraccess') then
     ReadUserMemoryDirectly
   else if TextIsEqual(@Kind[0], 'pagepoison') then
-    WriteIntoFreedPage;
+    WriteIntoFreedPage
+  else if TextIsEqual(@Kind[0], 'copyfault') then
+    FaultDuringUserCopy;
 end;
 
 end.

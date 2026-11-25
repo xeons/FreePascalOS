@@ -47,6 +47,11 @@ const
   { How fast a gradual adjustment moves the clock: 500 parts per
     million (half a millisecond a second, 1.8 s an hour). }
   SlewPartsPerMillion = 500;
+  { The largest gradual adjustment: an hour (which takes 83 days). }
+  MaximumSlewNanoseconds = Int64(3600) * NanosecondsPerSecond;
+  { The latest time the clock may be stepped to: 2200-01-01, well
+    inside what nanoseconds in 64 bits count (2262). }
+  LatestWallClockNanoseconds = Int64(7258118400) * NanosecondsPerSecond;
 
 { At start: the battery backed clock's time. }
 procedure StartWallClock;
@@ -64,8 +69,10 @@ function WallClockSeconds: TUnixTime;
   clock. Passive level. }
 procedure StepWallClockTo(Time: TUnixTime);
 { Moves the clock by OffsetNanoseconds: at once (and the battery backed
-  clock with it) or gradually. Passive level. }
-procedure AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean);
+  clock with it) or gradually. Passive level. False (nothing changed)
+  if a step would take the clock outside 1970 to 2200, or a gradual
+  adjustment is larger than MaximumSlewNanoseconds. }
+function AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean): Boolean;
 { What a gradual adjustment still has to move the clock by. }
 function WallClockAdjustmentRemaining: Int64;
 
@@ -220,14 +227,33 @@ begin
   WriteRealTimeClock(Time);
 end;
 
-procedure AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean);
+{ Whether stepping the clock (now Current) by Offset keeps it between
+  1970 and LatestWallClockNanoseconds; tested without overflowing. }
+function StepStaysInRange(Current, Offset: Int64): Boolean;
+begin
+  if Offset >= 0 then
+    Result := (Current <= LatestWallClockNanoseconds) and (Offset <= LatestWallClockNanoseconds - Current)
+  else
+    Result := (Current >= 0) and (Offset >= -Current);
+end;
+
+function AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean): Boolean;
 var
   PreviousLevel: TPriorityLevel;
   Now: QWord;
 begin
+  if Gradually and ((OffsetNanoseconds > MaximumSlewNanoseconds) or
+     (OffsetNanoseconds < -MaximumSlewNanoseconds)) then
+    Exit(False);
   BeginChange(PreviousLevel);
   Now := ClockNanoseconds;
   SettleSlewLocked(Now);
+  Result := Gradually or StepStaysInRange(BaseOffset + Int64(Now), OffsetNanoseconds);
+  if not Result then
+  begin
+    EndChange(PreviousLevel);
+    Exit;
+  end;
   if Gradually then
     SlewTotal := OffsetNanoseconds
   else

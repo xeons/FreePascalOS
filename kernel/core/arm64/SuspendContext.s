@@ -18,7 +18,12 @@
 // Saving and resuming a processor's kernel state across suspend to RAM
 // (Kernel.Arch.Suspend): like setjmp and longjmp. The context holds
 // X19-X30 (offsets 0-88), SP (96), DAIF (104), the priority level (112,
-// noted by ArchNoteSuspendLevel in Pascal) and TPIDR_EL0 (120).
+// noted by ArchNoteSuspendLevel in Pascal) and TPIDR_EL0 (120), then
+// from offset 128 the floating point and SIMD registers (V0-V31, FPCR,
+// FPSR: ArchSaveFpuState's 528 bytes, at the first 16-byte boundary).
+// A frozen processor stopped in the middle of a thread whose registers
+// those are: turning it off loses them, so they are saved here and put
+// back by ArchResumeSuspendContext.
 
     .text
     .balign 4
@@ -39,9 +44,15 @@ ArchSaveSuspendRegisters:
     str     x9, [x0, #104]
     mrs     x9, tpidr_el0
     str     x9, [x0, #120]
-    // The priority level, in Pascal (GICv2 keeps it in memory, GICv3 in
-    // a system register); X19 is the callee's to keep.
+    // X19 is the callee's to keep (saved above).
     mov     x19, x0
+    // The floating point and SIMD registers (ArchSaveFpuState uses X1-X3).
+    add     x0, x19, #(128 + 15)
+    and     x0, x0, #0xFFFFFFFFFFFFFFF0
+    bl      ArchSaveFpuState
+    // The priority level, in Pascal (GICv2 keeps it in memory, GICv3 in
+    // a system register).
+    mov     x0, x19
     bl      ArchNoteSuspendLevel
     ldr     x30, [x19, #88]
     ldr     x19, [x19, #0]

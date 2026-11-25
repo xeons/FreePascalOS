@@ -82,6 +82,7 @@ uses
   Hal.InterruptVectors,
   Kernel.Arch.Cpu,
   Kernel.Arch.PriorityLevel,
+  Kernel.SpinLock,
   Kernel.Processors;
 
 const
@@ -123,6 +124,11 @@ var
   VectorOfInterrupt: TInterruptVectorTable;
   LevelTriggeredOf: array[0..MaximumInterrupts - 1] of Boolean;
   TargetOf: array[0..MaximumInterrupts - 1] of LongWord;
+  { False once masked (DisableGicV3Interrupt): waking leaves it so. }
+  EnabledOf: array[0..MaximumInterrupts - 1] of Boolean;
+  { Serializes the read-modify-write of GICD_ICFGR (sixteen interrupts a
+    word), taken with interrupts off. }
+  ConfigurationLock: TSpinLock;
   LastAcknowledged: array[0..MaximumProcessors - 1] of LongWord;
   Redistributors: array[0..MaximumProcessors - 1] of TRedistributor;
 
@@ -277,6 +283,7 @@ function InitializeGicV3(constref Description: TGicDescription): Boolean;
 begin
   Result := False;
   ResetInterruptVectorTable(VectorOfInterrupt);
+  InitializeSpinLock(ConfigurationLock);
   if (Description.DistributorAddress = 0) or not MapRedistributorRegions(Description) then
     Exit;
   Distributor := PByte(MapDeviceMemory(Description.DistributorAddress, DistributorSize));
@@ -305,12 +312,37 @@ begin
   Result := ProcessorId and $FFFFFF;
 end;
 
-function ConnectGicV3Interrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
-  TargetProcessorId: LongWord): Boolean;
+{ Writes SPI Interrupt's priority, trigger and route as recorded, and
+  enables it if Enable. }
+procedure ProgramSharedInterrupt(Interrupt: LongWord; Enable: Boolean);
 var
   Offset: LongWord;
   Shift: LongWord;
   Value: LongWord;
+  InterruptsWereEnabled: Boolean;
+begin
+  InterruptsWereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(ConfigurationLock);
+  PByte(Distributor + DistributorPriority + Interrupt)^ :=
+    GicPriorityOfLevel(ArchPriorityLevelOfVector(VectorOfInterrupt[Interrupt]));
+  Offset := DistributorConfiguration + (Interrupt div 16) * 4;
+  Shift := (Interrupt mod 16) * 2 + 1;
+  Value := ReadDistributor(Offset);
+  if LevelTriggeredOf[Interrupt] then
+    Value := Value and not (LongWord(1) shl Shift)
+  else
+    Value := Value or (LongWord(1) shl Shift);
+  WriteDistributor(Offset, Value);
+  PQWord(Distributor + DistributorRouter + Interrupt * 8)^ := RouterValue(TargetOf[Interrupt]);
+  if Enable then
+    WriteDistributor(DistributorSetEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
+  ReleaseSpinLockAtCurrentLevel(ConfigurationLock);
+  RestoreInterrupts(InterruptsWereEnabled);
+end;
+
+function ConnectGicV3Interrupt(Interrupt: LongWord; Vector: Byte; LevelTriggered: Boolean;
+  TargetProcessorId: LongWord): Boolean;
+var
   Redistributor: PRedistributorRecord;
 begin
   Result := False;
@@ -331,17 +363,8 @@ begin
     WaitForRedistributorWrites(Redistributor^);
     Exit(True);
   end;
-  PByte(Distributor + DistributorPriority + Interrupt)^ := GicPriorityOfLevel(ArchPriorityLevelOfVector(Vector));
-  Offset := DistributorConfiguration + (Interrupt div 16) * 4;
-  Shift := (Interrupt mod 16) * 2 + 1;
-  Value := ReadDistributor(Offset);
-  if LevelTriggered then
-    Value := Value and not (LongWord(1) shl Shift)
-  else
-    Value := Value or (LongWord(1) shl Shift);
-  WriteDistributor(Offset, Value);
-  PQWord(Distributor + DistributorRouter + Interrupt * 8)^ := RouterValue(TargetProcessorId);
-  WriteDistributor(DistributorSetEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
+  EnabledOf[Interrupt] := True;
+  ProgramSharedInterrupt(Interrupt, True);
   Result := True;
 end;
 
@@ -358,8 +381,7 @@ begin
     while Interrupt < InterruptTotal do
     begin
       if VectorOfInterrupt[Interrupt] <> SpuriousInterruptVector then
-        ConnectGicV3Interrupt(Interrupt, VectorOfInterrupt[Interrupt], LevelTriggeredOf[Interrupt],
-          TargetOf[Interrupt]);
+        ProgramSharedInterrupt(Interrupt, EnabledOf[Interrupt]);
       Inc(Interrupt);
     end;
   end;
@@ -382,7 +404,10 @@ begin
       WriteRedistributor(Redistributor^, RedistributorClearEnable, LongWord(1) shl Interrupt);
   end
   else if Interrupt < InterruptTotal then
+  begin
+    EnabledOf[Interrupt] := False;
     WriteDistributor(DistributorClearEnable + (Interrupt div 32) * 4, LongWord(1) shl (Interrupt mod 32));
+  end;
 end;
 
 function AcknowledgeGicV3Interrupt: Byte;

@@ -156,7 +156,8 @@ procedure GetProcessTimes(Process: PProcess; out Times: TThreadTimes);
 function ProcessIsRunnable(Process: PProcess): Boolean;
 
 { Releases the resources of threads that have exited. Must be called at
-  PassiveLevel; the idle thread does this whenever it runs. }
+  PassiveLevel by a thread that may wait (the last reference to a
+  process deletes it): the thread reaper (Processes.ThreadReaper). }
 procedure ReapTerminatedThreads;
 
 function ThreadFromControlBlock(ControlBlock: PThreadControlBlock): PThread;

@@ -29,6 +29,19 @@
   An interrupt from user mode swaps in the kernel's GS base on the way in
   and the user's on the way out (Kernel.Arch.ProcessorBlock); the saved
   code selector says where the interrupt came from.
+
+  An NMI or machine check can arrive anywhere, also between SYSCALL and
+  its SWAPGS (or between the SWAPGS and IRETQ on the way back): there the
+  saved code selector says kernel while GS still holds the user's base.
+  For those two vectors the entry looks at the GS base itself (its
+  MSR): a user base (the kernel's has bit 63 set; a program cannot set
+  one in the kernel half) is swapped, which the vector's (unused) error
+  code slot remembers for the way out.
+
+  With SMAP on, an interrupt in the middle of a user copy arrives with
+  RFLAGS.AC set (the copy's window to user memory); the entry clears it
+  (CLAC), so the handler runs with user memory protected. IRETQ gives
+  the copy its flags back.
 }
 unit Kernel.Arch.InterruptEntry;
 
@@ -44,12 +57,41 @@ implementation
 uses
   Kernel.Interrupts;
 
+const
+  VectorNonMaskableInterrupt = 2;
+  VectorMachineCheck = 18;
+  MsrGsBase = $C0000101;
+
+var
+  SmapEnabled: Byte; external name 'ArchSmapEnabled';
+
 procedure CommonInterruptEntry; assembler; nostackframe;
 asm
   { Stack: vector, error code, RIP, CS (+24), ... }
+  cmp qword ptr [rsp], VectorNonMaskableInterrupt
+  je @CheckGsBase
+  cmp qword ptr [rsp], VectorMachineCheck
+  je @CheckGsBase
   test byte ptr [rsp + 24], 3
   jz @FromKernel
   db $0F, $01, $F8 { swapgs }
+  jmp @FromKernel
+@CheckGsBase:
+  push rax
+  push rcx
+  push rdx
+  mov ecx, MsrGsBase
+  rdmsr
+  { Stack: rdx, rcx, rax, vector, error code (+32). }
+  mov qword ptr [rsp + 32], 0
+  test edx, edx
+  js @GsBaseChecked
+  db $0F, $01, $F8 { swapgs }
+  mov qword ptr [rsp + 32], 1
+@GsBaseChecked:
+  pop rdx
+  pop rcx
+  pop rax
 @FromKernel:
   push rax
   push rbx
@@ -72,6 +114,10 @@ asm
     quadwords, so the stack is still 16-byte aligned for the call. }
   mov rdi, rsp
   cld
+  cmp byte ptr [rip + SmapEnabled], 0
+  je @UserMemoryClosed
+  db $0F, $01, $CA { clac }
+@UserMemoryClosed:
   call DispatchInterrupt
 
   pop r15
@@ -90,6 +136,11 @@ asm
   pop rbx
   pop rax
 
+  { An NMI or machine check swapped GS if its error code slot says so. }
+  cmp qword ptr [rsp], VectorNonMaskableInterrupt
+  je @RestoreCheckedGsBase
+  cmp qword ptr [rsp], VectorMachineCheck
+  je @RestoreCheckedGsBase
   { Discard the vector number and error code. }
   add rsp, 16
   { Stack: RIP, CS (+8), ... }
@@ -97,6 +148,12 @@ asm
   jz @ToKernel
   db $0F, $01, $F8 { swapgs }
 @ToKernel:
+  iretq
+@RestoreCheckedGsBase:
+  cmp qword ptr [rsp + 8], 0
+  lea rsp, [rsp + 16]
+  je @ToKernel
+  db $0F, $01, $F8 { swapgs }
   iretq
 end;
 

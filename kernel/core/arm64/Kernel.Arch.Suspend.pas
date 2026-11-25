@@ -22,8 +22,11 @@
 
   ArchSaveSuspendContext works like setjmp (SuspendContext.s): it saves
   the callee-saved registers X19-X30, the stack pointer, DAIF, the user
-  thread pointer (TPIDR_EL0) and the priority level (the GIC's priority
-  mask), then returns 0. ArchResumeSuspendContext, on the same
+  thread pointer (TPIDR_EL0), the priority level (the GIC's priority
+  mask) and the floating point and SIMD registers, then returns 0. Those
+  last ones belong to the thread the processor froze in the middle of
+  (it freezes in its dispatch interrupt, and the kernel saves them only
+  at a thread switch); turned off, the processor would lose them. ArchResumeSuspendContext, on the same
   processor after it was woken through the start-up entry
   (Kernel.Arch.ProcessorStartup: translation, vectors, then
   ReinitializeThisProcessor and the HAL), puts the level back and
@@ -34,7 +37,10 @@
 
   A frozen processor turns itself off (PSCI CPU_OFF) rather than wait:
   SYSTEM_SUSPEND requires every other processor to be off, and they are
-  started again with CPU_ON.
+  started again with CPU_ON. Should the firmware refuse CPU_OFF, the
+  processor stays on and ArchParkFrozenProcessor returns: it then waits
+  to be let go in place (Kernel.ProcessorPower), and SYSTEM_SUSPEND
+  fails, as it must with a processor still on.
 }
 unit Kernel.Arch.Suspend;
 
@@ -46,6 +52,9 @@ type
   TArchSuspendContext = record
     { X19-X30, SP, DAIF, the priority level, TPIDR_EL0. }
     Registers: array[0..15] of QWord;
+    { V0-V31, FPCR and FPSR (ArchSaveFpuState's 528 bytes, 16-byte
+      aligned: the area is found inside). }
+    FpuArea: array[0..543] of Byte;
   end;
   PArchSuspendContext = ^TArchSuspendContext;
 
@@ -53,7 +62,9 @@ type
 function ArchSaveSuspendContext(var Context: TArchSuspendContext): QWord; external name 'ArchSaveSuspendRegisters';
 { Never returns: the saving call returns again. }
 procedure ArchResumeSuspendContext(var Context: TArchSuspendContext);
-{ Where a frozen processor waits for the machine to sleep: off. }
+{ Where a frozen processor waits for the machine to sleep: off. Returns
+  only if the firmware refused to turn it off (it is still on, with its
+  state intact). }
 procedure ArchParkFrozenProcessor;
 
 implementation
@@ -67,6 +78,13 @@ const
   LevelIndex = 14;
 
 procedure ArchResumeSuspendRegisters(var Context: TArchSuspendContext); external name 'ArchResumeSuspendRegisters';
+procedure ArchRestoreFpuState(Area: Pointer); external name 'ArchRestoreFpuState';
+
+{ Where SuspendContext.s saved them. }
+function FpuAreaOf(var Context: TArchSuspendContext): Pointer;
+begin
+  Result := Pointer((PtrUInt(@Context.FpuArea[0]) + 15) and not PtrUInt(15));
+end;
 
 procedure ArchNoteSuspendLevel(var Context: TArchSuspendContext); [public, alias: 'ArchNoteSuspendLevel'];
 begin
@@ -76,6 +94,7 @@ end;
 procedure ArchResumeSuspendContext(var Context: TArchSuspendContext);
 begin
   ArchSetPriorityLevel(Byte(Context.Registers[LevelIndex]));
+  ArchRestoreFpuState(FpuAreaOf(Context));
   ArchResumeSuspendRegisters(Context);
 end;
 
@@ -83,9 +102,7 @@ procedure ArchParkFrozenProcessor;
 begin
   DataSynchronizationBarrier;
   PsciTurnOffThisProcessor;
-  { The firmware refused: wait here until started again. }
-  while True do
-    HaltProcessor;
+  { The firmware refused: the caller waits in place. }
 end;
 
 end.

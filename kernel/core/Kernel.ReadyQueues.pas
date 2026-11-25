@@ -213,11 +213,15 @@ end;
 function OnlineProcessorMask: QWord;
 var
   Index: LongWord;
+  Processor: PProcessor;
 begin
   Result := 0;
   for Index := 0 to ProcessorTotal - 1 do
-    if ProcessorByIndex(Index)^.IsOnline then
+  begin
+    Processor := ProcessorByIndex(Index);
+    if (Processor <> nil) and Processor^.IsOnline then
       Result := Result or (QWord(1) shl Index);
+  end;
 end;
 
 function ThreadMayRunOn(Thread: PThreadControlBlock; Processor: PProcessor): Boolean;

@@ -93,6 +93,8 @@ procedure WriteCurrentStackTrace(Indent: PChar);
 implementation
 
 uses
+  Memory.Layout,
+  Memory.Arch.PageTables,
   Kernel.Arch.ContextSwitch,
   Kernel.Processors,
   Debug.KernelSymbols,
@@ -210,6 +212,8 @@ end;
 procedure FindStackBounds(FramePointer: QWord; out Bounds: TStackTraceBounds);
 var
   Thread: PThreadControlBlock;
+  Page: QWord;
+  Physical: TPhysicalAddress;
 begin
   Thread := RunningThreadOrNil;
   if (Thread <> nil) and (Thread^.StackBase <> 0) and
@@ -218,10 +222,21 @@ begin
     SetThreadBounds(Thread, Bounds);
     Exit;
   end;
+  { A stack not known here (an interrupt stack, the boot stack): up to
+    FallbackWindowBytes above the frame, but only as far as pages are
+    mapped, so the walk cannot fault on a guard page (a fault while
+    panicking stops the report). }
   Bounds.Low := FramePointer;
-  Bounds.High := FramePointer + FallbackWindowBytes;
-  if Bounds.High < FramePointer then
-    Bounds.High := High(QWord);
+  Bounds.High := FramePointer;
+  Page := FramePointer and not QWord(PageSize - 1);
+  while (Bounds.High - Bounds.Low < FallbackWindowBytes) and (Page + PageSize > Page) and
+    TranslateVirtualAddress(Page, Physical) do
+  begin
+    Page := Page + PageSize;
+    Bounds.High := Page;
+  end;
+  if Bounds.High - Bounds.Low > FallbackWindowBytes then
+    Bounds.High := Bounds.Low + FallbackWindowBytes;
 end;
 
 procedure WriteTrapFrameStackTrace(Frame: PTrapFrame; Indent: PChar);

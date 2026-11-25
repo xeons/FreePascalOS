@@ -105,6 +105,7 @@ uses
   Drivers.Xhci,
   Processes.Process,
   Processes.Thread,
+  Processes.ThreadReaper,
   Kernel.Events,
   Processes.SystemCalls,
   Processes.Termination,
@@ -253,14 +254,16 @@ procedure RunIdleLoop; noreturn;
 begin
   while True do
   begin
-    ReapTerminatedThreads;
+    { Exited threads are released by the reaper, which may wait. }
+    WakeThreadReaperIfNeeded;
     { A thread this processor may run can be left in another's queue
       when that queue's lock was taken just as it looked: it looks again
       rather than halting. }
     if IdleProcessorFoundWork then
       Continue;
-    { Interrupts are enabled, so the next interrupt ends the wait. If it
-      made a thread ready, the dispatch interrupt switches to it. }
+    { Checks again with interrupts off and waits for the next interrupt
+      in the same step (Kernel.IdleStates). If it made a thread ready,
+      the dispatch interrupt switches to it. }
     IdleProcessor;
   end;
 end;
@@ -328,6 +331,7 @@ begin
   DebugWriteTag('init');
   DebugWriteLine('Phase 1 started');
 
+  StartThreadReaper;
   InitializePlatformTables(PBootInformation(Context)^);
   { With the firmware's processor list read, the processors start before
     the drivers, so device interrupts can go to all of them. }

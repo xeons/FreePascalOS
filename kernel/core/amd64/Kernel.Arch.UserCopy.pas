@@ -21,17 +21,21 @@
 
   The system call layer checks a user range against the process's
   regions before it copies, but another thread of the process may free
-  the memory in between. The copy routines here are small leaf functions
-  that touch no stack while they copy; the calling thread is marked
-  (UserCopyActive) while it is inside one. If a page fault on a user
-  address cannot be resolved while the mark is set, the exception
-  handler makes the routine return -1 (RecoverFromUserCopyFault): it
-  sets RAX and "returns" to the caller by popping the return address.
+  the memory in between. The copy routines (UserAccess.s) are small leaf
+  functions that touch no stack while they copy; the calling thread is
+  marked (UserCopyActive) while it is inside one. If a page fault on a
+  user address cannot be resolved while the mark is set and the faulting
+  instruction is inside one of the routines, the exception handler makes
+  the routine return -1 (RecoverFromUserCopyFault). A fault elsewhere
+  while the mark is set (an interrupt handler following a bad pointer in
+  the middle of a copy) is a kernel bug, reported as one.
 
   With SMAP (supervisor mode access prevention) available, it is turned
   on: the processor then refuses every kernel access to user pages, and
   the copy routines allow it only for their own duration (STAC / CLAC).
-  So any place that touched user memory directly would fault at once.
+  So any place that touched user memory directly would fault at once;
+  the interrupt entry closes the window for the handlers it runs
+  (Kernel.Arch.InterruptEntry).
 }
 unit Kernel.Arch.UserCopy;
 
@@ -80,10 +84,21 @@ const
   ControlRegister4Smap = QWord(1) shl 21;
   { CPUID leaf 7, subleaf 0: EBX bit 20. }
   CpuidSmapBit = LongWord(1) shl 20;
+  FlagsAlignmentCheck = QWord($40000);
 
 var
-  { Read by the copy routines: STAC/CLAC exist only with SMAP. }
-  SmapEnabled: Byte = 0;
+  { Read by the copy routines and the interrupt entry: STAC/CLAC exist
+    only with SMAP. }
+  SmapEnabled: Byte; external name 'ArchSmapEnabled';
+
+function ArchUserCopyBytes(Destination, Source: Pointer; Length: QWord): Int64; external name 'ArchUserCopyBytes';
+function ArchUserCopyString(Destination, Source: PChar; Capacity: QWord): Int64;
+  external name 'ArchUserCopyString';
+procedure ArchUserCopyBytesStart; external name 'ArchUserCopyBytes';
+procedure ArchUserCopyBytesEnd; external name 'ArchUserCopyBytesEnd';
+procedure ArchUserCopyStringStart; external name 'ArchUserCopyString';
+procedure ArchUserCopyStringEnd; external name 'ArchUserCopyStringEnd';
+procedure ArchUserCopyFault; external name 'ArchUserCopyFault';
 
 procedure InitializeUserCopy;
 var
@@ -115,53 +130,8 @@ asm
 end;
 
 function UserMemoryProtectionIsOnHere: Boolean;
-const
-  FlagsAlignmentCheck = QWord($40000);
 begin
   Result := (SmapEnabled = 0) or ((ReadFlags and FlagsAlignmentCheck) = 0);
-end;
-
-{ RDI = Destination, RSI = Source, RDX = Length. }
-function CopyBytes(Destination, Source: Pointer; Length: QWord): Int64; assembler; nostackframe;
-asm
-  cmp byte ptr [SmapEnabled], 0
-  je @copy
-  db $0F, $01, $CB { stac: allow user page accesses }
-@copy:
-  mov rcx, rdx
-  rep movsb
-  cmp byte ptr [SmapEnabled], 0
-  je @done
-  db $0F, $01, $CA { clac: forbid them again }
-@done:
-  xor eax, eax
-end;
-
-{ RDI = Destination, RSI = Source, RDX = Capacity. }
-function CopyString(Destination, Source: PChar; Capacity: QWord): Int64; assembler; nostackframe;
-asm
-  cmp byte ptr [SmapEnabled], 0
-  je @start
-  db $0F, $01, $CB { stac: allow user page accesses }
-@start:
-  xor ecx, ecx
-@next:
-  cmp rcx, rdx
-  je @too_long
-  mov al, byte ptr [rsi + rcx]
-  mov byte ptr [rdi + rcx], al
-  test al, al
-  jz @found
-  inc rcx
-  jmp @next
-@too_long:
-  mov rcx, -2
-@found:
-  cmp byte ptr [SmapEnabled], 0
-  je @done
-  db $0F, $01, $CA { clac: forbid them again }
-@done:
-  mov rax, rcx
 end;
 
 function ArchCopyUserMemory(Destination, Source: Pointer; Length: QWord): Int64;
@@ -172,7 +142,7 @@ begin
     Exit(0);
   Thread := CurrentThread;
   Thread^.UserCopyActive := True;
-  Result := CopyBytes(Destination, Source, Length);
+  Result := ArchUserCopyBytes(Destination, Source, Length);
   Thread^.UserCopyActive := False;
 end;
 
@@ -184,8 +154,13 @@ begin
     Exit(UserCopyTooLong);
   Thread := CurrentThread;
   Thread^.UserCopyActive := True;
-  Result := CopyString(Destination, Source, Capacity);
+  Result := ArchUserCopyString(Destination, Source, Capacity);
   Thread^.UserCopyActive := False;
+end;
+
+function IsInside(Address: QWord; StartRoutine, EndRoutine: Pointer): Boolean;
+begin
+  Result := (Address >= QWord(StartRoutine)) and (Address < QWord(EndRoutine));
 end;
 
 function RecoverFromUserCopyFault(Frame: PTrapFrame; FaultAddress: QWord): Boolean;
@@ -198,13 +173,15 @@ begin
   Thread := CurrentThread;
   if (Thread = nil) or not Thread^.UserCopyActive then
     Exit;
-  { The routines push nothing, so the stack pointer is at the return
-    address: return from the routine with UserCopyFaulted. }
+  if not IsInside(Frame^.Rip, @ArchUserCopyBytesStart, @ArchUserCopyBytesEnd) and
+     not IsInside(Frame^.Rip, @ArchUserCopyStringStart, @ArchUserCopyStringEnd) then
+    Exit;
+  { The routines push nothing, so the stack pointer is still at the
+    return address: ArchUserCopyFault returns UserCopyFaulted. }
   Frame^.Rax := QWord(UserCopyFaulted);
-  Frame^.Rip := PQWord(Frame^.Rsp)^;
-  Frame^.Rsp := Frame^.Rsp + SizeOf(QWord);
+  Frame^.Rip := QWord(@ArchUserCopyFault);
   { Leave user accesses forbidden again (clears RFLAGS.AC). }
-  Frame^.Rflags := Frame^.Rflags and not QWord($40000);
+  Frame^.Rflags := Frame^.Rflags and not FlagsAlignmentCheck;
   Result := True;
 end;
 

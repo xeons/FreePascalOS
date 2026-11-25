@@ -21,7 +21,10 @@
   processor keeps in its own registers (clock modulation): the calling
   kernel thread moves itself from processor to processor by changing
   its affinity, runs the routine on each, and gets its old affinity
-  back. Slow (a switch per processor) but simple, and only for the rare
+  back - unless its affinity was set by someone else meanwhile (taskset
+  on its process, say): each move exchanges the mask and sees what it
+  replaced, so that setting is kept and put back at the end instead.
+  Slow (a switch per processor) but simple, and only for the rare
   changes that need it. Passive level, from a kernel thread.
 }
 unit Power.EveryProcessor;
@@ -43,14 +46,20 @@ uses
   Kernel.Scheduler;
 
 { Moves the calling thread to processor Index; False if it does not
-  get there (it is not online). }
-function MoveToProcessor(Thread: PThreadControlBlock; Index: LongWord): Boolean;
+  get there (it is not online). LastSet is the mask this unit set last;
+  a different one found in its place was set by someone else, and
+  becomes Wanted, the mask to leave at the end. }
+function MoveToProcessor(Thread: PThreadControlBlock; Index: LongWord; var LastSet, Wanted: QWord): Boolean;
 const
   MaximumYields = 1000;
 var
   Yields: Integer;
+  Replaced: QWord;
 begin
-  SetThreadAffinity(Thread, QWord(1) shl Index);
+  Replaced := ExchangeThreadAffinity(Thread, QWord(1) shl Index);
+  if Replaced <> LastSet then
+    Wanted := Replaced;
+  LastSet := QWord(1) shl Index;
   Yields := 0;
   while (CurrentProcessor^.Index <> Index) and (Yields < MaximumYields) do
   begin
@@ -63,21 +72,24 @@ end;
 procedure RunOnEveryProcessor(Routine: TProcessorRoutine; Context: Pointer);
 var
   Thread: PThreadControlBlock;
-  OldMask: QWord;
+  LastSet: QWord;
+  Wanted: QWord;
   Index: LongWord;
   Processor: PProcessor;
 begin
   Thread := CurrentThread;
-  OldMask := Thread^.AffinityMask;
+  LastSet := Thread^.AffinityMask;
+  Wanted := LastSet;
   Index := 0;
   while Index < ProcessorTotal do
   begin
     Processor := ProcessorByIndex(Index);
-    if (Processor <> nil) and Processor^.IsOnline and MoveToProcessor(Thread, Index) then
+    if (Processor <> nil) and Processor^.IsOnline and MoveToProcessor(Thread, Index, LastSet, Wanted) then
       Routine(Context);
     Inc(Index);
   end;
-  SetThreadAffinity(Thread, OldMask);
+  { Set by someone else during the last routine: theirs stays. }
+  ReplaceThreadAffinity(Thread, LastSet, Wanted);
 end;
 
 end.

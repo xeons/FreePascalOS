@@ -38,7 +38,9 @@ function PsciUsesHypervisorCall: Boolean;
 function PsciVersion: LongWord;
 
 { Starts the processor with affinity ProcessorId at physical address
-  EntryPoint with Context in X0. True if the firmware accepted. }
+  EntryPoint with Context in X0. True if the firmware accepted; False
+  also when it says the processor is already on (ALREADY_ON, or
+  ON_PENDING): then it does not run EntryPoint. }
 function PsciStartProcessor(ProcessorId: QWord; EntryPoint, Context: QWord): Boolean;
 { Suspends this processor in PowerState (a standby state: it returns
   when an interrupt is pending, as WFI does). True if the firmware took
@@ -153,7 +155,7 @@ begin
   if not Available then
     Exit(False);
   Status := CallPsci(CpuOnFunction, ProcessorId, EntryPoint, Context);
-  Result := (Status = ResultSuccess) or (Status = ResultAlreadyOn);
+  Result := Status = ResultSuccess;
 end;
 
 function PsciSuspendProcessor(PowerState: LongWord): Boolean;

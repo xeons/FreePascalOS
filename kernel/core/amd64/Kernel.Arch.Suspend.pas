@@ -58,7 +58,7 @@ function ArchSaveSuspendContext(var Context: TArchSuspendContext): QWord;
 { Never returns: the saving call returns again. }
 procedure ArchResumeSuspendContext(var Context: TArchSuspendContext);
 { Where a frozen processor waits for the machine to sleep: halted, until
-  INIT ends it. }
+  INIT ends it (never returns). }
 procedure ArchParkFrozenProcessor;
 
 implementation
