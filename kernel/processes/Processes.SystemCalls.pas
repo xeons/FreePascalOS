@@ -43,6 +43,7 @@ uses
   Processes.SystemUsage,
   Processes.ClockCalls,
   Processes.PowerCalls,
+  Processes.PowerDeviceCalls,
   Processes.KeyboardCalls,
   Processes.WaitCalls,
   Processes.NotificationCalls,
@@ -780,6 +781,12 @@ begin
     CallGetProcessorPower: Result := PerformGetProcessorPower(Argument0);
     CallListThermalZones: Result := PerformListThermalZones(Argument0, Argument1);
     CallListBatteries: Result := PerformListBatteries(Argument0, Argument1);
+    { Wake sources, cooling, performance states (Processes.PowerDeviceCalls). }
+    CallSetWakeAlarm: Result := PerformSetWakeAlarm(Argument0);
+    CallListWakeSources: Result := PerformListWakeSources(Argument0, Argument1);
+    CallSetWakeSource: Result := PerformSetWakeSource(Argument0, Argument1);
+    CallListCoolingDevices: Result := PerformListCoolingDevices(Argument0, Argument1);
+    CallListPerformanceStates: Result := PerformListPerformanceStates(Argument0, Argument1);
     CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
     CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
     CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);

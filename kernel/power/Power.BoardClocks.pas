@@ -71,6 +71,7 @@ uses
   Drivers.Rp1Fan,
   Power.Performance,
   Power.ThermalZones,
+  Power.ProcessorLoad,
   Debug.Output;
 
 type
@@ -225,35 +226,6 @@ begin
   RegisterThermalZone(Zone);
 end;
 
-{ The busiest processor's busy share since the last look, in percent. }
-function BusiestPercent(var LastBusy, LastIdle: array of QWord): LongWord;
-var
-  Index: LongWord;
-  Busy: QWord;
-  Idle: QWord;
-  DeltaBusy: QWord;
-  DeltaIdle: QWord;
-  Share: LongWord;
-begin
-  Result := 0;
-  Index := 0;
-  while (Index < ProcessorTotal) and (Index <= LongWord(High(LastBusy))) do
-  begin
-    GetProcessorTimes(Index, Busy, Idle);
-    DeltaBusy := Busy - LastBusy[Index];
-    DeltaIdle := Idle - LastIdle[Index];
-    LastBusy[Index] := Busy;
-    LastIdle[Index] := Idle;
-    if DeltaBusy + DeltaIdle > 0 then
-    begin
-      Share := LongWord(DeltaBusy * 100 div (DeltaBusy + DeltaIdle));
-      if Share > Result then
-        Result := Share;
-    end;
-    Inc(Index);
-  end;
-end;
-
 procedure UpdateFan;
 var
   Running: Boolean;
@@ -289,20 +261,17 @@ end;
 
 procedure RunGovernor(Context: Pointer);
 var
-  LastBusy: array[0..MaximumProcessors - 1] of QWord;
-  LastIdle: array[0..MaximumProcessors - 1] of QWord;
+  Load: TProcessorLoadSample;
   Busiest: LongWord;
   Samples: QWord;
 begin
-  ZeroMemory(@LastBusy[0], SizeOf(LastBusy));
-  ZeroMemory(@LastIdle[0], SizeOf(LastIdle));
-  BusiestPercent(LastBusy, LastIdle);
+  StartLoadSample(Load);
   Samples := 0;
   while True do
   begin
     SleepMilliseconds(SampleMilliseconds);
     Inc(Samples);
-    Busiest := BusiestPercent(LastBusy, LastIdle);
+    Busiest := BusiestProcessorPercent(Load);
     if Busiest >= BusyPercentToRaise then
     begin
       WantsMaximum := True;

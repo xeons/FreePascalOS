@@ -27,9 +27,17 @@
     below, they are let up a step at a time again (Power.Performance:
     the lowest limit any zone asks for holds);
   - critical: two readings in a row at or above it shut the machine
-    down cleanly (Processes.Shutdown), as ACPI asks.
-  A thread ("Thermal") reads each zone as often as it says. With the
-  kernel option thermal=off the zones are only read and shown.
+    down cleanly (Processes.Shutdown), as ACPI asks;
+  - active (ACPI's _AC0, the hottest, to _AC9): at or above one, the
+    zone's routine runs the fans of that trip point and of every cooler
+    one (Io.AcpiPower, Power.Cooling); they stop again once the zone is
+    3 degrees below the trip point.
+  A thread ("Thermal") reads each zone as often as it says, and at once
+  when the firmware says the temperature changed (Notify 0x80 on the
+  zone: NotifyThermalZone); after Notify 0x81 (trip points changed) or
+  0x82 (device lists changed) the trip points are read again first.
+  With the kernel option thermal=off the zones are only read and shown
+  (fans included: they are left alone).
 }
 unit Power.ThermalZones;
 
@@ -39,6 +47,7 @@ interface
 
 const
   MaximumThermalZones = 8;
+  MaximumActiveTrips = 10;
   ThermalZoneNameCapacity = 32;
   { A trip point that is not there (Abi's ThermalTripNone). }
   NoTripPoint = Low(LongInt);
@@ -47,6 +56,11 @@ type
   PThermalZone = ^TThermalZone;
   { Reads the zone's temperature in thousandths of a degree Celsius. }
   TThermalZoneReader = function(Zone: PThermalZone; out MilliCelsius: LongInt): Boolean;
+  { Runs the fans of active trip point Level and the cooler ones, stops
+    the rest (Level = ActiveCount: all stopped). }
+  TActiveCoolingRoutine = procedure(Zone: PThermalZone; Level: LongWord);
+  { Reads the trip points again into Zone (a copy). }
+  TTripPointReader = procedure(Zone: PThermalZone);
 
   TThermalZone = record
     Name: array[0..ThermalZoneNameCapacity - 1] of Char;
@@ -57,6 +71,15 @@ type
     PassiveMilliCelsius: LongInt;
     CriticalMilliCelsius: LongInt;
     PollMilliseconds: LongWord;
+    ActiveCount: Integer;
+    ActiveMilliCelsius: array[0..MaximumActiveTrips - 1] of LongInt;
+    SetActive: TActiveCoolingRoutine;
+    ReadTrips: TTripPointReader;
+    { Kept by the policy: the active trip point in force (ActiveCount:
+      none), whether the trip points are to be read again. }
+    ActiveLevel: LongWord;
+    ActiveDriven: Boolean;
+    TripsChanged: Boolean;
     { Kept by the policy: the last reading (NoTripPoint before the
       first), the limit the zone asks for, the critical readings in a
       row, and when it is read next (clock nanoseconds). }
@@ -74,6 +97,11 @@ function ThermalZoneCount: Integer;
 { A copy of zone Index; False past the last. }
 function GetThermalZone(Index: Integer; out Zone: TThermalZone): Boolean;
 procedure WriteThermalSummary;
+{ The firmware's Notify on a zone (any level, AML's lock may be held):
+  the zone whose context is Context is read soon. }
+procedure NotifyThermalZone(Context: Pointer; Value: QWord);
+{ The number of the zone whose context is Context, or -1. }
+function FindThermalZone(Context: Pointer): Integer;
 
 implementation
 
@@ -85,6 +113,7 @@ uses
   Kernel.Clock,
   Kernel.Scheduler,
   Kernel.Options,
+  Kernel.Events,
   Processes.Thread,
   Processes.Shutdown,
   Power.Performance,
@@ -94,6 +123,10 @@ const
   LimitStepPercent = 10;
   LowestLimitPercent = 30;
   PassiveHysteresisMilliCelsius = 3000;
+  ActiveHysteresisMilliCelsius = 3000;
+  NotifyTemperatureChanged = $80;
+  NotifyTripPointsChanged = $81;
+  NotifyDeviceListsChanged = $82;
   CriticalReadingsToShutDown = 2;
   ShortestPollMilliseconds = 100;
   DefaultPollMilliseconds = 10000;
@@ -109,6 +142,7 @@ var
   PolicyStarted: Boolean = False;
   MonitorOnly: Boolean = False;
   ShutdownRequested: Boolean = False;
+  PolicyWake: TEvent;
 
 procedure WriteMilliCelsius(Value: LongInt);
 begin
@@ -158,6 +192,48 @@ begin
   end;
 end;
 
+{ The active trip point in force after a reading: the hottest one
+  reached, kept until 3 degrees below it. }
+function NextActiveLevel(constref Zone: TThermalZone; Temperature: LongInt): LongWord;
+var
+  Level: Integer;
+begin
+  Result := LongWord(Zone.ActiveCount);
+  for Level := 0 to Zone.ActiveCount - 1 do
+    if Temperature >= Zone.ActiveMilliCelsius[Level] then
+    begin
+      Result := LongWord(Level);
+      Break;
+    end;
+  if Zone.ActiveDriven and (Zone.ActiveLevel < Result) and (Zone.ActiveLevel < LongWord(Zone.ActiveCount)) and
+     (Temperature >= Zone.ActiveMilliCelsius[Zone.ActiveLevel] - ActiveHysteresisMilliCelsius) then
+    Result := Zone.ActiveLevel;
+end;
+
+{ After Notify 0x81: the zone's trip points read again. }
+procedure RefreshTrips(Index: Integer);
+var
+  PreviousLevel: TPriorityLevel;
+  Zone: TThermalZone;
+begin
+  PreviousLevel := AcquireSpinLock(Lock);
+  Zone := Zones[Index];
+  Zones[Index].TripsChanged := False;
+  ReleaseSpinLock(Lock, PreviousLevel);
+  if not Assigned(Zone.ReadTrips) then
+    Exit;
+  Zone.ReadTrips(@Zone);
+  PreviousLevel := AcquireSpinLock(Lock);
+  Zones[Index].PassiveMilliCelsius := Zone.PassiveMilliCelsius;
+  Zones[Index].CriticalMilliCelsius := Zone.CriticalMilliCelsius;
+  Zones[Index].ActiveCount := Zone.ActiveCount;
+  Zones[Index].ActiveMilliCelsius := Zone.ActiveMilliCelsius;
+  { The fans are set again by the next reading. }
+  Zones[Index].ActiveDriven := False;
+  ReleaseSpinLock(Lock, PreviousLevel);
+  ReportZone(Zones[Index], 'trip points read again');
+end;
+
 { Reads zone Index if it is due; returns whether it was read. }
 procedure ReadZone(Index: Integer; Now: QWord);
 var
@@ -166,13 +242,18 @@ var
   Temperature: LongInt;
   Limit: LongWord;
   Critical: Boolean;
+  Active: LongWord;
+  ActiveChanged: Boolean;
 begin
+  if Zones[Index].TripsChanged then
+    RefreshTrips(Index);
   PreviousLevel := AcquireSpinLock(Lock);
   Zone := Zones[Index];
   ReleaseSpinLock(Lock, PreviousLevel);
   if Now < Zone.NextReadTime then
     Exit;
   Critical := False;
+  ActiveChanged := False;
   if Zone.Read(@Zones[Index], Temperature) then
   begin
     Limit := NextLimit(Zone, Temperature);
@@ -184,6 +265,14 @@ begin
     Zone.TemperatureMilliCelsius := Temperature;
     if MonitorOnly then
       Limit := 100;
+    Active := NextActiveLevel(Zone, Temperature);
+    ActiveChanged := Assigned(Zone.SetActive) and not MonitorOnly and (Zone.ActiveCount > 0) and
+      (not Zone.ActiveDriven or (Active <> Zone.ActiveLevel));
+    if ActiveChanged then
+    begin
+      Zone.ActiveLevel := Active;
+      Zone.ActiveDriven := True;
+    end;
     if (Limit < 100) and (Zone.LimitPercent = 100) then
       ReportZone(Zone, 'above its passive trip point, slowing the processors')
     else if (Limit = 100) and (Zone.LimitPercent < 100) then
@@ -194,8 +283,18 @@ begin
   Zones[Index].TemperatureMilliCelsius := Zone.TemperatureMilliCelsius;
   Zones[Index].LimitPercent := Zone.LimitPercent;
   Zones[Index].CriticalReadings := Zone.CriticalReadings;
+  Zones[Index].ActiveLevel := Zone.ActiveLevel;
+  Zones[Index].ActiveDriven := Zone.ActiveDriven;
   Zones[Index].NextReadTime := Now + QWord(Zone.PollMilliseconds) * NanosecondsPerMillisecondHere;
   ReleaseSpinLock(Lock, PreviousLevel);
+  if ActiveChanged then
+  begin
+    if Zone.ActiveLevel < LongWord(Zone.ActiveCount) then
+      ReportZone(Zone, 'at an active trip point, fans on')
+    else
+      ReportZone(Zone, 'below its active trip points, fans off');
+    Zone.SetActive(@Zones[Index], Zone.ActiveLevel);
+  end;
   if Critical and not MonitorOnly and not ShutdownRequested then
   begin
     ShutdownRequested := True;
@@ -249,7 +348,8 @@ begin
       Wait := ShortestPollMilliseconds;
     if Wait < ShortestPollMilliseconds then
       Wait := ShortestPollMilliseconds;
-    SleepMilliseconds(Wait);
+    { A Notify ends the wait early. }
+    WaitForEventWithOptions(PolicyWake, Wait, False);
   end;
 end;
 
@@ -274,6 +374,9 @@ begin
     Zones[ZoneCount].LimitPercent := 100;
     Zones[ZoneCount].CriticalReadings := 0;
     Zones[ZoneCount].NextReadTime := 0;
+    Zones[ZoneCount].ActiveLevel := LongWord(Zones[ZoneCount].ActiveCount);
+    Zones[ZoneCount].ActiveDriven := False;
+    Zones[ZoneCount].TripsChanged := False;
     if Zones[ZoneCount].PollMilliseconds = 0 then
       Zones[ZoneCount].PollMilliseconds := DefaultPollMilliseconds;
     if Zones[ZoneCount].PollMilliseconds < ShortestPollMilliseconds then
@@ -282,7 +385,10 @@ begin
   end;
   StartPolicy := Result and not PolicyStarted;
   if StartPolicy then
+  begin
+    InitializeEvent(PolicyWake, EventKindSynchronization, False);
     PolicyStarted := True;
+  end;
   ReleaseSpinLock(Lock, PreviousLevel);
   if not StartPolicy then
     Exit;
@@ -352,6 +458,37 @@ begin
     DebugWriteLine(' ms');
     DebugEndMessage;
   end;
+end;
+
+function FindThermalZone(Context: Pointer): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to ZoneCount - 1 do
+    if Zones[Index].Context = Context then
+      Exit(Index);
+  Result := -1;
+end;
+
+procedure NotifyThermalZone(Context: Pointer; Value: QWord);
+var
+  Index: Integer;
+begin
+  Index := FindThermalZone(Context);
+  if (Index < 0) or not PolicyStarted then
+    Exit;
+  case Value of
+    NotifyTemperatureChanged:
+      Zones[Index].NextReadTime := 0;
+    NotifyTripPointsChanged, NotifyDeviceListsChanged:
+      begin
+        Zones[Index].TripsChanged := True;
+        Zones[Index].NextReadTime := 0;
+      end;
+  else
+    Exit;
+  end;
+  SignalEvent(PolicyWake);
 end;
 
 end.

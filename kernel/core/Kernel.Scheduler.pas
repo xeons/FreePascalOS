@@ -198,6 +198,7 @@ implementation
 
 uses
   Kernel.ProcessorPower,
+  Kernel.BroadcastTimer,
   Runtime.LinkedList,
   Runtime.Memory,
   Runtime.Text,
@@ -562,6 +563,9 @@ begin
   { Suspend to RAM freezes processors here, where they hold no spin lock
     (the dispatch interrupt only runs below dispatch level). }
   FreezeThisProcessorIfRequested;
+  { A processor whose timer stops while idle may have asked the boot
+    processor's clock interrupt to come earlier. }
+  ServeBroadcastRequest;
   { Work handed over by interrupt handlers may ready threads, so it runs
     before the next thread is chosen. }
   RunDeferredCalls;

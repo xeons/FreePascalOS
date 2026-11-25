@@ -36,13 +36,26 @@ const
   IdleMethodHalt = 0;
   IdleMethodMonitorWait = 1;
   IdleMethodFirmwareSuspend = 2;
+  { Reading an I/O port enters it (ACPI's older C-states). }
+  IdleMethodPortRead = 3;
+
+  { TIdleState.Flags. }
+  { The processor's own clock interrupt (local APIC timer, generic
+    timer) stops in it: another processor wakes it when it is due
+    (Kernel.BroadcastTimer). }
+  IdleStateStopsTimer = $01;
+  { The processor loses its registers (PSCI power-down): it comes back
+    through an entry point and its saved state. }
+  IdleStateLosesContext = $02;
 
 type
   TIdleState = record
     Name: array[0..IdleStateNameCapacity - 1] of Char;
     Method: LongWord;
-    { The MWAIT hint or the PSCI power state. }
+    { The MWAIT hint, the PSCI power state or the port. }
     Parameter: LongWord;
+    { IdleState* flags. }
+    Flags: LongWord;
     ExitLatencyNanoseconds: QWord;
     { Going into it pays off only for an idle stretch at least this
       long (the time to the processor's next clock interrupt). }

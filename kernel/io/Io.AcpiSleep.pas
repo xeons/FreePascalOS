@@ -70,6 +70,7 @@ uses
   Firmware.AcpiSleepStates,
   Io.AcpiHardware,
   Io.AcpiNamespace,
+  Io.AcpiWake,
   Io.Watchdog,
   Debug.Output;
 
@@ -176,12 +177,16 @@ begin
   begin
     SuspendThroughHal := HalOffersSuspendToRam;
     if not SuspendThroughHal then
-      Report('the firmware offers no suspend to RAM');
+      Report('the firmware offers no suspend to RAM')
+    else
+      ArmWakeSources(SuspendToRam, False);
     Exit(SuspendThroughHal);
   end;
   LockAmlInterpreter;
   if SleepTypeOf(SuspendToRam, SuspendTypeA, SuspendTypeB) then
   begin
+    { The wake devices are told before \_PTS, as ACPI orders. }
+    ArmWakeSources(SuspendToRam, True);
     PrepareToSleep(SuspendToRam);
     Result := True;
   end
@@ -200,7 +205,8 @@ begin
   end;
   if not SetFirmwareWakingVector(LongWord(WakeVector)) then
     Exit;
-  { The wake status cleared; the power button stays a wake source. }
+  { Only the wake sources' events enabled, and the wake status cleared. }
+  ApplyWakeEnables;
   ClearPm1Status(Pm1StatusBits);
   WriteSleepControl(SuspendTypeA, SuspendTypeB);
   { The machine sleeps within a moment; waking comes back through the
@@ -215,13 +221,20 @@ var
   Ignored: TAmlValue;
 begin
   if SuspendThroughHal then
+  begin
+    NoteWakeReason(False);
+    DisarmWakeSources(SuspendToRam, False);
     Exit;
+  end;
+  { What woke it, before the status is cleared. }
+  NoteWakeReason(True);
   EnableAcpiMode;
   ClearPm1Status(Pm1StatusBits);
   LockAmlInterpreter;
   Argument := MakeInteger(SuspendToRam);
   if EvaluatePath(nil, '\_WAK', @Argument, 1, Ignored) then
     ReleaseValue(Ignored);
+  DisarmWakeSources(SuspendToRam, True);
   UnlockAmlInterpreter;
 end;
 

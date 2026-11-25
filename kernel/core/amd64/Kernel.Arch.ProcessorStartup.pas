@@ -74,7 +74,9 @@ uses
   Kernel.Arch.InterruptTable,
   Kernel.Arch.ProcessorBlock,
   Kernel.Arch.SystemCallEntry,
-  Hal.Platform;
+  Kernel.Arch.MemoryTypeRanges,
+  Hal.Platform,
+  Debug.Output;
 
 var
   ProcessorTrampolineStart: Byte; external name 'ProcessorTrampolineStart';
@@ -168,6 +170,7 @@ begin
   StartupField(EferOffset)^ := ReadModelSpecificRegister(MsrExtendedFeatureEnable) and
     not EferLongModeActive;
   BootPageAttributes := ReadModelSpecificRegister(MsrPageAttributeTable);
+  SaveBootMemoryTypeRanges;
   Result := True;
 end;
 
@@ -193,6 +196,21 @@ begin
   Result := True;
 end;
 
+{ The processor's MTRRs made the boot processor's (said in the log when
+  they differed: cleared after waking, or set otherwise by the
+  firmware). }
+procedure SynchronizeMemoryTypes(Processor: PProcessor);
+begin
+  if not SynchronizeMemoryTypeRanges then
+    Exit;
+  DebugBeginMessage;
+  DebugWriteTag('smp');
+  DebugWrite('processor ');
+  DebugWriteDecimal(Processor^.Index);
+  DebugWriteLine(': memory type ranges set to the boot processor''s');
+  DebugEndMessage;
+end;
+
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 begin
   WriteControlRegister3(KernelPageTableRoot);
@@ -202,6 +220,7 @@ begin
   ArchSetProcessorBlock(Processor);
   LoadInterruptTableOnThisProcessor;
   WriteModelSpecificRegister(MsrPageAttributeTable, BootPageAttributes);
+  SynchronizeMemoryTypes(Processor);
   EnableSystemCallsOnThisProcessor;
   HalInitializeSecondaryProcessor;
 end;
@@ -213,6 +232,7 @@ begin
   ArchSetProcessorBlock(Processor);
   LoadInterruptTableOnThisProcessor;
   WriteModelSpecificRegister(MsrPageAttributeTable, BootPageAttributes);
+  SynchronizeMemoryTypes(Processor);
   EnableSystemCallsOnThisProcessor;
 end;
 

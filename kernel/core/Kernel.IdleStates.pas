@@ -47,6 +47,19 @@
   if the table changed meanwhile, so it never enters a state half
   written. How often each processor entered each state is counted in
   its block (IdleStateEntries) for the power information call.
+
+  States whose clock interrupt stops (IdleStateStopsTimer: deep C-states
+  without ARAT, PSCI states that stop the timer or power down) are
+  entered only by a processor the boot processor can wake on time
+  (Kernel.BroadcastTimer), never by the boot processor itself. Its timer
+  is stale afterwards (its clock interrupt time reads NeverDue): the
+  next round of the idle loop, or the switch to a thread, sets it again
+  (RearmClockInterrupt). The kernel option idlebroadcast=force treats
+  every state of the other processors as one whose timer stops, and
+  really leaves the timer at its longest (4 s) while they wait, so the
+  broadcast is all that wakes them on time: the test of it on machines
+  without such states (QEMU); idlebroadcast=off keeps to states whose
+  timer runs.
 }
 unit Kernel.IdleStates;
 
@@ -70,6 +83,8 @@ function GetIdleState(Index: Integer; out State: TIdleState): Boolean;
   halt, stays). }
 procedure SetFirmwareIdleStates(constref States: array of TIdleState; Count: Integer);
 procedure WriteIdleStates;
+{ Entries into states whose timer stops, on every processor. }
+function BroadcastIdleEntryCount: QWord;
 
 implementation
 
@@ -83,6 +98,10 @@ uses
   Kernel.ReadyQueues,
   Kernel.Clock,
   Kernel.Arch.IdleStates,
+  Kernel.BroadcastTimer,
+  Kernel.Options,
+  Runtime.Text,
+  Hal.Platform,
   Debug.Output;
 
 var
@@ -92,9 +111,28 @@ var
     under ChangeLock). }
   TableSequence: PtrUInt = 0;
   ChangeLock: TSpinLock;
+  ForceBroadcast: Boolean = False;
+  BroadcastOff: Boolean = False;
+  BroadcastEntries: Int64 = 0;
+
+function BroadcastIdleEntryCount: QWord;
+begin
+  Result := QWord(AtomicFetchAndAdd(BroadcastEntries, 0));
+end;
+
+procedure ReadBroadcastOption;
+var
+  Value: array[0..15] of Char;
+begin
+  if not GetKernelOptionValue('idlebroadcast', @Value[0], SizeOf(Value)) then
+    Exit;
+  ForceBroadcast := TextIsEqual(@Value[0], 'force');
+  BroadcastOff := TextIsEqual(@Value[0], 'off');
+end;
 
 procedure InitializeIdleStates;
 begin
+  ReadBroadcastOption;
   InitializeSpinLock(ChangeLock);
   StateCount := 1;
   StateCount := PtrUInt(ArchDiscoverIdleStates(States));
@@ -102,8 +140,9 @@ begin
     StateCount := 1;
 end;
 
-{ The deepest state worth entering for a stay of Expected nanoseconds. }
-function ChooseState(Expected: QWord): Integer;
+{ The deepest state worth entering for a stay of Expected nanoseconds
+  (only states whose timer runs, unless TimerMayStop). }
+function ChooseState(Expected: QWord; TimerMayStop: Boolean): Integer;
 var
   Count: Integer;
   Index: Integer;
@@ -113,7 +152,8 @@ begin
   Index := 1;
   while Index < Count do
   begin
-    if States[Index].TargetResidencyNanoseconds <= Expected then
+    if (States[Index].TargetResidencyNanoseconds <= Expected) and
+       (TimerMayStop or ((States[Index].Flags and IdleStateStopsTimer) = 0)) then
       Result := Index;
     Inc(Index);
   end;
@@ -121,7 +161,7 @@ end;
 
 { A consistent copy of the state worth entering for a stay of Expected
   nanoseconds, and its number. }
-function TakeState(Expected: QWord; out State: TIdleState): Integer;
+function TakeState(Expected: QWord; TimerMayStop: Boolean; out State: TIdleState): Integer;
 var
   Sequence: PtrUInt;
 begin
@@ -132,7 +172,7 @@ begin
       CpuRelax;
       Continue;
     end;
-    Result := ChooseState(Expected);
+    Result := ChooseState(Expected, TimerMayStop);
     State := States[Result];
     FullMemoryBarrier;
   until AtomicLoad(TableSequence) = Sequence;
@@ -146,6 +186,8 @@ var
   Expected: QWord;
   Chosen: Integer;
   State: TIdleState;
+  TimerMayStop: Boolean;
+  StopsTimer: Boolean;
 begin
   { The idle thread never leaves its processor. }
   Processor := CurrentProcessor;
@@ -156,16 +198,31 @@ begin
     EnableInterrupts;
     Exit;
   end;
+  { Its timer stopped in the last wait: set it again first. }
+  if Processor^.ClockInterruptTime = NeverDue then
+    RearmClockInterrupt;
   Now := ClockNanoseconds;
   Due := Processor^.ClockInterruptTime;
   if Due > Now then
     Expected := Due - Now
   else
     Expected := 0;
-  Chosen := TakeState(Expected, State);
+  TimerMayStop := not BroadcastOff and BroadcastIsAvailable(Processor);
+  Chosen := TakeState(Expected, TimerMayStop, State);
   Inc(Processor^.IdleStateEntries[Chosen]);
+  StopsTimer := TimerMayStop and (ForceBroadcast or ((State.Flags and IdleStateStopsTimer) <> 0));
+  if StopsTimer then
+  begin
+    AtomicIncrement(BroadcastEntries);
+    EnterBroadcastIdle(Processor);
+    { The test: as if the timer had stopped. }
+    if ForceBroadcast then
+      HalSetClockInterruptIn(NeverDue);
+  end;
   { Enables interrupts as it waits. }
   ArchEnterIdleState(State, Processor^.Index);
+  if StopsTimer then
+    LeaveBroadcastIdle(Processor);
 end;
 
 function IdleStateCount: Integer;

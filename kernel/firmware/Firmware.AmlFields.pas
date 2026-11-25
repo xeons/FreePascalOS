@@ -125,7 +125,7 @@ begin
   Value := 0;
   if (Region = nil) or (Region^.Kind <> NodeRegion) or not AccessIsInRegion(Region, ByteOffset, Width) then
     Exit(False);
-  if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration]) then
+  if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration, AmlSpaceEmbeddedController]) then
     { Spaces the kernel has no handler for read as zeros. }
     Exit(True);
   Result := AmlHost.ReadSpace(Region^.Space, RegionAddress(Region, ByteOffset), Width * 8, Value);
@@ -135,7 +135,7 @@ function WriteRegion(Region: PAmlNode; ByteOffset: QWord; Width: Byte; Value: QW
 begin
   if (Region = nil) or (Region^.Kind <> NodeRegion) or not AccessIsInRegion(Region, ByteOffset, Width) then
     Exit(False);
-  if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration]) then
+  if not (Region^.Space in [AmlSpaceSystemMemory, AmlSpaceSystemIo, AmlSpacePciConfiguration, AmlSpaceEmbeddedController]) then
     Exit(True);
   Result := AmlHost.WriteSpace(Region^.Space, RegionAddress(Region, ByteOffset), Width * 8, Value);
 end;

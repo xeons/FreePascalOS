@@ -49,6 +49,11 @@ function ReadRealTimeClock: TUnixTime;
 procedure WriteRealTimeClock(Time: TUnixTime);
 { True if a clock that keeps time (a PL031) was found. }
 function RealTimeClockIsKept: Boolean;
+{ The PL031's alarm at Time (0: off); False without one, or for a time
+  past or beyond its 32-bit count. }
+function SetRealTimeClockAlarm(Time: TUnixTime): Boolean;
+{ True if the alarm went off since the last call. }
+function RealTimeClockAlarmFired: Boolean;
 
 implementation
 
@@ -94,6 +99,25 @@ end;
 function RealTimeClockIsKept: Boolean;
 begin
   Result := FindPl031;
+end;
+
+function SetRealTimeClockAlarm(Time: TUnixTime): Boolean;
+begin
+  if not FindPl031 then
+    Exit(False);
+  if Time = 0 then
+  begin
+    SetPl031Alarm(0);
+    Exit(True);
+  end;
+  Result := (Time > TUnixTime(ReadPl031Seconds)) and (Time <= High(LongWord));
+  if Result then
+    SetPl031Alarm(QWord(Time));
+end;
+
+function RealTimeClockAlarmFired: Boolean;
+begin
+  Result := FindPl031 and Pl031AlarmFired;
 end;
 
 end.

@@ -27,15 +27,23 @@
   the namespace is loaded, Io.AcpiProcessorIdle) gives the firmware's
   own hints and latencies.
 
+  ACPI's _CST may also list states entered by reading an I/O port (the
+  chipset's P_LVLx registers, older machines): read with interrupts
+  disabled, the chipset ends the state at the next interrupt, which is
+  taken once they are enabled again.
+
   Deeper states are only used where it is safe:
   - not under a hypervisor (it decides itself what a halt is; QEMU's
     emulation reports MONITOR but its MWAIT does not sleep with several
-    processors), unless idle=mwait asks for them;
-  - the local APIC timer keeps running in deep states (ARAT, CPUID 6
-    EAX bit 2), since it is each processor's clock interrupt;
+    processors, and a port read there only exits to it), unless
+    idle=mwait (or idle=port for port states) asks for them;
   - the time stamp counter is invariant (it is the kernel's clock, and
     stops in deep states otherwise);
   - CPUID 5 states its monitor line size and that interrupts end MWAIT.
+  Where the local APIC timer does not keep running in deep states (no
+  ARAT, CPUID 6 EAX bit 2) every state deeper than C1 is marked as
+  stopping it (IdleStateStopsTimer): the boot processor's clock then
+  wakes the processors in them (Kernel.BroadcastTimer).
   idle=halt keeps to HLT; maxcstate=N stops at C(N).
 }
 unit Kernel.Arch.IdleStates;
@@ -56,10 +64,14 @@ function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
   the wait itself, so one that came since the caller disabled them
   ends it at once (and is taken on return). }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
-{ A state the firmware lists (ACPI _CST: its C-state type, MWAIT hint
-  and exit latency) as one of ours; False if it may not be used. }
-function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+{ A state the firmware lists (ACPI _CST: its C-state type, how it is
+  entered - AcpiIdleEntry* - with its MWAIT hint or port, and its exit
+  latency) as one of ours; False if it may not be used. }
+function ArchIdleStateFromFirmware(CStateType, Entry, Parameter, LatencyMicroseconds: LongWord;
   out State: TIdleState): Boolean;
+{ The capabilities to tell the firmware in _PDC/_OSC (Intel's processor
+  driver capability bits). }
+function ArchProcessorCapabilities: LongWord;
 
 implementation
 
@@ -68,6 +80,7 @@ uses
   Runtime.Memory,
   Kernel.Arch.Cpu,
   Kernel.Options,
+  Hal.PortIo,
   Hal.TimeStampClock;
 
 const
@@ -99,7 +112,9 @@ type
 var
   MonitorLines: array[0..63] of TMonitorLine;
   MonitorWaitUsable: Boolean = False;
-  DeepestAllowed: LongWord = 0;
+  DeepestAllowed: LongWord = 7;
+  TimerKeepsRunning: Boolean = False;
+  PortStatesUsable: Boolean = False;
 
 { Called with interrupts disabled: STI takes effect only after the next
   instruction, so MWAIT starts before any interrupt can be taken, and a
@@ -154,12 +169,52 @@ begin
   if (Registers.Ecx and (MonitorWaitExtensionsBit or MonitorWaitInterruptBreakBit)) <>
      (MonitorWaitExtensionsBit or MonitorWaitInterruptBreakBit) then
     Exit;
-  ExecuteCpuid(CpuidThermalPower, 0, Registers);
-  if (Registers.Eax and AlwaysRunningApicTimerBit) = 0 then
-    Exit;
   if not TimeStampCounterIsInvariant then
     Exit;
   Result := True;
+end;
+
+{ Things the deeper states need to know, whichever way they come. }
+procedure ExamineProcessor;
+var
+  Registers: TCpuidResult;
+  Hypervisor: Boolean;
+begin
+  ExecuteCpuid(0, 0, Registers);
+  if Registers.Eax >= CpuidThermalPower then
+  begin
+    ExecuteCpuid(CpuidThermalPower, 0, Registers);
+    TimerKeepsRunning := (Registers.Eax and AlwaysRunningApicTimerBit) <> 0;
+  end;
+  ExecuteCpuid(CpuidFeatures, 0, Registers);
+  Hypervisor := (Registers.Ecx and FeatureHypervisorBit) <> 0;
+  PortStatesUsable := not OptionIs('idle', 'halt') and TimeStampCounterIsInvariant and
+    (not Hypervisor or OptionIs('idle', 'port'));
+end;
+
+function TimerFlags: LongWord;
+begin
+  if TimerKeepsRunning then
+    Result := 0
+  else
+    Result := IdleStateStopsTimer;
+end;
+
+function ArchProcessorCapabilities: LongWord;
+const
+  CapabilityPerformanceFixedHardware = $0001;
+  CapabilityHaltC1 = $0002;
+  CapabilityMultiprocessorC1 = $0008;
+  CapabilityMultiprocessorC2C3 = $0010;
+  CapabilitySoftwareCoordinatedP = $0020;
+  CapabilitySoftwareCoordinatedC = $0040;
+  CapabilityC1FixedHardware = $0100;
+  CapabilityC2C3FixedHardware = $0200;
+begin
+  Result := CapabilityPerformanceFixedHardware or CapabilityHaltC1 or CapabilityMultiprocessorC1 or
+    CapabilityMultiprocessorC2C3 or CapabilitySoftwareCoordinatedP or CapabilitySoftwareCoordinatedC;
+  if MonitorWaitUsable then
+    Result := Result or CapabilityC1FixedHardware or CapabilityC2C3FixedHardware;
 end;
 
 function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
@@ -175,12 +230,13 @@ begin
   States[0].ExitLatencyNanoseconds := NanosecondsPerMicrosecond;
   Result := 1;
 
-  MonitorWaitUsable := DecideMonitorWait;
-  if not MonitorWaitUsable then
-    Exit;
+  ExamineProcessor;
   DeepestAllowed := DeepestMonitorWaitState;
   if GetKernelOptionNumber('maxcstate', Limit) and (Limit < DeepestAllowed) then
     DeepestAllowed := LongWord(Limit);
+  MonitorWaitUsable := DecideMonitorWait;
+  if not MonitorWaitUsable then
+    Exit;
 
   ExecuteCpuid(CpuidMonitorWait, 0, Registers);
   Number := 2;
@@ -193,6 +249,7 @@ begin
       NameState(States[Result], Number);
       States[Result].Method := IdleMethodMonitorWait;
       States[Result].Parameter := (Number - 1) shl 4;
+      States[Result].Flags := TimerFlags;
       States[Result].ExitLatencyNanoseconds := QWord(TypicalExitLatency[Number]) * NanosecondsPerMicrosecond;
       States[Result].TargetResidencyNanoseconds := States[Result].ExitLatencyNanoseconds * ResidencyFactor;
       Inc(Result);
@@ -203,18 +260,47 @@ end;
 
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
 begin
-  if State.Method = IdleMethodMonitorWait then
-    EnableInterruptsMonitorAndWait(@MonitorLines[ProcessorIndex and High(MonitorLines)], State.Parameter)
+  case State.Method of
+    IdleMethodMonitorWait:
+      EnableInterruptsMonitorAndWait(@MonitorLines[ProcessorIndex and High(MonitorLines)], State.Parameter);
+    IdleMethodPortRead:
+      begin
+        { The read enters the state; an interrupt (still pending, as
+          they are disabled) ends it. }
+        ReadPortByte(Word(State.Parameter));
+        EnableInterrupts;
+      end;
   else
     EnableInterruptsAndHalt;
+  end;
 end;
 
-function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
+function PortStateFromFirmware(CStateType, Port, LatencyMicroseconds: LongWord; out State: TIdleState): Boolean;
+begin
+  Result := PortStatesUsable and (CStateType >= 2) and (CStateType <= DeepestAllowed) and (Port <= $FFFF);
+  if not Result then
+    Exit;
+  CopyText(@State.Name[0], 'Cn (port)', IdleStateNameCapacity);
+  State.Name[1] := Char(Ord('0') + CStateType);
+  State.Method := IdleMethodPortRead;
+  State.Parameter := Port;
+  State.Flags := TimerFlags;
+  State.ExitLatencyNanoseconds := QWord(LatencyMicroseconds) * NanosecondsPerMicrosecond;
+  State.TargetResidencyNanoseconds := State.ExitLatencyNanoseconds * ResidencyFactor;
+end;
+
+function ArchIdleStateFromFirmware(CStateType, Entry, Parameter, LatencyMicroseconds: LongWord;
   out State: TIdleState): Boolean;
+const
+  EntryPortRead = 1;
 var
   Number: LongWord;
+  Hint: LongWord;
 begin
   ZeroMemory(@State, SizeOf(State));
+  if Entry = EntryPortRead then
+    Exit(PortStateFromFirmware(CStateType, Parameter, LatencyMicroseconds, State));
+  Hint := Parameter;
   Number := ((Hint shr 4) and $F) + 1;
   Result := MonitorWaitUsable and (CStateType >= 2) and (Number >= 2) and (Number <= DeepestAllowed);
   if not Result then
@@ -228,6 +314,7 @@ begin
   State.Name[9] := #0;
   State.Method := IdleMethodMonitorWait;
   State.Parameter := Hint;
+  State.Flags := TimerFlags;
   State.ExitLatencyNanoseconds := QWord(LatencyMicroseconds) * NanosecondsPerMicrosecond;
   State.TargetResidencyNanoseconds := State.ExitLatencyNanoseconds * ResidencyFactor;
 end;

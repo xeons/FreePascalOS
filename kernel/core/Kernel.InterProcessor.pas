@@ -104,6 +104,7 @@ uses
   Kernel.PriorityLevel,
   Kernel.SpinLock,
   Kernel.Interrupts,
+  Kernel.BroadcastTimer,
   Kernel.Panic;
 
 const
@@ -235,6 +236,9 @@ end;
 
 procedure RequestDispatchOnProcessor(Processor: PProcessor);
 begin
+  { Powered down (idle=powerdown-test): starting it again is the wake. }
+  if WakePoweredDownProcessor(Processor) then
+    Exit;
   HalRequestDispatchOn(Processor^.ApicId);
 end;
 

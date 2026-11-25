@@ -23,6 +23,13 @@
   keeps time by counting clock ticks. The clock is assumed to hold UTC.
   Setting the date and time (CallSetWallClock) writes it back, so the
   next boot starts from it.
+
+  The alarm (a wake source from suspend to RAM through ACPI's RTC
+  event): the seconds, minutes and hours alarm registers, matched every
+  day, so an alarm must be due within 24 hours (no day of month alarm
+  register is assumed). Setting it turns on the alarm interrupt enable
+  (AIE) in status register B; status register C says (and clears) that
+  it fired.
 }
 unit Hal.RealTimeClock;
 
@@ -38,6 +45,11 @@ function ReadRealTimeClock: TUnixTime;
 { Sets the clock to Time (whole seconds, UTC), in the clock's own
   format (BCD or binary, 12 or 24 hours, as status register B says). }
 procedure WriteRealTimeClock(Time: TUnixTime);
+{ Sets the alarm for Time (UTC, within a day from now by the clock's own
+  reading); 0 turns it off. False if Time is past or too far. }
+function SetRealTimeClockAlarm(Time: TUnixTime): Boolean;
+{ True if the alarm went off since the last call (reading clears it). }
+function RealTimeClockAlarmFired: Boolean;
 
 implementation
 
@@ -58,7 +70,14 @@ const
   RegisterYear = $09;
   RegisterStatusA = $0A;
   RegisterStatusB = $0B;
+  RegisterStatusC = $0C;
   RegisterCentury = $32;
+  RegisterSecondsAlarm = $01;
+  RegisterMinutesAlarm = $03;
+  RegisterHoursAlarm = $05;
+  StatusBAlarmInterrupt = $20;
+  StatusCAlarmFlag = $20;
+  SecondsPerDay = 86400;
 
   StatusAUpdateInProgress = $80;
   { Holds the clock still while it is being set. }
@@ -240,6 +259,60 @@ begin
   WriteCmosRegister(RegisterYear, Reading.Year);
   WriteCmosRegister(RegisterCentury, Reading.Century);
   WriteCmosRegister(RegisterStatusB, StatusB and not StatusBSetClock);
+end;
+
+{ A value for a register in the clock's own format. }
+function ClockFormat(Value: Byte; StatusB: Byte): Byte;
+begin
+  if (StatusB and StatusBBinaryMode) = 0 then
+    Result := BinaryToBcd(Value)
+  else
+    Result := Value;
+end;
+
+function SetRealTimeClockAlarm(Time: TUnixTime): Boolean;
+var
+  Now: TUnixTime;
+  Year, Month, Day, Hour, Minute, Second: LongInt;
+  StatusB: Byte;
+  IsPm: Boolean;
+  HourValue: Byte;
+begin
+  StatusB := ReadCmosRegister(RegisterStatusB);
+  if Time = 0 then
+  begin
+    WriteCmosRegister(RegisterStatusB, StatusB and not StatusBAlarmInterrupt);
+    ReadCmosRegister(RegisterStatusC);
+    Exit(True);
+  end;
+  Now := ReadRealTimeClock;
+  if (Now = 0) or (Time <= Now) or (Time - Now >= SecondsPerDay) then
+    Exit(False);
+  UnixTimeToCalendar(Time, Year, Month, Day, Hour, Minute, Second);
+  IsPm := False;
+  if (StatusB and StatusB24HourMode) = 0 then
+  begin
+    IsPm := Hour >= 12;
+    Hour := Hour mod 12;
+    if Hour = 0 then
+      Hour := 12;
+  end;
+  HourValue := ClockFormat(Byte(Hour), StatusB);
+  if IsPm then
+    HourValue := HourValue or HourPmFlag;
+  WriteCmosRegister(RegisterStatusB, StatusB and not StatusBAlarmInterrupt);
+  WriteCmosRegister(RegisterSecondsAlarm, ClockFormat(Byte(Second), StatusB));
+  WriteCmosRegister(RegisterMinutesAlarm, ClockFormat(Byte(Minute), StatusB));
+  WriteCmosRegister(RegisterHoursAlarm, HourValue);
+  { A flag left from before would read as this alarm. }
+  ReadCmosRegister(RegisterStatusC);
+  WriteCmosRegister(RegisterStatusB, StatusB or StatusBAlarmInterrupt);
+  Result := True;
+end;
+
+function RealTimeClockAlarmFired: Boolean;
+begin
+  Result := (ReadCmosRegister(RegisterStatusC) and StatusCAlarmFlag) <> 0;
 end;
 
 end.

@@ -714,7 +714,33 @@ const
   CallGetParentProcessId = 196;
   { 197-199 are kept for this block. }
 
-  CallCount = 197;
+  { --- Power: wake sources, cooling, performance states (228-235) ------------- }
+
+  { (Seconds): the machine wakes from suspend to RAM by the battery
+    backed clock's alarm Seconds from now (at most a day on a PC); 0
+    cancels it. Root only (ErrorNotPermitted). ErrorUnsupported without
+    an alarm that can wake the machine; ErrorInvalidArgument when too
+    far. }
+  CallSetWakeAlarm = 228;
+  { (BufferAddress, Capacity): what may wake the machine from suspend
+    to RAM (devices with ACPI _PRW, the clock's alarm) as up to Capacity
+    TAbiWakeSource records; returns how many there are. }
+  CallListWakeSources = 229;
+  { (Index, Enabled): lets wake source Index (CallListWakeSources'
+    order) wake the machine, or not. Root only. }
+  CallSetWakeSource = 230;
+  { (BufferAddress, Capacity): the cooling devices (ACPI fans of the
+    thermal zones' active trip points, the board's fan) as up to Capacity
+    TAbiCoolingDevice records; returns how many there are. }
+  CallListCoolingDevices = 231;
+  { (BufferAddress, Capacity): the processors' performance states (ACPI
+    _PSS) as up to Capacity TAbiPerformanceState records, fastest first;
+    returns how many there are (0: none, or hardware P-states, which
+    CallGetProcessorPower's clock range shows). }
+  CallListPerformanceStates = 232;
+  { 233-235 are kept for this group. }
+
+  CallCount = 233;
 
   { CallWaitForChild flags (the Linux values). }
   WaitNoHang = 1;
@@ -809,6 +835,23 @@ const
   BatteryUnitCurrent = 1;
   { A battery value that is not known. }
   BatteryValueUnknown = High(LongWord);
+  { TAbiWakeSource.Kind. }
+  WakeSourceOther = 0;
+  WakeSourcePowerButton = 1;
+  WakeSourceSleepButton = 2;
+  WakeSourceLid = 3;
+  WakeSourceUsb = 4;
+  WakeSourceNetwork = 5;
+  WakeSourceAlarm = 6;
+  AbiWakeSourceNameCapacity = 48;
+  { TAbiCoolingDevice.Kind. }
+  CoolingAcpiFan = 1;
+  CoolingBoardFan = 2;
+  AbiCoolingNameCapacity = 48;
+  { TAbiPerformanceState.Flags. }
+  PerformanceStateCurrent = $01;
+  { Above the firmware's limit (_PPC) or the thermal limit. }
+  PerformanceStateNotAllowed = $02;
   KeyboardLayoutNameCapacity = 16;
   KeyboardLayoutDescriptionCapacity = 48;
   { The key repeat: the delay before a held key repeats, and the rate it
@@ -1750,6 +1793,51 @@ type
     Present: LongWord;
   end;
   PAbiBattery = ^TAbiBattery;
+
+  TAbiWakeSource = record
+    { The ACPI device's path ("\_SB_.PCI0.XHC_"), or "alarm". }
+    Name: array[0..AbiWakeSourceNameCapacity - 1] of Char;
+    { WakeSource* kind. }
+    Kind: LongWord;
+    { 1 if it may wake the machine. }
+    Enabled: LongWord;
+    { Its general purpose event (High(LongWord) for none). }
+    GpeNumber: LongWord;
+    { The deepest sleep state it wakes from (3: suspend to RAM). }
+    DeepestSleepState: LongWord;
+    { 1 if it woke the machine the last time. }
+    WokeLast: LongWord;
+    { The alarm: seconds until it goes off (0 when not set). }
+    AlarmSeconds: LongWord;
+  end;
+  PAbiWakeSource = ^TAbiWakeSource;
+
+  TAbiCoolingDevice = record
+    { The fan's ACPI path, or "fan" for the board's. }
+    Name: array[0..AbiCoolingNameCapacity - 1] of Char;
+    { Cooling* kind. }
+    Kind: LongWord;
+    { 1 while it runs. }
+    Running: LongWord;
+    { Its speed in percent of full (0 off, 100 full on). }
+    SpeedPercent: LongWord;
+    { The thermal zone (CallListThermalZones' index) it cools, and the
+      active trip point (0 the hottest) that runs it; High(LongWord)
+      when not known. }
+    ThermalZone: LongWord;
+    ActiveLevel: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiCoolingDevice = ^TAbiCoolingDevice;
+
+  TAbiPerformanceState = record
+    FrequencyMegahertz: LongWord;
+    PowerMilliwatts: LongWord;
+    LatencyMicroseconds: LongWord;
+    { PerformanceState* flags. }
+    Flags: LongWord;
+  end;
+  PAbiPerformanceState = ^TAbiPerformanceState;
 
   TAbiSystemInformation = record
     SystemName: array[0..AbiTextCapacity - 1] of Char;

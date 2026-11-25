@@ -46,6 +46,12 @@ function PsciStartProcessor(ProcessorId: QWord; EntryPoint, Context: QWord): Boo
   when an interrupt is pending, as WFI does). True if the firmware took
   it; False if it refused (the processor did not sleep). }
 function PsciSuspendProcessor(PowerState: LongWord): Boolean;
+{ Suspends this processor in a power-down state: it comes back at the
+  physical address EntryPoint with its MMU off and Context in X0, as a
+  started processor does. Returns True if the firmware took a shallower
+  state instead (the processor kept its registers: it goes on), False if
+  it refused. }
+function PsciSuspendProcessorAt(PowerState: LongWord; EntryPoint, Context: QWord): Boolean;
 { Whether the firmware offers CPU_SUSPEND (PSCI 1.0 PSCI_FEATURES; taken
   as offered by a 0.2 firmware), and whether its power states use the
   extended format (the state type in bit 30 rather than bit 16). }
@@ -164,6 +170,13 @@ begin
     Exit(False);
   { A standby state needs no entry point: the call returns. }
   Result := CallPsci(FunctionCpuSuspend, PowerState, 0, 0) = ResultSuccess;
+end;
+
+function PsciSuspendProcessorAt(PowerState: LongWord; EntryPoint, Context: QWord): Boolean;
+begin
+  if not Available then
+    Exit(False);
+  Result := CallPsci(FunctionCpuSuspend, PowerState, EntryPoint, Context) = ResultSuccess;
 end;
 
 function PsciOffersProcessorSuspend(out ExtendedStateFormat: Boolean): Boolean;

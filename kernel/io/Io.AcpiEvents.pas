@@ -25,11 +25,15 @@
   level triggered) and noted. Then a deferred call wakes the event
   thread (RunAcpiEvents), which does what may take long or run AML:
   - a GPE runs its handler method, \_GPE._Lnn (level: then its status is
-    cleared) or _Enn (edge: cleared first), and is enabled again;
+    cleared) or _Enn (edge: cleared first), and is enabled again; a GPE
+    a driver took (RegisterGpeHandler: the embedded controller's) runs
+    the driver's routine instead;
   - a button press goes to the power policy (the handler the kernel
     gave), and so does a Notify of 0x80 to a power or sleep button
     device (PNP0C0C, PNP0C0E: buttons with control methods); other
-    notifications are logged.
+    notifications go to the handlers registered for them
+    (RegisterNotifyHandler: thermal zones, processors), each of which
+    may only note it (AML is running), and are logged.
 
   The SCI is the ISA IRQ the FADT names, routed through the MADT's
   overrides; without one it is level triggered, active low (ACPI's
@@ -45,6 +49,14 @@ interface
 type
   TPowerEvent = (PowerEventPowerButton, PowerEventSleepButton);
   TPowerEventHandler = procedure(Event: TPowerEvent);
+  { A GPE's routine, in the event thread (interpreter unlocked). }
+  TGpeHandler = procedure(Number: LongWord);
+  { Told of a Notify while AML runs: True if it was for it. }
+  TNotifyHandler = function(Node: Pointer; Value: QWord): Boolean;
+
+{ Takes GPE Number (before InitializeAcpiEvents). }
+procedure RegisterGpeHandler(Number: LongWord; Handler: TGpeHandler);
+procedure RegisterNotifyHandler(Handler: TNotifyHandler);
 
 { After the namespace is loaded: ACPI mode, the SCI, the buttons and the
   GPEs that have methods. False if there is no ACPI fixed hardware. }
@@ -75,6 +87,7 @@ uses
 
 const
   MaximumGpes = 256;
+  MaximumNotifyHandlers = 4;
   { Notify values. }
   NotifyButtonPressed = $80;
 
@@ -90,6 +103,24 @@ var
   GpeCount: LongWord;
   { Button presses that came as Notify while AML ran. }
   NotifiedButtons: PtrUInt;
+  GpeHandlers: array[0..MaximumGpes - 1] of TGpeHandler;
+  NotifyHandlers: array[0..MaximumNotifyHandlers - 1] of TNotifyHandler;
+  NotifyHandlerCount: Integer = 0;
+
+procedure RegisterGpeHandler(Number: LongWord; Handler: TGpeHandler);
+begin
+  if Number < MaximumGpes then
+    GpeHandlers[Number] := Handler;
+end;
+
+procedure RegisterNotifyHandler(Handler: TNotifyHandler);
+begin
+  if NotifyHandlerCount < MaximumNotifyHandlers then
+  begin
+    NotifyHandlers[NotifyHandlerCount] := Handler;
+    Inc(NotifyHandlerCount);
+  end;
+end;
 
 { --- The SCI -------------------------------------------------------------------- }
 
@@ -132,6 +163,8 @@ end;
 procedure HandleNotify(Node: Pointer; Value: QWord);
 var
   Path: array[0..79] of Char;
+  Index: Integer;
+  Handled: Boolean;
 begin
   if Value = NotifyButtonPressed then
   begin
@@ -146,10 +179,17 @@ begin
       Exit;
     end;
   end;
+  Handled := False;
+  for Index := 0 to NotifyHandlerCount - 1 do
+    if NotifyHandlers[Index](Node, Value) then
+      Handled := True;
   NodePathText(PAmlNode(Node), @Path[0], SizeOf(Path));
   DebugBeginMessage;
   DebugWriteTag('acpi');
-  DebugWrite('notify ');
+  if Handled then
+    DebugWrite('notify (handled) ')
+  else
+    DebugWrite('notify ');
   DebugWrite(@Path[0]);
   DebugWrite(' 0x');
   DebugWriteHex(Value, 2);
@@ -165,6 +205,13 @@ var
   LevelTriggered: Boolean;
   Ignored: TAmlValue;
 begin
+  if (Number < MaximumGpes) and Assigned(GpeHandlers[Number]) then
+  begin
+    ClearGpe(Number);
+    GpeHandlers[Number](Number);
+    EnableGpe(Number, True);
+    Exit;
+  end;
   Method := GpeMethodOf(Number, LevelTriggered);
   if not LevelTriggered then
     ClearGpe(Number);
@@ -254,7 +301,7 @@ begin
   begin
     EnableGpe(Number, False);
     ClearGpe(Number);
-    if GpeMethodOf(Number, LevelTriggered) <> nil then
+    if (GpeMethodOf(Number, LevelTriggered) <> nil) or Assigned(GpeHandlers[Number]) then
     begin
       HandledGpes[Number div 32] := HandledGpes[Number div 32] or (LongWord(1) shl (Number mod 32));
       EnableGpe(Number, True);

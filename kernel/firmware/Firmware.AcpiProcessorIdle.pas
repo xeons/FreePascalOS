@@ -26,10 +26,12 @@
   latency in microseconds and the power in milliwatts. Only states
   entered through functional fixed hardware are taken here (address
   space 7Fh, class 2 in the bit offset: "native C-state beyond halt"),
-  whose address is the MWAIT hint; states entered by reading an I/O
-  port (the older way) are not used. Firmware that waits for _PDC or
-  _OSC to hear what the processor driver can do may answer with port
-  states only, or nothing: then the CPUID states stay.
+  whose address is the MWAIT hint; and states entered by reading an I/O
+  port (address space 1, the older way: the read enters the state, the
+  chipset ends it), whose address is the port. Firmware waits for _PDC
+  or _OSC to hear what the processor driver can do
+  (Firmware.AcpiProcessorControl, evaluated first) and answers with
+  port states, MWAIT states or nothing accordingly.
 
   Plain Pascal over the interpreter, built by the host test
   (tools/AcpiPowerTest).
@@ -41,21 +43,37 @@ unit Firmware.AcpiProcessorIdle;
 
 interface
 
+uses
+  Firmware.AmlNamespace;
+
 const
   MaximumAcpiIdleStates = 8;
+  { TAcpiIdleState.Entry. }
+  AcpiIdleEntryMonitorWait = 0;
+  AcpiIdleEntryPortRead = 1;
+  MaximumAcpiProcessors = 64;
 
 type
   TAcpiIdleState = record
     { 1, 2 or 3. }
     CStateType: LongWord;
+    { How it is entered: the MWAIT hint, or the port to read. }
+    Entry: LongWord;
     MonitorWaitHint: LongWord;
+    Port: LongWord;
     LatencyMicroseconds: LongWord;
     PowerMilliwatts: LongWord;
   end;
 
-{ The first processor's _CST states entered with MWAIT, in the order
-  listed; returns how many. }
+{ The first processor's _CST states entered with MWAIT or a port read
+  (type 2 or deeper: C1 is the halt), in the order listed; returns how
+  many. }
 function ReadAcpiIdleStates(var States: array of TAcpiIdleState): Integer;
+{ The first processor object (Processor, or a device ACPI0007); nil if
+  none. }
+function FirstAcpiProcessor: PAmlNode;
+{ Every processor object (up to Length(Nodes)); returns how many. }
+function ListAcpiProcessors(var Nodes: array of PAmlNode): Integer;
 
 implementation
 
@@ -63,12 +81,12 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Firmware.AmlValues,
-  Firmware.AmlNamespace,
   Firmware.AcpiDeviceWalk;
 
 const
   GenericRegisterTag = $82;
   FixedHardwareSpace = $7F;
+  SystemIoSpace = $01;
   NativeCStateClass = 2;
   ProcessorDeviceId = 'ACPI0007';
   MaximumDepth = 24;
@@ -107,7 +125,64 @@ begin
   ReleaseValue(Description.Properties);
 end;
 
-function FirstProcessor: PAmlNode;
+type
+  TProcessorList = record
+    Nodes: ^PAmlNode;
+    Capacity: Integer;
+    Count: Integer;
+  end;
+  PProcessorList = ^TProcessorList;
+
+procedure AddProcessor(var List: TProcessorList; Node: PAmlNode);
+begin
+  if List.Count < List.Capacity then
+  begin
+    List.Nodes[List.Count] := Node;
+    Inc(List.Count);
+  end;
+end;
+
+procedure CollectProcessorObjects(Scope: PAmlNode; Depth: Integer; var List: TProcessorList);
+var
+  Child: PAmlNode;
+begin
+  if Depth >= MaximumDepth then
+    Exit;
+  Child := Scope^.FirstChild;
+  while Child <> nil do
+  begin
+    if Child^.Kind = NodeProcessor then
+      AddProcessor(List, Child)
+    else if Child^.Kind in [NodeScope, NodeDevice] then
+      CollectProcessorObjects(Child, Depth + 1, List);
+    Child := Child^.NextSibling;
+  end;
+end;
+
+procedure NoteEveryProcessorDevice(var Description: TAcpiDeviceDescription; Context: Pointer);
+begin
+  if TextIsEqual(@Description.HardwareId[0], ProcessorDeviceId) then
+    AddProcessor(PProcessorList(Context)^, Description.Node);
+  ReleaseValue(Description.Properties);
+end;
+
+function ListAcpiProcessors(var Nodes: array of PAmlNode): Integer;
+var
+  List: TProcessorList;
+begin
+  Result := 0;
+  if (NamespaceRoot = nil) or (Length(Nodes) = 0) then
+    Exit;
+  List.Nodes := @Nodes[0];
+  List.Capacity := Length(Nodes);
+  List.Count := 0;
+  CollectProcessorObjects(NamespaceRoot, 0, List);
+  if List.Count = 0 then
+    WalkAcpiDevices(@NoteEveryProcessorDevice, @List);
+  Result := List.Count;
+end;
+
+function FirstAcpiProcessor: PAmlNode;
 var
   Search: TProcessorSearch;
 begin
@@ -147,16 +222,27 @@ begin
   if (Register^.Kind <> AmlBuffer) or (ValueLength(Register^) < 15) then
     Exit;
   Data := ValueData(Register^);
-  if (Data[0] <> GenericRegisterTag) or (Data[3] <> FixedHardwareSpace) or (Data[5] <> NativeCStateClass) then
+  if Data[0] <> GenericRegisterTag then
     Exit;
-  State.MonitorWaitHint := PLongWord(@Data[7])^;
+  if (Data[3] = FixedHardwareSpace) and (Data[5] = NativeCStateClass) then
+  begin
+    State.Entry := AcpiIdleEntryMonitorWait;
+    State.MonitorWaitHint := PLongWord(@Data[7])^;
+  end
+  else if (Data[3] = SystemIoSpace) and (PQWord(@Data[7])^ <> 0) and (PQWord(@Data[7])^ <= $FFFF) then
+  begin
+    State.Entry := AcpiIdleEntryPortRead;
+    State.Port := LongWord(PQWord(@Data[7])^);
+  end
+  else
+    Exit;
   if ElementInteger(Entry, 1, Number) then
     State.CStateType := LongWord(Number);
   if ElementInteger(Entry, 2, Number) then
     State.LatencyMicroseconds := LongWord(Number);
   if ElementInteger(Entry, 3, Number) then
     State.PowerMilliwatts := LongWord(Number);
-  Result := State.CStateType >= 1;
+  Result := State.CStateType >= 2;
 end;
 
 function ReadAcpiIdleStates(var States: array of TAcpiIdleState): Integer;
@@ -167,7 +253,7 @@ var
   State: TAcpiIdleState;
 begin
   Result := 0;
-  Processor := FirstProcessor;
+  Processor := FirstAcpiProcessor;
   if Processor = nil then
     Exit;
   if not EvaluateChild(Processor, '_CST', Value) or (Value.Kind <> AmlPackage) then

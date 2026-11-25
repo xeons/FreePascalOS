@@ -105,6 +105,11 @@ procedure RestartClockTick;
 procedure StopClockTick;
 { Whether idle processors stop their tick (not tickless=off). }
 function ClockIsTickless: Boolean;
+{ Interrupts disabled: sets the executing processor's clock interrupt
+  again from its due times, those already past included (it then comes
+  at once): after its timer stopped in an idle state
+  (Kernel.BroadcastTimer), whose clock interrupt time reads NeverDue. }
+procedure RearmClockInterrupt;
 
 implementation
 
@@ -119,6 +124,7 @@ uses
   Kernel.Timers,
   Kernel.Options,
   Kernel.WallClock,
+  Kernel.BroadcastTimer,
   Kernel.Panic;
 
 const
@@ -183,8 +189,31 @@ begin
   Housekeeping := SchedulerHousekeepingTime(Processor);
   if Housekeeping < Result then
     Result := Housekeeping;
+  { The boot processor wakes those whose timer stops while idle. }
+  if Processor^.Index = 0 then
+  begin
+    Housekeeping := NextBroadcastDue(Now);
+    if Housekeeping < Result then
+      Result := Housekeeping;
+  end;
   if Result <= Now then
     Result := Now + 1;
+end;
+
+procedure RearmClockInterrupt;
+var
+  Processor: PProcessor;
+  Now: QWord;
+  Deadline: QWord;
+begin
+  Processor := CurrentProcessor;
+  Now := ClockNanoseconds;
+  Deadline := NextClockDeadline(Processor, Now);
+  if Processor^.NextTimerDueTime < Deadline then
+    Deadline := Processor^.NextTimerDueTime;
+  if Processor^.NextWakeUpTime < Deadline then
+    Deadline := Processor^.NextWakeUpTime;
+  SetClockInterruptFor(Processor, Deadline, Now);
 end;
 
 { The ticks that passed by Now, the tick schedule moved on past them.
@@ -229,6 +258,8 @@ begin
   RestoreInterrupts(WereEnabled);
   if ElapsedTicks > 0 then
     Inc(Processor^.TickInterruptCount);
+  if Processor^.Index = 0 then
+    ServeBroadcast(Now);
   if Now >= Processor^.NextTimerDueTime then
     Inc(Processor^.TimerInterruptCount);
   if Now >= Processor^.NextWakeUpTime then
@@ -251,7 +282,11 @@ begin
   if Processor^.NextTickTime = NeverDue then
   begin
     Processor^.NextTickTime := ClockNanoseconds + NanosecondsPerTick;
-    if Processor^.NextTickTime < Processor^.ClockInterruptTime then
+    { NeverDue: its timer may have stopped in an idle state (or nothing
+      was due): set in full. }
+    if Processor^.ClockInterruptTime = NeverDue then
+      RearmClockInterrupt
+    else if Processor^.NextTickTime < Processor^.ClockInterruptTime then
       SetClockInterruptFor(Processor, Processor^.NextTickTime, ClockNanoseconds);
   end;
   RestoreInterrupts(WereEnabled);

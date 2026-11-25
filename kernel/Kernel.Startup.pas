@@ -48,6 +48,7 @@ implementation
 uses
   Kernel.IdleStates,
   Io.AcpiPower,
+  Power.PerformanceStates,
   Objects.Events,
   Objects.Semaphores,
   Objects.Timers,
@@ -338,6 +339,9 @@ begin
   StartSecondaryProcessors(@RunIdleLoop);
   InitializeBuses;
   LoadAcpiNamespaceOnLargeStack;
+  { Hardware P-states where the processor has them (before ACPI's
+    performance states are looked at). }
+  StartHardwarePStates;
   { Thermal zones, batteries and _CST's idle states, read on a thread of
     their own. }
   StartAcpiPower;

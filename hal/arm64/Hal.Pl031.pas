@@ -19,7 +19,9 @@
 {
   The ARM PrimeCell real-time clock (PL031): a 32-bit count of seconds
   since 1970 that runs on its own (RTCDR, read), loaded with a new time
-  by writing RTCLR.
+  by writing RTCLR. Its alarm: the match register (RTCMR) raises the
+  interrupt when the count reaches it, if unmasked (RTCIMSC); the raw
+  status (RTCRIS) says it did, RTCICR clears it.
 
   A device tree names it ("arm,pl031": QEMU's virt machine after a
   native boot). QEMU's ACPI tables do not list it, so on a machine whose
@@ -38,6 +40,10 @@ interface
 function FindPl031: Boolean;
 function ReadPl031Seconds: QWord;
 procedure WritePl031Seconds(Seconds: QWord);
+{ The alarm at Seconds (0: off). }
+procedure SetPl031Alarm(Seconds: QWord);
+{ True if the alarm went off since it was set (cleared then). }
+function Pl031AlarmFired: Boolean;
 
 implementation
 
@@ -52,7 +58,12 @@ uses
 const
   RegisterBytes = $1000;
   DataRegister = $000;
+  MatchRegister = $004;
   LoadRegister = $008;
+  InterruptMaskRegister = $010;
+  RawInterruptRegister = $014;
+  InterruptClearRegister = $01C;
+  InterruptAlarm = 1;
   ControlRegister = $00C;
   ControlStart = 1;
   PeripheralIdRegister = $FE0;
@@ -148,6 +159,23 @@ end;
 procedure WritePl031Seconds(Seconds: QWord);
 begin
   PLongWord(Registers + LoadRegister)^ := LongWord(Seconds);
+end;
+
+procedure SetPl031Alarm(Seconds: QWord);
+begin
+  PLongWord(Registers + InterruptMaskRegister)^ := 0;
+  PLongWord(Registers + InterruptClearRegister)^ := InterruptAlarm;
+  if Seconds = 0 then
+    Exit;
+  PLongWord(Registers + MatchRegister)^ := LongWord(Seconds);
+  PLongWord(Registers + InterruptMaskRegister)^ := InterruptAlarm;
+end;
+
+function Pl031AlarmFired: Boolean;
+begin
+  Result := (ReadRegister(RawInterruptRegister) and InterruptAlarm) <> 0;
+  if Result then
+    PLongWord(Registers + InterruptClearRegister)^ := InterruptAlarm;
 end;
 
 end.

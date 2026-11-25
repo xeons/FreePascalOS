@@ -44,6 +44,9 @@ uses
 
 const
   AcpiThermalPathLength = 64;
+  { _AC0 to _AC9, and up to this many devices in each _ALx. }
+  MaximumAcpiActiveTrips = 10;
+  MaximumAcpiActiveDevices = 4;
   { A trip point the zone does not have. }
   AcpiNoTemperature = -1;
 
@@ -57,6 +60,13 @@ type
     HotDeciKelvin: LongInt;
     { _TZP, tenths of a second (0 if absent or 0). }
     PollDeciseconds: LongWord;
+    { Active cooling: _AC0 (the hottest) to _ACn, each with the devices
+      of its _ALx (fans, or power resources) that must run at or above
+      it. }
+    ActiveCount: Integer;
+    ActiveDeciKelvin: array[0..MaximumAcpiActiveTrips - 1] of LongInt;
+    ActiveDevices: array[0..MaximumAcpiActiveTrips - 1, 0..MaximumAcpiActiveDevices - 1] of PAmlNode;
+    ActiveDeviceCount: array[0..MaximumAcpiActiveTrips - 1] of Integer;
   end;
 
 { The thermal zones, their trip points read; returns how many (at most
@@ -65,6 +75,8 @@ function ListAcpiThermalZones(var Zones: array of TAcpiThermalZone): Integer;
 { The zone's _TMP; False if it fails or makes no sense. }
 function ReadAcpiZoneTemperature(Node: PAmlNode; out DeciKelvin: LongInt): Boolean;
 function DeciKelvinToMilliCelsius(DeciKelvin: LongInt): LongInt;
+{ The zone's trip points read again (after Notify 0x81). }
+procedure ReadAcpiZoneTripPoints(var Zone: TAcpiThermalZone);
 
 implementation
 
@@ -94,6 +106,78 @@ begin
     Result := AcpiNoTemperature;
 end;
 
+function ResolveNode(const Value: TAmlValue): PAmlNode;
+begin
+  case Value.Kind of
+    AmlNodeReference:
+      Result := PAmlNode(Value.Node);
+    AmlNamePath:
+      Result := LookupNameString(PAmlNode(Value.Node), Value.Bytes^.Data, Value.Bytes^.Length);
+    AmlString:
+      Result := LookupText(NamespaceRoot, PChar(Value.Bytes^.Data));
+  else
+    Result := nil;
+  end;
+end;
+
+procedure ReadActiveDevices(Node: PAmlNode; Level: Integer; var Zone: TAcpiThermalZone);
+var
+  Name: array[0..4] of Char;
+  List: TAmlValue;
+  Index: LongWord;
+  Device: PAmlNode;
+begin
+  Name := '_AL0';
+  Name[3] := Char(Ord('0') + Level);
+  if not EvaluateChild(Node, @Name[0], List) then
+    Exit;
+  if List.Kind = AmlPackage then
+  begin
+    Index := 0;
+    while (Index < List.Package^.Count) and (Zone.ActiveDeviceCount[Level] < MaximumAcpiActiveDevices) do
+    begin
+      Device := ResolveNode(List.Package^.Elements[Index]);
+      if Device <> nil then
+      begin
+        Zone.ActiveDevices[Level, Zone.ActiveDeviceCount[Level]] := Device;
+        Inc(Zone.ActiveDeviceCount[Level]);
+      end;
+      Inc(Index);
+    end;
+  end;
+  ReleaseValue(List);
+end;
+
+{ _AC0, _AC1, ... until the first that is missing. }
+procedure ReadActiveTrips(Node: PAmlNode; var Zone: TAcpiThermalZone);
+var
+  Name: array[0..4] of Char;
+  Level: Integer;
+  Trip: LongInt;
+begin
+  Zone.ActiveCount := 0;
+  for Level := 0 to MaximumAcpiActiveTrips - 1 do
+  begin
+    Name := '_AC0';
+    Name[3] := Char(Ord('0') + Level);
+    Trip := TripPoint(Node, @Name[0]);
+    if Trip = AcpiNoTemperature then
+      Break;
+    Zone.ActiveDeciKelvin[Level] := Trip;
+    Zone.ActiveDeviceCount[Level] := 0;
+    ReadActiveDevices(Node, Level, Zone);
+    Inc(Zone.ActiveCount);
+  end;
+end;
+
+procedure ReadAcpiZoneTripPoints(var Zone: TAcpiThermalZone);
+begin
+  Zone.PassiveDeciKelvin := TripPoint(Zone.Node, '_PSV');
+  Zone.CriticalDeciKelvin := TripPoint(Zone.Node, '_CRT');
+  Zone.HotDeciKelvin := TripPoint(Zone.Node, '_HOT');
+  ReadActiveTrips(Zone.Node, Zone);
+end;
+
 procedure DescribeZone(Node: PAmlNode; var Zone: TAcpiThermalZone);
 var
   Poll: QWord;
@@ -101,6 +185,7 @@ begin
   ZeroMemory(@Zone, SizeOf(Zone));
   Zone.Node := Node;
   BuildPath(Node, Zone.Path);
+  ReadActiveTrips(Node, Zone);
   Zone.PassiveDeciKelvin := TripPoint(Node, '_PSV');
   Zone.CriticalDeciKelvin := TripPoint(Node, '_CRT');
   Zone.HotDeciKelvin := TripPoint(Node, '_HOT');

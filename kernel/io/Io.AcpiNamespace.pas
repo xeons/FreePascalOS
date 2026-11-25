@@ -68,6 +68,7 @@ uses
   Firmware.AcpiPciRouting,
   Io.Pci,
   Io.AcpiDevices,
+  Io.AcpiEmbeddedController,
   Debug.Output;
 
 const
@@ -304,6 +305,7 @@ begin
     AmlSpaceSystemMemory: Result := ReadMemory(Address, Width, Value);
     AmlSpaceSystemIo: Result := ReadPort(Address, Width, Value);
     AmlSpacePciConfiguration: Result := ReadConfiguration(Address, Width, Value);
+    AmlSpaceEmbeddedController: Result := ReadEmbeddedControllerAddress(Address, Width, Value);
   else
     begin
       Value := 0;
@@ -318,6 +320,7 @@ begin
     AmlSpaceSystemMemory: Result := WriteMemory(Address, Width, Value);
     AmlSpaceSystemIo: Result := WritePort(Address, Width, Value);
     AmlSpacePciConfiguration: Result := WriteConfiguration(Address, Width, Value);
+    AmlSpaceEmbeddedController: Result := WriteEmbeddedControllerAddress(Address, Width, Value);
   else
     Result := False;
   end;
@@ -487,6 +490,8 @@ begin
   until Table = nil;
   if Tables = 0 then
     Exit;
+  { Before the devices' _INI, which may read it. }
+  ConnectEmbeddedController;
   InitializeAmlDevices;
   ReportLoad(Tables, Failures, BuildPciRouting);
   ReportPlatformDevices(EnumerateAcpiDevices);

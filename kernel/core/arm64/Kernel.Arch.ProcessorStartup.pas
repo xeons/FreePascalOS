@@ -59,6 +59,13 @@ procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 function PrepareWakeEntry(Processor: PProcessor; StackTop: QWord; EntryPoint: Pointer): QWord;
 function WakeEntryContext: QWord;
 procedure ReinitializeThisProcessor(Processor: PProcessor);
+{ An idle power-down state (PSCI CPU_SUSPEND, or CPU_OFF for the QEMU
+  test): Processor comes back through the start-up entry and runs
+  EntryPoint(Processor) on a small stack of its own. A start-up record
+  of its own too, since processors power down and come back at any
+  time, together. Returns the entry's physical address; Context is the
+  X0 to give it. }
+function PrepareIdleWakeEntry(Processor: PProcessor; EntryPoint: Pointer; out Context: QWord): QWord;
 
 implementation
 
@@ -94,7 +101,19 @@ type
 const
   TableLevels = 4;
 
+const
+  IdleWakeStackSize = 8192;
+
+type
+  TIdleWakeArea = record
+    Start: TSecondaryStartRecord;
+    { Up to the next cache line: the record is cleaned on its own. }
+    Padding: array[0..63] of Byte;
+    Stack: array[0..IdleWakeStackSize - 1] of Byte;
+  end;
+
 var
+  IdleWakeAreas: array[0..MaximumProcessors - 1] of TIdleWakeArea;
   RecordPhysical: TPhysicalAddress;
   StartRecord: PSecondaryStartRecord;
   EntryPhysical: TPhysicalAddress;
@@ -192,6 +211,27 @@ end;
 function WakeEntryContext: QWord;
 begin
   Result := RecordPhysical;
+end;
+
+function PrepareIdleWakeEntry(Processor: PProcessor; EntryPoint: Pointer; out Context: QWord): QWord;
+var
+  Area: ^TIdleWakeArea;
+  Physical: TPhysicalAddress;
+begin
+  Result := 0;
+  Context := 0;
+  if (StartRecord = nil) or (Processor^.Index >= MaximumProcessors) then
+    Exit;
+  Area := @IdleWakeAreas[Processor^.Index];
+  if not TranslateVirtualAddress(QWord(@Area^.Start), Physical) then
+    Exit;
+  Area^.Start := StartRecord^;
+  Area^.Start.StackTop := (QWord(@Area^.Stack[0]) + IdleWakeStackSize) and not QWord(15);
+  Area^.Start.Processor := QWord(Processor);
+  Area^.Start.EntryPoint := QWord(EntryPoint);
+  CleanDataCache(@Area^.Start, SizeOf(TSecondaryStartRecord));
+  Context := Physical;
+  Result := EntryPhysical;
 end;
 
 procedure ReinitializeThisProcessor(Processor: PProcessor);

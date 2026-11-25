@@ -34,6 +34,12 @@
 
   The kernel option "processors=N" limits how many processors run (1
   keeps the system on the boot processor).
+
+  A processor plugged in later (ACPI processor hotplug, Io.AcpiPower:
+  a Notify on its processor object, its _STA and _MAT) is brought up
+  the same way by BringUpPluggedProcessor, the start-up code prepared
+  first if no other processor needed it at start. One at a time (the
+  start-up record is shared).
 }
 unit Kernel.SecondaryProcessors;
 
@@ -47,6 +53,10 @@ type
 { Starts the secondary processors; each ends up running IdleRoutine as
   its idle thread. Called from a thread, with the scheduler running. }
 procedure StartSecondaryProcessors(IdleRoutine: TIdleRoutine);
+{ Brings up the processor with interrupt controller id ApicId, plugged
+  in since start. False if it is running already, would pass the
+  processor limit, or did not start. Passive level, from a thread. }
+function BringUpPluggedProcessor(ApicId: LongWord): Boolean;
 
 implementation
 
@@ -75,6 +85,8 @@ const
 
 var
   SecondaryIdleRoutine: TIdleRoutine;
+  StartupPrepared: Boolean = False;
+  RequestsInitialized: Boolean = False;
 
 procedure SecondaryProcessorEntry(Processor: PProcessor);
 begin
@@ -155,7 +167,9 @@ begin
   begin
     InitializeInterProcessorRequests;
     SetRemoteInvalidation(@InvalidateRemoteTranslations);
-    if PrepareProcessorStartup then
+    RequestsInitialized := True;
+    StartupPrepared := PrepareProcessorStartup;
+    if StartupPrepared then
     begin
       for Index := 0 to ListedProcessorCount - 1 do
       begin
@@ -192,6 +206,51 @@ begin
     DebugWriteLine(' processor running')
   else
     DebugWriteLine(' processors running');
+  DebugEndMessage;
+end;
+
+function ProcessorIsKnown(ApicId: LongWord): Boolean;
+var
+  Index: LongWord;
+  Processor: PProcessor;
+begin
+  for Index := 0 to ProcessorTotal - 1 do
+  begin
+    Processor := ProcessorByIndex(Index);
+    if (Processor <> nil) and (Processor^.ApicId = ApicId) then
+      Exit(True);
+  end;
+  Result := False;
+end;
+
+function BringUpPluggedProcessor(ApicId: LongWord): Boolean;
+begin
+  Result := False;
+  if ProcessorIsKnown(ApicId) or (ProcessorTotal >= ProcessorLimit) or (SecondaryIdleRoutine = nil) then
+    Exit;
+  if not RequestsInitialized then
+  begin
+    InitializeInterProcessorRequests;
+    SetRemoteInvalidation(@InvalidateRemoteTranslations);
+    RequestsInitialized := True;
+  end;
+  if not StartupPrepared then
+    StartupPrepared := PrepareProcessorStartup;
+  if not StartupPrepared then
+    Exit;
+  Result := BringUpProcessor(ApicId);
+  DebugBeginMessage;
+  DebugWriteTag('smp');
+  DebugWrite('processor with APIC id ');
+  DebugWriteDecimal(ApicId);
+  if Result then
+  begin
+    DebugWrite(' plugged in and running; ');
+    DebugWriteDecimal(OnlineProcessorCount);
+    DebugWriteLine(' processors running');
+  end
+  else
+    DebugWriteLine(' plugged in, but did not start');
   DebugEndMessage;
 end;
 
