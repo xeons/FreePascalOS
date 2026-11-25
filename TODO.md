@@ -97,7 +97,12 @@ how the existing pieces fit together.
       never runs user code and reaches user memory only through the copy
       routines)
 - [x] Object reference counts saturate (with a warning) instead of wrapping
-- [ ] Contiguous physical allocations (for DMA buffers)
+- [x] Contiguous physical allocations (for DMA buffers): a free-frame
+      bitmap next to the doubly linked free list, searched a word at a
+      time for runs with an alignment, a boundary and an address range
+      (Memory.FrameRuns, AllocatePhysicalRun); Io.Dma takes its buffers
+      from them (AllocateAlignedDmaBuffer, LimitDmaBoundary; xHCI 64 KiB);
+      tools/FrameRunTest and kernel self tests
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
 - [x] Growable region table: an address space's regions in a balanced tree
@@ -132,8 +137,12 @@ how the existing pieces fit together.
       could be served from the mapped file's pages when they are resident
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
-- [ ] Keep relocated copies of image pages per load address, so loading a
-      library needs no relocation work at all
+- [x] Keep relocated copies of image pages per load address, so loading a
+      library needs no relocation work at all (Processes.RelocatedCopies:
+      keyed by the bias and every symbol resolution, kept with the image
+      section, dropped under memory pressure; libraries keep the place
+      their section was given first, aslr=process for per-process
+      places; CallGetImageCacheStatistics 208; latelibtest)
 - [x] Heap checking in the kernel heap and every program's heap (kernel option
       `heapchecks`, `HEAP_CHECKS`): fill patterns that make freed pointers
       non-canonical, guards after blocks, double free detection, a quarantine
@@ -157,8 +166,10 @@ how the existing pieces fit together.
       with 137 (OOM score adjustment, the initial program and adjustment -1000 spared
       unless asking, kernel log and NotificationProcessEndedForMemory); per-user process
       limit (ProcessLimitProcesses); CallGetMemoryPressure, free
-- [ ] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
-      the reserve/commit work)
+- [x] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
+      the reserve/commit work): the footprint counts commitments not
+      resident yet; CallGetProcessMemoryCharge (209) shows any process's
+      charge and score; memorytest charge
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -171,8 +182,11 @@ how the existing pieces fit together.
       ELF TLS and the threadvars of Free Pascal libraries), DT_INIT /
       DT_INIT_ARRAY before LoadLibrary returns, DT_FINI_ARRAY / DT_FINI at
       the end, Free Pascal libraries' own unit initialization (si_dll)
-- [ ] Resource strings of Free Pascal libraries loaded at run time; initial
-      and local exec TLS accesses into them (no surplus static TLS)
+- [x] Resource strings of Free Pascal libraries loaded at run time (their
+      tables merged into the program's, so SetResourceStrings reaches
+      them); initial and local exec TLS accesses into libraries loaded
+      late (a 2 KiB static TLS surplus, filled into every thread when
+      the load succeeds); latelibtest with libstatictls
 - [x] Thread priorities set by programs (offsets from the process's)
 - [x] Thread names (CallSetThreadName, CallListThreads; TThread, hang
       reports, the debug shell's threads command, ps -L/-T, the task

@@ -56,6 +56,11 @@
                 otherwise the image states it (Drivers.RamDiskDecompression).
     aslr=off    Every process gets the fixed address space layout instead
                 of a random one (Processes.AddressLayout), for debugging.
+    aslr=process
+                Libraries too get random places of their own in each
+                process, instead of the place their image section was
+                given first (shared by every process, so their relocated
+                copies serve every load: Processes.ImageLoader).
     tickless=off
                 Idle processors keep their 100 Hz tick (Kernel.Clock).
     idle=halt|mwait|wfi, maxcstate=N

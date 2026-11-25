@@ -38,6 +38,8 @@
     thread stacks     first fit from a random page of
     and thread data   [48 TiB, 64 TiB), chosen per thread       32 bits
     each library      a random page of [126 TiB, 127 TiB)       28 bits
+                      (kept for every process unless aslr=process:
+                      Processes.ImageLoader.PlaceLibrary)
     main stack top    a random page of the 64 GiB below
                       0000_7FFF_FFFF_F000, and the initial
                       stack pointer a random 16 bytes in a page 24+8 bits
