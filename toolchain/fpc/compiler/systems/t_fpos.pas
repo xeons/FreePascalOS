@@ -239,7 +239,7 @@ implementation
                     if pos(target_info.sharedlibext,s)>0 then
                       AddFileName(maybequoted(s))
                     else
-                      AddFileName('-l'+s);
+                      Add('-l'+s);
                   end;
                 Add(')');
               end;
