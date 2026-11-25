@@ -72,6 +72,10 @@ type
     { Writes go to a copy of the page (copy on write), never to the
       file. }
     BackingIsPrivate: Boolean;
+    { A shared file mapping made from a handle open for writing: it may
+      be (made) writable, and what is written reaches the file (the
+      mapped file's pages are marked dirty and written back). }
+    BackingIsWritable: Boolean;
     { Program images: the load that mapped the region (a number of
       Processes.ImageLoader's), so a load that fails takes back its own
       regions and nothing else. 0 for every other region. }

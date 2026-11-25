@@ -90,6 +90,7 @@ uses
   Processes.AffinityCalls,
   Processes.LimitCalls,
   Processes.MemoryCalls,
+  Processes.MappedFileCalls,
   Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
@@ -844,6 +845,11 @@ begin
     CallUnmountVolume: Result := PerformUnmountVolume(Argument0, Argument1);
     CallListMounts: Result := PerformListMounts(Argument0, Argument1);
     CallGetFileTimes: Result := PerformGetFileTimes(Argument0, Int64(Argument1), Argument2, Argument3);
+    { File mappings (214-219). }
+    CallSyncMemory: Result := PerformSyncMemory(Argument0, Argument1, Argument2);
+    CallQueryMemoryResidency: Result := PerformQueryMemoryResidency(Argument0, Argument1, Argument2);
+    CallGetMappedFileStatistics: Result := PerformGetMappedFileStatistics(Argument0);
+    CallTrimMappedFiles: Result := PerformTrimMappedFiles(Argument0, Argument1);
     { The POSIX block (180-199). }
     CallMapMemory: Result := PerformMapMemory(Argument0, Argument1, Argument2, Argument3, Int64(Argument4),
       Argument5);

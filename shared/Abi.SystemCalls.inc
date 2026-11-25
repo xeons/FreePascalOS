@@ -185,9 +185,11 @@ const
     read-only shared by default, MapPrivate for copy on write, which
     MapWritable makes writable; MapExecutable). The file's pages are
     read when first touched and shared with every other mapping of it
-    and with read(). A shared writable mapping is refused
-    (ErrorUnsupported: nothing writes pages back to files yet). Returns
-    the address. Unmapped with CallFreeMemory. ErrorUnsupported if the
+    and with read(). A shared mapping is writable (MapWritable without
+    MapPrivate) only through a handle opened for writing
+    (ErrorAccessDenied otherwise): what is written reaches the file
+    (CallSyncMemory, unmapping, sync, or within seconds). Returns the
+    address. Unmapped with CallFreeMemory. ErrorUnsupported if the
     handle has no memory to map. }
   CallMapHandle = 72;
 
@@ -714,7 +716,47 @@ const
   CallGetParentProcessId = 196;
   { 197-199 are kept for this block. }
 
-  CallCount = 197;
+  { --- File mappings (214-219) ----------------------------------------- }
+
+  { (Address, Length, Flags): msync: the pages of shared file mappings in
+    [Address, Address + Length) (Address page aligned) written by the
+    program are written back to their files; with SyncMemoryWait their
+    volumes are flushed too, so the data is on the disk when it returns.
+    Flags: SyncMemoryAsync, SyncMemoryInvalidate (nothing to do: mapped
+    pages always show the file), SyncMemoryWait (the Linux MS_* values).
+    ErrorBadAddress if part of the range is not mapped. }
+  CallSyncMemory = 214;
+  { (Address, Length, VectorAddress): mincore: one byte per page of
+    [Address, Address + Length) (Address page aligned) at VectorAddress,
+    PageResidency* bits: in memory (mapped here, or a file page the
+    file's mapped file holds), mapped in this process, waiting to be
+    written back to its file. ErrorBadAddress if part of the range is
+    not mapped. }
+  CallQueryMemoryResidency = 215;
+  { (StatisticsAddress): the mapped files' figures as a
+    TAbiMappedFileStatistics. }
+  CallGetMappedFileStatistics = 216;
+  { (PagesWanted, Flags): drops up to PagesWanted pages of mapped files
+    now, as memory pressure would: clean pages nobody maps, and with
+    TrimMappedPagesToo mapped ones as well (their mappings read them
+    again when touched). Returns the pages freed. Root only. }
+  CallTrimMappedFiles = 217;
+  { 218-219 are kept for this block. }
+
+  CallCount = 218;
+
+  { CallSyncMemory flags (the Linux MS_* values). }
+  SyncMemoryAsync = 1;
+  SyncMemoryInvalidate = 2;
+  SyncMemoryWait = 4;
+
+  { CallQueryMemoryResidency bits. }
+  PageResidencyResident = $01;
+  PageResidencyMapped = $02;
+  PageResidencyDirty = $04;
+
+  { CallTrimMappedFiles flags. }
+  TrimMappedPagesToo = $01;
 
   { CallWaitForChild flags (the Linux values). }
   WaitNoHang = 1;
@@ -1684,6 +1726,27 @@ type
     LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
   end;
   PAbiMemoryPressure = ^TAbiMemoryPressure;
+
+  { The pages of files that processes map (CallGetMappedFileStatistics). }
+  TAbiMappedFileStatistics = record
+    { Mapped files, and snapshots kept for copy on write mappings of
+      files that changed since. }
+    MappedFiles: QWord;
+    SnapshotFiles: QWord;
+    { Their pages in memory, and those waiting to be written back. }
+    ResidentPages: QWord;
+    DirtyPages: QWord;
+    { Since start: pages written back to files, pages dropped under
+      memory pressure, mappings of them taken away for that, pages read
+      by snapshots before a change, and bytes read() copied from
+      mapped pages instead of reading the file. }
+    PagesWrittenBack: QWord;
+    PagesEvicted: QWord;
+    MappingsDropped: QWord;
+    SnapshotPagesRead: QWord;
+    BytesReadFromPages: QWord;
+  end;
+  PAbiMappedFileStatistics = ^TAbiMappedFileStatistics;
 
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;

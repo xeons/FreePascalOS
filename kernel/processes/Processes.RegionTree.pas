@@ -58,6 +58,13 @@ type
     SubtreeStart: QWord;
     SubtreeEnd: QWord;
     SubtreeLargestGap: QWord;
+    { A region backed by a mapped file is on that file's list of
+      mappings (Processes.MappedFiles keeps it, under the file's lock),
+      with the address space it is in (nil while on no list). Nodes
+      keep their address, so the list survives the tree's rotations. }
+    MapperNext: PRegionNode;
+    MapperPrevious: PRegionNode;
+    MapperSpace: Pointer;
   end;
 
   TRegionTree = record

@@ -124,6 +124,10 @@ uses
   Kernel.Timers,
   Processes.ImageSections,
   Processes.MappedFiles,
+  Processes.MappedFileChanges,
+  Processes.MappedFileMappings,
+  Processes.MappedFileEviction,
+  Kernel.MappedFileSelfTest,
   Processes.VirtualMemory,
   Processes.HangWatch,
   Drivers.MemoryDevices,
@@ -233,6 +237,9 @@ begin
   InitializeWatches;
   InitializeImageSections;
   InitializeMappedFiles;
+  InitializeMappedFileChanges;
+  InitializeMappedFileMappings;
+  InitializeMappedFileEviction;
   InitializeVirtualMemory;
   InitializeTerminalSignals;
   InitializeConsole;
@@ -375,6 +382,7 @@ begin
   RunNetworkSelfTests;
   RunNetworkHardeningSelfTests;
   RunFileSystemSelfTests;
+  RunMappedFileSelfTest;
   { Only when asked: the write tests change the test volumes, and end
     journaled ones with a simulated crash that leaves them read-only. }
   if KernelOptionIsSet(OptionFileSystemWriteTests) then

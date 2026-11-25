@@ -213,6 +213,10 @@ procedure PublishAddressSpace(var Slot: PAddressSpace; Space: PAddressSpace; out
   the release (it may destroy the space). }
 function ReferencePublishedSpace(var Slot: PAddressSpace): PAddressSpace;
 procedure ReleaseAddressSpaceReference(Space: PAddressSpace);
+{ A reference to Space if it is still alive (not on its way to being
+  destroyed); False otherwise. Any level (for walking a mapped file's
+  mappings, Processes.MappedFileMappings). }
+function TryReferenceAddressSpace(Space: PAddressSpace): Boolean;
 { The usage of the space in Slot, read under the slot's lock (any level
   up to dispatch, no reference needed); False if there is none. }
 function ReadPublishedSpaceUsage(var Slot: PAddressSpace; out Usage: TAddressSpaceUsage): Boolean;
@@ -383,7 +387,8 @@ uses
   Memory.Arch.PageTables,
   Kernel.Arch.Cpu,
   Processes.RegionEditing,
-  Processes.MappedFiles;
+  Processes.MappedFiles,
+  Processes.MappedFileChanges;
 
 const
   PageFaultWasPresent = 1;
@@ -416,8 +421,39 @@ end;
 procedure FreeRegionNode(Node: PRegionNode);
 begin
   if Node^.Region.Backing <> nil then
+  begin
+    DetachMappedFileMapper(PMappedFile(Node^.Region.Backing), Node);
     ReleaseMappedFile(PMappedFile(Node^.Region.Backing), Node^.Region.BackingIsPrivate);
+  end;
   FreeKernelMemory(Node);
+end;
+
+{ The same for the regions of a space that is destroyed: what shared
+  writable mappings wrote reaches the file soon. }
+procedure FreeRegionNodeOfEndedSpace(Node: PRegionNode);
+begin
+  if (Node^.Region.Backing <> nil) and Node^.Region.BackingIsWritable then
+    MarkMappedFileWriteBackPending(PMappedFile(Node^.Region.Backing));
+  FreeRegionNode(Node);
+end;
+
+function TryReferenceAddressSpace(Space: PAddressSpace): Boolean;
+var
+  Seen: PtrUInt;
+begin
+  repeat
+    Seen := PtrUInt(Space^.References);
+    if Int64(Seen) <= 0 then
+      Exit(False);
+  until AtomicCompareExchange(PtrUInt(Space^.References), Seen + 1, Seen) = Seen;
+  Result := True;
+end;
+
+{ A shared file mapping whose writes reach the file. }
+function IsSharedWritableBacking(Region: PUserRegion): Boolean;
+begin
+  Result := (Region^.Backing <> nil) and not Region^.BackingIsPrivate and Region^.BackingIsWritable and
+    ((Region^.Attributes and RegionWritable) <> 0);
 end;
 
 { True if a thread may sleep here (reading a file's page). }
@@ -480,10 +516,10 @@ begin
     Exit;
   { Every user page and page table is released along with the root. }
   DestroyAddressSpaceRoot(Space^.Root);
-  ClearRegionTree(Space^.Regions, @FreeRegionNode);
+  ClearRegionTree(Space^.Regions, @FreeRegionNodeOfEndedSpace);
   ChangeSystemCommitCharge(-Int64(Space^.CommitChargePages));
   FreeKernelMemory(Space);
-  DrainMappedFileReleases;
+  FlushPendingMappedFileWriteBacks;
 end;
 
 procedure GetAddressSpaceUsage(Space: PAddressSpace; out Usage: TAddressSpaceUsage);
@@ -703,6 +739,8 @@ begin
     Exit;
   end;
   InsertRegionNode(Space^.Regions, Node);
+  if Template.Backing <> nil then
+    AttachMappedFileMapper(PMappedFile(Template.Backing), Node, Space);
   if Template.Kind <> RegionKindStackGuard then
     Space^.VirtualBytes := Space^.VirtualBytes + Length;
   Result := ErrorNone;
@@ -816,6 +854,9 @@ begin
   Node := RemoveRegionNode(Space^.Regions, Start);
   if Node = nil then
     Exit;
+  { What it wrote reaches the file soon (FlushPendingMappedFileWriteBacks). }
+  if (Node^.Region.Backing <> nil) and Node^.Region.BackingIsWritable then
+    MarkMappedFileWriteBackPending(PMappedFile(Node^.Region.Backing));
   ReleaseRegionPages(Space, Node^.Region.Start, Node^.Region.Length);
   UnchargeCommitLocked(Space, RegionChargePages(Node^.Region));
   if Node^.Region.Kind <> RegionKindStackGuard then
@@ -868,7 +909,10 @@ begin
     Exit(ErrorOutOfMemory);
   SplitRegionAt(Space^.Regions, Address, Node);
   if Node^.Region.Backing <> nil then
+  begin
     ReferenceMappedFile(PMappedFile(Node^.Region.Backing), Node^.Region.BackingIsPrivate);
+    AttachMappedFileMapper(PMappedFile(Node^.Region.Backing), Node, Space);
+  end;
   Result := ErrorNone;
 end;
 
@@ -978,8 +1022,7 @@ begin
       RemoveRegionLocked(Space, Start - StackGuardSize);
   end;
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
-  if CurrentPriorityLevel = PassiveLevel then
-    DrainMappedFileReleases;
+  FlushPendingMappedFileWriteBacks;
   Result := ErrorNone;
 end;
 
@@ -1228,21 +1271,26 @@ begin
   ReleaseSpinLock(Space^.Lock, PreviousLevel);
 end;
 
+{ The file page behind PageAddress of the backed Region. }
+function BackingPageIndex(Region: PUserRegion; PageAddress: QWord): QWord; forward;
+
 { Maps the file's page Physical for the backed Region at PageAddress,
-  taking a reference to it: copy on write if the region is private (the
-  mark stays when it is read-only, so a later change of protection
-  still copies), read-only shared otherwise. }
+  with the caller's reference to it (AcquireResidentMappedFilePage):
+  copy on write if the region is private (the mark stays when it is
+  read-only, so a later change of protection still copies), read-only
+  shared otherwise - or, for a write to a shared writable mapping
+  (ForWrite), writable with the page marked dirty. }
 function MapBackedPageLocked(Space: PAddressSpace; PageAddress: QWord; Region: PUserRegion;
-  Physical: TPhysicalAddress): LongInt;
+  Physical: TPhysicalAddress; ForWrite: Boolean): LongInt;
 var
   Mapping: LongWord;
 begin
   Mapping := RegionMapping(Region);
   if Region^.BackingIsPrivate then
     Mapping := (Mapping and not MappingWritable) or MappingCopyOnWrite
-  else
+  else if not (ForWrite and IsSharedWritableBacking(Region) and
+     MarkMappedFilePageDirty(PMappedFile(Region^.Backing), BackingPageIndex(Region, PageAddress), Physical)) then
     Mapping := Mapping and not MappingWritable;
-  ReferencePhysicalPage(Physical);
   if not MapPageInAddressSpace(Space^.Root, PageAddress, Physical, Mapping) then
   begin
     FreePhysicalPage(Physical);
@@ -1254,7 +1302,6 @@ begin
   Result := ErrorNone;
 end;
 
-{ The file page behind PageAddress of the backed Region. }
 function BackingPageIndex(Region: PUserRegion; PageAddress: QWord): QWord;
 begin
   Result := (Region^.BackingOffset + (PageAddress - Region^.Start)) div PageSize;
@@ -1383,6 +1430,24 @@ begin
   end;
 end;
 
+{ A write to a present page of a shared writable mapping (mapped
+  read-only until written): the page is marked dirty and made writable.
+  If the entry no longer maps the file's page, it is dropped and the
+  touch maps the page afresh. }
+function MakeSharedPageWritableLocked(Space: PAddressSpace; PageAddress: QWord; Region: PUserRegion;
+  Physical: TPhysicalAddress): LongInt;
+begin
+  UnmapPageInAddressSpace(Space^.Root, PageAddress);
+  if MarkMappedFilePageDirty(PMappedFile(Region^.Backing), BackingPageIndex(Region, PageAddress), Physical) and
+     MapPageInAddressSpace(Space^.Root, PageAddress, Physical, RegionMapping(Region)) then
+    Exit(ErrorNone);
+  FreePhysicalPage(Physical);
+  Dec(Space^.CommittedPages);
+  if Space^.SharedPages > 0 then
+    Dec(Space^.SharedPages);
+  Result := ErrorNone;
+end;
+
 { True if the region allows the access the fault code describes. }
 function AccessAllowed(Region: PUserRegion; ErrorCode: QWord): Boolean;
 begin
@@ -1459,6 +1524,9 @@ begin
     begin
       if IsCopyOnWrite then
         Result := BreakCopyOnWriteLocked(Space, PageAddress, RoundDownToPage(PhysicalAddress)) = ErrorNone
+      else if IsSharedWritableBacking(Region) then
+        Result := MakeSharedPageWritableLocked(Space, PageAddress, Region,
+          RoundDownToPage(PhysicalAddress)) = ErrorNone
       else
         Result := True;
     end;
@@ -1469,8 +1537,9 @@ begin
   else if Region^.Backing <> nil then
   begin
     PageIndex := BackingPageIndex(Region, PageAddress);
-    if ResidentMappedFilePage(PMappedFile(Region^.Backing), PageIndex, PhysicalAddress) then
-      Result := MapBackedPageLocked(Space, PageAddress, Region, PhysicalAddress) = ErrorNone
+    if AcquireResidentMappedFilePage(PMappedFile(Region^.Backing), PageIndex, PhysicalAddress) then
+      Result := MapBackedPageLocked(Space, PageAddress, Region, PhysicalAddress,
+        (ErrorCode and PageFaultWasWrite) <> 0) = ErrorNone
     else
     begin
       { Read from the file without the lock; the touch is then tried
@@ -1578,9 +1647,37 @@ begin
   if Access = WindowRead then
     Exit(True);
   if (Region^.Backing <> nil) and not Region^.BackingIsPrivate then
-    Exit;
+    Exit((Access = WindowWrite) and IsSharedWritableBacking(Region));
   Result := ((Region^.Attributes and RegionWritable) <> 0) or
     ((Access = WindowImageWrite) and (Region^.Kind = RegionKindImage));
+end;
+
+{ A kernel pointer for writing to a page of a shared writable mapping:
+  the file's page itself, marked dirty (written back like a write by
+  the program). PageInNeeded if it must be read from its file first. }
+function SharedPageWindow(Space: PAddressSpace; Address: QWord; Region: PUserRegion;
+  out Window: PByte): LongInt;
+var
+  PageAddress: QWord;
+  PageIndex: QWord;
+  Physical: TPhysicalAddress;
+begin
+  Window := nil;
+  PageAddress := RoundDownToPage(Address);
+  PageIndex := BackingPageIndex(Region, PageAddress);
+  if not TranslateInAddressSpace(Space^.Root, PageAddress, Physical) then
+  begin
+    if not AcquireResidentMappedFilePage(PMappedFile(Region^.Backing), PageIndex, Physical) then
+      Exit(PageInNeeded);
+    Result := MapBackedPageLocked(Space, PageAddress, Region, Physical, True);
+    if Result <> ErrorNone then
+      Exit;
+  end;
+  Physical := RoundDownToPage(Physical);
+  if not MarkMappedFilePageDirty(PMappedFile(Region^.Backing), PageIndex, Physical) then
+    Exit(ErrorBadAddress);
+  Window := PByte(PhysicalToVirtual(Physical)) + (Address and PageOffsetMask);
+  Result := ErrorNone;
 end;
 
 { Returns a kernel pointer to Address in Space, providing the page if it
@@ -1601,6 +1698,8 @@ begin
   Region := FindRegionLocked(Space, Address);
   if not WindowAllowed(Region, Access) then
     Exit(ErrorBadAddress);
+  if (Access <> WindowRead) and IsSharedWritableBacking(Region) then
+    Exit(SharedPageWindow(Space, Address, Region, Window));
   if (Access <> WindowRead) and QueryPageInAddressSpace(Space^.Root, Address, PhysicalAddress, IsCopyOnWrite) then
   begin
     PhysicalAddress := RoundDownToPage(PhysicalAddress);
@@ -1617,10 +1716,10 @@ begin
       Exit(ErrorBadAddress);
     if Region^.Backing <> nil then
     begin
-      if not ResidentMappedFilePage(PMappedFile(Region^.Backing),
+      if not AcquireResidentMappedFilePage(PMappedFile(Region^.Backing),
          BackingPageIndex(Region, RoundDownToPage(Address)), PhysicalAddress) then
         Exit(PageInNeeded);
-      Result := MapBackedPageLocked(Space, RoundDownToPage(Address), Region, PhysicalAddress);
+      Result := MapBackedPageLocked(Space, RoundDownToPage(Address), Region, PhysicalAddress, False);
       if Result <> ErrorNone then
         Exit;
       { Mapped copy on write: a write copies it now. }

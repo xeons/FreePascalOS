@@ -155,6 +155,7 @@ function DuplicateAddressSpace(Source: PAddressSpace; out Copy: PAddressSpace): 
 var
   Context: TCopyContext;
   PreviousLevel: TPriorityLevel;
+  CopyLevel: TPriorityLevel;
 begin
   Result := CreateAddressSpace(Copy);
   if Result <> ErrorNone then
@@ -167,8 +168,14 @@ begin
   Context.Source := Source;
   Context.Target := Copy;
   Context.Error := ErrorNone;
+  { The copy's lock too: its regions go on the mapped files' lists of
+    mappers as they are added, where the eviction and write-back may
+    find them (Processes.MappedFileMappings, which holds one space's
+    lock at a time) before the copy is done. }
   PreviousLevel := AcquireSpinLock(Source^.Lock);
+  CopyLevel := AcquireSpinLock(Copy^.Lock);
   VisitRegions(Source^.Regions, @CopyRegion, @Context);
+  ReleaseSpinLock(Copy^.Lock, CopyLevel);
   ReleaseSpinLock(Source^.Lock, PreviousLevel);
   Result := Context.Error;
   if Result <> ErrorNone then
