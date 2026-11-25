@@ -163,6 +163,11 @@ type
     PendingInitializerCount: QWord;
     PendingFinalizers: PQWord;
     PendingFinalizerCount: QWord;
+    { A program that names an interpreter (PT_INTERP, a C program and
+      mlibc's ld.so): the interpreter's module index, -1 for none. The
+      interpreter loads the libraries, relocates and runs the
+      initializers itself; the kernel only maps the two. }
+    InterpreterModule: Integer;
   end;
 
   PModuleList = ^TModuleList;
@@ -179,6 +184,8 @@ type
 { All routines return 0 on success or an Abi error code. }
 
 function LoadProgramImage(Process: PProcess; KernelPath: PChar; out MainModule: PLoadedModule): LongInt;
+{ The interpreter module of a program that has one (PT_INTERP), else nil. }
+function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
 function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
 function FindExportedSymbol(Process: PProcess; ModuleHandle: Integer; Name: PChar;
   out Address: QWord): LongInt;
@@ -211,6 +218,7 @@ const
   MaximumStaticTlsSize = 1024 * 1024;
   MaximumInitializers = 4096;
   LibraryDirectory = '/lib/';
+  MaximumInterpreterPath = 256;
 
 type
   { An ELF file while it is being loaded: its section, which the load
@@ -694,6 +702,37 @@ begin
   Result := nil;
 end;
 
+function FindInterpreterSegment(const Image: TImageFile): PElf64ProgramHeader;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+  begin
+    Result := ProgramHeaderAt(Image, Index);
+    if Result^.SegmentType = ProgramHeaderTypeInterpreter then
+      Exit;
+  end;
+  Result := nil;
+end;
+
+{ The interpreter's path named by PT_INTERP, as a kernel path on the
+  system volume. }
+function ReadInterpreterPath(const Image: TImageFile; Segment: PElf64ProgramHeader; KernelPath: PChar): LongInt;
+var
+  UserPath: array[0..MaximumInterpreterPath - 1] of Char;
+begin
+  if (Segment^.FileSize < 2) or (Segment^.FileSize > MaximumInterpreterPath) or
+     (Segment^.FileOffset + Segment^.FileSize > Image.Size) then
+    Exit(ErrorBadExecutable);
+  if ReadMappedFileBytes(Image.MappedFile, Segment^.FileOffset, @UserPath[0], Segment^.FileSize) <> ErrorNone then
+    Exit(ErrorBadExecutable);
+  UserPath[Segment^.FileSize - 1] := #0;
+  if UserPath[0] <> '/' then
+    Exit(ErrorBadExecutable);
+  SystemVolumePath(@UserPath[0], KernelPath, ProcessPathCapacity);
+  Result := ErrorNone;
+end;
+
 { Gives the module a place in the static TLS area, after (further from
   the thread pointer than) the blocks placed before it. }
 function PlaceThreadLocalStorage(List: PModuleList; Module: PLoadedModule;
@@ -998,6 +1037,35 @@ begin
     Result := FindFreeRange(Space, Length, Layout^.LibraryWindowStart, Layout^.LibraryWindowEnd, Start);
 end;
 
+{ The kernel leaves a module to its interpreter: no relocations, no
+  initializers of its own to collect. }
+procedure LeaveToInterpreter(Module: PLoadedModule);
+begin
+  FreeKernelMemory(Module^.Relocations);
+  Module^.Relocations := nil;
+  Module^.RelocationCount := 0;
+  Module^.IsRelocated := True;
+  Module^.InitializersTaken := True;
+end;
+
+{ Maps the program's interpreter (mlibc's ld.so) as a library, which
+  relocates itself. }
+function LoadInterpreter(Process: PProcess; Program_: PLoadedModule; KernelPath: PChar): LongInt;
+var
+  InterpreterIndex: Integer;
+  Interpreter: PLoadedModule;
+begin
+  Result := LoadModule(Process, KernelPath, False, InterpreterIndex);
+  if Result <> ErrorNone then
+    Exit;
+  Interpreter := ModuleList(Process)^.Modules[InterpreterIndex];
+  if Interpreter^.NeededCount <> 0 then
+    Exit(ErrorBadExecutable);
+  LeaveToInterpreter(Program_);
+  LeaveToInterpreter(Interpreter);
+  Program_^.InterpreterModule := InterpreterIndex;
+end;
+
 function LoadModule(Process: PProcess; KernelPath: PChar; IsProgram: Boolean;
   out ModuleIndex: Integer): LongInt;
 var
@@ -1009,7 +1077,11 @@ var
   HighestPageEnd: QWord;
   Bias: QWord;
   Space: PAddressSpace;
+  InterpreterPath: array[0..ProcessPathCapacity - 1] of Char;
+  HasInterpreter: Boolean;
 begin
+  HasInterpreter := False;
+  InterpreterPath[0] := #0;
   ModuleIndex := -1;
   List := ModuleList(Process);
   Space := Process^.AddressSpace;
@@ -1025,6 +1097,11 @@ begin
 
   if not HeaderIsValid(Image) or not MeasureSpan(Image, LowestPage, HighestPageEnd) then
     Result := ErrorBadExecutable;
+  if (Result = ErrorNone) and IsProgram and (FindInterpreterSegment(Image) <> nil) then
+  begin
+    HasInterpreter := True;
+    Result := ReadInterpreterPath(Image, FindInterpreterSegment(Image), @InterpreterPath[0]);
+  end;
   if Result = ErrorNone then
     Result := ReadDynamicSection(Image, Dynamic);
 
@@ -1063,10 +1140,12 @@ begin
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
     Result := CopyDynamicTables(Module, Image, Dynamic);
   end;
-  if Result = ErrorNone then
+  if (Result = ErrorNone) and not HasInterpreter then
     Result := NoteInitializers(Module, Dynamic, Bias);
-  if (Result = ErrorNone) and (FindThreadLocalSegment(Image) <> nil) then
+  if (Result = ErrorNone) and not HasInterpreter and (FindThreadLocalSegment(Image) <> nil) then
     Result := PlaceThreadLocalStorage(List, Module, FindThreadLocalSegment(Image), Bias);
+  if Result = ErrorNone then
+    Module^.InterpreterModule := -1;
 
   ReleaseImageSection(Image.Section);
 
@@ -1083,7 +1162,10 @@ begin
   List^.Modules[List^.Count] := Module;
   Inc(List^.Count);
 
-  Result := LoadNeededLibraries(Process, Module, Dynamic);
+  if HasInterpreter then
+    Result := LoadInterpreter(Process, Module, @InterpreterPath[0])
+  else
+    Result := LoadNeededLibraries(Process, Module, Dynamic);
 end;
 
 { --- Symbols and relocation ------------------------------------------ }
@@ -1406,6 +1488,13 @@ begin
     MainModule := ModuleList(Process)^.Modules[ModuleIndex];
     ModuleList(Process)^.StartupComplete := True;
   end;
+end;
+
+function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
+begin
+  if (MainModule = nil) or (MainModule^.InterpreterModule < 0) then
+    Exit(nil);
+  Result := ModuleList(Process)^.Modules[MainModule^.InterpreterModule];
 end;
 
 function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;

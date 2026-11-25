@@ -308,6 +308,11 @@ function AddRegionRecordLocked(Space: PAddressSpace; const Template: TUserRegion
 { Removes the region starting at Start, or every piece of the
   allocation starting there. False if there is none. }
 function RemoveAllocationLocked(Space: PAddressSpace; Start: QWord): Boolean;
+{ The page table attributes the pages of Region get. }
+function RegionMapping(Region: PUserRegion): LongWord;
+{ Removes just the region (piece) starting at Start, with its pages
+  (munmap, Processes.MemoryMapping). }
+procedure RemoveAllocationPieceLocked(Space: PAddressSpace; Start: QWord);
 { Cuts the region holding Address there (nothing if it starts there or
   no region holds it). ErrorOutOfMemory over the region limit. }
 function SplitRegionLocked(Space: PAddressSpace; Address: QWord): LongInt;
@@ -727,6 +732,11 @@ begin
   if Node^.Region.Kind <> RegionKindStackGuard then
     Space^.VirtualBytes := Space^.VirtualBytes - Node^.Region.Length;
   FreeRegionNode(Node);
+end;
+
+procedure RemoveAllocationPieceLocked(Space: PAddressSpace; Start: QWord);
+begin
+  RemoveRegionLocked(Space, Start);
 end;
 
 function RemoveAllocationLocked(Space: PAddressSpace; Start: QWord): Boolean;
