@@ -220,8 +220,24 @@ userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
+# The compiler and the runtime library's flags: when they change (a new
+# target, a different compiler), the whole runtime library and with it
+# every library and program is built again, since units made for another
+# target or with other options cannot be mixed ("PPU is compiled for
+# another target").
+RTL_USER_FLAGS_STAMP := $(BUILD_DIRECTORY)/rtl-user.flags
+RTL_USER_FLAGS_TEXT := $(TARGET_FPC) $(USER_RTL_FLAGS)
+
+.PHONY: rtl-user-flags-check
+rtl-user-flags-check:
+	@mkdir -p $(BUILD_DIRECTORY)
+	@if [ "$$(cat $(RTL_USER_FLAGS_STAMP) 2> /dev/null)" != "$(RTL_USER_FLAGS_TEXT)" ]; then \
+		echo "$(RTL_USER_FLAGS_TEXT)" > $(RTL_USER_FLAGS_STAMP); fi
+
+$(RTL_USER_FLAGS_STAMP): rtl-user-flags-check
+
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
-		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
+		shared/Abi.ErrorMessages.inc $(RTL_USER_FLAGS_STAMP) | $(CROSS_COMPILER)
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
 	@rm -rf $(RTL_USER_DIRECTORY)
