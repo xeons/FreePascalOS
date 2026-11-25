@@ -1,0 +1,5 @@
+# Font files are binary: no text diffs, merges or line-ending changes.
+*.ttf binary
+*.otf binary
+*.ttc binary
+*.woff2 binary
