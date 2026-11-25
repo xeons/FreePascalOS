@@ -128,6 +128,9 @@ procedure GetThreadTimes(Thread: PThreadControlBlock; out Times: TThreadTimes);
 var
   PreviousLevel: TPriorityLevel;
   Processor: PProcessor;
+  Now: QWord;
+  Pending: QWord;
+  PendingInUserMode: Boolean;
 begin
   { The processor it ran on last charges it when it switches away, and
     knows since when it runs if it still does. }
@@ -140,12 +143,30 @@ begin
     Exit;
   end;
   PreviousLevel := LockProcessorAtDispatchLevel(Processor);
+  Now := ClockNanoseconds;
   Times.RunNanoseconds := Thread^.RunNanoseconds;
+  Pending := 0;
+  PendingInUserMode := False;
   if (Thread^.State = ThreadStateRunning) and (Processor^.RunningThread = Thread) then
-    Times.RunNanoseconds := Times.RunNanoseconds + ElapsedSince(Processor^.RunningSince, ClockNanoseconds);
+  begin
+    Times.RunNanoseconds := Times.RunNanoseconds + ElapsedSince(Processor^.RunningSince, Now);
+    { Running alone with its tick deferred (dynamic tick): the ticks
+      not taken yet count as the last clock interrupt found it, as they
+      will be charged. }
+    if (Processor^.TickDeferredUntil <> 0) and (Processor^.NextTickTime <> NeverDue) and
+       (Now >= Processor^.NextTickTime) then
+    begin
+      Pending := (Now - Processor^.NextTickTime) div NanosecondsPerTick + 1;
+      PendingInUserMode := Processor^.LastTickInUserMode;
+    end;
+  end;
   UnlockProcessorAndLower(Processor, PreviousLevel);
   Times.UserTicks := Thread^.UserTicks;
   Times.KernelTicks := Thread^.KernelTicks;
+  if PendingInUserMode then
+    Times.UserTicks := Times.UserTicks + Pending
+  else
+    Times.KernelTicks := Times.KernelTicks + Pending;
 end;
 
 procedure AddThreadTimes(var Total: TThreadTimes; const Times: TThreadTimes);

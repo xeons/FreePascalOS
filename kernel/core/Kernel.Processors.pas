@@ -96,6 +96,9 @@ type
     TickDeferredUntil: QWord;
     { How often the tick was deferred so. }
     TickDeferralCount: QWord;
+    { Whether the last clock interrupt found the processor in user mode:
+      the ticks a deferral skipped are charged to that mode. }
+    LastTickInUserMode: Boolean;
     { How many clock interrupts it took (its tick stops while it idles,
       so an idle processor takes few), and how often it entered each of
       the idle states (Kernel.IdleStates). }

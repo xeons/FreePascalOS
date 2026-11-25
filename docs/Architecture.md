@@ -785,6 +785,20 @@ on the dispatcher lock and its wait queues:
   lookup reads it shared, mounting and removing a disk change it
   exclusively.
 
+**Timing windows.** `Kernel.SchedulerLatencySelfTest` makes two windows
+QEMU does not hit by chance happen on every boot, with test hooks. The
+idle window hook (`SetIdleWindowHookForTest`) holds an idle processor
+between its check for work and its wait, interrupts off: a thread
+pinned there and woken inside the window must run at once, and so must
+a thread left in a busy processor's queue whose lock the test holds
+while the idle processor's dispatch interrupt arrives in the window
+and is refused its steal (the case the one-step check and wait was
+made for; with interrupts enabled in the window it sleeps with the
+work, and the test fails). And with the time slice stretched beyond
+any wait (`SetTimeSliceTicksForTest`), lowering a spinning thread's
+priority below a ready thread's must hand over the processor at once
+(without the reschedule `SetThreadPriority` asks for, it never would).
+
 Kernel self tests (`Kernel.SynchronizationSelfTest`) run on every boot:
 semaphore counts, limits and consumers in several threads; readers and
 writers of a shared lock in several threads (no reader sees a write half
@@ -826,13 +840,53 @@ them between processors and changing their priorities.
   (`RestartClockTick`), a whole tick later, so the thread gets a full
   time slice. Processor time stays exact (it is taken at every switch),
   the uptime and the timers come from the counter, and the load
-  averages have a deadline of their own. Busy processors keep the 100 Hz
-  tick. Each processor counts its clock interrupts
+  averages have a deadline of their own. Each processor counts its clock interrupts
   (`ClockInterruptCount`) and of those the ones that found a tick, a
   timer or a wake-up due: an idle QEMU guest takes about one a second
   per idle processor rather than 100; what is left is due work (in the
   test machine, netlog's 100 ms poll and the services' timers). Kernel option `tickless=off` keeps
   the tick on idle processors too.
+- **Dynamic tick.** A busy processor whose running thread is alone
+  (nothing in its run queues) has no time slice to end either. The
+  clock interrupt that finds it so asks for the dispatch interrupt,
+  which looks under the processor's scheduling lock (where the count is
+  exact) and defers the tick (`DeferClockTick`, `TickDeferredUntil`) to
+  a residual tick a second later. That one still charges the ticks that
+  passed (the split of processor time between user mode and the kernel
+  is sampled once a second then) and the next dispatch decides again.
+  Whoever queues a thread on that processor sees the deferral under the
+  same lock and sends it its dispatch interrupt, which starts the tick
+  again a whole tick from then (`ResumeClockTick`), and so does any
+  switch: the newcomer waits at most one time slice, as before. An
+  alerted thread (asked to end, stop or take a signal) running on
+  another processor is sent a dispatch interrupt too, so it reaches its
+  safe point at once rather than at a tick that may be a second away.
+  `TickDeferralCount` counts the deferrals. Kernel option
+  `dynamictick=off` (or `tickless=off`) keeps the 100 Hz tick on busy
+  processors.
+- **The clock page** (`Kernel.ClockPage`): one physical page with the
+  clock's parameters (`TAbiClockPage`: the counter value at an origin,
+  the uptime then and the counter's rate, from `HalDescribeUserClock`;
+  the wall clock's offset and gradual adjustment, from
+  `ReadWallClockState`), mapped read-only into every program (a section
+  region; its address is the auxiliary vector entry
+  `AuxiliaryClockPage`). The runtime reads the uptime and the wall clock
+  from it with the processor's counter and no system call
+  (`System.ReadClockPageTime`: a copy under the page's sequence count,
+  odd while the kernel changes it, and the counter - `LFENCE; RDTSC` on
+  x86-64, `ISB; MRS CNTVCT_EL0` on AArch64, where `CNTKCTL_EL1.EL0VCTEN`
+  is set on every processor as its clock starts or wakes); `Sys.Time`
+  (`WallClockNanoseconds`, `MonotonicNanoseconds`, `UptimeMilliseconds`),
+  `Now`, `GetLocalTime` and `GetTickCount64` use it. The arithmetic is
+  one include (`shared/ClockPageMath.inc`) shared by the kernel's wall
+  clock, the runtime and `tools/ClockPageTest`, and the HALs convert the
+  counter the same way, so the page's time is to the nanosecond what the
+  system call gives. The kernel publishes the page at start, whenever
+  the wall clock is set or adjusted, and when the clock continues after
+  suspend to RAM. Where programs cannot read the kernel's clock (KVM's
+  paravirtual clock, chosen under KVM unless the counter is invariant or
+  `clock=tsc`) the page says `ClockPageModeSystemCall` and the runtime
+  makes the call.
 - **Timers** (`Kernel.Timers`) go on the queue of the processor that
   sets them; each queue has a lock its clock interrupt takes, and
   setting or cancelling also takes one shared lock, so that two
@@ -987,7 +1041,12 @@ interrupts per second over a second; sysinfo shows the clock rate, the
 hottest temperature and the batteries; the kernel debug shell's `power`
 writes the same to the log.
 
-**Tests.** coretest runs `powerstat --check-idle 3 5`: the processors
+**Tests.** The kernel self tests (`Kernel.ClockSelfTest`) check that
+the clock page's time is the kernel's, and that a thread spinning
+alone on a processor leaves it almost without ticks while a second
+one beside it brings the tick back (both share the processor). coretest runs `powerstat --check-busy 3 5` (a thread of
+its own spinning on the last processor, which must take under 5 ticks
+a second) and `powerstat --check-idle 3 5`: the processors
 that stayed idle for 3 seconds (busy under 10 %) must average under 5
 clock interrupts a second that found no timer or wake-up due (100 with
 the periodic tick; the interrupts for due work, which depend on what
@@ -1367,7 +1426,10 @@ statistics count discards and their bytes.
   for their requests alertably (`Io.DeviceFiles`); when the thread is
   alerted (ended, or stopped by job control), `CancelRequest` takes its
   request out of the queue and completes it with `ErrorInterrupted`,
-  and the call is restarted after a stop. Drivers that wait themselves
+  and the call is restarted after a stop. Device files and block
+  devices send their requests as bounded requests
+  (`CallDriverAndWaitBounded`, see "Ending other programs"), so a
+  driver that never completes one cannot keep a process from ending. Drivers that wait themselves
   (the console) wait alertably too. Buffers are always kernel memory
   (system calls copy through their transfer buffer). A device whose
   hardware went away (an unplugged disk) leaves `/dev` with
@@ -9582,12 +9644,35 @@ never have ended. What a process held goes with it: its handles are
 closed (sockets, pipes, channels; the display server sees the channel
 break and removes its windows), user-mode locks were in its own memory.
 
-The kernel's remaining non-alertable waits a user thread can reach are
-bounded by hardware: opening and closing a device, block I/O, and the
-wait for a cancelled request to complete. Should one of them never end
-(a driver that loses a request), the hang watch says so: a process
-still there 10 seconds after it was told to end is written to the log
-with where each of its threads is (`[ending]`, see "Diagnosing hangs").
+The waits for drivers a user thread reaches - opening and closing a
+device, its reads, writes and control requests, block I/O, and the
+wait for a request it cancelled - are bounded (`Io.BoundedRequests`).
+Such a request is a copy on the heap that the driver owns while it
+holds it: its own buffer (copied in before, and out after for reads
+and control requests), a reference to the device file it names (a
+close carries a copy of the device file, whose object is being
+deleted) and a completion routine; the waiter and the completion each
+hold a reference. Once the thread cancelled its request (alerted while
+waiting for a device) or must end (its process is being ended or is
+exiting, or the thread was asked to exit: `CurrentThreadMustEnd` in
+`Processes.Termination`, looked at every 250 ms of a wait that is not
+alertable), it waits at most 5 seconds more, then gives the request up
+(`ErrorInterrupted` for a cancelled one, else `ErrorTimedOut`; a block
+transfer fails as on a disk error) with a line in the log (`[io] gave
+up on a read sent to ... that its driver did not complete`). The
+driver completes it whenever it does, into memory nobody else uses,
+and the last reference frees it (the device file's reference at
+passive level). Without memory for the copy a request is sent the old
+way. Closing an audio stream also stops waiting for it to drain once
+the device has played nothing for three seconds. A self test
+(`Kernel.BoundedRequestSelfTest`) uses a driver that loses every
+request: a cancelled read and an open of a thread that must end are
+given up, the late completions leave the senders' buffers alone, and a
+thread that need not end still gets its late result. Should a process
+still not end (a driver stuck inside its dispatch routine), the hang
+watch says so: a process still there 10 seconds after it was told to
+end is written to the log with where each of its threads is
+(`[ending]`, see "Diagnosing hangs").
 
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
 shell reports a program killed by that signal. Ending a program outright

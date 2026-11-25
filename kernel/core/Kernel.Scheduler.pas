@@ -339,7 +339,7 @@ begin
   SetRunningPriority(Processor, NextThread^.Priority);
   { Another thread runs: a deferred tick starts again (the next dispatch
     defers it anew if that one runs alone). }
-  ResumeClockTick;
+  ResumeClockTick(PreviousThread);
   { The tick stopped while the processor idled (Kernel.Clock). }
   if (PreviousThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
     RestartClockTick
@@ -441,7 +441,7 @@ begin
       if ReadyThreadCountOf(Processor) = 0 then
         DeferClockTick
       else
-        ResumeClockTick;
+        ResumeClockTick(Running);
     end;
     UnlockProcessor(Processor);
     Exit;

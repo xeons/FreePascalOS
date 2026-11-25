@@ -124,8 +124,9 @@ function ClockHasDynamicTick: Boolean;
   tick (nothing if dynamic tick is off or the processor idles). }
 procedure DeferClockTick;
 { The same: the tick starts again, a whole tick from now, if it was
-  deferred. }
-procedure ResumeClockTick;
+  deferred; the ticks it skipped are charged to Thread (the one that ran
+  alone meanwhile), in the mode the last clock interrupt found. }
+procedure ResumeClockTick(Thread: Pointer);
 { Whether Processor's tick is deferred (read under its scheduling
   lock). }
 function ClockTickIsDeferred(Processor: Pointer): Boolean;
@@ -144,6 +145,8 @@ uses
   Kernel.Options,
   Kernel.WallClock,
   Kernel.ClockPage,
+  Kernel.Threads,
+  Kernel.ProcessorTime,
   Kernel.Panic;
 
 const
@@ -262,6 +265,7 @@ begin
   RecordInterruptedPlace(Frame);
   Processor := CurrentProcessor;
   Inc(Processor^.ClockInterruptCount);
+  Processor^.LastTickInUserMode := ArchFrameIsFromUserMode(Frame);
   Now := ClockNanoseconds;
   WereEnabled := SaveAndDisableInterrupts;
   ElapsedTicks := TakeElapsedTicks(Processor, Now);
@@ -353,11 +357,12 @@ begin
   RestoreInterrupts(WereEnabled);
 end;
 
-procedure ResumeClockTick;
+procedure ResumeClockTick(Thread: Pointer);
 var
   Processor: PProcessor;
   WereEnabled: Boolean;
   Now: QWord;
+  Skipped: QWord;
 begin
   WereEnabled := SaveAndDisableInterrupts;
   Processor := CurrentProcessor;
@@ -365,10 +370,18 @@ begin
   begin
     Processor^.TickDeferredUntil := 0;
     Now := ClockNanoseconds;
-    { A fresh schedule: the ticks that passed while deferred are not
-      charged to whoever runs next. }
+    { The ticks skipped go to the thread that ran alone, so the split of
+      its time between user mode and the kernel still has its samples;
+      then a fresh schedule, so whoever runs next gets a whole tick. }
     if Processor^.NextTickTime <> NeverDue then
+    begin
+      if (Thread <> nil) and (Now >= Processor^.NextTickTime) then
+      begin
+        Skipped := (Now - Processor^.NextTickTime) div NanosecondsPerTick + 1;
+        ChargeClockTicks(PThreadControlBlock(Thread), Skipped, Processor^.LastTickInUserMode);
+      end;
       Processor^.NextTickTime := Now + NanosecondsPerTick;
+    end;
     if Processor^.NextTickTime < Processor^.ClockInterruptTime then
       SetClockInterruptFor(Processor, Processor^.NextTickTime, Now);
   end;
