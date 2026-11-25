@@ -19,9 +19,10 @@
 {
   System calls about attributes of open files and volumes:
   CallSetHandleAttributes (times, mode, owner of an open file, by handle)
-  and CallGetVolumeInformation (the volume a path is on). Also the checks
-  and conversions they share with the path based calls
-  (Processes.FileCalls).
+  and CallGetVolumeInformation (the volume a path is on). Also the
+  conversion they share with the path based calls (Processes.FileCalls);
+  who may change what is checked by the VFS through
+  Processes.Security.CurrentMayChangeAttributes.
 }
 unit Processes.FileAttributeCalls;
 
@@ -36,11 +37,6 @@ uses
 
 { Root and kernel threads may change anything. }
 function CallerMaySetAnyAttributes: Boolean;
-{ May the calling process make Changes to a node described by
-  Information? Fields are the Abi fields asked for. Returns ErrorNone,
-  ErrorNotPermitted or ErrorAccessDenied. }
-function CheckAttributeChangesFor(const Information: TNodeInformation; Fields: LongWord;
-  const Changes: TAttributeChanges): LongInt;
 { The kernel form of Abi attribute changes ("now" times filled in). }
 procedure ConvertAttributeChanges(const UserChanges: TAbiAttributeChanges; out Changes: TAttributeChanges);
 procedure FillVolumeInformation(Volume: PVolume; out Information: TAbiVolumeInformation);
@@ -65,6 +61,8 @@ uses
   Processes.Thread,
   Processes.UserAccess,
   Processes.Security,
+  Processes.ObjectCalls,
+  Objects.Manager,
   Processes.FileCalls;
 
 function Failure(Error: LongInt): Int64;
@@ -80,34 +78,6 @@ begin
   Result := not Process^.IsUserProcess or (Process^.Credentials.EffectiveUserId = RootUserId);
 end;
 
-function CheckAttributeChangesFor(const Information: TNodeInformation; Fields: LongWord;
-  const Changes: TAttributeChanges): LongInt;
-var
-  Process: PProcess;
-  IsOwner: Boolean;
-begin
-  if CallerMaySetAnyAttributes then
-    Exit(ErrorNone);
-  Process := CurrentProcess;
-  IsOwner := Information.OwnerId = Process^.Credentials.EffectiveUserId;
-  Result := ErrorNone;
-  if ((Changes.Fields and AttributeChangeMode) <> 0) and not IsOwner then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and AttributeChangeOwner) <> 0) and (Changes.OwnerId <> Information.OwnerId) then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and AttributeChangeGroup) <> 0) and (Changes.GroupId <> Information.GroupId) and
-     (not IsOwner or not IsInGroup(Process^.Credentials, Changes.GroupId)) then
-    Exit(ErrorNotPermitted);
-  if ((Changes.Fields and (AttributeChangeModificationTime or AttributeChangeAccessTime)) <> 0) and
-     not IsOwner then
-  begin
-    if (Fields and ChangeFieldTimesAreNow) = 0 then
-      Exit(ErrorNotPermitted);
-    if not CredentialsMayAccess(Process^.Credentials, Information, AccessWrite) then
-      Exit(ErrorAccessDenied);
-  end;
-end;
-
 procedure ConvertAttributeChanges(const UserChanges: TAbiAttributeChanges; out Changes: TAttributeChanges);
 begin
   { The Abi field flags have the same values as the VFS ones. }
@@ -117,7 +87,8 @@ begin
   Changes.GroupId := UserChanges.GroupId;
   Changes.ModificationTime := UserChanges.ModificationTime;
   Changes.AccessTime := UserChanges.AccessTime;
-  if (UserChanges.Fields and ChangeFieldTimesAreNow) <> 0 then
+  Changes.TimesAreNow := (UserChanges.Fields and ChangeFieldTimesAreNow) <> 0;
+  if Changes.TimesAreNow then
   begin
     Changes.Fields := Changes.Fields and not ChangeFieldTimesAreNow;
     Changes.ModificationTime := CurrentWallClockTime;
@@ -142,30 +113,27 @@ function PerformSetHandleAttributes(Handle: Int64; ChangesAddress: QWord): Int64
 var
   UserChanges: TAbiAttributeChanges;
   Changes: TAttributeChanges;
+  OpenedFile: POpenFile;
   Kind: THandleKind;
-  ObjectBody: Pointer;
-  Information: TNodeInformation;
   Error: LongInt;
-  Process: PProcess;
-  Found: Boolean;
 begin
   Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Found := LookupHandle(Process^.Handles, Handle, Kind, ObjectBody);
-  ReleaseMutex(Process^.Lock);
-  if not Found then
+  { A reference, so that another thread closing the handle meanwhile
+    cannot free the open file under us. }
+  OpenedFile := POpenFile(ReferenceHandle(Handle, Kind));
+  if OpenedFile = nil then
     Exit(Failure(ErrorBadHandle));
   if Kind <> HandleKindFile then
+  begin
+    DereferenceObject(OpenedFile);
     Exit(Failure(ErrorUnsupported));
+  end;
   ConvertAttributeChanges(UserChanges, Changes);
-  GetFileInformation(POpenFile(ObjectBody), Information);
-  Error := CheckAttributeChangesFor(Information, UserChanges.Fields, Changes);
-  if Error <> ErrorNone then
-    Exit(Failure(Error));
-  Result := -Int64(ErrorFromStatus(SetFileAttributes(POpenFile(ObjectBody), Changes)));
+  { Who may change what is checked by the VFS, under the volume's lock. }
+  Result := -Int64(ErrorFromStatus(SetFileAttributes(OpenedFile, Changes)));
+  DereferenceObject(OpenedFile);
 end;
 
 { The volume a kernel path leads to, through mount points ("/" names

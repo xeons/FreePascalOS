@@ -170,6 +170,7 @@ const
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
   Credentials: TProcessCredentials;
+  ProgramIdentity: TProgramIdentity;
   Creation: TAbiProcessCreation;
   Caller: PProcess;
   Startup: TProcessStartup;
@@ -208,7 +209,7 @@ begin
   Error := ApplyStartIdentity(Caller, QWord(Creation.Identity), Credentials);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Error := CheckMayExecute(Caller, @KernelPath[0], Credentials);
+  Error := CheckMayExecute(Caller, @KernelPath[0], Credentials, ProgramIdentity);
   if Error <> ErrorNone then
     Exit(Failure(Error));
 
@@ -236,6 +237,7 @@ begin
   end;
 
   FillMemory(@Startup, SizeOf(Startup), 0);
+  Startup.ProgramIdentity := ProgramIdentity;
   Startup.KernelPath := @KernelPath[0];
   Startup.Name := FileNameOf(@UserPath[0]);
   Startup.Arguments := Arguments.Items;

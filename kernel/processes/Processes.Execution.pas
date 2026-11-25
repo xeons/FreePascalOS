@@ -92,6 +92,8 @@ type
     CloseOnExec: PLongInt;
     CloseOnExecCount: QWord;
     Credentials: TProcessCredentials;
+    { The file the permission check looked at. }
+    ProgramIdentity: TProgramIdentity;
   end;
   PExecRequest = ^TExecRequest;
 
@@ -127,7 +129,7 @@ begin
   if Result = ErrorNone then
   begin
     InheritCredentials(Caller, Request^.Credentials);
-    Result := CheckMayExecute(Caller, @Request^.KernelPath[0], Request^.Credentials);
+    Result := CheckMayExecute(Caller, @Request^.KernelPath[0], Request^.Credentials, Request^.ProgramIdentity);
   end;
   if Result = ErrorNone then
     Result := CopyStringListFromUser(QWord(Execution.Arguments), Request^.Arguments);
@@ -184,6 +186,10 @@ begin
   Process^.Modules := nil;
   if Result = ErrorNone then
     Result := LoadProgramImage(Process, @Request^.KernelPath[0], MainModule);
+  { The path may lead elsewhere since the check (a symbolic link
+    changed): the credentials were made for the file checked. }
+  if (Result = ErrorNone) and not ModuleIsProgram(MainModule, Request^.ProgramIdentity) then
+    Result := ErrorAccessDenied;
   if Result = ErrorNone then
     Result := CollectInitializers(Process, Lists);
   if Result = ErrorNone then

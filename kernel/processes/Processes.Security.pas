@@ -180,9 +180,46 @@ begin
     (Caller^.Credentials.RealUserId = Target^.Credentials.RealUserId);
 end;
 
+{ Who may change what (chmod, chown, chgrp, utimes):
+    mode       the owner (or root)
+    owner      root only
+    group      root, or the owner giving it to one of its own groups
+    times      the owner (or root); anyone with write permission may set
+               them to now.
+  Asked by the VFS about the node being changed, with its volume's lock
+  held. }
+function CurrentMayChangeAttributes(const Information: TNodeInformation;
+  const Changes: TAttributeChanges): TFileSystemStatus;
+var
+  Process: PProcess;
+  IsOwner: Boolean;
+begin
+  Process := CurrentProcess;
+  if not Process^.IsUserProcess or (Process^.Credentials.EffectiveUserId = RootUserId) then
+    Exit(StatusSuccess);
+  IsOwner := Information.OwnerId = Process^.Credentials.EffectiveUserId;
+  Result := StatusSuccess;
+  if ((Changes.Fields and AttributeChangeMode) <> 0) and not IsOwner then
+    Exit(StatusNotPermitted);
+  if ((Changes.Fields and AttributeChangeOwner) <> 0) and (Changes.OwnerId <> Information.OwnerId) then
+    Exit(StatusNotPermitted);
+  if ((Changes.Fields and AttributeChangeGroup) <> 0) and (Changes.GroupId <> Information.GroupId) and
+     (not IsOwner or not IsInGroup(Process^.Credentials, Changes.GroupId)) then
+    Exit(StatusNotPermitted);
+  if ((Changes.Fields and (AttributeChangeModificationTime or AttributeChangeAccessTime)) <> 0) and
+     not IsOwner then
+  begin
+    if not Changes.TimesAreNow then
+      Exit(StatusNotPermitted);
+    if not CredentialsMayAccess(Process^.Credentials, Information, AccessWrite) then
+      Exit(StatusAccessDenied);
+  end;
+end;
+
 procedure InitializeProcessSecurity;
 begin
   SetFileSecurityHooks(@CurrentMayAccess, @CurrentCreationAttributes, @CurrentIsOwnerOrRoot);
+  SetAttributeChangeHook(@CurrentMayChangeAttributes);
 end;
 
 end.

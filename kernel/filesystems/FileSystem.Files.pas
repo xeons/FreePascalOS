@@ -197,8 +197,10 @@ function RemovePath(Path: PChar): TFileSystemStatus;
 function RenamePath(SourcePath: PChar; TargetPath: PChar): TFileSystemStatus;
 
 { Writes summary information of every writable volume to disk. }
-{ Changes permissions, owner, group or times. FollowLinks selects whether
-  a final symbolic link is changed or what it points to. }
+{ Changes permissions, owner, group or times, if the caller may
+  (FileSystem.Security.MayChangeAttributes, asked about the node changed
+  with the volume's lock held). FollowLinks selects whether a final
+  symbolic link is changed or what it points to. }
 function SetPathAttributes(Path: PChar; FollowLinks: Boolean;
   const Changes: TAttributeChanges): TFileSystemStatus;
 { The same for the node of an open file. }
@@ -219,6 +221,12 @@ function WatchPath(Path: PChar; Flags: LongWord; out Watch: PWatch): TFileSystem
   waits for the operation running on it, fails every later one, and
   gives its driver data back as soon as no node of it is in use. }
 procedure MarkVolumeGone(Volume: PVolume);
+{ Unmounting: in one hold of the volume's lock, checks that the volume is
+  idle (see VolumeIsBusy; WasBusy says whether it was), refusing with
+  StatusInUse unless Force, writes it back and marks it gone - so nothing
+  can be opened between the check and the end. StatusVolumeGone if it
+  went away already. }
+function RetireVolume(Volume: PVolume; Force: Boolean; out WasBusy: Boolean): TFileSystemStatus;
 
 procedure SyncAllVolumes;
 
@@ -283,8 +291,6 @@ type
     { The trail of Parent, when the change is to be reported. }
     Trail: PNodeTrail;
     Name: array[0..MaximumNameLengthInBytes] of Char;
-    { The volume relative path, normalized, for loop checks in rename. }
-    NormalizedPath: array[0..MaximumPathBytes - 1] of Char;
   end;
   PParentAndName = ^TParentAndName;
 
@@ -332,10 +338,12 @@ begin
 end;
 
 { Gives a gone volume's driver data back once no node besides the root
-  is in use any more. Volume lock held. }
+  is in use any more, and the root itself is not open (its only
+  reference is the volume's own). Volume lock held. }
 procedure FinishGoneVolume(Volume: PVolume);
 begin
-  if not Volume^.IsGone or Volume^.IsUnmounted or (Volume^.NodesInUse > 0) then
+  if not Volume^.IsGone or Volume^.IsUnmounted or (Volume^.NodesInUse > 0) or
+     (Volume^.RootNode^.ReferenceCount > 1) then
     Exit;
   RemoveListEntry(@Volume^.RootNode^.CacheLink);
   if Assigned(Volume^.Driver^.Unmount) then
@@ -349,6 +357,16 @@ procedure ReleaseNodeReference(Volume: PVolume; Node: PNode);
 begin
   if Node = nil then
     Exit;
+  if Node = Volume^.RootNode then
+  begin
+    { The volume keeps the root's last reference; the driver frees the
+      root when the volume is unmounted. Once a gone volume's root is no
+      longer open, that may happen now. }
+    if Node^.ReferenceCount > 1 then
+      Dec(Node^.ReferenceCount);
+    FinishGoneVolume(Volume);
+    Exit;
+  end;
   Dec(Node^.ReferenceCount);
   if Node^.ReferenceCount <= 0 then
   begin
@@ -724,11 +742,8 @@ begin
   if Result = StatusSuccess then
   begin
     ParentPath[0] := #0;
-    Target^.NormalizedPath[0] := #0;
     for ComponentIndex := 0 to Split^.ComponentCount - 2 do
       AppendComponent(@ParentPath[0], Split^.Components[ComponentIndex]);
-    for ComponentIndex := 0 to Split^.ComponentCount - 1 do
-      AppendComponent(@Target^.NormalizedPath[0], Split^.Components[ComponentIndex]);
 
     if TextLength(Split^.Components[Split^.ComponentCount - 1]) > MaximumNameLengthInBytes then
       Result := StatusNameTooLong
@@ -1577,14 +1592,58 @@ begin
   FreeKernelMemory(Target);
 end;
 
-{ True if Inner names Outer itself or something below it. }
-function PathIsInside(Inner: PChar; Outer: PChar): Boolean;
+{ True if a volume is mounted on a directory below Directory (on Volume,
+  whose lock is held): the mount records its path as text, which a
+  rename of Directory would leave behind. Each mount point's parent is
+  looked up afresh, and its trail tells whether Directory is on the way. }
+function HasMountBelow(Volume: PVolume; Directory: PNode): Boolean;
 var
-  OuterLength: PtrUInt;
+  MountPath: PChar;
+  Trail: PNodeTrail;
+  Index: Integer;
+  LastSeparator: PtrInt;
+  Position: PtrInt;
+  Found: PNode;
+  SameVolume: PVolume;
 begin
-  OuterLength := TextLength(Outer);
-  Result := MemoryIsEqual(Inner, Outer, OuterLength) and
-    ((Inner[OuterLength] = #0) or (Inner[OuterLength] = '/'));
+  Result := False;
+  if Volume^.MountsOnVolume = 0 then
+    Exit;
+  MountPath := PChar(AllocateKernelMemory(MaximumPathBytes));
+  Trail := AllocateTrail;
+  if (MountPath = nil) or (Trail = nil) then
+  begin
+    FreeKernelMemory(MountPath);
+    FreeTrail(Trail);
+    Exit(True); { cannot tell: refuse rather than risk it }
+  end;
+  Index := 0;
+  while not Result and MountPointPathOnVolume(Volume, Index, MountPath, MaximumPathBytes) do
+  begin
+    { The mount point's parent: the mount point itself would lead into
+      the volume mounted there. }
+    LastSeparator := -1;
+    Position := 0;
+    while MountPath[Position] <> #0 do
+    begin
+      if MountPath[Position] = '/' then
+        LastSeparator := Position;
+      Inc(Position);
+    end;
+    if LastSeparator >= 0 then
+      MountPath[LastSeparator] := #0
+    else
+      MountPath[0] := #0;
+    SameVolume := Volume;
+    if ResolveInVolume(SameVolume, MountPath, True, 0, Trail, False, Found) = StatusSuccess then
+    begin
+      Result := FindInTrail(Trail, Directory^.Information.NodeNumber) >= 0;
+      ReleaseNodeReference(SameVolume, Found);
+    end;
+    Inc(Index);
+  end;
+  FreeKernelMemory(MountPath);
+  FreeTrail(Trail);
 end;
 
 { Renames Node onto the name of Existing, which goes (as on Unix: a file
@@ -1716,10 +1775,14 @@ begin
     Result := BeginLocatedNameOperation(SourceVolume, SourceLocation, Source);
   if Result = StatusSuccess then
   begin
-    Target^.Trail := nil;
-    if Source^.Trail <> nil then
-      Target^.Trail := AllocateTrail;
-    Result := ResolveParent(SourceVolume, TargetLocation, Target, False);
+    { The target's trail is always kept: the directories its parent was
+      found through, under this hold of the lock, are what the loop check
+      below looks at. }
+    Target^.Trail := AllocateTrail;
+    if Target^.Trail = nil then
+      Result := StatusOutOfMemory
+    else
+      Result := ResolveParent(SourceVolume, TargetLocation, Target, False);
 
     if Result = StatusSuccess then
     begin
@@ -1739,8 +1802,14 @@ begin
         else if (Existing = Node) and TextIsEqual(@Source^.Name[0], @Target^.Name[0]) then
           Result := StatusSuccess { renaming something onto itself }
         else if (Node^.Information.Kind = NodeKindDirectory) and
-                PathIsInside(@Target^.NormalizedPath[0], @Source^.NormalizedPath[0]) then
+                (FindInTrail(Target^.Trail, Node^.Information.NodeNumber) >= 0) then
+          { The target's parent is the directory itself or lies below
+            it (found through the nodes, so a symbolic link in the
+            target's path changes nothing). }
           Result := StatusInvalidPath
+        else if (Node^.Information.Kind = NodeKindDirectory) and HasMountBelow(Source^.Volume, Node) then
+          { A mount further down records its path as text. }
+          Result := StatusInUse
         else
         begin
           if (Existing <> nil) and (Existing <> Node) then
@@ -1822,7 +1891,14 @@ begin
     else if not Assigned(Volume^.Driver^.SetAttributes) then
       Result := StatusUnsupported
     else
-      Result := ChangeNodeAttributes(Volume, Node, Changes);
+    begin
+      { Checked on the node just resolved, with the lock still held: a
+        symbolic link swapped after a check made apart would otherwise
+        aim the change at someone else's file. }
+      Result := MayChangeAttributes(Node^.Information, Changes);
+      if Result = StatusSuccess then
+        Result := ChangeNodeAttributes(Volume, Node, Changes);
+    end;
     if (Result = StatusSuccess) and (Trail <> nil) then
       ReportNodeChange(Volume, Trail, WatchChangeAttributes, Node);
     ReleaseNodeReference(Volume, Node);
@@ -1845,7 +1921,9 @@ begin
   Result := LockVolume(Volume);
   if Result <> StatusSuccess then
     Exit;
-  Result := ChangeNodeAttributes(Volume, OpenedFile^.Node, Changes);
+  Result := MayChangeAttributes(OpenedFile^.Node^.Information, Changes);
+  if Result = StatusSuccess then
+    Result := ChangeNodeAttributes(Volume, OpenedFile^.Node, Changes);
   ReleaseMutex(Volume^.Lock);
   if Result = StatusSuccess then
     ReportOpenFileChange(OpenedFile, WatchChangeAttributes);
@@ -1969,15 +2047,50 @@ begin
   ReleaseMutex(Volume^.Lock);
 end;
 
-procedure MarkVolumeGone(Volume: PVolume);
+{ Volume lock held. }
+procedure MarkVolumeGoneLocked(Volume: PVolume);
 begin
-  AcquireMutex(Volume^.Lock);
   Volume^.IsGone := True;
   { Nothing is written back to a disk that is not there; ext keeps
     nodes removed while open on its orphan list, which this skips. }
   Volume^.IsReadOnly := True;
   FinishGoneVolume(Volume);
+end;
+
+procedure MarkVolumeGone(Volume: PVolume);
+begin
+  AcquireMutex(Volume^.Lock);
+  MarkVolumeGoneLocked(Volume);
   ReleaseMutex(Volume^.Lock);
+end;
+
+{ Volume lock held. }
+function VolumeIsBusyLocked(Volume: PVolume): Boolean;
+begin
+  Result := (Volume^.NodesInUse > 0) or
+    ((Volume^.RootNode <> nil) and (Volume^.RootNode^.ReferenceCount > 1));
+end;
+
+function RetireVolume(Volume: PVolume; Force: Boolean; out WasBusy: Boolean): TFileSystemStatus;
+begin
+  WasBusy := False;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  WasBusy := VolumeIsBusyLocked(Volume);
+  if WasBusy and not Force then
+  begin
+    ReleaseMutex(Volume^.Lock);
+    Exit(StatusInUse);
+  end;
+  { Written back while it is still there: a gone volume writes nothing. }
+  if not Volume^.IsReadOnly and Assigned(Volume^.Driver^.Sync) then
+    Volume^.Driver^.Sync(Volume);
+  MarkVolumeGoneLocked(Volume);
+  ReleaseMutex(Volume^.Lock);
+  { What the driver wrote is in the cache; it goes to the disk now. }
+  if Volume^.Device <> nil then
+    FlushCachedDevice(Volume^.Device);
 end;
 
 procedure SyncAllVolumes;
@@ -2101,8 +2214,7 @@ end;
 function VolumeIsBusy(Volume: PVolume): Boolean;
 begin
   AcquireMutex(Volume^.Lock);
-  Result := (Volume^.NodesInUse > 0) or
-    ((Volume^.RootNode <> nil) and (Volume^.RootNode^.ReferenceCount > 1));
+  Result := VolumeIsBusyLocked(Volume);
   ReleaseMutex(Volume^.Lock);
 end;
 

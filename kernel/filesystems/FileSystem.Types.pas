@@ -109,7 +109,9 @@ type
     StatusVolumeGone,
     { The operation would join two volumes (a rename or a hard link
       from one to another). }
-    StatusCrossesVolumes
+    StatusCrossesVolumes,
+    { Only the owner (or root) may make this change (chmod, chown). }
+    StatusNotPermitted
   );
 
   { The advisory lock an open file holds (FileSystem.Locks). }
@@ -168,6 +170,10 @@ type
     GroupId: LongWord;
     ModificationTime: TUnixTime;
     AccessTime: TUnixTime;
+    { The caller asked for the times to be set to now (touch): anyone who
+      may write the file may do that, not only its owner. Drivers ignore
+      it. }
+    TimesAreNow: Boolean;
   end;
 
   PVolume = ^TVolume;
@@ -394,6 +400,7 @@ begin
     StatusAccessDenied: Result := 'access denied';
     StatusVolumeGone: Result := 'volume gone';
     StatusCrossesVolumes: Result := 'crosses volumes';
+    StatusNotPermitted: Result := 'not permitted';
   else
     Result := 'unknown status';
   end;

@@ -30,7 +30,8 @@ unit Processes.ProgramArguments;
 interface
 
 uses
-  Processes.Process;
+  Processes.Process,
+  Processes.ImageLoader;
 
 const
   MaximumArgumentBytes = 64 * 1024;
@@ -51,9 +52,11 @@ function CopyStringListFromUser(ListAddress: QWord; out List: TStringList): Long
 function FileNameOf(Path: PChar): PChar;
 { Running a program needs execute permission (root: any execute bit) and
   a volume not mounted noexec. A set-user-ID or set-group-ID program
-  runs as its owner or group, unless its volume is mounted nosuid. }
+  runs as its owner or group, unless its volume is mounted nosuid.
+  Identity names the file checked: the caller loads the program by path
+  again and must refuse if that is another file (ModuleIsProgram). }
 function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
-  var Credentials: TProcessCredentials): LongInt;
+  var Credentials: TProcessCredentials; out Identity: TProgramIdentity): LongInt;
 
 implementation
 
@@ -147,16 +150,22 @@ const
   a volume not mounted noexec. A set-user-ID or set-group-ID program
   runs as its owner or group, unless its volume is mounted nosuid. }
 function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
-  var Credentials: TProcessCredentials): LongInt;
+  var Credentials: TProcessCredentials; out Identity: TProgramIdentity): LongInt;
 var
   Information: TNodeInformation;
 begin
   Result := ErrorNone;
+  Identity.IsKnown := False;
+  Identity.VolumeNumber := 0;
+  Identity.NodeNumber := 0;
   if not Caller^.IsUserProcess then
     Exit;
   { A missing program is reported by the loader. }
   if DescribePath(KernelPath, True, Information) <> StatusSuccess then
     Exit;
+  Identity.IsKnown := True;
+  Identity.VolumeNumber := Information.VolumeNumber;
+  Identity.NodeNumber := Information.NodeNumber;
   if (Information.Kind <> NodeKindFile) or
      ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
      not CredentialsMayAccess(Credentials, Information, AccessExecute) then

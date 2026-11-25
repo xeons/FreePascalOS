@@ -100,6 +100,15 @@ const
   MaximumNeededLibraries = MaximumModules;
 
 type
+  { The file a program was checked as (Processes.ProgramArguments.
+    CheckMayExecute): the program loaded must be that same file, not
+    one a symbolic link was turned to meanwhile. }
+  TProgramIdentity = record
+    IsKnown: Boolean;
+    VolumeNumber: LongWord;
+    NodeNumber: QWord;
+  end;
+
   PLoadedModule = ^TLoadedModule;
   TLoadedModule = record
     Name: array[0..ModuleNameLength - 1] of Char;
@@ -168,6 +177,9 @@ type
       interpreter loads the libraries, relocates and runs the
       initializers itself; the kernel only maps the two. }
     InterpreterModule: Integer;
+    { The file it was loaded from: its volume (a PVolume) and node. }
+    FileVolume: Pointer;
+    FileNodeNumber: QWord;
   end;
 
   PModuleList = ^TModuleList;
@@ -186,6 +198,9 @@ type
 function LoadProgramImage(Process: PProcess; KernelPath: PChar; out MainModule: PLoadedModule): LongInt;
 { The interpreter module of a program that has one (PT_INTERP), else nil. }
 function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;
+{ True if Module was loaded from the file Identity names (or Identity
+  names none). }
+function ModuleIsProgram(Module: PLoadedModule; const Identity: TProgramIdentity): Boolean;
 function LoadLibraryImage(Process: PProcess; KernelPath: PChar; out ModuleHandle: Integer): LongInt;
 { The kernel path of library Name in library folder FolderIndex (0: /lib,
   1: /usr/local/lib) of the system volume; False past the last folder. }
@@ -1150,6 +1165,8 @@ begin
   if Result = ErrorNone then
   begin
     CopyText(@Module^.Name[0], FileNameOf(KernelPath), ModuleNameLength);
+    Module^.FileVolume := Image.Section^.Identity.Volume;
+    Module^.FileNodeNumber := Image.Section^.Identity.NodeNumber;
     Module^.Base := Bias;
     Module^.Limit := Bias + HighestPageEnd;
     Module^.ImageStart := Bias + LowestPage;
@@ -1507,6 +1524,15 @@ begin
     MainModule := ModuleList(Process)^.Modules[ModuleIndex];
     ModuleList(Process)^.StartupComplete := True;
   end;
+end;
+
+function ModuleIsProgram(Module: PLoadedModule; const Identity: TProgramIdentity): Boolean;
+begin
+  if not Identity.IsKnown then
+    Exit(True);
+  Result := (Module <> nil) and (Module^.FileVolume <> nil) and
+    (PVolume(Module^.FileVolume)^.Number = Identity.VolumeNumber) and
+    (Module^.FileNodeNumber = Identity.NodeNumber);
 end;
 
 function InterpreterOf(Process: PProcess; MainModule: PLoadedModule): PLoadedModule;

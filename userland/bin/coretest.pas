@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..429] of TCommandTest = (
+  CommandTests: array[0..434] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -788,7 +788,26 @@ const
       mapped file removed while mapped. The cached image sections and
       mappings let them go, so the used space comes back to what it was
       (and the disk checks clean afterwards). }
-    (Command: 'mkdir -p /usr/local/lib /usr/local/bin; sync; before=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); cp /lib/libplugin.so /usr/local/lib/libfreedplugin.so; /bin/coretest --load-library libfreedplugin.so; rm /usr/local/lib/libfreedplugin.so; cp /bin/sleep /usr/local/bin/coretest-sleeper; /usr/local/bin/coretest-sleeper 1 & sleep 0.3; cp /bin/true /usr/local/bin/coretest-new; mv /usr/local/bin/coretest-new /usr/local/bin/coretest-sleeper; wait; rm /usr/local/bin/coretest-sleeper; maptest --map-removed /usr/local/lib/maptest-removed.dat | tail -n 1; after=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); test "$before" = "$after" && echo freed || echo "used $before KiB before, $after after"'; ExpectedOutput: 'loaded libfreedplugin.so'#10'maptest: 6 of 6 checks passed'#10'freed'#10; ExpectedStatus: 0)
+    (Command: 'mkdir -p /usr/local/lib /usr/local/bin; sync; before=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); cp /lib/libplugin.so /usr/local/lib/libfreedplugin.so; /bin/coretest --load-library libfreedplugin.so; rm /usr/local/lib/libfreedplugin.so; cp /bin/sleep /usr/local/bin/coretest-sleeper; /usr/local/bin/coretest-sleeper 1 & sleep 0.3; cp /bin/true /usr/local/bin/coretest-new; mv /usr/local/bin/coretest-new /usr/local/bin/coretest-sleeper; wait; rm /usr/local/bin/coretest-sleeper; maptest --map-removed /usr/local/lib/maptest-removed.dat | tail -n 1; after=$(df | grep " /$" | tr -s " " | cut -d " " -f 3); test "$before" = "$after" && echo freed || echo "used $before KiB before, $after after"'; ExpectedOutput: 'loaded libfreedplugin.so'#10'maptest: 6 of 6 checks passed'#10'freed'#10; ExpectedStatus: 0),
+    { A volume's root open while it is unmounted by force: the open
+      handle still reads (and fails) and closes afterwards, and the
+      volume comes back. }
+    (Command: 'mkdir -p rootgone && mount LABEL=FAT16TEST rootgone && src=$(mount | grep " on /tmp/coretest/rootgone " | cut -d " " -f 1); (sleep 1; cat > /dev/null 2>&1; echo read-after) < rootgone & sleep 0.3; umount -f rootgone; wait; echo closed; mount $src && cat /volumes/$(basename $src)/hello.txt'; ExpectedOutput: 'read-after'#10'closed'#10'Hello from FreePascalOS!'#10; ExpectedStatus: 0),
+    { A folder moved into itself through a symbolic link is refused (the
+      loop check follows the nodes the target's path passes, not its
+      text); a folder with a volume mounted below it cannot be renamed
+      until the volume is unmounted. }
+    (Command: 'mkdir -p loopdir/inner && ln -s loopdir/inner looplink && mv loopdir looplink/moved 2>/dev/null || echo refused; ls -d loopdir; rm -rf loopdir looplink'; ExpectedOutput: 'refused'#10'loopdir'#10; ExpectedStatus: 0),
+    (Command: 'mkdir -p outer/mp && mount LABEL=FAT16TEST outer/mp && src=$(mount | grep " on /tmp/coretest/outer/mp " | cut -d " " -f 1); mv outer outer2 2>/dev/null || echo busy; umount outer/mp && mv outer outer2 && echo moved; rm -rf outer2; mount $src && test -e /volumes/$(basename $src)/hello.txt && echo back'; ExpectedOutput: 'busy'#10'moved'#10'back'#10; ExpectedStatus: 0),
+    { chmod through a symbolic link to someone else's file is refused
+      (checked on the file reached, under its volume's lock); anyone who
+      may write a file may set its times to now, only its owner to
+      another time. }
+    (Command: 'touch rootfile; chmod 644 rootfile; su user -c "ln -sf /tmp/coretest/rootfile /tmp/userlink; chmod 777 /tmp/userlink" 2>/dev/null || echo refused; stat -c %a rootfile; chmod 666 rootfile; su user -c "touch /tmp/coretest/rootfile" && echo touched; su user -c "touch -t 202001010000 /tmp/coretest/rootfile" 2>/dev/null || echo refused; su user -c "rm -f /tmp/userlink"; rm rootfile'; ExpectedOutput: 'refused'#10'644'#10'touched'#10'refused'#10; ExpectedStatus: 0),
+    { A write 256 GiB into a file on /tmp (tmpfs) is refused: no file
+      reaches past the volume's size, holes included, since its page map
+      is as long as the file. }
+    (Command: 'printf x | dd of=far obs=1048576 seek=262144 2>/dev/null || echo refused; rm -f far; printf y | dd of=near obs=4096 seek=2 2>/dev/null && stat -c %s near; rm -f near'; ExpectedOutput: 'refused'#10'8193'#10; ExpectedStatus: 0)
   );
 
 var

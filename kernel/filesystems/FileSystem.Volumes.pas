@@ -335,10 +335,16 @@ begin
 end;
 
 procedure ChangeVolumeOptions(Volume: PVolume; var Options: TMountOptions);
+var
+  BecomesReadOnly: Boolean;
 begin
-  if Options.ReadOnly and not Volume^.IsReadOnly then
-    SyncVolume(Volume);
   AcquireMutex(Volume^.Lock);
+  { Written back in the same hold of the lock that makes it read-only:
+    a change made in between would otherwise never reach the driver's
+    on-disk summaries (free counts, the clean mark). }
+  BecomesReadOnly := Options.ReadOnly and not Volume^.IsReadOnly;
+  if BecomesReadOnly and not Volume^.IsGone and Assigned(Volume^.Driver^.Sync) then
+    Volume^.Driver^.Sync(Volume);
   if Options.ReadOnly then
     Volume^.IsReadOnly := True;
   Options.ReadOnly := Volume^.IsReadOnly;
@@ -350,6 +356,8 @@ begin
   if Volume^.Driver^.HasNoOwners then
     RemapOwnerlessNodes(Volume);
   ReleaseMutex(Volume^.Lock);
+  if BecomesReadOnly and (Volume^.Device <> nil) then
+    FlushCachedDevice(Volume^.Device);
 end;
 
 function DiskHasPartitions(Disk: PBlockDevice): Boolean;

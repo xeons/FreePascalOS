@@ -165,6 +165,7 @@ begin
     StatusAccessDenied: Result := ErrorAccessDenied;
     StatusVolumeGone: Result := ErrorNoDevice;
     StatusCrossesVolumes: Result := ErrorCrossVolume;
+    StatusNotPermitted: Result := ErrorNotPermitted;
   else
     Result := ErrorIo;
   end;
