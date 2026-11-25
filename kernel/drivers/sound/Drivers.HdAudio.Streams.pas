@@ -33,6 +33,9 @@ unit Drivers.HdAudio.Streams;
 
 interface
 
+uses
+  Io.Dma;
+
 const
   FormatStereo16Bit48000 = $0011;
 
@@ -42,16 +45,18 @@ type
     { Its number among all the descriptors (its interrupt bit). }
     Index: LongWord;
     Tag: LongWord;
-    ListPhysical: QWord;
+    { The buffer descriptor list: shared DMA memory of the controller. }
+    List: TDmaBuffer;
   end;
 
 { The first input and the first output stream's numbers. }
 function FirstInputStream(Registers: PByte): LongWord;
 function FirstOutputStream(Registers: PByte): LongWord;
-{ Makes Stream number Index (on Tag) describe the ring of Pages; False
-  if memory is short. }
+{ Makes Stream number Index (on Tag) describe the ring of Pages (the
+  controller's bus addresses for them; Dma is its attributes); False if
+  memory is short. }
 function PrepareStream(out Stream: THdAudioStream; Registers: PByte; Index, Tag: LongWord;
-  const Pages: array of QWord): Boolean;
+  constref Dma: TDmaAttributes; const Pages: array of QWord): Boolean;
 { Resets the stream and programs it again: it starts at the beginning of
   the ring. }
 procedure ResetStream(var Stream: THdAudioStream);
@@ -66,8 +71,6 @@ procedure AcknowledgeStream(var Stream: THdAudioStream);
 implementation
 
 uses
-  Memory.Layout,
-  Memory.PhysicalPages,
   Kernel.Arch.Cpu,
   Kernel.Clock,
   Io.AudioOutput,
@@ -102,7 +105,7 @@ begin
 end;
 
 function PrepareStream(out Stream: THdAudioStream; Registers: PByte; Index, Tag: LongWord;
-  const Pages: array of QWord): Boolean;
+  constref Dma: TDmaAttributes; const Pages: array of QWord): Boolean;
 var
   List: PQWord;
   Entry: Integer;
@@ -110,10 +113,9 @@ begin
   Stream.Index := Index;
   Stream.Tag := Tag;
   Stream.Descriptor := Registers + StreamDescriptorBase + Index * StreamDescriptorSize;
-  Stream.ListPhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Stream.ListPhysical = 0 then
+  if not AllocateDmaBuffer(Dma, AudioPeriodCount * 16, DmaShared, Stream.List) then
     Exit(False);
-  List := PQWord(PhysicalToVirtual(Stream.ListPhysical));
+  List := PQWord(Stream.List.Address);
   { Address, then length and "interrupt on completion" in one word. }
   for Entry := 0 to AudioPeriodCount - 1 do
   begin
@@ -145,8 +147,8 @@ begin
   WaitForControl(Stream, StreamControlReset, 0);
   Write32(Stream.Descriptor, StreamCycleLength, AudioPeriodCount * AudioPeriodBytes);
   Write16(Stream.Descriptor, StreamLastValidIndex, AudioPeriodCount - 1);
-  Write32(Stream.Descriptor, StreamListLower, LongWord(Stream.ListPhysical));
-  Write32(Stream.Descriptor, StreamListUpper, LongWord(Stream.ListPhysical shr 32));
+  Write32(Stream.Descriptor, StreamListLower, LongWord(Stream.List.DeviceAddress));
+  Write32(Stream.Descriptor, StreamListUpper, LongWord(Stream.List.DeviceAddress shr 32));
   Control := Read32(Stream.Descriptor, StreamControl) and $FFFFFF;
   Control := (Control and not ($F shl 20)) or (Stream.Tag shl 20) or StreamControlInterruptOnCompletion;
   Write32(Stream.Descriptor, StreamControl, Control);
