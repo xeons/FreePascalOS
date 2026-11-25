@@ -243,6 +243,7 @@ begin
   Chip.BringUp := @BringUpRtl8125;
   Chip.ReadLink := @ReadLink;
   Chip.LinkStillDown := @LinkStillDown;
+  Chip.Uses32BitDma := nil;
   Card := CreateRealtekCard(Pci, Chip, State);
   if Card = nil then
     Exit;

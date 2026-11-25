@@ -18,13 +18,21 @@
 
 {
   Memory network cards reach by DMA: descriptor rings and the buffers
-  frames are received into and sent from.
+  frames are received into and sent from (Io.Dma).
 
-  Every card here takes 32-bit addresses or is given them, so all of it
-  is kept below 4 GiB. A frame buffer is 2 KiB (an Ethernet frame and its
-  check sequence fit), two to a page, so no buffer crosses a page and
-  none needs contiguous pages. The pages stay the driver's for as long
-  as the system runs (a card is never taken away).
+  The rings are shared DMA memory (mapped uncached for a card that does
+  not snoop the caches). The frame buffers are streaming DMA memory: a
+  frame buffer is 2 KiB (an Ethernet frame and its check sequence fit),
+  two to a page, so no buffer crosses a page and none needs contiguous
+  pages; the driver brackets each transfer (PrepareReceiveBuffer before
+  the card may write a buffer, FinishReceiveBuffer before reading what
+  it wrote, PrepareTransmitBuffer after filling one). The card is given
+  each buffer's device address, not its physical one (they differ
+  behind a bridge with inbound windows, such as the Raspberry Pi 5's
+  PCIe). A card limited to 32-bit addresses has its attributes limited
+  with LimitNetworkCardDma first, so everything lands below 4 GiB of bus
+  addresses. The pages stay the driver's for as long as the system runs
+  (a card is never taken away).
 }
 unit Drivers.NetworkBuffers;
 
@@ -33,36 +41,55 @@ unit Drivers.NetworkBuffers;
 
 interface
 
+uses
+  Io.Dma;
+
 const
   NetworkBufferBytes = 2048;
-  { Device addresses must end below this. }
-  NetworkDmaLimit = QWord($FFFFFFFF);
+  { The first bus address a card with 32-bit DMA cannot put out. }
+  Network32BitDmaLimit = QWord($100000000);
 
 type
   PNetworkBuffer = ^TNetworkBuffer;
   TNetworkBuffer = record
     Data: PByte;
-    Physical: QWord;
+    { What the card is given for Data. }
+    DeviceAddress: QWord;
   end;
 
-{ Fills Count buffers of NetworkBufferBytes. False if memory is short
-  (whatever was taken stays taken: the card is not started). }
-function AllocateNetworkBuffers(Buffers: PNetworkBuffer; Count: Integer): Boolean;
+{ The card only puts out 32-bit bus addresses. }
+procedure LimitNetworkCardDma(var Dma: TDmaAttributes);
 
-{ One zeroed page below 4 GiB for a descriptor ring; its physical address
-  in Physical, or nil. }
-function AllocateDescriptorPage(out Physical: QWord): Pointer;
+{ Fills Count buffers of NetworkBufferBytes, streaming DMA memory the
+  card can reach. False if memory is short (whatever was taken stays
+  taken: the card is not started). }
+function AllocateNetworkBuffers(constref Dma: TDmaAttributes; Buffers: PNetworkBuffer; Count: Integer): Boolean;
+
+{ Zeroed shared DMA memory of SizeInBytes for a descriptor ring (CPU
+  address in Ring.Address, the card's in Ring.DeviceAddress). }
+function AllocateDescriptorRing(constref Dma: TDmaAttributes; SizeInBytes: QWord; out Ring: TDmaBuffer): Boolean;
+
+{ Before the card may write into Buffer. }
+procedure PrepareReceiveBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer);
+{ After the card wrote Length bytes into Buffer, before they are read. }
+procedure FinishReceiveBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer; Length: LongWord);
+{ After Length bytes were put into Buffer, before the card reads them. }
+procedure PrepareTransmitBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer; Length: LongWord);
 
 implementation
 
 uses
-  Memory.Layout,
-  Memory.PhysicalPages;
+  Memory.Layout;
 
-function AllocateNetworkBuffers(Buffers: PNetworkBuffer; Count: Integer): Boolean;
+procedure LimitNetworkCardDma(var Dma: TDmaAttributes);
+begin
+  LimitDmaBusAddresses(Dma, Network32BitDmaLimit);
+end;
+
+function AllocateNetworkBuffers(constref Dma: TDmaAttributes; Buffers: PNetworkBuffer; Count: Integer): Boolean;
 var
   Index: Integer;
-  PagePhysical: QWord;
+  Page: TDmaBuffer;
   BuffersPerPage: Integer;
   Slot: Integer;
 begin
@@ -71,14 +98,13 @@ begin
   Index := 0;
   while Index < Count do
   begin
-    PagePhysical := AllocateZeroedPhysicalPageBelow(NetworkDmaLimit, PageUsageGeneral);
-    if PagePhysical = 0 then
+    if not AllocateDmaBuffer(Dma, PageSize, DmaStreaming, Page) then
       Exit;
     Slot := 0;
     while (Slot < BuffersPerPage) and (Index < Count) do
     begin
-      Buffers[Index].Physical := PagePhysical + QWord(Slot) * NetworkBufferBytes;
-      Buffers[Index].Data := PByte(PhysicalToVirtual(Buffers[Index].Physical));
+      Buffers[Index].Data := Page.Address + Slot * NetworkBufferBytes;
+      Buffers[Index].DeviceAddress := Page.DeviceAddress + QWord(Slot) * NetworkBufferBytes;
       Inc(Slot);
       Inc(Index);
     end;
@@ -86,12 +112,33 @@ begin
   Result := True;
 end;
 
-function AllocateDescriptorPage(out Physical: QWord): Pointer;
+function AllocateDescriptorRing(constref Dma: TDmaAttributes; SizeInBytes: QWord; out Ring: TDmaBuffer): Boolean;
 begin
-  Physical := AllocateZeroedPhysicalPageBelow(NetworkDmaLimit, PageUsageGeneral);
-  if Physical = 0 then
-    Exit(nil);
-  Result := PhysicalToVirtual(Physical);
+  Result := AllocateDmaBuffer(Dma, SizeInBytes, DmaShared, Ring);
+end;
+
+function ClampedLength(Length: LongWord): LongWord;
+begin
+  Result := Length;
+  if Result > NetworkBufferBytes then
+    Result := NetworkBufferBytes;
+end;
+
+procedure PrepareReceiveBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer);
+begin
+  PrepareDmaFromDevice(Dma, Buffer.Data, NetworkBufferBytes);
+end;
+
+procedure FinishReceiveBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer; Length: LongWord);
+begin
+  if Length > 0 then
+    FinishDmaFromDevice(Dma, Buffer.Data, ClampedLength(Length));
+end;
+
+procedure PrepareTransmitBuffer(constref Dma: TDmaAttributes; constref Buffer: TNetworkBuffer; Length: LongWord);
+begin
+  if Length > 0 then
+    PrepareDmaToDevice(Dma, Buffer.Data, ClampedLength(Length));
 end;
 
 end.

@@ -49,6 +49,7 @@ uses
   Kernel.DeferredCalls,
   Kernel.Timers,
   Io.Pci,
+  Io.Dma,
   Io.NetworkAdapters,
   Drivers.NetworkCards,
   Drivers.RealtekGigabit.Registers,
@@ -72,6 +73,9 @@ type
     { Called every two seconds while the link is down (Seconds since it
       went down or the card started), at dispatch level; nil for none. }
     LinkStillDown: procedure(Card: PRealtekCard; Seconds: LongWord);
+    { True if the chip only puts out 32-bit DMA addresses (asked once the
+      registers are mapped, before any memory is taken); nil: 64-bit. }
+    Uses32BitDma: function(Card: PRealtekCard): Boolean;
   end;
 
   TRealtekCard = record
@@ -79,6 +83,7 @@ type
     Pci: PPciDevice;
     Registers: PByte;
     RegistersBytes: QWord;
+    Dma: TDmaAttributes;
     Address: TEthernetAddress;
     Chip: TRealtekChip;
     { The chip unit's own record (version, firmware). }
@@ -96,7 +101,7 @@ type
     LinkDownSeconds: LongWord;
 
     Counters: PRealtekTallyCounters;
-    CountersPhysical: QWord;
+    CountersMemory: TDmaBuffer;
     PreviousCounters: TRealtekTallyCounters;
     CounterDumpPending: Boolean;
 
@@ -138,8 +143,6 @@ uses
   Runtime.Text,
   Runtime.Memory,
   Runtime.Atomic,
-  Memory.Layout,
-  Memory.PhysicalPages,
   Memory.KernelHeap,
   Memory.DeviceMapping,
   Kernel.Arch.TrapFrame,
@@ -149,6 +152,7 @@ uses
   Io.PciMessageInterrupts,
   Io.PciLineInterrupts,
   Io.PowerManagement,
+  Io.PlatformDevices,
   Drivers.NetworkBuffers,
   Debug.Output;
 
@@ -327,8 +331,8 @@ begin
       Exit;
     AccountCounters(Card);
   end;
-  Write32(Card^.Registers, RegisterCounterDumpHigh, LongWord(Card^.CountersPhysical shr 32));
-  Write32(Card^.Registers, RegisterCounterDumpLow, LongWord(Card^.CountersPhysical) or CounterDumpStart);
+  Write32(Card^.Registers, RegisterCounterDumpHigh, LongWord(Card^.CountersMemory.DeviceAddress shr 32));
+  Write32(Card^.Registers, RegisterCounterDumpLow, LongWord(Card^.CountersMemory.DeviceAddress) or CounterDumpStart);
   Card^.CounterDumpPending := True;
 end;
 
@@ -479,15 +483,18 @@ begin
   Card^.RegistersBytes := Bar.SizeInBytes;
   if Card^.Registers = nil then
     Exit;
-  if not AllocateRealtekRings(Card^.Rings, Card^.Registers, @Card^.Card, Chip.TransmitPoll) then
+  GetPciDmaAttributes(Pci, Card^.Dma);
+  if Assigned(Chip.Uses32BitDma) and Chip.Uses32BitDma(Card) then
+    LimitNetworkCardDma(Card^.Dma);
+  if not AllocateRealtekRings(Card^.Rings, Card^.Registers, @Card^.Card, Chip.TransmitPoll, Card^.Dma) then
   begin
     ReportRealtek(Card, 'not enough memory for the rings');
     Exit;
   end;
-  { Statistics are only lost without it. }
-  Card^.CountersPhysical := AllocateZeroedPhysicalPageBelow(NetworkDmaLimit, PageUsageGeneral);
-  if Card^.CountersPhysical <> 0 then
-    Card^.Counters := PRealtekTallyCounters(PhysicalToVirtual(Card^.CountersPhysical));
+  { Statistics are only lost without it. The chip writes the counters
+    while the driver may look: shared memory. }
+  if AllocateDmaBuffer(Card^.Dma, SizeOf(TRealtekTallyCounters), DmaShared, Card^.CountersMemory) then
+    Card^.Counters := PRealtekTallyCounters(Card^.CountersMemory.Address);
   InitializeDeferredCall(Card^.ServiceCall, @ServiceCard, Card);
   InitializeDeferredCall(Card^.WatchCall, @WatchCard, Card);
   InitializeTimer(Card^.PollTimer);
