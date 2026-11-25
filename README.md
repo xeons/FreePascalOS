@@ -311,8 +311,15 @@ taken by `scripts/take-screenshots.py` from the plans in
 ## Requirements
 
 - Free Pascal 3.2.2 (`fpc`, x86-64 compiler) and its sources (`fpc-src`,
-  expected in `/usr/lib/fpc/src`; set `FPC_SOURCE` otherwise): user
-  programs get the Free Pascal runtime library built from them
+  expected in `/usr/lib/fpc/src`; set `FPC_SOURCE` otherwise). The
+  system is compiled with its own Free Pascal target
+  (`x86_64-freepascalos`, `aarch64-freepascalos`): the first `make`
+  builds that compiler by itself from the installed sources and the
+  patches in `toolchain/fpc/` (`build/toolchain/ppcx64`, a few seconds;
+  nothing is installed outside `build/`), and uses it for the loader,
+  kernel and userland. The same compiler is put on the system disk
+  (`/bin/fpc`), so programs can be compiled inside the system too.
+- GNU `patch`, to apply those patches
 - GNU binutils (`ld`, `objcopy`, `objdump`)
 - QEMU (`qemu-system-x86_64`) and OVMF UEFI firmware, for running it
 - `sfdisk` and mtools, for `make image`
@@ -328,7 +335,7 @@ taken by `scripts/take-screenshots.py` from the plans in
   pointer's pictures when the system disk is built
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
+`pacman -S fpc fpc-src patch qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
 
 For the AArch64 (Raspberry Pi 4) build, `ARCH=arm64`, also:
 
