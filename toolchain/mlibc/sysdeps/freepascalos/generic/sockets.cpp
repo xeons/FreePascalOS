@@ -17,11 +17,14 @@
 // BSD sockets over the kernel's IPv4 and IPv6 sockets (Abi.Networking):
 // addresses are translated between struct sockaddr_in/_in6 and the
 // kernel's TAbiSocketAddress (ports in the machine's byte order there),
-// and the common options to the kernel's SocketOption*. There are no
-// Unix domain sockets.
+// and the common options to the kernel's SocketOption*. Unix domain
+// sockets (AF_UNIX) go to localsockets.cpp; the calls that take either
+// kind of socket (listen, accept, shutdown, the options, send and
+// receive without names) are the same kernel calls for both.
 
 #include "kernel.hpp"
 #include "descriptors.hpp"
+#include "localsockets.hpp"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -159,6 +162,11 @@ void *gather(const struct msghdr *hdr, size_t *length) {
 namespace mlibc {
 
 int Sysdeps<Socket>::operator()(int family, int type, int protocol, int *fd) {
+	if (family == AF_UNIX) {
+		if (protocol != 0)
+			return EPROTONOSUPPORT;
+		return fpos::local_socket(type, fd);
+	}
 	long kernel_family;
 	switch (family) {
 		case AF_INET: kernel_family = FPOS_ADDRESS_FAMILY_IPV4; break;
@@ -186,7 +194,17 @@ int Sysdeps<Socket>::operator()(int family, int type, int protocol, int *fd) {
 	return 0;
 }
 
+int Sysdeps<Socketpair>::operator()(int domain, int type_and_flags, int proto, int *fds) {
+	if (domain != AF_UNIX)
+		return EOPNOTSUPP;
+	if (proto != 0)
+		return EPROTONOSUPPORT;
+	return fpos::local_socketpair(type_and_flags, fds);
+}
+
 int Sysdeps<Bind>::operator()(int fd, const struct sockaddr *addr_ptr, socklen_t addr_length) {
+	if (addr_ptr && addr_ptr->sa_family == AF_UNIX)
+		return fpos::local_bind(fd, addr_ptr, addr_length);
 	struct fpos_socket_address address;
 	if (int e = fpos::to_kernel_address(addr_ptr, addr_length, &address))
 		return e;
@@ -194,6 +212,8 @@ int Sysdeps<Bind>::operator()(int fd, const struct sockaddr *addr_ptr, socklen_t
 }
 
 int Sysdeps<Connect>::operator()(int fd, const struct sockaddr *addr_ptr, socklen_t addr_length) {
+	if (addr_ptr && addr_ptr->sa_family == AF_UNIX)
+		return fpos::local_connect(fd, addr_ptr, addr_length);
 	struct fpos_socket_address address;
 	if (int e = fpos::to_kernel_address(addr_ptr, addr_length, &address))
 		return e;
@@ -214,7 +234,9 @@ int Sysdeps<Accept>::operator()(int fd, int *newfd, struct sockaddr *addr_ptr, s
 	memset(&address, 0, sizeof(address));
 	if (int e = fpos::call_into(newfd, FPOS_CALL_ACCEPT_SOCKET, fd, &address))
 		return e;
-	if (addr_ptr && addr_length)
+	if (address.family == AF_UNIX)
+		fpos::local_accepted(*newfd, addr_ptr, addr_length);
+	else if (addr_ptr && addr_length)
 		fpos::from_kernel_address(address, addr_ptr, *addr_length, addr_length);
 	fpos::forget_descriptor(*newfd);
 	unsigned char descriptor = 0;
@@ -230,6 +252,15 @@ int Sysdeps<Accept>::operator()(int fd, int *newfd, struct sockaddr *addr_ptr, s
 
 int Sysdeps<Sendto>::operator()(int fd, const void *buffer, size_t size, int flags,
 		const struct sockaddr *sock_addr, socklen_t addr_length, ssize_t *length) {
+	if (sock_addr && sock_addr->sa_family == AF_UNIX) {
+		struct iovec piece = {const_cast<void *>(buffer), size};
+		struct msghdr message = {};
+		message.msg_name = const_cast<struct sockaddr *>(sock_addr);
+		message.msg_namelen = addr_length;
+		message.msg_iov = &piece;
+		message.msg_iovlen = 1;
+		return fpos::local_sendmsg(fd, &message, flags, length);
+	}
 	struct fpos_socket_address address;
 	struct fpos_socket_address *target = nullptr;
 	if (sock_addr) {
@@ -249,6 +280,26 @@ int Sysdeps<Sendto>::operator()(int fd, const void *buffer, size_t size, int fla
 
 int Sysdeps<Recvfrom>::operator()(int fd, void *buffer, size_t size, int flags, struct sockaddr *sock_addr,
 		socklen_t *addr_length, ssize_t *length) {
+	if (sock_addr && fpos::is_local_socket(fd)) {
+		struct iovec piece = {buffer, size};
+		struct msghdr message = {};
+		message.msg_name = sock_addr;
+		message.msg_namelen = addr_length ? *addr_length : 0;
+		message.msg_iov = &piece;
+		message.msg_iovlen = 1;
+		if (int e = fpos::local_recvmsg(fd, &message, flags, length))
+			return e;
+		if (addr_length)
+			*addr_length = message.msg_namelen;
+		return 0;
+	}
+	if ((flags & MSG_WAITALL) && fpos::is_local_socket(fd)) {
+		struct iovec piece = {buffer, size};
+		struct msghdr message = {};
+		message.msg_iov = &piece;
+		message.msg_iovlen = 1;
+		return fpos::local_recvmsg(fd, &message, flags, length);
+	}
 	struct fpos_socket_address address;
 	memset(&address, 0, sizeof(address));
 	long result = fpos::call(FPOS_CALL_RECEIVE_SOCKET, fd, buffer, size, fpos::kernel_send_flags(flags),
@@ -262,6 +313,8 @@ int Sysdeps<Recvfrom>::operator()(int fd, void *buffer, size_t size, int flags, 
 }
 
 int Sysdeps<MsgSend>::operator()(int fd, const struct msghdr *hdr, int flags, ssize_t *length) {
+	if (fpos::is_local_socket(fd))
+		return fpos::local_sendmsg(fd, hdr, flags, length);
 	size_t total;
 	void *buffer = fpos::gather(hdr, &total);
 	if (!buffer)
@@ -273,6 +326,8 @@ int Sysdeps<MsgSend>::operator()(int fd, const struct msghdr *hdr, int flags, ss
 }
 
 int Sysdeps<MsgRecv>::operator()(int fd, struct msghdr *hdr, int flags, ssize_t *length) {
+	if (fpos::is_local_socket(fd))
+		return fpos::local_recvmsg(fd, hdr, flags, length);
 	size_t total = 0;
 	for (size_t i = 0; i < (size_t)hdr->msg_iovlen; i++)
 		total += hdr->msg_iov[i].iov_len;
@@ -315,6 +370,12 @@ int Sysdeps<Shutdown>::operator()(int sockfd, int how) {
 
 int Sysdeps<GetSockopt>::operator()(int fd, int layer, int number, void *__restrict buffer,
 		socklen_t *__restrict size) {
+	bool local = layer == SOL_SOCKET && fpos::is_local_socket(fd);
+	if (local) {
+		int e;
+		if (fpos::local_getsockopt(fd, layer, number, buffer, size, &e))
+			return e;
+	}
 	const fpos::OptionMapping *mapping = fpos::find_option(layer, number);
 	if (!mapping)
 		return ENOPROTOOPT;
@@ -330,7 +391,10 @@ int Sysdeps<GetSockopt>::operator()(int fd, int layer, int number, void *__restr
 		*size = count;
 		return 0;
 	}
-	if (mapping->kernel_option == FPOS_SOCKET_OPTION_KIND)
+	if (mapping->kernel_option == FPOS_SOCKET_OPTION_KIND && local)
+		value = value == FPOS_LOCAL_SOCKET_DATAGRAM ? SOCK_DGRAM
+			: value == FPOS_LOCAL_SOCKET_PACKETS ? SOCK_SEQPACKET : SOCK_STREAM;
+	else if (mapping->kernel_option == FPOS_SOCKET_OPTION_KIND)
 		value = value == FPOS_SOCKET_KIND_STREAM ? SOCK_STREAM
 			: value == FPOS_SOCKET_KIND_DATAGRAM ? SOCK_DGRAM : SOCK_RAW;
 	int result = (int)value;
@@ -341,6 +405,12 @@ int Sysdeps<GetSockopt>::operator()(int fd, int layer, int number, void *__restr
 }
 
 int Sysdeps<SetSockopt>::operator()(int fd, int layer, int number, const void *buffer, socklen_t size) {
+	bool local = layer == SOL_SOCKET && fpos::is_local_socket(fd);
+	if (local) {
+		int e;
+		if (fpos::local_setsockopt(fd, layer, number, buffer, size, &e))
+			return e;
+	}
 	const fpos::OptionMapping *mapping = fpos::find_option(layer, number);
 	// Options the kernel does not have (SO_LINGER, IP_TOS...) are taken
 	// and have no effect, as programs rarely depend on them.
@@ -357,11 +427,18 @@ int Sysdeps<SetSockopt>::operator()(int fd, int layer, int number, const void *b
 			return EINVAL;
 		value = *static_cast<const int *>(buffer);
 	}
-	return fpos::call_checked(FPOS_CALL_SET_SOCKET_OPTION, fd, mapping->kernel_option, value);
+	int e = fpos::call_checked(FPOS_CALL_SET_SOCKET_OPTION, fd, mapping->kernel_option, value);
+	// Options a local socket has no use for (SO_REUSEADDR, SO_BROADCAST)
+	// are taken, as on Linux.
+	if (local && e == EOPNOTSUPP)
+		return 0;
+	return e;
 }
 
 int Sysdeps<Sockname>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
 		socklen_t *actual_length) {
+	if (fpos::is_local_socket(fd))
+		return fpos::local_name(fd, false, addr_ptr, max_addr_length, actual_length);
 	struct fpos_socket_address address;
 	if (int e = fpos::call_checked(FPOS_CALL_GET_SOCKET_ADDRESS, fd, FPOS_SOCKET_ADDRESS_LOCAL, &address))
 		return e;
@@ -371,6 +448,8 @@ int Sysdeps<Sockname>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t m
 
 int Sysdeps<Peername>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
 		socklen_t *actual_length) {
+	if (fpos::is_local_socket(fd))
+		return fpos::local_name(fd, true, addr_ptr, max_addr_length, actual_length);
 	struct fpos_socket_address address;
 	if (int e = fpos::call_checked(FPOS_CALL_GET_SOCKET_ADDRESS, fd, FPOS_SOCKET_ADDRESS_PEER, &address))
 		return e;

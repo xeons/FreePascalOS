@@ -127,8 +127,15 @@ end;
 function OpenDevice(Device: PDeviceObject; Flags: LongWord; out OpenFile: PDeviceFile): LongInt;
 var
   Request: TIoRequest;
+  Instead: Pointer;
 begin
   OpenFile := nil;
+  if Assigned(Device^.OpenInstead) then
+  begin
+    Result := Device^.OpenInstead(Device, Flags, Instead);
+    OpenFile := PDeviceFile(Instead);
+    Exit;
+  end;
   if not TryCountOpen(Device) then
     Exit(ErrorBusy);
   OpenFile := PDeviceFile(CreateObject(DeviceFileObjectType, nil));

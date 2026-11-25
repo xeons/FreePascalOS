@@ -74,6 +74,9 @@ struct FreePascalOsSysdepTags :
 	Utimensat,
 	Isatty,
 	Ttyname,
+	// Memory (libc only).
+	Msync,
+	Mincore,
 	// Names.
 	OpenDir,
 	ReadEntries,
@@ -162,6 +165,7 @@ struct FreePascalOsSysdepTags :
 	Sockname,
 	Peername,
 	InetConfigured,
+	Socketpair,
 	// Terminals.
 	Tcgetattr,
 	Tcsetattr,
@@ -172,6 +176,8 @@ struct FreePascalOsSysdepTags :
 	Tcgetwinsize,
 	Tcsetwinsize,
 	Ioctl,
+	Ptsname,
+	Unlockpt,
 	// Signals.
 	Sigaction,
 	Sigprocmask,

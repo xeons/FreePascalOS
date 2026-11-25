@@ -97,6 +97,7 @@ mode_t type_bits_of(uint32_t kind) {
 		case FPOS_KIND_FIFO: return S_IFIFO;
 		case FPOS_KIND_CHARACTER_DEVICE: return S_IFCHR;
 		case FPOS_KIND_BLOCK_DEVICE: return S_IFBLK;
+		case FPOS_KIND_SOCKET: return S_IFSOCK;
 		default: return S_IFREG;
 	}
 }
@@ -174,11 +175,27 @@ int stat_of_handle_kind(int fd, struct stat *statbuf) {
 	return 0;
 }
 
+// The times to the nanosecond (CallGetFileTimes), where the file
+// system has them; the whole seconds stay otherwise.
+void fill_precise_times(const struct fpos_file_times &times, struct stat *statbuf) {
+	statbuf->st_atim.tv_sec = times.access.seconds;
+	statbuf->st_atim.tv_nsec = times.access.nanoseconds;
+	statbuf->st_mtim.tv_sec = times.modification.seconds;
+	statbuf->st_mtim.tv_nsec = times.modification.nanoseconds;
+	statbuf->st_ctim.tv_sec = times.change.seconds;
+	statbuf->st_ctim.tv_nsec = times.change.nanoseconds;
+}
+
+constexpr long file_times_follow_links = 1;
+
 int stat_path(const char *path, bool follow_links, struct stat *statbuf) {
 	struct fpos_file_information information;
 	if (int e = call_checked(FPOS_CALL_GET_PATH_INFORMATION, path, &information, follow_links ? 1 : 0))
 		return e;
 	fill_stat(information, statbuf);
+	struct fpos_file_times times;
+	if (!error_of(call(FPOS_CALL_GET_FILE_TIMES, path, -1, follow_links ? file_times_follow_links : 0, &times)))
+		fill_precise_times(times, statbuf);
 	return 0;
 }
 
@@ -188,6 +205,9 @@ int stat_handle(int fd, struct stat *statbuf) {
 	if (error_of(result))
 		return stat_of_handle_kind(fd, statbuf);
 	fill_stat(information, statbuf);
+	struct fpos_file_times times;
+	if (!error_of(call(FPOS_CALL_GET_FILE_TIMES, 0, fd, 0, &times)))
+		fill_precise_times(times, statbuf);
 	return 0;
 }
 

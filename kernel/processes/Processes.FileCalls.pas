@@ -154,6 +154,19 @@ begin
     if Normalized[Index] <> DeviceDirectoryPrefix[Index + 1] then
       Exit;
   Rest := @Normalized[Length(DeviceDirectoryPrefix)];
+  { /dev/pts/N is the pseudo-terminal ptsN (the name C programs use). }
+  if (Rest[0] = 'p') and (Rest[1] = 't') and (Rest[2] = 's') and (Rest[3] = '/') and
+     (Rest[4] >= '0') and (Rest[4] <= '9') then
+  begin
+    Index := 4;
+    while (Rest[Index] >= '0') and (Rest[Index] <= '9') do
+      Inc(Index);
+    if (Rest[Index] <> #0) or (Index >= DeviceNameLength) then
+      Exit;
+    CopyText(Name, 'pts', DeviceNameLength);
+    CopyText(@Name[3], @Rest[4], DeviceNameLength - 3);
+    Exit(DeviceEntry);
+  end;
   if (Rest^ = #0) or (TextLength(Rest) >= DeviceNameLength) then
     Exit;
   Index := 0;

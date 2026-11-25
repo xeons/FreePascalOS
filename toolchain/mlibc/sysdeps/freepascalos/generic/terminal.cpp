@@ -22,6 +22,7 @@
 
 #include "kernel.hpp"
 #include "descriptors.hpp"
+#include "pseudoterminals.hpp"
 
 #include <errno.h>
 #include <string.h>
@@ -190,6 +191,17 @@ int Sysdeps<Ioctl>::operator()(int fd, unsigned long request, void *arg, int *re
 			}
 			*static_cast<int *>(arg) = 0;
 			return 0;
+		}
+		case TIOCGPTN: {
+			unsigned int number;
+			if (int e = fpos::terminal_number_of(fd, &number))
+				return e;
+			*static_cast<unsigned int *>(arg) = number;
+			return 0;
+		}
+		case TIOCSPTLCK: {
+			unsigned int number;
+			return fpos::terminal_number_of(fd, &number);
 		}
 		case TIOCSCTTY:
 		case TIOCNOTTY:
