@@ -63,6 +63,7 @@ NATIVE_COMPILER := $(NATIVE_FPC_ROOT)/bin/$(NATIVE_COMPILER_NAME)
 NATIVE_FPC_DRIVER := $(NATIVE_FPC_ROOT)/bin/fpc
 NATIVE_FPC_CONFIGURATION := $(NATIVE_FPC_ROOT)/etc/fpc.cfg
 NATIVE_FPC_UNITS_STAMP := $(NATIVE_FPC_UNIT_ROOT)/.staged
+NATIVE_FPC_PACKAGES_STAMP := $(NATIVE_FPC_UNIT_ROOT)/fcl-process/.built
 
 # Library name and the folder its units were compiled into.
 NATIVE_FPC_DEFAULT_LIBRARIES := system cryptography coreutils
@@ -76,7 +77,8 @@ NATIVE_FPC_LIBRARY_FILES := $(addprefix $(USER_LIBRARY_OUTPUT)/lib,$(addsuffix .
 
 # What the system disk gets (nothing with NATIVE_FPC=no).
 ifeq ($(NATIVE_FPC),yes)
-  NATIVE_FPC_SYSTEM_DISK_FILES := $(NATIVE_COMPILER) $(NATIVE_FPC_DRIVER) $(NATIVE_FPC_CONFIGURATION) $(NATIVE_FPC_UNITS_STAMP)
+  NATIVE_FPC_SYSTEM_DISK_FILES := $(NATIVE_COMPILER) $(NATIVE_FPC_DRIVER) $(NATIVE_FPC_CONFIGURATION) $(NATIVE_FPC_UNITS_STAMP) \
+	$(NATIVE_FPC_PACKAGES_STAMP)
 else
   NATIVE_FPC_SYSTEM_DISK_FILES :=
 endif
@@ -92,7 +94,8 @@ NATIVE_COMPILER_FLAGS := $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBR
 	-d$(FPC_TARGET_CPU) -dGDB -dBROWSERLOG -dRELEASE -vw-n-
 
 .PHONY: native-fpc
-native-fpc: $(NATIVE_COMPILER) $(NATIVE_FPC_DRIVER) $(NATIVE_FPC_CONFIGURATION) $(NATIVE_FPC_UNITS_STAMP)
+native-fpc: $(NATIVE_COMPILER) $(NATIVE_FPC_DRIVER) $(NATIVE_FPC_CONFIGURATION) $(NATIVE_FPC_UNITS_STAMP) \
+	$(NATIVE_FPC_PACKAGES_STAMP)
 
 $(PPUMOVE): $(CROSS_COMPILER)
 	@rm -rf build/toolchain/ppumove-units
@@ -148,6 +151,21 @@ $(NATIVE_FPC_UNITS_STAMP): $(PPUMOVE) $(NATIVE_FPC_LIBRARY_FILES)
 	cp $(RTL_USER_DIRECTORY)/si_prc.ppu $(RTL_USER_DIRECTORY)/si_prc.o \
 		$(RTL_USER_DIRECTORY)/si_dll.ppu $(RTL_USER_DIRECTORY)/si_dll.o $(NATIVE_FPC_UNIT_ROOT)/rtl/
 	$(foreach library,$(NATIVE_FPC_LIBRARIES),$(call stage-library-units,$(library),$(USER_BUILD_DIRECTORY)/$(library),$(library)))
+	@touch $@
+
+# Free Pascal's packages, compiled for FreePascalOS from the patched
+# sources and installed as ordinary units (linked into the programs that
+# use them): fcl-process (TProcess and pipe streams, on the kernel's
+# processes and pipes: toolchain/fpc/packages/fcl-process).
+FCL_PROCESS_SOURCE := $(FPC_PACKAGE_SOURCE)/fcl-process/src
+FCL_PROCESS_PLATFORM_SOURCE := toolchain/fpc/packages/fcl-process/src/freepascalos
+
+$(NATIVE_FPC_PACKAGES_STAMP): $(NATIVE_FPC_UNITS_STAMP) $(wildcard $(FCL_PROCESS_PLATFORM_SOURCE)/*)
+	@rm -rf $(dir $@)
+	@mkdir -p $(dir $@)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) \
+		-Fi$(FCL_PROCESS_PLATFORM_SOURCE) -Fi$(FCL_PROCESS_SOURCE) -Fu$(FCL_PROCESS_SOURCE) -vw-n- \
+		-FU$(dir $@) $(FCL_PROCESS_SOURCE)/process.pp
 	@touch $@
 
 # The host check (make native-fpc-test, part of make test): the staged

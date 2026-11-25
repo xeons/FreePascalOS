@@ -43,9 +43,10 @@ toolchain_directory=$(cd "$(dirname "$0")" && pwd)
 fpc_source=${FPC_SOURCE:-/usr/lib/fpc/src}
 
 # The parts of the source tree that are copied. The runtime library and
-# the packages are compiled straight from $FPC_SOURCE (with the files
-# in rtl/fpc in front of them), so only these are needed.
-source_parts="compiler packages/fcl-process"
+# the packages are compiled straight from $FPC_SOURCE, with the
+# FreePascalOS files (rtl/fpc, toolchain/fpc/packages) in front of
+# them, so only the compiler is needed.
+source_parts="compiler"
 
 if [ ! -f "$fpc_source/compiler/pp.pas" ]; then
     echo "$0: no compiler sources in $fpc_source (install fpc-src or set FPC_SOURCE)" >&2
