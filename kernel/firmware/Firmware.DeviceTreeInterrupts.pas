@@ -311,7 +311,10 @@ begin
     if not ReadCellProperty(Tree, Parent, '#address-cells', ParentAddressCells) then
       ParentAddressCells := 0;
     ParentInterruptCells := InterruptCellsOf(Tree, Parent);
-    if Position + ParentAddressCells + ParentInterruptCells > Total then
+    { Cell counts no specifier has are a broken tree (and are kept from
+      making the sums below wrap). }
+    if (ParentAddressCells > MaximumAddressCells) or (ParentInterruptCells > MaximumInterruptCells) or
+       (QWord(Position) + ParentAddressCells + ParentInterruptCells > Total) then
       Exit;
     if Matches then
     begin
