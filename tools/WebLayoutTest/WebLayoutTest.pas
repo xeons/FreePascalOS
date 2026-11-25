@@ -29,7 +29,8 @@
   painting (pixels of known boxes, a damaged rectangle painted alone
   matching the full paint), the speed and memory of a large page, and
   font matching with the system's fonts and configuration
-  (WebLayoutTest.SystemFonts; WEB_HOST_FONTS names the fonts directory).
+  (WebLayoutTest.SystemFonts; WEB_HOST_FONTS names the fonts directory,
+  userland/fonts).
 }
 program WebLayoutTest;
 

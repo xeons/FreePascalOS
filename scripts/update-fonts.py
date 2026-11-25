@@ -15,71 +15,35 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Copies the freely licensed fonts the build machine has into the
-system's font directory (/lib/fonts on the system disk).
+"""Refreshes the fonts kept in the source tree (userland/fonts) from
+the machine's font packages; run by hand (make update-fonts), never by
+the build.
 
-    collect-host-fonts.py LIST OUTPUT [--set full|core|none]
+    update-fonts.py LIST FONTS-DIRECTORY
 
-LIST (scripts/host-fonts.list) names every family: its files, the
-host package they come from and their licence. A family is copied
-only if its licence file is there and says what the list expects, and
-every font's own copyright or licence description (the name table's
-IDs 0 and 13) does too; anything missing or not matching is skipped
-with a message, never failing the build (the system works with the
-fonts kept in userland/fonts alone).
+LIST (scripts/fonts.list) names every family: its files, the host
+package they come from and their licence. A family is taken only if
+all its files are there, its licence file is there and says what the
+list expects, and every font's own copyright or licence description
+(the name table's IDs 0 and 13) does too; anything missing or not
+matching is skipped with a message, and the copy already in the source
+tree is left as it is.
 
-Each family goes into OUTPUT/<family>/ with a LICENSE file: where the
-fonts come from, their copyright and licence as they state them, and
-the licence's full text. OUTPUT/MANIFEST lists every family copied
-(family, directory, files, licence, package). The files copied are
-remembered in OUTPUT/.host-fonts so that the next run removes them
-first (families from userland/fonts are left alone).
+Each family goes into FONTS-DIRECTORY/<family>/ with a LICENSE file
+(where the fonts come from, their copyright and licence as they state
+them, and the licence's full text) and a SOURCE line (upstream,
+version, package). FONTS-DIRECTORY/MANIFEST lists every family
+(family, directory, files, licence, version, package); its rows for
+families not refreshed are kept. Font files in a refreshed family's
+directory that the list no longer names are removed.
 """
 
-import configparser
 import os
 import shutil
-import struct
 import subprocess
 import sys
 
-RECORD_NAME = '.host-fonts'
-
-
-def read_names(path):
-    """The name table's strings (by ID) of a font, or of a collection's
-    first face; {} if it cannot be read."""
-    try:
-        with open(path, 'rb') as handle:
-            data = handle.read()
-    except OSError:
-        return {}
-    try:
-        offset = 0
-        if data[:4] == b'ttcf':
-            offset = struct.unpack('>I', data[12:16])[0]
-        count = struct.unpack('>H', data[offset + 4:offset + 6])[0]
-        name_table = None
-        for index in range(count):
-            entry = offset + 12 + 16 * index
-            tag, _, table_offset, _ = struct.unpack('>4sIII', data[entry:entry + 16])
-            if tag == b'name':
-                name_table = table_offset
-        if name_table is None:
-            return {}
-        _, record_count, strings = struct.unpack('>HHH', data[name_table:name_table + 6])
-        names = {}
-        for index in range(record_count):
-            entry = name_table + 6 + 12 * index
-            platform, _, language, name_id, length, start = struct.unpack('>HHHHHH', data[entry:entry + 12])
-            raw = data[name_table + strings + start:name_table + strings + start + length]
-            if platform == 3 and language == 0x409:
-                names[name_id] = raw.decode('utf-16-be', 'replace')
-            elif platform == 1 and name_id not in names:
-                names[name_id] = raw.decode('latin-1')
-        return names
-    except (struct.error, IndexError):
-        return {}
+import fontlist
 
 
 def package_version(package):
@@ -94,40 +58,17 @@ def package_version(package):
     return parts[1] if len(parts) == 2 else ''
 
 
-def family_directory(name):
-    return name.strip().lower().replace(' ', '-')
-
-
-def lines_of(value):
-    return [line.strip() for line in value.splitlines() if line.strip()]
-
-
-def remove_previous(output):
-    record = os.path.join(output, RECORD_NAME)
-    if not os.path.exists(record):
-        return
-    with open(record) as handle:
-        for line in handle:
-            path = os.path.join(output, line.strip())
-            if line.strip() and os.path.isfile(path):
-                os.remove(path)
-    for entry in sorted(os.listdir(output)):
-        directory = os.path.join(output, entry)
-        if os.path.isdir(directory) and not os.listdir(directory):
-            os.rmdir(directory)
-    os.remove(record)
-
-
 def license_text(section, source_root):
     """The licence's full text (the note first), and the file it came
     from; (None, reason) if it is missing or does not match."""
+    candidates = fontlist.lines_of(section.get('license-files', ''))
     chosen = None
-    for candidate in lines_of(section.get('license-files', '')):
+    for candidate in candidates:
         if os.path.isfile(candidate):
             chosen = candidate
             break
     if chosen is None:
-        return None, 'no licence file (%s)' % ', '.join(lines_of(section.get('license-files', '')))
+        return None, 'no licence file (%s)' % ', '.join(candidates)
     with open(chosen, encoding='utf-8', errors='replace') as handle:
         text = handle.read()
     marker = section.get('license-marker', '')
@@ -144,128 +85,125 @@ def license_text(section, source_root):
 
 
 def font_states_license(path, marker):
-    names = read_names(path)
+    names = fontlist.read_names(path)
     stated = (names.get(0, '') + '\n' + names.get(13, '')).lower()
     return marker.lower() in stated, names
 
 
 def write_license(directory, family, section, files, names, text, source, version):
-    lines = []
-    lines.append('%s' % family)
-    lines.append('')
-    lines.append('Files: %s' % ', '.join(os.path.basename(path) for path in files))
+    lines = [family, '']
+    lines.append('Files: %s' % ', '.join(sorted(files)))
     lines.append('Licence: %s' % section.get('license', ''))
     package = section.get('package', '')
-    lines.append('Copied from the build machine\'s package %s%s' % (package, (' ' + version) if version else ''))
+    lines.append('Taken from the Arch Linux package %s%s' % (package, (' ' + version) if version else ''))
     if section.get('upstream'):
         lines.append('Upstream: %s' % section.get('upstream'))
     if names.get(0):
-        lines.append('')
-        lines.append('Copyright (as the font states it):')
-        lines.append(names[0].strip())
+        lines += ['', 'Copyright (as the font states it):', names[0].strip()]
     if names.get(13):
-        lines.append('')
-        lines.append('Licence (as the font states it):')
-        lines.append(names[13].strip())
-    lines.append('')
-    lines.append('=' * 72)
-    lines.append('The licence\'s full text (from %s):' % source)
-    lines.append('')
+        lines += ['', 'Licence (as the font states it):', names[13].strip()]
+    lines += ['', '=' * 72, 'The licence\'s full text (from %s):' % source, '']
     with open(os.path.join(directory, 'LICENSE'), 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(lines) + '\n' + text)
 
 
-def collect(list_path, output, font_set):
+def write_source(directory, section, version, names):
+    font_version = names.get(5, '').strip()
+    line = 'upstream %s; version %s%s; package %s (Arch Linux)\n' % (
+        section.get('upstream', '?'), version or '?', (' (font: %s)' % font_version) if font_version else '',
+        section.get('package', '?'))
+    with open(os.path.join(directory, 'SOURCE'), 'w', encoding='utf-8') as handle:
+        handle.write(line)
+
+
+def check_section(section_name, section, source_root):
+    """The section's directories ({directory: (family, [(path, names)])})
+    and its licence, or None (with a message) when it is skipped."""
+    files = fontlist.files_for_set(section, None)
+    missing = [path for path in files if not os.path.isfile(path)]
+    if missing:
+        print('update fonts: %s skipped, not on this machine: %s (install %s)' %
+              (section_name, ', '.join(missing), section.get('package', '?')))
+        return None
+    licence, reason = license_text(section, source_root)
+    if licence is None:
+        print('update fonts: %s skipped: %s' % (section_name, reason))
+        return None
+    marker = section.get('name-marker', '')
+    directories = {}
+    for path in files:
+        if marker:
+            states, names = font_states_license(path, marker)
+        else:
+            states, names = True, fontlist.read_names(path)
+        if not states:
+            print('update fonts: %s skipped: %s does not state "%s" in its name table' %
+                  (section_name, path, marker))
+            return None
+        if fontlist.is_split(section):
+            family = fontlist.split_family(names, path)
+            directory = fontlist.family_directory(family)
+        else:
+            family = section.get('name', section_name)
+            directory = section_name
+        directories.setdefault(directory, (family, []))[1].append((path, names))
+    return directories, licence
+
+
+def refresh_directory(fonts_directory, directory_name, family, section, members, licence, version):
+    directory = os.path.join(fonts_directory, directory_name)
+    os.makedirs(directory, exist_ok=True)
+    wanted = set()
+    for path, _ in members:
+        wanted.add(os.path.basename(path))
+        shutil.copyfile(path, os.path.join(directory, os.path.basename(path)))
+    for entry in os.listdir(directory):
+        if entry.lower().endswith(fontlist.FONT_EXTENSIONS) and entry not in wanted:
+            print('update fonts: %s/%s removed (no longer in the list)' % (directory_name, entry))
+            os.remove(os.path.join(directory, entry))
+    text, source = licence
+    names = members[0][1]
+    write_license(directory, family, section, wanted, names, text, source, version)
+    write_source(directory, section, version, names)
+    return [family, directory_name, ' '.join(sorted(wanted)), section.get('license', ''), version or '?',
+            section.get('package', '')]
+
+
+def update(list_path, fonts_directory):
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(list_path)))
-    os.makedirs(output, exist_ok=True)
-    remove_previous(output)
-    if font_set == 'none':
-        print('host fonts: none wanted (HOST_FONT_SET=none)')
-        return
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(list_path)
-    copied = []
-    manifest = []
-    total = 0
+    parser = fontlist.read_list(list_path)
+    manifest = fontlist.read_manifest(fonts_directory)
+    gathered = {}
     skipped = 0
     for section_name in parser.sections():
         section = parser[section_name]
-        if font_set not in section.get('sets', 'full').split():
-            continue
-        files = lines_of(section.get('files', ''))
-        if font_set == 'core' and section.get('core-files'):
-            files = lines_of(section.get('core-files'))
-        present = [path for path in files if os.path.isfile(path)]
-        missing = [path for path in files if not os.path.isfile(path)]
-        if missing:
-            print('host fonts: %s: not on this machine: %s' % (section_name, ', '.join(missing)))
-        if not present:
-            print('host fonts: %s skipped (install %s to have it)' % (section_name, section.get('package', '?')))
+        checked = check_section(section_name, section, source_root)
+        if checked is None:
             skipped += 1
             continue
-        licence, reason = license_text(section, source_root)
-        if licence is None:
-            print('host fonts: %s skipped: %s' % (section_name, reason))
-            skipped += 1
-            continue
-        text, source = licence
-        marker = section.get('name-marker', '')
-        groups = {}
-        refused = False
-        for path in present:
-            states, names = font_states_license(path, marker) if marker else (True, read_names(path))
-            if not states:
-                print('host fonts: %s skipped: %s does not state "%s" in its name table' %
-                      (section_name, path, marker))
-                refused = True
-                break
-            if section.getboolean('split', False):
-                family = names.get(16) or names.get(1) or os.path.splitext(os.path.basename(path))[0]
-            else:
-                family = section.get('name', section_name)
-            groups.setdefault(family, []).append((path, names))
-        if refused:
-            skipped += 1
-            continue
+        directories, licence = checked
+        for directory_name, (family, members) in directories.items():
+            if directory_name in gathered:
+                known = {os.path.basename(path) for path, _ in gathered[directory_name][2]}
+                members = gathered[directory_name][2] + [m for m in members if os.path.basename(m[0]) not in known]
+            gathered[directory_name] = (family, section, members, licence)
+    total = 0
+    for directory_name in sorted(gathered):
+        family, section, members, licence = gathered[directory_name]
         version = package_version(section.get('package', ''))
-        for family, members in groups.items():
-            directory_name = section_name if not section.getboolean('split', False) else family_directory(family)
-            directory = os.path.join(output, directory_name)
-            os.makedirs(directory, exist_ok=True)
-            paths = [path for path, _ in members]
-            for path in paths:
-                target = os.path.join(directory, os.path.basename(path))
-                shutil.copyfile(path, target)
-                copied.append(os.path.join(directory_name, os.path.basename(path)))
-                total += os.path.getsize(path)
-            if not os.path.exists(os.path.join(directory, 'LICENSE')):
-                write_license(directory, family, section, paths, members[0][1], text, source, version)
-                copied.append(os.path.join(directory_name, 'LICENSE'))
-            manifest.append('\t'.join([family, directory_name, ' '.join(os.path.basename(p) for p in paths),
-                                       section.get('license', ''),
-                                       section.get('package', '') + ((' ' + version) if version else '')]))
-    with open(os.path.join(output, 'MANIFEST'), 'w', encoding='utf-8') as handle:
-        handle.write('# The fonts copied from the build machine (scripts/collect-host-fonts.py):\n')
-        handle.write('# family\tdirectory\tfiles\tlicence\tpackage\n')
-        handle.write('\n'.join(manifest) + '\n')
-    copied.append('MANIFEST')
-    with open(os.path.join(output, RECORD_NAME), 'w') as handle:
-        handle.write('\n'.join(copied) + '\n')
-    print('host fonts (%s set): %d families, %.1f MB copied%s' %
-          (font_set, len(manifest), total / 1e6, ('; %d skipped' % skipped) if skipped else ''))
+        manifest[directory_name] = refresh_directory(fonts_directory, directory_name, family, section, members,
+                                                     licence, version)
+        total += sum(os.path.getsize(path) for path, _ in members)
+    fontlist.write_manifest(fonts_directory, manifest)
+    print('update fonts: %d families refreshed, %.1f MB%s' %
+          (len(gathered), total / 1e6, ('; %d sections skipped' % skipped) if skipped else ''))
 
 
 def main():
-    arguments = sys.argv[1:]
-    font_set = 'full'
-    if '--set' in arguments:
-        position = arguments.index('--set')
-        font_set = arguments[position + 1]
-        del arguments[position:position + 2]
-    if len(arguments) != 2 or font_set not in ('full', 'core', 'none'):
+    if len(sys.argv) != 3:
         print(__doc__)
         sys.exit(2)
-    collect(arguments[0], arguments[1], font_set)
+    update(sys.argv[1], sys.argv[2])
 
 
 if __name__ == '__main__':

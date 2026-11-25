@@ -177,31 +177,28 @@ TERMINUS_SIZES := 12 14 16 18 20 22 24 28 32
 SYSTEM_FONT_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/terminus
 SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 
-# The TrueType fonts (/lib/fonts/dejavu-sans, the interface's, and
-# /lib/fonts/dejavu-sans-mono): DejaVu Sans and DejaVu Sans Mono, regular
-# and bold, kept in userland/fonts with their licence (Bitstream Vera and
-# DejaVu's changes), which has to go with them; libfont renders them at
-# any size.
+# The outline fonts (/lib/fonts/<family>): DejaVu Sans (the
+# interface's) and DejaVu Sans Mono, Liberation, Noto with CJK and colour
+# emoji, Source Sans, Cantarell, Roboto, Open Sans, Hack, Inconsolata,
+# the URW base 35 and Droid Sans Fallback, all freely licensed and kept
+# in userland/fonts with their licences (which have to go with them).
+# scripts/install-fonts.py puts in the set FONT_SET names, as
+# scripts/fonts.list says: full (the system disk, about 80 MB), core
+# (DejaVu Sans and Sans Mono, Liberation, Droid Sans Fallback for CJK
+# and Noto Sans Symbols 2: the default for arm64, whose system image is
+# the Raspberry Pi's RAM disk, served over TFTP) or base (DejaVu Sans
+# and Sans Mono regular and bold only). make update-fonts refreshes
+# userland/fonts from the build machine's font packages.
 OUTLINE_FONT_SOURCE := userland/fonts
-OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*.ttf) $(wildcard $(OUTLINE_FONT_SOURCE)/*/LICENSE)
+OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*) $(OUTLINE_FONT_SOURCE)/MANIFEST
+FONT_SCRIPTS := scripts/install-fonts.py scripts/fontlist.py scripts/fonts.list
 DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
-DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
-
-# The freely licensed fonts the build machine has (Liberation, more
-# DejaVu, Noto with CJK and colour emoji, Source Sans, Cantarell,
-# Roboto, Open Sans, Hack, Inconsolata, the URW base 35), copied into
-# /lib/fonts with their licences by scripts/collect-host-fonts.py from
-# the list in scripts/host-fonts.list (nothing of them is in git;
-# what the machine lacks is skipped). HOST_FONT_SET: full (the system
-# disk, about 80 MB), core (Liberation, Droid Sans Fallback for CJK and
-# Noto Sans Symbols 2: the default for arm64, whose system image is the
-# Raspberry Pi's RAM disk, served over TFTP) or none.
 ifeq ($(ARCH),arm64)
-HOST_FONT_SET ?= core
+FONT_SET ?= core
 else
-HOST_FONT_SET ?= full
+FONT_SET ?= full
 endif
-HOST_FONTS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-$(HOST_FONT_SET)
+OUTLINE_FONTS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts-$(FONT_SET)
 
 # The icon theme (/usr/share/icons/NAME.ico, 16 to 96 pixels) and the
 # pointer's pictures (/lib/pointers/NAME.cur, several sizes): drawn
@@ -220,7 +217,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
-	$(DEJAVU_SANS_STAMP) $(HOST_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
+	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
 		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
@@ -509,18 +506,9 @@ $(SYSTEM_FONTS_STAMP):
 	cp $(TERMINUS_LICENSE) $(SYSTEM_FONT_DIRECTORY)/LICENSE
 	@touch $@
 
-$(DEJAVU_SANS_STAMP): $(OUTLINE_FONT_FILES)
-	@for family in $(notdir $(wildcard $(OUTLINE_FONT_SOURCE)/*)); do \
-		rm -rf $(USER_BUILD_DIRECTORY)/fonts/$$family; \
-		mkdir -p $(USER_BUILD_DIRECTORY)/fonts/$$family; \
-		cp $(OUTLINE_FONT_SOURCE)/$$family/* $(USER_BUILD_DIRECTORY)/fonts/$$family/; \
-	done
-	@touch $@
-
-$(HOST_FONTS_STAMP): $(DEJAVU_SANS_STAMP) scripts/collect-host-fonts.py scripts/host-fonts.list \
-		$(wildcard scripts/font-licenses/*)
-	@rm -f $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-*
-	python3 -B scripts/collect-host-fonts.py scripts/host-fonts.list $(USER_BUILD_DIRECTORY)/fonts --set $(HOST_FONT_SET)
+$(OUTLINE_FONTS_STAMP): $(OUTLINE_FONT_FILES) $(FONT_SCRIPTS)
+	@rm -f $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts* $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-*
+	python3 -B scripts/install-fonts.py scripts/fonts.list $(OUTLINE_FONT_SOURCE) $(USER_BUILD_DIRECTORY)/fonts --set $(FONT_SET)
 	@touch $@
 
 $(ICONS_STAMP): $(ICON_SOURCES)
