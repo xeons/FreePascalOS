@@ -30,7 +30,10 @@
     ...in the interrupt handler:
     QueueDeferredCall(KeyboardCall);
 
-  A call already queued is not queued twice; it runs once.
+  A call already queued is not queued twice; it runs once. A call never
+  runs on two processors at once: one queued again while it runs
+  stays in the queue, passed over by the other processors, until the
+  processor running it finishes and runs it again itself.
 }
 unit Kernel.DeferredCalls;
 
@@ -50,7 +53,8 @@ type
     Routine: TDeferredRoutine;
     Context: Pointer;
     IsQueued: Boolean;
-    { Processors running it now (it may be queued again while it runs). }
+    { Processors running it now: 0 or 1 (it may be queued again while it
+      runs, and then waits for that run to end). }
     RunningCount: LongInt;
   end;
 
@@ -113,6 +117,13 @@ begin
   HalRequestSoftwareInterrupt(DispatchLevel);
 end;
 
+function CallOfLink(Entry: PListEntry): PDeferredCall;
+begin
+  Result := PDeferredCall(ContainingRecord(Entry, FieldOffset(PDeferredCall(nil)^.Link)));
+end;
+
+{ The first queued call that no processor runs now, taken off the queue
+  and marked running; nil if none. }
 function TakeNextCall: PDeferredCall;
 var
   WereEnabled: Boolean;
@@ -120,13 +131,19 @@ var
 begin
   WereEnabled := SaveAndDisableInterrupts;
   AcquireSpinLockAtCurrentLevel(QueueLock);
-  Entry := RemoveHeadEntry(Queue);
   Result := nil;
-  if Entry <> nil then
+  Entry := Queue.Next;
+  while Entry <> @Queue do
   begin
-    Result := PDeferredCall(ContainingRecord(Entry, FieldOffset(PDeferredCall(nil)^.Link)));
-    Result^.IsQueued := False;
-    Inc(Result^.RunningCount);
+    if CallOfLink(Entry)^.RunningCount = 0 then
+    begin
+      Result := CallOfLink(Entry);
+      RemoveListEntry(Entry);
+      Result^.IsQueued := False;
+      Inc(Result^.RunningCount);
+      Break;
+    end;
+    Entry := Entry^.Next;
   end;
   ReleaseSpinLockAtCurrentLevel(QueueLock);
   RestoreInterrupts(WereEnabled);
@@ -143,6 +160,8 @@ begin
   RestoreInterrupts(WereEnabled);
 end;
 
+{ A call queued again while it ran is found by the next TakeNextCall of
+  this same loop, once FinishCall marked it not running. }
 procedure RunDeferredCalls;
 var
   Call: PDeferredCall;

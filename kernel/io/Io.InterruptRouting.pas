@@ -94,17 +94,24 @@ uses
   Hal.InterruptController,
   Firmware.Madt,
   Kernel.Processors,
+  Kernel.PriorityLevel,
+  Kernel.SpinLock,
   Io.LineInterruptStorms,
   Debug.Output;
 
 var
   Available: Boolean = False;
+  { Connections may come from several drivers' threads at once: the
+    vector count, the round robin target, the shared lines and the
+    handler registrations they make are changed under it. }
+  RoutingLock: TSpinLock;
   { The processor the last interrupt was given to. }
   LastTargetIndex: LongWord = 0;
   NextVector: Integer = DeviceInterruptVectorFirst;
 
 procedure InitializeInterruptRouting;
 begin
+  InitializeSpinLock(RoutingLock);
   Available := InitializeDeviceInterruptRouting(ParseMadt);
   WriteDeviceInterruptRouting;
 end;
@@ -168,7 +175,7 @@ begin
   Dec(NextVector);
 end;
 
-function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
+function ConnectIsaInterruptLocked(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
 var
   Routing: TIsaInterruptRouting;
   Vector: Byte;
@@ -186,6 +193,15 @@ begin
   end;
   ReportConnection('IRQ', Irq, Vector, Target);
   Result := True;
+end;
+
+function ConnectIsaInterrupt(Irq: Byte; Handler: TInterruptHandler; Context: Pointer): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(RoutingLock);
+  Result := ConnectIsaInterruptLocked(Irq, Handler, Context);
+  ReleaseSpinLock(RoutingLock, PreviousLevel);
 end;
 
 const
@@ -226,8 +242,8 @@ begin
   Result := RoutingOfIsaInterrupt(Irq).GlobalInterrupt;
 end;
 
-function ConnectGlobalInterrupt(Gsi: LongWord; LevelTriggered, ActiveLow: Boolean; Handler: TInterruptHandler;
-  Context: Pointer): Boolean;
+function ConnectGlobalInterruptLocked(Gsi: LongWord; LevelTriggered, ActiveLow: Boolean;
+  Handler: TInterruptHandler; Context: Pointer): Boolean;
 var
   Index: Integer;
   Line: PSharedLine;
@@ -275,6 +291,16 @@ begin
   Result := True;
 end;
 
+function ConnectGlobalInterrupt(Gsi: LongWord; LevelTriggered, ActiveLow: Boolean; Handler: TInterruptHandler;
+  Context: Pointer): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(RoutingLock);
+  Result := ConnectGlobalInterruptLocked(Gsi, LevelTriggered, ActiveLow, Handler, Context);
+  ReleaseSpinLock(RoutingLock, PreviousLevel);
+end;
+
 procedure WriteSharedLineSummary;
 var
   Index: Integer;
@@ -297,7 +323,7 @@ begin
   DebugEndMessage;
 end;
 
-function ConnectMessageInterrupt(RequesterId: LongWord; Handler: TInterruptHandler; Context: Pointer;
+function ConnectMessageInterruptLocked(RequesterId: LongWord; Handler: TInterruptHandler; Context: Pointer;
   out Message: TInterruptMessage): Boolean;
 var
   Vector: Byte;
@@ -315,6 +341,16 @@ begin
   end;
   ReportConnection('Message interrupt', -1, Vector, Target);
   Result := True;
+end;
+
+function ConnectMessageInterrupt(RequesterId: LongWord; Handler: TInterruptHandler; Context: Pointer;
+  out Message: TInterruptMessage): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(RoutingLock);
+  Result := ConnectMessageInterruptLocked(RequesterId, Handler, Context, Message);
+  ReleaseSpinLock(RoutingLock, PreviousLevel);
 end;
 
 end.

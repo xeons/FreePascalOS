@@ -30,7 +30,10 @@
   FinishKernelPanic writes the back trace (Debug.StackTrace): of the
   interrupted code when the exception handler gave its frame
   (SetPanicTraceStart), otherwise of the code that called
-  BeginKernelPanic - the routine that panicked and its callers.
+  BeginKernelPanic - the routine that panicked and its callers. Each
+  processor notes its own trace start (two may fault at once, and only
+  the first to panic reports), so the trace is always of the processor
+  that panicked.
 
   FinishKernelPanic then, in this order: lets the reset policy say what
   will happen (Kernel.Watchdog: "resets in N seconds"), lets the network
@@ -109,9 +112,17 @@ var
   PanicFlushRoutine: TPanicHook = nil;
   PanicResetAnnounce: TPanicHook = nil;
   PanicResetPerform: TPanicHook = nil;
-  TraceProgramCounter: QWord = 0;
-  TraceFramePointer: QWord = 0;
-  TraceStartIsSet: Boolean = False;
+  { Indexed by processor. }
+  TraceProgramCounters: array[0..MaximumProcessors - 1] of QWord;
+  TraceFramePointers: array[0..MaximumProcessors - 1] of QWord;
+  TraceStartIsSet: array[0..MaximumProcessors - 1] of Boolean;
+
+function TraceSlot: LongWord;
+begin
+  Result := CurrentProcessorIndexOrZero;
+  if Result >= MaximumProcessors then
+    Result := 0;
+end;
 
 procedure SetPanicHook(Hook: TPanicHook);
 begin
@@ -144,34 +155,42 @@ begin
 end;
 
 procedure SetPanicTraceStart(ProgramCounter, FramePointer: QWord);
+var
+  Slot: LongWord;
 begin
   if PanicIsInProgress then
     Exit;
-  TraceProgramCounter := ProgramCounter;
-  TraceFramePointer := FramePointer;
-  TraceStartIsSet := True;
+  Slot := TraceSlot;
+  TraceProgramCounters[Slot] := ProgramCounter;
+  TraceFramePointers[Slot] := FramePointer;
+  TraceStartIsSet[Slot] := True;
 end;
 
 { BeginKernelPanic's caller: where it will return to and its frame. }
 procedure NoteCallerForTrace(BeginFrame: QWord);
+var
+  Slot: LongWord;
 begin
-  if TraceStartIsSet or (BeginFrame = 0) then
+  Slot := TraceSlot;
+  if TraceStartIsSet[Slot] or (BeginFrame = 0) then
     Exit;
-  TraceFramePointer := PQWord(BeginFrame)^;
-  TraceProgramCounter := PQWord(BeginFrame + 8)^;
-  TraceStartIsSet := True;
+  TraceFramePointers[Slot] := PQWord(BeginFrame)^;
+  TraceProgramCounters[Slot] := PQWord(BeginFrame + 8)^;
+  TraceStartIsSet[Slot] := True;
 end;
 
 procedure WritePanicTrace;
 var
   Bounds: TStackTraceBounds;
+  Slot: LongWord;
 begin
-  if not TraceStartIsSet then
+  Slot := TraceSlot;
+  if not TraceStartIsSet[Slot] then
     Exit;
   DebugWriteLine('');
   DebugWriteLine('Back trace:');
-  FindStackBounds(TraceFramePointer, Bounds);
-  WriteStackTrace(TraceProgramCounter, TraceFramePointer, Bounds, '  ');
+  FindStackBounds(TraceFramePointers[Slot], Bounds);
+  WriteStackTrace(TraceProgramCounters[Slot], TraceFramePointers[Slot], Bounds, '  ');
 end;
 
 procedure BeginKernelPanic(Code: QWord; Reason: PChar);

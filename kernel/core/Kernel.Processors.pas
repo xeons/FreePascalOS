@@ -53,6 +53,10 @@ uses
 
 const
   MaximumProcessors = 32;
+  { TProcessor.StartClaim. }
+  ProcessorStartPending = 0;
+  ProcessorStartJoined = 1;
+  ProcessorStartAbandoned = 2;
   { Idle states a processor may know (Kernel.IdleStates). }
   MaximumIdleStates = 8;
 
@@ -132,6 +136,11 @@ type
       processor's; the boot processor's are static). }
     InterruptStackArea: Pointer;
     DescriptorTables: TProcessorDescriptorTables;
+    { Start-up (Kernel.SecondaryProcessors): ProcessorStartPending until
+      the processor claims its block on arrival (ProcessorStartJoined)
+      or the boot processor gives up on it (ProcessorStartAbandoned):
+      one compare-and-exchange each, so a late arrival knows to stop. }
+    StartClaim: PtrUInt;
     { Suspend to RAM (Kernel.ProcessorPower): where it is in freezing
       (FreezeState*, changed only by compare-and-exchange or by the one
       side that owns the state it is in), and the state it froze in. }
