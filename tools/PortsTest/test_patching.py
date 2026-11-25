@@ -149,7 +149,7 @@ class PatchTests(support.ScratchTestCase):
 
     def test_formats(self):
         import lzma
-        from compression import zstd
+        from portstool import zstdcodec as zstd
         raw = io.BytesIO()
         with tarfile.open(fileobj=raw, mode="w") as archive:
             info = tarfile.TarInfo("pkg-2/file")

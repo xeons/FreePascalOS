@@ -43,7 +43,6 @@ import os
 import shutil
 import sys
 import tarfile
-from compression import zstd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE_ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -51,6 +50,7 @@ sys.path.insert(0, os.path.join(SOURCE_ROOT, "scripts"))
 sys.path.insert(0, os.path.join(SOURCE_ROOT, "tools", "PortsTest"))
 
 from portstool import ed25519, image, repository, stage  # noqa: E402
+from portstool import zstdcodec as zstd  # noqa: E402
 from portstool.manifest import Manifest  # noqa: E402
 from portstool.package import write_package  # noqa: E402
 from portstool.versions import compare_versions  # noqa: E402

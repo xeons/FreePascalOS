@@ -32,9 +32,9 @@ import io
 import os
 import stat
 import tarfile
-from compression import zstd
 
 from . import manifest as manifest_module
+from . import zstdcodec
 from .portfile import PortError
 
 COMPRESSION_LEVEL = 19
@@ -83,7 +83,7 @@ def write_package(path, manifest, description, scripts, stage_root, epoch):
             else:
                 with open(os.path.join(stage_root, name), "rb") as stream:
                     archive.addfile(_info(name, epoch, entry.mode, size=entry.size), stream)
-    data = zstd.compress(raw.getvalue(), level=COMPRESSION_LEVEL)
+    data = zstdcodec.compress(raw.getvalue(), COMPRESSION_LEVEL)
     with open(temporary, "wb") as stream:
         stream.write(data)
     os.replace(temporary, path)
@@ -98,8 +98,8 @@ class PackageReader:
         self.path = path
         try:
             with open(path, "rb") as stream:
-                raw = zstd.decompress(stream.read())
-        except (OSError, zstd.ZstdError) as error:
+                raw = zstdcodec.decompress(stream.read())
+        except (OSError, zstdcodec.ZstdError) as error:
             raise PackageError(f"{path}: not a package ({error})") from None
         self.archive = tarfile.open(fileobj=io.BytesIO(raw), mode="r:")
         members = self.archive.getmembers()

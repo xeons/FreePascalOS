@@ -18,12 +18,16 @@
 bzip2, xz, zstd) and zip, with nothing written outside the target (tar's
 "data" filter: no absolute names, no '..', no links out, no devices)."""
 
+import io
 import os
 import shutil
 import tarfile
 import zipfile
 
+from . import zstdcodec
 from .portfile import PortError
+
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".zip")
 
@@ -55,9 +59,18 @@ def extract_archive(path, target):
                     os.chmod(os.path.join(target, member.filename), mode)
         return
     try:
-        with tarfile.open(path, "r:*") as archive:
+        with open(path, "rb") as stream:
+            zstandard = stream.read(4) == ZSTD_MAGIC
+        if zstandard:
+            # tarfile reads .tar.zst only from Python 3.14 on.
+            with open(path, "rb") as stream:
+                data = zstdcodec.decompress(stream.read())
+            archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        else:
+            archive = tarfile.open(path, "r:*")
+        with archive:
             archive.extractall(target, filter="data")
-    except (tarfile.TarError, OSError) as error:
+    except (tarfile.TarError, OSError, zstdcodec.ZstdError) as error:
         raise ExtractError(f"{os.path.basename(path)}: {error}") from None
 
 

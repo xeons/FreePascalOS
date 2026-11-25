@@ -24,9 +24,9 @@ import shutil
 import subprocess
 import tarfile
 import unittest
-from compression import zstd
 
 import support
+from portstool import zstdcodec as zstd
 from portstool import database, ed25519, image, repository, stage
 from portstool.manifest import ManifestError, format_manifest, parse_manifest
 from portstool.package import PackageError, PackageReader, write_package
