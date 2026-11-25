@@ -51,7 +51,11 @@ set -euo pipefail
 
 user_build_directory="$1"
 output_image="$2"
-image_size_mib=64
+# The image is at least 64 MiB, more when what goes on it needs it (the
+# fonts, userland/fonts put in by scripts/install-fonts.py):
+# its contents and a seventh more for the file system, with 24 MiB to
+# spare, in whole 8 MiB.
+minimum_image_size_mib=64
 partition_start_sector=2048
 
 script_directory=$(dirname "$0")
@@ -107,6 +111,13 @@ if [[ -d "$source_directory/firmware" ]]; then
     mkdir -p "$staging_directory/lib/firmware"
     cp -r "$source_directory"/firmware/* "$staging_directory/lib/firmware/"
 fi
+# The native Free Pascal compiler (/bin/fpc, /bin/ppcx64 or ppca64,
+# /etc/fpc.cfg, the units in /usr/lib/fpc), when it was built
+# (toolchain/fpc/fpc.mk; NATIVE_FPC=no leaves it out).
+if [[ -d "$user_build_directory/fpc-root" && "${NATIVE_FPC:-yes}" == yes ]]; then
+    cp -r "$user_build_directory"/fpc-root/. "$staging_directory/"
+    find "$staging_directory/usr/lib/fpc" -name .staged -delete
+fi
 if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
     cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
 fi
@@ -136,6 +147,11 @@ copy_program pgrep pkill
 copy_program gzip gunzip
 copy_program gzip zcat
 
+staged_mib=$(du -sm "$staging_directory" | cut -f1)
+image_size_mib=$(( (staged_mib + staged_mib / 7 + 24 + 2 + 7) / 8 * 8 ))
+if (( image_size_mib < minimum_image_size_mib )); then
+    image_size_mib=$minimum_image_size_mib
+fi
 partition_size_mib=$((image_size_mib - 2))
 rm -f "$partition_image"
 mke2fs -q -t ext4 -L FPOSROOT -d "$staging_directory" -E root_owner=0:0 \
@@ -177,4 +193,4 @@ printf 'label: gpt\nstart=%d, size=%dMiB, type=0FC63DAF-8483-4772-8E79-3D69D8477
 dd if="$partition_image" of="$output_image" bs=512 seek=$partition_start_sector \
     conv=notrunc status=none
 rm -f "$partition_image"
-echo "System disk: $output_image"
+echo "System disk: $output_image (${image_size_mib} MiB, ${staged_mib} MiB of files)"

@@ -57,8 +57,9 @@ USER_LIBRARY_OUTPUT := $(USER_BUILD_DIRECTORY)/lib
 USER_PROGRAM_OUTPUT := $(USER_BUILD_DIRECTORY)/bin
 USER_ROOT_DIRECTORY := $(USER_BUILD_DIRECTORY)/root
 
-# The compiler targets Linux for its ELF output and calling convention;
-# UNIX and LINUX are undefined so no code takes Linux specific paths.
+# The userland is compiled for FreePascalOS (-Tfreepascalos, the target
+# toolchain/fpc adds to the compiler): System V calling convention, ELF,
+# FREEPASCALOS defined and neither UNIX nor LINUX.
 # -OoNOSTACKFRAME: every procedure keeps a frame (the RBP chain), which
 # -O2 would leave out, so that the runtime can find the calling code:
 # the addresses after a runtime error, and where a block was freed in a
@@ -78,7 +79,7 @@ USER_FLOAT_CHECK_FLAGS :=
 ifeq ($(ARCH),arm64)
   USER_FLOAT_CHECK_FLAGS := -CE
 endif
-USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) $(USER_FLOAT_CHECK_FLAGS) -Tlinux -Cg -Cn -uUNIX -uLINUX -Fishared
+USER_FLAGS := $(COMMON_FLAGS) $(USER_FRAME_FLAGS) $(USER_FLOAT_CHECK_FLAGS) -Tfreepascalos -Cg -Cn -Fishared
 
 # The user runtime library is the Free Pascal RTL: the FreePascalOS parts
 # in rtl/fpc, everything generic from the compiler's source tree.
@@ -92,7 +93,7 @@ else
   FPC_RTL_CPU := x86_64
 endif
 # Upstream sources warn a lot; only errors are shown for them.
-USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tlinux -Cg -Cn -uUNIX -uLINUX \
+USER_RTL_FLAGS := -n -O2 $(USER_FRAME_FLAGS) -Si -ve -Tfreepascalos -Cg -Cn \
 	-Firtl/fpc -Fishared -Fi$(FPC_RTL_SOURCE) -Fi$(FPC_RTL_SOURCE)/inc -Fi$(FPC_RTL_SOURCE)/$(FPC_RTL_CPU) \
 	-Fi$(FPC_RTL_SOURCE)/objpas -Fi$(FPC_RTL_SOURCE)/objpas/sysutils -Fi$(FPC_RTL_SOURCE)/objpas/classes \
 	-Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/inc -Fi$(FPC_PACKAGE_SOURCE)/rtl-objpas/src/common \
@@ -177,15 +178,28 @@ TERMINUS_SIZES := 12 14 16 18 20 22 24 28 32
 SYSTEM_FONT_DIRECTORY := $(USER_BUILD_DIRECTORY)/fonts/terminus
 SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 
-# The TrueType fonts (/lib/fonts/dejavu-sans, the interface's, and
-# /lib/fonts/dejavu-sans-mono): DejaVu Sans and DejaVu Sans Mono, regular
-# and bold, kept in userland/fonts with their licence (Bitstream Vera and
-# DejaVu's changes), which has to go with them; libfont renders them at
-# any size.
+# The outline fonts (/lib/fonts/<family>): DejaVu Sans (the
+# interface's) and DejaVu Sans Mono, Liberation, Noto with CJK and colour
+# emoji, Source Sans, Cantarell, Roboto, Open Sans, Hack, Inconsolata,
+# the URW base 35 and Droid Sans Fallback, all freely licensed and kept
+# in userland/fonts with their licences (which have to go with them).
+# scripts/install-fonts.py puts in the set FONT_SET names, as
+# scripts/fonts.list says: full (the system disk, about 80 MB), core
+# (DejaVu Sans and Sans Mono, Liberation, Droid Sans Fallback for CJK
+# and Noto Sans Symbols 2: the default for arm64, whose system image is
+# the Raspberry Pi's RAM disk, served over TFTP) or base (DejaVu Sans
+# and Sans Mono regular and bold only). make update-fonts refreshes
+# userland/fonts from the build machine's font packages.
 OUTLINE_FONT_SOURCE := userland/fonts
-OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*.ttf) $(wildcard $(OUTLINE_FONT_SOURCE)/*/LICENSE)
+OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*) $(OUTLINE_FONT_SOURCE)/MANIFEST
+FONT_SCRIPTS := scripts/install-fonts.py scripts/fontlist.py scripts/fonts.list
 DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
-DEJAVU_SANS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts
+ifeq ($(ARCH),arm64)
+FONT_SET ?= core
+else
+FONT_SET ?= full
+endif
+OUTLINE_FONTS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts-$(FONT_SET)
 
 # The icon theme (/usr/share/icons/NAME.ico, 16 to 96 pixels) and the
 # pointer's pictures (/lib/pointers/NAME.cur, several sizes): drawn
@@ -204,10 +218,26 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
-	$(DEJAVU_SANS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
+	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
+
+# The compiler and the runtime library's flags: when they change (a new
+# target, a different compiler), the whole runtime library and with it
+# every library and program is built again, since units made for another
+# target or with other options cannot be mixed ("PPU is compiled for
+# another target").
+RTL_USER_FLAGS_STAMP := $(BUILD_DIRECTORY)/rtl-user.flags
+RTL_USER_FLAGS_TEXT := $(TARGET_FPC) $(USER_RTL_FLAGS)
+
+.PHONY: rtl-user-flags-check
+rtl-user-flags-check:
+	@mkdir -p $(BUILD_DIRECTORY)
+	@if [ "$$(cat $(RTL_USER_FLAGS_STAMP) 2> /dev/null)" != "$(RTL_USER_FLAGS_TEXT)" ]; then \
+		echo "$(RTL_USER_FLAGS_TEXT)" > $(RTL_USER_FLAGS_STAMP); fi
+
+$(RTL_USER_FLAGS_STAMP): rtl-user-flags-check
 
 $(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
-		shared/Abi.ErrorMessages.inc | $(CROSS_COMPILER)
+		shared/Abi.ErrorMessages.inc $(RTL_USER_FLAGS_STAMP) | $(CROSS_COMPILER)
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
 	@rm -rf $(RTL_USER_DIRECTORY)
@@ -493,12 +523,9 @@ $(SYSTEM_FONTS_STAMP):
 	cp $(TERMINUS_LICENSE) $(SYSTEM_FONT_DIRECTORY)/LICENSE
 	@touch $@
 
-$(DEJAVU_SANS_STAMP): $(OUTLINE_FONT_FILES)
-	@for family in $(notdir $(wildcard $(OUTLINE_FONT_SOURCE)/*)); do \
-		rm -rf $(USER_BUILD_DIRECTORY)/fonts/$$family; \
-		mkdir -p $(USER_BUILD_DIRECTORY)/fonts/$$family; \
-		cp $(OUTLINE_FONT_SOURCE)/$$family/* $(USER_BUILD_DIRECTORY)/fonts/$$family/; \
-	done
+$(OUTLINE_FONTS_STAMP): $(OUTLINE_FONT_FILES) $(FONT_SCRIPTS)
+	@rm -f $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts* $(USER_BUILD_DIRECTORY)/fonts/.host-fonts-*
+	python3 -B scripts/install-fonts.py scripts/fonts.list $(OUTLINE_FONT_SOURCE) $(USER_BUILD_DIRECTORY)/fonts --set $(FONT_SET)
 	@touch $@
 
 $(ICONS_STAMP): $(ICON_SOURCES)
@@ -708,10 +735,13 @@ $(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% userland/%/program.info $$(w
 	@if [ -d userland/$*/icons ]; then mkdir -p $(APP_OUTPUT)/$*/icons; cp userland/$*/icons/*.ico $(APP_OUTPUT)/$*/icons/; fi
 	@touch $@
 
+# The native Free Pascal compiler, its units and configuration.
+include toolchain/fpc/fpc.mk
+
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): userland scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
+$(SYSTEM_DISK): userland $(NATIVE_FPC_SYSTEM_DISK_FILES) scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
 		$(wildcard userland/etc/*/*/*) \
 		$(wildcard userland/pointers/*) $(AUTHORIZED_KEYS)
-	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@
+	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" NATIVE_FPC=$(NATIVE_FPC) scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@

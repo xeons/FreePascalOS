@@ -37,7 +37,7 @@ implementation
 uses
   SysUtils, TestChecks, Web.Dom, Web.Atoms, Web.Html.Serializer, Web.Layout.Document, Web.Layout.Dump,
   Web.Layout.Dispatch, Web.Layout.Boxes, Web.Layout.Resources, Web.Paint.Painter, Css.ElementAdapter, Css.Parser,
-  Css.Stylesheets, WebLayoutTest.Pages;
+  Css.Stylesheets, Image.Model, WebLayoutTest.Pages;
 
 const
   DynamicPage =
@@ -105,6 +105,7 @@ var
   Element, Child: TElement;
   Index: Integer;
   SkippedBefore, LaidOutBefore: Int64;
+  Updated, Fresh: string;
 begin
   Layout := LayoutText(DynamicPage, 600, Document);
   try
@@ -172,6 +173,36 @@ begin
     Check(Layout.NeedsUpdate, 'incremental: a sheet that arrived makes layout due');
     Layout.Update;
     Check(Layout.BoxOf(Document.GetElementById('late')).Padding[sideTop] = 7, 'incremental: the late sheet applies');
+  finally
+    FreeLayout(Layout, Document);
+    Document := nil;
+  end;
+  { A float inside a block that does not contain it (4chan's thumbnail
+    in div.file): a change after it relays out its later siblings, and the
+    skipped block must still put its float in the context they flow
+    around (the post's text was laid over the picture once an icon in it
+    loaded: only the image's box was due). }
+  Layout := LayoutText('<!doctype html><style>body { margin: 0; font: 14px sans-serif } ' +
+    '.thumb { float: left; width: 100px; height: 80px; margin: 3px 20px } ' +
+    '.post { display: inline }</style>' +
+    '<body><div><div class=post><div id=file><div></div><a class=thumb></a></div><div id=info><span><img id=icon></span></div>' +
+    '<blockquote id=message>Message text beside the picture</blockquote></div></div></body>', 600, Document);
+  try
+    Layout.Resources.SetElementImage(Document.GetElementById('icon'), TImage.Create(16, 16), 16, 16);
+    Layout.Update;
+    Updated := DumpLayoutTree(Layout.Root);
+    { The same page laid out afresh, the picture's size given. }
+    Document.GetElementById('icon').SetAttribute('width', '16');
+    Document.GetElementById('icon').SetAttribute('height', '16');
+    Fresh := FreshDump(Document, Layout.ViewportWidth);
+    if Updated <> Fresh then
+    begin
+      WriteLn('--- updated');
+      Write(Updated);
+      WriteLn('--- fresh');
+      Write(Fresh);
+    end;
+    Check(Updated = Fresh, 'incremental: an image arrived after a float from a block laid out before');
   finally
     FreeLayout(Layout, Document);
     Document := nil;

@@ -170,3 +170,21 @@ var found = [];
 for (var textNode = texts.nextNode(); textNode; textNode = texts.nextNode()) found.push(textNode.data);
 check("NodeIterator with an acceptNode object", found.join() === "a,b,i" && texts.previousNode().data === "i" &&
   texts.pointerBeforeReferenceNode === true && texts instanceof NodeIterator);
+
+// Collections with an indexed getter and a length iterate as arrays do
+// (WebIDL): 4chan's ads code runs for...of over getElementsByClassName,
+// and the rest of its start-up never ran when that threw.
+var iterRoot = document.createElement("div");
+iterRoot.innerHTML = "<p class=k>1</p><span class=k>2</span><p>3</p>";
+var iterated = [];
+for (const element of iterRoot.getElementsByClassName("k")) iterated.push(element.textContent);
+check("for...of over an HTMLCollection", iterated.join() === "1,2");
+check("spreading children", [...iterRoot.children].length === 3);
+check("HTMLCollection's iterator is Array.prototype.values",
+  HTMLCollection.prototype[Symbol.iterator] === Array.prototype.values &&
+  !HTMLCollection.prototype.propertyIsEnumerable(Symbol.iterator));
+iterRoot.firstChild.setAttribute("title", "t");
+check("Array.from over a NamedNodeMap", Array.from(iterRoot.firstChild.attributes).length === 2);
+check("a derived collection inherits its iterator",
+  typeof HTMLFormControlsCollection === "undefined" ||
+  !Object.prototype.hasOwnProperty.call(HTMLFormControlsCollection.prototype, Symbol.iterator));

@@ -16,18 +16,23 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #
-# Builds a Free Pascal cross compiler from the compiler sources with the
+# Builds the Free Pascal compiler that compiles for FreePascalOS, from the
+# compiler sources with the FreePascalOS patches (toolchain/fpc), with the
 # installed (native x86-64) fpc, into the build tree. Nothing is installed.
 #
 #   build-cross-compiler.sh <target-cpu> <output-file>
 #
-#   target-cpu   aarch64 (the compiler's name for arm64)
-#   output-file  e.g. build/toolchain/ppcrossa64
+#   target-cpu   x86_64 or aarch64 (the compiler's name for arm64)
+#   output-file  e.g. build/toolchain/ppcx64, build/toolchain/ppcrossa64
 #
-# The compiler sources are taken from $FPC_SOURCE/compiler (default
-# /usr/lib/fpc/src, the fpc-src package). Building takes about a minute.
-# The AArch64 compiler of release 3.2.2 has no internal assembler: it
-# writes GNU assembly and runs aarch64-linux-gnu-as (binutils) on it.
+# The compiler knows every target release 3.2.2 knows (the loader and
+# the kernel are still compiled for win64 and linux) and the new
+# x86_64-freepascalos and aarch64-freepascalos, which the userland is
+# compiled for. The compiler sources are taken from $FPC_SOURCE/compiler
+# (default /usr/lib/fpc/src, the fpc-src package). Building takes about
+# a minute. The AArch64 compiler of release 3.2.2 has no internal
+# assembler: it writes GNU assembly and runs aarch64-linux-gnu-as
+# (binutils) on it.
 
 set -euo pipefail
 
@@ -38,22 +43,21 @@ fi
 
 target_cpu=$1
 output_file=$2
-fpc_source=${FPC_SOURCE:-/usr/lib/fpc/src}
-compiler_source=$fpc_source/compiler
 host_fpc=${HOST_FPC:-fpc}
+script_directory=$(cd "$(dirname "$0")" && pwd)
 
 case $target_cpu in
-    aarch64) ;;
+    x86_64) cpu_family_directory=x86 ;;
+    aarch64) cpu_family_directory=aarch64 ;;
     *) echo "$0: target '$target_cpu' is not supported" >&2; exit 2 ;;
 esac
 
-if [ ! -f "$compiler_source/pp.pas" ]; then
-    echo "$0: no compiler sources in $compiler_source (install fpc-src or set FPC_SOURCE)" >&2
-    exit 1
-fi
-
 output_directory=$(dirname "$output_file")
+source_directory=$output_directory/fpc-source-$target_cpu
 unit_directory=$output_directory/units-$target_cpu
+"$script_directory/../toolchain/fpc/prepare-source.sh" "$source_directory"
+compiler_source=$source_directory/compiler
+rm -rf "$unit_directory"
 mkdir -p "$unit_directory"
 
 # The same switches the compiler's own Makefile uses for a release
@@ -61,8 +65,9 @@ mkdir -p "$unit_directory"
 # debug information writers. The host's fpc.cfg supplies its runtime
 # library.
 "$host_fpc" -O2 -Xs \
-    -Fu"$compiler_source" -Fu"$compiler_source/$target_cpu" -Fu"$compiler_source/systems" \
-    -Fi"$compiler_source" -Fi"$compiler_source/$target_cpu" \
+    -Fu"$compiler_source" -Fu"$compiler_source/$target_cpu" -Fu"$compiler_source/$cpu_family_directory" \
+    -Fu"$compiler_source/systems" \
+    -Fi"$compiler_source" -Fi"$compiler_source/$target_cpu" -Fi"$compiler_source/$cpu_family_directory" \
     -d"$target_cpu" -dGDB -dBROWSERLOG -dRELEASE \
     -FU"$unit_directory" -o"$output_file" \
     "$compiler_source/pp.pas"

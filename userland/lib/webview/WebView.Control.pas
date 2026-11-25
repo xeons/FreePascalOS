@@ -81,7 +81,8 @@ uses
   WebView.Engine,
   WebView.ContentProcess,
   WebView.PromptSheet,
-  WebView.RecoveryPanels;
+  WebView.RecoveryPanels,
+  WebView.RemoteFrames;
 
 const
   { A child the view no longer shows (a sheet, a bar, the crashed page)
@@ -152,21 +153,14 @@ type
     { In a content process. }
     FProcess: TContentProcess;
     FLink: TContentClient;
-    FShared: TSharedSurface;
-    FSharedId: LongWord;
-    FFrame: TSurface;
-    FHasFrame: Boolean;
-    FFrameInfo: TIpcFrameInfo;
+    { The renderer's surface, the last frame and the async scrolling. }
+    FFrames: TRemoteFrames;
     FSentGeometry: TIpcViewGeometry;
     FSentVisible: Boolean;
     FSentFocused: Boolean;
     FInputSequence: LongWord;
     FInputSentAt: QWord;
     FFrameAt: QWord;
-    { Async scrolling: how far the last frame is shown moved up (device
-      pixels), and the input that will have scrolled it by then. }
-    FScrollShift: Double;
-    FShiftUntilInput: LongWord;
     FStateTimer: TTimer;
     FNextRequestId: LongWord;
     FFindRequestId: LongWord;
@@ -546,6 +540,7 @@ begin
   FRemoteIndex := -1;
   FImagesEnabled := True;
   FAuthorStylesEnabled := True;
+  FFrames := TRemoteFrames.Create;
   FStateTimer := TTimer.Create(Self);
   FStateTimer.Interval := StateTimerMilliseconds;
   FStateTimer.OnTimer := @StateTimerFired;
@@ -557,8 +552,7 @@ begin
   FStateTimer.Free;
   LeaveProcess;
   FLink.Free;
-  FShared.Free;
-  FreeSurface(FFrame);
+  FFrames.Free;
   FFavicon.Free;
   FPopupMenu.Free;
   FDefaultMenu.Free;

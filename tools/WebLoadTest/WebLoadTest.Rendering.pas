@@ -281,7 +281,7 @@ end;
 
 procedure RunRenderingTests;
 begin
-  WebFontDirectory := 'userland/fonts';
+  WebFontDirectory := TestFontDirectory;
   ResetWebFontLibrary;
   Environment := TTestEnvironment.Create;
   Conditions := TRenderConditions.Create;

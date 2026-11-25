@@ -25,8 +25,11 @@
   the console's and the terminal's font, monospaced), "dejavu-sans"
   (DejaVu Sans, TrueType, regular and bold; proportional, the
   interface's) and "dejavu-sans-mono" (DejaVu Sans Mono, TrueType,
-  regular and bold). A family may also hold coverage fonts (".cvf",
-  Font.Coverage).
+  regular and bold), and the other outline fonts kept in userland/fonts
+  (scripts/fonts.list: Liberation, Noto, ...; all or a core set), each
+  family a directory named after it ("liberation-sans"). A family may also
+  hold coverage fonts (".cvf", Font.Coverage), OpenType fonts (".otf")
+  and collections (".ttc": the first face is used).
 
   LoadFontFamily reads only the start of every font file in a family's
   directory, enough for its size and weight (a TrueType font's table
@@ -34,6 +37,12 @@
   that reads a face's glyphs the first time it is picked. A TrueType
   font is one face of any size; its file is read whole, once, and kept
   for as long as the program runs.
+
+  Character fallback: the unit sets Font.Text's FallbackFaceFinder, so
+  a character the face lacks is drawn from the families the system's
+  font configuration (/etc/fonts.conf, Font.Configuration) lists for
+  it, each family read the first time it is needed, a face of the same
+  size and weight taken from it. The finder remembers its last answers.
 }
 unit Font.Files;
 
@@ -68,20 +77,20 @@ uses
   Font.Coverage,
   Font.FontData,
   Font.TrueType,
+  Font.Summaries,
+  Font.Configuration,
   Font.OutlineFaces;
 
 const
-  MaximumFontFileSize = 16 * 1024 * 1024;
+  { A CJK collection is about 20 MB. }
+  MaximumFontFileSize = 48 * 1024 * 1024;
   { Enough for the header of a bitmap or coverage font. }
   SummaryBytes = 64;
   PsfExtension = '.psf';
   CoverageExtension = '.cvf';
   TrueTypeExtension = '.ttf';
   OpenTypeExtension = '.otf';
-  { A TrueType font's table directory, at most. }
-  MaximumDirectoryTables = 256;
-  MacStyleBold = $0001;
-  BoldWeightClass = 600;
+  CollectionExtension = '.ttc';
 
 type
   TFontKind = (NotAFont, PsfFont, CoverageFont, TrueTypeFont);
@@ -95,7 +104,7 @@ begin
     Result := PsfFont
   else if Extension = CoverageExtension then
     Result := CoverageFont
-  else if (Extension = TrueTypeExtension) or (Extension = OpenTypeExtension) then
+  else if (Extension = TrueTypeExtension) or (Extension = OpenTypeExtension) or (Extension = CollectionExtension) then
     Result := TrueTypeFont
   else
     Result := NotAFont;
@@ -188,66 +197,17 @@ begin
   Face.Source := Source;
 end;
 
-{ Count bytes of the open file at Offset; False if they are not all there. }
-function ReadAt(Handle: Int64; Offset: QWord; Count: LongWord; out Bytes: TBytes): Boolean;
-var
-  Got: Int64;
-begin
-  Bytes := nil;
-  SetLength(Bytes, Count);
-  Result := (Count = 0) or ((SeekFile(Handle, Int64(Offset), SeekFromStart) = Int64(Offset)) and
-    (ReadFile(Handle, @Bytes[0], Count) = Count));
-end;
-
 { A TrueType font's weight, from its table directory, head and OS/2,
-  read where they are without reading the rest of the file. }
-function ReadTrueTypeWeight(const Path: string; out Bold: Boolean): Boolean;
+  read where they are without reading the rest of the file. An italic
+  face is left out of a family's set (the interface draws upright
+  text). }
+function ReadTrueTypeWeight(const Path: string; out Bold, Italic: Boolean): Boolean;
 var
-  Handle: Int64;
-  Header: TBytes;
-  Directory: TBytes;
-  Part: TBytes;
-  Table: TFontTable;
-  TableCount: LongWord;
-  Index: LongWord;
-  Tag: string;
-  Offset: LongWord;
-  Length_: LongWord;
+  Summary: TFontSummary;
 begin
-  Result := False;
-  Bold := False;
-  Handle := OpenFile(PChar(Path), OpenRead);
-  if Handle < 0 then
-    Exit;
-  try
-    if not ReadAt(Handle, 0, 12, Header) or not LooksLikeTrueType(@Header[0], 12) then
-      Exit;
-    Table := FontTableAt(Header, 0, 12);
-    TableCount := ReadUnsigned16(Table, 4);
-    if (TableCount = 0) or (TableCount > MaximumDirectoryTables) or
-       not ReadAt(Handle, 12, 16 * TableCount, Directory) then
-      Exit;
-    Table := FontTableAt(Directory, 0, Length(Directory));
-    for Index := 0 to TableCount - 1 do
-    begin
-      Tag := ReadTag(Table, 16 * QWord(Index));
-      Offset := ReadUnsigned32(Table, 16 * QWord(Index) + 8);
-      Length_ := ReadUnsigned32(Table, 16 * QWord(Index) + 12);
-      if (Tag = 'head') and (Length_ >= 46) and ReadAt(Handle, Offset, 46, Part) then
-      begin
-        if (ReadUnsigned16(FontTableAt(Part, 0, 46), 44) and MacStyleBold) <> 0 then
-          Bold := True;
-        Result := True;
-      end
-      else if (Tag = 'OS/2') and (Length_ >= 6) and ReadAt(Handle, Offset, 6, Part) then
-      begin
-        if ReadUnsigned16(FontTableAt(Part, 0, 6), 4) >= BoldWeightClass then
-          Bold := True;
-      end;
-    end;
-  finally
-    CloseFile(Handle);
-  end;
+  Result := ReadFontSummary(Path, 0, Summary);
+  Bold := Summary.Bold;
+  Italic := Summary.Italic;
 end;
 
 { A face known by its file: its size and weight from the file's start. }
@@ -258,6 +218,7 @@ var
   Got: Int64;
   Size: LongInt;
   Bold: Boolean;
+  Italic: Boolean;
 begin
   Result := False;
   ClearFace(Face);
@@ -265,7 +226,7 @@ begin
   Bold := False;
   if KindOfFont(Name) = TrueTypeFont then
   begin
-    Result := ReadTrueTypeWeight(Path, Bold);
+    Result := ReadTrueTypeWeight(Path, Bold, Italic) and not Italic;
     if Result then
     begin
       Face.Format := GlyphOutline;
@@ -325,4 +286,97 @@ begin
   Result := FontSet.Count > 0;
 end;
 
+{ --- Character fallback ------------------------------------------------ }
+
+type
+  TFallbackFamily = record
+    Name: string;
+    Listed: Boolean;
+    Present: Boolean;
+    FontSet: TFontSet;
+  end;
+  PFallbackFamily = ^TFallbackFamily;
+
+  TRememberedFallback = record
+    CodePoint: LongWord;
+    Size: LongInt;
+    Bold: Boolean;
+    Face: PFontFace;
+  end;
+
+const
+  RememberedCount = 256;
+
+var
+  FallbackFamilies: array of PFallbackFamily;
+  Remembered: array[0..RememberedCount - 1] of TRememberedFallback;
+  RememberedValid: array[0..RememberedCount - 1] of Boolean;
+
+{ The family's set, listed the first time (nil if it is not installed). }
+function FallbackFamily(const Name: string): PFallbackFamily;
+var
+  Index: LongInt;
+  Directory: string;
+begin
+  Directory := FamilyDirectoryName(Name);
+  for Index := 0 to High(FallbackFamilies) do
+    if FallbackFamilies[Index]^.Name = Directory then
+    begin
+      Result := FallbackFamilies[Index];
+      if Result^.Present then
+        Exit
+      else
+        Exit(nil);
+    end;
+  New(Result);
+  Result^.Name := Directory;
+  Result^.Present := LoadFontFamily(Directory, Result^.FontSet);
+  Result^.Listed := True;
+  SetLength(FallbackFamilies, Length(FallbackFamilies) + 1);
+  FallbackFamilies[High(FallbackFamilies)] := Result;
+  if not Result^.Present then
+    Result := nil;
+end;
+
+function FindFallbackFace(const Face: TFontFace; CodePoint: LongWord): PFontFace;
+var
+  Slot: LongInt;
+  Families: TFamilyList;
+  Index: LongInt;
+  Family: PFallbackFamily;
+  Candidate: PFontFace;
+  Size: LongInt;
+begin
+  Result := nil;
+  Size := Face.Size;
+  if Size < 1 then
+    Size := Face.Height;
+  Slot := LongInt((CodePoint * 31 + LongWord(Size) * 7 + LongWord(Ord(Face.Bold))) mod RememberedCount);
+  if RememberedValid[Slot] and (Remembered[Slot].CodePoint = CodePoint) and (Remembered[Slot].Size = Size) and
+     (Remembered[Slot].Bold = Face.Bold) then
+    Exit(Remembered[Slot].Face);
+  Families := SystemFontConfiguration.FallbackFamilies(CodePoint);
+  for Index := 0 to High(Families) do
+  begin
+    Family := FallbackFamily(Families[Index]);
+    if Family = nil then
+      Continue;
+    { A pixel size is points at 72 dots per inch. }
+    Candidate := SelectFace(Family^.FontSet, LongWord(Size) * 10, PointsPerInch, Face.Bold);
+    if (Candidate = nil) or not HasGlyphFor(Candidate^, CodePoint) then
+      Continue;
+    if (Candidate^.Format = GlyphOutline) and ((Candidate^.Outlines = nil) or not Candidate^.Outlines.CanDraw) then
+      Continue;
+    Result := Candidate;
+    Break;
+  end;
+  Remembered[Slot].CodePoint := CodePoint;
+  Remembered[Slot].Size := Size;
+  Remembered[Slot].Bold := Face.Bold;
+  Remembered[Slot].Face := Result;
+  RememberedValid[Slot] := True;
+end;
+
+initialization
+  FallbackFaceFinder := @FindFallbackFace;
 end.

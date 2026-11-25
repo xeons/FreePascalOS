@@ -692,8 +692,32 @@ normalized (0-65535), not pixels.
         `Image.Scaling`'s area averaging; checked against Pillow
 - [x] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
       so any DPI): DejaVu Sans (the interface's) and DejaVu Sans Mono at every
-      size, light vertical autohinting, gamma-correct blending; CFF outlines and
-      the fonts' own bytecode hinting not done
+      size, light vertical autohinting, gamma-correct blending; the fonts' own
+      bytecode hinting not done
+- [x] libfont: CFF and CFF2 outlines (OpenType .otf, CID-keyed Noto CJK,
+      variable fonts' default instance), TrueType collections (.ttc, a face by
+      index), CBDT/CBLC colour emoji scaled from the nearest strike (PNG through
+      libimage's decoder hook), cmap format 14 and symbol maps
+- [x] Freely licensed fonts in /lib/fonts with their licences and a MANIFEST
+      (scripts/fonts.list; full set on amd64, core set for the Pi's RAM disk):
+      Liberation (Arial/Times New Roman/Courier New metrics), DejaVu, Noto
+      with 34 scripts, CJK and colour emoji, Source Sans 3, Cantarell, Roboto,
+      Open Sans, Hack, Inconsolata, the URW base 35, Droid Sans Fallback
+- [x] The fonts kept in the repository (userland/fonts/<family>/ with LICENSE
+      and SOURCE, MANIFEST); the build installs them from there
+      (scripts/install-fonts.py, FONT_SET full/core/base), never from the
+      host; make update-fonts (scripts/update-fonts.py) refreshes them from
+      the host packages with the licence checks; font-test and
+      web-layout-test take their fonts from the repository
+- [x] Font configuration (/etc/fonts.conf, Font.Configuration): generic
+      families and common names to installed faces, per-script fallback
+      chains; per-character fallback in libweb and in the toolkit's text
+      (Font.Text's FallbackFaceFinder); the interface stays DejaVu Sans
+- [ ] COLR/CPAL colour glyphs (v0 and v1), sbix and SVG-in-OpenType; full
+      variable-font instances (fvar/gvar/HVAR, CFF2 blends at other axes)
+- [ ] Choosing a collection's face by language (Noto CJK's JP face is used
+      for Chinese and Korean too) and by the lang attribute
+- [ ] Emoji ZWJ sequences, flags and keycaps as single glyphs (needs GSUB)
 - [x] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits: an isometric icon set and
       the pointer's pictures drawn by code at build time (16 to 96 px),
@@ -1267,6 +1291,36 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
       machines running at once: probably a fixed wait too short under load
 
+## Native Free Pascal
+
+- [x] FPC targets of our own, x86_64-freepascalos and aarch64-freepascalos,
+      as patches against 3.2.2 (toolchain/fpc); the userland compiled for
+      them (code identical to the borrowed linux target)
+- [x] The internal ELF linker writes position independent executables (no
+      binutils needed on x86-64)
+- [x] ppcx64 / ppca64 and the fpc driver as FreePascalOS programs, with
+      fpc.cfg and the units on the system disk (units in libraries marked by
+      ppumove, linked shared with -XD)
+- [x] In the guest: hello, several units, a library (linked and loaded at
+      run time), userland tools against libcoreutils/libcryptography, and the
+      compiler compiling itself
+- [x] fcl-process (TProcess, pipe streams) for FreePascalOS
+- [x] Tests: a coretest line (compile and run in the guest), native-fpc-test
+      on the host
+- [ ] AArch64 in the guest: needs GNU as and ld for *-freepascalos (the
+      binutils port); ppca64 already runs and writes assembly
+- [ ] An `as`/`ld`-free AArch64 (an internal assembler and ELF linker for
+      AArch64 are only in FPC trunk)
+- [ ] Express it as a port once the ports framework lands (ports/, pkg)
+- [ ] More packages for Lazarus: fcl-xml, fcl-json, fcl-image, fcl-res,
+      fcl-registry, paszlib, simpleipc; fpmake/fpcmake knowing the OS
+- [ ] The LCL widget set over libwindowing/libcontrols, then the IDE
+      (see "Towards Lazarus" in docs/Architecture.md)
+- [ ] A debugger for the IDE (GDB port or FpDebug on kernel calls for
+      debugging other processes)
+- [ ] Compiler sources on the system or a package, so `make cycle` can run in
+      the guest without an extra disk
+
 ## Ports and packages
 
 - [x] Ports tree (`ports/CATEGORY/NAME/port.toml`, patches, files),
@@ -1297,9 +1351,8 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       release, with a patch for standard input and output)
 - [ ] Build and test the C ports once `make c-toolchain` exists: zlib, lua,
       sqlite3, then bash (committed, status "untested")
-- [ ] The program loader finds shared libraries in /usr/local/lib (DT_RUNPATH
-      or a search path), so C ports can link dynamically; until then they
-      link statically
+- [x] The program loader finds shared libraries in /usr/local/lib after /lib
+      (needed libraries and LoadLibrary by a bare name; coretest checks it)
 - [ ] Ported graphical programs: a package installing a program folder the
       desktop finds (/usr/local/app or a second program folder root)
 - [ ] pkg: autoremove (packages installed as dependencies nothing needs
@@ -1374,10 +1427,12 @@ Part 2 (style, layout, painting):
 - [ ] Fixed table layout, collapsing borders, `visibility: collapse`
 - [x] Synthetic bold and oblique for faces the system lacks; paint-only
       restyle without relayout
-- [x] @font-face loading: TrueType and WOFF 1 faces join the font library
-      (Web.Loading.LayoutSink, Web.Text.Woff); fonts re-bound in place
-- [ ] Bidi and writing modes, shaping beyond kerning, WOFF2 and CFF web
-      fonts (web fonts are process-wide, not per document),
+- [x] @font-face loading: TrueType, OpenType (CFF too), collections, WOFF 1
+      and WOFF2 (Web.Text.Woff2: Brotli, the glyf/loca and hmtx transforms)
+      faces join the font library (Web.Loading.LayoutSink, Web.Text.Woff);
+      fonts re-bound in place
+- [ ] Bidi and writing modes, shaping beyond kerning (Arabic draws
+      unjoined), web fonts per document rather than process-wide,
       ::first-line/::first-letter
 - [x] position: sticky (offsets at painting and hit testing time under
       the viewport, when the list is built in inner scroll containers)
@@ -1625,10 +1680,10 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       media queries, details/summary
 - [ ] Custom elements (customElements is missing: reddit, MDN's widgets,
       YouTube) and shadow DOM (attachShadow: lit components, archive.org)
-- [ ] WOFF2 web fonts (only the .woff and TrueType sources load today)
-- [ ] A metric-compatible sans-serif (Liberation Sans or Arimo): DejaVu
-      Sans is about 10% wider than Arial, so lines break differently from
-      the reference on most pages (a font decision for the coordinator)
+- [x] WOFF2 web fonts
+- [x] A metric-compatible sans-serif: sans-serif, Arial and Helvetica are
+      Liberation Sans (fonts.conf), Times New Roman Liberation Serif,
+      Courier New and monospace Liberation Mono
 - [ ] details: the summary's activation behavior in the DOM (a script's
       summary.click() does nothing; libwebview's ActOnClick toggles on a
       user's click), and the default summary of a details without one
@@ -1673,3 +1728,115 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A separate network process; IME text and drag and drop through the
       content process; storage events across processes
 - [x] getComputedStyle and layout metrics from the web view's layout
+- [x] 4chan's boards: for...of over HTMLCollection (indexed collections
+      iterate as arrays), thumbnails no longer covered by posts once an
+      icon loads (escaping floats never skipped; block-in-inline float
+      edges), quote previews, catalog; initMouseEvent for DuckDuckGo
+- [x] The renderer's frames on the browser's side apart from the control
+      (WebView.RemoteFrames, bounded sizes) with a fake-renderer test;
+      a wheel storm in the pointer fuzz
+- [ ] Fast wheel on Wikipedia reported "Access violation" in QEMU: not
+      reproduced (KVM and TCG wheel storms with resizes, scroll-bar drags,
+      PageDown/End, hovering; host loops); webcontent prints
+      "webcontent: input failed: ..." with a back trace to look for
+- [ ] Named access on the Window object (an element's id as a global)
+- [ ] Margins of blocks inside an inline box collapse with each other
+
+## Planned: driver model (loading only the drivers the machine needs)
+
+Today every driver is compiled into the kernel and `Io.Startup` calls each
+one's initializer in turn (`InitializeAhciControllers`,
+`InitializeE1000Adapters`, ...); each scans for its own hardware. Options,
+in the order they would be built:
+
+- [ ] **A. Match tables and a device manager (first step, small).** Every
+      driver declares what it drives: PCI vendor/device or class/subclass,
+      USB class/vendor/product, ACPI `_HID`/`_CID`, device tree
+      `compatible` strings, platform names. The buses enumerate devices
+      once and a device manager (an NT "Plug and Play manager"-like role)
+      binds each device to the best-matching driver, calling the driver's
+      `AddDevice`/start routine only for devices that exist. Removal and
+      hot plug (USB, PCIe hot plug, Thunderbolt later) go through the same
+      path. Drivers stay compiled in, but nothing initializes for absent
+      hardware, and boot order follows device dependencies instead of a
+      fixed list.
+- [ ] **B. Loadable driver modules (the main step).** Drivers built as
+      separate kernel modules (relocatable ELF or shared objects linked
+      against an exported kernel interface with versioned symbols),
+      kept in `/lib/drivers/` with a small `.info` manifest each (name,
+      version, match IDs, load group: boot / system / on demand,
+      dependencies). The build generates a match index; the device
+      manager loads a module the first time a matching device appears and
+      can unload it when its last device goes. Boot-critical drivers
+      (storage and the file system holding /lib/drivers, the display)
+      come from the boot image (the ESP or the RAM disk) so the root
+      volume can be reached; everything else loads from disk.
+      Needs: a stable kernel driver interface (versioned), a module
+      loader with relocations and symbol resolution, signature checks
+      (optional, Ed25519 as for packages), `driverctl list|load|unload|
+      info`, and Task Manager / sysinfo showing devices and their drivers.
+- [ ] **C. User-mode drivers (later, for isolation).** Selected classes
+      (USB HID, audio, printers, scanners, some network cards) run as
+      processes: the kernel maps the device's MMIO/ports into the
+      process, forwards its interrupts as events, and restricts DMA
+      (IOMMU when available). A crashing driver is restarted without
+      taking the system down. The process restrictions added for the
+      browser sandbox are a starting point.
+- [ ] Recommendation: A now, then B with A's match tables as the
+      manifests' content, then C for classes where a crash matters more
+      than speed.
+
+## Planned: 3D graphics (OpenGL and Vulkan)
+
+- [ ] **Kernel GPU interface** (a DRM/KMS-like role, generic names):
+      display modes and outputs (scanout, page flips, vblank events,
+      hot-plugged monitors via EDID), GPU memory objects (allocate, map,
+      share between processes by handle), command submission with fences
+      and sync objects, per-process GPU contexts, and a device file per
+      GPU. Drivers: virtio-gpu 3D first (QEMU: virgl for OpenGL, venus
+      for Vulkan), then real hardware (Intel, AMD) much later.
+- [ ] **libgl / libvulkan via Mesa** (through the ports system, once the C
+      toolchain and mlibc work): a FreePascalOS window-system layer for
+      EGL and the Vulkan WSI (surfaces backed by the display server's
+      shared-memory windows today, GPU buffers when the kernel interface
+      exists); software rendering first (softpipe without LLVM; llvmpipe
+      and lavapipe once LLVM is ported), then virgl/venus, then hardware
+      drivers. Pascal bindings (OpenGL and Vulkan headers for FPC) so
+      Pascal programs can use them.
+- [ ] Display server: GPU-composited windows (optional; keep the CPU path),
+      a way for a window's content to be a GPU buffer, and vsync'd
+      presentation.
+- [ ] WebGL in the browser on top of libgl (later).
+- [ ] Demos and tests: glxgears-like and vkcube-like programs, conformance
+      subsets (piglit / VK-GL-CTS pieces) run in QEMU with virtio-gpu.
+
+## Planned: installer image
+
+- [ ] A bootable installer image (UEFI, hybrid ISO + USB image; an SD
+      image for the Raspberry Pi) running a live session with the
+      installer program, and a text-mode fallback.
+- [ ] Steps: language, region and time zone, keyboard layout (with a test
+      field), network (optional; for package repositories and time),
+      disk setup (guided "erase disk" and manual partitioning: GPT
+      tables, create, delete, resize where the file system allows,
+      format ext4 / FAT32 / exFAT, the EFI system partition, swap later,
+      mount points written to /etc/fstab), user account (name, login,
+      password, administrator rights, automatic login), computer name,
+      optional packages from the ports repository, a summary, then the
+      installation with progress and a log.
+- [ ] Installing: copy the system, write fstab and settings (keyboard,
+      locale, time zone, hostname), create the user and home folder, and
+      install the boot loader: the ESP files plus a UEFI boot entry
+      through the runtime variable services (needs SetVariable support
+      in the kernel), or the Pi's boot partition and config.txt.
+- [ ] Libraries/tools it needs: a partitioning library (GPT/MBR reading
+      and writing, alignment, resize checks), mkfs tools for ext4, FAT
+      and exFAT inside the OS (check which exist), file system resize
+      (ext4 grow/shrink, FAT), UEFI variable access, and a keyboard
+      layout system (layouts as data files, a setting, switching in the
+      display server and the console).
+- [ ] First-boot setup for preinstalled images (the same steps without
+      disk setup), and an "upgrade an existing installation" path.
+- [ ] Tests: a scripted install in QEMU onto an empty virtual disk
+      (guided and manual), then booting the installed system and checking
+      the user, settings and boot entry.

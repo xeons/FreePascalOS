@@ -363,7 +363,7 @@ var
   Run: TFeatureRun;
   Sink: TLayoutResourceSink;
 begin
-  WebFontDirectory := 'userland/fonts';
+  WebFontDirectory := TestFontDirectory;
   ResetWebFontLibrary;
   Run := TFeatureRun.Create;
   Run.Environment := TTestEnvironment.Create;

@@ -311,8 +311,15 @@ taken by `scripts/take-screenshots.py` from the plans in
 ## Requirements
 
 - Free Pascal 3.2.2 (`fpc`, x86-64 compiler) and its sources (`fpc-src`,
-  expected in `/usr/lib/fpc/src`; set `FPC_SOURCE` otherwise): user
-  programs get the Free Pascal runtime library built from them
+  expected in `/usr/lib/fpc/src`; set `FPC_SOURCE` otherwise). The
+  system is compiled with its own Free Pascal target
+  (`x86_64-freepascalos`, `aarch64-freepascalos`): the first `make`
+  builds that compiler by itself from the installed sources and the
+  patches in `toolchain/fpc/` (`build/toolchain/ppcx64`, a few seconds;
+  nothing is installed outside `build/`), and uses it for the loader,
+  kernel and userland. The same compiler is put on the system disk
+  (`/bin/fpc`), so programs can be compiled inside the system too.
+- GNU `patch`, to apply those patches
 - GNU binutils (`ld`, `objcopy`, `objdump`)
 - QEMU (`qemu-system-x86_64`) and OVMF UEFI firmware, for running it
 - `sfdisk` and mtools, for `make image`
@@ -320,15 +327,15 @@ taken by `scripts/take-screenshots.py` from the plans in
   `make run` and `make test`
 - OpenSSL (`openssl`) and Python 3's ssl module, for the HTTPS tests of
   `make test` (the test servers on the host)
-- The console's font: Terminus (`terminus-font`); DejaVu Sans and DejaVu
-  Sans Mono come with the source (`userland/fonts`)
+- The console's font: Terminus (`terminus-font`); the outline fonts
+  (DejaVu, Liberation, Noto, ...) come with the source (`userland/fonts`)
 - Python's Pillow (`python-pillow`) and FreeType (`freetype2`, which
   Pillow uses; or `python-freetype-py`), for the host tests' fixtures
 - Python's cairo bindings (`python-cairo`), which draw the icons and the
   pointer's pictures when the system disk is built
 
 On Arch based systems:
-`pacman -S fpc fpc-src qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
+`pacman -S fpc fpc-src patch qemu-system-x86 edk2-ovmf mtools dosfstools exfatprogs e2fsprogs python openssl terminus-font python-pillow freetype2 python-cairo`.
 
 For the AArch64 (Raspberry Pi 4) build, `ARCH=arm64`, also:
 
@@ -563,10 +570,12 @@ Terminus (ter-116n), distributed under the SIL Open Font License 1.1; the
 license is in `kernel/debug/Debug.ConsoleFont.LICENSE`.
 
 The system volume carries Terminus (`/lib/fonts/terminus`, SIL Open Font
-License 1.1) and DejaVu Sans and DejaVu Sans Mono 2.37
-(`/lib/fonts/dejavu-sans`, `/lib/fonts/dejavu-sans-mono`, from
-`userland/fonts`; the Bitstream Vera licence with DejaVu's changes, which
-are in the public domain), each with its licence in the same directory.
+License 1.1) and the outline fonts kept in `userland/fonts` (DejaVu,
+Liberation, Noto, Source Sans 3, Cantarell, Roboto, Open Sans, Hack,
+Inconsolata, the URW base 35 and Droid Sans Fallback, under the SIL OFL
+1.1, the Bitstream Vera licence, MIT, AGPL 3.0 with URW's font exception
+and Apache 2.0; `userland/fonts/MANIFEST` lists them), each family with
+its licence and source in the same directory.
 
 The `firmware/` folder holds firmware that devices load into themselves
 (it runs on the device, not in FreePascalOS), copied unmodified from the

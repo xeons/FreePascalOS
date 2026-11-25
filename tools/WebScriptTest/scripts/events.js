@@ -145,3 +145,24 @@ var composed = null;
 leaf.addEventListener("path", function (e) { composed = e.composedPath(); });
 leaf.dispatchEvent(new Event("path"));
 check("composedPath", composed.length === 7 && composed[0] === leaf && composed[5] === document && composed[6] === window);
+
+// The legacy initializers (DuckDuckGo builds its clicks with
+// document.createEvent("MouseEvents") and initMouseEvent).
+var legacy = document.createEvent("MouseEvents");
+legacy.initMouseEvent("click", true, true, window, 2, 10, 20, 30, 40, true, false, true, false, 1, document.body);
+check("initMouseEvent sets the fields", legacy.type === "click" && legacy.bubbles && legacy.cancelable &&
+  legacy.view === window && legacy.detail === 2 && legacy.screenX === 10 && legacy.clientY === 40 &&
+  legacy.ctrlKey && !legacy.altKey && legacy.shiftKey && legacy.button === 1 && legacy.relatedTarget === document.body);
+var legacyTarget = document.createElement("a");
+var legacyClicks = 0;
+legacyTarget.addEventListener("click", function (event) {
+  legacyClicks++;
+  event.initMouseEvent("other", false, false, null, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+});
+legacyTarget.dispatchEvent(legacy);
+check("a legacy event is dispatched, and initMouseEvent does nothing while it is",
+  legacyClicks === 1 && legacy.type === "click" && legacy.button === 1);
+var legacyUi = document.createEvent("UIEvents");
+legacyUi.initUIEvent("resize", false, true, null, 5);
+check("initUIEvent", legacyUi.type === "resize" && !legacyUi.bubbles && legacyUi.cancelable && legacyUi.view === null &&
+  legacyUi.detail === 5);

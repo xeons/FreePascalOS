@@ -229,7 +229,8 @@ end;
 
 function CanSkip(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
 begin
-  Result := ([bfNeedsLayout, bfChildNeedsLayout, bfSawOutsideFloats, bfHasEscapingAbsolute] * Box.Flags = []) and
+  Result := ([bfNeedsLayout, bfChildNeedsLayout, bfSawOutsideFloats, bfHasEscapingAbsolute,
+    bfHasEscapingFloats] * Box.Flags = []) and
     SameLayoutInput(Box, Input) and (Box.Kind <> bkViewport);
 end;
 
@@ -237,7 +238,7 @@ procedure LayoutBox(Box: TLayoutBox; const Input: TLayoutInput);
 var
   OwnList: TPositionedList;
   ContentInput: TLayoutInput;
-  PositionedBefore, FixedBefore: Integer;
+  PositionedBefore, FixedBefore, FloatsBefore: Integer;
   IsContainingBlock: Boolean;
 begin
   if CanSkip(Box, Input) then
@@ -246,7 +247,10 @@ begin
     Exit;
   end;
   Inc(BoxesLaidOut);
-  Box.Flags := Box.Flags - [bfSawOutsideFloats, bfHasEscapingAbsolute];
+  Box.Flags := Box.Flags - [bfSawOutsideFloats, bfHasEscapingAbsolute, bfHasEscapingFloats];
+  FloatsBefore := 0;
+  if Input.Floats <> nil then
+    FloatsBefore := Input.Floats.Count;
   ResolveBoxEdges(Box, Input.AvailableWidth);
   IsContainingBlock := Box.IsPositioned or (bfRootElement in Box.Flags) or (Box.Kind = bkViewport) or
     (Box.Style.Value(cpTransform)^.Kind <> cvKeyword);
@@ -292,6 +296,8 @@ begin
   if ((Input.Positioned <> nil) and (Input.Positioned.Count > PositionedBefore)) or
      ((Input.FixedBoxes <> nil) and (Input.FixedBoxes.Count > FixedBefore)) then
     Include(Box.Flags, bfHasEscapingAbsolute);
+  if (Input.Floats <> nil) and (Input.Floats.Count > FloatsBefore) then
+    Include(Box.Flags, bfHasEscapingFloats);
   Box.Flags := Box.Flags - [bfNeedsLayout, bfChildNeedsLayout];
   RememberLayoutInput(Box, Input);
 end;

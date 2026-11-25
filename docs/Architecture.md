@@ -78,9 +78,12 @@ release 3.2.2, so two ordinary targets are borrowed:
 
 Both are built against `rtl/freestanding/system.pas`, a minimal System unit
 with only what the compiler insists on. Nothing in the kernel uses the stock
-runtime library. User programs are compiled for `linux` too (with `UNIX` and
-`LINUX` undefined) and get the full Free Pascal runtime library, ported to
-this kernel (see "The runtime library").
+runtime library. User programs are compiled for FreePascalOS itself
+(`-Tfreepascalos`, a target the project adds to the compiler: see "Native
+Free Pascal") and get the full Free Pascal runtime library, ported to this
+kernel (see "The runtime library"). The compiler that does all this is
+built from the Free Pascal 3.2.2 sources with the project's patches
+(`build/toolchain/ppcx64`, `ppcrossa64` for AArch64; `make toolchain`).
 Unit initialization sections are never used; every subsystem has an explicit
 `Initialize...` routine called in a defined order from `Kernel.Startup`.
 
@@ -112,6 +115,206 @@ AArch64 division does not trap, so the compiler checks divisors itself
 and calls `fpc_divbyzero`, which the freestanding System unit provides
 (the kernel panics); it also calls `Move` for large copies, which the
 System unit provides too.
+
+## Native Free Pascal
+
+The system compiles Pascal programs for itself: `/bin/fpc` (the driver)
+and `/bin/ppcx64` (`/bin/ppca64` on AArch64) are Free Pascal 3.2.2 built
+as FreePascalOS programs, with the runtime library and the system's own
+libraries as their units. `fpc hello.pas` in a shell makes a program that
+runs; a program of several units, a `library`, and the system's own tools
+(`userland/bin/wc.pas`, `sha256sum.pas` against libcoreutils and
+libcryptography) build the same way, and the compiler compiles itself
+(about 5.5 s under KVM; the result compiles itself again to the same
+size).
+
+### A target of its own
+
+Release 3.2.2 has no FreePascalOS, so the userland used to borrow the
+`linux` target with `UNIX` and `LINUX` undefined. That works for cross
+compiling, but not for a compiler that runs here: the compiler's idea of
+its own system (`source_info`, its default target, where it looks for
+`fpc.cfg` and the units), the target's name in unit folders
+(`x86_64-linux`), and every build tool keyed on the target's name -
+fpmake's and fpcmake's OS lists, Lazarus's `$(TargetOS)`, its package
+conditions and widget set defaults - would all say Linux, and Linux code
+paths (`BaseUnix`, `/proc`, glibc) would be taken. So the compiler gets
+real targets, `x86_64-freepascalos` and `aarch64-freepascalos`
+(`system_x86_64_freepascalos` = 104, `system_aarch64_freepascalos` =
+105 in the ppu's target field), as a patch set against the 3.2.2 sources
+in `toolchain/fpc`:
+
+- `compiler/systems/i_fpos.pas` (the target records) and `t_fpos.pas`
+  (imports, exports and both linkers), new files laid over the sources;
+- `patches/0001-freepascalos-target.patch`: the targets in `systems.inc`
+  and the system sets of `systems.pas` (each wherever Linux on the same
+  processor is: weak linking, exports from programs, the x87 extended
+  size, AArch64's caller-copied value parameters, the "no executable
+  stack" note), the linkers `ld_freepascalos` and
+  `ld_int_freepascalos`, and the assemblers that may write for it;
+- `0002-elf-position-independent-executables.patch`: the internal ELF
+  linker writes position independent executables (below);
+- `0003-freepascalos-host.patch`: the compiler and the driver running
+  here (`fpc.cfg` in `../etc` beside the executable, `~/.fpc.cfg`, the
+  units in `/usr/lib/fpc/<version>`, programs found through `PATH`, an
+  internally linked program made executable with the umask applied, as
+  GNU ld does);
+- `0004-ppudump-target-names.patch`: ppudump names the new targets;
+- `0005-units-in-shared-libraries.patch`: a unit that lives in a shared
+  library (see below) brings its library into the link.
+
+`toolchain/fpc/prepare-source.sh` copies the compiler sources from
+`FPC_SOURCE` (the fpc-src package, or the official
+`fpc-3.2.2.source.tar.gz` unpacked), lays the new files over them and
+applies the patches; `scripts/build-cross-compiler.sh` builds the host's
+compiler from the result (`build/toolchain/ppcx64`, which also compiles
+the loader for win64 and the kernel for linux, and `ppcrossa64`). The
+whole userland is compiled for the new target. The target defines
+`FREEPASCALOS` and neither `UNIX` nor `LINUX`, makes position
+independent code by default (`tf_pic_default`), starts programs in
+`si_prc` and libraries in `si_dll` (`systems_internal_sysinit`, so the
+compiler adds them itself), defines `FPC_HAS_INDIRECT_ENTRY_INFORMATION`
+on both processors, and takes extra unit folders from `FPOSUNITS`.
+Code generation is Linux's: the runtime library's objects compiled for
+`linux` and for `freepascalos` are byte for byte the same on x86-64; on
+AArch64 only `fpintres` differs, which now finds the resources through
+the entry information as on x86-64.
+
+### Linking
+
+x86-64 programs need no other tool: the compiler's internal assembler
+writes the objects and its internal ELF linker links them. Release 3.2.2
+could link only fixed address executables and shared libraries, so patch
+0002 adds position independent executables (`TElfExeOutput.
+PositionIndependentExecutable`, set by `t_fpos` for programs): ET_DYN,
+linked at address zero, every absolute address and every GOT entry of a
+symbol of its own getting a RELATIVE relocation (as in a shared
+library), functions of libraries called through the PLT without a
+canonical address in the program and no copy relocations (the code is
+position independent, so neither is needed), no interpreter, and an
+entry point. Segments are aligned to 4 KiB (`-z max-page-size=4096`).
+The loader's other needs hold already: a System V hash table, `DT_NEEDED`
+for each library, DT_INIT `FPC_SHARED_LIB_START` and DT_FINI
+`FPC_LIB_EXIT` for libraries, and only the relocation types it applies.
+
+The other linker is GNU ld (`-Xe`; and on AArch64, which has neither an
+internal assembler nor an internal ELF linker in 3.2.2, the compiler
+runs `as` and `ld`): programs `-pie --no-dynamic-linker -e _start`,
+libraries `-shared -Bsymbolic -soname lib<name>.so` with the init and
+fini functions, both `--hash-style=sysv -z max-page-size=4096 -z
+noexecstack` - the same switches the userland's own build uses - with
+the objects and `-l<library>` in an implicit linker script (`link.res`),
+and a version script keeping everything but the `exports` local in a
+library that names them. On the host both are checked on every build
+of the test (`native-fpc-test` links with the internal linker; GNU ld
+was checked by hand on both processors).
+
+### Units in libraries
+
+The runtime library and the Sys.* units are in `libsystem.so`, not
+copied into each program, and the other libraries likewise. A program
+the native compiler links must therefore link against the library rather
+than the units' objects. Free Pascal has the mechanism (ppumove, from
+the days of Linux shared RTLs): a unit's ppu marked "in library" and
+"shared linked" names its library, and a program compiled with `-XD`
+(link shared) links `-l<library>` instead of the unit's object. 3.2.2
+skipped such units altogether (it took them for units of dynamic
+packages), which patch 0005 undoes for units without a package. The
+build runs ppumove (`-b`: the library itself is already made) over
+copies of the userland's ppus, library by library; `si_prc` and
+`si_dll` stay ordinary units with their objects, since they are linked
+into every program and library.
+
+### On the system disk
+
+`toolchain/fpc/fpc.mk` (included by `userland.mk`) stages, in
+`build/<arch>/user/fpc-root`, and `make-system-disk.sh` copies:
+
+| Path | What |
+|---|---|
+| `/bin/fpc` | the driver: runs `ppcx64` / `ppca64` from beside itself or `PATH` |
+| `/bin/ppcx64`, `/bin/ppca64` | the compiler (stripped; about 4.4 MB) |
+| `/etc/fpc.cfg` | `-Fu/usr/lib/fpc/$fpcversion/units/$fpctarget/*`, `-XD`, `-Fl/lib`, `-OoNOSTACKFRAME` (frames for back traces), `-CE` on AArch64, `-l -viwn` |
+| `/usr/lib/fpc/3.2.2/units/<cpu>-freepascalos/rtl` | the runtime library's units (libsystem) and `si_prc`, `si_dll` with their objects |
+| `.../system`, `cryptography`, `coreutils` | the units of those libraries (`NATIVE_FPC_LIBRARIES`, `all` for every library's) |
+| `.../fcl-process` | TProcess and the pipe streams, ordinary units |
+
+About 11 MB in all (the system disk grows to fit);
+`NATIVE_FPC=no` leaves it out. The compiler and the driver are linked
+by GNU ld from the host's cross compilation like the other programs.
+Programs a user compiles are linked by the internal linker on x86-64.
+
+`fcl-process` for FreePascalOS (`toolchain/fpc/packages/fcl-process`)
+starts programs with `Sys.Processes.StartProgram`, giving them the pipes
+of `poUsePipes` (or `/dev/null` for `poNoConsole`) as standard handles,
+an environment and a working folder; it waits on the process handle
+(`WaitForProgramWithTimeout`, so `Running` and `WaitOnExit(Timeout)`
+work), stops, continues and ends programs through the job control and
+end request calls, and a pipe reports something to read when
+`CallWaitForHandles` says so (`NumBytesAvailable` then says 4096: a read
+returns what is there). `RunCommand('fpc', ['-iV'], S)` works, as the
+Lazarus IDE will need.
+
+On AArch64 `ppca64` runs here and writes the assembly and the link
+script, then needs GNU `as` and `ld` in `PATH` (the binutils port for
+`*-freepascalos`); without them `fpc -s` stops after writing
+`ppas.sh`.
+
+### Ports
+
+The ports framework (`ports/`, `scripts/ports.py`, `pkg`) has not
+landed yet, so the port is a self-contained piece for it to wrap:
+inputs `FPC_SOURCE` and the userland's build, `toolchain/fpc/` holding
+the patches and new files, `prepare-source.sh`, `fpc.mk` and the
+configuration, output the staged tree `build/<arch>/user/fpc-root`
+(laid out as installed).
+
+### Tests
+
+A coretest line compiles a program and a unit of its own with `/bin/fpc`
+in the guest and runs the program (it prints the expected line and a
+note on standard error when the system disk has no compiler). On the
+host, `make native-fpc-test` (part of `make test`) checks that the
+staged compiler and driver are programs the loader takes (64-bit ELF
+for the processor, ET_DYN with an entry, no interpreter, needing
+`libsystem.so`, DT_HASH, no text relocations, only RELATIVE, 64,
+GLOB_DAT, JUMP_SLOT and COPY relocations), that `fpc.cfg` links shared
+and finds the units, that System, SysUtils and Sys.Files are
+FreePascalOS units marked as living in their library while `si_prc` is
+not, and links a sample program with the internal linker and checks it
+the same way.
+
+### Towards Lazarus
+
+The IDE and the LCL come later; what they need:
+
+- **A widget set over libwindowing and libcontrols** (`lcl/interfaces/
+  freepascalos`, `LCLPlatform` `lpFreePascalOS`): a `TWidgetSet`
+  descendant and the `TWS*` classes mapping forms to libwindowing's
+  windows and the standard controls to libcontrols' (buttons, edits,
+  memos, lists, trees, menus, dialogs, scroll bars), the LCL's `TCanvas`
+  and GDI calls (`LCLIntf`: device contexts, pens, brushes, fonts,
+  regions, bitmaps) onto libdrawing's surfaces and libfont, the message
+  loop onto the display server's events, the clipboard, timers, the
+  cursor, and DPI from the display's scale. Lazarus itself has to learn
+  the OS name in its target lists (`IDEProcs`, codetools'
+  `DefineTemplates`, `lazbuild`), as fpmake's `TOS` and fpcmake's list
+  have to.
+- **Packages the IDE needs**, compiled as fcl-process is: rtl-objpas,
+  fcl-base, fcl-process (done), fcl-xml (configuration files), fcl-json,
+  fcl-image and fcl-res (icons, resources), fcl-registry (XML
+  registry), fcl-extra, paszlib, fcl-db and fcl-web for packages built
+  on them, simpleipc (one instance), and Lazarus's own LazUtils,
+  CodeTools, SynEdit, IDEIntf and BuildIntf over them; units like
+  `dynlibs` and `fileutil` take their Unix paths unless taught this
+  system.
+- **Debugging**: the IDE's debugger needs either GDB (a port) or FpDebug
+  taught the system's process control: stopping another process,
+  reading and writing its memory and registers, breakpoints and single
+  steps, from kernel calls a debugger may use.
+- **Memory and disk**: the IDE is an executable of tens of MB and its
+  units take hundreds; it is better a package (or another volume) than
+  part of every system disk, and the RAM disk the Pi boots from.
 
 ## Boot sequence
 
@@ -10107,22 +10310,105 @@ independent) against the Free Pascal runtime library:
   the console's and the terminal's font, monospaced, a face standing for
   an em six sevenths of its height, so faces of both kinds picked for
   one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
-  DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
-  `userland/fonts` and copied by the build). Listing a family reads
+  DejaVu Sans Mono 2.37, TrueType, regular and bold (with obliques in
+  the full set); the other outline fonts, see "Fonts" below; all of them
+  kept in `userland/fonts` and put in by the build). Listing a family reads
   only the start of each file, its size and weight (for a TrueType font
   its table directory, head and OS/2); a face's glyphs are read the
   first time it is picked, so a program does not load every size. Sizes
   are in points, so text is the same size on any display.
 
+  Fonts. The outline fonts are all freely licensed and kept in the
+  repository, in `userland/fonts/<family>/`, each family with its
+  `LICENSE` (where the fonts come from, their copyright and licence as
+  they state them, the licence's full text) and a `SOURCE` line
+  (upstream, version, the Arch Linux package they were taken from);
+  `userland/fonts/MANIFEST` lists them all (family, directory, files,
+  licence, version, package). Licences: SIL OFL 1.1 (Liberation, Noto
+  with CJK and colour emoji, Source Sans 3, Cantarell, Roboto, Open
+  Sans, Inconsolata), Bitstream Vera with DejaVu's public-domain
+  changes, MIT and Bitstream Vera (Hack), AGPL 3.0 with URW's font
+  exception (the URW base 35), Apache 2.0 (Droid Sans Fallback); about
+  85 MB, the Noto CJK collections and Noto Color Emoji the largest
+  (`.gitattributes` marks font files binary). `scripts/fonts.list`
+  names each family, its files, sets, package, upstream and licence.
+  The build takes the fonts from the repository only, never from the
+  build machine: `scripts/install-fonts.py` puts the set `FONT_SET`
+  names into /lib/fonts (a section's `sets`, and its `core-files` or
+  `base-files` when the set takes only some of its files), with each
+  family's LICENSE and SOURCE and the set's rows of the MANIFEST.
+  `make update-fonts` (`scripts/update-fonts.py`, run by hand) refreshes
+  `userland/fonts` from the build machine's packages, taking a family
+  only when all its files are there, its licence file says what the
+  list expects and every font's own name table (copyright, licence
+  description) agrees; anything else is skipped with a message and
+  the repository's copy kept.
+  `FONT_SET=full` (amd64's default, about 80 MB: DejaVu Sans and Sans
+  Mono; Liberation Sans, Serif and Mono, metric-compatible with Arial,
+  Times New Roman and Courier New; DejaVu's obliques and Serif; Noto Sans, Serif and Mono;
+  Noto Sans for 34 scripts with Symbols, Symbols 2 and Math; Noto Color
+  Emoji; Noto Sans CJK regular and bold; Source Sans 3; Cantarell;
+  Roboto; Open Sans; Hack; Inconsolata; the URW base 35: Nimbus Sans,
+  Sans Narrow, Roman and Mono PS, P052, C059, URW Bookman, URW Gothic,
+  Z003, Standard Symbols PS, D050000L), `core` (arm64's default, 6.7 MB,
+  1.4 MB of it Droid Sans Fallback for CJK: DejaVu Sans and Sans Mono
+  and Liberation regular and bold, Noto Sans Symbols 2; the system
+  image is the Raspberry Pi's RAM disk, served xz-compressed over TFTP)
+  or `base` (DejaVu Sans and Sans Mono regular and bold: what the host
+  tests lay pages out with, in build/tools/base-fonts, so their expected
+  layouts do not change when fonts are added; the web layout test's
+  system font matching uses all of `userland/fonts`, and the font
+  test's CFF, collection, variable and emoji fixtures are made from the
+  repository's files). The system disk
+  grows with its contents (at least 64 MiB; 160 MiB with the full set).
+  The interface keeps DejaVu Sans; a family a program lists (the font
+  dialog) may be any of them. A family's italic faces are left out of
+  its font set (the interface draws upright text).
+
+  `Font.Configuration` reads `/etc/fonts.conf` (userland/etc): in
+  `[families]`, a generic family or font name and the families that
+  stand for it (the first installed taken); in `[fallback]`, the
+  default chain; in `[scripts]`, a script's code point ranges and the
+  families tried first for them (CJK, Arabic, Hebrew, the Indic
+  scripts, Thai, ..., emoji, symbols, math). Without the file, built-in
+  settings give DejaVu Sans and DejaVu Sans Mono. Font.Text measures
+  and draws a character a face lacks with `FallbackFaceFinder`'s face
+  (Font.Files sets it: the configured chain's families, each listed
+  and read when first reached, a face of the same pixel size and
+  weight, the answers remembered), on the same baseline, without
+  kerning to its neighbours; zero-width joiners and variation selectors
+  take no room.
+
   TrueType: `Font.FontData` reads big-endian numbers inside a table,
   every read checked against the table's end in 64-bit arithmetic.
   `Font.TrueType` (`LoadTrueTypeFont`) opens a font: the table
-  directory (every table inside the file; CFF "OTTO" fonts and
-  collections are not read), `head` (units to the em, 16 to 16384; the
+  directory (every table inside the file; a collection's face by its
+  index, `FontFaceCount`), `head` (units to the em, 16 to 16384; the
   loca format; the weight bit), `maxp`, `hhea` and `hmtx` (advances;
   glyphs past the last advance share it), `OS/2` (weight class; the
-  line if hhea has none), `post` (underline), `loca` (in order, inside
-  glyf) and `cmap`; anything wrong refuses the font.
+  line if hhea has none), `post` (underline), the outlines (`loca` and
+  `glyf`, in order; else `CFF ` or `CFF2`; else colour bitmaps alone)
+  and `cmap`; anything wrong refuses the font. A variable font is its
+  default instance (glyf and CFF2 hold it; blends keep their defaults).
+  `Font.CffData` reads CFF INDEXes (16- or 32-bit counts) and DICTs,
+  `Font.CffOutlines` the CFF table (Top DICT, CharStrings, Private DICT
+  and local subroutines; CID-keyed fonts' FDArray and FDSelect formats
+  0 and 3, as Noto CJK has) and CFF2's (FDSelect format 4, the variation
+  store's region counts), and `Font.CffCharStrings` runs Type 2
+  charstrings into cubic outlines (moves, lines, the curve operators
+  and flex family, subroutines with their bias, hints skipped, widths
+  dropped, arithmetic, CFF2's blend and vsindex; ten levels of calls,
+  200000 operators, points within a million units, or the glyph is
+  refused). Cubic control points are marked in the outline
+  (`TOutlinePoint.Cubic`); rendering cuts cubics with libdrawing's
+  `FlattenCubicCurve`. `Font.ColorBitmaps` reads CBLC strikes and index
+  subtables (formats 1 to 5) and CBDT images (formats 17 to 19, PNG),
+  decoded through `ColorBitmapDecoder` (set by the toolkit and libweb to
+  libimage's) and scaled smoothly from the nearest strike to the size;
+  a colour glyph is a bitmap of colours (`TGlyphBitmap.Colors`) cached
+  like coverage. `Font.CharacterMaps` also takes a symbol font's map
+  (3/0, its U+F020 to U+F0FF also at U+0020) and looks variation
+  sequences up in format 14.
   `Font.CharacterMaps` reads the Unicode subtable, format 12 (3/10,
   0/4, 0/6) before format 4 (3/1, 0/0-3), into mappings by code point.
   `Font.GlyphData` reads outlines: simple glyphs (flags with repeats,
@@ -10198,7 +10484,17 @@ independent) against the Free Pascal runtime library:
   average); the hinter (E's and H's bars, baseline, x height and cap
   height on whole pixels, no overshoot at small sizes), the text API,
   gamma-correct blending, subpixel glyphs, the cache's limits and order
-  of use, and font sets giving every size with faces that never move.
+  of use, and font sets giving every size with faces that never move;
+  with the build machine's fonts when it has them (the fixtures name
+  them, else the checks are skipped saying so): Source Sans 3, Nimbus
+  Sans, Cantarell (CFF2) and Noto Sans CJK's first and third faces
+  rendered against FreeType (cubic curves within 48 a pixel and 7.5 on
+  average: FreeType cuts them more coarsely), a collection's faces
+  mapping one character to their own glyphs, Noto Color Emoji drawn in
+  colour through libimage, DejaVu Sans made into WOFF2 by woff2_compress
+  unwrapped glyph for glyph as the original (every truncation refused),
+  randomly damaged CFF data never raising, Liberation Sans with Arial's
+  advances, and userland/etc/fonts.conf read.
   On the system, `drawtest` draws a window on the display in DejaVu
   Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
@@ -11536,7 +11832,10 @@ members first and each level by name, as WebIDL reads them), enums,
 callbacks, callback interfaces, typedefs, constants, attributes,
 operations with overloads, optional arguments with defaults and variadic
 ones, constructors, static members, getters, setters and deleters,
-`iterable<>` and stringifiers. Reflected attributes need no code: an
+`iterable<>` and stringifiers; an interface with an indexed getter of
+its own and no `iterable<>` iterates as an array (WebIDL: its
+`@@iterator` is `%Array.prototype.values%`), so `for...of` over an
+HTMLCollection or a NamedNodeMap works. Reflected attributes need no code: an
 extended attribute names the content attribute and kind (`[Reflect]`,
 `[Reflect=for]`, `[ReflectURL]`, `[ReflectEnum=(...)]` with
 `[ReflectMissing]`/`[ReflectInvalid]`, `[ReflectDefault]`,
@@ -12189,15 +12488,30 @@ the view asks for frames while any runs.
 
 ### Text (Web.Text)
 
-`Web.Text.Fonts` lists the TrueType faces under the font directory
-(/lib/fonts; the host tools point it at userland/fonts): a subdirectory
-per family ("dejavu-sans" is "DejaVu Sans"), weight and slant from the
-file names; a face's file is read when first used. Matching walks the
-font-family list: generic families map to installed ones (sans-serif,
-serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
-Sans Mono; some well-known names too), the face nearest the weight and
-slant is taken, and a character the face lacks takes the nearest face
-of the library that has it (remembered per font).
+`Web.Text.Fonts` lists the faces under the font directory (/lib/fonts;
+the host tools point it at userland/fonts): a subdirectory per family
+("liberation-sans" is "Liberation Sans"), each .ttf, .otf or .ttc file a
+face (a collection's first), weight and slant from its header
+(`Font.Summaries`, a few hundred bytes read), so a face's file is read
+only when it is chosen. Matching walks the font-family list: an
+installed family by its name, else what the system's font configuration
+(/etc/fonts.conf, see "Fonts" under libfont) says stands for the name:
+sans-serif, Arial and Helvetica are Liberation Sans (Arial's metrics),
+serif and Times New Roman Liberation Serif, monospace and Courier New
+Liberation Mono, Palatino P052 and the other PostScript names their URW
+stand-ins, system-ui and -apple-system the interface's DejaVu Sans,
+emoji Noto Color Emoji. The face nearest the weight and slant is picked
+by the headers and read. A character the face lacks walks the
+configured chain for its script (Noto Sans CJK for Han and kana, Noto
+Sans Arabic, ..., Noto Color Emoji for emoji) and then the default
+chain, each family read only when reached, so mixed text draws every
+character (remembered per font and in the library). U+FE0F after a
+character asks for the emoji family; any variation selector picks the
+face's variation glyph (cmap format 14); selectors and zero-width
+joiners take no room (emoji sequences joined by U+200D draw one after
+another: there are no ligatures). Colour glyphs paint in their own
+colours (`Font.GlyphDrawing`); libweb sets libfont's PNG decoder to
+libimage's (`Image.PictureColors`).
 
 A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
 a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
@@ -12261,7 +12575,13 @@ floats and the box's offset in it, the lists absolutely positioned and
 fixed boxes go to); a clean box laid out before for the same input whose
 layout did not depend on outside floats or containing blocks is skipped,
 so relayout after a change touches the changed part and what depends on
-its size.
+its size. A box whose layout put floats into a formatting context outside
+it (`bfHasEscapingFloats`: a float in a block that does not contain it)
+is never skipped: the context is made anew on every layout, and a skipped
+box would leave its floats out of it, so the boxes after it would not
+flow around them (4chan's posts were laid over their thumbnails once an
+icon in them loaded). A block inside an inline box (block-in-inline)
+looks for the floats from its margin edge, as in block flow.
 
 - Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
   8.3.1): widths with auto margins, min/max, box-sizing and percentages;
@@ -12458,14 +12778,18 @@ document's resources (others are dropped): link sheets, the imports of
 since an import hangs on a sheet already in use), images with their
 natural size, url() images fetched when the layout first asks (no-cors,
 sniffed, decoded on the page thread, given under the URL text as
-written), and @font-face sources: TrueType, OpenType with TrueType
-outlines and WOFF 1 (`Web.Text.Woff` unwraps it with libcompression's
-zlib) join the font library under the rule's family, weight and style;
-the fonts made from styles then pick their faces again in place
-(`RefreshTextFonts`: no font object goes, so display lists keep valid
-pointers) and every layout measures again. WOFF2 and CFF outlines are
-refused by `FontFormatSupported`, so the loader tries the next source;
-web fonts are process-wide rather than per document. `SetViewport`
+written), and @font-face sources: TrueType, OpenType (TrueType or CFF
+outlines), collections, WOFF 1 (`Web.Text.Woff` unwraps it with
+libcompression's zlib) and WOFF2 (`Web.Text.Woff2`: libcompression's
+Brotli, then the glyf and loca tables rebuilt from the transformed
+glyf's streams of contour and point counts, flags, coordinate
+triplets, composite data, boxes and instructions, the loca format
+written into head, and hmtx's left side bearings from the glyphs'
+xMin when the transform left them out) join the font library under the
+rule's family, weight and style; the fonts made from styles then pick
+their faces again in place (`RefreshTextFonts`: no font object goes,
+so display lists keep valid pointers) and every layout measures again.
+Web fonts are process-wide rather than per document. `SetViewport`
 gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
@@ -12647,8 +12971,9 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
-unicode-range), ::first-line and ::first-letter, inline boxes
+scripts: Arabic draws unjoined), emoji ZWJ sequences and flags (their
+parts draw one by one), a collection's face chosen by language (its
+first is used), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic
@@ -12723,7 +13048,10 @@ web view's pointer steps over its `TPageSelection`), with the layout
 brought up to date or left behind (as the web view puts a slow layout
 off), painting, hit testing, the selection's rectangles and both
 collectors between steps; then 600 more with the engines collecting
-every 16 KiB. It passes when the document's selection stays in the
+every 16 KiB; then a wheel storm of 2000 steps, most of them bursts of
+10 to 60 wheel steps both ways with the pointer moving over the page,
+the layout left behind, and tasks, rendering steps, animations, hit
+tests and resizes in between. It passes when the document's selection stays in the
 document, the view's selection in its current index, its text and
 rectangles readable, and no script error is uncaught. `WebLoadTest
 pointer` runs it alone, `WEB_POINTER_VERBOSE=1` prints a line a step.
@@ -13417,7 +13745,14 @@ the page thread runs scripts, layout and painting; image decoding and
 other workers stay on their threads; it has no network threads of its
 own (the network service has them).
 
-**Async scrolling.** Input carries a sequence number; frames and
+**Async scrolling.** The browser's side of a renderer's frames is
+`WebView.RemoteFrames` (the surface, the view's copy of the last frame
+and its shift), apart from the control: it refuses frames of a replaced
+surface or larger than theirs, clips damage and viewports to the frame
+and keeps the renderer's scroll and document sizes within bounds before
+using them; `tools/WebIpcTest` (`WebIpcTest.Frames`) plays a renderer
+that replaces its surface while the browser scrolls and paints, and
+checks that a replaced section is never read. Input carries a sequence number; frames and
 `IpcInputHandled` say how far the renderer got. When input has gone
 unanswered for 120 ms (a long layout, a busy script, a hung page), the
 wheel moves the last frame in the browser itself, within the document's

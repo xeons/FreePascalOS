@@ -1,0 +1,104 @@
+diff --git a/compiler/globals.pas b/compiler/globals.pas
+index f531622..988d2fb 100644
+--- a/compiler/globals.pas
++++ b/compiler/globals.pas
+@@ -1413,6 +1413,9 @@ implementation
+ {$ifdef macos}
+   {$define need_path_search}
+ {$endif macos}
++{$ifdef freepascalos}
++  {$define need_path_search}
++{$endif freepascalos}
+ 
+    procedure get_exepath;
+      var
+diff --git a/compiler/link.pas b/compiler/link.pas
+index d545c9c..9a3fe7b 100644
+--- a/compiler/link.pas
++++ b/compiler/link.pas
+@@ -166,6 +166,9 @@ Implementation
+ {$ifdef hasUnix}
+       baseunix,
+ {$endif hasUnix}
++{$ifdef freepascalos}
++      Sys.Files,
++{$endif freepascalos}
+       cscript,globals,verbose,comphook,ppu,fpccrc,
+       aasmbase,aasmcpu,
+       ogmap;
+@@ -1627,6 +1630,11 @@ Implementation
+ {$ifdef hasUnix}
+         fpchmod(current_module.exefilename,493);
+ {$endif hasUnix}
++{$ifdef freepascalos}
++        { executable by everyone the umask allows, as GNU ld makes it }
++        if result then
++          Sys.Files.ChangeMode(PChar(current_module.exefilename),$1FF and not Sys.Files.CurrentUmask);
++{$endif freepascalos}
+       end;
+ 
+ 
+diff --git a/compiler/options.pas b/compiler/options.pas
+index fe9a369..55f60f2 100644
+--- a/compiler/options.pas
++++ b/compiler/options.pas
+@@ -3339,16 +3339,16 @@ function check_configfile(fn:string; var foundfn:string):boolean;
+   end;
+ 
+ var
+-{$ifdef Unix}
++{$if defined(Unix) or defined(freepascalos)}
+   hs,
+-{$endif Unix}
++{$endif}
+   configpath : string;
+ begin
+   foundfn:=fn;
+   check_configfile:=true;
+   { retrieve configpath }
+   configpath:=FixPath(GetEnvironmentVariable('PPC_CONFIG_PATH'),false);
+-{$ifdef Unix}
++{$if defined(Unix) or defined(freepascalos)}
+   if configpath='' then
+    configpath:=ExpandFileName(FixPath(exepath+'../etc/',false));
+ {$endif}
+@@ -3361,7 +3361,7 @@ begin
+   }
+   if not FileExists(fn) then
+    begin
+-{$ifdef Unix}
++{$if defined(Unix) or defined(freepascalos)}
+      hs:=GetEnvironmentVariable('HOME');
+      if (hs<>'') and CfgFileExists(FixPath(hs,false)+'.'+fn) then
+       foundfn:=FixPath(hs,false)+'.'+fn
+@@ -3378,7 +3378,7 @@ begin
+          foundfn:=FixPath(GetEnvironmentVariable('ALLUSERSPROFILE'),false)+fn
+      else
+ {$endif WINDOWS}
+-{$ifndef Unix}
++{$if not defined(Unix) and not defined(freepascalos)}
+       if CfgFileExists(exepath+fn) then
+        foundfn:=exepath+fn
+      else
+@@ -3905,7 +3905,7 @@ begin
+         UnitSearchPath.AddPath(GetEnvironmentVariable(target_info.unit_env),false);
+     end;
+ 
+-{$ifdef Unix}
++{$if defined(Unix) or defined(freepascalos)}
+   fpcdir:=FixPath(GetEnvironmentVariable('FPCDIR'),false);
+   if fpcdir='' then
+     begin
+diff --git a/compiler/utils/fpc.pp b/compiler/utils/fpc.pp
+index e9c2bde..03da50d 100644
+--- a/compiler/utils/fpc.pp
++++ b/compiler/utils/fpc.pp
+@@ -26,7 +26,7 @@ program fpc;
+      Sysutils;
+ 
+   const
+-{$ifdef UNIX}
++{$if defined(UNIX) or defined(FREEPASCALOS)}
+     exeext='';
+ {$else UNIX}
+   {$ifdef HASAMIGA}

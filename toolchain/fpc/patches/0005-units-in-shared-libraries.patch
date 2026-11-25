@@ -1,0 +1,17 @@
+diff --git a/compiler/pmodules.pas b/compiler/pmodules.pas
+index e360866..7a933f3 100644
+--- a/compiler/pmodules.pas
++++ b/compiler/pmodules.pas
+@@ -2414,7 +2414,11 @@ type
+                  hp:=tmodule(loaded_units.first);
+                  while assigned(hp) do
+                   begin
+-                    if (hp<>sysinitmod) and (hp.flags and uf_in_library=0) then
++                    { a unit in a library that is not a package (ppumove)
++                      brings its library: linked shared (-XD), its library
++                      is linked instead of its object file }
++                    if (hp<>sysinitmod) and
++                       (((hp.flags and uf_in_library)=0) or not assigned(hp.package)) then
+                       begin
+                         linker.AddModuleFiles(hp);
+                         if (hp.flags and uf_checkpointer_called)<>0 then

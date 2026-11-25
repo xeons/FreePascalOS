@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..425] of TCommandTest = (
+  CommandTests: array[0..427] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -759,6 +759,11 @@ const
     (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Process restrictions (the browser's renderer sandbox). }
     (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { Native Free Pascal: /bin/fpc compiles a program and a unit of its
+      own (against libsystem, linked by the compiler's internal linker)
+      and the program runs; skipped when the system disk was built with
+      NATIVE_FPC=no. }
+    (Command: 'if test -x /bin/fpc; then printf "unit nativeunit; interface function Answer: LongInt; implementation function Answer: LongInt; begin Answer := 6 * 7 end; end." > nativeunit.pas; printf "program native; uses SysUtils, nativeunit; begin WriteLn(UpperCase(''native fpc''), '' '', Answer) end." > native.pas; fpc native.pas > fpc.log 2>&1 || cat fpc.log; ./native; rm -f native native.o native.pas nativeunit.* fpc.log; else echo "coretest: no /bin/fpc on the system disk, native Free Pascal skipped" >&2; echo "NATIVE FPC 42"; fi'; ExpectedOutput: 'NATIVE FPC 42'#10; ExpectedStatus: 0),
     { pkg: the system disk carries hello installed (ports/image.list) and
       the package pkg-selftest as a file; it is installed (with its
       post-install script), checked, refused twice, found changed by
@@ -767,7 +772,10 @@ const
     (Command: 'pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst; echo $?; cat /tmp/pkg-selftest.post-install; cat /usr/local/share/pkg-selftest/latest; tail -n 1 /usr/local/etc/pkg-selftest.conf'; ExpectedOutput: 'installed pkg-selftest 1.0'#10'running the post-install script of pkg-selftest'#10'0'#10'pkg-selftest 1.0 installed'#10'pkg self test: this file was installed by pkg.'#10'greeting = hello'#10; ExpectedStatus: 0),
     (Command: 'pkg which /usr/local/share/pkg-selftest/message.txt; pkg verify pkg-selftest; pkg test pkg-selftest; pkg info pkg-selftest | head -n 2; pkg list -q'; ExpectedOutput: '/usr/local/share/pkg-selftest/message.txt was installed by pkg-selftest 1.0'#10'pkg-selftest 1.0: ok'#10'pkg-selftest: passed: grep -q ''pkg self test'' /usr/local/share/pkg-selftest/latest'#10'Name:        pkg-selftest'#10'Version:     1.0'#10'hello'#10'pkg-selftest'#10; ExpectedStatus: 0),
     (Command: 'pkg remove hello 2>&1; echo $?; pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst 2>&1; echo $?; echo x >> /usr/local/etc/pkg-selftest.conf; pkg verify pkg-selftest 2>&1 | grep -c "pkg-selftest.conf: the size is 115, not 113"'; ExpectedOutput: 'pkg: hello is needed by pkg-selftest'#10'1'#10'pkg: pkg-selftest 1.0 is installed already'#10'1'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q; pkg verify; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0)
+    (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q; pkg verify; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0),
+    { The loader finds a library named without a folder in /usr/local/lib
+      (ported software's) when /lib has none. }
+    (Command: 'mkdir -p /usr/local/lib; cp /lib/libplugin.so /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; rm /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; echo $?'; ExpectedOutput: 'loaded libportplugin.so'#10'cannot load libportplugin.so'#10'1'#10; ExpectedStatus: 0)
   );
 
 var
@@ -985,6 +993,18 @@ begin
     CrashOnPurpose;
   if TextIsEqual(Argument(1), '--overflow-stack') then
     Halt(RecurseWithoutEnd(1));
+  if TextIsEqual(Argument(1), '--load-library') then
+  begin
+    { Loads a library by its bare name, as the loader finds it (/lib,
+      then /usr/local/lib). }
+    if LoadLibrary(Argument(2)) >= 0 then
+    begin
+      WriteLn('loaded ', Argument(2));
+      Halt(0);
+    end;
+    WriteLn('cannot load ', Argument(2));
+    Halt(1);
+  end;
   if TextIsEqual(Argument(1), '--error-order') then
   begin
     { Through a pipe: error output goes at once, standard output when
