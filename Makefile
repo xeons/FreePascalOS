@@ -230,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test clock-page-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -581,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -692,6 +692,18 @@ $(SCHEDULER_POLICY_TEST): tools/SchedulerPolicyTest/SchedulerPolicyTest.pas kern
 
 scheduler-policy-test: $(SCHEDULER_POLICY_TEST)
 	$(SCHEDULER_POLICY_TEST)
+
+# The clock page's arithmetic (shared/ClockPageMath.inc: the kernel's and
+# every program's) on the host.
+CLOCK_PAGE_TEST := build/tools/ClockPageTest
+
+$(CLOCK_PAGE_TEST): tools/ClockPageTest/ClockPageTest.pas shared/Runtime.ClockPage.pas shared/ClockPageMath.inc \
+		shared/Abi.SystemCalls.inc
+	@mkdir -p build/tools/clock-page-units
+	$(FPC) -O2 -Cr -Co -Fushared -FEbuild/tools -FUbuild/tools/clock-page-units $<
+
+clock-page-test: $(CLOCK_PAGE_TEST)
+	$(CLOCK_PAGE_TEST)
 
 # The kernel's UTF-8 / UTF-16 conversions for file names (Runtime.Unicode)
 # on the host: malformed UTF-8 (overlongs, surrogates, past U+10FFFF).

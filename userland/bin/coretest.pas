@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..436] of TCommandTest = (
+  CommandTests: array[0..437] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -815,7 +815,10 @@ const
       user, a set-user-ID program swapped through a link while it starts
       and a lowered limit raised again. }
     (Command: 'loadertest > loader.log; echo $?; grep FAIL loader.log; tail -n 1 loader.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
+    (Command: 'su user -c "loadertest --unprivileged" > loaderu.log; echo $?; grep FAIL loaderu.log; tail -n 1 loaderu.log | cut -d " " -f 4-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Dynamic tick: a processor busy with one spinning thread takes
+      fewer than 5 ticks a second (100 with the periodic tick). }
+    (Command: 'powerstat --check-busy 3 5 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
   );
 
 var
