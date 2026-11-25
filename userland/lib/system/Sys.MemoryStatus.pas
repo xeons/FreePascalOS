@@ -37,9 +37,17 @@ uses
 type
   TBlockCacheStatistics = TAbiBlockCacheStatistics;
   TMemoryPressure = TAbiMemoryPressure;
+  TProcessMemoryCharge = TAbiProcessMemoryCharge;
+  TImageCacheStatistics = TAbiImageCacheStatistics;
 
 function GetBlockCacheStatistics(out Statistics: TBlockCacheStatistics): LongInt;
 function GetMemoryPressure(out Pressure: TMemoryPressure): LongInt;
+{ What the out-of-memory policy charges process ProcessId (0: this one)
+  with, and its score (CallGetProcessMemoryCharge). }
+function GetProcessMemoryCharge(ProcessId: QWord; out Charge: TProcessMemoryCharge): LongInt;
+{ The loader's image sections and relocated copies
+  (CallGetImageCacheStatistics). }
+function GetImageCacheStatistics(out Statistics: TImageCacheStatistics): LongInt;
 { Bytes in the cache now. }
 function CacheBytes(const Statistics: TBlockCacheStatistics): QWord;
 { Hits among all lookups, in tenths of a percent (0 without lookups). }
@@ -71,6 +79,18 @@ function GetMemoryPressure(out Pressure: TMemoryPressure): LongInt;
 begin
   FillChar(Pressure, SizeOf(Pressure), 0);
   Result := ErrorCodeOf(SystemCall(CallGetMemoryPressure, QWord(@Pressure), 0, 0, 0, 0, 0));
+end;
+
+function GetProcessMemoryCharge(ProcessId: QWord; out Charge: TProcessMemoryCharge): LongInt;
+begin
+  FillChar(Charge, SizeOf(Charge), 0);
+  Result := ErrorCodeOf(SystemCall(CallGetProcessMemoryCharge, ProcessId, QWord(@Charge), 0, 0, 0, 0));
+end;
+
+function GetImageCacheStatistics(out Statistics: TImageCacheStatistics): LongInt;
+begin
+  FillChar(Statistics, SizeOf(Statistics), 0);
+  Result := ErrorCodeOf(SystemCall(CallGetImageCacheStatistics, QWord(@Statistics), 0, 0, 0, 0, 0));
 end;
 
 function CacheBytes(const Statistics: TBlockCacheStatistics): QWord;
