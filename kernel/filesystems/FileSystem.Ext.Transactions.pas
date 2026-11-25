@@ -186,13 +186,24 @@ const
 
 function JournalBlockAddress(Journal: PExtJournal; LogicalBlock: QWord): QWord;
 var
-  Index: LongWord;
+  Lower: LongWord;
+  Upper: LongWord;
+  Middle: LongWord;
   Run: PJournalRun;
 begin
-  for Index := 1 to Journal^.RunCount do
+  { The runs are in file order (MapJournalFile): a binary search keeps
+    recovery of a fragmented journal from turning quadratic. }
+  Lower := 0;
+  Upper := Journal^.RunCount;
+  while Lower < Upper do
   begin
-    Run := @Journal^.Runs[Index - 1];
-    if (LogicalBlock >= Run^.LogicalStart) and (LogicalBlock < Run^.LogicalStart + Run^.Count) then
+    Middle := Lower + (Upper - Lower) div 2;
+    Run := @Journal^.Runs[Middle];
+    if LogicalBlock < Run^.LogicalStart then
+      Upper := Middle
+    else if LogicalBlock >= Run^.LogicalStart + Run^.Count then
+      Lower := Middle + 1
+    else
       Exit((Run^.PhysicalStart + LogicalBlock - Run^.LogicalStart) * Journal^.Format.BlockSize);
   end;
   Result := 0;

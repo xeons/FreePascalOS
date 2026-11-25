@@ -60,12 +60,18 @@ uses
   Io.BlockCache,
   FileSystem.Ext.JournalFormat;
 
+const
+  InitialRevokeCapacity = 256;
+  { 16 million slots: far more than any journal revokes. }
+  MaximumRevokeCapacity = 16 * 1024 * 1024;
+
 type
   TRecoveryPass = (PassScan, PassRevoke, PassReplay);
 
   TRevokeRecord = record
     Block: QWord;
     Sequence: LongWord;
+    IsUsed: Boolean;
   end;
   PRevokeRecord = ^TRevokeRecord;
 
@@ -106,20 +112,76 @@ end;
 
 { --- Revoke records ---------------------------------------------------- }
 
+{ The revoked blocks are kept in an open addressing hash table (a
+  journal may revoke hundreds of thousands of blocks; looking each one
+  up in a list would make recovery quadratic). }
+
+{$push}{$Q-}{$R-} { the hash multiplies modulo 2^64 }
+function RevokeSlot(var Recovery: TRecovery; Block: QWord): LongWord;
+var
+  Mask: LongWord;
+begin
+  Mask := Recovery.RevokeCapacity - 1;
+  Result := LongWord((Block * QWord($9E3779B97F4A7C15)) shr 40) and Mask;
+  while Recovery.Revokes[Result].IsUsed and (Recovery.Revokes[Result].Block <> Block) do
+    Result := (Result + 1) and Mask;
+end;
+{$pop}
+
 function FindRevoke(var Recovery: TRecovery; Block: QWord): PRevokeRecord;
 var
-  Index: LongWord;
+  Slot: LongWord;
 begin
-  for Index := 1 to Recovery.RevokeCount do
-    if Recovery.Revokes[Index - 1].Block = Block then
-      Exit(@Recovery.Revokes[Index - 1]);
   Result := nil;
+  if Recovery.RevokeCapacity = 0 then
+    Exit;
+  Slot := RevokeSlot(Recovery, Block);
+  if Recovery.Revokes[Slot].IsUsed then
+    Result := @Recovery.Revokes[Slot];
+end;
+
+{ Doubles the table (or makes the first one) and enters what it held. }
+function GrowRevokes(var Recovery: TRecovery): Boolean;
+var
+  Old: PRevokeRecord;
+  OldCapacity: LongWord;
+  NewCapacity: LongWord;
+  Index: LongWord;
+  Slot: LongWord;
+begin
+  Old := Recovery.Revokes;
+  OldCapacity := Recovery.RevokeCapacity;
+  if OldCapacity = 0 then
+    NewCapacity := InitialRevokeCapacity
+  else if OldCapacity >= MaximumRevokeCapacity then
+    Exit(False)
+  else
+    NewCapacity := OldCapacity * 2;
+  Recovery.Revokes := PRevokeRecord(AllocateZeroedKernelMemory(QWord(NewCapacity) * SizeOf(TRevokeRecord)));
+  if Recovery.Revokes = nil then
+  begin
+    Recovery.Revokes := Old;
+    Exit(False);
+  end;
+  Recovery.RevokeCapacity := NewCapacity;
+  Index := 0;
+  while Index < OldCapacity do
+  begin
+    if Old[Index].IsUsed then
+    begin
+      Slot := RevokeSlot(Recovery, Old[Index].Block);
+      Recovery.Revokes[Slot] := Old[Index];
+    end;
+    Inc(Index);
+  end;
+  FreeKernelMemory(Old);
+  Result := True;
 end;
 
 procedure AddRevoke(var Recovery: TRecovery; Block: QWord; Sequence: LongWord);
 var
   Existing: PRevokeRecord;
-  Grown: PRevokeRecord;
+  Slot: LongWord;
 begin
   Existing := FindRevoke(Recovery, Block);
   if Existing <> nil then
@@ -128,22 +190,17 @@ begin
       Existing^.Sequence := Sequence;
     Exit;
   end;
-  if Recovery.RevokeCount = Recovery.RevokeCapacity then
-  begin
-    Grown := PRevokeRecord(AllocateKernelMemory((Recovery.RevokeCapacity * 2 + 64) * SizeOf(TRevokeRecord)));
-    if Grown = nil then
+  { At most half full, so probes stay short. }
+  if (Recovery.RevokeCount + 1) * 2 > Recovery.RevokeCapacity then
+    if not GrowRevokes(Recovery) then
     begin
       Recovery.Failed := True;
       Exit;
     end;
-    if Recovery.RevokeCount > 0 then
-      CopyMemory(Grown, Recovery.Revokes, Recovery.RevokeCount * SizeOf(TRevokeRecord));
-    FreeKernelMemory(Recovery.Revokes);
-    Recovery.Revokes := Grown;
-    Recovery.RevokeCapacity := Recovery.RevokeCapacity * 2 + 64;
-  end;
-  Recovery.Revokes[Recovery.RevokeCount].Block := Block;
-  Recovery.Revokes[Recovery.RevokeCount].Sequence := Sequence;
+  Slot := RevokeSlot(Recovery, Block);
+  Recovery.Revokes[Slot].Block := Block;
+  Recovery.Revokes[Slot].Sequence := Sequence;
+  Recovery.Revokes[Slot].IsUsed := True;
   Inc(Recovery.RevokeCount);
 end;
 
@@ -220,7 +277,7 @@ begin
     Exit;
   if (Flags and JournalTagEscaped) <> 0 then
     WriteBigEndian32(Recovery.Data, JournalMagic);
-  if (Target * Format.BlockSize + Format.BlockSize > BlockDeviceSizeInBytes(Journal^.Volume^.Device)) or
+  if (Target >= BlockDeviceSizeInBytes(Journal^.Volume^.Device) div Format.BlockSize) or
      not VolumeWrite(Journal^.Volume, Target * Format.BlockSize, Format.BlockSize, Recovery.Data) then
     Recovery.Failed := True
   else

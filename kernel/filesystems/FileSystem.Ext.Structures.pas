@@ -37,6 +37,9 @@ const
   GoodOldInodeSize = 128;
   GoodOldRevision = 0;
   MaximumInodeSize = 1024;
+  { ext4 counts more links than this as "many" (1); stay below it (also
+    for the ".." links a folder's subfolders give it). }
+  MaximumLinkCount = 65000;
 
   { Superblock fields beyond the TSuperblock record. }
   SuperblockChecksumSeedOffset = $270;

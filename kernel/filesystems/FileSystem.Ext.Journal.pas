@@ -111,6 +111,12 @@ begin
   Result := StatusSuccess;
 end;
 
+const
+  { Far larger than any journal mke2fs makes (at most a few hundred
+    thousand blocks); a damaged length beyond it would have the mount map
+    and scan billions of blocks. }
+  MaximumJournalBlocks = 16 * 1024 * 1024;
+
 function ReadJournalFormat(Journal: PExtJournal; Ext: PExtVolume; FileBlocks: QWord;
   out Reason: PChar): TFileSystemStatus;
 var
@@ -130,6 +136,7 @@ begin
   Journal^.TotalBlocks := ReadBigEndian32(Superblock + JournalSuperblockMaximumLength);
   Journal^.FirstLogBlock := ReadBigEndian32(Superblock + JournalSuperblockFirst);
   if (Journal^.Format.BlockSize <> Ext^.BlockSize) or (Journal^.TotalBlocks > FileBlocks) or
+     (Journal^.TotalBlocks > MaximumJournalBlocks) or
      (Journal^.FirstLogBlock = 0) or (Journal^.FirstLogBlock >= Journal^.TotalBlocks) then
   begin
     Reason := 'the journal superblock does not fit the journal';
