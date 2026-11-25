@@ -27,6 +27,7 @@
 #                   QEMU DSDTs and compare what it finds with the expected output
 #   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
 #   make gem-descriptor-test  The Pi 5 Ethernet's (Cadence GEM) DMA descriptors (host)
+#   make virtio-used-ring-test  Virtio used ring ids, lengths and queue sizes checked (host)
 #   make hdmi-audio-test   The Pi 5 HDMI audio's N/CTS, IEC 60958 frames and DMA blocks (host)
 #   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
 #                   Python) for platform devices on the host: ids, resources,
@@ -225,7 +226,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test virtio-used-ring-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -576,7 +577,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: native-fpc-test aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: native-fpc-test aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test virtio-used-ring-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -783,6 +784,16 @@ $(GEM_DESCRIPTOR_TEST): tools/GemDescriptorTest/GemDescriptorTest.pas kernel/dri
 
 gem-descriptor-test: $(GEM_DESCRIPTOR_TEST)
 	$(GEM_DESCRIPTOR_TEST)
+
+# What a virtio device writes into a used ring, checked (Drivers.VirtioUsedRing).
+VIRTIO_USED_RING_TEST := build/tools/VirtioUsedRingTest
+
+$(VIRTIO_USED_RING_TEST): tools/VirtioUsedRingTest/VirtioUsedRingTest.pas kernel/drivers/virtio/Drivers.VirtioUsedRing.pas
+	@mkdir -p build/tools/virtio-used-ring-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/virtio -FEbuild/tools -FUbuild/tools/virtio-used-ring-units $<
+
+virtio-used-ring-test: $(VIRTIO_USED_RING_TEST)
+	$(VIRTIO_USED_RING_TEST)
 
 # The Raspberry Pi 5's HDMI audio without the hardware: N/CTS against the
 # HDMI table, the MAI's sample clock, IEC 60958 subframes, the audio

@@ -27,9 +27,21 @@
   to BouncePageCount pages per command; longer requests are split), so
   callers' buffers need not be physically contiguous.
 
+  DMA (Io.Dma): the header page (header, discard segment, status byte)
+  is shared DMA memory; the bounce pages are streaming DMA memory,
+  cleaned before the device reads them and invalidated around its
+  writes. The device is given device addresses throughout. The copies
+  between the bounce pages and the request's buffer may run at dispatch
+  level (the deferred call): that is safe because request buffers are
+  always resident kernel memory (Io.Manager; user data comes through
+  the kernel's transfer buffers, and only user addresses are paged).
+
   One request runs at a time; others wait in a queue. Completion comes by
   MSI-X interrupt, finished by a deferred call; a device without MSI-X
-  is polled.
+  is polled. A polled request that times out resets the device before
+  anything else is sent, so it cannot finish late into pages (and a
+  used ring) a later request uses; if the reset fails, the disk fails
+  every request from then on.
 
   A device offering VIRTIO_BLK_F_DISCARD takes discard requests: the
   header (type discard) is followed by one segment (first sector,
@@ -52,8 +64,6 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
-  Memory.Layout,
-  Memory.PhysicalPages,
   Memory.KernelHeap,
   Kernel.Arch.TrapFrame,
   Kernel.Arch.Cpu,
@@ -65,6 +75,7 @@ uses
   Io.Pci,
   Io.Manager,
   Io.BlockDevice,
+  Io.Dma,
   Drivers.VirtioPci,
   Debug.Output;
 
@@ -74,6 +85,8 @@ const
   BouncePageCount = 32;
   PageBytes = 4096;
   PollTimeoutMilliseconds = 5000;
+  { A header, a data page and a status: the shortest useful chain. }
+  MinimumQueueSize = 3;
 
   FeatureReadOnly = 5;
   FeatureFlush = 9;
@@ -117,9 +130,9 @@ type
     SupportsDiscard: Boolean;
     MaximumDiscardSectors: QWord;
     HeaderPage: PByte;
-    HeaderPagePhysical: QWord;
+    HeaderMemory: TDmaBuffer;
     BouncePages: array[0..BouncePageCount - 1] of PByte;
-    BouncePagesPhysical: array[0..BouncePageCount - 1] of QWord;
+    BounceMemory: array[0..BouncePageCount - 1] of TDmaBuffer;
     { Interrupt driven requests. }
     StateLock: TSpinLock;
     Waiting: TRequestQueue;
@@ -129,6 +142,12 @@ type
     FinishCommand: TDeferredCall;
     { Polled requests. }
     PollingLock: TMutex;
+    { Bounce pages one chain may carry: a header and a status descriptor
+      besides them must fit the queue. }
+    PagesPerPiece: Integer;
+    { A timed out request could not be stopped by a reset: every request
+      fails. }
+    IsBroken: Boolean;
   end;
 
 var
@@ -146,15 +165,15 @@ var
   Disk: PVirtioDisk;
 begin
   Result := Request^.Length - Done;
+  Disk := DiskOf(Request^.Device);
   if Request^.Operation = IoFunctionDiscard then
   begin
-    Disk := DiskOf(Request^.Device);
     if Result div SectorSize > Disk^.MaximumDiscardSectors then
       Result := Disk^.MaximumDiscardSectors * SectorSize;
     Exit;
   end;
-  if Result > BouncePageCount * PageBytes then
-    Result := BouncePageCount * PageBytes;
+  if Result > QWord(Disk^.PagesPerPiece) * PageBytes then
+    Result := QWord(Disk^.PagesPerPiece) * PageBytes;
 end;
 
 { The chain of a discard: header, segment, status. }
@@ -174,15 +193,15 @@ begin
   Segment^.Flags := 0;
   Disk^.HeaderPage[StatusOffsetInHeaderPage] := $FF;
   Descriptor := Disk^.Queue.Descriptors;
-  Descriptor[0].Address := Disk^.HeaderPagePhysical;
+  Descriptor[0].Address := Disk^.HeaderMemory.DeviceAddress;
   Descriptor[0].Length := SizeOf(TBlockRequestHeader);
   Descriptor[0].Flags := VirtqueueDescriptorNext;
   Descriptor[0].Next := 1;
-  Descriptor[1].Address := Disk^.HeaderPagePhysical + SegmentOffsetInHeaderPage;
+  Descriptor[1].Address := Disk^.HeaderMemory.DeviceAddress + SegmentOffsetInHeaderPage;
   Descriptor[1].Length := SizeOf(TDiscardSegment);
   Descriptor[1].Flags := VirtqueueDescriptorNext;
   Descriptor[1].Next := 2;
-  Descriptor[2].Address := Disk^.HeaderPagePhysical + StatusOffsetInHeaderPage;
+  Descriptor[2].Address := Disk^.HeaderMemory.DeviceAddress + StatusOffsetInHeaderPage;
   Descriptor[2].Length := 1;
   Descriptor[2].Flags := VirtqueueDescriptorWrite;
   Descriptor[2].Next := 0;
@@ -219,7 +238,7 @@ begin
   Disk^.HeaderPage[StatusOffsetInHeaderPage] := $FF;
 
   Descriptor := Disk^.Queue.Descriptors;
-  Descriptor[0].Address := Disk^.HeaderPagePhysical;
+  Descriptor[0].Address := Disk^.HeaderMemory.DeviceAddress;
   Descriptor[0].Length := SizeOf(TBlockRequestHeader);
   Descriptor[0].Flags := VirtqueueDescriptorNext;
   Descriptor[0].Next := 1;
@@ -232,9 +251,14 @@ begin
     if Chunk > PageBytes then
       Chunk := PageBytes;
     if Request^.Operation = IoFunctionWrite then
+    begin
       CopyMemory(Disk^.BouncePages[PageIndex], PByte(Request^.Buffer) + Done + QWord(PageIndex) * PageBytes,
         Chunk);
-    Descriptor[Count].Address := Disk^.BouncePagesPhysical[PageIndex];
+      PrepareDmaToDevice(Disk^.Virtio.Dma, Disk^.BouncePages[PageIndex], Chunk);
+    end
+    else
+      PrepareDmaFromDevice(Disk^.Virtio.Dma, Disk^.BouncePages[PageIndex], Chunk);
+    Descriptor[Count].Address := Disk^.BounceMemory[PageIndex].DeviceAddress;
     Descriptor[Count].Length := LongWord(Chunk);
     Descriptor[Count].Flags := VirtqueueDescriptorNext;
     if IsRead then
@@ -244,7 +268,7 @@ begin
     Inc(PageIndex);
     Remaining := Remaining - Chunk;
   end;
-  Descriptor[Count].Address := Disk^.HeaderPagePhysical + StatusOffsetInHeaderPage;
+  Descriptor[Count].Address := Disk^.HeaderMemory.DeviceAddress + StatusOffsetInHeaderPage;
   Descriptor[Count].Length := 1;
   Descriptor[Count].Flags := VirtqueueDescriptorWrite;
   Descriptor[Count].Next := 0;
@@ -269,6 +293,7 @@ begin
     Chunk := Remaining;
     if Chunk > PageBytes then
       Chunk := PageBytes;
+    FinishDmaFromDevice(Disk^.Virtio.Dma, Disk^.BouncePages[PageIndex], Chunk);
     CopyMemory(PByte(Request^.Buffer) + Done + QWord(PageIndex) * PageBytes, Disk^.BouncePages[PageIndex],
       Chunk);
     Inc(PageIndex);
@@ -300,10 +325,25 @@ begin
   Result := ErrorNone;
   Done := 0;
   AcquireMutex(Disk^.PollingLock);
+  if Disk^.IsBroken then
+  begin
+    ReleaseMutex(Disk^.PollingLock);
+    Request.Information := 0;
+    Exit(ErrorIo);
+  end;
   repeat
     Piece := PieceLength(@Request, Done);
     SubmitPiece(Disk, @Request, Done, Piece);
-    if not WaitForCompletion(Disk) or not FinishPiece(Disk, @Request, Done, Piece) then
+    if not WaitForCompletion(Disk) then
+    begin
+      { The device may still finish the chain: reset it before the pages
+        and the queue are used again. }
+      if not RestartVirtioDevice(Disk^.Virtio, Disk^.Queue) then
+        Disk^.IsBroken := True;
+      Result := ErrorIo;
+      Break;
+    end;
+    if not FinishPiece(Disk, @Request, Done, Piece) then
     begin
       Result := ErrorIo;
       Break;
@@ -428,18 +468,31 @@ function AllocateDiskPages(Disk: PVirtioDisk): Boolean;
 var
   Index: Integer;
 begin
-  Disk^.HeaderPagePhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if Disk^.HeaderPagePhysical = 0 then
+  { The header and status the device reads and writes while it runs:
+    shared memory. }
+  if not AllocateDmaBuffer(Disk^.Virtio.Dma, PageBytes, DmaShared, Disk^.HeaderMemory) then
     Exit(False);
-  Disk^.HeaderPage := PByte(PhysicalToVirtual(Disk^.HeaderPagePhysical));
+  Disk^.HeaderPage := Disk^.HeaderMemory.Address;
   for Index := 0 to BouncePageCount - 1 do
   begin
-    Disk^.BouncePagesPhysical[Index] := AllocatePhysicalPage(PageUsageGeneral);
-    if Disk^.BouncePagesPhysical[Index] = 0 then
+    if not AllocateDmaBuffer(Disk^.Virtio.Dma, PageBytes, DmaStreaming, Disk^.BounceMemory[Index]) then
       Exit(False);
-    Disk^.BouncePages[Index] := PByte(PhysicalToVirtual(Disk^.BouncePagesPhysical[Index]));
+    Disk^.BouncePages[Index] := Disk^.BounceMemory[Index].Address;
   end;
   Result := True;
+end;
+
+procedure FreeDiskPages(Disk: PVirtioDisk);
+var
+  Index: Integer;
+begin
+  FreeDmaBuffer(Disk^.HeaderMemory);
+  Disk^.HeaderPage := nil;
+  for Index := 0 to BouncePageCount - 1 do
+  begin
+    FreeDmaBuffer(Disk^.BounceMemory[Index]);
+    Disk^.BouncePages[Index] := nil;
+  end;
 end;
 
 { Waking from suspend to RAM reset the device (block I/O was stopped
@@ -464,15 +517,26 @@ begin
   if Disk = nil then
     Exit;
   if not OpenVirtioDevice(Pci, Disk^.Virtio) then
+  begin
+    FreeKernelMemory(Disk);
     Exit;
+  end;
   if not NegotiateVirtioFeatures(Disk^.Virtio,
        (QWord(1) shl FeatureReadOnly) or (QWord(1) shl FeatureFlush) or (QWord(1) shl FeatureDiscard),
        Accepted) or
-     not AllocateDiskPages(Disk) or not SetUpVirtqueue(Disk^.Virtio, 0, Disk^.Queue) then
+     not AllocateDiskPages(Disk) or not SetUpVirtqueue(Disk^.Virtio, 0, Disk^.Queue) or
+     (Disk^.Queue.Size < MinimumQueueSize) then
   begin
+    { The device never started: nothing of this memory is in its hands
+      (the queue's own pages stay with the failed device). }
     FailVirtioDevice(Disk^.Virtio);
+    FreeDiskPages(Disk);
+    FreeKernelMemory(Disk);
     Exit;
   end;
+  Disk^.PagesPerPiece := Disk^.Queue.Size - 2;
+  if Disk^.PagesPerPiece > BouncePageCount then
+    Disk^.PagesPerPiece := BouncePageCount;
   Disk^.SupportsFlush := (Accepted and (QWord(1) shl FeatureFlush)) <> 0;
   Disk^.SectorCount := PQWord(Disk^.Virtio.DeviceConfiguration)^;
   Disk^.SupportsDiscard := (Accepted and (QWord(1) shl FeatureDiscard)) <> 0;

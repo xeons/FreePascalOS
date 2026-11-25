@@ -22,7 +22,9 @@
   A resource is a picture the host keeps (a width, a height, a pixel
   format), backed by guest memory it copies from: here one physically
   contiguous piece each, lines of width times 4 bytes. Drawing goes to
-  that memory; copying a rectangle to the host (transfer to host) and
+  that memory (streaming DMA memory: cleaned from the caches before each
+  transfer, Io.Dma, and given to the device by its device address);
+  copying a rectangle to the host (transfer to host) and
   then flushing it shows it on the scanouts the resource is set to.
 
   Each routine here only begins its command in the device's batch
@@ -35,6 +37,7 @@ unit Drivers.VirtioGpuResources;
 interface
 
 uses
+  Io.Dma,
   Drivers.DisplayDevice,
   Drivers.VirtioGpuQueues;
 
@@ -50,9 +53,13 @@ type
     { The memory behind it: enough for the largest mode offered. }
     FramebufferPhysical: QWord;
     FramebufferBytes: QWord;
+    { Streaming DMA memory of the device (FramebufferPhysical is its
+      physical address, for the programs that map it). }
+    FramebufferMemory: TDmaBuffer;
     { The cursor's 64 x 64 resource, backed by the cursor image page. }
     CursorResourceId: LongWord;
     CursorImagePhysical: QWord;
+    CursorImageMemory: TDmaBuffer;
     { What the device was last told of the cursor. }
     Cursor: TDisplayCursor;
     CursorShown: Boolean;
@@ -63,7 +70,7 @@ type
 
 function NewGpuResourceId(Device: PGpuDevice): LongWord;
 function BeginCreateResource(Device: PGpuDevice; ResourceId, Format, Width, Height: LongWord): Boolean;
-function BeginAttachBacking(Device: PGpuDevice; ResourceId: LongWord; Physical, Bytes: QWord): Boolean;
+function BeginAttachBacking(Device: PGpuDevice; ResourceId: LongWord; DeviceAddress, Bytes: QWord): Boolean;
 function BeginUnreferenceResource(Device: PGpuDevice; ResourceId: LongWord): Boolean;
 function BeginSetScanout(Device: PGpuDevice; Scanout, ResourceId, Width, Height: LongWord): Boolean;
 { Copies the rectangle from the backing (lines of Width * 4 bytes, the
@@ -109,7 +116,7 @@ begin
   Command^.Height := Height;
 end;
 
-function BeginAttachBacking(Device: PGpuDevice; ResourceId: LongWord; Physical, Bytes: QWord): Boolean;
+function BeginAttachBacking(Device: PGpuDevice; ResourceId: LongWord; DeviceAddress, Bytes: QWord): Boolean;
 var
   Command: ^TGpuAttachBacking;
 begin
@@ -119,7 +126,7 @@ begin
     Exit;
   Command^.ResourceId := ResourceId;
   Command^.EntryCount := 1;
-  Command^.Entry.Address := Physical;
+  Command^.Entry.Address := DeviceAddress;
   Command^.Entry.Length := LongWord(Bytes);
 end;
 
