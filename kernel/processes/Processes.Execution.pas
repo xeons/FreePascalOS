@@ -232,6 +232,8 @@ begin
   ReleaseMutex(Process^.Lock);
 
   Result := CreateThreadStorage(Process, ThreadDataStart, ThreadPointer);
+  if Result = ErrorNone then
+    RecordThreadId(Process, ThreadPointer, Thread^.ControlBlock.ThreadId);
   Thread^.UserStackStart := Image.StackStart;
   Thread^.ThreadDataStart := ThreadDataStart;
   Thread^.OwnedAllocationStart := 0;

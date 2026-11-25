@@ -171,6 +171,25 @@ void test_pipes(void) {
 	waitpid(child, NULL, 0);
 	CHECK(strstr(buffer, "hello from C") != NULL, "piped output '%s'", buffer);
 
+	/* A program of the system's own runtime (Free Pascal), exec'd from C. */
+	CHECK(pipe(ends) == 0, "pipe");
+	fflush(stdout);
+	child = fork();
+	if (child == 0) {
+		dup2(ends[1], 1);
+		close(ends[0]);
+		close(ends[1]);
+		execl("/bin/echo", "echo", "from", "pascal", (char *)NULL);
+		_exit(127);
+	}
+	close(ends[1]);
+	read_all(ends[0], buffer, sizeof(buffer));
+	close(ends[0]);
+	int status = 0;
+	waitpid(child, &status, 0);
+	CHECK(strcmp(buffer, "from pascal\n") == 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		"/bin/echo said '%s', status %#x", buffer, status);
+
 	FILE *output = popen("/usr/bin/hello", "r");
 	CHECK(output != NULL, "popen: %s", strerror(errno));
 	if (output) {

@@ -10741,7 +10741,7 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
 `popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running; 405
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`); 407
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own. `make c-test` boots
