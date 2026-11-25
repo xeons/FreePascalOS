@@ -41,8 +41,10 @@ uses
 { Fills States (from index 0) with this processor's idle states;
   returns how many. }
 function ArchDiscoverIdleStates(var States: array of TIdleState): Integer;
-{ Waits in State until an interrupt (interrupts enabled), on the
-  processor numbered ProcessorIndex. }
+{ Waits in State until an interrupt, on the processor numbered
+  ProcessorIndex. Called with interrupts disabled; they are enabled by
+  the wait itself, so one that came since the caller disabled them
+  ends it at once (and is taken on return). }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
 { ACPI's _CST states are x86-64's: none is taken here. }
 function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;
@@ -123,10 +125,14 @@ begin
   end;
 end;
 
+{ A standby state, like WFI, returns for a pending interrupt even while
+  PSTATE.I masks it; it is taken once they are enabled again. }
 procedure ArchEnterIdleState(constref State: TIdleState; ProcessorIndex: LongWord);
 begin
-  if (State.Method <> IdleMethodFirmwareSuspend) or not PsciSuspendProcessor(State.Parameter) then
-    HaltProcessor;
+  if (State.Method = IdleMethodFirmwareSuspend) and PsciSuspendProcessor(State.Parameter) then
+    EnableInterrupts
+  else
+    EnableInterruptsAndHalt;
 end;
 
 function ArchIdleStateFromFirmware(CStateType, Hint, LatencyMicroseconds: LongWord;

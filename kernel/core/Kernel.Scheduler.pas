@@ -86,6 +86,11 @@ const
   index N; AllProcessors for any). A thread running or queued where it
   may no longer run moves at once. }
 procedure SetThreadAffinity(Thread: PThreadControlBlock; Mask: QWord);
+{ SetThreadAffinity only if Thread's mask is still Expected (nobody else
+  changed it meanwhile); False, and nothing changed, if it is not. }
+function ReplaceThreadAffinity(Thread: PThreadControlBlock; Expected, Mask: QWord): Boolean;
+{ SetThreadAffinity, returning the mask it replaced (in one step). }
+function ExchangeThreadAffinity(Thread: PThreadControlBlock; Mask: QWord): QWord;
 
 { Turns the currently executing boot code into the idle thread, described
   by IdleThread, and enables scheduling. }
@@ -136,6 +141,9 @@ procedure TerminateCurrentThread; noreturn;
 { Removes one terminated thread from the scheduler's terminated list,
   or returns nil. Its stack is no longer in use and may be freed. }
 function TakeTerminatedThread: PThreadControlBlock;
+{ Whether the terminated list holds a thread (a moment's look, without
+  the lock: for the idle thread to wake the reaper). }
+function TerminatedThreadsArePending: Boolean;
 
 { Called by the executing processor's clock interrupt at ClockLevel, at
   clock time Now, with the number of 10 ms ticks that passed since the
@@ -386,8 +394,9 @@ var
   SliceOver: Boolean;
 begin
   Running := Processor^.RunningThread;
-  SliceOver := Processor^.QuantumHasExpired;
-  Processor^.QuantumHasExpired := False;
+  { The clock interrupt sets it at a higher level on this processor, so
+    read and clear in one step. }
+  SliceOver := AtomicExchange(Processor^.QuantumHasExpired, 0) <> 0;
   if Running = Processor^.IdleThread then
   begin
     MustLeave := False;
@@ -580,7 +589,7 @@ begin
   for Index := 0 to ProcessorTotal - 1 do
   begin
     Processor := ProcessorByIndex(Index);
-    if Processor^.IsOnline and (Processor^.RunningThread <> Processor^.IdleThread) then
+    if (Processor <> nil) and Processor^.IsOnline and (Processor^.RunningThread <> Processor^.IdleThread) then
       Inc(Result);
   end;
 end;
@@ -595,6 +604,11 @@ begin
   for Index := 0 to 2 do
     LoadAverage[Index] := (LoadAverage[Index] * LoadDecay[Index] +
       Runnable * (LoadOne - LoadDecay[Index])) shr LoadFractionBits;
+end;
+
+function TerminatedThreadsArePending: Boolean;
+begin
+  Result := PListEntry(AtomicLoad(PtrUInt(TerminatedThreads.Next))) <> @TerminatedThreads;
 end;
 
 procedure GetLoadAverages(out OneMinute, FiveMinutes, FifteenMinutes: LongWord);
@@ -628,7 +642,7 @@ begin
       Thread^.QuantumRemaining := Thread^.QuantumRemaining - LongInt(ElapsedTicks);
       if Thread^.QuantumRemaining <= 0 then
       begin
-        Processor^.QuantumHasExpired := True;
+        AtomicStore(Processor^.QuantumHasExpired, 1);
         DispatchNeeded := True;
       end;
     end;
@@ -813,6 +827,7 @@ procedure SetThreadPriority(Thread: PThreadControlBlock; Priority: LongWord);
 var
   PreviousLevel: TPriorityLevel;
   Processor: PProcessor;
+  Lowered: Boolean;
 begin
   if Priority > HighestThreadPriority then
     Priority := HighestThreadPriority;
@@ -835,21 +850,23 @@ begin
   end
   else
   begin
+    Lowered := Priority < Thread^.Priority;
     Thread^.Priority := Priority;
     SetRunningPriority(Processor, Priority);
     UnlockProcessor(Processor);
+    { Running, and now less important: a ready thread may now come
+      first there (PreemptIfNeeded decides). }
+    if Lowered then
+      RequestDispatchOn(Processor);
   end;
   ReleaseDispatcherLock(PreviousLevel);
 end;
 
-procedure SetThreadAffinity(Thread: PThreadControlBlock; Mask: QWord);
+{ Sets the mask with the dispatcher lock held. }
+procedure ApplyThreadAffinityLocked(Thread: PThreadControlBlock; Mask: QWord);
 var
-  PreviousLevel: TPriorityLevel;
   Processor: PProcessor;
 begin
-  if Mask = 0 then
-    Mask := AllProcessors;
-  PreviousLevel := AcquireDispatcherLock;
   Processor := LockProcessorOfThreadLocked(Thread);
   Thread^.AffinityMask := Mask;
   if Processor <> nil then
@@ -869,6 +886,43 @@ begin
       RequestDispatchOn(Processor);
     end;
   end;
+end;
+
+procedure SetThreadAffinity(Thread: PThreadControlBlock; Mask: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if Mask = 0 then
+    Mask := AllProcessors;
+  PreviousLevel := AcquireDispatcherLock;
+  ApplyThreadAffinityLocked(Thread, Mask);
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+function ExchangeThreadAffinity(Thread: PThreadControlBlock; Mask: QWord): QWord;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if Mask = 0 then
+    Mask := AllProcessors;
+  PreviousLevel := AcquireDispatcherLock;
+  Result := Thread^.AffinityMask;
+  ApplyThreadAffinityLocked(Thread, Mask);
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+function ReplaceThreadAffinity(Thread: PThreadControlBlock; Expected, Mask: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if Expected = 0 then
+    Expected := AllProcessors;
+  if Mask = 0 then
+    Mask := AllProcessors;
+  PreviousLevel := AcquireDispatcherLock;
+  Result := Thread^.AffinityMask = Expected;
+  if Result then
+    ApplyThreadAffinityLocked(Thread, Mask);
   ReleaseDispatcherLock(PreviousLevel);
 end;
 
@@ -940,7 +994,7 @@ begin
   IdleThread^.Priority := IdlePriority;
   IdleThread^.BasePriority := IdlePriority;
   IdleThread^.AddressSpaceRoot := KernelPageTableRoot;
-  Processor^.QuantumHasExpired := False;
+  Processor^.QuantumHasExpired := 0;
   Processor^.IdleThread := IdleThread;
   Processor^.RunningThread := IdleThread;
   SetRunningPriority(Processor, IdlePriority);
