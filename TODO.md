@@ -2019,7 +2019,8 @@ in the order they would be built:
 - [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
 - [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
 - [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
-- [ ] Clang driver support (`--target=x86_64-freepascalos`)
+- [x] Clang driver support (`--target=x86_64-freepascalos`, `aarch64-freepascalos`):
+      LLVM 23.1.6 patches, `make clang-toolchain`, ctest built by Clang
 - [ ] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,
       CallQueryMemoryResidency 215); clock_gettime from the clock page
       (AuxiliaryClockPage) instead of a system call
