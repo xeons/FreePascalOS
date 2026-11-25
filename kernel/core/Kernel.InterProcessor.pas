@@ -167,11 +167,15 @@ procedure WaitForShootdownAnswers(Root: QWord; StartAddress: QWord; PageCount: L
 var
   Index: LongWord;
   Spins: QWord;
+  Target: PProcessor;
 begin
   for Index := 0 to ProcessorTotal - 1 do
   begin
+    Target := ProcessorByIndex(Index);
+    if Target = nil then
+      Continue;
     Spins := 0;
-    while AtomicLoad(ProcessorByIndex(Index)^.ShootdownPending) <> 0 do
+    while AtomicLoad(Target^.ShootdownPending) <> 0 do
     begin
       CpuRelax;
       Inc(Spins);
