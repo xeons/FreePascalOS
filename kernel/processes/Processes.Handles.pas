@@ -74,6 +74,8 @@ type
     HandleKindSocket,
     { A semaphore (Processes.ObjectCalls). }
     HandleKindSemaphore,
+    { A mutex (Processes.ObjectCalls). }
+    HandleKindMutex,
     { Held for an object about to be stored (ReserveHandle): taken, but
       not usable and never looked up. }
     HandleKindReserved

@@ -130,8 +130,9 @@ function SendMessage(Channel: PChannelEnd; Message: PChannelMessage): LongInt;
 function ReceiveMessage(Channel: PChannelEnd; Capacity, HandleCapacity: LongWord; out Message: PChannelMessage;
   out Needed, NeededHandles: LongWord): LongInt;
 
-{ A port named Name (the caller's reference); ErrorExists if taken. }
-function CreatePort(Name: PChar; out Port: PPort): LongInt;
+{ A port named Name (the caller's reference), \Ports\<Name> in the
+  object namespace, owned by OwnerId and GroupId; ErrorExists if taken. }
+function CreatePort(Name: PChar; OwnerId, GroupId: LongWord; out Port: PPort): LongInt;
 { Connects Client to the port named Name: the client's end (the
   caller's reference). ErrorNotFound, ErrorBusy (too many waiting). }
 function ConnectToPort(Name: PChar; const Client: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
@@ -145,10 +146,14 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Memory.KernelHeap,
-  Objects.Manager;
+  Objects.Manager,
+  Objects.Namespace;
 
 const
-  PortNamePrefix: PChar = 'port:';
+  PortNamePrefix: PChar = '\Ports\';
+  PortPathCapacity = 8 + MaximumPortNameLength + 1;
+  { Anyone may connect (the server checks its peers). }
+  PortNameMode = $1B6; { rw-rw-rw- }
 
 var
   ChannelObjectType: TObjectType;
@@ -385,45 +390,49 @@ end;
 
 { --- Ports -------------------------------------------------------------- }
 
-{ "port:" and Name into Buffer; False if Name is empty or too long. }
+{ The port's path in the object namespace, \Ports\ and Name, into
+  Buffer; False if Name is empty, too long or has a backslash. }
 function PortObjectName(Name: PChar; Buffer: PChar): Boolean;
 var
   Length: PtrUInt;
+  Index: PtrUInt;
 begin
   Length := TextLength(Name);
   if (Length = 0) or (Length > MaximumPortNameLength) then
     Exit(False);
+  for Index := 1 to Length do
+    if Name[Index - 1] = '\' then
+      Exit(False);
   CopyMemory(Buffer, PortNamePrefix, TextLength(PortNamePrefix));
   CopyMemory(Buffer + TextLength(PortNamePrefix), Name, Length + 1);
   Result := True;
 end;
 
-function CreatePort(Name: PChar; out Port: PPort): LongInt;
+function CreatePort(Name: PChar; OwnerId, GroupId: LongWord; out Port: PPort): LongInt;
 var
-  ObjectName: array[0..ObjectNameLength - 1] of Char;
-  Existing: Pointer;
+  ObjectName: array[0..PortPathCapacity - 1] of Char;
 begin
   Port := nil;
   if not PortObjectName(Name, @ObjectName[0]) then
     Exit(ErrorInvalidArgument);
-  Existing := LookupObjectByName(@ObjectName[0], nil);
-  if Existing <> nil then
-  begin
-    DereferenceObject(Existing);
-    Exit(ErrorExists);
-  end;
-  Port := PPort(CreateObject(PortObjectType, @ObjectName[0]));
+  Port := PPort(CreateObject(PortObjectType, nil));
   if Port = nil then
-    Exit(ErrorExists);
+    Exit(ErrorOutOfMemory);
   InitializeMutex(Port^.Lock);
   InitializeListHead(Port^.PendingEnds);
   InitializeEvent(Port^.Pending, EventKindNotification, False);
-  Result := ErrorNone;
+  { Named only once ready: whoever finds it may connect at once. }
+  Result := InsertObjectName(Port, @ObjectName[0], OwnerId, GroupId, PortNameMode, KernelNamespaceCaller);
+  if Result <> ErrorNone then
+  begin
+    DereferenceObject(Port);
+    Port := nil;
+  end;
 end;
 
 function ConnectToPort(Name: PChar; const Client: TAbiChannelPeer; out Channel: PChannelEnd): LongInt;
 var
-  ObjectName: array[0..ObjectNameLength - 1] of Char;
+  ObjectName: array[0..PortPathCapacity - 1] of Char;
   Port: PPort;
   ServerEnd: PChannelEnd;
 begin

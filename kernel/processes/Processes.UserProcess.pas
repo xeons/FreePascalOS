@@ -89,6 +89,9 @@ type
     OomScoreAdjust: LongInt;
     { The starting process's restrictions (Processes.Restrictions). }
     Restrictions: LongWord;
+    { Its user may not read the program (OpenProgramFile): AT_SECURE is
+      set, and so is TProcess.ImageUnreadable. }
+    ImageUnreadable: Boolean;
     { More handles it gets, with their numbers (after the standard ones,
       so a passed 0, 1 or 2 replaces one). }
     PassedHandles: TPassedHandles;
@@ -424,7 +427,7 @@ begin
   PutSlot(AuxiliaryEffectiveGroupId);
   PutSlot(Startup.Credentials.EffectiveGroupId);
   PutSlot(AuxiliarySecure);
-  PutSlot(Ord(CredentialsAreSecure(Startup.Credentials)));
+  PutSlot(Ord(CredentialsAreSecure(Startup.Credentials) or Startup.ImageUnreadable));
   PutSlot(AuxiliaryRandomBytes);
   PutSlot(RandomPosition);
   PutSlot(AuxiliaryProgramName);
@@ -500,6 +503,7 @@ begin
   Process^.ProcessCountLimit := Startup.ProcessCountLimit;
   Process^.OomScoreAdjust := Startup.OomScoreAdjust;
   Process^.Restrictions := Startup.Restrictions;
+  Process^.ImageUnreadable := Startup.ImageUnreadable;
   Result := CreateAddressSpace(Space);
   if Result = ErrorNone then
   begin

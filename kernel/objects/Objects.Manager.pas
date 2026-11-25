@@ -26,8 +26,12 @@
   object is deleted (through its type's delete routine) when the last
   reference is dropped.
 
-  Named objects are entered in a single, flat namespace and can be found
-  by name. A hierarchical namespace can be layered on top later.
+  A named object has a place in the object namespace (Objects.Namespace):
+  a tree of directories, with paths like \Device\keyboard. Its name
+  goes when the object is deleted, or earlier if it is removed. The
+  name, the directory it is in, and the owner and mode that guard it
+  are in the header's name record (TObjectNameRecord), which the
+  namespace manages.
 
   A reference count never wraps: one that reaches ObjectReferenceCountLimit
   (only a reference leak gets there) stays there, with a warning in the
@@ -51,23 +55,58 @@ unit Objects.Manager;
 interface
 
 uses
+  Abi.SystemCalls,
   Runtime.LinkedList;
 
 const
-  ObjectNameLength = 32;
+  { One name of a path, its terminating zero included. }
+  ObjectNameLength = ObjectNameCapacity;
+  ObjectTypeNameLength = 32;
   { Where a reference count saturates. }
   ObjectReferenceCountLimit = Int64(1) shl 40;
+
+  { TObjectNameRecord.Flags. }
+  { The object was given a name once (it may have been removed since):
+    its deletion asks the namespace to let go of the name. }
+  NameFlagEverNamed = $01;
+  { The namespace holds a reference of its own (a directory), so the
+    object stays until its name is removed. }
+  NameFlagPermanent = $02;
+  { A directory a program made (CallCreateObjectDirectory): one that may
+    be removed. The kernel's stay. }
+  NameFlagMadeByProgram = $04;
 
 type
   TObjectDeleteRoutine = procedure(ObjectBody: Pointer);
 
   PObjectType = ^TObjectType;
   TObjectType = record
-    Name: array[0..ObjectNameLength - 1] of Char;
+    Name: array[0..ObjectTypeNameLength - 1] of Char;
     BodySize: QWord;
     DeleteRoutine: TObjectDeleteRoutine;
     LiveObjectCount: Int64;
+    { The handle kind (Abi HandleKind*) a program opens an object of this
+      type by name as (CallOpenNamedObject); 0 if it cannot. }
+    OpenKind: LongWord;
     TypeLink: TListEntry;
+  end;
+
+  { Where an object is in the namespace; changed only by
+    Objects.Namespace, under its lock. }
+  PObjectNameRecord = ^TObjectNameRecord;
+  TObjectNameRecord = record
+    { The directory (its body) the object is named in; nil while it has
+      no name. }
+    Parent: Pointer;
+    { In the parent directory's list of entries. }
+    Link: TListEntry;
+    OwnerId: LongWord;
+    GroupId: LongWord;
+    { Permission bits as for files (rwx for owner, group, others), and
+      ObjectModeSticky for a directory. }
+    Mode: LongWord;
+    Flags: LongWord;
+    Name: array[0..ObjectNameLength - 1] of Char;
   end;
 
 procedure InitializeObjectManager;
@@ -77,22 +116,38 @@ procedure InitializeObjectManager;
   released. }
 procedure RegisterObjectType(var ObjectType: TObjectType; Name: PChar;
   BodySize: QWord; DeleteRoutine: TObjectDeleteRoutine);
+{ Lets programs open objects of the type by name, as handles of Kind. }
+procedure SetObjectTypeOpenKind(var ObjectType: TObjectType; Kind: LongWord);
 
 { Creates an object with a reference count of one, owned by the caller.
-  The body is zero filled. Name may be nil for an unnamed object. Returns
-  nil if memory ran out or the name is already taken. }
-function CreateObject(var ObjectType: TObjectType; Name: PChar): Pointer;
+  The body is zero filled. Path (a full namespace path, \Kernel\Console)
+  may be nil for an unnamed object; a named one is owned by root, mode
+  0600. Returns nil if memory ran out or the name could not be had. }
+function CreateObject(var ObjectType: TObjectType; Path: PChar): Pointer;
+{ The same with the name's owner and mode, and why it failed. }
+function CreateNamedObject(var ObjectType: TObjectType; Path: PChar; OwnerId, GroupId, Mode: LongWord;
+  out Error: LongInt): Pointer;
 
 procedure ReferenceObject(ObjectBody: Pointer);
+{ Adds a reference unless the object is being deleted (its count
+  reached zero): False then. For finding objects in lists that do not
+  hold references (the namespace). }
+function TryReferenceObject(ObjectBody: Pointer): Boolean;
 procedure DereferenceObject(ObjectBody: Pointer);
 
-{ Finds a named object and returns it with an extra reference, or nil.
-  When ExpectedType is not nil the object must be of that type. }
-function LookupObjectByName(Name: PChar; ExpectedType: PObjectType): Pointer;
+{ Finds a named object by its full path and returns it with an extra
+  reference, or nil; no permission checks (for the kernel). When
+  ExpectedType is not nil the object must be of that type. }
+function LookupObjectByName(Path: PChar; ExpectedType: PObjectType): Pointer;
 
 function ObjectTypeOf(ObjectBody: Pointer): PObjectType;
+{ The object's own name (the last part of its path), '' if unnamed. }
 function ObjectNameOf(ObjectBody: Pointer): PChar;
 function ObjectReferenceCount(ObjectBody: Pointer): Int64;
+{ For Objects.Namespace: the name record in an object's header, and the
+  object a record's Link belongs to. }
+function ObjectNameRecordOf(ObjectBody: Pointer): PObjectNameRecord;
+function ObjectOfNameLink(Entry: PListEntry): Pointer;
 
 { For the self tests only: puts an object's count at Count, so the
   saturation can be reached without 2^40 references. }
@@ -107,6 +162,7 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Memory.KernelHeap,
+  Objects.Namespace,
   Kernel.SpinLock,
   Kernel.PriorityLevel,
   Kernel.Panic,
@@ -117,22 +173,21 @@ const
   ObjectHeaderSignature = LongWord($4A424F46); { 'FOBJ' }
   DeletedObjectSignature = LongWord($44454C44); { 'DLED' }
 
-  ObjectFlagNamed = 1;
+  KernelNameMode = $180; { rw------- }
 
 type
   PObjectHeader = ^TObjectHeader;
   TObjectHeader = record
     Signature: LongWord;
-    Flags: LongWord;
+    Reserved: LongWord;
     ReferenceCount: Int64;
     ObjectType: PObjectType;
-    NamespaceLink: TListEntry;
-    Name: array[0..ObjectNameLength - 1] of Char;
+    NameRecord: TObjectNameRecord;
   end;
 
 var
-  NamespaceLock: TSpinLock;
-  NamedObjects: TListEntry;
+  { Guards the list of types. }
+  TypeListLock: TSpinLock;
   ObjectTypes: TListEntry;
 
 { The header is padded to a multiple of 16 bytes so bodies stay aligned. }
@@ -157,9 +212,9 @@ begin
   Result := Pointer(PByte(Header) + HeaderSize);
 end;
 
-function HeaderFromNamespaceLink(Entry: PListEntry): PObjectHeader;
+function HeaderOfNameLink(Entry: PListEntry): PObjectHeader;
 begin
-  Result := PObjectHeader(ContainingRecord(Entry, FieldOffset(PObjectHeader(nil)^.NamespaceLink)));
+  Result := PObjectHeader(ContainingRecord(Entry, FieldOffset(PObjectHeader(nil)^.NameRecord.Link)));
 end;
 
 function TypeFromTypeLink(Entry: PListEntry): PObjectType;
@@ -169,9 +224,9 @@ end;
 
 procedure InitializeObjectManager;
 begin
-  InitializeSpinLock(NamespaceLock);
-  InitializeListHead(NamedObjects);
+  InitializeSpinLock(TypeListLock);
   InitializeListHead(ObjectTypes);
+  InitializeObjectNamespace;
 end;
 
 procedure RegisterObjectType(var ObjectType: TObjectType; Name: PChar;
@@ -183,64 +238,56 @@ begin
   ObjectType.BodySize := BodySize;
   ObjectType.DeleteRoutine := DeleteRoutine;
   ObjectType.LiveObjectCount := 0;
+  ObjectType.OpenKind := 0;
 
-  PreviousLevel := AcquireSpinLock(NamespaceLock);
+  PreviousLevel := AcquireSpinLock(TypeListLock);
   InsertAtTail(ObjectTypes, @ObjectType.TypeLink);
-  ReleaseSpinLock(NamespaceLock, PreviousLevel);
+  ReleaseSpinLock(TypeListLock, PreviousLevel);
 end;
 
-{ Called with the namespace lock held. }
-function FindNamedObjectLocked(Name: PChar): PObjectHeader;
-var
-  Entry: PListEntry;
-  Header: PObjectHeader;
+procedure SetObjectTypeOpenKind(var ObjectType: TObjectType; Kind: LongWord);
 begin
-  Entry := NamedObjects.Next;
-  while Entry <> @NamedObjects do
-  begin
-    Header := HeaderFromNamespaceLink(Entry);
-    if TextIsEqual(@Header^.Name[0], Name) then
-      Exit(Header);
-    Entry := Entry^.Next;
-  end;
-  Result := nil;
+  ObjectType.OpenKind := Kind;
 end;
 
-function CreateObject(var ObjectType: TObjectType; Name: PChar): Pointer;
+function CreateNamedObject(var ObjectType: TObjectType; Path: PChar; OwnerId, GroupId, Mode: LongWord;
+  out Error: LongInt): Pointer;
 var
   Header: PObjectHeader;
-  PreviousLevel: TPriorityLevel;
-  IsNamed: Boolean;
 begin
+  Error := ErrorNone;
   Header := PObjectHeader(AllocateZeroedKernelMemory(HeaderSize + ObjectType.BodySize));
   if Header = nil then
+  begin
+    Error := ErrorOutOfMemory;
     Exit(nil);
+  end;
 
   Header^.Signature := ObjectHeaderSignature;
   Header^.ReferenceCount := 1;
   Header^.ObjectType := @ObjectType;
-  InitializeListHead(Header^.NamespaceLink);
+  InitializeListHead(Header^.NameRecord.Link);
 
-  IsNamed := (Name <> nil) and (Name^ <> #0);
-  if IsNamed then
+  if (Path <> nil) and (Path^ <> #0) then
   begin
-    CopyText(@Header^.Name[0], Name, ObjectNameLength);
-    Header^.Flags := ObjectFlagNamed;
-
-    PreviousLevel := AcquireSpinLock(NamespaceLock);
-    if FindNamedObjectLocked(@Header^.Name[0]) <> nil then
+    Error := InsertObjectName(BodyOf(Header), Path, OwnerId, GroupId, Mode, KernelNamespaceCaller);
+    if Error <> ErrorNone then
     begin
-      ReleaseSpinLock(NamespaceLock, PreviousLevel);
       Header^.Signature := DeletedObjectSignature;
       FreeKernelMemory(Header);
       Exit(nil);
     end;
-    InsertAtTail(NamedObjects, @Header^.NamespaceLink);
-    ReleaseSpinLock(NamespaceLock, PreviousLevel);
   end;
 
   AtomicIncrement(ObjectType.LiveObjectCount);
   Result := BodyOf(Header);
+end;
+
+function CreateObject(var ObjectType: TObjectType; Path: PChar): Pointer;
+var
+  Error: LongInt;
+begin
+  Result := CreateNamedObject(ObjectType, Path, 0, 0, KernelNameMode, Error);
 end;
 
 procedure WarnReferenceCountSaturated(Header: PObjectHeader);
@@ -254,10 +301,10 @@ begin
   DebugWrite(@Header^.ObjectType^.Name[0]);
   DebugWrite(' object ');
   DebugWriteAddress(QWord(BodyOf(Header)));
-  if Header^.Name[0] <> #0 then
+  if Header^.NameRecord.Name[0] <> #0 then
   begin
     DebugWrite(' (');
-    DebugWrite(@Header^.Name[0]);
+    DebugWrite(@Header^.NameRecord.Name[0]);
     DebugWrite(')');
   end;
   DebugWriteLine(' saturated (a reference leak); the object is kept for good');
@@ -287,19 +334,25 @@ begin
       'referencing an object that is being deleted', QWord(ObjectBody), 0, 0, 0);
 end;
 
+function TryReferenceObject(ObjectBody: Pointer): Boolean;
+var
+  Header: PObjectHeader;
+begin
+  Header := HeaderOf(ObjectBody);
+  Result := TakeReference(Header) > 1;
+  if not Result then
+    AtomicDecrement(Header^.ReferenceCount);
+end;
+
 procedure DeleteObject(Header: PObjectHeader);
 var
-  PreviousLevel: TPriorityLevel;
   ObjectType: PObjectType;
 begin
   ObjectType := Header^.ObjectType;
 
-  if (Header^.Flags and ObjectFlagNamed) <> 0 then
-  begin
-    PreviousLevel := AcquireSpinLock(NamespaceLock);
-    RemoveListEntry(@Header^.NamespaceLink);
-    ReleaseSpinLock(NamespaceLock, PreviousLevel);
-  end;
+  { Unnamed objects (most) never touch the namespace's lock. }
+  if (Header^.NameRecord.Flags and NameFlagEverNamed) <> 0 then
+    DetachObjectName(BodyOf(Header));
 
   if Assigned(ObjectType^.DeleteRoutine) then
     ObjectType^.DeleteRoutine(BodyOf(Header));
@@ -326,26 +379,10 @@ begin
     DeleteObject(Header);
 end;
 
-function LookupObjectByName(Name: PChar; ExpectedType: PObjectType): Pointer;
-var
-  PreviousLevel: TPriorityLevel;
-  Header: PObjectHeader;
+function LookupObjectByName(Path: PChar; ExpectedType: PObjectType): Pointer;
 begin
-  Result := nil;
-  PreviousLevel := AcquireSpinLock(NamespaceLock);
-
-  Header := FindNamedObjectLocked(Name);
-  if (Header <> nil) and ((ExpectedType = nil) or (Header^.ObjectType = ExpectedType)) then
-  begin
-    { Taking the reference under the lock keeps the object alive even if
-      its last other reference is dropped right after we unlock. }
-    if TakeReference(Header) > 1 then
-      Result := BodyOf(Header)
-    else
-      AtomicDecrement(Header^.ReferenceCount);
-  end;
-
-  ReleaseSpinLock(NamespaceLock, PreviousLevel);
+  if LookupObjectPath(Path, ExpectedType, KernelNamespaceCaller, 0, Result) <> ErrorNone then
+    Result := nil;
 end;
 
 function ObjectTypeOf(ObjectBody: Pointer): PObjectType;
@@ -355,7 +392,17 @@ end;
 
 function ObjectNameOf(ObjectBody: Pointer): PChar;
 begin
-  Result := @HeaderOf(ObjectBody)^.Name[0];
+  Result := @HeaderOf(ObjectBody)^.NameRecord.Name[0];
+end;
+
+function ObjectNameRecordOf(ObjectBody: Pointer): PObjectNameRecord;
+begin
+  Result := @HeaderOf(ObjectBody)^.NameRecord;
+end;
+
+function ObjectOfNameLink(Entry: PListEntry): Pointer;
+begin
+  Result := BodyOf(HeaderOfNameLink(Entry));
 end;
 
 function ObjectReferenceCount(ObjectBody: Pointer): Int64;
@@ -370,7 +417,7 @@ end;
 
 procedure WriteObjectManagerSummary;
 const
-  MaximumReportedTypes = 16;
+  MaximumReportedTypes = 24;
 var
   PreviousLevel: TPriorityLevel;
   Entry: PListEntry;
@@ -380,9 +427,9 @@ var
   Index: Integer;
 begin
   { Take a snapshot first: the debug output lock runs at HighLevel, where
-    the dispatch level namespace lock can no longer be acquired. }
+    the dispatch level type list lock can no longer be acquired. }
   ReportedTypeCount := 0;
-  PreviousLevel := AcquireSpinLock(NamespaceLock);
+  PreviousLevel := AcquireSpinLock(TypeListLock);
   Entry := ObjectTypes.Next;
   while (Entry <> @ObjectTypes) and (ReportedTypeCount < MaximumReportedTypes) do
   begin
@@ -391,7 +438,7 @@ begin
     Inc(ReportedTypeCount);
     Entry := Entry^.Next;
   end;
-  ReleaseSpinLock(NamespaceLock, PreviousLevel);
+  ReleaseSpinLock(TypeListLock, PreviousLevel);
 
   DebugBeginMessage;
   DebugWriteTag('objects');

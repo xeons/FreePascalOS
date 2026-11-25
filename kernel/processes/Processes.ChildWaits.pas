@@ -51,6 +51,10 @@ function PerformWaitForChild(ProcessId: Int64; StatusAddress: QWord; Flags: QWor
 function PerformSetProcessGroup(ProcessId, GroupId: QWord): Int64;
 function PerformCreateSession: Int64;
 function PerformGetProcessGroupOf(ProcessId, Which: QWord): Int64;
+{ True if a running process of session SessionId is in group GroupId:
+  the groups a new process may be started in (CallCreateProcess
+  GroupId), as setpgid may join. }
+function GroupExistsInSession(GroupId, SessionId: QWord): Boolean;
 
 implementation
 
@@ -294,6 +298,13 @@ begin
   Search.Found := False;
   VisitRunningProcessesLocked(@NoteGroupMember, @Search);
   Result := Search.Found;
+end;
+
+function GroupExistsInSession(GroupId, SessionId: QWord): Boolean;
+begin
+  LockProcessRegistry;
+  Result := GroupExistsInSessionLocked(GroupId, SessionId);
+  UnlockProcessRegistry;
 end;
 
 function PerformSetProcessGroup(ProcessId, GroupId: QWord): Int64;

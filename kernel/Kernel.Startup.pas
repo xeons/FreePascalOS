@@ -83,6 +83,7 @@ uses
   Kernel.FileSystemWriteTest,
   Runtime.Checksums,
   Objects.Manager,
+  Objects.Mutexes,
   Io.Startup,
   Network.Startup,
   Network.LogStreaming,
@@ -244,6 +245,7 @@ begin
   InitializePipes;
   InitializeEventObjects;
   InitializeSemaphoreObjects;
+  InitializeMutexObjects;
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;

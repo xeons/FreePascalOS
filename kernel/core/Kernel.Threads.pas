@@ -181,6 +181,11 @@ type
 
     { The thread object that embeds this block, if any. }
     Owner: Pointer;
+
+    { The mutexes (PEvent, kind EventKindMutex) the thread owns, linked
+      by their NextOwned; nil for none. Given up as abandoned when the
+      thread ends (Kernel.MutexEvents). Dispatcher lock. }
+    OwnedMutexes: Pointer;
   end;
 
 { The 16-byte aligned FXSAVE area inside Thread^.FpuState. }

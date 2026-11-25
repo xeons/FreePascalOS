@@ -45,6 +45,7 @@ function CreateSemaphoreObject(InitialCount, Limit: LongInt): PSemaphoreObject;
 implementation
 
 uses
+  Abi.SystemCalls,
   Objects.Manager;
 
 var
@@ -53,6 +54,7 @@ var
 procedure InitializeSemaphoreObjects;
 begin
   RegisterObjectType(SemaphoreObjectType, 'Semaphore', SizeOf(TSemaphoreObject), nil);
+  SetObjectTypeOpenKind(SemaphoreObjectType, HandleKindSemaphore);
 end;
 
 function CreateSemaphoreObject(InitialCount, Limit: LongInt): PSemaphoreObject;

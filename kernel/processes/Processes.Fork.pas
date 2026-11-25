@@ -92,6 +92,7 @@ begin
   Child^.ProcessCountLimit := Parent^.ProcessCountLimit;
   Child^.OomScoreAdjust := Parent^.OomScoreAdjust;
   Child^.Restrictions := Parent^.Restrictions;
+  Child^.ImageUnreadable := Parent^.ImageUnreadable;
   SetHandleLimit(Child^.Handles, Parent^.Handles.Limit);
   InheritSignalState(Parent, Child);
 end;

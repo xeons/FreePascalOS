@@ -100,7 +100,7 @@ end;
 procedure InitializeConsole;
 begin
   RegisterObjectType(ConsoleObjectType, 'Console', SizeOf(TConsole), nil);
-  TheConsole := PConsole(CreateObject(ConsoleObjectType, 'Console'));
+  TheConsole := PConsole(CreateObject(ConsoleObjectType, '\Kernel\Console'));
   if TheConsole = nil then
     KernelPanic('could not create the console');
   InitializeLineDiscipline(TheConsole^.Terminal, -1, TheConsole, @ShowOnConsole);

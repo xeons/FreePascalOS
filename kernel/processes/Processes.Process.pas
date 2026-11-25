@@ -192,6 +192,10 @@ type
     { Restrict* flags the process put on itself (Processes.Restrictions):
       only ever added. Inherited. }
     Restrictions: LongWord;
+    { It runs a program its user may not read (mode 0711; see
+      OpenProgramFile): whatever would show its memory or its image to
+      another program must refuse. Set by spawn and exec, kept by fork. }
+    ImageUnreadable: Boolean;
     { Signals and children, for the C library's POSIX calls
       (Processes.Signals, Processes.ChildWaits). }
     Posix: TProcessPosixState;
@@ -317,7 +321,7 @@ begin
   InitializeListHead(RunningProcesses);
   RegisterObjectType(ProcessObjectType, 'Process', SizeOf(TProcess), @DeleteProcess);
 
-  TheSystemProcess := PProcess(CreateObject(ProcessObjectType, 'System'));
+  TheSystemProcess := PProcess(CreateObject(ProcessObjectType, '\Kernel\System'));
   if TheSystemProcess = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the system process', 0, 0, 0, 0);
   InitializeCommonFields(TheSystemProcess, 'System');

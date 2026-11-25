@@ -18,8 +18,8 @@
 
 {
   System calls for the objects programs work together with: events,
-  semaphores, timers, sections, ports and channels (Objects.Events,
-  Objects.Semaphores, Objects.Timers, Objects.Sections,
+  semaphores, mutexes, timers, sections, ports and channels (Objects.Events,
+  Objects.Semaphores, Objects.Mutexes, Objects.Timers, Objects.Sections,
   Processes.Channels). Waiting for them is in
   Processes.WaitCalls; mapping a section in Processes.MappingCalls.
 }
@@ -38,6 +38,8 @@ function PerformSetEvent(Handle: Int64; Signal: Boolean): Int64;
 function PerformCreateSemaphore(InitialCount, Limit: Int64): Int64;
 function PerformReleaseSemaphore(Handle: Int64; ReleaseCount: Int64): Int64;
 function PerformGetSemaphoreCount(Handle: Int64): Int64;
+function PerformCreateMutex(Flags: QWord): Int64;
+function PerformReleaseMutex(Handle: Int64): Int64;
 function PerformCreateTimer(Flags: QWord): Int64;
 function PerformSetTimer(Handle: Int64; DueMilliseconds, PeriodMilliseconds: QWord): Int64;
 function PerformCreateSection(Length: QWord): Int64;
@@ -65,6 +67,8 @@ uses
   Objects.Events,
   Objects.Semaphores,
   Kernel.Semaphores,
+  Objects.Mutexes,
+  Kernel.MutexEvents,
   Objects.Timers,
   Objects.Sections,
   Processes.Process,
@@ -185,6 +189,31 @@ begin
   DereferenceObject(SemaphoreObject);
 end;
 
+{ --- Mutexes ----------------------------------------------------------------- }
+
+function PerformCreateMutex(Flags: QWord): Int64;
+begin
+  if (Flags and not QWord(MutexInitiallyOwned)) <> 0 then
+    Exit(Failure(ErrorInvalidArgument));
+  Result := HandleForNewObject(Processes.Handles.HandleKindMutex,
+    CreateMutexObject((Flags and MutexInitiallyOwned) <> 0));
+end;
+
+function PerformReleaseMutex(Handle: Int64): Int64;
+var
+  MutexObject: PMutexObject;
+  RemainingHolds: LongInt;
+begin
+  MutexObject := PMutexObject(ReferenceHandleOfKind(Handle, Processes.Handles.HandleKindMutex));
+  if MutexObject = nil then
+    Exit(Failure(ErrorBadHandle));
+  if ReleaseMutexEvent(MutexObject^.Event, RemainingHolds) then
+    Result := RemainingHolds
+  else
+    Result := Failure(ErrorNotPermitted);
+  DereferenceObject(MutexObject);
+end;
+
 { --- Timers ------------------------------------------------------------------ }
 
 function PerformCreateTimer(Flags: QWord): Int64;
@@ -261,6 +290,8 @@ end;
 
 { --- Ports and channels -------------------------------------------------------- }
 
+procedure DescribeCaller(out Holder: TAbiChannelPeer); forward;
+
 function FetchPortName(NameAddress: QWord; Name: PChar): LongInt;
 begin
   Result := CopyStringFromUser(NameAddress, Name, MaximumPortNameLength + 1);
@@ -271,12 +302,14 @@ var
   Name: array[0..MaximumPortNameLength] of Char;
   Port: PPort;
   Error: LongInt;
+  Holder: TAbiChannelPeer;
 begin
   if CallerRestricted(RestrictPortConnections) then
     Exit(Failure(ErrorAccessDenied));
   Error := FetchPortName(NameAddress, @Name[0]);
+  DescribeCaller(Holder);
   if Error = ErrorNone then
-    Error := CreatePort(@Name[0], Port);
+    Error := CreatePort(@Name[0], Holder.UserId, Holder.GroupId, Port);
   if Error <> ErrorNone then
     Exit(Failure(Error));
   Result := HandleForNewObject(Processes.Handles.HandleKindPort, Port);
