@@ -284,6 +284,7 @@ var
   Timeout: QWord;
   Now: QWord;
   Outcome: TWaitResult;
+  Depth: LongWord;
 begin
   Timeout := InfiniteTimeout;
   if Deadline <> NeverDue then
@@ -294,9 +295,11 @@ begin
     { Rounded up, so the wait never ends early. }
     Timeout := (Deadline - Now + NanosecondsPerMillisecond - 1) div NanosecondsPerMillisecond;
   end;
-  UnlockNetwork;
+  { The lock is recursive: a caller that already held it must not keep
+    it through the wait, or the network thread could never run. }
+  Depth := ReleaseNetworkLockFully;
   Outcome := WaitForEventWithOptions(Event^, Timeout, True);
-  LockNetwork;
+  ReacquireNetworkLock(Depth);
   case Outcome of
     WaitSignaled: Result := ErrorNone;
     WaitTimedOut: Result := ErrorWouldBlock;

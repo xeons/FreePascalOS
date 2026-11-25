@@ -248,6 +248,10 @@ how the existing pieces fit together.
 - [x] ACPI AML interpreter (namespace, methods, fields over memory, I/O and PCI
       configuration space), PCI interrupt routing from _PRT, shared level
       triggered lines; AC'97 on its line
+- [x] AML hardening: field and buffer field bounds, 128 KiB stack budget, reference,
+      package and field nesting limits, calls on the loop budget, table length caps,
+      malformed-table host test (AmlTest --malformed); PCI decoding left off for a BAR
+      that found no window
 - [x] ACPI events: SCI, power and sleep buttons (fixed and control method), GPEs
       with their _Lxx/_Exx methods, Notify; S5 power off; reset; orderly
       shutdown (poweroff, reboot, halt)
@@ -309,6 +313,23 @@ how the existing pieces fit together.
 - [x] Discard: NVMe Dataset Management, AHCI TRIM, virtio-blk DISCARD, the RAM disk
       frees pages; ext/FAT/exFAT discard what they free (batched, after the metadata is
       durable, ext after its commit; discard=off); fstrim (CallTrimVolume)
+- [x] Hostile or faulty devices fail only themselves (driver audit): HID report
+      offsets in 64 bits, reports over 1 KiB refused, key arrays cut at 256; endpoint
+      0, reserved bits and repeated endpoints refused; xHCI gives up timed out
+      transfers (Stop Endpoint, Set TR Dequeue Pointer, else the slot disabled),
+      recovers halted bulk endpoints, aborts timed out commands, frees the slot and
+      memory of failed enumerations, takes away devices that do not resume; USB storage
+      Bulk-Only reset recovery; NVMe matches completion identifiers and resets the
+      controller on a timeout; AHCI port recovery in a thread; ACPI table lengths
+      checked; usb-descriptor-test (crafted and fuzzed descriptors on guarded
+      pages), nvme-queue-test, acpi-table-test
+- [ ] USB class probes run in the port watcher thread with its port lock held: a
+      slow probe (a disk getting ready) delays unplug handling and suspend (bounded
+      now: a probe stops at the first timeout); bind in a thread of the device's own,
+      with removal racing the probe handled
+- [ ] A coretest that unplugs and replugs a USB disk mid-transfer through QEMU's
+      monitor (test-qemu.sh has no monitor socket yet); a fault-injecting xHCI or
+      NVMe model for the timeout paths
 - [ ] Discard on USB disks (SCSI UNMAP) and SD cards (ERASE); a nodiscard mount option
       once mount options exist; shrinking the image section cache under pressure
 
@@ -363,6 +384,18 @@ how the existing pieces fit together.
 - [ ] Setting times with nanoseconds (utimensat); ext nanoseconds kept when stamping (now cleared)
 - [x] File timestamps beyond modification time; ext4 nanosecond timestamps (access, change,
       birth; CallGetFileTimes, stat, ls --time=)
+- [x] Damaged and hostile disks (file system audit): ext, FAT and exFAT refuse, mount
+      read-only or report StatusCorrupted instead of overrunning buffers or looping
+      (geometry, names, extent headers, orphan list, cluster chains, journal recovery
+      limits); host test with crafted and fuzzed images (make file-system-image-test)
+- [x] VFS: an open root survives a forced unmount; chmod/chown/utimes checked on the node
+      under its volume's lock; exec checks the file it loads; unmount and rename checks
+      under the lock; renaming a folder with a mount below refused; tmpfs files capped
+- [ ] ext: verify metadata checksums when reading (a damaged inode is only caught where
+      its fields are used)
+- [ ] Discards: a gone volume's batch record stays in the registry (as its TVolume does)
+- [ ] Mount records keep paths as text: renaming above a mount point is refused rather
+      than followed
 
 ## User mode
 
@@ -918,6 +951,24 @@ normalized (0-65535), not pixels.
       table (and the resolver's destination order), v4-mapped addresses
       on IPv6 sockets, a stable-privacy identifier (RFC 7217) instead of
       EUI-64
+- [x] Network stack hardening (an audit's findings): 127.0.0.0/8 and
+      ::1 only from lo, and other martian sources and destinations
+      dropped (Network.InputFilter); RFC 6528 initial sequence numbers,
+      RFC 6056 ports, RFC 7739 IPv4 identifications and per-connection
+      timestamp offsets from SipHash keys; RFC 5961 challenge ACKs (SYN,
+      in-window RST, old and new ACKs), rate limited; half-open children
+      without buffers, bounded in all and pushing out their own; zero
+      windows probed while closing, orphans given up; ICMP errors checked
+      against the quoted sequence and source, ICMP and ICMPv6 errors and
+      echo replies rate limited; RFC 5722 overlapping fragments and RFC
+      7112 header chains; router advertisements leave static routes
+      alone; learned path MTUs kept; per-user shares of change watchers,
+      multicast memberships and shared UDP ports; one TCP listener per
+      shared port; netshell timeouts; the kernel DHCP client's sanity
+      checks (TcpTest, Ipv6Test, Kernel.NetworkHardeningSelfTest)
+- [ ] Network hardening later: SYN cookies (a backlog full of children
+      not yet accepted still drops new SYNs), IPv4 reassembly limits per
+      source like IPv6's, rate limits per destination as well as overall
 - [ ] IPv6 and multicast later: drivers programming their multicast
       filters (the hook is there), the IPv6 options kept in
       Network.settings, IPv4 fragments sent and IPv4 path MTU for UDP,
@@ -1078,8 +1129,10 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
         kernel debug shell
   - [ ] VideoCore mailbox: display (framebuffer modes), and the "notify
         xHCI reset" tag should the VL805 ever be reset through PCIe
-  - [ ] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
-        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe
+  - [x] The other PCI drivers (AHCI, NVMe, virtio, e1000, Realtek, HD
+        Audio, AC'97) through `Io.Dma`, for non-coherent PCIe, and
+        `GetPciDmaAttributes` taking a BrcmPcie host's dma-ranges (untested on
+        the Pi 5; 32-bit-only cards cannot reach its RAM above 4 GiB)
   - [ ] GPIO and the PWM audio jack; HDMI audio on the Pi 4 (the Pi 5's
         driver would carry over: BCM2711 HDMI, legacy DMA channels)
   - [x] Debugging without a serial cable: the kernel log over UDP

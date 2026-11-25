@@ -163,6 +163,36 @@ begin
   end;
 end;
 
+{ A node with "dma-ranges" of its own is a bus: what the devices below
+  it see (a PCI host's inbound windows). }
+procedure DescribeChildDma(Node: LongInt; var Device: TPlatformDevice);
+var
+  Index: LongWord;
+  BusStart: QWord;
+  PhysicalStart: QWord;
+  Size: QWord;
+begin
+  if not NodeHasProperty(Tree^, Node, 'dma-ranges') then
+    Exit;
+  SetDefaultDmaAttributes(Device.ChildDma);
+  Device.ChildDma.Coherent := NodeIsDmaCoherent(Tree^, Node);
+  Index := 0;
+  while (Device.ChildDma.WindowCount < MaximumDmaWindows) and
+        ReadDmaRange(Tree^, Node, Index, BusStart, PhysicalStart, Size) do
+  begin
+    if Size > 0 then
+    begin
+      Device.ChildDma.Windows[Device.ChildDma.WindowCount].PhysicalStart := PhysicalStart;
+      Device.ChildDma.Windows[Device.ChildDma.WindowCount].BusStart := BusStart;
+      Device.ChildDma.Windows[Device.ChildDma.WindowCount].Length := Size;
+      Inc(Device.ChildDma.WindowCount);
+    end;
+    Inc(Index);
+  end;
+  ApplyDmaOptions(Device.ChildDma);
+  Device.HasChildDma := True;
+end;
+
 procedure DescribeDma(Node: LongInt; var Device: TPlatformDevice);
 var
   Bus: LongInt;
@@ -193,6 +223,7 @@ begin
     end;
   end;
   ApplyDmaOptions(Device.Dma);
+  DescribeChildDma(Node, Device);
 end;
 
 procedure RecordNode(Node: LongInt; Path: PChar);

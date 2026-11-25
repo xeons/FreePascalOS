@@ -32,7 +32,9 @@
   could keep more in flight than half of it.
 
   A size set by its socket's option is kept: the buffer takes that size
-  (never less than what it holds) and does not grow.
+  (never less than what it holds, and for receiving never less than
+  what it holds plus the window already promised: RFC 7323 2.4) and
+  does not grow.
 }
 unit Network.TcpBuffers;
 
@@ -117,9 +119,25 @@ begin
   ResizeByteRing(Ring, Requested);
 end;
 
-procedure ApplyRequestedBuffers(Connection: PTcpConnection);
+{ The receive window the last acknowledgment promised. }
+function PromisedReceiveWindow(Connection: PTcpConnection): LongWord;
 begin
-  ResizeTo(Connection^.ReceiveBuffer, Connection^.RequestedReceiveBuffer);
+  if SequenceAfter(Connection^.AdvertisedEdge, Connection^.ReceiveNext) then
+    Result := Connection^.AdvertisedEdge - Connection^.ReceiveNext
+  else
+    Result := 0;
+end;
+
+procedure ApplyRequestedBuffers(Connection: PTcpConnection);
+var
+  Floor: QWord;
+  Requested: LongWord;
+begin
+  Requested := Connection^.RequestedReceiveBuffer;
+  Floor := QWord(Connection^.ReceiveBuffer.Count) + PromisedReceiveWindow(Connection);
+  if (Requested <> 0) and (Requested < Floor) and (Floor <= MaximumReceiveBufferBytes) then
+    Requested := LongWord(Floor);
+  ResizeTo(Connection^.ReceiveBuffer, Requested);
   ResizeTo(Connection^.SendBuffer, Connection^.RequestedSendBuffer);
 end;
 

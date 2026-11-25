@@ -129,7 +129,7 @@ begin
     Socket^.IsBound := True;
     Exit(ErrorNone);
   end;
-  Port := ChooseDynamicPort(Socket, Socket^.Local);
+  Port := ChooseDynamicPort(Socket, Socket^.Local, nil);
   if Port = 0 then
     Exit(ErrorAddressInUse);
   Socket^.Local.Port := Port;

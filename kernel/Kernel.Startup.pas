@@ -89,6 +89,7 @@ uses
   Network.FallbackAddress,
   Kernel.NetworkShell,
   Kernel.NetworkSelfTest,
+  Kernel.NetworkHardeningSelfTest,
   Io.BlockCache,
   Memory.Pressure,
   Io.AudioOutput,
@@ -368,6 +369,7 @@ begin
   RunIoSelfTests;
   RunWatchdogSelfTest;
   RunNetworkSelfTests;
+  RunNetworkHardeningSelfTests;
   RunFileSystemSelfTests;
   { Only when asked: the write tests change the test volumes, and end
     journaled ones with a simulated crash that leaves them read-only. }

@@ -41,7 +41,7 @@ uses
   Drivers.DisplayDevice,
   Drivers.VirtioGpuResources;
 
-{ Makes the scanout's cursor resource on CursorImagePhysical; False if
+{ Makes the scanout's cursor resource on CursorImageMemory; False if
   the device refused it. Called with the batch empty. }
 function SetUpGpuCursor(Scanout: PGpuScanout): Boolean;
 { The adapter's UpdateCursor (Context is the scanout). }
@@ -53,6 +53,7 @@ implementation
 
 uses
   Runtime.Memory,
+  Io.Dma,
   Kernel.Mutex,
   Kernel.Timers,
   Kernel.DeferredCalls,
@@ -62,6 +63,7 @@ uses
 
 const
   CursorSize = 64;
+  CursorImageBytes = CursorSize * CursorSize * 4;
   RestLogMilliseconds = 250;
   MaximumLoggedScanouts = 16;
 
@@ -140,7 +142,8 @@ begin
   Scanout^.CursorResourceId := NewGpuResourceId(Device);
   Result := BeginCreateResource(Device, Scanout^.CursorResourceId, GpuFormatBlueGreenRedAlpha, CursorSize,
       CursorSize) and
-    BeginAttachBacking(Device, Scanout^.CursorResourceId, Scanout^.CursorImagePhysical, CursorSize * CursorSize * 4) and
+    BeginAttachBacking(Device, Scanout^.CursorResourceId, Scanout^.CursorImageMemory.DeviceAddress,
+      CursorImageBytes) and
     RunGpuCommands(Device);
   if Result then
     AddRestLog(Scanout);
@@ -167,6 +170,9 @@ var
   Device: PGpuDevice;
 begin
   Device := Scanout^.Device;
+  { What was drawn into the image (through the caches) reaches memory
+    before the device copies it. }
+  PrepareDmaToDevice(Device^.Virtio.Dma, Scanout^.CursorImageMemory.Address, CursorImageBytes);
   Result := BeginTransferToHost(Device, Scanout^.CursorResourceId, CursorSize, 0, 0, CursorSize, CursorSize) and
     RunGpuCommands(Device) and SendCursor(Scanout, GpuCommandUpdateCursor, Scanout^.CursorResourceId);
 end;
@@ -218,7 +224,7 @@ begin
     Exit;
   if not BeginCreateResource(Scanout^.Device, Scanout^.CursorResourceId, GpuFormatBlueGreenRedAlpha, CursorSize,
        CursorSize) or
-     not BeginAttachBacking(Scanout^.Device, Scanout^.CursorResourceId, Scanout^.CursorImagePhysical,
+     not BeginAttachBacking(Scanout^.Device, Scanout^.CursorResourceId, Scanout^.CursorImageMemory.DeviceAddress,
        CursorSize * CursorSize * 4) or
      not RunGpuCommands(Scanout^.Device) then
     Exit;

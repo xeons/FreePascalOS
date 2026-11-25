@@ -82,6 +82,9 @@ uses
   Memory.KernelHeap,
   FileSystem.Ext.Blocks;
 
+const
+  MaximumExtNameLength = 255;
+
 function HasFileTypes(Ext: PExtVolume): Boolean;
 begin
   Result := HasIncompatibleFeature(Ext, IncompatibleFileType);
@@ -141,6 +144,10 @@ begin
       Exit(StatusCorrupted);
 
     NameLength := EntryNameLength(Ext, Header);
+    { Without the file type feature the name length has 16 bits, but no
+      name is longer than 255 bytes: a longer one would not fit Entry. }
+    if NameLength > MaximumExtNameLength then
+      Exit(StatusCorrupted);
     if (Header.InodeNumber = 0) or (NameLength = 0) or
        (NameLength + DirectoryEntryHeaderSize > Header.RecordLength) then
     begin
@@ -288,8 +295,10 @@ begin
       UsedBytes := 0
     else
       UsedBytes := DirectoryRecordLength(EntryNameLength(Ext, Header^));
+    if UsedBytes > Header^.RecordLength then
+      Exit; { a name longer than its record: damaged }
 
-    if Header^.RecordLength - UsedBytes >= Needed then
+    if LongWord(Header^.RecordLength) - UsedBytes >= Needed then
     begin
       if UsedBytes = 0 then
         { Reuse the empty record as a whole. }
@@ -427,8 +436,14 @@ begin
 
   { ".." is always the second record of the first block. }
   First := PDirectoryEntryHeader(Buffer);
+  if (First^.RecordLength < DirectoryEntryHeaderSize) or
+     (First^.RecordLength + DirectoryEntryHeaderSize > UsableBlockBytes(Ext)) then
+  begin
+    FreeKernelMemory(Buffer);
+    Exit(StatusCorrupted);
+  end;
   Second := PDirectoryEntryHeader(Buffer + First^.RecordLength);
-  if (First^.RecordLength >= Ext^.BlockSize) or (Second^.NameLength <> 2) then
+  if Second^.NameLength <> 2 then
     Result := StatusCorrupted
   else
   begin

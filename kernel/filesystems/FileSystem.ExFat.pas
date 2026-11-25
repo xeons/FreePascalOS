@@ -60,6 +60,11 @@ uses
   FileSystem.ExFat.Write,
   FileSystem.ExFat.Attributes;
 
+const
+  { Clusters 2 .. $FFFFFFF6: from $FFFFFFF7 on, FAT entries mean "bad
+    cluster" and "end of chain". }
+  MaximumClusterCount = $FFFFFFF5;
+
 var
   Driver: TFileSystemDriver;
 
@@ -183,13 +188,39 @@ begin
     MemoryIsEqual(@BootSector.FileSystemName[0], PChar(FileSystemNameText), 8);
 end;
 
+{ The layout the boot sector describes fits together and fits the
+  device: sectors of 512 bytes to 4 KiB, clusters up to 32 MiB, cluster
+  numbers below the end-of-chain values, a FAT with an entry for every
+  cluster, and a cluster heap that ends on the device. }
+function BootSectorGeometryIsValid(const BootSector: TBootSector; DeviceBytes: QWord): Boolean;
+var
+  BytesPerSector: QWord;
+  BytesPerCluster: QWord;
+  HeapEnd: QWord;
+begin
+  Result := False;
+  if (BootSector.BytesPerSectorShift < 9) or (BootSector.BytesPerSectorShift > 12) or
+     (BootSector.SectorsPerClusterShift > 25 - BootSector.BytesPerSectorShift) then
+    Exit;
+  BytesPerSector := QWord(1) shl BootSector.BytesPerSectorShift;
+  BytesPerCluster := BytesPerSector shl BootSector.SectorsPerClusterShift;
+  if (BootSector.ClusterCount = 0) or (BootSector.ClusterCount > MaximumClusterCount) then
+    Exit;
+  if QWord(BootSector.FatLength) * BytesPerSector < (QWord(BootSector.ClusterCount) + 2) * 4 then
+    Exit;
+  if (QWord(BootSector.FatOffset) + BootSector.FatLength) * BytesPerSector > DeviceBytes then
+    Exit;
+  HeapEnd := QWord(BootSector.ClusterHeapOffset) * BytesPerSector +
+    QWord(BootSector.ClusterCount) * BytesPerCluster;
+  Result := HeapEnd <= DeviceBytes;
+end;
+
 function ExFatProbe(Device: PBlockDevice): Boolean;
 var
   BootSector: TBootSector;
 begin
   Result := ReadBootSector(Device, BootSector) and
-    (BootSector.BytesPerSectorShift >= 9) and (BootSector.BytesPerSectorShift <= 12) and
-    (BootSector.SectorsPerClusterShift <= 25 - BootSector.BytesPerSectorShift);
+    BootSectorGeometryIsValid(BootSector, BlockDeviceSizeInBytes(Device));
 end;
 
 { A node for one of the system files (bitmap, up-case table) described by
@@ -313,7 +344,9 @@ begin
     end;
   until False;
 
-  if FoundUpcaseTable and (ExFat^.Bitmap <> nil) then
+  { The bitmap must have a bit for every cluster. }
+  if FoundUpcaseTable and (ExFat^.Bitmap <> nil) and
+     (ExFat^.Bitmap^.DataLength >= (QWord(ExFat^.ClusterCount) + 7) div 8) then
     Result := StatusSuccess
   else
     Result := StatusCorrupted;
@@ -339,7 +372,8 @@ var
   BytesPerSector: QWord;
   Root: PExFatNode;
 begin
-  if not ReadBootSector(Volume^.Device, BootSector) then
+  if not ReadBootSector(Volume^.Device, BootSector) or
+     not BootSectorGeometryIsValid(BootSector, BlockDeviceSizeInBytes(Volume^.Device)) then
     Exit(StatusCorrupted);
 
   ExFat := PExFatVolume(AllocateZeroedKernelMemory(SizeOf(TExFatVolume)));

@@ -30,6 +30,14 @@
   and where all its settings' descriptors are, for drivers that look
   further (audio streaming settings).
 
+  The descriptors come from the device, which may be broken or hostile:
+  an endpoint descriptor naming endpoint 0 (the default control
+  endpoint, which only the USB core uses), setting reserved address
+  bits, of the control type, with no packet size, or repeating an
+  address already listed for its interface is left out, so no class
+  driver is ever handed an endpoint that would take the place of
+  another one.
+
   Plain Pascal with no kernel dependencies: the host test
   (tools/UsbDescriptorTest) walks real descriptors with it.
 }
@@ -115,6 +123,9 @@ function FindUsbInterface(var Configuration: TUsbConfigurationInfo; Number: Byte
   (IN when WantIn). }
 function FindUsbEndpoint(const UsbInterface: TUsbInterfaceInfo; TransferType: Byte; WantIn: Boolean;
   out Endpoint: TUsbEndpointInfo): Boolean;
+{ True if Address (80h set for IN) names an endpoint other than the
+  default control endpoint, without reserved bits. }
+function UsbEndpointAddressIsValid(Address: Byte): Boolean;
 { A few words on what an interface of this class, subclass and protocol
   is, for the log ("HID boot mouse"). }
 function UsbInterfaceKindName(InterfaceClass, Subclass, Protocol: Byte): PChar;
@@ -131,16 +142,40 @@ begin
   Result := Data[0] or (Word(Data[1]) shl 8);
 end;
 
+function UsbEndpointAddressIsValid(Address: Byte): Boolean;
+begin
+  Result := ((Address and $0F) <> 0) and ((Address and $70) = 0);
+end;
+
+function HasEndpointAddress(const UsbInterface: TUsbInterfaceInfo; Address: Byte): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to UsbInterface.EndpointCount - 1 do
+    if UsbInterface.Endpoints[Index].Address = Address then
+      Exit(True);
+  Result := False;
+end;
+
+{ Adds the endpoint descriptor's endpoint, unless it is one no driver
+  may be given (see the unit's header). }
 procedure AddEndpoint(var UsbInterface: TUsbInterfaceInfo; Descriptor: PByte);
 var
   Endpoint: ^TUsbEndpointInfo;
+  Address: Byte;
+  MaximumPacket: Word;
 begin
   if UsbInterface.EndpointCount = MaximumInterfaceEndpoints then
     Exit;
+  Address := Descriptor[2];
+  MaximumPacket := ReadWord(Descriptor + 4) and $7FF;
+  if not UsbEndpointAddressIsValid(Address) or ((Descriptor[3] and 3) = UsbTransferControl) or
+     (MaximumPacket = 0) or HasEndpointAddress(UsbInterface, Address) then
+    Exit;
   Endpoint := @UsbInterface.Endpoints[UsbInterface.EndpointCount];
-  Endpoint^.Address := Descriptor[2];
+  Endpoint^.Address := Address;
   Endpoint^.Attributes := Descriptor[3];
-  Endpoint^.MaximumPacket := ReadWord(Descriptor + 4) and $7FF;
+  Endpoint^.MaximumPacket := MaximumPacket;
   Endpoint^.Interval := Descriptor[6];
   Inc(UsbInterface.EndpointCount);
 end;

@@ -21,15 +21,26 @@
   corrections of RFC 1122 and RFC 5961's caution about resets).
 
   A segment for no connection is answered with a reset - unless a
-  listener takes its port: a SYN then makes a child in SYN_RECEIVED
-  (if the backlog has room; otherwise it is dropped and the peer tries
-  again), which answers with SYN-ACK and joins the accept queue once
-  the handshake completes.
+  listener takes its port: a SYN then makes a child in SYN_RECEIVED,
+  which answers with SYN-ACK and joins the accept queue once the
+  handshake completes; only then does it get its buffers. A listener
+  keeps to its backlog, and all listeners together to
+  MaximumHalfOpenConnections children in SYN_RECEIVED: when there is no
+  room, the listener's oldest half-open child gives way (a flood of
+  SYNs pushes out its own), and with none to give way the SYN is
+  dropped and the peer tries again. A SYN for a connection in TIME_WAIT
+  whose sequence number (and timestamp) is beyond the old one's ends
+  the old one and opens a new one (RFC 1122 4.2.2.13, RFC 6191).
 
   On a synchronized connection a segment must fall in the receive
-  window (else it is answered with an ACK and dropped), and is trimmed
-  to it. A reset ends the connection (refused while connecting, reset
-  later); a SYN in the window is an error that resets it. The
+  window (Network.TcpAcceptance; else it is answered with an ACK and
+  dropped), and is trimmed to it. RFC 5961's defences against blind
+  attacks: a reset ends the connection only at exactly RCV.NXT (one
+  elsewhere in the window gets a challenge ACK), a SYN never resets it
+  but gets a challenge ACK wherever it falls, and an acknowledgment of
+  what was never sent, or older than the largest window the peer
+  offered, gets one and goes no further; challenge ACKs are rate
+  limited per connection (RFC 5961 7). The
   acknowledgment frees the send buffer, moves the closing states on
   (our FIN acknowledged) and updates the send window. Data in order
   goes to the receive buffer, and what waited out of order behind it
@@ -64,6 +75,10 @@ procedure TcpInput(constref Datagram: TIpDatagram; Payload: PByte; Length: LongW
 { A destination unreachable about a segment we sent (its endpoints as
   we sent it): while connecting, it ends the attempt with Error. }
 procedure TcpReportError(constref Local, Remote: TNetworkEndpoint; Sequence: LongWord; Error: LongInt);
+{ True if Sequence, quoted by an ICMP error about a segment we sent from
+  Local to Remote, is one a connection between them has in flight
+  (RFC 5927 4.1): the error is then about a real segment. }
+function TcpQuotedSequenceIsValid(constref Local, Remote: TNetworkEndpoint; Sequence: LongWord): Boolean;
 
 implementation
 
@@ -85,6 +100,9 @@ uses
   Network.TcpStates,
   Network.TcpOutput,
   Network.TcpRecovery,
+  Network.TcpAcceptance,
+  Network.TokenBuckets,
+  Network.UnpredictableNumbers,
   Network.Statistics;
 
 function Minimum(First, Second: LongWord): LongWord;
@@ -149,7 +167,30 @@ begin
   Child^.Timestamps := True;
 end;
 
+{ Sends an ACK that RFC 5961 calls for (or one for a segment that moves
+  nothing), unless the connection sent its share of them already. }
+procedure SendChallengeAck(Connection: PTcpConnection);
+begin
+  if TakeToken(Connection^.ChallengeAcks, NetworkNow) then
+    SendAckNow(Connection);
+end;
+
 { --- LISTEN --------------------------------------------------------------- }
+
+{ True if Listener may take another child: there is room, or its
+  oldest half-open child was pushed out to make some. }
+function MakeRoomForChild(Listener: PTcpConnection): Boolean;
+var
+  Oldest: PTcpConnection;
+begin
+  if (Listener^.ChildCount < Listener^.Backlog) and (HalfOpenConnectionCount < MaximumHalfOpenConnections) then
+    Exit(True);
+  Oldest := OldestHalfOpenChild(Listener);
+  if Oldest = nil then
+    Exit(False);
+  FreeTcpConnection(Oldest);
+  Result := (Listener^.ChildCount < Listener^.Backlog) and (HalfOpenConnectionCount < MaximumHalfOpenConnections);
+end;
 
 procedure HandleListen(Listener: PTcpConnection; constref Datagram: TIpDatagram;
   constref Segment: TTcpSegment);
@@ -163,28 +204,26 @@ begin
     SendResetFor(Datagram, Segment);
     Exit;
   end;
-  if ((Segment.Flags and TcpFlagSyn) = 0) or (Listener^.ChildCount >= Listener^.Backlog) then
+  if ((Segment.Flags and TcpFlagSyn) = 0) or not MakeRoomForChild(Listener) then
     Exit;
   Child := CreateTcpConnection;
   if Child = nil then
     Exit;
   InheritFromListener(Child, Listener);
-  if not CreateConnectionBuffers(Child) then
-  begin
-    FreeTcpConnection(Child);
-    Exit;
-  end;
   Child^.Local := DatagramDestination(Datagram, Segment.DestinationPort);
   Child^.Remote := DatagramSource(Datagram, Segment.SourcePort);
   Child^.Listener := Listener;
   Inc(Listener^.ChildCount);
+  MarkHalfOpen(Child);
   Child^.InitialReceiveSequence := Segment.Sequence;
   Child^.ReceiveNext := Segment.Sequence + 1;
   Child^.SendWindow := Segment.Window;
+  Child^.LargestSendWindow := Segment.Window;
   Child^.SendWindowSequence := Segment.Sequence;
   Child^.MaximumSegment := NegotiatedSegmentSize(Segment, Child);
   AgreeOnOptions(Child, Segment);
-  Child^.InitialSendSequence := GenerateInitialSequence;
+  Child^.InitialSendSequence := InitialSequenceFor(Child^.Local, Child^.Remote);
+  Child^.TimestampOffset := TimestampOffsetFor(Child^.Local, Child^.Remote);
   Child^.SendUnacknowledged := Child^.InitialSendSequence;
   Child^.SendNext := Child^.InitialSendSequence;
   Child^.SendMaximum := Child^.InitialSendSequence;
@@ -220,6 +259,7 @@ begin
   Connection^.MaximumSegment := NegotiatedSegmentSize(Segment, Connection);
   AgreeOnOptions(Connection, Segment);
   Connection^.SendWindow := Segment.Window;
+  Connection^.LargestSendWindow := Segment.Window;
   Connection^.SendWindowSequence := Segment.Sequence;
   Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
   if not HasAck then
@@ -241,27 +281,9 @@ end;
 { --- Synchronized states --------------------------------------------------- }
 
 function SegmentIsAcceptable(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
-var
-  Window: LongWord;
-  Length: LongWord;
-  WindowEnd: LongWord;
 begin
-  Window := ReceiveWindow(Connection);
-  Length := SegmentSequenceLength(Segment);
-  WindowEnd := Connection^.ReceiveNext + Window;
-  if Length = 0 then
-  begin
-    if Window = 0 then
-      Exit(Segment.Sequence = Connection^.ReceiveNext);
-    Exit(SequenceAfterOrEqual(Segment.Sequence, Connection^.ReceiveNext) and
-      SequenceBefore(Segment.Sequence, WindowEnd));
-  end;
-  if Window = 0 then
-    Exit(False);
-  Result := (SequenceAfterOrEqual(Segment.Sequence, Connection^.ReceiveNext) and
-      SequenceBefore(Segment.Sequence, WindowEnd)) or
-    (SequenceAfterOrEqual(Segment.Sequence + Length - 1, Connection^.ReceiveNext) and
-      SequenceBefore(Segment.Sequence + Length - 1, WindowEnd));
+  Result := Network.TcpAcceptance.SegmentIsAcceptable(Segment.Sequence, SegmentSequenceLength(Segment),
+    Connection^.ReceiveNext, ReceiveWindow(Connection));
 end;
 
 { Cuts away what was received before and what lies beyond the window. }
@@ -326,6 +348,8 @@ begin
       SequenceBeforeOrEqual(Connection^.SendWindowAcknowledgment, Segment.Acknowledgment)) then
   begin
     Connection^.SendWindow := SegmentWindow(Connection, Segment);
+    if Connection^.SendWindow > Connection^.LargestSendWindow then
+      Connection^.LargestSendWindow := Connection^.SendWindow;
     Connection^.SendWindowSequence := Segment.Sequence;
     Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
     { A peer that answers our probes is still there. }
@@ -372,9 +396,10 @@ var
   IsDuplicate: Boolean;
 begin
   Acknowledgment := Segment.Acknowledgment;
-  if SequenceAfter(Acknowledgment, Connection^.SendMaximum) then
+  if AcknowledgmentDisposition(Acknowledgment, Connection^.SendUnacknowledged, Connection^.SendMaximum,
+     Connection^.LargestSendWindow) <> AcknowledgmentAcceptable then
   begin
-    SendAckNow(Connection);
+    SendChallengeAck(Connection);
     Exit(False);
   end;
   Result := True;
@@ -556,7 +581,7 @@ var
 begin
   if not Connection^.Timestamps or not Segment.Options.HasTimestamps or (Segment.Options.TimestampEcho = 0) then
     Exit;
-  Elapsed := LongInt(TimestampNow - Segment.Options.TimestampEcho);
+  Elapsed := LongInt(ConnectionTimestamp(Connection) - Segment.Options.TimestampEcho);
   if Elapsed < 0 then
     Exit;
   Sample := QWord(Elapsed) * NanosecondsPerMillisecond;
@@ -626,8 +651,18 @@ begin
     SendResetFor(Datagram, Segment);
     Exit(False);
   end;
+  { The buffers come with the connection's completion, not with its
+    SYN. }
+  if (Connection^.ReceiveBuffer.Data = nil) and not CreateConnectionBuffers(Connection) then
+  begin
+    CloseTcpConnection(Connection, ErrorOutOfMemory, True);
+    Exit(False);
+  end;
+  ClearHalfOpen(Connection);
   Connection^.SendUnacknowledged := Segment.Acknowledgment;
   Connection^.SendWindow := SegmentWindow(Connection, Segment);
+  if Connection^.SendWindow > Connection^.LargestSendWindow then
+    Connection^.LargestSendWindow := Connection^.SendWindow;
   Connection^.SendWindowSequence := Segment.Sequence;
   Connection^.SendWindowAcknowledgment := Segment.Acknowledgment;
   NoteAcknowledgment(Connection, Segment.Acknowledgment, 0, 0);
@@ -682,10 +717,27 @@ begin
   end;
 end;
 
+{ RFC 1122 4.2.2.13 and RFC 6191: a SYN that may end a connection in
+  TIME_WAIT and open a new one - beyond the old sequence numbers and, if
+  both carry timestamps, the old timestamps. }
+function IsReopeningSyn(Connection: PTcpConnection; constref Segment: TTcpSegment): Boolean;
+begin
+  Result := False;
+  if (Connection^.State <> TcpTimeWait) or
+     ((Segment.Flags and (TcpFlagSyn or TcpFlagAck or TcpFlagReset)) <> TcpFlagSyn) or
+     not SequenceAfter(Segment.Sequence, Connection^.ReceiveNext) then
+    Exit;
+  if Connection^.Timestamps and Segment.Options.HasTimestamps and
+     not SequenceAfter(Segment.Options.TimestampValue, Connection^.TimestampRecent) then
+    Exit;
+  Result := True;
+end;
+
 procedure HandleSynchronized(Connection: PTcpConnection; constref Datagram: TIpDatagram;
   Segment: TTcpSegment);
 var
   InOrder: Boolean;
+  HadData: Boolean;
 begin
   if DroppedForTest(Connection, Segment) then
     Exit;
@@ -694,27 +746,35 @@ begin
   Connection^.KeepAliveProbes := 0;
   if FailsPaws(Connection, Segment) or not SegmentIsAcceptable(Connection, Segment) then
   begin
-    if (Segment.Flags and TcpFlagReset) = 0 then
-      SendAckNow(Connection);
-    Exit;
-  end;
-  KeepRecentTimestamp(Connection, Segment);
-  TrimToWindow(Connection, Segment);
-  if (Segment.Flags and TcpFlagReset) <> 0 then
-  begin
-    { Only a reset at exactly the expected sequence number is believed
-      at once (RFC 5961); one elsewhere in the window gets an ACK. }
-    if Segment.Sequence = Connection^.ReceiveNext then
-      HandleReset(Connection)
+    { RFC 5961: a reset outside the window is dropped without a word;
+      a SYN anywhere gets a challenge ACK. }
+    if (Segment.Flags and TcpFlagReset) <> 0 then
+      Exit;
+    if (Segment.Flags and TcpFlagSyn) <> 0 then
+      SendChallengeAck(Connection)
     else
       SendAckNow(Connection);
     Exit;
   end;
-  if (Segment.Flags and TcpFlagSyn) <> 0 then
+  if (Segment.Flags and TcpFlagReset) <> 0 then
   begin
-    CloseTcpConnection(Connection, ErrorConnectionReset, True);
+    { Only a reset at exactly the expected sequence number is believed
+      (RFC 5961 3.2); one elsewhere in the window gets a challenge ACK. }
+    case ResetDisposition(Segment.Sequence, Connection^.ReceiveNext, ReceiveWindow(Connection)) of
+      ResetAccepted: HandleReset(Connection);
+      ResetChallenged: SendChallengeAck(Connection);
+    end;
     Exit;
   end;
+  if (Segment.Flags and TcpFlagSyn) <> 0 then
+  begin
+    { RFC 5961 4.2: never a reset for a SYN, whatever its sequence. }
+    SendChallengeAck(Connection);
+    Exit;
+  end;
+  KeepRecentTimestamp(Connection, Segment);
+  HadData := Segment.DataLength > 0;
+  TrimToWindow(Connection, Segment);
   if (Segment.Flags and TcpFlagAck) = 0 then
     Exit;
   if Connection^.State = TcpSynReceived then
@@ -727,7 +787,13 @@ begin
 
   InOrder := True;
   if StateCanReceive(Connection^.State) then
-    InOrder := HandleData(Connection, Segment)
+  begin
+    InOrder := HandleData(Connection, Segment);
+    { Data that found no room (a zero window): the peer learns the
+      window from the ACK. }
+    if HadData and (Segment.DataLength = 0) then
+      SendAckNow(Connection);
+  end
   else if Segment.DataLength > 0 then
     { Data after the peer's FIN: nothing to do with it but say so. }
     SendAckNow(Connection);
@@ -761,6 +827,12 @@ begin
     Exit;
   Connection := FindTcpConnection(DatagramDestination(Datagram, Segment.DestinationPort),
     DatagramSource(Datagram, Segment.SourcePort));
+  if (Connection <> nil) and IsReopeningSyn(Connection, Segment) and
+     (FindTcpListener(DatagramDestination(Datagram, Segment.DestinationPort)) <> nil) then
+  begin
+    CloseTcpConnection(Connection, ErrorNone, False);
+    Connection := nil;
+  end;
   if Connection = nil then
   begin
     Listener := FindTcpListener(DatagramDestination(Datagram, Segment.DestinationPort));
@@ -787,6 +859,15 @@ begin
      SequenceAfter(Sequence, Connection^.SendMaximum) then
     Exit;
   CloseTcpConnection(Connection, Error, False);
+end;
+
+function TcpQuotedSequenceIsValid(constref Local, Remote: TNetworkEndpoint; Sequence: LongWord): Boolean;
+var
+  Connection: PTcpConnection;
+begin
+  Connection := FindTcpConnection(Local, Remote);
+  Result := (Connection <> nil) and SequenceAfterOrEqual(Sequence, Connection^.SendUnacknowledged) and
+    SequenceBefore(Sequence, Connection^.SendMaximum);
 end;
 
 end.

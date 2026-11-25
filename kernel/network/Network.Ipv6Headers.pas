@@ -28,6 +28,10 @@
   refused (nothing is forwarded). A fragment header ends the walk
   unless it is an atomic fragment (offset 0, no more fragments), which
   is passed over. "No next header" ends it with nothing to deliver.
+
+  The first fragment of a datagram must hold the whole header chain up
+  to and with the upper-layer header (RFC 8200 4.5, RFC 7112):
+  FirstFragmentHoldsHeaderChain says whether it does.
 }
 unit Network.Ipv6Headers;
 
@@ -68,6 +72,11 @@ type
 { Walks the datagram at Data (the fixed header first, TotalLength bytes
   in all). }
 function WalkIpv6Headers(Data: PByte; TotalLength: LongWord): TIpv6HeaderWalk;
+{ The Length bytes at Data, the fragmentable part of a first fragment
+  whose fragment header names NextHeader, hold every extension header
+  that follows and the upper-layer header (TCP 20 bytes, UDP 8, ICMPv6
+  4; an unknown or encrypted protocol is taken as it is). }
+function FirstFragmentHoldsHeaderChain(Data: PByte; Length: LongWord; NextHeader: Byte): Boolean;
 
 implementation
 
@@ -83,6 +92,10 @@ const
   NextHeaderFragment = 44;
   NextHeaderNone = 59;
   NextHeaderDestinationOptions = 60;
+  NextHeaderAuthentication = 51;
+  NextHeaderTcp = 6;
+  NextHeaderUdp = 17;
+  NextHeaderIcmpv6 = 58;
   OptionPad1 = 0;
   OptionPadN = 1;
   OptionRouterAlert = 5;
@@ -221,6 +234,46 @@ begin
     else
       Result.Outcome := WalkReachedUpperLayer;
       Exit;
+    end;
+  until False;
+end;
+
+function FirstFragmentHoldsHeaderChain(Data: PByte; Length: LongWord; NextHeader: Byte): Boolean;
+var
+  Position: LongWord;
+  HeaderLength: LongWord;
+begin
+  Position := 0;
+  repeat
+    case NextHeader of
+      NextHeaderHopByHop, NextHeaderRouting, NextHeaderDestinationOptions, NextHeaderAuthentication:
+        begin
+          if Position + 2 > Length then
+            Exit(False);
+          if NextHeader = NextHeaderAuthentication then
+            HeaderLength := (LongWord(Data[Position + 1]) + 2) * 4
+          else
+            HeaderLength := (LongWord(Data[Position + 1]) + 1) * 8;
+          if Position + HeaderLength > Length then
+            Exit(False);
+          NextHeader := Data[Position];
+          Position := Position + HeaderLength;
+        end;
+      NextHeaderFragment:
+        begin
+          if Position + FragmentHeaderBytes > Length then
+            Exit(False);
+          NextHeader := Data[Position];
+          Position := Position + FragmentHeaderBytes;
+        end;
+      NextHeaderTcp:
+        Exit(Position + 20 <= Length);
+      NextHeaderUdp:
+        Exit(Position + 8 <= Length);
+      NextHeaderIcmpv6:
+        Exit(Position + 4 <= Length);
+    else
+      Exit(True);
     end;
   until False;
 end;

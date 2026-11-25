@@ -176,8 +176,10 @@ begin
     Mtu := MinimumPathMtu;
   if Mtu >= LinkMtu then
     Exit(False);
-  Position := ObtainEntry(Table, Destination, Now);
+  { Looked up before the entry is obtained: an expired path MTU makes
+    the lookup drop the entry, which must not take the new one with it. }
   Previous := LookupPathMtu(Table, Destination, Now);
+  Position := ObtainEntry(Table, Destination, Now);
   if Previous = 0 then
     Previous := LinkMtu;
   Result := Mtu < Previous;

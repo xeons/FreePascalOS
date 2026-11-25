@@ -136,7 +136,8 @@ var
 begin
   Ext := ExtVolumeOf(@Node^.Common);
   BytesIntoBlock := FileSize mod Ext^.BlockSize;
-  if BytesIntoBlock = 0 then
+  { No block lies past the last 32-bit block number (a damaged size). }
+  if (BytesIntoBlock = 0) or (FileSize div Ext^.BlockSize > High(LongWord)) then
     Exit(StatusSuccess);
   Result := MapLogicalBlock(Node, LongWord(FileSize div Ext^.BlockSize), PhysicalBlock);
   if (Result <> StatusSuccess) or (PhysicalBlock = 0) then
@@ -274,6 +275,8 @@ begin
     Exit;
 
   IsDirectory := Kind = NodeKindDirectory;
+  if IsDirectory and (InodeRecord(Parent)^.LinksCount >= MaximumLinkCount) then
+    Exit(StatusTooManyLinks);
   Result := AllocateInode(Directory^.Volume, GroupOfInode(Ext, Parent^.InodeNumber), IsDirectory,
     InodeNumber);
   if Result <> StatusSuccess then
@@ -346,6 +349,8 @@ begin
   if ByteCount = 0 then
     Exit(StatusSuccess);
 
+  if ByteCount > High(QWord) - Offset then
+    Exit(StatusNoSpace);
   FirstBlock := Offset div Ext^.BlockSize;
   LastBlock := (Offset + ByteCount - 1) div Ext^.BlockSize;
   if LastBlock > High(LongWord) then
@@ -374,6 +379,12 @@ begin
     WriteNodeInode(ExtNode);
 end;
 
+{ The largest size a file can have: one past its last 32-bit block. }
+function MaximumFileBytes(Ext: PExtVolume): QWord;
+begin
+  Result := (QWord(High(LongWord)) + 1) * Ext^.BlockSize;
+end;
+
 function ExtSetFileSize(Node: PNode; NewSize: QWord): TFileSystemStatus;
 var
   ExtNode: PExtNode;
@@ -384,11 +395,17 @@ begin
   ExtNode := PExtNode(Node);
   Ext := ExtVolumeOf(Node);
   OldSize := InodeSize(InodeRecord(ExtNode)^);
+  { Block numbers within a file are 32 bits. }
+  if NewSize > MaximumFileBytes(Ext) then
+    Exit(StatusNoSpace);
 
   if NewSize < OldSize then
   begin
     KeepBlocks := (NewSize + Ext^.BlockSize - 1) div Ext^.BlockSize;
-    Result := ReleaseBlocksFrom(ExtNode, LongWord(KeepBlocks));
+    if KeepBlocks > High(LongWord) then
+      Result := StatusSuccess { every block number is below the cut }
+    else
+      Result := ReleaseBlocksFrom(ExtNode, LongWord(KeepBlocks));
   end
   else
     { The new part is a hole; only the old last block needs clearing. }
@@ -474,6 +491,8 @@ begin
     Result := DirectoryIsModifiable(Target);
   if Result <> StatusSuccess then
     Exit;
+  if IsDirectory and (Source <> Target) and (InodeRecord(Target)^.LinksCount >= MaximumLinkCount) then
+    Exit(StatusTooManyLinks);
 
   { Add the new name first, so the file is never without a name. }
   Result := AddDirectoryEntry(Target, TargetName, ExtNode^.InodeNumber,

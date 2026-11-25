@@ -398,7 +398,7 @@ var
 begin
   Ext := PExtVolume(Volume^.DriverData);
   Offset := 0;
-  if (InodeNumber = 0) or (InodeNumber > Ext^.InodesPerGroup * Ext^.GroupCount) then
+  if (InodeNumber = 0) or (QWord(InodeNumber) > QWord(Ext^.InodesPerGroup) * Ext^.GroupCount) then
     Exit(StatusCorrupted);
 
   Group := GroupOfInode(Ext, InodeNumber);
@@ -563,6 +563,11 @@ var
   Ext: PExtVolume;
 begin
   Ext := PExtVolume(Volume^.DriverData);
+  Bitmap := nil;
+  { A damaged descriptor must not have a bitmap written over the boot
+    block, the superblock or past the end. }
+  if (BitmapBlock = 0) or (BitmapBlock >= Ext^.BlockCount) then
+    Exit(StatusCorrupted);
   Bitmap := PByte(AllocateKernelMemory(Ext^.BlockSize));
   if Bitmap = nil then
     Exit(StatusOutOfMemory);
@@ -959,6 +964,8 @@ var
   UsedDirectories: QWord;
 begin
   Ext := PExtVolume(Volume^.DriverData);
+  if (InodeNumber = 0) or (QWord(InodeNumber) > QWord(Ext^.InodesPerGroup) * Ext^.GroupCount) then
+    Exit(StatusCorrupted);
   Group := GroupOfInode(Ext, InodeNumber);
   Index := (InodeNumber - 1) mod Ext^.InodesPerGroup;
 
@@ -994,7 +1001,8 @@ begin
     UpdateBitmapChecksum(Ext, @Descriptor[0], Bitmap, Ext^.InodesPerGroup div 8,
       DescriptorOffsetInodeBitmapChecksumLow, DescriptorOffsetInodeBitmapChecksumHigh);
     Result := WriteGroupDescriptor(Volume, Group, @Descriptor[0]);
-    Inc(Ext^.FreeInodeCount);
+    if Ext^.FreeInodeCount < High(LongWord) then
+      Inc(Ext^.FreeInodeCount);
     Ext^.SuperblockNeedsWriting := True;
   end;
   FreeKernelMemory(Bitmap);

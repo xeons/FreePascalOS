@@ -27,8 +27,12 @@
   holds a reference to it; the handle the program got holds another.
   When the program closes its handle (or ends), only the table's
   reference is left, and the entry is dropped the next time the table
-  is looked at. Under its own spin lock; objects are let go of after it
-  is released, at passive level, as every caller runs.
+  is looked at. A user other than root holds at most
+  MaximumWatchersPerUser of them, and all such users together leave
+  WatchersKeptForRoot entries free, so that nobody can fill the table
+  and keep the network service from watching. Under its own spin lock;
+  objects are let go of after it is released, at passive level, as
+  every caller runs.
 }
 unit Network.ChangeWatchers;
 
@@ -41,11 +45,15 @@ uses
 
 const
   MaximumNetworkChangeWatchers = 32;
+  MaximumWatchersPerUser = 8;
+  WatchersKeptForRoot = 8;
+  WatcherRootUserId = 0;
 
-{ A new watcher: an event object (one reference, the caller's) that is
-  signaled after every change from now on; nil when the table is full or
-  memory ran out. The table keeps a reference of its own. }
-function CreateNetworkChangeWatcher: PEventObject;
+{ A new watcher for UserId: an event object (one reference, the
+  caller's) that is signaled after every change from now on; nil when
+  the table (or the user's share of it) is full or memory ran out. The
+  table keeps a reference of its own. }
+function CreateNetworkChangeWatcher(UserId: LongWord): PEventObject;
 { Something in the network's configuration changed: every watcher is
   signaled. At passive level (under the network lock or not). }
 procedure NoteNetworkChange;
@@ -65,6 +73,29 @@ var
   { A zeroed spin lock is free. }
   WatcherLock: TSpinLock;
   Watchers: TWatcherList;
+  WatcherOwners: array[0..MaximumNetworkChangeWatchers - 1] of LongWord;
+
+{ Under the lock: whether UserId may have another watcher. }
+function UserHasRoom(UserId: LongWord): Boolean;
+var
+  Index: Integer;
+  OwnCount: Integer;
+  UnprivilegedCount: Integer;
+begin
+  if UserId = WatcherRootUserId then
+    Exit(True);
+  OwnCount := 0;
+  UnprivilegedCount := 0;
+  for Index := 0 to MaximumNetworkChangeWatchers - 1 do
+    if (Watchers[Index] <> nil) and (WatcherOwners[Index] <> WatcherRootUserId) then
+    begin
+      Inc(UnprivilegedCount);
+      if WatcherOwners[Index] = UserId then
+        Inc(OwnCount);
+    end;
+  Result := (OwnCount < MaximumWatchersPerUser) and
+    (UnprivilegedCount < MaximumNetworkChangeWatchers - WatchersKeptForRoot);
+end;
 
 { Under the lock: takes the watchers nobody else holds out of the table
   into Abandoned; returns how many. }
@@ -90,7 +121,7 @@ begin
     DereferenceObject(Abandoned[Index]);
 end;
 
-function CreateNetworkChangeWatcher: PEventObject;
+function CreateNetworkChangeWatcher(UserId: LongWord): PEventObject;
 var
   Abandoned: TWatcherList;
   AbandonedCount: Integer;
@@ -106,13 +137,15 @@ begin
   Placed := False;
   PreviousLevel := AcquireSpinLock(WatcherLock);
   AbandonedCount := TakeAbandonedWatchers(Abandoned);
-  for Index := 0 to MaximumNetworkChangeWatchers - 1 do
-    if Watchers[Index] = nil then
-    begin
-      Watchers[Index] := Result;
-      Placed := True;
-      Break;
-    end;
+  if UserHasRoom(UserId) then
+    for Index := 0 to MaximumNetworkChangeWatchers - 1 do
+      if Watchers[Index] = nil then
+      begin
+        Watchers[Index] := Result;
+        WatcherOwners[Index] := UserId;
+        Placed := True;
+        Break;
+      end;
   ReleaseSpinLock(WatcherLock, PreviousLevel);
   ReleaseAbandonedWatchers(Abandoned, AbandonedCount);
   if not Placed then

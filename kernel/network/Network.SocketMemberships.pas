@@ -25,7 +25,11 @@
   its address), else the one the routes give the group (IPv6: the first
   Ethernet interface with IPv6; IPv4: the default route's). An IPv6
   socket may join IPv4 groups unless it is Ipv6Only. Closing the socket
-  leaves them all. Under the network lock.
+  leaves them all. A user other than root holds at most
+  MaximumUserMemberships memberships over all of its sockets, and may
+  not take the interface groups' table below GroupEntriesKeptForRoot
+  free entries, so that nobody can fill it for the system's own
+  services (mDNS, the DHCPv6 client). Under the network lock.
 }
 unit Network.SocketMemberships;
 
@@ -36,6 +40,10 @@ interface
 uses
   Abi.SystemCalls,
   Network.Sockets;
+
+const
+  MaximumUserMemberships = 32;
+  GroupEntriesKeptForRoot = 16;
 
 { SocketOptionJoinGroup or SocketOptionLeaveGroup with the request. }
 function ChangeSocketMembership(Socket: PSocket; Option: LongWord; constref Request: TAbiMulticastMembership): LongInt;
@@ -111,6 +119,36 @@ begin
   Result := -1;
 end;
 
+{ Memberships held by all the sockets of UserId. }
+function UserMembershipCount(UserId: LongWord): LongWord;
+var
+  Other: PSocket;
+  Index: Integer;
+begin
+  Result := 0;
+  Other := FirstSocket;
+  while Other <> nil do
+  begin
+    if Other^.Owner.UserId = UserId then
+      for Index := 0 to MaximumSocketMemberships - 1 do
+        if Other^.Memberships[Index].InUse then
+          Inc(Result);
+    Other := NextSocket(Other);
+  end;
+end;
+
+{ Whether the socket's owner may take another membership. }
+function OwnerHasRoom(Socket: PSocket; NetworkInterface: PNetworkInterface; Family: Word;
+  constref Group6: TIpv6Address; Group4: TIpv4Address): Boolean;
+begin
+  if Socket^.Owner.UserId = 0 then
+    Exit(True);
+  if UserMembershipCount(Socket^.Owner.UserId) >= MaximumUserMemberships then
+    Exit(False);
+  Result := MulticastGroupHasEntry(NetworkInterface, Family, Group6, Group4) or
+    (FreeMulticastGroupEntries > GroupEntriesKeptForRoot);
+end;
+
 function JoinGroup(Socket: PSocket; NetworkInterface: PNetworkInterface; Family: Word;
   constref Group6: TIpv6Address; Group4: TIpv4Address): LongInt;
 var
@@ -118,6 +156,8 @@ var
 begin
   if FindMembership(Socket, NetworkInterface, Family, Group6, Group4) >= 0 then
     Exit(ErrorAddressInUse);
+  if not OwnerHasRoom(Socket, NetworkInterface, Family, Group6, Group4) then
+    Exit(ErrorNoSpace);
   for Index := 0 to MaximumSocketMemberships - 1 do
     if not Socket^.Memberships[Index].InUse then
     begin

@@ -84,6 +84,7 @@ uses
   Network.TcpKeepAlive,
   Network.TcpBuffers,
   Network.TcpWindows,
+  Network.UnpredictableNumbers,
   Network.Statistics;
 
 function ConnectionOf(Socket: PSocket): PTcpConnection;
@@ -221,14 +222,15 @@ begin
   end;
 end;
 
-{ A socket that listens or connects without having bound gets a port. }
-function BindImplicitly(Socket: PSocket): LongInt;
+{ A socket that listens or connects (to Remote; nil when listening)
+  without having bound gets a port. }
+function BindImplicitly(Socket: PSocket; Remote: PNetworkEndpoint): LongInt;
 var
   Port: Word;
 begin
   if Socket^.IsBound then
     Exit(ErrorNone);
-  Port := ChooseDynamicPort(Socket, Socket^.Local);
+  Port := ChooseDynamicPort(Socket, Socket^.Local, Remote);
   if Port = 0 then
     Exit(ErrorAddressInUse);
   Socket^.Local.Port := Port;
@@ -250,9 +252,13 @@ begin
     Connection^.Backlog := Backlog;
     Exit(ErrorNone);
   end;
-  Result := BindImplicitly(Socket);
+  Result := BindImplicitly(Socket, nil);
   if Result <> ErrorNone then
     Exit;
+  { Two sockets may share a port while neither listens (with
+    SocketOptionReuseAddress); only one of them may listen on it. }
+  if not PortIsFree(Socket, Socket^.Local, Socket^.Local.Port, True) then
+    Exit(ErrorAddressInUse);
   Connection := CreateTcpConnection;
   if Connection = nil then
     Exit(ErrorOutOfMemory);
@@ -362,7 +368,7 @@ begin
     Source.Port := Socket^.Local.Port;
     Socket^.Local := Source;
   end;
-  Result := BindImplicitly(Socket);
+  Result := BindImplicitly(Socket, @Remote);
   if Result <> ErrorNone then
     Exit;
   if FindTcpConnection(Socket^.Local, Remote) <> nil then
@@ -384,7 +390,8 @@ begin
   Connection^.SackPermitted := True;
   Connection^.Timestamps := True;
   Connection^.MaximumSegment := OwnMaximumSegment(Remote, Socket^.BoundInterface);
-  Connection^.InitialSendSequence := GenerateInitialSequence;
+  Connection^.InitialSendSequence := InitialSequenceFor(Connection^.Local, Connection^.Remote);
+  Connection^.TimestampOffset := TimestampOffsetFor(Connection^.Local, Connection^.Remote);
   Connection^.SendUnacknowledged := Connection^.InitialSendSequence;
   Connection^.SendNext := Connection^.InitialSendSequence;
   Connection^.SendMaximum := Connection^.InitialSendSequence;

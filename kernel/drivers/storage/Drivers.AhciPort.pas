@@ -53,6 +53,8 @@ uses
   Kernel.SpinLock,
   Kernel.DeferredCalls,
   Kernel.Timers,
+  Kernel.Events,
+  Io.Dma,
   Io.Manager;
 
 const
@@ -158,7 +160,8 @@ const
 type
   { A physically contiguous piece of a command's data. }
   TDataSegment = record
-    Physical: QWord;
+    { Where the controller finds it (a bus address, Io.Dma). }
+    BusAddress: QWord;
     Length: QWord;
   end;
   TDataSegments = array[0..MaximumPrdtEntries - 1] of TDataSegment;
@@ -177,10 +180,15 @@ type
   TAhciPort = record
     Registers: PByte;
     PortNumber: LongWord;
-    ControlPagePhysical: QWord;
+    { What the controller's DMA reaches and whether it snoops (Io.Dma). }
+    Dma: TDmaAttributes;
+    { Its DMA memory (shared: uncached for a controller that does not
+      snoop): the command list and received FIS page, the command
+      tables and the bounce buffer. }
+    ControlPageBuffer: TDmaBuffer;
     ControlPage: PByte;
-    TablePagesPhysical: array[0..TablePageCount - 1] of QWord;
-    BouncePagesPhysical: array[0..BounceBufferPages - 1] of QWord;
+    TablePageBuffers: array[0..TablePageCount - 1] of TDmaBuffer;
+    BouncePageBuffers: array[0..BounceBufferPages - 1] of TDmaBuffer;
     { Slots the controller has, and how many queued commands the disk
       takes at once (0: no NCQ). }
     SlotCount: LongWord;
@@ -229,6 +237,14 @@ type
     TimeoutCall: TDeferredCall;
     CommandDeadline: QWord;
     RecoveryCount: QWord;
+    { A command failed or timed out: the recovery thread resets the port
+      (which waits for the controller, so not at dispatch level) and
+      only then fails what was running, whose buffers the controller
+      may write until the port stopped. Nothing starts meanwhile. A
+      port that did not come back fails every request at once. }
+    Recovering: Boolean;
+    IsDead: Boolean;
+    RecoveryNeeded: TEvent;
   end;
 
   PAhciController = ^TAhciController;
@@ -291,6 +307,8 @@ function RecoverPort(Port: PAhciPort): Boolean;
 
 procedure CopyFromBounceBuffer(Port: PAhciPort; Destination: PByte; ByteCount: QWord);
 procedure CopyToBounceBuffer(Port: PAhciPort; Source: PByte; ByteCount: QWord);
+{ The bounce buffer's first page, for the driver. }
+function BounceBufferStart(Port: PAhciPort): PByte;
 
 implementation
 
@@ -370,9 +388,14 @@ begin
   Fis[13] := Byte(SectorCount shr 8);
 end;
 
-function SlotTablePhysical(Port: PAhciPort; Slot: LongWord): QWord;
+function SlotTableBusAddress(Port: PAhciPort; Slot: LongWord): QWord;
 begin
-  Result := Port^.TablePagesPhysical[Slot div TablesPerPage] + (Slot mod TablesPerPage) * CommandTableBytes;
+  Result := Port^.TablePageBuffers[Slot div TablesPerPage].DeviceAddress + (Slot mod TablesPerPage) * CommandTableBytes;
+end;
+
+function SlotTable(Port: PAhciPort; Slot: LongWord): PByte;
+begin
+  Result := Port^.TablePageBuffers[Slot div TablesPerPage].Address + (Slot mod TablesPerPage) * CommandTableBytes;
 end;
 
 procedure BuildCommand(Port: PAhciPort; Slot: LongWord; Command: Byte; Lba: QWord; SectorCount: Word;
@@ -381,12 +404,12 @@ var
   Header: PCommandHeader;
   Table: PByte;
   Prdt: PPrdtEntry;
-  TablePhysical: QWord;
+  TableBusAddress: QWord;
   Index: Integer;
   Flags: LongWord;
 begin
-  TablePhysical := SlotTablePhysical(Port, Slot);
-  Table := PByte(PhysicalToVirtual(TablePhysical));
+  TableBusAddress := SlotTableBusAddress(Port, Slot);
+  Table := SlotTable(Port, Slot);
   if Queued then
   begin
     { NCQ: the count moves to the features field, the tag goes where the
@@ -402,8 +425,8 @@ begin
   Prdt := PPrdtEntry(Table + PrdtOffsetInTable);
   for Index := 0 to SegmentCount - 1 do
   begin
-    Prdt[Index].DataAddressLow := LongWord(Segments[Index].Physical);
-    Prdt[Index].DataAddressHigh := LongWord(Segments[Index].Physical shr 32);
+    Prdt[Index].DataAddressLow := LongWord(Segments[Index].BusAddress);
+    Prdt[Index].DataAddressHigh := LongWord(Segments[Index].BusAddress shr 32);
     Prdt[Index].Reserved := 0;
     Prdt[Index].ByteCountMinusOne := LongWord(Segments[Index].Length - 1);
   end;
@@ -414,15 +437,15 @@ begin
   Header := PCommandHeader(Port^.ControlPage + CommandListOffset) + Slot;
   Header^.Flags := Flags;
   Header^.BytesTransferred := 0;
-  Header^.TableAddressLow := LongWord(TablePhysical);
-  Header^.TableAddressHigh := LongWord(TablePhysical shr 32);
+  Header^.TableAddressLow := LongWord(TableBusAddress);
+  Header^.TableAddressHigh := LongWord(TableBusAddress shr 32);
 end;
 
 procedure SetCommandFeatures(Port: PAhciPort; Slot: LongWord; Features: Byte);
 var
   Table: PByte;
 begin
-  Table := PByte(PhysicalToVirtual(SlotTablePhysical(Port, Slot)));
+  Table := SlotTable(Port, Slot);
   Table[3] := Features;
 end;
 
@@ -437,7 +460,7 @@ var
   Table: PByte;
 begin
   BuildCommand(Port, Slot, AtaCommandPacket, 0, 0, Segments, SegmentCount, False, False);
-  Table := PByte(PhysicalToVirtual(SlotTablePhysical(Port, Slot)));
+  Table := SlotTable(Port, Slot);
   if SegmentCount > 0 then
     Table[3] := FeatureDma;
   { The byte count limit (for PIO; harmless with DMA). }
@@ -475,7 +498,7 @@ begin
   RemainingBytes := ByteCount;
   while RemainingBytes > 0 do
   begin
-    Segments[SegmentCount].Physical := Port^.BouncePagesPhysical[SegmentCount];
+    Segments[SegmentCount].BusAddress := Port^.BouncePageBuffers[SegmentCount].DeviceAddress;
     Segments[SegmentCount].Length := RemainingBytes;
     if Segments[SegmentCount].Length > PageSize then
       Segments[SegmentCount].Length := PageSize;
@@ -511,7 +534,7 @@ begin
   RemainingBytes := ByteCount;
   while RemainingBytes > 0 do
   begin
-    Segments[SegmentCount].Physical := Port^.BouncePagesPhysical[SegmentCount];
+    Segments[SegmentCount].BusAddress := Port^.BouncePageBuffers[SegmentCount].DeviceAddress;
     Segments[SegmentCount].Length := RemainingBytes;
     if Segments[SegmentCount].Length > PageSize then
       Segments[SegmentCount].Length := PageSize;
@@ -615,6 +638,11 @@ begin
       ReadRegister(Port^.Registers, PortCommand) or PortCommandStart);
 end;
 
+function BounceBufferStart(Port: PAhciPort): PByte;
+begin
+  Result := Port^.BouncePageBuffers[0].Address;
+end;
+
 procedure CopyFromBounceBuffer(Port: PAhciPort; Destination: PByte; ByteCount: QWord);
 var
   PageIndex: Integer;
@@ -626,7 +654,7 @@ begin
     ChunkBytes := ByteCount;
     if ChunkBytes > PageSize then
       ChunkBytes := PageSize;
-    CopyMemory(Destination, PhysicalToVirtual(Port^.BouncePagesPhysical[PageIndex]), ChunkBytes);
+    CopyMemory(Destination, Port^.BouncePageBuffers[PageIndex].Address, ChunkBytes);
     Destination := Destination + ChunkBytes;
     ByteCount := ByteCount - ChunkBytes;
     Inc(PageIndex);
@@ -644,7 +672,7 @@ begin
     ChunkBytes := ByteCount;
     if ChunkBytes > PageSize then
       ChunkBytes := PageSize;
-    CopyMemory(PhysicalToVirtual(Port^.BouncePagesPhysical[PageIndex]), Source, ChunkBytes);
+    CopyMemory(Port^.BouncePageBuffers[PageIndex].Address, Source, ChunkBytes);
     Source := Source + ChunkBytes;
     ByteCount := ByteCount - ChunkBytes;
     Inc(PageIndex);

@@ -20,8 +20,16 @@
   Putting fragmented IPv6 datagrams together (RFC 8200 4.5), as
   Network.Fragments does for IPv4: one buffer per datagram (source,
   destination and identification), a bitmap of the 8-byte blocks that
-  came, at most 8 datagrams at once for 60 s each (the oldest pushed out
-  by a ninth).
+  came (Network.ReassemblyBlocks), at most 16 datagrams at once for 60 s
+  each. Senders of one /64 hold at most 4 of them: a fifth pushes out
+  their own oldest, so one flooding source cannot push out the others';
+  past that, the oldest of all gives way.
+
+  RFC 5722: a fragment that overlaps one that came (or disagrees about
+  where the datagram ends) gives up the whole datagram, silently; an
+  exact copy of one that came is dropped alone. RFC 8200 4.5: the first
+  fragment must hold the whole header chain up to the upper-layer
+  header (Network.Ipv6 checks it before handing the fragment here).
 
   The whole datagram is a fixed header (from the fragments, its next
   header the first fragment's, its payload length the new one) followed
@@ -40,7 +48,10 @@ uses
   Network.Ipv6Headers;
 
 const
-  MaximumIpv6Reassemblies = 8;
+  MaximumIpv6Reassemblies = 16;
+  { Reassemblies the senders of one /64 may hold. }
+  MaximumReassembliesPerPrefix = 4;
+  ReassemblyPrefixLength = 64;
   Ipv6ReassemblySeconds = 60;
   MaximumIpv6Payload = 65535;
 
@@ -61,13 +72,12 @@ uses
   Network.ByteOrder,
   Network.Ipv6Addresses,
   Network.Core,
+  Network.ReassemblyBlocks,
   Network.Statistics;
 
 const
   FixedHeaderBytes = 40;
   FragmentHeaderBytes = 8;
-  BlockBytes = 8;
-  BlockCount = (MaximumIpv6Payload + BlockBytes - 1) div BlockBytes;
   NanosecondsPerSecond = QWord(1000) * 1000 * 1000;
 
 type
@@ -84,7 +94,7 @@ type
     Payload: PByte;
     { 0 until the last fragment came. }
     PayloadLength: LongWord;
-    Received: array[0..(BlockCount + 7) div 8 - 1] of Byte;
+    Received: TReassemblyBlocks;
     Deadline: QWord;
   end;
 
@@ -105,33 +115,65 @@ begin
     Ipv6AddressesEqual(Reassembly^.Destination, Datagram.Destination6);
 end;
 
+{ The oldest reassembly in use, of all or (Prefix not nil) of senders
+  in the /64 of Prefix^; and how many such there are. }
+function OldestReassembly(Prefix: PIpv6Address; out Count: Integer): PReassembly;
+var
+  Index: Integer;
+  Candidate: PReassembly;
+begin
+  Result := nil;
+  Count := 0;
+  for Index := 0 to MaximumIpv6Reassemblies - 1 do
+  begin
+    Candidate := @Reassemblies[Index];
+    if not Candidate^.InUse or
+       ((Prefix <> nil) and not SameIpv6Prefix(Candidate^.Source, Prefix^, ReassemblyPrefixLength)) then
+      Continue;
+    Inc(Count);
+    if (Result = nil) or (Candidate^.Deadline < Result^.Deadline) then
+      Result := Candidate;
+  end;
+end;
+
+function FreeReassembly: PReassembly;
+var
+  Index: Integer;
+begin
+  for Index := 0 to MaximumIpv6Reassemblies - 1 do
+    if not Reassemblies[Index].InUse then
+      Exit(@Reassemblies[Index]);
+  Result := nil;
+end;
+
 function FindReassembly(constref Datagram: TIpDatagram; Identification: LongWord): PReassembly;
 var
   Index: Integer;
   Free: PReassembly;
+  Sender: TIpv6Address;
+  Count: Integer;
   Oldest: PReassembly;
 begin
-  Free := nil;
-  Oldest := nil;
   for Index := 0 to MaximumIpv6Reassemblies - 1 do
   begin
     Result := @Reassemblies[Index];
-    if not Result^.InUse then
-    begin
-      if Free = nil then
-        Free := Result;
-      Continue;
-    end;
     if Matches(Result, Datagram, Identification) then
       Exit;
-    if (Oldest = nil) or (Result^.Deadline < Oldest^.Deadline) then
-      Oldest := Result;
   end;
-  if Free = nil then
+  Sender := Datagram.Source6;
+  Oldest := OldestReassembly(@Sender, Count);
+  if Count >= MaximumReassembliesPerPrefix then
+    Free := Oldest
+  else
+  begin
+    Free := FreeReassembly;
+    if Free = nil then
+      Free := OldestReassembly(nil, Count);
+  end;
+  if Free^.InUse then
   begin
     Inc(NetworkStatistics.Ipv6.ReassemblyFailures);
-    ReleaseReassembly(Oldest);
-    Free := Oldest;
+    ReleaseReassembly(Free);
   end;
   Result := Free;
   FillMemory(Result, SizeOf(TReassembly), 0);
@@ -147,38 +189,9 @@ begin
   RequestNetworkWakeAt(Result^.Deadline);
 end;
 
-procedure MarkBlocks(Reassembly: PReassembly; Offset, Length: LongWord);
-var
-  Block: LongWord;
-  LastBlock: LongWord;
-begin
-  if Length = 0 then
-    Exit;
-  Block := Offset div BlockBytes;
-  LastBlock := (Offset + Length - 1) div BlockBytes;
-  while Block <= LastBlock do
-  begin
-    Reassembly^.Received[Block div 8] := Reassembly^.Received[Block div 8] or (1 shl (Block mod 8));
-    Inc(Block);
-  end;
-end;
-
 function IsComplete(Reassembly: PReassembly): Boolean;
-var
-  Block: LongWord;
-  Blocks: LongWord;
 begin
-  if (Reassembly^.PayloadLength = 0) or not Reassembly^.HasFirst then
-    Exit(False);
-  Blocks := (Reassembly^.PayloadLength + BlockBytes - 1) div BlockBytes;
-  Block := 0;
-  while Block < Blocks do
-  begin
-    if (Reassembly^.Received[Block div 8] and (1 shl (Block mod 8))) = 0 then
-      Exit(False);
-    Inc(Block);
-  end;
-  Result := True;
+  Result := Reassembly^.HasFirst and ReassemblyBlocksComplete(Reassembly^.Received, Reassembly^.PayloadLength);
 end;
 
 function BuildWhole(Reassembly: PReassembly; out WholeLength: LongWord): PByte;
@@ -208,13 +221,33 @@ begin
     Exit;
   Length := Datagram.TotalLength - DataStart;
   if (Walk.FragmentOffset + Length > MaximumIpv6Payload) or
-     (Walk.MoreFragments and (((Length mod BlockBytes) <> 0) or (Length = 0))) then
+     (Walk.MoreFragments and (((Length mod ReassemblyBlockBytes) <> 0) or (Length = 0))) then
     Exit;
   Reassembly := FindReassembly(Datagram, Walk.Identification);
   if Reassembly = nil then
     Exit;
+  case ClassifyFragment(Reassembly^.Received, Walk.FragmentOffset, Length, Walk.MoreFragments,
+    Reassembly^.PayloadLength) of
+    FragmentDuplicate:
+      begin
+        { An exact copy is dropped alone; different bytes over the same
+          blocks are an overlap. }
+        if not MemoryIsEqual(Reassembly^.Payload + Walk.FragmentOffset, Datagram.Header + DataStart, Length) then
+        begin
+          Inc(NetworkStatistics.Ipv6.ReassemblyFailures);
+          ReleaseReassembly(Reassembly);
+        end;
+        Exit;
+      end;
+    FragmentOverlaps:
+      begin
+        Inc(NetworkStatistics.Ipv6.ReassemblyFailures);
+        ReleaseReassembly(Reassembly);
+        Exit;
+      end;
+  end;
   CopyMemory(Reassembly^.Payload + Walk.FragmentOffset, Datagram.Header + DataStart, Length);
-  MarkBlocks(Reassembly, Walk.FragmentOffset, Length);
+  MarkReassemblyBlocks(Reassembly^.Received, Walk.FragmentOffset, Length);
   if Walk.FragmentOffset = 0 then
   begin
     Reassembly^.HasFirst := True;

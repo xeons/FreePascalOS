@@ -24,7 +24,10 @@
   link-local address, a manual address's prefix) and go with them;
   routers' advertisements add on-link prefixes and default routes that
   expire with their lifetimes (RouteFlagAutomatic); others are added by
-  hand. A gateway is usually a router's link-local address, so a route
+  hand. Advertisements only ever renew or remove routes they made: a
+  route added by hand or with an address keeps its lifetime (forever)
+  whatever a router says, and one made by hand over an automatic route
+  takes it over. A gateway is usually a router's link-local address, so a route
   always names its interface. A lookup takes the longest prefix on an
   interface that is up, the lowest metric among equals. Link-local and
   multicast destinations are not looked up here: they leave by the
@@ -56,6 +59,14 @@ function AddIpv6Route(constref Destination: TIpv6Address; PrefixLength: LongWord
   interface; ErrorNotFound if there is none. }
 function RemoveIpv6Route(constref Destination: TIpv6Address; PrefixLength: LongWord;
   constref Gateway: TIpv6Address; NetworkInterface: PNetworkInterface): LongInt;
+{ The same for a route that came from router advertisements only
+  (RouteFlagAutomatic): ErrorNotFound for any other. }
+function RemoveAutomaticIpv6Route(constref Destination: TIpv6Address; PrefixLength: LongWord;
+  constref Gateway: TIpv6Address; NetworkInterface: PNetworkInterface): LongInt;
+{ The flags of that route (RouteFlag*); False if there is none. }
+function FindIpv6RouteFlags(constref Destination: TIpv6Address; PrefixLength: LongWord;
+  constref Gateway: TIpv6Address; NetworkInterface: PNetworkInterface; out Flags: LongWord;
+  out ExpiresAt: QWord): Boolean;
 { Removes the routes of NetworkInterface: all of them, or only those
   that came from router advertisements. }
 procedure RemoveIpv6InterfaceRoutes(NetworkInterface: PNetworkInterface; OnlyAutomatic: Boolean);
@@ -151,10 +162,22 @@ begin
   Route := FindRoute(Prefix, PrefixLength, Gateway, False, NetworkInterface);
   if Route <> nil then
   begin
-    if (Flags and RouteFlagAutomatic) = 0 then
+    if (Flags and RouteFlagAutomatic) <> 0 then
+    begin
+      { A router renews only what routers made. }
+      if (Route^.Flags and RouteFlagAutomatic) = 0 then
+        Exit(ErrorExists);
+      Route^.ExpiresAt := ExpiresAt;
+      Route^.Metric := Metric;
+      Exit(ErrorNone);
+    end;
+    if (Route^.Flags and RouteFlagAutomatic) = 0 then
       Exit(ErrorExists);
-    Route^.ExpiresAt := ExpiresAt;
+    { Made by hand (or with an address) over a router's: it is ours now,
+      for as long as it is wanted. }
+    Route^.Flags := (Flags and (RouteFlagGateway or RouteFlagInterface)) or (Route^.Flags and RouteFlagGateway);
     Route^.Metric := Metric;
+    Route^.ExpiresAt := ExpiresAt;
     Exit(ErrorNone);
   end;
   for Index := 0 to MaximumIpv6Routes - 1 do
@@ -192,6 +215,40 @@ begin
     Exit(ErrorNotFound);
   Route^.InUse := False;
   Result := ErrorNone;
+end;
+
+function RemoveAutomaticIpv6Route(constref Destination: TIpv6Address; PrefixLength: LongWord;
+  constref Gateway: TIpv6Address; NetworkInterface: PNetworkInterface): LongInt;
+var
+  Route: PIpv6Route;
+begin
+  if PrefixLength > 128 then
+    Exit(ErrorInvalidArgument);
+  Route := FindRoute(Ipv6PrefixOf(Destination, PrefixLength), PrefixLength, Gateway,
+    IsUnspecifiedIpv6Address(Gateway), NetworkInterface);
+  if (Route = nil) or ((Route^.Flags and RouteFlagAutomatic) = 0) then
+    Exit(ErrorNotFound);
+  Route^.InUse := False;
+  Result := ErrorNone;
+end;
+
+function FindIpv6RouteFlags(constref Destination: TIpv6Address; PrefixLength: LongWord;
+  constref Gateway: TIpv6Address; NetworkInterface: PNetworkInterface; out Flags: LongWord;
+  out ExpiresAt: QWord): Boolean;
+var
+  Route: PIpv6Route;
+begin
+  Flags := 0;
+  ExpiresAt := 0;
+  if PrefixLength > 128 then
+    Exit(False);
+  Route := FindRoute(Ipv6PrefixOf(Destination, PrefixLength), PrefixLength, Gateway, False, NetworkInterface);
+  Result := Route <> nil;
+  if Result then
+  begin
+    Flags := Route^.Flags;
+    ExpiresAt := Route^.ExpiresAt;
+  end;
 end;
 
 procedure RemoveIpv6InterfaceRoutes(NetworkInterface: PNetworkInterface; OnlyAutomatic: Boolean);

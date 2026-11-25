@@ -155,6 +155,9 @@ uses
   FileSystem.Fat.Names,
   FileSystem.Discards;
 
+const
+  MaximumDirectoryRecords = 65536;
+
 function FatVolumeOf(Node: PNode): PFatVolume;
 begin
   Result := PFatVolume(Node^.Volume^.DriverData);
@@ -308,7 +311,9 @@ begin
 
   while CurrentOrdinal < Ordinal do
   begin
-    if not IsValidDataCluster(Fat, CurrentCluster) then
+    { No chain is longer than the volume: one that is comes back on
+      itself. }
+    if (CurrentOrdinal >= Fat^.ClusterCount) or not IsValidDataCluster(Fat, CurrentCluster) then
       Exit(StatusCorrupted);
     if not ReadFatEntry(Node^.Common.Volume, CurrentCluster, NextCluster) then
       Exit(StatusIoError);
@@ -503,6 +508,10 @@ begin
     Exit(StatusSuccess);
   end;
 
+  { A directory holds at most 65536 records (2 MiB); past that its chain
+    is damaged, maybe looping without an end marker. }
+  if Index >= MaximumDirectoryRecords then
+    Exit(StatusCorrupted);
   EntriesPerCluster := Fat^.BytesPerCluster div DirectoryEntrySize;
   Result := FindClusterOfChain(Directory, LongWord(Index div EntriesPerCluster), Cluster);
   if Result = StatusSuccess then

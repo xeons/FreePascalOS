@@ -25,8 +25,13 @@
 #                   session as it normally starts; report pass/fail
 #   make aml-test   Run the kernel's AML interpreter on the host against captured
 #                   QEMU DSDTs and compare what it finds with the expected output
+#   make file-system-image-test  The ext, FAT and exFAT drivers on the host against
+#                   disk images damaged on purpose and at random
 #   make device-tree-test  Read a device tree laid out like the Raspberry Pi 5's (host)
 #   make gem-descriptor-test  The Pi 5 Ethernet's (Cadence GEM) DMA descriptors (host)
+#   make nvme-queue-test      NVMe queue pairs: identifiers, phases, late completions (host)
+#   make acpi-table-test      ACPI table lengths and checksums checked before use (host)
+#   make virtio-used-ring-test  Virtio used ring ids, lengths and queue sizes checked (host)
 #   make hdmi-audio-test   The Pi 5 HDMI audio's N/CTS, IEC 60958 frames and DMA blocks (host)
 #   make acpi-device-test  Walk a DSDT laid out like the Raspberry Pi 4's (made by
 #                   Python) for platform devices on the host: ids, resources,
@@ -225,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -576,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: native-fpc-test aml-test region-tree-test mount-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -636,12 +641,20 @@ $(AML_TEST): $(AML_TEST_SOURCES)
 	@mkdir -p build/tools/aml-units
 	$(FPC) -O2 -Fukernel/firmware -Fushared -FEbuild/tools -FUbuild/tools/aml-units $<
 
-aml-test: $(AML_TEST)
+# Malformed tables (make-malformed.py): each must fail cleanly, none may
+# crash, hang or write outside its blocks.
+AML_MALFORMED := build/tools/aml-malformed
+
+$(AML_MALFORMED)/CASES: tools/AmlTest/make-malformed.py
+	python3 -I $< $(AML_MALFORMED)
+
+aml-test: $(AML_TEST) $(AML_MALFORMED)/CASES
 	@for machine in $(AML_TEST_MACHINES); do \
 		$(AML_TEST) tools/AmlTest/qemu-$$machine-dsdt.aml > build/tools/aml-$$machine.out && \
 		diff -u tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out > /dev/null || \
 		{ echo "AML TEST FAILED: $$machine (diff tools/AmlTest/qemu-$$machine.expected build/tools/aml-$$machine.out)"; exit 1; }; \
 	done; echo "AML TEST PASSED: $(AML_TEST_MACHINES)"
+	timeout 300 $(AML_TEST) --malformed $(AML_MALFORMED)
 
 # The region tree of user address spaces (Processes.RegionTree) on the
 # host, against a plain list doing the same the slow way.
@@ -694,6 +707,34 @@ $(MOUNT_TEST): tools/MountTest/MountTest.pas kernel/filesystems/FileSystem.Mount
 
 mount-test: $(MOUNT_TEST)
 	$(MOUNT_TEST)
+
+# The kernel's ext2/3/4, FAT and exFAT drivers on the host, against disk
+# images damaged on purpose (made by make-images.py with mke2fs, mkfs.fat,
+# mtools and mkfs.exfat) and copies damaged at random: they may refuse,
+# mount read-only or report corruption, never crash, hang, leak or write
+# outside their buffers. The kernel's block cache, heap, clock and mutexes
+# are stood in for (tools/FileSystemImageTest/stubs).
+FILE_SYSTEM_IMAGE_TEST := build/tools/FileSystemImageTest
+FILE_SYSTEM_IMAGES := build/tools/fs-images
+FILE_SYSTEM_FUZZ_ITERATIONS ?= 400
+
+$(FILE_SYSTEM_IMAGE_TEST): tools/FileSystemImageTest/FileSystemImageTest.pas tools/FileSystemImageTest/ImageHarness.pas \
+		tools/FileSystemImageTest/ImageMutations.pas $(wildcard tools/FileSystemImageTest/stubs/*.pas) \
+		$(wildcard kernel/filesystems/FileSystem.Ext*.pas) $(wildcard kernel/filesystems/FileSystem.Fat*.pas) \
+		$(wildcard kernel/filesystems/FileSystem.ExFat*.pas) kernel/filesystems/FileSystem.Types.pas
+	@mkdir -p build/tools/fs-image-units
+	$(FPC) -O1 -gl -Cr -Futools/FileSystemImageTest/stubs -Futools/FileSystemImageTest -Fukernel/filesystems \
+		-Fukernel/runtime -Fushared -FEbuild/tools -FUbuild/tools/fs-image-units $<
+
+$(FILE_SYSTEM_IMAGES)/MANIFEST: tools/FileSystemImageTest/make-images.py
+	python3 -I $< $(FILE_SYSTEM_IMAGES)
+
+.PHONY: file-system-image-test
+file-system-image-test: $(FILE_SYSTEM_IMAGE_TEST) $(FILE_SYSTEM_IMAGES)/MANIFEST
+	$(FILE_SYSTEM_IMAGE_TEST) $(FILE_SYSTEM_IMAGES)/MANIFEST
+	@for image in ext2 ext4 ext4-plain fat12 fat16 exfat; do \
+		$(FILE_SYSTEM_IMAGE_TEST) --fuzz $(FILE_SYSTEM_IMAGES)/$$image.img $(FILE_SYSTEM_FUZZ_ITERATIONS) 1 || exit 1; \
+	done
 
 # The kernel's random number core (ChaCha20, against RFC 8439) and the
 # randomized address space layouts (Processes.AddressLayout) on the host.
@@ -784,6 +825,16 @@ $(GEM_DESCRIPTOR_TEST): tools/GemDescriptorTest/GemDescriptorTest.pas kernel/dri
 gem-descriptor-test: $(GEM_DESCRIPTOR_TEST)
 	$(GEM_DESCRIPTOR_TEST)
 
+# What a virtio device writes into a used ring, checked (Drivers.VirtioUsedRing).
+VIRTIO_USED_RING_TEST := build/tools/VirtioUsedRingTest
+
+$(VIRTIO_USED_RING_TEST): tools/VirtioUsedRingTest/VirtioUsedRingTest.pas kernel/drivers/virtio/Drivers.VirtioUsedRing.pas
+	@mkdir -p build/tools/virtio-used-ring-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/virtio -FEbuild/tools -FUbuild/tools/virtio-used-ring-units $<
+
+virtio-used-ring-test: $(VIRTIO_USED_RING_TEST)
+	$(VIRTIO_USED_RING_TEST)
+
 # The Raspberry Pi 5's HDMI audio without the hardware: N/CTS against the
 # HDMI table, the MAI's sample clock, IEC 60958 subframes, the audio
 # InfoFrame (Drivers.HdmiAudio.Format) and the BCM2712 DMA's control
@@ -800,25 +851,63 @@ hdmi-audio-test: $(HDMI_AUDIO_TEST)
 
 # USB configuration descriptors walked into interfaces, and HID report
 # descriptors and reports routed by id (Drivers.UsbDescriptors,
-# Drivers.HidReports), over a keyboard and mouse receiver's descriptors.
+# Drivers.HidReports), over a keyboard and mouse receiver's descriptors;
+# hostile and fuzzed descriptors read from guarded buffers; the xHCI
+# ring and transfer bookkeeping (Drivers.XhciTrbs, Drivers.XhciTransfers).
 USB_DESCRIPTOR_TEST := build/tools/UsbDescriptorTest
+# The host's runtime units (Runtime.Atomic: barriers) for host tests of
+# kernel code that uses them.
+HOST_RUNTIME_ARCH := $(if $(filter aarch64 arm64,$(shell uname -m)),arm64,amd64)
 
 $(USB_DESCRIPTOR_TEST): tools/UsbDescriptorTest/UsbDescriptorTest.pas kernel/drivers/usb/Drivers.UsbDescriptors.pas \
-		kernel/drivers/usb/Drivers.HidReports.pas shared/Runtime.Memory.pas
+		kernel/drivers/usb/Drivers.HidReports.pas kernel/drivers/usb/Drivers.XhciTrbs.pas \
+		kernel/drivers/usb/Drivers.XhciTransfers.pas shared/Runtime.Memory.pas \
+		$(wildcard tools/UsbDescriptorTest/*.pas)
 	@mkdir -p build/tools/usb-descriptor-units
-	$(FPC) -O2 -Cr -Fukernel/drivers/usb -Fushared -FEbuild/tools -FUbuild/tools/usb-descriptor-units $<
+	$(FPC) -O2 -Cr -Fukernel/drivers/usb -Fushared -Fukernel/runtime/$(HOST_RUNTIME_ARCH) \
+		-Futools/UsbDescriptorTest -FEbuild/tools -FUbuild/tools/usb-descriptor-units $<
 
 usb-descriptor-test: $(USB_DESCRIPTOR_TEST)
 	$(USB_DESCRIPTOR_TEST)
 
+# NVMe queue pairs with the controller played in memory: identifiers,
+# phase wraps, and a late completion of a command given up dropped
+# instead of taken for the next one's (Drivers.NvmeQueues).
+NVME_QUEUE_TEST := build/tools/NvmeQueueTest
+
+$(NVME_QUEUE_TEST): tools/NvmeQueueTest/NvmeQueueTest.pas kernel/drivers/storage/Drivers.NvmeQueues.pas \
+		shared/Runtime.Memory.pas
+	@mkdir -p build/tools/nvme-queue-units
+	$(FPC) -O2 -Cr -Fukernel/drivers/storage -Fushared -Fukernel/runtime/$(HOST_RUNTIME_ARCH) \
+		-FEbuild/tools -FUbuild/tools/nvme-queue-units $<
+
+nvme-queue-test: $(NVME_QUEUE_TEST)
+	$(NVME_QUEUE_TEST)
+
+# ACPI tables refused before use when their length does not cover their
+# header or their checksum fails; root table entry counts that cannot
+# underflow (Firmware.AcpiTableChecks).
+ACPI_TABLE_TEST := build/tools/AcpiTableTest
+
+$(ACPI_TABLE_TEST): tools/AcpiTableTest/AcpiTableTest.pas kernel/firmware/Firmware.AcpiTableChecks.pas
+	@mkdir -p build/tools/acpi-table-units
+	$(FPC) -O2 -Cr -Fukernel/firmware -FEbuild/tools -FUbuild/tools/acpi-table-units $<
+
+acpi-table-test: $(ACPI_TABLE_TEST)
+	$(ACPI_TABLE_TEST)
+
 # The kernel TCP's pure parts: options (MSS, window scale, SACK,
 # timestamps) written and read, window scaling and buffer growth, the
-# SACK scoreboard of RFC 6675 and the receiver's SACK blocks.
+# SACK scoreboard of RFC 6675 and the receiver's SACK blocks; SipHash and
+# the keyed numbers (ISNs, ports, identifications), RFC 5961's checks and
+# the token buckets.
 TCP_TEST := build/tools/TcpTest
 TCP_TEST_SOURCES := tools/TcpTest/TcpTest.pas kernel/network/Network.TcpSequences.pas \
 	kernel/network/Network.TcpOptions.pas kernel/network/Network.TcpWindows.pas \
 	kernel/network/Network.TcpScoreboard.pas kernel/network/Network.TcpReceivedBlocks.pas \
-	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas
+	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas kernel/network/Network.SipHash.pas \
+	kernel/network/Network.KeyedNumbers.pas kernel/network/Network.TcpAcceptance.pas \
+	kernel/network/Network.TokenBuckets.pas
 
 $(TCP_TEST): $(TCP_TEST_SOURCES)
 	@mkdir -p build/tools/tcp-test-units
@@ -1527,11 +1616,14 @@ $(WEB_RENDER): userland/bin/webrender.pas $(wildcard userland/webrender/*.pas) $
 webrender: $(WEB_RENDER)
 
 # The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
-# RFC 6724 address selection, the destination cache, fragments.
+# RFC 6724 address selection, the destination cache, fragments; martian
+# addresses on crafted headers and reassembly's overlap checks.
 IPV6_TEST := build/tools/Ipv6Test
 IPV6_TEST_SOURCES := tools/Ipv6Test/Ipv6Test.pas tools/CryptoTest/TestChecks.pas shared/AddressSelection.pas \
 	kernel/network/Network.Sha256.pas kernel/network/Network.InterfaceIdentifiers.pas \
-	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas
+	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas \
+	kernel/network/Network.InputFilter.pas kernel/network/Network.ReassemblyBlocks.pas \
+	kernel/network/Network.Ipv6Headers.pas
 
 $(IPV6_TEST): $(IPV6_TEST_SOURCES)
 	@mkdir -p build/tools/ipv6-test-units

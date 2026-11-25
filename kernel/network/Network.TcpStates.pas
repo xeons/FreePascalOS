@@ -107,6 +107,7 @@ begin
     SendConnectionSegment(Connection, Connection^.SendNext, TcpFlagReset, 0, 0);
   CountAbortedConnection(Connection^.State);
   Connection^.State := TcpClosed;
+  ClearHalfOpen(Connection);
   Connection^.RetransmitDeadline := 0;
   Connection^.AckDeadline := 0;
   Connection^.AckPending := False;

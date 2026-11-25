@@ -130,9 +130,30 @@ end;
 
 { --- Reading: extent trees ------------------------------------------- }
 
-function ReadExtentHeader(Volume: PVolume; Address: QWord; out Header: TExtentHeader): Boolean;
+{ How many entries fit in a tree block (after its header, before the
+  checksum tail). }
+function TreeBlockCapacity(Ext: PExtVolume): LongWord;
 begin
-  Result := ExtRead(Volume, Address, SizeOf(Header), @Header) and (Header.Magic = ExtentMagic);
+  Result := LongWord((Ext^.BlockSize - ExtentHeaderSize) div ExtentEntrySize);
+end;
+
+{ A header read from the disk can be trusted only this far: its magic,
+  no more entries than its node holds (Capacity) and a depth no valid
+  tree has beyond. }
+function ExtentHeaderIsValid(const Header: TExtentHeader; Capacity: LongWord): Boolean;
+begin
+  Result := (Header.Magic = ExtentMagic) and (Header.Entries <= Capacity) and
+    (Header.Depth <= MaximumExtentDepth);
+end;
+
+{ Reads the header of the tree block at Address, which must sit one
+  level below a node of depth ParentDepth. }
+function ReadExtentHeader(Volume: PVolume; Address: QWord; ParentDepth: Word;
+  out Header: TExtentHeader): Boolean;
+begin
+  Result := ExtRead(Volume, Address, SizeOf(Header), @Header) and
+    ExtentHeaderIsValid(Header, TreeBlockCapacity(PExtVolume(Volume^.DriverData))) and
+    (Header.Depth + 1 = ParentDepth);
 end;
 
 function MapThroughExtents(Node: PExtNode; LogicalBlock: LongWord; out PhysicalBlock: QWord): TFileSystemStatus;
@@ -168,7 +189,7 @@ begin
   Ext := ExtVolumeOf(@Node^.Common);
   Volume := Node^.Common.Volume;
   Header := PExtentHeader(@InodeRecord(Node)^.Block[0])^;
-  if Header.Magic <> ExtentMagic then
+  if not ExtentHeaderIsValid(Header, ExtentRootCapacity) then
     Exit(StatusCorrupted);
   RootEntries := PExtentEntry(PByte(@InodeRecord(Node)^.Block[0]) + ExtentHeaderSize);
   FromInode := True;
@@ -219,7 +240,7 @@ begin
       Exit(StatusCorrupted);
     NodeAddress := StartBlock * Ext^.BlockSize;
     FromInode := False;
-    if not ReadExtentHeader(Volume, NodeAddress, Header) then
+    if not ReadExtentHeader(Volume, NodeAddress, Header.Depth, Header) then
       Exit(StatusCorrupted);
   end;
   Result := StatusCorrupted; { deeper than any valid tree }
@@ -574,7 +595,7 @@ begin
 
   Root := PExtentHeader(@InodeRecord(Node)^.Block[0]);
   RootEntries := PExtentEntry(PByte(Root) + ExtentHeaderSize);
-  if Root^.Magic <> ExtentMagic then
+  if not ExtentHeaderIsValid(Root^, ExtentRootCapacity) then
     Exit(StatusCorrupted);
   if Root^.Depth > 1 then
     Exit(StatusUnsupported);
@@ -593,7 +614,7 @@ begin
       Exit(StatusCorrupted);
     List.TreeBlocks[List.TreeBlockCount] := LeafBlock;
     Inc(List.TreeBlockCount);
-    if not ReadExtentHeader(Volume, LeafBlock * Ext^.BlockSize, Leaf) or (Leaf.Depth <> 0) then
+    if not ReadExtentHeader(Volume, LeafBlock * Ext^.BlockSize, Root^.Depth, Leaf) then
       Exit(StatusCorrupted);
     for LeafIndex := 0 to Integer(Leaf.Entries) - 1 do
     begin

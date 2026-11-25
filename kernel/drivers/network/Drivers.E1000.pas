@@ -60,11 +60,14 @@ uses
   Kernel.DeferredCalls,
   Kernel.Timers,
   Io.Pci,
+  Io.Dma,
+  Io.PlatformDevices,
   Io.PciMessageInterrupts,
   Io.PciLineInterrupts,
   Io.PowerManagement,
   Io.NetworkAdapters,
   Drivers.NetworkCards,
+  Drivers.NetworkBuffers,
   Drivers.E1000.Registers,
   Drivers.E1000.Models,
   Drivers.E1000.Hardware,
@@ -83,6 +86,7 @@ type
     Pci: PPciDevice;
     Model: PE1000Model;
     Registers: PByte;
+    Dma: TDmaAttributes;
     Address: TEthernetAddress;
     Rings: TE1000Rings;
     UsesInterrupts: Boolean;
@@ -276,6 +280,12 @@ begin
     Exit;
   Card^.Pci := Pci;
   Card^.Model := Model;
+  GetPciDmaAttributes(Pci, Card^.Dma);
+  { The conventional PCI parts are given 32-bit addresses (as Linux
+    does: 64-bit DMA is unreliable on some of them); the PCI Express
+    ones take 64-bit addresses. }
+  if (Model^.Family = FamilyClassic) or (Model^.Family = FamilyClassicLater) then
+    LimitNetworkCardDma(Card^.Dma);
   PciEnableDevice(Pci, True);
   Card^.Registers := PByte(MapDeviceMemory(Bar.PhysicalAddress, Bar.SizeInBytes));
   if Card^.Registers = nil then
@@ -287,7 +297,7 @@ begin
     ReportFailure(Pci, 'no valid station address');
     Exit;
   end;
-  if not AllocateE1000Rings(Card^.Rings, Card^.Registers, @Card^.Card) then
+  if not AllocateE1000Rings(Card^.Rings, Card^.Registers, @Card^.Card, Card^.Dma) then
   begin
     ReportFailure(Pci, 'not enough memory for the rings');
     Exit;

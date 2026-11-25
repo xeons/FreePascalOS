@@ -61,13 +61,14 @@ uses
   Kernel.PriorityLevel,
   Kernel.DeferredCalls,
   Kernel.Timers,
-  Memory.Layout,
-  Memory.PhysicalPages,
   Memory.KernelHeap,
   Io.Pci,
   Io.PowerManagement,
   Io.NetworkAdapters,
+  Io.Dma,
+  Drivers.NetworkBuffers,
   Drivers.VirtioPci,
+  Drivers.VirtioUsedRing,
   Debug.Output;
 
 const
@@ -78,17 +79,14 @@ const
   NetHeaderBytes = 12;
   ReceiveQueueIndex = 0;
   TransmitQueueIndex = 1;
-  BufferBytes = 2048;
-  BuffersPerPage = 4096 div BufferBytes;
+  BufferBytes = NetworkBufferBytes;
   ConfigurationStatusOffset = 6;
   StatusLinkUp = 1;
   PollMilliseconds = 10;
 
 type
-  TBufferSet = record
-    Buffers: array[0..MaximumQueueSize - 1] of PByte;
-    Physical: array[0..MaximumQueueSize - 1] of QWord;
-  end;
+  { Streaming DMA buffers of the card (Drivers.NetworkBuffers). }
+  TBufferSet = array[0..MaximumQueueSize - 1] of TNetworkBuffer;
 
   PVirtioNetCard = ^TVirtioNetCard;
   TVirtioNetCard = record
@@ -100,6 +98,8 @@ type
     { Transmit descriptors not in use. }
     TransmitFree: array[0..MaximumQueueSize - 1] of Word;
     TransmitFreeCount: Integer;
+    { Transmit descriptors the card has and has not given back. }
+    TransmitInFlight: array[0..MaximumQueueSize - 1] of Boolean;
     TransmitLock: TSpinLock;
     ReceiveLock: TSpinLock;
     { Transmit said it had no room: the network layer waits to hear. }
@@ -114,27 +114,9 @@ type
     PollCall: TDeferredCall;
   end;
 
-function AllocateBuffers(var BufferSet: TBufferSet; Count: Integer): Boolean;
-var
-  Index: Integer;
-  Page: QWord;
+function AllocateBuffers(Card: PVirtioNetCard; var BufferSet: TBufferSet; Count: Integer): Boolean;
 begin
-  Index := 0;
-  while Index < Count do
-  begin
-    Page := AllocateZeroedPhysicalPage(PageUsageGeneral);
-    if Page = 0 then
-      Exit(False);
-    BufferSet.Physical[Index] := Page;
-    BufferSet.Buffers[Index] := PByte(PhysicalToVirtual(Page));
-    if Index + 1 < Count then
-    begin
-      BufferSet.Physical[Index + 1] := Page + BufferBytes;
-      BufferSet.Buffers[Index + 1] := PByte(PhysicalToVirtual(Page)) + BufferBytes;
-    end;
-    Index := Index + BuffersPerPage;
-  end;
-  Result := True;
+  Result := AllocateNetworkBuffers(Card^.Virtio.Dma, @BufferSet[0], Count);
 end;
 
 { Gives the card every receive buffer (descriptor N holds buffer N). }
@@ -147,7 +129,8 @@ begin
   while Index < Card^.ReceiveQueue.Size do
   begin
     Descriptor := @Card^.ReceiveQueue.Descriptors[Index];
-    Descriptor^.Address := Card^.ReceiveBuffers.Physical[Index];
+    PrepareReceiveBuffer(Card^.Virtio.Dma, Card^.ReceiveBuffers[Index]);
+    Descriptor^.Address := Card^.ReceiveBuffers[Index].DeviceAddress;
     Descriptor^.Length := BufferBytes;
     Descriptor^.Flags := VirtqueueDescriptorWrite;
     Descriptor^.Next := 0;
@@ -164,6 +147,7 @@ begin
   for Index := Card^.TransmitQueue.Size - 1 downto 0 do
   begin
     Card^.TransmitFree[Card^.TransmitFreeCount] := Word(Index);
+    Card^.TransmitInFlight[Index] := False;
     Inc(Card^.TransmitFreeCount);
   end;
 end;
@@ -185,8 +169,11 @@ var
 begin
   while TakeVirtqueueUsedChain(Card^.TransmitQueue, Head, Length) do
   begin
-    if (Head < Card^.TransmitQueue.Size) and (Card^.TransmitFreeCount < Card^.TransmitQueue.Size) then
+    { Only a descriptor that was handed out comes back (a card reporting
+      one twice must not put it on the free list twice). }
+    if Card^.TransmitInFlight[Head] and (Card^.TransmitFreeCount < Card^.TransmitQueue.Size) then
     begin
+      Card^.TransmitInFlight[Head] := False;
       Card^.TransmitFree[Card^.TransmitFreeCount] := Head;
       Inc(Card^.TransmitFreeCount);
     end;
@@ -200,6 +187,7 @@ procedure HandleReceivedFrames(Card: PVirtioNetCard);
 var
   Head: Word;
   Length: LongWord;
+  FrameLength: LongWord;
   Offered: Boolean;
   PreviousLevel: TPriorityLevel;
 begin
@@ -207,11 +195,16 @@ begin
   PreviousLevel := AcquireSpinLock(Card^.ReceiveLock);
   while TakeVirtqueueUsedChain(Card^.ReceiveQueue, Head, Length) do
   begin
-    if Head >= Card^.ReceiveQueue.Size then
-      Continue;
-    if (Length > NetHeaderBytes) and (Card^.Adapter <> nil) then
-      NetworkFrameReceived(Card^.Adapter, Card^.ReceiveBuffers.Buffers[Head] + NetHeaderBytes,
-        Length - NetHeaderBytes);
+    { Head is one of the queue's descriptors (TakeVirtqueueUsedChain
+      skips others); the length the card reports is clamped to the
+      buffer, so a faulty card cannot make this read past it. }
+    if UsedPayloadLength(Length, BufferBytes, NetHeaderBytes, FrameLength) and (FrameLength > 0) and
+       (Card^.Adapter <> nil) then
+    begin
+      FinishReceiveBuffer(Card^.Virtio.Dma, Card^.ReceiveBuffers[Head], NetHeaderBytes + FrameLength);
+      NetworkFrameReceived(Card^.Adapter, Card^.ReceiveBuffers[Head].Data + NetHeaderBytes, FrameLength);
+    end;
+    PrepareReceiveBuffer(Card^.Virtio.Dma, Card^.ReceiveBuffers[Head]);
     OfferVirtqueueChain(Card^.ReceiveQueue, Head);
     Offered := True;
   end;
@@ -287,7 +280,8 @@ begin
   end;
   Dec(Card^.TransmitFreeCount);
   Head := Card^.TransmitFree[Card^.TransmitFreeCount];
-  Buffer := Card^.TransmitBuffers.Buffers[Head];
+  Card^.TransmitInFlight[Head] := True;
+  Buffer := Card^.TransmitBuffers[Head].Data;
   FillMemory(Buffer, NetHeaderBytes, 0);
   CopyMemory(Buffer + NetHeaderBytes, Frame, Length);
   FrameLength := Length;
@@ -296,8 +290,9 @@ begin
     FillMemory(Buffer + NetHeaderBytes + Length, MinimumFrameBytes - Length, 0);
     FrameLength := MinimumFrameBytes;
   end;
+  PrepareTransmitBuffer(Card^.Virtio.Dma, Card^.TransmitBuffers[Head], NetHeaderBytes + FrameLength);
   Descriptor := @Card^.TransmitQueue.Descriptors[Head];
-  Descriptor^.Address := Card^.TransmitBuffers.Physical[Head];
+  Descriptor^.Address := Card^.TransmitBuffers[Head].DeviceAddress;
   Descriptor^.Length := NetHeaderBytes + FrameLength;
   Descriptor^.Flags := 0;
   Descriptor^.Next := 0;
@@ -391,8 +386,8 @@ begin
        Accepted) or
      not SetUpVirtqueue(Card^.Virtio, ReceiveQueueIndex, Card^.ReceiveQueue) or
      not SetUpVirtqueue(Card^.Virtio, TransmitQueueIndex, Card^.TransmitQueue) or
-     not AllocateBuffers(Card^.ReceiveBuffers, Card^.ReceiveQueue.Size) or
-     not AllocateBuffers(Card^.TransmitBuffers, Card^.TransmitQueue.Size) then
+     not AllocateBuffers(Card, Card^.ReceiveBuffers, Card^.ReceiveQueue.Size) or
+     not AllocateBuffers(Card, Card^.TransmitBuffers, Card^.TransmitQueue.Size) then
   begin
     FailVirtioDevice(Card^.Virtio);
     Exit;

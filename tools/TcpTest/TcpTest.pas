@@ -31,6 +31,15 @@
     retransmission of RFC 6675 over a scenario with three holes.
   - Network.TcpReceivedBlocks: the receiver's blocks, most recent first,
     merged and dropped as the acknowledgment passes them.
+  - Network.SipHash: the reference vectors of SipHash-2-4.
+  - Network.KeyedNumbers: RFC 6528 initial sequence numbers (the same
+    endpoints and key give the same offset, others differ, the clock
+    moves them on), timestamp offsets, RFC 6056 port candidates in range
+    and covering it, the double hash's counters, RFC 7739
+    identifications.
+  - Network.TcpAcceptance: the window test with its zero-window
+    allowance, RFC 5961's reset dispositions and acknowledgment range.
+  - Network.TokenBuckets: bursts, refill, the cap.
 
   Prints every failed check and exits with 1 if there was one.
 }
@@ -44,7 +53,11 @@ uses
   Network.TcpOptions,
   Network.TcpWindows,
   Network.TcpScoreboard,
-  Network.TcpReceivedBlocks;
+  Network.TcpReceivedBlocks,
+  Network.SipHash,
+  Network.KeyedNumbers,
+  Network.TcpAcceptance,
+  Network.TokenBuckets;
 
 var
   Failures: Integer = 0;
@@ -415,7 +428,163 @@ begin
   Check(Blocks.Blocks[2].Start = At(10) + 500, 'and trims one it reached into');
 end;
 
+{ --- SipHash and the keyed numbers ----------------------------------------- }
+
+function ReferenceKey: TSipHashKey;
+var
+  Bytes: array[0..15] of Byte;
+  Index: Integer;
 begin
+  for Index := 0 to 15 do
+    Bytes[Index] := Index;
+  Result := SipHashKeyFromBytes(@Bytes[0]);
+end;
+
+procedure TestSipHash;
+const
+  Lengths: array[0..5] of LongWord = (0, 1, 7, 8, 15, 63);
+  Expected: array[0..5] of QWord = (QWord($726FDB47DD0E0E31), QWord($74F839C593DC67FD),
+    QWord($AB0200F58B01D137), QWord($93F5F5799A932462), QWord($A129CA6149BE45E5), QWord($958A324CEB064572));
+var
+  Message: array[0..63] of Byte;
+  Index: Integer;
+  Key: TSipHashKey;
+begin
+  for Index := 0 to 63 do
+    Message[Index] := Index;
+  Key := ReferenceKey;
+  for Index := 0 to High(Lengths) do
+    Check(SipHash24(Key, @Message[0], Lengths[Index]) = Expected[Index],
+      'SipHash-2-4 of ' + IntToStr(Lengths[Index]) + ' bytes matches the reference');
+end;
+
+procedure TestKeyedNumbers;
+var
+  Key: TSipHashKey;
+  OtherKey: TSipHashKey;
+  Local: TKeyedEndpoint;
+  Remote: TKeyedEndpoint;
+  OtherRemote: TKeyedEndpoint;
+  First: LongWord;
+  Table: TPerturbationTable;
+  Seen: array[49152..65535] of Boolean;
+  Attempt: LongWord;
+  Port: Word;
+  AllSeen: Boolean;
+begin
+  Key := ReferenceKey;
+  OtherKey := Key;
+  OtherKey.Second := OtherKey.Second xor 1;
+  Local := KeyedIpv4Endpoint($0A00020F, 49200);
+  Remote := KeyedIpv4Endpoint($5DB8D822, 443);
+  OtherRemote := KeyedIpv4Endpoint($5DB8D822, 80);
+  First := KeyedInitialSequence(Key, Local, Remote, 0);
+  CheckNumber(KeyedInitialSequence(Key, Local, Remote, 0), First, 'the same endpoints, the same ISN');
+  CheckNumber(KeyedInitialSequence(Key, Local, Remote, 4000 * 1000), LongWord(First + 1000),
+    'the ISN moves on with the 4-microsecond clock');
+  Check(KeyedInitialSequence(Key, Local, OtherRemote, 0) <> First, 'another peer port, another ISN offset');
+  Check(KeyedInitialSequence(OtherKey, Local, Remote, 0) <> First, 'another key, another ISN offset');
+  Check(LongWord(KeyedInitialSequence(Key, Local, OtherRemote, 0) - First) <> 64000,
+    'not the old fixed step between connections');
+  Check(KeyedTimestampOffset(Key, Local, Remote) <> KeyedTimestampOffset(Key, Local, OtherRemote),
+    'timestamp offsets differ between connections');
+  Check(PerturbationIndex(Key, Local, Remote) < PerturbationTableLength, 'the counter index is in the table');
+
+  FillChar(Table, SizeOf(Table), 0);
+  CheckNumber(TakePerturbation(Table, 5, 3), 0, 'a counter starts where it is');
+  CheckNumber(TakePerturbation(Table, 5, 0), 3, 'and moves on by the step (at least 1)');
+  CheckNumber(TakePerturbation(Table, 5 + PerturbationTableLength, 1), 4, 'the index wraps the table');
+
+  FillChar(Seen, SizeOf(Seen), 0);
+  Attempt := 0;
+  while Attempt <= 65535 - 49152 do
+  begin
+    Port := DynamicPortCandidate($DEADBEEF, 77, Attempt, 49152, 65535);
+    Check(Port >= 49152, 'a port candidate in the dynamic range');
+    if Port >= 49152 then
+      Seen[Port] := True;
+    Inc(Attempt);
+  end;
+  AllSeen := True;
+  for Port := 49152 to 65535 do
+    if not Seen[Port] then
+      AllSeen := False;
+  Check(AllSeen, 'the candidates cover the whole range');
+  Check(DynamicPortCandidate(LongWord(HashEndpoints(Key, Local, Remote)), 0, 0, 49152, 65535) <>
+    DynamicPortCandidate(LongWord(HashEndpoints(Key, Local, OtherRemote)), 0, 0, 49152, 65535),
+    'searches towards different peers start apart');
+
+  Check(KeyedIpv4Identification(Key, $0A00020F, $5DB8D822, 6, 0) <>
+    KeyedIpv4Identification(Key, $0A00020F, $5DB8D823, 6, 0), 'identifications differ by destination');
+  CheckNumber(Word(KeyedIpv4Identification(Key, 1, 2, 17, 9) - KeyedIpv4Identification(Key, 1, 2, 17, 8)), 1,
+    'the counter steps an identification by one');
+  Check(Ipv4IdentificationIndex(Key, 1, 2, 17) < PerturbationTableLength, 'the identification counter index');
+end;
+
+{ --- RFC 5961 and the window test ----------------------------------------- }
+
+procedure TestAcceptance;
+begin
+  Check(SegmentIsAcceptable(1000, 100, 1000, 500), 'data at RCV.NXT in the window');
+  Check(SegmentIsAcceptable(900, 200, 1000, 500), 'data reaching into the window from before');
+  Check(not SegmentIsAcceptable(800, 100, 1000, 500), 'data wholly before the window');
+  Check(not SegmentIsAcceptable(1500, 10, 1000, 500), 'data just past the window');
+  Check(SegmentIsAcceptable(1499, 0, 1000, 500), 'an empty segment at the window''s last byte');
+  Check(SegmentIsAcceptable($FFFFFFF0, 32, $FFFFFFF8, 100), 'acceptable across the wrap');
+  { RFC 9293 3.10.7.4: a zero window still takes ACKs and RSTs at
+    RCV.NXT, even on a segment that carries data. }
+  Check(SegmentIsAcceptable(1000, 100, 1000, 0), 'zero window: data at RCV.NXT is taken for its ACK');
+  Check(SegmentIsAcceptable(1000, 0, 1000, 0), 'zero window: an empty segment at RCV.NXT');
+  Check(not SegmentIsAcceptable(1001, 0, 1000, 0), 'zero window: anything else is not');
+
+  Check(ResetDisposition(1000, 1000, 500) = ResetAccepted, 'a reset at exactly RCV.NXT ends the connection');
+  Check(ResetDisposition(1200, 1000, 500) = ResetChallenged, 'a reset elsewhere in the window: challenge ACK');
+  Check(ResetDisposition(2000, 1000, 500) = ResetDropped, 'a reset outside the window is dropped');
+  Check(ResetDisposition(999, 1000, 500) = ResetDropped, 'a reset just before the window is dropped');
+
+  Check(AcknowledgmentDisposition(5000, 5000, 6000, 1000) = AcknowledgmentAcceptable, 'ACK of SND.UNA');
+  Check(AcknowledgmentDisposition(6000, 5000, 6000, 1000) = AcknowledgmentAcceptable, 'ACK of SND.MAX');
+  Check(AcknowledgmentDisposition(6001, 5000, 6000, 1000) = AcknowledgmentTooNew, 'ACK of what was never sent');
+  Check(AcknowledgmentDisposition(4000, 5000, 6000, 1000) = AcknowledgmentAcceptable,
+    'an old ACK within MAX.SND.WND is acceptable');
+  Check(AcknowledgmentDisposition(3999, 5000, 6000, 1000) = AcknowledgmentTooOld,
+    'an ACK older than SND.UNA - MAX.SND.WND is not (RFC 5961 5.2)');
+  Check(AcknowledgmentDisposition(LongWord($80000000) + 5000, 5000, 6000, 1000) = AcknowledgmentTooNew,
+    'an ACK half the sequence space away');
+  Check(AcknowledgmentDisposition($FFFFFF00, $10, $20, $200) = AcknowledgmentAcceptable,
+    'the range across the wrap');
+end;
+
+procedure TestTokenBuckets;
+const
+  Second = QWord(1000000000);
+var
+  Bucket: TTokenBucket;
+  Taken: Integer;
+  Index: Integer;
+begin
+  InitializeTokenBucket(Bucket, 10, 5);
+  Taken := 0;
+  for Index := 1 to 20 do
+    if TakeToken(Bucket, Second) then
+      Inc(Taken);
+  CheckNumber(Taken, 5, 'a full bucket gives its burst at once');
+  Check(not TakeToken(Bucket, Second + Second div 20), 'half a token''s time later: nothing');
+  Check(TakeToken(Bucket, Second + Second div 10), 'a tenth of a second at 10 per second: one');
+  Check(not TakeToken(Bucket, Second + Second div 10), 'and only one');
+  Taken := 0;
+  for Index := 1 to 20 do
+    if TakeToken(Bucket, 100 * Second) then
+      Inc(Taken);
+  CheckNumber(Taken, 5, 'a long quiet refills no more than the burst');
+  Check(not TakeToken(Bucket, 50 * Second), 'a clock that goes back gives nothing');
+end;
+
+begin
+  TestSipHash;
+  TestKeyedNumbers;
+  TestAcceptance;
+  TestTokenBuckets;
   TestSequences;
   TestSynWithEverything;
   TestSynWithFewer;

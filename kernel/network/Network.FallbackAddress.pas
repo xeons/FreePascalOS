@@ -41,7 +41,11 @@
   interface has an address. Each reason for waiting is said once, not at
   every try: with no network card at all ("no network card"), or no link,
   the thread waits quietly for one to come (a USB adapter, a cable) and
-  says so again only when the reason changes.
+  says so again only when the reason changes. An offer or
+  acknowledgment whose address cannot be a host's (0.0.0.0/8, loopback,
+  multicast, 240.0.0.0/4, its subnet's network or broadcast address;
+  Network.InputFilter) is ignored, and a router outside the subnet is
+  not used. The transaction identifier is random.
 }
 unit Network.FallbackAddress;
 
@@ -77,6 +81,8 @@ uses
   Network.Sockets,
   Network.SocketOperations,
   Network.OptionText,
+  Network.InputFilter,
+  Kernel.Random,
   Debug.Output;
 
 const
@@ -390,6 +396,9 @@ begin
       Exit;
     if not ParseAnswer(@Message[0], LongWord(Received), Hardware, Answer) then
       Continue;
+    if (Answer.Kind in [MessageOffer, MessageAcknowledge]) and
+       not DhcpOfferedAddressIsUsable(Answer.Address, PrefixOfMask(Answer.Mask)) then
+      Continue;
     if Kind = MessageDiscover then
       Exit(Answer.Kind = MessageOffer);
     if (Answer.Kind = MessageAcknowledge) or (Answer.Kind = MessageRefuse) then
@@ -470,7 +479,7 @@ begin
       DereferenceObject(Socket);
     Exit;
   end;
-  TransactionId := LongWord(HalClockNanoseconds) xor (LongWord(Hardware[4]) shl 8) xor Hardware[5];
+  TransactionId := LongWord(RandomQWord);
   FillMemory(@Offer, SizeOf(Offer), 0);
   if Exchange(Socket, MessageDiscover, Hardware, Offer, Offer) and
      Exchange(Socket, MessageRequest, Hardware, Offer, Answer) then
@@ -484,6 +493,11 @@ begin
     Prefix := PrefixOfMask(Answer.Mask);
     if Prefix = 0 then
       Prefix := 24;
+    { A router must be on the subnet, and a host. }
+    if (Answer.Router <> AnyAddress) and
+       (not SameNetwork(Answer.Router, Answer.Address, Prefix) or (Answer.Router = Answer.Address) or
+        not DhcpOfferedAddressIsUsable(Answer.Router, Prefix)) then
+      Answer.Router := AnyAddress;
     LockNetwork;
     ApplyAddressLocked(NetworkInterface, Answer.Address, Prefix, Answer.Router);
     UnlockNetwork;

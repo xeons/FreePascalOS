@@ -71,6 +71,9 @@ type
     Node: Pointer;
   end;
 
+const
+  MaximumPackageNesting = 32;
+
 var
   { 4 or 8: the width of integers in the table being run. }
   AmlIntegerBytes: LongWord = 8;
@@ -94,6 +97,8 @@ procedure ReleaseValue(var Value: TAmlValue);
 { Another holder of the same value (storage shared). }
 function ShareValue(const Value: TAmlValue): TAmlValue;
 { A copy with storage of its own, all the way down. }
+{ A copy of Value (its own storage); empty if Value holds packages
+  nested more than MaximumPackageNesting deep. }
 function CopyValue(const Value: TAmlValue): TAmlValue;
 
 { Conversions. Implicit ones (operands) read strings as hexadecimal;
@@ -276,10 +281,16 @@ begin
   RetainValue(Result);
 end;
 
-function CopyValue(const Value: TAmlValue): TAmlValue;
+{ Packages may hold packages, and a store into a package's element may
+  put a copy of the package itself there: so that copying (and freeing)
+  stays shallow, packages nested deeper than MaximumPackageNesting are
+  not copied (the copy is empty). }
+function CopyValueWithin(const Value: TAmlValue; DepthLeft: Integer): TAmlValue;
 var
   Index: LongWord;
 begin
+  if (Value.Kind = AmlPackage) and (DepthLeft <= 0) then
+    Exit(EmptyValue);
   case Value.Kind of
     AmlString, AmlBuffer, AmlNamePath:
       begin
@@ -295,11 +306,25 @@ begin
         Result := MakePackage(Value.Package^.Count);
         if (Result.Kind = AmlPackage) and (Value.Package^.Count > 0) then
           for Index := 0 to Value.Package^.Count - 1 do
-            Result.Package^.Elements[Index] := CopyValue(Value.Package^.Elements[Index]);
+          begin
+            Result.Package^.Elements[Index] := CopyValueWithin(Value.Package^.Elements[Index], DepthLeft - 1);
+            if (Result.Package^.Elements[Index].Kind = AmlNone) and
+               (Value.Package^.Elements[Index].Kind <> AmlNone) then
+            begin
+              { Too deep: no copy at all. }
+              ReleaseValue(Result);
+              Exit;
+            end;
+          end;
       end;
   else
     Result := ShareValue(Value);
   end;
+end;
+
+function CopyValue(const Value: TAmlValue): TAmlValue;
+begin
+  Result := CopyValueWithin(Value, MaximumPackageNesting);
 end;
 
 function ValueData(const Value: TAmlValue): PByte;

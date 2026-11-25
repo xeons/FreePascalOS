@@ -24,9 +24,12 @@
   a listener on its destination port (one bound to the destination
   address before one bound to every address). Closed connections are
   never found: one still held by its socket only waits for the socket
-  to close. Initial sequence numbers come from the clock (4 per
-  microsecond, as RFC 793 suggests) plus a random offset taken once.
-  Used under the network lock.
+  to close. Initial sequence numbers come from
+  Network.UnpredictableNumbers (RFC 6528). Children of listeners still
+  waiting for the handshake's last ACK are counted (half-open), and
+  get their buffers only when it comes (a flood of SYNs costs a
+  connection record each, not two buffers). Used under the network
+  lock.
 }
 unit Network.TcpConnections;
 
@@ -46,6 +49,16 @@ function CreateTcpConnection: PTcpConnection;
 { The send and receive buffers of a connection that will carry data:
   the sizes its socket asked for, else 64 KiB each to grow from. }
 function CreateConnectionBuffers(Connection: PTcpConnection): Boolean;
+{ The receive buffer CreateConnectionBuffers will make (what a SYN-ACK
+  sent before it offers). }
+function PlannedReceiveBuffer(Connection: PTcpConnection): LongWord;
+{ A listener's child waits for the handshake's last ACK (half-open), or
+  no longer does. }
+procedure MarkHalfOpen(Connection: PTcpConnection);
+procedure ClearHalfOpen(Connection: PTcpConnection);
+function HalfOpenConnectionCount: LongWord;
+{ The oldest half-open child of Listener; nil if it has none. }
+function OldestHalfOpenChild(Listener: PTcpConnection): PTcpConnection;
 { Takes a connection out of the table (and off its listener's queue)
   and frees it with everything it holds. }
 procedure FreeTcpConnection(Connection: PTcpConnection);
@@ -53,7 +66,6 @@ function FirstTcpConnection: PTcpConnection;
 function NextTcpConnection(Connection: PTcpConnection): PTcpConnection;
 function FindTcpConnection(constref Local, Remote: TNetworkEndpoint): PTcpConnection;
 function FindTcpListener(constref Local: TNetworkEndpoint): PTcpConnection;
-function GenerateInitialSequence: LongWord;
 { Frees the out-of-order segments a connection keeps. }
 procedure DiscardOutOfOrder(Connection: PTcpConnection);
 
@@ -62,8 +74,8 @@ implementation
 uses
   Runtime.LinkedList,
   Memory.KernelHeap,
-  Kernel.Random,
   Network.ByteRings,
+  Network.TokenBuckets,
   Network.TcpWindows,
   Network.TcpReceivedBlocks,
   Abi.SystemCalls,
@@ -72,12 +84,12 @@ uses
 
 var
   Connections: TListEntry;
-  SequenceOffset: LongWord;
+  HalfOpenCount: LongWord;
 
 procedure InitializeTcpConnections;
 begin
   InitializeListHead(Connections);
-  SequenceOffset := LongWord(RandomQWord);
+  HalfOpenCount := 0;
 end;
 
 function CreateTcpConnection: PTcpConnection;
@@ -95,6 +107,7 @@ begin
   InitializeListHead(Result^.AcceptQueue);
   InitializeListHead(Result^.AcceptLink);
   InitializeListHead(Result^.OutOfOrder);
+  InitializeTokenBucket(Result^.ChallengeAcks, ChallengeAcksPerSecond, ChallengeAckBurst);
   InsertAtTail(Connections, @Result^.Link);
 end;
 
@@ -114,6 +127,45 @@ begin
       BufferSize(Connection^.RequestedReceiveBuffer, InitialReceiveBufferBytes));
 end;
 
+function PlannedReceiveBuffer(Connection: PTcpConnection): LongWord;
+begin
+  Result := BufferSize(Connection^.RequestedReceiveBuffer, InitialReceiveBufferBytes);
+end;
+
+procedure MarkHalfOpen(Connection: PTcpConnection);
+begin
+  if Connection^.IsHalfOpen then
+    Exit;
+  Connection^.IsHalfOpen := True;
+  Inc(HalfOpenCount);
+end;
+
+procedure ClearHalfOpen(Connection: PTcpConnection);
+begin
+  if not Connection^.IsHalfOpen then
+    Exit;
+  Connection^.IsHalfOpen := False;
+  Dec(HalfOpenCount);
+end;
+
+function HalfOpenConnectionCount: LongWord;
+begin
+  Result := HalfOpenCount;
+end;
+
+function OldestHalfOpenChild(Listener: PTcpConnection): PTcpConnection;
+begin
+  { Connections join the table at its tail: the first found is the
+    oldest. }
+  Result := FirstTcpConnection;
+  while Result <> nil do
+  begin
+    if (Result^.Listener = Listener) and Result^.IsHalfOpen then
+      Exit;
+    Result := NextTcpConnection(Result);
+  end;
+end;
+
 procedure DiscardOutOfOrder(Connection: PTcpConnection);
 var
   Entry: PListEntry;
@@ -131,6 +183,7 @@ end;
 
 procedure FreeTcpConnection(Connection: PTcpConnection);
 begin
+  ClearHalfOpen(Connection);
   RemoveListEntry(@Connection^.Link);
   if Connection^.Listener <> nil then
   begin
@@ -211,13 +264,6 @@ begin
   { An IPv4 listener of the port before an IPv6 one that takes IPv4 too. }
   if Result = nil then
     Result := DualStack;
-end;
-
-function GenerateInitialSequence: LongWord;
-begin
-  Result := LongWord(NetworkNow div 250) + SequenceOffset;
-  { Not the same twice within one tick of the clock. }
-  SequenceOffset := SequenceOffset + 64000;
 end;
 
 end.

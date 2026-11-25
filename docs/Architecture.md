@@ -1064,7 +1064,11 @@ replaces it.
 Started from phase 1 by `Io.Startup`, in dependency order:
 
 1. **ACPI** (`Firmware.Acpi`) finds the system description tables through
-   the RSDP the loader passed on.
+   the RSDP the loader passed on. A table (the RSDT and XSDT too) is used
+   only if its length covers its 36-byte header and is not absurd and its
+   checksum adds up (`Firmware.AcpiTableChecks`, `make acpi-table-test`),
+   so a root table of length 0 cannot count garbage entries; empty root
+   entries are skipped.
 2. **PCI** (`Io.Pci`) scans every bus in the MCFG table's ECAM windows.
    Buses with devices stay mapped (uncached, via `Memory.DeviceMapping`).
    Then the **ACPI namespace** is loaded (see below), which needs PCI
@@ -1086,6 +1090,16 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    that fails or times out fails every request running on the port with
    `ErrorIo`, and the port is reset as the AHCI specification describes
    (stop, clear errors, COMRESET if the device is still busy, start).
+   The reset runs in the port's `AhciRecovery` thread, not the deferred
+   call: it waits for the controller (up to seconds), and the requests
+   only fail once the port stopped, since the controller writes their
+   pages until then. Nothing starts meanwhile; a port that does not come
+   back fails later requests at once. The port's memory (command list,
+   tables, bounce buffer) is DMA memory of the controller (`Io.Dma`), and
+   request pages are given at their bus addresses (a page the controller
+   cannot reach is bounced) with the cache maintenance a non-coherent
+   controller needs; a controller without 64-bit addressing stays below
+   4 GiB.
    ATAPI devices (optical drives, signature EB140101h) are read-only disks
    of their medium's block size: IDENTIFY PACKET DEVICE gives the model,
    SCSI READ CAPACITY(10) the size, and reads are READ(10) commands in
@@ -1111,10 +1125,22 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    of the `nvme` driver with its logical block size. Admin commands are
    polled. I/O commands complete by MSI-X or MSI. Data goes through the
    controller's bounce pages, up to 128 KiB (or the controller's largest
-   transfer) a command, described by PRP entries or a PRP list. The tests
-   attach an NVMe disk holding a copy of the FAT32 test partition.
+   transfer) a command, described by PRP entries or a PRP list. Only the
+   completion carrying the identifier of the command waited for counts:
+   a late one of a command given up is dropped (`TakeCompletionFor`). A
+   command that times out resets the controller (disabled, which ends
+   what it had, queues emptied and created again) before its bounce
+   pages are used again: in place when polled, from the `NvmeRecovery`
+   thread when a timer notices it on an interrupt driven controller
+   (requests wait meanwhile, the timed out one fails). Queues, bounce
+   pages, PRP list and identify data are its DMA memory (`Io.Dma`, at
+   bus addresses). `make nvme-queue-test` plays the controller in memory.
+   The tests attach an NVMe disk holding a copy of the FAT32 test
+   partition.
 
-   USB: xHCI controllers (`Drivers.Xhci`, rings in `Drivers.XhciRings`)
+   USB: xHCI controllers (`Drivers.Xhci`, TRBs and ring bookkeeping in
+   `Drivers.XhciTrbs`, ring memory in `Drivers.XhciRings`, the transfer
+   waited for in `Drivers.XhciTransfers`)
    are taken over from the firmware, reset and given a device context
    array (with scratchpad pages), a command ring and an event ring. Events
    come by MSI-X or MSI (or are polled); a deferred call takes them off
@@ -1169,13 +1195,47 @@ Started from phase 1 by `Io.Startup`, in dependency order:
    request it does not support, like SET_IDLE on many mice), or that
    ends in a babble or transaction error, halts endpoint 0: it is reset
    (Reset Endpoint, then Set TR Dequeue Pointer past the failed
-   request's TRBs) so the next request goes through. USB mass storage (`Drivers.UsbStorage`,
+   request's TRBs) so the next request goes through.
+
+   A broken or hostile device (or a misbehaving controller) may only fail
+   that device, never corrupt kernel memory, hold a processor at dispatch
+   level or wedge the controller. Configuration descriptors leave out
+   endpoints naming endpoint 0 (00h, 80h), with reserved address bits, of
+   the control type, without a packet size or repeating an address; the
+   xHCI driver itself refuses endpoint 0 (whose contexts are the slot's
+   and the control endpoint's) and an endpoint already open. HID report
+   offsets are worked out in 64 bits, a report described as longer than
+   1 KiB is not used, key arrays are read up to 256 entries and every bit
+   is checked against the report's length. A transfer that times out is
+   taken off its endpoint before its DMA pages are reused (Stop Endpoint,
+   or Reset Endpoint if it halted meanwhile, then Set TR Dequeue Pointer
+   past it); if the controller refuses, the device is failed: marked
+   gone, its slot disabled, and taken away by the port watcher (its
+   drivers told) until it is unplugged. A halted bulk endpoint is reset
+   at once and the transfer reports a stall (`UsbTransferStalled`); the
+   class driver clears the device's side (`UsbClearEndpointHalt`). A
+   command that times out is aborted (Command Abort; a controller whose
+   ring does not stop is given up). A device that fails to enumerate
+   gives its slot back (Disable Slot) and its memory, once the controller
+   let go of the slot; one that cannot be set up again after waking is
+   taken away (and enumerated afresh). Event TRBs are read after their
+   cycle bit, residues and interval exponents are clamped. `make
+   usb-descriptor-test` runs crafted and randomly mutated descriptors
+   from buffers that end at a protected page (a read past them crashes
+   the test) and the ring and transfer bookkeeping in memory. USB mass storage (`Drivers.UsbStorage`,
    Bulk-Only Transport) sends SCSI commands in command block wrappers:
    INQUIRY, TEST UNIT READY with REQUEST SENSE, READ CAPACITY(10),
    READ/WRITE(10) and SYNCHRONIZE CACHE(10). Each device becomes a disk of
    the `usb-storage` driver, whose requests run in the caller's thread,
    marked removable. Unplugged, its requests fail and its removal is
-   announced (below). The tests attach a USB stick holding a copy of the
+   announced (below). Errors are recovered from as Bulk-Only Transport
+   says: a stalled data stage is cleared and the status still read, a
+   stalled status read cleared and tried once more, anything else (a
+   failed or timed out command or status, a status that is not this
+   command's, a phase error) gets reset recovery (Bulk-Only Mass Storage
+   Reset, both halts cleared). A probe stops at the first timeout. The
+   capacity must give a power of two block size from 512 to 4096 bytes;
+   a last block of FFFFFFFFh (READ(10)'s limit) uses that much. The tests attach a USB stick holding a copy of the
    exFAT test partition, and the input test plugs a second one in and
    out while the system runs.
 
@@ -1438,16 +1498,68 @@ of their own. `Io.Dma` gives drivers what they need for that:
   their bus address (`TranslateDmaAddress`).
 - The kernel option `noncoherentdma` treats every device as not
   coherent, which exercises the uncached mappings and the cache
-  maintenance under QEMU, whose devices all snoop.
+  maintenance under QEMU, whose devices all snoop
+  (`TEST_KERNEL_OPTIONS=noncoherentdma scripts/test-qemu.sh ...` runs
+  the amd64 test that way).
 
 Converted so far: xHCI (all its memory is shared, uncached for a
 controller that does not snoop; isochronous packets from the audio
 buffers are cleaned and translated before they are queued), SDHCI, the
 VideoCore mailbox, GENET, the Cadence GEM and the BCM2712 DMA (its
 control blocks shared, the HDMI audio slots streaming, cleaned after each
-is written). The other PCI drivers (AHCI, NVMe, virtio,
-e1000, Realtek, HD Audio, AC'97) still assume coherent DMA at physical
-addresses, which holds on every machine they are found on today.
+is written), and every PCI driver: each gets its attributes once at
+probe with `GetPciDmaAttributes`, so a PCIe card behind a bridge with
+inbound windows is given bus addresses. On the Raspberry Pi 5 that bridge
+is the BCM2712's PCIe root complex (`Drivers.BrcmPcie`): a device tree
+bus node's own `dma-ranges` (its inbound windows) and coherency are kept
+as what the devices below it see (`ChildDma` of the platform device),
+and `GetPciDmaAttributes` takes them for `brcm,bcm2712-pcie` (and
+`bcm2711`) hosts as for ECAM and ACPI ones. Untested on the board.
+
+- **AHCI**: command list, received FIS, command tables and bounce buffer
+  are shared buffers; request pages are translated to bus addresses
+  (else bounced) with the cache maintenance a non-coherent controller
+  needs; 32-bit controllers (CAP.S64A clear) stay below 4 GiB.
+- **NVMe**: queues, bounce pages, PRP list and identify data are shared
+  buffers.
+
+- **Network cards** (`Drivers.NetworkBuffers`, shared by e1000/e1000e,
+  RTL8139, RTL8168 and RTL8125 and by virtio-net): descriptor rings
+  and the Realtek tally counters are shared buffers, the 2 KiB frame
+  buffers streaming (`PrepareReceiveBuffer` before a buffer is handed
+  to the card, `FinishReceiveBuffer` before a frame is read,
+  `PrepareTransmitBuffer` after one is copied in). 32-bit DMA
+  (`LimitNetworkCardDma`) for the RTL8139, the conventional PCI e1000
+  parts (as Linux) and the RTL8168B (XID 300h/380h under mask 7C8h);
+  the PCI Express e1000e parts, later RTL8168s and the RTL8125/8126 take
+  64-bit addresses (they must, on the Pi 5, whose PCIe sees RAM at
+  10_0000_0000h).
+- **Virtio** (`Drivers.VirtioPci`): the three parts of every queue are
+  shared buffers; `VIRTIO_F_ACCESS_PLATFORM` is accepted when offered.
+  virtio-blk's header page is shared and its bounce pages streaming;
+  virtio-gpu's command slots and cursor page are shared, its
+  framebuffers and cursor images streaming, cleaned (by the kernel's
+  address, which reaches every mapping of the same memory) for the rows
+  of each flush before the transfer to the host.
+- **Sound**: HD Audio's buffer descriptor lists and AC'97's descriptor
+  list are shared buffers, and `RegisterAudioOutput` /
+  `RegisterAudioInput` take the device's attributes: the ring's periods
+  are then shared buffers (uncached for a device that does not snoop,
+  so the mixer and the capture thread need no maintenance) with their
+  bus addresses in `PeriodsDeviceAddress`. Without attributes (USB
+  audio, which cleans and translates each packet in
+  `Drivers.XhciIsochronous`, and HDMI audio, which copies the ring) the
+  periods are ordinary cached pages as before. HD Audio keeps to 4 GiB
+  without GCAP's 64-bit bit, AC'97 always.
+
+What a virtio device writes into a used ring is checked
+(`Drivers.VirtioUsedRing`, host test `make virtio-used-ring-test`): an
+id that is not a descriptor of the queue is skipped, never indexed;
+virtio-net clamps the reported length to its buffer (and drops one
+shorter than its header); virtio-gpu counts a batch done only when each
+of its own heads came back once; queue sizes are rounded down to a
+power of two. A polled virtio-blk request that times out resets the
+device before the bounce pages are used again.
 
 ## Device interrupts
 
@@ -1532,14 +1644,25 @@ for now the routing of PCI interrupt lines.
 
   Stores follow ACPI's implicit conversions; a store into a named buffer
   keeps its length and storage, so buffer fields over it stay valid.
-  Errors end the evaluation cleanly. So do loops that run too long and
-  calls nested too deep.
+  Errors end the evaluation cleanly. So do loops that run too long,
+  calls nested too deep or too many (calls take from the loop budget),
+  evaluations using more than 128 KiB of stack (operators nested
+  hundreds deep), stores through more than 8 references, and copies of
+  packages nested more than 32 deep. A nested evaluation (a field's
+  `_ADR`) shares the outer one's budget. Tables over 16 MiB are refused;
+  the DSDT must have its signature (a wrong checksum is only reported).
+  `AmlTest --malformed` (part of `make aml-test`) runs tables
+  `tools/AmlTest/make-malformed.py` makes, one per such problem.
 - **Fields** (`Firmware.AmlFields`) read and write bits a unit at a time
   (the access width), following the update rule for the bits around
   them. Plain fields go to their region; bank fields set the bank
   first; index fields go through their index and data fields; buffer
   fields go into a buffer. A PCI configuration region finds its device
-  from the `_ADR` above it and its bus from `_BBN`.
+  from the `_ADR` above it and its bus from `_BBN`. Fields are at most
+  4 KiB, accesses stay inside their region, buffer fields inside their
+  buffer, fields through fields nest at most 8 deep, and index and bank
+  fields over names that are not fields are left out. Unaligned memory
+  accesses go a byte at a time (AArch64 device memory faults on them).
 - **Loading** (`Io.AcpiNamespace`) gives the interpreter the kernel as
   its host and loads the DSDT (through the FADT) and every SSDT. It then
   runs the devices' `_STA` and `_INI`, builds the routing and records
@@ -4666,11 +4789,30 @@ unreachable (sent to itself through lo, so ping shows "Destination Host
 Unreachable"). Requests for our address are answered and the asker
 remembered; a new address is announced with a gratuitous request.
 
+**Martian addresses** (`Network.InputFilter`, RFC 1812 5.3.7, RFC 1122
+3.2.1.3, RFC 4291 2.5). Before anything else, a datagram whose
+addresses cannot be genuine is dropped (counted as an address error).
+127.0.0.0/8 and ::1 come in only on lo, as source or destination: a
+datagram to 127.0.0.1 or ::1 from an Ethernet interface never reaches a
+service that listens only on lo (TCP included). Nor does a source that
+is one of our own addresses, or the arrival interface's subnet
+broadcast (an answer would reflect to the whole subnet), come in from
+outside; a limited-broadcast, multicast or IPv4-mapped source, a
+destination of 0.0.0.0, :: or an IPv4-mapped one, and 0.0.0.0 as the
+source of anything but UDP and IGMP are dropped everywhere. Going out,
+a loopback source never leaves by another interface than lo
+(`ErrorNetworkUnreachable`). Self tests inject crafted datagrams on a
+test interface that is not in the table (`Kernel.NetworkPacketCrafting`,
+`Kernel.NetworkHardeningSelfTest`); Ipv6Test checks the rules on
+crafted headers.
+
 **IPv4.** Datagrams are checked (version, lengths, header checksum) and
 taken if addressed to any of this machine's addresses (the weak host
 model), to 255.255.255.255, to the arrival interface's subnet
-broadcast, or - UDP only - to anything on an interface with no address
-yet (what a DHCP client needs). Nothing is forwarded. Fragments are put
+broadcast, or - UDP to port 68 only - to anything on an interface with
+no address yet (what a DHCP client needs). Identifications are a keyed
+hash of the addresses and protocol plus a counter from a table picked
+by a second hash (RFC 7739 5.3, `Network.UnpredictableNumbers`). Nothing is forwarded. Fragments are put
 together (RFC 815: one buffer, a bitmap of 8-byte blocks, at most 8
 datagrams at once for 30 s each). Nothing is sent in fragments: a
 datagram larger than the interface's MTU (1500) fails with
@@ -4688,7 +4830,14 @@ request's identifier; raw ICMP sockets get every message. Destination
 unreachable and time exceeded about UDP or TCP go to the socket or
 connection; errors are sent for an unknown protocol, a closed UDP port
 and a failed ARP, never about an ICMP error, a broadcast or a later
-fragment.
+fragment. An error that comes in is believed only about a datagram we
+sent (its quoted source is ours), and a "fragmentation needed" about
+TCP only if the sequence number it quotes is in flight on that
+connection (RFC 5927 4.1). Token buckets (`Network.TokenBuckets`) limit
+the errors sent to other machines (100 a second, bursts of 50), echo
+replies to them (1000, 200) and the errors taken in from them (200,
+50), for ICMP and ICMPv6 alike (RFC 1812 4.3.2.8, RFC 4443 2.4 (f));
+this machine's own traffic over lo is not limited.
 
 **UDP.** A datagram goes to the socket bound to its port that fits best
 (bound to its address before bound to every address, a connected one
@@ -4768,8 +4917,14 @@ through (padding and router alert known; an unknown option skipped or
 the datagram dropped, with a parameter problem, as its two high bits
 say), a routing header with segments left is refused, "no next header"
 ends it, and a fragment goes to reassembly (`Network.Ipv6Fragments`: as
-IPv4's, 8 datagrams at once for 60 s; the whole datagram is walked
-again; atomic fragments are passed over). ICMPv6, UDP and TCP get what
+IPv4's, 16 datagrams at once for 60 s, at most 4 of them for the
+senders of one /64, which then push out their own oldest; the whole
+datagram is walked again; atomic fragments are passed over). RFC 5722:
+a fragment that overlaps one that came, or disagrees about the end,
+gives up the whole datagram silently (`Network.ReassemblyBlocks`); an
+exact copy is dropped alone. RFC 8200 4.5 / RFC 7112: a first fragment
+that does not hold the whole header chain up to the upper-layer header
+is refused with a parameter problem (code 3). ICMPv6, UDP and TCP get what
 is left; another protocol a parameter problem. Lo (::1) carries IPv6 as
 it carries IPv4: its receive side looks at the version nibble. Going
 out, a datagram to one of our addresses goes through lo; to a
@@ -4802,7 +4957,10 @@ datagram from one of our addresses lowers the path MTU to its
 destination (never below 1280) for ten minutes, after which the link's
 is tried again; `Ipv6PayloadLimit` (so TCP's MSS) and fragmenting use
 it, and TCP's connections to the destination are told at once
-(`TcpPathMtuChanged`). A redirect (RFC 4861 8.1: link-local source, hop
+(`TcpPathMtuChanged`) - but only by a Packet Too Big about TCP that
+quotes a sequence number in flight (RFC 5927 4.1); one about anything
+else lowers only the cache. A path MTU learned again after the old one
+expired is kept (it used to be lost with the expired entry). A redirect (RFC 4861 8.1: link-local source, hop
 limit 255, code 0, at least 40 bytes, a destination that is not
 multicast, from the router that is the destination's first hop now, a
 target that is link-local or the destination itself, options with
@@ -4904,10 +5062,26 @@ SYN_RECEIVED for each SYN while the backlog has room (counting children
 not yet accepted), and the child joins the accept queue when the
 handshake completes; a connection outlives its socket while it closes.
 
-- *Input* follows "Segment Arrives": the window check (an unacceptable
-  segment gets an ACK), trimming to the window, a reset believed only at
-  exactly the expected sequence number (RFC 5961), a SYN in the window
-  resets, the acknowledgment frees the send ring and moves FIN_WAIT_1,
+- *Half-open children* get no buffers: their SYN-ACK offers the receive
+  buffer they will have, and the buffers come with the handshake's last
+  ACK. All listeners together keep at most 256 children in
+  SYN_RECEIVED; when a listener's backlog (or that total) is reached,
+  its oldest half-open child gives way to the new SYN (a flood pushes
+  out its own), and with none to give way the SYN is dropped. No SYN
+  cookies.
+- *Input* follows "Segment Arrives": the window check
+  (`Network.TcpAcceptance`; an unacceptable segment gets an ACK; a zero
+  window still takes the ACK of a segment at RCV.NXT, cutting its data
+  away and answering with the window), trimming to the window, then
+  RFC 5961's defences against blind attacks: a reset ends the
+  connection only at exactly RCV.NXT (elsewhere in the window it gets a
+  challenge ACK, outside it nothing), a SYN never resets a synchronized
+  connection but gets a challenge ACK wherever it falls, and an
+  acknowledgment beyond SND.MAX or older than SND.UNA less the largest
+  window the peer offered gets one and goes no further; challenge ACKs
+  are limited to 10 a second per connection. A SYN for a connection in
+  TIME_WAIT beyond its sequence numbers (and timestamps) opens a new one
+  (RFC 1122 4.2.2.13, RFC 6191). The acknowledgment frees the send ring and moves FIN_WAIT_1,
   CLOSING and LAST_ACK on, the send window is updated by the RFC 793
   rule, data in order goes to the receive ring and segments that arrive
   ahead (as many bytes as the receive ring holds) wait to be joined, a
@@ -4995,8 +5169,18 @@ handshake completes; a connection outlives its socket while it closes.
   its own. TIME_WAIT lasts 60 s (twice an MSL of 30 s); FIN_WAIT_2 of a
   connection without its socket ends after 60 s. A closed listener
   resets the children it had not handed out.
-- Initial sequence numbers follow the clock (4 per microsecond) plus a
-  random offset taken at start.
+- *Unpredictable numbers* (`Network.UnpredictableNumbers` over the pure
+  `Network.KeyedNumbers` and `Network.SipHash`, keys from
+  `Kernel.Random` at first use): initial sequence numbers are a
+  4-microsecond clock plus SipHash-2-4 of the four endpoints (RFC
+  6528); every TSval carries a per-connection offset hashed from the
+  endpoints (RFC 7323 7.1); a connection's dynamic port is found by RFC
+  6056's algorithm 4 (a hashed offset plus a counter that moves on by
+  the tries and a small random step), a port with no peer known yet
+  (bind, listen, datagram sockets) from a random start.
+- *Zero windows*: the probe goes in every state with data still to
+  send, the closing ones too; a connection whose socket is gone gives
+  up (with a reset) after 8 probes, answered or not.
 - *Test hook*: `SocketOptionTestDropEvery` (root's) drops every Nth data
   segment that arrives on the connection, as if lost on the way;
   networktest uses it to make loss over lo.
@@ -5126,7 +5310,14 @@ or went, an interface turned on or off or given an address, a route, the
 DNS servers. It then lists again. The kernel keeps the events in a
 table of 32 with a reference each; one whose handle was closed (only the
 table's reference left) is dropped the next time the table is looked
-at. The network service waits on it instead of polling.
+at. A user other than root holds at most 8 (`ErrorTooManyHandles`), and
+such users together leave 8 entries for root. Likewise a user other
+than root holds at most 32 multicast memberships over all its sockets
+and cannot take the interface groups' table below 16 free entries
+(`Network.SocketMemberships`); a datagram socket may share a port
+(`SocketOptionReuseAddress`) only with sockets of its own user (root
+with anyone), and only one of several TCP sockets sharing a port may
+listen on it. The network service waits on it instead of polling.
 
 **Ports and interfaces.** Two sockets may bind the same port when both
 are bound to interfaces (`SocketOptionInterface`, root's), different
@@ -8160,6 +8351,48 @@ driver cannot keep consistent (bigalloc, quota, encryption, case folding,
 multiple-mount protection). htree indexed directories are read but not
 modified.
 
+**Damaged disks.** USB sticks are mounted as soon as they arrive, so the
+drivers take whatever is on a disk as untrusted: a damaged or hostile
+volume may be refused, mounted read-only or answer `StatusCorrupted`,
+never more. In particular:
+
+- ext: the superblock's geometry is checked at every mount (also the one
+  after a journal replay): blocks of 1 to 64 KiB, block and inode
+  bitmaps of one block (blocks and inodes per group at most 8 x the
+  block size), the first ordinary inode at least 11, inode and block
+  counts that fit the groups and the device. Directory names are at most
+  255 bytes (also on volumes without the file type feature, whose name
+  length has 16 bits); extent headers hold no more entries than their
+  node and no deeper trees; bitmap blocks and inode numbers are range
+  checked; sizes past the last 32-bit block are refused rather than
+  truncated. The orphan list is measured first (tortoise and hare, at
+  most 65536 entries) and never names a reserved inode such as the
+  journal. Journal recovery looks revoked blocks up in a hash table and
+  log blocks by binary search, and refuses journals past 16M blocks.
+- FAT: tables too small for the clusters, a FAT32 active table that does
+  not exist and cluster counts reaching the FAT32 end-of-chain values are
+  refused; a long name part numbered 0 starts no name. exFAT: the boot
+  sector's sector and cluster sizes, cluster count, FAT length and the
+  cluster heap's end on the device are checked at mount, and so is the
+  allocation bitmap's size; contiguous runs are summed in 64 bits and
+  files are no larger than the cluster heap.
+- Both: a cluster chain longer than the volume is `StatusCorrupted`, as
+  is a FAT folder past 65536 records or an exFAT folder past 256 MiB, so
+  a chain that loops without an end marker no longer holds the volume
+  lock for ever. exFAT clears its dirty mark only between two cache
+  flushes.
+
+`make file-system-image-test` (`tools/FileSystemImageTest`) builds the
+three drivers for the host on stand-ins for the block cache, heap, clock
+and mutexes, and runs them on disk images `make-images.py` makes with
+`mke2fs`, `mkfs.fat`, `mtools` and `mkfs.exfat`: valid ones, copies with
+one specific kind of damage each (expected to be refused, read-only or
+`StatusCorrupted`), and copies damaged at random (`--fuzz`, aimed at
+the bytes that are not zero, the images' metadata). Each image is
+mounted, walked, written to, unmounted and mounted again; the heap
+stand-in's guard areas catch writes outside a block, and its count of
+blocks leaks; the cache stand-in reports a loop as a hang.
+
 ### The ext3/ext4 journal
 
 ext3 and ext4 volumes are written through their journal (JBD2, the file of
@@ -8292,7 +8525,8 @@ well.
 - **Resolution.** The table names the volume holding the mount point,
   the mount point's node number (the record keeps a reference to the
   node, so its volume is busy and the folder can be neither removed nor
-  renamed: `StatusInUse`), the volume mounted there, and the mount
+  renamed: `StatusInUse`, and neither can a folder above it, as the
+  record keeps the path as text), the volume mounted there, and the mount
   point's path from the root of the volume at the top of the chain
   ("/tmp"). `ResolveInVolume` looks each directory it passes up in the
   table (only on volumes with `MountsOnVolume` > 0) and goes on at the
@@ -8308,7 +8542,10 @@ well.
   (`LocatePath`, `LocateParent`: the volume and the path there) and
   refuse with `StatusCrossesVolumes` (`ErrorCrossVolume`, 18; `mv`
   copies then) when the volumes differ; then they resolve on that one
-  volume without crossing.
+  volume without crossing. A folder moved below itself is recognized by
+  the nodes the target's parent was found through (its trail, under the
+  volume's lock), so a symbolic link in the target's path does not hide
+  it.
 - **Mounting** (`MountAtDirectory`) needs a folder that is not a
   volume's root, nothing mounted on it already, and the volume not
   mounted elsewhere nor above the folder (no cycles); mounting a volume
@@ -8317,17 +8554,20 @@ well.
 - **Unmounting** (`UnmountVolume`) is refused while a node of the volume
   besides its root is in use (an open file or folder, a mount point of
   another volume on it) or its root is open, and (`CallUnmountVolume`)
-  while a program's current directory is in it, unless forced. It
-  writes the volume back (driver `Sync`, then the disk is flushed),
+  while a program's current directory is in it, unless forced. The idle
+  check, writing the volume back (driver `Sync`) and marking it gone
+  happen in one hold of its lock (`RetireVolume`), then the disk is
+  flushed; it
   takes it off the list and from its folder, and marks it gone as an
   unplugged disk's volumes are (below): a forced unmount's open files
   fail with `ErrorNoDevice` from then on, and the driver data goes
-  when the last is closed. Its device cannot be mounted again until
+  when the last is closed (an open root included: the volume's root
+  node stays until no handle names it). Its device cannot be mounted again until
   then (`DeviceHasLingeringVolume`). The system volume is never
   unmounted. A disk unplugged takes its volumes' mounts, and the mounts
   on them, with it (`ForgetMountsOfVolume`).
 - **Options** (`FileSystem.MountOptions`, kept in `TVolume.Options`):
-  `ro`/`rw`, `noexec` (programs on it do not start: `CheckMayExecute`
+  `ro`/`rw`, `noexec` (programs on it do not start: `OpenProgramFile`
   sees `TNodeInformation.VolumeFlags`), `nosuid` (set-id bits ignored
   when they start), `discard` (kept for drivers that tell the disk
   which blocks were freed), `uid=`, `gid=`, `umask=`, `fmask=`,
@@ -8365,7 +8605,9 @@ nanosecond (reading does not move the access time). A file's contents
 are whole pages from the physical page allocator
 (`FileSystem.Memory.Storage`: a page map per file, holes read as zeros),
 counted against `size=` (bytes, k, m, g, or a share of the RAM; half by
-default; `StatusNoSpace` past it), and counted by the kernel as
+default; `StatusNoSpace` past it; no file reaches past it either,
+holes included, since a page map is as long as its file), and counted
+by the kernel as
 drivers' memory. Folders are lists of entries with a serial number each,
 which a listing's cursor keeps (`FileSystem.Memory.Nodes`). A file's
 pages go back when it is shortened, when its last name goes (or, if it
@@ -9371,6 +9613,16 @@ volumes support all of them. FAT and exFAT map the mode onto the
 read-only attribute, store times in their own resolution and refuse hard
 links and owners other than the ones the mount options give (see "Owners
 on FAT and exFAT").
+Who may change what (the owner the mode, root the owner, the owner a group
+of its own, anyone with write permission the times to now) is checked by
+`FileSystem.Security.MayChangeAttributes` (a hook `Processes.Security`
+installs) on the node being changed, with its volume's lock held, for
+paths and handles alike: a check made apart from the change would let a
+symbolic link swapped in between aim it at someone else's file. Likewise
+exec, process creation and `CallLoadLibrary` open the program once
+(`OpenProgramFile`, `OpenLibraryFile`), check that open file and load
+from it, so a set-user-ID check cannot be spent on a different file (see
+"Hardening: crafted programs and racing callers").
 A per-process root directory implements `chroot`: paths are taken relative
 to it and ".." never leads above it.
 
@@ -14728,7 +14980,9 @@ so their drivers bind and connect like any other platform device's.
   revision, serial number, Ethernet address, clock rates (EMMC2's base
   clock), temperature and power domains; `Drivers.RaspberryPiBoard`
   writes the board's line at start-up and for the kernel debug shell's
-  `board`.
+  `board`. A question the firmware does not answer in time sets its
+  message page aside until the late answer comes, and the next question
+  uses a second page, so a late answer never lands in another question.
 - A Raspberry Pi 5 (BCM2712, Cortex-A76) would differ in: most I/O behind
   the RP1 south bridge on PCIe (its own UARTs, Ethernet, USB), so the
   console and devices need RP1 drivers; a different (younger) UEFI port
@@ -14876,7 +15130,10 @@ boot"), so a rebuild is all an iteration takes.
    `nc 192.168.1.50 2323` (the Pi's address is in the `configured` or
    `kernel DHCP lease` line of the log). It has **no authentication**:
    anyone on the network can read files and reset the board, so only on
-   a network you trust.
+   a network you trust. It serves one connection at a time; one quiet
+   for ten minutes is closed, a peer that vanished is found by
+   keep-alives (after a minute, then every 10 s, six times), and one
+   that stops reading is dropped after a minute.
 7. **Getting back without touching the board.** The PM watchdog is armed
    at start-up (15 seconds, the most it can count; `[watchdog] BCM2835
    PM watchdog ... armed`) and petted by a kernel timer, so a kernel that
@@ -15677,8 +15934,9 @@ come up nobody would. With `netaddr` the first Ethernet interface gets
 the fixed address as soon as it exists. Otherwise, with netlog or
 netshell on and no interface addressed after `netdhcp` seconds, the
 kernel runs a minimal DHCP exchange (DISCOVER, OFFER, REQUEST, ACK,
-broadcast replies; address, mask, router) on the first Ethernet interface
-with a link, brings it up, sets the address and default route
+broadcast replies; address, mask, router; a random transaction
+identifier; an offered address that cannot be a host's, or a router off
+the subnet, is not taken) on the first Ethernet interface with a link, brings it up, sets the address and default route
 (`[netaddr] eth0: kernel DHCP lease ...`), and tries again every minute
 until some interface has an address. The lease is not renewed: it is a
 diagnostic address, and the network service, when it starts, sets its

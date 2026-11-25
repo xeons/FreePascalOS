@@ -19,13 +19,17 @@
 {
   IPv4 (RFC 791): datagrams in and out.
 
-  Received datagrams are checked (version, lengths, header checksum)
-  and taken if they are for this machine: one of its addresses on any
-  interface, the limited broadcast 255.255.255.255, the broadcast
-  address of the network they arrived from, a multicast group joined on
-  the interface (Network.MulticastGroups; lo takes every group) or
-  224.0.0.1, or (UDP only) anything on an interface without an address
-  yet, which a DHCP client needs.
+  Received datagrams are checked (version, lengths, header checksum),
+  dropped if their addresses are martian (Network.InputFilter: above
+  all, 127.0.0.0/8 only ever comes in on lo, as source or destination;
+  nor does one of our own addresses or the subnet's broadcast address
+  come in as a source), and taken if they are for this machine: one of
+  its addresses on any interface, the limited broadcast
+  255.255.255.255, the broadcast address of the network they arrived
+  from, a multicast group joined on the interface
+  (Network.MulticastGroups; lo takes every group) or 224.0.0.1, or (UDP
+  to port 68 only) anything on an interface without an address yet,
+  which a DHCP client needs.
   Nothing is forwarded. Fragments are put together first
   (Network.Fragments); then the datagram goes to ICMP, IGMP, UDP or
   TCP, and a protocol nobody speaks is answered with protocol
@@ -37,7 +41,11 @@
   01:00:5e Ethernet address), the source address if the sender has
   none, and puts the header in front.
   Datagrams are never fragmented: one that does not fit the interface's
-  MTU fails with ErrorMessageTooLong. TCP sets "don't fragment".
+  MTU fails with ErrorMessageTooLong. TCP sets "don't fragment". A
+  loopback source never leaves by another interface than lo
+  (ErrorNetworkUnreachable). Identifications are a keyed hash of the
+  addresses and protocol plus a counter (Network.UnpredictableNumbers,
+  RFC 7739).
 }
 unit Network.Ipv4;
 
@@ -100,6 +108,8 @@ uses
   Network.Udp,
   Network.TcpInput,
   Network.Statistics,
+  Network.UnpredictableNumbers,
+  Network.InputFilter,
   Runtime.Memory,
   Memory.KernelHeap;
 
@@ -107,9 +117,6 @@ const
   FlagDontFragment = $4000;
   FlagMoreFragments = $2000;
   FragmentOffsetMask = $1FFF;
-
-var
-  NextIdentification: Word;
 
 function IsBroadcastFor(NetworkInterface: PNetworkInterface; Destination: TIpv4Address): Boolean;
 begin
@@ -120,7 +127,7 @@ begin
 end;
 
 function AcceptsDestination(NetworkInterface: PNetworkInterface; Destination: TIpv4Address;
-  Protocol: Byte): Boolean;
+  Protocol: Byte; DestinationPort: Word): Boolean;
 begin
   if IsBroadcastFor(NetworkInterface, Destination) then
     Exit(True);
@@ -128,7 +135,41 @@ begin
     Exit(NetworkInterface^.IsLoopback or InterfaceJoinedIpv4Group(NetworkInterface, Destination));
   if IsLocalAddress(Destination) then
     Exit(True);
-  Result := not NetworkInterface^.HasAddress and (Protocol = IpProtocolUdp);
+  Result := not NetworkInterface^.HasAddress and UnconfiguredInterfaceAccepts(Protocol, DestinationPort);
+end;
+
+function ArrivalOf(NetworkInterface: PNetworkInterface): TArrivalInterface;
+begin
+  Result.IsLoopback := NetworkInterface^.IsLoopback;
+  Result.HasAddress := NetworkInterface^.HasAddress;
+  Result.Address := NetworkInterface^.Address;
+  Result.PrefixLength := NetworkInterface^.PrefixLength;
+end;
+
+{ Drops a datagram whose addresses must not come in on the interface
+  (Network.InputFilter), or that is not for this machine. }
+function AddressesAreAcceptable(NetworkInterface: PNetworkInterface; constref Datagram: TIpDatagram;
+  DestinationPort: Word): Boolean;
+var
+  Arrival: TArrivalInterface;
+  SourceIsOwn: Boolean;
+begin
+  Arrival := ArrivalOf(NetworkInterface);
+  SourceIsOwn := not Arrival.IsLoopback and (FindInterfaceWithAddress(Datagram.Source) <> nil);
+  Result := not Ipv4SourceIsMartian(Datagram.Source, Datagram.Protocol, Arrival, SourceIsOwn) and
+    not Ipv4DestinationIsMartian(Datagram.Destination, Arrival) and
+    AcceptsDestination(NetworkInterface, Datagram.Destination, Datagram.Protocol, DestinationPort);
+end;
+
+{ The UDP destination port of an unfragmented datagram (0 if it is not
+  one or is too short). }
+function UdpDestinationPort(Data: PByte; HeaderLength, TotalLength: LongWord): Word;
+begin
+  Result := 0;
+  if (Data[9] <> IpProtocolUdp) or ((ReadBigEndian16(Data + 6) and ($2000 or $1FFF)) <> 0) or
+     (TotalLength < HeaderLength + 4) then
+    Exit;
+  Result := ReadBigEndian16(Data + HeaderLength + 2);
 end;
 
 procedure DeliverDatagram(constref Datagram: TIpDatagram);
@@ -185,8 +226,8 @@ begin
   Datagram.TimeToLive := Data[8];
   Datagram.ArrivalInterface := NetworkInterface;
   Datagram.Header := Data;
-  if (Datagram.Source = LimitedBroadcastAddress) or IsMulticastAddress(Datagram.Source) or
-     not AcceptsDestination(NetworkInterface, Datagram.Destination, Datagram.Protocol) then
+  if not AddressesAreAcceptable(NetworkInterface, Datagram,
+     UdpDestinationPort(Data, Datagram.HeaderLength, Datagram.TotalLength)) then
   begin
     Inc(NetworkStatistics.Ip.AddressErrors);
     CountReceiveDrop(NetworkInterface);
@@ -344,8 +385,7 @@ begin
   Header[0] := $45;
   Header[1] := 0;
   WriteBigEndian16(Header + 2, Word(TotalLength));
-  WriteBigEndian16(Header + 4, NextIdentification);
-  Inc(NextIdentification);
+  WriteBigEndian16(Header + 4, NextIpv4Identification(Source, Destination, Protocol));
   if DontFragment then
     WriteBigEndian16(Header + 6, FlagDontFragment)
   else
@@ -376,7 +416,13 @@ begin
   begin
     if Source = AnyAddress then
       Source := RoutedSource;
-    if Packet^.Length + Ipv4HeaderBytes > NetworkInterface^.Mtu then
+    if IsLoopbackAddress(Source) and not NetworkInterface^.IsLoopback then
+    begin
+      { RFC 1122 3.2.1.3: 127.0.0.0/8 never appears on a network. }
+      Inc(NetworkStatistics.Ip.NoRoutes);
+      Result := ErrorNetworkUnreachable;
+    end
+    else if Packet^.Length + Ipv4HeaderBytes > NetworkInterface^.Mtu then
     begin
       Inc(NetworkStatistics.Ip.SendDiscards);
       Result := ErrorMessageTooLong;
@@ -430,8 +476,7 @@ begin
   Header[0] := $46;
   Header[1] := 0;
   WriteBigEndian16(Header + 2, Word(Packet^.Length));
-  WriteBigEndian16(Header + 4, NextIdentification);
-  Inc(NextIdentification);
+  WriteBigEndian16(Header + 4, NextIpv4Identification(Source, Destination, Protocol));
   WriteBigEndian16(Header + 6, 0);
   Header[8] := 1;
   Header[9] := Protocol;

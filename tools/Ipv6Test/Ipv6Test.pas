@@ -26,7 +26,15 @@
       (AddressSelection) with the examples of its section 10;
     - the destination cache: path MTUs and redirects with their expiry
       (Network.DestinationTable);
-    - cutting a datagram into fragments (Network.FragmentBuilder).
+    - cutting a datagram into fragments (Network.FragmentBuilder);
+    - martian addresses on crafted IPv4 and IPv6 headers: 127.0.0.0/8
+      and ::1 from an Ethernet interface, spoofed and broadcast sources,
+      what an unconfigured interface takes, what a DHCP server may offer
+      (Network.InputFilter);
+    - reassembly: RFC 5722's overlaps and duplicates
+      (Network.ReassemblyBlocks), RFC 8200's first fragment holding the
+      whole header chain (Network.Ipv6Headers);
+    - a path MTU learned again after the old one expired.
 }
 program Ipv6Test;
 
@@ -40,6 +48,9 @@ uses
   Network.InterfaceIdentifiers,
   Network.DestinationTable,
   Network.FragmentBuilder,
+  Network.InputFilter,
+  Network.ReassemblyBlocks,
+  Network.Ipv6Headers,
   AddressSelection;
 
 { --- Addresses written as text ------------------------------------------- }
@@ -346,6 +357,14 @@ begin
     'the link MTU itself is no news');
   Check(LookupPathMtu(Table, Destination('2001:db8::1'), 615 * Second) = 0, 'a path MTU expires');
   Check(DestinationEntryCount(Table) = 0, 'and its entry goes');
+  { Learned again after the old one expired (with no lookup between):
+    the new path MTU must be kept, not lost with the expired entry. }
+  Check(RecordPathMtu(Table, Destination('2001:db8::3'), 2, 1400, 1500, 10 * Second, 600 * Second),
+    'a path MTU for another destination');
+  Check(RecordPathMtu(Table, Destination('2001:db8::3'), 2, 1300, 1500, 700 * Second, 600 * Second),
+    'learned again after it expired');
+  Check(LookupPathMtu(Table, Destination('2001:db8::3'), 701 * Second) = 1300, 'the new path MTU is kept');
+  Check(LookupPathMtu(Table, Destination('2001:db8::3'), 1400 * Second) = 0, 'and expires in its turn');
 
   RecordRedirect(Table, Destination('2001:db8::5'), Destination('fe80::9'), 2, 0, 60 * Second);
   Check(LookupRedirect(Table, Destination('2001:db8::5'), Second, NextHop, InterfaceIndex) and
@@ -438,6 +457,198 @@ begin
   Check(not PlanIpv6Fragments(@Datagram[0], Length(Datagram), 56, Plan), 'an MTU too small cannot be cut for');
 end;
 
+{ --- Martian addresses (Network.InputFilter), on crafted headers ---------- }
+
+type
+  TIpv4Header = array[0..19] of Byte;
+  TIpv6Header = array[0..39] of Byte;
+
+function Ipv4Of(const Text: string): LongWord;
+var
+  Parsed: TSelectionAddress;
+begin
+  Parsed := Address(Text);
+  Result := (LongWord(Parsed[12]) shl 24) or (LongWord(Parsed[13]) shl 16) or (LongWord(Parsed[14]) shl 8) or
+    Parsed[15];
+end;
+
+function ReadWord32(Bytes: PByte): LongWord;
+begin
+  Result := (LongWord(Bytes[0]) shl 24) or (LongWord(Bytes[1]) shl 16) or (LongWord(Bytes[2]) shl 8) or Bytes[3];
+end;
+
+{ A datagram's header as it comes off the wire. }
+function CraftIpv4(const Source, Destination: string; Protocol: Byte): TIpv4Header;
+var
+  Value: LongWord;
+  Index: Integer;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result[0] := $45;
+  Result[3] := 20;
+  Result[8] := 64;
+  Result[9] := Protocol;
+  Value := Ipv4Of(Source);
+  for Index := 0 to 3 do
+    Result[12 + Index] := Byte(Value shr (24 - 8 * Index));
+  Value := Ipv4Of(Destination);
+  for Index := 0 to 3 do
+    Result[16 + Index] := Byte(Value shr (24 - 8 * Index));
+end;
+
+function CraftIpv6(const Source, Destination: string): TIpv6Header;
+var
+  Parsed: TSelectionAddress;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result[0] := $60;
+  Result[6] := 6;
+  Result[7] := 64;
+  Parsed := Address(Source);
+  Move(Parsed[0], Result[8], 16);
+  Parsed := Address(Destination);
+  Move(Parsed[0], Result[24], 16);
+end;
+
+function EthernetArrival: TArrivalInterface;
+begin
+  Result.IsLoopback := False;
+  Result.HasAddress := True;
+  Result.Address := Ipv4Of('192.168.1.10');
+  Result.PrefixLength := 24;
+end;
+
+function LoopbackArrival: TArrivalInterface;
+begin
+  Result.IsLoopback := True;
+  Result.HasAddress := True;
+  Result.Address := Ipv4Of('127.0.0.1');
+  Result.PrefixLength := 8;
+end;
+
+{ Drops the crafted IPv4 header as Ipv4Input does. }
+function Ipv4Dropped(const Header: TIpv4Header; constref Arrival: TArrivalInterface; SourceIsOwn: Boolean): Boolean;
+begin
+  Result := Ipv4SourceIsMartian(ReadWord32(@Header[12]), Header[9], Arrival, SourceIsOwn) or
+    Ipv4DestinationIsMartian(ReadWord32(@Header[16]), Arrival);
+end;
+
+function Ipv6Dropped(const Header: TIpv6Header; OnLoopback: Boolean): Boolean;
+var
+  Source: array[0..15] of Byte;
+  Destination: array[0..15] of Byte;
+begin
+  Move(Header[8], Source[0], 16);
+  Move(Header[24], Destination[0], 16);
+  Result := Ipv6SourceIsMartian(Source, OnLoopback) or Ipv6DestinationIsMartian(Destination, OnLoopback);
+end;
+
+procedure TestInputFilter;
+begin
+  { RFC 1122 3.2.1.3: 127.0.0.0/8 only ever comes in on lo. }
+  Check(Ipv4Dropped(CraftIpv4('192.168.1.7', '127.0.0.1', 6), EthernetArrival, False),
+    'a TCP SYN to 127.0.0.1 from the LAN is dropped');
+  Check(Ipv4Dropped(CraftIpv4('192.168.1.7', '127.1.2.3', 17), EthernetArrival, False),
+    'UDP to anywhere in 127.0.0.0/8 from the LAN is dropped');
+  Check(Ipv4Dropped(CraftIpv4('127.0.0.1', '192.168.1.10', 6), EthernetArrival, False),
+    'a loopback source from the LAN is dropped');
+  Check(not Ipv4Dropped(CraftIpv4('127.0.0.1', '127.0.0.1', 6), LoopbackArrival, False),
+    'on lo, 127.0.0.1 to 127.0.0.1 is fine');
+  Check(not Ipv4Dropped(CraftIpv4('192.168.1.10', '192.168.1.10', 6), LoopbackArrival, False),
+    'on lo, our own address as source is fine');
+  Check(not Ipv4Dropped(CraftIpv4('192.168.1.7', '192.168.1.10', 6), EthernetArrival, False),
+    'an ordinary datagram from the LAN is taken');
+  { Item 6: reflection through the subnet's broadcast address. }
+  Check(Ipv4Dropped(CraftIpv4('192.168.1.255', '192.168.1.10', 1), EthernetArrival, False),
+    'a source that is the subnet''s broadcast address is dropped');
+  Check(Ipv4Dropped(CraftIpv4('192.168.1.10', '192.168.1.10', 1), EthernetArrival, True),
+    'one of our own addresses as source from the LAN is dropped');
+  Check(Ipv4Dropped(CraftIpv4('255.255.255.255', '192.168.1.10', 17), EthernetArrival, False),
+    'the limited broadcast as source');
+  Check(Ipv4Dropped(CraftIpv4('224.0.0.1', '192.168.1.10', 17), EthernetArrival, False), 'a multicast source');
+  Check(not Ipv4Dropped(CraftIpv4('0.0.0.0', '255.255.255.255', 17), EthernetArrival, False),
+    'a DHCP client''s 0.0.0.0 is taken for UDP');
+  Check(not Ipv4Dropped(CraftIpv4('0.0.0.0', '224.0.0.22', 2), EthernetArrival, False),
+    'and for an IGMPv3 report');
+  Check(Ipv4Dropped(CraftIpv4('0.0.0.0', '192.168.1.10', 6), EthernetArrival, False),
+    'but not for TCP');
+  Check(Ipv4Dropped(CraftIpv4('192.168.1.7', '0.0.0.0', 17), EthernetArrival, False), 'a destination of 0.0.0.0');
+  { Item 10: an interface without an address. }
+  Check(UnconfiguredInterfaceAccepts(17, 68), 'unconfigured: UDP to the DHCP client port is taken');
+  Check(not UnconfiguredInterfaceAccepts(17, 53), 'unconfigured: UDP to another port is not');
+  Check(not UnconfiguredInterfaceAccepts(6, 68), 'unconfigured: TCP is not');
+  Check(not UnconfiguredInterfaceAccepts(17, 0), 'unconfigured: UDP of unknown port (a fragment) is not');
+
+  { RFC 4291 2.5.3: ::1 only on lo. }
+  Check(Ipv6Dropped(CraftIpv6('fe80::7', '::1'), False), 'a TCP SYN to ::1 from the LAN is dropped');
+  Check(Ipv6Dropped(CraftIpv6('::1', 'fe80::1'), False), 'a ::1 source from the LAN is dropped');
+  Check(not Ipv6Dropped(CraftIpv6('::1', '::1'), True), 'on lo, ::1 to ::1 is fine');
+  Check(not Ipv6Dropped(CraftIpv6('fe80::7', 'fe80::1'), False), 'an ordinary IPv6 datagram is taken');
+  Check(not Ipv6Dropped(CraftIpv6('::', 'ff02::1:ff00:1'), False), 'duplicate address detection''s :: is taken');
+  Check(Ipv6Dropped(CraftIpv6('ff02::1', 'fe80::1'), False), 'a multicast IPv6 source');
+  Check(Ipv6Dropped(CraftIpv6('::ffff:7f00:1', 'fe80::1'), False), 'an IPv4-mapped source');
+  Check(Ipv6Dropped(CraftIpv6('fe80::7', '::ffff:a00:1'), False), 'an IPv4-mapped destination');
+  Check(Ipv6Dropped(CraftIpv6('fe80::7', '::'), False), 'a destination of ::');
+
+  { Item 14: what a DHCP server may offer. }
+  Check(DhcpOfferedAddressIsUsable(Ipv4Of('10.0.2.15'), 24), 'an ordinary DHCP offer');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('127.0.0.1'), 8), 'no loopback lease');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('0.0.0.0'), 0), 'no 0.0.0.0 lease');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('224.0.0.5'), 24), 'no multicast lease');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('255.255.255.255'), 0), 'no broadcast lease');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('240.1.2.3'), 8), 'no 240.0.0.0/4 lease');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('10.0.2.255'), 24), 'not the subnet''s broadcast address');
+  Check(not DhcpOfferedAddressIsUsable(Ipv4Of('10.0.2.0'), 24), 'not the subnet''s network address');
+  Check(DhcpOfferedAddressIsUsable(Ipv4Of('10.0.2.0'), 16), 'a .0 inside a /16 is a host');
+  Check(DhcpOfferedAddressIsUsable(Ipv4Of('10.0.2.1'), 31), 'a /31 has no network or broadcast address');
+end;
+
+{ --- Reassembly: RFC 5722 and RFC 8200 4.5 -------------------------------- }
+
+procedure TestReassemblyBlocks;
+var
+  Blocks: TReassemblyBlocks;
+begin
+  ClearReassemblyBlocks(Blocks);
+  Check(ClassifyFragment(Blocks, 0, 1232, True, 0) = FragmentFits, 'a first fragment fits');
+  MarkReassemblyBlocks(Blocks, 0, 1232);
+  Check(ClassifyFragment(Blocks, 0, 1232, True, 0) = FragmentDuplicate, 'the same fragment again is a duplicate');
+  Check(ClassifyFragment(Blocks, 1224, 16, True, 0) = FragmentOverlaps, 'one reaching back over it overlaps');
+  Check(ClassifyFragment(Blocks, 8, 16, True, 0) = FragmentDuplicate,
+    'one wholly inside what came is a duplicate (the bytes decide)');
+  Check(ClassifyFragment(Blocks, 1232, 1232, True, 0) = FragmentFits, 'the next one fits');
+  MarkReassemblyBlocks(Blocks, 1232, 1232);
+  Check(not ReassemblyBlocksComplete(Blocks, 3000), 'not complete with a piece missing');
+  Check(ClassifyFragment(Blocks, 2000, 1000, False, 0) = FragmentOverlaps, 'a last fragment over the second');
+  Check(ClassifyFragment(Blocks, 1200, 8, False, 0) = FragmentOverlaps,
+    'a last fragment ending before data that came disagrees about the end');
+  Check(ClassifyFragment(Blocks, 2464, 536, False, 0) = FragmentFits, 'the real last fragment fits');
+  MarkReassemblyBlocks(Blocks, 2464, 536);
+  Check(ReassemblyBlocksComplete(Blocks, 3000), 'complete');
+  Check(ClassifyFragment(Blocks, 2464, 600, False, 3000) = FragmentOverlaps, 'another end than the last''s');
+  Check(ClassifyFragment(Blocks, 2464, 536, False, 3000) = FragmentDuplicate, 'the last again: a duplicate');
+  Check(ClassifyFragment(Blocks, 3000, 8, True, 3000) = FragmentOverlaps, 'a fragment past the end');
+end;
+
+procedure TestHeaderChain;
+var
+  Data: array[0..63] of Byte;
+begin
+  FillChar(Data, SizeOf(Data), 0);
+  Check(FirstFragmentHoldsHeaderChain(@Data[0], 20, 6), 'a first fragment with the whole TCP header');
+  Check(not FirstFragmentHoldsHeaderChain(@Data[0], 19, 6), 'one byte short of the TCP header');
+  Check(FirstFragmentHoldsHeaderChain(@Data[0], 8, 17), 'the UDP header');
+  Check(not FirstFragmentHoldsHeaderChain(@Data[0], 4, 17), 'half the UDP header');
+  Check(FirstFragmentHoldsHeaderChain(@Data[0], 4, 58), 'the ICMPv6 header');
+  { A destination options header (8 bytes) then UDP. }
+  Data[0] := 17;
+  Data[1] := 0;
+  Check(FirstFragmentHoldsHeaderChain(@Data[0], 16, 60), 'destination options then UDP, all there');
+  Check(not FirstFragmentHoldsHeaderChain(@Data[0], 12, 60), 'destination options then half of UDP');
+  Check(not FirstFragmentHoldsHeaderChain(@Data[0], 6, 60), 'half of the destination options');
+  Check(FirstFragmentHoldsHeaderChain(@Data[0], 0, 59), 'no next header needs nothing');
+end;
+
 begin
   TestSha256;
   TestStableIdentifiers;
@@ -445,5 +656,8 @@ begin
   TestDestinationOrdering;
   TestDestinationTable;
   TestFragments;
+  TestInputFilter;
+  TestReassemblyBlocks;
+  TestHeaderChain;
   FinishChecks('IPv6');
 end.

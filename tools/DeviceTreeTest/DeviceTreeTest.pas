@@ -230,6 +230,16 @@ begin
     'the extended interrupt at the GIC');
 end;
 
+{ A nexus mapping to a parent whose #address-cells is absurd: no
+  interrupt, and no endless walk of the map. }
+procedure TestHostileNexus;
+var
+  Gic: TGicInterrupt;
+begin
+  Check(not NodeGicInterrupt(Tree^, FindNodeByPath(Tree^, '/hostile-device'), 0, Gic),
+    'an interrupt through a nexus naming a parent with absurd #address-cells');
+end;
+
 procedure TestPci;
 var
   Host: TDeviceTreePciHost;
@@ -349,6 +359,7 @@ begin
     TestMachine;
     TestInterrupts;
     TestPci;
+    TestHostileNexus;
     TestRp1;
   end;
   if Failures > 0 then

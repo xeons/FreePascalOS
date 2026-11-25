@@ -27,8 +27,17 @@
   the host recognizes new entries without being told where they end; it
   frees them by writing the completion queue's doorbell (the new head).
 
-  Each queue here is one page (64 commands, 256 completions at most);
-  the queues are used one command at a time.
+  Each queue here is one page (64 commands, 64 completions); the
+  queues are used one command at a time. Every command gets an
+  identifier of its own, and only the completion carrying the
+  identifier of the command waited for counts: one that comes late,
+  for a command already given up, is taken off the queue and dropped
+  (TakeCompletionFor), never mistaken for the next command's.
+
+  Plain Pascal with no kernel dependencies past the runtime: the memory
+  and doorbells are the caller's (Drivers.NvmeQueueMemory allocates
+  them), and the host test tools/NvmeQueueTest drives a queue pair in
+  memory.
 }
 unit Drivers.NvmeQueues;
 
@@ -41,6 +50,7 @@ const
   NvmeQueueEntries = 64;
   NvmeCommandSize = 64;
   NvmeCompletionSize = 16;
+  NvmeCompletionPhaseBit = $10000;
 
 type
   TNvmeCommand = packed record
@@ -71,9 +81,10 @@ type
   TNvmeQueuePair = record
     Identifier: Word;
     Submissions: PNvmeCommand;
-    SubmissionsPhysical: QWord;
+    { Where the controller finds the queues (bus addresses, Io.Dma). }
+    SubmissionsBusAddress: QWord;
     Completions: PNvmeCompletion;
-    CompletionsPhysical: QWord;
+    CompletionsBusAddress: QWord;
     SubmissionTail: Word;
     CompletionHead: Word;
     ExpectedPhase: LongWord;
@@ -82,69 +93,40 @@ type
     NextCommandIdentifier: Word;
   end;
 
-{ Allocates the queues' pages; the doorbells follow from Registers, the
-  doorbell stride and the queue's identifier. }
-function AllocateQueuePair(Identifier: Word; Registers: PByte; DoorbellStride: LongWord;
-  out Pair: TNvmeQueuePair): Boolean;
-
 { Empties the queues (as a controller that was reset expects them):
   zeroed, at their first entries, expecting phase 1. }
 procedure ResetQueuePair(var Pair: TNvmeQueuePair);
 
 { Copies Command into the next submission slot (setting its identifier)
-  and rings the doorbell. }
-procedure SubmitCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand);
-{ If a new completion is there, frees its slot and returns True with its
-  status (0 = success). }
-function TakeCompletion(var Pair: TNvmeQueuePair; out Status: Word): Boolean;
-{ Submits Command and waits up to TimeoutMilliseconds for its completion. }
-function ExecuteCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand;
-  TimeoutMilliseconds: QWord): Boolean;
+  and rings the doorbell; returns the identifier. }
+function SubmitCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand): Word;
+{ If a new completion is there, frees its slot and returns True with the
+  identifier of its command and its status (0 = success). }
+function TakeCompletion(var Pair: TNvmeQueuePair; out Identifier: Word; out Status: Word): Boolean;
+{ Takes completions until the one of command Identifier: True with its
+  status if it is there; others are dropped. False if it has not come
+  yet. }
+function TakeCompletionFor(var Pair: TNvmeQueuePair; Identifier: Word; out Status: Word): Boolean;
 
 implementation
 
 uses
   Runtime.Memory,
-  Runtime.Atomic,
-  Kernel.Arch.Cpu,
-  Kernel.Clock,
-  Memory.Layout,
-  Memory.PhysicalPages;
-
-const
-  DoorbellBase = $1000;
-  CompletionPhaseBit = $10000;
-
-function AllocateQueuePair(Identifier: Word; Registers: PByte; DoorbellStride: LongWord;
-  out Pair: TNvmeQueuePair): Boolean;
-begin
-  FillMemory(@Pair, SizeOf(Pair), 0);
-  Pair.Identifier := Identifier;
-  Pair.SubmissionsPhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  Pair.CompletionsPhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  Result := (Pair.SubmissionsPhysical <> 0) and (Pair.CompletionsPhysical <> 0);
-  if not Result then
-    Exit;
-  Pair.Submissions := PNvmeCommand(PhysicalToVirtual(Pair.SubmissionsPhysical));
-  Pair.Completions := PNvmeCompletion(PhysicalToVirtual(Pair.CompletionsPhysical));
-  Pair.SubmissionDoorbell := PLongWord(Registers + DoorbellBase + (2 * Identifier) * DoorbellStride);
-  Pair.CompletionDoorbell := PLongWord(Registers + DoorbellBase + (2 * Identifier + 1) * DoorbellStride);
-  Pair.ExpectedPhase := CompletionPhaseBit;
-end;
+  Runtime.Atomic;
 
 procedure ResetQueuePair(var Pair: TNvmeQueuePair);
 begin
-  FillMemory(Pair.Submissions, 4096, 0);
-  FillMemory(Pair.Completions, 4096, 0);
+  FillMemory(Pair.Submissions, NvmeQueueEntries * NvmeCommandSize, 0);
+  FillMemory(Pair.Completions, NvmeQueueEntries * NvmeCompletionSize, 0);
   Pair.SubmissionTail := 0;
   Pair.CompletionHead := 0;
-  Pair.ExpectedPhase := CompletionPhaseBit;
+  Pair.ExpectedPhase := NvmeCompletionPhaseBit;
 end;
 
-procedure SubmitCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand);
+function SubmitCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand): Word;
 begin
-  Command.OpcodeAndIdentifier := (Command.OpcodeAndIdentifier and $FF) or
-    (LongWord(Pair.NextCommandIdentifier) shl 16);
+  Result := Pair.NextCommandIdentifier;
+  Command.OpcodeAndIdentifier := (Command.OpcodeAndIdentifier and $FF) or (LongWord(Result) shl 16);
   Inc(Pair.NextCommandIdentifier);
   Pair.Submissions[Pair.SubmissionTail] := Command;
   Pair.SubmissionTail := (Pair.SubmissionTail + 1) mod NvmeQueueEntries;
@@ -152,38 +134,44 @@ begin
   Pair.SubmissionDoorbell^ := Pair.SubmissionTail;
 end;
 
-function TakeCompletion(var Pair: TNvmeQueuePair; out Status: Word): Boolean;
+function TakeCompletion(var Pair: TNvmeQueuePair; out Identifier: Word; out Status: Word): Boolean;
 var
   Entry: PNvmeCompletion;
+  Word3: LongWord;
 begin
-  FullMemoryBarrier;
+  Identifier := 0;
+  Status := 0;
   Entry := @Pair.Completions[Pair.CompletionHead];
-  Result := (Entry^.IdentifierPhaseStatus and CompletionPhaseBit) = Pair.ExpectedPhase;
+  Word3 := PLongWord(@Entry^.IdentifierPhaseStatus)^;
+  Result := (Word3 and NvmeCompletionPhaseBit) = Pair.ExpectedPhase;
   if not Result then
     Exit;
-  Status := Word(Entry^.IdentifierPhaseStatus shr 17);
+  { The rest only once the phase says the entry is complete. }
+  FullMemoryBarrier;
+  Identifier := Word(Word3);
+  Status := Word(Word3 shr 17);
   Pair.CompletionHead := (Pair.CompletionHead + 1) mod NvmeQueueEntries;
   if Pair.CompletionHead = 0 then
-    Pair.ExpectedPhase := Pair.ExpectedPhase xor CompletionPhaseBit;
+    Pair.ExpectedPhase := Pair.ExpectedPhase xor NvmeCompletionPhaseBit;
   FullMemoryBarrier;
   Pair.CompletionDoorbell^ := Pair.CompletionHead;
 end;
 
-function ExecuteCommand(var Pair: TNvmeQueuePair; var Command: TNvmeCommand;
-  TimeoutMilliseconds: QWord): Boolean;
+function TakeCompletionFor(var Pair: TNvmeQueuePair; Identifier: Word; out Status: Word): Boolean;
 var
-  Deadline: QWord;
-  Status: Word;
+  Taken: Word;
+  Guard: Integer;
 begin
-  SubmitCommand(Pair, Command);
-  Deadline := ClockTickCount + MillisecondsToTicks(TimeoutMilliseconds);
-  while not TakeCompletion(Pair, Status) do
+  Status := 0;
+  { At most a queue's worth: the controller cannot have more there. }
+  for Guard := 1 to NvmeQueueEntries do
   begin
-    if ClockTickCount > Deadline then
+    if not TakeCompletion(Pair, Taken, Status) then
       Exit(False);
-    CpuRelax;
+    if Taken = Identifier then
+      Exit(True);
   end;
-  Result := Status = 0;
+  Result := False;
 end;
 
 end.

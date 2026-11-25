@@ -62,6 +62,11 @@ function NetworkCoreIsReady: Boolean;
 procedure LockNetwork;
 procedure UnlockNetwork;
 function NetworkIsLockedByCurrentThread: Boolean;
+{ For a wait that must let the network thread run: lets go of the lock
+  however many times the current thread took it, and returns that
+  count for ReacquireNetworkLock. }
+function ReleaseNetworkLockFully: LongWord;
+procedure ReacquireNetworkLock(Depth: LongWord);
 
 { At dispatch level or below: queues a received packet for the network
   thread and wakes it. False (and the packet freed) if the queue is
@@ -130,6 +135,25 @@ end;
 function NetworkIsLockedByCurrentThread: Boolean;
 begin
   Result := MutexIsOwnedByCurrentThread(NetworkLockMutex);
+end;
+
+function ReleaseNetworkLockFully: LongWord;
+begin
+  Result := 0;
+  while MutexIsOwnedByCurrentThread(NetworkLockMutex) do
+  begin
+    ReleaseMutex(NetworkLockMutex);
+    Inc(Result);
+  end;
+end;
+
+procedure ReacquireNetworkLock(Depth: LongWord);
+begin
+  while Depth > 0 do
+  begin
+    AcquireMutex(NetworkLockMutex);
+    Dec(Depth);
+  end;
 end;
 
 function QueueReceivedPacket(Packet: PPacket): Boolean;

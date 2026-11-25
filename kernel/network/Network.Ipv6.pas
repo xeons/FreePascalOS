@@ -19,9 +19,12 @@
 {
   IPv6 (RFC 8200): datagrams in and out.
 
-  A datagram that arrives is checked (version, payload length), taken
-  if it is for one of this machine's addresses (not a tentative one), or
-  for a multicast group the interface listens to, and its extension
+  A datagram that arrives is checked (version, payload length), dropped
+  if its addresses are martian (Network.InputFilter: ::1 only ever comes
+  in on lo, as source or destination; multicast sources, IPv4-mapped
+  addresses and a destination of :: never), taken if it is for one of
+  this machine's addresses (not a tentative one), or for a multicast
+  group the interface listens to, and its extension
   headers are walked (Network.Ipv6Headers): hop-by-hop and destination
   options are looked through, a routing header with segments left is
   refused, a fragment goes to reassembly (Network.Ipv6Fragments) and the
@@ -39,7 +42,8 @@
   address, the rest to the next hop's through the neighbour cache. A
   datagram larger than the path MTU (the link's, or what a Packet Too
   Big said) is sent in fragments (Network.FragmentBuilder), each with
-  the same random identification.
+  the same random identification. A datagram from ::1 never leaves by
+  another interface than lo.
 }
 unit Network.Ipv6;
 
@@ -63,6 +67,7 @@ const
   NextHeaderIcmpv6 = 58;
   NextHeaderNone = 59;
   NextHeaderDestinationOptions = 60;
+  FragmentHeaderBytes = 8;
   { Neighbor Discovery's messages go with this hop limit, and are
     believed only with it. }
   NeighborDiscoveryHopLimit = 255;
@@ -124,6 +129,7 @@ uses
   Network.Icmpv6,
   Network.Udp,
   Network.TcpInput,
+  Network.InputFilter,
   Network.Statistics;
 
 function Ipv6LinkMtu(NetworkInterface: PNetworkInterface): LongWord;
@@ -184,6 +190,16 @@ begin
         Inc(NetworkStatistics.Ipv6.ReassemblyFragments);
         if AlreadyReassembled then
           Exit;
+        if (Walk.FragmentOffset = 0) and (Walk.Offset + FragmentHeaderBytes <= Datagram.TotalLength) and
+           not FirstFragmentHoldsHeaderChain(Datagram.Header + Walk.Offset + FragmentHeaderBytes,
+             Datagram.TotalLength - Walk.Offset - FragmentHeaderBytes, Walk.NextHeader) then
+        begin
+          { RFC 8200 4.5: the first fragment lacks part of the chain. }
+          Inc(NetworkStatistics.Ipv6.HeaderErrors);
+          SendIcmpv6Error(Datagram.Header, Datagram.TotalLength, Icmpv6TypeParameterProblem,
+            Icmpv6CodeIncompleteHeaderChain, 0);
+          Exit;
+        end;
         if not AddIpv6Fragment(Datagram, Walk, Whole, WholeLength) then
           Exit;
         Inc(NetworkStatistics.Ipv6.Reassembled);
@@ -236,7 +252,8 @@ begin
   Datagram.Header := Data;
   Datagram.TotalLength := Ipv6HeaderBytes + PayloadLength;
   Datagram.IsBroadcast := IsMulticastIpv6Address(Datagram.Destination6);
-  if IsMulticastIpv6Address(Datagram.Source6) then
+  if Ipv6SourceIsMartian(Datagram.Source6, NetworkInterface^.IsLoopback) or
+     Ipv6DestinationIsMartian(Datagram.Destination6, NetworkInterface^.IsLoopback) then
   begin
     Inc(NetworkStatistics.Ipv6.AddressErrors);
     CountReceiveDrop(NetworkInterface);
@@ -399,6 +416,13 @@ var
   Header: PByte;
   Mtu: LongWord;
 begin
+  if IsLoopbackIpv6Address(Source) and not NetworkInterface^.IsLoopback then
+  begin
+    { RFC 4291 2.5.3: ::1 is never sent outside the node. }
+    Inc(NetworkStatistics.Ipv6.NoRoutes);
+    FreePacket(Packet);
+    Exit(ErrorNetworkUnreachable);
+  end;
   CountOutgoingIcmpv6(Packet, NextHeader);
   Header := PrependToPacket(Packet, Ipv6HeaderBytes);
   if Header = nil then
@@ -444,6 +468,11 @@ begin
   ChosenSource := Source;
   if IsUnspecifiedIpv6Address(ChosenSource) then
     ChosenSource := RoutedSource;
+  if IsLoopbackIpv6Address(ChosenSource) and not NetworkInterface^.IsLoopback then
+  begin
+    Inc(NetworkStatistics.Ipv6.NoRoutes);
+    Exit(ErrorNetworkUnreachable);
+  end;
   Datagram := AllocateKernelMemory(Ipv6HeaderBytes + PayloadLength);
   if Datagram = nil then
   begin

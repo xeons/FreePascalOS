@@ -125,6 +125,8 @@ const
   { Configuration default, port connectivity: nothing attached. }
   PortNotConnected = 1;
   MaximumGain = $7F;
+  { A node number is eight bits in a verb. }
+  MaximumNodeId = $FF;
 
 type
   TPathKind = (PathOutput, PathInput);
@@ -356,6 +358,23 @@ begin
     Path.SupportedRates := Parameter(Registers, Codec, Group, ParameterPcmRates);
 end;
 
+{ The "subordinate node count" answer (first node in bits 16-23, count
+  in bits 0-7) is the codec's: the nodes it names are walked only as far
+  as a node number fits a verb (NIDs to 255), and a count of 0 walks
+  none (an unsigned "First to First + Count - 1" would run from 0 to
+  4 billion). }
+function FirstSubordinate(Nodes: LongWord): LongWord;
+begin
+  Result := (Nodes shr 16) and $FF;
+end;
+
+function SubordinateCount(Nodes: LongWord): LongWord;
+begin
+  Result := Nodes and $FF;
+  if FirstSubordinate(Nodes) + Result > MaximumNodeId + 1 then
+    Result := MaximumNodeId + 1 - FirstSubordinate(Nodes);
+end;
+
 { Looks in the audio function group Group for a path of Kind. }
 function SetUpPath(Registers: PByte; Codec, Group: LongWord; Kind: TPathKind; Tag: LongWord;
   out Path: TCodecPath): Boolean;
@@ -367,15 +386,17 @@ var
   Middle: LongWord;
   Inner: LongWord;
   Found: LongWord;
+  Step: LongWord;
 begin
   Result := False;
   ZeroMemory(@Path, SizeOf(Path));
   Path.Codec := Codec;
   Nodes := Parameter(Registers, Codec, Group, ParameterNodeCount);
-  First := (Nodes shr 16) and $FF;
+  First := FirstSubordinate(Nodes);
   PowerUp(Registers, Codec, Group);
-  for Node := First to First + (Nodes and $FF) - 1 do
+  for Step := 1 to SubordinateCount(Nodes) do
   begin
+    Node := First + Step - 1;
     if Kind = PathOutput then
     begin
       { From an output pin back to a converter. }
@@ -412,6 +433,7 @@ var
   Codec: LongWord;
   Nodes: LongWord;
   Group: LongWord;
+  Step: LongWord;
 begin
   Result := False;
   ZeroMemory(@Path, SizeOf(Path));
@@ -421,10 +443,13 @@ begin
     if (Present and (1 shl Codec)) = 0 then
       Continue;
     Nodes := Parameter(Registers, Codec, 0, ParameterNodeCount);
-    for Group := (Nodes shr 16) and $FF to ((Nodes shr 16) and $FF) + (Nodes and $FF) - 1 do
+    for Step := 1 to SubordinateCount(Nodes) do
+    begin
+      Group := FirstSubordinate(Nodes) + Step - 1;
       if ((Parameter(Registers, Codec, Group, ParameterFunctionType) and $FF) = FunctionTypeAudio) and
          SetUpPath(Registers, Codec, Group, Kind, Tag, Path) then
         Exit(True);
+    end;
   end;
 end;
 

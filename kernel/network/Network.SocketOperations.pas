@@ -213,7 +213,7 @@ begin
       Port := 0
     else if Port = 0 then
     begin
-      Port := ChooseDynamicPort(Socket, Endpoint);
+      Port := ChooseDynamicPort(Socket, Endpoint, nil);
       if Port = 0 then
         Result := ErrorAddressInUse;
     end
