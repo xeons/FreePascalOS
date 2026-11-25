@@ -872,7 +872,72 @@ const
   CallListPerformanceStates = 232;
   { 233-235 are kept for this group. }
 
-  CallCount = 233;
+  { --- Signals and timers (240-249) ---------------------------------------
+    Real-time signals (FirstRealTimeSignal .. HighestSignal) queue: each
+    one sent waits with its own TAbiSignalInformation, and they are
+    taken lowest signal first, in the order sent within a signal; the
+    others are one pending instance each. A process has at most
+    MaximumQueuedSignals queued (sigqueue then fails with
+    ErrorWouldBlock). POSIX timers (MaximumPosixTimers per process, ids
+    from 0) and the interval timers count on the real-time clock, the
+    uptime, or the processor time of the process or of one thread (the
+    time is exact, Kernel.ProcessorTime; a processor-time timer is
+    looked at on every clock tick of the threads it counts). A timer's
+    signal waits at most once: expiries while it waits add to its
+    overrun. }
+
+  { (Target, Signal, Value): sigqueue: Signal to process Target with
+    Value (SignalFromQueue). ErrorWouldBlock if the process has
+    MaximumQueuedSignals queued; otherwise as CallSendSignal. }
+  CallQueueSignal = 240;
+  { (MaskAddress, InformationAddress or 0, TimeoutNanoseconds (-1:
+    none)): sigtimedwait: takes a signal of the set (a QWord mask) that
+    waits for the thread or the process - blocked ones too - and returns
+    it, with its TAbiSignalInformation; waits for one at most the
+    timeout. ErrorWouldBlock once the timeout passed, ErrorInterrupted if
+    a signal outside the set was taken by a handler meanwhile. }
+  CallWaitForSignal = 241;
+  { (NewAddress or 0, OldAddress or 0): sigaltstack with
+    TAbiSignalStack records: handlers of signals set up with
+    SignalFlagOnStack (and processor exceptions of such signals, a stack
+    overflow among them) run on that stack. ErrorNotPermitted while the
+    thread runs on it, ErrorOutOfMemory below MinimumSignalStackSize. }
+  CallSetAlternateSignalStack = 242;
+  { (ClockId, EventAddress or 0): timer_create on clock ClockId
+    (PosixClock*, or a processor-time clock of the process or one of its
+    threads as clock_getcpuclockid makes them) with what it does when it
+    expires (a TAbiTimerEvent; none: SIGALRM with the timer's id as its
+    value). Returns its id. ErrorWouldBlock with MaximumPosixTimers;
+    ErrorInvalidArgument for an unknown clock or notification,
+    ErrorUnsupported for another process's clock. }
+  CallCreatePosixTimer = 243;
+  { (TimerId, Flags, NewAddress, OldAddress or 0): timer_settime with
+    TAbiTimerSpec records (the first expiry, 0 to disarm; the period).
+    TimerAbsolute: the first expiry is a time of the clock. }
+  CallSetPosixTimer = 244;
+  { (TimerId, SpecAddress): timer_gettime: the time left and the
+    period. }
+  CallGetPosixTimer = 245;
+  { (TimerId): timer_delete (a signal of it that waits goes too). }
+  CallDeletePosixTimer = 246;
+  { (TimerId): timer_getoverrun: the expiries its last notification
+    stood for less one (TimerNotifyEvent: taken now, since the last
+    call). }
+  CallGetTimerOverrun = 247;
+  { (Which, NewAddress or 0, OldAddress or 0): setitimer/getitimer with
+    TAbiTimerSpec records: IntervalTimerReal (SIGALRM, the uptime),
+    IntervalTimerVirtual (SIGVTALRM, the process's time in user mode),
+    IntervalTimerProfile (SIGPROF, all of its processor time). They stay
+    across exec; a forked child has none. }
+  CallSetIntervalTimer = 248;
+  { (ClockId, TimeAddress or 0, ResolutionAddress or 0): clock_gettime
+    and clock_getres of a processor-time clock (PosixClockProcessTime,
+    PosixClockThreadTime, or one made by clock_getcpuclockid /
+    pthread_getcpuclockid) as TAbiPreciseTime records. ErrorNotFound if
+    the process or thread is gone. }
+  CallGetProcessorClock = 249;
+
+  CallCount = 250;
 
   { CallSyncMemory flags (the Linux MS_* values). }
   SyncMemoryAsync = 1;
@@ -929,6 +994,53 @@ const
   { TAbiSignalRecord.Code. }
   SignalFromProcess = 0;
   SignalFromKernel = 1;
+  { sigqueue (CallQueueSignal). }
+  SignalFromQueue = 2;
+  { A POSIX timer's expiry. }
+  SignalFromTimer = 3;
+  { CallSetSignalDisposition flags: a system call the handler cut short
+    is made again (SA_RESTART; not the calls POSIX never restarts: the
+    waits for signals, sleeps, poll and select), the handler runs on the
+    alternate signal stack (SA_ONSTACK). }
+  SignalFlagRestart = $02;
+  SignalFlagOnStack = $04;
+  SignalVirtualAlarm = 26;
+  SignalProfile = 27;
+  { The real-time signals (they queue). }
+  FirstRealTimeSignal = 32;
+  { CallQueueSignal. }
+  MaximumQueuedSignals = 1024;
+  { TAbiSignalStack.Flags (the Linux SS_* values). }
+  SignalStackOnStack = 1;
+  SignalStackDisable = 2;
+  MinimumSignalStackSize = 2048;
+  { The POSIX timers (CallCreatePosixTimer). }
+  MaximumPosixTimers = 64;
+  { Clock ids (the Linux values). A processor-time clock of a given
+    process or thread is negative: not (Id shl 3), plus
+    PosixClockCpuScheduled, plus PosixClockCpuPerThread for a thread. }
+  PosixClockRealTime = 0;
+  PosixClockMonotonic = 1;
+  PosixClockProcessTime = 2;
+  PosixClockThreadTime = 3;
+  PosixClockMonotonicRaw = 4;
+  PosixClockRealTimeCoarse = 5;
+  PosixClockMonotonicCoarse = 6;
+  PosixClockBootTime = 7;
+  PosixClockCpuScheduled = 2;
+  PosixClockCpuPerThread = 4;
+  { TAbiTimerEvent.Notify (the Linux SIGEV_* values, but for the event:
+    TimerNotifyEvent signals an event handle, and the C library runs
+    SIGEV_THREAD's function on a thread that waits for it). }
+  TimerNotifySignal = 0;
+  TimerNotifyNone = 1;
+  TimerNotifyEvent = 2;
+  { CallSetPosixTimer flags. }
+  TimerAbsolute = 1;
+  { CallSetIntervalTimer. }
+  IntervalTimerReal = 0;
+  IntervalTimerVirtual = 1;
+  IntervalTimerProfile = 2;
 
   { CallUnmountVolume flags. }
   UnmountForce = $01;
@@ -2437,8 +2549,56 @@ type
     Value: Int64;
     { The interrupted registers. }
     Context: TAbiContext;
+    { SignalFromTimer: the timer and its overrun. }
+    TimerId: LongWord;
+    Overrun: LongWord;
   end;
   PAbiSignalRecord = ^TAbiSignalRecord;
+
+  { What CallWaitForSignal gives for the signal it took. }
+  TAbiSignalInformation = record
+    Signal: LongWord;
+    { SignalFrom*. }
+    Code: LongWord;
+    SenderProcessId: Int64;
+    SenderUserId: QWord;
+    Value: Int64;
+    TimerId: LongWord;
+    Overrun: LongWord;
+  end;
+  PAbiSignalInformation = ^TAbiSignalInformation;
+
+  { An alternate signal stack (CallSetAlternateSignalStack). }
+  TAbiSignalStack = record
+    Base: QWord;
+    Size: QWord;
+    { SignalStack*. }
+    Flags: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiSignalStack = ^TAbiSignalStack;
+
+  { What a POSIX timer does when it expires (CallCreatePosixTimer). }
+  TAbiTimerEvent = record
+    { TimerNotify*. }
+    Notify: LongWord;
+    Signal: LongWord;
+    { Given with the signal (si_value). }
+    Value: Int64;
+    { TimerNotifyEvent: an event handle of the caller's. }
+    EventHandle: Int64;
+  end;
+  PAbiTimerEvent = ^TAbiTimerEvent;
+
+  { A timer's setting (CallSetPosixTimer, CallSetIntervalTimer). }
+  TAbiTimerSpec = record
+    { Until the first expiry (or, with TimerAbsolute, its time); 0: not
+      armed. }
+    ValueNanoseconds: QWord;
+    { Between expiries after that; 0: once. }
+    IntervalNanoseconds: QWord;
+  end;
+  PAbiTimerSpec = ^TAbiTimerSpec;
 
   { Input events (/dev/events): what keyboards and pointing devices do,
     for programs that take the input (a display server). Reads return

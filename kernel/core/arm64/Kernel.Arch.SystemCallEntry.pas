@@ -47,6 +47,10 @@ procedure SetSystemCallKernelStack(StackTop: QWord);
 function SystemCallNumber(Frame: PTrapFrame): QWord;
 function SystemCallArgument(Frame: PTrapFrame; Index: Integer): QWord;
 procedure SetSystemCallResult(Frame: PTrapFrame; Value: Int64);
+{ Makes the thread make its system call again when it returns to user
+  mode: back to the SVC, with the first argument (which the result
+  replaced) given back. }
+procedure RewindSystemCall(Frame: PTrapFrame; Number, Argument0: QWord);
 
 { Called by the exception code for an SVC from user mode, with
   interrupts disabled; returns with them disabled. }
@@ -95,6 +99,15 @@ end;
 procedure SetSystemCallResult(Frame: PTrapFrame; Value: Int64);
 begin
   Frame^.X[0] := QWord(Value);
+end;
+
+procedure RewindSystemCall(Frame: PTrapFrame; Number, Argument0: QWord);
+const
+  SvcLength = 4;
+begin
+  Frame^.Elr := Frame^.Elr - SvcLength;
+  Frame^.X[NumberRegister] := Number;
+  Frame^.X[0] := Argument0;
 end;
 
 procedure DispatchSystemCall(Frame: PTrapFrame);

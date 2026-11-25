@@ -41,7 +41,7 @@ C_STRIP := $(C_TOOLCHAIN)/bin/$(C_TRIPLET)-strip
 C_RUNTIME_OUTPUT := $(USER_BUILD_DIRECTORY)/usr
 C_RUNTIME_STAMP := $(USER_BUILD_DIRECTORY)/c-runtime.stamp
 C_TEST_SOURCES := $(wildcard toolchain/ctest/*.c toolchain/ctest/*.cpp toolchain/ctest/*.h)
-C_FLAGS := -O2 -Wall -Wextra
+C_FLAGS := -O2 -Wall -Wextra --sysroot=$(C_SYSROOT)
 
 # The C runtime's libraries as the system disk has them (stripped).
 C_RUNTIME_LIBRARIES := ld.so libc.so libm.so libpthread.so libdl.so librt.so libutil.so libresolv.so

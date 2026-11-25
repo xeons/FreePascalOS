@@ -173,6 +173,32 @@ extern "C" {
 /* (): the parent's id. */
 #define FPOS_CALL_GET_PARENT_PROCESS_ID 196
 
+/* Signals and timers (240-249). */
+/* (Pid, Signal, Value): sigqueue. */
+#define FPOS_CALL_QUEUE_SIGNAL 240
+/* (MaskAddress, InformationAddress, TimeoutNanoseconds or -1):
+   sigtimedwait; returns the signal. */
+#define FPOS_CALL_WAIT_FOR_SIGNAL 241
+/* (NewAddress, OldAddress): sigaltstack with fpos_signal_stack. */
+#define FPOS_CALL_SET_ALTERNATE_SIGNAL_STACK 242
+/* (ClockId, EventAddress): timer_create; returns the timer's id. */
+#define FPOS_CALL_CREATE_POSIX_TIMER 243
+/* (TimerId, Flags, NewAddress, OldAddress): timer_settime with
+   fpos_timer_spec. */
+#define FPOS_CALL_SET_POSIX_TIMER 244
+/* (TimerId, SpecAddress): timer_gettime. */
+#define FPOS_CALL_GET_POSIX_TIMER 245
+/* (TimerId): timer_delete. */
+#define FPOS_CALL_DELETE_POSIX_TIMER 246
+/* (TimerId): timer_getoverrun. */
+#define FPOS_CALL_GET_TIMER_OVERRUN 247
+/* (Which, NewAddress, OldAddress): setitimer/getitimer with
+   fpos_timer_spec. */
+#define FPOS_CALL_SET_INTERVAL_TIMER 248
+/* (ClockId, TimeAddress, ResolutionAddress): a processor-time clock as
+   fpos_precise_time records. */
+#define FPOS_CALL_GET_PROCESSOR_CLOCK 249
+
 /* --- Errors --------------------------------------------------------------- */
 
 #define FPOS_ERROR_TIMED_OUT 110
@@ -261,6 +287,24 @@ extern "C" {
 #define FPOS_SIGNAL_DEFAULT 0
 #define FPOS_SIGNAL_IGNORE 1
 #define FPOS_SIGNAL_HANDLE 2
+#define FPOS_SIGNAL_FLAG_RESET_HANDLER 0x01
+#define FPOS_SIGNAL_FLAG_RESTART 0x02
+#define FPOS_SIGNAL_FLAG_ON_STACK 0x04
+
+/* Alternate signal stacks (fpos_signal_stack.flags; the SS_* values). */
+#define FPOS_SIGNAL_STACK_ON_STACK 1
+#define FPOS_SIGNAL_STACK_DISABLE 2
+
+/* Timers (FPOS_CALL_CREATE_POSIX_TIMER, fpos_timer_event.notify). */
+#define FPOS_TIMER_NOTIFY_SIGNAL 0
+#define FPOS_TIMER_NOTIFY_NONE 1
+#define FPOS_TIMER_NOTIFY_EVENT 2
+#define FPOS_TIMER_ABSOLUTE 1
+#define FPOS_MAXIMUM_POSIX_TIMERS 64
+/* Processor-time clocks of a given process or thread: not (id << 3)
+   plus these. */
+#define FPOS_CLOCK_CPU_SCHEDULED 2
+#define FPOS_CLOCK_CPU_PER_THREAD 4
 
 /* Sockets. */
 #define FPOS_ADDRESS_FAMILY_IPV4 2
@@ -470,6 +514,8 @@ struct fpos_exception_record {
 /* Why a signal came (fpos_signal_record.code). */
 #define FPOS_SIGNAL_FROM_PROCESS 0
 #define FPOS_SIGNAL_FROM_KERNEL 1
+#define FPOS_SIGNAL_FROM_QUEUE 2
+#define FPOS_SIGNAL_FROM_TIMER 3
 
 struct fpos_signal_record {
 	uint32_t signal;
@@ -480,6 +526,38 @@ struct fpos_signal_record {
 	uint64_t sender_user_id;
 	int64_t value;
 	struct fpos_context context;
+	uint32_t timer_id;
+	uint32_t overrun;
+};
+
+/* The signal FPOS_CALL_WAIT_FOR_SIGNAL took (TAbiSignalInformation). */
+struct fpos_signal_information {
+	uint32_t signal;
+	uint32_t code;
+	int64_t sender_process_id;
+	uint64_t sender_user_id;
+	int64_t value;
+	uint32_t timer_id;
+	uint32_t overrun;
+};
+
+struct fpos_signal_stack {
+	uint64_t base;
+	uint64_t size;
+	uint32_t flags;
+	uint32_t reserved;
+};
+
+struct fpos_timer_event {
+	uint32_t notify;
+	uint32_t signal;
+	int64_t value;
+	int64_t event_handle;
+};
+
+struct fpos_timer_spec {
+	uint64_t value_nanoseconds;
+	uint64_t interval_nanoseconds;
 };
 
 /* --- The calls -------------------------------------------------------------- */

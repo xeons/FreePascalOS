@@ -142,6 +142,15 @@ struct FreePascalOsSysdepTags :
 	Times,
 	GetItimer,
 	SetItimer,
+	// Timers and clocks.
+	TimerCreate,
+	TimerSettime,
+	TimerGettime,
+	TimerDelete,
+	TimerGetoverrun,
+	ClockGetres,
+	ClockGetcpuclockid,
+	ThreadGetcpuclockid,
 	// Waiting for descriptors.
 	Poll,
 	Ppoll,
@@ -181,7 +190,9 @@ struct FreePascalOsSysdepTags :
 	Pause,
 	Kill,
 	Tgkill,
-	Sigaltstack
+	Sigaltstack,
+	Sigtimedwait,
+	Sigqueue
 {};
 
 template<typename Tag>

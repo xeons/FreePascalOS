@@ -49,6 +49,7 @@ libc_sources += files(
 	'generic/terminal.cpp',
 	'generic/signals.cpp',
 	'generic/timers.cpp',
+	'generic/clocks.cpp',
 	'arch' / arch / 'thread-entry.S',
 )
 

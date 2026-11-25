@@ -49,6 +49,8 @@ static const struct test_group groups[] = {
 	{"processes", test_processes},
 	{"pipes", test_pipes},
 	{"signals", test_signals},
+	{"realtime-signals", test_realtime_signals},
+	{"timers", test_timers},
 	{"sockets", test_sockets},
 	{"dlopen", test_dlopen},
 	{"security", test_security},

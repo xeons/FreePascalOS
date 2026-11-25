@@ -117,7 +117,13 @@ uses
   Processes.Execution,
   Processes.ChildWaits,
   Processes.ObjectNameCalls,
-  Processes.Signals;
+  Processes.Signals,
+  { Signals and timers (240-249). }
+  Processes.SignalWaits,
+  Processes.AlternateSignalStacks,
+  Processes.PosixTimers,
+  Processes.ProcessorClocks,
+  Processes.SystemCallRestart;
 
 const
   SystemName = 'FreePascalOS';
@@ -897,6 +903,17 @@ begin
     { Memory and the loader (208-213). }
     CallGetProcessMemoryCharge: Result := PerformGetProcessMemoryCharge(Argument0, Argument1);
     CallGetImageCacheStatistics: Result := PerformGetImageCacheStatistics(Argument0);
+    { Signals and timers (240-249). }
+    CallQueueSignal: Result := PerformQueueSignal(Int64(Argument0), Argument1, Int64(Argument2));
+    CallWaitForSignal: Result := PerformWaitForSignal(Argument0, Argument1, Int64(Argument2));
+    CallSetAlternateSignalStack: Result := PerformSetAlternateSignalStack(Argument0, Argument1);
+    CallCreatePosixTimer: Result := PerformCreatePosixTimer(Int64(Argument0), Argument1);
+    CallSetPosixTimer: Result := PerformSetPosixTimer(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallGetPosixTimer: Result := PerformGetPosixTimer(Int64(Argument0), Argument1);
+    CallDeletePosixTimer: Result := PerformDeletePosixTimer(Int64(Argument0));
+    CallGetTimerOverrun: Result := PerformGetTimerOverrun(Int64(Argument0));
+    CallSetIntervalTimer: Result := PerformSetIntervalTimer(Argument0, Argument1, Argument2);
+    CallGetProcessorClock: Result := PerformGetProcessorClock(Int64(Argument0), Argument1, Argument2);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -966,6 +983,11 @@ begin
   until not MustRestart or CurrentProcess^.TerminationRequested;
 
   SetSystemCallResult(Frame, Result);
+  { Cut short by a signal: made again after the handler (SA_RESTART) or
+    if no handler runs (Processes.SystemCallRestart); not when a stack
+    overflow is raised instead. }
+  if not CurrentThreadObject^.StackOverflowPending then
+    NoteInterruptedCall(Number, Argument0, Result, CurrentThreadObject^.Posix.AlertedForSignal);
   CurrentThreadObject^.SystemCallFrame := nil;
   { A program asked to end does so before it runs any further. }
   EndProcessIfTerminationRequested;
@@ -974,6 +996,9 @@ begin
   DeliverPendingStackOverflow(Frame);
   { A signal the program handles (Processes.Signals). }
   DeliverPendingSignals(Frame);
+  RestartInterruptedCallIfNoted(Frame);
+  { A signal taken just now may have ended the process. }
+  EndProcessIfTerminationRequested;
 end;
 
 procedure InitializeSystemCalls;
@@ -982,6 +1007,7 @@ begin
   InitializeProcessTermination;
   InitializeThreadCalls;
   InitializeWaitCalls;
+  InitializePosixTimers;
   { From here on the kernel touches user memory only through checked
     copies, so SMAP can be turned on. }
   InitializeUserCopy;

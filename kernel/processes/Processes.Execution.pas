@@ -86,6 +86,7 @@ uses
   Processes.Security,
   Processes.Restrictions,
   Processes.Signals,
+  Processes.PosixTimers,
   Processes.ThreadControl,
   Processes.ProgramArguments,
   Processes.Arch.UserContext;
@@ -379,6 +380,7 @@ begin
   CloseListedHandles(Process, Request);
   Process^.ExceptionDispatcher := 0;
   ResetSignalHandlersForExec(Process);
+  DeletePosixTimersForExec(Process);
   AcquireMutex(Process^.Lock);
   Process^.Credentials := Request^.Credentials;
   Process^.ImageUnreadable := Request^.ImageUnreadable;

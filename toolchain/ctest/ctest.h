@@ -50,6 +50,8 @@ void test_threads(void);
 void test_processes(void);
 void test_pipes(void);
 void test_signals(void);
+void test_realtime_signals(void);
+void test_timers(void);
 void test_sockets(void);
 void test_dlopen(void);
 void test_security(void);

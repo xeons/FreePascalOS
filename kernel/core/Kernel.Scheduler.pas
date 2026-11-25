@@ -134,6 +134,12 @@ procedure ClearCurrentThreadAlert;
 { Changes the priority of a thread, moving it between run queues if it
   is ready. }
 procedure SetThreadPriority(Thread: PThreadControlBlock; Priority: LongWord);
+{ Keeps the clock tick of the processor Thread runs on even while it
+  runs alone (Needs), or lets it be deferred again: a processor-time
+  timer must see the thread's time grow tick by tick. A processor
+  whose tick is deferred is asked to look again. Any level up to
+  DispatchLevel. }
+procedure SetThreadNeedsClockTick(Thread: PThreadControlBlock; Needs: Boolean);
 
 { Average number of runnable threads over the last 1, 5 and 15 minutes,
   in hundredths, and the number right now. }
@@ -436,10 +442,11 @@ begin
     if SliceOver then
       Running^.QuantumRemaining := SliceTicks;
     { Dynamic tick: alone, the running thread needs no tick; with
-      threads waiting behind it, it does. }
+      threads waiting behind it, or a processor-time timer counting its
+      time, it does. }
     if Running <> Processor^.IdleThread then
     begin
-      if ReadyThreadCountOf(Processor) = 0 then
+      if (ReadyThreadCountOf(Processor) = 0) and not Running^.NeedsClockTick then
         DeferClockTick
       else
         ResumeClockTick(Running);
@@ -987,6 +994,27 @@ begin
       RequestDispatchOnProcessor(Processor);
   end;
   ReleaseDispatcherLock(PreviousLevel);
+end;
+
+procedure SetThreadNeedsClockTick(Thread: PThreadControlBlock; Needs: Boolean);
+var
+  Processor: PProcessor;
+  Deferred: Boolean;
+  PreviousLevel: TPriorityLevel;
+begin
+  Thread^.NeedsClockTick := Needs;
+  if not Needs or (Thread^.State <> ThreadStateRunning) then
+    Exit;
+  { Running with its tick deferred: the dispatch interrupt there looks
+    again (PreemptIfNeededLocked) and starts the tick. }
+  Processor := ProcessorByIndex(Thread^.LastProcessorIndex);
+  if Processor = nil then
+    Exit;
+  PreviousLevel := LockProcessorAtDispatchLevel(Processor);
+  Deferred := ClockTickIsDeferred(Processor);
+  UnlockProcessorAndLower(Processor, PreviousLevel);
+  if Deferred then
+    RequestDispatchOn(Processor);
 end;
 
 procedure ClearCurrentThreadAlert;

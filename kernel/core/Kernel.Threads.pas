@@ -164,6 +164,10 @@ type
       kernel: how its run time divides between the two. }
     UserTicks: QWord;
     KernelTicks: QWord;
+    { Its tick is never deferred while it runs alone (dynamic tick): a
+      processor-time timer of its process counts its time
+      (Kernel.Scheduler.SetThreadNeedsClockTick). }
+    NeedsClockTick: Boolean;
 
     { Inside a routine copying to or from user memory, whose faults on
       user addresses are survivable (Kernel.Arch.UserCopy). }
