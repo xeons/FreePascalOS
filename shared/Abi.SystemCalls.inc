@@ -650,7 +650,114 @@ const
     system keeps it. Flags: FileTimesFollowLinks for Path. }
   CallGetFileTimes = 175;
 
-  CallCount = 176;
+  { --- The POSIX block (180-199): what the C library (mlibc) needs ------- }
+
+  { (Address, Length, Protection, Flags, Handle, Offset): mmap, with the
+    Linux PROT_* and MAP_* values (MAP_SHARED, MAP_PRIVATE, MAP_FIXED,
+    MAP_ANONYMOUS, MAP_FIXED_NOREPLACE): anonymous memory or a file's
+    pages, where there is room (at Address if it is free) or with
+    MAP_FIXED exactly at Address, replacing run time allocations and
+    mappings there (see Processes.MemoryMapping). Returns the address. }
+  CallMapMemory = 180;
+  { (Address, Length): munmap. }
+  CallUnmapMemory = 181;
+  { (): fork: a copy of the calling process (its memory copy on write,
+    its handles, the calling thread). Returns the child's id, and 0 in
+    the child. }
+  CallForkProcess = 182;
+  { (ExecutionAddress): execve (a TAbiExecution): the calling process
+    runs another program, keeping its id, handles (less those listed to
+    close) and signal mask; its other threads end. Returns only on
+    failure. }
+  CallExecuteProgram = 183;
+  { (ProcessId, StatusAddress, Flags): waitpid: waits for a child
+    (ProcessId > 0), any child (-1), any child of the caller's group (0)
+    or of group -ProcessId, to end (or stop, with WaitUntraced), stores
+    the Linux status word (exit code shl 8, or the signal) and returns
+    its id; 0 with WaitNoHang if none has. ErrorNoChildProcess. }
+  CallWaitForChild = 184;
+  { (Entry, Argument, StackPointer): a thread of the calling process on
+    a stack the caller made (16-byte aligned). Returns a thread handle. }
+  CallCreateThreadOnStack = 185;
+  { (Dispatcher): where the process's threads continue to take a
+    signal it handles: with the address of a TAbiSignalRecord (on the
+    thread's stack) as the argument, as if called. }
+  CallSetSignalDispatcher = 186;
+  { (Target, Signal): kill: a process (> 0), the caller's group (0),
+    every process the caller may signal (-1) or group -Target. Signal 0
+    only checks. ErrorNoSuchProcess, ErrorNotPermitted. }
+  CallSendSignal = 187;
+  { (How, MaskAddress or 0, OldMaskAddress or 0): sigprocmask of the
+    calling thread (SignalBlock, SignalUnblock, SignalSetMask; masks are
+    QWords, bit N - 1 for signal N). }
+  CallSetSignalMask = 188;
+  { (Signal, Disposition, HandlerMask, Flags): what happens to a signal
+    (SignalDispositionDefault, -Ignore, -Handle), the mask added while
+    its handler runs, SignalFlagResetHandler. }
+  CallSetSignalDisposition = 189;
+  { (RecordAddress): ends a handler: the thread goes on with the
+    record's context and mask. Does not return. }
+  CallReturnFromSignal = 190;
+  { (MaskAddress): sigsuspend: waits with that mask until a signal is
+    taken; returns ErrorInterrupted. }
+  CallSuspendForSignal = 191;
+  { (): the signals waiting for the calling thread, as a mask. }
+  CallPendingSignals = 192;
+  { (ProcessId (0: the caller), GroupId (0: its own id)): setpgid. }
+  CallSetProcessGroup = 193;
+  { (): setsid: the caller leads a new session and group, without a
+    controlling terminal; returns the session's id. }
+  CallCreateSession = 194;
+  { (ProcessId (0: the caller), Which): its group (0) or session (1). }
+  CallGetProcessGroupOf = 195;
+  { (): the parent's id. }
+  CallGetParentProcessId = 196;
+  { 197-199 are kept for this block. }
+
+  CallCount = 197;
+
+  { CallWaitForChild flags (the Linux values). }
+  WaitNoHang = 1;
+  WaitUntraced = 2;
+  WaitContinued = 8;
+
+  { CallSetSignalMask. }
+  SignalBlock = 0;
+  SignalUnblock = 1;
+  SignalSetMask = 2;
+  { CallSetSignalDisposition. }
+  SignalDispositionDefault = 0;
+  SignalDispositionIgnore = 1;
+  SignalDispositionHandle = 2;
+  SignalFlagResetHandler = $01;
+  { The signals (the Linux numbers). }
+  HighestSignal = 64;
+  SignalHangUp = 1;
+  SignalInterrupt = 2;
+  SignalQuit = 3;
+  SignalIllegalInstruction = 4;
+  SignalTrap = 5;
+  SignalAbort = 6;
+  SignalBus = 7;
+  SignalFloatingPoint = 8;
+  SignalKill = 9;
+  SignalUser1 = 10;
+  SignalSegmentation = 11;
+  SignalUser2 = 12;
+  SignalPipe = 13;
+  SignalAlarm = 14;
+  SignalTerminate = 15;
+  SignalChild = 17;
+  SignalContinue = 18;
+  SignalStop = 19;
+  SignalTerminalStop = 20;
+  SignalTerminalInput = 21;
+  SignalTerminalOutput = 22;
+  SignalUrgent = 23;
+  SignalWindowChanged = 28;
+  { TAbiSignalRecord.Code. }
+  SignalFromProcess = 0;
+  SignalFromKernel = 1;
 
   { CallUnmountVolume flags. }
   UnmountForce = $01;
@@ -1932,6 +2039,17 @@ type
   PAbiContext = ^TAbiContext;
 
   { What the exception dispatcher gets (CallSetExceptionDispatcher). }
+  { CallExecuteProgram's argument. }
+  TAbiExecution = record
+    Path: PChar;
+    Arguments: PPChar;          { nil terminated }
+    Environment: PPChar;        { nil terminated }
+    { Handles closed once the new program is loaded (close-on-exec). }
+    CloseOnExec: ^LongInt;
+    CloseOnExecCount: QWord;
+  end;
+  PAbiExecution = ^TAbiExecution;
+
   TAbiExceptionRecord = record
     Code: LongWord;
     { Access violations: AccessKind*. }
@@ -1943,6 +2061,24 @@ type
     Context: TAbiContext;
   end;
   PAbiExceptionRecord = ^TAbiExceptionRecord;
+
+  { What a thread taking a signal finds on its stack (CallSetSignalDispatcher;
+    struct fpos_signal_record in the C library). }
+  TAbiSignalRecord = record
+    Signal: LongWord;
+    { SignalFromProcess (kill) or SignalFromKernel. }
+    Code: LongWord;
+    { The thread's mask before the handler; CallReturnFromSignal puts it
+      back. }
+    PreviousMask: QWord;
+    FaultAddress: QWord;
+    SenderProcessId: Int64;
+    SenderUserId: QWord;
+    Value: Int64;
+    { The interrupted registers. }
+    Context: TAbiContext;
+  end;
+  PAbiSignalRecord = ^TAbiSignalRecord;
 
   { Input events (/dev/events): what keyboards and pointing devices do,
     for programs that take the input (a display server). Reads return

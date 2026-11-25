@@ -48,6 +48,7 @@ unit Processes.UserThread;
 interface
 
 uses
+  Abi.SystemCalls,
   Processes.Process,
   Processes.Thread;
 
@@ -66,6 +67,12 @@ function ThreadPriorityForNice(Nice: LongInt): LongWord;
 function StartUserThread(Process: PProcess; EntryPoint, StackPointer, Argument, StackStart: QWord;
   Name: PChar; ReturnReference: Boolean; out Thread: PThread): LongInt;
 
+{ Starts the thread of a process fork made: in user mode with Context
+  (the parent's registers at its system call, the result already
+  changed) and ThreadPointer (the parent thread's). }
+function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; ThreadPointer: QWord;
+  SignalMask: QWord; Name: PChar; out Thread: PThread): LongInt;
+
 { Ends the user side of the calling thread: releases its stack and
   thread data, leaves the address space and signals its exit. Returns
   True if it was the last active thread of its process, which must then
@@ -82,7 +89,6 @@ implementation
 
 uses
   Runtime.Atomic,
-  Abi.SystemCalls,
   Memory.KernelHeap,
   Memory.Arch.PageTables,
   Kernel.Arch.Cpu,
@@ -103,6 +109,12 @@ type
     StackStart: QWord;
     ThreadDataStart: QWord;
     ThreadPointer: QWord;
+    { A forked thread: it starts with these registers and the parent's
+      thread pointer instead. }
+    HasContext: Boolean;
+    Context: TAbiContext;
+    ForkedThreadPointer: QWord;
+    SignalMask: QWord;
   end;
   PUserThreadStart = ^TUserThreadStart;
 
@@ -136,6 +148,12 @@ begin
   if Thread^.Process^.TerminationRequested then
     ExitCurrentThread(Thread^.Process^.TerminationCode);
 
+  if Start.HasContext then
+  begin
+    Thread^.Posix.SignalMask := Start.SignalMask;
+    SetOwnThreadPointer(Start.ForkedThreadPointer);
+    ArchEnterUserModeWithContext(@Start.Context);
+  end;
   SetOwnThreadPointer(Start.ThreadPointer);
   ArchEnterUserMode(Start.EntryPoint, Start.StackPointer, Start.Argument);
 end;
@@ -174,6 +192,38 @@ begin
   Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
     ThreadPriorityForNice(Process^.Credentials.Nice), Name,
     ReturnReference);
+  if Thread = nil then
+  begin
+    AtomicDecrement(Process^.ActiveUserThreads);
+    ReleaseThreadStorage(Process, Start^.ThreadDataStart);
+    FreeKernelMemory(Start);
+    Exit(ErrorOutOfMemory);
+  end;
+  Result := ErrorNone;
+end;
+
+function StartForkedUserThread(Process: PProcess; const Context: TAbiContext; ThreadPointer: QWord;
+  SignalMask: QWord; Name: PChar; out Thread: PThread): LongInt;
+var
+  Start: PUserThreadStart;
+begin
+  Thread := nil;
+  Start := PUserThreadStart(AllocateZeroedKernelMemory(SizeOf(TUserThreadStart)));
+  if Start = nil then
+    Exit(ErrorOutOfMemory);
+  Result := CreateThreadStorage(Process, Start^.ThreadDataStart, Start^.ThreadPointer);
+  if Result <> ErrorNone then
+  begin
+    FreeKernelMemory(Start);
+    Exit;
+  end;
+  Start^.HasContext := True;
+  Start^.Context := Context;
+  Start^.ForkedThreadPointer := ThreadPointer;
+  Start^.SignalMask := SignalMask;
+  AtomicIncrement(Process^.ActiveUserThreads);
+  Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
+    ThreadPriorityForNice(Process^.Credentials.Nice), Name, False);
   if Thread = nil then
   begin
     AtomicDecrement(Process^.ActiveUserThreads);

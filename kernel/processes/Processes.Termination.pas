@@ -86,7 +86,8 @@ uses
   Processes.Security,
   Processes.Stopping,
   Processes.ThreadControl,
-  Processes.UserExceptions;
+  Processes.UserExceptions,
+  Processes.Signals;
 
 procedure EndProcessIfTerminationRequested;
 var
@@ -129,6 +130,9 @@ begin
     EnableInterrupts;
     ExitCurrentProcess(Process^.TerminationCode);
   end;
+  { A signal the program handles (Processes.Signals). }
+  if (Process <> nil) and Process^.IsUserProcess then
+    DeliverPendingSignals(Frame);
 end;
 
 procedure RequestProcessTerminationLocked(Process: PProcess; ExitCode: LongInt);

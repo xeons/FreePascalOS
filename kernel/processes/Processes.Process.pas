@@ -42,7 +42,8 @@ uses
   Objects.Manager,
   Processes.AddressSpace,
   Processes.Handles,
-  Processes.NotificationQueue;
+  Processes.NotificationQueue,
+  Processes.PosixState;
 
 const
   ProcessNameLength = 32;
@@ -185,6 +186,9 @@ type
     { Restrict* flags the process put on itself (Processes.Restrictions):
       only ever added. Inherited. }
     Restrictions: LongWord;
+    { Signals and children, for the C library's POSIX calls
+      (Processes.Signals, Processes.ChildWaits). }
+    Posix: TProcessPosixState;
   end;
 
 var
@@ -267,6 +271,8 @@ begin
   InitializeEvent(Process^.ContinueEvent, EventKindNotification, True);
   InitializeEvent(Process^.StateChangedEvent, EventKindNotification, False);
   InitializeNotificationQueue(Process^.Notifications);
+  InitializeSpinLock(Process^.Posix.SignalLock);
+  InitializeEvent(Process^.Posix.ChildChangedEvent, EventKindNotification, False);
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
   CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);
   InitializeListHead(Process^.RunningLink);

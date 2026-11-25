@@ -44,7 +44,8 @@ uses
   Kernel.ProcessorTime,
   Kernel.Events,
   Objects.Manager,
-  Processes.Process;
+  Processes.Process,
+  Processes.PosixState;
 
 type
   PThread = ^TThread;
@@ -100,6 +101,8 @@ type
     { The frame of the system call the thread is in (its user registers),
       nil outside system calls. }
     SystemCallFrame: Pointer;
+    { Its signal mask and the signals sent to it (Processes.Signals). }
+    Posix: TThreadPosixState;
   end;
 
 var
