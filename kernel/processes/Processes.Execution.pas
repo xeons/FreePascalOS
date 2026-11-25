@@ -31,8 +31,9 @@
   a dynamically linked C program) with the new initial stack. The
   process keeps its id, parent, group, session, terminal, working
   directory and other handles; a set-user-ID program changes its
-  effective user. A process with other threads cannot exec yet
-  (ErrorBusy).
+  effective user. Its other threads end first (once the program is known
+  to be there), as nothing may run in the old space while the new one is
+  set up.
 }
 unit Processes.Execution;
 
@@ -60,6 +61,9 @@ uses
   Kernel.Arch.ContextSwitch,
   Kernel.Mutex,
   Kernel.Scheduler,
+  Objects.Manager,
+  FileSystem.Types,
+  FileSystem.Files,
   Processes.Process,
   Processes.Thread,
   Processes.Handles,
@@ -74,6 +78,7 @@ uses
   Processes.Security,
   Processes.Restrictions,
   Processes.Signals,
+  Processes.ThreadControl,
   Processes.ProgramArguments,
   Processes.Arch.UserContext;
 
@@ -242,6 +247,68 @@ begin
   DestroyAddressSpace(OldSpace);
 end;
 
+const
+  MaximumThreadsEndedAtOnce = 256;
+
+type
+  TThreadCollection = record
+    Current: PThread;
+    Threads: array[0..MaximumThreadsEndedAtOnce - 1] of PThread;
+    Count: Integer;
+  end;
+  PThreadCollection = ^TThreadCollection;
+
+procedure CollectOtherThread(Thread: PThread; Context: Pointer);
+var
+  Collection: PThreadCollection;
+begin
+  Collection := PThreadCollection(Context);
+  if (Thread = Collection^.Current) or not Thread^.IsUserThread or
+     (Collection^.Count >= MaximumThreadsEndedAtOnce) then
+    Exit;
+  ReferenceObject(Thread);
+  Collection^.Threads[Collection^.Count] := Thread;
+  Inc(Collection^.Count);
+end;
+
+{ Ends every other thread of the process and waits until they are gone
+  (they free their stacks in the old address space). False if the
+  process is being ended meanwhile. }
+function EndOtherThreads(Process: PProcess; Current: PThread): Boolean;
+var
+  Collection: PThreadCollection;
+  Index: Integer;
+begin
+  while Process^.ActiveUserThreads > 1 do
+  begin
+    if Process^.TerminationRequested then
+      Exit(False);
+    Collection := PThreadCollection(AllocateZeroedKernelMemory(SizeOf(TThreadCollection)));
+    if Collection = nil then
+      Exit(False);
+    Collection^.Current := Current;
+    VisitProcessThreads(Process, @CollectOtherThread, Collection);
+    for Index := 0 to Collection^.Count - 1 do
+    begin
+      RequestThreadExit(Collection^.Threads[Index], 0);
+      DereferenceObject(Collection^.Threads[Index]);
+    end;
+    FreeKernelMemory(Collection);
+    SleepMilliseconds(1);
+  end;
+  Result := True;
+end;
+
+{ The program is there: exec ends the other threads only for a program
+  it can expect to start. }
+function ProgramExists(Request: PExecRequest): Boolean;
+var
+  Information: TNodeInformation;
+begin
+  Result := (DescribePath(@Request^.KernelPath[0], True, Information) = StatusSuccess) and
+    (Information.Kind = NodeKindFile);
+end;
+
 procedure CloseListedHandles(Process: PProcess; Request: PExecRequest);
 var
   Index: QWord;
@@ -284,11 +351,24 @@ begin
   Thread := CurrentThreadObject;
   if CallerRestricted(RestrictProcessCreation) then
     Exit(ErrorAccessDenied);
-  if Process^.ActiveUserThreads > 1 then
-    Exit(ErrorBusy);
   Result := ReadRequest(Process, ExecutionAddress, Request);
   if Result <> ErrorNone then
     Exit;
+  { The other threads end first: nothing may run in the old space while
+    the new one is set up. }
+  if Process^.ActiveUserThreads > 1 then
+  begin
+    if not ProgramExists(Request) then
+    begin
+      FreeRequest(Request);
+      Exit(ErrorNotFound);
+    end;
+    if not EndOtherThreads(Process, Thread) then
+    begin
+      FreeRequest(Request);
+      Exit(ErrorInterrupted);
+    end;
+  end;
   Result := LoadNewImage(Process, Request, Image);
   if Result <> ErrorNone then
   begin

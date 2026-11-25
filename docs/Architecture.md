@@ -10680,7 +10680,7 @@ kernel (`Processes.PosixMemoryCalls`, `Processes.MemoryMapping`,
 | 180 | `CallMapMemory` (Address, Length, Protection, Flags, Handle, Offset) | mmap: anonymous or a file's pages (shared read-only or private copy on write); `MAP_FIXED` replaces run time allocations and mappings in the range (inside a reservation the mapping becomes a piece of it); never images, stacks or devices |
 | 181 | `CallUnmapMemory` (Address, Length) | munmap of allocations and mappings, splitting them |
 | 182 | `CallForkProcess` () | a copy of the caller (see below); the child gets 0 |
-| 183 | `CallExecuteProgram` (TAbiExecution) | execve in place: the new program is loaded into a new address space first, so a failure leaves the caller as it was; then the calling thread moves into it, the old space goes, the close-on-exec handles are closed, handled signals become default (ignored ones and the mask stay), set-user-ID applies; the same process id; refused (`ErrorBusy`) while the process has other threads |
+| 183 | `CallExecuteProgram` (TAbiExecution) | execve in place: the new program is loaded into a new address space first, so a failure leaves the caller as it was; then the calling thread moves into it, the old space goes, the close-on-exec handles are closed, handled signals become default (ignored ones and the mask stay), set-user-ID applies; the same process id; the process's other threads end first (once the program is known to be there) |
 | 184 | `CallWaitForChild` (ProcessId, StatusAddress, Flags) | waitpid with the Linux status word, `WNOHANG`, `WUNTRACED` |
 | 185 | `CallCreateThreadOnStack` (Entry, Argument, StackPointer) | a thread on the caller's stack |
 | 186 | `CallSetSignalDispatcher` (Address) | where handled signals are taken |
@@ -10741,7 +10741,7 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
 `popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`; 404
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running; 405
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own. `make c-test` boots

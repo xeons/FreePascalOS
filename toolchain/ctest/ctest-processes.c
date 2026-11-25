@@ -20,6 +20,7 @@
    processes. */
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
@@ -38,6 +39,29 @@ static void read_all(int fd, char *buffer, size_t size) {
 	memset(buffer, 0, size);
 	while (total + 1 < size && (count = read(fd, buffer + total, size - 1 - total)) > 0)
 		total += (size_t)count;
+}
+
+static void *keep_sleeping(void *argument) {
+	(void)argument;
+	for (;;)
+		usleep(1000);
+	return NULL;
+}
+
+/* exec from a process with another thread running: the thread ends. */
+static void test_exec_with_threads(void) {
+	fflush(stdout);
+	pid_t child = fork();
+	if (child == 0) {
+		pthread_t thread;
+		pthread_create(&thread, NULL, keep_sleeping, NULL);
+		usleep(5000);
+		execl("/usr/bin/hello", "/usr/bin/hello", "threaded", (char *)NULL);
+		_exit(127);
+	}
+	int status = 0;
+	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		"exec with a thread running: status %#x", status);
 }
 
 void test_processes(void) {
@@ -109,6 +133,7 @@ void test_processes(void) {
 	if (group_child == 0)
 		_exit(setpgid(0, 0) == 0 && getpgrp() == getpid() ? 0 : 1);
 	CHECK(waitpid(group_child, &status, 0) == group_child && WEXITSTATUS(status) == 0, "setpgid");
+	test_exec_with_threads();
 }
 
 void test_pipes(void) {
