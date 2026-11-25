@@ -157,6 +157,8 @@ function KernelListWakeSources(Sources: PAbiWakeSource; Capacity: QWord): Int64;
 function KernelSetWakeSource(Index: QWord; Enabled: Boolean): Int64;
 function KernelListCoolingDevices(Devices: PAbiCoolingDevice; Capacity: QWord): Int64;
 function KernelListPerformanceStates(States: PAbiPerformanceState; Capacity: QWord): Int64;
+{ The clock and timers (call 236). }
+function KernelGetClockInformation(out Information: TAbiClockInformation): Int64;
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
 function KernelSetTimeZone(Name: PChar): Int64;
 function KernelGetKeyboardSettings(out Settings: TAbiKeyboardSettings): Int64;
@@ -677,6 +679,11 @@ end;
 function KernelListPerformanceStates(States: PAbiPerformanceState; Capacity: QWord): Int64;
 begin
   Result := SystemCall(CallListPerformanceStates, QWord(States), Capacity, 0, 0, 0, 0);
+end;
+
+function KernelGetClockInformation(out Information: TAbiClockInformation): Int64;
+begin
+  Result := SystemCall(CallGetClockInformation, QWord(@Information), 0, 0, 0, 0, 0);
 end;
 
 function KernelGetTimeZone(Buffer: PChar; Capacity: QWord): Int64;
