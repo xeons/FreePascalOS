@@ -23,8 +23,9 @@
   memorytest cache
       Reads /bin until the block cache has grown, then starts a memory
       hog that takes memory until it finds memory short, reading files
-      all the while: the cache must give lines back, every read must
-      work and the hog must end normally. (A coretest line.)
+      all the while: the caches (block cache, mapped file pages or
+      relocated copies) must give memory back, every read must work
+      and the hog must end normally. (A coretest line.)
   memorytest oom
       Starts a small bystander and a hog that takes memory without end:
       the hog must be ended with 137, the bystander and this program
@@ -274,6 +275,13 @@ var
   Before: TBlockCacheStatistics;
   Grown: TBlockCacheStatistics;
   After: TBlockCacheStatistics;
+  MappedGrown: TAbiMappedFileStatistics;
+  MappedAfter: TAbiMappedFileStatistics;
+  ImagesGrown: TImageCacheStatistics;
+  ImagesAfter: TImageCacheStatistics;
+  LinesGivenBack: QWord;
+  MappedPagesGivenBack: QWord;
+  CopiesGivenBack: QWord;
   PressureBefore: TMemoryPressure;
   PressureAfter: TMemoryPressure;
   Bytes: QWord;
@@ -289,6 +297,8 @@ begin
     [Before.LineCount, Before.MinimumLines, Before.MaximumLines]));
   ReadsWorked := ReadFolder('/bin', Bytes) and ReadFolder('/bin', Bytes);
   GetBlockCacheStatistics(Grown);
+  GetMappedFileStatistics(MappedGrown);
+  GetImageCacheStatistics(ImagesGrown);
   Check(ReadsWorked and (Bytes > 0), Format('read %d bytes of /bin', [Bytes]));
   Check((Grown.LinesGrown > Before.LinesGrown) or (Grown.LineCount = Grown.MaximumLines),
     Format('the cache grew to %d lines', [Grown.LineCount]));
@@ -309,12 +319,20 @@ begin
   Status := WaitForStatus(Hog, 120);
   CloseFile(Hog);
   GetBlockCacheStatistics(After);
+  GetMappedFileStatistics(MappedAfter);
+  GetImageCacheStatistics(ImagesAfter);
   GetMemoryPressure(PressureAfter);
   Check(Status = 0, Format('the hog ended normally (status %d)', [Status]));
   Check(ReadsWorked, Format('every read worked while memory was short (%d rounds)', [Rounds]));
   Check(PressureAfter.PressureEvents > PressureBefore.PressureEvents, 'memory was found short');
-  Check(After.LinesShrunk > Grown.LinesShrunk,
-    Format('the cache gave %d lines back', [After.LinesShrunk - Grown.LinesShrunk]));
+  { Whichever shrinker the pressure reached first gives memory back: the
+    block cache, the mapped files' pages or the relocated copies. }
+  LinesGivenBack := After.LinesShrunk - Grown.LinesShrunk;
+  MappedPagesGivenBack := MappedAfter.PagesEvicted - MappedGrown.PagesEvicted;
+  CopiesGivenBack := ImagesAfter.CopiesDropped - ImagesGrown.CopiesDropped;
+  Check(LinesGivenBack + MappedPagesGivenBack + CopiesGivenBack > 0,
+    Format('the caches gave memory back (%d cache lines, %d mapped file pages, %d relocated copies)',
+    [LinesGivenBack, MappedPagesGivenBack, CopiesGivenBack]));
   Check(After.LineCount >= After.MinimumLines, 'the cache kept its minimum');
   Check(PressureAfter.ProcessesEnded = PressureBefore.ProcessesEnded, 'nobody was ended for memory');
 end;
