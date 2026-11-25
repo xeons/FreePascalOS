@@ -91,7 +91,11 @@ how the existing pieces fit together.
       generator) for speeds between off and full (built only; falls back
       to on/off when the PWM does not read back as set)
 - [ ] Raspberry Pi 5: check the fan PWM, the clock governor, the fan pin
-      and the thermal limit on the board
+      and the thermal limit on the board; first check Drivers.Rp1Pwm's
+      register offsets and pin function against Linux's clk-rp1, pwm-rp1
+      and pinctrl-rp1 (written from memory, not from the sources)
+- [ ] Uptime step back after resume under KVM (seen once in a suspend
+      stress run; kvmclock guard added, cause not confirmed)
 - [x] Core audit fixes: AArch64 suspend keeps FP/SIMD registers; freeze
       handshake (no processor left frozen); clock paused last; x86 user
       copy recovery bound to the copy routines, CLAC at interrupt entry,
@@ -341,6 +345,8 @@ how the existing pieces fit together.
       plugged processor online)
 - [ ] Processor hot removal (ACPI eject); QEMU test of interrupts to an
       x2APIC id above 255 (needs a guest with that many processors)
+- [ ] Wake from USB and network on real hardware (QEMU's xHCI and e1000
+      never wake the machine; only the host test checks the arming)
 - [x] Interactive kernel debug console (kernel option kshell: ls, cat, volumes, disks,
       ps, mem, cache, uptime)
 - [x] Shadow buffer for the framebuffer console so scrolling never reads
@@ -2014,5 +2020,8 @@ in the order they would be built:
 - [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
 - [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
 - [ ] Clang driver support (`--target=x86_64-freepascalos`)
+- [ ] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,
+      CallQueryMemoryResidency 215); clock_gettime from the clock page
+      (AuxiliaryClockPage) instead of a system call
 - [x] C ports through the ports tool (config.sub and libtool taught the
       target automatically): zlib, lua, sqlite3, bash tried on the system
