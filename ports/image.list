@@ -7,3 +7,7 @@
 # is skipped.
 
 hello
+# GNU as and ld (and ar, nm, objdump ...) running on the system: native
+# Free Pascal on AArch64 assembles and links with them. Skipped without
+# the C toolchain (make c-toolchain).
+binutils

@@ -33,6 +33,7 @@ The ports so far:
 | lang/lua | 5.4.9 | custom (Lua's Makefile) | untested |
 | databases/sqlite3 | 3.54.1 | autotools (autosetup), options and a flavour | untested |
 | shells/bash | 5.3 | autotools, signed source | untested |
+| devel/binutils | 2.47 | autotools (host = target), the cross toolchain's patch | tested; on the system disk (with the C toolchain) |
 
 "untested" ports are committed but have not been built and run on the
 system yet: the C ports wait for the C toolchain (below) and are skipped

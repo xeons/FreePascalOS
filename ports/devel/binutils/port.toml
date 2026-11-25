@@ -1,0 +1,61 @@
+# GNU binutils running on FreePascalOS (host = target = the system's
+# own triplet): the assembler and linker native Free Pascal calls on
+# AArch64 (its 3.2.2 release has neither an internal assembler nor an
+# internal ELF linker there), and as, ld, ar, nm, objdump ... for C work
+# on the system. Built with the cross toolchain (make c-toolchain) from
+# the same release and the same patch (a symbolic link to
+# toolchain/patches/binutils) as the cross binutils. Without plugins,
+# NLS, gprofng and the debugger; the documentation is left out.
+
+[port]
+name = "binutils"
+version = "2.47"
+revision = 0
+summary = "GNU assembler, linker and binary tools (native)"
+description = """
+The GNU binary utilities for FreePascalOS itself: as (the GNU
+assembler), ld (the GNU linker), ar, ranlib, nm, objcopy, objdump,
+readelf, size, strings and strip, for the system's own processor and
+executable format. Native Free Pascal on AArch64 assembles and links
+with them (/usr/local/bin is on the PATH); on x86-64 the compiler's
+internal assembler and linker do that, and these serve C work.
+"""
+homepage = "https://www.gnu.org/software/binutils/"
+license = "GPL-3.0-or-later"
+license_files = ["COPYING3"]
+maintainer = "FreePascalOS ports"
+categories = ["devel"]
+status = "tested"
+architectures = ["x86_64", "aarch64"]
+notes = "The patch is toolchain/patches/binutils/0001-freepascalos-target.patch, shared with the cross toolchain."
+
+[[sources]]
+url = "https://ftp.gnu.org/gnu/binutils/binutils-2.47.tar.xz"
+mirrors = ["https://ftpmirror.gnu.org/binutils/binutils-2.47.tar.xz"]
+sha256 = "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
+size = 29034716
+extract_dir = "binutils-2.47"
+
+[dependencies]
+host = ["make", "cc"]
+
+[build]
+system = "autotools"
+out_of_tree = true
+# --host only: the target is the host, the system's own triplet.
+configure_args = [
+  "--disable-nls", "--disable-werror", "--disable-plugins", "--disable-gdb", "--disable-gdbserver",
+  "--disable-sim", "--disable-gprofng", "--disable-gprof", "--disable-libctf", "--disable-shared",
+  "--enable-deterministic-archives", "--without-zstd", "--without-debuginfod",
+  "--with-sysroot=/", "MAKEINFO=true",
+]
+make_args = ["MAKEINFO=true"]
+
+[install]
+remove = ["share/info/*", "share/man/*", "lib/*", "include/*", "*-freepascalos/*", "bin/elfedit", "bin/addr2line", "bin/c++filt"]
+
+[test]
+system = [
+  "as --version | head -n 1 | grep -q 'GNU assembler'",
+  "ld --version | head -n 1 | grep -q 'GNU ld'",
+]
