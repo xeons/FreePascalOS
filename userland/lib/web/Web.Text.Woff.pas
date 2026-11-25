@@ -18,9 +18,10 @@
 
 {
   Web font files as TrueType data: WOFF 1.0 (W3C, 2012) unwrapped to
-  the sfnt it carries (each table zlib-compressed or stored), TrueType
-  and OpenType data as they are. WOFF2 (Brotli with table transforms)
-  is not read yet.
+  the sfnt it carries (each table zlib-compressed or stored), WOFF 2.0
+  (Brotli with the glyf, loca and hmtx transforms, Web.Text.Woff2),
+  TrueType and OpenType data and collections as they are (a
+  collection's first face is used).
 }
 unit Web.Text.Woff;
 
@@ -45,7 +46,8 @@ function WebFontToSfnt(const Data: TBytes): TBytes;
 implementation
 
 uses
-  Compression.Buffers;
+  Compression.Buffers,
+  Web.Text.Woff2;
 
 const
   WoffHeaderSize = 44;
@@ -189,10 +191,12 @@ end;
 function WebFontToSfnt(const Data: TBytes): TBytes;
 begin
   case DetectWebFontKind(Data) of
-    WebFontTrueType, WebFontOpenTypeCff:
+    WebFontTrueType, WebFontOpenTypeCff, WebFontCollection:
       Result := Data;
     WebFontWoff:
       Result := UnwrapWoff(Data);
+    WebFontWoff2:
+      Result := UnwrapWoff2(Data);
   else
     Result := nil;
   end;

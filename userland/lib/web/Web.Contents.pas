@@ -76,6 +76,7 @@ uses
   Web.Text.FontInstances,
   Web.Text.Breaking,
   Web.Text.Woff,
+  Web.Text.Woff2,
   Web.Layout.EmbeddedContent,
   Web.Layout.Resources,
   Web.Layout.TextOffsets,
