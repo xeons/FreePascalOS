@@ -20,7 +20,7 @@ license = "LGPL-2.1-or-later"
 license_files = ["rtl/COPYING.FPC", "rtl/COPYING.txt"]
 maintainer = "FreePascalOS ports"
 categories = ["devel"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 notes = "COPYING.FPC adds a static linking exception to the LGPL."
 

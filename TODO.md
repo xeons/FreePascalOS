@@ -639,6 +639,11 @@ normalized (0-65535), not pixels.
       members reported and refused) and writing (deflate or stored,
       ZIP64 when needed or forced), tar/ustar/GNU/pax and tar.gz reading,
       ExtractAll with safe names, folder browsing (`make archive-test`)
+- [x] libarchive: tar.zst (streaming, libcompression's Zstandard decoder)
+      and tar.xz (the whole-buffer xz decoder, into memory) reading, told by
+      content (`make archive-test`)
+- [ ] libarchive: tar.xz streaming (the xz decoder works on whole buffers,
+      so a .tar.xz is unpacked into memory, at most 512 MiB)
 - [ ] libarchive: 7z reading
 - [ ] libimage: one image model (pixels, frames with delays, colour
       profile, metadata) and a decoder/encoder per format, chosen by content
@@ -1261,6 +1266,46 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Self test "exited threads did not release their stacks"
       (TestThreadExitAndCleanup) panicked once on arm64 with ten QEMU
       machines running at once: probably a fixed wait too short under load
+
+## Ports and packages
+
+- [x] Ports tree (`ports/CATEGORY/NAME/port.toml`, patches, files),
+      port.schema.json, a licence allowlist (SPDX), ports/README.md
+- [x] `scripts/ports.py`: fetch (mirrors, DISTDIR cache), verify (SHA-256,
+      size, gpg or Ed25519 signatures), extract, patch, configure, build,
+      stage, package, clean, test, info, deps (graph, order, dot), list,
+      search, outdated, makepatch, makesum, lint, repo, keygen,
+      install-to-image; options and flavours; a build log per port;
+      reproducible packages; cookies and rebuilds when a port changes
+- [x] Build systems: autotools, meson (cross file), cmake (toolchain file;
+      skipped while the build machine has no cmake), make, fpc (the
+      build's compiler and runtime, as userland.mk), custom, none
+- [x] C ports skipped (not failed) while the C toolchain is missing;
+      a sysroot per port with its build dependencies' packages
+- [x] Packages: tar.zst with +MANIFEST (every file's mode, size and
+      SHA-256), +DESC, scripts, licences in share/licenses
+- [x] Repositories: INDEX with sizes and SHA-256s, Ed25519-signed
+- [x] pkg: install (files or repositories, with dependencies), remove,
+      info, list, which, verify, search, update, upgrade, test; /var/db/pkg;
+      every check before anything changes, staged files renamed into
+      place, everything undone on failure; a lock
+- [x] The system disk carries ports/image.list's packages installed
+- [x] /usr/local/bin on every default PATH
+- [x] Host tests (`make ports-test`, `make pkg-test`), coretest installs,
+      verifies and removes a package
+- [x] Pascal ports: hello, pkg-selftest, ptop (from the Free Pascal source
+      release, with a patch for standard input and output)
+- [ ] Build and test the C ports once `make c-toolchain` exists: zlib, lua,
+      sqlite3, then bash (committed, status "untested")
+- [ ] The program loader finds shared libraries in /usr/local/lib (DT_RUNPATH
+      or a search path), so C ports can link dynamically; until then they
+      link statically
+- [ ] Ported graphical programs: a package installing a program folder the
+      desktop finds (/usr/local/app or a second program folder root)
+- [ ] cmake on the build machine (or a port of it), then cmake ports
+- [ ] pkg: autoremove (packages installed as dependencies nothing needs
+      any more), pkg fetch, a progress line while downloading
+- [ ] A public package repository with a signing key the system disk carries
 
 ## Web engine (libweb)
 

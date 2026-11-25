@@ -201,7 +201,7 @@ begin
   if Repository.Signed then
   begin
     if not ReadPublicKey(Repository.KeyPath, Key) then
-      raise EPackageRefused.CreateFmt('%s: no key in %s (or signature=none in %s)',
+      raise EPackageRefused.CreateFmt('%s: no key in %s (or signature=none in /%s)',
         [Repository.Name, Repository.KeyPath, RepositoriesFile]);
     if not Context.FetchUrl(JoinUrl(Repository.Url, 'INDEX.sig'), Folder + '/INDEX.sig.new', Problem) then
       raise EPackageRefused.CreateFmt('%s: cannot fetch the index''s signature: %s', [Repository.Name, Problem]);

@@ -6925,11 +6925,11 @@ make-system-disk.sh); coretest checks it.
 ### Archives (libarchive)
 
 **libarchive** (`userland/lib/archive`, units `Archive.*`) reads zip,
-tar and tar.gz files, writes zip files, extracts archives into folders
+tar, tar.gz, tar.zst and tar.xz files, writes zip files, extracts archives into folders
 and lists an archive's folders for browsing. It is built over
-libcompression (deflate, gzip, CRC-32) and libsystem, and its core
-units also build on the host. The file manager uses it for compressed
-folders.
+libcompression (deflate, gzip, CRC-32, Zstandard, xz) and libsystem,
+and its core units also build on the host. The file manager uses it for
+compressed folders, pkg for packages (tar.zst).
 
 ```
   Archive.Readers     TArchiveReader (Count, Entries[], IndexOf,
@@ -6942,7 +6942,8 @@ folders.
   Archive.ZipReader   central directory, ZIP64, stored/deflated, CRC check
   Archive.ZipEndRecord  Archive.ZipExtraFields  Archive.ZipFormat
   Archive.TarReader   ustar, v7, GNU 'L'/'K', pax; hard links as copies
-  Archive.TarFormat   Archive.RewindingStreams (tar.gz, seekable forward)
+  Archive.TarFormat   Archive.RewindingStreams (tar.gz, tar.zst, seekable forward)
+  Archive.XzStreams   tar.xz, decompressed into memory
   Archive.Detection   by content, not by name
 =========== shared ==========================================================
   Archive.Entries (TArchiveEntry, SafeEntryPath)  Archive.Times
@@ -6973,9 +6974,17 @@ descriptors need nothing special; extraction inflates through
 size, encrypted members (flag 0 or AES) and other methods. The tar
 reader walks the headers once when opened (pax `path`, `linkpath`,
 `size`, `mtime`; GNU long names and links; base-256 numbers). A
-.tar.gz is read through `TRewindingGzipStream`, which decompresses
-forwards and starts again only to go back, so listing and extracting in
-order decompresses it once per pass.
+.tar.gz or .tar.zst is read through `TRewindingDecoderStream`, which
+decompresses forwards through libcompression's streaming decoders
+(`TInflatingDecoder`, `TZstdDecoder`; several gzip members or zstd
+frames read as one) and starts again only to go back, so listing and
+extracting in order decompresses it once per pass. libcompression's xz
+decoder works on whole buffers (it is the one the kernel unpacks RAM
+disks with), so a .tar.xz is decompressed into memory when it is opened
+(at most 512 MiB, `Archive.XzStreams`). A zstd file is taken for a
+.tar.zst when its first block decodes to a tar header; an xz file for a
+.tar.xz by its magic and, for small files, a size in its index that is a
+whole number of tar blocks.
 
 **Writing.** `TZipWriter` streams each member through `TDeflater`
 (level 6) while computing its CRC-32, then writes the local header again
@@ -7011,7 +7020,230 @@ a Unicode name, big and incompressible data, a link, a time before
 1980; forced ZIP64; from files on disk; 65537 members), reads them back
 and has `check-written.py` check them with Python's zipfile (testzip,
 names, data, modes, DOS and extended times, ZIP64 end records).
-7z is not read (TODO.md).
+The pax fixture is also read as .tar.zst (two Zstandard frames) and
+.tar.xz. 7z is not read (TODO.md).
+
+## Ports and packages
+
+Software from elsewhere comes to the system as **ports**, as on
+FreeBSD: a tree of descriptions (`ports/CATEGORY/NAME/port.toml`), each
+with the patches that make the software build and work here and files
+of its own, built on the build machine by `scripts/ports.py` into
+**packages**, which **pkg** installs, checks and removes on the system.
+`ports/README.md` is the reference for port.toml, the commands and the
+package format; this section is how the parts fit.
+
+```
+  build machine                                    the system
+  ports/CATEGORY/NAME/port.toml, patches/, files/
+        |  scripts/ports.py (scripts/portstool/)
+        v
+  fetch -> verify -> extract -> patch -> configure -> build -> stage -> package
+        |                                                       |
+  DISTDIR (~/Downloads/sources)            build/ARCH/ports/packages/*.pkg.tar.zst
+                                                   |          |
+                         install-to-image (image.list)    repo DIR --key
+                                   |                          |  INDEX, INDEX.sig
+                     build/ARCH/ports/image-root     HTTP(S) or a folder
+                                   |                          |
+                     system disk: /usr/local,        pkg update / install NAME
+                     /var/db/pkg, /var/cache/pkg     pkg install FILE, remove,
+                                                     verify, which, upgrade ...
+```
+
+**The prefix.** Ported software lives under `/usr/local` and nowhere
+else (staging refuses anything outside it): the base system owns `/bin`,
+`/lib`, `/app` and `/etc` and is replaced as a whole, so no package can
+overwrite or break it, and replacing the base leaves packages alone;
+`/usr/local` is also every build system's default. `/usr/local/bin` is
+on the default PATH everywhere it is set (the kernel's first process,
+`sh`, logins, the service manager's services, line completion,
+`FindProgramPath`). The loader does not look in `/usr/local/lib` yet, so
+C ports link statically (TODO.md).
+
+**The tool** is Python (it drives the build machine's own tools, and
+Python's standard library reads TOML, tar in every compression, zip and
+HTTP), split by concern under `scripts/portstool/`:
+
+```
+  cli.py          the commands; phases.py  PortBuild: phases, cookies, fingerprint
+  portfile.py     Port: port.toml read, schema-checked, defaults, options, flavours
+  schema.py       a JSON Schema subset, over ports/port.schema.json
+  licenses.py     SPDX expressions against ports/licenses.txt
+  tree.py         PortsTree: find, provider, search;  resolver.py  build order, cycles
+  versions.py     version order and dependencies (as Pkg.Versions)
+  fetch.py        download with mirrors, SHA-256, gpgv or Ed25519 signatures
+  extract.py      archives unpacked safely;  patching.py  patch -pN, makepatch
+  context.py      the clean environment and ${VARIABLES};  logs.py  a log per port
+  toolchain.py    the C cross toolchain, meson cross files, cmake toolchain
+                  files, the Free Pascal settings make writes
+  builders/       autotools, meson, cmake, make, fpc, custom (and none)
+  stage.py        the stage completed, tidied, checked, listed
+  manifest.py     +MANIFEST;  package.py  writing and reading packages
+  database.py     /var/db/pkg on a root;  image.py  install-to-image
+  repository.py   INDEX and INDEX.sig;  ed25519.py  RFC 8032 in Python
+```
+
+A phase runs every phase before it that has not run; each leaves a
+cookie in `build/ARCH/ports/NAME/.cookies`, and a fingerprint of the
+port's folder (with the options, and for Pascal ports the runtime
+library and libsystem it links against) sends a changed port back to
+extract. Builds are reproducible: an environment of PATH and what the
+tool sets (LC_ALL=C, TZ=UTC, SOURCE_DATE_EPOCH from the port's last
+commit), a fresh stage, normalized permissions and times, sorted tar
+members owned by 0:0, a fixed Zstandard level. A port that needs what
+this machine lacks (the C toolchain, cmake, a host tool, another
+architecture) is skipped, not failed, so `make ports` and the system
+disk build work before the C toolchain exists.
+
+**C ports** use the cross toolchain of `make c-toolchain`
+(`build/toolchain/TRIPLET/bin/TRIPLET-gcc`, TRIPLET
+`x86_64-freepascalos` or `aarch64-freepascalos`, with mlibc in
+`build/sysroot/ARCH`). Each port builds against a sysroot of its own:
+the toolchain's, hard linked, with the packages of its build
+dependencies unpacked into it, pkg-config pointed there
+(`PKG_CONFIG_SYSROOT_DIR`, `PKG_CONFIG_LIBDIR`). autotools gets
+`--host=TRIPLET --build=... --prefix=/usr/local`, meson a cross file
+(host_machine system `freepascalos`), cmake a toolchain file. zlib,
+lua, sqlite3 and bash are committed with checksums verified against
+upstream (zlib's and bash's signatures with the keys in their folders)
+and status "untested" until the toolchain exists.
+
+**Pascal ports** are compiled exactly as userland.mk compiles a /bin
+program: make writes the build's compiler, USER_FLAGS, runtime and
+library folders and link flags into `build/ARCH/user/ports-fpc.settings`
+(`make ports-fpc-settings`, `ports/ports.mk`), and the fpc builder links
+each program with `si_prc.o` against libsystem, libcryptography,
+libcoreutils and the libraries the port names. hello is built from the
+port's own files; ptop comes from the Free Pascal 3.2.2 source release
+(fcl-base's CustApp and bufstream compiled in from the same tree) with
+one patch, made with makepatch, that lets it read standard input and
+write standard output; it is checked on the system (x86-64), installed
+from a signed repository over HTTP.
+
+**Packages** are `NAME-VERSION[_REVISION]-ARCH.pkg.tar.zst`: a pax tar
+compressed with Zstandard whose first member is `+MANIFEST` (name,
+version, origin, architecture, prefix, summary, SPDX licence,
+dependencies, provides, conflicts, scripts, test commands, licence
+files, then a `dir`, `file MODE SIZE SHA256 PATH` or `link PATH TARGET`
+line per path), then `+DESC`, the scripts, and the payload. libarchive
+reads tar.zst for pkg (and tar.xz; see "Archives").
+
+**On the system disk.** `ports/image.list` names the ports the disk
+carries installed: `make system-disk` builds their packages and their
+run dependencies, `install-to-image` installs them into
+`build/ARCH/ports/image-root` with their `/var/db/pkg` entries (pkg
+treats them like any other package; their install scripts do not run),
+adds `pkg-selftest`'s package to `/var/cache/pkg` for coretest, and
+`scripts/make-system-disk.sh` copies the folder onto the disk with
+empty `/var/db/pkg`, `/var/cache/pkg` and `/etc/pkg/keys`.
+
+### pkg
+
+`pkg` (`userland/bin/pkg.pas`, units `userland/pkg/Pkg.*`) installs
+package files and packages from repositories, and removes, describes,
+lists, finds (`which`), verifies, searches, updates, upgrades and tests
+them. It links libarchive (tar.zst), libhttp (repositories),
+libcryptography (SHA-256, Ed25519) and libsystem.
+
+```
+  pkg.pas           the command line, the lock
+  Pkg.Commands      install, remove, info, list, which, verify, search, update,
+                    upgrade, test over a context
+  Pkg.Installer     one install or upgrade as a transaction
+  Pkg.Remover       removal;  Pkg.Verification  an installed package checked
+  Pkg.Repositories  /etc/pkg/repositories, INDEX fetched and its signature
+                    checked, packages fetched and checked
+  Pkg.Database      /var/db/pkg;  Pkg.Archives  a package file opened and checked
+  Pkg.Manifests  Pkg.Index  Pkg.Versions  Pkg.Hashing  Pkg.Paths
+  Pkg.Context       root, database, messages, and two services:
+  Pkg.System        ... the system's: scripts by /bin/sh, URLs by libhttp
+  Pkg.FileSystem    links, modes, renames, the lock (libsystem, or the host's)
+```
+
+**The database** is a folder per installed package,
+`/var/db/pkg/NAME/`: `+MANIFEST` as it came in the package, `+DESC`,
+the removal scripts, and `+INSTALLED` (`installed UNIXTIME`, `automatic
+yes|no`: installed only as a dependency). An entry is written into a
+temporary folder and renamed into place. `pkg -r ROOT` (or `PKG_ROOT`)
+works on another root. Commands that change anything hold an exclusive
+lock on `/var/db/pkg/.lock`.
+
+**Installing** is a transaction (`Pkg.Installer`):
+
+1. Checks before anything is touched: the architecture; the version
+   against what is installed (the same or an older one is refused
+   without `-f`); every dependency installed (a version requirement is
+   checked against the package of that name; another package providing
+   the name meets it); no conflicting package either way; no path that
+   belongs to another package, is a folder, or (without `-f`) is there
+   and belongs to no package.
+2. The pre-install script (a failure stops it).
+3. Staging: every file unpacked beside its place as `NAME.pkg-new`,
+   its size and SHA-256 checked against the manifest while it is
+   written, its mode set; links made the same way; the manifest's
+   folders made. A failure removes everything staged and the folders
+   made for it.
+4. Commit: an existing file is moved aside to `NAME.pkg-old` and the
+   staged one renamed into place; a failed rename puts back everything
+   committed so far (and removes the staging).
+5. The files of the previous version that the new one lacks are
+   removed, the `.pkg-old` copies deleted, the database entry written,
+   and the post-install script run (its failure is only reported).
+
+A package named instead of a file comes from the repositories: the
+newest version for this architecture in the cached indexes (a package
+of that name before one that only provides it), its missing
+dependencies installed first as automatic ones, each fetched into
+`/var/cache/pkg` and used only when its size and SHA-256 are the
+index's (a cached copy that matches is not fetched again). `pkg
+upgrade` installs every newer version the indexes have (upgrades keep
+whether a package was automatic).
+
+**Removing** refuses a package another installed package needs (unless
+that one goes in the same command, or `-f`), runs the pre-remove script
+(a failure stops it), removes its files and links (saying which had
+changed since they were installed), its folders left empty (deepest
+first, never the prefix's own `bin`, `lib`, `share`, ...), its
+database entry, then runs the post-remove script. **verify** checks
+every folder, file (size, SHA-256, permissions) and link of a package,
+and its dependencies. **Scripts** run as `/bin/sh FILE` with
+`PKG_NAME`, `PKG_VERSION`, `PKG_ROOT` and `PKG_PREFIX` set; `pkg test`
+runs a package's test lines the same way.
+
+**Repositories** (`/etc/pkg/repositories`, `NAME URL [key=PATH |
+signature=none]`): `pkg update` fetches `URL/INDEX` and `URL/INDEX.sig`
+(http and https through libhttp with the system's certificates, or
+`file:///path` and plain paths), checks the Ed25519 signature with
+`/etc/pkg/keys/NAME.pub` (`ed25519 HEX`; refused without a key unless
+`signature=none`), parses the index and only then replaces the cached
+one in `/var/cache/pkg/repos/NAME/`. `scripts/ports.py repo DIR --key
+SECRET` writes both on the build machine (`make ports-repo`).
+
+**Tests.** `make ports-test` (tools/PortsTest, Python unittest) checks
+the tool: port.toml and the schema, licences, versions, the resolver,
+extraction, patches and makepatch, manifests, packages (layout, byte
+for byte reproducibility, damaged ones found), install-to-image,
+repositories, Ed25519 against RFC 8032 and OpenSSL, and whole builds
+through `scripts/ports.py` in a ports tree of its own, including
+autotools and meson cross builds with the build machine's gcc behind
+x86_64-freepascalos names and a build dependency unpacked into the
+sysroot, the skip without a toolchain, signatures, and refusals.
+`make pkg-test` (tools/PkgTest) builds pkg's units on the host (all but
+`Pkg.System`, with the host's Unix calls in `Pkg.FileSystem` and
+`Archive.FileSystem`) over packages, an index and an image database
+that `make-fixtures.py` makes with the ports tool: versions in the
+ports tool's order, manifests, indexes, archives, then install,
+refusals that change nothing (the same version, a file of another
+package, an unmet version, a conflict, another architecture, a damaged
+package, a failing pre-install script), forcing over a file of no
+package, an upgrade, verify finding changes, which, info, list, and
+removal leaving nothing; and repositories over file:// (update, search,
+install by name with a dependency, a damaged cached package fetched
+again, a bad signature and a missing key refused). coretest installs
+`pkg-selftest` from `/var/cache/pkg`, checks its files, link, scripts
+and test line, verifies it, sees two refusals and a changed file, and
+removes it, leaving `hello` alone.
 
 ## JavaScript engine
 
