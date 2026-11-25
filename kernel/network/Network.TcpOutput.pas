@@ -47,7 +47,10 @@
 
   A peer that advertises a zero window is probed with one byte each
   time the timer expires, so that a lost window update does not stall
-  the connection. Acknowledgments of received data are delayed up to
+  the connection - in every state with data still to send, closing ones
+  too; a connection whose socket is gone gives up after
+  MaximumOrphanZeroWindowProbes probes, answered or not, so that a peer
+  that keeps its window shut cannot keep it for ever. Acknowledgments of received data are delayed up to
   40 ms, or sent at once for every second segment.
 }
 unit Network.TcpOutput;
@@ -344,7 +347,7 @@ begin
   if not Connection^.Timestamps or (EchoedTimestamp = 0) or
      SequenceBefore(Acknowledgment, Connection^.TimestampSampleMark) then
     Exit;
-  Elapsed := LongInt(TimestampNow - EchoedTimestamp);
+  Elapsed := LongInt(ConnectionTimestamp(Connection) - EchoedTimestamp);
   if Elapsed < 0 then
     Exit;
   TakeRoundTripSample(Connection, QWord(Elapsed) * NanosecondsPerMillisecond);
@@ -389,6 +392,12 @@ begin
   Inc(Connection^.RetransmitCount);
   if Connection^.RetransmitCount > MaximumZeroWindowProbes then
     Exit(GiveUp(Connection, True));
+  if Connection^.Socket = nil then
+  begin
+    Inc(Connection^.OrphanProbes);
+    if Connection^.OrphanProbes > MaximumOrphanZeroWindowProbes then
+      Exit(GiveUp(Connection, True));
+  end;
   { One byte beyond the window: the peer answers with its window. }
   SendConnectionSegment(Connection, Connection^.SendNext, 0, 0, 1);
   Connection^.SendNext := Connection^.SendNext + 1;
@@ -406,7 +415,7 @@ begin
   Result := False;
   Connection^.RetransmitDeadline := 0;
   if (Connection^.SendWindow = 0) and (InFlight(Connection) = 0) and (Connection^.SendBuffer.Count > 0) and
-     StateCanSend(Connection^.State) then
+     (Connection^.State in [TcpEstablished, TcpCloseWait, TcpFinWait1, TcpClosing, TcpLastAck]) then
     Exit(ProbeZeroWindow(Connection));
   if InFlight(Connection) = 0 then
     Exit;

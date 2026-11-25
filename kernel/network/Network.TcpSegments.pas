@@ -33,7 +33,10 @@
   Windows: the field of a SYN is never scaled; on other segments ours
   is in units of 2^ReceiveWindowShift and never takes back what an
   earlier advertisement promised (RFC 7323 2.4), and the peer's is
-  shifted by SendWindowShift. Timestamps count milliseconds.
+  shifted by SendWindowShift. Timestamps count milliseconds, from an
+  offset of each connection's own (RFC 7323 7.1). A child of a listener
+  has no buffers before the handshake completes: its SYN-ACK offers the
+  receive buffer it will get.
 }
 unit Network.TcpSegments;
 
@@ -83,6 +86,8 @@ function ReceiveWindow(Connection: PTcpConnection): LongWord;
 function SenderSegmentSize(Connection: PTcpConnection): LongWord;
 { Our timestamp clock (milliseconds). }
 function TimestampNow: LongWord;
+{ The clock as the connection's timestamps carry it: with its offset. }
+function ConnectionTimestamp(Connection: PTcpConnection): LongWord;
 { The MSS we advertise: what the route's MTU leaves for data. }
 function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
 { Sends a segment of Connection: Flags (ACK added in every state but
@@ -105,6 +110,7 @@ uses
   Network.Packets,
   Network.ByteRings,
   Network.IpOutput,
+  Network.TcpConnections,
   Network.Statistics;
 
 function ParseTcpSegment(constref Datagram: TIpDatagram; Payload: PByte; Length: LongWord;
@@ -156,7 +162,15 @@ var
   Limit: LongWord;
 begin
   if Connection^.ReceiveBuffer.Data = nil then
-    Exit(0);
+  begin
+    if Connection^.State <> TcpSynReceived then
+      Exit(0);
+    Result := PlannedReceiveBuffer(Connection);
+    Limit := LargestWindow(Connection^.ReceiveWindowShift);
+    if Result > Limit then
+      Result := Limit;
+    Exit;
+  end;
   Result := ByteRingFreeSpace(Connection^.ReceiveBuffer);
   Limit := LargestWindow(Connection^.ReceiveWindowShift);
   if Result > Limit then
@@ -188,6 +202,11 @@ end;
 function TimestampNow: LongWord;
 begin
   Result := LongWord(NetworkNow div NanosecondsPerMillisecond);
+end;
+
+function ConnectionTimestamp(Connection: PTcpConnection): LongWord;
+begin
+  Result := LongWord(QWord(TimestampNow) + Connection^.TimestampOffset);
 end;
 
 function OwnMaximumSegment(constref Remote: TNetworkEndpoint; BoundInterface: PNetworkInterface): LongWord;
@@ -261,7 +280,7 @@ begin
   if Connection^.Timestamps then
   begin
     Options.HasTimestamps := True;
-    Options.TimestampValue := TimestampNow;
+    Options.TimestampValue := ConnectionTimestamp(Connection);
     if (Flags and TcpFlagAck) <> 0 then
       Options.TimestampEcho := Connection^.TimestampRecent;
   end;

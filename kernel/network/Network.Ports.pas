@@ -23,7 +23,9 @@
   identifier of its echo requests). Two sockets of a protocol may not
   bind the same port on overlapping addresses (one of them 0.0.0.0 or
   ::, or both the same), unless:
-    - UDP: both asked for SocketOptionReuseAddress;
+    - UDP: both asked for SocketOptionReuseAddress and belong to the
+      same user (or the new one is root's), so that nobody can bind
+      beside another user's socket and take its unicast datagrams;
     - TCP: the new one asked for it and the other is not listening (a
       connection waiting out TIME_WAIT, or one that is still closing);
     - both are bound to interfaces (SocketOptionInterface), different
@@ -32,8 +34,13 @@
   they are freed. IPv4 and IPv6 never overlap: a socket of each family
   may have the same port.
 
-  A port of 0 is given one from the dynamic range (49152-65535), taken
-  in turn so that a port just let go is not handed out again at once.
+  A port of 0 is given one from the dynamic range (49152-65535). A
+  connection's port is found as RFC 6056's algorithm 4 says: the search
+  starts at a keyed hash of its endpoints plus a counter that moves on
+  with each use (Network.UnpredictableNumbers), so its ports say nothing
+  about those towards other peers and a port just let go is not handed
+  out again at once; with no peer known yet (bind, listen, a datagram
+  socket) it starts at a random place (algorithm 1).
 }
 unit Network.Ports;
 
@@ -54,19 +61,18 @@ const
 { True if Socket may bind Address:Port (with AllowReuse: as its
   SocketOptionReuseAddress allows). }
 function PortIsFree(Socket: PSocket; constref Address: TNetworkEndpoint; Port: Word; AllowReuse: Boolean): Boolean;
-{ A free port from the dynamic range for Socket on Address; 0 if every
-  one is taken. }
-function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint): Word;
+{ A free port from the dynamic range for Socket on Address, towards
+  Remote (nil: no peer known); 0 if every one is taken. }
+function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint; Remote: PNetworkEndpoint): Word;
 
 implementation
 
 uses
   Abi.SystemCalls,
   Network.TcpTypes,
-  Network.TcpConnections;
-
-var
-  NextDynamicPort: LongWord = FirstDynamicPort;
+  Network.TcpConnections,
+  Network.KeyedNumbers,
+  Network.UnpredictableNumbers;
 
 function AddressesOverlap(constref First, Second: TNetworkEndpoint): Boolean;
 begin
@@ -106,7 +112,8 @@ begin
     Exit;
   case Socket^.Protocol of
     SocketProtocolUdp:
-      Result := not (AllowReuse and Other^.ReuseAddress);
+      Result := not (AllowReuse and Other^.ReuseAddress and
+        ((Socket^.Owner.UserId = Other^.Owner.UserId) or (Socket^.Owner.UserId = 0)));
     SocketProtocolTcp:
       begin
         Connection := PTcpConnection(Other^.Connection);
@@ -152,19 +159,31 @@ begin
   Result := not ConflictsWithOrphan(Socket, Address, Port, AllowReuse);
 end;
 
-function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint): Word;
+function ChooseDynamicPort(Socket: PSocket; constref Address: TNetworkEndpoint; Remote: PNetworkEndpoint): Word;
 var
-  Tries: LongWord;
+  Offset: LongWord;
+  Index: LongWord;
+  Counter: LongWord;
+  Attempt: LongWord;
   Candidate: Word;
 begin
-  for Tries := 1 to LastDynamicPort - FirstDynamicPort + 1 do
+  Index := 0;
+  Counter := 0;
+  if Remote <> nil then
+    StartDynamicPortSearch(Address, Remote^, Offset, Index, Counter)
+  else
+    Offset := RandomDynamicPortOffset;
+  Attempt := 0;
+  while Attempt <= LastDynamicPort - FirstDynamicPort do
   begin
-    Candidate := Word(NextDynamicPort);
-    Inc(NextDynamicPort);
-    if NextDynamicPort > LastDynamicPort then
-      NextDynamicPort := FirstDynamicPort;
+    Candidate := DynamicPortCandidate(Offset, Counter, Attempt, FirstDynamicPort, LastDynamicPort);
     if PortIsFree(Socket, Address, Candidate, False) then
+    begin
+      if Remote <> nil then
+        CountDynamicPortUse(Index, Attempt + 1);
       Exit(Candidate);
+    end;
+    Inc(Attempt);
   end;
   Result := 0;
 end;

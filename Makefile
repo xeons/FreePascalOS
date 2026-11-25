@@ -813,12 +813,16 @@ usb-descriptor-test: $(USB_DESCRIPTOR_TEST)
 
 # The kernel TCP's pure parts: options (MSS, window scale, SACK,
 # timestamps) written and read, window scaling and buffer growth, the
-# SACK scoreboard of RFC 6675 and the receiver's SACK blocks.
+# SACK scoreboard of RFC 6675 and the receiver's SACK blocks; SipHash and
+# the keyed numbers (ISNs, ports, identifications), RFC 5961's checks and
+# the token buckets.
 TCP_TEST := build/tools/TcpTest
 TCP_TEST_SOURCES := tools/TcpTest/TcpTest.pas kernel/network/Network.TcpSequences.pas \
 	kernel/network/Network.TcpOptions.pas kernel/network/Network.TcpWindows.pas \
 	kernel/network/Network.TcpScoreboard.pas kernel/network/Network.TcpReceivedBlocks.pas \
-	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas
+	kernel/network/Network.ByteOrder.pas shared/Runtime.Memory.pas kernel/network/Network.SipHash.pas \
+	kernel/network/Network.KeyedNumbers.pas kernel/network/Network.TcpAcceptance.pas \
+	kernel/network/Network.TokenBuckets.pas
 
 $(TCP_TEST): $(TCP_TEST_SOURCES)
 	@mkdir -p build/tools/tcp-test-units

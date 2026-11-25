@@ -58,7 +58,8 @@ uses
   Network.ByteRings,
   Network.Interfaces,
   Network.TcpScoreboard,
-  Network.TcpReceivedBlocks;
+  Network.TcpReceivedBlocks,
+  Network.TokenBuckets;
 
 const
   TcpFlagFin = $01;
@@ -96,6 +97,16 @@ const
   DefaultKeepAliveIdleSeconds = 7200;
   DefaultKeepAliveIntervalSeconds = 75;
   DefaultKeepAliveCount = 9;
+  { RFC 5961 7: challenge ACKs a connection sends at most, per second
+    and in a burst. }
+  ChallengeAcksPerSecond = 10;
+  ChallengeAckBurst = 10;
+  { Children of listeners still in SYN_RECEIVED, for all listeners
+    together (each listener also keeps to its backlog). }
+  MaximumHalfOpenConnections = 256;
+  { Zero-window probes a connection whose socket is gone sends at most
+    (answered or not) before it is reset. }
+  MaximumOrphanZeroWindowProbes = 8;
   { RFC 7323 5.5: a TS.Recent older than this is not used for PAWS. }
   TimestampRecentLifetime = QWord(24) * 24 * 3600 * NanosecondsPerSecond;
 
@@ -148,13 +159,18 @@ type
       acknowledgment last sent. }
     TimestampRecent: LongWord;
     TimestampRecentTime: QWord;
+    { Added to our clock in every TSval (RFC 7323 7.1: a keyed hash of
+      the endpoints, so that the clock is not exposed). }
+    TimestampOffset: LongWord;
     LastAckSent: LongWord;
     { RTTM: a sample is taken from the echoed timestamp of the first
       acknowledgment that reaches this (once a round trip). }
     TimestampSampleMark: LongWord;
 
-    { A child: the listening connection it came from, until accepted. }
+    { A child: the listening connection it came from, until accepted;
+      IsHalfOpen while it waits for the handshake's last ACK. }
     Listener: PTcpConnection;
+    IsHalfOpen: Boolean;
     AcceptLink: TListEntry;
     { A listener: children connected and waiting to be accepted, and
       how many children it has in all (connected or not). }
@@ -172,6 +188,8 @@ type
     SendWindow: LongWord;
     SendWindowSequence: LongWord;
     SendWindowAcknowledgment: LongWord;
+    { The largest window the peer ever offered (RFC 5961 5: MAX.SND.WND). }
+    LargestSendWindow: LongWord;
     { The largest segment we send (the peer's MSS, our MTU). }
     MaximumSegment: LongWord;
     CongestionWindow: LongWord;
@@ -235,6 +253,11 @@ type
     KeepAliveDeadline: QWord;
     KeepAliveProbes: LongWord;
     LastReceived: QWord;
+    { Zero-window probes sent since the socket went. }
+    OrphanProbes: LongWord;
+    { RFC 5961's challenge ACKs (and ACKs for segments that would move
+      nothing), rate limited. }
+    ChallengeAcks: TTokenBucket;
 
     { Why the connection failed (ErrorConnectionRefused, ...); reported
       to the socket once. }
