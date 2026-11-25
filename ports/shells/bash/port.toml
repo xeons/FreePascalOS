@@ -1,7 +1,9 @@
 # GNU Bash, the stretch goal: autoconf, termios, job control, signals
 # and a lot of the C library. Built without its own malloc and without
-# native language support. Untested and expected to need patches once
-# the C toolchain and mlibc exist.
+# native language support. Linked against
+# libc.so (a static link meets bash's own getenv and getcwd), with
+# -fcommon for the bundled termcap and readline. Tested on the system:
+# loops, functions, arrays, command substitution, exit status.
 
 [port]
 name = "bash"
@@ -20,7 +22,7 @@ license = "GPL-3.0-or-later"
 license_files = ["COPYING"]
 maintainer = "FreePascalOS ports"
 categories = ["shells"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 
 [[sources]]
@@ -36,7 +38,7 @@ host = ["make", "cc"]
 
 [build]
 system = "autotools"
-configure_args = ["--without-bash-malloc", "--disable-nls", "--enable-static-link"]
+configure_args = ["--without-bash-malloc", "--disable-nls", "CFLAGS=--sysroot=${SYSROOT} -O2 -fcommon"]
 
 [options.readline]
 description = "Line editing and history with the bundled readline"

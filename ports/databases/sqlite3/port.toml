@@ -1,7 +1,8 @@
 # SQLite: the amalgamation's configure (autosetup, which takes --host and
 # --prefix like autoconf), the static library and the sqlite3 shell.
-# Options and a flavour show how they work. Untested: it waits for the C
-# toolchain.
+# Options and a flavour show how they work. Tested on the
+# system (the shell's
+# terminal width needs struct winsize from <sys/ioctl.h>).
 
 [port]
 name = "sqlite3"
@@ -20,7 +21,7 @@ license = "blessing"
 license_files = ["port:files/LICENSE"]
 maintainer = "FreePascalOS ports"
 categories = ["databases"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 
 [[sources]]

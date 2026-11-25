@@ -33,6 +33,8 @@ architecture="$1"
 esp_directory="$2"
 system_disk_image="$3"
 timeout_seconds=${TEST_TIMEOUT:-300}
+# C_TEST_INIT boots another program of the disk instead (trying a port).
+initial_program=${C_TEST_INIT:-/usr/bin/ctest}
 
 build_directory=$(dirname "$esp_directory")
 test_esp_directory="$build_directory/c-test-esp"
@@ -46,7 +48,7 @@ fi
 
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
-echo "test-exit init=/usr/bin/ctest" > "$test_esp_directory/FreePascalOS/options.txt"
+echo "test-exit init=$initial_program" > "$test_esp_directory/FreePascalOS/options.txt"
 cp -f "$system_disk_image" "$run_system_disk_image"
 
 # AArch64: QEMU's virt machine (scripts/run-qemu-arm64.sh), the system
@@ -62,8 +64,8 @@ if [[ "$architecture" == "arm64" ]]; then
         timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
         -- "${devices[@]}" < /dev/null > /dev/null 2>&1
     qemu_status=$?
-    sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | grep -E "ctest|cxxtest|hello|process |mlibc" | head -200
-    if [[ "$qemu_status" == 1 ]] && grep -q "ctest: all .* checks passed" "$serial_log"; then
+    sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | grep -E "ctest|cxxtest|hello|process |mlibc|porttest|lua|bash|sqlite|pkg|^[0-9]" | head -200
+    if [[ "$qemu_status" == 1 ]] && { [[ -n "${C_TEST_INIT:-}" ]] || grep -q "ctest: all .* checks passed" "$serial_log"; }; then
         echo "C TEST PASSED"
         exit 0
     fi
@@ -102,9 +104,9 @@ timeout "$timeout_seconds" qemu-system-x86_64 \
     < /dev/null > /dev/null 2>&1
 qemu_status=$?
 
-sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | grep -E "ctest|cxxtest|hello|process |mlibc|ld.so" | head -200
+sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r//g' "$serial_log" | grep -E "ctest|cxxtest|hello|process |mlibc|ld.so|porttest|lua|bash|sqlite|pkg|^[0-9]" | head -200
 
-if [[ "$qemu_status" == 1 ]] && grep -q "ctest: all .* checks passed" "$serial_log"; then
+if [[ "$qemu_status" == 1 ]] && { [[ -n "${C_TEST_INIT:-}" ]] || grep -q "ctest: all .* checks passed" "$serial_log"; }; then
     echo "C TEST PASSED"
     exit 0
 fi

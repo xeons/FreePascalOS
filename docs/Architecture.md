@@ -11119,8 +11119,29 @@ with - knows every object. A static program (`-static`) is an
 ordinary ET_EXEC at 0x400000 the kernel starts directly; mlibc's static
 startup does the same work for itself.
 
-Libraries for C programs live in `/usr/lib` and the Pascal ones in
-`/lib`; neither loader looks in the other's folder.
+Libraries for C programs live in `/usr/lib` (the C runtime) and
+`/usr/local/lib` (ported software, see `ports/README.md`): mlibc's
+`ld.so` looks in `LD_LIBRARY_PATH`, then in those two (its default
+paths, `-Ddefault_library_paths` in `toolchain/build-toolchain.sh`), and
+an rpath a port links with is honoured too. The kernel's loader, for
+Pascal programs, looks in `/lib` and then `/usr/local/lib`; it never
+loads a C library for a C program.
+
+### Ports
+
+The ports tool (`scripts/portstool`) builds a port with `toolchain = "c"`
+with this toolchain and a sysroot of its own (a copy of
+`build/sysroot/<arch>` with the build dependencies' packages unpacked
+into it). Before an autotools port is configured
+(`autotools_target.py`), every `config.sub` of its tree (and autosetup's
+`autosetup-config.sub`) is replaced by `toolchain/config.sub` (from the
+patched binutils), and its libtool learns the target: `freepascalos*`
+joins libtool's Linux cases in `configure`, `libtool.m4`, `ltmain.sh`
+and `aclocal.m4`, so shared libraries are built and named as on Linux.
+zlib, lua, sqlite3 and bash are built this way and tried on the system
+(their `[test]` commands through `pkg test`, and a few uses of each);
+`C_TEST_INIT=/usr/bin/PROGRAM scripts/test-c-runtime.sh` boots a disk with
+another first program for such tries.
 
 ### The sysdeps
 

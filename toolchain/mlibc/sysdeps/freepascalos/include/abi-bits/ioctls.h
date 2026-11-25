@@ -24,6 +24,10 @@
 #ifndef _ABIBITS_IOCTLS_H
 #define _ABIBITS_IOCTLS_H
 
+/* As on Linux, where <sys/ioctl.h> brings struct winsize with
+   TIOCGWINSZ. */
+#include <bits/winsize.h>
+
 #ifndef TCGETS
 #define TCGETS 0x5401
 #endif

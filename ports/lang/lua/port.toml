@@ -1,6 +1,6 @@
 # Lua, a small C program and library built with its own Makefile. The
 # "generic" platform is plain ISO C (no dlopen, no readline), the least
-# the C library has to give. Untested: it waits for the C toolchain.
+# the C library has to give. Tested on the system.
 
 [port]
 name = "lua"
@@ -19,7 +19,7 @@ license = "MIT"
 license_files = ["port:files/LICENSE"]
 maintainer = "FreePascalOS ports"
 categories = ["lang"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 
 [[sources]]

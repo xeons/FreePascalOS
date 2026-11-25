@@ -1865,3 +1865,5 @@ in the order they would be built:
 - [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
 - [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
 - [ ] Clang driver support (`--target=x86_64-freepascalos`)
+- [x] C ports through the ports tool (config.sub and libtool taught the
+      target automatically): zlib, lua, sqlite3, bash tried on the system
