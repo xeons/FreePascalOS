@@ -35,7 +35,7 @@ uses
   Archive.Progress;
 
 type
-  TArchiveFormat = (ArchiveUnknown, ArchiveZip, ArchiveTar, ArchiveTarGzip);
+  TArchiveFormat = (ArchiveUnknown, ArchiveZip, ArchiveTar, ArchiveTarGzip, ArchiveTarZstd, ArchiveTarXz);
 
   TArchiveReader = class
   private
@@ -68,8 +68,9 @@ type
   end;
 
 { The format by the content: zip by its end of central directory record
-  (or a local header at the start), tar.gz by the gzip magic with a tar
-  header in it, tar by "ustar" or a right header checksum. }
+  (or a local header at the start), tar.gz and tar.zst by the gzip or
+  Zstandard magic with a tar header in it, tar.xz by the xz magic (and
+  the size its index gives), tar by "ustar" or a right header checksum. }
 function DetectArchiveFormat(const FileName: string): TArchiveFormat;
 function DetectArchiveFormat(Stream: TStream): TArchiveFormat;
 function IsArchiveFile(const FileName: string): Boolean;
@@ -236,11 +237,14 @@ begin
 end;
 
 function OpenArchive(const FileName: string): TArchiveReader;
+var
+  Format: TArchiveFormat;
 begin
-  case DetectArchiveFormat(FileName) of
+  Format := DetectArchiveFormat(FileName);
+  case Format of
     ArchiveZip: Result := TZipReader.Create(FileName);
-    ArchiveTar: Result := TTarReader.Create(FileName, False);
-    ArchiveTarGzip: Result := TTarReader.Create(FileName, True);
+    ArchiveTar, ArchiveTarGzip, ArchiveTarZstd, ArchiveTarXz:
+      Result := TTarReader.Create(FileName, Format);
   else
     if not FileExists(FileName) then
       raise EArchiveError.CreateFmt('Cannot open %s', [FileName]);

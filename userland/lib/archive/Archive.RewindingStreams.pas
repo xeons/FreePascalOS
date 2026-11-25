@@ -17,11 +17,16 @@
 }
 
 {
-  The decompressed content of a gzip file as a stream that can be
-  positioned anywhere: forwards by decompressing and dropping what lies
-  between, backwards by starting over from the beginning. Reading a
-  .tar.gz in order (listing, then extracting everything) decompresses
-  it once per pass.
+  The decompressed content of a gzip or Zstandard file as a stream that
+  can be positioned anywhere: forwards by decompressing and dropping
+  what lies between, backwards by starting over from the beginning.
+  Reading a .tar.gz or .tar.zst in order (listing, then extracting
+  everything) decompresses it once per pass.
+
+  Decompression goes through libcompression's streaming decoders
+  (TStreamingDecoder: TInflatingDecoder for gzip, TZstdDecoder), fed
+  from the source in pieces; several gzip members or zstd frames come
+  out as one stream.
 }
 unit Archive.RewindingStreams;
 
@@ -33,20 +38,27 @@ interface
 uses
   Classes,
   SysUtils,
-  Compression.Formats,
-  Compression.Streams;
+  Compression.StreamingDecoders;
 
 type
-  TRewindingGzipStream = class(TStream)
+  TRewindingCompression = (RewindingGzip, RewindingZstd);
+
+  TRewindingDecoderStream = class(TStream)
   private
     FSource: TStream;
     FOwnsSource: Boolean;
-    FDecoder: TDecompressionStream;
+    FCompression: TRewindingCompression;
+    FDecoder: TStreamingDecoder;
+    FInput: array of Byte;
+    FNeedsInput: Boolean;
+    FEnded: Boolean;
     FPosition: Int64;
     procedure Restart;
     procedure SkipForward(Count: Int64);
+    function FillInput: Boolean;
+    function CompressionName: string;
   public
-    constructor Create(Source: TStream; OwnsSource: Boolean = False);
+    constructor Create(Source: TStream; Compression: TRewindingCompression; OwnsSource: Boolean = False);
     destructor Destroy; override;
     function Read(var Buffer; Count: LongInt): LongInt; override;
     function Write(const Buffer; Count: LongInt): LongInt; override;
@@ -55,23 +67,37 @@ type
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
   end;
 
+  { The gzip one, as tar.gz reading has always used it. }
+  TRewindingGzipStream = class(TRewindingDecoderStream)
+  public
+    constructor Create(Source: TStream; OwnsSource: Boolean = False);
+  end;
+
 implementation
 
 uses
+  Compression.Errors,
+  Compression.Formats,
+  Compression.InflatingDecoders,
+  Compression.ZstdDecoder,
   Archive.Entries;
 
 const
+  InputBufferSize = 65536;
   SkipBufferSize = 65536;
 
-constructor TRewindingGzipStream.Create(Source: TStream; OwnsSource: Boolean);
+constructor TRewindingDecoderStream.Create(Source: TStream; Compression: TRewindingCompression;
+  OwnsSource: Boolean);
 begin
   inherited Create;
   FSource := Source;
   FOwnsSource := OwnsSource;
+  FCompression := Compression;
+  SetLength(FInput, InputBufferSize);
   Restart;
 end;
 
-destructor TRewindingGzipStream.Destroy;
+destructor TRewindingDecoderStream.Destroy;
 begin
   FDecoder.Free;
   if FOwnsSource then
@@ -79,43 +105,76 @@ begin
   inherited Destroy;
 end;
 
-procedure TRewindingGzipStream.Restart;
+function TRewindingDecoderStream.CompressionName: string;
+begin
+  if FCompression = RewindingZstd then
+    Result := 'Zstandard'
+  else
+    Result := 'gzip';
+end;
+
+procedure TRewindingDecoderStream.Restart;
 begin
   FreeAndNil(FDecoder);
   FSource.Position := 0;
-  FDecoder := TDecompressionStream.Create(FSource, FormatGzip);
+  if FCompression = RewindingZstd then
+    FDecoder := TZstdDecoder.Create
+  else
+    FDecoder := TInflatingDecoder.Create(FormatGzip);
+  FNeedsInput := True;
+  FEnded := False;
   FPosition := 0;
 end;
 
-function TRewindingGzipStream.Read(var Buffer; Count: LongInt): LongInt;
+{ The next piece of the source into the decoder; False at its end. }
+function TRewindingDecoderStream.FillInput: Boolean;
 var
-  Done: LongInt;
+  Got: LongInt;
+begin
+  Got := FSource.Read(FInput[0], Length(FInput));
+  Result := Got > 0;
+  if Result then
+  begin
+    FDecoder.SetInput(@FInput[0], Got);
+    FNeedsInput := False;
+  end;
+end;
+
+function TRewindingDecoderStream.Read(var Buffer; Count: LongInt): LongInt;
+var
+  Written: SizeInt;
+  Outcome: TDecompressResult;
 begin
   Result := 0;
-  try
-    while Result < Count do
+  while (Result < Count) and not FEnded do
+  begin
+    if FNeedsInput and not FillInput then
     begin
-      Done := FDecoder.Read((PByte(@Buffer) + Result)^, Count - Result);
-      if Done <= 0 then
-        Break;
-      Inc(Result, Done);
+      if not FDecoder.Finished then
+        raise EArchiveError.CreateFmt('Damaged %s data: it is cut short', [CompressionName]);
+      FEnded := True;
+      Break;
     end;
-  except
-    on Error: EArchiveError do
-      raise;
-    on Error: Exception do
-      raise EArchiveError.CreateFmt('Damaged gzip data: %s', [Error.Message]);
+    Outcome := FDecoder.Decompress(PByte(@Buffer) + Result, Count - Result, Written);
+    Inc(Result, Written);
+    case Outcome of
+      DecompressNeedsInput, DecompressFinished:
+        FNeedsInput := FDecoder.InputRemaining = 0;
+      DecompressFailed:
+        raise EArchiveError.CreateFmt('Damaged %s data: %s',
+          [CompressionName, CompressionErrorMessage(FDecoder.Error)]);
+    end;
   end;
   Inc(FPosition, Result);
 end;
 
-function TRewindingGzipStream.Write(const Buffer; Count: LongInt): LongInt;
+function TRewindingDecoderStream.Write(const Buffer; Count: LongInt): LongInt;
 begin
   raise EArchiveError.Create('A decompressing stream cannot be written');
   Result := 0;
 end;
 
-procedure TRewindingGzipStream.SkipForward(Count: Int64);
+procedure TRewindingDecoderStream.SkipForward(Count: Int64);
 var
   Buffer: array of Byte;
   Piece, Got: LongInt;
@@ -135,7 +194,7 @@ begin
   end;
 end;
 
-function TRewindingGzipStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
+function TRewindingDecoderStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
 var
   Target: Int64;
 begin
@@ -152,6 +211,11 @@ begin
   if Target > FPosition then
     SkipForward(Target - FPosition);
   Result := FPosition;
+end;
+
+constructor TRewindingGzipStream.Create(Source: TStream; OwnsSource: Boolean);
+begin
+  inherited Create(Source, RewindingGzip, OwnsSource);
 end;
 
 end.

@@ -38,6 +38,7 @@ uses
   Archive.ZipExtraFields,
   Archive.TarFormat,
   Archive.RewindingStreams,
+  Archive.XzStreams,
   Archive.Readers,
   Archive.Detection,
   Archive.ZipReader,

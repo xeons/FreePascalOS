@@ -38,6 +38,8 @@ implementation
 uses
   Compression.Formats,
   Compression.Streams,
+  Archive.RewindingStreams,
+  Archive.XzStreams,
   Archive.TarFormat,
   Archive.ZipFormat,
   Archive.ZipEndRecord;
@@ -96,6 +98,27 @@ begin
   end;
 end;
 
+function ZstdHoldsTar(Stream: TStream): Boolean;
+var
+  Decoder: TRewindingDecoderStream;
+  Block: TTarBlock;
+begin
+  Result := False;
+  Decoder := TRewindingDecoderStream.Create(Stream, RewindingZstd);
+  try
+    try
+      FillChar(Block, SizeOf(Block), 0);
+      if ReadFully(Decoder, Block, TarBlockSize) < TarBlockSize then
+        Exit;
+      Result := IsTarHeader(Block) or BlockIsZero(Block);
+    except
+      Result := False;
+    end;
+  finally
+    Decoder.Free;
+  end;
+end;
+
 function DetectFormat(Stream: TStream): TArchiveFormat;
 var
   Block: TTarBlock;
@@ -117,6 +140,18 @@ begin
     begin
       if GzipHoldsTar(Stream) then
         Result := ArchiveTarGzip;
+      Exit;
+    end;
+    if (Block[0] = $28) and (Block[1] = $B5) and (Block[2] = $2F) and (Block[3] = $FD) then
+    begin
+      if ZstdHoldsTar(Stream) then
+        Result := ArchiveTarZstd;
+      Exit;
+    end;
+    if (Got >= 6) and (Block[0] = $FD) and (Block[1] = $37) and (Block[2] = $7A) and (Block[3] = $58) then
+    begin
+      if XzHoldsTar(Stream) then
+        Result := ArchiveTarXz;
       Exit;
     end;
   end;

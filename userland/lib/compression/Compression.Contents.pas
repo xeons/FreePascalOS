@@ -19,8 +19,8 @@
 {
   The contents of libcompression.so: deflate compression and
   decompression with the zlib and gzip wrappers and their checksums,
-  and the brotli and Zstandard decoders. Compiling this unit compiles
-  all of them.
+  the brotli and Zstandard decoders, and the whole-buffer xz decoder.
+  Compiling this unit compiles all of them.
 }
 unit Compression.Contents;
 
@@ -64,7 +64,13 @@ uses
   Compression.ZstdLiterals,
   Compression.ZstdSequences,
   Compression.ZstdFrames,
-  Compression.ZstdDecoder;
+  Compression.ZstdDecoder,
+  Compression.DecodeResults,
+  Compression.CyclicRedundancy,
+  Compression.RangeDecoder,
+  Compression.LzmaDecoder,
+  Compression.Lzma2Decoder,
+  Compression.XzDecoder;
 
 implementation
 
