@@ -54,6 +54,10 @@ function HalDispatchInterruptVector: Byte;
 { --- Several processors --- }
 function HalCurrentProcessorId: LongWord;
 procedure HalInitializeSecondaryProcessor;
+{ First thing on a processor that starts or wakes, before its priority
+  level may change: what the level needs (a GICv3's system register
+  interface). }
+procedure HalOpenInterruptInterface;
 procedure HalPrepareForSleep;
 procedure HalResumeBootProcessor;
 { The last step before the machine sleeps (interrupts off, the other
@@ -206,6 +210,11 @@ end;
 procedure HalInitializeSecondaryProcessor;
 begin
   InitializeGicOnThisProcessor;
+end;
+
+procedure HalOpenInterruptInterface;
+begin
+  OpenGicSystemRegistersOnThisProcessor;
 end;
 
 procedure HalPrepareForSleep;

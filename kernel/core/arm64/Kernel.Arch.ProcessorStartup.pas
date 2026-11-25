@@ -167,6 +167,8 @@ end;
 
 procedure InitializeThisSecondaryProcessor(Processor: PProcessor);
 begin
+  { The priority level (a spin lock raises it) needs it on a GICv3. }
+  HalOpenInterruptInterface;
   ArchSetProcessorBlock(Processor);
   InitializeDescriptorTables(Processor^.DescriptorTables, Processor^.InterruptStackArea);
   { Off the start-up identity mapping, onto an empty user half. }
@@ -194,6 +196,7 @@ end;
 
 procedure ReinitializeThisProcessor(Processor: PProcessor);
 begin
+  HalOpenInterruptInterface;
   ArchSetProcessorBlock(Processor);
   ReloadDescriptorTables(Processor^.DescriptorTables);
   ActivateAddressSpace(Processor^.ActiveAddressSpace);
