@@ -83,8 +83,9 @@ const
   { Iterations of all While loops and method calls in one evaluation
     before it is given up as stuck. }
   LoopBudget = 2000000;
-  { The stack an evaluation may use (kernel stacks are 32 KiB). }
-  MaximumStackBytes = 12 * 1024;
+  { The stack an evaluation may use: AML runs on threads with 256 KiB
+    stacks (the namespace loader, AcpiPower, Thermal). }
+  MaximumStackBytes = 128 * 1024;
   { References followed by a store (a name holding a reference to a
     name holding a reference...). }
   MaximumReferenceHops = 8;
