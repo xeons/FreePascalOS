@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..427] of TCommandTest = (
+  CommandTests: array[0..428] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -775,7 +775,10 @@ const
     (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q; pkg verify; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0),
     { The loader finds a library named without a folder in /usr/local/lib
       (ported software's) when /lib has none. }
-    (Command: 'mkdir -p /usr/local/lib; cp /lib/libplugin.so /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; rm /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; echo $?'; ExpectedOutput: 'loaded libportplugin.so'#10'cannot load libportplugin.so'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'mkdir -p /usr/local/lib; cp /lib/libplugin.so /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; rm /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; echo $?'; ExpectedOutput: 'loaded libportplugin.so'#10'cannot load libportplugin.so'#10'1'#10; ExpectedStatus: 0),
+    { The C runtime (mlibc, toolchain/ctest), when the system disk has it:
+      stdio, threads, fork/exec, signals, sockets, dlopen, C++. }
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest > ctest.log 2>&1; echo $?; grep FAILED ctest.log; tail -n 1 ctest.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

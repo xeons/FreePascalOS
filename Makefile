@@ -92,6 +92,10 @@
 #                   (SYSTEM_IMAGE_COMPRESSION=xz, gzip or none)
 #   make userland   Build the user mode libraries and programs
 #   make system-disk  Build the ext4 system volume with /bin and /lib
+#   make c-toolchain  Build the C/C++ cross toolchain and mlibc for ARCH
+#                   (build/toolchain/<triplet>, sysroot build/sysroot/<arch>)
+#   make c-test     Boot with the C test suite (/usr/bin/ctest) as the first
+#                   program: stdio, threads, fork/exec, signals, sockets, C++
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
 #   make update-fonts  Refresh the outline fonts in userland/fonts from the
@@ -607,6 +611,8 @@ suspend-stress: esp $(TEST_DISK) $(SYSTEM_DISK)
 
 include userland/userland.mk
 include ports/ports.mk
+# The C toolchain and runtime (make c-toolchain, c-runtime, c-test).
+include toolchain/c-runtime.mk
 
 # --- Tools -----------------------------------------------------------------
 

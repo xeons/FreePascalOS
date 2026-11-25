@@ -8873,11 +8873,13 @@ test copies to an unmapped user address.
 | Sockets (104-115) | CreateSocket, BindSocket, ListenSocket, AcceptSocket, ConnectSocket, SendSocket, ReceiveSocket, ShutdownSocket, Get/SetSocketOption, GetSocketAddress, WaitForSocket (see "Networking") |
 | Network configuration (116-123) | ListNetworkInterfaces, ConfigureNetworkInterface, ChangeRoute, ListRoutes, ListArpEntries, ListSockets, Get/SetDnsServers (changes root only) |
 
-There is no fork: `CreateProcess` starts a program directly, with an
-argument list, an environment, a working directory, the three handles
-that become the new program's standard input, output and error, and its
-group (the caller's, a new one, one to join, or a new one in the
-foreground of its terminal: `GroupNewInForeground`).
+Programs of the system's own runtime do not fork: `CreateProcess`
+starts a program directly, with an argument list, an environment, a
+working directory, the three handles that become the new program's
+standard input, output and error, and its group (the caller's, a new
+one, one to join, or a new one in the foreground of its terminal:
+`GroupNewInForeground`). For C programs there are fork, exec and
+waitpid too (the POSIX block, 180-199: see "C library and toolchain").
 
 ### Controlling threads
 
@@ -9160,7 +9162,8 @@ in a registry so they can be found by id.
 
 ### Notifications and requests to end
 
-There are no Unix signals: nothing runs code in a program behind its
+Programs of the system's own runtime get no Unix signals (C programs
+do: see "C library and toolchain"): nothing runs code in such a program behind its
 back. Instead the system tells a process what concerns it through the
 process's **notification queue** (`Processes.NotificationQueue`), which
 the process waits on like any other handle: the pseudo-handle
@@ -11026,6 +11029,284 @@ behind correct CRCs, so the damage reaches the decompressor and the
 filters. The model, surfaces, orientations, scaling, compositing and
 the registry are checked on their own; and malformed, truncated and randomly damaged
 files must load or give an `EImageError`, never anything worse.
+
+## C library and toolchain
+
+C and C++ programs run beside the Pascal ones: a GCC cross toolchain for
+the targets `x86_64-freepascalos` and `aarch64-freepascalos`, the C
+library **mlibc** (managarm's, MIT licensed) with a FreePascalOS sysdeps
+layer, libgcc and libstdc++, so POSIX software can be ported (the ports
+system builds with it). Pascal programs are untouched: the two worlds
+share the kernel's system calls and nothing else.
+
+### Building it
+
+`make c-toolchain ARCH=amd64` (or `arm64`) runs
+`toolchain/build-toolchain.sh`, which downloads the official releases
+into `~/Downloads/sources` (`FPOS_SOURCES` overrides it) - binutils
+2.47, GCC 16.2.0 with GMP 6.3.0, MPFR 4.2.2 and MPC 1.3.1 (checked
+against their GNU signatures when the sums in the script were taken),
+mlibc 7.0.0 and the commits of frigg, libsmarter and freestnd-cxx-hdrs
+its meson files pin - checks each against the SHA-256 in the script,
+applies `toolchain/patches/{binutils,gcc,mlibc}/*.patch`, copies
+`toolchain/mlibc/sysdeps/freepascalos` into mlibc and builds, each step
+remembered by a stamp (`build/toolchain/work/<triplet>/stamps`; name
+steps on the command line to run only those):
+
+| Step | What |
+|---|---|
+| fetch, unpack | the archives, unpacked and patched under `build/toolchain/src` |
+| binutils | as, ld, objdump, ... |
+| mlibc-headers | mlibc's headers into the sysroot (`-Dheaders_only`) |
+| gcc | the compilers alone (stage 1), and `unwind.h` for mlibc |
+| libgcc-static | `libgcc.a` alone, which mlibc links with |
+| mlibc | `ld.so`, `libc.so`, `libc.a`, `crt1.o`/`crti.o`/`crtn.o`, the empty `libm`, `libpthread`, `libdl`, ... |
+| libgcc | all of libgcc (`libgcc_s.so.1`, `libgcc_eh.a`, crtbegin/crtend) |
+| libstdcxx | libstdc++ (stage 2: C++ against mlibc), shared and static |
+
+The paths are stable (the ports system and anyone else rely on them):
+
+    build/toolchain/<triplet>/bin/<triplet>-gcc, -g++, -ld, -ar, -strip ...
+    build/sysroot/<arch>/usr/include     mlibc's headers (and <freepascalos/syscall.h>)
+    build/sysroot/<arch>/usr/lib         crt files, libc, ld.so, libgcc_s, libstdc++
+
+The compiler is configured `--with-sysroot` (so `-I`/`-L` need nothing
+for the C library), `--enable-default-pie`, `--enable-threads=posix`,
+`--enable-shared`. The patches are small: the OS name in `config.sub`;
+the targets in bfd, gas and ld (the stock `elf_x86_64` and `aarch64linux`
+emulations, whose linker scripts keep the ELF header loaded for
+`__ehdr_start`); in GCC a `config.gcc` entry, `gcc/config/freepascalos.h`
+(`__freepascalos__` and `unix`, `_GNU_SOURCE` for C++ as on GNU/Linux,
+the start files `crt1.o crti.o crtbegin*.o ... crtend*.o crtn.o`, `-lc`,
+`-dynamic-linker /usr/lib/ld.so`, `--hash-style=both`,
+`--eh-frame-hdr`, 4 KiB pages; `-pthread` and `-rdynamic` from
+`gnu-user.opt`), the libgcc entries (shared libgcc, DWARF unwinding
+through `dl_iterate_phdr`), and libtool's knowledge of the OS (in
+libstdc++'s configure: shared libraries named and versioned as on
+Linux). A port's own libtool needs the same: `freepascalos*` added to
+the `linux* | k*bsd*-gnu | kopensolaris*-gnu` cases of its configure.
+Clang with `--target=x86_64-freepascalos` is not done (it would need a
+driver toolchain class).
+
+`make c-runtime` (part of `make system-disk` when the toolchain is
+there; nothing otherwise) strips the runtime into the userland build's
+`usr/lib` - `ld.so`, `libc.so`, `libm.so`, `libpthread.so`, `libdl.so`,
+`librt.so`, `libutil.so`, `libresolv.so`, `libgcc_s.so.1`,
+`libstdc++.so.6` (about 4.5 MiB together, libstdc++ 2.7 of them) - and
+builds the test programs into `usr/bin`; `make-system-disk.sh` copies
+`usr` to the system disk's `/usr`.
+
+### How a C program starts
+
+A C program is a PIE (ET_DYN) linked against `libc.so` with
+`PT_INTERP` = `/usr/lib/ld.so`. The kernel's loader
+(`Processes.ImageLoader`), seeing PT_INTERP, maps the program and the
+interpreter and nothing else: it neither relocates them, nor loads
+`DT_NEEDED` libraries, nor lays out TLS, nor collects initializers (it
+does all of that for Pascal programs, which have no PT_INTERP). The
+first thread starts at the interpreter's entry with the usual initial
+stack plus `AT_BASE`, `AT_RANDOM` (16 random bytes), `AT_EXECFN`,
+`AT_SECURE` and the user and group ids. mlibc's `ld.so` relocates
+itself, maps `libc.so` and the other libraries from `/usr/lib` (and
+`LD_LIBRARY_PATH`) with `mmap` - reserving each library's span, then
+mapping its segments into it with `MAP_FIXED` - makes the static TLS
+area and the main thread's TCB (its own layout: `%fs:0x28` is the stack
+protector's canary), sets the thread pointer (`CallSetThreadPointer`),
+runs the initializers and jumps to `_start` (`crt1.o`), which calls
+`__mlibc_entry` and `main`. `dlopen` is the same `ld.so` at work (no
+`CallLoadLibrary`), and `dl_iterate_phdr` - what C++ exceptions unwind
+with - knows every object. A static program (`-static`) is an
+ordinary ET_EXEC at 0x400000 the kernel starts directly; mlibc's static
+startup does the same work for itself.
+
+Libraries for C programs live in `/usr/lib` (the C runtime) and
+`/usr/local/lib` (ported software, see `ports/README.md`): mlibc's
+`ld.so` looks in `LD_LIBRARY_PATH`, then in those two (its default
+paths, `-Ddefault_library_paths` in `toolchain/build-toolchain.sh`), and
+an rpath a port links with is honoured too. The kernel's loader, for
+Pascal programs, looks in `/lib` and then `/usr/local/lib`; it never
+loads a C library for a C program.
+
+### Ports
+
+The ports tool (`scripts/portstool`) builds a port with `toolchain = "c"`
+with this toolchain and a sysroot of its own (a copy of
+`build/sysroot/<arch>` with the build dependencies' packages unpacked
+into it). Before an autotools port is configured
+(`autotools_target.py`), every `config.sub` of its tree (and autosetup's
+`autosetup-config.sub`) is replaced by `toolchain/config.sub` (from the
+patched binutils), and its libtool learns the target: `freepascalos*`
+joins libtool's Linux cases in `configure`, `libtool.m4`, `ltmain.sh`
+and `aclocal.m4`, so shared libraries are built and named as on Linux.
+zlib, lua, sqlite3 and bash are built this way and tried on the system
+(their `[test]` commands through `pkg test`, and a few uses of each);
+`C_TEST_INIT=/usr/bin/PROGRAM scripts/test-c-runtime.sh` boots a disk with
+another first program for such tries.
+
+### The sysdeps
+
+`toolchain/mlibc/sysdeps/freepascalos` is mlibc's view of the kernel,
+one file per concern in `generic/` (`core.cpp`: logging, exit, the
+thread pointer, futexes over `WaitOnAddress`/`WakeAddress`, clocks over
+`CallGetPreciseTime`; `memory.cpp`; `files-core.cpp` and `files.cpp`;
+`directories.cpp`; `threads.cpp`; `process.cpp`; `signals.cpp`;
+`sockets.cpp`; `polling.cpp`; `terminal.cpp`; `system.cpp`), the start
+files and the thread entry in `arch/<cpu>/`, and the ABI headers:
+mlibc's Linux ABI (errno values, `struct stat`, `O_*`, signal numbers,
+`termios`, socket constants) - the kernel's error codes already are the
+Linux errno numbers - with the call numbers and records in
+`include/freepascalos/syscall.h` (installed, for programs that want the
+native calls). mlibc's "linux" option is off (it needs Linux's kernel
+headers), so there is no `epoll`, `inotify`, `signalfd`, `timerfd` or
+`eventfd`; posix, glibc and bsd are on.
+
+- **Descriptors** are the kernel's handles, same numbers. What POSIX
+  keeps per descriptor and the kernel does not - close-on-exec,
+  `O_NONBLOCK`, the path a directory was opened with (for `openat` and
+  the other `*at` calls, `fchdir`) - lives in a table in the process
+  (`descriptors.cpp`), so fork copies it and exec drops it.
+  `O_NONBLOCK` on pipes and terminals is a zero-timeout
+  `CallWaitForHandles` before the read; on sockets the kernel's own
+  non-blocking option. `O_CREAT` opens first and creates exclusively
+  only if the file is missing, then sets the mode less the umask.
+  `pread`/`pwrite` seek and seek back (not atomic). `fsync` is a whole
+  `CallSync`. `flock` and `fcntl` record locks are the kernel's
+  whole-file locks.
+- **Memory**: `mmap`, `munmap` and `mprotect` pass the Linux `PROT_*`
+  and `MAP_*` values to `CallMapMemory`, `CallUnmapMemory` and
+  `CallProtectMemory`; mlibc's allocator takes its pages the same way.
+  W^X holds: anonymous memory never becomes executable without
+  `CallSetMemoryPolicy`, a file mapped executable needs no permission.
+- **Threads**: mlibc makes the TCB and TLS; `PrepareStack` maps the
+  stack with a guard page below and leaves the start routine, the TCB
+  and the argument on it; `Clone` starts a kernel thread there with
+  `CallCreateThreadOnStack`, which loads its thread pointer and runs the
+  routine.
+- **Processes**: `fork`, `execve` and `waitpid` are the kernel's
+  (`CallForkProcess`, `CallExecuteProgram` with the close-on-exec list,
+  `CallWaitForChild`), and so `posix_spawn`, `system` and `popen`
+  work; process groups and sessions too.
+- **Signals**: `sigaction` keeps the handlers here and tells the kernel
+  the disposition and the handler's mask (`CallSetSignalDisposition`);
+  the kernel continues a thread in `signal_dispatcher` with a
+  `fpos_signal_record`, which calls the handler (with a `siginfo_t`:
+  the sender, or the faulting address) and returns through
+  `CallReturnFromSignal`. Processor exceptions come to the exception
+  dispatcher (`CallSetExceptionDispatcher`) and become SIGSEGV, SIGFPE,
+  SIGILL, SIGBUS or SIGTRAP: a handler runs and the instruction is
+  tried again (or the handler `siglongjmp`s out); without one the
+  program says where it faulted and ends as killed by the signal.
+  Writing to a pipe nobody reads raises SIGPIPE. `sigaltstack` is
+  accepted and ignored (handlers run on the thread's stack).
+  `setitimer(ITIMER_REAL)` and `alarm` are a kernel thread of the
+  process (`timers.cpp`, started with the first timer, all signals
+  blocked, system calls only) sleeping on a word until the timer is due
+  and then sending SIGALRM; a child of fork has none.
+- **Sockets** are the kernel's IPv4 and IPv6 sockets: addresses
+  translated from `sockaddr_in`/`sockaddr_in6` (ports in host order in
+  the kernel's record), the common `SO_*`, `TCP_*`, `IP_TTL`,
+  `IPV6_V6ONLY` options mapped (unknown ones are accepted and do
+  nothing). No `AF_UNIX`, so no `socketpair`.
+- **poll/select** look at every descriptor without waiting (files are
+  always ready, sockets through `CallWaitForSocket`), then wait in
+  `CallWaitForHandles` on those it can wait for (at most 64), checking
+  every 10 ms for what it cannot (a socket's room to write).
+- **Terminals**: `termios` maps `ECHO`, `ICANON` and `ISIG` onto the
+  console's modes and keeps the rest of the structure;
+  `TIOCGWINSZ`/`TIOCSWINSZ`, `TIOCGPGRP`/`TIOCSPGRP`, `FIONREAD` and
+  `FIONBIO` are there. Pseudo-terminal masters (`posix_openpt`) are
+  not: the kernel's master side is two handles.
+- **The rest**: `uname` and `gethostname` from `CallGetSystemInformation`,
+  `sysconf`, `getentropy` from `/dev/urandom`, users and groups from
+  `CallGetCredentials`/`CallSetUserIds`/`CallSetGroupIds` (and
+  `getpwnam` from `/etc/passwd`, which mlibc reads itself), resource
+  limits as constants.
+
+### The POSIX block of system calls (180-199)
+
+What the C library needs that the kernel did not have, added in the
+kernel (`Processes.PosixMemoryCalls`, `Processes.MemoryMapping`,
+`Processes.Fork`, `Processes.AddressSpaceCopy`, `Processes.Execution`,
+`Processes.ChildWaits`, `Processes.Signals`, state in
+`Processes.PosixState`):
+
+| Number | Call | |
+|---|---|---|
+| 180 | `CallMapMemory` (Address, Length, Protection, Flags, Handle, Offset) | mmap: anonymous or a file's pages (shared read-only or private copy on write); `MAP_FIXED` replaces run time allocations and mappings in the range (inside a reservation the mapping becomes a piece of it); never images, stacks or devices |
+| 181 | `CallUnmapMemory` (Address, Length) | munmap of allocations and mappings, splitting them |
+| 182 | `CallForkProcess` () | a copy of the caller (see below); the child gets 0 |
+| 183 | `CallExecuteProgram` (TAbiExecution) | execve in place: the new program is loaded into a new address space first, so a failure leaves the caller as it was; then the calling thread moves into it, the old space goes, the close-on-exec handles are closed, handled signals become default (ignored ones and the mask stay), set-user-ID applies; the same process id; the process's other threads end first (once the program is known to be there) |
+| 184 | `CallWaitForChild` (ProcessId, StatusAddress, Flags) | waitpid with the Linux status word, `WNOHANG`, `WUNTRACED` |
+| 185 | `CallCreateThreadOnStack` (Entry, Argument, StackPointer) | a thread on the caller's stack |
+| 186 | `CallSetSignalDispatcher` (Address) | where handled signals are taken |
+| 187 | `CallSendSignal` (Target, Signal) | kill (a process, a group, the caller's group, everyone it may) |
+| 188 | `CallSetSignalMask` (How, Mask, OldMask) | sigprocmask (per thread) |
+| 189 | `CallSetSignalDisposition` (Signal, Disposition, HandlerMask, Flags) | default, ignore or handle; `SA_RESETHAND` |
+| 190 | `CallReturnFromSignal` (Record) | back from a handler: registers and mask |
+| 191 | `CallSuspendForSignal` (Mask) | sigsuspend |
+| 192 | `CallPendingSignals` () | sigpending |
+| 193-195 | `CallSetProcessGroup`, `CallCreateSession`, `CallGetProcessGroupOf` | setpgid, setsid, getpgid/getsid |
+| 196 | `CallGetParentProcessId` () | getppid |
+
+**fork** makes a process object with the caller's credentials,
+directories, group, session, terminal, limits, restrictions, exception
+dispatcher and signal dispositions, every handle under the same number
+(thread handles left out; open files are shared, offsets and all), and
+a copy of the address space (`Processes.AddressSpaceCopy`): the same
+layout and regions, each page the caller may write privately mapped
+copy on write in both (the first write of either side copies it,
+`BreakCopyOnWriteLocked`), read-only and shared pages mapped again with
+a reference more, untouched pages left for both to fault in; device
+memory is not copied. Its one thread is a copy of the calling thread:
+it starts in the kernel and enters user mode with the caller's
+registers at the system call (`ArchEnterUserModeWithContext`, an
+`iretq` or `eret` with every register), the result register 0, the
+caller's thread pointer and signal mask. The kernel's module list is
+not copied (a C program's `ld.so` keeps its own). The parent keeps a
+reference to each child (`Posix.Children`) until it waits for it: an
+ended child is a zombie until then.
+
+**Signals** (`Processes.Signals`): a process says per signal what
+happens; a signal sent to it is then ended (status 128 plus the
+signal; waitpid sees the signal), stopped or continued (`SIGSTOP`,
+`SIGTSTP`, `SIGTTIN`, `SIGTTOU`, `SIGCONT`, through job control),
+dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default, and ignored ones),
+or - handled, or blocked by every thread - left pending, and one thread
+that does not block it is alerted (its wait ends with
+`ErrorInterrupted`, which becomes `EINTR`; there is no `SA_RESTART`),
+unless the sending thread takes it itself (`raise`). The alert is given
+up when that thread is back in user mode, whoever took the signal.
+At the thread's next return to user mode (`DeliverPendingSignals`, at
+the end of every system call and in the interrupt return hook) the
+kernel writes a `TAbiSignalRecord` below the red zone, adds the
+handler's mask and enters the dispatcher; a pending signal that is not
+handled takes its default action then. `SIGKILL` and `SIGSTOP` cannot
+be caught or blocked. The system's own mechanisms meet signals where
+they overlap: an end request (kill's TERM, a terminal's hang-up,
+Ctrl-C) to a process that handles or ignores SIGTERM, SIGHUP or SIGINT
+becomes that signal (`EndRequestTakenAsSignalLocked`, in
+`Processes.EndRequests`), otherwise the process ends as before and its
+parent's waitpid sees the signal; a child that ends sends SIGCHLD to a
+parent that handles it; a process ended by a processor exception
+nobody took counts as killed by SIGSEGV.
+
+### Tests
+
+`toolchain/ctest`: `ctest` (C: stdio, malloc and mmap, strings, math,
+time, files and directories with `*at` calls, the environment, pthreads
+with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
+`posix_spawn`, several children, process groups, pipes with `dup2` and
+`popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
+SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; 410
+checks), then `hello-static` and `cxxtest` (iostreams, containers,
+exceptions through ten frames and across threads, `std::thread`,
+mutexes, atomics, chrono) as programs of their own. `make c-test` boots
+(QEMU, `ACCEL=kvm` for speed; with `ARCH=arm64` QEMU's virt machine) with
+`init=/usr/bin/ctest` and passes when
+every check did (`scripts/test-c-runtime.sh`, log in
+`build/amd64/c-test-serial.log`); a coretest line runs `ctest` when the
+system disk has it.
 
 ## Style engine (libcss)
 

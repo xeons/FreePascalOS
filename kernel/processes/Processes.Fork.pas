@@ -1,0 +1,167 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  fork (CallForkProcess), for the C library.
+
+  The child is a new process with a copy of the caller's address space
+  (copy on write, Processes.AddressSpaceCopy), every handle of the
+  caller under the same number (thread handles left out: they stand for
+  the caller's threads), its credentials, working and root directory,
+  group, session, controlling terminal, limits, restrictions and signal
+  dispositions, and one thread: a copy of the calling thread, which
+  goes on from the same system call with the result 0 and the same
+  thread pointer and signal mask. The parent gets the child's id. The
+  parent keeps a reference to the child until it waits for it
+  (Processes.ChildWaits).
+
+  The module list (what the kernel's loader loaded) is not copied: a C
+  program's own dynamic linker keeps its libraries, and CallLoadLibrary
+  is not for C programs.
+}
+unit Processes.Fork;
+
+{$mode objfpc}
+
+interface
+
+uses
+  Kernel.Arch.TrapFrame;
+
+function PerformForkProcess(Frame: PTrapFrame): Int64;
+
+implementation
+
+uses
+  Runtime.Memory,
+  Runtime.Text,
+  Abi.SystemCalls,
+  Kernel.Mutex,
+  Kernel.SpinLock,
+  Objects.Manager,
+  Processes.Process,
+  Processes.Thread,
+  Processes.Handles,
+  Processes.AddressSpace,
+  Processes.AddressSpaceCopy,
+  Processes.UserThread,
+  Processes.ChildWaits,
+  Processes.Signals,
+  Processes.Arch.UserContext;
+
+function Failure(Error: LongInt): Int64;
+begin
+  Result := -Int64(Error);
+end;
+
+procedure CopyProcessFields(Parent, Child: PProcess);
+begin
+  Child^.ParentProcessId := Parent^.ProcessId;
+  CopyText(@Child^.CurrentDirectory[0], @Parent^.CurrentDirectory[0], ProcessPathCapacity);
+  CopyText(@Child^.RootDirectory[0], @Parent^.RootDirectory[0], ProcessPathCapacity);
+  CopyText(@Child^.CommandLine[0], @Parent^.CommandLine[0], ProcessCommandLineCapacity);
+  Child^.GroupId := Parent^.GroupId;
+  Child^.SessionId := Parent^.SessionId;
+  Child^.Credentials := Parent^.Credentials;
+  Child^.ControllingTerminal := Parent^.ControllingTerminal;
+  Child^.IgnoresInterrupt := Parent^.IgnoresInterrupt;
+  Child^.ExceptionDispatcher := Parent^.ExceptionDispatcher;
+  Child^.ProcessCountLimit := Parent^.ProcessCountLimit;
+  Child^.OomScoreAdjust := Parent^.OomScoreAdjust;
+  Child^.Restrictions := Parent^.Restrictions;
+  SetHandleLimit(Child^.Handles, Parent^.Handles.Limit);
+  InheritSignalState(Parent, Child);
+end;
+
+{ Every handle but thread handles, under the same numbers. }
+function CopyHandles(Parent, Child: PProcess): LongInt;
+var
+  Handle: LongWord;
+  Kind: THandleKind;
+  ObjectBody: Pointer;
+begin
+  Result := ErrorNone;
+  AcquireMutex(Parent^.Lock);
+  Handle := 0;
+  while Handle < Parent^.Handles.Limit do
+  begin
+    if LookupHandle(Parent^.Handles, Handle, Kind, ObjectBody) and (Kind <> HandleKindThread) then
+      if not SetHandle(Child^.Handles, Integer(Handle), Kind, ObjectBody) then
+      begin
+        Result := ErrorOutOfMemory;
+        Break;
+      end;
+    Inc(Handle);
+  end;
+  ReleaseMutex(Parent^.Lock);
+end;
+
+function PerformForkProcess(Frame: PTrapFrame): Int64;
+var
+  Parent: PProcess;
+  Child: PProcess;
+  Caller: PThread;
+  ChildThread: PThread;
+  Context: TAbiContext;
+  Error: LongInt;
+begin
+  Parent := CurrentProcess;
+  Caller := CurrentThreadObject;
+  Child := CreateProcessObject(@Parent^.Name[0]);
+  if Child = nil then
+    Exit(Failure(ErrorOutOfMemory));
+  CopyProcessFields(Parent, Child);
+  Error := DuplicateAddressSpace(Parent^.AddressSpace, Child^.AddressSpace);
+  if Error = ErrorNone then
+  begin
+    Child^.PageTableRoot := Child^.AddressSpace^.Root;
+    Error := CopyHandles(Parent, Child);
+  end;
+  if Error = ErrorNone then
+    Error := AddChild(Parent, Child);
+  if Error <> ErrorNone then
+  begin
+    DereferenceObject(Child);
+    Exit(Failure(Error));
+  end;
+
+  { The child goes on from this system call with the result 0. }
+  CaptureUserContext(Frame, Context);
+{$ifdef CPUAARCH64}
+  Context.X[0] := 0;
+{$else}
+  Context.Rax := 0;
+{$endif}
+  RegisterRunningProcess(Child);
+  Error := StartForkedUserThread(Child, Context, Caller^.ControlBlock.UserThreadPointer,
+    Caller^.Posix.SignalMask, @Parent^.Name[0], ChildThread);
+  if Error <> ErrorNone then
+  begin
+    UnregisterRunningProcess(Child);
+    { Never ran: reaped like a child that ended at once. }
+    Child^.ExitCode := 127;
+    Child^.HasExited := True;
+    DereferenceObject(Child);
+    Exit(Failure(Error));
+  end;
+  Result := Int64(Child^.ProcessId);
+  { The parent's list of children holds the child from here on. }
+  DereferenceObject(Child);
+end;
+
+end.

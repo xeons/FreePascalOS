@@ -44,7 +44,9 @@ interface
 uses
   Processes.Process,
   Processes.Handles,
-  Processes.HandlePassing;
+  Processes.HandlePassing,
+  Processes.ImageLoader,
+  Processes.ImageInitializers;
 
 type
   TProcessStartup = record
@@ -87,6 +89,18 @@ type
 
 procedure InitializeUserProcesses;
 
+{ Lays out the initial stack (arguments, environment, auxiliary vector)
+  below the stack top of the process's layout; StackPointer is where the
+  program starts with it. Interpreter is the program's PT_INTERP module
+  or nil. Used by exec too (Processes.Execution). }
+function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
+  MainModule, Interpreter: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
+{ Where the first thread starts: the program's entry point, or its
+  interpreter's (which then starts the program). }
+function ProgramStartAddress(Process: PProcess; MainModule: PLoadedModule): QWord;
+{ The arguments joined by spaces into Destination (what ps shows). }
+procedure JoinArguments(Arguments: PPChar; Count: Integer; Destination: PChar; Capacity: QWord);
+
 { Starts a program. On success Process holds a reference for the caller. }
 function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess): LongInt;
 
@@ -127,14 +141,14 @@ uses
   Objects.Manager,
   Processes.AddressSpace,
   Processes.UserRegions,
-  Processes.ImageLoader,
-  Processes.ImageInitializers,
   Processes.Thread,
   Processes.UserThread,
   Processes.UserExceptions,
   Processes.LoadedModules,
   Processes.OutOfMemory,
   Memory.PhysicalPages,
+  Kernel.Random,
+  Processes.ChildWaits,
   Debug.Output;
 
 const
@@ -143,9 +157,19 @@ const
   AuxiliaryProgramHeaderSize = 4;
   AuxiliaryProgramHeaderCount = 5;
   AuxiliaryPageSize = 6;
+  AuxiliaryInterpreterBase = 7;
   AuxiliaryEntryPoint = 9;
-  AuxiliaryEntryCount = 10;
+  AuxiliaryUserId = 11;
+  AuxiliaryEffectiveUserId = 12;
+  AuxiliaryGroupId = 13;
+  AuxiliaryEffectiveGroupId = 14;
+  AuxiliarySecure = 23;
+  AuxiliaryRandomBytes = 25;
+  AuxiliaryProgramName = 31;
+  AuxiliaryEntryCount = 18;
   ProgramHeaderSize = 56;
+  { AT_RANDOM: bytes for the C library's stack protector and hashing. }
+  RandomByteCount = 16;
 
 { --- Faults ---------------------------------------------------------- }
 
@@ -213,6 +237,8 @@ begin
     makes the addresses above meaningful (scripts/symbolize.py). }
   EnableInterrupts;
   WriteProcessModules(Process, 'process');
+  { As a process killed by SIGSEGV, for a parent's waitpid. }
+  Process^.Posix.EndSignal := SignalSegmentation;
   ExitCurrentProcess(ExitStatusException);
 end;
 
@@ -265,7 +291,7 @@ end;
   (less its random offset) and returns the stack pointer the program
   starts with (pointing at the argument count). }
 function BuildInitialStack(Process: PProcess; const Startup: TProcessStartup;
-  MainModule: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
+  MainModule, Interpreter: PLoadedModule; const Lists: TInitializerLists; out StackPointer: QWord): LongInt;
 var
   StringBytes: QWord;
   PointerSlots: QWord;
@@ -281,6 +307,10 @@ var
   Length: QWord;
   StackTop: QWord;
   ImageTop: QWord;
+  RandomPosition: QWord;
+  ProgramName: PChar;
+  ProgramNamePosition: QWord;
+  InterpreterBase: QWord;
 
   procedure PutSlot(Value: QWord);
   begin
@@ -308,8 +338,14 @@ var
   end;
 
 begin
+  { AT_EXECFN: the name the program was started by. }
+  if Startup.ArgumentCount > 0 then
+    ProgramName := Startup.Arguments[0]
+  else
+    ProgramName := Startup.Name;
   StringBytes := TotalStringBytes(Startup.Arguments, Startup.ArgumentCount) +
-    TotalStringBytes(Startup.Environment, Startup.EnvironmentCount);
+    TotalStringBytes(Startup.Environment, Startup.EnvironmentCount) +
+    TextLength(ProgramName) + 1 + RandomByteCount;
   PointerSlots := 1 + QWord(Startup.ArgumentCount) + 1 + QWord(Startup.EnvironmentCount) + 1 +
     2 * AuxiliaryEntryCount;
 
@@ -339,6 +375,13 @@ begin
   for Index := 0 to Startup.EnvironmentCount - 1 do
     PutSlot(PlaceString(Startup.Environment[Index]));
   PutSlot(0);
+  ProgramNamePosition := PlaceString(ProgramName);
+  RandomPosition := StringPosition;
+  FillRandom(Image + (RandomPosition - StackPointer), RandomByteCount);
+  StringPosition := StringPosition + RandomByteCount;
+  InterpreterBase := 0;
+  if Interpreter <> nil then
+    InterpreterBase := Interpreter^.ImageStart;
 
   PutSlot(AuxiliaryProgramHeaders);
   PutSlot(MainModule^.ProgramHeaderAddress);
@@ -350,6 +393,22 @@ begin
   PutSlot(PageSize);
   PutSlot(AuxiliaryEntryPoint);
   PutSlot(MainModule^.EntryPoint);
+  PutSlot(AuxiliaryInterpreterBase);
+  PutSlot(InterpreterBase);
+  PutSlot(AuxiliaryUserId);
+  PutSlot(Process^.Credentials.RealUserId);
+  PutSlot(AuxiliaryEffectiveUserId);
+  PutSlot(Process^.Credentials.EffectiveUserId);
+  PutSlot(AuxiliaryGroupId);
+  PutSlot(Process^.Credentials.RealGroupId);
+  PutSlot(AuxiliaryEffectiveGroupId);
+  PutSlot(Process^.Credentials.EffectiveGroupId);
+  PutSlot(AuxiliarySecure);
+  PutSlot(0);
+  PutSlot(AuxiliaryRandomBytes);
+  PutSlot(RandomPosition);
+  PutSlot(AuxiliaryProgramName);
+  PutSlot(ProgramNamePosition);
   PutSlot(Abi.SystemCalls.AuxiliaryInitializers);
   PutSlot(PlaceList(Lists.Initializers, Lists.InitializerCount));
   PutSlot(Abi.SystemCalls.AuxiliaryInitializerCount);
@@ -363,6 +422,17 @@ begin
 
   Result := WriteIntoAddressSpace(Process^.AddressSpace, StackPointer, Image, ImageSize);
   FreeKernelMemory(Image);
+end;
+
+function ProgramStartAddress(Process: PProcess; MainModule: PLoadedModule): QWord;
+var
+  Interpreter: PLoadedModule;
+begin
+  Interpreter := InterpreterOf(Process, MainModule);
+  if Interpreter <> nil then
+    Result := Interpreter^.EntryPoint
+  else
+    Result := MainModule^.EntryPoint;
 end;
 
 function CreateUserProcess(const Startup: TProcessStartup; out Process: PProcess): LongInt;
@@ -423,7 +493,8 @@ begin
   if Result = ErrorNone then
     Result := CollectInitializers(Process, Lists);
   if Result = ErrorNone then
-    Result := BuildInitialStack(Process, Startup, MainModule, Lists, StackPointer);
+    Result := BuildInitialStack(Process, Startup, MainModule, InterpreterOf(Process, MainModule), Lists,
+      StackPointer);
   FreeInitializerLists(Lists);
 
   if Result = ErrorNone then
@@ -442,7 +513,7 @@ begin
     { Registered before the thread starts, so it is always found while
       it runs. }
     RegisterRunningProcess(Process);
-    Result := StartUserThread(Process, MainModule^.EntryPoint, StackPointer, 0,
+    Result := StartUserThread(Process, ProgramStartAddress(Process, MainModule), StackPointer, 0,
       StackStart, Startup.Name, False, MainThread);
     if Result <> ErrorNone then
       UnregisterRunningProcess(Process);
@@ -478,6 +549,10 @@ begin
   DestroyAddressSpace(Space);
   SignalEvent(Process^.ExitEvent);
   SignalEvent(Process^.StateChangedEvent);
+  { POSIX: the children it never waited for are let go; its parent hears
+    of its end (waitpid, SIGCHLD; Processes.ChildWaits). }
+  ReleaseChildren(Process);
+  NotifyParentOfChange(Process, False);
 end;
 
 procedure ExitCurrentThread(ExitCode: LongInt);

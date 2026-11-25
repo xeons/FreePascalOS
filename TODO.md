@@ -1840,3 +1840,30 @@ in the order they would be built:
 - [ ] Tests: a scripted install in QEMU onto an empty virtual disk
       (guided and manual), then booting the installed system and checking
       the user, settings and boot entry.
+
+## C library and toolchain
+
+- [x] Targets `x86_64-freepascalos` and `aarch64-freepascalos` in binutils
+      2.47 and GCC 16.2 (`toolchain/patches`), built by
+      `toolchain/build-toolchain.sh` (`make c-toolchain`)
+- [x] mlibc 7.0 with FreePascalOS sysdeps (`toolchain/mlibc/sysdeps/freepascalos`)
+- [x] libgcc (shared and static), libstdc++ (shared and static)
+- [x] PT_INTERP: C programs start in mlibc's `ld.so`
+- [x] mmap/munmap with MAP_FIXED, threads on caller-made stacks (180, 181, 185)
+- [x] fork (copy on write), exec in place (other threads end first), waitpid (182-184)
+- [x] POSIX signals: dispositions, masks, handlers, SIGCHLD, SIGPIPE,
+      Ctrl-C/hang-up/TERM as signals, faults as SIGSEGV/SIGFPE/SIGILL (186-192)
+- [x] Process groups and sessions, getppid (193-196)
+- [x] C test suite and C++ test (`toolchain/ctest`, `make c-test`, a coretest line)
+- [x] Both architectures: the toolchain built and ctest passing on amd64
+      (KVM) and arm64 (QEMU virt)
+- [ ] The C runtime on the Raspberry Pi 5 (built, not tried on the board)
+- [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
+- [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
+- [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
+- [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
+- [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
+- [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
+- [ ] Clang driver support (`--target=x86_64-freepascalos`)
+- [x] C ports through the ports tool (config.sub and libtool taught the
+      target automatically): zlib, lua, sqlite3, bash tried on the system

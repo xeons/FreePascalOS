@@ -37,6 +37,10 @@ uses
   is passed in the first argument register (RDI); all other general
   purpose registers start out zero. Never returns. }
 procedure ArchEnterUserMode(EntryPoint: QWord; StackPointer: QWord; Argument: QWord);
+{ Starts executing user code with every register of Context (a
+  TAbiContext in kernel memory): the child of fork. Of RFLAGS only the
+  arithmetic and direction flags are taken. Never returns. }
+procedure ArchEnterUserModeWithContext(Context: Pointer);
 
 function ArchFrameIsFromUserMode(Frame: PTrapFrame): Boolean;
 
@@ -74,6 +78,39 @@ asm
   xor r13d, r13d
   xor r14d, r14d
   xor r15d, r15d
+  { Hand GS back to user mode (Kernel.Arch.ProcessorBlock). }
+  db $0F, $01, $F8 { swapgs }
+  iretq
+end;
+
+{ TAbiContext: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, R8-R15, RIP,
+  RFLAGS, 8 bytes each. }
+procedure ArchEnterUserModeWithContext(Context: Pointer); assembler; nostackframe;
+asm
+  cli
+  push qword UserDataSelector
+  push qword [rdi + 56]
+  mov rax, [rdi + 136]
+  and rax, $0CD5
+  or rax, UserInitialFlags
+  push rax
+  push qword UserCodeSelector
+  push qword [rdi + 128]
+  mov rax, [rdi]
+  mov rbx, [rdi + 8]
+  mov rcx, [rdi + 16]
+  mov rdx, [rdi + 24]
+  mov rsi, [rdi + 32]
+  mov rbp, [rdi + 48]
+  mov r8, [rdi + 64]
+  mov r9, [rdi + 72]
+  mov r10, [rdi + 80]
+  mov r11, [rdi + 88]
+  mov r12, [rdi + 96]
+  mov r13, [rdi + 104]
+  mov r14, [rdi + 112]
+  mov r15, [rdi + 120]
+  mov rdi, [rdi + 40]
   { Hand GS back to user mode (Kernel.Arch.ProcessorBlock). }
   db $0F, $01, $F8 { swapgs }
   iretq

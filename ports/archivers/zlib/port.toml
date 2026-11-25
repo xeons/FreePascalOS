@@ -1,7 +1,7 @@
 # zlib, the first C library: built static with the cross toolchain
 # (make c-toolchain). zlib's configure is its own (not autoconf): it
-# takes the target from CHOST and the compiler from CC. Untested: it
-# waits for the C toolchain and mlibc.
+# takes the target from CHOST and the compiler from CC. Tested on the
+# system (make c-toolchain, then make port-zlib).
 
 [port]
 name = "zlib"
@@ -19,7 +19,7 @@ license = "Zlib"
 license_files = ["LICENSE"]
 maintainer = "FreePascalOS ports"
 categories = ["archivers", "devel"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 
 [[sources]]

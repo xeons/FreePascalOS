@@ -106,13 +106,19 @@ uses
   { What the processor is (CallGetProcessorDescription). }
   Kernel.Arch.ProcessorIdentity,
   { What the machine is (CallGetMachineModel). }
-  Drivers.MachineModel;
+  Drivers.MachineModel,
+  { The POSIX block: the C library's calls. }
+  Processes.PosixMemoryCalls,
+  Processes.ProgramArguments,
+  Processes.Fork,
+  Processes.Execution,
+  Processes.ChildWaits,
+  Processes.Signals;
 
 const
   SystemName = 'FreePascalOS';
   SystemRelease = '0.2.0';
   SystemVersion = '#1 FreePascalOS kernel';
-  MaximumArgumentBytes = 64 * 1024;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -120,122 +126,6 @@ begin
 end;
 
 { --- Process creation ------------------------------------------------ }
-
-type
-  { Kernel copies of an argument or environment list. }
-  TStringList = record
-    Items: PPChar;
-    Count: Integer;
-    Storage: PChar;
-  end;
-
-procedure FreeStringList(var List: TStringList);
-begin
-  FreeKernelMemory(List.Items);
-  FreeKernelMemory(List.Storage);
-  List.Items := nil;
-  List.Storage := nil;
-  List.Count := 0;
-end;
-
-{ Copies a nil terminated array of user strings into kernel memory. }
-function CopyStringListFromUser(ListAddress: QWord; out List: TStringList): LongInt;
-var
-  Pointers: array[0..MaximumArguments] of QWord;
-  Index: Integer;
-  Used: QWord;
-  Length: QWord;
-begin
-  List.Items := nil;
-  List.Count := 0;
-  List.Storage := nil;
-  if ListAddress = 0 then
-    Exit(ErrorNone);
-
-  Index := 0;
-  repeat
-    if Index > MaximumArguments then
-      Exit(ErrorNameTooLong);
-    Result := CopyFromUser(@Pointers[Index], ListAddress + QWord(Index) * 8, 8);
-    if Result <> ErrorNone then
-      Exit;
-    Inc(Index);
-  until Pointers[Index - 1] = 0;
-  List.Count := Index - 1;
-
-  List.Items := PPChar(AllocateZeroedKernelMemory((List.Count + 1) * SizeOf(PChar)));
-  List.Storage := PChar(AllocateKernelMemory(MaximumArgumentBytes));
-  if (List.Items = nil) or (List.Storage = nil) then
-  begin
-    FreeStringList(List);
-    Exit(ErrorOutOfMemory);
-  end;
-
-  Used := 0;
-  for Index := 0 to List.Count - 1 do
-  begin
-    Result := CopyStringFromUser(Pointers[Index], List.Storage + Used, MaximumArgumentBytes - Used);
-    if Result <> ErrorNone then
-    begin
-      FreeStringList(List);
-      Exit;
-    end;
-    List.Items[Index] := List.Storage + Used;
-    Length := TextLength(List.Storage + Used) + 1;
-    Used := Used + Length;
-  end;
-  Result := ErrorNone;
-end;
-
-function FileNameOf(Path: PChar): PChar;
-var
-  Index: PtrUInt;
-begin
-  Result := Path;
-  Index := 0;
-  while Path[Index] <> #0 do
-  begin
-    if (Path[Index] = '/') and (Path[Index + 1] <> #0) then
-      Result := @Path[Index + 1];
-    Inc(Index);
-  end;
-end;
-
-const
-  ModeSetUserId = $800;
-  ModeSetGroupId = $400;
-
-{ Running a program needs execute permission (root: any execute bit) and
-  a volume not mounted noexec. A set-user-ID or set-group-ID program
-  runs as its owner or group, unless its volume is mounted nosuid. }
-function CheckMayExecute(Caller: PProcess; KernelPath: PChar;
-  var Credentials: TProcessCredentials): LongInt;
-var
-  Information: TNodeInformation;
-begin
-  Result := ErrorNone;
-  if not Caller^.IsUserProcess then
-    Exit;
-  { A missing program is reported by the loader. }
-  if DescribePath(KernelPath, True, Information) <> StatusSuccess then
-    Exit;
-  if (Information.Kind <> NodeKindFile) or
-     ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
-     not CredentialsMayAccess(Credentials, Information, AccessExecute) then
-    Exit(ErrorAccessDenied);
-  if (Information.VolumeFlags and VolumeFlagNoSetId) <> 0 then
-    Exit;
-  if (Information.Mode and ModeSetUserId) <> 0 then
-  begin
-    Credentials.EffectiveUserId := Information.OwnerId;
-    Credentials.SavedUserId := Information.OwnerId;
-  end;
-  if (Information.Mode and ModeSetGroupId) <> 0 then
-  begin
-    Credentials.EffectiveGroupId := Information.GroupId;
-    Credentials.SavedGroupId := Information.GroupId;
-  end;
-end;
 
 { The user a program is started as, when its creator names one
   (TAbiProcessCreation.Identity): only root may. Its real, effective and
@@ -738,7 +628,8 @@ end;
 
 { --- Dispatcher ------------------------------------------------------ }
 
-function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3, Argument4: QWord): Int64;
+function PerformSystemCall(Number: QWord; Argument0, Argument1, Argument2, Argument3, Argument4,
+  Argument5: QWord): Int64;
 begin
   Result := 0;
   case Number of
@@ -922,6 +813,22 @@ begin
     CallUnmountVolume: Result := PerformUnmountVolume(Argument0, Argument1);
     CallListMounts: Result := PerformListMounts(Argument0, Argument1);
     CallGetFileTimes: Result := PerformGetFileTimes(Argument0, Int64(Argument1), Argument2, Argument3);
+    { The POSIX block (180-199). }
+    CallMapMemory: Result := PerformMapMemory(Argument0, Argument1, Argument2, Argument3, Int64(Argument4),
+      Argument5);
+    CallUnmapMemory: Result := PerformUnmapMemory(Argument0, Argument1);
+    CallCreateThreadOnStack: Result := PerformCreateThreadOnStack(Argument0, Argument1, Argument2);
+    CallWaitForChild: Result := PerformWaitForChild(Int64(Argument0), Argument1, Argument2);
+    CallSetSignalDispatcher: Result := PerformSetSignalDispatcher(Argument0);
+    CallSendSignal: Result := PerformSendSignal(Int64(Argument0), Argument1);
+    CallSetSignalMask: Result := PerformSetSignalMask(Argument0, Argument1, Argument2);
+    CallSetSignalDisposition: Result := PerformSetSignalDisposition(Argument0, Argument1, Argument2, Argument3);
+    CallSuspendForSignal: Result := PerformSuspendForSignal(Argument0);
+    CallPendingSignals: Result := PerformPendingSignals;
+    CallSetProcessGroup: Result := PerformSetProcessGroup(Argument0, Argument1);
+    CallCreateSession: Result := PerformCreateSession;
+    CallGetProcessGroupOf: Result := PerformGetProcessGroupOf(Argument0, Argument1);
+    CallGetParentProcessId: Result := Int64(CurrentProcess^.ParentProcessId);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -935,6 +842,7 @@ var
   Argument2: QWord;
   Argument3: QWord;
   Argument4: QWord;
+  Argument5: QWord;
   Result: Int64;
   MustRestart: Boolean;
 begin
@@ -944,6 +852,7 @@ begin
   Argument2 := SystemCallArgument(Frame, 2);
   Argument3 := SystemCallArgument(Frame, 3);
   Argument4 := SystemCallArgument(Frame, 4);
+  Argument5 := SystemCallArgument(Frame, 5);
   CurrentThreadObject^.SystemCallFrame := Frame;
   { A stack overflow's reserve is armed again once the stack is clear. }
   if StackReserveIsOpen then
@@ -951,18 +860,35 @@ begin
 
   { Continuing at a context replaces the whole frame; on success there is
     no result to return. }
-  if Number = CallContinue then
+  { fork works on the caller's registers (the child goes on from them). }
+  if Number = CallForkProcess then
   begin
-    Result := -Int64(PerformContinue(Frame, Argument0));
+    SetSystemCallResult(Frame, PerformForkProcess(Frame));
+    CurrentThreadObject^.SystemCallFrame := nil;
+    EndProcessIfTerminationRequested;
+    DeliverPendingSignals(Frame);
+    Exit;
+  end;
+
+  { Leaving a signal handler and exec replace the whole frame too. }
+  if (Number = CallContinue) or (Number = CallReturnFromSignal) or (Number = CallExecuteProgram) then
+  begin
+    case Number of
+      CallContinue: Result := -Int64(PerformContinue(Frame, Argument0));
+      CallReturnFromSignal: Result := -Int64(PerformReturnFromSignal(Frame, Argument0));
+    else
+      Result := -Int64(PerformExecuteProgram(Frame, Argument0));
+    end;
     if Result <> 0 then
       SetSystemCallResult(Frame, Result);
     CurrentThreadObject^.SystemCallFrame := nil;
     EndProcessIfTerminationRequested;
+    DeliverPendingSignals(Frame);
     Exit;
   end;
 
   repeat
-    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2, Argument3, Argument4);
+    Result := PerformSystemCall(Number, Argument0, Argument1, Argument2, Argument3, Argument4, Argument5);
     { A call cut short because the program was asked to stop runs again
       once the program is continued, so the program never sees the stop. }
     MustRestart := (Result = Failure(ErrorInterrupted)) and
@@ -978,6 +904,8 @@ begin
   { The call's data ran into the stack's reserve: the program learns of
     the overflow now, with the call's result in hand. }
   DeliverPendingStackOverflow(Frame);
+  { A signal the program handles (Processes.Signals). }
+  DeliverPendingSignals(Frame);
 end;
 
 procedure InitializeSystemCalls;

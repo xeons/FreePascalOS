@@ -203,3 +203,38 @@ ArchEnterUserModeAt:
     mov     x29, xzr
     mov     x30, xzr
     eret
+
+// void ArchEnterUserModeWithContextAt(TAbiContext *Context,
+//                                     QWord KernelStackTop)
+// Starts user code with every register of Context (X0-X30, SP, PC and
+// the condition flags of PSTATE; EL0, interrupts enabled): the child of
+// fork goes on from the parent's system call. The kernel stack starts
+// over at KernelStackTop; Context is read before anything is pushed.
+    .global ArchEnterUserModeWithContextAt
+ArchEnterUserModeWithContextAt:
+    msr     daifset, #2
+    mov     sp, x1
+    ldr     x9, [x0, #248]
+    msr     sp_el0, x9
+    ldr     x10, [x0, #256]
+    msr     elr_el1, x10
+    ldr     x11, [x0, #264]
+    and     x11, x11, #0xF0000000
+    msr     spsr_el1, x11
+    ldp     x2, x3, [x0, #16]
+    ldp     x4, x5, [x0, #32]
+    ldp     x6, x7, [x0, #48]
+    ldp     x8, x9, [x0, #64]
+    ldp     x10, x11, [x0, #80]
+    ldp     x12, x13, [x0, #96]
+    ldp     x14, x15, [x0, #112]
+    ldp     x16, x17, [x0, #128]
+    ldp     x18, x19, [x0, #144]
+    ldp     x20, x21, [x0, #160]
+    ldp     x22, x23, [x0, #176]
+    ldp     x24, x25, [x0, #192]
+    ldp     x26, x27, [x0, #208]
+    ldp     x28, x29, [x0, #224]
+    ldr     x30, [x0, #240]
+    ldp     x0, x1, [x0, #0]
+    eret

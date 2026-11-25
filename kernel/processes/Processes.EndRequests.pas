@@ -73,6 +73,7 @@ procedure TellGroupTerminalResized(GroupId: QWord; Size: QWord);
 implementation
 
 uses
+  Processes.Signals,
   Abi.SystemCalls,
   Processes.NotificationQueue,
   Processes.Security,
@@ -118,8 +119,13 @@ begin
     Exit;
   if NotificationIsSelected(Process^.Notifications, LongWord(1) shl Reason) then
     PostNotification(Process^.Notifications, NotificationEndRequested, Reason, SenderProcessId, 0)
-  else
+  { A C program that handles or ignores SIGTERM, SIGHUP or SIGINT gets
+    the signal (Processes.Signals). }
+  else if not EndRequestTakenAsSignalLocked(Process, Reason, SenderProcessId) then
+  begin
+    Process^.Posix.EndSignal := SignalOfEndReason(Reason);
     RequestProcessTerminationLocked(Process, EndStatusOf(Reason));
+  end;
 end;
 
 function ControlledByTerminal(Process: PProcess; Terminal: Pointer): Boolean;

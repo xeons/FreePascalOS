@@ -33,6 +33,9 @@ uses
   is passed in the first argument register (X0); all other general
   purpose registers start out zero. Never returns. }
 procedure ArchEnterUserMode(EntryPoint: QWord; StackPointer: QWord; Argument: QWord);
+{ Starts executing user code with every register of Context (a
+  TAbiContext in kernel memory): the child of fork. Never returns. }
+procedure ArchEnterUserModeWithContext(Context: Pointer);
 
 function ArchFrameIsFromUserMode(Frame: PTrapFrame): Boolean;
 
@@ -52,6 +55,14 @@ procedure ArchEnterUserModeAt(EntryPoint, StackPointer, Argument, KernelStackTop
 procedure ArchEnterUserMode(EntryPoint: QWord; StackPointer: QWord; Argument: QWord);
 begin
   ArchEnterUserModeAt(EntryPoint, StackPointer, Argument, CurrentProcessor^.SystemCallStack);
+end;
+
+procedure ArchEnterUserModeWithContextAt(Context: Pointer; KernelStackTop: QWord);
+  external name 'ArchEnterUserModeWithContextAt';
+
+procedure ArchEnterUserModeWithContext(Context: Pointer);
+begin
+  ArchEnterUserModeWithContextAt(Context, CurrentProcessor^.SystemCallStack);
 end;
 
 function ArchFrameIsFromUserMode(Frame: PTrapFrame): Boolean;

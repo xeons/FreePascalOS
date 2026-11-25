@@ -22,6 +22,7 @@ import os
 
 from .base import Builder
 from ..toolchain import build_triplet
+from ..autotools_target import prepare_tree
 
 
 class AutotoolsBuilder(Builder):
@@ -37,6 +38,8 @@ class AutotoolsBuilder(Builder):
                 context.run(["autoreconf", "-fi"], cwd=context.configure_directory)
             else:
                 raise FileNotFoundError(f"{script} is missing (and there is no configure.ac)")
+        # The package's config.sub and libtool learn the target.
+        prepare_tree(context.configure_directory)
         self.ensure_build_tree()
         command = [
             script,
