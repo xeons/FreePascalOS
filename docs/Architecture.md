@@ -239,7 +239,7 @@ into every program and library.
 | `.../system`, `cryptography`, `coreutils` | the units of those libraries (`NATIVE_FPC_LIBRARIES`, `all` for every library's) |
 | `.../fcl-process` | TProcess and the pipe streams, ordinary units |
 
-About 11 MB in all (the system disk holds 49 of its 62 MB on x86-64);
+About 11 MB in all (the system disk grows to fit);
 `NATIVE_FPC=no` leaves it out. The compiler and the driver are linked
 by GNU ld from the host's cross compilation like the other programs.
 Programs a user compiles are linked by the internal linker on x86-64.
@@ -313,8 +313,8 @@ The IDE and the LCL come later; what they need:
   reading and writing its memory and registers, breakpoints and single
   steps, from kernel calls a debugger may use.
 - **Memory and disk**: the IDE is an executable of tens of MB and its
-  units take hundreds, more than the 64 MB system disk holds; it will be
-  a package on another volume.
+  units take hundreds; it is better a package (or another volume) than
+  part of every system disk, and the RAM disk the Pi boots from.
 
 ## Boot sequence
 
