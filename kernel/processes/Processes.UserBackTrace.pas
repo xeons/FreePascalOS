@@ -39,7 +39,9 @@
 
   The routines are named from the module file's .symtab, else the
   loader's dynamic symbols (Processes.UserSymbols), as
-  scripts/symbolize.py would (Processes.SymbolNames). Runs in the
+  scripts/symbolize.py would (Processes.SymbolNames). A program that
+  may not be read (mode 0711, ProcessImageIsReadable) gets no trace:
+  its stack, image and files stay unread. Runs in the
   ending thread, at passive level, in its address space.
 }
 unit Processes.UserBackTrace;
@@ -389,12 +391,36 @@ begin
   FreeKernelMemory(Trace);
 end;
 
+{ Whether the report may look at what the program is made of: its
+  files (.symtab, .debug_frame), its loaded image (.eh_frame, dynamic
+  symbols) and its stack. A program run without read permission (mode
+  0711) must give none of that away.
+  TODO after the merge of the objects/namespace package: return
+  not Process^.ImageUnreadable. }
+function ProcessImageIsReadable(Process: PProcess): Boolean;
+begin
+  Result := Process <> nil;
+end;
+
+procedure WriteTraceWithheld(Tag: PChar);
+begin
+  DebugBeginMessage;
+  DebugWriteTag(Tag);
+  DebugWriteLine('  (no back trace: the program may not be read)');
+  DebugEndMessage;
+end;
+
 procedure WriteUserBackTrace(Process: PProcess; Frame: PTrapFrame; Tag: PChar);
 var
   Trace: PTrace;
 begin
   if (Process = nil) or (Frame = nil) then
     Exit;
+  if not ProcessImageIsReadable(Process) then
+  begin
+    WriteTraceWithheld(Tag);
+    Exit;
+  end;
   Trace := PTrace(AllocateZeroedKernelMemory(SizeOf(TTrace)));
   if Trace = nil then
     Exit;

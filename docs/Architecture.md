@@ -15983,7 +15983,10 @@ dynamic symbols the loader kept (a stripped library's exports), and
 written as `scripts/symbolize.py` does (`Processes.SymbolNames`).
 Libraries a C program's own dynamic linker maps are not in the
 kernel's module list: their frames show the bare address, stepped by
-the frame pointer. `tools/CallFrameInfoTest` (`make
+the frame pointer. A program run without read permission (mode 0711)
+gets no trace at all ("no back trace: the program may not be read"):
+its stack, image and files stay unread (`ProcessImageIsReadable`).
+`tools/CallFrameInfoTest` (`make
 call-frame-info-test`, part of `make test`) runs the unwinder on the
 host over `.eh_frame`, `.eh_frame_hdr` and `.debug_frame` fixtures
 `make-cfi-fixtures.py` writes (x86-64 and AArch64, both `.debug_frame`
