@@ -42,7 +42,7 @@ end;
 function ReadProcessorCounter: QWord; assembler; nostackframe;
 asm
   isb
-  mrs x0, cntvct_el0
+  .long 0xD53BE040 { mrs x0, cntvct_el0: the assembler does not know the name }
 end;
 
 { --- Thread control block (ThreadBlock* in Abi.SystemCalls) ------------- }
