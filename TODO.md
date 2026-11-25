@@ -902,6 +902,24 @@ normalized (0-65535), not pixels.
       table (and the resolver's destination order), v4-mapped addresses
       on IPv6 sockets, a stable-privacy identifier (RFC 7217) instead of
       EUI-64
+- [x] Network stack hardening (an audit's findings): 127.0.0.0/8 and
+      ::1 only from lo, and other martian sources and destinations
+      dropped (Network.InputFilter); RFC 6528 initial sequence numbers,
+      RFC 6056 ports, RFC 7739 IPv4 identifications and per-connection
+      timestamp offsets from SipHash keys; RFC 5961 challenge ACKs (SYN,
+      in-window RST, old and new ACKs), rate limited; half-open children
+      without buffers, bounded in all and pushing out their own; zero
+      windows probed while closing, orphans given up; ICMP errors checked
+      against the quoted sequence and source, ICMP and ICMPv6 errors and
+      echo replies rate limited; RFC 5722 overlapping fragments and RFC
+      7112 header chains; router advertisements leave static routes
+      alone; learned path MTUs kept; per-user shares of change watchers,
+      multicast memberships and shared UDP ports; one TCP listener per
+      shared port; netshell timeouts; the kernel DHCP client's sanity
+      checks (TcpTest, Ipv6Test, Kernel.NetworkHardeningSelfTest)
+- [ ] Network hardening later: SYN cookies (a backlog full of children
+      not yet accepted still drops new SYNs), IPv4 reassembly limits per
+      source like IPv6's, rate limits per destination as well as overall
 - [ ] IPv6 and multicast later: drivers programming their multicast
       filters (the hook is there), the IPv6 options kept in
       Network.settings, IPv4 fragments sent and IPv4 path MTU for UDP,

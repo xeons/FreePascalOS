@@ -4666,11 +4666,30 @@ unreachable (sent to itself through lo, so ping shows "Destination Host
 Unreachable"). Requests for our address are answered and the asker
 remembered; a new address is announced with a gratuitous request.
 
+**Martian addresses** (`Network.InputFilter`, RFC 1812 5.3.7, RFC 1122
+3.2.1.3, RFC 4291 2.5). Before anything else, a datagram whose
+addresses cannot be genuine is dropped (counted as an address error).
+127.0.0.0/8 and ::1 come in only on lo, as source or destination: a
+datagram to 127.0.0.1 or ::1 from an Ethernet interface never reaches a
+service that listens only on lo (TCP included). Nor does a source that
+is one of our own addresses, or the arrival interface's subnet
+broadcast (an answer would reflect to the whole subnet), come in from
+outside; a limited-broadcast, multicast or IPv4-mapped source, a
+destination of 0.0.0.0, :: or an IPv4-mapped one, and 0.0.0.0 as the
+source of anything but UDP and IGMP are dropped everywhere. Going out,
+a loopback source never leaves by another interface than lo
+(`ErrorNetworkUnreachable`). Self tests inject crafted datagrams on a
+test interface that is not in the table (`Kernel.NetworkPacketCrafting`,
+`Kernel.NetworkHardeningSelfTest`); Ipv6Test checks the rules on
+crafted headers.
+
 **IPv4.** Datagrams are checked (version, lengths, header checksum) and
 taken if addressed to any of this machine's addresses (the weak host
 model), to 255.255.255.255, to the arrival interface's subnet
-broadcast, or - UDP only - to anything on an interface with no address
-yet (what a DHCP client needs). Nothing is forwarded. Fragments are put
+broadcast, or - UDP to port 68 only - to anything on an interface with
+no address yet (what a DHCP client needs). Identifications are a keyed
+hash of the addresses and protocol plus a counter from a table picked
+by a second hash (RFC 7739 5.3, `Network.UnpredictableNumbers`). Nothing is forwarded. Fragments are put
 together (RFC 815: one buffer, a bitmap of 8-byte blocks, at most 8
 datagrams at once for 30 s each). Nothing is sent in fragments: a
 datagram larger than the interface's MTU (1500) fails with
@@ -4688,7 +4707,14 @@ request's identifier; raw ICMP sockets get every message. Destination
 unreachable and time exceeded about UDP or TCP go to the socket or
 connection; errors are sent for an unknown protocol, a closed UDP port
 and a failed ARP, never about an ICMP error, a broadcast or a later
-fragment.
+fragment. An error that comes in is believed only about a datagram we
+sent (its quoted source is ours), and a "fragmentation needed" about
+TCP only if the sequence number it quotes is in flight on that
+connection (RFC 5927 4.1). Token buckets (`Network.TokenBuckets`) limit
+the errors sent to other machines (100 a second, bursts of 50), echo
+replies to them (1000, 200) and the errors taken in from them (200,
+50), for ICMP and ICMPv6 alike (RFC 1812 4.3.2.8, RFC 4443 2.4 (f));
+this machine's own traffic over lo is not limited.
 
 **UDP.** A datagram goes to the socket bound to its port that fits best
 (bound to its address before bound to every address, a connected one
@@ -4768,8 +4794,14 @@ through (padding and router alert known; an unknown option skipped or
 the datagram dropped, with a parameter problem, as its two high bits
 say), a routing header with segments left is refused, "no next header"
 ends it, and a fragment goes to reassembly (`Network.Ipv6Fragments`: as
-IPv4's, 8 datagrams at once for 60 s; the whole datagram is walked
-again; atomic fragments are passed over). ICMPv6, UDP and TCP get what
+IPv4's, 16 datagrams at once for 60 s, at most 4 of them for the
+senders of one /64, which then push out their own oldest; the whole
+datagram is walked again; atomic fragments are passed over). RFC 5722:
+a fragment that overlaps one that came, or disagrees about the end,
+gives up the whole datagram silently (`Network.ReassemblyBlocks`); an
+exact copy is dropped alone. RFC 8200 4.5 / RFC 7112: a first fragment
+that does not hold the whole header chain up to the upper-layer header
+is refused with a parameter problem (code 3). ICMPv6, UDP and TCP get what
 is left; another protocol a parameter problem. Lo (::1) carries IPv6 as
 it carries IPv4: its receive side looks at the version nibble. Going
 out, a datagram to one of our addresses goes through lo; to a
@@ -4802,7 +4834,10 @@ datagram from one of our addresses lowers the path MTU to its
 destination (never below 1280) for ten minutes, after which the link's
 is tried again; `Ipv6PayloadLimit` (so TCP's MSS) and fragmenting use
 it, and TCP's connections to the destination are told at once
-(`TcpPathMtuChanged`). A redirect (RFC 4861 8.1: link-local source, hop
+(`TcpPathMtuChanged`) - but only by a Packet Too Big about TCP that
+quotes a sequence number in flight (RFC 5927 4.1); one about anything
+else lowers only the cache. A path MTU learned again after the old one
+expired is kept (it used to be lost with the expired entry). A redirect (RFC 4861 8.1: link-local source, hop
 limit 255, code 0, at least 40 bytes, a destination that is not
 multicast, from the router that is the destination's first hop now, a
 target that is link-local or the destination itself, options with
@@ -4904,10 +4939,26 @@ SYN_RECEIVED for each SYN while the backlog has room (counting children
 not yet accepted), and the child joins the accept queue when the
 handshake completes; a connection outlives its socket while it closes.
 
-- *Input* follows "Segment Arrives": the window check (an unacceptable
-  segment gets an ACK), trimming to the window, a reset believed only at
-  exactly the expected sequence number (RFC 5961), a SYN in the window
-  resets, the acknowledgment frees the send ring and moves FIN_WAIT_1,
+- *Half-open children* get no buffers: their SYN-ACK offers the receive
+  buffer they will have, and the buffers come with the handshake's last
+  ACK. All listeners together keep at most 256 children in
+  SYN_RECEIVED; when a listener's backlog (or that total) is reached,
+  its oldest half-open child gives way to the new SYN (a flood pushes
+  out its own), and with none to give way the SYN is dropped. No SYN
+  cookies.
+- *Input* follows "Segment Arrives": the window check
+  (`Network.TcpAcceptance`; an unacceptable segment gets an ACK; a zero
+  window still takes the ACK of a segment at RCV.NXT, cutting its data
+  away and answering with the window), trimming to the window, then
+  RFC 5961's defences against blind attacks: a reset ends the
+  connection only at exactly RCV.NXT (elsewhere in the window it gets a
+  challenge ACK, outside it nothing), a SYN never resets a synchronized
+  connection but gets a challenge ACK wherever it falls, and an
+  acknowledgment beyond SND.MAX or older than SND.UNA less the largest
+  window the peer offered gets one and goes no further; challenge ACKs
+  are limited to 10 a second per connection. A SYN for a connection in
+  TIME_WAIT beyond its sequence numbers (and timestamps) opens a new one
+  (RFC 1122 4.2.2.13, RFC 6191). The acknowledgment frees the send ring and moves FIN_WAIT_1,
   CLOSING and LAST_ACK on, the send window is updated by the RFC 793
   rule, data in order goes to the receive ring and segments that arrive
   ahead (as many bytes as the receive ring holds) wait to be joined, a
@@ -4995,8 +5046,18 @@ handshake completes; a connection outlives its socket while it closes.
   its own. TIME_WAIT lasts 60 s (twice an MSL of 30 s); FIN_WAIT_2 of a
   connection without its socket ends after 60 s. A closed listener
   resets the children it had not handed out.
-- Initial sequence numbers follow the clock (4 per microsecond) plus a
-  random offset taken at start.
+- *Unpredictable numbers* (`Network.UnpredictableNumbers` over the pure
+  `Network.KeyedNumbers` and `Network.SipHash`, keys from
+  `Kernel.Random` at first use): initial sequence numbers are a
+  4-microsecond clock plus SipHash-2-4 of the four endpoints (RFC
+  6528); every TSval carries a per-connection offset hashed from the
+  endpoints (RFC 7323 7.1); a connection's dynamic port is found by RFC
+  6056's algorithm 4 (a hashed offset plus a counter that moves on by
+  the tries and a small random step), a port with no peer known yet
+  (bind, listen, datagram sockets) from a random start.
+- *Zero windows*: the probe goes in every state with data still to
+  send, the closing ones too; a connection whose socket is gone gives
+  up (with a reset) after 8 probes, answered or not.
 - *Test hook*: `SocketOptionTestDropEvery` (root's) drops every Nth data
   segment that arrives on the connection, as if lost on the way;
   networktest uses it to make loss over lo.
@@ -5126,7 +5187,14 @@ or went, an interface turned on or off or given an address, a route, the
 DNS servers. It then lists again. The kernel keeps the events in a
 table of 32 with a reference each; one whose handle was closed (only the
 table's reference left) is dropped the next time the table is looked
-at. The network service waits on it instead of polling.
+at. A user other than root holds at most 8 (`ErrorTooManyHandles`), and
+such users together leave 8 entries for root. Likewise a user other
+than root holds at most 32 multicast memberships over all its sockets
+and cannot take the interface groups' table below 16 free entries
+(`Network.SocketMemberships`); a datagram socket may share a port
+(`SocketOptionReuseAddress`) only with sockets of its own user (root
+with anyone), and only one of several TCP sockets sharing a port may
+listen on it. The network service waits on it instead of polling.
 
 **Ports and interfaces.** Two sockets may bind the same port when both
 are bound to interfaces (`SocketOptionInterface`, root's), different
@@ -14786,7 +14854,10 @@ boot"), so a rebuild is all an iteration takes.
    `nc 192.168.1.50 2323` (the Pi's address is in the `configured` or
    `kernel DHCP lease` line of the log). It has **no authentication**:
    anyone on the network can read files and reset the board, so only on
-   a network you trust.
+   a network you trust. It serves one connection at a time; one quiet
+   for ten minutes is closed, a peer that vanished is found by
+   keep-alives (after a minute, then every 10 s, six times), and one
+   that stops reading is dropped after a minute.
 7. **Getting back without touching the board.** The PM watchdog is armed
    at start-up (15 seconds, the most it can count; `[watchdog] BCM2835
    PM watchdog ... armed`) and petted by a kernel timer, so a kernel that
@@ -15587,8 +15658,9 @@ come up nobody would. With `netaddr` the first Ethernet interface gets
 the fixed address as soon as it exists. Otherwise, with netlog or
 netshell on and no interface addressed after `netdhcp` seconds, the
 kernel runs a minimal DHCP exchange (DISCOVER, OFFER, REQUEST, ACK,
-broadcast replies; address, mask, router) on the first Ethernet interface
-with a link, brings it up, sets the address and default route
+broadcast replies; address, mask, router; a random transaction
+identifier; an offered address that cannot be a host's, or a router off
+the subnet, is not taken) on the first Ethernet interface with a link, brings it up, sets the address and default route
 (`[netaddr] eth0: kernel DHCP lease ...`), and tries again every minute
 until some interface has an address. The lease is not renewed: it is a
 diagnostic address, and the network service, when it starts, sets its
