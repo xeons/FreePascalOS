@@ -40,9 +40,14 @@ how the existing pieces fit together.
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
       calls 140-142, waitable with wait-for-all)
-- [ ] Named objects (open a semaphore or event by name)
-- [ ] Use shared locks for more read-mostly lookups (open file and node tables,
-      handle table reads)
+- [x] Named objects (events, semaphores, mutexes, sections and timers named
+      and opened by name, create-or-open in libsystem; calls 200-205) and
+      mutex objects for programs (calls 206-207: owner, recursion, waits for
+      all, abandonment reported as WaitAbandoned)
+- [x] Use shared locks for more read-mostly lookups (handle table reads without
+      the process lock, the process registry, the mount list)
+- [ ] Node cache lookups without the volume's operation lock (every file
+      operation holds the volume lock throughout; needs that lock split)
 - [x] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
 - [x] Priority boosting for threads woken from waits (by wake reason, decay per
@@ -169,7 +174,9 @@ how the existing pieces fit together.
 
 ## Objects and processes
 
-- [ ] Hierarchical object namespace (directories, e.g. `\Device\Keyboard`)
+- [x] Hierarchical object namespace (directories `\Device`, `\Storage`,
+      `\Kernel`, `\Ports`, `\Shared`; owners, modes and the sticky bit on
+      names and directories; objls)
 - [x] Per-process handle tables
 - [x] Growable handle tables (two levels, lowest free number first) up to a
       per-process handle limit; limits for regions and handles
@@ -246,10 +253,11 @@ how the existing pieces fit together.
       private mapped file becomes a snapshot that reads only the pages a
       change touches (marked preserved), not the whole file; filemaptest
       checks one page read for a 1 MiB file
-- [ ] Executing a program the caller may run but not read (mode 0711): the
-      loader opens it with the caller's read permission
-- [ ] Spawn joins any group number it is given (CallCreateProcess GroupId);
-      setpgid now joins only a group of the caller's session
+- [x] Executing a program the caller may run but not read (mode 0711): opened
+      on the kernel's authority after the execute check, AT_SECURE set and the
+      process marked (TProcess.ImageUnreadable)
+- [x] Spawn joins only a group of the caller's session (CallCreateProcess
+      GroupId), as setpgid does
 
 ## I/O
 

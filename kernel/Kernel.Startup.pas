@@ -73,6 +73,7 @@ uses
   Kernel.Panic,
   Kernel.SelfTest,
   Kernel.MemorySelfTest,
+  Kernel.ObjectNamespaceSelfTest,
   Kernel.SynchronizationSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
@@ -84,6 +85,7 @@ uses
   Kernel.FileSystemWriteTest,
   Runtime.Checksums,
   Objects.Manager,
+  Objects.Mutexes,
   Io.Startup,
   Network.Startup,
   Network.LogStreaming,
@@ -252,6 +254,7 @@ begin
   InitializePipes;
   InitializeEventObjects;
   InitializeSemaphoreObjects;
+  InitializeMutexObjects;
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;
@@ -373,6 +376,7 @@ begin
   RunKernelSelfTests;
   RunMemorySelfTests;
   RunSynchronizationSelfTests;
+  RunObjectNamespaceSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
   RunPlatformSelfTest;

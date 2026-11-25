@@ -191,8 +191,13 @@ begin
 end;
 
 function CreateBlockDevice(Name: PChar): PBlockDevice;
+var
+  Path: array[0..BlockDeviceNameLength + 15] of Char;
 begin
-  Result := PBlockDevice(CreateObject(BlockDeviceObjectType, Name));
+  { Named \Storage\<name> in the object namespace. }
+  CopyText(@Path[0], '\Storage\', SizeOf(Path));
+  CopyText(@Path[9], Name, SizeOf(Path) - 9);
+  Result := PBlockDevice(CreateObject(BlockDeviceObjectType, @Path[0]));
   if Result <> nil then
     CopyText(@Result^.Name[0], Name, BlockDeviceNameLength);
 end;

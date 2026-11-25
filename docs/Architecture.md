@@ -783,7 +783,18 @@ on the dispatcher lock and its wait queues:
   recorded per thread to catch it). `TryAcquire...` versions never
   wait. The volume list (`FileSystem.Volumes`) uses one: every path
   lookup reads it shared, mounting and removing a disk change it
-  exclusively.
+  exclusively. So do other tables that are read far more than changed:
+  each process's handle table (`THandleTable.EntryLock`: changes hold
+  the process's lock and the entry lock exclusively, only while the
+  entries change, releasing the objects afterwards; lookups take only
+  the entry lock shared, and `ReferenceHandleEntry` references under it,
+  so the threads of a process look up handles side by side without the
+  process's lock), the process registry (`LockProcessRegistryShared` for
+  listing and finding processes; registering and changing groups and
+  sessions exclusive) and the mount list (describing mounts and finding
+  a volume's mount point shared). A volume's node cache stays under the
+  volume's lock, which every file operation holds for its whole
+  duration.
 
 Kernel self tests (`Kernel.SynchronizationSelfTest`) run on every boot:
 semaphore counts, limits and consumers in several threads; readers and
@@ -8783,11 +8794,72 @@ tests, must pass `e2fsck` too.
 
 ## Objects
 
-Every object has a header (signature, reference count, type, optional name)
+Every object has a header (signature, reference count, type, name record)
 followed by its body; callers only ever see body pointers. An object is
 deleted, through its type's delete routine, when its last reference is
-dropped. Named objects live in a flat namespace (`LookupObjectByName`).
-Thread objects embed the scheduler's thread control block.
+dropped. Thread objects embed the scheduler's thread control block.
+
+### The object namespace
+
+Named objects live in a tree of directories (`Objects.Namespace`),
+written as paths from the root with backslashes:
+
+| Directory | What is in it |
+|---|---|
+| `\Device` | every device listed under /dev (`Io.Manager` names each one it lists, with its owner and mode, and takes the name away with `UnlistDevice`) |
+| `\Storage` | the disks and partitions (`TBlockDevice`) |
+| `\Kernel` | the console (`Console`) and the system process (`System`) |
+| `\Ports` | the ports of `CallCreatePort`, owned by their creator, mode 0666 (connecting is the server's to judge) |
+| `\Shared` | what programs name: events, semaphores, mutexes, sections, timers (mode 1777, like /tmp) |
+
+A directory is an object of type `Directory` holding a list of entries;
+an entry is the name record in the header of the object named there
+(`TObjectNameRecord`: the directory, the link in its list, the name of
+up to 63 characters, owner, group, mode, flags). A named object holds a
+reference to its directory, so a directory lives while anything is named
+in it. The namespace holds none to an ordinary object: its name goes
+when the object is deleted (`DetachObjectName`, called only for objects
+that were ever named, so most deletions never touch the namespace) or
+when removed (`RemoveObjectName`); the object goes on unnamed. Directories
+are permanent: the namespace holds a reference until the name is removed,
+which needs an empty directory that a program made (the kernel's stay;
+programs may make 1024 in all). A lookup takes a reference only if the
+object is not already being deleted (`TryReferenceObject`): a count that
+reached zero still has its entry until its deletion takes it out. One
+spin lock guards the tree (lookups are short walks, and names go at
+DispatchLevel too). `CreateObject(Type, Path)` names a kernel object
+(root, 0600); `CreateNamedObject` takes the owner and mode;
+`LookupObjectByName(Path, Type)` finds one without checks.
+
+Permissions work as for files, through the caller's `TNamespaceCaller`
+(the kernel's own calls are unchecked; a program's carries its
+credentials and the routines that judge them, `Processes.ObjectNameCalls`):
+search (x) on every directory on the way, write (w) on a directory to
+name or remove in it (in a sticky one, removing needs the name's or the
+directory's owner, or root), read (r) to list one, read and write on an
+object to open it; chmod by the owner, chown by root, the group by the
+owner to one of its groups. Root passes every check.
+
+System calls (200-205; `Sys.NamedObjects` in libsystem):
+
+| Call | Does |
+|---|---|
+| 200 `CallCreateObjectDirectory` (Path, Mode) | a directory of the caller's (umask applied) |
+| 201 `CallNameObject` (Handle, Path, Mode) | names an unnamed event, semaphore, mutex, section or timer: `ErrorExists` if taken, `ErrorBusy` if named already |
+| 202 `CallOpenNamedObject` (Path, Kind) | a new handle to it (Kind 0: any that opens; directories, devices and ports do not: `ErrorUnsupported`) |
+| 203 `CallListObjectDirectory` (Path, Buffer, Capacity, FirstIndex) | `TAbiObjectDirectoryEntry` records (name, type, the kind it opens as, flags, owner, group, mode, entries, references); returns how many there are |
+| 204 `CallRemoveObjectName` (Path) | the name goes; the object stays while handles hold it |
+| 205 `CallSetObjectSecurity` (Path, Mode, Owner, Group; -1 leaves one) | chmod and chown |
+
+A process restricted from port connections can use none of them. The
+library's `CreateNamedEvent`, `CreateNamedSemaphore`, `CreateNamedMutex`
+and `CreateNamedSection` create or open: a new object is named, and if
+the name is taken the existing one is opened instead (trying again if it
+went away in between), so two programs agree on one object by its name
+alone. `objls [-l] [-R] [PATH]` lists the namespace (mode, owner, group,
+references, type, name). `objtest` (in coretest) checks it from user
+mode, the self test `Kernel.ObjectNamespaceSelfTest` from the kernel
+(as root and as a checked user with id 1000).
 
 A reference count never wraps: one that reaches
 `ObjectReferenceCountLimit` (2^40, which only a reference leak gets to)
@@ -8983,7 +9055,20 @@ spawn; `OpenLibraryFile` for `CallLoadLibrary`): the caller's permission
 (execute; for a library read and execute; a `noexec` volume refuses
 both) and the set-user-ID owner are taken from that open file, and the
 loader loads that same file, so a symbolic link swapped in between
-cannot get another program run as the first one's owner. Exec loads
+cannot get another program run as the first one's owner. A program
+needs no read permission: `OpenProgramFile` opens it with
+`OpenForExecution`, which makes the file system check execute instead
+of read permission (the path's directories still need search), and the
+kernel reads it on its own authority, so a program of mode 0711 runs
+while its user cannot read it. The open file never reaches the program
+(programs cannot pass `OpenForExecution`: their open flags are masked
+to the Abi ones). If the new program's user may not read it
+(`ImageUnreadable`), it runs with `AT_SECURE` set, so a dynamic linker
+ignores `LD_PRELOAD` (which could load code to read it), and the
+process is marked (`TProcess.ImageUnreadable`, kept by fork, set anew
+by exec): there is no ptrace or core dump, and anything added that
+shows a process's memory or image to another program must refuse such
+a process. Exec loads
 into an address space of its own through a `TLoadTarget` (the space and
 its module list), which becomes the process's only at the switch.
 Address spaces are reference counted: the process's slot changes only
@@ -9502,6 +9587,7 @@ test copies to an unmapped user address.
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Semaphores (140-142; 143-147 reserved) | CreateSemaphore, ReleaseSemaphore, GetSemaphoreCount (see "Objects for programs that work together") |
+| Named objects and mutexes (200-207) | CreateObjectDirectory, NameObject, OpenNamedObject, ListObjectDirectory, RemoveObjectName, SetObjectSecurity (see "The object namespace"), CreateMutex, ReleaseMutex |
 | Memory | AllocateMemory, FreeMemory |
 | Virtual memory (160-165) | ReserveMemory, CommitMemory, DecommitMemory, ProtectMemory, QueryMemory, SetMemoryPolicy (see "Virtual memory: reserving, committing, protecting, mapping files") |
 | Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
@@ -10029,11 +10115,25 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
   (`CallCreateSemaphore`, 140), releases (`CallReleaseSemaphore`, 141:
   returns the count before, `ErrorOverflow` past the limit) and reads
   (`CallGetSemaphoreCount`, 142); a wait on the handle takes one,
-  alone, among others or in a wait for all. There are no named objects
-  yet, so no call opens one by name: the handle is passed on like any
-  other. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
+  alone, among others or in a wait for all. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
   `GetSemaphoreCount` (`Sys.Objects`) and a `TSemaphore` class
-  (`Sys.Semaphores`).
+  (`Sys.Semaphores`). A semaphore, like an event, mutex, section or
+  timer, can be given a name and opened by it (see "The object
+  namespace").
+- **Mutexes** (`Objects.Mutexes`, calls 206-207): mutex events
+  (`Kernel.MutexEvents`, an event kind `EventKindMutex`) a program makes
+  (`CallCreateMutex`, owned at once with `MutexInitiallyOwned`) and
+  takes by waiting on the handle, alone, among others or in a wait for
+  all: the waiting thread becomes the owner; the owner may take it again
+  (each take is a hold, `SignalCount`) and gives each back with
+  `CallReleaseMutex` (returns the holds left; `ErrorNotPermitted` for a
+  thread that does not own it). A mutex is available to a waiter when
+  free or when it is the owner (`EventIsAvailableToLocked`), so waits for
+  all work with it too. Each thread keeps a list of the mutexes it owns
+  (`TThreadControlBlock.OwnedMutexes`); a user thread that ends holding
+  any (`LeaveCurrentUserThread`) abandons them: each is freed and marked,
+  and the wait that takes it next returns its index plus `WaitAbandoned`
+  ($100), once. A mutex deleted while owned leaves its owner's list.
 - **Timers** (`Objects.Timers`): an event signaled when a time comes,
   once or periodically (`CallSetTimer`), to well under a millisecond; a
   periodic timer counts each time from when the last was due, so
@@ -11924,7 +12024,7 @@ kernel (`Processes.PosixMemoryCalls`, `Processes.MemoryMapping`,
 | 190 | `CallReturnFromSignal` (Record) | back from a handler: registers and mask |
 | 191 | `CallSuspendForSignal` (Mask) | sigsuspend |
 | 192 | `CallPendingSignals` () | sigpending |
-| 193-195 | `CallSetProcessGroup`, `CallCreateSession`, `CallGetProcessGroupOf` | setpgid, setsid, getpgid/getsid |
+| 193-195 | `CallSetProcessGroup`, `CallCreateSession`, `CallGetProcessGroupOf` | setpgid, setsid, getpgid/getsid (setpgid, and `CallCreateProcess` with a group id, join only a group of the caller's session: `ErrorNotPermitted` for another session's group, a number no process has, or a new session) |
 | 196 | `CallGetParentProcessId` () | getppid |
 
 **fork** makes a process object with the caller's credentials,

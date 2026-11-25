@@ -67,8 +67,11 @@
   whatever level the request completed at, up to DispatchLevel, so they
   may only take spin locks and queue deferred calls.
 
+  Every named device is also \Device\<name> in the object namespace
+  (Objects.Namespace), with the owner and mode it was created with.
+
   A device whose hardware went away (an unplugged disk) leaves /dev
-  with UnlistDevice; the object stays, since open handles and device
+  (and \Device) with UnlistDevice; the object stays, since open handles and device
   stacks may still name it, and its driver fails requests from then on.
 }
 unit Io.Manager;
@@ -292,6 +295,7 @@ uses
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
+  Objects.Namespace,
   Memory.KernelHeap,
   Kernel.Threads,
   Kernel.Scheduler,
@@ -355,6 +359,18 @@ begin
   ReleaseSpinLock(RegistryLock, PreviousLevel);
 end;
 
+{ Every device listed under /dev is \Device\<name> in the object
+  namespace too, owned and guarded as its /dev entry. A name the
+  namespace cannot take (one with a backslash) is only left out of it. }
+procedure NameDeviceInNamespace(Device: PDeviceObject);
+var
+  Path: array[0..DeviceNameLength + 15] of Char;
+begin
+  CopyText(@Path[0], '\Device\', SizeOf(Path));
+  CopyText(@Path[8], @Device^.Name[0], SizeOf(Path) - 8);
+  InsertObjectName(Device, @Path[0], Device^.OwnerId, Device^.GroupId, Device^.Mode, KernelNamespaceCaller);
+end;
+
 function CreateDevice(Driver: PDriverObject; Name: PChar; Kind: TDeviceKind; Mode: LongWord;
   ExtensionSize: QWord): PDeviceObject;
 begin
@@ -383,6 +399,8 @@ begin
     DereferenceObject(Result);
     Exit(nil);
   end;
+  if Name <> nil then
+    NameDeviceInNamespace(Result);
 end;
 
 procedure UnlistDevice(Device: PDeviceObject);
@@ -403,6 +421,8 @@ begin
     Devices[Index] := nil;
   DeviceTotal := Kept;
   ReleaseSpinLock(RegistryLock, PreviousLevel);
+  { It leaves \Device with /dev. }
+  DetachObjectName(Device);
 end;
 
 function FindDevice(Name: PChar): PDeviceObject;

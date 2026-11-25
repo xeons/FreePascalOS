@@ -378,6 +378,9 @@ begin
   Check('each of the group ends with its own status', (StatusOf(First) = 42) and (StatusOf(Second) = 43));
   Check('each heard the reason', WaitUntilSaid(ChildOutput, 'got service-stop', 2));
   Check('a group that does not exist', AskGroupToEnd(999999, EndReasonAsked) = -ErrorNoSuchProcess);
+  Check('no program started in a group nobody has', StartChild(['--leave'], 999999, False) = -ErrorNotPermitted);
+  Check('nor in a group while leading a new session', StartChild(['--leave'], Int64(CurrentProcessGroup), True) =
+    -ErrorNotPermitted);
   CloseChildOutput;
 end;
 
@@ -390,6 +393,8 @@ begin
   Leader := StartChild(['--take-with-child'], GroupNew, True);
   SessionId := QWord(ProcessIdOf(Leader));
   WaitUntilSaid(ChildOutput, 'ready', 2);
+  Check('no program started in a group of another session', StartChild(['--leave'], Int64(SessionId), False) =
+    -ErrorNotPermitted);
   Check('a session asked as a whole', AskSessionToEnd(SessionId, EndReasonLogOff) = 2);
   Check('its leader ends once its child did', StatusOf(Leader) = 42);
   Check('both heard the reason', WaitUntilSaid(ChildOutput, 'got log-off', 2));

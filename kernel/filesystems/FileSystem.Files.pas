@@ -99,6 +99,12 @@ const
   OpenExclusive = $08;  { with OpenCreate: fail if the file exists }
   OpenTruncate = $10;   { discard existing contents }
   OpenAppend = $20;     { every write goes to the end of the file }
+  { With OpenForReading: the caller needs execute permission on the file
+    instead of read permission, and the kernel reads it on its own
+    authority. Only for loading a program the caller may run but not
+    read (mode 0711): the open file never reaches the caller, and the
+    open call of programs never passes it (Processes.FileCalls). }
+  OpenForExecution = $10000;
 
 type
   POpenFile = ^TOpenFile;
@@ -989,7 +995,9 @@ end;
 function AccessForFlags(Flags: LongWord): LongWord;
 begin
   Result := 0;
-  if (Flags and OpenForReading) <> 0 then
+  if (Flags and OpenForExecution) <> 0 then
+    Result := Result or AccessExecute
+  else if (Flags and OpenForReading) <> 0 then
     Result := Result or AccessRead;
   if WantsWriteAccess(Flags) then
     Result := Result or AccessWrite;

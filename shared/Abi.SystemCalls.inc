@@ -716,6 +716,90 @@ const
   CallGetParentProcessId = 196;
   { 197-199 are kept for this block. }
 
+  { --- Named objects and the object namespace (200-207) -----------------
+    Objects have names in a tree of directories, written with
+    backslashes from the root: \Shared\editor\lock. The kernel's own
+    directories are \Device (the devices under /dev), \Storage (disks
+    and partitions), \Ports (the ports of CallCreatePort), \Kernel and
+    \Shared, where programs name their events, semaphores, mutexes,
+    sections and timers (mode 1777, like /tmp). Each name has an owner,
+    a group and permission bits as files do: looking a name up needs
+    search (x) permission on every directory on the way, naming or
+    removing something in a directory write (w) permission on it (in a
+    sticky directory only the name's owner, the directory's owner or
+    root may remove it), listing it read (r) permission, and opening an
+    object read and write permission on the object. A name lasts as long
+    as its object (the last handle closed, it goes) or until removed; a
+    directory a program makes lasts until removed. Names are up to
+    ObjectNameCapacity - 1 characters, no backslash; paths up to
+    MaximumObjectPathLength. Restricted from port connections
+    (RestrictPortConnections), a process can do none of this
+    (ErrorAccessDenied). }
+
+  { (PathAddress, Mode): a new directory (Mode: its permission bits and
+    ObjectModeSticky; the caller's umask applies), owned by the caller.
+    ErrorExists, ErrorNotFound (a directory on the way is missing),
+    ErrorNotDirectory, ErrorAccessDenied, ErrorNoSpace (programs have
+    made MaximumObjectDirectories). }
+  CallCreateObjectDirectory = 200;
+  { (Handle, PathAddress, Mode): gives the object behind Handle (an
+    event, semaphore, mutex, section or timer without a name) the name
+    Path, owned by the caller with Mode (umask applied). ErrorExists if
+    the name is taken (the library's create-or-open then opens it),
+    ErrorBusy if the object has a name already, ErrorUnsupported for
+    another kind of handle. }
+  CallNameObject = 201;
+  { (PathAddress, Kind): a new handle to the object named Path, which
+    must be of handle kind Kind (HandleKindEvent, ...; 0: any kind that
+    can be opened). ErrorNotFound, ErrorAccessDenied, ErrorInvalidArgument
+    (another kind), ErrorUnsupported (a directory, device or port: not
+    opened by name). }
+  CallOpenNamedObject = 202;
+  { (PathAddress, BufferAddress, Capacity, FirstIndex): the entries of a
+    directory from FirstIndex on, as up to Capacity
+    TAbiObjectDirectoryEntry records; returns how many entries the
+    directory has (which may be more than FirstIndex + Capacity). }
+  CallListObjectDirectory = 203;
+  { (PathAddress): removes a name: the object goes on without one until
+    its last handle is closed. A directory must be empty
+    (ErrorDirectoryNotEmpty) and one a program made (the kernel's stay:
+    ErrorNotPermitted). }
+  CallRemoveObjectName = 204;
+  { (PathAddress, Mode, OwnerId, GroupId; -1 for each to leave alone):
+    chmod and chown for a name. The mode by its owner or root, the owner
+    by root, the group by its owner (to a group of theirs) or root.
+    ErrorNotPermitted. }
+  CallSetObjectSecurity = 205;
+  { (Flags: MutexInitiallyOwned): a new mutex, a handle like a
+    semaphore's: signaled while no thread owns it. A wait it ends
+    (CallWaitForHandles, alone, among others or with WaitForAll) makes
+    the waiting thread its owner; its owner may take it again (each take
+    a hold). A thread that ends owning it abandons it: the next wait to
+    take it returns its index plus WaitAbandoned. }
+  CallCreateMutex = 206;
+  { (Handle): gives up one hold of the calling thread; returns the holds
+    left (0: free). ErrorNotPermitted if the thread does not own it. }
+  CallReleaseMutex = 207;
+
+
+  { The namespace (calls 200-205). }
+  { One name of a path, its terminating zero included. }
+  ObjectNameCapacity = 64;
+  MaximumObjectPathLength = 256;
+  { The directories programs may make, all together. }
+  MaximumObjectDirectories = 1024;
+  { A directory's sticky bit (Mode). }
+  ObjectModeSticky = $200;
+  { TAbiObjectDirectoryEntry.Flags. }
+  ObjectEntryDirectory = $01;
+  { It stays until its name is removed (a directory). }
+  ObjectEntryPermanent = $02;
+  { CallCreateMutex. }
+  MutexInitiallyOwned = $01;
+  { Added to the result of CallWaitForHandles when the wait took a mutex
+    its previous owner abandoned. }
+  WaitAbandoned = $100;
+
   { --- Memory and the loader (208-213) ------------------------------------ }
 
   { (StatisticsAddress): the program loader's caches as a
@@ -1256,7 +1340,8 @@ const
   RestrictFileReads = $04;
   { No processes started. }
   RestrictProcessCreation = $08;
-  { No named ports made or connected to (the display server, services). }
+  { No named ports made or connected to (the display server, services),
+    and nothing named, opened by name or listed in the object namespace. }
   RestrictPortConnections = $10;
   { No other process ended, stopped, continued or asked to end. }
   RestrictProcessControl = $20;
@@ -1459,6 +1544,7 @@ const
   { A network socket (Abi.Networking.inc). }
   HandleKindSocket = 14;
   HandleKindSemaphore = 15;
+  HandleKindMutex = 16;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -1936,6 +2022,27 @@ type
   end;
   PAbiProcessIdentity = ^TAbiProcessIdentity;
 
+  { An entry of an object directory (CallListObjectDirectory). }
+  TAbiObjectDirectoryEntry = record
+    Name: array[0..ObjectNameCapacity - 1] of Char;
+    { What the object is: Directory, Event, Semaphore, Mutex, Section,
+      Timer, Port, Device, BlockDevice, Process, Console... }
+    TypeName: array[0..31] of Char;
+    { The handle kind it opens as (CallOpenNamedObject); 0 if it is not
+      opened by name. }
+    Kind: LongWord;
+    { ObjectEntry*. }
+    Flags: LongWord;
+    OwnerId: LongWord;
+    GroupId: LongWord;
+    Mode: LongWord;
+    { For a directory: how many entries it has. }
+    EntryCount: LongWord;
+    { References the kernel holds to the object (handles among them). }
+    ReferenceCount: QWord;
+  end;
+  PAbiObjectDirectoryEntry = ^TAbiObjectDirectoryEntry;
+
   { Arguments of CallCreateProcess, passed by address. }
   TAbiProcessCreation = record
     Path: PChar;
@@ -1946,7 +2053,9 @@ type
     OutputHandle: Int64;
     ErrorHandle: Int64;
     { GroupInherit, GroupNew (a group led by the new process) or the id
-      of an existing group to join. }
+      of an existing group of the caller's session to join (as setpgid:
+      ErrorNotPermitted for another session's group, a number no
+      process has, or with ProcessNewSession). }
     GroupId: Int64;
     { nil: the caller's user and groups. Otherwise who the new process
       runs as (its real, effective and saved ids and its supplementary

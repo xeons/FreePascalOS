@@ -112,6 +112,7 @@ uses
   Kernel.Threads,
   Kernel.Scheduler,
   Kernel.Events,
+  Kernel.MutexEvents,
   Processes.AddressSpace,
   Processes.ThreadStorage,
   Processes.UserProcess;
@@ -278,6 +279,10 @@ var
 begin
   Thread := CurrentThreadObject;
   Process := Thread^.Process;
+
+  { The mutexes it still owns are abandoned: freed, and their next
+    owners told (Kernel.MutexEvents). }
+  AbandonOwnedMutexEvents(@Thread^.ControlBlock);
 
   { Unmapping the stack is safe: this thread runs on its kernel stack. }
   if Thread^.UserStackStart <> 0 then

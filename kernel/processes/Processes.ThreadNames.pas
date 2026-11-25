@@ -177,7 +177,7 @@ begin
       Exit(Failure(ErrorOutOfMemory));
   end;
 
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   if ProcessId = 0 then
     Process := CurrentProcess
   else

@@ -31,6 +31,13 @@
                               signaled while it is above zero; each
                               waiter it releases takes one. Only
                               Kernel.Semaphores makes these.
+    EventKindMutex            Owned by one thread at a time: signaled
+                              while nobody owns it, and its owner may
+                              take it again (SignalCount counts the
+                              holds), so for the owner it is always
+                              available. A waiter it releases becomes
+                              the owner. Only Kernel.MutexEvents makes
+                              and releases these.
 
   A thread may wait on several events at once and wake when any one of
   them is signaled (WaitForAnyEvent): it is linked into each one's
@@ -64,17 +71,25 @@ uses
   Kernel.Threads;
 
 type
-  TEventKind = (EventKindNotification, EventKindSynchronization, EventKindSemaphore);
+  TEventKind = (EventKindNotification, EventKindSynchronization, EventKindSemaphore, EventKindMutex);
 
+  PEvent = ^TEvent;
   TEvent = record
     Kind: TEventKind;
     IsSignaled: Boolean;
-    { A semaphore's count (IsSignaled while above zero); unused by the
-      other kinds. }
+    { A mutex whose owner ended without releasing it, until the next
+      owner learns of it (Kernel.MutexEvents). }
+    Abandoned: Boolean;
+    { A semaphore's count (IsSignaled while above zero), a mutex's holds;
+      unused by the other kinds. }
     SignalCount: LongInt;
     Waiters: TListEntry;
+    { A mutex's owner, and the next mutex that thread owns (its list
+      starts at TThreadControlBlock.OwnedMutexes); nil for the other
+      kinds. }
+    Owner: PThreadControlBlock;
+    NextOwned: PEvent;
   end;
-  PEvent = ^TEvent;
 
 procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled: Boolean);
 procedure SignalEvent(var Event: TEvent);
@@ -85,6 +100,9 @@ procedure SignalEventWithBoost(var Event: TEvent; Boost: LongWord);
   held. For Kernel.Semaphores. }
 procedure ReleaseEventWaitersLocked(var Event: TEvent; Boost: LongWord);
 procedure ResetEvent(var Event: TEvent);
+{ Whether Thread's wait on Event could take it now: it is signaled, or
+  it is a mutex Thread owns already. Dispatcher lock held. }
+function EventIsAvailableToLocked(Event: PEvent; Thread: PThreadControlBlock): Boolean;
 procedure WaitForEvent(var Event: TEvent);
 { Waits at most TimeoutMilliseconds (or InfiniteTimeout); an alertable
   wait also ends when the thread is alerted (see AlertThread). }
@@ -125,15 +143,45 @@ begin
     Event.SignalCount := 1
   else
     Event.SignalCount := 0;
+  Event.Abandoned := False;
+  Event.Owner := nil;
+  Event.NextOwned := nil;
   InitializeListHead(Event.Waiters);
+end;
+
+function EventIsAvailableToLocked(Event: PEvent; Thread: PThreadControlBlock): Boolean;
+begin
+  Result := Event^.IsSignaled or ((Event^.Kind = EventKindMutex) and (Event^.Owner = Thread));
+end;
+
+{ Thread takes the mutex Event: it becomes the owner (the mutex goes on
+  the front of its list), or holds it once more. }
+procedure TakeMutexLocked(Event: PEvent; Thread: PThreadControlBlock);
+begin
+  if Event^.Owner = Thread then
+  begin
+    { Past this many holds the count stays: a release then gives the
+      mutex up early, which only a program holding it two thousand
+      million times could see. }
+    if Event^.SignalCount < High(LongInt) then
+      Inc(Event^.SignalCount);
+    Exit;
+  end;
+  Event^.Owner := Thread;
+  Event^.SignalCount := 1;
+  Event^.IsSignaled := False;
+  Event^.NextOwned := PEvent(Thread^.OwnedMutexes);
+  Thread^.OwnedMutexes := Event;
 end;
 
 { Takes the signal a released waiter used: a synchronization event
   resets itself, a semaphore gives one of its count. (A semaphore listed
   twice in one wait for all is taken once if it holds only one.) }
-procedure ConsumeSignalLocked(Event: PEvent);
+procedure ConsumeSignalLocked(Event: PEvent; Thread: PThreadControlBlock);
 begin
   case Event^.Kind of
+    EventKindMutex:
+      TakeMutexLocked(Event, Thread);
     EventKindSynchronization:
       Event^.IsSignaled := False;
     EventKindSemaphore:
@@ -145,12 +193,12 @@ begin
   end;
 end;
 
-function AllEventsSignaledLocked(Events: PPEvent; Count: LongInt): Boolean;
+function AllEventsSignaledLocked(Events: PPEvent; Count: LongInt; Thread: PThreadControlBlock): Boolean;
 var
   Position: LongInt;
 begin
   for Position := 0 to Count - 1 do
-    if not Events[Position]^.IsSignaled then
+    if not EventIsAvailableToLocked(Events[Position], Thread) then
       Exit(False);
   Result := True;
 end;
@@ -161,7 +209,7 @@ var
   Position: LongInt;
 begin
   for Position := 0 to Thread^.WaitBlockCount - 1 do
-    if not PEvent(Thread^.WaitBlocks[Position].Event)^.IsSignaled then
+    if not EventIsAvailableToLocked(PEvent(Thread^.WaitBlocks[Position].Event), Thread) then
       Exit(False);
   Result := True;
 end;
@@ -186,12 +234,12 @@ begin
   if Thread^.WaitsForAll then
   begin
     for Position := 0 to Thread^.WaitBlockCount - 1 do
-      ConsumeSignalLocked(PEvent(Thread^.WaitBlocks[Position].Event));
+      ConsumeSignalLocked(PEvent(Thread^.WaitBlocks[Position].Event), Thread);
     Thread^.SatisfiedWaitIndex := 0;
   end
   else
   begin
-    ConsumeSignalLocked(PEvent(Block^.Event));
+    ConsumeSignalLocked(PEvent(Block^.Event), Thread);
     Thread^.SatisfiedWaitIndex := Block^.Index;
   end;
   { Takes every block of the thread off its event, this one included. }
@@ -262,24 +310,24 @@ end;
 { Ends a wait at once if it is already satisfied: for any event, the
   first one signaled; for all, if every one is. }
 function TrySatisfyAtOnceLocked(Events: PPEvent; Count: LongInt; WaitForAll: Boolean;
-  out Index: LongInt): Boolean;
+  Thread: PThreadControlBlock; out Index: LongInt): Boolean;
 var
   Position: LongInt;
 begin
   Index := -1;
   if WaitForAll then
   begin
-    if not AllEventsSignaledLocked(Events, Count) then
+    if not AllEventsSignaledLocked(Events, Count, Thread) then
       Exit(False);
     for Position := 0 to Count - 1 do
-      ConsumeSignalLocked(Events[Position]);
+      ConsumeSignalLocked(Events[Position], Thread);
     Index := 0;
     Exit(True);
   end;
   for Position := 0 to Count - 1 do
-    if Events[Position]^.IsSignaled then
+    if EventIsAvailableToLocked(Events[Position], Thread) then
     begin
-      ConsumeSignalLocked(Events[Position]);
+      ConsumeSignalLocked(Events[Position], Thread);
       Index := Position;
       Exit(True);
     end;
@@ -296,12 +344,12 @@ var
   Position: LongInt;
 begin
   PreviousLevel := AcquireDispatcherLock;
-  if TrySatisfyAtOnceLocked(Events, Count, WaitForAll, Index) then
+  Thread := CurrentThread;
+  if TrySatisfyAtOnceLocked(Events, Count, WaitForAll, Thread, Index) then
   begin
     ReleaseDispatcherLock(PreviousLevel);
     Exit(WaitSignaled);
   end;
-  Thread := CurrentThread;
   for Position := 0 to Count - 1 do
   begin
     Blocks[Position].Thread := Thread;
