@@ -75,6 +75,7 @@ uses
   Kernel.SynchronizationSelfTest,
   Kernel.SchedulerLatencySelfTest,
   Kernel.ClockSelfTest,
+  Kernel.BoundedRequestSelfTest,
   Kernel.HeapCheckTest,
   Kernel.ProtectionSelfTest,
   Kernel.ProtectionFaultTest,
@@ -116,6 +117,7 @@ uses
   Io.Console,
   Io.TerminalSignals,
   Io.Manager,
+  Io.BoundedRequests,
   Io.DeviceFiles,
   Kernel.IoSelfTest,
   Kernel.WatchdogSelfTest,
@@ -239,6 +241,7 @@ begin
   InitializeTerminalSignals;
   InitializeConsole;
   InitializeIoManager;
+  InitializeBoundedRequests;
   InitializeDeviceFiles;
   InitializeMemoryDevices;
   InitializeConsoleDevice;
@@ -375,6 +378,7 @@ begin
   RunProtectionSelfTests;
   RunProtectionFaultTest;
   RunIoSelfTests;
+  RunBoundedRequestSelfTests;
   RunWatchdogSelfTest;
   RunNetworkSelfTests;
   RunNetworkHardeningSelfTests;

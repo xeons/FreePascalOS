@@ -431,19 +431,31 @@ end;
 
 { Waits until everything Stream wrote has been played. }
 procedure DrainStream(Output: PAudioOutput; Stream: PAudioStream);
+const
+  { A device that plays nothing for this many waits of a second has
+    stopped: closing does not wait for it any longer. }
+  StalledWaitLimit = 3;
 var
   State: POutputState;
+  PlayedBefore: QWord;
+  StalledWaits: Integer;
 begin
   State := StateOf(Output);
   SignalEvent(MixerWake);
+  StalledWaits := 0;
   repeat
     ResetEvent(State^.PeriodDone);
     if (StreamQueuedBytes(Stream) = 0) and
        (not State^.IsPlaying or (State^.Played > Stream^.LastSoundPeriod)) then
       Exit;
+    PlayedBefore := State^.Played;
     if WaitForEventWithOptions(State^.PeriodDone, 1000, True) = WaitAlerted then
       Exit;
-  until False;
+    if State^.Played = PlayedBefore then
+      Inc(StalledWaits)
+    else
+      StalledWaits := 0;
+  until StalledWaits >= StalledWaitLimit;
 end;
 
 function StreamOf(var Request: TIoRequest): PAudioStream;

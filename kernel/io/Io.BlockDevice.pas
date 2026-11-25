@@ -35,7 +35,10 @@
   the partition start and passed to the parent device.
 
   ReadBlocks and WriteBlocks wait, so they must be called at
-  PassiveLevel.
+  PassiveLevel. The waits are bounded (Io.BoundedRequests): a thread
+  that must end gives a request its driver never completes up after
+  RequestGraceMilliseconds, and the transfer fails as on a disk
+  error.
 
   Every request passes a gate counting those in flight: suspending to
   RAM closes it (new requests wait for resume) once the last one is
@@ -98,6 +101,8 @@ type
     Buffer: Pointer;
     Request: TIoRequest;
     Completed: TEvent;
+    { Its bounded request while in flight (Io.BoundedRequests). }
+    Bounded: Pointer;
   end;
   PBlockWrite = ^TBlockWrite;
 
@@ -167,7 +172,9 @@ uses
   Runtime.Text,
   Abi.SystemCalls,
   Kernel.Mutex,
+  Kernel.Clock,
   Io.PowerManagement,
+  Io.BoundedRequests,
   Kernel.Panic,
   Objects.Manager,
   Debug.Output;
@@ -340,7 +347,7 @@ begin
   Request.Length := QWord(BlockCount) * Device^.BlockSize;
   Request.Offset := FirstBlock * Device^.BlockSize;
   EnterGate;
-  Result := (CallDriverAndWait(Device^.StorageDevice, Request, False) = ErrorNone) and
+  Result := (CallDriverAndWaitBounded(Device^.StorageDevice, Request, False) = ErrorNone) and
     (QWord(Request.Information) = Request.Length);
   LeaveGate;
 end;
@@ -372,6 +379,7 @@ end;
 
 function WriteBlocksTogether(Device: PBlockDevice; Writes: PBlockWrite; Count: Integer): Boolean;
 var
+  GiveUpAt: QWord;
   Disk: PBlockDevice;
   Shift: QWord;
   Index: Integer;
@@ -391,6 +399,8 @@ begin
     Disk := Disk^.Parent;
   end;
   EnterGate;
+  { All in flight at once, each a bounded request (or, without memory
+    for one, sent and waited for on its own as before). }
   for Index := 0 to Count - 1 do
   begin
     Write := @Writes[Index];
@@ -400,14 +410,17 @@ begin
     Write^.Request.Buffer := Write^.Buffer;
     Write^.Request.Length := QWord(Write^.BlockCount) * Disk^.BlockSize;
     Write^.Request.Offset := (Shift + Write^.FirstBlock) * Disk^.BlockSize;
-    Write^.Request.CompletionEvent := @Write^.Completed;
-    CallDriver(Disk^.StorageDevice, Write^.Request);
+    Write^.Bounded := StartBoundedRequest(Disk^.StorageDevice, Write^.Request);
   end;
   Result := True;
+  GiveUpAt := NeverDue;
   for Index := 0 to Count - 1 do
   begin
     Write := @Writes[Index];
-    WaitForEvent(Write^.Completed);
+    if Write^.Bounded <> nil then
+      FinishBoundedRequest(Write^.Bounded, Write^.Request, False, GiveUpAt)
+    else
+      CallDriverAndWait(Disk^.StorageDevice, Write^.Request, False);
     if (Write^.Request.Status <> ErrorNone) or (QWord(Write^.Request.Information) <> Write^.Request.Length) then
       Result := False;
   end;
@@ -428,7 +441,7 @@ begin
   FillMemory(@Request, SizeOf(Request), 0);
   Request.Operation := IoFunctionFlush;
   EnterGate;
-  Status := CallDriverAndWait(Device^.StorageDevice, Request, False);
+  Status := CallDriverAndWaitBounded(Device^.StorageDevice, Request, False);
   LeaveGate;
   Result := (Status = ErrorNone) or (Status = ErrorUnsupported);
 end;
@@ -465,7 +478,7 @@ begin
     Request.Offset := FirstBlock * Device^.BlockSize;
     Request.Length := Piece * Device^.BlockSize;
     EnterGate;
-    if CallDriverAndWait(Device^.StorageDevice, Request, False) <> ErrorNone then
+    if CallDriverAndWaitBounded(Device^.StorageDevice, Request, False) <> ErrorNone then
       Result := False;
     LeaveGate;
     if not Result then
