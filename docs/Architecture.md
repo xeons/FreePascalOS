@@ -2075,7 +2075,8 @@ repeat (`Drivers.KeyboardRepeat`: a delay of 250 to 1000 ms and 2 to
 one little command machine: one command of two bytes at a time, each
 byte answered by an interrupt, a change that comes meanwhile waiting for
 it (`Ps2RunInTurnWithInterrupts` starts a command from a system call in
-turn with the interrupt). USB keyboards send no repeats yet. On the
+turn with the interrupt). USB keyboards send no repeats: their driver
+repeats the held key with a timer, from the same settings (below). On the
 screen the layout is the user's: the display server (root) changes it
 for any program (`RequestSetKeyboardSettings`, see below), as it does
 the mouse's settings; `keyboardsettings [-r] [-d DELAY] [-s RATE]
@@ -2138,10 +2139,34 @@ handler called from the xHCI event processing, which queues the next
 read). Each 8-byte report is compared with the one before: modifier bits
 and the usage codes of up to six held keys give the keys pressed and
 released, which are mapped onto the PS/2 scan codes. Each keyboard is an
-input device `usbkeyboardN` that the console reads. Keys do not repeat
-while held, and the lights stay off. The input test types on a QEMU USB
-keyboard, then unplugs it and types on the PS/2 keyboard; the kernel
-logs how many keys each kind delivered, and the test checks both.
+input device `usbkeyboardN` that the console reads.
+- **Key repeat.** A USB keyboard reports only changes (SET_IDLE 0), so
+  `Drivers.UsbKeyboard` repeats the newest key pressed itself (not a
+  modifier nor a lock key): a kernel timer presses it again after the
+  key repeat delay and then at the repeat rate (`Drivers.KeyboardRepeat`,
+  read at each repeat, so `keyboardsettings` takes effect at once) until
+  it is released, another key is pressed, the keyboard sleeps or is
+  unplugged (a removal handler stops it). Reports and the timer's call
+  both run at dispatch level, perhaps on two processors: a spin lock per
+  keyboard keeps them apart, and the call checks the timer was not set
+  again meanwhile (cancelling cannot take back a queued call).
+- **Lock lights.** A lock key that changes the locks notes the lights
+  wanted (`Drivers.UsbKeyboardLights`) and wakes the "UsbLights" thread,
+  which sends them with SET_REPORT (output report) through the HID
+  driver's routine: the boot protocol's byte (Num, Caps, Scroll Lock in
+  bits 0-2) or, in the report protocol, the output report holding the
+  LED page's usages (`Drivers.HidReports` lays output items out like
+  input ones; `BuildLightsReport`); a keyboard without one gets none.
+  Each change is a log line (`[input] usbkeyboard0 lights: Num Lock Caps
+  Lock`); after waking from suspend the lights are sent again.
+
+The input test types on a QEMU USB keyboard (a key held 1.5 s must
+repeat 5 to 20 times; Caps Lock capitalizes and lights up), then
+unplugs it and types on the PS/2 keyboard; the kernel logs how many
+keys each kind delivered (and the USB repeats and lights reports), and
+the test checks both. `make usb-descriptor-test` checks the lights
+reports of the boot keyboard, a keyboard with report ids, one without
+lights, and the boot protocol's.
 
 Input events (Io.InputEvents) are the input for a graphical program:
 every keyboard and pointing device as one stream of `TAbiInputEvent`

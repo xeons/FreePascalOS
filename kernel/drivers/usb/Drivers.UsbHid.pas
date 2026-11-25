@@ -36,6 +36,11 @@
   - a boot mouse (03/01/02) whose descriptor is of no use: the boot
     protocol's 3-byte reports.
 
+  A keyboard's lock lights go out as its output report (SET_REPORT,
+  report type output): the boot protocol's one byte, or the report the
+  descriptor gives the LED page's usages; a keyboard in the report
+  protocol whose descriptor has none gets no lights.
+
   A wireless keyboard and mouse receiver usually has a boot keyboard
   interface and a mouse interface (a boot mouse, or reports with ids:
   the mouse, consumer control, system control); each is a HID interface
@@ -62,12 +67,16 @@ uses
   Drivers.UsbInterfaces,
   Drivers.HidReports,
   Drivers.UsbKeyboard,
+  Drivers.UsbKeyboardLights,
   Drivers.UsbPointer,
   Debug.Output;
 
 const
   RequestGetDescriptor = 6;
+  RequestSetReport = $09;
   RequestSetIdle = $0A;
+  ReportTypeOutput = 2;
+  MaximumLightsReport = 64;
   RequestSetProtocol = $0B;
   StandardFromInterface = $81;
   ClassRequestToInterface = $21;
@@ -85,6 +94,8 @@ type
     Description: THidDescription;
     Keyboard: PUsbKeyboard;
     Pointer: PUsbPointer;
+    HasLights: Boolean;
+    Lights: THidLightsLayout;
   end;
 
 { --- Reports ------------------------------------------------------------------ }
@@ -122,6 +133,40 @@ begin
   end;
 end;
 
+{ --- Lights ------------------------------------------------------------------- }
+
+{ The keyboard's lights routine (Drivers.UsbKeyboardLights' thread). }
+function SendHidLights(Context: Pointer; Lights: Byte): Boolean;
+var
+  Hid: PHidInterface;
+  Report: array[0..MaximumLightsReport - 1] of Byte;
+  Length: LongWord;
+begin
+  Hid := PHidInterface(Context);
+  Length := BuildLightsReport(Hid^.Lights, Lights, @Report[0], SizeOf(Report));
+  Result := (Length > 0) and UsbControlTransfer(Hid^.Usb, ClassRequestToInterface, RequestSetReport,
+    (ReportTypeOutput shl 8) or Hid^.Lights.ReportId, Hid^.InterfaceNumber, @Report[0], Length);
+end;
+
+{ Where the keyboard's lights are, if it has any. }
+procedure ChooseLights(Hid: PHidInterface);
+begin
+  if Hid^.Keyboard = nil then
+    Exit;
+  if Hid^.Mode = HidModeBootKeyboard then
+  begin
+    BootLightsLayout(Hid^.Lights);
+    Hid^.HasLights := True;
+  end
+  else if Hid^.Description.HasLights then
+  begin
+    Hid^.Lights := Hid^.Description.LightsLayout;
+    Hid^.HasLights := True;
+  end;
+  if Hid^.HasLights then
+    SetUsbKeyboardLightsRoutine(Hid^.Keyboard, @SendHidLights, Hid);
+end;
+
 { --- Setting the interface up -------------------------------------------------- }
 
 { The protocol the mode needs (boot interfaces only have the choice),
@@ -153,6 +198,16 @@ begin
   if Hid^.Pointer <> nil then
     ResetUsbPointer(Hid^.Pointer);
   ChooseProtocol(Hid);
+end;
+
+{ Unplugged: a held key must not go on repeating. }
+procedure RemoveHidInterface(Usb: PUsbDevice; Context: Pointer);
+var
+  Hid: PHidInterface;
+begin
+  Hid := PHidInterface(Context);
+  if Hid^.Keyboard <> nil then
+    StopUsbKeyboard(Hid^.Keyboard);
 end;
 
 { The interface's report descriptor, parsed. }
@@ -308,7 +363,9 @@ begin
   end;
   Result := True;
   ChooseProtocol(Hid);
+  ChooseLights(Hid);
   UsbAddResumeHandler(Usb, @ResumeHidInterface, Hid);
+  UsbAddRemovalHandler(Usb, @RemoveHidInterface, Hid);
   WriteHidSummary(Hid);
   if not UsbStartInterruptIn(Usb, Endpoint.Address, Endpoint.MaximumPacket, Endpoint.Interval, @HandleReport, Hid) then
     WriteNotTaken(Usb, UsbInterface^.Number, 'its interrupt IN endpoint could not be started');

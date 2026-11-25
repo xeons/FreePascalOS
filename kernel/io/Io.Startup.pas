@@ -92,6 +92,7 @@ uses
   Drivers.Xhci,
   Drivers.UsbStorage,
   Drivers.UsbKeyboard,
+  Drivers.UsbKeyboardLights,
   Drivers.HdAudio,
   Drivers.Ac97,
   Drivers.Bcm2712Dma,
@@ -292,7 +293,11 @@ begin
   DebugWriteDecimal(Ps2KeyboardKeyCount);
   DebugWrite(', USB ');
   DebugWriteDecimal(UsbKeyboardKeyCount);
-  DebugWriteLine('');
+  DebugWrite(' (repeated ');
+  DebugWriteDecimal(UsbKeyboardRepeatCount);
+  DebugWrite(', lights reports ');
+  DebugWriteDecimal(LightsReportsSent);
+  DebugWriteLine(')');
   DebugEndMessage;
 end;
 

@@ -239,7 +239,8 @@ how the existing pieces fit together.
 - [x] Dead keys for de/fr accents; Latin-1 and the euro sign in the framebuffer
       font, UTF-8 and escape sequences in the framebuffer console
 - [x] USB keyboards (HID boot protocol on the xHCI driver)
-- [ ] USB keyboards: key repeat, lock lights
+- [x] USB keyboards: key repeat (a timer, the kernel's repeat settings), lock
+      lights (SET_REPORT output reports, the "UsbLights" thread)
 - [x] Sound: audio framework (/dev/audio, periods ring, formats, volume, drain),
       Intel HD Audio driver, libaudio, tone, play and mixer
 - [x] Sound: streams mixed in the kernel (any number of programs), per-stream and

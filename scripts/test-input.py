@@ -268,6 +268,28 @@ def type_on_keyboard(text):
 type_on_keyboard('echo Usb-Keyboard')
 press('ret')
 checks.append(('usb keyboard', wait_for('\nUsb-Keyboard', 10)))
+# A key held for 1.5 s repeats (after 500 ms, 11 a second: about ten);
+# Caps Lock on the USB keyboard capitalizes and sets its lights.
+type_on_keyboard('echo rep')
+monitor.sendall(b'sendkey x 1500\n')
+time.sleep(1.8)
+type_on_keyboard('-end')
+press('ret')
+repeated = None
+for attempt in range(50):
+    collect(0.2)
+    repeated = re.search(rb'\nrep(x+)-end', bytes(received))
+    if repeated:
+        break
+checks.append(('usb keyboard: a held key repeats', repeated is not None and 5 <= len(repeated.group(1)) <= 20))
+type_on_keyboard('echo ')
+press('caps_lock')
+type_on_keyboard('usb')
+press('caps_lock')
+type_on_keyboard('-locks')
+press('ret')
+checks.append(('usb keyboard: caps lock', wait_for('\nUSB-locks', 10)))
+checks.append(('usb keyboard: lock lights', b'usbkeyboard0 lights: Num Lock Caps Lock' in received))
 monitor.sendall(b'device_del usbkbd\n')
 time.sleep(1)
 

@@ -371,6 +371,39 @@ begin
   CheckNumber(State.Buttons, 1 shl 2, 'the boot layout''s buttons');
 end;
 
+{ The lock lights' output reports: the boot keyboard's (no ids), the
+  combined interface's (report 1), and the boot protocol's own. }
+procedure TestKeyboardLights;
+var
+  Description: THidDescription;
+  Layout: THidLightsLayout;
+  Report: array[0..7] of Byte;
+  Length: LongWord;
+begin
+  ParseHidDescription(@KeyboardReportDescriptor[0], System.Length(KeyboardReportDescriptor), Description);
+  Check(Description.HasLights, 'the boot keyboard has lights');
+  CheckNumber(Description.LightsLayout.ReportBytes, 1, 'its lights report length');
+  CheckNumber(Description.LightsLayout.CapsLock.BitOffset, 1, 'its Caps Lock bit');
+  Length := BuildLightsReport(Description.LightsLayout, HidLightCapsLock or HidLightScrollLock, @Report[0],
+    SizeOf(Report));
+  CheckNumber(Length, 1, 'the lights report''s length');
+  CheckNumber(Report[0], $06, 'Caps Lock and Scroll Lock as bits');
+  ParseHidDescription(@CombinedReportDescriptor[0], System.Length(CombinedReportDescriptor), Description);
+  Check(Description.HasLights and Description.LightsLayout.UsesReportIds, 'the combined keyboard has lights by id');
+  CheckNumber(Description.LightsLayout.ReportId, 1, 'its lights report id');
+  Length := BuildLightsReport(Description.LightsLayout, HidLightNumLock, @Report[0], SizeOf(Report));
+  CheckNumber(Length, 2, 'the id and the lights byte');
+  Check((Report[0] = 1) and (Report[1] = $01), 'report 1 with Num Lock');
+  CheckNumber(BuildLightsReport(Description.LightsLayout, HidLightNumLock, @Report[0], 1), 0,
+    'a buffer too small for the report');
+  ParseHidDescription(@BitmapKeyboardReportDescriptor[0], System.Length(BitmapKeyboardReportDescriptor), Description);
+  Check(not Description.HasLights, 'the bitmap keyboard has no lights');
+  BootLightsLayout(Layout);
+  Length := BuildLightsReport(Layout, HidLightNumLock or HidLightCapsLock or HidLightScrollLock, @Report[0],
+    SizeOf(Report));
+  Check((Length = 1) and (Report[0] = $07), 'the boot protocol''s lights byte');
+end;
+
 procedure TestModes;
 var
   Keyboard: THidDescription;
@@ -400,6 +433,7 @@ begin
   TestCombinedInterface;
   TestBitmapKeyboard;
   TestBootMouse;
+  TestKeyboardLights;
   TestModes;
   TestHostileConfigurations;
   TestHostileReportDescriptors;

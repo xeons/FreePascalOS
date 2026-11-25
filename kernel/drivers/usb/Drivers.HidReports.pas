@@ -40,6 +40,12 @@
   protocol's 8 bytes (ReadKeyboardAsBoot), so one keyboard driver
   handles both protocols.
 
+  Output items are laid out the same way in output reports of their
+  own: the one holding the LED page's Num Lock, Caps Lock and Scroll
+  Lock usages is the keyboard's lights report, which BuildLightsReport
+  fills for a SET_REPORT request (the boot protocol's is one byte:
+  Num Lock, Caps Lock, Scroll Lock in bits 0-2).
+
   Plain Pascal with no kernel dependencies (the host test
   tools/UsbDescriptorTest uses it too).
 }
@@ -70,6 +76,10 @@ const
   { Entries of a key array read: the boot report holds six keys, and a
     report is read at dispatch level, so a huge array is cut short. }
   MaximumKeyArrayEntries = 256;
+  { The lights BuildLightsReport takes. }
+  HidLightNumLock = $01;
+  HidLightCapsLock = $02;
+  HidLightScrollLock = $04;
 
 type
   THidField = record
@@ -111,12 +121,25 @@ type
     KeyBitmapUsageMinimum: LongWord;
   end;
 
+  { Where a keyboard's lock lights are in its output report. }
+  THidLightsLayout = record
+    UsesReportIds: Boolean;
+    ReportId: Byte;
+    { The report's length without its id byte. }
+    ReportBytes: LongWord;
+    NumLock: THidField;
+    CapsLock: THidField;
+    ScrollLock: THidField;
+  end;
+
   THidDescription = record
     UsesReportIds: Boolean;
     HasPointer: Boolean;
     PointerLayout: THidPointerLayout;
     HasKeyboard: Boolean;
     KeyboardLayout: THidKeyboardLayout;
+    HasLights: Boolean;
+    LightsLayout: THidLightsLayout;
     { Every input report's id (0 without ids), for the log. }
     ReportCount: Integer;
     ReportIds: array[0..MaximumHidReports - 1] of Byte;
@@ -167,6 +190,14 @@ function ReadKeyboardAsBoot(const Layout: THidKeyboardLayout; Report: PByte; Rep
 { The boot mouse report's layout: buttons 1-3 in the first byte, X and
   Y relative in the next two. }
 procedure BootMouseLayout(out Layout: THidPointerLayout);
+{ The boot protocol's lights report: Num Lock, Caps Lock and Scroll
+  Lock in bits 0-2 of one byte. }
+procedure BootLightsLayout(out Layout: THidLightsLayout);
+{ The lights report for Lights (HidLight* bits) in Buffer, its id byte
+  first if the layout uses ids; returns its length (0 if Capacity is too
+  small). }
+function BuildLightsReport(const Layout: THidLightsLayout; Lights: Byte; Buffer: PByte;
+  Capacity: LongWord): LongWord;
 { How to drive a HID interface of this subclass and protocol whose
   report descriptor was parsed (Parsed) into Description: a boot
   keyboard in the boot protocol unless its descriptor puts a pointer
@@ -187,6 +218,7 @@ const
   LongItemPrefix = $FE;
 
   MainInput = $8;
+  MainOutput = $9;
   GlobalUsagePage = $0;
   GlobalLogicalMinimum = $1;
   GlobalLogicalMaximum = $2;
@@ -206,6 +238,10 @@ const
   PageGenericDesktop = $01;
   PageKeyboard = $07;
   PageButton = $09;
+  PageLeds = $08;
+  UsageLedNumLock = $01;
+  UsageLedCapsLock = $02;
+  UsageLedScrollLock = $03;
   UsageX = $30;
   UsageY = $31;
   UsageWheel = $38;
@@ -257,6 +293,21 @@ type
     Count: Integer;
   end;
 
+  { Output reports: only their lights are of use. }
+  POutputFields = ^TOutputFields;
+  TOutputFields = record
+    Id: Byte;
+    BitOffset: LongWord;
+    TooLong: Boolean;
+    HasLights: Boolean;
+    Lights: THidLightsLayout;
+  end;
+
+  TOutputTable = record
+    Reports: array[0..MaximumHidReports - 1] of TOutputFields;
+    Count: Integer;
+  end;
+
 { The report with Id, added if new; nil if the table is full. }
 function ReportWithId(var Table: TReportTable; Id: Byte): PReportFields;
 var
@@ -268,6 +319,21 @@ begin
   if Table.Count = MaximumHidReports then
     Exit(nil);
   ZeroMemory(@Table.Reports[Table.Count], SizeOf(TReportFields));
+  Table.Reports[Table.Count].Id := Id;
+  Result := @Table.Reports[Table.Count];
+  Inc(Table.Count);
+end;
+
+function OutputWithId(var Table: TOutputTable; Id: Byte): POutputFields;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Table.Count - 1 do
+    if Table.Reports[Index].Id = Id then
+      Exit(@Table.Reports[Index]);
+  if Table.Count = MaximumHidReports then
+    Exit(nil);
+  ZeroMemory(@Table.Reports[Table.Count], SizeOf(TOutputFields));
   Table.Reports[Table.Count].Id := Id;
   Result := @Table.Reports[Table.Count];
   Inc(Table.Count);
@@ -436,6 +502,45 @@ begin
   Report^.BitOffset := LongWord(ItemEnd);
 end;
 
+{ An Output item: its fields laid out in its output report, the lock
+  lights noted (one-bit variables on the LED page). }
+procedure AddOutputItem(var Table: TOutputTable; const Globals: TGlobals; const Locals: TLocals; Flags: LongWord);
+var
+  Report: POutputFields;
+  Index: LongWord;
+  Usage: LongWord;
+  Field: THidField;
+  ItemEnd: QWord;
+begin
+  Report := OutputWithId(Table, Globals.ReportId);
+  if (Report = nil) or Report^.TooLong or (Globals.ReportCount = 0) or (Globals.ReportSize = 0) then
+    Exit;
+  ItemEnd := QWord(Report^.BitOffset) + QWord(Globals.ReportCount) * Globals.ReportSize;
+  if ItemEnd > MaximumHidReportBits then
+  begin
+    Report^.TooLong := True;
+    Report^.HasLights := False;
+    Exit;
+  end;
+  if (Globals.ReportSize = 1) and ((Flags and InputConstant) = 0) and ((Flags and InputVariable) <> 0) then
+    for Index := 0 to Globals.ReportCount - 1 do
+    begin
+      Usage := UsageAt(Locals, Index);
+      if (Usage shr 16) <> PageLeds then
+        Continue;
+      FillField(Field, Globals, Report^.BitOffset + Index, Flags);
+      case Usage and $FFFF of
+        UsageLedNumLock: Report^.Lights.NumLock := Field;
+        UsageLedCapsLock: Report^.Lights.CapsLock := Field;
+        UsageLedScrollLock: Report^.Lights.ScrollLock := Field;
+      else
+        Continue;
+      end;
+      Report^.HasLights := True;
+    end;
+  Report^.BitOffset := LongWord(ItemEnd);
+end;
+
 procedure HandleGlobalItem(Tag: Integer; Unsigned: LongWord; Signed: LongInt; var Globals: TGlobals;
   var Stack: array of TGlobals; var Depth: Integer; var UsesIds: Boolean);
 begin
@@ -492,6 +597,25 @@ begin
 end;
 
 { The pointer's and the keyboard's reports from the table. }
+procedure PickLights(var Outputs: TOutputTable; UsesIds: Boolean; var Description: THidDescription);
+var
+  Index: Integer;
+  Report: POutputFields;
+begin
+  for Index := 0 to Outputs.Count - 1 do
+  begin
+    Report := @Outputs.Reports[Index];
+    if Report^.TooLong or not Report^.HasLights then
+      Continue;
+    Description.HasLights := True;
+    Description.LightsLayout := Report^.Lights;
+    Description.LightsLayout.UsesReportIds := UsesIds;
+    Description.LightsLayout.ReportId := Report^.Id;
+    Description.LightsLayout.ReportBytes := (Report^.BitOffset + 7) div 8;
+    Exit;
+  end;
+end;
+
 procedure PickReports(var Table: TReportTable; UsesIds: Boolean; var Description: THidDescription);
 var
   Index: Integer;
@@ -530,6 +654,7 @@ var
   Depth: Integer;
   Locals: TLocals;
   Table: TReportTable;
+  Outputs: TOutputTable;
   Position: LongWord;
   Prefix: Byte;
   Size: Integer;
@@ -542,6 +667,7 @@ begin
   ZeroMemory(@Globals, SizeOf(Globals));
   ZeroMemory(@Locals, SizeOf(Locals));
   Table.Count := 0;
+  Outputs.Count := 0;
   Depth := 0;
   UsesIds := False;
   Position := 0;
@@ -571,7 +697,9 @@ begin
       ItemTypeMain:
         begin
           if Tag = MainInput then
-            AddInputItem(Table, Globals, Locals, Unsigned);
+            AddInputItem(Table, Globals, Locals, Unsigned)
+          else if Tag = MainOutput then
+            AddOutputItem(Outputs, Globals, Locals, Unsigned);
           { Local items end with every main item. }
           Locals.UsageCount := 0;
           Locals.HasUsageRange := False;
@@ -580,6 +708,7 @@ begin
     Position := Position + 1 + LongWord(Size);
   end;
   PickReports(Table, UsesIds, Description);
+  PickLights(Outputs, UsesIds, Description);
   Result := Description.HasPointer or Description.HasKeyboard;
 end;
 
@@ -761,6 +890,55 @@ begin
   Layout.X.LogicalMaximum := 127;
   Layout.Y := Layout.X;
   Layout.Y.BitOffset := 16;
+end;
+
+procedure BootLightsLayout(out Layout: THidLightsLayout);
+
+  procedure SetBit(var Field: THidField; Bit: LongWord);
+  begin
+    Field.Present := True;
+    Field.BitOffset := Bit;
+    Field.BitSize := 1;
+    Field.LogicalMaximum := 1;
+  end;
+
+begin
+  ZeroMemory(@Layout, SizeOf(Layout));
+  Layout.ReportBytes := 1;
+  SetBit(Layout.NumLock, 0);
+  SetBit(Layout.CapsLock, 1);
+  SetBit(Layout.ScrollLock, 2);
+end;
+
+{ Sets a one-bit field of a report (after its id byte, if any). }
+procedure SetReportBit(UsesReportIds: Boolean; const Field: THidField; On: Boolean; Report: PByte;
+  ReportLength: LongWord);
+var
+  Bit: QWord;
+begin
+  if not Field.Present or not On then
+    Exit;
+  Bit := Field.BitOffset;
+  if UsesReportIds then
+    Bit := Bit + 8;
+  if Bit div 8 < ReportLength then
+    Report[Bit div 8] := Report[Bit div 8] or (1 shl (Bit mod 8));
+end;
+
+function BuildLightsReport(const Layout: THidLightsLayout; Lights: Byte; Buffer: PByte;
+  Capacity: LongWord): LongWord;
+begin
+  Result := Layout.ReportBytes;
+  if Layout.UsesReportIds then
+    Inc(Result);
+  if (Result = 0) or (Result > Capacity) then
+    Exit(0);
+  ZeroMemory(Buffer, Result);
+  if Layout.UsesReportIds then
+    Buffer[0] := Layout.ReportId;
+  SetReportBit(Layout.UsesReportIds, Layout.NumLock, (Lights and HidLightNumLock) <> 0, Buffer, Result);
+  SetReportBit(Layout.UsesReportIds, Layout.CapsLock, (Lights and HidLightCapsLock) <> 0, Buffer, Result);
+  SetReportBit(Layout.UsesReportIds, Layout.ScrollLock, (Lights and HidLightScrollLock) <> 0, Buffer, Result);
 end;
 
 function ChooseHidMode(Subclass, Protocol: Byte; Parsed: Boolean; const Description: THidDescription): THidInterfaceMode;

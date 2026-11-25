@@ -23,7 +23,8 @@
   PS/2 keyboards repeat by themselves (their "typematic" setting): the
   driver registers a routine here and is told whenever the settings
   change, and gives the keyboard the nearest it can do. USB keyboards
-  send no repeats (their keys do not repeat yet). The settings are the
+  send no repeats: their driver repeats the held key itself with a
+  timer, reading the settings each time (Drivers.UsbKeyboard). The settings are the
   kernel's for every keyboard, changed with CallSetKeyboardSettings.
 }
 unit Drivers.KeyboardRepeat;
