@@ -830,14 +830,15 @@ FONT_FIXTURES := build/tools/font-fixtures
 FONT_FIXTURES_STAMP := $(FONT_FIXTURES)/.made
 FONT_FIXTURE_SCRIPTS := tools/FontTest/make-font-fixtures.py tools/FontTest/freetypereference.py
 FONT_TEST_SOURCES := $(wildcard tools/FontTest/*.pas) $(wildcard userland/lib/drawing/*.pas) \
-	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas))
+	$(filter-out %/Font.Files.pas,$(wildcard userland/lib/font/*.pas)) userland/lib/web/Web.Text.Woff2.pas \
+	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas)
 
 $(FONT_TEST): $(FONT_TEST_SOURCES)
 	@mkdir -p build/tools/font-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font \
-		-FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/FontTest -Fuuserland/lib/drawing -Fuuserland/lib/font -Fuuserland/lib/image \
+		-Fuuserland/lib/compression -Fuuserland/lib/web -FUbuild/tools/font-test-units -o$@ tools/FontTest/FontTest.pas
 
-$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf)
+$(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(wildcard userland/fonts/*/*.ttf) scripts/host-fonts.list
 	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the font test's references (python-pillow)"; exit 1; }
 	@rm -rf $(FONT_FIXTURES)
 	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/fonts

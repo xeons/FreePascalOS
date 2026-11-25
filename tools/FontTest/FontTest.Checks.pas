@@ -39,7 +39,7 @@ procedure Check(const Name: string; Passed: Boolean);
 function ReadFileBytes(const Path: string; out Data: TBytes): Boolean;
 { The TrueType font in the file at Path; nil if it cannot be read or is
   refused. }
-function LoadFontFile(const Path: string): TTrueTypeFont;
+function LoadFontFile(const Path: string; FaceIndex: LongInt = 0): TTrueTypeFont;
 
 implementation
 
@@ -77,13 +77,13 @@ begin
   end;
 end;
 
-function LoadFontFile(const Path: string): TTrueTypeFont;
+function LoadFontFile(const Path: string; FaceIndex: LongInt): TTrueTypeFont;
 var
   Data: TBytes;
 begin
   Result := nil;
   if ReadFileBytes(Path, Data) then
-    Result := LoadTrueTypeFont(Data);
+    Result := LoadTrueTypeFont(Data, FaceIndex);
 end;
 
 end.
