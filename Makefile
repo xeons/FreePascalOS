@@ -230,7 +230,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: unicode-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
@@ -581,7 +581,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mount-test file-system-image-test scheduler-policy-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -703,6 +703,25 @@ $(UNICODE_TEST): tools/UnicodeTest/UnicodeTest.pas kernel/runtime/Runtime.Unicod
 
 unicode-test: $(UNICODE_TEST)
 	$(UNICODE_TEST)
+
+# The unwinder of the kernel's user back traces (Processes.CallFrame-
+# Entries, .CallFrameRules) on the host, over .eh_frame, .eh_frame_hdr
+# and .debug_frame fixtures tools/CallFrameInfoTest/make-cfi-fixtures.py
+# writes (x86-64 and AArch64, Free Pascal's and the standard layout).
+CALL_FRAME_INFO_TEST := build/tools/CallFrameInfoTest
+CALL_FRAME_INFO_FIXTURES := build/tools/cfi-fixtures/memory.bin
+
+$(CALL_FRAME_INFO_TEST): tools/CallFrameInfoTest/CallFrameInfoTest.pas \
+		kernel/processes/Processes.CallFrameEntries.pas kernel/processes/Processes.CallFrameRules.pas \
+		kernel/processes/Processes.SymbolNames.pas
+	@mkdir -p build/tools/call-frame-info-units
+	$(FPC) -O2 -Cr -Co -Fukernel/processes -Fushared -FEbuild/tools -FUbuild/tools/call-frame-info-units $<
+
+$(CALL_FRAME_INFO_FIXTURES): tools/CallFrameInfoTest/make-cfi-fixtures.py
+	python3 -I $< $(dir $@)
+
+call-frame-info-test: $(CALL_FRAME_INFO_TEST) $(CALL_FRAME_INFO_FIXTURES)
+	$(CALL_FRAME_INFO_TEST) $(dir $(CALL_FRAME_INFO_FIXTURES))
 
 # Mount options, owners of FAT and exFAT, the mount table and /etc/fstab
 # (FileSystem.MountOptions, .OwnerMapping, .MountTable, Sys.MountTable)
