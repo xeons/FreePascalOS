@@ -21,7 +21,9 @@
   time): threadvars and a unit initialization of a Free Pascal library
   that the program was not linked with. The initialization runs once,
   in the thread that loads the library, and marks that thread's
-  threadvar; every other thread's copy starts at zero.
+  threadvar; every other thread's copy starts at zero. A resource string
+  (and a constant initialized with it) shows that translations made with
+  SetResourceStrings reach a library's units (latelibtest).
 }
 unit DynPascalState;
 
@@ -32,10 +34,20 @@ interface
 const
   LoaderMark = 77;
 
+resourcestring
+  SDynPascalGreeting = 'hello from libdynpascal';
+
+const
+  { Set from the resource string; updated with it on a translation. }
+  GreetingCopy: AnsiString = SDynPascalGreeting;
+
 function DynPascalCounterAddress: PInt64;
 function DynPascalMark: LongInt;
 function DynPascalInitializations: LongInt;
 procedure DynPascalSetMark(Value: LongInt);
+{ The resource string and the constant made from it, as they are now. }
+function DynPascalGreeting: PChar;
+function DynPascalGreetingCopy: PChar;
 
 implementation
 
@@ -62,6 +74,16 @@ end;
 procedure DynPascalSetMark(Value: LongInt);
 begin
   Mark := Value;
+end;
+
+function DynPascalGreeting: PChar;
+begin
+  Result := PChar(SDynPascalGreeting);
+end;
+
+function DynPascalGreetingCopy: PChar;
+begin
+  Result := PChar(GreetingCopy);
 end;
 
 function DynPascalInitializations: LongInt;

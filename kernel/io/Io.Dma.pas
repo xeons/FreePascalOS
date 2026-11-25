@@ -27,9 +27,17 @@
     - how its bus addresses map to physical memory (ACPI _DMA: windows
       of physical memory, each seen at a bus address of its own; none
       means it sees physical addresses one to one, all of them);
-    - the highest bus address it can put out itself (32-bit DMA engines).
+    - the highest bus address it can put out itself (32-bit DMA engines);
+    - a boundary no buffer may cross (a power of two: xHCI's structures
+      never span a 64 KiB line), which the driver sets.
   The platform code fills them in (Io.PlatformDevices for ACPI devices
   and PCI devices).
+
+  Buffers are physically contiguous runs from the page allocator's run
+  search (Memory.PhysicalPages: AllocatePhysicalRun), taken from the
+  lowest DMA window the device has (or below its address limit), page
+  aligned or aligned further (AllocateAlignedDmaBuffer) and inside the
+  device's boundary.
 
   Two kinds of buffer:
     - shared ones (DmaShared: descriptor rings, contexts, anything both
@@ -73,6 +81,8 @@ type
     Windows: array[0..MaximumDmaWindows - 1] of TDmaWindow;
     { The first bus address the device cannot put out (0: no limit). }
     BusAddressLimit: QWord;
+    { No buffer crosses a multiple of this (a power of two; 0: none). }
+    BoundaryBytes: QWord;
   end;
   PDmaAttributes = ^TDmaAttributes;
 
@@ -97,6 +107,9 @@ procedure SetDefaultDmaAttributes(out Attributes: TDmaAttributes);
 procedure ApplyDmaOptions(var Attributes: TDmaAttributes);
 { The device itself only puts out bus addresses below Limit. }
 procedure LimitDmaBusAddresses(var Attributes: TDmaAttributes; Limit: QWord);
+{ No buffer of the device may cross a multiple of Bytes (a power of
+  two); the smaller boundary wins. }
+procedure LimitDmaBoundary(var Attributes: TDmaAttributes; Bytes: QWord);
 { The first physical address past the memory the device can reach in
   one piece starting low (where allocations for it come from). }
 function DmaPhysicalLimit(constref Attributes: TDmaAttributes): QWord;
@@ -110,6 +123,10 @@ function TranslateDmaAddress(constref Attributes: TDmaAttributes; Physical: QWor
   memory the device can reach. False if there is none. }
 function AllocateDmaBuffer(constref Attributes: TDmaAttributes; SizeInBytes: QWord; Kind: TDmaBufferKind;
   out Buffer: TDmaBuffer): Boolean;
+{ The same, with the buffer's physical (and bus) address a multiple of
+  AlignmentBytes (a power of two; page aligned at least). }
+function AllocateAlignedDmaBuffer(constref Attributes: TDmaAttributes; SizeInBytes: QWord;
+  AlignmentBytes: QWord; Kind: TDmaBufferKind; out Buffer: TDmaBuffer): Boolean;
 procedure FreeDmaBuffer(var Buffer: TDmaBuffer);
 
 { Cache maintenance around a transfer, for memory reached through the
@@ -150,6 +167,14 @@ procedure LimitDmaBusAddresses(var Attributes: TDmaAttributes; Limit: QWord);
 begin
   if (Attributes.BusAddressLimit = 0) or (Limit < Attributes.BusAddressLimit) then
     Attributes.BusAddressLimit := Limit;
+end;
+
+procedure LimitDmaBoundary(var Attributes: TDmaAttributes; Bytes: QWord);
+begin
+  if (Bytes = 0) or ((Bytes and (Bytes - 1)) <> 0) then
+    Exit;
+  if (Attributes.BoundaryBytes = 0) or (Bytes < Attributes.BoundaryBytes) then
+    Attributes.BoundaryBytes := Bytes;
 end;
 
 { The physical end of Window that its bus addresses stay below the
@@ -273,35 +298,88 @@ begin
 end;
 
 procedure FreePages(Physical: QWord; PageCount: QWord);
-var
-  PageIndex: QWord;
 begin
-  PageIndex := 0;
-  while PageIndex < PageCount do
+  FreePhysicalRun(Physical, PageCount);
+end;
+
+{ The physical ranges a buffer may come from, lowest first: the device's
+  windows (each as far as its bus addresses stay below the device's
+  limit), or everything below that limit. Count is how many there are. }
+procedure DmaPhysicalRanges(constref Attributes: TDmaAttributes; out Lowest, Limits: array of QWord;
+  out Count: Integer);
+var
+  Index: Integer;
+  Other: Integer;
+  Swap: QWord;
+begin
+  Count := 0;
+  if Attributes.WindowCount = 0 then
   begin
-    FreePhysicalPage(Physical + PageIndex * PageSize);
-    Inc(PageIndex);
+    Lowest[0] := 0;
+    Limits[0] := DmaPhysicalLimit(Attributes);
+    Count := 1;
+    Exit;
+  end;
+  for Index := 0 to Attributes.WindowCount - 1 do
+  begin
+    Lowest[Count] := Attributes.Windows[Index].PhysicalStart;
+    Limits[Count] := UsableWindowEnd(Attributes, Attributes.Windows[Index]);
+    if Limits[Count] > Lowest[Count] then
+      Inc(Count);
+  end;
+  { In order of their start. }
+  for Index := 1 to Count - 1 do
+    for Other := Index downto 1 do
+      if Lowest[Other] < Lowest[Other - 1] then
+      begin
+        Swap := Lowest[Other];
+        Lowest[Other] := Lowest[Other - 1];
+        Lowest[Other - 1] := Swap;
+        Swap := Limits[Other];
+        Limits[Other] := Limits[Other - 1];
+        Limits[Other - 1] := Swap;
+      end;
+end;
+
+{ A zeroed run of PageCount pages the device reaches, aligned and inside
+  its boundary; 0 if there is none. }
+function AllocateReachablePages(constref Attributes: TDmaAttributes; PageCount, AlignmentBytes: QWord): QWord;
+var
+  Lowest: array[0..MaximumDmaWindows - 1] of QWord;
+  Limits: array[0..MaximumDmaWindows - 1] of QWord;
+  Count: Integer;
+  Index: Integer;
+  Constraints: TPhysicalRunConstraints;
+begin
+  Result := 0;
+  DmaPhysicalRanges(Attributes, Lowest, Limits, Count);
+  for Index := 0 to Count - 1 do
+  begin
+    if Limits[Index] - Lowest[Index] < PageCount * PageSize then
+      Continue;
+    SetPhysicalRunConstraints(Constraints, PageCount);
+    Constraints.AlignmentBytes := AlignmentBytes;
+    Constraints.BoundaryBytes := Attributes.BoundaryBytes;
+    Constraints.LowestAddress := Lowest[Index];
+    { Limits are the first byte past; the constraint is the last byte. }
+    Constraints.Limit := Limits[Index] - 1;
+    Result := AllocatePhysicalRun(Constraints, PageUsageGeneral, True);
+    if Result <> 0 then
+      Exit;
   end;
 end;
 
-function AllocateDmaBuffer(constref Attributes: TDmaAttributes; SizeInBytes: QWord; Kind: TDmaBufferKind;
-  out Buffer: TDmaBuffer): Boolean;
+function AllocateAlignedDmaBuffer(constref Attributes: TDmaAttributes; SizeInBytes: QWord;
+  AlignmentBytes: QWord; Kind: TDmaBufferKind; out Buffer: TDmaBuffer): Boolean;
 var
   PageCount: QWord;
-  Limit: QWord;
 begin
   Result := False;
   ZeroMemory(@Buffer, SizeOf(Buffer));
-  if SizeInBytes = 0 then
+  if (SizeInBytes = 0) or ((AlignmentBytes and (AlignmentBytes - 1)) <> 0) then
     Exit;
   PageCount := PagesForBytes(SizeInBytes);
-  Limit := DmaPhysicalLimit(Attributes);
-  if Limit < PageSize then
-    Exit;
-  if PageCount = 1 then
-    Buffer.Physical := AllocateZeroedPhysicalPageBelow(Limit, PageUsageGeneral)
-  else
-    Buffer.Physical := AllocateZeroedContiguousPhysicalPages(PageCount, Limit, PageUsageGeneral);
+  Buffer.Physical := AllocateReachablePages(Attributes, PageCount, AlignmentBytes);
   if Buffer.Physical = 0 then
     Exit;
   Buffer.SizeInBytes := PageCount * PageSize;
@@ -325,6 +403,12 @@ begin
     Buffer.IsUncachedMapping := True;
   end;
   Result := True;
+end;
+
+function AllocateDmaBuffer(constref Attributes: TDmaAttributes; SizeInBytes: QWord; Kind: TDmaBufferKind;
+  out Buffer: TDmaBuffer): Boolean;
+begin
+  Result := AllocateAlignedDmaBuffer(Attributes, SizeInBytes, PageSize, Kind, Buffer);
 end;
 
 procedure FreeDmaBuffer(var Buffer: TDmaBuffer);

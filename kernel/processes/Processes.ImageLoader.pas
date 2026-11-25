@@ -58,15 +58,21 @@
   descriptor (AArch64) gets libsystem's static resolver and the
   variable's offset from the thread pointer.
 
-  The static layout is fixed once the program is loaded, so a library
-  with a TLS segment loaded after that (LoadLibraryImage) gets dynamic
-  TLS instead: its module id is TlsDynamicModuleTag plus its module
+  The static layout is fixed once the program is loaded, but it ends in
+  a surplus (StaticTlsSurplusBytes, reserved when the program is
+  loaded): a library loaded later whose TLS must be at a fixed distance
+  from the thread pointer - one marked DF_STATIC_TLS or with initial or
+  local exec accesses (TPOFF relocations) of its own - gets its block
+  there, if it fits, and every thread there is gets the block's initial
+  contents when the load succeeds (threads made later get them as for
+  any static block). Any other library with a TLS segment loaded after
+  that (LoadLibraryImage) gets dynamic TLS instead: its module id is TlsDynamicModuleTag plus its module
   handle, a TLS descriptor gets libsystem's dynamic resolver (and the
   tag, the handle and the offset as its argument), and the user runtime
   makes each thread's block the first time the thread touches it, from
   what CallGetModuleTls says (Processes.ModuleCalls). Initial and local
   exec accesses (TPOFF relocations) cannot reach such a block and fail
-  the load. The initializers and finalizers of libraries loaded late
+  the load (a library that needs the surplus when it is used up). The initializers and finalizers of libraries loaded late
   are collected for the runtime to call (CallTakeModuleInitializers).
 
   Each module keeps kernel copies of its symbol, string and hash tables
@@ -148,6 +154,15 @@ type
     Relocations: Pointer;
     RelocationCount: QWord;
     IsRelocated: Boolean;
+    { Relocated into pages of the kernel's (a relocated copy kept with
+      its image section, or one made now), not in the process: until it
+      is relocated, its section (a PImageSection, a use held) and which
+      of its ImagePageCount pages the relocations write (RelocatedPages,
+      1 per such page; those are left unmapped until then). }
+    UsesRelocatedCopies: Boolean;
+    Section: Pointer;
+    RelocatedPages: PByte;
+    ImagePageCount: QWord;
 
     Needed: array[0..MaximumNeededLibraries - 1] of Integer;
     NeededCount: Integer;
@@ -167,6 +182,9 @@ type
     { Loaded after the program started: its TLS block is made per thread
       by the user runtime (TlsOffset is unused). }
     HasDynamicTls: Boolean;
+    { Loaded after the program started with its block in the static
+      surplus: the threads there are get the block when the load ends. }
+    HasSurplusTls: Boolean;
 
     { Initializers and finalizers (user addresses; 0 if absent). }
     InitFunction: QWord;
@@ -196,9 +214,13 @@ type
   TModuleList = record
     Modules: array[0..MaximumModules - 1] of PLoadedModule;
     Count: Integer;
-    { The static TLS area every thread gets below its thread pointer. }
+    { The static TLS area every thread gets below its thread pointer
+      (from the program's load on, the surplus included). }
     StaticTlsSize: QWord;
     StaticTlsAlignment: QWord;
+    { The surplus: blocks of libraries loaded late are placed from
+      SurplusCursor (as PlaceStaticTlsBlock counts) up to StaticTlsSize. }
+    SurplusCursor: QWord;
     { Set once the program is loaded: the layout can no longer change. }
     StartupComplete: Boolean;
   end;
@@ -232,6 +254,9 @@ function FindExportedSymbol(Process: PProcess; ModuleHandle: Integer; Name: PCha
 procedure ReleaseModules(Process: PProcess);
 { Frees the module list in Modules (a load target's). }
 procedure ReleaseModuleList(var Modules: Pointer);
+{ The size of a thread's data region and where its thread pointer is,
+  for the module list List (nil: a process without modules). }
+procedure GetThreadRegionLayout(List: PModuleList; out RegionSize, ThreadPointerOffset: QWord);
 
 implementation
 
@@ -251,13 +276,21 @@ uses
   Processes.ImageSections,
   Processes.MappedFiles,
   Processes.Paths,
-  Processes.Arch.ImageFormat;
+  Processes.RelocatedCopies,
+  Processes.Arch.ImageFormat,
+  Kernel.Options;
 
 const
   MaximumImageSize = 64 * 1024 * 1024;
   MaximumDynamicSectionSize = 64 * 1024;
   MaximumProgramHeaders = 64;
   MaximumStaticTlsSize = 1024 * 1024;
+  { The static TLS surplus for libraries loaded late (glibc keeps about
+    as much), and the alignment the thread pointer gets so blocks
+    placed there may be aligned up to it. }
+  StaticTlsSurplusBytes = 2048;
+  StaticTlsSurplusAlignment = 64;
+  MinimumThreadPointerAlignment = 16;
   MaximumInitializers = 4096;
   { Where libraries named without a folder are looked for, in order:
     the system's, then ported software's (ports/README.md, "Prefix"). }
@@ -288,7 +321,10 @@ type
     { Zeros (bss alone). }
     PageSourceZero,
     { Built in the section. }
-    PageSourceBuilt);
+    PageSourceBuilt,
+    { Written by relocations: mapped from a relocated copy once the
+      module is relocated. }
+    PageSourceRelocated);
 
   TDynamicInformation = record
     StringTable: QWord;
@@ -306,6 +342,7 @@ type
     FiniArray: QWord;
     FiniArraySize: QWord;
     HasPreinitArray: Boolean;
+    Flags: QWord;
     NeededOffsets: array[0..MaximumNeededLibraries - 1] of QWord;
     NeededCount: Integer;
   end;
@@ -692,6 +729,9 @@ begin
         Template.CommitsOnDemand := True;
         Result := AddRegionRecord(Space, Template);
       end;
+    PageSourceRelocated:
+      { Its pages come once the module is relocated (InstallRelocatedPages). }
+      Result := AddRegionRecord(Space, Template);
   else
     begin
       { The section's built pages, mapped now into the region (which
@@ -710,11 +750,41 @@ begin
   end;
 end;
 
+{ Where page PageIndex is mapped from: as ClassifyPage says, but a page
+  the relocations write (RelocatedPages) waits for its relocated copy. }
+function MappedPageSource(const Image: TImageFile; PageIndex: QWord; RelocatedPages: PByte;
+  out FileOffset: QWord): TPageSource;
+begin
+  Result := ClassifyPage(Image, PageIndex, FileOffset);
+  if (Result <> PageSourceNone) and (RelocatedPages <> nil) and (RelocatedPages[PageIndex] <> 0) then
+    Result := PageSourceRelocated;
+end;
+
+{ The attributes of page PageIndex: those of every segment covering it. }
+function PageAttributesOf(const Image: TImageFile; PageIndex: QWord): LongWord;
+var
+  Index: Integer;
+  ProgramHeader: PElf64ProgramHeader;
+  PageStart: QWord;
+begin
+  Result := 0;
+  PageStart := Image.Section^.LowestPage + PageIndex * PageSize;
+  for Index := 0 to Image.Header^.ProgramHeaderCount - 1 do
+  begin
+    ProgramHeader := ProgramHeaderAt(Image, Index);
+    if (ProgramHeader^.SegmentType <> ProgramHeaderTypeLoad) or (ProgramHeader^.MemorySize = 0) then
+      Continue;
+    if (ProgramHeader^.VirtualAddress < PageStart + PageSize) and
+       (ProgramHeader^.VirtualAddress + ProgramHeader^.MemorySize > PageStart) then
+      Result := Result or SegmentAttributes(ProgramHeader^.Flags);
+  end;
+end;
+
 { Maps the image with exactly the attributes of the segments covering
   each page, one region per run of pages alike in attributes and source
   (and, for the file's pages, following one another in the file). }
 function MapSegments(Space: PAddressSpace; const Image: TImageFile; Bias: QWord;
-  LowestPage, HighestPageEnd: QWord; LoadTag: QWord): LongInt;
+  LowestPage, HighestPageEnd: QWord; LoadTag: QWord; RelocatedPages: PByte): LongInt;
 var
   PageCount: QWord;
   PageAttributes: PLongWord;
@@ -750,7 +820,7 @@ begin
   PageIndex := 0;
   while (PageIndex < PageCount) and (Result = ErrorNone) do
   begin
-    RunSource := ClassifyPage(Image, PageIndex, RunOffset);
+    RunSource := MappedPageSource(Image, PageIndex, RelocatedPages, RunOffset);
     if (PageAttributes[PageIndex] = 0) or (RunSource = PageSourceNone) then
     begin
       Inc(PageIndex);
@@ -760,7 +830,7 @@ begin
     Inc(PageIndex);
     while PageIndex < PageCount do
     begin
-      Source := ClassifyPage(Image, PageIndex, FileOffset);
+      Source := MappedPageSource(Image, PageIndex, RelocatedPages, FileOffset);
       if (PageAttributes[PageIndex] <> PageAttributes[RunStart]) or (Source <> RunSource) or
          ((Source = PageSourceFile) and (FileOffset <> RunOffset + (PageIndex - RunStart) * PageSize)) then
         Break;
@@ -818,10 +888,29 @@ begin
   Result := ErrorNone;
 end;
 
+{ True if one of Module's relocations is an initial or local exec
+  access (a fixed offset from the thread pointer). }
+function HasOwnThreadPointerRelocations(Module: PLoadedModule): Boolean;
+var
+  Index: QWord;
+  Kind: TRelocationKind;
+begin
+  Result := False;
+  Index := 0;
+  while Index < Module^.RelocationCount do
+  begin
+    Kind := ClassifyRelocation(RelocationType(PElf64Rela(Module^.Relocations)[Index]));
+    if (Kind = RelocationKindThreadPointerOffset64) or (Kind = RelocationKindThreadPointerOffset32) then
+      Exit(True);
+    Inc(Index);
+  end;
+end;
+
 { Gives the module a place in the static TLS area, after (further from
-  the thread pointer than) the blocks placed before it. }
+  the thread pointer than) the blocks placed before it; for a library
+  loaded late, in the surplus if NeedsStaticTls (and it fits). }
 function PlaceThreadLocalStorage(List: PModuleList; Module: PLoadedModule;
-  Segment: PElf64ProgramHeader; Bias: QWord): LongInt;
+  Segment: PElf64ProgramHeader; Bias: QWord; NeedsStaticTls: Boolean): LongInt;
 var
   Alignment: QWord;
   Offset: QWord;
@@ -843,9 +932,22 @@ begin
   Module^.TlsImageSize := Segment^.FileSize;
   Module^.TlsSize := Segment^.MemorySize;
   Module^.TlsAlignment := Alignment;
-  { Too late for the static area: the runtime makes its blocks. }
   if List^.StartupComplete then
   begin
+    { In the surplus if its accesses need a fixed place and it fits;
+      otherwise the runtime makes its blocks. }
+    if NeedsStaticTls and (Alignment <= List^.StaticTlsAlignment) then
+    begin
+      StaticTlsSize := List^.SurplusCursor;
+      Offset := PlaceStaticTlsBlock(StaticTlsSize, Segment^.MemorySize, Alignment);
+      if StaticTlsSize <= List^.StaticTlsSize then
+      begin
+        List^.SurplusCursor := StaticTlsSize;
+        Module^.TlsOffset := Offset;
+        Module^.HasSurplusTls := True;
+        Exit(ErrorNone);
+      end;
+    end;
     Module^.HasDynamicTls := True;
     Exit(ErrorNone);
   end;
@@ -918,6 +1020,7 @@ begin
         DynamicFiniArray: Dynamic.FiniArray := Entry[EntryIndex].Value;
         DynamicFiniArraySize: Dynamic.FiniArraySize := Entry[EntryIndex].Value;
         DynamicPreinitArray, DynamicPreinitArraySize: Dynamic.HasPreinitArray := True;
+        DynamicFlags: Dynamic.Flags := Entry[EntryIndex].Value;
       end;
       Inc(EntryIndex);
     end;
@@ -1074,11 +1177,19 @@ begin
   FreeKernelMemory(Module^.Symbols);
   FreeKernelMemory(Module^.Strings);
   FreeKernelMemory(Module^.Relocations);
+  FreeKernelMemory(Module^.RelocatedPages);
+  if Module^.Section <> nil then
+    ReleaseImageSection(PImageSection(Module^.Section));
   FreeKernelMemory(Module);
 end;
 
 function LoadModule(const Target: TLoadTarget; OpenedFile: POpenFile; KernelPath: PChar; IsProgram: Boolean;
-  out ModuleIndex: Integer): LongInt; forward;
+  RelocatesItself: Boolean; out ModuleIndex: Integer): LongInt; forward;
+{ Notes which pages of the image Module's relocations write (its
+  RelocatedPages), so they are left for a relocated copy; nothing (the
+  module is relocated in the process) if it has copy relocations or a
+  relocation outside its image. }
+function PlanRelocatedPages(Module: PLoadedModule; const Image: TImageFile): LongInt; forward;
 
 function NoteInitializers(Module: PLoadedModule; const Dynamic: TDynamicInformation;
   Bias: QWord): LongInt;
@@ -1158,7 +1269,7 @@ begin
       FolderIndex := 0;
       repeat
         LibraryFolderPath(FolderIndex, LibraryName, @LibraryPath[0], ProcessPathCapacity);
-        Result := LoadModule(Target, nil, @LibraryPath[0], False, Existing);
+        Result := LoadModule(Target, nil, @LibraryPath[0], False, False, Existing);
         Inc(FolderIndex);
       until (Result <> ErrorNotFound) or (FolderIndex >= LibraryFolderCount);
       if Result <> ErrorNone then
@@ -1169,13 +1280,39 @@ begin
   end;
 end;
 
-{ Finds room for a library of Length bytes: at a random page of the
-  library window (anywhere in it if nothing fits above that page), or
-  without randomization after the library loaded last. }
-function PlaceLibrary(Space: PAddressSpace; Length: QWord; out Start: QWord): Boolean;
+type
+  TLibraryPlacement = (PlacementNotRead, PlacementShared, PlacementPerProcess);
+
+var
+  LibraryPlacement: TLibraryPlacement = PlacementNotRead;
+
+{ True unless the kernel option aslr=process asks for every library at
+  a random place of its own in each process. }
+function LibraryPlacementIsShared: Boolean;
+var
+  Value: array[0..15] of Char;
+begin
+  if LibraryPlacement = PlacementNotRead then
+  begin
+    LibraryPlacement := PlacementShared;
+    if GetKernelOptionValue('aslr', @Value[0], SizeOf(Value)) and TextIsEqual(@Value[0], 'process') then
+      LibraryPlacement := PlacementPerProcess;
+  end;
+  Result := LibraryPlacement = PlacementShared;
+end;
+
+{ Finds room for a library of Length bytes whose section is Section.
+  Without randomization: after the library loaded last. With it: where
+  the library was placed first since its section was made, if that is
+  free here - every process then has it at the same place, and its
+  relocated copy fits (unless aslr=process) - else at a random page of
+  the library window (anywhere in it if nothing fits above that page),
+  which becomes its place if it had none. }
+function PlaceLibrary(Space: PAddressSpace; Section: PImageSection; Length: QWord; out Start: QWord): Boolean;
 var
   Layout: PAddressLayout;
   Hint: QWord;
+  Preferred: QWord;
 begin
   Layout := @Space^.Layout;
   if not Layout^.IsRandomized then
@@ -1185,10 +1322,23 @@ begin
       Space^.NextLibraryAddress := Start + Length + PageSize;
     Exit;
   end;
+  if LibraryPlacementIsShared then
+  begin
+    Preferred := Section^.PreferredStart;
+    if (Preferred <> 0) and (Preferred >= Layout^.LibraryWindowStart) and (Preferred < Layout^.LibraryWindowEnd) and
+       (Length <= Layout^.LibraryWindowEnd - Preferred) and
+       FindFreeRange(Space, Length, Preferred, Preferred + Length, Start) and (Start = Preferred) then
+    begin
+      AtomicIncrement(RelocatedCopyCounters.SharedPlacements);
+      Exit(True);
+    end;
+  end;
   Hint := ChooseLibraryAddress(Layout^, Length, @LayoutRandom);
   Result := FindFreeRange(Space, Length, Hint, Layout^.LibraryWindowEnd, Start);
   if not Result then
     Result := FindFreeRange(Space, Length, Layout^.LibraryWindowStart, Layout^.LibraryWindowEnd, Start);
+  if Result and (Section^.PreferredStart = 0) and LibraryPlacementIsShared then
+    Section^.PreferredStart := Start;
 end;
 
 { The kernel leaves a module to its interpreter: no relocations, no
@@ -1209,7 +1359,7 @@ var
   InterpreterIndex: Integer;
   Interpreter: PLoadedModule;
 begin
-  Result := LoadModule(Target, nil, KernelPath, False, InterpreterIndex);
+  Result := LoadModule(Target, nil, KernelPath, False, True, InterpreterIndex);
   if Result <> ErrorNone then
     Exit;
   Interpreter := ModuleList(Target)^.Modules[InterpreterIndex];
@@ -1223,7 +1373,7 @@ end;
 { Loads the module from OpenedFile, or if that is nil from the system
   file KernelPath. }
 function LoadModule(const Target: TLoadTarget; OpenedFile: POpenFile; KernelPath: PChar; IsProgram: Boolean;
-  out ModuleIndex: Integer): LongInt;
+  RelocatesItself: Boolean; out ModuleIndex: Integer): LongInt;
 var
   List: PModuleList;
   Image: TImageFile;
@@ -1277,19 +1427,13 @@ begin
       Bias := 0 { linked for a fixed address }
     else if IsProgram then
       Bias := Space^.Layout.ImageBase - LowestPage
-    else if not PlaceLibrary(Space, HighestPageEnd - LowestPage, Bias) then
+    else if not PlaceLibrary(Space, Image.Section, HighestPageEnd - LowestPage, Bias) then
       Result := ErrorOutOfMemory
     else
       Bias := Bias - LowestPage;
   end;
 
   LoadTag := QWord(AtomicIncrement(LastLoadTag));
-  if Result = ErrorNone then
-  begin
-    Result := MapSegments(Space, Image, Bias, LowestPage, HighestPageEnd, LoadTag);
-    Mapped := True;
-  end;
-
   if Result = ErrorNone then
   begin
     Module := PLoadedModule(AllocateZeroedKernelMemory(SizeOf(TLoadedModule)));
@@ -1310,14 +1454,29 @@ begin
     Module^.ProgramHeaderCount := Image.Header^.ProgramHeaderCount;
     Result := CopyDynamicTables(Module, Image, Dynamic);
   end;
+  { Which pages its relocations write: those come from a relocated copy. }
+  if (Result = ErrorNone) and not HasInterpreter and not RelocatesItself then
+    Result := PlanRelocatedPages(Module, Image);
+
+  if Result = ErrorNone then
+  begin
+    Result := MapSegments(Space, Image, Bias, LowestPage, HighestPageEnd, LoadTag, Module^.RelocatedPages);
+    Mapped := True;
+  end;
+
   if (Result = ErrorNone) and not HasInterpreter then
     Result := NoteInitializers(Module, Dynamic, Bias);
   if (Result = ErrorNone) and not HasInterpreter and (FindThreadLocalSegment(Image) <> nil) then
-    Result := PlaceThreadLocalStorage(List, Module, FindThreadLocalSegment(Image), Bias);
+    Result := PlaceThreadLocalStorage(List, Module, FindThreadLocalSegment(Image), Bias,
+      ((Dynamic.Flags and DynamicFlagStaticTls) <> 0) or HasOwnThreadPointerRelocations(Module));
   if Result = ErrorNone then
     Module^.InterpreterModule := -1;
 
-  ReleaseImageSection(Image.Section);
+  { A module relocated from a copy keeps its section until then. }
+  if (Result = ErrorNone) and Module^.UsesRelocatedCopies then
+    Module^.Section := Image.Section
+  else
+    ReleaseImageSection(Image.Section);
 
   if Result <> ErrorNone then
   begin
@@ -1462,25 +1621,97 @@ begin
 end;
 
 type
-  { Writes relocated values into the process, keeping a pointer to the
-    page last written: relocations come sorted by address, so most land
-    in the same page as the one before. }
+  { Where the relocations' values go: into the process (keeping a
+    pointer to the page last written: relocations come sorted by
+    address, so most land in the same page as the one before), or for a
+    module relocated into a copy (CopyPages set) into kernel pages, one
+    per page of the image, made from the page's own contents when first
+    written. }
   TRelocationWriter = record
     Space: PAddressSpace;
     PageAddress: QWord;
     Window: PByte;
+    Module: PLoadedModule;
+    Image: TImageFile;
+    CopyPages: PQWord;
   end;
+  PRelocationWriter = ^TRelocationWriter;
 
 procedure BeginRelocationWriting(out Writer: TRelocationWriter; Space: PAddressSpace);
 begin
+  FillMemory(@Writer, SizeOf(Writer), 0);
   Writer.Space := Space;
   Writer.PageAddress := High(QWord);
-  Writer.Window := nil;
+end;
+
+{ The kernel page standing for page PageIndex of the module's image,
+  made now (with what the page holds before relocation) if it is not
+  there yet. }
+function CopyPageFor(var Writer: TRelocationWriter; PageIndex: QWord; out Page: PByte): LongInt;
+var
+  Physical: TPhysicalAddress;
+  FileOffset: QWord;
+  Length: QWord;
+begin
+  Page := nil;
+  if (PageIndex >= Writer.Module^.ImagePageCount) or (Writer.Module^.RelocatedPages[PageIndex] = 0) then
+    Exit(ErrorBadExecutable);
+  if Writer.CopyPages[PageIndex] = 0 then
+  begin
+    Physical := AllocateZeroedPhysicalPage(PageUsageProgramImage);
+    if Physical = 0 then
+      Exit(ErrorOutOfMemory);
+    Writer.CopyPages[PageIndex] := Physical;
+    case ClassifyPage(Writer.Image, PageIndex, FileOffset) of
+      PageSourceFile:
+        begin
+          Length := PageSize;
+          if Writer.Image.Size - FileOffset < Length then
+            Length := Writer.Image.Size - FileOffset;
+          Result := ReadMappedFileBytes(Writer.Image.MappedFile, FileOffset, PhysicalToVirtual(Physical), Length);
+          if Result <> ErrorNone then
+            Exit;
+        end;
+      PageSourceBuilt:
+        CopyMemory(PhysicalToVirtual(Physical), PhysicalToVirtual(Writer.Image.Section^.BuiltPages[PageIndex]),
+          PageSize);
+      PageSourceZero: ;
+    else
+      Exit(ErrorBadExecutable);
+    end;
+  end;
+  Page := PByte(PhysicalToVirtual(Writer.CopyPages[PageIndex]));
+  Result := ErrorNone;
+end;
+
+function WriteIntoCopy(var Writer: TRelocationWriter; Target: QWord; Data: PByte; Size: QWord): LongInt;
+var
+  Page: PByte;
+  Chunk: QWord;
+begin
+  Result := ErrorNone;
+  while Size > 0 do
+  begin
+    if Target < Writer.Module^.ImageStart then
+      Exit(ErrorBadExecutable);
+    Result := CopyPageFor(Writer, (RoundDownToPage(Target) - Writer.Module^.ImageStart) div PageSize, Page);
+    if Result <> ErrorNone then
+      Exit;
+    Chunk := PageSize - (Target and PageOffsetMask);
+    if Chunk > Size then
+      Chunk := Size;
+    CopyMemory(Page + (Target and PageOffsetMask), Data, Chunk);
+    Target := Target + Chunk;
+    Data := Data + Chunk;
+    Size := Size - Chunk;
+  end;
 end;
 
 function WriteRelocatedValue(var Writer: TRelocationWriter; Target: QWord; Data: Pointer;
   Size: QWord): LongInt;
 begin
+  if Writer.CopyPages <> nil then
+    Exit(WriteIntoCopy(Writer, Target, PByte(Data), Size));
   { A value across a page boundary takes the general path. }
   if RoundDownToPage(Target) <> RoundDownToPage(Target + Size - 1) then
     Exit(WriteIntoImage(Writer.Space, Target, Data, Size));
@@ -1532,8 +1763,171 @@ begin
   end;
 end;
 
+{ --- Symbol resolutions -------------------------------------------------
+
+  A module relocated into a copy first resolves every symbol its
+  relocations name, once each. The resolutions, with the load bias and
+  the thread-local storage placements, are the key its relocated copy
+  is kept under: a later load with the same key would write exactly
+  the same bytes, so it maps the copy instead. }
+
+type
+  { One symbol's resolution, as it goes into the key. }
+  TSymbolResolution = packed record
+    SymbolIndex: LongWord;
+    Found: LongWord;
+    { The symbol's address, or for a thread-local one its offset in the
+      defining module's block. }
+    Address: QWord;
+    Size: QWord;
+    { The defining module's TLS placement (TlsPlacementWord). }
+    TlsWord: QWord;
+  end;
+  PSymbolResolution = ^TSymbolResolution;
+
+  TResolutionKeyHeader = packed record
+    Bias: QWord;
+    OwnTlsWord: QWord;
+    StaticResolver: QWord;
+    DynamicResolver: QWord;
+    ResolutionCount: QWord;
+  end;
+  PResolutionKeyHeader = ^TResolutionKeyHeader;
+
+  TResolutionTable = record
+    { Per symbol index, its entry, or -1. }
+    SlotOf: PLongInt;
+    { The key: a header and Count entries. }
+    Key: PByte;
+    KeyLength: QWord;
+    Entries: PSymbolResolution;
+    { Per entry, the module that defines the symbol (nil if none). }
+    Definers: ^PLoadedModule;
+    Count: LongWord;
+  end;
+  PResolutionTable = ^TResolutionTable;
+
+const
+  TlsPlacementStatic = QWord(1) shl 60;
+  TlsPlacementDynamic = QWord(2) shl 60;
+
+{ Where a module's TLS block is, as one word (0: it has none). }
+function TlsPlacementWord(Module: PLoadedModule): QWord;
+begin
+  if (Module = nil) or not Module^.HasThreadLocalStorage then
+    Exit(0);
+  if Module^.HasDynamicTls then
+    Result := TlsPlacementDynamic or QWord(Module^.Handle)
+  else
+    Result := TlsPlacementStatic or Module^.TlsOffset;
+end;
+
+procedure FreeResolutionTable(var Table: TResolutionTable);
+begin
+  FreeKernelMemory(Table.SlotOf);
+  FreeKernelMemory(Table.Key);
+  FreeKernelMemory(Table.Definers);
+  FillMemory(@Table, SizeOf(Table), 0);
+end;
+
+function ResolverAddress(List: PModuleList; Name: PChar): QWord;
+var
+  Size: QWord;
+  Defining: PLoadedModule;
+begin
+  Result := 0;
+  if (Name = nil) or (Name^ = #0) or not ResolveSymbol(List, Name, Result, Size, nil, Defining) then
+    Result := 0;
+end;
+
+{ Resolves every symbol Module's relocations name and builds the key. }
+function BuildResolutionTable(List: PModuleList; Module: PLoadedModule; out Table: TResolutionTable): LongInt;
+var
+  Relocation: PElf64Rela;
+  Index: QWord;
+  SymbolIndex: LongWord;
+  Count: LongWord;
+  Header: PResolutionKeyHeader;
+  Entry: PSymbolResolution;
+  Symbol: PElf64Symbol;
+  Defining: PLoadedModule;
+  Found: Boolean;
+begin
+  FillMemory(@Table, SizeOf(Table), 0);
+  Table.SlotOf := PLongInt(AllocateKernelMemory((QWord(Module^.SymbolCount) + 1) * SizeOf(LongInt)));
+  if Table.SlotOf = nil then
+    Exit(ErrorOutOfMemory);
+  FillMemory(Table.SlotOf, (QWord(Module^.SymbolCount) + 1) * SizeOf(LongInt), $FF);
+  Count := 0;
+  Index := 0;
+  while Index < Module^.RelocationCount do
+  begin
+    Relocation := PElf64Rela(Module^.Relocations) + Index;
+    SymbolIndex := RelocationSymbolIndex(Relocation^);
+    if (SymbolIndex <> 0) and (ClassifyRelocation(RelocationType(Relocation^)) <> RelocationKindNone) then
+    begin
+      if SymbolIndex >= Module^.SymbolCount then
+      begin
+        FreeResolutionTable(Table);
+        Exit(ErrorBadExecutable);
+      end;
+      if Table.SlotOf[SymbolIndex] < 0 then
+      begin
+        Table.SlotOf[SymbolIndex] := LongInt(Count);
+        Inc(Count);
+      end;
+    end;
+    Inc(Index);
+  end;
+
+  Table.Count := Count;
+  Table.KeyLength := SizeOf(TResolutionKeyHeader) + QWord(Count) * SizeOf(TSymbolResolution);
+  Table.Key := PByte(AllocateZeroedKernelMemory(Table.KeyLength));
+  Table.Definers := AllocateZeroedKernelMemory((QWord(Count) + 1) * SizeOf(Pointer));
+  if (Table.Key = nil) or (Table.Definers = nil) then
+  begin
+    FreeResolutionTable(Table);
+    Exit(ErrorOutOfMemory);
+  end;
+  Header := PResolutionKeyHeader(Table.Key);
+  Header^.Bias := Module^.Base;
+  Header^.OwnTlsWord := TlsPlacementWord(Module);
+  Header^.StaticResolver := ResolverAddress(List, TlsDescriptorResolverName);
+  Header^.DynamicResolver := ResolverAddress(List, TlsDynamicDescriptorResolverName);
+  Header^.ResolutionCount := Count;
+  Table.Entries := PSymbolResolution(Table.Key + SizeOf(TResolutionKeyHeader));
+
+  SymbolIndex := 1;
+  while SymbolIndex < Module^.SymbolCount do
+  begin
+    if Table.SlotOf[SymbolIndex] >= 0 then
+    begin
+      Entry := Table.Entries + Table.SlotOf[SymbolIndex];
+      Symbol := SymbolAt(Module, SymbolIndex);
+      Entry^.SymbolIndex := SymbolIndex;
+      Found := ResolveSymbol(List, SymbolName(Module, Symbol), Entry^.Address, Entry^.Size, nil, Defining);
+      if not Found then
+      begin
+        if SymbolBinding(Symbol^) <> SymbolBindingWeak then
+        begin
+          FreeResolutionTable(Table);
+          Exit(ErrorBadExecutable); { an undefined symbol }
+        end;
+        Entry^.Address := 0;
+        Entry^.Size := 0;
+        Defining := nil;
+      end;
+      Entry^.Found := Ord(Found);
+      Entry^.TlsWord := TlsPlacementWord(Defining);
+      Table.Definers[Table.SlotOf[SymbolIndex]] := Defining;
+    end;
+    Inc(SymbolIndex);
+  end;
+  Result := ErrorNone;
+end;
+
 function ApplyRelocation(const LoadTarget: TLoadTarget; Module: PLoadedModule; const Relocation: TElf64Rela;
-  var Writer: TRelocationWriter): LongInt;
+  var Writer: TRelocationWriter; Table: PResolutionTable): LongInt;
 var
   List: PModuleList;
   Kind: TRelocationKind;
@@ -1546,6 +1940,7 @@ var
   CopyBuffer: Pointer;
   DefiningModule: PLoadedModule;
   Value32: LongWord;
+  Slot: LongInt;
 begin
   List := ModuleList(LoadTarget);
   { Without a symbol, a TLS relocation refers to the module's own block. }
@@ -1556,7 +1951,15 @@ begin
   SymbolAddress := 0;
   SymbolSize := 0;
 
-  if SymbolIndex <> 0 then
+  if (SymbolIndex <> 0) and (Table <> nil) and (Kind <> RelocationKindNone) and (Kind <> RelocationKindCopy) then
+  begin
+    { Resolved once already (BuildResolutionTable). }
+    Slot := Table^.SlotOf[SymbolIndex];
+    SymbolAddress := Table^.Entries[Slot].Address;
+    SymbolSize := Table^.Entries[Slot].Size;
+    DefiningModule := Table^.Definers[Slot];
+  end
+  else if SymbolIndex <> 0 then
   begin
     if SymbolIndex >= Module^.SymbolCount then
       Exit(ErrorBadExecutable);
@@ -1636,35 +2039,376 @@ begin
   Result := WriteRelocatedValue(Writer, Target, @Value, SizeOf(Value));
 end;
 
+{ --- Relocated copies --------------------------------------------------- }
+
+function PlanRelocatedPages(Module: PLoadedModule; const Image: TImageFile): LongInt;
+var
+  Index: QWord;
+  Relocation: PElf64Rela;
+  Kind: TRelocationKind;
+  First: QWord;
+  Last: QWord;
+  Page: QWord;
+  FileOffset: QWord;
+begin
+  Result := ErrorNone;
+  Module^.ImagePageCount := Image.Section^.PageCount;
+  if Module^.RelocationCount = 0 then
+    Exit;
+  Module^.RelocatedPages := PByte(AllocateZeroedKernelMemory(Module^.ImagePageCount));
+  if Module^.RelocatedPages = nil then
+    Exit(ErrorOutOfMemory);
+  Index := 0;
+  while Index < Module^.RelocationCount do
+  begin
+    Relocation := PElf64Rela(Module^.Relocations) + Index;
+    Kind := ClassifyRelocation(RelocationType(Relocation^));
+    { Copy relocations read the process's memory: such a module (a
+      program linked for a fixed address) is relocated in the process.
+      So is one with a value outside its image: it fails to load there. }
+    if (Kind = RelocationKindCopy) or (Kind = RelocationKindUnsupported) or
+       (Relocation^.Offset < Image.Section^.LowestPage) or
+       (Relocation^.Offset - Image.Section^.LowestPage > Module^.ImagePageCount * PageSize) or
+       (RelocationWriteSize(Kind, 0) > Module^.ImagePageCount * PageSize -
+         (Relocation^.Offset - Image.Section^.LowestPage)) then
+    begin
+      FreeKernelMemory(Module^.RelocatedPages);
+      Module^.RelocatedPages := nil;
+      Exit;
+    end;
+    if Kind <> RelocationKindNone then
+    begin
+      First := (Relocation^.Offset - Image.Section^.LowestPage) div PageSize;
+      Last := (Relocation^.Offset + RelocationWriteSize(Kind, 0) - 1 - Image.Section^.LowestPage) div PageSize;
+      for Page := First to Last do
+      begin
+        if ClassifyPage(Image, Page, FileOffset) = PageSourceNone then
+        begin
+          FreeKernelMemory(Module^.RelocatedPages);
+          Module^.RelocatedPages := nil;
+          Exit;
+        end;
+        Module^.RelocatedPages[Page] := 1;
+      end;
+    end;
+    Inc(Index);
+  end;
+  Module^.UsesRelocatedCopies := True;
+end;
+
+{ Maps the relocated pages (CopyPages[Index] for page Index, or none)
+  into the process; they were left unmapped when the module was. }
+function InstallRelocatedPages(Space: PAddressSpace; Module: PLoadedModule; const Image: TImageFile;
+  PageCount: QWord; PageIndices, Pages: PQWord): LongInt;
+var
+  Index: QWord;
+begin
+  Result := ErrorNone;
+  Index := 0;
+  while (Index < PageCount) and (Result = ErrorNone) do
+  begin
+    Result := MapSharedPage(Space, Module^.ImageStart + PageIndices[Index] * PageSize, Pages[Index],
+      PageAttributesOf(Image, PageIndices[Index]));
+    Inc(Index);
+  end;
+end;
+
+{ Every planned page made (relocations write each, but a page is never
+  left without one) and listed: Indices and Pages, kernel arrays. }
+function CollectCopyPages(var Writer: TRelocationWriter; out Count: QWord; out Indices, Pages: PQWord): LongInt;
+var
+  Index: QWord;
+  Page: PByte;
+begin
+  Count := 0;
+  Indices := nil;
+  Pages := nil;
+  Index := 0;
+  while Index < Writer.Module^.ImagePageCount do
+  begin
+    if Writer.Module^.RelocatedPages[Index] <> 0 then
+    begin
+      Result := CopyPageFor(Writer, Index, Page);
+      if Result <> ErrorNone then
+        Exit;
+      Inc(Count);
+    end;
+    Inc(Index);
+  end;
+  Indices := PQWord(AllocateKernelMemory((Count + 1) * SizeOf(QWord)));
+  Pages := PQWord(AllocateKernelMemory((Count + 1) * SizeOf(QWord)));
+  if (Indices = nil) or (Pages = nil) then
+  begin
+    FreeKernelMemory(Indices);
+    FreeKernelMemory(Pages);
+    Indices := nil;
+    Pages := nil;
+    Exit(ErrorOutOfMemory);
+  end;
+  Count := 0;
+  Index := 0;
+  while Index < Writer.Module^.ImagePageCount do
+  begin
+    if Writer.CopyPages[Index] <> 0 then
+    begin
+      Indices[Count] := Index;
+      Pages[Count] := Writer.CopyPages[Index];
+      Writer.CopyPages[Index] := 0;
+      Inc(Count);
+    end;
+    Inc(Index);
+  end;
+  Result := ErrorNone;
+end;
+
+procedure FreeCopyPages(var Writer: TRelocationWriter);
+var
+  Index: QWord;
+begin
+  if Writer.CopyPages = nil then
+    Exit;
+  Index := 0;
+  while Index < Writer.Module^.ImagePageCount do
+  begin
+    if Writer.CopyPages[Index] <> 0 then
+      FreePhysicalPage(Writer.CopyPages[Index]);
+    Inc(Index);
+  end;
+  FreeKernelMemory(Writer.CopyPages);
+  Writer.CopyPages := nil;
+end;
+
+{ Relocates Module into kernel pages and maps them; keeps them as a
+  relocated copy of its section unless it is a program at a random
+  address (it would never be at that address again). }
+function RelocateIntoCopy(const Target: TLoadTarget; Module: PLoadedModule; const Image: TImageFile;
+  var Table: TResolutionTable): LongInt;
+var
+  Writer: TRelocationWriter;
+  Index: QWord;
+  Count: QWord;
+  Indices: PQWord;
+  Pages: PQWord;
+  Copy: PRelocatedCopy;
+  Keep: Boolean;
+begin
+  BeginRelocationWriting(Writer, Target.Space);
+  Writer.Module := Module;
+  Writer.Image := Image;
+  Writer.CopyPages := PQWord(AllocateZeroedKernelMemory(Module^.ImagePageCount * SizeOf(QWord)));
+  if Writer.CopyPages = nil then
+    Exit(ErrorOutOfMemory);
+  Result := ErrorNone;
+  Index := 0;
+  while (Index < Module^.RelocationCount) and (Result = ErrorNone) do
+  begin
+    Result := ApplyRelocation(Target, Module, PElf64Rela(Module^.Relocations)[Index], Writer, @Table);
+    Inc(Index);
+  end;
+  if Result = ErrorNone then
+    Result := CollectCopyPages(Writer, Count, Indices, Pages);
+  FreeCopyPages(Writer);
+  if Result <> ErrorNone then
+    Exit;
+  Result := InstallRelocatedPages(Target.Space, Module, Image, Count, Indices, Pages);
+  Keep := (Result = ErrorNone) and ((Module^.Handle <> 0) or not Target.Space^.Layout.IsRandomized);
+  Copy := nil;
+  if Keep then
+    Copy := CreateRelocatedCopy(Module^.Base, Table.Key, Table.KeyLength, Count, Indices, Pages);
+  if Copy <> nil then
+  begin
+    { The copy took the key and the pages. }
+    Table.Key := nil;
+    Table.Entries := nil;
+    KeepRelocatedCopy(PImageSection(Module^.Section), Copy);
+    AtomicIncrement(RelocatedCopyCounters.Kept);
+    Exit;
+  end;
+  { Not kept: the process's references are all the pages have now. }
+  Index := 0;
+  while Index < Count do
+  begin
+    FreePhysicalPage(Pages[Index]);
+    Inc(Index);
+  end;
+  FreeKernelMemory(Indices);
+  FreeKernelMemory(Pages);
+  if Result = ErrorNone then
+    AtomicIncrement(RelocatedCopyCounters.NotKept);
+end;
+
+{ A module whose relocated pages come from a copy: the kept one that
+  matches, or one made now. }
+function RelocateFromCopy(const Target: TLoadTarget; Module: PLoadedModule): LongInt;
+var
+  Image: TImageFile;
+  Table: TResolutionTable;
+  Copy: PRelocatedCopy;
+begin
+  UseSection(PImageSection(Module^.Section), Image);
+  Result := BuildResolutionTable(ModuleList(Target), Module, Table);
+  if Result <> ErrorNone then
+    Exit;
+  Copy := FindRelocatedCopy(PImageSection(Module^.Section), Module^.Base, Table.Key, Table.KeyLength);
+  if Copy <> nil then
+  begin
+    Result := InstallRelocatedPages(Target.Space, Module, Image, Copy^.PageCount, Copy^.PageIndices, Copy^.Pages);
+    ReleaseRelocatedCopy(Copy);
+    if Result = ErrorNone then
+      AtomicIncrement(RelocatedCopyCounters.Reused);
+  end
+  else
+    Result := RelocateIntoCopy(Target, Module, Image, Table);
+  FreeResolutionTable(Table);
+end;
+
+{ Relocates in the process itself (a module with copy relocations). }
+function RelocateInProcess(const Target: TLoadTarget; Module: PLoadedModule): LongInt;
+var
+  RelocationIndex: QWord;
+  Writer: TRelocationWriter;
+begin
+  Result := ErrorNone;
+  RelocationIndex := 0;
+  BeginRelocationWriting(Writer, Target.Space);
+  while (RelocationIndex < Module^.RelocationCount) and (Result = ErrorNone) do
+  begin
+    Result := ApplyRelocation(Target, Module, PElf64Rela(Module^.Relocations)[RelocationIndex], Writer, nil);
+    Inc(RelocationIndex);
+  end;
+end;
+
+procedure FinishRelocation(Module: PLoadedModule);
+begin
+  FreeKernelMemory(Module^.Relocations);
+  Module^.Relocations := nil;
+  Module^.RelocationCount := 0;
+  FreeKernelMemory(Module^.RelocatedPages);
+  Module^.RelocatedPages := nil;
+  if Module^.Section <> nil then
+    ReleaseImageSection(PImageSection(Module^.Section));
+  Module^.Section := nil;
+  Module^.IsRelocated := True;
+end;
+
+{ Relocates the modules not relocated yet: first those relocated from
+  copies, then those relocated in the process, whose copy relocations
+  read the others' data (as relocated). }
 function RelocatePendingModules(const Target: TLoadTarget): LongInt;
 var
   List: PModuleList;
   ModuleIndex: Integer;
   Module: PLoadedModule;
-  RelocationIndex: QWord;
-  Writer: TRelocationWriter;
+  Pass: Integer;
 begin
   List := ModuleList(Target);
-  for ModuleIndex := 0 to List^.Count - 1 do
-  begin
-    Module := List^.Modules[ModuleIndex];
-    if Module^.IsRelocated then
-      Continue;
-    RelocationIndex := 0;
-    BeginRelocationWriting(Writer, Target.Space);
-    while RelocationIndex < Module^.RelocationCount do
+  for Pass := 0 to 1 do
+    for ModuleIndex := 0 to List^.Count - 1 do
     begin
-      Result := ApplyRelocation(Target, Module, PElf64Rela(Module^.Relocations)[RelocationIndex], Writer);
+      Module := List^.Modules[ModuleIndex];
+      if Module^.IsRelocated or (Module^.UsesRelocatedCopies <> (Pass = 0)) then
+        Continue;
+      if Module^.UsesRelocatedCopies then
+        Result := RelocateFromCopy(Target, Module)
+      else
+        Result := RelocateInProcess(Target, Module);
       if Result <> ErrorNone then
         Exit;
-      Inc(RelocationIndex);
+      FinishRelocation(Module);
     end;
-    FreeKernelMemory(Module^.Relocations);
-    Module^.Relocations := nil;
-    Module^.RelocationCount := 0;
-    Module^.IsRelocated := True;
-  end;
   Result := ErrorNone;
+end;
+
+{ --- The static TLS surplus ---------------------------------------------- }
+
+{ The program is loaded: the static area gets its surplus. }
+procedure ReserveStaticTlsSurplus(List: PModuleList);
+begin
+  List^.SurplusCursor := List^.StaticTlsSize;
+  List^.StaticTlsSize := List^.StaticTlsSize + StaticTlsSurplusBytes;
+  if List^.StaticTlsAlignment < StaticTlsSurplusAlignment then
+    List^.StaticTlsAlignment := StaticTlsSurplusAlignment;
+end;
+
+procedure GetThreadRegionLayout(List: PModuleList; out RegionSize, ThreadPointerOffset: QWord);
+var
+  Alignment: QWord;
+  StaticTlsSize: QWord;
+begin
+  Alignment := MinimumThreadPointerAlignment;
+  StaticTlsSize := 0;
+  if List <> nil then
+  begin
+    if List^.StaticTlsAlignment > Alignment then
+      Alignment := List^.StaticTlsAlignment;
+    StaticTlsSize := List^.StaticTlsSize;
+  end;
+  LayOutThreadRegion(StaticTlsSize, Alignment, RegionSize, ThreadPointerOffset);
+end;
+
+{ Gives Module's surplus block its initial contents (Image, ImageSize
+  bytes, then zeros) in every thread data region of the space: every
+  thread the process has (the layout of those regions has not changed
+  since the program was loaded). }
+function FillSurplusBlockOfThreads(Space: PAddressSpace; List: PModuleList; Module: PLoadedModule;
+  Image: Pointer): LongInt;
+var
+  RegionSize: QWord;
+  ThreadPointerOffset: QWord;
+  Address: QWord;
+  Start: QWord;
+  Length: QWord;
+  Block: QWord;
+begin
+  Result := ErrorNone;
+  GetThreadRegionLayout(List, RegionSize, ThreadPointerOffset);
+  Address := 0;
+  while FindRegionOfKind(Space, RegionKindThreadData, Address, Start, Length) do
+  begin
+    Address := Start + Length;
+    if Length <> RoundUpToPage(RegionSize) then
+      Continue;
+    Block := QWord(Int64(Start + ThreadPointerOffset) + TlsBlockDisplacement(Module^.TlsOffset));
+    if Module^.TlsImageSize > 0 then
+      Result := WriteIntoAddressSpace(Space, Block, Image, Module^.TlsImageSize);
+    if (Result = ErrorNone) and (Module^.TlsSize > Module^.TlsImageSize) then
+      Result := WriteIntoAddressSpace(Space, Block + Module^.TlsImageSize, nil,
+        Module^.TlsSize - Module^.TlsImageSize);
+    if Result <> ErrorNone then
+      Exit;
+  end;
+end;
+
+{ The libraries just loaded (from FirstNew) with surplus blocks: every
+  thread gets its block (the TLS image read from the relocated module). }
+function FillSurplusBlocks(const Target: TLoadTarget; FirstNew: Integer): LongInt;
+var
+  List: PModuleList;
+  Index: Integer;
+  Module: PLoadedModule;
+  Image: Pointer;
+begin
+  Result := ErrorNone;
+  List := ModuleList(Target);
+  for Index := FirstNew to List^.Count - 1 do
+  begin
+    Module := List^.Modules[Index];
+    if not Module^.HasSurplusTls then
+      Continue;
+    Image := nil;
+    if Module^.TlsImageSize > 0 then
+    begin
+      Image := AllocateKernelMemory(Module^.TlsImageSize);
+      if Image = nil then
+        Exit(ErrorOutOfMemory);
+      Result := ReadFromAddressSpace(Target.Space, Module^.TlsImageAddress, Image, Module^.TlsImageSize);
+    end;
+    if Result = ErrorNone then
+      Result := FillSurplusBlockOfThreads(Target.Space, List, Module, Image);
+    FreeKernelMemory(Image);
+    if Result <> ErrorNone then
+      Exit;
+  end;
 end;
 
 { --- Public routines ------------------------------------------------- }
@@ -1677,12 +2421,13 @@ begin
   MainModule := nil;
   if ProgramFile = nil then
     Exit(ErrorNotFound);
-  Result := LoadModule(Target, ProgramFile, KernelPath, True, ModuleIndex);
+  Result := LoadModule(Target, ProgramFile, KernelPath, True, False, ModuleIndex);
   if Result = ErrorNone then
     Result := RelocatePendingModules(Target);
   if Result = ErrorNone then
   begin
     MainModule := ModuleList(Target)^.Modules[ModuleIndex];
+    ReserveStaticTlsSurplus(ModuleList(Target));
     ModuleList(Target)^.StartupComplete := True;
   end;
 end;
@@ -1718,6 +2463,7 @@ function LoadLibraryImage(const Target: TLoadTarget; LibraryFile: POpenFile; Ker
 var
   Existing: Integer;
   FirstNew: Integer;
+  SurplusCursor: QWord;
 begin
   ModuleHandle := -1;
   if LibraryFile = nil then
@@ -1729,12 +2475,17 @@ begin
     Exit(ErrorNone);
   end;
   FirstNew := ModuleList(Target)^.Count;
-  Result := LoadModule(Target, LibraryFile, KernelPath, False, ModuleHandle);
+  SurplusCursor := ModuleList(Target)^.SurplusCursor;
+  Result := LoadModule(Target, LibraryFile, KernelPath, False, False, ModuleHandle);
   if Result = ErrorNone then
     Result := RelocatePendingModules(Target);
+  if Result = ErrorNone then
+    Result := FillSurplusBlocks(Target, FirstNew);
   if Result <> ErrorNone then
   begin
     UnloadModulesFrom(Target, FirstNew);
+    { Nothing uses the surplus they took. }
+    ModuleList(Target)^.SurplusCursor := SurplusCursor;
     ModuleHandle := -1;
   end;
 end;

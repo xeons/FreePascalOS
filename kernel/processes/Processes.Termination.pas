@@ -87,7 +87,25 @@ uses
   Processes.Stopping,
   Processes.ThreadControl,
   Processes.UserExceptions,
-  Processes.Signals;
+  Processes.Signals,
+  Io.BoundedRequests;
+
+{ Whether the calling thread must end: its process is being ended or
+  is exiting (its last thread closes the handles), or it was asked to
+  exit. For Io.BoundedRequests: such a thread gives up on a request a
+  driver does not complete. }
+function CurrentThreadMustEnd: Boolean;
+var
+  Process: PProcess;
+  Thread: PThread;
+begin
+  Process := CurrentProcess;
+  if (Process = nil) or not Process^.IsUserProcess then
+    Exit(False);
+  Thread := CurrentThreadObject;
+  Result := Process^.TerminationRequested or (Process^.ActiveUserThreads <= 0) or
+    ((Thread <> nil) and Thread^.ExitRequested);
+end;
 
 procedure EndProcessIfTerminationRequested;
 var
@@ -149,6 +167,7 @@ end;
 procedure InitializeProcessTermination;
 begin
   SetUserModeReturnHook(@CheckTerminationOnReturn);
+  SetThreadMustEndQuery(@CurrentThreadMustEnd);
 end;
 
 function TerminateProcessById(ProcessId: QWord; ExitCode: LongInt): LongInt;

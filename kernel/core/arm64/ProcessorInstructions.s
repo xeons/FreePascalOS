@@ -280,6 +280,11 @@ ROUTINE ArchWriteTimerControl
     isb
     ret
 
+ROUTINE ArchWriteTimerKernelControl
+    msr     cntkctl_el1, x0
+    isb
+    ret
+
 ROUTINE ArchReadTimerControl
     mrs     x0, cntv_ctl_el0
     ret

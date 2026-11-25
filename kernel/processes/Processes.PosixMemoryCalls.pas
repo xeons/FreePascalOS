@@ -45,6 +45,7 @@ uses
   Processes.Handles,
   Processes.ObjectCalls,
   Processes.MappedFiles,
+  Processes.MappedFileChanges,
   Processes.MemoryMapping,
   Processes.UserThread,
   FileSystem.Files;
@@ -59,35 +60,50 @@ var
   OpenedFile: POpenFile;
   MappedFile: PMappedFile;
   IsPrivate: Boolean;
+  HandleIsWritable: Boolean;
   Error: LongInt;
   Start: QWord;
 begin
   MappedFile := nil;
   IsPrivate := (Flags and PosixMapPrivate) <> 0;
+  HandleIsWritable := False;
   if (Flags and PosixMapAnonymous) = 0 then
   begin
     OpenedFile := POpenFile(ReferenceHandleOfKind(Handle, HandleKindFile));
     if OpenedFile = nil then
       Exit(Failure(ErrorBadHandle));
+    HandleIsWritable := (OpenedFile^.Flags and OpenForWriting) <> 0;
     Error := AcquireMappedFile(OpenedFile, IsPrivate, MappedFile);
+    { A shared mapping through a writable handle may write the file
+      (now, or after mprotect): the mapped file keeps a way to. }
+    if (Error = ErrorNone) and not IsPrivate and HandleIsWritable then
+    begin
+      Error := PrepareMappedFileForWriting(MappedFile, OpenedFile);
+      if Error <> ErrorNone then
+        ReleaseMappedFile(MappedFile, IsPrivate);
+    end;
     DereferenceObject(OpenedFile);
     if Error <> ErrorNone then
       Exit(Failure(Error));
   end;
   Error := MapMemory(CurrentProcess^.AddressSpace, Address, Length, Protection, Flags, MappedFile,
-    Offset, Start);
+    Offset, HandleIsWritable, Start);
   if Error <> ErrorNone then
   begin
     if MappedFile <> nil then
       ReleaseMappedFile(MappedFile, IsPrivate);
     Exit(Failure(Error));
   end;
+  { MAP_FIXED may have replaced a writable mapping. }
+  FlushPendingMappedFileWriteBacks;
   Result := Int64(Start);
 end;
 
 function PerformUnmapMemory(Address, Length: QWord): Int64;
 begin
   Result := -Int64(UnmapMemory(CurrentProcess^.AddressSpace, Address, Length));
+  { What an unmapped writable mapping wrote reaches the file. }
+  FlushPendingMappedFileWriteBacks;
 end;
 
 function PerformCreateThreadOnStack(EntryPoint, Argument, StackPointer: QWord): Int64;

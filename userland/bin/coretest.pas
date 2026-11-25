@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..438] of TCommandTest = (
+  CommandTests: array[0..445] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -705,9 +705,9 @@ const
     (Command: '/bin/coretest --crash-on-purpose 2> crash.log; sed -n 3p crash.log | grep -c "^  [$][0-9A-F]*  coretest+[$][0-9A-F]*$"; grep -c "^  [$][0-9A-F]*-[$][0-9A-F]* libsystem.so$" crash.log'; ExpectedOutput: '1'#10'1'#10; ExpectedStatus: 0),
     { Address space layout randomization: two runs of a program have its
       code, a library's, the stack, the heap and a thread's stack in
-      other places (booted with aslr=off, the same command prints
+      other places, libraries keeping theirs (booted with aslr=off, the same command prints
       "aslrtest: aslr=off, the addresses are the same"). }
-    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, library, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
+    (Command: 'aslrtest --print > aslr1.txt; aslrtest --print > aslr2.txt; aslrtest --compare aslr1.txt aslr2.txt; echo $?'; ExpectedOutput: 'aslrtest: code, stack, heap and thread stack addresses differ'#10'0'#10; ExpectedStatus: 0),
     { Libraries with thread-local storage, threadvars and initializers
       loaded with LoadLibrary by a program running threads (dynlibtest):
       per-thread values in old and new threads, initializers once, the
@@ -759,6 +759,13 @@ const
     (Command: 'mounttest > mount.log; echo $?; grep FAIL mount.log; tail -n 1 mount.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
     { Process restrictions (the browser's renderer sandbox). }
     (Command: 'restricttest > restrict.log; echo $?; grep FAIL restrict.log; tail -n 1 restrict.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    { The object namespace: named events, semaphores, mutexes and
+      sections, directories, permissions (objtest); objls; and a program
+      its user may run but not read (mode 0711): it runs, with AT_SECURE,
+      and cannot be read; without the execute bit it does not run. }
+    (Command: 'objtest > obj.log; echo $?; grep FAIL obj.log; tail -n 1 obj.log | cut -d " " -f 3-'; ExpectedOutput: '0'#10'checks, 0 failed'#10; ExpectedStatus: 0),
+    (Command: 'objls; objls -l ''\Kernel'' | grep Console | tr -s " " | cut -d " " -f 1,2,3,5,6; objls ''\nothing'' 2>/dev/null; echo $?'; ExpectedOutput: 'Device\'#10'Storage\'#10'Kernel\'#10'Ports\'#10'Shared\'#10'-rw------- 0 0 Console Console'#10'1'#10; ExpectedStatus: 0),
+    (Command: 'cp /bin/objtest x711 && chmod 711 x711 && su user -c "./x711 --secure"; su user -c "cat x711 > /dev/null 2>&1 || echo unreadable"; ./x711 --secure; chmod 700 x711; su user -c "./x711 --secure 2>/dev/null || echo refused"; rm x711'; ExpectedOutput: 'secure 1'#10'unreadable'#10'secure 0'#10'refused'#10; ExpectedStatus: 0),
     { Native Free Pascal: /bin/fpc compiles a program and a unit of its
       own (against libsystem, linked by the compiler's internal linker)
       and the program runs; skipped when the system disk was built with
@@ -820,7 +827,28 @@ const
       source past the end refused, the alarm turned off and on; a user
       may not set the wake alarm. }
     (Command: 'powerstat --check-wake > wake.log; echo $?; grep FAIL wake.log; tail -n 1 wake.log | cut -d " " -f 3-5'; ExpectedOutput: '0'#10'wake sources, the'#10; ExpectedStatus: 0),
-    (Command: 'su user -c "suspend -t 5" 2> /dev/null; echo $?'; ExpectedOutput: '1'#10; ExpectedStatus: 0)
+    (Command: 'su user -c "suspend -t 5" 2> /dev/null; echo $?'; ExpectedOutput: '1'#10; ExpectedStatus: 0),
+    { File mappings (filemaptest): shared writable mappings (only through
+      a writable handle) seen by other mappings and read() at once,
+      dirty until msync, written back on unmap; write() keeps a
+      mapping's bytes; a private mapping a write changes reads one page
+      as its snapshot; trimming unmaps and drops clean mapped pages,
+      which read the same again, and leaves dirty ones. }
+    (Command: 'filemaptest > filemap.log; echo $?; grep FAIL filemap.log; tail -n 1 filemap.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { What the out-of-memory policy charges a process with (memorytest
+      charge): commitments not touched yet count, and move to resident
+      when touched; another process's charge can be read. }
+    (Command: 'memorytest charge > charge.log; echo $?; grep FAIL charge.log; tail -n 1 charge.log | cut -d " " -f 5-'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Libraries loaded late (latelibtest): initial exec TLS in the static
+      surplus for threads started before and after, resource strings of
+      a Free Pascal library translated, relocated copies reused by later
+      processes with the library at the same place. }
+    (Command: 'latelibtest > latelib.log; echo $?; grep FAIL latelib.log; tail -n 1 latelib.log'; ExpectedOutput: '0'#10'latelibtest: 36 checks, 0 failed'#10; ExpectedStatus: 0),
+    { Dynamic tick: a processor busy with one spinning thread takes
+      fewer than 20 ticks in its quietest second (100 with the periodic
+      tick; its own sampling thread, pinned there too, wakes once a
+      second). }
+    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
   );
 
 var

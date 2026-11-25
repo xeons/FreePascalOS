@@ -91,6 +91,8 @@ uses
   Processes.AffinityCalls,
   Processes.LimitCalls,
   Processes.MemoryCalls,
+  Processes.MappedFileCalls,
+  Processes.MemoryChargeCalls,
   Processes.VirtualMemoryCalls,
   Processes.LoadedModules,
   Processes.HandlePassing,
@@ -114,6 +116,7 @@ uses
   Processes.Fork,
   Processes.Execution,
   Processes.ChildWaits,
+  Processes.ObjectNameCalls,
   Processes.Signals;
 
 const
@@ -171,7 +174,7 @@ const
 { The rest of starting a program, whose file ProgramFile is open and
   checked. }
 function CreateProcessFromFile(Caller: PProcess; const Creation: TAbiProcessCreation; ProgramFile: POpenFile;
-  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials): Int64; forward;
+  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials; ImageUnreadable: Boolean): Int64; forward;
 
 function PerformCreateProcess(CreationAddress: QWord): Int64;
 var
@@ -181,6 +184,7 @@ var
   UserPath: array[0..ProcessPathCapacity - 1] of Char;
   KernelPath: array[0..ProcessPathCapacity - 1] of Char;
   ProgramFile: POpenFile;
+  ImageUnreadable: Boolean;
   Error: LongInt;
 begin
   { Programs from before ProcessPassHandles pass a record ending at
@@ -206,15 +210,16 @@ begin
   if Error <> ErrorNone then
     Exit(Failure(Error));
   { Checked and loaded from this one open file (Processes.ProgramArguments). }
-  Error := OpenProgramFile(Caller, @KernelPath[0], Credentials, ProgramFile);
+  Error := OpenProgramFile(Caller, @KernelPath[0], Credentials, ProgramFile, ImageUnreadable);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Result := CreateProcessFromFile(Caller, Creation, ProgramFile, @UserPath[0], @KernelPath[0], Credentials);
+  Result := CreateProcessFromFile(Caller, Creation, ProgramFile, @UserPath[0], @KernelPath[0], Credentials,
+    ImageUnreadable);
   CloseFile(ProgramFile);
 end;
 
 function CreateProcessFromFile(Caller: PProcess; const Creation: TAbiProcessCreation; ProgramFile: POpenFile;
-  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials): Int64;
+  UserPath, KernelPath: PChar; const Credentials: TProcessCredentials; ImageUnreadable: Boolean): Int64;
 var
   Startup: TProcessStartup;
   WorkingDirectory: array[0..ProcessPathCapacity - 1] of Char;
@@ -262,6 +267,7 @@ begin
   Startup.WorkingDirectory := @WorkingDirectory[0];
   Startup.ParentProcessId := Caller^.ProcessId;
   Startup.Credentials := Credentials;
+  Startup.ImageUnreadable := ImageUnreadable;
   { A program started inside a chroot stays inside it. }
   Startup.RootDirectory := @RootDirectory[0];
   Startup.ControllingTerminal := Caller^.ControllingTerminal;
@@ -276,6 +282,13 @@ begin
   else
     if Creation.GroupId < 0 then
       Exit(Failure(ErrorInvalidArgument));
+    { Only a group of the caller's session, as setpgid joins: never one
+      of another session, nor a number nobody has; and a process that
+      leads a new session leads its own group. }
+    if (Creation.Flags and ProcessNewSession) <> 0 then
+      Exit(Failure(ErrorNotPermitted));
+    if not GroupExistsInSession(QWord(Creation.GroupId), Caller^.SessionId) then
+      Exit(Failure(ErrorNotPermitted));
     Startup.GroupId := QWord(Creation.GroupId);
   end;
 
@@ -851,6 +864,11 @@ begin
     CallUnmountVolume: Result := PerformUnmountVolume(Argument0, Argument1);
     CallListMounts: Result := PerformListMounts(Argument0, Argument1);
     CallGetFileTimes: Result := PerformGetFileTimes(Argument0, Int64(Argument1), Argument2, Argument3);
+    { File mappings (214-219). }
+    CallSyncMemory: Result := PerformSyncMemory(Argument0, Argument1, Argument2);
+    CallQueryMemoryResidency: Result := PerformQueryMemoryResidency(Argument0, Argument1, Argument2);
+    CallGetMappedFileStatistics: Result := PerformGetMappedFileStatistics(Argument0);
+    CallTrimMappedFiles: Result := PerformTrimMappedFiles(Argument0, Argument1);
     { The POSIX block (180-199). }
     CallMapMemory: Result := PerformMapMemory(Argument0, Argument1, Argument2, Argument3, Int64(Argument4),
       Argument5);
@@ -867,6 +885,18 @@ begin
     CallCreateSession: Result := PerformCreateSession;
     CallGetProcessGroupOf: Result := PerformGetProcessGroupOf(Argument0, Argument1);
     CallGetParentProcessId: Result := Int64(CurrentProcess^.ParentProcessId);
+    CallCreateObjectDirectory: Result := PerformCreateObjectDirectory(Argument0, Argument1);
+    CallNameObject: Result := PerformNameObject(Int64(Argument0), Argument1, Argument2);
+    CallOpenNamedObject: Result := PerformOpenNamedObject(Argument0, Argument1);
+    CallListObjectDirectory: Result := PerformListObjectDirectory(Argument0, Argument1, Argument2, Argument3);
+    CallRemoveObjectName: Result := PerformRemoveObjectName(Argument0);
+    CallSetObjectSecurity: Result := PerformSetObjectSecurity(Argument0, Int64(Argument1), Int64(Argument2),
+      Int64(Argument3));
+    CallCreateMutex: Result := PerformCreateMutex(Argument0);
+    CallReleaseMutex: Result := PerformReleaseMutex(Int64(Argument0));
+    { Memory and the loader (208-213). }
+    CallGetProcessMemoryCharge: Result := PerformGetProcessMemoryCharge(Argument0, Argument1);
+    CallGetImageCacheStatistics: Result := PerformGetImageCacheStatistics(Argument0);
   else
     Result := Failure(ErrorNotImplemented);
   end;

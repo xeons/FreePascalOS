@@ -39,6 +39,11 @@
   With WaitForAll the wait lasts until every handle is ready at the same
   time, and the automatic reset events and timers among them are
   consumed only then, together (Kernel.Events).
+
+  A mutex is ready while no thread owns it, and always for its owner; a
+  wait it ends makes the waiting thread its owner (Kernel.MutexEvents).
+  If the wait took a mutex whose previous owner ended holding it, the
+  result has WaitAbandoned added.
 }
 unit Processes.WaitCalls;
 
@@ -62,6 +67,8 @@ uses
   Objects.Events,
   Objects.Timers,
   Objects.Semaphores,
+  Objects.Mutexes,
+  Kernel.MutexEvents,
   Io.Manager,
   Io.Pipes,
   Processes.Handles,
@@ -110,6 +117,8 @@ begin
     HandleKindTimer: Result := @PTimerObject(ObjectBody)^.Event;
     { Signaled while its count is above zero; a wait it ends takes one. }
     HandleKindSemaphore: Result := @PSemaphoreObject(ObjectBody)^.Semaphore.Event;
+    { Free, or owned by the waiting thread; a wait it ends takes it. }
+    HandleKindMutex: Result := @PMutexObject(ObjectBody)^.Event;
     HandleKindProcess: Result := @PProcess(ObjectBody)^.ExitEvent;
     HandleKindThread: Result := @PThread(ObjectBody)^.ExitEvent;
     HandleKindPipeReadEnd: Result := @PPipe(ObjectBody)^.Readable;
@@ -166,6 +175,20 @@ begin
   end;
 end;
 
+{ Whether the wait that just ended took a mutex its previous owner
+  abandoned (each such mark is taken, so it is told once): the
+  Signaled one, or for a wait for all any of them. }
+function TookAbandonedMutex(Events: PPEvent; Count: LongInt; Signaled: Int64; WaitForAll: Boolean): Boolean;
+var
+  Position: LongInt;
+begin
+  Result := False;
+  for Position := 0 to Count - 1 do
+    if (WaitForAll or (Position = Signaled)) and (Events[Position]^.Kind = EventKindMutex) then
+      if TakeAbandonedMark(Events[Position]^) then
+        Result := True;
+end;
+
 function PerformWaitForHandles(HandlesAddress: QWord; Count: QWord; Timeout: Int64; Flags: QWord): Int64;
 var
   Handles: array[0..MaximumWaitHandles - 1] of Int64;
@@ -202,6 +225,9 @@ begin
       TimeoutMilliseconds := QWord(Timeout);
     Result := WaitForEvents(@Events[0], LongInt(Count), TimeoutMilliseconds,
       (Flags and WaitForAll) <> 0);
+    if (Result >= 0) and TookAbandonedMutex(@Events[0], LongInt(Count), Result,
+      (Flags and WaitForAll) <> 0) then
+      Result := Result + WaitAbandoned;
   end
   else
     Result := Failure(Error);

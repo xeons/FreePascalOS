@@ -783,7 +783,32 @@ on the dispatcher lock and its wait queues:
   recorded per thread to catch it). `TryAcquire...` versions never
   wait. The volume list (`FileSystem.Volumes`) uses one: every path
   lookup reads it shared, mounting and removing a disk change it
-  exclusively.
+  exclusively. So do other tables that are read far more than changed:
+  each process's handle table (`THandleTable.EntryLock`: changes hold
+  the process's lock and the entry lock exclusively, only while the
+  entries change, releasing the objects afterwards; lookups take only
+  the entry lock shared, and `ReferenceHandleEntry` references under it,
+  so the threads of a process look up handles side by side without the
+  process's lock), the process registry (`LockProcessRegistryShared` for
+  listing and finding processes; registering and changing groups and
+  sessions exclusive) and the mount list (describing mounts and finding
+  a volume's mount point shared). A volume's node cache stays under the
+  volume's lock, which every file operation holds for its whole
+  duration.
+
+**Timing windows.** `Kernel.SchedulerLatencySelfTest` makes two windows
+QEMU does not hit by chance happen on every boot, with test hooks. The
+idle window hook (`SetIdleWindowHookForTest`) holds an idle processor
+between its check for work and its wait, interrupts off: a thread
+pinned there and woken inside the window must run at once, and so must
+a thread left in a busy processor's queue whose lock the test holds
+while the idle processor's dispatch interrupt arrives in the window
+and is refused its steal (the case the one-step check and wait was
+made for; with interrupts enabled in the window it sleeps with the
+work, and the test fails). And with the time slice stretched beyond
+any wait (`SetTimeSliceTicksForTest`), lowering a spinning thread's
+priority below a ready thread's must hand over the processor at once
+(without the reschedule `SetThreadPriority` asks for, it never would).
 
 Kernel self tests (`Kernel.SynchronizationSelfTest`) run on every boot:
 semaphore counts, limits and consumers in several threads; readers and
@@ -826,13 +851,53 @@ them between processors and changing their priorities.
   (`RestartClockTick`), a whole tick later, so the thread gets a full
   time slice. Processor time stays exact (it is taken at every switch),
   the uptime and the timers come from the counter, and the load
-  averages have a deadline of their own. Busy processors keep the 100 Hz
-  tick. Each processor counts its clock interrupts
+  averages have a deadline of their own. Each processor counts its clock interrupts
   (`ClockInterruptCount`) and of those the ones that found a tick, a
   timer or a wake-up due: an idle QEMU guest takes about one a second
   per idle processor rather than 100; what is left is due work (in the
   test machine, netlog's 100 ms poll and the services' timers). Kernel option `tickless=off` keeps
   the tick on idle processors too.
+- **Dynamic tick.** A busy processor whose running thread is alone
+  (nothing in its run queues) has no time slice to end either. The
+  clock interrupt that finds it so asks for the dispatch interrupt,
+  which looks under the processor's scheduling lock (where the count is
+  exact) and defers the tick (`DeferClockTick`, `TickDeferredUntil`) to
+  a residual tick a second later. That one still charges the ticks that
+  passed (the split of processor time between user mode and the kernel
+  is sampled once a second then) and the next dispatch decides again.
+  Whoever queues a thread on that processor sees the deferral under the
+  same lock and sends it its dispatch interrupt, which starts the tick
+  again a whole tick from then (`ResumeClockTick`), and so does any
+  switch: the newcomer waits at most one time slice, as before. An
+  alerted thread (asked to end, stop or take a signal) running on
+  another processor is sent a dispatch interrupt too, so it reaches its
+  safe point at once rather than at a tick that may be a second away.
+  `TickDeferralCount` counts the deferrals. Kernel option
+  `dynamictick=off` (or `tickless=off`) keeps the 100 Hz tick on busy
+  processors.
+- **The clock page** (`Kernel.ClockPage`): one physical page with the
+  clock's parameters (`TAbiClockPage`: the counter value at an origin,
+  the uptime then and the counter's rate, from `HalDescribeUserClock`;
+  the wall clock's offset and gradual adjustment, from
+  `ReadWallClockState`), mapped read-only into every program (a section
+  region; its address is the auxiliary vector entry
+  `AuxiliaryClockPage`). The runtime reads the uptime and the wall clock
+  from it with the processor's counter and no system call
+  (`System.ReadClockPageTime`: a copy under the page's sequence count,
+  odd while the kernel changes it, and the counter - `LFENCE; RDTSC` on
+  x86-64, `ISB; MRS CNTVCT_EL0` on AArch64, where `CNTKCTL_EL1.EL0VCTEN`
+  is set on every processor as its clock starts or wakes); `Sys.Time`
+  (`WallClockNanoseconds`, `MonotonicNanoseconds`, `UptimeMilliseconds`),
+  `Now`, `GetLocalTime` and `GetTickCount64` use it. The arithmetic is
+  one include (`shared/ClockPageMath.inc`) shared by the kernel's wall
+  clock, the runtime and `tools/ClockPageTest`, and the HALs convert the
+  counter the same way, so the page's time is to the nanosecond what the
+  system call gives. The kernel publishes the page at start, whenever
+  the wall clock is set or adjusted, and when the clock continues after
+  suspend to RAM. Where programs cannot read the kernel's clock (KVM's
+  paravirtual clock, chosen under KVM unless the counter is invariant or
+  `clock=tsc`) the page says `ClockPageModeSystemCall` and the runtime
+  makes the call.
 - **Timers** (`Kernel.Timers`) go on the queue of the processor that
   sets them; each queue has a lock its clock interrupt takes, and
   setting or cancelling also takes one shared lock, so that two
@@ -968,7 +1033,10 @@ its dispatch interrupt, and its next one is set for the earliest time
 left in the table (part of its next clock deadline). The slot is written
 before the boot processor's interrupt time is read, and a dispatch
 interrupt sent before the processor waits stays pending, so no wake-up
-is lost. The boot processor never enters these states (it keeps time),
+is lost. The due time handed over is the clock interrupt time, so it
+covers a deferred tick's residual tick (dynamic tick) as well as timers
+and wake-ups; `ResumeClockTick` and `RestartClockTick` set a stale timer
+again in full. The boot processor never enters these states (it keeps time),
 nor does any processor when it is the only one. `idlebroadcast=off`
 keeps to states whose timer runs; `idlebroadcast=force` treats every
 state of the other processors as stopping the timer and really leaves
@@ -1114,7 +1182,15 @@ one by its power resource, `_OSC` and `_PDC` given the capabilities,
 `powerstat --check-wake` (the alarm listed last, an index past the end
 refused, the alarm turned off and on) and checks that a user may not set
 the wake alarm. The input test wakes the machine by the alarm
-(`suspend -t 6`, no `system_wakeup`) and plugs a processor in. coretest runs `powerstat --check-idle 3 5`: the processors
+(`suspend -t 6`, no `system_wakeup`) and plugs a processor in.
+
+**Tests.** The kernel self tests (`Kernel.ClockSelfTest`) check that
+the clock page's time is the kernel's, and that a thread spinning
+alone on a processor leaves it almost without ticks while a second
+one beside it brings the tick back (both share the processor). coretest runs `powerstat --check-busy 3 20` (a thread of
+its own spinning on the last processor, which must take under 20 ticks
+in the quietest of three seconds - 100 with the periodic tick; about 5
+are its own sampling thread's wake-up there) and `powerstat --check-idle 3 5`: the processors
 that stayed idle for 3 seconds (busy under 10 %) must average under 5
 clock interrupts a second that found no timer or wake-up due (100 with
 the periodic tick; the interrupts for due work, which depend on what
@@ -1494,7 +1570,10 @@ statistics count discards and their bytes.
   for their requests alertably (`Io.DeviceFiles`); when the thread is
   alerted (ended, or stopped by job control), `CancelRequest` takes its
   request out of the queue and completes it with `ErrorInterrupted`,
-  and the call is restarted after a stop. Drivers that wait themselves
+  and the call is restarted after a stop. Device files and block
+  devices send their requests as bounded requests
+  (`CallDriverAndWaitBounded`, see "Ending other programs"), so a
+  driver that never completes one cannot keep a process from ending. Drivers that wait themselves
   (the console) wait alertably too. Buffers are always kernel memory
   (system calls copy through their transfer buffer). A device whose
   hardware went away (an unplugged disk) leaves `/dev` with
@@ -1660,8 +1739,34 @@ of their own. `Io.Dma` gives drivers what they need for that:
   `FinishDmaFromDevice` (invalidate; partial lines at the edges are
   cleaned and invalidated, never thrown away) after it wrote. For a
   coherent device these do nothing.
-- Allocations come from below the device's reach and are given to it at
-  their bus address (`TranslateDmaAddress`).
+- Allocations are physically contiguous runs from the page allocator's
+  run search (`AllocatePhysicalRun`, see "Contiguous physical runs"),
+  from the device's lowest DMA window (or below its address limit),
+  page aligned or aligned further (`AllocateAlignedDmaBuffer`) and
+  inside the device's boundary (`LimitDmaBoundary`: xHCI sets 64 KiB,
+  which none of its structures may cross), and are given to it at their
+  bus address (`TranslateDmaAddress`).
+
+**Contiguous physical runs** (`Memory.PhysicalPages`,
+`Memory.FrameRuns`). Next to the page frame database's free list -
+linked both ways, so any free frame can be taken off it in constant
+time - a bitmap with one bit per frame says which frames are free.
+`AllocatePhysicalRun` takes a `TPhysicalRunConstraints` (pages, an
+alignment and a boundary, both powers of two, and an address range) and
+scans the bitmap a 64-frame word at a time: words with no free frame
+are skipped whole, a used frame inside a candidate moves the candidate
+past it to the next aligned frame, and a candidate that would cross a
+boundary moves to the boundary; the lowest run that fits is taken frame
+by frame off the free list. When none fits, the freed pages the heap
+checks hold back are let go and the search is tried once more.
+`FreePhysicalRun` gives a run back; `LongestFreePhysicalRun` measures
+fragmentation. Single pages below an address (32-bit devices) and the
+old `AllocateZeroedContiguousPhysicalPages` use the same search.
+`tools/FrameRunTest` (`make frame-run-test`) compares the search with
+a frame-by-frame one on thousands of random bitmaps and requests; the
+kernel self tests ("contiguous physical runs", "DMA buffers with
+alignment, boundary and windows") allocate runs with 64 KiB and 2 MiB
+alignments, a boundary, a 4 GiB limit and a window at boot.
 - The kernel option `noncoherentdma` treats every device as not
   coherent, which exercises the uncached mappings and the cache
   maintenance under QEMU, whose devices all snoop
@@ -8225,8 +8330,8 @@ adapter that does not exist yet.
 card: descriptor rings are one page; frame buffers are 2 KiB, two to a
 page, so none crosses a page. The RTL8139's receive ring is one 32 KiB
 buffer, from `AllocateZeroedContiguousPhysicalPages` (`Memory.PhysicalPages`:
-a run of free frames below a limit, taken off the free list in one
-walk).
+a run of free frames below a limit, found in the free-frame bitmap; see
+"Contiguous physical runs").
 
 **Rings.** Receive and transmit rings of 128 descriptors with a buffer
 each. Received frames are handed to the network layer from the buffer
@@ -8977,11 +9082,72 @@ tests, must pass `e2fsck` too.
 
 ## Objects
 
-Every object has a header (signature, reference count, type, optional name)
+Every object has a header (signature, reference count, type, name record)
 followed by its body; callers only ever see body pointers. An object is
 deleted, through its type's delete routine, when its last reference is
-dropped. Named objects live in a flat namespace (`LookupObjectByName`).
-Thread objects embed the scheduler's thread control block.
+dropped. Thread objects embed the scheduler's thread control block.
+
+### The object namespace
+
+Named objects live in a tree of directories (`Objects.Namespace`),
+written as paths from the root with backslashes:
+
+| Directory | What is in it |
+|---|---|
+| `\Device` | every device listed under /dev (`Io.Manager` names each one it lists, with its owner and mode, and takes the name away with `UnlistDevice`) |
+| `\Storage` | the disks and partitions (`TBlockDevice`) |
+| `\Kernel` | the console (`Console`) and the system process (`System`) |
+| `\Ports` | the ports of `CallCreatePort`, owned by their creator, mode 0666 (connecting is the server's to judge) |
+| `\Shared` | what programs name: events, semaphores, mutexes, sections, timers (mode 1777, like /tmp) |
+
+A directory is an object of type `Directory` holding a list of entries;
+an entry is the name record in the header of the object named there
+(`TObjectNameRecord`: the directory, the link in its list, the name of
+up to 63 characters, owner, group, mode, flags). A named object holds a
+reference to its directory, so a directory lives while anything is named
+in it. The namespace holds none to an ordinary object: its name goes
+when the object is deleted (`DetachObjectName`, called only for objects
+that were ever named, so most deletions never touch the namespace) or
+when removed (`RemoveObjectName`); the object goes on unnamed. Directories
+are permanent: the namespace holds a reference until the name is removed,
+which needs an empty directory that a program made (the kernel's stay;
+programs may make 1024 in all). A lookup takes a reference only if the
+object is not already being deleted (`TryReferenceObject`): a count that
+reached zero still has its entry until its deletion takes it out. One
+spin lock guards the tree (lookups are short walks, and names go at
+DispatchLevel too). `CreateObject(Type, Path)` names a kernel object
+(root, 0600); `CreateNamedObject` takes the owner and mode;
+`LookupObjectByName(Path, Type)` finds one without checks.
+
+Permissions work as for files, through the caller's `TNamespaceCaller`
+(the kernel's own calls are unchecked; a program's carries its
+credentials and the routines that judge them, `Processes.ObjectNameCalls`):
+search (x) on every directory on the way, write (w) on a directory to
+name or remove in it (in a sticky one, removing needs the name's or the
+directory's owner, or root), read (r) to list one, read and write on an
+object to open it; chmod by the owner, chown by root, the group by the
+owner to one of its groups. Root passes every check.
+
+System calls (200-205; `Sys.NamedObjects` in libsystem):
+
+| Call | Does |
+|---|---|
+| 200 `CallCreateObjectDirectory` (Path, Mode) | a directory of the caller's (umask applied) |
+| 201 `CallNameObject` (Handle, Path, Mode) | names an unnamed event, semaphore, mutex, section or timer: `ErrorExists` if taken, `ErrorBusy` if named already |
+| 202 `CallOpenNamedObject` (Path, Kind) | a new handle to it (Kind 0: any that opens; directories, devices and ports do not: `ErrorUnsupported`) |
+| 203 `CallListObjectDirectory` (Path, Buffer, Capacity, FirstIndex) | `TAbiObjectDirectoryEntry` records (name, type, the kind it opens as, flags, owner, group, mode, entries, references); returns how many there are |
+| 204 `CallRemoveObjectName` (Path) | the name goes; the object stays while handles hold it |
+| 205 `CallSetObjectSecurity` (Path, Mode, Owner, Group; -1 leaves one) | chmod and chown |
+
+A process restricted from port connections can use none of them. The
+library's `CreateNamedEvent`, `CreateNamedSemaphore`, `CreateNamedMutex`
+and `CreateNamedSection` create or open: a new object is named, and if
+the name is taken the existing one is opened instead (trying again if it
+went away in between), so two programs agree on one object by its name
+alone. `objls [-l] [-R] [PATH]` lists the namespace (mode, owner, group,
+references, type, name). `objtest` (in coretest) checks it from user
+mode, the self test `Kernel.ObjectNamespaceSelfTest` from the kernel
+(as root and as a checked user with id 1000).
 
 A reference count never wraps: one that reaches
 `ObjectReferenceCountLimit` (2^40, which only a reference leak gets to)
@@ -9049,7 +9215,7 @@ other's way and each keeps room to grow:
 | program image | [1 TiB, 2 TiB) | 28 bits |
 | run time allocations (heap chunks, mappings) | first fit upwards from a random page of [16 TiB, 17 TiB) | 28 bits |
 | each thread's stack and thread data | first fit from a random page of [48 TiB, 64 TiB), chosen per thread | 32 bits |
-| each library | a random page of [126 TiB, 127 TiB) | 28 bits |
+| each library | a random page of [126 TiB, 127 TiB), chosen the first time its image section is loaded and kept for every process (see below) | 28 bits |
 | main stack top | a random page of the 64 GiB below 0x7FFF_FFFF_F000; the initial stack pointer a random 16 bytes into a page | 24 + 8 bits |
 
 A range that does not fit above its random start is looked for from the
@@ -9058,6 +9224,18 @@ sooner. Programs are position independent (`ld -pie`, ET_DYN) and the
 loader relocates them like libraries; an ET_EXEC program would still go
 to its fixed address. The kernel option `aslr=off` gives every process
 the old fixed layout (for debugging: the same addresses in every run).
+
+Libraries are placed as Windows places DLLs: the first load of a library
+since its image section was made (a boot, or the file changed) puts it
+at a random page of the library window, which its section remembers
+(`PreferredStart`); later loads, in any process, put it there again if
+that range is free in the process. So a library is at the same address
+in every process, and its relocated pages are the same: they are kept
+with the section and mapped by later loads instead of relocating again
+(see "Relocated copies" below). The program, the heap, the stacks and
+the thread data stay random per process. The kernel option
+`aslr=process` gives each process random places of its own for its
+libraries too (and no relocated copy is ever used for them).
 
 The random numbers come from `Kernel.Random`: ChaCha20 (RFC 8439,
 `Kernel.ChaCha20`) with fast key erasure - each block gives the next key
@@ -9071,9 +9249,52 @@ identifications, TCP initial sequence numbers), `/dev/random` and made-up
 virtio MAC addresses use it too. `tools/AslrTest` (`make aslr-test`)
 checks ChaCha20 against the RFC's vector and many layouts against their
 windows on the host; `aslrtest` (a coretest line) runs a program twice
-and checks that its code, a library's, its stack, a heap block and a
-thread's stack all moved (booted with `aslr=off`, the same command
-prints "aslrtest: aslr=off, the addresses are the same").
+and checks that its code, its stack, a heap block and a thread's stack
+all moved - and a library's too when booted with `aslr=process`
+(booted with `aslr=off`, the same command prints "aslrtest: aslr=off,
+the addresses are the same").
+
+#### Relocated copies
+
+Relocating a library writes into some of its pages (the GOT, data
+pointers, text relocations). Those pages are made by the kernel, not in
+the process (`Processes.ImageLoader`, `Processes.RelocatedCopies`):
+
+- When a module is mapped, the loader notes which pages of its image
+  its relocations write (`PlanRelocatedPages`) and leaves them out of
+  the mapping: their regions get no pages until the module is relocated.
+- Relocating starts by resolving every symbol the relocations name, once
+  each (`BuildResolutionTable`). The resolutions - each symbol's address
+  and size, the TLS placement of its module - with the load bias, the
+  module's own TLS placement and the TLS descriptor resolvers are the
+  key.
+- If the module's image section keeps a relocated copy with that bias
+  and key, its pages are mapped (copy on write, like the section's
+  built pages) and nothing is relocated. Otherwise the relocations are
+  applied into fresh kernel pages - each starting as what the page
+  holds before relocation: the file's page, a built page or zeros - the
+  pages are mapped, and they are kept as a copy of the section under the
+  key (up to `MaximumRelocatedCopies` = 4 per section, the least
+  recently used going first). A program is kept only when it is not at a
+  random address (it would never be there again).
+- A module with copy relocations (a program linked for a fixed address)
+  is relocated in the process as before, after the others, so what it
+  copies is relocated data.
+- Copies go with their section, and a shrinker ("relocated image
+  copies") drops them, oldest first, when memory is short; pages a
+  process maps stay its.
+
+Two loads with equal keys would write exactly the same bytes, so a copy
+is never used where its contents would be wrong; with libraries kept at
+their place (above) every process after the first gets libsystem and
+the others relocated for nothing, sharing the pages until it writes
+them. `CallGetImageCacheStatistics` (208) gives a
+`TAbiImageCacheStatistics`: the sections kept, the copies and their
+pages, the loads that reused a copy, kept a new one or kept none, the
+libraries placed at their section's place, and the copies dropped.
+`latelibtest` (a coretest line) runs two children loading
+libdynpascal.so and checks that relocated copies were reused and that
+both found it at the same address.
 
 Where the program and its libraries went is kept in the process's module
 list (`Process^.Modules`, a `TModuleList` of `TLoadedModule`): each
@@ -9122,7 +9343,20 @@ spawn; `OpenLibraryFile` for `CallLoadLibrary`): the caller's permission
 (execute; for a library read and execute; a `noexec` volume refuses
 both) and the set-user-ID owner are taken from that open file, and the
 loader loads that same file, so a symbolic link swapped in between
-cannot get another program run as the first one's owner. Exec loads
+cannot get another program run as the first one's owner. A program
+needs no read permission: `OpenProgramFile` opens it with
+`OpenForExecution`, which makes the file system check execute instead
+of read permission (the path's directories still need search), and the
+kernel reads it on its own authority, so a program of mode 0711 runs
+while its user cannot read it. The open file never reaches the program
+(programs cannot pass `OpenForExecution`: their open flags are masked
+to the Abi ones). If the new program's user may not read it
+(`ImageUnreadable`), it runs with `AT_SECURE` set, so a dynamic linker
+ignores `LD_PRELOAD` (which could load code to read it), and the
+process is marked (`TProcess.ImageUnreadable`, kept by fork, set anew
+by exec): there is no ptrace or core dump, and anything added that
+shows a process's memory or image to another program must refuse such
+a process. Exec loads
 into an address space of its own through a `TLoadTarget` (the space and
 its module list), which becomes the process's only at the switch.
 Address spaces are reference counted: the process's slot changes only
@@ -9148,8 +9382,8 @@ Int64 is no target. Exec keeps pending signals. A section is charged
 to its creator's commit limit and counted in its footprint for as long
 as it exists. A mapped file is joined under its volume's lock, which a
 change of the file holds from its first hook to the end of the write,
-so a private user never joins in between; a stale mapped file never
-reads its file again.
+so a private user never joins in between; a snapshot reads the pages
+each later change touches before it lands.
 
 `loadertest` (two coretest lines) runs the crafted files of
 `/usr/lib/loadertest`, written at build time by
@@ -9294,45 +9528,142 @@ private pages, and the system's total.
 
 **File mappings.** `CallMapHandle(Handle, Offset, Length, Flags)` on a
 regular file opened for reading maps it (Length 0: to its end):
-read-only shared by default, `MapPrivate` for copy on write (writable
-with `MapWritable`), `MapExecutable`. A shared writable mapping is
-refused with `ErrorUnsupported`: nothing writes dirty pages back to the
-file yet. The pages are a **mapped file**'s (`Processes.MappedFiles`):
-one per file (volume and node number, found in a registry), holding the
-pages of the file read so far in a two-level table, each read once -
-`ReadFromFileAt` through the file system and its block cache - when some
-process first touches it. Reading sleeps, so the fault resolver leaves
-the address space's spin lock for it (with a reference to the mapped
-file) and lets the touch happen again; a fault that may not sleep (a
-copy at raised level) fails instead, and `WaitOnAddress` reads the word
-once before its spin lock. Every mapping, in every process, maps those
-same pages, each with a reference of its own; the region holds a
-reference to the mapped file. A mapped file keeps an open file of its
-own (`DuplicateOpenFileForReading`), so the mapping outlives the
-program's handle and the file's name. Unmapping (`CallFreeMemory`) and
-the end of the process give the references back; the last one destroys
-the mapped file, deferred to passive level when it goes under a spin
-lock (`DrainMappedFileReleases`).
+read-only shared by default, `MapWritable` for a shared writable mapping
+(only through a handle opened for writing, else `ErrorAccessDenied`),
+`MapPrivate` for copy on write (writable with `MapWritable`),
+`MapExecutable`. `CallMapMemory` (mmap) does the same with the Linux
+`MAP_SHARED`/`MAP_PRIVATE` and `PROT_*` values; a shared mapping made
+through a writable handle may also be made writable later
+(`CallProtectMemory`; the region's `BackingIsWritable`). The pages are a
+**mapped file**'s (`Processes.MappedFiles`): it holds the pages of the
+file read so far in a two-level table, each read once - `ReadFromFileAt`
+through the file system and its block cache - when some process first
+touches it. Reading sleeps, so the fault resolver leaves the address
+space's spin lock for it (with a reference to the mapped file) and lets
+the touch happen again; a fault that may not sleep (a copy at raised
+level) fails instead, and `WaitOnAddress` reads the word once before its
+spin lock. Every mapping, in every process, maps those same pages, each
+with a reference of its own taken under the mapped file's lock
+(`AcquireResidentMappedFilePage`); the region holds a reference to the
+mapped file. A mapped file keeps an open file of its own
+(`DuplicateOpenFileForReading`, and `DuplicateOpenFileForWriting` once a
+shared writable mapping is made), so the mapping outlives the program's
+handle and the file's name. Unmapping (`CallFreeMemory`, munmap) and the
+end of the process give the references back; the last one writes the
+dirty pages back and destroys the mapped file, deferred
+(`DrainMappedFileReleases`) when it goes under a spin lock or on the
+thread reclaiming memory. A node with mapped files counts them
+(`TNode.MappedFileCount`).
 
-When the file changes, the file system tells the mapped files twice
-(`AddFileChangingHook`, `AddFileChangedHook`). Before the change lands,
-with the volume's lock held, a mapped file with private users (copy on
-write mappings, program images) reads every page it has not read yet
-and leaves the registry: those mappings keep exactly what they were
-mapped with, and writing a running program's file does not change the
-program. After a change, a mapped file with only shared mappings reads
-the pages the change touched again, in place, so a shared read-only
-mapping shows what `read()` shows; a page read while the file changed is
-read again (`ChangeCount`). `maptest` checks all of this: protection
-faults are catchable `EAccessViolation`s at the byte touched, commit and
-decommit (and the charge), W^X and the policy (a `ret` written and run),
-guard pages, a file seen through a mapping and through `read()`, a
-`write()` seen through a shared mapping, two private mappings keeping
-their writes apart and a private one keeping the old contents, the
-commit limit, and that the library pages it maps are mapped by other
-processes too (`PagesMappedElsewhere` in `CallGetProcessResources`:
-resident file pages with more holders than the mapped file and this
-mapping).
+Page table entries carry flags (`Processes.MappedPageEntries`): *dirty*
+(written through a shared writable mapping, not written back yet) and
+*preserved* (a snapshot's page, see below). There are two kinds of
+mapped file, each found again by later mappings of the same file in a
+registry (a spin-locked list, volume and node number):
+
+- **Shared** ones, for shared mappings, always show the file. A shared
+  writable mapping maps the pages read-only at first; the first write
+  faults, marks the page dirty and maps it writable
+  (`MarkMappedFilePageDirty`; the kernel's own writes through the
+  physical window do the same). Dirty pages are written back
+  (`WriteBackMappedFile`, one at a time per mapped file) through
+  `WriteToFileWithinSize`, which never makes the file longer, on
+  `CallSyncMemory` (msync; `SyncMemoryWait` also flushes the volume),
+  when a writable mapping is unmapped or its process ends
+  (`MarkMappedFileWriteBackPending`, then
+  `FlushPendingMappedFileWriteBacks`), before a volume is written back
+  (`sync`, `AddVolumeSyncHook`), on the block cache's background writer
+  once a page has been dirty for 5 s, and when the mapped file goes.
+  Before a batch is written, its pages lose write access in every
+  mapping (the page protector of `Processes.MappedFileMappings`), so a
+  later write marks the page dirty again and is never lost.
+- **Private** ones, for copy on write mappings and program images, keep
+  what the file held when they were mapped. Before the file changes for
+  the first time while they have users, they become **snapshots**
+  (`IsStale`: later mappings get a new mapped file), and before each
+  change from then on every snapshot reads the pages the change touches
+  - only those - and marks them preserved; pages no change touched are
+  still read from the file when first needed. Writing a few bytes of a
+  large file another program maps privately costs a page, not the file,
+  and writing a running program's file does not change the program. A
+  snapshot that cannot read a page it must keep (memory ran out) is
+  damaged: its missing pages fail. Before a private mapped file is found
+  or made, the shared one's dirty pages are written back, so a copy on
+  write mapping starts from what shared mappings wrote.
+
+The file system reports changes around the write with the range
+(`Processes.MappedFileChanges`): before it (`AddFileChangingHook`, volume
+lock held, Offset and Length - `WriteToFile`, `ChangeFileSize` from the
+shorter size, truncation on open from 0) for the snapshots, and right
+after it with the lock still held (`AddFileWrittenHook`), when the
+resident pages of the mapped files that are not snapshots get only the
+changed bytes read into them, so what a shared writable mapping wrote
+elsewhere in the same page stays; a mapped file's own write-back is not
+read back into it. A page read while the file changed is read again
+(`ChangeCount`). `read()` of a file with mapped files copies what lies
+in their resident pages (the shared one first) instead of going through
+the file system (`SetResidentFileReader`, `ReadThroughMappedPages`): it
+sees a mapping's writes before they are written back, and a page held
+twice - mapped and in the block cache - is read from neither. A mapped
+file's page that the block cache holds too is still two copies; what
+`read()` reads from mapped pages no longer pulls lines into the cache.
+
+Each mapped file lists the region nodes mapping it, with their address
+spaces (`AttachMappedFileMapper` from `AddRegionRecordLocked` and
+`SplitRegionLocked`, detached in `FreeRegionNode`; the links are in
+`TRegionNode`, whose address never changes). `VisitMappings`
+(`Processes.MappedFileMappings`) takes a reference to each live space on
+the list (`TryReferenceAddressSpace`) and, holding one space's lock and
+the mapped file's at a time, hands every region to a visitor: taking
+write access before a write-back, or removing the entries that map
+pages being evicted. Fork holds the child's lock as well as the parent's
+while it copies, since the child's regions are on those lists already.
+
+**Eviction.** The shrinker "mapped files"
+(`Processes.MappedFileEviction`, `Memory.Pressure`) drops clean pages
+that can be read again - not dirty, not preserved, not of a damaged
+snapshot - from each mapped file's eviction cursor on: gently only those
+nobody maps (nothing but the mapped file holds them: a library nobody
+runs, pages an image section keeps), hard also mapped ones, whose
+mappings are removed first so the next touch reads them again
+(`TakeEvictionCandidates`, `UnmapMappedPages`, `DropEvictionCandidate`,
+which frees a page only when the mapped file and the shrinker are its
+last holders). It never takes a volume lock or writes anything.
+`CallTrimMappedFiles` (root) runs it on demand.
+
+**System calls 214-217.** `CallSyncMemory(Address, Length, Flags)`
+(msync, `SyncMemoryAsync`/`Invalidate`/`Wait`, the Linux values),
+`CallQueryMemoryResidency(Address, Length, Vector)` (mincore: a byte per
+page, `PageResidencyResident`, `-Mapped`, `-Dirty`),
+`CallGetMappedFileStatistics` (`TAbiMappedFileStatistics`: mapped files,
+snapshots, resident and dirty pages, pages written back, evicted,
+mappings dropped, snapshot pages read, bytes `read()` copied from mapped
+pages) and `CallTrimMappedFiles(PagesWanted, Flags)`
+(`TrimMappedPagesToo`); 218-219 are kept. In `Sys.Memory`: `SyncMemory`,
+`QueryMemoryResidency`, `GetMappedFileStatistics`, `TrimMappedFiles`.
+
+Tests: the mapped file self test (`Kernel.MappedFileSelfTest`, every
+boot, on a memory volume of its own: a dirty page seen by `read()` and
+not by the file system until written back, a `write()` into a dirty page
+keeping the mapping's bytes, a private mapped file becoming a snapshot
+that reads only the written page, eviction dropping clean unmapped pages
+but not a preserved one); `filemaptest` (a coretest line: shared
+writable mappings only through writable handles, seen at once by other
+mappings and `read()`, dirty until msync, written back on unmap and
+munmap, `write()` into a dirty page, a snapshot of a 1 MiB file reading
+one page, trimming unmapping clean pages that read the same again and
+leaving a dirty one); `MappedFileTest` on the host (`make
+mapped-file-test`: entry flags, change spans and in-page byte ranges
+against a byte model, write-back lengths, mapping overlaps). `maptest`
+checks the rest: protection faults are catchable `EAccessViolation`s at
+the byte touched, commit and decommit (and the charge), W^X and the
+policy (a `ret` written and run), guard pages, a file seen through a
+mapping and through `read()`, a `write()` seen through a shared mapping,
+two private mappings keeping their writes apart and a private one
+keeping the old contents, the commit limit, and that the library pages
+it maps are mapped by other processes too (`PagesMappedElsewhere` in
+`CallGetProcessResources`: resident file pages with more holders than
+the mapped file and this mapping).
 
 The runtime's heap still takes its chunks with `CallAllocateMemory`:
 those pages are already provided only when touched, so reserving and
@@ -9413,9 +9744,25 @@ thread pointer on AArch64), entries by module handle; libraries are
 never unloaded, so a filled entry stays valid and needs no generation
 check, and the AArch64 resolver finds it without a call (only the first
 access saves every register and calls Pascal). Vectors and blocks are
-`AllocateForThread` allocations, freed when the thread ends. Initial and
-local exec accesses (TPOFF relocations) cannot reach such a block and
-fail the load (glibc keeps a surplus of static TLS for those).
+`AllocateForThread` allocations, freed when the thread ends.
+
+Initial and local exec accesses (TPOFF relocations) cannot reach such a
+block, so the static area ends in a **surplus**: when the program is
+loaded, 2048 bytes (`StaticTlsSurplusBytes`, about what glibc keeps) are
+added to it and the thread pointer is aligned to at least 64 bytes. A
+library loaded late whose TLS must be at a fixed distance from the
+thread pointer - marked DF_STATIC_TLS, or with TPOFF relocations of its
+own - gets its block in the surplus if it fits (alignment up to the
+thread pointer's): its module id is then a static one, like the startup
+libraries'. Once the load has succeeded the kernel writes the block's
+initial contents (the TLS image, then zeros) into every thread data
+region of the process - every thread there is, as the layout of those
+regions has not changed since the program was loaded - and threads made
+later get the block like any static one. A failed load gives the
+surplus it took back. A library that needs the surplus when it is used
+up fails to load as before. `latelibtest` loads libstatictls.so (initial
+exec TLS, `userland/lib/statictls`, one assembly source per
+architecture) after starting threads and checks every thread's block.
 
 Free Pascal 3.2.2 does not use ELF TLS for threadvars: every access calls
 `FPC_THREADVAR_RELOCATE` with an offset stored in the variable. Until the
@@ -9438,8 +9785,19 @@ the rest a block of their own in the dynamic TLS vector (offsets with
 `ThreadvarDynamicFlag`, the library's number and the offset in its
 block; the loading thread keeps their values, other threads start with
 zeros, as in a new thread) and initializes those units; its DT_FINI
-finalizes them. The library's own `begin ... end` block is not run, and
-the resource strings of its units are not set up.
+finalizes them. The library's own `begin ... end` block is not run.
+Its resource string tables (`FPC_RESOURCESTRINGTABLES`, and
+`FPC_RESSTRINITTABLES` for constants initialized with resource strings)
+go to `SysRegisterLibrary` too: the compiler gives every resource string
+its default value, but ObjPas's `SetResourceStrings`,
+`SetUnitResourceStrings` and `FinalizeResourceTables` walk only the
+table System's `_FPC_ResourceStringTables` points at, the program's. So
+System points it at a merged table: the program's tables followed by
+those of every library's own units (a unit's table is the same records
+whoever lists it, so the units the program has are not listed twice),
+and the same for `_FPC_ResStrInitTables`. A translation made after a
+library was loaded reaches its strings and the constants made from them
+(`latelibtest` checks it with libdynpascal's); one made before does not.
 `userland/lib/dynpascal` shows how such a library is built.
 
 Initialization code runs in user mode. The kernel collects the
@@ -9517,6 +9875,7 @@ test copies to an unmapped user address.
 | Job control | StopProcesses, ContinueProcesses, WaitForProcessChange |
 | Notifications (91-93) | SelectNotifications, ReceiveNotification, RequestEnd (see "Notifications and requests to end") |
 | Semaphores (140-142; 143-147 reserved) | CreateSemaphore, ReleaseSemaphore, GetSemaphoreCount (see "Objects for programs that work together") |
+| Named objects and mutexes (200-207) | CreateObjectDirectory, NameObject, OpenNamedObject, ListObjectDirectory, RemoveObjectName, SetObjectSecurity (see "The object namespace"), CreateMutex, ReleaseMutex |
 | Memory | AllocateMemory, FreeMemory |
 | Virtual memory (160-165) | ReserveMemory, CommitMemory, DecommitMemory, ProtectMemory, QueryMemory, SetMemoryPolicy (see "Virtual memory: reserving, committing, protecting, mapping files") |
 | Libraries | LoadLibrary, FindSymbol, GetModuleTls (150), TakeModuleInitializers (151) |
@@ -9662,10 +10021,19 @@ a user page fault.
 **Running out** (`Processes.OutOfMemory`). A user page fault that found
 no page even after reclaiming chooses a process to end
 (`Processes.OutOfMemoryScores`): its score is its share of memory in
-thousandths - resident plus committed pages (`Processes.MemoryCharges`;
-the virtual memory calls feed commitments in through
-`SetCommitCounters`, until then a process is charged with what it has
-resident) - plus its adjustment (-1000 to 1000). The highest score goes,
+thousandths - its footprint: resident pages, the sections it made and
+the pages committed to it that are not resident yet
+(`Processes.MemoryCharges`; the virtual memory calls feed commitments in
+through `SetCommitCounters`: its commit charge less its private resident
+pages) - plus its adjustment (-1000 to 1000). So a process that
+committed much and touched little is weighed by what it may come to
+use. `CallGetProcessMemoryCharge` (209) gives any process's
+`TAbiProcessMemoryCharge`: resident and shared pages, commit charge,
+committed but not resident, sections, footprint, its score now
+(`ProcessMemoryNotEligible` if it would not be chosen) and adjustment;
+`memorytest charge` (a coretest line) commits 32 MiB, checks they count
+as committed but not resident and raise the footprint, touches half and
+checks it moved to resident, and reads a hog's charge. The highest score goes,
 on equal scores the larger. Never chosen unless it is the culprit (the
 process whose fault failed): the initial program (the service manager),
 a process with the adjustment -1000 (the display server sets it on
@@ -9802,12 +10170,35 @@ never have ended. What a process held goes with it: its handles are
 closed (sockets, pipes, channels; the display server sees the channel
 break and removes its windows), user-mode locks were in its own memory.
 
-The kernel's remaining non-alertable waits a user thread can reach are
-bounded by hardware: opening and closing a device, block I/O, and the
-wait for a cancelled request to complete. Should one of them never end
-(a driver that loses a request), the hang watch says so: a process
-still there 10 seconds after it was told to end is written to the log
-with where each of its threads is (`[ending]`, see "Diagnosing hangs").
+The waits for drivers a user thread reaches - opening and closing a
+device, its reads, writes and control requests, block I/O, and the
+wait for a request it cancelled - are bounded (`Io.BoundedRequests`).
+Such a request is a copy on the heap that the driver owns while it
+holds it: its own buffer (copied in before, and out after for reads
+and control requests), a reference to the device file it names (a
+close carries a copy of the device file, whose object is being
+deleted) and a completion routine; the waiter and the completion each
+hold a reference. Once the thread cancelled its request (alerted while
+waiting for a device) or must end (its process is being ended or is
+exiting, or the thread was asked to exit: `CurrentThreadMustEnd` in
+`Processes.Termination`, looked at every 250 ms of a wait that is not
+alertable), it waits at most 5 seconds more, then gives the request up
+(`ErrorInterrupted` for a cancelled one, else `ErrorTimedOut`; a block
+transfer fails as on a disk error) with a line in the log (`[io] gave
+up on a read sent to ... that its driver did not complete`). The
+driver completes it whenever it does, into memory nobody else uses,
+and the last reference frees it (the device file's reference at
+passive level). Without memory for the copy a request is sent the old
+way. Closing an audio stream also stops waiting for it to drain once
+the device has played nothing for three seconds. A self test
+(`Kernel.BoundedRequestSelfTest`) uses a driver that loses every
+request: a cancelled read and an open of a thread that must end are
+given up, the late completions leave the senders' buffers alone, and a
+thread that need not end still gets its late result. Should a process
+still not end (a driver stuck inside its dispatch routine), the hang
+watch says so: a process still there 10 seconds after it was told to
+end is written to the log with where each of its threads is
+(`[ending]`, see "Diagnosing hangs").
 
 The exit code is chosen by the caller: 128 plus a signal number, as a Unix
 shell reports a program killed by that signal. Ending a program outright
@@ -10035,11 +10426,25 @@ behind handles (closed with `CallClose`, inherited, passed in messages):
   (`CallCreateSemaphore`, 140), releases (`CallReleaseSemaphore`, 141:
   returns the count before, `ErrorOverflow` past the limit) and reads
   (`CallGetSemaphoreCount`, 142); a wait on the handle takes one,
-  alone, among others or in a wait for all. There are no named objects
-  yet, so no call opens one by name: the handle is passed on like any
-  other. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
+  alone, among others or in a wait for all. libsystem has `CreateSemaphore`, `ReleaseSemaphore` and
   `GetSemaphoreCount` (`Sys.Objects`) and a `TSemaphore` class
-  (`Sys.Semaphores`).
+  (`Sys.Semaphores`). A semaphore, like an event, mutex, section or
+  timer, can be given a name and opened by it (see "The object
+  namespace").
+- **Mutexes** (`Objects.Mutexes`, calls 206-207): mutex events
+  (`Kernel.MutexEvents`, an event kind `EventKindMutex`) a program makes
+  (`CallCreateMutex`, owned at once with `MutexInitiallyOwned`) and
+  takes by waiting on the handle, alone, among others or in a wait for
+  all: the waiting thread becomes the owner; the owner may take it again
+  (each take is a hold, `SignalCount`) and gives each back with
+  `CallReleaseMutex` (returns the holds left; `ErrorNotPermitted` for a
+  thread that does not own it). A mutex is available to a waiter when
+  free or when it is the owner (`EventIsAvailableToLocked`), so waits for
+  all work with it too. Each thread keeps a list of the mutexes it owns
+  (`TThreadControlBlock.OwnedMutexes`); a user thread that ends holding
+  any (`LeaveCurrentUserThread`) abandons them: each is freed and marked,
+  and the wait that takes it next returns its index plus `WaitAbandoned`
+  ($100), once. A mutex deleted while owned leaves its owner's list.
 - **Timers** (`Objects.Timers`): an event signaled when a time comes,
   once or periodically (`CallSetTimer`), to well under a millisecond; a
   periodic timer counts each time from when the last was due, so
@@ -11930,7 +12335,7 @@ kernel (`Processes.PosixMemoryCalls`, `Processes.MemoryMapping`,
 | 190 | `CallReturnFromSignal` (Record) | back from a handler: registers and mask |
 | 191 | `CallSuspendForSignal` (Mask) | sigsuspend |
 | 192 | `CallPendingSignals` () | sigpending |
-| 193-195 | `CallSetProcessGroup`, `CallCreateSession`, `CallGetProcessGroupOf` | setpgid, setsid, getpgid/getsid |
+| 193-195 | `CallSetProcessGroup`, `CallCreateSession`, `CallGetProcessGroupOf` | setpgid, setsid, getpgid/getsid (setpgid, and `CallCreateProcess` with a group id, join only a group of the caller's session: `ErrorNotPermitted` for another session's group, a number no process has, or a new session) |
 | 196 | `CallGetParentProcessId` () | getppid |
 
 **fork** makes a process object with the caller's credentials,
@@ -16147,15 +16552,77 @@ Modules:
 
 The kernel's own report of a program it ends (no dispatcher, the
 dispatcher failed) does the same in the kernel log
-(`Processes.LoadedModules`):
+(`Processes.LoadedModules`), with the chain of calls that led to the
+fault between the first line and the modules (`Processes.UserBackTrace`):
 
 ```
 [process] coretest (44): page fault at 0x0000000000407AB6 (coretest+0x7AB6) accessing 0x0000000000000000, terminated
+[process]   #0 0x0000000000407AB6 coretest+0x7AB6 CORETEST.CRASHONPURPOSE+0x6
+[process]   #1 0x0000000000407B9B coretest+0x7B9B main+0xEB
+[process]   #2 0x00007F00002F31A6 libsystem.so+0x1AF1A6 SYSTEM.SYSENTRY+0x26
+[process]   #3 0x0000000000408C4E coretest+0x8C4E SI_PRC.ENTERPROGRAM+0x9F
+[process]   #4 0x0000000000408BAB coretest+0x8BAB SI_PRC.PROGRAMENTRY+0xC
 [process]   module coretest at 0x0000000000400000-0x000000000041C000
 ```
 
+**User back traces.** The kernel walks the program's stack itself, in
+the ending thread (passive level, its address space), trusting
+nothing: user memory is read only through the copy routines, so a bad
+pointer ends the trace rather than faulting; each caller's stack
+pointer must lie above its callee's; the walk stops after 32 frames,
+at address 0, or at a return address in no module and no executable
+region (what lies above the outermost frame, `_start`'s). A frame is unwound by DWARF call frame information
+where there is some for its address (`Processes.CallFrameEntries`
+finds and decodes the entries, `Processes.CallFrameRules` runs their
+programs: the advances, offset, register, same value and undefined
+rules, remember and restore state, the CFA definitions; a rule given
+as a DWARF expression makes that register unknown, a CFA given by one
+ends the walk):
+
+- C code (gcc) has its loaded `.eh_frame`, found through the binary
+  search table of the `.eh_frame_hdr` its `PT_GNU_EH_FRAME` names
+  (augmentations z, R, P, L, S; pointers absolute, pc- or
+  data-relative, of any size);
+- Free Pascal writes `.debug_frame` only, which is not loaded: it is
+  read from the module's file (the file of the mapped file behind the
+  module's image regions, `Processes.ModuleFiles`, which stays open
+  even if its name is gone), up to 8 MiB, once per report. Free
+  Pascal's internal assembler writes an FDE's CIE pointer there as 8
+  bytes instead of 4; an FDE's layout is the one that puts its first
+  address inside the module's code. AArch64 Free Pascal code has no
+  call frame information at all.
+
+Everything else steps by the frame pointer (the saved one and the
+return address at it: every routine of the system's Pascal code keeps
+a frame, `-OoNOSTACKFRAME`), which must lie at or above the stack
+pointer and be aligned. Call frame information matters where frames
+are not complete: C code built without frame pointers, and a fault at
+a routine's first instruction or in its epilogue, where the frame
+pointer still is the caller's. A return address is looked up by the
+call before it (address - 1). The routines are named from the module
+file's `.symtab` (one pass over it in chunks for all the trace's
+addresses in that module: the function symbol with the highest value
+at or below the address that covers it, a sized one before an unsized
+one at the same value - main before PASCALMAIN), else from the
+dynamic symbols the loader kept (a stripped library's exports), and
+written as `scripts/symbolize.py` does (`Processes.SymbolNames`).
+Libraries a C program's own dynamic linker maps are not in the
+kernel's module list: their frames show the bare address, stepped by
+the frame pointer. A program run without read permission (mode 0711)
+gets no trace at all ("no back trace: the program may not be read"):
+its stack, image and files stay unread (`ProcessImageIsReadable`).
+`tools/CallFrameInfoTest` (`make
+call-frame-info-test`, part of `make test`) runs the unwinder on the
+host over `.eh_frame`, `.eh_frame_hdr` and `.debug_frame` fixtures
+`make-cfi-fixtures.py` writes (x86-64 and AArch64, both `.debug_frame`
+layouts, hand-made stacks) and checks the names;
+`scripts/test-symbolize.py` checks that the kernel's report of
+`coretest --crash-without-dispatcher` names CrashOnPurpose, the main
+program and the runtime's SysEntry in that order.
+
 `scripts/symbolize.py --report REPORT build/ARCH/user` reads either form
-(or a whole serial log, report by report), takes the bases from the
+(or a whole serial log, report by report; the kernel's back trace lines
+too), takes the bases from the
 report, finds each module's file by name under the given folders and
 names the routines (addr2line, the names demangled to `UNIT.ROUTINE`);
 `symbolize.py PROGRAM LIBRARY_DIRECTORY ADDRESS...` still lays the

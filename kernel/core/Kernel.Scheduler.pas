@@ -82,6 +82,11 @@ uses
 const
   QuantumTicks = 2;
 
+{ For the self tests only: the time slice in ticks (QuantumTicks; 0
+  puts it back), so that a test can make a slice that never ends in
+  time and see whether something else reschedules. }
+procedure SetTimeSliceTicksForTest(Ticks: LongInt);
+
 { Limits Thread to the processors in Mask (bit N: the processor with
   index N; AllProcessors for any). A thread running or queued where it
   may no longer run moves at once. }
@@ -232,6 +237,7 @@ type
   end;
 
 var
+  SliceTicks: LongInt = QuantumTicks;
   DispatcherLock: TSpinLock;
   TerminatedThreads: TListEntry;
   Handovers: array[0..MaximumProcessors - 1] of TSwitchHandover;
@@ -280,8 +286,11 @@ begin
   Target := ChooseProcessorFor(Thread);
   LockProcessor(Target);
   EnqueueReadyThread(Thread, Target);
+  { A processor whose tick is deferred (its thread ran alone) needs its
+    dispatch interrupt to start it again, or Thread would wait for the
+    residual tick. }
   ShouldRunNow := (Target^.RunningThread = Target^.IdleThread) or
-    (RunningPriorityOf(Target) < Thread^.Priority);
+    (RunningPriorityOf(Target) < Thread^.Priority) or ClockTickIsDeferred(Target);
   UnlockProcessor(Target);
   if ShouldRunNow then
     RequestDispatchOn(Target);
@@ -326,9 +335,12 @@ begin
   Handovers[Processor^.Index].HandsOverDispatcherLock := HandsOverDispatcherLock;
   ChargeRunningThreadLocked(Processor, ClockNanoseconds);
   NextThread^.State := ThreadStateRunning;
-  NextThread^.QuantumRemaining := QuantumTicks;
+  NextThread^.QuantumRemaining := SliceTicks;
   Processor^.RunningThread := NextThread;
   SetRunningPriority(Processor, NextThread^.Priority);
+  { Another thread runs: a deferred tick starts again (the next dispatch
+    defers it anew if that one runs alone). }
+  ResumeClockTick(PreviousThread);
   { The tick stopped while the processor idled (Kernel.Clock). }
   if (PreviousThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
     RestartClockTick
@@ -422,7 +434,16 @@ begin
   if NextThread = nil then
   begin
     if SliceOver then
-      Running^.QuantumRemaining := QuantumTicks;
+      Running^.QuantumRemaining := SliceTicks;
+    { Dynamic tick: alone, the running thread needs no tick; with
+      threads waiting behind it, it does. }
+    if Running <> Processor^.IdleThread then
+    begin
+      if ReadyThreadCountOf(Processor) = 0 then
+        DeferClockTick
+      else
+        ResumeClockTick(Running);
+    end;
     UnlockProcessor(Processor);
     Exit;
   end;
@@ -643,6 +664,11 @@ begin
     ChargeClockTicks(Thread, ElapsedTicks, InUserMode);
     if Thread <> Processor^.IdleThread then
     begin
+      { Alone on the processor: the dispatch interrupt defers the tick
+        (under the processor's lock, where the count is exact). }
+      if ClockHasDynamicTick and not ClockTickIsDeferred(Processor) and
+         (ReadyThreadCountOf(Processor) = 0) then
+        DispatchNeeded := True;
       Thread^.QuantumRemaining := Thread^.QuantumRemaining - LongInt(ElapsedTicks);
       if Thread^.QuantumRemaining <= 0 then
       begin
@@ -930,6 +956,13 @@ begin
   ReleaseDispatcherLock(PreviousLevel);
 end;
 
+procedure SetTimeSliceTicksForTest(Ticks: LongInt);
+begin
+  if Ticks <= 0 then
+    Ticks := QuantumTicks;
+  SliceTicks := Ticks;
+end;
+
 function TicksToMilliseconds(Ticks: QWord): QWord;
 begin
   Result := Ticks * 1000 div ClockTicksPerSecond;
@@ -938,11 +971,21 @@ end;
 procedure AlertThread(Thread: PThreadControlBlock);
 var
   PreviousLevel: TPriorityLevel;
+  Processor: PProcessor;
 begin
   PreviousLevel := AcquireDispatcherLock;
   Thread^.AlertPending := True;
   if (Thread^.State = ThreadStateWaiting) and Thread^.WaitIsAlertable then
-    WakeWaitingThreadLocked(Thread, WaitAlerted);
+    WakeWaitingThreadLocked(Thread, WaitAlerted)
+  else if Thread^.State = ThreadStateRunning then
+  begin
+    { Running elsewhere: an interrupt there takes it to its next safe
+      point now, rather than at a clock tick that may be deferred (or a
+      second away). }
+    Processor := ProcessorByIndex(Thread^.LastProcessorIndex);
+    if (Processor <> nil) and (Processor <> CurrentProcessor) then
+      RequestDispatchOnProcessor(Processor);
+  end;
   ReleaseDispatcherLock(PreviousLevel);
 end;
 

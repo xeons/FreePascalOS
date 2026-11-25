@@ -41,8 +41,19 @@
   SysUnregisterLibrary (the library's DT_FINI, run before the program's
   units finalize) finalizes them in the opposite order. The library's own
   begin ... end block is not run: put startup code in a unit's
-  initialization section. Resource strings of such units are not
-  initialized.
+  initialization section.
+
+  Resource strings: the compiler gives every resource string its default
+  value as it lays the tables out, but the routines that change them
+  (ObjPas: SetResourceStrings, SetUnitResourceStrings, and at the end
+  FinalizeResourceTables) walk the table System's _FPC_ResourceStringTables
+  points at - the program's. SysRegisterLibrary therefore puts a merged
+  table there: the program's tables followed by those of every library's
+  own units (a unit's table is the same records whoever lists it, so the
+  units the program has already are not listed twice), and the same
+  for the tables of constants initialized with resource strings
+  (_FPC_ResStrInitTables). A translation made after the library was
+  loaded reaches its strings; one made before does not.
 }
 
 type
@@ -67,6 +78,30 @@ const
 var
   FreePascalLibraries: array[0..FreePascalLibraryLimit - 1] of PFreePascalLibrary;
   FreePascalLibraryCount: LongInt = 0;
+
+type
+  { ObjPas's TResourceStringTableList: per unit, indirect pointers to
+    the first and past the last record of its table. }
+  TResourceTableEntry = record
+    TableStart: PPointer;
+    TableEnd: PPointer;
+  end;
+  PResourceTableList = ^TResourceTableList;
+  TResourceTableList = packed record
+    Count: SizeInt;
+    Tables: array[0..65535] of TResourceTableEntry;
+  end;
+  { ObjPas's TResStrInitTable: per unit, a list of constants to update. }
+  PResourceInitTableList = ^TResourceInitTableList;
+  TResourceInitTableList = packed record
+    Count: SizeInt;
+    Tables: array[1..32767] of Pointer;
+  end;
+
+var
+  { The merged tables made so far (nil while only the program's are). }
+  MergedResourceTables: PResourceTableList = nil;
+  MergedResourceInitTables: PResourceInitTableList = nil;
 
 function ProgramInitFinalTable: PInitFinalTable;
 begin
@@ -232,7 +267,111 @@ begin
     CopyLibraryThreadvarValues(FreePascalLibraries[Index]);
 end;
 
-function SysRegisterLibrary(InitFinalTable, ThreadvarTables: Pointer): Pointer;
+{ True if List has a table whose records start where Entry's do. }
+function ResourceTableIsListed(List: PResourceTableList; constref Entry: TResourceTableEntry): Boolean;
+var
+  Index: SizeInt;
+begin
+  ResourceTableIsListed := False;
+  if List = nil then
+    Exit;
+  for Index := 0 to List^.Count - 1 do
+    if (List^.Tables[Index].TableStart <> nil) and (Entry.TableStart <> nil) and
+       (List^.Tables[Index].TableStart^ = Entry.TableStart^) then
+    begin
+      ResourceTableIsListed := True;
+      Exit;
+    end;
+end;
+
+{ The program's resource string tables (and those added before) with the
+  library's own ones after them. }
+procedure MergeResourceTables(Library_: PResourceTableList);
+var
+  Current: PResourceTableList;
+  Merged: PResourceTableList;
+  Index: SizeInt;
+  Count: SizeInt;
+begin
+  if (Library_ = nil) or (Library_^.Count <= 0) then
+    Exit;
+  Current := PResourceTableList(FPCResourceStringTables);
+  Count := 0;
+  if Current <> nil then
+    Count := Current^.Count;
+  Merged := PResourceTableList(GetMem(SizeOf(SizeInt) + (Count + Library_^.Count) * SizeOf(TResourceTableEntry)));
+  Merged^.Count := Count;
+  if Count > 0 then
+    Move(Current^.Tables[0], Merged^.Tables[0], Count * SizeOf(TResourceTableEntry));
+  for Index := 0 to Library_^.Count - 1 do
+    if not ResourceTableIsListed(Merged, Library_^.Tables[Index]) then
+    begin
+      Merged^.Tables[Merged^.Count] := Library_^.Tables[Index];
+      Inc(Merged^.Count);
+    end;
+  if Merged^.Count = Count then
+  begin
+    FreeMem(Merged);
+    Exit;
+  end;
+  FPCResourceStringTables := Merged;
+  if MergedResourceTables <> nil then
+    FreeMem(MergedResourceTables);
+  MergedResourceTables := Merged;
+end;
+
+function ResourceInitTableIsListed(List: PResourceInitTableList; Table: Pointer): Boolean;
+var
+  Index: SizeInt;
+begin
+  ResourceInitTableIsListed := False;
+  if List = nil then
+    Exit;
+  for Index := 1 to List^.Count do
+    if List^.Tables[Index] = Table then
+    begin
+      ResourceInitTableIsListed := True;
+      Exit;
+    end;
+end;
+
+{ The same for the constants initialized with resource strings. }
+procedure MergeResourceInitTables(Library_: PResourceInitTableList);
+var
+  Current: PResourceInitTableList;
+  Merged: PResourceInitTableList;
+  Index: SizeInt;
+  Count: SizeInt;
+begin
+  if (Library_ = nil) or (Library_^.Count <= 0) then
+    Exit;
+  Current := PResourceInitTableList(FPCResStrInitTables);
+  Count := 0;
+  if Current <> nil then
+    Count := Current^.Count;
+  Merged := PResourceInitTableList(GetMem(SizeOf(SizeInt) + (Count + Library_^.Count) * SizeOf(Pointer)));
+  Merged^.Count := Count;
+  if Count > 0 then
+    Move(Current^.Tables[1], Merged^.Tables[1], Count * SizeOf(Pointer));
+  for Index := 1 to Library_^.Count do
+    if not ResourceInitTableIsListed(Merged, Library_^.Tables[Index]) then
+    begin
+      Merged^.Tables[Merged^.Count + 1] := Library_^.Tables[Index];
+      Inc(Merged^.Count);
+    end;
+  if Merged^.Count = Count then
+  begin
+    FreeMem(Merged);
+    Exit;
+  end;
+  FPCResStrInitTables := Merged;
+  if MergedResourceInitTables <> nil then
+    FreeMem(MergedResourceInitTables);
+  MergedResourceInitTables := Merged;
+end;
+
+function SysRegisterLibrary(InitFinalTable, ThreadvarTables, ResourceStringTables,
+  ResourceStringInitTables: Pointer): Pointer;
 var
   Registered: PFreePascalLibrary;
   Index: ALUUInt;
@@ -267,6 +406,8 @@ begin
 
   LayOutLibraryThreadvars(Registered);
   CopyLibraryThreadvarValues(Registered);
+  MergeResourceTables(PResourceTableList(ResourceStringTables));
+  MergeResourceInitTables(PResourceInitTableList(ResourceStringInitTables));
 
   if Registered^.InitFinalTable <> nil then
     for Index := 1 to ALUUInt(Registered^.InitFinalTable^.TableCount) do

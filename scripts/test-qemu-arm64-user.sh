@@ -147,6 +147,12 @@ if [[ "$result" == passed ]]; then
         result="failed (the USB audio recording does not hold the 500 Hz tone)"
     fi
 fi
+# The kernel's report of coretest --crash-without-dispatcher, with its
+# back trace (scripts/test-symbolize.py, as on x86-64).
+if [[ "$result" == passed ]] &&
+   ! python3 -I "$script_directory/test-symbolize.py" "$serial_log" "$build_directory/user"; then
+    result="failed (the crash report's back trace or symbols are wrong)"
+fi
 echo "ARM64 CORETEST (GICv$gic_version): $result, ${counts:-no result} ($serial_log)"
 grep -a '\[coretest\] FAIL' "$serial_log" | head -n 40
 [[ "$result" == passed ]]

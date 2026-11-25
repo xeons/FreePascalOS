@@ -102,6 +102,8 @@ type
     Credentials: TProcessCredentials;
     { The program's file, checked; closed with the request. }
     ProgramFile: POpenFile;
+    { Its new user may not read it (OpenProgramFile). }
+    ImageUnreadable: Boolean;
   end;
   PExecRequest = ^TExecRequest;
 
@@ -138,7 +140,8 @@ begin
   if Result = ErrorNone then
   begin
     InheritCredentials(Caller, Request^.Credentials);
-    Result := OpenProgramFile(Caller, @Request^.KernelPath[0], Request^.Credentials, Request^.ProgramFile);
+    Result := OpenProgramFile(Caller, @Request^.KernelPath[0], Request^.Credentials, Request^.ProgramFile,
+      Request^.ImageUnreadable);
   end;
   if Result = ErrorNone then
     Result := CopyStringListFromUser(QWord(Execution.Arguments), Request^.Arguments);
@@ -205,6 +208,7 @@ begin
     Startup.EnvironmentCount := Request^.Environment.Count;
     { What the program runs as, set-user-ID applied. }
     Startup.Credentials := Request^.Credentials;
+    Startup.ImageUnreadable := Request^.ImageUnreadable;
     Result := BuildInitialStack(Image.Space, Startup, MainModule, InterpreterOf(Target, MainModule), Lists,
       Image.StackPointer);
   end;
@@ -377,6 +381,7 @@ begin
   ResetSignalHandlersForExec(Process);
   AcquireMutex(Process^.Lock);
   Process^.Credentials := Request^.Credentials;
+  Process^.ImageUnreadable := Request^.ImageUnreadable;
   CopyText(@Process^.Name[0], FileNameOf(@Request^.UserPath[0]), ProcessNameLength);
   JoinArguments(Request^.Arguments.Items, Request^.Arguments.Count, @Process^.CommandLine[0],
     ProcessCommandLineCapacity);

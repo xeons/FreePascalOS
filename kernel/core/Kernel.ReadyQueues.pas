@@ -115,6 +115,9 @@ function StealWasRefused(Processor: PProcessor): Boolean;
 
 { Threads in all queues (read without locks: a moment's figure). }
 function ReadyThreadTotal: LongWord;
+{ Threads in Processor's queues: exact under its lock, else a moment's
+  figure. }
+function ReadyThreadCountOf(Processor: PProcessor): LongWord;
 
 { A ready thread that has waited long enough for the starvation boost
   by Now (Kernel.PriorityBoosts), taken out of its queue, or nil. Takes
@@ -490,6 +493,11 @@ end;
 function StealWasRefused(Processor: PProcessor): Boolean;
 begin
   Result := AtomicLoad(QueueOf(Processor)^.StealRefused) <> 0;
+end;
+
+function ReadyThreadCountOf(Processor: PProcessor): LongWord;
+begin
+  Result := QueueOf(Processor)^.Count;
 end;
 
 function ReadyThreadTotal: LongWord;

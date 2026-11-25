@@ -23,43 +23,53 @@
   the pages of it that have been read, each read once - through the file
   system and its block cache - the first time some process touched it
   (Processes.AddressSpace's fault resolver asks for it). Every mapping of
-  the file, in every process, maps those same physical pages: read-only
-  shared, or copy on write for private mappings, program data and
-  library data (Processes.ImageLoader maps programs and libraries this
-  way). Each mapper takes a reference to every page it maps, so the
-  pages stay while any process maps them.
+  the file, in every process, maps those same physical pages. Each
+  mapper takes a reference to every page it maps, so the pages stay
+  while any process maps them. The page table's entries carry flags
+  (Processes.MappedPageEntries): dirty, preserved.
 
-  The registry finds the mapped file of a file that is mapped already,
-  so a second mapping, or a second process running the same program,
-  shares its pages. A mapped file keeps an open file of its own (a
-  duplicate for reading): the program may close its handle, and the file
-  may lose its name, without the mapping losing its contents.
+  There are two kinds, each found in the registry by later mappings of
+  the same file, so they share its pages:
 
-  When the file changes:
+    * shared ones (HoldsPrivate False) for shared mappings, read-only
+      or writable. They always show the file: a write() to it is copied
+      into their resident pages (Processes.MappedFileChanges), and a
+      shared writable mapping writes into the pages themselves, which
+      are then marked dirty and written back to the file (msync, unmap,
+      sync, a background round, the mapped file's end). read() of the
+      file copies from their resident pages (TResidentFileReader), so
+      it sees what a mapping wrote before it reached the file.
+    * private ones for copy on write mappings and program images,
+      which keep what the file held when they were mapped: before the
+      file changes for the first time while they have users, they
+      become snapshots (IsStale: out of the registry, later mappings
+      get a new mapped file), and before each change from then on they
+      read the pages the change touches - only those - and keep them
+      (marked preserved). Pages never touched by a change are still
+      read from the file when first needed. Writing a running program's
+      file does not change the program. Before a private mapped file is
+      found or made, the dirty pages of the shared one are written
+      back, so a copy on write mapping starts from what shared mappings
+      wrote.
 
-    * Before the change lands (TFileChangingHook, under the volume's
-      lock), a mapped file with private users - copy on write mappings,
-      program images - reads every page it has not read yet, so they
-      all keep the contents they were mapped with, and leaves the
-      registry (it is stale: later mappings get a new mapped file).
-      Writing a running program's file does not change the program.
-    * After a change (TFileChangedHook), the pages a mapped file with
-      only shared read-only mappings holds are read again where the
-      change touched them, in place, so those mappings show what read()
-      shows. A page being read while the change happened is read again
-      (ChangeCount), never kept with the old contents.
+  The regions mapping a mapped file are on its list of mappers (the
+  region nodes, AttachMappedFileMapper), so the pages can be taken from
+  every mapping: write access before a page is written back (so a later
+  write marks it dirty again), the page itself when memory runs short
+  (Processes.MappedFileEviction drops clean pages, unmapping them where
+  they are mapped; the next touch reads them again).
 
   A new user joins a mapped file (AcquireMappedFile) under the file's
-  volume lock, which the change holds from the first hook to the end
-  of the write: so a private user never joins between "no private
-  users, nothing to keep" and the write. And a stale mapped file never
-  reads again: a page the first hook could not read (memory ran out)
-  is gone, and touching it fails rather than show the new contents.
+  volume lock, which a change holds from the first hook to the last:
+  so a private user never joins between "no private users, nothing to
+  keep" and the write.
 
-  Destroying a mapped file closes its open file, which needs passive
-  level; the last reference may go at dispatch level (a region removed
-  under the address space's spin lock), so such a mapped file waits on a
-  list until the next DrainMappedFileReleases.
+  Destroying a mapped file writes its dirty pages back and closes its
+  open files, which needs passive level and a thread that may wait for
+  the file system; the last reference may go at dispatch level (a
+  region removed under the address space's spin lock) or on the thread
+  reclaiming memory, so such a mapped file waits on a list until the
+  next DrainMappedFileReleases.
 }
 unit Processes.MappedFiles;
 
@@ -70,8 +80,10 @@ interface
 
 uses
   Kernel.SpinLock,
+  Kernel.Mutex,
   Memory.Layout,
-  FileSystem.Files;
+  FileSystem.Files,
+  Processes.RegionTree;
 
 const
   { Entries in one chunk of a mapped file's page table (a page of it). }
@@ -81,21 +93,29 @@ const
 
 type
   PMappedFile = ^TMappedFile;
+  PPMappedFile = ^PMappedFile;
   TMappedFile = record
-    { In the registry, while it is not stale. }
+    { On the registry's list (snapshots too) until destroyed. }
     Next: PMappedFile;
-    IsRegistered: Boolean;
+    IsListed: Boolean;
     Volume: Pointer;
     NodeNumber: QWord;
+    { A duplicate for reading, and one for writing once a shared
+      writable mapping was made (nil before). }
     OpenedFile: POpenFile;
+    WriterFile: POpenFile;
+    { For copy on write mappings and images (see above). }
+    HoldsPrivate: Boolean;
     SizeInBytes: QWord;
     PageCount: QWord;
-    { The page table: ChunkCount chunks of MappedFileChunkPages physical
-      addresses each (nil until a page in it is read; 0 where a page is
-      not read yet). }
+    { The page table: ChunkCount chunks of MappedFileChunkPages entries
+      each (nil until a page in it is read). }
     Chunks: ^PQWord;
     ChunkCount: QWord;
     ResidentPages: QWord;
+    DirtyPages: QWord;
+    { When the first of the dirty pages became dirty (uptime, ms). }
+    DirtySince: QWord;
     { Holders: regions mapping it, image sections, loads under way. }
     References: LongInt;
     { Those of them that must keep the contents they first saw. }
@@ -103,9 +123,24 @@ type
     { Counts the changes of the file, so a page read across one is read
       again. }
     ChangeCount: QWord;
-    { Its file changed while it had private users: its pages are the
-      old contents, all of them read; it never reads again. }
+    { A snapshot (see above). }
     IsStale: Boolean;
+    { A snapshot that could not keep a page a change touched: pages not
+      in memory are lost. }
+    IsDamaged: Boolean;
+    { A writable mapping of it went: its dirty pages are written back
+      soon (FlushPendingMappedFileWriteBacks). }
+    WriteBackPending: Boolean;
+    { The thread writing its pages back (its own writes are not copied
+      into the pages again). }
+    WriteBackThread: Pointer;
+    { One write-back at a time. }
+    WriteBackLock: TMutex;
+    { Where the eviction looks next. }
+    EvictionCursor: QWord;
+    { The region nodes mapping it (TRegionNode.Mapper*). }
+    Mappers: PRegionNode;
+    MapperCount: LongInt;
     { On the list of mapped files waiting to be destroyed. }
     PendingNext: PMappedFile;
     Lock: TSpinLock;
@@ -113,35 +148,122 @@ type
 
   TMappedFileStatistics = record
     MappedFiles: QWord;
+    SnapshotFiles: QWord;
     ResidentPages: QWord;
+    DirtyPages: QWord;
+    PagesWrittenBack: QWord;
+    PagesEvicted: QWord;
+    MappingsDropped: QWord;
+    SnapshotPagesRead: QWord;
+    BytesReadFromPages: QWord;
   end;
 
+  { Takes write access to the pages [FirstPage, EndPage) of MappedFile
+    away from every mapping (Processes.MappedFileMappings). Passive
+    level, no lock held. }
+  TMappedPageProtector = procedure(MappedFile: PMappedFile; FirstPage, EndPage: QWord);
+
+  TMappedPageReference = record
+    PageIndex: QWord;
+    Physical: TPhysicalAddress;
+  end;
+  PMappedPageReference = ^TMappedPageReference;
+
+var
+  { Counters kept by this unit and Processes.MappedFileChanges /
+    Processes.MappedFileEviction. }
+  MappedPagesWrittenBack: QWord = 0;
+  MappedPagesEvicted: QWord = 0;
+  MappedMappingsDropped: QWord = 0;
+  MappedSnapshotPagesRead: QWord = 0;
+  MappedBytesReadFromPages: QWord = 0;
+  { Some mapped file waits for a write-back (WriteBackPending). }
+  MappedFileWriteBackRequested: Boolean = False;
+
 procedure InitializeMappedFiles;
+procedure SetMappedPageProtector(Protector: TMappedPageProtector);
 
 { The mapped file of the file OpenedFile is open on (which must be open
   for reading), found in the registry or made, with a reference (a
   private one if IsPrivate). Returns 0 or an Abi error. Passive level. }
 function AcquireMappedFile(OpenedFile: POpenFile; IsPrivate: Boolean; out MappedFile: PMappedFile): LongInt;
+{ Lets shared writable mappings of MappedFile be made from OpenedFile
+  (open for writing): the mapped file keeps a duplicate to write back
+  through. ErrorAccessDenied if OpenedFile is not open for writing. }
+function PrepareMappedFileForWriting(MappedFile: PMappedFile; OpenedFile: POpenFile): LongInt;
 { One more reference. Any level. }
 procedure ReferenceMappedFile(MappedFile: PMappedFile; IsPrivate: Boolean);
-{ Gives a reference back; the last one destroys it (at once at passive
-  level, else at the next DrainMappedFileReleases). Any level. }
+{ Gives a reference back; the last one destroys it (at once where that
+  may be done, else at the next DrainMappedFileReleases). Any level. }
 procedure ReleaseMappedFile(MappedFile: PMappedFile; IsPrivate: Boolean);
-{ Destroys the mapped files whose last reference went at dispatch
-  level. Passive level. }
+{ Destroys the mapped files whose last reference went where they could
+  not be destroyed. Passive level. }
 procedure DrainMappedFileReleases;
 
-{ The page PageIndex if it has been read (no reference is taken: it
-  stays while the caller's reference to the mapped file does). Any
-  level. }
+{ The page PageIndex if it is in memory (no reference is taken: for
+  looking only). Any level. }
 function ResidentMappedFilePage(MappedFile: PMappedFile; PageIndex: QWord;
   out Physical: TPhysicalAddress): Boolean;
-{ Reads page PageIndex if it has not been read yet. Passive level. }
+{ The same, with a reference to the page for the caller (which keeps it
+  from being evicted). Any level. }
+function AcquireResidentMappedFilePage(MappedFile: PMappedFile; PageIndex: QWord;
+  out Physical: TPhysicalAddress): Boolean;
+{ True if page PageIndex waits to be written back. Any level. }
+function MappedFilePageIsDirty(MappedFile: PMappedFile; PageIndex: QWord): Boolean;
+{ Reads page PageIndex if it is not in memory. Passive level. }
 function LoadMappedFilePage(MappedFile: PMappedFile; PageIndex: QWord): LongInt;
 { Copies Length bytes at Offset of the file, through its pages (beyond
   its end: zeros). Passive level. }
 function ReadMappedFileBytes(MappedFile: PMappedFile; Offset: QWord; Destination: Pointer;
   Length: QWord): LongInt;
+{ Reads the file's page PageIndex into the page Physical (the part
+  beyond the end of the file zeroed). Passive level. }
+function ReadMappedPageContents(MappedFile: PMappedFile; PageIndex: QWord; Physical: TPhysicalAddress): LongInt;
+
+{ Marks page PageIndex dirty if it is Physical (a shared writable
+  mapping is about to write it). False if the page is not Physical.
+  Any level. }
+function MarkMappedFilePageDirty(MappedFile: PMappedFile; PageIndex: QWord; Physical: TPhysicalAddress): Boolean;
+{ Marks page PageIndex preserved (a snapshot's page a change touched). }
+procedure MarkMappedFilePagePreserved(MappedFile: PMappedFile; PageIndex: QWord);
+{ Takes up to Capacity dirty pages from Position on, below EndPage:
+  their dirty marks are cleared and each comes with a reference.
+  Position moves past the last page looked at. Any level. }
+function TakeDirtyMappedPages(MappedFile: PMappedFile; var Position: QWord; EndPage: QWord;
+  Pages: PMappedPageReference; Capacity: Integer): Integer;
+{ Writes the dirty pages of [FirstPage, EndPage) back to the file (write
+  access to each is taken from the mappings first). 0 or ErrorIo.
+  Passive level. }
+function WriteBackMappedFile(MappedFile: PMappedFile; FirstPage, EndPage: QWord): LongInt;
+{ Asks for MappedFile's dirty pages to be written back soon. Any level. }
+procedure MarkMappedFileWriteBackPending(MappedFile: PMappedFile);
+
+{ Puts the region node Node of the address space Space on MappedFile's
+  list of mappers, and takes it off again. Any level. }
+procedure AttachMappedFileMapper(MappedFile: PMappedFile; Node: PRegionNode; Space: Pointer);
+procedure DetachMappedFileMapper(MappedFile: PMappedFile; Node: PRegionNode);
+
+{ Every listed mapped file (Volume nil) or those of one file
+  (NodeNumber on Volume), each with a reference, in a block of kernel
+  memory (FreeMappedFileList gives both back). False if memory ran out.
+  Passive level. }
+function ListMappedFiles(Volume: Pointer; NodeNumber: QWord; AllOfVolume: Boolean;
+  out Files: PPMappedFile; out Count: Integer): Boolean;
+procedure FreeMappedFileList(Files: PPMappedFile; Count: Integer);
+{ The mapped file whose pages read() of the file may copy (the shared
+  one, else a private one that is not a snapshot), with a reference;
+  nil if there is none. Any level. }
+function FindMappedFileForReading(Volume: Pointer; NodeNumber: QWord): PMappedFile;
+
+{ Up to Capacity pages that could be dropped (in memory, clean, not
+  preserved), from the eviction cursor on, each with a reference. Any
+  level. }
+function TakeEvictionCandidates(MappedFile: PMappedFile; Pages: PMappedPageReference;
+  Capacity: Integer): Integer;
+{ Drops the candidate if nothing but the mapped file and the caller
+  holds it any more and it is still clean; gives the caller's reference
+  back either way. True if the page was freed. Any level. }
+function DropEvictionCandidate(MappedFile: PMappedFile; const Page: TMappedPageReference): Boolean;
 
 procedure GetMappedFileStatistics(out Statistics: TMappedFileStatistics);
 
@@ -151,19 +273,38 @@ uses
   Runtime.Memory,
   Abi.SystemCalls,
   FileSystem.Types,
-  Kernel.Mutex,
   Kernel.PriorityLevel,
+  Kernel.Scheduler,
+  Kernel.Clock,
   Memory.PhysicalPages,
-  Memory.KernelHeap;
+  Memory.KernelHeap,
+  Memory.Pressure,
+  Processes.MappedPageEntries,
+  Processes.MappedFileRanges;
+
+const
+  { Pages written back at a time (write access taken from them
+    together). }
+  WriteBackBatch = 32;
+  { Entries the eviction looks at under one hold of the lock. }
+  EvictionScanLimit = 4096;
 
 var
-  RegistryLock: TMutex;
+  RegistryLock: TSpinLock;
   Registry: PMappedFile;
+  RegistryCount: LongInt;
   PendingLock: TSpinLock;
   PendingReleases: PMappedFile;
+  PageProtector: TMappedPageProtector = nil;
+
+procedure SetMappedPageProtector(Protector: TMappedPageProtector);
+begin
+  PageProtector := Protector;
+end;
 
 { --- Page table -------------------------------------------------------- }
 
+{ Caller holds the lock. }
 function EntryOf(MappedFile: PMappedFile; PageIndex: QWord): PQWord;
 var
   Chunk: PQWord;
@@ -181,9 +322,13 @@ var
   ChunkIndex: QWord;
   Fresh: PQWord;
   PreviousLevel: TPriorityLevel;
+  Present: Boolean;
 begin
   ChunkIndex := PageIndex div MappedFileChunkPages;
-  if MappedFile^.Chunks[ChunkIndex] <> nil then
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Present := MappedFile^.Chunks[ChunkIndex] <> nil;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+  if Present then
     Exit(True);
   Fresh := PQWord(AllocateZeroedKernelMemory(MappedFileChunkPages * SizeOf(QWord)));
   if Fresh = nil then
@@ -200,26 +345,17 @@ begin
   Result := True;
 end;
 
-{ Reads the file's page PageIndex into the page Physical (the part
-  beyond the end of the file zeroed). }
-function ReadPageContents(MappedFile: PMappedFile; PageIndex: QWord; Physical: TPhysicalAddress): LongInt;
+function ReadMappedPageContents(MappedFile: PMappedFile; PageIndex: QWord; Physical: TPhysicalAddress): LongInt;
 var
-  Offset: QWord;
   Wanted: QWord;
   BytesRead: QWord;
   Window: PByte;
 begin
   Window := PByte(PhysicalToVirtual(Physical));
-  Offset := PageIndex * PageSize;
-  Wanted := 0;
-  if Offset < MappedFile^.SizeInBytes then
-  begin
-    Wanted := MappedFile^.SizeInBytes - Offset;
-    if Wanted > PageSize then
-      Wanted := PageSize;
-  end;
+  Wanted := BytesBeforeEnd(PageIndex, MappedFile^.SizeInBytes);
   BytesRead := 0;
-  if (Wanted > 0) and (ReadFromFileAt(MappedFile^.OpenedFile, Offset, Window, Wanted, BytesRead) <> StatusSuccess) then
+  if (Wanted > 0) and (ReadFromFileAt(MappedFile^.OpenedFile, PageIndex * PageSize, Window, Wanted,
+     BytesRead) <> StatusSuccess) then
     Exit(ErrorIo);
   if BytesRead < PageSize then
     ZeroMemory(Window + BytesRead, PageSize - BytesRead);
@@ -238,9 +374,42 @@ begin
   PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
   Entry := EntryOf(MappedFile, PageIndex);
   if Entry <> nil then
-    Physical := Entry^;
+    Physical := MappedPagePhysical(Entry^);
   ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
   Result := Physical <> 0;
+end;
+
+function AcquireResidentMappedFilePage(MappedFile: PMappedFile; PageIndex: QWord;
+  out Physical: TPhysicalAddress): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PQWord;
+begin
+  Physical := 0;
+  if PageIndex >= MappedFile^.PageCount then
+    Exit(False);
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Entry := EntryOf(MappedFile, PageIndex);
+  if Entry <> nil then
+    Physical := MappedPagePhysical(Entry^);
+  if Physical <> 0 then
+    ReferencePhysicalPage(Physical);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+  Result := Physical <> 0;
+end;
+
+function MappedFilePageIsDirty(MappedFile: PMappedFile; PageIndex: QWord): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PQWord;
+begin
+  Result := False;
+  if PageIndex >= MappedFile^.PageCount then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Entry := EntryOf(MappedFile, PageIndex);
+  Result := (Entry <> nil) and MappedPageIsDirty(Entry^);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
 end;
 
 function LoadMappedFilePage(MappedFile: PMappedFile; PageIndex: QWord): LongInt;
@@ -259,8 +428,8 @@ begin
   repeat
     if ResidentMappedFilePage(MappedFile, PageIndex, Existing) then
       Exit(ErrorNone);
-    { Its file changed since: what is not here is lost. }
-    if MappedFile^.IsStale then
+    { A snapshot that lost pages: what is not here is gone. }
+    if MappedFile^.IsDamaged then
       Exit(ErrorIo);
     PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
     Seen := MappedFile^.ChangeCount;
@@ -269,7 +438,7 @@ begin
     Fresh := AllocatePhysicalPage(PageUsageProgramImage);
     if Fresh = 0 then
       Exit(ErrorOutOfMemory);
-    Result := ReadPageContents(MappedFile, PageIndex, Fresh);
+    Result := ReadMappedPageContents(MappedFile, PageIndex, Fresh);
     if Result <> ErrorNone then
     begin
       FreePhysicalPage(Fresh);
@@ -278,12 +447,11 @@ begin
 
     PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
     Entry := EntryOf(MappedFile, PageIndex);
-    { Read across a change of the file: maybe old contents; read again
-      (a stale mapped file has all its pages and never changes). }
+    { Read across a change of the file: maybe old contents; read again. }
     Kept := (Entry^ = 0) and (MappedFile^.ChangeCount = Seen);
     if Kept then
     begin
-      Entry^ := Fresh;
+      Entry^ := MakeMappedPageEntry(Fresh, 0);
       Inc(MappedFile^.ResidentPages);
     end;
     ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
@@ -314,11 +482,14 @@ begin
       ZeroMemory(Target, Piece)
     else
     begin
-      Result := LoadMappedFilePage(MappedFile, PageIndex);
-      if Result <> ErrorNone then
-        Exit;
-      ResidentMappedFilePage(MappedFile, PageIndex, Physical);
+      { The page may be evicted between reading and taking it. }
+      repeat
+        Result := LoadMappedFilePage(MappedFile, PageIndex);
+        if Result <> ErrorNone then
+          Exit;
+      until AcquireResidentMappedFilePage(MappedFile, PageIndex, Physical);
       CopyMemory(Target, PByte(PhysicalToVirtual(Physical)) + InPage, Piece);
+      FreePhysicalPage(Physical);
     end;
     Target := Target + Piece;
     Offset := Offset + Piece;
@@ -327,19 +498,212 @@ begin
   Result := ErrorNone;
 end;
 
+{ --- Dirty pages and writing back ------------------------------------------ }
+
+function MarkMappedFilePageDirty(MappedFile: PMappedFile; PageIndex: QWord; Physical: TPhysicalAddress): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PQWord;
+begin
+  Result := False;
+  if PageIndex >= MappedFile^.PageCount then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Entry := EntryOf(MappedFile, PageIndex);
+  if (Entry <> nil) and (MappedPagePhysical(Entry^) = Physical) and (Physical <> 0) then
+  begin
+    if not MappedPageIsDirty(Entry^) then
+    begin
+      Entry^ := Entry^ or MappedPageDirty;
+      if MappedFile^.DirtyPages = 0 then
+        MappedFile^.DirtySince := UptimeMilliseconds;
+      Inc(MappedFile^.DirtyPages);
+    end;
+    Result := True;
+  end;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+procedure MarkMappedFilePagePreserved(MappedFile: PMappedFile; PageIndex: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PQWord;
+begin
+  if PageIndex >= MappedFile^.PageCount then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Entry := EntryOf(MappedFile, PageIndex);
+  if (Entry <> nil) and (Entry^ <> 0) then
+    Entry^ := Entry^ or MappedPagePreserved;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+function TakeDirtyMappedPages(MappedFile: PMappedFile; var Position: QWord; EndPage: QWord;
+  Pages: PMappedPageReference; Capacity: Integer): Integer;
+var
+  PreviousLevel: TPriorityLevel;
+  Entry: PQWord;
+  Chunk: PQWord;
+begin
+  Result := 0;
+  if EndPage > MappedFile^.PageCount then
+    EndPage := MappedFile^.PageCount;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  while (Position < EndPage) and (Result < Capacity) and (MappedFile^.DirtyPages > 0) do
+  begin
+    Chunk := MappedFile^.Chunks[Position div MappedFileChunkPages];
+    if Chunk = nil then
+    begin
+      { A whole chunk never read. }
+      Position := (Position div MappedFileChunkPages + 1) * MappedFileChunkPages;
+      Continue;
+    end;
+    Entry := @Chunk[Position mod MappedFileChunkPages];
+    if MappedPageIsDirty(Entry^) then
+    begin
+      Entry^ := Entry^ and not MappedPageDirty;
+      Dec(MappedFile^.DirtyPages);
+      Pages[Result].PageIndex := Position;
+      Pages[Result].Physical := MappedPagePhysical(Entry^);
+      ReferencePhysicalPage(Pages[Result].Physical);
+      Inc(Result);
+    end;
+    Inc(Position);
+  end;
+  if MappedFile^.DirtyPages = 0 then
+    Position := EndPage;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+function WriteBackMappedFile(MappedFile: PMappedFile; FirstPage, EndPage: QWord): LongInt;
+var
+  Pages: array[0..WriteBackBatch - 1] of TMappedPageReference;
+  Count: Integer;
+  Index: Integer;
+  Position: QWord;
+  Written: QWord;
+  Status: TFileSystemStatus;
+begin
+  Result := ErrorNone;
+  { Nothing was ever written through it. }
+  if (MappedFile^.WriterFile = nil) or (MappedFile^.DirtyPages = 0) then
+    Exit;
+  if EndPage > MappedFile^.PageCount then
+    EndPage := MappedFile^.PageCount;
+  AcquireMutex(MappedFile^.WriteBackLock);
+  MappedFile^.WriteBackThread := CurrentThread;
+  Position := FirstPage;
+  while Position < EndPage do
+  begin
+    Count := TakeDirtyMappedPages(MappedFile, Position, EndPage, @Pages[0], WriteBackBatch);
+    if Count = 0 then
+      Break;
+    { A write after this marks the page dirty again (and is in what is
+      written now, or written next time). }
+    if Assigned(PageProtector) then
+      PageProtector(MappedFile, Pages[0].PageIndex, Pages[Count - 1].PageIndex + 1);
+    for Index := 0 to Count - 1 do
+    begin
+      Status := WriteToFileWithinSize(MappedFile^.WriterFile, Pages[Index].PageIndex * PageSize,
+        PhysicalToVirtual(Pages[Index].Physical), PageSize, Written);
+      if Status = StatusSuccess then
+        Inc(MappedPagesWrittenBack)
+      else
+      begin
+        { Kept for another try (a later sync). }
+        MarkMappedFilePageDirty(MappedFile, Pages[Index].PageIndex, Pages[Index].Physical);
+        Result := ErrorIo;
+      end;
+      FreePhysicalPage(Pages[Index].Physical);
+    end;
+  end;
+  MappedFile^.WriteBackThread := nil;
+  ReleaseMutex(MappedFile^.WriteBackLock);
+end;
+
+procedure MarkMappedFileWriteBackPending(MappedFile: PMappedFile);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  if MappedFile^.DirtyPages > 0 then
+  begin
+    MappedFile^.WriteBackPending := True;
+    MappedFileWriteBackRequested := True;
+  end;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+{ --- Mappers ------------------------------------------------------------- }
+
+procedure AttachMappedFileMapper(MappedFile: PMappedFile; Node: PRegionNode; Space: Pointer);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if (MappedFile = nil) or (Node^.MapperSpace <> nil) then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Node^.MapperSpace := Space;
+  Node^.MapperPrevious := nil;
+  Node^.MapperNext := MappedFile^.Mappers;
+  if MappedFile^.Mappers <> nil then
+    MappedFile^.Mappers^.MapperPrevious := Node;
+  MappedFile^.Mappers := Node;
+  Inc(MappedFile^.MapperCount);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+procedure DetachMappedFileMapper(MappedFile: PMappedFile; Node: PRegionNode);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if (MappedFile = nil) or (Node^.MapperSpace = nil) then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  if Node^.MapperPrevious <> nil then
+    Node^.MapperPrevious^.MapperNext := Node^.MapperNext
+  else
+    MappedFile^.Mappers := Node^.MapperNext;
+  if Node^.MapperNext <> nil then
+    Node^.MapperNext^.MapperPrevious := Node^.MapperPrevious;
+  Node^.MapperNext := nil;
+  Node^.MapperPrevious := nil;
+  Node^.MapperSpace := nil;
+  Dec(MappedFile^.MapperCount);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
 { --- Lifetime ------------------------------------------------------------ }
 
-procedure UnregisterLocked(MappedFile: PMappedFile); forward;
+procedure UnlistLocked(MappedFile: PMappedFile);
+var
+  Link: ^PMappedFile;
+begin
+  if not MappedFile^.IsListed then
+    Exit;
+  Link := @Registry;
+  while (Link^ <> nil) and (Link^ <> MappedFile) do
+    Link := @Link^^.Next;
+  if Link^ = MappedFile then
+    Link^ := MappedFile^.Next;
+  MappedFile^.Next := nil;
+  MappedFile^.IsListed := False;
+  Dec(RegistryCount);
+end;
 
 procedure Destroy(MappedFile: PMappedFile);
 var
+  PreviousLevel: TPriorityLevel;
   ChunkIndex: QWord;
   Index: QWord;
   Chunk: PQWord;
 begin
-  AcquireMutex(RegistryLock);
-  UnregisterLocked(MappedFile);
-  ReleaseMutex(RegistryLock);
+  { Nothing maps it any more: what was written reaches the file. }
+  WriteBackMappedFile(MappedFile, 0, MappedFile^.PageCount);
+
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  UnlistLocked(MappedFile);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
 
   for ChunkIndex := 1 to MappedFile^.ChunkCount do
   begin
@@ -347,12 +711,15 @@ begin
     if Chunk = nil then
       Continue;
     for Index := 1 to MappedFileChunkPages do
-      if Chunk[Index - 1] <> 0 then
-        FreePhysicalPage(Chunk[Index - 1]);
+      if MappedPagePhysical(Chunk[Index - 1]) <> 0 then
+        FreePhysicalPage(MappedPagePhysical(Chunk[Index - 1]));
     FreeKernelMemory(Chunk);
   end;
   FreeKernelMemory(MappedFile^.Chunks);
+  ChangeMappedFileCount(MappedFile^.OpenedFile, -1);
   CloseFile(MappedFile^.OpenedFile);
+  if MappedFile^.WriterFile <> nil then
+    CloseFile(MappedFile^.WriterFile);
   FreeKernelMemory(MappedFile);
 end;
 
@@ -365,6 +732,13 @@ begin
   if IsPrivate then
     Inc(MappedFile^.PrivateUsers);
   ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+{ Destroying writes to the file system: not at dispatch level, not on
+  the thread reclaiming memory. }
+function MayDestroyHere: Boolean;
+begin
+  Result := CanReclaimMemoryHere;
 end;
 
 procedure ReleaseMappedFile(MappedFile: PMappedFile; IsPrivate: Boolean);
@@ -382,7 +756,7 @@ begin
   ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
   if not IsLast then
     Exit;
-  if CurrentPriorityLevel = PassiveLevel then
+  if MayDestroyHere then
     Destroy(MappedFile)
   else
   begin
@@ -399,7 +773,7 @@ var
   Taken: PMappedFile;
   Next: PMappedFile;
 begin
-  if (PendingReleases = nil) or (CurrentPriorityLevel <> PassiveLevel) then
+  if (PendingReleases = nil) or not MayDestroyHere then
     Exit;
   PreviousLevel := AcquireSpinLock(PendingLock);
   Taken := PendingReleases;
@@ -415,51 +789,114 @@ end;
 
 { --- The registry ------------------------------------------------------------ }
 
-{ A live mapped file of (Volume, NodeNumber) with a reference taken, or
-  nil. One whose last reference went (it is being destroyed) is not
-  brought back. Caller holds RegistryLock. }
-function FindRegisteredLocked(Volume: Pointer; NodeNumber: QWord; IsPrivate: Boolean): PMappedFile;
+{ Takes a reference if the mapped file is still alive (one whose last
+  reference went is being destroyed and is not brought back). }
+function TryReference(MappedFile: PMappedFile; IsPrivate: Boolean): Boolean;
 var
   PreviousLevel: TPriorityLevel;
-  Alive: Boolean;
+begin
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Result := MappedFile^.References > 0;
+  if Result then
+  begin
+    Inc(MappedFile^.References);
+    if IsPrivate then
+      Inc(MappedFile^.PrivateUsers);
+  end;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+end;
+
+{ A live mapped file of the kind asked for (HoldsPrivate) that is not a
+  snapshot, with a reference taken (a private one if PrivateReference),
+  or nil. Caller holds RegistryLock. }
+function FindKindLocked(Volume: Pointer; NodeNumber: QWord; HoldsPrivate, PrivateReference: Boolean): PMappedFile;
 begin
   Result := Registry;
   while Result <> nil do
   begin
-    if (Result^.Volume = Volume) and (Result^.NodeNumber = NodeNumber) then
-    begin
-      PreviousLevel := AcquireSpinLock(Result^.Lock);
-      Alive := Result^.References > 0;
-      if Alive then
-      begin
-        Inc(Result^.References);
-        if IsPrivate then
-          Inc(Result^.PrivateUsers);
-      end;
-      ReleaseSpinLock(Result^.Lock, PreviousLevel);
-      if Alive then
+    if (Result^.Volume = Volume) and (Result^.NodeNumber = NodeNumber) and
+       (Result^.HoldsPrivate = HoldsPrivate) and not Result^.IsStale and
+       TryReference(Result, PrivateReference) then
         Exit;
-    end;
     Result := Result^.Next;
   end;
 end;
 
-procedure UnregisterLocked(MappedFile: PMappedFile);
-var
-  Link: ^PMappedFile;
+{ The one a new mapping of that kind joins. }
+function FindSharableLocked(Volume: Pointer; NodeNumber: QWord; IsPrivate: Boolean): PMappedFile;
 begin
-  if not MappedFile^.IsRegistered then
-    Exit;
-  Link := @Registry;
-  while (Link^ <> nil) and (Link^ <> MappedFile) do
-    Link := @Link^^.Next;
-  if Link^ = MappedFile then
-    Link^ := MappedFile^.Next;
-  MappedFile^.Next := nil;
-  MappedFile^.IsRegistered := False;
+  Result := FindKindLocked(Volume, NodeNumber, IsPrivate, IsPrivate);
 end;
 
-function CreateMappedFile(Duplicate: POpenFile; const Information: TNodeInformation;
+function FindMappedFileForReading(Volume: Pointer; NodeNumber: QWord): PMappedFile;
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  if Registry = nil then
+    Exit(nil);
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Result := FindKindLocked(Volume, NodeNumber, False, False);
+  if Result = nil then
+    Result := FindKindLocked(Volume, NodeNumber, True, False);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
+end;
+
+function ListMappedFiles(Volume: Pointer; NodeNumber: QWord; AllOfVolume: Boolean;
+  out Files: PPMappedFile; out Count: Integer): Boolean;
+var
+  PreviousLevel: TPriorityLevel;
+  Capacity: Integer;
+  MappedFile: PMappedFile;
+  Fits: Boolean;
+begin
+  Files := nil;
+  Count := 0;
+  repeat
+    Capacity := RegistryCount + 8;
+    Files := PPMappedFile(AllocateKernelMemory(QWord(Capacity) * SizeOf(PMappedFile)));
+    if Files = nil then
+      Exit(False);
+    Count := 0;
+    Fits := True;
+    PreviousLevel := AcquireSpinLock(RegistryLock);
+    if RegistryCount > Capacity then
+      Fits := False
+    else
+    begin
+      MappedFile := Registry;
+      while MappedFile <> nil do
+      begin
+        if ((Volume = nil) or ((MappedFile^.Volume = Volume) and
+           (AllOfVolume or (MappedFile^.NodeNumber = NodeNumber)))) and
+           TryReference(MappedFile, False) then
+        begin
+          Files[Count] := MappedFile;
+          Inc(Count);
+        end;
+        MappedFile := MappedFile^.Next;
+      end;
+    end;
+    ReleaseSpinLock(RegistryLock, PreviousLevel);
+    if not Fits then
+    begin
+      FreeKernelMemory(Files);
+      Files := nil;
+    end;
+  until Fits;
+  Result := True;
+end;
+
+procedure FreeMappedFileList(Files: PPMappedFile; Count: Integer);
+var
+  Index: Integer;
+begin
+  for Index := 0 to Count - 1 do
+    ReleaseMappedFile(Files[Index], False);
+  if Files <> nil then
+    FreeKernelMemory(Files);
+end;
+
+function CreateMappedFile(Duplicate: POpenFile; const Information: TNodeInformation; IsPrivate: Boolean;
   out MappedFile: PMappedFile): LongInt;
 begin
   MappedFile := PMappedFile(AllocateZeroedKernelMemory(SizeOf(TMappedFile)));
@@ -468,6 +905,7 @@ begin
   MappedFile^.Volume := Duplicate^.Volume;
   MappedFile^.NodeNumber := Information.NodeNumber;
   MappedFile^.OpenedFile := Duplicate;
+  MappedFile^.HoldsPrivate := IsPrivate;
   MappedFile^.SizeInBytes := Information.SizeInBytes;
   MappedFile^.PageCount := (Information.SizeInBytes + PageSize - 1) div PageSize;
   MappedFile^.ChunkCount := (MappedFile^.PageCount + MappedFileChunkPages - 1) div MappedFileChunkPages;
@@ -481,7 +919,27 @@ begin
     Exit(ErrorOutOfMemory);
   end;
   InitializeSpinLock(MappedFile^.Lock);
+  InitializeMutex(MappedFile^.WriteBackLock);
+  ChangeMappedFileCount(Duplicate, 1);
   Result := ErrorNone;
+end;
+
+{ Before a copy on write mapping starts: what shared mappings wrote
+  reaches the file. }
+procedure WriteBackSharedPagesOf(Volume: Pointer; NodeNumber: QWord);
+var
+  PreviousLevel: TPriorityLevel;
+  Shared: PMappedFile;
+begin
+  if Registry = nil then
+    Exit;
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Shared := FindSharableLocked(Volume, NodeNumber, False);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
+  if Shared = nil then
+    Exit;
+  WriteBackMappedFile(Shared, 0, Shared^.PageCount);
+  ReleaseMappedFile(Shared, False);
 end;
 
 function AcquireMappedFile(OpenedFile: POpenFile; IsPrivate: Boolean; out MappedFile: PMappedFile): LongInt;
@@ -490,6 +948,7 @@ var
   Information: TNodeInformation;
   Duplicate: POpenFile;
   Existing: PMappedFile;
+  PreviousLevel: TPriorityLevel;
 begin
   MappedFile := nil;
   DrainMappedFileReleases;
@@ -502,19 +961,19 @@ begin
     Exit(ErrorInvalidArgument);
 
   Volume := PVolume(OpenedFile^.Volume);
+  if IsPrivate then
+    WriteBackSharedPagesOf(Volume, Information.NodeNumber);
   AcquireMutex(Volume^.Lock);
-  AcquireMutex(RegistryLock);
-  MappedFile := FindRegisteredLocked(Volume, Information.NodeNumber, IsPrivate);
-  ReleaseMutex(RegistryLock);
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  MappedFile := FindSharableLocked(Volume, Information.NodeNumber, IsPrivate);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
   ReleaseMutex(Volume^.Lock);
   if MappedFile <> nil then
     Exit(ErrorNone);
 
-  { The file system is not called with the registry's lock held (a file
-    change takes them the other way round). }
   if DuplicateOpenFileForReading(OpenedFile, Duplicate) <> StatusSuccess then
     Exit(ErrorOutOfMemory);
-  Result := CreateMappedFile(Duplicate, Information, MappedFile);
+  Result := CreateMappedFile(Duplicate, Information, IsPrivate, MappedFile);
   if Result <> ErrorNone then
   begin
     CloseFile(Duplicate);
@@ -525,17 +984,18 @@ begin
     MappedFile^.PrivateUsers := 1;
 
   { Under the volume's lock, as a change of the file holds it (see
-    above); the volume's lock comes before the registry's, as there. }
+    above). }
   AcquireMutex(Volume^.Lock);
-  AcquireMutex(RegistryLock);
-  Existing := FindRegisteredLocked(Volume, Information.NodeNumber, IsPrivate);
+  PreviousLevel := AcquireSpinLock(RegistryLock);
+  Existing := FindSharableLocked(Volume, Information.NodeNumber, IsPrivate);
   if Existing = nil then
   begin
     MappedFile^.Next := Registry;
     Registry := MappedFile;
-    MappedFile^.IsRegistered := True;
+    MappedFile^.IsListed := True;
+    Inc(RegistryCount);
   end;
-  ReleaseMutex(RegistryLock);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
   ReleaseMutex(Volume^.Lock);
   if Existing <> nil then
   begin
@@ -546,157 +1006,124 @@ begin
   Result := ErrorNone;
 end;
 
-{ --- Changes of files ------------------------------------------------------- }
-
-const
-  ChangeBatch = 16;
-
-type
-  TChangeBatch = record
-    Files: array[0..ChangeBatch - 1] of PMappedFile;
-    Count: Integer;
-  end;
-
-{ The registered mapped files of a file, each with a reference. }
-procedure CollectMappedFiles(Volume: Pointer; NodeNumber: QWord; out Batch: TChangeBatch);
+function PrepareMappedFileForWriting(MappedFile: PMappedFile; OpenedFile: POpenFile): LongInt;
 var
-  MappedFile: PMappedFile;
+  Duplicate: POpenFile;
   PreviousLevel: TPriorityLevel;
 begin
-  Batch.Count := 0;
-  AcquireMutex(RegistryLock);
-  MappedFile := Registry;
-  while (MappedFile <> nil) and (Batch.Count < ChangeBatch) do
+  if (OpenedFile^.Flags and OpenForWriting) = 0 then
+    Exit(ErrorAccessDenied);
+  if MappedFile^.WriterFile <> nil then
+    Exit(ErrorNone);
+  if DuplicateOpenFileForWriting(OpenedFile, Duplicate) <> StatusSuccess then
+    Exit(ErrorOutOfMemory);
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  if MappedFile^.WriterFile = nil then
   begin
-    if (MappedFile^.Volume = Volume) and (MappedFile^.NodeNumber = NodeNumber) then
-    begin
-      PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
-      if MappedFile^.References > 0 then
-      begin
-        Inc(MappedFile^.References);
-        Batch.Files[Batch.Count] := MappedFile;
-        Inc(Batch.Count);
-      end;
-      ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
-    end;
-    MappedFile := MappedFile^.Next;
+    MappedFile^.WriterFile := Duplicate;
+    Duplicate := nil;
   end;
-  ReleaseMutex(RegistryLock);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+  if Duplicate <> nil then
+    CloseFile(Duplicate);
+  Result := ErrorNone;
 end;
 
-procedure ReleaseBatch(const Batch: TChangeBatch);
-var
-  Index: Integer;
-begin
-  for Index := 0 to Batch.Count - 1 do
-    ReleaseMappedFile(Batch.Files[Index], False);
-end;
+{ --- Eviction ------------------------------------------------------------------ }
 
-{ Before the file changes: private users keep the old contents. }
-procedure FileChanging(Volume: PVolume; NodeNumber: QWord);
+function TakeEvictionCandidates(MappedFile: PMappedFile; Pages: PMappedPageReference;
+  Capacity: Integer): Integer;
 var
-  Batch: TChangeBatch;
-  Index: Integer;
-  MappedFile: PMappedFile;
   PreviousLevel: TPriorityLevel;
-  HasPrivateUsers: Boolean;
-  PageIndex: QWord;
+  Looked: QWord;
+  Position: QWord;
+  Entry: PQWord;
 begin
-  CollectMappedFiles(Volume, NodeNumber, Batch);
-  for Index := 0 to Batch.Count - 1 do
+  Result := 0;
+  if MappedFile^.IsDamaged or (MappedFile^.PageCount = 0) or (MappedFile^.ResidentPages = 0) then
+    Exit;
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Position := MappedFile^.EvictionCursor;
+  Looked := 0;
+  while (Result < Capacity) and (Looked < MappedFile^.PageCount) and (Looked < EvictionScanLimit) do
   begin
-    MappedFile := Batch.Files[Index];
-    PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
-    HasPrivateUsers := MappedFile^.PrivateUsers > 0;
-    if HasPrivateUsers then
-      Inc(MappedFile^.ChangeCount);
-    ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
-    if not HasPrivateUsers then
-      Continue;
-    { Every page now, before the change (the volume's lock is held, and
-      taken again by the reads). }
-    PageIndex := 0;
-    while PageIndex < MappedFile^.PageCount do
+    if Position >= MappedFile^.PageCount then
+      Position := 0;
+    Entry := EntryOf(MappedFile, Position);
+    if (Entry <> nil) and MappedPageIsEvictable(Entry^) then
     begin
-      LoadMappedFilePage(MappedFile, PageIndex);
-      Inc(PageIndex);
+      Pages[Result].PageIndex := Position;
+      Pages[Result].Physical := MappedPagePhysical(Entry^);
+      ReferencePhysicalPage(Pages[Result].Physical);
+      Inc(Result);
     end;
-    PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
-    MappedFile^.IsStale := True;
-    ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
-    AcquireMutex(RegistryLock);
-    UnregisterLocked(MappedFile);
-    ReleaseMutex(RegistryLock);
+    Inc(Position);
+    Inc(Looked);
   end;
-  ReleaseBatch(Batch);
+  MappedFile^.EvictionCursor := Position;
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
 end;
 
-{ After the change: shared mappings see the new contents. }
-procedure FileChanged(Volume: PVolume; NodeNumber: QWord; Offset, Length: QWord);
+function DropEvictionCandidate(MappedFile: PMappedFile; const Page: TMappedPageReference): Boolean;
 var
-  Batch: TChangeBatch;
-  Index: Integer;
-  MappedFile: PMappedFile;
   PreviousLevel: TPriorityLevel;
-  Information: TNodeInformation;
-  FirstPage: QWord;
-  LastPage: QWord;
-  PageIndex: QWord;
-  Physical: TPhysicalAddress;
+  Entry: PQWord;
 begin
-  CollectMappedFiles(Volume, NodeNumber, Batch);
-  for Index := 0 to Batch.Count - 1 do
+  PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
+  Entry := EntryOf(MappedFile, Page.PageIndex);
+  { The mapped file's reference and the caller's: nobody maps it. A
+    mapper takes its reference under this lock (AcquireResident...). }
+  Result := (Entry <> nil) and (Entry^ = MakeMappedPageEntry(Page.Physical, 0)) and
+    (PhysicalPageHolderCount(Page.Physical) = 2);
+  if Result then
   begin
-    MappedFile := Batch.Files[Index];
-    GetFileInformation(MappedFile^.OpenedFile, Information);
-    PreviousLevel := AcquireSpinLock(MappedFile^.Lock);
-    Inc(MappedFile^.ChangeCount);
-    MappedFile^.SizeInBytes := Information.SizeInBytes;
-    ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
-
-    FirstPage := Offset div PageSize;
-    if (Length = FileChangeToEnd) or (Offset + Length < Offset) then
-      LastPage := MappedFile^.PageCount
-    else
-      LastPage := (Offset + Length + PageSize - 1) div PageSize;
-    if LastPage > MappedFile^.PageCount then
-      LastPage := MappedFile^.PageCount;
-    PageIndex := FirstPage;
-    while PageIndex < LastPage do
-    begin
-      if ResidentMappedFilePage(MappedFile, PageIndex, Physical) then
-        ReadPageContents(MappedFile, PageIndex, Physical);
-      Inc(PageIndex);
-    end;
+    Entry^ := 0;
+    Dec(MappedFile^.ResidentPages);
   end;
-  ReleaseBatch(Batch);
+  ReleaseSpinLock(MappedFile^.Lock, PreviousLevel);
+  FreePhysicalPage(Page.Physical);
+  if Result then
+  begin
+    FreePhysicalPage(Page.Physical);
+    Inc(MappedPagesEvicted);
+  end;
 end;
+
+{ --- Statistics --------------------------------------------------------------- }
 
 procedure GetMappedFileStatistics(out Statistics: TMappedFileStatistics);
 var
+  PreviousLevel: TPriorityLevel;
   MappedFile: PMappedFile;
 begin
-  Statistics.MappedFiles := 0;
-  Statistics.ResidentPages := 0;
-  AcquireMutex(RegistryLock);
+  FillMemory(@Statistics, SizeOf(Statistics), 0);
+  PreviousLevel := AcquireSpinLock(RegistryLock);
   MappedFile := Registry;
   while MappedFile <> nil do
   begin
-    Inc(Statistics.MappedFiles);
+    if MappedFile^.IsStale then
+      Inc(Statistics.SnapshotFiles)
+    else
+      Inc(Statistics.MappedFiles);
     Statistics.ResidentPages := Statistics.ResidentPages + MappedFile^.ResidentPages;
+    Statistics.DirtyPages := Statistics.DirtyPages + MappedFile^.DirtyPages;
     MappedFile := MappedFile^.Next;
   end;
-  ReleaseMutex(RegistryLock);
+  ReleaseSpinLock(RegistryLock, PreviousLevel);
+  Statistics.PagesWrittenBack := MappedPagesWrittenBack;
+  Statistics.PagesEvicted := MappedPagesEvicted;
+  Statistics.MappingsDropped := MappedMappingsDropped;
+  Statistics.SnapshotPagesRead := MappedSnapshotPagesRead;
+  Statistics.BytesReadFromPages := MappedBytesReadFromPages;
 end;
 
 procedure InitializeMappedFiles;
 begin
-  InitializeMutex(RegistryLock);
+  InitializeSpinLock(RegistryLock);
   InitializeSpinLock(PendingLock);
   Registry := nil;
+  RegistryCount := 0;
   PendingReleases := nil;
-  AddFileChangingHook(@FileChanging);
-  AddFileChangedHook(@FileChanged);
 end;
 
 end.

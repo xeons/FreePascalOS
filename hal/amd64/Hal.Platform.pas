@@ -56,6 +56,12 @@ procedure HalStartClockOnThisProcessor;
   clock", "generic timer"). }
 function HalClockSourceName: PChar;
 procedure HalSetClockInterruptIn(Nanoseconds: QWord);
+{ The clock as programs may read it themselves (the clock page,
+  Kernel.ClockPage): the counter value at which it read
+  OriginNanoseconds and the counter's rate. False if programs cannot
+  read the kernel's clock (KVM's paravirtual clock). }
+function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+
 
 { Signals the end of the interrupt currently being serviced. }
 procedure HalEndOfInterrupt;
@@ -212,6 +218,12 @@ begin
     Result := ParavirtualClockNanoseconds
   else
     Result := TimeStampClockNanoseconds;
+end;
+
+function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+begin
+  Result := (not UsesParavirtualClock) and
+    DescribeTimeStampClock(Origin, OriginNanoseconds, CountsPerSecond);
 end;
 
 procedure HalStartClockOnThisProcessor;

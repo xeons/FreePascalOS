@@ -6,6 +6,7 @@ build/
 # Hand-written assembly sources are kept.
 !userland/lib/tlstest/*.s
 !userland/lib/dyntls/*.s
+!userland/lib/statictls/*.s
 !kernel/core/amd64/*.s
 !kernel/core/arm64/*.s
 !boot/uefi/arm64/*.s

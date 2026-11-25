@@ -40,9 +40,14 @@ how the existing pieces fit together.
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
       calls 140-142, waitable with wait-for-all)
-- [ ] Named objects (open a semaphore or event by name)
-- [ ] Use shared locks for more read-mostly lookups (open file and node tables,
-      handle table reads)
+- [x] Named objects (events, semaphores, mutexes, sections and timers named
+      and opened by name, create-or-open in libsystem; calls 200-205) and
+      mutex objects for programs (calls 206-207: owner, recursion, waits for
+      all, abandonment reported as WaitAbandoned)
+- [x] Use shared locks for more read-mostly lookups (handle table reads without
+      the process lock, the process registry, the mount list)
+- [ ] Node cache lookups without the volume's operation lock (every file
+      operation holds the volume lock throughout; needs that lock split)
 - [x] Wait on multiple objects
 - [x] Deferred calls that run at dispatch level (for device drivers)
 - [x] Priority boosting for threads woken from waits (by wake reason, decay per
@@ -52,8 +57,12 @@ how the existing pieces fit together.
 - [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
 - [x] Crash reports with module names and load bases
       (CallGetProcessModules, symbolize.py --report)
-- [ ] Back traces of user programs from the kernel's own crash report
-      (walk the program's frames; most user code omits frame pointers)
+- [x] Back traces of user programs from the kernel's own crash report
+      (call frame information: loaded .eh_frame through .eh_frame_hdr,
+      Free Pascal's .debug_frame from the module file; frame pointers
+      elsewhere; named from .symtab or the dynamic symbols)
+- [ ] User back traces through libraries a C program's dynamic linker
+      maps itself (not in the kernel's module list: bare addresses)
 - [x] Tickless idle: an idle processor's tick stops until its next due
       time (per-processor clock interrupt counters; coretest checks under
       5 a second per idle processor)
@@ -62,10 +71,17 @@ how the existing pieces fit together.
 - [x] Nanosecond wall clock (CallGetPreciseTime), stepped or slewed
       (CallAdjustWallClock); invariant TSC check, kvmclock under KVM
 - [x] SNTP client service (timesync, off by default)
-- [ ] Dynamic tick for busy processors (no tick while one thread runs
-      alone on a processor)
-- [ ] A shared read-only page with the clock's parameters (vDSO-style) so
-      the runtime reads the time without a system call
+- [x] Dynamic tick for busy processors (no tick while one thread runs
+      alone on a processor: a residual tick a second; a thread queued
+      there, a switch or an alert brings it back; dynamictick=off;
+      powerstat --check-busy in coretest)
+- [x] A shared read-only page with the clock's parameters (vDSO-style) so
+      the runtime reads the time without a system call (TAbiClockPage,
+      AuxiliaryClockPage; RDTSC / CNTVCT_EL0; Sys.Time, Now,
+      GetTickCount64; ClockPageTest, timetest)
+- [ ] The clock page under KVM's paravirtual clock (per-processor
+      pvclock records mapped for programs; they make the system call
+      for now)
 - [x] Power-down idle states (PSCI CPU_SUSPEND power-down through the
       start-up entry, idle=powerdown-test on QEMU; deep and port C-states
       without ARAT) with a broadcast timer (boot processor; self test,
@@ -83,12 +99,14 @@ how the existing pieces fit together.
       priority lowering reschedules; GIC/I/O APIC locks; ITS pending
       tables kept; release/acquire processor table; per-processor panic
       trace; strict UTF-8 decoding; bounded wall clock adjustments
+- [x] A regression test for the idle lost wakeup and for priority lowering
+      latency (Kernel.SchedulerLatencySelfTest: the idle window hook holds
+      a processor between check and wait for a wake-up and a refused
+      steal; an endless time slice for the priority lowering)
 - [x] Interrupt remapping (VT-d / AMD-Vi) so device interrupts can reach
       x2APIC ids above 255 (on where an id is above 255, or intremap=on;
       make interrupt-remapping-test behind QEMU's intel-iommu and
       amd-iommu)
-- [ ] A regression test for the idle lost wakeup and for priority lowering
-      latency (both are timing windows that QEMU does not hit reliably)
 
 ## Memory management
 
@@ -103,7 +121,12 @@ how the existing pieces fit together.
       never runs user code and reaches user memory only through the copy
       routines)
 - [x] Object reference counts saturate (with a warning) instead of wrapping
-- [ ] Contiguous physical allocations (for DMA buffers)
+- [x] Contiguous physical allocations (for DMA buffers): a free-frame
+      bitmap next to the doubly linked free list, searched a word at a
+      time for runs with an alignment, a boundary and an address range
+      (Memory.FrameRuns, AllocatePhysicalRun); Io.Dma takes its buffers
+      from them (AllocateAlignedDmaBuffer, LimitDmaBoundary; xHCI 64 KiB);
+      tools/FrameRunTest and kernel self tests
 - [x] Per-process address spaces (copy the kernel half of the top level table)
 - [x] Page fault handling for demand-zero memory
 - [x] Growable region table: an address space's regions in a balanced tree
@@ -129,17 +152,35 @@ how the existing pieces fit together.
       (AddFileRemovedHook), so a removed library or a program replaced
       while running no longer leaves an orphan inode at unmount; coretest
       checks the system disk's used space around it (and e2fsck after)
-- [ ] Shared writable file mappings (write-back of dirty pages through the
-      file write path; refused with ErrorUnsupported for now)
-- [ ] Evicting mapped file pages under memory pressure (they stay while the
-      file is mapped or its image section is cached; package 7's shrinker
-      could drop pages no process maps)
-- [ ] Mapped file pages and the block cache hold the same data twice; read()
-      could be served from the mapped file's pages when they are resident
+- [x] Shared writable file mappings (through a handle open for writing):
+      pages marked dirty on the first write, write access taken from every
+      mapping before a write-back, written back on CallSyncMemory (214),
+      unmap and process end, sync, after 5 s on the background writer and
+      when the mapped file goes; write() copies only the changed bytes into
+      resident pages; filemaptest, mapped file self test
+- [x] Evicting mapped file pages under memory pressure: the "mapped files"
+      shrinker drops clean pages nobody maps, and (hard) unmaps clean mapped
+      ones through the mapped file's list of mapping regions to read them
+      again on the next touch; preserved snapshot pages and dirty pages stay;
+      CallTrimMappedFiles (217), CallQueryMemoryResidency (215),
+      CallGetMappedFileStatistics (216)
+- [x] read() is served from a mapped file's resident pages (it also sees
+      what a shared writable mapping wrote before it is written back)
+- [ ] Mapped file pages could be the block cache's line pages themselves
+      (PinCachedPage, needs a file-page-to-disk-block query from each file
+      system and care when blocks move, e.g. after a truncate): a page read
+      for a mapping is still in the cache too until the cache drops it
+- [ ] A mapped file's page table does not grow: a file that grew after it was
+      first mapped can be mapped only up to its old size until every mapping
+      of it is gone
 - [x] Copy-on-write sharing of program and library pages between processes
       (image sections, reference counted physical pages)
-- [ ] Keep relocated copies of image pages per load address, so loading a
-      library needs no relocation work at all
+- [x] Keep relocated copies of image pages per load address, so loading a
+      library needs no relocation work at all (Processes.RelocatedCopies:
+      keyed by the bias and every symbol resolution, kept with the image
+      section, dropped under memory pressure; libraries keep the place
+      their section was given first, aslr=process for per-process
+      places; CallGetImageCacheStatistics 208; latelibtest)
 - [x] Heap checking in the kernel heap and every program's heap (kernel option
       `heapchecks`, `HEAP_CHECKS`): fill patterns that make freed pointers
       non-canonical, guards after blocks, double free detection, a quarantine
@@ -152,7 +193,9 @@ how the existing pieces fit together.
 
 ## Objects and processes
 
-- [ ] Hierarchical object namespace (directories, e.g. `\Device\Keyboard`)
+- [x] Hierarchical object namespace (directories `\Device`, `\Storage`,
+      `\Kernel`, `\Ports`, `\Shared`; owners, modes and the sticky bit on
+      names and directories; objls)
 - [x] Per-process handle tables
 - [x] Growable handle tables (two levels, lowest free number first) up to a
       per-process handle limit; limits for regions and handles
@@ -163,8 +206,10 @@ how the existing pieces fit together.
       with 137 (OOM score adjustment, the initial program and adjustment -1000 spared
       unless asking, kernel log and NotificationProcessEndedForMemory); per-user process
       limit (ProcessLimitProcesses); CallGetMemoryPressure, free
-- [ ] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
-      the reserve/commit work)
+- [x] Commitments feed the OOM policy (Processes.MemoryCharges.SetCommitCounters, from
+      the reserve/commit work): the footprint counts commitments not
+      resident yet; CallGetProcessMemoryCharge (209) shows any process's
+      charge and score; memorytest charge
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -177,8 +222,11 @@ how the existing pieces fit together.
       ELF TLS and the threadvars of Free Pascal libraries), DT_INIT /
       DT_INIT_ARRAY before LoadLibrary returns, DT_FINI_ARRAY / DT_FINI at
       the end, Free Pascal libraries' own unit initialization (si_dll)
-- [ ] Resource strings of Free Pascal libraries loaded at run time; initial
-      and local exec TLS accesses into them (no surplus static TLS)
+- [x] Resource strings of Free Pascal libraries loaded at run time (their
+      tables merged into the program's, so SetResourceStrings reaches
+      them); initial and local exec TLS accesses into libraries loaded
+      late (a 2 KiB static TLS surplus, filled into every thread when
+      the load succeeds); latelibtest with libstatictls
 - [x] Thread priorities set by programs (offsets from the process's)
 - [x] Thread names (CallSetThreadName, CallListThreads; TThread, hang
       reports, the debug shell's threads command, ps -L/-T, the task
@@ -193,10 +241,11 @@ how the existing pieces fit together.
       being served (hangtest --check); a thread started during the ending
       never runs; kill -9 of a group; a process still there 10 s after it
       was told to end is reported with its threads ([ending])
-- [ ] Bound the kernel's remaining non-alertable waits a user thread can
+- [x] Bound the kernel's remaining non-alertable waits a user thread can
       reach (device open and close, block I/O, the wait after cancelling a
       request), so a driver that never completes cannot keep a process
-      from ending
+      from ending (Io.BoundedRequests: given up 5 s after a cancel or
+      once the thread must end; audio drain stops on a stalled device)
 - [x] Ctrl-C on the console: process groups, a foreground group, programs may ignore it
 - [x] Stopping and continuing programs (job control: kill -STOP/-CONT, Ctrl-Z)
 - [x] Asynchronous notifications a program can handle: a notification queue
@@ -219,14 +268,16 @@ how the existing pieces fit together.
       limits, signals per process, pending signals kept across exec, hard
       process limits, sections charged to their creator, handle reserved
       before a thread starts, mapped files joined under the volume lock
-- [ ] A private mapping of a large file another program writes: the first
-      write reads the whole file (up to 16 GiB) under the volume lock; copy
-      only the pages written instead (needs the file system to report the
-      range before the write)
-- [ ] Executing a program the caller may run but not read (mode 0711): the
-      loader opens it with the caller's read permission
-- [ ] Spawn joins any group number it is given (CallCreateProcess GroupId);
-      setpgid now joins only a group of the caller's session
+- [x] A private mapping of a large file another program writes: the file
+      system reports the range before each change (TFileChangingHook), and a
+      private mapped file becomes a snapshot that reads only the pages a
+      change touches (marked preserved), not the whole file; filemaptest
+      checks one page read for a 1 MiB file
+- [x] Executing a program the caller may run but not read (mode 0711): opened
+      on the kernel's authority after the execute check, AT_SECURE set and the
+      process marked (TProcess.ImageUnreadable)
+- [x] Spawn joins only a group of the caller's session (CallCreateProcess
+      GroupId), as setpgid does
 
 ## I/O
 

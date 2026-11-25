@@ -64,6 +64,7 @@ procedure SetTimerObject(Timer: PTimerObject; DueMilliseconds, PeriodMillisecond
 implementation
 
 uses
+  Abi.SystemCalls,
   Kernel.Clock,
   Objects.Manager;
 
@@ -117,6 +118,7 @@ end;
 procedure InitializeTimerObjects;
 begin
   RegisterObjectType(TimerObjectType, 'Timer', SizeOf(TTimerObject), @DeleteTimerObject);
+  SetObjectTypeOpenKind(TimerObjectType, HandleKindTimer);
 end;
 
 function CreateTimerObject(ManualReset: Boolean): PTimerObject;

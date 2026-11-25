@@ -66,11 +66,12 @@ function ProtectAddressRange(Space: PAddressSpace; Address, Length: QWord; Prote
   out Previous: LongWord): LongInt;
 procedure QueryAddress(Space: PAddressSpace; Address: QWord; out Information: TAbiMemoryInformation);
 { Maps Length bytes of MappedFile from Offset (page aligned; Length 0:
-  to the file's end) with Map* Flags. On success the mapping holds the
-  caller's reference to MappedFile (taken private if Flags has
-  MapPrivate). }
+  to the file's end) with Map* Flags; HandleIsWritable if the file's
+  handle was opened for writing (a shared mapping may then be
+  writable). On success the mapping holds the caller's reference to
+  MappedFile (taken private if Flags has MapPrivate). }
 function MapFileIntoAddressSpace(Space: PAddressSpace; MappedFile: PMappedFile; Offset, Length: QWord;
-  Flags: LongWord; out Start: QWord): LongInt;
+  Flags: LongWord; HandleIsWritable: Boolean; out Start: QWord): LongInt;
 
 { Gives the out-of-memory policy (Processes.MemoryCharges) the commit
   charge: a process's commitment beyond its resident private pages, and
@@ -361,9 +362,10 @@ begin
       Previous := ProtectionOf(Region);
     if not IsCommitted(Region) then
       Result := ErrorInvalidArgument
-    { A shared file mapping is never written (nothing writes it back). }
+    { A shared file mapping is written only if its handle could write
+      the file. }
     else if (Region^.Kind = RegionKindFileMapping) and not Region^.BackingIsPrivate and
-       ((Attributes and RegionWritable) <> 0) then
+       not Region^.BackingIsWritable and ((Attributes and RegionWritable) <> 0) then
       Result := ErrorAccessDenied
     { Code from a file shared read-only needs no permission; anything
       else made executable does. }
@@ -458,7 +460,7 @@ begin
 end;
 
 function MapFileIntoAddressSpace(Space: PAddressSpace; MappedFile: PMappedFile; Offset, Length: QWord;
-  Flags: LongWord; out Start: QWord): LongInt;
+  Flags: LongWord; HandleIsWritable: Boolean; out Start: QWord): LongInt;
 var
   PreviousLevel: TPriorityLevel;
   Template: TUserRegion;
@@ -467,9 +469,9 @@ begin
   Start := 0;
   if (Flags and not (MapPrivate or MapWritable or MapExecutable)) <> 0 then
     Exit(ErrorInvalidArgument);
-  { Nothing writes a shared mapping's pages back to the file yet. }
-  if ((Flags and MapWritable) <> 0) and ((Flags and MapPrivate) = 0) then
-    Exit(ErrorUnsupported);
+  { A shared mapping writes the file: only through a handle that may. }
+  if ((Flags and MapWritable) <> 0) and ((Flags and MapPrivate) = 0) and not HandleIsWritable then
+    Exit(ErrorAccessDenied);
   if (Flags and (MapWritable or MapExecutable)) = (MapWritable or MapExecutable) then
     Exit(ErrorAccessDenied);
   FileBytes := MappedFile^.PageCount * PageSize;
@@ -493,6 +495,7 @@ begin
   Template.Backing := MappedFile;
   Template.BackingOffset := Offset;
   Template.BackingIsPrivate := (Flags and MapPrivate) <> 0;
+  Template.BackingIsWritable := not Template.BackingIsPrivate and HandleIsWritable;
 
   PreviousLevel := AcquireSpinLock(Space^.Lock);
   if not FindAllocationRangeLocked(Space, Length, Space^.Layout.AllocationBase, Start) then

@@ -94,7 +94,7 @@ begin
   Search.Found := False;
   Search.Process := SystemProcess;
   VisitProcessThreads(SystemProcess, @TraceThread, @Search);
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   VisitRunningProcessesLocked(@TraceProcessThreads, @Search);
   UnlockProcessRegistry;
   Result := Search.Found;

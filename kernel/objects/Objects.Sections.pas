@@ -65,6 +65,7 @@ function CreateSectionObject(Length: QWord): PSectionObject;
 implementation
 
 uses
+  Abi.SystemCalls,
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Objects.Manager;
@@ -99,6 +100,7 @@ end;
 procedure InitializeSectionObjects;
 begin
   RegisterObjectType(SectionObjectType, 'Section', SizeOf(TSectionObject), @DeleteSectionObject);
+  SetObjectTypeOpenKind(SectionObjectType, HandleKindSection);
 end;
 
 function CreateSectionObject(Length: QWord): PSectionObject;

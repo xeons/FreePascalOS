@@ -129,7 +129,7 @@ var
 begin
   FillMemory(@Search, SizeOf(Search), 0);
   Search.Wanted := Index;
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   VisitRunningProcessesLocked(@VisitForList, @Search);
   UnlockProcessRegistry;
   if not Search.Found then
@@ -290,7 +290,7 @@ function ReferenceProcess(ProcessId: QWord): PProcess;
 begin
   if ProcessId = 0 then
     ProcessId := CurrentProcess^.ProcessId;
-  LockProcessRegistry;
+  LockProcessRegistryShared;
   Result := FindRunningProcessLocked(ProcessId);
   if (Result <> nil) and not Result^.IsUserProcess then
     Result := nil;

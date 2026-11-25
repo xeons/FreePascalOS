@@ -56,6 +56,11 @@ function TimeStampClockNanoseconds: QWord;
 procedure PauseTimeStampClock;
 procedure ContinueTimeStampClock;
 
+{ The clock's parameters for the clock page: the counter value at which
+  it read OriginNanoseconds, and the counter's rate. False before it
+  started. }
+function DescribeTimeStampClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+
 implementation
 
 uses
@@ -110,6 +115,14 @@ begin
     fits in 64 bits for any counter below 18 GHz). }
   Result := StartNanoseconds + (Elapsed div Frequency) * NanosecondsPerSecond +
     ((Elapsed mod Frequency) * NanosecondsPerSecond) div Frequency;
+end;
+
+function DescribeTimeStampClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+begin
+  Origin := StartCount;
+  OriginNanoseconds := StartNanoseconds;
+  CountsPerSecond := Frequency;
+  Result := Frequency <> 0;
 end;
 
 procedure PauseTimeStampClock;

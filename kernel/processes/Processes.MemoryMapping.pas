@@ -22,7 +22,8 @@
 
   A mapping is anonymous memory (zero filled when touched, or address
   space alone with PROT_NONE: a reservation) or a file's pages
-  (Processes.MappedFiles: shared read-only, or private copy on write).
+  (Processes.MappedFiles: shared - writable if the file was opened for
+  writing, its writes reaching the file - or private copy on write).
   Without MAP_FIXED it goes where the run time allocation area has room
   (at the hint if the hint is free). With MAP_FIXED it goes exactly at
   the address: into free address space, or over pieces of run time
@@ -66,9 +67,11 @@ const
 
 { Maps Length bytes; MappedFile nil for anonymous memory, else the file
   (whose reference the mapping takes over on success) from the page
-  aligned Offset. Returns ErrorNone and the mapping's address. }
+  aligned Offset; HandleIsWritable if the file's handle was opened for
+  writing (a shared mapping may then be writable). Returns ErrorNone and
+  the mapping's address. }
 function MapMemory(Space: PAddressSpace; Address, Length, Protection, Flags: QWord;
-  MappedFile: PMappedFile; Offset: QWord; out Start: QWord): LongInt;
+  MappedFile: PMappedFile; Offset: QWord; HandleIsWritable: Boolean; out Start: QWord): LongInt;
 
 { Unmaps [Address, Address + Length); nothing mapped there is no error. }
 function UnmapMemory(Space: PAddressSpace; Address, Length: QWord): LongInt;
@@ -206,7 +209,7 @@ begin
 end;
 
 procedure FillTemplate(out Template: TUserRegion; Start, Length: QWord; Attributes: LongWord;
-  MappedFile: PMappedFile; Offset: QWord; IsPrivate: Boolean);
+  MappedFile: PMappedFile; Offset: QWord; IsPrivate, IsWritable: Boolean);
 begin
   FillMemory(@Template, SizeOf(Template), 0);
   Template.Start := Start;
@@ -226,11 +229,12 @@ begin
     Template.Backing := MappedFile;
     Template.BackingOffset := Offset;
     Template.BackingIsPrivate := IsPrivate;
+    Template.BackingIsWritable := not IsPrivate and IsWritable;
   end;
 end;
 
 function MapMemory(Space: PAddressSpace; Address, Length, Protection, Flags: QWord;
-  MappedFile: PMappedFile; Offset: QWord; out Start: QWord): LongInt;
+  MappedFile: PMappedFile; Offset: QWord; HandleIsWritable: Boolean; out Start: QWord): LongInt;
 var
   PreviousLevel: TPriorityLevel;
   Attributes: LongWord;
@@ -258,9 +262,9 @@ begin
   begin
     if (Offset and PageOffsetMask) <> 0 then
       Exit(ErrorInvalidArgument);
-    { Nothing writes a shared mapping's pages back to the file yet. }
-    if not IsPrivate and ((Attributes and RegionWritable) <> 0) then
-      Exit(ErrorUnsupported);
+    { A shared mapping writes the file: only through a handle that may. }
+    if not IsPrivate and ((Attributes and RegionWritable) <> 0) and not HandleIsWritable then
+      Exit(ErrorAccessDenied);
     if Offset >= MappedFile^.PageCount * PageSize then
       Exit(ErrorInvalidArgument);
     if Length > MappedFile^.PageCount * PageSize - Offset then
@@ -284,7 +288,7 @@ begin
     end;
     if Result = ErrorNone then
     begin
-      FillTemplate(Template, Address, Length, Attributes, MappedFile, Offset, IsPrivate);
+      FillTemplate(Template, Address, Length, Attributes, MappedFile, Offset, IsPrivate, HandleIsWritable);
       if Base <> 0 then
         Template.AllocationBase := Base;
       Result := AddRegionRecordLocked(Space, Template);
@@ -302,7 +306,7 @@ begin
       Result := ErrorOutOfMemory;
     if Result = ErrorNone then
     begin
-      FillTemplate(Template, Start, Length, Attributes, MappedFile, Offset, IsPrivate);
+      FillTemplate(Template, Start, Length, Attributes, MappedFile, Offset, IsPrivate, HandleIsWritable);
       Result := AddRegionRecordLocked(Space, Template);
     end;
     if Result <> ErrorNone then

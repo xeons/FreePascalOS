@@ -127,6 +127,12 @@ function SystemCall(Number: QWord; Argument1, Argument2, Argument3, Argument4,
 { The calling thread's id, as the kernel knows it. }
 function CurrentThreadId: QWord;
 
+{ The time from the clock page, without a system call: Which is
+  TimeWallClock (nanoseconds since 1970) or TimeUptimeNanoseconds.
+  False if the page cannot give it (no page, or a kernel clock programs
+  cannot read): then CallGetPreciseTime does. }
+function ReadClockPageTime(Which: LongWord; out Nanoseconds: Int64): Boolean;
+
 { The Abi error of the last failed file or thread operation of this
   thread (for SysUtils.GetLastOSError). }
 function GetLastSystemError: LongInt;
@@ -137,10 +143,13 @@ procedure SysEntry(constref Information: TEntryInformation);
 
 { Called by the startup code of a Free Pascal library loaded at run time
   (si_dll, its DT_INIT) with its unit tables (INITFINAL,
-  FPC_THREADVARTABLES): gives its own units' threadvars their blocks and
-  initializes those units. Returns what SysUnregisterLibrary (its
-  DT_FINI) takes to finalize them. }
-function SysRegisterLibrary(InitFinalTable, ThreadvarTables: Pointer): Pointer;
+  FPC_THREADVARTABLES, FPC_RESOURCESTRINGTABLES, FPC_RESSTRINITTABLES):
+  gives its own units' threadvars their blocks, adds its own units'
+  resource string tables to the program's (so SetResourceStrings reaches
+  them) and initializes those units. Returns what SysUnregisterLibrary
+  (its DT_FINI) takes to finalize them. }
+function SysRegisterLibrary(InitFinalTable, ThreadvarTables, ResourceStringTables,
+  ResourceStringInitTables: Pointer): Pointer;
 
 { Loads a library (CallLoadLibrary) and runs the initializers it brought
   in, as LoadLibrary does: the kernel's handle, or a negative Abi error
@@ -189,6 +198,7 @@ var
   InitializerCount: QWord;
   Finalizers: PQWord;
   FinalizerCount: QWord;
+  ClockPage: PAbiClockPage;
 
 type
   { ELF initializers get the arguments and the environment. }
@@ -206,9 +216,42 @@ begin
       AuxiliaryInitializerCount: InitializerCount := Entry[1];
       AuxiliaryFinalizers: Finalizers := PQWord(Entry[1]);
       AuxiliaryFinalizerCount: FinalizerCount := Entry[1];
+      AuxiliaryClockPage: ClockPage := PAbiClockPage(Entry[1]);
     end;
     Inc(Entry, 2);
   end;
+end;
+
+{$I ClockPageMath.inc}
+
+function ReadClockPageTime(Which: LongWord; out Nanoseconds: Int64): Boolean;
+var
+  Copy: TAbiClockPage;
+  Before: LongWord;
+  Counter: QWord;
+  Uptime: QWord;
+begin
+  ReadClockPageTime := False;
+  Nanoseconds := 0;
+  if (ClockPage = nil) or ((Which <> TimeWallClock) and (Which <> TimeUptimeNanoseconds)) then
+    Exit;
+  { A consistent copy and the counter read while it held: the kernel
+    makes Sequence odd while it changes the page. }
+  repeat
+    Before := ClockPage^.Sequence;
+    ReadBarrier;
+    Copy := ClockPage^;
+    Counter := ReadProcessorCounter;
+    ReadBarrier;
+  until ((Before and 1) = 0) and (ClockPage^.Sequence = Before);
+  if Copy.Mode <> ClockPageModeCounter then
+    Exit;
+  Uptime := ClockPageUptimeAt(Copy, Counter);
+  if Which = TimeWallClock then
+    Nanoseconds := ClockPageWallClockAt(Copy, Uptime)
+  else
+    Nanoseconds := Int64(Uptime);
+  ReadClockPageTime := True;
 end;
 
 procedure OsSetupEntryInformation(constref Information: TEntryInformation);

@@ -55,9 +55,17 @@ function FileNameOf(Path: PChar): PChar;
   nothing): running a program needs execute permission (root: any
   execute bit) and a volume not mounted noexec. A set-user-ID or
   set-group-ID program runs as its owner or group, unless its volume is
-  mounted nosuid. ProgramFile is the caller's to close (CloseFile). }
+  mounted nosuid. ProgramFile is the caller's to close (CloseFile).
+  Read permission is not needed: the kernel opens the file on its own
+  authority once execute permission is checked (a program of mode 0711
+  runs, and nobody but the kernel reads it). ImageUnreadable says that
+  the new program's user may not read it: the program then must not
+  trust its environment (AT_SECURE: its dynamic linker ignores
+  LD_PRELOAD, which could otherwise load code that reads it), and it is
+  marked so (TProcess.ImageUnreadable) for anything that would look
+  into its memory. }
 function OpenProgramFile(Caller: PProcess; KernelPath: PChar; var Credentials: TProcessCredentials;
-  out ProgramFile: POpenFile): LongInt;
+  out ProgramFile: POpenFile; out ImageUnreadable: Boolean): LongInt;
 { Opens a library at KernelPath for loading it at run time: it must be
   a file the caller may read and run, on a volume not mounted noexec. }
 function OpenLibraryFile(Caller: PProcess; KernelPath: PChar; out LibraryFile: POpenFile): LongInt;
@@ -149,13 +157,14 @@ const
   ModeSetUserId = $800;
   ModeSetGroupId = $400;
 
-{ Opens KernelPath for reading (the caller's read permission is the
-  file system's to check), as a file. }
-function OpenRegularFile(KernelPath: PChar; out OpenedFile: POpenFile;
+{ Opens KernelPath for reading as a file (the caller's read
+  permission, or with OpenForExecution in Flags its execute permission,
+  is the file system's to check). }
+function OpenRegularFile(KernelPath: PChar; Flags: LongWord; out OpenedFile: POpenFile;
   out Information: TNodeInformation): LongInt;
 begin
   OpenedFile := nil;
-  case OpenPath(KernelPath, OpenedFile) of
+  case OpenFile(KernelPath, OpenForReading or Flags, OpenedFile) of
     StatusSuccess: ;
     StatusAccessDenied: Exit(ErrorAccessDenied);
   else
@@ -172,13 +181,17 @@ begin
 end;
 
 function OpenProgramFile(Caller: PProcess; KernelPath: PChar; var Credentials: TProcessCredentials;
-  out ProgramFile: POpenFile): LongInt;
+  out ProgramFile: POpenFile; out ImageUnreadable: Boolean): LongInt;
 var
   Information: TNodeInformation;
 begin
-  Result := OpenRegularFile(KernelPath, ProgramFile, Information);
+  ImageUnreadable := False;
+  Result := OpenRegularFile(KernelPath, OpenForExecution, ProgramFile, Information);
   if (Result <> ErrorNone) or not Caller^.IsUserProcess then
     Exit;
+  { Judged for whom it runs as before a set-user-ID change (that user
+    started it; the owner may read it anyway). }
+  ImageUnreadable := not CredentialsMayAccess(Credentials, Information, AccessRead);
   if ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or
      not CredentialsMayAccess(Credentials, Information, AccessExecute) then
   begin
@@ -204,7 +217,7 @@ function OpenLibraryFile(Caller: PProcess; KernelPath: PChar; out LibraryFile: P
 var
   Information: TNodeInformation;
 begin
-  Result := OpenRegularFile(KernelPath, LibraryFile, Information);
+  Result := OpenRegularFile(KernelPath, 0, LibraryFile, Information);
   if (Result <> ErrorNone) or not Caller^.IsUserProcess then
     Exit;
   if ((Information.VolumeFlags and VolumeFlagNoExecute) <> 0) or

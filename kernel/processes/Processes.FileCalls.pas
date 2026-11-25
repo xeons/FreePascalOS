@@ -230,13 +230,10 @@ begin
 end;
 
 function LookupCurrentHandle(Handle: Int64; out Kind: THandleKind; out ObjectBody: Pointer): Boolean;
-var
-  Process: PProcess;
 begin
-  Process := CurrentProcess;
-  AcquireMutex(Process^.Lock);
-  Result := LookupHandle(Process^.Handles, Handle, Kind, ObjectBody);
-  ReleaseMutex(Process^.Lock);
+  { The handle table's shared lock: lookups of a process's threads run
+    side by side (Processes.Handles). }
+  Result := LookupHandle(CurrentProcess^.Handles, Handle, Kind, ObjectBody);
 end;
 
 function InsertCurrentHandle(Kind: THandleKind; ObjectBody: Pointer): Int64;
@@ -325,6 +322,10 @@ begin
   DereferenceObject(OpenFile);
 end;
 
+const
+  { Every open flag a program may pass. }
+  AbiOpenFlags = OpenRead or OpenWrite or OpenCreate or OpenExclusive or OpenTruncate or OpenAppend;
+
 function PerformOpenFile(PathAddress: QWord; Flags: QWord): Int64;
 var
   DeviceName: array[0..DeviceNameLength - 1] of Char;
@@ -365,8 +366,10 @@ begin
     FreeKernelMemory(KernelPath);
     Exit(Failure(ErrorAccessDenied));
   end;
-  { The Abi open flags have the same values as the VFS ones. }
-  Status := OpenFile(@KernelPath^[0], LongWord(Flags), OpenedFile);
+  { The Abi open flags have the same values as the VFS ones; the VFS's
+    own (OpenForExecution, which skips the read check) never come from a
+    program. }
+  Status := OpenFile(@KernelPath^[0], LongWord(Flags) and AbiOpenFlags, OpenedFile);
   FreeKernelMemory(KernelPath);
   if Status <> StatusSuccess then
     Exit(Failure(ErrorFromStatus(Status)));
@@ -724,6 +727,7 @@ begin
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
     HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
     HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
+    HandleKindMutex: Result := Abi.SystemCalls.HandleKindMutex;
   else
     Result := Failure(ErrorBadHandle);
   end;

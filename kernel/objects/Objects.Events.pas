@@ -47,6 +47,7 @@ function CreateEventObject(ManualReset, Signaled: Boolean): PEventObject;
 implementation
 
 uses
+  Abi.SystemCalls,
   Objects.Manager;
 
 var
@@ -55,6 +56,7 @@ var
 procedure InitializeEventObjects;
 begin
   RegisterObjectType(EventObjectType, 'Event', SizeOf(TEventObject), nil);
+  SetObjectTypeOpenKind(EventObjectType, HandleKindEvent);
 end;
 
 function CreateEventObject(ManualReset, Signaled: Boolean): PEventObject;

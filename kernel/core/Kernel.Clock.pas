@@ -42,8 +42,19 @@
   (StopClockTick), so a thread that wakes, runs briefly and waits again
   costs no tick. The switch away from the idle thread starts the
   tick again (RestartClockTick), due a whole tick later, so the thread
-  it switches to gets a full time slice. Busy processors keep the
-  100 Hz tick. Kernel option tickless=off keeps it on idle ones too.
+  it switches to gets a full time slice. Kernel option tickless=off
+  keeps it on idle ones too.
+
+  Dynamic tick: a busy processor whose running thread is alone (its
+  run queues are empty) has no time slice to end either. The scheduler
+  then defers the tick (DeferClockTick, from the dispatch interrupt
+  under the processor's lock) to a residual tick a second later, which
+  still charges the ticks that passed (for the split between user mode
+  and the kernel) and looks again. Whoever puts a thread on that
+  processor's queue sees the deferral under the same lock and sends it
+  its dispatch interrupt, which starts the tick again
+  (ResumeClockTick); so does any switch. Kernel option dynamictick=off
+  (or tickless=off) keeps the 100 Hz tick on busy processors.
 
   The wall clock is Kernel.WallClock's.
 }
@@ -110,6 +121,20 @@ function ClockIsTickless: Boolean;
   at once): after its timer stopped in an idle state
   (Kernel.BroadcastTimer), whose clock interrupt time reads NeverDue. }
 procedure RearmClockInterrupt;
+{ Whether busy processors running one thread alone defer their tick
+  (not dynamictick=off nor tickless=off). }
+function ClockHasDynamicTick: Boolean;
+{ From the scheduler, with the executing processor's scheduling lock
+  held: its running thread is alone, so its tick waits for the residual
+  tick (nothing if dynamic tick is off or the processor idles). }
+procedure DeferClockTick;
+{ The same: the tick starts again, a whole tick from now, if it was
+  deferred; the ticks it skipped are charged to Thread (the one that ran
+  alone meanwhile), in the mode the last clock interrupt found. }
+procedure ResumeClockTick(Thread: Pointer);
+{ Whether Processor's tick is deferred (read under its scheduling
+  lock). }
+function ClockTickIsDeferred(Processor: Pointer): Boolean;
 
 implementation
 
@@ -125,13 +150,19 @@ uses
   Kernel.Options,
   Kernel.WallClock,
   Kernel.BroadcastTimer,
+  Kernel.ClockPage,
+  Kernel.Threads,
+  Kernel.ProcessorTime,
   Kernel.Panic;
 
 const
   NanosecondsPerSecond = 1000000000;
+  { The tick of a processor whose thread runs alone (dynamic tick). }
+  ResidualTickNanoseconds = NanosecondsPerSecond;
 
 var
   StopsTickWhenIdle: Boolean = True;
+  DefersTickWhenAlone: Boolean = True;
 
 { Where the clock found the processor, for the hang dump: the address,
   and in kernel mode the top of the stack (within the running thread's
@@ -182,6 +213,8 @@ var
   Housekeeping: QWord;
 begin
   Result := Processor^.NextTickTime;
+  if Processor^.TickDeferredUntil <> 0 then
+    Result := Processor^.TickDeferredUntil;
   if (Processor^.NextTimerDueTime < Result) and (Processor^.NextTimerDueTime > Now) then
     Result := Processor^.NextTimerDueTime;
   if (Processor^.NextWakeUpTime < Result) and (Processor^.NextWakeUpTime > Now) then
@@ -234,6 +267,15 @@ begin
     Processor^.NextTickTime := Now + NanosecondsPerTick;
     Exit;
   end;
+  if Processor^.TickDeferredUntil <> 0 then
+  begin
+    { Deferred: this interrupt came for a timer or a wake-up, unless
+      the residual tick is due. That one counts the ticks that passed
+      (below), and the scheduler decides afresh whether to defer. }
+    if Now < Processor^.TickDeferredUntil then
+      Exit;
+    Processor^.TickDeferredUntil := 0;
+  end;
   if Now >= Processor^.NextTickTime then
   begin
     { Normally one; more if the interrupt came late. }
@@ -252,6 +294,7 @@ begin
   RecordInterruptedPlace(Frame);
   Processor := CurrentProcessor;
   Inc(Processor^.ClockInterruptCount);
+  Processor^.LastTickInUserMode := ArchFrameIsFromUserMode(Frame);
   Now := ClockNanoseconds;
   WereEnabled := SaveAndDisableInterrupts;
   ElapsedTicks := TakeElapsedTicks(Processor, Now);
@@ -320,6 +363,75 @@ begin
   Result := StopsTickWhenIdle;
 end;
 
+function ClockHasDynamicTick: Boolean;
+begin
+  Result := StopsTickWhenIdle and DefersTickWhenAlone;
+end;
+
+procedure DeferClockTick;
+var
+  Processor: PProcessor;
+  WereEnabled: Boolean;
+  Now: QWord;
+  Deadline: QWord;
+begin
+  if not (StopsTickWhenIdle and DefersTickWhenAlone) then
+    Exit;
+  WereEnabled := SaveAndDisableInterrupts;
+  Processor := CurrentProcessor;
+  if (Processor^.NextTickTime <> NeverDue) and (Processor^.TickDeferredUntil = 0) then
+  begin
+    Now := ClockNanoseconds;
+    Processor^.TickDeferredUntil := Now + ResidualTickNanoseconds;
+    Inc(Processor^.TickDeferralCount);
+    Deadline := NextClockDeadline(Processor, Now);
+    { Only later: an earlier interrupt (for a timer, a wake-up) stays. }
+    if Deadline > Processor^.ClockInterruptTime then
+      SetClockInterruptFor(Processor, Deadline, Now);
+  end;
+  RestoreInterrupts(WereEnabled);
+end;
+
+procedure ResumeClockTick(Thread: Pointer);
+var
+  Processor: PProcessor;
+  WereEnabled: Boolean;
+  Now: QWord;
+  Skipped: QWord;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  Processor := CurrentProcessor;
+  if Processor^.TickDeferredUntil <> 0 then
+  begin
+    Processor^.TickDeferredUntil := 0;
+    Now := ClockNanoseconds;
+    { The ticks skipped go to the thread that ran alone, so the split of
+      its time between user mode and the kernel still has its samples;
+      then a fresh schedule, so whoever runs next gets a whole tick. }
+    if Processor^.NextTickTime <> NeverDue then
+    begin
+      if (Thread <> nil) and (Now >= Processor^.NextTickTime) then
+      begin
+        Skipped := (Now - Processor^.NextTickTime) div NanosecondsPerTick + 1;
+        ChargeClockTicks(PThreadControlBlock(Thread), Skipped, Processor^.LastTickInUserMode);
+      end;
+      Processor^.NextTickTime := Now + NanosecondsPerTick;
+    end;
+    { NeverDue: its timer may have stopped in an idle state
+      (Kernel.BroadcastTimer): set in full, due times past included. }
+    if Processor^.ClockInterruptTime = NeverDue then
+      RearmClockInterrupt
+    else if Processor^.NextTickTime < Processor^.ClockInterruptTime then
+      SetClockInterruptFor(Processor, Processor^.NextTickTime, Now);
+  end;
+  RestoreInterrupts(WereEnabled);
+end;
+
+function ClockTickIsDeferred(Processor: Pointer): Boolean;
+begin
+  Result := PProcessor(Processor)^.TickDeferredUntil <> 0;
+end;
+
 procedure StartClockOnThisProcessor;
 var
   Processor: PProcessor;
@@ -328,6 +440,7 @@ begin
   WereEnabled := SaveAndDisableInterrupts;
   Processor := CurrentProcessor;
   Processor^.NextTickTime := ClockNanoseconds + NanosecondsPerTick;
+  Processor^.TickDeferredUntil := 0;
   { The first interrupt comes right away and sets the next one. }
   Processor^.ClockInterruptTime := 0;
   HalStartClockOnThisProcessor;
@@ -341,7 +454,11 @@ begin
   if GetKernelOptionValue('tickless', @Value[0], SizeOf(Value)) and
      (Value[0] = 'o') and (Value[1] = 'f') then
     StopsTickWhenIdle := False;
+  if GetKernelOptionValue('dynamictick', @Value[0], SizeOf(Value)) and
+     (Value[0] = 'o') and (Value[1] = 'f') then
+    DefersTickWhenAlone := False;
   StartWallClock;
+  InitializeClockPage;
   if not RegisterInterruptHandler(HalClockInterruptVector, @HandleClockInterrupt, nil) then
     KernelPanic('clock interrupt vector is already in use');
   StartClockOnThisProcessor;

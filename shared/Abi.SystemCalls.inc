@@ -185,9 +185,11 @@ const
     read-only shared by default, MapPrivate for copy on write, which
     MapWritable makes writable; MapExecutable). The file's pages are
     read when first touched and shared with every other mapping of it
-    and with read(). A shared writable mapping is refused
-    (ErrorUnsupported: nothing writes pages back to files yet). Returns
-    the address. Unmapped with CallFreeMemory. ErrorUnsupported if the
+    and with read(). A shared mapping is writable (MapWritable without
+    MapPrivate) only through a handle opened for writing
+    (ErrorAccessDenied otherwise): what is written reaches the file
+    (CallSyncMemory, unmapping, sync, or within seconds). Returns the
+    address. Unmapped with CallFreeMemory. ErrorUnsupported if the
     handle has no memory to map. }
   CallMapHandle = 72;
 
@@ -714,6 +716,136 @@ const
   CallGetParentProcessId = 196;
   { 197-199 are kept for this block. }
 
+  { --- Named objects and the object namespace (200-207) -----------------
+    Objects have names in a tree of directories, written with
+    backslashes from the root: \Shared\editor\lock. The kernel's own
+    directories are \Device (the devices under /dev), \Storage (disks
+    and partitions), \Ports (the ports of CallCreatePort), \Kernel and
+    \Shared, where programs name their events, semaphores, mutexes,
+    sections and timers (mode 1777, like /tmp). Each name has an owner,
+    a group and permission bits as files do: looking a name up needs
+    search (x) permission on every directory on the way, naming or
+    removing something in a directory write (w) permission on it (in a
+    sticky directory only the name's owner, the directory's owner or
+    root may remove it), listing it read (r) permission, and opening an
+    object read and write permission on the object. A name lasts as long
+    as its object (the last handle closed, it goes) or until removed; a
+    directory a program makes lasts until removed. Names are up to
+    ObjectNameCapacity - 1 characters, no backslash; paths up to
+    MaximumObjectPathLength. Restricted from port connections
+    (RestrictPortConnections), a process can do none of this
+    (ErrorAccessDenied). }
+
+  { (PathAddress, Mode): a new directory (Mode: its permission bits and
+    ObjectModeSticky; the caller's umask applies), owned by the caller.
+    ErrorExists, ErrorNotFound (a directory on the way is missing),
+    ErrorNotDirectory, ErrorAccessDenied, ErrorNoSpace (programs have
+    made MaximumObjectDirectories). }
+  CallCreateObjectDirectory = 200;
+  { (Handle, PathAddress, Mode): gives the object behind Handle (an
+    event, semaphore, mutex, section or timer without a name) the name
+    Path, owned by the caller with Mode (umask applied). ErrorExists if
+    the name is taken (the library's create-or-open then opens it),
+    ErrorBusy if the object has a name already, ErrorUnsupported for
+    another kind of handle. }
+  CallNameObject = 201;
+  { (PathAddress, Kind): a new handle to the object named Path, which
+    must be of handle kind Kind (HandleKindEvent, ...; 0: any kind that
+    can be opened). ErrorNotFound, ErrorAccessDenied, ErrorInvalidArgument
+    (another kind), ErrorUnsupported (a directory, device or port: not
+    opened by name). }
+  CallOpenNamedObject = 202;
+  { (PathAddress, BufferAddress, Capacity, FirstIndex): the entries of a
+    directory from FirstIndex on, as up to Capacity
+    TAbiObjectDirectoryEntry records; returns how many entries the
+    directory has (which may be more than FirstIndex + Capacity). }
+  CallListObjectDirectory = 203;
+  { (PathAddress): removes a name: the object goes on without one until
+    its last handle is closed. A directory must be empty
+    (ErrorDirectoryNotEmpty) and one a program made (the kernel's stay:
+    ErrorNotPermitted). }
+  CallRemoveObjectName = 204;
+  { (PathAddress, Mode, OwnerId, GroupId; -1 for each to leave alone):
+    chmod and chown for a name. The mode by its owner or root, the owner
+    by root, the group by its owner (to a group of theirs) or root.
+    ErrorNotPermitted. }
+  CallSetObjectSecurity = 205;
+  { (Flags: MutexInitiallyOwned): a new mutex, a handle like a
+    semaphore's: signaled while no thread owns it. A wait it ends
+    (CallWaitForHandles, alone, among others or with WaitForAll) makes
+    the waiting thread its owner; its owner may take it again (each take
+    a hold). A thread that ends owning it abandons it: the next wait to
+    take it returns its index plus WaitAbandoned. }
+  CallCreateMutex = 206;
+  { (Handle): gives up one hold of the calling thread; returns the holds
+    left (0: free). ErrorNotPermitted if the thread does not own it. }
+  CallReleaseMutex = 207;
+
+
+  { The namespace (calls 200-205). }
+  { One name of a path, its terminating zero included. }
+  ObjectNameCapacity = 64;
+  MaximumObjectPathLength = 256;
+  { The directories programs may make, all together. }
+  MaximumObjectDirectories = 1024;
+  { A directory's sticky bit (Mode). }
+  ObjectModeSticky = $200;
+  { TAbiObjectDirectoryEntry.Flags. }
+  ObjectEntryDirectory = $01;
+  { It stays until its name is removed (a directory). }
+  ObjectEntryPermanent = $02;
+  { CallCreateMutex. }
+  MutexInitiallyOwned = $01;
+  { Added to the result of CallWaitForHandles when the wait took a mutex
+    its previous owner abandoned. }
+  WaitAbandoned = $100;
+
+  { --- Memory and the loader (208-213) ------------------------------------ }
+
+  { (StatisticsAddress): the program loader's caches as a
+    TAbiImageCacheStatistics: the image sections kept, the relocated
+    copies of their pages kept per load address, and how often a load
+    used one instead of relocating. Anyone may read them. }
+  CallGetImageCacheStatistics = 208;
+  { (ProcessId (0: the caller), ChargeAddress): what the out-of-memory
+    policy charges the process with, as a TAbiProcessMemoryCharge: its
+    resident pages, its commitments not resident yet, the sections it
+    made, and the score that orders the processes it would end. Anyone
+    may ask about any process; ErrorNotFound if none has that id. }
+  CallGetProcessMemoryCharge = 209;
+  { 210-213 are kept for this block. }
+
+  { TAbiProcessMemoryCharge. }
+  ProcessMemoryNotEligible = Low(Int64);
+  ProcessMemoryProtected = 1;
+
+  { --- File mappings (214-219) ----------------------------------------- }
+
+  { (Address, Length, Flags): msync: the pages of shared file mappings in
+    [Address, Address + Length) (Address page aligned) written by the
+    program are written back to their files; with SyncMemoryWait their
+    volumes are flushed too, so the data is on the disk when it returns.
+    Flags: SyncMemoryAsync, SyncMemoryInvalidate (nothing to do: mapped
+    pages always show the file), SyncMemoryWait (the Linux MS_* values).
+    ErrorBadAddress if part of the range is not mapped. }
+  CallSyncMemory = 214;
+  { (Address, Length, VectorAddress): mincore: one byte per page of
+    [Address, Address + Length) (Address page aligned) at VectorAddress,
+    PageResidency* bits: in memory (mapped here, or a file page the
+    file's mapped file holds), mapped in this process, waiting to be
+    written back to its file. ErrorBadAddress if part of the range is
+    not mapped. }
+  CallQueryMemoryResidency = 215;
+  { (StatisticsAddress): the mapped files' figures as a
+    TAbiMappedFileStatistics. }
+  CallGetMappedFileStatistics = 216;
+  { (PagesWanted, Flags): drops up to PagesWanted pages of mapped files
+    now, as memory pressure would: clean pages nobody maps, and with
+    TrimMappedPagesToo mapped ones as well (their mappings read them
+    again when touched). Returns the pages freed. Root only. }
+  CallTrimMappedFiles = 217;
+  { 218-219 are kept for this block. }
+
   { --- Power: wake sources, cooling, performance states (228-235) ------------- }
 
   { (Seconds): the machine wakes from suspend to RAM by the battery
@@ -741,6 +873,19 @@ const
   { 233-235 are kept for this group. }
 
   CallCount = 233;
+
+  { CallSyncMemory flags (the Linux MS_* values). }
+  SyncMemoryAsync = 1;
+  SyncMemoryInvalidate = 2;
+  SyncMemoryWait = 4;
+
+  { CallQueryMemoryResidency bits. }
+  PageResidencyResident = $01;
+  PageResidencyMapped = $02;
+  PageResidencyDirty = $04;
+
+  { CallTrimMappedFiles flags. }
+  TrimMappedPagesToo = $01;
 
   { CallWaitForChild flags (the Linux values). }
   WaitNoHang = 1;
@@ -980,6 +1125,19 @@ const
   AuxiliaryInitializerCount = $1001;
   AuxiliaryFinalizers = $1002;
   AuxiliaryFinalizerCount = $1003;
+  { The address of the clock page (a read-only TAbiClockPage the kernel
+    keeps up to date), so the runtime reads the time without a system
+    call. }
+  AuxiliaryClockPage = $1004;
+
+  { TAbiClockPage.Mode: how the time is read from the page. }
+  { The page cannot give the time (the kernel's clock is not a counter
+    the program may read, such as KVM's paravirtual clock): use
+    CallGetPreciseTime. }
+  ClockPageModeSystemCall = 0;
+  { The processor's counter (RDTSC on x86-64, CNTVCT_EL0 on AArch64)
+    with CounterOrigin, OriginNanoseconds and CounterFrequency. }
+  ClockPageModeCounter = 1;
 
   { Fields of TAbiAttributeChanges that apply. }
   ChangeFieldMode = $01;
@@ -1238,7 +1396,8 @@ const
   RestrictFileReads = $04;
   { No processes started. }
   RestrictProcessCreation = $08;
-  { No named ports made or connected to (the display server, services). }
+  { No named ports made or connected to (the display server, services),
+    and nothing named, opened by name or listed in the object namespace. }
   RestrictPortConnections = $10;
   { No other process ended, stopped, continued or asked to end. }
   RestrictProcessControl = $20;
@@ -1441,6 +1600,7 @@ const
   { A network socket (Abi.Networking.inc). }
   HandleKindSocket = 14;
   HandleKindSemaphore = 15;
+  HandleKindMutex = 16;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -1647,6 +1807,32 @@ type
   end;
   PAbiPreciseTime = ^TAbiPreciseTime;
 
+  { The clock page (AuxiliaryClockPage): the parameters of the kernel's
+    clock, read without a lock. Sequence is odd while the kernel changes
+    the page; a reader copies what it needs and reads again if Sequence
+    was odd or changed meanwhile. With ClockPageModeCounter, for a
+    counter value C:
+      uptime = OriginNanoseconds                       if C <= CounterOrigin
+      uptime = OriginNanoseconds + (C - CounterOrigin) * 10^9 / CounterFrequency
+    (whole seconds and the rest computed apart, so nothing overflows;
+    shared/ClockPageMath.inc), and the wall clock is the uptime plus
+    WallBaseOffset plus the progress of a gradual adjustment: SlewTotal
+    moved at SlewPartsPerMillion of the uptime passed since SlewStart,
+    never past SlewTotal. }
+  TAbiClockPage = record
+    Sequence: LongWord;
+    Mode: LongWord;
+    CounterOrigin: QWord;
+    OriginNanoseconds: QWord;
+    CounterFrequency: QWord;
+    WallBaseOffset: Int64;
+    SlewTotal: Int64;
+    SlewStart: QWord;
+    SlewPartsPerMillion: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiClockPage = ^TAbiClockPage;
+
   TAbiIdleState = record
     { "C1 (HLT)", "C6 (MWAIT)", "WFI", "PSCI standby 1"... }
     Name: array[0..AbiIdleStateNameCapacity - 1] of Char;
@@ -1727,6 +1913,27 @@ type
     LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
   end;
   PAbiMemoryPressure = ^TAbiMemoryPressure;
+
+  { The pages of files that processes map (CallGetMappedFileStatistics). }
+  TAbiMappedFileStatistics = record
+    { Mapped files, and snapshots kept for copy on write mappings of
+      files that changed since. }
+    MappedFiles: QWord;
+    SnapshotFiles: QWord;
+    { Their pages in memory, and those waiting to be written back. }
+    ResidentPages: QWord;
+    DirtyPages: QWord;
+    { Since start: pages written back to files, pages dropped under
+      memory pressure, mappings of them taken away for that, pages read
+      by snapshots before a change, and bytes read() copied from
+      mapped pages instead of reading the file. }
+    PagesWrittenBack: QWord;
+    PagesEvicted: QWord;
+    MappingsDropped: QWord;
+    SnapshotPagesRead: QWord;
+    BytesReadFromPages: QWord;
+  end;
+  PAbiMappedFileStatistics = ^TAbiMappedFileStatistics;
 
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;
@@ -1942,6 +2149,27 @@ type
   end;
   PAbiProcessIdentity = ^TAbiProcessIdentity;
 
+  { An entry of an object directory (CallListObjectDirectory). }
+  TAbiObjectDirectoryEntry = record
+    Name: array[0..ObjectNameCapacity - 1] of Char;
+    { What the object is: Directory, Event, Semaphore, Mutex, Section,
+      Timer, Port, Device, BlockDevice, Process, Console... }
+    TypeName: array[0..31] of Char;
+    { The handle kind it opens as (CallOpenNamedObject); 0 if it is not
+      opened by name. }
+    Kind: LongWord;
+    { ObjectEntry*. }
+    Flags: LongWord;
+    OwnerId: LongWord;
+    GroupId: LongWord;
+    Mode: LongWord;
+    { For a directory: how many entries it has. }
+    EntryCount: LongWord;
+    { References the kernel holds to the object (handles among them). }
+    ReferenceCount: QWord;
+  end;
+  PAbiObjectDirectoryEntry = ^TAbiObjectDirectoryEntry;
+
   { Arguments of CallCreateProcess, passed by address. }
   TAbiProcessCreation = record
     Path: PChar;
@@ -1952,7 +2180,9 @@ type
     OutputHandle: Int64;
     ErrorHandle: Int64;
     { GroupInherit, GroupNew (a group led by the new process) or the id
-      of an existing group to join. }
+      of an existing group of the caller's session to join (as setpgid:
+      ErrorNotPermitted for another session's group, a number no
+      process has, or with ProcessNewSession). }
     GroupId: Int64;
     { nil: the caller's user and groups. Otherwise who the new process
       runs as (its real, effective and saved ids and its supplementary
@@ -1993,6 +2223,48 @@ type
     SystemCommitChargePages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { What CallGetImageCacheStatistics gives. }
+  TAbiImageCacheStatistics = record
+    { Image sections kept (programs and libraries between loads), the
+      relocated copies kept with them and the pages those hold. }
+    CachedSections: QWord;
+    RelocatedCopies: QWord;
+    RelocatedPages: QWord;
+    { Modules whose relocated pages came from a kept copy (no relocation
+      work), modules relocated and their copy kept, modules relocated
+      without keeping one (copy relocations, or no room). }
+    RelocationsReused: QWord;
+    RelocationsKept: QWord;
+    RelocationsNotKept: QWord;
+    { Libraries placed at the address their section had before (shared
+      by every process: ImagePlacementShared), and copies dropped to
+      give memory back. }
+    SharedPlacements: QWord;
+    CopiesDropped: QWord;
+  end;
+  PAbiImageCacheStatistics = ^TAbiImageCacheStatistics;
+
+  { What CallGetProcessMemoryCharge gives (pages). }
+  TAbiProcessMemoryCharge = record
+    { Pages mapped, and those of them shared with other processes. }
+    ResidentPages: QWord;
+    SharedPages: QWord;
+    { The commit charge, and the part of it not resident yet. }
+    CommitChargePages: QWord;
+    CommittedNotResidentPages: QWord;
+    { Sections (shared memory) it made, mapped or not. }
+    SectionPages: QWord;
+    { What the policy weighs: resident + sections + committed not resident. }
+    FootprintPages: QWord;
+    { Its score (per mille of RAM plus the adjustment), or
+      ProcessMemoryNotEligible if it would not be chosen. }
+    OomScore: Int64;
+    OomScoreAdjust: LongInt;
+    { ProcessMemoryProtected: never ended for memory unless it asks. }
+    Flags: LongWord;
+  end;
+  PAbiProcessMemoryCharge = ^TAbiProcessMemoryCharge;
 
   { What CallQueryMemory gives: the run of alike pages from BaseAddress
     for Length bytes, in the allocation (reservation, mapping, image

@@ -113,6 +113,7 @@ begin
     (Left.Attributes = Right.Attributes) and (Left.CommitsOnDemand = Right.CommitsOnDemand) and
     (Left.IsGuard = Right.IsGuard) and (Left.OwnerThreadId = Right.OwnerThreadId) and
     (Left.Backing = Right.Backing) and (Left.BackingIsPrivate = Right.BackingIsPrivate) and
+    (Left.BackingIsWritable = Right.BackingIsWritable) and
     ((Left.Backing = nil) or (Right.BackingOffset = Left.BackingOffset + Left.Length)) and
     (Left.ReserveBytes = 0) and (Right.ReserveBytes = 0);
 end;

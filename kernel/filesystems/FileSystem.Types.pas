@@ -196,6 +196,10 @@ type
       driver reported the read-only attribute, which the permissions
       made up from the mount options keep (FileSystem.Security). }
     HasReadOnlyAttribute: Boolean;
+    { Mapped files of this file (Processes.MappedFiles) holding pages
+      of it in memory: read() asks them for resident pages first while
+      this is not 0. Kept by the VFS under the volume's lock. }
+    MappedFileCount: LongInt;
   end;
 
   { Position within a directory listing. Its meaning belongs to the

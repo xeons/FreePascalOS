@@ -81,6 +81,7 @@ uses
   Firmware.DeviceTreeMachine,
   Hal.FirmwareTables,
   Hal.Platform,
+  Hal.GenericTimer,
   Hal.Psci;
 
 const
@@ -196,6 +197,9 @@ procedure IdleWakeEntry(Processor: PProcessor);
 begin
   ReinitializeThisProcessor(Processor);
   HalInitializeSecondaryProcessor;
+  { Lost with the power: programs read the virtual counter for the
+    clock page (the timer itself is set again by the idle loop). }
+  AllowUserCounterReads;
   if PowerDownTest then
   begin
     NotePoweredUp(Processor);

@@ -27,9 +27,10 @@
   (Processes.AddressSpace), writable if the handle was opened for
   writing. A section's pages are mapped writable, each with a reference
   of its own. A regular file is mapped through its mapped file
-  (Processes.MappedFiles): read-only shared, or copy on write
-  (MapPrivate, writable with MapWritable), its pages read when first
-  touched (Processes.VirtualMemory). The program unmaps it with
+  (Processes.MappedFiles): shared (writable with MapWritable if the
+  handle was opened for writing: what is written reaches the file), or
+  copy on write (MapPrivate, writable with MapWritable), its pages read
+  when first touched (Processes.VirtualMemory). The program unmaps it with
   CallFreeMemory, and it goes with the address space otherwise; the
   device's memory is never freed by either.
 }
@@ -110,17 +111,22 @@ function MapFile(OpenedFile: POpenFile; Offset, Length, Flags: QWord): Int64;
 var
   MappedFile: PMappedFile;
   IsPrivate: Boolean;
+  HandleIsWritable: Boolean;
   Error: LongInt;
   Start: QWord;
 begin
   if Flags > High(LongWord) then
     Exit(Failure(ErrorInvalidArgument));
   IsPrivate := (Flags and MapPrivate) <> 0;
+  HandleIsWritable := (OpenedFile^.Flags and OpenForWriting) <> 0;
   Error := AcquireMappedFile(OpenedFile, IsPrivate, MappedFile);
   if Error <> ErrorNone then
     Exit(Failure(Error));
-  Error := MapFileIntoAddressSpace(CurrentProcess^.AddressSpace, MappedFile, Offset, Length,
-    LongWord(Flags), Start);
+  if not IsPrivate and HandleIsWritable then
+    Error := PrepareMappedFileForWriting(MappedFile, OpenedFile);
+  if Error = ErrorNone then
+    Error := MapFileIntoAddressSpace(CurrentProcess^.AddressSpace, MappedFile, Offset, Length,
+      LongWord(Flags), HandleIsWritable, Start);
   if Error <> ErrorNone then
   begin
     ReleaseMappedFile(MappedFile, IsPrivate);
