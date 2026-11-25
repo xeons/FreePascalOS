@@ -687,8 +687,27 @@ normalized (0-65535), not pixels.
         `Image.Scaling`'s area averaging; checked against Pillow
 - [x] libfont: TrueType outlines, hinting, antialiasing, glyph cache (any size,
       so any DPI): DejaVu Sans (the interface's) and DejaVu Sans Mono at every
-      size, light vertical autohinting, gamma-correct blending; CFF outlines and
-      the fonts' own bytecode hinting not done
+      size, light vertical autohinting, gamma-correct blending; the fonts' own
+      bytecode hinting not done
+- [x] libfont: CFF and CFF2 outlines (OpenType .otf, CID-keyed Noto CJK,
+      variable fonts' default instance), TrueType collections (.ttc, a face by
+      index), CBDT/CBLC colour emoji scaled from the nearest strike (PNG through
+      libimage's decoder hook), cmap format 14 and symbol maps
+- [x] The build machine's freely licensed fonts copied into /lib/fonts with
+      their licences and a MANIFEST (scripts/host-fonts.list,
+      scripts/collect-host-fonts.py; full set on amd64, core set for the Pi's
+      RAM disk): Liberation (Arial/Times New Roman/Courier New metrics),
+      DejaVu, Noto with 34 scripts, CJK and colour emoji, Source Sans 3,
+      Cantarell, Roboto, Open Sans, Hack, Inconsolata, the URW base 35
+- [x] Font configuration (/etc/fonts.conf, Font.Configuration): generic
+      families and common names to installed faces, per-script fallback
+      chains; per-character fallback in libweb and in the toolkit's text
+      (Font.Text's FallbackFaceFinder); the interface stays DejaVu Sans
+- [ ] COLR/CPAL colour glyphs (v0 and v1), sbix and SVG-in-OpenType; full
+      variable-font instances (fvar/gvar/HVAR, CFF2 blends at other axes)
+- [ ] Choosing a collection's face by language (Noto CJK's JP face is used
+      for Chinese and Korean too) and by the lang attribute
+- [ ] Emoji ZWJ sequences, flags and keycaps as single glyphs (needs GSUB)
 - [x] Icons and cursors in several sizes (16, 24, 32, 48 px...); the nearest to
       the scale is used, scaled when none fits: an isometric icon set and
       the pointer's pictures drawn by code at build time (16 to 96 px),
@@ -1330,10 +1349,12 @@ Part 2 (style, layout, painting):
 - [ ] Fixed table layout, collapsing borders, `visibility: collapse`
 - [x] Synthetic bold and oblique for faces the system lacks; paint-only
       restyle without relayout
-- [x] @font-face loading: TrueType and WOFF 1 faces join the font library
-      (Web.Loading.LayoutSink, Web.Text.Woff); fonts re-bound in place
-- [ ] Bidi and writing modes, shaping beyond kerning, WOFF2 and CFF web
-      fonts (web fonts are process-wide, not per document),
+- [x] @font-face loading: TrueType, OpenType (CFF too), collections, WOFF 1
+      and WOFF2 (Web.Text.Woff2: Brotli, the glyf/loca and hmtx transforms)
+      faces join the font library (Web.Loading.LayoutSink, Web.Text.Woff);
+      fonts re-bound in place
+- [ ] Bidi and writing modes, shaping beyond kerning (Arabic draws
+      unjoined), web fonts per document rather than process-wide,
       ::first-line/::first-letter
 - [x] position: sticky (offsets at painting and hit testing time under
       the viewport, when the list is built in inner scroll containers)
@@ -1581,10 +1602,10 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       media queries, details/summary
 - [ ] Custom elements (customElements is missing: reddit, MDN's widgets,
       YouTube) and shadow DOM (attachShadow: lit components, archive.org)
-- [ ] WOFF2 web fonts (only the .woff and TrueType sources load today)
-- [ ] A metric-compatible sans-serif (Liberation Sans or Arimo): DejaVu
-      Sans is about 10% wider than Arial, so lines break differently from
-      the reference on most pages (a font decision for the coordinator)
+- [x] WOFF2 web fonts
+- [x] A metric-compatible sans-serif: sans-serif, Arial and Helvetica are
+      Liberation Sans (fonts.conf), Times New Roman Liberation Serif,
+      Courier New and monospace Liberation Mono
 - [ ] details: the summary's activation behavior in the DOM (a script's
       summary.click() does nothing; libwebview's ActOnClick toggles on a
       user's click), and the default summary of a details without one

@@ -9874,7 +9874,8 @@ independent) against the Free Pascal runtime library:
   licences: `terminus`, Terminus in heights 12 to 32, regular and bold,
   the console's and the terminal's font, monospaced, a face standing for
   an em six sevenths of its height, so faces of both kinds picked for
-  one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
+  one size match; the fonts the build copies from the build machine
+  (see "Fonts" below); `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
   DejaVu Sans Mono 2.37, TrueType, regular and bold, kept in
   `userland/fonts` and copied by the build). Listing a family reads
   only the start of each file, its size and weight (for a TrueType font
@@ -9882,15 +9883,79 @@ independent) against the Free Pascal runtime library:
   first time it is picked, so a program does not load every size. Sizes
   are in points, so text is the same size on any display.
 
+  Fonts. Besides Terminus and DejaVu (kept in the repository), the build
+  copies the freely licensed fonts the build machine has into
+  /lib/fonts: `scripts/host-fonts.list` names each family, its files,
+  the host package, upstream and licence, and
+  `scripts/collect-host-fonts.py` copies a family only when its licence
+  file is there and says what the list expects (SIL OFL, Apache 2.0,
+  MIT and Bitstream Vera, AGPL with URW's font exception) and every
+  font's own name table (copyright, licence description) agrees,
+  writing `/lib/fonts/<family>/LICENSE` (where the fonts come from,
+  their copyright and licence as they state them, the licence's full
+  text) and `/lib/fonts/MANIFEST` (family, directory, files, licence,
+  package); anything missing is skipped with a message, so the build
+  works with the repository's fonts alone. Nothing of them is in git.
+  `HOST_FONT_SET=full` (amd64's default, about 80 MB: Liberation Sans,
+  Serif and Mono, metric-compatible with Arial, Times New Roman and
+  Courier New; DejaVu's obliques and Serif; Noto Sans, Serif and Mono;
+  Noto Sans for 34 scripts with Symbols, Symbols 2 and Math; Noto Color
+  Emoji; Noto Sans CJK regular and bold; Source Sans 3; Cantarell;
+  Roboto; Open Sans; Hack; Inconsolata; the URW base 35: Nimbus Sans,
+  Sans Narrow, Roman and Mono PS, P052, C059, URW Bookman, URW Gothic,
+  Z003, Standard Symbols PS, D050000L), `core` (arm64's default, 6.7 MB,
+  1.4 MB of it Droid Sans Fallback for CJK: Liberation regular and
+  bold, Noto Sans Symbols 2; the system image is the Raspberry Pi's
+  RAM disk, served xz-compressed over TFTP) or `none`. The system disk
+  grows with its contents (at least 64 MiB; 160 MiB with the full set).
+  The interface keeps DejaVu Sans; a family a program lists (the font
+  dialog) may be any of them. A family's italic faces are left out of
+  its font set (the interface draws upright text).
+
+  `Font.Configuration` reads `/etc/fonts.conf` (userland/etc): in
+  `[families]`, a generic family or font name and the families that
+  stand for it (the first installed taken); in `[fallback]`, the
+  default chain; in `[scripts]`, a script's code point ranges and the
+  families tried first for them (CJK, Arabic, Hebrew, the Indic
+  scripts, Thai, ..., emoji, symbols, math). Without the file, built-in
+  settings give DejaVu Sans and DejaVu Sans Mono. Font.Text measures
+  and draws a character a face lacks with `FallbackFaceFinder`'s face
+  (Font.Files sets it: the configured chain's families, each listed
+  and read when first reached, a face of the same pixel size and
+  weight, the answers remembered), on the same baseline, without
+  kerning to its neighbours; zero-width joiners and variation selectors
+  take no room.
+
   TrueType: `Font.FontData` reads big-endian numbers inside a table,
   every read checked against the table's end in 64-bit arithmetic.
   `Font.TrueType` (`LoadTrueTypeFont`) opens a font: the table
-  directory (every table inside the file; CFF "OTTO" fonts and
-  collections are not read), `head` (units to the em, 16 to 16384; the
+  directory (every table inside the file; a collection's face by its
+  index, `FontFaceCount`), `head` (units to the em, 16 to 16384; the
   loca format; the weight bit), `maxp`, `hhea` and `hmtx` (advances;
   glyphs past the last advance share it), `OS/2` (weight class; the
-  line if hhea has none), `post` (underline), `loca` (in order, inside
-  glyf) and `cmap`; anything wrong refuses the font.
+  line if hhea has none), `post` (underline), the outlines (`loca` and
+  `glyf`, in order; else `CFF ` or `CFF2`; else colour bitmaps alone)
+  and `cmap`; anything wrong refuses the font. A variable font is its
+  default instance (glyf and CFF2 hold it; blends keep their defaults).
+  `Font.CffData` reads CFF INDEXes (16- or 32-bit counts) and DICTs,
+  `Font.CffOutlines` the CFF table (Top DICT, CharStrings, Private DICT
+  and local subroutines; CID-keyed fonts' FDArray and FDSelect formats
+  0 and 3, as Noto CJK has) and CFF2's (FDSelect format 4, the variation
+  store's region counts), and `Font.CffCharStrings` runs Type 2
+  charstrings into cubic outlines (moves, lines, the curve operators
+  and flex family, subroutines with their bias, hints skipped, widths
+  dropped, arithmetic, CFF2's blend and vsindex; ten levels of calls,
+  200000 operators, points within a million units, or the glyph is
+  refused). Cubic control points are marked in the outline
+  (`TOutlinePoint.Cubic`); rendering cuts cubics with libdrawing's
+  `FlattenCubicCurve`. `Font.ColorBitmaps` reads CBLC strikes and index
+  subtables (formats 1 to 5) and CBDT images (formats 17 to 19, PNG),
+  decoded through `ColorBitmapDecoder` (set by the toolkit and libweb to
+  libimage's) and scaled smoothly from the nearest strike to the size;
+  a colour glyph is a bitmap of colours (`TGlyphBitmap.Colors`) cached
+  like coverage. `Font.CharacterMaps` also takes a symbol font's map
+  (3/0, its U+F020 to U+F0FF also at U+0020) and looks variation
+  sequences up in format 14.
   `Font.CharacterMaps` reads the Unicode subtable, format 12 (3/10,
   0/4, 0/6) before format 4 (3/1, 0/0-3), into mappings by code point.
   `Font.GlyphData` reads outlines: simple glyphs (flags with repeats,
@@ -9966,7 +10031,17 @@ independent) against the Free Pascal runtime library:
   average); the hinter (E's and H's bars, baseline, x height and cap
   height on whole pixels, no overshoot at small sizes), the text API,
   gamma-correct blending, subpixel glyphs, the cache's limits and order
-  of use, and font sets giving every size with faces that never move.
+  of use, and font sets giving every size with faces that never move;
+  with the build machine's fonts when it has them (the fixtures name
+  them, else the checks are skipped saying so): Source Sans 3, Nimbus
+  Sans, Cantarell (CFF2) and Noto Sans CJK's first and third faces
+  rendered against FreeType (cubic curves within 48 a pixel and 7.5 on
+  average: FreeType cuts them more coarsely), a collection's faces
+  mapping one character to their own glyphs, Noto Color Emoji drawn in
+  colour through libimage, DejaVu Sans made into WOFF2 by woff2_compress
+  unwrapped glyph for glyph as the original (every truncation refused),
+  randomly damaged CFF data never raising, Liberation Sans with Arial's
+  advances, and userland/etc/fonts.conf read.
   On the system, `drawtest` draws a window on the display in DejaVu
   Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
@@ -11957,15 +12032,30 @@ the view asks for frames while any runs.
 
 ### Text (Web.Text)
 
-`Web.Text.Fonts` lists the TrueType faces under the font directory
-(/lib/fonts; the host tools point it at userland/fonts): a subdirectory
-per family ("dejavu-sans" is "DejaVu Sans"), weight and slant from the
-file names; a face's file is read when first used. Matching walks the
-font-family list: generic families map to installed ones (sans-serif,
-serif, system-ui, cursive, fantasy to DejaVu Sans; monospace to DejaVu
-Sans Mono; some well-known names too), the face nearest the weight and
-slant is taken, and a character the face lacks takes the nearest face
-of the library that has it (remembered per font).
+`Web.Text.Fonts` lists the faces under the font directory (/lib/fonts;
+the host tools point it at userland/fonts): a subdirectory per family
+("liberation-sans" is "Liberation Sans"), each .ttf, .otf or .ttc file a
+face (a collection's first), weight and slant from its header
+(`Font.Summaries`, a few hundred bytes read), so a face's file is read
+only when it is chosen. Matching walks the font-family list: an
+installed family by its name, else what the system's font configuration
+(/etc/fonts.conf, see "Fonts" under libfont) says stands for the name:
+sans-serif, Arial and Helvetica are Liberation Sans (Arial's metrics),
+serif and Times New Roman Liberation Serif, monospace and Courier New
+Liberation Mono, Palatino P052 and the other PostScript names their URW
+stand-ins, system-ui and -apple-system the interface's DejaVu Sans,
+emoji Noto Color Emoji. The face nearest the weight and slant is picked
+by the headers and read. A character the face lacks walks the
+configured chain for its script (Noto Sans CJK for Han and kana, Noto
+Sans Arabic, ..., Noto Color Emoji for emoji) and then the default
+chain, each family read only when reached, so mixed text draws every
+character (remembered per font and in the library). U+FE0F after a
+character asks for the emoji family; any variation selector picks the
+face's variation glyph (cmap format 14); selectors and zero-width
+joiners take no room (emoji sequences joined by U+200D draw one after
+another: there are no ligatures). Colour glyphs paint in their own
+colours (`Font.GlyphDrawing`); libweb sets libfont's PNG decoder to
+libimage's (`Image.PictureColors`).
 
 A web font face keeps to its `unicode-range` (`Web.Text.UnicodeRanges`):
 a family loaded in subsets (latin, latin-ext, cyrillic ...) leads with
@@ -12226,14 +12316,18 @@ document's resources (others are dropped): link sheets, the imports of
 since an import hangs on a sheet already in use), images with their
 natural size, url() images fetched when the layout first asks (no-cors,
 sniffed, decoded on the page thread, given under the URL text as
-written), and @font-face sources: TrueType, OpenType with TrueType
-outlines and WOFF 1 (`Web.Text.Woff` unwraps it with libcompression's
-zlib) join the font library under the rule's family, weight and style;
-the fonts made from styles then pick their faces again in place
-(`RefreshTextFonts`: no font object goes, so display lists keep valid
-pointers) and every layout measures again. WOFF2 and CFF outlines are
-refused by `FontFormatSupported`, so the loader tries the next source;
-web fonts are process-wide rather than per document. `SetViewport`
+written), and @font-face sources: TrueType, OpenType (TrueType or CFF
+outlines), collections, WOFF 1 (`Web.Text.Woff` unwraps it with
+libcompression's zlib) and WOFF2 (`Web.Text.Woff2`: libcompression's
+Brotli, then the glyf and loca tables rebuilt from the transformed
+glyf's streams of contour and point counts, flags, coordinate
+triplets, composite data, boxes and instructions, the loca format
+written into head, and hmtx's left side bearings from the glyphs'
+xMin when the transform left them out) join the font library under the
+rule's family, weight and style; the fonts made from styles then pick
+their faces again in place (`RefreshTextFonts`: no font object goes,
+so display lists keep valid pointers) and every layout measures again.
+Web fonts are process-wide rather than per document. `SetViewport`
 gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
@@ -12415,8 +12509,9 @@ full intrinsic track sizing algorithm, the fixed table
 layout and collapsing borders (laid out as separate borders without
 spacing), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
-scripts), WOFF2 and CFF web fonts (WOFF and TrueType load, each face kept to its
-unicode-range), ::first-line and ::first-letter, inline boxes
+scripts: Arabic draws unjoined), emoji ZWJ sequences and flags (their
+parts draw one by one), a collection's face chosen by language (its
+first is used), ::first-line and ::first-letter, inline boxes
 split around blocks (blocks inside inline boxes take lines of their own
 instead), relative positioning of inline boxes,
 perspective and preserve-3d, filters, blend modes, clip-path, border-image, conic
