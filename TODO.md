@@ -194,6 +194,22 @@ how the existing pieces fit together.
 - [x] Permission checks on FAT and exFAT beyond their read-only attribute (uid=, gid=, umask=,
       fmask=, dmask= mount options; the read-only attribute kept)
 - [x] Process list (ps, pgrep, pkill), per-thread CPU time
+- [x] Audit of memory, processes and objects fixed (loadertest, ctest security):
+      crafted ELF files confined to their module and user space, the kernel's
+      window into a process limited to its own private writable pages, fork
+      copy on write whatever the protection, exec/spawn/LoadLibrary check and
+      load one open file, AT_SECURE, reference counted address spaces, fork
+      limits, signals per process, pending signals kept across exec, hard
+      process limits, sections charged to their creator, handle reserved
+      before a thread starts, mapped files joined under the volume lock
+- [ ] A private mapping of a large file another program writes: the first
+      write reads the whole file (up to 16 GiB) under the volume lock; copy
+      only the pages written instead (needs the file system to report the
+      range before the write)
+- [ ] Executing a program the caller may run but not read (mode 0711): the
+      loader opens it with the caller's read permission
+- [ ] Spawn joins any group number it is given (CallCreateProcess GroupId);
+      setpgid now joins only a group of the caller's session
 
 ## I/O
 

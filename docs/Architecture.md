@@ -8542,13 +8542,103 @@ NAME=HEX`, or `--modules FILE` with lines of that listing or of a crash
 report naming a module and its base) and assumes the fixed layout for
 the modules it is not told about.
 
+#### Hardening: crafted programs and racing callers
+
+Nothing in a program or library file is trusted (`Processes.ImageLoader`):
+loadable segments must lie in user space (their sizes no larger than an
+image may be, so no address computed from them wraps), relocation tables
+must be whole 24-byte records (`DT_RELASZ`, `DT_PLTRELSZ`), string
+tables are copied with a terminating zero, and every address the file
+names must lie in the module's own image `[ImageStart, ImageEnd)`: the
+bytes a relocation writes, the TLS initialization image, the
+initializer and finalizer arrays, and for a copy relocation the source
+in the defining module's image. A needed library is a name, never a
+path. Each image region carries the tag of the load that mapped it
+(`TUserRegion.LoadTag`), so a load that fails takes back exactly what it
+mapped (`ReleaseImageRegions`), and a library that fails to load leaves
+no half relocated module behind for the next load to trip over.
+
+The window through which the kernel reads and writes another address
+space (`WriteIntoAddressSpace`, `ReadFromAddressSpace`, `WriteIntoImage`,
+`WritablePageWindow`) checks on its own, whatever the loader did: user
+addresses only, inside a region (no guard, no device memory); reads need
+a readable region; writes a writable one - or, for the loader's
+`WriteIntoImage`, a program image's read-only pages, relocated in place -
+and never a shared file mapping. A write first makes the page the
+process's own: a copy on write page, a file's page, an image section's
+built page or any page someone else holds a reference to is copied, so
+the kernel never writes a page other processes see (a set-user-ID
+program's cached pages, say). `MapSharedPage` maps only into a region
+that is already there. Fork marks every page of a private region copy
+on write in both spaces whatever its protection, and changing a
+protection never makes a page others hold writable (it is marked copy
+on write instead).
+
+The program's file is opened once (`OpenProgramFile`, for exec and
+spawn; `OpenLibraryFile` for `CallLoadLibrary`): the caller's permission
+(execute; for a library read and execute; a `noexec` volume refuses
+both) and the set-user-ID owner are taken from that open file, and the
+loader loads that same file, so a symbolic link swapped in between
+cannot get another program run as the first one's owner. Exec loads
+into an address space of its own through a `TLoadTarget` (the space and
+its module list), which becomes the process's only at the switch.
+Address spaces are reference counted: the process's slot changes only
+with `PublishAddressSpace`, under a lock readers of other processes take
+too (`ReadPublishedSpaceUsage` for ps and the out-of-memory scores,
+`ReferencePublishedSpace` for `CallGetProcessResources`), and the last
+reference destroys the space. The auxiliary vector carries the
+credentials the program runs with and `AT_SECURE` (set when the real and
+effective user or group differ), so mlibc's dynamic linker ignores
+`LD_PRELOAD` and `LD_LIBRARY_PATH` in a set-user-ID program.
+
+Fork obeys `RestrictProcessCreation` and the user's process limit like
+any start, copies handles even above a limit lowered since, and gives
+the child's thread the forking thread's stack (with its overflow
+handling), thread data and, in the kernel's thread block, its own id; a
+child that cannot start gives its memory and handles back at once. A
+thread's handle is reserved before the thread starts, so a full table
+refuses the thread rather than leave one running nobody can wait for.
+Thread handles never travel through a channel. kill applies stop
+signals per process by each one's dispositions, `kill(-1, ...)` reaches
+every process the caller may control (never "group 1"), and the lowest
+Int64 is no target. Exec keeps pending signals. A section is charged
+to its creator's commit limit and counted in its footprint for as long
+as it exists. A mapped file is joined under its volume's lock, which a
+change of the file holds from its first hook to the end of the write,
+so a private user never joins in between; a stale mapped file never
+reads its file again.
+
+`loadertest` (two coretest lines) runs the crafted files of
+`/usr/lib/loadertest`, written at build time by
+`scripts/make-crafted-elves.py`: programs with a segment in kernel
+space or wrapping, a relocation into kernel memory, TLS outside the
+module, a relocation table of part records; libraries with relocations
+into kernel memory, outside the module and into a gap of the module
+where the test mapped `/bin/su` (shared and private: the mapped page and
+the file must be unchanged), a copy relocation from kernel memory, an
+unterminated string table, an initializer array in kernel memory; and a
+relocation into a read-only page two processes share, which each must
+see with its own value. Good files of the same make show the rest is
+well formed. It also checks a forked child's thread id and stack
+overflow, a thread refused for lack of a handle, a thread handle not
+sent, a section over the commit limit, and a private mapping of a file
+rewritten meanwhile. Run as a user (`--unprivileged`) it races spawn
+against a link swapped between a set-user-ID copy of `true` and itself,
+and checks a lowered limit stays lowered. ctest's `security` group does
+the same for the C library: fork and `mprotect`, exec through a swapped
+link to the set-user-ID helper `/usr/bin/ctest-suid`, `AT_SECURE` with
+`LD_PRELOAD`, `kill(-1, SIGSTOP)`, a handled group `SIGTSTP`, pending
+signals across exec, fork's restriction and process limit, and process
+details read while another process execs in a loop.
+
 #### Process limits
 
 Every process has a region limit and a handle limit (by default 65536
 regions and 16384 handles, at most 1048576 and 65536), inherited by the
 processes it starts. `CallSetProcessLimit(Limit, Value)` (131) changes
 the caller's (`ProcessLimitRegions`, `ProcessLimitHandles`; lowering is
-always allowed, raising above the default is root's). Two more settings
+always allowed, raising is root's alone: a limit a user's process lowered
+stays a ceiling for it and what it starts, as a hard limit does). Two more settings
 go through it, inherited the same way: `ProcessLimitProcesses` (4), the
 most processes the caller's real user may run at once when this process
 starts one (default 4096, at most 65536; root's are not counted; one too
