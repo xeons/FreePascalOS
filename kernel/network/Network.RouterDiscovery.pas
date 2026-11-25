@@ -306,7 +306,7 @@ begin
   if (Flags and PrefixFlagOnLink) <> 0 then
   begin
     if ValidLifetime = 0 then
-      Result := RemoveIpv6Route(Prefix, PrefixLength, UnspecifiedIpv6Address, NetworkInterface) = ErrorNone
+      Result := RemoveAutomaticIpv6Route(Prefix, PrefixLength, UnspecifiedIpv6Address, NetworkInterface) = ErrorNone
     else
     begin
       Result := not Ipv6RouteExists(Prefix, PrefixLength, UnspecifiedIpv6Address, NetworkInterface);
@@ -366,11 +366,8 @@ var
 begin
   WasDefault := Ipv6RouteExists(UnspecifiedIpv6Address, 0, Router, NetworkInterface);
   if LifetimeSeconds = 0 then
-  begin
-    if WasDefault then
-      RemoveIpv6Route(UnspecifiedIpv6Address, 0, Router, NetworkInterface);
-    Exit(WasDefault);
-  end;
+    { Only a route the router made goes with it. }
+    Exit(RemoveAutomaticIpv6Route(UnspecifiedIpv6Address, 0, Router, NetworkInterface) = ErrorNone);
   AddIpv6Route(UnspecifiedIpv6Address, 0, Router, NetworkInterface, RouteFlagAutomatic, NetworkInterface^.Index,
     Now + QWord(LifetimeSeconds) * NanosecondsPerSecond);
   Result := not WasDefault;

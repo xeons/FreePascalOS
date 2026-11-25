@@ -1531,11 +1531,14 @@ $(WEB_RENDER): userland/bin/webrender.pas $(wildcard userland/webrender/*.pas) $
 webrender: $(WEB_RENDER)
 
 # The IPv6 stack's pure parts on the host: SHA-256, RFC 7217 identifiers,
-# RFC 6724 address selection, the destination cache, fragments.
+# RFC 6724 address selection, the destination cache, fragments; martian
+# addresses on crafted headers and reassembly's overlap checks.
 IPV6_TEST := build/tools/Ipv6Test
 IPV6_TEST_SOURCES := tools/Ipv6Test/Ipv6Test.pas tools/CryptoTest/TestChecks.pas shared/AddressSelection.pas \
 	kernel/network/Network.Sha256.pas kernel/network/Network.InterfaceIdentifiers.pas \
-	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas
+	kernel/network/Network.DestinationTable.pas kernel/network/Network.FragmentBuilder.pas \
+	kernel/network/Network.InputFilter.pas kernel/network/Network.ReassemblyBlocks.pas \
+	kernel/network/Network.Ipv6Headers.pas
 
 $(IPV6_TEST): $(IPV6_TEST_SOURCES)
 	@mkdir -p build/tools/ipv6-test-units
