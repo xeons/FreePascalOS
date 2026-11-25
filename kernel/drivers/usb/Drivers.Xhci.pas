@@ -1867,11 +1867,15 @@ end;
 function StartController(Controller: PXhciController): Integer;
 const
   CapabilityAddresses64 = 1;
+  { No xHCI data structure (ring, context, scratchpad) may cross a 64
+    KiB line (xHCI 1.2, table 6-1). }
+  StructureBoundary = 64 * 1024;
 var
   Parameters: LongWord;
   PortNumber: LongWord;
 begin
   Result := 0;
+  LimitDmaBoundary(Controller^.Dma, StructureBoundary);
   Controller^.Operational := Controller^.Capabilities + Controller^.Capabilities[CapabilityLengthRegister];
   Controller^.Runtime := Controller^.Capabilities +
     (Read32(Controller^.Capabilities, RuntimeOffsetRegister) and not LongWord($1F));

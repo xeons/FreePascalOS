@@ -22,11 +22,22 @@
   The page frame database is an array with one small record per physical
   page, indexed by page frame number (physical address div PageSize). It
   records what each page is used for, and free pages are chained through
-  it into a single free list, so allocating and freeing a page are both
-  constant time operations.
+  it into a single free list (linked both ways, so any free page can be
+  taken off it), so allocating and freeing a page are both constant time
+  operations.
 
-  The database itself is placed in the first usable memory region large
-  enough to hold it, and is reached through the physical memory window.
+  Contiguous runs. Next to the free list, a bitmap with a bit per page
+  frame (Memory.FrameRuns) says which frames are free, so a run of
+  physically contiguous pages - with an alignment, a boundary it must
+  not cross and an address range, as devices need for DMA buffers
+  (Io.Dma) - is found by scanning the bitmap a word at a time, and its
+  frames are taken off the free list one by one in constant time
+  (AllocatePhysicalRun, FreePhysicalRun). Single pages below an address
+  (32-bit devices) come from the bitmap too.
+
+  The database and the bitmap are placed together in the first usable
+  memory region large enough to hold them, and are reached through the
+  physical memory window.
 
   A page can be shared, mapped in several address spaces at once (the
   pages of program and library images, Processes.ImageSections). Every
@@ -122,10 +133,41 @@ function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUs
 { PageCount zeroed pages one after the other in physical memory, the last
   ending at or below Limit, for devices that need one buffer bigger than
   a page. Returns the first page's address, or zero if there is no such
-  run. Slow (it searches the database and the free list): for drivers
-  starting up. Each page is freed on its own with FreePhysicalPage. }
+  run. Each page is freed on its own with FreePhysicalPage (or all of
+  them with FreePhysicalRun). }
 function AllocateZeroedContiguousPhysicalPages(PageCount: QWord; Limit: TPhysicalAddress;
   Usage: TPageUsage): TPhysicalAddress;
+
+type
+  { What a contiguous run must be like (AllocatePhysicalRun). }
+  TPhysicalRunConstraints = record
+    PageCount: QWord;
+    { The first page's address is a multiple of this (a power of two;
+      0 or anything below a page: page aligned). }
+    AlignmentBytes: QWord;
+    { The run does not cross a multiple of this (a power of two; 0:
+      no boundary). }
+    BoundaryBytes: QWord;
+    { The run lies in [LowestAddress, Limit]: its first byte at or above
+      LowestAddress, its last at or below Limit. }
+    LowestAddress: TPhysicalAddress;
+    Limit: TPhysicalAddress;
+  end;
+
+{ Constraints for PageCount pages anywhere, page aligned. }
+procedure SetPhysicalRunConstraints(out Constraints: TPhysicalRunConstraints; PageCount: QWord);
+{ A run of physically contiguous pages as Constraints describe, the
+  lowest there is, filled with zeros if Zeroed; its first page's
+  address, or zero if there is none (after letting the freed pages the
+  heap checks hold back go). Each page has one holder, as from
+  AllocatePhysicalPage. }
+function AllocatePhysicalRun(constref Constraints: TPhysicalRunConstraints; Usage: TPageUsage;
+  Zeroed: Boolean): TPhysicalAddress;
+{ Frees PageCount pages from First (a run, or any pages one after the
+  other), each as FreePhysicalPage does. }
+procedure FreePhysicalRun(First: TPhysicalAddress; PageCount: QWord);
+{ The longest run of free pages there is now. }
+function LongestFreePhysicalRun: QWord;
 
 { Gives the page back, or drops one reference if it is shared. }
 procedure FreePhysicalPage(PhysicalAddress: TPhysicalAddress);
@@ -176,10 +218,12 @@ uses
   Kernel.Panic,
   Memory.HeapChecks,
   Memory.PageQuarantine,
+  Memory.FrameRuns,
   Debug.Output;
 
 const
-  NoNextFrame = High(QWord);
+  { The free list's links are 32-bit frame numbers (16 TiB of RAM). }
+  NoNextFrame = QWord(High(LongWord));
 
   { Memory below 1 MiB is never handed out. It is where firmware tables
     live on PCs and where secondary processors start executing. }
@@ -188,7 +232,9 @@ const
 
 type
   TPageFrame = record
-    NextFreeFrame: QWord;
+    { The free list's neighbours (NoNextFrame at its ends). }
+    NextFreeFrame: LongWord;
+    PreviousFreeFrame: LongWord;
     Usage: TPageUsage;
     { Holders besides the first. }
     ExtraReferences: LongWord;
@@ -197,6 +243,8 @@ type
 
 var
   FrameDatabase: PPageFrame;
+  { Which frames are on the free list (see the unit comment). }
+  FreeFrames: TFrameBitmap;
   FrameCount: QWord;
   FreeListHead: QWord;
   FreePageCount: QWord;
@@ -329,9 +377,33 @@ end;
 procedure PushFreeFrame(Frame: QWord);
 begin
   FrameDatabase[Frame].Usage := PageUsageFree;
-  FrameDatabase[Frame].NextFreeFrame := FreeListHead;
+  FrameDatabase[Frame].NextFreeFrame := LongWord(FreeListHead);
+  FrameDatabase[Frame].PreviousFreeFrame := LongWord(NoNextFrame);
+  if FreeListHead <> NoNextFrame then
+    FrameDatabase[FreeListHead].PreviousFreeFrame := LongWord(Frame);
   FreeListHead := Frame;
+  MarkFrameFree(FreeFrames, Frame);
   Inc(FreePageCount);
+end;
+
+{ Takes a free frame off the free list (database lock held). }
+procedure UnlinkFreeFrame(Frame: QWord);
+var
+  Next: QWord;
+  Previous: QWord;
+begin
+  Next := FrameDatabase[Frame].NextFreeFrame;
+  Previous := FrameDatabase[Frame].PreviousFreeFrame;
+  if Previous = NoNextFrame then
+    FreeListHead := Next
+  else
+    FrameDatabase[Previous].NextFreeFrame := LongWord(Next);
+  if Next <> NoNextFrame then
+    FrameDatabase[Next].PreviousFreeFrame := LongWord(Previous);
+  FrameDatabase[Frame].NextFreeFrame := LongWord(NoNextFrame);
+  FrameDatabase[Frame].PreviousFreeFrame := LongWord(NoNextFrame);
+  MarkFrameUsed(FreeFrames, Frame);
+  Dec(FreePageCount);
 end;
 
 var
@@ -390,6 +462,7 @@ end;
 procedure InitializePhysicalMemory(const BootInformation: TBootInformation);
 var
   DatabaseBytes: QWord;
+  BitmapBytes: QWord;
   DatabaseAddress: TPhysicalAddress;
   RegionIndex: QWord;
   Region: PMemoryRegion;
@@ -399,14 +472,19 @@ begin
   FrameCount := FindHighestRamAddress(BootInformation) shr PageShift;
   if FrameCount = 0 then
     KernelPanicWithCode(PanicInvalidBootInformation, 'memory map contains no RAM', 0, 0, 0, 0);
+  { The free list links frames by 32-bit numbers. }
+  if FrameCount >= NoNextFrame then
+    FrameCount := NoNextFrame - 1;
 
   DatabaseBytes := RoundUpToPage(FrameCount * SizeOf(TPageFrame));
-  DatabaseAddress := FindPlaceForDatabase(BootInformation, DatabaseBytes);
+  BitmapBytes := RoundUpToPage(FrameBitmapWords(FrameCount) * SizeOf(QWord));
+  DatabaseAddress := FindPlaceForDatabase(BootInformation, DatabaseBytes + BitmapBytes);
   if DatabaseAddress = 0 then
     KernelPanicWithCode(PanicOutOfPhysicalMemory,
-      'no room for the page frame database', DatabaseBytes, 0, 0, 0);
+      'no room for the page frame database', DatabaseBytes + BitmapBytes, 0, 0, 0);
 
   FrameDatabase := PPageFrame(PhysicalToVirtual(DatabaseAddress));
+  InitializeFrameBitmap(FreeFrames, PQWord(PhysicalToVirtual(DatabaseAddress + DatabaseBytes)), FrameCount);
 
   { Everything starts out reserved; only RAM regions are then described. }
   SetFrameUsage(0, FrameCount, PageUsageReserved);
@@ -425,7 +503,7 @@ begin
     Inc(RegionIndex);
   end;
 
-  SetFrameUsage(DatabaseAddress shr PageShift, DatabaseBytes shr PageShift,
+  SetFrameUsage(DatabaseAddress shr PageShift, (DatabaseBytes + BitmapBytes) shr PageShift,
     PageUsageFrameDatabase);
 
   BuildFreeList;
@@ -496,11 +574,9 @@ begin
     Exit(0);
   end;
 
-  FreeListHead := FrameDatabase[Frame].NextFreeFrame;
-  FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
+  UnlinkFreeFrame(Frame);
   ChangeFrameUsage(Frame, Usage);
   FrameDatabase[Frame].ExtraReferences := 0;
-  Dec(FreePageCount);
   MustSignal := ShouldSignalPressureLocked(False);
 
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
@@ -516,128 +592,154 @@ begin
     ZeroMemory(PhysicalToVirtual(Result), PageSize);
 end;
 
-function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUsage): TPhysicalAddress;
+{ The first frame past the frames whose page ends at or below Limit. }
+function EndFrameBelow(Limit: TPhysicalAddress): QWord;
+begin
+  if Limit >= FrameCount * PageSize then
+    Exit(FrameCount);
+  Result := (Limit + 1) shr PageShift;
+end;
+
+procedure SetPhysicalRunConstraints(out Constraints: TPhysicalRunConstraints; PageCount: QWord);
+begin
+  Constraints.PageCount := PageCount;
+  Constraints.AlignmentBytes := PageSize;
+  Constraints.BoundaryBytes := 0;
+  Constraints.LowestAddress := 0;
+  Constraints.Limit := High(QWord);
+end;
+
+{ The frame request for Constraints; False if they cannot be met by any
+  run (alignment or boundary not a power of two, a boundary below a
+  page or smaller than the run). }
+function FrameRequestFor(constref Constraints: TPhysicalRunConstraints; out Request: TFrameRunRequest): Boolean;
+var
+  Alignment: QWord;
+begin
+  Result := False;
+  Alignment := Constraints.AlignmentBytes;
+  if Alignment < PageSize then
+    Alignment := PageSize;
+  if (Alignment and (Alignment - 1)) <> 0 then
+    Exit;
+  if (Constraints.BoundaryBytes <> 0) and
+     (((Constraints.BoundaryBytes and (Constraints.BoundaryBytes - 1)) <> 0) or
+      (Constraints.BoundaryBytes < PageSize)) then
+    Exit;
+  Request.PageCount := Constraints.PageCount;
+  Request.AlignmentPages := Alignment shr PageShift;
+  Request.BoundaryPages := Constraints.BoundaryBytes shr PageShift;
+  Request.LowestFrame := (Constraints.LowestAddress + PageSize - 1) shr PageShift;
+  if Constraints.LowestAddress > High(QWord) - PageSize then
+    Request.LowestFrame := FrameCount;
+  { Memory below 1 MiB is never handed out. }
+  if Request.LowestFrame < LowFrameCount then
+    Request.LowestFrame := LowFrameCount;
+  Request.EndFrame := EndFrameBelow(Constraints.Limit);
+  Result := FrameRunRequestIsValid(Request);
+end;
+
+{ Lets every page the heap checks hold back go to the free list (database
+  lock held), so a run search sees all free memory. True if there were
+  any. }
+function DrainQuarantineLocked: Boolean;
+var
+  Released: QWord;
+begin
+  Result := False;
+  while ReleaseOldestFrame(FreedPageQuarantine, Released) do
+  begin
+    ReleaseQuarantinedFrameLocked(Released);
+    Result := True;
+  end;
+end;
+
+{ Finds and takes the run (database lock held); NoNextFrame if none. }
+function TakeFrameRunLocked(constref Request: TFrameRunRequest; Usage: TPageUsage): QWord;
+var
+  First: QWord;
+  Frame: QWord;
+begin
+  if not FindFreeFrameRun(FreeFrames, Request, First) then
+  begin
+    if not DrainQuarantineLocked or not FindFreeFrameRun(FreeFrames, Request, First) then
+      Exit(NoNextFrame);
+  end;
+  Frame := First;
+  while Frame < First + Request.PageCount do
+  begin
+    UnlinkFreeFrame(Frame);
+    ChangeFrameUsage(Frame, Usage);
+    FrameDatabase[Frame].ExtraReferences := 0;
+    Inc(Frame);
+  end;
+  Result := First;
+end;
+
+function AllocatePhysicalRun(constref Constraints: TPhysicalRunConstraints; Usage: TPageUsage;
+  Zeroed: Boolean): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
-  Frame: QWord;
-  Previous: QWord;
+  Request: TFrameRunRequest;
+  First: QWord;
   MustSignal: Boolean;
 begin
   Result := 0;
+  if not FrameRequestFor(Constraints, Request) then
+    Exit;
   PreviousLevel := AcquireSpinLock(DatabaseLock);
-  Previous := NoNextFrame;
-  Frame := FreeListHead;
-  { Compared by the page's last byte, so Limit can be the top of memory. }
-  while (Frame <> NoNextFrame) and ((Frame shl PageShift) + (PageSize - 1) > Limit) do
-  begin
-    Previous := Frame;
-    Frame := FrameDatabase[Frame].NextFreeFrame;
-  end;
-  if Frame <> NoNextFrame then
-  begin
-    if Previous = NoNextFrame then
-      FreeListHead := FrameDatabase[Frame].NextFreeFrame
-    else
-      FrameDatabase[Previous].NextFreeFrame := FrameDatabase[Frame].NextFreeFrame;
-    FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
-    ChangeFrameUsage(Frame, Usage);
-    FrameDatabase[Frame].ExtraReferences := 0;
-    Dec(FreePageCount);
-    Result := Frame shl PageShift;
-  end;
+  First := TakeFrameRunLocked(Request, Usage);
+  if First <> NoNextFrame then
+    Result := First shl PageShift;
   MustSignal := ShouldSignalPressureLocked(Result = 0);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
   if MustSignal then
     SignalPressure;
-  if Result <> 0 then
-    ZeroMemory(PhysicalToVirtual(Result), PageSize);
+  if (Result <> 0) and Zeroed then
+    ZeroMemory(PhysicalToVirtual(Result), Constraints.PageCount * PageSize);
 end;
 
-{ The first frame of PageCount free frames in a row, the last ending at or
-  below Limit, or NoNextFrame (database lock held). }
-function FindFreeFrameRun(PageCount: QWord; Limit: TPhysicalAddress): QWord;
+procedure FreePhysicalRun(First: TPhysicalAddress; PageCount: QWord);
 var
-  Frame: QWord;
-  RunStart: QWord;
-  RunLength: QWord;
+  Index: QWord;
 begin
-  Result := NoNextFrame;
-  RunStart := LowFrameCount;
-  RunLength := 0;
-  Frame := LowFrameCount;
-  while (Frame < FrameCount) and ((Frame shl PageShift) + (PageSize - 1) <= Limit) do
+  Index := 0;
+  while Index < PageCount do
   begin
-    if FrameDatabase[Frame].Usage = PageUsageFree then
-    begin
-      if RunLength = 0 then
-        RunStart := Frame;
-      Inc(RunLength);
-      if RunLength = PageCount then
-        Exit(RunStart);
-    end
-    else
-      RunLength := 0;
-    Inc(Frame);
+    FreePhysicalPage(First + Index * PageSize);
+    Inc(Index);
   end;
 end;
 
-{ Takes every frame from First to Last off the free list, in one walk
-  (database lock held; they are all free). }
-procedure UnlinkFreeFrames(First, Last: QWord);
+function LongestFreePhysicalRun: QWord;
 var
-  Frame: QWord;
-  Previous: QWord;
-  Next: QWord;
+  PreviousLevel: TPriorityLevel;
 begin
-  Previous := NoNextFrame;
-  Frame := FreeListHead;
-  while Frame <> NoNextFrame do
-  begin
-    Next := FrameDatabase[Frame].NextFreeFrame;
-    if (Frame >= First) and (Frame <= Last) then
-    begin
-      if Previous = NoNextFrame then
-        FreeListHead := Next
-      else
-        FrameDatabase[Previous].NextFreeFrame := Next;
-      FrameDatabase[Frame].NextFreeFrame := NoNextFrame;
-      Dec(FreePageCount);
-    end
-    else
-      Previous := Frame;
-    Frame := Next;
-  end;
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  Result := LongestFreeFrameRun(FreeFrames);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function AllocateZeroedPhysicalPageBelow(Limit: TPhysicalAddress; Usage: TPageUsage): TPhysicalAddress;
+var
+  Constraints: TPhysicalRunConstraints;
+begin
+  SetPhysicalRunConstraints(Constraints, 1);
+  Constraints.Limit := Limit;
+  Result := AllocatePhysicalRun(Constraints, Usage, True);
 end;
 
 function AllocateZeroedContiguousPhysicalPages(PageCount: QWord; Limit: TPhysicalAddress;
   Usage: TPageUsage): TPhysicalAddress;
 var
-  PreviousLevel: TPriorityLevel;
-  First: QWord;
-  Frame: QWord;
-  MustSignal: Boolean;
+  Constraints: TPhysicalRunConstraints;
 begin
   Result := 0;
   if PageCount = 0 then
     Exit;
-  PreviousLevel := AcquireSpinLock(DatabaseLock);
-  First := FindFreeFrameRun(PageCount, Limit);
-  if First <> NoNextFrame then
-  begin
-    UnlinkFreeFrames(First, First + PageCount - 1);
-    for Frame := First to First + PageCount - 1 do
-    begin
-      ChangeFrameUsage(Frame, Usage);
-      FrameDatabase[Frame].ExtraReferences := 0;
-    end;
-    Result := First shl PageShift;
-  end;
-  MustSignal := ShouldSignalPressureLocked(Result = 0);
-  ReleaseSpinLock(DatabaseLock, PreviousLevel);
-  if MustSignal then
-    SignalPressure;
-  if Result <> 0 then
-    ZeroMemory(PhysicalToVirtual(Result), PageCount * PageSize);
+  SetPhysicalRunConstraints(Constraints, PageCount);
+  Constraints.Limit := Limit;
+  Result := AllocatePhysicalRun(Constraints, Usage, True);
 end;
 
 { The last holder freed Frame (now PageUsageQuarantined, database lock
