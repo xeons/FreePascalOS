@@ -18,7 +18,11 @@
 
 {
   The fixed-width SIMD operations (spec 2.0, the 0xFD instructions) on
-  v128 values, lane by lane in portable Pascal.
+  v128 values, lane by lane in portable Pascal, and relaxed SIMD (3.0)
+  as the deterministic profile defines it: every relaxed instruction
+  behaves as its plain counterpart (swizzle, trunc_sat, bitselect, min,
+  max, q15mulr_sat_s), multiply-add rounds the product and then the
+  sum (not fused), and the dot products treat both operands as signed.
 
   A v128 lives in two slots, lane 0 in the lowest bytes (little endian
   on both of our architectures). Operands are read into locals before
@@ -410,6 +414,69 @@ begin
   end;
 end;
 
+{ The relaxed SIMD instructions that are not a plain SIMD instruction
+  in the deterministic profile: multiply-add (not fused: the product is
+  rounded, then the sum) and the i8 dot products (signed times signed,
+  pairs added with saturation). Three operands are at home from A. }
+procedure ExecuteRelaxed(const Instruction: TCodeInstruction; Slots: PQWord);
+var
+  X, Y, Z, R, Product: TWasmV128;
+  Index: Integer;
+  Sum: Int32;
+begin
+  if Instruction.Operation = OpI16x8RelaxedDotI8x16I7x16S then
+  begin
+    { Two operands: in B and C like any binary SIMD instruction. }
+    X := PWasmV128(@Slots[Instruction.B])^;
+    Y := PWasmV128(@Slots[Instruction.C])^;
+  end
+  else
+  begin
+    X := PWasmV128(@Slots[Instruction.A])^;
+    Y := PWasmV128(@Slots[Instruction.A + 2])^;
+    Z := PWasmV128(@Slots[Instruction.A + 4])^;
+  end;
+  case Instruction.Operation of
+    OpF32x4RelaxedMadd, OpF32x4RelaxedNmadd:
+      begin
+        if Instruction.Operation = OpF32x4RelaxedNmadd then
+          for Index := 0 to 3 do
+            X.DWords[Index] := X.DWords[Index] xor $80000000;
+        Product := F32Binary(X, Y, fbMul);
+        R := F32Binary(Product, Z, fbAdd);
+      end;
+    OpF64x2RelaxedMadd, OpF64x2RelaxedNmadd:
+      begin
+        if Instruction.Operation = OpF64x2RelaxedNmadd then
+          for Index := 0 to 1 do
+            X.QWords[Index] := X.QWords[Index] xor QWord($8000000000000000);
+        Product := F64Binary(X, Y, fbMul);
+        R := F64Binary(Product, Z, fbAdd);
+      end;
+  else
+    begin
+      for Index := 0 to 7 do
+      begin
+        Sum := Int32(ShortInt(X.Bytes[2 * Index])) * Int32(ShortInt(Y.Bytes[2 * Index])) +
+          Int32(ShortInt(X.Bytes[2 * Index + 1])) * Int32(ShortInt(Y.Bytes[2 * Index + 1]));
+        if Sum > 32767 then
+          Sum := 32767
+        else if Sum < -32768 then
+          Sum := -32768;
+        R.Words[Index] := Word(Sum);
+      end;
+      if Instruction.Operation = OpI32x4RelaxedDotI8x16I7x16AddS then
+      begin
+        Product := R;
+        for Index := 0 to 3 do
+          R.DWords[Index] := DWord(Int32(SmallInt(Product.Words[2 * Index])) +
+            Int32(SmallInt(Product.Words[2 * Index + 1])) + Int32(Z.DWords[Index]));
+      end;
+    end;
+  end;
+  PWasmV128(@Slots[Instruction.A])^ := R;
+end;
+
 procedure ExecuteSimd(const Instruction: TCodeInstruction; Slots: PQWord; Constants: PQWord);
 var
   X, Y, Z, R: TWasmV128;
@@ -434,7 +501,7 @@ begin
           else
             R.Bytes[Index] := Y.Bytes[Z.Bytes[Index] - 16];
       end;
-    OpI8x16Swizzle:
+    OpI8x16Swizzle, OpI8x16RelaxedSwizzle:
       for Index := 0 to 15 do
         if Y.Bytes[Index] < 16 then
           R.Bytes[Index] := X.Bytes[Y.Bytes[Index]]
@@ -508,7 +575,7 @@ begin
         R.QWords[0] := X.QWords[0] xor Y.QWords[0];
         R.QWords[1] := X.QWords[1] xor Y.QWords[1];
       end;
-    OpV128Bitselect:
+    OpV128Bitselect, OpI8x16RelaxedLaneselect..OpI64x2RelaxedLaneselect:
       begin
         X := PWasmV128(@Slots[Instruction.A])^;
         Y := PWasmV128(@Slots[Instruction.A + 2])^;
@@ -609,7 +676,7 @@ begin
     OpI16x8ExtaddPairwiseI8x16U: R := ExtendAddPairwise(X, lw16, False);
     OpI32x4ExtaddPairwiseI16x8S: R := ExtendAddPairwise(X, lw32, True);
     OpI32x4ExtaddPairwiseI16x8U: R := ExtendAddPairwise(X, lw32, False);
-    OpI16x8Q15mulrSatS: R := IntegerBinary(X, Y, lw16, ibQ15MulRSatS);
+    OpI16x8Q15mulrSatS, OpI16x8RelaxedQ15mulrS: R := IntegerBinary(X, Y, lw16, ibQ15MulRSatS);
     OpI16x8ExtendLowI8x16S: R := Extend(X, lw16, False, True);
     OpI16x8ExtendHighI8x16S: R := Extend(X, lw16, True, True);
     OpI16x8ExtendLowI8x16U: R := Extend(X, lw16, False, False);
@@ -668,17 +735,26 @@ begin
     OpF64x2Neg: for Index := 0 to 1 do R.QWords[Index] := X.QWords[Index] xor QWord($8000000000000000);
     OpF64x2Sqrt: for Index := 0 to 1 do SetF64Lane(R, Index, Sqrt(F64Lane(X, Index)));
     OpF64x2Add..OpF64x2Pmax: R := F64Binary(X, Y, TFloatBinary(Instruction.Operation - OpF64x2Add));
-    OpI32x4TruncSatF32x4S: for Index := 0 to 3 do R.DWords[Index] := DWord(SaturateToI32(F32Lane(X, Index)));
-    OpI32x4TruncSatF32x4U: for Index := 0 to 3 do R.DWords[Index] := SaturateToU32(F32Lane(X, Index));
+    OpF32x4RelaxedMin: R := F32Binary(X, Y, TFloatBinary(OpF32x4Min - OpF32x4Add));
+    OpF32x4RelaxedMax: R := F32Binary(X, Y, TFloatBinary(OpF32x4Max - OpF32x4Add));
+    OpF64x2RelaxedMin: R := F64Binary(X, Y, TFloatBinary(OpF64x2Min - OpF64x2Add));
+    OpF64x2RelaxedMax: R := F64Binary(X, Y, TFloatBinary(OpF64x2Max - OpF64x2Add));
+    OpF32x4RelaxedMadd..OpF64x2RelaxedNmadd, OpI16x8RelaxedDotI8x16I7x16S, OpI32x4RelaxedDotI8x16I7x16AddS:
+      begin
+        ExecuteRelaxed(Instruction, Slots);
+        Exit;
+      end;
+    OpI32x4TruncSatF32x4S, OpI32x4RelaxedTruncF32x4S: for Index := 0 to 3 do R.DWords[Index] := DWord(SaturateToI32(F32Lane(X, Index)));
+    OpI32x4TruncSatF32x4U, OpI32x4RelaxedTruncF32x4U: for Index := 0 to 3 do R.DWords[Index] := SaturateToU32(F32Lane(X, Index));
     OpF32x4ConvertI32x4S: for Index := 0 to 3 do SetF32Lane(R, Index, Int32(X.DWords[Index]));
     OpF32x4ConvertI32x4U: for Index := 0 to 3 do SetF32Lane(R, Index, U32ToF32(X.DWords[Index]));
-    OpI32x4TruncSatF64x2SZero:
+    OpI32x4TruncSatF64x2SZero, OpI32x4RelaxedTruncF64x2SZero:
       begin
         R.DWords[0] := DWord(SaturateToI32(F64Lane(X, 0)));
         R.DWords[1] := DWord(SaturateToI32(F64Lane(X, 1)));
         R.QWords[1] := 0;
       end;
-    OpI32x4TruncSatF64x2UZero:
+    OpI32x4TruncSatF64x2UZero, OpI32x4RelaxedTruncF64x2UZero:
       begin
         R.DWords[0] := SaturateToU32(F64Lane(X, 0));
         R.DWords[1] := SaturateToU32(F64Lane(X, 1));

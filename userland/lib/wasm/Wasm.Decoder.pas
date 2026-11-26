@@ -164,8 +164,13 @@ begin
     FReader.FailAt(FReader.Position - 1, 'integer too large');
   Limits.HasMaximum := Flags and 1 <> 0;
   if Flags and 4 <> 0 then
+    AddressType := vkI64
+  else
+    AddressType := vkI32;
+  { 3.0 reads limits as 64-bit numbers; i32 limits past 2^32 are then
+    invalid rather than malformed. }
+  if (Flags and 4 <> 0) or (wfMemory64 in FModule.Features) then
   begin
-    AddressType := vkI64;
     Limits.Minimum := FReader.ReadU64;
     if Limits.HasMaximum then
       Limits.Maximum := FReader.ReadU64
@@ -174,7 +179,6 @@ begin
   end
   else
   begin
-    AddressType := vkI32;
     Limits.Minimum := FReader.ReadU32;
     if Limits.HasMaximum then
       Limits.Maximum := FReader.ReadU32
@@ -568,6 +572,9 @@ begin
         ReadConstantExpression(Offset);
       end;
       UsesExpressions := Flags and 4 <> 0;
+      { Function indices are references that cannot be null. }
+      if not UsesExpressions and (wfFunctionReferences in FModule.Features) then
+        ElementType := MakeReferenceType(HeapTypeFunc, False);
       { The encodings 1, 2, 3 (and 5, 6, 7) name the element kind or type. }
       if Flags and 3 <> 0 then
       begin

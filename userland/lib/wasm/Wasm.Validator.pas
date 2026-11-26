@@ -118,6 +118,9 @@ end;
 procedure TModuleValidator.CheckTableType(const TableType: TWasmTableType);
 begin
   CheckValueType(TableType.ElementType);
+  if (TableType.AddressType = vkI32) and ((TableType.Limits.Minimum > $FFFFFFFF) or
+    (TableType.Limits.HasMaximum and (TableType.Limits.Maximum > $FFFFFFFF))) then
+    Fail('table size must be at most 2^32-1');
   if TableType.Limits.HasMaximum and (TableType.Limits.Minimum > TableType.Limits.Maximum) then
     Fail('size minimum must not be greater than maximum');
 end;
@@ -221,7 +224,7 @@ begin
     CheckTableType(FModule.Tables[TableIndex]);
     if FModule.TableDefinitions[Index].HasInitializer then
       FConstants.Check(FModule.TableDefinitions[Index].Initializer, FModule.Tables[TableIndex].ElementType,
-        Length(FModule.Globals))
+        FModule.ImportedGlobalCount)
     else if not FModule.Tables[TableIndex].ElementType.Nullable then
       Fail('type mismatch: a table of non-nullable references needs an initializer');
   end;
