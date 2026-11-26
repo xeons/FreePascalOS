@@ -118,6 +118,19 @@ type
     procedure Finished(Success: Boolean; const ErrorText: string); virtual; abstract;
   end;
 
+  { A WebSocket's events, on the page thread and never from inside
+    OpenWebSocket: Opened (or nothing when it fails), each message,
+    bytes that went out (bufferedAmount), the server's close frame, and
+    Closed once at the end (Failed: an error event goes first). }
+  TScriptWebSocketSink = class
+  public
+    procedure Opened(const Protocol, Extensions: string); virtual; abstract;
+    procedure MessageArrived(IsText: Boolean; const Data: TBytes); virtual; abstract;
+    procedure BytesSent(Count: QWord); virtual; abstract;
+    procedure CloseReceived; virtual; abstract;
+    procedure Closed(WasClean: Boolean; Code: Word; const Reason: string; Failed: Boolean); virtual; abstract;
+  end;
+
   { What script asks of the layout (CSSOM View, getComputedStyle), in
     CSS pixels; whoever lays the document out answers (the web view),
     bringing its layout up to date first. Positions are in the
@@ -233,6 +246,17 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject; virtual;
     { No more calls to the sink of Handle. }
     procedure CancelFetch(Context: TObject; Handle: TObject); virtual;
+    { WebSockets: whether the environment has them (the WebSocket
+      interface exists only then); Url is ws: or wss: (absolute, no
+      fragment), the protocols checked. The handle (nil: the
+      environment cannot open one now, the socket fails) is for Send,
+      Close and Forget; Forget stops every call to the sink. }
+    function SupportsWebSockets: Boolean; virtual;
+    function OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+      Sink: TScriptWebSocketSink): TObject; virtual;
+    procedure SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes); virtual;
+    procedure CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string); virtual;
+    procedure ForgetWebSocket(Context: TObject; Handle: TObject); virtual;
   end;
 
 procedure RaiseUnsupported(const What: string);
@@ -424,6 +448,29 @@ begin
 end;
 
 procedure TScriptEnvironment.CancelFetch(Context: TObject; Handle: TObject);
+begin
+end;
+
+function TScriptEnvironment.SupportsWebSockets: Boolean;
+begin
+  Result := False;
+end;
+
+function TScriptEnvironment.OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+  Sink: TScriptWebSocketSink): TObject;
+begin
+  Result := nil;
+end;
+
+procedure TScriptEnvironment.SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes);
+begin
+end;
+
+procedure TScriptEnvironment.CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string);
+begin
+end;
+
+procedure TScriptEnvironment.ForgetWebSocket(Context: TObject; Handle: TObject);
 begin
 end;
 

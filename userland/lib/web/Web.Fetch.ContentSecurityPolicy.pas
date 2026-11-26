@@ -25,9 +25,10 @@
   split at ASCII whitespace, a repeated name ignored. A meta policy drops
   report-uri, frame-ancestors and sandbox.
 
-  Enforcement comes with scripts; what is used now is
-  upgrade-insecure-requests (mixed content upgrades every http request
-  of the document).
+  The checks are Web.Fetch.CspChecks (source lists in
+  Web.Fetch.CspSources); a violation is described by a TCspViolation and
+  handed to the client's TCspViolationReporter (the document's: the
+  securitypolicyviolation event and the reports, Web.Loading.CspReports).
 }
 unit Web.Fetch.ContentSecurityPolicy;
 
@@ -56,6 +57,33 @@ type
     function HasDirective(const Name: string): Boolean;
     function DirectiveValues(const Name: string; out Values: TStringArray): Boolean;
     function Serialize: string;
+  end;
+
+  { One violation (CSP 2.4): what was blocked ('inline', 'eval', a URL),
+    the directive, the policy, where. }
+  TCspViolation = record
+    DocumentUrl: string;
+    Referrer: string;
+    BlockedUri: string;
+    EffectiveDirective: string;
+    OriginalPolicy: string;
+    Disposition: TCspDisposition;
+    { The first 40 characters of the inline script or style, or eval's
+      string, when the directive has 'report-sample'. }
+    Sample: string;
+    StatusCode: Integer;
+    SourceFile: string;
+    LineNumber, ColumnNumber: Integer;
+    { The element the violation is about (nil: the document). }
+    Element: TObject;
+    { The policy's report-uri URLs and report-to group. }
+    ReportUris: TStringArray;
+    ReportTo: string;
+  end;
+
+  TCspViolationReporter = class
+  public
+    procedure ViolationOccurred(constref Violation: TCspViolation); virtual; abstract;
   end;
 
   { A document's CSP list (part of its policy container). }

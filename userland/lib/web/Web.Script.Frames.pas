@@ -84,6 +84,12 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    function SupportsWebSockets: Boolean; override;
+    function OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+      Sink: TScriptWebSocketSink): TObject; override;
+    procedure SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes); override;
+    procedure CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string); override;
+    procedure ForgetWebSocket(Context: TObject; Handle: TObject); override;
     { The environment it forwards to (the parent's). }
     property Parent: TScriptEnvironment read FParent;
   end;
@@ -288,6 +294,32 @@ end;
 procedure TFrameEnvironment.CancelFetch(Context: TObject; Handle: TObject);
 begin
   FParent.CancelFetch(Context, Handle);
+end;
+
+function TFrameEnvironment.SupportsWebSockets: Boolean;
+begin
+  Result := FParent.SupportsWebSockets;
+end;
+
+function TFrameEnvironment.OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+  Sink: TScriptWebSocketSink): TObject;
+begin
+  Result := FParent.OpenWebSocket(Context, Url, Protocols, Sink);
+end;
+
+procedure TFrameEnvironment.SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes);
+begin
+  FParent.SendWebSocket(Context, Handle, IsText, Data);
+end;
+
+procedure TFrameEnvironment.CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string);
+begin
+  FParent.CloseWebSocket(Context, Handle, Code, Reason);
+end;
+
+procedure TFrameEnvironment.ForgetWebSocket(Context: TObject; Handle: TObject);
+begin
+  FParent.ForgetWebSocket(Context, Handle);
 end;
 
 { Frames }

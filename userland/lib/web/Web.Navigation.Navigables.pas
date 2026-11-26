@@ -510,6 +510,8 @@ begin
   if FParent <> nil then
   begin
     FLoader.SetOrigin(DocumentOrigin(FContainer.NodeDocument));
+    if FParent.FLoader <> nil then
+      FLoader.InheritPolicies(FParent.FLoader.Client);
     HookLoader(FLoader);
   end;
   Document.Release;
@@ -689,6 +691,9 @@ begin
     Request.Client := Options.Source.Client
   else
     Request.ReferrerKind := ReferrerNone;
+  { An iframe's navigation answers to its embedder's frame-src. }
+  if (FParent <> nil) and (FParent.FLoader <> nil) then
+    Request.PolicyClient := FParent.FLoader.Client;
   if Length(Options.Body) > 0 then
   begin
     Request.Body := Options.Body;
@@ -797,6 +802,11 @@ begin
   FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, DocumentExecutor, @TopOrigin);
   if HasOrigin then
     FLoader.SetOrigin(Origin);
+  { A local-scheme document (about:blank, about:srcdoc, data:, blob:)
+    has its creator's policies. }
+  if ((Url.Scheme = 'about') or (Url.Scheme = 'data') or (Url.Scheme = 'blob')) and (FParent <> nil) and
+     (FParent.FLoader <> nil) then
+    FLoader.InheritPolicies(FParent.FLoader.Client);
   FLoader.Times := FNavigationTimes;
   if FLoader.Times.NavigationStart = 0 then
   begin
@@ -980,6 +990,10 @@ begin
     CommitDocument(Url, Kind, Response.Charset);
   FLoader.Document.Referrer := Job.Referrer;
   FLoader.Document.LastModified := Response.Headers.Value('last-modified');
+  if (Url.Scheme = 'http') or (Url.Scheme = 'https') or (Url.Scheme = 'file') then
+    FLoader.ApplyResponsePolicies(Response.Headers.Combined('content-security-policy'),
+      Response.Headers.Combined('content-security-policy-report-only'), Response.Headers.Combined('reporting-endpoints'),
+      Job.Referrer);
   if Kind in [ContentText, ContentImage] then
     FLoader.Document.ContentType := Essence;
   if Kind = ContentImage then

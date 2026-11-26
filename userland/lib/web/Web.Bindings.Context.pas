@@ -98,6 +98,7 @@ uses
   Web.Dom,
   Web.Dom.UiEvents,
   Web.Dom.DataTransfer,
+  Web.Dom.SecurityEvents,
   Web.Dom.FormControls,
   Web.Bindings.Types,
   Web.Bindings.Strings,
@@ -476,6 +477,8 @@ begin
     Result := InterfacePointerEvent
   else if Event is TClipboardEvent then
     Result := InterfaceClipboardEvent
+  else if Event is TSecurityPolicyViolationEvent then
+    Result := InterfaceSecurityPolicyViolationEvent
   else if Event is TMouseEvent then
     Result := InterfaceMouseEvent
   else if Event is TKeyboardEvent then

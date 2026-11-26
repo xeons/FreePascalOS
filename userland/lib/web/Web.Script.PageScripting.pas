@@ -61,6 +61,7 @@ uses
   Web.Storage,
   Web.ScriptEnvironment,
   Web.Script.PageFetch,
+  Web.Script.PageSockets,
   Web.Script.Layout,
   Web.Script.ImportMaps,
   Js.Engine,
@@ -91,6 +92,7 @@ type
     FSaveScheduled: Boolean;
     FSaveTask: QWord;
     FFetches: TScriptFetches;
+    FSockets: TScriptWebSockets;
     FScreenWidth: Integer;
     FScreenHeight: Integer;
     function FindTimer(Context: TObject; TimerId: Integer): Integer;
@@ -137,6 +139,12 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    function SupportsWebSockets: Boolean; override;
+    function OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+      Sink: TScriptWebSocketSink): TObject; override;
+    procedure SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes); override;
+    procedure CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string); override;
+    procedure ForgetWebSocket(Context: TObject; Handle: TObject); override;
     { Writes the local storage that changed. }
     procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;
@@ -291,6 +299,7 @@ begin
   ForgetTimers;
   FTimers.Free;
   FFetches.Free;
+  FSockets.Free;
   SaveStorage;
   if FOwnsLocalStorage then
     FLocalStorage.Free;
@@ -870,6 +879,8 @@ begin
   if (Index < 0) or FContexts[Index].Stopped then
     Exit;
   FEnvironment.FFetches.CancelLoader(TDocumentLoader(Loader));
+  if FEnvironment.FSockets <> nil then
+    FEnvironment.FSockets.CancelLoader(TDocumentLoader(Loader));
   FContexts[Index].Stopped := True;
   FContexts[Index].Modules.Stopped := True;
   FContexts[Index].Context.AttachParser(nil);

@@ -45,6 +45,7 @@ uses
   Web.Dom.Events,
   Web.Dom.UiEvents,
   Web.Dom.DataTransfer,
+  Web.Dom.SecurityEvents,
   Web.Dom.Exceptions,
   Web.Bindings.Context,
   Web.Bindings.Listeners;
@@ -939,6 +940,95 @@ end;
 function TransitionEvent_get_pseudoElement(var Call: TBindingCall): TJsValue;
 begin
   Result := CallContext(Call).TextValue(TTransitionEvent(Call.Target).PseudoElement);
+end;
+
+{ SecurityPolicyViolationEvent (CSP 5.1). }
+
+function ThisViolationEvent(const Call: TBindingCall): TSecurityPolicyViolationEvent; inline;
+begin
+  Result := TSecurityPolicyViolationEvent(Call.Target);
+end;
+
+function SecurityPolicyViolationEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TSecurityPolicyViolationEvent;
+  Init: PBindingValue;
+begin
+  Event := TSecurityPolicyViolationEvent.Create(Call.Text(0));
+  Init := @Call.Arguments[1];
+  Event.DocumentUri := Init^.Items[SecurityPolicyViolationEventInit_documentURI].Text;
+  Event.Referrer := Init^.Items[SecurityPolicyViolationEventInit_referrer].Text;
+  Event.BlockedUri := Init^.Items[SecurityPolicyViolationEventInit_blockedURI].Text;
+  Event.ViolatedDirective := Init^.Items[SecurityPolicyViolationEventInit_violatedDirective].Text;
+  Event.EffectiveDirective := Init^.Items[SecurityPolicyViolationEventInit_effectiveDirective].Text;
+  Event.OriginalPolicy := Init^.Items[SecurityPolicyViolationEventInit_originalPolicy].Text;
+  Event.SourceFile := Init^.Items[SecurityPolicyViolationEventInit_sourceFile].Text;
+  Event.Sample := Init^.Items[SecurityPolicyViolationEventInit_sample].Text;
+  Event.Disposition := Init^.Items[SecurityPolicyViolationEventInit_disposition].Text;
+  Event.StatusCode := Trunc(Init^.Items[SecurityPolicyViolationEventInit_statusCode].Number);
+  Event.LineNumber := Trunc(Init^.Items[SecurityPolicyViolationEventInit_lineNumber].Number);
+  Event.ColumnNumber := Trunc(Init^.Items[SecurityPolicyViolationEventInit_columnNumber].Number);
+  Result := StartEvent(Call, Event);
+end;
+
+function SecurityPolicyViolationEvent_get_documentURI(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).DocumentUri);
+end;
+
+function SecurityPolicyViolationEvent_get_referrer(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).Referrer);
+end;
+
+function SecurityPolicyViolationEvent_get_blockedURI(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).BlockedUri);
+end;
+
+function SecurityPolicyViolationEvent_get_effectiveDirective(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).EffectiveDirective);
+end;
+
+function SecurityPolicyViolationEvent_get_violatedDirective(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).ViolatedDirective);
+end;
+
+function SecurityPolicyViolationEvent_get_originalPolicy(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).OriginalPolicy);
+end;
+
+function SecurityPolicyViolationEvent_get_sourceFile(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).SourceFile);
+end;
+
+function SecurityPolicyViolationEvent_get_sample(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).Sample);
+end;
+
+function SecurityPolicyViolationEvent_get_disposition(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisViolationEvent(Call).Disposition);
+end;
+
+function SecurityPolicyViolationEvent_get_statusCode(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsInteger(ThisViolationEvent(Call).StatusCode);
+end;
+
+function SecurityPolicyViolationEvent_get_lineNumber(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisViolationEvent(Call).LineNumber);
+end;
+
+function SecurityPolicyViolationEvent_get_columnNumber(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisViolationEvent(Call).ColumnNumber);
 end;
 
 end.
