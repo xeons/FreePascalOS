@@ -55,6 +55,9 @@ void test_timers(void);
 void test_sockets(void);
 void test_dlopen(void);
 void test_security(void);
+void test_event_descriptors(void);
+void test_epoll(void);
+void test_inotify(void);
 
 /* ctest's helper modes (ctest-security.c), chosen by its first argument. */
 int ctest_report_effective_user(void);

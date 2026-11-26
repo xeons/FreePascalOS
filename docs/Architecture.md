@@ -760,7 +760,11 @@ on the dispatcher lock and its wait queues:
 
 - **Events** (`Kernel.Events`): notification (stay signaled, release
   everyone) or synchronization (release one, reset). A thread may wait
-  for any or all of up to 64.
+  for any or all of up to 64. An event may have observers
+  (`AttachEventObserver`): routines told of every signal (and of a
+  semaphore's or mutex's release) under the dispatcher lock, before
+  the waiters are released, which wait for nothing and consume nothing
+  - how event polls hear of objects becoming ready.
 - **Mutexes** (`Kernel.Mutex`): an owner, recursive, handed directly to
   the first waiter.
 - **Semaphores** (`Kernel.Semaphores`): a count from 0 to a limit. A
@@ -1032,7 +1036,13 @@ them between processors and changing their priorities.
   The runtime's `Now` and `GetLocalTime` use the precise call
   (milliseconds), `Sys.Time` has `WallClockNanoseconds` and
   `MonotonicNanoseconds`. Every change of the clock is a line of the
-  kernel log (`[clock] stepped the wall clock by ...`).
+  kernel log (`[clock] stepped the wall clock by ...`). Whoever keeps
+  wall clock times as uptime deadlines registers a step routine
+  (`AddWallClockStepRoutine`, at most four), called below
+  DispatchLevel after every step (not a slew, and not when the time is
+  read again on resume, with the other processors still frozen): the
+  timer descriptors' absolute real time timers work out their
+  deadlines again or are canceled (`TimerCancelOnSet`).
 
 ## Power, idle states and temperature
 
@@ -9038,6 +9048,12 @@ program's message loop waits on it like on any handle
   the volume's lock held, and watches are made with it held too, so a
   change cannot slip by between resolving the path and watching it.
 
+A watch may belong to a watch group (inotify, `FileSystem.WatchGroups`):
+its records then go to the group's queue as Linux's inotify events (see
+"Event descriptors (260-269)"); a rename reported to several watches
+gives them one cookie, and a name created or removed by a rename carries
+`WatchRecordMoved`.
+
 `watchtest` (run by coretest) checks it with a shell making the changes
 in another process, on the system volume (ext4) and on the FAT16,
 exFAT and ext2 test volumes; `watch` prints the changes of any path and
@@ -10008,6 +10024,7 @@ test copies to an unmapped user address.
 | Clock, time zone, keyboard (98-103) | SetWallClock, GetTimeZone, SetTimeZone, GetKeyboardSettings, SetKeyboardSettings, DescribeKeyboardLayout (changes root only; see "Time zones" and the keyboard above) |
 | Sockets (104-115) | CreateSocket, BindSocket, ListenSocket, AcceptSocket, ConnectSocket, SendSocket, ReceiveSocket, ShutdownSocket, Get/SetSocketOption, GetSocketAddress, WaitForSocket (see "Networking") |
 | Network configuration (116-123) | ListNetworkInterfaces, ConfigureNetworkInterface, ChangeRoute, ListRoutes, ListArpEntries, ListSockets, Get/SetDnsServers (changes root only) |
+| Event descriptors (260-269) | CreateEventCounter, CreateTimerDescriptor, SetTimerDescriptor, QueryHandleReadiness, SetSignalDescriptor, CreateEventPoll, ControlEventPoll, WaitEventPoll, CreateWatchGroup, ChangeGroupWatch (eventfd, timerfd, signalfd, epoll, inotify: see "Event descriptors (260-269)") |
 
 Programs of the system's own runtime do not fork: `CreateProcess`
 starts a program directly, with an argument list, an environment, a
@@ -10604,7 +10621,10 @@ input (a driver may keep a
 not wait - a line read but not handed out, or typed input, in line
 editing mode a whole line), or a device opened only for writing with
 room (its `WritableEvent`: a pseudo-terminal's master side, with room
-to type), a socket readable. A file, and a device whose driver keeps no
+to type), a socket readable, an event descriptor readable (an event counter above
+zero, a timer descriptor gone off, a signal descriptor with a signal
+waiting, an event poll with ready entries, a watch group with records).
+A file, and a device whose driver keeps no
 such event, is always ready (one event signaled from the start and
 never reset), as poll says of files elsewhere: a read of it waits for
 no one else. Each stands for a notification event kept
@@ -11177,7 +11197,12 @@ the next login.
 
 A process has a table of handles, each naming a referenced object and
 its kind: file, console (the console or a pseudo-terminal), pipe read end, pipe write end, process, thread,
-watch, socket or the null device. Handles 0-2 are standard input, output and error.
+watch, socket, the null device, or an event descriptor (event counter, timer descriptor, signal
+descriptor, event poll, watch group; see "Event descriptors (260-269)"). Handles 0-2 are standard input, output and error.
+Every object counts the handles naming it, in every process and in
+messages on their way (`HandleCount` in its header, kept by
+`NoteHandleOpened`/`NoteHandleClosed`), so the event polls watching it
+let go of it when the last one closes.
 The table (`Processes.Handles`) has two levels: a fixed directory of
 256 chunk pointers and chunks of 256 entries, allocated as handles
 reach them and freed when the process ends; entries never move. A new
@@ -12428,8 +12453,13 @@ mlibc's Linux ABI (errno values, `struct stat`, `O_*`, signal numbers,
 Linux errno numbers - with the call numbers and records in
 `include/freepascalos/syscall.h` (installed, for programs that want the
 native calls). mlibc's "linux" option is off (it needs Linux's kernel
-headers), so there is no `epoll`, `inotify`, `signalfd`, `timerfd` or
-`eventfd`; posix, glibc and bsd are on.
+headers); posix, glibc and bsd are on, and so are its separate
+linux-epoll, linux-eventfd, linux-timerfd and linux-signalfd options
+(their headers need nothing of Linux's), over the kernel's event
+descriptors (`event-descriptors.cpp`, `event-polls.cpp`); inotify, which
+mlibc keeps in the linux option, is the sysdeps' own (`inotify.cpp` and
+an installed `<sys/inotify.h>` with Linux's values). See "Event
+descriptors (260-269)".
 
 - **Descriptors** are the kernel's handles, same numbers. What POSIX
   keeps per descriptor and the kernel does not - close-on-exec,
@@ -12494,9 +12524,11 @@ headers), so there is no `epoll`, `inotify`, `signalfd`, `timerfd` or
   `IPV6_V6ONLY` options mapped (unknown ones are accepted and do
   nothing). No `AF_UNIX`, so no `socketpair`.
 - **poll/select** look at every descriptor without waiting (files are
-  always ready, sockets through `CallWaitForSocket`), then wait in
+  always ready, sockets through `CallWaitForSocket`, event descriptors
+  through `CallQueryHandleReadiness`), then wait in
   `CallWaitForHandles` on those it can wait for (at most 64), checking
-  every 10 ms for what it cannot (a socket's room to write).
+  every 10 ms for what it cannot (a socket's room to write, a full
+  eventfd's). epoll has no such limit (the kernel's event polls).
 - **Terminals**: `termios` maps `ECHO`, `ICANON` and `ISIG` onto the
   console's modes and keeps the rest of the structure;
   `TIOCGWINSZ`/`TIOCSWINSZ`, `TIOCGPGRP`/`TIOCSPGRP`, `FIONREAD` and
@@ -12556,7 +12588,9 @@ ended child is a zombie until then.
 happens; a signal sent to it is then ended (status 128 plus the
 signal; waitpid sees the signal), stopped or continued (`SIGSTOP`,
 `SIGTSTP`, `SIGTTIN`, `SIGTTOU`, `SIGCONT`, through job control),
-dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default, and ignored ones),
+dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default - unless every
+thread blocks it: then it waits, for a signal descriptor or sigwait -
+and ignored ones),
 or - handled, or blocked by every thread - left pending, and one thread
 that does not block it (or waits for it in `sigtimedwait`, preferred)
 is alerted (its wait ends with `ErrorInterrupted`, which becomes
@@ -12682,6 +12716,118 @@ for a thread. The resolution is a nanosecond.
 `Kernel.SignalSelfTest` checks the queue (order, a timer's entry once
 and not counted, the limit, a removed timer entry taking its pending
 bit), the schedule arithmetic, the clock ids and the exception signals.
+### Event descriptors (260-269)
+
+eventfd, timerfd, signalfd, epoll and inotify are kernel objects behind
+handles of their own kinds (`Processes.EventDescriptorCalls`), each
+ready for `CallWaitForHandles` (so for poll and select) and for event
+polls like every other waitable object, and read with `CallRead`; their
+records are Linux's, so the C library passes them through. Their
+constants and records are in `shared/Abi.EventDescriptors.inc`. A
+handle made non-blocking (`EventDescriptorNonBlocking` when made, or
+`CallControlHandle`'s `ControlSetNonBlocking`, which fcntl's `O_NONBLOCK`
+sets) fails with `ErrorWouldBlock` instead of waiting.
+
+| Number | Call | |
+|---|---|---|
+| 260 | `CallCreateEventCounter` (InitialValue, Flags) | eventfd (`Objects.EventCounters`): a 64-bit count; a read of 8 bytes takes it all (or one, `EventCounterSemaphore`) and waits at zero; a write adds, waiting while the sum would pass 2^64-2 |
+| 261 | `CallCreateTimerDescriptor` (Clock, Flags) | timerfd (`Objects.TimerDescriptors`) on the real time, monotonic or boot clock (Linux's ids; the last two are the uptime) |
+| 262 | `CallSetTimerDescriptor` (Handle, Flags, New, Old) | timerfd_settime and (New 0) timerfd_gettime: `TAbiTimerSpecification` (struct itimerspec), `TimerAbsolute`, `TimerCancelOnSet` |
+| 263 | `CallQueryHandleReadiness` (Handle) | what poll says of any handle now (`PollReadable`, `PollWritable`, `PollError`, `PollHangUp`; `Processes.HandleReadiness`) |
+| 264 | `CallSetSignalDescriptor` (Handle or -1, Mask, Flags) | signalfd (`Processes.SignalDescriptors`), or a new mask |
+| 265-267 | `CallCreateEventPoll`, `CallControlEventPoll`, `CallWaitEventPoll` | epoll (`Processes.EventPolls`) |
+| 268-269 | `CallCreateWatchGroup`, `CallChangeGroupWatch` | inotify (`FileSystem.WatchGroups`) |
+
+**Readiness without looking at everything.** Kernel events can have
+observers (`Kernel.Events`): routines told of every signal of the event
+(and of a semaphore's release) under the dispatcher lock, before its
+waiters are released; they wait for nothing and consume nothing. Each
+object kind names at most two readiness events (`HandleReadinessEvents`:
+a pipe end's Readable or Writable, a socket's Readable and Writable, a
+device's ReadyEvent and WritableEvent, an event counter's Readable and
+Writable, the single event of the others) and says what it is ready for
+from its state (`HandleReadiness`), without its locks.
+
+**Event polls** (epoll). An entry per handle number and object added
+holds a reference to the object and an observer on each of its
+readiness events; a signal puts the entry on the poll's ready list and
+signals the poll's Ready event, from any level. A wait takes entries off
+the list, asks each object what it is ready for and reports what was
+asked for (`PollError` and `PollHangUp` always): a level triggered entry
+still ready goes back on the list, an edge triggered one waits for the
+next signal (every write to an eventfd or a pipe signals again, as on
+Linux), a one shot one is disabled until modified; a wait finding
+nothing resets Ready (only while the list is empty, under the event
+lock) and waits on it, alertable. Entries are found by number in 64
+buckets; any number of them, unlike `CallWaitForHandles`' 64 handles.
+Files are refused (`ErrorNotPermitted`: always ready), a poll inside
+itself or in a loop too, and polls nest at most four deep.
+`PollExclusive` is accepted (every waiter wakes). A registration lasts
+until removed, until the poll goes, or until the object's last handle
+is closed in any process: object headers count the handles that name
+them (`NoteObjectHandleOpened`/`Closed`, kept by `Processes.Handles`),
+and the last close takes the object's entries out of every poll
+(`ForgetObjectInEventPolls`, before the handle's reference goes), so
+closing a socket's last descriptor closes it even while it is in a poll.
+The entries on an object are listed in its header too. One mutex guards
+the entries; the ready lists are the event lock's.
+
+**Timer descriptors.** Armed with a first time (relative, or a time of
+its clock) and a period, in nanoseconds; each time it goes off (a
+deferred call at DispatchLevel, under the timer's spin lock) the count
+of expirations grows by every period gone by, and Ready is signaled; a
+read takes the count. An absolute real time timer follows the wall
+clock: `Kernel.WallClock` calls its step routines after every step (not
+a gradual adjustment, and not on resume, when the other processors are
+still frozen), and its uptime deadline is worked out again - or, armed
+with `TimerCancelOnSet`, it is stopped and reads fail with
+`ErrorCanceled` (and it is ready) until it is armed again.
+
+**Signal descriptors.** A program blocks the signals and reads them: a
+read takes the lowest waiting signal of the mask - the process's or the
+reading thread's - as a `TAbiSignalDescriptorRecord` (struct
+signalfd_siginfo: the signal, the sender and `SignalCodeUser` or
+`SignalCodeKernel`), as many as fit. A descriptor reports the signals
+of the process that made it: `Processes.Signals` tells it of every
+signal made to wait (`NoteSignalWaiting` signals its Ready), and Ready
+is brought up to date before every wait on it and after every read, so
+a signal taken some other way leaves nothing stale. For it (and
+sigwait) a signal ignored by default that every thread blocks (SIGCHLD,
+SIGWINCH, SIGURG) now waits instead of being dropped, as on Linux; once
+unblocked it is dropped.
+
+**Watch groups** (inotify). Members are ordinary watches
+(`FileSystem.Watches`) whose records go to the group's queue instead of
+their own, translated into Linux's events: names created and removed
+(`GroupWatchMovedTo`/`MovedFrom` when moved in or out - native watch
+records carry `WatchRecordMoved` for that now), renamed in a folder (both
+halves with one cookie, the same for every watch that sees the rename),
+written, attributes changed, the item itself removed (then
+`GroupWatchIgnored`), moved, or its volume gone (`GroupWatchUnmount`,
+then ignored); `GroupWatchIsDirectory` for folders. The file systems
+report no opening, closing or reading, so those events are accepted
+and never come. Adding a path watched already (same volume and node)
+changes that member's mask (`GroupWatchMaskAdd`, `GroupWatchMaskCreate`
+as Linux's); `GroupWatchOnlyDirectory`, `GroupWatchDontFollow`,
+`GroupWatchOneShot` as Linux's. Up to 4096 records wait, then one
+overflow record. The group's state is guarded by the watch lock.
+
+**In the C library.** `epoll_create1`, `epoll_ctl`, `epoll_wait` and
+`epoll_pwait` (the mask set around the wait, as ppoll's; at most 64
+events per call; `struct epoll_event` is packed on x86-64 and copied
+over), `eventfd`, `eventfd_read`/`eventfd_write`, `timerfd_create`/
+`settime`/`gettime` (`CLOCK_REALTIME`, `CLOCK_MONOTONIC`,
+`CLOCK_BOOTTIME`), `signalfd`, `inotify_init`/`init1`/`add_watch`/
+`rm_watch`, with `*_CLOEXEC` and `*_NONBLOCK`.
+
+The kernel self tests (`Kernel.EventDescriptorSelfTest`, every boot)
+check observers, event counters, event polls (level and edge triggered,
+one shot, modifying, a wait woken by another thread, nesting and loops,
+entries forgotten with the last handle) and timer descriptors (periods
+counted, stopping, a past absolute time, cancel on set and a timer that
+follows a step of the clock, stepped by nothing); ctest's "event
+descriptors", "epoll" and "inotify" groups check them from C, and a
+coretest line runs the last two as an ordinary user.
 
 ### Tests
 
@@ -12691,8 +12837,9 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
 `popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`; 518
-checks), then `hello-static` and `cxxtest` (iostreams, containers,
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`;
+eventfd, timerfd, signalfd, epoll (a hundred pipes, a TCP server,
+nesting, fork) and inotify; 569 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own; with Clang (`make
 clang-toolchain`) also `ctest-clang --groups-only` (every group again,

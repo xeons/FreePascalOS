@@ -209,6 +209,14 @@ cpp = '$PREFIX/bin/$TRIPLET-g++'
 ar = '$PREFIX/bin/$TRIPLET-ar'
 strip = '$PREFIX/bin/$TRIPLET-strip'
 
+# The sysroot named explicitly: a toolchain copied into another tree (a
+# worktree) still has the one it was built with built in.
+[built-in options]
+c_args = ['--sysroot=$SYSROOT']
+c_link_args = ['--sysroot=$SYSROOT']
+cpp_args = ['--sysroot=$SYSROOT']
+cpp_link_args = ['--sysroot=$SYSROOT']
+
 [host_machine]
 system = 'freepascalos'
 cpu_family = '$CPU'

@@ -90,6 +90,7 @@ implementation
 uses
   Runtime.Memory,
   Runtime.Atomic,
+  Runtime.LinkedList,
   Abi.SystemCalls,
   Memory.KernelHeap,
   Kernel.PriorityLevel,
@@ -144,6 +145,12 @@ type
     KernelTimer: TTimer;
     Call: TDeferredCall;
     Stopping: Boolean;
+    { An absolute CLOCK_REALTIME setting: on the list of timers that follow
+      a step of the wall clock, with the wall clock's offset from the
+      uptime when it was last placed. Under the timer mutex. }
+    WallLink: TListEntry;
+    FollowsWallClock: Boolean;
+    WallOffset: Int64;
     { Processor-time checks holding the timer just now. }
     Users: Int64;
   end;
@@ -159,6 +166,8 @@ type
 
 var
   TimerMutex: TMutex;
+  { The timers that follow a step of the wall clock. }
+  WallClockTimers: TListEntry;
 
 function Failure(Error: LongInt): Int64;
 begin
@@ -374,6 +383,79 @@ begin
   CancelDeferredCall(Timer^.Call);
 end;
 
+{ --- Following steps of the wall clock ------------------------------------- }
+
+function WallClockOffset: Int64;
+begin
+  Result := WallClockNanoseconds - Int64(ClockNanoseconds);
+end;
+
+{ Puts Timer on the list of timers that follow the wall clock, or takes
+  it off. The timer mutex held. }
+procedure SetFollowsWallClock(Timer: PPosixTimer; Follows: Boolean);
+begin
+  if Timer^.FollowsWallClock = Follows then
+    Exit;
+  if Follows then
+  begin
+    Timer^.WallOffset := WallClockOffset;
+    InsertAtTail(WallClockTimers, @Timer^.WallLink);
+  end
+  else
+    RemoveListEntry(@Timer^.WallLink);
+  Timer^.FollowsWallClock := Follows;
+end;
+
+function TimerFromWallLink(Entry: PListEntry): PPosixTimer;
+begin
+  Result := PPosixTimer(ContainingRecord(Entry, FieldOffset(PPosixTimer(nil)^.WallLink)));
+end;
+
+{ Moves an armed timer's due time by the step: as much earlier as the
+  wall clock went forward. }
+procedure FollowClockStep(Timer: PPosixTimer);
+var
+  Offset: Int64;
+  Step: Int64;
+  DueTime: Int64;
+  PreviousLevel: TPriorityLevel;
+  Armed: Boolean;
+begin
+  Offset := WallClockOffset;
+  Step := Offset - Timer^.WallOffset;
+  Timer^.WallOffset := Offset;
+  if (Step = 0) or (Timer^.DueTime > QWord(High(Int64))) then
+    Exit;
+  Timer^.Stopping := True;
+  StopKernelTimer(Timer);
+  StopKernelTimer(Timer);
+  PreviousLevel := AcquireSpinLock(Timer^.Process^.Posix.SignalLock);
+  Armed := Timer^.Armed;
+  DueTime := Int64(Timer^.DueTime) - Step;
+  if DueTime < 0 then
+    DueTime := 0;
+  if Armed then
+    Timer^.DueTime := QWord(DueTime);
+  ReleaseSpinLock(Timer^.Process^.Posix.SignalLock, PreviousLevel);
+  Timer^.Stopping := False;
+  if Armed then
+    SetTimerAt(Timer^.KernelTimer, QWord(DueTime), Timer^.Call);
+end;
+
+procedure WallClockStepped;
+var
+  Entry: PListEntry;
+begin
+  AcquireMutex(TimerMutex);
+  Entry := WallClockTimers.Next;
+  while Entry <> @WallClockTimers do
+  begin
+    FollowClockStep(TimerFromWallLink(Entry));
+    Entry := Entry^.Next;
+  end;
+  ReleaseMutex(TimerMutex);
+end;
+
 { Stops Timer and disarms it: its call is not running and will not run
   until it is armed again. The timer mutex held. }
 procedure StopTimer(Timer: PPosixTimer);
@@ -410,6 +492,7 @@ begin
   if Timer = nil then
     Exit;
   StopTimer(Timer);
+  SetFollowsWallClock(Timer, False);
   Timer^.Stopping := True;
   PreviousLevel := AcquireSpinLock(Process^.Posix.SignalLock);
   Table^[Slot] := nil;
@@ -586,10 +669,15 @@ var
   TickChange: Integer;
 begin
   StopTimer(Timer);
+  SetFollowsWallClock(Timer, False);
   if Spec.ValueNanoseconds = 0 then
     Exit(ErrorNone);
   if not DueTimeFor(Timer, Spec, Absolute, DueTime) then
     Exit(ErrorNotFound);
+  { An absolute real-time expiry stays at its wall clock time when the
+    clock is stepped. }
+  if Absolute and Timer^.CountsWallTime then
+    SetFollowsWallClock(Timer, True);
   PreviousLevel := AcquireSpinLock(Timer^.Process^.Posix.SignalLock);
   Timer^.DueTime := DueTime;
   Timer^.Interval := Spec.IntervalNanoseconds;
@@ -928,6 +1016,8 @@ end;
 procedure InitializePosixTimers;
 begin
   InitializeMutex(TimerMutex);
+  InitializeListHead(WallClockTimers);
+  AddWallClockStepRoutine(@WallClockStepped);
 end;
 
 end.

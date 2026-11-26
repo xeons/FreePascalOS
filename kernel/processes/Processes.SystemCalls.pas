@@ -39,6 +39,7 @@ implementation
 uses
   Processes.ObjectCalls,
   Processes.WatchCalls,
+  Processes.EventDescriptorCalls,
   Processes.ProcessDetails,
   Processes.SystemUsage,
   Processes.ClockCalls,
@@ -918,6 +919,17 @@ begin
     CallGetTimerOverrun: Result := PerformGetTimerOverrun(Int64(Argument0));
     CallSetIntervalTimer: Result := PerformSetIntervalTimer(Argument0, Argument1, Argument2);
     CallGetProcessorClock: Result := PerformGetProcessorClock(Int64(Argument0), Argument1, Argument2);
+    { Event descriptors (260-269, Processes.EventDescriptorCalls). }
+    CallCreateEventCounter: Result := PerformCreateEventCounter(Argument0, Argument1);
+    CallCreateTimerDescriptor: Result := PerformCreateTimerDescriptor(Argument0, Argument1);
+    CallSetTimerDescriptor: Result := PerformSetTimerDescriptor(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallQueryHandleReadiness: Result := PerformQueryHandleReadiness(Int64(Argument0));
+    CallSetSignalDescriptor: Result := PerformSetSignalDescriptor(Int64(Argument0), Argument1, Argument2);
+    CallCreateEventPoll: Result := PerformCreateEventPoll(Argument0);
+    CallControlEventPoll: Result := PerformControlEventPoll(Int64(Argument0), Argument1, Int64(Argument2), Argument3);
+    CallWaitEventPoll: Result := PerformWaitEventPoll(Int64(Argument0), Argument1, Argument2, Int64(Argument3));
+    CallCreateWatchGroup: Result := PerformCreateWatchGroup(Argument0);
+    CallChangeGroupWatch: Result := PerformChangeGroupWatch(Int64(Argument0), Argument1, Argument2, Argument3);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -1012,6 +1024,7 @@ begin
   InitializeThreadCalls;
   InitializeWaitCalls;
   InitializePosixTimers;
+  InitializeEventDescriptorCalls;
   { From here on the kernel touches user memory only through checked
     copies, so SMAP can be turned on. }
   InitializeUserCopy;

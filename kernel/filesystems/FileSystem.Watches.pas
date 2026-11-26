@@ -51,6 +51,11 @@
   repeats the newest one waiting (a file written in many pieces) is not
   queued again.
 
+  A watch may instead belong to a watch group (FileSystem.WatchGroups,
+  inotify): its records then go to the group's queue, translated, and
+  its own queue stays empty. A rename reported to several watches gives
+  them all the same cookie, so a group can pair the two halves.
+
   Each watch has a notification event, Ready, kept signaled while
   records wait, which CallWaitForHandles waits on. One mutex guards all
   watches; changes are reported with the volume's lock held, so the
@@ -96,6 +101,13 @@ type
     Records: array[0..MaximumQueuedWatchRecords - 1] of TWatchRecord;
     FirstRecord: Integer;
     RecordCount: Integer;
+    { The watch group it belongs to (nil: none), its descriptor and
+      GroupWatch* mask there, and its link in the group's members (all
+      under the watch lock). }
+    Group: Pointer;
+    GroupDescriptor: LongInt;
+    GroupMask: LongWord;
+    GroupLink: TListEntry;
   end;
 
   { A change, as the VFS reports it. }
@@ -137,6 +149,13 @@ procedure ReportVolumeDeparture(Volume: PVolume);
   and says how many bytes they took. }
 function ReadWatchRecords(Watch: PWatch; Buffer: PByte; Capacity: QWord; out Used: QWord): TWatchReadResult;
 
+{ The watch lock, for FileSystem.WatchGroups (whose state it guards
+  too). }
+procedure LockWatches;
+procedure UnlockWatches;
+{ The Watch* flags that report the GroupWatch* events of Mask. }
+function WatchFlagsOfGroupMask(Mask: LongWord): LongWord;
+
 implementation
 
 uses
@@ -144,7 +163,8 @@ uses
   Runtime.Text,
   Memory.KernelHeap,
   Kernel.Mutex,
-  Objects.Manager;
+  Objects.Manager,
+  FileSystem.WatchGroups;
 
 const
   RecordCapacity = MaximumQueuedWatchRecords;
@@ -156,6 +176,8 @@ var
   WatchLock: TMutex;
   AllWatches: TListEntry;
   LiveWatchCount: Integer;
+  { The cookie of the rename being reported (a new one per rename). }
+  RenameCookie: LongWord = 0;
 
 { --- The queue (watch lock held) ----------------------------------------- }
 
@@ -229,7 +251,10 @@ begin
   AppendRecord(Watch, WatchChangeOverflow, 0, nil, nil);
 end;
 
-procedure QueueRecord(Watch: PWatch; Kind: Word; IsDirectory: Boolean; Name, OldName: PChar);
+{ Queues a record; ExtraFlags (WatchRecordMoved) go into its flags. A
+  group's member hands it to the group instead. }
+procedure QueueFlaggedRecord(Watch: PWatch; Kind: Word; IsDirectory: Boolean; ExtraFlags: Word;
+  Name, OldName: PChar);
 var
   Flags: Word;
   NameCopy: PChar;
@@ -237,6 +262,13 @@ var
   NameAllocated: Boolean;
   OldNameAllocated: Boolean;
 begin
+  if Watch^.Group <> nil then
+  begin
+    if not Watch^.HasEnded then
+      DeliverToWatchGroup(Watch, Kind, IsDirectory, (ExtraFlags and WatchRecordMoved) <> 0, Name, OldName,
+        RenameCookie);
+    Exit;
+  end;
   if Watch^.HasEnded or Watch^.HasOverflowed or RepeatsNewestRecord(Watch, Kind, Name) then
     Exit;
   if Watch^.RecordCount >= RecordCapacity - 1 then
@@ -254,10 +286,15 @@ begin
     QueueOverflow(Watch);
     Exit;
   end;
-  Flags := 0;
+  Flags := ExtraFlags;
   if IsDirectory then
-    Flags := WatchRecordDirectory;
+    Flags := Flags or WatchRecordDirectory;
   AppendRecord(Watch, Kind, Flags, NameCopy, OldNameCopy);
+end;
+
+procedure QueueRecord(Watch: PWatch; Kind: Word; IsDirectory: Boolean; Name, OldName: PChar);
+begin
+  QueueFlaggedRecord(Watch, Kind, IsDirectory, 0, Name, OldName);
 end;
 
 { Records the end of the watch: nothing is queued after this one. }
@@ -407,9 +444,9 @@ begin
   if SourceInside and TargetInside then
     QueueRecord(Watch, WatchChangeRenamed, Report.IsDirectory, TargetName, SourceName)
   else if SourceInside then
-    QueueRecord(Watch, WatchChangeRemoved, Report.IsDirectory, SourceName, nil)
+    QueueFlaggedRecord(Watch, WatchChangeRemoved, Report.IsDirectory, WatchRecordMoved, SourceName, nil)
   else if TargetInside then
-    QueueRecord(Watch, WatchChangeCreated, Report.IsDirectory, TargetName, nil);
+    QueueFlaggedRecord(Watch, WatchChangeCreated, Report.IsDirectory, WatchRecordMoved, TargetName, nil);
 end;
 
 procedure DeliverChange(Watch: PWatch; const Report: TChangeReport; SourceName, TargetName: PChar);
@@ -441,6 +478,12 @@ begin
   if (SourceName <> nil) and (TargetName <> nil) then
   begin
     AcquireMutex(WatchLock);
+    if Report.Kind = WatchChangeRenamed then
+    begin
+      Inc(RenameCookie);
+      if RenameCookie = 0 then
+        RenameCookie := 1;
+    end;
     Entry := AllWatches.Next;
     while Entry <> @AllWatches do
     begin
@@ -571,6 +614,29 @@ begin
       ResetEvent(Watch^.Ready);
   end;
   ReleaseMutex(WatchLock);
+end;
+
+{ --- Groups ------------------------------------------------------------------ }
+
+procedure LockWatches;
+begin
+  AcquireMutex(WatchLock);
+end;
+
+procedure UnlockWatches;
+begin
+  ReleaseMutex(WatchLock);
+end;
+
+function WatchFlagsOfGroupMask(Mask: LongWord): LongWord;
+begin
+  Result := 0;
+  if (Mask and (GroupWatchCreate or GroupWatchDelete or GroupWatchMovedFrom or GroupWatchMovedTo)) <> 0 then
+    Result := Result or WatchNames;
+  if (Mask and GroupWatchModify) <> 0 then
+    Result := Result or WatchContents;
+  if (Mask and GroupWatchAttributes) <> 0 then
+    Result := Result or WatchAttributes;
 end;
 
 end.

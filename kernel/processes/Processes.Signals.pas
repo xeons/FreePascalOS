@@ -140,7 +140,8 @@ uses
   Processes.SystemCallRestart,
   Processes.PosixTimers,
   Processes.TimerSchedules,
-  Processes.Arch.UserContext;
+  Processes.Arch.UserContext,
+  Processes.SignalDescriptors;
 
 const
   { Neither blocked nor handled: SIGKILL and SIGSTOP. }
@@ -340,8 +341,19 @@ begin
     FreeQueuedSignals(Entry);
     Exit(ErrorWouldBlock);
   end;
+  { Signal descriptors with it in their mask become ready. }
+  NoteSignalWaiting(Process, Signal);
   WakeTakerOf(Process, Signal, True);
   Result := ErrorNone;
+end;
+
+{ A signal ignored by default that every thread blocks waits all the
+  same (for a signal descriptor or sigwait to take; unblocked, it is
+  dropped then), as on other systems. }
+function WaitsWhileBlocked(Process: PProcess; Signal: LongInt): Boolean;
+begin
+  Result := (Process^.Posix.Dispositions[Signal] = SignalDispositionDefault) and
+    (DefaultActionOf(Signal) = ActionIgnore) and not SomeThreadUnblocks(Process, Signal);
 end;
 
 function PostSignalWithInformationLocked(Process: PProcess; const Information: TAbiSignalInformation): LongInt;
@@ -358,7 +370,11 @@ begin
     Exit;
   end;
   if IsDiscarded(Process, Signal) then
+  begin
+    if WaitsWhileBlocked(Process, Signal) then
+      Result := MakePending(Process, Information);
     Exit;
+  end;
   if IsHandled(Process, Signal) then
     Result := MakePending(Process, Information)
   else if DefaultActionOf(Signal) = ActionTerminate then
@@ -407,7 +423,10 @@ begin
   { A signal whose default action ends the process ends it when a
     thread takes it (DeliverPendingSignals). }
   if Appended then
+  begin
+    NoteSignalWaiting(Process, Signal);
     WakeTakerOf(Process, Signal, AtThreadReturn);
+  end;
 end;
 
 function SignalOfEndReason(Reason: LongWord): LongInt;
@@ -434,7 +453,9 @@ end;
 
 function SignalsWaitingFor(Process: PProcess; Thread: PThread): QWord;
 begin
-  Result := Thread^.Posix.PendingSignals or Process^.Posix.PendingSignals;
+  Result := Process^.Posix.PendingSignals;
+  if Thread <> nil then
+    Result := Result or Thread^.Posix.PendingSignals;
 end;
 
 { The lowest signal set in Ready (not 0). }
@@ -496,7 +517,7 @@ begin
   if Ready <> 0 then
   begin
     Result := LowestSignalOf(Ready);
-    if (Thread^.Posix.PendingSignals and SignalBit(Result)) <> 0 then
+    if (Thread <> nil) and ((Thread^.Posix.PendingSignals and SignalBit(Result)) <> 0) then
     begin
       Thread^.Posix.PendingSignals := Thread^.Posix.PendingSignals and not SignalBit(Result);
       Information := KernelInformation(Result, 0);

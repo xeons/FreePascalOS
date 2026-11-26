@@ -64,6 +64,9 @@ static const struct test_group groups[] = {
 	{"sockets", test_sockets},
 	{"dlopen", test_dlopen},
 	{"security", test_security},
+	{"event descriptors", test_event_descriptors},
+	{"epoll", test_epoll},
+	{"inotify", test_inotify},
 };
 
 /* Runs a program of the suite; its exit code 0 is a pass. */

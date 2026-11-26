@@ -2028,7 +2028,19 @@ in the order they would be built:
       overflows handled on it), sigtimedwait/sigwaitinfo, sigqueue, real-time
       signal queues with siginfo values in order (240-242)
 - [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
-- [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
+- [x] epoll/inotify/eventfd/timerfd/signalfd (calls 260-269: kernel event
+      counters, timer descriptors, signal descriptors, event polls and
+      watch groups; mlibc's linux-epoll/eventfd/timerfd/signalfd options
+      and its own inotify, without Linux's headers)
+- [ ] inotify: IN_OPEN, IN_ACCESS, IN_CLOSE_WRITE/NOWRITE (the VFS reports
+      no opens, closes or reads); recursive watches are not wanted
+- [ ] epoll: EPOLLEXCLUSIVE wakes every waiter (accepted, not one at a
+      time); a nested poll is ready while its ready list is not empty
+      (not checked deeper)
+- [ ] signalfd reports the signals of the process that made it (after
+      fork the child's reads take its own, readiness follows the
+      parent's); timerfd: absolute real time timers do not follow the
+      clock read again on resume (other processors frozen then)
 - [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
 - [x] setitimer/getitimer/alarm: all three interval timers in the kernel (248)
 - [x] timer_create and friends (REALTIME, MONOTONIC, process and thread CPU

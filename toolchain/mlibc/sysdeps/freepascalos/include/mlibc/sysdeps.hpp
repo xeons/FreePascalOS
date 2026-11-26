@@ -192,7 +192,16 @@ struct FreePascalOsSysdepTags :
 	Tgkill,
 	Sigaltstack,
 	Sigtimedwait,
-	Sigqueue
+	Sigqueue,
+	// Event descriptors.
+	EpollCreate,
+	EpollCtl,
+	EpollPwait,
+	EventfdCreate,
+	TimerfdCreate,
+	TimerfdSettime,
+	TimerfdGettime,
+	SignalfdCreate
 {};
 
 template<typename Tag>

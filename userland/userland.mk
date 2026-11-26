@@ -237,7 +237,7 @@ rtl-user-flags-check:
 
 $(RTL_USER_FLAGS_STAMP): rtl-user-flags-check
 
-$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc \
+$(RTL_USER_DIRECTORY)/si_prc.ppu: $(wildcard rtl/fpc/*) shared/Abi.SystemCalls.inc shared/Abi.Networking.inc shared/Abi.EventDescriptors.inc \
 		shared/Abi.ErrorMessages.inc $(RTL_USER_FLAGS_STAMP) | $(CROSS_COMPILER)
 	@test -f $(FPC_RTL_SOURCE)/inc/system.inc || \
 		{ echo "The Free Pascal sources are needed in $(FPC_SOURCE) (set FPC_SOURCE)"; exit 1; }
