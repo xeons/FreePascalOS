@@ -135,10 +135,12 @@ if not no_headers
 	)
 	install_headers(
 		'include/freepascalos/syscall.h',
+		'include/freepascalos/windowing.h',
 		subdir: 'freepascalos',
 	)
 	install_headers(
 		'include/sys/inotify.h',
+		'include/sys/ioccom.h',
 		subdir: 'sys',
 	)
 endif

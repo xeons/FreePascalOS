@@ -1,0 +1,25 @@
+--- a/src/gallium/auxiliary/gallivm/lp_bld_init.c
++++ b/src/gallium/auxiliary/gallivm/lp_bld_init.c
+@@ -27,6 +27,10 @@
+ 
+ 
+ #include "util/u_debug.h"
++#include "util/detect_os.h"
++#if DETECT_OS_FREEPASCALOS
++#include <freepascalos/syscall.h>
++#endif
+ #include "util/u_memory.h"
+ #include "util/os_time.h"
+ #include "lp_bld.h"
+@@ -310,6 +314,11 @@
+    if (gallivm_initialized)
+       return true;
+ 
++#if DETECT_OS_FREEPASCALOS
++   if (fpos_syscall1(FPOS_CALL_SET_MEMORY_POLICY,
++                     FPOS_MEMORY_POLICY_ALLOW_DYNAMIC_CODE) < 0)
++      return false;
++#endif
+ 
+ #if !GALLIVM_USE_ORCJIT
+    /* LLVMLinkIn* are no-ops at runtime.  They just ensure the respective

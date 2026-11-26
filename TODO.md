@@ -2068,20 +2068,33 @@ in the order they would be built:
       and sync objects, per-process GPU contexts, and a device file per
       GPU. Drivers: virtio-gpu 3D first (QEMU: virgl for OpenGL, venus
       for Vulkan), then real hardware (Intel, AMD) much later.
-- [ ] **libgl / libvulkan via Mesa** (through the ports system, once the C
-      toolchain and mlibc work): a FreePascalOS window-system layer for
-      EGL and the Vulkan WSI (surfaces backed by the display server's
-      shared-memory windows today, GPU buffers when the kernel interface
-      exists); software rendering first (softpipe without LLVM; llvmpipe
-      and lavapipe once LLVM is ported), then virgl/venus, then hardware
+- [x] **libgl / libvulkan via Mesa**, software rendering: the ports
+      graphics/mesa (26.3.1: llvmpipe, softpipe, lavapipe) and devel/llvm
+      (23.1.6, LLVM's libraries for the system); EGL's native platform
+      and a Vulkan WSI backend (`VK_FPOS_window_surface`) for the display
+      server's shared-memory windows, `<freepascalos/windowing.h>` (the
+      protocol for C); gldemos (gltest, glgears, vkcube) on the system
+      disk. See docs/Architecture.md "OpenGL, OpenGL ES, EGL and Vulkan
+      (Mesa)".
+- [ ] Mesa, what is left: a Vulkan loader (the Khronos loader, taught
+      `VK_FPOS_window_surface`; programs open libvulkan_lvp.so
+      themselves today); vsync'd presentation and frame pacing
+      (the swap interval and FIFO are accepted and ignored); zero-copy
+      presentation (a window surface per swapchain image, or the
+      renderer drawing straight into the section); the shader cache
+      (disabled: needs a cache folder policy); GPU buffers and
+      virgl/venus once the kernel GPU interface exists, then hardware
       drivers. Pascal bindings (OpenGL and Vulkan headers for FPC) so
       Pascal programs can use them.
 - [ ] Display server: GPU-composited windows (optional; keep the CPU path),
       a way for a window's content to be a GPU buffer, and vsync'd
       presentation.
 - [ ] WebGL in the browser on top of libgl (later).
-- [ ] Demos and tests: glxgears-like and vkcube-like programs, conformance
-      subsets (piglit / VK-GL-CTS pieces) run in QEMU with virtio-gpu.
+- [x] Demos: glxgears-like and vkcube-like programs (gldemos: glgears,
+      vkcube; gltest checks EGL and three GL APIs headless, a coretest
+      line runs it on llvmpipe and softpipe).
+- [ ] Conformance subsets (piglit / VK-GL-CTS pieces) run in QEMU, later
+      with virtio-gpu.
 
 ## Planned: installer image
 

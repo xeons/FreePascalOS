@@ -1,0 +1,17 @@
+--- a/include/EGL/eglplatform.h
++++ b/include/EGL/eglplatform.h
+@@ -119,6 +119,14 @@
+ typedef Pixmap   EGLNativePixmapType;
+ typedef Window   EGLNativeWindowType;
+ 
++#elif defined(__freepascalos__)
++
++struct fpos_display;
++struct fpos_window;
++typedef struct fpos_display *EGLNativeDisplayType;
++typedef void                *EGLNativePixmapType;
++typedef struct fpos_window  *EGLNativeWindowType;
++
+ #elif defined(__unix__)
+ 
+ typedef void             *EGLNativeDisplayType;

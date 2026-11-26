@@ -1,0 +1,84 @@
+--- a/src/vulkan/registry/vk.xml
++++ b/src/vulkan/registry/vk.xml
+@@ -36,6 +36,7 @@
+         <platform name="provisional" protect="VK_ENABLE_BETA_EXTENSIONS" comment="Enable declarations for beta/provisional extensions" />
+         <platform name="screen" protect="VK_USE_PLATFORM_SCREEN_QNX" comment="QNX Screen Graphics Subsystem" />
+         <platform name="ohos" protect="VK_USE_PLATFORM_OHOS" comment="Open Harmony OS" />
++        <platform name="freepascalos" protect="VK_USE_PLATFORM_FREEPASCALOS_FPOS" comment="FreePascalOS display server" />
+     </platforms>
+ 
+     <tags comment="Vulkan vendor/author tags for extensions and layers">
+@@ -68,6 +69,7 @@
+         <tag name="KHR" author="Khronos" contact="Ralph Potter @r-potter" />
+         <tag name="KHX" author="Khronos" contact="Ralph Potter @r-potter" />
+         <tag name="EXT" author="Multivendor" contact="Jon Leech @oddhack" />
++        <tag name="FPOS" author="FreePascalOS" contact="FreePascalOS" />
+         <tag name="MESA" author="Mesa open source project" contact="Daniel Stone @fooishbar, David Airlie @airlied, Faith Ekstrand @gfxstrand, Hans-Kristian Arntzen @HansKristian-Work" />
+         <tag name="INTEL" author="Intel Corporation" contact="Slawek Grajewski @sgrajewski" />
+         <tag name="HUAWEI" author="Huawei Technologies Co. Ltd." contact="Pan Gao @PanGao-h, Juntao Li @Lawrenceleehw" />
+@@ -145,6 +147,7 @@
+         <type requires="ggp_c/vulkan_types.h" name="GgpFrameToken" />
+         <type requires="screen/screen.h" name="_screen_context" />
+         <type requires="screen/screen.h" name="_screen_window" />
++        <type requires="freepascalos/windowing.h" name="fpos_window" />
+         <type requires="screen/screen.h" name="_screen_buffer" />
+         <type requires="nvscisync.h" name="NvSciSyncAttrList" />
+         <type requires="nvscisync.h" name="NvSciSyncObj" />
+@@ -460,6 +463,7 @@
+         <type category="bitmask">typedef <type>VkFlags</type> <name>VkStreamDescriptorSurfaceCreateFlagsGGP</name>;</type>
+         <type category="bitmask">typedef <type>VkFlags</type> <name>VkHeadlessSurfaceCreateFlagsEXT</name>;</type>
+         <type category="bitmask">typedef <type>VkFlags</type> <name>VkScreenSurfaceCreateFlagsQNX</name>;</type>
++        <type category="bitmask">typedef <type>VkFlags</type> <name>VkWindowSurfaceCreateFlagsFPOS</name>;</type>
+         <type requires="VkPeerMemoryFeatureFlagBits" category="bitmask">typedef <type>VkFlags</type> <name>VkPeerMemoryFeatureFlags</name>;</type>
+         <type category="bitmask" name="VkPeerMemoryFeatureFlagsKHR" alias="VkPeerMemoryFeatureFlags" />
+         <type requires="VkMemoryAllocateFlagBits" category="bitmask">typedef <type>VkFlags</type> <name>VkMemoryAllocateFlags</name>;</type>
+@@ -2489,6 +2493,12 @@
+             <member optional="true">const <type>void</type>*                      <name>pNext</name></member>
+             <member optional="true"><type>VkStreamDescriptorSurfaceCreateFlagsGGP</type> <name>flags</name></member>
+             <member><type>GgpStreamDescriptor</type>              <name>streamDescriptor</name></member>
++        </type>
++        <type category="struct" name="VkWindowSurfaceCreateInfoFPOS">
++            <member values="VK_STRUCTURE_TYPE_WINDOW_SURFACE_CREATE_INFO_FPOS"><type>VkStructureType</type> <name>sType</name></member>
++            <member optional="true">const <type>void</type>*                      <name>pNext</name></member>
++            <member optional="true"><type>VkWindowSurfaceCreateFlagsFPOS</type>   <name>flags</name></member>
++            <member noautovalidity="true">struct <type>fpos_window</type>*        <name>window</name></member>
+         </type>
+         <type category="struct" name="VkScreenSurfaceCreateInfoQNX">
+             <member values="VK_STRUCTURE_TYPE_SCREEN_SURFACE_CREATE_INFO_QNX"><type>VkStructureType</type> <name>sType</name></member>
+@@ -16127,6 +16137,18 @@
+             <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
+             <param><type>VkSurfaceKHR</type>* <name>pSurface</name></param>
+         </command>
++        <command successcodes="VK_SUCCESS" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_OUT_OF_DEVICE_MEMORY,VK_ERROR_UNKNOWN,VK_ERROR_VALIDATION_FAILED">
++            <proto><type>VkResult</type> <name>vkCreateWindowSurfaceFPOS</name></proto>
++            <param><type>VkInstance</type> <name>instance</name></param>
++            <param>const <type>VkWindowSurfaceCreateInfoFPOS</type>* <name>pCreateInfo</name></param>
++            <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
++            <param><type>VkSurfaceKHR</type>* <name>pSurface</name></param>
++        </command>
++        <command>
++            <proto><type>VkBool32</type> <name>vkGetPhysicalDeviceWindowPresentationSupportFPOS</name></proto>
++            <param><type>VkPhysicalDevice</type> <name>physicalDevice</name></param>
++            <param><type>uint32_t</type> <name>queueFamilyIndex</name></param>
++        </command>
+         <command>
+             <proto><type>VkBool32</type> <name>vkGetPhysicalDeviceScreenPresentationSupportQNX</name></proto>
+             <param><type>VkPhysicalDevice</type> <name>physicalDevice</name></param>
+@@ -27940,6 +27962,17 @@
+                 <type name="VkScreenSurfaceCreateInfoQNX" />
+                 <command name="vkCreateScreenSurfaceQNX" />
+                 <command name="vkGetPhysicalDeviceScreenPresentationSupportQNX" />
++            </require>
++        </extension>
++        <extension name="VK_FPOS_window_surface" number="1999" type="instance" depends="VK_KHR_surface" platform="freepascalos" author="FPOS" contact="FreePascalOS" supported="vulkan" nofeatures="true">
++            <require>
++                <enum value="1" name="VK_FPOS_WINDOW_SURFACE_SPEC_VERSION" />
++                <enum value="&quot;VK_FPOS_window_surface&quot;" name="VK_FPOS_WINDOW_SURFACE_EXTENSION_NAME" />
++                <enum offset="0" extends="VkStructureType" name="VK_STRUCTURE_TYPE_WINDOW_SURFACE_CREATE_INFO_FPOS" />
++                <type name="VkWindowSurfaceCreateFlagsFPOS" />
++                <type name="VkWindowSurfaceCreateInfoFPOS" />
++                <command name="vkCreateWindowSurfaceFPOS" />
++                <command name="vkGetPhysicalDeviceWindowPresentationSupportFPOS" />
+             </require>
+         </extension>
+         <extension name="VK_KHR_extension_380" number="380" author="KHR" contact="James Jones @cubanismo" supported="disabled">

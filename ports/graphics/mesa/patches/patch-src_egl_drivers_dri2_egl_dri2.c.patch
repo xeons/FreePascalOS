@@ -1,0 +1,21 @@
+--- a/src/egl/drivers/dri2/egl_dri2.c
++++ b/src/egl/drivers/dri2/egl_dri2.c
+@@ -932,6 +932,9 @@
+    case _EGL_PLATFORM_ANDROID:
+       ret = dri2_initialize_android(disp);
+       break;
++   case _EGL_PLATFORM_FREEPASCALOS:
++      ret = dri2_initialize_freepascalos(disp);
++      break;
+    default:
+       UNREACHABLE("Callers ensure we cannot get here.");
+       return EGL_FALSE;
+@@ -1022,6 +1025,8 @@
+    case _EGL_PLATFORM_SURFACELESS:
+       break;
+    case _EGL_PLATFORM_DEVICE:
++      break;
++   case _EGL_PLATFORM_FREEPASCALOS:
+       break;
+    default:
+       UNREACHABLE("Platform teardown is not properly hooked.");
