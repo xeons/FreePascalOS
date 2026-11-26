@@ -189,8 +189,6 @@ var
   Memory: TWasmMemory;
   Slot: SizeInt;
   Index: Integer;
-  F32A, F32B: Single;
-  F64A, F64B: Double;
   I32A: Int32;
   U32A: DWord;
   I64A: Int64;

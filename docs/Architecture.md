@@ -9080,6 +9080,142 @@ buffers without copies, modules fetched later) and runs
 bytes, the collections and the longest pause; `JS_GC_STRESS=1` collects
 every 16 KiB to find missed roots.
 
+## WebAssembly engine
+
+libwasm (`userland/lib/wasm`, units `Wasm.*`, built as `libwasm.so` for
+amd64 and arm64 on libsystem alone) runs WebAssembly 2.0 modules: the
+MVP with mutable globals, sign extension, non-trapping float to int
+conversions, multiple values, bulk memory, reference types and the
+fixed-width SIMD instructions. It is portable Pascal, with no assembler,
+so the same code runs on both architectures and on the Linux host. The
+JavaScript `WebAssembly` object is to be built on its interface
+(`Wasm.Api`); nothing links the library yet.
+
+**Decoding** (`Wasm.Reader`, `Wasm.Instructions`, `Wasm.Decoder`) turns
+the binary into a `TWasmModule` (`Wasm.Module`): the index spaces with
+imports first, function bodies, constant expressions and data as ranges
+in the module's own copy of the bytes, and function names from the name
+section for stack traces. LEB128 integers follow the spec's rules for
+overlong and oversized encodings, names must be well formed UTF-8, and
+every function body is decoded instruction by instruction here, so that
+whatever the spec calls malformed is found before validation. One reader
+(`TWasmInstructionReader`) decodes an instruction and unpacks its
+immediates for the decoder, the validator, the compiler and the constant
+expression evaluator alike. Instructions are numbered densely
+(`Wasm.Opcodes`, made from the spec's instruction index): the one byte
+opcodes, $100 plus the 0xFC ones, $200 plus the 0xFD (SIMD) ones, each
+with its text format name, the kind of immediate, and for instructions
+of fixed type a signature that the validator and the compiler share.
+Value types are records (kind, nullability, heap type), not bytes, and
+memory instructions carry a memory index and a 64-bit offset, so typed
+references, multiple memories and memory64 fit without changing them.
+
+**Validation** (`Wasm.Validator`, `Wasm.CodeValidator`) is the spec's:
+limits, import and definition types, constant expressions in the
+restricted context (global.get only of imported immutable globals), the
+functions ref.func may name, unique export names, the start function,
+and every body with the appendix's algorithm (an operand stack of types
+and a control stack; after an unconditional branch the stack is
+polymorphic). The errors are `EWasmMalformed` and `EWasmInvalid` with
+the reference interpreter's messages, then `EWasmLinkError`, `EWasmTrap`
+and `EWasmResourceError` later on (`Wasm.Errors`): one class each for
+the JavaScript errors they become.
+
+**Compiled code** (`Wasm.Code`, `Wasm.CodeEmitter`, `Wasm.Compiler`). A
+frame is an array of 64-bit slots: the parameters, the declared locals,
+then the operand stack (a v128 takes two slots). The validator knows the
+stack's height at every instruction, so every operand has a fixed slot,
+and the compiler turns the stack machine into slot code that names its
+operands like registers: i32.add becomes "slot A := slot B + slot C" in
+one 16-byte instruction (an operation, a 16-bit extra immediate, three
+32-bit operands). A local.get copies nothing: its operand reads the
+local's slot until the local changes or a block boundary comes; a small
+constant waits to be written until something needs it in a slot; a
+result that local.set stores is written to the local directly. Branches
+are code indices with the values they carry moved to the target's slots
+when they are elsewhere. A few fusions cut dispatches in hot loops: a
+comparison followed by br_if or if is one compare-and-branch, and i32
+(and some i64) operations with a constant operand take it as an
+immediate. A callee's frame begins at the caller's argument slots, so a
+call copies nothing and its results land where the arguments were. Code
+after an unconditional branch is not compiled. The compiler records, at
+every call and back edge, which slots hold externrefs.
+
+**The interpreter** (`Wasm.Interpreter` and its include files by group,
+`Wasm.Simd`, `Wasm.Numerics`) is one loop and one case statement over
+dense operation numbers in a single procedure, so the instruction
+pointer, the frame and memory 0's address and length stay in registers.
+WebAssembly calls do not recurse in Pascal: a call pushes the caller's
+frame record on the store and goes on in the callee, so deep recursion
+is limited by the store (call depth and stack slots, then "call stack
+exhausted") and never by the host thread's stack. Host functions are
+called with the frame pushed. A trap jumps to one place that builds the
+stack trace (function index and name, byte offset in the module) from
+the frame records. Loads and stores check the 33-bit effective address
+against the memory's length; memory may move when it grows, and the
+interpreter reloads its address after calls and memory.grow. Floating
+point follows IEEE 754 with the exceptions masked around execution
+(the -CE checks of arm64 then never fire): f32 arithmetic is done in
+single precision, rounding to integers (ceil, floor, trunc, nearest)
+works on the bits, min and max order the zeros and propagate NaNs as
+the spec says, sign operations never touch NaN payloads, and 64-bit
+integers convert to f32 with a single rounding. Shifts and rotations
+take their counts modulo the width explicitly. SIMD lanes are done lane
+by lane with operands read before the result is written, since a result
+may share slots with an operand.
+
+**The store** (`Wasm.Runtime`) holds function, table, memory and global
+instances and module instances, owns them until it is destroyed, and is
+meant to be one per agent: there is no global mutable state. Function
+types are made canonical per store, so call_indirect and import matching
+compare numbers. Modules are reference counted (an embedder's handle,
+and each instance). **Instantiation** (`Wasm.Instantiation`) is the
+spec's order: imports matched (a link error makes nothing), the instance
+allocated with globals and element references evaluated, then active
+element and data segments applied one by one with bulk memory semantics
+(a segment that does not fit traps and the earlier ones stay written),
+then the start function.
+
+**The embedder's interface** (`Wasm.Api`): `WasmCompile` (bytes to a
+module or an error), `WasmValidate`, import and export descriptors with
+their types, `WasmInstantiate` (one external value per import) or
+`WasmInstantiateWith` (a resolver), `WasmCall` with `TWasmValue`
+arguments, host functions as methods with typed arguments and results
+that may raise to unwind and may call back in, and checked access to
+globals, tables and memories. funcref values are function instances,
+externref values pointers the embedder owns (nil is null). For a
+tracing collector, `TWasmStore.EnumerateReferences` visits every
+externref in tables, globals, element segments and the slots of
+suspended frames (by the compiler's safepoint maps), and
+`EnumerateHostData` the host functions' data. A memory's `OnGrow` tells
+the embedder after each successful grow (an ArrayBuffer over the old
+memory has to be detached). `OnInterrupt` is asked every
+`InterruptInterval` back edges and calls and can stop runaway code with
+a trap of kind `tkInterrupted`.
+
+**Tests.** `make wasm-test` (tools/WasmTest, part of the host tests)
+compiles small modules written in the text format for each feature
+area, checks the traps, host functions, import matching, memory growth
+notifications, the references a collector sees and the interrupt hook,
+instantiates a sample module given as `WASM_SAMPLE`, and prints the
+interpreter's speed: about 30 million calls a second on recursive
+fib(30) and one to two billion WebAssembly instructions a second on
+tight integer and memory loops on the development machine. `make
+wasm-spec-test` (tools/WasmSpecTest, not part of `make test`) runs the
+official spec test suite of release 2.0, downloaded into
+`~/Downloads/sources/wasm-spec` and never committed: its own parser for
+the text format (folded and flat instructions, abbreviations, numbers
+rounded exactly, `module binary` and `module quote`) and the .wast script
+commands, with the `spectest` host module. All 148 files of test/core
+and test/core/simd pass, 53,984 assertions.
+
+**Not done yet**: the JavaScript `WebAssembly` object; the 3.0 features
+(exception handling, tail calls, memory64, multiple memories, typed
+function references, garbage collected types, relaxed SIMD), for which
+the value types, memory indices and the opcode numbering leave room;
+collecting instances before the store goes away; streaming compilation
+and caching compiled code; a faster SIMD path than lane by lane.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a

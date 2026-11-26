@@ -616,7 +616,6 @@ var
   ParamTypes, ResultTypes: TWasmValueTypeArray;
   Operand: TCompileOperand;
   Destination, Source: Int32;
-  Index: Integer;
 begin
   case Instruction.Opcode of
     OpUnreachable:
