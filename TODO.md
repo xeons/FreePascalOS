@@ -1454,6 +1454,18 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Incremental or generational marking (needs a write barrier on reference stores)
 - [x] Polymorphic inline caches (four shapes per site)
 - [ ] Fused instructions for more cases; deeper prototype chains in the inline caches
+- [x] test262 host runner (`make test262`, tools/Test262) with expectations and skipped proposals
+- [ ] test262: 81.1% of the 51,174 tests run pass (language 94.1%, built-ins 73.0%, annexB 61.3%,
+      intl402 26.5%, staging 83.5%; 2,627 skipped). The main missing pieces, by failures: Temporal
+      (about 6,700 with its intl402 tests), Intl beyond en-US (Locale, DisplayNames, DurationFormat,
+      RelativeTimeFormat, most NumberFormat and DateTimeFormat options), RegExp Unicode properties
+      from the UCD (binary properties, scripts, property of strings) and the v flag's set notation,
+      explicit resource management (using, DisposableStack, SuppressedError), Annex B function
+      declarations in blocks under direct eval, the newer iterator methods (Iterator.zip, concat,
+      chunks, windows), Atomics.waitAsync and Map/WeakMap getOrInsert, the parameters' dead zone
+      (`(a = b, b) => ...`), completion values of loops, proper tail calls, and the Unicode data
+      for identifiers (the RTL's tables predate Unicode 10). The backtracking matcher runs out of
+      memory on million-character subjects (23 tests at the runner's 512 MB cap).
 
 ## Tooling
 

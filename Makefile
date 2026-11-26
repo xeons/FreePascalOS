@@ -1796,8 +1796,9 @@ javascript-test: $(JAVASCRIPT_TEST)
 	@echo "JAVASCRIPT TEST PASSED: $$(tail -n 1 build/tools/javascript-test.out | cut -d ' ' -f 2-)"
 
 # test262 on the host: each test runs in a child process forked by
-# build/tools/Test262 (half the cores, no more than fit in half the available memory; 10 s and 512 MB each), against the known failures
-# of tools/Test262/expectations.txt and the features skipped in
+# build/tools/Test262 (half the cores, no more than fit in half the
+# available memory; 10 s and 512 MB each), against the known failures of
+# tools/Test262/expectations.txt and the features skipped in
 # tools/Test262/skipped-features.txt. The checkout is downloaded by hand
 # (git clone --depth 1 https://github.com/tc39/test262 into
 # ~/Downloads/sources/test262) and never committed.

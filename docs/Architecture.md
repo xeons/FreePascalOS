@@ -9080,6 +9080,51 @@ buffers without copies, modules fetched later) and runs
 bytes, the collections and the longest pause; `JS_GC_STRESS=1` collects
 every 16 KiB to find missed roots.
 
+### test262
+
+`make test262` (tools/Test262, not part of `make test`) runs test262,
+the ECMAScript conformance suite, from a checkout downloaded by hand
+into `~/Downloads/sources/test262` (`TEST262=` another one, `FILTER=`
+path prefixes under `test/` such as `built-ins/Array`,
+`TEST262_FLAGS=--list` for every failure with its error, `--groups` for
+the pass rate of every second-level directory). The runner is split
+into the frontmatter reader (`Test262.Frontmatter`: includes, flags,
+negative phase and type, features), the harness files read once
+(`Test262.Harness`), the host (`Test262.Host`: `print` and `$262` with
+createRealm (another realm sharing the runtime, as frames do),
+evalScript, detachArrayBuffer, gc and global; modules are files, so
+`./x_FIXTURE.js` loads beside the test), one test's execution
+(`Test262.Execution`: a fresh engine per variant, non-strict and strict
+unless the flags say otherwise, modules once; harness first, then the
+test, then the job queue; a parse error is a script that does not
+compile, a resolution error a module graph that fails before the test
+module runs; asynchronous tests pass by printing
+`Test262:AsyncTestComplete`), the scheduler (`Test262.Scheduler`), the
+known failures (`Test262.Expectations`), the skips (`Test262.Skips`)
+and the report (`Test262.Reporter`: totals, the pass rate per
+directory, the unexpected failures and the newly passing tests).
+
+Each test is forked from the runner into a child that writes one line
+back through a pipe; a crash fails only that test, and a child past the
+time limit (10 s) is killed. The host is shared and has no swap, so
+each child is held to an address space cap (`--memory`, 512 MB, with
+RLIMIT_AS; the engine's heap limit is half of it so a runaway test
+usually ends with the engine's "Out of memory" error) and a CPU time
+limit, and the runner starts no more children than half the cores
+(`--jobs`) and than fit in half the available memory. The whole suite
+(about 51,000 tests run) takes about a minute.
+
+`tools/Test262/expectations.txt` lists the tests known to fail, by
+directory, each with the error it failed with when the list was written
+(`make test262-expectations` rewrites it from a whole run); the run
+fails only on a failure the list does not have, and names the listed
+tests that pass now. `tools/Test262/skipped-features.txt` lists the
+stage 3 proposals not implemented (each with why); the runner also
+skips what this host cannot give: `$262.agent` (no concurrent agents),
+CanBlockIsTrue (the main thread cannot block in Atomics.wait) and
+IsHTMLDDA (no such object). Standard features the engine lacks are not
+skipped: their failures are in the expectations.
+
 ## Network drivers
 
 Network card drivers (`kernel/drivers/network`) register each card as a

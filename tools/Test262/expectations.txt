@@ -3,8 +3,6 @@
 # comment after it the error it failed with.
 
 # annexB/built-ins
-annexB/built-ins/Array/from/iterator-method-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-annexB/built-ins/Object/is/emulates-undefined.js  # [non-strict] runtime Test262Error: SameValue with `undefined` Expected SameValue(«true», «false») to be true
 annexB/built-ins/RegExp/legacy-accessors/index/this-cross-realm-constructor.js  # [non-strict] runtime Test262Error: RegExp.$1 getter throws for cross-realm receiver Expected a TypeError to be thrown bu...
 annexB/built-ins/RegExp/legacy-accessors/index/this-not-regexp-constructor.js  # [non-strict] runtime Test262Error: RegExp.$1 getter throws for property descriptor receiver Expected a TypeError to be t...
 annexB/built-ins/RegExp/legacy-accessors/index/this-subclass-constructor.js  # [non-strict] runtime Test262Error: RegExp.$1 getter throws for subclass receiver Expected a TypeError to be thrown but n...
@@ -31,13 +29,6 @@ annexB/built-ins/RegExp/prototype/Symbol.split/Symbol.match-getter-recompiles-so
 annexB/built-ins/RegExp/prototype/Symbol.split/toint32-limit-recompiles-source.js  # [non-strict] runtime Test262Error: Expected SameValue(«"a"», «""») to be true
 annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js  # [non-strict] runtime Test262Error: Code unit: d800 Expected SameValue(«"\\"», «"\\\ud800"») to be true
 annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js  # [non-strict] runtime Test262Error: Code unit: d800 Expected SameValue(«"a\\"», «"a\\\ud800"») to be true
-annexB/built-ins/String/prototype/match/custom-matcher-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/String/prototype/matchAll/custom-matcher-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/String/prototype/replace/custom-replacer-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/String/prototype/replaceAll/custom-replacer-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/String/prototype/search/custom-searcher-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/String/prototype/split/custom-splitter-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/built-ins/TypedArrayConstructors/from/iterator-method-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Fl...
 
 # annexB/language
 annexB/language/comments/single-line-html-close-first-line-2.js  # [non-strict] expected EvalError at runtime, got parse SyntaxError: Unexpected token '>' (line 1)
@@ -284,19 +275,11 @@ annexB/language/eval-code/indirect/global-switch-case-eval-global-init.js  # [no
 annexB/language/eval-code/indirect/global-switch-case-eval-global-skip-early-err-try.js  # [non-strict] runtime Test262Error: An initialized binding is not created prior to evaluation Expected a ReferenceError t...
 annexB/language/eval-code/indirect/global-switch-dflt-eval-global-init.js  # [non-strict] runtime Test262Error: f descriptor should be configurable
 annexB/language/eval-code/indirect/global-switch-dflt-eval-global-skip-early-err-try.js  # [non-strict] runtime Test262Error: An initialized binding is not created prior to evaluation Expected a ReferenceError t...
-annexB/language/expressions/assignment/dstr/array-pattern-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
-annexB/language/expressions/assignment/dstr/object-pattern-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
 annexB/language/expressions/assignmenttargettype/callexpression-as-for-in-lhs.js  # [non-strict] parse SyntaxError: Invalid destructuring assignment target (line 27)
 annexB/language/expressions/assignmenttargettype/callexpression-as-for-of-lhs.js  # [non-strict] parse SyntaxError: Invalid destructuring assignment target (line 27)
 annexB/language/expressions/assignmenttargettype/callexpression-in-postfix-update.js  # [non-strict] parse SyntaxError: Invalid left-hand side expression (line 27)
 annexB/language/expressions/assignmenttargettype/callexpression-in-prefix-update.js  # [non-strict] parse SyntaxError: Invalid left-hand side expression (line 27)
 annexB/language/expressions/assignmenttargettype/cover-callexpression-and-asyncarrowhead.js  # [non-strict] parse SyntaxError: Invalid destructuring assignment target (line 36)
-annexB/language/expressions/coalesce/emulates-undefined.js  # [non-strict] runtime ReferenceError: unresolved is not defined
-annexB/language/expressions/logical-assignment/emulates-undefined-coalesce.js  # [non-strict] runtime ReferenceError: unresolved is not defined
-annexB/language/expressions/strict-does-not-equals/emulates-undefined.js  # [non-strict] runtime Test262Error: !== with `undefined`
-annexB/language/expressions/strict-equals/emulates-undefined.js  # [non-strict] runtime Test262Error: === with `undefined` Expected SameValue(«true», «false») to be true
-annexB/language/expressions/yield/star-iterable-return-emulates-undefined-throws-when-called.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-annexB/language/expressions/yield/star-iterable-throw-emulates-undefined-throws-when-called.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
 annexB/language/function-code/block-decl-func-skip-arguments.js  # [non-strict] runtime TypeError: Cannot read properties of undefined (reading 'toString')
 annexB/language/function-code/block-decl-func-skip-dft-param.js  # [non-strict] runtime Test262Error: value is not updated following evaluation Expected SameValue(«function f() {  }», ...
 annexB/language/function-code/block-decl-func-skip-early-err-try.js  # [non-strict] runtime Test262Error: An initialized binding is not created prior to evaluation Expected a ReferenceError t...
@@ -427,16 +410,8 @@ annexB/language/global-code/if-stmt-else-decl-global-update.js  # [non-strict] r
 annexB/language/global-code/script-decl-lex-collision.js  # [non-strict] runtime Test262Error: no bindings created Expected a ReferenceError to be thrown but no exception was throw...
 annexB/language/global-code/switch-case-global-skip-early-err-try.js  # [non-strict] runtime Test262Error: An initialized binding is not created prior to evaluation Expected a ReferenceError t...
 annexB/language/global-code/switch-dflt-global-skip-early-err-try.js  # [non-strict] runtime Test262Error: An initialized binding is not created prior to evaluation Expected a ReferenceError t...
-annexB/language/statements/class/subclass/superclass-emulates-undefined.js  # [non-strict] runtime TypeError: Object.defineProperty called on non-object
-annexB/language/statements/class/subclass/superclass-prototype-emulates-undefined.js  # [non-strict] runtime TypeError: Class extends value does not have valid prototype property
-annexB/language/statements/const/dstr/array-pattern-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
-annexB/language/statements/const/dstr/object-pattern-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
-annexB/language/statements/for-await-of/iterator-close-return-emulates-undefined-throws-when-called.js  # [non-strict] async Test262Error: Test262Error: expected TypeError because `iter[Symbol.asyncIterator]() returned a non-o...
 annexB/language/statements/for-in/bare-initializer.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 annexB/language/statements/for-in/nonstrict-initializer.js  # [non-strict] runtime Test262Error: Expected SameValue(«0», «1») to be true
-annexB/language/statements/for-of/iterator-close-return-emulates-undefined-throws-when-called.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-annexB/language/statements/function/default-parameters-emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
-annexB/language/statements/switch/emulates-undefined.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «3») to be true
 
 # built-ins/AggregateError
 built-ins/AggregateError/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: newTarget.prototype is undefined Expected SameValue(«AggregateError», «AggregateEr...
@@ -455,19 +430,10 @@ built-ins/Array/fromAsync/mapfn-sync-throws-close-sync-iterator.js  # [non-stric
 built-ins/Array/fromAsync/sync-iterable-with-rejecting-thenable-closes.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«0», «1») to be true
 built-ins/Array/fromAsync/this-constructor-with-unsettable-element-closes-async-iterator.js  # [non-strict] async Test262Error: Test262Error: element define failure should close iterator
 built-ins/Array/fromAsync/this-constructor-with-unsettable-element-closes-sync-iterator.js  # [non-strict] async Test262Error: Test262Error: element define failure should close iterator
-built-ins/Array/isArray/proxy-revoked.js  # [non-strict] runtime Test262Error: Array.isArray(handle.proxy) throws a TypeError exception Expected a TypeError to be t...
-built-ins/Array/isArray/proxy.js  # [non-strict] runtime Test262Error: Array.isArray(new Proxy([], {})) must return true Expected SameValue(«false», «tru...
 built-ins/Array/length/S15.4.5.2_A3_T4.js  # [non-strict] runtime Test262Error: The value of x[4294967294] is expected to equal undefined Expected SameValue(«429496...
 built-ins/Array/proto-from-ctor-realm-one.js  # [non-strict] runtime Test262Error: Object.getPrototypeOf(Reflect.construct(Array, [1], newTarget)) returns other.Array.p...
 built-ins/Array/proto-from-ctor-realm-two.js  # [non-strict] runtime Test262Error: Object.getPrototypeOf(Reflect.construct(Array, ["a", "b"], newTarget)) returns other....
 built-ins/Array/proto-from-ctor-realm-zero.js  # [non-strict] runtime Test262Error: Object.getPrototypeOf(Reflect.construct(Array, [], newTarget)) returns other.Array.pr...
-built-ins/Array/prototype/concat/arg-length-exceeding-integer-limit.js  # [non-strict] runtime Test262Error: [].concat(1, proxyForArrayWithLengthOutOfRange) throws a TypeError exception Expected...
-built-ins/Array/prototype/concat/create-proxy.js  # [non-strict] runtime Test262Error: Object.getPrototypeOf(Array.prototype.concat.call(proxy)) returns Ctor.prototype Expe...
-built-ins/Array/prototype/concat/is-concat-spreadable-is-array-proxy-revoked.js  # host exception EAccessViolation: Access violation
-built-ins/Array/prototype/concat/is-concat-spreadable-proxy.js  # [non-strict] runtime Test262Error: The value of [].concat(arrayProxy).length is expected to be 0 Expected SameValue(«1...
-built-ins/Array/prototype/filter/create-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«», «[object Object]») to be true
-built-ins/Array/prototype/flat/proxy-access-count.js  # [non-strict] runtime Test262Error: Actual [length, 0, 1, 2, 3, 4] and expected [length, constructor, 0, 1, 2, 3, length,...
-built-ins/Array/prototype/flatMap/proxy-access-count.js  # [non-strict] runtime Test262Error: Actual [length, 0, 1, 2, 3, 4] and expected [length, constructor, 0, 1, 2, 3, length,...
 built-ins/Array/prototype/indexOf/15.4.4.14-9-9.js  # [non-strict] runtime Test262Error: a.indexOf(2,4294967290 ) Expected SameValue(«-1», «4294967294») to be true
 built-ins/Array/prototype/join/number-elements.js  # [non-strict] runtime Test262Error: single element: 5e-324 Expected SameValue(«"4.9e-324"», «"5e-324"») to be true
 built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-12.js  # [non-strict] runtime Test262Error: arr.lastIndexOf(null, Infinity) Expected SameValue(«-1», «4294967294») to be true
@@ -480,14 +446,9 @@ built-ins/Array/prototype/map/15.4.4.19-8-9.js  # [non-strict] runtime Test262Er
 built-ins/Array/prototype/map/15.4.4.19-8-b-1.js  # [non-strict] runtime Test262Error: resArr.length Expected SameValue(«2», «10») to be true
 built-ins/Array/prototype/map/15.4.4.19-8-b-10.js  # [non-strict] runtime Test262Error: testResult.length Expected SameValue(«3», «20») to be true
 built-ins/Array/prototype/map/callbackfn-resize-arraybuffer.js  # [non-strict] runtime Test262Error: Actual [0, 1] and expected [0, 1, undefined] should have the same contents. result (s...
-built-ins/Array/prototype/map/create-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«», «[object Object]») to be true
 built-ins/Array/prototype/push/set-length-array-is-frozen.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 built-ins/Array/prototype/push/set-length-array-length-is-non-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 built-ins/Array/prototype/reverse/length-exceeding-integer-limit-with-proxy.js  # [non-strict] runtime Test262Error: Actual [Get:length, Has:0, Get:0, Has:9007199254740990, Get:9007199254740990, Set:0, ...
-built-ins/Array/prototype/slice/create-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«», «[object Object]») to be true
-built-ins/Array/prototype/splice/create-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«», «[object Object]») to be true
-built-ins/Array/prototype/splice/create-species-length-exceeding-integer-limit.js  # [non-strict] runtime Test262Error: // deleteCount argument exceeding 2^53-1. Array.prototype.splice.call(source, 0, 2 **...
-built-ins/Array/prototype/splice/throws-if-integer-limit-exceeded.js  # crashed (exit status 217)
 built-ins/Array/prototype/Symbol.unscopables/array-find-from-last.js  # [non-strict] runtime Test262Error: `findLast` property value Expected SameValue(«undefined», «true») to be true
 built-ins/Array/prototype/Symbol.unscopables/change-array-by-copy.js  # [non-strict] runtime Test262Error: toReversed should be an own property
 built-ins/Array/prototype/Symbol.unscopables/value.js  # [non-strict] runtime Test262Error: `copyWithin` property value Expected SameValue(«undefined», «true») to be true
@@ -497,7 +458,6 @@ built-ins/Array/prototype/toString/call-with-boolean.js  # [non-strict] runtime 
 built-ins/Array/prototype/toString/non-callable-join-string-tag.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Array]"», «"[object Object]"») to be true
 built-ins/Array/prototype/unshift/set-length-array-is-frozen.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 built-ins/Array/prototype/unshift/set-length-array-length-is-non-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-built-ins/Array/prototype/unshift/throws-if-integer-limit-exceeded.js  # crashed (exit status 217)
 built-ins/Array/prototype/with/length-exceeding-array-length-limit.js  # host exception EOutOfMemory: Out of memory
 built-ins/Array/S15.4.5.2_A1_T1.js  # [non-strict] runtime Test262Error: The value of x.length is expected to be 2147483649 Expected SameValue(«2», «214748...
 
@@ -663,7 +623,6 @@ built-ins/Atomics/notify/retrieve-length-before-index-coercion-non-shared-detach
 built-ins/Atomics/notify/retrieve-length-before-index-coercion-non-shared-resize-to-zero.js  # [non-strict] runtime RangeError: Invalid atomic access index
 built-ins/Atomics/notify/retrieve-length-before-index-coercion-non-shared.js  # [non-strict] runtime Test262Error: Expected a RangeError but got a Test262Error
 built-ins/Atomics/notify/retrieve-length-before-index-coercion.js  # [non-strict] runtime Test262Error: Expected a RangeError but got a Test262Error
-built-ins/Atomics/store/bigint/good-views.js  # [non-strict] runtime Test262Error: The value of view[3] equals the value of `control[0]` (val) Expected SameValue(«33n...
 built-ins/Atomics/wait/bigint/non-shared-bufferdata-throws.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a Test262Error
 built-ins/Atomics/wait/non-shared-bufferdata-throws.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a Test262Error
 built-ins/Atomics/wait/retrieve-length-before-index-coercion.js  # [non-strict] runtime Test262Error: Expected a RangeError but got a Test262Error
@@ -886,9 +845,6 @@ built-ins/Error/isError/prop-desc.js  # [non-strict] runtime Test262Error: isErr
 built-ins/Error/isError/symbols.js  # [non-strict] runtime TypeError: Error.isError is not a function
 built-ins/Error/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«Error», «Error») to be true
 
-# built-ins/eval
-built-ins/eval/private-identifiers-not-empty.js  # [non-strict] runtime Test262Error: It should be a SyntaxError if AllPrivateIdentifiersValid returns false to eval body E...
-
 # built-ins/FinalizationRegistry
 built-ins/FinalizationRegistry/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: newTarget.prototype is undefined Expected SameValue(«[object FinalizationRegistry]»...
 
@@ -918,11 +874,10 @@ built-ins/Function/15.3.5.4_2-90gs.js  # [non-strict] runtime TypeError: 'caller
 built-ins/Function/15.3.5.4_2-91gs.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
 built-ins/Function/15.3.5.4_2-92gs.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
 built-ins/Function/15.3.5.4_2-93gs.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
-built-ins/Function/internals/Construct/base-ctor-revoked-proxy-realm.js  # host exception EAccessViolation: Access violation
-built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js  # host exception EAccessViolation: Access violation
+built-ins/Function/internals/Construct/base-ctor-revoked-proxy-realm.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 built-ins/Function/internals/Construct/derived-return-val-realm.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a different error constructor with the same name
 built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js  # [non-strict] runtime Test262Error: Expected a ReferenceError but got a different error constructor with the same name
-built-ins/Function/private-identifiers-not-empty.js  # [non-strict] runtime Test262Error: It should be a SyntaxError if AllPrivateIdentifiersValid returns false to dynamic fun...
 built-ins/Function/proto-from-ctor-realm-prototype.js  # [non-strict] runtime Test262Error: Expected SameValue(«function () { [native code] }», «function () { [native code] }...
 built-ins/Function/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«function () { [native code] }», «function () { [native code] }...
 built-ins/Function/prototype/bind/get-fn-realm-recursive.js  # [non-strict] runtime Test262Error: Expected true but got false
@@ -1230,11 +1185,8 @@ built-ins/JSON/isRawJSON/length.js  # [non-strict] runtime TypeError: Cannot con
 built-ins/JSON/isRawJSON/name.js  # [non-strict] runtime TypeError: Cannot convert undefined or null to object
 built-ins/JSON/isRawJSON/not-a-constructor.js  # [non-strict] runtime Test262Error: isConstructor invoked with a non-function value
 built-ins/JSON/isRawJSON/prop-desc.js  # [non-strict] runtime Test262Error: isRawJSON should be an own property
-built-ins/JSON/parse/revived-proxy.js  # [non-strict] runtime Test262Error: proxy for array Expected SameValue(«true», «false») to be true
 built-ins/JSON/parse/reviver-array-define-prop-err.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
 built-ins/JSON/parse/reviver-array-delete-err.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
-built-ins/JSON/parse/reviver-array-length-coerce-err.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
-built-ins/JSON/parse/reviver-array-length-get-err.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
 built-ins/JSON/parse/reviver-call-args-after-forward-modification.js  # [non-strict] runtime TypeError: Cannot destructure 'undefined' as it is undefined.
 built-ins/JSON/parse/reviver-context-source-array-literal.js  # [non-strict] runtime Test262Error: context should be an object Expected SameValue(«"undefined"», «"object"») to be t...
 built-ins/JSON/parse/reviver-context-source-object-literal.js  # [non-strict] runtime Test262Error: context should be an object Expected SameValue(«"undefined"», «"object"») to be t...
@@ -1253,12 +1205,6 @@ built-ins/JSON/rawJSON/name.js  # [non-strict] runtime TypeError: Cannot convert
 built-ins/JSON/rawJSON/not-a-constructor.js  # [non-strict] runtime Test262Error: isConstructor invoked with a non-function value
 built-ins/JSON/rawJSON/prop-desc.js  # [non-strict] runtime Test262Error: rawJSON should be an own property
 built-ins/JSON/rawJSON/returns-expected-object.js  # [non-strict] runtime TypeError: JSON.rawJSON is not a function
-built-ins/JSON/stringify/replacer-array-abrupt.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
-built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-built-ins/JSON/stringify/replacer-array-proxy-revoked.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-built-ins/JSON/stringify/replacer-array-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«"{\"a\":1,\"b\":2}"», «"{\"b\":2}"») to be true
-built-ins/JSON/stringify/value-array-abrupt.js  # [non-strict] runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
-built-ins/JSON/stringify/value-array-proxy.js  # [non-strict] runtime Test262Error: proxy for an array Expected SameValue(«"{}"», «"[0,1]"») to be true
 built-ins/JSON/stringify/value-number.js  # [non-strict] runtime Test262Error: top level: 5e-324 Expected SameValue(«"4.9e-324"», «"5e-324"») to be true
 
 # built-ins/Map
@@ -1348,8 +1294,6 @@ built-ins/Object/preventExtensions/throws-when-false.js  # [non-strict] runtime 
 built-ins/Object/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true
 built-ins/Object/prototype/setPrototypeOf-with-non-circular-values-__proto__.js  # [non-strict] runtime Test262Error: Object.setPrototypeOf(ObjProto, { __proto__: null }) throws a TypeError Expected a Ty...
 built-ins/Object/prototype/setPrototypeOf-with-non-circular-values.js  # [non-strict] runtime Test262Error: Object.setPrototypeOf(ObjProto, Object.create(null)) throws a TypeError Expected a Ty...
-built-ins/Object/prototype/toString/proxy-array.js  # [non-strict] runtime Test262Error: array proxy Expected SameValue(«"[object Object]"», «"[object Array]"») to be tru...
-built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js  # host exception EAccessViolation: Access violation
 built-ins/Object/prototype/toString/symbol-tag-array-builtin.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Object]"», «"[object Iterator]"») to be true
 built-ins/Object/prototype/toString/symbol-tag-map-builtin.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Object]"», «"[object Iterator]"») to be true
 built-ins/Object/prototype/toString/symbol-tag-set-builtin.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Object]"», «"[object Iterator]"») to be true
@@ -6849,18 +6793,8 @@ built-ins/TypedArrayConstructors/ctors/length-arg/proto-from-ctor-realm.js  # [n
 built-ins/TypedArrayConstructors/ctors/no-args/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true (Testing with...
 built-ins/TypedArrayConstructors/ctors/object-arg/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true (Testing with...
 built-ins/TypedArrayConstructors/ctors/typedarray-arg/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true (Testing with...
-built-ins/TypedArrayConstructors/internals/Set/BigInt/boolean-tobigint.js  # host exception EAccessViolation: Access violation
-built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js  # host exception EAccessViolation: Access violation
-built-ins/TypedArrayConstructors/internals/Set/BigInt/string-nan-tobigint.js  # host exception EAccessViolation: Access violation
-built-ins/TypedArrayConstructors/internals/Set/BigInt/string-tobigint.js  # host exception EAccessViolation: Access violation
-built-ins/TypedArrayConstructors/internals/Set/BigInt/symbol-tobigint.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Bi...
-built-ins/TypedArrayConstructors/internals/Set/BigInt/undefined-tobigint.js  # host exception EAccessViolation: Access violation
 
 # built-ins/WeakMap
-built-ins/WeakMap/iterator-close-after-set-failure.js  # [non-strict] runtime InternalError: Out of memory
-built-ins/WeakMap/iterator-item-first-entry-returns-abrupt.js  # host exception EOutOfMemory: Out of memory
-built-ins/WeakMap/iterator-item-second-entry-returns-abrupt.js  # host exception EOutOfMemory: Out of memory
-built-ins/WeakMap/iterator-items-are-not-object-close-iterator.js  # host exception EOutOfMemory: Out of memory
 built-ins/WeakMap/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object WeakMap]», «[object WeakMap]») to be true
 built-ins/WeakMap/prototype/getOrInsert/adds-object-element.js  # [non-strict] runtime TypeError: map.getOrInsert is not a function
 built-ins/WeakMap/prototype/getOrInsert/adds-symbol-element.js  # [non-strict] runtime TypeError: map.getOrInsert is not a function
@@ -6886,14 +6820,11 @@ built-ins/WeakMap/prototype/getOrInsertComputed/returns-value-if-key-is-not-pres
 built-ins/WeakMap/prototype/getOrInsertComputed/returns-value-if-key-is-not-present-symbol-key.js  # [non-strict] runtime TypeError: map.getOrInsertComputed is not a function
 built-ins/WeakMap/prototype/getOrInsertComputed/returns-value-if-key-is-present-object-key.js  # [non-strict] runtime TypeError: map.getOrInsertComputed is not a function
 built-ins/WeakMap/prototype/getOrInsertComputed/returns-value-if-key-is-present-symbol-key.js  # [non-strict] runtime TypeError: map.getOrInsertComputed is not a function
-built-ins/WeakMap/set-not-callable-throws.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 
 # built-ins/WeakRef
 built-ins/WeakRef/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: newTarget.prototype is undefined Expected SameValue(«[object WeakRef]», «[object W...
 
 # built-ins/WeakSet
-built-ins/WeakSet/add-not-callable-throws.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-built-ins/WeakSet/iterator-close-after-add-failure.js  # host exception EOutOfMemory: Out of memory
 built-ins/WeakSet/proto-from-ctor-realm.js  # [non-strict] runtime Test262Error: Expected SameValue(«[object WeakSet]», «[object WeakSet]») to be true
 
 # intl402/Array
@@ -8247,29 +8178,14 @@ language/arguments-object/10.6-13-a-3.js  # [non-strict] runtime TypeError: 'cal
 language/block-scope/syntax/function-declarations/in-statement-position-do-statement-while-expression.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/function-declarations/in-statement-position-for-statement.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/function-declarations/in-statement-position-while-expression-statement.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/function-declaration-attempt-to-redeclare-with-var-declaration-nested-in-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -8446,12 +8362,6 @@ language/eval-code/indirect/var-env-var-strict.js  # [non-strict] runtime Test26
 language/expressions/arrow-function/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/arrow-function/dflt-params-ref-later.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
 language/expressions/arrow-function/dflt-params-ref-self.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
-language/expressions/arrow-function/dstr/ary-ptrn-rest-init-ary.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/arrow-function/dstr/ary-ptrn-rest-init-id.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/arrow-function/dstr/ary-ptrn-rest-init-obj.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/arrow-function/dstr/dflt-ary-ptrn-rest-init-ary.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/arrow-function/dstr/dflt-ary-ptrn-rest-init-id.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/arrow-function/dstr/dflt-ary-ptrn-rest-init-obj.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/arrow-function/dstr/syntax-error-ident-ref-break-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/arrow-function/dstr/syntax-error-ident-ref-case-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/arrow-function/dstr/syntax-error-ident-ref-catch-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -8530,7 +8440,6 @@ language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close.js  # 
 language/expressions/assignment/dstr/array-elem-trlg-iter-rest-thrw-close-err.js  # [non-strict] runtime Test262Error: Expected SameValue(«11», «1») to be true
 language/expressions/assignment/dstr/array-elem-trlg-iter-rest-thrw-close.js  # [non-strict] runtime Test262Error: Expected SameValue(«11», «1») to be true
 language/expressions/assignment/dstr/array-rest-before-elision.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/assignment/dstr/array-rest-init.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/assignment/dstr/array-rest-iter-rtrn-close-err.js  # [non-strict] runtime TypeError: undefined is not a function
 language/expressions/assignment/dstr/array-rest-iter-rtrn-close-null.js  # [non-strict] runtime TypeError: undefined is not a function
 language/expressions/assignment/dstr/array-rest-iter-rtrn-close.js  # [non-strict] runtime Test262Error:
@@ -8706,33 +8615,6 @@ language/expressions/class/class-name-ident-static-escaped.js  # [non-strict] ex
 language/expressions/class/class-name-ident-static.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/class-name-ident-yield-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/class-name-ident-yield.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/after-same-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/after-same-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/after-same-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-async-gen-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-static-async-gen-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/expressions/class/elements/after-same-line-static-async-gen-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-async-gen-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-async-method-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-static-async-method-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/expressions/class/elements/after-same-line-static-async-method-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-async-method-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-static-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/after-same-line-static-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/after-same-line-static-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/after-same-line-static-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/after-same-line-static-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/arrow-body-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/arrow-body-private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/async-gen-private-method-static/yield-promise-reject-next-catch.js  # [non-strict] async test did not complete
 language/expressions/class/elements/async-gen-private-method-static/yield-promise-reject-next-yield-star-async-iterator.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly resolved.
 language/expressions/class/elements/async-gen-private-method-static/yield-promise-reject-next-yield-star-sync-iterator.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly resolved.
@@ -8751,96 +8633,7 @@ language/expressions/class/elements/async-gen-private-method/yield-star-async-re
 language/expressions/class/elements/async-gen-private-method/yield-star-async-throw.js  # [non-strict] async TypeError: Cannot read properties of undefined (reading 'name')
 language/expressions/class/elements/async-gen-private-method/yield-star-next-then-get-abrupt.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly fulfilled.
 language/expressions/class/elements/async-gen-private-method/yield-star-next-then-returns-abrupt.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly fulfilled.
-language/expressions/class/elements/comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/computed-name-toprimitive-symbol.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be 42; Symbol() value should be 42
-language/expressions/class/elements/computed-name-toprimitive.js  # [non-strict] runtime Test262Error: d descriptor value should be 42; d value should be 42
-language/expressions/class/elements/direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/equality-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/escaped-accessor-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [accessor, a] and expected [accessor, a, b] should have the same contents.
-language/expressions/class/elements/escaped-async-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [async, a] and expected [async, a, b] should have the same contents.
-language/expressions/class/elements/escaped-get-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [get, a] and expected [get, a, b] should have the same contents.
-language/expressions/class/elements/escaped-set-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [set, a] and expected [set, a, b] should have the same contents.
-language/expressions/class/elements/escaped-static-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [static, a] and expected [static, a, b] should have the same contents.
-language/expressions/class/elements/init-value-incremental.js  # [non-strict] runtime Test262Error: 1 descriptor value should be 3; 1 value should be 3
-language/expressions/class/elements/intercalated-static-non-static-computed-fields.js  # [non-strict] runtime Test262Error: 0 descriptor value should be 4; 0 value should be 4
-language/expressions/class/elements/literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/multiple-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/multiple-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/multiple-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/multiple-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/multiple-stacked-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/multiple-stacked-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/multiple-stacked-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/nested-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/nested-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-private-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/nested-private-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-private-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-private-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-static-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-static-literal-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-static-private-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-static-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/nested-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/new-no-sc-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/new-no-sc-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/new-no-sc-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/new-no-sc-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/new-sc-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/new-sc-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/new-sc-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/new-sc-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/new-sc-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/new-sc-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/new-sc-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/new-sc-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-common.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-dollar.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-u2118.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-underscore.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-ZWJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-accessor-name/inst-private-name-ZWNJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/expressions/class/elements/private-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/expressions/class/elements/private-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/private-setter-shadowed-by-method-on-nested-class.js  # [non-strict] runtime Test262Error: invalid [[Set]] operation in a private method Expected a TypeError to be thrown but n...
-language/expressions/class/elements/private-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/private-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/regular-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/regular-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/regular-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/regular-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-async-gen-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/same-line-async-gen-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/expressions/class/elements/same-line-async-gen-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-async-gen-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-async-method-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/same-line-async-method-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/expressions/class/elements/same-line-async-method-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-async-method-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/same-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/same-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/same-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/same-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/same-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/static-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/static-literal-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/static-private-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/static-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-class-body-ctor-duplicate.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-private-environment-on-class-heritage-chained-usage.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-private-environment-on-class-heritage-function-expression.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -8851,47 +8644,12 @@ language/expressions/class/elements/syntax/early-errors/grammar-privatemeth-dupl
 language/expressions/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-get-get.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-set-field.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-set-set.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/grammar-privatename-in-computed-property-missing.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-async-gen-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-async-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-gen-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-get-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/elements/syntax/early-errors/grammar-static-set-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-fn-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-fn-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-fn-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-fn-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-heritage-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-heritage-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-heritage-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-heritage-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/field-init-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-fn-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-fn-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-fn-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-fn-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-heritage-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-heritage-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-heritage-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-heritage-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-outter-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-outter-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-outter-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/syntax/early-errors/invalid-names/method-outter-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/class/elements/wrapped-in-sc-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/expressions/class/elements/wrapped-in-sc-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/expressions/class/elements/wrapped-in-sc-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/expressions/class/elements/wrapped-in-sc-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
 language/expressions/class/gen-method-param-dflt-yield.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/gen-method-static/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/class/gen-method-static/dflt-params-ref-later.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
@@ -8916,18 +8674,6 @@ language/expressions/class/static-init-await-binding.js  # [non-strict] expected
 language/expressions/coalesce/tco-pos-null.js  # [strict] runtime RangeError: Maximum call stack size exceeded
 language/expressions/coalesce/tco-pos-undefined.js  # [strict] runtime RangeError: Maximum call stack size exceeded
 language/expressions/comma/tco-final.js  # [strict] runtime RangeError: Maximum call stack size exceeded
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-add.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «3...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-bitand.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «0...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-bitor.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «1...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-bitxor.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «2...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-div.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «0...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-exp.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «1...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-lshift.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «9...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-mod.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «1...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-mult.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «6...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-rshift.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «3...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-srshift.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «3...
-language/expressions/compound-assignment/left-hand-side-private-reference-accessor-property-sub.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «1...
 language/expressions/compound-assignment/left-hand-side-private-reference-method-add.js  # [non-strict] runtime Test262Error: PutValue throws when storing the result in a method private reference Expected a Type...
 language/expressions/compound-assignment/left-hand-side-private-reference-method-bitand.js  # [non-strict] runtime Test262Error: PutValue throws when storing the result in a method private reference Expected a Type...
 language/expressions/compound-assignment/left-hand-side-private-reference-method-bitor.js  # [non-strict] runtime Test262Error: PutValue throws when storing the result in a method private reference Expected a Type...
@@ -9024,7 +8770,6 @@ language/expressions/dynamic-import/catch/nested-function-import-catch-eval-scri
 language/expressions/dynamic-import/catch/nested-if-import-catch-eval-script-code-target.js  # [module] async test did not complete
 language/expressions/dynamic-import/catch/nested-while-import-catch-eval-script-code-target.js  # [module] async test did not complete
 language/expressions/dynamic-import/catch/top-level-import-catch-eval-script-code-target.js  # [module] async test did not complete
-language/expressions/dynamic-import/escape-sequence-import.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/dynamic-import/for-await-resolution-and-error-agen-yield.js  # [non-strict] async Test262Error: Test262Error: a Expected SameValue(«undefined», «42») to be true
 language/expressions/equals/bigint-and-number-extremes.js  # [non-strict] runtime Test262Error: The result of (0xfffffffffffff7ffffffffffffffffffffffffffffffffffffffffffffffffffffff...
 language/expressions/exponentiation/applying-the-exp-operator_A10.js  # [non-strict] runtime Test262Error: (-0.5 ** -Infinity) !== +Infinity
@@ -9039,10 +8784,6 @@ language/expressions/function/arguments-with-arguments-lex.js  # [non-strict] ru
 language/expressions/function/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/function/dflt-params-ref-later.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
 language/expressions/function/dflt-params-ref-self.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
-language/expressions/function/early-errors/invalid-names-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/function/early-errors/invalid-names-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/function/early-errors/invalid-names-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/function/early-errors/invalid-names-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/function/eval-var-scope-syntax-err.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 language/expressions/function/name-arguments-strict-body.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/function/name-arguments-strict.js  # [strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9079,24 +8820,17 @@ language/expressions/generators/yield-as-function-expression-binding-identifier.
 language/expressions/greater-than-or-equal/bigint-and-number-extremes.js  # [non-strict] runtime Test262Error: The result of (0xfffffffffffff7ffffffffffffffffffffffffffffffffffffffffffffffffffffff...
 language/expressions/greater-than/bigint-and-number-extremes.js  # [non-strict] runtime Test262Error: The result of (Number.MAX_VALUE > 0xfffffffffffff7fffffffffffffffffffffffffffffffffff...
 language/expressions/import.meta/import-meta-is-an-ordinary-object.js  # [module] parse SyntaxError: Cannot use new with import (/home/xeon/Downloads/sources/test262/test/language/expressions/i...
-language/expressions/import.meta/syntax/escape-sequence-import.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/in/private-field-in-nested.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/in/private-field-in.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/in/private-field-invalid-identifier-complex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/expressions/in/private-field-invalid-identifier-simple.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/in/private-field-rhs-non-object.js  # [non-strict] runtime Test262Error: Expected SameValue(«null», «null») to be false
 language/expressions/less-than-or-equal/bigint-and-number-extremes.js  # [non-strict] runtime Test262Error: The result of (Number.MAX_VALUE <= 0xfffffffffffff7ffffffffffffffffffffffffffffffffff...
 language/expressions/less-than/bigint-and-number-extremes.js  # [non-strict] runtime Test262Error: The result of (0xfffffffffffff7ffffffffffffffffffffffffffffffffffffffffffffffffffffff...
 language/expressions/logical-and/tco-right.js  # [strict] runtime RangeError: Maximum call stack size exceeded
-language/expressions/logical-assignment/left-hand-side-private-reference-accessor-property-and.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «f...
-language/expressions/logical-assignment/left-hand-side-private-reference-accessor-property-nullish.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «1...
-language/expressions/logical-assignment/left-hand-side-private-reference-accessor-property-or.js  # [non-strict] runtime Test262Error: PutValue should call the setter with the result Expected SameValue(«undefined», «t...
 language/expressions/logical-assignment/left-hand-side-private-reference-method-and.js  # [non-strict] runtime Test262Error: PutValue throws when storing the result in a method private reference Expected a Type...
 language/expressions/logical-assignment/lgcl-and-assignment-operator-lhs-before-rhs.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a Test262Error
 language/expressions/logical-assignment/lgcl-nullish-assignment-operator-lhs-before-rhs.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a Test262Error
 language/expressions/logical-assignment/lgcl-or-assignment-operator-lhs-before-rhs.js  # [non-strict] runtime Test262Error: Expected a TypeError but got a Test262Error
 language/expressions/logical-or/tco-right.js  # [strict] runtime RangeError: Maximum call stack size exceeded
-language/expressions/new.target/escaped-new.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/object/cover-initialized-name.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/object/identifier-shorthand-implements-invalid-strict-mode.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/expressions/object/identifier-shorthand-interface-invalid-strict-mode.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9180,10 +8914,6 @@ language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-call-err.js  # [non
 language/expressions/yield/star-rhs-iter-thrw-violation-rtrn-get-err.js  # [non-strict] runtime Test262Error: Expected SameValue(«TypeError: The iterator does not provide a 'throw' method», «T...
 
 # language/global-code
-language/global-code/invalid-private-names-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/global-code/invalid-private-names-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/global-code/invalid-private-names-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/global-code/invalid-private-names-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/global-code/script-decl-func-err-non-configurable.js  # [non-strict] runtime Test262Error: writable, non-enumerable data property Expected a TypeError to be thrown but no excep...
 language/global-code/script-decl-func-err-non-extensible.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 language/global-code/script-decl-lex-lex.js  # [non-strict] runtime Test262Error: No bindings created for script containing `let` redeclaration Expected a ReferenceErr...
@@ -9258,78 +8988,6 @@ language/identifiers/start-unicode-17.0.0-class-escaped.js  # [non-strict] parse
 language/identifiers/start-unicode-17.0.0-class.js  # [non-strict] parse SyntaxError: Invalid or unexpected token (line 16)
 language/identifiers/start-unicode-17.0.0-escaped.js  # [non-strict] parse SyntaxError: Invalid identifier escape (line 16)
 language/identifiers/start-unicode-17.0.0.js  # [non-strict] parse SyntaxError: Invalid or unexpected token (line 14)
-language/identifiers/val-break-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-break-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-case-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-case-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-catch-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-catch-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-class-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-class-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-const-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-const-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-continue-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-continue-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-debugger-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-debugger-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-default-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-default-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-delete-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-delete-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-do-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-do-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-else-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-else-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-enum-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-enum-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-export-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-export-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-extends-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-extends-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-false-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-false-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-finally-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-finally-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-for-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-for-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-function-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-function-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-if-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-if-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-import-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-import-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-in-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-in-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-instanceof-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-instanceof-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-new-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-new-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-null-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-null-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-return-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-return-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-super-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-super-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-switch-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-switch-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-this-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-this-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-throw-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-throw-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-true-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-true-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-try-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-try-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-typeof-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-typeof-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-var-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-var-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-void-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-void-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-while-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-while-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-with-via-escape-hex.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/identifiers/val-with-via-escape-hex4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/identifiers/vertical-tilde-continue-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/identifiers/vertical-tilde-continue.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/identifiers/vertical-tilde-start-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9342,9 +9000,6 @@ language/literals/bigint/numeric-separators/numeric-separator-literal-lol-0_7-er
 language/literals/bigint/numeric-separators/numeric-separator-literal-nonoctal-0_8-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/literals/bigint/numeric-separators/numeric-separator-literal-nonoctal-0_9-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/literals/bigint/numeric-separators/numeric-separator-literal-nzd-nsl-dds-leading-zero-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/literals/boolean/false-with-unicode.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/literals/boolean/true-with-unicode.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/literals/null/null-with-unicode.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/literals/numeric/numeric-separators/numeric-separator-literal-lol-0_0-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/literals/numeric/numeric-separators/numeric-separator-literal-lol-0_1-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/literals/numeric/numeric-separators/numeric-separator-literal-lol-0_7-err.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9414,30 +9069,9 @@ language/module-code/import-attributes/import-attribute-newlines.js  # [module] 
 language/module-code/import-attributes/import-attribute-trlng-comma.js  # [module] expected SyntaxError at resolution, got parse SyntaxError: Unsupported import attribute 'test262' (/home/xeon/D...
 language/module-code/import-attributes/import-attribute-value-string-double.js  # [module] expected SyntaxError at resolution, got parse SyntaxError: Unsupported import attribute 'test262' (/home/xeon/D...
 language/module-code/import-attributes/import-attribute-value-string-single.js  # [module] expected SyntaxError at resolution, got parse SyntaxError: Unsupported import attribute 'test262' (/home/xeon/D...
-language/module-code/invalid-private-names-call-expression-bad-reference.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/invalid-private-names-call-expression-this.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/invalid-private-names-member-expression-bad-reference.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/invalid-private-names-member-expression-this.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/module-code/parse-err-hoist-lex-fun.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/module-code/parse-err-hoist-lex-gen.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/private-identifiers-not-empty.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-1.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-2.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-3.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-4.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-5.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-6.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-7.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/module-code/privatename-not-valid-earlyerr-module-8.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/module-code/top-level-await/rejection-order.js  # [module] async test did not complete
-
-# language/reserved-words
-language/reserved-words/ident-reference-false-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/reserved-words/ident-reference-null-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/reserved-words/ident-reference-true-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/reserved-words/label-ident-false-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/reserved-words/label-ident-null-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/reserved-words/label-ident-true-escaped.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 
 # language/statements
 language/statements/async-function/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9532,10 +9166,6 @@ language/statements/await-using/throws-if-initializer-Symbol.dispose-property-is
 language/statements/await-using/throws-if-initializer-Symbol.dispose-property-is-undefined.js  # [non-strict] parse SyntaxError: Unexpected identifier 'x' (line 76)
 language/statements/await-using/throws-if-initializer-Symbol.dispose-property-not-callable.js  # [non-strict] parse SyntaxError: Unexpected identifier 'x' (line 80)
 language/statements/await-using/throws-suppressederror-if-multiple-errors-during-disposal.js  # [non-strict] parse SyntaxError: Unexpected identifier '_1' (line 46)
-language/statements/block/early-errors/invalid-names-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/block/early-errors/invalid-names-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/block/early-errors/invalid-names-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/block/early-errors/invalid-names-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/block/tco-stmt-list.js  # [strict] runtime RangeError: Maximum call stack size exceeded
 language/statements/block/tco-stmt.js  # [strict] runtime RangeError: Maximum call stack size exceeded
 language/statements/class/async-gen-method-static/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9576,33 +9206,6 @@ language/statements/class/class-name-ident-yield-escaped.js  # [non-strict] expe
 language/statements/class/class-name-ident-yield.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/definition/early-errors-class-async-method-duplicate-parameters.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/definition/early-errors-class-method-duplicate-parameters.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/after-same-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/after-same-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/after-same-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-async-gen-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-static-async-gen-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/statements/class/elements/after-same-line-static-async-gen-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-async-gen-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-async-method-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-static-async-method-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/statements/class/elements/after-same-line-static-async-method-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-async-method-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-static-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/after-same-line-static-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/after-same-line-static-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/after-same-line-static-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/after-same-line-static-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/arrow-body-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/arrow-body-private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/async-gen-private-method-static/yield-promise-reject-next-catch.js  # [non-strict] async test did not complete
 language/statements/class/elements/async-gen-private-method-static/yield-promise-reject-next-yield-star-async-iterator.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly resolved.
 language/statements/class/elements/async-gen-private-method-static/yield-promise-reject-next-yield-star-sync-iterator.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly resolved.
@@ -9621,126 +9224,18 @@ language/statements/class/elements/async-gen-private-method/yield-star-async-ret
 language/statements/class/elements/async-gen-private-method/yield-star-async-throw.js  # [non-strict] async TypeError: Cannot read properties of undefined (reading 'name')
 language/statements/class/elements/async-gen-private-method/yield-star-next-then-get-abrupt.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly fulfilled.
 language/statements/class/elements/async-gen-private-method/yield-star-next-then-returns-abrupt.js  # [non-strict] async Test262Error: Test262Error: Promise incorrectly fulfilled.
-language/statements/class/elements/comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/computed-name-toprimitive-symbol.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be 42; Symbol() value should be 42
-language/statements/class/elements/computed-name-toprimitive.js  # [non-strict] runtime Test262Error: d descriptor value should be 42; d value should be 42
-language/statements/class/elements/direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/equality-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/escaped-accessor-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [accessor, a] and expected [accessor, a, b] should have the same contents.
-language/statements/class/elements/escaped-async-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [async, a] and expected [async, a, b] should have the same contents.
-language/statements/class/elements/escaped-get-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [get, a] and expected [get, a, b] should have the same contents.
-language/statements/class/elements/escaped-set-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [set, a] and expected [set, a, b] should have the same contents.
-language/statements/class/elements/escaped-static-field-asi-before-computed-field.js  # [non-strict] runtime Test262Error: Actual [static, a] and expected [static, a, b] should have the same contents.
-language/statements/class/elements/init-value-incremental.js  # [non-strict] runtime Test262Error: 1 descriptor value should be 3; 1 value should be 3
-language/statements/class/elements/intercalated-static-non-static-computed-fields.js  # [non-strict] runtime Test262Error: 0 descriptor value should be 4; 0 value should be 4
-language/statements/class/elements/literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/multiple-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/multiple-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/multiple-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/multiple-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/multiple-stacked-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/multiple-stacked-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/multiple-stacked-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/multiple-stacked-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/nested-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/nested-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-private-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/nested-private-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-private-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-private-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-static-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-static-literal-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-static-private-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-static-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/nested-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/new-no-sc-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/new-no-sc-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/new-no-sc-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/new-no-sc-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/new-sc-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/new-sc-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/new-sc-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/new-sc-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/new-sc-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/new-sc-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/new-sc-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/new-sc-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-common.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-dollar.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-u2118.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-underscore.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-ZWJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-accessor-name/inst-private-name-ZWNJ.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"set string"») to be true
-language/statements/class/elements/private-arrow-fnc-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/private-direct-eval-err-contains-arguments.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/private-getter-is-not-clobbered-by-computed-property.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
-language/statements/class/elements/private-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/private-method-double-initialisation-get-and-set.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 language/statements/class/elements/private-method-double-initialisation-get.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 language/statements/class/elements/private-method-double-initialisation-set.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-language/statements/class/elements/private-method-is-not-clobbered-by-computed-property.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 language/statements/class/elements/private-method-not-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-language/statements/class/elements/private-setter-is-not-clobbered-by-computed-property.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js  # [non-strict] runtime Test262Error: invalid [[Set]] operation in a private method Expected a TypeError to be thrown but n...
 language/statements/class/elements/private-static-method-not-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-language/statements/class/elements/private-ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/private-typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/privatefield-on-proxy.js  # [non-strict] runtime TypeError: Cannot read private member f from an object whose class did not declare it
 language/statements/class/elements/privatefieldset-evaluation-order-1.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
 language/statements/class/elements/privategetter-on-proxy.js  # [non-strict] runtime TypeError: Cannot read private member f from an object whose class did not declare it
 language/statements/class/elements/privatemethods-on-proxy.js  # [non-strict] runtime TypeError: Cannot read private member f from an object whose class did not declare it
-language/statements/class/elements/privatename-not-valid-earlyerr-script-1.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-2.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-3.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-4.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-5.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-6.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-7.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-earlyerr-script-8.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/privatename-not-valid-eval-earlyerr-8.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
-language/statements/class/elements/regular-definitions-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/regular-definitions-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/regular-definitions-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/regular-definitions-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-async-gen-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/same-line-async-gen-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/statements/class/elements/same-line-async-gen-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-async-gen-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-async-method-computed-names.js  # [non-strict] async Test262Error: Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/same-line-async-method-computed-symbol-names.js  # [non-strict] async Test262Error: Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be u...
-language/statements/class/elements/same-line-async-method-rs-private-setter-alt.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-async-method-rs-private-setter.js  # [non-strict] async Test262Error: Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-gen-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/same-line-gen-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/same-line-gen-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-gen-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-method-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/same-line-method-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/same-line-method-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/same-line-method-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
 language/statements/class/elements/set-access-of-private-method.js  # [non-strict] runtime Test262Error: set operation on private method should throw TypeError Expected a TypeError to be thr...
 language/statements/class/elements/set-access-of-shadowed-private-method.js  # [non-strict] runtime Test262Error: subclass private method should shadow super class private accessor Expected a TypeErr...
-language/statements/class/elements/static-comp-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/static-literal-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/static-private-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/static-string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/string-literal-name-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-class-body-ctor-duplicate.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-private-environment-on-class-heritage-chained-usage.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-private-environment-on-class-heritage-function-expression.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -9751,49 +9246,14 @@ language/statements/class/elements/syntax/early-errors/grammar-privatemeth-dupli
 language/statements/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-get-get.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-set-field.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-set-set.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/grammar-privatename-in-computed-property-missing.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-async-gen-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-async-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-gen-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-get-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/early-errors/grammar-static-set-meth-prototype.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-fn-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-fn-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-fn-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-fn-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/field-init-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/fields-init-heritage-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/fields-init-heritage-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/fields-init-heritage-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/fields-init-heritage-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-fn-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-fn-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-fn-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-fn-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-heritage-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-heritage-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-heritage-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-heritage-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-outter-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-outter-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-outter-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/syntax/early-errors/invalid-names/method-outter-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/elements/syntax/valid/grammar-field-named-get-followed-by-generator-asi.js  # [non-strict] parse SyntaxError: Unexpected token '*' (line 40)
 language/statements/class/elements/syntax/valid/grammar-field-named-set-followed-by-generator-asi.js  # [non-strict] parse SyntaxError: Unexpected token '*' (line 40)
-language/statements/class/elements/ternary-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/typeof-init-err-contains-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/elements/wrapped-in-sc-computed-names.js  # [non-strict] runtime Test262Error: b descriptor value should be 42; b value should be 42
-language/statements/class/elements/wrapped-in-sc-computed-symbol-names.js  # [non-strict] runtime Test262Error: Symbol() descriptor value should be undefined; Symbol() value should be undefined
-language/statements/class/elements/wrapped-in-sc-rs-private-setter-alt.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
-language/statements/class/elements/wrapped-in-sc-rs-private-setter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «1») to be true
 language/statements/class/gen-method-param-dflt-yield.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/gen-method-static/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/gen-method-static/dflt-params-ref-later.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
@@ -9819,7 +9279,6 @@ language/statements/class/scope-static-meth-paramsbody-var-open.js  # [non-stric
 language/statements/class/scope-static-setter-paramsbody-var-open.js  # [non-strict] runtime Test262Error: Expected SameValue(«"inside"», «"outside"») to be true
 language/statements/class/static-gen-method-param-dflt-yield.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/static-init-await-binding-invalid.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/class/static-init-invalid-arguments.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/static-init-invalid-label-dup.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/static-init-invalid-return.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/class/static-init-scope-var-close.js  # [non-strict] runtime Test262Error: Expected SameValue(«"first block"», «"outer scope"») to be true
@@ -9853,7 +9312,6 @@ language/statements/for-in/decl-async-gen.js  # [non-strict] expected SyntaxErro
 language/statements/for-in/decl-fun.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-in/decl-gen.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-in/dstr/array-rest-before-elision.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/for-in/dstr/array-rest-init.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-in/dstr/obj-rest-before-comma-invalid.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-in/dstr/obj-rest-not-last-element-invalid.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-in/head-const-bound-names-fordecl-tdz.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
@@ -9886,7 +9344,6 @@ language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js  # [non-
 language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js  # [non-strict] runtime Test262Error: Expected SameValue(«11», «1») to be true
 language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js  # [non-strict] runtime Test262Error: Expected SameValue(«11», «1») to be true
 language/statements/for-of/dstr/array-rest-before-elision.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/for-of/dstr/array-rest-init.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js  # [non-strict] runtime TypeError: undefined is not a function
 language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js  # [non-strict] runtime TypeError: undefined is not a function
 language/statements/for-of/dstr/array-rest-iter-rtrn-close.js  # [non-strict] runtime Test262Error:
@@ -9939,10 +9396,6 @@ language/statements/function/arguments-with-arguments-lex.js  # [non-strict] run
 language/statements/function/dflt-params-duplicates.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/function/dflt-params-ref-later.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
 language/statements/function/dflt-params-ref-self.js  # [non-strict] runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
-language/statements/function/early-errors/invalid-names-call-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/function/early-errors/invalid-names-call-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/function/early-errors/invalid-names-member-expression-bad-reference.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/function/early-errors/invalid-names-member-expression-this.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/function/eval-var-scope-syntax-err.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 language/statements/function/name-arguments-strict-body.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/function/name-eval-strict-body.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -10005,24 +9458,9 @@ language/statements/switch/cptn-dflt-final.js  # [non-strict] runtime Test262Err
 language/statements/switch/cptn-no-dflt-match-abrupt-empty.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «undefined») to be true
 language/statements/switch/cptn-no-dflt-match-final.js  # [non-strict] runtime Test262Error: empty StatementList (lone case) Expected SameValue(«1», «undefined») to be true
 language/statements/switch/cptn-no-dflt-no-match.js  # [non-strict] runtime Test262Error: empty StatementList Expected SameValue(«1», «undefined») to be true
-language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/function-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/function-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/function-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/function-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
-language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-var.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/var-name-redeclaration-attempt-with-async-function.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 language/statements/switch/syntax/redeclaration/var-name-redeclaration-attempt-with-async-generator.js  # [non-strict] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
@@ -10190,11 +9628,9 @@ staging/explicit-resource-management/using-with-null-or-undefined.js  # [non-str
 staging/sm/Array/change-array-by-copy-errors-from-correct-realm.js  # [non-strict] runtime Test262Error: toSpliced - array too long Expected a TypeError but got a Error
 staging/sm/Array/from_errors.js  # [non-strict] runtime Test262Error: Expected SameValue(«"lCl0"», «"lC0"») to be true
 staging/sm/Array/from_proxy.js  # [non-strict] runtime Test262Error: Expected ["get", Symbol(Symbol.iterator) as 2, "get", ref 2, "get", "length", "get", ...
-staging/sm/Array/isArray.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 staging/sm/Array/length-truncate-nonconfigurable-sparse.js  # [non-strict] runtime Test262Error: Expected SameValue(«11», «10») to be true
 staging/sm/Array/length-truncate-nonconfigurable.js  # [non-strict] runtime Test262Error: Expected SameValue(«true», «false») to be true
 staging/sm/Array/set-with-indexed-property-on-prototype-chain.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
-staging/sm/Array/species.js  # [non-strict] runtime Test262Error: Expected SameValue(«function Array() { [native code] }», «function FakeArray(n) {
 staging/sm/Array/to-length.js  # host exception EOutOfMemory: Out of memory
 staging/sm/Array/toString-01.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Array]"», «"[object Object]"») to be true
 staging/sm/Array/unscopables.js  # [non-strict] runtime Test262Error: values should be an own property
@@ -10234,7 +9670,6 @@ staging/sm/eval/exhaustive-global-strictcaller-indirect-strictcode.js  # [strict
 staging/sm/eval/redeclared-arguments-in-param-expression-eval.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/expressions/destructuring-pattern-parenthesized.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/expressions/exponentiation-unparenthesised-unary.js  # [non-strict] runtime Test262Error: AsyncFunction:await a ** 0 Expected a SyntaxError to be thrown but no exception was t...
-staging/sm/expressions/nullish-coalescing.js  # [non-strict] runtime Error: expected undefined but got number
 staging/sm/expressions/optional-chain.js  # [non-strict] runtime TypeError: Cannot read properties of undefined (reading 'c')
 staging/sm/expressions/short-circuit-compound-assignment-anon-fns.js  # [non-strict] runtime Test262Error: Expected SameValue(«"a"», «""») to be true
 staging/sm/expressions/short-circuit-compound-assignment-const.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
@@ -10255,8 +9690,6 @@ staging/sm/Function/constructor-binding.js  # [non-strict] runtime Test262Error:
 staging/sm/Function/function-bind.js  # [non-strict] runtime Test262Error: Expected SameValue(«1», «0») to be true
 staging/sm/Function/function-caller-restrictions.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
 staging/sm/Function/function-name-assignment.js  # [non-strict] runtime Test262Error: Expected SameValue(«"inParen"», «""») to be true
-staging/sm/Function/function-name-computed-01.js  # [non-strict] runtime TypeError: Cannot read properties of undefined (reading 'name')
-staging/sm/Function/function-name-computed-02.js  # [non-strict] runtime TypeError: Cannot read properties of undefined (reading 'name')
 staging/sm/Function/function-name-for.js  # [non-strict] runtime TypeError: Cannot read properties of undefined (reading 'name')
 staging/sm/Function/function-name-method.js  # [non-strict] runtime Test262Error: Expected SameValue(«""», «"5"») to be true
 staging/sm/Function/function-toString-builtin-name.js  # [non-strict] runtime Test262Error: Incorrect match for undefined Expected SameValue(«"bound"», «undefined») to be tr...
@@ -10267,7 +9700,6 @@ staging/sm/Function/rest-has-duplicated.js  # [non-strict] runtime Test262Error:
 staging/sm/Function/throw-type-error.js  # [non-strict] runtime Test262Error: length descriptor should not be configurable
 staging/sm/generators/syntax.js  # [non-strict] parse SyntaxError: Unexpected identifier 'yield' (line 126)
 staging/sm/generators/yield-iterator-close.js  # [non-strict] runtime Test262Error: Assertion failed: expected exception, no exception thrown
-staging/sm/generators/yield-star-throw-htmldda.js  # [non-strict] runtime Test262Error: Expected SameValue(«true», «false») to be true
 staging/sm/global/adding-global-var-nonextensible-error.js  # [non-strict] runtime Test262Error: expected TypeError, got: Error: no error thrown Expected SameValue(«false», «true...
 staging/sm/Iterator/from/modify-return.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «"old return"») to be true
 staging/sm/Iterator/from/proxy-not-wrapped.js  # [non-strict] runtime Test262Error: Expected SameValue(«"get: Symbol(Symbol.iterator)\nget: Symbol(Symbol.iterator)\nget...
@@ -10290,7 +9722,6 @@ staging/sm/lexical-environment/block-scoped-functions-annex-b-notapplicable.js  
 staging/sm/lexical-environment/block-scoped-functions-annex-b-parameter.js  # [non-strict] runtime Test262Error: Expected SameValue(«function f() {  }», «123») to be true
 staging/sm/lexical-environment/eval-has-lexical-environment.js  # [non-strict] runtime Test262Error: Expected SameValue(«"number"», «"undefined"») to be true
 staging/sm/lexical-environment/for-loop.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
-staging/sm/Map/constructor-iterator-close.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 staging/sm/Math/acosh-approx.js  # [non-strict] runtime Error: got 0.00001414213620867583, expected a number near 0.000014142136208675862 (relative error: ...
 staging/sm/Math/asinh-approx.js  # [non-strict] runtime Error: got 1.6504814008541903e-12, expected a number near 1.6504814008555524e-12 (relative error: 6...
 staging/sm/Math/cbrt-approx.js  # [non-strict] runtime Error: got 1.0000000000000128e-100, expected a number near 1e-100 (relative error: 101)
@@ -10300,7 +9731,6 @@ staging/sm/Math/sinh-approx.js  # [non-strict] runtime Error: got 0, expected a 
 staging/sm/Math/tanh-approx.js  # [non-strict] runtime Error: got 1.6504814008582765e-12, expected a number near 1.6504814008555524e-12 (relative error: 1...
 staging/sm/misc/function-definition-eval.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 staging/sm/misc/future-reserved-words.js  # [non-strict] runtime Test262Error: implements: strict destructuring shorthand Expected a SyntaxError to be thrown but no...
-staging/sm/misc/unicode-escaped-keyword.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/module/await-restricted-nested.js  # [module] expected SyntaxError at parse, got runtime Test262: This statement should not be evaluated.
 staging/sm/Number/toExponential-values.js  # [non-strict] runtime Test262Error: Expected SameValue(«"1.79769313486885567767155760719658823500378842240410e+308"», ...
 staging/sm/Number/toPrecision-values.js  # [non-strict] runtime Test262Error: Expected SameValue(«"1.7976931349146354643555411963534009041647072842599e+308"», «...
@@ -10309,23 +9739,18 @@ staging/sm/object/accessor-name.js  # [non-strict] runtime Test262Error: Expecte
 staging/sm/object/defineGetter-defineSetter.js  # [non-strict] runtime Test262Error: Expected SameValue(«undefined», «function __defineSetter__() { [native code] }») ...
 staging/sm/object/property-descriptor-order.js  # [non-strict] runtime Test262Error: Actual [get, set, enumerable, configurable] and expected [set, configurable] should h...
 staging/sm/PrivateName/constructor-args.js  # [non-strict] runtime TypeError: Cannot read private member x from an object whose class did not declare it
-staging/sm/PrivateName/error-outside-class.js  # [non-strict] runtime Test262Error: Expected a SyntaxError but got a ReferenceError
 staging/sm/PrivateName/illegal-in-class-context.js  # [non-strict] runtime Test262Error: invalid use of private name due to operator precedence Expected a SyntaxError to be t...
-staging/sm/PrivateName/lexical-presence.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/PrivateName/parse-utf8-non-ascii-identifier.js  # [non-strict] parse SyntaxError: Invalid or unexpected token (line 15)
 staging/sm/PrivateName/proxy-init-set.js  # [non-strict] runtime TypeError: Cannot read private member field from an object whose class did not declare it
 staging/sm/Proxy/define-writable-as-non-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Proxy/delete-non-extensible.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Proxy/getPrototypeOf.js  # [non-strict] runtime Test262Error: Assertion failed: expected exception, no exception thrown
-staging/sm/Proxy/json-stringify-replacer-array-revocable-proxy.js  # [non-strict] runtime Test262Error: Expected SameValue(«"{\"a\":0}"», «"{}"») to be true
 staging/sm/Proxy/ownkeys-trap-duplicates.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Proxy/report-writable-as-non-writable.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-staging/sm/Proxy/revoke-as-side-effect.js  # host exception EAccessViolation: Access violation
-staging/sm/Proxy/revoked-get-function-realm-typeerror.js  # host exception EAccessViolation: Access violation
+staging/sm/Proxy/revoked-get-function-realm-typeerror.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Proxy/setPrototypeOf.js  # [non-strict] runtime Test262Error: Assertion failed: expected exception, no exception thrown
 staging/sm/Reflect/apply.js  # [non-strict] runtime Test262Error: Expected SameValue(«Symbol(moon)», «Symbol(moon)») to be true
 staging/sm/Reflect/argumentsList.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-staging/sm/Reflect/defineProperty.js  # [non-strict] runtime Test262Error: Expected SameValue(«true», «false») to be true
 staging/sm/Reflect/isExtensible.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Reflect/ownKeys.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Reflect/preventExtensions.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
@@ -10337,7 +9762,6 @@ staging/sm/RegExp/escape.js  # [non-strict] runtime Test262Error: Expected SameV
 staging/sm/RegExp/flags-param-handling.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/RegExp/ignoreCase-non-latin1-to-latin1.js  # [non-strict] runtime Test262Error: Expected SameValue(«false», «true») to be true
 staging/sm/RegExp/lastIndex-search.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
-staging/sm/RegExp/match-trace.js  # [non-strict] runtime Test262Error: Expected SameValue(«"{\"0\":\"abc\"}"», «"[\"abc\"]"») to be true
 staging/sm/RegExp/search-trace.js  # [non-strict] runtime Test262Error: Expected SameValue(«"get:lastIndex,set:lastIndex,get:exec,call:exec,set:lastIndex,ge...
 staging/sm/RegExp/source.js  # [non-strict] runtime Test262Error: Expected SameValue(«"â¨â©"», «"\\u2028\\u2029"») to be true
 staging/sm/RegExp/split-deleted-flags.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
@@ -10366,7 +9790,7 @@ staging/sm/regress/regress-586482-2.js  # [non-strict] runtime TypeError: 'calle
 staging/sm/regress/regress-586482-3.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
 staging/sm/regress/regress-586482-4.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
 staging/sm/regress/regress-586482-5.js  # [non-strict] runtime TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functi...
-staging/sm/regress/regress-610026.js  # crashed (exit status 217)
+staging/sm/regress/regress-610026.js  # host exception EOutOfMemory: Out of memory
 staging/sm/regress/regress-619003-1.js  # [non-strict] runtime Test262Error: duplicate argument names not allowed in this context Expected a SyntaxError to be thr...
 staging/sm/Set/difference.js  # [non-strict] runtime Test262Error: Actual [[[get]], size, valueOf(), [[get]], has, [[get]], keys, keys(), [[get]], next,...
 staging/sm/Set/intersection.js  # [non-strict] runtime Error: Unexpected call to |has| method
@@ -10388,9 +9812,7 @@ staging/sm/String/replace-math.js  # host exception EOutOfMemory: Out of memory
 staging/sm/String/string-code-point-upper-lower-mapping.js  # [non-strict] runtime Test262Error: Expected SameValue(«66967», «66928») to be true
 staging/sm/String/string-upper-lower-mapping.js  # [non-strict] runtime Test262Error: Expected SameValue(«"i"», «"i̇"») to be true
 staging/sm/Symbol/realms.js  # [non-strict] runtime Test262Error: Expected SameValue(«Symbol(ponies)», «Symbol(ponies)») to be true
-staging/sm/Symbol/toStringTag.js  # [non-strict] runtime Test262Error: Expected SameValue(«"[object Object]"», «"[object Array]"») to be true
 staging/sm/syntax/declaration-forbidden-in-label.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
-staging/sm/syntax/keyword-unescaped-requirement.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/syntax/let-as-label.js  # [non-strict] runtime Test262Error: Expected a SyntaxError to be thrown but no exception was thrown at all
 staging/sm/TypedArray/slice-memcpy.js  # [non-strict] runtime Test262Error: Actual [1, 2, 1, 2, 3, 4] and expected [1, 2, 1, 2, 1, 2] should have the same conten...
 
