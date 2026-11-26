@@ -4,6 +4,7 @@
 
 dictionary GetHTMLOptions {
   boolean serializableShadowRoots = false;
+  sequence<ShadowRoot> shadowRoots = [];
 };
 
 enum InsertPosition { "beforebegin", "afterbegin", "beforeend", "afterend" };

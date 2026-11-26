@@ -1693,20 +1693,6 @@ end;
 { HTMLScriptElement, HTMLTemplateElement, HTMLTitleElement,
   HTMLDialogElement }
 
-function ChildTextContent(Element: TElement): string;
-var
-  Child: TNode;
-begin
-  Result := '';
-  Child := Element.FirstChild;
-  while Child <> nil do
-  begin
-    if Child.NodeType in [NodeTypeText, NodeTypeCDataSection] then
-      Result := Result + TCharacterData(Child).Data;
-    Child := Child.NextSibling;
-  end;
-end;
-
 function HTMLScriptElement_get_async(var Call: TBindingCall): TJsValue;
 begin
   Result := JsBoolean(((ThisElement(Call).ElementState and ElementStateForceAsync) <> 0) or
@@ -1725,7 +1711,7 @@ end;
 
 function HTMLScriptElement_get_text(var Call: TBindingCall): TJsValue;
 begin
-  Result := Text(Call, ChildTextContent(ThisElement(Call)));
+  Result := Text(Call, ThisElement(Call).ChildTextContent);
 end;
 
 function HTMLScriptElement_set_text(var Call: TBindingCall): TJsValue;
@@ -1746,7 +1732,7 @@ end;
 
 function HTMLTitleElement_get_text(var Call: TBindingCall): TJsValue;
 begin
-  Result := Text(Call, ChildTextContent(ThisElement(Call)));
+  Result := Text(Call, ThisElement(Call).ChildTextContent);
 end;
 
 function HTMLTitleElement_set_text(var Call: TBindingCall): TJsValue;

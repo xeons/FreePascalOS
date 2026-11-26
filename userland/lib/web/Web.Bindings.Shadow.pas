@@ -34,12 +34,15 @@ interface
 uses
   Js.Values,
   Web.Dom,
+  Web.Html.Serializer,
   Web.Bindings.Types;
 
 {$I Web.Bindings.Shadow.Members.inc}
 
 { The DOM Standard's "retarget A against B" for nodes. }
 function RetargetNode(A, B: TNode): TNode;
+{ The shadowRoots member of a GetHTMLOptions (the ShadowRoot objects). }
+function OptionShadowRoots(const Options: TBindingValue): TShadowRootList;
 
 implementation
 
@@ -49,7 +52,6 @@ uses
   Web.Namespaces,
   Web.Dom.Exceptions,
   Web.Html.Parser,
-  Web.Html.Serializer,
   Web.Bindings.Context,
   Web.Bindings.CustomElementRegistry;
 
@@ -159,12 +161,28 @@ begin
   Result := JsUndefined;
 end;
 
+function OptionShadowRoots(const Options: TBindingValue): TShadowRootList;
+var
+  Index: Integer;
+  List: PBindingValue;
+begin
+  Result := nil;
+  List := @Options.Items[GetHTMLOptions_shadowRoots];
+  for Index := 0 to High(List^.Items) do
+    if List^.Items[Index].Native is TShadowRoot then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := TShadowRoot(List^.Items[Index].Native);
+    end;
+end;
+
 function ShadowRoot_getHTML(var Call: TBindingCall): TJsValue;
 var
   Serializable: Boolean;
 begin
   Serializable := Call.Arguments[0].Items[GetHTMLOptions_serializableShadowRoots].Flag;
-  Result := Context(Call).TextValue(SerializeChildrenWithShadowRoots(ThisShadowRoot(Call), Serializable));
+  Result := Context(Call).TextValue(SerializeChildrenWithShadowRoots(ThisShadowRoot(Call), Serializable,
+    OptionShadowRoots(Call.Arguments[0])));
 end;
 
 { Element }

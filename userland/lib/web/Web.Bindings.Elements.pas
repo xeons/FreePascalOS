@@ -45,7 +45,8 @@ uses
   Web.Html.Markup,
   Web.Html.Serializer,
   Web.Bindings.Context,
-  Web.Bindings.Selectors;
+  Web.Bindings.Selectors,
+  Web.Bindings.Shadow;
 
 function ThisElement(const Call: TBindingCall): TElement; inline;
 begin
@@ -313,7 +314,7 @@ end;
 function Element_getHTML(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).TextValue(SerializeChildrenWithShadowRoots(ThisElement(Call),
-    Call.Arguments[0].Items[GetHTMLOptions_serializableShadowRoots].Flag));
+    Call.Arguments[0].Items[GetHTMLOptions_serializableShadowRoots].Flag, OptionShadowRoots(Call.Arguments[0])));
 end;
 
 end.

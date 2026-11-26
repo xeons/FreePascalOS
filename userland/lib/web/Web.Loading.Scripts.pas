@@ -398,7 +398,7 @@ begin
   if ParserInserted then
     Element.ElementState := Element.ElementState and not ElementStateParserInserted;
   HasSrc := Element.HasAttributeAtom(AtomSrc);
-  if not HasSrc and (Element.TextContent = '') then
+  if not HasSrc and (Element.ChildTextContent = '') then
     Exit;
   if not Element.IsConnected then
     Exit;
@@ -411,7 +411,7 @@ begin
     Exit;
   { CSP: an inline script runs only if the document's policies allow
     it (by 'unsafe-inline', its nonce or its hash). }
-  if not HasSrc and CspBlocksInline(FContext.Client, CspInlineScript, Element.TextContent,
+  if not HasSrc and CspBlocksInline(FContext.Client, CspInlineScript, Element.ChildTextContent,
     Element.AttributeValueOf(AtomNonce), Element, SerializeUrl(FContext.DocumentUrl, True)) then
     Exit;
   Script := TPendingScript.Create;
@@ -437,7 +437,7 @@ begin
   else
   begin
     Script.Url := FContext.DocumentUrl;
-    Script.Source := Element.TextContent;
+    Script.Source := Element.ChildTextContent;
     Script.Ready := True;
   end;
   if Kind = ScriptImportMap then

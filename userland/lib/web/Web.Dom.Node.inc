@@ -617,6 +617,20 @@ begin
   end;
 end;
 
+function TNode.ChildTextContent: string;
+var
+  Child: TNode;
+begin
+  Result := '';
+  Child := GetFirstChild;
+  while Child <> nil do
+  begin
+    if Child.FNodeType in [NodeTypeText, NodeTypeCDataSection] then
+      Result := Result + TCharacterData(Child).Data;
+    Child := Child.NextSibling;
+  end;
+end;
+
 function TNode.CloneNode(Deep: Boolean): TNode;
 begin
   Result := CloneTree(Self, nil, Deep);

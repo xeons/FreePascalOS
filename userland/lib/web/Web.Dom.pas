@@ -380,6 +380,9 @@ type
     property NodeName: string read GetNodeName;
     property NodeValue: string read GetNodeValue write SetNodeValue;
     property TextContent: string read GetTextContent write SetTextContent;
+    { The data of the Text (and CDATA) children only, in order (DOM
+      Standard "child text content": what a script or style runs). }
+    function ChildTextContent: string;
     property ParentNode: TContainerNode read FParent;
     property ParentElement: TElement read GetParentElement;
     property FirstChild: TNode read GetFirstChild;

@@ -159,3 +159,16 @@ check("ShadowRoot.adoptedStyleSheets starts empty", Array.isArray(styledRoot.ado
 function after() {
   check("slotchange fired once at the slot, bubbling", changes.join(",") === "slotA:true");
 }
+var scriptHost = document.createElement("script");
+document.body.appendChild(scriptHost);
+var notRun = document.createElement("span");
+notRun.textContent = "window.scriptRanFromElementChild = true";
+scriptHost.appendChild(notRun);
+check("a script runs its Text children only, not an element child's text", window.scriptRanFromElementChild !== true);
+scriptHost.remove();
+var shadowHost = document.createElement("div");
+var shadowRootForHtml = shadowHost.attachShadow({ mode: "open" });
+shadowRootForHtml.innerHTML = "<b>in</b>";
+check("getHTML with shadowRoots lists a shadow root that is not serializable",
+  shadowHost.getHTML({ shadowRoots: [shadowRootForHtml] }) === '<template shadowrootmode="open"><b>in</b></template>' &&
+  shadowHost.getHTML() === "");

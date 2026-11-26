@@ -43,6 +43,12 @@ function SerializeNode(Node: TNode): string;
   serializable as declarative shadow root templates when
   SerializableShadowRoots (HTML Standard: serializing HTML fragments). }
 function SerializeChildrenWithShadowRoots(Node: TNode; SerializableShadowRoots: Boolean): string;
+type
+  TShadowRootList = array of TShadowRoot;
+
+{ getHTML: also the shadow roots listed, serializable or not. }
+function SerializeChildrenWithShadowRoots(Node: TNode; SerializableShadowRoots: Boolean;
+  const ShadowRoots: array of TShadowRoot): string;
 
 implementation
 
@@ -210,10 +216,28 @@ begin
 end;
 
 procedure SerializeInto(Output: TTextBuffer; Root: TNode; IncludeRoot: Boolean;
-  SerializableShadowRoots: Boolean = False); forward;
+  SerializableShadowRoots: Boolean = False; const ShadowRoots: TShadowRootList = nil); forward;
+
+{ Whether a host's shadow root is serialized: serializable ones when
+  asked for, and those getHTML lists. }
+function ShadowRootIncluded(Shadow: TShadowRoot; SerializableShadowRoots: Boolean;
+  const ShadowRoots: TShadowRootList): Boolean;
+var
+  Index: Integer;
+begin
+  if Shadow = nil then
+    Exit(False);
+  if SerializableShadowRoots and Shadow.Serializable then
+    Exit(True);
+  for Index := 0 to High(ShadowRoots) do
+    if ShadowRoots[Index] = Shadow then
+      Exit(True);
+  Result := False;
+end;
 
 { A host's serializable shadow root as a <template shadowrootmode>. }
-procedure AppendShadowRoot(Output: TTextBuffer; Shadow: TShadowRoot);
+procedure AppendShadowRoot(Output: TTextBuffer; Shadow: TShadowRoot; SerializableShadowRoots: Boolean;
+  const ShadowRoots: TShadowRootList);
 begin
   Output.AppendString('<template shadowrootmode="');
   Output.AppendString(Shadow.ModeText);
@@ -225,13 +249,13 @@ begin
   if Shadow.Clonable then
     Output.AppendString(' shadowrootclonable=""');
   Output.AppendChar('>');
-  SerializeInto(Output, Shadow, False, True);
+  SerializeInto(Output, Shadow, False, SerializableShadowRoots, ShadowRoots);
   Output.AppendString('</template>');
 end;
 
 { Serializes the children of Root (or, with IncludeRoot, Root itself). }
 procedure SerializeInto(Output: TTextBuffer; Root: TNode; IncludeRoot: Boolean;
-  SerializableShadowRoots: Boolean);
+  SerializableShadowRoots: Boolean; const ShadowRoots: TShadowRootList);
 var
   Node, Child, Parent: TNode;
   Stack: TNodeArray;
@@ -240,8 +264,8 @@ var
   procedure Enter(Element: TElement);
   begin
     AppendStartTag(Output, Element);
-    if SerializableShadowRoots and (Element.ShadowRoot <> nil) and Element.ShadowRoot.Serializable then
-      AppendShadowRoot(Output, Element.ShadowRoot);
+    if ShadowRootIncluded(Element.ShadowRoot, SerializableShadowRoots, ShadowRoots) then
+      AppendShadowRoot(Output, Element.ShadowRoot, SerializableShadowRoots, ShadowRoots);
   end;
 
   procedure Leave(Element: TElement);
@@ -270,9 +294,9 @@ begin
   SetLength(Stack, 16);
   Stack[0] := Root;
   Depth := 1;
-  if not IncludeRoot and SerializableShadowRoots and (Root.NodeType = NodeTypeElement) and
-    (TElement(Root).ShadowRoot <> nil) and TElement(Root).ShadowRoot.Serializable then
-    AppendShadowRoot(Output, TElement(Root).ShadowRoot);
+  if not IncludeRoot and (Root.NodeType = NodeTypeElement) and
+    ShadowRootIncluded(TElement(Root).ShadowRoot, SerializableShadowRoots, ShadowRoots) then
+    AppendShadowRoot(Output, TElement(Root).ShadowRoot, SerializableShadowRoots, ShadowRoots);
   Node := FirstSerializedChild(Root);
   while Depth > 0 do
   begin
@@ -315,6 +339,26 @@ begin
   Output := TTextBuffer.Create;
   try
     SerializeInto(Output, Node, False);
+    Result := Output.TakeText;
+  finally
+    Output.Free;
+  end;
+end;
+
+function SerializeChildrenWithShadowRoots(Node: TNode; SerializableShadowRoots: Boolean;
+  const ShadowRoots: array of TShadowRoot): string;
+var
+  Output: TTextBuffer;
+  List: TShadowRootList;
+  Index: Integer;
+begin
+  List := nil;
+  SetLength(List, Length(ShadowRoots));
+  for Index := 0 to High(ShadowRoots) do
+    List[Index] := ShadowRoots[Index];
+  Output := TTextBuffer.Create;
+  try
+    SerializeInto(Output, Node, False, SerializableShadowRoots, List);
     Result := Output.TakeText;
   finally
     Output.Free;
