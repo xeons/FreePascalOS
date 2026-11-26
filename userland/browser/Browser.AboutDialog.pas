@@ -17,7 +17,7 @@
 }
 
 {
-  Help > About Browser: the browser's icon on the theme's header band,
+  Help > About Tuxcat: the browser's icon on the theme's header band,
   its name and version, what it is built on, and Credits and Licence
   buttons (local pages).
 }
@@ -108,11 +108,11 @@ var
   Band: TAboutBand;
   Licence: TButton;
 begin
-  Dialog := TAboutDialog.CreateDialog('About Browser', Width, Height, Owner);
+  Dialog := TAboutDialog.CreateDialog('About Tuxcat', Width, Height, Owner);
   try
     Band := TAboutBand.Create(Dialog.Root);
     Band.SetBounds(0, 0, Width, BandHeight);
-    AddLine(Dialog, 'A web browser for FreePascalOS.', 0);
+    AddLine(Dialog, 'Tuxcat, the web browser of FreePascalOS.', 0);
     AddLine(Dialog, 'Pages run in sandboxed content processes, one per site.', 1);
     AddLine(Dialog, 'Built on libweb (HTML, CSS, layout, JavaScript), libhttp,', 2);
     AddLine(Dialog, 'libtls and libquic (HTTP/1.1, HTTP/2 and HTTP/3).', 3);

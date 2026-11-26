@@ -298,7 +298,7 @@ uses
   Browser.SearchEngineDialog;
 
 const
-  ProgramName = 'Browser';
+  ProgramName = 'Tuxcat';
 
 constructor TBrowserWindow.Create;
 begin

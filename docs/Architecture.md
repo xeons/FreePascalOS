@@ -17279,9 +17279,11 @@ and the encoding override in frames.
 
 ## Browser
 
-`browser` (`userland/browser`, installed as `/app/browser`: "Browser"
-in the Internet category with the `app-web-browser` icon) is a web
-browser on libwebview (its pages in content processes: "Browser process
+`browser` (`userland/browser`, installed as `/app/browser`) is Tuxcat,
+the web browser: "Tuxcat" in the Internet category, its window titles,
+menus and About box, with the `app-web-browser` icon (also
+`app-tuxcat`), a tuxedo cat drawn by `userland/icons/iconkit/cats.py`
+like the rest of the set. It is a web browser on libwebview (its pages in content processes: "Browser process
 model" below), linked with libquic for HTTP/3. Its chrome - the windows,
 menus, toolbars, dialogs, history, bookmarks, downloads and settings -
 lives in the browser process, laid out and used as browsers were before
