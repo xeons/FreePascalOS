@@ -163,6 +163,19 @@ anyTable.set(0, box);
 anyTable.set(1, 42);
 check("a JS-made anyref table", anyTable.get(0) === box && anyTable.get(1) === 42);
 
+// ---- typed function references ----
+// seven: () -> i32, inc: (i32) -> i32, callRef: ((ref $seven's type)) -> i32 by call_ref
+var typed = new W.Instance(new W.Module(wasm([
+  sec(1, vec([func([], [I32]), func([I32], [I32]), func([ref(0)], [I32]), func([], [[0x63, 0]])])),
+  sec(3, vec([[0], [1], [2], [3]])),
+  sec(7, vec([exportFunc("seven", 0), exportFunc("inc", 1), exportFunc("callRef", 2), exportFunc("nothing", 3)])),
+  sec(10, vec([body([0x41, 7]), body([0x20, 0, 0x41, 1, 0x6a]), body([0x20, 0, 0x14, 0]), body([0xd0, 0])]))
+]))).exports;
+check("a typed function reference takes an Exported Function of its type", typed.callRef(typed.seven) === 7);
+check("and refuses others, null and JavaScript functions", threw(function () { typed.callRef(typed.inc); },
+  TypeError) && threw(function () { typed.callRef(null); }, TypeError) &&
+  threw(function () { typed.callRef(function () { return 7; }); }, TypeError) && typed.nothing() === null);
+
 // ---- every kind of JavaScript value as an externref, in every place ----
 var symbol = Symbol("s"), object = { o: 1 }, big = 12345678901234567890n;
 var values = [1, 3, -1, 2 ** 30 - 1, 2 ** 30, 2 ** 30 + 1, -(2 ** 30) - 1, 2 ** 31 + 1, 2 ** 53 - 1, 4.5, -0, 0,
