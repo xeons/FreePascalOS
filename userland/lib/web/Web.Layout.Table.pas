@@ -423,6 +423,34 @@ begin
   LayoutBox(Cell, ChildInput);
 end;
 
+{ The absolutely positioned children of a table, row group or row go to
+  their containing block's list, their static position the top left of
+  Parent's content box (where an in-flow block would start). }
+procedure HandOverPositioned(Parent: TLayoutBox; const Input: TLayoutInput);
+var
+  Child: TLayoutBox;
+begin
+  Child := Parent.FirstChild;
+  while Child <> nil do
+  begin
+    if Child.IsAbsolutelyPositioned then
+    begin
+      Child.StaticX := Parent.ContentLeft;
+      Child.StaticY := Parent.ContentTop;
+      if bfFixed in Child.Flags then
+      begin
+        if Input.FixedBoxes <> nil then
+          Input.FixedBoxes.Add(Child);
+      end
+      else if Input.Positioned <> nil then
+        Input.Positioned.Add(Child);
+    end
+    else if Child.Kind in [bkTableRowGroup, bkTableRow] then
+      HandOverPositioned(Child, Input);
+    Child := Child.NextSibling;
+  end;
+end;
+
 procedure LayoutTable(Box: TLayoutBox; const Input: TLayoutInput);
 var
   Grid: TTableGrid;
@@ -660,6 +688,7 @@ begin
   Box.BottomPositive := Max(Box.Margin[sideBottom], 0);
   Box.BottomNegative := Min(Box.Margin[sideBottom], 0);
   Box.CollapsesThrough := False;
+  HandOverPositioned(Box, Input);
 end;
 
 end.

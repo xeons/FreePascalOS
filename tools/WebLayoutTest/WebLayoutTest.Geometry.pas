@@ -86,6 +86,43 @@ begin
   end;
 end;
 
+{ Table parts without a table get an anonymous one (CSS 2.2 17.2.1): two
+  table-cell boxes in a block sit side by side, and an absolutely
+  positioned row group of a table is laid out in its containing block
+  (WPT's CSS2 bottom-applies-to tests). }
+procedure CheckAnonymousTables;
+const
+  Page = '<!doctype html><body style="margin:0">' +
+    '<div><div id=c1 style="display:table-cell;width:50px;height:10px"></div>' +
+    '<div id=c2 style="display:table-cell;width:30px;height:10px"></div></div>' +
+    '<div style="display:table"><div id=group style="display:table-row-group;position:absolute;bottom:0">' +
+    '<div style="display:table-row"><div id=c3 style="display:table-cell;width:20px;height:20px"></div></div>' +
+    '</div></div></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height, FirstY: Double;
+  Found: Boolean;
+begin
+  Layout := LayoutText(Page, 400, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Found := ScriptLayout.BorderBox(Document.GetElementById('c1'), X, FirstY, Width, Height) and
+      ScriptLayout.BorderBox(Document.GetElementById('c2'), X, Y, Width, Height);
+    Check(Found and (Abs(X - 50) < 0.5) and (Abs(Y - FirstY) < 0.5),
+      'geometry: table cells without a table share an anonymous one (' + FloatToStr(X) + ', ' + FloatToStr(Y) + ')');
+    Found := ScriptLayout.BorderBox(Document.GetElementById('c3'), X, Y, Width, Height);
+    Check(Found and (Abs(Width - 20) < 0.5) and (Abs(Height - 20) < 0.5) and (Y > 100),
+      'geometry: an absolutely positioned row group is laid out at its offsets (' + FloatToStr(Y) + ', ' +
+      FloatToStr(Width) + ' x ' + FloatToStr(Height) + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -144,6 +181,7 @@ begin
       'geometry: an inline-block''s percentage top, left and height resolve against a definite box (' +
       FloatToStr(X) + ', ' + FloatToStr(Y - Unscrolled) + ', ' + FloatToStr(Height) + ')');
     CheckInitialContainingBlock;
+    CheckAnonymousTables;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');
