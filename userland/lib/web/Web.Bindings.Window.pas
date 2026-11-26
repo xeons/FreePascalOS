@@ -41,6 +41,7 @@ implementation
 uses
   SysUtils,
   Classes,
+  Web.Bindings.NamedTargets,
   Js.Strings,
   Js.Runtime,
   Js.Objects,
@@ -224,6 +225,7 @@ end;
 function Window_open(var Call: TBindingCall): TJsValue;
 var
   UrlText, Target, Resolved: string;
+  Chosen: TBindingContext;
 begin
   UrlText := Call.Text(0);
   if UrlText = '' then
@@ -237,6 +239,13 @@ begin
   begin
     Context(Call).Environment.Navigate(Context(Call), Resolved, False);
     Exit(GlobalValue(Call));
+  end;
+  { A frame by that name is navigated (and given back). }
+  Chosen := ChooseTargetContext(Context(Call), Target);
+  if Chosen <> nil then
+  begin
+    Chosen.Environment.Navigate(Chosen, Resolved, False);
+    Exit(JsObjectValue(Chosen.Engine.GlobalObject));
   end;
   Context(Call).Environment.OpenWindow(Context(Call), Resolved, Target, Call.Text(2));
   Result := JsNull;

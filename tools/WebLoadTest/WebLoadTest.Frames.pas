@@ -192,6 +192,11 @@ begin
     Navigable.Back;
     Check(Environment.RunUntil(@Conditions.FrameBack), 'frames: Back traverses the frame');
     Check(Pos('page.html', Navigable.CurrentUrlText) > 0, 'frames: the top-level document stays');
+    Executor.ContextOf(Navigable.ActiveDocument).Engine.Evaluate('var form = document.createElement("form");' +
+      ' form.action = "tall.html"; form.target = "kid"; document.body.appendChild(form); form.submit();', 'test');
+    Check(Environment.RunUntil(@Conditions.FrameAtTall), 'frames: a scripted submit goes to the frame its target ' +
+      'names (' + ChildUrl(Navigable, 0) + ')');
+    Check(Pos('page.html', Navigable.CurrentUrlText) > 0, 'frames: ... and the top-level document stays');
     Executor.ContextOf(Navigable.ActiveDocument).Engine.Evaluate('document.getElementById("a").remove()', 'test');
     Check(Navigable.ChildCount = 5, 'frames: removing the element drops its navigable');
   finally

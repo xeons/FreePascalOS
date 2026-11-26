@@ -46,6 +46,7 @@ implementation
 
 uses
   Web.Fetch.Requests,
+  Web.Bindings.NamedTargets,
   Web.Fetch.CspChecks,
   Web.Dom.FormControls,
   Web.Dom.Focus,
@@ -1494,7 +1495,8 @@ end;
 procedure SubmitForm(const Call: TBindingCall; Form, Submitter: TElement);
 var
   Action: TUrlRecord;
-  ActionText, Method: string;
+  ActionText, Method, TargetName: string;
+  Target: TBindingContext;
 begin
   Method := AsciiLowerCase(Form.AttributeValueOf(AtomMethod));
   if Method = 'post' then
@@ -1508,7 +1510,18 @@ begin
   Action.Query := SerializeFormEncoded(FormDataSet(Call, Form, Submitter));
   if CspBlocksFormAction(TFetchClient(Form.NodeDocument.SecurityPolicy), Action, Form) then
     Exit;
-  Context(Call).Environment.Navigate(Context(Call), SerializeUrl(Action), False);
+  { The submitter's formtarget, else the form's target: a frame by name,
+    else a new window of the host's. }
+  TargetName := '';
+  if (Submitter <> nil) and Submitter.HasAttributeAtom(Atomize('formtarget')) then
+    TargetName := Trim(Submitter.AttributeValueOf(Atomize('formtarget')))
+  else
+    TargetName := Trim(Form.AttributeValueOf(Atomize('target')));
+  Target := ChooseTargetContext(Context(Call), TargetName);
+  if Target = nil then
+    Context(Call).Environment.OpenWindow(Context(Call), SerializeUrl(Action), TargetName, '')
+  else
+    Target.Environment.Navigate(Target, SerializeUrl(Action), False);
 end;
 
 function HTMLFormElement_submit(var Call: TBindingCall): TJsValue;
