@@ -141,6 +141,10 @@ extern "C" {
 #define FPOS_CALL_PROTECT_MEMORY 163
 #define FPOS_CALL_QUERY_MEMORY 164
 #define FPOS_CALL_SET_MEMORY_POLICY 165
+/* FPOS_CALL_SET_MEMORY_POLICY's flags: anonymous memory may be made
+   executable (written read-write, then protected read-execute: a compiler
+   at run time). The policy is the process's and not inherited. */
+#define FPOS_MEMORY_POLICY_ALLOW_DYNAMIC_CODE 0x01
 #define FPOS_CALL_GET_FILE_TIMES 175
 
 /* The POSIX block (180-199): calls added for the C library. */
