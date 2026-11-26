@@ -138,4 +138,73 @@
     get total() { return progressData.get(this).total; }
   }
   internal.finishInterface(ProgressEvent, "ProgressEvent");
+
+  // ErrorEvent (HTML Standard 8.1.4.6), and reporting an exception: an
+  // uncaught exception fires one at the global; a listener that cancels
+  // it (or an onerror handler that returns true) keeps it off the
+  // console. natives.onReportException(error) answers whether it was
+  // cancelled (TBindingContext.ReportException calls it).
+  const errorData = new WeakMap();
+  class ErrorEvent extends Event {
+    constructor(type, eventInitDict) {
+      super(type, eventInitDict);
+      const init = eventInitDict == null ? {} : eventInitDict;
+      errorData.set(this, {
+        message: init.message === undefined ? "" : String(init.message),
+        filename: init.filename === undefined ? "" : String(init.filename),
+        lineno: init.lineno === undefined ? 0 : init.lineno >>> 0,
+        colno: init.colno === undefined ? 0 : init.colno >>> 0,
+        error: init.error === undefined ? undefined : init.error
+      });
+    }
+    get message() { return errorData.get(this).message; }
+    get filename() { return errorData.get(this).filename; }
+    get lineno() { return errorData.get(this).lineno; }
+    get colno() { return errorData.get(this).colno; }
+    get error() { return errorData.get(this).error; }
+  }
+  internal.finishInterface(ErrorEvent, "ErrorEvent");
+
+  // Where an error was thrown, from its stack's first frame
+  // ("at name (URL:line:column)" or "at URL (inline script 2):line:column").
+  function errorLocation(error) {
+    const location = { filename: "", lineno: 0, colno: 0 };
+    let stack;
+    try {
+      stack = error !== null && typeof error === "object" ? error.stack : undefined;
+    } catch (ignored) {
+      stack = undefined;
+    }
+    if (typeof stack !== "string") return location;
+    const match = /^\s*at (\S+) \(inline script \d+\):(\d+):(\d+)\s*$/m.exec(stack) ||
+      /^\s*at (?:.* \()?(\S+?):(\d+):(\d+)\)?\s*$/m.exec(stack);
+    if (match !== null) {
+      location.filename = match[1];
+      location.lineno = Number(match[2]);
+      location.colno = Number(match[3]);
+    }
+    return location;
+  }
+  function errorMessage(error) {
+    try {
+      if (error !== null && typeof error === "object" && typeof error.name === "string" &&
+        typeof error.message === "string")
+        return "Uncaught " + error.name + (error.message === "" ? "" : ": " + error.message);
+      return "Uncaught " + String(error);
+    } catch (ignored) {
+      return "Uncaught exception";
+    }
+  }
+  natives.onReportException = function (error) {
+    if (typeof global.dispatchEvent !== "function") return false;
+    const location = errorLocation(error);
+    const event = new ErrorEvent("error", { cancelable: true, message: errorMessage(error),
+      filename: location.filename, lineno: location.lineno, colno: location.colno, error: error });
+    return !global.dispatchEvent(event);
+  };
+  if (typeof global.reportError !== "function")
+    internal.define(global, "reportError", function reportError(e) {
+      if (arguments.length === 0) throw new TypeError("reportError needs an argument");
+      natives.reportError(e);
+    });
 })

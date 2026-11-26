@@ -75,3 +75,24 @@ check("the window's own members win over named elements", (function () {
   shadow.remove();
   return kept;
 })());
+var reported = null;
+function catchReported(event) { reported = event; event.preventDefault(); }
+addEventListener("error", catchReported);
+var reportedError = new TypeError("reported on purpose");
+reportError(reportedError);
+removeEventListener("error", catchReported);
+check("reportError fires an ErrorEvent at the window", reported instanceof ErrorEvent &&
+  reported.error === reportedError && reported.message === "Uncaught TypeError: reported on purpose" &&
+  reported.lineno > 0 && reported.cancelable);
+var onerrorArguments = null;
+window.onerror = function (message, source, line, column, error) {
+  onerrorArguments = [message, typeof source, typeof line, error];
+  return true;
+};
+reportError(reportedError);
+window.onerror = null;
+check("the window's onerror gets (message, source, lineno, colno, error)", onerrorArguments !== null &&
+  onerrorArguments[0] === "Uncaught TypeError: reported on purpose" && onerrorArguments[1] === "string" &&
+  onerrorArguments[2] === "number" && onerrorArguments[3] === reportedError);
+check("ErrorEvent's constructor", new ErrorEvent("error", { message: "m", lineno: 3 }).lineno === 3 &&
+  new ErrorEvent("x").message === "");

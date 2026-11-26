@@ -199,6 +199,8 @@ type
     FWatchedDepth: Integer;
     FWatchdogSlot: Integer;
     FOnConsoleMessage: TConsoleMessageEvent;
+    { An exception is being reported (its error event is out). }
+    FReportingException: Boolean;
     FDestroying: Boolean;
     FWindowHandlers: TJsValue;
     FCheckpointRunning: Boolean;
@@ -363,6 +365,7 @@ type
     function ThrowDomException(const Name, Message: string): TJsValue;
     { Reports an uncaught exception value to the console. }
     procedure ReportException(Value: TJsValue; const Where: string = '');
+    function ErrorEventCancelled(Value: TJsValue): Boolean;
     { Takes the pending exception and reports it. }
     procedure ReportPendingException(const Where: string = '');
     procedure Console(const Level, Text: string);
@@ -1528,12 +1531,42 @@ begin
     Result := R.ThrowError(ekError, Error.ClassName + ': ' + Error.Message);
 end;
 
+{ Fires the ErrorEvent of an uncaught exception at the global (the
+  platform's onReportException); True when a listener cancelled it. Not
+  again for an exception thrown while one is being reported. }
+function TBindingContext.ErrorEventCancelled(Value: TJsValue): Boolean;
+var
+  Natives, Callback, Outcome: TJsValue;
+  Mark: Integer;
+begin
+  Result := False;
+  if FReportingException or FClosed or not FEngine.Realm.CanEnter then
+    Exit;
+  Natives := FSingletons[SingletonPlatformNatives];
+  if not JsIsObject(Natives) then
+    Exit;
+  Callback := FEngine.GetProperty(Natives, 'onReportException');
+  if not JsIsCallable(Callback) then
+    Exit;
+  FReportingException := True;
+  Mark := FEngine.Runtime.PushRoot(Value);
+  try
+    if CallFunction(Callback, JsUndefined, [Value], Outcome, 'error event') then
+      Result := Outcome = JsTrue;
+  finally
+    FEngine.Runtime.PopRoots(Mark);
+    FReportingException := False;
+  end;
+end;
+
 procedure TBindingContext.ReportException(Value: TJsValue; const Where: string);
 var
   Text: string;
   Data: TObject;
 begin
   Inc(FReportedExceptions);
+  if ErrorEventCancelled(Value) then
+    Exit;
   Data := Unwrap(Value, InterfaceDOMException);
   if Data <> nil then
     Text := TDomExceptionData(Data).Name + ': ' + TDomExceptionData(Data).Message

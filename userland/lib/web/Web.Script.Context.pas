@@ -366,6 +366,25 @@ begin
   end;
 end;
 
+{ A script's uncaught exception (or syntax error) is reported: its error
+  event, then the console unless a listener cancelled it. }
+procedure ReportScriptError(Context: TScriptContext; Error: EJsError);
+var
+  Thrown: TJsValue;
+begin
+  if Error.HasThrown then
+    Thrown := Error.Thrown
+  else
+    Thrown := JsObjectValue(Context.Engine.Realm.NewError(ekSyntax,
+      Copy(Error.Message, Length('SyntaxError: ') + 1, MaxInt)));
+  if Context.ErrorEventCancelled(Thrown) then
+    Exit;
+  if Copy(Error.StackText, 1, 9) = 'Uncaught ' then
+    Context.Console('error', Error.StackText)
+  else
+    Context.Console('error', 'Uncaught ' + Error.StackText);
+end;
+
 procedure TScriptContext.ExecuteClassicScript(const Source, Url: string; Element: TElement; FireLoad: Boolean);
 var
   SavedScript: TElement;
@@ -389,10 +408,7 @@ begin
       Engine.Evaluate(Source, Name);
     except
       on Error: EJsError do
-        if Copy(Error.StackText, 1, 9) = 'Uncaught ' then
-          Console('error', Error.StackText)
-        else
-          Console('error', 'Uncaught ' + Error.StackText);
+        ReportScriptError(Self, Error);
     end;
   finally
     CurrentScript := SavedScript;

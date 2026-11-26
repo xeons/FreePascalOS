@@ -32,8 +32,8 @@
   standard says; it calls InvokeEventHandler.
 
   Not done: the element's form and the document in the handler's scope
-  chain (libjavascript has no with statement), the special onerror
-  signature and onbeforeunload's return value, and body/frameset handlers
+  chain (libjavascript has no with statement), onbeforeunload's return
+  value, and body/frameset handlers
   that forward to the window.
 }
 unit Web.Bindings.EventHandlers;
@@ -171,6 +171,30 @@ begin
     EnsureHandlerListener(Context, Target, EventType);
 end;
 
+function EventField(Context: TBindingContext; EventValue: TJsValue; const Name: string): TJsValue;
+begin
+  Result := Context.Engine.GetProperty(EventValue, Name);
+  if Result = JsException then
+  begin
+    Context.Engine.Runtime.TakeException;
+    Result := JsUndefined;
+  end;
+end;
+
+{ An ErrorEvent (the platform's, platform/00-base.js): it has a filename. }
+function IsErrorEvent(Context: TBindingContext; EventValue: TJsValue): Boolean;
+var
+  Constructor_: TJsValue;
+begin
+  Constructor_ := Context.Engine.GetProperty(JsObjectValue(Context.Engine.GlobalObject), 'ErrorEvent');
+  if Constructor_ = JsException then
+  begin
+    Context.Engine.Runtime.TakeException;
+    Exit(False);
+  end;
+  Result := JsIsObject(Constructor_) and (EventField(Context, EventValue, 'filename') <> JsUndefined);
+end;
+
 procedure RunEventHandler(Context: TBindingContext; EventType: TAtom; Event: TEvent);
 var
   Handler, EventValue, ThisValue, ReturnValue: TJsValue;
@@ -187,7 +211,17 @@ begin
   try
     Context.Engine.Runtime.PushRoot(Handler);
     ThisValue := Context.WrapTarget(Event.CurrentTarget);
-    if Context.CallFunction(Handler, ThisValue, [EventValue], ReturnValue, 'on' + NameOfAtom(EventType)) and
+    if (NameOfAtom(EventType) = 'error') and (Event.CurrentTarget = Context.Window) and IsErrorEvent(Context, EventValue) then
+    begin
+      { The window's onerror: (message, source, lineno, colno, error);
+        returning true cancels the event. }
+      if Context.CallFunction(Handler, ThisValue, [EventField(Context, EventValue, 'message'),
+        EventField(Context, EventValue, 'filename'), EventField(Context, EventValue, 'lineno'),
+        EventField(Context, EventValue, 'colno'), EventField(Context, EventValue, 'error')], ReturnValue,
+        'onerror') and (ReturnValue = JsTrue) then
+        Event.PreventDefault;
+    end
+    else if Context.CallFunction(Handler, ThisValue, [EventValue], ReturnValue, 'on' + NameOfAtom(EventType)) and
       (ReturnValue = JsFalse) then
       Event.PreventDefault;
   finally

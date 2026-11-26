@@ -102,6 +102,10 @@ type
     ErrorName: string;
     { The stack trace (or the message). }
     StackText: string;
+    { What was thrown (HasThrown false for a syntax error); not rooted:
+      report it before running script again. }
+    HasThrown: Boolean;
+    Thrown: TJsValue;
   end;
 
   TJsEngineOptions = record
@@ -544,6 +548,8 @@ begin
   Text := ErrorText(Thrown);
   Error := EJsError.Create(Text);
   Error.StackText := Text;
+  Error.HasThrown := True;
+  Error.Thrown := Thrown;
   if JsIsObject(Thrown) then
   begin
     Name := JsAsObject(Thrown).GetValue(FRealm, FRealm.Atom(anName));
