@@ -40,6 +40,18 @@ procedure WriteDeviceInterruptRouting;
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
 
+{ Keeps global system interrupt Gsi for a timer of the platform (the
+  HPET's comparator, Hal.HpetInterrupts) and routes it to processor
+  TargetProcessorId as Vector: RouteDeviceInterrupt refuses it from
+  then on, so a driver cannot take the line over. False if it cannot be
+  routed or is kept already. }
+function RoutePlatformTimerInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
+  ActiveLow, LevelTriggered: Boolean): Boolean;
+{ Masks a kept input and gives it up again. }
+procedure ReleasePlatformTimerInterrupt(Gsi: LongWord);
+{ Whether Gsi exists on an I/O APIC and nothing keeps it. }
+function DeviceInterruptIsFree(Gsi: LongWord): Boolean;
+
 { After a device interrupt's end at the local APIC: level triggered
   lines remapped by an AMD IOMMU (whose messages reach the local APIC as
   edge triggered, so it broadcasts no end of interrupt) get theirs at
@@ -89,6 +101,9 @@ var
   { The boot processor's APIC id: where an interrupt for a processor
     that cannot be named goes instead. }
   FallbackApicId: LongWord = 0;
+  { The inputs platform timers keep (RoutePlatformTimerInterrupt). }
+  KeptInputs: array[0..7] of LongWord;
+  KeptInputCount: Integer = 0;
 
 { TargetProcessorId if a device can name it, else the boot processor
   (an x2APIC id above 255 would be cut to its low 8 bits: another
@@ -154,7 +169,60 @@ begin
   DebugEndMessage;
 end;
 
+function InputIsKept(Gsi: LongWord): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to KeptInputCount - 1 do
+    if KeptInputs[Index] = Gsi then
+      Exit(True);
+  Result := False;
+end;
+
+function DeviceInterruptIsFree(Gsi: LongWord): Boolean;
+begin
+  Result := Available and (IoApicIndexOfGsi(Gsi) >= 0) and not InputIsKept(Gsi);
+end;
+
+function RouteUnkeptInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
+  ActiveLow, LevelTriggered: Boolean): Boolean; forward;
+
+function RoutePlatformTimerInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
+  ActiveLow, LevelTriggered: Boolean): Boolean;
+begin
+  if not DeviceInterruptIsFree(Gsi) or (KeptInputCount > High(KeptInputs)) then
+    Exit(False);
+  Result := RouteUnkeptInterrupt(Gsi, Vector, TargetProcessorId, ActiveLow, LevelTriggered);
+  if Result then
+  begin
+    KeptInputs[KeptInputCount] := Gsi;
+    Inc(KeptInputCount);
+  end;
+end;
+
+procedure ReleasePlatformTimerInterrupt(Gsi: LongWord);
+var
+  Index: Integer;
+begin
+  MaskGlobalInterrupt(Gsi);
+  for Index := 0 to KeptInputCount - 1 do
+    if KeptInputs[Index] = Gsi then
+    begin
+      KeptInputs[Index] := KeptInputs[KeptInputCount - 1];
+      Dec(KeptInputCount);
+      Exit;
+    end;
+end;
+
 function RouteDeviceInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
+  ActiveLow, LevelTriggered: Boolean): Boolean;
+begin
+  if InputIsKept(Gsi) then
+    Exit(False);
+  Result := RouteUnkeptInterrupt(Gsi, Vector, TargetProcessorId, ActiveLow, LevelTriggered);
+end;
+
+function RouteUnkeptInterrupt(Gsi: LongWord; Vector: Byte; TargetProcessorId: LongWord;
   ActiveLow, LevelTriggered: Boolean): Boolean;
 var
   Index: Integer;

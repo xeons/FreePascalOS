@@ -35,6 +35,25 @@
   for the earliest time still in the table (NextBroadcastDue, part of
   its next clock deadline, Kernel.Clock).
 
+  Where the platform has a timer of its own that runs in every idle
+  state (the HPET's comparator on x86-64, Hal.HpetEventTimer), that
+  timer does the boot processor's part instead (StartBroadcastDevice,
+  once device interrupts can be routed): EnterBroadcastIdle asks it for
+  an interrupt by the processor's due time if that is earlier than the
+  one it is set for (DeviceDue, under DeviceLock), and its interrupt
+  (ServeBroadcastDevice, on the boot processor) wakes the processors
+  due and sets it for the next due time in the table. The boot
+  processor then may enter those states too (its own due time goes in
+  the table like any other), and its clock no longer wakes for the
+  others. One comparator serves every processor. Kernel option
+  broadcasttimer=boot keeps the boot processor's clock instead.
+
+  The device cannot lose a wake-up either: a processor writes its slot
+  before it looks at DeviceDue (under the lock), and the interrupt sets
+  DeviceDue to never (under the lock) before it reads the table, so
+  either the interrupt sees the slot or the processor sees never and
+  sets the device itself.
+
   Recording and checking cannot lose a wake-up: the slot is written
   before the boot processor's next interrupt time is read (a full
   barrier), and a dispatch interrupt sent before the processor waits
@@ -79,6 +98,13 @@ function NextBroadcastDue(Now: QWord): QWord;
 procedure ServeBroadcastRequest;
 { How many times a processor was woken by the broadcast. }
 function BroadcastWakeCount: QWord;
+{ On the boot processor, once device interrupts can be routed: the
+  platform's timer takes the broadcast over where there is one. }
+procedure StartBroadcastDevice;
+{ The broadcast is the platform timer's, not the boot processor's. }
+function BroadcastUsesDevice: Boolean;
+{ "boot processor", or the platform timer ("HPET comparator 2 (...)"). }
+procedure DescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
 
 { The QEMU power-down test (see above): the processor is off now, or
   on its way there. }
@@ -104,9 +130,13 @@ implementation
 
 uses
   Runtime.Atomic,
+  Runtime.Text,
   Hal.Platform,
   Kernel.Arch.Cpu,
-  Kernel.Clock;
+  Kernel.SpinLock,
+  Kernel.Options,
+  Kernel.Clock,
+  Debug.Output;
 
 const
   PowerStateOn = 0;
@@ -126,6 +156,10 @@ var
   WakeCount: Int64 = 0;
   Initialized: Boolean = False;
   PowerUp: TPowerUpRoutine = nil;
+  UsesDevice: Boolean = False;
+  DeviceLock: TSpinLock;
+  { The time the device is set to interrupt by. }
+  DeviceDue: QWord = NeverDue;
 
 procedure InitializeTable;
 var
@@ -140,10 +174,30 @@ function BroadcastIsAvailable(Processor: PProcessor): Boolean;
 var
   Owner: PProcessor;
 begin
-  if (Processor^.Index = 0) or (Processor^.Index >= MaximumProcessors) then
+  if Processor^.Index >= MaximumProcessors then
+    Exit(False);
+  if UsesDevice then
+    Exit(True);
+  if Processor^.Index = 0 then
     Exit(False);
   Owner := ProcessorByIndex(0);
   Result := (Owner <> nil) and Owner^.IsOnline;
+end;
+
+{ The device interrupts by Due at the latest. }
+procedure RequestDeviceBy(Due: QWord);
+var
+  WereEnabled: Boolean;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(DeviceLock);
+  if Due < DeviceDue then
+  begin
+    DeviceDue := Due;
+    HalSetBroadcastTimerAt(Due);
+  end;
+  ReleaseSpinLockAtCurrentLevel(DeviceLock);
+  RestoreInterrupts(WereEnabled);
 end;
 
 procedure EnterBroadcastIdle(Processor: PProcessor);
@@ -161,6 +215,11 @@ begin
     again in full. }
   Processor^.ClockInterruptTime := NeverDue;
   FullMemoryBarrier;
+  if UsesDevice then
+  begin
+    RequestDeviceBy(Due);
+    Exit;
+  end;
   Owner := ProcessorByIndex(0);
   if Due < Owner^.ClockInterruptTime then
   begin
@@ -189,7 +248,8 @@ var
 begin
   if not Initialized then
     Exit;
-  Index := 1;
+  { From 0: the boot processor has a slot too when the device wakes. }
+  Index := 0;
   while (Index < ProcessorTotal) and (Index < MaximumProcessors) do
   begin
     Due := AtomicLoad(DueTimes[Index]);
@@ -212,7 +272,7 @@ begin
   Result := NeverDue;
   if not Initialized then
     Exit;
-  Index := 1;
+  Index := 0;
   while (Index < ProcessorTotal) and (Index < MaximumProcessors) do
   begin
     Due := QWord(AtomicLoad(DueTimes[Index]));
@@ -235,6 +295,64 @@ end;
 function BroadcastWakeCount: QWord;
 begin
   Result := QWord(AtomicFetchAndAdd(WakeCount, 0));
+end;
+
+{ The device's interrupt (on the boot processor, at the clock's level). }
+procedure ServeBroadcastDevice(Now: QWord);
+var
+  WereEnabled: Boolean;
+  Next: QWord;
+begin
+  WereEnabled := SaveAndDisableInterrupts;
+  AcquireSpinLockAtCurrentLevel(DeviceLock);
+  DeviceDue := NeverDue;
+  ReleaseSpinLockAtCurrentLevel(DeviceLock);
+  RestoreInterrupts(WereEnabled);
+  ServeBroadcast(Now);
+  Next := NextBroadcastDue(Now);
+  if Next <> NeverDue then
+    RequestDeviceBy(Next);
+end;
+
+function DeviceIsRefused: Boolean;
+var
+  Value: array[0..15] of Char;
+begin
+  Result := GetKernelOptionValue('broadcasttimer', @Value[0], SizeOf(Value)) and TextIsEqual(@Value[0], 'boot');
+end;
+
+procedure StartBroadcastDevice;
+var
+  Name: array[0..63] of Char;
+begin
+  if not Initialized then
+    InitializeTable;
+  if not HalBroadcastTimerIsAvailable or DeviceIsRefused then
+    Exit;
+  InitializeSpinLock(DeviceLock);
+  DeviceDue := NeverDue;
+  HalSetBroadcastHandler(@ServeBroadcastDevice);
+  FullMemoryBarrier;
+  UsesDevice := True;
+  HalDescribeBroadcastTimer(@Name[0], SizeOf(Name));
+  DebugBeginMessage;
+  DebugWriteTag('idle');
+  DebugWrite('Broadcast timer: ');
+  DebugWriteLine(@Name[0]);
+  DebugEndMessage;
+end;
+
+function BroadcastUsesDevice: Boolean;
+begin
+  Result := UsesDevice;
+end;
+
+procedure DescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
+begin
+  if UsesDevice then
+    HalDescribeBroadcastTimer(Text, Capacity)
+  else
+    CopyText(Text, 'boot processor', Capacity);
 end;
 
 { --- The power-down test ------------------------------------------------------ }

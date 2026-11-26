@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..445] of TCommandTest = (
+  CommandTests: array[0..446] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -848,7 +848,11 @@ const
       fewer than 20 ticks in its quietest second (100 with the periodic
       tick; its own sampling thread, pinned there too, wakes once a
       second). }
-    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0),
+    { The clock and timers (CallGetClockInformation): the test machine
+      (q35) has an HPET whose comparator the kernel took as its event
+      timer, and the counter's rate has a source. }
+    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
   );
 
 var

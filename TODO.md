@@ -9,7 +9,18 @@ how the existing pieces fit together.
 - [x] Use the MADT for I/O APICs and interrupt source overrides
 - [x] Use the MADT processor list (starting the other processors)
 - [x] FADT: power off, reset, sleep states (S3, S5)
-- [ ] HPET
+- [x] HPET: driver (ACPI table, 32/64-bit counter, one-shot and periodic
+      comparators, FSB / I/O APIC / legacy replacement routes checked by test
+      interrupts, suspend to RAM), calibration order (hypervisor leaf, kvmclock,
+      CPUID 15h/16h, HPET, ACPI PM timer, PIT), HPET clock source and TSC
+      watchdog, HPET broadcast timer for deep idle states, call 236
+- [ ] HPET follow-ups: a comparator per processor where enough have FSB
+      delivery (no wake-up IPI); FSB messages under interrupt remapping (an IRTE
+      with the HPET's source id from the DMAR/IVRS device scope); /dev/hpet or
+      comparators for programs; the PNP0103 device's _STA (firmware that hides
+      the HPET); the watchdog per processor (counters out of step between
+      processors); verify CPUID 15h crystal figures and the PIT probe on real
+      hardware that gates the PIT off
 - [x] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
 - [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)

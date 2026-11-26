@@ -29,6 +29,7 @@ unit Sys.Power;
 interface
 
 uses
+  SysUtils,
   Abi.SystemCalls;
 
 type
@@ -59,10 +60,16 @@ function ProcessorClockText(constref Information: TAbiProcessorPower): string;
 { The hottest zone's temperature, ThermalTripNone without one. }
 function HottestTemperature(const Zones: TThermalZoneArray): LongInt;
 
+{ The kernel's clock and timers (CallGetClockInformation): 0 or an
+  error number. }
+function GetClockInformation(out Information: TAbiClockInformation): LongInt;
+{ Them in a few lines: the clock and its counter, the local timer, the
+  HPET, the broadcast timer of deep idle states, the watchdog. }
+function ClockInformationLines(constref Information: TAbiClockInformation): TStringArray;
+
 implementation
 
 uses
-  SysUtils,
   Sys.Kernel;
 
 const
@@ -243,6 +250,89 @@ begin
     if (Zones[Index].TemperatureMilliCelsius <> ThermalTripNone) and
        ((Result = ThermalTripNone) or (Zones[Index].TemperatureMilliCelsius > Result)) then
       Result := Zones[Index].TemperatureMilliCelsius;
+end;
+
+function GetClockInformation(out Information: TAbiClockInformation): LongInt;
+var
+  Status: Int64;
+begin
+  FillChar(Information, SizeOf(Information), 0);
+  Status := KernelGetClockInformation(Information);
+  if Status < 0 then
+    Result := LongInt(-Status)
+  else
+    Result := 0;
+end;
+
+{ "2899.999 MHz" }
+function PreciseHertzText(Hertz: QWord): string;
+begin
+  Result := Format('%d.%.3d MHz', [Hertz div 1000000, (Hertz mod 1000000) div 1000]);
+end;
+
+function FlagText(Flags, Flag: LongWord; const Text: string): string;
+begin
+  if (Flags and Flag) <> 0 then
+    Result := Text
+  else
+    Result := '';
+end;
+
+function ClockInformationLines(constref Information: TAbiClockInformation): TStringArray;
+var
+  Lines: TStringArray;
+
+  procedure Add(const Line: string);
+  begin
+    SetLength(Lines, Length(Lines) + 1);
+    Lines[High(Lines)] := Line;
+  end;
+
+var
+  Flags: LongWord;
+  Line: string;
+begin
+  Lines := nil;
+  Flags := Information.Flags;
+  Line := 'Clock source: ' + PChar(@Information.ClockSource[0]) +
+    FlagText(Flags, ClockInformationClockForced, ' (chosen by the clocksource option)') +
+    FlagText(Flags, ClockInformationClockFellBack, ' (the watchdog moved it from the time stamp counter)');
+  if (Flags and ClockInformationClockPageCounter) <> 0 then
+    Line := Line + ', programs read the clock page'
+  else
+    Line := Line + ', programs make the system call';
+  Add(Line);
+  Line := 'Counter: ' + PreciseHertzText(Information.CounterHertz) + ', rate: ' +
+    PChar(@Information.CounterCalibration[0]);
+  if Information.CounterMeasuredHertz <> 0 then
+    Line := Line + ' (measured ' + PreciseHertzText(Information.CounterMeasuredHertz) + ')';
+  Line := Line + FlagText(Flags, ClockInformationCounterInvariant, ', invariant');
+  Add(Line);
+  Add('Local timer: ' + PreciseHertzText(Information.LocalTimerHertz) + ', rate: ' +
+    PChar(@Information.LocalTimerCalibration[0]));
+  if (Flags and ClockInformationHpetPresent) <> 0 then
+  begin
+    Add(Format('HPET: %s (period %d fs), %d-bit counter, %d comparators%s%s at 0x%x',
+      [PreciseHertzText((QWord(1000000000000000) + Information.HpetPeriodFemtoseconds div 2) div
+        Information.HpetPeriodFemtoseconds), Information.HpetPeriodFemtoseconds, Information.HpetCounterBits,
+       Information.HpetComparators,
+       FlagText(Flags, ClockInformationHpetLegacyCapable, ', legacy replacement capable'),
+       FlagText(Flags, ClockInformationHpetLegacyInUse, ' (in use)'), Information.HpetBaseAddress]));
+    if Information.HpetEventComparator >= 0 then
+      Add(Format('HPET event timer: comparator %d, %s, %d interrupts',
+        [Information.HpetEventComparator, PChar(@Information.HpetRoute[0]), Information.HpetInterrupts]));
+  end
+  else
+    Add('HPET: none');
+  Add(Format('Broadcast timer: %s, %d wake-ups', [PChar(@Information.BroadcastTimer[0]), Information.BroadcastWakes]));
+  if (Flags and ClockInformationClockWatched) <> 0 then
+    Add(Format('Watchdog: %d checks, %d failed, largest drift %d us',
+      [Information.WatchdogChecks, Information.WatchdogFailures,
+       Information.WatchdogLargestDriftNanoseconds div 1000]))
+  else if Information.WatchdogChecks > 0 then
+    Add(Format('Watchdog: stopped after %d checks, %d failed', [Information.WatchdogChecks,
+      Information.WatchdogFailures]));
+  Result := Lines;
 end;
 
 end.

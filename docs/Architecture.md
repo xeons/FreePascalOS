@@ -822,12 +822,83 @@ them between processors and changing their priorities.
 
 - **Time.** The kernel measures time with a fine clock from the HAL
   (`HalClockNanoseconds`): on x86-64 the time stamp counter, read on any
-  processor without a lock (`Hal.TimeStampClock`). Its rate is measured
-  at start against the interval timer, over 50 ms and together with the
-  local APIC timer, so the two agree closely. Uptime, timers, timeouts
-  and the tick count (`ClockTickCount`, in 10 ms ticks, which drivers
-  still use for coarse deadlines) all come from it, in nanoseconds
-  (`ClockNanoseconds`).
+  processor without a lock (`Hal.TimeStampClock`), or where that cannot
+  be trusted KVM's paravirtual clock or the HPET (`Hal.ClockSources`,
+  below). Uptime, timers, timeouts and the tick count (`ClockTickCount`,
+  in 10 ms ticks, which drivers still use for coarse deadlines) all come
+  from it, in nanoseconds (`ClockNanoseconds`).
+- **Calibration** (`Hal.ClockCalibration`, x86-64). The counter's rate is
+  the first of: stated by the hypervisor (leaf 4000_0010h EAX, or KVM's
+  paravirtual clock record's scale); stated by the processor (Intel CPUID
+  15h: the core crystal times EBX/EAX, the crystal known by the model
+  where ECX is 0 - 25 MHz Goldmont D, 19.2 MHz Goldmont and Goldmont
+  Plus, else from CPUID 16h's base frequency and the ratio, else 24 MHz
+  Skylake and Kaby Lake client; `Hal.TimerFrequencies`); measured over
+  50 ms against the HPET; against the ACPI PM timer (3.579545 MHz, the
+  FADT's port, 24 or 32 bits; `Hal.PowerManagementTimer`); against the
+  PIT, which is probed first (channel 2's latched count must go down:
+  many recent PCs gate it off, QEMU's `pit=off` leaves it out, and its
+  busy wait gives up after a bound of reads); last CPUID 16h's nominal
+  base frequency. A stated rate is checked against a 20 ms measurement
+  where there is a reference: more than 1% apart and the measurement is
+  taken. The local APIC timer (divided by 16): the hypervisor's leaf
+  (EBX, the bus), on bare metal Intel the CPUID 15h crystal (the timer
+  runs on it), else measured against the counter over 20 ms (so the two
+  agree closely, which decides whether a clock interrupt comes early by
+  the counter); a stated rate is checked the same way. The start-up busy
+  waits (the processors' INIT and STARTUP delays) use the counter once
+  its rate is known, else the HPET, the PM timer or the PIT. The boot
+  log says which source gave each rate (`[hal] Time stamp counter
+  2918.400 MHz (not invariant), rate: KVM paravirtual clock; stated ...,
+  2918.410 MHz measured against the HPET`).
+- **The HPET** (`Hal.Hpet`, `Hal.HpetTable`, `Hal.HpetMath`). The ACPI
+  HPET table gives the register block (mapped uncached), the comparator
+  count, the counter width and legacy replacement capability; the
+  capabilities register the period in femtoseconds (at most 100 ns).
+  The counter is enabled at start (the HAL looks the table up before the
+  rates are measured: Kernel.Startup finds the ACPI tables before
+  `InitializeHal`) with every comparator quiet and legacy replacement
+  off, and runs in every power state. A 64-bit counter is read high,
+  low, high; a 32-bit one is extended to 64 bits by counting its wraps
+  (the last value kept with a compare-and-exchange; the clock reads it
+  every few seconds at most, a wrap is 42.9 s at 100 MHz). Comparators
+  are used in 32-bit mode, one-shot (at least 192 ticks ahead, written
+  again further on while the counter may already be past it) or
+  periodic (value-set, first match then period). `hpet=off` ignores it.
+  Suspend to RAM loses its configuration: `SaveHpetState` and
+  `RestoreHpetState` (before the clock continues) keep the general
+  configuration, each comparator's configuration, value and FSB route.
+  The PNP0103 device in the namespace is not used (it only repeats the
+  table's address).
+- **Clock sources and the watchdog** (`Hal.ClockSources`). The clock is
+  the counter where it is invariant or in a virtual machine without
+  kvmclock; kvmclock where the counter is not invariant and KVM offers
+  it; the HPET on bare metal without an invariant counter
+  (`Hal.HpetClock`: the counter's ticks times its period, paused and
+  continued across suspend like the others). `clocksource=tsc`,
+  `clocksource=hpet` or `clocksource=kvmclock` (`clock=` is the older
+  spelling) chooses one that exists. While the counter is the clock and
+  there is an HPET, `Kernel.ClockWatchdog` calls `HalWatchClock` once a
+  second (a kernel timer's deferred call): the counter and the HPET are
+  read together (again if the reads were more than 50 us apart) and the
+  stretch each measured since the last check compared; more than 1%
+  (at least 500 us) apart twice in a row and the clock moves to the HPET,
+  continuing from the counter's time, logged (`[clock] time stamp
+  counter drifts from the HPET ... the clock is the HPET from now on`),
+  and the clock page is published again. With `clocksource=tsc` the
+  drift is only logged. `clockdrifttest` makes the watchdog see the
+  counter run 5% fast from its third check (the fallback's test). Deep
+  idle states are used where the clock keeps counting in them
+  (`HalClockRunsInDeepIdle`: an invariant counter, or the HPET).
+- **The clock page and the HPET.** When the clock is the HPET (or
+  kvmclock) the page says `ClockPageModeSystemCall` and programs make
+  the system call. Mapping the HPET's register page read-only into
+  programs (as Linux once did for its vDSO) would work, but the page
+  also holds the comparators and the interrupt status, every read is
+  an uncached device access (an exit to the hypervisor in a virtual
+  machine) that is barely cheaper than the call, and the runtime and
+  mlibc would need a second way of reading the page for a case that
+  only old machines and `clocksource=hpet` reach: so it is not done.
 - **One-shot clock interrupts.** Each processor's local APIC timer runs
   in one-shot mode (`Kernel.Clock`). Every time it interrupts, it is set
   again for the first of four things on that processor: its next 10 ms
@@ -917,7 +988,10 @@ them between processors and changing their priorities.
   the HAL pauses the clock before sleeping (`HalPrepareForSleep`) and
   continues it from the same time after waking, before any other
   processor runs, so the uptime leaves out the time asleep and every due
-  time still holds. Each processor starts its clock interrupt again as
+  time still holds. The HPET's registers are kept before and written
+  back before the clock continues; its event timer is set again from
+  the broadcast's deadline, the PIT's channel 0 silenced again, and the
+  watchdog starts afresh. Each processor starts its clock interrupt again as
   it wakes (`StartClockOnThisProcessor` in `WakeEntry`).
 - The counters of all processors are taken to run together, as they do
   on machines with an invariant counter and in virtual machines; under
@@ -930,9 +1004,17 @@ them between processors and changing their priorities.
   (which does not say its counter is invariant unless asked) the kernel's
   clock is then KVM's paravirtual clock instead (`Hal.ParavirtualClock`,
   kvmclock: MSR 4B564D01h, one record for every processor where KVM
-  says it is stable, read with a version count). `clock=tsc` or
-  `clock=kvmclock` chooses. It pauses and continues across suspend to
-  RAM like the counter clock.
+  says it is stable, read with a version count). `clocksource=` (or
+  `clock=`) chooses. It pauses and continues across suspend to RAM like
+  the counter clock.
+- **What programs see.** `CallGetClockInformation` (236) gives a
+  `TAbiClockInformation`: the clock source, the counter's and the local
+  timer's rates and where they came from, the HPET's period, width,
+  comparators, vendor, address, the comparator in use, its route and
+  interrupts, the broadcast timer and its wake-ups, the watchdog's
+  checks and largest drift, and whether programs read the clock page.
+  `powerstat --clock` prints it (and the default listing includes it),
+  timetest checks it.
 - **The wall clock** (`Kernel.WallClock`) is the uptime plus an offset:
   the battery backed clock's reading at start, to the nanosecond from
   then on. It can be stepped (`CallSetWallClock`, `CallAdjustWallClock`
@@ -1037,7 +1119,47 @@ is lost. The due time handed over is the clock interrupt time, so it
 covers a deferred tick's residual tick (dynamic tick) as well as timers
 and wake-ups; `ResumeClockTick` and `RestartClockTick` set a stale timer
 again in full. The boot processor never enters these states (it keeps time),
-nor does any processor when it is the only one. `idlebroadcast=off`
+nor does any processor when it is the only one - unless the platform
+has a timer of its own (below).
+
+**The HPET as the broadcast timer** (`Hal.HpetEventTimer`,
+`Hal.HpetInterrupts`, x86-64). One HPET comparator is the kernel's
+event timer, set up once device interrupts can be routed
+(`HalStartPlatformTimers`, phase one, before the other processors
+start) on vector 0xD1 (the clock's level) to the boot processor. Its
+route, the first that works of: an FSB message where the comparator can
+and interrupt remapping is off; an I/O APIC input its route capability
+allows that nothing else uses (input 2, the PIT's, with channel 0
+silenced; inputs above 23); legacy replacement (comparator 0 on IRQ 0);
+input 8 or a free one of 16-23. The input is kept from drivers
+(`RoutePlatformTimerInterrupt`). Each way is checked before it is kept:
+three matches 1 ms ahead must interrupt no more than 2 ms late, else the
+next way is tried (a second round takes any that interrupts at all).
+KVM's in-kernel interrupt controller has no route for input 2 (it sends
+ISA IRQ 0 there instead), so under KVM the check moves on to legacy
+replacement. `hpetroute=message|ioapic|legacy` forces one way.
+
+Where the event timer runs, `StartBroadcastDevice` makes it the
+broadcast timer (`broadcasttimer=boot` keeps the boot processor's
+clock): a single shared comparator rather than one per processor (that
+would take as many comparators with FSB delivery as processors, which
+few chipsets have, and saves only the wake-up's inter-processor
+interrupt). `EnterBroadcastIdle` writes the slot, then (under a lock)
+programs the comparator for the processor's due time if that is earlier
+than the time it is set for (`DeviceDue`); the comparator's interrupt
+sets `DeviceDue` to never under the same lock before it reads the
+table, so either it sees the slot or the processor sees never and sets
+the comparator itself. It wakes the processors due (`ServeBroadcast`,
+from slot 0 on) and sets the comparator for the next due time. The boot
+processor then may enter states whose timer stops too, and its clock no
+longer takes the others' due times. Deferred ticks are covered the same
+way: the due time handed over is the clock interrupt time, the residual
+tick included. The HPET self test (`Kernel.Arch.TimerSelfTest`) pins a
+thread to the boot processor with the broadcast forced and checks ten
+20 ms sleeps there; it also checks the counter against the clock over
+50 ms (2%), a fresh measurement of the counter's rate against the
+reference (2%), a one-shot 5 ms ahead (under 40 ms late) and the
+periodic mode (about one interrupt per 2 ms period). `idlebroadcast=off`
 keeps to states whose timer runs; `idlebroadcast=force` treats every
 state of the other processors as stopping the timer and really leaves
 it at its longest (4 s), so only the broadcast wakes them on time: the

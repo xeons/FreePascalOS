@@ -31,7 +31,8 @@ unit Hal.Platform;
 interface
 
 uses
-  Kernel.PriorityLevel;
+  Kernel.PriorityLevel,
+  Kernel.TimerDescription;
 
 { Prepares the interrupt controllers. Interrupts must still be disabled. }
 procedure InitializeHal;
@@ -62,6 +63,37 @@ procedure HalSetClockInterruptIn(Nanoseconds: QWord);
   read the kernel's clock (KVM's paravirtual clock). }
 function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
 
+
+{ --- Platform timers ---
+
+  A timer of the platform that runs on whatever the processors do (the
+  HPET's comparator here; none on AArch64): the broadcast timer of
+  deep idle states (Kernel.BroadcastTimer). }
+
+type
+  { Called at the clock's level with the clock's time. }
+  THalBroadcastHandler = procedure(Now: QWord);
+
+{ On the boot processor, once device interrupts can be routed: routes
+  the platform timer's interrupt to it. }
+procedure HalStartPlatformTimers;
+function HalBroadcastTimerIsAvailable: Boolean;
+procedure HalSetBroadcastHandler(Handler: THalBroadcastHandler);
+{ The broadcast timer's next interrupt at Deadline (a clock time;
+  High(QWord): none). Any processor, interrupts disabled or not. }
+procedure HalSetBroadcastTimerAt(Deadline: QWord);
+{ "HPET comparator 2 (I/O APIC input 2)". }
+procedure HalDescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
+
+{ The clock's watchdog: whether the kernel should call HalWatchClock
+  about once a second, and one check (True: the clock moved to another
+  counter, so the clock page must be published again). }
+function HalClockNeedsWatching: Boolean;
+function HalWatchClock: Boolean;
+{ Whether the clock keeps counting in idle states that stop the
+  processor's clock (where it does not, those states are not used). }
+function HalClockRunsInDeepIdle: Boolean;
+procedure HalDescribeTimers(out Description: TTimerDescription);
 
 { Signals the end of the interrupt currently being serviced. }
 procedure HalEndOfInterrupt;
@@ -137,7 +169,11 @@ uses
   Hal.LegacyPic,
   Hal.LocalApic,
   Hal.TimeStampClock,
-  Hal.ParavirtualClock,
+  Hal.Hpet,
+  Hal.HpetEventTimer,
+  Hal.ClockCalibration,
+  Hal.ClockSources,
+  Hal.TimerSummary,
   Runtime.Text,
   Kernel.Arch.Cpu,
   Kernel.Options,
@@ -145,10 +181,6 @@ uses
   Debug.Output;
 
 const
-  { The interval timer can count at most about 54 ms; the longer the
-    measurement, the closer the clock keeps to real time. }
-  CalibrationMicroseconds = 50000;
-  MicrosecondsPerSecond = 1000000;
   NanosecondsPerSecond = 1000000000;
   { The longest wait the clock interrupt is set for at once (the kernel
     asks again when it comes): what an idle processor with nothing due
@@ -158,72 +190,36 @@ const
 
 var
   TimerTicksPerSecond: QWord;
-  CyclesPerSecond: QWord;
-  CounterIsInvariant: Boolean;
-  { The kernel's clock is KVM's paravirtual clock rather than the
-    counter (see ChooseClockSource). }
-  UsesParavirtualClock: Boolean = False;
 
-{ Measures the local APIC timer and the time stamp counter over the same
-  stretch of the interval timer, so that the ratio between the two (which
-  decides whether a clock interrupt comes early by the counter) is close
-  even if the stretch itself is a little off. }
+{ The time stamp counter's and the local APIC timer's rates
+  (Hal.ClockCalibration), and the counter clock started. }
 procedure MeasureTimerFrequencies;
 var
-  StartCycles: QWord;
-  Cycles: QWord;
-  TimerTicks: QWord;
+  Calibration: TTimerCalibration;
 begin
-  StartLocalApicTimerCountdown;
-  StartCycles := ReadTimeStampCounter;
-  IntervalTimerBusyWait(CalibrationMicroseconds);
-  TimerTicks := StopLocalApicTimerCountdown;
-  Cycles := ReadTimeStampCounter - StartCycles;
-  TimerTicksPerSecond := TimerTicks * MicrosecondsPerSecond div CalibrationMicroseconds;
-  CyclesPerSecond := Cycles * MicrosecondsPerSecond div CalibrationMicroseconds;
-  if TimerTicksPerSecond = 0 then
-    KernelPanicWithCode(PanicHardwareMissing, 'local APIC timer does not count', 0, 0, 0, 0);
-  if CyclesPerSecond = 0 then
-    KernelPanicWithCode(PanicHardwareMissing, 'time stamp counter does not count', 0, 0, 0, 0);
-  StartTimeStampClock(CyclesPerSecond);
-end;
-
-{ The time stamp counter, unless it is not invariant and KVM offers its
-  paravirtual clock (clock=tsc keeps the counter, clock=kvmclock takes
-  the paravirtual clock whenever there is one). }
-procedure ChooseClockSource;
-var
-  Value: array[0..15] of Char;
-  Wanted: Boolean;
-begin
-  CounterIsInvariant := TimeStampCounterIsInvariant;
-  Wanted := not CounterIsInvariant;
-  if GetKernelOptionValue('clock', @Value[0], SizeOf(Value)) then
-    Wanted := TextIsEqual(@Value[0], 'kvmclock');
-  if Wanted then
-    UsesParavirtualClock := StartParavirtualClock;
+  CalibrateTimers(Calibration);
+  TimerTicksPerSecond := Calibration.LocalTimerHertz;
+  StartTimeStampClock(Calibration.CounterHertz);
 end;
 
 procedure InitializeHal;
 begin
   RemapAndMaskLegacyPic(LegacyPicMasterVectorBase, LegacyPicSlaveVectorBase);
   InitializeLocalApic(ApicSpuriousVector);
+  { Before the rates: the best reference to measure them against. }
+  InitializeHpet;
   MeasureTimerFrequencies;
   ChooseClockSource;
 end;
 
 function HalClockNanoseconds: QWord;
 begin
-  if UsesParavirtualClock then
-    Result := ParavirtualClockNanoseconds
-  else
-    Result := TimeStampClockNanoseconds;
+  Result := ClockSourceNanoseconds;
 end;
 
 function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
 begin
-  Result := (not UsesParavirtualClock) and
-    DescribeTimeStampClock(Origin, OriginNanoseconds, CountsPerSecond);
+  Result := DescribeUserClockSource(Origin, OriginNanoseconds, CountsPerSecond);
 end;
 
 procedure HalStartClockOnThisProcessor;
@@ -249,10 +245,53 @@ end;
 
 function HalClockSourceName: PChar;
 begin
-  if UsesParavirtualClock then
-    Result := 'KVM paravirtual clock'
-  else
-    Result := 'time stamp counter';
+  Result := ClockSourceName;
+end;
+
+procedure HalStartPlatformTimers;
+begin
+  if HpetIsPresent then
+    StartHpetEventTimer;
+end;
+
+function HalBroadcastTimerIsAvailable: Boolean;
+begin
+  Result := HpetEventTimerIsRunning;
+end;
+
+procedure HalSetBroadcastHandler(Handler: THalBroadcastHandler);
+begin
+  SetHpetEventHandler(THpetEventHandler(Handler));
+end;
+
+procedure HalSetBroadcastTimerAt(Deadline: QWord);
+begin
+  SetHpetEventAt(Deadline);
+end;
+
+procedure HalDescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
+begin
+  DescribeBroadcastTimer(Text, Capacity);
+end;
+
+function HalClockNeedsWatching: Boolean;
+begin
+  Result := ClockSourceIsWatched;
+end;
+
+function HalWatchClock: Boolean;
+begin
+  Result := WatchClockSource;
+end;
+
+function HalClockRunsInDeepIdle: Boolean;
+begin
+  Result := ClockKeepsRunningInDeepIdle;
+end;
+
+procedure HalDescribeTimers(out Description: TTimerDescription);
+begin
+  DescribePlatformTimers(Description);
 end;
 
 procedure HalEndOfInterrupt;
@@ -288,20 +327,20 @@ end;
 procedure HalPrepareForSleep;
 begin
   SaveIoApicEntries;
+  SaveHpetState;
 end;
 
 procedure HalPauseClockForSleep;
 begin
-  PauseTimeStampClock;
-  if UsesParavirtualClock then
-    PauseParavirtualClock;
+  PauseClockSource;
 end;
 
 procedure HalContinueClockAfterSleep;
 begin
-  ContinueTimeStampClock;
-  if UsesParavirtualClock then
-    ContinueParavirtualClock;
+  { The chipset forgot the HPET: its counter runs again before a clock
+    may read it. }
+  RestoreHpetState;
+  ContinueClockSource;
 end;
 
 function HalOffersSuspendToRam: Boolean;
@@ -320,6 +359,12 @@ begin
   { The IOMMU forgot its tables: before the entries that name them. }
   ResumeInterruptRemapping;
   RestoreIoApicEntries;
+  { Firmware may have started the PIT's tick again. }
+  if HpetEventTimerIsRunning then
+  begin
+    SilenceIntervalTimerOutput;
+    ResumeHpetEventTimer;
+  end;
 end;
 
 procedure HalInitializeSecondaryProcessor;
@@ -334,11 +379,11 @@ const
   AfterStartupMicroseconds = 200;
 begin
   LocalApicSendInit(ProcessorId);
-  IntervalTimerBusyWait(AfterInitMicroseconds);
+  CalibrationBusyWait(AfterInitMicroseconds);
   LocalApicSendStartup(ProcessorId, StartupPage);
-  IntervalTimerBusyWait(AfterStartupMicroseconds);
+  CalibrationBusyWait(AfterStartupMicroseconds);
   LocalApicSendStartup(ProcessorId, StartupPage);
-  IntervalTimerBusyWait(AfterStartupMicroseconds);
+  CalibrationBusyWait(AfterStartupMicroseconds);
 end;
 
 procedure HalRequestDispatchOn(ProcessorId: LongWord);
@@ -393,23 +438,11 @@ begin
   DebugWrite('Local APIC ');
   DebugWriteDecimal(LocalApicId);
   if LocalApicUsesX2ApicMode then
-    DebugWrite(' (x2APIC mode)')
+    DebugWriteLine(' (x2APIC mode)')
   else
-    DebugWrite(' (xAPIC mode)');
-  DebugWrite(', timer ');
-  DebugWriteDecimal(TimerTicksPerSecond div 1000);
-  DebugWrite(' kHz, time stamp counter ');
-  DebugWriteDecimal(CyclesPerSecond div 1000000);
-  if CounterIsInvariant then
-    DebugWrite(' MHz (invariant)')
-  else
-    DebugWrite(' MHz (not invariant)');
-  if UsesParavirtualClock then
-    DebugWrite('; clock: KVM paravirtual clock')
-  else
-    DebugWrite('; clock: time stamp counter');
-  DebugWriteLine('');
+    DebugWriteLine(' (xAPIC mode)');
   DebugEndMessage;
+  WriteTimerSummary;
 end;
 
 procedure HalExitEmulator(Reason: TEmulatorExitReason);
