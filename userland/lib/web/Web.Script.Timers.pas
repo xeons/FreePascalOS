@@ -72,6 +72,8 @@ implementation
 
 uses
   Js.Objects,
+  Web.Fetch.Requests,
+  Web.Fetch.CspChecks,
   Js.Functions,
   Web.Bindings.UrlResolution;
 
@@ -184,6 +186,13 @@ begin
     else
     begin
       Source := FContext.Engine.ToText(Timer.Handler);
+      { A string handler is compiled only where CSP allows eval. }
+      if CspBlocksEval(TFetchClient(FContext.Document.SecurityPolicy), Source) then
+      begin
+        FContext.Console('error', 'Refused to evaluate a string as JavaScript because ''unsafe-eval'' is not an ' +
+          'allowed source of script in the Content Security Policy');
+        Exit;
+      end;
       FContext.EnterScript;
       try
         if not FContext.Engine.TryEvaluate(Source, DocumentUrlText(FContext.Document) + ' (timer)', Ignored,

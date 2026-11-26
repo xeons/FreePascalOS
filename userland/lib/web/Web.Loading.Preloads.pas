@@ -324,6 +324,11 @@ var
 begin
   if Href = '' then
     Exit;
+  { Under a Content Security Policy the scanner does not guess: what it
+    would fetch lacks the element's nonce and would be refused (and
+    reported) for nothing. }
+  if FContext.Client.Csp.Count > 0 then
+    Exit;
   if FHasBase then
     Base := FBase
   else

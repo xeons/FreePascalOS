@@ -143,7 +143,8 @@ function CompareStyles(Old, New: TCssComputedStyle): TStyleChangeKind;
 implementation
 
 uses
-  Css.PropertyIds, Css.StateInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent;
+  Css.PropertyIds, Css.StateInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent,
+  Web.Fetch.Requests, Web.Fetch.CspChecks;
 
 var
   AtomStyleAttribute: TAtom;
@@ -412,6 +413,12 @@ begin
     if Element.HasAttributeAtom(AtomStyleAttribute) and not FAuthorStylesDisabled then
     begin
       Source := Element.AttributeValueOf(AtomStyleAttribute);
+      { CSP: a style attribute from markup or setAttribute applies only
+        if the policies allow it; one the CSSOM wrote always does. }
+      if (Source <> '') and ((Element.ElementState and ElementStateStyleFromCssom) = 0) and
+         CspBlocksInline(TFetchClient(Element.NodeDocument.SecurityPolicy), CspInlineStyleAttribute, Source, '',
+         Element) then
+        Source := '';
       if Source <> '' then
         Data^.StyleAttribute := ParseStyleAttribute(Source);
     end;

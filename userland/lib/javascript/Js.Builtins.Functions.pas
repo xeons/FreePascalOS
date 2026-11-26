@@ -206,6 +206,9 @@ begin
       Exit(JsException);
     Body := StringToUnicode(R.Heap, Text);
   end;
+  if Assigned(R.CompileStringsCheck) and
+     not R.MayCompileStrings('function anonymous(' + Parameters + #10') {'#10 + Body + #10'}') then
+    Exit(JsException);
   try
     Code := CompileFunctionSource(R, Parameters, Body, Callee.Magic >= 2, Odd(Callee.Magic));
   except

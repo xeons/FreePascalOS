@@ -183,7 +183,8 @@ uses
   Web.Fetch.MimeTypes,
   Web.Navigation.Events,
   Web.Loading.Priorities,
-  Web.Loading.TextDecoding;
+  Web.Loading.TextDecoding,
+  Web.Fetch.CspChecks;
 
 type
   TScriptEvent = class
@@ -401,6 +402,11 @@ begin
   if (Kind = ScriptClassic) and Element.HasAttributeAtom(AtomNomodule) and FExecutor.SupportsModules then
     Exit;
   if (Kind = ScriptModule) and not FExecutor.SupportsModules then
+    Exit;
+  { CSP: an inline script runs only if the document's policies allow
+    it (by 'unsafe-inline', its nonce or its hash). }
+  if not HasSrc and CspBlocksInline(FContext.Client, CspInlineScript, Element.TextContent,
+    Element.AttributeValueOf(AtomNonce), Element, SerializeUrl(FContext.DocumentUrl, True)) then
     Exit;
   Script := TPendingScript.Create;
   Script.Element := Element;

@@ -785,6 +785,7 @@ begin
     else
       Exit;
     ApplyCorsSettings(Request, Element, Request.Mode);
+    Request.CryptographicNonce := Element.AttributeValueOf(AtomNonce);
     if AsValue = 'font' then
       Request.Mode := FetchModeCors;
     if AsValue = 'image' then
