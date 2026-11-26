@@ -15218,7 +15218,10 @@ then delivered by the fetcher on its own loop; no respondWith continues
 with the network, a rejection is a network error. Fetches wait while
 the worker is activating. Navigation preload, when enabled, starts a
 network fetch with the Service-Worker-Navigation-Preload header for
-preloadResponse.
+preloadResponse. Content Security Policy is checked before a request
+reaches a worker (main fetch), and a worker's own fetches are checked
+against its own policies: those of its script's response, put on its
+agent's fetch client and kept with the registration.
 
 **Kept registrations** (`Web.Storage.OriginData`): a registration (scope,
 updateViaCache, the waiting or active worker's script, imports and
