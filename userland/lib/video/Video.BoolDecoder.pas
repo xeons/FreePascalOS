@@ -57,8 +57,12 @@ type
     function ReadTree(Tree: PShortInt; Probabilities: PByte): LongInt;
     { More bits were taken than the data had. }
     function HasError: Boolean;
-    { The first byte not yet taken into the window (VP9 tile ends). }
+    { The first byte not yet taken into the window. }
     function Position: PByte;
+    { Where the coded data ended: the bytes still in the window beyond
+      what the decoding needed are given back (VP9 frames packed without
+      a superframe index). }
+    function FindEnd: PByte;
   end;
 
 const
@@ -189,6 +193,19 @@ end;
 function TBoolDecoder.Position: PByte;
 begin
   Result := FBuffer;
+end;
+
+function TBoolDecoder.FindEnd: PByte;
+var
+  Count: LongInt;
+begin
+  Result := FBuffer;
+  Count := FCount;
+  while (Count > 8) and (Count < ValueBits) do
+  begin
+    Dec(Count, 8);
+    Dec(Result);
+  end;
 end;
 
 end.
