@@ -706,6 +706,11 @@ $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(COMPRESSION_PROGRAMS): $(COMPRESSION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
+# av1check decodes the AV1 streams built into it with libav1.
+AV1_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,av1check)
+$(AV1_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1
+$(AV1_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AV1_LIBRARY_OBJECTS)
+$(AV1_PROGRAMS): $(AV1_LIBRARY)
 # Programs that read image files.
 IMAGE_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,imageinfo)
 $(IMAGE_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -limage -lcompression -ldrawing

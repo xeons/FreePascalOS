@@ -35,7 +35,8 @@ interface
 
 uses
   Classes, SysUtils, Media.Frames, Av1.Common, Av1.Constants, Av1.Tables, Av1.CdfContext, Av1.BitReader,
-  Av1.SequenceHeader, Av1.FrameHeader, Av1.Picture, Av1.References, Av1.FrameContext, Av1.TileContext;
+  Av1.SequenceHeader, Av1.FrameHeader, Av1.Picture, Av1.References, Av1.FrameContext, Av1.TileContext,
+  Av1.WorkerPool;
 
 type
   TFrameShownEvent = procedure(const Frame: TVideoFrame) of object;
@@ -47,8 +48,13 @@ type
     FTiles: array of TTileContext;
     FTileMiStride, FTileMiRows: Integer;
     FThreadCount: Integer;
+    FPool: TWorkerPool;
+    FTileData: PByte;
+    FTileFirst: Integer;
+    FTileStarts, FTileSizes: array of Integer;
     FOnFrameShown: TFrameShownEvent;
     FPresentationTime: Int64;
+    procedure TileJob(Index, Worker: Integer);
     procedure SetupReferences;
     procedure LoadPreviousSegmentIds;
     procedure AllocateRestorationUnits;
@@ -122,35 +128,6 @@ begin
     CountTool(toolFilmGrain);
 end;
 
-type
-  TTileJob = record
-    Tile: TTileContext;
-    TileNum: Integer;
-    Data: PByte;
-    Size: Integer;
-  end;
-
-  { Decodes the tiles it is given, one after another. }
-  TTileWorker = class(TThread)
-  public
-    Jobs: array of TTileJob;
-    Failure: string;
-    procedure Execute; override;
-  end;
-
-procedure TTileWorker.Execute;
-var
-  Index: Integer;
-begin
-  try
-    for Index := 0 to High(Jobs) do
-      DecodeTile(Jobs[Index].Tile, Jobs[Index].TileNum, Jobs[Index].Data, Jobs[Index].Size);
-  except
-    on Error: Exception do
-      Failure := Error.Message;
-  end;
-end;
-
 function TFrameDecoder.ReferenceSlots: PReferenceSlots;
 begin
   Result := @FSlots;
@@ -160,11 +137,14 @@ constructor TFrameDecoder.Create(ThreadCount: Integer);
 begin
   inherited Create;
   FThreadCount := ThreadCount;
+  if ThreadCount > 1 then
+    FPool := TWorkerPool.Create(ThreadCount);
 end;
 
 destructor TFrameDecoder.Destroy;
 begin
   Reset;
+  FPool.Free;
   inherited Destroy;
 end;
 
@@ -294,53 +274,36 @@ begin
   end;
 end;
 
+procedure TFrameDecoder.TileJob(Index, Worker: Integer);
+begin
+  DecodeTile(FTiles[Worker], FTileFirst + Index, FTileData + FTileStarts[Index], FTileSizes[Index]);
+end;
+
 procedure TFrameDecoder.DecodeTiles(First, Last: Integer; const Starts, Sizes: array of Integer; Data: PByte);
 var
-  Count, Workers, Index, WorkerIndex: Integer;
-  Threads: array of TTileWorker;
-  Failure: string;
+  Count, Index: Integer;
 begin
   Count := Last - First + 1;
-  Workers := Min(FThreadCount, Count);
-  if Workers <= 1 then
+  if (FPool = nil) or (Count = 1) then
   begin
     EnsureTileContexts(1);
     for Index := 0 to Count - 1 do
       DecodeTile(FTiles[0], First + Index, Data + Starts[Index], Sizes[Index]);
     Exit;
   end;
-  EnsureTileContexts(Workers);
-  Threads := nil;
-  SetLength(Threads, Workers);
-  for WorkerIndex := 0 to Workers - 1 do
-  begin
-    Threads[WorkerIndex] := TTileWorker.Create(True);
-    Threads[WorkerIndex].FreeOnTerminate := False;
-  end;
+  EnsureTileContexts(FPool.WorkerCount);
+  FTileData := Data;
+  FTileFirst := First;
+  FTileStarts := nil;
+  FTileSizes := nil;
+  SetLength(FTileStarts, Count);
+  SetLength(FTileSizes, Count);
   for Index := 0 to Count - 1 do
   begin
-    WorkerIndex := Index mod Workers;
-    with Threads[WorkerIndex] do
-    begin
-      SetLength(Jobs, Length(Jobs) + 1);
-      Jobs[High(Jobs)].Tile := FTiles[WorkerIndex];
-      Jobs[High(Jobs)].TileNum := First + Index;
-      Jobs[High(Jobs)].Data := Data + Starts[Index];
-      Jobs[High(Jobs)].Size := Sizes[Index];
-    end;
+    FTileStarts[Index] := Starts[Index];
+    FTileSizes[Index] := Sizes[Index];
   end;
-  for WorkerIndex := 0 to Workers - 1 do
-    Threads[WorkerIndex].Start;
-  Failure := '';
-  for WorkerIndex := 0 to Workers - 1 do
-  begin
-    Threads[WorkerIndex].WaitFor;
-    if (Failure = '') and (Threads[WorkerIndex].Failure <> '') then
-      Failure := Threads[WorkerIndex].Failure;
-    Threads[WorkerIndex].Free;
-  end;
-  if Failure <> '' then
-    raise EAv1Error.Create(Failure);
+  FPool.Run(Count, @TileJob);
 end;
 
 procedure TFrameDecoder.DecodeTileGroup(Data: PByte; Size: Integer);
@@ -486,7 +449,7 @@ var
   Saved: TReferenceFrame;
   Row: Integer;
 begin
-  ApplyPostFilters(FFrame);
+  ApplyPostFilters(FFrame, FPool);
   StoreMotionField(FFrame);
   if FFrame.Header.segmentation_enabled and not FFrame.Header.segmentation_update_map then
     for Row := 0 to FFrame.Header.MiRows - 1 do

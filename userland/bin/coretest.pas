@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..447] of TCommandTest = (
+  CommandTests: array[0..448] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -855,7 +855,12 @@ const
     { The clock and timers (CallGetClockInformation): the test machine
       (q35) has an HPET whose comparator the kernel took as its event
       timer, and the counter's rate has a source. }
-    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0),
+    { libav1 on the system (av1check): AV1 streams made with aomenc - inter
+      frames with every loop filter, 10-bit film grain, 4:4:4 screen
+      content, superres with tiles - decoded on one thread and on four,
+      every frame equal to libaom's. }
+    (Command: 'av1check'; ExpectedOutput: 'av1check: 4 streams, 28 frames, ok'#10; ExpectedStatus: 0)
   );
 
 var
