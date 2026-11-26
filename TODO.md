@@ -822,8 +822,9 @@ normalized (0-65535), not pixels.
   - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
     through pools; AVIF, the same HEIF container with royalty-free AV1, can
     be added instead if wanted)
-  - [ ] AVIF (HEIF container, AV1 intra frames: a large decoder; until then
-        the browser neither advertises nor accepts image/avif)
+  - [ ] AVIF (HEIF container, AV1 intra frames: libav1 decodes the frames,
+        the HEIF container is left; until then the browser neither
+        advertises nor accepts image/avif)
   - [x] Scalable images (`Image.Scalable`): drawn again at any size, the
         last renderings kept
   - [x] Colour management basics: ICC v2/v4 matrix/TRC, grey and LUT
@@ -1777,12 +1778,46 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       fieldset.elements, EventSource, PointerEvent and pointer capture,
       ClipboardEvent and DataTransfer's string data, access keys, table
       colspan widths, the preload scanner's double fetches
-      (docs/html5test-gaps.md); 293 with WebSocket and CSP
+      (docs/html5test-gaps.md)
+- [x] IndexedDB 3.0 (databases and versions with upgradeneeded, blocked
+      and versionchange, object stores with key paths and key generators,
+      indexes with unique and multiEntry, every cursor direction,
+      continuePrimaryKey and advance, key ranges, getAll/getAllKeys,
+      transactions with auto-commit, commit(), abort and their events)
+      on a storage service (Web.IndexedDb.*) in the browser process
+      (IPC 340-342; refuses other sites' origins; private windows in
+      memory; a file per origin; quota) or in the program; structured
+      serialization to bytes (Blob, File, typed arrays, Map, Set, Date,
+      RegExp, BigInt, errors, cycles); navigator.storage (estimate,
+      persist, persisted); the Cache API on the same service; available
+      to dedicated workers; html5test storage 35/35
+- [ ] IndexedDB follow-ups: a storage format that writes only what
+      changed (the service writes an origin's whole file), eviction of
+      best-effort origins under disk pressure, the persistent-storage
+      permission's state following persist(), getAllRecords() and
+      IDBRecord (IndexedDB 3.0 editor's draft), structuredClone and
+      postMessage moved onto the same serializer (ArrayBuffer, typed
+      arrays, Blob), the OPFS (navigator.storage.getDirectory)
+- [x] Canvas 2D (CanvasRenderingContext2D complete: paths and Path2D
+      with SVG path data, transforms, fill rules, strokes with dashes,
+      caps and joins, linear/radial/conic gradients, patterns, shadows,
+      globalAlpha with every compositing operator and blend mode, clips,
+      text with fillText/strokeText/measureText from libfont's outlines,
+      drawImage, ImageData, the filter property), toDataURL and toBlob
+      (PNG, JPEG, WebP), OffscreenCanvas (also in workers, transferable),
+      ImageBitmap and createImageBitmap, bitmaprenderer, DOMMatrix;
+      canvases shown through the layout's image providers
+      (html5test: canvas 24 of 25, offscreen 3 of 3; 300 of 588)
+- [ ] Canvas: imageSmoothingQuality (always bilinear), display-p3 and
+      float16 colour spaces, the canvas element's own computed font and
+      colour for relative font sizes, currentcolor and direction:
+      inherit, a GPU path, hit regions (addHitRegion, dropped by the
+      standard)
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
-      Canvas 2D and OffscreenCanvas, custom elements, shadow
-      DOM, Web Animations, IndexedDB, media playback and Web Audio, the
-      Fullscreen API, file inputs with FileList and multipart uploads,
-      SharedWorker, foreignObject, relative positioning of inline boxes,
+      custom elements, shadow DOM, Web Animations, media playback and
+      Web Audio, the Fullscreen API, file inputs with FileList and
+      multipart uploads, SharedWorker, foreignObject, relative
+      positioning of inline boxes,
       designMode/execCommand, date and time pickers
 
 ## Web view and browser
@@ -1949,6 +1984,39 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Web view: date and time pickers, a colour picker, a file chooser for
       input type=file
 
+## Media: AV1 video (libav1)
+
+- [x] libav1 (`userland/lib/av1`): the AV1 decoding process written out
+      from the specification, tables generated from its sources
+      (`make-tables.py`)
+  - [x] OBUs, sequence and frame headers, operating point 0, frame
+        size changes and reference scaling, show_existing_frame, error
+        resilience and switch frames, forward key frames
+  - [x] Every coding tool: partitions to 4:1, intra (directional with
+        angle deltas and edge filters, smooth, Paeth, filter intra, CfL,
+        palettes, intra block copy), inter (motion vector prediction with
+        temporal candidates, OBMC, local and global warp, compound
+        average, distance, wedge and difference weighted, inter-intra),
+        transforms of every size and type, lossless, quantizer matrices,
+        segmentation, delta q and loop filter
+  - [x] Deblocking, CDEF, superres, loop restoration (Wiener and
+        self-guided), film grain synthesis
+  - [x] 8, 10 and 12 bits; 4:2:0, 4:2:2, 4:4:4, monochrome
+  - [x] Tiles on several threads, post filters by rows (`Av1.WorkerPool`)
+  - [x] `make av1-test`: aomenc (each tool and format), SVT-AV1 and rav1e
+        streams bit-exact against aomdec, on one thread and four, with a
+        coding tool coverage report, the same streams in WebM, MP4,
+        Matroska and OBU files through libmedia, damaged streams refused
+        cleanly; `av1check` and `mediaplay -k` on AV1 WebM in coretest
+  - [x] libmedia's AV1 `TVideoDecoder` (`Av1.MediaDecoder`)
+  - [ ] Faster: SIMD (SSE2/AVX2, NEON) inline assembly for the inter
+        filters, inverse transforms, CDEF and the deblocking filter, with
+        the Pascal loops as the fallback; frame-parallel decoding
+  - [ ] Large scale tile decoding (Annex D, tile list OBUs)
+  - [ ] Streams with intra-only frames and short reference signaling
+        (the code follows the specification but no test stream has them;
+        the host encoders do not produce them)
+
 ## Planned: driver model (loading only the drivers the machine needs)
 
 Today every driver is compiled into the kernel and `Io.Startup` calls each
@@ -1993,6 +2061,57 @@ in the order they would be built:
       manifests' content, then C for classes where a crash matters more
       than speed.
 
+## Media (libmedia)
+
+- [x] libmedia: frame records (`Media.Frames`, the contract with the video
+      libraries), tracks and packets, the demuxer and decoder classes, the
+      video decoder registry, `ConvertFrameToBgra` (BT.601/709/2020, SMPTE
+      240M, FCC, identity; limited and full range; 10/12-bit)
+- [x] Containers: WAV (RIFF, RF64, extensible), native FLAC (seek table,
+      bisection), Ogg (Vorbis, Opus, FLAC; chained; granule timing;
+      bisection seeking), Matroska/WebM (lacing, header stripping, unknown
+      sizes, cues, DiscardPadding, CodecDelay), MP4 (sample tables, edit
+      lists, fragmented MP4 read as it is appended), MP3 (ID3, Xing/LAME
+      gapless, VBRI, seeking)
+- [x] Audio decoders: PCM, FLAC (bit exact, MD5 checked), Vorbis (within
+      2e-7 of libvorbis), Opus (SILK, CELT, hybrid, multistream; RFC 8251
+      vectors with exact final ranges), MP3 (MPEG-1/2/2.5 Layer III, ISO
+      11172-4 full accuracy)
+- [x] Resampler (polyphase Kaiser windowed sinc), channel mixer (BS.775
+      downmix), conversion to the audio devices' sample kinds
+- [x] `mediaplay`: playback on the audio device, `-i` track info, `-k`
+      decoding checksums (per video frame once a video library registers)
+- [x] `make media-test` (host, fixtures from ffmpeg/flac/lame at build
+      time) and a coretest line
+- [x] libvideo: VP8 (RFC 6386) and VP9 (profiles 0-3, 8/10/12-bit,
+      4:2:0/4:2:2/4:4:0/4:4:4, tiles, superframes, scaled references,
+      intra-only and show-existing frames) decoders, bit exact with libvpx;
+      VP8 partition rows and VP9 tile columns and loop filter rows on
+      worker threads; registered with `Media.VideoDecoders` and linked into
+      mediaplay (`-k` checksums WebM/MP4 VP8/VP9 video); `make video-test`
+      (vpxenc streams, WebM/MP4 through libmedia, damaged streams, the
+      libvpx test vectors when present) and a coretest line
+- [ ] Register libav1's decoder with `Media.VideoDecoders.RegisterVideoDecoder`
+      and link it into mediaplay
+- [ ] libvideo: frame-parallel VP9 decoding (the next frame's rows as
+      their references' rows finish) and row-parallel decoding of
+      single-tile VP9 streams (parsing and reconstruction apart);
+      SIMD (FPC inline assembler) for the 8-tap filters, transforms and
+      loop filters (now about a fifth of libvpx's speed single threaded)
+- [ ] `Media.Frames`: a layout for 4:4:0 (VP9 profile 1/3); such frames
+      say pl420 with full width chroma planes
+- [x] libav1's decoder registered (`Av1.MediaDecoder`) and linked into
+      mediaplay: `-k` gives per-frame checksums of AV1 in WebM, Matroska,
+      MP4, IVF and OBU files (`Media.Ivf`, `Media.ObuStream`)
+- [ ] MP3 Layers I and II; Vorbis floor 0 and MP3 intensity stereo / mixed
+      blocks checked against streams that use them (no host encoder writes
+      them); Theora timing in Ogg; mfra-based MP4 seeking; zlib-compressed
+      Matroska frames
+- [ ] A player application (video window, seeking bar, playlists) and the
+      browser's HTMLMediaElement / MSE on libmedia (next batch)
+- [ ] Decoding audio ahead in a thread of its own while playing (mediaplay
+      decodes and writes on one thread)
+
 ## Planned: 3D graphics (OpenGL and Vulkan)
 
 - [ ] **Kernel GPU interface** (a DRM/KMS-like role, generic names):
@@ -2002,20 +2121,33 @@ in the order they would be built:
       and sync objects, per-process GPU contexts, and a device file per
       GPU. Drivers: virtio-gpu 3D first (QEMU: virgl for OpenGL, venus
       for Vulkan), then real hardware (Intel, AMD) much later.
-- [ ] **libgl / libvulkan via Mesa** (through the ports system, once the C
-      toolchain and mlibc work): a FreePascalOS window-system layer for
-      EGL and the Vulkan WSI (surfaces backed by the display server's
-      shared-memory windows today, GPU buffers when the kernel interface
-      exists); software rendering first (softpipe without LLVM; llvmpipe
-      and lavapipe once LLVM is ported), then virgl/venus, then hardware
+- [x] **libgl / libvulkan via Mesa**, software rendering: the ports
+      graphics/mesa (26.3.1: llvmpipe, softpipe, lavapipe) and devel/llvm
+      (23.1.6, LLVM's libraries for the system); EGL's native platform
+      and a Vulkan WSI backend (`VK_FPOS_window_surface`) for the display
+      server's shared-memory windows, `<freepascalos/windowing.h>` (the
+      protocol for C); gldemos (gltest, glgears, vkcube) on the system
+      disk. See docs/Architecture.md "OpenGL, OpenGL ES, EGL and Vulkan
+      (Mesa)".
+- [ ] Mesa, what is left: a Vulkan loader (the Khronos loader, taught
+      `VK_FPOS_window_surface`; programs open libvulkan_lvp.so
+      themselves today); vsync'd presentation and frame pacing
+      (the swap interval and FIFO are accepted and ignored); zero-copy
+      presentation (a window surface per swapchain image, or the
+      renderer drawing straight into the section); the shader cache
+      (disabled: needs a cache folder policy); GPU buffers and
+      virgl/venus once the kernel GPU interface exists, then hardware
       drivers. Pascal bindings (OpenGL and Vulkan headers for FPC) so
       Pascal programs can use them.
 - [ ] Display server: GPU-composited windows (optional; keep the CPU path),
       a way for a window's content to be a GPU buffer, and vsync'd
       presentation.
 - [ ] WebGL in the browser on top of libgl (later).
-- [ ] Demos and tests: glxgears-like and vkcube-like programs, conformance
-      subsets (piglit / VK-GL-CTS pieces) run in QEMU with virtio-gpu.
+- [x] Demos: glxgears-like and vkcube-like programs (gldemos: glgears,
+      vkcube; gltest checks EGL and three GL APIs headless, a coretest
+      line runs it on llvmpipe and softpipe).
+- [ ] Conformance subsets (piglit / VK-GL-CTS pieces) run in QEMU, later
+      with virtio-gpu.
 
 ## Planned: installer image
 
@@ -2065,7 +2197,9 @@ in the order they would be built:
 - [x] Both architectures: the toolchain built and ctest passing on amd64
       (KVM) and arm64 (QEMU virt)
 - [ ] The C runtime on the Raspberry Pi 5 (built, not tried on the board)
-- [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
+- [x] SA_RESTART (with the POSIX calls that never restart), sigaltstack (stack
+      overflows handled on it), sigtimedwait/sigwaitinfo, sigqueue, real-time
+      signal queues with siginfo values in order (240-242)
 - [x] AF_UNIX sockets (stream, datagram, seqpacket; paths and the
       abstract namespace; socketpair; SCM_RIGHTS, SCM_CREDENTIALS,
       SO_PEERCRED; shutdown, names) (253-258); pseudo-terminal masters as
@@ -2091,8 +2225,14 @@ in the order they would be built:
       stat, utimensat and futimens
 - [ ] fdatasync skipping metadata that is not needed to read the data
       (it does what fsync does)
-- [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
-- [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
+- [x] setitimer/getitimer/alarm: all three interval timers in the kernel (248)
+- [x] timer_create and friends (REALTIME, MONOTONIC, process and thread CPU
+      time; SIGEV_SIGNAL/NONE/THREAD), ITIMER_VIRTUAL/PROF; CPU-time clocks
+      from real per-thread times, clock_getcpuclockid/pthread_getcpuclockid (243-249)
+- [x] Absolute CLOCK_REALTIME timers follow steps of the wall clock; signalfd
+      reads the real-time queues with their values
+- [ ] SIGEV_THREAD_ID; thread-directed queued signals (pthread_sigqueue,
+      tgkill with a value)
 - [x] Clang driver support (`--target=x86_64-freepascalos`, `aarch64-freepascalos`):
       LLVM 23.1.6 patches, `make clang-toolchain`, ctest built by Clang
 - [x] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,

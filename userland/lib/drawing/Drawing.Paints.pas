@@ -50,7 +50,7 @@ uses
   Drawing.Transforms;
 
 type
-  TPaintKind = (PaintSolid, PaintLinearGradient, PaintRadialGradient, PaintPattern);
+  TPaintKind = (PaintSolid, PaintLinearGradient, PaintRadialGradient, PaintPattern, PaintConicGradient);
   TSpreadMethod = (SpreadPad, SpreadReflect, SpreadRepeat);
 
   TGradientStop = record
@@ -70,12 +70,23 @@ type
     { Radial: the end circle at 1 and the focal circle at 0. }
     CentreX, CentreY, Radius: Double;
     FocusX, FocusY, FocusRadius: Double;
+    { Conic: round (CentreX, CentreY), offset 0 at StartAngle (radians
+      from the positive x axis, clockwise on the screen) and a whole
+      turn later 1. }
+    StartAngle: Double;
     ToPaintSpace: TAffineTransform;
     { Pattern: the tile (not owned), repeated or transparent outside
       it, sampled at the nearest pixel or between the four nearest. }
     Tile: TSurface;
     TileRepeat: Boolean;
+    { With TileRepeat: the tile is not repeated along that axis (a
+      repeat-x or repeat-y pattern), transparent beyond it there. }
+    NoRepeatX, NoRepeatY: Boolean;
     Smooth: Boolean;
+    { Gradients: colours between stops mixed without premultiplying
+      their alpha (canvas gradients) rather than premultiplied (CSS,
+      SVG). Set before PreparePaint. }
+    InterpolateUnpremultiplied: Boolean;
     { Made by PreparePaint. }
     Ramp: array of TColor;
   end;
@@ -86,6 +97,8 @@ function LinearGradientPaint(X1, Y1, X2, Y2: Double; const Stops: TGradientStops
 function RadialGradientPaint(CentreX, CentreY, Radius, FocusX, FocusY, FocusRadius: Double;
   const Stops: TGradientStops; Spread: TSpreadMethod; const ToPaintSpace: TAffineTransform): TPaint;
 function PatternPaint(const Tile: TSurface; const ToPaintSpace: TAffineTransform): TPaint;
+function ConicGradientPaint(CentreX, CentreY, StartAngle: Double; const Stops: TGradientStops;
+  const ToPaintSpace: TAffineTransform): TPaint;
 { Builds the gradient's colour table (call after changing the stops). }
 procedure PreparePaint(var Paint: TPaint);
 { The colours of pixels Left .. Left + Count - 1 of line Y (surface
@@ -151,18 +164,39 @@ begin
   Result.ToPaintSpace := ToPaintSpace;
 end;
 
-{ The tile's pixel at (X, Y): wrapped when it repeats, else clamped to
-  its edge (Inside False when the point is beyond it). }
+function ConicGradientPaint(CentreX, CentreY, StartAngle: Double; const Stops: TGradientStops;
+  const ToPaintSpace: TAffineTransform): TPaint;
+begin
+  Result := Default(TPaint);
+  Result.Kind := PaintConicGradient;
+  Result.CentreX := CentreX;
+  Result.CentreY := CentreY;
+  Result.StartAngle := StartAngle;
+  Result.Stops := Stops;
+  Result.Spread := SpreadPad;
+  Result.ToPaintSpace := ToPaintSpace;
+  PreparePaint(Result);
+end;
+
+function RepeatsX(const Paint: TPaint): Boolean; inline;
+begin
+  Result := Paint.TileRepeat and not Paint.NoRepeatX;
+end;
+
+function RepeatsY(const Paint: TPaint): Boolean; inline;
+begin
+  Result := Paint.TileRepeat and not Paint.NoRepeatY;
+end;
+
+{ The tile's pixel at (X, Y): wrapped along the axes it repeats on,
+  else clamped to its edge. }
 function TilePixel(const Paint: TPaint; X, Y: LongInt): TColor;
 begin
-  if Paint.TileRepeat then
+  if RepeatsX(Paint) then
   begin
     X := X mod Paint.Tile.Width;
     if X < 0 then
       Inc(X, Paint.Tile.Width);
-    Y := Y mod Paint.Tile.Height;
-    if Y < 0 then
-      Inc(Y, Paint.Tile.Height);
   end
   else
   begin
@@ -170,6 +204,15 @@ begin
       X := 0;
     if X >= Paint.Tile.Width then
       X := Paint.Tile.Width - 1;
+  end;
+  if RepeatsY(Paint) then
+  begin
+    Y := Y mod Paint.Tile.Height;
+    if Y < 0 then
+      Inc(Y, Paint.Tile.Height);
+  end
+  else
+  begin
     if Y < 0 then
       Y := 0;
     if Y >= Paint.Tile.Height then
@@ -207,7 +250,9 @@ var
   BaseX, BaseY: LongInt;
   FractionX, FractionY: Double;
 begin
-  if not Paint.TileRepeat and ((X < 0) or (Y < 0) or (X >= Paint.Tile.Width) or (Y >= Paint.Tile.Height)) then
+  if not RepeatsX(Paint) and ((X < 0) or (X >= Paint.Tile.Width)) then
+    Exit(ColorTransparent);
+  if not RepeatsY(Paint) and ((Y < 0) or (Y >= Paint.Tile.Height)) then
     Exit(ColorTransparent);
   if not Paint.Smooth then
     Exit(TilePixel(Paint, Floor(X), Floor(Y)));
@@ -235,6 +280,16 @@ begin
   Result := True;
 end;
 
+{ Colour First to Second by Weight (0 to 1), every channel on its own
+  (alpha not premultiplied). }
+function InterpolateUnpremultipliedColors(First, Second: TColor; Weight: Double): TColor;
+begin
+  Result := ArgbColor(Round(AlphaOf(First) + (AlphaOf(Second) - AlphaOf(First)) * Weight),
+    Round(RedOf(First) + (RedOf(Second) - RedOf(First)) * Weight),
+    Round(GreenOf(First) + (GreenOf(Second) - GreenOf(First)) * Weight),
+    Round(BlueOf(First) + (BlueOf(Second) - BlueOf(First)) * Weight));
+end;
+
 { Colour First to Second by Weight (0 to 1), premultiplied. }
 function InterpolateColors(First, Second: TColor; Weight: Double): TColor;
 var
@@ -260,7 +315,7 @@ var
   Count: LongInt;
   Span: Double;
 begin
-  if not (Paint.Kind in [PaintLinearGradient, PaintRadialGradient]) then
+  if not (Paint.Kind in [PaintLinearGradient, PaintRadialGradient, PaintConicGradient]) then
     Exit;
   Paint.Ramp := nil;
   SetLength(Paint.Ramp, RampSize);
@@ -286,6 +341,9 @@ begin
       Span := Paint.Stops[StopIndex + 1].Offset - Paint.Stops[StopIndex].Offset;
       if Span <= 0 then
         Paint.Ramp[Entry] := Paint.Stops[StopIndex + 1].Color
+      else if Paint.InterpolateUnpremultiplied then
+        Paint.Ramp[Entry] := InterpolateUnpremultipliedColors(Paint.Stops[StopIndex].Color,
+          Paint.Stops[StopIndex + 1].Color, (Offset - Paint.Stops[StopIndex].Offset) / Span)
       else
         Paint.Ramp[Entry] := InterpolateColors(Paint.Stops[StopIndex].Color, Paint.Stops[StopIndex + 1].Color,
           (Offset - Paint.Stops[StopIndex].Offset) / Span);
@@ -386,7 +444,7 @@ begin
     PaintSolid:
       for Index := 0 to Count - 1 do
         Colors[Index] := Paint.Color;
-    PaintLinearGradient, PaintRadialGradient, PaintPattern:
+    PaintLinearGradient, PaintRadialGradient, PaintPattern, PaintConicGradient:
       begin
         SampleX := Left + 0.5;
         SampleY := Y + 0.5;
@@ -418,6 +476,17 @@ begin
                 Colors[Index] := RampColor(Paint, T)
               else
                 Colors[Index] := ColorTransparent;
+              PaintX := PaintX + StepX;
+              PaintY := PaintY + StepY;
+            end;
+          PaintConicGradient:
+            for Index := 0 to Count - 1 do
+            begin
+              DX := PaintX - Paint.CentreX;
+              DY := PaintY - Paint.CentreY;
+              T := (ArcTan2(DY, DX) - Paint.StartAngle) / (2 * Pi);
+              T := T - Floor(T);
+              Colors[Index] := RampColor(Paint, T);
               PaintX := PaintX + StepX;
               PaintY := PaintY + StepY;
             end;

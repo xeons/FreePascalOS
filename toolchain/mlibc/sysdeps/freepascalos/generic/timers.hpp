@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// The interval timer (generic/timers.cpp).
+// The timers (generic/timers.cpp).
 
 #pragma once
 
 namespace fpos {
 
-// A child of fork has no timer and no helper thread.
+// A child of fork has no timers: what SIGEV_THREAD timers left in it goes.
 void forget_timers_after_fork();
 
 } // namespace fpos

@@ -179,6 +179,26 @@ begin
   end;
 end;
 
+{ Whether Value converts to one of the enumeration's values (False for
+  a symbol, which conversion would reject anyway). }
+function EnumValueValid(Context: TBindingContext; Value: TJsValue; TypeIndex: Integer): Boolean;
+var
+  Text: string;
+  Range: TBindingRange;
+  Index: Integer;
+begin
+  if JsIsSymbol(Value) then
+    Exit(True);
+  Text := ValueToText(Context.Engine.Realm, Value);
+  if Context.Engine.Realm.HasException then
+    raise EBindingPendingException.Create('');
+  Range := BindingEnums[BindingTypes[TypeIndex].Reference];
+  for Index := 0 to Range.Count - 1 do
+    if BindingEnumValues[Range.First + Index] = Text then
+      Exit(True);
+  Result := False;
+end;
+
 function SetterEntry(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
@@ -219,6 +239,10 @@ begin
       Exit(JsUndefined);
     end;
     SetLength(Call.Arguments, 1);
+    { WebIDL 3.7.6: an attribute of an enumeration type ignores a string
+      that is not one of its values. }
+    if (BindingTypes[Member^.TypeIndex].Kind = tkEnum) and not EnumValueValid(Context, Value, Member^.TypeIndex) then
+      Exit(JsUndefined);
     ConvertValue(Context, Value, Member^.TypeIndex, Call.Arguments[0], MemberName(Member, Callee.Magic));
     if Member^.Kind = mkReflected then
     begin

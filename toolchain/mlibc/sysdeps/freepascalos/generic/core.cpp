@@ -137,6 +137,7 @@ int Sysdeps<ClockGet>::operator()(int clock, time_t *secs, long *nanos) {
 		return 0;
 #endif
 	long which;
+	struct fpos_precise_time now;
 	switch (clock) {
 		case CLOCK_REALTIME:
 		case CLOCK_REALTIME_COARSE:
@@ -146,14 +147,19 @@ int Sysdeps<ClockGet>::operator()(int clock, time_t *secs, long *nanos) {
 		case CLOCK_MONOTONIC_RAW:
 		case CLOCK_MONOTONIC_COARSE:
 		case CLOCK_BOOTTIME:
-		case CLOCK_PROCESS_CPUTIME_ID:
-		case CLOCK_THREAD_CPUTIME_ID:
 			which = FPOS_TIME_UPTIME_NANOSECONDS;
 			break;
 		default:
-			return EINVAL;
+			// The processor-time clocks: the calling process's or thread's,
+			// or one clock_getcpuclockid made (negative).
+			if (clock != CLOCK_PROCESS_CPUTIME_ID && clock != CLOCK_THREAD_CPUTIME_ID && clock >= 0)
+				return EINVAL;
+			if (int e = fpos::call_checked(FPOS_CALL_GET_PROCESSOR_CLOCK, clock, &now, nullptr))
+				return e == ENOENT ? EINVAL : e;
+			*secs = now.seconds;
+			*nanos = now.nanoseconds;
+			return 0;
 	}
-	struct fpos_precise_time now;
 	if (int e = fpos::call_checked(FPOS_CALL_GET_PRECISE_TIME, which, &now))
 		return e;
 	*secs = now.seconds;

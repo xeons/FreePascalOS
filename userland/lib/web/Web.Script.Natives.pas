@@ -72,6 +72,8 @@ uses
   Web.Script.NativeFetch,
   Web.Script.NativeWebSockets,
   Web.Script.NativeWorkers,
+  Web.Script.NativeStorage,
+  Web.Script.NativeCanvas,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -661,6 +663,8 @@ begin
   DefineFetchNatives(Context, Natives);
   DefineWebSocketNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
+  DefineStorageNatives(Context, Natives);
+  DefineCanvasNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

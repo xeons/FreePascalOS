@@ -1,0 +1,64 @@
+diff -ru a/options/internal/include/mlibc/sysdep-signatures.hpp b/options/internal/include/mlibc/sysdep-signatures.hpp
+--- a/options/internal/include/mlibc/sysdep-signatures.hpp	2026-11-25 17:48:39.149277466 -0600
++++ b/options/internal/include/mlibc/sysdep-signatures.hpp	2026-11-25 17:48:51.923582027 -0600
+@@ -75,6 +75,8 @@
+ SYSDEP_FUNC(ClockGet, int clock, time_t *secs, long *nanos);
+ SYSDEP_FUNC(ClockSet, int clock, time_t secs, long nanos);
+ SYSDEP_FUNC(ClockGetres, int clock, time_t *secs, long *nanos);
++SYSDEP_FUNC(ClockGetcpuclockid, pid_t pid, clockid_t *clock);
++SYSDEP_FUNC(ThreadGetcpuclockid, pid_t tid, clockid_t *clock);
+ SYSDEP_FUNC(Sleep, time_t *secs, long *nanos);
+ SYSDEP_FUNC(Isatty, int fd);
+ SYSDEP_FUNC(Rmdir, const char *path);
+diff -ru a/options/internal/include/mlibc/sysdep-tags.hpp b/options/internal/include/mlibc/sysdep-tags.hpp
+--- a/options/internal/include/mlibc/sysdep-tags.hpp	2026-11-25 17:48:39.148656146 -0600
++++ b/options/internal/include/mlibc/sysdep-tags.hpp	2026-11-25 17:48:51.922498029 -0600
+@@ -68,6 +68,10 @@
+ struct ClockSet {};
+ // int sys_clock_getres(int clock, time_t *secs, long *nanos);
+ struct ClockGetres {};
++// int sys_clock_getcpuclockid(pid_t pid, clockid_t *clock);
++struct ClockGetcpuclockid {};
++// int sys_thread_getcpuclockid(pid_t tid, clockid_t *clock);
++struct ThreadGetcpuclockid {};
+ // int sys_sleep(time_t *secs, long *nanos);
+ struct Sleep {};
+ // // In contrast to the isatty() library function, the sysdep function uses return value
+diff -ru a/options/posix/generic/pthread.cpp b/options/posix/generic/pthread.cpp
+--- a/options/posix/generic/pthread.cpp	2026-11-25 17:48:39.148037176 -0600
++++ b/options/posix/generic/pthread.cpp	2026-11-25 17:49:20.273323303 -0600
+@@ -1475,7 +1475,10 @@
+ 	}
+ }
+ 
+-int pthread_getcpuclockid(pthread_t, clockid_t *) {
++int pthread_getcpuclockid(pthread_t thread, clockid_t *clock) {
++	if constexpr (mlibc::IsImplemented<ThreadGetcpuclockid>) {
++		return mlibc::sysdep<ThreadGetcpuclockid>(reinterpret_cast<Tcb *>(thread)->tid, clock);
++	}
+ 	mlibc::infoLogger() << "mlibc: pthread_getcpuclockid() always returns ENOENT"
+ 			<< frg::endlog;
+ 	return ENOENT;
+diff -ru a/options/posix/generic/time.cpp b/options/posix/generic/time.cpp
+--- a/options/posix/generic/time.cpp	2026-11-25 17:48:39.147325966 -0600
++++ b/options/posix/generic/time.cpp	2026-11-25 17:49:16.076400199 -0600
+@@ -9,6 +9,7 @@
+ #include <mlibc/debug.hpp>
+ #include <mlibc/time.hpp>
+ #include <mlibc/strings.hpp>
++#include <mlibc/all-sysdeps.hpp>
+ 
+ namespace {
+ 
+@@ -511,7 +512,10 @@
+ 	return mlibc::strftime(s, maxsize, format, timeptr, static_cast<mlibc::localeinfo *>(l));
+ }
+ 
+-int clock_getcpuclockid(pid_t, clockid_t *) {
++int clock_getcpuclockid(pid_t pid, clockid_t *clock) {
++	if constexpr (mlibc::IsImplemented<ClockGetcpuclockid>) {
++		return mlibc::sysdep<ClockGetcpuclockid>(pid, clock);
++	}
+ 	mlibc::infoLogger() << "mlibc: clock_getcpuclockid unconditionally returns ENOSYS" << frg::endlog;
+ 	return ENOSYS;
+ }

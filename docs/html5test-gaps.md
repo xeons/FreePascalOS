@@ -21,8 +21,10 @@ rendering with the installed Firefox.
 |---|---|---|
 | Before | none | The page never showed a score: its inline script was a syntax error (`<!--` after a tab), and once that was fixed the test waited forever for images made by `new Image()` |
 | After the two blockers | 241 / 588 | The test runs to the end and shows every result |
-| After the html5test fixes | 273 / 588 | |
-| After WebSocket and CSP | 293 / 588 | communication 40 / 40, security 26 / 32 |
+| After this work | 273 / 588 | |
+| After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
+| After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
+| After WebSocket and CSP (merged with everything above) | 345 / 588 | communication 40 / 40, security 26 / 32 (+20) |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -33,7 +35,8 @@ differs: the score and the browser's name). What is left visibly: the
 are a few pixels shorter because Firefox on this machine takes Noto
 Sans Mono for `monospace` (the system takes Liberation Mono).
 
-Per category after this work:
+Per category after this work (canvas and offscreen after the canvas
+work that followed):
 
 | Category | Points | Category | Points |
 |---|---|---|---|
@@ -44,14 +47,14 @@ Per category after this work:
 | input | 5 / 10 | video | 0 / 33 |
 | audio | 2 / 30 | streaming | 0 / 5 |
 | responsive | 15 / 15 | svg | 2 / 4 |
-| canvas | 0 / 25 | 3d | 0 / 25 |
-| offscreen | 0 / 3 | animation | 5 / 8 |
+| canvas | 24 / 25 | 3d | 0 / 25 |
+| offscreen | 3 / 3 | animation | 5 / 8 |
 | communication | 40 / 40 | streams | 6 / 6 |
 | rtc | 0 / 45 | interaction | 5 / 19 |
 | performance | 11 / 12 | native | 0 / 1 |
 | resource | 7 / 7 | security | 26 / 32 |
 | payments | 0 / 5 | offline | 0 / 13 |
-| storage | 10 / 35 | files | 15 / 15 |
+| storage | 10 / 35 (35 / 35 with IndexedDB) | files | 15 / 15 |
 | scripting | 32 / 32 | other | 9 / 9 |
 
 ## What was fixed
@@ -92,6 +95,8 @@ Features (each a real implementation with tests):
 | Pointer events, pointer capture, mouseenter/mouseleave | 5 | `WebView.MouseEvents`, `Web.Dom.PointerCapture` |
 | ClipboardEvent, DataTransfer (string data), copy/cut/paste events | 5 | `Web.Dom.DataTransfer`, `WebView.ClipboardEvents` |
 | Access keys (Alt+Shift) and accessKeyLabel | 1 | `Web.Dom.AccessKeys` |
+| Canvas 2D: the whole CanvasRenderingContext2D (paths and Path2D, transforms, fill rules, strokes, dashes, gradients incl. conic, patterns, shadows, every compositing operator and blend mode, clips, text, drawImage, ImageData, filters), toDataURL (PNG, JPEG, WebP) and toBlob | 24 (canvas.*) | `Web.Canvas.*`, `Web.Bindings.Canvas`, `76-canvas.js`; docs/Architecture.md "Canvas" |
+| OffscreenCanvas (workers too), ImageBitmap and createImageBitmap, ImageBitmapRenderingContext | 3 (offscreen.*) | `Web.Canvas.Elements`, `Web.Script.NativeCanvas` |
 
 The date and time "custom user interface" points are the test's
 inference from sanitization: the fields can be typed into (their edit
@@ -174,21 +179,16 @@ Points are what each costs on html5test (588 in all).
 
 ### Large (weeks)
 
-- **Canvas 2D** (`canvas.*` 24, `offscreen.*` 3): no
-  CanvasRenderingContext2D yet. libdrawing already has what it needs
-  (paths with arcs, strokes with caps, joins and dashes, gradients,
-  patterns, transforms, masks); the work is the API (state stack,
-  paths and Path2D, fill and stroke rules, text with libfont,
-  drawImage, ImageData, compositing and blend modes, shadows,
-  toDataURL/toBlob with libimage), the canvas's bitmap shown through
-  the layout's element images, then OffscreenCanvas and ImageBitmap.
-  The biggest single gap and the most used on real sites.
+- **Canvas hit regions** (`canvas.hittest` 1): addHitRegion was dropped
+  from the standard (no browser has it); not done.
 - **Shadow DOM** (`components.shadowdom` 4): attachShadow, slots,
   retargeting, :host and ::slotted, shadow-including tree order in
   style, layout and events.
-- **IndexedDB** (`storage.indexedDB.*` 25): the database engine on
-  disk (per origin), transactions, key ranges, cursors, indexes,
-  structured clone of values (Blob, ArrayBuffer).
+- ~~**IndexedDB** (`storage.indexedDB.*` 25)~~: done - IndexedDB 3.0
+  on the storage service (Web.IndexedDb.*, in the browser process for
+  content processes), with navigator.storage and the Cache API on the
+  same service; see "IndexedDB, the Cache API and navigator.storage" in
+  docs/Architecture.md.
 - **Video and audio** (`video.*` 33, `audio.element` 18,
   `streaming.mediasource` 5): media elements that play: demuxers (MP4,
   WebM, Ogg), codecs (H.264, VP8/VP9, AV1, AAC, Opus, Vorbis, FLAC, MP3,
@@ -202,8 +202,8 @@ Points are what each costs on html5test (588 in all).
   connections (ICE, DTLS, SRTP, SCTP data channels), getUserMedia
   (camera and microphone drivers), getDisplayMedia, MediaRecorder.
 - **Service workers and push** (`offline.*` 12): service worker
-  registration, the fetch interception in the network service, the
-  Cache API, push messages.
+  registration, the fetch interception in the network service, push
+  messages (the Cache API is done: 86-cache-storage.js).
 - **WebAssembly** (`native.webassembly` 1): a Wasm engine in
   libjavascript.
 - **MathML** (`elements.mathml` 2): MathML Core layout.

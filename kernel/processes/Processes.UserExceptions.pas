@@ -113,6 +113,7 @@ uses
   Processes.AddressSpace,
   Processes.UserAccess,
   Processes.UserProcess,
+  Processes.AlternateSignalStacks,
   Debug.Output;
 
 const
@@ -147,6 +148,8 @@ var
   RecordTop: QWord;
   ReserveTop: QWord;
   StackPointer: QWord;
+  AlternateTop: QWord;
+  OnAlternateStack: Boolean;
 begin
   Result := False;
   Process := CurrentProcess;
@@ -173,6 +176,11 @@ begin
        (StackPointer < Thread^.OpenedStackReserve + UserStackRedZoneSize + 2 * SizeOf(ExceptionRecord)) then
       RecordTop := ReserveTop;
   end;
+  { A C program's handler of the signal this becomes may run on the
+    thread's alternate signal stack (Processes.AlternateSignalStacks). }
+  OnAlternateStack := AlternateStackTopForException(Process, Thread, Code, StackPointer, AlternateTop);
+  if OnAlternateStack then
+    RecordTop := AlternateTop;
   RecordAddress := (RecordTop - SizeOf(ExceptionRecord)) and not QWord(15);
   ReturnSlot := RecordAddress - SizeOf(QWord);
   NoReturnAddress := 0;
@@ -180,7 +188,7 @@ begin
     interrupts. }
   WereEnabled := SaveAndDisableInterrupts;
   EnableInterrupts;
-  Written := ((RecordAddress < StackPointer) or (Code = ExceptionStackOverflow)) and
+  Written := ((RecordAddress < StackPointer) or (Code = ExceptionStackOverflow) or OnAlternateStack) and
     (CopyToUser(RecordAddress, @ExceptionRecord, SizeOf(ExceptionRecord)) = ErrorNone) and
     (CopyToUser(ReturnSlot, @NoReturnAddress, SizeOf(NoReturnAddress)) = ErrorNone);
   DisableInterrupts;

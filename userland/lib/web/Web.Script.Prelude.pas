@@ -21,8 +21,10 @@
   speed does not matter: structuredClone's serialization and
   deserialization in one walk (HTML Standard 2.7: primitives, plain
   objects and arrays, Boolean, Number, String and BigInt objects, Date,
-  RegExp, Map, Set and errors, with cycles; anything else, platform
-  objects included, is a DataCloneError).
+  RegExp, Map, Set and errors, with cycles; platform objects that are
+  serializable are copied by the hooks the platform scripts add to the
+  function's hooks array (ImageData, ImageBitmap: platform/76-canvas.js);
+  anything else is a DataCloneError).
 }
 unit Web.Script.Prelude;
 
@@ -42,6 +44,15 @@ const
     '  function properties(source, copy, memory) {' + LineEnding +
     '    for (const key of Object.keys(source)) copy[key] = clone(source[key], memory);' + LineEnding +
     '    return copy;' + LineEnding +
+    '  }' + LineEnding +
+    '  function platformCopy(value) {' + LineEnding +
+    '    const hooks = structuredClone.hooks;' + LineEnding +
+    '    if (hooks === undefined) return undefined;' + LineEnding +
+    '    for (const hook of hooks) {' + LineEnding +
+    '      const copy = hook(value);' + LineEnding +
+    '      if (copy !== undefined) return copy;' + LineEnding +
+    '    }' + LineEnding +
+    '    return undefined;' + LineEnding +
     '  }' + LineEnding +
     '  function clone(value, memory) {' + LineEnding +
     '    if (typeof value === "symbol") refuse("a symbol");' + LineEnding +
@@ -81,12 +92,14 @@ const
     '        memory.set(value, copy);' + LineEnding +
     '        return properties(value, copy, memory);' + LineEnding +
     '      default:' + LineEnding +
-    '        refuse(tag.slice(8, -1));' + LineEnding +
+    '        copy = platformCopy(value);' + LineEnding +
+    '        if (copy === undefined) refuse(tag.slice(8, -1));' + LineEnding +
     '    }' + LineEnding +
     '    memory.set(value, copy);' + LineEnding +
     '    return copy;' + LineEnding +
     '  }' + LineEnding +
-    '  return function structuredClone(value) { return clone(value, new Map()); };' + LineEnding +
+    '  function structuredClone(value) { return clone(value, new Map()); }' + LineEnding +
+    '  return structuredClone;' + LineEnding +
     '})()';
 
 implementation

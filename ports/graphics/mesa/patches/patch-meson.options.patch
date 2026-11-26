@@ -1,0 +1,19 @@
+--- a/meson.options
++++ b/meson.options
+@@ -13,6 +13,7 @@
+   value : ['auto'],
+   choices : [
+     'auto', 'x11', 'wayland', 'haiku', 'android', 'windows', 'macos',
++    'freepascalos',
+   ],
+   description : 'window systems to support. If this is set to `auto`, all ' +
+                 'platforms applicable will be enabled.'
+@@ -23,7 +24,7 @@
+   type : 'combo',
+   value : 'auto',
+   choices : [
+-    'auto', 'x11', 'haiku', 'android', 'surfaceless',
++    'auto', 'x11', 'haiku', 'android', 'surfaceless', 'freepascalos',
+   ],
+   description : 'the window system EGL assumes for EGL_DEFAULT_DISPLAY',
+ )

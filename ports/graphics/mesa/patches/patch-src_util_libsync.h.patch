@@ -1,0 +1,13 @@
+--- a/src/util/libsync.h
++++ b/src/util/libsync.h
+@@ -42,6 +42,10 @@
+ 
+ #include "util/detect_os.h"
+ #include "util/os_file.h"
++
++#if DETECT_OS_FREEPASCALOS
++#include <sys/ioccom.h>
++#endif
+ 
+ #if defined(__cplusplus)
+ extern "C" {

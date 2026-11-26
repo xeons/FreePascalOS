@@ -1,0 +1,12 @@
+--- a/src/egl/meson.build
++++ b/src/egl/meson.build
+@@ -119,6 +119,9 @@
+       ]
+     endif
+   endif
++  if with_platform_freepascalos
++    files_egl += files('drivers/dri2/platform_freepascalos.c')
++  endif
+   if with_platform_android
+     deps_for_egl += [dep_android, idep_u_gralloc]
+     files_egl += files('drivers/dri2/platform_android.c')

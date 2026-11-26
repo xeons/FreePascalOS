@@ -1,0 +1,14 @@
+--- a/include/vulkan/vulkan.h
++++ b/include/vulkan/vulkan.h
+@@ -78,6 +78,11 @@
+ #endif
+ 
+ 
++#ifdef VK_USE_PLATFORM_FREEPASCALOS_FPOS
++#include "vulkan_freepascalos.h"
++#endif
++
++
+ #ifdef VK_USE_PLATFORM_SCREEN_QNX
+ #include <screen/screen.h>
+ #include "vulkan_screen.h"

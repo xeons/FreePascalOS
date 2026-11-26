@@ -233,6 +233,10 @@ type
       (Web.Dom.ImageRequests keeps it, the image loader fills it). }
     function ImageRequestObject: TObject;
     procedure SetImageRequestObject(Value: TObject);
+    { A canvas's bitmap and context (nil if none); the node owns it
+      (Web.Canvas.Elements keeps it). }
+    function CanvasStateObject: TObject;
+    procedure SetCanvasStateObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
     function HeldByEvents: Boolean; override;
@@ -906,6 +910,8 @@ type
     FormState: TObject;
     { An img's image request (Web.Dom.ImageRequests). }
     ImageRequest: TObject;
+    { A canvas's surface (Web.Canvas.Elements). }
+    CanvasState: TObject;
     destructor Destroy; override;
   end;
 

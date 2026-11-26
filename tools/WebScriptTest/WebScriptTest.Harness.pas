@@ -33,6 +33,10 @@
 
   A script file may define after(): it is called once the script, its
   microtasks and the timers it left (each a task of its own) have run.
+
+  IndexedDB, the Cache API and navigator.storage use a storage service
+  in memory per bed (the origin https://example.test); its notices are
+  tasks run before the timers.
 }
 unit WebScriptTest.Harness;
 
@@ -52,6 +56,7 @@ uses
   Web.Html.Parser,
   Web.ScriptEnvironment,
   Web.Storage,
+  Web.IndexedDb.Service,
   Web.Script.Context;
 
 type
@@ -73,9 +78,20 @@ type
     Canceled: Boolean;
   end;
 
+  TTestEnvironment = class;
+
+  TTestStorageClient = class(TIndexedDbClient)
+  public
+    Environment: TTestEnvironment;
+    procedure Notice(const Payload: TBytes); override;
+  end;
+
   TTestEnvironment = class(TScriptEnvironment)
   private
     FStorage: TWebStorageRegistry;
+    FIndexedDb: TIndexedDbService;
+    FStorageClient: TTestStorageClient;
+    FNotices: array of TBytes;
     FDeliveries: TList;
     procedure Deliver(Delivery: TTestDelivery);
   public
@@ -95,6 +111,8 @@ type
     function ViewportWidth: Integer; override;
     function ViewportHeight: Integer; override;
     function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
+    function IndexedDbAccess(Context: TObject): Integer; override;
+    function IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean; override;
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
@@ -158,6 +176,9 @@ begin
   Navigations := TStringList.Create;
   FStorage := TWebStorageRegistry.Create('');
   FDeliveries := TList.Create;
+  FIndexedDb := TIndexedDbService.Create('');
+  FStorageClient := TTestStorageClient.Create;
+  FStorageClient.Environment := Self;
 end;
 
 destructor TTestEnvironment.Destroy;
@@ -167,6 +188,9 @@ begin
   for Index := 0 to FDeliveries.Count - 1 do
     TTestDelivery(FDeliveries[Index]).Free;
   FDeliveries.Free;
+  FIndexedDb.ClientClosed(FStorageClient);
+  FIndexedDb.Free;
+  FStorageClient.Free;
   FStorage.Free;
   Scripts.Free;
   Navigations.Free;
@@ -207,6 +231,23 @@ begin
     Result := FStorage.SessionArea('https://example.test')
   else
     Result := FStorage.LocalArea('https://example.test');
+end;
+
+procedure TTestStorageClient.Notice(const Payload: TBytes);
+begin
+  SetLength(Environment.FNotices, Length(Environment.FNotices) + 1);
+  Environment.FNotices[High(Environment.FNotices)] := Copy(Payload);
+end;
+
+function TTestEnvironment.IndexedDbAccess(Context: TObject): Integer;
+begin
+  Result := IndexedDbAllowed;
+end;
+
+function TTestEnvironment.IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean;
+begin
+  Reply := FIndexedDb.Execute(FStorageClient, 'https://example.test', Request);
+  Result := True;
 end;
 
 function TTestEnvironment.StartFetch(Context: TObject; const Request: TScriptFetchRequest;
@@ -261,10 +302,19 @@ end;
 
 function TTestEnvironment.RunNextTimer(Context: TScriptContext): Boolean;
 var
+  Notice: TBytes;
   Index, Best: Integer;
   Delivery: TTestDelivery;
 begin
-  { Network results come before timers (as networking tasks would). }
+  { Storage notices, then network results, come before timers. }
+  if Length(FNotices) > 0 then
+  begin
+    Notice := FNotices[0];
+    Delete(FNotices, 0, 1);
+    Context.CallPlatform('onIndexedDbNotice', [Context.Engine.NewUint8Array(@Notice[0], Length(Notice))]);
+    Context.PerformMicrotaskCheckpoint;
+    Exit(True);
+  end;
   if FDeliveries.Count > 0 then
   begin
     Delivery := TTestDelivery(FDeliveries[0]);
