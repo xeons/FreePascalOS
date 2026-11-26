@@ -139,6 +139,9 @@ function IsLineTerminator(Character: WideChar): Boolean; inline;
 function IsJsWhiteSpace(Character: WideChar): Boolean;
 function TokenKindName(Kind: TJsTokenKind): string;
 function KeywordToken(const Name: UnicodeString; out Kind: TJsTokenKind): Boolean;
+{ FNV-1a over UTF-16 units (the name tables of the lexer, scopes and
+  scope chains); never overflows a range check. }
+function NameHash(Text: PWideChar; Count: Integer): LongWord;
 
 implementation
 
@@ -159,6 +162,20 @@ const
     '>>', '>>>', '&', '|', '^', '!', '~', '&&', '||', '??', '?', '?.', ':',
     '=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=',
     '|=', '^=', '&&=', '||=', '??=', '=>', '#', '@');
+
+{$push}{$R-}{$Q-}
+function NameHash(Text: PWideChar; Count: Integer): LongWord;
+const
+  Offset = LongWord(2166136261);
+  Prime = LongWord(16777619);
+var
+  Index: Integer;
+begin
+  Result := Offset;
+  for Index := 0 to Count - 1 do
+    Result := (Result xor LongWord(Ord(Text[Index]))) * Prime;
+end;
+{$pop}
 
 constructor EJsSyntaxError.CreateAt(const Text: string; ALine, AColumn: Integer);
 begin
@@ -578,7 +595,7 @@ end;
 procedure TJsLexer.TakeName(var Text: UnicodeString; Start, Count: Integer);
 var
   Hash, Mask: Cardinal;
-  Index, Position: Integer;
+  Index: Integer;
   Old: array of UnicodeString;
 begin
   if FNameCount * 2 >= Length(FNames) then
@@ -595,10 +612,7 @@ begin
     for Index := 0 to High(Old) do
       if Old[Index] <> '' then
       begin
-        Hash := 2166136261;
-        for Position := 1 to Length(Old[Index]) do
-          Hash := (Hash xor Ord(Old[Index][Position])) * 16777619;
-        Hash := Hash and Mask;
+        Hash := NameHash(PWideChar(Old[Index]), Length(Old[Index])) and Mask;
         while FNames[Hash] <> '' do
           Hash := (Hash + 1) and Mask;
         FNames[Hash] := Old[Index];
@@ -606,10 +620,7 @@ begin
       end;
   end;
   Mask := Cardinal(Length(FNames) - 1);
-  Hash := 2166136261;
-  for Index := Start to Start + Count - 1 do
-    Hash := (Hash xor Ord(FSource[Index])) * 16777619;
-  Hash := Hash and Mask;
+  Hash := NameHash(@FSource[Start], Count) and Mask;
   while FNames[Hash] <> '' do
   begin
     if (Length(FNames[Hash]) = Count) and (CompareWord(FNames[Hash][1], FSource[Start], Count) = 0) then

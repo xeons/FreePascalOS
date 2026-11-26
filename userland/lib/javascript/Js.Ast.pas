@@ -489,13 +489,9 @@ const
   { Scopes with more variables than this find names through a hash. }
   LinearFindLimit = 12;
 
-function NameHash(const Name: UnicodeString): Cardinal;
-var
-  Index: Integer;
+function NameHash(const Name: UnicodeString): Cardinal; inline;
 begin
-  Result := 2166136261;
-  for Index := 1 to Length(Name) do
-    Result := (Result xor Ord(Name[Index])) * 16777619;
+  Result := Js.Lexer.NameHash(PWideChar(Name), Length(Name));
 end;
 
 { Adds Variables[Index] unless an earlier variable has its name (Find

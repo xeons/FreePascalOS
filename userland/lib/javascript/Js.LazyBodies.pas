@@ -38,6 +38,7 @@ unit Js.LazyBodies;
 interface
 
 uses
+  Js.Lexer,
   Js.Ast;
 
 { Frees the nodes of Info's parameters and body (made since the arena's
@@ -52,7 +53,7 @@ var
   Names: array of UnicodeString;
   Slots: array of Integer;
   Mask, Hash: Cardinal;
-  Index, Kept, Character: Integer;
+  Index, Kept: Integer;
   Node: TJsNode;
   Duplicate: Boolean;
 begin
@@ -71,10 +72,7 @@ begin
     Duplicate := False;
     if Node.Kind = nkIdentifier then
     begin
-      Hash := 2166136261;
-      for Character := 1 to Length(Node.Text) do
-        Hash := (Hash xor Ord(Node.Text[Character])) * 16777619;
-      Hash := Hash and Mask;
+      Hash := NameHash(PWideChar(Node.Text), Length(Node.Text)) and Mask;
       while Slots[Hash] <> 0 do
       begin
         if Names[Slots[Hash] - 1] = Node.Text then
