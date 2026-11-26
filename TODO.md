@@ -1996,12 +1996,12 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       58.5 -> 83.5%, css/cssom 64.9 -> 65.7%, css/cssom-view 36.7 ->
       41.2%, shadow-dom 24.1 -> 92.8%, custom-elements 73.3 -> 76.7%,
       selection 97.2%, WebCryptoAPI 2.0%, compression 0.8 -> 32.7%,
-      wasm 0.8% (WebAssembly is being added)
+      wasm 0.8% -> 99.6% of 138458 (381 of 535 tests) with libwasm merged
 - [ ] WPT gaps, by size: legacy encoders (GBK, Big5, Shift_JIS,
       EUC-KR ... for form submission and URLs in legacy-encoded
       documents; only decoders exist); SubtleCrypto beyond digest
       (generateKey, importKey, sign, encrypt, CryptoKey; libcryptography
-      has the primitives for TLS); WebAssembly; worker scopes reuse the
+      has the primitives for TLS); worker scopes reuse the
       window's interfaces, so errors the window's natives and platform
       scripts throw are the window's TypeErrors (instanceof fails in
       .worker, .sharedworker and .serviceworker variants); streams per
