@@ -604,8 +604,20 @@ begin
   end;
 end;
 
+{ markHtmlDda(object): gives the object [[IsHTMLDDA]] (document.all:
+  typeof "undefined", false, loosely equal to null and undefined). }
+function NativeMarkHtmlDda(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Target: TJsValue;
+begin
+  Target := Arg(Args, ArgCount, 0);
+  if JsIsObject(Target) then
+    JsAsObject(Target).ObjectFlags := JsAsObject(Target).ObjectFlags or ObjectHtmlDda;
+  Result := JsUndefined;
+end;
+
 const
-  NativeCount = 31;
+  NativeCount = 32;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -637,9 +649,10 @@ const
     'exportPorts',
     'rangeRects',
     'elementRects',
-    'dispatchTrusted');
+    'dispatchTrusted',
+    'markHtmlDda');
   NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0,
-    1, 1, 1, 2);
+    1, 1, 1, 2, 1);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -671,7 +684,8 @@ const
     @NativeExportPorts,
     @NativeRangeRects,
     @NativeElementRects,
-    @NativeDispatchTrusted);
+    @NativeDispatchTrusted,
+    @NativeMarkHtmlDda);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

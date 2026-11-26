@@ -54,6 +54,8 @@ uses
 type
   TJsPreferredType = (ptDefault, ptNumber, ptString);
 
+{ Whether Value is an object with [[IsHTMLDDA]] (document.all). }
+function IsHtmlDda(Value: TJsValue): Boolean;
 function ToBoolean(Value: TJsValue): Boolean;
 function ToPrimitive(R: TJsRealm; Value: TJsValue; Preferred: TJsPreferredType = ptDefault): TJsValue;
 function ToNumber(R: TJsRealm; Value: TJsValue): TJsValue;
@@ -116,6 +118,11 @@ begin
   end;
 end;
 
+function IsHtmlDda(Value: TJsValue): Boolean;
+begin
+  Result := JsIsObject(Value) and ((JsAsObject(Value).ObjectFlags and ObjectHtmlDda) <> 0);
+end;
+
 function ToBoolean(Value: TJsValue): Boolean;
 var
   Number: Double;
@@ -135,7 +142,7 @@ begin
     Exit(JsAsString(Value).Length > 0);
   if JsIsBigInt(Value) then
     Exit(not TJsBigInt(JsAsCell(Value)).IsZero);
-  Result := True;
+  Result := not IsHtmlDda(Value);
 end;
 
 function ToPrimitive(R: TJsRealm; Value: TJsValue; Preferred: TJsPreferredType): TJsValue;
@@ -771,6 +778,8 @@ begin
     Exit(R.Atom(anSymbol));
   if JsIsBigInt(Value) then
     Exit(R.Atom(anBigInt));
+  if IsHtmlDda(Value) then
+    Exit(R.Atom(anUndefined));
   if JsIsCallable(Value) then
     Exit(R.Atom(anFunction));
   Result := R.Atom(anObject);
@@ -830,7 +839,10 @@ begin
       Exit;
     end;
     if JsIsNullish(First) or JsIsNullish(Second) then
+    begin
+      Equal := IsHtmlDda(First) or IsHtmlDda(Second);
       Exit;
+    end;
     if JsIsNumber(First) and JsIsString(Second) then
     begin
       Second := ToNumber(R, Second);
