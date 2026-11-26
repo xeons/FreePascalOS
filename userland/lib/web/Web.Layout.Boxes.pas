@@ -111,7 +111,10 @@ type
     { Its layout placed floats in a formatting context outside it: a
       skipped layout would leave them out of that context, and the boxes
       after it would not flow around them. }
-    bfHasEscapingFloats);
+    bfHasEscapingFloats,
+    { A table with collapsing borders, or one of its cells: its used
+      borders are its CollapsedBorder (halves of the collapsed edges). }
+    bfCollapsedBorders);
   TBoxFlags = set of TBoxFlag;
 
   TBoxSide = (sideTop, sideRight, sideBottom, sideLeft);
@@ -280,6 +283,16 @@ type
   public
     ColumnSpan, RowSpan: Integer;
     Column, Row: Integer;
+    CollapsedBorder: TBoxEdges;
+  end;
+
+  TTableBox = class(TLayoutBox)
+  public
+    CollapsedBorder: TBoxEdges;
+    { The collapsed edges to paint (Web.Layout.TableBorders'
+      TCollapsedBorders), nil with separate borders. }
+    CollapsedEdges: TObject;
+    destructor Destroy; override;
   end;
 
 function SideValue(const Edges: TBoxEdges; Side: TBoxSide): Single; inline;
@@ -453,6 +466,12 @@ begin
     Box.FirstBaseline := Box.FirstBaseline + Delta;
   if Box.LastBaseline >= 0 then
     Box.LastBaseline := Box.LastBaseline + Delta;
+end;
+
+destructor TTableBox.Destroy;
+begin
+  CollapsedEdges.Free;
+  inherited Destroy;
 end;
 
 procedure FreeBoxTree(Root: TLayoutBox);

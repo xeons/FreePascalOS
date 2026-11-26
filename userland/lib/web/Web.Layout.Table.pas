@@ -57,7 +57,8 @@ implementation
 
 uses
   Math, SysUtils, Web.Dom, Css.ComputedStyle, Css.ComputedValues, Css.PropertyIds, Css.Keywords, Css.Values,
-  Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Dispatch, Web.Layout.TableGrid, Web.Layout.TableFixed;
+  Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Dispatch, Web.Layout.TableGrid, Web.Layout.TableFixed,
+  Web.Layout.TableBorders;
 
 { Spreads Extra over the columns Cell spans, in proportion to their
   maximum widths (evenly when those are all zero); with AutoFirst only
@@ -152,6 +153,8 @@ end;
 
 function TableEdges(Box: TLayoutBox): Single;
 begin
+  if bfCollapsedBorders in Box.Flags then
+    Exit(TTableBox(Box).CollapsedBorder[sideLeft] + TTableBox(Box).CollapsedBorder[sideRight]);
   Result := Box.Style.Value(cpBorderLeftWidth)^.Number + Box.Style.Value(cpBorderRightWidth)^.Number +
     Abs(LengthOf(Box.Style, cpPaddingLeft, 0)) + Abs(LengthOf(Box.Style, cpPaddingRight, 0));
 end;
@@ -193,6 +196,17 @@ begin
       Grid.ColumnWidth[Column] := Grid.ColumnMin[Column];
 end;
 
+{ Collapsing borders resolved (the used borders of the table and its
+  cells change), or separate ones again. }
+procedure ChooseBorderModel(Box: TLayoutBox; const Grid: TTableGrid; AvailableWidth: Single);
+begin
+  if CollapsesBorders(Box) then
+    CollapseTableBorders(Box, Grid)
+  else
+    SeparateTableBorders(Box, Grid);
+  ResolveBoxEdges(Box, AvailableWidth);
+end;
+
 procedure TableIntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
 var
   Grid: TTableGrid;
@@ -200,6 +214,7 @@ var
   Child: TLayoutBox;
 begin
   BuildGrid(Box, Grid);
+  ChooseBorderModel(Box, Grid, 0);
   ColumnWidths(Grid);
   SumColumns(Grid, SumMin, SumMax);
   Spacing := Grid.SpacingX * (Grid.ColumnCount + 1);
@@ -234,6 +249,25 @@ begin
   ChildInput.BfcX := 0;
   ChildInput.BfcY := 0;
   LayoutBox(Cell, ChildInput);
+end;
+
+{ The grid lines the collapsed borders are centred on. }
+procedure PlaceCollapsedLines(Box: TLayoutBox; const RowTops, ColumnLefts: array of Single);
+var
+  Borders: TCollapsedBorders;
+  Index: Integer;
+begin
+  Borders := TCollapsedBorders(TTableBox(Box).CollapsedEdges);
+  if Borders = nil then
+    Exit;
+  SetLength(Borders.RowLines, Borders.RowCount + 1);
+  SetLength(Borders.ColumnLines, Borders.ColumnCount + 1);
+  for Index := 0 to Borders.RowCount do
+    if Index <= High(RowTops) then
+      Borders.RowLines[Index] := Box.ContentTop + RowTops[Index];
+  for Index := 0 to Borders.ColumnCount do
+    if Index <= High(ColumnLefts) then
+      Borders.ColumnLines[Index] := Box.ContentLeft + ColumnLefts[Index];
 end;
 
 { The absolutely positioned children of a table, row group or row go to
@@ -278,6 +312,7 @@ var
   Fixed: Boolean;
 begin
   BuildGrid(Box, Grid);
+  ChooseBorderModel(Box, Grid, Input.AvailableWidth);
   Fixed := UsesFixedLayout(Box);
   if Fixed then
   begin
@@ -501,6 +536,8 @@ begin
   Box.BottomPositive := Max(Box.Margin[sideBottom], 0);
   Box.BottomNegative := Min(Box.Margin[sideBottom], 0);
   Box.CollapsesThrough := False;
+  if bfCollapsedBorders in Box.Flags then
+    PlaceCollapsedLines(Box, RowTops, ColumnLefts);
   HandOverPositioned(Box, Input);
 end;
 

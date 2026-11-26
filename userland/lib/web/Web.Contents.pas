@@ -100,6 +100,7 @@ uses
   Web.Layout.Table,
   Web.Layout.TableGrid,
   Web.Layout.TableFixed,
+  Web.Layout.TableBorders,
   Web.Layout.Positioned,
   Web.Layout.Transforms,
   Web.Layout.BoxGeometry,

@@ -160,6 +160,40 @@ begin
   end;
 end;
 
+{ Collapsing borders (CSS 2.2 17.6.2): each edge's widest border wins,
+  centred on its line; a cell's used border is its half of the edge, the
+  table's the outer half. }
+procedure CheckCollapsedBorders;
+const
+  Page = '<!doctype html><body style="margin:10px"><table id=bt style="border-collapse:collapse;border:6px solid #0000ff">' +
+    '<tr><td id=b1 style="border:2px solid #ff0000;width:50px;height:30px;padding:0"></td>' +
+    '<td id=b2 style="border:4px solid #008000;width:50px;height:30px;padding:0"></td></tr>' +
+    '<tr><td id=b3 colspan=2 style="border:1px solid #000000;height:20px;padding:0"></td></tr></table></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height: Double;
+  Sizes: string;
+  Name: string;
+begin
+  Layout := LayoutText(Page, 800, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Sizes := '';
+    for Name in ['bt', 'b1', 'b2', 'b3'] do
+      if ScriptLayout.BorderBox(Document.GetElementById(Name), X, Y, Width, Height) then
+        Sizes := Sizes + FloatToStr(Round(X)) + ',' + FloatToStr(Round(Y)) + ' ' + FloatToStr(Round(Width)) + 'x' +
+          FloatToStr(Round(Height)) + ' ';
+    Check(Sizes = '10,10 116x66 13,13 55x35 68,13 55x35 13,48 110x25 ',
+      'geometry: collapsed table borders (' + Sizes + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -230,6 +264,7 @@ begin
     CheckInitialContainingBlock;
     CheckAnonymousTables;
     CheckFixedTableLayout;
+    CheckCollapsedBorders;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');

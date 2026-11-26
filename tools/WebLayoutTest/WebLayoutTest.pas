@@ -66,6 +66,7 @@ begin
   CheckLayerPainting;
   CheckGaugePainting;
   CheckSnappedPainting;
+  CheckCollapsedBorderPainting;
   CheckStyleSheetChanges;
   CheckShadowTrees;
   CheckScriptAnimations;

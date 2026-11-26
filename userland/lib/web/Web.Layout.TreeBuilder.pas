@@ -358,10 +358,10 @@ begin
           Include(Result.Flags, bfInlineLevel);
         end;
       kwTable:
-        Result := TLayoutBox.Create(bkTable, Element, Style);
+        Result := TTableBox.Create(bkTable, Element, Style);
       kwInlineTable:
         begin
-          Result := TLayoutBox.Create(bkTable, Element, Style);
+          Result := TTableBox.Create(bkTable, Element, Style);
           Include(Result.Flags, bfInlineLevel);
         end;
       kwTableRowGroup, kwTableHeaderGroup, kwTableFooterGroup:
@@ -1048,7 +1048,7 @@ begin
         Last := Next;
       Next := Next.NextSibling;
     end;
-    Table := TLayoutBox.Create(bkTable, nil, AnonymousStyleFor(Box.Style));
+    Table := TTableBox.Create(bkTable, nil, AnonymousStyleFor(Box.Style));
     Table.Flags := Table.Flags + [bfAnonymous, bfNewFormattingContext];
     if Box.Kind = bkInline then
       Include(Table.Flags, bfInlineLevel);

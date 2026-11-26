@@ -154,6 +154,19 @@ begin
   Box.Border[sideRight] := Style.Value(cpBorderRightWidth)^.Number;
   Box.Border[sideBottom] := Style.Value(cpBorderBottomWidth)^.Number;
   Box.Border[sideLeft] := Style.Value(cpBorderLeftWidth)^.Number;
+  { Collapsing table borders: halves of the edges, and no padding on the
+    table (CSS 2.2 17.6.2). }
+  if bfCollapsedBorders in Box.Flags then
+    if Box is TTableCellBox then
+      Box.Border := TTableCellBox(Box).CollapsedBorder
+    else if Box is TTableBox then
+    begin
+      Box.Border := TTableBox(Box).CollapsedBorder;
+      Box.Padding[sideTop] := 0;
+      Box.Padding[sideRight] := 0;
+      Box.Padding[sideBottom] := 0;
+      Box.Padding[sideLeft] := 0;
+    end;
 end;
 
 function HorizontalEdges(Box: TLayoutBox): Double;

@@ -37,6 +37,7 @@ procedure CheckFilterPainting;
 procedure CheckLayerPainting;
 procedure CheckGaugePainting;
 procedure CheckSnappedPainting;
+procedure CheckCollapsedBorderPainting;
 procedure ReportPerformance;
 
 implementation
@@ -225,6 +226,36 @@ begin
     Check(Clean, 'paint: border edges snap to device pixels (no red under a box at y 10.4)');
     CheckPixel(Surface, 20, 10, RgbColor(0, 128, 0), 'snapped border: the top edge at y 10');
     CheckPixel(Surface, 20, 9, RgbColor(255, 255, 255), 'snapped border: nothing above it');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+{ Collapsed table borders are painted by the table, each edge in the
+  winning border's color over the cells' backgrounds. }
+procedure CheckCollapsedBorderPainting;
+const
+  Page = '<!doctype html><body style="margin:10px"><table id=bt style="border-collapse:collapse;border:6px solid #0000ff">' +
+    '<tr><td id=b1 style="border:2px solid #ff0000;width:50px;height:30px;padding:0"></td>' +
+    '<td id=b2 style="border:4px solid #008000;width:50px;height:30px;padding:0;background:#ffff00"></td></tr>' +
+    '<tr><td id=b3 colspan=2 style="border:1px solid #000000;height:20px;padding:0"></td></tr></table></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(Page, 200, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 200, 100, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 200, 100));
+    CheckPixel(Surface, 11, 30, RgbColor(0, 0, 255), 'collapsed borders: the table''s outer edge');
+    CheckPixel(Surface, 67, 30, RgbColor(0, 128, 0), 'collapsed borders: the wider cell border wins the edge');
+    CheckPixel(Surface, 40, 47, RgbColor(255, 0, 0), 'collapsed borders: the red edge over the cell below');
+    CheckPixel(Surface, 90, 30, RgbColor(255, 255, 0), 'collapsed borders: the cell''s background inside');
   finally
     FreeSurface(Surface);
     Painter.Free;
