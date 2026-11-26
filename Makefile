@@ -255,7 +255,7 @@ KERNEL_LINKER_SCRIPT := kernel/link/$(ARCH).ld
 LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
-.PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
+.PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test responsiveness-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
 	ports-test pkg-test quic-test css-test wasm-test wasm-spec-test wasm-spec-test-3 svg-test web-test javascript-test test262 test262-expectations web-layout-test webrender web-load-test web-script-test webbrowse wpt web-ipc-test navigation-controls-test update-fonts
 
@@ -606,12 +606,13 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
+test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test responsiveness-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
 		quic-test css-test wasm-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
 	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
+	scripts/test-responsiveness.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-input.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-interrupt-remapping.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
 	scripts/test-clock-sources.py $(ESP_DIRECTORY) $(SYSTEM_DISK)
@@ -641,6 +642,14 @@ clock-sources-test: esp $(SYSTEM_DISK)
 .PHONY: memory-pressure-test
 memory-pressure-test: esp $(SYSTEM_DISK)
 	scripts/test-memory-pressure.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
+
+# A program spinning 16 threads and one taking memory without end beside
+# a 10 ms sleep loop whose lateness must stay bounded; the memory taker
+# refused or ended, the system usable afterwards, a job's limit; in a
+# 512 MiB guest with four processors; also run by make test.
+.PHONY: responsiveness-test
+responsiveness-test: esp $(SYSTEM_DISK)
+	scripts/test-responsiveness.sh $(ARCH) $(ESP_DIRECTORY) $(SYSTEM_DISK)
 
 # Panics on purpose (the testpanic kernel option) and checks the back
 # trace; also run by make test. Works for ARCH=arm64 too.
@@ -746,6 +755,22 @@ $(SCHEDULER_POLICY_TEST): tools/SchedulerPolicyTest/SchedulerPolicyTest.pas kern
 
 scheduler-policy-test: $(SCHEDULER_POLICY_TEST)
 	$(SCHEDULER_POLICY_TEST)
+
+# What keeps the system usable whatever one program does, on the host:
+# priority classes, fair share between processes (with a small
+# simulation), the memory reserves and commit limit, the thrash guard.
+RESPONSIVENESS_POLICY_TEST := build/tools/ResponsivenessPolicyTest
+
+$(RESPONSIVENESS_POLICY_TEST): tools/ResponsivenessPolicyTest/ResponsivenessPolicyTest.pas \
+		kernel/core/Kernel.PriorityBoosts.pas kernel/core/Kernel.PriorityClasses.pas kernel/core/Kernel.FairShare.pas \
+		kernel/memory/Memory.Reserves.pas kernel/memory/Memory.ThrashGuard.pas shared/Abi.SystemCalls.inc
+	@mkdir -p build/tools/responsiveness-policy-units
+	$(FPC) -O2 -Cr -Co -Fukernel/core -Fukernel/memory -Fushared -FEbuild/tools \
+		-FUbuild/tools/responsiveness-policy-units $<
+
+.PHONY: responsiveness-policy-test
+responsiveness-policy-test: $(RESPONSIVENESS_POLICY_TEST)
+	$(RESPONSIVENESS_POLICY_TEST)
 
 # The clock page's arithmetic (shared/ClockPageMath.inc: the kernel's and
 # every program's) on the host.

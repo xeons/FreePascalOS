@@ -46,7 +46,7 @@ unit Kernel.FairShare;
 interface
 
 const
-  FairShareHalfLifeNanoseconds = QWord(1000) * 1000 * 1000;
+  FairShareHalfLifeNanoseconds = QWord(500) * 1000 * 1000;
   MaximumFairSharePenalty = 2;
   { One processor, in thousandths. }
   OneProcessor = 1000;
@@ -85,26 +85,27 @@ const
     46341, 44376, 42495, 40693, 38968, 37316, 35734, 34219);
   { ln 2 in thousandths. }
   NaturalLogTwoThousandths = 693;
+  DecayStepNanoseconds = FairShareHalfLifeNanoseconds div 16;
 
 procedure DecayFairShareUsage(var Usage: TFairShareUsage; Now: QWord);
 var
-  Elapsed: QWord;
-  HalfLives: QWord;
-  Fraction: QWord;
+  Steps: QWord;
 begin
   if Now <= Usage.LastUpdate then
     Exit;
-  Elapsed := Now - Usage.LastUpdate;
-  Usage.LastUpdate := Now;
-  HalfLives := Elapsed div FairShareHalfLifeNanoseconds;
-  if HalfLives >= 64 then
+  { Decayed in sixteenths of a half-life; time short of one is kept for
+    the next call (charges come every few milliseconds). }
+  Steps := (Now - Usage.LastUpdate) div DecayStepNanoseconds;
+  if Steps = 0 then
+    Exit;
+  Usage.LastUpdate := Usage.LastUpdate + Steps * DecayStepNanoseconds;
+  if Steps >= 64 * 16 then
   begin
     Usage.DecayedNanoseconds := 0;
     Exit;
   end;
-  Usage.DecayedNanoseconds := Usage.DecayedNanoseconds shr HalfLives;
-  Fraction := ((Elapsed mod FairShareHalfLifeNanoseconds) * 16) div FairShareHalfLifeNanoseconds;
-  Usage.DecayedNanoseconds := (Usage.DecayedNanoseconds * FractionalHalving[Fraction]) shr 16;
+  Usage.DecayedNanoseconds := Usage.DecayedNanoseconds shr (Steps div 16);
+  Usage.DecayedNanoseconds := (Usage.DecayedNanoseconds * FractionalHalving[Steps mod 16]) shr 16;
 end;
 
 procedure AddFairShareRunTime(var Usage: TFairShareUsage; Elapsed, Now: QWord);
