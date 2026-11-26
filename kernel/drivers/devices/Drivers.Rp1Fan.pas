@@ -37,8 +37,15 @@
   the IO banks (each pin's STATUS and CTRL, 8 bytes per pin), the RIO
   blocks (OUT, OE, IN, with atomic XOR/SET/CLR aliases at +1000h,
   +2000h, +3000h) and the pads (one word per pin after a voltage
-  word). GPIO 45 is pin 11 of bank 2, whose IO, RIO and pads start at
-  8000h, 8000h and 8004h in their ranges.
+  word). GPIO 45 is pin 11 of bank 2 (GPIOs 34 to 53), whose IO, RIO
+  and pads start at 8000h, 8000h and 8004h in their ranges. The banks,
+  the function list, the pad bits and the CTRL fields were checked
+  against Linux's pinctrl-rp1.
+
+  Not done: Linux paces RP1 pin writes while PCIe ASPM is on (six writes
+  to the root complex's Slot Control register before each one) so that
+  pin changes arrive in order after the link wakes from L1. The fan's
+  writes are few and far apart, so it goes without.
 }
 unit Drivers.Rp1Fan;
 
@@ -73,6 +80,11 @@ const
   BankTwoPads = $8004;
   ControlRegister = 4;
   FunctionSelectMask = $1F;
+  { The output and output-enable overrides (0: the selected function
+    drives the pin), cleared on every function change as Linux's
+    pinctrl-rp1 does, so a value the firmware forced does not hold the
+    pin. }
+  OverridesMask = $F000;
   FunctionRegisteredInputOutput = 5;
   { Function 0 of GPIO 45: PWM1 channel 3. }
   FunctionPwm = 0;
@@ -118,22 +130,23 @@ begin
   WriteWord(Pads, BankTwoPads + FanPinInBank * 4, Pad);
   WriteWord(RegisteredInputOutput, BankTwoRegisteredInputOutput + AliasSet + RegisteredOutputEnable, Mask);
   Control := ReadWord(InputOutput, BankTwoInputOutput + FanPinInBank * 8 + ControlRegister);
-  Control := (Control and not FunctionSelectMask) or FunctionRegisteredInputOutput;
+  Control := (Control and not (FunctionSelectMask or OverridesMask)) or FunctionRegisteredInputOutput;
   WriteWord(InputOutput, BankTwoInputOutput + FanPinInBank * 8 + ControlRegister, Control);
   PinConfigured := True;
 end;
 
-{ The pin given to the PWM (its pad driving, no pulls). }
+{ The pin given to the PWM (its pad driving, pulled down as the device
+  tree's rp1_pwm1_gpio45 asks). }
 procedure ConfigurePinForPwm;
 var
   Pad: LongWord;
   Control: LongWord;
 begin
   Pad := ReadWord(Pads, BankTwoPads + FanPinInBank * 4);
-  Pad := (Pad and not (PadOutputDisable or PadPullUp or PadPullDown)) or PadInputEnable;
+  Pad := (Pad and not (PadOutputDisable or PadPullUp)) or PadInputEnable or PadPullDown;
   WriteWord(Pads, BankTwoPads + FanPinInBank * 4, Pad);
   Control := ReadWord(InputOutput, BankTwoInputOutput + FanPinInBank * 8 + ControlRegister);
-  Control := (Control and not FunctionSelectMask) or FunctionPwm;
+  Control := (Control and not (FunctionSelectMask or OverridesMask)) or FunctionPwm;
   WriteWord(InputOutput, BankTwoInputOutput + FanPinInBank * 8 + ControlRegister, Control);
   PinOnPwm := True;
   PinConfigured := False;

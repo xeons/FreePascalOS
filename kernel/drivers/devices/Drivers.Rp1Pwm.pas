@@ -29,10 +29,14 @@
 
   Its clock is CLK_PWM1 of RP1's clock generator ("raspberrypi,rp1-
   clocks"), which nothing sets up unless asked: here it is taken from
-  RP1's crystal (50 MHz) undivided, enabled, and read back; the
-  register offsets and fields are those of Linux's clk-rp1. The fan's
-  period is the device tree's 41566 ns (about 24 kHz), its signal
-  inverted (the pin high stops the fan).
+  RP1's crystal (50 MHz, the rate the device tree assigns) undivided,
+  enabled, and read back. CLK_PWM1 has no standard sources, only an
+  auxiliary mux whose inputs are, in order, the audio PLL's primary
+  phase, the video PLL's secondary output, the crystal and the six GP
+  clock sources; the register offsets, fields and source order were
+  checked against Linux's clk-rp1 and pwm-rp1. The fan's period is the
+  device tree's 41566 ns (about 24 kHz), its signal inverted (the pin
+  high stops the fan).
 
   Safety: anything that does not read back as written, or a tree that
   lacks a node, leaves the PWM unused, and Drivers.Rp1Fan keeps
@@ -80,12 +84,14 @@ const
   ClockPwm1Control = $00084;
   ClockPwm1DivideInteger = $00088;
   ClockPwm1DivideFraction = $0008C;
+  { One-hot: the source in use (Linux reads it back after a change). }
   ClockPwm1Select = $00090;
   ClockControlEnable = LongWord(1) shl 11;
   ClockControlAuxiliarySourceShift = 5;
   ClockControlAuxiliarySourceMask = LongWord($1F) shl 5;
-  { The auxiliary source that is RP1's crystal. }
-  ClockSourceCrystal = 0;
+  { The auxiliary source that is RP1's crystal ("xosc", the third input
+    of CLK_PWM1's auxiliary mux). }
+  ClockSourceCrystal = 2;
   CrystalHertz = 50000000;
   { The fan's period (the device tree's pwms cell). }
   FanPeriodNanoseconds = 41566;
@@ -121,11 +127,10 @@ begin
   WriteRegister(ClockRegisters, ClockPwm1DivideInteger, 1);
   WriteRegister(ClockRegisters, ClockPwm1DivideFraction, 0);
   WriteRegister(ClockRegisters, ClockPwm1Control, Control or ClockControlEnable);
-  Result := ((ReadRegister(ClockRegisters, ClockPwm1Control) and ClockControlEnable) <> 0) and
+  Control := ReadRegister(ClockRegisters, ClockPwm1Control);
+  Result := ((Control and ClockControlEnable) <> 0) and
+    ((Control and ClockControlAuxiliarySourceMask) shr ClockControlAuxiliarySourceShift = ClockSourceCrystal) and
     (ReadRegister(ClockRegisters, ClockPwm1DivideInteger) = 1);
-  if Result then
-    { The select register mirrors the source chosen (Linux waits on it). }
-    Result := ReadRegister(ClockRegisters, ClockPwm1Select) <> High(LongWord);
 end;
 
 { The channel's range and polarity; False if they do not read back. }

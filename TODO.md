@@ -117,9 +117,11 @@ how the existing pieces fit together.
       generator) for speeds between off and full (built only; falls back
       to on/off when the PWM does not read back as set)
 - [ ] Raspberry Pi 5: check the fan PWM, the clock governor, the fan pin
-      and the thermal limit on the board; first check Drivers.Rp1Pwm's
-      register offsets and pin function against Linux's clk-rp1, pwm-rp1
-      and pinctrl-rp1 (written from memory, not from the sources)
+      and the thermal limit on the board (Drivers.Rp1Pwm and Rp1Fan now
+      checked against Linux's clk-rp1, pwm-rp1 and pinctrl-rp1: the
+      crystal's mux index and the pin's overrides were wrong, now fixed)
+- [ ] Raspberry Pi 5: the fan's speed in RPM (the device tree's
+      rpm-regmap/rpm-offset: a tachometer count at PWM1 + 3Ch)
 - [ ] Uptime step back after resume under KVM (seen once in a suspend
       stress run; kvmclock guard added, cause not confirmed)
 - [x] Core audit fixes: AArch64 suspend keeps FP/SIMD registers; freeze
