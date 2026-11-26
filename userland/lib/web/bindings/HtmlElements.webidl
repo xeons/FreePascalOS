@@ -166,6 +166,8 @@ interface HTMLInputElement : HTMLElement {
   [Reflect=value] attribute DOMString defaultValue;
   [LegacyNullToEmptyString] attribute DOMString value;
   attribute unrestricted double valueAsNumber;
+  undefined stepUp(optional long n = 1);
+  undefined stepDown(optional long n = 1);
   [Reflect, ReflectDefault=0] attribute unsigned long width;
   readonly attribute boolean willValidate;
   boolean checkValidity();

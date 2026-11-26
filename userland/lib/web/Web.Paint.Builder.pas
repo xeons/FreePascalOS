@@ -679,7 +679,8 @@ begin
         Text := TextAreaValue(TElement(Box.Node))
       else if IsTextControl(TElement(Box.Node)) then
       begin
-        Text := InputValue(TElement(Box.Node));
+        { The user's text of a number or date field while it is edited. }
+        Text := TextControlValue(TElement(Box.Node));
         if InputType(TElement(Box.Node)) = 'password' then
           Text := MaskedText(Text);
       end
