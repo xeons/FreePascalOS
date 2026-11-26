@@ -47,6 +47,7 @@ uses
   Web.Dom.DataTransfer,
   Web.Dom.SecurityEvents,
   Web.Dom.Exceptions,
+  Web.Navigation.Events,
   Web.Bindings.Context,
   Web.Bindings.Listeners;
 
@@ -56,6 +57,8 @@ const
   CacheSlotDetail = 1;
   { A ClipboardEvent's clipboardData wrapper. }
   CacheSlotClipboardData = 1;
+  { A constructed PopStateEvent's state. }
+  CacheSlotPopState = 1;
 
 function ThisEvent(const Call: TBindingCall): TEvent; inline;
 begin
@@ -1043,6 +1046,80 @@ end;
 function SecurityPolicyViolationEvent_get_columnNumber(var Call: TBindingCall): TJsValue;
 begin
   Result := JsNumber(ThisViolationEvent(Call).ColumnNumber);
+end;
+
+{ The navigation events (Web.Navigation.Events). }
+
+function HashChangeEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: THashChangeEvent;
+begin
+  Event := THashChangeEvent.Create(Call.Text(0));
+  Event.OldUrl := Call.Arguments[1].Items[HashChangeEventInit_oldURL].Text;
+  Event.NewUrl := Call.Arguments[1].Items[HashChangeEventInit_newURL].Text;
+  Result := StartEvent(Call, Event);
+end;
+
+function HashChangeEvent_get_oldURL(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(THashChangeEvent(Call.Target).OldUrl);
+end;
+
+function HashChangeEvent_get_newURL(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(THashChangeEvent(Call.Target).NewUrl);
+end;
+
+function PageTransitionEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TPageTransitionEvent;
+begin
+  Event := TPageTransitionEvent.Create(Call.Text(0));
+  Event.Persisted := Call.Arguments[1].Items[PageTransitionEventInit_persisted].Flag;
+  Result := StartEvent(Call, Event);
+end;
+
+function PageTransitionEvent_get_persisted(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsBoolean(TPageTransitionEvent(Call.Target).Persisted);
+end;
+
+function PopStateEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TPopStateEvent;
+begin
+  Event := TPopStateEvent.Create(Call.Text(0));
+  Event.HasUaVisualTransition := Call.Arguments[1].Items[PopStateEventInit_hasUAVisualTransition].Flag;
+  Result := StartEvent(Call, Event);
+  CallContext(Call).WrapperOf(Result).SetCachedValue(CacheSlotPopState,
+    Call.Arguments[1].Items[PopStateEventInit_state].Script);
+end;
+
+{ A constructed event's state, else (the user agent's) the history state
+  the traversal restored. }
+function PopStateEvent_get_state(var Call: TBindingCall): TJsValue;
+begin
+  Result := TBindingWrapper(Call.Wrapper).CachedValue(CacheSlotPopState);
+  if Result = JsUndefined then
+    Result := CallContext(Call).Singleton(SingletonHistoryState);
+  if Result = JsUndefined then
+    Result := JsNull;
+end;
+
+function PopStateEvent_get_hasUAVisualTransition(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsBoolean(TPopStateEvent(Call.Target).HasUaVisualTransition);
+end;
+
+function BeforeUnloadEvent_get_returnValue(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(TBeforeUnloadEvent(Call.Target).UnloadReturnValue);
+end;
+
+function BeforeUnloadEvent_set_returnValue(var Call: TBindingCall): TJsValue;
+begin
+  TBeforeUnloadEvent(Call.Target).UnloadReturnValue := Call.Text(0);
+  Result := JsUndefined;
 end;
 
 end.

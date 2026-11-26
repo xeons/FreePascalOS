@@ -437,3 +437,44 @@ interface SecurityPolicyViolationEvent : Event {
   readonly attribute unsigned long lineNumber;
   readonly attribute unsigned long columnNumber;
 };
+
+// The events of navigation (HTML Standard 7.4.6.2, 7.4.6.3, 7.1.4.1):
+// natives of Web.Navigation.Events, and constructible by script.
+dictionary HashChangeEventInit : EventInit {
+  USVString oldURL = "";
+  USVString newURL = "";
+};
+
+[Exposed=Window]
+interface HashChangeEvent : Event {
+  constructor(DOMString type, optional HashChangeEventInit eventInitDict = {});
+  readonly attribute USVString oldURL;
+  readonly attribute USVString newURL;
+};
+
+dictionary PageTransitionEventInit : EventInit {
+  boolean persisted = false;
+};
+
+[Exposed=Window]
+interface PageTransitionEvent : Event {
+  constructor(DOMString type, optional PageTransitionEventInit eventInitDict = {});
+  readonly attribute boolean persisted;
+};
+
+dictionary PopStateEventInit : EventInit {
+  any state = null;
+  boolean hasUAVisualTransition = false;
+};
+
+[Exposed=Window]
+interface PopStateEvent : Event {
+  constructor(DOMString type, optional PopStateEventInit eventInitDict = {});
+  readonly attribute any state;
+  readonly attribute boolean hasUAVisualTransition;
+};
+
+[Exposed=Window]
+interface BeforeUnloadEvent : Event {
+  attribute DOMString returnValue;
+};

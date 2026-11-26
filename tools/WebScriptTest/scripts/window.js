@@ -106,3 +106,11 @@ otherBody.onload = bodyHandler;
 check("a windowless document's body has no window handlers", otherBody.onload === null);
 check("the media and newer event handler attributes exist", "oncanplay" in document.body &&
   "onbeforetoggle" in window && "onpagereveal" in window && "onmessageerror" in document.body);
+var hashEvent = new HashChangeEvent("hashchange", { oldURL: "http://a.test/#x", newURL: "http://a.test/#y" });
+check("HashChangeEvent", hashEvent instanceof Event && hashEvent.oldURL === "http://a.test/#x" &&
+  hashEvent.newURL === "http://a.test/#y");
+var stateObject = { page: 2 };
+check("PopStateEvent and PageTransitionEvent", new PopStateEvent("popstate", { state: stateObject }).state === stateObject &&
+  new PopStateEvent("popstate").state === null && new PageTransitionEvent("pageshow", { persisted: true }).persisted &&
+  typeof BeforeUnloadEvent === "function");
+check("createEvent of the navigation events", document.createEvent("HashChangeEvent") instanceof HashChangeEvent);

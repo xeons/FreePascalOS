@@ -446,6 +446,7 @@ implementation
 uses
   DateUtils,
   Web.Profiling,
+  Web.Navigation.Events,
   Js.Inspect,
   Css.Stylesheets,
   Web.Encoding.Utf8,
@@ -517,6 +518,15 @@ begin
     Result := InterfaceAnimationEvent
   else if Event is TTransitionEvent then
     Result := InterfaceTransitionEvent
+  else
+  if Event is THashChangeEvent then
+    Result := InterfaceHashChangeEvent
+  else if Event is TPageTransitionEvent then
+    Result := InterfacePageTransitionEvent
+  else if Event is TPopStateEvent then
+    Result := InterfacePopStateEvent
+  else if Event is TBeforeUnloadEvent then
+    Result := InterfaceBeforeUnloadEvent
   else
     Result := InterfaceEvent;
 end;

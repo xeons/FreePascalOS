@@ -44,6 +44,8 @@ uses
   Url.Parser,
   Web.Atoms,
   Web.Namespaces,
+  Js.Engine,
+  Js.Functions,
   Web.Dom,
   Web.Dom.Events,
   Web.Dom.UiEvents,
@@ -266,6 +268,39 @@ begin
   Result := Context(Call).WrapNode(ThisDocument(Call).CreateAttributeNS(Call.Text(0), Call.Text(1)));
 end;
 
+{ createEvent of the event interfaces the platform scripts define
+  (MessageEvent, StorageEvent ...): a new one of type "", made by its
+  constructor; NotSupportedError for any other name. }
+function ScriptEventInterface(const Call: TBindingCall; const Name: string): TJsValue;
+const
+  Names: array[0..9] of string = ('beforeunloadevent', 'compositionevent', 'devicemotionevent',
+    'deviceorientationevent', 'dragevent', 'hashchangeevent', 'messageevent', 'storageevent', 'textevent',
+    'touchevent');
+  Interfaces: array[0..9] of string = ('BeforeUnloadEvent', 'CompositionEvent', 'DeviceMotionEvent',
+    'DeviceOrientationEvent', 'DragEvent', 'HashChangeEvent', 'MessageEvent', 'StorageEvent', 'TextEvent',
+    'TouchEvent');
+var
+  Index: Integer;
+  Constructor_: TJsValue;
+  Engine: TJsEngine;
+begin
+  Engine := Context(Call).Engine;
+  for Index := Low(Names) to High(Names) do
+    if Names[Index] = Name then
+    begin
+      Constructor_ := Engine.GetProperty(JsObjectValue(Engine.GlobalObject), Interfaces[Index]);
+      if not JsIsCallable(Constructor_) then
+        Break;
+      try
+        Exit(Engine.Construct(Constructor_, [Engine.NewString('')]));
+      except
+        on EJsError do
+          Break;
+      end;
+    end;
+  raise EDomException.CreateError(NotSupportedError, 'no event interface ' + Call.Text(0));
+end;
+
 function Document_createEvent(var Call: TBindingCall): TJsValue;
 var
   Name: string;
@@ -285,7 +320,7 @@ begin
   else if Name = 'focusevent' then
     Event := TFocusEvent.Create('')
   else
-    raise EDomException.CreateError(NotSupportedError, 'no event interface ' + Call.Text(0));
+    Exit(ScriptEventInterface(Call, Name));
   try
     Result := Context(Call).WrapEvent(Event);
   finally
