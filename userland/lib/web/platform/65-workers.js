@@ -88,7 +88,16 @@
     // Canvas.
     "OffscreenCanvas", "OffscreenCanvasRenderingContext2D", "ImageBitmapRenderingContext", "ImageBitmap",
     "ImageData", "Path2D", "CanvasGradient", "CanvasPattern", "TextMetrics", "DOMMatrix", "DOMMatrixReadOnly",
-    "DOMPoint", "DOMPointReadOnly", "DOMRect", "DOMRectReadOnly"];
+    "DOMPoint", "DOMPointReadOnly", "DOMRect", "DOMRectReadOnly",
+    // The other interfaces exposed to workers (those the window has).
+    "XMLHttpRequestEventTarget", "XMLHttpRequestUpload", "CompressionStream", "DecompressionStream",
+    "ReadableStreamDefaultReader", "ReadableStreamBYOBReader", "ReadableStreamBYOBRequest",
+    "ReadableByteStreamController", "ReadableStreamDefaultController", "WritableStreamDefaultWriter",
+    "WritableStreamDefaultController", "TransformStreamDefaultController", "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy", "WebSocket", "CloseEvent", "PromiseRejectionEvent", "Crypto", "SubtleCrypto", "CryptoKey",
+    "Performance", "PerformanceEntry", "PerformanceMark", "PerformanceMeasure", "PerformanceObserver",
+    "PerformanceObserverEntryList", "PerformanceResourceTiming", "FileList", "WorkerNavigator", "WorkerLocation",
+    "Lock", "LockManager", "URLPattern"];
 
   function workerState(worker) {
     const state = workerData.get(worker);
