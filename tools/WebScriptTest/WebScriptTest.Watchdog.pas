@@ -19,8 +19,9 @@
 {
   The slow script watchdog (Web.Script.Watchdog): a script that never
   ends - a loop, promise jobs queueing each other, a timer callback
-  that loops - is stopped after the run limit and reported on the
-  console, and the page's next scripts run normally.
+  that loops, a WebAssembly function that loops (the store's interrupt
+  hook) - is stopped after the run limit and reported on the console,
+  and the page's next scripts run normally.
 }
 unit WebScriptTest.Watchdog;
 
@@ -41,6 +42,9 @@ uses
 
 const
   TestLimitMilliseconds = 300;
+  { (module (func (export "spin") (loop (br 0)))) }
+  SpinModule = 'new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, ' +
+    '1, 96, 0, 0, 3, 2, 1, 0, 7, 8, 1, 4, 115, 112, 105, 110, 0, 0, 10, 9, 1, 7, 0, 3, 64, 12, 0, 11, 11]))).exports.spin';
   StoppedText = 'was stopped';
 
 { Runs Source in Bed; True if it came back within a few seconds. }
@@ -85,6 +89,9 @@ begin
     CheckStopped('promise jobs queueing each other',
       'function again() { Promise.resolve().then(again); } again();');
     CheckStopped('a timer callback that loops', 'setTimeout(function () { while (true) {} }, 0);');
+    CheckStopped('a WebAssembly loop', SpinModule + '();');
+    CheckStopped('a WebAssembly loop caught and called again',
+      'var spin = ' + SpinModule + '; for (;;) { try { spin(); } catch (e) {} }');
     { A script that ends in time is left alone. }
     Bed := TTestBed.Create('watchdog-quick');
     try

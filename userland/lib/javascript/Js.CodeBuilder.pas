@@ -931,6 +931,7 @@ var
   Level, Inner, SavedCount, SavedDepth, Start: Integer;
   Control: TJsControl;
   SavedScope: TJsScope;
+  SavedControls: array of TJsControl;
 begin
   SavedDepth := FEnvironmentDepth;
   SavedScope := FScope;
@@ -944,11 +945,17 @@ begin
       EmitPopScopesTo(Control.EnvironmentDepth);
       FEnvironmentDepth := Control.EnvironmentDepth;
       SavedCount := FControlCount;
+      { The finally block is compiled as if the controls from Level on
+        were not there; its own controls take their slots and are freed
+        when it ends, so the slots are put back after. }
+      SavedControls := Copy(FControls, Level, SavedCount - Level);
       FControlCount := Level;
       if Control.Kind = ctFinally then
         CompileFinallyBlock(Control.FinallyBlock)
       else
         Emit(opIteratorClose, Control.IteratorRegister);
+      for Inner := 0 to High(SavedControls) do
+        FControls[Level + Inner] := SavedControls[Inner];
       FControlCount := SavedCount;
       for Inner := Level to FControlCount - 1 do
         FControls[Inner].AddGap(Start, Here);

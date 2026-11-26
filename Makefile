@@ -1788,7 +1788,7 @@ WEB_BINDING_SOURCES := userland/lib/web/make-bindings.py $(wildcard userland/lib
 	$(wildcard userland/lib/web/platform/*.js)
 WEB_SCRIPT_TEST_SOURCES := $(wildcard tools/WebScriptTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	$(filter-out %/Web.Contents.pas,$(wildcard userland/lib/web/*.pas)) $(wildcard userland/lib/web/*.inc) \
-	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) $(WASM_SOURCES) \
 	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/*.pas) \
 	$(wildcard userland/lib/tls/*.pas) tools/TlsTest/Crypto.Random.pas userland/lib/cryptography/Crypto.Digests.pas \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/font/*.pas) \
@@ -1804,7 +1804,7 @@ $(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard 
 $(WEB_SCRIPT_TEST): $(WEB_SCRIPT_TEST_SOURCES) $(WEB_SCRIPT_TEST_UNITS)/.generated
 	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
 	fpc -Mobjfpc -O2 -gl -vew -Futools/WebScriptTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/cryptography -Fushared -Fishared \
-		-Fuuserland/lib/web -Fuuserland/lib/javascript \
+		-Fuuserland/lib/web -Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm \
 		-Fuuserland/lib/css -Fuuserland/lib/http -Fuuserland/lib/drawing -Fuuserland/lib/image -Fuuserland/lib/font \
 		-Fuuserland/lib/compression -Fuuserland/lib/svg -Fuuserland/lib/tls \
 		-Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
@@ -1970,7 +1970,7 @@ WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/Te
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \
-	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) $(WASM_SOURCES) \
 	tools/WebLoadTest/editing-fuzz.html tools/WebLoadTest/pointer-fuzz.html tools/WebLoadTest/wpt-workers.html tools/WebBrowse/WebBrowse.Input.pas tools/WebBrowse/WebBrowse.Pointer.pas $(wildcard userland/lib/webview/WebView.*.pas)
 
 $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
@@ -1985,7 +1985,7 @@ $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
 		-Futools/WebBrowse -Fuuserland/lib/webview -Fuuserland/lib/windowing \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm -Fuuserland/lib/svg -Fushared -Fishared \
 		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
 
 web-load-test: $(WEB_LOAD_TEST) $(BASE_FONTS_STAMP)
@@ -2016,7 +2016,8 @@ $(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
 	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fuuserland/lib/webview -Fuuserland/lib/windowing -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm -Fuuserland/lib/svg -Fuuserland/lib/webview \
+		-Fuuserland/lib/windowing -Fushared -Fishared \
 		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WebBrowse/WebBrowse.pas
 
 webbrowse: $(WEB_BROWSE)

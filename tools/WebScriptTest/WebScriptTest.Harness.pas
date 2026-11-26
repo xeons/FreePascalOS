@@ -75,7 +75,9 @@ type
   end;
 
   { A fetch the environment answers in a later turn: /data.json is JSON,
-    /missing a 404, other hosts a network error. }
+    /module.wasm a small WebAssembly module (application/wasm),
+    /module-as-text.wasm the same as text/plain, a path under FileRoot
+    (when set) that file, /missing a 404, other hosts a network error. }
   TTestDelivery = class
   public
     Sink: TScriptFetchSink;
@@ -105,6 +107,8 @@ type
     Scripts: TStringList;
     Navigations: TStringList;
     ScreenModeAnswer: TScriptPermission;
+    { Files served for https://example.test/<path> ('': none). }
+    FileRoot: string;
     constructor Create;
     destructor Destroy; override;
     function SupportsTimers: Boolean; override;
@@ -276,17 +280,43 @@ begin
   TTestDelivery(Handle).Canceled := True;
 end;
 
+{ A module exporting add(i32, i32) -> i32. }
+const
+  SmallModule: array[0..40] of Byte = (0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7,
+    7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11);
+
+function MediaTypeOfPath(const Path: string): string;
+var
+  Extension: string;
+begin
+  Extension := LowerCase(ExtractFileExt(Path));
+  if Extension = '.wasm' then
+    Result := 'application/wasm'
+  else if Extension = '.js' then
+    Result := 'text/javascript'
+  else if Extension = '.json' then
+    Result := 'application/json'
+  else if (Extension = '.html') or (Extension = '.htm') then
+    Result := 'text/html'
+  else
+    Result := 'text/plain';
+end;
+
 procedure TTestEnvironment.Deliver(Delivery: TTestDelivery);
 const
   Json = '{"ok":true}';
+  Origin = 'https://example.test';
 var
   Headers: TScriptFetchHeaders;
-  Body: string;
+  Body, Path: string;
 begin
   Headers := nil;
   SetLength(Headers, 1);
   Headers[0].Name := 'Content-Type';
-  if Pos('https://example.test/', Delivery.Url) <> 1 then
+  Path := Copy(Delivery.Url, Length(Origin) + 1, MaxInt);
+  if Pos('?', Path) > 0 then
+    Path := Copy(Path, 1, Pos('?', Path) - 1);
+  if Pos(Origin + '/', Delivery.Url) <> 1 then
     Delivery.Sink.Finished(False, 'no route')
   else
   begin
@@ -296,13 +326,29 @@ begin
       Body := Json;
       Delivery.Sink.ResponseArrived(200, 'OK', Delivery.Url, 'basic', False, Headers);
     end
+    else if (Path = '/module.wasm') or (Path = '/module-as-text.wasm') then
+    begin
+      if Path = '/module.wasm' then
+        Headers[0].Value := 'application/wasm'
+      else
+        Headers[0].Value := 'text/plain';
+      SetLength(Body, Length(SmallModule));
+      Move(SmallModule[0], Body[1], Length(SmallModule));
+      Delivery.Sink.ResponseArrived(200, 'OK', Delivery.Url, 'basic', False, Headers);
+    end
+    else if (FileRoot <> '') and (Pos('..', Path) = 0) and FileExists(FileRoot + Path) then
+    begin
+      Headers[0].Value := MediaTypeOfPath(Path);
+      Body := ReadTextFile(FileRoot + Path);
+      Delivery.Sink.ResponseArrived(200, 'OK', Delivery.Url, 'basic', False, Headers);
+    end
     else
     begin
       Headers[0].Value := 'text/plain';
       Body := 'not found';
       Delivery.Sink.ResponseArrived(404, 'Not Found', Delivery.Url, 'basic', False, Headers);
     end;
-    if not Delivery.Canceled then
+    if not Delivery.Canceled and (Body <> '') then
       Delivery.Sink.DataArrived(@Body[1], Length(Body));
     if not Delivery.Canceled then
       Delivery.Sink.Finished(True, '');

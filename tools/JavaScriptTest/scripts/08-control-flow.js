@@ -67,6 +67,17 @@ console.log(caught instanceof TypeError, typeof caught.stack);
 function deep(n) { return n === 0 ? 0 : 1 + deep(n - 1); }
 console.log(deep(3000));
 try { (function recurse() { recurse(); })(); } catch (e) { console.log(e.constructor.name, e.message); }
+// A return through a finally block that has loops and a try of its own.
+const finallyLog = [];
+function returnThroughFinally() {
+  try {
+    return "returned";
+  } finally {
+    for (const item of [1, 2]) finallyLog.push(item);
+    try { finallyLog.push("inner"); } finally { finallyLog.push("inner finally"); }
+  }
+}
+console.log(returnThroughFinally(), finallyLog.join());
 /* expected
 [ 0, 2, 3 ] 3 11
 0 2 3 00 01 10 11
@@ -85,4 +96,5 @@ key a
 true string
 3000
 RangeError Maximum call stack size exceeded
+returned 1,2,inner,inner finally
 */
