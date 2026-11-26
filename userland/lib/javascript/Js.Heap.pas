@@ -138,9 +138,15 @@ type
     property TotalPause: Double read FTotalPause;
     property MarkTime: Double read FMarkTime;
     property SweepTime: Double read FSweepTime;
+    { A line per cell class, the Limit biggest by bytes: count and bytes
+      (a debugging aid; finishes the sweep first). }
+    function Census(Limit: Integer): string;
   end;
 
 implementation
+
+uses
+  SysUtils;
 
 constructor TJsHeap.Create;
 begin
@@ -345,6 +351,53 @@ begin
       FCollectThreshold := FBytesAllocated + FMinimumThreshold div 2;
     FThreshold := FCollectThreshold;
   end;
+end;
+
+function TJsHeap.Census(Limit: Integer): string;
+type
+  TCensusEntry = record
+    CellClass: TClass;
+    Count: Int64;
+    Bytes: Int64;
+  end;
+var
+  Entries: array of TCensusEntry;
+  Swap: TCensusEntry;
+  Cell: TJsCell;
+  Index, Other: Integer;
+begin
+  FinishSweep;
+  Entries := nil;
+  Cell := FFirstCell;
+  while Cell <> nil do
+  begin
+    Index := 0;
+    while (Index < Length(Entries)) and (Entries[Index].CellClass <> Cell.ClassType) do
+      Inc(Index);
+    if Index = Length(Entries) then
+    begin
+      SetLength(Entries, Index + 1);
+      Entries[Index].CellClass := Cell.ClassType;
+      Entries[Index].Count := 0;
+      Entries[Index].Bytes := 0;
+    end;
+    Inc(Entries[Index].Count);
+    Inc(Entries[Index].Bytes, Cell.MemorySize);
+    Cell := Cell.NextCell;
+  end;
+  for Index := 1 to High(Entries) do
+    for Other := Index downto 1 do
+      if Entries[Other].Bytes > Entries[Other - 1].Bytes then
+      begin
+        Swap := Entries[Other];
+        Entries[Other] := Entries[Other - 1];
+        Entries[Other - 1] := Swap;
+      end;
+  Result := '';
+  for Index := 0 to High(Entries) do
+    if Index < Limit then
+      Result := Result + Format('  %-32s %9d cells %9d kB', [Entries[Index].CellClass.ClassName,
+        Entries[Index].Count, Entries[Index].Bytes div 1024]) + LineEnding;
 end;
 
 procedure TJsHeap.FinishSweep;

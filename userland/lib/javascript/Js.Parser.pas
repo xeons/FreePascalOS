@@ -43,7 +43,8 @@ interface
 uses
   SysUtils,
   Js.Lexer,
-  Js.Ast;
+  Js.Ast,
+  Js.LazyBodies;
 
 const
   MaximumDepth = 400;
@@ -66,6 +67,14 @@ type
     FInClassField: Boolean;
     { Parsing arrow parameters as a pattern: names are declared later. }
     FNoDeclare: Boolean;
+    { A function expression comes right after '(': most likely invoked
+      at once (an IIFE), so compiled eagerly rather than parsed twice. }
+    FFunctionInParentheses: Boolean;
+    { What ParseFunction is told about the function it parses next: it
+      is right inside parentheses; its body is wanted (the function a
+      lazy compilation parses again). }
+    FNextFunctionInParentheses: Boolean;
+    FKeepNextBody: Boolean;
     FDepth: Integer;
     FLabels: array of UnicodeString;
     FLabelCount: Integer;
@@ -600,6 +609,7 @@ begin
       Fail('Internal error: lazy function');
     Exit(Node.Func);
   end;
+  FKeepNextBody := True;
   Result := ParseFunction(Kind, IsAsync, IsGenerator, Name, StartToken);
   if HasSelfName then
     NameFunctionExpression(Result);
@@ -1621,11 +1631,18 @@ var
   SavedStrict, SavedGenerator, SavedAsync, SavedClassField: Boolean;
   SavedLabels: array of UnicodeString;
   SavedLabelCount, SavedLoop, SavedSwitch: Integer;
+  NodeMark: Integer;
+  KeepBody: Boolean;
 begin
+  NodeMark := FArena.NodeCount;
+  KeepBody := FKeepNextBody;
+  FKeepNextBody := False;
   Result := TJsFunctionInfo.Create;
   FArena.Own(Result);
   Result.Name := Name;
   Result.Kind := Kind;
+  Result.InParentheses := FNextFunctionInParentheses;
+  FNextFunctionInParentheses := False;
   Result.IsAsync := IsAsync;
   Result.IsGenerator := IsGenerator;
   Result.SourceStart := StartToken.Start;
@@ -1671,6 +1688,9 @@ begin
     FLoopDepth := SavedLoop;
     FSwitchDepth := SavedSwitch;
   end;
+  { Compiled from its source when called: its nodes are not needed. }
+  if not KeepBody and (Kind in [fkNormal, fkMethod, fkGetter, fkSetter]) and CompilesLazily(Result) then
+    DiscardLazyBody(FArena, Result, NodeMark);
 end;
 
 procedure TJsParser.ParseParameters(Info: TJsFunctionInfo);
@@ -3134,6 +3154,7 @@ begin
     Exit;
   end;
   Sequence := NewNodeAt(nkSequence, StartToken);
+  FFunctionInParentheses := FToken.Kind = tkFunction;
   while True do
   begin
     if FToken.Kind = tkEllipsis then
@@ -3183,6 +3204,7 @@ function TJsParser.ParsePrimary: TJsNode;
 var
   StartToken, Peeked: TJsToken;
   Name: UnicodeString;
+  InParentheses: Boolean;
 begin
   StartToken := FToken;
   case FToken.Kind of
@@ -3297,8 +3319,11 @@ begin
       Result := ParseParenthesized;
     tkFunction:
       begin
+        InParentheses := FFunctionInParentheses;
+        FFunctionInParentheses := False;
         Next;
         Result := NewNodeAt(nkFunction, StartToken);
+        FNextFunctionInParentheses := InParentheses;
         if Accept(tkStar) then
         begin
           if FToken.Kind = tkIdentifier then

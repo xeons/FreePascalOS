@@ -173,6 +173,17 @@ type
 
   TJsScopeKind = (skScript, skFunction, skBlock, skCatch, skClass, skFor, skSwitch, skEval, skModule);
 
+  { Where a scope rebuilt around lazily compiled code (or a direct eval)
+    finds the variables of the scope it stands for, by name, when they
+    are first looked for (Js.EvalScopes): a bundle's top level scope has
+    thousands, and a function uses a few. }
+  TJsScopeBacking = class
+  public
+    { Declares (TJsScope.DeclareRestored) and returns the variable Name
+      of the scope Scope stands for; nil when it has none. }
+    function Restore(Scope: TJsScope; const Name: UnicodeString): TJsVariable; virtual; abstract;
+  end;
+
   TJsScope = class
   public
     Kind: TJsScopeKind;
@@ -197,6 +208,12 @@ type
     { A direct eval can see the scope's bindings by name: they all live
       in its environment. }
     EvalExposed: Boolean;
+    { The cell describing the scope for the code compiled later inside
+      it (Js.EvalScopes' TJsEvalChain, made once; nil again when the
+      scope declares or removes a variable). }
+    Snapshot: TObject;
+    { The variables not declared yet (nil: all are). }
+    Backing: TJsScopeBacking;
   private
     { Name lookup for a scope with many variables (a bundle's top level
       holds thousands): open addressing, slot = variable index + 1 (0:
@@ -211,6 +228,8 @@ type
     function HasEnvironment: Boolean; inline;
     function Find(const Name: UnicodeString): TJsVariable;
     function Declare(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind; Start: Integer): TJsVariable;
+    { A variable from the scope's Backing (the Snapshot stays). }
+    function DeclareRestored(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind): TJsVariable;
     procedure AddReference(Node: TJsNode);
     procedure AddChild(Scope: TJsScope);
     destructor Destroy; override;
@@ -267,6 +286,13 @@ type
     { Private names appear in it (it needs its class's private scope:
       not compiled lazily). }
     UsesPrivateNames: Boolean;
+    { A function expression right inside parentheses, (function ...):
+      compiled eagerly, as it is most likely called at once. }
+    InParentheses: Boolean;
+    { A lazy function's nodes were freed once it was parsed (only the
+      references its scopes resolve are kept): it can only be compiled
+      lazily, from its source. }
+    BodyDiscarded: Boolean;
     { Class constructors: the class's field initializers. }
     FieldInitializer: TJsNode;
     ClassNode: TJsNode;
@@ -333,7 +359,22 @@ type
     destructor Destroy; override;
     function NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
     procedure Own(Item: TObject);
+    { Frees the nodes made since Mark (a NodeCount) that no scope
+      references (ReferenceScope nil). }
+    procedure ReleaseUnreferencedNodes(Mark: Integer);
+    property NodeCount: Integer read FNodeCount;
   end;
+
+const
+  { Functions with less source than this are compiled at once. }
+  LazySourceLength = 160;
+
+{ A function compiled when first called: its body was parsed (early
+  errors checked, its free variables marked captured), but it gets no
+  bytecode until then. Not for class constructors and field
+  initializers, functions using private names, short ones, or ones
+  right inside parentheses (an IIFE, called at once anyway). }
+function CompilesLazily(Info: TJsFunctionInfo): Boolean;
 
 const
   { nkProperty / nkClassMember flags }
@@ -504,6 +545,8 @@ begin
     for Index := 0 to VariableCount - 1 do
       if Variables[Index].Name = Name then
         Exit(Variables[Index]);
+    if Backing <> nil then
+      Exit(Backing.Restore(Self, Name));
     Exit(nil);
   end;
   if FIndexedCount <> VariableCount then
@@ -518,6 +561,17 @@ begin
     Slot := (Slot + 1) and Mask;
   end;
   Result := nil;
+  if Backing <> nil then
+    Result := Backing.Restore(Self, Name);
+end;
+
+function TJsScope.DeclareRestored(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind): TJsVariable;
+var
+  Kept: TObject;
+begin
+  Kept := Snapshot;
+  Result := Declare(Name, DeclarationKind, 0);
+  Snapshot := Kept;
 end;
 
 function TJsScope.Declare(const Name: UnicodeString; DeclarationKind: TJsDeclarationKind; Start: Integer): TJsVariable;
@@ -528,6 +582,7 @@ begin
   Result.Scope := Self;
   Result.DeclarationStart := Start;
   Result.Index := -1;
+  Snapshot := nil;
   if VariableCount >= Length(Variables) then
     SetLength(Variables, Length(Variables) * 2 + 4);
   Variables[VariableCount] := Result;
@@ -554,6 +609,7 @@ begin
       Dec(VariableCount);
       Variable.Free;
       { The index is rebuilt on the next search. }
+      Snapshot := nil;
       FNameSlots := nil;
       FIndexedCount := 0;
       Exit;
@@ -603,6 +659,33 @@ begin
     SetLength(FNodes, Length(FNodes) * 2 + 256);
   FNodes[FNodeCount] := Result;
   Inc(FNodeCount);
+end;
+
+procedure TJsAstArena.ReleaseUnreferencedNodes(Mark: Integer);
+var
+  Index, Kept: Integer;
+  Node: TJsNode;
+begin
+  Kept := Mark;
+  for Index := Mark to FNodeCount - 1 do
+  begin
+    Node := FNodes[Index];
+    if Node.ReferenceScope = nil then
+      Node.Free
+    else
+    begin
+      FNodes[Kept] := Node;
+      Inc(Kept);
+    end;
+  end;
+  FNodeCount := Kept;
+end;
+
+function CompilesLazily(Info: TJsFunctionInfo): Boolean;
+begin
+  Result := (Info.Kind in [fkNormal, fkArrow, fkMethod, fkGetter, fkSetter]) and not Info.UsesPrivateNames and
+    not Info.InParentheses and (Info.SourceFinish - Info.SourceStart >= LazySourceLength) and
+    ((Info.Kind = fkArrow) or (Info.ParametersLine > 0));
 end;
 
 procedure TJsAstArena.Own(Item: TObject);
