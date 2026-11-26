@@ -9228,9 +9228,13 @@ Module), compileStreaming and instantiateStreaming, the interfaces
 Module (exports, imports, customSections), Instance, Memory (buffer,
 grow, toFixedLengthBuffer, toResizableBuffer), Table (length, get, set,
 grow), Global (value, valueOf) and the errors CompileError, LinkError and
-RuntimeError. Every window and frame has it, and so does the window of
-a shared or service worker's agent (the platform scripts run there);
-dedicated workers get their window's object.
+RuntimeError. Every window and frame has it, and every worker's global
+scope - dedicated, shared and service workers alike, all realms of a
+window's runtime - has one of its own: `natives.wasmInstall(scope)`
+(called by platform/65-workers.js when it makes a scope) runs the
+platform script in the scope's realm with natives made in that realm
+(which carry their window's context), so a worker's Modules, promises
+and errors are its realm's (`e instanceof TypeError` holds there).
 
 **Two halves.** `platform/57-webassembly.js` is the WebIDL side:
 argument counts, dictionaries read member by member in the standard's
@@ -9260,8 +9264,9 @@ only release what they held). Beside the store it keeps the JS API's
 caches - one JavaScript object per function, memory, table and global,
 so `instance.exports.f === instance.exports.f` and a memory exported
 twice is one Memory object - the current buffer of each memory, and per
-window the prototypes and error constructors its platform script
-registered (`wasmRegister`).
+realm the prototypes and error constructors its platform script
+registered (`wasmRegister`, which also files the realm under its agent:
+natives find their agent by their realm, `AgentOfRealm`).
 
 **Objects.** Module, Memory, Table and Global objects are host objects
 whose native data is the engine's object, with the registered
@@ -9271,7 +9276,10 @@ is refused. A Module object holds a reference to its compiled
 `TWasmModule` and releases it when collected. structuredClone and
 postMessage to a frame or a dedicated worker (one agent) make a new
 Module object of the same compiled module (a clone hook of the
-platform script); serializing one for another heap - a shared or
+platform script; the window's clone runs for a worker's messages too,
+so a message to a worker that had Modules in it is adopted into the
+worker's realm before it is delivered, `internal.adoptModules`);
+serializing one for another heap - a shared or
 service worker, BroadcastChannel, storage - is a DataCloneError, as the
 standard has it for another agent cluster. Instances are ordinary
 objects of the Instance class whose exports object (null prototype,
