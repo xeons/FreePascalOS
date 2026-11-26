@@ -822,8 +822,9 @@ normalized (0-65535), not pixels.
   - Not planned: HEIC (its HEVC compression is patent-encumbered and licensed
     through pools; AVIF, the same HEIF container with royalty-free AV1, can
     be added instead if wanted)
-  - [ ] AVIF (HEIF container, AV1 intra frames: a large decoder; until then
-        the browser neither advertises nor accepts image/avif)
+  - [ ] AVIF (HEIF container, AV1 intra frames: libav1 decodes the frames,
+        the HEIF container is left; until then the browser neither
+        advertises nor accepts image/avif)
   - [x] Scalable images (`Image.Scalable`): drawn again at any size, the
         last renderings kept
   - [x] Colour management basics: ICC v2/v4 matrix/TRC, grey and LUT
@@ -1908,6 +1909,39 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] Named access on the Window object (an element's id as a global)
 - [ ] Margins of blocks inside an inline box collapse with each other
 
+## Media: AV1 video (libav1)
+
+- [x] libav1 (`userland/lib/av1`): the AV1 decoding process written out
+      from the specification, tables generated from its sources
+      (`make-tables.py`)
+  - [x] OBUs, sequence and frame headers, operating point 0, frame
+        size changes and reference scaling, show_existing_frame, error
+        resilience and switch frames, forward key frames
+  - [x] Every coding tool: partitions to 4:1, intra (directional with
+        angle deltas and edge filters, smooth, Paeth, filter intra, CfL,
+        palettes, intra block copy), inter (motion vector prediction with
+        temporal candidates, OBMC, local and global warp, compound
+        average, distance, wedge and difference weighted, inter-intra),
+        transforms of every size and type, lossless, quantizer matrices,
+        segmentation, delta q and loop filter
+  - [x] Deblocking, CDEF, superres, loop restoration (Wiener and
+        self-guided), film grain synthesis
+  - [x] 8, 10 and 12 bits; 4:2:0, 4:2:2, 4:4:4, monochrome
+  - [x] Tiles on several threads, post filters by rows (`Av1.WorkerPool`)
+  - [x] `make av1-test`: aomenc (each tool and format), SVT-AV1 and rav1e
+        streams bit-exact against aomdec, on one thread and four, with a
+        coding tool coverage report, the same streams in WebM, MP4,
+        Matroska and OBU files through libmedia, damaged streams refused
+        cleanly; `av1check` and `mediaplay -k` on AV1 WebM in coretest
+  - [x] libmedia's AV1 `TVideoDecoder` (`Av1.MediaDecoder`)
+  - [ ] Faster: SIMD (SSE2/AVX2, NEON) inline assembly for the inter
+        filters, inverse transforms, CDEF and the deblocking filter, with
+        the Pascal loops as the fallback; frame-parallel decoding
+  - [ ] Large scale tile decoding (Annex D, tile list OBUs)
+  - [ ] Streams with intra-only frames and short reference signaling
+        (the code follows the specification but no test stream has them;
+        the host encoders do not produce them)
+
 ## Planned: driver model (loading only the drivers the machine needs)
 
 Today every driver is compiled into the kernel and `Io.Startup` calls each
@@ -1991,6 +2025,9 @@ in the order they would be built:
       loop filters (now about a fifth of libvpx's speed single threaded)
 - [ ] `Media.Frames`: a layout for 4:4:0 (VP9 profile 1/3); such frames
       say pl420 with full width chroma planes
+- [x] libav1's decoder registered (`Av1.MediaDecoder`) and linked into
+      mediaplay: `-k` gives per-frame checksums of AV1 in WebM, Matroska,
+      MP4, IVF and OBU files (`Media.Ivf`, `Media.ObuStream`)
 - [ ] MP3 Layers I and II; Vorbis floor 0 and MP3 intensity stereo / mixed
       blocks checked against streams that use them (no host encoder writes
       them); Theora timing in Ogg; mfra-based MP4 seeking; zlib-compressed

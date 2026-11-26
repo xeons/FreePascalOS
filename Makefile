@@ -93,6 +93,8 @@
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
+#   make av1-test   Check libav1 on the host: streams from aomenc, SVT-AV1 and rav1e
+#                   decoded frame for frame as aomdec does (one thread and four)
 #   make media-test  Check libmedia on the host: WAV, FLAC, Ogg, Matroska/WebM, MP4
 #   make video-test  Check libvideo's VP8 and VP9 decoders on the host (bit exact with libvpx)
 #                   and MP3 files the host's ffmpeg, flac and lame made, decoded and
@@ -237,7 +239,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test \
+	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
@@ -587,7 +589,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test \
+test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -1405,6 +1407,41 @@ compression-test: $(COMPRESSION_TEST) $(COMPRESSION_FIXTURES)/manifest.txt
 	@python3 tools/CompressionTest/check-with-zlib.py $(COMPRESSION_SAMPLES) > build/tools/compression-zlib.out || \
 		{ cat build/tools/compression-zlib.out; echo "COMPRESSION TEST FAILED (zlib refuses what it compressed)"; exit 1; }
 	@echo "COMPRESSION TEST PASSED: $$(tail -n 1 build/tools/compression-test.out | cut -d ' ' -f 3-)"
+
+# libav1 builds for the host too, and decodes the streams make-fixtures.py
+# makes with the host's AV1 encoders (aomenc with each coding tool and
+# format, SvtAv1EncApp, rav1e through ffmpeg): every frame must equal
+# what libaom's reference decoder (aomdec) gives, sample for sample, on
+# one thread and with tiles on four; damaged copies of them must be
+# decoded or refused, nothing worse. The test also lists which coding
+# tools the streams exercised (build/tools/av1-test.out). Its units are
+# built from scratch each time (the library's units refer to each other
+# in both directions, which incremental builds can get wrong).
+AV1_TEST := build/tools/Av1Test
+AV1_TEST_UNITS := build/tools/av1-test-units
+AV1_FIXTURES := build/tools/av1-fixtures
+AV1_TEST_SOURCES := $(wildcard tools/Av1Test/*.pas) $(filter-out %/Av1.Contents.pas,$(wildcard userland/lib/av1/*.pas)) \
+	$(wildcard userland/lib/av1/*.inc) $(filter-out %/Media.Contents.pas,$(wildcard userland/lib/media/*.pas))
+
+$(AV1_FIXTURES)/manifest.txt: tools/Av1Test/make-fixtures.py
+	@for tool in ffmpeg aomenc aomdec; do command -v $$tool > /dev/null || \
+		{ echo "$$tool is needed for the AV1 test's streams (ffmpeg, aom)"; exit 1; }; done
+	python3 -I $< $(AV1_FIXTURES)
+
+$(AV1_TEST): $(AV1_TEST_SOURCES)
+	@rm -rf $(AV1_TEST_UNITS)
+	@mkdir -p $(AV1_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -dAV1_TOOL_STATISTICS -Futools/Av1Test -Fuuserland/lib/av1 -Fiuserland/lib/av1 \
+		-Fuuserland/lib/media -Fiuserland/lib/media		-FU$(AV1_TEST_UNITS) -o$@ tools/Av1Test/Av1Test.pas
+
+av1-test: $(AV1_TEST) $(AV1_FIXTURES)/manifest.txt
+	@$(AV1_TEST) $(AV1_FIXTURES) > build/tools/av1-test.out || \
+		{ grep FAIL build/tools/av1-test.out; echo "AV1 TEST FAILED (build/tools/av1-test.out)"; exit 1; }
+	@$(AV1_TEST) $(AV1_FIXTURES) --threads 4 > build/tools/av1-test-threads.out || \
+		{ grep FAIL build/tools/av1-test-threads.out; echo "AV1 TEST FAILED with threads (build/tools/av1-test-threads.out)"; exit 1; }
+	@$(AV1_TEST) $(AV1_FIXTURES) --fuzz 4 > build/tools/av1-test-fuzz.out || \
+		{ grep FAIL build/tools/av1-test-fuzz.out; echo "AV1 TEST FAILED on damaged streams (build/tools/av1-test-fuzz.out)"; exit 1; }
+	@echo "AV1 TEST PASSED: $$(tail -n 1 build/tools/av1-test.out)"
 
 # libarchive builds for the host too (over libcompression): it reads the
 # zip and tar files make-fixtures.py makes with Python's zipfile and

@@ -43,6 +43,8 @@ uses
   Media.Ogg,
   Media.Matroska,
   Media.Mp4,
+  Media.Ivf,
+  Media.ObuStream,
   Media.Mp3File,
   Media.Containers,
   Media.Pcm,
