@@ -98,6 +98,8 @@ uses
   Web.Layout.Flex,
   Web.Layout.Grid,
   Web.Layout.Table,
+  Web.Layout.TableGrid,
+  Web.Layout.TableFixed,
   Web.Layout.Positioned,
   Web.Layout.Transforms,
   Web.Layout.BoxGeometry,

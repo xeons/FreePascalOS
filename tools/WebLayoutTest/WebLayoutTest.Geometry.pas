@@ -123,6 +123,39 @@ begin
   end;
 end;
 
+{ table-layout: fixed (CSS 2.2 17.5.2.1): the first row's cell widths and
+  the column elements decide, not the content; the rest is shared. }
+procedure CheckFixedTableLayout;
+const
+  Page = '<!doctype html><body style="margin:0">' +
+    '<table style="table-layout:fixed;width:300px;border-spacing:0"><tr><td id=f1 style="width:50px;padding:0">a</td>' +
+    '<td id=f2 style="padding:0">bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</td><td id=f3 style="padding:0">c</td></tr></table>' +
+    '<table style="table-layout:fixed;width:200px;border-spacing:0"><col style="width:20%"><col style="width:100px">' +
+    '<tr><td id=g1 style="padding:0">x</td><td id=g2 style="padding:0">y</td><td id=g3 style="padding:0">z</td></tr>' +
+    '</table></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height: Double;
+  Widths: string;
+  Name: string;
+begin
+  Layout := LayoutText(Page, 800, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Widths := '';
+    for Name in ['f1', 'f2', 'f3', 'g1', 'g2', 'g3'] do
+      if ScriptLayout.BorderBox(Document.GetElementById(Name), X, Y, Width, Height) then
+        Widths := Widths + FloatToStr(Round(Width)) + ' ';
+    Check(Widths = '50 125 125 40 100 60 ', 'geometry: fixed table layout column widths (' + Widths + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -182,6 +215,7 @@ begin
       FloatToStr(X) + ', ' + FloatToStr(Y - Unscrolled) + ', ' + FloatToStr(Height) + ')');
     CheckInitialContainingBlock;
     CheckAnonymousTables;
+    CheckFixedTableLayout;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');

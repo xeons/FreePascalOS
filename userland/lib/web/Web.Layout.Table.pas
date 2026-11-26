@@ -20,9 +20,9 @@
   Table layout: the automatic table layout algorithm in brief (CSS 2.2
   17.5.2.2, CSS Tables 3).
 
-  The rows (header groups first, footer groups last) and their cells
-  are placed on a grid, cells spanning columns and rows (colspan,
-  rowspan). Each column gets a minimum and maximum width from its
+  The rows and their cells are placed on a grid (Web.Layout.TableGrid),
+  cells spanning columns and rows (colspan, rowspan); table-layout:
+  fixed takes its column widths from Web.Layout.TableFixed. Each column gets a minimum and maximum width from its
   single-column cells (their min-content and max-content widths, a
   fixed cell width as a floor), then cells spanning several columns
   spread what they need beyond those. The table is as wide as its width
@@ -57,176 +57,7 @@ implementation
 
 uses
   Math, SysUtils, Web.Dom, Css.ComputedStyle, Css.ComputedValues, Css.PropertyIds, Css.Keywords, Css.Values,
-  Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Dispatch;
-
-type
-  TGridCell = record
-    Cell: TTableCellBox;
-    Row: Integer;
-    Column, ColumnSpan, RowSpan: Integer;
-  end;
-
-  TTableGrid = record
-    Rows: array of TLayoutBox;
-    RowGroups: array of TLayoutBox;
-    RowCount: Integer;
-    Cells: array of TGridCell;
-    CellCount: Integer;
-    ColumnCount: Integer;
-    ColumnMin, ColumnMax, ColumnWidth: array of Single;
-    { A single-column cell of the column has a fixed width. }
-    ColumnFixed: array of Boolean;
-    SpacingX, SpacingY: Single;
-  end;
-
-function SpanAttribute(Cell: TLayoutBox; const Name: string; Limit: Integer): Integer;
-var
-  Code: Integer;
-begin
-  Result := 1;
-  if (Cell.Node = nil) or not Cell.Node.IsElement then
-    Exit;
-  Val(Trim(TElement(Cell.Node).GetAttribute(Name)), Result, Code);
-  if (Code <> 0) or (Result < 1) then
-    Result := 1;
-  if Result > Limit then
-    Result := Limit;
-end;
-
-procedure BorderSpacing(Box: TLayoutBox; out Horizontal, Vertical: Single);
-var
-  Value: PCssComputedValue;
-begin
-  Horizontal := 0;
-  Vertical := 0;
-  if Box.Style.Keyword(cpBorderCollapse) = kwCollapse then
-    Exit;
-  Value := Box.Style.Value(cpBorderSpacing);
-  if Value^.Kind = cvLength then
-  begin
-    Horizontal := Value^.Number;
-    Vertical := Value^.Number;
-  end
-  else if (Value^.Kind = cvValue) and (Value^.Data <> nil) then
-  begin
-    if Value^.Data.Kind = vkDimension then
-    begin
-      Horizontal := Value^.Data.Number;
-      Vertical := Horizontal;
-    end
-    else if (Value^.Data.Kind = vkList) and (Value^.Data.Count >= 1) then
-    begin
-      Horizontal := Value^.Data.Items[0].Number;
-      Vertical := Horizontal;
-      if Value^.Data.Count >= 2 then
-        Vertical := Value^.Data.Items[1].Number;
-    end;
-  end;
-end;
-
-procedure AddRowsOf(var Grid: TTableGrid; Group: TLayoutBox);
-var
-  Row: TLayoutBox;
-begin
-  Row := Group.FirstChild;
-  while Row <> nil do
-  begin
-    if Row.Kind = bkTableRow then
-    begin
-      if Grid.RowCount >= Length(Grid.Rows) then
-      begin
-        SetLength(Grid.Rows, Grid.RowCount * 2 + 4);
-        SetLength(Grid.RowGroups, Length(Grid.Rows));
-      end;
-      Grid.Rows[Grid.RowCount] := Row;
-      Grid.RowGroups[Grid.RowCount] := Group;
-      Inc(Grid.RowCount);
-    end;
-    Row := Row.NextSibling;
-  end;
-end;
-
-function GroupKind(Group: TLayoutBox): Integer;
-var
-  Display: TCssKeyword;
-begin
-  Display := Group.Style.Keyword(cpDisplay);
-  if Display = kwTableHeaderGroup then
-    Result := 0
-  else if Display = kwTableFooterGroup then
-    Result := 2
-  else
-    Result := 1;
-end;
-
-procedure BuildGrid(Box: TLayoutBox; out Grid: TTableGrid);
-var
-  Group, Row, Cell: TLayoutBox;
-  Pass, RowIndex, Column, Span, RowSpan, Index, Other: Integer;
-  Occupied: array of array of Boolean;
-begin
-  Grid := Default(TTableGrid);
-  BorderSpacing(Box, Grid.SpacingX, Grid.SpacingY);
-  for Pass := 0 to 2 do
-  begin
-    Group := Box.FirstChild;
-    while Group <> nil do
-    begin
-      if (Group.Kind = bkTableRowGroup) and (GroupKind(Group) = Pass) then
-        AddRowsOf(Grid, Group);
-      Group := Group.NextSibling;
-    end;
-  end;
-  Occupied := nil;
-  SetLength(Occupied, Grid.RowCount + 1);
-  for RowIndex := 0 to Grid.RowCount - 1 do
-  begin
-    Row := Grid.Rows[RowIndex];
-    Column := 0;
-    Cell := Row.FirstChild;
-    while Cell <> nil do
-    begin
-      if Cell.Kind = bkTableCell then
-      begin
-        while (Column < Length(Occupied[RowIndex])) and Occupied[RowIndex][Column] do
-          Inc(Column);
-        Span := SpanAttribute(Cell, 'colspan', 1000);
-        RowSpan := SpanAttribute(Cell, 'rowspan', 65534);
-        if RowIndex + RowSpan > Grid.RowCount then
-          RowSpan := Grid.RowCount - RowIndex;
-        if RowSpan < 1 then
-          RowSpan := 1;
-        for Index := RowIndex to RowIndex + RowSpan - 1 do
-        begin
-          if Length(Occupied[Index]) < Column + Span then
-            SetLength(Occupied[Index], Column + Span);
-          for Other := Column to Column + Span - 1 do
-            Occupied[Index][Other] := True;
-        end;
-        if Grid.CellCount >= Length(Grid.Cells) then
-          SetLength(Grid.Cells, Grid.CellCount * 2 + 8);
-        Grid.Cells[Grid.CellCount].Cell := TTableCellBox(Cell);
-        Grid.Cells[Grid.CellCount].Row := RowIndex;
-        Grid.Cells[Grid.CellCount].Column := Column;
-        Grid.Cells[Grid.CellCount].ColumnSpan := Span;
-        Grid.Cells[Grid.CellCount].RowSpan := RowSpan;
-        TTableCellBox(Cell).Column := Column;
-        TTableCellBox(Cell).Row := RowIndex;
-        TTableCellBox(Cell).ColumnSpan := Span;
-        TTableCellBox(Cell).RowSpan := RowSpan;
-        Inc(Grid.CellCount);
-        Inc(Column, Span);
-        if Column > Grid.ColumnCount then
-          Grid.ColumnCount := Column;
-      end;
-      Cell := Cell.NextSibling;
-    end;
-  end;
-  SetLength(Grid.ColumnMin, Grid.ColumnCount);
-  SetLength(Grid.ColumnMax, Grid.ColumnCount);
-  SetLength(Grid.ColumnWidth, Grid.ColumnCount);
-  SetLength(Grid.ColumnFixed, Grid.ColumnCount);
-end;
+  Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Dispatch, Web.Layout.TableGrid, Web.Layout.TableFixed;
 
 { Spreads Extra over the columns Cell spans, in proportion to their
   maximum widths (evenly when those are all zero); with AutoFirst only
@@ -338,6 +169,30 @@ begin
   end;
 end;
 
+{ The automatic layout's column widths for Free: their maximums and the
+  rest in proportion to them, or between their minimums and maximums,
+  or their minimums. }
+procedure AutoColumnWidths(var Grid: TTableGrid; Free, SumMin, SumMax: Single);
+var
+  Column: Integer;
+  Weight: Single;
+begin
+  for Column := 0 to Grid.ColumnCount - 1 do
+    if Free >= SumMax then
+    begin
+      if SumMax > 0 then
+        Weight := Grid.ColumnMax[Column] / SumMax
+      else
+        Weight := 1 / Grid.ColumnCount;
+      Grid.ColumnWidth[Column] := Grid.ColumnMax[Column] + (Free - SumMax) * Weight;
+    end
+    else if (Free > SumMin) and (SumMax > SumMin) then
+      Grid.ColumnWidth[Column] := Grid.ColumnMin[Column] + (Grid.ColumnMax[Column] - Grid.ColumnMin[Column]) *
+        (Free - SumMin) / (SumMax - SumMin)
+    else
+      Grid.ColumnWidth[Column] := Grid.ColumnMin[Column];
+end;
+
 procedure TableIntrinsicWidths(Box: TLayoutBox; out MinWidth, MaxWidth: Single);
 var
   Grid: TTableGrid;
@@ -352,6 +207,8 @@ begin
     Spacing := 0;
   MinWidth := SumMin + Spacing + TableEdges(Box);
   MaxWidth := SumMax + Spacing + TableEdges(Box);
+  if UsesFixedLayout(Box) then
+    MinWidth := FixedColumnsMinimum(Grid) + Spacing + TableEdges(Box);
   Child := Box.FirstChild;
   while Child <> nil do
   begin
@@ -454,7 +311,7 @@ end;
 procedure LayoutTable(Box: TLayoutBox; const Input: TLayoutInput);
 var
   Grid: TTableGrid;
-  SumMin, SumMax, Available, Spacing, TableWidth, Specified, Free, Weight, X, Y, CellWidth, Height: Single;
+  SumMin, SumMax, Available, Spacing, TableWidth, Specified, Free, X, Y, CellWidth, Height: Single;
   ContentHeight, Extra, Offset, GroupTop, CaptionHeight: Single;
   Column, Index, RowIndex, Last: Integer;
   RowHeights, RowTops, ColumnLefts, RowBaselines: array of Single;
@@ -462,10 +319,20 @@ var
   Child, Group, Row: TLayoutBox;
   Align: TCssKeyword;
   ChildInput: TLayoutInput;
+  Fixed: Boolean;
 begin
   BuildGrid(Box, Grid);
-  ColumnWidths(Grid);
-  SumColumns(Grid, SumMin, SumMax);
+  Fixed := UsesFixedLayout(Box);
+  if Fixed then
+  begin
+    SumMin := FixedColumnsMinimum(Grid);
+    SumMax := SumMin;
+  end
+  else
+  begin
+    ColumnWidths(Grid);
+    SumColumns(Grid, SumMin, SumMax);
+  end;
   Spacing := Grid.SpacingX * (Grid.ColumnCount + 1);
   if Grid.ColumnCount = 0 then
     Spacing := 0;
@@ -484,20 +351,10 @@ begin
   Box.Width := TableWidth;
   { The columns. }
   Free := TableWidth - HorizontalBorderPadding(Box) - Spacing;
-  for Column := 0 to Grid.ColumnCount - 1 do
-    if Free >= SumMax then
-    begin
-      if SumMax > 0 then
-        Weight := Grid.ColumnMax[Column] / SumMax
-      else
-        Weight := 1 / Grid.ColumnCount;
-      Grid.ColumnWidth[Column] := Grid.ColumnMax[Column] + (Free - SumMax) * Weight;
-    end
-    else if (Free > SumMin) and (SumMax > SumMin) then
-      Grid.ColumnWidth[Column] := Grid.ColumnMin[Column] + (Grid.ColumnMax[Column] - Grid.ColumnMin[Column]) *
-        (Free - SumMin) / (SumMax - SumMin)
-    else
-      Grid.ColumnWidth[Column] := Grid.ColumnMin[Column];
+  if Fixed then
+    FixedColumnWidths(Grid, Free)
+  else
+    AutoColumnWidths(Grid, Free, SumMin, SumMax);
   SetLength(ColumnLefts, Grid.ColumnCount + 1);
   X := Grid.SpacingX;
   for Column := 0 to Grid.ColumnCount - 1 do
