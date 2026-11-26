@@ -1749,6 +1749,22 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A cheaper interface object: native accessors keyed by property in
       libjavascript would let one getter serve every attribute (a window
       costs about 420 KB of script heap over the bare realm today)
+- [x] html5test.co runs to its score (273 of 588; Firefox 547): HTML-like
+      comments after white space, images outside the document (pending
+      activity keeping their listeners), image natural sizes and
+      complete, resolved width/height in getComputedStyle, input value
+      sanitization with valueAsNumber/valueAsDate/stepUp/stepDown,
+      fieldset.elements, EventSource, PointerEvent and pointer capture,
+      ClipboardEvent and DataTransfer's string data, access keys, table
+      colspan widths, the preload scanner's double fetches
+      (docs/html5test-gaps.md)
+- [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
+      Canvas 2D and OffscreenCanvas, CSP enforcement and
+      SecurityPolicyViolationEvent, WebSocket, custom elements, shadow
+      DOM, Web Animations, IndexedDB, media playback and Web Audio, the
+      Fullscreen API, file inputs with FileList and multipart uploads,
+      SharedWorker, foreignObject, relative positioning of inline boxes,
+      designMode/execCommand, date and time pickers
 
 ## Web view and browser
 
@@ -1907,6 +1923,12 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       "webcontent: input failed: ..." with a back trace to look for
 - [ ] Named access on the Window object (an element's id as a global)
 - [ ] Margins of blocks inside an inline box collapse with each other
+- [x] Web view: range inputs as sliders (pointer and keys), meters and
+      progress bars drawn at their values, pointer events with pointer
+      capture before the mouse events, mouseenter and mouseleave,
+      clipboard events before copy, cut and paste, Alt+Shift access keys
+- [ ] Web view: date and time pickers, a colour picker, a file chooser for
+      input type=file
 
 ## Planned: driver model (loading only the drivers the machine needs)
 

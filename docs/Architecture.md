@@ -13341,6 +13341,13 @@ until then; a document frees its listed nodes when it goes. Trees are
 freed, cloned, compared and serialized without recursion, so a parsed
 tree may be any depth.
 
+A node may have pending activity (`TNode.BeginPendingActivity`, paired
+with `EndPendingActivity`): it is retained, and the bindings' root
+provider marks its script wrapper, so the wrapper's listeners live even
+outside the document until what the node waits for has happened. An
+image loading outside the document (`new Image()`) holds it from the
+start of its fetch until its load or error event has fired.
+
 ### The HTML parser
 
 `Web.Html.*` is the HTML Standard's parsing algorithm, complete:
@@ -14176,7 +14183,37 @@ shared and service workers, synchronous
 XMLHttpRequest, Web Animations (CSS animations and transitions run, see
 Styling), Selection.modify, @import in insertRule loading its sheet,
 ObservableArray for adoptedStyleSheets, the storage event between
-windows, images' natural size for script.
+windows.
+
+**Added for html5test.co** (docs/html5test-gaps.md has the results and
+what is left):
+
+- Images: an img loads also outside the document; its image request
+  (`Web.Dom.ImageRequests`, owned by the element, filled by the image
+  loader) gives naturalWidth, naturalHeight, complete and currentSrc;
+  width and height are the rendered content box, else the attribute,
+  else the natural size. getComputedStyle's width and height are the
+  resolved values (the used size of a rendered box by its box-sizing).
+- Forms: `Web.Dom.InputValues` has the number, range, date and time
+  microsyntaxes, each type's value as a number and back and the value
+  sanitization algorithms (sanitized also when read, so a changed type,
+  min, max or step applies at once); valueAsNumber for all of them,
+  valueAsDate (`platform/73-input-dates.js`), stepUp and stepDown. The
+  user's text in a number, date or time field is kept as its edit text
+  (`TFormControlState.EditText`), shown and edited while the value is
+  what it sanitizes to. fieldset.elements.
+- EventSource (`platform/62-eventsource.js`) over the platform fetch:
+  the stream parsed as it arrives, reconnection with Last-Event-ID.
+- PointerEvent and pointer capture (`Web.Dom.PointerCapture`: the
+  pending capture kept by the document and dropped when the element
+  leaves it); the pointer events themselves come from the web view
+  (WebView.MouseEvents).
+- DataTransfer's string data and ClipboardEvent (`Web.Dom.DataTransfer`);
+  the events come from the web view (WebView.ClipboardEvents).
+- Access keys (`Web.Dom.AccessKeys`): the assigned key and
+  accessKeyLabel ("Alt+Shift+K", the keys the web view takes).
+- The preload cache remembers what loaders asked for, so the scanner
+  does not fetch again what the parser has already requested.
 
 ### Tests
 
@@ -14726,6 +14763,11 @@ the first element matching, scrolled into view (X,Y is a point).
 (10 s); an endless animation alone does not keep a page from being
 quiet.
 
+webbrowse reads the system's font configuration beside its font
+directory (`userland/etc/fonts.conf` for `userland/fonts`), so pages get
+the families the system gives them (Arial Liberation Sans, Helvetica
+Nimbus Sans) rather than the library's built-in DejaVu Sans.
+
 #### Comparing common sites with a reference browser
 
 `scripts/compare-sites.py` (not in `make test`: it needs the network)
@@ -15011,7 +15053,17 @@ with the document's resources before the document goes).
   area's text is the value), check boxes and radio groups toggle, a
   select opens a pop-up menu of its options, a submit button or Enter in
   a field submits the form (urlencoded, GET or POST, through the
-  navigable).
+  navigable). Number, date and time fields are typed (their text kept
+  apart from the sanitized value). A range input is a slider
+  (`WebView.Engine.Ranges.inc`): pressing moves the thumb to the
+  pointer and dragging moves it on (input on each change, change when
+  the button comes up), the arrow keys step it, Page Up and Page Down by
+  a tenth, Home and End to its ends. Alt+Shift and an element's access
+  key (`Web.Dom.AccessKeys`) focuses and activates it, also from a text
+  field. Copy, cut and paste (the field editor's and the page's Ctrl+C)
+  fire their ClipboardEvents first (`WebView.ClipboardEvents`): a
+  cancelled copy or cut puts the page's text/plain on the clipboard, a
+  cancelled paste inserts nothing.
 - **Zoom** (Ctrl+plus, Ctrl+minus, Ctrl+0, `Zoom`): the CSS-to-device
   scale is the window's display scale times the zoom (30 % to 300 %),
   the top of the page kept; at another display scale the view lays out
@@ -15075,7 +15127,18 @@ then outwards. The view fires MouseEvents (`WebView.MouseEvents`:
 mousedown, mouseup, click, mousemove, mouseover, mouseout,
 contextmenu, with client coordinates in the target document's own
 viewport, page offsets, offsetX/Y, button, buttons, detail and
-modifiers); a cancelled mousedown keeps the focus and selection.
+modifiers); a cancelled mousedown keeps the focus and selection. Each
+mouse event with a pointer event comes after it (the mouse is pointer
+1: pointerdown, or pointermove for a second button; pointerup, or
+pointermove while a button is still held; pointermove, pointerover,
+pointerout, pointerenter, pointerleave); a cancelled pointerdown holds
+mousedown, mousemove and mouseup back until the pointer is up. Before
+each pointer event the document's pending pointer capture becomes its
+capture (lostpointercapture, gotpointercapture); while an element has
+it the down, move and up events go to it and the boundary events wait;
+it is released after pointerup. mouseenter and mouseleave (with their
+pointer events) fire where the hovered chain changes, after mouseout
+and after mouseover.
 
 **What a browser's menus and dialogs ask** (for the Firefox 3.6 style
 chrome; every one works in both process models, through the protocol's
