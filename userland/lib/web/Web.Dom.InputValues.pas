@@ -28,7 +28,8 @@
   and rounded to its step, its default the middle), and the steps
   (default step, step scale factor, step base) stepUp and stepDown use.
   Dates are proleptic Gregorian, years from 1 on with four or more
-  digits.
+  digits. Also where a range's value, a meter's and a progress bar's
+  lie between their ends, for drawing them.
 }
 unit Web.Dom.InputValues;
 
@@ -82,6 +83,16 @@ function SanitizeNumericValue(Input: TElement; const TypeName, Value: string): s
 function InputMinimum(Input: TElement; const TypeName: string; out Value: Double): Boolean;
 function InputMaximum(Input: TElement; const TypeName: string; out Value: Double): Boolean;
 function InputAllowedStep(Input: TElement; const TypeName: string): TInputStep;
+
+{ Where a range input's value (Value, its current one) lies from its
+  minimum (0) to its maximum (1). }
+function RangeFraction(Input: TElement; const Value: string): Double;
+{ How full a meter or progress element is (0 to 1); -1 for a progress
+  element without a value (indeterminate). }
+function GaugeFraction(Element: TElement): Double;
+{ A range input's value for a point Fraction of the way along it, on its
+  step. }
+function RangeValueAt(Input: TElement; Fraction: Double): string;
 
 implementation
 
@@ -670,6 +681,78 @@ begin
   if TypeName = 'datetime-local' then
     Exit(NumberToInputValue(TypeName, Number));
   Result := Value;
+end;
+
+{ ---- drawing ranges, meters and progress bars ---- }
+
+function RangeFraction(Input: TElement; const Value: string): Double;
+var
+  Minimum, Maximum, Number: Double;
+begin
+  InputMinimum(Input, 'range', Minimum);
+  InputMaximum(Input, 'range', Maximum);
+  if not ParseFloatingPointNumber(SanitizeRange(Input, Value), Number) then
+    Number := Minimum;
+  Result := 0;
+  if Maximum > Minimum then
+    Result := EnsureRange((Number - Minimum) / (Maximum - Minimum), 0, 1);
+end;
+
+function RangeValueAt(Input: TElement; Fraction: Double): string;
+var
+  Minimum, Maximum: Double;
+begin
+  InputMinimum(Input, 'range', Minimum);
+  InputMaximum(Input, 'range', Maximum);
+  Fraction := EnsureRange(Fraction, 0, 1);
+  Result := SanitizeRange(Input, FloatingPointNumberText(Minimum + (Maximum - Minimum) * Fraction));
+end;
+
+{ The rules for parsing floating-point number values, in brief: leading
+  white space and a + are allowed, and what follows the number. }
+function ParseNumberValue(const Text: string; out Value: Double): Boolean;
+var
+  Trimmed: string;
+  Length_: Integer;
+begin
+  Trimmed := TrimLeft(Text);
+  if (Trimmed <> '') and (Trimmed[1] = '+') then
+    Delete(Trimmed, 1, 1);
+  Length_ := Length(Trimmed);
+  while Length_ > 0 do
+  begin
+    if ParseFloatingPointNumber(Copy(Trimmed, 1, Length_), Value) then
+      Exit(True);
+    Dec(Length_);
+  end;
+  Value := 0;
+  Result := False;
+end;
+
+function GaugeFraction(Element: TElement): Double;
+var
+  Minimum, Maximum, Value: Double;
+begin
+  if Element.LocalName = 'progress' then
+  begin
+    if not Element.HasAttributeAtom(AtomValue) or not ParseNumberValue(Element.AttributeValueOf(AtomValue), Value) then
+      Exit(-1);
+    if not ParseNumberValue(Element.AttributeValueOf(AtomMax), Maximum) or (Maximum <= 0) then
+      Maximum := 1;
+    Exit(EnsureRange(Value / Maximum, 0, 1));
+  end;
+  if not ParseNumberValue(Element.AttributeValueOf(AtomMin), Minimum) then
+    Minimum := 0;
+  if not ParseNumberValue(Element.AttributeValueOf(AtomMax), Maximum) then
+    Maximum := 1;
+  if Maximum < Minimum then
+    Maximum := Minimum;
+  if not ParseNumberValue(Element.AttributeValueOf(AtomValue), Value) then
+    Value := 0;
+  Value := EnsureRange(Value, Minimum, Maximum);
+  Result := 0;
+  if Maximum > Minimum then
+    Result := (Value - Minimum) / (Maximum - Minimum);
 end;
 
 end.

@@ -124,6 +124,9 @@ begin
       Exit;
     end;
   end;
+  if (FFocusedElement <> nil) and not Control and (FormControlKindOf(FFocusedElement) = FormControlRange) and
+     RangeKeyDown(FFocusedElement, Code) then
+    Exit;
   ViewHeight := ViewportCssHeight;
   case Code of
     KeyArrowDown:

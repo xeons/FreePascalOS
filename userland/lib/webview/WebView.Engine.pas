@@ -221,6 +221,9 @@ type
     FPressButton: LongWord;
     FPressX, FPressY: LongInt;
     FDragged: Boolean;
+    { A range input being dragged, and its value when the drag began. }
+    FRangeControl: TElement;
+    FRangeStartValue: string;
     FLastPointerX, FLastPointerY: LongInt;
     FLastClickTime: QWord;
     FLastClickX, FLastClickY: LongInt;
@@ -397,6 +400,13 @@ type
     function ReadClipboard: string;
     procedure WriteClipboard(const Value: string);
     procedure ControlEdited(Element: TElement);
+    { Range inputs (WebView.Engine.Ranges.inc). }
+    function RangeFractionAt(Control: TElement; X: LongInt; out Fraction: Double): Boolean;
+    procedure ChangeRangeValue(Control: TElement; const Value: string);
+    procedure MoveRangeTo(Control: TElement; X: LongInt);
+    procedure StartRangeDrag(Control: TElement; X: LongInt);
+    procedure EndRangeDrag;
+    function RangeKeyDown(Control: TElement; Code: LongWord): Boolean;
     { Selection (WebView.Engine.Selection.inc). }
     { The page laid out (when due) and the text index brought up to its
       display list. }
@@ -599,6 +609,7 @@ uses
   Web.Layout.AnimationEvents,
   Web.Dom.Focus,
   Web.Dom.FormControls,
+  Web.Dom.InputValues,
   WebView.Network,
   WebView.Zoom,
   WebView.Forms,
@@ -634,6 +645,7 @@ end;
 {$I WebView.Engine.Painting.inc}
 {$I WebView.Engine.Scrolling.inc}
 {$I WebView.Engine.Pointer.inc}
+{$I WebView.Engine.Ranges.inc}
 {$I WebView.Engine.Keyboard.inc}
 {$I WebView.Engine.Forms.inc}
 {$I WebView.Engine.Selection.inc}

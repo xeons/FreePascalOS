@@ -159,6 +159,9 @@ begin
   if FPressedControl <> nil then
     FPressedControl.Release;
   FPressedControl := nil;
+  if FRangeControl <> nil then
+    FRangeControl.Release;
+  FRangeControl := nil;
   if FPressedTarget <> nil then
     FPressedTarget.Release;
   FPressedTarget := nil;

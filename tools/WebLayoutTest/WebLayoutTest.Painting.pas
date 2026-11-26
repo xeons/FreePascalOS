@@ -33,6 +33,7 @@ procedure CheckPainting;
 procedure CheckStickyPainting;
 procedure CheckMaskPainting;
 procedure CheckLayerPainting;
+procedure CheckGaugePainting;
 procedure ReportPerformance;
 
 implementation
@@ -74,6 +75,17 @@ const
     '<div style="width:100px;height:20px;background:#0000ff;mask-image:linear-gradient(to right, black, transparent)"></div>' +
     '<div style="width:100px;height:20px;background:#0000ff;-webkit-mask-image:url(nowhere.png)"></div>' +
     '<div style="margin:30px 0 0 150px;width:60px;height:20px;background:#ff0000;opacity:0.5;border-radius:4px"></div>' +
+    '</body>';
+
+  { A range's thumb at its value (129 x 16, a thumb of 16: its centre
+    travels from 8 to 121), meters and a progress bar filled as far as
+    their values. }
+  GaugePage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div><input type=range min=0 max=10 value=10 style="margin:0"></div>' +
+    '<div><input type=range min=0 max=10 value=0 style="margin:0"></div>' +
+    '<div><meter value=0.25 style="width:100px;height:16px;display:block"></meter></div>' +
+    '<div><progress value=3 max=4 style="width:100px;height:16px;display:block"></progress></div>' +
     '</body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
@@ -152,6 +164,33 @@ begin
   finally
     FreeSurface(Surface);
     FreeSurface(Partial);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckGaugePainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(GaugePage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 100, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 100));
+    CheckPixel(Surface, 121, 8, RgbColor($00, $75, $FF), 'a range at its maximum has its thumb at the end');
+    CheckPixel(Surface, 8, 3, RgbColor(255, 255, 255), 'a range at its maximum has no thumb at the start');
+    CheckPixel(Surface, 8, 27, RgbColor($00, $75, $FF), 'a range at its minimum has its thumb at the start');
+    CheckPixel(Surface, 121, 19, RgbColor(255, 255, 255), 'a range at its minimum has no thumb at the end');
+    CheckPixel(Surface, 15, 40, RgbColor($10, $7C, $10), 'a meter is filled up to its value');
+    CheckPixel(Surface, 40, 40, RgbColor($E0, $E0, $E0), 'a meter is empty past its value');
+    CheckPixel(Surface, 70, 62, RgbColor($10, $7C, $10), 'a progress bar is filled up to its value');
+    CheckPixel(Surface, 85, 62, RgbColor($E0, $E0, $E0), 'a progress bar is empty past its value');
+  finally
+    FreeSurface(Surface);
     Painter.Free;
     FreeLayout(Layout, Document);
   end;

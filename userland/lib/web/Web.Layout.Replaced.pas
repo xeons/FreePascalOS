@@ -148,6 +148,13 @@ begin
         Box.HasIntrinsicWidth := True;
         Box.HasIntrinsicHeight := True;
       end;
+    ControlRange:
+      begin
+        Box.IntrinsicWidth := 129;
+        Box.IntrinsicHeight := 16;
+        Box.HasIntrinsicWidth := True;
+        Box.HasIntrinsicHeight := True;
+      end;
   end;
   if Box.HasIntrinsicWidth and Box.HasIntrinsicHeight and (Box.IntrinsicHeight > 0) then
     Box.IntrinsicRatio := Box.IntrinsicWidth / Box.IntrinsicHeight;

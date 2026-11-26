@@ -109,6 +109,8 @@ const
   ControlRadio = 3;
   ControlTextArea = 4;
   ControlMeter = 5;
+  { input type=range: a track and a thumb at the value. }
+  ControlRange = 6;
   ControlNone = -1;
 
 implementation
@@ -161,7 +163,7 @@ begin
     if InputType = 'image' then
       Exit(ControlImage);
     if (InputType = 'range') then
-      Exit(ControlMeter);
+      Exit(ControlRange);
     if (InputType = 'submit') or (InputType = 'reset') or (InputType = 'button') or (InputType = 'hidden') or
        (InputType = 'file') or (InputType = 'color') then
       Exit(ControlNone);

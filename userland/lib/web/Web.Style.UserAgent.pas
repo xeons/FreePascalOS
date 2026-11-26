@@ -50,6 +50,7 @@ const
     '  background-color: ButtonFace; color: ButtonText; border: 2px outset ButtonBorder; padding: 1px 6px; }'#10 +
     'input:is([type=checkbox i], [type=radio i]) { margin: 3px 3px 3px 4px; padding: 0; border: none;'#10 +
     '  background-color: transparent; }'#10 +
+    'input[type=range i] { margin: 2px; padding: 0; border: none; background-color: transparent; }'#10 +
     'select { background-color: ButtonFace; border: 1px solid ButtonBorder; padding: 1px 2px; }'#10 +
     'textarea { overflow: auto; }'#10 +
     'option, optgroup { display: none; }'#10 +

@@ -765,6 +765,34 @@ end;
 
 { ---- controls ---- }
 
+{ A range input: a thin track, filled up to the thumb, and the round
+  thumb at Fraction of the way along. }
+procedure DrawRange(var Raster: TRaster; const Bounds: TRectangle; Fraction: Single);
+var
+  Track, Filled, Thumb: TRectangle;
+  ThumbSize, TrackHeight, Travel, Center: LongInt;
+begin
+  ThumbSize := RectangleHeight(Bounds);
+  if ThumbSize > RectangleWidth(Bounds) then
+    ThumbSize := RectangleWidth(Bounds);
+  TrackHeight := Max(2, ThumbSize div 4);
+  Travel := RectangleWidth(Bounds) - ThumbSize;
+  Center := Bounds.Left + ThumbSize div 2 + Round(Travel * Fraction);
+  Track := Bounds;
+  Track.Top := Bounds.Top + (RectangleHeight(Bounds) - TrackHeight) div 2;
+  Track.Bottom := Track.Top + TrackHeight;
+  FillSmoothRoundedRectangle(Raster.Canvas, Track, TrackHeight / 2, RgbColor($C8, $C8, $C8));
+  Filled := Track;
+  Filled.Right := Center;
+  if Filled.Right > Filled.Left then
+    FillSmoothRoundedRectangle(Raster.Canvas, Filled, TrackHeight / 2, RgbColor($00, $75, $FF));
+  Thumb.Left := Center - ThumbSize div 2;
+  Thumb.Right := Thumb.Left + ThumbSize;
+  Thumb.Top := Bounds.Top + (RectangleHeight(Bounds) - ThumbSize) div 2;
+  Thumb.Bottom := Thumb.Top + ThumbSize;
+  FillSmoothEllipse(Raster.Canvas, Thumb, RgbColor($00, $75, $FF));
+end;
+
 procedure DrawControl(var Raster: TRaster; const Item: TDisplayItem);
 var
   Bounds, Inner: TRectangle;
@@ -803,9 +831,19 @@ begin
       begin
         FillSmoothRoundedRectangle(Raster.Canvas, Bounds, RectangleHeight(Bounds) / 2, RgbColor($E0, $E0, $E0));
         Inner := Bounds;
-        Inner.Right := Bounds.Left + RectangleWidth(Bounds) div 2;
-        FillSmoothRoundedRectangle(Raster.Canvas, Inner, RectangleHeight(Bounds) / 2, RgbColor($10, $7C, $10));
+        if Item.Value < 0 then
+        begin
+          { Indeterminate: a stripe in the middle. }
+          Inner.Left := Bounds.Left + RectangleWidth(Bounds) * 3 div 8;
+          Inner.Right := Bounds.Left + RectangleWidth(Bounds) * 5 div 8;
+        end
+        else
+          Inner.Right := Bounds.Left + Round(RectangleWidth(Bounds) * Item.Value);
+        if Inner.Right > Inner.Left then
+          FillSmoothRoundedRectangle(Raster.Canvas, Inner, RectangleHeight(Bounds) / 2, RgbColor($10, $7C, $10));
       end;
+    ControlRange:
+      DrawRange(Raster, Bounds, Item.Value);
   end;
 end;
 

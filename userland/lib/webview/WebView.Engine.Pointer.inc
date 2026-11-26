@@ -469,6 +469,8 @@ begin
   if Control <> nil then
   begin
     SetFocusedElement(Control, False);
+    if (FormControlKindOf(Control) = FormControlRange) and Control.IsConnected then
+      StartRangeDrag(Control, X);
     Exit;
   end;
   if Link <> nil then
@@ -521,6 +523,11 @@ begin
       FDragged := True;
     { The page sees the pointer move while the button is held too. }
     FireMoveWhilePressed(X / Scale, Y / Scale);
+    if (FRangeControl <> nil) and FRangeControl.IsConnected then
+    begin
+      MoveRangeTo(FRangeControl, X);
+      Exit;
+    end;
     if FSelecting and FDragged and (FPressButton = ButtonLeft) then
     begin
       { Dragging past the top or bottom scrolls (and goes on scrolling
@@ -606,6 +613,7 @@ begin
     end;
     SetChain(FActiveChain, nil);
     FSelecting := False;
+    EndRangeDrag;
     if not FDragged then
     begin
       if (Control <> nil) and (FormControlOf(Hit.Node) = Control) then
