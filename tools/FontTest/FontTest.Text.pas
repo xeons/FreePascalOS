@@ -249,8 +249,12 @@ begin
     BlendCoverage(ColorWhite, ColorBlack, 128) = RgbColor(Expected, Expected, Expected));
   Check('gamma: nothing covered leaves, all covered replaces', (BlendCoverage($FF123456, ColorWhite, 0) = $FF123456)
     and (BlendCoverage($FF123456, $FF654321, 255) = $FF654321));
-  Check('gamma: a colour''s alpha scales the coverage', BlendCoverage(ColorBlack, $80FFFFFF, 255) =
-    BlendCoverage(ColorBlack, ColorWhite, 128));
+  { A translucent colour is put over the pixel in pixel values (as
+    browsers blend it), then mixed by the coverage with the gamma. }
+  Check('gamma: a fully covered translucent colour is the usual blend', BlendCoverage(ColorBlack, $80FFFFFF, 255) =
+    BlendColors(ColorBlack, $80FFFFFF));
+  Check('gamma: a half covered translucent colour mixes that blend', BlendCoverage(ColorBlack, $80FFFFFF, 128) =
+    BlendCoverage(ColorBlack, BlendColors(ColorBlack, $80FFFFFF), 128));
   Check('gamma: over a translucent pixel, the usual blend', BlendCoverage($80000000, ColorWhite, 128) =
     BlendColors($80000000, FadeColor(ColorWhite, 128)));
 end;

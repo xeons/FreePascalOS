@@ -763,7 +763,7 @@ begin
     else
       Mask[Index] := (LongWord(Mask[Index]) * (255 - BoxMask[Index])) div 255;
   for Row := 0 to Height - 1 do
-    BlendCoverageSpan(Raster.Canvas, Area.Top + Row, Area.Left, @Mask[Row * Width], Width, Item.Color);
+    BlendMaskSpan(Raster.Canvas, Area.Top + Row, Area.Left, @Mask[Row * Width], Width, Item.Color);
   if Coverage = 0 then;
 end;
 

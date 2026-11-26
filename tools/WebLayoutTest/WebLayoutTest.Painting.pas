@@ -32,6 +32,7 @@ interface
 procedure CheckPainting;
 procedure CheckStickyPainting;
 procedure CheckMaskPainting;
+procedure CheckShadowPainting;
 procedure CheckLayerPainting;
 procedure CheckGaugePainting;
 procedure ReportPerformance;
@@ -39,7 +40,7 @@ procedure ReportPerformance;
 implementation
 
 uses
-  SysUtils, DateUtils, TestChecks, Drawing.Colors, Drawing.Surfaces, Drawing.Rectangles, Web.Dom,
+  SysUtils, Math, DateUtils, TestChecks, Drawing.Colors, Drawing.Surfaces, Drawing.Rectangles, Web.Dom,
   Web.Layout.Document, Web.Layout.Boxes, Web.Paint.Painter, Web.Text.FontInstances, WebLayoutTest.Pages;
 
 const
@@ -86,6 +87,16 @@ const
     '<div><input type=range min=0 max=10 value=0 style="margin:0"></div>' +
     '<div><meter value=0.25 style="width:100px;height:16px;display:block"></meter></div>' +
     '<div><progress value=3 max=4 style="width:100px;height:16px;display:block"></progress></div>' +
+    '</body>';
+
+  { A box shadow's blur and translucent text are blended in pixel values
+    as other browsers do (a 0.2 black shadow 8px down with a 23px blur
+    darkens the white just under the box to about 217; a fully covered
+    pixel of 50% black text is 50% grey), not with the text gamma. }
+  ShadowPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="margin:50px;width:300px;height:100px;background:#ffffff;box-shadow:rgba(0,0,0,0.2) 0 8px 23px 0"></div>' +
+    '<div style="font:100px/120px sans-serif;color:rgba(0,0,0,0.5);margin-left:50px">I</div>' +
     '</body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
@@ -248,6 +259,32 @@ begin
     CheckPixel(Surface, 50, 30, RgbColor(255, 255, 255), 'mask: an image that is not there hides the box');
     CheckPixel(Surface, 180, 80, RgbColor(255, 128, 128), 'opacity group away from the corner');
     CheckPixel(Surface, 140, 80, RgbColor(255, 255, 255), 'opacity group: nothing outside it');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckShadowPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+  X, Darkest: Integer;
+begin
+  Layout := LayoutText(ShadowPage, 400, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 400, 400, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 400, 400));
+    CheckPixel(Surface, 200, 151, RgbColor(218, 218, 218), 'shadow: blur blended in pixel values');
+    CheckPixel(Surface, 200, 190, RgbColor(253, 253, 253), 'shadow: fades out');
+    Darkest := 255;
+    for X := 50 to 150 do
+      Darkest := Min(Darkest, RedOf(PixelAt(Surface, X, 260)));
+    Check(Abs(Darkest - 128) <= 3, 'paint: translucent text: a covered pixel is half grey (' + IntToStr(Darkest) + ')');
   finally
     FreeSurface(Surface);
     Painter.Free;

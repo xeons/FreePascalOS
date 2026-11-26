@@ -31,7 +31,12 @@
   which keeps dark text on a light ground from looking thin.
 
   Coverage 0 leaves a pixel as it is and 255 (with an opaque colour)
-  replaces it, exactly. A colour's own alpha scales the coverage. Where
+  replaces it, exactly. A colour's own alpha is not coverage: the
+  colour is first put over the pixel the usual way (as browsers blend
+  translucent colours, in pixel values), and that is mixed by the
+  coverage, so fully covered pixels of translucent text get the value
+  other browsers give them. Masks that are not anti-aliasing (a box
+  shadow's blur) are blended without the gamma (BlendMaskSpan). Where
   the surface is not opaque (a pixel with alpha below 255) light cannot
   be mixed by itself, so the colour is blended over it the usual way
   (Drawing.Colors' BlendColors, faded by the coverage).
@@ -54,6 +59,8 @@ const
 function BlendCoverage(Destination, Color: TColor; Coverage: Byte): TColor;
 { Count pixels from (Left, Y) (surface coordinates, no origin), each
   blended by its own coverage, Coverage[0] the leftmost; clipped. }
+procedure BlendMaskSpan(const Canvas: TCanvas; Y, Left: LongInt; Mask: PByte; Count: LongInt; Color: TColor);
+{ The same, gamma-correct (anti-aliased text). }
 procedure BlendCoverageSpan(const Canvas: TCanvas; Y, Left: LongInt; Coverage: PByte; Count: LongInt;
   Color: TColor);
 
@@ -112,17 +119,42 @@ function BlendCoverage(Destination, Color: TColor; Coverage: Byte): TColor;
 var
   Weight: LongWord;
 begin
-  Weight := (LongWord(Coverage) * AlphaOf(Color) + 127) div 255;
-  if Weight = 0 then
+  if (Coverage = 0) or (AlphaOf(Color) = 0) then
     Exit(Destination);
-  if Weight = 255 then
-    Exit(Color);
   if AlphaOf(Destination) <> AlphaOpaque then
     Exit(BlendColors(Destination, FadeColor(Color, Coverage)));
+  { A translucent colour over the pixel, then mixed by the coverage. }
+  if AlphaOf(Color) <> AlphaOpaque then
+    Color := BlendColors(Destination, Color);
+  Weight := Coverage;
+  if Weight = 255 then
+    Exit(Color);
   if not TablesMade then
     MakeTables;
   Result := ArgbColor(AlphaOpaque, MixChannel(RedOf(Destination), RedOf(Color), Weight),
     MixChannel(GreenOf(Destination), GreenOf(Color), Weight), MixChannel(BlueOf(Destination), BlueOf(Color), Weight));
+end;
+
+procedure BlendMaskSpan(const Canvas: TCanvas; Y, Left: LongInt; Mask: PByte; Count: LongInt; Color: TColor);
+var
+  Index, Start, Finish, X: LongInt;
+  Piece: TRectangle;
+  Line: PLongWord;
+begin
+  if (Count <= 0) or (AlphaOf(Color) = 0) then
+    Exit;
+  Line := SurfaceLine(Canvas.Surface, Y);
+  for Index := 0 to Canvas.Clip.Count - 1 do
+  begin
+    Piece := Canvas.Clip.Rectangles[Index];
+    if (Y < Piece.Top) or (Y >= Piece.Bottom) then
+      Continue;
+    Start := Max(Left, Piece.Left);
+    Finish := Min(Left + Count, Piece.Right);
+    for X := Start to Finish - 1 do
+      if Mask[X - Left] <> 0 then
+        Line[X] := BlendColors(Line[X], FadeColor(Color, Mask[X - Left]));
+  end;
 end;
 
 procedure BlendCoverageSpan(const Canvas: TCanvas; Y, Left: LongInt; Coverage: PByte; Count: LongInt;
