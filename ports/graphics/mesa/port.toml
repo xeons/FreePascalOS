@@ -56,6 +56,7 @@ size = 153777
 
 [dependencies]
 build = ["llvm"]
+run = ["llvm-runtime"]
 host = ["meson", "ninja", "python3", "bison", "flex", "pkg-config"]
 provides = ["libegl", "libgles", "libgl"]
 
@@ -67,7 +68,7 @@ configure_args = [
     "-Dgallium-drivers=llvmpipe,softpipe",
     "-Dvulkan-drivers=swrast",
     "-Dllvm=enabled",
-    "-Dshared-llvm=disabled",
+    "-Dshared-llvm=enabled",
     "-Dcpp_rtti=false",
     "-Dcmake_prefix_path=${SYSROOT}/usr/local",
     "-Degl=enabled",

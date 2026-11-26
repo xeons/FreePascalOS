@@ -1971,10 +1971,7 @@ in the order they would be built:
       (Mesa)".
 - [ ] Mesa, what is left: a Vulkan loader (the Khronos loader, taught
       `VK_FPOS_window_surface`; programs open libvulkan_lvp.so
-      themselves today); LLVM as one shared library (llvmpipe and
-      lavapipe each link it statically: about 75 MB apiece, so the
-      system disk grows by about 150 MB - needs split packages or a
-      libLLVM runtime port); vsync'd presentation and frame pacing
+      themselves today); vsync'd presentation and frame pacing
       (the swap interval and FIFO are accepted and ignored); zero-copy
       presentation (a window surface per swapchain image, or the
       renderer drawing straight into the section); the shader cache

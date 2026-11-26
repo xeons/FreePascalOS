@@ -12819,9 +12819,13 @@ Vulkan 1.4 driver lavapipe, behind `libEGL.so.1`, `libGLESv1_CM.so.1`,
 through EGL and `eglGetProcAddress`; there is no GLX and no `libGL`) and
 `libvulkan_lvp.so` with its ICD file, all in `/usr/local/lib`, with
 `libgallium-26.3.1.so` holding the drivers. LLVM's libraries are the
-port `devel/llvm` (23.1.6, static and position independent, the host's
-code generator only, cross-compiled with CMake: LLVM builds its TableGen
-programs natively first), a build dependency only. Mako and MarkupSafe,
+port `devel/llvm` (23.1.6, the host's code generator only, static and
+position independent and also as one shared library, `libLLVM.so`;
+cross-compiled with CMake: LLVM builds its TableGen programs natively
+first), Mesa's build dependency; Mesa links the shared library, which
+the port `devel/llvm-runtime` puts on the system alone (copied from the
+llvm package's build; llvm provides llvm-runtime and the two conflict,
+so a system with llvm installed needs nothing more). Mako and MarkupSafe,
 which Mesa's build needs in Python, are sources of the port found
 through `PYTHONPATH`, never installed. The ports tool's CMake toolchain
 files put `scripts/portstool/cmake` on `CMAKE_MODULE_PATH`:
@@ -12910,11 +12914,7 @@ it.
 `ports/image.list` puts gldemos (and so mesa) on the system disk, and a
 coretest line runs `gltest` on llvmpipe and on softpipe when the disk
 has it; `glgears -n` and `vkcube -n` need the display server and are
-tried in a session (`scripts/take-screenshots.py` plans). LLVM is
-linked statically into `libgallium` and into `libvulkan_lvp.so` (about
-75 MB each, stripped), which makes the system disk about 150 MB larger
-until LLVM can be one shared library of a package of its own (see
-TODO.md).
+tried in a session (`scripts/take-screenshots.py` plans).
 
 ### Tests
 

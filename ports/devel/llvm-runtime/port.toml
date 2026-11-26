@@ -1,0 +1,40 @@
+# LLVM's shared library alone, from the llvm port's build: what programs
+# linked against it (Mesa's llvmpipe and lavapipe) need on the system,
+# without llvm's headers and static libraries.
+
+[port]
+name = "llvm-runtime"
+version = "23.1.6"
+revision = 0
+summary = "LLVM's shared library, for programs that generate code at run time"
+description = """
+libLLVM.so from the llvm port (the code generator for the system's own
+processor), and nothing else: Mesa's llvmpipe and lavapipe compile
+shaders with it at run time. The llvm package has the same library with
+the headers, static libraries and CMake package, and so takes this
+package's place when it is installed.
+"""
+homepage = "https://llvm.org/"
+license = "Apache-2.0 WITH LLVM-exception"
+license_files = ["port:files/LICENSE.TXT"]
+maintainer = "FreePascalOS ports"
+categories = ["devel"]
+status = "untested"
+conflicts = ["llvm"]
+architectures = ["x86_64", "aarch64"]
+
+[dependencies]
+build = ["llvm"]
+
+[build]
+system = "custom"
+toolchain = "c"
+
+[build.steps]
+install = [
+    "mkdir -p ${STAGE}${PREFIX}/lib",
+    "cp -P ${SYSROOT}/usr/local/lib/libLLVM.so.* ${STAGE}${PREFIX}/lib/",
+]
+
+[test]
+system = ["ls /usr/local/lib/libLLVM.so.* > /dev/null"]
