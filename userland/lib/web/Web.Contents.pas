@@ -156,6 +156,14 @@ uses
   Web.Frames.Views,
   Web.Dom.UiEvents,
   Web.ScriptEnvironment,
+  Web.IndexedDb.Wire,
+  Web.IndexedDb.Keys,
+  Web.IndexedDb.Entries,
+  Web.IndexedDb.Database,
+  Web.IndexedDb.Files,
+  Web.IndexedDb.Operations,
+  Web.IndexedDb.Service,
+  Web.Script.PageStorage,
   { First of the script units: compiled in the order a program using
     them loads them (the bindings' units use each other in a cycle). }
   Web.Script.ImportMaps,
@@ -179,7 +187,21 @@ uses
   Web.Bindings.Install,
   Web.Script.Timers,
   Web.Script.Prelude,
-  Web.Script.Context;
+  Web.Script.Context,
+  Web.Canvas.Shared,
+  Web.Canvas.Paths,
+  Web.Canvas.Styles,
+  Web.Canvas.Fonts,
+  Web.Canvas.Text,
+  Web.Canvas.Filters,
+  Web.Canvas.Rendering,
+  Web.Canvas.State,
+  Web.Canvas.Surfaces,
+  Web.Canvas.Context2D,
+  Web.Canvas.Elements,
+  Web.Canvas.Encoding,
+  Web.Canvas.ScriptObjects,
+  Web.Script.NativeCanvas;
 
 implementation
 

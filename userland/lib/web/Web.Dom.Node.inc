@@ -62,6 +62,7 @@ var
 begin
   FormState.Free;
   ImageRequest.Free;
+  CanvasState.Free;
   Listeners.Free;
   ChildNodeList.Free;
   if ChildrenCollection <> nil then
@@ -159,6 +160,22 @@ begin
   if RareData.ImageRequest <> Value then
     RareData.ImageRequest.Free;
   RareData.ImageRequest := Value;
+end;
+
+function TNode.CanvasStateObject: TObject;
+begin
+  if FRareData = nil then
+    Exit(nil);
+  Result := FRareData.CanvasState;
+end;
+
+procedure TNode.SetCanvasStateObject(Value: TObject);
+begin
+  if (Value = nil) and (FRareData = nil) then
+    Exit;
+  if RareData.CanvasState <> Value then
+    RareData.CanvasState.Free;
+  RareData.CanvasState := Value;
 end;
 
 procedure TNode.SetFormStateObject(Value: TObject);

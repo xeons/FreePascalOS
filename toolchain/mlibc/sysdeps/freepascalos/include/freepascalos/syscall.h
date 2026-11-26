@@ -107,6 +107,13 @@ extern "C" {
 #define FPOS_CALL_CREATE_TIMER 76
 #define FPOS_CALL_SET_TIMER 77
 #define FPOS_CALL_WAIT_FOR_HANDLES 78
+#define FPOS_CALL_CREATE_SECTION 79
+#define FPOS_CALL_CREATE_PORT 80
+#define FPOS_CALL_CONNECT_PORT 81
+#define FPOS_CALL_ACCEPT_CONNECTION 82
+#define FPOS_CALL_CREATE_CHANNEL 83
+#define FPOS_CALL_SEND_MESSAGE 84
+#define FPOS_CALL_RECEIVE_MESSAGE 85
 #define FPOS_CALL_CREATE_PSEUDO_TERMINAL 86
 #define FPOS_CALL_SELECT_NOTIFICATIONS 91
 #define FPOS_CALL_RECEIVE_NOTIFICATION 92
@@ -134,6 +141,10 @@ extern "C" {
 #define FPOS_CALL_PROTECT_MEMORY 163
 #define FPOS_CALL_QUERY_MEMORY 164
 #define FPOS_CALL_SET_MEMORY_POLICY 165
+/* FPOS_CALL_SET_MEMORY_POLICY's flags: anonymous memory may be made
+   executable (written read-write, then protected read-execute: a compiler
+   at run time). The policy is the process's and not inherited. */
+#define FPOS_MEMORY_POLICY_ALLOW_DYNAMIC_CODE 0x01
 #define FPOS_CALL_GET_FILE_TIMES 175
 
 /* The POSIX block (180-199): calls added for the C library. */
@@ -200,6 +211,31 @@ extern "C" {
 #define FPOS_CALL_RECEIVE_LOCAL_MESSAGE 257
 /* (Handle, Which, BufferAddress): names, peer credentials, the kind. */
 #define FPOS_CALL_QUERY_LOCAL_SOCKET 258
+/* Signals and timers (240-249). */
+/* (Pid, Signal, Value): sigqueue. */
+#define FPOS_CALL_QUEUE_SIGNAL 240
+/* (MaskAddress, InformationAddress, TimeoutNanoseconds or -1):
+   sigtimedwait; returns the signal. */
+#define FPOS_CALL_WAIT_FOR_SIGNAL 241
+/* (NewAddress, OldAddress): sigaltstack with fpos_signal_stack. */
+#define FPOS_CALL_SET_ALTERNATE_SIGNAL_STACK 242
+/* (ClockId, EventAddress): timer_create; returns the timer's id. */
+#define FPOS_CALL_CREATE_POSIX_TIMER 243
+/* (TimerId, Flags, NewAddress, OldAddress): timer_settime with
+   fpos_timer_spec. */
+#define FPOS_CALL_SET_POSIX_TIMER 244
+/* (TimerId, SpecAddress): timer_gettime. */
+#define FPOS_CALL_GET_POSIX_TIMER 245
+/* (TimerId): timer_delete. */
+#define FPOS_CALL_DELETE_POSIX_TIMER 246
+/* (TimerId): timer_getoverrun. */
+#define FPOS_CALL_GET_TIMER_OVERRUN 247
+/* (Which, NewAddress, OldAddress): setitimer/getitimer with
+   fpos_timer_spec. */
+#define FPOS_CALL_SET_INTERVAL_TIMER 248
+/* (ClockId, TimeAddress, ResolutionAddress): a processor-time clock as
+   fpos_precise_time records. */
+#define FPOS_CALL_GET_PROCESSOR_CLOCK 249
 /* Event descriptors (260-269): eventfd, timerfd, signalfd, epoll,
    inotify. Each handle is waited on like any other and read with
    FPOS_CALL_READ. */
@@ -229,6 +265,7 @@ extern "C" {
 #define FPOS_ERROR_TIMED_OUT 110
 #define FPOS_ERROR_BUSY 16
 #define FPOS_ERROR_WOULD_BLOCK 11
+#define FPOS_ERROR_NOT_FOUND 2
 
 /* --- Open flags, seek origins, kinds -------------------------------------- */
 
@@ -363,6 +400,24 @@ struct fpos_timer_specification {
 #define FPOS_SIGNAL_DEFAULT 0
 #define FPOS_SIGNAL_IGNORE 1
 #define FPOS_SIGNAL_HANDLE 2
+#define FPOS_SIGNAL_FLAG_RESET_HANDLER 0x01
+#define FPOS_SIGNAL_FLAG_RESTART 0x02
+#define FPOS_SIGNAL_FLAG_ON_STACK 0x04
+
+/* Alternate signal stacks (fpos_signal_stack.flags; the SS_* values). */
+#define FPOS_SIGNAL_STACK_ON_STACK 1
+#define FPOS_SIGNAL_STACK_DISABLE 2
+
+/* Timers (FPOS_CALL_CREATE_POSIX_TIMER, fpos_timer_event.notify). */
+#define FPOS_TIMER_NOTIFY_SIGNAL 0
+#define FPOS_TIMER_NOTIFY_NONE 1
+#define FPOS_TIMER_NOTIFY_EVENT 2
+#define FPOS_TIMER_ABSOLUTE 1
+#define FPOS_MAXIMUM_POSIX_TIMERS 64
+/* Processor-time clocks of a given process or thread: not (id << 3)
+   plus these. */
+#define FPOS_CLOCK_CPU_SCHEDULED 2
+#define FPOS_CLOCK_CPU_PER_THREAD 4
 
 /* Sockets. */
 #define FPOS_ADDRESS_FAMILY_IPV4 2
@@ -581,6 +636,17 @@ struct fpos_local_message {
 	struct fpos_local_credentials credentials;
 };
 
+/* A message on a channel (FPOS_CALL_SEND_MESSAGE, FPOS_CALL_RECEIVE_MESSAGE):
+   length bytes at data and handle_count handles at handles; on receiving,
+   length and handle_count are the buffers' capacities on the way in and
+   what came on the way out. */
+struct fpos_message {
+	uint64_t data;
+	uint64_t length;
+	uint64_t handles;
+	uint64_t handle_count;
+};
+
 struct fpos_pseudo_terminal {
 	int64_t output_handle;
 	int64_t input_handle;
@@ -632,6 +698,8 @@ struct fpos_exception_record {
 /* Why a signal came (fpos_signal_record.code). */
 #define FPOS_SIGNAL_FROM_PROCESS 0
 #define FPOS_SIGNAL_FROM_KERNEL 1
+#define FPOS_SIGNAL_FROM_QUEUE 2
+#define FPOS_SIGNAL_FROM_TIMER 3
 
 struct fpos_signal_record {
 	uint32_t signal;
@@ -642,6 +710,38 @@ struct fpos_signal_record {
 	uint64_t sender_user_id;
 	int64_t value;
 	struct fpos_context context;
+	uint32_t timer_id;
+	uint32_t overrun;
+};
+
+/* The signal FPOS_CALL_WAIT_FOR_SIGNAL took (TAbiSignalInformation). */
+struct fpos_signal_information {
+	uint32_t signal;
+	uint32_t code;
+	int64_t sender_process_id;
+	uint64_t sender_user_id;
+	int64_t value;
+	uint32_t timer_id;
+	uint32_t overrun;
+};
+
+struct fpos_signal_stack {
+	uint64_t base;
+	uint64_t size;
+	uint32_t flags;
+	uint32_t reserved;
+};
+
+struct fpos_timer_event {
+	uint32_t notify;
+	uint32_t signal;
+	int64_t value;
+	int64_t event_handle;
+};
+
+struct fpos_timer_spec {
+	uint64_t value_nanoseconds;
+	uint64_t interval_nanoseconds;
 };
 
 /* --- The calls -------------------------------------------------------------- */

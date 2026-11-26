@@ -49,6 +49,7 @@ interface
 
 uses
   Abi.SystemCalls,
+  Processes.PosixState,
   Processes.Process,
   Processes.Thread;
 
@@ -64,6 +65,7 @@ type
     StackStart: QWord;
     OpenedStackReserve: QWord;
     SignalMask: QWord;
+    AlternateStack: TAlternateSignalStack;
     { The thread pointer is the kernel's thread block (in the thread
       data, not a C library's own control block): it gets the id. }
     RecordsThreadId: Boolean;
@@ -133,6 +135,7 @@ type
     ForkedRecordsThreadId: Boolean;
     OpenedStackReserve: QWord;
     SignalMask: QWord;
+    AlternateStack: TAlternateSignalStack;
   end;
   PUserThreadStart = ^TUserThreadStart;
 
@@ -178,9 +181,12 @@ begin
   if Start.HasContext then
   begin
     Thread^.Posix.SignalMask := Start.SignalMask;
+    Thread^.Posix.AlternateStack := Start.AlternateStack;
     SetOwnThreadPointer(Start.ForkedThreadPointer);
     ArchEnterUserModeWithContext(@Start.Context);
   end;
+  { POSIX: a new thread starts with its creator's mask. }
+  Thread^.Posix.SignalMask := Start.SignalMask;
   SetOwnThreadPointer(Start.ThreadPointer);
   ArchEnterUserMode(Start.EntryPoint, Start.StackPointer, Start.Argument);
 end;
@@ -210,6 +216,8 @@ begin
   Start^.StackPointer := StackPointer;
   Start^.Argument := Argument;
   Start^.StackStart := StackStart;
+  if (CurrentProcess = Process) and (CurrentThreadObject <> nil) then
+    Start^.SignalMask := CurrentThreadObject^.Posix.SignalMask;
 
   { Counted before it starts: it may exit at once. The creator is itself
     an active thread (or the process has not started yet), so the count
@@ -246,6 +254,7 @@ begin
   Start^.StackStart := Fork.StackStart;
   Start^.OpenedStackReserve := Fork.OpenedStackReserve;
   Start^.SignalMask := Fork.SignalMask;
+  Start^.AlternateStack := Fork.AlternateStack;
   AtomicIncrement(Process^.ActiveUserThreads);
   Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
     ThreadPriorityForNice(Process^.Credentials.Nice), Name, False);

@@ -165,6 +165,8 @@ uses
   Memory.PhysicalPages,
   Kernel.Random,
   Processes.ChildWaits,
+  Processes.Signals,
+  Processes.PosixTimers,
   Debug.Output;
 
 const
@@ -603,6 +605,10 @@ var
   Space: PAddressSpace;
 begin
   UnregisterRunningProcess(Process);
+  { Its timers stop before it is marked as gone, then what of its signal
+    queue is left goes (nobody finds it to send it more). }
+  DeleteProcessTimers(Process);
+  DiscardQueuedSignals(Process);
   AcquireMutex(Process^.Lock);
   MarkProcessExited(Process, ExitCode);
   CloseAllHandles(Process^.Handles);

@@ -558,6 +558,39 @@
     headersState(headers).guard = guard;
   }
 
+  // For the Cache API (86-cache-storage.js): what a request and a
+  // response are, a response's body bytes, and a response made again
+  // from what was kept.
+  internal.requestRecord = function (request) {
+    const state = requestState(request);
+    return { url: state.url, method: state.method, mode: state.mode, credentials: state.credentials,
+      headers: internal.headerList(state.headers).map(function (entry) { return entry.slice(); }) };
+  };
+  internal.responseRecord = function (response) {
+    const state = responseState(response);
+    return { type: state.type, url: state.url, status: state.status, statusText: state.statusText,
+      redirected: state.redirected, headers: internal.headerList(state.headers).map(function (entry) {
+        return entry.slice();
+      }) };
+  };
+  internal.bodyUnusable = function (object) {
+    const body = bodyOf(object);
+    return body.stream !== null && (internal.streamIsDisturbed(body.stream) || internal.streamIsLocked(body.stream));
+  };
+  internal.readBodyBytes = function (object) {
+    return consume(object, function (bytes) { return bytes; });
+  };
+  internal.makeStoredResponse = function (record, bytes) {
+    const response = new Response(null);
+    responseData.set(response, { type: record.type, url: record.url, status: record.status,
+      statusText: record.statusText, redirected: record.redirected,
+      headers: headersWithGuard(record.headers.map(function (entry) { return entry.slice(); }), "immutable") });
+    if (nullBodyStatuses.indexOf(record.status) >= 0 || record.type === "error") bodyData.set(response,
+      { stream: null, used: false });
+    else bodyData.set(response, bodyRecord({ bytes: bytes }));
+    return response;
+  };
+
   // ---- the network ----
 
   const pending = new Map();

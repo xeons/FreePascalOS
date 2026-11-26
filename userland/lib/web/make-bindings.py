@@ -489,7 +489,7 @@ class Model:
         elif spec.name == 'Promise':
             kind = 'tkPromise'
         elif spec.name in ('ArrayBuffer', 'ArrayBufferView', 'BufferSource', 'AllowSharedBufferSource',
-                           'Uint8Array'):
+                           'Uint8Array', 'Uint8ClampedArray'):
             kind = 'tkObject'
         else:
             definition = self.definitions.get(spec.name)

@@ -48,7 +48,8 @@ uses
   Web.Bindings.Ranges,
   Web.Bindings.Shadow,
   Web.Bindings.CustomElements,
-  Web.Bindings.StyleSheets;
+  Web.Bindings.StyleSheets,
+  Web.Bindings.Canvas;
 
 {$I Web.Bindings.Tables.inc}
 

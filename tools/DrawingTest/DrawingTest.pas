@@ -57,6 +57,7 @@ uses
   Font.Text,
   DrawingTest.Checks,
   DrawingTest.Smoothing,
+  DrawingTest.Compositing,
   DrawingTest.CoverageFonts;
 
 { --- Colours ----------------------------------------------------------------- }
@@ -712,6 +713,7 @@ begin
   TestTerminus(ParamStr(1));
   TestUtf8;
   TestSmoothing;
+  TestCompositing;
   TestCoverageFonts(ParamStr(2));
   if ParamCount >= 3 then
     WriteSample(ParamStr(1), ParamStr(2), ParamStr(3));

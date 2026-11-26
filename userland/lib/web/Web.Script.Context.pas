@@ -151,7 +151,9 @@ uses
   Web.Script.Timers,
   Web.Script.Prelude,
   Web.Script.Natives,
-  Web.Script.Frames;
+  Web.Script.Frames,
+  Js.Operations,
+  Web.Canvas.Elements;
 
 type
   { Forwards the document's changes to event handlers, script elements
@@ -238,6 +240,10 @@ end;
 procedure TScriptDocumentObserver.AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
   const OldValue: string; HadValue: Boolean);
 begin
+  { A canvas's width or height set: its bitmap and context reset. }
+  if (NamespaceId = NamespaceNone) and ((LocalName = AtomWidth) or (LocalName = AtomHeight)) and
+     Element.IsHtmlElement(AtomCanvas) then
+    CanvasDimensionsChanged(Element);
   if (NamespaceId = NamespaceNone) and IsEventHandlerAttribute(NameOfAtom(LocalName)) then
     EventHandlerAttributeChanged(FContext, Element, LocalName);
   if FContext.MutationObservers <> nil then
@@ -269,7 +275,7 @@ end;
 procedure TScriptContext.Setup;
 var
   Global: TJsObject;
-  Clone: TJsValue;
+  Clone, Hooks: TJsValue;
 begin
   FPreparesScripts := True;
   FReadyState := 'complete';
@@ -287,6 +293,10 @@ begin
   end;
   Clone := Engine.Evaluate(StructuredCloneSource, 'prelude');
   SetSingleton(SingletonStructuredClone, Clone);
+  { The platform scripts' clone hooks (serializable platform objects). }
+  Hooks := GetProperty(Engine.Realm, Singleton(SingletonPlatformInternal), Engine.Realm.Intern('cloneHooks'));
+  if JsIsObject(Clone) and JsIsObject(Hooks) then
+    JsAsObject(Clone).CreateDataProperty(Engine.Realm, Engine.Realm.Intern('hooks'), Hooks);
   { The document's wrapper is a root: every wrapper of its tree lives
     with it. }
   WrapNode(Document);

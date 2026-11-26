@@ -97,6 +97,7 @@ uses
   Web.Frames.Views,
   Web.Fetch.NetworkContexts,
   Web.Storage,
+  Web.IndexedDb.Service,
   Url.Records,
   WebView.Types,
   WebView.TextIndex,
@@ -280,6 +281,7 @@ type
     FOnNavigationRequest: TWebEngineViewNavigationEvent;
     FNetworkContext: TNetworkContext;
     FLocalStorage: TWebStorageRegistry;
+    FIndexedDb: TIndexedDbBackend;
     { Shows Menu at (X, Y) of the view's pixels (OnPopupMenu, else the
       window's pop-up). }
     procedure PopupMenu(Menu: TMenuItem; X, Y: LongInt; OnChosen: TMenuItemEvent);
@@ -562,6 +564,9 @@ type
       navigation; nil: the program's shared ones, WebView.Network). }
     property NetworkContext: TNetworkContext read FNetworkContext write FNetworkContext;
     property LocalStorage: TWebStorageRegistry read FLocalStorage write FLocalStorage;
+    { IndexedDB, the Cache API and navigator.storage (nil: the program's
+      shared service, WebView.Network). }
+    property IndexedDb: TIndexedDbBackend read FIndexedDb write FIndexedDb;
     { Script prompts are open (the page waits for their answers). }
     property ModalDepth: Integer read FModalDepth;
     { Images load (on unless turned off; from the next document). }

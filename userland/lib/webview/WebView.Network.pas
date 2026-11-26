@@ -50,6 +50,7 @@ uses
   Tls.CertificateSummaries,
   Web.Fetch.NetworkContexts,
   Web.Storage,
+  Web.IndexedDb.Service,
   Web.UserAgent;
 
 type
@@ -106,6 +107,12 @@ function SharedLocalStorage: TWebStorageRegistry;
   off the GUI thread, and by the routines below that change it). }
 procedure EnterLocalStorage;
 procedure LeaveLocalStorage;
+{ The program's storage service (IndexedDB, the Cache API,
+  navigator.storage), in the storage folder's indexeddb folder (the
+  private one, in memory, while private browsing). Thread safe. }
+function SharedIndexedDb: TIndexedDbService;
+{ Writes what the persistent service changed. }
+procedure SaveIndexedDb;
 
 { Private browsing: cookies, the HTTP cache, the HSTS hosts learned and
   local storage are fresh ones in memory (nothing is written to disk)
@@ -129,7 +136,8 @@ procedure ClearCookies;
   domain (example.com covers www.example.com), the longest matching one
   deciding, a blocked one winning a tie. }
 procedure SetCookiePolicy(Policy: TCookiePolicy; const AllowedHosts, BlockedHosts: TStringArray);
-{ The local storage of every origin. }
+{ The local storage, IndexedDB databases and Cache API caches of every
+  origin. }
 procedure ClearWebStorage;
 { The HSTS hosts learned. }
 procedure ClearHsts;
@@ -170,6 +178,8 @@ var
   PrivateCache: THttpCache = nil;
   PrivateHsts: THstsStore = nil;
   PrivateStorage: TWebStorageRegistry = nil;
+  PersistentDatabases: TIndexedDbService = nil;
+  PrivateDatabases: TIndexedDbService = nil;
   OfflineMode: Boolean = False;
   CacheLimit: Int64 = -1;
   CookieRules: TCookieUsePolicy;
@@ -203,6 +213,37 @@ begin
     Result := PrivateStorage
   else
     Result := PersistentLocalStorage;
+end;
+
+function SharedIndexedDb: TIndexedDbService;
+var
+  Folder: string;
+begin
+  EnterCriticalSection(StorageLock);
+  try
+    if PrivateMode then
+    begin
+      if PrivateDatabases = nil then
+        PrivateDatabases := TIndexedDbService.Create('');
+      Exit(PrivateDatabases);
+    end;
+    if PersistentDatabases = nil then
+    begin
+      Folder := '';
+      if StorageFolder <> '' then
+        Folder := IncludeTrailingPathDelimiter(StorageFolder) + 'indexeddb';
+      PersistentDatabases := TIndexedDbService.Create(Folder);
+    end;
+    Result := PersistentDatabases;
+  finally
+    LeaveCriticalSection(StorageLock);
+  end;
+end;
+
+procedure SaveIndexedDb;
+begin
+  if PersistentDatabases <> nil then
+    PersistentDatabases.SaveAll;
 end;
 
 function SharedNetworkContext: TNetworkContext;
@@ -281,6 +322,8 @@ begin
     PrivateHsts.Clear;
   if PrivateStorage <> nil then
     PrivateStorage.ClearAll;
+  if PrivateDatabases <> nil then
+    PrivateDatabases.ClearAll;
 end;
 
 procedure SwitchPrivateBrowsing(Enabled: Boolean);
@@ -450,6 +493,7 @@ begin
   finally
     LeaveLocalStorage;
   end;
+  SharedIndexedDb.ClearAll;
 end;
 
 procedure ClearHsts;
@@ -491,6 +535,7 @@ end;
 
 procedure FreeSharedNetworkContext;
 begin
+  SaveIndexedDb;
   Shared.Free;
   Shared := nil;
   SharedCookies.Free;

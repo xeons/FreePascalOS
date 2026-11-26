@@ -59,6 +59,7 @@ libc_sources += files(
 	'generic/terminal.cpp',
 	'generic/signals.cpp',
 	'generic/timers.cpp',
+	'generic/clocks.cpp',
 	'generic/event-descriptors.cpp',
 	'generic/event-polls.cpp',
 	'generic/inotify.cpp',
@@ -134,10 +135,12 @@ if not no_headers
 	)
 	install_headers(
 		'include/freepascalos/syscall.h',
+		'include/freepascalos/windowing.h',
 		subdir: 'freepascalos',
 	)
 	install_headers(
 		'include/sys/inotify.h',
+		'include/sys/ioccom.h',
 		subdir: 'sys',
 	)
 endif

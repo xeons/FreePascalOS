@@ -21,6 +21,7 @@
 #   lib<name>.so   ld -shared over the object files of a library's units:
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
+#                  libsystem, libmedia <- libav1 (the AV1 video decoder)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
 #                  libsystem <- libdrawing, libcompression <- libimage (image files)
 #                  libsystem <- libconfiguration (settings, per user and system)
@@ -41,6 +42,7 @@
 #                  libcss, libfont, libimage <- libsvg (SVG documents and images;
 #                  libweb)
 #                  libweb, libcontrols <- libwebview (the web view control; browser)
+#                  libmedia <- libvideo (VP8 and VP9 decoders; mediaplay)
 #   programs       ld -pie against the libraries, with si_prc providing
 #                  the entry point; symbols are bound by the kernel's
 #                  loader when the program starts
@@ -108,6 +110,7 @@ SYSTEM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/system
 CRYPTO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/cryptography
 CORE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/coreutils
 AUDIO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/audio
+AV1_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/av1
 DRAWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/drawing
 FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
 WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
@@ -126,11 +129,14 @@ WEB_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/web
 JAVASCRIPT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/javascript
 WEBVIEW_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webview
 WEBIPC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webipc
+MEDIA_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/media
+VIDEO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/video
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
 CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
 AUDIO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libaudio.so
+AV1_LIBRARY := $(USER_LIBRARY_OUTPUT)/libav1.so
 DRAWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdrawing.so
 FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
 WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
@@ -149,6 +155,8 @@ WEB_LIBRARY := $(USER_LIBRARY_OUTPUT)/libweb.so
 JAVASCRIPT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libjavascript.so
 WEBVIEW_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebview.so
 WEBIPC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebipc.so
+MEDIA_LIBRARY := $(USER_LIBRARY_OUTPUT)/libmedia.so
+VIDEO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libvideo.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 DYNTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdyntls.so
@@ -217,8 +225,8 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) $(AV1_LIBRARY) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(MEDIA_LIBRARY) $(VIDEO_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 # The compiler and the runtime library's flags: when they change (a new
@@ -291,6 +299,36 @@ $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 		-FU$(AUDIO_LIBRARY_OBJECTS) userland/lib/audio/Audio.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
 		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libav1: the AV1 video decoder, libmedia's AV1 TVideoDecoder.
+$(AV1_LIBRARY): $(SYSTEM_LIBRARY) $(MEDIA_LIBRARY) $(wildcard userland/lib/av1/*.pas) $(wildcard userland/lib/av1/*.inc)
+	@rm -rf $(AV1_LIBRARY_OBJECTS)
+	@mkdir -p $(AV1_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(MEDIA_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/av1 -Fiuserland/lib/av1 -FU$(AV1_LIBRARY_OBJECTS) userland/lib/av1/Av1.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libav1.so -o $@ \
+		$(AV1_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lmedia -lsystem
+
+# libmedia: decoded frames, the containers (WAV, FLAC, Ogg, Matroska and
+# WebM, MP4, MP3), the audio decoders (FLAC, Vorbis, Opus, MP3), the video
+# decoder registry, resampling and channel mixing.
+$(MEDIA_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/media/*.pas) $(wildcard userland/lib/media/*.inc)
+	@rm -rf $(MEDIA_LIBRARY_OBJECTS)
+	@mkdir -p $(MEDIA_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/media \
+		-Fiuserland/lib/media -FU$(MEDIA_LIBRARY_OBJECTS) userland/lib/media/Media.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libmedia.so -o $@ \
+		$(MEDIA_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libvideo: the VP8 and VP9 decoders (bit exact with libvpx, on worker
+# threads), registered as libmedia video decoders by Video.MediaDecoders.
+$(VIDEO_LIBRARY): $(MEDIA_LIBRARY) $(wildcard userland/lib/video/*.pas)
+	@rm -rf $(VIDEO_LIBRARY_OBJECTS)
+	@mkdir -p $(VIDEO_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(MEDIA_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/video -FU$(VIDEO_LIBRARY_OBJECTS) userland/lib/video/Video.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libvideo.so -o $@ \
+		$(VIDEO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lmedia -lsystem
 
 # libdrawing: surfaces, clipping regions and drawing on them.
 $(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
@@ -694,6 +732,11 @@ $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lcompression
 $(COMPRESSION_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(COMPRESSION_PROGRAMS): $(COMPRESSION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
+# av1check decodes the AV1 streams built into it with libav1.
+AV1_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,av1check)
+$(AV1_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1 -lmedia
+$(AV1_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(MEDIA_LIBRARY_OBJECTS) -Fu$(AV1_LIBRARY_OBJECTS)
+$(AV1_PROGRAMS): $(AV1_LIBRARY)
 # Programs that read image files.
 IMAGE_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,imageinfo)
 $(IMAGE_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -limage -lcompression -ldrawing
@@ -715,6 +758,13 @@ SYSTEM_SETTINGS_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,systemsettings)
 $(SYSTEM_SETTINGS_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio -lconfiguration
 $(SYSTEM_SETTINGS_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS)
 $(SYSTEM_SETTINGS_PROGRAMS): $(AUDIO_LIBRARY) $(CONFIGURATION_LIBRARY)
+# mediaplay plays and checks media files through libmedia, on the audio
+# device of libaudio, with libvideo's VP8 and VP9 decoders.
+MEDIA_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,mediaplay)
+$(MEDIA_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1 -lvideo -lmedia -laudio
+$(MEDIA_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(VIDEO_LIBRARY_OBJECTS) -Fu$(MEDIA_LIBRARY_OBJECTS) -Fu$(AUDIO_LIBRARY_OBJECTS) \
+	-Fu$(AV1_LIBRARY_OBJECTS)
+$(MEDIA_PROGRAMS): $(AV1_LIBRARY) $(VIDEO_LIBRARY) $(MEDIA_LIBRARY) $(AUDIO_LIBRARY)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)

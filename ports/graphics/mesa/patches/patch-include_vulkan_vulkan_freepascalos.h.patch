@@ -1,0 +1,49 @@
+--- /dev/null
++++ b/include/vulkan/vulkan_freepascalos.h
+@@ -0,0 +1,46 @@
++#ifndef VULKAN_FREEPASCALOS_H_
++#define VULKAN_FREEPASCALOS_H_ 1
++
++/*
++** Copyright 2026 Brandon Scott
++**
++** SPDX-License-Identifier: Apache-2.0 OR MIT
++*/
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define VK_FPOS_window_surface 1
++#define VK_FPOS_WINDOW_SURFACE_SPEC_VERSION 1
++#define VK_FPOS_WINDOW_SURFACE_EXTENSION_NAME "VK_FPOS_window_surface"
++#define VK_STRUCTURE_TYPE_WINDOW_SURFACE_CREATE_INFO_FPOS ((VkStructureType)1001998000)
++struct fpos_window;
++typedef VkFlags VkWindowSurfaceCreateFlagsFPOS;
++typedef struct VkWindowSurfaceCreateInfoFPOS {
++    VkStructureType                   sType;
++    const void*                       pNext;
++    VkWindowSurfaceCreateFlagsFPOS    flags;
++    struct fpos_window*               window;
++} VkWindowSurfaceCreateInfoFPOS;
++
++typedef VkResult (VKAPI_PTR *PFN_vkCreateWindowSurfaceFPOS)(VkInstance instance, const VkWindowSurfaceCreateInfoFPOS* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface);
++typedef VkBool32 (VKAPI_PTR *PFN_vkGetPhysicalDeviceWindowPresentationSupportFPOS)(VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex);
++
++#ifndef VK_NO_PROTOTYPES
++VKAPI_ATTR VkResult VKAPI_CALL vkCreateWindowSurfaceFPOS(
++    VkInstance                                  instance,
++    const VkWindowSurfaceCreateInfoFPOS*        pCreateInfo,
++    const VkAllocationCallbacks*                pAllocator,
++    VkSurfaceKHR*                               pSurface);
++
++VKAPI_ATTR VkBool32 VKAPI_CALL vkGetPhysicalDeviceWindowPresentationSupportFPOS(
++    VkPhysicalDevice                            physicalDevice,
++    uint32_t                                    queueFamilyIndex);
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif

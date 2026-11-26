@@ -124,6 +124,13 @@ type
     Message: string;
   end;
 
+  { A native object holding script values: its wrapper keeps them alive
+    (the wrapper's class traces them through TraceValues). }
+  TBindingTracedObject = class
+  public
+    procedure TraceValues(Tracer: TJsTracer); virtual; abstract;
+  end;
+
   { One per interface and context: the host class's tracer data. }
   TBindingClass = class
   public
@@ -194,6 +201,8 @@ type
     FDestroying: Boolean;
     FWindowHandlers: TJsValue;
     FCheckpointRunning: Boolean;
+    FCheckpointCleanup: Boolean;
+    FReportedExceptions: Integer;
     FTimeOrigin: QWord;
     FTimeOriginUnix: Double;
     FSingletons: array[TWindowSingleton] of TJsValue;
@@ -365,6 +374,9 @@ type
       const Where: string = ''): Boolean;
     { Runs the microtasks (promise jobs, mutation observers). }
     procedure PerformMicrotaskCheckpoint; virtual;
+    { The next microtask checkpoint ends with natives.onCheckpointCleanup
+      (IndexedDB's "cleanup Indexed Database transactions"). }
+    procedure RequestCheckpointCleanup;
 
     { A form control's state (Web.Dom.FormControls: made on first use,
       kept with the element), or nil if it has none. }
@@ -396,6 +408,9 @@ type
     { The context frees its environment. }
     property OwnsEnvironment: Boolean read FOwnsEnvironment write FOwnsEnvironment;
     property CallDepth: Integer read FCallDepth;
+    { How many uncaught exceptions were reported (a platform script
+      learns whether its event's listeners threw). }
+    property ReportedExceptions: Integer read FReportedExceptions;
     property OnConsoleMessage: TConsoleMessageEvent read FOnConsoleMessage write FOnConsoleMessage;
     property Destroying: Boolean read FDestroying;
     { The script element whose script runs (document.currentScript). }
@@ -513,6 +528,8 @@ end;
 
 procedure TBindingClass.TraceNative(HostClass_: TJsHostClass; NativeData: Pointer; Tracer: TJsTracer);
 begin
+  if (NativeData <> nil) and (TObject(NativeData) is TBindingTracedObject) then
+    TBindingTracedObject(NativeData).TraceValues(Tracer);
 end;
 
 { TBindingWrapper }
@@ -1493,6 +1510,7 @@ var
   Text: string;
   Data: TObject;
 begin
+  Inc(FReportedExceptions);
   Data := Unwrap(Value, InterfaceDOMException);
   if Data <> nil then
     Text := TDomExceptionData(Data).Name + ': ' + TDomExceptionData(Data).Message
@@ -1619,7 +1637,8 @@ begin
           ReportPendingException;
       end;
       for Index := 0 to High(FChildFrames) do
-        if not FChildFrames[Index].FClosed and (FChildFrames[Index].FEngine.PendingJobs > 0) then
+        if not FChildFrames[Index].FClosed and ((FChildFrames[Index].FEngine.PendingJobs > 0) or
+          FChildFrames[Index].FCheckpointCleanup) then
         begin
           FChildFrames[Index].PerformMicrotaskCheckpoint;
           Again := True;
@@ -1632,10 +1651,20 @@ begin
             ReportPendingException;
         end;
     until not Again;
+    if FCheckpointCleanup then
+    begin
+      FCheckpointCleanup := False;
+      CallPlatform('onCheckpointCleanup', []);
+    end;
     ReportUnhandledRejections;
   finally
     FCheckpointRunning := False;
   end;
+end;
+
+procedure TBindingContext.RequestCheckpointCleanup;
+begin
+  FCheckpointCleanup := True;
 end;
 
 procedure TBindingContext.InvokeListener(Callback: TJsValue; Event: TEvent);

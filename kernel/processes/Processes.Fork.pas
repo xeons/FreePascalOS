@@ -188,6 +188,7 @@ begin
   Start.StackStart := Caller^.UserStackStart;
   Start.OpenedStackReserve := Caller^.OpenedStackReserve;
   Start.SignalMask := Caller^.Posix.SignalMask;
+  Start.AlternateStack := Caller^.Posix.AlternateStack;
   Start.RecordsThreadId := (Caller^.ThreadDataStart <> 0) and
     (RegionStartOf(Parent^.AddressSpace, Start.ThreadPointer) = Caller^.ThreadDataStart);
   RegisterRunningProcess(Child);

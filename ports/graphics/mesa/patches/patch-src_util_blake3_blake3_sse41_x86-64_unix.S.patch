@@ -1,0 +1,10 @@
+--- a/src/util/blake3/blake3_sse41_x86-64_unix.S
++++ b/src/util/blake3/blake3_sse41_x86-64_unix.S
+@@ -1,6 +1,6 @@
+ #include "mesa_blake3_visibility.h"
+ 
+-#if defined(__ELF__) && defined(__linux__)
++#if defined(__ELF__) && (defined(__linux__) || defined(__freepascalos__))
+ .section .note.GNU-stack,"",%progbits
+ #endif
+ 

@@ -98,6 +98,9 @@ const
     kernel. }
   SignalCodeUser = 0;
   SignalCodeKernel = $80;
+  { sigqueue (SI_QUEUE) and a POSIX timer (SI_TIMER). }
+  SignalCodeQueue = -1;
+  SignalCodeTimer = -2;
 
 type
   { CallSetTimerDescriptor (struct itimerspec): the period (zero: once)
@@ -127,7 +130,20 @@ type
     Code: LongInt;
     SenderProcessId: LongWord;
     SenderUserId: LongWord;
-    Reserved: array[0..107] of Byte;
+    Descriptor: LongInt;
+    { A timer's id (ssi_tid). }
+    TimerId: LongWord;
+    Band: LongWord;
+    Overrun: LongWord;
+    TrapNumber: LongWord;
+    Status: LongInt;
+    { sigqueue's and timers' value (ssi_int, ssi_ptr). }
+    IntegerValue: LongInt;
+    PointerValue: QWord;
+    UserTime: QWord;
+    SystemTime: QWord;
+    Address: QWord;
+    Reserved: array[0..47] of Byte;
   end;
   PAbiSignalDescriptorRecord = ^TAbiSignalDescriptorRecord;
 

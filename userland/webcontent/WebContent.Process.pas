@@ -70,6 +70,7 @@ uses
   WebContent.Connection,
   WebContent.Transport,
   WebContent.Storage,
+  WebContent.IndexedDb,
   WebContent.Views,
   WebContent.Sandbox;
 
@@ -137,6 +138,7 @@ type
     FContext: TContentContext;
     FTransport: TContentTransport;
     FStorageBackend: TContentStorageBackend;
+    FIndexedDbBackend: TContentIndexedDbBackend;
     FViews: TList;
     FShutdown: Boolean;
     FInterruptions: Integer;
@@ -164,6 +166,8 @@ begin
   FStorageBackend := TContentStorageBackend.Create(FContext.Connection);
   FContext.Storage := TWebStorageRegistry.Create('');
   FContext.Storage.Backend := FStorageBackend;
+  FIndexedDbBackend := TContentIndexedDbBackend.Create(FContext.Connection);
+  FContext.IndexedDb := FIndexedDbBackend;
 end;
 
 destructor TContentProcessRunner.Destroy;
@@ -175,6 +179,7 @@ begin
   FViews.Free;
   FContext.Storage.Free;
   FStorageBackend.Free;
+  FIndexedDbBackend.Free;
   FContext.Network.Free;
   FContext.Connection.Free;
   FContext.Free;
@@ -199,6 +204,7 @@ begin
     Exit;
   case Message.Kind of
     IpcShutdown: FShutdown := True;
+    IpcIndexedDbNotice: FIndexedDbBackend.DeliverNotice(Message);
     IpcCreateView:
       if FindView(Message.ViewId) = nil then
         FViews.Add(TContentView.Create(FContext, Message.ViewId, DecodeViewSetup(Message.Payload)));

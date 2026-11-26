@@ -1,0 +1,14 @@
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -52,7 +52,11 @@
+ 
+ struct driOptionCache;
+ 
++#ifdef VK_USE_PLATFORM_FREEPASCALOS_FPOS
++#define VK_ICD_WSI_PLATFORM_MAX (VK_ICD_WSI_PLATFORM_FREEPASCALOS + 1)
++#else
+ #define VK_ICD_WSI_PLATFORM_MAX (VK_ICD_WSI_PLATFORM_METAL + 1)
++#endif
+ 
+ struct wsi_device {
+    /* Allocator for the instance */

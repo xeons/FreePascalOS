@@ -11,3 +11,6 @@ hello
 # Free Pascal on AArch64 assembles and links with them. Skipped without
 # the C toolchain (make c-toolchain).
 binutils
+# OpenGL and OpenGL ES (Mesa, software rendering) with their tests and
+# demonstrations. Skipped without the C toolchain.
+gldemos
