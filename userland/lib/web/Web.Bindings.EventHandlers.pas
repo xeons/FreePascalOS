@@ -170,6 +170,9 @@ var
   Handler, EventValue, ThisValue, ReturnValue: TJsValue;
   Mark: Integer;
 begin
+  { A closed window's realm is not entered again. }
+  if not Context.Engine.Realm.CanEnter then
+    Exit;
   Handler := GetEventHandler(Context, Event.CurrentTarget, NameOfAtom(EventType));
   if not JsIsCallable(Handler) then
     Exit;

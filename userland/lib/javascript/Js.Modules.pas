@@ -264,6 +264,12 @@ var
 begin
   Loader := FLoader;
   Entry := TModuleMapEntry(FEntry);
+  if (Loader <> nil) and not Loader.Realm.CanEnter then
+  begin
+    { The realm was detached: nothing more loads in it. }
+    Loader.RemoveFetch(Self);
+    Loader := nil;
+  end;
   if Loader <> nil then
   begin
     Loader.RemoveFetch(Self);
@@ -317,6 +323,11 @@ var
 begin
   Loader := FLoader;
   Entry := TModuleMapEntry(FEntry);
+  if (Loader <> nil) and not Loader.Realm.CanEnter then
+  begin
+    Loader.RemoveFetch(Self);
+    Loader := nil;
+  end;
   if Loader <> nil then
   begin
     Loader.RemoveFetch(Self);

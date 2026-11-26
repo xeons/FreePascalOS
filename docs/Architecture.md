@@ -8964,8 +8964,13 @@ call is dispatched to it (the interpreter's fast paths fall back to
 `Call` for a foreign function; the callee realm notes the caller in
 `CallerRealm`, which postMessage takes as its source). `Detach` stops a
 sharing realm's roots (its window closed; its functions then run in the
-caller's realm); a sharing engine is freed after the runtime's owner, or
-its realm and host classes are kept until then.
+caller's realm) once nothing runs in it: a script that removes its own
+iframe keeps its frames, globals and built-ins marked until it returns
+(`IsRunning`). After that the realm cannot be entered (`CanEnter`: Call,
+Construct and scripts throw a string, Evaluate raises, module fetches
+that arrive are dropped) and jobs queued for it are dropped, so nothing
+reads its freed globals or shapes. A sharing engine is freed after the
+runtime's owner, or its realm and host classes are kept until then.
 `EvaluateBuiltin` compiles an embedder's built-ins written in
 JavaScript (their sources are marked `Builtin`: Function.prototype.
 toString gives native code). A not-a-function error names the callee
@@ -14687,7 +14692,11 @@ iframe's load event fires then. contentWindow, contentDocument,
 window.parent, top, frameElement and length follow; removing the
 element closes the window (`Close`: its realm stops being a root and is
 detached; what the parent kept still works, running in the caller's
-realm). Frames are freed with their top-level context, after its engine
+realm). A closed context is never entered again: its listeners on any
+target are disabled (it is no longer a live listener owner; the
+window's lose their callbacks), its timers are freed, and CallFunction,
+event handlers, timers and scripts check `CanEnter` first (WebScriptTest
+frames-closing.js). Frames are freed with their top-level context, after its engine
 (their cells live in its runtime). `TFrameEnvironment` forwards timers,
 prompts, cookies, storage, fetches and the user agent to the parent's
 environment. That is the script-only path (an environment that does not

@@ -205,6 +205,7 @@ type
     constructor Create(ARuntime: TJsRuntime; StackCapacity: Integer = DefaultStackCapacity;
       MaximumFrames: Integer = DefaultMaximumFrames);
     destructor Destroy; override;
+    function IsRunning: Boolean; override;
     function Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue; override;
     function Construct(F: TJsValue; Args: PJsValue; Count: Integer; NewTarget: TJsValue): TJsValue; override;
     function NewError(Kind: TJsErrorKind; const Message: string): TJsObject; override;
@@ -1019,6 +1020,11 @@ begin
   end;
 end;
 
+function TJsInterpreterRealm.IsRunning: Boolean;
+begin
+  Result := (FFrameCount > 0) or (FRunDepth > 0);
+end;
+
 function TJsInterpreterRealm.Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
 var
   Target: TJsObject;
@@ -1027,6 +1033,8 @@ var
   Merged: TJsValueList;
   Index, BoundCount: Integer;
 begin
+  if not CanEnter then
+    Exit(RefuseEntry);
   if not JsIsObject(F) then
     Exit(NotCallable(F));
   Target := JsAsObject(F);
@@ -1081,6 +1089,8 @@ var
   Merged: TJsValueList;
   Index, BoundCount: Integer;
 begin
+  if not CanEnter then
+    Exit(RefuseEntry);
   if not JsIsConstructor(F) then
     Exit(ThrowTypeError(ValueToPascal(Self, F) + ' is not a constructor'));
   Target := JsAsObject(F);
@@ -1130,6 +1140,8 @@ var
   Script: TJsClosure;
   Mark: Integer;
 begin
+  if not CanEnter then
+    Exit(RefuseEntry);
   Script := NewClosure(Code, nil);
   Mark := Runtime.PushRoot(JsObjectValue(Script));
   try

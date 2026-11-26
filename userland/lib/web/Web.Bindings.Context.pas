@@ -842,6 +842,13 @@ begin
   CrossOriginViews := nil;
   for Index := 0 to High(FChildFrames) do
     FChildFrames[Index].Close;
+  { Nothing calls into the closed window again: its listeners (on any
+    target) do nothing, the window's lose their callbacks (no longer
+    marked), its timers stop. }
+  UnregisterListenerOwner(Self);
+  if FWindow.ListenerList(False) <> nil then
+    DisableListeners(FWindow.ListenerList(False), Self);
+  FreeAndNil(Timers);
   FEngine.Runtime.Heap.RemoveRootProvider(@MarkRoots);
   FEngine.Detach;
 end;
@@ -1565,6 +1572,12 @@ var
   Mark, Index: Integer;
   Runtime: TJsRuntime;
 begin
+  { A closed window's realm is not entered again. }
+  if not FEngine.Realm.CanEnter then
+  begin
+    Value := JsUndefined;
+    Exit(False);
+  end;
   Runtime := FEngine.Runtime;
   Mark := Runtime.PushRoot(F);
   Runtime.PushRoot(This);
@@ -1669,6 +1682,8 @@ var
   EventValue, ThisValue, Handler, Value: TJsValue;
   Mark: Integer;
 begin
+  if not FEngine.Realm.CanEnter then
+    Exit;
   EventValue := WrapEvent(Event);
   Mark := FEngine.Runtime.PushRoot(EventValue);
   try
