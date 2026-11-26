@@ -21,8 +21,12 @@
   - the HPET's counter advances at its stated period: over 50 ms it
     agrees with the kernel's clock within 2% (and 2 ms);
   - the calibration's sources agree: the time stamp counter's rate
-    measured again against the reference (HPET or PIT) is within 2% of
-    the rate in use, whichever source gave it;
+    measured again against the reference (HPET, PM timer or PIT) is
+    within 2% of the rate in use, whichever source gave it. Each
+    measurement is already the median of bracketed samples
+    (Hal.ClockCalibration), and the test takes the median of three of
+    them, so a processor held up (a busy host under an emulator) does
+    not fail it; a rate 5% off is checked to fail it;
   - the event timer's comparator fires on time: a one-shot 5 ms ahead
     arrives (never early, by construction) and less than 40 ms late;
     and periodically, where the comparator can, about once per period;
@@ -53,6 +57,7 @@ uses
   Hal.HpetMath,
   Hal.HpetEventTimer,
   Hal.ClockCalibration,
+  Hal.CalibrationSamples,
   Hal.TimerFrequencies;
 
 const
@@ -65,6 +70,9 @@ const
   PeriodNanoseconds = 2 * NanosecondsPerMillisecond;
   PeriodicMilliseconds = 100;
   MeasureMicroseconds = 20000;
+  MeasurementCount = 3;
+  { The figure a wrong rate must miss by: 5%. }
+  WrongRateDivisor = 20;
   SleepCount = 10;
   SleepLength = 20;
   MaximumMoveYields = 1000;
@@ -103,6 +111,17 @@ begin
     'HPET: the counter advances at its stated period (it agrees with the clock)');
 end;
 
+{ The median of MeasurementCount measurements against the reference. }
+function MeasureCounterMedian: QWord;
+var
+  Rates: TSampleRates;
+  Index: LongInt;
+begin
+  for Index := 0 to MeasurementCount - 1 do
+    Rates[Index] := MeasureCounterHertz(MeasureMicroseconds);
+  Result := MedianRate(Rates, MeasurementCount);
+end;
+
 procedure CheckCalibrationSources;
 var
   Calibration: TTimerCalibration;
@@ -113,9 +132,14 @@ begin
   Check(Calibration.LocalTimerHertz <> 0, 'timers: the local APIC timer''s rate is known');
   if Calibration.Reference = FrequencyUnknown then
     Exit;
-  Measured := MeasureCounterHertz(MeasureMicroseconds);
+  Measured := MeasureCounterMedian;
   Check(FrequenciesAgree(Calibration.CounterHertz, Measured, AgreementPartsPerMillion),
     'timers: the counter''s rate in use agrees with a new measurement against the reference');
+  { The comparison would catch a rate that is wrong. }
+  Check(not FrequenciesAgree(Calibration.CounterHertz + Calibration.CounterHertz div WrongRateDivisor,
+    Measured, AgreementPartsPerMillion), 'timers: a counter rate 5% fast agrees with the measurement');
+  Check(not FrequenciesAgree(Calibration.CounterHertz - Calibration.CounterHertz div WrongRateDivisor,
+    Measured, AgreementPartsPerMillion), 'timers: a counter rate 5% slow agrees with the measurement');
 end;
 
 procedure CheckOneShot;

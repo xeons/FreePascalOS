@@ -861,6 +861,24 @@ them between processors and changing their priorities.
   log says which source gave each rate (`[hal] Time stamp counter
   2918.400 MHz (not invariant), rate: KVM paravirtual clock; stated ...,
   2918.410 MHz measured against the HPET`).
+  Every measurement (the counter against a reference, the local APIC
+  timer against the counter) is the median of five samples over its
+  time (`Hal.CalibrationSamples`). A sample runs from one reference read
+  to another, each bracketed by counter reads with interrupts off: the
+  reference's moment is the middle of the bracket, of four attempts the
+  narrowest is kept, and a sample whose two half widths add up to more
+  than 0.1% of it is taken again (15 attempts at most, 60 while none was
+  steady - under TCG on a busy host most PIT samples are held up 1.5 ms
+  somewhere in their polls; with none steady at all, the steadiest
+  counts). For the PIT the start bracket holds the count's last byte and
+  the gate's rise (the 8254 counts from the gate, QEMU from the count)
+  and the end lies between the last poll that saw the output low and the
+  first that saw it high. Read one after the other, as before, a
+  processor held up between the two reads (an SMI; under an emulator or
+  a hypervisor a virtual processor that did not run) skewed the rate:
+  under TCG on a busy host the boot measured 2739.6 and once 2214.8 MHz
+  instead of 2918, the self test caught it and the watchdog moved the
+  clock to the HPET.
 - **The HPET** (`Hal.Hpet`, `Hal.HpetTable`, `Hal.HpetMath`). The ACPI
   HPET table gives the register block (mapped uncached), the comparator
   count, the counter width and legacy replacement capability; the
@@ -1174,7 +1192,8 @@ tick included. The HPET self test (`Kernel.Arch.TimerSelfTest`) pins a
 thread to the boot processor with the broadcast forced and checks ten
 20 ms sleeps there; it also checks the counter against the clock over
 50 ms (2%), a fresh measurement of the counter's rate against the
-reference (2%), a one-shot 5 ms ahead (under 40 ms late) and the
+reference (the median of three measurements, within 2%, and the same
+figure 5% too fast or too slow must not agree), a one-shot 5 ms ahead (under 40 ms late) and the
 periodic mode (about one interrupt per 2 ms period). `idlebroadcast=off`
 keeps to states whose timer runs; `idlebroadcast=force` treats every
 state of the other processors as stopping the timer and really leaves
@@ -18473,7 +18492,19 @@ reported as one (runtime error 218); anything else is an access violation
   (`physical page written after it was freed`) - a device still writing
   into a buffer its driver gave back, a stale translation. Held back
   pages count as free memory, and when the free list runs dry the oldest
-  one is let go early, so the checks never make memory run out.
+  one is let go early, so the checks never make memory run out. A page
+  leaves the ring, is checked and goes to the free list in one hold of
+  the database lock (it used to be checked after the lock was let go,
+  out of the ring yet still marked held back while other processors
+  freed and took pages). The ring counts the frames that went in and
+  came out; being first in, first out, the Nth in is the Nth out, so the
+  self test (`Kernel.PageQuarantineSelfTest`) watches its page's entry
+  number and knows when it left - even if, pushed out early by the
+  other processors' frees, it was handed out again (the free list is
+  last in, first out: the test's own next allocation took it) and freed
+  back into the ring, which made the old check of its use fail now and
+  then. Threads on up to three other processors take and free pages
+  throughout the test.
 - Not covered: device mappings. DMA buffers come from the page allocator,
   so filling heap blocks never changes memory a device is using; a device
   that writes into a freed heap block is caught as a write after free.

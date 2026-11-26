@@ -28,7 +28,11 @@
   - the stated frequencies (Hal.TimerFrequencies): CPUID 15h's ratio,
     the crystal by model or from CPUID 16h where ECX is 0, KVM's
     paravirtual scale, agreement in parts per million and the clock
-    watchdog's drift rule.
+    watchdog's drift rule;
+  - the calibration's samples (Hal.CalibrationSamples): bracketed reads
+    (middle, width, the narrowest kept), a sample's cycles, uncertainty
+    and rate, a vCPU stall between the reads made visible and refused,
+    the steadier of two, and the median that leaves outliers out.
   Prints each failure and exits 1 if there was one.
 }
 program HpetTest;
@@ -39,7 +43,8 @@ uses
   SysUtils,
   Hal.HpetTable,
   Hal.HpetMath,
-  Hal.TimerFrequencies;
+  Hal.TimerFrequencies,
+  Hal.CalibrationSamples;
 
 var
   Failures: Integer = 0;
@@ -203,10 +208,88 @@ begin
   Check(StrComp(FrequencySourceName(FrequencyFromHpet), 'measured against the HPET') = 0, 'names: HPET');
 end;
 
+procedure MakeRead(out Read: TBracketedRead; Before, After, Ticks: QWord);
+begin
+  Read.CounterBefore := Before;
+  Read.CounterAfter := After;
+  Read.ReferenceTicks := Ticks;
+end;
+
+procedure TestCalibrationSamples;
+const
+  { A 3 GHz counter against a reference read as nanoseconds. }
+  Hertz = 3000000000;
+var
+  Best: TBracketedRead;
+  Candidate: TBracketedRead;
+  HaveBest: Boolean;
+  Start: TBracketedRead;
+  Finish: TBracketedRead;
+  Sample: TCalibrationSample;
+  Stalled: TCalibrationSample;
+  Rates: TSampleRates;
+begin
+  MakeRead(Candidate, 1000, 1300, 7);
+  Check(BracketWidth(Candidate) = 300, 'brackets: width');
+  Check(BracketMiddle(Candidate) = 1150, 'brackets: middle');
+  HaveBest := False;
+  KeepNarrowerBracket(Best, HaveBest, Candidate);
+  Check(HaveBest and (Best.ReferenceTicks = 7), 'brackets: the first read is kept');
+  MakeRead(Candidate, 2000, 2100, 8);
+  KeepNarrowerBracket(Best, HaveBest, Candidate);
+  Check(Best.ReferenceTicks = 8, 'brackets: a narrower read replaces it');
+  MakeRead(Candidate, 3000, 9000, 9);
+  KeepNarrowerBracket(Best, HaveBest, Candidate);
+  Check(Best.ReferenceTicks = 8, 'brackets: a wider read does not');
+
+  { 10 ms: 30,000,000 cycles between the middles. }
+  MakeRead(Start, 1000000, 1000200, 0);
+  MakeRead(Finish, 31000000, 31000200, 0);
+  MakeCalibrationSample(Start, Finish, 10000000, Sample);
+  Check(Sample.Cycles = 30000000, 'samples: cycles between the middles');
+  Check(Sample.UncertaintyCycles = 201, 'samples: half of each width');
+  Check(SampleHertz(Sample) = Hertz, 'samples: the rate');
+  Check(SampleIsSteady(Sample, 1000), 'samples: narrow brackets are steady');
+
+  { The processor was held up 3 ms inside the start's bracket (between
+    the reference read and the counter read): the bracket shows it. }
+  MakeRead(Start, 1000000, 10000200, 0);
+  MakeCalibrationSample(Start, Finish, 10000000, Stalled);
+  Check(not SampleIsSteady(Stalled, 1000), 'samples: a stall between the reads is refused');
+  Check(SampleIsSteadier(Sample, Stalled), 'samples: the narrow one is steadier');
+  Check(not SampleIsSteadier(Stalled, Sample), 'samples: the stalled one is not');
+  Check(UncertaintyIsWithin(1000000, 1000, 1000), 'samples: 1000 ppm is within 1000 ppm');
+  Check(not UncertaintyIsWithin(1000000, 1001, 1000), 'samples: past 1000 ppm is not');
+  Check(not UncertaintyIsWithin(0, 0, 1000), 'samples: no cycles is never within');
+  Sample.ReferenceNanoseconds := 0;
+  Check(SampleHertz(Sample) = 0, 'samples: no time measured, no rate');
+  Check(not SampleIsSteady(Sample, 1000), 'samples: no time measured is not steady');
+  { Large counts do not overflow: 100 s at 3 GHz. }
+  MakeRead(Start, 0, 0, 0);
+  MakeRead(Finish, QWord(300000000000), QWord(300000000000), 0);
+  MakeCalibrationSample(Start, Finish, QWord(100000000000), Sample);
+  Check(SampleHertz(Sample) = Hertz, 'samples: a long sample');
+
+  Rates[0] := 2918000000;
+  Rates[1] := 2214000000;
+  Rates[2] := 2917000000;
+  Rates[3] := 3500000000;
+  Rates[4] := 2919000000;
+  Check(MedianRate(Rates, 5) = 2918000000, 'median: two outliers of five are left out');
+  Check(Rates[0] = 2214000000, 'median: sorted in place');
+  Rates[0] := 10;
+  Rates[1] := 21;
+  Check(MedianRate(Rates, 2) = 15, 'median: the mean of the middle two');
+  Rates[0] := 7;
+  Check(MedianRate(Rates, 1) = 7, 'median: of one');
+  Check(MedianRate(Rates, 0) = 0, 'median: of none');
+end;
+
 begin
   TestTable;
   TestRegisters;
   TestFrequencies;
+  TestCalibrationSamples;
   if Failures > 0 then
   begin
     WriteLn(Format('HPET TEST FAILED: %d of %d checks', [Failures, Checks]));

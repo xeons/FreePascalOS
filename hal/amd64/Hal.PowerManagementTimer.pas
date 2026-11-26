@@ -43,6 +43,9 @@ function PowerManagementTimerIsPresent: Boolean;
   wrap taken into account (once). }
 function ReadPowerManagementTimer: LongWord;
 function PowerManagementTicksSince(Start: LongWord): LongWord;
+{ Ticks from one reading to a later one (the wrap taken into account,
+  once). }
+function PowerManagementTicksBetween(Start, Finish: LongWord): LongWord;
 
 implementation
 
@@ -142,7 +145,12 @@ end;
 
 function PowerManagementTicksSince(Start: LongWord): LongWord;
 begin
-  Result := LongWord((QWord(ReadPowerManagementTimer) + QWord(CounterMask) + 1 - Start) and CounterMask);
+  Result := PowerManagementTicksBetween(Start, ReadPowerManagementTimer);
+end;
+
+function PowerManagementTicksBetween(Start, Finish: LongWord): LongWord;
+begin
+  Result := LongWord((QWord(Finish) + QWord(CounterMask) + 1 - Start) and CounterMask);
 end;
 
 end.
