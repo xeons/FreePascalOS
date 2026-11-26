@@ -74,6 +74,12 @@
 #                   lifetime with both collectors (bytes per wrapper)
 #   make javascript-test  Run libjavascript on the host: scripts with their expected
 #                   output, the embedding API, and a benchmark (time and peak bytes)
+#   make test262    Run test262 (ECMAScript conformance) against libjavascript on the
+#                   host (not part of make test): TEST262=checkout (default
+#                   ~/Downloads/sources/test262), FILTER="built-ins/Array ...",
+#                   TEST262_FLAGS=--list; fails on failures not in
+#                   tools/Test262/expectations.txt. make test262-expectations
+#                   rewrites that file from a whole run.
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
@@ -88,6 +94,17 @@
 #   make css-test   Check libcss on the host: tokenizer, parsing and serialization,
 #                   selectors, the cascade, computed values, media queries, colors
 #                   (against Python's conversions), memory and style sharing
+#   make wasm-test  Check libwasm on the host: decoding and validation, each feature
+#                   area of 2.0 and 3.0, traps, host functions, memory growth, the
+#                   garbage collector and its protocol with an embedder's, exceptions
+#                   across host functions, the interrupt hook, a sample module when
+#                   WASM_SAMPLE names one, and the interpreter's speed
+#   make wasm-spec-test  Run the WebAssembly 2.0 spec test suite against libwasm on the
+#                   host with the 2.0 features (WASM_SPEC_DIRECTORY: the spec repository's
+#                   test/core, downloaded into ~/Downloads/sources/wasm-spec; not part of
+#                   make test)
+#   make wasm-spec-test-3  The same with the 3.0 suite (WASM_SPEC3_DIRECTORY: test/ of the
+#                   wg-3.0 tag, downloaded into ~/Downloads/sources/wasm-spec-3.0)
 #   make svg-test   Check libsvg on the host: SVG documents drawn and probed pixel by
 #                   pixel (shapes, strokes, paints, clips, masks, text, use, images)
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
@@ -240,7 +257,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse wpt web-ipc-test navigation-controls-test update-fonts
+	ports-test pkg-test quic-test css-test wasm-test wasm-spec-test wasm-spec-test-3 svg-test web-test javascript-test test262 test262-expectations web-layout-test webrender web-load-test web-script-test webbrowse wpt web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -590,7 +607,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
+		quic-test css-test wasm-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
@@ -1352,6 +1369,59 @@ css-test: $(CSS_TEST)
 	@grep -a '^info' build/tools/css-test.out | sed 's/^info /  /'
 	@echo "CSS TEST PASSED: $$(tail -n 1 build/tools/css-test.out | cut -d ' ' -f 3-)"
 
+# libwasm on the host: small modules written in the text format (encoded by
+# the spec runner's encoder in tools/WasmSpecTest) for every feature area,
+# the embedder interface, and the interpreter's speed. WASM_SAMPLE may name
+# a module built by a real toolchain to instantiate with stub imports.
+WASM_TEST := build/tools/WasmTest
+WASM_TEST_UNITS := build/tools/wasm-test-units
+WASM_SAMPLE ?=
+WASM_SOURCES := $(wildcard userland/lib/wasm/*.pas) $(wildcard userland/lib/wasm/*.inc)
+
+$(WASM_TEST): $(wildcard tools/WasmTest/*.pas) $(wildcard tools/WasmSpecTest/*.pas) tools/CryptoTest/TestChecks.pas \
+		$(WASM_SOURCES)
+	@mkdir -p $(WASM_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/WasmTest -Futools/WasmSpecTest -Futools/CryptoTest -Fuuserland/lib/wasm \
+		-Fiuserland/lib/wasm -FU$(WASM_TEST_UNITS) -o$@ tools/WasmTest/WasmTest.pas
+
+wasm-test: $(WASM_TEST)
+	@$(WASM_TEST) $(WASM_SAMPLE) > build/tools/wasm-test.out || \
+		{ grep -A2 FAIL build/tools/wasm-test.out; echo "WASM TEST FAILED (build/tools/wasm-test.out)"; exit 1; }
+	@grep -a '^info\|^perf' build/tools/wasm-test.out | sed 's/^info /  /'
+	@echo "WASM TEST PASSED: $$(tail -n 1 build/tools/wasm-test.out | cut -d ' ' -f 3-)"
+
+# The WebAssembly spec test suite (release 2.0, test/core and test/core/simd)
+# against libwasm: tools/WasmSpecTest parses the .wast scripts (text format
+# modules, assertions) and runs them. The suite is downloaded, never
+# committed: git clone --branch wg-2.0 https://github.com/WebAssembly/spec
+# into ~/Downloads/sources/wasm-spec.
+WASM_SPEC_TEST := build/tools/WasmSpecTest
+WASM_SPEC_TEST_UNITS := build/tools/wasm-spec-test-units
+WASM_SPEC_DIRECTORY ?= $(HOME)/Downloads/sources/wasm-spec/test/core
+
+$(WASM_SPEC_TEST): $(wildcard tools/WasmSpecTest/*.pas) $(WASM_SOURCES)
+	@mkdir -p $(WASM_SPEC_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/WasmSpecTest -Fuuserland/lib/wasm -Fiuserland/lib/wasm \
+		-FU$(WASM_SPEC_TEST_UNITS) -o$@ tools/WasmSpecTest/WasmSpecTest.pas
+
+wasm-spec-test: $(WASM_SPEC_TEST)
+	@test -d $(WASM_SPEC_DIRECTORY) || { echo "no spec tests in $(WASM_SPEC_DIRECTORY)"; exit 1; }
+	@$(WASM_SPEC_TEST) --features=2.0 $(WASM_SPEC_DIRECTORY) > build/tools/wasm-spec-test.out || \
+		{ grep -v ' 0 failed' build/tools/wasm-spec-test.out; echo "WASM SPEC TEST FAILED (build/tools/wasm-spec-test.out)"; exit 1; }
+	@echo "WASM SPEC TEST PASSED: $$(tail -n 1 build/tools/wasm-spec-test.out)"
+
+# The 3.0 suite (wg-3.0 tag of the same repository: test/core with its
+# feature subdirectories, and test/legacy/exceptions), downloaded into
+# ~/Downloads/sources/wasm-spec-3.0.
+WASM_SPEC3_DIRECTORY ?= $(HOME)/Downloads/sources/wasm-spec-3.0/test
+
+wasm-spec-test-3: $(WASM_SPEC_TEST)
+	@test -d $(WASM_SPEC3_DIRECTORY)/core || { echo "no spec tests in $(WASM_SPEC3_DIRECTORY)"; exit 1; }
+	@$(WASM_SPEC_TEST) $(WASM_SPEC3_DIRECTORY)/core $(WASM_SPEC3_DIRECTORY)/legacy/exceptions \
+		> build/tools/wasm-spec-test-3.out || \
+		{ grep -v ' 0 failed' build/tools/wasm-spec-test-3.out; echo "WASM SPEC TEST 3.0 FAILED (build/tools/wasm-spec-test-3.out)"; exit 1; }
+	@echo "WASM SPEC TEST 3.0 PASSED: $$(tail -n 1 build/tools/wasm-spec-test-3.out)"
+
 # libsvg on the host (with libcss, libdrawing, libfont and libimage): small
 # SVG documents drawn and their pixels probed where each feature decides
 # the colour, with DejaVu Sans from userland/fonts for text. SvgTest FONTS
@@ -1740,7 +1810,7 @@ WEB_BINDING_SOURCES := userland/lib/web/make-bindings.py $(wildcard userland/lib
 	$(wildcard userland/lib/web/platform/*.js)
 WEB_SCRIPT_TEST_SOURCES := $(wildcard tools/WebScriptTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	$(filter-out %/Web.Contents.pas,$(wildcard userland/lib/web/*.pas)) $(wildcard userland/lib/web/*.inc) \
-	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) $(WASM_SOURCES) \
 	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/*.pas) \
 	$(wildcard userland/lib/tls/*.pas) tools/TlsTest/Crypto.Random.pas userland/lib/cryptography/Crypto.Digests.pas \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/font/*.pas) \
@@ -1756,7 +1826,7 @@ $(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard 
 $(WEB_SCRIPT_TEST): $(WEB_SCRIPT_TEST_SOURCES) $(WEB_SCRIPT_TEST_UNITS)/.generated
 	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
 	fpc -Mobjfpc -O2 -gl -vew -Futools/WebScriptTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/cryptography -Fushared -Fishared \
-		-Fuuserland/lib/web -Fuuserland/lib/javascript \
+		-Fuuserland/lib/web -Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm \
 		-Fuuserland/lib/css -Fuuserland/lib/http -Fuuserland/lib/drawing -Fuuserland/lib/image -Fuuserland/lib/font \
 		-Fuuserland/lib/compression -Fuuserland/lib/svg -Fuuserland/lib/tls \
 		-Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
@@ -1788,6 +1858,31 @@ javascript-test: $(JAVASCRIPT_TEST)
 		{ grep -A3 FAIL build/tools/javascript-test.out; echo "JAVASCRIPT TEST FAILED (build/tools/javascript-test.out)"; exit 1; }
 	@grep BENCH build/tools/javascript-test.out
 	@echo "JAVASCRIPT TEST PASSED: $$(tail -n 1 build/tools/javascript-test.out | cut -d ' ' -f 2-)"
+
+# test262 on the host: each test runs in a child process forked by
+# build/tools/Test262 (half the cores, no more than fit in half the
+# available memory; 10 s and 512 MB each), against the known failures of
+# tools/Test262/expectations.txt and the features skipped in
+# tools/Test262/skipped-features.txt. The checkout is downloaded by hand
+# (git clone --depth 1 https://github.com/tc39/test262 into
+# ~/Downloads/sources/test262) and never committed.
+TEST262 ?= $(HOME)/Downloads/sources/test262
+TEST262_TOOL := build/tools/Test262
+TEST262_UNITS := build/tools/test262-units
+TEST262_SOURCES := $(wildcard tools/Test262/*.pas) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas))
+
+$(TEST262_TOOL): $(TEST262_SOURCES)
+	@mkdir -p $(TEST262_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/Test262 -Fuuserland/lib/javascript \
+		-FU$(TEST262_UNITS) -o$@ tools/Test262/Test262.pas
+
+test262: $(TEST262_TOOL)
+	$(TEST262_TOOL) $(TEST262_FLAGS) $(TEST262) $(FILTER)
+
+test262-expectations: $(TEST262_TOOL)
+	-$(TEST262_TOOL) --write-expectations tools/Test262/expectations.txt $(TEST262) > build/tools/test262.out
+	@tail -n 2 build/tools/test262.out
 
 # libweb's style, layout and painting on the host (with libcss, libfont,
 # libdrawing and libimage): the reference pages of tools/WebTest/render
@@ -1922,7 +2017,7 @@ WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/Te
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \
-	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) $(WASM_SOURCES) \
 	tools/WebLoadTest/editing-fuzz.html tools/WebLoadTest/pointer-fuzz.html tools/WebLoadTest/wpt-workers.html tools/WebBrowse/WebBrowse.Input.pas tools/WebBrowse/WebBrowse.Pointer.pas $(wildcard userland/lib/webview/WebView.*.pas)
 
 $(WEB_LOAD_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
@@ -1937,7 +2032,7 @@ $(WEB_LOAD_TEST): $(WEB_LOAD_TEST_SOURCES) $(WEB_LOAD_TEST_UNITS)/.generated
 		-Futools/WebBrowse -Fuuserland/lib/webview -Fuuserland/lib/windowing \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm -Fuuserland/lib/svg -Fushared -Fishared \
 		-Fi$(WEB_LOAD_TEST_UNITS) -FU$(WEB_LOAD_TEST_UNITS) -o$@ tools/WebLoadTest/WebLoadTest.pas
 
 web-load-test: $(WEB_LOAD_TEST) $(BASE_FONTS_STAMP)
@@ -1968,7 +2063,8 @@ $(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
 	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WebBrowse -Futools/TlsTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fuuserland/lib/webview -Fuuserland/lib/windowing -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm -Fuuserland/lib/svg -Fuuserland/lib/webview \
+		-Fuuserland/lib/windowing -Fushared -Fishared \
 		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WebBrowse/WebBrowse.pas
 
 webbrowse: $(WEB_BROWSE)
@@ -1987,7 +2083,8 @@ $(WPT_RUN): $(wildcard tools/WptRun/*.pas) $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UN
 	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WptRun -Futools/WebBrowse -Futools/TlsTest \
 		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
-		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fuuserland/lib/webview -Fuuserland/lib/windowing -Fushared -Fishared \
+		-Fuuserland/lib/javascript -Fuuserland/lib/wasm -Fiuserland/lib/wasm -Fuuserland/lib/svg -Fuuserland/lib/webview \
+		-Fuuserland/lib/windowing -Fushared -Fishared \
 		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WptRun/WptRun.pas
 
 wpt: $(WPT_RUN) $(BASE_FONTS_STAMP)

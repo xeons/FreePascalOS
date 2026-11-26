@@ -17,7 +17,7 @@
 }
 
 {
-  browser - the web browser
+  browser - Tuxcat, the web browser
 
   browser [ADDRESS...]
 

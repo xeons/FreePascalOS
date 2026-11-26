@@ -356,6 +356,8 @@ begin
     Exit(JsNull);
   end;
   Outcome := Target.Matcher.Search(Text, LastIndex, Sticky);
+  if Outcome = roOutOfMemory then
+    Exit(R.ThrowRangeError('Out of memory matching the regular expression'));
   if Outcome = roInterrupted then
   begin
     R.Runtime.InterruptRequested := False;
@@ -970,6 +972,8 @@ begin
     while Position < Text.Length do
     begin
       Outcome := Matcher.MatchAt(Text, Position);
+      if Outcome = roOutOfMemory then
+        Exit(R.ThrowRangeError('Out of memory matching the regular expression'));
       if Outcome = roInterrupted then
       begin
         R.Runtime.Terminating := True;

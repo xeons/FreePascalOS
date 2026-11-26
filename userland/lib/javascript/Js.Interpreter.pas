@@ -2239,7 +2239,8 @@ DispatchLoop:
                 conversion that could run JavaScript. }
               Value := Regs[Code[PC + 3]];
               TypedArray := TJsTypedArray(Target);
-              if JsIsNumber(Value) <> IsBigIntKind(TypedArray.ElementKind) then
+              if (IsBigIntKind(TypedArray.ElementKind) and JsIsBigInt(Value)) or
+                (not IsBigIntKind(TypedArray.ElementKind) and JsIsNumber(Value)) then
               begin
                 if X < TypedArray.CurrentLength then
                 begin

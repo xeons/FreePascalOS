@@ -1456,6 +1456,85 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Incremental or generational marking (needs a write barrier on reference stores)
 - [x] Polymorphic inline caches (four shapes per site)
 - [ ] Fused instructions for more cases; deeper prototype chains in the inline caches
+- [x] test262 host runner (`make test262`, tools/Test262) with expectations and skipped proposals
+- [ ] test262: 81.1% of the 51,174 tests run pass (language 94.1%, built-ins 73.0%, annexB 61.3%,
+      intl402 26.5%, staging 83.5%; 2,627 skipped). The main missing pieces, by failures: Temporal
+      (about 6,700 with its intl402 tests), Intl beyond en-US (Locale, DisplayNames, DurationFormat,
+      RelativeTimeFormat, most NumberFormat and DateTimeFormat options), RegExp Unicode properties
+      from the UCD (binary properties, scripts, property of strings) and the v flag's set notation,
+      explicit resource management (using, DisposableStack, SuppressedError), Annex B function
+      declarations in blocks under direct eval, the newer iterator methods (Iterator.zip, concat,
+      chunks, windows), Atomics.waitAsync and Map/WeakMap getOrInsert, the parameters' dead zone
+      (`(a = b, b) => ...`), completion values of loops, proper tail calls, and the Unicode data
+      for identifiers (the RTL's tables predate Unicode 10). The backtracking matcher runs out of
+      memory on million-character subjects (23 tests at the runner's 512 MB cap).
+
+## WebAssembly engine (libwasm)
+
+- [x] Binary decoder: all sections, the eight element encodings, data count, the name section
+      (function names for stack traces), LEB128 and UTF-8 rules for malformed modules
+- [x] Validator per the spec's algorithm, with the reference interpreter's messages; implementation limits
+- [x] WebAssembly 2.0 features: mutable globals, sign extension, non-trapping conversions, multiple
+      values, bulk memory, reference types (multiple tables, typed select), fixed-width SIMD
+- [x] Compiler to slot code (operands as frame slots, lazy local.get and constants, results stored
+      straight into locals, compare-and-branch and immediate fusions) and an interpreter without Pascal
+      recursion for WebAssembly calls; traps with kind, message and stack trace
+- [x] Exact IEEE semantics on amd64 and arm64 (f32 in single precision, bit exact rounding, min/max and
+      NaN rules); exceptions masked around execution
+- [x] Store, instances, instantiation in the spec's order with bulk memory semantics for segments
+- [x] Embedding API (Wasm.Api): compile, validate, descriptors, instantiate, call, host functions, globals,
+      tables, memories; memory growth notifications; externref enumeration for a collector; interrupt hook
+- [x] make wasm-test (host test, sample module, speed) and make wasm-spec-test (the 2.0 spec suite: all
+      148 core and SIMD files pass)
+- [x] The JavaScript WebAssembly object on Wasm.Api (platform/57-webassembly.js, Web.Script.NativeWasm,
+      WasmObjects, WasmValues, WasmAgents): validate, compile, instantiate (both overloads),
+      compileStreaming and instantiateStreaming (MIME type, CORS-same-origin, status, body), Module
+      (exports, imports, customSections), Instance, Memory (buffer detached on growth from either side and
+      not detachable by script, grow, toFixedLengthBuffer, toResizableBuffer), Table, Global (i64 as
+      BigInt), CompileError / LinkError / RuntimeError (with the WebAssembly frames in the stack), RangeError
+      for stack exhaustion and memory; Exported Functions cached per function, JS callables as imports
+      (re-entrant, exceptions unchanged through WebAssembly), externrefs as JS values marked through
+      EnumerateReferences and EnumerateHostData; a store per agent; the watchdog through OnInterrupt;
+      CSP 'wasm-unsafe-eval'; Modules structured-cloneable within the agent (frames, dedicated workers)
+- [x] WPT wasm/jsapi (2.0 API and resizable buffers) and wasm/webapi pass on the host
+- [x] hCaptcha's hsw.js module (about 1 MB, 198 imports) compiles and is instantiated in its frame
+- [x] 3.0: extended constant expressions, tail calls (constant stack), multiple memories, memory64 and
+      table64, exception handling (try_table, throw, throw_ref, exnref; legacy try/catch/delegate/rethrow),
+      typed function references (non-nullable locals), GC (structs, arrays, i31, rec groups, subtyping,
+      casts, canonical type equivalence across modules), relaxed SIMD (deterministic profile); features can
+      be turned off (2.0 suite runs with 2.0's alone)
+- [x] Tracing collector for GC objects (safepoint maps, globals, tables, segments, pins, exposed objects)
+      with the embedder protocol (EnumerateReferences, or BeginHostTrace / TraceFromHost / EndHostTrace);
+      exceptions across host functions (EWasmException, WasmThrow, tags and payloads in Wasm.Api)
+- [x] make wasm-spec-test-3: the 3.0 spec suite (core, feature directories, legacy exceptions): all 262
+      files pass, also with --gc-stress
+- [x] JS API of the 3.0 features: WebAssembly.Tag, WebAssembly.Exception (getArg, is, stack with traceStack)
+      and JSTag (JavaScript exceptions caught by catch_all and catch $JSTag and rethrown unchanged,
+      exceptions out of WebAssembly the same Exception object each time, exported and imported tags);
+      memory64 and table64 address types ("address": "i64", BigInt sizes and indices); GC values at the
+      boundary (Exported GC Objects, the type checks of every reference type, i31 numbers, odd values as
+      boxed host words) with the two collectors tracing each other (cross-heap cycles collected); the JS
+      string builtins and imported string constants (compile options); all of it in workers too
+- [x] WPT wasm/jsapi on the host: 1002 of 1061 (the rest: type reflection, shared memories, ESM
+      integration's module source, getArg's index conversion); the 3.0 spec's js-api copy 1058 of 1062
+- [ ] Type reflection (tentative): the type() methods of Memory, Table, Global and Tag, the "minimum"
+      descriptor member, WebAssembly.Function (Exported Functions would become its instances)
+- [ ] Exported GC objects and Exceptions of a store object shared by a window and its dedicated worker
+      take the prototype of the realm that wrapped them first (Tags, Memories and the like have a cache per
+      worker realm now)
+- [ ] Shared memories (threads: a SharedArrayBuffer over the memory, atomics) - now a TypeError
+- [ ] Instances, memories and their JavaScript objects freed when unreachable (they live as long as the
+      agent's store; the caches are strong)
+- [ ] Compile off the page thread (compile and compileStreaming compile in a task on it now) and cache
+      compiled modules; ESM integration (import of .wasm modules)
+- [ ] Watch hCaptcha's proof of work after a click on the OS (webbrowse cannot click into frames): its
+      speed under the interpreter, and that a long one does not hit the 10 s slow script limit
+- [ ] Free instances, functions and tags when nothing refers to them (now they live as long as their store;
+      only GC heap objects are collected)
+- [ ] Faster memory64 and non-zero memory accesses (generic operations now) and inline struct/array
+      field accesses in the interpreter loop
+- [ ] Shared memories and threads, stack switching and the other post-3.0 proposals
+- [ ] Faster SIMD (whole-vector operations instead of lane loops); caching compiled modules
 
 ## Tooling
 

@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Programs: the file manager, terminal, text editor, web browser, mail,
+"""Programs: the file manager, terminal, text editor, web browser (Tuxcat), mail,
 calendar, contacts, media player, image viewer, paint, calculator, the
 Control Panel, task manager, help, system information, volume control,
 the controls' tour and demo, the dialogs, and a program of no icon of
@@ -32,6 +32,7 @@ from .shapes import (box, plane_shape, plane_stroke, poly_path, rect_path, circl
 from .objects import monitor, loudspeaker, sound_waves
 from .folders import folder, emblem_pictures
 from .filetypes import page, text_lines
+from .cats import tuxedo_cat
 
 group('Programs')
 
@@ -85,28 +86,9 @@ def draw_text_editor(pen):
     ctx.restore()
 
 
-@icon('app-web-browser', 'Web browser')
+@icon('app-web-browser', 'Tuxcat, the web browser', aliases=('app-tuxcat',))
 def draw_web_browser(pen):
-    globe(pen, 24.0, 24.0, 19.5 if not pen.small else 21.0)
-    if not pen.small:
-        # A ring round it, as an orbit.
-        ctx = pen.ctx
-        ctx.save()
-        ctx.translate(24.0, 24.0)
-        ctx.rotate(math.radians(-20))
-        ctx.scale(1.0, 0.32)
-        ctx.new_path()
-        ctx.arc(0, 0, 23.0, math.radians(-10), math.radians(190))
-        ctx.restore()
-        pen.stroke(INK, 3.6)
-        ctx.save()
-        ctx.translate(24.0, 24.0)
-        ctx.rotate(math.radians(-20))
-        ctx.scale(1.0, 0.32)
-        ctx.new_path()
-        ctx.arc(0, 0, 23.0, math.radians(-10), math.radians(190))
-        ctx.restore()
-        pen.stroke(GOLD, 2.0)
+    tuxedo_cat(pen)
 
 
 def envelope(pen, x, y, width, height):

@@ -1,0 +1,278 @@
+{
+  FreePascalOS
+  Copyright (C) 2026 Brandon Scott
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+}
+
+{
+  The compiled form of a function, which the interpreter runs.
+
+  A frame is an array of 64-bit slots: the parameters, then the declared
+  locals, then the operand stack (a v128 takes two slots). Since the
+  validator knows the height of the operand stack at every instruction,
+  every operand has a fixed slot, and the compiled code names slots
+  directly, like registers: i32.add becomes "slot A := slot B + slot C".
+  Every operation reads all its operands before it writes its result,
+  so a result may go to a slot that is also an operand.
+  A local.get does not copy: its operand reads the local's slot until
+  something would change the local or a block boundary comes, and a
+  result that goes straight into a local (local.set after an operation)
+  is written there. Branches are code indices, with the values a branch
+  carries moved to the target's slots first.
+
+  An instruction is 16 bytes: the operation, a 16-bit extra immediate
+  (a lane, a memory index, the parameter slots of call_indirect, the
+  condition slot of select) and three 32-bit operands A, B and C, whose
+  meaning each operation defines below. Operations that exist in
+  WebAssembly keep its code (Wasm.Opcodes); the ones of the compiled
+  form alone are numbered from CodeFirst on.
+
+  Memory instructions: A the value (loaded into or stored from), B the
+  address, C the offset (unsigned), Extra the memory index.
+
+  A function's frame begins where its caller's operand stack had the
+  arguments, so a call copies nothing: the callee's parameters are the
+  caller's argument slots, and its results land where the arguments
+  were.
+}
+unit Wasm.Code;
+
+{$mode objfpc}
+{$H+}
+
+interface
+
+uses
+  Wasm.Opcodes;
+
+const
+  CodeFirst = LastWasmOpcode + 1;
+  CodeCopy = CodeFirst + 0;            { A := B }
+  CodeCopy128 = CodeFirst + 1;         { A, A+1 := B, B+1 }
+  CodeCopyRange = CodeFirst + 2;       { C slots from B to A }
+  CodeConst32 = CodeFirst + 3;         { A := B (32 bits) }
+  CodeConst64 = CodeFirst + 4;         { A := B or C shl 32 }
+  CodeConst128 = CodeFirst + 5;        { A, A+1 := Constants[B], Constants[B+1] }
+  { Branches go to A; Extra is 1 on a back edge (to a loop), which counts
+    down to the next interrupt check. }
+  CodeBranch = CodeFirst + 6;          { go to A }
+  CodeNop = CodeFirst + 7;             { nothing (a removed instruction) }
+  CodeBranchIf = CodeFirst + 8;        { if B (i32) <> 0 go to A }
+  CodeUnused = CodeFirst + 9;
+  CodeBranchUnless = CodeFirst + 10;   { if B (i32) = 0 go to A }
+  CodeBranchTable = CodeFirst + 11;    { go to BranchTargets[B + min(slot A, C)] }
+  CodeReturn = CodeFirst + 12;         { results: B slots from A to the frame's slot 0 }
+  CodeCall = CodeFirst + 13;           { function A, its frame at slot B }
+  CodeCallIndirect = CodeFirst + 14;   { type A, frame at B, table C; Extra parameter slots (index after them) }
+  CodeSelect = CodeFirst + 15;         { A := if slot Extra then B else C }
+  CodeSelectAtHome = CodeFirst + 16;   { A := if A+2 then A else A+1 }
+  CodeSelect128 = CodeFirst + 17;      { as CodeSelect for v128 }
+  CodeSelect128AtHome = CodeFirst + 18; { A := if A+4 then A else A+2 }
+  CodeGlobalGet = CodeFirst + 19;      { A := global B }
+  CodeGlobalGet128 = CodeFirst + 20;
+  CodeGlobalSet = CodeFirst + 21;      { global B := A }
+  CodeGlobalSet128 = CodeFirst + 22;
+  { Comparisons fused with the branch that tests them: go to A if B op C. }
+  CodeBranchIfI32Eqz = CodeFirst + 23;  { if B = 0 }
+  CodeBranchIfI32Eq = CodeFirst + 24;
+  CodeBranchIfI32Ne = CodeFirst + 25;
+  CodeBranchIfI32LtS = CodeFirst + 26;
+  CodeBranchIfI32LtU = CodeFirst + 27;
+  CodeBranchIfI32GtS = CodeFirst + 28;
+  CodeBranchIfI32GtU = CodeFirst + 29;
+  CodeBranchIfI32LeS = CodeFirst + 30;
+  CodeBranchIfI32LeU = CodeFirst + 31;
+  CodeBranchIfI32GeS = CodeFirst + 32;
+  CodeBranchIfI32GeU = CodeFirst + 33;
+  { An i32 operation with a constant: A := B op C. }
+  CodeI32AddImmediate = CodeFirst + 34;
+  CodeI32AndImmediate = CodeFirst + 35;
+  CodeI32OrImmediate = CodeFirst + 36;
+  CodeI32XorImmediate = CodeFirst + 37;
+  CodeI32ShlImmediate = CodeFirst + 38;
+  CodeI32ShrSImmediate = CodeFirst + 39;
+  CodeI32ShrUImmediate = CodeFirst + 40;
+  CodeI32MulImmediate = CodeFirst + 41;
+  CodeI32EqImmediate = CodeFirst + 42;
+  CodeI32NeImmediate = CodeFirst + 43;
+  CodeI32LtSImmediate = CodeFirst + 44;
+  CodeI32LtUImmediate = CodeFirst + 45;
+  CodeI32GtSImmediate = CodeFirst + 46;
+  CodeI32GtUImmediate = CodeFirst + 47;
+  CodeI32LeSImmediate = CodeFirst + 48;
+  CodeI32LeUImmediate = CodeFirst + 49;
+  CodeI32GeSImmediate = CodeFirst + 50;
+  CodeI32GeUImmediate = CodeFirst + 51;
+  CodeI64AddImmediate = CodeFirst + 52;  { C sign extended }
+  CodeI64AndImmediate = CodeFirst + 53;
+  CodeI64ShlImmediate = CodeFirst + 54;
+  CodeI64ShrUImmediate = CodeFirst + 55;
+  CodeI64ShrSImmediate = CodeFirst + 56;
+  { Tail calls: the arguments go to the frame's slot 0 and the callee
+    takes the frame's place. }
+  CodeReturnCall = CodeFirst + 57;          { function A, arguments at B }
+  CodeReturnCallIndirect = CodeFirst + 58;  { as CodeCallIndirect }
+  CodeCallIndirect64 = CodeFirst + 59;      { a table64: the index is 64-bit }
+  CodeReturnCallIndirect64 = CodeFirst + 60;
+  CodeCallRef = CodeFirst + 61;             { frame at B; Extra parameter slots, the reference after them }
+  CodeReturnCallRef = CodeFirst + 62;
+  CodeBranchIfNull = CodeFirst + 63;        { if reference B is null go to A }
+  CodeBranchIfNonNull = CodeFirst + 64;     { if reference B is not null go to A }
+  CodeRefAsNonNull = CodeFirst + 65;        { A := B, trapping on null }
+  CodeThrow = CodeFirst + 66;               { tag B, payload at home from A }
+  CodeThrowRef = CodeFirst + 67;            { the exception in slot A }
+  CodeRethrow = CodeFirst + 68;             { the caught exception in slot A }
+  { Memories other than an i32 memory 0 (Wasm.MemoryAccess): Extra the
+    WebAssembly opcode, A the value (or the home of a lane access), B the
+    address, C the index in Constants of the offset and the memory. }
+  CodeMemoryAccessAt = CodeFirst + 69;
+  CodeMemorySizeAt = CodeFirst + 70;        { A := size of memory Extra }
+  CodeMemoryGrowAt = CodeFirst + 71;        { A := grow memory Extra by B }
+  CodeMemoryFillAt = CodeFirst + 72;        { operands at home from A; memory Extra }
+  CodeMemoryCopyAt = CodeFirst + 73;        { operands at home from A; memories B (destination), C }
+  CodeMemoryInitAt = CodeFirst + 74;        { operands at home from A; data B, memory Extra }
+  { Garbage collection (Wasm.GcOperations). A heap type operand is an
+    abstract heap type (negative) or the module's canonical type index. }
+  CodeRefTest = CodeFirst + 75;             { A := B matches heap type C; Extra bit 0 null matches, bit 1 negated }
+  CodeRefCast = CodeFirst + 76;             { A := B, trapping unless it matches C (Extra bit 0: null matches) }
+  CodeStructGet = CodeFirst + 77;           { A := field at byte C of struct B; Extra the access }
+  CodeStructSet = CodeFirst + 78;           { field at byte C of struct A := B; Extra the access }
+  CodeStructNew = CodeFirst + 79;           { fields at home from A, type B }
+  CodeStructNewDefault = CodeFirst + 80;    { A := a new struct of type B }
+  CodeArrayNew = CodeFirst + 81;            { value and length at home from A, type B }
+  CodeArrayNewDefault = CodeFirst + 82;     { length at A, type B }
+  CodeArrayNewFixed = CodeFirst + 83;       { C values at home from A, type B }
+  CodeArrayNewData = CodeFirst + 84;        { offset and length at home from A, type B, data C }
+  CodeArrayNewElem = CodeFirst + 85;        { offset and length at home from A, type B, element segment C }
+  CodeArrayGet = CodeFirst + 86;            { A := array B [slot C]; Extra the access }
+  CodeArraySet = CodeFirst + 87;            { array, index, value at home from A; Extra the access }
+  CodeArrayLen = CodeFirst + 88;            { A := length of array B }
+  CodeArrayFill = CodeFirst + 89;           { array, offset, value, count at home from A; Extra the access }
+  CodeArrayCopy = CodeFirst + 90;           { destination, offset, source, offset, count from A; Extra element size }
+  CodeArrayInitData = CodeFirst + 91;       { array, offset, source offset, count from A; type B, data C }
+  CodeArrayInitElem = CodeFirst + 92;       { the same with element segment C }
+  CodeAnyConvertExtern = CodeFirst + 93;    { A := B internalized }
+  CodeExternConvertAny = CodeFirst + 94;    { A := B externalized }
+  CodeRefI31 = CodeFirst + 95;              { A := i31 of B }
+  CodeI31Get = CodeFirst + 96;              { A := value of i31 B; Extra 1 signed }
+  CodeRefEq = CodeFirst + 97;               { A := B = C }
+  CodeLast = CodeRefEq;
+
+  { Field and element accesses (the Extra of struct and array access):
+    the size in the low three bits, AccessSigned for get_s. }
+  AccessI8 = 0;
+  AccessI16 = 1;
+  Access32 = 2;
+  Access64 = 3;
+  Access128 = 4;
+  AccessSigned = 8;
+  { Table instructions' Extra: the table (bit 0) or source table (bit 1)
+    is a table64, indexed with i64. }
+  TableIndex64 = 1;
+  SourceTableIndex64 = 2;
+
+type
+  TCodeInstruction = packed record
+    Operation: Word;
+    Extra: Word;
+    A: Int32;
+    B: Int32;
+    C: Int32;
+  end;
+  PCodeInstruction = ^TCodeInstruction;
+
+  { An exception handler (Wasm.Unwinding): a try_table, a legacy try
+    with catches, or a legacy try ... delegate, covering the code
+    [Start, Limit). A handler that does not catch passes the exception
+    on to Outer (the handler around it, -1 for the caller), a delegate to
+    DelegateTarget. }
+  TCodeHandlerKind = (hkCatch, hkDelegate);
+
+  TCodeHandler = record
+    Kind: TCodeHandlerKind;
+    Start: Int32;
+    Limit: Int32;
+    Outer: Int32;
+    DelegateTarget: Int32;
+    FirstClause: Int32;
+    ClauseCount: Int32;
+  end;
+
+  { A catch clause: Tag is the instance's tag index, -1 for catch_all;
+    the payload goes to slots from Destination, then the exception itself
+    when PushesException; ExceptionSlot (or -1) gets the exception too
+    (a legacy catch, for rethrow). Target is in BranchTargets[TargetEntry]. }
+  TCodeCatchClause = record
+    Tag: Int32;
+    PushesException: Boolean;
+    Destination: Int32;
+    ExceptionSlot: Int32;
+    TargetEntry: Int32;
+  end;
+
+  TCompiledFunction = class
+  public
+    Instructions: array of TCodeInstruction;
+    { The module offset of the WebAssembly instruction each one came from. }
+    ByteOffsets: array of Int32;
+    Constants: array of QWord;
+    BranchTargets: array of Int32;
+    FunctionIndex: Cardinal;
+    ParamSlots: Integer;
+    LocalSlots: Integer;    { parameters and declared locals }
+    FrameSlots: Integer;    { locals and the deepest operand stack }
+    { Where references the collector traces are live when the function is
+      suspended at a call, a back edge or an allocation: the slots of the
+      safepoint at instruction SafepointInstructions[i] are
+      SafepointSlots[SafepointStarts[i] .. SafepointStarts[i + 1]), each
+      as slot times two plus one for an extern slot (which may hold an
+      embedder's pointer). }
+    SafepointInstructions: array of Int32;
+    SafepointStarts: array of Int32;
+    SafepointSlots: array of Int32;
+    Handlers: array of TCodeHandler;
+    Clauses: array of TCodeCatchClause;
+    { The slots live at instruction Index; False if it is no safepoint. }
+    function FindSafepoint(Index: Integer; out First, Limit: Integer): Boolean;
+  end;
+
+implementation
+
+function TCompiledFunction.FindSafepoint(Index: Integer; out First, Limit: Integer): Boolean;
+var
+  Low, High, Middle: Integer;
+begin
+  Low := 0;
+  High := Length(SafepointInstructions) - 1;
+  while Low <= High do
+  begin
+    Middle := (Low + High) div 2;
+    if SafepointInstructions[Middle] = Index then
+    begin
+      First := SafepointStarts[Middle];
+      Limit := SafepointStarts[Middle + 1];
+      Exit(True);
+    end;
+    if SafepointInstructions[Middle] < Index then
+      Low := Middle + 1
+    else
+      High := Middle - 1;
+  end;
+  First := 0;
+  Limit := 0;
+  Result := False;
+end;
+
+end.

@@ -374,8 +374,13 @@
           }
           return bytes;
         }
-        const chunk = result.value instanceof Uint8Array ? result.value :
-          typeof result.value === "string" ? internal.encodeText(result.value) : internal.bufferBytes(result.value);
+        // Fetch's "fully read": every chunk must be a Uint8Array (of any
+        // realm); anything else errors the read.
+        const chunk = result.value;
+        if (!ArrayBuffer.isView(chunk) || Object.prototype.toString.call(chunk) !== "[object Uint8Array]") {
+          reader.cancel().catch(function () {});
+          throw new TypeError("Failed to read the body: a chunk is not a Uint8Array");
+        }
         chunks.push(chunk);
         total += chunk.length;
         return next();

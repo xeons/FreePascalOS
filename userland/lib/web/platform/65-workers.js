@@ -79,7 +79,7 @@
     "URLSearchParams", "Blob", "File", "FileReader", "FormData", "Headers", "Request", "Response", "AbortController",
     "AbortSignal", "ReadableStream", "WritableStream", "TransformStream", "TextEncoderStream", "TextDecoderStream",
     "MessageChannel", "MessagePort", "MessageEvent", "BroadcastChannel", "Event", "EventTarget", "CustomEvent",
-    "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "EventSource", "WebAssembly", "isSecureContext",
+    "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "EventSource", "isSecureContext",
     "origin",
     // IndexedDB and the Cache API (the window's origin is the worker's).
     "indexedDB", "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBRequest", "IDBOpenDBRequest", "IDBObjectStore",
@@ -128,7 +128,9 @@
       state.scheduled = false;
       while (state.pending.length > 0 && !state.terminated) {
         const message = state.pending.shift();
-        state.host.deliver(new MessageEvent("message", { data: message.data, ports: message.ports }));
+        const data = message.adopt && state.wasmNatives ? internal.adoptModules(message.data, state.wasmNatives) :
+          message.data;
+        state.host.deliver(new MessageEvent("message", { data: data, ports: message.ports }));
       }
     });
   }
@@ -200,6 +202,8 @@
       Object.setPrototypeOf(WorkerRequest, WindowRequest);
       scope.XMLHttpRequest = WorkerRequest;
     }
+    // WebAssembly is the scope's own (its objects and errors of its realm).
+    state.wasmNatives = natives.wasmInstall(scope);
     scope.self = scope;
     scope.location = locationOf(state.url);
     scope.importScripts = importScriptsOf(state, scope);
@@ -318,9 +322,10 @@
     postMessage(message, transfer) {
       const state = workerState(this);
       const ports = internal.transferredPorts(transfer).map(internal.movePort);
+      const moduleClones = internal.wasmModuleClones();
       const data = internal.cloneWithTransfer(message, transfer);
       if (state.terminated) return;
-      state.pending.push({ data: data, ports: ports });
+      state.pending.push({ data: data, ports: ports, adopt: internal.wasmModuleClones() !== moduleClones });
       flushToWorker(state);
     }
     terminate() {

@@ -181,6 +181,14 @@ begin
   Result := JsUndefined;
 end;
 
+{ Error.isError: whether the value has [[ErrorData]] (an object made by
+  an error constructor; a proxy of one does not). }
+function ErrorIsError(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+begin
+  Result := JsBoolean(JsIsObject(Arg(Args, ArgCount, 0)) and (JsAsObject(Args^[0]).ObjectClass = ocError));
+end;
+
 procedure InstallErrors(R: TJsInterpreterRealm);
 var
   Kind: TJsErrorKind;
@@ -208,6 +216,7 @@ begin
       R.Intrinsics[inError] := Constructor_;
       DefineMethod(R, Prototype, 'toString', @ErrorPrototypeToString, 0);
       DefineMethod(R, Constructor_, 'captureStackTrace', @ErrorCaptureStackTrace, 1);
+      DefineMethod(R, Constructor_, 'isError', @ErrorIsError, 1);
       Constructor_.DefineData(R, R.Intern('stackTraceLimit'), JsInteger(10), PropertyDefault);
     end
     else

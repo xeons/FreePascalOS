@@ -37,6 +37,8 @@
                     'unsafe-hashes')
     eval            eval(), Function() and string timers: script-src or
                     default-src with 'unsafe-eval'
+    wasm            compiling WebAssembly: script-src or default-src
+                    with 'unsafe-eval' or 'wasm-unsafe-eval'
     form-action     form submissions (no fallback)
     base-uri        <base href> (no fallback)
 
@@ -77,6 +79,10 @@ function CspBlocksInline(Client: TFetchClient; Kind: TCspInlineKind; const Sourc
   const SourceFile: string = ''; Line: Integer = 0; Column: Integer = 0): Boolean;
 { Should compiling a string as script be blocked (CSP 4.4.1)? }
 function CspBlocksEval(Client: TFetchClient; const Source: string): Boolean;
+{ CSP 4.2.4 (EnsureCSPDoesNotBlockWasmByteCompilation): script-src
+  without 'unsafe-eval' or 'wasm-unsafe-eval' blocks compiling
+  WebAssembly (reported as "wasm-eval"). }
+function CspBlocksWasm(Client: TFetchClient): Boolean;
 { form-action for a form's submission to Url. }
 function CspBlocksFormAction(Client: TFetchClient; constref Url: TUrlRecord; Element: TObject): Boolean;
 { base-uri for a <base> element's URL. }
@@ -311,6 +317,28 @@ begin
     if SourceListHasKeyword(Values, '''unsafe-eval''') then
       Continue;
     Report(Client, Policy, 'script-src', 'eval', SampleOf(Values, Source), nil, '', 0, 0);
+    if Policy.Disposition = CspEnforce then
+      Result := True;
+  end;
+end;
+
+function CspBlocksWasm(Client: TFetchClient): Boolean;
+var
+  Index: Integer;
+  Policy: TCspPolicy;
+  Values: TStringArray;
+begin
+  Result := False;
+  if (Client = nil) or (Client.Csp.Count = 0) then
+    Exit;
+  for Index := 0 to Client.Csp.Count - 1 do
+  begin
+    Policy := Client.Csp[Index];
+    if not GoverningDirective(Policy, 'script-src', Values) then
+      Continue;
+    if SourceListHasKeyword(Values, '''unsafe-eval''') or SourceListHasKeyword(Values, '''wasm-unsafe-eval''') then
+      Continue;
+    Report(Client, Policy, 'script-src', 'wasm-eval', '', nil, '', 0, 0);
     if Policy.Disposition = CspEnforce then
       Result := True;
   end;

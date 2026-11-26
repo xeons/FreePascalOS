@@ -8999,7 +8999,10 @@ MemoryLimit, Interrupt (any thread), CollectGarbage and heap statistics;
 binary data without copies (NewArrayBuffer, NewArrayBufferFrom,
 NewExternalArrayBuffer, NewTypedArray, NewUint8Array, BufferSourceData,
 DetachArrayBuffer, IsArrayBuffer, IsTypedArray; natives use
-Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray); modules
+Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray; a buffer of
+host memory can have a detach key, `HostDetachOnly`, that makes
+transfer() refuse it, and a `HostResize` hook through which its host
+resizes it: a WebAssembly memory's); modules
 (EvaluateModule, ImportModule, ModuleNamespace, and the ModuleResolver,
 ModuleFetcher and ModuleMetaHook hooks); HostEnsureCanCompileStrings
 as `Realm.CompileStringsCheck` (asked with the source before eval,
@@ -9079,6 +9082,619 @@ buffers without copies, modules fetched later) and runs
 `benchmarks/*.js`, reporting time, the heap's peak, the process's peak
 bytes, the collections and the longest pause; `JS_GC_STRESS=1` collects
 every 16 KiB to find missed roots.
+
+## WebAssembly engine
+
+libwasm (`userland/lib/wasm`, units `Wasm.*`, built as `libwasm.so` for
+amd64 and arm64 on libsystem alone) runs WebAssembly 3.0 modules: 2.0
+(the MVP with mutable globals, sign extension, non-trapping float to int
+conversions, multiple values, bulk memory, reference types, fixed-width
+SIMD) and the 3.0 additions: extended constant expressions, tail calls,
+multiple memories, memory64 and table64, exception handling (and the
+legacy form Emscripten still emits: try, catch, catch_all, delegate,
+rethrow), typed function references, garbage collection (structs,
+arrays, i31, recursive types, subtyping, casts) and relaxed SIMD. It is
+portable Pascal, with no assembler, so the same code runs on both
+architectures and on the Linux host. The JavaScript `WebAssembly`
+object of libweb is built on its interface (`Wasm.Api`; see "The
+JavaScript WebAssembly object" below), so libweb and every program on it
+link libwasm.
+
+**Features** (`Wasm.Features`): every 3.0 feature, and legacy
+exceptions, can be turned off for a module (`WasmCompile(Bytes,
+Features)`); with none of them the engine decodes and validates exactly
+WebAssembly 2.0, which is how the 2.0 spec suite runs (3.0 makes some
+modules valid that 2.0 rejects, and reads limits and offsets as 64-bit
+numbers).
+
+**Decoding** (`Wasm.Reader`, `Wasm.Instructions`, `Wasm.Decoder`) turns
+the binary into a `TWasmModule` (`Wasm.Module`): the index spaces with
+imports first (functions, tables, memories, globals, tags), function
+bodies, constant expressions and data as ranges in the module's own
+copy of the bytes, and function names from the name section for stack
+traces. LEB128 integers follow the spec's rules for overlong and
+oversized encodings, names must be well formed UTF-8, and every function
+body is decoded instruction by instruction here, so that whatever the
+spec calls malformed is found before validation. One reader
+(`TWasmInstructionReader`) decodes an instruction and unpacks its
+immediates (catch clauses and br_table labels in arrays of the reader)
+for the decoder, the validator, the compiler and the constant expression
+evaluator alike. Instructions are numbered densely (`Wasm.Opcodes`):
+the one byte opcodes, $100 plus the 0xFC ones, $200 plus the 0xFD (SIMD
+and relaxed SIMD) ones, $380 plus the 0xFB (GC) ones, each with its
+text format name, the kind of immediate, and for instructions of fixed
+type a signature that the validator and the compiler share. Value types
+are records (kind, nullability, heap type): abstract heap types are
+their binary codes as negative numbers, concrete ones type indices. The
+type section keeps the defined types (`Wasm.TypeDefinitions`: function,
+struct or array, final or not, a supertype, the rec group) beside the
+function types the rest reads.
+
+**Validation** (`Wasm.Validator`, `Wasm.ModuleTypes`,
+`Wasm.ConstantValidator`, `Wasm.CodeValidator` and its include files)
+is the spec's. The type section first: rec groups in order, references
+only into the group or backwards, declared supertypes earlier, not
+final, of the same kind and matched (parameters contravariant, results
+and immutable fields covariant, mutable fields exact), at most 63 deep.
+Types are equivalent iso-recursively: each group gets a canonical key
+(members by position, outside types by canonical index), the first group
+with a key is canonical, and every concrete heap type in the module is
+rewritten to its canonical index, so type equality is record equality
+afterwards. Subtyping (`Wasm.Subtyping`) is shared with the run time
+through a small type context (a module's types or a store's). Then
+limits (65536 pages for i32 memories, 2^48 for i64 ones), imports and
+definitions, constant expressions (constants, ref.null, ref.func,
+global.get of an immutable global defined earlier, i32 and i64 add, sub
+and mul, and the allocating GC instructions), segments with their
+address types, the start function, and every body with the appendix's
+algorithm: an operand stack of types and a control stack; after an
+unconditional branch the stack is polymorphic, and a reference popped
+from it has a bottom heap type that matches every heap type; values
+match by subtyping; locals of non-nullable types must be set before
+they are read (a block forgets what it set when it ends); try_table's
+catch clauses name labels outside it. The errors are `EWasmMalformed`
+and `EWasmInvalid` with the reference interpreter's messages, then
+`EWasmLinkError`, `EWasmTrap` and `EWasmResourceError` later on
+(`Wasm.Errors`): one class each for the JavaScript errors they become.
+
+**Compiled code** (`Wasm.Code`, `Wasm.CodeEmitter`, `Wasm.Compiler` and
+its include files). A frame is an array of 64-bit slots: the
+parameters, the declared locals, hidden locals for legacy catches, then
+the operand stack (a v128 takes two slots). The validator knows the
+stack's height at every instruction, so every operand has a fixed slot,
+and the compiler turns the stack machine into slot code that names its
+operands like registers: i32.add becomes "slot A := slot B + slot C" in
+one 16-byte instruction (an operation, a 16-bit extra immediate, three
+32-bit operands). A local.get copies nothing: its operand reads the
+local's slot until the local changes or a block boundary comes; a small
+constant waits to be written until something needs it in a slot; a
+result that local.set stores is written to the local directly. Branches
+are code indices with the values they carry moved to the target's slots
+when they are elsewhere. A few fusions cut dispatches in hot loops: a
+comparison followed by br_if or if is one compare-and-branch, and i32
+(and some i64) operations with a constant operand take it as an
+immediate. A callee's frame begins at the caller's argument slots, so a
+call copies nothing and its results land where the arguments were; a
+tail call moves its arguments to the frame's first slot and the callee
+takes the frame's place. Code after an unconditional branch is not
+compiled. At every call, back edge, allocation and throw the compiler
+records a safepoint: the slots holding references the collector traces
+(the any, eq, struct, array, i31 and exn hierarchies, and extern, which
+may also hold an embedder's pointer; not the func hierarchy, whose
+values are function instances the store owns). A try or try_table
+becomes a handler over the code of its body with its catch clauses
+(the instance's tag or catch-all, where the payload goes, the target);
+handlers chain to the one around them, a delegate to its target label's
+handler; a clause aimed at the function's own label goes through a
+returning stub. Memory instructions on memory 0 of an i32 memory keep
+the interpreter's fast path; any other memory and every memory64
+access become generic operations (`Wasm.MemoryAccess`), and table
+instructions on a table64 carry a flag.
+
+**The interpreter** (`Wasm.Interpreter` and its include files by group,
+`Wasm.Simd`, `Wasm.Numerics`, `Wasm.GcOperations`, `Wasm.Unwinding`) is
+one loop and one case statement over dense operation numbers in a
+single procedure, so the instruction pointer, the frame and memory 0's
+address and length stay in registers. WebAssembly calls do not recurse
+in Pascal: a call pushes the caller's frame record on the store and
+goes on in the callee, so deep recursion is limited by the store (call
+depth and stack slots, then "call stack exhausted") and never by the
+host thread's stack; tail calls do not push at all, so a million deep
+tail recursion runs in one frame. Host functions are called with the
+frame pushed. A trap jumps to one place that builds the stack trace
+(function index and name, byte offset in the module) from the frame
+records. A thrown exception is looked for in the handlers of the frame
+that threw and then of each caller, popping frames, up to the first
+host boundary, where it leaves as `EWasmException`; one a host function
+raises is caught around the host call and thrown on in the caller.
+Traps are never caught. Loads and stores check the effective address
+against the memory's length without overflow (64-bit address plus
+64-bit offset included); memory may move when it grows, and the
+interpreter reloads its address after calls, memory.grow and generic
+memory operations. Floating point follows IEEE 754 with the exceptions
+masked around execution (the -CE checks of arm64 then never fire): f32
+arithmetic is done in single precision, rounding to integers (ceil,
+floor, trunc, nearest) works on the bits, min and max order the zeros
+and propagate NaNs as the spec says, sign operations never touch NaN
+payloads, and 64-bit integers convert to f32 with a single rounding.
+Shifts and rotations take their counts modulo the width explicitly.
+SIMD lanes are done lane by lane with operands read before the result
+is written, since a result may share slots with an operand. Relaxed
+SIMD behaves as the spec's deterministic profile: every relaxed
+instruction as its plain counterpart (swizzle, trunc_sat, bitselect,
+min, max, q15mulr_sat_s), multiply-add not fused (the product is
+rounded, then the sum), the i8 dot products signed times signed with
+the pairs added with saturation.
+
+**The store** (`Wasm.Runtime`) holds function, table, memory, global and
+tag instances and module instances, owns them until it is destroyed,
+and is meant to be one per agent: there is no global mutable state.
+Types are canonical per store (`Wasm.TypeRegistry`): each rec group is
+registered by its key with outside references as store type ids, so
+equivalent types of different modules are one type; a host function's
+type is a group of one final function type. Each store type records its
+supertype chain, so a run time subtype test (call_indirect, ref.test,
+ref.cast, br_on_cast, import matching) is one comparison, and for
+structs and arrays the layout and the traced fields. The run time's
+types (functions, globals, tables, tags) name store type ids. Modules
+are reference counted (an embedder's handle, and each instance).
+**Instantiation** (`Wasm.Instantiation`) is the spec's order: the
+module's types registered and imports matched (a function's type a
+subtype of the import's, limits and address types, globals equal when
+mutable and a subtype when not, tags by type; a link error makes
+nothing), the instance allocated with tables filled by their
+initializers and globals and element references evaluated (no
+collection meanwhile), then active element and data segments applied
+one by one with bulk memory semantics (a segment that does not fit
+traps and the earlier ones stay written), then the start function.
+
+**Garbage collection** (`Wasm.GcHeap`, `Wasm.PointerTable`,
+`Wasm.GcOperations`). Structs, arrays, exceptions and boxes for host
+values in the any hierarchy live in the store's heap; objects never
+move. A reference is a 64-bit word: 0 is null, an odd word an i31 (its
+31 bits shifted left by one, plus one, so equal i31s are equal words),
+an even one a heap object, a function instance (func hierarchy) or, in
+the extern hierarchy, a pointer the embedder owns; the heap's table of
+live objects tells its own pointers apart without trusting bits, and
+embedder pointers must be even. any.convert_extern boxes a host pointer
+(i31s and objects pass unchanged); extern.convert_any unboxes it again,
+so values round-trip. Struct fields take a slot each in operand order
+(struct.new copies its operands as they are, field accesses carry byte
+offsets and access kinds in the compiled code); array elements take
+their storage size (i8, i16, ...). Collection is mark and sweep with
+mark epochs, started when enough was allocated since the last one
+(Options.CollectionThreshold, at least the live size) and only at
+allocations, which are safepoints: the running frame is recorded first.
+The roots are the store's globals, tables of traced types and element
+segments, the slots of every suspended frame by its safepoint map,
+pinned objects, exposed objects and exceptions in flight (pinned by
+`EWasmException`). The heap's size is capped (Options.MaximumHeapBytes);
+an allocation that does not fit after a collection traps with "out of
+memory".
+
+**The embedder's interface** (`Wasm.Api`): `WasmCompile` (bytes to a
+module or an error, with optional features), `WasmValidate`, import and
+export descriptors with their types (tags too), `WasmInstantiate` (one
+external value per import) or `WasmInstantiateWith` (a resolver),
+`WasmCall` with `TWasmValue` arguments, host functions as methods with
+typed arguments and results that may raise to unwind and may call back
+in (`WasmNewHostFunctionOfType` makes one of a module's own type id, from
+`WasmModuleTypeIds`, so an import of a type in a rec group or with
+supertypes links; `WasmStoreValueType` maps a module value type to the
+store's), and checked access to globals, tables and memories. A memory's
+`OnGrow` tells the embedder after each successful grow (an ArrayBuffer
+over the old memory has to be detached). `OnInterrupt` is asked every
+`InterruptInterval` back edges, calls and tail calls and can stop
+runaway code with a trap of kind `tkInterrupted`. Memories are capped by
+Options.MaximumMemoryBytes. For WebAssembly.Tag and Exception:
+`WasmNewTag`, `WasmTagType`, `WasmNewException`, `WasmExceptionTag`,
+`WasmExceptionPayload`, `WasmThrow` and `WasmThrowException` (raise
+`EWasmException`, which a host function does to throw into its
+caller); an exception leaving WebAssembly is `EWasmException` with Tag,
+Payload and Reference (the exnref, pinned while the Pascal exception
+lives). A JavaScript exception crossing into WebAssembly is thrown with
+the JavaScript layer's own JSTag (a tag with an externref parameter),
+so catch_all and catch of that tag see it. For references:
+`WasmClassifyReference` (null, i31, struct, array, exception, boxed host
+value, function, host value), `WasmMakeI31` / `WasmI31Value`,
+`WasmInternalize` / `WasmExternalize`, `WasmValueMatchesType` (what
+ToWebAssemblyValue checks), and reading and writing struct fields and
+array elements.
+
+The collector and the embedder's: every object handed to the embedder
+(call results, host function arguments, values read through the
+interface, exception payloads) is exposed and stays alive until the
+embedder's next trace; `WasmPin` / `WasmUnpin` (counted) keep objects
+regardless; an embedder without a tracing collector pins what it keeps
+and calls `WasmForgetExposed` now and then. A tracing embedder (the
+JavaScript engine) either (a) at each of its collections calls
+`Store.EnumerateReferences(Visitor)`, which gives every embedder pointer
+the store keeps alive (externrefs in tables, globals, segments, frames
+and inside reachable objects, boxed host values), and keeps them all,
+which is simple but leaves a cycle through both heaps alive until the
+store goes; or (b) traces through both heaps: `Store.BeginHostTrace`
+marks what the store's own roots and pins reach and reports the
+embedder pointers found; for every wasm reference its own marking
+reaches (a wrapper object holding it) the embedder calls
+`Store.TraceFromHost(Reference, Visitor)`, which marks on and reports
+more pointers; when its marking is complete, `Store.EndHostTrace`
+forgets exposed objects the host no longer reached and frees every
+unmarked object. No WebAssembly code may run between Begin and End.
+`EnumerateHostData` visits host functions' data.
+
+**Tests.** `make wasm-test` (tools/WasmTest, part of the host tests)
+compiles small modules written in the text format for each feature
+area of 2.0 and 3.0, checks the traps, host functions, import matching,
+memory growth notifications, the references a collector sees, the
+interrupt hook, objects surviving many collections in globals, locals,
+operands and the host's hands while the garbage goes, the host trace
+protocol and pins, and exceptions leaving to, thrown by and passing
+through host functions; instantiates a sample module given as
+`WASM_SAMPLE`; and prints the interpreter's speed: about 30 to 40
+million calls a second on recursive fib(30), one to two and a half
+billion WebAssembly instructions a second on tight integer and memory
+loops, and two million struct allocations a second with collections,
+on the development machine. `make wasm-spec-test` (tools/WasmSpecTest,
+not part of `make test`) runs the official spec test suite of release
+2.0 with the 2.0 features, downloaded into `~/Downloads/sources/wasm-spec`
+and never committed: all 148 files of test/core and test/core/simd
+pass, 53,984 assertions. `make wasm-spec-test-3` runs release 3.0 (the
+wg-3.0 tag, downloaded into `~/Downloads/sources/wasm-spec-3.0`): test/core
+with its feature directories (gc, exceptions, memory64, multi-memory,
+relaxed-simd, simd, bulk-memory) and test/legacy/exceptions, all 262
+files, 65,214 assertions; `--gc-stress` collects at every allocation
+(they pass that way too). WasmSpecTest has its own parser for the text
+format (folded and flat instructions, abbreviations, numbers rounded
+exactly, `module binary`, `module quote`, `module definition` and
+`module instance`) and the .wast script commands (with `either` results,
+`assert_exception` and the reference patterns of 3.0), with the
+`spectest` host module. The text front end reads WebAssembly 3.0: value
+types are kept in their binary encoding (`WasmText.Types`), type
+definitions with structs, arrays, subtypes and recursion groups
+(`WasmText.TypeDefinitions`), implicit type uses reuse only a final
+function type alone in its group, and the instructions of every 3.0
+proposal are encoded (exception handling with the legacy `try` too,
+tail calls, typed references, GC, memory64 and table64, multiple
+memories, relaxed SIMD); annotations are skipped. `--parse-only` only
+checks that every module encodes (and every text module an
+`assert_malformed` expects to fail does not), and `--dump DIRECTORY`
+writes the encoded modules out. The runner caps its address space (8
+GiB), memories (1 GiB) and the heap (512 MiB).
+
+**Not done yet**: collecting instances, functions and tags before the store
+goes away (only heap objects are collected); a faster path for memory64
+and non-zero memories (generic operations now) and for struct and array
+accesses (calls into `Wasm.GcOperations`); streaming compilation and
+caching compiled code; a faster SIMD path than lane by lane; shared
+memories and threads, stack switching and the other post-3.0 proposals.
+
+### test262
+
+`make test262` (tools/Test262, not part of `make test`) runs test262,
+the ECMAScript conformance suite, from a checkout downloaded by hand
+into `~/Downloads/sources/test262` (`TEST262=` another one, `FILTER=`
+path prefixes under `test/` such as `built-ins/Array`,
+`TEST262_FLAGS=--list` for every failure with its error, `--groups` for
+the pass rate of every second-level directory). The runner is split
+into the frontmatter reader (`Test262.Frontmatter`: includes, flags,
+negative phase and type, features), the harness files read once
+(`Test262.Harness`), the host (`Test262.Host`: `print` and `$262` with
+createRealm (another realm sharing the runtime, as frames do),
+evalScript, detachArrayBuffer, gc and global; modules are files, so
+`./x_FIXTURE.js` loads beside the test), one test's execution
+(`Test262.Execution`: a fresh engine per variant, non-strict and strict
+unless the flags say otherwise, modules once; harness first, then the
+test, then the job queue; a parse error is a script that does not
+compile, a resolution error a module graph that fails before the test
+module runs; asynchronous tests pass by printing
+`Test262:AsyncTestComplete`), the scheduler (`Test262.Scheduler`), the
+known failures (`Test262.Expectations`), the skips (`Test262.Skips`)
+and the report (`Test262.Reporter`: totals, the pass rate per
+directory, the unexpected failures and the newly passing tests).
+
+Each test is forked from the runner into a child that writes one line
+back through a pipe; a crash fails only that test, and a child past the
+time limit (10 s) is killed. The host is shared and has no swap, so
+each child is held to an address space cap (`--memory`, 512 MB, with
+RLIMIT_AS; the engine's heap limit is half of it so a runaway test
+usually ends with the engine's "Out of memory" error) and a CPU time
+limit, and the runner starts no more children than half the cores
+(`--jobs`) and than fit in half the available memory. The whole suite
+(about 51,000 tests run) takes about a minute.
+
+`tools/Test262/expectations.txt` lists the tests known to fail, by
+directory, each with the error it failed with when the list was written
+(`make test262-expectations` rewrites it from a whole run); the run
+fails only on a failure the list does not have, and names the listed
+tests that pass now. `tools/Test262/skipped-features.txt` lists the
+stage 3 proposals not implemented (each with why); the runner also
+skips what this host cannot give: `$262.agent` (no concurrent agents),
+CanBlockIsTrue (the main thread cannot block in Atomics.wait) and
+IsHTMLDDA (no such object). Standard features the engine lacks are not
+skipped: their failures are in the expectations.
+
+### The JavaScript WebAssembly object
+
+The WebAssembly JavaScript Interface and Web API in libweb, with the
+WebAssembly 3.0 features: the `WebAssembly` namespace with validate,
+compile, instantiate (bytes or a Module), compileStreaming and
+instantiateStreaming (all with the compile options of the JS string
+builtins), the JSTag attribute, the interfaces Module (exports, imports,
+customSections), Instance, Memory (buffer, grow, toFixedLengthBuffer,
+toResizableBuffer), Table (length, get, set, grow), Global (value,
+valueOf), Tag, Exception (getArg, is, stack) and the errors CompileError,
+LinkError and RuntimeError. Every window and frame has it, and every
+worker's global scope - dedicated, shared and service workers alike, all
+realms of a window's runtime - has one of its own: `natives.wasmInstall(scope)`
+(called by platform/65-workers.js when it makes a scope) runs the
+platform scripts (every `platform/5x-webassembly*.js`) in the scope's
+realm with natives made in that realm (which carry their window's
+context), so a worker's Modules, Tags, Exceptions, promises and errors
+are its realm's (`e instanceof TypeError` holds there).
+
+**Two halves.** `platform/57-webassembly.js` is the WebIDL side:
+argument counts, dictionaries read member by member in the standard's
+order (each converted as it is read, which the tests watch with
+getters), `[EnforceRange] unsigned long` and the address values of
+memory64, the instantiate overloads, "read the imports" (each import's
+module looked up again - after the builtin sets and string constants -,
+the kind checked: a callable, a Global or a value of the right type, a
+Memory, a Table, a Tag, else a LinkError), promises settled in tasks of
+their own (the bytes copied at the call), and the streaming checks
+(Content-Type exactly `application/wasm`, a CORS-same-origin response,
+an ok status, a body not yet used, read through fetch's own internals so
+a page replacing Response.prototype changes nothing). The errors are
+native error constructors of their own (callable without new, Error as
+their prototype, no toStringTag). `platform/58-webassembly-exceptions.js`
+adds Tag, Exception and JSTag with the helpers 57 leaves in
+`internal.webassembly`. The engine side is Pascal: `Web.Script.NativeWasm`
+(registration, modules, instantiation and the table of natives) with
+`NativeWasmStorage` (memories, tables, globals), `NativeWasmExceptions`
+(tags, exceptions) and `WasmStringBuiltins`; `Web.Script.WasmObjects`
+(the objects that carry engine objects, memory buffers, errors),
+`Web.Script.WasmValues` (values and calls both ways),
+`Web.Script.WasmHostValues` (JavaScript values as host references),
+`Web.Script.WasmReferences` (Exported GC Objects and Exception objects)
+and `Web.Script.WasmAgents` (the store and what is kept with it).
+
+**The store is the agent's.** `TWasmAgent` subclasses libwasm's
+`TWasmStore`, one per top-level context: its frames and its dedicated
+workers are realms of the same runtime on the same thread and share it;
+a shared or service worker's agent has a window and a store of its own.
+It is made when a realm of the runtime first uses WebAssembly and freed
+when the top-level context goes (before its engine, whose objects then
+only release what they held). Beside the store it keeps the JS API's
+caches - one JavaScript object per function, memory, table, global and
+tag, so `instance.exports.f === instance.exports.f` and a memory exported
+twice is one Memory object (a worker's realm, an agent of its own in a
+browser, has caches of its own: WebAssembly.JSTag is a Tag of its realm
+there) -, the weak caches of the collected heap's objects (one Exported
+GC Object per struct or array, one Exception per exception object), the
+current buffer of each memory, the JavaScript exception tag, and per
+realm the prototypes and error constructors its platform scripts
+registered (`wasmRegister`, which also files the realm under its agent:
+natives find their agent by their realm, `AgentOfRealm`).
+
+**Objects.** Module, Memory, Table, Global, Tag and Exception objects are
+host objects whose native data is the engine's object, with the
+registered prototypes (or `new.target`'s, for subclasses); the host
+class is the brand, so an object made with
+`Object.create(WebAssembly.Memory.prototype)` is refused. A Module object
+holds a reference to its compiled `TWasmModule` and releases it when
+collected; its compile options are the platform script's (a WeakMap,
+copied with a clone). structuredClone and postMessage to a frame or a
+dedicated worker (one agent) make a new Module object of the same
+compiled module (a clone hook of the platform script; the window's
+clone runs for a worker's messages too, so a message to a worker that
+had Modules in it is adopted into the worker's realm before it is
+delivered, `internal.adoptModules`); serializing one for another heap -
+a shared or service worker, BroadcastChannel, storage - is a
+DataCloneError, as the standard has it for another agent cluster.
+Instances are ordinary objects of the Instance class whose exports
+object (null prototype, read-only enumerable properties, not
+extensible) is made once; an exported tag is its Tag.
+
+**Exported Functions** are native functions of the realm that first
+needed them: name the function's index, length its parameter count,
+Function.prototype as their prototype, not constructors. A call
+converts the arguments with ToWebAssemblyValue, runs `WasmCall`, and
+gives undefined, the one value, or an array of several (i64 as BigInt);
+a v128 or exnref in the type is a TypeError. **Imported JavaScript
+callables** become host functions of the module's own type id (its rec
+group and supertypes kept, `WasmNewHostFunctionOfType`) whose data is
+the callable; calling one converts the arguments, calls with this
+undefined and converts the result (an iterable for several results).
+Calls nest both ways (an import calling an export calling an import) as
+far as the store allows. Several values are converted in two passes:
+the numbers (whose conversions run JavaScript: valueOf) and the type
+checks of the references in order, then the references are made (which
+allocates boxes nothing marks until WebAssembly holds them). Values only
+Pascal holds while JavaScript may run are pushed as temporary roots.
+
+**Values.** ToWebAssemblyValue: i32 by ToInt32, i64 by ToBigInt64, f32
+rounded to single precision, f64; references by hierarchy - func: null
+or an Exported Function of a matching type; any: a Number that is an
+integer in the i31 range (not -0) is an i31, an Exported GC Object its
+struct or array, any other value a host value (boxed in libwasm's heap,
+`WasmInternalize`), and the result must match the type (an i31 is no
+structref, a host value only an anyref, null only a nullable type);
+extern: the same, externalized - so `any.convert_extern` of the number
+5 is an i31, as the standard has it. A mismatch is a TypeError (a
+LinkError for a global import, as "read the imports" has it). ToJSValue:
+an i31 is a Number, a struct or array its Exported GC Object, a host
+value the value itself. The value type names of Global, Table and Tag are
+the JS API's (i32 ... externref, anyfunc) and, as engines take them,
+funcref, anyref, eqref, i31ref, structref, arrayref, nullref, nullfuncref,
+nullexternref and exnref (no exnref global or table can be used from
+JavaScript).
+
+**Host words.** libwasm reads a reference word as null (0), an i31 (odd),
+an object of its heap, or else a pointer the embedder owns, which must
+be even (`Web.Script.WasmHostValues`). A JavaScript value is a NaN-boxed
+word: objects, strings, symbols, BigInts, undefined and false are even
+and are their own host word (null is the null reference). A number is
+never its own word - an integer's or a double's bits may be odd, zero
+(+0) or look like a heap address - and neither is true (odd): numbers in
+the i31 range become i31s, every other number and true goes into a box,
+a small cell of the JavaScript heap whose word is its address under the
+integer tag (free in host words, since numbers are never there
+otherwise). Decoding undoes it, so every value - 3, 2^31+1, 4.5, -0, NaN,
+true - comes back the same (`Object.is`) from any place WebAssembly keeps
+it: struct fields, arrays, globals, tables, exception payloads, the any
+hierarchy.
+
+**Exported GC Objects** (`Web.Script.WasmReferences`) are exotic objects
+with no properties: the prototype is null and cannot be set, they are
+not extensible and cannot be made so (Object.preventExtensions, seal and
+freeze throw: libjavascript's integrity operations throw when an exotic
+object refuses), reads give undefined, writes and deletions are
+TypeErrors; typeof is "object", and they are Map and WeakMap keys like
+any object. One per struct or array, while either lives.
+
+**Two collectors, one trace.** The agent is a root provider of the
+JavaScript heap and follows libwasm's tracing protocol b: when a
+collection starts it marks its caches, buffers, registered prototypes
+and the callables behind host functions (`EnumerateHostData`) and calls
+`Store.BeginHostTrace`, which marks what the store's own roots reach
+(tables, globals, element segments, the live slots of suspended frames
+by the compiler's safepoint maps, pinned objects such as an exception in
+flight) and gives every host word it meets to the marking (a box marks
+itself, a value its cell). An Exported GC Object or an Exception, when
+the marking reaches it, calls `Store.TraceFromHost` for its object, which
+marks on in libwasm and gives more host words back. When marking is
+done (the weak processors' last phase) the wrappers left unmarked leave
+the caches and `Store.EndHostTrace` frees every object of libwasm's heap
+nothing reached. So a struct holding a JavaScript object that holds the
+struct's wrapper is garbage like any cycle, an object only WebAssembly
+holds keeps the JavaScript values in it, and libwasm's own collections
+(it collects by itself as it allocates) keep what JavaScript holds: a
+wrapper's object stays exposed for as long as the wrapper is traced.
+
+**Exceptions.** A Tag is a tag of the store: made by `new
+WebAssembly.Tag({ parameters })`, imported (the import kind "tag", a Tag
+object required) and exported. An Exception is an exception object of
+libwasm's heap: `new WebAssembly.Exception(tag, payload, { traceStack })`
+(not of JSTag; v128 and exnref payloads refused), getArg(tag, index) -
+the tag first, as engines and the tests have it -, is(tag), and stack
+(a string with traceStack, else undefined). A WebAssembly exception
+leaving WebAssembly (`EWasmException` out of `WasmCall` or a start
+function) becomes its Exception, the same object every time
+(`ThrowEscapedException`); an exception thrown by an imported callable
+or by a conversion of its result goes into WebAssembly as a WebAssembly
+exception: a WebAssembly.Exception is its own exception object again
+(`WasmThrowException`), any other value an exception of the agent's
+JavaScript tag (`WebAssembly.JSTag`, made on first use: (externref) ->
+()) with the value as its payload, which catch_all and catch $JSTag see
+- and leaving WebAssembly again an exception of that tag is its value.
+So a JavaScript exception crosses WebAssembly frames unchanged (the same
+object after throw_ref), an Exception rethrown from JavaScript is the
+same exception to WebAssembly, and a trap stays a trap (catch_all never
+sees it; once it has become a RuntimeError in JavaScript it is a
+JavaScript exception like any other). Only the watchdog's termination
+unwinds WebAssembly frames uncatchably (`EWasmScriptException`).
+
+**Address types.** Memory and Table descriptors take `address: "i64"`
+(memory64, table64): sizes, maxima, deltas and indices are then BigInts
+both ways (AddressValueToU64: ToBigInt, a TypeError outside 0 .. 2^64-1,
+`wasmToAddress`), Numbers for "i32" as before; the memory and table types
+built carry the address type, and a module's i64 memory or table import
+needs an i64 one.
+
+**String builtins.** Compiled with `{ builtins: ["js-string"] }`, a
+module's imports from `wasm:js-string` that name a builtin - cast, test,
+fromCharCodeArray, intoCharCodeArray, fromCharCode, fromCodePoint,
+charCodeAt, codePointAt, length, concat, substring, equals, compare - are
+the engine's: host functions of the builtins' own types (each a rec
+group of its own, the i16 array's too, registered from a module of just
+those types) working on the JavaScript strings externrefs hold; with
+`importedStringConstants: "m"` every import of module m is a string
+constant, its name. Both are checked at compile time (an import of the
+wrong type is a CompileError), left out of Module.imports, and looked up
+before the import object. A value that is no string, an index out of
+range and the like trap.
+
+**Memory buffers.** A memory's buffer is an ArrayBuffer over the
+memory's own bytes (libjavascript's external buffers) with a detach
+key: `HostDetachOnly` makes transfer() and transfer lists refuse it. A
+growth - memory.grow from script or from WebAssembly, even by 0 pages -
+reaches the agent through `TWasmMemory.OnGrow`, which detaches the
+buffer before the old bytes are freed; the next `buffer` is a new one
+over the new bytes. toResizableBuffer gives a resizable buffer instead
+(its maximum the memory's): it follows the memory's growth, and its
+resize() grows the memory by whole pages through libjavascript's
+`HostResize` hook (a length that is not a page multiple, or smaller, is
+a RangeError).
+
+**Errors.** A module that does not decode or validate is a
+CompileError ("WebAssembly module is malformed/invalid: reason @+offset"),
+a failed link a LinkError, a trap a RuntimeError whose stack begins with
+the WebAssembly frames ("at name (wasm-function[i]:0xoffset)") before
+the JavaScript ones, call stack exhaustion (the store's depth or slots)
+a RangeError, a memory or table that cannot be had a RangeError, a
+shared memory a TypeError (no threads yet).
+
+**CSP.** Compiling (the Module constructor, compile, instantiate with
+bytes, the streaming functions) asks `CspBlocksWasm`: a script-src (or
+default-src) without 'unsafe-eval' or 'wasm-unsafe-eval' refuses it
+with a CompileError and reports a violation of script-src with the
+blocked URI "wasm-eval", as eval's are reported; validate is not
+compilation and still answers.
+
+**Long work.** The store's interrupt hook (asked every million back
+edges and calls) answers the runtime's `InterruptRequested`, which the
+slow script watchdog sets for an entry running longer than its limit: a
+module looping for ever traps with `tkInterrupted`, and the Exported
+Function that called in turns that into the engine's uncatchable
+termination, so it ends exactly as a looping script does (a try around
+the call does not stop it, the console says the script was stopped, the
+page's next scripts run). Page code, WebAssembly included, does not
+answer the browser's pings (`NoteLongWorkStep` is for the engine's own
+work of known length): a renderer busy in a module is shown as not
+responding after the hang timeout, while the browser and its other tabs
+go on, since the browser never waits for a renderer (its sends never
+block, its IPC thread keeps what a renderer does not read).
+
+**Tests.** WebScriptTest's `webassembly.js` assembles modules with a
+small encoder and checks the surface, conversions, multiple results,
+traps and their stacks, call stack exhaustion, exceptions through
+WebAssembly, re-entrant calls, memories (buffers detached by growth
+from both sides, transfer refused, resizable buffers), tables,
+globals, externrefs kept through collections, structured clone, a
+Module sent to a dedicated worker, the promises (settled later) and the
+streaming functions over Response objects and the bed's fetch
+(`/module.wasm`); `webassembly-references.js` the Exported GC Objects,
+the type checks, i31 numbers, 27 kinds of values (odd numbers, -0, NaN,
+true, symbols, BigInts, structs ...) through every place an externref is
+kept, objects kept by each collector for the other, a cycle through both
+heaps collected (WeakRef), the string builtins and constants;
+`webassembly-exceptions.js` Tag, Exception and JSTag, JavaScript values
+caught by catch $JSTag and catch_all and rethrown unchanged, exception
+identity both ways, traps not caught, memory64 and table64, and all of
+it in a dedicated worker; WebScriptTest.WasmLifetime counts libwasm's
+heap and the wrapper cache from Pascal (structs freed with their
+wrappers, cycles freed in one collection, a struct a global holds kept,
+libwasm's own collection keeping what JavaScript holds). All of it also
+passes with `JS_GC_STRESS=1`. The watchdog tests stop a looping module
+and one called again from a catch; WebLoadTest's security tests check
+the CSP cases. The official tests, on the host: WPT `wasm/jsapi` (a
+WebScriptTest bed with the real testharness.js, every `.any.js` but
+idlharness, JSPI and ESM integration) passes 1002 of 1061 - the failures
+are type reflection (WebAssembly.Function, the type() methods, the
+"minimum" descriptor member: 51), shared memories (6), the module
+source intrinsics of ESM integration (3) and getArg's index conversion,
+where WPT expects a RangeError and the IDL's [EnforceRange] (and the
+spec's own copy of the test) a TypeError; the WebAssembly 3.0 spec's
+`test/js-api` copy (with the memory64 and table64 cases and JSTag's
+test) passes 1058 of 1062 (Exception.length, which it expects as 1 and
+WPT as 2; a Global setter called without an argument, likewise
+contradicted by WPT; a shared memory; the limits test compiling a
+million types runs out of time). `wasm/webapi`, through webbrowse
+against WPT's own server, passed all but JSTag in its IDL test before
+JSTag existed.
+
+hCaptcha's demo page loads its checkbox frame's hsw.js, whose embedded
+module (about 1 MB, 198 imports, 24 exports) compiles and is
+instantiated in the frame at load, without errors.
 
 ## Network drivers
 
@@ -15017,6 +15633,8 @@ error) over `TScriptEnvironment`:
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 55-serialization | StructuredSerialize to text and back, for values going to another heap (worker agents, BroadcastChannel, message links): primitives, arrays, objects, the wrapper objects, Date, RegExp, Map, Set, errors, ArrayBuffer, typed arrays and DataView, Blob, File, transferred ports |
+| 57-webassembly | the WebAssembly namespace (see "The JavaScript WebAssembly object") |
+| 58-webassembly-exceptions | WebAssembly.Tag, WebAssembly.Exception and WebAssembly.JSTag (the same section) |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort (over message links when its other side is in another heap), BroadcastChannel across the process |
 | 65-workers | dedicated workers (a realm of the window's runtime) and the runner the shared and service workers' scopes are made with |
 | 66-shared-workers | SharedWorker and the shared worker's side in its agent |
@@ -16878,9 +17496,11 @@ and the encoding override in frames.
 
 ## Browser
 
-`browser` (`userland/browser`, installed as `/app/browser`: "Browser"
-in the Internet category with the `app-web-browser` icon) is a web
-browser on libwebview (its pages in content processes: "Browser process
+`browser` (`userland/browser`, installed as `/app/browser`) is Tuxcat,
+the web browser: "Tuxcat" in the Internet category, its window titles,
+menus and About box, with the `app-web-browser` icon (also
+`app-tuxcat`), a tuxedo cat drawn by `userland/icons/iconkit/cats.py`
+like the rest of the set. It is a web browser on libwebview (its pages in content processes: "Browser process
 model" below), linked with libquic for HTTP/3. Its chrome - the windows,
 menus, toolbars, dialogs, history, bookmarks, downloads and settings -
 lives in the browser process, laid out and used as browsers were before

@@ -340,8 +340,8 @@ function TAboutPages.HelpPage: string;
   end;
 
 begin
-  Result := ThemedPage('Browser Help',
-    '<header><h1>Browser Help</h1><p>Getting around the browser</p></header><main>' +
+  Result := ThemedPage('Tuxcat Help',
+    '<header><h1>Tuxcat Help</h1><p>Getting around the browser</p></header><main>' +
     '<h2>The window</h2><p>From the top: the menu bar (View &gt; Toolbars hides it; Alt shows it again), the ' +
     'Navigation Toolbar (Back and Forward - hold them or right-click for the pages before and after; Reload, Stop, ' +
     'Home; the location bar; the search bar), the Bookmarks Toolbar, the tabs, the page, the find bar and the ' +
@@ -379,7 +379,7 @@ var
 
 begin
   Rows := '';
-  Row('Name', 'Browser');
+  Row('Name', 'Tuxcat');
   Row('Version', '2.0');
   Row('User agent', WebViewUserAgent);
   Row('Profile folder', BrowserProfileFolder);

@@ -110,7 +110,7 @@ begin
   AddLabel(Group, 'MB of space for the cache', 176, GroupTop + 28, 200);
   Tab := FTabs.AddPage('Update');
   Group := AddGroupIn(Tab, 'Automatically check for updates to', 8, 84);
-  FCheckUpdates := AddCheck(Group, '&Browser', 10, GroupTop);
+  FCheckUpdates := AddCheck(Group, '&Tuxcat', 10, GroupTop);
   AddLabel(Group, 'Browser is updated with the system itself.', 10, GroupTop + 26, 400);
   Tab := FTabs.AddPage('Encryption');
   Group := AddGroupIn(Tab, 'Protocols', 8, 72);

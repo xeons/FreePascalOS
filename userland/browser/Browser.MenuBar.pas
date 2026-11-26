@@ -262,7 +262,7 @@ begin
   Menu.AddSeparator;
   AddCommand(B, Menu, 'Check for &Updates...', CommandCheckUpdates);
   Menu.AddSeparator;
-  AddCommand(B, Menu, '&About Browser', CommandAbout);
+  AddCommand(B, Menu, '&About Tuxcat', CommandAbout);
 end;
 
 procedure BuildBrowserMenus(Window: TControlWindow; Parent: TControl; Run: TMenuItemEvent; out Menus: TBrowserMenus);

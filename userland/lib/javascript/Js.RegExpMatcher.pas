@@ -39,13 +39,16 @@ unit Js.RegExpMatcher;
 interface
 
 uses
+  SysUtils,
   Js.Strings,
   Js.RegExpCompiler;
 
 type
   TRxCaptures = array of Integer;
 
-  TRxOutcome = (roNoMatch, roMatch, roInterrupted);
+  { roOutOfMemory: the backtracking stack could not grow (the memory
+    is given back; the caller throws a RangeError). }
+  TRxOutcome = (roNoMatch, roMatch, roInterrupted, roOutOfMemory);
 
   TRxMatcher = class
   private type
@@ -459,8 +462,17 @@ begin
   FInterrupted := False;
   for Index := 0 to High(Captures) do
     Captures[Index] := -1;
-  if Run(0, Position, EndPosition) then
-    Exit(roMatch);
+  try
+    if Run(0, Position, EndPosition) then
+      Exit(roMatch);
+  except
+    on EOutOfMemory do
+    begin
+      FStack := nil;
+      FStackCount := 0;
+      Exit(roOutOfMemory);
+    end;
+  end;
   if FInterrupted then
     Exit(roInterrupted);
   Result := roNoMatch;

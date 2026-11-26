@@ -53,15 +53,27 @@ start_server() {
     if [[ " $* " == *" -tls1_2 "* || " $* " == *" -min_protocol "* ]]; then
         version=()
     fi
-    openssl s_server -quiet -accept "$port" "${version[@]}" -www "$@" > /dev/null 2>&1 &
-    server_process=$!
-    # Wait until it listens.
-    for _ in $(seq 1 50); do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2> /dev/null; then
-            return
-        fi
-        sleep 0.1
+    # Wait until it listens (a loaded host can take seconds to start
+    # OpenSSL); a server that exits at once found its port taken, so the
+    # next port is tried.
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        openssl s_server -quiet -accept "$port" "${version[@]}" -www "$@" > /dev/null 2>&1 &
+        server_process=$!
+        for _ in $(seq 1 300); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2> /dev/null; then
+                return
+            fi
+            if ! kill -0 "$server_process" 2> /dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        stop_server
+        port=$((port + 1))
     done
+    echo "FAIL s_server did not start (last port $port)"
+    failures=$((failures + 1))
 }
 
 stop_server() {

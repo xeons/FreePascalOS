@@ -635,6 +635,35 @@ begin
   Pair := AllocateRegisters(2);
   Prototype := Pair + 1;
   Emit(opMakeClass, Pair, Constructor_, Heritage);
+  { The class slots, numbered before the initializers are compiled (they
+    read them): the computed field keys, and the instance private
+    methods and accessors the instance initializer installs. }
+  InstanceSlots := 0;
+  StaticSlots := 0;
+  for Index := 0 to Node.Count - 1 do
+  begin
+    Member := Node.List[Index];
+    Flags := Member.Flags;
+    if ((Flags and PropertyFlagStaticBlock) <> 0) or (Member = ConstructorMember) then
+      Continue;
+    if (Flags and PropertyFlagField) <> 0 then
+    begin
+      if (Flags and PropertyFlagComputed) = 0 then
+        Continue;
+    end
+    else if ((Flags and PropertyFlagPrivate) = 0) or ((Flags and PropertyFlagStatic) <> 0) then
+      Continue;
+    if (Flags and PropertyFlagStatic) <> 0 then
+    begin
+      Member.Number := StaticSlots;
+      Inc(StaticSlots);
+    end
+    else
+    begin
+      Member.Number := InstanceSlots;
+      Inc(InstanceSlots);
+    end;
+  end;
   InstanceInit := -1;
   StaticInit := -1;
   if Node.C <> nil then
@@ -650,8 +679,6 @@ begin
     CompileFunctionNode(Node.D, StaticInit, '<static_initializer>', True);
     Emit(opSetHome, StaticInit, Pair);
   end;
-  InstanceSlots := 0;
-  StaticSlots := 0;
   for Index := 0 to Node.Count - 1 do
   begin
     Member := Node.List[Index];
@@ -670,19 +697,11 @@ begin
       if Computed then
       begin
         Key := CompileKey(Member.A, True, -1);
+        Slot := Trunc(Member.Number);
         if IsStatic then
-        begin
-          Slot := StaticSlots;
-          Inc(StaticSlots);
-          Emit(opSetClassSlot, StaticInit, Slot, Key);
-        end
+          Emit(opSetClassSlot, StaticInit, Slot, Key)
         else
-        begin
-          Slot := InstanceSlots;
-          Inc(InstanceSlots);
           Emit(opSetClassSlot, InstanceInit, Slot, Key);
-        end;
-        Member.Number := Slot;
       end;
       ReleaseTo(MemberMark);
       Continue;
@@ -703,10 +722,7 @@ begin
       end
       else
       begin
-        Slot := InstanceSlots;
-        Inc(InstanceSlots);
-        Member.Number := Slot;
-        Emit(opSetClassSlot, InstanceInit, Slot, Value);
+        Emit(opSetClassSlot, InstanceInit, Trunc(Member.Number), Value);
       end;
       ReleaseTo(MemberMark);
       Continue;

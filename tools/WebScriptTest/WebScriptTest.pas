@@ -44,6 +44,7 @@ uses
   Web.Bindings.Context,
   WebScriptTest.Harness,
   WebScriptTest.Lifetime,
+  WebScriptTest.WasmLifetime,
   WebScriptTest.Watchdog;
 
 procedure RunScripts(const Directory: string);
@@ -94,6 +95,7 @@ begin
   else
     RunScripts('tools/WebScriptTest/scripts');
   RunLifetimeTests;
+  RunWasmLifetimeTests;
   RunWatchdogTests;
   FinishChecks('web script test');
 end.

@@ -29,6 +29,9 @@
   counts towards the heap's bytes, so large buffers make collections
   come sooner.
 
+  A buffer the host marks HostDetachOnly (a WebAssembly memory's) is
+  detached by the host alone; script cannot transfer it.
+
   A typed array is an integer-indexed exotic object: the canonical
   numeric keys ("0", "-0", "1.5", "Infinity"...) are its elements or
   nothing, never ordinary properties; other keys are ordinary. Its
@@ -65,6 +68,13 @@ type
   { Frees memory a host handed to NewExternalArrayBuffer. }
   TJsBufferFreeProc = procedure(Data: Pointer; ByteLength: SizeInt; Context: Pointer);
 
+  TJsArrayBuffer = class;
+
+  { A host's resizing of a buffer whose memory it owns (a WebAssembly
+    memory's resizable buffer): it sets Data and ByteLength itself;
+    False is a RangeError. }
+  TJsBufferResizeHook = function(Buffer: TJsArrayBuffer; NewByteLength: SizeInt): Boolean of object;
+
   TJsArrayBuffer = class(TJsObject)
   public
     Data: PByte;
@@ -78,6 +88,12 @@ type
     External: Boolean;
     FreeProc: TJsBufferFreeProc;
     FreeContext: Pointer;
+    { The buffer has a detach key ([[ArrayBufferDetachKey]]): only its
+      host may detach it (a WebAssembly memory's buffer); transfer and
+      transfer lists throw a TypeError. }
+    HostDetachOnly: Boolean;
+    { Set for a resizable buffer of host memory: resize asks the host. }
+    HostResize: TJsBufferResizeHook;
     destructor Destroy; override;
     function MemorySize: SizeInt; override;
     { Lets go of the data without freeing it (transfer, the host taking
@@ -180,7 +196,8 @@ function NewTypedArrayObject(R: TJsRealm; Prototype: TJsObject; Kind: TJsTypedAr
   ByteOffset, Length: SizeInt): TJsTypedArray;
 { Detaches a buffer and hands its bytes to the caller, who frees them
   with FreeMem (memory a host lent is copied first and given back).
-  False when the buffer is already detached or the copy failed. }
+  False when the buffer is already detached, only its host may detach
+  it, or the copy failed. }
 function TakeArrayBufferData(R: TJsRealm; Buffer: TJsArrayBuffer; out Data: Pointer; out ByteLength: SizeInt): Boolean;
 { The bytes an ArrayBuffer, SharedArrayBuffer, typed array or DataView
   shows (a view: its window). False for anything else, or a detached
@@ -441,6 +458,7 @@ begin
   Detached := True;
   External := False;
   FreeProc := nil;
+  HostResize := nil;
 end;
 
 procedure TJsArrayBuffer.Detach;
@@ -812,7 +830,7 @@ function TakeArrayBufferData(R: TJsRealm; Buffer: TJsArrayBuffer; out Data: Poin
 begin
   Data := nil;
   ByteLength := 0;
-  if Buffer.Detached then
+  if Buffer.Detached or Buffer.HostDetachOnly then
     Exit(False);
   ByteLength := Buffer.ByteLength;
   if Buffer.External or (Buffer.Data = nil) then

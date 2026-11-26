@@ -1,0 +1,20 @@
+# test262 features the runner does not run: stage 3 proposals (test262's
+# features.txt, "Proposed language features") libjavascript does not
+# implement yet. Standard features the engine lacks are not listed here;
+# their failures are in expectations.txt. One feature per line, then why.
+
+Intl.Era-monthcode                    # Temporal calendar eras and month codes; needs Temporal
+Intl.Locale-info                      # Intl.Locale week, hour cycle and text info getters
+ShadowRealm                           # isolated realms with a callable boundary
+decorators                            # class and member decorators
+source-phase-imports                  # import source x from "..." (module source objects)
+source-phase-imports-module-source    # the test262 <module source> specifier of the above
+import-defer                          # import defer * as ns (deferred module evaluation)
+export-defer                          # export defer (deferred re-exports)
+import-text                           # import ... with { type: "text" }
+import-bytes                          # import ... with { type: "bytes" }
+immutable-arraybuffer                 # ArrayBuffer.prototype.transferToImmutable and friends
+nonextensible-applies-to-private      # private fields refused on non-extensible objects
+await-dictionary                      # Promise.allKeyed and Promise.allSettledKeyed
+error-stack-accessor                  # Error.prototype.stack as a standard accessor
+Iterator.prototype.join               # Iterator.prototype.join

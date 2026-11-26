@@ -35,7 +35,10 @@
     securitypolicyviolation events, reports to report-uri;
   - 'strict-dynamic': a script inserted by a nonced one runs, a
     parser-inserted one without the nonce does not;
-  - html5test's CSP 1.0 case: a frame whose meta policy refuses eval.
+  - html5test's CSP 1.0 case: a frame whose meta policy refuses eval;
+  - WebAssembly: script-src without 'unsafe-eval' or 'wasm-unsafe-eval'
+    refuses compiling (CompileError, a "wasm-eval" violation), while
+    validate still answers; 'wasm-unsafe-eval' allows it but not eval.
 }
 unit WebLoadTest.Security;
 
@@ -312,12 +315,59 @@ begin
   end;
 end;
 
+{ The policy's answer to WebAssembly in a page: what the page logged. }
+function WasmUnderPolicy(const Policy: string): string;
+const
+  { (module) }
+  EmptyModule = 'new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])';
+var
+  Run: TSecurityRun;
+begin
+  Run := TSecurityRun.Create;
+  try
+    Run.Environment.Site.AddRoute('wasm.test/page.html', 200, 'Content-Type: text/html|' +
+      'Content-Security-Policy: ' + Policy,
+      '<!DOCTYPE html><p id="out">x</p><script>var log = [];' +
+      'document.addEventListener("securitypolicyviolation", function (e) {' +
+      ' log.push("violation " + e.effectiveDirective + " " + e.blockedURI); });' +
+      'log.push("validate " + WebAssembly.validate(' + EmptyModule + '));' +
+      'try { new WebAssembly.Module(' + EmptyModule + '); log.push("module made"); }' +
+      ' catch (e) { log.push("module " + e.name); }' +
+      'try { eval("1"); log.push("eval ran"); } catch (e) { log.push("eval " + e.name); }' +
+      'WebAssembly.compile(' + EmptyModule + ').then(function () { log.push("compiled"); },' +
+      ' function (e) { log.push("compile " + e.name); }).then(function () { setTimeout(function () {' +
+      ' document.getElementById("out").textContent = log.join("|") + "|done"; }, 50); });</script>');
+    Run.Navigable.NavigateTo('https://wasm.test/page.html');
+    Check(Run.Environment.RunUntil(@Run.Done, 10000), 'csp wasm: the page finished (' + Policy + ')');
+    Result := Run.Output;
+  finally
+    Run.Free;
+  end;
+end;
+
+procedure CheckWasmPolicy;
+var
+  Text: string;
+begin
+  Text := WasmUnderPolicy('script-src ''unsafe-inline''');
+  Check((Pos('validate true|module CompileError|eval EvalError|', Text) = 1) and (Pos('compile CompileError', Text) > 0),
+    'csp wasm: compiling refused without ''wasm-unsafe-eval'' (' + Text + ')');
+  Check(Pos('violation script-src wasm-eval', Text) > 0, 'csp wasm: the violation event (' + Text + ')');
+  Text := WasmUnderPolicy('script-src ''unsafe-inline'' ''wasm-unsafe-eval''');
+  Check((Pos('validate true|module made|eval EvalError|', Text) = 1) and (Pos('compiled', Text) > 0) and
+    (Pos('violation script-src wasm-eval', Text) = 0), 'csp wasm: ''wasm-unsafe-eval'' allows compiling (' + Text + ')');
+  Text := WasmUnderPolicy('script-src ''unsafe-inline'' ''unsafe-eval''');
+  Check(Pos('validate true|module made|eval ran|compiled|', Text) = 1,
+    'csp wasm: ''unsafe-eval'' allows compiling (' + Text + ')');
+end;
+
 procedure RunSecurityTests;
 begin
   CheckWebSocketApi;
   CheckPolicies;
   CheckStrictDynamic;
   CheckMetaPolicyInFrame;
+  CheckWasmPolicy;
 end;
 
 end.

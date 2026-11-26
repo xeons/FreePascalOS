@@ -199,6 +199,12 @@ begin
     Exit(R.ThrowRangeError('Invalid array buffer length'));
   if Shared and (NewLength < Buffer.ByteLength) then
     Exit(R.ThrowRangeError('SharedArrayBuffer cannot shrink'));
+  if Assigned(Buffer.HostResize) then
+  begin
+    if not Buffer.HostResize(Buffer, NewLength) then
+      Exit(R.ThrowRangeError('The buffer cannot be resized to that length'));
+    Exit(JsUndefined);
+  end;
   if not ResizeArrayBuffer(R, Buffer, NewLength) then
     Exit(R.ThrowRangeError('Array buffer allocation failed'));
   Result := JsUndefined;
@@ -281,6 +287,8 @@ begin
     Exit(JsException);
   if Buffer.Detached then
     Exit(R.ThrowTypeError('Cannot perform ArrayBuffer.prototype.' + Method + ' on a detached ArrayBuffer'));
+  if Buffer.HostDetachOnly then
+    Exit(R.ThrowTypeError('Cannot perform ArrayBuffer.prototype.' + Method + ' on an ArrayBuffer that cannot be detached'));
   MaxLength := -1;
   if (Callee.Magic = 0) and Buffer.Resizable then
     MaxLength := Buffer.MaxByteLength;
