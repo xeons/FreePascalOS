@@ -1983,6 +1983,40 @@ in the order they would be built:
       manifests' content, then C for classes where a crash matters more
       than speed.
 
+## Media (libmedia)
+
+- [x] libmedia: frame records (`Media.Frames`, the contract with the video
+      libraries), tracks and packets, the demuxer and decoder classes, the
+      video decoder registry, `ConvertFrameToBgra` (BT.601/709/2020, SMPTE
+      240M, FCC, identity; limited and full range; 10/12-bit)
+- [x] Containers: WAV (RIFF, RF64, extensible), native FLAC (seek table,
+      bisection), Ogg (Vorbis, Opus, FLAC; chained; granule timing;
+      bisection seeking), Matroska/WebM (lacing, header stripping, unknown
+      sizes, cues, DiscardPadding, CodecDelay), MP4 (sample tables, edit
+      lists, fragmented MP4 read as it is appended), MP3 (ID3, Xing/LAME
+      gapless, VBRI, seeking)
+- [x] Audio decoders: PCM, FLAC (bit exact, MD5 checked), Vorbis (within
+      2e-7 of libvorbis), Opus (SILK, CELT, hybrid, multistream; RFC 8251
+      vectors with exact final ranges), MP3 (MPEG-1/2/2.5 Layer III, ISO
+      11172-4 full accuracy)
+- [x] Resampler (polyphase Kaiser windowed sinc), channel mixer (BS.775
+      downmix), conversion to the audio devices' sample kinds
+- [x] `mediaplay`: playback on the audio device, `-i` track info, `-k`
+      decoding checksums (per video frame once a video library registers)
+- [x] `make media-test` (host, fixtures from ffmpeg/flac/lame at build
+      time) and a coretest line
+- [ ] Register libvideo's (VP8, VP9) and libav1's decoders with
+      `Media.VideoDecoders.RegisterVideoDecoder` and link them into
+      mediaplay, so `-k` gives per-frame checksums of WebM/MP4 video
+- [ ] MP3 Layers I and II; Vorbis floor 0 and MP3 intensity stereo / mixed
+      blocks checked against streams that use them (no host encoder writes
+      them); Theora timing in Ogg; mfra-based MP4 seeking; zlib-compressed
+      Matroska frames
+- [ ] A player application (video window, seeking bar, playlists) and the
+      browser's HTMLMediaElement / MSE on libmedia (next batch)
+- [ ] Decoding audio ahead in a thread of its own while playing (mediaplay
+      decodes and writes on one thread)
+
 ## Planned: 3D graphics (OpenGL and Vulkan)
 
 - [ ] **Kernel GPU interface** (a DRM/KMS-like role, generic names):

@@ -5240,6 +5240,264 @@ stopping, and the 3D calculations: panning in stereo, 5.1 and 7.1,
 distance, curves, cones, emitter channels, the inner radius, Doppler,
 and a voice placed and moving to one side.
 
+## Media (libmedia)
+
+`libmedia.so` (`userland/lib/media`, units `Media.*`) reads media files
+and decodes their audio: the containers, the audio codecs, the records
+decoded frames come in, colour conversion for video frames, resampling
+and channel mixing to an output's format. Video codecs are libraries of
+their own (libvideo for VP8 and VP9, libav1) that produce libmedia's
+frame records and register themselves with it. Everything is Free
+Pascal, pure CPU, royalty-free formats only (no H.264, HEVC or AAC
+decoding; those are recognised so a file can say what it holds).
+
+### Frames, packets and the decoder contract
+
+`Media.Frames` is the contract with the video decoders: `TVideoFrame`
+(display size, bit depth 8/10/12, layout 4:2:0, 4:2:2, 4:4:4 or
+monochrome, three `TVideoPlane`s of 1 or 2-byte little-endian samples
+with their stride, the H.273 colour primaries, transfer and matrix codes,
+full or limited range, the presentation time) and `TAudioBuffer`
+(rate, channels, interleaved floats -1..1 in the WAVE / SMPTE order:
+front left, front right, centre, LFE, back left, back right, side left,
+side right). `ConvertFrameToBgra` (`Media.ColorConversion`) turns a
+frame into BGRA pixels: BT.601, BT.709, BT.2020, SMPTE 240M, FCC or the
+identity matrix (unspecified: BT.709 above 576 lines), limited or full
+range, 10 and 12-bit samples brought to 8, as integer arithmetic with 16
+fraction bits; chroma is upsampled by repetition.
+
+`Media.Packets` has the tracks and packets. A `TMediaTrack` carries its
+kind, `TCodecId`, the container's codec name, a time base, rate and
+channels or picture size, and the codec's setup in a form that does not
+depend on the container (`Headers`): Vorbis' three header packets, the
+OpusHead packet (an MP4 dOps box is turned into it), FLAC's 34-byte
+STREAMINFO, the vpcC / av1C box bodies. `CodecDelay` is what the decoder
+drops at the start (Opus pre-skip, MP3 encoder delay); a packet's
+`TrimStart` / `TrimEnd` are what it drops from that packet (Ogg granule
+positions, Matroska DiscardPadding, the last FLAC or MP3 frame). Times
+are in the track's time base (`ToMicroseconds`, `ScaleTime` without
+overflow for nanosecond bases).
+
+`TMediaDemuxer` (`Media.Demuxers`): `Recognizes` (by signature, never by
+name), `Open`, `ReadPacket` (all tracks, in file order), `SeekTo`
+(microseconds; the next packets start at or before the target, video at
+a key frame) and `Duration`. `Media.Containers.OpenMediaFile` shows the
+first 64 KiB to each demuxer in turn. `TAudioDecoder`
+(`Media.AudioDecoders`): `Configure(Track)`, `Decode(Packet, Buffer)`
+(applying the delay and trims), `Reset` after a seek;
+`Media.AudioCodecs.CreateAudioDecoder` makes the one for a track.
+`TVideoDecoder` (`Media.VideoDecoders`): `Configure`, `SendPacket`,
+`ReceiveFrame` (frames in presentation order), `Flush` and `Reset`, found
+through `RegisterVideoDecoder` / `CreateVideoDecoder` since the video
+libraries are separate. Broken input raises `EMediaError`
+(`EMediaUnsupported` for valid files using what is not decoded); a
+decoder can take the next packet after one it refused.
+
+### Containers
+
+- **WAV** (`Media.Wav`): RIFF and RF64 WAVE, PCM 8 to 32 bits, floats
+  32 and 64-bit, WAVE_FORMAT_EXTENSIBLE, MP3 data (tag 0x55); packets of
+  4096 frames, seeking by arithmetic.
+- **FLAC** (`Media.FlacFile`): "fLaC" and the metadata blocks (an ID3v2
+  tag in front is skipped); frames have no length, so a frame ends where
+  the next valid header starts and the CRC-16 of the bytes before it
+  comes out zero. Seeking uses the seek table, or bisects the file by
+  frame headers' sample numbers, then steps to the frame holding the
+  target.
+- **Ogg** (`Media.Ogg`, RFC 3533): pages with their CRC-32 checked,
+  packets across pages, multiplexed and chained streams (a chained link's
+  tracks appear when its first page is reached, so `TrackCount` can grow
+  while reading), the Vorbis, Opus and FLAC mappings (Theora recognised).
+  Packet lengths are worked out without decoding (`Media.Ogg.Codecs`:
+  the Opus TOC byte, FLAC frame headers, Vorbis block sizes from the
+  setup header's modes, scanned backwards from its end as ffmpeg does,
+  `Media.Ogg.VorbisModes`), so timestamps come from granule positions
+  exactly: a first page granule smaller than what its packets decode to
+  becomes `TrimStart`, a last one `TrimEnd`. Opus times count from the
+  end of the pre-skip (the first packet is at minus the pre-skip, the
+  decoder drops it as `CodecDelay`); a Vorbis stream's first packet sits
+  at minus its own length since it decodes to nothing. Seeking bisects
+  over pages, less the Opus pre-roll of 80 ms.
+- **Matroska and WebM** (`Media.Ebml`, `Media.Matroska.*`): the EBML
+  header (DocType webm or matroska), segments and clusters of known or
+  unknown size (live streams), SeekHead, Info, Tracks (Vorbis' Xiph-laced
+  CodecPrivate split into its three headers, OpusHead with CodecDelay and
+  SeekPreRoll, FLAC's metadata blocks to STREAMINFO, MP3, integer PCM
+  little and big-endian, float PCM, VP8, VP9, AV1 with av1C; AAC, H.264,
+  HEVC and Theora recognised), header stripping, SimpleBlock and
+  BlockGroup (BlockDuration, ReferenceBlock for key frames,
+  DiscardPadding as `TrimEnd`), Xiph, EBML and fixed lacing; Cues for
+  seeking, walking the clusters when there are none. Block times are less
+  the codec delay. Frames compressed with zlib, bzip2 or LZO, or
+  encrypted, are refused (that track's packets skipped).
+- **MP4** (`Media.Mp4.*`, ISO BMFF): moov and its sample tables (stts,
+  ctts, stsc, stsz/stz2, stco/co64, stss), edit lists (the first media
+  edit shifts times; audio before 0 beyond the codec's delay becomes
+  `TrimStart`; the end of the edit, or a last sample shorter than its
+  codec frame, `TrimEnd`), 64-bit and to-the-end box sizes, the sample
+  entries av01 (av1C), vp09 (vpcC), vp08, Opus (dOps to OpusHead's
+  little-endian layout), fLaC (dfLa to STREAMINFO), mp4a (esds: object
+  types 0x6B/0x69 MP3, 0x40/0x67 AAC recognised), .mp3, ipcm, fpcm, sowt,
+  twos and lpcm (PCM in packets of up to 1024 frames), avc1/hvc1/hev1
+  recognised; samples of all tracks in file order. Fragmented files
+  (mvex/trex, moof/traf with tfhd defaults, tfdt and every trun flag)
+  are read as they arrive: a moof or sample not yet wholly in the stream
+  makes `ReadPacket` return False without losing its place and a later
+  call goes on once more is appended, so an init segment followed by
+  media segments appended to one stream (Media Source Extensions, later)
+  plays. Seeking uses stss, or reads the remaining moof boxes (only
+  those) and searches their index; mfra is not used.
+- **MP3** (`Media.Mp3File`): ID3v2 tags in front (footers, several in a
+  row) and ID3v1 / APEv2 at the end skipped; a stream is taken only when
+  three more frames agree with the first; the Xing/Info and LAME tags
+  (frame count, seek table, encoder delay as `CodecDelay` = delay + 529,
+  padding as `TrimEnd` = padding - 529 on the last packet; the tag frame
+  itself is not given out) and VBRI; one packet per frame; seeking by the
+  Xing or VBRI table or, for constant bit rates, by position.
+
+### Audio decoders
+
+- **PCM** (`Media.Pcm`): integers of 8 to 32 bits and floats of 32 and
+  64, little or big-endian; integers are divided by 2^(bits - 1), which
+  is exact.
+- **FLAC** (`Media.Flac`, RFC 9639): constant, verbatim, fixed (orders
+  0-4) and LPC (orders 1-32) subframes, Rice partitions with escapes,
+  wasted bits, the stereo decorrelations, 4 to 32 bits per sample (64-bit
+  arithmetic, so the 33-bit side channel of 32-bit audio needs nothing
+  special), 1 to 8 channels, the frame's CRC-8 and CRC-16 checked.
+- **Vorbis** (`Media.Vorbis.*`, the Vorbis I specification): the three
+  headers (a single Xiph-laced block from Matroska is split too),
+  codebooks (a 10-bit lookup table and a fallback for longer codes; VQ
+  lookup types 1 and 2), floors 0 and 1, residues 0, 1 and 2, channel
+  coupling, windows and overlap for mixed block sizes, and the inverse
+  MDCT as a DCT-IV through an N/4-point FFT in double precision;
+  channels reordered from the Vorbis order to the WAVE order. Its output
+  is within 2e-7 of libvorbis' (about 137 dB).
+- **MP3** (`Media.Mp3.*`, MPEG-1, 2 and 2.5 Layer III; the structure and
+  tables follow minimp3, public domain): every bit rate including free
+  format, mono, stereo, mid/side and intensity stereo (MPEG-2's too),
+  the bit reservoir, CRC frames, mixed and short blocks, alias reduction,
+  the IMDCT and a DCT-II based synthesis filter bank. Packets can be
+  whole frames or any pieces of the stream (MP3 in WAV): the decoder
+  finds and assembles frames itself and resynchronises after damage. A
+  frame whose reservoir reaches back past what it has (just after a
+  seek) comes out silent, so timing holds. Layers I and II are refused
+  (EMediaUnsupported). Its output is within ISO 11172-4's full accuracy
+  of ffmpeg's floating point decoder (RMS 1e-7 to 3.5e-7 against the
+  limit of 8.8e-6).
+- **Opus** (`Media.Opus.*`, RFC 6716 with the RFC 8251 updates; the
+  tables were generated from libopus 1.5.2 and the units carry its BSD
+  notice): the range decoder, SILK (narrow, medium and wide band, mono
+  and stereo, 10 to 60 ms, LBRR frames skipped as in normal decoding,
+  its resampler), CELT (every band layout and frame size from 2.5 to 20
+  ms, transients, spreading, PVQ, anti-collapse, energy finalisation,
+  the pitch post-filter, de-emphasis), hybrid mode, redundancy frames
+  and mode transitions, TOC codes 0 to 3 with padding, the classic packet
+  loss concealment (an empty packet), multistream with channel mapping
+  families 0, 1 (reordered to the WAVE order) and 255, the OpusHead
+  output gain and the reference's soft clipper; output at 48 kHz
+  (`ConfigureRaw` takes 8, 12, 16, 24 or 48 kHz for the raw API the test
+  vectors use, with `DecodeRaw`, `DecodeRawInt16` and `FinalRange`).
+  The neural concealment of newer libopus (deep PLC, DRED) is left out.
+
+### Resampling, mixing and output
+
+`TResampler` (`Media.Resampler`) is a polyphase windowed-sinc filter
+(Kaiser window, beta 8.6): the output rate over the input rate, reduced,
+is Up/Down; output sample j lies at input time j * Down / Up, whose
+fraction picks one of Up phases (rounded to 1024 phases when Up is
+larger, as for 44100 to 47999). It has 32 taps upsampling and
+proportionally more downsampling (the cut-off just under the lower
+Nyquist frequency), streams (what is fed in pieces gives the same
+output), and `Flush` makes the output exactly ceil(input * Up / Down)
+frames. `TChannelMixer` (`Media.ChannelMixer`) maps channel counts in the
+usual layouts: downmixing folds centre and surrounds into the fronts at
+-3 dB (ITU-R BS.775) without the LFE, each output row scaled so
+full-scale input cannot clip; upmixing puts mono in both fronts and
+stereo in the front pair. `TAudioConverter` (`Media.AudioConversion`)
+chains both and writes 16 or 32-bit integers (rounded and clipped) or
+floats, the audio devices' sample kinds 2, 4 and 5.
+
+### mediaplay
+
+`mediaplay FILE...` plays the first audio track of each file on the
+audio device (libaudio's `Audio.Device`), as floats at the decoder's own
+rate and channels when the device takes them (the kernel converts to
+what the hardware plays), through `TAudioConverter` otherwise or when
+`-r RATE` / `-c CHANNELS` ask; `-s SECONDS` seeks first, `-d PATH`
+chooses the output. `-i` prints the container, length and tracks.
+`-k` decodes every track and prints checksums instead of playing (in
+the manner of ffmpeg's framemd5): `video TRACK FRAME PTS WxH MD5` per
+decoded frame (the visible samples of its planes, row by row), `packet
+TRACK N PTS SIZE MD5` per packet of a track without a decoder (video
+until a video library registers its decoders), and `audio TRACK FRAMES
+RATE CHANNELS MD5` per audio track (its samples as 16-bit
+little-endian). A damaged packet is skipped; a hundred and the file is
+given up.
+
+### Tests
+
+`make media-test` builds libmedia for the host (tools/MediaTest) and
+checks it over fixtures the host's tools make at build time
+(`tools/MediaTest/make-*-fixtures.py` into build/tools/media-fixtures;
+each script skips, with a note in its manifest, what the host cannot
+make; the synthetic signals are made by Python and are the same every
+build):
+- colour conversion (known colours in each matrix, range and depth),
+  times, PCM decoding and trimming, WAV files of every sample kind
+  against the floats they were made from, the resampler (length, a
+  tone's accuracy, a tone above the new Nyquist frequency removed, an
+  odd ratio, feeding in pieces), the mixer's matrices, the output
+  encoding;
+- FLAC: files the host's flac made in many settings (levels 0-8, 8 to
+  32 bits, 1 to 8 channels, block sizes 192 to 65535, LPC order 32,
+  odd rates, constant/verbatim subframes, wasted bits, an ID3v2 tag in
+  front, with and without a seek table) decoded to exactly the WAV
+  files they were made from, their integer samples' MD5 equal to
+  STREAMINFO's, seeking landing on the frame holding the target with the
+  WAV's samples there, and damaged frames refused (never a crash);
+- Vorbis: Ogg Vorbis files libvorbis made through ffmpeg (qualities -1
+  to 10, 8 to 96 kHz, 1, 2, 3 and 6 channels, one with digital silence)
+  decoded through a test-only page splitter and through the Ogg
+  demuxer, against libvorbis' own decoding: at least 100 dB, largest
+  error at most 1e-4, the reference's length, no samples from the first
+  packet; the inverse MDCT against its definition;
+- MP3: files lame and ffmpeg made (MPEG-1 32 to 320 kbit/s, VBR, ABR,
+  mono, joint, stereo, forced mid/side, CRC, no reservoir, transients
+  for short blocks, MPEG-2 and 2.5 rates, ID3 tags, no LAME tag, MP3 in
+  WAV, uneven pieces) against ffmpeg's mp3float (the same number of
+  samples, so the gapless trims agree, and ISO 11172-4 full accuracy),
+  free format against lame's own decoder, seeking, and damaged streams
+  decoding without crashing;
+- containers: 27 files ffmpeg muxed (Ogg Opus, Vorbis and FLAC, a
+  chained Ogg, WebM with Opus, Vorbis, live, VP8 and VP9, Matroska with
+  FLAC, MP3, PCM both ways, floats and AV1, MP4 with Opus, FLAC, MP3,
+  PCM, AAC, VP9, AV1, fragmented, and H.264 with B-frames and an edit
+  list) plus a Matroska file the script writes byte by byte (every
+  lacing, header stripping, unknown sizes, a BlockGroup): every packet's
+  size, MD5, time, duration and key flag against ffprobe's, the tracks'
+  codecs, rates, sizes and setup data, seeking, a fragmented MP4 opened
+  from its init segment and then appended to, and every file cut short
+  and with bytes overwritten (only EMediaError may come out);
+- end to end: the container fixtures decoded as a player would, the
+  lossless ones exactly the source WAV, the lossy ones its length to
+  the sample and without a shift;
+- Opus: the RFC 8251 test vectors (01 to 12), decoded stereo and mono
+  at 48 kHz: every packet's final range equal to the encoder's, and the
+  output passing opus_compare's quality measure (ported; its band
+  spectrum through an FFT) against `testvectorNN.dec` or `NNm.dec`, as
+  the reference's run_vectors.sh allows; libopus fixtures (SILK at each
+  band and frame size, with in-band FEC, hybrid, CELT low delay at 2.5
+  to 10 ms, CBR, 40 and 60 ms, 5.1) against libopus' own decoding at
+  over 60 dB; malformed packets, a lost packet, 16 kHz output. The
+  vectors come from `OPUS_TEST_VECTORS` (default
+  ~/Downloads/sources/opus_testvectors-rfc8251.tar.gz, checksum pinned)
+  and are skipped without it; they add about 30 s.
+coretest makes a WAV file with `tone` and checks `mediaplay -i` and that
+`mediaplay -k`'s MD5 is the file's data chunk's (16-bit samples decode
+to floats and back exactly), and that a file that is no media file is
+refused.
+
 ## Networking
 
 A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
