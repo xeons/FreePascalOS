@@ -22,7 +22,8 @@
 
   A module is "(module $name? field*)", or just its fields (the text
   format lets a module that is alone in its file leave out the module
-  wrapper). The script forms "(module $name? binary string*)" (the bytes
+  wrapper). The script forms "(module definition ...)" (read like the
+  others), "(module $name? binary string*)" (the bytes
   as written) and "(module $name? quote string*)" (text to be parsed
   only now, so that a malformed one can be expected to fail) are
   understood too.
@@ -78,6 +79,8 @@ var
 begin
   Name := '';
   Position := 1;
+  if (Position < Node.Count) and Node[Position].IsKeyword('definition') then
+    Inc(Position);
   if (Position < Node.Count) and Node[Position].IsAtomOf(ttIdentifier) then
   begin
     Name := Node[Position].Text;

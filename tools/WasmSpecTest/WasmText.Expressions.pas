@@ -17,7 +17,7 @@
 }
 
 {
-  Instructions of the text format into binary (core specification 2.0,
+  Instructions of the text format into binary (core specification 3.0,
   section 6.5): plain instructions, whose immediates follow them as
   sibling tokens and whose blocks run to a matching "end", and folded
   instructions, written as lists with their operands nested inside,
@@ -27,6 +27,16 @@
   the bottom one), so br $name becomes the depth of the innermost block
   with that name; locals come from the function's parameter and local
   identifiers. Every other index goes through the module context.
+
+  Structured instructions: block, loop, if/else, try_table and the
+  legacy try. A try_table's catch clauses, "(catch x l)", "(catch_ref x
+  l)", "(catch_all l)" and "(catch_all_ref l)", come after its block type
+  and name labels outside it: they are resolved before its own label is
+  pushed. A legacy try is "try bt instr* (catch x instr*)* (catch_all
+  instr*)? end" (its handlers see its label) or "try bt instr* delegate
+  l" (l resolved once the try's label is popped); folded it is
+  "(try bt (do instr*) (catch x instr*)* (catch_all instr*)?)" or
+  "(try bt (do instr*) (delegate l))".
 }
 unit WasmText.Expressions;
 
@@ -42,6 +52,7 @@ uses
   WasmText.Tree,
   WasmText.Binary,
   WasmText.Instructions,
+  WasmText.Types,
   WasmText.Context;
 
 type
@@ -58,21 +69,27 @@ type
     function ResolveLabel(Node: TTextNode): Cardinal;
     function ResolveLocal(Node: TTextNode): Cardinal;
     function ReadOptionalLabel(Parent: TTextNode; var Position: Integer): AnsiString;
+    procedure ReadClosingLabel(Parent: TTextNode; var Position: Integer; const LabelName: AnsiString);
     procedure WriteOpcode(Output: TBinaryWriter; const Info: TInstructionInfo);
     procedure ParseBlockType(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
-    procedure ParseMemoryArgument(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer;
-      Output: TBinaryWriter);
-    procedure ParseVectorConstant(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
-    procedure ParseLane(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
+    procedure ParseCatchClauses(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
+    { The opcode, label (when written) and block type of a structured
+      instruction, read from Parent's children at Position on. }
+    function ParseBlockHeader(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer): AnsiString;
     function ParseOptionalIndex(Space: TIndexSpace; Parent: TTextNode; var Position: Integer;
       out Index: Cardinal): Boolean;
+    procedure EncodeReferenceTest(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer;
+      Output: TBinaryWriter);
+    procedure EncodeBranchCast(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
     { Writes the opcode and the immediates read from Parent's children
-      at Position on (all but block instructions). }
+      at Position on (all but structured instructions). }
     procedure EncodeSimple(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer;
       Output: TBinaryWriter);
+    procedure EncodePlainHandlers(Parent: TTextNode; var Position: Integer; const LabelName: AnsiString);
     procedure EncodePlainBlock(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer);
     procedure EncodeFolded(Node: TTextNode);
     procedure EncodeFoldedIf(Node: TTextNode);
+    procedure EncodeFoldedTry(Node: TTextNode);
     procedure EncodeInstructions(Parent: TTextNode; var Position: Integer; InsidePlainBlock: Boolean);
   public
     { Locals maps local identifiers to indices (nil: none). }
@@ -87,7 +104,23 @@ type
 implementation
 
 uses
-  WasmText.Numbers;
+  WasmText.Numbers,
+  WasmText.Immediates;
+
+const
+  OpcodeElse = $05;
+  OpcodeEnd = $0B;
+  OpcodeCatch = $07;
+  OpcodeCatchAll = $19;
+  OpcodeDelegate = $18;
+  OpcodeSelect = $1B;
+  OpcodeSelectTyped = $1C;
+  BlockTypeEmpty = $40;
+
+  CatchClauseTag = 0;
+  CatchClauseTagReference = 1;
+  CatchClauseAll = 2;
+  CatchClauseAllReference = 3;
 
 constructor TExpressionEncoder.Create(Context: TModuleContext; Writer: TBinaryWriter; Locals: TStringList);
 begin
@@ -153,6 +186,15 @@ begin
   end;
 end;
 
+procedure TExpressionEncoder.ReadClosingLabel(Parent: TTextNode; var Position: Integer; const LabelName: AnsiString);
+var
+  Closing: AnsiString;
+begin
+  Closing := ReadOptionalLabel(Parent, Position);
+  if (Closing <> '') and (Closing <> LabelName) then
+    Fail(Parent[Position - 1], 'mismatching label ' + Closing);
+end;
+
 procedure TExpressionEncoder.WriteOpcode(Output: TBinaryWriter; const Info: TInstructionInfo);
 begin
   if Info.Prefix <> 0 then
@@ -172,109 +214,67 @@ begin
   if not TypeUse.HasTypeIndex and (Length(TypeUse.Parameters) = 0) and (Length(TypeUse.Results) <= 1) then
   begin
     if Length(TypeUse.Results) = 0 then
-      Output.WriteByte($40)
+      Output.WriteByte(BlockTypeEmpty)
     else
-      Output.WriteByte(TypeUse.Results[0]);
+      WriteValueType(Output, TypeUse.Results[0]);
   end
   else
     Output.WriteSigned(FContext.TypeIndexOf(TypeUse));
 end;
 
-function PowerOfTwoExponent(Value: QWord): Integer;
-begin
-  Result := -1;
-  if (Value = 0) or ((Value and (Value - 1)) <> 0) then
-    Exit;
-  Result := 0;
-  while Value > 1 do
-  begin
-    Value := Value shr 1;
-    Inc(Result);
-  end;
-end;
-
-procedure TExpressionEncoder.ParseMemoryArgument(const Info: TInstructionInfo; Parent: TTextNode;
-  var Position: Integer; Output: TBinaryWriter);
+procedure TExpressionEncoder.ParseCatchClauses(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
 var
-  Offset, Alignment: QWord;
-  AlignmentExponent: Integer;
-  Text: AnsiString;
-begin
-  Offset := 0;
-  AlignmentExponent := Info.Alignment;
-  if (Position < Parent.Count) and Parent[Position].IsAtomOf(ttKeyword) and
-     (Copy(Parent[Position].Text, 1, 7) = 'offset=') then
-  begin
-    Text := Copy(Parent[Position].Text, 8, MaxInt);
-    Offset := ParseUnsigned(Text, 32);
-    Inc(Position);
-  end;
-  if (Position < Parent.Count) and Parent[Position].IsAtomOf(ttKeyword) and
-     (Copy(Parent[Position].Text, 1, 6) = 'align=') then
-  begin
-    Text := Copy(Parent[Position].Text, 7, MaxInt);
-    Alignment := ParseUnsigned(Text, 32);
-    AlignmentExponent := PowerOfTwoExponent(Alignment);
-    if AlignmentExponent < 0 then
-      Fail(Parent[Position], 'alignment must be a power of two');
-    Inc(Position);
-  end;
-  Output.WriteUnsigned(AlignmentExponent);
-  Output.WriteUnsigned(Offset);
-end;
-
-procedure TExpressionEncoder.ParseVectorConstant(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
-var
-  Shape: AnsiString;
-  LaneCount, LaneBytes, Lane, ByteIndex: Integer;
-  Value: QWord;
+  Clauses: TBinaryWriter;
+  Count: Cardinal;
   Node: TTextNode;
+  Head: AnsiString;
+  WithTag: Boolean;
 begin
-  if Position >= Parent.Count then
-    Fail(Parent, 'unexpected end: v128.const needs a shape');
-  Node := Parent[Position];
-  Shape := Node.Text;
-  if not Node.IsAtomOf(ttKeyword) then
-    Fail(Node, 'unexpected token: expected a vector shape');
-  if Shape = 'i8x16' then begin LaneCount := 16; LaneBytes := 1; end
-  else if Shape = 'i16x8' then begin LaneCount := 8; LaneBytes := 2; end
-  else if (Shape = 'i32x4') or (Shape = 'f32x4') then begin LaneCount := 4; LaneBytes := 4; end
-  else if (Shape = 'i64x2') or (Shape = 'f64x2') then begin LaneCount := 2; LaneBytes := 8; end
-  else
-  begin
-    Fail(Node, 'unexpected token: unknown vector shape ' + Shape);
-    Exit;
-  end;
-  Inc(Position);
-  for Lane := 0 to LaneCount - 1 do
-  begin
-    if (Position >= Parent.Count) or not (Parent[Position].IsAtomOf(ttNumber) or
-       Parent[Position].IsAtomOf(ttKeyword)) then
-      Fail(Parent, 'wrong number of lane literals');
-    Node := Parent[Position];
-    if Shape[1] = 'f' then
+  Clauses := TBinaryWriter.Create;
+  try
+    Count := 0;
+    while Position < Parent.Count do
     begin
-      if LaneBytes = 4 then
-        Value := ParseFloatBits(Node.Text, fpSingle)
-      else
-        Value := ParseFloatBits(Node.Text, fpDouble);
-    end
-    else
-      Value := ParseIntegerBits(Node.Text, LaneBytes * 8);
-    for ByteIndex := 0 to LaneBytes - 1 do
-      Output.WriteByte(Byte((Value shr (8 * ByteIndex)) and $FF));
-    Inc(Position);
+      Node := Parent[Position];
+      Head := Node.Head;
+      if (Head <> 'catch') and (Head <> 'catch_ref') and (Head <> 'catch_all') and (Head <> 'catch_all_ref') then
+        Break;
+      WithTag := (Head = 'catch') or (Head = 'catch_ref');
+      if (WithTag and (Node.Count <> 3)) or (not WithTag and (Node.Count <> 2)) then
+        Fail(Node, 'unexpected token in catch clause');
+      if Head = 'catch' then Clauses.WriteByte(CatchClauseTag)
+      else if Head = 'catch_ref' then Clauses.WriteByte(CatchClauseTagReference)
+      else if Head = 'catch_all' then Clauses.WriteByte(CatchClauseAll)
+      else Clauses.WriteByte(CatchClauseAllReference);
+      if WithTag then
+        Clauses.WriteUnsigned(FContext.ResolveIndex(isTag, Node[1]));
+      Clauses.WriteUnsigned(ResolveLabel(Node[Node.Count - 1]));
+      Inc(Count);
+      Inc(Position);
+    end;
+    Output.WriteUnsigned(Count);
+    Output.WriteWriter(Clauses);
+  finally
+    Clauses.Free;
   end;
-  if (Position < Parent.Count) and Parent[Position].IsAtomOf(ttNumber) then
-    Fail(Parent[Position], 'wrong number of lane literals');
 end;
 
-procedure TExpressionEncoder.ParseLane(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
+function TExpressionEncoder.ParseBlockHeader(const Info: TInstructionInfo; Parent: TTextNode;
+  var Position: Integer): AnsiString;
+var
+  Header: TBinaryWriter;
 begin
-  if (Position >= Parent.Count) or not Parent[Position].IsAtomOf(ttNumber) then
-    Fail(Parent, 'unexpected token: expected a lane index');
-  Output.WriteByte(Byte(ParseUnsigned(Parent[Position].Text, 8)));
-  Inc(Position);
+  Result := ReadOptionalLabel(Parent, Position);
+  Header := TBinaryWriter.Create;
+  try
+    ParseBlockType(Parent, Position, Header);
+    if Info.Immediate = ikTryTable then
+      ParseCatchClauses(Parent, Position, Header);
+    WriteOpcode(FWriter, Info);
+    FWriter.WriteWriter(Header);
+  finally
+    Header.Free;
+  end;
 end;
 
 function TExpressionEncoder.ParseOptionalIndex(Space: TIndexSpace; Parent: TTextNode; var Position: Integer;
@@ -289,6 +289,43 @@ begin
   end;
 end;
 
+procedure TExpressionEncoder.EncodeReferenceTest(const Info: TInstructionInfo; Parent: TTextNode;
+  var Position: Integer; Output: TBinaryWriter);
+var
+  Nullable: Boolean;
+  HeapType: TValueType;
+begin
+  if Position >= Parent.Count then
+    Fail(Parent, 'unexpected end: expected a reference type');
+  SplitReferenceType(FContext.ParseReferenceType(Parent[Position]), Nullable, HeapType);
+  Inc(Position);
+  Output.WriteByte(Info.Prefix);
+  Output.WriteUnsigned(Info.Code + Cardinal(Ord(Nullable)));
+  WriteValueType(Output, HeapType);
+end;
+
+procedure TExpressionEncoder.EncodeBranchCast(Parent: TTextNode; var Position: Integer; Output: TBinaryWriter);
+var
+  LabelIndex: Cardinal;
+  Nullable: array[0..1] of Boolean;
+  HeapTypes: array[0..1] of TValueType;
+  Index: Integer;
+begin
+  if Position + 2 >= Parent.Count then
+    Fail(Parent, 'unexpected end: expected a label and two reference types');
+  LabelIndex := ResolveLabel(Parent[Position]);
+  Inc(Position);
+  for Index := 0 to 1 do
+  begin
+    SplitReferenceType(FContext.ParseReferenceType(Parent[Position]), Nullable[Index], HeapTypes[Index]);
+    Inc(Position);
+  end;
+  Output.WriteByte(Ord(Nullable[0]) or (Ord(Nullable[1]) shl 1));
+  Output.WriteUnsigned(LabelIndex);
+  WriteValueType(Output, HeapTypes[0]);
+  WriteValueType(Output, HeapTypes[1]);
+end;
+
 procedure TExpressionEncoder.EncodeSimple(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer;
   Output: TBinaryWriter);
 var
@@ -298,7 +335,7 @@ var
   TypeUse: TTypeUse;
   Bits: QWord;
   Single: Cardinal;
-  Types: TBytes;
+  Types: TValueTypeArray;
   Node: TTextNode;
 
   function RequireIndex(Space: TIndexSpace): Cardinal;
@@ -309,33 +346,43 @@ var
     Inc(Position);
   end;
 
-begin
-  if Info.Immediate = ikSelect then
+  function RequireNumber: Cardinal;
   begin
-    Types := nil;
-    while (Position < Parent.Count) and Parent[Position].IsListOf('result') do
-    begin
-      Node := Parent[Position];
-      for LabelIndex := 1 to Node.Count - 1 do
+    if (Position >= Parent.Count) or not Parent[Position].IsAtomOf(ttNumber) then
+      Fail(Parent, 'unexpected token: expected a number');
+    Result := Cardinal(ParseUnsigned(Parent[Position].Text, 32));
+    Inc(Position);
+  end;
+
+begin
+  case Info.Immediate of
+    ikSelect:
       begin
-        SetLength(Types, Length(Types) + 1);
-        Types[High(Types)] := FContext.ParseValueType(Node[LabelIndex]);
+        Types := nil;
+        while (Position < Parent.Count) and Parent[Position].IsListOf('result') do
+        begin
+          Node := Parent[Position];
+          for LabelIndex := 1 to Node.Count - 1 do
+            AppendValueType(Types, FContext.ParseValueType(Node[LabelIndex]));
+          Inc(Position);
+        end;
+        if (Position < Parent.Count) and Parent[Position].IsListOf('param') then
+          Fail(Parent[Position], 'unexpected token: select takes no parameters');
+        { A written (result) list, even an empty one, makes it the typed select. }
+        if (Position > 0) and Parent[Position - 1].IsListOf('result') then
+        begin
+          Output.WriteByte(OpcodeSelectTyped);
+          WriteValueTypes(Output, Types);
+        end
+        else
+          Output.WriteByte(OpcodeSelect);
+        Exit;
       end;
-      Inc(Position);
-    end;
-    if (Position < Parent.Count) and Parent[Position].IsListOf('param') then
-      Fail(Parent[Position], 'unexpected token: select takes no parameters');
-    { A written (result) list, even an empty one, makes it the typed select. }
-    if (Position > 0) and Parent[Position - 1].IsListOf('result') then
-    begin
-      Output.WriteByte($1C);
-      Output.WriteUnsigned(Length(Types));
-      if Types <> nil then
-        Output.WriteRaw(Types[0], Length(Types));
-    end
-    else
-      Output.WriteByte($1B);
-    Exit;
+    ikReferenceTest:
+      begin
+        EncodeReferenceTest(Info, Parent, Position, Output);
+        Exit;
+      end;
   end;
   WriteOpcode(Output, Info);
   case Info.Immediate of
@@ -363,9 +410,7 @@ begin
         for LabelIndex := 0 to High(Labels) do
           Output.WriteUnsigned(Labels[LabelIndex]);
       end;
-    ikFunction:
-      Output.WriteUnsigned(RequireIndex(isFunction));
-    ikReferenceFunction:
+    ikFunction, ikReferenceFunction:
       Output.WriteUnsigned(RequireIndex(isFunction));
     ikCallIndirect:
       begin
@@ -389,23 +434,34 @@ begin
         Output.WriteUnsigned(Index);
       end;
     ikMemoryArgument:
-      ParseMemoryArgument(Info, Parent, Position, Output);
+      ParseMemoryArgument(FContext, Info.Alignment, False, Parent, Position, Output);
     ikMemoryLane:
       begin
-        ParseMemoryArgument(Info, Parent, Position, Output);
-        ParseLane(Parent, Position, Output);
+        ParseMemoryArgument(FContext, Info.Alignment, True, Parent, Position, Output);
+        ParseLane(FContext, Parent, Position, Output);
       end;
-    ikMemoryZero:
-      Output.WriteByte(0);
+    ikMemoryIndex:
+      begin
+        ParseOptionalIndex(isMemory, Parent, Position, Index);
+        Output.WriteUnsigned(Index);
+      end;
     ikMemoryCopy:
       begin
-        Output.WriteByte(0);
-        Output.WriteByte(0);
+        First := 0;
+        Second := 0;
+        if ParseOptionalIndex(isMemory, Parent, Position, First) then
+          Second := RequireIndex(isMemory);
+        Output.WriteUnsigned(First);
+        Output.WriteUnsigned(Second);
       end;
     ikMemoryInit:
       begin
+        First := 0;
+        if (Position + 1 < Parent.Count) and FContext.IsIndex(Parent[Position]) and
+           FContext.IsIndex(Parent[Position + 1]) then
+          First := RequireIndex(isMemory);
         Output.WriteUnsigned(RequireIndex(isData));
-        Output.WriteByte(0);
+        Output.WriteUnsigned(First);
         FContext.UsesDataIndices := True;
       end;
     ikData:
@@ -415,17 +471,11 @@ begin
       end;
     ikTableInit:
       begin
+        First := 0;
         if (Position + 1 < Parent.Count) and FContext.IsIndex(Parent[Position]) and
            FContext.IsIndex(Parent[Position + 1]) then
-        begin
           First := RequireIndex(isTable);
-          Second := RequireIndex(isElement);
-        end
-        else
-        begin
-          First := 0;
-          Second := RequireIndex(isElement);
-        end;
+        Second := RequireIndex(isElement);
         Output.WriteUnsigned(Second);
         Output.WriteUnsigned(First);
       end;
@@ -465,61 +515,133 @@ begin
         end;
       end;
     ikVector:
-      ParseVectorConstant(Parent, Position, Output);
+      ParseVectorConstant(FContext, Parent, Position, Output);
     ikShuffle:
       for LabelIndex := 0 to 15 do
-        ParseLane(Parent, Position, Output);
+        ParseLane(FContext, Parent, Position, Output);
     ikLane:
-      ParseLane(Parent, Position, Output);
+      ParseLane(FContext, Parent, Position, Output);
     ikReferenceNull:
       begin
         if Position >= Parent.Count then
           Fail(Parent, 'unexpected end: expected a heap type');
-        Output.WriteByte(FContext.ParseHeapType(Parent[Position]));
+        WriteValueType(Output, FContext.ParseHeapType(Parent[Position]));
         Inc(Position);
       end;
+    ikTag:
+      Output.WriteUnsigned(RequireIndex(isTag));
+    ikType:
+      Output.WriteUnsigned(RequireIndex(isType));
+    ikTypeField:
+      begin
+        Index := RequireIndex(isType);
+        Output.WriteUnsigned(Index);
+        if Position >= Parent.Count then
+          Fail(Parent, 'unexpected end: expected a field');
+        Output.WriteUnsigned(FContext.ResolveField(Index, Parent[Position]));
+        Inc(Position);
+      end;
+    ikTypeCount:
+      begin
+        Output.WriteUnsigned(RequireIndex(isType));
+        Output.WriteUnsigned(RequireNumber);
+      end;
+    ikTypeData:
+      begin
+        Output.WriteUnsigned(RequireIndex(isType));
+        Output.WriteUnsigned(RequireIndex(isData));
+        FContext.UsesDataIndices := True;
+      end;
+    ikTypeElement:
+      begin
+        Output.WriteUnsigned(RequireIndex(isType));
+        Output.WriteUnsigned(RequireIndex(isElement));
+      end;
+    ikTypeType:
+      begin
+        Output.WriteUnsigned(RequireIndex(isType));
+        Output.WriteUnsigned(RequireIndex(isType));
+      end;
+    ikBranchCast:
+      EncodeBranchCast(Parent, Position, Output);
   else
     Fail(Parent, 'unexpected token');
   end;
 end;
 
+{ The handlers of a plain legacy try, after its body: catch clauses and
+  catch_all; the caller then expects end. }
+procedure TExpressionEncoder.EncodePlainHandlers(Parent: TTextNode; var Position: Integer; const LabelName: AnsiString);
+var
+  SeenCatchAll: Boolean;
+begin
+  SeenCatchAll := False;
+  while (Position < Parent.Count) and (Parent[Position].IsKeyword('catch') or
+        Parent[Position].IsKeyword('catch_all')) do
+  begin
+    if SeenCatchAll then
+      Fail(Parent[Position], 'unexpected token: handler after catch_all');
+    if Parent[Position].IsKeyword('catch') then
+    begin
+      Inc(Position);
+      if Position >= Parent.Count then
+        Fail(Parent, 'unexpected end: expected a tag index');
+      FWriter.WriteByte(OpcodeCatch);
+      FWriter.WriteUnsigned(FContext.ResolveIndex(isTag, Parent[Position]));
+      Inc(Position);
+    end
+    else
+    begin
+      Inc(Position);
+      ReadClosingLabel(Parent, Position, LabelName);
+      SeenCatchAll := True;
+      FWriter.WriteByte(OpcodeCatchAll);
+    end;
+    EncodeInstructions(Parent, Position, True);
+  end;
+end;
+
 procedure TExpressionEncoder.EncodePlainBlock(const Info: TInstructionInfo; Parent: TTextNode; var Position: Integer);
 var
-  LabelName, Closing: AnsiString;
-  BlockType: TBinaryWriter;
+  LabelName: AnsiString;
   Start: TTextNode;
 begin
   Start := Parent[Position - 1];
-  LabelName := ReadOptionalLabel(Parent, Position);
-  BlockType := TBinaryWriter.Create;
-  try
-    ParseBlockType(Parent, Position, BlockType);
-    WriteOpcode(FWriter, Info);
-    FWriter.WriteWriter(BlockType);
-  finally
-    BlockType.Free;
-  end;
+  LabelName := ParseBlockHeader(Info, Parent, Position);
   PushLabel(LabelName);
   EncodeInstructions(Parent, Position, True);
-  if (Position < Parent.Count) and Parent[Position].IsKeyword('else') then
+  if (Info.Immediate = ikIf) and (Position < Parent.Count) and Parent[Position].IsKeyword('else') then
   begin
-    if Info.Immediate <> ikIf then
-      Fail(Parent[Position], 'unexpected token: else outside if');
     Inc(Position);
-    Closing := ReadOptionalLabel(Parent, Position);
-    if (Closing <> '') and (Closing <> LabelName) then
-      Fail(Parent[Position - 1], 'mismatching label ' + Closing);
-    FWriter.WriteByte($05);
+    ReadClosingLabel(Parent, Position, LabelName);
+    FWriter.WriteByte(OpcodeElse);
     EncodeInstructions(Parent, Position, True);
   end;
+  if Info.Immediate = ikTry then
+  begin
+    if (Position < Parent.Count) and Parent[Position].IsKeyword('delegate') then
+    begin
+      Inc(Position);
+      PopLabel;
+      if Position >= Parent.Count then
+        Fail(Parent, 'unexpected end: expected a label');
+      FWriter.WriteByte(OpcodeDelegate);
+      FWriter.WriteUnsigned(ResolveLabel(Parent[Position]));
+      Inc(Position);
+      Exit;
+    end;
+    EncodePlainHandlers(Parent, Position, LabelName);
+  end;
   if (Position >= Parent.Count) or not Parent[Position].IsKeyword('end') then
+  begin
+    if Position < Parent.Count then
+      Fail(Parent[Position], 'unexpected token ' + Parent[Position].Text);
     Fail(Start, 'unexpected end of block: missing end');
+  end;
   Inc(Position);
-  Closing := ReadOptionalLabel(Parent, Position);
-  if (Closing <> '') and (Closing <> LabelName) then
-    Fail(Parent[Position - 1], 'mismatching label ' + Closing);
+  ReadClosingLabel(Parent, Position, LabelName);
   PopLabel;
-  FWriter.WriteByte($0B);
+  FWriter.WriteByte(OpcodeEnd);
 end;
 
 procedure TExpressionEncoder.EncodeFoldedIf(Node: TTextNode);
@@ -561,18 +683,73 @@ begin
   EncodeSequence(ThenNode, 1);
   if ElseNode <> nil then
   begin
-    FWriter.WriteByte($05);
+    FWriter.WriteByte(OpcodeElse);
     EncodeSequence(ElseNode, 1);
   end;
   PopLabel;
-  FWriter.WriteByte($0B);
+  FWriter.WriteByte(OpcodeEnd);
+end;
+
+procedure TExpressionEncoder.EncodeFoldedTry(Node: TTextNode);
+var
+  Position, BodyPosition: Integer;
+  Info: TInstructionInfo;
+  Handler: TTextNode;
+  SeenCatchAll: Boolean;
+begin
+  LookUpInstruction('try', Info);
+  Position := 1;
+  PushLabel(ParseBlockHeader(Info, Node, Position));
+  if (Position >= Node.Count) or not Node[Position].IsListOf('do') then
+    Fail(Node, 'unexpected token: try needs (do ...)');
+  BodyPosition := 1;
+  EncodeInstructions(Node[Position], BodyPosition, False);
+  Inc(Position);
+  if (Position < Node.Count) and Node[Position].IsListOf('delegate') then
+  begin
+    Handler := Node[Position];
+    if Handler.Count <> 2 then
+      Fail(Handler, 'unexpected token in delegate');
+    PopLabel;
+    FWriter.WriteByte(OpcodeDelegate);
+    FWriter.WriteUnsigned(ResolveLabel(Handler[1]));
+    if Position + 1 < Node.Count then
+      Fail(Node[Position + 1], 'unexpected token after delegate');
+    Exit;
+  end;
+  SeenCatchAll := False;
+  while (Position < Node.Count) and (Node[Position].IsListOf('catch') or Node[Position].IsListOf('catch_all')) do
+  begin
+    Handler := Node[Position];
+    if SeenCatchAll then
+      Fail(Handler, 'unexpected token: handler after catch_all');
+    BodyPosition := 1;
+    if Handler.IsListOf('catch') then
+    begin
+      if Handler.Count < 2 then
+        Fail(Handler, 'unexpected end: expected a tag index');
+      FWriter.WriteByte(OpcodeCatch);
+      FWriter.WriteUnsigned(FContext.ResolveIndex(isTag, Handler[1]));
+      BodyPosition := 2;
+    end
+    else
+    begin
+      SeenCatchAll := True;
+      FWriter.WriteByte(OpcodeCatchAll);
+    end;
+    EncodeInstructions(Handler, BodyPosition, False);
+    Inc(Position);
+  end;
+  if Position < Node.Count then
+    Fail(Node[Position], 'unexpected token in try');
+  PopLabel;
+  FWriter.WriteByte(OpcodeEnd);
 end;
 
 procedure TExpressionEncoder.EncodeFolded(Node: TTextNode);
 var
   Info: TInstructionInfo;
   Position: Integer;
-  LabelName: AnsiString;
   Immediates: TBinaryWriter;
 begin
   if (Node.Kind <> tnList) or (Node.Count = 0) or not Node[0].IsAtomOf(ttKeyword) then
@@ -580,26 +757,19 @@ begin
   if not LookUpInstruction(Node[0].Text, Info) then
     Fail(Node, 'unknown operator ' + Node[0].Text);
   case Info.Immediate of
-    ikBlock, ikLoop:
+    ikBlock, ikLoop, ikTryTable:
       begin
         Position := 1;
-        LabelName := ReadOptionalLabel(Node, Position);
-        Immediates := TBinaryWriter.Create;
-        try
-          ParseBlockType(Node, Position, Immediates);
-          WriteOpcode(FWriter, Info);
-          FWriter.WriteWriter(Immediates);
-        finally
-          Immediates.Free;
-        end;
-        PushLabel(LabelName);
+        PushLabel(ParseBlockHeader(Info, Node, Position));
         EncodeInstructions(Node, Position, False);
         PopLabel;
-        FWriter.WriteByte($0B);
+        FWriter.WriteByte(OpcodeEnd);
       end;
     ikIf:
       EncodeFoldedIf(Node);
-    ikElse, ikEnd:
+    ikTry:
+      EncodeFoldedTry(Node);
+    ikElse, ikEnd, ikCatch, ikCatchAll, ikDelegate:
       Fail(Node, 'unexpected token: ' + Node[0].Text);
   else
     begin
@@ -638,16 +808,16 @@ begin
     end;
     if not Node.IsAtomOf(ttKeyword) then
       Fail(Node, 'unexpected token ' + Node.Text);
-    if (Node.Text = 'end') or (Node.Text = 'else') then
+    if not LookUpInstruction(Node.Text, Info) then
+      Fail(Node, 'unknown operator ' + Node.Text);
+    if Info.Immediate in [ikEnd, ikElse, ikCatch, ikCatchAll, ikDelegate] then
     begin
       if InsidePlainBlock then
         Exit;
       Fail(Node, 'unexpected token ' + Node.Text);
     end;
-    if not LookUpInstruction(Node.Text, Info) then
-      Fail(Node, 'unknown operator ' + Node.Text);
     Inc(Position);
-    if Info.Immediate in [ikBlock, ikLoop, ikIf] then
+    if Info.Immediate in [ikBlock, ikLoop, ikIf, ikTryTable, ikTry] then
       EncodePlainBlock(Info, Parent, Position)
     else
       EncodeSimple(Info, Parent, Position, FWriter);

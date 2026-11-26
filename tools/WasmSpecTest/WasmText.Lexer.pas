@@ -34,6 +34,16 @@
   Strings are decoded into their raw bytes: \t \n \r \" \' \\, \hh
   (two hexadecimal digits) and \u with a hexadecimal code point in
   braces (written out in UTF-8).
+
+  WebAssembly 3.0 additions: an identifier may be written as '$' and a
+  string ($"name", a non-empty UTF-8 name), and is then the same token as
+  '$' followed by the name's bytes, so $"fh" and $fh are one identifier.
+  Annotations, "(@id ...)" with the "(@" written together, are skipped
+  like comments: their id (identifier characters or a string) must not
+  be empty, and their contents may be any tokens, reserved ones too, as
+  long as parentheses balance and strings and comments are closed. No
+  annotation has a meaning here (custom section annotations included:
+  custom sections never change what a module does).
 }
 unit WasmText.Lexer;
 
@@ -68,8 +78,59 @@ type
 
 function TokenizeText(const Source: AnsiString): TTextTokenArray;
 function IsIdentifierCharacter(Character: AnsiChar): Boolean;
+function IsValidUtf8(const Text: AnsiString): Boolean;
 
 implementation
+
+function IsValidUtf8(const Text: AnsiString): Boolean;
+var
+  Index, Extra, Count: Integer;
+  CodePoint: Cardinal;
+  Lead: Byte;
+begin
+  Result := False;
+  Index := 1;
+  while Index <= Length(Text) do
+  begin
+    Lead := Ord(Text[Index]);
+    if Lead < $80 then
+    begin
+      Inc(Index);
+      Continue;
+    end
+    else if (Lead and $E0) = $C0 then
+    begin
+      Extra := 1;
+      CodePoint := Lead and $1F;
+    end
+    else if (Lead and $F0) = $E0 then
+    begin
+      Extra := 2;
+      CodePoint := Lead and $0F;
+    end
+    else if (Lead and $F8) = $F0 then
+    begin
+      Extra := 3;
+      CodePoint := Lead and $07;
+    end
+    else
+      Exit;
+    if Index + Extra > Length(Text) then
+      Exit;
+    for Count := 1 to Extra do
+    begin
+      if (Ord(Text[Index + Count]) and $C0) <> $80 then
+        Exit;
+      CodePoint := (CodePoint shl 6) or (Ord(Text[Index + Count]) and $3F);
+    end;
+    if ((Extra = 1) and (CodePoint < $80)) or ((Extra = 2) and (CodePoint < $800)) or
+       ((Extra = 3) and (CodePoint < $10000)) or (CodePoint > $10FFFF) or
+       ((CodePoint >= $D800) and (CodePoint < $E000)) then
+      Exit;
+    Inc(Index, Extra + 1);
+  end;
+  Result := True;
+end;
 
 function IsIdentifierCharacter(Character: AnsiChar): Boolean;
 begin
@@ -120,6 +181,9 @@ type
     procedure SkipWhiteSpaceAndComments;
     function AtCommentStart: Boolean;
     function ReadString: AnsiString;
+    function AtDelimiter: Boolean;
+    procedure ReadQuotedIdentifier;
+    procedure SkipAnnotation;
     procedure ReadRun;
     procedure Add(Kind: TTextTokenKind; const Text: AnsiString; Line: Integer);
   public
@@ -306,6 +370,82 @@ begin
   end;
 end;
 
+function TTextLexer.AtDelimiter: Boolean;
+begin
+  Result := (FPosition > Length(FSource)) or (FSource[FPosition] in [' ', #9, #10, #13, '(', ')']) or
+    AtCommentStart;
+end;
+
+procedure TTextLexer.ReadQuotedIdentifier;
+var
+  Line: Integer;
+  Name: AnsiString;
+begin
+  { At '$' followed by '"'. }
+  Line := FLine;
+  Inc(FPosition);
+  Name := ReadString;
+  if not AtDelimiter then
+    Fail('unknown operator: string glued to another token');
+  if Name = '' then
+    Fail('empty identifier');
+  if not IsValidUtf8(Name) then
+    Fail('malformed UTF-8 encoding');
+  Add(ttIdentifier, '$' + Name, Line);
+end;
+
+procedure TTextLexer.SkipAnnotation;
+var
+  Depth, Start: Integer;
+  Character: AnsiChar;
+  Name: AnsiString;
+begin
+  { At "(@". }
+  Inc(FPosition, 2);
+  if (FPosition <= Length(FSource)) and (FSource[FPosition] = '"') then
+  begin
+    Name := ReadString;
+    if Name = '' then
+      Fail('empty annotation id');
+    if not IsValidUtf8(Name) then
+      Fail('malformed UTF-8 encoding');
+  end
+  else
+  begin
+    Start := FPosition;
+    while (FPosition <= Length(FSource)) and IsIdentifierCharacter(FSource[FPosition]) do
+      Inc(FPosition);
+    if FPosition = Start then
+      Fail('empty annotation id');
+  end;
+  Depth := 1;
+  while Depth > 0 do
+  begin
+    SkipWhiteSpaceAndComments;
+    if FPosition > Length(FSource) then
+      Fail('unclosed annotation');
+    Character := FSource[FPosition];
+    if Character = '(' then
+    begin
+      Inc(Depth);
+      Inc(FPosition);
+    end
+    else if Character = ')' then
+    begin
+      Dec(Depth);
+      Inc(FPosition);
+    end
+    else if Character = '"' then
+      ReadString
+    else if Character in [#33..#126] then
+      Inc(FPosition)
+    else if Ord(Character) >= $80 then
+      Fail('malformed UTF-8 encoding: illegal character')
+    else
+      Fail('illegal character');
+  end;
+end;
+
 procedure TTextLexer.ReadRun;
 var
   Start, Line, Pieces: Integer;
@@ -313,6 +453,11 @@ var
   StringBytes: AnsiString;
   Character: AnsiChar;
 begin
+  if (FSource[FPosition] = '$') and (FPosition < Length(FSource)) and (FSource[FPosition + 1] = '"') then
+  begin
+    ReadQuotedIdentifier;
+    Exit;
+  end;
   Start := FPosition;
   Line := FLine;
   Pieces := 0;
@@ -375,6 +520,9 @@ begin
       Break;
     case FSource[FPosition] of
       '(':
+        if (FPosition < Length(FSource)) and (FSource[FPosition + 1] = '@') then
+          SkipAnnotation
+        else
         begin
           Add(ttLeftParenthesis, '(', FLine);
           Inc(FPosition);

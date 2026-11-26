@@ -20,13 +20,21 @@
   The WebAssembly specification test suite against libwasm, on the host:
 
     WasmSpecTest DIRECTORY [--verbose]   every .wast in DIRECTORY and in
-                                         DIRECTORY/simd
+                                         its feature subdirectories
     WasmSpecTest FILE.wast ...           those files
+    --parse-only                         only parse and encode: report
+                                         modules that did not encode
+                                         (outside assert_malformed) and
+                                         text modules an assert_malformed
+                                         expects to fail that did encode
 
-  DIRECTORY is the spec repository's test/core (the 2.0 release,
-  downloaded, never committed). Prints one line per file with its
-  passed and failed assertions, the first failures of each file (all
-  with --verbose) and a total; exits with 1 if anything failed.
+  DIRECTORY is the spec repository's test/core (the 2.0 or 3.0 release,
+  downloaded, never committed); its subdirectories simd, gc, exceptions,
+  memory64, multi-memory, relaxed-simd and bulk-memory are run too, and
+  so is a "core" subdirectory (the layout of test/legacy/exceptions).
+  Prints one line per file with its passed and failed assertions, the
+  first failures of each file (all with --verbose) and a total; exits
+  with 1 if anything failed.
 }
 program WasmSpecTest;
 
@@ -39,9 +47,13 @@ uses
   WasmScript,
   WasmSpecRunner;
 
+const
+  FeatureDirectories: array[0..7] of AnsiString = ('simd', 'gc', 'exceptions', 'memory64', 'multi-memory',
+    'relaxed-simd', 'bulk-memory', 'core');
+
 var
   Files: TStringList;
-  Verbose: Boolean;
+  Verbose, ParseOnly: Boolean;
   TotalPassed, TotalFailed, FilesFailed: Integer;
 
 procedure AddDirectory(const Directory: AnsiString);
@@ -65,6 +77,40 @@ begin
   end;
 end;
 
+{ The --parse-only check: each module's encoding against what its
+  command expects of the text. A binary module's malformation is in its
+  bytes, so only text and quote modules count for assert_malformed. }
+procedure CheckEncoding(Commands: TScriptCommandList; var Outcome: TScriptOutcome);
+var
+  Index: Integer;
+  Command: TScriptCommand;
+begin
+  for Index := 0 to Commands.Count - 1 do
+  begin
+    Command := Commands[Index];
+    if not Command.HasModule then
+      Continue;
+    if Command.Kind = scAssertMalformed then
+    begin
+      if (Command.Module.EncodeError = '') and not Command.Module.IsBinary then
+      begin
+        Inc(Outcome.Failed);
+        Outcome.Failures.Add(Format('line %d: malformed text encoded (%s)', [Command.Line, Command.Message]));
+      end
+      else
+        Inc(Outcome.Passed);
+    end
+    else if Command.Module.EncodeError <> '' then
+    begin
+      Inc(Outcome.Failed);
+      Outcome.Failures.Add(Format('line %d: text did not encode: %s', [Command.Line,
+        Command.Module.EncodeError]));
+    end
+    else
+      Inc(Outcome.Passed);
+  end;
+end;
+
 procedure RunFile(const FileName: AnsiString);
 var
   Text: TStringList;
@@ -81,7 +127,10 @@ begin
     try
       Commands := ParseScript(Text.Text);
       try
-        RunScript(Commands, Outcome);
+        if ParseOnly then
+          CheckEncoding(Commands, Outcome)
+        else
+          RunScript(Commands, Outcome);
       finally
         Commands.Free;
       end;
@@ -111,24 +160,32 @@ begin
 end;
 
 var
-  Index: Integer;
+  Index, Feature: Integer;
+  Subdirectory: AnsiString;
 begin
   Files := TStringList.Create;
   Verbose := False;
+  ParseOnly := False;
   for Index := 1 to ParamCount do
     if ParamStr(Index) = '--verbose' then
       Verbose := True
+    else if ParamStr(Index) = '--parse-only' then
+      ParseOnly := True
     else if DirectoryExists(ParamStr(Index)) then
     begin
       AddDirectory(ParamStr(Index));
-      if DirectoryExists(IncludeTrailingPathDelimiter(ParamStr(Index)) + 'simd') then
-        AddDirectory(IncludeTrailingPathDelimiter(ParamStr(Index)) + 'simd');
+      for Feature := 0 to High(FeatureDirectories) do
+      begin
+        Subdirectory := IncludeTrailingPathDelimiter(ParamStr(Index)) + FeatureDirectories[Feature];
+        if DirectoryExists(Subdirectory) then
+          AddDirectory(Subdirectory);
+      end;
     end
     else
       Files.Add(ParamStr(Index));
   if Files.Count = 0 then
   begin
-    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose]');
+    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose] [--parse-only]');
     Halt(2);
   end;
   for Index := 0 to Files.Count - 1 do

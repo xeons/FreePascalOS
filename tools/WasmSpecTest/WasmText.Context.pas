@@ -19,10 +19,16 @@
 {
   What the module encoder and the instruction encoder share while a text
   module is turned into binary: the index spaces with their identifiers
-  (core specification 2.0, section 6.6.1, the identifier context), the
-  function types, value types, and type uses with the implicit types
-  they add (section 6.6.3: a type use without a matching type gets a new
-  one appended after all the others, in the order they are met).
+  (core specification 3.0, section 6.6.1, the identifier context), the
+  type definitions (see WasmText.Types; the "(type ...)" and "(rec ...)"
+  fields are read by WasmText.TypeDefinitions), value, reference and heap
+  types, and type uses with the implicit types they add.
+
+  An implicit type use (parameters and results without "(type x)")
+  stands for the first type that is a function type alone in its
+  recursion group, final and without supertypes, with the same
+  parameters and results; when there is none, such a type is appended
+  after all the others, in the order the uses are met.
 
   Nothing here validates: an index past the end of its space is encoded
   as written, for the validator to reject.
@@ -38,32 +44,20 @@ uses
   Classes,
   SysUtils,
   WasmText.Lexer,
-  WasmText.Tree;
-
-const
-  ValueTypeI32 = $7F;
-  ValueTypeI64 = $7E;
-  ValueTypeF32 = $7D;
-  ValueTypeF64 = $7C;
-  ValueTypeV128 = $7B;
-  ValueTypeFuncRef = $70;
-  ValueTypeExternRef = $6F;
+  WasmText.Tree,
+  WasmText.Types;
 
 type
-  TNameArray = array of AnsiString;
+  TNameArray = WasmText.Types.TNameArray;
+  TFunctionType = WasmText.Types.TFunctionType;
 
-  TIndexSpace = (isType, isFunction, isTable, isMemory, isGlobal, isElement, isData);
-
-  TFunctionType = record
-    Parameters: TBytes;
-    Results: TBytes;
-  end;
+  TIndexSpace = (isType, isFunction, isTable, isMemory, isGlobal, isElement, isData, isTag);
 
   TTypeUse = record
     HasTypeIndex: Boolean;
     TypeIndex: Cardinal;
-    Parameters: TBytes;
-    Results: TBytes;
+    Parameters: TValueTypeArray;
+    Results: TValueTypeArray;
     { The identifiers of the inline parameters ('' when unnamed). }
     ParameterNames: TNameArray;
   end;
@@ -73,13 +67,16 @@ type
   TModuleContext = class
   private
     FIdentifiers: array[TIndexSpace] of TStringList;
-    FTypes: array of TFunctionType;
-    FTypeCount: Integer;
-    function GetType(Index: Integer): TFunctionType;
+    FDefinitions: array of TTypeDefinition;
+    FDefinitionCount: Integer;
+    FGroups: array of TTypeGroup;
+    FGroupCount: Integer;
+    function GetDefinition(Index: Integer): TTypeDefinition;
+    function GetGroup(Index: Integer): TTypeGroup;
   public
     Counts: array[TIndexSpace] of Cardinal;
-    { Set when code uses memory.init or data.drop: the data count
-      section then has to be there. }
+    { Set when code uses memory.init, data.drop or another data index:
+      the data count section then has to be there. }
     UsesDataIndices: Boolean;
     { The number of types written as type definitions (known once the
       fields are collected); an inline signature can only be checked
@@ -93,11 +90,21 @@ type
     { An index written as a number or an identifier. }
     function ResolveIndex(Space: TIndexSpace; Node: TTextNode): Cardinal;
     function IsIndex(Node: TTextNode): Boolean;
+    { Reserves a recursion group of Count type definitions (filled in
+      with SetTypeDefinition); returns the first one's index. }
+    function AddTypeGroup(Count: Cardinal; IsRecursive: Boolean): Cardinal;
+    procedure SetTypeDefinition(Index: Cardinal; const Definition: TTypeDefinition);
+    { Appends a function type in a group of its own. }
     function AddType(const FunctionType: TFunctionType): Cardinal;
-    function ParseValueType(Node: TTextNode): Byte;
+    { A field of structure type TypeIndex, by number or identifier. }
+    function ResolveField(TypeIndex: Cardinal; Node: TTextNode): Cardinal;
+    function ParseHeapType(Node: TTextNode): TValueType;
+    function IsReferenceType(Node: TTextNode): Boolean;
+    function ParseReferenceType(Node: TTextNode): TValueType;
     function IsValueType(Node: TTextNode): Boolean;
-    function ParseReferenceType(Node: TTextNode): Byte;
-    function ParseHeapType(Node: TTextNode): Byte;
+    function ParseValueType(Node: TTextNode): TValueType;
+    { A value type or a packed type (i8, i16). }
+    function ParseStorageType(Node: TTextNode): TValueType;
     { Reads (param ...)* (result ...)* from Parent's children at
       Position on; with Names, parameters may carry identifiers. }
     procedure ParseSignature(Parent: TTextNode; var Position: Integer; AllowNames: Boolean;
@@ -105,16 +112,17 @@ type
     { (type x)? (param ...)* (result ...)*, checked against type x when
       both are written. }
     function ParseTypeUse(Parent: TTextNode; var Position: Integer; Purpose: TTypeUsePurpose): TTypeUse;
-    { The type index of a type use: its own, or the first equal type,
-      or a new type appended. }
+    { The type index of a type use: its own, or the first equal
+      standalone function type, or a new type appended. }
     function TypeIndexOf(const TypeUse: TTypeUse): Cardinal;
     function FunctionTypeOf(const TypeUse: TTypeUse): TFunctionType;
-    property Types[Index: Integer]: TFunctionType read GetType;
-    property TypeCount: Integer read FTypeCount;
+    property Definitions[Index: Integer]: TTypeDefinition read GetDefinition;
+    property TypeCount: Integer read FDefinitionCount;
+    property Groups[Index: Integer]: TTypeGroup read GetGroup;
+    property GroupCount: Integer read FGroupCount;
   end;
 
 function SpaceName(Space: TIndexSpace): AnsiString;
-function SameFunctionType(const Left, Right: TFunctionType): Boolean;
 
 implementation
 
@@ -123,31 +131,9 @@ uses
 
 function SpaceName(Space: TIndexSpace): AnsiString;
 const
-  Names: array[TIndexSpace] of AnsiString = ('type', 'func', 'table', 'memory', 'global', 'elem', 'data');
+  Names: array[TIndexSpace] of AnsiString = ('type', 'func', 'table', 'memory', 'global', 'elem', 'data', 'tag');
 begin
   Result := Names[Space];
-end;
-
-function SameBytes(const Left, Right: TBytes): Boolean;
-var
-  Index: Integer;
-begin
-  Result := Length(Left) = Length(Right);
-  if Result then
-    for Index := 0 to High(Left) do
-      if Left[Index] <> Right[Index] then
-        Exit(False);
-end;
-
-function SameFunctionType(const Left, Right: TFunctionType): Boolean;
-begin
-  Result := SameBytes(Left.Parameters, Right.Parameters) and SameBytes(Left.Results, Right.Results);
-end;
-
-procedure AppendByte(var Bytes: TBytes; Value: Byte);
-begin
-  SetLength(Bytes, Length(Bytes) + 1);
-  Bytes[High(Bytes)] := Value;
 end;
 
 constructor TModuleContext.Create;
@@ -180,9 +166,14 @@ begin
     raise EWasmTextError.Create(Message);
 end;
 
-function TModuleContext.GetType(Index: Integer): TFunctionType;
+function TModuleContext.GetDefinition(Index: Integer): TTypeDefinition;
 begin
-  Result := FTypes[Index];
+  Result := FDefinitions[Index];
+end;
+
+function TModuleContext.GetGroup(Index: Integer): TTypeGroup;
+begin
+  Result := FGroups[Index];
 end;
 
 function TModuleContext.DefineIndex(Space: TIndexSpace; const Identifier: AnsiString; Node: TTextNode): Cardinal;
@@ -217,52 +208,125 @@ begin
   Result := Cardinal(PtrUInt(FIdentifiers[Space].Objects[Found]));
 end;
 
+function TModuleContext.AddTypeGroup(Count: Cardinal; IsRecursive: Boolean): Cardinal;
+var
+  Index: Cardinal;
+begin
+  if FGroupCount = Length(FGroups) then
+    SetLength(FGroups, FGroupCount * 2 + 8);
+  Result := FDefinitionCount;
+  FGroups[FGroupCount].First := Result;
+  FGroups[FGroupCount].Count := Count;
+  FGroups[FGroupCount].IsRecursive := IsRecursive;
+  Inc(FGroupCount);
+  if FDefinitionCount + Integer(Count) > Length(FDefinitions) then
+    SetLength(FDefinitions, (FDefinitionCount + Integer(Count)) * 2 + 8);
+  Index := 0;
+  while Index < Count do
+  begin
+    FDefinitions[FDefinitionCount] := Default(TTypeDefinition);
+    FDefinitions[FDefinitionCount].IsFinal := True;
+    FDefinitions[FDefinitionCount].GroupSize := Count;
+    Inc(FDefinitionCount);
+    Inc(Index);
+  end;
+end;
+
+procedure TModuleContext.SetTypeDefinition(Index: Cardinal; const Definition: TTypeDefinition);
+var
+  GroupSize: Cardinal;
+begin
+  GroupSize := FDefinitions[Index].GroupSize;
+  FDefinitions[Index] := Definition;
+  FDefinitions[Index].GroupSize := GroupSize;
+end;
+
 function TModuleContext.AddType(const FunctionType: TFunctionType): Cardinal;
 begin
-  if FTypeCount = Length(FTypes) then
-    SetLength(FTypes, FTypeCount * 2 + 8);
-  FTypes[FTypeCount] := FunctionType;
-  Result := FTypeCount;
-  Inc(FTypeCount);
+  Result := AddTypeGroup(1, False);
+  FDefinitions[Result].Kind := ckFunction;
+  FDefinitions[Result].FunctionType := FunctionType;
+  Inc(Counts[isType]);
+end;
+
+function TModuleContext.ResolveField(TypeIndex: Cardinal; Node: TTextNode): Cardinal;
+var
+  Index: Integer;
+begin
+  if Node.IsAtomOf(ttNumber) then
+    Exit(Cardinal(ParseUnsigned(Node.Text, 32)));
+  if not Node.IsAtomOf(ttIdentifier) then
+    Fail(Node, 'unexpected token: expected a field index');
+  if TypeIndex < Cardinal(FDefinitionCount) then
+    for Index := 0 to High(FDefinitions[TypeIndex].FieldNames) do
+      if FDefinitions[TypeIndex].FieldNames[Index] = Node.Text then
+        Exit(Index);
+  Fail(Node, 'unknown field ' + Node.Text);
+  Result := 0;
+end;
+
+function TModuleContext.ParseHeapType(Node: TTextNode): TValueType;
+var
+  Code: Byte;
+begin
+  if Node.IsAtomOf(ttKeyword) and AbstractHeapTypeCode(Node.Text, Code) then
+    Exit(SingleByte(Code));
+  if not IsIndex(Node) then
+    Fail(Node, 'unexpected token: expected a heap type');
+  Result := HeapTypeOfIndex(ResolveIndex(isType, Node));
+end;
+
+function TModuleContext.IsReferenceType(Node: TTextNode): Boolean;
+var
+  Code: Byte;
+begin
+  Result := (Node.IsAtomOf(ttKeyword) and ReferenceAbbreviationCode(Node.Text, Code)) or Node.IsListOf('ref');
+end;
+
+function TModuleContext.ParseReferenceType(Node: TTextNode): TValueType;
+var
+  Code: Byte;
+  Position: Integer;
+  Nullable: Boolean;
+begin
+  if Node.IsAtomOf(ttKeyword) and ReferenceAbbreviationCode(Node.Text, Code) then
+    Exit(SingleByte(Code));
+  if not Node.IsListOf('ref') then
+    Fail(Node, 'unexpected token: expected a reference type');
+  Position := 1;
+  Nullable := (Position < Node.Count) and Node[Position].IsKeyword('null');
+  if Nullable then
+    Inc(Position);
+  if Position <> Node.Count - 1 then
+    Fail(Node, 'unexpected token in reference type');
+  Result := MakeReferenceType(Nullable, ParseHeapType(Node[Position]));
 end;
 
 function TModuleContext.IsValueType(Node: TTextNode): Boolean;
+var
+  Code: Byte;
 begin
-  Result := (Node.Kind = tnAtom) and (Node.TokenKind = ttKeyword) and
-    ((Node.Text = 'i32') or (Node.Text = 'i64') or (Node.Text = 'f32') or (Node.Text = 'f64') or
-     (Node.Text = 'v128') or (Node.Text = 'funcref') or (Node.Text = 'externref'));
+  Result := (Node.IsAtomOf(ttKeyword) and NumberTypeCode(Node.Text, Code)) or IsReferenceType(Node);
 end;
 
-function TModuleContext.ParseValueType(Node: TTextNode): Byte;
+function TModuleContext.ParseValueType(Node: TTextNode): TValueType;
+var
+  Code: Byte;
 begin
-  Result := 0;
-  if Node.IsKeyword('i32') then Result := ValueTypeI32
-  else if Node.IsKeyword('i64') then Result := ValueTypeI64
-  else if Node.IsKeyword('f32') then Result := ValueTypeF32
-  else if Node.IsKeyword('f64') then Result := ValueTypeF64
-  else if Node.IsKeyword('v128') then Result := ValueTypeV128
-  else if Node.IsKeyword('funcref') then Result := ValueTypeFuncRef
-  else if Node.IsKeyword('externref') then Result := ValueTypeExternRef
-  else
+  if Node.IsAtomOf(ttKeyword) and NumberTypeCode(Node.Text, Code) then
+    Exit(SingleByte(Code));
+  if not IsReferenceType(Node) then
     Fail(Node, 'unexpected token: expected a value type');
+  Result := ParseReferenceType(Node);
 end;
 
-function TModuleContext.ParseReferenceType(Node: TTextNode): Byte;
+function TModuleContext.ParseStorageType(Node: TTextNode): TValueType;
+var
+  Code: Byte;
 begin
-  Result := 0;
-  if Node.IsKeyword('funcref') then Result := ValueTypeFuncRef
-  else if Node.IsKeyword('externref') then Result := ValueTypeExternRef
-  else
-    Fail(Node, 'unexpected token: expected a reference type');
-end;
-
-function TModuleContext.ParseHeapType(Node: TTextNode): Byte;
-begin
-  Result := 0;
-  if Node.IsKeyword('func') then Result := ValueTypeFuncRef
-  else if Node.IsKeyword('extern') then Result := ValueTypeExternRef
-  else
-    Fail(Node, 'unexpected token: expected a heap type');
+  if Node.IsAtomOf(ttKeyword) and PackedTypeCode(Node.Text, Code) then
+    Exit(SingleByte(Code));
+  Result := ParseValueType(Node);
 end;
 
 procedure TModuleContext.ParseSignature(Parent: TTextNode; var Position: Integer; AllowNames: Boolean;
@@ -280,14 +344,14 @@ begin
         Fail(Node[1], 'unexpected token: named parameter');
       if Node.Count <> 3 then
         Fail(Node, 'unexpected token: one type per named parameter');
-      AppendByte(FunctionType.Parameters, ParseValueType(Node[2]));
+      AppendValueType(FunctionType.Parameters, ParseValueType(Node[2]));
       SetLength(Names, Length(Names) + 1);
       Names[High(Names)] := Node[1].Text;
     end
     else
       for Index := 1 to Node.Count - 1 do
       begin
-        AppendByte(FunctionType.Parameters, ParseValueType(Node[Index]));
+        AppendValueType(FunctionType.Parameters, ParseValueType(Node[Index]));
         SetLength(Names, Length(Names) + 1);
         Names[High(Names)] := '';
       end;
@@ -297,7 +361,7 @@ begin
   begin
     Node := Parent[Position];
     for Index := 1 to Node.Count - 1 do
-      AppendByte(FunctionType.Results, ParseValueType(Node[Index]));
+      AppendValueType(FunctionType.Results, ParseValueType(Node[Index]));
     Inc(Position);
   end;
 end;
@@ -308,6 +372,7 @@ var
   InlineType: TFunctionType;
   Names: TNameArray;
   Start: Integer;
+  HasDefinition: Boolean;
 begin
   Result.HasTypeIndex := False;
   Result.TypeIndex := 0;
@@ -333,14 +398,17 @@ begin
   Result.ParameterNames := Names;
   if Result.HasTypeIndex then
   begin
+    HasDefinition := (Result.TypeIndex < Cardinal(FDefinitionCount)) and
+      (FDefinitions[Result.TypeIndex].Kind = ckFunction);
     if (Position > Start) and (Result.TypeIndex >= ExplicitTypeCount) then
       Fail(Parent, 'unknown type ' + IntToStr(Result.TypeIndex));
-    if (Position > Start) and not SameFunctionType(InlineType, FTypes[Result.TypeIndex]) then
+    if (Position > Start) and not (HasDefinition and
+       SameFunctionType(InlineType, FDefinitions[Result.TypeIndex].FunctionType)) then
       Fail(Parent, 'inline function type does not match its type');
-    if (Position = Start) and (Result.TypeIndex < Cardinal(FTypeCount)) then
+    if (Position = Start) and HasDefinition then
     begin
-      Result.Parameters := FTypes[Result.TypeIndex].Parameters;
-      Result.Results := FTypes[Result.TypeIndex].Results;
+      Result.Parameters := FDefinitions[Result.TypeIndex].FunctionType.Parameters;
+      Result.Results := FDefinitions[Result.TypeIndex].FunctionType.Results;
       SetLength(Result.ParameterNames, Length(Result.Parameters));
     end;
   end;
@@ -360,8 +428,9 @@ begin
   if TypeUse.HasTypeIndex then
     Exit(TypeUse.TypeIndex);
   FunctionType := FunctionTypeOf(TypeUse);
-  for Index := 0 to FTypeCount - 1 do
-    if SameFunctionType(FTypes[Index], FunctionType) then
+  for Index := 0 to FDefinitionCount - 1 do
+    if IsStandaloneFunctionType(FDefinitions[Index]) and
+       SameFunctionType(FDefinitions[Index].FunctionType, FunctionType) then
       Exit(Index);
   Result := AddType(FunctionType);
 end;
