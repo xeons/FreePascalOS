@@ -98,9 +98,74 @@
     if (/[\0\r\n]/.test(text)) throw new TypeError("Failed to execute on 'Headers': Invalid value");
     return text;
   }
-  function isForbidden(name) {
+  const methodOverrideHeaders = ["x-http-method", "x-http-method-override", "x-method-override"];
+  // A header value's comma-separated parts (Fetch's "get, decode, and
+  // split": commas inside quoted strings do not split).
+  function splitValue(value) {
+    const parts = [];
+    let current = "", quoted = false;
+    for (let index = 0; index < value.length; index++) {
+      const character = value[index];
+      if (quoted && character === "\\" && index + 1 < value.length) {
+        current += character + value[++index];
+        continue;
+      }
+      if (character === "\"") quoted = !quoted;
+      if (character === "," && !quoted) {
+        parts.push(current.replace(/^[\t ]+|[\t ]+$/g, ""));
+        current = "";
+      } else current += character;
+    }
+    parts.push(current.replace(/^[\t ]+|[\t ]+$/g, ""));
+    return parts;
+  }
+  // A forbidden request-header (name, value): the names the user agent
+  // controls, and method overrides that name CONNECT, TRACE or TRACK.
+  function isForbidden(name, value) {
     const lower = name.toLowerCase();
-    return forbiddenRequestHeaders.indexOf(lower) >= 0 || lower.startsWith("proxy-") || lower.startsWith("sec-");
+    if (forbiddenRequestHeaders.indexOf(lower) >= 0 || lower.startsWith("proxy-") || lower.startsWith("sec-"))
+      return true;
+    if (value === undefined || methodOverrideHeaders.indexOf(lower) < 0) return false;
+    return splitValue(value).some(function (method) {
+      const upper = method.toUpperCase();
+      return upper === "CONNECT" || upper === "TRACE" || upper === "TRACK";
+    });
+  }
+
+  // CORS-safelisted request-headers (Fetch 2.2.2) for "request-no-cors"
+  // headers, and the forbidden response-header names for "response".
+  function hasUnsafeByte(value) {
+    return /[\x00-\x08\x0A-\x1F"():<>?@[\\\]{}\x7F]/.test(value);
+  }
+  function isNoCorsSafelisted(name, value) {
+    const lower = name.toLowerCase();
+    if (value.length > 128) return false;
+    if (lower === "accept") return !hasUnsafeByte(value);
+    if (lower === "accept-language" || lower === "content-language") return /^[0-9A-Za-z *,\-.;=]*$/.test(value);
+    if (lower === "content-type") {
+      if (hasUnsafeByte(value)) return false;
+      const essence = value.split(";")[0].replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, "").toLowerCase();
+      return essence === "application/x-www-form-urlencoded" || essence === "multipart/form-data" ||
+        essence === "text/plain";
+    }
+    return false;
+  }
+  function isNoCorsSafelistedName(name) {
+    const lower = name.toLowerCase();
+    return lower === "accept" || lower === "accept-language" || lower === "content-language" ||
+      lower === "content-type";
+  }
+  function isForbiddenResponseName(name) {
+    const lower = name.toLowerCase();
+    return lower === "set-cookie" || lower === "set-cookie2";
+  }
+  // Whether the guard keeps (name, value) out ("validate" in Fetch 5.2;
+  // Combined: the value with what the list has for the name, for append).
+  function guardRejects(state, name, value, combined) {
+    if (state.guard === "request") return isForbidden(name, value);
+    if (state.guard === "request-no-cors") return !isNoCorsSafelisted(name, combined === undefined ? value : combined);
+    if (state.guard === "response") return isForbiddenResponseName(name);
+    return false;
   }
 
   const headersData = new WeakMap();
@@ -120,6 +185,8 @@
       const lower = checkName(name).toLowerCase();
       if (state.guard === "immutable") throw new TypeError("Headers are immutable");
       if (state.guard === "request" && isForbidden(lower)) return;
+      if (state.guard === "request-no-cors" && !isNoCorsSafelistedName(lower)) return;
+      if (state.guard === "response" && isForbiddenResponseName(lower)) return;
       state.list = state.list.filter(function (entry) { return entry[0].toLowerCase() !== lower; });
     }
     get(name) {
@@ -141,7 +208,7 @@
       const checkedName = checkName(name);
       const checkedValue = checkValue(value);
       if (state.guard === "immutable") throw new TypeError("Headers are immutable");
-      if (state.guard === "request" && isForbidden(checkedName)) return;
+      if (guardRejects(state, checkedName, checkedValue)) return;
       const lower = checkedName.toLowerCase();
       const index = state.list.findIndex(function (entry) { return entry[0].toLowerCase() === lower; });
       if (index < 0) state.list.push([checkedName, checkedValue]);
@@ -153,9 +220,16 @@
     forEach(callback, thisArgument) {
       for (const [name, value] of sortedPairs(this)) callback.call(thisArgument, value, name, this);
     }
-    *entries() { yield* sortedPairs(this); }
-    *keys() { for (const pair of sortedPairs(this)) yield pair[0]; }
-    *values() { for (const pair of sortedPairs(this)) yield pair[1]; }
+    // Live: each step sorts and combines the list as it is then.
+    *entries() {
+      for (let index = 0; ; index++) {
+        const pairs = sortedPairs(this);
+        if (index >= pairs.length) return;
+        yield pairs[index];
+      }
+    }
+    *keys() { for (const pair of this.entries()) yield pair[0]; }
+    *values() { for (const pair of this.entries()) yield pair[1]; }
     [Symbol.iterator]() { return this.entries(); }
   }
   internal.finishInterface(Headers, "Headers");
@@ -165,7 +239,11 @@
     const checkedName = checkName(name);
     const checkedValue = checkValue(value);
     if (state.guard === "immutable") throw new TypeError("Headers are immutable");
-    if (state.guard === "request" && isForbidden(checkedName)) return;
+    const lower = checkedName.toLowerCase();
+    const existing = state.list.filter(function (entry) { return entry[0].toLowerCase() === lower; })
+      .map(function (entry) { return entry[1]; });
+    if (guardRejects(state, checkedName, checkedValue,
+      existing.length === 0 ? checkedValue : existing.join(", ") + ", " + checkedValue)) return;
     state.list.push([checkedName, checkedValue]);
   }
   function fillHeaders(headers, init) {
@@ -407,7 +485,7 @@
         state.headers = headersWithGuard(state.headerList, state.mode === "no-cors" ? "request-no-cors" : "request");
         fillHeaders(state.headers, options.headers);
         state.headerList = internal.headerList(state.headers);
-      } else state.headers = headersWithGuard(state.headerList, "request");
+      } else state.headers = headersWithGuard(state.headerList, state.mode === "no-cors" ? "request-no-cors" : "request");
       let body = null;
       if (options.body !== undefined && options.body !== null) {
         if (state.method === "GET" || state.method === "HEAD")
@@ -914,7 +992,7 @@
           "must be OPENED.", "InvalidStateError");
       const checkedName = checkName(name);
       const checkedValue = checkValue(value);
-      if (isForbidden(checkedName)) return;
+      if (isForbidden(checkedName, checkedValue)) return;
       const lower = checkedName.toLowerCase();
       const existing = state.headerList.find(function (entry) { return entry[0].toLowerCase() === lower; });
       if (existing) existing[1] += ", " + checkedValue;

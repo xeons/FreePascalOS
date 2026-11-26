@@ -69,3 +69,19 @@ hostUrl.host = "example.com:invalid";
 check("a host setter keeps the host when the port is bad", hostUrl.href === "http://example.com:8080/path");
 hostUrl.host = "example.org:65536";
 check("a host setter keeps the host when the port overflows", hostUrl.host === "example.org:8080");
+var noCors = new Request("about:blank", { mode: "no-cors" }).headers;
+noCors.append("x-custom", "1");
+noCors.append("accept", "text/html");
+check("no-cors request headers keep only the safelisted ones", !noCors.has("x-custom") && noCors.get("accept") === "text/html");
+var overrideHeaders = new Request("https://site.example/").headers;
+overrideHeaders.append("x-http-method-override", "TRACE");
+overrideHeaders.append("x-method-override", "GET");
+check("a method override naming TRACE is a forbidden request header", !overrideHeaders.has("x-http-method-override") &&
+  overrideHeaders.get("x-method-override") === "GET");
+var responseHeaders = new Response("").headers;
+responseHeaders.append("Set-Cookie", "a=b");
+check("Set-Cookie is a forbidden response header", !responseHeaders.has("set-cookie"));
+var liveHeaders = new Headers([["a", "1"], ["b", "2"], ["c", "3"]]);
+var seenNames = [];
+for (var headerPair of liveHeaders) { seenNames.push(headerPair[0]); if (headerPair[0] === "a") liveHeaders.delete("b"); }
+check("Headers iterate live", seenNames.join() === "a,c");
