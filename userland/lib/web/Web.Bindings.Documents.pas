@@ -188,14 +188,24 @@ begin
     InterfaceHTMLCollection, True, JsUndefined);
 end;
 
+{ The is member of an ElementCreationOptions argument ('' none). }
+function CreationIsValue(const Call: TBindingCall; Index: Integer): string;
+begin
+  Result := '';
+  if (Index < Length(Call.Arguments)) and (Call.Arguments[Index].Kind = bvDictionary) and
+    (Call.Arguments[Index].Items[ElementCreationOptions_is].Kind = bvString) then
+    Result := Call.Arguments[Index].Items[ElementCreationOptions_is].Text;
+end;
+
 function Document_createElement(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).WrapNode(ThisDocument(Call).CreateElement(Call.Text(0)));
+  Result := Context(Call).WrapNode(ThisDocument(Call).CreateElement(Call.Text(0), CreationIsValue(Call, 1)));
 end;
 
 function Document_createElementNS(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).WrapNode(ThisDocument(Call).CreateElementNS(Call.Text(0), Call.Text(1)));
+  Result := Context(Call).WrapNode(ThisDocument(Call).CreateElementNS(Call.Text(0), Call.Text(1),
+    CreationIsValue(Call, 2)));
 end;
 
 function Document_createDocumentFragment(var Call: TBindingCall): TJsValue;

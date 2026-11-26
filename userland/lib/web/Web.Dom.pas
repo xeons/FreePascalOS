@@ -779,8 +779,9 @@ type
     function NewComment(const Text: string): TComment;
     function NewDocumentType(const DoctypeName, PublicIdText, SystemIdText: string): TDocumentType;
     { Document }
-    function CreateElement(const LocalNameText: string): TElement;
-    function CreateElementNS(const Namespace, QualifiedName: string): TElement;
+    { createElement and createElementNS (IsValue: the options' is). }
+    function CreateElement(const LocalNameText: string; const IsValue: string = ''): TElement;
+    function CreateElementNS(const Namespace, QualifiedName: string; const IsValue: string = ''): TElement;
     function CreateDocumentFragment: TDocumentFragment;
     function CreateTextNode(const Text: string): TText;
     function CreateCDataSection(const Text: string): TCDataSection;

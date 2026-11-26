@@ -326,7 +326,26 @@ begin
   Result.FSystemId := SystemIdText;
 end;
 
-function TDocument.CreateElement(const LocalNameText: string): TElement;
+{ "Create an element" with the synchronous custom elements flag: a
+  defined custom element's constructor runs now (the custom element
+  host); otherwise a plain element (undefined for custom names). }
+function CreateElementWithCustomElements(Document: TDocument; LocalAtom: TAtom; Namespace: TNamespaceId;
+  const IsValue: string): TElement;
+begin
+  Result := nil;
+  if (CustomElementHost <> nil) and ((IsValue <> '') or IsCustomElementNameAtom(LocalAtom)) then
+    Result := CustomElementHost.CreateElement(Document, LocalAtom, Namespace, IsValue, True);
+  if Result = nil then
+    Result := Document.NewElement(LocalAtom, Namespace);
+  if (IsValue <> '') and (Result.IsValue = '') then
+  begin
+    Result.SetIsValue(IsValue);
+    if Web.Namespaces.NamespaceUri(Namespace) = AtomHtmlNamespace then
+      Result.SetCustomElementState(CustomElementUndefined);
+  end;
+end;
+
+function TDocument.CreateElement(const LocalNameText: string; const IsValue: string): TElement;
 var
   Name: string;
   Namespace: TNamespaceId;
@@ -340,17 +359,17 @@ begin
     Namespace := NamespaceHtml
   else
     Namespace := NamespaceNone;
-  Result := NewElement(Atomize(Name), Namespace);
+  Result := CreateElementWithCustomElements(Self, Atomize(Name), Namespace, IsValue);
   ListForCollection(Result);
 end;
 
-function TDocument.CreateElementNS(const Namespace, QualifiedName: string): TElement;
+function TDocument.CreateElementNS(const Namespace, QualifiedName: string; const IsValue: string): TElement;
 var
   QualifierId: TNamespaceId;
   NameAtom: TAtom;
 begin
   ValidateAndExtract(Namespace, QualifiedName, NameContextElement, QualifierId, NameAtom);
-  Result := NewElement(NameAtom, QualifierId);
+  Result := CreateElementWithCustomElements(Self, NameAtom, QualifierId, IsValue);
   ListForCollection(Result);
 end;
 

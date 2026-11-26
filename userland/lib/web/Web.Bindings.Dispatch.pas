@@ -121,8 +121,9 @@ begin
   StartCall(Call, Context, R, This, Args, ArgCount, Member, Callee.Magic);
   if ((Member^.Flags and MemberStatic) = 0) and not CheckThis(Context, Call) then
     Exit(IllegalInvocation(R));
-  { [CEReactions]: custom element reactions run as the method returns. }
-  Reactions := CustomElementsDefined;
+  { [CEReactions]: custom element reactions run as the method returns
+    (define() itself makes the first definition). }
+  Reactions := CustomElementHost <> nil;
   if Reactions then
     EnterReactionsScope;
   try
@@ -254,7 +255,7 @@ begin
   end;
   if ((Member^.Flags and MemberStatic) = 0) and not CheckThis(Context, Call) then
     Exit(IllegalInvocation(R));
-  Reactions := CustomElementsDefined;
+  Reactions := CustomElementHost <> nil;
   if Reactions then
     EnterReactionsScope;
   try

@@ -318,8 +318,13 @@ begin
 end;
 
 function Window_get_customElements(var Call: TBindingCall): TJsValue;
+var
+  Registry: TCustomElementRegistry;
 begin
-  Result := Context(Call).WrapObject(RegistryOf(Context(Call)), InterfaceCustomElementRegistry, False, JsUndefined);
+  Registry := RegistryOf(Context(Call));
+  if not JsIsObject(Registry.Wrapper) then
+    Registry.Wrapper := Context(Call).WrapObject(Registry, InterfaceCustomElementRegistry, False, JsUndefined);
+  Result := Registry.Wrapper;
 end;
 
 { [HTMLConstructor] (HTML 3.2.3): new MyElement() makes an element of

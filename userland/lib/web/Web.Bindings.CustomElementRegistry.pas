@@ -97,6 +97,8 @@ type
     procedure MarkRoots(Tracer: TJsTracer);
   public
     DefinitionRunning: Boolean;
+    { window.customElements' wrapper (one per window). }
+    Wrapper: TJsValue;
     constructor Create(Context: TBindingContext);
     destructor Destroy; override;
     function FindByName(const Name: string): TCustomElementDefinition;
@@ -283,6 +285,7 @@ constructor TCustomElementRegistry.Create(Context: TBindingContext);
 begin
   inherited Create;
   FContext := Context;
+  Wrapper := JsUndefined;
   Context.Engine.Runtime.Heap.AddRootProvider(@MarkRoots);
   SetLength(Registries, Length(Registries) + 1);
   Registries[High(Registries)] := Self;
@@ -328,6 +331,7 @@ begin
   end;
   for Index := 0 to High(FPendingPromises) do
     Tracer.MarkValue(FPendingPromises[Index]);
+  Tracer.MarkValue(Wrapper);
 end;
 
 function TCustomElementRegistry.FindByName(const Name: string): TCustomElementDefinition;

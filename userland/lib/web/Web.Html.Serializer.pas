@@ -159,6 +159,13 @@ begin
     AppendEscaped(Output, Element.AttributeAt(Index - 1)^.Value, True);
     Output.AppendChar('"');
   end;
+  { An element made with an is value keeps it (HTML: serializing). }
+  if (Element.IsValue <> '') and not Element.HasAttributeAtom(AtomIs) then
+  begin
+    Output.AppendString(' is="');
+    AppendEscaped(Output, Element.IsValue, True);
+    Output.AppendChar('"');
+  end;
   Output.AppendChar('>');
 end;
 
