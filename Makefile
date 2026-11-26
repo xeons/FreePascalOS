@@ -74,6 +74,12 @@
 #                   lifetime with both collectors (bytes per wrapper)
 #   make javascript-test  Run libjavascript on the host: scripts with their expected
 #                   output, the embedding API, and a benchmark (time and peak bytes)
+#   make test262    Run test262 (ECMAScript conformance) against libjavascript on the
+#                   host (not part of make test): TEST262=checkout (default
+#                   ~/Downloads/sources/test262), FILTER="built-ins/Array ...",
+#                   TEST262_FLAGS=--list; fails on failures not in
+#                   tools/Test262/expectations.txt. make test262-expectations
+#                   rewrites that file from a whole run.
 #   make tls-test   Check libtls on the host: certificates, chains, the RFC 8448
 #                   handshake, and whole connections to OpenSSL's s_server
 #   make wget-test  Check wget's URL, header and chunked decoding logic on the host
@@ -240,7 +246,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
+	ports-test pkg-test quic-test css-test svg-test web-test javascript-test test262 test262-expectations web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -1788,6 +1794,30 @@ javascript-test: $(JAVASCRIPT_TEST)
 		{ grep -A3 FAIL build/tools/javascript-test.out; echo "JAVASCRIPT TEST FAILED (build/tools/javascript-test.out)"; exit 1; }
 	@grep BENCH build/tools/javascript-test.out
 	@echo "JAVASCRIPT TEST PASSED: $$(tail -n 1 build/tools/javascript-test.out | cut -d ' ' -f 2-)"
+
+# test262 on the host: each test runs in a child process forked by
+# build/tools/Test262 (half the cores, no more than fit in half the available memory; 10 s and 512 MB each), against the known failures
+# of tools/Test262/expectations.txt and the features skipped in
+# tools/Test262/skipped-features.txt. The checkout is downloaded by hand
+# (git clone --depth 1 https://github.com/tc39/test262 into
+# ~/Downloads/sources/test262) and never committed.
+TEST262 ?= $(HOME)/Downloads/sources/test262
+TEST262_TOOL := build/tools/Test262
+TEST262_UNITS := build/tools/test262-units
+TEST262_SOURCES := $(wildcard tools/Test262/*.pas) \
+	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas))
+
+$(TEST262_TOOL): $(TEST262_SOURCES)
+	@mkdir -p $(TEST262_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/Test262 -Fuuserland/lib/javascript \
+		-FU$(TEST262_UNITS) -o$@ tools/Test262/Test262.pas
+
+test262: $(TEST262_TOOL)
+	$(TEST262_TOOL) $(TEST262_FLAGS) $(TEST262) $(FILTER)
+
+test262-expectations: $(TEST262_TOOL)
+	-$(TEST262_TOOL) --write-expectations tools/Test262/expectations.txt $(TEST262) > build/tools/test262.out
+	@tail -n 2 build/tools/test262.out
 
 # libweb's style, layout and painting on the host (with libcss, libfont,
 # libdrawing and libimage): the reference pages of tools/WebTest/render
