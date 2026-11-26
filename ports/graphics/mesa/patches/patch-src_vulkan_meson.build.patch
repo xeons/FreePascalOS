@@ -1,0 +1,12 @@
+--- a/src/vulkan/meson.build
++++ b/src/vulkan/meson.build
+@@ -65,6 +65,9 @@
+ if with_platform_android
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_ANDROID_KHR'
+ endif
++if with_platform_freepascalos
++  vulkan_wsi_list += '-DVK_USE_PLATFORM_FREEPASCALOS_FPOS'
++endif
+ if with_platform_windows
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_WIN32_KHR'
+ endif

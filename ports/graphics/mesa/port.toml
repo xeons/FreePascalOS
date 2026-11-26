@@ -2,16 +2,23 @@
 name = "mesa"
 version = "26.3.1"
 revision = 0
-summary = "OpenGL, OpenGL ES and EGL with software rendering (softpipe)"
+summary = "OpenGL, OpenGL ES, EGL and Vulkan with software rendering"
 description = """
 Mesa is an open source implementation of OpenGL, OpenGL ES, EGL and
-Vulkan. This port builds the software rasterizer softpipe (no LLVM)
-behind libEGL, libGLESv1_CM and libGLESv2: OpenGL ES 1.1 to 3.x and
-desktop OpenGL (through eglGetProcAddress) rendered by the processor.
+Vulkan. This port builds the software renderers: llvmpipe (shaders
+compiled to machine code by LLVM at run time, the default) and softpipe
+(GALLIUM_DRIVER=softpipe) behind libEGL, libGLESv1_CM and libGLESv2 -
+OpenGL ES 1.1 to 3.2 and desktop OpenGL (through eglGetProcAddress) -
+and lavapipe, a Vulkan 1.4 driver (libvulkan_lvp.so with its ICD file;
+the Vulkan headers are installed too).
 EGL's native platform is the display server's windows (EGLNativeWindowType
 is a struct fpos_window of <freepascalos/windowing.h>, drawn into its
 shared-memory surface at each eglSwapBuffers); the surfaceless platform
 gives pbuffers and framebuffer objects without a window system.
+Vulkan presents to the same windows: the instance extension
+VK_FPOS_window_surface (vkCreateWindowSurfaceFPOS, <vulkan/vulkan.h>
+with VK_USE_PLATFORM_FREEPASCALOS_FPOS) makes a VkSurfaceKHR of a
+struct fpos_window.
 """
 homepage = "https://www.mesa3d.org/"
 license = "MIT"
@@ -48,6 +55,7 @@ sha256 = "2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6"
 size = 153777
 
 [dependencies]
+build = ["llvm"]
 host = ["meson", "ninja", "python3", "bison", "flex", "pkg-config"]
 provides = ["libegl", "libgles", "libgl"]
 
@@ -56,9 +64,12 @@ system = "meson"
 toolchain = "c"
 configure_args = [
     "-Dplatforms=freepascalos",
-    "-Dgallium-drivers=softpipe",
-    "-Dvulkan-drivers=",
-    "-Dllvm=disabled",
+    "-Dgallium-drivers=llvmpipe,softpipe",
+    "-Dvulkan-drivers=swrast",
+    "-Dllvm=enabled",
+    "-Dshared-llvm=disabled",
+    "-Dcpp_rtti=false",
+    "-Dcmake_prefix_path=${SYSROOT}/usr/local",
     "-Degl=enabled",
     "-Dopengl=true",
     "-Dgles1=enabled",
@@ -80,5 +91,14 @@ configure_args = [
 ]
 environment = { PYTHONPATH = "${WORK}/work/mako-1.4.3:${WORK}/work/markupsafe-3.0.4/src" }
 
+# Mesa keeps its own copy of the Vulkan headers (with the FreePascalOS
+# surface extension added); programs build against it.
+[build.steps]
+post_install = [
+    "mkdir -p ${STAGE}${PREFIX}/include/vulkan ${STAGE}${PREFIX}/include/vk_video",
+    "cp ${SOURCE}/include/vulkan/vk_platform.h ${SOURCE}/include/vulkan/vulkan.h ${SOURCE}/include/vulkan/vulkan_core.h ${SOURCE}/include/vulkan/vulkan_freepascalos.h ${STAGE}${PREFIX}/include/vulkan/",
+    "cp ${SOURCE}/include/vk_video/*.h ${STAGE}${PREFIX}/include/vk_video/",
+]
+
 [test]
-system = ["test -f /usr/local/lib/libEGL.so.1", "test -f /usr/local/lib/libGLESv2.so.2"]
+system = ["test -f /usr/local/lib/libEGL.so.1", "test -f /usr/local/lib/libGLESv2.so.2", "test -f /usr/local/lib/libvulkan_lvp.so"]

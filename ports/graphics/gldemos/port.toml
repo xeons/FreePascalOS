@@ -5,12 +5,14 @@
 name = "gldemos"
 version = "1.0"
 revision = 0
-summary = "OpenGL and OpenGL ES tests and demonstrations"
+summary = "OpenGL, OpenGL ES and Vulkan tests and demonstrations"
 description = """
 gltest checks Mesa without a window system: OpenGL ES 2, OpenGL ES 1.1
 and desktop OpenGL contexts on EGL's surfaceless platform, drawing and
 reading pixels back. glgears turns three gears in a window of the
 display server (OpenGL ES 2 through EGL's FreePascalOS platform).
+vkcube turns a cube with coloured corners in a window with Vulkan
+(lavapipe), presented through VK_FPOS_window_surface and a swapchain.
 """
 homepage = "https://www.mesa3d.org/"
 license = "GPL-3.0-or-later"
@@ -23,6 +25,7 @@ architectures = ["x86_64", "aarch64"]
 [dependencies]
 build = ["mesa"]
 run = ["mesa"]
+host = ["glslangValidator"]
 
 [build]
 system = "custom"
@@ -32,11 +35,15 @@ toolchain = "c"
 build = [
     "$CC $CFLAGS $LDFLAGS -Wall -o gltest ${FILES}/gltest.c -lEGL -lGLESv2",
     "$CC $CFLAGS $LDFLAGS -Wall -o glgears ${FILES}/glgears.c -lEGL -lGLESv2 -lm",
+    "glslangValidator -V --vn cube_vertex_shader -o cube.vert.h ${FILES}/cube.vert",
+    "glslangValidator -V --vn cube_fragment_shader -o cube.frag.h ${FILES}/cube.frag",
+    "$CC $CFLAGS $LDFLAGS -Wall -I. -o vkcube ${FILES}/vkcube.c -ldl -lm",
 ]
 install = [
     "mkdir -p ${STAGE}${PREFIX}/bin",
     "install -m 0755 gltest ${STAGE}${PREFIX}/bin/gltest",
     "install -m 0755 glgears ${STAGE}${PREFIX}/bin/glgears",
+    "install -m 0755 vkcube ${STAGE}${PREFIX}/bin/vkcube",
 ]
 
 [test]

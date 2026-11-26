@@ -120,6 +120,12 @@ def meson_cross_file(toolchain, sysroot, path):
         f"ar = {quoted(toolchain.tool('ar'))}",
         f"strip = {quoted(toolchain.tool('strip'))}",
         f"pkg-config = {quoted(shutil.which('pkg-config') or 'pkg-config')}",
+    ]
+    # CMake finds the CMake packages of build dependencies (LLVM's, for
+    # Mesa) when a port's dependency() falls back to it.
+    if shutil.which("cmake"):
+        lines.append(f"cmake = {quoted(shutil.which('cmake'))}")
+    lines += [
         "",
         "[built-in options]",
         f"c_args = [{sysroot_flag}]",
