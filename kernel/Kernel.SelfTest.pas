@@ -209,6 +209,20 @@ begin
   SleepMilliseconds(Milliseconds);
   Elapsed := ClockNanoseconds - Start;
   Check(Elapsed >= Milliseconds * NanosecondsPerMillisecond, 'sleep returned early');
+  if Elapsed > (Milliseconds + Slack) * NanosecondsPerMillisecond then
+  begin
+    { How long, before the panic: a lost clock interrupt shows as a
+      fallback's length (the 1 s residual tick, the 4 s longest wait),
+      a busy host as a smaller overshoot. }
+    DebugBeginMessage;
+    DebugWriteTag('selftest');
+    DebugWrite('a sleep of ');
+    DebugWriteDecimal(Milliseconds);
+    DebugWrite(' ms took ');
+    DebugWriteDecimal(Elapsed div 1000);
+    DebugWriteLine(' us');
+    DebugEndMessage;
+  end;
   Check(Elapsed <= (Milliseconds + Slack) * NanosecondsPerMillisecond, 'sleep took far too long');
 end;
 

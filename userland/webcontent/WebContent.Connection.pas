@@ -22,7 +22,10 @@
   an alert's answer, the clipboard, a cookie, a local file. While it
   waits it answers pings (so a page showing a dialog is not taken for
   hung) and puts everything else aside, in order, for the loop to
-  handle afterwards (Next).
+  handle afterwards (Next). AnswerWaitingPings does the same without
+  waiting, between the steps of long work (Web.LongWork: the platform
+  scripts run when a window is made, seconds on an emulator), so a
+  renderer that is starting up is not taken for hung either.
 }
 unit WebContent.Connection;
 
@@ -56,6 +59,12 @@ type
     { The next message to handle (a ping is answered here and not
       returned): one put aside, else one from the channel. }
     function Next(out Message: TIpcMessage): Boolean;
+    { Answers the pings that came, putting everything else aside for
+      Next; does not wait. }
+    procedure AnswerWaitingPings;
+    { Messages put aside wait for Next (the loop must not wait for the
+      channel meanwhile). }
+    function HasDeferred: Boolean;
     function Broken: Boolean;
     property Endpoint: TIpcEndpoint read FEndpoint;
   end;
@@ -150,6 +159,28 @@ begin
       Wait := 1000;
     WaitForHandle(FEndpoint.Channel, Wait);
   until False;
+end;
+
+procedure TContentConnection.AnswerWaitingPings;
+var
+  Message: TIpcMessage;
+begin
+  while FEndpoint.Receive(Message) = IpcReceived do
+  begin
+    if Message.Kind = IpcPing then
+    begin
+      AnswerPing(Message);
+      Message.Free;
+    end
+    else
+      FDeferred.Add(Message);
+  end;
+  FEndpoint.Flush;
+end;
+
+function TContentConnection.HasDeferred: Boolean;
+begin
+  Result := FDeferred.Count > 0;
 end;
 
 function TContentConnection.Next(out Message: TIpcMessage): Boolean;

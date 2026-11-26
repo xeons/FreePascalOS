@@ -17188,6 +17188,18 @@ minute (`IpcScriptInterrupted`) shows the same bar. The browser prints
 `process started PID`, `crashed STATUS`, `hung`, `responsive`, `wait`,
 `stop` and `script-interrupted N` lines with the tab.
 
+A content process answers pings in its loop, in `Call`, and also
+between the steps of the engine's own long work (`Web.LongWork`): when
+a window's realm is made the platform scripts run (a fraction of a second under
+KVM, 3.4 s under TCG and more on a busy host, the longest single
+script about 0.9 s there), and after each one `NoteLongWorkStep` lets
+the process answer the pings that came (`AnswerWaitingPings`, at most
+every 100 ms; other messages are put aside for the loop, which then
+does not wait). Without that a renderer starting up under emulation
+went 5 s or more without an answer and was taken for hung. Page
+scripts never take such a step, so a looping script still goes
+unanswered.
+
 **The sandbox.** Before it runs any page a content process restricts
 itself (`WebContent.Sandbox`) with a new kernel facility, **process
 restrictions**: `CallSetProcessLimit(ProcessLimitRestrictions, Flags)`
@@ -17287,7 +17299,8 @@ own (two webcontent processes), the served page loops with the
 watchdog off and gets the "not responding" bar, Stop ends its renderer
 (the tab shows it crashed), about:crash crashes the local renderer
 (both its tabs show it), Reload brings the page back in a new process
-and the browser lives on.
+and the browser lives on; no renderer starting up (the first page's,
+the local pages', the one Reload starts) is ever reported hung.
 
 **Not yet.** Out-of-process iframes (above); a network process; IME
 text (`InputText` is in the protocol, not used); drag and drop into and
