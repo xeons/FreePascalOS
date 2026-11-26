@@ -62,7 +62,6 @@ function EncodeModuleFields(Container: TTextNode; FirstField: Integer): TBytes;
 implementation
 
 uses
-  WasmText.Numbers,
   WasmText.Expressions;
 
 type

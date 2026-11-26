@@ -27,6 +27,13 @@
                                          (outside assert_malformed) and
                                          text modules an assert_malformed
                                          expects to fail that did encode
+    --dump DIRECTORY                     also write every module that
+                                         encoded to DIRECTORY, as
+                                         DIR-FILE.LINE.KIND.wasm (KIND:
+                                         valid, invalid or malformed, with
+                                         "binary-" before it for modules
+                                         written as bytes), for looking at
+                                         with other tools
 
   DIRECTORY is the spec repository's test/core (the 2.0 or 3.0 release,
   downloaded, never committed); its subdirectories simd, gc, exceptions,
@@ -54,6 +61,7 @@ const
 var
   Files: TStringList;
   Verbose, ParseOnly: Boolean;
+  DumpDirectory: AnsiString;
   TotalPassed, TotalFailed, FilesFailed: Integer;
 
 procedure AddDirectory(const Directory: AnsiString);
@@ -111,6 +119,37 @@ begin
   end;
 end;
 
+procedure DumpModules(const FileName: AnsiString; Commands: TScriptCommandList);
+var
+  Index: Integer;
+  Command: TScriptCommand;
+  Kind: AnsiString;
+  Stream: TFileStream;
+begin
+  for Index := 0 to Commands.Count - 1 do
+  begin
+    Command := Commands[Index];
+    if not Command.HasModule or (Command.Module.EncodeError <> '') or (Command.Module.Bytes = nil) then
+      Continue;
+    if Command.Kind = scAssertInvalid then
+      Kind := 'invalid'
+    else if Command.Kind = scAssertMalformed then
+      Kind := 'malformed'
+    else
+      Kind := 'valid';
+    if Command.Module.IsBinary then
+      Kind := 'binary-' + Kind;
+    Stream := TFileStream.Create(Format('%s%s-%s.%d.%s.wasm', [IncludeTrailingPathDelimiter(DumpDirectory),
+      ExtractFileName(ExtractFileDir(ExpandFileName(FileName))), ChangeFileExt(ExtractFileName(FileName), ''),
+      Command.Line, Kind]), fmCreate);
+    try
+      Stream.WriteBuffer(Command.Module.Bytes[0], Length(Command.Module.Bytes));
+    finally
+      Stream.Free;
+    end;
+  end;
+end;
+
 procedure RunFile(const FileName: AnsiString);
 var
   Text: TStringList;
@@ -127,6 +166,8 @@ begin
     try
       Commands := ParseScript(Text.Text);
       try
+        if DumpDirectory <> '' then
+          DumpModules(FileName, Commands);
         if ParseOnly then
           CheckEncoding(Commands, Outcome)
         else
@@ -166,9 +207,18 @@ begin
   Files := TStringList.Create;
   Verbose := False;
   ParseOnly := False;
-  for Index := 1 to ParamCount do
+  DumpDirectory := '';
+  Index := 1;
+  while Index <= ParamCount do
+  begin
     if ParamStr(Index) = '--verbose' then
       Verbose := True
+    else if (ParamStr(Index) = '--dump') and (Index < ParamCount) then
+    begin
+      Inc(Index);
+      DumpDirectory := ParamStr(Index);
+      ForceDirectories(DumpDirectory);
+    end
     else if ParamStr(Index) = '--parse-only' then
       ParseOnly := True
     else if DirectoryExists(ParamStr(Index)) then
@@ -183,9 +233,11 @@ begin
     end
     else
       Files.Add(ParamStr(Index));
+    Inc(Index);
+  end;
   if Files.Count = 0 then
   begin
-    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose] [--parse-only]');
+    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose] [--parse-only] [--dump DIRECTORY]');
     Halt(2);
   end;
   for Index := 0 to Files.Count - 1 do

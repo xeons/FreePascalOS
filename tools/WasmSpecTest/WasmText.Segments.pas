@@ -45,7 +45,6 @@ interface
 
 uses
   SysUtils,
-  WasmText.Lexer,
   WasmText.Tree,
   WasmText.Binary,
   WasmText.Types,
@@ -73,9 +72,6 @@ type
   end;
 
 implementation
-
-uses
-  WasmText.Expressions;
 
 const
   ElementFlagPassiveOrDeclarative = 1;

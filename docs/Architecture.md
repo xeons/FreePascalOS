@@ -9209,6 +9209,18 @@ rounded exactly, `module binary` and `module quote`) and the .wast script
 commands, with the `spectest` host module. All 148 files of test/core
 and test/core/simd pass, 53,984 assertions.
 
+The text front end reads WebAssembly 3.0: value types are kept in their
+binary encoding (`WasmText.Types`), type definitions with structs,
+arrays, subtypes and recursion groups (`WasmText.TypeDefinitions`),
+implicit type uses reuse only a final function type alone in its group,
+and the instructions of every 3.0 proposal are encoded (exception
+handling with the legacy `try` too, tail calls, typed references, GC,
+memory64 and table64, multiple memories, relaxed SIMD); annotations are
+skipped. Given a 3.0 `test/core`, WasmSpecTest also runs its feature
+subdirectories; `--parse-only` only checks that every module encodes
+(and every text module an `assert_malformed` expects to fail does not),
+and `--dump DIRECTORY` writes the encoded modules out.
+
 **Not done yet**: the JavaScript `WebAssembly` object; the 3.0 features
 (exception handling, tail calls, memory64, multiple memories, typed
 function references, garbage collected types, relaxed SIMD), for which
