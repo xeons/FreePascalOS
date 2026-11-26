@@ -1,0 +1,78 @@
+[port]
+name = "mesa"
+version = "26.3.1"
+revision = 0
+summary = "OpenGL, OpenGL ES and EGL with software rendering (softpipe)"
+description = """
+Mesa is an open source implementation of OpenGL, OpenGL ES, EGL and
+Vulkan. This port builds the software rasterizer softpipe (no LLVM)
+behind libEGL, libGLESv1_CM and libGLESv2: OpenGL ES 1.1 to 3.x and
+desktop OpenGL (through eglGetProcAddress) rendered by the processor.
+EGL offers the surfaceless platform: pbuffers and rendering to
+framebuffer objects, without a window system.
+"""
+homepage = "https://www.mesa3d.org/"
+license = "MIT"
+license_files = ["docs/license.rst"]
+maintainer = "FreePascalOS ports"
+categories = ["graphics"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+notes = """
+Mesa's build runs Python with Mako; Mako and MarkupSafe (pure Python,
+build time only) come as further sources and are found through
+PYTHONPATH. Nothing of them is installed.
+"""
+
+[[sources]]
+url = "https://archive.mesa3d.org/mesa-26.3.1.tar.xz"
+sha256 = "4e4e438eac7b840a9383988cbb7c08dad8041da544b9319fc26d319fa7348961"
+size = 91661844
+extract_dir = "mesa-26.3.1"
+signature = { url = "https://archive.mesa3d.org/mesa-26.3.1.tar.xz.sig", type = "gpg", key = "mesa-signing-key.gpg" }
+
+[[sources]]
+url = "https://files.pythonhosted.org/packages/5a/09/e07c4b5579a79f4b16f8d4f29f6c54514ac787c4ad506b8c4f28a0e6b0bf/mako-1.4.3.tar.gz"
+sha256 = "cd6537fe88d5fec315c55c2f8529bc4ce7a9a352ad7db3eeaa6a66e2dd4ec37a"
+size = 412799
+
+[[sources]]
+url = "https://files.pythonhosted.org/packages/38/9b/e422a865e1d5d57d0e509b4e0bf1c1a70a7f6382c29a5aa428df994c8bc8/markupsafe-3.0.4.tar.gz"
+sha256 = "2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6"
+size = 153777
+
+[dependencies]
+host = ["meson", "ninja", "python3", "bison", "flex", "pkg-config"]
+provides = ["libegl", "libgles", "libgl"]
+
+[build]
+system = "meson"
+toolchain = "c"
+configure_args = [
+    "-Dplatforms=",
+    "-Dgallium-drivers=softpipe",
+    "-Dvulkan-drivers=",
+    "-Dllvm=disabled",
+    "-Degl=enabled",
+    "-Dopengl=true",
+    "-Dgles1=enabled",
+    "-Dgles2=enabled",
+    "-Dglx=disabled",
+    "-Dgbm=disabled",
+    "-Dglvnd=disabled",
+    "-Dexpat=disabled",
+    "-Dxmlconfig=disabled",
+    "-Dzstd=disabled",
+    "-Dzlib=disabled",
+    "-Dvalgrind=disabled",
+    "-Dlibunwind=disabled",
+    "-Dlmsensors=disabled",
+    "-Dshader-cache=disabled",
+    "-Dvideo-codecs=",
+    "-Dbuild-tests=false",
+    "-Dtools=",
+]
+environment = { PYTHONPATH = "${WORK}/work/mako-1.4.3:${WORK}/work/markupsafe-3.0.4/src" }
+
+[test]
+system = ["test -f /usr/local/lib/libEGL.so.1", "test -f /usr/local/lib/libGLESv2.so.2"]

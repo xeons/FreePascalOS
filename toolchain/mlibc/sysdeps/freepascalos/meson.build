@@ -138,6 +138,7 @@ if not no_headers
 	)
 	install_headers(
 		'include/sys/inotify.h',
+		'include/sys/ioccom.h',
 		subdir: 'sys',
 	)
 endif
