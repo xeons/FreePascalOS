@@ -58,6 +58,7 @@ uses
   Compression.BrotliContextMaps,
   Compression.BrotliMetaBlocks,
   Compression.BrotliDecoder,
+  Compression.BrotliStored,
   Compression.ZstdBitReaders,
   Compression.FiniteStateEntropy,
   Compression.ZstdHuffman,
