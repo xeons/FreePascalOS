@@ -11537,7 +11537,7 @@ independent) against the Free Pascal runtime library:
   winding counts as far as it is from even (`ShapeCoverageBytes` gives
   the coverage of an area under either rule, for paints and masks).
 
-  Vector graphics (SVG, and a canvas API later) build on it:
+  Vector graphics (SVG, and libweb's canvas) build on it:
   `Drawing.Transforms` (2 x 3 affine matrices: combining, inverting,
   the scale a transform gives lengths), `Drawing.Paths` (subpaths of
   lines, quadratic and cubic curves and elliptical arcs in SVG's
@@ -11562,7 +11562,21 @@ independent) against the Free Pascal runtime library:
   (filling a shape with a paint under either rule at an opacity,
   through a coverage mask; masks multiply; a layer drawn over a canvas
   through a mask and an opacity, for group opacity, clip paths and
-  masks). `Drawing.CoverageBlending` blends a
+  masks). For canvas, `Drawing.Paints` also has conic gradients (an
+  angle from a start, clockwise), patterns repeated along one axis only
+  (`NoRepeatX`, `NoRepeatY`) and gradients mixed without premultiplying
+  (`InterpolateUnpremultiplied`, as canvas gradients are);
+  `Drawing.Compositing` composites colours by every Porter-Duff operator
+  canvas names (source-over/in/out/atop, destination-over/in/out/atop,
+  lighter, copy, xor) and the sixteen blend modes of Compositing and
+  Blending Level 1 (separable ones per channel, hue, saturation, color
+  and luminosity through SetLum/SetSat), in premultiplied floating point
+  (an integer path for source-over), a span at a time with a weight per
+  pixel (a clip's coverage) mixing the result with what was there;
+  `Drawing.Blurring` approximates a Gaussian of standard deviation s by
+  three box blurs of d = floor(s 3 sqrt(2 pi) / 4 + 0.5) (feGaussianBlur's
+  rule, running sums, so the radius does not cost), on a byte plane or
+  on colours premultiplied. `Drawing.CoverageBlending` blends a
   colour by a coverage gamma-correct (the light of both mixed, gamma
   1.8), a span of coverage bytes at a time: what text is drawn with.
   `Drawing.SmoothLines` draws
@@ -14615,6 +14629,15 @@ results to styling and layout without either knowing the other:
   density), which replaced boxes take as their intrinsic size.
 - `FontsChanged` / `NotifyFontsChanged`: the process's font library
   gained web fonts; every layout lays out again (`rcFonts`).
+- `SetElementImageProvider(Element, Provider)`: an element that draws
+  its own image (a canvas, `Web.Canvas.Elements`). The layout asks
+  `ImageProvidersPending` in `NeedsUpdate` and calls
+  `TakeProvidedImages` at the start of `Update`: a provider whose pixels
+  changed copies them into the element's image when the size is the same
+  (`rcImagePixels`: only the paint version moves, nothing is laid out)
+  or gives a new image (laid out again as any image). A canvas drawn a
+  thousand times between two frames is copied once.
+  `ForgetElementImageProvider` when the provider goes.
 - `FreeDocumentResources(Document)` when the document goes.
 
 The sink that fills them is `TLayoutResourceSink`
@@ -14641,6 +14664,142 @@ gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
 their images and are laid out again, the display list is rebuilt).
+
+### Canvas (Web.Canvas)
+
+The canvas element's scripting (HTML Standard 4.12.5) is drawn by
+`Web.Canvas.*` over libdrawing, libfont and libimage, with the bindings
+in `bindings/Canvas.webidl` (`Web.Bindings.Canvas`) and the operations
+that settle later in `platform/76-canvas.js`:
+
+- **Surfaces and contexts** (`Web.Canvas.Surfaces`, `Web.Canvas.Elements`).
+  A canvas element gets its surface (owned by the element:
+  `TNode.CanvasStateObject`) with its first context or when its bitmap
+  is read: a libimage `TImage` (ARGB, not premultiplied) sized by the
+  width and height attributes (non-negative integers, 300 by 150);
+  setting either (the script context's document observer sees every
+  attribute change) resets the bitmap and the context. The surface has
+  at most one context (2d or bitmaprenderer; getContext for another kind
+  is null; webgl, webgl2 and webgpu are null, as there is no 3D yet).
+  Contexts, gradients, patterns, offscreen canvases and image bitmaps
+  are reference counted (`Web.Canvas.Shared`); a script wrapper holds
+  its reference through a handle and the object remembers its wrapper
+  while it lives, so script sees one wrapper per object, and a context's
+  wrapper keeps its canvas's alive (ctx.canvas).
+- **The drawing state** (`Web.Canvas.State`): transform, fill and stroke
+  styles, globalAlpha, the operator, line width, caps, joins, miter
+  limit, dashes, shadow, text styles, image smoothing, filter and the
+  clipping region (a coverage byte per bitmap pixel, never changed in
+  place, so saved states share it). save() copies, restore() pops,
+  reset() and a resize go back to the defaults.
+- **Paths** (`Web.Canvas.Paths`): the CanvasPath methods on libdrawing's
+  `TPath`, for the context's current default path (points transformed
+  as they are added) and Path2D (kept as given; `new Path2D(text)`
+  parses SVG path data with libsvg's parser; addPath with a
+  DOMMatrix2DInit). arc and ellipse follow the standard's sweep rules
+  (a whole turn at most, the direction asked) as cubic Beziers of at
+  most a quarter turn, arcTo the tangent construction in the space of
+  the call, roundRect its radii rules (one to four, DOMPointInit or
+  numbers, scaled down when they do not fit, negative widths and
+  heights flipping the corners).
+- **The drawing model** (`Web.Canvas.Rendering`): every fill, stroke,
+  text and image makes a layer (the shape's coverage times its paint
+  over the area that matters: the bitmap plus what a shadow or filter
+  can bring in), then the filter, the shadow (its alpha offset and
+  blurred by shadowBlur / 2), globalAlpha, and both composited by the
+  operator within the clip; operators that change the destination where
+  the source is transparent (copy, source-in, source-out,
+  destination-in, destination-atop) composite over the whole bitmap.
+  Strokes are made in the user space of the current transform (the path
+  through its inverse, dashed and stroked, then transformed back), so
+  non-uniform scales and skews give the right outlines.
+- **Styles** (`Web.Canvas.Styles`): CSS colours with libcss (serialized
+  as #rrggbb, or rgba() with the shortest alpha that gives back the
+  same byte), live CanvasGradients (linear, two-circle radial, conic;
+  stops in offset order, then the order added; colours mixed without
+  premultiplying), CanvasPatterns (a copy of the image, the repetition,
+  setTransform; one made from a cross-origin image taints the canvas it
+  is used on).
+- **Text** (`Web.Canvas.Fonts`, `Web.Canvas.Text`): the font attribute
+  is CSS's font shorthand through libcss (CSS-wide keywords and var()
+  refused; relative sizes against 10px), the face chosen by libweb's
+  text fonts and cached; fillText and strokeText place the glyphs
+  (fallback faces, kerning, letterSpacing and wordSpacing), anchor them
+  by textAlign and textBaseline, squeeze to maxWidth and turn the
+  TrueType or CFF outlines into a path, so text takes every transform,
+  style, shadow and operator. measureText gives the advance, the ink's
+  box from the outlines, and the font's and em square's extents
+  relative to the baseline.
+- **Images**: drawImage takes an img (its decoded image at its natural
+  size; one not loaded draws nothing, a broken one is an
+  InvalidStateError), a canvas, an OffscreenCanvas or an ImageBitmap (a
+  video draws nothing until media play), clips the source rectangle to
+  the source with the destination, and samples it as a pattern through
+  the inverse transform (bilinear unless imageSmoothingEnabled is
+  false). An image that is not same origin, data:, blob: or fetched with
+  CORS (crossorigin) clears the canvas's origin-clean flag;
+  getImageData, toDataURL, toBlob and convertToBlob then throw a
+  SecurityError.
+- **Pixels**: getImageData (outside the bitmap is transparent black),
+  putImageData with a dirty rectangle (no transform, clip, alpha or
+  operator), createImageData and the ImageData constructor (WebIDL's
+  overloads resolved by hand; the Uint8ClampedArray is kept alive
+  through the wrapper, `TBindingTracedObject`). alpha: false keeps every
+  pixel opaque.
+- **Filters** (`Web.Canvas.Filters`): "none" or blur, brightness,
+  contrast, drop-shadow, grayscale, hue-rotate, invert, opacity,
+  saturate and sepia, on sRGB values; url() is not accepted (the
+  attribute keeps its value), as there is no SVG filter engine.
+- **Encoding** (`Web.Canvas.Encoding`): PNG, image/jpeg (quality 0 to 1,
+  0.92 otherwise; composited onto black first) and image/webp (lossless)
+  with libimage's encoders; other types give PNG, no pixels "data:,".
+  toBlob calls back in a task, convertToBlob settles a promise.
+- **OffscreenCanvas, ImageBitmap**: OffscreenCanvas (an EventTarget) has
+  the same contexts on its own surface (OffscreenCanvasRenderingContext2D
+  is the same drawing code), width and height that reset it,
+  transferToImageBitmap and convertToBlob; transferControlToOffscreen
+  makes the element a placeholder whose layout image comes from the
+  offscreen canvas. createImageBitmap takes every image source, ImageData
+  and Blobs (decoded with libimage, EXIF orientation applied), with a
+  crop rectangle (outside is transparent), resizeWidth/resizeHeight
+  (pixelated: nearest) and imageOrientation flipY; it rejects as the
+  standard says (RangeError for an empty crop, InvalidStateError for an
+  undecodable Blob). ImageData and ImageBitmap are serializable and
+  ImageBitmap and OffscreenCanvas transferable: the structured clone
+  asks the platform's clone hooks (`Web.Script.Prelude`), and the
+  workers' postMessage moves the canvas objects of its transfer list
+  (`internal.cloneWithTransfer`). Workers get every canvas interface and
+  createImageBitmap (they are realms on the window's thread, so an
+  offscreen canvas drawn on in a worker is read directly).
+- **On the page**: the canvas element's surface is its image provider
+  (see Resources below): drawing marks it, and at the next layout the
+  pixels are copied into the element's layout image, drawn like any
+  replaced element's image (scaled to the box with the device scale;
+  the bitmap is in CSS pixels as the standard has it, pages that want
+  device pixels size it by devicePixelRatio).
+- DOMMatrixReadOnly and DOMMatrix (`platform/70-matrix.js`, Geometry
+  Interfaces Level 1, with WebKitCSSMatrix and SVGMatrix as aliases)
+  came with getTransform: sequences of 6 or 16, CSS transform lists,
+  fromMatrix and the typed arrays, every operation and its Self form,
+  inverse, transformPoint, toString and toJSON.
+- WebIDL attributes of an enumeration type now ignore a string that is
+  not one of its values (WebIDL 3.7.6) instead of throwing
+  (`Web.Bindings.Dispatch`), as ctx.lineCap = "bogus" must.
+
+Tests: `tools/WebScriptTest/scripts/canvas.js` (about a hundred
+checks: state and attributes, every operator, paths, strokes, dashes,
+transforms, clips, gradients, patterns, shadows, filters, drawImage,
+ImageData, Path2D, encoding, OffscreenCanvas, ImageBitmap, clones,
+toBlob and createImageBitmap), `WebLoadTest.Canvas` (a fetched page:
+images drawn, cross-origin tainting, text with the system fonts, the
+layout taking the pixels and painting them), `DrawingTest.Compositing`
+(operators and blend modes by hand, blurs, conic gradients, one-axis
+patterns). Measured against Firefox on a test drawing of every feature
+(800 x 600: paths, joins, arcs, gradients of the three kinds, dashes,
+shadows, text, transforms, operators, clips, patterns, round
+rectangles, curves, drawImage smoothed and not, a blur filter),
+`compare-sites.py` scores 0.2 (0 alike, 100 nothing alike); the text
+differs by its fonts.
 
 ### The web view's API
 
