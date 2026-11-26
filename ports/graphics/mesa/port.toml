@@ -8,8 +8,10 @@ Mesa is an open source implementation of OpenGL, OpenGL ES, EGL and
 Vulkan. This port builds the software rasterizer softpipe (no LLVM)
 behind libEGL, libGLESv1_CM and libGLESv2: OpenGL ES 1.1 to 3.x and
 desktop OpenGL (through eglGetProcAddress) rendered by the processor.
-EGL offers the surfaceless platform: pbuffers and rendering to
-framebuffer objects, without a window system.
+EGL's native platform is the display server's windows (EGLNativeWindowType
+is a struct fpos_window of <freepascalos/windowing.h>, drawn into its
+shared-memory surface at each eglSwapBuffers); the surfaceless platform
+gives pbuffers and framebuffer objects without a window system.
 """
 homepage = "https://www.mesa3d.org/"
 license = "MIT"
@@ -19,7 +21,11 @@ categories = ["graphics"]
 status = "untested"
 architectures = ["x86_64", "aarch64"]
 notes = """
-Mesa's build runs Python with Mako; Mako and MarkupSafe (pure Python,
+The patches teach Mesa the system (DETECT_OS_FREEPASCALOS, _GNU_SOURCE,
+the DRI frontend without DRM: the "pseudo-drm" platform GNU Hurd uses)
+and add the EGL platform freepascalos (platform_freepascalos.c: the
+swrast loader copies each finished frame into the window's surface and
+names it damaged). Mesa's build runs Python with Mako; Mako and MarkupSafe (pure Python,
 build time only) come as further sources and are found through
 PYTHONPATH. Nothing of them is installed.
 """
@@ -49,7 +55,7 @@ provides = ["libegl", "libgles", "libgl"]
 system = "meson"
 toolchain = "c"
 configure_args = [
-    "-Dplatforms=",
+    "-Dplatforms=freepascalos",
     "-Dgallium-drivers=softpipe",
     "-Dvulkan-drivers=",
     "-Dllvm=disabled",

@@ -107,6 +107,13 @@ extern "C" {
 #define FPOS_CALL_CREATE_TIMER 76
 #define FPOS_CALL_SET_TIMER 77
 #define FPOS_CALL_WAIT_FOR_HANDLES 78
+#define FPOS_CALL_CREATE_SECTION 79
+#define FPOS_CALL_CREATE_PORT 80
+#define FPOS_CALL_CONNECT_PORT 81
+#define FPOS_CALL_ACCEPT_CONNECTION 82
+#define FPOS_CALL_CREATE_CHANNEL 83
+#define FPOS_CALL_SEND_MESSAGE 84
+#define FPOS_CALL_RECEIVE_MESSAGE 85
 #define FPOS_CALL_CREATE_PSEUDO_TERMINAL 86
 #define FPOS_CALL_SELECT_NOTIFICATIONS 91
 #define FPOS_CALL_RECEIVE_NOTIFICATION 92
@@ -229,6 +236,7 @@ extern "C" {
 #define FPOS_ERROR_TIMED_OUT 110
 #define FPOS_ERROR_BUSY 16
 #define FPOS_ERROR_WOULD_BLOCK 11
+#define FPOS_ERROR_NOT_FOUND 2
 
 /* --- Open flags, seek origins, kinds -------------------------------------- */
 
@@ -579,6 +587,17 @@ struct fpos_local_message {
 	uint32_t flags;
 	struct fpos_local_socket_name *name;
 	struct fpos_local_credentials credentials;
+};
+
+/* A message on a channel (FPOS_CALL_SEND_MESSAGE, FPOS_CALL_RECEIVE_MESSAGE):
+   length bytes at data and handle_count handles at handles; on receiving,
+   length and handle_count are the buffers' capacities on the way in and
+   what came on the way out. */
+struct fpos_message {
+	uint64_t data;
+	uint64_t length;
+	uint64_t handles;
+	uint64_t handle_count;
 };
 
 struct fpos_pseudo_terminal {

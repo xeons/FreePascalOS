@@ -9,7 +9,8 @@ summary = "OpenGL and OpenGL ES tests and demonstrations"
 description = """
 gltest checks Mesa without a window system: OpenGL ES 2, OpenGL ES 1.1
 and desktop OpenGL contexts on EGL's surfaceless platform, drawing and
-reading pixels back.
+reading pixels back. glgears turns three gears in a window of the
+display server (OpenGL ES 2 through EGL's FreePascalOS platform).
 """
 homepage = "https://www.mesa3d.org/"
 license = "GPL-3.0-or-later"
@@ -30,10 +31,12 @@ toolchain = "c"
 [build.steps]
 build = [
     "$CC $CFLAGS $LDFLAGS -Wall -o gltest ${FILES}/gltest.c -lEGL -lGLESv2",
+    "$CC $CFLAGS $LDFLAGS -Wall -o glgears ${FILES}/glgears.c -lEGL -lGLESv2 -lm",
 ]
 install = [
     "mkdir -p ${STAGE}${PREFIX}/bin",
     "install -m 0755 gltest ${STAGE}${PREFIX}/bin/gltest",
+    "install -m 0755 glgears ${STAGE}${PREFIX}/bin/glgears",
 ]
 
 [test]

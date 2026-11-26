@@ -1,0 +1,20 @@
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
+@@ -565,6 +565,17 @@
+ EGLBoolean
+ dri2_initialize_surfaceless(_EGLDisplay *disp);
+ 
++#ifdef HAVE_FREEPASCALOS_PLATFORM
++EGLBoolean
++dri2_initialize_freepascalos(_EGLDisplay *disp);
++#else
++static inline EGLBoolean
++dri2_initialize_freepascalos(_EGLDisplay *disp)
++{
++   return _eglError(EGL_NOT_INITIALIZED, "FreePascalOS platform not built");
++}
++#endif
++
+ EGLBoolean
+ dri2_initialize_device(_EGLDisplay *disp);
+ static inline void
