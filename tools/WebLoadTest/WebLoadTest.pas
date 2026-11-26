@@ -41,6 +41,7 @@ uses
   WebLoadTest.Pointer,
   WebLoadTest.Frames,
   WebLoadTest.BrowserFeatures,
+  WebLoadTest.Workers,
   SysUtils,
   Web.Bindings.Context,
   Web.Navigation.Pages;
@@ -54,6 +55,13 @@ begin
   begin
     RunEditingTests;
     FinishChecks('web load test (editing)');
+    Exit;
+  end;
+  { "workers": only the worker tests. }
+  if ParamStr(1) = 'workers' then
+  begin
+    RunWorkerTests;
+    FinishChecks('web load test (workers)');
     Exit;
   end;
   { "pointer": only the pointer fuzz test. }
@@ -73,5 +81,6 @@ begin
   RunEditingTests;
   RunPointerTests;
   RunBrowserFeatureTests;
+  RunWorkerTests;
   FinishChecks('web load test');
 end.
