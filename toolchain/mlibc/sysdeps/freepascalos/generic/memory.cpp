@@ -15,8 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 // Memory: mmap, munmap and mprotect over the kernel's POSIX mapping
-// calls (180, 181) and CallProtectMemory. PROT_* and MAP_* have the
-// kernel's values (the Linux ones), so they pass straight through.
+// calls (180, 181) and CallProtectMemory, msync and mincore over
+// CallSyncMemory and CallQueryMemoryResidency (214, 215). PROT_*, MAP_*
+// and MS_* have the kernel's values (the Linux ones), so they pass
+// straight through.
 
 #include "kernel.hpp"
 
@@ -42,6 +44,41 @@ int Sysdeps<VmUnmap>::operator()(void *pointer, size_t size) {
 int Sysdeps<VmProtect>::operator()(void *pointer, size_t size, int prot) {
 	return fpos::call_checked(FPOS_CALL_PROTECT_MEMORY, pointer, size, prot);
 }
+
+#ifndef MLIBC_BUILDING_RTLD
+int Sysdeps<Msync>::operator()(void *addr, size_t length, int flags) {
+	if (flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC))
+		return EINVAL;
+	if ((flags & MS_ASYNC) && (flags & MS_SYNC))
+		return EINVAL;
+	int e = fpos::call_checked(FPOS_CALL_SYNC_MEMORY, addr, length, flags);
+	// Linux: ENOMEM for a range that is not mapped.
+	return e == EFAULT ? ENOMEM : e;
+}
+
+// Advice only: the kernel pages memory in as it is touched.
+int Sysdeps<Madvise>::operator()(void *addr, size_t length, int advice) {
+	(void)addr;
+	(void)length;
+	// MADV_NORMAL, MADV_RANDOM, MADV_SEQUENTIAL, MADV_WILLNEED and
+	// MADV_DONTNEED (0-4, the Linux values; mlibc's names for them come
+	// with its linux option).
+	if (advice < 0 || advice > 4)
+		return EINVAL;
+	return 0;
+}
+
+int Sysdeps<Mincore>::operator()(void *addr, size_t length, unsigned char *vec) {
+	int e = fpos::call_checked(FPOS_CALL_QUERY_MEMORY_RESIDENCY, addr, length, vec);
+	if (e)
+		return e == EFAULT ? ENOMEM : e;
+	// mincore's bit 0 is "resident"; the kernel's other bits say more.
+	size_t pages = (length + 4095) / 4096;
+	for (size_t i = 0; i < pages; i++)
+		vec[i] = (vec[i] & FPOS_PAGE_RESIDENCY_RESIDENT) ? 1 : 0;
+	return 0;
+}
+#endif
 
 int Sysdeps<AnonAllocate>::operator()(size_t size, void **pointer) {
 	return Sysdeps<VmMap>::operator()(nullptr, size, PROT_READ | PROT_WRITE,

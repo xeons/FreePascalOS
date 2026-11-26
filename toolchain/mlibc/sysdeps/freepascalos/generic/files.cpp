@@ -30,6 +30,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
 #include <mlibc/all-sysdeps.hpp>
 #include <mlibc/allocator.hpp>
@@ -181,26 +182,19 @@ int Sysdeps<Openat>::operator()(int dirfd, const char *path, int flags, mode_t m
 	return fpos::open_at(dirfd, path, flags, mode, fd);
 }
 
+// The kernel reads and writes at the offset without touching the
+// descriptor's position (CallReadAt, CallWriteAt), so threads sharing a
+// descriptor do not race on it.
 int Sysdeps<Pread>::operator()(int fd, void *buf, size_t n, off_t off, ssize_t *bytes_read) {
-	long position = fpos::call(FPOS_CALL_SEEK, fd, 0, SEEK_CUR);
-	if (int e = fpos::error_of(position))
-		return e;
-	if (int e = fpos::call_checked(FPOS_CALL_SEEK, fd, off, SEEK_SET))
-		return e;
-	int e = fpos::call_into(bytes_read, FPOS_CALL_READ, fd, buf, n);
-	fpos::call(FPOS_CALL_SEEK, fd, position, SEEK_SET);
-	return e;
+	if (off < 0)
+		return EINVAL;
+	return fpos::call_into(bytes_read, FPOS_CALL_READ_AT, fd, buf, n, off);
 }
 
 int Sysdeps<Pwrite>::operator()(int fd, const void *buf, size_t n, off_t off, ssize_t *bytes_written) {
-	long position = fpos::call(FPOS_CALL_SEEK, fd, 0, SEEK_CUR);
-	if (int e = fpos::error_of(position))
-		return e;
-	if (int e = fpos::call_checked(FPOS_CALL_SEEK, fd, off, SEEK_SET))
-		return e;
-	int e = fpos::call_into(bytes_written, FPOS_CALL_WRITE, fd, buf, n);
-	fpos::call(FPOS_CALL_SEEK, fd, position, SEEK_SET);
-	return e;
+	if (off < 0)
+		return EINVAL;
+	return fpos::call_into(bytes_written, FPOS_CALL_WRITE_AT, fd, buf, n, off);
 }
 
 int Sysdeps<Readv>::operator()(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_read) {
@@ -340,14 +334,13 @@ int Sysdeps<Truncate>::operator()(const char *path, off_t length) {
 	return e;
 }
 
+// Only that file's dirty blocks and metadata (CallSyncHandle).
 int Sysdeps<Fsync>::operator()(int fd) {
-	if (!fpos::handle_is_open(fd))
-		return EBADF;
-	return fpos::call_checked(FPOS_CALL_SYNC);
+	return fpos::call_checked(FPOS_CALL_SYNC_HANDLE, fd, 0);
 }
 
 int Sysdeps<Fdatasync>::operator()(int fd) {
-	return Sysdeps<Fsync>::operator()(fd);
+	return fpos::call_checked(FPOS_CALL_SYNC_HANDLE, fd, FPOS_SYNC_HANDLE_DATA_ONLY);
 }
 
 void Sysdeps<Sync>::operator()() {
@@ -441,27 +434,45 @@ int Sysdeps<Fchownat>::operator()(int dirfd, const char *pathname, uid_t owner, 
 	return fpos::attributes_at(dirfd, pathname, flags, &changes);
 }
 
+// Times to the nanosecond. Both "now" (or no times) lets the kernel
+// fill them in, which anyone who may write the file may ask; a single
+// UTIME_NOW is the clock's time given explicitly (owner only, as on
+// Linux).
 int Sysdeps<Utimensat>::operator()(int dirfd, const char *pathname, const struct timespec times[2],
 		int flags) {
 	struct fpos_attribute_changes changes = {};
-	if (!times) {
+	bool both_now = !times || (times[0].tv_nsec == UTIME_NOW && times[1].tv_nsec == UTIME_NOW);
+	if (both_now) {
 		changes.fields = FPOS_CHANGE_ACCESS_TIME | FPOS_CHANGE_MODIFICATION_TIME | FPOS_CHANGE_TIMES_ARE_NOW;
 	} else {
-		bool now = false;
-		if (times[0].tv_nsec != UTIME_OMIT) {
-			changes.fields |= FPOS_CHANGE_ACCESS_TIME;
-			changes.access_time = times[0].tv_sec;
-			now = now || times[0].tv_nsec == UTIME_NOW;
+		struct timespec now = {};
+		if (times[0].tv_nsec == UTIME_NOW || times[1].tv_nsec == UTIME_NOW) {
+			time_t seconds;
+			long nanoseconds;
+			if (int e = Sysdeps<ClockGet>::operator()(CLOCK_REALTIME, &seconds, &nanoseconds))
+				return e;
+			now.tv_sec = seconds;
+			now.tv_nsec = nanoseconds;
 		}
-		if (times[1].tv_nsec != UTIME_OMIT) {
-			changes.fields |= FPOS_CHANGE_MODIFICATION_TIME;
-			changes.modification_time = times[1].tv_sec;
-			now = now || times[1].tv_nsec == UTIME_NOW;
+		for (int i = 0; i < 2; i++) {
+			if (times[i].tv_nsec == UTIME_OMIT)
+				continue;
+			const struct timespec &given = times[i].tv_nsec == UTIME_NOW ? now : times[i];
+			if (given.tv_nsec < 0 || given.tv_nsec > 999999999)
+				return EINVAL;
+			if (i == 0) {
+				changes.fields |= FPOS_CHANGE_ACCESS_TIME;
+				changes.access_time = given.tv_sec;
+				changes.access_nanoseconds = (uint32_t)given.tv_nsec;
+			} else {
+				changes.fields |= FPOS_CHANGE_MODIFICATION_TIME;
+				changes.modification_time = given.tv_sec;
+				changes.modification_nanoseconds = (uint32_t)given.tv_nsec;
+			}
 		}
-		if (now)
-			changes.fields |= FPOS_CHANGE_TIMES_ARE_NOW;
 		if (!changes.fields)
 			return 0;
+		changes.fields |= FPOS_CHANGE_NANOSECONDS;
 	}
 	return fpos::attributes_at(dirfd, pathname, pathname ? flags : (flags | AT_EMPTY_PATH), &changes);
 }
@@ -488,7 +499,7 @@ int Sysdeps<Ttyname>::operator()(int fd, char *buf, size_t size) {
 			digits[count++] = (char)('0' + value % 10);
 			value /= 10;
 		} while (value);
-		strcpy(name, "/dev/pts");
+		strcpy(name, "/dev/pts/");
 		size_t position = strlen(name);
 		while (count)
 			name[position++] = digits[--count];

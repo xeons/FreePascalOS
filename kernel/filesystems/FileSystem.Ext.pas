@@ -151,6 +151,7 @@ begin
     FileTypeDirectory: Result := NodeKindDirectory;
     FileTypeSymbolicLink: Result := NodeKindSymbolicLink;
     FileTypeFifo: Result := NodeKindFifo;
+    FileTypeSocket: Result := NodeKindSocket;
   else
     Result := NodeKindOther;
   end;

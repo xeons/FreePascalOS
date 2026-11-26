@@ -217,6 +217,11 @@ type
       line discipline (a PLineDiscipline, Io.LineDiscipline); nil for
       other devices. }
     Terminal: Pointer;
+    { A device that opens as another (/dev/ptmx: the master side of a
+      new pseudo-terminal): when set, Io.DeviceFiles.OpenDevice gives
+      what this returns (Device: this PDeviceObject; OpenFile: a
+      PDeviceFile with one reference) instead of opening this device. }
+    OpenInstead: function(Device: Pointer; Flags: LongWord; out OpenFile: Pointer): LongInt;
   end;
 
   TDeviceFile = record

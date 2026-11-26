@@ -872,6 +872,105 @@ const
   CallListPerformanceStates = 232;
   { 233-235 are kept for this group. }
 
+  { --- Files, local sockets (250-259) ------------------------------------ }
+
+  { (Handle, BufferAddress, Count, Offset): pread: reads at Offset of a
+    file (or block device) without touching the handle's position;
+    each piece the kernel reads (TransferChunkSize) is read under the
+    volume's lock, so another thread's write is either all in it or not
+    at all. ErrorIllegalSeek for a pipe, socket or terminal. }
+  CallReadAt = 250;
+  { (Handle, BufferAddress, Count, Offset): pwrite: the same for writing
+    (the file grows if Offset + Count lies past its end; a handle opened
+    for appending writes at Offset too). }
+  CallWriteAt = 251;
+  { (Handle, Flags): fsync/fdatasync: what was written to the file
+    behind Handle (its data and its metadata: the inode, the allocation
+    it needed; the pages shared writable mappings of it changed) reaches
+    the disk, and the disk's own cache is flushed; other files' dirty
+    blocks are left to the background writer. A directory: the changes
+    to its entries. Flags: SyncHandleDataOnly (fdatasync; the same work
+    at present). A block device: all its blocks. ErrorInvalidArgument
+    for a pipe, socket or terminal. }
+  CallSyncHandle = 252;
+  { (Kind, Flags, PairAddress): a local (Unix domain) socket of Kind
+    (LocalSocketStream, LocalSocketDatagram, LocalSocketPackets);
+    Flags: LocalSocketNonBlocking. With PairAddress 0 it returns the
+    handle; otherwise it makes two sockets connected to each other
+    (socketpair), stores their handles (two Int64) at PairAddress and
+    returns 0. Handles to local sockets are HandleKindSocket; listen,
+    accept, shutdown, the options, CallWaitForSocket, CallRead and
+    CallWrite take them like network sockets. }
+  CallCreateLocalSocket = 253;
+  { (Handle, NameAddress): binds the socket to a TAbiLocalSocketName: a
+    path (a socket node is made there, rw for everyone less the umask;
+    ErrorAddressInUse if the path exists), a name in the abstract
+    namespace (Bytes[0] = 0: no node, gone with the socket), or, with
+    Length 0, an abstract name the kernel picks. }
+  CallBindLocalSocket = 254;
+  { (Handle, NameAddress): connects to the socket bound to the name: a
+    stream or packet socket to a listening one (the connection waits in
+    its backlog until accepted; a full backlog waits unless the socket
+    does not wait: ErrorWouldBlock), a datagram socket sets where its
+    datagrams go. A path needs write permission on the socket node.
+    ErrorConnectionRefused if nobody listens there (or the name is
+    gone). }
+  CallConnectLocalSocket = 255;
+  { (Handle, MessageAddress, Flags): sends a TAbiLocalMessage: its bytes
+    (a stream in pieces, a datagram or packet whole), handles to pass
+    along (SCM_RIGHTS: the receiver gets handles of its own to the same
+    objects) and, for datagram sockets, the name to send to. The
+    receiver also learns who sent it (SCM_CREDENTIALS, SO_PEERCRED).
+    Flags: LocalMessage*. Returns the bytes sent. ErrorBrokenPipe once
+    the peer is gone or shut down (the C library raises SIGPIPE),
+    ErrorMessageTooLong for a datagram over LocalDatagramLimit. }
+  CallSendLocalMessage = 256;
+  { (Handle, MessageAddress, Flags): receives into a TAbiLocalMessage:
+    the bytes (a stream stops before a message that carries handles), up
+    to HandleCount passed handles (installed in the caller's table,
+    their numbers stored at HandlesAddress; the rest are closed and
+    LocalMessageHandlesCut set), the sender's name and credentials.
+    Returns the bytes received (0: the peer is gone or shut down). }
+  CallReceiveLocalMessage = 257;
+  { (Handle, Which, BufferAddress): LocalQueryName and LocalQueryPeerName
+    write a TAbiLocalSocketName, LocalQueryPeerCredentials a
+    TAbiLocalCredentials (who made the connected peer). LocalQueryKind
+    returns the socket's LocalSocket* kind (ErrorUnsupported for a
+    network socket, ErrorBadHandle for no socket). }
+  CallQueryLocalSocket = 258;
+  { 259 is kept for this block. }
+
+
+  { CallSyncHandle flags. }
+  SyncHandleDataOnly = $01;
+
+  { CallCreateLocalSocket kinds (the Linux SOCK_* values) and flags. }
+  LocalSocketStream = 1;
+  LocalSocketDatagram = 2;
+  LocalSocketPackets = 5;
+  LocalSocketNonBlocking = $100;
+  { The longest name (sun_path). }
+  LocalSocketNameCapacity = 108;
+  { The most handles one message passes. }
+  MaximumLocalMessageHandles = 64;
+  { The largest datagram or packet. }
+  LocalDatagramLimit = 212992;
+  { CallSendLocalMessage and CallReceiveLocalMessage flags. }
+  LocalMessagePeek = $01;
+  LocalMessageDontWait = $02;
+  { Receive on a stream: wait until the whole buffer is filled (or the
+    stream ends). }
+  LocalMessageWaitAll = $04;
+  { Set on return: the datagram was longer than the buffer (the rest is
+    dropped); passed handles did not all fit. }
+  LocalMessageTruncated = $10;
+  LocalMessageHandlesCut = $20;
+  { CallQueryLocalSocket. }
+  LocalQueryName = 0;
+  LocalQueryPeerName = 1;
+  LocalQueryPeerCredentials = 2;
+  LocalQueryKind = 3;
+
   { --- Clocks and timers (236-239) -------------------------------------------- }
 
   { (InformationAddress): the kernel's clock and timers as a
@@ -1373,6 +1472,10 @@ const
   { The given times are "now": the kernel fills them in, and someone with
     write permission may do this to a file they do not own. }
   ChangeFieldTimesAreNow = $20;
+  { TAbiAttributeChanges has ModificationNanoseconds and
+    AccessNanoseconds for the times given (utimensat); without it the
+    record may end before them and the times are whole seconds. }
+  ChangeFieldNanoseconds = $40;
 
   { Requests of CallControlHandle (on a console handle). }
   ControlGetConsoleMode = 1;
@@ -1814,6 +1917,8 @@ const
   KindFifo = 4;
   KindCharacterDevice = 5;
   KindBlockDevice = 6;
+  { The name a local socket is bound to (bind). }
+  KindSocket = 7;
 
   { --- Handle kinds ---------------------------------------------------- }
 
@@ -2003,6 +2108,9 @@ type
     GroupId: LongWord;
     ModificationTime: Int64;
     AccessTime: Int64;
+    { Read only with ChangeFieldNanoseconds (0-999999999). }
+    ModificationNanoseconds: LongWord;
+    AccessNanoseconds: LongWord;
   end;
   PAbiAttributeChanges = ^TAbiAttributeChanges;
 
@@ -2649,6 +2757,43 @@ type
     GroupId: LongWord;
   end;
   PAbiChannelPeer = ^TAbiChannelPeer;
+
+  { A local socket's name (CallBindLocalSocket, CallConnectLocalSocket):
+    Length bytes of Bytes, a path, or a name in the abstract namespace
+    when Bytes[0] is 0 (then every byte of Length counts). }
+  TAbiLocalSocketName = record
+    Length: LongWord;
+    Reserved: LongWord;
+    Bytes: array[0..LocalSocketNameCapacity - 1] of Char;
+  end;
+  PAbiLocalSocketName = ^TAbiLocalSocketName;
+
+  { Who sent a message, or made a connected socket. }
+  TAbiLocalCredentials = record
+    ProcessId: LongWord;
+    UserId: LongWord;
+    GroupId: LongWord;
+    Reserved: LongWord;
+  end;
+  PAbiLocalCredentials = ^TAbiLocalCredentials;
+
+  { CallSendLocalMessage and CallReceiveLocalMessage. }
+  TAbiLocalMessage = record
+    BufferAddress: QWord;
+    Length: QWord;
+    { Int64 handle numbers: to pass, or room for those received. }
+    HandlesAddress: QWord;
+    { Sending: how many to pass; receiving: room in, received out. }
+    HandleCount: LongWord;
+    { Set on return: LocalMessageTruncated, LocalMessageHandlesCut. }
+    Flags: LongWord;
+    { A TAbiLocalSocketName (0: none): where a datagram goes, or who sent
+      what was received (Length 0 if the sender has no name). }
+    NameAddress: QWord;
+    { Receiving: the sender. }
+    Credentials: TAbiLocalCredentials;
+  end;
+  PAbiLocalMessage = ^TAbiLocalMessage;
 
   { What CallCreatePseudoTerminal gives. }
   TAbiPseudoTerminal = record

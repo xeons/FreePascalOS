@@ -365,11 +365,15 @@ begin
   begin
     Inode^.Information.ModificationTime := Changes.ModificationTime;
     Inode^.Information.ModificationNanoseconds := 0;
+    if (Changes.Fields and AttributeChangeNanoseconds) <> 0 then
+      Inode^.Information.ModificationNanoseconds := Changes.ModificationNanoseconds;
   end;
   if (Changes.Fields and AttributeChangeAccessTime) <> 0 then
   begin
     Inode^.Information.AccessTime := Changes.AccessTime;
     Inode^.Information.AccessNanoseconds := 0;
+    if (Changes.Fields and AttributeChangeNanoseconds) <> 0 then
+      Inode^.Information.AccessNanoseconds := Changes.AccessNanoseconds;
   end;
   StampInode(Inode, False);
   RefreshNode(Node);

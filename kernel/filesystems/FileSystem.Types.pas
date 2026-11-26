@@ -78,6 +78,9 @@ const
   AttributeChangeGroup = $04;
   AttributeChangeModificationTime = $08;
   AttributeChangeAccessTime = $10;
+  { ModificationNanoseconds and AccessNanoseconds count (drivers that
+    keep nanoseconds store them; the others round down). }
+  AttributeChangeNanoseconds = $40;
 
   { TNodeInformation.VolumeFlags }
   VolumeFlagNoExecute = $01;
@@ -123,7 +126,9 @@ type
     NodeKindSymbolicLink,
     NodeKindOther,
     { A named pipe. }
-    NodeKindFifo
+    NodeKindFifo,
+    { The name a local socket is bound to (Io.LocalSocketNames). }
+    NodeKindSocket
   );
 
   TFileName = array[0..MaximumNameBytes - 1] of Char;
@@ -170,6 +175,9 @@ type
     GroupId: LongWord;
     ModificationTime: TUnixTime;
     AccessTime: TUnixTime;
+    { With AttributeChangeNanoseconds (0-999999999). }
+    ModificationNanoseconds: LongWord;
+    AccessNanoseconds: LongWord;
     { The caller asked for the times to be set to now (touch): anyone who
       may write the file may do that, not only its owner. Drivers ignore
       it. }
@@ -360,6 +368,10 @@ type
     { The mount record when the volume is mounted at a directory of
       another one (FileSystem.Mounts), else nil. }
     MountRecord: Pointer;
+    { The node whose change the driver is making (its block cache tag,
+      see BeginNodeChange), so that syncing that file later writes back
+      only the blocks it dirtied. Changed with Lock held. }
+    ChangeTag: QWord;
   end;
 
 function FileSystemStatusText(Status: TFileSystemStatus): PChar;
@@ -374,6 +386,17 @@ function VolumeWrite(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
 function VolumeWriteZeros(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord): Boolean;
 
 function DriverSupportsWriting(Driver: PFileSystemDriver): Boolean;
+
+{ The blocks the driver writes until EndNodeChange belong to Node (the
+  volume's lock held): the block cache tags their lines with it
+  (Io.BlockCache), and CallSyncHandle writes back only those. A change
+  of two directories at once (a rename) uses BeginSharedChange: its
+  blocks go with any file's sync. }
+procedure BeginNodeChange(Volume: PVolume; Node: PNode);
+procedure BeginSharedChange(Volume: PVolume);
+procedure EndNodeChange(Volume: PVolume);
+{ The cache tag of Node's blocks. }
+function NodeChangeTag(Node: PNode): QWord;
 
 implementation
 
@@ -417,6 +440,7 @@ begin
     NodeKindDirectory: Result := 'directory';
     NodeKindSymbolicLink: Result := 'symlink';
     NodeKindFifo: Result := 'fifo';
+    NodeKindSocket: Result := 'socket';
   else
     Result := 'other';
   end;
@@ -431,12 +455,35 @@ end;
 function VolumeWrite(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord;
   Buffer: Pointer): Boolean;
 begin
-  Result := CachedWrite(Volume^.Device, ByteOffset, ByteCount, Buffer);
+  Result := CachedWriteTagged(Volume^.Device, ByteOffset, ByteCount, Buffer, Volume^.ChangeTag);
 end;
 
 function VolumeWriteZeros(Volume: PVolume; ByteOffset: QWord; ByteCount: QWord): Boolean;
 begin
-  Result := CachedWriteZeros(Volume^.Device, ByteOffset, ByteCount);
+  Result := CachedWriteTagged(Volume^.Device, ByteOffset, ByteCount, nil, Volume^.ChangeTag);
+end;
+
+function NodeChangeTag(Node: PNode): QWord;
+begin
+  { 0 is no tag, and the cache's shared tag is High(QWord). }
+  Result := (Node^.Information.NodeNumber + 1) and (High(QWord) shr 1);
+  if Result = CacheTagNone then
+    Result := 1;
+end;
+
+procedure BeginNodeChange(Volume: PVolume; Node: PNode);
+begin
+  Volume^.ChangeTag := NodeChangeTag(Node);
+end;
+
+procedure BeginSharedChange(Volume: PVolume);
+begin
+  Volume^.ChangeTag := CacheTagShared;
+end;
+
+procedure EndNodeChange(Volume: PVolume);
+begin
+  Volume^.ChangeTag := CacheTagNone;
 end;
 
 function DriverSupportsWriting(Driver: PFileSystemDriver): Boolean;

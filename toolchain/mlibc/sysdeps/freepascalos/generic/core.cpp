@@ -16,9 +16,13 @@
 
 // What both the dynamic linker and libc need: logging, ending the
 // process, the thread pointer, futexes (the kernel's WaitOnAddress and
-// WakeAddress) and the clocks.
+// WakeAddress) and the clocks (CLOCK_REALTIME and CLOCK_MONOTONIC from
+// the clock page when it offers the counter, clockpage.cpp).
 
 #include "kernel.hpp"
+#ifndef MLIBC_BUILDING_RTLD
+#include "clockpage.hpp"
+#endif
 
 #include <errno.h>
 #include <string.h>
@@ -27,6 +31,41 @@
 #include <mlibc/tcb.hpp>
 
 namespace fpos {
+
+#ifndef MLIBC_BUILDING_RTLD
+// The clocks the page can give, without a system call.
+bool clock_from_page(int clock, time_t *secs, long *nanos) {
+	int64_t value;
+	switch (clock) {
+		case CLOCK_REALTIME:
+		case CLOCK_REALTIME_COARSE:
+			if (!clock_page_wall_clock(&value))
+				return false;
+			break;
+		case CLOCK_MONOTONIC:
+		case CLOCK_MONOTONIC_RAW:
+		case CLOCK_MONOTONIC_COARSE:
+		case CLOCK_BOOTTIME: {
+			uint64_t uptime;
+			if (!clock_page_uptime(&uptime))
+				return false;
+			value = static_cast<int64_t>(uptime);
+			break;
+		}
+		default:
+			return false;
+	}
+	int64_t seconds = value / 1000000000;
+	int64_t rest = value % 1000000000;
+	if (rest < 0) {
+		rest += 1000000000;
+		seconds--;
+	}
+	*secs = seconds;
+	*nanos = rest;
+	return true;
+}
+#endif
 
 long milliseconds_of(const struct timespec *timeout) {
 	if (!timeout)
@@ -93,6 +132,10 @@ int Sysdeps<FutexWake>::operator()(int *pointer, bool all) {
 }
 
 int Sysdeps<ClockGet>::operator()(int clock, time_t *secs, long *nanos) {
+#ifndef MLIBC_BUILDING_RTLD
+	if (fpos::clock_from_page(clock, secs, nanos))
+		return 0;
+#endif
 	long which;
 	struct fpos_precise_time now;
 	switch (clock) {

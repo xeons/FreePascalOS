@@ -97,6 +97,7 @@ uses
   Processes.FileAttributeCalls,
   Processes.FileLockCalls,
   Processes.SocketCalls,
+  Processes.LocalSocketCalls,
   Processes.Restrictions,
   Processes.EventDescriptorCalls;
 
@@ -154,6 +155,19 @@ begin
     if Normalized[Index] <> DeviceDirectoryPrefix[Index + 1] then
       Exit;
   Rest := @Normalized[Length(DeviceDirectoryPrefix)];
+  { /dev/pts/N is the pseudo-terminal ptsN (the name C programs use). }
+  if (Rest[0] = 'p') and (Rest[1] = 't') and (Rest[2] = 's') and (Rest[3] = '/') and
+     (Rest[4] >= '0') and (Rest[4] <= '9') then
+  begin
+    Index := 4;
+    while (Rest[Index] >= '0') and (Rest[Index] <= '9') do
+      Inc(Index);
+    if (Rest[Index] <> #0) or (Index >= DeviceNameLength) then
+      Exit;
+    CopyText(Name, 'pts', DeviceNameLength);
+    CopyText(@Name[3], @Rest[4], DeviceNameLength - 3);
+    Exit(DeviceEntry);
+  end;
   if (Rest^ = #0) or (TextLength(Rest) >= DeviceNameLength) then
     Exit;
   Index := 0;
@@ -257,6 +271,7 @@ begin
     NodeKindDirectory: UserInformation.Kind := KindDirectory;
     NodeKindSymbolicLink: UserInformation.Kind := KindSymbolicLink;
     NodeKindFifo: UserInformation.Kind := KindFifo;
+    NodeKindSocket: UserInformation.Kind := KindSocket;
   else
     UserInformation.Kind := KindOther;
   end;
@@ -534,6 +549,8 @@ begin
       end;
     HandleKindSocket:
       Result := ReadSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindLocalSocket:
+      Result := ReadLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
     HandleKindEventCounter, HandleKindTimerDescriptor, HandleKindSignalDescriptor, HandleKindEventPoll,
     HandleKindWatchGroup:
       Result := ReadEventDescriptor(Kind, ObjectBody, BufferAddress, ByteCount);
@@ -631,6 +648,8 @@ begin
       Result := WriteInPieces(WriteToPipeTarget, ObjectBody, BufferAddress, ByteCount);
     HandleKindSocket:
       Result := WriteSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindLocalSocket:
+      Result := WriteLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
     HandleKindEventCounter, HandleKindTimerDescriptor, HandleKindSignalDescriptor, HandleKindEventPoll,
     HandleKindWatchGroup:
       Result := WriteEventDescriptor(Kind, ObjectBody, BufferAddress, ByteCount);
@@ -732,7 +751,7 @@ begin
     HandleKindPort: Result := Abi.SystemCalls.HandleKindPort;
     HandleKindChannel: Result := Abi.SystemCalls.HandleKindChannel;
     HandleKindWatch: Result := Abi.SystemCalls.HandleKindWatch;
-    HandleKindSocket: Result := Abi.SystemCalls.HandleKindSocket;
+    HandleKindSocket, HandleKindLocalSocket: Result := Abi.SystemCalls.HandleKindSocket;
     HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
     HandleKindMutex: Result := Abi.SystemCalls.HandleKindMutex;
     HandleKindEventCounter: Result := Abi.SystemCalls.HandleKindEventCounter;
@@ -1103,7 +1122,7 @@ var
 begin
   if CallerRestricted(RestrictFileWrites) then
     Exit(Failure(ErrorAccessDenied));
-  Error := CopyFromUser(@UserChanges, ChangesAddress, SizeOf(UserChanges));
+  Error := CopyAttributeChangesFromUser(ChangesAddress, UserChanges);
   if Error = ErrorNone then
     Error := FetchKernelPath(PathAddress, KernelPath);
   if Error <> ErrorNone then

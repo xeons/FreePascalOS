@@ -173,6 +173,33 @@ extern "C" {
 /* (): the parent's id. */
 #define FPOS_CALL_GET_PARENT_PROCESS_ID 196
 
+/* File mappings (214-219). */
+
+/* (Address, Length, Flags): msync (the MS_* values). */
+#define FPOS_CALL_SYNC_MEMORY 214
+/* (Address, Length, VectorAddress): mincore (FPOS_PAGE_RESIDENCY_*). */
+#define FPOS_CALL_QUERY_MEMORY_RESIDENCY 215
+
+/* Files and local sockets (250-259). */
+
+/* (Handle, Buffer, Count, Offset): pread, the position left alone. */
+#define FPOS_CALL_READ_AT 250
+/* (Handle, Buffer, Count, Offset): pwrite. */
+#define FPOS_CALL_WRITE_AT 251
+/* (Handle, Flags): fsync of one file (FPOS_SYNC_HANDLE_DATA_ONLY). */
+#define FPOS_CALL_SYNC_HANDLE 252
+/* (Kind, Flags, PairAddress): a Unix domain socket, or a pair of them. */
+#define FPOS_CALL_CREATE_LOCAL_SOCKET 253
+/* (Handle, NameAddress): bind to a struct fpos_local_socket_name. */
+#define FPOS_CALL_BIND_LOCAL_SOCKET 254
+/* (Handle, NameAddress): connect. */
+#define FPOS_CALL_CONNECT_LOCAL_SOCKET 255
+/* (Handle, MessageAddress, Flags): sendmsg (struct fpos_local_message). */
+#define FPOS_CALL_SEND_LOCAL_MESSAGE 256
+/* (Handle, MessageAddress, Flags): recvmsg. */
+#define FPOS_CALL_RECEIVE_LOCAL_MESSAGE 257
+/* (Handle, Which, BufferAddress): names, peer credentials, the kind. */
+#define FPOS_CALL_QUERY_LOCAL_SOCKET 258
 /* Signals and timers (240-249). */
 /* (Pid, Signal, Value): sigqueue. */
 #define FPOS_CALL_QUEUE_SIGNAL 240
@@ -244,6 +271,7 @@ extern "C" {
 #define FPOS_KIND_FIFO 4
 #define FPOS_KIND_CHARACTER_DEVICE 5
 #define FPOS_KIND_BLOCK_DEVICE 6
+#define FPOS_KIND_SOCKET 7
 
 #define FPOS_HANDLE_KIND_FILE 1
 #define FPOS_HANDLE_KIND_CONSOLE 2
@@ -272,6 +300,21 @@ extern "C" {
 #define FPOS_CHANGE_MODIFICATION_TIME 0x08
 #define FPOS_CHANGE_ACCESS_TIME 0x10
 #define FPOS_CHANGE_TIMES_ARE_NOW 0x20
+/* The record's nanosecond fields count (utimensat). */
+#define FPOS_CHANGE_NANOSECONDS 0x40
+
+/* The clock page (auxiliary vector entry FPOS_AUXILIARY_CLOCK_PAGE). */
+#define FPOS_AUXILIARY_CLOCK_PAGE 0x1004
+#define FPOS_CLOCK_PAGE_MODE_SYSTEM_CALL 0
+#define FPOS_CLOCK_PAGE_MODE_COUNTER 1
+
+/* mincore bits (FPOS_CALL_QUERY_MEMORY_RESIDENCY). */
+#define FPOS_PAGE_RESIDENCY_RESIDENT 0x01
+#define FPOS_PAGE_RESIDENCY_MAPPED 0x02
+#define FPOS_PAGE_RESIDENCY_DIRTY 0x04
+
+/* FPOS_CALL_SYNC_HANDLE. */
+#define FPOS_SYNC_HANDLE_DATA_ONLY 0x01
 
 /* Console requests (FPOS_CALL_CONTROL_HANDLE). */
 #define FPOS_CONTROL_GET_CONSOLE_MODE 1
@@ -394,6 +437,25 @@ struct fpos_timer_specification {
 #define FPOS_SOCKET_OPTION_RECEIVE_BUFFER 17
 #define FPOS_SOCKET_OPTION_SEND_BUFFER 18
 #define FPOS_SOCKET_OPTION_IPV6_ONLY 22
+#define FPOS_SOCKET_OPTION_PASS_CREDENTIALS 28
+#define FPOS_SOCKET_OPTION_LISTENING 29
+
+/* Local (Unix domain) sockets. */
+#define FPOS_LOCAL_SOCKET_STREAM 1
+#define FPOS_LOCAL_SOCKET_DATAGRAM 2
+#define FPOS_LOCAL_SOCKET_PACKETS 5
+#define FPOS_LOCAL_SOCKET_NON_BLOCKING 0x100
+#define FPOS_LOCAL_SOCKET_NAME_CAPACITY 108
+#define FPOS_MAXIMUM_LOCAL_MESSAGE_HANDLES 64
+#define FPOS_LOCAL_MESSAGE_PEEK 0x01
+#define FPOS_LOCAL_MESSAGE_DONT_WAIT 0x02
+#define FPOS_LOCAL_MESSAGE_WAIT_ALL 0x04
+#define FPOS_LOCAL_MESSAGE_TRUNCATED 0x10
+#define FPOS_LOCAL_MESSAGE_HANDLES_CUT 0x20
+#define FPOS_LOCAL_QUERY_NAME 0
+#define FPOS_LOCAL_QUERY_PEER_NAME 1
+#define FPOS_LOCAL_QUERY_PEER_CREDENTIALS 2
+#define FPOS_LOCAL_QUERY_KIND 3
 
 /* --- Records ---------------------------------------------------------------- */
 
@@ -445,6 +507,24 @@ struct fpos_attribute_changes {
 	uint32_t group_id;
 	int64_t modification_time;
 	int64_t access_time;
+	/* Read only with FPOS_CHANGE_NANOSECONDS. */
+	uint32_t modification_nanoseconds;
+	uint32_t access_nanoseconds;
+};
+
+/* The clock page (TAbiClockPage): Sequence is odd while the kernel
+   changes it. */
+struct fpos_clock_page {
+	uint32_t sequence;
+	uint32_t mode;
+	uint64_t counter_origin;
+	uint64_t origin_nanoseconds;
+	uint64_t counter_frequency;
+	int64_t wall_base_offset;
+	int64_t slew_total;
+	uint64_t slew_start;
+	uint32_t slew_parts_per_million;
+	uint32_t reserved;
 };
 
 struct fpos_credentials {
@@ -519,6 +599,29 @@ struct fpos_socket_address {
 	uint32_t scope_id;
 	uint8_t address[16];
 	uint64_t reserved;
+};
+
+struct fpos_local_socket_name {
+	uint32_t length;
+	uint32_t reserved;
+	char bytes[FPOS_LOCAL_SOCKET_NAME_CAPACITY];
+};
+
+struct fpos_local_credentials {
+	uint32_t process_id;
+	uint32_t user_id;
+	uint32_t group_id;
+	uint32_t reserved;
+};
+
+struct fpos_local_message {
+	const void *buffer;
+	uint64_t length;
+	int64_t *handles;
+	uint32_t handle_count;
+	uint32_t flags;
+	struct fpos_local_socket_name *name;
+	struct fpos_local_credentials credentials;
 };
 
 struct fpos_pseudo_terminal {

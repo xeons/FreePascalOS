@@ -88,6 +88,9 @@ type
     HandleKindSemaphore,
     { A mutex (Processes.ObjectCalls). }
     HandleKindMutex,
+    { A local (Unix domain) socket (Processes.LocalSockets); told to
+      programs as HandleKindSocket. }
+    HandleKindLocalSocket,
     { Event descriptors (Processes.EventDescriptorCalls): an event
       counter (eventfd), a timer descriptor (timerfd), a signal
       descriptor (signalfd), an event poll (epoll) and a watch group
@@ -183,6 +186,7 @@ uses
   Memory.KernelHeap,
   Objects.Manager,
   Io.Pipes,
+  Processes.LocalSockets,
   Processes.EventPolls;
 
 procedure InitializeHandleTable(out Table: THandleTable);
@@ -214,6 +218,8 @@ begin
   case Kind of
     HandleKindPipeReadEnd: OpenPipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: OpenPipeEnd(PPipe(ObjectBody), True);
+    { Local sockets too: closing the last one disconnects the peer. }
+    HandleKindLocalSocket: NoteLocalSocketOpened(PLocalSocket(ObjectBody));
   end;
 end;
 
@@ -222,6 +228,7 @@ begin
   case Kind of
     HandleKindPipeReadEnd: ClosePipeEnd(PPipe(ObjectBody), False);
     HandleKindPipeWriteEnd: ClosePipeEnd(PPipe(ObjectBody), True);
+    HandleKindLocalSocket: NoteLocalSocketClosed(PLocalSocket(ObjectBody));
   end;
   if NoteObjectHandleClosed(ObjectBody) then
     ForgetObjectInEventPolls(ObjectBody);

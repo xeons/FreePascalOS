@@ -58,6 +58,7 @@ uses
   Objects.Timers,
   Objects.Sections,
   Processes.Channels,
+  Processes.LocalSockets,
   Drivers.Displays,
   Memory.Layout,
   Memory.PhysicalPages,
@@ -270,6 +271,7 @@ begin
   InitializeTimerObjects;
   InitializeSectionObjects;
   InitializeChannels;
+  InitializeLocalSockets;
   InitializeSystemCalls;
 end;
 

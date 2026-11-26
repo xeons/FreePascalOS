@@ -89,6 +89,7 @@ begin
     NodeKindDirectory: Result := FileTypeDirectory;
     NodeKindSymbolicLink: Result := FileTypeSymbolicLink;
     NodeKindFifo: Result := FileTypeFifo;
+    NodeKindSocket: Result := FileTypeSocket;
   else
     Result := FileTypeUnknown;
   end;
@@ -176,6 +177,11 @@ begin
         Inode^.Mode := ModeTypeFifo or PermissionsFile;
         Inode^.LinksCount := 1;
       end;
+    NodeKindSocket:
+      begin
+        Inode^.Mode := ModeTypeSocket or PermissionsFile;
+        Inode^.LinksCount := 1;
+      end;
   else
     begin
       Inode^.Mode := ModeTypeRegular or PermissionsFile;
@@ -200,7 +206,7 @@ begin
   { Fast symbolic links keep their target where the block map would be;
     named pipes have no data at all (e2fsck rejects an extent tree). }
   if HasIncompatibleFeature(Ext, IncompatibleExtents) and (Kind <> NodeKindSymbolicLink) and
-     (Kind <> NodeKindFifo) then
+     (Kind <> NodeKindFifo) and (Kind <> NodeKindSocket) then
     InitializeEmptyExtentTree(Node);
 end;
 
@@ -266,7 +272,7 @@ begin
   Created := nil;
   Parent := PExtNode(Directory);
   Ext := ExtVolumeOf(Directory);
-  if not (Kind in [NodeKindFile, NodeKindDirectory, NodeKindSymbolicLink, NodeKindFifo]) then
+  if not (Kind in [NodeKindFile, NodeKindDirectory, NodeKindSymbolicLink, NodeKindFifo, NodeKindSocket]) then
     Exit(StatusUnsupported);
   if TextLength(Name) > 255 then
     Exit(StatusNameTooLong);

@@ -72,7 +72,8 @@ uses
   Processes.Thread,
   Processes.Channels,
   Processes.SignalDescriptors,
-  Processes.EventPolls;
+  Processes.EventPolls,
+  Processes.LocalSockets;
 
 const
   ReadyBoth = PollReadable or PollWritable;
@@ -155,6 +156,7 @@ begin
     Processes.Handles.HandleKindPipeReadEnd: Result := PipeReadEndReadiness(PPipe(ObjectBody));
     Processes.Handles.HandleKindPipeWriteEnd: Result := PipeWriteEndReadiness(PPipe(ObjectBody));
     Processes.Handles.HandleKindSocket: Result := SocketReadiness(PSocket(ObjectBody));
+    Processes.Handles.HandleKindLocalSocket: Result := LocalSocketReadiness(PLocalSocket(ObjectBody));
     Processes.Handles.HandleKindEventCounter: Result := EventCounterReadiness(PEventCounter(ObjectBody));
     Processes.Handles.HandleKindTimerDescriptor: Result := TimerDescriptorReadiness(PTimerDescriptor(ObjectBody));
     Processes.Handles.HandleKindSignalDescriptor: Result := SignalDescriptorReadiness(PSignalDescriptor(ObjectBody));
@@ -206,6 +208,11 @@ begin
       begin
         AddEvent(Events, Count, @PSocket(ObjectBody)^.Readable);
         AddEvent(Events, Count, @PSocket(ObjectBody)^.Writable);
+      end;
+    Processes.Handles.HandleKindLocalSocket:
+      begin
+        AddEvent(Events, Count, @PLocalSocket(ObjectBody)^.Readable);
+        AddEvent(Events, Count, @PLocalSocket(ObjectBody)^.Writable);
       end;
     Processes.Handles.HandleKindEventCounter:
       begin

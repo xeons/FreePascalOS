@@ -76,5 +76,13 @@
 #ifndef FIOCLEX
 #define FIOCLEX 0x5451
 #endif
+/* Pseudo-terminal masters: the terminal's number, and the lock
+   (unlockpt; there is nothing to unlock). */
+#ifndef TIOCGPTN
+#define TIOCGPTN 0x80045430
+#endif
+#ifndef TIOCSPTLCK
+#define TIOCSPTLCK 0x40045431
+#endif
 
 #endif /* _ABIBITS_IOCTLS_H */

@@ -35,6 +35,13 @@
 
   Both devices of a pair are made the first time the pair is used, and
   kept for its later uses.
+
+  /dev/ptmx (rw-rw-rw-) is how C programs get one (posix_openpt):
+  opening it takes a new pair and gives its master side opened as asked
+  - for reading and writing, one handle that reads the output and types
+  into the terminal (its ReadyEvent says there is output to read). The
+  program learns N with ControlGetTerminalNumber and opens the terminal
+  side as /dev/pts/N (or /dev/ptsN).
 }
 unit Drivers.PseudoTerminalDevices;
 
@@ -74,6 +81,7 @@ const
 var
   MasterDriver: PDriverObject;
   TerminalDriver: PDriverObject;
+  CloningDriver: PDriverObject;
 
 function PairOf(Device: PDeviceObject): PPseudoTerminal;
 begin
@@ -159,6 +167,8 @@ end;
 
 { --- Making them ------------------------------------------------------------ }
 
+procedure MakeCloningDevice; forward;
+
 procedure InitializePseudoTerminalDevices;
 var
   Dispatch: TDispatchTable;
@@ -178,6 +188,22 @@ begin
   Dispatch[IoFunctionWrite] := @WriteTerminalSide;
   Dispatch[IoFunctionControl] := @ControlTerminalSide;
   TerminalDriver := CreateDriver('pts', Dispatch);
+  MakeCloningDevice;
+end;
+
+function OpenNewMaster(Device: Pointer; Flags: LongWord; out OpenFile: Pointer): LongInt; forward;
+
+{ /dev/ptmx: never opened itself (OpenInstead). }
+procedure MakeCloningDevice;
+var
+  Dispatch: TDispatchTable;
+  Cloning: PDeviceObject;
+begin
+  FillMemory(@Dispatch, SizeOf(Dispatch), 0);
+  CloningDriver := CreateDriver('ptmx', Dispatch);
+  Cloning := CreateDevice(CloningDriver, 'ptmx', DeviceKindCharacter, EveryoneReadWrite, 0);
+  if Cloning <> nil then
+    Cloning^.OpenInstead := @OpenNewMaster;
 end;
 
 { Makes the two devices of a pair used for the first time. }
@@ -207,6 +233,36 @@ begin
   Pair^.MasterDevice := Master;
   Pair^.TerminalDevice := TerminalSide;
   Result := True;
+end;
+
+const
+  DefaultRows = 25;
+  DefaultColumns = 80;
+
+function OpenNewMaster(Device: Pointer; Flags: LongWord; out OpenFile: Pointer): LongInt;
+var
+  Pair: PPseudoTerminal;
+  MasterFile: PDeviceFile;
+begin
+  OpenFile := nil;
+  Pair := ReservePseudoTerminal;
+  if Pair = nil then
+    Exit(ErrorBusy);
+  if (Pair^.MasterDevice = nil) and not MakeDevices(Pair) then
+  begin
+    ReleasePseudoTerminal(Pair);
+    Exit(ErrorOutOfMemory);
+  end;
+  SetTerminalSize(Pair^.Terminal, DefaultRows, DefaultColumns);
+  if (Flags and (OpenRead or OpenWrite)) = 0 then
+    Flags := Flags or OpenRead or OpenWrite;
+  Result := OpenDevice(PDeviceObject(Pair^.MasterDevice), Flags and (OpenRead or OpenWrite), MasterFile);
+  if Result <> ErrorNone then
+  begin
+    ReleasePseudoTerminal(Pair);
+    Exit;
+  end;
+  OpenFile := MasterFile;
 end;
 
 function CreatePseudoTerminal(Rows, Columns: LongWord; out OutputFile, InputFile, TerminalFile: PDeviceFile;

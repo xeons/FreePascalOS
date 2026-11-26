@@ -1,0 +1,35 @@
+diff -ru a/options/posix/generic/sys-mman.cpp b/options/posix/generic/sys-mman.cpp
+--- a/options/posix/generic/sys-mman.cpp	2026-11-25 18:00:12.193467207 -0600
++++ b/options/posix/generic/sys-mman.cpp	2026-11-25 18:00:12.201575006 -0600
+@@ -150,6 +150,9 @@
+ 	return ret;
+ }
+ 
++#endif /* __MLIBC_LINUX_OPTION */
++
++#if __MLIBC_LINUX_OPTION || __MLIBC_BSD_OPTION
+ int madvise(void *addr, size_t length, int advice) {
+ 	if(int e = mlibc::sysdep_or_enosys<Madvise>(addr, length, advice)) {
+ 		errno = e;
+@@ -166,4 +169,4 @@
+ 	}
+ 	return 0;
+ }
+-#endif /* __MLIBC_LINUX_OPTION */
++#endif /* __MLIBC_LINUX_OPTION || __MLIBC_BSD_OPTION */
+diff -ru a/options/posix/include/sys/mman.h b/options/posix/include/sys/mman.h
+--- a/options/posix/include/sys/mman.h	2026-11-25 18:00:12.194199256 -0600
++++ b/options/posix/include/sys/mman.h	2026-11-25 18:00:12.201597394 -0600
+@@ -38,10 +38,10 @@
+ int memfd_create(const char *__name, unsigned int __flags);
+ #endif /* __MLIBC_LINUX_OPTION && defined(_GNU_SOURCE) */
+ 
+-#if __MLIBC_LINUX_OPTION && defined(_DEFAULT_SOURCE)
++#if (__MLIBC_LINUX_OPTION || __MLIBC_BSD_OPTION) && defined(_DEFAULT_SOURCE)
+ int madvise(void *__addr, size_t __size, int __advise);
+ int mincore(void *__addr, size_t __size, unsigned char *__vec);
+-#endif /* __MLIBC_LINUX_OPTION && defined(_DEFAULT_SOURCE) */
++#endif /* (__MLIBC_LINUX_OPTION || __MLIBC_BSD_OPTION) && defined(_DEFAULT_SOURCE) */
+ 
+ #endif /* !__MLIBC_ABI_ONLY */
+ 

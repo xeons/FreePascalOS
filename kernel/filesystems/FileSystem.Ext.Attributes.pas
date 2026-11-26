@@ -54,6 +54,24 @@ const
   InodeModificationTimeExtraOffset = $88;
   InodeAccessTimeExtraOffset = $8C;
 
+{ Sets an extra time field, if this inode has it: the nanoseconds and
+  the two bits of seconds past 32. }
+procedure SetExtraTime(Node: PExtNode; FieldOffset: LongWord; Seconds: Int64; Nanoseconds: LongWord);
+var
+  Ext: PExtVolume;
+  ExtraSize: Word;
+  Epoch: LongWord;
+begin
+  Ext := ExtVolumeOf(@Node^.Common);
+  if Ext^.InodeSize <= GoodOldInodeSize then
+    Exit;
+  ExtraSize := PWord(@Node^.InodeBytes[InodeExtraSizeOffset])^;
+  if GoodOldInodeSize + ExtraSize < FieldOffset + 4 then
+    Exit;
+  Epoch := LongWord((Seconds - Int64(LongInt(LongWord(Seconds)))) shr 32) and 3;
+  PLongWord(@Node^.InodeBytes[FieldOffset])^ := (Nanoseconds shl 2) or Epoch;
+end;
+
 { Clears an extra time field if this inode has it. }
 procedure ClearExtraTime(Node: PExtNode; FieldOffset: LongWord);
 var
@@ -91,12 +109,19 @@ begin
   if (Changes.Fields and AttributeChangeModificationTime) <> 0 then
   begin
     Inode^.ModificationTime := LongWord(Changes.ModificationTime);
-    ClearExtraTime(ExtNode, InodeModificationTimeExtraOffset);
+    if (Changes.Fields and AttributeChangeNanoseconds) <> 0 then
+      SetExtraTime(ExtNode, InodeModificationTimeExtraOffset, Changes.ModificationTime,
+        Changes.ModificationNanoseconds)
+    else
+      ClearExtraTime(ExtNode, InodeModificationTimeExtraOffset);
   end;
   if (Changes.Fields and AttributeChangeAccessTime) <> 0 then
   begin
     Inode^.AccessTime := LongWord(Changes.AccessTime);
-    ClearExtraTime(ExtNode, InodeAccessTimeExtraOffset);
+    if (Changes.Fields and AttributeChangeNanoseconds) <> 0 then
+      SetExtraTime(ExtNode, InodeAccessTimeExtraOffset, Changes.AccessTime, Changes.AccessNanoseconds)
+    else
+      ClearExtraTime(ExtNode, InodeAccessTimeExtraOffset);
   end;
 
   Inode^.ChangeTime := LongWord(CurrentWallClockTime);

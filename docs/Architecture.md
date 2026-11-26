@@ -2470,6 +2470,23 @@ master: the echo and output of a command, `tty` and `stty size`,
 pseudo-terminal reusing the first whose master reads end of file once
 its program is gone.
 
+**`/dev/ptmx`** (rw-rw-rw-) is the other way to get one, the one C
+programs use (`posix_openpt`, `openpty`, `forkpty`): the device has no
+driver of its own (`TDeviceObject.OpenInstead`, which
+`Io.DeviceFiles.OpenDevice` follows), and opening it takes a new pair
+(25 by 80) and opens its master side as asked - for reading and writing
+one handle that both reads the output and types into the terminal; its
+`ReadyEvent` (output to read) and `WritableEvent` (room to type) make
+poll and select see both directions. `ControlGetTerminalNumber` on the
+master gives N (`ptsname`, `TIOCGPTN`); the terminal side opens as
+`/dev/pts/N` as well as `/dev/ptsN` (the path is mapped onto the device
+name, `ClassifyDevicePath`). `grantpt` and `unlockpt` have nothing to
+do (the terminal side is rw for everyone and never locked). The ctest
+group `terminals` checks the master as one descriptor, the name, the
+window size set on the master and seen on the terminal, both
+directions, poll, the end of file once the terminal side is closed, and
+`openpty` with a line edited and echoed.
+
 The keyboard (Drivers.Ps2Keyboard, IRQ 1) and the serial port
 (Drivers.SerialDevice, IRQ 4) are input devices (Io.InputDevice): their
 interrupt handlers put characters in a ring, and a deferred call hands
@@ -8797,6 +8814,22 @@ way (see "Settings").
 
 ### The block cache
 
+**Syncing one file.** Every dirty line carries a tag: whose change
+dirtied it (`CachedWriteTagged`). The VFS names the node a driver call
+changes (`BeginNodeChange`/`EndNodeChange` in `FileSystem.Types`, the
+volume's `ChangeTag`, read by `VolumeWrite`): a file for writes, size
+changes and attribute changes, the directory for creating and removing
+names, and "shared" for renames and hard links (two directories, or a
+directory and an inode). A line dirtied by a second change becomes
+shared too. `FlushCachedTag` writes back only the dirty lines of one
+tag and the shared ones (those dirty when it began), then flushes the
+device; `SyncFile` (CallSyncHandle, fsync and fdatasync) first writes
+the file's pages kept by shared writable mappings back to it (the file
+sync hook of `Processes.MappedFileChanges`), so one program's fsync
+leaves other files' dirty blocks to the background writer. The ext3/4
+journal flushes the disk at every commit anyway; ext2, FAT and exFAT
+gain the most. Memory volumes have nothing to write.
+
 **Size.** The block cache (`Io.BlockCache`, 4 KiB lines) starts at its
 minimum and takes a new line for a miss, instead of reusing the least
 recently used one, while it is below its maximum and twice the low
@@ -9186,6 +9219,14 @@ FAT has the creation time to 10 ms and the access date; exFAT the
 creation and access times and 10 ms steps; memory volumes keep all
 four exactly. `TAbiFileInformation` is unchanged (whole seconds);
 `CallGetFileTimes` (175) gives a `TAbiFileTimes` for a path or a handle.
+`TAbiAttributeChanges` takes nanoseconds with `ChangeFieldNanoseconds`
+(two more fields; programs built before pass the shorter record, which
+the kernel copies alone without the flag): ext writes them to a large
+inode's extra fields (with the two bits of seconds past 2038), memory
+volumes keep them, FAT and exFAT round down. "Now" times are filled in
+to the nanosecond. C programs: `stat` gives `st_atim`/`st_mtim`/
+`st_ctim` from CallGetFileTimes, `utimensat` and `futimens` set them
+(`UTIME_NOW`, `UTIME_OMIT`).
 `stat` shows the times to the nanosecond and the birth (`%w`, `%W`),
 `ls -l --time=atime|ctime|birth` (`-u`, `-c`) shows and sorts by
 another time, `touch -a` and `-m` set one of them.
@@ -12444,7 +12485,8 @@ another first program for such tries.
 `toolchain/mlibc/sysdeps/freepascalos` is mlibc's view of the kernel,
 one file per concern in `generic/` (`core.cpp`: logging, exit, the
 thread pointer, futexes over `WaitOnAddress`/`WakeAddress`, clocks over
-`CallGetPreciseTime`; `memory.cpp`; `files-core.cpp` and `files.cpp`;
+`CallGetPreciseTime`, or for `CLOCK_REALTIME` and `CLOCK_MONOTONIC` the
+clock page with no system call, `clockpage.cpp`; `memory.cpp`; `files-core.cpp` and `files.cpp`;
 `directories.cpp`; `threads.cpp`; `process.cpp`; `signals.cpp`;
 `sockets.cpp`; `polling.cpp`; `terminal.cpp`; `system.cpp`), the start
 files and the thread entry in `arch/<cpu>/`, and the ABI headers:
@@ -12453,7 +12495,8 @@ mlibc's Linux ABI (errno values, `struct stat`, `O_*`, signal numbers,
 Linux errno numbers - with the call numbers and records in
 `include/freepascalos/syscall.h` (installed, for programs that want the
 native calls). mlibc's "linux" option is off (it needs Linux's kernel
-headers); posix, glibc and bsd are on, and so are its separate
+headers); posix, glibc and bsd are on (`madvise` and `mincore` are
+built for the bsd option too, `toolchain/patches/mlibc`), and so are its separate
 linux-epoll, linux-eventfd, linux-timerfd and linux-signalfd options
 (their headers need nothing of Linux's), over the kernel's event
 descriptors (`event-descriptors.cpp`, `event-polls.cpp`); inotify, which
@@ -12470,12 +12513,17 @@ descriptors (260-269)".
   `CallWaitForHandles` before the read; on sockets the kernel's own
   non-blocking option. `O_CREAT` opens first and creates exclusively
   only if the file is missing, then sets the mode less the umask.
-  `pread`/`pwrite` seek and seek back (not atomic). `fsync` is a whole
-  `CallSync`. `flock` and `fcntl` record locks are the kernel's
+  `pread`/`pwrite` are `CallReadAt`/`CallWriteAt` (the descriptor's
+  offset untouched, so threads sharing it do not race), `preadv` and
+  `pwritev` gather into one of them (an mlibc patch; mlibc had none).
+  `fsync`/`fdatasync` are `CallSyncHandle`: only that file's blocks. `flock` and `fcntl` record locks are the kernel's
   whole-file locks.
 - **Memory**: `mmap`, `munmap` and `mprotect` pass the Linux `PROT_*`
   and `MAP_*` values to `CallMapMemory`, `CallUnmapMemory` and
   `CallProtectMemory`; mlibc's allocator takes its pages the same way.
+  `msync` and `mincore` are `CallSyncMemory` and
+  `CallQueryMemoryResidency` (ENOMEM for memory not mapped; `mincore`
+  gives bit 0, resident).
   W^X holds: anonymous memory never becomes executable without
   `CallSetMemoryPolicy`, a file mapped executable needs no permission.
 - **Threads**: mlibc makes the TCB and TLS; `PrepareStack` maps the
@@ -12516,13 +12564,18 @@ descriptors (260-269)".
   `clock_getres` of `CLOCK_PROCESS_CPUTIME_ID`, `CLOCK_THREAD_CPUTIME_ID`
   and the clocks `clock_getcpuclockid`/`pthread_getcpuclockid` make
   (Linux's encoding, negative; mlibc patched with two sysdeps for them,
-  `toolchain/patches/mlibc/0002-processor-time-clock-ids.patch`) read
+  `toolchain/patches/mlibc/0004-processor-time-clock-ids.patch`) read
   the kernel's real per-thread times (call 249), not the uptime.
 - **Sockets** are the kernel's IPv4 and IPv6 sockets: addresses
   translated from `sockaddr_in`/`sockaddr_in6` (ports in host order in
   the kernel's record), the common `SO_*`, `TCP_*`, `IP_TTL`,
   `IPV6_V6ONLY` options mapped (unknown ones are accepted and do
-  nothing). No `AF_UNIX`, so no `socketpair`.
+  nothing). `AF_UNIX` sockets are the kernel's local sockets
+  (`localsockets.cpp`, see "Local sockets"): `sockaddr_un` paths and
+  abstract names, `socketpair`, `SCM_RIGHTS`, `SCM_CREDENTIALS` with
+  `SO_PASSCRED`, `SO_PEERCRED`, `SO_ACCEPTCONN`, `SOCK_SEQPACKET`;
+  listen, accept, shutdown, the common options and send/recv without
+  names are the same kernel calls for both kinds.
 - **poll/select** look at every descriptor without waiting (files are
   always ready, sockets through `CallWaitForSocket`, event descriptors
   through `CallQueryHandleReadiness`), then wait in
@@ -12532,8 +12585,10 @@ descriptors (260-269)".
 - **Terminals**: `termios` maps `ECHO`, `ICANON` and `ISIG` onto the
   console's modes and keeps the rest of the structure;
   `TIOCGWINSZ`/`TIOCSWINSZ`, `TIOCGPGRP`/`TIOCSPGRP`, `FIONREAD` and
-  `FIONBIO` are there. Pseudo-terminal masters (`posix_openpt`) are
-  not: the kernel's master side is two handles.
+  `FIONBIO` are there, and `TIOCGPTN`/`TIOCSPTLCK`. `posix_openpt` opens
+  `/dev/ptmx` (one descriptor for the master), `ptsname` asks it for N
+  (`/dev/pts/N`), `unlockpt` checks it is one (`pseudoterminals.cpp`),
+  so `openpty` and `forkpty` work through mlibc's own code.
 - **The rest**: `uname` and `gethostname` from `CallGetSystemInformation`,
   `sysconf`, `getentropy` from `/dev/urandom`, users and groups from
   `CallGetCredentials`/`CallSetUserIds`/`CallSetGroupIds` (and
@@ -12718,6 +12773,52 @@ for a thread. The resolution is a nanosecond.
 `Kernel.SignalSelfTest` checks the queue (order, a timer's entry once
 and not counted, the limit, a removed timer entry taking its pending
 bit), the schedule arithmetic, the clock ids and the exception signals.
+### Files and local sockets (250-259)
+
+| Number | Call | |
+|---|---|---|
+| 250 | `CallReadAt` (Handle, Buffer, Count, Offset) | pread of a file or block device, the position untouched; each 16 KiB piece one VFS call under the volume's lock; `ErrorIllegalSeek` for pipes, sockets, terminals |
+| 251 | `CallWriteAt` (Handle, Buffer, Count, Offset) | pwrite (the file grows as needed; an appending handle writes at Offset too) |
+| 252 | `CallSyncHandle` (Handle, Flags) | fsync/fdatasync of one file (`SyncHandleDataOnly`), see "The block cache"; `ErrorInvalidArgument` for pipes and sockets |
+| 253 | `CallCreateLocalSocket` (Kind, Flags, PairAddress) | a local socket (`LocalSocketStream`, `LocalSocketDatagram`, `LocalSocketPackets`; `LocalSocketNonBlocking`), or with PairAddress a connected pair (socketpair) |
+| 254 | `CallBindLocalSocket` (Handle, NameAddress) | to a `TAbiLocalSocketName`: a path (a socket node is made there), an abstract name (first byte 0), or with Length 0 one picked by the kernel |
+| 255 | `CallConnectLocalSocket` (Handle, NameAddress) | to a listener (waits while its backlog is full) or a datagram socket's destination; a path needs write permission on its node |
+| 256 | `CallSendLocalMessage` (Handle, MessageAddress, Flags) | a `TAbiLocalMessage`: bytes, handles to pass, for datagrams the name to send to |
+| 257 | `CallReceiveLocalMessage` (Handle, MessageAddress, Flags) | bytes, passed handles installed as the receiver's, the sender's name and credentials; `LocalMessageTruncated`, `LocalMessageHandlesCut` |
+| 258 | `CallQueryLocalSocket` (Handle, Which, Buffer) | the name, the peer's name, the peer's credentials, the kind |
+
+**Local sockets** (`Processes.LocalSockets`, the names in
+`Processes.LocalSocketNames`, the calls in `Processes.LocalSocketCalls`)
+are a handle kind of their own (`HandleKindLocalSocket`), told to
+programs as `HandleKindSocket`; listen, accept, shutdown, the options,
+`CallWaitForSocket`, `CallRead` and `CallWrite`, and send and receive
+without names take them through the network socket calls (the
+dispatcher sends them on, `PerformSocketCallOnLocalSocket`), and
+`CallWaitForHandles` waits for them to be readable. Each socket queues
+the messages sent to it: one send is one message - its bytes, the
+objects it passes (each held as an open handle while in flight, as a
+channel message's are) and who sent it (credentials and, for
+datagrams, the sender's name). A datagram or packet socket receives
+messages whole (cut to the buffer, `MSG_TRUNC`); a stream joins them
+but never reads past a message that passes objects, so they come with
+their bytes. connect makes the server's end at once and queues it in
+the listener's backlog; accept takes it. Senders wait for room in the
+receiver's queue (256 KiB, or 128 messages; `SO_RCVBUF` changes it);
+readers for the `Readable` event. One mutex guards every local socket
+and is never held while waiting. A socket's open handles are counted
+(`NoteHandleOpened`): when the last closes, its peer sees the end of
+the stream (reads 0, writes `ErrorBrokenPipe`, which the C library
+turns into SIGPIPE), its backlog's connections are released, its name
+is given up and what was queued is dropped, closing what it passed. A
+socket passed in a message queued on itself is never collected (Linux
+has a collector for such cycles). Names: a path is a socket node
+(`NodeKindSocket`, `KindSocket`; ext and memory volumes have them, FAT
+and exFAT do not) known by its volume and node number, so any path to
+it connects; it stays after the socket closes (programs remove it
+before binding again); abstract names go with their socket. Credentials
+(`SO_PEERCRED`) are those of whoever made the peer: the connecting
+process for a server's end, the listener's maker for the client, each
+other's for a pair.
 ### Event descriptors (260-269)
 
 eventfd, timerfd, signalfd, epoll and inotify are kernel objects behind
@@ -12840,11 +12941,16 @@ coretest line runs the last two as an ordinary user.
 time, files and directories with `*at` calls, the environment, pthreads
 with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
-`popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
+`popen`, Unix domain sockets of all three kinds (paths, abstract names,
+autobind, `SCM_RIGHTS` across fork, `SCM_CREDENTIALS`, `SO_PEERCRED`,
+shutdown, poll, non-blocking), pseudo-terminals through `/dev/ptmx` and
+`openpty`, pread/pwrite from four threads on one descriptor, preadv and
+pwritev, fsync and fdatasync, nanosecond times, msync and mincore, the
+clock page against the system call, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
 loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`;
 eventfd, timerfd, signalfd, epoll (a hundred pipes, a TCP server,
-nesting, fork) and inotify; 657 checks), then `hello-static` and `cxxtest` (iostreams, containers,
+nesting, fork) and inotify; 786 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own; with Clang (`make
 clang-toolchain`) also `ctest-clang --groups-only` (every group again,
