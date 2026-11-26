@@ -48,6 +48,8 @@ uses
 
 const
   ServiceWorkersKind = 'service-workers';
+  { The layout of the kept records (older ones are not read). }
+  RecordVersion = 2;
 
 type
   TServiceWorkerState = (WorkerParsed, WorkerInstalling, WorkerInstalled, WorkerActivating, WorkerActivated,
@@ -66,6 +68,10 @@ type
     ImportSources: TStringArray;
     { "Set of event types to handle" has fetch. }
     HandlesFetch: Boolean;
+    { The script response's Content-Security-Policy fields (enforced and
+      report-only): the worker's own policies, applied to its fetches. }
+    CspEnforced: string;
+    CspReportOnly: string;
     SkipWaitingFlag: Boolean;
     { The agent running it (TWorkerAgent; nil when not running) and
       what Web.Workers.ServiceWorkerJobs keeps with it. }
@@ -227,6 +233,8 @@ begin
   Writer.WriteText(Worker.ScriptUrl);
   Writer.WriteText(Worker.Source);
   Writer.WriteInteger(Ord(Worker.HandlesFetch));
+  Writer.WriteText(Worker.CspEnforced);
+  Writer.WriteText(Worker.CspReportOnly);
   Writer.WriteInteger(Length(Worker.ImportUrls));
   for Index := 0 to High(Worker.ImportUrls) do
   begin
@@ -241,6 +249,8 @@ var
 begin
   Worker.Source := Reader.ReadText;
   Worker.HandlesFetch := Reader.ReadInteger <> 0;
+  Worker.CspEnforced := Reader.ReadText;
+  Worker.CspReportOnly := Reader.ReadText;
   Count := Reader.ReadInteger;
   if (Count < 0) or (Count > 1000) then
     Count := 0;
@@ -278,7 +288,7 @@ begin
       OriginDataBackend.Save(ServiceWorkersKind, Origin, nil);
       Exit;
     end;
-    Writer.WriteInteger(1);
+    Writer.WriteInteger(RecordVersion);
     Writer.WriteInteger(Kept.Count);
     for Index := 0 to Kept.Count - 1 do
     begin
@@ -314,7 +324,7 @@ begin
     Exit;
   Reader := TOriginDataReader.Create(OriginDataBackend.Load(ServiceWorkersKind, Origin));
   try
-    if Reader.AtEnd or (Reader.ReadInteger <> 1) then
+    if Reader.AtEnd or (Reader.ReadInteger <> RecordVersion) then
       Exit;
     Count := Reader.ReadInteger;
     Index := 0;

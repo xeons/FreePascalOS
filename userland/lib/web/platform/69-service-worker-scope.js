@@ -313,8 +313,11 @@
       const type = response.headers.get("content-type") || "";
       const essence = type.split(";")[0].trim().toLowerCase();
       const allowed = response.headers.get("service-worker-allowed") || "";
+      // The worker's own policies come with its script.
+      const policy = response.headers.get("content-security-policy") || "";
+      const reportOnly = response.headers.get("content-security-policy-report-only") || "";
       return response.text().then(function (text) {
-        natives.swScriptFetched(true, text, essence, allowed, "");
+        natives.swScriptFetched(true, text, essence, allowed, "", policy, reportOnly);
       });
     }).catch(function (failure) {
       natives.swScriptFetched(false, "", "", "", String(failure && failure.message || failure));

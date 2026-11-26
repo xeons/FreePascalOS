@@ -47,7 +47,8 @@
   'controller' (worker), 'message' (worker, text, link ids).
 
   In a worker's agent:
-    swScriptFetched(ok, text, mime essence, Service-Worker-Allowed, error)
+    swScriptFetched(ok, text, mime essence, Service-Worker-Allowed, error,
+                    Content-Security-Policy, its report-only twin)
     swEvaluated(failed, error, handles fetch, import URLs, import sources)
     swEventDone(eventId, ok)
     swFetchRespond(fetchId, 'fallback' | 'error' | 'response', [type, url,
@@ -852,7 +853,8 @@ begin
   Result := JsUndefined;
   if AgentWorker(Context, Worker) then
     WorkerScriptFetched(Worker, TruthArg(Args, ArgCount, 0), TextArg(Context, Args, ArgCount, 1),
-      TextArg(Context, Args, ArgCount, 2), TextArg(Context, Args, ArgCount, 3), TextArg(Context, Args, ArgCount, 4));
+      TextArg(Context, Args, ArgCount, 2), TextArg(Context, Args, ArgCount, 3), TextArg(Context, Args, ArgCount, 4),
+      TextArg(Context, Args, ArgCount, 5), TextArg(Context, Args, ArgCount, 6));
 end;
 
 function NativeEvaluated(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;

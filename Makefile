@@ -1917,7 +1917,7 @@ http-test: $(HTTP_TEST)
 WEB_LOAD_TEST := build/tools/WebLoadTest
 WEB_LOAD_TEST_UNITS := build/tools/web-load-test-units
 WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
-	tools/HttpTest/HttpTest.Pipes.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
+	tools/HttpTest/HttpTest.Pipes.pas tools/HttpTest/HttpTest.WebSocketServer.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \

@@ -42,7 +42,8 @@
     a script of the wrong type, unregister, no service workers or
     caches on an insecure page, and a registration kept through the
     origin data store controlling a page after everything was
-    forgotten (the worker started again from its stored script).
+    forgotten (the worker started again from its stored script), and
+    the worker's own Content Security Policy blocking its fetch.
 }
 unit WebLoadTest.Workers;
 
@@ -576,6 +577,51 @@ begin
   end;
 end;
 
+{ A service worker's own Content Security Policy (its script's
+  response) applies to what it fetches. }
+procedure CheckWorkerPolicies;
+var
+  Finished: Boolean;
+  Environment: TTestEnvironment;
+  Sink: TNullResourceSink;
+  Page: TWorkerPage;
+  Conditions: TWorkerConditions;
+begin
+  Environment := TTestEnvironment.Create;
+  Sink := TNullResourceSink.Create;
+  Conditions := TWorkerConditions.Create;
+  try
+    Environment.Site.AddRoute('s.test/csp/sw.js', 200, JavaScriptType + '|Content-Security-Policy: connect-src ''none''',
+      'self.addEventListener("message", function (event) { fetch("/net.txt").then(() => "fetched", () => "blocked")' +
+      '.then(function (outcome) { event.source.postMessage(outcome); }); });');
+    Environment.Site.AddRoute('s.test/net.txt', 200, 'Content-Type: text/plain', 'from the network');
+    Environment.Site.AddRoute('s.test/csp/page.html', 200, HtmlType, LogScript + '<script>(async function () { ' +
+      'try { navigator.serviceWorker.onmessage = function (e) { log("worker " + e.data); log("done"); }; ' +
+      'const registration = await navigator.serviceWorker.register("sw.js"); ' +
+      'const worker = registration.installing; ' +
+      'await new Promise(r => { worker.onstatechange = () => { if (worker.state === "activated") r(); }; }); ' +
+      'log("page " + await fetch("/net.txt").then(() => "fetched", () => "blocked")); ' +
+      'worker.postMessage("go"); } catch (e) { log("fail " + e); log("done"); } })();</script>');
+    Page := TWorkerPage.Create(Environment, Sink);
+    try
+      SetLength(Conditions.Pages, 1);
+      Conditions.Pages[0] := Page;
+      Conditions.Marker := 'done';
+      Page.Navigable.NavigateTo('https://s.test/csp/page.html');
+      Finished := Environment.RunUntil(@Conditions.AllHaveMarker, 10000);
+      Check(Finished and Page.Has('page fetched') and Page.Has('worker blocked'),
+        'service workers: the worker''s own connect-src blocks its fetch, not the page''s (' + Page.Output + ')');
+    finally
+      Page.Free;
+    end;
+  finally
+    ResetServiceWorkers;
+    Conditions.Free;
+    Sink.Free;
+    Environment.Free;
+  end;
+end;
+
 function ReadFixture(const Path: string): string;
 var
   Lines: TStringList;
@@ -633,6 +679,7 @@ begin
     CheckBroadcastChannels;
     CheckCaches;
     CheckServiceWorkers;
+    CheckWorkerPolicies;
   finally
     FreeAndNil(TestStorage);
   end;

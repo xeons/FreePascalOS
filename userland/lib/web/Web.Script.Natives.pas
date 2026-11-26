@@ -70,6 +70,7 @@ uses
   Web.ScriptEnvironment,
   Web.Script.PlatformSources,
   Web.Script.NativeFetch,
+  Web.Script.NativeWebSockets,
   Web.Script.NativeWorkers,
   Web.Script.MessageLinks,
   Web.Script.BroadcastChannels,
@@ -664,6 +665,7 @@ begin
   for Index := 0 to NativeCount - 1 do
     Context.Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index);
   DefineFetchNatives(Context, Natives);
+  DefineWebSocketNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
   DefineLinkNatives(Context, Natives);
   DefineBroadcastNatives(Context, Natives);

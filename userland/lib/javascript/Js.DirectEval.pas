@@ -174,6 +174,8 @@ var
   Closure: TJsClosure;
   Mark: Integer;
 begin
+  if Assigned(R.CompileStringsCheck) and not R.MayCompileStrings(StringToUnicode(R.Heap, JsAsString(Source))) then
+    Exit(JsException);
   try
     Code := CompileDirectEval(R, StringToUnicode(R.Heap, JsAsString(Source)), TJsEvalChain(Chain), Caller);
   except

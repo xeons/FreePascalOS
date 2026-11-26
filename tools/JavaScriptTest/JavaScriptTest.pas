@@ -386,6 +386,19 @@ type
       Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
   end;
 
+  { HostEnsureCanCompileStrings: refuses source containing "refuse". }
+  TCompileGate = class
+  public
+    Seen: string;
+    function Allowed(Realm: TJsRealm; const Source: UnicodeString): Boolean;
+  end;
+
+function TCompileGate.Allowed(Realm: TJsRealm; const Source: UnicodeString): Boolean;
+begin
+  Seen := Seen + string(Source) + ';';
+  Result := Pos('refuse', string(Source)) = 0;
+end;
+
 var
   PointClass: TJsHostClass;
   ExternalFreed: Integer;
@@ -585,6 +598,7 @@ end;
 
 procedure TestEmbedding;
 var
+  Gate: TCompileGate;
   Engine: TJsEngine;
   Fixture: TApiFixture;
   Value, Kept, Doubler: TJsValue;
@@ -631,6 +645,24 @@ begin
     Value := Engine.Evaluate('let order = []; Promise.resolve().then(() => order.push("job")); order.push("sync"); order');
     Engine.RunJobs;
     Check(Engine.ToText(Value) = 'sync,job', 'api: job queue');
+    Gate := TCompileGate.Create;
+    try
+      Engine.Realm.CompileStringsCheck := @Gate.Allowed;
+      Value := Engine.Evaluate('var results = [];' +
+        'try { results.push(eval("1 + 1")); } catch (e) { results.push(e.name); }' +
+        'try { eval("refuse"); } catch (e) { results.push(e.name); }' +
+        'try { (0, eval)("refuse"); } catch (e) { results.push(e.name); }' +
+        'try { new Function("a", "return refuse"); } catch (e) { results.push(e.name); }' +
+        'try { results.push(Function("return 3")()); } catch (e) { results.push(e.name); }' +
+        'results.push(eval(42)); results.join(",")');
+      Check(Engine.ToText(Value) = '2,EvalError,EvalError,EvalError,3,42',
+        'api: the compile-strings hook refuses eval and Function (' + Engine.ToText(Value) + ')');
+      Check(Pos('function anonymous(a'#10') {'#10'return refuse'#10'}', Gate.Seen) > 0,
+        'api: the hook sees Function''s whole source');
+      Engine.Realm.CompileStringsCheck := nil;
+    finally
+      Gate.Free;
+    end;
   finally
     Engine.Free;
   end;

@@ -37,6 +37,7 @@ uses
   WebView.Engine,
   WebView.ContentProcess,
   WebView.NetworkService,
+  WebView.NetworkSockets,
   WebView.ContentIo,
   WebView.ContentProcesses,
   WebView.PromptSheet,

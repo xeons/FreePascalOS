@@ -115,6 +115,11 @@ const
   ElementStateAlreadyStarted = $0002;
   ElementStateForceAsync = $0004;
   ElementStateFromDocumentWrite = $0008;
+  { The style attribute was last written by the CSSOM (element.style),
+    which CSP does not block; ElementStateCssomWriting is set while the
+    CSSOM writes it. }
+  ElementStateStyleFromCssom = $0010;
+  ElementStateCssomWriting = $0020;
 
 type
   TNode = class;
@@ -555,6 +560,7 @@ type
     FLiveRangeCount: Integer;
     FSelection: TDocumentSelection;
     FStyleSheets: TObject;
+    FSecurityPolicy: TObject;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
     function GetDocumentElement: TElement;
@@ -597,6 +603,10 @@ type
     { The document's style sheet objects (Web.Style.DocumentSheets makes
       them); freed with the document. }
     property StyleSheets: TObject read FStyleSheets write FStyleSheets;
+    { What enforces the document's Content Security Policy: its fetch
+      client (Web.Fetch.Requests; Web.Fetch.CspChecks checks against
+      it), set by its loader. Not owned; nil: no policy. }
+    property SecurityPolicy: TObject read FSecurityPolicy write FSecurityPolicy;
     { Tells the observers a form control's state changed (Web.Dom.FormControls). }
     procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }

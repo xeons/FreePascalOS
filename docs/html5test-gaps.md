@@ -25,6 +25,7 @@ rendering with the installed Firefox.
 | After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
 | After service workers and SharedWorker | 284 / 588 alone; 336 / 588 merged with IndexedDB and Canvas | offline.serviceWorkers, performance.sharedWorker |
 | After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
+| After WebSocket and CSP (merged with everything above) | 345 / 588 | communication 40 / 40, security 26 / 32 (+20) |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -49,10 +50,10 @@ work that followed):
 | responsive | 15 / 15 | svg | 2 / 4 |
 | canvas | 24 / 25 | 3d | 0 / 25 |
 | offscreen | 3 / 3 | animation | 5 / 8 |
-| communication | 25 / 40 | streams | 6 / 6 |
+| communication | 40 / 40 | streams | 6 / 6 |
 | rtc | 0 / 45 | interaction | 5 / 19 |
 | performance | 11 / 12 | native | 0 / 1 |
-| resource | 7 / 7 | security | 21 / 32 |
+| resource | 7 / 7 | security | 26 / 32 |
 | payments | 0 / 5 | offline | 0 / 13 |
 | storage | 10 / 35 (35 / 35 with IndexedDB) | files | 15 / 15 |
 | scripting | 32 / 32 | other | 9 / 9 |
@@ -103,6 +104,16 @@ inference from sanitization: the fields can be typed into (their edit
 text kept apart from the value as browsers do) but there is no picker
 yet (see below).
 
+## Closed by the networking and security work
+
+| Feature | Points | Where |
+|---|---|---|
+| WebSocket (RFC 6455 with permessage-deflate, through the browser's network service in a browser; binaryType, bufferedAmount, the close handshake, CloseEvent) | `communication.websocket.basic`, `.binary` | libhttp `Http.WebSockets`; `Web.Fetch.WebSockets`, `Web.Script.PageSockets`, `63-websocket.js`; `WebView.NetworkSockets` |
+| CSP Level 3 enforcement (requests by destination, nonces, hashes, 'strict-dynamic', inline scripts and styles, handlers, eval through libjavascript's compile-strings hook, form-action, base-uri, report-only, reports) | `security.csp10` (the frame whose meta policy must refuse eval) | `Web.Fetch.CspSources`, `Web.Fetch.CspChecks`, `Web.Loading.CspReports` |
+| SecurityPolicyViolationEvent, fired for every violation | `security.csp11` | `Web.Dom.SecurityEvents`, Events.webidl |
+
+Trusted Types is not done (the test does not ask for it).
+
 ## Credited by the test with less behind it
 
 - `audio.loop`, `audio.preload` (2 points): the attributes reflect, but
@@ -144,16 +155,6 @@ Points are what each costs on html5test (588 in all).
 
 ### Medium (days)
 
-- **CSP enforcement** (`security.csp10` 3, `security.csp11` 2):
-  Content-Security-Policy is parsed (`Web.Fetch.ContentSecurityPolicy`)
-  but only upgrade-insecure-requests is applied. Needs script-src
-  (inline, nonces, hashes, 'strict-dynamic', eval through a libjavascript
-  host hook), style-src, img-src, connect-src, default-src fallback,
-  report-only, violation reports and SecurityPolicyViolationEvent.
-- **WebSocket** (`communication.websocket.*` 15): RFC 6455 over
-  libhttp's connections (TLS, HTTP/1.1 upgrade; RFC 8441 over HTTP/2
-  later); in the browser it has to go through the network service
-  process like fetch.
 - **Custom elements** (`components.custom` 4): CustomElementRegistry
   (define, get, whenDefined, upgrade), constructors through HTMLElement,
   the reactions (connected, disconnected, adopted, attributeChanged),

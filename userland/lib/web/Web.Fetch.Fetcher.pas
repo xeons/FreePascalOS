@@ -41,6 +41,9 @@
   303 and POST rules from libhttp, a Referrer-Policy on the redirect
   applied), each new URL going through main fetch again.
 
+  CSP (Web.Fetch.CspChecks) blocks a request whose URL its document's
+  policy does not allow, before it goes and after every redirect.
+
   The response: its type, Strict-Transport-Security taken (https only),
   X-Content-Type-Options: nosniff blocking scripts and style sheets of
   the wrong type, the MIME type extracted and, when the request asks,
@@ -195,6 +198,7 @@ uses
   Web.Fetch.LocalFiles,
   Web.Fetch.Cors,
   Web.Fetch.MixedContent,
+  Web.Fetch.CspChecks,
   Web.Fetch.ReferrerPolicy,
   Web.Fetch.ServiceWorkerHook;
 
@@ -532,6 +536,21 @@ end;
 
 { ---- main fetch ---- }
 
+{ CSP's pre-request check (and, as main fetch runs again for each
+  redirect, its check after a redirect). }
+function RequestBlockedByCsp(Request: TFetchRequest): Boolean;
+var
+  Policies: TFetchClient;
+begin
+  Policies := Request.PolicyClient;
+  if Policies = nil then
+    Policies := Request.Client;
+  if Policies = nil then
+    Exit(False);
+  Result := CspBlocksRequest(Policies, Request.CurrentUrl, Request.Destination, Request.CryptographicNonce,
+    Request.Integrity, Request.ParserMetadata = ParserMetadataInserted, Length(Request.UrlList) - 1);
+end;
+
 procedure TFetcher.MainFetch(Job: TFetchJob);
 var
   Request: TFetchRequest;
@@ -549,6 +568,11 @@ begin
   if ShouldBlockMixedContent(Request) then
   begin
     FailJob(Job, 'blocked: insecure content on a secure page (' + SerializeUrl(Current) + ')');
+    Exit;
+  end;
+  if RequestBlockedByCsp(Request) then
+  begin
+    FailJob(Job, 'blocked by the Content Security Policy (' + SerializeUrl(Current) + ')');
     Exit;
   end;
   if (Request.Mode = FetchModeSameOrigin) and (Current.Scheme <> 'data') and

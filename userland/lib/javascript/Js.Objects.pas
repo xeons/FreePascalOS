@@ -256,6 +256,11 @@ type
     Values: array[0..3] of TJsValue;
   end;
 
+  { The host's HostEnsureCanCompileStrings (ECMAScript 19.2.1.2, CSP's
+    'unsafe-eval'): False refuses to compile Source (eval or Function),
+    and an EvalError is thrown. }
+  TJsCompileStringsCheck = function(Realm: TJsRealm; const Source: UnicodeString): Boolean of object;
+
   TJsRealm = class
   private
     FJobs: array of TJsJob;
@@ -282,7 +287,11 @@ type
     { While a function of this realm runs because another realm called
       it: that realm (the incumbent, for postMessage's source). }
     CallerRealm: TJsRealm;
+    { Asked before eval and Function compile a string (nil: always). }
+    CompileStringsCheck: TJsCompileStringsCheck;
     constructor Create(ARuntime: TJsRuntime);
+    { HostEnsureCanCompileStrings: False with an EvalError thrown. }
+    function MayCompileStrings(const Source: UnicodeString): Boolean;
     destructor Destroy; override;
     { The realm's engine goes but its runtime stays (other realms use it):
       functions of this realm may still be reachable from them. }
@@ -1647,6 +1656,14 @@ begin
       Tracer.MarkCell(Intrinsics[Intrinsic]);
   if GlobalObject <> nil then
     Tracer.MarkCell(GlobalObject);
+end;
+
+function TJsRealm.MayCompileStrings(const Source: UnicodeString): Boolean;
+begin
+  Result := not Assigned(CompileStringsCheck) or CompileStringsCheck(Self, Source);
+  if not Result then
+    ThrowError(ekEval, 'Refused to evaluate a string as JavaScript because ''unsafe-eval'' is not an allowed ' +
+      'source of script in the Content Security Policy');
 end;
 
 function TJsRealm.Throw(Value: TJsValue): TJsValue;

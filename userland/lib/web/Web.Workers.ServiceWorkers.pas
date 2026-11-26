@@ -98,7 +98,7 @@ procedure ScheduleUnregister(Client: TBindingContext; RequestId: Integer; Regist
 { What a worker's agent reports. }
 function WorkerOfAgentContext(Context: TBindingContext): TServiceWorkerRecord;
 procedure WorkerScriptFetched(Worker: TServiceWorkerRecord; Ok: Boolean; const Text, MimeEssence, AllowedScope,
-  ErrorText: string);
+  ErrorText, CspEnforced, CspReportOnly: string);
 procedure WorkerEvaluated(Worker: TServiceWorkerRecord; Failed: Boolean; const ErrorText: string;
   HandlesFetch: Boolean; const ImportUrls, ImportSources: TStringArray);
 procedure WorkerEventDone(Worker: TServiceWorkerRecord; EventId: Integer; Success: Boolean);
@@ -151,6 +151,7 @@ uses
   Web.Fetch.MimeTypes,
   Web.Fetch.ServiceWorkerHook,
   Web.Fetch.ReferrerPolicy,
+  Web.Fetch.ContentSecurityPolicy,
   Web.Loading.Contexts,
   Web.Script.ContextTasks,
   Web.Script.NativeServiceWorkers,
@@ -506,6 +507,27 @@ begin
   Result := DefaultStorageBackend;
 end;
 
+{ The worker's Content Security Policy (its script response's) on its
+  agent's fetch client: what the worker fetches is checked against it
+  (connect-src for fetch(), script-src for importScripts...). }
+procedure ApplyWorkerPolicies(Worker: TServiceWorkerRecord);
+var
+  Agent: TWorkerAgent;
+  Client: TFetchClient;
+begin
+  Agent := TWorkerAgent(Worker.Agent);
+  if (Agent = nil) or (Agent.Context = nil) then
+    Exit;
+  Client := ContextFetchClient(Agent.Context);
+  if Client = nil then
+    Exit;
+  Client.Csp.Clear;
+  if Worker.CspEnforced <> '' then
+    Client.Csp.AddFromField(Worker.CspEnforced, CspEnforce);
+  if Worker.CspReportOnly <> '' then
+    Client.Csp.AddFromField(Worker.CspReportOnly, CspReport);
+end;
+
 { "Run Service Worker": an agent for Worker; its script runs from what
   was stored unless the update check runs it (FetchFirst). }
 function StartWorker(Worker: TServiceWorkerRecord; Network: TNetworkContext; FetchFirst: Boolean): TRunningWorker;
@@ -531,6 +553,7 @@ begin
     Exit(nil);
   end;
   SendAgentStart(Worker);
+  ApplyWorkerPolicies(Worker);
   if FetchFirst then
     SendAgentFetchScript(Worker, Worker.Registration.UpdateViaCache = 'all')
   else
@@ -879,7 +902,7 @@ begin
 end;
 
 procedure WorkerScriptFetched(Worker: TServiceWorkerRecord; Ok: Boolean; const Text, MimeEssence, AllowedScope,
-  ErrorText: string);
+  ErrorText, CspEnforced, CspReportOnly: string);
 var
   Job: TServiceWorkerJob;
   Registration: TServiceWorkerRegistration;
@@ -924,6 +947,9 @@ begin
     Exit;
   end;
   Worker.Source := Text;
+  Worker.CspEnforced := CspEnforced;
+  Worker.CspReportOnly := CspReportOnly;
+  ApplyWorkerPolicies(Worker);
   SendAgentRun(Worker);
 end;
 

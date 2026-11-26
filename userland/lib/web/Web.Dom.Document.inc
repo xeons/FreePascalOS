@@ -528,6 +528,13 @@ procedure TDocument.NotifyAttributeChanged(Element: TElement; LocalAtom: TAtom; 
 var
   Index: Integer;
 begin
+  if (LocalAtom = AtomStyle) and (Namespace = NamespaceNone) then
+  begin
+    if (Element.ElementState and ElementStateCssomWriting) <> 0 then
+      Element.ElementState := Element.ElementState or ElementStateStyleFromCssom
+    else if (Element.ElementState and ElementStateStyleFromCssom) <> 0 then
+      Element.ElementState := Element.ElementState and not ElementStateStyleFromCssom;
+  end;
   for Index := 1 to System.Length(FObservers) do
     FObservers[Index - 1].AttributeChanged(Element, LocalAtom, Namespace, OldValue, HadValue);
 end;

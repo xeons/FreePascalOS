@@ -197,6 +197,20 @@ const
   { A request: about:PATH; the reply: found, HTML (the browser's own
     pages, only for a process locked to about:). }
   IpcAboutPage = 312;
+  { WebSockets. Content to browser: open (TIpcWebSocketOpen), send
+    (TIpcWebSocketData), close (TIpcWebSocketClose), abort (the id).
+    Browser to content: opened (TIpcWebSocketOpened), a message
+    (TIpcWebSocketData), bytes sent (id and count), the server's close
+    frame (the id), closed (TIpcWebSocketClosed, last). }
+  IpcWebSocketOpen = 350;
+  IpcWebSocketSend = 351;
+  IpcWebSocketClose = 352;
+  IpcWebSocketAbort = 353;
+  IpcWebSocketOpened = 354;
+  IpcWebSocketMessage = 355;
+  IpcWebSocketSent = 356;
+  IpcWebSocketCloseReceived = 357;
+  IpcWebSocketClosed = 358;
   { IndexedDB, the Cache API and navigator.storage (the browser's
     storage service, Web.IndexedDb.Service). A request: the renderer's
     client id, the origin, the request bytes; the reply: the service's
@@ -272,6 +286,15 @@ begin
     IpcHopHead: Result := 'hop-head';
     IpcHopData: Result := 'hop-data';
     IpcHopDone: Result := 'hop-done';
+    IpcWebSocketOpen: Result := 'websocket-open';
+    IpcWebSocketSend: Result := 'websocket-send';
+    IpcWebSocketClose: Result := 'websocket-close';
+    IpcWebSocketAbort: Result := 'websocket-abort';
+    IpcWebSocketOpened: Result := 'websocket-opened';
+    IpcWebSocketMessage: Result := 'websocket-message';
+    IpcWebSocketSent: Result := 'websocket-sent';
+    IpcWebSocketCloseReceived: Result := 'websocket-close-received';
+    IpcWebSocketClosed: Result := 'websocket-closed';
     IpcIndexedDbRequest: Result := 'indexeddb-request';
     IpcIndexedDbClientClosed: Result := 'indexeddb-client-closed';
     IpcIndexedDbNotice: Result := 'indexeddb-notice';

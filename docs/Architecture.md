@@ -7505,6 +7505,8 @@ builds on the host (`make http-test`).
   programs: wget, libweb (later), ...
 =========== Http.Client: Execute (one request) and Fetch (the whole fetch)
   Http.FetchTasks   fetches on threads: OnHead, OnData, OnDone, Cancel
+  Http.WebSockets   RFC 6455 connections (Http.WebSocketHandshake,
+                    Http.WebSocketFrames, Http.WebSocketDeflate)
   Http.Messages     THttpRequest, THttpResponse (content read as it comes)
   Http.Redirects  Http.Authentication (Http.Challenges, Http.Digest)
   Http.Cookies (Http.CookieDates, Http.CookieFiles, Http.PublicSuffixes)
@@ -7712,8 +7714,39 @@ thread safe.
   HTTPS DNS records (RFC 9460) are not looked up: libsystem's resolver
   keeps no data of unknown record types.
 
+**WebSockets** (`Http.WebSockets`, RFC 6455 with RFC 7692's
+permessage-deflate). A `TWebSocketConnection` makes a connection of its
+own through the client's connector (HTTP/1.1 only: "h2" is not offered;
+RFC 8441 over HTTP/2 is not done) and runs two threads. The reader
+sends the opening handshake (`Http.WebSocketHandshake`: GET with
+Upgrade, a random Sec-WebSocket-Key, version 13, Origin, the
+subprotocols, "permessage-deflate" offered without parameters, the
+jar's cookies and User-Agent), checks the answer (101, Upgrade,
+Connection, Sec-WebSocket-Accept = base64(SHA-1(key + GUID)), only
+extensions and a subprotocol that were offered; Set-Cookie kept), then
+reads frames (`Http.WebSocketFrames`): fragments joined, pings answered
+with pongs, the server's close echoed, and the connection failed with
+close code 1002 for reserved bits and opcodes, masked server frames,
+long or fragmented control frames, misplaced continuations and 64-bit
+lengths with the top bit; 1007 for text or a close reason that is not
+UTF-8 (checked after inflating); 1009 past the message limit (256 MiB,
+the browser's service 64 MiB). The writer sends what the owner queued
+(text, binary, pong, close), masks every frame with a fresh key,
+deflates messages when agreed (`Http.WebSocketDeflate`: raw deflate
+with a sync flush, its 00 00 FF FF tail left off; client and server
+no-context-takeover honoured, server_max_window_bits 8-15 taken;
+client_max_window_bits is refused, since it was not offered) and
+reports the bytes of each message once written (bufferedAmount). The
+closing handshake waits for the server to end TCP (5 s) after both
+close frames. The observer hears Opened, each message, BytesSent,
+CloseReceived and Closed once (clean, the code and reason; else 1006,
+with Failed and the reason when it failed). `DiscardWebSocketConnection`
+aborts and frees a connection on a thread of its own, so nobody waits
+for the network to let go of one.
+
 Not here yet: proxies (wget had none), 100-continue, HTTP/2 PING
-keep-alive, HSTS and CORS (libweb's), the full UTS #46 table.
+keep-alive, HSTS and CORS (libweb's), the full UTS #46 table, WebSockets
+over HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220).
 
 **Tests** (`make http-test`, tools/HttpTest): the URL Standard (about
 200 cases written from the standard's examples and rules: special and
@@ -7733,7 +7766,14 @@ malformed response, priorities, GOAWAY), and the client over a
 connector of pipes (keep-alive and a stale connection, gzip and
 deflate, redirects with their method rules and limit, cookies, the
 cache fresh and revalidated, Basic, Alt-Svc, eight fetch tasks on one
-HTTP/2 connection, a cancel), RFC 6265bis's rules in the jar (public
+HTTP/2 connection, a cancel), WebSockets (RFC 6455's accept example and
+section 5.7's frames, the frame reader fed a byte at a time and every
+failure it must find, UTF-8 edge cases, RFC 7692's compressed examples
+and context takeover, the extension answer, the handshake's checks,
+then whole connections against a WebSocket server over pipes written
+apart from the client - echo with a subprotocol and deflate, cookies
+from the handshake, the server closing, invalid UTF-8, a refused and a
+wrongly accepted handshake), RFC 6265bis's rules in the jar (public
 suffixes, Secure, prefixes, SameSite both ways, HttpOnly against scripts,
 400 days), RFC 9111's freshness and age arithmetic, the disk cache read
 back by another cache, Alt-Svc parsing and its cache (expiry, choosing
@@ -8920,7 +8960,11 @@ NewExternalArrayBuffer, NewTypedArray, NewUint8Array, BufferSourceData,
 DetachArrayBuffer, IsArrayBuffer, IsTypedArray; natives use
 Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray); modules
 (EvaluateModule, ImportModule, ModuleNamespace, and the ModuleResolver,
-ModuleFetcher and ModuleMetaHook hooks).
+ModuleFetcher and ModuleMetaHook hooks); HostEnsureCanCompileStrings
+as `Realm.CompileStringsCheck` (asked with the source before eval,
+indirect eval and the Function constructors compile a string - the
+latter's as "function anonymous(...) {...}" -; False throws EvalError:
+libweb's CSP 'unsafe-eval').
 Uncaught exceptions reach the host as `EJsError` with the stack text.
 `Js.Platform` holds the clock and time zone hooks; `Js.SystemClock`
 fills them on FreePascalOS from the kernel's clock and the time zone
@@ -14247,7 +14291,10 @@ decided on the page thread:
 | `Web.Fetch.Cors` | safelisted methods and headers, preflight decisions and checks, the CORS check, exposed headers, the preflight cache |
 | `Web.Fetch.MixedContent` | upgrades (images, audio, video; everything under upgrade-insecure-requests) and blocking |
 | `Web.Fetch.Hsts` | RFC 6797: the field, known hosts with includeSubDomains, upgrades, saving to text |
-| `Web.Fetch.ContentSecurityPolicy` | CSP 3 policies parsed and stored (field, report-only, meta) |
+| `Web.Fetch.ContentSecurityPolicy` | CSP 3 policies parsed and stored (field, report-only, meta); `TCspViolation` and the client's `TCspViolationReporter` |
+| `Web.Fetch.CspSources` | CSP 3 source lists: '*', scheme and host sources (wildcards, ports, paths, ignored after a redirect), 'self', scheme-part matching (http: covers https:, ws: covers wss:/http:/https:), keywords, nonces, hashes (SHA-256/384/512, base64 or base64url), integrity metadata against hash sources |
+| `Web.Fetch.CspChecks` | the checks: requests (the destination's effective directive through its fallback list; scripts and workers by nonce, integrity, 'strict-dynamic' or URL), inline script/style/attributes, eval, form-action, base-uri; each violated policy reported, enforced ones block |
+| `Web.Fetch.WebSockets` | a page's WebSocket connections: libhttp's in this process or the transport's (the browser's network service); their events copied into networking tasks |
 | `Web.Fetch.LocalFiles` | file: URL paths, MIME types by extension, folder index pages |
 
 Main fetch computes the Referer (the request's policy, else the
@@ -14279,8 +14326,54 @@ scripts and style sheets of the wrong type, the MIME type is extracted,
 and when the request asks (navigations, images) the first 1445 bytes
 are sniffed before the consumer sees the response - only when sniffing
 can change the type (none or unknown, the Apache defaults, images), so
-a typed HTML page streams from its first byte. CSP is parsed into the
-client's list; only upgrade-insecure-requests acts yet.
+a typed HTML page streams from its first byte.
+
+**Content Security Policy** (CSP Level 3). A document's policies come
+from its response (Content-Security-Policy, -Report-Only; meta
+policies as the parser meets them, enforced only), and a local-scheme
+document (about:blank, srcdoc, data:, blob:) copies its creator's. The
+fetch client holds the list; the document points at it
+(`TDocument.SecurityPolicy`) so the style and binding layers can check
+too. What is enforced:
+
+| Where | Directive | How |
+|---|---|---|
+| main fetch, again after every redirect | the destination's: connect-src (fetch, XHR, EventSource, beacons, WebSocket), script-src-elem, style-src-elem, img-src, font-src, media-src, frame-src (an iframe's navigation, against its embedder's policy: `TFetchRequest.PolicyClient`), worker-src, object-src, manifest-src, each with its fallback list | scripts: a nonce (the element's), integrity hashes, 'strict-dynamic' (not parser-inserted), else the URL |
+| script preparation | script-src-elem | inline scripts: 'unsafe-inline' (ignored beside a nonce, a hash or 'strict-dynamic'), the nonce, a hash |
+| style blocks, style attributes | style-src-elem, style-src-attr | a refused `<style>` has no sheet; a refused attribute does not apply (what element.style writes is exempt) |
+| event handler attributes | script-src-attr | hashes only with 'unsafe-hashes' |
+| eval, Function, string timers | script-src | 'unsafe-eval'; libjavascript asks `TJsRealm.CompileStringsCheck` (HostEnsureCanCompileStrings) and throws EvalError |
+| form submission, `<base href>` | form-action, base-uri | no fallback |
+| frames' responses | frame-ancestors | (Web.Navigation.FramePolicy) |
+
+A violation (`TCspViolation`) goes to the document's reporter
+(`Web.Loading.CspReports`), which in a DOM manipulation task fires a
+`securitypolicyviolation` event (SecurityPolicyViolationEvent, bubbling
+and composed) at the element or the document, and posts a report: to
+the report-to group's endpoint from Reporting-Endpoints
+(application/reports+json, a csp-violation report) or else to each
+report-uri (application/csp-report). Reports have no client (they
+outlive the document), the document's origin, no referrer, and are
+sent once per directive, policy and blocked URL (at most 100). The
+preload scanner does not speculate under a policy (its guesses would
+lack nonces). Not done: the sandbox directive, Trusted Types
+(require-trusted-types-for), workers' own policies, nonce hiding
+(element.nonce reflects the attribute), and the nonce passing to a
+module script's imports.
+
+**WebSocket** (WebSockets Standard over libhttp's `Http.WebSockets`).
+The platform script `63-websocket.js` has WebSocket and CloseEvent; the
+interface exists only where the environment opens connections
+(`TScriptEnvironment.SupportsWebSockets`: pages, not the bare test
+environment or workers). `Web.Script.PageSockets` makes the handshake
+the document's request: upgrade-insecure-requests, HSTS (ws: becomes
+wss:), mixed content (ws: from a secure context fails), CSP
+connect-src, then a channel of the page's `TWebSocketChannels`
+(`Web.Fetch.WebSockets`) with the document's origin and SameSite
+context. A blocked or failed connection fires error, then close 1006.
+bufferedAmount counts what send() queued and goes down as the
+connection reports bytes written; binaryType gives Blobs or
+ArrayBuffers; a document that is left closes its sockets with 1001.
 
 ### Loading documents and subresources
 
@@ -14408,12 +14501,11 @@ that message, on a timer after `MillisecondsUntilNextTimer`, or when
 idle, and `RenderingOpportunity` when a frame can be painted. `Run`
 waits for work itself (programs without a GUI loop).
 
-Not yet: CSP enforcement and Subresource Integrity (both are stored on
-the request), ORB, bfcache, pushState/replaceState (the entries have the
-slot), `<object>`/`<embed>` documents, form submission, blob: URLs,
-animated images (the first frame is shown). Service workers see a
-navigation before the network (see "Workers, caches and service
-workers").
+Not yet: Subresource Integrity (stored on the request), ORB, bfcache,
+pushState/replaceState (the entries have the slot), `<object>`/`<embed>`
+documents, form submission, blob: URLs, animated images (the first
+frame is shown). Service workers see a navigation before the network
+(see "Workers, caches and service workers").
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
 prints its tree in the html5lib format (`-s` the serialization, `-e`
@@ -16794,7 +16886,9 @@ blocked), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
 storage load, set, remove, clear; about pages; 340-342 the storage
 service: an IndexedDB request, a client closed, and a notice the other
-way; 343-344 the per-origin records of service worker registrations).
+way; 343-344 the per-origin records of service worker registrations;
+350-358 WebSockets: open, send, close, abort from the renderer,
+opened, message, bytes sent, close received, closed from the browser).
 Records with encoders
 and decoders for the larger payloads are in `WebIpc.ViewMessages` and
 `WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
@@ -16920,6 +17014,18 @@ and sets its out-of-memory adjustment to 700 while none of its views is
 shown and 300 while one is, so a background renderer is ended before
 the browser (0) when memory runs out. The browser's setting
 `Browser/Sandbox` turns the restrictions off for debugging.
+
+**WebSockets in the browser.** A page's WebSocket is the network
+service's connection (`WebView.NetworkSockets`): the renderer decides
+what its page may open (mixed content, CSP connect-src) and sends
+`IpcWebSocketOpen` with its own number for it; the browser opens only
+ws: and wss: URLs, upgrades a host HSTS knows to wss:, sends the page's
+Origin only if it is of the process's site (else refuses), decides the
+handshake's SameSite context from the site, and holds at most 200 per
+process. Events come back from the connection's threads as messages
+the renderer's loop hands to the page's channels; ended connections
+are freed by the IPC thread's reaping, dropped ones on threads of
+their own.
 
 **What the browser refuses a renderer.** The network service knows the
 site each process is locked to and does not take a renderer's word for
