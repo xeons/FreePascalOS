@@ -96,3 +96,13 @@ check("the window's onerror gets (message, source, lineno, colno, error)", onerr
   onerrorArguments[2] === "number" && onerrorArguments[3] === reportedError);
 check("ErrorEvent's constructor", new ErrorEvent("error", { message: "m", lineno: 3 }).lineno === 3 &&
   new ErrorEvent("x").message === "");
+var bodyHandler = function () {};
+document.body.onhashchange = bodyHandler;
+check("a body's window-reflecting handlers are the window's", window.onhashchange === bodyHandler &&
+  document.body.onhashchange === bodyHandler);
+window.onhashchange = null;
+var otherBody = document.implementation.createHTMLDocument("").body;
+otherBody.onload = bodyHandler;
+check("a windowless document's body has no window handlers", otherBody.onload === null);
+check("the media and newer event handler attributes exist", "oncanplay" in document.body &&
+  "onbeforetoggle" in window && "onpagereveal" in window && "onmessageerror" in document.body);

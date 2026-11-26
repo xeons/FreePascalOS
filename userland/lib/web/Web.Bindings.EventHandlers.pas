@@ -32,9 +32,9 @@
   standard says; it calls InvokeEventHandler.
 
   Not done: the element's form and the document in the handler's scope
-  chain (libjavascript has no with statement), onbeforeunload's return
-  value, and body/frameset handlers
-  that forward to the window.
+  chain (libjavascript has no with statement) and onbeforeunload's
+  return value. Body and frameset elements' window-reflecting handlers
+  are the window's (HandlerTarget).
 }
 unit Web.Bindings.EventHandlers;
 
@@ -129,6 +129,60 @@ begin
   end;
 end;
 
+const
+  { The window-reflecting body element event handler set and
+    WindowEventHandlers (HTML Standard 8.1.8.2): on body and frameset
+    elements these are the window's handlers. }
+  WindowReflectingTypes: array[0..23] of string = ('afterprint', 'beforeprint', 'beforeunload', 'blur', 'error',
+    'focus', 'hashchange', 'languagechange', 'load', 'message', 'messageerror', 'offline', 'online', 'pagehide',
+    'pagereveal', 'pageshow', 'pageswap', 'popstate', 'rejectionhandled', 'resize', 'scroll', 'storage',
+    'unhandledrejection', 'unload');
+
+function IsWindowReflectingType(const EventType: string): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := Low(WindowReflectingTypes) to High(WindowReflectingTypes) do
+    if WindowReflectingTypes[Index] = EventType then
+      Exit(True);
+  Result := False;
+end;
+
+function IsBodyOrFrameset(Target: TEventTarget): Boolean;
+begin
+  Result := (Target is TElement) and (TElement(Target).IsHtmlElement(AtomBody) or
+    TElement(Target).IsHtmlElement(AtomFrameset));
+end;
+
+{ Whose handler Target's is: a body or frameset element's window-reflecting
+  handlers are its window's (nil when its document has no window here). }
+function HandlerTarget(Context: TBindingContext; Target: TEventTarget; const EventType: string): TEventTarget;
+begin
+  Result := Target;
+  if not IsBodyOrFrameset(Target) or not IsWindowReflectingType(EventType) then
+    Exit;
+  if (TElement(Target).NodeDocument = Context.Document) and (Context.Window <> nil) then
+    Result := Context.Window
+  else
+    Result := nil;
+end;
+
+{ The element whose content attribute gives Target's handler: Target, or
+  for the window's reflected handlers its document's body (or frameset). }
+function AttributeElement(Context: TBindingContext; Target: TEventTarget; const EventType: string): TElement;
+var
+  Body: TElement;
+begin
+  if Target is TElement then
+    Exit(TElement(Target));
+  Result := nil;
+  if (Target <> Context.Window) or (Context.Document = nil) or not IsWindowReflectingType(EventType) then
+    Exit;
+  Body := Context.Document.Body;
+  if IsBodyOrFrameset(Body) then
+    Result := Body;
+end;
+
 function GetEventHandler(Context: TBindingContext; Target: TEventTarget; const EventType: string): TJsValue;
 var
   Map: TJsObject;
@@ -136,6 +190,9 @@ var
   Element: TElement;
   AttributeName: TAtom;
 begin
+  Target := HandlerTarget(Context, Target, EventType);
+  if Target = nil then
+    Exit(JsNull);
   Map := Context.EventHandlerMap(Target, False);
   Key := Context.Engine.Realm.Intern(EventType);
   if Map <> nil then
@@ -145,9 +202,9 @@ begin
       Exit;
   end;
   Result := JsNull;
-  if not (Target is TElement) then
+  Element := AttributeElement(Context, Target, EventType);
+  if Element = nil then
     Exit;
-  Element := TElement(Target);
   AttributeName := FindAtom('on' + EventType);
   if (AttributeName = AtomNone) or not Element.HasAttributeAtom(AttributeName) then
     Exit;
@@ -161,6 +218,9 @@ procedure SetEventHandler(Context: TBindingContext; Target: TEventTarget; const 
 var
   Map: TJsObject;
 begin
+  Target := HandlerTarget(Context, Target, EventType);
+  if Target = nil then
+    Exit;
   if not JsIsCallable(Value) then
     Value := JsNull;
   Map := Context.EventHandlerMap(Target, True);
@@ -233,16 +293,20 @@ procedure EventHandlerAttributeChanged(Context: TBindingContext; Element: TEleme
 var
   EventType: string;
   Map: TJsObject;
+  Target: TEventTarget;
 begin
   EventType := Copy(NameOfAtom(LocalName), 3, MaxInt);
-  if Element.ScriptWrapper <> nil then
+  Target := HandlerTarget(Context, Element, EventType);
+  if Target = nil then
+    Exit;
+  if (Target <> Element) or (Element.ScriptWrapper <> nil) then
   begin
-    Map := Context.EventHandlerMap(Element, False);
+    Map := Context.EventHandlerMap(Target, False);
     if Map <> nil then
       Map.DeleteProperty(Context.Engine.Realm, Context.Engine.Realm.Intern(EventType));
   end;
   if Element.HasAttributeAtom(LocalName) then
-    EnsureHandlerListener(Context, Element, EventType);
+    EnsureHandlerListener(Context, Target, EventType);
 end;
 
 procedure ActivateEventHandlerAttributes(Context: TBindingContext; Element: TElement);
@@ -250,6 +314,7 @@ var
   Index: Integer;
   Attribute: PAttributeRecord;
   Name: string;
+  Target: TEventTarget;
 begin
   for Index := 0 to Element.AttributeCount - 1 do
   begin
@@ -257,8 +322,11 @@ begin
     if Attribute^.NamespaceId <> NamespaceNone then
       Continue;
     Name := NameOfAtom(Attribute^.LocalName);
-    if IsEventHandlerAttribute(Name) then
-      EnsureHandlerListener(Context, Element, Copy(Name, 3, MaxInt));
+    if not IsEventHandlerAttribute(Name) then
+      Continue;
+    Target := HandlerTarget(Context, Element, Copy(Name, 3, MaxInt));
+    if Target <> nil then
+      EnsureHandlerListener(Context, Target, Copy(Name, 3, MaxInt));
   end;
 end;
 
