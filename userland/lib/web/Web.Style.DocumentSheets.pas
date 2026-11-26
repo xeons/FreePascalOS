@@ -76,8 +76,8 @@ type
     function FindOwner(Element: TElement): Integer;
     procedure RemoveAt(Index: Integer);
     procedure RetireSheet(Sheet: TCssStyleSheet);
-    procedure Notify(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
   public
+    procedure Notify(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
     constructor Create(Document: TDocument);
     destructor Destroy; override;
     { The current sheet of a <style> element (parsed now if its text or
@@ -114,6 +114,12 @@ type
     property OnSheetParsed: TSheetParsedEvent read FOnSheetParsed write FOnSheetParsed;
   end;
 
+{ A shadow root's adoptedStyleSheets (the sheets are the document's
+  constructed ones; the list is kept with the shadow root). Setting
+  them tells the document's sheet listeners. }
+function ShadowRootAdoptedSheets(Shadow: TShadowRoot): TCssStyleSheetList;
+procedure SetShadowRootAdoptedSheets(Shadow: TShadowRoot; const Sheets: TCssStyleSheetList);
+
 { The document's sheets, made when first asked for (the document frees
   them). }
 function DocumentSheetsOf(Document: TDocument): TDocumentSheets;
@@ -124,6 +130,28 @@ implementation
 
 uses
   SysUtils, Web.Atoms, Web.Profiling, Css.Parser, Css.MediaQueries, Web.Fetch.Requests, Web.Fetch.CspChecks;
+
+type
+  TShadowRootSheets = class
+  public
+    Adopted: TCssStyleSheetList;
+  end;
+
+function ShadowRootAdoptedSheets(Shadow: TShadowRoot): TCssStyleSheetList;
+begin
+  if Shadow.StyleSheets = nil then
+    Result := nil
+  else
+    Result := TShadowRootSheets(Shadow.StyleSheets).Adopted;
+end;
+
+procedure SetShadowRootAdoptedSheets(Shadow: TShadowRoot; const Sheets: TCssStyleSheetList);
+begin
+  if Shadow.StyleSheets = nil then
+    Shadow.StyleSheets := TShadowRootSheets.Create;
+  TShadowRootSheets(Shadow.StyleSheets).Adopted := Copy(Sheets);
+  DocumentSheetsOf(Shadow.NodeDocument).Notify(scSheetsChanged, nil, nil);
+end;
 
 function ExistingDocumentSheets(Document: TDocument): TDocumentSheets;
 begin

@@ -134,6 +134,8 @@ type
       constref Options: TNavigateOptions; AtResponse: Boolean): Boolean;
     function ProvideAboutPage(const Path: string; out Html: string): Boolean;
     procedure EnginePopupBlocked(Sender: TWebEngineView; const Url: string);
+    function EngineFullscreenRequest(Sender: TWebEngineView; Enter: Boolean): Boolean;
+    procedure HostLockPointer(Control: TControl; Lock: Boolean);
   public
     constructor Create(Context: TContentContext; ViewId: LongWord; constref Setup: TIpcViewSetup);
     destructor Destroy; override;
@@ -203,6 +205,8 @@ begin
   FEngine.OnSelectionChanged := @EngineSelectionChanged;
   FEngine.OnNavigationRequest := @EngineNavigationRequest;
   FEngine.OnPopupBlocked := @EnginePopupBlocked;
+  FEngine.OnFullscreenRequest := @EngineFullscreenRequest;
+  FHost.OnLockPointer := @HostLockPointer;
   FEngine.Navigable.Fetcher.AboutPageProvider := @ProvideAboutPage;
   if Setup.Zoom <> 1 then
     FEngine.Zoom := Setup.Zoom;
@@ -298,6 +302,12 @@ begin
     IpcStop: FEngine.Stop;
     IpcResize: ApplyGeometry(DecodeGeometry(Message.Payload));
     IpcSetVisible: SetVisible(DecodeFlag(Message.Payload));
+    IpcFullscreenChanged:
+      if not DecodeFlag(Message.Payload) then
+        FEngine.FullscreenEnded;
+    IpcPointerLockChanged:
+      if not DecodeFlag(Message.Payload) then
+        FEngine.PointerLockEnded;
     IpcSetFocus: SetFocused(DecodeFlag(Message.Payload));
     IpcSetZoom: FEngine.Zoom := DecodeReal(Message.Payload);
     IpcInput: HandleInput(DecodeInputEvent(Message.Payload));
@@ -526,6 +536,7 @@ begin
           Target.HandlePointerDown(Input.X, Input.Y, Input.Button);
       end;
     InputPointerMove: PointerMoved(Input.X, Input.Y, Input.Button);
+    InputPointerMoveLocked: FEngine.MoveLockedPointer(Input.X, Input.Y, Input.Button);
     InputPointerUp:
       begin
         Target := FHost.Pressed;
@@ -655,6 +666,21 @@ procedure TContentView.EngineTitleChanged(Sender: TWebEngineView; const Value: s
 begin
   Send(IpcTitleChanged, EncodeText(Value));
   SendHistory;
+end;
+
+{ The browser decides; it says IpcFullscreenChanged when it leaves (or
+  refuses). }
+function TContentView.EngineFullscreenRequest(Sender: TWebEngineView; Enter: Boolean): Boolean;
+begin
+  Send(IpcFullscreenRequest, EncodeFlag(Enter));
+  Result := True;
+end;
+
+{ The pointer lock is the browser window's: it answers with
+  IpcPointerLockChanged. }
+procedure TContentView.HostLockPointer(Control: TControl; Lock: Boolean);
+begin
+  Send(IpcPointerLockRequest, EncodeFlag(Lock));
 end;
 
 procedure TContentView.EnginePopupBlocked(Sender: TWebEngineView; const Url: string);

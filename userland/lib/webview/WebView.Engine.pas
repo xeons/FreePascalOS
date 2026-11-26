@@ -98,6 +98,8 @@ uses
   Web.Fetch.NetworkContexts,
   Web.Storage,
   Web.IndexedDb.Service,
+  Web.ScriptEnvironment,
+  Web.Script.PageScripting,
   Url.Records,
   WebView.Types,
   WebView.TextIndex,
@@ -125,6 +127,9 @@ type
 
   TWebEngineViewEvent = procedure(Sender: TWebEngineView) of object;
   TWebEngineViewTextEvent = procedure(Sender: TWebEngineView; const Text: string) of object;
+  { The page asks to show an element fullscreen (Enter) or to leave: True
+    when the host does (the browser window fills the screen). }
+  TWebEngineViewFullscreenEvent = function(Sender: TWebEngineView; Enter: Boolean): Boolean of object;
   TWebEngineViewLoadingEvent = procedure(Sender: TWebEngineView; State: TLoadingState) of object;
   TWebEngineViewLinkEvent = procedure(Sender: TWebEngineView; const Url: string; Disposition: TLinkDisposition;
     var Handled: Boolean) of object;
@@ -253,6 +258,10 @@ type
     { When the user last clicked or typed (GetTickCount64): window.open
       within a second of it is not a pop-up nobody asked for. }
     FLastUserGesture: QWord;
+    { Fullscreen and the pointer lock (WebView.Engine.ScreenModes.inc). }
+    FOnFullscreenRequest: TWebEngineViewFullscreenEvent;
+    FPointerLockWanted: Boolean;
+    FMovementX, FMovementY: Double;
     FOnPopupBlocked: TWebEngineViewTextEvent;
     { Typing into the focused text field. }
     FFieldEditor: TTextFieldEditor;
@@ -339,6 +348,9 @@ type
     procedure NoteUserGesture;
     function HasUserGesture: Boolean;
     function ScriptOpenWindow(const Url, Target, Features: string): Boolean;
+    function ScriptScreenMode(Kind: TScreenModeKind; Enter: Boolean): TScriptPermission;
+    { Escape leaves the pointer lock, else fullscreen: True when it did. }
+    function LeaveScreenModeByKey: Boolean;
     procedure PaintCaret(var Canvas: TCanvas);
     function ShowsAt(Container: TNode; X, Y: Single): Boolean;
     procedure PaintInnerScrollBars(var Canvas: TCanvas);
@@ -450,6 +462,8 @@ type
     procedure PlaceChildren(const Area: TRectangle); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
+    procedure PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord); override;
+    procedure PointerLockChanged(Locked: Boolean); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     procedure PointerLeave; override;
     procedure Wheel(Steps: LongInt); override;
@@ -583,6 +597,15 @@ type
       second) is refused, and told to OnPopupBlocked with its URL. }
     property PopupsBlocked: Boolean read FPopupsBlocked write FPopupsBlocked;
     property OnPopupBlocked: TWebEngineViewTextEvent read FOnPopupBlocked write FOnPopupBlocked;
+    { Element.requestFullscreen and exitFullscreen (nil: no fullscreen). }
+    property OnFullscreenRequest: TWebEngineViewFullscreenEvent read FOnFullscreenRequest write FOnFullscreenRequest;
+    { The host left fullscreen by itself (F11, Escape in its window): the
+      page hears fullscreenchange. }
+    procedure FullscreenEnded;
+    { For a host that locks the pointer elsewhere (the content process's
+      browser): the lock's motion, and its end or refusal. }
+    procedure MoveLockedPointer(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+    procedure PointerLockEnded;
   end;
 
 var
@@ -612,7 +635,6 @@ uses
   Web.Layout.Resources,
   Web.Paint.DisplayList,
   Web.Text.FontInstances,
-  Web.Script.PageScripting,
   Web.Layout.AnimationEvents,
   Web.Dom.Focus,
   Web.Dom.FormControls,
@@ -661,5 +683,6 @@ end;
 {$I WebView.Engine.Find.inc}
 {$I WebView.Engine.History.inc}
 {$I WebView.Engine.Options.inc}
+{$I WebView.Engine.ScreenModes.inc}
 
 end.

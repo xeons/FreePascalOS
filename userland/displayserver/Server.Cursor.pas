@@ -49,6 +49,8 @@ uses
 var
   PointerX: LongInt;
   PointerY: LongInt;
+  { Not drawn (the pointer is locked to a window, Server.Input). }
+  PointerHidden: Boolean;
 
 { In the middle of the first screen. }
 procedure InitializeCursor;

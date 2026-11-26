@@ -73,10 +73,14 @@ type
     pcScope, pcRoot, pcEmpty, pcFirstChild, pcLastChild, pcOnlyChild, pcFirstOfType,
     pcLastOfType, pcOnlyOfType, pcNthChild, pcNthLastChild, pcNthOfType, pcNthLastOfType,
     { logical and linguistic }
-    pcIs, pcWhere, pcNot, pcHas, pcLang, pcDir);
+    pcIs, pcWhere, pcNot, pcHas, pcLang, pcDir,
+    { shadow trees (CSS Scoping) and custom states }
+    pcHost, pcHostContext, pcState);
 
   TCssPseudoElement = (peNone, peBefore, peAfter, peMarker, pePlaceholder, peSelection,
     peFirstLine, peFirstLetter, peBackdrop, peFileSelectorButton,
+    { CSS Scoping: elements assigned to a slot, parts of a shadow tree }
+    peSlotted, pePart,
     { a ::-webkit- pseudo-element nobody knows: valid, never matches }
     peUnknownPrefixed);
 
@@ -98,10 +102,11 @@ type
     NamespacePrefix: TCssAtom;
     { The attribute value; the :dir direction; the prefixed pseudo-element's name. }
     Value: string;
-    { The :lang ranges. }
+    { The :lang ranges; the ::part names. }
     Languages: array of string;
     NthA, NthB: Integer;
-    { :is, :where, :not, :has, :nth-*(An+B of S); owned. }
+    { :is, :where, :not, :has, :nth-*(An+B of S), :host(),
+      :host-context(), ::slotted(); owned. }
     Arguments: TCssSelectorList;
     { '&': the parent rule's selectors (not owned; nil at the top level). }
     NestingParent: TCssSelectorList;
@@ -187,13 +192,13 @@ begin
     skType: Result := SpecificityType;
     skId: Result := SpecificityId;
     skClass, skAttribute: Result := SpecificityClass;
-    skPseudoElement: Result := SpecificityType;
+    skPseudoElement: Result := AddSpecificity(SpecificityType, ListSpecificity(Simple.Arguments));
     skNesting: Result := ListSpecificity(Simple.NestingParent);
     skPseudoClass:
       case Simple.PseudoClass of
         pcWhere: Result := 0;
         pcIs, pcNot, pcHas: Result := ListSpecificity(Simple.Arguments);
-        pcNthChild, pcNthLastChild:
+        pcNthChild, pcNthLastChild, pcHost, pcHostContext:
           Result := AddSpecificity(SpecificityClass, ListSpecificity(Simple.Arguments));
       else
         Result := SpecificityClass;
@@ -326,7 +331,22 @@ begin
       if Simple.PseudoElement = peUnknownPrefixed then
         Result := '::' + SerializeIdentifier(Simple.Value)
       else
+      begin
         Result := '::' + PseudoElementName(Simple.PseudoElement);
+        if Simple.PseudoElement = peSlotted then
+          Result := Result + '(' + Simple.Arguments.Serialize + ')'
+        else if Simple.PseudoElement = pePart then
+        begin
+          Result := Result + '(';
+          for Index := 0 to High(Simple.Languages) do
+          begin
+            if Index > 0 then
+              Result := Result + ' ';
+            Result := Result + SerializeIdentifier(Simple.Languages[Index]);
+          end;
+          Result := Result + ')';
+        end;
+      end;
     skPseudoClass:
       begin
         Result := ':' + PseudoClassName(Simple.PseudoClass);
@@ -353,6 +373,11 @@ begin
             end;
           pcDir:
             Result := Result + '(' + Simple.Value + ')';
+          pcState:
+            Result := Result + '(' + SerializeIdentifier(Simple.Value) + ')';
+          pcHost, pcHostContext:
+            if Simple.Arguments <> nil then
+              Result := Result + '(' + Simple.Arguments.Serialize + ')';
         end;
       end;
   else

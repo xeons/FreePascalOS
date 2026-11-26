@@ -48,8 +48,11 @@ type
     procedure PrepareToReceive; override;
   end;
 
+  TContentLockPointerEvent = procedure(Control: TControl; Lock: Boolean) of object;
+
   TContentControlHost = class(TControlHost)
   private
+    FOnLockPointer: TContentLockPointerEvent;
     FScale: TContentScale;
     FFocused: TControl;
     FDamage: TRectangle;
@@ -67,6 +70,9 @@ type
     procedure FocusControlAfter(Control: TControl); override;
     function OwnerWindow: TMessageReceiver; override;
     function BeginDrag(Control: TControl; Data: TDragData): Boolean; override;
+    { The pointer lock goes to the browser (OnLockPointer). }
+    procedure LockPointer(Control: TControl; Lock: Boolean); override;
+    property OnLockPointer: TContentLockPointerEvent read FOnLockPointer write FOnLockPointer;
     { What was invalidated since the last TakeDamage (False: nothing). }
     function TakeDamage(out Area: TRectangle): Boolean;
     procedure DamageAll(Width, Height: LongInt);
@@ -95,6 +101,14 @@ destructor TContentControlHost.Destroy;
 begin
   FScale.Free;
   inherited Destroy;
+end;
+
+procedure TContentControlHost.LockPointer(Control: TControl; Lock: Boolean);
+begin
+  if Assigned(FOnLockPointer) then
+    FOnLockPointer(Control, Lock)
+  else
+    inherited LockPointer(Control, Lock);
 end;
 
 procedure TContentControlHost.InvalidatePixels(const Area: TRectangle);

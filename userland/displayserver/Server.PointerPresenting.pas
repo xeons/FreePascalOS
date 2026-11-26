@@ -136,6 +136,15 @@ var
   Screen: PScreen;
   Index: LongInt;
 begin
+  if PointerHidden then
+  begin
+    for Index := 0 to ScreenCount - 1 do
+    begin
+      RemoveSoftwareCursor(@Screens[Index]);
+      HideDeviceCursor(@Screens[Index]);
+    end;
+    Exit;
+  end;
   CursorPicture(Image, HotspotX, HotspotY);
   Place := MakeRectangle(PointerX - HotspotX, PointerY - HotspotY, Image.Width, Image.Height);
   Target := NearestScreen(PointerX, PointerY);

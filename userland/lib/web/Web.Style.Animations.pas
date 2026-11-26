@@ -40,6 +40,7 @@ unit Web.Style.Animations;
 
 {$mode objfpc}
 {$H+}
+{$modeswitch nestedprocvars}
 
 interface
 
@@ -62,6 +63,27 @@ type
     ElapsedTime: Double;
   end;
   TPendingAnimationEventArray = array of TPendingAnimationEvent;
+
+  { A running CSS animation or transition as script sees it (the
+    CSSAnimation and CSSTransition objects of Web Animations). }
+  TCssAnimationInfo = record
+    IsTransition: Boolean;
+    { The animation's name or the transitioned property's. }
+    Name: string;
+    { Milliseconds: the time since it started (its delay included), its
+      delay, its iteration duration; the iteration count. }
+    LocalTime: Double;
+    Delay: Double;
+    Duration: Double;
+    Iterations: Double;
+    Direction: string;
+    Fill: string;
+    Paused: Boolean;
+    Ended: Boolean;
+  end;
+  TCssAnimationInfoArray = array of TCssAnimationInfo;
+
+  TCssAnimationAction = (caPause, caPlay, caCancel, caSeek);
 
   TStyleAnimations = class
   private
@@ -91,6 +113,12 @@ type
     procedure ElementRemoved(Element: TElement);
     { The events collected since the last call, for the owner to fire. }
     function TakeEvents: TPendingAnimationEventArray;
+    { Script's view and control of an element's CSS animations and
+      transitions (Web Animations: CSSAnimation, CSSTransition). Seek
+      takes the new local time in milliseconds. }
+    function Describe(Element: TElement): TCssAnimationInfoArray;
+    procedure Control(Element: TElement; IsTransition: Boolean; const Name: string; Action: TCssAnimationAction;
+      Value: Double);
     { Milliseconds; replaceable (tests). }
     property Clock: TAnimationClock read FClock write FClock;
   end;
@@ -102,7 +130,7 @@ implementation
 
 uses
   Math, Css.Keywords, Css.Units, Css.Easing, Css.Interpolation, Css.Properties, Css.Shorthands, Css.Declarations,
-  Web.Style.NodeData;
+  Web.Style.NodeData, Web.Style.ScriptAnimations;
 
 type
   TRunningAnimation = record
@@ -117,6 +145,8 @@ type
     Paused: Boolean;
     PausedAt: Double;
     Started, Ended: Boolean;
+    { cancel() from script: no effect until animation-name changes. }
+    Cancelled: Boolean;
     LastIteration: Int64;
     { The keyframes' computed styles (one per keyframe rule), made from
       the base style they were computed under. }
@@ -604,6 +634,8 @@ begin
   Progress := 0;
   Iteration := 0;
   Ended := False;
+  if Running.Cancelled then
+    Exit;
   if Running.Paused then
     Now := Running.PausedAt;
   Elapsed := Now - Running.StartTime - Running.Delay;
@@ -798,7 +830,8 @@ begin
   State := TElementAnimations(Data^.Animations);
   { Nothing to do for the elements (nearly all) without any. }
   if (State = nil) and not HasAnimationNames(NewBase) and
-    not ((OldBase <> nil) and (OldBase <> NewBase) and HasTransitions(NewBase)) then
+    not ((OldBase <> nil) and (OldBase <> NewBase) and HasTransitions(NewBase)) and
+    (Element.AnimationEffects = nil) then
   begin
     Data^.BaseStyle.Release;
     Data^.BaseStyle := nil;
@@ -862,6 +895,9 @@ begin
       end;
     end;
   end;
+  { Then script animations (Web Animations), in effect order. }
+  if Element.AnimationEffects <> nil then
+    ApplyEffects(Element, FEngine, NewBase, ParentStyle, @SetOverride);
   for Index := High(State.Transitions) downto 0 do
   begin
     Progress := Now - State.Transitions[Index].StartTime - State.Transitions[Index].Delay;
@@ -900,7 +936,7 @@ begin
   Ended := True;
   for Index := 0 to High(State.Animations) do
     if not State.Animations[Index].Ended and (State.Animations[Index].Keyframes <> nil) and
-      not State.Animations[Index].Paused then
+      not State.Animations[Index].Paused and not State.Animations[Index].Cancelled then
       Ended := False;
   if Length(State.Transitions) > 0 then
     Ended := False;
@@ -908,7 +944,7 @@ begin
     RemoveActive(Element)
   else
     AddActive(Element);
-  if not State.HasEffects then
+  if not State.HasEffects and not HasEffectsInEffect(Element) then
   begin
     Data^.Animations := nil;
     State.Free;
@@ -924,6 +960,134 @@ begin
   if OverrideCount = 0 then
     Exit(NewBase.AddRef);
   Result := StyleWithOverrides(NewBase, Overrides, OverrideCount);
+end;
+
+function KeywordText(Keyword: TCssKeyword; const Default: string): string;
+begin
+  case Keyword of
+    kwReverse: Result := 'reverse';
+    kwAlternate: Result := 'alternate';
+    kwAlternateReverse: Result := 'alternate-reverse';
+    kwForwards: Result := 'forwards';
+    kwBackwards: Result := 'backwards';
+    kwBoth: Result := 'both';
+  else
+    Result := Default;
+  end;
+end;
+
+function TStyleAnimations.Describe(Element: TElement): TCssAnimationInfoArray;
+var
+  Data: PNodeData;
+  State: TElementAnimations;
+  Index, Count: Integer;
+  Now: Double;
+begin
+  Result := nil;
+  Data := ExistingNodeData(Element);
+  if (Data = nil) or (Data^.Animations = nil) then
+    Exit;
+  State := TElementAnimations(Data^.Animations);
+  Now := FClock();
+  SetLength(Result, Length(State.Transitions) + Length(State.Animations));
+  Count := 0;
+  { Transitions come before animations in composite order. }
+  for Index := 0 to High(State.Transitions) do
+  begin
+    Result[Count] := Default(TCssAnimationInfo);
+    Result[Count].IsTransition := True;
+    Result[Count].Name := PropertyName(State.Transitions[Index].Id);
+    Result[Count].LocalTime := Now - State.Transitions[Index].StartTime;
+    Result[Count].Delay := State.Transitions[Index].Delay;
+    Result[Count].Duration := State.Transitions[Index].Duration;
+    Result[Count].Iterations := 1;
+    Result[Count].Direction := 'normal';
+    Result[Count].Fill := 'backwards';
+    Inc(Count);
+  end;
+  for Index := 0 to High(State.Animations) do
+  begin
+    if State.Animations[Index].Cancelled then
+      Continue;
+    Result[Count] := Default(TCssAnimationInfo);
+    Result[Count].Name := State.Animations[Index].Name;
+    if State.Animations[Index].Paused then
+      Result[Count].LocalTime := State.Animations[Index].PausedAt - State.Animations[Index].StartTime
+    else
+      Result[Count].LocalTime := Now - State.Animations[Index].StartTime;
+    Result[Count].Delay := State.Animations[Index].Delay;
+    Result[Count].Duration := State.Animations[Index].Duration;
+    Result[Count].Iterations := State.Animations[Index].Iterations;
+    Result[Count].Direction := KeywordText(State.Animations[Index].Direction, 'normal');
+    Result[Count].Fill := KeywordText(State.Animations[Index].FillMode, 'none');
+    Result[Count].Paused := State.Animations[Index].Paused;
+    Result[Count].Ended := State.Animations[Index].Ended;
+    Inc(Count);
+  end;
+  SetLength(Result, Count);
+end;
+
+procedure TStyleAnimations.Control(Element: TElement; IsTransition: Boolean; const Name: string;
+  Action: TCssAnimationAction; Value: Double);
+var
+  Data: PNodeData;
+  State: TElementAnimations;
+  Index: Integer;
+  Now: Double;
+begin
+  Data := ExistingNodeData(Element);
+  if (Data = nil) or (Data^.Animations = nil) then
+    Exit;
+  State := TElementAnimations(Data^.Animations);
+  Now := FClock();
+  if IsTransition then
+  begin
+    for Index := High(State.Transitions) downto 0 do
+      if PropertyName(State.Transitions[Index].Id) = Name then
+        case Action of
+          caCancel:
+            begin
+              QueueEvent(Element, aeTransitionCancel, Name, 0);
+              State.RemoveTransition(Index);
+            end;
+          caSeek:
+            State.Transitions[Index].StartTime := Now - Value;
+        end;
+  end
+  else
+    for Index := 0 to High(State.Animations) do
+      if State.Animations[Index].Name = Name then
+        case Action of
+          caPause:
+            if not State.Animations[Index].Paused then
+            begin
+              State.Animations[Index].Paused := True;
+              State.Animations[Index].PausedAt := Now;
+            end;
+          caPlay:
+            if State.Animations[Index].Paused then
+            begin
+              State.Animations[Index].StartTime := State.Animations[Index].StartTime +
+                (Now - State.Animations[Index].PausedAt);
+              State.Animations[Index].Paused := False;
+            end;
+          caCancel:
+            begin
+              if State.Animations[Index].Started and not State.Animations[Index].Ended then
+                QueueEvent(Element, aeAnimationCancel, Name, 0);
+              State.Animations[Index].Cancelled := True;
+            end;
+          caSeek:
+            begin
+              if State.Animations[Index].Paused then
+                State.Animations[Index].StartTime := State.Animations[Index].PausedAt - Value
+              else
+                State.Animations[Index].StartTime := Now - Value;
+              State.Animations[Index].Ended := False;
+            end;
+        end;
+  MarkAnimationDirty(Element);
+  AddActive(Element);
 end;
 
 end.

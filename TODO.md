@@ -1551,7 +1551,7 @@ Part 1 (encodings, HTML parsing, DOM):
       document.write, pause/resume; meta charset changes and restarts
 - [ ] The 2025 customizable `<select>` parser changes (the classic "in select"
       modes are implemented)
-- [ ] Declarative shadow roots (`<template shadowrootmode>`) and shadow trees
+- [x] Declarative shadow roots (`<template shadowrootmode>`) and shadow trees
       in the DOM (slots, retargeting, composed events)
 - [ ] Form owners of form-associated elements (the parser's form pointer)
 - [x] DOM core: nodes, mutation algorithms with validity checks, Attr nodes,
@@ -1620,10 +1620,16 @@ Part 2 (style, layout, painting):
       iterations, directions, play state; numbers, lengths, colors,
       transforms) run each frame with an injectable clock; animation and
       transition events
+- [x] Web Animations (element.animate, KeyframeEffect, Animation's timing
+      model, getAnimations, CSSAnimation and CSSTransition) applied in
+      styling; shadow trees in styling (:host, ::slotted, ::part, :state,
+      scoped sheets, the cascade's context) and the flat tree in boxes
+- [ ] Web Animations: composite add and accumulate, replaced animations
+      removed automatically; @keyframes and @font-face in shadow tree
+      sheets
 - [ ] Inline boxes split around blocks, relative inline boxes,
       perspective and preserve-3d, filters, blend modes, clip-path,
-      border-image, conic gradients, blurred text shadows; Web
-      Animations (element.animate)
+      border-image, conic gradients, blurred text shadows
 - [x] Scrollbars (the web view's: theme bars for the viewport, thin bars in
       scroll containers)
 - [ ] Incremental display list updates
@@ -1751,9 +1757,14 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       tied to the web view's selection), the CSSOM (document.styleSheets,
       sheets, rules, insertRule appended rules indexed at once,
       constructable sheets, adoptedStyleSheets)
-- [ ] Shadow DOM interfaces, TreeWalker, Web Animations, synchronous XHR,
-      XML parsing (DOMParser's XML types, responseXML), the
-      unhandledrejection event, Selection.modify
+- [x] Shadow DOM interfaces (ShadowRoot, attachShadow, slots, slotchange,
+      composedPath, getHTML and setHTMLUnsafe), custom elements (registry,
+      [HTMLConstructor], reactions, upgrades, customized built-ins,
+      ElementInternals with form-associated custom elements,
+      CustomStateSet), the Fullscreen API and the Pointer Lock API
+- [ ] TreeWalker, synchronous XHR, XML parsing (DOMParser's XML types,
+      responseXML), the unhandledrejection event, Selection.modify,
+      delegatesFocus in the focusing steps
 - [x] DOMParser (text/html), SVGElement/SVGGraphicsElement/SVGSVGElement,
       document.open/write/close outside the parser, Location's setters,
       HTML's cloning steps (scripts that ran, control values), isTrusted
@@ -1813,10 +1824,14 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       colour for relative font sizes, currentcolor and direction:
       inherit, a GPU path, hit regions (addHitRegion, dropped by the
       standard)
+- [x] html5test: custom elements, shadow DOM, Web Animations, the
+      Fullscreen API, Pointer Lock (364 of 588 with WebSocket and CSP)
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
       custom elements, shadow DOM, Web Animations, media playback and
       Web Audio, the Fullscreen API, file inputs with FileList and
       multipart uploads, foreignObject, relative
+      media playback and Web Audio, file inputs with FileList and
+      multipart uploads, SharedWorker, foreignObject, relative
       positioning of inline boxes,
       designMode/execCommand, date and time pickers
 - [x] Workers (html5test 273 -> 284; 336 merged with IndexedDB and
@@ -1939,7 +1954,7 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       performance.measure, TreeWalker / NodeIterator, unicode-range and
       the fallback font, column flex items' min/max width, calc() in
       media queries, details/summary
-- [ ] Custom elements (customElements is missing: reddit, MDN's widgets,
+- [x] Custom elements (customElements is missing: reddit, MDN's widgets,
       YouTube) and shadow DOM (attachShadow: lit components, archive.org)
 - [x] WOFF2 web fonts
 - [x] A metric-compatible sans-serif: sans-serif, Arial and Helvetica are

@@ -2957,6 +2957,19 @@ for that display), printing a line for each. Without the flag a change
 lasts until the server ends, so the tests' many changes leave nothing
 behind.
 
+Pointer lock (`RequestSetPointerLock` 47, `EventPointerLock` 144): the
+active, shown window may ask for the pointer to be locked to it (the
+Pointer Lock API in the browser, games). The pointer is hidden and stays
+where it was; every motion goes to the window as `EventPointerMove`
+with `PointerMoveLocked` in Flags and the motion in Width and Height
+(an absolute device's motion from where it was), and buttons and the
+wheel go to it as if captured. The lock ends when the window lets go,
+stops being the active one, is hidden or goes, or the screen locks; the
+window hears `EventPointerLock` Value 0 (also for a refused request).
+Windowing has `TWindow.SetPointerLock`, `PointerMoveLocked` and
+`PointerLockChanged`; controls `TControl.RequestPointerLock`, the
+window routing the lock's motion to the control that asked.
+
 Pointer shapes: the arrow, the four resize arrows (left-right, up-down
 and the two diagonals), a text beam, a busy hourglass, a hand, move,
 not allowed and a crosshair (`Pointer*` in the protocol, 0 to 10;
@@ -14152,9 +14165,44 @@ target's capture and then other listeners, and bubble listeners back
 up; stopPropagation, stopImmediatePropagation, preventDefault
 (cancelable only, not in passive listeners), once, listeners added or
 removed during dispatch, and exceptions in listeners (reported, the
-others still run) behave as the standard says. Shadow trees,
-retargeting and activation behavior come with the later phases; the
-event loop too.
+others still run) behave as the standard says. The path is a list of
+structs (invocation target, shadow-adjusted target, related target,
+the closed tree marks), so events cross shadow trees as the standard
+says: listeners see the target and related target retargeted against
+their own tree, a shadow root passes an event to its host only when it
+is composed or did not start in that tree, a slotted node's parent is
+its slot, targets that would show a shadow tree are cleared after
+dispatch, and composedPath() leaves out the closed trees the current
+target is outside of (`TEventTarget`'s virtual node hooks: root, host,
+closed, assigned slot).
+
+**Shadow trees** (`Web.Dom.Shadow.inc`, `Web.Dom.Slots.inc`). A
+`TShadowRoot` is a document fragment whose host is its shadow host
+(attachShadow's checks: HTML elements of the valid host names and valid
+custom element names; open or closed, delegatesFocus, slotAssignment
+named or manual, clonable, serializable; a declarative root of the same
+mode is emptied and reused). The host owns it, and for references its
+parent is the host, so script holding a node of a shadow tree keeps the
+host alive. Shadow-including tree order (an element, its shadow tree,
+its children) drives connecting and disconnecting: the nodes of a
+connected host's tree are connected, get NodeConnected, run their
+scripts and load their images, but their ids are not the document's
+(ShadowRoot.getElementById walks its tree). Slots: named assignment
+(a host child's slot attribute against the first slot of that name in
+tree order) and manual (HTMLSlotElement.assign), "assign slottables
+(for a tree)", "assign a slot", flattened assigned nodes; the
+insertion, removal and attribute change steps call them only for
+documents that ever had a shadow root, and only scan a shadow tree that
+ever had a slot. A changed assignment signals a slot change (slotchange
+at the next mutation observer microtask, after the observers'
+callbacks) and tells the observers (`SlotAssignmentChanged`); pointers
+between slots and slottables are weak both ways. `FlatTreeParent`,
+`FlatTreeFirstChild` and `FlatTreeNextChild` walk the flat tree (a
+host's children are its shadow tree's, a filled slot's its assigned
+nodes, an empty slot's its own), which styling and boxes follow.
+Cloning copies a clonable shadow root (even for a shallow clone); the
+serializer writes serializable ones as declarative templates for
+getHTML({serializableShadowRoots}).
 
 ### Node size and lifetime
 
@@ -14230,9 +14278,19 @@ start of its fetch until its load or error event has fired.
   `Web.Html.Markup` innerHTML, outerHTML and insertAdjacentHTML, and
   `Web.Html.TreeDump` the html5lib test format.
 
+Declarative shadow roots: a `<template shadowrootmode>` start tag
+attaches a shadow root (clonable, serializable and delegatesFocus from
+its attributes) to the adjusted current node and stands for it on the
+stack, never inserted, so the template's content parses into the
+shadow root; documents and setHTMLUnsafe allow them, innerHTML and
+DOMParser do not. With custom element definitions (and outside
+fragments) the parser constructs a defined custom element at once and
+runs the reactions after each insertion ("create an element for a
+token" with will execute script).
+
 Not yet: the 2025 customizable `<select>` parser changes (the classic
-"in select" modes are implemented), declarative shadow roots on
-`<template shadowrootmode>`, form owners of form-associated elements.
+"in select" modes are implemented), form owners of form-associated
+elements.
 
 ### The event loop
 
@@ -15091,6 +15149,107 @@ XMLHttpRequest, Web Animations (CSS animations and transitions run, see
 Styling), Selection.modify, @import in insertRule loading its sheet,
 ObservableArray for adoptedStyleSheets, the storage event between
 windows.
+**Shadow DOM** (`bindings/Shadow.webidl`, `Web.Bindings.Shadow`):
+ShadowRoot (mode, delegatesFocus, slotAssignment, clonable,
+serializable, host, onslotchange, activeElement retargeted,
+adoptedStyleSheets, innerHTML, getHTML, setHTMLUnsafe), attachShadow,
+shadowRoot (null for closed roots), Element.part, setHTMLUnsafe, the
+Slottable mixin (assignedSlot, null into closed trees), the slot's
+assignedNodes and assignedElements ({flatten}) and assign;
+getRootNode({composed}), document.activeElement retargeted to the host.
+
+**Custom elements** (`bindings/CustomElements.webidl`,
+`Web.Bindings.CustomElementRegistry`, `Web.Bindings.CustomElements`,
+the DOM's part in `Web.Dom.CustomElements.inc`). Each window has a
+CustomElementRegistry (define with its checks, the lifecycle callbacks,
+observedAttributes, disabledFeatures and formAssociated read once; get,
+getName, whenDefined's promise, upgrade). Every HTML element
+interface's constructor is [HTMLConstructor] (make-bindings.py points
+them at one routine): new on a defined class makes an element of its
+definition, and inside an upgrade it takes the element being upgraded
+off the definition's construction stack. The DOM keeps each element's
+custom element state (undefined for valid custom names until defined,
+:defined), is value and definition (reference counted: the registry,
+each element and each pending upgrade hold one), and calls the
+registry - its CustomElementHost - only for elements flagged as
+candidates: connected (connectedCallback or an upgrade attempt),
+disconnected, adopted, attribute changes of custom elements. Reactions
+go to the element's reaction queue and the current element queue of
+the reactions stack, which the dispatcher pushes around every operation
+and attribute setter ([CEReactions]; a pending script exception waits
+while they run), or the backup element queue (a microtask).
+createElement and createElementNS take the is option and construct
+defined elements at once; clones and innerHTML make undefined elements
+that upgrade when connected (the fragment parser's document has no
+registry); is values are serialized. Customized built-ins (extends)
+work through createElement, new and markup. attachInternals gives
+ElementInternals: form-associated custom elements are listed in their
+form (elements, length, validity, submission with the value
+setFormValue gave: a string under the element's name or a FormData's
+entries), setValidity with the flags and message, validity
+(ValidityState), validationMessage, willValidate, checkValidity and
+reportValidity (invalid events), labels, form, the formAssociated,
+formReset and formDisabled callbacks, shadowRoot (when available to the
+internals), states (CustomStateSet, :state() through the style
+adapter), role and a few ARIA values kept.
+
+**Web Animations** (`platform/77-animations.js`,
+`Web.Script.NativeAnimations`, `Web.Style.ScriptAnimations`).
+document.timeline (DocumentTimeline over performance.now),
+KeyframeEffect (keyframes in the array and the property-indexed forms,
+offsets checked and computed, easing and composite per keyframe,
+getKeyframes, setKeyframes, target, the copy constructor),
+AnimationEffect's timing (getTiming, getComputedTiming with the phases,
+fill modes, iteration start, directions and the effect's easing through
+libcss, updateTiming with its checks), Animation (play with auto-rewind
+and the pending play task finished at the next frame, pause, finish,
+cancel, reverse, playbackRate and updatePlaybackRate, the currentTime
+and startTime setters, playState, pending, the ready and finished
+promises, finish, cancel and remove events as AnimationPlaybackEvent,
+persist, commitStyles), Element.animate, Element.getAnimations
+({subtree}), Document.getAnimations and ShadowRoot.getAnimations. Each
+frame the script works out every effect's progress and hands it to
+styling with the effect's keyframes; `TStyleAnimations.Animate` applies
+the effects in effect order over the CSS animations and under the
+transitions, interpolating each property between the keyframes around
+the progress (an implicit 0% or 100% keyframe is the underlying value).
+The CSS animations and transitions the styler runs appear as
+CSSAnimation and CSSTransition objects (animationName,
+transitionProperty, playState, currentTime, startTime, the effect's
+timing; pause, play, cancel, finish and seeking reach the styler
+through `TScriptLayout`). Not yet: composite add and accumulate
+(applied as replace), the automatic removal of replaced animations.
+
+**Fullscreen and Pointer Lock** (`platform/78-screen-modes.js`,
+`Web.Script.NativeScreenModes`). requestFullscreen (connected HTML, SVG
+or MathML elements, not dialogs, in the window's document; in a frame
+only with allowfullscreen), exitFullscreen, fullscreenElement
+(retargeted; ShadowRoot's too), fullscreenEnabled, fullscreen, the
+fullscreenchange and fullscreenerror events at the next frame and the
+promises; the document's fullscreen element (`TDocument.FullscreenElement`)
+matches :fullscreen and the engine's user agent sheet makes it fill the
+viewport above everything. requestPointerLock (a promise),
+exitPointerLock, pointerLockElement, pointerlockchange and
+pointerlockerror, MouseEvent's movementX and movementY (also in the
+dictionary). Both ask the host through the script environment
+(`RequestFullscreen`, `RequestPointerLock`: granted, denied without a
+user gesture, or unsupported); removing the element, or the host
+leaving the mode by itself (the platform callbacks onFullscreenEnded and
+onPointerLockEnded) ends it. A sandboxed frame locks the pointer only
+with allow-pointer-lock. The web view asks the browser (which then
+fills the screen with the page alone) and locks the pointer through the
+display server (see the web view and the display server's pointer
+lock); Escape leaves the lock, else fullscreen.
+
+**Not done yet**: ErrorEvent and onerror's arguments, the event handler
+scope chain (form, document), the unhandledrejection event, XML parsing
+(DOMParser, XHR's responseXML), TreeWalker, `<object>` and `<embed>`
+documents, frameset layout (`<frame>` loads but is laid out as an
+inline replaced box), shared and service workers, synchronous
+XMLHttpRequest, Selection.modify, @import in insertRule loading its
+sheet, ObservableArray for adoptedStyleSheets, the storage event
+between windows, a shadow root's delegatesFocus in the focusing steps,
+@keyframes and @font-face in shadow tree sheets.
 
 **Added for html5test.co** (docs/html5test-gaps.md has the results and
 what is left):
@@ -15519,6 +15678,30 @@ while styling and queued by the owner as tasks
 bubbling, at elements still in the document). The web view and
 webbrowse advance animations and queue their events every frame, and
 the view asks for frames while any runs.
+
+**Shadow trees in styling** (libcss's `Css.TreeScopes`,
+`Css.SelectorMatching`, `Css.StyleEngine`; `Web.Style.Resolver`). Each
+shadow root has a style scope (`TCssTreeScope`: its `<style>` and
+`<link>` sheets in tree order, then its adoptedStyleSheets, indexed on
+their own, collected again when sheets may have changed). An element of
+a shadow tree is matched against its scope's rules and the user
+agent's, never the document's author rules; its host against the
+scope's `:host`, `:host()` and `:host-context()` rules (the host is
+featureless there: nothing else matches it and nothing above it is
+seen; the matcher's `ShadowHost`); an assigned element against the
+`::slotted()` rules of each slot it is assigned to, through nested
+slots; a part against the outer tree's `::part()` rules; `:state()`
+against a custom element's states. The cascade's context compares the
+shadow nesting of the trees declarations come from (for normal ones the
+outer wins, for important ones the inner). Elements in shadow trees do
+not share styles. The styler walks the flat tree (slots are display:
+contents in the user agent sheet), marks style and boxes dirty along
+flat tree parents, restyles a host and its shadow tree when the scope's
+sheets change, and restyles conservatively for state changes inside
+shadow trees (their rules are not in the engine's state dependencies).
+The box tree is built from the flat tree, so a host's unassigned
+children are not rendered and a slot shows its assigned nodes or else
+its fallback.
 
 ### Text (Web.Text)
 
@@ -16894,7 +17077,10 @@ history state, zoom, cursor, link, download, navigation failure,
 context menu, pop-up menu, console, script dialog, beforeunload,
 clipboard write and read, selection, open URL, script interrupted,
 input handled, unhandled key, page text; version 2: 226 a pop-up
-blocked), 300-399 the network service
+blocked; 230 a fullscreen request and 231 a pointer lock request from
+the page, answered by 130 the browser leaving or refusing fullscreen
+and 131 the pointer lock's state; input kind 10, a locked pointer's
+motion), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
 storage load, set, remove, clear; about pages; 340-342 the storage
 service: an IndexedDB request, a client closed, and a notice the other

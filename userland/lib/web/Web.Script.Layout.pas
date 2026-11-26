@@ -60,11 +60,15 @@ type
     function ElementAtPoint(X, Y: Double): TElement; override;
     function ComputedValue(Element: TElement; const PropertyName: string): string; override;
     function TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray; override;
+    function CssAnimations(Element: TElement): TScriptCssAnimationArray; override;
+    procedure ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+      Action: TScriptCssAnimationAction; Value: Double); override;
   end;
 
 implementation
 
 uses
+  Web.Style.Animations,
   Css.ComputedStyle,
   Css.PropertyIds,
   Css.Properties,
@@ -375,6 +379,41 @@ begin
   if Size < 0 then
     Size := 0;
   Result := SerializeNumber(Size) + 'px';
+end;
+
+function TDocumentScriptLayout.CssAnimations(Element: TElement): TScriptCssAnimationArray;
+var
+  Infos: TCssAnimationInfoArray;
+  Index: Integer;
+begin
+  Result := nil;
+  if not Ready then
+    Exit;
+  Infos := Layout.Styler.Animations.Describe(Element);
+  SetLength(Result, Length(Infos));
+  for Index := 0 to High(Infos) do
+  begin
+    Result[Index].IsTransition := Infos[Index].IsTransition;
+    Result[Index].Name := Infos[Index].Name;
+    Result[Index].LocalTime := Infos[Index].LocalTime;
+    Result[Index].Delay := Infos[Index].Delay;
+    Result[Index].Duration := Infos[Index].Duration;
+    Result[Index].Iterations := Infos[Index].Iterations;
+    Result[Index].Direction := Infos[Index].Direction;
+    Result[Index].Fill := Infos[Index].Fill;
+    Result[Index].Paused := Infos[Index].Paused;
+    Result[Index].Ended := Infos[Index].Ended;
+  end;
+end;
+
+procedure TDocumentScriptLayout.ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+  Action: TScriptCssAnimationAction; Value: Double);
+const
+  Actions: array[TScriptCssAnimationAction] of TCssAnimationAction = (caPause, caPlay, caCancel, caSeek);
+begin
+  if not Ready then
+    Exit;
+  Layout.Styler.Animations.Control(Element, IsTransition, Name, Actions[Action], Value);
 end;
 
 function TDocumentScriptLayout.ComputedValue(Element: TElement; const PropertyName: string): string;

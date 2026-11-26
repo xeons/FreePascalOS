@@ -292,7 +292,7 @@ begin
       if Index >= 0 then
       begin
         FFlags := FFlags or NodeFlagHasId;
-        if (FFlags and NodeFlagConnected) <> 0 then
+        if ((FFlags and NodeFlagConnected) <> 0) and not IsInShadowTreeNode(Self) then
           FOwnerDocument.RegisterId(Self, FAttributes[Index].Value);
       end
       else
@@ -306,10 +306,22 @@ begin
         FFlags := FFlags and not NodeFlagHasClass;
       if FRareData <> nil then
         FRareData.ClassAtomsValid := False;
-    end;
+    end
+    else if ((LocalAtom = AtomSlot) or (LocalAtom = AtomName)) and FOwnerDocument.FHasShadowRoots then
+      SlotsAttributeChanged(Self, LocalAtom, OldValue, HadValue);
   end;
   if DocumentHasObservers(FOwnerDocument) then
     FOwnerDocument.NotifyAttributeChanged(Self, LocalAtom, Namespace, OldValue, HadValue);
+  if ((FFlags and NodeFlagCustomCandidate) <> 0) and (CustomElementHost <> nil) and
+    (CustomElementState = CustomElementCustom) then
+  begin
+    Index := AttributeIndexOf(LocalAtom, Namespace);
+    if Index >= 0 then
+      CustomElementHost.ElementAttributeChanged(Self, LocalAtom, Namespace, OldValue, FAttributes[Index].Value,
+        HadValue, True)
+    else
+      CustomElementHost.ElementAttributeChanged(Self, LocalAtom, Namespace, OldValue, '', HadValue, False);
+  end;
 end;
 
 procedure TElement.ChangeAttributeValue(Index: Integer; const Value: string);
@@ -396,7 +408,13 @@ var
   Copy: TElement;
   Index: Integer;
 begin
-  Copy := Document.NewElement(FLocalName, FNamespaceId);
+  Copy := nil;
+  if ((FFlags and NodeFlagCustomCandidate) <> 0) and (CustomElementHost <> nil) then
+    Copy := CustomElementHost.CreateElement(Document, FLocalName, FNamespaceId, IsValue, False);
+  if Copy = nil then
+    Copy := Document.NewElement(FLocalName, FNamespaceId);
+  if (FRareData <> nil) and (FRareData.IsValue <> '') then
+    Copy.SetIsValue(FRareData.IsValue);
   SetLength(Copy.FAttributes, System.Length(FAttributes));
   for Index := 1 to System.Length(FAttributes) do
     Copy.FAttributes[Index - 1] := FAttributes[Index - 1];

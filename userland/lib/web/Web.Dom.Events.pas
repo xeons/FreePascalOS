@@ -27,8 +27,16 @@
   then other listeners, and, for bubbling events, the bubble listeners
   back up. stopPropagation, stopImmediatePropagation, preventDefault,
   once and passive listeners, and listeners added or removed while an
-  event is dispatched behave as the standard says. Shadow trees (and so
-  retargeting and composed) and activation behavior come later.
+  event is dispatched behave as the standard says.
+
+  Shadow trees: the path is a list of structs (DOM Standard 2.9), each
+  with its invocation target, shadow-adjusted target, related target and
+  the closed tree marks; listeners see the target and related target
+  retargeted against their own tree, a shadow root passes an event on
+  to its host only when the event is composed (or did not start in that
+  tree), and composedPath() hides what is inside closed shadow trees
+  from listeners outside them. The node specifics (roots, hosts,
+  assigned slots) come through virtual methods of TEventTarget.
 
   Targets are kept alive while an event refers to them through the
   virtual RetainTarget/ReleaseTarget (nodes: Retain/Release).
@@ -99,6 +107,17 @@ type
 
   TEventTargetArray = array of TEventTarget;
 
+  { One struct of an event's path (DOM Standard 2.9, "append to an
+    event path"). }
+  TEventPathItem = record
+    InvocationTarget: TEventTarget;
+    ShadowAdjustedTarget: TEventTarget;
+    RelatedTarget: TEventTarget;
+    RootOfClosedTree: Boolean;
+    SlotInClosedTree: Boolean;
+  end;
+  TEventPathItemArray = array of TEventPathItem;
+
   TEvent = class
   private
     FEventType: TAtom;
@@ -119,7 +138,8 @@ type
     FDispatching: Boolean;
     FInitialized: Boolean;
     FTimeStamp: Double;
-    FPath: TEventTargetArray;
+    FPath: TEventPathItemArray;
+    FPathCount: Integer;
     FReferenceCount: Integer;
     FScriptWrapper: Pointer;
     procedure SetTarget(NewTarget: TEventTarget);
@@ -143,8 +163,13 @@ type
     procedure PreventDefault;
     { The legacy initEvent: ignored while the event is dispatched. }
     procedure InitEvent(const TypeName: string; CanBubble, IsCancelable: Boolean);
-    { The path of the event while it is dispatched; empty otherwise. }
+    { composedPath(): the path as the current target may see it (closed
+      shadow trees it is outside of left out) while the event is
+      dispatched; empty otherwise. }
     function ComposedPath: TEventTargetArray;
+    { The invocation target of the path's first struct while the event
+      is dispatched (a shadow root's "get the parent"), else nil. }
+    function FirstPathTarget: TEventTarget;
     property EventType: TAtom read FEventType;
     property TypeName: string read GetEventTypeName;
     property Target: TEventTarget read FTarget;
@@ -174,6 +199,17 @@ type
     { An exception a listener raised (the bindings report it). }
     procedure ReportListenerException(Error: Exception); virtual;
   public
+    { What dispatch needs to know of nodes (Web.Dom overrides these):
+      whether the target is a node; its root; if it is a shadow root,
+      its host (nil otherwise) and whether it is closed; whether it is a
+      shadow-including inclusive ancestor of Other; the slot it is
+      assigned to (slottables), nil if none. }
+    function IsNodeTarget: Boolean; virtual;
+    function TargetRoot: TEventTarget; virtual;
+    function ShadowHostTarget: TEventTarget; virtual;
+    function IsClosedShadowRoot: Boolean; virtual;
+    function IsShadowIncludingInclusiveAncestorOf(Other: TEventTarget): Boolean; virtual;
+    function AssignedSlotTarget: TEventTarget; virtual;
     procedure RetainTarget; virtual;
     procedure ReleaseTarget; virtual;
     { Whether events hold the target (RetainTarget and ReleaseTarget):
@@ -452,9 +488,94 @@ begin
   FCancelable := IsCancelable;
 end;
 
-function TEvent.ComposedPath: TEventTargetArray;
+function TEvent.FirstPathTarget: TEventTarget;
 begin
-  Result := Copy(FPath);
+  if FPathCount = 0 then
+    Result := nil
+  else
+    Result := FPath[0].InvocationTarget;
+end;
+
+{ DOM Standard: composedPath(). }
+function TEvent.ComposedPath: TEventTargetArray;
+var
+  Count, CurrentTargetIndex, CurrentTargetHiddenLevel, CurrentHiddenLevel, MaxHiddenLevel, Index: Integer;
+  Before: TEventTargetArray;
+  BeforeCount: Integer;
+begin
+  Result := nil;
+  if (FPathCount = 0) or (FCurrentTarget = nil) then
+    Exit;
+  CurrentTargetIndex := 0;
+  CurrentTargetHiddenLevel := 0;
+  Index := FPathCount - 1;
+  while Index >= 0 do
+  begin
+    if FPath[Index].RootOfClosedTree then
+      Inc(CurrentTargetHiddenLevel);
+    if FPath[Index].InvocationTarget = FCurrentTarget then
+    begin
+      CurrentTargetIndex := Index;
+      Break;
+    end;
+    if FPath[Index].SlotInClosedTree then
+      Dec(CurrentTargetHiddenLevel);
+    Dec(Index);
+  end;
+  { The current target and the structs before it, nearest first. }
+  Before := nil;
+  SetLength(Before, FPathCount);
+  BeforeCount := 1;
+  Before[0] := FCurrentTarget;
+  CurrentHiddenLevel := CurrentTargetHiddenLevel;
+  MaxHiddenLevel := CurrentTargetHiddenLevel;
+  Index := CurrentTargetIndex - 1;
+  while Index >= 0 do
+  begin
+    if FPath[Index].RootOfClosedTree then
+      Inc(CurrentHiddenLevel);
+    if CurrentHiddenLevel <= MaxHiddenLevel then
+    begin
+      Before[BeforeCount] := FPath[Index].InvocationTarget;
+      Inc(BeforeCount);
+    end;
+    if FPath[Index].SlotInClosedTree then
+    begin
+      Dec(CurrentHiddenLevel);
+      if CurrentHiddenLevel < MaxHiddenLevel then
+        MaxHiddenLevel := CurrentHiddenLevel;
+    end;
+    Dec(Index);
+  end;
+  SetLength(Result, FPathCount);
+  Count := 0;
+  for Index := BeforeCount - 1 downto 0 do
+  begin
+    Result[Count] := Before[Index];
+    Inc(Count);
+  end;
+  { The structs after the current target. }
+  CurrentHiddenLevel := CurrentTargetHiddenLevel;
+  MaxHiddenLevel := CurrentTargetHiddenLevel;
+  Index := CurrentTargetIndex + 1;
+  while Index < FPathCount do
+  begin
+    if FPath[Index].SlotInClosedTree then
+      Inc(CurrentHiddenLevel);
+    if CurrentHiddenLevel <= MaxHiddenLevel then
+    begin
+      Result[Count] := FPath[Index].InvocationTarget;
+      Inc(Count);
+    end;
+    if FPath[Index].RootOfClosedTree then
+    begin
+      Dec(CurrentHiddenLevel);
+      if CurrentHiddenLevel < MaxHiddenLevel then
+        MaxHiddenLevel := CurrentHiddenLevel;
+    end;
+    Inc(Index);
+  end;
+  SetLength(Result, Count);
 end;
 
 function TEventTarget.GetListenerList(CreateIfMissing: Boolean): TEventListenerList;
@@ -469,6 +590,36 @@ end;
 
 procedure TEventTarget.ReportListenerException(Error: Exception);
 begin
+end;
+
+function TEventTarget.IsNodeTarget: Boolean;
+begin
+  Result := False;
+end;
+
+function TEventTarget.TargetRoot: TEventTarget;
+begin
+  Result := Self;
+end;
+
+function TEventTarget.ShadowHostTarget: TEventTarget;
+begin
+  Result := nil;
+end;
+
+function TEventTarget.IsClosedShadowRoot: Boolean;
+begin
+  Result := False;
+end;
+
+function TEventTarget.IsShadowIncludingInclusiveAncestorOf(Other: TEventTarget): Boolean;
+begin
+  Result := Other = Self;
+end;
+
+function TEventTarget.AssignedSlotTarget: TEventTarget;
+begin
+  Result := nil;
 end;
 
 procedure TEventTarget.RetainTarget;
@@ -589,64 +740,188 @@ begin
   end;
 end;
 
+{ DOM Standard: retarget A against B. }
+function Retarget(A, B: TEventTarget): TEventTarget;
+var
+  Root: TEventTarget;
+begin
+  Result := A;
+  while (Result <> nil) and Result.IsNodeTarget do
+  begin
+    Root := Result.TargetRoot;
+    if (Root.ShadowHostTarget = nil) or ((B <> nil) and Root.IsShadowIncludingInclusiveAncestorOf(B)) then
+      Exit;
+    Result := Root.ShadowHostTarget;
+  end;
+end;
+
+function IsShadowTreeNode(Target: TEventTarget): Boolean;
+begin
+  Result := (Target <> nil) and Target.IsNodeTarget and (Target.TargetRoot.ShadowHostTarget <> nil);
+end;
+
+{ "Append to an event path"; the path holds its targets. }
+procedure AppendToEventPath(Event: TEvent; InvocationTarget, ShadowAdjustedTarget, RelatedTarget: TEventTarget;
+  SlotInClosedTree: Boolean);
+var
+  Item: ^TEventPathItem;
+begin
+  if Event.FPathCount >= Length(Event.FPath) then
+    SetLength(Event.FPath, Event.FPathCount * 2 + 8);
+  Item := @Event.FPath[Event.FPathCount];
+  Item^.InvocationTarget := InvocationTarget;
+  Item^.ShadowAdjustedTarget := ShadowAdjustedTarget;
+  Item^.RelatedTarget := RelatedTarget;
+  Item^.RootOfClosedTree := InvocationTarget.IsClosedShadowRoot;
+  Item^.SlotInClosedTree := SlotInClosedTree;
+  Inc(Event.FPathCount);
+  if InvocationTarget.HeldByEvents then
+    InvocationTarget.RetainTarget;
+  if (RelatedTarget <> nil) and RelatedTarget.HeldByEvents then
+    RelatedTarget.RetainTarget;
+end;
+
+{ The standard's "invoke" for the path's struct at Index: the target is
+  the nearest shadow-adjusted target at or before it. }
+procedure InvokePathItem(Event: TEvent; Index: Integer; Phase: TListenerPhase);
+var
+  TargetIndex: Integer;
+begin
+  TargetIndex := Index;
+  while (TargetIndex > 0) and (Event.FPath[TargetIndex].ShadowAdjustedTarget = nil) do
+    Dec(TargetIndex);
+  Event.SetTarget(Event.FPath[TargetIndex].ShadowAdjustedTarget);
+  Event.SetRelatedTarget(Event.FPath[Index].RelatedTarget);
+  InvokeListeners(Event.FPath[Index].InvocationTarget, Event, Phase);
+end;
+
+{ Builds the event path from Start (DOM Standard: dispatch, step 5). }
+procedure BuildEventPath(Event: TEvent; Start, OriginalRelatedTarget: TEventTarget);
+var
+  Parent, Target, RelatedTarget, Slottable: TEventTarget;
+  SlotInClosedTree: Boolean;
+begin
+  Target := Start;
+  RelatedTarget := Retarget(OriginalRelatedTarget, Start);
+  if (Start = RelatedTarget) and (Start <> OriginalRelatedTarget) then
+    Exit;
+  AppendToEventPath(Event, Start, Start, RelatedTarget, False);
+  Slottable := nil;
+  if Start.AssignedSlotTarget <> nil then
+    Slottable := Start;
+  SlotInClosedTree := False;
+  Parent := Start.GetTheParent(Event);
+  while Parent <> nil do
+  begin
+    if Slottable <> nil then
+    begin
+      Slottable := nil;
+      if Parent.TargetRoot.IsClosedShadowRoot then
+        SlotInClosedTree := True;
+    end;
+    if Parent.AssignedSlotTarget <> nil then
+      Slottable := Parent;
+    RelatedTarget := Retarget(OriginalRelatedTarget, Parent);
+    if not Parent.IsNodeTarget or (Target.IsNodeTarget and
+      Target.TargetRoot.IsShadowIncludingInclusiveAncestorOf(Parent)) then
+      AppendToEventPath(Event, Parent, nil, RelatedTarget, SlotInClosedTree)
+    else if Parent = RelatedTarget then
+      Parent := nil
+    else
+    begin
+      Target := Parent;
+      AppendToEventPath(Event, Parent, Target, RelatedTarget, SlotInClosedTree);
+    end;
+    if Parent <> nil then
+      Parent := Parent.GetTheParent(Event);
+    SlotInClosedTree := False;
+  end;
+end;
+
 function TEventTarget.DispatchEvent(Event: TEvent): Boolean;
 var
-  Path: TEventTargetArray;
-  Parent: TEventTarget;
-  Count, Index: Integer;
+  OriginalRelatedTarget, FinalTarget, FinalRelatedTarget: TEventTarget;
+  ClearTargets: Boolean;
+  Index, ClearIndex: Integer;
 begin
   if Event.FDispatching or not Event.FInitialized then
     RaiseDomError(InvalidStateError, 'the event is being dispatched or was not initialized');
   Event.FDispatching := True;
+  Event.FPath := nil;
+  Event.FPathCount := 0;
+  OriginalRelatedTarget := Event.FRelatedTarget;
+  if (OriginalRelatedTarget <> nil) and OriginalRelatedTarget.HeldByEvents then
+    OriginalRelatedTarget.RetainTarget;
   Event.SetTarget(Self);
-  Path := nil;
-  Count := 0;
-  Parent := Self;
-  while Parent <> nil do
-  begin
-    if Count >= Length(Path) then
-      SetLength(Path, Count * 2 + 8);
-    Path[Count] := Parent;
-    if Parent.HeldByEvents then
-      Parent.RetainTarget;
-    Inc(Count);
-    Parent := Parent.GetTheParent(Event);
-  end;
-  SetLength(Path, Count);
-  Event.FPath := Path;
+  ClearTargets := False;
   try
-    { Capturing: from the top down; at the target its capture listeners. }
-    Index := Count;
-    while Index >= 1 do
+    BuildEventPath(Event, Self, OriginalRelatedTarget);
+    if Event.FPathCount > 0 then
     begin
-      if Index = 1 then
-        Event.FPhase := EventPhaseAtTarget
-      else
-        Event.FPhase := EventPhaseCapturing;
-      InvokeListeners(Path[Index - 1], Event, ListenerPhaseCapturing);
-      Dec(Index);
-    end;
-    { The target's other listeners, then bubbling back up. }
-    for Index := 1 to Count do
-    begin
-      if Index = 1 then
-        Event.FPhase := EventPhaseAtTarget
-      else if Event.FBubbles then
-        Event.FPhase := EventPhaseBubbling
-      else
-        Break;
-      InvokeListeners(Path[Index - 1], Event, ListenerPhaseBubbling);
+      { Targets that would show a shadow tree are cleared afterwards. }
+      ClearIndex := Event.FPathCount - 1;
+      while (ClearIndex > 0) and (Event.FPath[ClearIndex].ShadowAdjustedTarget = nil) do
+        Dec(ClearIndex);
+      ClearTargets := IsShadowTreeNode(Event.FPath[ClearIndex].ShadowAdjustedTarget) or
+        IsShadowTreeNode(Event.FPath[ClearIndex].RelatedTarget);
+      { Capturing, from the top down (at a target: its capture listeners). }
+      for Index := Event.FPathCount - 1 downto 0 do
+      begin
+        if Event.FPath[Index].ShadowAdjustedTarget <> nil then
+          Event.FPhase := EventPhaseAtTarget
+        else
+          Event.FPhase := EventPhaseCapturing;
+        InvokePathItem(Event, Index, ListenerPhaseCapturing);
+      end;
+      { The targets' other listeners, and bubbling back up. }
+      for Index := 0 to Event.FPathCount - 1 do
+      begin
+        if Event.FPath[Index].ShadowAdjustedTarget <> nil then
+          Event.FPhase := EventPhaseAtTarget
+        else if Event.FBubbles then
+          Event.FPhase := EventPhaseBubbling
+        else
+          Continue;
+        InvokePathItem(Event, Index, ListenerPhaseBubbling);
+      end;
     end;
   finally
     Event.FPhase := EventPhaseNone;
     Event.FCurrentTarget := nil;
-    Event.FPath := nil;
     Event.FDispatching := False;
     Event.FStopPropagation := False;
     Event.FStopImmediatePropagation := False;
-    for Index := 1 to Count do
-      if Path[Index - 1].HeldByEvents then
-        Path[Index - 1].ReleaseTarget;
+    { After dispatch the target is the one the outermost listeners saw. }
+    FinalTarget := Self;
+    FinalRelatedTarget := OriginalRelatedTarget;
+    for Index := 0 to Event.FPathCount - 1 do
+      if (Event.FPath[Index].ShadowAdjustedTarget <> nil) or Event.FBubbles then
+      begin
+        if Event.FPath[Index].ShadowAdjustedTarget <> nil then
+          FinalTarget := Event.FPath[Index].ShadowAdjustedTarget;
+        FinalRelatedTarget := Event.FPath[Index].RelatedTarget;
+      end;
+    if ClearTargets then
+    begin
+      Event.SetTarget(nil);
+      Event.SetRelatedTarget(nil);
+    end
+    else
+    begin
+      Event.SetTarget(FinalTarget);
+      Event.SetRelatedTarget(FinalRelatedTarget);
+    end;
+    for Index := 0 to Event.FPathCount - 1 do
+    begin
+      if Event.FPath[Index].InvocationTarget.HeldByEvents then
+        Event.FPath[Index].InvocationTarget.ReleaseTarget;
+      if (Event.FPath[Index].RelatedTarget <> nil) and Event.FPath[Index].RelatedTarget.HeldByEvents then
+        Event.FPath[Index].RelatedTarget.ReleaseTarget;
+    end;
+    Event.FPath := nil;
+    Event.FPathCount := 0;
+    if (OriginalRelatedTarget <> nil) and OriginalRelatedTarget.HeldByEvents then
+      OriginalRelatedTarget.ReleaseTarget;
   end;
   Result := not Event.FCanceled;
 end;

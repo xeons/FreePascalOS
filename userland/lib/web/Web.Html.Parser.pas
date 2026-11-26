@@ -150,7 +150,8 @@ function ParseHtmlDocument(const Bytes: string; const TransportCharset: string =
 function ParseHtmlText(const Text: string; ScriptingEnabled: Boolean = False): TDocument;
 { The HTML fragment parsing algorithm: the nodes Text parses into in the
   context of Context, in a new fragment of Context's document. }
-function ParseHtmlFragment(Context: TElement; const Text: string): TDocumentFragment;
+function ParseHtmlFragment(Context: TElement; const Text: string;
+  AllowDeclarativeShadowRoots: Boolean = False): TDocumentFragment;
 
 implementation
 
@@ -478,7 +479,8 @@ begin
   end;
 end;
 
-function ParseHtmlFragment(Context: TElement; const Text: string): TDocumentFragment;
+function ParseHtmlFragment(Context: TElement; const Text: string;
+  AllowDeclarativeShadowRoots: Boolean): TDocumentFragment;
 var
   Scratch: TDocument;
   Parser: THtmlParser;
@@ -491,6 +493,7 @@ begin
     Parser := THtmlParser.Create(Scratch);
     try
       Parser.TreeBuilder.SetUpFragment(Context);
+      Parser.TreeBuilder.AllowDeclarativeShadowRoots := AllowDeclarativeShadowRoots;
       Parser.WriteText(Text);
       Parser.Finish;
     finally

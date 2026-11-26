@@ -90,6 +90,10 @@ procedure FreeSubtreeData(Root: TNode);
 { The element's computed style, nil when it has none. }
 function StyleOf(Node: TNode): TCssComputedStyle;
 
+{ The node's parent for styling and boxes: its flat tree parent (a
+  shadow root's is its host); nil for nodes outside the flat tree. }
+function StyleParentOf(Node: TNode): TNode;
+
 { Marks Node's style dirty and its ancestors' "descendant dirty". }
 procedure MarkStyleDirty(Node: TNode);
 { Marks Node's animated style due (time moved) and its ancestors'
@@ -147,7 +151,7 @@ begin
   while Node <> nil do
   begin
     FreeNodeData(Node);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
@@ -162,19 +166,27 @@ begin
     Result := Data^.Style;
 end;
 
+function StyleParentOf(Node: TNode): TNode;
+begin
+  if Node is TShadowRoot then
+    Result := TShadowRoot(Node).Host
+  else
+    Result := FlatTreeParent(Node);
+end;
+
 procedure MarkAncestors(Node: TNode; Flag: TNodeDataFlag);
 var
   Ancestor: TNode;
   Data: PNodeData;
 begin
-  Ancestor := Node.ParentNode;
+  Ancestor := StyleParentOf(Node);
   while Ancestor <> nil do
   begin
     Data := NodeDataOf(Ancestor);
     if Flag in Data^.Flags then
       Break;
     Include(Data^.Flags, Flag);
-    Ancestor := Ancestor.ParentNode;
+    Ancestor := StyleParentOf(Ancestor);
   end;
 end;
 
@@ -203,7 +215,7 @@ begin
       Data := NodeDataOf(Node);
       Data^.Flags := Data^.Flags + [ndStyleDirty, ndDescendantStyleDirty];
     end;
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
   MarkAncestors(Root, ndDescendantStyleDirty);
 end;
@@ -217,7 +229,7 @@ begin
   begin
     if Node.IsElement then
       Include(NodeDataOf(Node)^.Flags, ndHintsDirty);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 

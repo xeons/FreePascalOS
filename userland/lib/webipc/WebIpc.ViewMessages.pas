@@ -45,6 +45,9 @@ const
   InputContextMenu = 8;
   { Text typed through an input method (Text). }
   InputText = 9;
+  { The motion of a locked pointer (X, Y: in pixels; Button: the
+    buttons held). }
+  InputPointerMoveLocked = 10;
 
   { TIpcDialogRequest.Kind. }
   DialogAlert = 1;
@@ -391,7 +394,7 @@ begin
     Result.Modifiers := Reader.ReadLongWord;
     Result.FromKeyboard := Reader.ReadBoolean;
     Result.Text := Reader.ReadString;
-    if (Result.Kind < InputPointerDown) or (Result.Kind > InputText) then
+    if (Result.Kind < InputPointerDown) or (Result.Kind > InputPointerMoveLocked) then
       raise EIpcMalformed.Create('an unknown kind of input');
   finally
     Reader.Free;

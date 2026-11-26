@@ -194,6 +194,12 @@ begin
     IpcStatusText: TellStatus(DecodeText(Message.Payload));
     IpcHistoryState: TakeHistoryState(Message);
     IpcPopupBlocked: TellPopupBlocked(DecodeText(Message.Payload));
+    IpcFullscreenRequest:
+      { A refusal is told back (the page then leaves fullscreen). }
+      if not AskFullscreen(DecodeFlag(Message.Payload)) and DecodeFlag(Message.Payload) then
+        SendToProcess(IpcFullscreenChanged, EncodeFlag(False));
+    IpcPointerLockRequest:
+      RequestPointerLock(DecodeFlag(Message.Payload));
     IpcZoomChanged:
       begin
         Amount := DecodeReal(Message.Payload);

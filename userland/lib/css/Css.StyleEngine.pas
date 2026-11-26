@@ -41,7 +41,7 @@ interface
 uses
   Css.Atoms, Css.Selectors, Css.Declarations, Css.Stylesheets, Css.MediaQueries, Css.ElementAdapter,
   Css.BloomFilter, Css.SelectorMatching, Css.RuleIndex, Css.Cascade, Css.StyleStructs, Css.ComputedStyle,
-  Css.StyleCompute, Css.PropertyIds, Css.StateInvalidation;
+  Css.StyleCompute, Css.PropertyIds, Css.StateInvalidation, Css.TreeScopes;
 
 type
   TCssStyleStatistics = record
@@ -105,6 +105,10 @@ type
       Style: TCssComputedStyle);
     function Resolve(Element: TCssElement; Parent: TCssComputedStyle; PseudoElement: TCssPseudoElement;
       RequireMatch: Boolean): TCssComputedStyle;
+    procedure MatchScopeRules(Index: TCssRuleIndex; Element: TCssElement; PseudoElement: TCssPseudoElement;
+      ShadowHost: TCssElement; Depth: Integer; Target: TCssElement; AuthorOnly: Boolean; var ItemCount: Integer);
+    procedure MatchShadowRules(Element: TCssElement; PseudoElement: TCssPseudoElement; ElementScope: TCssTreeScope;
+      var ItemCount: Integer);
     procedure VisitSubtree(Element: TCssElement; Parent: TCssComputedStyle; Visitor: TCssStyleVisitor;
       Data: Pointer);
   public
@@ -423,6 +427,90 @@ begin
   Result := FComputer.Compute(Cascaded, Parent, FRootStyle, False);
 end;
 
+{ The rules of one index that match Element (as the originating element
+  of PseudoElement) with ShadowHost featureless, added at Depth. For
+  ::slotted() and ::part() (PseudoElement peSlotted, pePart) Element is
+  the slot or the host and Target the element styled. }
+procedure TCssStyleEngine.MatchScopeRules(Index: TCssRuleIndex; Element: TCssElement; PseudoElement: TCssPseudoElement;
+  ShadowHost: TCssElement; Depth: Integer; Target: TCssElement; AuthorOnly: Boolean; var ItemCount: Integer);
+var
+  CandidateCount, Position: Integer;
+  Entry: PCssRuleEntry;
+  SavedHost: TCssElement;
+begin
+  Index.Candidates(FAdapter, Element, FCandidates, CandidateCount);
+  SavedHost := FMatcher.ShadowHost;
+  FMatcher.ShadowHost := ShadowHost;
+  try
+    for Position := 0 to CandidateCount - 1 do
+    begin
+      Entry := Index.Entry(FCandidates[Position]);
+      Inc(FStatistics.SelectorsTested);
+      if Entry^.Selector.PseudoElement <> PseudoElement then
+        Continue;
+      if AuthorOnly and (Entry^.Origin <> coAuthor) then
+        Continue;
+      if not FMatcher.Matches(Entry^.Selector, Element, PseudoElement) then
+        Continue;
+      if (PseudoElement = peSlotted) and not FMatcher.SlottedArgumentMatches(Entry^.Selector, Target) then
+        Continue;
+      if (PseudoElement = pePart) and not FMatcher.PartNamesMatch(Entry^.Selector, Target) then
+        Continue;
+      Inc(FStatistics.SelectorsMatched);
+      AddCascadeBlock(FItems, ItemCount, Entry^.Block, Entry^.Origin, False, Entry^.LayerRank,
+        Entry^.Specificity, Entry^.Order, Depth);
+    end;
+  finally
+    FMatcher.ShadowHost := SavedHost;
+  end;
+end;
+
+{ The shadow tree rules for Element: its own scope's, its shadow root's
+  :host rules, the ::slotted() rules of the slots it is assigned to and
+  the outer tree's ::part() rules. }
+procedure TCssStyleEngine.MatchShadowRules(Element: TCssElement; PseudoElement: TCssPseudoElement;
+  ElementScope: TCssTreeScope; var ItemCount: Integer);
+var
+  HostScope, SlotScope, OuterScope: TCssTreeScope;
+  Slot, Host: TCssElement;
+  SavedFilter: TCssAncestorFilter;
+begin
+  if ElementScope <> nil then
+    MatchScopeRules(ElementScope.Rules(FEnvironment), Element, PseudoElement, ElementScope.Host, ElementScope.Depth,
+      nil, False, ItemCount);
+  SavedFilter := FMatcher.Filter;
+  FMatcher.Filter := nil;
+  try
+    HostScope := TCssTreeScope(FAdapter.ShadowScope(Element));
+    if HostScope <> nil then
+      MatchScopeRules(HostScope.Rules(FEnvironment), Element, PseudoElement, Element, HostScope.Depth, nil, False,
+        ItemCount);
+    if PseudoElement <> peNone then
+      Exit;
+    Slot := FAdapter.AssignedSlot(Element);
+    while Slot <> nil do
+    begin
+      SlotScope := TCssTreeScope(FAdapter.TreeScope(Slot));
+      if SlotScope <> nil then
+        MatchScopeRules(SlotScope.Rules(FEnvironment), Slot, peSlotted, SlotScope.Host, SlotScope.Depth, Element,
+          False, ItemCount);
+      Slot := FAdapter.AssignedSlot(Slot);
+    end;
+    if ElementScope <> nil then
+    begin
+      Host := ElementScope.Host;
+      OuterScope := TCssTreeScope(FAdapter.TreeScope(Host));
+      if OuterScope <> nil then
+        MatchScopeRules(OuterScope.Rules(FEnvironment), Host, pePart, OuterScope.Host, OuterScope.Depth, Element,
+          False, ItemCount)
+      else
+        MatchScopeRules(FIndex, Host, pePart, nil, 0, Element, True, ItemCount);
+    end;
+  finally
+    FMatcher.Filter := SavedFilter;
+  end;
+end;
+
 function TCssStyleEngine.Resolve(Element: TCssElement; Parent: TCssComputedStyle; PseudoElement: TCssPseudoElement;
   RequireMatch: Boolean): TCssComputedStyle;
 var
@@ -432,8 +520,10 @@ var
   Shareable, IsRoot: Boolean;
   Hash, Flags: LongWord;
   Cascaded: TCssCascadedValues;
+  ElementScope: TCssTreeScope;
 begin
   EnsureIndex;
+  ElementScope := TCssTreeScope(FAdapter.TreeScope(Element));
   Inc(FStatistics.ElementsStyled);
   IsRoot := (PseudoElement = peNone) and FAdapter.IsRoot(Element);
   { The ancestor filter is good only while it holds this element's
@@ -456,6 +546,9 @@ begin
     Inc(FStatistics.SelectorsTested);
     if Entry^.Selector.PseudoElement <> PseudoElement then
       Continue;
+    { The document's author rules do not reach into shadow trees. }
+    if (ElementScope <> nil) and (Entry^.Origin = coAuthor) then
+      Continue;
     if not FMatcher.PassesFilter(Entry^.Selector) then
     begin
       Inc(FStatistics.FilterRejections);
@@ -470,6 +563,11 @@ begin
     Inc(SignatureCount);
     if Entry^.Block.UsesAttributes then
       Shareable := False;
+  end;
+  if (ElementScope <> nil) or (FAdapter.ShadowScope(Element) <> nil) or (FAdapter.AssignedSlot(Element) <> nil) then
+  begin
+    Shareable := False;
+    MatchShadowRules(Element, PseudoElement, ElementScope, ItemCount);
   end;
   FMatcher.Filter := nil;
   if RequireMatch and (ItemCount = 0) then

@@ -146,6 +146,24 @@ type
   end;
   TScriptRectArray = array of TScriptRect;
 
+  { A running CSS animation or transition (Web Animations' CSSAnimation
+    and CSSTransition); times in milliseconds. }
+  TScriptCssAnimation = record
+    IsTransition: Boolean;
+    Name: string;
+    LocalTime, Delay, Duration, Iterations: Double;
+    Direction, Fill: string;
+    Paused, Ended: Boolean;
+  end;
+  TScriptCssAnimationArray = array of TScriptCssAnimation;
+
+  { pause, play, cancel, seek (to Value ms of local time). }
+  TScriptCssAnimationAction = (scaPause, scaPlay, scaCancel, scaSeek);
+
+  { The host's answer to a request for a screen mode (fullscreen, a
+    pointer lock). }
+  TScriptPermission = (ScriptPermissionGranted, ScriptPermissionDenied, ScriptPermissionUnsupported);
+
   TScriptLayout = class
   public
     { The rectangles (document CSS px) the characters StartOffset to
@@ -170,6 +188,11 @@ type
     { The computed value of a property ('' when the element is not
       rendered and has no style). }
     function ComputedValue(Element: TElement; const PropertyName: string): string; virtual; abstract;
+    { The element's CSS animations and transitions, and script's control
+      of one (by default: none). }
+    function CssAnimations(Element: TElement): TScriptCssAnimationArray; virtual;
+    procedure ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+      Action: TScriptCssAnimationAction; Value: Double); virtual;
   end;
 
   TScriptEnvironment = class
@@ -213,6 +236,14 @@ type
       _parent) with Features: True when the host opened or navigated
       something (a host may refuse a pop-up nobody asked for). }
     function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; virtual;
+    { The Fullscreen API's and the Pointer Lock API's requests to the
+      host: Enter True to go fullscreen (or lock the pointer), False to
+      leave (the answer then does not matter). The host refuses without
+      a user gesture; by default neither exists. When the host leaves a
+      mode by itself (Escape, the window losing focus) the embedder calls
+      the platform callback onFullscreenEnded or onPointerLockEnded. }
+    function RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission; virtual;
+    function RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission; virtual;
 
     { The viewport, in CSS pixels, and the device pixel ratio. }
     function ViewportWidth: Integer; virtual;
@@ -299,6 +330,16 @@ begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
 end;
 
+function TScriptLayout.CssAnimations(Element: TElement): TScriptCssAnimationArray;
+begin
+  Result := nil;
+end;
+
+procedure TScriptLayout.ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+  Action: TScriptCssAnimationAction; Value: Double);
+begin
+end;
+
 function TScriptLayout.ClientRects(Element: TElement): TScriptRectArray;
 var
   Rect: TScriptRect;
@@ -379,6 +420,16 @@ end;
 function TScriptEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
 begin
   Result := False;
+end;
+
+function TScriptEnvironment.RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission;
+begin
+  Result := ScriptPermissionUnsupported;
+end;
+
+function TScriptEnvironment.RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission;
+begin
+  Result := ScriptPermissionUnsupported;
 end;
 
 function TScriptEnvironment.Confirm(Context: TObject; const Message: string): Boolean;

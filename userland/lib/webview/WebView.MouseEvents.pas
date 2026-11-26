@@ -61,6 +61,8 @@ type
     Detail: LongInt;
     { The system's modifier bits (Windowing). }
     Modifiers: LongWord;
+    { The motion since the last move (Pointer Lock's movementX/Y). }
+    MovementX, MovementY: Double;
   end;
 
 { Fires a trusted MouseEvent of EventType at Target; False when a
@@ -117,6 +119,8 @@ begin
   Event.ScreenY := Init.ScreenY;
   Event.Button := Init.Button;
   Event.Buttons := Init.Buttons;
+  Event.MovementX := Init.MovementX;
+  Event.MovementY := Init.MovementY;
 end;
 
 function IsBoundaryEvent(const EventType: string): Boolean;

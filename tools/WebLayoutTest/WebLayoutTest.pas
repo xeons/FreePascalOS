@@ -39,7 +39,7 @@ program WebLayoutTest;
 
 uses
   SysUtils, Classes, DateUtils, TestChecks, WebLayoutTest.Pages, WebLayoutTest.Dynamic, WebLayoutTest.Painting,
-  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Geometry, WebLayoutTest.Fonts, WebLayoutTest.SystemFonts;
+  WebLayoutTest.StyleSheets, WebLayoutTest.Transforms, WebLayoutTest.Geometry, WebLayoutTest.Fonts, WebLayoutTest.SystemFonts, WebLayoutTest.ShadowTrees, WebLayoutTest.ScriptAnimations;
 
 var
   Update: Boolean;
@@ -62,6 +62,8 @@ begin
   CheckLayerPainting;
   CheckGaugePainting;
   CheckStyleSheetChanges;
+  CheckShadowTrees;
+  CheckScriptAnimations;
   CheckTransforms;
   CheckAnimations;
   CheckElementGeometry;

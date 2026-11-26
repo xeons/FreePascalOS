@@ -19,6 +19,7 @@ dictionary FocusOptions {
              nobr, noembed, noframes, noscript, plaintext, rb, rp, rt, rtc, ruby, s, samp, search,
              section, small, strike, strong, sub, summary, sup, tt, u, var, wbr)]
 interface HTMLElement : Element {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString title;
   [Reflect] attribute DOMString lang;
   attribute boolean translate;
@@ -82,6 +83,7 @@ interface mixin HTMLHyperlinkElementUtils {
 
 [Exposed=Window, LocalNames=(a)]
 interface HTMLAnchorElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString target;
   [Reflect] attribute DOMString download;
   [Reflect] attribute USVString ping;
@@ -101,6 +103,7 @@ HTMLAnchorElement includes HTMLHyperlinkElementUtils;
 
 [Exposed=Window, LocalNames=(area)]
 interface HTMLAreaElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString alt;
   [Reflect] attribute DOMString coords;
   [Reflect] attribute DOMString shape;
@@ -113,6 +116,7 @@ HTMLAreaElement includes HTMLHyperlinkElementUtils;
 
 [Exposed=Window, LocalNames=(img)]
 interface HTMLImageElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString alt;
   [ReflectURL] attribute USVString src;
   [Reflect] attribute USVString srcset;
@@ -137,6 +141,7 @@ interface HTMLImageElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(input)]
 interface HTMLInputElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString accept;
   [Reflect] attribute DOMString alt;
   [Reflect] attribute DOMString autocomplete;
@@ -185,6 +190,7 @@ interface HTMLInputElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(button)]
 interface HTMLButtonElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
   [ReflectURL] attribute USVString formAction;
@@ -202,6 +208,7 @@ interface HTMLButtonElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(textarea)]
 interface HTMLTextAreaElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString autocomplete;
   [Reflect, ReflectDefault=20, ReflectPositive] attribute unsigned long cols;
   [Reflect] attribute DOMString dirName;
@@ -232,6 +239,7 @@ interface HTMLTextAreaElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(select)]
 interface HTMLSelectElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString autocomplete;
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
@@ -258,6 +266,7 @@ interface HTMLSelectElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(option)]
 interface HTMLOptionElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString label;
@@ -270,12 +279,14 @@ interface HTMLOptionElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(optgroup)]
 interface HTMLOptGroupElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean disabled;
   [Reflect] attribute DOMString label;
 };
 
 [Exposed=Window, LocalNames=(form)]
 interface HTMLFormElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect=accept-charset] attribute DOMString acceptCharset;
   [ReflectURL] attribute USVString action;
   [Reflect] attribute DOMString autocomplete;
@@ -302,6 +313,7 @@ interface HTMLFormElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(label)]
 interface HTMLLabelElement : HTMLElement {
+  [HTMLConstructor] constructor();
   readonly attribute HTMLFormElement? form;
   [Reflect=for] attribute DOMString htmlFor;
   readonly attribute HTMLElement? control;
@@ -309,6 +321,7 @@ interface HTMLLabelElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(fieldset)]
 interface HTMLFieldSetElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString name;
@@ -318,12 +331,14 @@ interface HTMLFieldSetElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(legend)]
 interface HTMLLegendElement : HTMLElement {
+  [HTMLConstructor] constructor();
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(output)]
 interface HTMLOutputElement : HTMLElement {
+  [HTMLConstructor] constructor();
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString name;
   readonly attribute DOMString type;
@@ -333,6 +348,7 @@ interface HTMLOutputElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(script)]
 interface HTMLScriptElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString type;
   [Reflect] attribute boolean noModule;
@@ -351,6 +367,7 @@ interface HTMLScriptElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(style)]
 interface HTMLStyleElement : HTMLElement {
+  [HTMLConstructor] constructor();
   attribute boolean disabled;
   [Reflect] attribute DOMString media;
   [Reflect] attribute DOMString type;
@@ -359,6 +376,7 @@ interface HTMLStyleElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(link)]
 interface HTMLLinkElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString href;
   [Reflect=crossorigin, ReflectEnum=("anonymous", "use-credentials"), ReflectMissing="", ReflectInvalid="anonymous"]
     attribute DOMString crossOrigin;
@@ -380,6 +398,7 @@ interface HTMLLinkElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(meta)]
 interface HTMLMetaElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
   [Reflect=http-equiv] attribute DOMString httpEquiv;
   [Reflect] attribute DOMString content;
@@ -389,25 +408,31 @@ interface HTMLMetaElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(title)]
 interface HTMLTitleElement : HTMLElement {
+  [HTMLConstructor] constructor();
   attribute DOMString text;
 };
 
 [Exposed=Window, LocalNames=(base)]
 interface HTMLBaseElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString href;
   [Reflect] attribute DOMString target;
 };
 
 [Exposed=Window, LocalNames=(head)]
-interface HTMLHeadElement : HTMLElement { };
+interface HTMLHeadElement : HTMLElement {
+  [HTMLConstructor] constructor();
+};
 
 [Exposed=Window, LocalNames=(html)]
 interface HTMLHtmlElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString version;
 };
 
 [Exposed=Window, LocalNames=(body)]
 interface HTMLBodyElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString text;
   [Reflect] attribute DOMString link;
   [Reflect=vlink] attribute DOMString vLink;
@@ -419,6 +444,7 @@ HTMLBodyElement includes WindowEventHandlers;
 
 [Exposed=Window, LocalNames=(template)]
 interface HTMLTemplateElement : HTMLElement {
+  [HTMLConstructor] constructor();
   readonly attribute DocumentFragment content;
   [Reflect=shadowrootmode, ReflectEnum=("open", "closed"), ReflectMissing="", ReflectInvalid=""]
     attribute DOMString shadowRootMode;
@@ -426,34 +452,42 @@ interface HTMLTemplateElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(slot)]
 interface HTMLSlotElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
 };
 
 [Exposed=Window, LocalNames=(div)]
 interface HTMLDivElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(span)]
-interface HTMLSpanElement : HTMLElement { };
+interface HTMLSpanElement : HTMLElement {
+  [HTMLConstructor] constructor();
+};
 
 [Exposed=Window, LocalNames=(p)]
 interface HTMLParagraphElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(h1, h2, h3, h4, h5, h6)]
 interface HTMLHeadingElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(br)]
 interface HTMLBRElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString clear;
 };
 
 [Exposed=Window, LocalNames=(hr)]
 interface HTMLHRElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString color;
   [Reflect=noshade] attribute boolean noShade;
@@ -463,22 +497,26 @@ interface HTMLHRElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(pre, listing, xmp)]
 interface HTMLPreElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=0] attribute long width;
 };
 
 [Exposed=Window, LocalNames=(blockquote, q)]
 interface HTMLQuoteElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString cite;
 };
 
 [Exposed=Window, LocalNames=(ins, del)]
 interface HTMLModElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString cite;
   [Reflect=datetime] attribute DOMString dateTime;
 };
 
 [Exposed=Window, LocalNames=(ol)]
 interface HTMLOListElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean reversed;
   [Reflect, ReflectDefault=1] attribute long start;
   [Reflect] attribute DOMString type;
@@ -487,38 +525,45 @@ interface HTMLOListElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(ul)]
 interface HTMLUListElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean compact;
   [Reflect] attribute DOMString type;
 };
 
 [Exposed=Window, LocalNames=(menu)]
 interface HTMLMenuElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean compact;
 };
 
 [Exposed=Window, LocalNames=(li)]
 interface HTMLLIElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=0] attribute long value;
   [Reflect] attribute DOMString type;
 };
 
 [Exposed=Window, LocalNames=(dl)]
 interface HTMLDListElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean compact;
 };
 
 [Exposed=Window, LocalNames=(data)]
 interface HTMLDataElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString value;
 };
 
 [Exposed=Window, LocalNames=(time)]
 interface HTMLTimeElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect=datetime] attribute DOMString dateTime;
 };
 
 [Exposed=Window, LocalNames=(iframe)]
 interface HTMLIFrameElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString srcdoc;
   [Reflect] attribute DOMString name;
@@ -538,6 +583,7 @@ interface HTMLIFrameElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(embed)]
 interface HTMLEmbedElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString type;
   [Reflect] attribute DOMString width;
@@ -546,6 +592,7 @@ interface HTMLEmbedElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(object)]
 interface HTMLObjectElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString data;
   [Reflect] attribute DOMString type;
   [Reflect] attribute DOMString name;
@@ -556,6 +603,7 @@ interface HTMLObjectElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(audio, video)]
 interface HTMLMediaElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect=crossorigin, ReflectEnum=("anonymous", "use-credentials"), ReflectMissing="", ReflectInvalid="anonymous"]
     attribute DOMString crossOrigin;
@@ -570,6 +618,7 @@ interface HTMLMediaElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(source)]
 interface HTMLSourceElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString type;
   [Reflect] attribute USVString srcset;
@@ -579,12 +628,14 @@ interface HTMLSourceElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(canvas)]
 interface HTMLCanvasElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=300] attribute unsigned long width;
   [Reflect, ReflectDefault=150] attribute unsigned long height;
 };
 
 [Exposed=Window, LocalNames=(table)]
 interface HTMLTableElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString border;
   [Reflect] attribute DOMString frame;
@@ -598,22 +649,26 @@ interface HTMLTableElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(caption)]
 interface HTMLTableCaptionElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(thead, tbody, tfoot)]
 interface HTMLTableSectionElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
 };
 
 [Exposed=Window, LocalNames=(tr)]
 interface HTMLTableRowElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString align;
   [Reflect=bgcolor] attribute DOMString bgColor;
 };
 
 [Exposed=Window, LocalNames=(td, th)]
 interface HTMLTableCellElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=1, ReflectPositive] attribute unsigned long colSpan;
   [Reflect, ReflectDefault=1] attribute unsigned long rowSpan;
   [Reflect] attribute DOMString headers;
@@ -629,6 +684,7 @@ interface HTMLTableCellElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(col, colgroup)]
 interface HTMLTableColElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=1, ReflectPositive] attribute unsigned long span;
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString width;
@@ -636,24 +692,28 @@ interface HTMLTableColElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(details)]
 interface HTMLDetailsElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
   [Reflect] attribute boolean open;
 };
 
 [Exposed=Window, LocalNames=(dialog)]
 interface HTMLDialogElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean open;
   attribute DOMString returnValue;
 };
 
 [Exposed=Window, LocalNames=(progress)]
 interface HTMLProgressElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=0] attribute double value;
   [Reflect, ReflectDefault=1] attribute double max;
 };
 
 [Exposed=Window, LocalNames=(meter)]
 interface HTMLMeterElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect, ReflectDefault=0] attribute double value;
   [Reflect, ReflectDefault=0] attribute double min;
   [Reflect, ReflectDefault=1] attribute double max;
@@ -664,17 +724,23 @@ interface HTMLMeterElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(map)]
 interface HTMLMapElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
 };
 
 [Exposed=Window, LocalNames=(picture)]
-interface HTMLPictureElement : HTMLElement { };
+interface HTMLPictureElement : HTMLElement {
+  [HTMLConstructor] constructor();
+};
 
 [Exposed=Window, LocalNames=(datalist)]
-interface HTMLDataListElement : HTMLElement { };
+interface HTMLDataListElement : HTMLElement {
+  [HTMLConstructor] constructor();
+};
 
 [Exposed=Window, LocalNames=(track)]
 interface HTMLTrackElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString kind;
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString srclang;
@@ -684,12 +750,14 @@ interface HTMLTrackElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(param)]
 interface HTMLParamElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
   [Reflect] attribute DOMString value;
 };
 
 [Exposed=Window, LocalNames=(font)]
 interface HTMLFontElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString color;
   [Reflect] attribute DOMString face;
   [Reflect] attribute DOMString size;
@@ -697,17 +765,20 @@ interface HTMLFontElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(dir)]
 interface HTMLDirectoryElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute boolean compact;
 };
 
 [Exposed=Window, LocalNames=(frameset)]
 interface HTMLFrameSetElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString cols;
   [Reflect] attribute DOMString rows;
 };
 
 [Exposed=Window, LocalNames=(frame)]
 interface HTMLFrameElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
   [ReflectURL] attribute USVString src;
   readonly attribute Document? contentDocument;
@@ -716,6 +787,7 @@ interface HTMLFrameElement : HTMLElement {
 
 [Exposed=Window, LocalNames=(marquee)]
 interface HTMLMarqueeElement : HTMLElement {
+  [HTMLConstructor] constructor();
   [Reflect] attribute DOMString behavior;
   [Reflect] attribute DOMString direction;
 };

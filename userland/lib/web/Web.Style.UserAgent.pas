@@ -56,7 +56,15 @@ const
     'option, optgroup { display: none; }'#10 +
     'fieldset { min-inline-size: auto; }'#10 +
     'summary { cursor: default; }'#10 +
-    'img { overflow: clip; }'#10;
+    'img { overflow: clip; }'#10 +
+    { The Fullscreen API's rendering: the element fills the viewport,
+      above everything (the top layer, by z-index). }
+    ':not(:root):fullscreen { position: fixed !important; inset: 0 !important; margin: 0 !important;'#10 +
+    '  box-sizing: border-box !important; min-width: 0 !important; max-width: none !important;'#10 +
+    '  min-height: 0 !important; max-height: none !important; width: 100% !important; height: 100% !important;'#10 +
+    '  transform: none !important; z-index: 2147483647 !important; object-fit: contain; }'#10 +
+    'iframe:fullscreen { border: none !important; padding: 0 !important; }'#10 +
+    'img:fullscreen, video:fullscreen, canvas:fullscreen { background-color: black; }'#10;
 
 var
   Sheet: TCssStyleSheet = nil;

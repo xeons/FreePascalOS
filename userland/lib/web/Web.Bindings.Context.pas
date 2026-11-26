@@ -1158,7 +1158,10 @@ begin
     NodeTypeDocumentType:
       Result := InterfaceDocumentType;
     NodeTypeDocumentFragment:
-      Result := InterfaceDocumentFragment;
+      if Node is TShadowRoot then
+        Result := InterfaceShadowRoot
+      else
+        Result := InterfaceDocumentFragment;
     NodeTypeDocument:
       if TDocument(Node).IsHtmlDocument then
         Result := InterfaceHTMLDocument

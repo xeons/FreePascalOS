@@ -115,6 +115,12 @@ const
   { TIpcDisplayOptions: images, text-only zoom, author styles, pop-ups,
     the encoding override. }
   IpcSetDisplayOptions = 127;
+  { Flag: the browser left fullscreen (or refused it): the page hears
+    fullscreenchange. }
+  IpcFullscreenChanged = 130;
+  { Flag: the pointer is locked to the view's window now, or not (any
+    more, or refused). }
+  IpcPointerLockChanged = 131;
 
   { ---- content process to browser ---- }
   { A new surface (a section handle comes with it): TIpcSurfaceInfo. }
@@ -170,6 +176,10 @@ const
   { A pop-up the page asked for without a user gesture was refused:
     its URL. }
   IpcPopupBlocked = 226;
+  { Flag: the page asks to go fullscreen (True) or to leave it. }
+  IpcFullscreenRequest = 230;
+  { Flag: the page asks for the pointer to be locked (True) or let go. }
+  IpcPointerLockRequest = 231;
 
   { ---- the network service ---- }
   { Content to browser: TIpcHopRequest (HopId is the content process's). }

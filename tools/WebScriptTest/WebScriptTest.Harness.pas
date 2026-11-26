@@ -30,6 +30,11 @@
     runTimers()              fires the due timers in order, returns how
                              many ran
     lastNavigation()         the URL the last navigation asked for
+    screenModeAnswer(text)   how the host answers fullscreen and pointer
+                             lock requests: granted (the default),
+                             denied or unsupported
+    endScreenMode(kind)      the host leaves fullscreen or the pointer
+                             lock by itself (kind: fullscreen, pointerlock)
 
   A script file may define after(): it is called once the script, its
   microtasks and the timers it left (each a task of its own) have run.
@@ -99,6 +104,7 @@ type
     Clock: Int64;
     Scripts: TStringList;
     Navigations: TStringList;
+    ScreenModeAnswer: TScriptPermission;
     constructor Create;
     destructor Destroy; override;
     function SupportsTimers: Boolean; override;
@@ -108,6 +114,8 @@ type
       Mode: TScriptFetchMode); override;
     procedure Navigate(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
+    function RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission; override;
+    function RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission; override;
     function ViewportWidth: Integer; override;
     function ViewportHeight: Integer; override;
     function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
@@ -150,7 +158,8 @@ implementation
 
 uses
   TestChecks,
-  Web.Bindings.Strings;
+  Web.Bindings.Strings,
+  Web.Script.Natives;
 
 function ReadTextFile(const Path: string): string;
 var
@@ -431,6 +440,41 @@ begin
   Result := JsUndefined;
 end;
 
+function TTestEnvironment.RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission;
+begin
+  Result := ScreenModeAnswer;
+end;
+
+function TTestEnvironment.RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission;
+begin
+  Result := ScreenModeAnswer;
+end;
+
+function NativeScreenModeAnswer(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+var
+  Answer: string;
+begin
+  Answer := TextArgument(R, Args, ArgCount, 0);
+  if Answer = 'denied' then
+    CurrentBed.Environment.ScreenModeAnswer := ScriptPermissionDenied
+  else if Answer = 'unsupported' then
+    CurrentBed.Environment.ScreenModeAnswer := ScriptPermissionUnsupported
+  else
+    CurrentBed.Environment.ScreenModeAnswer := ScriptPermissionGranted;
+  Result := JsUndefined;
+end;
+
+function NativeEndScreenMode(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+begin
+  if TextArgument(R, Args, ArgCount, 0) = 'pointerlock' then
+    CallPlatformCallback(CurrentBed.Context, 'onPointerLockEnded', [])
+  else
+    CallPlatformCallback(CurrentBed.Context, 'onFullscreenEnded', []);
+  Result := JsUndefined;
+end;
+
 function NativeRunTimers(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
@@ -481,6 +525,8 @@ begin
   Engine.DefineFunction(Global, 'consoleText', @NativeConsoleText, 0);
   Engine.DefineFunction(Global, 'clearConsole', @NativeClearConsole, 0);
   Engine.DefineFunction(Global, 'runTimers', @NativeRunTimers, 0);
+  Engine.DefineFunction(Global, 'screenModeAnswer', @NativeScreenModeAnswer, 1);
+  Engine.DefineFunction(Global, 'endScreenMode', @NativeEndScreenMode, 1);
   Engine.DefineFunction(Global, 'lastNavigation', @NativeLastNavigation, 0);
   if Html = '' then
     Context.ParseDocument(DefaultHtml)

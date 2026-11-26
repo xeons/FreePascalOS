@@ -546,11 +546,14 @@ var
   Scale: Double;
 begin
   inherited PointerMove(X, Y, Buttons);
+  Scale := DeviceScale;
+  { movementX and movementY: the motion since the last move. }
+  FMovementX := (X - FLastPointerX) / Scale;
+  FMovementY := (Y - FLastPointerY) / Scale;
   FLastPointerX := X;
   FLastPointerY := Y;
   if FPainter = nil then
     Exit;
-  Scale := DeviceScale;
   if FPressButton = ButtonLeft then
   begin
     if not FDragged and MovedPast(X, Y, FPressX, FPressY) then

@@ -105,6 +105,23 @@ type
     { The parsed style attribute (the host keeps it; Css.Parser's
       ParseStyleAttribute makes one), nil when there is none. }
     function StyleAttribute(Element: TCssElement): TCssDeclarationBlock; virtual;
+    { Shadow trees (CSS Scoping). The element's tree scope (a
+      TCssTreeScope, Css.TreeScopes) when it is in a shadow tree, nil in
+      the document; the scope of its own shadow root when it is a host;
+      the slot it is assigned to; whether its parent in its tree is a
+      shadow root (the adapter's Parent answers the host then, which
+      only the host's own scope may see). }
+    function TreeScope(Element: TCssElement): TObject; virtual;
+    function ShadowScope(Element: TCssElement): TObject; virtual;
+    function AssignedSlot(Element: TCssElement): TCssElement; virtual;
+    function ParentIsShadowHost(Element: TCssElement): Boolean; virtual;
+    { Whether the document has shadow trees at all (else the matcher
+      skips the shadow checks). }
+    function HasShadowTrees: Boolean; virtual;
+    { Whether the element's part attribute has Name (::part()). }
+    function HasPart(Element: TCssElement; const Name: string): Boolean; virtual;
+    { Whether a custom element's states have Name (:state()). }
+    function HasCustomState(Element: TCssElement; const Name: string): Boolean; virtual;
     { Presentational hints (HTML's mapped attributes such as width,
       bgcolor, align): author origin declarations with specificity 0,
       before every author rule. nil when there are none. }
@@ -112,6 +129,41 @@ type
   end;
 
 implementation
+
+function TCssElementAdapter.TreeScope(Element: TCssElement): TObject;
+begin
+  Result := nil;
+end;
+
+function TCssElementAdapter.ShadowScope(Element: TCssElement): TObject;
+begin
+  Result := nil;
+end;
+
+function TCssElementAdapter.AssignedSlot(Element: TCssElement): TCssElement;
+begin
+  Result := nil;
+end;
+
+function TCssElementAdapter.ParentIsShadowHost(Element: TCssElement): Boolean;
+begin
+  Result := False;
+end;
+
+function TCssElementAdapter.HasShadowTrees: Boolean;
+begin
+  Result := False;
+end;
+
+function TCssElementAdapter.HasPart(Element: TCssElement; const Name: string): Boolean;
+begin
+  Result := False;
+end;
+
+function TCssElementAdapter.HasCustomState(Element: TCssElement; const Name: string): Boolean;
+begin
+  Result := False;
+end;
 
 function TCssElementAdapter.IsRoot(Element: TCssElement): Boolean;
 begin

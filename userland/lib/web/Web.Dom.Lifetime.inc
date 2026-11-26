@@ -27,6 +27,18 @@
   document while anything in its subtree is referenced.
 }
 
+procedure SlotsNodeDestroyed(Node: TNode); forward;
+procedure SlotsNodeInserted(Node: TNode; Parent: TContainerNode); forward;
+procedure SlotsNodeRemoved(Node: TNode; OldParent: TContainerNode; OldSlot: TElement); forward;
+procedure SlotsAttributeChanged(Element: TElement; LocalAtom: TAtom; const OldValue: string; HadValue: Boolean);
+  forward;
+function IsInShadowTreeNode(Node: TNode): Boolean; forward;
+procedure CustomReactionsConnected(Root: TNode); forward;
+procedure CustomReactionsDisconnected(Root: TNode); forward;
+procedure CustomReactionsAdopted(Root: TNode; OldDocument, NewDocument: TDocument); forward;
+function AttachShadowRoot(Host: TElement; Mode: TShadowRootMode; Clonable, Serializable, DelegatesFocus: Boolean;
+  SlotAssignment: TSlotAssignmentMode): TShadowRoot; forward;
+
 var
   CollectorEntries: TNodeArray;
   CollectorCount: Integer;
@@ -97,15 +109,20 @@ begin
     Dec(CollectorCount);
 end;
 
+{ A shadow root's reference parent is its host. }
 function ReferenceParent(Node: TNode): TNode; inline;
 begin
   if Node.FNodeType = NodeTypeAttribute then
     Result := TAttr(Node).FOwnerElement
   else
+  begin
     Result := Node.FParent;
+    if (Result = nil) and (Node.FNodeType = NodeTypeDocumentFragment) and (Node is TShadowRoot) then
+      Result := TShadowRoot(Node).FHost;
+  end;
 end;
 
-{ A template's contents: a root its template owns. }
+{ A template's contents (or a shadow root): a root its host owns. }
 function IsHostedRoot(Node: TNode): Boolean; inline;
 begin
   Result := (Node.FNodeType = NodeTypeDocumentFragment) and (TDocumentFragment(Node).FHost <> nil);

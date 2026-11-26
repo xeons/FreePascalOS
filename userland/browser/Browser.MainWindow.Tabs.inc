@@ -136,6 +136,9 @@ var
 begin
   if (Index < 0) or (Index >= FTabs.Count) then
     Exit;
+  { Another tab: a page's fullscreen ends. }
+  if (Index <> FActive) and (FPageFullscreenView <> nil) then
+    LeavePageFullscreen(True);
   FActive := Index;
   for Other := 0 to FTabs.Count - 1 do
     TabAt(Other).View.Visible := Other = Index;
@@ -163,6 +166,8 @@ begin
     Exit;
   end;
   Tab := TabAt(Index);
+  if (FPageFullscreenView <> nil) and (TabOfView(FPageFullscreenView) = Index) then
+    LeavePageFullscreen(False);
   Saved := CaptureTab(Index);
   if not BrowserApp.PrivateBrowsing then
   begin

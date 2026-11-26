@@ -51,6 +51,8 @@ type
     FQuirks: Boolean;
     FFilter: TCssAncestorFilter;
     FScope: TCssElement;
+    FShadowHost: TCssElement;
+    FShadowTrees: Boolean;
     FAnchors: array of TCssElement;
     FAnchorCount: Integer;
     FChildIndexes: TCssPointerMap;
@@ -66,7 +68,13 @@ type
     function MatchLanguage(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
     function SiblingIndex(Element: TCssElement; FromEnd, OfType: Boolean): Integer;
     function SameName(First, Second: TCssElement): Boolean;
+    function MatchFeaturelessHost(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
+    function MatchHostContext(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
   public
+    { The parent combinators see: the tree parent, the host only as the
+      parent of its shadow tree's top elements while matching that
+      tree's rules, nothing above the featureless host. }
+    function TreeParent(Element: TCssElement): TCssElement;
     constructor Create(Adapter: TCssElementAdapter);
     destructor Destroy; override;
     { Whether Selector matches Element (for PseudoElement, the
@@ -86,6 +94,16 @@ type
     property Filter: TCssAncestorFilter read FFilter write FFilter;
     { :scope (nil: the root). }
     property Scope: TCssElement read FScope write FScope;
+    { The host of the shadow tree whose rules are matched (nil: the
+      document's): it is featureless (only :host, :host() and
+      :host-context() match it) and nothing above or beside it is seen. }
+    property ShadowHost: TCssElement read FShadowHost write FShadowHost;
+    { For a ::slotted() selector matched on a slot: whether its argument
+      matches Element (the slotted element). }
+    function SlottedArgumentMatches(Selector: TCssComplexSelector; Element: TCssElement): Boolean;
+    { For a ::part() selector matched on a host: whether Element (in the
+      host's shadow tree) has every part name it asks for. }
+    function PartNamesMatch(Selector: TCssComplexSelector; Element: TCssElement): Boolean;
   end;
 
 implementation
@@ -486,12 +504,125 @@ begin
   end;
 end;
 
+{ :host-context(X): the host or one of its shadow-including ancestors
+  matches X. }
+function TCssSelectorMatcher.MatchHostContext(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
+var
+  SavedHost, Current: TCssElement;
+begin
+  Result := False;
+  SavedHost := FShadowHost;
+  FShadowHost := nil;
+  try
+    Current := Element;
+    while Current <> nil do
+    begin
+      if MatchesList(Simple.Arguments, Current) then
+        Exit(True);
+      Current := FAdapter.Parent(Current);
+    end;
+  finally
+    FShadowHost := SavedHost;
+  end;
+end;
+
+{ A simple selector against the featureless shadow host of the rules'
+  shadow tree. }
+function TCssSelectorMatcher.MatchFeaturelessHost(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
+var
+  SavedHost: TCssElement;
+begin
+  Result := False;
+  if Simple.Kind = skPseudoElement then
+    Exit(True);
+  if Simple.Kind <> skPseudoClass then
+    Exit;
+  case Simple.PseudoClass of
+    pcHost:
+      begin
+        if Simple.Arguments = nil then
+          Exit(True);
+        SavedHost := FShadowHost;
+        FShadowHost := nil;
+        try
+          Result := MatchesList(Simple.Arguments, Element);
+        finally
+          FShadowHost := SavedHost;
+        end;
+      end;
+    pcHostContext:
+      Result := MatchHostContext(Simple, Element);
+    pcIs, pcWhere:
+      Result := MatchesList(Simple.Arguments, Element);
+    pcNot:
+      Result := not MatchesList(Simple.Arguments, Element);
+  end;
+end;
+
+function TCssSelectorMatcher.TreeParent(Element: TCssElement): TCssElement;
+begin
+  if (FShadowHost <> nil) and (Element = FShadowHost) then
+    Exit(nil);
+  Result := FAdapter.Parent(Element);
+  if FShadowTrees and (Result <> nil) and (Result <> FShadowHost) and FAdapter.ParentIsShadowHost(Element) then
+    Result := nil;
+end;
+
+function TCssSelectorMatcher.SlottedArgumentMatches(Selector: TCssComplexSelector; Element: TCssElement): Boolean;
+var
+  Index: Integer;
+  SavedHost: TCssElement;
+  SavedFilter: TCssAncestorFilter;
+begin
+  Result := False;
+  if Length(Selector.Compounds) = 0 then
+    Exit;
+  for Index := 0 to High(Selector.Compounds[0].Simples) do
+    if (Selector.Compounds[0].Simples[Index].Kind = skPseudoElement) and
+      (Selector.Compounds[0].Simples[Index].PseudoElement = peSlotted) then
+    begin
+      SavedHost := FShadowHost;
+      SavedFilter := FFilter;
+      FShadowHost := nil;
+      try
+        Result := MatchesList(Selector.Compounds[0].Simples[Index].Arguments, Element);
+      finally
+        FShadowHost := SavedHost;
+        FFilter := SavedFilter;
+      end;
+      Exit;
+    end;
+end;
+
+function TCssSelectorMatcher.PartNamesMatch(Selector: TCssComplexSelector; Element: TCssElement): Boolean;
+var
+  Index, NameIndex: Integer;
+  Simple: ^TCssSimpleSelector;
+begin
+  Result := False;
+  if Length(Selector.Compounds) = 0 then
+    Exit;
+  for Index := 0 to High(Selector.Compounds[0].Simples) do
+  begin
+    Simple := @Selector.Compounds[0].Simples[Index];
+    if (Simple^.Kind = skPseudoElement) and (Simple^.PseudoElement = pePart) then
+    begin
+      for NameIndex := 0 to High(Simple^.Languages) do
+        if not FAdapter.HasPart(Element, Simple^.Languages[NameIndex]) then
+          Exit(False);
+      Exit(True);
+    end;
+  end;
+end;
+
 function TCssSelectorMatcher.MatchPseudoClass(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
 var
   States: TCssElementStates;
   Sibling: TCssElement;
 begin
   case Simple.PseudoClass of
+    pcHost, pcHostContext: Result := False;
+    pcState: Result := FAdapter.HasCustomState(Element, Simple.Value);
     pcIs, pcWhere: Result := MatchesList(Simple.Arguments, Element);
     pcNot: Result := not MatchesList(Simple.Arguments, Element);
     pcHas: Result := MatchHas(Simple, Element);
@@ -597,6 +728,8 @@ var
   Index: Integer;
   Wanted: TCssAtom;
 begin
+  if (FShadowHost <> nil) and (Element = FShadowHost) then
+    Exit(MatchFeaturelessHost(Simple, Element));
   case Simple.Kind of
     skType:
       begin
@@ -666,12 +799,15 @@ begin
   if Combinator in [cmNextSibling, cmSubsequentSibling] then
   begin
     CandidateNotFound := mrRestartFromDescendant;
-    Next := Adapter.PreviousSibling(Element);
+    if Element = Matcher.FShadowHost then
+      Next := nil
+    else
+      Next := Adapter.PreviousSibling(Element);
   end
   else
   begin
     CandidateNotFound := mrNotMatchedGlobally;
-    Next := Adapter.Parent(Element);
+    Next := Matcher.TreeParent(Element);
   end;
   repeat
     if Next = nil then
@@ -686,7 +822,7 @@ begin
     if Combinator = cmSubsequentSibling then
       Next := Adapter.PreviousSibling(Next)
     else
-      Next := Adapter.Parent(Next);
+      Next := Matcher.TreeParent(Next);
   until False;
 end;
 
@@ -701,6 +837,7 @@ begin
     Exit(False);
   if not PassesFilter(Selector) then
     Exit(False);
+  FShadowTrees := FAdapter.HasShadowTrees;
   Result := MatchFrom(Self, Selector, 0, Element) = mrMatched;
 end;
 

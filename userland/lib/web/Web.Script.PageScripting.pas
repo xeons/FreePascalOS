@@ -79,6 +79,9 @@ type
   TScriptConfirmEvent = function(const Message: string): Boolean of object;
   TScriptPromptEvent = function(const Message, Default: string; out Answer: string): Boolean of object;
   TScriptConsoleEvent = procedure(const Level, Text: string) of object;
+  { Fullscreen or a pointer lock asked of the host (Web.ScriptEnvironment). }
+  TScreenModeKind = (ScreenModeFullscreen, ScreenModePointerLock);
+  TScriptScreenModeEvent = function(Kind: TScreenModeKind; Enter: Boolean): TScriptPermission of object;
 
   TPageScriptExecutor = class;
 
@@ -127,6 +130,8 @@ type
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure Alert(Context: TObject; const Message: string); override;
     function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; override;
+    function RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission; override;
+    function RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission; override;
     function Confirm(Context: TObject; const Message: string): Boolean; override;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; override;
     function ViewportWidth: Integer; override;
@@ -216,6 +221,10 @@ type
     FOnConfirm: TScriptConfirmEvent;
     FOnPrompt: TScriptPromptEvent;
     FOnConsoleMessage: TScriptConsoleEvent;
+    FOnScreenMode: TScriptScreenModeEvent;
+    { The window that asked for each screen mode it has now. }
+    FScreenModeContexts: array[TScreenModeKind] of TObject;
+    function RequestScreenMode(Context: TObject; Kind: TScreenModeKind; Enter: Boolean): TScriptPermission;
     function IndexOfLoader(Loader: TObject): Integer;
     { Drops the records of the frames' windows inside Context (they go
       with it). }
@@ -245,6 +254,11 @@ type
     property OnConfirm: TScriptConfirmEvent read FOnConfirm write FOnConfirm;
     property OnPrompt: TScriptPromptEvent read FOnPrompt write FOnPrompt;
     property OnConsoleMessage: TScriptConsoleEvent read FOnConsoleMessage write FOnConsoleMessage;
+    { Fullscreen and pointer lock requests (nil: the host has neither). }
+    property OnScreenMode: TScriptScreenModeEvent read FOnScreenMode write FOnScreenMode;
+    { The host left a screen mode by itself: the window that had it hears
+      (fullscreenchange, pointerlockchange). }
+    procedure ScreenModeEnded(Kind: TScreenModeKind);
   end;
 
 type
@@ -268,6 +282,7 @@ implementation
 
 uses
   Web.Profiling,
+  Web.Script.Natives,
   DateUtils,
   Js.Values,
   Web.EventLoop.AnimationFrames,
@@ -508,6 +523,40 @@ end;
 function TPageScriptEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;
 begin
   Result := Assigned(FExecutor.FOnOpenWindow) and FExecutor.FOnOpenWindow(Url, Target, Features);
+end;
+
+function TPageScriptEnvironment.RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission;
+begin
+  Result := FExecutor.RequestScreenMode(Context, ScreenModeFullscreen, Enter);
+end;
+
+function TPageScriptEnvironment.RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission;
+begin
+  Result := FExecutor.RequestScreenMode(Context, ScreenModePointerLock, Lock);
+end;
+
+function TPageScriptExecutor.RequestScreenMode(Context: TObject; Kind: TScreenModeKind;
+  Enter: Boolean): TScriptPermission;
+begin
+  if not Assigned(FOnScreenMode) then
+    Exit(ScriptPermissionUnsupported);
+  Result := FOnScreenMode(Kind, Enter);
+  if Enter and (Result = ScriptPermissionGranted) then
+    FScreenModeContexts[Kind] := Context
+  else if not Enter then
+    FScreenModeContexts[Kind] := nil;
+end;
+
+procedure TPageScriptExecutor.ScreenModeEnded(Kind: TScreenModeKind);
+const
+  Callbacks: array[TScreenModeKind] of string = ('onFullscreenEnded', 'onPointerLockEnded');
+var
+  Context: TObject;
+begin
+  Context := FScreenModeContexts[Kind];
+  FScreenModeContexts[Kind] := nil;
+  if (Context <> nil) and IsLiveContext(Context) then
+    CallPlatformCallback(TBindingContext(Context), Callbacks[Kind], []);
 end;
 
 procedure TPageScriptEnvironment.Alert(Context: TObject; const Message: string);

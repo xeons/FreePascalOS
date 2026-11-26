@@ -465,6 +465,12 @@ end;
 
 procedure TBrowserWindow.ToggleFullScreen;
 begin
+  { F11 while a page is fullscreen ends the page's fullscreen. }
+  if FPageFullscreenView <> nil then
+  begin
+    LeavePageFullscreen(True);
+    Exit;
+  end;
   FFullScreen := not FFullScreen;
   if FFullScreen then
     Maximize

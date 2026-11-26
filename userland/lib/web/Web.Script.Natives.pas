@@ -76,6 +76,8 @@ uses
   Web.Script.BroadcastChannels,
   Web.Workers.SharedWorkers,
   Web.Script.NativeServiceWorkers,
+  Web.Script.NativeAnimations,
+  Web.Script.NativeScreenModes,
   Web.Script.NativeStorage,
   Web.Script.NativeCanvas,
   Web.Origins,
@@ -671,6 +673,8 @@ begin
   DefineBroadcastNatives(Context, Natives);
   DefineSharedWorkerNatives(Context, Natives);
   DefineServiceWorkerNatives(Context, Natives);
+  DefineAnimationNatives(Context, Natives);
+  DefineScreenModeNatives(Context, Natives);
   DefineStorageNatives(Context, Natives);
   DefineCanvasNatives(Context, Natives);
 end;

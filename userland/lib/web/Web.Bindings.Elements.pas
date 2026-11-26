@@ -312,7 +312,8 @@ end;
 
 function Element_getHTML(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).TextValue(SerializeChildren(ThisElement(Call)));
+  Result := Context(Call).TextValue(SerializeChildrenWithShadowRoots(ThisElement(Call),
+    Call.Arguments[0].Items[GetHTMLOptions_serializableShadowRoots].Flag));
 end;
 
 end.

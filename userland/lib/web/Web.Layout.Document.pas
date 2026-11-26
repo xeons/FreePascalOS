@@ -294,7 +294,7 @@ begin
       FLayoutDirty := True;
       Exit;
     end;
-    Current := Current.ParentNode;
+    Current := StyleParentOf(Current);
   end;
 end;
 
@@ -310,8 +310,8 @@ begin
   Data := ExistingNodeData(Element);
   if (Change = scBoxes) or (Box = nil) then
   begin
-    if Element.ParentNode <> nil then
-      MarkBoxesOf(Element.ParentNode);
+    if StyleParentOf(Element) <> nil then
+      MarkBoxesOf(StyleParentOf(Element));
     Exit;
   end;
   { Same boxes, new style. }
@@ -349,7 +349,7 @@ begin
   Child := Box.FirstChild;
   while Child <> nil do
   begin
-    if (Child.Kind = bkText) and (Child.Node <> nil) and (Child.Node.ParentNode = Element) then
+    if (Child.Kind = bkText) and (Child.Node <> nil) and (StyleParentOf(Child.Node) = Element) then
       NewStyle := Style
     else if (bfAnonymous in Child.Flags) and (Child.Node = nil) and not (Child is TTextBox) then
       NewStyle := FBuilder.AnonymousStyleFor(Box.Style)
@@ -377,8 +377,8 @@ begin
     Box.MarkNeedsLayout;
     FLayoutDirty := True;
   end
-  else if Node.ParentNode <> nil then
-    MarkBoxesOf(Node.ParentNode);
+  else if StyleParentOf(Node) <> nil then
+    MarkBoxesOf(StyleParentOf(Node));
 end;
 
 procedure TDocumentLayout.NodeRemoved(Node: TNode);
@@ -470,7 +470,7 @@ begin
         Box.MarkNeedsLayout;
         FLayoutDirty := True;
       end;
-    Node := Node.NextInTree(FDocument);
+    Node := Node.NextInShadowIncludingTree(FDocument);
   end;
 end;
 
@@ -488,7 +488,7 @@ begin
     Box := BoxOf(Node);
     if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
       TReplacedBox(Box).Content := FResources.ElementFrame(TElement(Node));
-    Node := Node.NextInTree(FDocument);
+    Node := Node.NextInShadowIncludingTree(FDocument);
   end;
 end;
 
@@ -553,6 +553,7 @@ var
   Data: PNodeData;
   Child: TNode;
   Box: TLayoutBox;
+  Cursor: TFlatTreeCursor;
 begin
   Data := ExistingNodeData(Node);
   if Data = nil then
@@ -568,11 +569,11 @@ begin
   if not (ndDescendantBoxesDirty in Data^.Flags) then
     Exit;
   Exclude(Data^.Flags, ndDescendantBoxesDirty);
-  Child := Node.FirstChild;
+  Child := FlatTreeFirstChild(Node, Cursor);
   while Child <> nil do
   begin
     RebuildDirtyBoxes(Child);
-    Child := Child.NextSibling;
+    Child := FlatTreeNextChild(Cursor);
   end;
 end;
 

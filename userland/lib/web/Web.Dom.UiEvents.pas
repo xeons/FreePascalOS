@@ -58,6 +58,8 @@ type
     ScrollX, ScrollY: LongInt;
     Button: SmallInt;
     Buttons: Word;
+    { Pointer Lock: the motion since the last mousemove (CSS px). }
+    MovementX, MovementY: Double;
   end;
 
   { Pointer Events 3: a mouse event with the pointer's identity and

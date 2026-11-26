@@ -39,6 +39,10 @@ uses
 function SerializeChildren(Node: TNode): string;
 { The serialization of Node itself (outerHTML). }
 function SerializeNode(Node: TNode): string;
+{ getHTML(): Node's children, with the shadow roots that are
+  serializable as declarative shadow root templates when
+  SerializableShadowRoots (HTML Standard: serializing HTML fragments). }
+function SerializeChildrenWithShadowRoots(Node: TNode; SerializableShadowRoots: Boolean): string;
 
 implementation
 
@@ -155,6 +159,13 @@ begin
     AppendEscaped(Output, Element.AttributeAt(Index - 1)^.Value, True);
     Output.AppendChar('"');
   end;
+  { An element made with an is value keeps it (HTML: serializing). }
+  if (Element.IsValue <> '') and not Element.HasAttributeAtom(AtomIs) then
+  begin
+    Output.AppendString(' is="');
+    AppendEscaped(Output, Element.IsValue, True);
+    Output.AppendChar('"');
+  end;
   Output.AppendChar('>');
 end;
 
@@ -198,8 +209,29 @@ begin
   end;
 end;
 
+procedure SerializeInto(Output: TTextBuffer; Root: TNode; IncludeRoot: Boolean;
+  SerializableShadowRoots: Boolean = False); forward;
+
+{ A host's serializable shadow root as a <template shadowrootmode>. }
+procedure AppendShadowRoot(Output: TTextBuffer; Shadow: TShadowRoot);
+begin
+  Output.AppendString('<template shadowrootmode="');
+  Output.AppendString(Shadow.ModeText);
+  Output.AppendChar('"');
+  if Shadow.DelegatesFocus then
+    Output.AppendString(' shadowrootdelegatesfocus=""');
+  if Shadow.Serializable then
+    Output.AppendString(' shadowrootserializable=""');
+  if Shadow.Clonable then
+    Output.AppendString(' shadowrootclonable=""');
+  Output.AppendChar('>');
+  SerializeInto(Output, Shadow, False, True);
+  Output.AppendString('</template>');
+end;
+
 { Serializes the children of Root (or, with IncludeRoot, Root itself). }
-procedure SerializeInto(Output: TTextBuffer; Root: TNode; IncludeRoot: Boolean);
+procedure SerializeInto(Output: TTextBuffer; Root: TNode; IncludeRoot: Boolean;
+  SerializableShadowRoots: Boolean);
 var
   Node, Child, Parent: TNode;
   Stack: TNodeArray;
@@ -208,6 +240,8 @@ var
   procedure Enter(Element: TElement);
   begin
     AppendStartTag(Output, Element);
+    if SerializableShadowRoots and (Element.ShadowRoot <> nil) and Element.ShadowRoot.Serializable then
+      AppendShadowRoot(Output, Element.ShadowRoot);
   end;
 
   procedure Leave(Element: TElement);
@@ -236,6 +270,9 @@ begin
   SetLength(Stack, 16);
   Stack[0] := Root;
   Depth := 1;
+  if not IncludeRoot and SerializableShadowRoots and (Root.NodeType = NodeTypeElement) and
+    (TElement(Root).ShadowRoot <> nil) and TElement(Root).ShadowRoot.Serializable then
+    AppendShadowRoot(Output, TElement(Root).ShadowRoot);
   Node := FirstSerializedChild(Root);
   while Depth > 0 do
   begin
@@ -278,6 +315,19 @@ begin
   Output := TTextBuffer.Create;
   try
     SerializeInto(Output, Node, False);
+    Result := Output.TakeText;
+  finally
+    Output.Free;
+  end;
+end;
+
+function SerializeChildrenWithShadowRoots(Node: TNode; SerializableShadowRoots: Boolean): string;
+var
+  Output: TTextBuffer;
+begin
+  Output := TTextBuffer.Create;
+  try
+    SerializeInto(Output, Node, False, SerializableShadowRoots);
     Result := Output.TakeText;
   finally
     Output.Free;

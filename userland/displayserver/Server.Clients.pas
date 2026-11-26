@@ -522,6 +522,8 @@ begin
       ActivateWindow(Window);
     RequestSetCapture:
       SetPointerCapture(Window, Message.Value <> 0);
+    RequestSetPointerLock:
+      SetPointerLock(Window, Message.Value <> 0);
     RequestEnableWindow:
       EnableWindow(Window, Message.Value <> 0);
     RequestSetOwner:

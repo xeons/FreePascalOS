@@ -113,6 +113,9 @@ dictionary MouseEventInit : EventModifierInit {
   short button = 0;
   unsigned short buttons = 0;
   EventTarget? relatedTarget = null;
+  // Pointer Lock 2.0
+  double movementX = 0;
+  double movementY = 0;
 };
 
 [Exposed=Window]
@@ -135,6 +138,9 @@ interface MouseEvent : UIEvent {
   readonly attribute short button;
   readonly attribute unsigned short buttons;
   readonly attribute EventTarget? relatedTarget;
+  // Pointer Lock 2.0: the motion since the last mousemove.
+  readonly attribute double movementX;
+  readonly attribute double movementY;
   boolean getModifierState(DOMString keyArg);
   undefined initMouseEvent(DOMString typeArg, optional boolean bubblesArg = false,
     optional boolean cancelableArg = false, optional Window? viewArg = null, optional long detailArg = 0,

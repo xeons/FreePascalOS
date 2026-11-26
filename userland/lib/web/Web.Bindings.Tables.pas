@@ -46,6 +46,8 @@ uses
   Web.Bindings.MutationObservers,
   Web.Bindings.Style,
   Web.Bindings.Ranges,
+  Web.Bindings.Shadow,
+  Web.Bindings.CustomElements,
   Web.Bindings.StyleSheets,
   Web.Bindings.Canvas;
 

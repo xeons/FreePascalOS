@@ -294,6 +294,13 @@ begin
   InitializeNode(Result, NodeTypeElement, Self);
   Result.FLocalName := LocalAtom;
   Result.FNamespaceId := Namespace;
+  { A valid custom element name is undefined until defined (DOM
+    Standard: create an element, step 7.3). }
+  if (Web.Namespaces.NamespaceUri(Namespace) = AtomHtmlNamespace) and IsCustomElementNameAtom(LocalAtom) then
+  begin
+    Result.FFlags := Result.FFlags or NodeFlagCustomCandidate;
+    Result.RareData.CustomState := CustomElementUndefined;
+  end;
 end;
 
 function TDocument.NewText(const Text: string): TText;
@@ -319,7 +326,26 @@ begin
   Result.FSystemId := SystemIdText;
 end;
 
-function TDocument.CreateElement(const LocalNameText: string): TElement;
+{ "Create an element" with the synchronous custom elements flag: a
+  defined custom element's constructor runs now (the custom element
+  host); otherwise a plain element (undefined for custom names). }
+function CreateElementWithCustomElements(Document: TDocument; LocalAtom: TAtom; Namespace: TNamespaceId;
+  const IsValue: string): TElement;
+begin
+  Result := nil;
+  if (CustomElementHost <> nil) and ((IsValue <> '') or IsCustomElementNameAtom(LocalAtom)) then
+    Result := CustomElementHost.CreateElement(Document, LocalAtom, Namespace, IsValue, True);
+  if Result = nil then
+    Result := Document.NewElement(LocalAtom, Namespace);
+  if (IsValue <> '') and (Result.IsValue = '') then
+  begin
+    Result.SetIsValue(IsValue);
+    if Web.Namespaces.NamespaceUri(Namespace) = AtomHtmlNamespace then
+      Result.SetCustomElementState(CustomElementUndefined);
+  end;
+end;
+
+function TDocument.CreateElement(const LocalNameText: string; const IsValue: string): TElement;
 var
   Name: string;
   Namespace: TNamespaceId;
@@ -333,17 +359,17 @@ begin
     Namespace := NamespaceHtml
   else
     Namespace := NamespaceNone;
-  Result := NewElement(Atomize(Name), Namespace);
+  Result := CreateElementWithCustomElements(Self, Atomize(Name), Namespace, IsValue);
   ListForCollection(Result);
 end;
 
-function TDocument.CreateElementNS(const Namespace, QualifiedName: string): TElement;
+function TDocument.CreateElementNS(const Namespace, QualifiedName: string; const IsValue: string): TElement;
 var
   QualifierId: TNamespaceId;
   NameAtom: TAtom;
 begin
   ValidateAndExtract(Namespace, QualifiedName, NameContextElement, QualifierId, NameAtom);
-  Result := NewElement(NameAtom, QualifierId);
+  Result := CreateElementWithCustomElements(Self, NameAtom, QualifierId, IsValue);
   ListForCollection(Result);
 end;
 
@@ -584,9 +610,9 @@ begin
   while Node <> nil do
   begin
     Node.FFlags := Node.FFlags or NodeFlagConnected;
-    if (Node.FFlags and NodeFlagHasId) <> 0 then
+    if ((Node.FFlags and NodeFlagHasId) <> 0) and not IsInShadowTreeNode(Node) then
       RegisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
@@ -601,7 +627,7 @@ begin
   begin
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeConnected(Node);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
@@ -614,7 +640,7 @@ begin
   while Node <> nil do
   begin
     Node.FFlags := Node.FFlags and not NodeFlagConnected;
-    if (Node.FFlags and NodeFlagHasId) <> 0 then
+    if ((Node.FFlags and NodeFlagHasId) <> 0) and not IsInShadowTreeNode(Node) then
       UnregisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
     if Node = FTargetElement then
       FTargetElement := nil;
@@ -624,9 +650,21 @@ begin
       FPendingPointerCapture := nil;
     if Node = FPointerCapture then
       FPointerCapture := nil;
+    if Node = FFullscreenElement then
+    begin
+      FFullscreenElement := nil;
+      for Index := 1 to System.Length(FObservers) do
+        FObservers[Index - 1].ScreenModeElementRemoved(TElement(Node), True);
+    end;
+    if Node = FPointerLockElement then
+    begin
+      FPointerLockElement := nil;
+      for Index := 1 to System.Length(FObservers) do
+        FObservers[Index - 1].ScreenModeElementRemoved(TElement(Node), False);
+    end;
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 

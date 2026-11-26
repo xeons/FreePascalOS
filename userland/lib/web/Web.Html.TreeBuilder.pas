@@ -95,7 +95,16 @@ type
     { Short whitespace-only texts ("\n  " between tags), shared by the
       text nodes that have them. }
     FWhitespaceTexts: array[0..63] of string;
+    FAllowDeclarativeShadowRoots: Boolean;
+    { Declarative shadow roots: the template elements standing for them
+      on the stack (never inserted) and the shadow roots their contents
+      go into. }
+    FShadowTemplates: array of TElement;
+    FShadowTemplateRoots: array of TShadowRoot;
     function SharedText(const Text: string): string;
+    function ShadowRootOfTemplate(Template: TElement): TShadowRoot;
+    function TryDeclarativeShadowRoot(var Token: TToken): Boolean;
+    function CustomElementsInvolved: Boolean;
     procedure ParseError(const Code: string);
     { The dispatcher. }
     procedure DispatchToken(var Token: TToken);
@@ -180,6 +189,10 @@ type
     property OnScriptEnd: TScriptEndEvent read FOnScriptEnd write FOnScriptEnd;
     property OnEncodingDeclared: TEncodingDeclaredEvent read FOnEncodingDeclared write FOnEncodingDeclared;
     property OnParseError: TParseErrorEvent read FOnParseError write FOnParseError;
+    { Whether <template shadowrootmode> attaches a shadow root (documents
+      and setHTMLUnsafe; not innerHTML or DOMParser). }
+    property AllowDeclarativeShadowRoots: Boolean read FAllowDeclarativeShadowRoots
+      write FAllowDeclarativeShadowRoots;
   end;
 
 const
@@ -189,6 +202,7 @@ const
 implementation
 
 uses
+  Web.Dom.Exceptions,
   Web.Html.ForeignContent,
   Web.Html.Quirks;
 
@@ -201,10 +215,15 @@ begin
   FPendingTableCharacters := TTextBuffer.Create;
   FFramesetOk := True;
   FMode := ImInitial;
+  FAllowDeclarativeShadowRoots := True;
 end;
 
 destructor THtmlTreeBuilder.Destroy;
+var
+  Index: Integer;
 begin
+  for Index := 0 to High(FShadowTemplates) do
+    FShadowTemplates[Index].Release;
   FOpenElements.Free;
   FFormatting.Free;
   FPendingTableCharacters.Free;
@@ -438,9 +457,91 @@ begin
   end;
   if (Parent.NodeType = NodeTypeElement) and TElement(Parent).IsHtmlElement(AtomTemplate) then
   begin
-    Parent := TElement(Parent).TemplateContent;
+    if ShadowRootOfTemplate(TElement(Parent)) <> nil then
+      Parent := ShadowRootOfTemplate(TElement(Parent))
+    else
+      Parent := TElement(Parent).TemplateContent;
     Before := nil;
   end;
+end;
+
+function THtmlTreeBuilder.ShadowRootOfTemplate(Template: TElement): TShadowRoot;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FShadowTemplates) do
+    if FShadowTemplates[Index] = Template then
+      Exit(FShadowTemplateRoots[Index]);
+  Result := nil;
+end;
+
+function FindTokenAttribute(const Token: TToken; Name: TAtom; out Value: string): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 1 to Token.AttributeCount do
+    if Token.Attributes[Index - 1].Name = Name then
+    begin
+      Value := Token.Attributes[Index - 1].Value;
+      Exit(True);
+    end;
+  Value := '';
+  Result := False;
+end;
+
+{ A template start tag with shadowrootmode (HTML Standard, "in head":
+  the declarative shadow root steps): the adjusted current node gets a
+  shadow root and the template, kept on the stack only, stands for it.
+  False when it is an ordinary template. }
+function THtmlTreeBuilder.TryDeclarativeShadowRoot(var Token: TToken): Boolean;
+var
+  ModeValue, Ignored: string;
+  RootMode: TShadowRootMode;
+  Host, Template: TElement;
+  Shadow: TShadowRoot;
+begin
+  Result := False;
+  if not FAllowDeclarativeShadowRoots or not FindTokenAttribute(Token, AtomShadowrootmode, ModeValue) then
+    Exit;
+  ModeValue := AsciiLowerCase(ModeValue);
+  if ModeValue = 'open' then
+    RootMode := ShadowRootOpen
+  else if ModeValue = 'closed' then
+    RootMode := ShadowRootClosed
+  else
+    Exit;
+  Host := AdjustedCurrentNode;
+  if (Host = nil) or (FOpenElements.Count = 0) or (Host = FOpenElements[0]) or (Host.ShadowRoot <> nil) then
+    Exit;
+  try
+    Shadow := Host.AttachShadow(RootMode, FindTokenAttribute(Token, AtomShadowrootclonable, Ignored),
+      FindTokenAttribute(Token, AtomShadowrootserializable, Ignored),
+      FindTokenAttribute(Token, AtomShadowrootdelegatesfocus, Ignored), SlotAssignmentNamed);
+  except
+    on EDomException do
+    begin
+      ParseError('invalid-declarative-shadow-root');
+      Exit;
+    end;
+  end;
+  Shadow.Declarative := True;
+  Shadow.AvailableToElementInternals := True;
+  Template := CreateElementForToken(Token, NamespaceHtml, Host);
+  { Never inserted: held while the parser lives, collected after. }
+  Template.Retain;
+  SetLength(FShadowTemplates, Length(FShadowTemplates) + 1);
+  SetLength(FShadowTemplateRoots, Length(FShadowTemplateRoots) + 1);
+  FShadowTemplates[High(FShadowTemplates)] := Template;
+  FShadowTemplateRoots[High(FShadowTemplateRoots)] := Shadow;
+  FOpenElements.Push(Template);
+  Result := True;
+end;
+
+{ Whether the document's window has custom element definitions, so the
+  parser takes the custom element steps (not for fragments). }
+function THtmlTreeBuilder.CustomElementsInvolved: Boolean;
+begin
+  Result := (CustomElementHost <> nil) and (FContextElement = nil) and CustomElementHost.HasDefinitions(FDocument);
 end;
 
 function THtmlTreeBuilder.CreateElementForToken(var Token: TToken; Namespace: TNamespaceId;
@@ -448,8 +549,37 @@ function THtmlTreeBuilder.CreateElementForToken(var Token: TToken; Namespace: TN
 var
   Index: Integer;
   Attribute: ^TTokenAttribute;
+  IsValue: string;
+  HasIs: Boolean;
 begin
-  Result := IntendedParent.NodeDocument.NewElement(Token.TagName, Namespace);
+  Result := nil;
+  HasIs := FindTokenAttribute(Token, AtomIs, IsValue);
+  { A defined custom element is constructed now ("create an element
+    for a token" with will execute script); its attributes then run
+    their change steps (attributeChangedCallback). }
+  if (HasIs or IsCustomElementNameAtom(Token.TagName)) and CustomElementsInvolved then
+  begin
+    CustomElementHost.PushReactionsScope;
+    try
+      Result := CustomElementHost.CreateElement(IntendedParent.NodeDocument, Token.TagName, Namespace, IsValue, True);
+      if (Result <> nil) and (Result.CustomElementState = CustomElementCustom) then
+      begin
+        for Index := 1 to Token.AttributeCount do
+        begin
+          Attribute := @Token.Attributes[Index - 1];
+          if not Result.HasAttributeAtom(Attribute^.LocalName, Attribute^.NamespaceId) then
+            Result.SetAttributeAtom(Attribute^.LocalName, Attribute^.NamespaceId, Attribute^.Value);
+        end;
+        Exit;
+      end;
+    finally
+      CustomElementHost.PopReactionsScope;
+    end;
+  end;
+  if Result = nil then
+    Result := IntendedParent.NodeDocument.NewElement(Token.TagName, Namespace);
+  if HasIs and (Result.IsValue = '') then
+    Result.SetIsValue(IsValue);
   for Index := 1 to Token.AttributeCount do
   begin
     Attribute := @Token.Attributes[Index - 1];
@@ -469,7 +599,18 @@ var
 begin
   AppropriatePlace(nil, Parent, Before);
   Result := CreateElementForToken(Token, Namespace, Parent);
-  InsertAt(Result, Parent, Before);
+  { Custom element reactions (connectedCallback) run right after. }
+  if ((Result.Flags and NodeFlagCustomCandidate) <> 0) and CustomElementsInvolved then
+  begin
+    CustomElementHost.PushReactionsScope;
+    try
+      InsertAt(Result, Parent, Before);
+    finally
+      CustomElementHost.PopReactionsScope;
+    end;
+  end
+  else
+    InsertAt(Result, Parent, Before);
   FOpenElements.Push(Result);
 end;
 
@@ -888,6 +1029,7 @@ var
   Node: TNode;
 begin
   FContextElement := Context;
+  FAllowDeclarativeShadowRoots := False;
   if Context.IsHtml then
   begin
     Name := Context.LocalNameAtom;
