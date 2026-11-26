@@ -71,7 +71,8 @@
     "URLSearchParams", "Blob", "File", "FileReader", "FormData", "Headers", "Request", "Response", "AbortController",
     "AbortSignal", "ReadableStream", "WritableStream", "TransformStream", "TextEncoderStream", "TextDecoderStream",
     "MessageChannel", "MessagePort", "MessageEvent", "BroadcastChannel", "Event", "EventTarget", "CustomEvent",
-    "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "WebAssembly", "isSecureContext", "origin"];
+    "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "EventSource", "WebAssembly", "isSecureContext",
+    "origin"];
 
   function workerState(worker) {
     const state = workerData.get(worker);

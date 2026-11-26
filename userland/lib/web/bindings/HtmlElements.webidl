@@ -310,6 +310,7 @@ interface HTMLFieldSetElement : HTMLElement {
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString name;
   readonly attribute DOMString type;
+  [SameObject] readonly attribute HTMLCollection elements;
 };
 
 [Exposed=Window, LocalNames=(legend)]

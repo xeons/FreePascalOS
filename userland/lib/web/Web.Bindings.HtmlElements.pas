@@ -77,6 +77,12 @@ type
     function Matches(Element: TElement): Boolean; override;
   end;
 
+  { A fieldset's elements: the listed elements under it. }
+  TFieldSetElementsCollection = class(THtmlCollection)
+  protected
+    function Matches(Element: TElement): Boolean; override;
+  end;
+
   TSelectedOptionsCollection = class(THtmlCollection)
   protected
     function Matches(Element: TElement): Boolean; override;
@@ -96,6 +102,11 @@ function TFormElementsCollection.Matches(Element: TElement): Boolean;
 begin
   Result := IsListedElement(Element) and not (Element.IsHtmlElement(AtomInput) and (InputType(Element) = 'image')) and
     (FormOwner(Element) = Root);
+end;
+
+function TFieldSetElementsCollection.Matches(Element: TElement): Boolean;
+begin
+  Result := IsListedElement(Element);
 end;
 
 function TSelectedOptionsCollection.Matches(Element: TElement): Boolean;
@@ -1499,6 +1510,12 @@ end;
 function HTMLFieldSetElement_get_type(var Call: TBindingCall): TJsValue;
 begin
   Result := Text(Call, 'fieldset');
+end;
+
+function HTMLFieldSetElement_get_elements(var Call: TBindingCall): TJsValue;
+begin
+  Result := Context(Call).WrapObject(TFieldSetElementsCollection.Create(ThisElement(Call)),
+    InterfaceHTMLCollection, True, Call.This);
 end;
 
 function HTMLLegendElement_get_form(var Call: TBindingCall): TJsValue;

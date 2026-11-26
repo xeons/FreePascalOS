@@ -140,3 +140,14 @@ check("contentEditable", editable.contentEditable === "inherit" && (editable.con
   editable.isContentEditable));
 editable.innerText = "a\nb";
 check("innerText setter makes line breaks", editable.innerHTML === "a<br>b");
+
+var fieldset = document.createElement("fieldset");
+fieldset.innerHTML = "<legend>l</legend><input name=a><div><select name=b></select><output></output></div>" +
+  "<label>x</label><fieldset><button>b</button></fieldset><input type=image>";
+var fieldsetElements = fieldset.elements;
+check("fieldset.elements lists the listed elements under it",
+  fieldsetElements instanceof HTMLCollection && fieldsetElements.length === 6 &&
+  fieldsetElements[0].name === "a" && fieldsetElements.b.tagName === "SELECT" &&
+  fieldsetElements[4].tagName === "BUTTON" && fieldset.elements === fieldsetElements);
+fieldset.appendChild(document.createElement("textarea"));
+check("fieldset.elements is live", fieldsetElements.length === 7);

@@ -376,8 +376,70 @@ begin
   end;
 end;
 
+{ EventSource against the in-process server: a stream in pieces (CRLF,
+  CR and LF line ends, a comment, a named event, multi-line data, an
+  id, retry), the reconnection after the server closes sending
+  Last-Event-ID, a response of the wrong type failing for good, and
+  close(). }
+procedure CheckEventSource;
+var
+  Environment: TTestEnvironment;
+  Conditions: TFetchConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Route: TTestRoute;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TFetchConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  try
+    Environment.Site.AddRoute('e.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><p id="out">x</p><script>var log = [], ones = 0;' +
+      'var source = new EventSource("/events");' +
+      'log.push(source.readyState + " " + source.url);' +
+      'source.onopen = function () { log.push("open " + source.readyState); };' +
+      'source.onmessage = function (e) { log.push("message " + JSON.stringify(e.data) + " " + e.lastEventId + " " +' +
+      ' e.origin); if (e.data === "one" && ++ones === 2) { source.close(); log.push("closed " + source.readyState);' +
+      ' var bad = new EventSource("/plain"); bad.onerror = function () { log.push("bad " + bad.readyState);' +
+      ' document.getElementById("out").textContent = log.join("|") + "|done"; }; } };' +
+      'source.addEventListener("tick", function (e) { log.push("tick " + e.data); });' +
+      'source.onerror = function () { log.push("error " + source.readyState); };</script>');
+    Route := Environment.Site.AddRoute('e.test/events', 200, 'Content-Type: text/event-stream; charset=utf-8',
+      #$EF#$BB#$BF': a comment'#13#10'retry: 50'#13#10'data: one'#13#10#13#10 +
+      'event: tick'#13'data: a'#13'data: b'#13#13 + 'id: 7'#10'data:  spaced'#10#10 + 'data'#10#10 +
+      'data: no end');
+    Route.Pieces := 7;
+    Environment.Site.AddRoute('e.test/plain', 200, 'Content-Type: text/plain', 'data: x'#10#10);
+    Navigable.NavigateTo('https://e.test/page.html');
+    Check(Environment.RunUntil(@Conditions.Done), 'event source: the events came (' + Trim(Conditions.Console) + ')');
+    Text := '';
+    if Navigable.ActiveDocument.GetElementById('out') <> nil then
+      Text := Navigable.ActiveDocument.GetElementById('out').TextContent;
+    Check(Text = '0 https://e.test/events|open 1|message "one"  https://e.test|tick a'#10'b|' +
+      'message " spaced" 7 https://e.test|message "" 7 https://e.test|error 0|open 1|message "one" 7 https://e.test|' +
+      'closed 2|bad 2|done',
+      'event source: fields, line ends, reconnection, close and a wrong type (' + Text + ')');
+    Check(Pos('last-event-id: 7', LowerCase(Environment.Site.LastHead('e.test/events'))) > 0,
+      'event source: the reconnection sends Last-Event-ID');
+  finally
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
+  CheckEventSource;
   CheckDetachedImages;
   CheckScriptedPage;
   CheckScriptFetches;
