@@ -52,7 +52,9 @@ uses
   Drawing.Stroking,
   Drawing.Dashing,
   Drawing.Paints,
-  Drawing.PaintFilling;
+  Drawing.PaintFilling,
+  Drawing.Compositing,
+  Drawing.Blurring;
 
 implementation
 

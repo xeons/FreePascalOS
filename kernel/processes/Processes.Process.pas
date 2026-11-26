@@ -311,6 +311,7 @@ begin
   InitializeEvent(Process^.StateChangedEvent, EventKindNotification, False);
   InitializeNotificationQueue(Process^.Notifications);
   InitializeSpinLock(Process^.Posix.SignalLock);
+  InitializeSpinLock(Process^.Posix.UserTimeLock);
   InitializeEvent(Process^.Posix.ChildChangedEvent, EventKindNotification, False);
   CopyText(@Process^.CurrentDirectory[0], '/', ProcessPathCapacity);
   CopyText(@Process^.RootDirectory[0], '/', ProcessPathCapacity);

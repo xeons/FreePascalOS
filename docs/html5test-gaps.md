@@ -24,6 +24,7 @@ rendering with the installed Firefox.
 | After this work | 273 / 588 | |
 | After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
 | After service workers, the Cache API and SharedWorker | 284 / 588 | offline.serviceWorkers, performance.sharedWorker |
+| After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -34,7 +35,8 @@ differs: the score and the browser's name). What is left visibly: the
 are a few pixels shorter because Firefox on this machine takes Noto
 Sans Mono for `monospace` (the system takes Liberation Mono).
 
-Per category after this work:
+Per category after this work (canvas and offscreen after the canvas
+work that followed):
 
 | Category | Points | Category | Points |
 |---|---|---|---|
@@ -45,8 +47,8 @@ Per category after this work:
 | input | 5 / 10 | video | 0 / 33 |
 | audio | 2 / 30 | streaming | 0 / 5 |
 | responsive | 15 / 15 | svg | 2 / 4 |
-| canvas | 0 / 25 | 3d | 0 / 25 |
-| offscreen | 0 / 3 | animation | 5 / 8 |
+| canvas | 24 / 25 | 3d | 0 / 25 |
+| offscreen | 3 / 3 | animation | 5 / 8 |
 | communication | 25 / 40 | streams | 6 / 6 |
 | rtc | 0 / 45 | interaction | 5 / 19 |
 | performance | 11 / 12 | native | 0 / 1 |
@@ -93,6 +95,8 @@ Features (each a real implementation with tests):
 | Pointer events, pointer capture, mouseenter/mouseleave | 5 | `WebView.MouseEvents`, `Web.Dom.PointerCapture` |
 | ClipboardEvent, DataTransfer (string data), copy/cut/paste events | 5 | `Web.Dom.DataTransfer`, `WebView.ClipboardEvents` |
 | Access keys (Alt+Shift) and accessKeyLabel | 1 | `Web.Dom.AccessKeys` |
+| Canvas 2D: the whole CanvasRenderingContext2D (paths and Path2D, transforms, fill rules, strokes, dashes, gradients incl. conic, patterns, shadows, every compositing operator and blend mode, clips, text, drawImage, ImageData, filters), toDataURL (PNG, JPEG, WebP) and toBlob | 24 (canvas.*) | `Web.Canvas.*`, `Web.Bindings.Canvas`, `76-canvas.js`; docs/Architecture.md "Canvas" |
+| OffscreenCanvas (workers too), ImageBitmap and createImageBitmap, ImageBitmapRenderingContext | 3 (offscreen.*) | `Web.Canvas.Elements`, `Web.Script.NativeCanvas` |
 
 The date and time "custom user interface" points are the test's
 inference from sanitization: the fields can be typed into (their edit
@@ -175,15 +179,8 @@ Points are what each costs on html5test (588 in all).
 
 ### Large (weeks)
 
-- **Canvas 2D** (`canvas.*` 24, `offscreen.*` 3): no
-  CanvasRenderingContext2D yet. libdrawing already has what it needs
-  (paths with arcs, strokes with caps, joins and dashes, gradients,
-  patterns, transforms, masks); the work is the API (state stack,
-  paths and Path2D, fill and stroke rules, text with libfont,
-  drawImage, ImageData, compositing and blend modes, shadows,
-  toDataURL/toBlob with libimage), the canvas's bitmap shown through
-  the layout's element images, then OffscreenCanvas and ImageBitmap.
-  The biggest single gap and the most used on real sites.
+- **Canvas hit regions** (`canvas.hittest` 1): addHitRegion was dropped
+  from the standard (no browser has it); not done.
 - **Shadow DOM** (`components.shadowdom` 4): attachShadow, slots,
   retargeting, :host and ::slotted, shadow-including tree order in
   style, layout and events.

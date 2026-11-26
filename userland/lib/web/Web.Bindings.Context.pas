@@ -124,6 +124,13 @@ type
     Message: string;
   end;
 
+  { A native object holding script values: its wrapper keeps them alive
+    (the wrapper's class traces them through TraceValues). }
+  TBindingTracedObject = class
+  public
+    procedure TraceValues(Tracer: TJsTracer); virtual; abstract;
+  end;
+
   { One per interface and context: the host class's tracer data. }
   TBindingClass = class
   public
@@ -521,6 +528,8 @@ end;
 
 procedure TBindingClass.TraceNative(HostClass_: TJsHostClass; NativeData: Pointer; Tracer: TJsTracer);
 begin
+  if (NativeData <> nil) and (TObject(NativeData) is TBindingTracedObject) then
+    TBindingTracedObject(NativeData).TraceValues(Tracer);
 end;
 
 { TBindingWrapper }

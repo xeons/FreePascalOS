@@ -1,0 +1,13 @@
+--- a/src/vulkan/wsi/meson.build
++++ b/src/vulkan/wsi/meson.build
+@@ -32,6 +32,10 @@
+   platform_deps += dep_dxheaders
+ else
+   files_vulkan_wsi += files('wsi_common_headless.c')
++endif
++
++if with_platform_freepascalos
++  files_vulkan_wsi += files('wsi_common_freepascalos.c')
+ endif
+ 
+ if with_platform_macos

@@ -134,6 +134,7 @@ uses
   Kernel.PanicTest,
   Kernel.StackTraceSelfTest,
   Kernel.RandomSelfTest,
+  Kernel.SignalSelfTest,
   Kernel.Arch.PlatformSelfTest,
   Kernel.Timers,
   Processes.ImageSections,
@@ -405,6 +406,7 @@ begin
   RunClockSelfTests;
   RunStackTraceSelfTest;
   RunRandomSelfTest;
+  RunSignalSelfTest;
   RunPlatformSelfTest;
   RunHeapCheckSelfTest;
   RunProtectionSelfTests;

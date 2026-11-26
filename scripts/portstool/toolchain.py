@@ -120,6 +120,12 @@ def meson_cross_file(toolchain, sysroot, path):
         f"ar = {quoted(toolchain.tool('ar'))}",
         f"strip = {quoted(toolchain.tool('strip'))}",
         f"pkg-config = {quoted(shutil.which('pkg-config') or 'pkg-config')}",
+    ]
+    # CMake finds the CMake packages of build dependencies (LLVM's, for
+    # Mesa) when a port's dependency() falls back to it.
+    if shutil.which("cmake"):
+        lines.append(f"cmake = {quoted(shutil.which('cmake'))}")
+    lines += [
         "",
         "[built-in options]",
         f"c_args = [{sysroot_flag}]",
@@ -143,9 +149,14 @@ def meson_cross_file(toolchain, sysroot, path):
     return path
 
 
+# Platform/FreePascalOS.cmake: what CMake knows of the system.
+CMAKE_MODULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cmake")
+
+
 def cmake_toolchain_file(toolchain, sysroot, path):
     lines = [
         "set(CMAKE_SYSTEM_NAME FreePascalOS)",
+        f'list(APPEND CMAKE_MODULE_PATH "{CMAKE_MODULES}")',
         f"set(CMAKE_SYSTEM_PROCESSOR {toolchain.processor})",
         f'set(CMAKE_SYSROOT "{sysroot}")',
         f'set(CMAKE_C_COMPILER "{toolchain.tool("gcc")}")',

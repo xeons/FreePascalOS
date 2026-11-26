@@ -587,6 +587,8 @@ begin
     Result := True;
   if not Result and (FResources.FrameCount > 0) then
     Result := FramesNeedUpdate;
+  if not Result then
+    Result := FResources.ImageProvidersPending;
 end;
 
 function TDocumentLayout.AnimationsRunning: Boolean;
@@ -615,6 +617,8 @@ var
   Input: TLayoutInput;
   Viewport: TLayoutBox;
 begin
+  { Elements drawing their own images (canvases) give their new pixels. }
+  FResources.TakeProvidedImages;
   EnterPhase(PhaseStyle);
   try
     FStyler.UpdateStyles;

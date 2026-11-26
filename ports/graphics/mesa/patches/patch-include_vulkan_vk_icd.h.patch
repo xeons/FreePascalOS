@@ -1,0 +1,10 @@
+--- a/include/vulkan/vk_icd.h
++++ b/include/vulkan/vk_icd.h
+@@ -118,6 +118,7 @@
+     VK_ICD_WSI_PLATFORM_GGP,
+     VK_ICD_WSI_PLATFORM_SCREEN,
+     VK_ICD_WSI_PLATFORM_FUCHSIA,
++    VK_ICD_WSI_PLATFORM_FREEPASCALOS,
+ } VkIcdWsiPlatform;
+ 
+ typedef struct {

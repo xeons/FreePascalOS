@@ -1,0 +1,25 @@
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -269,6 +269,12 @@
+       goto fail;
+ #endif
+ 
++#ifdef VK_USE_PLATFORM_FREEPASCALOS_FPOS
++   result = wsi_freepascalos_init_wsi(wsi, alloc, pdevice);
++   if (result != VK_SUCCESS)
++      goto fail;
++#endif
++
+ #ifndef VK_USE_PLATFORM_WIN32_KHR
+    result = wsi_headless_init_wsi(wsi, alloc, pdevice);
+    if (result != VK_SUCCESS)
+@@ -342,6 +348,9 @@
+ {
+ #ifndef VK_USE_PLATFORM_WIN32_KHR
+    wsi_headless_finish_wsi(wsi, alloc);
++#endif
++#ifdef VK_USE_PLATFORM_FREEPASCALOS_FPOS
++   wsi_freepascalos_finish_wsi(wsi, alloc);
+ #endif
+ #ifdef VK_USE_PLATFORM_DISPLAY_KHR
+    wsi_display_finish_wsi(wsi, alloc);

@@ -76,6 +76,7 @@ uses
   Web.Workers.SharedWorkers,
   Web.Script.NativeServiceWorkers,
   Web.Script.NativeStorage,
+  Web.Script.NativeCanvas,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -669,6 +670,7 @@ begin
   DefineSharedWorkerNatives(Context, Natives);
   DefineServiceWorkerNatives(Context, Natives);
   DefineStorageNatives(Context, Natives);
+  DefineCanvasNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

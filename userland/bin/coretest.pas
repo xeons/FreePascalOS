@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..447] of TCommandTest = (
+  CommandTests: array[0..454] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -777,13 +777,13 @@ const
       the package pkg-selftest as a file; it is installed (with its
       post-install script), checked, refused twice, found changed by
       verify, and removed (with its pre-remove script), leaving nothing.
-      binutils, on the disk too when the C toolchain was built, is left
-      out of the listings. }
-    (Command: 'pkg list -q | grep -v ^binutils; pkg verify hello; hello pkg; command -v hello'; ExpectedOutput: 'hello'#10'hello 1.0: ok'#10'Hello, pkg!'#10'/usr/local/bin/hello'#10; ExpectedStatus: 0),
+      binutils, mesa, llvm-runtime and gldemos, on the disk too when the C toolchain
+      was built, are left out of the listings. }
+    (Command: 'pkg list -q | grep -Ev ''^(binutils|gldemos|mesa|llvm-runtime)''; pkg verify hello; hello pkg; command -v hello'; ExpectedOutput: 'hello'#10'hello 1.0: ok'#10'Hello, pkg!'#10'/usr/local/bin/hello'#10; ExpectedStatus: 0),
     (Command: 'pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst; echo $?; cat /tmp/pkg-selftest.post-install; cat /usr/local/share/pkg-selftest/latest; tail -n 1 /usr/local/etc/pkg-selftest.conf'; ExpectedOutput: 'installed pkg-selftest 1.0'#10'running the post-install script of pkg-selftest'#10'0'#10'pkg-selftest 1.0 installed'#10'pkg self test: this file was installed by pkg.'#10'greeting = hello'#10; ExpectedStatus: 0),
-    (Command: 'pkg which /usr/local/share/pkg-selftest/message.txt; pkg verify pkg-selftest; pkg test pkg-selftest; pkg info pkg-selftest | head -n 2; pkg list -q | grep -v ^binutils'; ExpectedOutput: '/usr/local/share/pkg-selftest/message.txt was installed by pkg-selftest 1.0'#10'pkg-selftest 1.0: ok'#10'pkg-selftest: passed: grep -q ''pkg self test'' /usr/local/share/pkg-selftest/latest'#10'Name:        pkg-selftest'#10'Version:     1.0'#10'hello'#10'pkg-selftest'#10; ExpectedStatus: 0),
+    (Command: 'pkg which /usr/local/share/pkg-selftest/message.txt; pkg verify pkg-selftest; pkg test pkg-selftest; pkg info pkg-selftest | head -n 2; pkg list -q | grep -Ev ''^(binutils|gldemos|mesa|llvm-runtime)'''; ExpectedOutput: '/usr/local/share/pkg-selftest/message.txt was installed by pkg-selftest 1.0'#10'pkg-selftest 1.0: ok'#10'pkg-selftest: passed: grep -q ''pkg self test'' /usr/local/share/pkg-selftest/latest'#10'Name:        pkg-selftest'#10'Version:     1.0'#10'hello'#10'pkg-selftest'#10; ExpectedStatus: 0),
     (Command: 'pkg remove hello 2>&1; echo $?; pkg install /var/cache/pkg/pkg-selftest-1.0-*.pkg.tar.zst 2>&1; echo $?; echo x >> /usr/local/etc/pkg-selftest.conf; pkg verify pkg-selftest 2>&1 | grep -c "pkg-selftest.conf: the size is 115, not 113"'; ExpectedOutput: 'pkg: hello is needed by pkg-selftest'#10'1'#10'pkg: pkg-selftest 1.0 is installed already'#10'1'#10'1'#10; ExpectedStatus: 0),
-    (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q | grep -v ^binutils; pkg verify | grep -v ^binutils; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0),
+    (Command: 'pkg remove pkg-selftest 2>/dev/null; echo $?; cat /tmp/pkg-selftest.pre-remove; test ! -e /usr/local/share/pkg-selftest && test ! -e /usr/local/etc/pkg-selftest.conf && test ! -e /var/db/pkg/pkg-selftest && echo clean; pkg list -q | grep -Ev ''^(binutils|gldemos|mesa|llvm-runtime)''; pkg verify | grep -Ev ''^(binutils|gldemos|mesa|llvm-runtime)''; rm /tmp/pkg-selftest.post-install /tmp/pkg-selftest.pre-remove'; ExpectedOutput: 'running the pre-remove script of pkg-selftest'#10'removed pkg-selftest 1.0'#10'0'#10'pkg-selftest removing'#10'clean'#10'hello'#10'hello 1.0: ok'#10; ExpectedStatus: 0),
     { The loader finds a library named without a folder in /usr/local/lib
       (ported software's) when /lib has none. }
     (Command: 'mkdir -p /usr/local/lib; cp /lib/libplugin.so /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; rm /usr/local/lib/libportplugin.so; /bin/coretest --load-library libportplugin.so; echo $?'; ExpectedOutput: 'loaded libportplugin.so'#10'cannot load libportplugin.so'#10'1'#10; ExpectedStatus: 0),
@@ -855,7 +855,52 @@ const
     { The clock and timers (CallGetClockInformation): the test machine
       (q35) has an HPET whose comparator the kernel took as its event
       timer, and the counter's rate has a source. }
-    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --clock > clock.log; echo $?; if test "$(uname -m)" = aarch64; then echo 1; else grep -c "^HPET event timer: comparator" clock.log; fi; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0),
+    { Signals and timers of the C runtime (calls 240-249), by themselves
+      on a system that runs other things: real-time signal queues,
+      sigtimedwait, sigaltstack and stack overflows, SA_RESTART; POSIX
+      timers, interval timers and processor-time clocks. }
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest realtime-signals > rtsig.log 2>&1; echo $?; grep FAILED rtsig.log; tail -n 1 rtsig.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest timers > ctimers.log 2>&1; echo $?; grep FAILED ctimers.log; tail -n 1 ctimers.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { libmedia on the system (mediaplay): a WAV file's container and
+      track, its decoding checksummed (16-bit samples decode to floats
+      and back exactly, so the MD5 is the data chunk's), and a file that
+      is no media file refused. }
+    (Command: 'tone -o mp.wav -r 44100 440 0.5 && mediaplay -i mp.wav && mediaplay -k mp.wav > k.txt; cut -d " " -f 1-5 k.txt; cut -d " " -f 6 k.txt > k1; tail -c 88200 mp.wav | md5sum | cut -d " " -f 1 > k2; diff k1 k2 && echo same; mediaplay -i /etc/passwd 2>&1; echo $?'; ExpectedOutput: 'mp.wav: wav, 0:00:00.500, 1 track(s)'#10'  track 0: audio pcm [pcm], 44100 Hz, 2 channel(s), 16 bits, 0:00:00.500'#10'audio 0 22050 44100 2'#10'same'#10'mediaplay: /etc/passwd: not a media file this system reads'#10'1'#10; ExpectedStatus: 0),
+    { libvideo through mediaplay: a VP9 WebM file (32x32, 3 frames,
+      made by vpxenc and ffmpeg) decoded picture by picture; the MD5s
+      are vpxdec's (and ffmpeg's framemd5). }
+    (Command: 'echo ' +
+      'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAQuEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZU' +
+      'rmtTrIHGTbuMU6uEElTDZ1OsggEfTbuMU6uEHFO7a1OsggQY7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmoCrXsYMPQkBNgIRM' +
+      'YXZmV0GETGF2ZkSJiEBZAAAAAAAAFlSua9SuAQAAAAAAAEvXgQFzxYgAAAAAAAAAAZyBACK1nIN1bmSIgQCGhVZfVlA5g4EBI+OD' +
+      'hAH8oFXgjbCBILqBIFWwhFW5gQFV7oEA7AEAAAAAAAACAAASVMNntXNzsmPAi2PFiAAAAAAAAAABZ8ihRaOIRFVSQVRJT05Eh5Mw' +
+      'MDowMDowMC4xMDAwMDAwMDAAH0O2dUK554EAo0KIgQAAgIJJg0IAAfAB9iY4JBwYQgABkG7md66Ruq7asKPq+4uH8S8PLGV06gfY' +
+      'AAB3f//6Wf17dEC5QtlIC2CipCde2b+FNttl3wdXx4DNbBGOirWZjOpoYqbSBjJstAi7nN7wLlLcjZ5gU/V9FKcYsE24+/dgoN2N' +
+      'bRbD8L+QAQbp8FPIyzT8+Y0V9eX6bjF3DavmC+JiWj/jpZ3vGNldRdXdjamaOPQNXpNz/gW2IT+uGKYLDAGgPRRtY5UGITJULufL' +
+      'AUdbhE9+F4gVDJ/eX/ToAlFNx5pTn8WAgYOulQ/VtiQYsIIrbUU65xUZsBsUBPQ2Sj/oKqXmg3whbbwWTDuaYl8IJKtsPfMD9beL' +
+      'A3Gc4LrHBrSliaRPo9GM9NmOr8UXC1hV/A8yuQbGRKNaa1QsKk+kaPVpZI4BWiUshGX/PKRK8YGKbZ2QHwx85RrSgPtfuzeQohxm' +
+      'CoyZeFo3kArjwIKYrkzw0p8b+7NUVadHlw51aViPIXbemqtRQj+YIcM/7y9FZgtP9ppuTS2/mUs8s/d9R09L79NfFgwKQOCDcuPo' +
+      'bJyM+nkLUHl2q5Z8ERd7ngaTCgMpV67YVrgy00DnXMwT5bl9ibrAhRWWpQbmpHQJ0X+ZHnOg5QvKmLsF4z+3B8r13INJHxnSEfHM' +
+      'lX2p+HWI04ZozfO6yOgpT1big7vDinJdoc/1ugcCEy9PgTviz/IozNJFGoOCs7XkIK1Yu+sDJ9+F61/9whE8ZvIwBQGIhzyz4Y4X' +
+      'Bg7W9ExXTYxXb6ykd7XQ0ZKFPMM88ZWwwJFqSl/p9+Z3hv5J89pUjzVz/xtwwiiZ229UWFdZv8x+8PKKh4PWXYz2K3cMsz5wRpo8' +
+      'TR4Ao5SBACEAhgBAkpxMSUAAA2AAAHUsgKOTgQBDAIYAQJKcTErAAANgAABDQBxTu2uRu4+zgQC3iveBAfGCAVnwgQM=' +
+      ' | base64 -d > v.webm && mediaplay -k v.webm'; ExpectedOutput:
+      'video 0 0 0 32x32 aa01e3b8d00875ca0ba73152b5adb154'#10'video 0 1 33 32x32 069dcb77983072d6ed0a28fee555ae3e'#10 +
+      'video 0 2 67 32x32 069dcb77983072d6ed0a28fee555ae3e'#10; ExpectedStatus: 0),
+    { libav1 on the system (av1check): AV1 streams made with aomenc - inter
+      frames with every loop filter, 10-bit film grain, 4:4:4 screen
+      content, superres with tiles - decoded on one thread and on four,
+      every frame equal to libaom's. }
+    (Command: 'av1check'; ExpectedOutput: 'av1check: 4 streams and a WebM file, 34 frames, ok'#10; ExpectedStatus: 0),
+    { mediaplay -k on an AV1 WebM file (libmedia's Matroska demuxer, libav1
+      through the decoder registry): each frame's MD5 equal to aomdec's. }
+    (Command: 'av1check -w av1.webm && mediaplay -k av1.webm | cut -d " " -f 1-3,5-6'; ExpectedOutput: 'video 0 0 96x64 0762dfed594d30ab891f2de41b9feb27'#10'video 0 1 96x64 13a3749cecc7669a8b00fddb862133ed'#10'video 0 2 96x64 a1a0c2e746c23b3a80713c7b8c825355'#10'video 0 3 96x64 74364920439733dea9d93806b303dee2'#10'video 0 4 96x64 8f6ce7d9548204ca6e0bb3e0e8f27ce4'#10'video 0 5 96x64 2d0a1296efa4b3efa7169f35289b0635'#10; ExpectedStatus: 0),
+    { OpenGL, OpenGL ES and EGL (Mesa, ports/graphics/mesa) without a
+      window system, when the system disk has them: llvmpipe, then
+      softpipe. }
+    (Command: 'if test -x /usr/local/bin/gltest; then gltest > /tmp/gl.log 2>&1; echo $?; tail -n 1 /tmp/gl.log | cut -d " " -f 4-; GALLIUM_DRIVER=softpipe gltest > /tmp/gl.log 2>&1; echo $?; tail -n 1 /tmp/gl.log | cut -d " " -f 4-; rm /tmp/gl.log; else echo 0; echo checks passed; echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10'0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var

@@ -35,6 +35,12 @@ interface
 uses
   Io.BlockDevice;
 
+const
+  { Dirty line tags, as in the kernel's block cache (the image is written
+    at once here, so tags change nothing). }
+  CacheTagNone = 0;
+  CacheTagShared = High(QWord);
+
 type
   EOperationLimit = class(TObject)
   end;
@@ -47,7 +53,10 @@ var
 function CachedRead(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord; Buffer: Pointer): Boolean;
 function CachedWrite(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord; Buffer: Pointer): Boolean;
 function CachedWriteZeros(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord): Boolean;
+function CachedWriteTagged(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer; Tag: QWord): Boolean;
 function FlushCachedDevice(Device: PBlockDevice): Boolean;
+function FlushCachedTag(Device: PBlockDevice; Tag: QWord): Boolean;
 
 implementation
 
@@ -90,10 +99,25 @@ begin
     FillChar(Device^.Image[ByteOffset], ByteCount, 0);
 end;
 
+{ Buffer nil writes zeros, as in the kernel. }
+function CachedWriteTagged(Device: PBlockDevice; ByteOffset: QWord; ByteCount: QWord;
+  Buffer: Pointer; Tag: QWord): Boolean;
+begin
+  if Buffer = nil then
+    Result := CachedWriteZeros(Device, ByteOffset, ByteCount)
+  else
+    Result := CachedWrite(Device, ByteOffset, ByteCount, Buffer);
+end;
+
 function FlushCachedDevice(Device: PBlockDevice): Boolean;
 begin
   CountOperation;
   Result := True;
+end;
+
+function FlushCachedTag(Device: PBlockDevice; Tag: QWord): Boolean;
+begin
+  Result := FlushCachedDevice(Device);
 end;
 
 end.

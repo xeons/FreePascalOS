@@ -95,6 +95,7 @@ uses
   Kernel.Scheduler,
   Objects.Manager,
   Processes.PosixState,
+  Processes.Signals,
   Processes.Thread;
 
 var
@@ -197,43 +198,41 @@ begin
   ReleaseSpinLock(ListLock, PreviousLevel);
 end;
 
-{ Takes the lowest signal of Mask waiting for Thread or its process into
-  Item; False if none waits. }
+function CodeOf(Code: LongWord): LongInt;
+begin
+  case Code of
+    SignalFromKernel: Result := SignalCodeKernel;
+    SignalFromQueue: Result := SignalCodeQueue;
+    SignalFromTimer: Result := SignalCodeTimer;
+  else
+    Result := SignalCodeUser;
+  end;
+end;
+
+{ Takes the lowest signal of Mask waiting for Thread (when it is one of
+  the process's) or the process into Item, a real-time one from its
+  queue with its value (Processes.Signals.TakeSignal); False if none
+  waits. }
 function TakeSignal(Process: PProcess; Thread: PThread; Mask: QWord; out Item: TAbiSignalDescriptorRecord): Boolean;
 var
-  PreviousLevel: TPriorityLevel;
-  Waiting: QWord;
+  Information: TAbiSignalInformation;
   Signal: LongInt;
-  Sender: QWord;
 begin
   FillMemory(@Item, SizeOf(Item), 0);
-  Sender := 0;
-  PreviousLevel := AcquireSpinLock(Process^.Posix.SignalLock);
-  Waiting := Process^.Posix.PendingSignals and Mask;
-  if (Thread <> nil) and (Thread^.Process = Process) then
-    Waiting := Waiting or (Thread^.Posix.PendingSignals and Mask);
-  Result := Waiting <> 0;
-  if Result then
-  begin
-    Signal := 1;
-    while (Waiting and SignalBit(Signal)) = 0 do
-      Inc(Signal);
-    if (Thread <> nil) and (Thread^.Process = Process) and
-       ((Thread^.Posix.PendingSignals and SignalBit(Signal)) <> 0) then
-      Thread^.Posix.PendingSignals := Thread^.Posix.PendingSignals and not SignalBit(Signal)
-    else
-    begin
-      Process^.Posix.PendingSignals := Process^.Posix.PendingSignals and not SignalBit(Signal);
-      Sender := Process^.Posix.PendingSenders[Signal];
-    end;
-    Item.Signal := LongWord(Signal);
-    Item.SenderProcessId := LongWord(Sender);
-    if Sender <> 0 then
-      Item.Code := SignalCodeUser
-    else
-      Item.Code := SignalCodeKernel;
-  end;
-  ReleaseSpinLock(Process^.Posix.SignalLock, PreviousLevel);
+  if (Thread <> nil) and (Thread^.Process <> Process) then
+    Thread := nil;
+  Signal := Processes.Signals.TakeSignal(Process, Thread, Mask, Information);
+  Result := Signal <> 0;
+  if not Result then
+    Exit;
+  Item.Signal := LongWord(Signal);
+  Item.Code := CodeOf(Information.Code);
+  Item.SenderProcessId := LongWord(Information.SenderProcessId);
+  Item.SenderUserId := LongWord(Information.SenderUserId);
+  Item.TimerId := Information.TimerId;
+  Item.Overrun := Information.Overrun;
+  Item.IntegerValue := LongInt(Information.Value);
+  Item.PointerValue := QWord(Information.Value);
 end;
 
 function ReadSignalDescriptor(Descriptor: PSignalDescriptor; Buffer: Pointer; Capacity: QWord): Int64;

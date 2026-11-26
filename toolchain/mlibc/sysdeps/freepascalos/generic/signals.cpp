@@ -69,8 +69,44 @@ int tell_kernel(int signal, const struct sigaction &action) {
 	uint64_t handler_mask = mask_of(&action.sa_mask);
 	if (!(action.sa_flags & SA_NODEFER))
 		handler_mask |= bit_of(signal);
-	long flags = (action.sa_flags & SA_RESETHAND) ? 1 : 0;
+	long flags = 0;
+	if (action.sa_flags & SA_RESETHAND)
+		flags |= FPOS_SIGNAL_FLAG_RESET_HANDLER;
+	if (action.sa_flags & SA_RESTART)
+		flags |= FPOS_SIGNAL_FLAG_RESTART;
+	if (action.sa_flags & SA_ONSTACK)
+		flags |= FPOS_SIGNAL_FLAG_ON_STACK;
 	return call_checked(FPOS_CALL_SET_SIGNAL_DISPOSITION, signal, disposition, handler_mask, flags);
+}
+
+int si_code_of(uint32_t code) {
+	switch (code) {
+		case FPOS_SIGNAL_FROM_KERNEL:
+			return SI_KERNEL;
+		case FPOS_SIGNAL_FROM_QUEUE:
+			return SI_QUEUE;
+		case FPOS_SIGNAL_FROM_TIMER:
+			return SI_TIMER;
+		default:
+			return SI_USER;
+	}
+}
+
+// What a signal came with, as siginfo_t says it: the sender (kill,
+// sigqueue), the value (sigqueue, timers) or the timer and its overrun.
+void fill_siginfo(siginfo_t *info, int signal, uint32_t code, int64_t sender, uint64_t sender_user,
+		int64_t value, uint32_t timer_id, uint32_t overrun) {
+	memset(info, 0, sizeof(*info));
+	info->si_signo = signal;
+	info->si_code = si_code_of(code);
+	if (code == FPOS_SIGNAL_FROM_TIMER) {
+		info->si_timerid = (int)timer_id;
+		info->si_overrun = (int)overrun;
+	} else {
+		info->si_pid = (pid_t)sender;
+		info->si_uid = (uid_t)sender_user;
+	}
+	info->si_value.sival_ptr = reinterpret_cast<void *>(value);
 }
 
 void call_handler(int signal, siginfo_t *info, ucontext_t *context) {
@@ -89,16 +125,11 @@ void call_handler(int signal, siginfo_t *info, ucontext_t *context) {
 
 [[noreturn]] void signal_dispatcher(struct fpos_signal_record *record) {
 	siginfo_t info;
-	memset(&info, 0, sizeof(info));
-	info.si_signo = (int)record->signal;
-	info.si_code = record->code == FPOS_SIGNAL_FROM_KERNEL ? SI_KERNEL : SI_USER;
+	fill_siginfo(&info, (int)record->signal, record->code, record->sender_process_id,
+		record->sender_user_id, record->value, record->timer_id, record->overrun);
 	// si_pid and si_addr share their place in siginfo_t.
-	if (record->fault_address) {
+	if (record->fault_address)
 		info.si_addr = reinterpret_cast<void *>(record->fault_address);
-	} else {
-		info.si_pid = (pid_t)record->sender_process_id;
-		info.si_uid = (uid_t)record->sender_user_id;
-	}
 	ucontext_t context;
 	memset(&context, 0, sizeof(context));
 	set_mask(&context.uc_sigmask, record->previous_mask);
@@ -256,13 +287,53 @@ int Sysdeps<Tgkill>::operator()(int tgid, int tid, int signal) {
 }
 
 int Sysdeps<Sigaltstack>::operator()(const stack_t *ss, stack_t *oss) {
-	// Handlers run on the thread's own stack.
-	(void)ss;
+	struct fpos_signal_stack requested;
+	struct fpos_signal_stack previous;
+	memset(&requested, 0, sizeof(requested));
+	if (ss) {
+		requested.base = reinterpret_cast<uint64_t>(ss->ss_sp);
+		requested.size = ss->ss_size;
+		requested.flags = (ss->ss_flags & SS_DISABLE) ? FPOS_SIGNAL_STACK_DISABLE : 0;
+	}
+	if (int e = fpos::call_checked(FPOS_CALL_SET_ALTERNATE_SIGNAL_STACK, ss ? &requested : nullptr, &previous))
+		return e;
 	if (oss) {
 		memset(oss, 0, sizeof(*oss));
-		oss->ss_flags = SS_DISABLE;
+		oss->ss_sp = reinterpret_cast<void *>(previous.base);
+		oss->ss_size = previous.size;
+		oss->ss_flags = 0;
+		if (previous.flags & FPOS_SIGNAL_STACK_DISABLE)
+			oss->ss_flags |= SS_DISABLE;
+		if (previous.flags & FPOS_SIGNAL_STACK_ON_STACK)
+			oss->ss_flags |= SS_ONSTACK;
 	}
 	return 0;
+}
+
+int Sysdeps<Sigtimedwait>::operator()(const sigset_t *__restrict set, siginfo_t *__restrict info,
+		const struct timespec *__restrict timeout, int *out_signal) {
+	uint64_t mask = fpos::mask_of(set);
+	long nanoseconds = -1;
+	if (timeout) {
+		if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000)
+			return EINVAL;
+		nanoseconds = timeout->tv_sec * 1000000000L + timeout->tv_nsec;
+	}
+	struct fpos_signal_information taken;
+	long signal = fpos::call(FPOS_CALL_WAIT_FOR_SIGNAL, &mask, &taken, nanoseconds);
+	if (int e = fpos::error_of(signal))
+		return e;
+	if (info)
+		fpos::fill_siginfo(info, (int)signal, taken.code, taken.sender_process_id, taken.sender_user_id,
+			taken.value, taken.timer_id, taken.overrun);
+	*out_signal = (int)signal;
+	return 0;
+}
+
+int Sysdeps<Sigqueue>::operator()(pid_t pid, int signal, const union sigval value) {
+	if (signal < 0 || signal > fpos::highest_signal)
+		return EINVAL;
+	return fpos::call_checked(FPOS_CALL_QUEUE_SIGNAL, pid, signal, reinterpret_cast<long>(value.sival_ptr));
 }
 
 } // namespace mlibc

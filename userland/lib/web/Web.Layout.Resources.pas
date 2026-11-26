@@ -35,6 +35,11 @@
     style (background-image, list-style-image, content: SetUrlImage, by
     the URL text as written, with the base it is relative to given in
     OnImageNeeded). Images are owned here.
+  - element image providers: an element that draws its own image (a
+    canvas) registers a provider; when the layout updates it takes the
+    newest pixels from the providers whose pixels changed, into the
+    element's image in place when the size is the same (rcImagePixels:
+    only painting is out of date), else as a new image.
   - frames: what an iframe (or frame) shows, a TEmbeddedContent its
     owner (Web.Frames.Views) sets and takes away (SetElementFrame; not
     owned here).
@@ -55,7 +60,25 @@ uses
 type
   { rcFonts: the font library gained faces (@font-face): text is
     measured again. }
-  TResourceChange = (rcStyleSheets, rcImages, rcFonts, rcFrames);
+  TResourceChange = (rcStyleSheets, rcImages, rcFonts, rcFrames, rcImagePixels);
+
+  { An element that draws its image itself (Web.Canvas.Elements). }
+  TElementImageProvider = class
+  public
+    { The pixels changed since they were last provided. }
+    function ImageChanged: Boolean; virtual; abstract;
+    { Whether there are pixels at all. }
+    function HasImage: Boolean; virtual; abstract;
+    { The pixels now: copied into Current (not nil, the same size) and
+      False, else True with a new image (nil: none) in NewImage. The
+      changed flag is cleared. }
+    function ProvideImage(Current: TImage; out NewImage: TImage): Boolean; virtual; abstract;
+  end;
+
+  TElementImageProviderEntry = record
+    Element: TElement;
+    Provider: TElementImageProvider;
+  end;
 
   TResourceListener = procedure(Change: TResourceChange) of object;
   { A url() image is wanted (once per URL text): Url as written, BaseUrl
@@ -95,6 +118,7 @@ type
     FElementImages: array of TElementImage;
     FUrlImages: array of TUrlImage;
     FFrames: array of TElementFrame;
+    FProviders: array of TElementImageProviderEntry;
     FListeners: array of TResourceListener;
     FOnImageNeeded: TImageNeededEvent;
     FOnImportsNeeded: TImportsNeededEvent;
@@ -139,6 +163,12 @@ type
     procedure RemoveListener(Listener: TResourceListener);
     { For sheets made here (from <style>). }
     procedure RequestImports(Sheet: TCssStyleSheet; Owner: TElement);
+    { An element's image comes from Provider (not owned; nil: no longer). }
+    procedure SetElementImageProvider(Element: TElement; Provider: TElementImageProvider);
+    { A provider has new pixels for the layout to take. }
+    function ImageProvidersPending: Boolean;
+    { The providers' new pixels become the elements' images. }
+    procedure TakeProvidedImages;
     { Forget what belongs to an element that left the document. }
     procedure ElementRemoved(Element: TElement);
     property Document: TDocument read FDocument;
@@ -153,6 +183,8 @@ procedure FreeDocumentResources(Document: TDocument);
 { Tells every document's listeners that the font library changed (the
   library is the process's, so every document measures again). }
 procedure NotifyFontsChanged;
+{ Provider goes: every document forgets it (and the image it gave). }
+procedure ForgetElementImageProvider(Provider: TElementImageProvider);
 
 implementation
 
@@ -194,6 +226,20 @@ var
 begin
   for Index := 0 to High(AllResources) do
     AllResources[Index].FontsChanged;
+end;
+
+procedure ForgetElementImageProvider(Provider: TElementImageProvider);
+var
+  Index, Entry: Integer;
+  Resources: TDocumentResources;
+begin
+  for Index := 0 to High(AllResources) do
+  begin
+    Resources := AllResources[Index];
+    for Entry := High(Resources.FProviders) downto 0 do
+      if Resources.FProviders[Entry].Provider = Provider then
+        Resources.SetElementImageProvider(Resources.FProviders[Entry].Element, nil);
+  end;
 end;
 
 constructor TDocumentResources.Create(Document: TDocument);
@@ -491,6 +537,63 @@ procedure TDocumentResources.RequestImports(Sheet: TCssStyleSheet; Owner: TEleme
 begin
   if Assigned(FOnImportsNeeded) then
     FOnImportsNeeded(Sheet, Owner);
+end;
+
+procedure TDocumentResources.SetElementImageProvider(Element: TElement; Provider: TElementImageProvider);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FProviders) do
+    if FProviders[Index].Element = Element then
+    begin
+      if Provider <> nil then
+      begin
+        FProviders[Index].Provider := Provider;
+        Exit;
+      end;
+      FProviders[Index] := FProviders[High(FProviders)];
+      SetLength(FProviders, Length(FProviders) - 1);
+      SetElementImage(Element, nil);
+      Exit;
+    end;
+  if Provider = nil then
+    Exit;
+  SetLength(FProviders, Length(FProviders) + 1);
+  FProviders[High(FProviders)].Element := Element;
+  FProviders[High(FProviders)].Provider := Provider;
+end;
+
+function TDocumentResources.ImageProvidersPending: Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FProviders) do
+    if FProviders[Index].Provider.ImageChanged or
+       ((FindElementImage(FProviders[Index].Element) < 0) and FProviders[Index].Provider.HasImage) then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TDocumentResources.TakeProvidedImages;
+var
+  Index: Integer;
+  Current, NewImage: TImage;
+  PixelsChanged: Boolean;
+begin
+  PixelsChanged := False;
+  for Index := 0 to High(FProviders) do
+  begin
+    Current := ElementImage(FProviders[Index].Element);
+    if not FProviders[Index].Provider.ImageChanged and
+       ((Current <> nil) or not FProviders[Index].Provider.HasImage) then
+      Continue;
+    if FProviders[Index].Provider.ProvideImage(Current, NewImage) then
+      SetElementImage(FProviders[Index].Element, NewImage)
+    else
+      PixelsChanged := True;
+  end;
+  if PixelsChanged then
+    Notify(rcImagePixels);
 end;
 
 procedure TDocumentResources.ElementRemoved(Element: TElement);

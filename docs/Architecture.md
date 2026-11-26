@@ -570,7 +570,13 @@ sets PAN again whatever the interrupted code had, and the exception
 return restores it; a copy that faults (memory another thread freed)
 leaves through `ArchUserCopyFault` with PAN set again in the saved state.
 MSR PAN does not exist on ARMv8.0, so the copy routines test
-`ArchPanEnabled` first. The Cortex-A72 (QEMU's default here, the
+`ArchPanEnabled` first. Every processor also sets SCTLR_EL1.UCT, UCI and
+DZE (as Linux does): user mode may read CTR_EL0, clean and invalidate
+caches by address (DC CVAU, DC CIVAC, IC IVAU) and zero cache lines (DC
+ZVA), which code generated at run time needs to make itself visible to
+instruction fetch (GCC's `__clear_cache`, LLVM's JIT in Mesa's
+llvmpipe); without them those instructions trap and the program dies of
+SIGILL. The Cortex-A72 (QEMU's default here, the
 Raspberry Pi 4) has no PAN; the Pi 5's Cortex-A76 and QEMU's "max"
 processor have it (`CPU=max scripts/run-qemu-arm64.sh`; the AArch64 boot
 test boots it once). Every system call reaches user memory through
@@ -5240,6 +5246,399 @@ stopping, and the 3D calculations: panning in stereo, 5.1 and 7.1,
 distance, curves, cones, emitter channels, the inner radius, Doppler,
 and a voice placed and moving to one side.
 
+## Media (libmedia)
+
+`libmedia.so` (`userland/lib/media`, units `Media.*`) reads media files
+and decodes their audio: the containers, the audio codecs, the records
+decoded frames come in, colour conversion for video frames, resampling
+and channel mixing to an output's format. Video codecs are libraries of
+their own (libvideo for VP8 and VP9, libav1) that produce libmedia's
+frame records and register themselves with it. Everything is Free
+Pascal, pure CPU, royalty-free formats only (no H.264, HEVC or AAC
+decoding; those are recognised so a file can say what it holds).
+
+### Frames, packets and the decoder contract
+
+`Media.Frames` is the contract with the video decoders: `TVideoFrame`
+(display size, bit depth 8/10/12, layout 4:2:0, 4:2:2, 4:4:4 or
+monochrome, three `TVideoPlane`s of 1 or 2-byte little-endian samples
+with their stride, the H.273 colour primaries, transfer and matrix codes,
+full or limited range, the presentation time) and `TAudioBuffer`
+(rate, channels, interleaved floats -1..1 in the WAVE / SMPTE order:
+front left, front right, centre, LFE, back left, back right, side left,
+side right). `ConvertFrameToBgra` (`Media.ColorConversion`) turns a
+frame into BGRA pixels: BT.601, BT.709, BT.2020, SMPTE 240M, FCC or the
+identity matrix (unspecified: BT.709 above 576 lines), limited or full
+range, 10 and 12-bit samples brought to 8, as integer arithmetic with 16
+fraction bits; chroma is upsampled by repetition.
+
+`Media.Packets` has the tracks and packets. A `TMediaTrack` carries its
+kind, `TCodecId`, the container's codec name, a time base, rate and
+channels or picture size, and the codec's setup in a form that does not
+depend on the container (`Headers`): Vorbis' three header packets, the
+OpusHead packet (an MP4 dOps box is turned into it), FLAC's 34-byte
+STREAMINFO, the vpcC / av1C box bodies. `CodecDelay` is what the decoder
+drops at the start (Opus pre-skip, MP3 encoder delay); a packet's
+`TrimStart` / `TrimEnd` are what it drops from that packet (Ogg granule
+positions, Matroska DiscardPadding, the last FLAC or MP3 frame). Times
+are in the track's time base (`ToMicroseconds`, `ScaleTime` without
+overflow for nanosecond bases).
+
+`TMediaDemuxer` (`Media.Demuxers`): `Recognizes` (by signature, never by
+name), `Open`, `ReadPacket` (all tracks, in file order), `SeekTo`
+(microseconds; the next packets start at or before the target, video at
+a key frame) and `Duration`. `Media.Containers.OpenMediaFile` shows the
+first 64 KiB to each demuxer in turn. `TAudioDecoder`
+(`Media.AudioDecoders`): `Configure(Track)`, `Decode(Packet, Buffer)`
+(applying the delay and trims), `Reset` after a seek;
+`Media.AudioCodecs.CreateAudioDecoder` makes the one for a track.
+`TVideoDecoder` (`Media.VideoDecoders`): `Configure`, `SendPacket`,
+`ReceiveFrame` (frames in presentation order), `Flush` and `Reset`, found
+through `RegisterVideoDecoder` / `CreateVideoDecoder` since the video
+libraries are separate. Broken input raises `EMediaError`
+(`EMediaUnsupported` for valid files using what is not decoded); a
+decoder can take the next packet after one it refused.
+
+### Containers
+
+- **WAV** (`Media.Wav`): RIFF and RF64 WAVE, PCM 8 to 32 bits, floats
+  32 and 64-bit, WAVE_FORMAT_EXTENSIBLE, MP3 data (tag 0x55); packets of
+  4096 frames, seeking by arithmetic.
+- **FLAC** (`Media.FlacFile`): "fLaC" and the metadata blocks (an ID3v2
+  tag in front is skipped); frames have no length, so a frame ends where
+  the next valid header starts and the CRC-16 of the bytes before it
+  comes out zero. Seeking uses the seek table, or bisects the file by
+  frame headers' sample numbers, then steps to the frame holding the
+  target.
+- **Ogg** (`Media.Ogg`, RFC 3533): pages with their CRC-32 checked,
+  packets across pages, multiplexed and chained streams (a chained link's
+  tracks appear when its first page is reached, so `TrackCount` can grow
+  while reading), the Vorbis, Opus and FLAC mappings (Theora recognised).
+  Packet lengths are worked out without decoding (`Media.Ogg.Codecs`:
+  the Opus TOC byte, FLAC frame headers, Vorbis block sizes from the
+  setup header's modes, scanned backwards from its end as ffmpeg does,
+  `Media.Ogg.VorbisModes`), so timestamps come from granule positions
+  exactly: a first page granule smaller than what its packets decode to
+  becomes `TrimStart`, a last one `TrimEnd`. Opus times count from the
+  end of the pre-skip (the first packet is at minus the pre-skip, the
+  decoder drops it as `CodecDelay`); a Vorbis stream's first packet sits
+  at minus its own length since it decodes to nothing. Seeking bisects
+  over pages, less the Opus pre-roll of 80 ms.
+- **Matroska and WebM** (`Media.Ebml`, `Media.Matroska.*`): the EBML
+  header (DocType webm or matroska), segments and clusters of known or
+  unknown size (live streams), SeekHead, Info, Tracks (Vorbis' Xiph-laced
+  CodecPrivate split into its three headers, OpusHead with CodecDelay and
+  SeekPreRoll, FLAC's metadata blocks to STREAMINFO, MP3, integer PCM
+  little and big-endian, float PCM, VP8, VP9, AV1 with av1C; AAC, H.264,
+  HEVC and Theora recognised), header stripping, SimpleBlock and
+  BlockGroup (BlockDuration, ReferenceBlock for key frames,
+  DiscardPadding as `TrimEnd`), Xiph, EBML and fixed lacing; Cues for
+  seeking, walking the clusters when there are none. Block times are less
+  the codec delay. Frames compressed with zlib, bzip2 or LZO, or
+  encrypted, are refused (that track's packets skipped).
+- **MP4** (`Media.Mp4.*`, ISO BMFF): moov and its sample tables (stts,
+  ctts, stsc, stsz/stz2, stco/co64, stss), edit lists (the first media
+  edit shifts times; audio before 0 beyond the codec's delay becomes
+  `TrimStart`; the end of the edit, or a last sample shorter than its
+  codec frame, `TrimEnd`), 64-bit and to-the-end box sizes, the sample
+  entries av01 (av1C), vp09 (vpcC), vp08, Opus (dOps to OpusHead's
+  little-endian layout), fLaC (dfLa to STREAMINFO), mp4a (esds: object
+  types 0x6B/0x69 MP3, 0x40/0x67 AAC recognised), .mp3, ipcm, fpcm, sowt,
+  twos and lpcm (PCM in packets of up to 1024 frames), avc1/hvc1/hev1
+  recognised; samples of all tracks in file order. Fragmented files
+  (mvex/trex, moof/traf with tfhd defaults, tfdt and every trun flag)
+  are read as they arrive: a moof or sample not yet wholly in the stream
+  makes `ReadPacket` return False without losing its place and a later
+  call goes on once more is appended, so an init segment followed by
+  media segments appended to one stream (Media Source Extensions, later)
+  plays. Seeking uses stss, or reads the remaining moof boxes (only
+  those) and searches their index; mfra is not used.
+- **MP3** (`Media.Mp3File`): ID3v2 tags in front (footers, several in a
+  row) and ID3v1 / APEv2 at the end skipped; a stream is taken only when
+  three more frames agree with the first; the Xing/Info and LAME tags
+  (frame count, seek table, encoder delay as `CodecDelay` = delay + 529,
+  padding as `TrimEnd` = padding - 529 on the last packet; the tag frame
+  itself is not given out) and VBRI; one packet per frame; seeking by the
+  Xing or VBRI table or, for constant bit rates, by position.
+
+### Audio decoders
+
+- **PCM** (`Media.Pcm`): integers of 8 to 32 bits and floats of 32 and
+  64, little or big-endian; integers are divided by 2^(bits - 1), which
+  is exact.
+- **FLAC** (`Media.Flac`, RFC 9639): constant, verbatim, fixed (orders
+  0-4) and LPC (orders 1-32) subframes, Rice partitions with escapes,
+  wasted bits, the stereo decorrelations, 4 to 32 bits per sample (64-bit
+  arithmetic, so the 33-bit side channel of 32-bit audio needs nothing
+  special), 1 to 8 channels, the frame's CRC-8 and CRC-16 checked.
+- **Vorbis** (`Media.Vorbis.*`, the Vorbis I specification): the three
+  headers (a single Xiph-laced block from Matroska is split too),
+  codebooks (a 10-bit lookup table and a fallback for longer codes; VQ
+  lookup types 1 and 2), floors 0 and 1, residues 0, 1 and 2, channel
+  coupling, windows and overlap for mixed block sizes, and the inverse
+  MDCT as a DCT-IV through an N/4-point FFT in double precision;
+  channels reordered from the Vorbis order to the WAVE order. Its output
+  is within 2e-7 of libvorbis' (about 137 dB).
+- **MP3** (`Media.Mp3.*`, MPEG-1, 2 and 2.5 Layer III; the structure and
+  tables follow minimp3, public domain): every bit rate including free
+  format, mono, stereo, mid/side and intensity stereo (MPEG-2's too),
+  the bit reservoir, CRC frames, mixed and short blocks, alias reduction,
+  the IMDCT and a DCT-II based synthesis filter bank. Packets can be
+  whole frames or any pieces of the stream (MP3 in WAV): the decoder
+  finds and assembles frames itself and resynchronises after damage. A
+  frame whose reservoir reaches back past what it has (just after a
+  seek) comes out silent, so timing holds. Layers I and II are refused
+  (EMediaUnsupported). Its output is within ISO 11172-4's full accuracy
+  of ffmpeg's floating point decoder (RMS 1e-7 to 3.5e-7 against the
+  limit of 8.8e-6).
+- **Opus** (`Media.Opus.*`, RFC 6716 with the RFC 8251 updates; the
+  tables were generated from libopus 1.5.2 and the units carry its BSD
+  notice): the range decoder, SILK (narrow, medium and wide band, mono
+  and stereo, 10 to 60 ms, LBRR frames skipped as in normal decoding,
+  its resampler), CELT (every band layout and frame size from 2.5 to 20
+  ms, transients, spreading, PVQ, anti-collapse, energy finalisation,
+  the pitch post-filter, de-emphasis), hybrid mode, redundancy frames
+  and mode transitions, TOC codes 0 to 3 with padding, the classic packet
+  loss concealment (an empty packet), multistream with channel mapping
+  families 0, 1 (reordered to the WAVE order) and 255, the OpusHead
+  output gain and the reference's soft clipper; output at 48 kHz
+  (`ConfigureRaw` takes 8, 12, 16, 24 or 48 kHz for the raw API the test
+  vectors use, with `DecodeRaw`, `DecodeRawInt16` and `FinalRange`).
+  The neural concealment of newer libopus (deep PLC, DRED) is left out.
+
+### Resampling, mixing and output
+
+`TResampler` (`Media.Resampler`) is a polyphase windowed-sinc filter
+(Kaiser window, beta 8.6): the output rate over the input rate, reduced,
+is Up/Down; output sample j lies at input time j * Down / Up, whose
+fraction picks one of Up phases (rounded to 1024 phases when Up is
+larger, as for 44100 to 47999). It has 32 taps upsampling and
+proportionally more downsampling (the cut-off just under the lower
+Nyquist frequency), streams (what is fed in pieces gives the same
+output), and `Flush` makes the output exactly ceil(input * Up / Down)
+frames. `TChannelMixer` (`Media.ChannelMixer`) maps channel counts in the
+usual layouts: downmixing folds centre and surrounds into the fronts at
+-3 dB (ITU-R BS.775) without the LFE, each output row scaled so
+full-scale input cannot clip; upmixing puts mono in both fronts and
+stereo in the front pair. `TAudioConverter` (`Media.AudioConversion`)
+chains both and writes 16 or 32-bit integers (rounded and clipped) or
+floats, the audio devices' sample kinds 2, 4 and 5.
+
+### mediaplay
+
+`mediaplay FILE...` plays the first audio track of each file on the
+audio device (libaudio's `Audio.Device`), as floats at the decoder's own
+rate and channels when the device takes them (the kernel converts to
+what the hardware plays), through `TAudioConverter` otherwise or when
+`-r RATE` / `-c CHANNELS` ask; `-s SECONDS` seeks first, `-d PATH`
+chooses the output. `-i` prints the container, length and tracks.
+`-k` decodes every track and prints checksums instead of playing (in
+the manner of ffmpeg's framemd5): `video TRACK FRAME PTS WxH MD5` per
+decoded frame (the visible samples of its planes, row by row), `packet
+TRACK N PTS SIZE MD5` per packet of a track without a decoder (video
+until a video library registers its decoders), and `audio TRACK FRAMES
+RATE CHANNELS MD5` per audio track (its samples as 16-bit
+little-endian). A damaged packet is skipped; a hundred and the file is
+given up.
+
+### Tests
+
+`make media-test` builds libmedia for the host (tools/MediaTest) and
+checks it over fixtures the host's tools make at build time
+(`tools/MediaTest/make-*-fixtures.py` into build/tools/media-fixtures;
+each script skips, with a note in its manifest, what the host cannot
+make; the synthetic signals are made by Python and are the same every
+build):
+- colour conversion (known colours in each matrix, range and depth),
+  times, PCM decoding and trimming, WAV files of every sample kind
+  against the floats they were made from, the resampler (length, a
+  tone's accuracy, a tone above the new Nyquist frequency removed, an
+  odd ratio, feeding in pieces), the mixer's matrices, the output
+  encoding;
+- FLAC: files the host's flac made in many settings (levels 0-8, 8 to
+  32 bits, 1 to 8 channels, block sizes 192 to 65535, LPC order 32,
+  odd rates, constant/verbatim subframes, wasted bits, an ID3v2 tag in
+  front, with and without a seek table) decoded to exactly the WAV
+  files they were made from, their integer samples' MD5 equal to
+  STREAMINFO's, seeking landing on the frame holding the target with the
+  WAV's samples there, and damaged frames refused (never a crash);
+- Vorbis: Ogg Vorbis files libvorbis made through ffmpeg (qualities -1
+  to 10, 8 to 96 kHz, 1, 2, 3 and 6 channels, one with digital silence)
+  decoded through a test-only page splitter and through the Ogg
+  demuxer, against libvorbis' own decoding: at least 100 dB, largest
+  error at most 1e-4, the reference's length, no samples from the first
+  packet; the inverse MDCT against its definition;
+- MP3: files lame and ffmpeg made (MPEG-1 32 to 320 kbit/s, VBR, ABR,
+  mono, joint, stereo, forced mid/side, CRC, no reservoir, transients
+  for short blocks, MPEG-2 and 2.5 rates, ID3 tags, no LAME tag, MP3 in
+  WAV, uneven pieces) against ffmpeg's mp3float (the same number of
+  samples, so the gapless trims agree, and ISO 11172-4 full accuracy),
+  free format against lame's own decoder, seeking, and damaged streams
+  decoding without crashing;
+- containers: 27 files ffmpeg muxed (Ogg Opus, Vorbis and FLAC, a
+  chained Ogg, WebM with Opus, Vorbis, live, VP8 and VP9, Matroska with
+  FLAC, MP3, PCM both ways, floats and AV1, MP4 with Opus, FLAC, MP3,
+  PCM, AAC, VP9, AV1, fragmented, and H.264 with B-frames and an edit
+  list) plus a Matroska file the script writes byte by byte (every
+  lacing, header stripping, unknown sizes, a BlockGroup): every packet's
+  size, MD5, time, duration and key flag against ffprobe's, the tracks'
+  codecs, rates, sizes and setup data, seeking, a fragmented MP4 opened
+  from its init segment and then appended to, and every file cut short
+  and with bytes overwritten (only EMediaError may come out);
+- end to end: the container fixtures decoded as a player would, the
+  lossless ones exactly the source WAV, the lossy ones its length to
+  the sample and without a shift;
+- Opus: the RFC 8251 test vectors (01 to 12), decoded stereo and mono
+  at 48 kHz: every packet's final range equal to the encoder's, and the
+  output passing opus_compare's quality measure (ported; its band
+  spectrum through an FFT) against `testvectorNN.dec` or `NNm.dec`, as
+  the reference's run_vectors.sh allows; libopus fixtures (SILK at each
+  band and frame size, with in-band FEC, hybrid, CELT low delay at 2.5
+  to 10 ms, CBR, 40 and 60 ms, 5.1) against libopus' own decoding at
+  over 60 dB; malformed packets, a lost packet, 16 kHz output. The
+  vectors come from `OPUS_TEST_VECTORS` (default
+  ~/Downloads/sources/opus_testvectors-rfc8251.tar.gz, checksum pinned)
+  and are skipped without it; they add about 30 s.
+coretest makes a WAV file with `tone` and checks `mediaplay -i` and that
+`mediaplay -k`'s MD5 is the file's data chunk's (16-bit samples decode
+to floats and back exactly), and that a file that is no media file is
+refused.
+
+## Video decoders (libvideo: VP8 and VP9)
+
+libvideo.so (`userland/lib/video`, over libmedia) decodes VP8 (RFC 6386)
+and VP9 (profiles 0 to 3: 4:2:0, 4:2:2, 4:4:0 and 4:4:4 at 8, 10 and 12
+bits) natively, bit exact with the reference decoder, libvpx: every
+picture's MD5 equals vpxdec's. The arithmetic is libvpx's where it
+matters (the 16-bit intermediate values of VP8's transforms, VP9's
+transforms rounded after every multiplication, the way motion vectors
+are clamped and predicted, which pixels intra prediction makes up at the
+frame's edges, the loop filters' order), including its quirks (a VP9
+error-resilient frame drops the sign biases it just read; VP8 clamps
+near vectors whatever the header's clamping type says; a VP9 packet
+shows at most its last frame).
+
+`Video.MediaDecoders` registers `TVp8MediaDecoder` and `TVp9MediaDecoder`
+with libmedia's video decoder registry (using the unit is enough), so a
+program that opens a WebM or MP4 file with libmedia and calls
+`CreateVideoDecoder(codecVp8 / codecVp9)` decodes it; mediaplay does,
+and `mediaplay -k` prints an MD5 per picture. Neither codec reorders, so
+a packet's picture comes out at once with the packet's presentation
+time; decoding errors raise `EMediaError`. `Video.Ivf` reads IVF files
+(what vpxenc writes; libmedia does not demux them).
+
+The frame contract is libmedia's `Media.Frames`: 8-bit samples as bytes,
+10 and 12-bit as 2 bytes little-endian, planes cropped to the visible
+size. VP8 frames say BT.601 limited range; VP9's colour space code maps
+to the H.273 codes (BT.601, 709, SMPTE 170/240, BT.2020, sRGB as
+identity). 4:4:0 has no layout of its own in the contract: such frames
+say `pl420` and their chroma planes are full width and half height (the
+plane sizes are right; a converter that trusts the layout gets the
+colours of the wrong columns, but stays inside the planes).
+
+### VP8
+
+`Vp8.FrameHeader` reads the tag and the first partition's header,
+keeping what lasts in `TVp8StreamState` (probabilities and the copy to
+go back to when a frame does not keep its updates, segmentation, loop
+filter deltas, sign biases). `Vp8.Modes` reads every macroblock's modes
+and vectors first (near vectors from above, left and above-left; split
+macroblocks), into a grid with a border row and column. Reconstruction
+(`Vp8.Reconstruction`) goes row by row, each row's tokens from its
+partition (`Vp8.Residuals`): intra prediction (`Vp8.IntraPrediction`,
+the picture's border holding 127 above and 129 left, the above-right
+pixels of the 4x4 blocks copied down as libvpx does), six tap or
+bilinear motion compensation (`Vp8.InterPrediction`; version 3's whole
+pixel chroma), the inverse DCT and Walsh-Hadamard transforms. Then the
+loop filter (`Vp8.LoopFilter`, normal or simple, levels by segment,
+reference and mode), the borders extended (32 luma pixels, so vectors
+may point outside), and the last, golden and alternate references
+replaced or copied. With several token partitions, rows of different
+partitions are reconstructed on worker threads, each a macroblock and
+one behind the row above (`TVideoProgress`).
+
+### VP9
+
+A packet's superframe index (if any) splits it into frames.
+`Vp9.FrameHeader` reads the uncompressed header (profile, colour format,
+size or a reference's size, the 8 reference slots it refreshes, loop
+filter, quantizers, segmentation, tiles) and the compressed one
+(transform mode, differential probability updates, compound reference
+setup). `Vp9.Decoder` keeps the four frame contexts, resets them for key,
+intra-only and error-resilient frames as libvpx does, and after the
+frame adapts the probabilities from the counts (`Vp9.Probabilities`)
+unless the frame is frame-parallel or error resilient.
+
+Pictures (`Vp9.Pictures`) hold 16-bit samples for every bit depth, so
+one code path serves 8, 10 and 12 bits; they are a whole number of 64x64
+superblocks in size, and keep their motion vectors for the next frame's
+prediction. A tile (`Vp9.TileDecoder`) walks its superblocks, splitting
+partitions down to blocks; each block's modes (`Vp9.Modes`: segment ids
+with temporal prediction, skip, transform size, references with their
+contexts, inter modes, switchable filters, motion vectors from up to 8
+neighbours and the previous frame, sub-8x8 blocks) are read, then the
+block is reconstructed (`Vp9.BlockReconstruction`): intra blocks
+transform block by transform block (`Vp9.IntraPrediction`, 10 modes, the
+4x4 directional modes their own), inter blocks predicted whole
+(`Vp9.InterPrediction`: 8-tap regular, smooth and sharp kernels and
+bilinear, compound averaging, references of another size through fixed
+point scale steps, edges repeated into a scratch block exactly where
+libvpx does) and their residual added. Tokens (`Vp9.Residuals`) use the
+scan orders of the transform type and the Pareto table; the transforms
+(`Vp9.Transforms`: DCT 4 to 32, ADST 4 to 16, Walsh-Hadamard for
+lossless frames) are libvpx's high bit depth ones, converted from its C
+by a script. The loop filter (`Vp9.LoopFilter`) runs after all tiles:
+superblock by superblock, each plane's vertical then horizontal edges,
+4, 8 or 16 wide by transform size, levels by segment, reference and
+mode, with libvpx's general (non-4:2:0) edge rules, which give the same
+result as its bit mask paths.
+
+Threads: the tile columns of a tile row are decoded at the same time
+(they share nothing but disjoint parts of the above contexts and the
+mode info), and superblock rows of the loop filter, each two superblocks
+behind the row above. Frame-parallel decoding (the next frame starting
+while this one finishes) is not done; libvpx dropped it too.
+
+### Threads (Video.WorkerPool)
+
+`TVideoWorkerPool` runs jobs on worker threads (TThread, RTL events) and
+reports the first exception of a job from `WaitAll`; `TVideoProgress`
+counters let a job wait for another's row (spinning, then yielding),
+and are aborted when a job fails so that none waits forever. Decoders use
+`DefaultVideoThreadCount` threads (one per processor, at most 8) unless
+told otherwise (`Video.MediaDecoders.VideoThreadCount`).
+
+### Tests
+
+`make video-test` builds libvideo and libmedia for the host
+(tools/VideoTest, with range checks) and decodes:
+- 28 streams `tools/VideoTest/make-vectors.py` makes at build time with
+  the host's ffmpeg (test patterns) and vpxenc: VP8 versions 0 to 3, 8
+  token partitions, alternate references, error resilience, near
+  lossless, real-time with segmentation, odd sizes; VP9 superframes,
+  2x2 tiles, lossless, segmentation (variance and cyclic refresh), frame
+  parallel, error resilient, no loop filter, profiles 1 (4:4:4, 4:2:2,
+  4:4:0), 2 (10 and 12 bits) and 3 (10-bit 4:4:4, 12-bit 4:2:2), and
+  scaled references (`scaling-encoder.c`, the host's libvpx asked to
+  scale its input internally; left out without a C compiler or libvpx's
+  headers), each on one thread and on three, every picture against
+  vpxdec's MD5;
+- the same streams put in WebM and MP4 files by ffmpeg, through
+  libmedia's demuxers and decoder registry as mediaplay -k does;
+- every stream damaged 8 ways (bytes changed, packets cut or dropped):
+  refusals are fine, range or access errors fail;
+- the interface: registration, frame records, timestamps, the IVF
+  reader, the boolean decoder against an encoder written in the test;
+- the libvpx test vectors when they are in `VIDEO_CONFORMANCE_VECTORS`
+  (default ~/Downloads/sources/libvpx-test-vectors: the 61 vp80-0x
+  vectors and 48 VP9 ones, quantizers, sizes, tiles, resizing, intra-only,
+  show-existing frames, 4:2:2/4:4:0/4:4:4, 10 and 12 bits;
+  `prepare-conformance.py` turns their WebM files into IVF); skipped
+  without them.
+
+coretest decodes a small VP9 WebM file with `mediaplay -k` and checks
+the pictures' MD5s.
+
 ## Networking
 
 A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
@@ -7980,6 +8379,152 @@ and has `check-written.py` check them with Python's zipfile (testzip,
 names, data, modes, DOS and extended times, ZIP64 end records).
 The pax fixture is also read as .tar.zst (two Zstandard frames) and
 .tar.xz. 7z is not read (TODO.md).
+
+### Video: the AV1 decoder (libav1)
+
+**libav1** (`userland/lib/av1`, units `Av1.*`) decodes AV1 (the AOMedia
+Video 1 bitstream, royalty free): all of the Main profile in 8 and
+10 bits, and the High (4:4:4) and Professional (4:2:2, 12-bit)
+profiles' formats too, with every coding tool, film grain synthesis,
+and tiles decoded on several threads. It needs only libmedia and the
+runtime library, so it builds and is tested on the host as well.
+Programs give `TAv1Decoder` the OBUs of a stream a temporal unit at a
+time (an IVF frame, a Matroska block, an MP4 sample) and take the
+frames it shows as libmedia's `Media.Frames` `TVideoFrame` records: one
+plane each for Y, U and V, bytes for 8-bit streams and little-endian
+words otherwise, cropped to the coded size (UpscaledWidth by
+FrameHeight; the render size is only a hint), with the stream's colour
+description. Or they go through libmedia: `Av1.MediaDecoder` registers
+`TAv1VideoDecoder` (a `TVideoDecoder`: Configure with the track's av1C
+configuration OBUs, SendPacket, ReceiveFrame, Reset) for codecAv1 when a
+program uses it, as mediaplay does, so `mediaplay -k` checksums the AV1
+frames of WebM, Matroska, MP4, IVF and OBU files (the last two read by
+libmedia's `Media.Ivf` and `Media.ObuStream`).
+
+```
+  Av1.Decoder         TAv1Decoder: Decode (OBUs, a presentation time),
+                      TakeFrame, Reset; operating point 0
+  Av1.FrameDecoding   after a frame header: CDFs, previous segment ids,
+                      motion field estimation; tile groups (tiles on the
+                      worker pool); the wrapup: post filters, motion field
+                      storage, the reference update; show_existing_frame
+  Av1.Output          the output process: crop, film grain, TVideoFrame
+  Av1.MediaDecoder    TAv1VideoDecoder, libmedia's decoder for codecAv1
+  Av1.WorkerPool      workers that share a job's indices (tiles, rows)
+=========== headers ========================================================
+  Av1.SequenceHeader  Av1.FrameHeader (TFrameHeader)  Av1.FrameHeaderParsing
+  Av1.BitReader (f(n), uvlc, le, leb128, su, ns)  Av1.References (the slots)
+=========== tiles and blocks: syntax ========================================
+  Av1.TileDecoding    init_symbol, decode_tile, read_lr, exit_symbol
+  Av1.BlockDecoding   decode_partition, decode_block, compute_prediction
+  Av1.BlockFlagsSyntax (segment ids, skip, CDEF, delta q/lf, is_inter)
+  Av1.IntraModeSyntax Av1.PaletteSyntax Av1.InterModeSyntax
+  Av1.ReferenceFrameSyntax Av1.MotionVectorSyntax Av1.TransformSyntax
+  Av1.CoefficientSyntax  Av1.ResidualDecoding (transform blocks and trees)
+  Av1.SymbolDecoder   the arithmetic decoder (64-bit window)  Av1.CdfContext
+=========== prediction and reconstruction ===================================
+  Av1.MvPrediction Av1.MvCandidates Av1.WarpSamples   find_mv_stack ...
+  Av1.MotionField     motion field estimation (projection) and storage
+  Av1.IntraPrediction Av1.IntraEdges Av1.PalettePrediction Av1.ChromaFromLuma
+  Av1.InterPrediction Av1.BlockInterPrediction Av1.MotionVectorScaling
+  Av1.Warp (local and global warp, shear, warp estimation)  Av1.Obmc
+  Av1.CompoundMasks (wedge, difference, inter-intra, distance weights)
+  Av1.Reconstruction  Av1.InverseTransform (DCT/ADST/flip/identity 4-64, WHT)
+=========== post filters ====================================================
+  Av1.PostFilters  Av1.LoopFilter Av1.LoopFilterSamples  Av1.Cdef
+  Av1.SuperRes  Av1.LoopRestoration Av1.Wiener Av1.SelfGuided
+  Av1.RestorationWindow  Av1.FilmGrain Av1.FilmGrainNoise Av1.FilmGrainScaling
+=========== state and tables ================================================
+  Av1.FrameContext (frame-wide arrays)  Av1.TileContext (a tile's block)
+  Av1.Picture (planes of 16-bit samples)  Av1.Common  Av1.ToolStatistics
+  Av1.Constants Av1.Tables Av1.DefaultCdfs Av1.QuantizerMatrices (generated)
+```
+
+**Following the specification.** The decoder is the decoding process of
+the AV1 Bitstream and Decoding Process Specification written out in
+Pascal: the routines carry the specification's names
+(`DecodePartition` is decode_partition, `ReadCoefficients` is coeffs( )),
+the state keeps its variable names (MiRow, YMode, RefFrame, Mv,
+`TBlockInfo` for the per 4x4 arrays YModes, RefFrames, Mvs, MiSizes,
+...), and every constant table (scan orders, default CDFs, filter
+kernels, quantizer lookups and matrices, Gaussian sequence) is generated
+from the specification's own Markdown sources by
+`userland/lib/av1/make-tables.py` into checked in include files
+(`Av1.Constants.inc`, `Av1.Tables.inc`, `Av1.DefaultCdfs.inc`,
+`Av1.QuantizerMatrices.inc`, and the record of adaptive CDFs
+`Av1.CdfFields.inc` with its initialization). Where the specification
+writes a slow but simple formulation the code takes a faster one with
+the same results: the symbol decoder keeps a 64-bit window of inverted
+bits instead of reading bit by bit (running out of data shifts in ones,
+the specification's zero padding), the coefficient contexts work out
+the transform class once per block, CDEF filters a padded copy of each
+8x8 block with an "unavailable" value no strength lets through,
+unscaled inter prediction inside the reference skips clamping and does
+zero fractions as plain scaling.
+
+**State.** A `TFrameContext` holds the frame being decoded: its headers,
+CurrFrame, the CDFs it started with and those saved from the tile
+context_update_tile_id, and the frame-wide arrays indexed by mode info
+position (with room to the next 128 samples and a superblock more,
+since blocks reach past the frame's edges and the specification stores
+them whole). Each tile is decoded with a `TTileContext` (its symbol
+decoder and CDFs, the above and left contexts, the block's variables,
+scratch for prediction and reconstruction); tiles write disjoint parts
+of the frame's arrays, so several decode at once on the worker pool,
+one context per worker. Samples are 16-bit everywhere (8, 10 and
+12-bit streams take the same code), in `TPicture` planes with padding
+past the right and bottom. A decoded frame becomes one
+`TReferenceFrame` (the picture after loop restoration, its sizes and
+order hints, the motion field and segmentation map stored compactly,
+its CDFs, global motion, loop filter deltas, segmentation features and
+film grain parameters) that every slot refresh_frame_flags names shares,
+counting references.
+
+**Post filters.** After the last tile group the frame wrapup runs the
+deblocking filter (in place: all vertical edges of a plane, then all
+horizontal ones), CDEF (into a copy), superres upscaling and loop
+restoration (into another copy), each on the worker pool by superblock
+rows or restoration stripes: within one pass of the deblocking filter
+no two edges touch the same samples (filter lengths follow the
+transform sizes on both sides), so rows can go in any order. Film grain
+is added to the output frame only, as the specification's output
+process does, never to the reference.
+
+**Threads.** `TAv1Decoder.Create(ThreadCount)` makes a pool of
+ThreadCount workers (the calling thread and ThreadCount - 1 threads,
+`Av1.WorkerPool`); the tiles of a tile group and the rows of each post
+filter are shared between them. A stream of one tile still gets its
+post filters spread over the workers.
+
+**Tests.** `make av1-test` builds libav1 on the host with range checks
+(`tools/Av1Test`) and decodes the streams `tools/Av1Test/make-fixtures.py`
+makes at build time with the host's encoders: aomenc with each tool and
+format switched on (intra only, inter at several speeds, global and
+local warp, OBMC, compound modes, 10 and 12 bits, 4:4:4 and 4:2:2,
+monochrome, palettes and intra block copy, film grain, superres,
+uniform and non-uniform tiles, 128x128 superblocks, lossless, quantizer
+matrices, delta q and loop filter, segmentation, error resilience with
+switch frames, reference scaling from resize mode, forward key frames),
+SvtAv1EncApp and rav1e through ffmpeg; some of them also in WebM, MP4
+and Matroska files (ffmpeg, without re-encoding) and as OBU files, read
+through libmedia's demuxers and decoder registry. Every frame must equal what
+aomdec, libaom's reference decoder, gives, sample for sample, on one
+thread and with four, and damaged copies of the streams (bytes changed,
+temporal units cut short or dropped) must be decoded or refused with
+EAv1Error, never anything worse; the test lists how often each coding tool came up
+(`Av1.ToolStatistics`, compiled in only for the test). On the system,
+coretest runs `av1check`, which decodes four small streams built into it
+(`userland/av1check/Av1Check.Streams.inc`, written by
+`tools/Av1Test/make-system-check.py`) on one thread and four and
+compares each frame's hash with aomdec's, then decodes the first again
+from a WebM file through libmedia; a second coretest line has av1check
+write that WebM file and checks mediaplay -k's MD5 of each frame.
+
+**Not done.** Large scale tile decoding (Annex D: tile list OBUs, for
+light fields) is not supported, and the scalability metadata's
+operating point choice is fixed at 0. Speed comes from tables, integer
+arithmetic and threads; there are no SIMD paths yet, and frames are not
+decoded in parallel with each other.
 
 ## Ports and packages
 
@@ -11537,7 +12082,7 @@ independent) against the Free Pascal runtime library:
   winding counts as far as it is from even (`ShapeCoverageBytes` gives
   the coverage of an area under either rule, for paints and masks).
 
-  Vector graphics (SVG, and a canvas API later) build on it:
+  Vector graphics (SVG, and libweb's canvas) build on it:
   `Drawing.Transforms` (2 x 3 affine matrices: combining, inverting,
   the scale a transform gives lengths), `Drawing.Paths` (subpaths of
   lines, quadratic and cubic curves and elliptical arcs in SVG's
@@ -11562,7 +12107,21 @@ independent) against the Free Pascal runtime library:
   (filling a shape with a paint under either rule at an opacity,
   through a coverage mask; masks multiply; a layer drawn over a canvas
   through a mask and an opacity, for group opacity, clip paths and
-  masks). `Drawing.CoverageBlending` blends a
+  masks). For canvas, `Drawing.Paints` also has conic gradients (an
+  angle from a start, clockwise), patterns repeated along one axis only
+  (`NoRepeatX`, `NoRepeatY`) and gradients mixed without premultiplying
+  (`InterpolateUnpremultiplied`, as canvas gradients are);
+  `Drawing.Compositing` composites colours by every Porter-Duff operator
+  canvas names (source-over/in/out/atop, destination-over/in/out/atop,
+  lighter, copy, xor) and the sixteen blend modes of Compositing and
+  Blending Level 1 (separable ones per channel, hue, saturation, color
+  and luminosity through SetLum/SetSat), in premultiplied floating point
+  (an integer path for source-over), a span at a time with a weight per
+  pixel (a clip's coverage) mixing the result with what was there;
+  `Drawing.Blurring` approximates a Gaussian of standard deviation s by
+  three box blurs of d = floor(s 3 sqrt(2 pi) / 4 + 0.5) (feGaussianBlur's
+  rule, running sums, so the radius does not cost), on a byte plane or
+  on colours premultiplied. `Drawing.CoverageBlending` blends a
   colour by a coverage gamma-correct (the light of both mixed, gamma
   1.8), a span of coverage bytes at a time: what text is drawn with.
   `Drawing.SmoothLines` draws
@@ -12545,12 +13104,27 @@ descriptors (260-269)".
   SIGILL, SIGBUS or SIGTRAP: a handler runs and the instruction is
   tried again (or the handler `siglongjmp`s out); without one the
   program says where it faulted and ends as killed by the signal.
-  Writing to a pipe nobody reads raises SIGPIPE. `sigaltstack` is
-  accepted and ignored (handlers run on the thread's stack).
-  `setitimer(ITIMER_REAL)` and `alarm` are a kernel thread of the
-  process (`timers.cpp`, started with the first timer, all signals
-  blocked, system calls only) sleeping on a word until the timer is due
-  and then sending SIGALRM; a child of fork has none.
+  Writing to a pipe nobody reads raises SIGPIPE. `SA_RESTART`,
+  `SA_ONSTACK` and `SA_RESETHAND` go to the kernel as disposition
+  flags; `sigaltstack`, `sigqueue`, `sigtimedwait`/`sigwaitinfo`/
+  `sigwait` are the kernel's (calls 242, 240, 241), and `siginfo_t`
+  carries `SI_USER`, `SI_QUEUE`, `SI_TIMER` or `SI_KERNEL`, the sender,
+  the value and a timer's id and overrun.
+- **Timers and clocks** (`timers.cpp`, `clocks.cpp`): `setitimer`,
+  `getitimer` and `alarm` (all three interval timers) and
+  `timer_create`/`timer_settime`/`timer_gettime`/`timer_delete`/
+  `timer_getoverrun` are the kernel's (calls 243-248). `SIGEV_SIGNAL`
+  and `SIGEV_NONE` are the kernel's own; `SIGEV_THREAD` is made here:
+  the kernel timer signals an event (`TimerNotifyEvent`), and a thread
+  of the timer's (all signals blocked, `sigev_notify_attributes` if
+  given, detached) waits for it, takes the overrun and calls the
+  function; `timer_delete` marks it and wakes it to end. A child of
+  fork closes what SIGEV_THREAD timers left in it. `clock_gettime` and
+  `clock_getres` of `CLOCK_PROCESS_CPUTIME_ID`, `CLOCK_THREAD_CPUTIME_ID`
+  and the clocks `clock_getcpuclockid`/`pthread_getcpuclockid` make
+  (Linux's encoding, negative; mlibc patched with two sysdeps for them,
+  `toolchain/patches/mlibc/0004-processor-time-clock-ids.patch`) read
+  the kernel's real per-thread times (call 249), not the uptime.
 - **Sockets** are the kernel's IPv4 and IPv6 sockets: addresses
   translated from `sockaddr_in`/`sockaddr_in6` (ports in host order in
   the kernel's record), the common `SO_*`, `TCP_*`, `IP_TTL`,
@@ -12632,9 +13206,10 @@ dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default - unless every
 thread blocks it: then it waits, for a signal descriptor or sigwait -
 and ignored ones),
 or - handled, or blocked by every thread - left pending, and one thread
-that does not block it is alerted (its wait ends with
-`ErrorInterrupted`, which becomes `EINTR`; there is no `SA_RESTART`),
-unless the sending thread takes it itself (`raise`). The alert is given
+that does not block it (or waits for it in `sigtimedwait`, preferred)
+is alerted (its wait ends with `ErrorInterrupted`, which becomes
+`EINTR`, or the call is made again: below), unless the sending thread
+takes it itself (`raise`). A new thread starts with its creator's mask. The alert is given
 up when that thread is back in user mode, whoever took the signal.
 At the thread's next return to user mode (`DeliverPendingSignals`, at
 the end of every system call and in the interrupt return hook) the
@@ -12650,6 +13225,113 @@ parent's waitpid sees the signal; a child that ends sends SIGCHLD to a
 parent that handles it; a process ended by a processor exception
 nobody took counts as killed by SIGSEGV.
 
+**Signals and timers (calls 240-249)**:
+
+| Call | (Arguments) | C |
+|---|---|---|
+| 240 | `CallQueueSignal` (Pid, Signal, Value) | sigqueue |
+| 241 | `CallWaitForSignal` (MaskAddress, InformationAddress, TimeoutNanoseconds or -1) | sigtimedwait, sigwaitinfo |
+| 242 | `CallSetAlternateSignalStack` (NewAddress, OldAddress) | sigaltstack |
+| 243 | `CallCreatePosixTimer` (ClockId, EventAddress) | timer_create |
+| 244 | `CallSetPosixTimer` (TimerId, Flags, NewAddress, OldAddress) | timer_settime |
+| 245 | `CallGetPosixTimer` (TimerId, SpecAddress) | timer_gettime |
+| 246 | `CallDeletePosixTimer` (TimerId) | timer_delete |
+| 247 | `CallGetTimerOverrun` (TimerId) | timer_getoverrun |
+| 248 | `CallSetIntervalTimer` (Which, NewAddress, OldAddress) | setitimer, getitimer |
+| 249 | `CallGetProcessorClock` (ClockId, TimeAddress, ResolutionAddress) | clock_gettime/getres of CPU clocks |
+
+*Queued signals* (`Processes.SignalQueue`): a signal that does not
+queue waits as a bit with the information of its first sending
+(`PendingInformation`; later ones merge into it). Real-time signals
+(32-64; mlibc's `SIGRTMIN` is 35) queue once per sending, from `kill`
+too: an entry from the kernel heap with the sender, its user id, the
+code and the value, at most `MaximumQueuedSignals` (1024) per process
+(then `EAGAIN`). Of the signals a thread may take the lowest goes
+first, and within a signal the oldest entry, so values arrive in the
+order sent. A timer's entry is part of the timer: it waits at most once,
+and expiries while it waits add to its overrun (`DELAYTIMER_MAX` at
+most), handed over with the signal and kept for `timer_getoverrun`.
+Ignoring a signal drops its entries; deleting a timer drops its entry;
+the end of the process frees the rest.
+
+*sigtimedwait* (`Processes.SignalWaits`): the thread names a set it
+blocks; while it waits the set is its `WaitedSignals`, so a sending of
+one alerts it although it blocks it. It takes the lowest of the set
+(blocked ones too) with its information; a signal outside the set it
+does not block, a stop or the end of the process end the wait with
+`EINTR` (the handler runs as the call returns), the timeout with
+`EAGAIN`.
+
+*Alternate signal stacks* (`Processes.AlternateSignalStacks`): per
+thread, kept by a forked child's thread, forgotten by exec. A signal
+whose disposition has `SignalFlagOnStack` gets its record at the top of
+that stack unless the thread is on it already; processor exceptions of
+a C program (it has a signal dispatcher) go there when the signal the
+C library makes of them (`SignalOfException`) has the flag, so a stack
+overflow - the main thread's reserve or a pthread's guard page - still
+reaches a SIGSEGV handler. Changing the stack while on it is
+`EPERM`, one below `MinimumSignalStackSize` `ENOMEM`; `ss_flags` reads
+`SS_ONSTACK` from the system call's stack pointer.
+
+*SA_RESTART* (`Processes.SystemCallRestart`): a call that failed with
+`ErrorInterrupted` because a signal alerted the thread, and is one that
+may be made again (read, write, open, the console and file-lock
+controls, waitpid, waits for processes and threads, channel messages,
+socket accept/send/receive), is noted at the end of the call. Entering
+a handler with `SignalFlagRestart` rewinds the frame to the system
+call instruction (`RewindSystemCall`: `Rip - 2` and the number in RAX;
+`Elr - 4` and the first argument back in X0), so the call starts over
+when the handler returns; a handler without the flag sees `EINTR`; if
+no handler runs at all (another thread took the signal) the call is
+made again at once. The waits for signals, sleeps, `poll`/`select`
+(`CallWaitForHandles`, `CallWaitForSocket`) and address waits are never
+made again, as POSIX lists. A call made again starts over, timeout and
+all.
+
+*POSIX and interval timers* (`Processes.PosixTimers`,
+`Processes.TimerSchedules`): a table per process, `MaximumPosixTimers`
+(64) POSIX timers (their ids are their places) and the three interval
+timers after them, made when first set. A timer counts on the uptime
+(`CLOCK_MONOTONIC`, `CLOCK_BOOTTIME`, `CLOCK_REALTIME` - whose absolute
+times are wall times turned into uptime when set and moved with every
+step of the wall clock (`AddWallClockStepRoutine`, the period too);
+`ITIMER_REAL`): a
+kernel timer (`Kernel.Timers`) whose deferred call re-arms it on its
+schedule and queues the signal (`PostTimerSignal`, at `DispatchLevel`
+under the process's signal lock alone, waking a taker with an alert;
+a signal whose default action ends the process ends it when a thread
+takes it); or on processor time: the process's
+(`CLOCK_PROCESS_CPUTIME_ID`, `ITIMER_PROF`), its user-mode part
+(`ITIMER_VIRTUAL`, from the ticks' split of the exact run time) or one
+thread's (`CLOCK_THREAD_CPUTIME_ID`, also of another thread of the
+process). Processor time grows only while a thread runs, so those
+timers are looked at by the process's threads as they go back to user
+mode (`CheckProcessorTimers` in `DeliverPendingSignals`, once per clock
+tick per thread); while one is armed the process's threads keep their
+tick when they run alone (`NeedsClockTick`,
+`SetThreadNeedsClockTick`: the dynamic tick would defer it for a
+second), so such a timer is at most a tick late. Periods keep to their
+schedule (the next due time from the last), and periods that passed
+unseen are overrun. Notification: the signal and value
+(`TimerNotifySignal`; no sigevent: SIGALRM with the timer's id), an
+event handle (`TimerNotifyEvent`, for SIGEV_THREAD; expiries while it
+is still signaled count as overrun, taken by `CallGetTimerOverrun`), or
+nothing (`TimerNotifyNone`). Setting and deleting take one mutex;
+deleting stops the kernel timer and its call (twice, as
+`Objects.Timers` does) and waits for processor-time checks holding the
+timer. exec deletes the POSIX timers and keeps the interval timers; a
+forked child has none; the end of the process deletes them all before
+it is marked as ended.
+
+*Processor-time clocks* (`Processes.ProcessorClocks`): a thread's
+exact run time, a process's sum over its threads (ended ones included);
+the clock of a given process (any running one) or thread (of the
+caller's process) has Linux's encoding, `not (Id shl 3)` plus 2, plus 4
+for a thread. The resolution is a nanosecond.
+
+`Kernel.SignalSelfTest` checks the queue (order, a timer's entry once
+and not counted, the limit, a removed timer entry taking its pending
+bit), the schedule arithmetic, the clock ids and the exception signals.
 ### Files and local sockets (250-259)
 
 | Number | Call | |
@@ -12766,8 +13448,11 @@ with `TimerCancelOnSet`, it is stopped and reads fail with
 **Signal descriptors.** A program blocks the signals and reads them: a
 read takes the lowest waiting signal of the mask - the process's or the
 reading thread's - as a `TAbiSignalDescriptorRecord` (struct
-signalfd_siginfo: the signal, the sender and `SignalCodeUser` or
-`SignalCodeKernel`), as many as fit. A descriptor reports the signals
+signalfd_siginfo: the signal, the sender and its user, `SignalCodeUser`,
+`SignalCodeKernel`, `SignalCodeQueue` or `SignalCodeTimer`, the value, a
+timer's id and overrun), as many as fit, through
+`Processes.Signals.TakeSignal`: real-time signals come from their queue
+in order, a timer's with its overrun. A descriptor reports the signals
 of the process that made it: `Processes.Signals` tells it of every
 signal made to wait (`NoteSignalWaiting` signals its Ready), and Ready
 is brought up to date before every wait on it and after every read, so
@@ -12809,6 +13494,113 @@ follows a step of the clock, stepped by nothing); ctest's "event
 descriptors", "epoll" and "inotify" groups check them from C, and a
 coretest line runs the last two as an ordinary user.
 
+### OpenGL, OpenGL ES, EGL and Vulkan (Mesa)
+
+Mesa 26.3.1 is a port (`ports/graphics/mesa`, meson): the software
+renderers llvmpipe (the default: shaders compiled to machine code by
+LLVM at run time), softpipe (`GALLIUM_DRIVER=softpipe`, no LLVM) and the
+Vulkan 1.4 driver lavapipe, behind `libEGL.so.1`, `libGLESv1_CM.so.1`,
+`libGLESv2.so.2` (desktop OpenGL 4.x compatibility and core contexts
+through EGL and `eglGetProcAddress`; there is no GLX and no `libGL`) and
+`libvulkan_lvp.so` with its ICD file, all in `/usr/local/lib`, with
+`libgallium-26.3.1.so` holding the drivers. LLVM's libraries are the
+port `devel/llvm` (23.1.6, the host's code generator only, static and
+position independent and also as one shared library, `libLLVM.so`;
+cross-compiled with CMake: LLVM builds its TableGen programs natively
+first), Mesa's build dependency; Mesa links the shared library, which
+the port `devel/llvm-runtime` puts on the system alone (copied from the
+llvm package's build; llvm provides llvm-runtime and the two conflict,
+so a system with llvm installed needs nothing more). Mako and MarkupSafe,
+which Mesa's build needs in Python, are sources of the port found
+through `PYTHONPATH`, never installed. The ports tool's CMake toolchain
+files put `scripts/portstool/cmake` on `CMAKE_MODULE_PATH`:
+`Platform/FreePascalOS.cmake` tells CMake the system is a Unix with ELF
+shared libraries named and linked as on Linux.
+
+The patches, one concern each where they can be: Mesa learns the system
+(`DETECT_OS_FREEPASCALOS` beside managarm's, the other mlibc system;
+`_GNU_SOURCE`; non-executable stacks for its assembly), uses its DRI
+frontend without DRM (the "pseudo-drm" platform GNU Hurd uses: no
+libdrm, no kernel graphics interface yet), finds LLVM through its CMake
+package, and gallivm asks for `CallSetMemoryPolicy`
+(`MemoryPolicyAllowDynamicCode`) before compiling anything, as the
+kernel's W^X demands of a JIT (code written into read-write pages, then
+protected read-execute). LLVM's own patches: the `freepascalos` OS in
+target triples (the Clang toolchain's 0001) and its Support library on
+the system (`endian.h`, `statvfs`'s `f_flag`).
+
+**Windows for EGL.** EGL's native platform is the display server
+(`platform_freepascalos.c` in Mesa's `src/egl/drivers/dri2`,
+`_EGL_PLATFORM_FREEPASCALOS`, `-Dplatforms=freepascalos`, which is also
+`egl-native-platform`): `EGLNativeWindowType` is a `struct fpos_window *`
+and `EGLNativeDisplayType` a `struct fpos_display *` (ignored:
+`EGL_DEFAULT_DISPLAY` does as well), from `<freepascalos/windowing.h>`
+(below). The renderers draw into buffers of their own (the "swrast"
+loader); at `eglSwapBuffers` the loader's putImage copies the finished
+frame into the window's surface section, a line at a time, and sends
+`RequestDamage` for it. The drawable's size is read from the window at
+each frame, so after the program gives the window a new surface
+(`EventResized` → `fpos_window_set_surface`) the next frame has the new
+size. Configurations: 32-bit BGRA and BGRX (the surface's $AARRGGBB),
+window and pbuffer, with depth and stencil, buffer age and swap with
+damage; the swap interval is accepted and ignored (there is no vsync to
+wait for yet). EGL's surfaceless platform
+(`EGL_PLATFORM_SURFACELESS_MESA`) gives pbuffers and framebuffer objects
+without a display server.
+
+**Windows for Vulkan.** An instance extension of the system's own,
+`VK_FPOS_window_surface` (added to Mesa's copy of the registry, `vk.xml`:
+platform `freepascalos`, `VK_USE_PLATFORM_FREEPASCALOS_FPOS`, author tag
+`FPOS`, extension number 1999, so
+`VK_STRUCTURE_TYPE_WINDOW_SURFACE_CREATE_INFO_FPOS` is 1001998000;
+`include/vulkan/vulkan_freepascalos.h`): `vkCreateWindowSurfaceFPOS` with a
+`VkWindowSurfaceCreateInfoFPOS` naming a `struct fpos_window`, and
+`vkGetPhysicalDeviceWindowPresentationSupportFPOS`. Mesa's window system
+integration has a backend for it (`wsi_common_freepascalos.c`,
+`VK_ICD_WSI_PLATFORM_FREEPASCALOS`): the surface's current extent is the
+window's surface size, formats B8G8R8A8 UNORM and sRGB, present modes
+FIFO, mailbox and immediate (alike: no vsync); swapchain images are
+processor images (lavapipe is a software device), and presenting copies
+the image into the window's surface and names it damaged, then returns
+`VK_SUBOPTIMAL_KHR` while the window's size differs from the swapchain's
+(the program makes a new one). The Vulkan headers (Mesa's copy, with the
+extension) are installed with the port. There is no Vulkan loader yet: a
+program opens `libvulkan_lvp.so` and takes its functions from
+`vk_icdGetInstanceProcAddr` (`vkcube` does).
+
+**`<freepascalos/windowing.h>`** (installed with the C library's
+headers, beside `<freepascalos/syscall.h>`, which gained the port,
+channel and section calls 79-85) is the display server's protocol for C:
+`struct fpos_window_message` (the same 152 bytes as
+`TWindowMessage`), the request and event numbers C programs need, and
+header-only calls - `fpos_display_connect` (the port `display`,
+`RequestHello` answering pings, `EventWelcome`), `fpos_display_next_event`
+and `fpos_display_wait_for` (events that come while waiting for a reply
+are kept, `EventPing` is answered as it comes), `fpos_window_create`
+(a section of width x height pixels mapped, `RequestCreateWindow`),
+`fpos_window_show`, `fpos_window_set_title`, `fpos_window_set_surface`
+(a new section, `RequestSetSurface`), `fpos_window_damage` and
+`fpos_window_destroy`. Keep it in step with `Windowing.Protocol`.
+
+`ports/graphics/gldemos` (from the port's `files/`, on the system disk)
+has the programs: `gltest` (no window: OpenGL ES 2, OpenGL ES 1.1 and
+desktop OpenGL contexts on EGL's surfaceless platform; clears, a GLSL
+program and a triangle, pixels read back; "gltest: all N checks
+passed"), `glgears` (three turning gears in a window with OpenGL ES 2;
+arrow keys turn the view; `glgears -n FRAMES` draws that many frames,
+checks the picture and prints the rate) and `vkcube` (a turning cube in
+a window with Vulkan through a swapchain, its shaders compiled to SPIR-V
+by the build machine's glslangValidator; `vkcube -n FRAMES` checks the
+window's surface shows the cube). The C library's `<sys/ioccom.h>`
+(ioctl request macros in Linux's encoding, which mlibc keeps in its
+Linux option) came with the port: Mesa's DRM and sync file headers use
+it.
+
+`ports/image.list` puts gldemos (and so mesa) on the system disk, and a
+coretest line runs `gltest` on llvmpipe and on softpipe when the disk
+has it; `glgears -n` and `vkcube -n` need the display server and are
+tried in a session (`scripts/take-screenshots.py` plans).
+
 ### Tests
 
 `toolchain/ctest`: `ctest` (C: stdio, malloc and mmap, strings, math,
@@ -12822,9 +13614,9 @@ shutdown, poll, non-blocking), pseudo-terminals through `/dev/ptmx` and
 pwritev, fsync and fdatasync, nanosecond times, msync and mincore, the
 clock page against the system call, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`;
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`;
 eventfd, timerfd, signalfd, epoll (a hundred pipes, a TCP server,
-nesting, fork) and inotify; 569 checks), then `hello-static` and `cxxtest` (iostreams, containers,
+nesting, fork) and inotify; 786 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own; with Clang (`make
 clang-toolchain`) also `ctest-clang --groups-only` (every group again,
@@ -12834,7 +13626,7 @@ skipped when the disk lacks them). `make c-test` boots
 `init=/usr/bin/ctest` and passes when
 every check did (`scripts/test-c-runtime.sh`, log in
 `build/amd64/c-test-serial.log`); a coretest line runs `ctest` when the
-system disk has it.
+system disk has it, and two more its `realtime-signals` and `timers` groups alone.
 
 ## Style engine (libcss)
 
@@ -14906,6 +15698,15 @@ results to styling and layout without either knowing the other:
   density), which replaced boxes take as their intrinsic size.
 - `FontsChanged` / `NotifyFontsChanged`: the process's font library
   gained web fonts; every layout lays out again (`rcFonts`).
+- `SetElementImageProvider(Element, Provider)`: an element that draws
+  its own image (a canvas, `Web.Canvas.Elements`). The layout asks
+  `ImageProvidersPending` in `NeedsUpdate` and calls
+  `TakeProvidedImages` at the start of `Update`: a provider whose pixels
+  changed copies them into the element's image when the size is the same
+  (`rcImagePixels`: only the paint version moves, nothing is laid out)
+  or gives a new image (laid out again as any image). A canvas drawn a
+  thousand times between two frames is copied once.
+  `ForgetElementImageProvider` when the provider goes.
 - `FreeDocumentResources(Document)` when the document goes.
 
 The sink that fills them is `TLayoutResourceSink`
@@ -14932,6 +15733,142 @@ gives the loader's media environment (link media, srcset, sizes).
 
 Changes notify the layout (styles become dirty, replaced boxes take
 their images and are laid out again, the display list is rebuilt).
+
+### Canvas (Web.Canvas)
+
+The canvas element's scripting (HTML Standard 4.12.5) is drawn by
+`Web.Canvas.*` over libdrawing, libfont and libimage, with the bindings
+in `bindings/Canvas.webidl` (`Web.Bindings.Canvas`) and the operations
+that settle later in `platform/76-canvas.js`:
+
+- **Surfaces and contexts** (`Web.Canvas.Surfaces`, `Web.Canvas.Elements`).
+  A canvas element gets its surface (owned by the element:
+  `TNode.CanvasStateObject`) with its first context or when its bitmap
+  is read: a libimage `TImage` (ARGB, not premultiplied) sized by the
+  width and height attributes (non-negative integers, 300 by 150);
+  setting either (the script context's document observer sees every
+  attribute change) resets the bitmap and the context. The surface has
+  at most one context (2d or bitmaprenderer; getContext for another kind
+  is null; webgl, webgl2 and webgpu are null, as there is no 3D yet).
+  Contexts, gradients, patterns, offscreen canvases and image bitmaps
+  are reference counted (`Web.Canvas.Shared`); a script wrapper holds
+  its reference through a handle and the object remembers its wrapper
+  while it lives, so script sees one wrapper per object, and a context's
+  wrapper keeps its canvas's alive (ctx.canvas).
+- **The drawing state** (`Web.Canvas.State`): transform, fill and stroke
+  styles, globalAlpha, the operator, line width, caps, joins, miter
+  limit, dashes, shadow, text styles, image smoothing, filter and the
+  clipping region (a coverage byte per bitmap pixel, never changed in
+  place, so saved states share it). save() copies, restore() pops,
+  reset() and a resize go back to the defaults.
+- **Paths** (`Web.Canvas.Paths`): the CanvasPath methods on libdrawing's
+  `TPath`, for the context's current default path (points transformed
+  as they are added) and Path2D (kept as given; `new Path2D(text)`
+  parses SVG path data with libsvg's parser; addPath with a
+  DOMMatrix2DInit). arc and ellipse follow the standard's sweep rules
+  (a whole turn at most, the direction asked) as cubic Beziers of at
+  most a quarter turn, arcTo the tangent construction in the space of
+  the call, roundRect its radii rules (one to four, DOMPointInit or
+  numbers, scaled down when they do not fit, negative widths and
+  heights flipping the corners).
+- **The drawing model** (`Web.Canvas.Rendering`): every fill, stroke,
+  text and image makes a layer (the shape's coverage times its paint
+  over the area that matters: the bitmap plus what a shadow or filter
+  can bring in), then the filter, the shadow (its alpha offset and
+  blurred by shadowBlur / 2), globalAlpha, and both composited by the
+  operator within the clip; operators that change the destination where
+  the source is transparent (copy, source-in, source-out,
+  destination-in, destination-atop) composite over the whole bitmap.
+  Strokes are made in the user space of the current transform (the path
+  through its inverse, dashed and stroked, then transformed back), so
+  non-uniform scales and skews give the right outlines.
+- **Styles** (`Web.Canvas.Styles`): CSS colours with libcss (serialized
+  as #rrggbb, or rgba() with the shortest alpha that gives back the
+  same byte), live CanvasGradients (linear, two-circle radial, conic;
+  stops in offset order, then the order added; colours mixed without
+  premultiplying), CanvasPatterns (a copy of the image, the repetition,
+  setTransform; one made from a cross-origin image taints the canvas it
+  is used on).
+- **Text** (`Web.Canvas.Fonts`, `Web.Canvas.Text`): the font attribute
+  is CSS's font shorthand through libcss (CSS-wide keywords and var()
+  refused; relative sizes against 10px), the face chosen by libweb's
+  text fonts and cached; fillText and strokeText place the glyphs
+  (fallback faces, kerning, letterSpacing and wordSpacing), anchor them
+  by textAlign and textBaseline, squeeze to maxWidth and turn the
+  TrueType or CFF outlines into a path, so text takes every transform,
+  style, shadow and operator. measureText gives the advance, the ink's
+  box from the outlines, and the font's and em square's extents
+  relative to the baseline.
+- **Images**: drawImage takes an img (its decoded image at its natural
+  size; one not loaded draws nothing, a broken one is an
+  InvalidStateError), a canvas, an OffscreenCanvas or an ImageBitmap (a
+  video draws nothing until media play), clips the source rectangle to
+  the source with the destination, and samples it as a pattern through
+  the inverse transform (bilinear unless imageSmoothingEnabled is
+  false). An image that is not same origin, data:, blob: or fetched with
+  CORS (crossorigin) clears the canvas's origin-clean flag;
+  getImageData, toDataURL, toBlob and convertToBlob then throw a
+  SecurityError.
+- **Pixels**: getImageData (outside the bitmap is transparent black),
+  putImageData with a dirty rectangle (no transform, clip, alpha or
+  operator), createImageData and the ImageData constructor (WebIDL's
+  overloads resolved by hand; the Uint8ClampedArray is kept alive
+  through the wrapper, `TBindingTracedObject`). alpha: false keeps every
+  pixel opaque.
+- **Filters** (`Web.Canvas.Filters`): "none" or blur, brightness,
+  contrast, drop-shadow, grayscale, hue-rotate, invert, opacity,
+  saturate and sepia, on sRGB values; url() is not accepted (the
+  attribute keeps its value), as there is no SVG filter engine.
+- **Encoding** (`Web.Canvas.Encoding`): PNG, image/jpeg (quality 0 to 1,
+  0.92 otherwise; composited onto black first) and image/webp (lossless)
+  with libimage's encoders; other types give PNG, no pixels "data:,".
+  toBlob calls back in a task, convertToBlob settles a promise.
+- **OffscreenCanvas, ImageBitmap**: OffscreenCanvas (an EventTarget) has
+  the same contexts on its own surface (OffscreenCanvasRenderingContext2D
+  is the same drawing code), width and height that reset it,
+  transferToImageBitmap and convertToBlob; transferControlToOffscreen
+  makes the element a placeholder whose layout image comes from the
+  offscreen canvas. createImageBitmap takes every image source, ImageData
+  and Blobs (decoded with libimage, EXIF orientation applied), with a
+  crop rectangle (outside is transparent), resizeWidth/resizeHeight
+  (pixelated: nearest) and imageOrientation flipY; it rejects as the
+  standard says (RangeError for an empty crop, InvalidStateError for an
+  undecodable Blob). ImageData and ImageBitmap are serializable and
+  ImageBitmap and OffscreenCanvas transferable: the structured clone
+  asks the platform's clone hooks (`Web.Script.Prelude`), and the
+  workers' postMessage moves the canvas objects of its transfer list
+  (`internal.cloneWithTransfer`). Workers get every canvas interface and
+  createImageBitmap (they are realms on the window's thread, so an
+  offscreen canvas drawn on in a worker is read directly).
+- **On the page**: the canvas element's surface is its image provider
+  (see Resources below): drawing marks it, and at the next layout the
+  pixels are copied into the element's layout image, drawn like any
+  replaced element's image (scaled to the box with the device scale;
+  the bitmap is in CSS pixels as the standard has it, pages that want
+  device pixels size it by devicePixelRatio).
+- DOMMatrixReadOnly and DOMMatrix (`platform/70-matrix.js`, Geometry
+  Interfaces Level 1, with WebKitCSSMatrix and SVGMatrix as aliases)
+  came with getTransform: sequences of 6 or 16, CSS transform lists,
+  fromMatrix and the typed arrays, every operation and its Self form,
+  inverse, transformPoint, toString and toJSON.
+- WebIDL attributes of an enumeration type now ignore a string that is
+  not one of its values (WebIDL 3.7.6) instead of throwing
+  (`Web.Bindings.Dispatch`), as ctx.lineCap = "bogus" must.
+
+Tests: `tools/WebScriptTest/scripts/canvas.js` (about a hundred
+checks: state and attributes, every operator, paths, strokes, dashes,
+transforms, clips, gradients, patterns, shadows, filters, drawImage,
+ImageData, Path2D, encoding, OffscreenCanvas, ImageBitmap, clones,
+toBlob and createImageBitmap), `WebLoadTest.Canvas` (a fetched page:
+images drawn, cross-origin tainting, text with the system fonts, the
+layout taking the pixels and painting them), `DrawingTest.Compositing`
+(operators and blend modes by hand, blurs, conic gradients, one-axis
+patterns). Measured against Firefox on a test drawing of every feature
+(800 x 600: paths, joins, arcs, gradients of the three kinds, dashes,
+shadows, text, transforms, operators, clips, patterns, round
+rectangles, curves, drawImage smoothed and not, a blur filter),
+`compare-sites.py` scores 0.2 (0 alike, 100 nothing alike); the text
+differs by its fonts.
 
 ### The web view's API
 
