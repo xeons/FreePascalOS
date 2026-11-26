@@ -152,6 +152,10 @@ partial interface Document {
   attribute any adoptedStyleSheets;
 };
 
+partial interface ShadowRoot {
+  attribute any adoptedStyleSheets;
+};
+
 partial interface HTMLStyleElement {
   readonly attribute CSSStyleSheet? sheet;
 };

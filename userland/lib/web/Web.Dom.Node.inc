@@ -285,11 +285,15 @@ begin
   end;
 end;
 
+{ A node's "get the parent": its assigned slot when it is a slottable
+  assigned to one, else its parent (documents and shadow roots have
+  their own). }
 function TNode.GetTheParent(Event: TEvent): TEventTarget;
 begin
-  { A document's parent is its window, which comes with the browsing
-    context in a later phase. }
-  Result := FParent;
+  if (FRareData <> nil) and (FRareData.AssignedSlot <> nil) then
+    Result := FRareData.AssignedSlot
+  else
+    Result := FParent;
 end;
 
 function TNode.GetNodeValue: string;

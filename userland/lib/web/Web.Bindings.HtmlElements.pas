@@ -72,6 +72,8 @@ uses
   Web.Bindings.Style,
   Web.Bindings.UrlResolution,
   Web.Bindings.CrossOrigin,
+  Web.Bindings.CustomElementRegistry,
+  Web.Bindings.CustomElements,
   Web.ScriptEnvironment;
 
 type
@@ -93,12 +95,14 @@ type
     Context: TBindingContext;
   end;
 
+{ Listed elements: the form controls and form-associated custom
+  elements. }
 function IsListedElement(Element: TElement): Boolean;
 begin
   Result := Element.IsHtml and ((Element.LocalNameAtom = AtomButton) or (Element.LocalNameAtom = AtomFieldset) or
     (Element.LocalNameAtom = AtomInput) or (Element.LocalNameAtom = AtomObject) or
     (Element.LocalNameAtom = AtomOutput) or (Element.LocalNameAtom = AtomSelect) or
-    (Element.LocalNameAtom = AtomTextarea));
+    (Element.LocalNameAtom = AtomTextarea) or IsFormAssociatedCustomElement(Element));
 end;
 
 function TFormElementsCollection.Matches(Element: TElement): Boolean;
@@ -184,6 +188,8 @@ function IsValid(const Call: TBindingCall; Element: TElement): Boolean;
 var
   State: TFormControlState;
 begin
+  if IsFormAssociatedCustomElement(Element) then
+    Exit(CustomElementValid(Element));
   if not WillValidate(Element) then
     Exit(True);
   State := Context(Call).FindFormState(Element);
@@ -1415,6 +1421,22 @@ var
     Inc(Count);
   end;
 
+  { A form-associated custom element gives its own entries (with or
+    without a name of the element's). }
+  procedure AddCustomElementEntries(Element: TElement);
+  var
+    Names, Values: TStringArray;
+    EntryIndex: Integer;
+  begin
+    if Element.HasAttributeAtom(AtomDisabled) then
+      Exit;
+    Names := nil;
+    Values := nil;
+    CustomElementFormEntries(Element, Names, Values);
+    for EntryIndex := 0 to High(Names) do
+      Add(Names[EntryIndex], Values[EntryIndex]);
+  end;
+
 begin
   Result := nil;
   Count := 0;
@@ -1422,6 +1444,11 @@ begin
   for Index := 0 to High(Controls) do
   begin
     Control := TElement(Controls[Index]);
+    if IsFormAssociatedCustomElement(Control) then
+    begin
+      AddCustomElementEntries(Control);
+      Continue;
+    end;
     Name := Control.AttributeValueOf(AtomName);
     if (Name = '') or Control.HasAttributeAtom(AtomDisabled) then
       Continue;
@@ -1531,6 +1558,7 @@ begin
   Controls := FormControls(ThisElement(Call));
   for Index := 0 to High(Controls) do
   begin
+    CustomElementFormReset(TElement(Controls[Index]));
     ResetState(Context(Call).FindFormState(TElement(Controls[Index])));
     if TElement(Controls[Index]).IsHtmlElement(AtomSelect) then
     begin

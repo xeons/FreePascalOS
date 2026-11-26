@@ -104,7 +104,10 @@ end;
 
 function Node_getRootNode(var Call: TBindingCall): TJsValue;
 begin
-  Result := Context(Call).WrapNode(ThisNode(Call).GetRootNode);
+  if Call.Arguments[0].Items[GetRootNodeOptions_composed].Flag then
+    Result := Context(Call).WrapNode(ThisNode(Call).GetShadowIncludingRoot)
+  else
+    Result := Context(Call).WrapNode(ThisNode(Call).GetRootNode);
 end;
 
 function Node_get_parentNode(var Call: TBindingCall): TJsValue;

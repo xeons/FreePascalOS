@@ -129,7 +129,7 @@ begin
   Shadow := TElement(Parent).ShadowRoot;
   if Shadow = nil then
     Exit;
-  if OpenOnly and (Shadow.FMode <> ShadowRootModeOpen) then
+  if OpenOnly and (Shadow.FMode <> ShadowRootOpen) then
     Exit;
   if Shadow.FSlotAssignment = SlotAssignmentManual then
   begin

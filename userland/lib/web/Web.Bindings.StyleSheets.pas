@@ -775,6 +775,59 @@ begin
   Result := JsUndefined;
 end;
 
+const
+  ShadowAdoptedSlot = 41;
+
+function ShadowRoot_get_adoptedStyleSheets(var Call: TBindingCall): TJsValue;
+var
+  Wrapper: TBindingWrapper;
+  Adopted: TCssStyleSheetList;
+  Values: array of TJsValue;
+  Index: Integer;
+begin
+  Wrapper := TBindingWrapper(Call.Wrapper);
+  Result := Wrapper.CachedValue(ShadowAdoptedSlot);
+  if JsIsObject(Result) then
+    Exit;
+  Adopted := ShadowRootAdoptedSheets(TShadowRoot(Call.Target));
+  Values := nil;
+  SetLength(Values, Length(Adopted));
+  for Index := 0 to High(Adopted) do
+    Values[Index] := WrapSheet(Context(Call), Adopted[Index]);
+  Result := Context(Call).NewArray(Values);
+  Wrapper.SetCachedValue(ShadowAdoptedSlot, Result);
+end;
+
+function ShadowRoot_set_adoptedStyleSheets(var Call: TBindingCall): TJsValue;
+var
+  Value, Item: TJsValue;
+  Count, Index: Integer;
+  List: TCssStyleSheetList;
+  Native: TObject;
+  Values: array of TJsValue;
+begin
+  Value := Call.Script(0);
+  if not JsIsObject(Value) then
+    raise EBindingTypeError.Create('adoptedStyleSheets must be an array of CSSStyleSheet');
+  Count := Trunc(Context(Call).Engine.ToNumber(Context(Call).Engine.GetProperty(Value, 'length')));
+  List := nil;
+  Values := nil;
+  for Index := 0 to Count - 1 do
+  begin
+    Item := Context(Call).Engine.GetProperty(Value, IntToStr(Index));
+    Native := Context(Call).Unwrap(Item, InterfaceCSSStyleSheet);
+    if (Native = nil) or not Sheets(Call).IsConstructed(TCssStyleSheet(Native)) then
+      RaiseDomError('NotAllowedError', 'only constructed style sheets can be adopted');
+    SetLength(List, Length(List) + 1);
+    List[High(List)] := TCssStyleSheet(Native);
+    SetLength(Values, Length(Values) + 1);
+    Values[High(Values)] := Item;
+  end;
+  SetShadowRootAdoptedSheets(TShadowRoot(Call.Target), List);
+  TBindingWrapper(Call.Wrapper).SetCachedValue(ShadowAdoptedSlot, Context(Call).NewArray(Values));
+  Result := JsUndefined;
+end;
+
 function HTMLStyleElement_get_sheet(var Call: TBindingCall): TJsValue;
 begin
   Result := WrapSheet(Context(Call), DocumentSheetsOf(TElement(Call.Target).NodeDocument).StyleElementSheet(

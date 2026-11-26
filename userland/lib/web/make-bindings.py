@@ -641,7 +641,15 @@ class Model:
         constructors = [member for member in members if member.kind == 'constructor']
         construct = 'nil'
         constructor_first, constructor_count, constructor_length = -1, 0, 0
-        if constructors:
+        if constructors and 'HTMLConstructor' in constructors[0].attributes:
+            # The HTML element interfaces share the [HTMLConstructor] steps
+            # (Web.Bindings.CustomElements).
+            flags |= 128
+            construct = '@HTMLConstructor_construct'
+            self.declare('CustomElements', ('HTMLConstructor_construct', 'constructor'))
+            constructor_first, constructor_count = self.overload_range(constructors)
+            constructor_length = 0
+        elif constructors:
             flags |= 128
             construct = '@%s_constructor' % prefix
             self.declare(definition.group, ('%s_constructor' % prefix, 'constructor'))

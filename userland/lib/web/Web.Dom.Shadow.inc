@@ -206,7 +206,7 @@ end;
 
 function TShadowRoot.GetModeText: string;
 begin
-  if FMode = ShadowRootModeOpen then
+  if FMode = ShadowRootOpen then
     Result := 'open'
   else
     Result := 'closed';
@@ -219,7 +219,7 @@ end;
 
 function TShadowRoot.IsClosedShadowRoot: Boolean;
 begin
-  Result := FMode = ShadowRootModeClosed;
+  Result := FMode = ShadowRootClosed;
 end;
 
 { A shadow root's "get the parent": its host, unless the event is not

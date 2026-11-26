@@ -70,6 +70,7 @@ type
     function ShadowScope(Element: TCssElement): TObject; override;
     function AssignedSlot(Element: TCssElement): TCssElement; override;
     function ParentIsShadowHost(Element: TCssElement): Boolean; override;
+    function HasShadowTrees: Boolean; override;
     function HasPart(Element: TCssElement; const Name: string): Boolean; override;
     function HasCustomState(Element: TCssElement; const Name: string): Boolean; override;
     property Document: TDocument read FDocument;
@@ -210,6 +211,11 @@ begin
     Result := TShadowRoot(ParentNode).Host
   else
     Result := nil;
+end;
+
+function TDomElementAdapter.HasShadowTrees: Boolean;
+begin
+  Result := FDocument.HasShadowRoots;
 end;
 
 function TDomElementAdapter.ParentIsShadowHost(Element: TCssElement): Boolean;

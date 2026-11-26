@@ -239,7 +239,8 @@ begin
           end;
         AtomTemplate:
           begin
-            InsertHtmlElement(Token);
+            if not TryDeclarativeShadowRoot(Token) then
+              InsertHtmlElement(Token);
             FFormatting.PushMarker;
             FFramesetOk := False;
             FMode := ImInTemplate;

@@ -152,7 +152,7 @@ type
   TDocumentNotifyEvent = procedure(Sender: TObject) of object;
 
   { Shadow roots (DOM Standard 4.8). }
-  TShadowRootMode = (ShadowRootModeOpen, ShadowRootModeClosed);
+  TShadowRootMode = (ShadowRootOpen, ShadowRootClosed);
   TSlotAssignmentMode = (SlotAssignmentNamed, SlotAssignmentManual);
 
   { An element's custom element state (DOM Standard 4.9); the zero
@@ -588,6 +588,7 @@ type
     function IsDefinedElement: Boolean;
     { A custom element's states (CustomStateSet, :state()). }
     function HasCustomState(const Name: string): Boolean;
+    function CustomStates: TStringArray;
     procedure SetCustomStates(const States: TStringArray);
   end;
 

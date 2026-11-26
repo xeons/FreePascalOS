@@ -168,6 +168,14 @@ begin
   Result := False;
 end;
 
+function TElement.CustomStates: TStringArray;
+begin
+  if FRareData = nil then
+    Result := nil
+  else
+    Result := Copy(FRareData.CustomStates);
+end;
+
 procedure TElement.SetCustomStates(const States: TStringArray);
 begin
   if (System.Length(States) = 0) and ((FRareData = nil) or (FRareData.CustomStates = nil)) then

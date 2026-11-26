@@ -72,7 +72,8 @@ implementation
 
 uses
   Web.Bindings.Reflection,
-  Web.Bindings.EventHandlers;
+  Web.Bindings.EventHandlers,
+  Web.Bindings.CustomElementRegistry;
 
 procedure StartCall(out Call: TBindingCall; Context: TBindingContext; R: TJsRealm; const This: TJsValue;
   Args: PJsValueArray; ArgCount: Integer; Member: PBindingMember; InterfaceId: Integer);
@@ -113,18 +114,28 @@ var
   Context: TBindingContext;
   Member: PBindingMember;
   Call: TBindingCall;
+  Reactions: Boolean;
 begin
   Context := ContextOfRealm(R);
   Member := PBindingMember(Callee.HostData);
   StartCall(Call, Context, R, This, Args, ArgCount, Member, Callee.Magic);
   if ((Member^.Flags and MemberStatic) = 0) and not CheckThis(Context, Call) then
     Exit(IllegalInvocation(R));
+  { [CEReactions]: custom element reactions run as the method returns. }
+  Reactions := CustomElementsDefined;
+  if Reactions then
+    EnterReactionsScope;
   try
-    ConvertArguments(Context, Call, Member^.FirstOverload, Member^.OverloadCount, MemberName(Member, Callee.Magic));
-    Result := Member^.Getter(Call);
-  except
-    on Error: Exception do
-      Result := Context.ThrowFromException(Error);
+    try
+      ConvertArguments(Context, Call, Member^.FirstOverload, Member^.OverloadCount, MemberName(Member, Callee.Magic));
+      Result := Member^.Getter(Call);
+    except
+      on Error: Exception do
+        Result := Context.ThrowFromException(Error);
+    end;
+  finally
+    if Reactions then
+      LeaveReactionsScope(Context);
   end;
 end;
 
@@ -179,28 +190,15 @@ begin
   end;
 end;
 
-function SetterEntry(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
-  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+{ An attribute setter's work (PutForwards, event handlers, reflection,
+  the routine). }
+function AssignAttribute(Context: TBindingContext; var Call: TBindingCall; Member: PBindingMember;
+  Value: TJsValue; InterfaceId: Integer): TJsValue;
 var
-  Context: TBindingContext;
-  Call: TBindingCall;
-  Member: PBindingMember;
-  Value, Forward: TJsValue;
+  R: TJsRealm;
+  Forward: TJsValue;
 begin
-  Context := ContextOfRealm(R);
-  Member := PBindingMember(Callee.HostData);
-  StartCall(Call, Context, R, This, Args, ArgCount, Member, Callee.Magic);
-  Value := Arg(Args, ArgCount, 0);
-  if (Member^.Flags and MemberReplaceable) <> 0 then
-  begin
-    if not JsIsObject(This) then
-      Exit(IllegalInvocation(R));
-    if not JsAsObject(This).CreateDataProperty(R, R.Intern(string(Member^.Name)), Value) and R.HasException then
-      Exit(JsException);
-    Exit(JsUndefined);
-  end;
-  if ((Member^.Flags and MemberStatic) = 0) and not CheckThis(Context, Call) then
-    Exit(IllegalInvocation(R));
+  R := Call.Realm;
   try
     if (Member^.Flags and MemberPutForwards) <> 0 then
     begin
@@ -219,7 +217,7 @@ begin
       Exit(JsUndefined);
     end;
     SetLength(Call.Arguments, 1);
-    ConvertValue(Context, Value, Member^.TypeIndex, Call.Arguments[0], MemberName(Member, Callee.Magic));
+    ConvertValue(Context, Value, Member^.TypeIndex, Call.Arguments[0], MemberName(Member, InterfaceId));
     if Member^.Kind = mkReflected then
     begin
       SetReflected(Context, TElement(Call.Target), Member, Call.Arguments[0]);
@@ -230,6 +228,40 @@ begin
   except
     on Error: Exception do
       Result := Context.ThrowFromException(Error);
+  end;
+end;
+
+function SetterEntry(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+var
+  Context: TBindingContext;
+  Call: TBindingCall;
+  Member: PBindingMember;
+  Value: TJsValue;
+  Reactions: Boolean;
+begin
+  Context := ContextOfRealm(R);
+  Member := PBindingMember(Callee.HostData);
+  StartCall(Call, Context, R, This, Args, ArgCount, Member, Callee.Magic);
+  Value := Arg(Args, ArgCount, 0);
+  if (Member^.Flags and MemberReplaceable) <> 0 then
+  begin
+    if not JsIsObject(This) then
+      Exit(IllegalInvocation(R));
+    if not JsAsObject(This).CreateDataProperty(R, R.Intern(string(Member^.Name)), Value) and R.HasException then
+      Exit(JsException);
+    Exit(JsUndefined);
+  end;
+  if ((Member^.Flags and MemberStatic) = 0) and not CheckThis(Context, Call) then
+    Exit(IllegalInvocation(R));
+  Reactions := CustomElementsDefined;
+  if Reactions then
+    EnterReactionsScope;
+  try
+    Result := AssignAttribute(Context, Call, Member, Value, Callee.Magic);
+  finally
+    if Reactions then
+      LeaveReactionsScope(Context);
   end;
 end;
 

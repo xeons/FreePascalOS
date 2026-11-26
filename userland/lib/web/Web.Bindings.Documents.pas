@@ -50,6 +50,7 @@ uses
   Web.Dom.Exceptions,
   Web.Html.Markup,
   Web.Bindings.Context,
+  Web.Bindings.Shadow,
   Web.Bindings.UrlResolution;
 
 type
@@ -526,7 +527,8 @@ end;
 function Document_get_activeElement(var Call: TBindingCall): TJsValue;
 begin
   if ThisDocument(Call).FocusedElement <> nil then
-    Result := Context(Call).WrapNode(ThisDocument(Call).FocusedElement)
+    { Retargeted: the host of a focused element in a shadow tree. }
+    Result := Context(Call).WrapNode(RetargetNode(ThisDocument(Call).FocusedElement, ThisDocument(Call)))
   else if ThisDocument(Call).Body <> nil then
     Result := Context(Call).WrapNode(ThisDocument(Call).Body)
   else

@@ -47,6 +47,7 @@ uses
   Web.Atoms,
   Web.Namespaces,
   Web.Dom,
+  Web.Dom.Events,
   Web.Bindings.Types,
   Web.Bindings.Context;
 
@@ -104,7 +105,10 @@ type
     FObservers: array of TMutationObserverData;
     FRegistrations: array of TMutationRegistration;
     FMicrotaskQueued: Boolean;
+    { The signal slots (DOM Standard): slotchange is due at each; held. }
+    FSignalSlots: array of TElement;
     procedure MarkRoots(Tracer: TJsTracer);
+    procedure FireSlotChanges(const Slots: array of TElement);
     procedure RemoveRegistrationAt(Index: Integer);
     procedure QueueRecordFor(Observer: TMutationObserverData; Template: TMutationRecordData; WithOldValue: Boolean);
     procedure QueueMicrotask;
@@ -123,6 +127,8 @@ type
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string);
     { The mutation observer microtask. }
     procedure NotifyObservers;
+    { "Signal a slot change": Slot joins the signal slots. }
+    procedure SignalSlot(Slot: TElement);
   end;
 
 { The context's mutation observers, made on first use. }
@@ -237,6 +243,9 @@ begin
   for Index := 0 to High(FRegistrations) do
     ReleaseNode(FRegistrations[Index].Node);
   FRegistrations := nil;
+  for Index := 0 to High(FSignalSlots) do
+    ReleaseNode(FSignalSlots[Index]);
+  FSignalSlots := nil;
   for Index := 0 to High(FObservers) do
     FObservers[Index].Context := nil;
   if FContext.Engine <> nil then
@@ -547,6 +556,40 @@ begin
   end;
 end;
 
+procedure TMutationObservers.SignalSlot(Slot: TElement);
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(FSignalSlots) do
+    if FSignalSlots[Index] = Slot then
+      Exit;
+  RetainNode(Slot);
+  SetLength(FSignalSlots, Length(FSignalSlots) + 1);
+  FSignalSlots[High(FSignalSlots)] := Slot;
+  QueueMicrotask;
+end;
+
+{ The slotchange events of the signal slots taken (bubbling, at each
+  slot in the order they were signaled). }
+procedure TMutationObservers.FireSlotChanges(const Slots: array of TElement);
+var
+  Index: Integer;
+  Event: TEvent;
+begin
+  for Index := 0 to High(Slots) do
+  begin
+    Event := TEvent.Create('slotchange', True, False);
+    try
+      Event.IsTrusted := True;
+      Slots[Index].DispatchEvent(Event);
+    finally
+      Event.Release;
+    end;
+  end;
+  for Index := 0 to High(Slots) do
+    ReleaseNode(Slots[Index]);
+end;
+
 procedure TMutationObservers.NotifyObservers;
 var
   Pending: array of TMutationObserverData;
@@ -554,9 +597,14 @@ var
   Observer: TMutationObserverData;
   Records, Ignored: TJsValue;
   Mark: Integer;
+  SignalSet: array of TElement;
 begin
   FMicrotaskQueued := False;
   Pending := Copy(FObservers);
+  { The signal slots are taken now; their events fire after the
+    observers' callbacks. }
+  SignalSet := FSignalSlots;
+  FSignalSlots := nil;
   for Index := 0 to High(Pending) do
   begin
     Observer := Pending[Index];
@@ -579,6 +627,9 @@ begin
       FContext.Engine.Runtime.PopRoots(Mark);
     end;
   end;
+  { Slots signaled while the callbacks ran have queued the next
+    microtask. }
+  FireSlotChanges(SignalSet);
 end;
 
 { MutationObserver }

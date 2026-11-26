@@ -170,9 +170,17 @@ type
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
     procedure SelectionChanged(Document: TDocument); override;
+    procedure SlotChangeSignaled(Slot: TElement); override;
   end;
 
 { TScriptDocumentObserver }
+
+{ slotchange fires at the next mutation observer microtask. }
+procedure TScriptDocumentObserver.SlotChangeSignaled(Slot: TElement);
+begin
+  if not FContext.Closed then
+    MutationObserversOf(FContext).SignalSlot(Slot);
+end;
 
 { The platform script queues selectionchange (platform/72-selection.js). }
 procedure TScriptDocumentObserver.SelectionChanged(Document: TDocument);

@@ -52,6 +52,7 @@ type
     FFilter: TCssAncestorFilter;
     FScope: TCssElement;
     FShadowHost: TCssElement;
+    FShadowTrees: Boolean;
     FAnchors: array of TCssElement;
     FAnchorCount: Integer;
     FChildIndexes: TCssPointerMap;
@@ -563,7 +564,7 @@ begin
   if (FShadowHost <> nil) and (Element = FShadowHost) then
     Exit(nil);
   Result := FAdapter.Parent(Element);
-  if (Result <> nil) and (Result <> FShadowHost) and FAdapter.ParentIsShadowHost(Element) then
+  if FShadowTrees and (Result <> nil) and (Result <> FShadowHost) and FAdapter.ParentIsShadowHost(Element) then
     Result := nil;
 end;
 
@@ -836,6 +837,7 @@ begin
     Exit(False);
   if not PassesFilter(Selector) then
     Exit(False);
+  FShadowTrees := FAdapter.HasShadowTrees;
   Result := MatchFrom(Self, Selector, 0, Element) = mrMatched;
 end;
 
