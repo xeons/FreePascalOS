@@ -42,6 +42,9 @@ unit Hal.IntervalTimer;
 
 interface
 
+uses
+  Hal.CalibrationSamples;
+
 const
   IntervalTimerFrequency = 1193182;
 
@@ -49,6 +52,12 @@ const
   using timer channel 2. False if the timer never got there (it is not
   there). }
 function IntervalTimerBusyWait(Microseconds: LongWord): Boolean;
+{ The same countdown timed by the time stamp counter: Start brackets the
+  gate's rise (its ReferenceTicks 0), Finish the change of the output
+  (from before the last read that saw it low to after the first that
+  saw it high; its ReferenceTicks the count). Interrupts are off only
+  around each read. False if the timer never got there. }
+function TimeIntervalTimerCountdown(Microseconds: LongWord; out Start, Finish: TBracketedRead): Boolean;
 { Whether the timer counts (checked once, then remembered). }
 function IntervalTimerIsPresent: Boolean;
 { Stops channel 0, so it raises IRQ 0 no more. }
@@ -57,6 +66,7 @@ procedure SilenceIntervalTimerOutput;
 implementation
 
 uses
+  Kernel.Arch.Cpu,
   Hal.PortIo;
 
 const
@@ -118,6 +128,55 @@ begin
     Inc(Reads);
   Result := Reads < MaximumWaitReads;
 
+  WritePortByte(SpeakerControlPort, Control);
+end;
+
+function TimeIntervalTimerCountdown(Microseconds: LongWord; out Start, Finish: TBracketedRead): Boolean;
+var
+  Count: QWord;
+  Control: Byte;
+  Reads: LongWord;
+  WereEnabled: Boolean;
+  PollBefore: QWord;
+  PreviousPollBefore: QWord;
+  OutputHigh: Boolean;
+begin
+  Count := (QWord(IntervalTimerFrequency) * Microseconds) div 1000000;
+  if Count > MaximumCount then
+    Count := MaximumCount;
+  if Count = 0 then
+    Count := 1;
+  Control := ReadPortByte(SpeakerControlPort);
+  Control := Control and not (SpeakerGateEnable or SpeakerDataEnable);
+  WritePortByte(SpeakerControlPort, Control);
+  WritePortByte(ModeCommandPort, Channel2OneShotCommand);
+  WritePortByte(Channel2DataPort, Byte(Count and $FF));
+  WritePortByte(Channel2DataPort, Byte((Count shr 8) and $FF));
+  WereEnabled := SaveAndDisableInterrupts;
+  Start.CounterBefore := ReadTimeStampCounter;
+  WritePortByte(SpeakerControlPort, Control or SpeakerGateEnable);
+  Start.CounterAfter := ReadTimeStampCounter;
+  RestoreInterrupts(WereEnabled);
+  Start.ReferenceTicks := 0;
+  { Each poll is timed; the change happened after the start of the
+    last poll that saw the output low. }
+  PreviousPollBefore := Start.CounterBefore;
+  Reads := 0;
+  OutputHigh := False;
+  while not OutputHigh and (Reads < MaximumWaitReads) do
+  begin
+    WereEnabled := SaveAndDisableInterrupts;
+    PollBefore := ReadTimeStampCounter;
+    OutputHigh := (ReadPortByte(SpeakerControlPort) and Channel2OutputHigh) <> 0;
+    Finish.CounterAfter := ReadTimeStampCounter;
+    RestoreInterrupts(WereEnabled);
+    if not OutputHigh then
+      PreviousPollBefore := PollBefore;
+    Inc(Reads);
+  end;
+  Finish.CounterBefore := PreviousPollBefore;
+  Finish.ReferenceTicks := Count;
+  Result := OutputHigh;
   WritePortByte(SpeakerControlPort, Control);
 end;
 

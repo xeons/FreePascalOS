@@ -46,8 +46,20 @@
      crystal (Linux takes the same), since the timer runs on it.
   3. Measured against the time stamp counter, now known, over 20 ms (so
      the ratio of the two, which decides whether a clock interrupt comes
-     early by the counter, is close).
+     early by the counter, is close), in samples as below.
   A stated rate is checked against that measurement in the same way.
+
+  Every measurement is the median of five samples over its time, and a
+  sample is the counter between two reference reads each bracketed by
+  counter reads (Hal.CalibrationSamples): the reference's moment is the
+  middle of its bracket, the narrowest of four attempts is kept, and a
+  sample whose brackets are wider than 0.1% of it is taken again (up to
+  15 attempts in all; with none steady, the steadiest is used). A
+  processor held up between a reference read and a counter read - an
+  SMI, or under an emulator or hypervisor a virtual processor that did
+  not run for milliseconds - then neither skews a sample (it was read
+  one after the other before: once, 50 ms against a busy host's HPET
+  came out 6% slow) nor, being one of five, the result.
 
   Busy waits before the kernel's clock runs (the processors' start-up
   delays, Hal.Platform) use the best reference there is: the counter
@@ -102,10 +114,21 @@ uses
   Hal.IntervalTimer,
   Hal.PowerManagementTimer,
   Hal.LocalApic,
-  Hal.ParavirtualClock;
+  Hal.ParavirtualClock,
+  Hal.CalibrationSamples;
 
 const
   MeasureMicroseconds = 50000;
+  { A measurement is the median of this many samples (Microseconds
+    shared between them), each the counter between two bracketed
+    reference reads; up to SampleAttempts are taken to get them. }
+  SampleCount = 5;
+  SampleAttempts = 3 * SampleCount;
+  ShortestSampleMicroseconds = 2000;
+  { The attempts at each bracketed read, the narrowest kept. }
+  BracketAttempts = 4;
+  { A sample whose bracket uncertainty passes 0.1% of it is not used. }
+  SteadyPartsPerMillion = 1000;
   CheckMicroseconds = 20000;
   LocalTimerMicroseconds = 20000;
   AgreementPartsPerMillion = 10000;
@@ -223,46 +246,66 @@ begin
     Result := FrequencyUnknown;
 end;
 
-{ The counter against the HPET over about Microseconds. }
-function MeasureAgainstHpet(Microseconds: LongWord): QWord;
+{ One reference read, bracketed by the counter (interrupts off), the
+  narrowest of a few attempts. }
+procedure ReadReferenceBracketed(Reference: TFrequencySource; out Read: TBracketedRead);
 var
-  StartTicks: QWord;
-  EndTicks: QWord;
-  Wanted: QWord;
-  StartCycles: QWord;
-  Cycles: QWord;
-  Nanoseconds: QWord;
+  Candidate: TBracketedRead;
+  HaveRead: Boolean;
+  Attempt: LongInt;
+  WereEnabled: Boolean;
 begin
-  Wanted := HpetNanosecondsToTicks(QWord(Microseconds) * NanosecondsPerMicrosecond, HpetPeriodFemtoseconds);
-  StartTicks := ReadHpetCounter;
-  StartCycles := ReadTimeStampCounter;
-  repeat
-    EndTicks := ReadHpetCounter;
-  until EndTicks - StartTicks >= Wanted;
-  Cycles := ReadTimeStampCounter - StartCycles;
-  Nanoseconds := HpetTicksToNanoseconds(EndTicks - StartTicks, HpetPeriodFemtoseconds);
-  if Nanoseconds = 0 then
-    Exit(0);
-  Result := Cycles * NanosecondsPerSecond div Nanoseconds;
+  HaveRead := False;
+  Read.CounterBefore := 0;
+  Read.CounterAfter := 0;
+  Read.ReferenceTicks := 0;
+  for Attempt := 1 to BracketAttempts do
+  begin
+    WereEnabled := SaveAndDisableInterrupts;
+    Candidate.CounterBefore := ReadTimeStampCounter;
+    if Reference = FrequencyFromHpet then
+      Candidate.ReferenceTicks := ReadHpetCounter
+    else
+      Candidate.ReferenceTicks := ReadPowerManagementTimer;
+    Candidate.CounterAfter := ReadTimeStampCounter;
+    RestoreInterrupts(WereEnabled);
+    KeepNarrowerBracket(Read, HaveRead, Candidate);
+  end;
 end;
 
-{ The counter against the PM timer over about Microseconds. }
-function MeasureAgainstPowerManagementTimer(Microseconds: LongWord): QWord;
+{ A sample against the HPET over about Microseconds. }
+function SampleAgainstHpet(Microseconds: LongWord; out Sample: TCalibrationSample): Boolean;
 var
-  Start: LongWord;
+  Start: TBracketedRead;
+  Finish: TBracketedRead;
+  Wanted: QWord;
+begin
+  Wanted := HpetNanosecondsToTicks(QWord(Microseconds) * NanosecondsPerMicrosecond, HpetPeriodFemtoseconds);
+  ReadReferenceBracketed(FrequencyFromHpet, Start);
+  while ReadHpetCounter - Start.ReferenceTicks < Wanted do
+    CpuRelax;
+  ReadReferenceBracketed(FrequencyFromHpet, Finish);
+  MakeCalibrationSample(Start, Finish,
+    HpetTicksToNanoseconds(Finish.ReferenceTicks - Start.ReferenceTicks, HpetPeriodFemtoseconds), Sample);
+  Result := Sample.ReferenceNanoseconds <> 0;
+end;
+
+{ A sample against the PM timer over about Microseconds. }
+function SampleAgainstPowerManagementTimer(Microseconds: LongWord; out Sample: TCalibrationSample): Boolean;
+var
+  Start: TBracketedRead;
+  Finish: TBracketedRead;
   Wanted: QWord;
   Ticks: QWord;
-  StartCycles: QWord;
-  Cycles: QWord;
 begin
   Wanted := QWord(PowerManagementTimerFrequency) * Microseconds div MicrosecondsPerSecond;
-  Start := ReadPowerManagementTimer;
-  StartCycles := ReadTimeStampCounter;
-  repeat
-    Ticks := PowerManagementTicksSince(Start);
-  until Ticks >= Wanted;
-  Cycles := ReadTimeStampCounter - StartCycles;
-  Result := Cycles * PowerManagementTimerFrequency div Ticks;
+  ReadReferenceBracketed(FrequencyFromPowerManagementTimer, Start);
+  while PowerManagementTicksSince(LongWord(Start.ReferenceTicks)) < Wanted do
+    CpuRelax;
+  ReadReferenceBracketed(FrequencyFromPowerManagementTimer, Finish);
+  Ticks := PowerManagementTicksBetween(LongWord(Start.ReferenceTicks), LongWord(Finish.ReferenceTicks));
+  MakeCalibrationSample(Start, Finish, Ticks * NanosecondsPerSecond div PowerManagementTimerFrequency, Sample);
+  Result := Sample.ReferenceNanoseconds <> 0;
 end;
 
 procedure PowerManagementBusyWait(Microseconds: LongWord);
@@ -276,29 +319,77 @@ begin
     CpuRelax;
 end;
 
-function MeasureAgainstIntervalTimer(Microseconds: LongWord): QWord;
+{ A sample against the PIT's countdown over about Microseconds. }
+function SampleAgainstIntervalTimer(Microseconds: LongWord; out Sample: TCalibrationSample): Boolean;
 var
-  StartCycles: QWord;
-  Cycles: QWord;
+  Start: TBracketedRead;
+  Finish: TBracketedRead;
 begin
   if Microseconds > LongestIntervalWait then
     Microseconds := LongestIntervalWait;
-  StartCycles := ReadTimeStampCounter;
-  if not IntervalTimerBusyWait(Microseconds) then
-    Exit(0);
-  Cycles := ReadTimeStampCounter - StartCycles;
-  Result := Cycles * MicrosecondsPerSecond div Microseconds;
+  Result := TimeIntervalTimerCountdown(Microseconds, Start, Finish);
+  if not Result then
+    Exit;
+  MakeCalibrationSample(Start, Finish,
+    (Finish.ReferenceTicks - Start.ReferenceTicks) * NanosecondsPerSecond div IntervalTimerFrequency, Sample);
+  Result := Sample.ReferenceNanoseconds <> 0;
 end;
 
-function MeasureWith(Reference: TFrequencySource; Microseconds: LongWord): QWord;
+function TakeSample(Reference: TFrequencySource; Microseconds: LongWord; out Sample: TCalibrationSample): Boolean;
 begin
+  Sample.Cycles := 0;
+  Sample.UncertaintyCycles := 0;
+  Sample.ReferenceNanoseconds := 0;
   case Reference of
-    FrequencyFromHpet: Result := MeasureAgainstHpet(Microseconds);
-    FrequencyFromPowerManagementTimer: Result := MeasureAgainstPowerManagementTimer(Microseconds);
-    FrequencyFromIntervalTimer: Result := MeasureAgainstIntervalTimer(Microseconds);
+    FrequencyFromHpet: Result := SampleAgainstHpet(Microseconds, Sample);
+    FrequencyFromPowerManagementTimer: Result := SampleAgainstPowerManagementTimer(Microseconds, Sample);
+    FrequencyFromIntervalTimer: Result := SampleAgainstIntervalTimer(Microseconds, Sample);
   else
-    Result := 0;
+    Result := False;
   end;
+end;
+
+{ The counter's rate against Reference over about Microseconds in all:
+  the median of SampleCount steady samples (Hal.CalibrationSamples), a
+  few more tried in place of unsteady ones; if none was steady, the
+  steadiest. 0 without a reference. }
+function MeasureWith(Reference: TFrequencySource; Microseconds: LongWord): QWord;
+var
+  SampleMicroseconds: LongWord;
+  Sample: TCalibrationSample;
+  Steadiest: TCalibrationSample;
+  HaveSteadiest: Boolean;
+  Rates: TSampleRates;
+  SteadyCount: LongInt;
+  Attempts: LongInt;
+begin
+  Result := 0;
+  SampleMicroseconds := Microseconds div SampleCount;
+  if SampleMicroseconds < ShortestSampleMicroseconds then
+    SampleMicroseconds := ShortestSampleMicroseconds;
+  SteadyCount := 0;
+  Attempts := 0;
+  HaveSteadiest := False;
+  while (SteadyCount < SampleCount) and (Attempts < SampleAttempts) do
+  begin
+    Inc(Attempts);
+    if not TakeSample(Reference, SampleMicroseconds, Sample) then
+      Continue;
+    if SampleIsSteady(Sample, SteadyPartsPerMillion) then
+    begin
+      Rates[SteadyCount] := SampleHertz(Sample);
+      Inc(SteadyCount);
+    end
+    else if not HaveSteadiest or SampleIsSteadier(Sample, Steadiest) then
+    begin
+      Steadiest := Sample;
+      HaveSteadiest := True;
+    end;
+  end;
+  if SteadyCount > 0 then
+    Result := MedianRate(Rates, SteadyCount)
+  else if HaveSteadiest then
+    Result := SampleHertz(Steadiest);
 end;
 
 function MeasureCounterHertz(Microseconds: LongWord): QWord;
@@ -376,25 +467,72 @@ begin
     'the time stamp counter''s rate is unknown (no HPET, PM timer or PIT, no CPUID 15h or 16h)', 0, 0, 0, 0);
 end;
 
-{ The local APIC timer's ticks per second against the counter. }
-function MeasureLocalTimer(CounterHertz: QWord): QWord;
+{ One run of the local APIC timer against the counter over about
+  Microseconds, its start and its stop each bracketed by the counter
+  (interrupts off): its ticks per second, and whether the brackets were
+  narrow enough to use it (Steady). 0 if it measured nothing. }
+function SampleLocalTimer(CounterHertz: QWord; Microseconds: LongWord; out Steady: Boolean): QWord;
 var
-  StartCycles: QWord;
-  Cycles: QWord;
+  Start: TBracketedRead;
+  Finish: TBracketedRead;
   Wanted: QWord;
   Ticks: QWord;
+  Cycles: QWord;
+  WereEnabled: Boolean;
 begin
-  Wanted := CounterHertz * LocalTimerMicroseconds div MicrosecondsPerSecond;
+  Wanted := CounterHertz * Microseconds div MicrosecondsPerSecond;
+  WereEnabled := SaveAndDisableInterrupts;
+  Start.CounterBefore := ReadTimeStampCounter;
   StartLocalApicTimerCountdown;
-  StartCycles := ReadTimeStampCounter;
-  repeat
-    Cycles := ReadTimeStampCounter - StartCycles;
-  until Cycles >= Wanted;
+  Start.CounterAfter := ReadTimeStampCounter;
+  RestoreInterrupts(WereEnabled);
+  while ReadTimeStampCounter - Start.CounterAfter < Wanted do
+    CpuRelax;
+  WereEnabled := SaveAndDisableInterrupts;
+  Finish.CounterBefore := ReadTimeStampCounter;
   Ticks := StopLocalApicTimerCountdown;
-  Cycles := ReadTimeStampCounter - StartCycles;
+  Finish.CounterAfter := ReadTimeStampCounter;
+  RestoreInterrupts(WereEnabled);
+  Cycles := BracketMiddle(Finish) - BracketMiddle(Start);
+  Steady := UncertaintyIsWithin(Cycles, BracketWidth(Start) div 2 + BracketWidth(Finish) div 2 + 1,
+    SteadyPartsPerMillion);
   if Cycles = 0 then
     Exit(0);
   Result := Ticks * CounterHertz div Cycles;
+end;
+
+{ The local APIC timer's ticks per second against the counter: the
+  median of SampleCount steady runs, as MeasureWith. }
+function MeasureLocalTimer(CounterHertz: QWord): QWord;
+var
+  Rates: TSampleRates;
+  SteadyCount: LongInt;
+  Attempts: LongInt;
+  Rate: QWord;
+  Steady: Boolean;
+  Fallback: QWord;
+begin
+  SteadyCount := 0;
+  Attempts := 0;
+  Fallback := 0;
+  while (SteadyCount < SampleCount) and (Attempts < SampleAttempts) do
+  begin
+    Inc(Attempts);
+    Rate := SampleLocalTimer(CounterHertz, LocalTimerMicroseconds div SampleCount, Steady);
+    if Rate = 0 then
+      Continue;
+    if Steady then
+    begin
+      Rates[SteadyCount] := Rate;
+      Inc(SteadyCount);
+    end
+    else if Fallback = 0 then
+      Fallback := Rate;
+  end;
+  if SteadyCount > 0 then
+    Result := MedianRate(Rates, SteadyCount)
+  else
+    Result := Fallback;
 end;
 
 procedure DecideLocalTimerRate(var Calibration: TTimerCalibration);

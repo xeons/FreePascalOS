@@ -744,11 +744,12 @@ clock-page-test: $(CLOCK_PAGE_TEST)
 
 # The x86-64 HAL's timer arithmetic on the host: the ACPI HPET table, the
 # HPET's units and 32-bit wrap, CPUID 15h/16h and kvmclock frequencies and
-# the clock watchdog's rule (Hal.HpetTable, Hal.HpetMath, Hal.TimerFrequencies).
+# the clock watchdog's rule (Hal.HpetTable, Hal.HpetMath, Hal.TimerFrequencies),
+# the calibration's bracketed samples and median (Hal.CalibrationSamples).
 HPET_TEST := build/tools/HpetTest
 
 $(HPET_TEST): tools/HpetTest/HpetTest.pas hal/amd64/Hal.HpetTable.pas hal/amd64/Hal.HpetMath.pas \
-		hal/amd64/Hal.TimerFrequencies.pas
+		hal/amd64/Hal.TimerFrequencies.pas hal/amd64/Hal.CalibrationSamples.pas
 	@mkdir -p build/tools/hpet-test-units
 	$(FPC) -O2 -Cr -Co -Fuhal/amd64 -FEbuild/tools -FUbuild/tools/hpet-test-units $<
 
