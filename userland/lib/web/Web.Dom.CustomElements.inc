@@ -80,6 +80,10 @@ procedure TDocumentObserver.CustomElementStateChanged(Element: TElement);
 begin
 end;
 
+procedure TDocumentObserver.ScreenModeElementRemoved(Element: TElement; Fullscreen: Boolean);
+begin
+end;
+
 function TElement.CustomElementState: TCustomElementState;
 begin
   if FRareData = nil then

@@ -66,6 +66,9 @@ type
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure Alert(Context: TObject; const Message: string); override;
     function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; override;
+    { The frame's own window asks (it hears when the mode ends). }
+    function RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission; override;
+    function RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission; override;
     function Confirm(Context: TObject; const Message: string): Boolean; override;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; override;
     function ViewportWidth: Integer; override;
@@ -181,6 +184,16 @@ procedure TFrameEnvironment.HistoryChangeUrl(Context: TObject; const Url: string
 begin
   { The frame's own document URL changes (the context does it); the
     joint session history is not kept per frame. }
+end;
+
+function TFrameEnvironment.RequestFullscreen(Context: TObject; Enter: Boolean): TScriptPermission;
+begin
+  Result := FParent.RequestFullscreen(Context, Enter);
+end;
+
+function TFrameEnvironment.RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission;
+begin
+  Result := FParent.RequestPointerLock(Context, Lock);
 end;
 
 function TFrameEnvironment.OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean;

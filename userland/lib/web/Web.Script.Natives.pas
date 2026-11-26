@@ -72,6 +72,7 @@ uses
   Web.Script.NativeFetch,
   Web.Script.NativeWorkers,
   Web.Script.NativeAnimations,
+  Web.Script.NativeScreenModes,
   Web.Script.NativeStorage,
   Web.Script.NativeCanvas,
   Web.Origins,
@@ -663,6 +664,7 @@ begin
   DefineFetchNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
   DefineAnimationNatives(Context, Natives);
+  DefineScreenModeNatives(Context, Natives);
   DefineStorageNatives(Context, Natives);
   DefineCanvasNatives(Context, Natives);
 end;

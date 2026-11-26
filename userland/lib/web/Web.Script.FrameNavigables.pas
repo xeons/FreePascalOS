@@ -69,6 +69,7 @@ type
     procedure HistoryChangeUrl(Context: TObject; const Url: string; ReplaceEntry: Boolean); override;
     procedure Alert(Context: TObject; const Message: string); override;
     function OpenWindow(Context: TObject; const Url, Target, Features: string): Boolean; override;
+    function RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission; override;
     function Confirm(Context: TObject; const Message: string): Boolean; override;
     function Prompt(Context: TObject; const Message, Default: string; out Answer: string): Boolean; override;
     function ViewportWidth: Integer; override;
@@ -177,6 +178,14 @@ function TNavigableFrameEnvironment.OpenWindow(Context: TObject; const Url, Targ
 begin
   Result := (FNavigable <> nil) and (not FNavigable.Sandboxed or (AllowPopups in FNavigable.Allowances)) and
     inherited OpenWindow(Context, Url, Target, Features);
+end;
+
+{ A sandboxed frame locks the pointer only with allow-pointer-lock. }
+function TNavigableFrameEnvironment.RequestPointerLock(Context: TObject; Lock: Boolean): TScriptPermission;
+begin
+  if Lock and ((FNavigable = nil) or (FNavigable.Sandboxed and not (AllowPointerLock in FNavigable.Allowances))) then
+    Exit(ScriptPermissionDenied);
+  Result := inherited RequestPointerLock(Context, Lock);
 end;
 
 procedure TNavigableFrameEnvironment.Alert(Context: TObject; const Message: string);

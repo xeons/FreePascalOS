@@ -173,9 +173,23 @@ type
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
     procedure SelectionChanged(Document: TDocument); override;
     procedure SlotChangeSignaled(Slot: TElement); override;
+    procedure ScreenModeElementRemoved(Element: TElement; Fullscreen: Boolean); override;
   end;
 
 { TScriptDocumentObserver }
+
+{ A fullscreen or pointer lock element taken out of the document: the
+  mode ends (platform/78-screen-modes.js asks the host and fires the
+  change event at the document). }
+procedure TScriptDocumentObserver.ScreenModeElementRemoved(Element: TElement; Fullscreen: Boolean);
+begin
+  if FContext.Closed then
+    Exit;
+  if Fullscreen then
+    FContext.CallPlatform('onFullscreenElementRemoved', [])
+  else
+    FContext.CallPlatform('onPointerLockElementRemoved', []);
+end;
 
 { slotchange fires at the next mutation observer microtask. }
 procedure TScriptDocumentObserver.SlotChangeSignaled(Slot: TElement);

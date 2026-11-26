@@ -508,6 +508,8 @@ begin
   Event.ClientY := Trunc(Init^.Items[MouseEventInit_clientY].Number);
   Event.Button := Trunc(Init^.Items[MouseEventInit_button].Number);
   Event.Buttons := Trunc(Init^.Items[MouseEventInit_buttons].Number);
+  Event.MovementX := Init^.Items[MouseEventInit_movementX].Number;
+  Event.MovementY := Init^.Items[MouseEventInit_movementY].Number;
   if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
     Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
   Result := StartEvent(Call, Event);
@@ -616,6 +618,16 @@ begin
   Result := JsInteger(ThisMouseEvent(Call).Button);
 end;
 
+function MouseEvent_get_movementX(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisMouseEvent(Call).MovementX);
+end;
+
+function MouseEvent_get_movementY(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisMouseEvent(Call).MovementY);
+end;
+
 function MouseEvent_get_buttons(var Call: TBindingCall): TJsValue;
 begin
   Result := JsInteger(ThisMouseEvent(Call).Buttons);
@@ -651,6 +663,8 @@ begin
   Event.ClientY := Trunc(Init^.Items[MouseEventInit_clientY].Number);
   Event.Button := Trunc(Init^.Items[MouseEventInit_button].Number);
   Event.Buttons := Trunc(Init^.Items[MouseEventInit_buttons].Number);
+  Event.MovementX := Init^.Items[MouseEventInit_movementX].Number;
+  Event.MovementY := Init^.Items[MouseEventInit_movementY].Number;
   if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
     Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
   Event.PointerId := Trunc(Init^.Items[PointerEventInit_pointerId].Number);

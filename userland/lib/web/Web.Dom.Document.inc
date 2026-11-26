@@ -644,9 +644,17 @@ begin
     if Node = FPointerCapture then
       FPointerCapture := nil;
     if Node = FFullscreenElement then
+    begin
       FFullscreenElement := nil;
+      for Index := 1 to System.Length(FObservers) do
+        FObservers[Index - 1].ScreenModeElementRemoved(TElement(Node), True);
+    end;
     if Node = FPointerLockElement then
+    begin
       FPointerLockElement := nil;
+      for Index := 1 to System.Length(FObservers) do
+        FObservers[Index - 1].ScreenModeElementRemoved(TElement(Node), False);
+    end;
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
     Node := Node.NextInShadowIncludingTree(Root);

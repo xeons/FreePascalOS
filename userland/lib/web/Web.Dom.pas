@@ -201,6 +201,9 @@ type
     { Element's custom element state changed (:defined), or its custom
       states (:state()). }
     procedure CustomElementStateChanged(Element: TElement); virtual;
+    { The fullscreen element or the pointer lock element left the
+      document (it is no longer either): script exits the mode. }
+    procedure ScreenModeElementRemoved(Element: TElement; Fullscreen: Boolean); virtual;
   end;
 
   { What the DOM asks of the custom element machinery (the script
