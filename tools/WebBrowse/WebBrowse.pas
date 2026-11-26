@@ -56,6 +56,13 @@
                    scroll:top|bottom, scrollby:DY (the viewport itself),
                    hover:SELECTOR (to its middle), hoverat:X,Y, back, forward
     --patience MS  how long a step waits for quiet before it goes on (10000)
+    --echo-console each console message on standard output as it comes
+    --finish-on PREFIX  done at the first console message starting with
+                   PREFIX (a test harness's report), not when quiet
+    --map-host DOMAIN=ADDRESS  DOMAIN and its subdomains connect to
+                   ADDRESS without a lookup (a local test server)
+    --trust-ca FILE  also trust the PEM certificate authorities in FILE
+                   (a local test server's CA)
     -f FONTDIR     font directory (userland/fonts)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move
@@ -75,6 +82,7 @@ uses
   cthreads,
   SysUtils,
   Web.Bindings.Context,
+  WebBrowse.HostNetwork,
   WebBrowse.Preload,
   WebBrowse.Session;
 
@@ -146,6 +154,19 @@ begin
       Options.Scripting := False
     else if Argument = '-e' then
       Options.EvalSource := NextArgument
+    else if Argument = '--echo-console' then
+      Options.EchoConsole := True
+    else if Argument = '--finish-on' then
+      Options.FinishMarker := NextArgument
+    else if Argument = '--map-host' then
+    begin
+      Argument := NextArgument;
+      if Pos('=', Argument) < 2 then
+        Usage;
+      MapHostToAddress(Copy(Argument, 1, Pos('=', Argument) - 1), Copy(Argument, Pos('=', Argument) + 1, MaxInt));
+    end
+    else if Argument = '--trust-ca' then
+      TrustCertificateFile(NextArgument)
     else if Argument = '--preload' then
       InstallPreloadScript(NextArgument)
     else if Argument = '--do' then

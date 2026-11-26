@@ -75,6 +75,13 @@ type
     Steps: array of string;
     { How long a step waits for quiet before it goes on anyway. }
     StepPatienceMilliseconds: Double;
+    { Each console message on standard output as it comes
+      ("console LEVEL: TEXT"). }
+    EchoConsole: Boolean;
+    { When set, the run ends at the first console message that starts
+      with this (a test harness saying it is done), not when the page
+      goes quiet; the outputs then follow as usual. }
+    FinishMarker: string;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -176,6 +183,8 @@ type
     FTyping: string;
     FNextKeyAt: Double;
     FWaitUntil: Double;
+    { The finish marker was seen on the console. }
+    FFinished: Boolean;
     procedure ConsoleMessage(const Level, Text: string);
     procedure AdoptDocument(Document: TDocument);
     procedure ReleaseDocument;
@@ -331,6 +340,13 @@ var
 begin
   Line := Format('%8.0f %s: %s', [Clock, Level, Text]);
   FConsole.Add(Line);
+  if FOptions.EchoConsole then
+  begin
+    WriteLn('console ', Level, ': ', Text);
+    Flush(Output);
+  end;
+  if (FOptions.FinishMarker <> '') and (Copy(Text, 1, Length(FOptions.FinishMarker)) = FOptions.FinishMarker) then
+    FFinished := True;
   if FOptions.Verbose then
     WriteLn(StdErr, 'console ', Line);
 end;
@@ -816,7 +832,9 @@ begin
       FStepReadyAt := Clock;
       FQuietSince := -1;
     end;
-    if Quiet and not StepsBusy then
+    if FFinished then
+      Break;
+    if (FOptions.FinishMarker = '') and Quiet and not StepsBusy then
     begin
       if FQuietSince < 0 then
         FQuietSince := Clock;

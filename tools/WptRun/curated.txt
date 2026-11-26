@@ -1,0 +1,33 @@
+# The web-platform-tests directories make wpt runs by default: the HTML
+# and JavaScript APIs pages use most. One path of the WPT checkout per
+# line; the report groups results by these.
+dom
+html/webappapis
+html/browsers
+html/semantics/scripting-1
+html/dom
+url
+encoding
+xhr
+fetch/api
+FileAPI
+streams
+webstorage
+IndexedDB
+workers
+webmessaging
+websockets
+eventsource
+uievents
+console
+hr-time
+performance-timeline
+user-timing
+css/cssom
+css/cssom-view
+shadow-dom
+custom-elements
+selection
+WebCryptoAPI
+compression
+wasm

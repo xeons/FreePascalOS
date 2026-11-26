@@ -26,6 +26,12 @@
 
   The host counterpart of Http.SocketConnector and
   Http.SocketTransports, for tools/WebBrowse.
+
+  Two host-only settings exist for a local test server (wpt serve,
+  tools/WptRun), never in the system's build: names mapped to an
+  address without a lookup (web-platform.test and its subdomains are
+  127.0.0.1, with no change to /etc/hosts), and extra certificate
+  authorities trusted beside the host's roots (WPT's test CA).
 }
 unit WebBrowse.HostNetwork;
 
@@ -49,6 +55,12 @@ type
       out Transport: THttpTransport): THttpResult; override;
   end;
 
+{ DOMAIN and every name under it connect to ADDRESS (a numeric IPv4 or
+  IPv6 address) without a lookup. }
+procedure MapHostToAddress(const Domain, Address: string);
+{ The PEM certificates in FileName are trusted as roots too. }
+procedure TrustCertificateFile(const FileName: string);
+
 { Unix seconds now (the client's clock). }
 function HostUnixTime: Int64;
 function CreateHostClient(constref Settings: THttpClientSettings): THttpClient;
@@ -57,6 +69,7 @@ implementation
 
 uses
   SysUtils,
+  Classes,
   DateUtils,
   BaseUnix,
   Unix,
@@ -91,10 +104,72 @@ type
     procedure Close; override;
   end;
 
+  THostMapping = record
+    Domain: string;
+    Address: string;
+  end;
+
 var
   TrustLock: TRTLCriticalSection;
   SharedTrustStore: PTlsTrustStore = nil;
   TrustLoaded: Boolean = False;
+  ExtraTrustFiles: array of string;
+  HostMappings: array of THostMapping;
+
+procedure MapHostToAddress(const Domain, Address: string);
+begin
+  SetLength(HostMappings, Length(HostMappings) + 1);
+  HostMappings[High(HostMappings)].Domain := LowerCase(Domain);
+  HostMappings[High(HostMappings)].Address := Address;
+end;
+
+procedure TrustCertificateFile(const FileName: string);
+begin
+  SetLength(ExtraTrustFiles, Length(ExtraTrustFiles) + 1);
+  ExtraTrustFiles[High(ExtraTrustFiles)] := FileName;
+end;
+
+{ The address a mapped name connects to, or the name itself. }
+function MappedHost(const Host: string): string;
+var
+  Index: Integer;
+  Name, Domain: string;
+begin
+  Name := LowerCase(Host);
+  for Index := 0 to High(HostMappings) do
+  begin
+    Domain := HostMappings[Index].Domain;
+    if (Name = Domain) or ((Length(Name) > Length(Domain)) and
+      (Copy(Name, Length(Name) - Length(Domain), MaxInt) = '.' + Domain)) then
+      Exit(HostMappings[Index].Address);
+  end;
+  Result := Host;
+end;
+
+procedure LoadExtraTrust;
+var
+  Index: Integer;
+  Lines: TStringList;
+begin
+  for Index := 0 to High(ExtraTrustFiles) do
+  begin
+    if SharedTrustStore = nil then
+      SharedTrustStore := CreateTrustStore;
+    Lines := TStringList.Create;
+    try
+      try
+        Lines.LoadFromFile(ExtraTrustFiles[Index]);
+        if AddPemCertificates(SharedTrustStore, Lines.Text) <= 0 then
+          WriteLn(StdErr, 'no certificates in ', ExtraTrustFiles[Index]);
+      except
+        on Error: Exception do
+          WriteLn(StdErr, 'cannot read ', ExtraTrustFiles[Index], ': ', Error.Message);
+      end;
+    finally
+      Lines.Free;
+    end;
+  end;
+end;
 
 function HostUnixTime: Int64;
 begin
@@ -116,6 +191,7 @@ begin
       TrustLoaded := True;
       if LoadSystemTrustStore(SharedTrustStore) <> TlsErrorNone then
         SharedTrustStore := nil;
+      LoadExtraTrust;
     end;
     Result := SharedTrustStore;
   finally
@@ -360,7 +436,7 @@ begin
   List := nil;
   if Observer <> nil then
     Observer.LookingUp(Host);
-  Status := getaddrinfo(PChar(Host), PChar(IntToStr(Port)), @Hints, @List);
+  Status := getaddrinfo(PChar(MappedHost(Host)), PChar(IntToStr(Port)), @Hints, @List);
   if (Status <> 0) or (List = nil) then
   begin
     if Observer <> nil then

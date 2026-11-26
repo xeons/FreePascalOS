@@ -1,0 +1,20 @@
+{
+  "server_host": "127.0.0.1",
+  "check_subdomains": false,
+  "bind_address": true,
+  "ports": {
+    "http": [8000, 8001],
+    "https": [8443, 8444],
+    "h2": [9000],
+    "ws": [8002],
+    "wss": [8445],
+    "http-local": ["auto"],
+    "http-public": ["auto"],
+    "https-local": ["auto"],
+    "https-public": ["auto"],
+    "webtransport-h3": ["auto"],
+    "websocket-h3": ["auto"],
+    "dns": [8053]
+  },
+  "logging": {"level": "warning", "suppress_handler_traceback": true}
+}

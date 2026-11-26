@@ -57,6 +57,8 @@ type
 var
   Watchdog: TWatchdogThread = nil;
   Beats: LongWord = 0;
+  { Set to stop the watchdog at once rather than at its next second. }
+  StopRequested: PRTLEvent = nil;
 
 procedure Beat;
 begin
@@ -96,7 +98,7 @@ begin
   StillFor := 0;
   while not Terminated do
   begin
-    Sleep(1000);
+    RTLEventWaitFor(StopRequested, 1000);
     if Terminated then
       Break;
     if Beats <> LastBeats then
@@ -119,6 +121,7 @@ end;
 
 procedure StartWatchdog(StallSeconds, HardLimitSeconds: Integer);
 begin
+  StopRequested := RTLEventCreate;
   Watchdog := TWatchdogThread.Create(True);
   Watchdog.StallSeconds := StallSeconds;
   Watchdog.HardLimitSeconds := HardLimitSeconds;
@@ -131,8 +134,11 @@ begin
   if Watchdog = nil then
     Exit;
   Watchdog.Terminate;
+  RTLEventSetEvent(StopRequested);
   Watchdog.WaitFor;
   FreeAndNil(Watchdog);
+  RTLEventDestroy(StopRequested);
+  StopRequested := nil;
 end;
 
 end.

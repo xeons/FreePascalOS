@@ -240,7 +240,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
+	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse wpt web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -1972,6 +1972,26 @@ $(WEB_BROWSE): $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
 		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WebBrowse/WebBrowse.pas
 
 webbrowse: $(WEB_BROWSE)
+
+# web-platform-tests on the host (not part of make test): wptrun starts
+# WPT's own server from a checkout (WPT_ROOT, ~/Downloads/sources/wpt)
+# and runs each test in a webbrowse session of its own, several at once,
+# with the real testharness.js; it reports pass rates per directory and
+# what differs from tools/WptRun/expectations (make wpt WPT_TESTS=dom/nodes,
+# WPT_FLAGS=--list or --update).
+WPT_RUN := build/tools/wptrun
+WPT_TESTS ?= @tools/WptRun/curated.txt
+WPT_FLAGS ?=
+
+$(WPT_RUN): $(wildcard tools/WptRun/*.pas) $(WEB_BROWSE_SOURCES) $(WEB_BROWSE_UNITS)/.generated
+	fpc -Mobjfpc -O2 -OoNOSTACKFRAME -gl $(WEB_BROWSE_FLAGS) -vew -Futools/WptRun -Futools/WebBrowse -Futools/TlsTest \
+		-Fuuserland/lib/web -Fuuserland/lib/http -Fuuserland/lib/css -Fuuserland/lib/image -Fuuserland/lib/drawing \
+		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fuuserland/lib/tls -Fuuserland/lib/font \
+		-Fuuserland/lib/javascript -Fuuserland/lib/svg -Fuuserland/lib/webview -Fuuserland/lib/windowing -Fushared -Fishared \
+		-Fi$(WEB_BROWSE_UNITS) -FU$(WEB_BROWSE_UNITS) -o$@ tools/WptRun/WptRun.pas
+
+wpt: $(WPT_RUN) $(BASE_FONTS_STAMP)
+	@$(WPT_RUN) $(WPT_FLAGS) $(WPT_TESTS)
 
 # The resolver's EDNS(0) and cache of answers (libsystem) and the network
 # service's DHCP and DHCPv6 messages build for the host too, with range
