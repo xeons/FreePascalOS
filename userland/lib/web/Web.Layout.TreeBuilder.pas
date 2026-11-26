@@ -834,6 +834,18 @@ begin
   Include(Box.Flags, bfNewFormattingContext);
 end;
 
+{ Whether the contiguous text boxes from First on hold only white space. }
+function IsWhiteSpaceOnlyTextRun(First: TLayoutBox): Boolean;
+begin
+  while (First <> nil) and (First.Kind = bkText) do
+  begin
+    if (First.Node = nil) or not IsWhiteSpaceOnly(TCharacterData(First.Node).Data) then
+      Exit(False);
+    First := First.NextSibling;
+  end;
+  Result := True;
+end;
+
 procedure TBoxTreeBuilder.FixUpFlexContainer(Box: TLayoutBox);
 var
   Child, Next, Wrapper: TLayoutBox;
@@ -844,10 +856,18 @@ begin
     Next := Child.NextSibling;
     if Child.Kind = bkText then
     begin
-      if IsCollapsibleWhiteSpaceBox(Child) then
+      { CSS Flexbox 4 and Grid 6: a run of text children that is only
+        white space is not rendered, whatever white-space says. }
+      if IsWhiteSpaceOnlyTextRun(Child) then
       begin
-        Box.RemoveChild(Child);
-        FreeBoxTree(Child);
+        while (Child <> nil) and (Child.Kind = bkText) do
+        begin
+          Next := Child.NextSibling;
+          Box.RemoveChild(Child);
+          FreeBoxTree(Child);
+          Child := Next;
+        end;
+        Continue;
       end
       else
       begin

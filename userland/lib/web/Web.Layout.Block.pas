@@ -54,7 +54,7 @@ implementation
 
 uses
   Css.ComputedStyle, Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Floats,
-  Web.Layout.Inline, Web.Layout.Dispatch, Web.Layout.Sizing;
+  Web.Layout.Inline, Web.Layout.Dispatch, Web.Layout.Sizing, Web.Atoms, Web.Dom;
 
 type
   TMarginStrut = record
@@ -406,6 +406,21 @@ begin
   end;
 end;
 
+{ HTML 15.5.4 (button layout): a button's content is centred in the
+  block axis of a taller button; select and the button-like inputs are
+  drawn the same way in other browsers. }
+function CentresContent(Box: TLayoutBox): Boolean;
+var
+  Element: TElement;
+begin
+  Result := False;
+  if (Box.Node = nil) or not Box.Node.IsElement or (bfAnonymous in Box.Flags) then
+    Exit;
+  Element := TElement(Box.Node);
+  Result := Element.IsHtmlElement(AtomButton) or Element.IsHtmlElement(AtomSelect) or
+    Element.IsHtmlElement(AtomInput);
+end;
+
 procedure LayoutBlockFlow(Box: TLayoutBox; const Input: TLayoutInput);
 var
   ContentHeight, ContentWidth, ChildContainingHeight, Lowest: Single;
@@ -471,7 +486,11 @@ begin
   end;
   Box.ContentExtent := ContentHeight;
   if Box.Kind <> bkViewport then
-    ComputeUsedHeight(Box, Input, ContentHeight)
+  begin
+    ComputeUsedHeight(Box, Input, ContentHeight);
+    if (Box.ContentHeight > ContentHeight) and CentresContent(Box) then
+      ShiftLayoutContents(Box, (Box.ContentHeight - ContentHeight) / 2);
+  end
   else
   begin
     Box.ScrollHeight := ContentHeight;

@@ -1,0 +1,16 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x132.5
+    block <body> at (0,0) size 800x132.5
+      flex <div> at (0,0) size 300x20
+        block <span> at (0,0) size 9.8x20
+          line 0 at y 0 height 20 baseline 15.54
+            text "a" at (0,0.69) size 9.8x18.62
+        block <span> at (9.8,0) size 10.16x20
+          line 0 at y 0 height 20 baseline 15.54
+            text "b" at (9.8,0.69) size 10.16x18.62
+      flex <div> at (0,20) size 320x112.5
+        flex <div> at (0,20) size 320x112.5
+          flex <a> at (0,20) size 212x112.5
+            block <span> at (0,20) size 200x112.5
+          block <div> at (212,20) size 108x112.5
+            block <div> at (212,20) size 108x40

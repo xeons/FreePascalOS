@@ -1,0 +1,21 @@
+<!-- width=800 -->
+<!doctype html>
+<html><body style="margin:0;font:16px/20px sans-serif">
+<!-- A flex container's runs of white space text are not rendered even
+     when white-space keeps them (a view count row whose markup is
+     indented, white-space: pre): no anonymous items of blank lines. -->
+<div style="display:flex;white-space:pre;width:300px">
+  <span>a</span>
+  <span>b</span>
+</div>
+<!-- A column flexbox's stretched item is measured at the column's width:
+     a row inside it whose thumbnail is 62.5% wide with a 16:9 padding
+     box gets the thumbnail's height, not the height it would have at
+     its fit-content width (a list of video thumbnails). -->
+<div style="display:flex;flex-direction:column;width:320px">
+<div style="display:flex">
+<a style="display:flex;flex:none;width:62.5%;padding-right:12px"><span style="display:block;width:100%;padding-top:56.25%"></span></a>
+<div style="flex:1 1 0%"><div style="height:40px"></div></div>
+</div>
+</div>
+</body></html>

@@ -196,6 +196,31 @@ begin
   end;
 end;
 
+function AlignOf(Container, Item: TLayoutBox): TCssKeyword;
+begin
+  Result := KeywordValue(Item.Style, cpAlignSelf);
+  if KeywordIn(Result, [kwAuto, kwNormal]) then
+    Result := KeywordValue(Container.Style, cpAlignItems);
+  if KeywordIn(Result, [kwNormal]) then
+    Result := kwStretch;
+end;
+
+{ The width a column's item is laid out at: its own width (kept to
+  min-width and max-width), else the container's inner width when it is
+  stretched in a single line (CSS Flexbox 9.4 and 9.8: that cross size
+  is definite), else -1 (fit-content). }
+function ColumnItemWidth(const State: TFlexState; const Item: TFlexItem; Align: TCssKeyword): Single;
+var
+  ContainerWidth: Single;
+begin
+  ContainerWidth := State.Box.ContentWidth;
+  Result := SpecifiedBorderBoxWidth(Item.Box, ContainerWidth);
+  if Result >= 0 then
+    Result := ClampWidth(Item.Box, Result, ContainerWidth)
+  else if (Align = kwStretch) and not Item.CrossAutoStart and not Item.CrossAutoEnd then
+    Result := Max(0, ContainerWidth - Item.CrossMarginStart - Item.CrossMarginEnd);
+end;
+
 procedure ResolveBaseSizes(var State: TFlexState);
 var
   Index: Integer;
@@ -275,7 +300,10 @@ begin
       end
       else
       begin
-        LayItemOut(State, Item^, -1, -1);
+        if State.Wraps then
+          LayItemOut(State, Item^, -1, -1)
+        else
+          LayItemOut(State, Item^, -1, ColumnItemWidth(State, Item^, AlignOf(State.Box, Box)));
         Value := Box.Height;
       end;
     end;
@@ -483,15 +511,6 @@ begin
   until (Clamped = 0) or (Guard > 50);
 end;
 
-function AlignOf(Container, Item: TLayoutBox): TCssKeyword;
-begin
-  Result := KeywordValue(Item.Style, cpAlignSelf);
-  if KeywordIn(Result, [kwAuto, kwNormal]) then
-    Result := KeywordValue(Container.Style, cpAlignItems);
-  if KeywordIn(Result, [kwNormal]) then
-    Result := kwStretch;
-end;
-
 function ItemBaseline(Box: TLayoutBox; Row: Boolean): Single;
 begin
   if Box.FirstBaseline >= 0 then
@@ -559,13 +578,7 @@ begin
     end
     else
     begin
-      Specified := SpecifiedBorderBoxWidth(Item^.Box, Box.ContentWidth);
-      { A width of its own still keeps to min-width and max-width. }
-      if Specified >= 0 then
-        Specified := ClampWidth(Item^.Box, Specified, Box.ContentWidth);
-      if (Specified < 0) and (Item^.Align = kwStretch) and not Item^.CrossAutoStart and not Item^.CrossAutoEnd then
-        Specified := Max(0, Box.ContentWidth - Item^.CrossMarginStart - Item^.CrossMarginEnd);
-      LayItemOut(State, Item^, Item^.Target, Specified);
+      LayItemOut(State, Item^, Item^.Target, ColumnItemWidth(State, Item^, Item^.Align));
       Item^.CrossSize := Item^.Box.Width;
     end;
     Item^.Baseline := ItemBaseline(Item^.Box, State.Row);

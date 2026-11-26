@@ -34,6 +34,10 @@ audio.play().then(function () { playError = "resolved"; }, function (error) { pl
 var defaultMuted = document.createElement("video");
 defaultMuted.setAttribute("muted", "");
 check("muted follows the muted attribute until set", defaultMuted.muted === true);
+// A video without metadata is 0 x 0 (players divide these for the aspect
+// ratio, so they must be numbers); audio elements have no such members.
+check("videoWidth and videoHeight are 0 without metadata", defaultMuted.videoWidth === 0 &&
+  defaultMuted.videoHeight === 0 && !("videoWidth" in audio));
 
 function after() {
   check("the source fails as unsupported", errors === 1 && audio.error instanceof MediaError &&

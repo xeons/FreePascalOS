@@ -181,12 +181,12 @@ begin
         Node := AbsolutizeCalc(Value.Calc, @ResolveLengthLeaf, @Context);
         if Node.IsLeaf and (Node.UnitValue = cuPx) then
         begin
-          Result := NewDimension(Node.Value, cuPx);
+          Result := NewDimension(CensorCalcResult(Node.Value), cuPx);
           Node.Free;
         end
         else if Node.IsLeaf and (Node.UnitValue = cuNone) then
         begin
-          Result := NewNumber(Node.Value);
+          Result := NewNumber(CensorCalcResult(Node.Value));
           Node.Free;
         end
         else

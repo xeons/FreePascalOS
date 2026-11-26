@@ -48,7 +48,7 @@ procedure LayoutReplaced(Box: TReplacedBox; const Input: TLayoutInput);
 implementation
 
 uses
-  SysUtils, Web.Atoms, Web.Dom, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.TreeBuilder,
+  SysUtils, Web.Atoms, Web.Dom, Css.PropertyIds, Css.ComputedValues, Css.Keywords, Web.Layout.Values, Web.Layout.TreeBuilder,
   Web.Text.FontInstances;
 
 function AttributeNumber(Box: TLayoutBox; const Name: string; Default: Integer): Integer;
@@ -123,7 +123,12 @@ begin
     ControlTextField:
       begin
         Box.IntrinsicWidth := AttributeNumber(Box, 'size', 20) * CharacterWidth;
-        Box.IntrinsicHeight := LineHeight;
+        { A line of text: the line-height when one is given (as other
+          browsers do), else the font's height. }
+        if Box.Style.Value(cpLineHeight)^.Kind = cvKeyword then
+          Box.IntrinsicHeight := LineHeight
+        else
+          Box.IntrinsicHeight := UsedLineHeight(Box.Style);
         Box.HasIntrinsicWidth := True;
         Box.HasIntrinsicHeight := True;
       end;
@@ -156,7 +161,11 @@ begin
         Box.HasIntrinsicHeight := True;
       end;
   end;
-  if Box.HasIntrinsicWidth and Box.HasIntrinsicHeight and (Box.IntrinsicHeight > 0) then
+  { Only images (and the like) scale with a ratio: a form control's
+    width and height are independent (a text field 100% wide keeps one
+    line's height). }
+  if (Box.ControlKind = ControlImage) and Box.HasIntrinsicWidth and Box.HasIntrinsicHeight and
+    (Box.IntrinsicHeight > 0) then
     Box.IntrinsicRatio := Box.IntrinsicWidth / Box.IntrinsicHeight;
 end;
 
