@@ -546,6 +546,9 @@ begin
   Check((Pos('data block', Executor.Log) = 0) and (Pos('legacy', Executor.Log) = 0),
     'scripts: data blocks and nomodule skipped');
   Check(Environment.Site.RequestCount('later.png') = 1, 'scripts: the speculative fetch was used, not repeated');
+  Check((Environment.Site.RequestCount('d.js') = 1) and (Environment.Site.RequestCount('block.js') = 1) and
+    (Environment.Site.RequestCount('as.js') = 1),
+    'scripts: what the parser fetched before it blocked is not fetched again by the scanner');
 end;
 
 procedure CheckHistory;
