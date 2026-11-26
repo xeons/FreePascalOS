@@ -98,6 +98,7 @@ uses
   Web.Dom,
   Web.Dom.UiEvents,
   Web.Dom.DataTransfer,
+  Web.Dom.SecurityEvents,
   Web.Dom.FormControls,
   Web.Bindings.Types,
   Web.Bindings.Strings,
@@ -219,6 +220,7 @@ type
     procedure RegisterWrapper(var List: TBindingWrapperArray; var Count: Integer; Wrapper: TBindingWrapper);
     procedure UnregisterWrapper(var List: TBindingWrapperArray; var Count: Integer; Wrapper: TBindingWrapper);
     procedure WriteConsole(const Text: string; IsError: Boolean);
+    function CompileStringsAllowed(Realm: TJsRealm; const Source: UnicodeString): Boolean;
     function NewWrapper(WrapperClass: TBindingWrapperClass; Native: TObject; InterfaceId: Integer;
       Owned: Boolean; Prototype: TJsObject): TJsValue;
   protected
@@ -442,7 +444,10 @@ uses
   DateUtils,
   Web.Profiling,
   Js.Inspect,
-  Css.Stylesheets;
+  Css.Stylesheets,
+  Web.Encoding.Utf8,
+  Web.Fetch.Requests,
+  Web.Fetch.CspChecks;
 
 var
   Contexts: array of TBindingContext;
@@ -491,6 +496,8 @@ begin
     Result := InterfacePointerEvent
   else if Event is TClipboardEvent then
     Result := InterfaceClipboardEvent
+  else if Event is TSecurityPolicyViolationEvent then
+    Result := InterfaceSecurityPolicyViolationEvent
   else if Event is TMouseEvent then
     Result := InterfaceMouseEvent
   else if Event is TKeyboardEvent then
@@ -644,6 +651,12 @@ end;
 
 { TBindingContext }
 
+{ CSP's 'unsafe-eval' for eval() and Function() in this window. }
+function TBindingContext.CompileStringsAllowed(Realm: TJsRealm; const Source: UnicodeString): Boolean;
+begin
+  Result := not CspBlocksEval(TFetchClient(FDocument.SecurityPolicy), Utf16ToUtf8(Source));
+end;
+
 constructor TBindingContext.Create(ADocument: TDocument; AEnvironment: TScriptEnvironment; AWindow: TEventTarget);
 begin
   CreateFrame(ADocument, AEnvironment, nil, nil);
@@ -704,6 +717,7 @@ begin
   FEngine.Runtime.Heap.AddRootProvider(@MarkRoots);
   FEngine.Runtime.Heap.AddWeakProcessor(@MarkLiveGroups);
   FEngine.Realm.ConsoleWriter := @WriteConsole;
+  FEngine.Realm.CompileStringsCheck := @CompileStringsAllowed;
   IndexedWrapperClass := TBindingWrapper;
   SetLength(Contexts, Length(Contexts) + 1);
   Contexts[High(Contexts)] := Self;

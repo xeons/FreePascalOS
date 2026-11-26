@@ -33,7 +33,8 @@ uses
   TestChecks,
   WebIpc.Wire,
   WebIpc.ViewMessages,
-  WebIpc.NetworkMessages;
+  WebIpc.NetworkMessages,
+  WebIpc.Messages;
 
 procedure CheckViewPayloads;
 var
@@ -323,11 +324,81 @@ begin
   Check(Refused, 'payloads: a cut IndexedDB request is refused');
 end;
 
+procedure CheckWebSocketPayloads;
+var
+  Open, OpenBack: TIpcWebSocketOpen;
+  Data, DataBack: TIpcWebSocketData;
+  Close, CloseBack: TIpcWebSocketClose;
+  Opened, OpenedBack: TIpcWebSocketOpened;
+  Closed, ClosedBack: TIpcWebSocketClosed;
+  SocketId, Count: QWord;
+  Payload: TBytes;
+begin
+  Open := Default(TIpcWebSocketOpen);
+  Open.SocketId := QWord($200000003);
+  Open.Url := 'wss://example.com/chat?room=1';
+  SetLength(Open.Protocols, 2);
+  Open.Protocols[0] := 'chat';
+  Open.Protocols[1] := 'superchat';
+  Open.Origin := 'https://example.com';
+  OpenBack := DecodeWebSocketOpen(EncodeWebSocketOpen(Open));
+  Check((OpenBack.SocketId = Open.SocketId) and (OpenBack.Url = Open.Url) and (Length(OpenBack.Protocols) = 2) and
+    (OpenBack.Protocols[1] = 'superchat') and (OpenBack.Origin = 'https://example.com'), 'payloads: a WebSocket open');
+
+  Data.SocketId := 5;
+  Data.IsText := False;
+  Data.Data := TBytes.Create(0, 1, 255);
+  DataBack := DecodeWebSocketData(EncodeWebSocketData(Data));
+  Check((DataBack.SocketId = 5) and not DataBack.IsText and (Length(DataBack.Data) = 3) and (DataBack.Data[2] = 255),
+    'payloads: a WebSocket message');
+  Data.IsText := True;
+  Data.Data := nil;
+  DataBack := DecodeWebSocketData(EncodeWebSocketData(Data));
+  Check(DataBack.IsText and (Length(DataBack.Data) = 0), 'payloads: an empty WebSocket text message');
+
+  Close.SocketId := 6;
+  Close.Code := 4999;
+  Close.Reason := 'bye';
+  CloseBack := DecodeWebSocketClose(EncodeWebSocketClose(Close));
+  Check((CloseBack.SocketId = 6) and (CloseBack.Code = 4999) and (CloseBack.Reason = 'bye'), 'payloads: a WebSocket close');
+
+  Opened.SocketId := 7;
+  Opened.Protocol := 'chat';
+  Opened.Extensions := 'permessage-deflate';
+  OpenedBack := DecodeWebSocketOpened(EncodeWebSocketOpened(Opened));
+  Check((OpenedBack.SocketId = 7) and (OpenedBack.Protocol = 'chat') and (OpenedBack.Extensions = 'permessage-deflate'),
+    'payloads: a WebSocket opened');
+
+  Closed.SocketId := 8;
+  Closed.WasClean := True;
+  Closed.Code := 1000;
+  Closed.Reason := 'done';
+  Closed.Failed := False;
+  ClosedBack := DecodeWebSocketClosed(EncodeWebSocketClosed(Closed));
+  Check((ClosedBack.SocketId = 8) and ClosedBack.WasClean and (ClosedBack.Code = 1000) and (ClosedBack.Reason = 'done') and
+    not ClosedBack.Failed, 'payloads: a WebSocket closed');
+
+  DecodeWebSocketSent(EncodeWebSocketSent(9, QWord($123456789)), SocketId, Count);
+  Check((SocketId = 9) and (Count = QWord($123456789)), 'payloads: WebSocket bytes sent');
+
+  Payload := EncodeWebSocketClosed(Closed);
+  SetLength(Payload, Length(Payload) - 3);
+  try
+    DecodeWebSocketClosed(Payload);
+    Check(False, 'payloads: a cut WebSocket closed is refused');
+  except
+    on EIpcMalformed do
+      Check(True, 'payloads: a cut WebSocket closed is refused');
+  end;
+  Check(IpcKindName(IpcWebSocketClosed) = 'websocket-closed', 'payloads: the WebSocket kinds are named');
+end;
+
 procedure RunPayloadChecks;
 begin
   CheckViewPayloads;
   CheckFavicon;
   CheckNetworkPayloads;
+  CheckWebSocketPayloads;
 end;
 
 end.

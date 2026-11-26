@@ -45,6 +45,8 @@ uses
 implementation
 
 uses
+  Web.Fetch.Requests,
+  Web.Fetch.CspChecks,
   Web.Dom.FormControls,
   Web.Dom.Focus,
   Web.Dom.ImageRequests,
@@ -1504,6 +1506,8 @@ begin
     Exit;
   Action.HasQuery := True;
   Action.Query := SerializeFormEncoded(FormDataSet(Call, Form, Submitter));
+  if CspBlocksFormAction(TFetchClient(Form.NodeDocument.SecurityPolicy), Action, Form) then
+    Exit;
   Context(Call).Environment.Navigate(Context(Call), SerializeUrl(Action), False);
 end;
 

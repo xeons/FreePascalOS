@@ -73,6 +73,7 @@ uses
   Web.Loading.Scripts,
   Web.Loading.Icons,
   Web.Loading.Fonts,
+  Web.Loading.CspReports,
   Web.Navigation.Windows;
 
 type
@@ -129,6 +130,8 @@ type
     FOnFrameInserted: TLoaderFrameEvent;
     FOnFrameChanged: TLoaderFrameEvent;
     FOnFrameRemoved: TLoaderFrameEvent;
+    FCspReporter: TDocumentCspReporter;
+    procedure CspConsoleMessage(const Level, Text: string);
     procedure ParserCall(Bytes: PByte; Count: SizeInt; Finish, Resume: Boolean);
     procedure CheckRestart;
     procedure ScanIfBlocked;
@@ -205,6 +208,12 @@ type
       documents: their creator's; sandboxed ones: opaque): the client's
       and the document's. }
     procedure SetOrigin(constref Origin: TUrlOrigin);
+    { The response's Content-Security-Policy, -Report-Only and
+      Reporting-Endpoints fields, and the document's referrer. }
+    procedure ApplyResponsePolicies(const Enforced, ReportOnly, Endpoints, Referrer: string);
+    { A local-scheme document's policies, taken from its creator. }
+    procedure InheritPolicies(Source: TFetchClient);
+    property CspReporter: TDocumentCspReporter read FCspReporter;
   end;
 
 implementation
@@ -217,6 +226,7 @@ uses
   Web.Encoding.Sniffing,
   Web.Encoding.DecoderFactory,
   Web.Fetch.ReferrerPolicy,
+  Web.Fetch.ContentSecurityPolicy,
   Web.Navigation.Events,
   Web.Origins;
 
@@ -329,6 +339,10 @@ begin
   if FClient.Origin.Opaque then
     SetDocumentOrigin(FDocument, FClient.Origin);
   FDocument.BrowsingContext := Self;
+  FCspReporter := TDocumentCspReporter.Create(Self);
+  FCspReporter.OnConsole := @CspConsoleMessage;
+  FClient.CspReporter := FCspReporter;
+  FDocument.SecurityPolicy := FClient;
   FDocument.ScriptingEnabled := Executor <> nil;
   OnLoadDelaysGone := @LoadDelaysGone;
   FPreloads := TPreloadCache.Create(Self);
@@ -376,11 +390,35 @@ begin
   FEvents.Free;
   FTextDecoder.Free;
   FTextBuffer.Free;
+  FCspReporter.Free;
+  if FDocument.SecurityPolicy = FClient then
+    FDocument.SecurityPolicy := nil;
   FClient.Free;
   if FDocument.BrowsingContext = Self then
     FDocument.BrowsingContext := nil;
   FDocument.Release;
   inherited Destroy;
+end;
+
+procedure TDocumentLoader.CspConsoleMessage(const Level, Text: string);
+begin
+  if (FScripts <> nil) and (FScripts.Executor <> nil) then
+    FScripts.Executor.LoaderConsoleMessage(Self, Level, Text);
+end;
+
+procedure TDocumentLoader.ApplyResponsePolicies(const Enforced, ReportOnly, Endpoints, Referrer: string);
+begin
+  if Enforced <> '' then
+    FClient.Csp.AddFromField(Enforced, CspEnforce);
+  if ReportOnly <> '' then
+    FClient.Csp.AddFromField(ReportOnly, CspReport);
+  FClient.DocumentReferrer := Referrer;
+  FCspReporter.SetEndpoints(Endpoints);
+end;
+
+procedure TDocumentLoader.InheritPolicies(Source: TFetchClient);
+begin
+  InheritCsp(FClient, Source);
 end;
 
 procedure TDocumentLoader.BeginContent(Kind: TDocumentContentKind; const TransportCharset: string);
@@ -755,6 +793,7 @@ begin
     else
       Exit;
     ApplyCorsSettings(Request, Element, Request.Mode);
+    Request.CryptographicNonce := Element.AttributeValueOf(AtomNonce);
     if AsValue = 'font' then
       Request.Mode := FetchModeCors;
     if AsValue = 'image' then

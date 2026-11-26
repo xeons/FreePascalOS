@@ -50,7 +50,8 @@ uses
   SysUtils,
   Classes,
   WebIpc.Messages,
-  WebView.ContentProcess;
+  WebView.ContentProcess,
+  WebView.NetworkSockets;
 
 type
   { One content process's exchanges and requests. }
@@ -60,6 +61,7 @@ type
     FLock: TRTLCriticalSection;
     FHops: TList;
     FWaiting: TList;
+    FSockets: TContentSockets;
     FDatabaseClients: TList;
     procedure StartHop(Message: TIpcMessage);
     procedure LaunchWaiting;
@@ -222,6 +224,7 @@ begin
   InitCriticalSection(FLock);
   FHops := TList.Create;
   FWaiting := TList.Create;
+  FSockets := TContentSockets.Create(Process);
   FDatabaseClients := TList.Create;
 end;
 
@@ -230,6 +233,7 @@ var
   Index: Integer;
   Entry: THopEntry;
 begin
+  FSockets.Free;
   for Index := 0 to FHops.Count - 1 do
   begin
     Entry := THopEntry(FHops[Index]);
@@ -275,6 +279,7 @@ begin
     IpcCookieSet: SetCookie(Message);
     IpcStorageLoad: LoadStorage(Message);
     IpcStorageSet, IpcStorageRemove, IpcStorageClear: ChangeStorage(Message);
+    IpcWebSocketOpen, IpcWebSocketSend, IpcWebSocketClose, IpcWebSocketAbort: FSockets.Handle(Message);
     IpcIndexedDbRequest: ExecuteIndexedDb(Message);
     IpcIndexedDbClientClosed: CloseIndexedDbClient(Message);
   else
@@ -461,6 +466,7 @@ begin
   finally
     Done.Free;
   end;
+  FSockets.Reap;
   LaunchWaiting;
 end;
 

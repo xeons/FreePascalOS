@@ -366,3 +366,38 @@ interface TransitionEvent : Event {
   readonly attribute double elapsedTime;
   readonly attribute DOMString pseudoElement;
 };
+
+// Content Security Policy Level 3 (5.1).
+enum SecurityPolicyViolationEventDisposition { "enforce", "report" };
+
+dictionary SecurityPolicyViolationEventInit : EventInit {
+  required USVString documentURI;
+  DOMString referrer = "";
+  USVString blockedURI = "";
+  required DOMString violatedDirective;
+  required DOMString effectiveDirective;
+  required DOMString originalPolicy;
+  USVString sourceFile = "";
+  DOMString sample = "";
+  required SecurityPolicyViolationEventDisposition disposition;
+  required unsigned short statusCode;
+  unsigned long lineNumber = 0;
+  unsigned long columnNumber = 0;
+};
+
+[Exposed=(Window,Worker)]
+interface SecurityPolicyViolationEvent : Event {
+  constructor(DOMString type, SecurityPolicyViolationEventInit eventInitDict);
+  readonly attribute USVString documentURI;
+  readonly attribute DOMString referrer;
+  readonly attribute USVString blockedURI;
+  readonly attribute DOMString effectiveDirective;
+  readonly attribute DOMString violatedDirective;
+  readonly attribute DOMString originalPolicy;
+  readonly attribute USVString sourceFile;
+  readonly attribute DOMString sample;
+  readonly attribute SecurityPolicyViolationEventDisposition disposition;
+  readonly attribute unsigned short statusCode;
+  readonly attribute unsigned long lineNumber;
+  readonly attribute unsigned long columnNumber;
+};

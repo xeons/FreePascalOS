@@ -78,6 +78,7 @@ function SubmitFormIn(Navigable: TNavigable; Form, Submitter: TElement): Boolean
 implementation
 
 uses
+  Web.Fetch.CspChecks,
   Web.Dom.FormControls,
   Web.Navigation.Events,
   Url.Parser,
@@ -340,6 +341,9 @@ begin
     if not FireEvent(Form, 'submit', True, True) or not Form.IsConnected then
       Exit;
     if (Navigable.Loader = nil) or not BuildFormSubmission(Form, Submitter, Navigable.Loader, Target, Options) then
+      Exit;
+    { CSP's form-action. }
+    if CspBlocksFormAction(Navigable.Loader.Client, Target, Form) then
       Exit;
   finally
     if Submitter <> nil then

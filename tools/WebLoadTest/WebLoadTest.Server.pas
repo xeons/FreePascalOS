@@ -24,6 +24,10 @@
   the test opens between them, so documents arrive bit by bit. Every
   request is logged ("METHOD scheme://host/target") with its head.
 
+  Hosts named wsecho.test, wsclose.test and wsrefuse.test are WebSocket
+  servers instead (HttpTest.WebSocketServer: echo, the server closing
+  with 4001, a refused handshake); SocketLog lists what they saw.
+
   The test environment joins the site to an event loop, a client, a
   network context and a fetcher, and runs the loop until a condition
   holds.
@@ -40,6 +44,7 @@ uses
   SysUtils,
   SyncObjs,
   HttpTest.Pipes,
+  HttpTest.WebSocketServer,
   Http.Client,
   Http.Connectors,
   Http.Observers,
@@ -81,6 +86,7 @@ type
     FServers: TList;
     FLog: TStringList;
     FHeads: TStringList;
+    FSocketServers: TList;
   public
     constructor Create;
     destructor Destroy; override;
@@ -95,6 +101,9 @@ type
     function LastHead(const Text: string): string;
     function LogText: string;
     procedure ClearLog;
+    { What every WebSocket server saw, and their handshake requests. }
+    function SocketLog: string;
+    function SocketHeads: string;
   end;
 
   TTestCondition = function: Boolean of object;
@@ -273,6 +282,7 @@ begin
   FRoutes := TList.Create;
   FPairs := TList.Create;
   FServers := TList.Create;
+  FSocketServers := TList.Create;
   FLog := TStringList.Create;
   FHeads := TStringList.Create;
 end;
@@ -297,6 +307,7 @@ begin
   FRoutes.Free;
   FPairs.Free;
   FServers.Free;
+  FSocketServers.Free;
   FLog.Free;
   FHeads.Free;
   DoneCriticalSection(FLock);
@@ -311,8 +322,17 @@ var
 begin
   Pair := TPipePair.Create('http/1.1');
   Pair.Server.TimeoutMilliseconds := 0;
-  Server := TTestServer.Create(Self, Pair.Server, Url.Scheme);
+  if SerializeHost(Url.Host) = 'wsecho.test' then
+    Server := TWebSocketTestServer.Create(Pair.Server, ScenarioEcho, 'chat', True)
+  else if SerializeHost(Url.Host) = 'wsclose.test' then
+    Server := TWebSocketTestServer.Create(Pair.Server, ScenarioServerCloses, '', False)
+  else if SerializeHost(Url.Host) = 'wsrefuse.test' then
+    Server := TWebSocketTestServer.Create(Pair.Server, ScenarioRefuse, '', False)
+  else
+    Server := TTestServer.Create(Self, Pair.Server, Url.Scheme);
   EnterCriticalSection(FLock);
+  if Server is TWebSocketTestServer then
+    FSocketServers.Add(Server);
   FPairs.Add(Pair);
   FServers.Add(Server);
   LeaveCriticalSection(FLock);
@@ -402,6 +422,34 @@ begin
   FLog.Clear;
   FHeads.Clear;
   LeaveCriticalSection(FLock);
+end;
+
+function TTestSite.SocketLog: string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  EnterCriticalSection(FLock);
+  try
+    for Index := 0 to FSocketServers.Count - 1 do
+      Result := Result + TWebSocketTestServer(FSocketServers[Index]).LogText + ';';
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+function TTestSite.SocketHeads: string;
+var
+  Index: Integer;
+begin
+  Result := '';
+  EnterCriticalSection(FLock);
+  try
+    for Index := 0 to FSocketServers.Count - 1 do
+      Result := Result + TWebSocketTestServer(FSocketServers[Index]).RequestHead;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
 end;
 
 constructor TTestEnvironment.Create;

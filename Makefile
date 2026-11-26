@@ -1803,7 +1803,7 @@ WEB_RENDER_LIBRARY_SOURCES := $(wildcard userland/lib/web/*.pas) $(wildcard user
 	$(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/font/*.pas) $(wildcard userland/lib/drawing/*.pas) \
 	$(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas)
 WEB_RENDER_UNIT_PATHS := -Fuuserland/lib/web -Fuuserland/lib/css -Fuuserland/lib/font -Fuuserland/lib/drawing \
-	-Fuuserland/lib/image -Fuuserland/lib/compression -Fuuserland/lib/svg
+	-Fuuserland/lib/image -Fuuserland/lib/compression -Fuuserland/lib/svg -Fuuserland/lib/http -Fuuserland/lib/cryptography -Futools/TlsTest -Fushared -Fishared
 WEB_LAYOUT_TEST_SOURCES := $(wildcard tools/WebLayoutTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	$(WEB_RENDER_LIBRARY_SOURCES)
 
@@ -1916,7 +1916,7 @@ http-test: $(HTTP_TEST)
 WEB_LOAD_TEST := build/tools/WebLoadTest
 WEB_LOAD_TEST_UNITS := build/tools/web-load-test-units
 WEB_LOAD_TEST_SOURCES := $(wildcard tools/WebLoadTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
-	tools/HttpTest/HttpTest.Pipes.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
+	tools/HttpTest/HttpTest.Pipes.pas tools/HttpTest/HttpTest.WebSocketServer.pas $(wildcard userland/lib/web/*.pas) $(wildcard userland/lib/web/*.inc) \
 	$(wildcard userland/lib/http/*.pas) $(wildcard userland/lib/css/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas) \
 	$(wildcard userland/lib/cryptography/*.pas) $(wildcard userland/lib/tls/*.pas) $(wildcard userland/lib/font/*.pas) \

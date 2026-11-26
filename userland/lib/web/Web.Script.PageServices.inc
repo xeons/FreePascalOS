@@ -282,3 +282,39 @@ procedure TPageScriptEnvironment.CancelFetch(Context: TObject; Handle: TObject);
 begin
   FFetches.Cancel(Handle);
 end;
+
+function TPageScriptEnvironment.SupportsWebSockets: Boolean;
+begin
+  Result := FExecutor.FLoop <> nil;
+end;
+
+function TPageScriptEnvironment.OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+  Sink: TScriptWebSocketSink): TObject;
+begin
+  Result := nil;
+  if FExecutor.FLoop = nil then
+    Exit;
+  if FSockets = nil then
+    FSockets := TScriptWebSockets.Create(FExecutor.FLoop);
+  Result := FSockets.Open(TDocumentLoader(LoaderOf(Context)), Url, Protocols, Sink);
+end;
+
+procedure TPageScriptEnvironment.SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean;
+  const Data: TBytes);
+begin
+  if FSockets <> nil then
+    FSockets.Send(Handle, IsText, Data);
+end;
+
+procedure TPageScriptEnvironment.CloseWebSocket(Context: TObject; Handle: TObject; Code: Word;
+  const Reason: string);
+begin
+  if FSockets <> nil then
+    FSockets.Close(Handle, Code, Reason);
+end;
+
+procedure TPageScriptEnvironment.ForgetWebSocket(Context: TObject; Handle: TObject);
+begin
+  if FSockets <> nil then
+    FSockets.Forget(Handle);
+end;

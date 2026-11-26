@@ -129,7 +129,7 @@ function ExistingDocumentSheets(Document: TDocument): TDocumentSheets;
 implementation
 
 uses
-  SysUtils, Web.Atoms, Web.Profiling, Css.Parser, Css.MediaQueries;
+  SysUtils, Web.Atoms, Web.Profiling, Css.Parser, Css.MediaQueries, Web.Fetch.Requests, Web.Fetch.CspChecks;
 
 type
   TShadowRootSheets = class
@@ -268,6 +268,22 @@ begin
       Exit(FSheets[Index].Sheet);
     RetireSheet(FSheets[Index].Sheet);
     FSheets[Index].Sheet := nil;
+  end;
+  { CSP: a style block its document's policies refuse has no sheet
+    (asked once per text: the record keeps the nil). }
+  if CspBlocksInline(TFetchClient(FDocument.SecurityPolicy), CspInlineStyle, Source, Element.AttributeValueOf(AtomNonce),
+    Element) then
+  begin
+    if Index < 0 then
+    begin
+      SetLength(FSheets, Length(FSheets) + 1);
+      Index := High(FSheets);
+      FSheets[Index].Owner := Element;
+    end;
+    FSheets[Index].Source := Source;
+    FSheets[Index].Media := Media;
+    FSheets[Index].Sheet := nil;
+    Exit(nil);
   end;
   EnterPhase(PhaseStyleSheetParse);
   try

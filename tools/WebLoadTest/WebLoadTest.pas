@@ -41,6 +41,7 @@ uses
   WebLoadTest.Pointer,
   WebLoadTest.Frames,
   WebLoadTest.BrowserFeatures,
+  WebLoadTest.Security,
   WebLoadTest.Canvas,
   SysUtils,
   Web.Bindings.Context,
@@ -64,6 +65,13 @@ begin
     FinishChecks('web load test (pointer)');
     Exit;
   end;
+  { "security": only the WebSocket and CSP tests. }
+  if ParamStr(1) = 'security' then
+  begin
+    RunSecurityTests;
+    FinishChecks('web load test (security)');
+    Exit;
+  end;
   { "canvas": only the canvas page test. }
   if ParamStr(1) = 'canvas' then
   begin
@@ -81,6 +89,7 @@ begin
   RunEditingTests;
   RunPointerTests;
   RunBrowserFeatureTests;
+  RunSecurityTests;
   RunCanvasTests;
   FinishChecks('web load test');
 end.

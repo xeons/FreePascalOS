@@ -118,6 +118,11 @@ const
   ElementStateAlreadyStarted = $0002;
   ElementStateForceAsync = $0004;
   ElementStateFromDocumentWrite = $0008;
+  { The style attribute was last written by the CSSOM (element.style),
+    which CSP does not block; ElementStateCssomWriting is set while the
+    CSSOM writes it. }
+  ElementStateStyleFromCssom = $0010;
+  ElementStateCssomWriting = $0020;
 
 type
   TNode = class;
@@ -721,6 +726,7 @@ type
     FHasShadowRoots: Boolean;
     FFullscreenElement: TElement;
     FPointerLockElement: TElement;
+    FSecurityPolicy: TObject;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
     function GetDocumentElement: TElement;
@@ -777,6 +783,10 @@ type
     { Tells the observers about slots (Web.Dom.Slots.inc). }
     procedure NotifySlotChangeSignaled(Slot: TElement);
     procedure NotifySlotAssignmentChanged(Slot: TElement);
+    { What enforces the document's Content Security Policy: its fetch
+      client (Web.Fetch.Requests; Web.Fetch.CspChecks checks against
+      it), set by its loader. Not owned; nil: no policy. }
+    property SecurityPolicy: TObject read FSecurityPolicy write FSecurityPolicy;
     { Tells the observers a form control's state changed (Web.Dom.FormControls). }
     procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }

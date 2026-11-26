@@ -133,7 +133,8 @@ implementation
 
 uses
   Url.Parser,
-  Web.Atoms;
+  Web.Atoms,
+  Web.Fetch.CspChecks;
 
 function DefaultLoadingSettings: TLoadingSettings;
 begin
@@ -191,8 +192,10 @@ begin
       if Element.IsHtmlElement(AtomBase) and Element.HasAttributeAtom(AtomHref) then
       begin
         { The frozen base URL: the href against the document's URL. }
+        { CSP's base-uri may refuse it (the document's URL stays the
+          base). }
         if ParseUrl(Element.AttributeValueOf(AtomHref), FDocumentUrl, Parsed) and (Parsed.Scheme <> 'data') and
-           (Parsed.Scheme <> 'javascript') then
+           (Parsed.Scheme <> 'javascript') and not CspBlocksBaseUrl(FClient, Parsed, nil) then
           FBaseUrl := Parsed;
         Break;
       end;

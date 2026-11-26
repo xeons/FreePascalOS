@@ -99,6 +99,43 @@ type
     Values: TStringArray;
   end;
 
+  TIpcWebSocketOpen = record
+    SocketId: QWord;
+    { ws: or wss:. }
+    Url: string;
+    Protocols: TStringArray;
+    { The page's serialized origin (checked against the process's site). }
+    Origin: string;
+  end;
+
+  { A message either way. }
+  TIpcWebSocketData = record
+    SocketId: QWord;
+    IsText: Boolean;
+    Data: TBytes;
+  end;
+
+  TIpcWebSocketClose = record
+    SocketId: QWord;
+    { 0: no code. }
+    Code: Word;
+    Reason: string;
+  end;
+
+  TIpcWebSocketOpened = record
+    SocketId: QWord;
+    Protocol: string;
+    Extensions: string;
+  end;
+
+  TIpcWebSocketClosed = record
+    SocketId: QWord;
+    WasClean: Boolean;
+    Code: Word;
+    Reason: string;
+    Failed: Boolean;
+  end;
+
 function EncodeHopRequest(constref Value: TIpcHopRequest): TBytes;
 function DecodeHopRequest(const Payload: TBytes): TIpcHopRequest;
 function EncodeHopHead(constref Value: TIpcHopHead): TBytes;
@@ -129,6 +166,20 @@ procedure DecodeIndexedDbRequest(const Payload: TBytes; out ClientId: LongWord; 
   notice) the service's bytes. }
 function EncodeIndexedDbNotice(ClientId: LongWord; const Notice: TBytes): TBytes;
 procedure DecodeIndexedDbNotice(const Payload: TBytes; out ClientId: LongWord; out Notice: TBytes);
+
+function EncodeWebSocketOpen(constref Value: TIpcWebSocketOpen): TBytes;
+function DecodeWebSocketOpen(const Payload: TBytes): TIpcWebSocketOpen;
+function EncodeWebSocketData(constref Value: TIpcWebSocketData): TBytes;
+function DecodeWebSocketData(const Payload: TBytes): TIpcWebSocketData;
+function EncodeWebSocketClose(constref Value: TIpcWebSocketClose): TBytes;
+function DecodeWebSocketClose(const Payload: TBytes): TIpcWebSocketClose;
+function EncodeWebSocketOpened(constref Value: TIpcWebSocketOpened): TBytes;
+function DecodeWebSocketOpened(const Payload: TBytes): TIpcWebSocketOpened;
+function EncodeWebSocketClosed(constref Value: TIpcWebSocketClosed): TBytes;
+function DecodeWebSocketClosed(const Payload: TBytes): TIpcWebSocketClosed;
+{ Bytes sent: the id and the count. }
+function EncodeWebSocketSent(SocketId, Count: QWord): TBytes;
+procedure DecodeWebSocketSent(const Payload: TBytes; out SocketId, Count: QWord);
 
 implementation
 
@@ -518,6 +569,189 @@ begin
   try
     ClientId := Reader.ReadLongWord;
     Notice := Reader.ReadBytes;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketOpen(constref Value: TIpcWebSocketOpen): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(Value.SocketId);
+    Writer.WriteString(Value.Url);
+    Writer.WriteStrings(Value.Protocols);
+    Writer.WriteString(Value.Origin);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeWebSocketOpen(const Payload: TBytes): TIpcWebSocketOpen;
+var
+  Reader: TIpcReader;
+begin
+  Result := Default(TIpcWebSocketOpen);
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.SocketId := Reader.ReadQWord;
+    Result.Url := Reader.ReadString;
+    Result.Protocols := Reader.ReadStrings;
+    Result.Origin := Reader.ReadString;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketData(constref Value: TIpcWebSocketData): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(Value.SocketId);
+    Writer.WriteBoolean(Value.IsText);
+    Writer.WriteBytes(Value.Data);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeWebSocketData(const Payload: TBytes): TIpcWebSocketData;
+var
+  Reader: TIpcReader;
+begin
+  Result := Default(TIpcWebSocketData);
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.SocketId := Reader.ReadQWord;
+    Result.IsText := Reader.ReadBoolean;
+    Result.Data := Reader.ReadBytes;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketClose(constref Value: TIpcWebSocketClose): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(Value.SocketId);
+    Writer.WriteWord(Value.Code);
+    Writer.WriteString(Value.Reason);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeWebSocketClose(const Payload: TBytes): TIpcWebSocketClose;
+var
+  Reader: TIpcReader;
+begin
+  Result := Default(TIpcWebSocketClose);
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.SocketId := Reader.ReadQWord;
+    Result.Code := Reader.ReadWord;
+    Result.Reason := Reader.ReadString;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketOpened(constref Value: TIpcWebSocketOpened): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(Value.SocketId);
+    Writer.WriteString(Value.Protocol);
+    Writer.WriteString(Value.Extensions);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeWebSocketOpened(const Payload: TBytes): TIpcWebSocketOpened;
+var
+  Reader: TIpcReader;
+begin
+  Result := Default(TIpcWebSocketOpened);
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.SocketId := Reader.ReadQWord;
+    Result.Protocol := Reader.ReadString;
+    Result.Extensions := Reader.ReadString;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketClosed(constref Value: TIpcWebSocketClosed): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(Value.SocketId);
+    Writer.WriteBoolean(Value.WasClean);
+    Writer.WriteWord(Value.Code);
+    Writer.WriteString(Value.Reason);
+    Writer.WriteBoolean(Value.Failed);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeWebSocketClosed(const Payload: TBytes): TIpcWebSocketClosed;
+var
+  Reader: TIpcReader;
+begin
+  Result := Default(TIpcWebSocketClosed);
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result.SocketId := Reader.ReadQWord;
+    Result.WasClean := Reader.ReadBoolean;
+    Result.Code := Reader.ReadWord;
+    Result.Reason := Reader.ReadString;
+    Result.Failed := Reader.ReadBoolean;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeWebSocketSent(SocketId, Count: QWord): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteQWord(SocketId);
+    Writer.WriteQWord(Count);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+procedure DecodeWebSocketSent(const Payload: TBytes; out SocketId, Count: QWord);
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    SocketId := Reader.ReadQWord;
+    Count := Reader.ReadQWord;
   finally
     Reader.Free;
   end;

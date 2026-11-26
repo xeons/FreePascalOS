@@ -387,6 +387,8 @@ begin
   Source := Arg(Args, ArgCount, 0);
   if not JsIsString(Source) then
     Exit(Source);
+  if Assigned(R.CompileStringsCheck) and not R.MayCompileStrings(StringToUnicode(R.Heap, JsAsString(Source))) then
+    Exit(JsException);
   try
     Code := CompileScript(R, StringToUnicode(R.Heap, JsAsString(Source)), '<eval>');
   except

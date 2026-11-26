@@ -379,6 +379,7 @@ begin
   FContext.ApplyCorsSettings(Request, State.Element, FetchModeNoCors);
   FContext.ApplyReferrerPolicyAttribute(Request, State.Element);
   Request.InitiatorType := 'link';
+  Request.CryptographicNonce := State.Element.AttributeValueOf(AtomNonce);
   if ParserInserted then
     Request.ParserMetadata := ParserMetadataInserted
   else

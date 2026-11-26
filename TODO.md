@@ -1007,6 +1007,12 @@ normalized (0-65535), not pixels.
       not hold the connection's lock
 - [x] libhttp: Brotli and zstd content codings, decoded in pieces as
       the body arrives (libcompression's streaming decoders)
+- [x] libhttp: WebSocket connections (RFC 6455: handshake, frames,
+      masking, ping/pong, the closing handshake, the failures with their
+      close codes) with permessage-deflate (RFC 7692), on threads of
+      their own (Http.WebSockets)
+- [ ] libhttp: WebSockets over HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220),
+      and through proxies
 - [ ] libhttp: proxies (http_proxy, CONNECT), 100-continue, a PING keep-alive and idle timeout for
       HTTP/2, the full UTS #46 mapping and NFC for IDNA, the full public
       suffix list on the system disk, a persistent cookie store for the
@@ -1655,7 +1661,21 @@ Part 2, loading side (event loop, fetch, loading, navigation):
       reload, stop, meta refresh, unload events, observer notifications;
       `TWebPage` for embedders
 - [x] Host test (`make web-load-test`) with an in-process HTTP server
-- [ ] CSP enforcement and Subresource Integrity (stored on requests now)
+- [x] CSP Level 3 enforcement: requests by destination with fallback
+      lists (frame-src against the embedder), nonces, hashes,
+      'strict-dynamic', 'unsafe-hashes', inline scripts, style blocks and
+      attributes, event handler attributes, eval/Function/string timers
+      (libjavascript's compile-strings hook), form-action, base-uri,
+      report-only, securitypolicyviolation events, report-uri and
+      report-to with Reporting-Endpoints
+- [ ] CSP: the sandbox directive, workers' own policies, nonce hiding,
+      nonces passed to module imports, Trusted Types
+      (require-trusted-types-for, trusted-types)
+- [x] WebSocket and CloseEvent (the page's channels: libhttp's
+      connections in the process, the browser's network service in a
+      browser; mixed content, HSTS and CSP connect-src applied)
+- [ ] WebSocket in workers; WebSocketStream
+- [ ] Subresource Integrity (stored on requests now)
 - [x] history.pushState/replaceState (TNavigable.ChangeUrlFromScript)
 - [ ] bfcache; popstate's state object across documents
 - [x] Form submission from the web view (GET and POST, urlencoded)
@@ -1805,12 +1825,11 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       inherit, a GPU path, hit regions (addHitRegion, dropped by the
       standard)
 - [x] html5test: custom elements, shadow DOM, Web Animations, the
-      Fullscreen API, Pointer Lock (344 of 588)
+      Fullscreen API, Pointer Lock (364 of 588 with WebSocket and CSP)
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
-      CSP enforcement and
-      SecurityPolicyViolationEvent, WebSocket, media playback and Web
-      Audio, file inputs with FileList and multipart uploads,
-      SharedWorker, foreignObject, relative positioning of inline boxes,
+      media playback and Web Audio, file inputs with FileList and
+      multipart uploads, SharedWorker, foreignObject, relative
+      positioning of inline boxes,
       designMode/execCommand, date and time pickers
 
 ## Web view and browser

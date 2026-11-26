@@ -84,6 +84,10 @@ type
     Origin: TUrlOrigin;
     ReferrerPolicy: TReferrerPolicy;
     Csp: TCspList;
+    { Told of CSP violations (not owned; nil: nobody). }
+    CspReporter: TCspViolationReporter;
+    { The document's referrer, for violation reports. }
+    DocumentReferrer: string;
     IsSecureContext: Boolean;
     { The top-level document's origin (its site, for cookies). }
     TopLevelOrigin: TUrlOrigin;
@@ -110,6 +114,10 @@ type
     CacheMode: TFetchCacheMode;
     { Not owned; nil: the browser itself (a typed address). }
     Client: TFetchClient;
+    { Whose CSP the request answers to when not its client's (an
+      iframe's navigation: the embedding document's frame-src). Not
+      owned; nil: the client's. }
+    PolicyClient: TFetchClient;
     Origin: TUrlOrigin;
     ReferrerKind: TReferrerKind;
     ReferrerUrl: TUrlRecord;

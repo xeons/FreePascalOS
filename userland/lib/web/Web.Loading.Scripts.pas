@@ -105,6 +105,8 @@ type
     procedure DocumentStopped(Loader: TObject); virtual;
     { The loader is going: what the engine kept for its document goes. }
     procedure DocumentFreed(Loader: TObject); virtual;
+    { A message for the page's console from the loader (CSP refusals). }
+    procedure LoaderConsoleMessage(Loader: TObject; const Level, Text: string); virtual;
   end;
 
   TBlockingQuery = function: Boolean of object;
@@ -183,7 +185,8 @@ uses
   Web.Fetch.MimeTypes,
   Web.Navigation.Events,
   Web.Loading.Priorities,
-  Web.Loading.TextDecoding;
+  Web.Loading.TextDecoding,
+  Web.Fetch.CspChecks;
 
 type
   TScriptEvent = class
@@ -280,6 +283,10 @@ begin
 end;
 
 procedure TScriptExecutor.DocumentFreed(Loader: TObject);
+begin
+end;
+
+procedure TScriptExecutor.LoaderConsoleMessage(Loader: TObject; const Level, Text: string);
 begin
 end;
 
@@ -401,6 +408,11 @@ begin
   if (Kind = ScriptClassic) and Element.HasAttributeAtom(AtomNomodule) and FExecutor.SupportsModules then
     Exit;
   if (Kind = ScriptModule) and not FExecutor.SupportsModules then
+    Exit;
+  { CSP: an inline script runs only if the document's policies allow
+    it (by 'unsafe-inline', its nonce or its hash). }
+  if not HasSrc and CspBlocksInline(FContext.Client, CspInlineScript, Element.TextContent,
+    Element.AttributeValueOf(AtomNonce), Element, SerializeUrl(FContext.DocumentUrl, True)) then
     Exit;
   Script := TPendingScript.Create;
   Script.Element := Element;

@@ -174,7 +174,12 @@ begin
   FBlock.Free;
   FBlock := Updated;
   FSource := FBlock.Serialize;
-  FElement.SetAttributeAtom(AtomStyle, NamespaceNone, FSource);
+  FElement.ElementState := FElement.ElementState or ElementStateCssomWriting;
+  try
+    FElement.SetAttributeAtom(AtomStyle, NamespaceNone, FSource);
+  finally
+    FElement.ElementState := FElement.ElementState and not ElementStateCssomWriting;
+  end;
 end;
 
 { TRuleStyle }

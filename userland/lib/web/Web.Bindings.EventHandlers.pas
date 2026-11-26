@@ -75,6 +75,8 @@ function IsEventHandlerAttribute(const Name: string): Boolean;
 implementation
 
 uses
+  Web.Fetch.Requests,
+  Web.Fetch.CspChecks,
   Web.Bindings.UrlResolution;
 
 function IsEventHandlerAttribute(const Name: string): Boolean;
@@ -114,6 +116,10 @@ function CompileHandler(Context: TBindingContext; Element: TElement; const Event
 var
   Source, ErrorText: string;
 begin
+  { CSP: an event handler attribute is inline script ('script-src-attr'). }
+  if CspBlocksInline(TFetchClient(Element.NodeDocument.SecurityPolicy), CspInlineScriptAttribute, Body, '', Element,
+    DocumentUrlText(Element.NodeDocument)) then
+    Exit(JsNull);
   Source := '(function on' + EventType + '(event) {' + LineEnding + Body + LineEnding + '})';
   if not Context.Engine.TryEvaluate(Source, DocumentUrlText(Element.NodeDocument) + ' (on' + EventType + ')',
     Result, ErrorText) then

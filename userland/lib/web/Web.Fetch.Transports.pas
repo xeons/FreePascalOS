@@ -27,6 +27,11 @@
   CSP, referrers, redirects, sniffing) is still decided here; the
   browser keeps the cookie jar, the HTTP cache, the connections and the
   HSTS list, and refuses what the process's site may not have.
+
+  WebSocket connections go the same way: the page's checks (mixed
+  content, CSP connect-src, HSTS) are made here, the connection itself
+  is the browser's (its cookies, its sockets); its events come back to
+  a TWebSocketEventSink.
 }
 unit Web.Fetch.Transports;
 
@@ -52,8 +57,40 @@ type
     procedure HopDone(HopId: QWord; constref Outcome: THttpResult); virtual; abstract;
   end;
 
+  { What a page asks for when it opens a WebSocket (the URL ws: or wss:,
+    checked already). }
+  TWebSocketOpenRequest = record
+    Url: string;
+    Protocols: array of string;
+    { The serialized origin of the page. }
+    Origin: string;
+    { Whether the page's top-level site is the URL's (SameSite cookies);
+      a browser decides this itself. }
+    SameSite: Boolean;
+  end;
+
+  { Hears one page's WebSocket connections, from any thread. Closed comes
+    once, last (Failed: the connection failed rather than closed). }
+  TWebSocketEventSink = class
+  public
+    procedure SocketOpened(SocketId: QWord; const Protocol, Extensions: string); virtual; abstract;
+    procedure SocketMessage(SocketId: QWord; IsText: Boolean; const Data: TBytes); virtual; abstract;
+    procedure SocketBytesSent(SocketId: QWord; Count: QWord); virtual; abstract;
+    procedure SocketCloseReceived(SocketId: QWord); virtual; abstract;
+    procedure SocketClosed(SocketId: QWord; WasClean: Boolean; Code: Word; const Reason: string;
+      Failed: Boolean); virtual; abstract;
+  end;
+
   TNetworkTransport = class
   public
+    { WebSockets (by default none: the connection fails at once). }
+    procedure OpenWebSocket(constref Request: TWebSocketOpenRequest; SocketId: QWord; Sink: TWebSocketEventSink);
+      virtual;
+    procedure SendWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; IsText: Boolean; const Data: TBytes); virtual;
+    { Starts the closing handshake (Code 0: none). }
+    procedure CloseWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; Code: Word; const Reason: string); virtual;
+    { Drops the connection; nothing more is told of it. }
+    procedure AbortWebSocket(Sink: TWebSocketEventSink; SocketId: QWord); virtual;
     { Sends Request (taken over) as Sink's hop HopId. Its head, body and
       outcome come to Sink; the outcome always comes, once. }
     procedure StartHop(Request: THttpRequest; HopId: QWord; Urgent: Boolean; Sink: THopResultSink); virtual; abstract;
@@ -71,5 +108,25 @@ type
   end;
 
 implementation
+
+procedure TNetworkTransport.OpenWebSocket(constref Request: TWebSocketOpenRequest; SocketId: QWord;
+  Sink: TWebSocketEventSink);
+begin
+  Sink.SocketClosed(SocketId, False, 1006, '', True);
+end;
+
+procedure TNetworkTransport.SendWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; IsText: Boolean;
+  const Data: TBytes);
+begin
+end;
+
+procedure TNetworkTransport.CloseWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; Code: Word;
+  const Reason: string);
+begin
+end;
+
+procedure TNetworkTransport.AbortWebSocket(Sink: TWebSocketEventSink; SocketId: QWord);
+begin
+end;
 
 end.

@@ -25,6 +25,9 @@ unit Crypto.Sha256;
 
 {$mode objfpc}
 {$pointermath on}
+{ The word arithmetic wraps by design (programs built with -Cr too). }
+{$rangechecks off}
+{$overflowchecks off}
 
 interface
 

@@ -63,6 +63,7 @@ uses
   Web.Script.PageStorage,
   Web.ScriptEnvironment,
   Web.Script.PageFetch,
+  Web.Script.PageSockets,
   Web.Script.Layout,
   Web.Script.ImportMaps,
   Js.Engine,
@@ -96,6 +97,7 @@ type
     FSaveScheduled: Boolean;
     FSaveTask: QWord;
     FFetches: TScriptFetches;
+    FSockets: TScriptWebSockets;
     FScreenWidth: Integer;
     FScreenHeight: Integer;
     FStorageService: TPageStorage;
@@ -152,6 +154,12 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    function SupportsWebSockets: Boolean; override;
+    function OpenWebSocket(Context: TObject; const Url: string; const Protocols: TStringArray;
+      Sink: TScriptWebSocketSink): TObject; override;
+    procedure SendWebSocket(Context: TObject; Handle: TObject; IsText: Boolean; const Data: TBytes); override;
+    procedure CloseWebSocket(Context: TObject; Handle: TObject; Code: Word; const Reason: string); override;
+    procedure ForgetWebSocket(Context: TObject; Handle: TObject); override;
     { Writes the local storage that changed. }
     procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;
@@ -229,6 +237,7 @@ type
     procedure DocumentTimed(Loader: TObject); override;
     procedure DocumentStopped(Loader: TObject); override;
     procedure DocumentFreed(Loader: TObject); override;
+    procedure LoaderConsoleMessage(Loader: TObject; const Level, Text: string); override;
     { The live context of Document, nil if none. }
     function ContextOf(Document: TDocument): TScriptContext;
     function IsLiveContext(Context: TObject): Boolean;
@@ -320,6 +329,7 @@ begin
   ForgetTimers;
   FTimers.Free;
   FFetches.Free;
+  FSockets.Free;
   FStorageService.Free;
   SaveStorage;
   if FOwnsLocalStorage then
@@ -928,6 +938,11 @@ begin
     FContexts[Index].Context.SetTimeOrigin(TDocumentLoader(Loader).Times.NavigationStart);
 end;
 
+procedure TPageScriptExecutor.LoaderConsoleMessage(Loader: TObject; const Level, Text: string);
+begin
+  ConsoleMessage(Level, Text);
+end;
+
 procedure TPageScriptExecutor.DocumentStopped(Loader: TObject);
 var
   Index: Integer;
@@ -936,6 +951,8 @@ begin
   if (Index < 0) or FContexts[Index].Stopped then
     Exit;
   FEnvironment.FFetches.CancelLoader(TDocumentLoader(Loader));
+  if FEnvironment.FSockets <> nil then
+    FEnvironment.FSockets.CancelLoader(TDocumentLoader(Loader));
   FContexts[Index].Stopped := True;
   FContexts[Index].Modules.Stopped := True;
   FContexts[Index].Context.AttachParser(nil);
