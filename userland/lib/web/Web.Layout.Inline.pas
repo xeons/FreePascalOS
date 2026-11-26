@@ -189,7 +189,7 @@ var
 begin
   ContentX := State.Container.ContentLeft;
   ContentY := State.Container.ContentTop;
-  ChildInput := MakeChildInput(State.Input, State.ContentWidth, Indefinite, wmShrinkToFit);
+  ChildInput := MakeChildInput(State.Input, State.ContentWidth, State.Input.ContainingHeight, wmShrinkToFit);
   ChildInput.BfcX := State.Input.BfcX + ContentX;
   ChildInput.BfcY := State.Input.BfcY + ContentY + MinimumTop;
   LayoutBox(Box, ChildInput);
@@ -744,7 +744,7 @@ procedure LayOutAtomic(var State: TLineState; Box: TLayoutBox; LineTop: Single);
 var
   ChildInput: TLayoutInput;
 begin
-  ChildInput := MakeChildInput(State.Input, State.ContentWidth, Indefinite, wmShrinkToFit);
+  ChildInput := MakeChildInput(State.Input, State.ContentWidth, State.Input.ContainingHeight, wmShrinkToFit);
   ChildInput.Floats := nil;
   ChildInput.BfcX := 0;
   ChildInput.BfcY := 0;
@@ -755,7 +755,7 @@ procedure LayOutBlockInInline(var State: TLineState; Box: TLayoutBox);
 var
   ChildInput: TLayoutInput;
 begin
-  ChildInput := MakeChildInput(State.Input, State.ContentWidth, Indefinite, wmStretch);
+  ChildInput := MakeChildInput(State.Input, State.ContentWidth, State.Input.ContainingHeight, wmStretch);
   { Where its border box will be in the formatting context (its margins
     included, as in block flow): the floats its lines go around are
     found from there. }

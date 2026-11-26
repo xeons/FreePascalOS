@@ -19,7 +19,7 @@
     if (target === null) return;
     const event = new Event(type, { bubbles: true, composed: true });
     try {
-      target.dispatchEvent(event);
+      internal.fire(target, event);
     } catch (error) {
       natives.reportError(error);
     }

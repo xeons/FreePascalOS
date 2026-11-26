@@ -497,7 +497,7 @@
     const event = new AnimationPlaybackEvent(type, { currentTime: currentTimeOf(animation),
       timelineTime: timelineTime(animation) });
     try {
-      animation.dispatchEvent(event);
+      internal.fire(animation, event);
     } catch (error) {
       natives.reportError(error);
     }

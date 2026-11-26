@@ -44,6 +44,8 @@
     --stall SECONDS  the watchdog reports a page thread stuck this long (5)
     --no-script    scripting off
     -e JS          evaluate JS once the page is quiet; print the result
+    --preload FILE run this script in every document (frames too) before
+                   the page's own scripts (watching a site from inside)
     --do STEP      then what a user does, each step once the page is quiet
                    again (or after 10 s): eval:JS, type:TEXT (\n is Enter),
                    key:NAME (Enter, ArrowDown, ctrl+KeyA), click:SELECTOR,
@@ -73,6 +75,7 @@ uses
   cthreads,
   SysUtils,
   Web.Bindings.Context,
+  WebBrowse.Preload,
   WebBrowse.Session;
 
 var
@@ -143,6 +146,8 @@ begin
       Options.Scripting := False
     else if Argument = '-e' then
       Options.EvalSource := NextArgument
+    else if Argument = '--preload' then
+      InstallPreloadScript(NextArgument)
     else if Argument = '--do' then
     begin
       SetLength(Options.Steps, Length(Options.Steps) + 1);

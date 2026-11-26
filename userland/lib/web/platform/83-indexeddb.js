@@ -87,7 +87,7 @@
   // canceled.
   function fire(target, event) {
     const before = natives.reportedErrors();
-    const notCanceled = target.dispatchEvent(event);
+    const notCanceled = internal.fire(target, event);
     return { threw: natives.reportedErrors() !== before, canceled: !notCanceled };
   }
 

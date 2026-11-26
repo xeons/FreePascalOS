@@ -51,6 +51,11 @@ const
     '<span id=empty></span>' +
     '<div id=sized style="width:50%;padding:5px;border:2px solid;height:auto"><p style="margin:0;height:30px"></p></div>' +
     '<div id=bordered style="box-sizing:border-box;width:100px;padding:10px;height:40px"></div>' +
+    { An image grid's tile (reCAPTCHA): a relative inline-block three
+      times its 100px box, moved by percentages of the box. }
+    '<div id=tilebox style="width:100px;height:100px;overflow:hidden;line-height:0">' +
+    '<span id=tile style="display:inline-block;position:relative;top:-100%;left:-200%;width:300%;height:300%">' +
+    '</span></div>' +
     '</body>';
 
 procedure CheckElementGeometry;
@@ -104,6 +109,11 @@ begin
       'geometry: with box-sizing: border-box the border box size');
     Check(ScriptLayout.ComputedValue(Document.GetElementById('short'), 'width') = 'auto',
       'geometry: an inline box''s width stays auto');
+    Found := ScriptLayout.BorderBox(Document.GetElementById('tilebox'), X, Unscrolled, Width, Height) and
+      ScriptLayout.BorderBox(Document.GetElementById('tile'), X, Y, Width, Height);
+    Check(Found and (Abs(X + 200) < 0.5) and (Abs(Y - (Unscrolled - 100)) < 0.5) and (Abs(Height - 300) < 0.5),
+      'geometry: an inline-block''s percentage top, left and height resolve against a definite box (' +
+      FloatToStr(X) + ', ' + FloatToStr(Y - Unscrolled) + ', ' + FloatToStr(Height) + ')');
   finally
     ScriptLayout.Free;
     FreeLayout(Layout, Document);

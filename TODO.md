@@ -1770,6 +1770,26 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] reCAPTCHA under TCG (no KVM): its 860 KB script runs three times
       (page, anchor, challenge frame) and can miss its 15 s handshake
       timeout before the anchor retries; faster script start-up
+- [x] Cloudflare Turnstile: events the user agent fires from the
+      platform scripts (postMessage, ports, channels, workers, sockets,
+      EventSource, XHR, IndexedDB) are trusted (`internal.fire`, the
+      dispatchTrusted native); Turnstile drops untrusted messages, so its
+      init/extraParams handshake never finished. The demo now completes
+- [ ] Turnstile: the widget's success mark (inside its nested frame) is
+      not painted
+- [x] reCAPTCHA image grid showed three identical rows: atomic inlines
+      and floats got an indefinite containing height, so a tile's
+      `top: -100%` was dropped (block flow passes its definite content
+      height to inline content now)
+- [ ] WebAssembly (decoder, validator, interpreter, the JS API):
+      hCaptcha's proof of work (hsw.js) needs WebAssembly.instantiate,
+      so its checkbox cannot complete
+- [ ] hCaptcha froze the browser on the OS after clicking the checkbox
+      (not reproduced on the host: webbrowse does not route the pointer
+      into src frames)
+- [ ] webbrowse: pointer input into src frames; `location` read before
+      a realm's document is attached raises an access violation (seen
+      from `--preload`, which runs at context start)
 - [x] Range/Selection (window/document.getSelection, selectionchange,
       tied to the web view's selection), the CSSOM (document.styleSheets,
       sheets, rules, insertRule appended rules indexed at once,

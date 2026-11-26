@@ -83,7 +83,8 @@ uses
   Web.Script.NativeCanvas,
   Web.Origins,
   Web.Bindings.CrossOrigin,
-  Web.Dom.RangeContents;
+  Web.Dom.RangeContents,
+  Web.Dom.Events;
 
 const
   LocalKind = 0;
@@ -578,8 +579,31 @@ begin
   Result := JsUndefined;
 end;
 
+{ dispatchTrusted(target, event): the user agent dispatching an event it
+  made (HTML's message events from postMessage, ports, channels and
+  workers): isTrusted is true, where script's dispatchEvent clears it.
+  Undefined when either is not this realm's (the script then dispatches
+  the usual way). }
+function NativeDispatchTrusted(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+var
+  Target: TEventTarget;
+  Event: TEvent;
+begin
+  Target := TEventTarget(Context.Unwrap(Arg(Args, ArgCount, 0), InterfaceEventTarget));
+  Event := TEvent(Context.Unwrap(Arg(Args, ArgCount, 1), InterfaceEvent));
+  if (Target = nil) or (Event = nil) or Event.IsDispatching then
+    Exit(JsUndefined);
+  Event.Retain;
+  try
+    Event.IsTrusted := True;
+    Result := JsBoolean(Target.DispatchEvent(Event));
+  finally
+    Event.Release;
+  end;
+end;
+
 const
-  NativeCount = 30;
+  NativeCount = 31;
   NativeNames: array[0..NativeCount - 1] of string = (
     'now',
     'timeOrigin',
@@ -610,9 +634,10 @@ const
     'computedNames',
     'exportPorts',
     'rangeRects',
-    'elementRects');
+    'elementRects',
+    'dispatchTrusted');
   NativeLengths: array[0..NativeCount - 1] of Integer = (0, 0, 0, 1, 1, 2, 2, 3, 2, 1, 1, 0, 0, 1, 1, 2, 1, 3, 1, 0, 1, 1, 3, 0, 2, 2, 0,
-    1, 1, 1);
+    1, 1, 1, 2);
   NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
     @NativeNow,
     @NativeTimeOrigin,
@@ -643,7 +668,8 @@ const
     @NativeComputedNames,
     @NativeExportPorts,
     @NativeRangeRects,
-    @NativeElementRects);
+    @NativeElementRects,
+    @NativeDispatchTrusted);
 
 { Every native: runs its routine in the realm's context; a Pascal
   exception becomes a script error. }

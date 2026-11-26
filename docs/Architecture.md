@@ -15093,7 +15093,10 @@ traffic", /sorry/index), whose reCAPTCHA widget needs src iframes.
 Events the engine fires are released, never freed (a listener that
 touches one makes a wrapper holding a reference: the collector read
 freed events, the DuckDuckGo crash), keep isTrusted (only script's
-dispatchEvent clears it), and hold only node targets: the window,
+dispatchEvent clears it; the platform scripts fire theirs through
+`internal.fire`, the dispatchTrusted native, so a message from
+postMessage, a port, a socket or a worker is trusted as in other
+engines: Cloudflare Turnstile ignores untrusted messages), and hold only node targets: the window,
 XMLHttpRequest, AbortSignal and other targets belong to their wrappers,
 which the event's wrapper keeps alive (an event freed after its target
 called it back). Promises rejected with no handler are reported to the

@@ -28,7 +28,7 @@
     connections.delete(connection);
     const event = new Event("error", { cancelable: true });
     Object.defineProperty(event, "message", { value: message });
-    worker.dispatchEvent(event);
+    internal.fire(worker, event);
   };
 
   class SharedWorker extends EventTarget {
@@ -67,7 +67,7 @@
       else {
         const worker = this;
         internal.queueTask(function () {
-          worker.dispatchEvent(new Event("error", { cancelable: true }));
+          internal.fire(worker, new Event("error", { cancelable: true }));
         });
       }
     }

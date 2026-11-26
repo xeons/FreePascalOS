@@ -50,7 +50,7 @@
     setTimeoutOf.call(global, function () {
       pending = false;
       const document = global.document;
-      if (document) document.dispatchEvent(new Event("selectionchange"));
+      if (document) internal.fire(document, new Event("selectionchange"));
     }, 0);
   };
 })

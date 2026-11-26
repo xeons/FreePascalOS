@@ -61,7 +61,7 @@
     state.reason = reason === undefined ? internal.domException("signal is aborted without reason", "AbortError") :
       reason;
     for (const algorithm of state.algorithms.splice(0)) algorithm();
-    signal.dispatchEvent(new Event("abort"));
+    internal.fire(signal, new Event("abort"));
     for (const dependent of state.dependents.splice(0)) signalAbort(dependent, state.reason);
   }
   internal.onAbort = function (signal, algorithm) {
@@ -900,7 +900,7 @@
       state.errorFlag = false;
       if (state.readyState !== OPENED) {
         state.readyState = OPENED;
-        this.dispatchEvent(new Event("readystatechange"));
+        internal.fire(this, new Event("readystatechange"));
       }
     }
     setRequestHeader(name, value) {
@@ -1126,7 +1126,7 @@
     return state.textCache;
   }
   function fireXhrProgress(target, type, loaded, total, computable) {
-    target.dispatchEvent(new ProgressEvent(type, { lengthComputable: !!computable, loaded: loaded, total: total }));
+    internal.fire(target, new ProgressEvent(type, { lengthComputable: !!computable, loaded: loaded, total: total }));
   }
   function abortRunning(state) {
     if (state.fetchId !== null) {
@@ -1146,14 +1146,14 @@
     const length = state.responseHeaders.find(function (entry) { return entry[0].toLowerCase() === "content-length"; });
     state.total = length ? Number(length[1]) || 0 : 0;
     state.readyState = HEADERS_RECEIVED;
-    target.dispatchEvent(new Event("readystatechange"));
+    internal.fire(target, new Event("readystatechange"));
   }
   function receiveData(target, state, chunk) {
     if (state.readyState === DONE || state.readyState === UNSENT) return;
     state.chunks.push(chunk);
     state.received += chunk.length;
     if (state.readyState === HEADERS_RECEIVED) state.readyState = LOADING;
-    target.dispatchEvent(new Event("readystatechange"));
+    internal.fire(target, new Event("readystatechange"));
     fireXhrProgress(target, "progress", state.received, state.total, state.total > 0);
   }
   function receiveEnd(target, state) {
@@ -1164,7 +1164,7 @@
     if (state.readyState === UNSENT) return;
     state.readyState = DONE;
     state.sendFlag = false;
-    target.dispatchEvent(new Event("readystatechange"));
+    internal.fire(target, new Event("readystatechange"));
     fireXhrProgress(target, "load", state.received, state.total, state.total > 0);
     fireXhrProgress(target, "loadend", state.received, state.total, state.total > 0);
   }
@@ -1181,7 +1181,7 @@
     state.responseHeaders = [];
     state.chunks = [];
     state.received = 0;
-    target.dispatchEvent(new Event("readystatechange"));
+    internal.fire(target, new Event("readystatechange"));
     fireXhrProgress(target, kind, 0, 0, false);
     fireXhrProgress(target, "loadend", 0, 0, false);
   }

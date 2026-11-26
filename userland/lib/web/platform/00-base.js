@@ -43,6 +43,16 @@
     return Class;
   };
 
+  // Dispatches an event the user agent fires (a message from
+  // postMessage, a socket's open, a request's progress): isTrusted is
+  // true, as for the engine's own events. Script's dispatchEvent makes
+  // it false, and page scripts cannot reach this.
+  const dispatchTrusted = natives.dispatchTrusted;
+  internal.fire = function (target, event) {
+    const outcome = dispatchTrusted === undefined ? undefined : dispatchTrusted(target, event);
+    return outcome === undefined ? target.dispatchEvent(event) : outcome;
+  };
+
   // The token interfaces made only by the engine pass to their
   // constructors; script calling them gets a TypeError.
   internal.token = Symbol("platform");

@@ -435,6 +435,9 @@ begin
     Inner.BfcX := 0;
     Inner.BfcY := 0;
   end;
+  { Percentages of the children (block, atomic inline or float) resolve
+    against this box's content height when it is definite. }
+  Inner.ContainingHeight := ChildContainingHeight;
   try
     if bfChildrenInline in Box.Flags then
     begin
@@ -455,7 +458,6 @@ begin
     end
     else
     begin
-      Inner.ContainingHeight := ChildContainingHeight;
       LayoutBlockChildren(Box, Inner, ContentWidth, ChildContainingHeight, ContentHeight);
     end;
     if OwnFloats <> nil then

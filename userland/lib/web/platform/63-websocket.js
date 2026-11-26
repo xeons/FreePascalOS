@@ -166,8 +166,8 @@
   function closed(socket, state, wasClean, code, reason, failed) {
     state.readyState = CLOSED;
     if (state.id >= 0) sockets.delete(state.id);
-    if (failed) socket.dispatchEvent(new Event("error"));
-    socket.dispatchEvent(new CloseEvent("close", { wasClean: wasClean, code: code, reason: reason }));
+    if (failed) internal.fire(socket, new Event("error"));
+    internal.fire(socket, new CloseEvent("close", { wasClean: wasClean, code: code, reason: reason }));
   }
 
   natives.onWebSocketEvent = function (id, kind, a, b, c, d) {
@@ -179,13 +179,13 @@
       state.readyState = OPEN;
       state.protocol = a;
       state.extensions = b;
-      socket.dispatchEvent(new Event("open"));
+      internal.fire(socket, new Event("open"));
     } else if (kind === "message") {
       if (state.readyState !== OPEN) return;
       let data = b;
       if (!a) data = state.binaryType === "blob" ? internal.makeBlob(b, "") : b.buffer.slice(b.byteOffset,
         b.byteOffset + b.byteLength);
-      socket.dispatchEvent(new MessageEventClass("message", { data: data, origin: state.origin }));
+      internal.fire(socket, new MessageEventClass("message", { data: data, origin: state.origin }));
     } else if (kind === "sent") {
       state.bufferedAmount = Math.max(0, state.bufferedAmount - a);
     } else if (kind === "closing") {

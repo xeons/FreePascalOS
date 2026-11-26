@@ -214,7 +214,7 @@
       const matches = natives.matchMedia(state.media);
       if (matches !== state.matches) {
         state.matches = matches;
-        list.dispatchEvent(new MediaQueryListEvent("change", { media: state.media, matches: matches }));
+        internal.fire(list, new MediaQueryListEvent("change", { media: state.media, matches: matches }));
       }
     }
   };

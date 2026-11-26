@@ -350,7 +350,7 @@
         for (const port of messagePorts) closePort(port);
         return;
       }
-      global.dispatchEvent(new MessageEvent("message", { data: data, origin: sourceOrigin, source: source,
+      internal.fire(global, new MessageEvent("message", { data: data, origin: sourceOrigin, source: source,
         ports: messagePorts }));
     });
   });
@@ -413,7 +413,7 @@
       state.scheduled = false;
       while (state.queue.length > 0 && !state.closed) {
         const message = state.queue.shift();
-        port.dispatchEvent(new MessageEvent("message", { data: message.data, ports: message.ports }));
+        internal.fire(port, new MessageEvent("message", { data: message.data, ports: message.ports }));
       }
     });
   }
@@ -450,10 +450,10 @@
     try {
       data = internal.deserializeMessage(text, []);
     } catch (error) {
-      receiver.dispatchEvent(new MessageEvent("messageerror", { origin: origin }));
+      internal.fire(receiver, new MessageEvent("messageerror", { origin: origin }));
       return;
     }
-    receiver.dispatchEvent(new MessageEvent("message", { data: data, origin: origin }));
+    internal.fire(receiver, new MessageEvent("message", { data: data, origin: origin }));
   };
   class BroadcastChannel extends EventTarget {
     constructor(name) {

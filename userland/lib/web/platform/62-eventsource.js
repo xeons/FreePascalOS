@@ -112,7 +112,7 @@
         announced = true;
         if (state.readyState === CLOSED) return;
         state.readyState = OPEN;
-        source.dispatchEvent(new Event("open"));
+        internal.fire(source, new Event("open"));
       },
       onData: function (chunk) {
         if (state.fetchId !== id || !announced) return;
@@ -140,13 +140,13 @@
     stopRunning(state);
     if (state.readyState === CLOSED) return;
     state.readyState = CLOSED;
-    source.dispatchEvent(new Event("error"));
+    internal.fire(source, new Event("error"));
   }
 
   function reestablish(source, state) {
     if (state.readyState === CLOSED) return;
     state.readyState = CONNECTING;
-    source.dispatchEvent(new Event("error"));
+    internal.fire(source, new Event("error"));
     if (state.readyState !== CONNECTING) return;
     state.timer = global.setTimeout(function () {
       state.timer = null;
@@ -221,7 +221,7 @@
     state.data = "";
     state.eventType = "";
     if (state.readyState === CLOSED) return;
-    source.dispatchEvent(new MessageEventClass(type, { data: data, origin: state.origin,
+    internal.fire(source, new MessageEventClass(type, { data: data, origin: state.origin,
       lastEventId: state.lastEventId }));
   }
 })

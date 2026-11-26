@@ -100,7 +100,7 @@
     const event = new Event("error", { cancelable: true });
     Object.defineProperty(event, "message", { value: message });
     Object.defineProperty(event, "filename", { value: url });
-    worker.dispatchEvent(event);
+    internal.fire(worker, event);
   }
 
   function locationOf(url) {
@@ -194,7 +194,7 @@
         const ports = internal.transferredPorts(transfer).map(internal.movePort);
         const data = internal.cloneWithTransfer(message, transfer);
         internal.queueTask(function () {
-          if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data, ports: ports }));
+          if (!state.terminated) internal.fire(worker, new MessageEvent("message", { data: data, ports: ports }));
         });
       };
       scope.close = function close() {

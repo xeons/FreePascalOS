@@ -507,7 +507,7 @@
   internal.finishInterface(FileReader, "FileReader");
 
   function fireProgress(target, type, loaded, total) {
-    target.dispatchEvent(new ProgressEvent(type, { lengthComputable: total !== undefined, loaded: loaded || 0,
+    internal.fire(target, new ProgressEvent(type, { lengthComputable: total !== undefined, loaded: loaded || 0,
       total: total || 0 }));
   }
   internal.fireProgress = fireProgress;

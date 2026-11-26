@@ -307,10 +307,10 @@
     try {
       received = internal.receiveThroughLink(message.text, message.ids);
     } catch (error) {
-      target.dispatchEvent(new MessageEvent("messageerror", { origin: message.origin, source: message.source }));
+      internal.fire(target, new MessageEvent("messageerror", { origin: message.origin, source: message.source }));
       return;
     }
-    target.dispatchEvent(new MessageEvent("message", { data: received.data, origin: message.origin,
+    internal.fire(target, new MessageEvent("message", { data: received.data, origin: message.origin,
       source: message.source, ports: received.ports }));
   }
 
@@ -336,12 +336,12 @@
       const state = workerState(worker);
       if (state.state === value[2]) return;
       state.state = value[2];
-      worker.dispatchEvent(new Event("statechange"));
+      internal.fire(worker, new Event("statechange"));
     } else if (kind === "updatefound") {
       const registration = registrationObjects.get(value);
-      if (registration !== undefined) registration.dispatchEvent(new Event("updatefound"));
+      if (registration !== undefined) internal.fire(registration, new Event("updatefound"));
     } else if (kind === "controller") {
-      container.dispatchEvent(new Event("controllerchange"));
+      internal.fire(container, new Event("controllerchange"));
     } else if (kind === "message") {
       const message = { text: text, ids: ids, source: workerFor(value), origin: new URL(value[1]).origin };
       const state = containerState(container);
