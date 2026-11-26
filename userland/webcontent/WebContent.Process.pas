@@ -65,6 +65,7 @@ uses
   Web.Fetch.NetworkContexts,
   Web.Storage,
   Web.Script.Watchdog,
+  Web.LongWork,
   WebIpc.Messages,
   WebIpc.ViewMessages,
   WebContent.Connection,
@@ -145,6 +146,9 @@ type
     procedure ServeChannel;
     procedure FinishTurn;
     procedure WaitForWork;
+    { A step of the engine's long work (Web.LongWork): pings are
+      answered. }
+    procedure LongWorkStep;
   public
     constructor Create(constref Options: TContentOptions);
     destructor Destroy; override;
@@ -164,12 +168,14 @@ begin
   FStorageBackend := TContentStorageBackend.Create(FContext.Connection);
   FContext.Storage := TWebStorageRegistry.Create('');
   FContext.Storage.Backend := FStorageBackend;
+  SetLongWorkStepHandler(@LongWorkStep);
 end;
 
 destructor TContentProcessRunner.Destroy;
 var
   Index: Integer;
 begin
+  SetLongWorkStepHandler(nil);
   for Index := 0 to FViews.Count - 1 do
     TContentView(FViews[Index]).Free;
   FViews.Free;
@@ -282,13 +288,22 @@ begin
     Handles[Count] := WatchedHandle(Index);
     Inc(Count);
   end;
-  if FContext.Connection.Endpoint.HasPending then
+  if FContext.Connection.HasDeferred then
+    { Put aside while pings were answered: handled at once. }
+    Timeout := 0
+  else if FContext.Connection.Endpoint.HasPending then
     Timeout := 5
   else
     Timeout := InfiniteWait;
   Ready := WaitForHandles(Slice(Handles, Count), Timeout);
   if (Ready >= 2) and (Ready < Count) then
     ReportHandleReady(Ready - 2);
+end;
+
+procedure TContentProcessRunner.LongWorkStep;
+begin
+  if not FContext.Connection.Broken then
+    FContext.Connection.AnswerWaitingPings;
 end;
 
 procedure TContentProcessRunner.Run;

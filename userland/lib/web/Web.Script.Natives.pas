@@ -55,6 +55,7 @@ implementation
 
 uses
   SysUtils,
+  Web.LongWork,
   Js.Objects,
   Js.Functions,
   Js.Engine,
@@ -678,13 +679,18 @@ begin
   begin
     try
       Factory := Engine.EvaluateBuiltin(PlatformScriptSource(Index), 'platform/' + PlatformScriptNames[Index]);
-      if not Context.CallFunction(Factory, JsUndefined, [Natives, JsObjectValue(Engine.GlobalObject), Internal],
-        Outcome, 'platform/' + PlatformScriptNames[Index]) then
-        Continue;
+      NoteLongWorkStep;
+      { A script that threw was reported; the next one runs anyway. }
+      Context.CallFunction(Factory, JsUndefined, [Natives, JsObjectValue(Engine.GlobalObject), Internal],
+        Outcome, 'platform/' + PlatformScriptNames[Index]);
     except
       on Error: EJsError do
         Context.Console('error', 'platform/' + PlatformScriptNames[Index] + ': ' + Error.Message);
     end;
+    { Seconds in all on a slow machine (an emulator): after each step
+      the program may answer what cannot wait that long, such as a
+      content process its browser's pings (Web.LongWork). }
+    NoteLongWorkStep;
   end;
 end;
 

@@ -1686,13 +1686,21 @@ time.sleep(0.5)
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 type_on_serial(b'/app/browser/browser file:///tmp/browser-test.html > /tmp/browser.log 2>&1 &\r')
-time.sleep(8)
-browser_screen = take_screen()
 
 
 def browser_colour_near(colour, expected):
     return len(colour) == 6 and all(abs(int(colour[i:i + 2], 16) - int(expected[i:i + 2], 16)) <= 8 for i in (0, 2, 4))
 
+
+# The page on the screen: a new renderer runs its platform scripts first
+# (seconds under TCG, more on a busy host), so the screen is looked at
+# until the page shows, for up to 40 s.
+time.sleep(8)
+browser_screen = take_screen()
+browser_deadline = time.time() + 32
+while not browser_colour_near(browser_screen(500, 500), 'ff8000') and time.time() < browser_deadline:
+    time.sleep(1)
+    browser_screen = take_screen()
 
 browser_from = len(received)
 type_on_serial(b'kill %2; wait %2; cat /tmp/browser.log; settings delete Browser; rm -r /.settings/browser; kill %1; wait; '
@@ -1798,7 +1806,12 @@ time.sleep(14)
 processes_from = len(received)
 # (pgrep never counts itself; ps | grep counted the grep too.)
 type_on_serial(b'm=DONE; echo RENDERERS $(pgrep -c webcontent) $m\r')
-wait_for('RENDERERS', 10)
+# The count itself, not the echoed command line (which has RENDERERS
+# too, and comes first: on a busy host pgrep answers later).
+renderers_deadline = time.time() + 20
+while time.time() < renderers_deadline and \
+        re.search(rb'RENDERERS \d+ DONE', bytes(received[processes_from:])) is None:
+    collect(0.2)
 processes_two = re.search(rb'RENDERERS 2 DONE', bytes(received[processes_from:])) is not None
 # The served tab is the last (the third address opened after the first).
 press('ctrl-tab')
@@ -1835,6 +1848,15 @@ checks.append(('browser processes: about:crash crashes the local pages\' rendere
                procs_ok and len(re.findall(rb'process crashed \d+ tab [01]', procs_log)) == 2 and
                procs_log.count(b'loaded file:///tmp/pa.html') >= 2 and b'exit' in procs_log and
                browser_colour_near(reloaded_screen(500, 400), 'ff8000')))
+# A renderer starting up runs the platform scripts for its window's
+# realm (seconds under TCG, more on a busy host) and answers the pings
+# between them (Web.LongWork), so it is not "not responding": neither the
+# first local page (Browser/HangTimeout 8 s by default) nor the local
+# pages here (4 s, including the new renderer Reload starts) are taken
+# for hung; only the looping page is.
+checks.append(('browser processes: a renderer starting up answers pings (only the looping page is "not responding")',
+               browser_ok and b'process hung' not in browser_log and
+               procs_ok and re.search(rb'process hung 1 tab [01]', procs_log) is None))
 # Paint on a new picture (480x320, white): the rectangle tool picked by
 # its button in the tool box, a rectangle dragged with the pointer from
 # (20, 20) to (120, 80) of the picture (Paint prints where its top left
