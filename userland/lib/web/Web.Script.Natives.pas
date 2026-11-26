@@ -71,6 +71,9 @@ uses
   Web.Script.PlatformSources,
   Web.Script.NativeFetch,
   Web.Script.NativeWorkers,
+  Web.Script.MessageLinks,
+  Web.Script.BroadcastChannels,
+  Web.Workers.SharedWorkers,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -659,6 +662,9 @@ begin
     Context.Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index);
   DefineFetchNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
+  DefineLinkNatives(Context, Natives);
+  DefineBroadcastNatives(Context, Natives);
+  DefineSharedWorkerNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

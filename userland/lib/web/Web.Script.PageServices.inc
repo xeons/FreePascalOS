@@ -229,3 +229,8 @@ procedure TPageScriptEnvironment.CancelFetch(Context: TObject; Handle: TObject);
 begin
   FFetches.Cancel(Handle);
 end;
+
+function TPageScriptEnvironment.LoadingContextOf(Context: TObject): TObject;
+begin
+  Result := LoaderOf(Context);
+end;

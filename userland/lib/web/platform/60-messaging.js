@@ -1,7 +1,11 @@
 // Cross-document messaging (HTML Standard 9.3, 9.4, 9.5): window.postMessage
 // (the message structured-cloned, delivered in a task as a MessageEvent
 // with the sender's origin and window), MessageChannel and MessagePort,
-// BroadcastChannel among this window and its frames.
+// BroadcastChannel among the same-origin windows and workers of the
+// process. Ports whose other side is in another heap (a shared or
+// service worker, another page) talk through message links
+// (Web.Script.MessageLinks): the message is serialized to text
+// (55-serialization.js) and transferred ports become link ends.
 (function (natives, global, internal) {
   "use strict";
   const token = internal.token;
@@ -79,6 +83,9 @@
   // their own realm (exportPort and importEndpoint below). Only these
   // scripts ever hold another realm's endpoints.
   const portData = new WeakMap();
+  internal.isMessagePort = function (value) {
+    return value !== null && typeof value === "object" && portData.has(value);
+  };
   function portState(port) {
     const state = portData.get(port);
     if (state === undefined) throw new TypeError("Illegal invocation");
@@ -90,6 +97,10 @@
   function deliverToPort(target, data, ports) {
     const state = portState(target);
     if (state.closed) return;
+    if (state.linkRelay !== null) {
+      natives.linkPost(state.linkRelay, internal.serializeMessage(data, ports), ports.map(portToLink));
+      return;
+    }
     if (state.relay !== null) {
       state.relay.post(data, ports.map(exportPort));
       return;
@@ -111,6 +122,8 @@
       if (state.closed) return;
       if (state.remote !== null) state.remote.post(cloned, ports.map(exportPort));
       else if (state.other !== null) deliverToPort(state.other, cloned, ports);
+      else if (state.link !== null)
+        natives.linkPost(state.link, internal.serializeMessage(cloned, ports), ports.map(portToLink));
     };
     endpoint.connect = function (sink) {
       state.relay = sink;
@@ -135,13 +148,104 @@
     movedState.other = state.other;
     movedState.remote = state.remote;
     movedState.queue = state.queue;
+    movedState.link = state.link;
     state.other = null;
     state.remote = null;
     state.queue = [];
+    state.link = null;
     if (movedState.other !== null) portState(movedState.other).other = moved;
     if (movedState.remote !== null) movedState.remote.connect(sinkFor(moved));
+    if (movedState.link !== null) bindLinkPort(moved, movedState.link);
     return moved;
   }
+
+  // ---- ports over message links ----
+
+  const linkHandlers = new Map();
+  natives.onLinkMessage = function (id, text, ids) {
+    const handler = linkHandlers.get(id);
+    if (handler !== undefined) handler.message(text, ids);
+  };
+  natives.onLinkClosed = function (id) {
+    const handler = linkHandlers.get(id);
+    linkHandlers.delete(id);
+    if (handler !== undefined) handler.closed();
+  };
+  // Raw use of a link by the worker scripts: Handler.message(text, ids)
+  // and Handler.closed().
+  internal.listenToLink = function (id, handler) {
+    linkHandlers.set(id, handler);
+    natives.linkAttach(id);
+  };
+  internal.forgetLink = function (id) {
+    linkHandlers.delete(id);
+  };
+
+  function receiveThroughLink(text, ids) {
+    const ports = ids.map(portFromLink);
+    return { data: internal.deserializeMessage(text, ports), ports: ports };
+  }
+  internal.receiveThroughLink = receiveThroughLink;
+
+  // Port's other side is the link end Id: what arrives there is its.
+  function bindLinkPort(port, id) {
+    const state = portState(port);
+    state.link = id;
+    internal.listenToLink(id, {
+      message: function (text, ids) {
+        const received = receiveThroughLink(text, ids);
+        deliverToPort(port, received.data, received.ports);
+      },
+      closed: function () {
+        if (state.link === id) state.link = null;
+        closePort(port);
+      }
+    });
+  }
+
+  // A port of this realm for a link end that came with a message.
+  function portFromLink(id) {
+    const port = new MessagePort(token);
+    bindLinkPort(port, id);
+    return port;
+  }
+  internal.portFromLink = portFromLink;
+
+  // Port goes to another heap: the id of the link end the receiver gets.
+  // A port over a link already hands its own end on; another one stays
+  // here as a relay (a port taking its place in its entanglement) whose
+  // traffic crosses a new link.
+  function portToLink(port) {
+    const state = portState(port);
+    if (state.link !== null) {
+      const id = state.link;
+      state.link = null;
+      state.transferred = true;
+      linkHandlers.delete(id);
+      return id;
+    }
+    const pair = natives.linkOpen();
+    const relay = movePort(port);
+    const relayState = portState(relay);
+    relayState.linkRelay = pair[0];
+    internal.listenToLink(pair[0], {
+      message: function (text, ids) {
+        const received = receiveThroughLink(text, ids);
+        if (relayState.closed) return;
+        if (relayState.remote !== null) relayState.remote.post(received.data, received.ports.map(exportPort));
+        else if (relayState.other !== null) deliverToPort(relayState.other, received.data, received.ports);
+      },
+      closed: function () {
+        relayState.linkRelay = null;
+        closePort(relay);
+      }
+    });
+    const waiting = relayState.queue;
+    relayState.queue = [];
+    for (const message of waiting) deliverToPort(relay, message.data, message.ports);
+    return pair[1];
+  }
+  internal.portToLink = portToLink;
 
   // What another realm's endpoint calls to reach Port.
   function sinkFor(port) {
@@ -187,6 +291,14 @@
     const relay = state.relay;
     state.relay = null;
     if (relay !== null) relay.close();
+    for (const key of ["link", "linkRelay"]) {
+      const id = state[key];
+      state[key] = null;
+      if (id !== null) {
+        linkHandlers.delete(id);
+        natives.linkClose(id);
+      }
+    }
   }
 
   // Asked by another realm's postMessage for the ports a script of this
@@ -247,8 +359,8 @@
     constructor(key) {
       if (key !== token) internal.illegal();
       super();
-      portData.set(this, { other: null, remote: null, relay: null, started: false, closed: false,
-        transferred: false, queue: [], onmessage: null, scheduled: false });
+      portData.set(this, { other: null, remote: null, relay: null, link: null, linkRelay: null, started: false,
+        closed: false, transferred: false, queue: [], onmessage: null, scheduled: false });
     }
     postMessage(message, transferOrOptions) {
       const state = portState(this);
@@ -259,6 +371,11 @@
       if (state.closed || state.transferred) return;
       if (state.remote !== null) {
         state.remote.post(message, ports.map(exportPort));
+        return;
+      }
+      if (state.link !== null) {
+        const text = internal.serializeMessage(message, ports);
+        natives.linkPost(state.link, text, ports.map(portToLink));
         return;
       }
       if (state.other === null) return;
@@ -315,39 +432,53 @@
   }
   internal.finishInterface(MessageChannel, "MessageChannel");
 
-  // BroadcastChannel: channels of one name in this realm.
-  const channels = new Map();
+  // BroadcastChannel (HTML Standard 9.6): every channel of the name in
+  // the same-origin windows and workers of this process hears a message
+  // (Web.Script.BroadcastChannels: serialized, delivered in a task of
+  // each receiver's loop).
   const broadcastData = new WeakMap();
+  const joinedChannels = new Map();
+  function broadcastState(channel) {
+    const state = broadcastData.get(channel);
+    if (state === undefined) throw new TypeError("Illegal invocation");
+    return state;
+  }
+  natives.onBroadcast = function (id, text, origin) {
+    const receiver = joinedChannels.get(id);
+    if (receiver === undefined || broadcastData.get(receiver).closed) return;
+    let data;
+    try {
+      data = internal.deserializeMessage(text, []);
+    } catch (error) {
+      receiver.dispatchEvent(new MessageEvent("messageerror", { origin: origin }));
+      return;
+    }
+    receiver.dispatchEvent(new MessageEvent("message", { data: data, origin: origin }));
+  };
   class BroadcastChannel extends EventTarget {
     constructor(name) {
       if (arguments.length < 1) throw new TypeError("Failed to construct 'BroadcastChannel': 1 argument required.");
       super();
       const channelName = String(name);
-      broadcastData.set(this, { name: channelName, closed: false });
-      if (!channels.has(channelName)) channels.set(channelName, new Set());
-      channels.get(channelName).add(this);
+      const id = natives.broadcastJoin(channelName);
+      broadcastData.set(this, { name: channelName, closed: false, id: id });
+      joinedChannels.set(id, this);
     }
-    get name() { return broadcastData.get(this).name; }
+    get name() { return broadcastState(this).name; }
     postMessage(message) {
-      const state = broadcastData.get(this);
+      const state = broadcastState(this);
+      if (arguments.length < 1)
+        throw new TypeError("Failed to execute 'postMessage' on 'BroadcastChannel': 1 argument required.");
       if (state.closed) throw internal.domException("Failed to execute 'postMessage' on 'BroadcastChannel': " +
         "Channel is closed", "InvalidStateError");
-      const data = clone(message);
-      const sender = this;
-      const origin = global.origin;
-      for (const receiver of channels.get(state.name) || []) {
-        if (receiver === sender) continue;
-        internal.queueTask(function () {
-          if (!broadcastData.get(receiver).closed)
-            receiver.dispatchEvent(new MessageEvent("message", { data: data, origin: origin }));
-        });
-      }
+      natives.broadcastPost(state.id, internal.serializeMessage(message, []));
     }
     close() {
-      const state = broadcastData.get(this);
+      const state = broadcastState(this);
+      if (state.closed) return;
       state.closed = true;
-      const set = channels.get(state.name);
-      if (set) set.delete(this);
+      joinedChannels.delete(state.id);
+      natives.broadcastLeave(state.id);
     }
   }
   internal.defineHandler(BroadcastChannel.prototype, "message");

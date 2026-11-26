@@ -233,6 +233,11 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject; virtual;
     { No more calls to the sink of Handle. }
     procedure CancelFetch(Context: TObject; Handle: TObject); virtual;
+    { The loading context (Web.Loading.Contexts.TLoadingContext: the
+      document's loop, fetcher and fetch client) of a context's document,
+      nil when it has none: workers, service workers and caches find
+      the context's event loop, origin and client through it. }
+    function LoadingContextOf(Context: TObject): TObject; virtual;
   end;
 
 procedure RaiseUnsupported(const What: string);
@@ -425,6 +430,11 @@ end;
 
 procedure TScriptEnvironment.CancelFetch(Context: TObject; Handle: TObject);
 begin
+end;
+
+function TScriptEnvironment.LoadingContextOf(Context: TObject): TObject;
+begin
+  Result := nil;
 end;
 
 end.

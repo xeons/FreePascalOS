@@ -9,6 +9,10 @@
 // structured clones delivered in tasks; an uncaught error in the
 // worker's script fires error at the Worker. importScripts fetches
 // through fetch() (CORS) before the script runs again (see below).
+//
+// internal.createWorkerRunner is the same machinery for the shared and
+// service workers' scopes (66-shared-workers.js, 69-service-worker-
+// scope.js), which run in a worker agent's window (Web.Workers.Agents).
 (function (natives, global, internal) {
   "use strict";
   const workerData = new WeakMap();
@@ -23,6 +27,7 @@
     function WorkerGlobalScope() { throw new TypeError("Illegal constructor"); }
     function DedicatedWorkerGlobalScope() { throw new TypeError("Illegal constructor"); }
     Object.setPrototypeOf(DedicatedWorkerGlobalScope.prototype, WorkerGlobalScope.prototype);
+    Object.defineProperty(DedicatedWorkerGlobalScope, "name", { value: host.kind });
     const proto = WorkerGlobalScope.prototype;
     Object.defineProperty(proto, "addEventListener", { configurable: true, writable: true, value: function (type, callback) {
       if (callback === null || callback === undefined) return;
@@ -52,14 +57,17 @@
       return !event.defaultPrevented;
     } });
     Object.defineProperty(DedicatedWorkerGlobalScope.prototype, Symbol.toStringTag,
-      { configurable: true, value: "DedicatedWorkerGlobalScope" });
+      { configurable: true, value: host.kind });
     Object.setPrototypeOf(globalThis, DedicatedWorkerGlobalScope.prototype);
     Object.defineProperty(globalThis, "WorkerGlobalScope", { configurable: true, writable: true, value: WorkerGlobalScope });
-    Object.defineProperty(globalThis, "DedicatedWorkerGlobalScope", { configurable: true, writable: true,
+    Object.defineProperty(globalThis, host.kind, { configurable: true, writable: true,
       value: DedicatedWorkerGlobalScope });
-    globalThis.onmessage = null;
-    globalThis.onmessageerror = null;
+    for (const name of host.handlers) globalThis["on" + name] = null;
     globalThis.onerror = null;
+    host.listeners = function (type) {
+      const list = listeners.get(type);
+      return (list !== undefined && list.length > 0) || typeof globalThis["on" + type] === "function";
+    };
     host.deliver = deliver;
   })();`;
 
@@ -150,37 +158,50 @@
     };
   }
 
-  function makeScope(worker, state) {
+  // A worker scope (a realm of this window's runtime) for State (url,
+  // name, imports, missing, starting, scope, host): Kind is its global
+  // scope interface's name, Handlers its event handler attributes, Setup
+  // adds what the kind has of its own.
+  function makeScope(state, kind, handlers, setup) {
     const scope = natives.workerRealm();
     state.scope = scope;
-    state.host = { deliver: null };
+    state.host = { deliver: null, listeners: null, kind: kind, handlers: handlers };
     for (const name of sharedFunctions)
       if (typeof global[name] === "function") scope[name] = global[name].bind(global);
     for (const name of sharedObjects)
       if (name in global) scope[name] = global[name];
     scope.self = scope;
-    scope.name = state.name;
     scope.location = locationOf(state.url);
-    scope.postMessage = function postMessage(message, transfer) {
-      const ports = internal.transferredPorts(transfer).map(internal.movePort);
-      const data = structuredClone(message);
-      internal.queueTask(function () {
-        if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data, ports: ports }));
-      });
-    };
-    scope.close = function close() {
-      state.terminated = true;
-    };
     scope.importScripts = importScriptsOf(state, scope);
+    setup(scope);
     scope.__workerHost = state.host;
     natives.workerEvaluate(scope, bootstrap, "worker-scope");
     return scope;
   }
 
-  function start(worker, state, source) {
+  function dedicatedSetup(worker, state) {
+    return function (scope) {
+      scope.name = state.name;
+      scope.postMessage = function postMessage(message, transfer) {
+        const ports = internal.transferredPorts(transfer).map(internal.movePort);
+        const data = structuredClone(message);
+        internal.queueTask(function () {
+          if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data, ports: ports }));
+        });
+      };
+      scope.close = function close() {
+        state.terminated = true;
+      };
+    };
+  }
+
+  // Runs Source in a new scope (again, from the start, once the scripts
+  // its importScripts asked for are fetched); Done(error) after, with
+  // the uncaught error's text or undefined.
+  function runScript(state, source, makeNewScope, done) {
     if (state.terminated) return;
     if (state.scope !== null) natives.workerClose(state.scope);
-    const scope = makeScope(worker, state);
+    const scope = makeNewScope();
     state.missing = [];
     state.starting = true;
     const error = natives.workerEvaluate(scope, source, state.url);
@@ -188,18 +209,57 @@
     if (state.missing.length > 0 && state.restarts < 4) {
       state.restarts++;
       Promise.all(state.missing.map(function (url) {
-        return fetchSource(url).then(function (text) { state.imports.set(url, text); });
+        return state.fetchImport(url).then(function (text) { state.imports.set(url, text); });
       })).then(function () {
-        start(worker, state, source);
+        runScript(state, source, makeNewScope, done);
       }).catch(function (failure) {
-        if (!state.terminated) fireError(worker, String(failure && failure.message || failure), state.url);
+        if (!state.terminated) done(String(failure && failure.message || failure));
       });
       return;
     }
-    if (error !== undefined) fireError(worker, error, state.url);
-    state.ready = true;
-    flushToWorker(state);
+    done(error);
   }
+
+  function start(worker, state, source) {
+    runScript(state, source, function () {
+      return makeScope(state, "DedicatedWorkerGlobalScope", ["message", "messageerror"], dedicatedSetup(worker, state));
+    }, function (error) {
+      if (error !== undefined) fireError(worker, error, state.url);
+      state.ready = true;
+      flushToWorker(state);
+    });
+  }
+
+  // The worker scope of a shared or service worker. Options: url, name,
+  // kind, handlers, setup(scope), fetchImport(url) (a promise of the
+  // text; fetch() by default), imports (a Map of the scripts already
+  // fetched). The runner: run(source, done(error)), scope(),
+  // deliver(event), handles(type) (a listener or handler for it), close().
+  internal.createWorkerRunner = function (options) {
+    const state = { url: options.url, name: options.name || "", scope: null, host: null, terminated: false,
+      imports: options.imports || new Map(), missing: [], starting: false, restarts: 0,
+      fetchImport: options.fetchImport || fetchSource };
+    return {
+      state: state,
+      run: function (source, done) {
+        runScript(state, source, function () {
+          return makeScope(state, options.kind, options.handlers, options.setup);
+        }, done);
+      },
+      scope: function () { return state.scope; },
+      deliver: function (event) {
+        if (!state.terminated && state.host !== null && state.host.deliver !== null) state.host.deliver(event);
+      },
+      handles: function (type) {
+        return state.host !== null && state.host.listeners !== null && state.host.listeners(type);
+      },
+      close: function () {
+        if (state.terminated) return;
+        state.terminated = true;
+        if (state.scope !== null) natives.workerClose(state.scope);
+      }
+    };
+  };
 
   class Worker extends EventTarget {
     constructor(scriptURL, options) {
@@ -216,7 +276,7 @@
       const name = options !== null && typeof options === "object" && options.name !== undefined ?
         String(options.name) : "";
       const state = { url: url, name: name, scope: null, host: null, ready: false, terminated: false, pending: [],
-        scheduled: false, imports: new Map(), missing: [], starting: false, restarts: 0 };
+        scheduled: false, imports: new Map(), missing: [], starting: false, restarts: 0, fetchImport: fetchSource };
       workerData.set(this, state);
       const worker = this;
       fetchSource(url).then(function (source) {

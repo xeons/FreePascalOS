@@ -137,6 +137,7 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    function LoadingContextOf(Context: TObject): TObject; override;
     { Writes the local storage that changed. }
     procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;

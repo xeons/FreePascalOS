@@ -45,6 +45,16 @@
 
   The clock is in milliseconds and can be replaced (tests drive time by
   hand).
+
+  Satellite loops: a loop that belongs to no page (a shared or service
+  worker's agent, Web.Workers.Agents) calls MakeSatellite. Every other
+  loop of the thread (a primary) then runs one of the satellites' ready
+  tasks after each of its own, counts their tasks and timers in
+  HasReadyTask and MillisecondsUntilNextTimer, and is woken when a task
+  is posted to a satellite, so whatever drives the pages drives the
+  workers too. SatelliteReaper (if set) runs before a primary takes a
+  satellite's task, outside every satellite task: agents are freed
+  there.
 }
 unit Web.EventLoop;
 
@@ -94,7 +104,12 @@ type
     FOnTaskException: TNotifyEvent;
     FLastException: string;
     FTasksRun: QWord;
+    FSatellite: Boolean;
     function DefaultClock: Double;
+    function RunOwnTask: Boolean;
+    function OwnReadyTask: Boolean;
+    function OwnMillisecondsUntilNextTimer: Double;
+    procedure WakeSelf;
     procedure TakeInbox;
     procedure QueueDueTimers;
     function ChooseQueue: TTaskQueue;
@@ -139,6 +154,9 @@ type
     procedure RequestRendering;
     { The web view can paint now: "update the rendering". }
     procedure RenderingOpportunity;
+    { This loop stops being a primary and becomes a satellite (above). }
+    procedure MakeSatellite;
+    property Satellite: Boolean read FSatellite;
     property CurrentTask: TWebTask read FCurrentTask;
     { The running timer task's nesting level, 0 outside timers. }
     property CurrentTimerNestingLevel: Integer read GetCurrentTimerNestingLevel;
@@ -154,10 +172,50 @@ type
     property LastException: string read FLastException;
   end;
 
+  TSatelliteReaper = procedure;
+
+var
+  { Runs before primaries take satellites' tasks (see above). }
+  SatelliteReaper: TSatelliteReaper;
+
 implementation
 
 uses
   Web.Profiling;
+
+var
+  { Every loop of the process, primaries and satellites apart; the lock
+    guards the lists (Wake comes from any thread). }
+  LoopListLock: TRTLCriticalSection;
+  PrimaryLoops: TList;
+  SatelliteLoops: TList;
+  NextSatellite: Integer;
+
+{ The satellites in order, from the round-robin position on. }
+function SatelliteSnapshot: TList;
+var
+  Index, Count: Integer;
+begin
+  Result := TList.Create;
+  EnterCriticalSection(LoopListLock);
+  try
+    Count := SatelliteLoops.Count;
+    for Index := 0 to Count - 1 do
+      Result.Add(SatelliteLoops[(NextSatellite + Index) mod Count]);
+  finally
+    LeaveCriticalSection(LoopListLock);
+  end;
+end;
+
+function SatelliteAlive(Loop: TEventLoop): Boolean;
+begin
+  EnterCriticalSection(LoopListLock);
+  try
+    Result := SatelliteLoops.IndexOf(Loop) >= 0;
+  finally
+    LeaveCriticalSection(LoopListLock);
+  end;
+end;
 
 constructor TEventLoop.Create(Clock: TEventLoopClock);
 var
@@ -175,6 +233,9 @@ begin
     FClock := Clock
   else
     FClock := @DefaultClock;
+  EnterCriticalSection(LoopListLock);
+  PrimaryLoops.Add(Self);
+  LeaveCriticalSection(LoopListLock);
 end;
 
 destructor TEventLoop.Destroy;
@@ -182,6 +243,10 @@ var
   Source: TTaskSource;
   Index: Integer;
 begin
+  EnterCriticalSection(LoopListLock);
+  PrimaryLoops.Remove(Self);
+  SatelliteLoops.Remove(Self);
+  LeaveCriticalSection(LoopListLock);
   EnterCriticalSection(FInboxLock);
   for Index := 0 to FInboxCount - 1 do
     FInbox[Index].Free;
@@ -246,11 +311,50 @@ begin
   PostTask(Task);
 end;
 
-procedure TEventLoop.Wake;
+procedure TEventLoop.WakeSelf;
 begin
   RTLEventSetEvent(FWakeEvent);
   if Assigned(FOnWake) then
     FOnWake(Self);
+end;
+
+procedure TEventLoop.Wake;
+var
+  Primaries: array of TEventLoop;
+  Index: Integer;
+begin
+  if not FSatellite then
+  begin
+    WakeSelf;
+    Exit;
+  end;
+  { A satellite's work is done by the primaries: wake them all. }
+  Primaries := nil;
+  EnterCriticalSection(LoopListLock);
+  try
+    SetLength(Primaries, PrimaryLoops.Count);
+    for Index := 0 to PrimaryLoops.Count - 1 do
+      Primaries[Index] := TEventLoop(PrimaryLoops[Index]);
+    { Woken under the lock: a loop cannot be freed meanwhile. }
+    for Index := 0 to High(Primaries) do
+      Primaries[Index].WakeSelf;
+  finally
+    LeaveCriticalSection(LoopListLock);
+  end;
+end;
+
+procedure TEventLoop.MakeSatellite;
+begin
+  if FSatellite then
+    Exit;
+  EnterCriticalSection(LoopListLock);
+  try
+    PrimaryLoops.Remove(Self);
+    SatelliteLoops.Add(Self);
+    FSatellite := True;
+  finally
+    LeaveCriticalSection(LoopListLock);
+  end;
 end;
 
 procedure TEventLoop.TakeInbox;
@@ -399,6 +503,33 @@ end;
 
 function TEventLoop.RunNextTask: Boolean;
 var
+  Satellites: TList;
+  Index: Integer;
+begin
+  Result := RunOwnTask;
+  if FSatellite then
+    Exit;
+  if Assigned(SatelliteReaper) then
+    SatelliteReaper();
+  if SatelliteLoops.Count = 0 then
+    Exit;
+  Satellites := SatelliteSnapshot;
+  try
+    for Index := 0 to Satellites.Count - 1 do
+      if SatelliteAlive(TEventLoop(Satellites[Index])) and TEventLoop(Satellites[Index]).RunOwnTask then
+      begin
+        EnterCriticalSection(LoopListLock);
+        Inc(NextSatellite);
+        LeaveCriticalSection(LoopListLock);
+        Exit(True);
+      end;
+  finally
+    Satellites.Free;
+  end;
+end;
+
+function TEventLoop.RunOwnTask: Boolean;
+var
   Queue: TTaskQueue;
 begin
   TakeInbox;
@@ -431,6 +562,24 @@ end;
 
 function TEventLoop.HasReadyTask: Boolean;
 var
+  Satellites: TList;
+  Index: Integer;
+begin
+  Result := OwnReadyTask;
+  if Result or FSatellite or (SatelliteLoops.Count = 0) then
+    Exit;
+  Satellites := SatelliteSnapshot;
+  try
+    for Index := 0 to Satellites.Count - 1 do
+      if TEventLoop(Satellites[Index]).OwnReadyTask then
+        Exit(True);
+  finally
+    Satellites.Free;
+  end;
+end;
+
+function TEventLoop.OwnReadyTask: Boolean;
+var
   Source: TTaskSource;
   Due: Double;
 begin
@@ -442,6 +591,28 @@ begin
 end;
 
 function TEventLoop.MillisecondsUntilNextTimer: Double;
+var
+  Satellites: TList;
+  Index: Integer;
+  Wait: Double;
+begin
+  Result := OwnMillisecondsUntilNextTimer;
+  if FSatellite or (SatelliteLoops.Count = 0) then
+    Exit;
+  Satellites := SatelliteSnapshot;
+  try
+    for Index := 0 to Satellites.Count - 1 do
+    begin
+      Wait := TEventLoop(Satellites[Index]).OwnMillisecondsUntilNextTimer;
+      if (Wait >= 0) and ((Result < 0) or (Wait < Result)) then
+        Result := Wait;
+    end;
+  finally
+    Satellites.Free;
+  end;
+end;
+
+function TEventLoop.OwnMillisecondsUntilNextTimer: Double;
 var
   Due: Double;
 begin
@@ -529,4 +700,12 @@ begin
   end;
 end;
 
+initialization
+  InitCriticalSection(LoopListLock);
+  PrimaryLoops := TList.Create;
+  SatelliteLoops := TList.Create;
+finalization
+  PrimaryLoops.Free;
+  SatelliteLoops.Free;
+  DoneCriticalSection(LoopListLock);
 end.

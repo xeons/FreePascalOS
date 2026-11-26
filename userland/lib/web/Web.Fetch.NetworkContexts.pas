@@ -78,6 +78,14 @@ type
     property AllowFileAccess: Boolean read FAllowFileAccess write FAllowFileAccess;
   end;
 
+type
+  TNetworkContextGoingHook = procedure(Network: TNetworkContext);
+
+var
+  { Called first when a network context is freed: what still uses it
+    (worker agents, Web.Workers.Agents) goes with it. }
+  NetworkContextGoingHook: TNetworkContextGoingHook;
+
 implementation
 
 uses
@@ -158,6 +166,8 @@ end;
 
 destructor TNetworkContext.Destroy;
 begin
+  if Assigned(NetworkContextGoingHook) then
+    NetworkContextGoingHook(Self);
   FTransport.Free;
   if FOwnedCookies <> nil then
     FClient.Cookies := nil;
