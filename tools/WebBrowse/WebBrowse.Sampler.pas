@@ -321,7 +321,7 @@ end;
 procedure StopProfiler(Top: Integer);
 var
   Names: TFPStringHashTable;
-  SelfCounts, TotalCounts, Seen: TStringList;
+  SelfCounts, TotalCounts, OwnerCounts, Seen: TStringList;
   Index, Frame: Integer;
   Name: string;
 begin
@@ -339,9 +339,11 @@ begin
   Names := TFPStringHashTable.Create;
   SelfCounts := TStringList.Create;
   TotalCounts := TStringList.Create;
+  OwnerCounts := TStringList.Create;
   Seen := TStringList.Create;
   SelfCounts.Sorted := True;
   TotalCounts.Sorted := True;
+  OwnerCounts.Sorted := True;
   Seen.Sorted := True;
   try
     for Index := 0 to ProfileCount - 1 do
@@ -349,6 +351,17 @@ begin
       if ProfileSamples[Index].Count = 0 then
         Continue;
       Count(SelfCounts, FunctionOf(ProfileSamples[Index].Addresses[0], Names));
+      { The runtime's time (memory, strings, exception frames) goes to
+        the program's function that called into it. }
+      for Frame := 0 to ProfileSamples[Index].Count - 1 do
+      begin
+        Name := FunctionOf(ProfileSamples[Index].Addresses[Frame], Names);
+        if Pos('.pas: ', Name) > 0 then
+        begin
+          Count(OwnerCounts, Name);
+          Break;
+        end;
+      end;
       Seen.Clear;
       for Frame := 0 to ProfileSamples[Index].Count - 1 do
       begin
@@ -363,10 +376,12 @@ begin
     WriteLn('profile: ', ProfileCount, ' samples of work (', IdleSamples, ' idle not counted), 1 ms apart');
     PrintTop('self:', SelfCounts, ProfileCount, Top);
     PrintTop('total:', TotalCounts, ProfileCount, Top);
+    PrintTop('self, with the runtime it calls:', OwnerCounts, ProfileCount, Top);
   finally
     Names.Free;
     SelfCounts.Free;
     TotalCounts.Free;
+    OwnerCounts.Free;
     Seen.Free;
   end;
 end;

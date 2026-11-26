@@ -50,6 +50,16 @@ const
   MaximumDepth = 400;
 
 type
+  { Where a token starts: what the hot parsing functions keep of their
+    first token (a TJsToken copy carries two strings: reference counts,
+    initialization and an exception frame in every call). }
+  TJsSourceMark = record
+    Start: Integer;
+    Line: Integer;
+    Column: Integer;
+  end;
+
+type
   TJsParseGoal = (pgScript, pgFunctionBody, pgEval, pgModule);
 
   TJsParser = class
@@ -101,6 +111,8 @@ type
     procedure Leave;
     function NewNode(Kind: TJsNodeKind): TJsNode;
     function NewNodeAt(Kind: TJsNodeKind; const Token: TJsToken): TJsNode;
+    function NewNodeAtMark(Kind: TJsNodeKind; const Mark: TJsSourceMark): TJsNode; inline;
+    function CurrentMark: TJsSourceMark; inline;
     function PushScope(Kind: TJsScopeKind): TJsScope;
     procedure PopScope;
     function NewIdentifier(const Name: UnicodeString; const Token: TJsToken): TJsNode;
@@ -149,7 +161,10 @@ type
       const Name: UnicodeString; const StartToken: TJsToken): TJsFunctionInfo;
     procedure ParseParameters(Info: TJsFunctionInfo);
     procedure ParseFunctionBody(Info: TJsFunctionInfo);
-    function ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsToken;
+    function ParsePrivateIn(NoIn: Boolean): TJsNode;
+    function AsyncArrowParameterFollows: Boolean;
+    function ParseAsyncArrowWithIdentifier(const Start: TJsSourceMark): TJsNode;
+    function ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsSourceMark;
       ReferenceMark, ChildMark: Integer; OuterScope: TJsScope): TJsNode;
     function ParseClass(IsExpression: Boolean; const StartToken: TJsToken): TJsNode;
     function ParseClassMember(ClassNode: TJsNode; var InstanceInit, StaticInit: TJsFunctionInfo): TJsNode;
@@ -375,6 +390,18 @@ end;
 function TJsParser.NewNodeAt(Kind: TJsNodeKind; const Token: TJsToken): TJsNode;
 begin
   Result := FArena.NewNode(Kind, Token.Line, Token.Column);
+end;
+
+function TJsParser.NewNodeAtMark(Kind: TJsNodeKind; const Mark: TJsSourceMark): TJsNode;
+begin
+  Result := FArena.NewNode(Kind, Mark.Line, Mark.Column);
+end;
+
+function TJsParser.CurrentMark: TJsSourceMark;
+begin
+  Result.Start := FToken.Start;
+  Result.Line := FToken.Line;
+  Result.Column := FToken.Column;
 end;
 
 function TJsParser.PushScope(Kind: TJsScopeKind): TJsScope;
@@ -1775,7 +1802,7 @@ begin
   Next;
 end;
 
-function TJsParser.ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsToken;
+function TJsParser.ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsSourceMark;
   ReferenceMark, ChildMark: Integer; OuterScope: TJsScope): TJsNode;
 var
   Info: TJsFunctionInfo;
@@ -1887,7 +1914,7 @@ begin
     if Info.UsesPrivateNames and (FFunction <> nil) then
       FFunction.UsesPrivateNames := True;
   end;
-  Result := NewNodeAt(nkFunction, StartToken);
+  Result := NewNodeAtMark(nkFunction, StartToken);
   Result.Func := Info;
 end;
 
@@ -2456,63 +2483,77 @@ begin
     Result.A := ParseAssignment(NoIn);
 end;
 
+{ After async: an identifier on the same line (async x => ...). }
+function TJsParser.AsyncArrowParameterFollows: Boolean;
+var
+  Peeked: TJsToken;
+begin
+  Peeked := PeekToken;
+  Result := not Peeked.NewlineBefore and (Peeked.Kind = tkIdentifier);
+end;
+
+{ async x => ...: from async (the current token) on. }
+function TJsParser.ParseAsyncArrowWithIdentifier(const Start: TJsSourceMark): TJsNode;
+var
+  ReferenceMark, ChildMark: Integer;
+  OuterScope: TJsScope;
+  ParameterToken: TJsToken;
+  Name: UnicodeString;
+  Left: TJsNode;
+begin
+  { The function's source starts at async (toString, and parsing it
+    again when it is compiled lazily). }
+  Next;
+  ReferenceMark := FScope.ReferenceCount;
+  ChildMark := FScope.ChildCount;
+  OuterScope := FScope;
+  ParameterToken := FToken;
+  Name := BindingIdentifierName;
+  Left := NewIdentifier(Name, ParameterToken);
+  if FToken.Kind <> tkArrow then
+    Unexpected;
+  Result := ParseArrowFunction(Left, True, Start, ReferenceMark, ChildMark, OuterScope);
+end;
+
+{ The rare paths of ParseAssignment have the managed locals: this runs
+  for every expression. }
 function TJsParser.ParseAssignment(NoIn: Boolean): TJsNode;
 var
-  StartToken, Peeked, ParameterToken: TJsToken;
+  Start: TJsSourceMark;
+  StartIsIdentifier, StartIsAsync: Boolean;
   ReferenceMark, ChildMark: Integer;
   OuterScope: TJsScope;
   Left, Node: TJsNode;
   Op: TJsTokenKind;
-  Name: UnicodeString;
   Arguments: TJsNode;
   Index: Integer;
 begin
   Enter;
   try
-    StartToken := FToken;
-    if (FToken.Kind = tkIdentifier) and (FToken.Text = 'yield') and FInGenerator and not FToken.Escaped then
+    Start := CurrentMark;
+    StartIsIdentifier := FToken.Kind = tkIdentifier;
+    StartIsAsync := StartIsIdentifier and (FToken.Text = 'async');
+    if StartIsIdentifier and (FToken.Text = 'yield') and FInGenerator and not FToken.Escaped then
       Exit(ParseYield(NoIn));
     { async arrow functions: async x => ..., async (x) => ... }
-    if IsContextual('async') then
-    begin
-      Peeked := PeekToken;
-      if not Peeked.NewlineBefore then
-      begin
-        if (Peeked.Kind = tkIdentifier) then
-        begin
-          { The function's source starts at async (toString, and parsing
-            it again when it is compiled lazily). }
-          Next;
-          ReferenceMark := FScope.ReferenceCount;
-          ChildMark := FScope.ChildCount;
-          OuterScope := FScope;
-          ParameterToken := FToken;
-          Name := BindingIdentifierName;
-          Left := NewIdentifier(Name, ParameterToken);
-          if FToken.Kind <> tkArrow then
-            Unexpected;
-          Exit(ParseArrowFunction(Left, True, StartToken, ReferenceMark, ChildMark, OuterScope));
-        end;
-      end;
-    end;
+    if IsContextual('async') and AsyncArrowParameterFollows then
+      Exit(ParseAsyncArrowWithIdentifier(Start));
     ReferenceMark := FScope.ReferenceCount;
     ChildMark := FScope.ChildCount;
     OuterScope := FScope;
     Left := ParseConditional(NoIn);
     if FToken.Kind = tkArrow then
     begin
-      if (Left.Kind = nkIdentifier) and (StartToken.Kind = tkIdentifier) and
-        (Left.Flags and NodeFlagParenthesized = 0) then
-        Exit(ParseArrowFunction(Left, False, StartToken, ReferenceMark, ChildMark, OuterScope));
+      if (Left.Kind = nkIdentifier) and StartIsIdentifier and (Left.Flags and NodeFlagParenthesized = 0) then
+        Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, OuterScope));
       if ((Left.Flags and NodeFlagParenthesized) <> 0) or ((Left.Flags and ArrowParametersFlag) <> 0) then
-        Exit(ParseArrowFunction(Left, False, StartToken, ReferenceMark, ChildMark, OuterScope));
-      if (Left.Kind = nkCall) and (Left.A.Kind = nkIdentifier) and (Left.A.Text = 'async') and
-        (StartToken.Kind = tkIdentifier) and (StartToken.Text = 'async') then
+        Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, OuterScope));
+      if (Left.Kind = nkCall) and (Left.A.Kind = nkIdentifier) and (Left.A.Text = 'async') and StartIsAsync then
       begin
         Arguments := NewNode(nkSequence);
         for Index := 0 to Left.Count - 1 do
           Arguments.Add(Left.List[Index]);
-        Exit(ParseArrowFunction(Arguments, True, StartToken, ReferenceMark, ChildMark, OuterScope));
+        Exit(ParseArrowFunction(Arguments, True, Start, ReferenceMark, ChildMark, OuterScope));
       end;
       Unexpected;
     end;
@@ -2532,7 +2573,7 @@ begin
         (Op in [tkAndAndAssign, tkOrOrAssign, tkQuestionQuestionAssign]) then
         Fail('Invalid left-hand side in assignment');
       Next;
-      Node := NewNodeAt(nkAssign, StartToken);
+      Node := NewNodeAtMark(nkAssign, Start);
       Node.Op := Op;
       Node.A := Left;
       Node.B := ParseAssignment(NoIn);
@@ -2588,26 +2629,31 @@ begin
   end;
 end;
 
+{ #name in object }
+function TJsParser.ParsePrivateIn(NoIn: Boolean): TJsNode;
+var
+  StartToken: TJsToken;
+  PrivateName: UnicodeString;
+begin
+  StartToken := FToken;
+  PrivateName := '#' + FToken.Text;
+  Next;
+  Next;
+  Result := NewNodeAt(nkPrivateIn, StartToken);
+  Result.A := NewIdentifier(PrivateName, StartToken);
+  Result.B := ParseBinary(9, NoIn);
+end;
+
 function TJsParser.ParseBinary(MinimumPrecedence: Integer; NoIn: Boolean): TJsNode;
 var
   Precedence: Integer;
   Op: TJsTokenKind;
   Right, Node: TJsNode;
-  StartToken: TJsToken;
-  PrivateName: UnicodeString;
+  StartToken: TJsSourceMark;
 begin
-  StartToken := FToken;
+  StartToken := CurrentMark;
   if (FToken.Kind = tkPrivateName) and (PeekToken.Kind = tkIn) then
-  begin
-    { #name in object }
-    PrivateName := '#' + FToken.Text;
-    Next;
-    Next;
-    Node := NewNodeAt(nkPrivateIn, StartToken);
-    Node.A := NewIdentifier(PrivateName, StartToken);
-    Node.B := ParseBinary(9, NoIn);
-    Result := Node;
-  end
+    Result := ParsePrivateIn(NoIn)
   else
     Result := ParseUnary;
   while True do
@@ -2634,10 +2680,10 @@ begin
         and ((Result.Flags and NodeFlagParenthesized) = 0)) or ((Right.Kind = nkLogical) and
         (Right.Op = tkQuestionQuestion) and ((Right.Flags and NodeFlagParenthesized) = 0))) then
         Fail('Unexpected token');
-      Node := NewNodeAt(nkLogical, StartToken);
+      Node := NewNodeAtMark(nkLogical, StartToken);
     end
     else
-      Node := NewNodeAt(nkBinary, StartToken);
+      Node := NewNodeAtMark(nkBinary, StartToken);
     Node.Op := Op;
     Node.A := Result;
     Node.B := Right;
@@ -2647,18 +2693,18 @@ end;
 
 function TJsParser.ParseUnary: TJsNode;
 var
-  StartToken: TJsToken;
+  StartToken: TJsSourceMark;
   Op: TJsTokenKind;
 begin
   Enter;
   try
-    StartToken := FToken;
+    StartToken := CurrentMark;
     case FToken.Kind of
       tkBang, tkTilde, tkPlus, tkMinus, tkTypeof, tkVoid, tkDelete:
         begin
           Op := FToken.Kind;
           Next;
-          Result := NewNodeAt(nkUnary, StartToken);
+          Result := NewNodeAtMark(nkUnary, StartToken);
           Result.Op := Op;
           Result.A := ParseUnary();
           if (Op = tkDelete) and FStrict and (Result.A.Kind = nkIdentifier) then
@@ -2670,7 +2716,7 @@ begin
         begin
           Op := FToken.Kind;
           Next;
-          Result := NewNodeAt(nkUpdate, StartToken);
+          Result := NewNodeAtMark(nkUpdate, StartToken);
           Result.Op := Op;
           Result.Flags := UpdateFlagPrefix;
           Result.A := ParseUnary();
@@ -2686,7 +2732,7 @@ begin
         if FFunction.Kind = fkModule then
           FFunction.IsAsync := True;
         Next;
-        Result := NewNodeAt(nkAwait, StartToken);
+        Result := NewNodeAtMark(nkAwait, StartToken);
         Result.A := ParseUnary();
       end
       else
@@ -2778,9 +2824,9 @@ end;
 
 function TJsParser.ParseLeftHandSide: TJsNode;
 var
-  StartToken: TJsToken;
+  StartToken: TJsSourceMark;
 begin
-  StartToken := FToken;
+  StartToken := CurrentMark;
   if FToken.Kind = tkNew then
     Result := ParseNew
   else if FToken.Kind = tkSuper then
@@ -2788,17 +2834,17 @@ begin
     Next;
     if FToken.Kind = tkLeftParen then
     begin
-      Result := NewNodeAt(nkSuperCall, StartToken);
+      Result := NewNodeAtMark(nkSuperCall, StartToken);
       ParseArguments(Result);
     end
     else if Accept(tkDot) then
     begin
-      Result := NewNodeAt(nkSuperMember, StartToken);
+      Result := NewNodeAtMark(nkSuperMember, StartToken);
       Result.Text := IdentifierName;
     end
     else if Accept(tkLeftBracket) then
     begin
-      Result := NewNodeAt(nkSuperMember, StartToken);
+      Result := NewNodeAtMark(nkSuperMember, StartToken);
       Result.A := ParseExpression;
       Expect(tkRightBracket);
     end
@@ -2820,11 +2866,11 @@ begin
       if not ModuleGoal then
         Fail('Cannot use ''import.meta'' outside a module');
       Next;
-      Result := NewNodeAt(nkImportMeta, StartToken);
+      Result := NewNodeAtMark(nkImportMeta, StartToken);
       Result := ParseCallTail(Result, True);
       Exit;
     end;
-    Result := NewNodeAt(nkDynamicImport, StartToken);
+    Result := NewNodeAtMark(nkDynamicImport, StartToken);
     Expect(tkLeftParen);
     Result.A := ParseAssignment;
     if Accept(tkComma) and (FToken.Kind <> tkRightParen) then
