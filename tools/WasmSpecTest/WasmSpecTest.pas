@@ -34,6 +34,7 @@
                                          "binary-" before it for modules
                                          written as bytes), for looking at
                                          with other tools
+    --gc-stress                          collect at every allocation
     --features=2.0                       compile with the features of
                                          WebAssembly 2.0 only (for its
                                          suite, which 3.0 contradicts in
@@ -242,6 +243,8 @@ begin
       ParseOnly := True
     else if ParamStr(Index) = '--features=2.0' then
       SpecFeatures := WasmFeatures20
+    else if ParamStr(Index) = '--gc-stress' then
+      SpecGcStress := True
     else if DirectoryExists(ParamStr(Index)) then
     begin
       AddDirectory(ParamStr(Index));

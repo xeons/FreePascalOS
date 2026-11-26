@@ -56,6 +56,9 @@ type
 var
   { What modules are compiled with (WebAssembly 2.0 for its own suite). }
   SpecFeatures: TWasmFeatures;
+  { Collect at every allocation (to find references the collector
+    misses). }
+  SpecGcStress: Boolean;
 
 { Runs a parsed script; Outcome.Failures must be a list to fill. }
 procedure RunScript(Commands: TScriptCommandList; var Outcome: TScriptOutcome);
@@ -117,6 +120,8 @@ begin
   Options := TWasmStore.DefaultOptions;
   Options.MaximumMemoryBytes := QWord(1024) * 1024 * 1024;
   Options.MaximumHeapBytes := QWord(512) * 1024 * 1024;
+  if SpecGcStress then
+    Options.CollectionThreshold := 1;
   FStore := TWasmStore.Create(Options);
   FModules := TList.Create;
   FNamed := TStringList.Create;

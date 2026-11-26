@@ -74,6 +74,7 @@ uses
   Wasm.TypeDefinitions,
   Wasm.Subtyping,
   Wasm.GcOperations,
+  Wasm.TypeRegistry,
   Wasm.Interpreter;
 
 function LimitsMatch(const Actual, Expected: TWasmLimits): Boolean;
@@ -96,25 +97,32 @@ begin
     What]);
 end;
 
-procedure CheckImport(Instance: TWasmModuleInstance; const Import: TWasmImport; const External: TWasmExternal);
+{ A module value type with its concrete heap type as a store id. }
+function RuntimeValueType(const TypeIds: TWasmIdArray; const ValueType: TWasmValueType): TWasmValueType;
+begin
+  Result := ValueType;
+  if (Result.Kind = vkReference) and (Result.HeapType >= 0) then
+    Result.HeapType := TypeIds[Result.HeapType];
+end;
+
+procedure CheckImport(Store: TWasmStore; const TypeIds: TWasmIdArray; const Import: TWasmImport;
+  const External: TWasmExternal);
 var
-  Store: TWasmStore;
   Limits: TWasmLimits;
   Expected: TWasmValueType;
 begin
-  Store := Instance.Store;
   if External.Kind <> Import.Kind then
     LinkFailure(Import, 'expected a ' + ExternalKindName(Import.Kind));
   case Import.Kind of
     ekFunction:
       if (External.Func = nil) or
-        not Store.Registry.IsSubtype(External.Func.TypeId, Instance.TypeIds[Import.TypeIndex]) then
+        not Store.Registry.IsSubtype(External.Func.TypeId, TypeIds[Import.TypeIndex]) then
         LinkFailure(Import, 'function type');
     ekTable:
       begin
         Limits := External.Table.TableType.Limits;
         Limits.Minimum := External.Table.Size;
-        Expected := Instance.RuntimeValueType(Import.TableType.ElementType);
+        Expected := RuntimeValueType(TypeIds, Import.TableType.ElementType);
         if (External.Table.TableType.ElementType <> Expected) or
           (External.Table.TableType.AddressType <> Import.TableType.AddressType) or
           not LimitsMatch(Limits, Import.TableType.Limits) then
@@ -130,7 +138,7 @@ begin
       end;
     ekGlobal:
       begin
-        Expected := Instance.RuntimeValueType(Import.GlobalType.ValueType);
+        Expected := RuntimeValueType(TypeIds, Import.GlobalType.ValueType);
         if External.Global.GlobalType.Mutable <> Import.GlobalType.Mutable then
           LinkFailure(Import, 'global type');
         if Import.GlobalType.Mutable then
@@ -142,7 +150,7 @@ begin
           LinkFailure(Import, 'global type');
       end;
     ekTag:
-      if (External.Tag = nil) or (External.Tag.TypeId <> Instance.TypeIds[Import.TagTypeIndex]) then
+      if (External.Tag = nil) or (External.Tag.TypeId <> TypeIds[Import.TagTypeIndex]) then
         LinkFailure(Import, 'tag type');
   end;
 end;
@@ -426,16 +434,18 @@ var
   Instance: TWasmModuleInstance;
   Index: Integer;
   FunctionIndex, TableIndex, MemoryIndex, GlobalIndex, TagIndex: Integer;
+  TypeIds: TWasmIdArray;
 begin
   if Length(Imports) <> Length(Module.Imports) then
     raise EWasmLinkError.CreateFmt('expected %d imports, got %d', [Length(Module.Imports), Length(Imports)]);
+  TypeIds := Store.Registry.RegisterModule(Module);
+  for Index := 0 to High(Module.Imports) do
+    CheckImport(Store, TypeIds, Module.Imports[Index], Imports[Index]);
   Instance := Store.NewModuleInstance(Module);
-  Instance.TypeIds := Store.Registry.RegisterModule(Module);
+  Instance.TypeIds := TypeIds;
   SetLength(Instance.RuntimeTypes, Length(Instance.TypeIds));
   for Index := 0 to High(Instance.TypeIds) do
     Instance.RuntimeTypes[Index] := Store.Registry.TypeOf(Instance.TypeIds[Index]);
-  for Index := 0 to High(Module.Imports) do
-    CheckImport(Instance, Module.Imports[Index], Imports[Index]);
 
   SetLength(Instance.Functions, Module.FunctionCount);
   SetLength(Instance.Tables, Length(Module.Tables));
