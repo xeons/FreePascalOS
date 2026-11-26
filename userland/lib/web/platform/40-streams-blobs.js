@@ -278,13 +278,35 @@
         get desiredSize() { return readableController.desiredSize; }
       };
       if (settings.start) settings.start.call(settings, controller);
+      // A transform or flush that fails errors the readable side too (a
+      // reader waiting on it is not left hanging).
+      function failBoth(reason) {
+        try {
+          readableController.error(reason);
+        } catch (ignored) {
+        }
+        throw reason;
+      }
+      function guarded(run) {
+        let outcome;
+        try {
+          outcome = run();
+        } catch (reason) {
+          failBoth(reason);
+        }
+        return Promise.resolve(outcome).catch(failBoth);
+      }
       const writable = new WritableStream({
         write: function (chunk) {
-          if (settings.transform) return settings.transform.call(settings, chunk, controller);
-          controller.enqueue(chunk);
+          return guarded(function () {
+            if (settings.transform) return settings.transform.call(settings, chunk, controller);
+            controller.enqueue(chunk);
+          });
         },
         close: function () {
-          return Promise.resolve(settings.flush ? settings.flush.call(settings, controller) : undefined).then(function () {
+          return guarded(function () {
+            return settings.flush ? settings.flush.call(settings, controller) : undefined;
+          }).then(function () {
             readableController.close();
           });
         }

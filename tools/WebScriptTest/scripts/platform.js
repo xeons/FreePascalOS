@@ -98,6 +98,22 @@ reader.read().then(function (r) { streamed.push(r.value); return reader.read(); 
   .then(function (r) { streamed.push(r.value); return reader.read(); })
   .then(function (r) { streamed.push(r.done); });
 
+// CompressionStream and DecompressionStream round trips, and a failing
+// transform erroring the readable side.
+var roundTrips = [];
+["gzip", "deflate", "deflate-raw", "brotli"].forEach(function (format) {
+  var original = new TextEncoder().encode("round trip ".repeat(200));
+  new Response(new Blob([original]).stream().pipeThrough(new CompressionStream(format))).arrayBuffer()
+    .then(function (compressed) {
+      return new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream(format))).text();
+    }).then(function (text) { roundTrips.push(format + (text === "round trip ".repeat(200) ? " ok" : " differs")); },
+      function (error) { roundTrips.push(format + " " + error); });
+});
+var failingTransform = new TransformStream({ transform: function () { throw new RangeError("transform"); } });
+var transformReadError = null;
+failingTransform.writable.getWriter().write(1).catch(function () {});
+failingTransform.readable.getReader().read().catch(function (error) { transformReadError = error; });
+
 // Headers, Request, Response
 var headers = new Headers({ "Content-Type": "text/html", "X-A": "1" });
 headers.append("x-a", "2");
@@ -147,6 +163,8 @@ function after() {
   check("digest", digestHex === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   check("blob text", blobText === "abcd");
   check("stream reading", streamed.join() === "a,b,true");
+  check("compression streams round trip", roundTrips.sort().join() === "brotli ok,deflate ok,deflate-raw ok,gzip ok");
+  check("a failing transform errors the readable side", transformReadError instanceof RangeError);
   check("response body", json !== null && json.x === 1);
   check("fetch", fetchedStatus === 200 && fetchedType === "application/json" && fetched !== null && fetched.ok === true);
   check("fetch of a 404", failed === 404);

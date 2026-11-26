@@ -73,6 +73,7 @@ uses
   Web.Script.NativeFetch,
   Web.Script.NativeWebSockets,
   Web.Script.NativeWorkers,
+  Web.Script.NativeCompression,
   Web.Script.MessageLinks,
   Web.Script.BroadcastChannels,
   Web.Workers.SharedWorkers,
@@ -696,6 +697,7 @@ begin
   DefineFetchNatives(Context, Natives);
   DefineWebSocketNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
+  DefineCompressionNatives(Context, Natives);
   DefineLinkNatives(Context, Natives);
   DefineBroadcastNatives(Context, Natives);
   DefineSharedWorkerNatives(Context, Natives);
