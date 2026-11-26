@@ -42,6 +42,9 @@ function FindTxSize(W, H: Integer): Integer;
 
 implementation
 
+uses
+  Av1.ToolStatistics;
+
 const
   Tx_Type_In_Set_Intra: array[0..TX_SET_TYPES_INTRA - 1, 0..TX_TYPES - 1] of Byte = (
     (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
@@ -172,6 +175,7 @@ begin
   H4 := Tx_Height[TxSz] div MI_SIZE;
   if TxfmSplit then
   begin
+    CountTool(toolTransformSplit);
     SubTxSz := Split_Tx_Size[TxSz];
     StepW := Tx_Width[SubTxSz] div MI_SIZE;
     StepH := Tx_Height[SubTxSz] div MI_SIZE;

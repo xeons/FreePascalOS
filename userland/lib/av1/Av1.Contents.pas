@@ -46,7 +46,7 @@ uses
   Av1.LoopFilterSamples, Av1.LoopFilter, Av1.Cdef, Av1.SuperRes, Av1.RestorationWindow, Av1.Wiener,
   Av1.SelfGuided, Av1.LoopRestoration, Av1.PostFilters,
   Av1.FilmGrainNoise, Av1.FilmGrainScaling, Av1.FilmGrain, Av1.Output,
-  Av1.FrameDecoding, Av1.Decoder;
+  Av1.ToolStatistics, Av1.FrameDecoding, Av1.Decoder;
 
 implementation
 

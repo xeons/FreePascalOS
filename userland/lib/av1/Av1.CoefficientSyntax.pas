@@ -40,7 +40,25 @@ function ReadCoefficients(Tile: TTileContext; Plane, StartX, StartY, TxSz: Integ
 implementation
 
 uses
-  Av1.TransformSyntax;
+  Av1.TransformSyntax, Av1.ToolStatistics;
+
+procedure CountTransformTools(Tile: TTileContext; TxSz: Integer);
+var
+  TxType: Integer;
+begin
+  TxType := Tile.PlaneTxType;
+  if Tile.Lossless then
+    CountTool(toolWalshHadamard);
+  if Tx_Size_Sqr_Up[TxSz] = TX_64X64 then
+    CountTool(toolTransform64);
+  if Tx_Width[TxSz] <> Tx_Height[TxSz] then
+    CountTool(toolTransformRectangular);
+  if (TxType = IDTX) or (TxType >= V_DCT) then
+    CountTool(toolTransformIdentity);
+  if (TxType = FLIPADST_DCT) or (TxType = DCT_FLIPADST) or (TxType = FLIPADST_FLIPADST) or
+    (TxType = ADST_FLIPADST) or (TxType = FLIPADST_ADST) or (TxType = V_FLIPADST) or (TxType = H_FLIPADST) then
+    CountTool(toolTransformFlipAdst);
+end;
 
 const
   Coeff_Base_Pos_Ctx_Offset: array[0..2] of Integer =
@@ -343,6 +361,7 @@ begin
     if Plane = 0 then
       ReadTransformType(Tile, X4, Y4, TxSz);
     Tile.PlaneTxType := ComputeTxType(Tile, Plane, TxSz, X4, Y4);
+    CountTransformTools(Tile, TxSz);
     Scan := GetScan(Tile, TxSz);
     AdjTxSz := Adjusted_Tx_Size[TxSz];
     Shape.TxSz := TxSz;

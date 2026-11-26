@@ -1202,6 +1202,7 @@ begin
         SetFrameRefs(Sequence, Slots, Header, LastFrameIdx, GoldFrameIdx);
       end;
     end;
+    Header.frame_refs_short_signaling := FrameRefsShortSignaling;
     for Index := 0 to REFS_PER_FRAME - 1 do
     begin
       if not FrameRefsShortSignaling then

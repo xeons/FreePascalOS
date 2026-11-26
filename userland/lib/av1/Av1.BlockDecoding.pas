@@ -37,7 +37,84 @@ implementation
 
 uses
   Av1.BlockFlagsSyntax, Av1.IntraModeSyntax, Av1.InterModeSyntax, Av1.PaletteSyntax, Av1.TransformSyntax,
-  Av1.MotionVectorSyntax, Av1.MvPrediction, Av1.ResidualDecoding, Av1.IntraPrediction, Av1.InterPrediction;
+  Av1.MotionVectorSyntax, Av1.MvPrediction, Av1.ResidualDecoding, Av1.IntraPrediction, Av1.InterPrediction,
+  Av1.MotionVectorScaling, Av1.ToolStatistics;
+
+procedure CountIntraTools(Tile: TTileContext);
+begin
+  if (Tile.YMode >= V_PRED) and (Tile.YMode <= D67_PRED) then
+    CountTool(toolIntraDirectional);
+  if (Tile.AngleDeltaY <> 0) or (Tile.AngleDeltaUV <> 0) then
+    CountTool(toolAngleDelta);
+  if (Tile.YMode >= SMOOTH_PRED) and (Tile.YMode <= SMOOTH_H_PRED) then
+    CountTool(toolSmooth);
+  if Tile.YMode = PAETH_PRED then
+    CountTool(toolPaeth);
+  if Tile.HasChroma and (Tile.UVMode = UV_CFL_PRED) then
+    CountTool(toolChromaFromLuma);
+  if Tile.use_filter_intra then
+    CountTool(toolFilterIntra);
+  if Tile.PaletteSizeY > 0 then
+    CountTool(toolPaletteY);
+  if Tile.PaletteSizeUV > 0 then
+    CountTool(toolPaletteUv);
+end;
+
+procedure CountInterTools(Tile: TTileContext);
+var
+  Mode: Integer;
+begin
+  Mode := Tile.YMode;
+  if Tile.RefFrame[1] > INTRA_FRAME then
+  begin
+    CountTool(toolCompoundReference);
+    if (Tile.RefFrame[0] >= BWDREF_FRAME) = (Tile.RefFrame[1] >= BWDREF_FRAME) then
+      CountTool(toolUnidirectionalCompound);
+  end
+  else
+    CountTool(toolSingleReference);
+  if Tile.skip_mode then
+    CountTool(toolSkipMode);
+  if (Mode = NEWMV) or (Mode = NEW_NEWMV) or (Mode = NEAREST_NEWMV) or (Mode = NEW_NEARESTMV) or
+    (Mode = NEAR_NEWMV) or (Mode = NEW_NEARMV) then
+    CountTool(toolNewMv);
+  if (Mode = GLOBALMV) or (Mode = GLOBAL_GLOBALMV) then
+  begin
+    CountTool(toolGlobalMv);
+    if Tile.Header^.GmType[Tile.RefFrame[0]] > TRANSLATION then
+      CountTool(toolGlobalMotionWarp);
+  end;
+  if Tile.motion_mode = LOCALWARP then
+    CountTool(toolLocalWarp)
+  else if Tile.motion_mode = OBMC then
+    CountTool(toolObmc);
+  if Tile.interintra then
+  begin
+    CountTool(toolInterIntra);
+    if Tile.wedge_interintra then
+      CountTool(toolInterIntraWedge);
+  end
+  else if Tile.RefFrame[1] > INTRA_FRAME then
+    case Tile.compound_type of
+      COMPOUND_WEDGE: CountTool(toolCompoundWedge);
+      COMPOUND_DIFFWTD: CountTool(toolCompoundDiffWeighted);
+      COMPOUND_DISTANCE: CountTool(toolCompoundDistance);
+    end;
+  if Tile.interp_filter[0] <> Tile.interp_filter[1] then
+    CountTool(toolDualFilter);
+  if IsScaled(Tile, Tile.RefFrame[0]) or ((Tile.RefFrame[1] > INTRA_FRAME) and IsScaled(Tile, Tile.RefFrame[1])) then
+    CountTool(toolScaledReference);
+end;
+
+procedure CountBlockTools(Tile: TTileContext);
+begin
+  if Tile.use_intrabc then
+    CountTool(toolIntraBlockCopy)
+  else if Tile.is_inter then
+    CountInterTools(Tile)
+  else
+    CountIntraTools(Tile);
+end;
 
 procedure ReadIntraFrameModeInfo(Tile: TTileContext);
 begin
@@ -300,6 +377,9 @@ begin
     ReadInterFrameModeInfo(Tile);
   ReadPaletteTokens(Tile);
   ReadBlockTxSize(Tile);
+{$ifdef AV1_TOOL_STATISTICS}
+  CountBlockTools(Tile);
+{$endif}
   if Tile.skip then
     ResetBlockContext(Tile, Bw4, Bh4);
   IsCompound := Tile.RefFrame[1] > INTRA_FRAME;

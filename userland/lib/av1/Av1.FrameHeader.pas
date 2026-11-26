@@ -87,6 +87,7 @@ type
     refresh_frame_flags: Integer;
     allow_intrabc: Boolean;
     ref_frame_idx: array[0..REFS_PER_FRAME - 1] of Integer;
+    frame_refs_short_signaling: Boolean;
     allow_high_precision_mv: Boolean;
     is_motion_mode_switchable: Boolean;
     use_ref_frame_mvs: Boolean;

@@ -43,7 +43,7 @@ function CountUnitsInFrame(UnitSize, FrameSize: Integer): Integer;
 implementation
 
 uses
-  Av1.BlockDecoding;
+  Av1.BlockDecoding, Av1.ToolStatistics;
 
 function CountUnitsInFrame(UnitSize, FrameSize: Integer): Integer;
 begin
@@ -193,6 +193,10 @@ begin
     RestorationType := ReadSymbol(Tile.Symbols, @Tile.Cdf.RestorationTypeCdf, RESTORE_SWITCHABLE);
   end;
   RestorationUnit^.RestorationType := RestorationType;
+  if RestorationType = RESTORE_WIENER then
+    CountTool(toolWiener)
+  else if RestorationType = RESTORE_SGRPROJ then
+    CountTool(toolSelfGuided);
   if RestorationType = RESTORE_WIENER then
   begin
     for Pass := 0 to 1 do

@@ -37,7 +37,7 @@ program Av1Test;
 
 uses
   {$ifdef UNIX}cthreads,{$endif}
-  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1Test.Ivf;
+  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1.ToolStatistics, Av1Test.Ivf;
 
 var
   FixtureDirectory: string;
@@ -221,9 +221,27 @@ begin
   end;
 end;
 
+{ What the streams exercised: every tool and how often it was met. }
+procedure ReportCoverage;
+var
+  Tool: TAv1Tool;
+  Missing: string;
+begin
+  Missing := '';
+  for Tool := Low(TAv1Tool) to High(TAv1Tool) do
+  begin
+    WriteLn(Format('tool %-30s %d', [ToolNames[Tool], ToolCounts[Tool]]));
+    if ToolCounts[Tool] = 0 then
+      Missing := Missing + ' [' + ToolNames[Tool] + ']';
+  end;
+  if (OnlyName = '') and (Missing <> '') then
+    WriteLn('tools no stream exercised:', Missing);
+end;
+
 begin
   ParseArguments;
   RunManifest;
+  ReportCoverage;
   WriteLn(Format('%d streams passed, %d failed, %d frames', [Passed, Failed, TotalFrames]));
   if Failed > 0 then
     Halt(1);

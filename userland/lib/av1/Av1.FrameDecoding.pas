@@ -77,7 +77,50 @@ type
 implementation
 
 uses
-  Av1.TileDecoding, Av1.MotionField, Av1.PostFilters, Av1.Output;
+  Av1.TileDecoding, Av1.MotionField, Av1.PostFilters, Av1.Output, Av1.ToolStatistics;
+
+procedure CountFrameTools(const Sequence: TSequenceHeader; const Header: TFrameHeader);
+begin
+  case Header.frame_type of
+    KEY_FRAME: CountTool(toolKeyFrame);
+    INTER_FRAME: CountTool(toolInterFrame);
+    INTRA_ONLY_FRAME: CountTool(toolIntraOnlyFrame);
+  else
+    CountTool(toolSwitchFrame);
+  end;
+  if Header.error_resilient_mode then
+    CountTool(toolErrorResilient);
+  if Header.frame_refs_short_signaling then
+    CountTool(toolShortRefSignaling);
+  if Header.reference_select then
+    CountTool(toolReferenceSelect);
+  if Header.use_ref_frame_mvs then
+    CountTool(toolTemporalMvs);
+  if Header.skip_mode_present then
+    CountTool(toolSkipModeFrame);
+  if Header.TileCols * Header.TileRows > 1 then
+    CountTool(toolMultipleTiles);
+  if Sequence.use_128x128_superblock then
+    CountTool(toolSuperblock128);
+  if Header.use_superres then
+    CountTool(toolSuperres);
+  if Header.CodedLossless then
+    CountTool(toolLossless);
+  if Header.using_qmatrix then
+    CountTool(toolQuantizerMatrix);
+  if Header.segmentation_enabled then
+    CountTool(toolSegmentation);
+  if Header.delta_q_present then
+    CountTool(toolDeltaQ);
+  if Header.delta_lf_present then
+    CountTool(toolDeltaLf);
+  if (Header.loop_filter_level[0] <> 0) or (Header.loop_filter_level[1] <> 0) then
+    CountTool(toolLoopFilter);
+  if Sequence.enable_cdef and not Header.CodedLossless and not Header.allow_intrabc then
+    CountTool(toolCdef);
+  if Sequence.film_grain_params_present and Header.FilmGrain.apply_grain then
+    CountTool(toolFilmGrain);
+end;
 
 type
   TTileJob = record
@@ -205,6 +248,7 @@ begin
     FFrame := TFrameContext.Create;
   FFrame.Sequence := Sequence;
   FFrame.Header := Header;
+  CountFrameTools(Sequence, Header);
   SetupReferences;
   FFrame.Allocate;
   if Header.primary_ref_frame = PRIMARY_REF_NONE then
@@ -471,6 +515,7 @@ begin
     FFrame := TFrameContext.Create;
   FFrame.Sequence := Sequence;
   FFrame.Header := Header;
+  CountTool(toolShowExistingFrame);
   Output(Shown.Picture, Shown.RefUpscaledWidth, Shown.RefFrameHeight, Header.FilmGrain);
   if Header.frame_type = KEY_FRAME then
   begin
