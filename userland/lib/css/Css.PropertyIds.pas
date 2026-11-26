@@ -126,7 +126,7 @@ type
     cpClip,
     { masking }
     cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin, cpMaskClip,
-    cpMaskMode,
+    cpMaskMode, cpMaskComposite,
     { text decoration }
     cpTextDecorationLine, cpTextDecorationStyle, cpTextDecorationColor,
     cpTextDecorationThickness, cpTextUnderlineOffset, cpTextOverflow, cpUnicodeBidi,

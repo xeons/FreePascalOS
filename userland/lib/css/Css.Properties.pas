@@ -128,6 +128,7 @@ begin
   else if Lower = '-webkit-mask-repeat' then Result := cpMaskRepeat
   else if Lower = '-webkit-mask-origin' then Result := cpMaskOrigin
   else if Lower = '-webkit-mask-clip' then Result := cpMaskClip
+  else if Lower = '-webkit-mask-composite' then Result := cpMaskComposite
   else if Lower = '-webkit-mask' then Result := cpMask
   else
     Result := cpInvalid;

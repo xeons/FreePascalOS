@@ -101,7 +101,7 @@ begin
       cpBackgroundClip]);
     cpBackgroundPosition: Result := Ids([cpBackgroundPositionX, cpBackgroundPositionY]);
     cpMask: Result := Ids([cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin,
-      cpMaskClip, cpMaskMode]);
+      cpMaskClip, cpMaskMode, cpMaskComposite]);
     cpMaskPosition: Result := Ids([cpMaskPositionX, cpMaskPositionY]);
     cpFont: Result := Ids([cpFontStyle, cpFontVariantCaps, cpFontWeight, cpFontStretch, cpFontSize, cpLineHeight,
       cpFontFamily, cpFontVariantLigatures, cpFontVariantNumeric, cpFontVariantEastAsian, cpFontVariantPosition,
@@ -563,14 +563,14 @@ end;
   (CSS Masking 1, 7.10). }
 function ExpandMask(var Expansion: TExpansion; var Cursor: TCssTokenCursor): Boolean;
 var
-  Layers: array[0..7] of TCssValue;
-  Image, Position, Size, RepeatValue, Mode, FirstBox, SecondBox, Item: TCssValue;
+  Layers: array[0..8] of TCssValue;
+  Image, Position, Size, RepeatValue, Mode, Composite, FirstBox, SecondBox, Item: TCssValue;
   Index: Integer;
   Progress: Boolean;
 begin
   Result := False;
-  { Image, position x and y, size, repeat, origin, clip, mode. }
-  for Index := 0 to 7 do
+  { Image, position x and y, size, repeat, origin, clip, mode, composite. }
+  for Index := 0 to 8 do
     Layers[Index] := NewList(lsComma);
   try
     repeat
@@ -579,6 +579,7 @@ begin
       Size := nil;
       RepeatValue := nil;
       Mode := nil;
+      Composite := nil;
       FirstBox := nil;
       SecondBox := nil;
       repeat
@@ -613,6 +614,11 @@ begin
         begin
           Mode := ParseKeyword(Cursor, [kwAlpha, kwLuminance, kwMatchSource]);
           Progress := Mode <> nil;
+        end;
+        if not Progress and (Composite = nil) then
+        begin
+          Composite := ParseKeyword(Cursor, [kwAdd, kwSubtract, kwIntersect, kwExclude]);
+          Progress := Composite <> nil;
         end;
         if not Progress and (SecondBox = nil) then
         begin
@@ -659,6 +665,8 @@ begin
       end;
       if Mode = nil then Mode := NewKeyword(kwMatchSource);
       Layers[7].Add(Mode);
+      if Composite = nil then Composite := NewKeyword(kwAdd);
+      Layers[8].Add(Composite);
     until not SkipComma(Cursor);
     if not Cursor.AtEndIgnoringWhitespace then
       Exit;
@@ -670,9 +678,10 @@ begin
     Put(Expansion, cpMaskOrigin, Layers[5].AddRef);
     Put(Expansion, cpMaskClip, Layers[6].AddRef);
     Put(Expansion, cpMaskMode, Layers[7].AddRef);
+    Put(Expansion, cpMaskComposite, Layers[8].AddRef);
     Result := True;
   finally
-    for Index := 0 to 7 do
+    for Index := 0 to 8 do
       Layers[Index].Release;
   end;
 end;

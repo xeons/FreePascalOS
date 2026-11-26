@@ -33,6 +33,7 @@ procedure CheckPainting;
 procedure CheckStickyPainting;
 procedure CheckMaskPainting;
 procedure CheckShadowPainting;
+procedure CheckFilterPainting;
 procedure CheckLayerPainting;
 procedure CheckGaugePainting;
 procedure ReportPerformance;
@@ -97,6 +98,18 @@ const
     '<!doctype html><body style="margin:0;background:#ffffff">' +
     '<div style="margin:50px;width:300px;height:100px;background:#ffffff;box-shadow:rgba(0,0,0,0.2) 0 8px 23px 0"></div>' +
     '<div style="font:100px/120px sans-serif;color:rgba(0,0,0,0.5);margin-left:50px">I</div>' +
+    '</body>';
+
+  { Filters and composited mask layers: a blur that spreads past the
+    box, grayscale(), invert() with opacity(); a rim from two mask
+    layers, content-box excluded from border-box (a button's rim light). }
+  FilterPage =
+    '<!doctype html><body style="margin:0;background:#ffffff">' +
+    '<div style="margin:30px;width:60px;height:60px;background:#000000;filter:blur(5px)"></div>' +
+    '<div style="margin:30px;width:60px;height:30px;background:#ff0000;filter:grayscale(1)"></div>' +
+    '<div style="margin:30px;width:60px;height:30px;background:#ff0000;filter:invert(1) opacity(0.5)"></div>' +
+    '<div style="margin:30px;width:100px;height:40px;padding:4px;background:#0000ff;' +
+    'mask:linear-gradient(#fff,#fff) content-box exclude,linear-gradient(#fff,#fff)"></div>' +
     '</body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
@@ -285,6 +298,32 @@ begin
     for X := 50 to 150 do
       Darkest := Min(Darkest, RedOf(PixelAt(Surface, X, 260)));
     Check(Abs(Darkest - 128) <= 3, 'paint: translucent text: a covered pixel is half grey (' + IntToStr(Darkest) + ')');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckFilterPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(FilterPage, 300, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 300, 400, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 300, 400));
+    CheckPixel(Surface, 60, 60, RgbColor(0, 0, 0), 'filter: the middle of a blurred box');
+    Check(RedOf(PixelAt(Surface, 27, 60)) < 200, 'filter: a blur spreads past the box');
+    Check(RedOf(PixelAt(Surface, 30, 60)) > 60, 'filter: a blur softens the edge');
+    CheckPixel(Surface, 60, 135, RgbColor(54, 54, 54), 'filter: grayscale');
+    CheckPixel(Surface, 60, 195, RgbColor(128, 255, 255), 'filter: invert and opacity');
+    CheckPixel(Surface, 32, 270, RgbColor(0, 0, 255), 'mask-composite: exclude keeps the padding rim');
+    CheckPixel(Surface, 80, 270, RgbColor(255, 255, 255), 'mask-composite: exclude takes out the content box');
   finally
     FreeSurface(Surface);
     Painter.Free;

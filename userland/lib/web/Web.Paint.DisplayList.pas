@@ -37,7 +37,7 @@ interface
 
 uses
   Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles, Css.Values, Css.Keywords, Css.TransformMatrices,
-  Image.Model, Web.Layout.Boxes, Web.Text.FontInstances;
+  Image.Model, Web.Layout.Boxes, Web.Text.FontInstances, Web.Paint.Filters;
 
 type
   TDisplayItemKind = (
@@ -69,6 +69,12 @@ type
       the mask layers, the ones after it the content, composited at the
       pop through the layers' alpha. The bounds: the mask's clip. }
     diPushMask, diMaskContent, diPopMask,
+    { One mask layer composited with the layers below it (mask-composite;
+      Index: a TMaskComposite), drawn into a group of its own. }
+    diPushMaskLayer, diPopMaskLayer,
+    { A filtered subtree (the filter property; Index: its operations in
+      Filters), drawn into a group filtered at the pop. }
+    diPushFilter, diPopFilter,
     { Not drawn: where a box is, for hit testing. }
     diHitArea,
     { A control's own text (a text field's value; Index: a string), in
@@ -98,6 +104,10 @@ type
     Styles: array[0..3] of TCssKeyword;
     Radii: Integer;
   end;
+
+  { mask-composite: how a mask layer's alpha combines with the layers
+    below it. }
+  TMaskComposite = (mcAdd, mcSubtract, mcIntersect, mcExclude);
 
   TTextRun = record
     Box: TTextBox;
@@ -169,6 +179,8 @@ type
     FrameCount: Integer;
     Transforms: array of TCssMatrix2D;
     TransformCount: Integer;
+    Filters: array of TFilterOperations;
+    FilterCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
     procedure Clear;
@@ -183,6 +195,7 @@ type
     function AddSticky(const Value: TStickyRun): Integer;
     function AddFrame(Content: TObject): Integer;
     function AddTransform(const Value: TCssMatrix2D): Integer;
+    function AddFilter(const Value: TFilterOperations): Integer;
     { Bytes the list holds. }
     function MemoryBytes: PtrUInt;
   end;
@@ -310,6 +323,15 @@ begin
   Frames[FrameCount] := Content;
   Result := FrameCount;
   Inc(FrameCount);
+end;
+
+function TDisplayList.AddFilter(const Value: TFilterOperations): Integer;
+begin
+  if FilterCount >= Length(Filters) then
+    SetLength(Filters, FilterCount * 2 + 4);
+  Filters[FilterCount] := Value;
+  Result := FilterCount;
+  Inc(FilterCount);
 end;
 
 function TDisplayList.MemoryBytes: PtrUInt;

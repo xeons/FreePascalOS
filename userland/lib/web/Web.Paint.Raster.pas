@@ -70,7 +70,7 @@ implementation
 
 uses
   Math, SysUtils, Drawing.Colors, Drawing.Canvas, Drawing.Regions, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
-  Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Css.Keywords, Font.Outlines,
+  Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Drawing.Blurring, Web.Paint.Filters, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Font.GlyphDrawing, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
   Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent, Drawing.Transforms,
   Drawing.Paints, Drawing.PaintFilling, Css.TransformMatrices;
@@ -93,6 +93,10 @@ type
       pixels of the surface below). }
     IsTransform: Boolean;
     DeviceTransform: TAffineTransform;
+    { A mask layer's group: how it combines with the layers below. }
+    Composite: TMaskComposite;
+    { A filter's group: its operations (Filters of the list), else -1. }
+    Filter: Integer;
   end;
   PGroup = ^TGroup;
 
@@ -1207,6 +1211,115 @@ begin
   SetCanvasClip(Raster.Canvas, Clip);
 end;
 
+{ A filter's group covers the clip and, for a blur, as far around it as
+  the blur reaches (what is drawn there blurs into the clip); the clips
+  of the surface below apply when it is put back. }
+const
+  { The largest side of a filter group's surface. }
+  MaximumFilterSide = 8192;
+
+procedure PushFilter(var Raster: TRaster; const Item: TDisplayItem);
+var
+  Group: PGroup;
+  Bounds: TRectangle;
+  Operations: TFilterOperations;
+  Index, Margin: LongInt;
+begin
+  if Raster.GroupDepth >= Length(Raster.Groups) then
+    SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
+  Group := @Raster.Groups[Raster.GroupDepth];
+  Inc(Raster.GroupDepth);
+  Group^.Canvas := Raster.Canvas;
+  Group^.Opacity := 255;
+  Group^.MaskSurface.Pixels := nil;
+  Group^.Surface.Pixels := nil;
+  Group^.IsTransform := False;
+  Group^.Filter := Item.Index;
+  Operations := Raster.List.Filters[Item.Index];
+  Margin := 0;
+  for Index := 0 to High(Operations) do
+    if Operations[Index].Kind = foBlur then
+      Inc(Margin, BlurMargin(Operations[Index].Amount * Raster.View.Scale));
+  Bounds := RegionBounds(Raster.Canvas.Clip);
+  if RectangleIsEmpty(Bounds) then
+    Exit;
+  Bounds := InflateRectangle(Bounds, Margin);
+  Group^.Left := Bounds.Left;
+  Group^.Top := Bounds.Top;
+  if (RectangleWidth(Bounds) > MaximumFilterSide) or (RectangleHeight(Bounds) > MaximumFilterSide) or
+     not CreateSurface(Group^.Surface, RectangleWidth(Bounds), RectangleHeight(Bounds), ColorTransparent) then
+  begin
+    Group^.Surface.Pixels := nil;
+    Exit;
+  end;
+  BeginCanvas(Raster.Canvas, Group^.Surface);
+  Inc(Raster.ShiftX, Bounds.Left);
+  Inc(Raster.ShiftY, Bounds.Top);
+end;
+
+{ The group's drawing filtered, then put on the surface below (within
+  its clips). }
+procedure PopFilter(var Raster: TRaster);
+var
+  Group: PGroup;
+begin
+  if not LeaveGroup(Raster, Group) then
+    Exit;
+  ApplyFilterOperations(Group^.Surface, Raster.List.Filters[Group^.Filter], Raster.View.Scale);
+  DrawSurface(Raster.Canvas, Group^.Surface, MakeRectangle(0, 0, Group^.Surface.Width, Group^.Surface.Height),
+    Group^.Left, Group^.Top, True, 255);
+  FreeSurface(Group^.Surface);
+end;
+
+procedure PushMaskLayer(var Raster: TRaster; const Item: TDisplayItem);
+begin
+  PushGroup(Raster, Item);
+  Raster.Groups[Raster.GroupDepth - 1].Composite := TMaskComposite(Item.Index);
+end;
+
+{ CSS Masking 7.2: the layer (source) over the layers below it
+  (destination), by alpha; outside the layer's area its alpha is 0. }
+function CompositeAlpha(Source, Destination: LongWord; Composite: TMaskComposite): LongWord; inline;
+begin
+  case Composite of
+    mcSubtract: Result := Source * (255 - Destination) div 255;
+    mcIntersect: Result := Source * Destination div 255;
+    mcExclude: Result := (Source * (255 - Destination) + Destination * (255 - Source)) div 255;
+  else
+    Result := Source + Destination * (255 - Source) div 255;
+  end;
+end;
+
+procedure PopMaskLayer(var Raster: TRaster);
+var
+  Group: PGroup;
+  Row, Column, Left, Top: LongInt;
+  Line, Source: PLongWord;
+  SourceAlpha: LongWord;
+begin
+  if not LeaveGroup(Raster, Group) then
+    Exit;
+  for Row := 0 to Raster.Canvas.Surface.Height - 1 do
+  begin
+    Line := SurfaceLine(Raster.Canvas.Surface, Row);
+    Top := Row - Group^.Top;
+    for Column := 0 to Raster.Canvas.Surface.Width - 1 do
+    begin
+      Left := Column - Group^.Left;
+      SourceAlpha := 0;
+      if (Top >= 0) and (Top < Group^.Surface.Height) and (Left >= 0) and (Left < Group^.Surface.Width) then
+      begin
+        Source := SurfaceLine(Group^.Surface, Top);
+        SourceAlpha := AlphaOf(Source[Left]);
+      end;
+      if (SourceAlpha = 0) and (Group^.Composite <> mcIntersect) then
+        Continue;
+      Line[Column] := ArgbColor(Byte(CompositeAlpha(SourceAlpha, AlphaOf(Line[Column]), Group^.Composite)), 0, 0, 0);
+    end;
+  end;
+  FreeSurface(Group^.Surface);
+end;
+
 procedure PopMask(var Raster: TRaster);
 var
   Group: PGroup;
@@ -1282,6 +1395,10 @@ begin
       diPushOpacity: PushGroup(Raster, Item^);
       diPopOpacity: PopGroup(Raster);
       diPushMask: PushGroup(Raster, Item^);
+      diPushMaskLayer: PushMaskLayer(Raster, Item^);
+      diPushFilter: PushFilter(Raster, Item^);
+      diPopFilter: PopFilter(Raster);
+      diPopMaskLayer: PopMaskLayer(Raster);
       diPushTransform: PushTransform(Raster, Item^);
       diPopTransform: PopTransform(Raster);
       diMaskContent: BeginMaskContent(Raster);

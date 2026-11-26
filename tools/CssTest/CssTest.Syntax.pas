@@ -155,6 +155,9 @@ begin
   CheckValue('-webkit-line-clamp', '2px', '(invalid)');
   CheckValue('-webkit-box-orient', 'vertical', 'vertical');
   CheckValue('-webkit-box-orient', 'block-axis', 'block-axis');
+  CheckValue('mask-composite', 'exclude', 'exclude');
+  CheckValue('mask-composite', 'add, subtract', 'add, subtract');
+  CheckValue('mask-composite', 'xor', '(invalid)');
   CheckValue('color', 'RED', 'rgb(255, 0, 0)');
   CheckValue('color', '#0f08', 'rgba(0, 255, 0, 0.533)');
   CheckValue('color', 'rgb(255 0 0 / 50%)', 'rgba(255, 0, 0, 0.5)');

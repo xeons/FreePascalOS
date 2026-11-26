@@ -289,6 +289,8 @@ const
       Compute: cmpValue; Animation: atDiscrete),
     (Group: pgEffects; Initial: 'match-source'; Grammar: '#alpha | luminance | match-source'; Compute: cmpValue;
       Animation: atDiscrete),
+    (Group: pgEffects; Initial: 'add'; Grammar: '#add | subtract | intersect | exclude'; Compute: cmpValue;
+      Animation: atDiscrete),
     { text decoration }
     (Group: pgText; Initial: 'none'; Grammar: 'none | {underline overline line-through blink spelling-error ' +
       'grammar-error}'; Compute: cmpKeyword; Animation: atDiscrete),

@@ -128,7 +128,7 @@ type
     { transitions and animations }
     kwEase, kwLinear, kwEaseIn, kwEaseOut, kwEaseInOut, kwStepStart, kwStepEnd, kwJumpStart,
     kwJumpEnd, kwJumpNone, kwJumpBoth, kwInfinite, kwReverse, kwAlternate, kwAlternateReverse,
-    kwForwards, kwBackwards, kwRunning, kwPaused, kwAllowDiscrete, kwReplace, kwAdd,
+    kwForwards, kwBackwards, kwRunning, kwPaused, kwAllowDiscrete, kwReplace, kwAdd, kwSubtract, kwIntersect, kwExclude,
     kwAccumulate,
     { transforms and compositing }
     kwFlat, kwPreserve3d, kwMultiply, kwScreen, kwDarken, kwLighten, kwColorDodge,
