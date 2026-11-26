@@ -1,0 +1,17 @@
+<!-- width=800 -->
+<!doctype html>
+<html><body style="margin:0;font:16px/20px sans-serif">
+<!-- -webkit-line-clamp: a -webkit-box with -webkit-box-orient: vertical
+     is a block container (not a flexbox) of at most N lines, the last
+     ending in an ellipsis (a video title clamped to two lines). -->
+<a style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;width:150px"><span>A long title that goes on for more than two lines of text here</span></a>
+<!-- Its inline children stay on one line with their spaces (a count and
+     a word in two spans), not one flex item each. -->
+<div style="display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden"><span>10,642</span><span> Comments</span></div>
+<!-- text-overflow: ellipsis on a line that overflows a clipping box. -->
+<div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Channel name that is long</div>
+<!-- A -webkit-box without a clamp is a flexbox; vertical orientation
+     makes it a column. -->
+<div style="display:-webkit-box;-webkit-box-orient:vertical;width:100px"><span>a</span><span>b</span></div>
+<div style="display:-webkit-box;width:100px"><span>a</span><span>b</span></div>
+</body></html>

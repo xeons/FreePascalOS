@@ -52,7 +52,7 @@ procedure BuildDisplayList(Root: TLayoutBox; Resources: TDocumentResources; List
 implementation
 
 uses
-  Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
+  Math, SysUtils, Web.Dom, Web.Atoms, Web.Layout.LineClamp, Web.Paint.Filters, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
   Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
   Web.Dom.FormControls, Web.Dom.InputValues, Css.TransformMatrices, Web.Layout.Transforms;
@@ -698,7 +698,8 @@ begin
       if (Text = '') and TElement(Box.Node).HasAttributeAtom(AtomPlaceholder) then
       begin
         Text := TElement(Box.Node).AttributeValueOf(AtomPlaceholder);
-        Color := FadeColor(Color, 128);
+        { Firefox draws a placeholder in 54% of the text colour. }
+        Color := FadeColor(Color, 138);
       end;
       if Text <> '' then
       begin
@@ -845,6 +846,7 @@ begin
   if not IsVisible(Text) then
     Exit;
   Run.Box := Text;
+  Run.Literal := -1;
   Run.Font := TextFontOf(Text.Style);
   Run.TextStart := Fragment.TextStart;
   Run.TextLength := Fragment.TextLength;
@@ -925,6 +927,31 @@ begin
   Box.Height := SavedHeight;
 end;
 
+{ The ellipses of text-overflow and line clamping, in the container's
+  font and colour. }
+procedure PaintEllipses(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
+var
+  Index: Integer;
+  Run: TTextRun;
+  Entry: PDisplayItem;
+  Ellipsis: TLineEllipsis;
+begin
+  if not IsVisible(Box) then
+    Exit;
+  for Index := 0 to Box.Inline.EllipsisCount - 1 do
+  begin
+    Ellipsis := Box.Inline.Ellipses[Index];
+    Run := Default(TTextRun);
+    Run.Font := TextFontOf(Box.Style);
+    Run.Literal := Builder.List.AddString(EllipsisText);
+    Run.Baseline := Y + Ellipsis.Baseline;
+    Entry := Builder.List.Add(diText, X + Ellipsis.X, Y + Ellipsis.Baseline - Run.Font.Ascent,
+      Run.Font.MeasureText(EllipsisText, 1, Length(EllipsisText)), Run.Font.Ascent + Run.Font.Descent, Box);
+    Entry^.Color := ToColor(Box.Style.Color);
+    Entry^.Index := Builder.List.AddText(Run);
+  end;
+end;
+
 procedure PaintFragments(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
 var
   Index: Integer;
@@ -933,9 +960,13 @@ var
 begin
   if Box.Inline = nil then
     Exit;
+  if Box.Inline.EllipsisCount > 0 then
+    PaintEllipses(Builder, Box, X, Y);
   for Index := 0 to Box.Inline.FragmentCount - 1 do
   begin
     Fragment := @Box.Inline.Fragments[Index];
+    if Fragment^.Clipped then
+      Continue;
     case Fragment^.Kind of
       fkText:
         PaintText(Builder, Fragment^, X, Y);
@@ -1273,30 +1304,16 @@ begin
     Builder.List.Add(diPopClip, 0, 0, 0, 0, Layer.Box);
 end;
 
-{ The start of a masked box: the mask's clip (mask-clip of the first
-  layer; no-clip: none), the mask group and its layers (an image not
-  loaded yet, or not decodable, masks everything out as the spec says);
-  the content follows. False when there is no mask. }
-function BeginMask(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; out Clipped: Boolean): Boolean;
-var
-  Style: TCssComputedStyle;
-  Images: PCssComputedValue;
-  Count, Layer: Integer;
-  Item: TCssValue;
-  Clip: TCssKeyword;
-  ClipX, ClipY, ClipWidth, ClipHeight: Single;
-  Entry: PDisplayItem;
+{ A mask layer's painting area (its mask-clip box) in document
+  coordinates; False for no-clip. }
+function MaskLayerClip(Box: TLayoutBox; X, Y: Single; Clip: TCssKeyword; out ClipX, ClipY, ClipWidth,
+  ClipHeight: Single): Boolean;
 begin
-  Clipped := False;
-  Style := Box.Style;
-  Result := HasMaskImage(Style);
-  if not Result then
-    Exit;
+  Result := Clip <> kwNoClip;
   ClipX := X;
   ClipY := Y;
   ClipWidth := Box.Width;
   ClipHeight := Box.Height;
-  Clip := LayerKeyword(Style, cpMaskClip, 0, kwBorderBox);
   if KeywordIn(Clip, [kwPaddingBox, kwContentBox]) then
   begin
     ClipX := ClipX + Box.Border[sideLeft];
@@ -1311,24 +1328,97 @@ begin
       ClipHeight := ClipHeight - Box.Padding[sideTop] - Box.Padding[sideBottom];
     end;
   end;
-  if Clip <> kwNoClip then
+end;
+
+{ The widest of the layers' mask-clip boxes (border, padding, content
+  box in that order), or no-clip when a layer has it. }
+function WidestMaskClip(Style: TCssComputedStyle; Count: Integer): TCssKeyword;
+var
+  Layer: Integer;
+  Clip: TCssKeyword;
+begin
+  Result := kwContentBox;
+  for Layer := 0 to Count - 1 do
+  begin
+    Clip := LayerKeyword(Style, cpMaskClip, Layer, kwBorderBox);
+    if (Clip = kwNoClip) or ((Clip = kwBorderBox) and (Result <> kwNoClip)) or
+      ((Clip = kwPaddingBox) and (Result = kwContentBox)) then
+      Result := Clip;
+  end;
+end;
+
+function MaskCompositeOf(Keyword: TCssKeyword): TMaskComposite;
+begin
+  case Keyword of
+    kwSubtract: Result := mcSubtract;
+    kwIntersect: Result := mcIntersect;
+    kwExclude: Result := mcExclude;
+  else
+    Result := mcAdd;
+  end;
+end;
+
+{ The start of a masked box: the mask's clip (the widest of the layers'
+  mask-clip boxes; no-clip: none), the mask group and its layers, each
+  in its own mask-clip box and, above the bottom one, composited with
+  the ones below as mask-composite says (an image not loaded yet, or
+  not decodable, masks everything out as the spec says); the content
+  follows. False when there is no mask. }
+function BeginMask(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; out Clipped: Boolean): Boolean;
+var
+  Style: TCssComputedStyle;
+  Images: PCssComputedValue;
+  Count, Layer: Integer;
+  Item: TCssValue;
+  Clip, LayerClip: TCssKeyword;
+  Composite: TMaskComposite;
+  ClipX, ClipY, ClipWidth, ClipHeight, LayerX, LayerY, LayerWidth, LayerHeight: Single;
+  Entry: PDisplayItem;
+  OwnClip: Boolean;
+begin
+  Clipped := False;
+  Style := Box.Style;
+  Result := HasMaskImage(Style);
+  if not Result then
+    Exit;
+  Images := Style.Value(cpMaskImage);
+  if Images^.Data.Kind = vkList then
+    Count := Images^.Data.Count
+  else
+    Count := 1;
+  Clip := WidestMaskClip(Style, Count);
+  if MaskLayerClip(Box, X, Y, Clip, ClipX, ClipY, ClipWidth, ClipHeight) then
   begin
     Builder.List.Add(diPushClip, ClipX, ClipY, ClipWidth, ClipHeight, Box);
     Clipped := True;
   end;
   Entry := Builder.List.Add(diPushMask, ClipX, ClipY, ClipWidth, ClipHeight, Box);
   Entry^.Value := 1;
-  Images := Style.Value(cpMaskImage);
-  if Images^.Data.Kind = vkList then
-    Count := Images^.Data.Count
-  else
-    Count := 1;
   for Layer := Count - 1 downto 0 do
   begin
     Item := LayerItem(Images, Layer);
+    LayerClip := LayerKeyword(Style, cpMaskClip, Layer, kwBorderBox);
+    Composite := mcAdd;
+    if Layer < Count - 1 then
+      Composite := MaskCompositeOf(LayerKeyword(Style, cpMaskComposite, Layer, kwAdd));
+    if ((Item = nil) or (Item.Kind = vkKeyword)) and (Composite <> mcIntersect) then
+      Continue;
+    OwnClip := (LayerClip <> Clip) and MaskLayerClip(Box, X, Y, LayerClip, LayerX, LayerY, LayerWidth, LayerHeight);
+    if OwnClip then
+      Builder.List.Add(diPushClip, LayerX, LayerY, LayerWidth, LayerHeight, Box);
+    if Composite <> mcAdd then
+    begin
+      Entry := Builder.List.Add(diPushMaskLayer, ClipX, ClipY, ClipWidth, ClipHeight, Box);
+      Entry^.Value := 1;
+      Entry^.Index := Ord(Composite);
+    end;
     if (Item <> nil) and (Item.Kind <> vkKeyword) then
       PaintImageLayer(Builder, Box, Style, MaskLayerIds, Layer, Item, X, Y, Box.Width, Box.Height, ClipX, ClipY,
         ClipWidth, ClipHeight);
+    if Composite <> mcAdd then
+      Builder.List.Add(diPopMaskLayer, 0, 0, 0, 0, Box);
+    if OwnClip then
+      Builder.List.Add(diPopClip, 0, 0, 0, 0, Box);
   end;
   Builder.List.Add(diMaskContent, ClipX, ClipY, 0, 0, nil);
 end;
@@ -1387,7 +1477,8 @@ begin
         end;
       diPopTransform:
         Dec(Depth);
-      diPopClip, diPopOpacity, diPopFixed, diPopSticky, diPopMask, diMaskContent, diPushFixed, diPushSticky:
+      diPopClip, diPopOpacity, diPopFixed, diPopSticky, diPopMask, diMaskContent, diPushFixed, diPushSticky,
+      diPushMaskLayer, diPopMaskLayer, diPopFilter:
         ;
     else
       if (Depth = 0) and (Item^.Width > 0) and (Item^.Height > 0) then
@@ -1418,6 +1509,7 @@ var
   Opacity: Single;
   Entry: PDisplayItem;
   ClipsOverflow: Boolean;
+  Filters: TFilterOperations;
 begin
   Opacity := 1;
   if Box.Style <> nil then
@@ -1439,6 +1531,15 @@ begin
     Entry^.Value := Opacity;
   end;
   Masked := (Box.Kind <> bkViewport) and BeginMask(Builder, Box, X, Y, MaskClipped);
+  Filters := nil;
+  if (Box.Kind <> bkViewport) and (Box.Style <> nil) then
+    Filters := FilterOperationsOf(Box.Style);
+  if Filters <> nil then
+  begin
+    Entry := Builder.List.Add(diPushFilter, X, Y, Box.Width, Box.Height, Box);
+    Entry^.Value := 1;
+    Entry^.Index := Builder.List.AddFilter(Filters);
+  end;
   PaintDecorations(Builder, Box, X, Y);
   Layers := nil;
   Count := 0;
@@ -1476,6 +1577,8 @@ begin
     PaintLayerWithClips(Builder, Layers[Index]);
     Inc(Index);
   end;
+  if Filters <> nil then
+    Builder.List.Add(diPopFilter, 0, 0, 0, 0, Box);
   if Masked then
     EndMask(Builder, Box, MaskClipped);
   if Box.Kind <> bkViewport then

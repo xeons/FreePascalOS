@@ -14618,7 +14618,11 @@ a value that still has var() (and of custom properties). Math functions
 abs, sign, the trigonometric and exponential functions, the constants;
 the tree is type-checked with exponents per base type and simplified
 (like units combined, absolute units made canonical, number-only
-functions computed). Colors (`Css.Colors`, `Css.ColorParser`) are CSS
+functions computed). A top-level result is censored (Values 4, 10.9):
+NaN is 0 and +/-infinity the largest finite length (17895697 px, what
+Firefox lays out): a player whose aspect ratio a script set to NaN
+(`calc(var(--ratio) / 1 * 100%)`) laid YouTube's whole primary column
+out at a NaN height. Colors (`Css.Colors`, `Css.ColorParser`) are CSS
 Color 4 and 5: named, hex, rgb/hsl (legacy and modern syntax), hwb, lab,
 lch, oklab, oklch, color() in every predefined space, color-mix() (with
 hue methods, premultiplied), currentcolor and the system colors (a
@@ -15837,7 +15841,7 @@ error) over `TScriptEnvironment`:
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
-| 79-media-elements | the media element API without playback: load() with a source fails as an unsupported one (error event, MediaError 4, NETWORK_NO_SOURCE), play() rejects with NotSupportedError, canPlayType() is "", volume, muted and the rates are kept; TimeRanges are empty |
+| 79-media-elements | the media element API without playback: load() with a source fails as an unsupported one (error event, MediaError 4, NETWORK_NO_SOURCE), play() rejects with NotSupportedError, canPlayType() is "", volume, muted and the rates are kept; TimeRanges are empty; videoWidth and videoHeight are 0 (no metadata) |
 | 80-structured-serialize | StructuredSerializeForStorage and StructuredDeserialize to and from bytes (see "IndexedDB, the Cache API and navigator.storage") |
 | 81-indexeddb-keys | IndexedDB keys as byte strings that sort as keys, key paths, IDBKeyRange |
 | 82-indexeddb-backend | the requests to the storage service and their replies, its notices, tasks that are never clamped |
@@ -16702,8 +16706,14 @@ node (not per word or line), ::before/::after with generated text,
 nothing. CSS's anonymous boxes: block containers with both block and
 inline children wrap inline runs in anonymous blocks (a run of
 collapsible white space alone is dropped); flex items are blockified and
-text runs among them wrapped; missing table rows, row groups and cells
-are made. A block inside an inline box stays there and gets lines of its
+text runs among them wrapped (a run that is only white space is dropped
+whatever white-space says, as CSS Flexbox 4 has it: an indented row under
+white-space: pre made blank items of whole lines on YouTube's view
+count); missing table rows, row groups and cells are made.
+`display: -webkit-box` is a flexbox (a column when `-webkit-box-orient`
+is vertical), except with a vertical orientation and a
+`-webkit-line-clamp`: then it is a block container, as in other
+browsers (below). A block inside an inline box stays there and gets lines of its
 own (no inline splitting). `Web.Layout.Counters` applies
 counter-reset/set/increment and the list-item counter with CSS Lists 3
 scoping in one walk and writes the generated text: strings, counter(),
@@ -16766,6 +16776,16 @@ looks for the floats from its margin edge, as in block flow.
   line that did not fit beside its own float move down for ever, which
   froze the browser on www.wikipedia.org's fundraising banner (reference
   page `floats-wider-than-room`).
+- Ellipses (`Web.Layout.LineClamp`, CSS Overflow 4): `text-overflow:
+  ellipsis` (its end side) on a block container whose overflow clips
+  gives each line that runs past the content box an ellipsis, hiding the
+  characters (cut at character boundaries) and atomic inlines it needs
+  room for (fragments marked `Clipped`); legacy line clamping
+  (`-webkit-line-clamp: N` on a vertical `-webkit-box`) drops the lines
+  after the Nth, makes the box as tall as N lines and ends the last with
+  an ellipsis. The ellipses are kept in the inline content and painted
+  in the container's font and colour (a text run with text of its own);
+  the layout dump shows them (`ellipsis at x ... baseline ...`).
 - Intrinsic sizes (`Web.Layout.Sizing`): min-content and max-content of
   inline content, block children, flex containers, tables and replaced
   boxes; shrink-to-fit.
@@ -16778,12 +16798,24 @@ looks for the floats from its margin edge, as in block flow.
 - Replaced elements (`Web.Layout.Replaced`): intrinsic sizes from the
   image (or 300x150, or the controls' font-based sizes), the ratio kept
   when one side or a min/max applies; object-fit and object-position
-  when painting.
+  when painting. Only images have a ratio: a form control's width and
+  height are independent (a text field 100% wide keeps one line's
+  height; it was scaled to 61 px in YouTube's search box), and a text
+  field's line is its line-height when one is given.
+- Buttons (`<button>`, `<select>` and the button-like inputs) centre
+  their content in a taller box (HTML's button layout), with
+  `ShiftLayoutContents` (`Web.Layout.Boxes`), which table cells'
+  vertical-align uses too.
 - Flexbox (`Web.Layout.Flex`, CSS Flexbox 1 section 9): flex base sizes,
   automatic minimum sizes, lines, the flexible length resolution loop
   with freezing, cross sizes, align-content, stretch, auto margins,
   justify-content, align-items/align-self with baselines, gaps, order,
-  reversed directions and wrap-reverse.
+  reversed directions and wrap-reverse. A single-line column measures a
+  stretched auto-width item at the stretched width, not fit-content (CSS
+  Flexbox 9.4 and 9.8 make that cross size definite): YouTube's list of
+  video thumbnails (a row of a 62.5% wide link holding a 56.25%
+  padding-top box, inside a column) measured each row at its fit-content
+  width, where the thumbnail was nothing, and fixed it at that height.
 - Grid (`Web.Layout.Grid`, CSS Grid 1 in its basic form): explicit
   tracks from grid-template-columns/rows (lengths, percentages, fr,
   auto, min-content, max-content, minmax(), fit-content(), repeat() with
@@ -16880,7 +16912,19 @@ mask group: its image layers (url() images and gradients, laid out like
 background layers) drawn first, then the content, composited through
 the layers' alpha; an image not loaded (or not decodable) masks
 everything out, as the spec says (Wikipedia's icons are masks of SVG
-images over currentColor). The root's (or body's) background paints the canvas.
+images over currentColor). Each layer is drawn in its own mask-clip box
+(the group's clip is the widest of them) and a layer above the bottom
+one combines with those below by `mask-composite` (add, subtract,
+intersect, exclude: `diPushMaskLayer`, a group composited into the mask
+by alpha): YouTube's buttons draw a rim light as content-box excluded
+from border-box. The `filter` property (`Web.Paint.Filters`, Filter
+Effects 1) makes a filter group (`diPushFilter`, inside the mask and
+opacity groups): blur() (Drawing.Blurring's three box blurs; the group
+reaches past the clip as far as the blur does, so what is drawn there
+blurs in), brightness(), contrast(), grayscale(), hue-rotate(), invert(),
+opacity(), saturate() and sepia() (the spec's matrices and transfer
+functions on unpremultiplied sRGB); drop-shadow() and url() are not
+drawn. The root's (or body's) background paints the canvas.
 Backgrounds have all their layers: color, url() images (sized with
 background-size auto/cover/contain/lengths, positioned, repeated) and
 gradients (`Web.Paint.Gradients`: linear and radial, repeating,
@@ -16896,7 +16940,12 @@ double, groove, ridge, inset, outset; one ring when rounded), glyphs from
 libfont's glyph cache, images scaled and tiled (a scalable image, SVG,
 drawn again at the device size of the tile instead, so it stays crisp at
 any zoom and pixel ratio), gradients per pixel, box
-shadows as a blurred coverage mask (outer and inset), the controls
+shadows as a blurred mask (outer and inset) blended in pixel values like
+other browsers (`BlendMaskSpan`: libdrawing's gamma-correct coverage
+blending is for anti-aliasing only; a translucent colour is put over
+the pixel the usual way and only that is mixed by coverage, so a 0.2
+black shadow and 54% placeholder text come out as dark as in Firefox,
+not half as dark), the controls
 (check boxes, radio buttons, meters, text field values), clip regions,
 opacity groups and masks on transparent surfaces as big as their clip
 (not the whole surface) and rounded clips composited through their
@@ -16939,6 +16988,9 @@ results to styling and layout without either knowing the other:
   or gives a new image (laid out again as any image). A canvas drawn a
   thousand times between two frames is copied once.
   `ForgetElementImageProvider` when the provider goes.
+- @font-face rules of `<style>` sheets are not loaded yet (only those of
+  linked sheets and their imports reach the font loader through
+  `SheetReady`): see TODO.md.
 - `FreeDocumentResources(Document)` when the document goes.
 
 The sink that fills them is `TLayoutResourceSink`
@@ -17219,6 +17271,25 @@ chains restored by name, the freed lazy bodies, the IIFE compiled at
 once and the lighter lexer and parser made that 3 s of script (1.1 s
 the longest task) and 570 MB (`-m`).
 
+Compared with Firefox (`scripts/compare-sites.py`, the `youtube` and
+`youtube-watch` entries, a watch page of a short, old and popular video)
+the front page and the watch page differ now mostly in what the engine
+honestly cannot do or what YouTube serves differently: no voice search
+button (YouTube shows it only with Web Audio, `window.AudioContext`),
+the player says "Your browser can't play this video" (no media
+playback: HTMLVideoElement's videoWidth/videoHeight are 0, so the player
+box is 16:9 rather than the video's 4:3, which also gives the primary
+column a larger minimum width at 400 px), and the related videos come in
+whatever variant YouTube's experiments give the session (the menu button
+under the title and shown on hover, other typography). What it took:
+censored calc() results, videoWidth/videoHeight, white space runs in
+flex containers, stretched column flex items measured at their width,
+form controls without a ratio, centred button content, legacy line
+clamping and text-overflow ellipses, shadows and translucent text
+blended like other browsers, mask-composite, the filter property,
+gradients of one color with two positions and getComputedStyle under
+display: none and for pseudo-elements.
+
 On the build machine Wikipedia's Main Page (1280 px) loads in about 1.3
 s, most of it network: 30 ms of style, 25 ms of layout, longest frame
 about 50 ms; the Pascal article (25000 px tall) about 90 ms of style and
@@ -17274,7 +17345,8 @@ project sites) and, for each, at 1280x800 and 400x800:
   scrolls and hovers there and goes back. A crash or hang fails it.
 
 Everything goes into the folder given with `--out` (outside the
-repository: nothing it fetched is committed): the pictures, the logs,
+repository, or under its ignored `build/`: nothing it fetched is
+committed): the pictures, the logs,
 `results.json`, and `report.txt` / `report.html` with the pages by
 score (`--baseline OLD/results.json` puts the earlier scores beside
 them). Problems found are reduced to small cases in the host tests

@@ -205,6 +205,19 @@
     state(this).preservesPitch = !!value;
   });
 
+  // HTML 4.8.11.2: a video's intrinsic size is 0 x 0 until it has
+  // metadata (readyState HAVE_NOTHING), which is always here. Players
+  // derive the aspect ratio from these, so they must be numbers.
+  const VideoElement = global.HTMLVideoElement;
+  if (typeof VideoElement === "function") {
+    const videoSize = function () {
+      if (!(this instanceof VideoElement)) throw new TypeError("Illegal invocation");
+      return 0;
+    };
+    for (const name of ["videoWidth", "videoHeight"])
+      Object.defineProperty(VideoElement.prototype, name, { get: videoSize, enumerable: true, configurable: true });
+  }
+
   const constants = { NETWORK_EMPTY: NETWORK_EMPTY, NETWORK_IDLE: NETWORK_IDLE, NETWORK_LOADING: NETWORK_LOADING,
     NETWORK_NO_SOURCE: NETWORK_NO_SOURCE, HAVE_NOTHING: 0, HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2,
     HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 };

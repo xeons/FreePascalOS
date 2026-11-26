@@ -1,0 +1,15 @@
+<!-- width=800 -->
+<!doctype html>
+<html><body style="margin:0;font:16px/20px sans-serif">
+<!-- A text field has no aspect ratio: 100% wide it keeps one line's
+     height, and a line-height of its own sets that line (a search box). -->
+<div style="display:flex;width:600px;height:38px;align-items:center">
+<form style="display:flex;flex:1 1 0%"><input style="font:16px sans-serif;line-height:22px;padding:1px 0;border:none;width:100%;margin:0"></form>
+</div>
+<!-- A check box 30px wide stays 13px high. -->
+<div><input type=checkbox style="width:30px;margin:0"></div>
+<!-- A button taller than its content centres it (HTML button layout),
+     as a block and as an inline-block. -->
+<button style="display:block;width:64px;height:40px;border:1px solid;padding:0"><span style="display:inline-block;width:24px;height:24px;vertical-align:middle"></span></button>
+<button style="width:64px;height:40px;border:1px solid;padding:0;font:13px/15px sans-serif">X</button>
+</body></html>

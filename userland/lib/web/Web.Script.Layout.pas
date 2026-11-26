@@ -58,7 +58,8 @@ type
     procedure ScrollTo(Element: TElement; Left, Top: Double); override;
     procedure ViewportScroll(out Left, Top: Double); override;
     function ElementAtPoint(X, Y: Double): TElement; override;
-    function ComputedValue(Element: TElement; const PropertyName: string): string; override;
+    function ComputedValue(Element: TElement; const PropertyName: string; const PseudoElement: string = ''): string;
+      override;
     function TextRects(Node: TNode; StartOffset, EndOffset: Integer): TScriptRectArray; override;
     function CssAnimations(Element: TElement): TScriptCssAnimationArray; override;
     procedure ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
@@ -81,7 +82,9 @@ uses
   Web.Paint.DisplayList,
   Web.Paint.Sticky,
   Web.Text.FontInstances,
-  Web.Style.NodeData;
+  Web.Style.NodeData,
+  Css.Selectors,
+  SysUtils;
 
 procedure TDocumentScriptLayout.Resolve;
 begin
@@ -416,29 +419,67 @@ begin
   Layout.Styler.Animations.Control(Element, IsTransition, Name, Actions[Action], Value);
 end;
 
-function TDocumentScriptLayout.ComputedValue(Element: TElement; const PropertyName: string): string;
+{ getComputedStyle's pseudo-element argument: none for '' (and for a
+  name without colons, as browsers take it), else ::name or the legacy
+  :before, :after, :first-line and :first-letter; Valid False for any
+  other. }
+function ParsePseudoArgument(const Text: string; out Valid: Boolean): TCssPseudoElement;
+var
+  Name: string;
+begin
+  Valid := True;
+  Result := peNone;
+  if (Text = '') or (Text[1] <> ':') then
+    Exit;
+  Name := LowerCase(Text);
+  if Copy(Name, 1, 2) = '::' then
+    Delete(Name, 1, 2)
+  else
+  begin
+    Delete(Name, 1, 1);
+    if (Name <> 'before') and (Name <> 'after') and (Name <> 'first-line') and (Name <> 'first-letter') then
+    begin
+      Valid := False;
+      Exit;
+    end;
+  end;
+  Result := PseudoElementByName(Name);
+  Valid := Result <> peNone;
+end;
+
+function TDocumentScriptLayout.ComputedValue(Element: TElement; const PropertyName: string;
+  const PseudoElement: string): string;
 var
   Style: TCssComputedStyle;
   Id: TCssPropertyId;
+  Pseudo: TCssPseudoElement;
+  Valid: Boolean;
 begin
   Result := '';
   if not Ready then
     Exit;
-  Style := StyleOf(Element);
+  Pseudo := ParsePseudoArgument(PseudoElement, Valid);
+  if not Valid then
+    Exit;
+  Style := Layout.Styler.StyleForScript(Element, Pseudo);
   if Style = nil then
     Exit;
-  Id := PropertyByName(PropertyName);
-  if Id = cpCustom then
-    Exit(Style.CustomProperty(PropertyName));
-  if Id = cpInvalid then
-    Exit;
-  if (Id = cpWidth) or (Id = cpHeight) then
-  begin
-    Result := UsedSize(Layout.BoxOf(Element), Id);
-    if Result <> '' then
+  try
+    Id := PropertyByName(PropertyName);
+    if Id = cpCustom then
+      Exit(Style.CustomProperty(PropertyName));
+    if Id = cpInvalid then
       Exit;
+    if ((Id = cpWidth) or (Id = cpHeight)) and (Pseudo = peNone) then
+    begin
+      Result := UsedSize(Layout.BoxOf(Element), Id);
+      if Result <> '' then
+        Exit;
+    end;
+    Result := Style.SerializeProperty(Id);
+  finally
+    Style.Release;
   end;
-  Result := Style.SerializeProperty(Id);
 end;
 
 end.

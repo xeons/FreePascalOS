@@ -1,0 +1,20 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x138
+    block <body> at (0,0) size 800x138
+      flex <div> at (0,0) size 600x38
+        flex <form> at (0,7) size 600x24
+          replaced <input> at (0,7) size 600x24
+      block <div> at (0,38) size 800x20
+        line 0 at y 38 height 20 baseline 53.54
+          atomic <input> at (0,40.54) size 30x13
+        replaced <input> at (0,40.54) size 30x13
+      block <button> at (0,58) size 64x40
+        line 0 at y 66 height 24 baseline 81.6
+          atomic <span> at (20,66) size 24x24
+        inline-block <span> at (20,66) size 24x24
+      block (anonymous) at (0,98) size 800x40
+        line 0 at y 98 height 40 baseline 122.5
+          atomic <button> at (0,98) size 64x40
+        inline-block <button> at (0,98) size 64x40
+          line 0 at y 110.5 height 15 baseline 122.5
+            text "X" at (27.55,110.43) size 8.91x15.13

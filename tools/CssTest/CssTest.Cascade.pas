@@ -282,6 +282,35 @@ begin
   end;
 end;
 
+{ CSS Values 4, 10.9: a top-level calculation that comes to NaN is 0,
+  one that comes to infinity the largest finite length (a video page's
+  player box whose aspect ratio a script set to NaN). }
+procedure TestCalcCensoring;
+var
+  S: TStyler;
+  Html, Box: TTestElement;
+begin
+  StartStyler(S, False);
+  try
+    Html := AddElement(nil, 'html', []);
+    S.Root := Html;
+    Box := AddElement(Html, 'div', ['style', '--ratio: NaN; padding-top: calc(var(--ratio) / 1 * 100%);' +
+      ' margin-left: calc(NaN * 1px); width: calc(infinity * 1px); height: calc(-infinity * 1em)']);
+    S.Engine.SetEnvironment(DefaultMediaEnvironment);
+    StyleAll(S);
+    Check(Abs(Box.Style.Length(cpPaddingTop, 200)) < 1E-4, 'calc() of NaN percent resolves to 0 (' +
+      FloatToStr(Box.Style.Length(cpPaddingTop, 200)) + ')');
+    Check(Abs(Box.Style.Length(cpMarginLeft, 200)) < 1E-4, 'calc() of NaN px resolves to 0 (' +
+      FloatToStr(Box.Style.Length(cpMarginLeft, 200)) + ')');
+    Check(Abs(Box.Style.Length(cpWidth, 200) - 17895697) < 2, 'calc() of infinity px is the largest length (' +
+      FloatToStr(Box.Style.Length(cpWidth, 200)) + ')');
+    Check(Abs(Box.Style.Length(cpHeight, 200) + 17895697) < 2, 'calc() of -infinity em is the most negative (' +
+      FloatToStr(Box.Style.Length(cpHeight, 200)) + ')');
+  finally
+    StopStyler(S);
+  end;
+end;
+
 procedure TestUserAgentSheet;
 var
   S: TStyler;
@@ -435,6 +464,7 @@ begin
   TestLayers;
   TestRevertAndKeywords;
   TestComputedValues;
+  TestCalcCensoring;
   TestUserAgentSheet;
   TestMediaQueries;
   TestColors;

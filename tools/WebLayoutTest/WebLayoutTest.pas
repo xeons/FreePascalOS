@@ -61,6 +61,8 @@ begin
   CheckPainting;
   CheckStickyPainting;
   CheckMaskPainting;
+  CheckShadowPainting;
+  CheckFilterPainting;
   CheckLayerPainting;
   CheckGaugePainting;
   CheckSnappedPainting;

@@ -190,9 +190,16 @@ begin
             Output := Output + Indent + '    br';
         end;
         Output := Output + ' at (' + FormatLayoutNumber(X + Fragment^.X) + ',' + FormatLayoutNumber(Y + Fragment^.Y) +
-          ') size ' + FormatLayoutNumber(Fragment^.Width) + 'x' + FormatLayoutNumber(Fragment^.Height) + LineEnding;
+          ') size ' + FormatLayoutNumber(Fragment^.Width) + 'x' + FormatLayoutNumber(Fragment^.Height);
+        if Fragment^.Clipped then
+          Output := Output + ' clipped';
+        Output := Output + LineEnding;
       end;
     end;
+  if (bfChildrenInline in Box.Flags) and (Box.Inline <> nil) then
+    for Index := 0 to Box.Inline.EllipsisCount - 1 do
+      Output := Output + Indent + '  ellipsis at x ' + FormatLayoutNumber(X + Box.Inline.Ellipses[Index].X) +
+        ' baseline ' + FormatLayoutNumber(Y + Box.Inline.Ellipses[Index].Baseline) + LineEnding;
   Child := Box.FirstChild;
   while Child <> nil do
   begin

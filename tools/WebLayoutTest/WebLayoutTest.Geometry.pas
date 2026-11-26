@@ -56,6 +56,10 @@ const
     '<div id=tilebox style="width:100px;height:100px;overflow:hidden;line-height:0">' +
     '<span id=tile style="display:inline-block;position:relative;top:-100%;left:-200%;width:300%;height:300%">' +
     '</span></div>' +
+    { getComputedStyle of an element under display: none (styled for the
+      asking) and of pseudo-elements. }
+    '<div style="display:none;color:rgb(1,2,3)"><span id=hidden style="width:7px">x</span></div>' +
+    '<style>#pseudo::before{content:"a";color:rgb(4,5,6)}</style><p id=pseudo>z</p>' +
     '</body>';
 
 { An absolutely positioned box without a positioned ancestor is placed
@@ -208,6 +212,16 @@ begin
       'geometry: with box-sizing: border-box the border box size');
     Check(ScriptLayout.ComputedValue(Document.GetElementById('short'), 'width') = 'auto',
       'geometry: an inline box''s width stays auto');
+    Check((ScriptLayout.ComputedValue(Document.GetElementById('hidden'), 'color') = 'rgb(1, 2, 3)') and
+      (ScriptLayout.ComputedValue(Document.GetElementById('hidden'), 'width') = '7px'),
+      'computed style: an element under display: none has one (' +
+      ScriptLayout.ComputedValue(Document.GetElementById('hidden'), 'color') + ')');
+    Check((ScriptLayout.ComputedValue(Document.GetElementById('pseudo'), 'color', '::before') = 'rgb(4, 5, 6)') and
+      (ScriptLayout.ComputedValue(Document.GetElementById('pseudo'), 'content', ':before') = '"a"'),
+      'computed style: of a ::before (' +
+      ScriptLayout.ComputedValue(Document.GetElementById('pseudo'), 'color', '::before') + ')');
+    Check(ScriptLayout.ComputedValue(Document.GetElementById('pseudo'), 'color', '::nothing') = '',
+      'computed style: of an unknown pseudo-element is empty');
     Found := ScriptLayout.BorderBox(Document.GetElementById('tilebox'), X, Unscrolled, Width, Height) and
       ScriptLayout.BorderBox(Document.GetElementById('tile'), X, Y, Width, Height);
     Check(Found and (Abs(X + 200) < 0.5) and (Abs(Y - (Unscrolled - 100)) < 0.5) and (Abs(Height - 300) < 0.5),

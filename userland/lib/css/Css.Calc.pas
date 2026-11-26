@@ -85,7 +85,12 @@ function IsMathFunction(const Name: string): Boolean;
   when they are not allowed). Returns nil when invalid. }
 function ParseMathFunction(var Cursor: TCssTokenCursor; Expected, PercentAs: TCssUnitCategory): TCssCalcNode;
 procedure SimplifyCalc(var Node: TCssCalcNode);
+{ Evaluates a whole (top-level) calculation; the result is censored. }
 function EvaluateCalc(Node: TCssCalcNode; Resolver: TCssCalcLeafResolver; Data: Pointer): Double;
+{ CSS Values 4, 10.9: a top-level calculation that produces NaN gives
+  0, and one that produces +/-infinity the largest finite value of that
+  sign (here the largest length Firefox lays out, 17895697 px). }
+function CensorCalcResult(Value: Double): Double;
 { The specified value form: calc(...) around sums, products and single values. }
 function SerializeCalc(Node: TCssCalcNode): string;
 { A copy whose relative length leaves are converted (by Resolver) to
@@ -902,7 +907,22 @@ begin
   end;
 end;
 
-function EvaluateCalc(Node: TCssCalcNode; Resolver: TCssCalcLeafResolver; Data: Pointer): Double;
+const
+  LargestFiniteCalcResult = 17895697.0;
+
+function CensorCalcResult(Value: Double): Double;
+begin
+  if IsNan(Value) then
+    Result := 0
+  else if Value > LargestFiniteCalcResult then
+    Result := LargestFiniteCalcResult
+  else if Value < -LargestFiniteCalcResult then
+    Result := -LargestFiniteCalcResult
+  else
+    Result := Value;
+end;
+
+function EvaluateCalcNode(Node: TCssCalcNode; Resolver: TCssCalcLeafResolver; Data: Pointer): Double;
 var
   Values: array of Double;
   Index: Integer;
@@ -918,8 +938,13 @@ begin
   end;
   SetLength(Values, Length(Node.Children));
   for Index := 0 to High(Node.Children) do
-    Values[Index] := TrigonometricArgument(Node, EvaluateCalc(Node.Children[Index], Resolver, Data));
+    Values[Index] := TrigonometricArgument(Node, EvaluateCalcNode(Node.Children[Index], Resolver, Data));
   Result := Compute(Node, Values, Node.Kind, Node.Strategy);
+end;
+
+function EvaluateCalc(Node: TCssCalcNode; Resolver: TCssCalcLeafResolver; Data: Pointer): Double;
+begin
+  Result := CensorCalcResult(EvaluateCalcNode(Node, Resolver, Data));
 end;
 
 function AbsolutizeCalc(Node: TCssCalcNode; Resolver: TCssCalcLeafResolver; Data: Pointer): TCssCalcNode;
@@ -942,7 +967,7 @@ begin
   SimplifyCalc(Result);
 end;
 
-function CalcAsLengthPercentage(Node: TCssCalcNode; out Pixels, Percent: Double): Boolean;
+function SplitLengthPercentage(Node: TCssCalcNode; out Pixels, Percent: Double): Boolean;
 var
   Index: Integer;
   Child: TCssCalcNode;
@@ -975,6 +1000,21 @@ begin
     end;
   end;
   Result := True;
+end;
+
+function CalcAsLengthPercentage(Node: TCssCalcNode; out Pixels, Percent: Double): Boolean;
+begin
+  Result := SplitLengthPercentage(Node, Pixels, Percent);
+  if Result and (IsNan(Pixels) or IsNan(Percent)) then
+  begin
+    Pixels := 0;
+    Percent := 0;
+  end
+  else
+  begin
+    Pixels := CensorCalcResult(Pixels);
+    Percent := CensorCalcResult(Percent);
+  end;
 end;
 
 { ---- serialization ---- }

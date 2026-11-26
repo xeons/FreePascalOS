@@ -118,7 +118,7 @@ implementation
 
 uses
   SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values,
-  Web.Dom.FormControls, Web.Layout.ViewportOverflow;
+  Web.Dom.FormControls, Web.Layout.ViewportOverflow, Web.Layout.LineClamp;
 
 var
   AtomCanvasElement, AtomIframeElement, AtomEmbedElement, AtomObjectElement, AtomVideoElement,
@@ -331,10 +331,23 @@ begin
             Include(Result.Flags, bfListItem);
         end;
       kwFlex, kwWebkitBox:
-        Result := TLayoutBox.Create(bkFlex, Element, Style);
+        if LineClampOf(Style) > 0 then
+        begin
+          { Legacy line clamping: a block container (Web.Layout.LineClamp). }
+          Result := TLayoutBox.Create(bkBlock, Element, Style);
+          Include(Result.Flags, bfNewFormattingContext);
+        end
+        else
+          Result := TLayoutBox.Create(bkFlex, Element, Style);
       kwInlineFlex, kwWebkitInlineBox:
         begin
-          Result := TLayoutBox.Create(bkFlex, Element, Style);
+          if LineClampOf(Style) > 0 then
+          begin
+            Result := TLayoutBox.Create(bkBlock, Element, Style);
+            Include(Result.Flags, bfNewFormattingContext);
+          end
+          else
+            Result := TLayoutBox.Create(bkFlex, Element, Style);
           Include(Result.Flags, bfInlineLevel);
         end;
       kwGrid:
@@ -835,6 +848,18 @@ begin
   Include(Box.Flags, bfNewFormattingContext);
 end;
 
+{ Whether the contiguous text boxes from First on hold only white space. }
+function IsWhiteSpaceOnlyTextRun(First: TLayoutBox): Boolean;
+begin
+  while (First <> nil) and (First.Kind = bkText) do
+  begin
+    if (First.Node = nil) or not IsWhiteSpaceOnly(TCharacterData(First.Node).Data) then
+      Exit(False);
+    First := First.NextSibling;
+  end;
+  Result := True;
+end;
+
 procedure TBoxTreeBuilder.FixUpFlexContainer(Box: TLayoutBox);
 var
   Child, Next, Wrapper: TLayoutBox;
@@ -845,10 +870,18 @@ begin
     Next := Child.NextSibling;
     if Child.Kind = bkText then
     begin
-      if IsCollapsibleWhiteSpaceBox(Child) then
+      { CSS Flexbox 4 and Grid 6: a run of text children that is only
+        white space is not rendered, whatever white-space says. }
+      if IsWhiteSpaceOnlyTextRun(Child) then
       begin
-        Box.RemoveChild(Child);
-        FreeBoxTree(Child);
+        while (Child <> nil) and (Child.Kind = bkText) do
+        begin
+          Next := Child.NextSibling;
+          Box.RemoveChild(Child);
+          FreeBoxTree(Child);
+          Child := Next;
+        end;
+        Continue;
       end
       else
       begin

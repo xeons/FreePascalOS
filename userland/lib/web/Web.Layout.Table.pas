@@ -223,50 +223,6 @@ begin
     MaxWidth := MinWidth;
 end;
 
-{ Moves the boxes positioned relative to Box (its children, and those
-  inside its inline boxes). }
-procedure ShiftChildren(Box: TLayoutBox; Delta: Single);
-var
-  Child: TLayoutBox;
-begin
-  Child := Box.FirstChild;
-  while Child <> nil do
-  begin
-    if Child.Kind = bkInline then
-      ShiftChildren(Child, Delta)
-    else
-      Child.Y := Child.Y + Delta;
-    Child := Child.NextSibling;
-  end;
-end;
-
-procedure ShiftContents(Box: TLayoutBox; Delta: Single);
-var
-  Index: Integer;
-begin
-  if Delta = 0 then
-    Exit;
-  ShiftChildren(Box, Delta);
-  if Box.Inline <> nil then
-  begin
-    for Index := 0 to Box.Inline.FragmentCount - 1 do
-    begin
-      Box.Inline.Fragments[Index].Y := Box.Inline.Fragments[Index].Y + Delta;
-      Box.Inline.Fragments[Index].Baseline := Box.Inline.Fragments[Index].Baseline + Delta;
-    end;
-    for Index := 0 to Box.Inline.LineCount - 1 do
-    begin
-      Box.Inline.Lines[Index].Top := Box.Inline.Lines[Index].Top + Delta;
-      Box.Inline.Lines[Index].Baseline := Box.Inline.Lines[Index].Baseline + Delta;
-    end;
-    { Inline atomic boxes were moved with the children. }
-  end;
-  if Box.FirstBaseline >= 0 then
-    Box.FirstBaseline := Box.FirstBaseline + Delta;
-  if Box.LastBaseline >= 0 then
-    Box.LastBaseline := Box.LastBaseline + Delta;
-end;
-
 procedure LayoutCell(const Input: TLayoutInput; Cell: TLayoutBox; Width, Height: Single);
 var
   ChildInput: TLayoutInput;
@@ -502,7 +458,7 @@ begin
           if Cell^.Cell.FirstBaseline >= 0 then
             Offset := RowBaselines[Cell^.Row] - Cell^.Cell.FirstBaseline;
       end;
-    ShiftContents(Cell^.Cell, Offset);
+    ShiftLayoutContents(Cell^.Cell, Offset);
   end;
   { Captions go outside the grid's border: above it (in the space added
     to the top margin) and below it. }

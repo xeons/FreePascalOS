@@ -412,8 +412,10 @@ def main():
     parser.add_argument('--webbrowse', default=WEBBROWSE, help='the webbrowse binary (a copy keeps runs apart from builds)')
     options = parser.parse_args()
     options.out = os.path.abspath(options.out)
-    if options.out.startswith(REPOSITORY + os.sep):
-        sys.exit('compare-sites: put the output outside the repository (--out)')
+    # build/ is ignored, so pictures of sites kept there are never committed
+    if options.out.startswith(REPOSITORY + os.sep) and \
+            not options.out.startswith(os.path.join(REPOSITORY, 'build') + os.sep):
+        sys.exit('compare-sites: put the output outside the repository or under build/ (--out)')
     options.sizes = [parse_size(text) for text in options.sizes.split(',')]
     WEBBROWSE = os.path.abspath(options.webbrowse)
     if not os.path.exists(WEBBROWSE):

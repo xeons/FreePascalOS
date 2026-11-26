@@ -126,10 +126,11 @@ type
     cpClip,
     { masking }
     cpMaskImage, cpMaskPositionX, cpMaskPositionY, cpMaskSize, cpMaskRepeat, cpMaskOrigin, cpMaskClip,
-    cpMaskMode,
+    cpMaskMode, cpMaskComposite,
     { text decoration }
     cpTextDecorationLine, cpTextDecorationStyle, cpTextDecorationColor,
     cpTextDecorationThickness, cpTextUnderlineOffset, cpTextOverflow, cpUnicodeBidi,
+    cpWebkitLineClamp, cpWebkitBoxOrient,
     { generated content }
     cpContent, cpCounterReset, cpCounterIncrement, cpCounterSet,
     { table }
