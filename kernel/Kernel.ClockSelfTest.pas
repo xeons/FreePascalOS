@@ -82,9 +82,12 @@ const
     deferral; the residual tick and a few for whatever else woke there
     with it. }
   WakerTickLimit = 10;
-  { A sleep or timer is late by more than this only if its clock
-    interrupt waited for a tick that was deferred. }
-  WakerLatenessLimitMilliseconds = 100;
+  { A sleep or timer whose clock interrupt waited for the residual tick
+    would end about 980 ms late, every time (the deferral is renewed as
+    the waker waits). The limit stays below that but above the ~750 ms
+    QEMU's multi-threaded TCG sometimes sleeps through a correctly
+    armed generic timer (scripts/test-qemu-arm64.sh). }
+  WakerLatenessLimitMilliseconds = 800;
   { The page's time and the kernel's, read one after the other. }
   ClockAgreementNanoseconds = 2 * NanosecondsPerMillisecond;
 
