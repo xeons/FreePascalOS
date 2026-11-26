@@ -104,7 +104,7 @@ uses
   Web.Script.WasmValues;
 
 const
-  KindNames: array[TWasmExternalKind] of string = ('function', 'table', 'memory', 'global');
+  KindNames: array[TWasmExternalKind] of string = ('function', 'table', 'memory', 'global', 'tag');
 
 type
   TNativeRoutine = function(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
@@ -452,8 +452,10 @@ begin
         ekFunction: Value := ExportedFunctionValue(R, Exported[Index].External.Func);
         ekTable: Value := StoreObjectValue(R, woTable, Exported[Index].External.Table);
         ekMemory: Value := StoreObjectValue(R, woMemory, Exported[Index].External.Memory);
+        ekGlobal: Value := StoreObjectValue(R, woGlobal, Exported[Index].External.Global);
       else
-        Value := StoreObjectValue(R, woGlobal, Exported[Index].External.Global);
+        { A tag: WebAssembly.Tag is not there yet (TODO.md). }
+        Value := JsUndefined;
       end;
       Target.DefineData(R, ToPropertyKey(R, R.NewString(Exported[Index].Name)), Value, PropertyEnumerable);
     end;
