@@ -330,7 +330,7 @@ begin
     on EOutOfMemory do
       Exit(-1);
   end;
-  for Index := OldSize to NewSize - 1 do
+  for Index := SizeInt(OldSize) to SizeInt(NewSize) - 1 do
     Elements[Index] := Value;
   Result := OldSize;
 end;

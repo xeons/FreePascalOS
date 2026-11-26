@@ -88,6 +88,13 @@
 #   make css-test   Check libcss on the host: tokenizer, parsing and serialization,
 #                   selectors, the cascade, computed values, media queries, colors
 #                   (against Python's conversions), memory and style sharing
+#   make wasm-test  Check libwasm on the host: decoding and validation, each feature
+#                   area, traps, host functions, memory growth, externrefs for a
+#                   collector, the interrupt hook, a sample module when WASM_SAMPLE
+#                   names one, and the interpreter's speed
+#   make wasm-spec-test  Run the WebAssembly 2.0 spec test suite against libwasm on the
+#                   host (WASM_SPEC_DIRECTORY: the spec repository's test/core,
+#                   downloaded into ~/Downloads/sources/wasm-spec; not part of make test)
 #   make svg-test   Check libsvg on the host: SVG documents drawn and probed pixel by
 #                   pixel (shapes, strokes, paints, clips, masks, text, use, images)
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
@@ -240,7 +247,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
+	ports-test pkg-test quic-test css-test wasm-test wasm-spec-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -590,7 +597,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 test-disk: $(TEST_DISK)
 
 test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
+		quic-test css-test wasm-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
 	scripts/test-panic-trace.sh $(ARCH) $(ESP_DIRECTORY)
@@ -1351,6 +1358,47 @@ css-test: $(CSS_TEST)
 		{ grep -A2 FAIL build/tools/css-test.out; echo "CSS TEST FAILED (build/tools/css-test.out)"; exit 1; }
 	@grep -a '^info' build/tools/css-test.out | sed 's/^info /  /'
 	@echo "CSS TEST PASSED: $$(tail -n 1 build/tools/css-test.out | cut -d ' ' -f 3-)"
+
+# libwasm on the host: small modules written in the text format (encoded by
+# the spec runner's encoder in tools/WasmSpecTest) for every feature area,
+# the embedder interface, and the interpreter's speed. WASM_SAMPLE may name
+# a module built by a real toolchain to instantiate with stub imports.
+WASM_TEST := build/tools/WasmTest
+WASM_TEST_UNITS := build/tools/wasm-test-units
+WASM_SAMPLE ?=
+WASM_SOURCES := $(wildcard userland/lib/wasm/*.pas) $(wildcard userland/lib/wasm/*.inc)
+
+$(WASM_TEST): $(wildcard tools/WasmTest/*.pas) $(wildcard tools/WasmSpecTest/*.pas) tools/CryptoTest/TestChecks.pas \
+		$(WASM_SOURCES)
+	@mkdir -p $(WASM_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/WasmTest -Futools/WasmSpecTest -Futools/CryptoTest -Fuuserland/lib/wasm \
+		-Fiuserland/lib/wasm -FU$(WASM_TEST_UNITS) -o$@ tools/WasmTest/WasmTest.pas
+
+wasm-test: $(WASM_TEST)
+	@$(WASM_TEST) $(WASM_SAMPLE) > build/tools/wasm-test.out || \
+		{ grep -A2 FAIL build/tools/wasm-test.out; echo "WASM TEST FAILED (build/tools/wasm-test.out)"; exit 1; }
+	@grep -a '^info\|^perf' build/tools/wasm-test.out | sed 's/^info /  /'
+	@echo "WASM TEST PASSED: $$(tail -n 1 build/tools/wasm-test.out | cut -d ' ' -f 3-)"
+
+# The WebAssembly spec test suite (release 2.0, test/core and test/core/simd)
+# against libwasm: tools/WasmSpecTest parses the .wast scripts (text format
+# modules, assertions) and runs them. The suite is downloaded, never
+# committed: git clone --branch wg-2.0 https://github.com/WebAssembly/spec
+# into ~/Downloads/sources/wasm-spec.
+WASM_SPEC_TEST := build/tools/WasmSpecTest
+WASM_SPEC_TEST_UNITS := build/tools/wasm-spec-test-units
+WASM_SPEC_DIRECTORY ?= $(HOME)/Downloads/sources/wasm-spec/test/core
+
+$(WASM_SPEC_TEST): $(wildcard tools/WasmSpecTest/*.pas) $(WASM_SOURCES)
+	@mkdir -p $(WASM_SPEC_TEST_UNITS)
+	fpc -Mobjfpc -O2 -vew -Futools/WasmSpecTest -Fuuserland/lib/wasm -Fiuserland/lib/wasm \
+		-FU$(WASM_SPEC_TEST_UNITS) -o$@ tools/WasmSpecTest/WasmSpecTest.pas
+
+wasm-spec-test: $(WASM_SPEC_TEST)
+	@test -d $(WASM_SPEC_DIRECTORY) || { echo "no spec tests in $(WASM_SPEC_DIRECTORY)"; exit 1; }
+	@$(WASM_SPEC_TEST) $(WASM_SPEC_DIRECTORY) > build/tools/wasm-spec-test.out || \
+		{ grep -v ' 0 failed' build/tools/wasm-spec-test.out; echo "WASM SPEC TEST FAILED (build/tools/wasm-spec-test.out)"; exit 1; }
+	@echo "WASM SPEC TEST PASSED: $$(tail -n 1 build/tools/wasm-spec-test.out)"
 
 # libsvg on the host (with libcss, libdrawing, libfont and libimage): small
 # SVG documents drawn and their pixels probed where each feature decides

@@ -37,6 +37,7 @@
 #                  libjavascript, libhttp, libcss, libfont, libdrawing, libimage, libsvg <- libweb (the browser
 #                  engine; htmldump, webrender)
 #                  libsystem <- libjavascript (the ECMAScript engine; js)
+#                  libsystem <- libwasm (the WebAssembly engine)
 #                  libwindowing, libimage <- libcontrols (controls and dialogs)
 #                  libsystem <- libcss (the style engine; cssdump, libweb)
 #                  libcss, libfont, libimage <- libsvg (SVG documents and images;
@@ -131,6 +132,7 @@ WEBVIEW_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webview
 WEBIPC_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/webipc
 MEDIA_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/media
 VIDEO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/video
+WASM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/wasm
 
 SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
@@ -157,6 +159,7 @@ WEBVIEW_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebview.so
 WEBIPC_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwebipc.so
 MEDIA_LIBRARY := $(USER_LIBRARY_OUTPUT)/libmedia.so
 VIDEO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libvideo.so
+WASM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwasm.so
 PLUGIN_LIBRARY := $(USER_LIBRARY_OUTPUT)/libplugin.so
 TLSTEST_LIBRARY := $(USER_LIBRARY_OUTPUT)/libtlstest.so
 DYNTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdyntls.so
@@ -226,7 +229,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 .SECONDEXPANSION:
 
 userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) $(AV1_LIBRARY) \
-	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(MEDIA_LIBRARY) $(VIDEO_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
+	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(MEDIA_LIBRARY) $(VIDEO_LIBRARY) $(WASM_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
 # The compiler and the runtime library's flags: when they change (a new
@@ -419,6 +422,16 @@ $(CSS_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/css/*.pas)
 		-FU$(CSS_LIBRARY_OBJECTS) userland/lib/css/Css.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libcss.so -o $@ \
 		$(CSS_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libwasm: the WebAssembly engine (decoder, validator, compiler to slot
+# code, interpreter, store and instantiation); nothing links it yet.
+$(WASM_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/wasm/*.pas) $(wildcard userland/lib/wasm/*.inc)
+	@rm -rf $(WASM_LIBRARY_OBJECTS)
+	@mkdir -p $(WASM_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/wasm \
+		-Fiuserland/lib/wasm -FU$(WASM_LIBRARY_OBJECTS) userland/lib/wasm/Wasm.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libwasm.so -o $@ \
+		$(WASM_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libsvg: SVG documents (XML, styling with libcss), their rendering with
 # libdrawing (text with libfont, images with libimage) and SVG as a
