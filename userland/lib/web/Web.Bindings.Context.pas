@@ -364,8 +364,10 @@ type
     function NewDomException(const Name, Message: string): TJsValue;
     function ThrowDomException(const Name, Message: string): TJsValue;
     { Reports an uncaught exception value to the console. }
-    procedure ReportException(Value: TJsValue; const Where: string = '');
+    { FireErrorEvent false: a worker's exception (console only). }
+    procedure ReportException(Value: TJsValue; const Where: string = ''; FireErrorEvent: Boolean = True);
     function ErrorEventCancelled(Value: TJsValue): Boolean;
+    function IsWorkerRealmValue(Value: TJsValue): Boolean;
     { Takes the pending exception and reports it. }
     procedure ReportPendingException(const Where: string = '');
     procedure Console(const Level, Text: string);
@@ -1544,13 +1546,36 @@ end;
 { Fires the ErrorEvent of an uncaught exception at the global (the
   platform's onReportException); True when a listener cancelled it. Not
   again for an exception thrown while one is being reported. }
+{ Whether Value is an object of one of this window's worker realms (its
+  prototype chain reaches that realm's Object.prototype): a worker's
+  error, which is not the window's to report as an ErrorEvent. }
+function TBindingContext.IsWorkerRealmValue(Value: TJsValue): Boolean;
+var
+  Walk: TJsObject;
+  Index, Depth: Integer;
+begin
+  Result := False;
+  if not JsIsObject(Value) or (Length(WorkerEngines) = 0) then
+    Exit;
+  Walk := JsAsObject(Value);
+  Depth := 0;
+  while (Walk <> nil) and (Depth < 64) do
+  begin
+    for Index := 0 to High(WorkerEngines) do
+      if Walk = WorkerEngines[Index].Realm.Intrinsics[inObjectPrototype] then
+        Exit(True);
+    Walk := Walk.Proto;
+    Inc(Depth);
+  end;
+end;
+
 function TBindingContext.ErrorEventCancelled(Value: TJsValue): Boolean;
 var
   Natives, Callback, Outcome: TJsValue;
   Mark: Integer;
 begin
   Result := False;
-  if FReportingException or FClosed or not FEngine.Realm.CanEnter then
+  if FReportingException or FClosed or not FEngine.Realm.CanEnter or IsWorkerRealmValue(Value) then
     Exit;
   Natives := FSingletons[SingletonPlatformNatives];
   if not JsIsObject(Natives) then
@@ -1569,13 +1594,13 @@ begin
   end;
 end;
 
-procedure TBindingContext.ReportException(Value: TJsValue; const Where: string);
+procedure TBindingContext.ReportException(Value: TJsValue; const Where: string; FireErrorEvent: Boolean);
 var
   Text: string;
   Data: TObject;
 begin
   Inc(FReportedExceptions);
-  if ErrorEventCancelled(Value) then
+  if FireErrorEvent and ErrorEventCancelled(Value) then
     Exit;
   Data := Unwrap(Value, InterfaceDOMException);
   if Data <> nil then
@@ -1758,7 +1783,12 @@ begin
       if Handler = JsException then
         ReportPendingException('event listener')
       else if not JsIsCallable(Handler) then
-        ReportException(JsObjectValue(FEngine.Realm.NewError(ekType, 'handleEvent is not a function')))
+      begin
+        { A worker's listener object: the worker's error, not the
+          window's ErrorEvent. }
+        ReportException(JsObjectValue(FEngine.Realm.NewError(ekType, 'handleEvent is not a function')), '',
+          not IsWorkerRealmValue(Callback));
+      end
       else
         CallFunction(Handler, Callback, [EventValue], Value, 'event listener');
     end;

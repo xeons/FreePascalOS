@@ -187,6 +187,19 @@
       if (typeof global[name] === "function") scope[name] = global[name].bind(global);
     for (const name of sharedObjects)
       if (name in global) scope[name] = global[name];
+    // The scope's XMLHttpRequest makes requests that know they are a
+    // worker's (no document responses).
+    if (typeof global.XMLHttpRequest === "function" && typeof internal.markWorkerRequest === "function") {
+      const WindowRequest = global.XMLHttpRequest;
+      const WorkerRequest = function XMLHttpRequest() {
+        const request = Reflect.construct(WindowRequest, [], new.target || WorkerRequest);
+        internal.markWorkerRequest(request);
+        return request;
+      };
+      WorkerRequest.prototype = WindowRequest.prototype;
+      Object.setPrototypeOf(WorkerRequest, WindowRequest);
+      scope.XMLHttpRequest = WorkerRequest;
+    }
     scope.self = scope;
     scope.location = locationOf(state.url);
     scope.importScripts = importScriptsOf(state, scope);

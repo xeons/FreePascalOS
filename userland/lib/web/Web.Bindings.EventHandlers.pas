@@ -315,6 +315,7 @@ var
   Attribute: PAttributeRecord;
   Name: string;
   Target: TEventTarget;
+  Map: TJsObject;
 begin
   for Index := 0 to Element.AttributeCount - 1 do
   begin
@@ -325,8 +326,17 @@ begin
     if not IsEventHandlerAttribute(Name) then
       Continue;
     Target := HandlerTarget(Context, Element, Copy(Name, 3, MaxInt));
-    if Target <> nil then
-      EnsureHandlerListener(Context, Target, Copy(Name, 3, MaxInt));
+    if Target = nil then
+      Continue;
+    { A body's attribute replaces what the window's handler was (it is
+      compiled from the attribute when first needed). }
+    if Target <> Element then
+    begin
+      Map := Context.EventHandlerMap(Target, False);
+      if Map <> nil then
+        Map.DeleteProperty(Context.Engine.Realm, Context.Engine.Realm.Intern(Copy(Name, 3, MaxInt)));
+    end;
+    EnsureHandlerListener(Context, Target, Copy(Name, 3, MaxInt));
   end;
 end;
 

@@ -1171,6 +1171,8 @@
     Object.defineProperty(XMLHttpRequest.prototype, name, { value: value, enumerable: true });
   internal.defineHandler(XMLHttpRequest.prototype, "readystatechange");
   internal.finishInterface(XMLHttpRequest, "XMLHttpRequest");
+  // Marks an XMLHttpRequest a worker made (platform/65-workers.js).
+  internal.markWorkerRequest = function (request) { xhrState(request).inWorker = true; };
 
   // A Document sent: an HTML document as its markup, an XML one in the
   // XML serialization (platform/56-xml-serializer.js).
@@ -1186,6 +1188,8 @@
   // HTML only when responseType is "document", XML for an XML MIME type,
   // null for anything else or XML that is not well-formed.
   function documentResponse(state, bytes) {
+    // A worker's XMLHttpRequest has no document response.
+    if (state.inWorker) return null;
     const essence = contentTypeOf(state).split(";")[0].trim().toLowerCase();
     const isXml = essence === "" || essence === "text/xml" || essence === "application/xml" || /\+xml$/.test(essence);
     const parser = new global.DOMParser();
