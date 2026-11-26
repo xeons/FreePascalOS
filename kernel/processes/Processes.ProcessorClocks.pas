@@ -58,6 +58,8 @@ implementation
 
 uses
   Abi.SystemCalls,
+  Kernel.PriorityLevel,
+  Kernel.SpinLock,
   Kernel.ProcessorTime,
   Processes.UserAccess;
 
@@ -97,14 +99,36 @@ begin
   Result := True;
 end;
 
+{ The user part SplitRunTime estimates from the ratio of the clock ticks
+  can jump ahead when that ratio moves toward user mode, which would let
+  ITIMER_VIRTUAL expire before its time. The time reported is kept
+  between the last one and the last one plus the processor time since. }
 procedure ReadProcessTimes(Process: PProcess; out RunNanoseconds, UserNanoseconds: QWord);
 var
   Times: TThreadTimes;
   KernelNanoseconds: QWord;
+  Estimate: QWord;
+  Limit: QWord;
+  PreviousLevel: TPriorityLevel;
 begin
   GetProcessTimes(Process, Times);
   RunNanoseconds := Times.RunNanoseconds;
-  SplitRunTime(Times, UserNanoseconds, KernelNanoseconds);
+  SplitRunTime(Times, Estimate, KernelNanoseconds);
+  PreviousLevel := AcquireSpinLock(Process^.Posix.UserTimeLock);
+  with Process^.Posix do
+  begin
+    if RunNanoseconds < ReportedRunNanoseconds then
+      RunNanoseconds := ReportedRunNanoseconds;
+    Limit := ReportedUserNanoseconds + (RunNanoseconds - ReportedRunNanoseconds);
+    if Estimate > Limit then
+      Estimate := Limit;
+    if Estimate < ReportedUserNanoseconds then
+      Estimate := ReportedUserNanoseconds;
+    ReportedUserNanoseconds := Estimate;
+    ReportedRunNanoseconds := RunNanoseconds;
+  end;
+  ReleaseSpinLock(Process^.Posix.UserTimeLock, PreviousLevel);
+  UserNanoseconds := Estimate;
 end;
 
 function ReadThreadTime(Thread: PThread): QWord;

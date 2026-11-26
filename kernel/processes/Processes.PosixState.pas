@@ -89,6 +89,14 @@ type
     Timers: Pointer;
     ArmedProcessorTimers: LongInt;
     ProcessorTimersCheckedTick: QWord;
+    { The process's user time as last reported and its whole processor
+      time then (Processes.ProcessorClocks.ReadProcessTimes): the user
+      part is estimated from the clock ticks, so it is kept from going
+      back or growing faster than the processor time. Guarded by
+      UserTimeLock. }
+    UserTimeLock: TSpinLock;
+    ReportedUserNanoseconds: QWord;
+    ReportedRunNanoseconds: QWord;
     { The signal that ended the process (0: it exited or was ended
       otherwise), for its parent's waitpid. }
     EndSignal: LongInt;
