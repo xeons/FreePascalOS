@@ -209,7 +209,8 @@ function after() {
     "aborted ConstraintError",
     "after abort undefined", "final Quarry Memories 2",
     "pending request AbortError", "explicit abort error null", "counter 50 undefined",
-    "versionchange 2 3", "upgrade 2 3", "upgrade aborted AbortError", "reopened 2 books,counter,nested",
+    // close() waits for the reading transaction still running: blocked.
+    "versionchange 2 3", "blocked", "upgrade 2 3", "upgrade aborted AbortError", "reopened 2 books,counter,nested",
     "deleted 2 null", "databases 0"];
   check("IndexedDB event order" + "\n  got:      " + log.join(" | ") + "\n  expected: " + expected.join(" | "),
     log.join("|") === expected.join("|"));

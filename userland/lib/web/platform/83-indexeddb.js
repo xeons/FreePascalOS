@@ -622,6 +622,26 @@
   // ---- opening and deleting (4.1, 4.2) ----
 
   let nextToken = 1;
+  // Requests waiting for other connections: asked again when the
+  // service's blocked notice comes (after the others' versionchange
+  // events), and every 10 ms until they are closed.
+  const waiting = new Map();
+  backend.onNotice(3, function (reader) {
+    const retry = waiting.get(reader.u32());
+    if (retry !== undefined) retry();
+  });
+  function waitAgain(requestToken, round, attempt) {
+    const state = { done: false, timer: 0 };
+    const again = function () {
+      if (state.done) return;
+      state.done = true;
+      waiting.delete(requestToken);
+      if (state.timer !== 0) global.clearTimeout(state.timer);
+      attempt(round + 1);
+    };
+    waiting.set(requestToken, again);
+    state.timer = global.setTimeout(again, 10);
+  }
 
   function finishRequest(request, result, error) {
     const state = requestData.get(request);
@@ -654,9 +674,7 @@
         fire(request, new IDBVersionChangeEvent("blocked", { oldVersion: current,
           newVersion: version === undefined ? current : version }));
       }
-      // The first time, the others get their versionchange events first.
-      if (round === 0) backend.queueTask(function () { attemptOpen(request, name, version, requestToken, 1); });
-      else global.setTimeout(function () { attemptOpen(request, name, version, requestToken, round + 1); }, 10);
+      waitAgain(requestToken, round, function (next) { attemptOpen(request, name, version, requestToken, next); });
       return;
     }
     const connection = reader.u32();
@@ -737,8 +755,7 @@
         state.blockedFired = true;
         fire(request, new IDBVersionChangeEvent("blocked", { oldVersion: current, newVersion: null }));
       }
-      if (round === 0) backend.queueTask(function () { attemptDelete(request, name, requestToken, 1); });
-      else global.setTimeout(function () { attemptDelete(request, name, requestToken, round + 1); }, 10);
+      waitAgain(requestToken, round, function (next) { attemptDelete(request, name, requestToken, next); });
       return;
     }
     const oldVersion = reader.f64();

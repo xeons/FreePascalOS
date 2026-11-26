@@ -102,6 +102,10 @@ const
   IdbNoticeVersionChange = 1;
   { The connection was closed by the service (storage cleared). }
   IdbNoticeClosed = 2;
+  { To the client whose open or delete waits, after the versionchange
+    notices of the others (in that order): its request token. It asks
+    again then, and fires blocked if the others are still open. }
+  IdbNoticeBlocked = 3;
 
   TransactionReadOnly = 0;
   TransactionReadWrite = 1;
@@ -604,6 +608,7 @@ procedure TIndexedDbService.Wait(Client: TIndexedDbClient; Token: LongWord; Orig
   Database: TIdbDatabase; Pending: TIdbPending; NewVersion: Int64; Writer: TIdbWriter);
 var
   Others: Integer;
+  Notice: TIdbWriter;
 begin
   Others := OthersOpen(Database);
   if Pending = nil then
@@ -620,6 +625,14 @@ begin
   begin
     Pending.Notified := True;
     NotifyOthers(Database, Database.Version, NewVersion);
+    Notice := TIdbWriter.Create;
+    try
+      Notice.WriteByte(IdbNoticeBlocked);
+      Notice.WriteLongWord(Token);
+      Client.Notice(Notice.Data);
+    finally
+      Notice.Free;
+    end;
   end;
   Writer.WriteByte(IdbOutcomeWait);
   Writer.WriteLongWord(Others);
