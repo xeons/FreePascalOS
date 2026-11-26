@@ -93,6 +93,7 @@ begin
   end;
   PartList.Free;
   CustomData.Free;
+  AnimationEffects.Free;
   inherited Destroy;
 end;
 

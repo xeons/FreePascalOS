@@ -69,6 +69,7 @@ uses
   Web.Style.Hints,
   Web.Style.DocumentSheets,
   Web.Style.Sheets,
+  Web.Style.ScriptAnimations,
   Web.Style.Animations,
   Web.Style.UserAgent,
   Web.Style.Resolver,

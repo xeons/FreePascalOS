@@ -584,6 +584,11 @@ type
       internals); owned by the element. }
     function CustomElementData: TObject;
     procedure SetCustomElementData(Data: TObject);
+    { Web Animations' effects on the element (Web.Style.ScriptAnimations
+      keeps them), owned; nil when none. }
+    function GetAnimationEffects: TObject;
+    procedure SetAnimationEffects(Value: TObject);
+    property AnimationEffects: TObject read GetAnimationEffects write SetAnimationEffects;
     { The element is "defined" (:defined): uncustomized or custom. }
     function IsDefinedElement: Boolean;
     { A custom element's states (CustomStateSet, :state()). }
@@ -1086,6 +1091,9 @@ type
     CustomDefinition: TObject;
     CustomData: TObject;
     CustomStates: TStringArray;
+    { Web Animations' keyframe effects targeting the element
+      (Web.Style.ScriptAnimations), owned. }
+    AnimationEffects: TObject;
     destructor Destroy; override;
   end;
 

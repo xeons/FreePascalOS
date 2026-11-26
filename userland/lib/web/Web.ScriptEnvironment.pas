@@ -127,6 +127,20 @@ type
   end;
   TScriptRectArray = array of TScriptRect;
 
+  { A running CSS animation or transition (Web Animations' CSSAnimation
+    and CSSTransition); times in milliseconds. }
+  TScriptCssAnimation = record
+    IsTransition: Boolean;
+    Name: string;
+    LocalTime, Delay, Duration, Iterations: Double;
+    Direction, Fill: string;
+    Paused, Ended: Boolean;
+  end;
+  TScriptCssAnimationArray = array of TScriptCssAnimation;
+
+  { pause, play, cancel, seek (to Value ms of local time). }
+  TScriptCssAnimationAction = (scaPause, scaPlay, scaCancel, scaSeek);
+
   TScriptLayout = class
   public
     { The rectangles (document CSS px) the characters StartOffset to
@@ -151,6 +165,11 @@ type
     { The computed value of a property ('' when the element is not
       rendered and has no style). }
     function ComputedValue(Element: TElement; const PropertyName: string): string; virtual; abstract;
+    { The element's CSS animations and transitions, and script's control
+      of one (by default: none). }
+    function CssAnimations(Element: TElement): TScriptCssAnimationArray; virtual;
+    procedure ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+      Action: TScriptCssAnimationAction; Value: Double); virtual;
   end;
 
   TScriptEnvironment = class
@@ -242,6 +261,16 @@ implementation
 procedure RaiseUnsupported(const What: string);
 begin
   raise EScriptEnvironmentUnsupported.Create(What + ' is not available here');
+end;
+
+function TScriptLayout.CssAnimations(Element: TElement): TScriptCssAnimationArray;
+begin
+  Result := nil;
+end;
+
+procedure TScriptLayout.ControlCssAnimation(Element: TElement; IsTransition: Boolean; const Name: string;
+  Action: TScriptCssAnimationAction; Value: Double);
+begin
 end;
 
 function TScriptLayout.ClientRects(Element: TElement): TScriptRectArray;

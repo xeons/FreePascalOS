@@ -184,6 +184,23 @@ begin
   FOwnerDocument.NotifyCustomElementStateChanged(Self);
 end;
 
+function TElement.GetAnimationEffects: TObject;
+begin
+  if FRareData = nil then
+    Result := nil
+  else
+    Result := FRareData.AnimationEffects;
+end;
+
+procedure TElement.SetAnimationEffects(Value: TObject);
+begin
+  if (Value = nil) and (FRareData = nil) then
+    Exit;
+  if RareData.AnimationEffects <> Value then
+    RareData.AnimationEffects.Free;
+  RareData.AnimationEffects := Value;
+end;
+
 function TElement.PartList: TDomTokenList;
 begin
   if RareData.PartList = nil then

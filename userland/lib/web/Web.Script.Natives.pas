@@ -71,6 +71,7 @@ uses
   Web.Script.PlatformSources,
   Web.Script.NativeFetch,
   Web.Script.NativeWorkers,
+  Web.Script.NativeAnimations,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -659,6 +660,7 @@ begin
     Context.Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index);
   DefineFetchNatives(Context, Natives);
   DefineWorkerNatives(Context, Natives);
+  DefineAnimationNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);
