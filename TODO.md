@@ -1777,7 +1777,7 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       fieldset.elements, EventSource, PointerEvent and pointer capture,
       ClipboardEvent and DataTransfer's string data, access keys, table
       colspan widths, the preload scanner's double fetches
-      (docs/html5test-gaps.md)
+      (docs/html5test-gaps.md); 293 with WebSocket and CSP
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
       Canvas 2D and OffscreenCanvas, custom elements, shadow
       DOM, Web Animations, IndexedDB, media playback and Web Audio, the

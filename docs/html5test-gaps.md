@@ -21,7 +21,8 @@ rendering with the installed Firefox.
 |---|---|---|
 | Before | none | The page never showed a score: its inline script was a syntax error (`<!--` after a tab), and once that was fixed the test waited forever for images made by `new Image()` |
 | After the two blockers | 241 / 588 | The test runs to the end and shows every result |
-| After this work | 273 / 588 | |
+| After the html5test fixes | 273 / 588 | |
+| After WebSocket and CSP | 293 / 588 | communication 40 / 40, security 26 / 32 |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -45,10 +46,10 @@ Per category after this work:
 | responsive | 15 / 15 | svg | 2 / 4 |
 | canvas | 0 / 25 | 3d | 0 / 25 |
 | offscreen | 0 / 3 | animation | 5 / 8 |
-| communication | 25 / 40 | streams | 6 / 6 |
+| communication | 40 / 40 | streams | 6 / 6 |
 | rtc | 0 / 45 | interaction | 5 / 19 |
 | performance | 11 / 12 | native | 0 / 1 |
-| resource | 7 / 7 | security | 21 / 32 |
+| resource | 7 / 7 | security | 26 / 32 |
 | payments | 0 / 5 | offline | 0 / 13 |
 | storage | 10 / 35 | files | 15 / 15 |
 | scripting | 32 / 32 | other | 9 / 9 |
