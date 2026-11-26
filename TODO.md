@@ -1830,13 +1830,14 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       satellite event loops; registrations kept by the browser
       (IpcOriginDataLoad/Save 343-344); WebLoadTest.Workers and a
       web-platform-tests subset (wpt-workers.html)
-- [ ] Access violation in TJsShape.Find (from the interpreter's Call): a
-      listener a platform script adds to a frame's window while the
-      platform is installed, once the frame was removed and the
-      collector ran (WebScriptTest frames.js with such a listener in
-      68-service-workers.js); the listener's function is apparently
-      not kept alive (or not dropped) with the closed frame's realm.
-      68-service-workers.js avoids it for now
+- [x] Access violation in TJsShape.Find after a frame was removed: a
+      detached realm is still traced while its code runs (a frame that
+      removes its own iframe), and closed frames' listeners, timers,
+      handlers, messages, module results and jobs no longer enter it
+      (TJsRealm.CanEnter); frames-closing.js and TestDetachedRealm
+- [ ] crypto.subtle.digest raises a range-check error when the web
+      library is built with -Cr (seen under JS_GC_STRESS with a -Cr -Ct
+      WebScriptTest build; the normal build has no range checks there)
 - [ ] Workers left: module workers, push messages and notifications
       (needs a push service), Background Sync, openWindow/focus (need
       notification clicks), WindowClient.navigate resolving to the new
