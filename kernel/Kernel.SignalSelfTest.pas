@@ -37,6 +37,7 @@ procedure RunSignalSelfTest;
 implementation
 
 uses
+  Runtime.Memory,
   Abi.SystemCalls,
   Memory.KernelHeap,
   Kernel.SelfTest,
@@ -49,7 +50,7 @@ uses
 
 function Information(Signal: LongInt; Value: Int64): TAbiSignalInformation;
 begin
-  FillChar(Result, SizeOf(Result), 0);
+  ZeroMemory(@Result, SizeOf(Result));
   Result.Signal := LongWord(Signal);
   Result.Code := SignalFromQueue;
   Result.Value := Value;
@@ -96,7 +97,7 @@ begin
   Check(TakeValue(Process, 36) = 2, 'another signal was lost');
   Check(Process^.Posix.QueuedCount = 0, 'the count does not come back to 0');
 
-  FillChar(TimerEntry, SizeOf(TimerEntry), 0);
+  ZeroMemory(@TimerEntry, SizeOf(TimerEntry));
   TimerEntry.Information := Information(SignalAlarm, 7);
   TimerEntry.Timer := @TimerEntry;
   Check(AppendQueuedSignalLocked(Process, @TimerEntry) and AppendQueuedSignalLocked(Process, @TimerEntry),
