@@ -23,7 +23,7 @@ rendering with the installed Firefox.
 | After the two blockers | 241 / 588 | The test runs to the end and shows every result |
 | After this work | 273 / 588 | |
 | After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
-| After service workers and SharedWorker | 284 / 588 alone; 336 / 588 merged with IndexedDB and Canvas | offline.serviceWorkers, performance.sharedWorker |
+| After service workers and SharedWorker | 284 / 588 alone; 336 merged with IndexedDB and Canvas; 356 with WebSocket and CSP too | offline.serviceWorkers, performance.sharedWorker |
 | After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
 | After WebSocket and CSP (merged with everything above) | 345 / 588 | communication 40 / 40, security 26 / 32 (+20) |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
