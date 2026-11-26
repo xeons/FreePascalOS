@@ -50,7 +50,9 @@ uses
   Media.Containers,
   MediaPlay.Info,
   MediaPlay.Checksums,
-  MediaPlay.Playback;
+  MediaPlay.Playback,
+  { The video decoders: registered when their units are used. }
+  Av1.MediaDecoder;
 
 const
   Usage = 'Usage: mediaplay [OPTION]... FILE...'#10 +

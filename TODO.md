@@ -1930,7 +1930,10 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
   - [x] Tiles on several threads, post filters by rows (`Av1.WorkerPool`)
   - [x] `make av1-test`: aomenc (each tool and format), SVT-AV1 and rav1e
         streams bit-exact against aomdec, on one thread and four, with a
-        coding tool coverage report; `av1check` in coretest on the system
+        coding tool coverage report, the same streams in WebM, MP4,
+        Matroska and OBU files through libmedia, damaged streams refused
+        cleanly; `av1check` and `mediaplay -k` on AV1 WebM in coretest
+  - [x] libmedia's AV1 `TVideoDecoder` (`Av1.MediaDecoder`)
   - [ ] Faster: SIMD (SSE2/AVX2, NEON) inline assembly for the inter
         filters, inverse transforms, CDEF and the deblocking filter, with
         the Pascal loops as the fallback; frame-parallel decoding
@@ -2005,9 +2008,10 @@ in the order they would be built:
       decoding checksums (per video frame once a video library registers)
 - [x] `make media-test` (host, fixtures from ffmpeg/flac/lame at build
       time) and a coretest line
-- [ ] Register libvideo's (VP8, VP9) and libav1's decoders with
-      `Media.VideoDecoders.RegisterVideoDecoder` and link them into
-      mediaplay, so `-k` gives per-frame checksums of WebM/MP4 video
+- [x] libav1's decoder registered (`Av1.MediaDecoder`) and linked into
+      mediaplay: `-k` gives per-frame checksums of AV1 in WebM, Matroska,
+      MP4, IVF and OBU files (`Media.Ivf`, `Media.ObuStream`)
+- [ ] Register libvideo's (VP8, VP9) decoders the same way
 - [ ] MP3 Layers I and II; Vorbis floor 0 and MP3 intensity stereo / mixed
       blocks checked against streams that use them (no host encoder writes
       them); Theora timing in Ogg; mfra-based MP4 seeking; zlib-compressed

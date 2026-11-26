@@ -8245,16 +8245,20 @@ The pax fixture is also read as .tar.zst (two Zstandard frames) and
 Video 1 bitstream, royalty free): all of the Main profile in 8 and
 10 bits, and the High (4:4:4) and Professional (4:2:2, 12-bit)
 profiles' formats too, with every coding tool, film grain synthesis,
-and tiles decoded on several threads. It needs only the runtime
-library, so it builds and is tested on the host as well. Programs give
-`TAv1Decoder` the OBUs of a stream a temporal unit at a time (an IVF
-frame, a Matroska block, an MP4 sample: libmedia's demuxers hand these
-over) and take the frames it shows as `Media.Frames` `TVideoFrame`
-records: one plane each for Y, U and V, bytes for 8-bit streams and
-little-endian words otherwise, cropped to the coded size
-(UpscaledWidth by FrameHeight; the render size is only a hint), with
-the stream's colour description. Until libmedia is merged libav1 keeps
-an identical copy of `Media.Frames`.
+and tiles decoded on several threads. It needs only libmedia and the
+runtime library, so it builds and is tested on the host as well.
+Programs give `TAv1Decoder` the OBUs of a stream a temporal unit at a
+time (an IVF frame, a Matroska block, an MP4 sample) and take the
+frames it shows as libmedia's `Media.Frames` `TVideoFrame` records: one
+plane each for Y, U and V, bytes for 8-bit streams and little-endian
+words otherwise, cropped to the coded size (UpscaledWidth by
+FrameHeight; the render size is only a hint), with the stream's colour
+description. Or they go through libmedia: `Av1.MediaDecoder` registers
+`TAv1VideoDecoder` (a `TVideoDecoder`: Configure with the track's av1C
+configuration OBUs, SendPacket, ReceiveFrame, Reset) for codecAv1 when a
+program uses it, as mediaplay does, so `mediaplay -k` checksums the AV1
+frames of WebM, Matroska, MP4, IVF and OBU files (the last two read by
+libmedia's `Media.Ivf` and `Media.ObuStream`).
 
 ```
   Av1.Decoder         TAv1Decoder: Decode (OBUs, a presentation time),
@@ -8264,6 +8268,7 @@ an identical copy of `Media.Frames`.
                       worker pool); the wrapup: post filters, motion field
                       storage, the reference update; show_existing_frame
   Av1.Output          the output process: crop, film grain, TVideoFrame
+  Av1.MediaDecoder    TAv1VideoDecoder, libmedia's decoder for codecAv1
   Av1.WorkerPool      workers that share a job's indices (tiles, rows)
 =========== headers ========================================================
   Av1.SequenceHeader  Av1.FrameHeader (TFrameHeader)  Av1.FrameHeaderParsing
@@ -8359,14 +8364,20 @@ monochrome, palettes and intra block copy, film grain, superres,
 uniform and non-uniform tiles, 128x128 superblocks, lossless, quantizer
 matrices, delta q and loop filter, segmentation, error resilience with
 switch frames, reference scaling from resize mode, forward key frames),
-SvtAv1EncApp and rav1e through ffmpeg. Every frame must equal what
+SvtAv1EncApp and rav1e through ffmpeg; some of them also in WebM, MP4
+and Matroska files (ffmpeg, without re-encoding) and as OBU files, read
+through libmedia's demuxers and decoder registry. Every frame must equal what
 aomdec, libaom's reference decoder, gives, sample for sample, on one
-thread and with four; the test lists how often each coding tool came up
+thread and with four, and damaged copies of the streams (bytes changed,
+temporal units cut short or dropped) must be decoded or refused with
+EAv1Error, never anything worse; the test lists how often each coding tool came up
 (`Av1.ToolStatistics`, compiled in only for the test). On the system,
 coretest runs `av1check`, which decodes four small streams built into it
 (`userland/av1check/Av1Check.Streams.inc`, written by
 `tools/Av1Test/make-system-check.py`) on one thread and four and
-compares each frame's hash with aomdec's.
+compares each frame's hash with aomdec's, then decodes the first again
+from a WebM file through libmedia; a second coretest line has av1check
+write that WebM file and checks mediaplay -k's MD5 of each frame.
 
 **Not done.** Large scale tile decoding (Annex D: tile list OBUs, for
 light fields) is not supported, and the scalability metadata's

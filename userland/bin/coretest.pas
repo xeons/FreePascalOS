@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..449] of TCommandTest = (
+  CommandTests: array[0..450] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -865,7 +865,10 @@ const
       frames with every loop filter, 10-bit film grain, 4:4:4 screen
       content, superres with tiles - decoded on one thread and on four,
       every frame equal to libaom's. }
-    (Command: 'av1check'; ExpectedOutput: 'av1check: 4 streams, 28 frames, ok'#10; ExpectedStatus: 0)
+    (Command: 'av1check'; ExpectedOutput: 'av1check: 4 streams and a WebM file, 34 frames, ok'#10; ExpectedStatus: 0),
+    { mediaplay -k on an AV1 WebM file (libmedia's Matroska demuxer, libav1
+      through the decoder registry): each frame's MD5 equal to aomdec's. }
+    (Command: 'av1check -w av1.webm && mediaplay -k av1.webm | cut -d " " -f 1-3,5-6'; ExpectedOutput: 'video 0 0 96x64 0762dfed594d30ab891f2de41b9feb27'#10'video 0 1 96x64 13a3749cecc7669a8b00fddb862133ed'#10'video 0 2 96x64 a1a0c2e746c23b3a80713c7b8c825355'#10'video 0 3 96x64 74364920439733dea9d93806b303dee2'#10'video 0 4 96x64 8f6ce7d9548204ca6e0bb3e0e8f27ce4'#10'video 0 5 96x64 2d0a1296efa4b3efa7169f35289b0635'#10; ExpectedStatus: 0)
   );
 
 var

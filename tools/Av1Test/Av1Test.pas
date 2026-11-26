@@ -37,7 +37,7 @@ program Av1Test;
 
 uses
   {$ifdef UNIX}cthreads,{$endif}
-  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1.ToolStatistics, Av1Test.Ivf, Av1Test.Fuzzing;
+  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1.ToolStatistics, Av1Test.Ivf, Av1Test.Fuzzing, Av1Test.Containers;
 
 var
   FixtureDirectory: string;
@@ -118,14 +118,28 @@ var
   Width, Height, Index, Shown, Offset: Integer;
   Difference: string;
   Started: TDateTime;
+  Decoded: TVideoFrames;
 begin
   Difference := '';
   Shown := 0;
   Offset := 0;
   Started := Now;
   try
-    Frames := ReadIvfFile(FixtureDirectory + '/' + StreamFile, Width, Height);
     Reference := LoadFile(FixtureDirectory + '/' + ReferenceFile);
+    if LowerCase(ExtractFileExt(StreamFile)) <> '.ivf' then
+    begin
+      { Through libmedia: its demuxers and decoder registry. }
+      Decoded := DecodeContainerFile(FixtureDirectory + '/' + StreamFile);
+      for Index := 0 to High(Decoded) do
+        if Difference = '' then
+        begin
+          Difference := CompareFrame(Decoded[Index], Reference, Offset, Shown);
+          Inc(Shown);
+        end;
+      Frames := nil;
+    end
+    else
+      Frames := ReadIvfFile(FixtureDirectory + '/' + StreamFile, Width, Height);
     Decoder := TAv1Decoder.Create(ThreadCount);
     try
       for Index := 0 to High(Frames) do
@@ -243,7 +257,10 @@ begin
       if (OnlyName <> '') and (Fields[0] <> OnlyName) then
         Continue;
       if FuzzRounds > 0 then
-        RunFuzzCase(Fields[0], Fields[1])
+      begin
+        if LowerCase(ExtractFileExt(Fields[1])) = '.ivf' then
+          RunFuzzCase(Fields[0], Fields[1]);
+      end
       else
         RunCase(Fields[0], Fields[1], Fields[2], StrToInt(Fields[3]));
     end;

@@ -20,8 +20,10 @@
   The contents of libav1.so, the AV1 video decoder.
 
   Compiling this unit compiles every unit of the library; programs use
-  Av1.Decoder (TAv1Decoder) and Media.Frames. libav1 needs only the
-  runtime library, so it builds and is tested on the host as well
+  Av1.Decoder (TAv1Decoder) and libmedia's Media.Frames, or libmedia's
+  video decoder registry through Av1.MediaDecoder. libav1 needs only
+  libmedia and the runtime library, so it builds and is tested on the
+  host as well
   (tools/Av1Test, against streams made by the host's AV1 encoders and
   decoded by its reference decoder).
 }
@@ -46,7 +48,7 @@ uses
   Av1.LoopFilterSamples, Av1.LoopFilter, Av1.Cdef, Av1.SuperRes, Av1.RestorationWindow, Av1.Wiener,
   Av1.SelfGuided, Av1.LoopRestoration, Av1.PostFilters,
   Av1.FilmGrainNoise, Av1.FilmGrainScaling, Av1.FilmGrain, Av1.Output,
-  Av1.ToolStatistics, Av1.FrameDecoding, Av1.Decoder;
+  Av1.ToolStatistics, Av1.FrameDecoding, Av1.Decoder, Av1.MediaDecoder;
 
 implementation
 

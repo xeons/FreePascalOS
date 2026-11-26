@@ -29,6 +29,7 @@ building the system needs no AV1 tools; run this again only to change the
 streams.
 """
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -104,6 +105,16 @@ def main():
                                                                              pascal_bytes(data)))
             output.append('  Hashes%s: array[0..%d] of QWord = (\n    %s);\n\n' % (
                 identifier, len(hashes) - 1, ',\n    '.join('QWord($%016x)' % h for h in hashes)))
+        # The first stream in a WebM file too, for libmedia and mediaplay.
+        webm = os.path.join(directory, 'sample.webm')
+        subprocess.run(['ffmpeg', '-nostdin', '-loglevel', 'error', '-y', '-i', os.path.join(directory, 'inter.ivf'),
+                        '-c:v', 'copy', webm], check=True)
+        webm_data = open(webm, 'rb').read()
+        raw = open(os.path.join(directory, 'inter.yuv'), 'rb').read()
+        per_frame = frame_sizes(96, 64, 'yuv420p')
+        md5s = [hashlib.md5(raw[i:i + per_frame]).hexdigest() for i in range(0, len(raw), per_frame)]
+        output.append('const\n  SampleWebm: array[0..%d] of Byte = %s;\n' % (len(webm_data) - 1, pascal_bytes(webm_data)))
+        output.append('  { MD5 of each frame of SampleWebm (for mediaplay -k): %s }\n\n' % ' '.join(md5s))
     output.append('const\n  StreamCount = %d;\n' % len(names))
     output.append('  Streams: array[0..StreamCount - 1] of TCheckStream = (\n    %s);\n' % ',\n    '.join(
         "(Name: '%s'; Data: @Stream%s; Size: SizeOf(Stream%s); Hashes: @Hashes%s; FrameCount: %d)" %

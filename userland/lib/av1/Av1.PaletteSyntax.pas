@@ -44,6 +44,7 @@ var
   Frame: TFrameContext;
   AboveN, LeftN, AboveIdx, LeftIdx, AboveC, LeftC, Value, AboveBase, LeftBase: Integer;
 begin
+  Cache := Default(TPaletteCache);
   Frame := Tile.Frame;
   AboveN := 0;
   if ((Tile.MiRow * MI_SIZE) mod 64) <> 0 then

@@ -1420,7 +1420,7 @@ AV1_TEST := build/tools/Av1Test
 AV1_TEST_UNITS := build/tools/av1-test-units
 AV1_FIXTURES := build/tools/av1-fixtures
 AV1_TEST_SOURCES := $(wildcard tools/Av1Test/*.pas) $(filter-out %/Av1.Contents.pas,$(wildcard userland/lib/av1/*.pas)) \
-	$(wildcard userland/lib/av1/*.inc)
+	$(wildcard userland/lib/av1/*.inc) $(filter-out %/Media.Contents.pas,$(wildcard userland/lib/media/*.pas))
 
 $(AV1_FIXTURES)/manifest.txt: tools/Av1Test/make-fixtures.py
 	@for tool in ffmpeg aomenc aomdec; do command -v $$tool > /dev/null || \
@@ -1431,7 +1431,7 @@ $(AV1_TEST): $(AV1_TEST_SOURCES)
 	@rm -rf $(AV1_TEST_UNITS)
 	@mkdir -p $(AV1_TEST_UNITS)
 	fpc -Mobjfpc -O2 -Cr -vew -dAV1_TOOL_STATISTICS -Futools/Av1Test -Fuuserland/lib/av1 -Fiuserland/lib/av1 \
-		-FU$(AV1_TEST_UNITS) -o$@ tools/Av1Test/Av1Test.pas
+		-Fuuserland/lib/media -Fiuserland/lib/media		-FU$(AV1_TEST_UNITS) -o$@ tools/Av1Test/Av1Test.pas
 
 av1-test: $(AV1_TEST) $(AV1_FIXTURES)/manifest.txt
 	@$(AV1_TEST) $(AV1_FIXTURES) > build/tools/av1-test.out || \

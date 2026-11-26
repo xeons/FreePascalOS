@@ -54,6 +54,16 @@ SOURCES = {
 
 AOM_COMMON = ['--cpu-used=6', '--threads=1']
 
+# Streams also put into WebM and MP4 files (by ffmpeg, without
+# re-encoding), and encoded as OBU files, for libmedia's demuxers.
+CONTAINERS = {
+    'inter-good': ['webm', 'mp4'],
+    'high-bitdepth-10': ['webm', 'mp4'],
+    'svt-av1': ['webm', 'mp4'],
+    'film-grain': ['mkv'],
+}
+OBU_STREAMS = ['inter-good']
+
 # name: (source, encoder, arguments)
 CASES = [
     ('intra-nofilter', 'pattern', 'aom',
@@ -161,6 +171,18 @@ def main():
             if f.startswith(name + '-') and f.endswith('.count'):
                 os.remove(os.path.join(directory, f))
         lines.append('%s %s %s %d' % (name, os.path.basename(stream), os.path.basename(reference), count))
+        # The same stream in containers, read through libmedia.
+        for container in CONTAINERS.get(name, []):
+            boxed = os.path.join(directory, '%s.%s' % (name, container))
+            run(['ffmpeg', '-nostdin', '-y', '-i', stream, '-c:v', 'copy', boxed])
+            lines.append('%s-%s %s %s %d' % (name, container, os.path.basename(boxed),
+                                             os.path.basename(reference), count))
+        if name in OBU_STREAMS:
+            obu = os.path.join(directory, name + '.obu')
+            run(['aomenc'] + AOM_COMMON + arguments + ['--obu', '-o', obu, make_source(directory, source_name)[0]])
+            run(['aomdec', '--rawvideo', '-o', reference + '.obu.yuv', obu])
+            lines.append('%s-obu %s %s %d' % (name, os.path.basename(obu), os.path.basename(reference) + '.obu.yuv',
+                                              count))
     with open(os.path.join(directory, 'manifest.txt'), 'w') as manifest:
         manifest.write('\n'.join(lines) + '\n')
     for f in os.listdir(directory):

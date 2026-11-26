@@ -21,7 +21,7 @@
 #   lib<name>.so   ld -shared over the object files of a library's units:
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
-#                  libsystem <- libav1 (the AV1 video decoder)
+#                  libsystem, libmedia <- libav1 (the AV1 video decoder)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
 #                  libsystem <- libdrawing, libcompression <- libimage (image files)
 #                  libsystem <- libconfiguration (settings, per user and system)
@@ -297,14 +297,14 @@ $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
 		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
-# libav1: the AV1 video decoder (frames as Media.Frames records).
-$(AV1_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/av1/*.pas) $(wildcard userland/lib/av1/*.inc)
+# libav1: the AV1 video decoder, libmedia's AV1 TVideoDecoder.
+$(AV1_LIBRARY): $(SYSTEM_LIBRARY) $(MEDIA_LIBRARY) $(wildcard userland/lib/av1/*.pas) $(wildcard userland/lib/av1/*.inc)
 	@rm -rf $(AV1_LIBRARY_OBJECTS)
 	@mkdir -p $(AV1_LIBRARY_OBJECTS)
-	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/av1 \
-		-Fiuserland/lib/av1 -FU$(AV1_LIBRARY_OBJECTS) userland/lib/av1/Av1.Contents.pas
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(MEDIA_LIBRARY_OBJECTS) \
+		-Fuuserland/lib/av1 -Fiuserland/lib/av1 -FU$(AV1_LIBRARY_OBJECTS) userland/lib/av1/Av1.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libav1.so -o $@ \
-		$(AV1_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+		$(AV1_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lmedia -lsystem
 
 # libmedia: decoded frames, the containers (WAV, FLAC, Ogg, Matroska and
 # WebM, MP4, MP3), the audio decoders (FLAC, Vorbis, Opus, MP3), the video
@@ -721,8 +721,8 @@ $(COMPRESSION_PROGRAMS): $(COMPRESSION_LIBRARY)
 SOUND_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,tone play mixer voicetest effecttest record soundinfo)
 # av1check decodes the AV1 streams built into it with libav1.
 AV1_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,av1check)
-$(AV1_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1
-$(AV1_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AV1_LIBRARY_OBJECTS)
+$(AV1_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1 -lmedia
+$(AV1_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(MEDIA_LIBRARY_OBJECTS) -Fu$(AV1_LIBRARY_OBJECTS)
 $(AV1_PROGRAMS): $(AV1_LIBRARY)
 # Programs that read image files.
 IMAGE_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,imageinfo)
@@ -748,9 +748,10 @@ $(SYSTEM_SETTINGS_PROGRAMS): $(AUDIO_LIBRARY) $(CONFIGURATION_LIBRARY)
 # mediaplay plays and checks media files through libmedia, on the audio
 # device of libaudio.
 MEDIA_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,mediaplay)
-$(MEDIA_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lmedia -laudio
-$(MEDIA_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(MEDIA_LIBRARY_OBJECTS) -Fu$(AUDIO_LIBRARY_OBJECTS)
-$(MEDIA_PROGRAMS): $(MEDIA_LIBRARY) $(AUDIO_LIBRARY)
+$(MEDIA_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lav1 -lmedia -laudio
+$(MEDIA_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(MEDIA_LIBRARY_OBJECTS) -Fu$(AUDIO_LIBRARY_OBJECTS) \
+	-Fu$(AV1_LIBRARY_OBJECTS)
+$(MEDIA_PROGRAMS): $(MEDIA_LIBRARY) $(AUDIO_LIBRARY) $(AV1_LIBRARY)
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)

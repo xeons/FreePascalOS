@@ -25,9 +25,12 @@
   loop filter, 10-bit film grain, 4:4:4 screen content with palettes and
   intra block copy, superres with two tiles) on one thread and on four,
   and compares the hash of every frame shown with the hash of the frame
-  libaom's reference decoder gave when the streams were made. Prints a
-  line for each failure and then "av1check: N streams, M frames, ok" or
-  "... failed"; the exit status is 1 on failure. coretest runs it.
+  libaom's reference decoder gave when the streams were made; then the
+  first stream again from a WebM file through libmedia's demuxer and
+  decoder registry. Prints a line for each failure and then a summary
+  ending in "ok" or "failed"; the exit status is 1 on failure.
+  "av1check -w FILE" writes that WebM file instead (for mediaplay -k).
+  coretest runs both.
 }
 program av1check;
 
@@ -36,7 +39,8 @@ program av1check;
 
 uses
   {$ifdef UNIX}cthreads,{$endif}
-  SysUtils, Media.Frames, Av1.Decoder, Av1Check.Streams;
+  Classes, SysUtils, Media.Frames, Media.Packets, Media.Demuxers, Media.Containers, Media.VideoDecoders,
+  Av1.Decoder, Av1.MediaDecoder, Av1Check.Streams;
 
 var
   Failures: Integer = 0;
@@ -122,19 +126,93 @@ begin
   end;
 end;
 
+{ The first stream again, from a WebM file through libmedia: its
+  Matroska demuxer and the AV1 decoder its registry hands out. }
+procedure CheckWebm;
+var
+  Stream: TBytesStream;
+  Demuxer: TMediaDemuxer;
+  Track: TMediaTrack;
+  Decoder: TVideoDecoder;
+  Packet: TMediaPacket;
+  Frame: TVideoFrame;
+  Data: TBytes;
+  Shown: Integer;
+begin
+  Shown := 0;
+  Data := nil;
+  SetLength(Data, SizeOf(SampleWebm));
+  Move(SampleWebm, Data[0], SizeOf(SampleWebm));
+  try
+    Stream := TBytesStream.Create(Data);
+    Demuxer := OpenMediaStream(Stream, True);
+    try
+      Track := Demuxer.FirstTrackOf(mkVideo);
+      Decoder := CreateVideoDecoder(codecAv1);
+      if (Track = nil) or (Decoder = nil) then
+      begin
+        Fail('webm: no AV1 track or decoder');
+        Exit;
+      end;
+      try
+        Decoder.Configure(Track);
+        while Demuxer.ReadPacket(Packet) do
+        begin
+          Decoder.SendPacket(Packet);
+          while Decoder.ReceiveFrame(Frame) do
+          begin
+            if (Shown >= Streams[0].FrameCount) or (HashFrame(Frame) <> Streams[0].Hashes[Shown]) then
+              Fail(Format('webm: frame %d differs', [Shown]));
+            Inc(Shown);
+            Inc(FramesChecked);
+          end;
+        end;
+      finally
+        Decoder.Free;
+      end;
+    finally
+      Demuxer.Free;
+    end;
+    if Shown <> Streams[0].FrameCount then
+      Fail(Format('webm: %d frames shown, expected %d', [Shown, Streams[0].FrameCount]));
+  except
+    on Error: Exception do
+      Fail('webm: ' + Error.Message);
+  end;
+end;
+
+{ av1check -w FILE: writes the WebM sample, for mediaplay. }
+procedure WriteSample(const FileName: string);
+var
+  Output: TFileStream;
+begin
+  Output := TFileStream.Create(FileName, fmCreate);
+  try
+    Output.WriteBuffer(SampleWebm, SizeOf(SampleWebm));
+  finally
+    Output.Free;
+  end;
+end;
+
 var
   Index: Integer;
 begin
+  if (ParamCount = 2) and (ParamStr(1) = '-w') then
+  begin
+    WriteSample(ParamStr(2));
+    Exit;
+  end;
   for Index := 0 to StreamCount - 1 do
   begin
     CheckStream(Streams[Index], 1);
     CheckStream(Streams[Index], 4);
   end;
+  CheckWebm;
   if Failures = 0 then
-    WriteLn(Format('av1check: %d streams, %d frames, ok', [StreamCount, FramesChecked]))
+    WriteLn(Format('av1check: %d streams and a WebM file, %d frames, ok', [StreamCount, FramesChecked]))
   else
   begin
-    WriteLn(Format('av1check: %d streams, %d frames, failed', [StreamCount, FramesChecked]));
+    WriteLn(Format('av1check: %d streams and a WebM file, %d frames, failed', [StreamCount, FramesChecked]));
     Halt(1);
   end;
 end.

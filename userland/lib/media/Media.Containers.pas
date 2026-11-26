@@ -20,7 +20,8 @@
   Opening a media file whatever its container: the first bytes are
   shown to each demuxer (Recognizes) in turn, and the first that knows
   them reads the file. The formats are told apart by their signatures
-  (RIFF/WAVE, OggS, the EBML header, an ftyp box, fLaC, ID3 or an MPEG
+  (RIFF/WAVE, OggS, the EBML header, an ftyp box, DKIF, a temporal
+  delimiter OBU, fLaC, ID3 or an MPEG
   audio frame header), never by the file name.
 }
 unit Media.Containers;
@@ -52,14 +53,16 @@ uses
   Media.Ogg,
   Media.Matroska,
   Media.Mp4,
+  Media.Ivf,
+  Media.ObuStream,
   Media.Mp3File;
 
 function FindDemuxerClass(const Head: TBytes): TMediaDemuxerClass;
 const
   { The order matters only for MP3, whose frame sync is the weakest
     signature: it goes last. }
-  Candidates: array[0..5] of TMediaDemuxerClass = (TWavDemuxer, TFlacDemuxer, TOggDemuxer, TMatroskaDemuxer,
-    TMp4Demuxer, TMp3Demuxer);
+  Candidates: array[0..7] of TMediaDemuxerClass = (TWavDemuxer, TFlacDemuxer, TOggDemuxer, TMatroskaDemuxer,
+    TMp4Demuxer, TIvfDemuxer, TObuStreamDemuxer, TMp3Demuxer);
 var
   Candidate: TMediaDemuxerClass;
 begin
