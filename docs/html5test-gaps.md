@@ -27,6 +27,7 @@ rendering with the installed Firefox.
 | After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
 | After WebSocket and CSP (merged with everything above) | 345 / 588 | communication 40 / 40, security 26 / 32 (+20) |
 | After shadow DOM, custom elements, Web Animations, Fullscreen and Pointer Lock (merged with everything above) | 364 / 588 | components.custom and components.shadowdom, animation.webanimation, output.requestFullScreen, input.pointerLock; 344 on the tree before WebSocket and CSP |
+| Everything above merged in master (webbrowse, 2026-11-26) | 375 / 588 | |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
