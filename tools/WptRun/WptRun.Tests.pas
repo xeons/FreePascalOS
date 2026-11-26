@@ -17,7 +17,8 @@
 }
 
 {
-  Which testharness tests a path of the WPT checkout holds, the way
+  Which testharness tests and reftests a path of the WPT checkout holds,
+  the way
   WPT's manifest (tools/manifest/sourcefile.py) names them:
 
     x.html, .htm, .xhtml, .xht, .svg   one test when it loads
@@ -30,7 +31,9 @@
     x.worker.js   x.worker.html
 
   each once per variant (<meta name=variant content=?a>, "// META:
-  variant=?a"). A test is long ("timeout=long") when its META or
+  variant=?a"). A markup file without testharness.js that links to a
+  reference (<link rel=match|mismatch>) is a reftest, unless its
+  <meta name=flags> marks it a CSS manual test. A test is long ("timeout=long") when its META or
   <meta name=timeout content=long> says so, and loads over https when
   its name has ".https." or ".h2." or its global is a service worker.
   Directories named resources, support or tools, the top-level common,
@@ -51,6 +54,10 @@ type
     Path: string;
     Secure: Boolean;
     LongTimeout: Boolean;
+    { A reftest (WptRun.Reftests): screenshots of it and its references
+      compared, PageCount pages rendered at most. }
+    Reftest: Boolean;
+    PageCount: Integer;
   end;
   TWptTestList = array of TWptTest;
 
@@ -65,7 +72,12 @@ implementation
 uses
   SysUtils,
   Classes,
-  StrUtils;
+  StrUtils,
+  WptRun.Reftests;
+
+const
+  { The pages of a reftest graph a test is given time for. }
+  MostReftestPages = 8;
 
 type
   TMetaPair = record
@@ -288,12 +300,33 @@ begin
     (Name = 'reference') or (Name = 'print') or ((Name <> '') and (Name[1] = '.'));
 end;
 
-procedure AddTest(var List: TWptTestList; const Path: string; Secure, LongTimeout: Boolean);
+procedure AddTest(var List: TWptTestList; const Path: string; Secure, LongTimeout: Boolean;
+  Reftest: Boolean = False; PageCount: Integer = 0);
 begin
   SetLength(List, Length(List) + 1);
   List[High(List)].Path := Path;
   List[High(List)].Secure := Secure or (Pos('.https.', Path) > 0) or (Pos('.h2.', Path) > 0);
   List[High(List)].LongTimeout := LongTimeout;
+  List[High(List)].Reftest := Reftest;
+  List[High(List)].PageCount := PageCount;
+end;
+
+{ The reftest of markup file FileName (Lower: its text in lower case),
+  once per variant, when it is one. }
+procedure ExpandReftest(const FileName, UrlPath, Lower: string; var List: TWptTestList);
+var
+  Root: string;
+  Pairs: TMetaPairs;
+  Variant: string;
+  PageCount: Integer;
+begin
+  if (Pos('/reference/', UrlPath) > 0) or not HasReftestLinks(Lower) or HasManualFlags(Lower) then
+    Exit;
+  Root := Copy(FileName, 1, Length(FileName) - Length(UrlPath));
+  PageCount := ReftestPageCount(Root, UrlPath, MostReftestPages);
+  Pairs := MarkupMetadata(Lower);
+  for Variant in Variants(MarkupMetadata(ReadText(FileName))) do
+    AddTest(List, UrlPath + Variant, False, MetaValue(Pairs, 'timeout') = 'long', True, PageCount);
 end;
 
 { The tests of one file; UrlPath is its path from the root ("/dom/a.html"). }
@@ -349,7 +382,10 @@ begin
     Exit;
   Lower := LowerCase(ReadText(FileName));
   if Pos('/resources/testharness.js', Lower) = 0 then
+  begin
+    ExpandReftest(FileName, UrlPath, Lower, List);
     Exit;
+  end;
   Pairs := MarkupMetadata(Lower);
   Long := MetaValue(Pairs, 'timeout') = 'long';
   VariantList := Variants(MarkupMetadata(ReadText(FileName)));
@@ -476,7 +512,8 @@ begin
     for TestIndex := 0 to High(Found) do
       if ((Wanted = '') or (Copy(Found[TestIndex].Path, 1, Length(Wanted)) = Wanted)) and
         ((Query = '') or (Copy(Found[TestIndex].Path, Length(Found[TestIndex].Path) - Length(Query) + 1, MaxInt) = Query)) then
-        AddTest(Result, Found[TestIndex].Path, Found[TestIndex].Secure, Found[TestIndex].LongTimeout);
+        AddTest(Result, Found[TestIndex].Path, Found[TestIndex].Secure, Found[TestIndex].LongTimeout,
+          Found[TestIndex].Reftest, Found[TestIndex].PageCount);
   end;
   SortAndDeduplicate(Result);
 end;

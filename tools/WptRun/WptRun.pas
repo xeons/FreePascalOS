@@ -19,10 +19,13 @@
 {
   wptrun: web-platform-tests on the Linux host with the browser engine
   (make wpt; not part of make test). It starts WPT's own server from a
-  checkout (WptRun.Server), finds the testharness tests under the paths
-  given (WptRun.Tests), runs each in a webbrowse session of its own,
-  several at once (WptRun.Jobs, WptRun.Child), with the real
-  testharness.js and our testharnessreport.js, and reports pass rates
+  checkout (WptRun.Server), finds the testharness tests and reftests
+  under the paths given (WptRun.Tests), runs each in a webbrowse session
+  of its own, several at once (WptRun.Jobs, WptRun.Child), with the real
+  testharness.js and our testharnessreport.js, or for a reftest renders
+  it and its references at 800x600 and compares the pixels
+  (WptRun.ReftestChild; screenshots of failures in
+  build/wpt/reftest-shots), and reports pass rates
   per directory, the failures the expectations do not know and the
   known failures that now pass (WptRun.Expectations).
 
@@ -64,6 +67,7 @@ uses
   WptRun.Server,
   WptRun.Report,
   WptRun.Child,
+  WptRun.ReftestChild,
   WptRun.Limits;
 
 type
@@ -93,6 +97,10 @@ type
     procedure AddPath(const Path: string);
     function Run: Integer;
   end;
+
+const
+  { Screenshots of the reftests that failed, one directory per test. }
+  ReftestShotDirectory = 'build/wpt/reftest-shots';
 
 function NowSeconds: Double;
 var
@@ -284,6 +292,8 @@ begin
     Settings.CertificateFile := IncludeTrailingPathDelimiter(WptRoot) + 'tools/certs/cacert.pem';
     Settings.FontDirectory := FontDirectory;
     Settings.TimeoutMultiplier := Multiplier;
+    Settings.WptRoot := ExcludeTrailingPathDelimiter(ExpandFileName(WptRoot));
+    Settings.ShotDirectory := ExpandFileName(ReftestShotDirectory);
     Started := NowSeconds;
     RunTests(FTests, Settings, @TestFinished);
   finally
@@ -334,6 +344,11 @@ begin
   begin
     LimitChildResources;
     Halt(RunChild);
+  end;
+  if (ParamCount >= 1) and (ParamStr(1) = '--reftest') then
+  begin
+    LimitChildResources;
+    Halt(RunReftestChild);
   end;
   Runner := TWptRunner.Create;
   try

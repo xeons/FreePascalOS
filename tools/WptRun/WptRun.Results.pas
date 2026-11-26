@@ -33,8 +33,9 @@ const
   ResultMarker = 'wptrun-result:';
 
 type
-  { testharness.js's harness statuses, then the runner's own. }
-  THarnessStatus = (HarnessOk, HarnessError, HarnessTimeout, HarnessPreconditionFailed, HarnessCrash,
+  { testharness.js's harness statuses, a reftest's FAIL (its screenshots
+    did not compare as its links say), then the runner's own. }
+  THarnessStatus = (HarnessOk, HarnessError, HarnessTimeout, HarnessPreconditionFailed, HarnessFail, HarnessCrash,
     HarnessExternalTimeout);
   { testharness.js's subtest statuses. }
   TSubtestStatus = (SubtestPass, SubtestFail, SubtestTimeout, SubtestNotRun, SubtestPreconditionFailed);
@@ -51,6 +52,7 @@ type
     Message: string;
     Subtests: array of TSubtestResult;
     Milliseconds: Double;
+    Reftest: Boolean;
   end;
   TTestResultList = array of TTestResult;
 
@@ -73,7 +75,7 @@ uses
 
 function HarnessStatusName(Status: THarnessStatus): string;
 const
-  Names: array[THarnessStatus] of string = ('OK', 'ERROR', 'TIMEOUT', 'PRECONDITION_FAILED', 'CRASH',
+  Names: array[THarnessStatus] of string = ('OK', 'ERROR', 'TIMEOUT', 'PRECONDITION_FAILED', 'FAIL', 'CRASH',
     'EXTERNAL-TIMEOUT');
 begin
   Result := Names[Status];
@@ -147,7 +149,7 @@ begin
       Exit(False);
     Report := TJSONObject(Data);
     Status := Report.Get('status', 1);
-    if (Status < 0) or (Status > Ord(HarnessPreconditionFailed)) then
+    if (Status < 0) or (Status > Ord(HarnessFail)) then
       Status := Ord(HarnessError);
     Outcome.Harness := THarnessStatus(Status);
     Outcome.Message := TextOf(Report.Find('message'));
