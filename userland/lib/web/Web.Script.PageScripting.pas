@@ -117,6 +117,8 @@ type
     { The timers of a context that stopped. }
     procedure ForgetContext(Context: TObject);
     procedure ForgetTimers;
+    { The page's loop is going: the storage service lets go of it. }
+    procedure DetachStorageLoop;
     procedure TimerDue(Context: TObject; TimerId, Milliseconds: Integer; Repeating: Boolean);
     function ManagesFrames: Boolean; override;
     function SupportsTimers: Boolean; override;
@@ -376,6 +378,12 @@ begin
     FStorageService.ForgetContext(Context);
   if FExecutor.FLoop <> nil then
     FExecutor.FLoop.DiscardTasks(Context);
+end;
+
+procedure TPageScriptEnvironment.DetachStorageLoop;
+begin
+  if FStorageService <> nil then
+    FStorageService.DetachLoop;
 end;
 
 procedure TPageScriptEnvironment.ForgetTimers;
@@ -844,6 +852,7 @@ begin
   for Index := 0 to High(FContexts) do
     FEnvironment.ForgetContext(FContexts[Index].Context);
   FEnvironment.ForgetTimers;
+  FEnvironment.DetachStorageLoop;
   if TMethod(FLoop.OnMicrotaskCheckpoint).Data = Pointer(Self) then
     FLoop.OnMicrotaskCheckpoint := nil;
   FLoop := nil;

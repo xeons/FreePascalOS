@@ -15459,6 +15459,89 @@ everything in memory was forgotten; and a web-platform-tests subset
 webmessaging/broadcastchannel basics, cache-storage, registration
 checks, SharedWorker). `make web-ipc-test` checks the origin data
 payloads.
+
+### web-platform-tests on the host (make wpt)
+
+`make wpt` runs the upstream web-platform-tests against the engine on
+the Linux host (not part of `make test`; it needs a WPT checkout,
+`WPT_ROOT` or `~/Downloads/sources/wpt`, cloned with
+`git clone --depth 1 https://github.com/web-platform-tests/wpt`, never
+committed). `tools/WptRun` is the runner:
+
+```
+wptrun (parent)                                  wpt serve (WPT's own server)
+  WptRun.Tests: paths -> tests                     python3 wpt --venv _venv3 --skip-venv-setup serve
+  WptRun.Server: starts/stops the server  ------>    --config tools/WptRun/server/config.json
+  WptRun.Jobs: N children at once                    --alias_file build/wpt/aliases.txt
+     |                                               (127.0.0.1: 8000/8001 http, 8443/8444 https,
+     | wptrun --child URL --seconds S --trust-ca    8002 ws, 8445 wss)
+     v
+  WptRun.Child: one WebBrowse.Session  --- http(s)://web-platform.test:8000|8443/... --->
+     console: "wptrun-result:{json}"  <--- testharness.js + our testharnessreport.js
+  WptRun.Results / Expectations / Report
+```
+
+**The server** is WPT's `wpt serve`, run with the system's Python and
+the checkout's vendored modules (tools/third_party): `--venv` names a
+virtualenv and `--skip-venv-setup` uses it as it is, so nothing is
+installed (the Python handlers need `cryptography`, which the host
+has). Our config listens on 127.0.0.1 with `check_subdomains` off: the
+test domains resolve only inside our client. The alias file serves
+`tools/WptRun/harness/testharnessreport.js` as
+`/resources/testharnessreport.js`: it turns off the results table
+(`output: false`, as wptrunner does) and, from testharness.js's
+completion callback, prints one console line, `wptrun-result:` and
+JSON (url, harness status and message, each subtest's name, status and
+message). A server already listening on port 8000 is used as it is.
+The server runs in a session of its own and is stopped with its
+process group when the run ends.
+
+**Host-only client options** (WebBrowse.HostNetwork, never in the
+system's build; also on webbrowse as `--map-host DOMAIN=ADDRESS` and
+`--trust-ca FILE`): a name and its subdomains connect to a fixed
+address without a lookup (`web-platform.test`, `www.`, `www1.`,
+`www2.`, the punycode ones, and `not-web-platform.test` all go to
+127.0.0.1; /etc/hosts is not touched), and the PEM certificates of a
+file are trusted beside the host's roots (WPT's
+`tools/certs/cacert.pem`; the TLS server name stays the test domain,
+so certificate checks run as for a real site).
+
+**Tests** are found the way WPT's manifest names them: `.html`,
+`.htm`, `.xhtml`, `.xht` and `.svg` files that load
+`/resources/testharness.js`; `x.any.js` once per global of its
+`// META: global=` (window and dedicatedworker by default: `.any.html`,
+`.any.worker.html`, and `.any.sharedworker.html`,
+`.any.serviceworker.html`, the module variants; ShadowRealm and jsshell
+globals are skipped); `x.window.js` and `x.worker.js`; each once per
+`variant`. `timeout=long` (META or `<meta name=timeout>`) gives a test
+75 s instead of 20 s (testharness.js times out at 10 s or 60 s and
+reports what it has); `.https.`, `.h2.` and service worker globals
+load over https. Directories named resources, support, tools,
+crashtests, reference and print, and -manual, -visual, -crash and
+reference files are not tests.
+
+**A child** is the runner's own binary with `--child`: one
+`TBrowseSession` (the webbrowse pipeline: TWebPage over libhttp and
+libtls on host sockets, layout, scripting, the event loop driven like
+the web view) with `EchoConsole` and `FinishMarker` set, so it ends at
+the report line rather than at quiet. A child that exits without a
+report is a CRASH; one that outlives its time plus 15 s is killed, an
+EXTERNAL-TIMEOUT. Tests run `-j N` at once (half the processors).
+
+**Results** are compared with `tools/WptRun/expectations/AREA.txt`
+(one file per top-level directory, our own data): per test, the
+subtests known to fail and `!harness STATUS` when the harness does not
+finish OK; only passing or not counts, so a known failure that turns
+from FAIL into TIMEOUT stays known. The run prints each unexpected
+failure and each known failure that now passes, a table per directory
+(tests passing entirely, subtests passed of all, the rate; a test
+without subtests counts as one), and exits 1 on unexpected failures.
+`--list` prints every failing subtest with its message, `--update`
+rewrites the expectations of the tests run, `--dry-run` lists the
+tests. `make wpt` runs `tools/WptRun/curated.txt` (the HTML and
+JavaScript API directories); `make wpt WPT_TESTS=dom/nodes
+WPT_FLAGS=--list` runs others. Pass rates and the main gaps are kept
+in TODO.md.
 ### IndexedDB, the Cache API and navigator.storage
 
 Pages keep structured data in **IndexedDB** (Indexed Database API 3.0),

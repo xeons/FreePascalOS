@@ -40,6 +40,7 @@
     --depth N      report directories this deep (the depth of each PATH)
     --multiplier X scale the time limits (1)
     -v             each test as it finishes
+    --dry-run      print the tests the paths hold; run none
     -f FONTDIR     font directory (userland/fonts)
 
   Exit status: 0 when nothing failed unexpectedly, 1 otherwise, 2 when
@@ -72,6 +73,8 @@ type
     FExpectations: TExpectationSet;
     FReport: TRunReport;
     FDetails: TStringList;
+    { --list: one text per failing test (its line, then its subtests'). }
+    FFailing: TStringList;
     FDone: Integer;
     FUnexpectedTotal, FNewlyPassingTotal: Integer;
     function GroupOf(const Path: string): string;
@@ -81,7 +84,7 @@ type
     ExpectationDirectory: string;
     Jobs: Integer;
     Depth: Integer;
-    List, Update, Verbose: Boolean;
+    List, Update, Verbose, DryRun: Boolean;
     Multiplier: Double;
     FontDirectory: string;
     constructor Create;
@@ -128,6 +131,7 @@ begin
   inherited Create;
   FPaths := TStringList.Create;
   FDetails := TStringList.Create;
+  FFailing := TStringList.Create;
   FReport := TRunReport.Create;
   WptRoot := GetEnvironmentVariable('WPT_ROOT');
   if WptRoot = '' then
@@ -145,6 +149,7 @@ begin
   FExpectations.Free;
   FReport.Free;
   FDetails.Free;
+  FFailing.Free;
   FPaths.Free;
   inherited Destroy;
 end;
@@ -198,8 +203,14 @@ begin
     Result := DirectoryAtDepth(Path, PathDepth(FPaths[Best]));
 end;
 
+function OneLine(const Text: string): string;
+begin
+  Result := StringReplace(StringReplace(Text, #13, ' ', [rfReplaceAll]), #10, ' ', [rfReplaceAll]);
+end;
+
 procedure TWptRunner.TestFinished(constref Outcome: TTestResult; const Output: string);
 var
+  Block: string;
   Comparison: TComparison;
   Index: Integer;
   Passed, Total: Integer;
@@ -217,17 +228,18 @@ begin
     else if FDone mod 100 = 0 then
       WriteLn(StdErr, Format('wptrun: %d of %d tests', [FDone, Length(FTests)]));
     for Index := 0 to Comparison.UnexpectedFailures.Count - 1 do
-      FDetails.Add('UNEXPECTED ' + Outcome.Path + ' | ' + Comparison.UnexpectedFailures[Index]);
+      FDetails.Add('UNEXPECTED ' + Outcome.Path + ' | ' + OneLine(Comparison.UnexpectedFailures[Index]));
     for Index := 0 to Comparison.NewlyPassing.Count - 1 do
-      FDetails.Add('NOW PASSES ' + Outcome.Path + ' | ' + Comparison.NewlyPassing[Index]);
+      FDetails.Add('NOW PASSES ' + Outcome.Path + ' | ' + OneLine(Comparison.NewlyPassing[Index]));
     if List and ((Outcome.Harness <> HarnessOk) or (Passed < Total)) then
     begin
-      FDetails.Add('FAILING ' + Outcome.Path + ' (harness ' + HarnessStatusName(Outcome.Harness) + ': ' +
-        Outcome.Message + ')');
+      Block := 'FAILING ' + Outcome.Path + ' (harness ' + HarnessStatusName(Outcome.Harness) + ': ' +
+        OneLine(Outcome.Message) + ')';
       for Index := 0 to High(Outcome.Subtests) do
         if Outcome.Subtests[Index].Status <> SubtestPass then
-          FDetails.Add('  ' + SubtestStatusName(Outcome.Subtests[Index].Status) + ' ' + Outcome.Subtests[Index].Name +
-            ': ' + StringReplace(Outcome.Subtests[Index].Message, #10, ' ', [rfReplaceAll]));
+          Block := Block + LineEnding + '  ' + SubtestStatusName(Outcome.Subtests[Index].Status) + ' ' +
+            OneLine(Outcome.Subtests[Index].Name) + ': ' + OneLine(Outcome.Subtests[Index].Message);
+      FFailing.Add(Block);
     end;
   finally
     Comparison.UnexpectedFailures.Free;
@@ -259,8 +271,16 @@ begin
     WriteLn(StdErr, 'wptrun: no tests');
     Exit(2);
   end;
+  if DryRun then
+  begin
+    for Index := 0 to High(FTests) do
+      WriteLn(TestUrl(FTests[Index]), BoolToStr(FTests[Index].LongTimeout, ' (long)', ''));
+    WriteLn(Length(FTests), ' tests');
+    Exit(0);
+  end;
   FExpectations := TExpectationSet.Create(ExpectationDirectory);
   FExpectations.Load;
+  StopServerOnSignals;
   if not StartWptServer(WptRoot, 'tools/WptRun/server/config.json', 'tools/WptRun/harness', 'build/wpt') then
     Exit(2);
   try
@@ -276,6 +296,9 @@ begin
   finally
     StopWptServer;
   end;
+  FFailing.Sort;
+  for Index := 0 to FFailing.Count - 1 do
+    WriteLn(FFailing[Index]);
   FDetails.Sort;
   for Index := 0 to FDetails.Count - 1 do
     WriteLn(FDetails[Index]);
@@ -296,7 +319,7 @@ end;
 procedure Usage;
 begin
   WriteLn(StdErr, 'usage: wptrun [-j N] [--wpt DIR] [--list] [--update] [--expectations DIR] [--depth N]');
-  WriteLn(StdErr, '         [--multiplier X] [-v] [-f FONTDIR] PATH|@FILE...');
+  WriteLn(StdErr, '         [--multiplier X] [-v] [--dry-run] [-f FONTDIR] PATH|@FILE...');
   Halt(2);
 end;
 
@@ -336,6 +359,8 @@ begin
         Runner.Depth := StrToIntDef(NextArgument, 0)
       else if Argument = '--multiplier' then
         Runner.Multiplier := StrToFloatDef(NextArgument, 1)
+      else if Argument = '--dry-run' then
+        Runner.DryRun := True
       else if Argument = '-v' then
         Runner.Verbose := True
       else if Argument = '-f' then

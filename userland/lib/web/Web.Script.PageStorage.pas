@@ -83,6 +83,9 @@ type
     function QueueTask(Context: TObject; TaskId: Integer): Boolean;
     { The context is gone: its connections close, its transactions abort. }
     procedure ForgetContext(Context: TObject);
+    { The loop is going (the page shuts down before its storage): a flush
+      it was to run happens now, and nothing is queued on it again. }
+    procedure DetachLoop;
     { Writes what changed (a service of this program only). }
     procedure Flush;
     procedure FlushDue;
@@ -303,6 +306,19 @@ begin
   Task.Group := Self;
   FFlushHandle := Loop.ScheduleTask(Task, FlushDelay);
   FFlushScheduled := True;
+end;
+
+procedure TPageStorage.DetachLoop;
+begin
+  if Loop = nil then
+    Exit;
+  if FFlushScheduled then
+  begin
+    Loop.CancelScheduledTask(FFlushHandle);
+    FFlushScheduled := False;
+    Flush;
+  end;
+  Loop := nil;
 end;
 
 procedure TPageStorage.FlushDue;

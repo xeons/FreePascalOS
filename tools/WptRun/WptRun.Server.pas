@@ -49,6 +49,8 @@ function PortOpen(Port: Word): Boolean;
 function StartWptServer(const WptRoot, ConfigFile, HarnessDirectory, WorkDirectory: string): Boolean;
 { Stops the server StartWptServer started, if it did. }
 procedure StopWptServer;
+{ SIGINT and SIGTERM stop the server before the runner exits. }
+procedure StopServerOnSignals;
 
 implementation
 
@@ -169,6 +171,18 @@ begin
   fpKill(-ServerPid, SIGKILL);
   fpWaitPid(ServerPid, nil, WNOHANG);
   ServerPid := 0;
+end;
+
+procedure StopOnSignal(Signal: LongInt); cdecl;
+begin
+  StopWptServer;
+  fpExit(128 + Signal);
+end;
+
+procedure StopServerOnSignals;
+begin
+  fpSignal(SIGINT, SignalHandler(@StopOnSignal));
+  fpSignal(SIGTERM, SignalHandler(@StopOnSignal));
 end;
 
 end.
