@@ -80,7 +80,7 @@
     "AbortSignal", "ReadableStream", "WritableStream", "TransformStream", "TextEncoderStream", "TextDecoderStream",
     "MessageChannel", "MessagePort", "MessageEvent", "BroadcastChannel", "Event", "EventTarget", "CustomEvent",
     "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "EventSource", "WebAssembly", "isSecureContext",
-    "origin"];
+    "origin", "caches", "Cache", "CacheStorage"];
 
   function workerState(worker) {
     const state = workerData.get(worker);

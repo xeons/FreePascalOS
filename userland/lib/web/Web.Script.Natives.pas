@@ -74,6 +74,7 @@ uses
   Web.Script.MessageLinks,
   Web.Script.BroadcastChannels,
   Web.Workers.SharedWorkers,
+  Web.Script.NativeCaches,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -665,6 +666,7 @@ begin
   DefineLinkNatives(Context, Natives);
   DefineBroadcastNatives(Context, Natives);
   DefineSharedWorkerNatives(Context, Natives);
+  DefineCacheNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

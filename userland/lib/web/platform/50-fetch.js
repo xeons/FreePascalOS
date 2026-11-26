@@ -558,6 +558,105 @@
     headersState(headers).guard = guard;
   }
 
+  // ---- requests and responses as records (the Cache API's store, a
+  // service worker's fetch event and its answer) ----
+
+  // The body of an opaque response: script never reads it, but a cache
+  // keeps it and a service worker hands it to the page that asked.
+  const opaqueBodies = new WeakMap();
+
+  // A Response made by the engine: Record has type, url, status,
+  // statusText, headerList ([name, value] pairs), redirected and bytes (a
+  // Uint8Array, or null for no body).
+  internal.makeResponse = function (record) {
+    const response = new Response(null);
+    const state = responseState(response);
+    state.type = record.type;
+    state.url = record.url || "";
+    state.status = record.type === "opaque" ? 0 : record.status;
+    state.statusText = record.type === "opaque" ? "" : record.statusText;
+    state.redirected = !!record.redirected;
+    state.headers = headersWithGuard(record.type === "opaque" ? [] :
+      record.headerList.map(function (entry) { return entry.slice(); }), "immutable");
+    const bytes = record.bytes === null || record.bytes === undefined ? null : record.bytes;
+    if (record.type === "opaque") {
+      bodyData.set(response, { stream: null, used: false });
+      opaqueBodies.set(response, Promise.resolve(bytes === null ? new Uint8Array(0) : bytes));
+    } else bodyData.set(response, bytes === null ? { stream: null, used: false } : bodyRecord({ bytes: bytes }));
+    return response;
+  };
+
+  internal.isResponse = function (value) {
+    return value !== null && typeof value === "object" && responseData.has(value);
+  };
+  internal.isRequest = function (value) {
+    return value !== null && typeof value === "object" && requestData.has(value);
+  };
+  internal.bodyUnusable = function (object) {
+    const body = bodyOf(object);
+    return body.stream !== null && (internal.streamIsDisturbed(body.stream) || internal.streamIsLocked(body.stream));
+  };
+
+  // A promise of Response's record (above), its body read to the end
+  // (so the body is used afterwards).
+  internal.responseRecord = function (response) {
+    const state = responseState(response);
+    const record = { type: state.type === "default" ? "basic" : state.type, url: state.url, status: state.status,
+      statusText: state.statusText, redirected: state.redirected,
+      headerList: internal.headerList(state.headers).map(function (entry) { return entry.slice(); }), bytes: null };
+    if (opaqueBodies.has(response)) {
+      return opaqueBodies.get(response).then(function (bytes) {
+        record.bytes = bytes;
+        return record;
+      });
+    }
+    const body = bodyOf(response);
+    if (body.stream === null) return Promise.resolve(record);
+    body.used = true;
+    const bytes = body.bytes !== undefined && !internal.streamIsDisturbed(body.stream) ? Promise.resolve(body.bytes) :
+      internal.readAllBytes(body.stream);
+    if (body.bytes !== undefined) internal.readAllBytes(body.stream).catch(function () {});
+    return bytes.then(function (data) {
+      record.bytes = data;
+      return record;
+    });
+  };
+
+  // A request's record: method, url, headerList, mode, credentials,
+  // cache, redirect, referrer, referrerPolicy, integrity, destination,
+  // keepalive and bytes (a promise of the body, null for none).
+  internal.requestRecord = function (request) {
+    const state = requestState(request);
+    const body = bodyOf(request);
+    return { method: state.method, url: state.url,
+      headerList: state.headerList.map(function (entry) { return entry.slice(); }), mode: state.mode,
+      credentials: state.credentials, cache: state.cache, redirect: state.redirect, referrer: state.referrer,
+      referrerPolicy: state.referrerPolicy, integrity: state.integrity, destination: state.destination,
+      keepalive: state.keepalive,
+      bytes: body.stream === null ? null : body.bytes !== undefined ? Promise.resolve(body.bytes) :
+        internal.readAllBytes(body.stream) };
+  };
+
+  // A Request made by the engine (a fetch event's): a record as above
+  // with bytes a Uint8Array or null; mode may be navigate. The headers
+  // are immutable.
+  internal.makeRequest = function (record) {
+    const request = new Request(record.url, record.bytes === null || record.method === "GET" || record.method === "HEAD" ?
+      { method: record.method } : { method: record.method, body: record.bytes });
+    const state = requestState(request);
+    state.mode = record.mode;
+    state.credentials = record.credentials;
+    state.cache = record.cache;
+    state.redirect = record.redirect;
+    state.referrer = record.referrer === "" ? "no-referrer" : record.referrer;
+    state.referrerPolicy = record.referrerPolicy;
+    state.integrity = record.integrity;
+    state.destination = record.destination;
+    state.headerList = record.headerList.map(function (entry) { return entry.slice(); });
+    state.headers = headersWithGuard(state.headerList, "immutable");
+    return request;
+  };
+
   // ---- the network ----
 
   const pending = new Map();
@@ -607,6 +706,18 @@
     return Promise.resolve(response);
   }
 
+  function joinChunks(chunks) {
+    let total = 0;
+    for (const chunk of chunks) total += chunk.length;
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
   internal.define(global, "fetch", function fetch(input, init) {
     let request;
     try {
@@ -625,6 +736,7 @@
       return new Promise(function (resolve, reject) {
         let controller = null;
         let finished = false;
+        let opaqueDone = null;
         const queued = [];
         let ended = false;
         let failure = null;
@@ -638,7 +750,12 @@
             responseStateValue.url = url;
             responseStateValue.redirected = details.redirected;
             responseStateValue.headers = headersWithGuard(headerList, "immutable");
-            if (state.method === "HEAD" || nullBodyStatuses.indexOf(status) >= 0 || details.type === "opaque")
+            if (details.type === "opaque") {
+              bodyData.set(response, { stream: null, used: false });
+              opaqueBodies.set(response, new Promise(function (resolveBody) {
+                opaqueDone = resolveBody;
+              }));
+            } else if (state.method === "HEAD" || nullBodyStatuses.indexOf(status) >= 0)
               bodyData.set(response, { stream: null, used: false });
             else bodyData.set(response, {
               stream: new ReadableStream({
@@ -664,9 +781,11 @@
             finished = true;
             ended = true;
             if (controller !== null) try { controller.close(); } catch (error) {}
+            if (opaqueDone !== null) opaqueDone(joinChunks(queued.splice(0)));
           },
           onError: function (message) {
             finished = true;
+            if (opaqueDone !== null) opaqueDone(new Uint8Array(0));
             failure = new TypeError("Failed to fetch");
             if (controller !== null) controller.error(failure);
             reject(failure);
