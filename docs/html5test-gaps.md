@@ -22,6 +22,7 @@ rendering with the installed Firefox.
 | Before | none | The page never showed a score: its inline script was a syntax error (`<!--` after a tab), and once that was fixed the test waited forever for images made by `new Image()` |
 | After the two blockers | 241 / 588 | The test runs to the end and shows every result |
 | After this work | 273 / 588 | |
+| After service workers, the Cache API and SharedWorker | 284 / 588 | offline.serviceWorkers, performance.sharedWorker |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -128,9 +129,9 @@ Points are what each costs on html5test (588 in all).
   chooser in the browser (`ChooseFileToOpen` exists), a FileList of
   File objects, and multipart/form-data submission. (Medium with the
   upload part.)
-- `performance.sharedWorker` (1): SharedWorker; workers are realms on
-  the window's thread, so one shared by several windows needs a worker
-  thread or a host realm per site.
+- ~~`performance.sharedWorker` (1)~~: done - SharedWorker in a worker
+  agent of its own (see "Workers, caches and service workers" in
+  docs/Architecture.md).
 - `svg.foreignobject` (1): SVGForeignObjectElement and HTML content
   inside SVG drawn by the layout (only once it is drawn).
 - Date and time pickers (no points of their own): the fields are typed;
@@ -200,9 +201,10 @@ Points are what each costs on html5test (588 in all).
 - **WebRTC and media capture** (`rtc.*` 22, `media.*` 23): peer
   connections (ICE, DTLS, SRTP, SCTP data channels), getUserMedia
   (camera and microphone drivers), getDisplayMedia, MediaRecorder.
-- **Service workers and push** (`offline.*` 12): service worker
-  registration, the fetch interception in the network service, the
-  Cache API, push messages.
+- **Service workers and push** (`offline.*` 12): service workers (with
+  fetch interception before the network, the Clients API) and the Cache
+  API are done (10 points); push messages are left - they need a push
+  service.
 - **WebAssembly** (`native.webassembly` 1): a Wasm engine in
   libjavascript.
 - **MathML** (`elements.mathml` 2): MathML Core layout.

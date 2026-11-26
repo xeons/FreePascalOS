@@ -1763,8 +1763,23 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       SecurityPolicyViolationEvent, WebSocket, custom elements, shadow
       DOM, Web Animations, IndexedDB, media playback and Web Audio, the
       Fullscreen API, file inputs with FileList and multipart uploads,
-      SharedWorker, foreignObject, relative positioning of inline boxes,
+      foreignObject, relative positioning of inline boxes,
       designMode/execCommand, date and time pickers
+- [x] Workers (html5test 273 -> 284): service workers (register, update,
+      unregister, install/activate with waitUntil, skipWaiting,
+      clients.claim, fetch interception of navigations and controlled
+      clients, the Clients API, messages both ways, navigation preload),
+      the Cache API, SharedWorker, BroadcastChannel across the process,
+      MessagePorts between heaps (message links), worker agents on
+      satellite event loops; caches and registrations kept by the browser
+      (IpcOriginDataLoad/Save 340-341); WebLoadTest.Workers and a
+      web-platform-tests subset (wpt-workers.html)
+- [ ] Workers left: module workers, push messages and notifications
+      (needs a push service), Background Sync, openWindow/focus (need
+      notification clicks), WindowClient.navigate resolving to the new
+      client, dedicated/shared workers as service worker clients, one
+      shared or service worker per site across content processes, update
+      checks of imported scripts
 
 ## Web view and browser
 

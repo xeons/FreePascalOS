@@ -13618,8 +13618,10 @@ waits for work itself (programs without a GUI loop).
 
 Not yet: CSP enforcement and Subresource Integrity (both are stored on
 the request), ORB, bfcache, pushState/replaceState (the entries have the
-slot), `<object>`/`<embed>` documents, form submission, Service
-Workers, blob: URLs, animated images (the first frame is shown).
+slot), `<object>`/`<embed>` documents, form submission, blob: URLs,
+animated images (the first frame is shown). Service workers see a
+navigation before the network (see "Workers, caches and service
+workers").
 
 `htmldump [-s] [-e] [-c CHARSET] [-f CONTEXT] FILE` parses a file and
 prints its tree in the html5lib format (`-s` the serialization, `-e`
@@ -14035,7 +14037,13 @@ error) over `TScriptEnvironment`:
 | 35-fonts | FontFace, FontFaceSet, document.fonts (settled at once: style sheets' fonts are the loader's) |
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
-| 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort, BroadcastChannel |
+| 55-serialization | StructuredSerialize to text and back, for values going to another heap (worker agents, BroadcastChannel, message links): primitives, arrays, objects, the wrapper objects, Date, RegExp, Map, Set, errors, ArrayBuffer, typed arrays and DataView, Blob, File, transferred ports |
+| 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort (over message links when its other side is in another heap), BroadcastChannel across the process |
+| 65-workers | dedicated workers (a realm of the window's runtime) and the runner the shared and service workers' scopes are made with |
+| 66-shared-workers | SharedWorker and the shared worker's side in its agent |
+| 67-caches | CacheStorage (caches) and Cache, in secure contexts |
+| 68-service-workers | navigator.serviceWorker, ServiceWorkerRegistration, ServiceWorker, NavigationPreloadManager |
+| 69-service-worker-scope | the service worker's scope in its agent: ExtendableEvent, FetchEvent, ExtendableMessageEvent, Clients, Client, WindowClient |
 | 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
 | 71-traversal | NodeFilter, TreeWalker and NodeIterator (createTreeWalker, createNodeIterator) over the bindings' own tree getters, so a polyfill that redefines firstChild does not change what they walk |
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
@@ -14179,7 +14187,7 @@ event handler scope chain (form, document), the unhandledrejection
 event, XML parsing (DOMParser, XHR's responseXML), shadow DOM,
 TreeWalker, `<object>` and `<embed>` documents, frameset
 layout (`<frame>` loads but is laid out as an inline replaced box),
-shared and service workers, synchronous
+module workers, synchronous
 XMLHttpRequest, Web Animations (CSS animations and transitions run, see
 Styling), Selection.modify, @import in insertRule loading its sheet,
 ObservableArray for adoptedStyleSheets, the storage event between
@@ -14234,6 +14242,135 @@ observer hook, node lifetime, the script hook with document.write and
 pausing, innerHTML and friends, event dispatch, and serialization. The
 test prints the parser's speed and bytes per node ("perf" lines): on the
 build machine about 2.3 million nodes (20 MB of HTML) per second.
+
+### Workers, caches and service workers
+
+Shared and service workers belong to no single page, so each runs in a
+**worker agent** (`Web.Workers.Agents`): an event loop, a fetcher over
+the starting page's network context and a window-less navigable whose
+document is empty and at the worker script's URL (so of its origin),
+scripted like a page. The worker's global scope is a realm of that
+window's runtime made by 65-workers.js's runner, as a dedicated
+worker's is of its page's; timers, fetch, crypto and messaging are the
+host window's. The agent's loop is a **satellite** (`Web.EventLoop`,
+`MakeSatellite`): every other loop of the thread runs one of the
+satellites' ready tasks after each of its own, counts their timers and
+tasks when it waits, and is woken when a task is posted to one, so
+whatever drives the pages (the web view's GUI loop, a content process's
+page thread, webbrowse, the tests) drives the workers without knowing
+about them. An agent is retired, never freed inside its own task: the
+satellite reaper frees it before the next satellite task, and agents of
+a network context that goes are freed with it.
+
+Pages and agents are different heaps, so objects cannot pass between
+them. **Message links** (`Web.Script.MessageLinks`) carry a message as
+the text of its serialization (55-serialization.js) plus the ids of the
+link ends it transfers, delivered in order in a task of the receiving
+context's loop (`Web.Script.ContextTasks.PostToContext`, which checks
+that the context still lives). A MessagePort whose other side is in
+another heap is bound to a link end; transferring a same-heap port
+moves its place in the entanglement to a relay port whose traffic
+crosses a new link. **BroadcastChannel** (`Web.Script.BroadcastChannels`)
+is a process-wide hub by origin and name.
+
+**Shared workers** (`Web.Workers.SharedWorkers`): one per origin,
+script URL and name; `new SharedWorker` opens a link, keeps one end as
+`worker.port` and has the agent fire connect with the other. A blob:
+URL's script goes along as text (the blob store is the page's). A
+script that cannot be fetched or parsed fires error at every waiting
+SharedWorker; the worker goes with the last document that connected to
+it, or at close().
+
+**The Cache API** (`Web.Storage.ResponseCaches`, natives in
+`Web.Script.NativeCaches`, 67-caches.js): per origin an ordered map of
+named caches of request/response pairs with their bodies, shared by
+every window and worker of the origin in the process; matching (URL
+without fragment, ignoreSearch, ignoreMethod, Vary) is the script's,
+the store applies batches of puts and deletes together (64 MiB per
+origin, QuotaExceededError past it). Opaque responses keep their body
+away from script (50-fetch.js's hidden body) so a cache or a service
+worker can hand it on.
+
+**Service workers**: the records (`Web.Workers.ServiceWorkerModel`:
+registrations by origin and scope with installing, waiting and active
+workers, each with its script and imported scripts; the clients, every
+window and frame of the process, with the id their navigation reserved),
+the behaviour (`Web.Workers.ServiceWorkers`: one job queue for Register,
+Update and Unregister; Install, Try Activate, Activate, Clear
+Registration, skipWaiting, clients.claim; running a worker in an agent
+when it has an event and ending it after 30 s idle), and the natives
+(`Web.Script.NativeServiceWorkers`, with the page side
+68-service-workers.js and the worker side 69-service-worker-scope.js).
+Every change is pushed as an update (a registration's slots, a worker's
+state, updatefound, a client's new controller, a message from a worker)
+to the contexts of the origin in order, so each realm's objects change
+before the events about them. An update job checks the script in a
+fresh agent: it fetches it (Service-Worker: script, no redirects, the
+HTTP cache bypassed unless updateViaCache is 'all'), the job checks the
+status, a JavaScript MIME type and the max scope (the script's
+directory, or Service-Worker-Allowed), compares it with the newest
+worker's, and only a changed script is evaluated and installed. A
+navigation in a registration's scope that last checked a day ago starts
+a soft update.
+
+**Handle Fetch.** The fetcher offers every http and https request that
+is not a redirect's and not marked SkipServiceWorker to
+`ServiceWorkerFetchHook` (`Web.Fetch.ServiceWorkerHook`) before the
+network and before any CORS preflight: a navigation (secure URLs only)
+whose URL is in an active registration's scope (the request records the
+controller; the navigable gives it and the reserved client id to the new
+document's `TFetchClient`, so the page is controlled from its first
+script, even when the worker leaves the request to the network), or a
+request of a controlled client. If the worker handles fetch, the agent
+gets a FetchEvent; respondWith's response comes back as its record and
+whole body and is checked against the request (a network error, a cors
+response to a same-origin request, an opaque one to a request that is
+not no-cors, an opaque redirect, a navigation answered across origins),
+then delivered by the fetcher on its own loop; no respondWith continues
+with the network, a rejection is a network error. Fetches wait while
+the worker is activating. Navigation preload, when enabled, starts a
+network fetch with the Service-Worker-Navigation-Preload header for
+preloadResponse.
+
+**Kept records** (`Web.Storage.OriginData`): caches and registrations
+(scope, updateViaCache, the waiting or active worker's script, imports
+and whether it handles fetch) are records per origin, loaded when an
+origin is first used and saved after each change through
+`OriginDataBackend`: the browser's `TFolderOriginData` in
+storage/origin-data (a `TMemoryOriginData` while private browsing; the
+switch starts caches and service workers again from the other store),
+and in a content process `TContentOriginData`, which asks the browser
+(`IpcOriginDataLoad` 340, `IpcOriginDataSave` 341; the network service
+refuses origins of other sites than the process's lock). Without a
+backend (webbrowse) they live in memory.
+
+Not done: module workers (type 'module' is refused), push messages and
+notifications (no push service; a push event would take the same event
+path as message), Background Sync, Clients.openWindow and
+WindowClient.focus (they need a notification click: always refused),
+WindowClient.navigate resolving to the new client (it resolves null),
+dedicated and shared workers as service worker clients, one shared or
+service worker across content processes of one site (each process runs
+its own, and two processes' caches of one origin overwrite each other's
+records), the update check of imported scripts.
+
+**Tests.** `make web-load-test` (WebLoadTest.Workers; `WebLoadTest
+workers` runs only them): two pages sharing a shared worker, a port
+through it, a blob: URL, the error, the workers going with the pages;
+BroadcastChannel between pages and not across origins; the Cache API's
+matching, addAll, CacheStorage and the caches kept through a memory
+store; service workers' registration, install and activate with
+waitUntil, claim, a made, a cached, a network and a failed response,
+messages both ways with a transferred port, matchAll, a navigation
+answered by the worker and controlled from its first script, update
+with the same and with a new script, skipWaiting, the max scope and
+Service-Worker-Allowed, the MIME check, unregister, no service workers
+or caches on an insecure page, and a kept registration answering after
+everything in memory was forgotten; and a web-platform-tests subset
+(wpt-workers.html with a small testharness.js work-alike:
+webmessaging/broadcastchannel basics, cache-storage, registration
+checks, SharedWorker). `make web-ipc-test` checks the origin data
+payloads.
 
 ### Styling (Web.Style)
 
@@ -15564,7 +15701,8 @@ clipboard write and read, selection, open URL, script interrupted,
 input handled, unhandled key, page text; version 2: 226 a pop-up
 blocked), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
-storage load, set, remove, clear; about pages). Records with encoders
+storage load, set, remove, clear; about pages; 340-341 the per-origin
+records of caches and service workers). Records with encoders
 and decoders for the larger payloads are in `WebIpc.ViewMessages` and
 `WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
 state is a `TIpcHistoryState` (can go back and forward, the entries'
