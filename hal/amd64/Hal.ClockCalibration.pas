@@ -54,7 +54,8 @@
   counter reads (Hal.CalibrationSamples): the reference's moment is the
   middle of its bracket, the narrowest of four attempts is kept, and a
   sample whose brackets are wider than 0.1% of it is taken again (up to
-  15 attempts in all; with none steady, the steadiest is used). A
+  15 attempts in all, 60 while none was steady; with none steady at
+  all, the steadiest is used). A
   processor held up between a reference read and a counter read - an
   SMI, or under an emulator or hypervisor a virtual processor that did
   not run for milliseconds - then neither skews a sample (it was read
@@ -121,9 +122,13 @@ const
   MeasureMicroseconds = 50000;
   { A measurement is the median of this many samples (Microseconds
     shared between them), each the counter between two bracketed
-    reference reads; up to SampleAttempts are taken to get them. }
+    reference reads. Up to SampleAttempts are taken to get them, and
+    while none was steady up to MaximumSampleAttempts (a busy host under
+    an emulator holds the virtual processor up for 1.5 ms at a time,
+    often in one of a sample's many PIT polls). }
   SampleCount = 5;
   SampleAttempts = 3 * SampleCount;
+  MaximumSampleAttempts = 12 * SampleCount;
   ShortestSampleMicroseconds = 2000;
   { The attempts at each bracketed read, the narrowest kept. }
   BracketAttempts = 4;
@@ -248,6 +253,15 @@ end;
 
 { One reference read, bracketed by the counter (interrupts off), the
   narrowest of a few attempts. }
+{ Whether a measurement takes another sample, with SteadyCount steady
+  ones of Attempts. }
+function WantsAnotherSample(SteadyCount, Attempts: LongInt): Boolean;
+begin
+  if (SteadyCount >= SampleCount) or (Attempts >= MaximumSampleAttempts) then
+    Exit(False);
+  Result := (Attempts < SampleAttempts) or (SteadyCount = 0);
+end;
+
 procedure ReadReferenceBracketed(Reference: TFrequencySource; out Read: TBracketedRead);
 var
   Candidate: TBracketedRead;
@@ -370,7 +384,7 @@ begin
   SteadyCount := 0;
   Attempts := 0;
   HaveSteadiest := False;
-  while (SteadyCount < SampleCount) and (Attempts < SampleAttempts) do
+  while WantsAnotherSample(SteadyCount, Attempts) do
   begin
     Inc(Attempts);
     if not TakeSample(Reference, SampleMicroseconds, Sample) then
@@ -515,7 +529,7 @@ begin
   SteadyCount := 0;
   Attempts := 0;
   Fallback := 0;
-  while (SteadyCount < SampleCount) and (Attempts < SampleAttempts) do
+  while WantsAnotherSample(SteadyCount, Attempts) do
   begin
     Inc(Attempts);
     Rate := SampleLocalTimer(CounterHertz, LocalTimerMicroseconds div SampleCount, Steady);

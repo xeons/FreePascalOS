@@ -53,7 +53,7 @@ const
   there). }
 function IntervalTimerBusyWait(Microseconds: LongWord): Boolean;
 { The same countdown timed by the time stamp counter: Start brackets the
-  gate's rise (its ReferenceTicks 0), Finish the change of the output
+  count's last byte and the gate's rise (its ReferenceTicks 0), Finish the change of the output
   (from before the last read that saw it low to after the first that
   saw it high; its ReferenceTicks the count). Interrupts are off only
   around each read. False if the timer never got there. }
@@ -151,9 +151,11 @@ begin
   WritePortByte(SpeakerControlPort, Control);
   WritePortByte(ModeCommandPort, Channel2OneShotCommand);
   WritePortByte(Channel2DataPort, Byte(Count and $FF));
-  WritePortByte(Channel2DataPort, Byte((Count shr 8) and $FF));
+  { The 8254 counts from the gate's rise, QEMU's from the count's last
+    byte (it ignores the gate in mode 0): the bracket holds both. }
   WereEnabled := SaveAndDisableInterrupts;
   Start.CounterBefore := ReadTimeStampCounter;
+  WritePortByte(Channel2DataPort, Byte((Count shr 8) and $FF));
   WritePortByte(SpeakerControlPort, Control or SpeakerGateEnable);
   Start.CounterAfter := ReadTimeStampCounter;
   RestoreInterrupts(WereEnabled);

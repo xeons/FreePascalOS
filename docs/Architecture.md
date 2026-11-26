@@ -867,9 +867,12 @@ them between processors and changing their priorities.
   to another, each bracketed by counter reads with interrupts off: the
   reference's moment is the middle of the bracket, of four attempts the
   narrowest is kept, and a sample whose two half widths add up to more
-  than 0.1% of it is taken again (15 attempts at most; with none steady,
-  the steadiest counts). For the PIT the start is its gate's rise and
-  the end lies between the last poll that saw the output low and the
+  than 0.1% of it is taken again (15 attempts at most, 60 while none was
+  steady - under TCG on a busy host most PIT samples are held up 1.5 ms
+  somewhere in their polls; with none steady at all, the steadiest
+  counts). For the PIT the start bracket holds the count's last byte and
+  the gate's rise (the 8254 counts from the gate, QEMU from the count)
+  and the end lies between the last poll that saw the output low and the
   first that saw it high. Read one after the other, as before, a
   processor held up between the two reads (an SMI; under an emulator or
   a hypervisor a virtual processor that did not run) skewed the rate:
