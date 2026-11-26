@@ -18,7 +18,9 @@
 
 {
   Sample rate conversion: a polyphase windowed-sinc filter (Kaiser
-  window, 32 taps per phase), streaming.
+  window, 32 taps per phase when upsampling, proportionally more when
+  downsampling so the filter keeps its sharpness at the lower cut-off),
+  streaming.
 
   The output rate over the input rate, reduced, is Up / Down: output
   sample j lies at input time j * Down / Up, whose whole part picks the
@@ -29,7 +31,7 @@
   frequencies, so downsampling does not alias.
 
   Process takes interleaved frames and returns what can be computed so
-  far (the filter looks HalfTaps frames ahead); Flush returns the rest,
+  far (the filter looks half its taps ahead); Flush returns the rest,
   so the output has exactly ceil(InputFrames * Up / Down) frames.
 }
 unit Media.Resampler;
@@ -50,6 +52,7 @@ type
     FInputRate, FOutputRate, FChannels: Integer;
     FUp, FDown: Int64;
     FPhaseCount: Integer;
+    FHalfTaps, FTaps: Integer;
     FFilters: array of Single;
     { Pending input frames (interleaved); FBufferStart is the input frame
       number of the first. }
@@ -75,8 +78,9 @@ type
   end;
 
 const
+  { Half the taps at a cut-off of the input's Nyquist frequency. }
   ResamplerHalfTaps = 16;
-  ResamplerTaps = 2 * ResamplerHalfTaps;
+  ResamplerMaximumHalfTaps = 256;
   ResamplerMaximumPhases = 1024;
 
 implementation
@@ -130,6 +134,12 @@ begin
     FPhaseCount := FUp
   else
     FPhaseCount := ResamplerMaximumPhases;
+  FHalfTaps := ResamplerHalfTaps;
+  if OutputRate < InputRate then
+    FHalfTaps := (ResamplerHalfTaps * Int64(InputRate) + OutputRate - 1) div OutputRate;
+  if FHalfTaps > ResamplerMaximumHalfTaps then
+    FHalfTaps := ResamplerMaximumHalfTaps;
+  FTaps := 2 * FHalfTaps;
   BuildFilters;
   Reset;
 end;
@@ -145,16 +155,16 @@ begin
     Cutoff := 0.95 * FOutputRate / FInputRate
   else
     Cutoff := 0.95;
-  SetLength(FFilters, FPhaseCount * ResamplerTaps);
+  SetLength(FFilters, FPhaseCount * FTaps);
   for Phase := 0 to FPhaseCount - 1 do
   begin
     Sum := 0;
-    for Tap := 0 to ResamplerTaps - 1 do
+    for Tap := 0 to FTaps - 1 do
     begin
       { The distance from the output time (frame n + Phase / FPhaseCount)
         back to input frame n - HalfTaps + 1 + Tap. }
-      Distance := (ResamplerHalfTaps - 1 - Tap) + Phase / FPhaseCount;
-      Ratio := Distance / ResamplerHalfTaps;
+      Distance := (FHalfTaps - 1 - Tap) + Phase / FPhaseCount;
+      Ratio := Distance / FHalfTaps;
       if Abs(Ratio) >= 1 then
         Window := 0
       else
@@ -164,13 +174,13 @@ begin
       else
         Value := Sin(Pi * Cutoff * Distance) / (Pi * Distance);
       Value := Value * Window;
-      FFilters[Phase * ResamplerTaps + Tap] := Value;
+      FFilters[Phase * FTaps + Tap] := Value;
       Sum := Sum + Value;
     end;
     { Unity gain at DC for every phase. }
     if Sum <> 0 then
-      for Tap := 0 to ResamplerTaps - 1 do
-        FFilters[Phase * ResamplerTaps + Tap] := FFilters[Phase * ResamplerTaps + Tap] / Sum;
+      for Tap := 0 to FTaps - 1 do
+        FFilters[Phase * FTaps + Tap] := FFilters[Phase * FTaps + Tap] / Sum;
   end;
 end;
 
@@ -178,10 +188,10 @@ procedure TResampler.Reset;
 begin
   { HalfTaps - 1 frames of silence before the first input frame, so the
     first output frame is centred on it. }
-  FBufferFrames := ResamplerHalfTaps - 1;
+  FBufferFrames := FHalfTaps - 1;
   SetLength(FBuffer, FBufferFrames * FChannels);
   FillChar(FBuffer[0], Length(FBuffer) * SizeOf(Single), 0);
-  FBufferStart := -(ResamplerHalfTaps - 1);
+  FBufferStart := -(FHalfTaps - 1);
   FPosition := 0;
   FInputTotal := 0;
   FOutputTotal := 0;
@@ -218,19 +228,19 @@ begin
   begin
     Frame := FPosition div FUp;
     { The last input frame the filter reads must be buffered. }
-    if Frame + ResamplerHalfTaps > FBufferStart + FBufferFrames then
+    if Frame + FHalfTaps >= FBufferStart + FBufferFrames then
       Break;
     if FPhaseCount = FUp then
       Phase := FPosition mod FUp
     else
       Phase := ((FPosition mod FUp) * FPhaseCount + FUp div 2) div FUp;
-    FirstFrame := Frame - ResamplerHalfTaps + 1;
+    FirstFrame := Frame - FHalfTaps + 1;
     if Phase >= FPhaseCount then
     begin
       { Rounded up to the next frame's phase 0. }
       Phase := 0;
       Inc(FirstFrame);
-      if FirstFrame + ResamplerTaps > FBufferStart + FBufferFrames then
+      if FirstFrame + FTaps > FBufferStart + FBufferFrames then
         Break;
     end;
     if Count >= Capacity then
@@ -238,12 +248,12 @@ begin
       Capacity := Capacity * 2 + 256;
       SetLength(Result, Capacity * FChannels);
     end;
-    Filter := @FFilters[Phase * ResamplerTaps];
+    Filter := @FFilters[Phase * FTaps];
     for Channel := 0 to FChannels - 1 do
     begin
       Source := @FBuffer[(FirstFrame - FBufferStart) * FChannels + Channel];
       Sum := 0;
-      for Tap := 0 to ResamplerTaps - 1 do
+      for Tap := 0 to FTaps - 1 do
       begin
         Sum := Sum + Filter[Tap] * Source^;
         Inc(Source, FChannels);
@@ -256,7 +266,7 @@ begin
   end;
   SetLength(Result, Count * FChannels);
   { Frames no later output reads go. }
-  Discard := FPosition div FUp - ResamplerHalfTaps + 1 - FBufferStart;
+  Discard := FPosition div FUp - FHalfTaps + 1 - FBufferStart;
   if Discard > FBufferFrames then
     Discard := FBufferFrames;
   if Discard > 0 then
@@ -279,7 +289,7 @@ var
   Expected: Int64;
 begin
   Expected := (FInputTotal * FUp + FDown - 1) div FDown;
-  Append(nil, 0, ResamplerTaps + 1);
+  Append(nil, 0, FTaps + 1);
   Result := Produce(Expected);
 end;
 

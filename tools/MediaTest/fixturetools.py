@@ -94,6 +94,14 @@ def test_signal(rate, channels, seconds, seed=1):
     return samples
 
 
+def channel_mask(channels):
+    """The WAVE speaker mask of the usual layout of a channel count (the
+    order Media.Frames keeps: front left, right, centre, LFE, back left,
+    right, side left, right; 7 channels have a back centre)."""
+    masks = {1: 0x4, 2: 0x3, 3: 0x7, 4: 0x33, 5: 0x37, 6: 0x3F, 7: 0x70F, 8: 0x63F}
+    return masks.get(channels, (1 << channels) - 1)
+
+
 def write_wav(path, rate, channels, samples, bits=16, float_samples=False, extensible=False):
     """A WAV file of interleaved floats (-1..1) as bits-wide PCM or floats."""
     data = bytearray()
@@ -115,7 +123,7 @@ def write_wav(path, rate, channels, samples, bits=16, float_samples=False, exten
     if extensible:
         guid_tail = bytes([0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71])
         fmt = struct.pack("<HHIIHHHHI", 0xFFFE, channels, rate, rate * block_align, block_align, bits, 22, bits,
-                          (1 << channels) - 1) + struct.pack("<H", tag) + guid_tail
+                          channel_mask(channels)) + struct.pack("<H", tag) + guid_tail
     else:
         fmt = struct.pack("<HHIIHH", tag, channels, rate, rate * block_align, block_align, bits)
     body = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
