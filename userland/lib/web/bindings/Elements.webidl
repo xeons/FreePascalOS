@@ -65,3 +65,53 @@ interface Element : Node {
 Element includes ParentNode;
 Element includes NonDocumentTypeChildNode;
 Element includes ChildNode;
+
+// ARIAMixin (WAI-ARIA 1.3 10.1): role and the aria-* attributes as
+// nullable reflected strings (the element references are not here).
+interface mixin ARIAMixin {
+  [Reflect] attribute DOMString? role;
+  [Reflect=aria-atomic] attribute DOMString? ariaAtomic;
+  [Reflect=aria-autocomplete] attribute DOMString? ariaAutoComplete;
+  [Reflect=aria-braillelabel] attribute DOMString? ariaBrailleLabel;
+  [Reflect=aria-brailleroledescription] attribute DOMString? ariaBrailleRoleDescription;
+  [Reflect=aria-busy] attribute DOMString? ariaBusy;
+  [Reflect=aria-checked] attribute DOMString? ariaChecked;
+  [Reflect=aria-colcount] attribute DOMString? ariaColCount;
+  [Reflect=aria-colindex] attribute DOMString? ariaColIndex;
+  [Reflect=aria-colindextext] attribute DOMString? ariaColIndexText;
+  [Reflect=aria-colspan] attribute DOMString? ariaColSpan;
+  [Reflect=aria-current] attribute DOMString? ariaCurrent;
+  [Reflect=aria-description] attribute DOMString? ariaDescription;
+  [Reflect=aria-disabled] attribute DOMString? ariaDisabled;
+  [Reflect=aria-expanded] attribute DOMString? ariaExpanded;
+  [Reflect=aria-haspopup] attribute DOMString? ariaHasPopup;
+  [Reflect=aria-hidden] attribute DOMString? ariaHidden;
+  [Reflect=aria-invalid] attribute DOMString? ariaInvalid;
+  [Reflect=aria-keyshortcuts] attribute DOMString? ariaKeyShortcuts;
+  [Reflect=aria-label] attribute DOMString? ariaLabel;
+  [Reflect=aria-level] attribute DOMString? ariaLevel;
+  [Reflect=aria-live] attribute DOMString? ariaLive;
+  [Reflect=aria-modal] attribute DOMString? ariaModal;
+  [Reflect=aria-multiline] attribute DOMString? ariaMultiLine;
+  [Reflect=aria-multiselectable] attribute DOMString? ariaMultiSelectable;
+  [Reflect=aria-orientation] attribute DOMString? ariaOrientation;
+  [Reflect=aria-placeholder] attribute DOMString? ariaPlaceholder;
+  [Reflect=aria-posinset] attribute DOMString? ariaPosInSet;
+  [Reflect=aria-pressed] attribute DOMString? ariaPressed;
+  [Reflect=aria-readonly] attribute DOMString? ariaReadOnly;
+  [Reflect=aria-relevant] attribute DOMString? ariaRelevant;
+  [Reflect=aria-required] attribute DOMString? ariaRequired;
+  [Reflect=aria-roledescription] attribute DOMString? ariaRoleDescription;
+  [Reflect=aria-rowcount] attribute DOMString? ariaRowCount;
+  [Reflect=aria-rowindex] attribute DOMString? ariaRowIndex;
+  [Reflect=aria-rowindextext] attribute DOMString? ariaRowIndexText;
+  [Reflect=aria-rowspan] attribute DOMString? ariaRowSpan;
+  [Reflect=aria-selected] attribute DOMString? ariaSelected;
+  [Reflect=aria-setsize] attribute DOMString? ariaSetSize;
+  [Reflect=aria-sort] attribute DOMString? ariaSort;
+  [Reflect=aria-valuemax] attribute DOMString? ariaValueMax;
+  [Reflect=aria-valuemin] attribute DOMString? ariaValueMin;
+  [Reflect=aria-valuenow] attribute DOMString? ariaValueNow;
+  [Reflect=aria-valuetext] attribute DOMString? ariaValueText;
+};
+Element includes ARIAMixin;

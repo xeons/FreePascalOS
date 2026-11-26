@@ -60,7 +60,10 @@ type
 
   TBindingMemberKind = (mkAttribute, mkOperation, mkConstant, mkReflected, mkEventHandler, mkStringifier);
 
-  TBindingReflectKind = (rkNone, rkString, rkUrl, rkBoolean, rkLong, rkUnsignedLong, rkDouble, rkEnum);
+  { rkNullableString: a DOMString? attribute, null when the content
+    attribute is absent, removing it when set to null. }
+  TBindingReflectKind = (rkNone, rkString, rkUrl, rkBoolean, rkLong, rkUnsignedLong, rkDouble, rkEnum,
+    rkNullableString);
 
 const
   { TBindingType.Flags }

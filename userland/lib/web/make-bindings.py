@@ -769,6 +769,8 @@ class Model:
                 row['reflect'] = 'rkUnsignedLong'
             elif type_name == 'double':
                 row['reflect'] = 'rkDouble'
+            elif member.type.nullable:
+                row['reflect'] = 'rkNullableString'
             else:
                 row['reflect'] = 'rkString'
             row['value'] = constant_value(attributes.get('ReflectDefault', '0'))

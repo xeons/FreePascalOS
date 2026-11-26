@@ -229,3 +229,10 @@ var imageElement = document.createElement("img");
 imageElement.setAttribute("referrerpolicy", "bogus");
 check("referrerPolicy is an enumerated attribute", imageElement.referrerPolicy === "" &&
   (imageElement.referrerPolicy = "origin", imageElement.getAttribute("referrerpolicy") === "origin"));
+var ariaElement = document.createElement("div");
+var ariaBefore = [ariaElement.ariaLabel, ariaElement.role];
+ariaElement.ariaLabel = "label";
+var ariaSet = ariaElement.getAttribute("aria-label");
+ariaElement.ariaLabel = null;
+check("ARIA attributes reflect as nullable strings", ariaBefore[0] === null && ariaBefore[1] === null &&
+  ariaSet === "label" && !ariaElement.hasAttribute("aria-label") && ariaElement.ariaLabel === null);

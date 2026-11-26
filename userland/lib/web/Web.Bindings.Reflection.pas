@@ -186,6 +186,11 @@ begin
         else
           Result := Context.TextValue(string(Member^.Invalid));
       end;
+    rkNullableString:
+      if Index < 0 then
+        Result := JsNull
+      else
+        Result := Context.TextValue(Text);
   else
     Result := Context.TextValue(Text);
   end;
@@ -217,6 +222,11 @@ begin
       end;
     rkDouble:
       Element.SetAttributeAtom(Name, NamespaceNone, NumberToString(Value.Number));
+    rkNullableString:
+      if Value.Kind in [bvMissing, bvNull, bvUndefined] then
+        Element.RemoveAttributeAtom(Name)
+      else
+        Element.SetAttributeAtom(Name, NamespaceNone, Value.Text);
   else
     Element.SetAttributeAtom(Name, NamespaceNone, Value.Text);
   end;
