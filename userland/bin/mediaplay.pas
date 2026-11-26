@@ -48,6 +48,7 @@ uses
   Media.Errors,
   Media.Demuxers,
   Media.Containers,
+  Video.MediaDecoders,
   MediaPlay.Info,
   MediaPlay.Checksums,
   MediaPlay.Playback;

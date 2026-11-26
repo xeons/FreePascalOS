@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..448] of TCommandTest = (
+  CommandTests: array[0..449] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -860,7 +860,29 @@ const
       track, its decoding checksummed (16-bit samples decode to floats
       and back exactly, so the MD5 is the data chunk's), and a file that
       is no media file refused. }
-    (Command: 'tone -o mp.wav -r 44100 440 0.5 && mediaplay -i mp.wav && mediaplay -k mp.wav > k.txt; cut -d " " -f 1-5 k.txt; cut -d " " -f 6 k.txt > k1; tail -c 88200 mp.wav | md5sum | cut -d " " -f 1 > k2; diff k1 k2 && echo same; mediaplay -i /etc/passwd 2>&1; echo $?'; ExpectedOutput: 'mp.wav: wav, 0:00:00.500, 1 track(s)'#10'  track 0: audio pcm [pcm], 44100 Hz, 2 channel(s), 16 bits, 0:00:00.500'#10'audio 0 22050 44100 2'#10'same'#10'mediaplay: /etc/passwd: not a media file this system reads'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'tone -o mp.wav -r 44100 440 0.5 && mediaplay -i mp.wav && mediaplay -k mp.wav > k.txt; cut -d " " -f 1-5 k.txt; cut -d " " -f 6 k.txt > k1; tail -c 88200 mp.wav | md5sum | cut -d " " -f 1 > k2; diff k1 k2 && echo same; mediaplay -i /etc/passwd 2>&1; echo $?'; ExpectedOutput: 'mp.wav: wav, 0:00:00.500, 1 track(s)'#10'  track 0: audio pcm [pcm], 44100 Hz, 2 channel(s), 16 bits, 0:00:00.500'#10'audio 0 22050 44100 2'#10'same'#10'mediaplay: /etc/passwd: not a media file this system reads'#10'1'#10; ExpectedStatus: 0),
+    { libvideo through mediaplay: a VP9 WebM file (32x32, 3 frames,
+      made by vpxenc and ffmpeg) decoded picture by picture; the MD5s
+      are vpxdec's (and ffmpeg's framemd5). }
+    (Command: 'echo ' +
+      'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAQuEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZU' +
+      'rmtTrIHGTbuMU6uEElTDZ1OsggEfTbuMU6uEHFO7a1OsggQY7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmoCrXsYMPQkBNgIRM' +
+      'YXZmV0GETGF2ZkSJiEBZAAAAAAAAFlSua9SuAQAAAAAAAEvXgQFzxYgAAAAAAAAAAZyBACK1nIN1bmSIgQCGhVZfVlA5g4EBI+OD' +
+      'hAH8oFXgjbCBILqBIFWwhFW5gQFV7oEA7AEAAAAAAAACAAASVMNntXNzsmPAi2PFiAAAAAAAAAABZ8ihRaOIRFVSQVRJT05Eh5Mw' +
+      'MDowMDowMC4xMDAwMDAwMDAAH0O2dUK554EAo0KIgQAAgIJJg0IAAfAB9iY4JBwYQgABkG7md66Ruq7asKPq+4uH8S8PLGV06gfY' +
+      'AAB3f//6Wf17dEC5QtlIC2CipCde2b+FNttl3wdXx4DNbBGOirWZjOpoYqbSBjJstAi7nN7wLlLcjZ5gU/V9FKcYsE24+/dgoN2N' +
+      'bRbD8L+QAQbp8FPIyzT8+Y0V9eX6bjF3DavmC+JiWj/jpZ3vGNldRdXdjamaOPQNXpNz/gW2IT+uGKYLDAGgPRRtY5UGITJULufL' +
+      'AUdbhE9+F4gVDJ/eX/ToAlFNx5pTn8WAgYOulQ/VtiQYsIIrbUU65xUZsBsUBPQ2Sj/oKqXmg3whbbwWTDuaYl8IJKtsPfMD9beL' +
+      'A3Gc4LrHBrSliaRPo9GM9NmOr8UXC1hV/A8yuQbGRKNaa1QsKk+kaPVpZI4BWiUshGX/PKRK8YGKbZ2QHwx85RrSgPtfuzeQohxm' +
+      'CoyZeFo3kArjwIKYrkzw0p8b+7NUVadHlw51aViPIXbemqtRQj+YIcM/7y9FZgtP9ppuTS2/mUs8s/d9R09L79NfFgwKQOCDcuPo' +
+      'bJyM+nkLUHl2q5Z8ERd7ngaTCgMpV67YVrgy00DnXMwT5bl9ibrAhRWWpQbmpHQJ0X+ZHnOg5QvKmLsF4z+3B8r13INJHxnSEfHM' +
+      'lX2p+HWI04ZozfO6yOgpT1big7vDinJdoc/1ugcCEy9PgTviz/IozNJFGoOCs7XkIK1Yu+sDJ9+F61/9whE8ZvIwBQGIhzyz4Y4X' +
+      'Bg7W9ExXTYxXb6ykd7XQ0ZKFPMM88ZWwwJFqSl/p9+Z3hv5J89pUjzVz/xtwwiiZ229UWFdZv8x+8PKKh4PWXYz2K3cMsz5wRpo8' +
+      'TR4Ao5SBACEAhgBAkpxMSUAAA2AAAHUsgKOTgQBDAIYAQJKcTErAAANgAABDQBxTu2uRu4+zgQC3iveBAfGCAVnwgQM=' +
+      ' | base64 -d > v.webm && mediaplay -k v.webm'; ExpectedOutput:
+      'video 0 0 0 32x32 aa01e3b8d00875ca0ba73152b5adb154'#10'video 0 1 33 32x32 069dcb77983072d6ed0a28fee555ae3e'#10 +
+      'video 0 2 67 32x32 069dcb77983072d6ed0a28fee555ae3e'#10; ExpectedStatus: 0)
   );
 
 var
