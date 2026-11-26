@@ -171,6 +171,9 @@ type
     function EvaluateCode(const Source, FileName: string; Builtin: Boolean): TJsValue;
     procedure MarkRoots(Tracer: TJsTracer);
     procedure RaiseException;
+    { Raises EJsError when the realm cannot be entered (detached, with
+      nothing running in it). }
+    procedure CheckEnterable;
     function GetMemoryLimit: Int64;
     procedure SetMemoryLimit(Value: Int64);
     procedure FinishCall;
@@ -190,8 +193,11 @@ type
     constructor CreateSharing(Parent: TJsEngine; const Options: TJsEngineOptions);
     destructor Destroy; override;
     { A sharing engine's realm is no longer used (its window closed): its
-      roots stop being marked, so what nothing else holds is collected;
-      its functions still reachable run in their callers' realms. }
+      roots stop being marked once nothing runs in it (a script that
+      closed its own window finishes first), so what nothing else holds
+      is collected; its functions still reachable run in their callers'
+      realms, and calls, scripts and modules can no longer start in it
+      (they throw; jobs queued for it are dropped). }
     procedure Detach;
     property Detached: Boolean read FDetached;
     class function DefaultOptions: TJsEngineOptions;
@@ -407,8 +413,6 @@ begin
   if FDetached or FOwnsRuntime then
     Exit;
   FDetached := True;
-  if not FRuntimeGone then
-    FRuntime.Heap.RemoveRootProvider(@MarkRoots);
   FRealm.Detach;
 end;
 
@@ -435,6 +439,7 @@ begin
       { Freed before its parent: the cells stay in the runtime, so the
         realm and host classes they point to must too. }
       Detach;
+      FRuntime.Heap.RemoveRootProvider(@MarkRoots);
       if FParent <> nil then
         FParent.AdoptOrphan(Self);
       FRealm := nil;
@@ -477,6 +482,9 @@ procedure TJsEngine.MarkRoots(Tracer: TJsTracer);
 var
   Index: Integer;
 begin
+  { A detached engine's roots go once nothing runs in its realm. }
+  if FDetached and not FRealm.IsRunning then
+    Exit;
   if Length(FRoots) > 0 then
     Tracer.MarkValues(@FRoots[0], Length(FRoots));
   for Index := 0 to High(FHostClasses) do
@@ -506,6 +514,18 @@ begin
     FRuntime.TakeException;
   end;
   Result := 'Uncaught ' + InspectNested(FRealm, Value);
+end;
+
+procedure TJsEngine.CheckEnterable;
+var
+  Error: EJsError;
+begin
+  if FRealm.CanEnter then
+    Exit;
+  Error := EJsError.Create('Error: the realm was detached: its window is closed');
+  Error.ErrorName := 'Error';
+  Error.StackText := Error.Message;
+  raise Error;
 end;
 
 procedure TJsEngine.FinishCall;
@@ -550,6 +570,7 @@ var
   Code: TJsCode;
   Error: EJsError;
 begin
+  CheckEnterable;
   try
     Code := CompileScript(FRealm, UTF8Decode(Source), FileName);
     if Builtin and (Code.Source <> nil) then
@@ -834,6 +855,7 @@ var
   Handle: Integer;
   Promise: TJsPromise;
 begin
+  CheckEnterable;
   Result := ModuleLoaderOf(FRealm).EvaluateSource(Source, Key);
   if Result = JsException then
     RaiseException;
@@ -858,6 +880,7 @@ end;
 
 function TJsEngine.ImportModule(const Specifier: string; const ReferrerKey: string): TJsValue;
 begin
+  CheckEnterable;
   Result := ModuleLoaderOf(FRealm).Import(Specifier, ReferrerKey, False);
 end;
 

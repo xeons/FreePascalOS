@@ -277,9 +277,10 @@ type
     LengthKey: TJsValue;
     PrototypeKey: TJsValue;
     ConstructorKey: TJsValue;
-    { A realm whose engine went while others share its runtime: its
-      roots are no longer marked and its functions run in the caller's
-      realm. }
+    { A realm whose engine went while others share its runtime: once
+      what runs in it returns, its roots are no longer marked, its
+      functions run in the caller's realm and it cannot be entered
+      again (IsRunning). }
     Detached: Boolean;
     { The shared runtime was freed before this realm (nothing of the heap
       may be touched). }
@@ -296,6 +297,16 @@ type
     { The realm's engine goes but its runtime stays (other realms use it):
       functions of this realm may still be reachable from them. }
     procedure Detach; virtual;
+    { Whether code runs in this realm now (frames or a native call on
+      its stack): a realm detached by what it runs, an iframe's script
+      removing its own iframe, keeps its roots until it returns. }
+    function IsRunning: Boolean; virtual;
+    { Whether a call may start in this realm: False once it is detached
+      and nothing runs in it (its globals and built-ins may be gone). }
+    function CanEnter: Boolean; inline;
+    { The exception for a call into a realm that cannot be entered: a
+      string, nothing of the realm is touched. }
+    function RefuseEntry: TJsValue;
     { Calls F (any value: not callable throws a TypeError). }
     function Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue; virtual; abstract;
     function Construct(F: TJsValue; Args: PJsValue; Count: Integer; NewTarget: TJsValue): TJsValue; virtual; abstract;
@@ -1632,8 +1643,23 @@ end;
 
 procedure TJsRealm.MarkRoots(Tracer: TJsTracer);
 begin
-  if not Detached then
+  if not Detached or IsRunning then
     TraceRealm(Tracer);
+end;
+
+function TJsRealm.IsRunning: Boolean;
+begin
+  Result := False;
+end;
+
+function TJsRealm.CanEnter: Boolean;
+begin
+  Result := not Detached or IsRunning;
+end;
+
+function TJsRealm.RefuseEntry: TJsValue;
+begin
+  Result := Throw(NewString('The realm was detached: its window is closed'));
 end;
 
 procedure TJsRealm.Detach;
@@ -1702,6 +1728,9 @@ procedure TJsRealm.EnqueueJob(Handler: TJsJobHandler; V0, V1, V2, V3: TJsValue);
 var
   Index: Integer;
 begin
+  { A detached realm's queue is not marked and never runs. }
+  if Detached then
+    Exit;
   if FJobHead + FJobCount >= Length(FJobs) then
   begin
     if FJobHead > 0 then

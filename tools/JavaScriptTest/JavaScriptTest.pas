@@ -507,6 +507,62 @@ begin
   end;
 end;
 
+{ A frame removed by its own script: the realm is detached while it
+  runs, so it keeps its roots until it returns (globals, lexicals and
+  built-ins collected under the running script read freed memory); once
+  it returned it cannot be entered again, its jobs are dropped, and the
+  functions the parent kept run in the parent's realm. }
+var
+  DetachingEngine: TJsEngine;
+
+function NativeDetachAndCollect(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+begin
+  DetachingEngine.Detach;
+  DetachingEngine.CollectGarbage;
+  DetachingEngine.CollectGarbage;
+  Result := JsUndefined;
+end;
+
+procedure TestDetachedRealm;
+var
+  Parent, Child: TJsEngine;
+  Value, Kept: TJsValue;
+  ErrorText: string;
+  Handle: Integer;
+begin
+  Parent := TJsEngine.Create;
+  Child := TJsEngine.CreateSharing(Parent, TJsEngine.DefaultOptions);
+  try
+    DetachingEngine := Child;
+    Child.DefineFunction(Child.GlobalObject, 'detachAndCollect', @NativeDetachAndCollect, 0);
+    Value := Child.Evaluate('var seven = 7; let kept = { a: [1, 2, 3] };' +
+      'function kept2() { return [1, 2].map(function (x) { return x * 2; }).join(); }' +
+      'function work() { var local = { b: "x" + seven }; detachAndCollect();' +
+      '  var s = 0; for (var i = 0; i < 2000; i++) { s += kept.a[1] + local.b.length; var t = { i: i }; }' +
+      '  Promise.resolve().then(function () { seven = 0; });' +
+      '  return s + seven + String(Math.max(1, 2)) + [1, 2].map(function (x) { return x; }).length; }' +
+      'work()');
+    Check(Child.ToText(Value) = '800722', 'api: a realm detached by its own script finishes it');
+    Kept := Child.GetProperty(JsObjectValue(Child.GlobalObject), 'kept2');
+    Handle := Parent.Protect(Kept);
+    Child.CollectGarbage;
+    Check(Child.PendingJobs = 0, 'api: a detached realm drops its jobs');
+    Check(Child.Realm.Call(Kept, JsUndefined, nil, 0) = JsException, 'api: a detached realm cannot be entered');
+    Child.Runtime.TakeException;
+    Check(not Child.TryEvaluate('1', 'detached', Value, ErrorText), 'api: no scripts in a detached realm');
+    Value := Parent.Call(Parent.Protected(Handle), JsUndefined, []);
+    Check(Parent.ToText(Value) = '2,4', 'api: a detached realm''s function runs in its caller''s realm');
+    Parent.Unprotect(Handle);
+    Child.Free;
+    Child := nil;
+    Parent.CollectGarbage;
+  finally
+    Child.Free;
+    Parent.Free;
+  end;
+end;
+
 { ArrayBuffers made and read from Pascal without copies. }
 procedure TestBinaryData;
 var
@@ -744,6 +800,7 @@ begin
     TestBinaryData;
     TestModuleLoading;
     TestSharedEngineModules;
+    TestDetachedRealm;
     Files.Clear;
     if FindFirst(BenchmarkDirectory + '*.js', faAnyFile, Search) = 0 then
     begin

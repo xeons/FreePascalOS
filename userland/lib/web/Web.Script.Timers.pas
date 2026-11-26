@@ -167,7 +167,7 @@ var
   SavedNesting: Integer;
 begin
   Index := IndexOf(Id);
-  if Index < 0 then
+  if (Index < 0) or not FContext.Engine.Realm.CanEnter then
     Exit;
   Timer := FTimers[Index];
   if not Timer.Repeating then

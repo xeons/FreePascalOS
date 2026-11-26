@@ -349,6 +349,9 @@ var
   SavedScript: TElement;
   Name: string;
 begin
+  { A closed window runs no more scripts. }
+  if not Engine.Realm.CanEnter then
+    Exit;
   SavedScript := CurrentScript;
   CurrentScript := Element;
   Inc(FScriptCount);
