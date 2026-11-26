@@ -211,7 +211,10 @@ begin
     Got := Actual[Position];
     DurationWrong := False;
     if Wanted.HasDuration then
-      if Tolerance = 0 then
+      if (Tolerance = 0) and (Index = Last) then
+        { The end of the presentation (an edit list) may cut the last. }
+        DurationWrong := (Got.Duration > Wanted.Duration) or (Got.Duration < 0)
+      else if Tolerance = 0 then
         DurationWrong := Got.Duration <> Wanted.Duration
       else
         { Rounded times; the last block's duration is the file's own,
@@ -282,6 +285,11 @@ begin
           Good := Good and Track.PcmFloat and (Track.BitsPerSample = 32);
         CompareSetup := (Fields[7] <> '-') and ((Track.Codec in [codecOpus, codecAv1, codecH264, codecAac])
           or ((Track.Codec = codecFlac) and (FormatWanted <> 'matroska')));
+        { An av1C without configuration OBUs (a fragmented file's, written
+          before the encoder's first frame): FFmpeg takes the sequence
+          header from the stream instead. }
+        if (Track.Codec = codecAv1) and (Length(Track.Headers) = 1) and (Length(Track.Headers[0]) <= 4) then
+          CompareSetup := False;
         if CompareSetup then
           Good := Good and (Length(Track.Headers) >= 1) and (MD5OfBytes(Track.Headers[0]) = Fields[7]);
         if Track.Codec = codecFlac then

@@ -435,7 +435,10 @@ begin
     if (Index = Count - 1) and (DiscardPadding > 0) then
     begin
       Packet.TrimEnd := DiscardPadding * Info.TrimRate div 1000000000;
-      Dec(Packet.Duration, (DiscardPadding + FTimestampScale div 2) div FTimestampScale);
+      { A BlockDuration given is already the shortened one (as FFmpeg
+        writes it); a duration from the codec is not. }
+      if BlockDuration = 0 then
+        Dec(Packet.Duration, (DiscardPadding + FTimestampScale div 2) div FTimestampScale);
       if Packet.Duration < 0 then
         Packet.Duration := 0;
     end;
