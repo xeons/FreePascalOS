@@ -47,6 +47,14 @@ how the existing pieces fit together.
 
 ## Kernel core
 
+- [ ] Boot self tests that can fail on a heavily loaded host under TCG
+      (seen with ~24 busy loops plus several QEMUs): thread exit stack
+      release (fixed 100 ms sleep against the global free page count),
+      shared lock readers holding it together, the clock page's uptime and
+      wall clock against the kernel's, unmounting the memory volume, the
+      HPET broadcast ending late, "sleep took far too long", an idle
+      processor refusing a steal; make each deterministic or tolerant of
+      vCPU stalls without losing what it catches
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
