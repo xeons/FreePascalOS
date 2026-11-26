@@ -158,6 +158,10 @@ const
   KernelName = 'FreePascalOS';
   KernelVersion = '0.1.0';
   PhaseOneThreadPriority = DefaultThreadPriority + 4;
+  { Above every user thread, boosts included (Kernel.PriorityBoosts):
+    relieving memory pressure must never wait for the program causing
+    it. }
+  MemoryPressureThreadPriority = 17;
 
 procedure ValidateBootInformation(BootInformation: PBootInformation);
 begin
@@ -386,7 +390,7 @@ begin
   StartAcpiEvents;
   if CreateSystemThread(@RunBlockCacheWriter, nil, PhaseOneThreadPriority, 'CacheWriter', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the cache writer', 0, 0, 0, 0);
-  if CreateSystemThread(@RunMemoryPressureWatcher, nil, PhaseOneThreadPriority, 'MemoryPressure', False) = nil then
+  if CreateSystemThread(@RunMemoryPressureWatcher, nil, MemoryPressureThreadPriority, 'MemoryPressure', False) = nil then
     KernelPanicWithCode(PanicInitializationFailed, 'could not create the memory pressure thread', 0, 0, 0, 0);
   if (XhciControllerCount > 0) and
      (CreateSystemThread(@RunUsbPortWatcher, nil, PhaseOneThreadPriority, 'UsbPorts', False) = nil) then

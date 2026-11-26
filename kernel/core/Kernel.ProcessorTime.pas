@@ -81,7 +81,8 @@ implementation
 uses
   Kernel.PriorityLevel,
   Kernel.Clock,
-  Kernel.ReadyQueues;
+  Kernel.ReadyQueues,
+  Kernel.SchedulingGroups;
 
 { Time from Since to Now, never negative: the counters of the processors
   run together, but one may read a few cycles behind another. }
@@ -102,6 +103,7 @@ begin
   Processor^.RunningSince := Now;
   Thread := Processor^.RunningThread;
   Thread^.RunNanoseconds := Thread^.RunNanoseconds + Elapsed;
+  ChargeSchedulingGroup(Thread^.SchedulingGroup, Elapsed, Now);
   if Thread = Processor^.IdleThread then
     Processor^.IdleNanoseconds := Processor^.IdleNanoseconds + Elapsed
   else

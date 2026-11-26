@@ -55,6 +55,11 @@ uses
   Processes.NodeName,
   Processes.ThreadNames,
   Processes.ModuleCalls,
+  Processes.PriorityClassCalls,
+  Processes.JobCalls,
+  Processes.Jobs,
+  Kernel.PriorityClasses,
+  Memory.CommitCharge,
   Runtime.Memory,
   Runtime.Text,
   Abi.SystemCalls,
@@ -323,6 +328,8 @@ begin
   Startup.ProcessCountLimit := Caller^.ProcessCountLimit;
   Startup.OomScoreAdjust := Caller^.OomScoreAdjust;
   Startup.Restrictions := Caller^.Restrictions;
+  Startup.PriorityClass := InheritedPriorityClass(Caller^.PriorityClass);
+  Startup.Job := Caller^.Job;
   ReleaseMutex(Caller^.Lock);
   Error := ErrorNone;
   if (Creation.Flags and ProcessPassHandles) <> 0 then
@@ -953,6 +960,11 @@ begin
     CallWaitEventPoll: Result := PerformWaitEventPoll(Int64(Argument0), Argument1, Argument2, Int64(Argument3));
     CallCreateWatchGroup: Result := PerformCreateWatchGroup(Argument0);
     CallChangeGroupWatch: Result := PerformChangeGroupWatch(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallSetPriorityClass: Result := PerformSetPriorityClass(Argument0, Argument1);
+    CallCreateJob: Result := PerformCreateJob(Argument0);
+    CallAssignProcessToJob: Result := PerformAssignProcessToJob(Int64(Argument0), Int64(Argument1));
+    CallSetJobLimit: Result := PerformSetJobLimit(Int64(Argument0), Argument1, Argument2);
+    CallGetJobInformation: Result := PerformGetJobInformation(Int64(Argument0), Argument1);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -1042,6 +1054,11 @@ end;
 
 procedure InitializeSystemCalls;
 begin
+  InitializeJobs;
+  { Pages below the critical watermark only for the kernel and the
+    essential processes; commitments within the system's limit. }
+  SetReserveAccessQuery(@CurrentThreadMayUseMemoryReserve);
+  InitializeSystemCommitLimit;
   InitializeUserProcesses;
   InitializeProcessTermination;
   InitializeThreadCalls;

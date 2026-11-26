@@ -27,7 +27,10 @@
   file holds them: a library nobody runs any more, pages of a file
   unmapped long ago that an image section keeps). Hard, mapped pages go
   too: their mappings are removed (Processes.MappedFileMappings) and the
-  next touch reads them again.
+  next touch reads them again - but only as many as the thrash guard
+  allows (Memory.ThrashGuard: a few a second), so a program that keeps
+  asking for memory is ended for it rather than every program being
+  made to read its code from disk again and again.
 
   Each mapped file is looked at from where the last pass stopped (its
   eviction cursor), so the pages taken rotate through the file. The
@@ -48,12 +51,22 @@ procedure InitializeMappedFileEviction;
 { Frees up to PagesWanted pages of mapped files; returns how many it
   freed. Passive level. }
 function EvictMappedFilePages(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord;
+{ Mapped pages the thrash guard kept from being evicted, since start. }
+function ThrashGuardRefusedPages: QWord;
 
 implementation
 
 uses
+  Kernel.Clock,
+  Memory.PhysicalPages,
+  Memory.ThrashGuard,
   Processes.MappedFiles,
   Processes.MappedFileMappings;
+
+var
+  { Used only by the shrinker, which Memory.Pressure runs one at a time. }
+  Guard: TThrashGuard;
+  GuardReady: Boolean = False;
 
 const
   CandidateBatch = 64;
@@ -111,11 +124,43 @@ begin
   FreeMappedFileList(Files, Count);
 end;
 
+procedure EnsureGuard;
+var
+  Physical: TPhysicalMemoryStatistics;
+begin
+  if GuardReady then
+    Exit;
+  GetPhysicalMemoryStatistics(Physical);
+  InitializeThrashGuard(Guard, ThrashGuardRate(Physical.TotalUsablePages), ClockNanoseconds);
+  GuardReady := True;
+end;
+
+{ Mapped pages, within what the thrash guard grants. }
+function EvictMappedPagesGuarded(PagesWanted: QWord): QWord;
+var
+  Granted: QWord;
+begin
+  EnsureGuard;
+  Granted := TakeThrashGuardPages(Guard, PagesWanted, ClockNanoseconds);
+  if Granted = 0 then
+    Exit(0);
+  Result := EvictPass(Granted, True);
+  if Result < Granted then
+    ReturnThrashGuardPages(Guard, Granted - Result);
+end;
+
 function EvictMappedFilePages(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord;
 begin
   Result := EvictPass(PagesWanted, False);
   if (Result < PagesWanted) and (Urgency = ShrinkHard) then
-    Result := Result + EvictPass(PagesWanted - Result, True);
+    Result := Result + EvictMappedPagesGuarded(PagesWanted - Result);
+end;
+
+function ThrashGuardRefusedPages: QWord;
+begin
+  if not GuardReady then
+    Exit(0);
+  Result := Guard.Refused;
 end;
 
 procedure InitializeMappedFileEviction;

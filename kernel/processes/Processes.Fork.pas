@@ -65,6 +65,7 @@ uses
   Processes.Handles,
   Processes.AddressSpace,
   Processes.AddressSpaceCopy,
+  Processes.Jobs,
   Processes.UserThread,
   Processes.ChildWaits,
   Processes.Signals,
@@ -93,6 +94,8 @@ begin
   Child^.OomScoreAdjust := Parent^.OomScoreAdjust;
   Child^.Restrictions := Parent^.Restrictions;
   Child^.ImageUnreadable := Parent^.ImageUnreadable;
+  Child^.PriorityClass := Parent^.PriorityClass;
+  JoinJobAtStart(Child, PJob(Parent^.Job));
   SetHandleLimit(Child^.Handles, Parent^.Handles.Limit);
   InheritSignalState(Parent, Child);
 end;

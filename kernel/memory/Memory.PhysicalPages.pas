@@ -58,6 +58,16 @@
   the thread that asks the caches to shrink. Every failed allocation is
   counted, so a caller can tell whether a failure was for want of
   memory (FailedPageAllocationCount before and after).
+
+  The reserve (Memory.Reserves). Below the critical watermark, a page for
+  a process's memory, a mapped file or a section (IsProcessPageUsage) is
+  refused unless the reserve access query (set by the process manager)
+  says the current thread may use the reserve - a kernel thread or an
+  essential process, which may go down to half the watermark; kernel
+  allocations of every other use may take the last page. A refusal is
+  counted as a failed allocation (and in ReserveRefusalCount), so the
+  faulting program's out-of-memory handling starts at once while the
+  kernel and the user's shell still have memory to work with.
 }
 unit Memory.PhysicalPages;
 
@@ -110,6 +120,9 @@ type
   { How short of free pages the system is: above the low watermark,
     below it, below the critical one. }
   TMemoryPressureLevel = (MemoryPressureNone, MemoryPressureLow, MemoryPressureCritical);
+
+  { Whether the current thread may take pages from the reserve. }
+  TReserveAccessQuery = function: Boolean;
 
   { Runs when free pages fall below the low watermark or an allocation
     fails, once until AcknowledgeMemoryPressure. Any priority level up to
@@ -212,8 +225,16 @@ procedure SetMemoryPressureCallback(Callback: TMemoryPressureCallback);
 { The pressure was dealt with: the callback runs again the next time an
   allocation finds memory short. }
 procedure AcknowledgeMemoryPressure;
-{ Allocations that found no free page, since the start. }
+{ Allocations that found no free page, since the start (refusals for
+  the reserve included). }
 function FailedPageAllocationCount: QWord;
+{ Allocations of processes' pages refused for the reserve. }
+function ReserveRefusalCount: QWord;
+{ Who may use the reserve (nil: everyone, as before the process manager
+  starts). }
+procedure SetReserveAccessQuery(Query: TReserveAccessQuery);
+{ True for the uses that are processes' pages (held to the reserve). }
+function IsProcessPageUsage(Usage: TPageUsage): Boolean;
 
 implementation
 
@@ -225,6 +246,7 @@ uses
   Memory.HeapChecks,
   Memory.PageQuarantine,
   Memory.FrameRuns,
+  Memory.Reserves,
   Debug.Output;
 
 const
@@ -266,6 +288,8 @@ var
   PressureCallback: TMemoryPressureCallback;
   PressureSignaled: Boolean;
   FailedAllocations: QWord;
+  ReserveRefusals: QWord;
+  ReserveAccessQuery: TReserveAccessQuery = nil;
 
 { Counts every page's use once the database is built; from then on the
   counts follow each change. }
@@ -558,14 +582,46 @@ begin
     Callback;
 end;
 
+function IsProcessPageUsage(Usage: TPageUsage): Boolean;
+begin
+  Result := Usage in [PageUsageUserMemory, PageUsageProgramImage, PageUsageSection];
+end;
+
+{ The free pages a process page must leave: the reserve's floor, or 0
+  when the caller may take any (asked outside the lock, and only when
+  memory is near the reserve). }
+function ReserveFloorFor(Usage: TPageUsage): QWord;
+var
+  Query: TReserveAccessQuery;
+begin
+  Result := 0;
+  if not IsProcessPageUsage(Usage) or (FreePageCount > CriticalWatermarkPages) then
+    Exit;
+  Query := ReserveAccessQuery;
+  if not Assigned(Query) then
+    Exit;
+  Result := UserPageFloor(CriticalWatermarkPages, Query());
+end;
+
 function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
   Released: QWord;
   MustSignal: Boolean;
+  Floor: QWord;
 begin
+  Floor := ReserveFloorFor(Usage);
   PreviousLevel := AcquireSpinLock(DatabaseLock);
+  if (Floor > 0) and (FreePageCount <= Floor) then
+  begin
+    Inc(ReserveRefusals);
+    MustSignal := ShouldSignalPressureLocked(True);
+    ReleaseSpinLock(DatabaseLock, PreviousLevel);
+    if MustSignal then
+      SignalPressure;
+    Exit(0);
+  end;
   { Out of free pages: the oldest held back one goes first. }
   if (FreeListHead = NoNextFrame) and ReleaseOldestFrame(FreedPageQuarantine, Released) then
     ReleaseQuarantinedFrameLocked(Released);
@@ -980,6 +1036,16 @@ begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
   PressureSignaled := False;
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function ReserveRefusalCount: QWord;
+begin
+  Result := ReserveRefusals;
+end;
+
+procedure SetReserveAccessQuery(Query: TReserveAccessQuery);
+begin
+  ReserveAccessQuery := Query;
 end;
 
 function FailedPageAllocationCount: QWord;

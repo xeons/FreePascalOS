@@ -41,6 +41,7 @@ uses
   Memory.KernelHeap,
   Memory.PhysicalPages,
   Memory.Pressure,
+  Memory.CommitCharge,
   Io.BlockCache,
   FileSystem.Types,
   FileSystem.Discards,
@@ -51,6 +52,7 @@ uses
   Processes.FileCalls,
   Processes.MemoryCharges,
   Processes.OutOfMemory,
+  Processes.MappedFileEviction,
   Processes.UserAccess;
 
 function Failure(Error: LongInt): Int64;
@@ -126,6 +128,10 @@ begin
   Pressure.ProcessesEnded := Ended.ProcessesEnded;
   Pressure.LastEndedProcessId := Ended.LastEndedProcessId;
   CopyText(@Pressure.LastEndedName[0], @Ended.LastEndedName[0], SizeOf(Pressure.LastEndedName));
+  Pressure.CommitLimitPages := SystemCommitLimitPages;
+  Pressure.CommitFailures := SystemCommitFailures;
+  Pressure.ReserveRefusals := ReserveRefusalCount;
+  Pressure.ThrashGuardRefusals := ThrashGuardRefusedPages;
   Result := -Int64(CopyToUser(PressureAddress, @Pressure, SizeOf(Pressure)));
 end;
 

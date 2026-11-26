@@ -35,7 +35,8 @@ unit Processes.MemoryCharges;
 interface
 
 uses
-  Processes.Process;
+  Processes.Process,
+  Processes.OutOfMemoryScores;
 
 type
   { Pages committed to Process beyond those it has resident. Called with
@@ -49,12 +50,27 @@ procedure SetCommitCounters(ProcessCounter: TProcessCommitCounter; SystemCounter
 { Resident plus committed pages (the process registered and running). }
 function ProcessFootprintPages(Process: PProcess): QWord;
 function SystemCommittedPages: QWord;
+{ Process as the out-of-memory policy weighs it: its footprint, its
+  adjustment moved for its kind (OomKindAdjust), whether it is
+  protected (the initial program, the System class) and ending. }
+procedure DescribeOomCandidate(Process: PProcess; out Candidate: TOomCandidate);
 
 implementation
 
 uses
+  Abi.SystemCalls,
   Memory.PhysicalPages,
   Processes.AddressSpace;
+
+procedure DescribeOomCandidate(Process: PProcess; out Candidate: TOomCandidate);
+begin
+  Candidate.FootprintPages := ProcessFootprintPages(Process);
+  Candidate.ScoreAdjust := OomKindAdjust(Process^.OomScoreAdjust, Process^.Restrictions <> 0,
+    Process^.PriorityClass <= PriorityClassBackground, Process^.PriorityClass = PriorityClassInteractive);
+  Candidate.IsProtected := Process^.NeverEndForMemory or (Process^.PriorityClass = PriorityClassSystem);
+  Candidate.IsCulprit := False;
+  Candidate.IsEnding := Process^.TerminationRequested or Process^.HasExited;
+end;
 
 var
   ProcessCommits: TProcessCommitCounter;

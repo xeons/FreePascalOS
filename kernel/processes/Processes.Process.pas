@@ -39,6 +39,7 @@ uses
   Kernel.Mutex,
   Kernel.Events,
   Kernel.ProcessorTime,
+  Kernel.SchedulingGroups,
   Objects.Manager,
   Processes.AddressSpace,
   Processes.Handles,
@@ -192,6 +193,14 @@ type
     { Restrict* flags the process put on itself (Processes.Restrictions):
       only ever added. Inherited. }
     Restrictions: LongWord;
+
+    { --- Scheduling and jobs (Kernel.PriorityClasses, Processes.Jobs) --- }
+    { PriorityClass*: where its threads' base priority lies. }
+    PriorityClass: LongWord;
+    { Its threads, for fair share between processes. }
+    SchedulingGroup: TSchedulingGroup;
+    { The job it is in (a PJob, referenced), or nil. Set once. }
+    Job: Pointer;
     { It runs a program its user may not read (mode 0711; see
       OpenProgramFile): whatever would show its memory or its image to
       another program must refuse. Set by spawn and exec, kept by fork. }
@@ -248,6 +257,7 @@ procedure VisitRunningProcessesLocked(Visit: TProcessVisitor; Context: Pointer);
 implementation
 
 uses
+  Abi.SystemCalls,
   Kernel.SharedLocks,
   Runtime.Atomic,
   Runtime.Text,
@@ -289,6 +299,8 @@ begin
   CloseAllHandles(Process^.Handles);
   PublishAddressSpace(Process^.AddressSpace, nil, Space);
   DestroyAddressSpace(Space);
+  if Process^.Job <> nil then
+    DereferenceObject(Process^.Job);
 end;
 
 function AllocateProcessOrThreadId: QWord;
@@ -319,6 +331,8 @@ begin
   { Root until told otherwise; user processes get their creator's. }
   Process^.Credentials.Umask := DefaultUmask;
   Process^.Credentials.AffinityMask := AllProcessors;
+  Process^.PriorityClass := PriorityClassNormal;
+  InitializeSchedulingGroup(Process^.SchedulingGroup);
   Process^.StartTime := CurrentWallClockTime;
   Process^.StartUptimeNanoseconds := ClockNanoseconds;
 end;

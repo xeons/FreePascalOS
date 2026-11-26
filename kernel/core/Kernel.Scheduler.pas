@@ -196,6 +196,14 @@ procedure WakeWaitingThreadWithBoostLocked(Thread: PThreadControlBlock; Result: 
   Boost: LongWord);
 
 function ContextSwitchCount: QWord;
+
+{ Priority inheritance (Kernel.Mutex), dispatcher lock held: Owner, which
+  holds what a thread of priority Priority waits for, runs at least at
+  that priority (and is marked PriorityInherited) until it releases it. }
+procedure InheritPriorityLocked(Owner: PThreadControlBlock; Priority: LongWord);
+{ The current thread released what it held: an inherited priority ends
+  (back to its base), and a more important ready thread may run. }
+procedure EndInheritedPriorityLocked;
 { How many starvation boosts were given since start. }
 function StarvationBoostTotal: QWord;
 
@@ -227,6 +235,8 @@ uses
   Kernel.ReadyQueues,
   Kernel.ProcessorTime,
   Kernel.PriorityBoosts,
+  Kernel.FairShare,
+  Kernel.SchedulingGroups,
   Kernel.Arch.ProcessorBlock,
   Kernel.Panic;
 
@@ -404,16 +414,33 @@ begin
 end;
 
 { The running thread used up its time slice: a boost loses a level, a
-  starvation boost all of it (Kernel.PriorityBoosts). }
+  starvation boost all of it (Kernel.PriorityBoosts); at its base, a
+  thread of a process using more than its share of the processors goes
+  below it (Kernel.FairShare). A priority inherited from a mutex waiter
+  stays until the mutex is released. }
 procedure DecayRunningThreadPriority(Processor: PProcessor; Thread: PThreadControlBlock);
+var
+  Now: QWord;
+  Penalty: LongWord;
 begin
+  if Thread^.PriorityInherited then
+    Exit;
   if Thread^.StarvationBoosted then
   begin
     Thread^.StarvationBoosted := False;
     Thread^.Priority := Thread^.BasePriority;
   end
   else
+  begin
     Thread^.Priority := DecayedPriority(Thread^.BasePriority, Thread^.Priority);
+    if Thread^.SchedulingGroup <> nil then
+    begin
+      Now := ClockNanoseconds;
+      ChargeRunningThreadLocked(Processor, Now);
+      Penalty := SchedulingGroupPenalty(Thread^.SchedulingGroup, Now, OnlineProcessorCount);
+      Thread^.Priority := FairSharePriority(Thread^.BasePriority, Thread^.Priority, Penalty);
+    end;
+  end;
   SetRunningPriority(Processor, Thread^.Priority);
 end;
 
@@ -880,9 +907,11 @@ begin
     Priority := LowestThreadPriority;
   PreviousLevel := AcquireDispatcherLock;
   Processor := LockProcessorOfThreadLocked(Thread);
-  { A new base priority ends any boost. }
+  { A new base priority ends any boost (an inherited priority comes
+    back with the next waiter). }
   Thread^.BasePriority := Priority;
   Thread^.StarvationBoosted := False;
+  Thread^.PriorityInherited := False;
   if Processor = nil then
     Thread^.Priority := Priority
   else if Thread^.State = ThreadStateReady then
@@ -905,6 +934,56 @@ begin
       RequestDispatchOn(Processor);
   end;
   ReleaseDispatcherLock(PreviousLevel);
+end;
+
+{ Moves Thread (dispatcher lock held) to NewPriority wherever it is:
+  requeued if ready, the processor's running priority if running. }
+procedure ChangeCurrentPriorityLocked(Thread: PThreadControlBlock; NewPriority: LongWord);
+var
+  Processor: PProcessor;
+  Lowered: Boolean;
+begin
+  Processor := LockProcessorOfThreadLocked(Thread);
+  if Processor = nil then
+    Thread^.Priority := NewPriority
+  else if Thread^.State = ThreadStateReady then
+  begin
+    RemoveReadyThread(Thread);
+    Thread^.Priority := NewPriority;
+    UnlockProcessor(Processor);
+    PlaceReadyThread(Thread);
+  end
+  else
+  begin
+    Lowered := NewPriority < Thread^.Priority;
+    Thread^.Priority := NewPriority;
+    SetRunningPriority(Processor, NewPriority);
+    UnlockProcessor(Processor);
+    if Lowered then
+      RequestDispatchOn(Processor);
+  end;
+end;
+
+procedure InheritPriorityLocked(Owner: PThreadControlBlock; Priority: LongWord);
+begin
+  if (Owner = nil) or (Owner^.Priority >= Priority) then
+    Exit;
+  if Priority > HighestThreadPriority then
+    Priority := HighestThreadPriority;
+  Owner^.PriorityInherited := True;
+  ChangeCurrentPriorityLocked(Owner, Priority);
+end;
+
+procedure EndInheritedPriorityLocked;
+var
+  Thread: PThreadControlBlock;
+begin
+  Thread := CurrentThread;
+  if not Thread^.PriorityInherited then
+    Exit;
+  Thread^.PriorityInherited := False;
+  if Thread^.Priority > Thread^.BasePriority then
+    ChangeCurrentPriorityLocked(Thread, Thread^.BasePriority);
 end;
 
 { Sets the mask with the dispatcher lock held. }
@@ -1041,12 +1120,16 @@ begin
   Thread := CurrentProcessor^.RunningThread;
   if Thread = CurrentProcessor^.IdleThread then
     KernelPanic('the idle thread tried to wait');
-  { A starvation boost is for one time slice of running only. }
+  { A starvation boost is for one time slice of running only, and a
+    fair share penalty for running only (one that waits is not what
+    crowds the others out). }
   if Thread^.StarvationBoosted then
   begin
     Thread^.StarvationBoosted := False;
     Thread^.Priority := Thread^.BasePriority;
   end;
+  if Thread^.Priority < Thread^.BasePriority then
+    Thread^.Priority := Thread^.BasePriority;
   Thread^.State := ThreadStateWaiting;
   SwitchAwayFromBlockedThreadLocked;
   { Readied and run again: the switch released the dispatcher lock,
@@ -1118,6 +1201,8 @@ begin
   Thread^.Priority := Priority;
   Thread^.BasePriority := Priority;
   Thread^.StarvationBoosted := False;
+  Thread^.PriorityInherited := False;
+  Thread^.SchedulingGroup := nil;
   Thread^.ReadySince := 0;
   Thread^.QuantumRemaining := QuantumTicks;
   Thread^.AffinityMask := AllProcessors;

@@ -151,9 +151,7 @@ begin
   if not Process^.IsUserProcess or Process^.HasExited or
      not ReadPublishedSpaceUsage(Process^.AddressSpace, Usage) then
     Exit;
-  Candidate.FootprintPages := ProcessFootprintPages(Process);
-  Candidate.ScoreAdjust := Process^.OomScoreAdjust;
-  Candidate.IsProtected := Process^.NeverEndForMemory;
+  DescribeOomCandidate(Process, Candidate);
   Candidate.IsCulprit := Process = Search^.Culprit;
   Candidate.IsEnding := Process^.TerminationRequested;
   Score := OomScore(Candidate, Search^.TotalPages);

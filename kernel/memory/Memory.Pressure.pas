@@ -38,7 +38,9 @@
   and try again. When even that finds nothing and memory is critical,
   the out-of-memory handler (set by Processes.OutOfMemory: it ends a
   process) is the last resort; the pressure thread calls it too when
-  allocations keep failing with nothing left to reclaim.
+  allocations keep failing with nothing left to reclaim. The pressure
+  thread runs in the real-time class (Kernel.Startup), so no busy
+  program, boosted or not, keeps it from relieving the pressure.
 
   ReclaimMemory runs one at a time (a second caller waits, then finds
   the memory the first freed). A shrinker that itself allocates and
@@ -107,6 +109,7 @@ uses
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Memory.HeapChecks,
+  Memory.CommitCharge,
   Kernel.Arch.Cpu,
   Kernel.PriorityLevel,
   Kernel.Mutex,
@@ -301,6 +304,9 @@ begin
   begin
     WaitForEventWithOptions(PressureEvent, WatcherIntervalMilliseconds, False);
     RelievePressure(FailuresSeen);
+    { The kernel's own share of memory changed: so does what processes
+      may commit (Memory.CommitCharge). }
+    RefreshSystemCommitLimit;
   end;
 end;
 
