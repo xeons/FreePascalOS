@@ -70,6 +70,8 @@ uses
   WebContent.Connection,
   WebContent.Transport,
   WebContent.Storage,
+  WebContent.OriginData,
+  Web.Storage.OriginData,
   WebContent.Views,
   WebContent.Sandbox;
 
@@ -137,6 +139,7 @@ type
     FContext: TContentContext;
     FTransport: TContentTransport;
     FStorageBackend: TContentStorageBackend;
+    FOriginData: TContentOriginData;
     FViews: TList;
     FShutdown: Boolean;
     FInterruptions: Integer;
@@ -164,6 +167,9 @@ begin
   FStorageBackend := TContentStorageBackend.Create(FContext.Connection);
   FContext.Storage := TWebStorageRegistry.Create('');
   FContext.Storage.Backend := FStorageBackend;
+  { Caches and service worker registrations are the browser's to keep. }
+  FOriginData := TContentOriginData.Create(FContext.Connection);
+  OriginDataBackend := FOriginData;
 end;
 
 destructor TContentProcessRunner.Destroy;
@@ -175,6 +181,8 @@ begin
   FViews.Free;
   FContext.Storage.Free;
   FStorageBackend.Free;
+  OriginDataBackend := nil;
+  FOriginData.Free;
   FContext.Network.Free;
   FContext.Connection.Free;
   FContext.Free;

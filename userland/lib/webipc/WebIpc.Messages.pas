@@ -197,6 +197,12 @@ const
   { A request: about:PATH; the reply: found, HTML (the browser's own
     pages, only for a process locked to about:). }
   IpcAboutPage = 312;
+  { Per-origin records kept for the content process (the Cache API's
+    caches, service worker registrations: Web.Storage.OriginData). A
+    request: TIpcOriginData without data; the reply: the record's bytes.
+    Then TIpcOriginData with the whole new record (empty: removed). }
+  IpcOriginDataLoad = 340;
+  IpcOriginDataSave = 341;
 
   { The most of the selected text IpcSelectionChanged carries. }
   SelectionTextLimit = 256 * 1024;
@@ -250,6 +256,8 @@ begin
     IpcHistoryState: Result := 'history-state';
     IpcContextMenu: Result := 'context-menu';
     IpcPopupBlocked: Result := 'popup-blocked';
+    IpcOriginDataLoad: Result := 'origin-data-load';
+    IpcOriginDataSave: Result := 'origin-data-save';
     IpcHopStart: Result := 'hop-start';
     IpcHopHead: Result := 'hop-head';
     IpcHopData: Result := 'hop-data';

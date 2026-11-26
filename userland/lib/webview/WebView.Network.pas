@@ -50,6 +50,7 @@ uses
   Tls.CertificateSummaries,
   Web.Fetch.NetworkContexts,
   Web.Storage,
+  Web.Storage.OriginData,
   Web.UserAgent;
 
 type
@@ -96,8 +97,14 @@ procedure SetHttp3Allowed(Allowed: Boolean);
 { Frees the shared context (at the program's end; web views must be gone). }
 procedure FreeSharedNetworkContext;
 { Where localStorage is kept, a file per origin (set before the first
-  page; '' keeps it in memory). }
+  page; '' keeps it in memory). The Cache API's caches and the service
+  worker registrations go in its origin-data folder. }
 procedure SetWebStorageFolder(const Folder: string);
+{ Where the per-origin records (caches, service worker registrations)
+  of this program's pages and of its content processes are kept: the
+  folder's, a memory store while private browsing, nil when no folder
+  was set. }
+function SharedOriginData: TOriginDataBackend;
 { The program's local storage, shared by its web views (the private
   one while private browsing). }
 function SharedLocalStorage: TWebStorageRegistry;
@@ -154,6 +161,8 @@ uses
   Http.ConnectionSecurity,
   Http.SocketConnector,
   Web.Fetch.Hsts,
+  Web.Storage.ResponseCaches,
+  Web.Workers.ServiceWorkers,
   Tls.SystemTrust;
 
 var
@@ -174,6 +183,8 @@ var
   CacheLimit: Int64 = -1;
   CookieRules: TCookieUsePolicy;
   StorageLock: TRTLCriticalSection;
+  PersistentOriginData: TFolderOriginData = nil;
+  PrivateOriginData: TMemoryOriginData = nil;
 
 procedure EnterLocalStorage;
 begin
@@ -185,9 +196,36 @@ begin
   LeaveCriticalSection(StorageLock);
 end;
 
+function SharedOriginData: TOriginDataBackend;
+begin
+  if PrivateMode then
+  begin
+    if PrivateOriginData = nil then
+      PrivateOriginData := TMemoryOriginData.Create;
+    Result := PrivateOriginData;
+  end
+  else
+    Result := PersistentOriginData;
+end;
+
 procedure SetWebStorageFolder(const Folder: string);
 begin
   StorageFolder := Folder;
+  FreeAndNil(PersistentOriginData);
+  if Folder <> '' then
+    PersistentOriginData := TFolderOriginData.Create(IncludeTrailingPathDelimiter(Folder) + 'origin-data');
+  OriginDataBackend := SharedOriginData;
+end;
+
+{ The pages' caches and service workers start again from the records of
+  the mode switched to (the other mode's are not kept in memory). }
+procedure SwitchOriginData;
+begin
+  ResetServiceWorkers;
+  ForgetAllCaches;
+  if PrivateOriginData <> nil then
+    PrivateOriginData.Clear;
+  OriginDataBackend := SharedOriginData;
 end;
 
 function PersistentLocalStorage: TWebStorageRegistry;
@@ -320,6 +358,7 @@ begin
   finally
     LeaveLocalStorage;
   end;
+  SwitchOriginData;
   { Which TLS connections were made tells where one went. }
   ClearConnectionSecurity;
 end;

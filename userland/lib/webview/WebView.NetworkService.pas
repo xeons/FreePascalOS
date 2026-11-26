@@ -65,6 +65,8 @@ type
     procedure SetCookie(Message: TIpcMessage);
     procedure LoadStorage(Message: TIpcMessage);
     procedure ChangeStorage(Message: TIpcMessage);
+    procedure LoadOriginData(Message: TIpcMessage);
+    procedure SaveOriginData(Message: TIpcMessage);
     procedure Reply(Message: TIpcMessage; const Payload: TBytes);
     function UrlOfOwnSite(const Url: string): Boolean;
   public
@@ -99,6 +101,7 @@ uses
   Web.Fetch.HttpHops,
   Web.Fetch.NetworkContexts,
   Web.Storage,
+  Web.Storage.OriginData,
   WebIpc.ViewMessages,
   WebIpc.NetworkMessages,
   WebView.Sites,
@@ -245,6 +248,8 @@ begin
     IpcCookieSet: SetCookie(Message);
     IpcStorageLoad: LoadStorage(Message);
     IpcStorageSet, IpcStorageRemove, IpcStorageClear: ChangeStorage(Message);
+    IpcOriginDataLoad: LoadOriginData(Message);
+    IpcOriginDataSave: SaveOriginData(Message);
   else
     Exit(False);
   end;
@@ -531,6 +536,45 @@ begin
     end;
   end;
   Reply(Message, EncodeStoragePairs(Pairs));
+end;
+
+{ Only the known kinds, only for origins of the process's own site. }
+function OriginDataKindKnown(const Kind: string): Boolean;
+begin
+  Result := (Kind = 'caches') or (Kind = 'service-workers');
+end;
+
+procedure TContentNetwork.LoadOriginData(Message: TIpcMessage);
+var
+  Kind, Origin: string;
+  Data: TBytes;
+  Store: TOriginDataBackend;
+begin
+  DecodeOriginData(Message.Payload, Kind, Origin, Data);
+  Data := nil;
+  Store := SharedOriginData;
+  if OriginDataKindKnown(Kind) and UrlOfOwnSite(Origin) and (Store <> nil) then
+    Data := Store.Load(Kind, Origin)
+  else if not UrlOfOwnSite(Origin) then
+    WriteLn(StdErr, '[network] refused the ', Kind, ' of ', Origin, ' to a process of ', FProcess.Site);
+  Reply(Message, EncodeOriginDataRecord(Data));
+end;
+
+procedure TContentNetwork.SaveOriginData(Message: TIpcMessage);
+var
+  Kind, Origin: string;
+  Data: TBytes;
+  Store: TOriginDataBackend;
+begin
+  DecodeOriginData(Message.Payload, Kind, Origin, Data);
+  Store := SharedOriginData;
+  if not OriginDataKindKnown(Kind) or not UrlOfOwnSite(Origin) then
+  begin
+    WriteLn(StdErr, '[network] refused to save the ', Kind, ' of ', Origin, ' for a process of ', FProcess.Site);
+    Exit;
+  end;
+  if Store <> nil then
+    Store.Save(Kind, Origin, Data);
 end;
 
 procedure TContentNetwork.ChangeStorage(Message: TIpcMessage);

@@ -205,7 +205,8 @@ var
   HopId: QWord;
   Data: TBytes;
   Url, Cookie, Origin, Key, Value: string;
-  Secure: Boolean;
+  Secure, Refused: Boolean;
+  Truncated: TBytes;
 begin
   Request := Default(TIpcHopRequest);
   Request.HopId := QWord($100000002);
@@ -289,6 +290,21 @@ begin
   Check((Url = 'https://a.example/') and (Cookie = 'k=v') and Secure, 'payloads: a cookie access');
   DecodeStorageChange(EncodeStorageChange('https://a.example', 'key', 'value'), Origin, Key, Value);
   Check((Origin = 'https://a.example') and (Key = 'key') and (Value = 'value'), 'payloads: a storage change');
+  DecodeOriginData(EncodeOriginData('caches', 'https://a.example', BytesOf('rec')), Key, Origin, Data);
+  Check((Key = 'caches') and (Origin = 'https://a.example') and (StringOf(Data) = 'rec'),
+    'payloads: an origin data record');
+  Check(StringOf(DecodeOriginDataRecord(EncodeOriginDataRecord(BytesOf('abc')))) = 'abc',
+    'payloads: an origin data reply');
+  Truncated := EncodeOriginData('service-workers', 'https://a.example', BytesOf('record'));
+  SetLength(Truncated, Length(Truncated) - 3);
+  Refused := False;
+  try
+    DecodeOriginData(Truncated, Key, Origin, Data);
+  except
+    on EIpcMalformed do
+      Refused := True;
+  end;
+  Check(Refused, 'payloads: a cut origin data record is refused');
 end;
 
 procedure RunPayloadChecks;

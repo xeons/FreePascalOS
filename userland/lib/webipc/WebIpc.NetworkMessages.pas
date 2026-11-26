@@ -122,6 +122,14 @@ procedure DecodeCookieAccess(const Payload: TBytes; out Url, Cookie: string; out
 function EncodeStorageChange(const Origin, Key, Value: string): TBytes;
 procedure DecodeStorageChange(const Payload: TBytes; out Origin, Key, Value: string);
 
+{ IpcOriginDataLoad and IpcOriginDataSave: the kind of record ('caches',
+  'service-workers'), the origin and (saving) the record; the load's
+  reply is EncodeOriginDataRecord. }
+function EncodeOriginData(const Kind, Origin: string; const Data: TBytes): TBytes;
+procedure DecodeOriginData(const Payload: TBytes; out Kind, Origin: string; out Data: TBytes);
+function EncodeOriginDataRecord(const Data: TBytes): TBytes;
+function DecodeOriginDataRecord(const Payload: TBytes): TBytes;
+
 implementation
 
 procedure WriteFields(Writer: TIpcWriter; const Fields: TIpcHeaderFields);
@@ -453,6 +461,60 @@ begin
     Origin := Reader.ReadString;
     Key := Reader.ReadString;
     Value := Reader.ReadString;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeOriginData(const Kind, Origin: string; const Data: TBytes): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteString(Kind);
+    Writer.WriteString(Origin);
+    Writer.WriteBytes(Data);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+procedure DecodeOriginData(const Payload: TBytes; out Kind, Origin: string; out Data: TBytes);
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Kind := Reader.ReadString;
+    Origin := Reader.ReadString;
+    Data := Reader.ReadBytes;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeOriginDataRecord(const Data: TBytes): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteBytes(Data);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+function DecodeOriginDataRecord(const Payload: TBytes): TBytes;
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    Result := Reader.ReadBytes;
   finally
     Reader.Free;
   end;

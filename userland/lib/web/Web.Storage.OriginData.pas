@@ -54,15 +54,33 @@ type
     procedure Save(const Kind, Origin: string; const Data: TBytes); virtual; abstract;
   end;
 
+  { Files (thread safe: a browser's GUI thread and its network service
+    use one). }
   TFolderOriginData = class(TOriginDataBackend)
   private
     FFolder: string;
+    FLock: TRTLCriticalSection;
     function PathOf(const Kind, Origin: string): string;
   public
     constructor Create(const AFolder: string);
+    destructor Destroy; override;
     function Load(const Kind, Origin: string): TBytes; override;
     procedure Save(const Kind, Origin: string; const Data: TBytes); override;
     property Folder: string read FFolder;
+  end;
+
+  { Records in memory only (private browsing; thread safe). }
+  TMemoryOriginData = class(TOriginDataBackend)
+  private
+    FKeys: TStringList;
+    FRecords: array of TBytes;
+    FLock: TRTLCriticalSection;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Load(const Kind, Origin: string): TBytes; override;
+    procedure Save(const Kind, Origin: string; const Data: TBytes); override;
+    procedure Clear;
   end;
 
   TOriginDataWriter = class
@@ -119,6 +137,72 @@ constructor TFolderOriginData.Create(const AFolder: string);
 begin
   inherited Create;
   FFolder := ExcludeTrailingPathDelimiter(AFolder);
+  InitCriticalSection(FLock);
+end;
+
+destructor TFolderOriginData.Destroy;
+begin
+  DoneCriticalSection(FLock);
+  inherited Destroy;
+end;
+
+constructor TMemoryOriginData.Create;
+begin
+  inherited Create;
+  FKeys := TStringList.Create;
+  InitCriticalSection(FLock);
+end;
+
+destructor TMemoryOriginData.Destroy;
+begin
+  FKeys.Free;
+  DoneCriticalSection(FLock);
+  inherited Destroy;
+end;
+
+function TMemoryOriginData.Load(const Kind, Origin: string): TBytes;
+var
+  Index: Integer;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Index := FKeys.IndexOf(Kind + ' ' + Origin);
+    if Index >= 0 then
+      Result := Copy(FRecords[Index])
+    else
+      Result := nil;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TMemoryOriginData.Save(const Kind, Origin: string; const Data: TBytes);
+var
+  Index: Integer;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Index := FKeys.IndexOf(Kind + ' ' + Origin);
+    if Index < 0 then
+    begin
+      Index := FKeys.Add(Kind + ' ' + Origin);
+      SetLength(FRecords, FKeys.Count);
+    end;
+    FRecords[Index] := Copy(Data);
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TMemoryOriginData.Clear;
+begin
+  EnterCriticalSection(FLock);
+  try
+    FKeys.Clear;
+    FRecords := nil;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
 end;
 
 function TFolderOriginData.PathOf(const Kind, Origin: string): string;
@@ -126,15 +210,15 @@ begin
   Result := FFolder + '/' + Kind + '/' + OriginDataFileName(Origin) + '.dat';
 end;
 
-function TFolderOriginData.Load(const Kind, Origin: string): TBytes;
+function ReadWholeFile(const Path: string): TBytes;
 var
   Stream: TFileStream;
 begin
   Result := nil;
-  if not FileExists(PathOf(Kind, Origin)) then
+  if not FileExists(Path) then
     Exit;
   try
-    Stream := TFileStream.Create(PathOf(Kind, Origin), fmOpenRead or fmShareDenyWrite);
+    Stream := TFileStream.Create(Path, fmOpenRead or fmShareDenyWrite);
     try
       SetLength(Result, Stream.Size);
       if Length(Result) > 0 then
@@ -148,19 +232,12 @@ begin
   end;
 end;
 
-procedure TFolderOriginData.Save(const Kind, Origin: string; const Data: TBytes);
+{ Written beside it first, then put in its place. }
+procedure WriteWholeFile(const Path: string; const Data: TBytes);
 var
   Stream: TFileStream;
-  Path, Temporary: string;
+  Temporary: string;
 begin
-  Path := PathOf(Kind, Origin);
-  if Length(Data) = 0 then
-  begin
-    if FileExists(Path) then
-      DeleteFile(Path);
-    Exit;
-  end;
-  ForceDirectories(FFolder + '/' + Kind);
   Temporary := Path + '.new';
   try
     Stream := TFileStream.Create(Temporary, fmCreate);
@@ -175,6 +252,38 @@ begin
   except
     on EStreamError do
       ;
+  end;
+end;
+
+function TFolderOriginData.Load(const Kind, Origin: string): TBytes;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Result := ReadWholeFile(PathOf(Kind, Origin));
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TFolderOriginData.Save(const Kind, Origin: string; const Data: TBytes);
+var
+  Path: string;
+begin
+  EnterCriticalSection(FLock);
+  try
+    Path := PathOf(Kind, Origin);
+    if Length(Data) = 0 then
+    begin
+      if FileExists(Path) then
+        DeleteFile(Path);
+    end
+    else
+    begin
+      ForceDirectories(FFolder + '/' + Kind);
+      WriteWholeFile(Path, Data);
+    end;
+  finally
+    LeaveCriticalSection(FLock);
   end;
 end;
 
