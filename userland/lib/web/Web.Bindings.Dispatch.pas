@@ -358,78 +358,112 @@ const
   PairValues = 2;
   PairForEach = 3;
 
+{ The pair at Index of the object Target (an array [name, value]), or
+  not an object past the end; False when the getter threw. }
+function PairOf(Context: TBindingContext; Target: TJsValue; InterfaceId, Index: Integer; out Pair: TJsValue): Boolean;
+var
+  Arguments: TBindingValueArray;
+begin
+  SetLength(Arguments, 1);
+  Arguments[0].Kind := bvNumber;
+  Arguments[0].Number := Index;
+  Result := CallSpecial(Context, BindingInterfaces[InterfaceId].PairAt, Context.WrapperOf(Target), InterfaceId,
+    Arguments, Pair);
+end;
+
+{ next() of a pair iterator: the pairs are read live, one index at a time
+  (a pair deleted during the walk moves the rest up, as the iterable
+  declaration's value pairs do). Callee.Data is [target, next index],
+  the target undefined once done; Callee.HostData the kind. }
+function PairIteratorNext(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+var
+  Context: TBindingContext;
+  State: TJsObject;
+  Target, Pair, Value: TJsValue;
+  Index, Mark: Integer;
+begin
+  Context := ContextOfRealm(R);
+  State := JsAsObject(Callee.Data);
+  Target := State.GetValue(R, JsInteger(0));
+  if not JsIsObject(Target) then
+    Exit(CreateIterResult(R, JsUndefined, True));
+  Index := Round(Context.Engine.ToNumber(State.GetValue(R, JsInteger(1))));
+  if not PairOf(Context, Target, Callee.Magic, Index, Pair) then
+    Exit(JsException);
+  if not JsIsObject(Pair) then
+  begin
+    State.Put(R, JsInteger(0), JsUndefined);
+    Exit(CreateIterResult(R, JsUndefined, True));
+  end;
+  Mark := Context.Engine.Runtime.PushRoot(Pair);
+  try
+    State.Put(R, JsInteger(1), JsInteger(Index + 1));
+    case PtrInt(Callee.HostData) of
+      PairKeys: Value := JsAsObject(Pair).GetValue(R, JsInteger(0));
+      PairValues: Value := JsAsObject(Pair).GetValue(R, JsInteger(1));
+    else
+      Value := Pair;
+    end;
+    Result := CreateIterResult(R, Value, False);
+  finally
+    Context.Engine.Runtime.PopRoots(Mark);
+  end;
+end;
+
 function PairIterationEntry(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Context: TBindingContext;
-  Wrapper: TBindingWrapper;
-  Info: PBindingInterface;
   Index, Mark: Integer;
-  Arguments: TBindingValueArray;
-  Pair, Key, Item, Callback, Snapshot, Iterator, Ignored: TJsValue;
-  Items: TJsValueList;
+  Pair, Key, Item, Callback, Ignored: TJsValue;
+  Iterator: TJsObject;
+  Next: TJsNativeFunction;
   CallArgs: array[0..2] of TJsValue;
   Kind: PtrInt;
 begin
   Context := ContextOfRealm(R);
   if Context.Unwrap(This, Callee.Magic) = nil then
     Exit(IllegalInvocation(R));
-  Wrapper := Context.WrapperOf(This);
-  Info := @BindingInterfaces[Callee.Magic];
   Kind := PtrInt(Callee.HostData);
+  if Kind <> PairForEach then
+  begin
+    Iterator := R.NewObject(R.Intrinsics[inIteratorPrototype]);
+    Mark := Context.Engine.Runtime.PushRoot(JsObjectValue(Iterator));
+    try
+      Next := Context.Engine.DefineFunction(Iterator, 'next', @PairIteratorNext, 0, Callee.Magic);
+      Next.HostData := Pointer(Kind);
+      Next.Data := Context.Engine.NewArray([This, JsInteger(0)]);
+      Result := JsObjectValue(Iterator);
+    finally
+      Context.Engine.Runtime.PopRoots(Mark);
+    end;
+    Exit;
+  end;
   Callback := Arg(Args, ArgCount, 0);
-  if (Kind = PairForEach) and not JsIsCallable(Callback) then
+  if not JsIsCallable(Callback) then
     Exit(R.ThrowTypeError('forEach needs a function'));
-  Items := nil;
   Mark := Context.Engine.Runtime.PushRoot(JsUndefined);
   try
     Index := 0;
-    SetLength(Arguments, 1);
     while True do
     begin
-      Arguments[0].Kind := bvNumber;
-      Arguments[0].Number := Index;
-      if not CallSpecial(Context, Info^.PairAt, Wrapper, Callee.Magic, Arguments, Pair) then
+      if not PairOf(Context, This, Callee.Magic, Index, Pair) then
         Exit(JsException);
       if not JsIsObject(Pair) then
         Break;
       Context.Engine.Runtime.PushRoot(Pair);
       Key := JsAsObject(Pair).GetValue(R, JsInteger(0));
       Item := JsAsObject(Pair).GetValue(R, JsInteger(1));
-      case Kind of
-        PairEntries:
-          begin
-            SetLength(Items, Length(Items) + 1);
-            Items[High(Items)] := Pair;
-          end;
-        PairKeys:
-          begin
-            SetLength(Items, Length(Items) + 1);
-            Items[High(Items)] := Key;
-          end;
-        PairValues:
-          begin
-            SetLength(Items, Length(Items) + 1);
-            Items[High(Items)] := Item;
-          end;
-        PairForEach:
-          begin
-            CallArgs[0] := Item;
-            CallArgs[1] := Key;
-            CallArgs[2] := This;
-            Ignored := R.Call(Callback, Arg(Args, ArgCount, 1), @CallArgs[0], 3);
-            if Ignored = JsException then
-              Exit(JsException);
-          end;
-      end;
+      CallArgs[0] := Item;
+      CallArgs[1] := Key;
+      CallArgs[2] := This;
+      Ignored := R.Call(Callback, Arg(Args, ArgCount, 1), @CallArgs[0], 3);
+      if Ignored = JsException then
+        Exit(JsException);
       Inc(Index);
     end;
-    if Kind = PairForEach then
-      Exit(JsUndefined);
-    Snapshot := Context.Engine.NewArray(Items);
-    Context.Engine.Runtime.PushRoot(Snapshot);
-    Iterator := JsObjectValue(R.Intrinsics[inArrayValues]);
-    Result := R.Call(Iterator, Snapshot, nil, 0);
+    Result := JsUndefined;
   finally
     Context.Engine.Runtime.PopRoots(Mark);
   end;

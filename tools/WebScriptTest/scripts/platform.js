@@ -157,3 +157,17 @@ function after() {
     states.join() === "1,2,3,4" && xhr.getResponseHeader("Content-Type") === "application/json");
   check("XMLHttpRequest json", xhrJson.response !== null && xhrJson.response.ok === true);
 }
+var consoleNames = ["assert", "clear", "count", "countReset", "debug", "dir", "dirxml", "error", "group",
+  "groupCollapsed", "groupEnd", "info", "log", "table", "time", "timeEnd", "timeLog", "trace", "warn"];
+check("console has every operation, enumerable", consoleNames.every(function (name) {
+  var described = Object.getOwnPropertyDescriptor(console, name);
+  return described && typeof described.value === "function" && described.enumerable;
+}) && Object.prototype.toString.call(console) === "[object console]");
+var labelError = null;
+try { console.count({ toString: function () { throw new RangeError("label"); } }); } catch (e) { labelError = e; }
+console.time("t");
+console.timeLog("t", "midway");
+console.timeEnd("t");
+console.count();
+console.countReset();
+check("console labels convert with toString (and rethrow)", labelError instanceof RangeError);

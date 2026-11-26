@@ -85,6 +85,10 @@ interface Document : Node {
 // page's document is an instance of.
 [Exposed=Window]
 interface HTMLDocument : Document { };
+
+// What createDocument() and an XML parse make (DOM Standard 4.5.1).
+[Exposed=Window]
+interface XMLDocument : Document { };
 Document includes NonElementParentNode;
 Document includes ParentNode;
 Document includes GlobalEventHandlers;

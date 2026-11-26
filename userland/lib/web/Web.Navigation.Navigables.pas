@@ -792,7 +792,7 @@ var
   HasOrigin: Boolean;
 begin
   UnloadActiveDocument;
-  Document := TDocument.CreateDocument(True);
+  Document := TDocument.CreateDocument(Kind <> ContentXml);
   FWindow := TWebWindow.Create(FLoop, Document);
   FWindow.Navigable := Self;
   if FParent <> nil then
@@ -968,8 +968,12 @@ begin
   end;
   Essence := Response.ComputedEssence;
   Disposition := LowerCase(Response.Headers.Value('content-disposition'));
+  { XHTML stays with the HTML parser for now: the XML parser runs no
+    scripts. }
   if IsHtmlMimeType(Essence) or (Essence = 'application/xhtml+xml') then
     Kind := ContentHtml
+  else if IsXmlMimeType(Essence) and not IsSupportedImageType(Essence) then
+    Kind := ContentXml
   else if IsTextLikeMimeType(Essence) then
     Kind := ContentText
   else if IsSupportedImageType(Essence) then
@@ -1008,7 +1012,7 @@ begin
     FLoader.ApplyResponsePolicies(Response.Headers.Combined('content-security-policy'),
       Response.Headers.Combined('content-security-policy-report-only'), Response.Headers.Combined('reporting-endpoints'),
       Job.Referrer);
-  if Kind in [ContentText, ContentImage] then
+  if Kind in [ContentText, ContentImage, ContentXml] then
     FLoader.Document.ContentType := Essence;
   if Kind = ContentImage then
   begin

@@ -767,7 +767,13 @@ begin
   begin
     Step := RunState;
     if Step = StepFailure then
+    begin
+      { A setter's parse keeps what it changed before the failure (a host
+        set before a bad port stays set). }
+      if HaveUrl and (StateOverride <> StateNone) then
+        Url := FUrl;
       Exit(False);
+    end;
     if Step = StepReturn then
       Break;
     if AtEnd then

@@ -47,6 +47,7 @@ uses
   Js.Builtins.Functions,
   Js.Builtins.Error,
   Js.Builtins.Global,
+  Js.Builtins.Console,
   Js.Builtins.Symbol,
   Js.Builtins.Arrays,
   Js.Builtins.Iterators,
@@ -141,6 +142,7 @@ begin
   InstallFunction(R);
   InstallErrors(R);
   InstallGlobal(R);
+  InstallConsole(R);
   InstallSymbol(R);
   InstallIterators(R);
   InstallArray(R);

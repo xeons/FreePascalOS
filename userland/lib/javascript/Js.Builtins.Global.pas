@@ -17,13 +17,12 @@
 }
 
 {
-  The global object's own functions and values, and console.
+  The global object's own functions and values (console is
+  Js.Builtins.Console).
 
   globalThis, NaN, Infinity, undefined, parseInt, parseFloat, isNaN,
   isFinite, the URI functions, eval (indirect: the code runs in the
-  global scope), queueMicrotask, and console (log, info, debug, warn,
-  error, assert, group, groupEnd, table-less), which writes through
-  the realm's ConsoleWriter with %s %d %i %f %o %O %j substitution.
+  global scope) and queueMicrotask.
 }
 unit Js.Builtins.Global;
 
@@ -412,148 +411,9 @@ begin
   Result := JsUndefined;
 end;
 
-{ console }
-
-function FormatArguments(R: TJsRealm; Args: PJsValueArray; ArgCount: Integer): string;
-var
-  Format_, Piece: string;
-  Index, Next: Integer;
-  Number: Double;
-  Integer32: LongInt;
-begin
-  Result := '';
-  if ArgCount = 0 then
-    Exit;
-  Next := 1;
-  if JsIsString(Args^[0]) then
-  begin
-    Format_ := StringToUtf8(R.Heap, JsAsString(Args^[0]));
-    Index := 1;
-    while Index <= Length(Format_) do
-    begin
-      if (Format_[Index] = '%') and (Index < Length(Format_)) then
-      begin
-        case Format_[Index + 1] of
-          's', 'd', 'i', 'f', 'o', 'O', 'j', 'c':
-            if Next < ArgCount then
-            begin
-              case Format_[Index + 1] of
-                's':
-                  if JsIsString(Args^[Next]) then
-                    Piece := StringToUtf8(R.Heap, JsAsString(Args^[Next]))
-                  else
-                    Piece := InspectNested(R, Args^[Next]);
-                'd', 'i':
-                  begin
-                    if ToDouble(R, Args^[Next], Number) then
-                    begin
-                      if Format_[Index + 1] = 'i' then
-                        Number := Int(Number);
-                      Piece := NumberToString(Number);
-                    end
-                    else
-                    begin
-                      R.Runtime.TakeException;
-                      Piece := 'NaN';
-                    end;
-                    Integer32 := 0;
-                    if Integer32 = 0 then;
-                  end;
-                'f':
-                  if ToDouble(R, Args^[Next], Number) then
-                    Piece := NumberToString(Number)
-                  else
-                  begin
-                    R.Runtime.TakeException;
-                    Piece := 'NaN';
-                  end;
-                'c':
-                  Piece := '';
-              else
-                Piece := InspectNested(R, Args^[Next]);
-              end;
-              Result := Result + Piece;
-              Inc(Next);
-              Inc(Index, 2);
-              Continue;
-            end;
-          '%':
-            begin
-              Result := Result + '%';
-              Inc(Index, 2);
-              Continue;
-            end;
-        end;
-      end;
-      Result := Result + Format_[Index];
-      Inc(Index);
-    end;
-  end
-  else
-    Result := InspectValue(R, Args^[0]);
-  for Index := Next to ArgCount - 1 do
-    Result := Result + ' ' + InspectValue(R, Args^[Index]);
-end;
-
-procedure WriteConsole(R: TJsRealm; const Text: string; IsError: Boolean);
-var
-  Realm: TJsInterpreterRealm;
-  Indented: string;
-begin
-  Realm := TJsInterpreterRealm(R);
-  Indented := Text;
-  if Realm.ConsoleIndent > 0 then
-    Indented := StringOfChar(' ', Realm.ConsoleIndent) +
-      StringReplace(Text, #10, #10 + StringOfChar(' ', Realm.ConsoleIndent), [rfReplaceAll]);
-  if Assigned(Realm.ConsoleWriter) then
-    Realm.ConsoleWriter(Indented, IsError)
-  else if IsError then
-    WriteLn(StdErr, Indented)
-  else
-    WriteLn(Indented);
-end;
-
-{ Magic: 0 log/info/debug, 1 warn/error. }
-function ConsoleLog(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
-  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
-begin
-  WriteConsole(R, FormatArguments(R, Args, ArgCount), Callee.Magic = 1);
-  Result := JsUndefined;
-end;
-
-function ConsoleAssert(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
-  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
-begin
-  Result := JsUndefined;
-  if ToBoolean(Arg(Args, ArgCount, 0)) then
-    Exit;
-  if ArgCount > 1 then
-    WriteConsole(R, 'Assertion failed: ' + FormatArguments(R, @Args^[1], ArgCount - 1), True)
-  else
-    WriteConsole(R, 'Assertion failed', True);
-end;
-
-{ Magic: 0 group, 1 groupEnd. }
-function ConsoleGroup(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
-  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
-var
-  Realm: TJsInterpreterRealm;
-begin
-  Realm := TJsInterpreterRealm(R);
-  if Callee.Magic = 0 then
-  begin
-    if ArgCount > 0 then
-      WriteConsole(R, FormatArguments(R, Args, ArgCount), False);
-    Inc(Realm.ConsoleIndent, 2);
-  end
-  else if Realm.ConsoleIndent >= 2 then
-    Dec(Realm.ConsoleIndent, 2);
-  Result := JsUndefined;
-end;
-
 procedure InstallGlobal(R: TJsInterpreterRealm);
 var
-  Global, Console: TJsObject;
+  Global: TJsObject;
 begin
   Global := R.GlobalObject;
   Global.DefineData(R, R.Atom(anGlobalThis), JsObjectValue(Global), PropertyHidden);
@@ -571,17 +431,6 @@ begin
   DefineMethod(R, Global, 'eval', @GlobalEval, 1);
   R.Intrinsics[inEval] := JsAsObject(Global.GetValue(R, R.Atom(anEval)));
   DefineMethod(R, Global, 'queueMicrotask', @GlobalQueueMicrotask, 1);
-  Console := R.NewPlainObject;
-  DefineValue(R, Global, 'console', JsObjectValue(Console));
-  DefineMethod(R, Console, 'log', @ConsoleLog, 0, 0);
-  DefineMethod(R, Console, 'info', @ConsoleLog, 0, 0);
-  DefineMethod(R, Console, 'debug', @ConsoleLog, 0, 0);
-  DefineMethod(R, Console, 'warn', @ConsoleLog, 0, 1);
-  DefineMethod(R, Console, 'error', @ConsoleLog, 0, 1);
-  DefineMethod(R, Console, 'trace', @ConsoleLog, 0, 1);
-  DefineMethod(R, Console, 'assert', @ConsoleAssert, 0);
-  DefineMethod(R, Console, 'group', @ConsoleGroup, 0, 0);
-  DefineMethod(R, Console, 'groupEnd', @ConsoleGroup, 0, 1);
 end;
 
 end.

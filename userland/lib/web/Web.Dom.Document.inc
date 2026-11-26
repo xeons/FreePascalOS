@@ -280,6 +280,7 @@ begin
   Copy.FCharacterSet := FCharacterSet;
   Copy.FUrl := FUrl;
   Copy.FMode := FMode;
+  Copy.FIsXmlDocumentObject := FIsXmlDocumentObject;
   Result := Copy;
 end;
 

@@ -80,7 +80,7 @@ type
   TDocumentLoader = class;
   PUrlOrigin = ^TUrlOrigin;
 
-  TDocumentContentKind = (ContentHtml, ContentText, ContentImage, ContentPrepared);
+  TDocumentContentKind = (ContentHtml, ContentText, ContentImage, ContentPrepared, ContentXml);
 
   TTitleChangedEvent = procedure(Loader: TDocumentLoader; const Title: string) of object;
   TLoaderEvent = procedure(Loader: TDocumentLoader) of object;
@@ -121,6 +121,8 @@ type
     FTextBuffer: TTextBuffer;
     FTextNode: TText;
     FTextPending: string;
+    { An XML document's bytes, parsed whole once they are all here. }
+    FXmlBytes: string;
     FOnTitleChanged: TTitleChangedEvent;
     FOnDomContentLoaded: TLoaderEvent;
     FOnLoaded: TLoaderEvent;
@@ -153,6 +155,7 @@ type
     procedure CheckTitle;
     procedure AppendTextContent(Bytes: PByte; Count: SizeInt; Flush: Boolean);
     procedure BuildTextDocument;
+    procedure BuildXmlDocument;
     procedure BuildImageDocument;
   protected
     procedure HandleLinkChanged(Element: TElement);
@@ -228,7 +231,8 @@ uses
   Web.Fetch.ReferrerPolicy,
   Web.Fetch.ContentSecurityPolicy,
   Web.Navigation.Events,
-  Web.Origins;
+  Web.Origins,
+  Web.Xml.Parser;
 
 type
   { The observer's calls, forwarded to the loader. }
@@ -440,7 +444,46 @@ begin
       BuildTextDocument;
     ContentImage:
       BuildImageDocument;
+    ContentXml:
+      FDocument.IsXmlDocumentObject := True;
   end;
+end;
+
+{ The XML document from its bytes (the byte order mark, else the
+  transport's charset, else UTF-8), or the parser error document. }
+procedure TDocumentLoader.BuildXmlDocument;
+var
+  Encoding: TTextEncoding;
+  MarkLength: Integer;
+  Decoder: TTextDecoder;
+  Buffer: TTextBuffer;
+  Bytes, Error: string;
+  Root: TElement;
+begin
+  Bytes := FXmlBytes;
+  FXmlBytes := '';
+  MarkLength := 0;
+  if not SniffByteOrderMark(PByte(PChar(Bytes)), Length(Bytes), Encoding, MarkLength) then
+    if (FTransportCharset = '') or not EncodingForLabel(FTransportCharset, Encoding) then
+      Encoding := TextEncodingUtf8;
+  if not IsDecodableEncoding(Encoding) then
+    Encoding := TextEncodingUtf8;
+  FDocument.CharacterSet := EncodingName(Encoding);
+  Delete(Bytes, 1, MarkLength);
+  Decoder := CreateDecoder(Encoding);
+  Buffer := TTextBuffer.Create;
+  try
+    Decoder.Decode(PByte(PChar(Bytes)), Length(Bytes), Buffer, True);
+    if ParseXmlInto(FDocument, Buffer.Text, Error) then
+      Exit;
+  finally
+    Buffer.Free;
+    Decoder.Free;
+  end;
+  FDocument.ReplaceChildren([]);
+  Root := FDocument.CreateElementNS('http://www.mozilla.org/newlayout/xml/parsererror.xml', 'parsererror');
+  Root.AppendChild(FDocument.CreateTextNode('XML Parsing Error: ' + Error));
+  FDocument.AppendChild(Root);
 end;
 
 procedure TDocumentLoader.BuildTextDocument;
@@ -549,6 +592,11 @@ begin
   case FContentKind of
     ContentText:
       AppendTextContent(Data, Count, False);
+    ContentXml:
+      begin
+        SetString(Chunk, PChar(Data), Count);
+        FXmlBytes := FXmlBytes + Chunk;
+      end;
     ContentHtml:
       begin
         SetString(Chunk, PChar(Data), Count);
@@ -601,6 +649,11 @@ begin
     ContentText:
       begin
         AppendTextContent(nil, 0, True);
+        TheEnd;
+      end;
+    ContentXml:
+      begin
+        BuildXmlDocument;
         TheEnd;
       end;
   else

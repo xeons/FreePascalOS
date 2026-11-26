@@ -295,7 +295,7 @@ procedure ConvertRecord(Context: TBindingContext; Value: TJsValue; ValueType: In
   out Converted: TBindingValue; const What: string);
 var
   Keys: TJsValueList;
-  Index, Count, Found: Integer;
+  Index, Count, Found, Earlier: Integer;
   Target: TJsObject;
   Desc: TJsPropertyDescriptor;
   R: TJsRealm;
@@ -323,7 +323,15 @@ begin
     KeyValue := KeyToStringValue(R, Keys[Index]);
     Converted.Keys[Count] := ConvertString(Context, KeyValue, tkUsvString);
     ConvertValue(Context, GetPropertyByKey(R, Value, Keys[Index]), ValueType, Converted.Items[Count], What);
-    Inc(Count);
+    { Two keys that are one as USVStrings (lone surrogates replaced): the
+      later value takes the earlier key's place. }
+    Earlier := 0;
+    while (Earlier < Count) and (Converted.Keys[Earlier] <> Converted.Keys[Count]) do
+      Inc(Earlier);
+    if Earlier < Count then
+      Converted.Items[Earlier] := Converted.Items[Count]
+    else
+      Inc(Count);
   end;
   SetLength(Converted.Keys, Count);
   SetLength(Converted.Items, Count);
@@ -630,7 +638,10 @@ begin
       Value := Call.RawArguments^[Index]
     else
       Value := JsUndefined;
-    if (Index >= Call.PassedCount) or (Value = JsUndefined) and ((Argument^.Flags and ArgumentOptional) <> 0) then
+    { An undefined passed to a variadic argument is a value ("undefined"
+      for a DOMString), not a missing optional argument. }
+    if (Index >= Call.PassedCount) or (Value = JsUndefined) and ((Argument^.Flags and ArgumentOptional) <> 0) and
+      ((Argument^.Flags and ArgumentVariadic) = 0) then
     begin
       if (Argument^.Flags and ArgumentHasDefault) <> 0 then
         ConvertDefault(Context, Argument^.TypeIndex, Argument^.DefaultValue, Call.Arguments[Index],

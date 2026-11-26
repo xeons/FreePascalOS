@@ -294,7 +294,10 @@
         return consume(this, function (bytes) {
           if (/^application\/x-www-form-urlencoded/i.test(type)) {
             const form = new FormData();
-            for (const [name, value] of new URLSearchParams(internal.decodeText(bytes))) form.append(name, value);
+            // The body is parsed as it is: a leading "?" is a name's.
+            const text = internal.decodeText(bytes);
+            for (const [name, value] of new URLSearchParams(text.charAt(0) === "?" ? "?" + text : text))
+              form.append(name, value);
             return form;
           }
           throw new TypeError("Could not parse content as FormData.");
@@ -892,6 +895,7 @@
       state.headerList = [];
       state.sendFlag = false;
       state.response = null;
+      state.documentResponse = undefined;
       state.chunks = [];
       state.received = 0;
       state.status = 0;
@@ -995,6 +999,7 @@
       if (state.readyState === DONE) {
         state.readyState = UNSENT;
         state.response = null;
+        state.documentResponse = undefined;
       }
     }
     get responseURL() {
@@ -1055,8 +1060,7 @@
           state.response = null;
         }
       } else if (state.responseType === "document") {
-        const parser = new global.DOMParser();
-        state.response = parser.parseFromString(internal.decodeText(bytes), "text/html");
+        state.response = documentResponse(state, bytes);
       }
       return state.response;
     }
@@ -1074,8 +1078,10 @@
       if (state.responseType !== "" && state.responseType !== "document")
         throw internal.domException("The value is only accessible if the object's 'responseType' is '' or " +
           "'document'.", "InvalidStateError");
-      if (state.readyState !== DONE || state.errorFlag || state.responseType === "") return null;
-      return this.response;
+      if (state.readyState !== DONE || state.errorFlag) return null;
+      if (state.responseType === "document") return this.response;
+      if (state.documentResponse === undefined) state.documentResponse = documentResponse(state, responseBytes(state));
+      return state.documentResponse;
     }
   }
   XMLHttpRequest.UNSENT = UNSENT;
@@ -1094,6 +1100,24 @@
     return document.documentElement ? document.documentElement.outerHTML : "";
   };
 
+  // The document a response is (XMLHttpRequest's "document response"):
+  // HTML only when responseType is "document", XML for an XML MIME type,
+  // null for anything else or XML that is not well-formed.
+  function documentResponse(state, bytes) {
+    const essence = contentTypeOf(state).split(";")[0].trim().toLowerCase();
+    const isXml = essence === "" || essence === "text/xml" || essence === "application/xml" || /\+xml$/.test(essence);
+    const parser = new global.DOMParser();
+    if (essence === "text/html") {
+      if (state.responseType !== "document") return null;
+      return parser.parseFromString(internal.decodeText(bytes), "text/html");
+    }
+    if (!isXml) return null;
+    const document = parser.parseFromString(internal.decodeText(bytes), "application/xml");
+    const root = document.documentElement;
+    if (root !== null && root.localName === "parsererror" &&
+      root.namespaceURI === "http://www.mozilla.org/newlayout/xml/parsererror.xml") return null;
+    return document;
+  }
   function contentTypeOf(state) {
     if (state.overrideMime !== null) return state.overrideMime;
     const entry = state.responseHeaders.find(function (item) { return item[0].toLowerCase() === "content-type"; });

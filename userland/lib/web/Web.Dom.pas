@@ -698,6 +698,7 @@ type
   private
     FMode: TDocumentMode;
     FIsHtmlDocument: Boolean;
+    FIsXmlDocumentObject: Boolean;
     FContentType: string;
     FCharacterSet: string;
     FUrl: string;
@@ -824,6 +825,9 @@ type
     property Mode: TDocumentMode read FMode write FMode;
     property CompatMode: string read GetCompatMode;
     property IsHtmlDocument: Boolean read FIsHtmlDocument;
+    { An XMLDocument to script (createDocument(), an XML parse), not a
+      plain Document. }
+    property IsXmlDocumentObject: Boolean read FIsXmlDocumentObject write FIsXmlDocumentObject;
     property ContentType: string read FContentType write FContentType;
     property CharacterSet: string read FCharacterSet write FCharacterSet;
     property Url: string read FUrl write FUrl;

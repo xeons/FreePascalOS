@@ -51,3 +51,21 @@ var seen = [];
 fromRecord.forEach(function (value, key) { seen.push(key + value); });
 check("forEach", seen.join() === "one1,two2");
 check("encoding", new URLSearchParams({ "a&b": "c=d é" }).toString() === "a%26b=c%3Dd+%C3%A9");
+var live = new URLSearchParams("a=1&b=2&c=3");
+var walked = [];
+for (var pair of live) {
+  walked.push(pair[0]);
+  if (pair[0] === "a") live.delete("a");
+}
+check("iteration reads the pairs live (a deleted pair moves the rest up)", walked.join() === "a,c");
+var iterator = new URLSearchParams("x=1").entries();
+check("a pair iterator is an iterator", typeof iterator.next === "function" &&
+  iterator[Symbol.iterator]() === iterator && iterator.next().value.join() === "x,1" && iterator.next().done);
+var lone = new URLSearchParams({ "\uD835x": "1", "xx": "2", "\uD83Dx": "3" });
+check("record keys that are one USVString keep the later value in the first place",
+  lone.toString() === "%EF%BF%BDx=3&xx=2");
+var hostUrl = new URL("http://example.net:8080/path");
+hostUrl.host = "example.com:invalid";
+check("a host setter keeps the host when the port is bad", hostUrl.href === "http://example.com:8080/path");
+hostUrl.host = "example.org:65536";
+check("a host setter keeps the host when the port overflows", hostUrl.host === "example.org:8080");

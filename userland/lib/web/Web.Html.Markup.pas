@@ -51,7 +51,8 @@ uses
   Web.Namespaces,
   Web.Dom.Exceptions,
   Web.Html.Parser,
-  Web.Html.Serializer;
+  Web.Html.Serializer,
+  Web.Xml.Parser;
 
 function GetInnerHtml(Node: TNode): string;
 begin
@@ -156,22 +157,15 @@ begin
 end;
 
 function ParseMarkupDocument(const Markup, ContentType, Url: string): TDocument;
-const
-  ParserErrorNamespace = 'http://www.mozilla.org/newlayout/xml/parsererror.xml';
-var
-  Error: TElement;
 begin
   if ContentType = 'text/html' then
-    Result := ParseHtmlText(Markup, False)
-  else
   begin
-    Result := TDocument.CreateDocument(False);
-    Error := Result.CreateElementNS(ParserErrorNamespace, 'parsererror');
-    Result.AppendChild(Error);
-    Error.AppendChild(Result.CreateTextNode('XML documents are not supported'));
-  end;
-  Result.ContentType := ContentType;
-  Result.Url := Url;
+    Result := ParseHtmlText(Markup, False);
+    Result.ContentType := ContentType;
+    Result.Url := Url;
+  end
+  else
+    Result := ParseXmlDocument(Markup, ContentType, Url);
 end;
 
 end.

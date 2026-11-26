@@ -41,6 +41,7 @@ uses
   Js.Builtins.Functions,
   Js.Builtins.Error,
   Js.Builtins.Global,
+  Js.Builtins.Console,
   Js.Builtins.Symbol,
   Js.Builtins.Iterators,
   Js.Builtins.Arrays,

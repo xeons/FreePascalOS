@@ -70,13 +70,11 @@ uses
 
 { Runs the parser from a state on a copy; the copy is kept only when it
   worked. }
+{ What a setter changes stays changed even when the parse then fails, as
+  the URL Standard's setters run the parser on the URL itself. }
 procedure ParseInto(var Url: TUrlRecord; const Input: string; State: TUrlParserState);
-var
-  Copy_: TUrlRecord;
 begin
-  Copy_ := Url;
-  if ParseUrlWithOverride(Input, Copy_, State) then
-    Url := Copy_;
+  ParseUrlWithOverride(Input, Url, State);
 end;
 
 procedure StripTrailingSpacesFromOpaquePath(var Url: TUrlRecord);

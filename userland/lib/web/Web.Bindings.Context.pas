@@ -1165,6 +1165,8 @@ begin
     NodeTypeDocument:
       if TDocument(Node).IsHtmlDocument then
         Result := InterfaceHTMLDocument
+      else if TDocument(Node).IsXmlDocumentObject then
+        Result := InterfaceXMLDocument
       else
         Result := InterfaceDocument;
     NodeTypeAttribute:

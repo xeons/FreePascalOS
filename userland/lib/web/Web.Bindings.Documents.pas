@@ -570,6 +570,7 @@ var
 begin
   Document := TDocument.CreateDocument(False);
   try
+    Document.IsXmlDocumentObject := True;
     Namespace := Call.Text(0);
     if Call.Native(2) <> nil then
       Document.AppendChild(TNode(Call.Native(2)));
