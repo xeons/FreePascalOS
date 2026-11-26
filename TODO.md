@@ -1952,6 +1952,54 @@ in the order they would be built:
       manifests' content, then C for classes where a crash matters more
       than speed.
 
+## Media (libmedia)
+
+- [x] libmedia: frame records (`Media.Frames`, the contract with the video
+      libraries), tracks and packets, the demuxer and decoder classes, the
+      video decoder registry, `ConvertFrameToBgra` (BT.601/709/2020, SMPTE
+      240M, FCC, identity; limited and full range; 10/12-bit)
+- [x] Containers: WAV (RIFF, RF64, extensible), native FLAC (seek table,
+      bisection), Ogg (Vorbis, Opus, FLAC; chained; granule timing;
+      bisection seeking), Matroska/WebM (lacing, header stripping, unknown
+      sizes, cues, DiscardPadding, CodecDelay), MP4 (sample tables, edit
+      lists, fragmented MP4 read as it is appended), MP3 (ID3, Xing/LAME
+      gapless, VBRI, seeking)
+- [x] Audio decoders: PCM, FLAC (bit exact, MD5 checked), Vorbis (within
+      2e-7 of libvorbis), Opus (SILK, CELT, hybrid, multistream; RFC 8251
+      vectors with exact final ranges), MP3 (MPEG-1/2/2.5 Layer III, ISO
+      11172-4 full accuracy)
+- [x] Resampler (polyphase Kaiser windowed sinc), channel mixer (BS.775
+      downmix), conversion to the audio devices' sample kinds
+- [x] `mediaplay`: playback on the audio device, `-i` track info, `-k`
+      decoding checksums (per video frame once a video library registers)
+- [x] `make media-test` (host, fixtures from ffmpeg/flac/lame at build
+      time) and a coretest line
+- [x] libvideo: VP8 (RFC 6386) and VP9 (profiles 0-3, 8/10/12-bit,
+      4:2:0/4:2:2/4:4:0/4:4:4, tiles, superframes, scaled references,
+      intra-only and show-existing frames) decoders, bit exact with libvpx;
+      VP8 partition rows and VP9 tile columns and loop filter rows on
+      worker threads; registered with `Media.VideoDecoders` and linked into
+      mediaplay (`-k` checksums WebM/MP4 VP8/VP9 video); `make video-test`
+      (vpxenc streams, WebM/MP4 through libmedia, damaged streams, the
+      libvpx test vectors when present) and a coretest line
+- [ ] Register libav1's decoder with `Media.VideoDecoders.RegisterVideoDecoder`
+      and link it into mediaplay
+- [ ] libvideo: frame-parallel VP9 decoding (the next frame's rows as
+      their references' rows finish) and row-parallel decoding of
+      single-tile VP9 streams (parsing and reconstruction apart);
+      SIMD (FPC inline assembler) for the 8-tap filters, transforms and
+      loop filters (now about a fifth of libvpx's speed single threaded)
+- [ ] `Media.Frames`: a layout for 4:4:0 (VP9 profile 1/3); such frames
+      say pl420 with full width chroma planes
+- [ ] MP3 Layers I and II; Vorbis floor 0 and MP3 intensity stereo / mixed
+      blocks checked against streams that use them (no host encoder writes
+      them); Theora timing in Ogg; mfra-based MP4 seeking; zlib-compressed
+      Matroska frames
+- [ ] A player application (video window, seeking bar, playlists) and the
+      browser's HTMLMediaElement / MSE on libmedia (next batch)
+- [ ] Decoding audio ahead in a thread of its own while playing (mediaplay
+      decodes and writes on one thread)
+
 ## Planned: 3D graphics (OpenGL and Vulkan)
 
 - [ ] **Kernel GPU interface** (a DRM/KMS-like role, generic names):
