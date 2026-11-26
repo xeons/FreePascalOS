@@ -53,9 +53,6 @@ uses
   Processes.Process,
   Processes.Thread;
 
-const
-  UserThreadPriority = 8;
-
 type
   { What the thread of a forked child takes over from the forking thread
     (its copies in the child's space). }
@@ -71,8 +68,9 @@ type
     RecordsThreadId: Boolean;
   end;
 
-{ The thread priority for a nice value (-20 .. 19). }
-function ThreadPriorityForNice(Nice: LongInt): LongWord;
+{ The base priority of Process's threads: its priority class moved by
+  its nice value (Kernel.PriorityClasses). }
+function ProcessThreadPriority(Process: PProcess): LongWord;
 
 { Starts a user thread in Process at EntryPoint with the given stack
   pointer and Argument in the first argument register. StackStart is the
@@ -113,6 +111,7 @@ uses
   Kernel.Arch.ContextSwitch,
   Kernel.Threads,
   Kernel.Scheduler,
+  Kernel.PriorityClasses,
   Kernel.Events,
   Kernel.MutexEvents,
   Processes.AddressSpace,
@@ -191,10 +190,9 @@ begin
   ArchEnterUserMode(Start.EntryPoint, Start.StackPointer, Start.Argument);
 end;
 
-function ThreadPriorityForNice(Nice: LongInt): LongWord;
+function ProcessThreadPriority(Process: PProcess): LongWord;
 begin
-  { Nice 0 is the usual user priority; every 4 steps is one priority. }
-  Result := LongWord(LongInt(UserThreadPriority) - Nice div 4);
+  Result := ThreadBasePriority(Process^.PriorityClass, Process^.Credentials.Nice);
 end;
 
 function StartUserThread(Process: PProcess; EntryPoint, StackPointer, Argument, StackStart: QWord;
@@ -223,9 +221,10 @@ begin
     an active thread (or the process has not started yet), so the count
     cannot reach zero in between. }
   AtomicIncrement(Process^.ActiveUserThreads);
-  { Every thread runs at the priority its process's nice value gives. }
+  { Every thread runs at the priority its process's class and nice value
+    give. }
   Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
-    ThreadPriorityForNice(Process^.Credentials.Nice), Name,
+    ProcessThreadPriority(Process), Name,
     ReturnReference);
   if Thread = nil then
   begin
@@ -257,7 +256,7 @@ begin
   Start^.AlternateStack := Fork.AlternateStack;
   AtomicIncrement(Process^.ActiveUserThreads);
   Thread := CreateThreadInProcess(Process, @UserThreadStart, Start,
-    ThreadPriorityForNice(Process^.Credentials.Nice), Name, False);
+    ProcessThreadPriority(Process), Name, False);
   if Thread = nil then
   begin
     AtomicDecrement(Process^.ActiveUserThreads);

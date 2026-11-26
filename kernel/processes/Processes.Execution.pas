@@ -185,7 +185,7 @@ begin
   if Result <> ErrorNone then
     Exit;
   SetRegionLimit(Image.Space, Process^.AddressSpace^.RegionLimit);
-  SetCommitLimit(Image.Space, Process^.AddressSpace^.CommitLimitPages);
+  InheritCommitSettings(Process^.AddressSpace, Image.Space);
   Image.StackStart := Image.Space^.Layout.StackTop - UserStackReserve;
   Result := AddRegion(Image.Space, Image.StackStart, UserStackReserve, RegionReadable or RegionWritable,
     RegionKindStack, True);

@@ -713,8 +713,10 @@ Rules that follow from this:
   number of threads running or ready and folds it into three
   exponentially decayed averages (1, 5 and 15 minutes, fixed point with
   11 fraction bits, as in Unix load averages). The run queues keep a count of their threads for this.
-- User threads run at priority 8 for nice 0; every 4 nice steps move one
-  priority (nice -20 is 13, nice 19 is 4). `SetThreadPriority` sets a
+- User threads run at the base priority of their process's *priority
+  class* (see below: 8 for an ordinary program) for nice 0; every 4
+  nice steps move one priority within the variable class (in the Normal
+  class nice -20 is 13, nice 19 is 4). `SetThreadPriority` sets a
   thread's base priority (ending any boost) and moves a ready thread to
   the run queue of its new priority.
 - Floating point and SSE registers belong to threads: the switch saves the
@@ -758,6 +760,79 @@ The rules are pure functions checked on the host
 (`tools/SchedulerPolicyTest`); the kernel self tests check that an event
 wakes a thread beside a busy one at once, and `schedtest` (in coretest)
 both that and the starvation boost from user mode.
+
+### Priority classes
+
+Until these, every user process ran at priority 8: the display server,
+the desktop, the task manager, a browser and its renderers all competed
+as equals, and only wake boosts (which decay) kept the screen alive
+beside a page's scripts - a busy enough page slowed the whole system
+until the user could not even close its window. Now each process is in
+a class (`Kernel.PriorityClasses`, `TProcess.PriorityClass`,
+`CallSetPriorityClass` 270, libsystem's `Sys.PriorityClasses`) that
+gives its threads' base priority, nice moving it within the variable
+class:
+
+| Class | Base | Who |
+|---|---|---|
+| Idle | 4 | a content process none of whose views is shown |
+| Background | 6 | a content process with a view shown |
+| Normal | 8 | every program (the default) |
+| Interactive | 10 | the session manager, the desktop, the task manager |
+| System | 12 | the display server (screens and input) |
+
+So the display server preempts every program, the desktop and the task
+manager every ordinary program, and a page's renderer never holds up
+the browser's window; a lower class reaches a higher one only through a
+boost, which decays. Any process may put itself or another of its own
+user's in a class up to Normal, or up to its own class when that is
+higher (the desktop gives the task manager it starts Interactive); root
+any. Idle and Background are inherited; a process started by one in a
+higher class begins Normal (what the user starts from the desktop is an
+ordinary program). The display server and the session manager (root)
+set their own classes; the session manager puts the desktop in
+Interactive. Essential processes - Interactive and System, and the
+initial program - may also use the memory reserves (see "Memory
+pressure and running out"). `TAbiProcessDetails.PriorityClass` shows a
+process's class.
+
+### Fair share between processes
+
+A process with many busy threads would otherwise get many times the
+processor time of one with a single thread at the same priority. Each
+process has a scheduling group (`Kernel.SchedulingGroups`, pointed at by
+`TThreadControlBlock.SchedulingGroup`; kernel threads have none): every
+switch charges the time its thread ran to it (`Kernel.ProcessorTime`),
+decayed by half every 500 ms (`Kernel.FairShare`, in sixteenths of a
+half-life, the remainder kept for the next charge). A group running on
+K processors all the time settles at K * H / ln 2, so the decayed time
+says how many processors it has used lately. A group using more than
+its allowance - one processor, or half of them when there are more -
+has its threads that use up their time slice placed below their base:
+one level for going over, one more for each further quarter of the
+processors, at most two, never below 1 (`DecayRunningThreadPriority`).
+Only threads of the variable class, only after a used up slice (a
+thread that waits goes back to its base, and wake boosts are kept),
+looked at again every slice: a busy process still gets every processor
+nobody else wants; it only stops crowding out the others. A program
+spinning 16 threads on four processors then sits at 6 beside an
+ordinary program's thread at 8.
+
+### Priority inheritance
+
+A thread that waits for a kernel mutex (`Kernel.Mutex`) owned by a less
+important thread raises the owner to its own priority
+(`InheritPriorityLocked`: requeued if ready, the processor's running
+priority if running; marked `PriorityInherited`, which no slice decays)
+until the owner releases a mutex (`EndInheritedPriorityLocked`, back to
+its base, a dispatch requested). So a renderer holding a file system
+lock cannot keep the display server waiting while busier programs run.
+(A thread holding several contended mutexes drops at the first release;
+user-mode locks have no owner the kernel knows, and are not covered.)
+The memory pressure thread runs at 17, in the real-time class, so no
+program, boosted or not, keeps it from relieving the pressure it
+causes; page faults, zeroing and copies for system calls run in the
+faulting thread at its own priority.
 
 ### Locks and synchronization objects
 
@@ -3194,6 +3269,19 @@ answer: its loop's wait is cut to the next ping or deadline. The
 windows of a program stuck in a handler are still raised and minimized
 by the server, and the kernel ends the program whatever it is doing
 (see "Ending other programs").
+
+Closing such a window always works: when the user asks to close a
+window of a program that is not responding - its close button, Alt+F4,
+the taskbar (`AskToClose` in `Server.WindowStates`, which all three
+use) - the server still sends the program `EventCloseRequested`, and
+also tells the shell `EventShellEndTaskOffered` (Value: the program's
+process, Text: the title). The desktop (`Desktop.EndTask`) asks "TITLE
+is not responding" with End task and Wait, and End task ends the
+process outright (`TerminateProgram`, 137), one question per program at
+a time; the task buttons of such a program say "(Not responding)". The
+desktop and the task manager run in the Interactive priority class and
+may use the memory reserve, so this works under any load (see
+"Priority classes").
 
 Window icons (`Server.WindowIcons`): a program gives its window an icon
 as a name of the icon theme (`RequestSetWindowIcon`; `TWindow.IconName`
@@ -11449,6 +11537,66 @@ with interrupts on reclaims and tries once more before returning nil
 (kernel allocations fail cleanly, they never end a process), and so does
 a user page fault.
 
+**The reserve** (`Memory.Reserves`). Below the critical watermark the
+free pages belong to the kernel and the essential processes: a page for
+a process's memory, a mapped file or a section (`IsProcessPageUsage`) is
+refused there for an ordinary program (counted as a failed allocation
+and in `ReserveRefusalCount`), while an essential process (Interactive
+or System class, the initial program: `Processes.PriorityClassCalls`)
+may go down to half the watermark and the kernel's own allocations to
+the last page. The allocator asks the process manager's query
+(`SetReserveAccessQuery`) only near the watermark. So the display
+server still draws, the desktop still closes windows and the task
+manager still opens while a program has taken everything else, and the
+kernel's heap (channel messages, sockets) does not fail first.
+
+**The thrash guard** (`Memory.ThrashGuard`). With no swap, the only
+memory the shrinkers can take from running programs is their mapped
+pages (code and libraries), read again on the next touch. Taken without
+bound, a program that keeps asking turns the system into a disk reader
+- every program faulting its code back in turn after turn - and is ended
+only once nothing at all is left. Hard eviction of mapped pages
+(`Processes.MappedFileEviction`) now draws from a token bucket of 1/64
+of RAM a second (at least 256 pages, holding a second's worth); once it
+is empty the shrinker gives nothing more, the faulting program finds no
+page and the policy below ends a process within a second. Pages nobody
+maps are never limited. `TAbiMemoryPressure.ThrashGuardRefusals` counts
+what it kept.
+
+**The commit limit** (`Memory.CommitCharge`). A commitment is charged
+to the process (`ProcessLimitCommit`), its job if it is in one, and the
+system, and fails with `ErrorOutOfMemory` if any of them would go over
+its limit: a program's allocation fails cleanly instead of the system
+degrading when it touches what it was promised. The system's limit is
+the RAM processes may use - all of it less what the kernel holds for
+itself (its image, heap, stacks, page tables, page database, drivers'
+buffers; not the caches it gives back) and the critical watermark -
+scaled by the kernel option `commitlimit=PERCENT` (100 by default;
+`off` for none); the memory pressure thread recomputes it each second.
+The last 1/32 of it is only for essential processes
+(`TAddressSpace.MayUseCommitReserve`). A stack is charged only its
+first 64 KiB (`StackChargeBytes`), as committed stack is elsewhere:
+stacks are reserved large (1 MiB a thread, 8 MiB the main one) and
+mostly never touched, and charging them whole would refuse threads long
+before memory is short; what a stack grows into beyond that is resident
+memory the policy below weighs. `TAbiMemoryPressure` reports the limit
+and the commitments refused (`CallGetMemoryPressure`).
+
+**Jobs** (`Processes.Jobs`, `Processes.JobCalls`, libsystem's
+`Sys.Jobs`). A job (`CallCreateJob` 271, a handle of `HandleKindJob`)
+groups processes whose commitments are charged together against one
+limit (`CallSetJobLimit` 273 with `JobLimitCommit`); a process joins one
+for good (`CallAssignProcessToJob` 272, a process handle or
+`CurrentProcessHandle`; another user's needs root), its present charge
+and its sections' moving into the job's pool (a `TCommitPool`, the
+job's first field), and what it starts or forks is in the job from the
+start. Each member and each of its address spaces references the job,
+whose pool gets back what a space had when the space goes.
+`CallGetJobInformation` (274) gives a `TAbiJobInformation`: the
+processes in it now and ever, its charge, peak, limit and refusals. The
+browser puts its content processes in one (see "Browser process
+model").
+
 **Running out** (`Processes.OutOfMemory`). A user page fault that found
 no page even after reclaiming chooses a process to end
 (`Processes.OutOfMemoryScores`): its score is its share of memory in
@@ -11467,9 +11615,14 @@ as committed but not resident and raise the footprint, touches half and
 checks it moved to resident, and reads a hog's charge. The highest score goes,
 on equal scores the larger. Never chosen unless it is the culprit (the
 process whose fault failed): the initial program (the service manager),
-a process with the adjustment -1000 (the display server sets it on
-itself; lowering below 0 is root's), and one already being ended; the
-culprit goes if nobody else may. The chosen process is ended with exit
+a process with the adjustment -1000 (the display server and the session
+manager set it on themselves; lowering below 0 is root's), one in the
+System class, and one already being ended; the culprit goes if nobody
+else may. A process's kind moves its adjustment (`OomKindAdjust`): a
+sandboxed one (a renderer) +150, one in the Idle or Background class
++150, one in the Interactive class (the desktop, the task manager) -300
+- so a runaway page's renderer goes before the browser, and the browser
+before the desktop. The chosen process is ended with exit
 status 137 (`ExitStatusOutOfMemory`), with a kernel log line ("Out of
 memory: ended NAME (PID), SIZE resident and committed, ...") and a
 `NotificationProcessEndedForMemory` (Value: its id) to every process
@@ -11495,7 +11648,20 @@ ended. `scripts/test-memory-pressure.sh` (in `make test`) boots a
 256 MiB guest with `memorytest` as the first program: a hog without end
 must be ended with 137 while a bystander and the system live on, and a
 small process with the adjustment 1000 must be ended before a hog;
-then the discards above.
+then the discards above (booted with `commitlimit=off`, so the hogs
+reach the policy rather than the commit limit).
+`scripts/test-responsiveness.sh` (in `make test`, also `make
+responsiveness-test`) boots a 512 MiB guest with four processors and
+`responsivetest` as the first program: the priority class rules; the
+lateness of a 10 ms sleep loop alone, beside `burn -t 16` in the Normal
+class (fair share) and the Interactive class, and beside a memory hog
+without end, which must be refused by the commit limit (status 0 or
+203) or ended (137); afterwards a program must still start, 32 MiB be
+taken and free memory come back; and a hog in a job limited to 48 MiB
+beyond the test's own charge must be refused at that limit. The rules
+themselves are checked on the host by `tools/ResponsivenessPolicyTest`
+(`make responsiveness-policy-test`, with a simulation of an 8-thread
+busy process beside a single-thread one) and `tools/CachePolicyTest`.
 
 ### Processor exceptions
 
@@ -17960,11 +18126,36 @@ named ports (the display server, services), `RestrictProcessControl`
 ending, stopping or asking any other process to end. Refusals are
 `ErrorAccessDenied`. Handles it already holds (its channel, standard
 output) keep working. A renderer also lowers the memory it may commit
-(`--memory-limit`, 1 GiB by default; only root could raise it again)
-and sets its out-of-memory adjustment to 700 while none of its views is
-shown and 300 while one is, so a background renderer is ended before
-the browser (0) when memory runs out. The browser's setting
-`Browser/Sandbox` turns the restrictions off for debugging.
+(`--memory-limit`: a quarter of the machine's RAM, between 256 MiB and
+2 GiB, `WebView.ContentMemory`; only root could raise it again) and sets
+its out-of-memory adjustment to 700 while none of its views is shown and
+300 while one is, so a background renderer is ended before the browser
+(0) when memory runs out (the kernel adds 150 more for being
+sandboxed). The browser's setting `Browser/Sandbox` turns the
+restrictions off for debugging.
+
+**Pages cannot take the machine.** The YouTube report (one page slowing
+the whole system to a crawl, then memory running out) is answered at
+three levels:
+
+- *Processor.* A renderer is in the Background priority class while one
+  of its views is shown and Idle while none is (`WebContent.Sandbox`,
+  see "Priority classes"), below the browser's window (Normal), the
+  desktop and task manager (Interactive) and the display server
+  (System); fair share keeps a renderer with many busy threads from
+  crowding out other programs at its level.
+- *Memory.* Every content process is put in one job
+  (`WebView.ContentMemory.PutInContentJob`, `Sys.Jobs`) whose commit
+  limit is three fifths of RAM, next to each process's own limit; the
+  system's commit limit and reserves protect the rest. A page that keeps
+  allocating has its allocations refused (run time error 203) or its
+  process ended for memory (137); the tab's crash panel then says the
+  page ran out of memory (`EndedForMemory`: 203, or 137 when the
+  kernel's last process ended for memory is that one), the other tabs
+  live on. about:support shows both limits and the job's charge.
+- *Hangs.* A page that stops answering gets the hang bar (Wait, Stop);
+  a browser window that stops answering is ended from its close button
+  (see "Programs that stop responding").
 
 **WebSockets in the browser.** A page's WebSocket is the network
 service's connection (`WebView.NetworkSockets`): the renderer decides

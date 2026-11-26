@@ -89,6 +89,11 @@ type
     OomScoreAdjust: LongInt;
     { The starting process's restrictions (Processes.Restrictions). }
     Restrictions: LongWord;
+    { Its priority class (Kernel.PriorityClasses.InheritedPriorityClass
+      of the starting process's), and the job it joins (a PJob of the
+      starting process, which holds it; nil for none). }
+    PriorityClass: LongWord;
+    Job: Pointer;
     { Its user may not read the program (OpenProgramFile): AT_SECURE is
       set, and so is TProcess.ImageUnreadable. }
     ImageUnreadable: Boolean;
@@ -162,6 +167,7 @@ uses
   Processes.LoadedModules,
   Processes.UserBackTrace,
   Processes.OutOfMemory,
+  Processes.Jobs,
   Memory.PhysicalPages,
   Kernel.Random,
   Processes.ChildWaits,
@@ -530,6 +536,7 @@ begin
   Process^.OomScoreAdjust := Startup.OomScoreAdjust;
   Process^.Restrictions := Startup.Restrictions;
   Process^.ImageUnreadable := Startup.ImageUnreadable;
+  Process^.PriorityClass := Startup.PriorityClass;
   Result := CreateAddressSpace(Space);
   if Result = ErrorNone then
   begin
@@ -537,6 +544,7 @@ begin
     if Startup.RegionLimit <> 0 then
       SetRegionLimit(Space, Startup.RegionLimit);
     SetCommitLimit(Space, Startup.CommitLimitPages);
+    JoinJobAtStart(Process, PJob(Startup.Job));
     Process^.PageTableRoot := Space^.Root;
     StackStart := Space^.Layout.StackTop - UserStackReserve;
     Result := AddRegion(Space, StackStart, UserStackReserve,

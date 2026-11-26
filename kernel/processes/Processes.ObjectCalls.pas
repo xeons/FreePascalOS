@@ -235,13 +235,15 @@ var
 begin
   Process := PProcess(Holder);
   AtomicFetchAndAdd(Process^.SectionChargePages, -Int64(Pages));
-  ChangeSystemCommitCharge(-Int64(Pages));
+  UnchargeCommitPool(PCommitPool(Process^.Job), Pages);
+  UnchargeSystemCommit(Pages);
   DereferenceObject(Process);
 end;
 
 { Charges Pages of a new section to the calling process: refused over
   its commit limit (what its space has charged and its sections
-  together). }
+  together), its job's (the job's pool is the first field of the job:
+  Processes.Jobs) or the system's. }
 function ChargeSection(Process: PProcess; Pages: QWord): LongInt;
 var
   Usage: TAddressSpaceUsage;
@@ -250,8 +252,14 @@ begin
   if (Usage.CommitLimitPages <> 0) and
      (Usage.CommitChargePages + QWord(Process^.SectionChargePages) + Pages > Usage.CommitLimitPages) then
     Exit(ErrorOutOfMemory);
+  if not TryChargeCommitPool(PCommitPool(Process^.Job), Pages) then
+    Exit(ErrorOutOfMemory);
+  if not TryChargeSystemCommit(Pages, Process^.AddressSpace^.MayUseCommitReserve) then
+  begin
+    UnchargeCommitPool(PCommitPool(Process^.Job), Pages);
+    Exit(ErrorOutOfMemory);
+  end;
   AtomicFetchAndAdd(Process^.SectionChargePages, Int64(Pages));
-  ChangeSystemCommitCharge(Int64(Pages));
   ReferenceObject(Process);
   Result := ErrorNone;
 end;

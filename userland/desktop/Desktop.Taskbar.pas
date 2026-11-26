@@ -284,6 +284,16 @@ begin
   Result := (Index >= 0) and FWindowList.HasButton(Index);
 end;
 
+{ A task button's caption: the window's title, and that its program
+  does not respond (the display server's ShellWindowNotResponding). }
+function TaskTitle(const Title: string; Flags: LongWord): string;
+begin
+  if (Flags and ShellWindowNotResponding) <> 0 then
+    Result := Title + ' (Not responding)'
+  else
+    Result := Title;
+end;
+
 procedure TTaskbarWindow.WindowsChanged;
 var
   Index: LongInt;
@@ -314,7 +324,7 @@ begin
       TaskButton.OnClick := @TaskClicked;
       TaskButton.OnContextMenu := @TaskContextMenu;
     end;
-    TaskButton.ShowState(Entry.Title, (Entry.Flags and ShellWindowActive) <> 0,
+    TaskButton.ShowState(TaskTitle(Entry.Title, Entry.Flags), (Entry.Flags and ShellWindowActive) <> 0,
       (Entry.Flags and ShellWindowMinimized) <> 0, Entry.IconVersion);
     Ordered.Add(TaskButton);
   end;

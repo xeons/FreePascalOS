@@ -65,7 +65,10 @@ done
 
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
-echo "test-exit init=/bin/memorytest" > "$test_esp_directory/FreePascalOS/options.txt"
+# commitlimit=off: the hogs must be allowed to commit past the RAM, so the
+# out-of-memory policy (not the commit limit) is what stops them here;
+# scripts/test-responsiveness.sh checks the commit limit itself.
+echo "test-exit init=/bin/memorytest commitlimit=off" > "$test_esp_directory/FreePascalOS/options.txt"
 firmware_variables="$build_directory/test-memory-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
 

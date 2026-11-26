@@ -307,6 +307,19 @@ begin
     'equal scores: the larger one');
   Check(OomScore(Candidate(Total * 2, 0, False, False, False), Total) = 1000, 'the share is at most 1000');
   Check(OomScore(Candidate(100, 0, False, False, True), Total) = OomNotEligible, 'ending: no score');
+  { The kind of process (OomKindAdjust). }
+  Check(OomKindAdjust(0, True, False, False) = SandboxedOomAdjust, 'a sandboxed process goes earlier');
+  Check(OomKindAdjust(0, False, True, False) = BackgroundOomAdjust, 'a background process goes earlier');
+  Check(OomKindAdjust(0, False, False, True) = EssentialOomAdjust, 'the desktop goes later');
+  Check(OomKindAdjust(950, True, True, False) = OomAdjustHighest, 'never above 1000');
+  Check(OomKindAdjust(-1000, True, True, False) = OomAdjustLowest, '-1000 stays never');
+  Check(OomKindAdjust(-800, False, False, True) > OomAdjustLowest, 'lowered by its kind it stays eligible');
+  Check(Choose([Candidate(30000, OomKindAdjust(0, False, False, True), False, False, False),
+    Candidate(20000, OomKindAdjust(300, True, False, False), False, False, False)], Total) = 1,
+    'a sandboxed renderer goes before a larger desktop');
+  Check(Choose([Candidate(30000, OomKindAdjust(0, False, False, False), False, False, False),
+    Candidate(25000, OomKindAdjust(0, False, True, False), False, False, False)], Total) = 1,
+    'a background process goes before a slightly larger program');
 end;
 
 begin

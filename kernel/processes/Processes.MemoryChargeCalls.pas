@@ -74,13 +74,9 @@ begin
   Charge.FootprintPages := ProcessFootprintPages(Process);
   if Charge.FootprintPages > Charge.ResidentPages + Charge.SectionPages then
     Charge.CommittedNotResidentPages := Charge.FootprintPages - Charge.ResidentPages - Charge.SectionPages;
-  Candidate.FootprintPages := Charge.FootprintPages;
-  Candidate.ScoreAdjust := Process^.OomScoreAdjust;
-  Candidate.IsProtected := Process^.NeverEndForMemory;
-  Candidate.IsCulprit := False;
-  Candidate.IsEnding := Process^.TerminationRequested or Process^.HasExited;
+  DescribeOomCandidate(Process, Candidate);
   Charge.OomScoreAdjust := Process^.OomScoreAdjust;
-  if Process^.NeverEndForMemory then
+  if Candidate.IsProtected then
     Charge.Flags := ProcessMemoryProtected;
   UnlockProcessRegistry;
   GetPhysicalMemoryStatistics(Physical);

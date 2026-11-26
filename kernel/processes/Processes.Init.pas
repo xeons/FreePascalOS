@@ -60,6 +60,7 @@ uses
   Processes.Handles,
   Processes.Paths,
   Processes.UserProcess,
+  Processes.PriorityClassCalls,
   Processes.Security,
   Debug.Output;
 
@@ -161,6 +162,7 @@ begin
     terminal. }
   Startup.ControllingTerminal := Console;
 
+  Startup.PriorityClass := PriorityClassNormal;
   Report('Starting ', @ProgramPath[0]);
   Error := CreateUserProcess(Startup, Process);
   { The process's handles hold their own references. }
@@ -171,7 +173,10 @@ begin
   { The service manager (or whatever runs first) is ended for want of
     memory only if it is the one asking (Processes.OutOfMemory). }
   if Error = ErrorNone then
+  begin
     Process^.NeverEndForMemory := True;
+    ApplyMemoryReserveAccess(Process);
+  end;
   if Error <> ErrorNone then
   begin
     DebugBeginMessage;

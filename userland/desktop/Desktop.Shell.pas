@@ -78,6 +78,7 @@ implementation
 uses
   Abi.SystemCalls,
   Sys.Notifications,
+  Sys.PriorityClasses,
   Windowing.Displays,
   Windowing.Shell,
   Windowing.EndRequests,
@@ -85,6 +86,7 @@ uses
   Controls.Keys,
   Desktop.Programs,
   Desktop.Locking,
+  Desktop.EndTask,
   Desktop.Report;
 
 procedure TShell.EndRequested(Reason: LongWord);
@@ -173,6 +175,8 @@ begin
       FWindowList.TakeChange(Message);
     EventShellWindowGone:
       FWindowList.Remove(Message.Window);
+    EventShellEndTaskOffered:
+      OfferToEndTask(Message);
     EventDisplaysChanged:
       LayOut;
     EventNotificationIconChanged:
@@ -206,7 +210,11 @@ begin
       Exit;
     end;
   end;
-  StartCommand('taskmanager', '', 'Task Manager', FTaskManagerProcessId);
+  { It must get the processor and memory whatever a runaway program
+    takes: the desktop's own Interactive class (Kernel.PriorityClasses),
+    which the desktop may pass on to it. }
+  if StartCommand('taskmanager', '', 'Task Manager', FTaskManagerProcessId) then
+    SetPriorityClass(FTaskManagerProcessId, PriorityClassInteractive);
 end;
 
 procedure TShell.WindowsChanged;

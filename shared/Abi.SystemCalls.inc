@@ -1128,7 +1128,35 @@ const
     follows). Needs read permission on what is watched. }
   CallChangeGroupWatch = 269;
 
-  CallCount = 270;
+  { --- Priority classes and jobs (270-274) ------------------------------ }
+
+  { (ProcessId, Class): the priority class (PriorityClass*) of a process
+    (0: the caller), which places all its threads: what a display server,
+    a desktop, a program and a browser's content process run at relative
+    to each other. PriorityClassQuery changes nothing. Any process may
+    put itself, or a process of its user, in a class up to Normal, or up
+    to its own class if that is higher; root any class. Returns the
+    previous class. ErrorNoSuchProcess, ErrorNotPermitted,
+    ErrorInvalidArgument. }
+  CallSetPriorityClass = 270;
+  { (Flags): a new job, a handle: a group of processes whose memory is
+    charged together against one limit (CallSetJobLimit). Flags: 0. }
+  CallCreateJob = 271;
+  { (Job, Process): puts the process (a process handle, or
+    CurrentProcessHandle for the caller) in the job, its commit charge
+    moving into the job's; the processes it starts from then on are in
+    the job too. A process is in at most one job, for good:
+    ErrorExists if it is in one already. ErrorNotPermitted for another
+    user's process (unless root). }
+  CallAssignProcessToJob = 272;
+  { (Job, Limit, Value): JobLimitCommit: the most pages all processes
+    of the job together may have committed (0: none); a commitment
+    beyond it fails with ErrorOutOfMemory. Returns the previous value. }
+  CallSetJobLimit = 273;
+  { (Job, InformationAddress): a TAbiJobInformation. }
+  CallGetJobInformation = 274;
+
+  CallCount = 275;
 
   { CallSyncMemory flags (the Linux MS_* values). }
   SyncMemoryAsync = 1;
@@ -1398,6 +1426,8 @@ const
     from the caller; Ctrl-C does not end it (an interactive shell). }
   ProcessDetailsCommandLineHidden = $01;
   ProcessDetailsIgnoresInterrupt = $02;
+  { It is in a job (CallAssignProcessToJob). }
+  ProcessDetailsInJob = $04;
 
   { --- Arguments ------------------------------------------------------- }
 
@@ -1406,6 +1436,28 @@ const
 
   { Handle of the thread calls meaning "the calling thread". }
   CurrentThreadHandle = -1;
+  { Process handle of CallAssignProcessToJob meaning "the caller". }
+  CurrentProcessHandle = -1;
+
+  { Priority classes (CallSetPriorityClass), lowest first: the base
+    priority of every thread of a process, which nice moves within its
+    class. Idle: runs only when nothing else wants to (a hidden tab's
+    renderer); Background: below ordinary programs (a browser's content
+    processes); Normal: ordinary programs (the default, and what a
+    process started by one in a higher class gets); Interactive: what
+    the user drives the system with (the desktop, the task manager, the
+    session manager); System: the display server and input. A process
+    in the Idle or Background class passes it on to what it starts. }
+  PriorityClassIdle = 0;
+  PriorityClassBackground = 1;
+  PriorityClassNormal = 2;
+  PriorityClassInteractive = 3;
+  PriorityClassSystem = 4;
+  PriorityClassHighest = 4;
+  PriorityClassQuery = $FF;
+
+  { CallSetJobLimit's limits. }
+  JobLimitCommit = 1;
   ThreadPriorityOffsetLowest = -15;
   ThreadPriorityOffsetHighest = 15;
   ThreadPriorityOffsetBias = 15;
@@ -1946,6 +1998,8 @@ const
   HandleKindSignalDescriptor = 22;
   HandleKindEventPoll = 23;
   HandleKindWatchGroup = 24;
+  { A job (CallCreateJob). }
+  HandleKindJob = 25;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -2006,7 +2060,8 @@ type
     ThreadCount: LongWord;
     HandleCount: LongWord;
     Nice: LongInt;
-    { The thread priority its nice value gives (1 .. 31; 8 for nice 0). }
+    { The thread priority its class and nice value give (1 .. 31; 8 for
+      nice 0 in the Normal class). }
     Priority: LongWord;
     { ProcessDetails*. }
     Flags: LongWord;
@@ -2034,6 +2089,9 @@ type
     Terminal: array[0..AbiTerminalNameCapacity - 1] of Char;
     { The arguments it was started with, joined by spaces. }
     CommandLine: array[0..AbiCommandLineCapacity - 1] of Char;
+    { PriorityClass*. }
+    PriorityClass: LongWord;
+    DetailsReserved: LongWord;
   end;
   PAbiProcessDetails = ^TAbiProcessDetails;
 
@@ -2259,6 +2317,17 @@ type
     ProcessesEnded: QWord;
     LastEndedProcessId: QWord;
     LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
+    { The most pages all processes may have committed (the RAM they may
+      use, less the kernel's own and its reserve, as the kernel option
+      commitlimit=PERCENT scales it), and commitments refused for it. }
+    CommitLimitPages: QWord;
+    CommitFailures: QWord;
+    { Page allocations of ordinary programs refused because only the
+      reserve (kept for the kernel and the system's own processes) was
+      left; pages of running programs the thrash guard kept from being
+      evicted (Memory.ThrashGuard). }
+    ReserveRefusals: QWord;
+    ThrashGuardRefusals: QWord;
   end;
   PAbiMemoryPressure = ^TAbiMemoryPressure;
 
@@ -2618,6 +2687,21 @@ type
     SystemCommitChargePages: QWord;
   end;
   PAbiProcessResources = ^TAbiProcessResources;
+
+  { What CallGetJobInformation gives. }
+  TAbiJobInformation = record
+    { The processes in the job now, and ever. }
+    ActiveProcesses: LongWord;
+    TotalProcesses: LongWord;
+    { The pages its processes have committed together, the most there
+      ever were, and its limit (0: none). }
+    CommitChargePages: QWord;
+    PeakCommitChargePages: QWord;
+    CommitLimitPages: QWord;
+    { Commitments refused for the limit. }
+    CommitFailures: QWord;
+  end;
+  PAbiJobInformation = ^TAbiJobInformation;
 
   { What CallGetImageCacheStatistics gives. }
   TAbiImageCacheStatistics = record

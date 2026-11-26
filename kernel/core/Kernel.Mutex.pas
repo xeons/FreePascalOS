@@ -28,6 +28,14 @@
   When a mutex is released while threads are waiting, ownership passes
   directly to the first waiter, so waiters are served in arrival order.
 
+  Priority inheritance: a thread that has to wait raises the owner to its
+  own priority (Kernel.Scheduler.InheritPriorityLocked) if the owner's is
+  lower, so a busy thread of middling priority cannot keep a less
+  important owner - and through it the more important waiter - off the
+  processor (the display server's thread waiting for a lock a page's
+  renderer holds in the file system, say). The owner drops back to its
+  base priority when it releases a mutex.
+
   Mutexes may only be used at PassiveLevel.
 }
 unit Kernel.Mutex;
@@ -89,6 +97,7 @@ begin
   else
   begin
     InsertAtTail(Mutex.Waiters, @Thread^.SchedulerLink);
+    InheritPriorityLocked(Mutex.Owner, Thread^.Priority);
     WaitCurrentThreadLocked;
     { ReleaseMutex made this thread the owner before waking it. }
   end;
@@ -124,6 +133,7 @@ begin
       Mutex.RecursionCount := 1;
       ReadyThreadLocked(NextOwner);
     end;
+    EndInheritedPriorityLocked;
   end;
 
   ReleaseDispatcherLock(PreviousLevel);

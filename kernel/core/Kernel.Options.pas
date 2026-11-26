@@ -79,6 +79,10 @@
                 of the free memory (Io.BlockCacheSizing).
     discard=off File systems do not discard what they free
                 (FileSystem.Discards); fstrim still works.
+    commitlimit=PERCENT|off
+                What all processes together may commit, as a share of
+                the RAM they may use (100 by default, 10 to 10000), or
+                no limit (Memory.CommitCharge, Memory.Reserves).
 
   User mode reads the line too (CallGetKernelOptions): the service
   manager takes mode=text or mode=graphical (the boot mode, graphical by

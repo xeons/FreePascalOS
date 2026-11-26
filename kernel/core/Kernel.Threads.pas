@@ -35,7 +35,8 @@ interface
 
 uses
   Runtime.LinkedList,
-  Kernel.Arch.ContextSwitch;
+  Kernel.Arch.ContextSwitch,
+  Kernel.SchedulingGroups;
 
 const
   IdlePriority = 0;
@@ -115,7 +116,13 @@ type
       which lasts one time slice. }
     ReadySince: QWord;
     StarvationBoosted: Boolean;
+    { Raised to the priority of a more important thread waiting for a
+      mutex it owns (Kernel.Mutex), until it releases it. }
+    PriorityInherited: Boolean;
     QuantumRemaining: LongInt;
+    { The process's threads, for fair share (Kernel.SchedulingGroups);
+      nil for kernel threads. }
+    SchedulingGroup: PSchedulingGroup;
 
     { The processors the thread may run on, one bit per processor index;
       AllProcessors for any (Kernel.ReadyQueues). }

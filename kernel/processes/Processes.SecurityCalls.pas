@@ -340,7 +340,7 @@ begin
   end;
   ReleaseMutex(Target^.Lock);
   if Result = 0 then
-    SetProcessThreadPriorities(Target, ThreadPriorityForNice(LongInt(Nice)));
+    SetProcessThreadPriorities(Target, ProcessThreadPriority(Target));
   DereferenceObject(Target);
 end;
 

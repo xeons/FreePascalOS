@@ -100,6 +100,8 @@ type
     HandleKindSignalDescriptor,
     HandleKindEventPoll,
     HandleKindWatchGroup,
+    { A job (Processes.Jobs). }
+    HandleKindJob,
     { Held for an object about to be stored (ReserveHandle): taken, but
       not usable and never looked up. }
     HandleKindReserved

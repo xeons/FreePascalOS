@@ -103,6 +103,7 @@ uses
   Sys.Notifications,
   Sys.Objects,
   Sys.Processes,
+  Sys.PriorityClasses,
   Sys.Time,
   Windowing.HandleWatches,
   Session.UserSettings,
@@ -159,6 +160,9 @@ begin
     Exit;
   end;
   FProcess := Process;
+  { The desktop is how the user closes windows and reaches the task
+    manager: above every program it starts (Kernel.PriorityClasses). }
+  SetPriorityClass(QWord(ProcessIdOf(Process)), PriorityClassInteractive);
   FDesktopExitCode := -1;
   FEndedOutright := False;
   { The desktop leads the session: its id is the session's. }

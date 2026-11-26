@@ -317,6 +317,9 @@ begin
   Thread^.ControlBlock.AddressSpaceRoot := Process^.PageTableRoot;
   { Set before it starts: once started it may run (and end) at once. }
   Thread^.ControlBlock.AffinityMask := Process^.Credentials.AffinityMask;
+  { Its run time counts for its process's fair share. }
+  if Process <> SystemProcess then
+    Thread^.ControlBlock.SchedulingGroup := @Process^.SchedulingGroup;
 
   AttachToProcess(Thread, Process);
 
@@ -403,36 +406,57 @@ end;
 type
   TThreadChange = (ChangePriority, ChangeAffinity);
 
-{ Changes the priority or affinity of every thread of Process. }
+{ True if the thread has what the change would give it already. }
+function ThreadHasChange(Thread: PThread; Change: TThreadChange; Value: QWord): Boolean;
+begin
+  if Change = ChangePriority then
+    Result := Thread^.ControlBlock.BasePriority = OffsetPriority(LongWord(Value), Thread^.PriorityOffset)
+  else
+    Result := Thread^.ControlBlock.AffinityMask = Value;
+end;
+
+{ Changes the priority or affinity of every thread of Process, a batch
+  at a time: each pass collects threads that still need the change, so a
+  process with more threads than a batch gets all of them changed. }
 procedure ChangeProcessThreads(Process: PProcess; Change: TThreadChange; Value: QWord);
 const
   MaximumThreads = 64;
+  MaximumPasses = 1024;
 var
   PreviousLevel: TPriorityLevel;
   Entry: PListEntry;
   Threads: array[0..MaximumThreads - 1] of PThread;
   Count: Integer;
   Index: Integer;
+  Pass: Integer;
 begin
-  Count := 0;
-  PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
-  Entry := Process^.Threads.Next;
-  while (Entry <> @Process^.Threads) and (Count < MaximumThreads) do
+  for Pass := 1 to MaximumPasses do
   begin
-    Threads[Count] := ThreadFromProcessLink(Entry);
-    ReferenceObject(Threads[Count]);
-    Inc(Count);
-    Entry := Entry^.Next;
-  end;
-  ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
-  for Index := 0 to Count - 1 do
-  begin
-    if Change = ChangePriority then
-      SetThreadPriority(@Threads[Index]^.ControlBlock,
-        OffsetPriority(LongWord(Value), Threads[Index]^.PriorityOffset))
-    else
-      SetThreadAffinity(@Threads[Index]^.ControlBlock, Value);
-    DereferenceObject(Threads[Index]);
+    Count := 0;
+    PreviousLevel := AcquireSpinLock(Process^.ThreadListLock);
+    Entry := Process^.Threads.Next;
+    while (Entry <> @Process^.Threads) and (Count < MaximumThreads) do
+    begin
+      if not ThreadHasChange(ThreadFromProcessLink(Entry), Change, Value) then
+      begin
+        Threads[Count] := ThreadFromProcessLink(Entry);
+        ReferenceObject(Threads[Count]);
+        Inc(Count);
+      end;
+      Entry := Entry^.Next;
+    end;
+    ReleaseSpinLock(Process^.ThreadListLock, PreviousLevel);
+    if Count = 0 then
+      Exit;
+    for Index := 0 to Count - 1 do
+    begin
+      if Change = ChangePriority then
+        SetThreadPriority(@Threads[Index]^.ControlBlock,
+          OffsetPriority(LongWord(Value), Threads[Index]^.PriorityOffset))
+      else
+        SetThreadAffinity(@Threads[Index]^.ControlBlock, Value);
+      DereferenceObject(Threads[Index]);
+    end;
   end;
 end;
 

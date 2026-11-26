@@ -488,6 +488,11 @@ const
   { Value: 1 the pointer is locked to the window now, 0 it is not (any
     more, or the request was refused). }
   EventPointerLock = 144;
+  { To the shell: the user asked to close Window (its close button,
+    Alt+F4, the taskbar), but its program does not respond (it would
+    not hear the request): the shell offers to end it. Value: the
+    program's process; Text: the window's title. }
+  EventShellEndTaskOffered = 145;
 
   { EventPointerMove's Flags: the motion of a locked pointer. }
   PointerMoveLocked = $01;

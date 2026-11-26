@@ -191,7 +191,7 @@ begin
     Exit(ErrorNotPermitted);
   Thread^.PriorityOffset := Offset;
   SetThreadPriority(@Thread^.ControlBlock,
-    OffsetPriority(ThreadPriorityForNice(Thread^.Process^.Credentials.Nice), Offset));
+    OffsetPriority(ProcessThreadPriority(Thread^.Process), Offset));
   Result := ErrorNone;
 end;
 

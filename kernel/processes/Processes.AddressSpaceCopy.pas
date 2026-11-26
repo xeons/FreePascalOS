@@ -163,7 +163,7 @@ begin
   Copy^.Layout := Source^.Layout;
   Copy^.NextLibraryAddress := Source^.NextLibraryAddress;
   Copy^.RegionLimit := Source^.RegionLimit;
-  Copy^.CommitLimitPages := Source^.CommitLimitPages;
+  InheritCommitSettings(Source, Copy);
   Copy^.AllowsDynamicCode := Source^.AllowsDynamicCode;
   Context.Source := Source;
   Context.Target := Copy;

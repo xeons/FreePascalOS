@@ -112,7 +112,10 @@ begin
   Details.ThreadCount := Process^.ThreadCount;
   Details.HandleCount := CountOpenHandles(Process^.Handles);
   Details.Nice := Process^.Credentials.Nice;
-  Details.Priority := ThreadPriorityForNice(Process^.Credentials.Nice);
+  Details.Priority := ProcessThreadPriority(Process);
+  Details.PriorityClass := Process^.PriorityClass;
+  if Process^.Job <> nil then
+    Details.Flags := Details.Flags or ProcessDetailsInJob;
   if Process^.IgnoresInterrupt then
     Details.Flags := Details.Flags or ProcessDetailsIgnoresInterrupt;
   Details.StartTime := Process^.StartTime;

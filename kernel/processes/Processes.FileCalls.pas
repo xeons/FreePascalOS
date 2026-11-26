@@ -759,6 +759,7 @@ begin
     HandleKindSignalDescriptor: Result := Abi.SystemCalls.HandleKindSignalDescriptor;
     HandleKindEventPoll: Result := Abi.SystemCalls.HandleKindEventPoll;
     HandleKindWatchGroup: Result := Abi.SystemCalls.HandleKindWatchGroup;
+    HandleKindJob: Result := Abi.SystemCalls.HandleKindJob;
   else
     Result := Failure(ErrorBadHandle);
   end;

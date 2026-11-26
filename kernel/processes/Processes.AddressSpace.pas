@@ -70,10 +70,17 @@
   tried again. Private ones map the pages copy on write.
 
   Commit charge: the pages of private memory the space may come to use
-  (RegionChargePages: committed allocations, stacks, thread data,
-  writable images, writable private file mappings) are counted in
-  CommitChargePages, against CommitLimitPages (0: none), and in the
-  system's total (Memory.CommitCharge).
+  (RegionChargePages: committed allocations, the first StackChargeBytes
+  of each stack, thread data, writable images, writable private file
+  mappings) are counted in CommitChargePages, against CommitLimitPages
+  (0: none), in its job's pool if it is in one (CommitPool) and in the
+  system's total (Memory.CommitCharge); a charge any of them refuses
+  fails with ErrorOutOfMemory. A stack is charged only its first pages,
+  as committed stack is elsewhere: stacks are reserved large (1 MiB a
+  thread, 8 MiB the main one) and mostly never touched, and charging
+  them whole would refuse threads long before memory is short; what a
+  stack grows into beyond that is resident memory the out-of-memory
+  policy weighs.
 
   A section (memory shared between processes, Objects.Sections) is
   mapped the same way, its pages mapped at once, each with a reference
@@ -140,6 +147,8 @@ const
   StackReserveSize = 64 * 1024;
   StackReserveRearmDistance = 64 * 1024;
   StackGuardSize = QWord(256) * 1024 * 1024;
+  { The part of a stack charged as committed (see above). }
+  StackChargeBytes = 64 * 1024;
 
   RegionReadable = LongWord(1) shl 0;
   RegionWritable = LongWord(1) shl 1;
@@ -167,6 +176,12 @@ type
     { The commit charge (see above), and its limit (0: none). }
     CommitChargePages: QWord;
     CommitLimitPages: QWord;
+    { The job's pool the charge also goes to (nil: none), and the job
+      object holding it (referenced by the space). }
+    CommitPool: Pointer;
+    CommitPoolOwner: Pointer;
+    { An essential process's: may commit into the system's reserve. }
+    MayUseCommitReserve: Boolean;
     { Memory may be made executable after it was written
       (CallSetMemoryPolicy); without it nothing but program images and
       files mapped executable is. }
@@ -234,6 +249,15 @@ procedure SetCommitLimit(Space: PAddressSpace; LimitPages: QWord);
 { The space's commit charge, in pages (for a policy on running out of
   memory, with Memory.CommitCharge's total). }
 function CommitChargeOf(Space: PAddressSpace): QWord;
+{ Whether Space may commit into the system's essential reserve. }
+procedure SetCommitReserveAccess(Space: PAddressSpace; MayUseReserve: Boolean);
+{ Charges Space's commitments also to Pool (a PCommitPool inside the
+  object Owner, which the space references until it is destroyed), its
+  present charge moving in at once. Space must be in no pool yet. }
+procedure JoinCommitPool(Space: PAddressSpace; Pool, Owner: Pointer);
+{ Copies From's pool, limit and reserve access to the new space To
+  (exec, fork) before anything is charged to it. }
+procedure InheritCommitSettings(From, Target: PAddressSpace);
 { The resident pages of file backed regions that some other mapping
   maps too (another process running the same program, say). Walks the
   page tables: for diagnostics, not for every snapshot. }
@@ -389,6 +413,7 @@ uses
   Memory.KernelHeap,
   Memory.CommitCharge,
   Memory.Arch.PageTables,
+  Objects.Manager,
   Kernel.Arch.Cpu,
   Processes.RegionEditing,
   Processes.MappedFiles,
@@ -521,7 +546,10 @@ begin
   { Every user page and page table is released along with the root. }
   DestroyAddressSpaceRoot(Space^.Root);
   ClearRegionTree(Space^.Regions, @FreeRegionNodeOfEndedSpace);
-  ChangeSystemCommitCharge(-Int64(Space^.CommitChargePages));
+  UnchargeSystemCommit(Space^.CommitChargePages);
+  UnchargeCommitPool(PCommitPool(Space^.CommitPool), Space^.CommitChargePages);
+  if Space^.CommitPoolOwner <> nil then
+    DereferenceObject(Space^.CommitPoolOwner);
   FreeKernelMemory(Space);
   FlushPendingMappedFileWriteBacks;
 end;
@@ -594,6 +622,42 @@ begin
   Result := Space^.CommitChargePages;
 end;
 
+procedure SetCommitReserveAccess(Space: PAddressSpace; MayUseReserve: Boolean);
+begin
+  Space^.MayUseCommitReserve := MayUseReserve;
+end;
+
+procedure JoinCommitPool(Space: PAddressSpace; Pool, Owner: Pointer);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  ReferenceObject(Owner);
+  PreviousLevel := AcquireSpinLock(Space^.Lock);
+  if Space^.CommitPool = nil then
+  begin
+    Space^.CommitPool := Pool;
+    Space^.CommitPoolOwner := Owner;
+    ForceChargeCommitPool(PCommitPool(Pool), Space^.CommitChargePages);
+    Owner := nil;
+  end;
+  ReleaseSpinLock(Space^.Lock, PreviousLevel);
+  { It was in a pool already. }
+  if Owner <> nil then
+    DereferenceObject(Owner);
+end;
+
+procedure InheritCommitSettings(From, Target: PAddressSpace);
+begin
+  Target^.CommitLimitPages := From^.CommitLimitPages;
+  Target^.MayUseCommitReserve := From^.MayUseCommitReserve;
+  if (From^.CommitPoolOwner <> nil) and (Target^.CommitPool = nil) then
+  begin
+    ReferenceObject(From^.CommitPoolOwner);
+    Target^.CommitPool := From^.CommitPool;
+    Target^.CommitPoolOwner := From^.CommitPoolOwner;
+  end;
+end;
+
 type
   TElsewhereCount = record
     Space: PAddressSpace;
@@ -643,9 +707,16 @@ begin
   Pages := Region.Length div PageSize;
   Result := 0;
   case Region.Kind of
-    RegionKindAllocation, RegionKindStack, RegionKindThreadData:
+    RegionKindAllocation, RegionKindThreadData:
       if Region.CommitsOnDemand then
         Result := Pages;
+    RegionKindStack:
+      if Region.CommitsOnDemand then
+      begin
+        Result := Pages;
+        if Result > StackChargeBytes div PageSize then
+          Result := StackChargeBytes div PageSize;
+      end;
     RegionKindImage:
       if (Region.Attributes and RegionWritable) <> 0 then
         Result := Pages;
@@ -661,8 +732,14 @@ begin
     Exit(ErrorNone);
   if (Space^.CommitLimitPages <> 0) and (Space^.CommitChargePages + Pages > Space^.CommitLimitPages) then
     Exit(ErrorOutOfMemory);
+  if not TryChargeCommitPool(PCommitPool(Space^.CommitPool), Pages) then
+    Exit(ErrorOutOfMemory);
+  if not TryChargeSystemCommit(Pages, Space^.MayUseCommitReserve) then
+  begin
+    UnchargeCommitPool(PCommitPool(Space^.CommitPool), Pages);
+    Exit(ErrorOutOfMemory);
+  end;
   Space^.CommitChargePages := Space^.CommitChargePages + Pages;
-  ChangeSystemCommitCharge(Int64(Pages));
   Result := ErrorNone;
 end;
 
@@ -671,7 +748,8 @@ begin
   if Pages > Space^.CommitChargePages then
     Pages := Space^.CommitChargePages;
   Space^.CommitChargePages := Space^.CommitChargePages - Pages;
-  ChangeSystemCommitCharge(-Int64(Pages));
+  UnchargeCommitPool(PCommitPool(Space^.CommitPool), Pages);
+  UnchargeSystemCommit(Pages);
 end;
 
 procedure SetRegionLimit(Space: PAddressSpace; Limit: LongWord);

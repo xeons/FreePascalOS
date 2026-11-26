@@ -77,6 +77,20 @@ how the existing pieces fit together.
 - [x] Deferred calls that run at dispatch level (for device drivers)
 - [x] Priority boosting for threads woken from waits (by wake reason, decay per
       time slice, starvation boost; never the real-time class)
+- [x] Priority classes (Idle 4, Background 6, Normal 8, Interactive 10, System 12;
+      CallSetPriorityClass): display server System, session manager, desktop and
+      task manager Interactive, content processes Background/Idle
+- [x] Fair share between processes (Kernel.FairShare: decayed run time per process,
+      up to two levels below the base while over its share of the processors)
+- [x] Priority inheritance for kernel mutexes; the memory pressure thread in the
+      real-time class
+- [ ] Priority inheritance for user-mode locks (WaitOnAddress has no owner; would
+      need an owner-recording lock call) and for shared locks' exclusive holders
+- [ ] Foreground boost: the display server telling the kernel the process of the
+      focused window, for a longer time slice or a level above its class
+- [ ] Processor rate limits per job (a ceiling, not only fair share)
+- [ ] responsivetest (scripts/test-responsiveness.sh) not yet run in the suite:
+      tune its lateness allowances once seen under TCG and KVM
 - [x] Stack back trace in the panic screen (frame pointer walk, kernel
       symbol table made at build time, also over netlog; testpanic option)
 - [x] Kernel stack traces of any thread (kshell `trace`, the hang watch)
@@ -242,6 +256,22 @@ how the existing pieces fit together.
       the reserve/commit work): the footprint counts commitments not
       resident yet; CallGetProcessMemoryCharge (209) shows any process's
       charge and score; memorytest charge
+- [x] System commit limit enforced (RAM less the kernel's own, commitlimit=PERCENT,
+      1/32 kept for essential processes; stacks charged their first 64 KiB)
+- [x] Memory reserve below the critical watermark for the kernel and essential
+      processes; thrash guard on evicting mapped pages (Memory.ThrashGuard)
+- [x] Jobs: processes charged together against one commit limit (CallCreateJob ..
+      CallGetJobInformation 271-274); the browser's content processes in one
+- [x] OOM policy prefers sandboxed and background processes, protects the System
+      class, spares the Interactive class longer
+- [ ] Jobs: ending every member when the last handle closes, notifications when a
+      job's limit refuses, working-set (resident) limits beside commit limits
+- [ ] Stack commit charged page by page as a stack grows (now a fixed first 64 KiB),
+      so a deep recursion is refused by the commit limit, not ended by the policy
+- [ ] Accessed bits for mapped file eviction (the thrash guard only limits the rate;
+      eviction itself still rotates without regard to use)
+- [ ] Check the strict default commit limit against the whole suite (512 MiB guests);
+      memorytest cache may now meet the limit before memory is short
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,
@@ -766,8 +796,12 @@ normalized (0-65535), not pixels.
       responding)" after its titles, a flag in window lists); the task
       manager shows it and ends such a program outright (asked), and offers
       the same for any process still there when its wait after End is over
-- [ ] The taskbar marking a program that is not responding; its windows'
-      contents faded
+- [x] The taskbar marking a program that is not responding ("(Not responding)"
+      on its task buttons)
+- [x] Closing a window of a program that does not respond offers End task / Wait
+      (EventShellEndTaskOffered from the display server, Desktop.EndTask)
+- [ ] A not responding window's contents faded; the display server opening the task
+      manager itself when the desktop is the program that hangs
 - [x] Graphical login, locking, log off, shut down and suspend from the desktop
       (the lock enforced by the display server; Super+L, Ctrl+Alt+L, the
       Start menu, after idle minutes and before suspending)
