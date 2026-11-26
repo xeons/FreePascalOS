@@ -188,3 +188,16 @@ check("Array.from over a NamedNodeMap", Array.from(iterRoot.firstChild.attribute
 check("a derived collection inherits its iterator",
   typeof HTMLFormControlsCollection === "undefined" ||
   !Object.prototype.hasOwnProperty.call(HTMLFormControlsCollection.prototype, Symbol.iterator));
+var xmlDocument = new DOMParser().parseFromString(
+  '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY e "ent">]><r xmlns="urn:a" xmlns:b="urn:b" b:at="1">' +
+  '<b:c>&e;&#x41;</b:c><![CDATA[<x>]]><?pi data?><!--note--></r>', "application/xml");
+var xmlRoot = xmlDocument.documentElement;
+check("DOMParser parses XML (namespaces, entities, CDATA, PIs, comments)", xmlDocument instanceof XMLDocument &&
+  xmlRoot.namespaceURI === "urn:a" && xmlRoot.firstChild.namespaceURI === "urn:b" &&
+  xmlRoot.firstChild.prefix === "b" && xmlRoot.firstChild.textContent === "entA" &&
+  xmlRoot.getAttributeNS("urn:b", "at") === "1" && xmlRoot.childNodes[1].nodeType === Node.CDATA_SECTION_NODE &&
+  xmlRoot.childNodes[2].target === "pi" && xmlRoot.childNodes[3].data === "note" && xmlDocument.doctype.name === "r");
+var brokenXml = new DOMParser().parseFromString("<a><b></a>", "text/xml");
+check("XML that is not well-formed gives the parser error document",
+  brokenXml.documentElement.localName === "parsererror");
+check("createDocument makes an XMLDocument", document.implementation.createDocument(null, "x") instanceof XMLDocument);
