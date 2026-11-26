@@ -75,6 +75,9 @@ type
     { Parsing a module (import.meta allowed throughout). }
     ModuleGoal: Boolean;
     procedure Fail(const Text: string);
+    { The early errors of a regular expression literal: its flags and
+      its pattern. }
+    procedure CheckRegExpLiteral(const Pattern, Flags: UnicodeString);
     procedure FailAt(const Token: TJsToken; const Text: string);
     procedure Unexpected;
     procedure Next;
@@ -186,6 +189,9 @@ type
 
 implementation
 
+uses
+  Js.RegExpCompiler;
+
 const
   { Placeholder for "()" and "(...rest)" before =>. }
   ArrowParametersFlag = $8000;
@@ -206,6 +212,31 @@ end;
 function TJsParser.SourceText(Start, Finish: Integer): UnicodeString;
 begin
   Result := FLexer.SourceText(Start, Finish);
+end;
+
+procedure TJsParser.CheckRegExpLiteral(const Pattern, Flags: UnicodeString);
+var
+  Index: Integer;
+  Seen: UnicodeString;
+begin
+  Seen := '';
+  for Index := 1 to Length(Flags) do
+  begin
+    if (Pos(Flags[Index], 'dgimsuvy') = 0) or (Pos(Flags[Index], Seen) > 0) then
+      Fail('Invalid regular expression flags');
+    Seen := Seen + Flags[Index];
+  end;
+  if (Pos('u', Flags) > 0) and (Pos('v', Flags) > 0) then
+    Fail('Invalid regular expression flags');
+  { The v flag's set notation is checked when the literal runs. }
+  if Pos('v', Flags) > 0 then
+    Exit;
+  try
+    ValidateRegExp(Pattern, Pos('i', Flags) > 0, Pos('u', Flags) > 0);
+  except
+    on Error: ERegExpSyntax do
+      Fail(Error.Message);
+  end;
 end;
 
 procedure TJsParser.Fail(const Text: string);
@@ -263,8 +294,13 @@ begin
 end;
 
 function TJsParser.IsIdentifierToken: Boolean;
+var
+  Keyword: TJsTokenKind;
 begin
   Result := FToken.Kind = tkIdentifier;
+  { A reserved word spelled with escapes is still reserved (12.7.2). }
+  if Result and FToken.Escaped and KeywordToken(FToken.Text, Keyword) then
+    Result := False;
   if Result and FStrict then
   begin
     if (FToken.Text = 'implements') or (FToken.Text = 'interface') or (FToken.Text = 'package') or
@@ -1520,12 +1556,16 @@ begin
   begin
     { A block's function: lexical in the block. }
     Existing := FScope.Find(Name);
-    if (Existing <> nil) and (FStrict or (Existing.Kind <> dkFunction)) then
+    if (Existing <> nil) and (FStrict or (Existing.Kind <> dkFunction) or not Existing.IsPlainBlockFunction or
+      IsAsync or IsGenerator) then
       FailAt(NameToken, 'Identifier ''' + string(Name) + ''' has already been declared');
     if Existing <> nil then
       Variable := Existing
     else
+    begin
       Variable := FScope.Declare(Name, dkFunction, NameToken.Start);
+      Variable.IsPlainBlockFunction := not IsAsync and not IsGenerator;
+    end;
     Variable.Kind := dkFunction;
     if not FStrict and not IsAsync and not IsGenerator then
     begin
@@ -2303,6 +2343,9 @@ begin
           begin
             if Index <> Node.Count - 1 then
               raise EJsSyntaxError.CreateAt('Rest element must be last element', Element.Line, Element.Column);
+            if Element.A.Kind = nkAssign then
+              raise EJsSyntaxError.CreateAt('Rest element may not have a default initializer', Element.Line,
+                Element.Column);
             Element.Kind := nkRest;
             Element.A := ToPattern(Element.A, Binding);
           end
@@ -2318,6 +2361,9 @@ begin
           Element := Node.List[Index];
           if (Element.Flags and PropertyFlagSpread) <> 0 then
           begin
+            { An object rest takes a name or a property, not a pattern. }
+            if Element.A.Kind in [nkArray, nkObject, nkAssign] then
+              raise EJsSyntaxError.CreateAt('Invalid rest element', Element.Line, Element.Column);
             Element.Kind := nkRest;
             Element.A := ToPattern(Element.A, Binding);
           end
@@ -3216,6 +3262,7 @@ begin
     tkSlash, tkSlashAssign:
       begin
         FLexer.ScanRegExp(FToken);
+        CheckRegExpLiteral(FToken.Text, FToken.Raw);
         Result := NewNode(nkRegExp);
         Result.Text := FToken.Text;
         Result.Name := FToken.Raw;

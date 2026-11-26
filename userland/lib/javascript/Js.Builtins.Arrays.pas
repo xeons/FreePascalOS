@@ -51,9 +51,14 @@ uses
   Js.Builtins.Iterators;
 
 procedure InstallArray(R: TJsInterpreterRealm);
+{ IsArray (7.2.2): an array, or a proxy whose target is one; False
+  (a TypeError thrown) for a revoked proxy. }
 function IsArray(R: TJsRealm; Value: TJsValue; out Outcome: Boolean): Boolean;
 
 implementation
+
+uses
+  Js.Builtins.Reflect;
 
 const
   MaximumSafeLength = 9007199254740991;
@@ -67,9 +72,24 @@ type
   end;
 
 function IsArray(R: TJsRealm; Value: TJsValue; out Outcome: Boolean): Boolean;
+var
+  Target: TJsObject;
 begin
-  Outcome := JsIsObject(Value) and (JsAsObject(Value).ObjectClass = ocArray);
+  Outcome := False;
   Result := True;
+  if not JsIsObject(Value) then
+    Exit;
+  Target := JsAsObject(Value);
+  while Target is TJsProxy do
+  begin
+    if TJsProxy(Target).Handler = nil then
+    begin
+      R.ThrowTypeError('Cannot perform ''IsArray'' on a proxy that has been revoked');
+      Exit(False);
+    end;
+    Target := TJsProxy(Target).Target;
+  end;
+  Outcome := Target.ObjectClass = ocArray;
 end;
 
 function ThisArrayLike(R: TJsRealm; This: TJsValue; out Like: TArrayLike): Boolean;
@@ -156,8 +176,11 @@ end;
 function ArraySpeciesCreate(R: TJsRealm; Original: TJsObject; Length: Int64): TJsValue;
 var
   Constructor_, Argument: TJsValue;
+  OriginalIsArray: Boolean;
 begin
-  if Original.ObjectClass <> ocArray then
+  if not IsArray(R, JsObjectValue(Original), OriginalIsArray) then
+    Exit(JsException);
+  if not OriginalIsArray then
   begin
     if Length > High(LongWord) then
       Exit(R.ThrowRangeError('Invalid array length'));
@@ -234,7 +257,8 @@ function ArrayIsArray(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; Ar
 var
   Outcome: Boolean;
 begin
-  IsArray(R, Arg(Args, ArgCount, 0), Outcome);
+  if not IsArray(R, Arg(Args, ArgCount, 0), Outcome) then
+    Exit(JsException);
   Result := JsBoolean(Outcome);
 end;
 
@@ -532,6 +556,8 @@ begin
   end;
   if not ThisArrayLike(R, This, Like) then
     Exit(JsException);
+  if (ArgCount > 0) and (Like.Length + ArgCount > MaximumSafeLength) then
+    Exit(R.ThrowTypeError('Array length would exceed the maximum'));
   if ArgCount > 0 then
   begin
     Index := Like.Length;
@@ -592,6 +618,8 @@ begin
   ItemCount := 0;
   if ArgCount > 2 then
     ItemCount := ArgCount - 2;
+  if Like.Length + ItemCount - DeleteCount > MaximumSafeLength then
+    Exit(R.ThrowTypeError('Array length would exceed the maximum'));
   Removed := ArraySpeciesCreate(R, Like.Target, DeleteCount);
   if Removed = JsException then
     Exit(JsException);
@@ -1474,7 +1502,7 @@ begin
   if Flag <> JsUndefined then
     Spreadable := ToBoolean(Flag)
   else
-    Spreadable := JsAsObject(Value).ObjectClass = ocArray;
+    Exit(IsArray(R, Value, Spreadable));
   Result := True;
 end;
 
@@ -1623,7 +1651,9 @@ begin
       if Value = JsException then
         Exit(False);
     end;
-    Spread := (Depth > 0) and JsIsObject(Value) and (JsAsObject(Value).ObjectClass = ocArray);
+    Spread := False;
+    if (Depth > 0) and not IsArray(R, Value, Spread) then
+      Exit(False);
     if Spread then
     begin
       if not LengthOfArrayLike(R, JsAsObject(Value), ElementLength) then

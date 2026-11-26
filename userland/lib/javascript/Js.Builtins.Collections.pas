@@ -1131,15 +1131,15 @@ function WeakConstructor(R: TJsRealm; const This: TJsValue; Args: PJsValueArray;
 var
   Collection: TJsWeakCollection;
   Prototype: TJsObject;
-  Items: TJsValueList;
-  Index: Integer;
-  Key, Value: TJsValue;
+  Iterator: TJsIteratorRecord;
+  Item, Key, Value: TJsValue;
   Adder: TJsValue;
   Pair: array[0..1] of TJsValue;
   Mark: Integer;
 begin
   if NewTarget = JsUndefined then
     Exit(R.ThrowTypeError('Constructor requires ''new'''));
+  Value := JsUndefined;
   if Callee.Magic = KindMap then
   begin
     Prototype := PrototypeFromConstructor(R, NewTarget, inWeakMapPrototype);
@@ -1165,28 +1165,50 @@ begin
     Adder := Collection.GetValue(R, R.Atom(anAdd));
   if Adder = JsException then
     Exit(JsException);
+  if not JsIsCallable(Adder) then
+    Exit(R.ThrowTypeError('''' + ValueToPascal(R, Adder) + ''' returned for the adder is not a function'));
+  { Entries are taken one at a time (the iterable may never end), the
+    iterator closed when one fails. }
+  if not GetIterator(R, Args^[0], False, Iterator) then
+    Exit(JsException);
   Mark := R.Runtime.PushRoot(Result);
+  R.Runtime.PushRoot(Iterator.Iterator);
+  R.Runtime.PushRoot(Iterator.NextMethod);
   try
-    if not IterableToList(R, Args^[0], Items) then
-      Exit(JsException);
-    for Index := 0 to High(Items) do
+    while IteratorStep(R, Iterator, Item) do
     begin
       if Callee.Magic = KindMap then
       begin
-        Key := GetProperty(R, Items[Index], JsInteger(0));
-        if Key = JsException then
+        if not JsIsObject(Item) then
+        begin
+          R.ThrowTypeError('Iterator value ' + ValueToPascal(R, Item) + ' is not an entry object');
+          IteratorClose(R, Iterator.Iterator, True);
           Exit(JsException);
-        Value := GetProperty(R, Items[Index], JsInteger(1));
-        if Value = JsException then
+        end;
+        Key := GetProperty(R, Item, JsInteger(0));
+        if Key <> JsException then
+          Value := GetProperty(R, Item, JsInteger(1));
+        if (Key = JsException) or (Value = JsException) then
+        begin
+          IteratorClose(R, Iterator.Iterator, True);
           Exit(JsException);
+        end;
         Pair[0] := Key;
         Pair[1] := Value;
         if R.Call(Adder, Result, @Pair[0], 2) = JsException then
+        begin
+          IteratorClose(R, Iterator.Iterator, True);
           Exit(JsException);
+        end;
       end
-      else if R.Call(Adder, Result, @Items[Index], 1) = JsException then
+      else if R.Call(Adder, Result, @Item, 1) = JsException then
+      begin
+        IteratorClose(R, Iterator.Iterator, True);
         Exit(JsException);
+      end;
     end;
+    if R.HasException then
+      Exit(JsException);
   finally
     R.Runtime.PopRoots(Mark);
   end;

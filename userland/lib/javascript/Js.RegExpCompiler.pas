@@ -116,6 +116,11 @@ type
 
 { Compiles the pattern; raises ERegExpSyntax for a bad pattern. }
 function CompileRegExp(const Pattern: UnicodeString; IgnoreCase, Multiline, DotAll, Unicode: Boolean): TRxProgram;
+{ The early errors of a regular expression literal: raises ERegExpSyntax
+  when the pattern is not valid. A \p property the standard defines but
+  the matcher does not have yet passes here (it throws when the literal
+  is evaluated): a script must not fail to parse for it. }
+procedure ValidateRegExp(const Pattern: UnicodeString; IgnoreCase, Unicode: Boolean);
 
 { Case mapping for case-insensitive matching. }
 function CanonicalizeCase(Code: LongWord; Unicode: Boolean): LongWord;
@@ -436,6 +441,16 @@ type
     procedure Add(Child: TRxNode);
   end;
 
+  TRxPathStep = record
+    Disjunction: Integer;
+    Alternative: Integer;
+  end;
+
+  TRxNamedGroupPlace = record
+    Name: UnicodeString;
+    Path: array of TRxPathStep;
+  end;
+
   TRxCompiler = class
   private
     FPattern: UnicodeString;
@@ -446,6 +461,13 @@ type
     FGroupCount: Integer;
     FNames: array of UnicodeString;
     FHasNamedGroups: Boolean;
+    FValidating: Boolean;
+    { Where the parser is: the alternative taken in each enclosing
+      disjunction (numbered as met), for the named groups' duplicates. }
+    FPath: array of TRxPathStep;
+    FDisjunctionCount: Integer;
+    FNamedGroups: array of TRxNamedGroupPlace;
+    procedure NoteGroupName(const Name: UnicodeString);
     procedure Fail(const Message: string);
     function AtEnd: Boolean; inline;
     function Peek(Offset: Integer = 0): LongWord;
@@ -494,6 +516,101 @@ begin
   Result.Kind := Kind;
   Result.ClassIndex := -1;
   Result.Group := -1;
+end;
+
+const
+  { General_Category values and their aliases (ECMA-262 table "Value
+    aliases and canonical values for the Unicode property
+    General_Category"), then the categories each stands for. }
+  GeneralCategoryNames: array[0..37] of string = (
+    'Cased_Letter LC:Lu Ll Lt', 'Close_Punctuation Pe:Pe', 'Connector_Punctuation Pc:Pc',
+    'Control Cc cntrl:Cc', 'Currency_Symbol Sc:Sc', 'Dash_Punctuation Pd:Pd', 'Decimal_Number Nd digit:Nd',
+    'Enclosing_Mark Me:Me', 'Final_Punctuation Pf:Pf', 'Format Cf:Cf', 'Initial_Punctuation Pi:Pi',
+    'Letter L:Lu Ll Lt Lm Lo', 'Letter_Number Nl:Nl', 'Line_Separator Zl:Zl', 'Lowercase_Letter Ll:Ll',
+    'Mark M Combining_Mark:Mn Mc Me', 'Math_Symbol Sm:Sm', 'Modifier_Letter Lm:Lm', 'Modifier_Symbol Sk:Sk',
+    'Nonspacing_Mark Mn:Mn', 'Number N:Nd Nl No', 'Open_Punctuation Ps:Ps', 'Other C:Cc Cf Cs Co Cn',
+    'Other_Letter Lo:Lo', 'Other_Number No:No', 'Other_Punctuation Po:Po', 'Other_Symbol So:So',
+    'Paragraph_Separator Zp:Zp', 'Private_Use Co:Co', 'Punctuation P punct:Pc Pd Ps Pe Pi Pf Po',
+    'Separator Z:Zs Zl Zp', 'Space_Separator Zs:Zs', 'Spacing_Mark Mc:Mc', 'Surrogate Cs:Cs',
+    'Symbol S:Sm Sc Sk So', 'Titlecase_Letter Lt:Lt', 'Unassigned Cn:Cn', 'Uppercase_Letter Lu:Lu');
+
+  { The binary properties ECMA-262 lists (table "Binary Unicode property
+    aliases and their canonical property names"), names and aliases. }
+  BinaryPropertyNames: array[0..103] of string = (
+    'ASCII', 'ASCII_Hex_Digit', 'AHex', 'Alphabetic', 'Alpha', 'Any', 'Assigned', 'Bidi_Control', 'Bidi_C',
+    'Bidi_Mirrored', 'Bidi_M', 'Case_Ignorable', 'CI', 'Cased', 'Changes_When_Casefolded', 'CWCF',
+    'Changes_When_Casemapped', 'CWCM', 'Changes_When_Lowercased', 'CWL', 'Changes_When_NFKC_Casefolded', 'CWKCF',
+    'Changes_When_Titlecased', 'CWT', 'Changes_When_Uppercased', 'CWU', 'Dash', 'Default_Ignorable_Code_Point', 'DI',
+    'Deprecated', 'Dep', 'Diacritic', 'Dia', 'Emoji', 'Emoji_Component', 'EComp', 'Emoji_Modifier', 'EMod',
+    'Emoji_Modifier_Base', 'EBase', 'Emoji_Presentation', 'EPres', 'Extended_Pictographic', 'ExtPict', 'Extender',
+    'Ext', 'Grapheme_Base', 'Gr_Base', 'Grapheme_Extend', 'Gr_Ext', 'Hex_Digit', 'Hex', 'IDS_Binary_Operator',
+    'IDSB', 'IDS_Trinary_Operator', 'IDST', 'ID_Continue', 'IDC', 'ID_Start', 'IDS', 'Ideographic', 'Ideo',
+    'Join_Control', 'Join_C', 'Logical_Order_Exception', 'LOE', 'Lowercase', 'Lower', 'Math',
+    'Noncharacter_Code_Point', 'NChar', 'Pattern_Syntax', 'Pat_Syn', 'Pattern_White_Space', 'Pat_WS',
+    'Quotation_Mark', 'QMark', 'Radical', 'Regional_Indicator', 'RI', 'Sentence_Terminal', 'STerm', 'Soft_Dotted',
+    'SD', 'Terminal_Punctuation', 'Term', 'Unified_Ideograph', 'UIdeo', 'Uppercase', 'Upper', 'Variation_Selector',
+    'VS', 'White_Space', 'space', 'XID_Continue', 'XIDC', 'XID_Start', 'XIDS', 'IDS_Unary_Operator', 'IDSU',
+    'ID_Compat_Math_Continue', 'ID_Compat_Math_Start', 'Modifier_Combining_Mark', 'MCM');
+
+function CategoryBit(const Letters: string): LongWord;
+const
+  Codes: array[TUnicodeCategory] of string = ('Lu', 'Ll', 'Lt', 'Lm', 'Lo', 'Mn', 'Mc', 'Me', 'Nd', 'Nl', 'No',
+    'Pc', 'Pd', 'Ps', 'Pe', 'Pi', 'Pf', 'Po', 'Sm', 'Sc', 'Sk', 'So', 'Zs', 'Zl', 'Zp', 'Cc', 'Cf', 'Cs', 'Co', 'Cn');
+var
+  Category: TUnicodeCategory;
+begin
+  for Category := Low(TUnicodeCategory) to High(TUnicodeCategory) do
+    if Codes[Category] = Letters then
+      Exit(LongWord(1) shl Ord(Category));
+  Result := 0;
+end;
+
+{ The categories a General_Category value stands for; 0 when it is not
+  one. }
+function GeneralCategoryMask(const Value: UnicodeString): LongWord;
+var
+  Index, Colon: Integer;
+  Names, Codes: TStringArray;
+  Item, Code: string;
+begin
+  Result := 0;
+  for Index := 0 to High(GeneralCategoryNames) do
+  begin
+    Colon := Pos(':', GeneralCategoryNames[Index]);
+    Names := Copy(GeneralCategoryNames[Index], 1, Colon - 1).Split([' ']);
+    for Item in Names do
+      if UnicodeString(Item) = Value then
+      begin
+        Codes := Copy(GeneralCategoryNames[Index], Colon + 1, MaxInt).Split([' ']);
+        for Code in Codes do
+          Result := Result or CategoryBit(Code);
+        Exit;
+      end;
+  end;
+end;
+
+function IsBinaryPropertyName(const Name: UnicodeString): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(BinaryPropertyNames) do
+    if UnicodeString(BinaryPropertyNames[Index]) = Name then
+      Exit(True);
+  Result := False;
+end;
+
+{ A Script value as the standard spells them (Latin, Old_Italic, Zyyy). }
+function IsScriptValueSyntax(const Value: UnicodeString): Boolean;
+var
+  Index: Integer;
+begin
+  if (Value = '') or not ((Value[1] >= 'A') and (Value[1] <= 'Z')) then
+    Exit(False);
+  for Index := 1 to Length(Value) do
+    if not (((Value[Index] >= 'A') and (Value[Index] <= 'Z')) or ((Value[Index] >= 'a') and (Value[Index] <= 'z')) or
+      (Value[Index] = '_')) then
+      Exit(False);
+  Result := True;
 end;
 
 constructor TRxCompiler.Create(const Pattern: UnicodeString; Target: TRxProgram);
@@ -598,17 +715,61 @@ end;
 function TRxCompiler.ParseDisjunction: TRxNode;
 var
   Alternation: TRxNode;
+  Depth: Integer;
 begin
+  Depth := Length(FPath);
+  SetLength(FPath, Depth + 1);
+  FPath[Depth].Disjunction := FDisjunctionCount;
+  FPath[Depth].Alternative := 0;
+  Inc(FDisjunctionCount);
   Result := ParseAlternative;
   if Accept('|') then
   begin
     Alternation := NewNode(rnAlternation);
     Alternation.Add(Result);
     repeat
+      Inc(FPath[Depth].Alternative);
       Alternation.Add(ParseAlternative);
     until not Accept('|');
     Result := Alternation;
   end;
+  SetLength(FPath, Depth);
+end;
+
+{ A group name may come again only in another alternative of a
+  disjunction both are in (/(?<a>x)|(?<a>y)/): two groups of one name
+  that can both match are an early error. }
+procedure TRxCompiler.NoteGroupName(const Name: UnicodeString);
+var
+  Index, Step: Integer;
+  Other: ^TRxNamedGroupPlace;
+  Disjoint: Boolean;
+begin
+  for Index := 0 to High(FNamedGroups) do
+  begin
+    Other := @FNamedGroups[Index];
+    if Other^.Name <> Name then
+      Continue;
+    { The first enclosing disjunction where the two paths part. }
+    Disjoint := False;
+    Step := 0;
+    while (Step < Length(Other^.Path)) and (Step < Length(FPath)) do
+    begin
+      if Other^.Path[Step].Disjunction <> FPath[Step].Disjunction then
+        Break;
+      if Other^.Path[Step].Alternative <> FPath[Step].Alternative then
+      begin
+        Disjoint := True;
+        Break;
+      end;
+      Inc(Step);
+    end;
+    if not Disjoint then
+      Fail('Duplicate capture group name');
+  end;
+  SetLength(FNamedGroups, Length(FNamedGroups) + 1);
+  FNamedGroups[High(FNamedGroups)].Name := Name;
+  FNamedGroups[High(FNamedGroups)].Path := Copy(FPath);
 end;
 
 function TRxCompiler.ParseAlternative: TRxNode;
@@ -815,6 +976,7 @@ begin
           else if Accept('<') then
           begin
             Name := ParseGroupName;
+            NoteGroupName(Name);
             Group := NewNode(rnGroup);
             Inc(FProgram.GroupCount);
             Group.Group := FProgram.GroupCount;
@@ -1122,12 +1284,6 @@ var
   Name, Value: UnicodeString;
   EqualsAt: Integer;
   Mask: LongWord;
-
-  function Bit(Category: TUnicodeCategory): LongWord;
-  begin
-    Result := LongWord(1) shl Ord(Category);
-  end;
-
 begin
   Result := True;
   if not Accept('{') then
@@ -1151,90 +1307,63 @@ begin
       if ((Name = 'Script') or (Name = 'sc') or (Name = 'Script_Extensions') or (Name = 'scx')) then
       begin
         if not AddScriptRanges(Target, Value) then
+        begin
+          if FValidating and IsScriptValueSyntax(Value) then
+            Exit;
           Fail('Invalid property name');
+        end;
         if Negated then
           Target.Negated := not Target.Negated;
         Exit;
       end;
       Fail('Invalid property name');
     end;
-    Name := Value;
+    Mask := GeneralCategoryMask(Value);
+    if Mask = 0 then
+      Fail('Invalid property name');
+    Target.AddProperty(Mask, Negated);
+    Exit;
   end;
-  Mask := 0;
-  if (Name = 'L') or (Name = 'Letter') then
-    Mask := Bit(TUnicodeCategory.ucUppercaseLetter) or Bit(TUnicodeCategory.ucLowercaseLetter) or
-      Bit(TUnicodeCategory.ucTitlecaseLetter) or Bit(TUnicodeCategory.ucModifierLetter) or
-      Bit(TUnicodeCategory.ucOtherLetter)
-  else if (Name = 'Lu') or (Name = 'Uppercase_Letter') then
-    Mask := Bit(TUnicodeCategory.ucUppercaseLetter)
-  else if (Name = 'Ll') or (Name = 'Lowercase_Letter') then
-    Mask := Bit(TUnicodeCategory.ucLowercaseLetter)
-  else if (Name = 'Lt') or (Name = 'Titlecase_Letter') then
-    Mask := Bit(TUnicodeCategory.ucTitlecaseLetter)
-  else if (Name = 'Lm') or (Name = 'Modifier_Letter') then
-    Mask := Bit(TUnicodeCategory.ucModifierLetter)
-  else if (Name = 'Lo') or (Name = 'Other_Letter') then
-    Mask := Bit(TUnicodeCategory.ucOtherLetter)
-  else if (Name = 'M') or (Name = 'Mark') then
-    Mask := Bit(TUnicodeCategory.ucNonSpacingMark) or Bit(TUnicodeCategory.ucCombiningMark) or
-      Bit(TUnicodeCategory.ucEnclosingMark)
-  else if (Name = 'Mn') or (Name = 'Nonspacing_Mark') then
-    Mask := Bit(TUnicodeCategory.ucNonSpacingMark)
-  else if (Name = 'N') or (Name = 'Number') then
-    Mask := Bit(TUnicodeCategory.ucDecimalNumber) or Bit(TUnicodeCategory.ucLetterNumber) or
-      Bit(TUnicodeCategory.ucOtherNumber)
-  else if (Name = 'Nd') or (Name = 'Decimal_Number') or (Name = 'digit') then
-    Mask := Bit(TUnicodeCategory.ucDecimalNumber)
-  else if (Name = 'P') or (Name = 'Punctuation') or (Name = 'punct') then
-    Mask := Bit(TUnicodeCategory.ucConnectPunctuation) or Bit(TUnicodeCategory.ucDashPunctuation) or
-      Bit(TUnicodeCategory.ucOpenPunctuation) or Bit(TUnicodeCategory.ucClosePunctuation) or
-      Bit(TUnicodeCategory.ucInitialPunctuation) or Bit(TUnicodeCategory.ucFinalPunctuation) or
-      Bit(TUnicodeCategory.ucOtherPunctuation)
-  else if (Name = 'S') or (Name = 'Symbol') then
-    Mask := Bit(TUnicodeCategory.ucMathSymbol) or Bit(TUnicodeCategory.ucCurrencySymbol) or
-      Bit(TUnicodeCategory.ucModifierSymbol) or Bit(TUnicodeCategory.ucOtherSymbol)
-  else if (Name = 'Sm') or (Name = 'Math_Symbol') then
-    Mask := Bit(TUnicodeCategory.ucMathSymbol)
-  else if (Name = 'Sc') or (Name = 'Currency_Symbol') then
-    Mask := Bit(TUnicodeCategory.ucCurrencySymbol)
-  else if (Name = 'Z') or (Name = 'Separator') then
-    Mask := Bit(TUnicodeCategory.ucSpaceSeparator) or Bit(TUnicodeCategory.ucLineSeparator) or
-      Bit(TUnicodeCategory.ucParagraphSeparator)
-  else if (Name = 'Zs') or (Name = 'Space_Separator') then
-    Mask := Bit(TUnicodeCategory.ucSpaceSeparator)
-  else if (Name = 'C') or (Name = 'Other') then
-    Mask := Bit(TUnicodeCategory.ucControl) or Bit(TUnicodeCategory.ucFormat) or Bit(TUnicodeCategory.ucSurrogate) or
-      Bit(TUnicodeCategory.ucPrivateUse) or Bit(TUnicodeCategory.ucUnassigned)
-  else if (Name = 'Cc') or (Name = 'Control') or (Name = 'cntrl') then
-    Mask := Bit(TUnicodeCategory.ucControl)
-  else if (Name = 'Alphabetic') or (Name = 'Alpha') then
-    Mask := Bit(TUnicodeCategory.ucUppercaseLetter) or Bit(TUnicodeCategory.ucLowercaseLetter) or
-      Bit(TUnicodeCategory.ucTitlecaseLetter) or Bit(TUnicodeCategory.ucModifierLetter) or
-      Bit(TUnicodeCategory.ucOtherLetter) or Bit(TUnicodeCategory.ucLetterNumber)
+  Mask := GeneralCategoryMask(Name);
+  if Mask <> 0 then
+  begin
+    Target.AddProperty(Mask, Negated);
+    Exit;
+  end;
+  if (Name = 'Alphabetic') or (Name = 'Alpha') then
+    Target.AddProperty(GeneralCategoryMask('L') or GeneralCategoryMask('Nl'), Negated)
+  else if Name = 'Assigned' then
+    Target.AddProperty(GeneralCategoryMask('Cn'), not Negated)
   else if (Name = 'White_Space') or (Name = 'space') then
   begin
     ClassEscape('s', Target);
     if Negated then
       Target.Negated := not Target.Negated;
-    Exit;
   end
   else if Name = 'ASCII' then
   begin
     Target.AddRange(0, 127);
     if Negated then
       Target.Negated := not Target.Negated;
-    Exit;
+  end
+  else if (Name = 'ASCII_Hex_Digit') or (Name = 'AHex') then
+  begin
+    Target.AddRange(Ord('0'), Ord('9'));
+    Target.AddRange(Ord('A'), Ord('F'));
+    Target.AddRange(Ord('a'), Ord('f'));
+    if Negated then
+      Target.Negated := not Target.Negated;
   end
   else if Name = 'Any' then
   begin
     Target.AddRange(0, $10FFFF);
     if Negated then
       Target.Negated := not Target.Negated;
-    Exit;
   end
+  else if FValidating and IsBinaryPropertyName(Name) then
+    Exit
   else
     Fail('Invalid property name');
-  Target.AddProperty(Mask, Negated);
 end;
 
 { One class atom: a single code point (Single) or a class escape added
@@ -1624,6 +1753,24 @@ begin
     end;
   finally
     Compiler.Free;
+  end;
+end;
+
+procedure ValidateRegExp(const Pattern: UnicodeString; IgnoreCase, Unicode: Boolean);
+var
+  Target: TRxProgram;
+  Compiler: TRxCompiler;
+begin
+  Target := TRxProgram.Create;
+  Target.IgnoreCase := IgnoreCase;
+  Target.Unicode := Unicode;
+  Compiler := TRxCompiler.Create(Pattern, Target);
+  try
+    Compiler.FValidating := True;
+    Compiler.Compile;
+  finally
+    Compiler.Free;
+    Target.Free;
   end;
 end;
 

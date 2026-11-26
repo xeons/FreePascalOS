@@ -55,6 +55,9 @@ function BuiltinTag(Target: TJsObject): string;
 
 implementation
 
+uses
+  Js.Builtins.Arrays;
+
 type
   TNative = TJsNativeCallback;
 
@@ -842,6 +845,7 @@ function ObjectPrototypeToString(R: TJsRealm; const This: TJsValue; Args: PJsVal
 var
   Value, Tag: TJsValue;
   Name: string;
+  ValueIsArray: Boolean;
 begin
   if This = JsUndefined then
     Exit(R.NewString('[object Undefined]'));
@@ -850,7 +854,13 @@ begin
   Value := ToObject(R, This);
   if Value = JsException then
     Exit(JsException);
-  Name := BuiltinTag(JsAsObject(Value));
+  { IsArray first: a proxy of an array is one (until it is revoked). }
+  if not IsArray(R, Value, ValueIsArray) then
+    Exit(JsException);
+  if ValueIsArray then
+    Name := 'Array'
+  else
+    Name := BuiltinTag(JsAsObject(Value));
   Tag := JsAsObject(Value).GetValue(R, R.Runtime.SymbolValue(wsToStringTag));
   if Tag = JsException then
     Exit(JsException);

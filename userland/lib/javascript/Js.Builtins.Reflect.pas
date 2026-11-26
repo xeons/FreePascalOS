@@ -437,8 +437,10 @@ function ProxyRevoke(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; Arg
 begin
   if JsIsObject(Callee.Data) then
   begin
+    { Revoked is Handler = nil. The target stays: a trap may revoke its
+      own proxy, and the operation that called it goes on with the
+      target it read first (as the standard's algorithms do). }
     TJsProxy(JsAsObject(Callee.Data)).Handler := nil;
-    TJsProxy(JsAsObject(Callee.Data)).Target := nil;
     Callee.Data := JsUndefined;
   end;
   Result := JsUndefined;
