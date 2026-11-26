@@ -219,3 +219,13 @@ check("stepUp without an allowed step throws", (function () {
 })() && (function () {
   try { typedInput("text").stepUp(); return false; } catch (e) { return e.name === "InvalidStateError"; }
 })());
+var videoElement = document.createElement("video");
+check("video and audio have their own interfaces", videoElement instanceof HTMLVideoElement &&
+  videoElement instanceof HTMLMediaElement && document.createElement("audio") instanceof HTMLAudioElement &&
+  !(videoElement instanceof HTMLAudioElement));
+videoElement.setAttribute("playsinline", "");
+check("video reflects playsInline, poster, width", videoElement.playsInline && videoElement.width === 0);
+var imageElement = document.createElement("img");
+imageElement.setAttribute("referrerpolicy", "bogus");
+check("referrerPolicy is an enumerated attribute", imageElement.referrerPolicy === "" &&
+  (imageElement.referrerPolicy = "origin", imageElement.getAttribute("referrerpolicy") === "origin"));

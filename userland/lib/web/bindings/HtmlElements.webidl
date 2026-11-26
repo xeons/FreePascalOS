@@ -92,7 +92,8 @@ interface HTMLAnchorElement : HTMLElement {
   [Reflect] attribute DOMString hreflang;
   [Reflect] attribute DOMString type;
   attribute DOMString text;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
   [Reflect] attribute DOMString coords;
   [Reflect] attribute DOMString charset;
   [Reflect] attribute DOMString name;
@@ -110,7 +111,8 @@ interface HTMLAreaElement : HTMLElement {
   [Reflect] attribute DOMString target;
   [Reflect] attribute DOMString download;
   [Reflect] attribute DOMString rel;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
 };
 HTMLAreaElement includes HTMLHyperlinkElementUtils;
 
@@ -131,12 +133,17 @@ interface HTMLImageElement : HTMLElement {
   readonly attribute unsigned long naturalHeight;
   readonly attribute boolean complete;
   readonly attribute USVString currentSrc;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
   [Reflect, ReflectEnum=("sync", "async", "auto"), ReflectMissing="auto", ReflectInvalid="auto"] attribute DOMString decoding;
   [Reflect, ReflectEnum=("lazy", "eager"), ReflectMissing="eager", ReflectInvalid="eager"] attribute DOMString loading;
   [Reflect] attribute DOMString name;
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString border;
+  [ReflectURL] attribute USVString lowsrc;
+  [Reflect, ReflectDefault=0] attribute unsigned long hspace;
+  [Reflect, ReflectDefault=0] attribute unsigned long vspace;
+  [ReflectURL=longdesc] attribute USVString longDesc;
 };
 
 [Exposed=Window, LocalNames=(input)]
@@ -151,6 +158,10 @@ interface HTMLInputElement : HTMLElement {
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
   [ReflectURL] attribute USVString formAction;
+  [Reflect=formenctype, ReflectEnum=("application/x-www-form-urlencoded", "multipart/form-data", "text/plain"),
+    ReflectMissing="", ReflectInvalid="application/x-www-form-urlencoded"] attribute DOMString formEnctype;
+  [Reflect=formmethod, ReflectEnum=("get", "post", "dialog"), ReflectMissing="", ReflectInvalid="get"]
+    attribute DOMString formMethod;
   [Reflect] attribute boolean formNoValidate;
   [Reflect] attribute DOMString formTarget;
   [Reflect, ReflectDefault=0] attribute unsigned long height;
@@ -194,6 +205,10 @@ interface HTMLButtonElement : HTMLElement {
   [Reflect] attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
   [ReflectURL] attribute USVString formAction;
+  [Reflect=formenctype, ReflectEnum=("application/x-www-form-urlencoded", "multipart/form-data", "text/plain"),
+    ReflectMissing="", ReflectInvalid="application/x-www-form-urlencoded"] attribute DOMString formEnctype;
+  [Reflect=formmethod, ReflectEnum=("get", "post", "dialog"), ReflectMissing="", ReflectInvalid="get"]
+    attribute DOMString formMethod;
   [Reflect] attribute boolean formNoValidate;
   [Reflect] attribute DOMString formTarget;
   [Reflect] attribute DOMString name;
@@ -358,7 +373,8 @@ interface HTMLScriptElement : HTMLElement {
     attribute DOMString crossOrigin;
   attribute DOMString text;
   [Reflect] attribute DOMString integrity;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
   [Reflect] attribute DOMString charset;
   [Reflect] attribute DOMString event;
   [Reflect=for] attribute DOMString htmlFor;
@@ -389,7 +405,8 @@ interface HTMLLinkElement : HTMLElement {
   [Reflect] attribute DOMString type;
   [Reflect] attribute USVString imageSrcset;
   [Reflect] attribute DOMString imageSizes;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
   [Reflect] attribute boolean disabled;
   [Reflect] attribute DOMString charset;
   [Reflect] attribute DOMString rev;
@@ -572,13 +589,17 @@ interface HTMLIFrameElement : HTMLElement {
   [Reflect] attribute boolean allowFullscreen;
   [Reflect] attribute DOMString width;
   [Reflect] attribute DOMString height;
-  [Reflect=referrerpolicy] attribute DOMString referrerPolicy;
+  [Reflect=referrerpolicy, ReflectEnum=("", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"), ReflectMissing="", ReflectInvalid=""]
+    attribute DOMString referrerPolicy;
   [Reflect, ReflectEnum=("lazy", "eager"), ReflectMissing="eager", ReflectInvalid="eager"] attribute DOMString loading;
   readonly attribute Document? contentDocument;
   readonly attribute Window? contentWindow;
   [Reflect] attribute DOMString align;
   [Reflect] attribute DOMString scrolling;
   [Reflect=frameborder] attribute DOMString frameBorder;
+  [ReflectURL=longdesc] attribute USVString longDesc;
+  [Reflect=marginheight] attribute DOMString marginHeight;
+  [Reflect=marginwidth] attribute DOMString marginWidth;
 };
 
 [Exposed=Window, LocalNames=(embed)]
@@ -588,6 +609,8 @@ interface HTMLEmbedElement : HTMLElement {
   [Reflect] attribute DOMString type;
   [Reflect] attribute DOMString width;
   [Reflect] attribute DOMString height;
+  [Reflect] attribute DOMString align;
+  [Reflect] attribute DOMString name;
 };
 
 [Exposed=Window, LocalNames=(object)]
@@ -599,11 +622,21 @@ interface HTMLObjectElement : HTMLElement {
   readonly attribute HTMLFormElement? form;
   [Reflect] attribute DOMString width;
   [Reflect] attribute DOMString height;
+  [Reflect] attribute DOMString align;
+  [Reflect] attribute DOMString archive;
+  [Reflect] attribute DOMString code;
+  [Reflect] attribute boolean declare;
+  [Reflect, ReflectDefault=0] attribute unsigned long hspace;
+  [Reflect] attribute DOMString standby;
+  [Reflect, ReflectDefault=0] attribute unsigned long vspace;
+  [ReflectURL=codebase] attribute DOMString codeBase;
+  [Reflect=codetype] attribute DOMString codeType;
+  [Reflect=usemap] attribute DOMString useMap;
+  [Reflect] attribute DOMString border;
 };
 
-[Exposed=Window, LocalNames=(audio, video)]
+[Exposed=Window]
 interface HTMLMediaElement : HTMLElement {
-  [HTMLConstructor] constructor();
   [ReflectURL] attribute USVString src;
   [Reflect=crossorigin, ReflectEnum=("anonymous", "use-credentials"), ReflectMissing="", ReflectInvalid="anonymous"]
     attribute DOMString crossOrigin;
@@ -614,6 +647,20 @@ interface HTMLMediaElement : HTMLElement {
   [Reflect] attribute boolean controls;
   [Reflect=muted] attribute boolean defaultMuted;
   readonly attribute boolean paused;
+};
+
+[Exposed=Window, LocalNames=(video)]
+interface HTMLVideoElement : HTMLMediaElement {
+  [HTMLConstructor] constructor();
+  [Reflect, ReflectDefault=0] attribute unsigned long width;
+  [Reflect, ReflectDefault=0] attribute unsigned long height;
+  [ReflectURL] attribute USVString poster;
+  [Reflect=playsinline] attribute boolean playsInline;
+};
+
+[Exposed=Window, LocalNames=(audio)]
+interface HTMLAudioElement : HTMLMediaElement {
+  [HTMLConstructor] constructor();
 };
 
 [Exposed=Window, LocalNames=(source)]
@@ -741,7 +788,8 @@ interface HTMLDataListElement : HTMLElement {
 [Exposed=Window, LocalNames=(track)]
 interface HTMLTrackElement : HTMLElement {
   [HTMLConstructor] constructor();
-  [Reflect] attribute DOMString kind;
+  [Reflect, ReflectEnum=("subtitles", "captions", "descriptions", "chapters", "metadata"), ReflectMissing="subtitles",
+    ReflectInvalid="metadata"] attribute DOMString kind;
   [ReflectURL] attribute USVString src;
   [Reflect] attribute DOMString srclang;
   [Reflect] attribute DOMString label;
@@ -753,6 +801,8 @@ interface HTMLParamElement : HTMLElement {
   [HTMLConstructor] constructor();
   [Reflect] attribute DOMString name;
   [Reflect] attribute DOMString value;
+  [Reflect] attribute DOMString type;
+  [Reflect=valuetype] attribute DOMString valueType;
 };
 
 [Exposed=Window, LocalNames=(font)]
