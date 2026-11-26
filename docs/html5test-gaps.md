@@ -214,7 +214,8 @@ Points are what each costs on html5test (588 in all).
   libjavascript.
 - **MathML** (`elements.mathml` 2): MathML Core layout.
 - **SVG filters** (`svg.filters` 1): the filter effects in libsvg and
-  CSS filter().
+  CSS filter()'s url() references (CSS filter functions other than
+  drop-shadow() are painted: `Web.Paint.Filters`).
 - **Web Authentication, Credential Management, Payment Request**
   (`security.authentication` 3, `security.credential` 3, `payments` 5).
 - **Speech** (`audio.speechrecognition` 3, `audio.speechsynthesis` 2).

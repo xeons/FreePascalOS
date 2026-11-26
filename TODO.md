@@ -2175,6 +2175,32 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] YouTube: video playback (needs the media pipeline in the web view); Google
       Fonts serves TTF instead of WOFF2 to the engine's user agent (20 MB of
       YouTube Sans per visit)
+- [x] YouTube's front and watch pages against Firefox (compare-sites.py,
+      youtube and youtube-watch): censored calc() results (a NaN aspect
+      ratio left the primary column NaN px tall), videoWidth/videoHeight,
+      white space runs in flex containers, stretched column flex items
+      measured at their width (thumbnails), form controls without a ratio
+      (the search box), centred button content, -webkit-line-clamp and
+      -webkit-box-orient, text-overflow: ellipsis, shadows and translucent
+      text blended like other browsers, mask-composite, the filter property,
+      gradients of one color with two positions, getComputedStyle under
+      display: none and for pseudo-elements
+- [ ] Web Audio (window.AudioContext): YouTube shows its voice search button
+      only with it
+- [ ] @font-face in `<style>` sheets: never loaded (only linked sheets reach
+      the font loader through SheetReady; DocumentSheets asks for imports
+      only); needs the loader told when an inline sheet is retired
+      (TFontLoader keeps the rule and sheet) before it can load them
+- [ ] getComputedStyle: display of flex and grid items is not blockified in
+      the computed value (layout blockifies the boxes); top/left/right/bottom
+      of positioned boxes are not resolved to px
+- [ ] filter: drop-shadow() and url() references are not drawn
+- [ ] text-overflow: the start side value, and ellipses in right-to-left
+      lines; line clamping over block children (only a clamped box's own
+      lines are counted)
+- [ ] A web font's TrueType face looks condensed next to the installed one
+      at text sizes (the autohinter's blue zones from Google's Roboto v51
+      TTF): seen on YouTube's title when the web face was matched first
 - [ ] Inline style serialization keeps colours as specified (red, not
       rgb(255, 0, 0)); overflow-x/y computed values (visible becomes auto
       beside scroll)
