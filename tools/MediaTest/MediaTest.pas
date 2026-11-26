@@ -38,7 +38,8 @@ uses
   MediaTest.Containers,
   MediaTest.Vorbis,
   MediaTest.Opus,
-  MediaTest.Mp3;
+  MediaTest.Mp3,
+  MediaTest.EndToEnd;
 
 var
   FixtureRoot, OpusVectors: string;
@@ -59,5 +60,6 @@ begin
   RunVorbisTests(FixtureRoot);
   RunOpusTests(FixtureRoot, OpusVectors);
   RunMp3Tests(FixtureRoot);
+  RunEndToEndTests(FixtureRoot);
   FinishChecks('MEDIA TEST');
 end.
