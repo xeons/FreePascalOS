@@ -63,8 +63,12 @@ type
     LastPong: QWord;
     PingSequence: LongWord;
     Hung: Boolean;
-    { The browser asked it to end (no views left) or ended it. }
+    { The browser asked it to end (no views left) or ended it; when
+      (milliseconds of uptime), and whether it was then ended by force
+      for not ending in time (busy in a script, or swapping). }
     ShutdownSent: Boolean;
+    ShutdownSentAt: QWord;
+    ShutdownForced: Boolean;
     KilledAsHung: Boolean;
     { The IPC thread saw it end and no longer looks at it. }
     Ended: Boolean;

@@ -424,10 +424,19 @@ type
     property CurrentScript: TElement read FCurrentScript write FCurrentScript;
   end;
 
+const
+  DefaultContextHeapLimit = 1024 * 1024 * 1024;
+
 var
   { The first collection threshold of new contexts' engines in bytes (0:
     libjavascript's default); tests make it small to collect often. }
   ContextHeapThreshold: Int64 = 0;
+  { The most a page's script heap (its window, frames and workers: one
+    heap) may hold in bytes, 0 for no limit. A script that needs more
+    after a collection is stopped with an out of memory error, rather
+    than the content process growing until the system runs out (a
+    content process sets it from its memory limit). }
+  ContextHeapLimit: Int64 = DefaultContextHeapLimit;
 
 type
   TContextGoingHook = procedure(Context: TBindingContext);
@@ -701,6 +710,7 @@ begin
   Options := TJsEngine.DefaultOptions;
   if ContextHeapThreshold > 0 then
     Options.InitialHeapThreshold := ContextHeapThreshold;
+  Options.MemoryLimit := ContextHeapLimit;
   if Parent = nil then
     FEngine := TJsEngine.Create(Options)
   else
