@@ -72,6 +72,9 @@ procedure CloseInput;
   signaled). }
 procedure ProcessInput;
 procedure SetPointerCapture(Window: TServerWindow; Capture: Boolean);
+{ RequestSetPointerLock: the pointer locked to Window (active, usable)
+  or let go; the window hears EventPointerLock either way. }
+procedure SetPointerLock(Window: TServerWindow; Lock: Boolean);
 { The window is going: no hover, capture or drag refers to it. }
 procedure ForgetWindowInInput(Window: TServerWindow);
 { Ends a drag of a frame, if one goes on (the scale changed). }
@@ -134,6 +137,11 @@ var
   DragStartX: LongInt;
   DragStartY: LongInt;
   DragStartBounds: TRectangle;
+  { The window the pointer is locked to (nil: none), and where the
+    pointer stays meanwhile. }
+  Locked: TServerWindow;
+  LockedX: LongInt;
+  LockedY: LongInt;
 
 function OpenInput: LongInt;
 begin
@@ -159,6 +167,88 @@ begin
   end
   else if Captured = Window then
     Captured := nil;
+end;
+
+procedure TellPointerLock(Window: TServerWindow; IsLocked: Boolean);
+var
+  Message: TWindowMessage;
+begin
+  Message := NewMessage(EventPointerLock, Window.Id);
+  Message.Value := Ord(IsLocked);
+  SendToProgram(Window, Message);
+end;
+
+{ Ends the lock; Tell: the window hears it (not when it is going). }
+procedure EndPointerLock(Tell: Boolean);
+var
+  Window: TServerWindow;
+begin
+  Window := Locked;
+  if Window = nil then
+    Exit;
+  Locked := nil;
+  PointerHidden := False;
+  if Captured = Window then
+    Captured := nil;
+  if Tell then
+    TellPointerLock(Window, False);
+end;
+
+procedure SetPointerLock(Window: TServerWindow; Lock: Boolean);
+begin
+  if not Lock then
+  begin
+    if Locked = Window then
+      EndPointerLock(True);
+    Exit;
+  end;
+  if (Window <> ActiveWindow) or not Window.Visible or not WindowUsable(Window) or ScreenLocked or
+    (Drag <> DragNone) or DataDragActive then
+  begin
+    TellPointerLock(Window, False);
+    Exit;
+  end;
+  if (Locked <> nil) and (Locked <> Window) then
+    EndPointerLock(True);
+  Locked := Window;
+  LockedX := PointerX;
+  LockedY := PointerY;
+  Captured := Window;
+  PointerHidden := True;
+  TellPointerLock(Window, True);
+end;
+
+{ The lock ends when its window is no longer the active, shown one. }
+function PointerLockHolds: Boolean;
+begin
+  if Locked = nil then
+    Exit(False);
+  if (Locked <> ActiveWindow) or not Locked.Visible or not WindowUsable(Locked) or ScreenLocked then
+  begin
+    EndPointerLock(True);
+    Exit(False);
+  end;
+  Result := True;
+end;
+
+{ The motion of a locked pointer: the pointer stays, the window hears it. }
+procedure SendLockedMotion(DeltaX, DeltaY: LongInt);
+var
+  Message: TWindowMessage;
+begin
+  PointerX := LockedX;
+  PointerY := LockedY;
+  if (DeltaX = 0) and (DeltaY = 0) then
+    Exit;
+  Message := NewMessage(EventPointerMove, Locked.Id);
+  Message.Left := PointerX - Locked.ClientLeft;
+  Message.Top := PointerY - Locked.ClientTop;
+  Message.Width := DeltaX;
+  Message.Height := DeltaY;
+  Message.Code := ButtonsHeld;
+  Message.Flags := PointerMoveLocked;
+  Message.Modifiers := KeyboardModifiers;
+  SendToProgram(Locked, Message);
 end;
 
 function LeftButtonHeld: Boolean;
@@ -187,6 +277,7 @@ procedure SendPointerEvent(Window: TServerWindow; Kind: LongWord; Code: LongWord
 
 procedure ReleasePointer;
 begin
+  EndPointerLock(True);
   CancelDrag;
   CancelDataDrag;
   Captured := nil;
@@ -197,6 +288,8 @@ end;
 
 procedure ForgetWindowInInput(Window: TServerWindow);
 begin
+  if Locked = Window then
+    EndPointerLock(False);
   if Captured = Window then
     Captured := nil;
   if Hovered = Window then
@@ -609,6 +702,11 @@ begin
         begin
           DeltaX := Events[Index].X;
           DeltaY := Events[Index].Y;
+          if PointerLockHolds then
+          begin
+            SendLockedMotion(DeltaX, DeltaY);
+            Continue;
+          end;
           AdjustMotion(DeltaX, DeltaY);
           MovePointerBy(DeltaX, DeltaY);
           PointerMoved;
@@ -616,6 +714,17 @@ begin
       InputEventPosition:
         begin
           MovePointerToPosition(Events[Index].X, Events[Index].Y);
+          if PointerLockHolds then
+          begin
+            { An absolute device (a tablet) moves on: its motion is told
+              from where it was. }
+            DeltaX := PointerX - LockedX;
+            DeltaY := PointerY - LockedY;
+            LockedX := PointerX;
+            LockedY := PointerY;
+            SendLockedMotion(DeltaX, DeltaY);
+            Continue;
+          end;
           PointerMoved;
         end;
       InputEventButton:

@@ -106,6 +106,7 @@ type
     FInvalid: TRegion;
     FVisible: Boolean;
     FActive: Boolean;
+    FPointerLocked: Boolean;
     FLeft: LongInt;
     FTop: LongInt;
     FOwner: TWindow;
@@ -138,6 +139,11 @@ type
     procedure KeyDown(Code, Character, Modifiers: LongWord); virtual;
     procedure KeyUp(Code, Modifiers: LongWord); virtual;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); virtual;
+    { While the pointer is locked to the window (SetPointerLock): its
+      motion in pixels. }
+    procedure PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord); virtual;
+    { The pointer lock began (Locked) or ended, or was refused. }
+    procedure PointerLockChanged(Locked: Boolean); virtual;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); virtual;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); virtual;
     procedure PointerLeave; virtual;
@@ -207,6 +213,10 @@ type
     { Paints what is invalid now (the loop does this before waiting). }
     procedure PaintNow;
     procedure SetCapture(Capture: Boolean);
+    { Asks for the pointer to be locked to the window, or lets it go
+      (Windowing.Protocol: RequestSetPointerLock); PointerLockChanged
+      says how it went. }
+    procedure SetPointerLock(Lock: Boolean);
     { The pointer's shape (Pointer*) over the whole client area. }
     { Gives the window an icon of its own pictures (a few sizes, each
       at most MaximumIconSide across; the server draws the nearest);
@@ -239,6 +249,8 @@ type
     property ClientHeight: LongInt read GetClientHeight;
     property Visible: Boolean read FVisible;
     property Active: Boolean read FActive;
+    { The pointer is locked to the window (SetPointerLock). }
+    property PointerLocked: Boolean read FPointerLocked;
     { The window it belongs to and stays above (nil: none); never one it
       owns. }
     property Owner: TWindow read FOwner write SetOwner;
@@ -735,6 +747,15 @@ begin
   SendRequest(Message, -1);
 end;
 
+procedure TWindow.SetPointerLock(Lock: Boolean);
+var
+  Message: TWindowMessage;
+begin
+  Message := NewMessage(RequestSetPointerLock, FId);
+  Message.Value := Ord(Lock);
+  SendRequest(Message, -1);
+end;
+
 procedure TWindow.StartTimer(Id: LongWord; Milliseconds: LongWord);
 var
   Handle: Int64;
@@ -784,6 +805,14 @@ begin
 end;
 
 procedure TWindow.PointerMove(X, Y: LongInt; Buttons: LongWord);
+begin
+end;
+
+procedure TWindow.PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+begin
+end;
+
+procedure TWindow.PointerLockChanged(Locked: Boolean);
 begin
 end;
 
@@ -976,7 +1005,15 @@ begin
       else
         Window.KeyUp(Message.Code, Message.Modifiers);
     EventPointerMove:
-      Window.PointerMove(Message.Left, Message.Top, Message.Code);
+      if (Message.Flags and PointerMoveLocked) <> 0 then
+        Window.PointerMoveLocked(Message.Width, Message.Height, Message.Code)
+      else
+        Window.PointerMove(Message.Left, Message.Top, Message.Code);
+    EventPointerLock:
+      begin
+        Window.FPointerLocked := Message.Value <> 0;
+        Window.PointerLockChanged(Message.Value <> 0);
+      end;
     EventPointerButton:
       if Message.Value <> 0 then
         Window.PointerDown(Message.Left, Message.Top, Message.Code)

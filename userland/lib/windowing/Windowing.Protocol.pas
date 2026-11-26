@@ -326,6 +326,15 @@ const
     message loop, so an answer means the program still serves its
     windows. }
   RequestAnswerPing = 46;
+  { The pointer lock (Pointer Lock API, games): Value 1 asks for the
+    pointer to be locked to the window, which must be active; 0 lets it
+    go. While locked the pointer is hidden and stays where it was, and
+    the window gets every motion as EventPointerMove with Flags
+    PointerMoveLocked and Width, Height the motion in pixels (Left, Top
+    staying put); its button and wheel events too. Answered by
+    EventPointerLock; the lock ends when the window stops being active,
+    is hidden or goes, or the screen locks (EventPointerLock Value 0). }
+  RequestSetPointerLock = 47;
 
   { --- Events: server to program ---------------------------------------- }
 
@@ -476,6 +485,12 @@ const
     one that has not answered for a while is not responding (its
     windows' titles say so, ShellWindowNotResponding). }
   EventPing = 143;
+  { Value: 1 the pointer is locked to the window now, 0 it is not (any
+    more, or the request was refused). }
+  EventPointerLock = 144;
+
+  { EventPointerMove's Flags: the motion of a locked pointer. }
+  PointerMoveLocked = $01;
 
   { RequestHello's Flags. }
   HelloAnswersPings = $01;
