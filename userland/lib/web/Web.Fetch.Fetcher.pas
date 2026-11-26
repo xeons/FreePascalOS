@@ -156,6 +156,13 @@ type
       Consumer in later tasks. Group: what the job belongs to (a
       document), for CancelGroup. }
     function Fetch(Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer = nil): TFetchJob;
+    { A service worker's answer to job JobId (Web.Fetch.ServiceWorkerHook;
+      on the fetcher's thread, in a task): its response (taken) with the
+      whole body, the network after all, or a network error. Nothing
+      happens when the job is gone. }
+    procedure RespondFromServiceWorker(JobId: QWord; Response: TFetchResponse; const Body: string);
+    procedure ContinueWithoutServiceWorker(JobId: QWord);
+    procedure FailFromServiceWorker(JobId: QWord; const Reason: string);
     { No more callbacks for the job; freed later. }
     procedure Cancel(Job: TFetchJob);
     procedure CancelGroup(Group: Pointer);
@@ -188,7 +195,8 @@ uses
   Web.Fetch.LocalFiles,
   Web.Fetch.Cors,
   Web.Fetch.MixedContent,
-  Web.Fetch.ReferrerPolicy;
+  Web.Fetch.ReferrerPolicy,
+  Web.Fetch.ServiceWorkerHook;
 
 constructor TJobIdData.Create(Id: QWord);
 begin
@@ -264,6 +272,8 @@ var
   Item: TObject;
   Index: Integer;
 begin
+  if ServiceWorkerFetchHook <> nil then
+    ServiceWorkerFetchHook.FetcherGone(Self);
   FRunner.Free;
   FLoop.DiscardTasks(Self);
   for Item in FJobs.Values do
@@ -547,6 +557,18 @@ begin
     FailJob(Job, 'blocked: a same-origin request to another origin');
     Exit;
   end;
+  { HTTP fetch, "handle fetch": a service worker may answer the request
+    before the network (and before any CORS preflight). }
+  if not Job.ServiceWorkerDone and not Request.SkipServiceWorker and (Request.RedirectCount = 0) and
+     ((Current.Scheme = 'http') or (Current.Scheme = 'https')) and (ServiceWorkerFetchHook <> nil) then
+  begin
+    Job.ServiceWorkerDone := True;
+    if ServiceWorkerFetchHook.Intercept(Self, FLoop, Job.Id, Request, Job.Referrer) then
+    begin
+      Job.State := JobAwaitingResponse;
+      Exit;
+    end;
+  end;
   if (Current.Scheme = 'data') or (Current.Scheme = 'about') or (Request.Mode = FetchModeNavigate) or
      SameOrigin(Request.Origin, OriginOfUrl(Current)) and (Request.ResponseTainting = TaintingBasic) then
     SchemeFetch(Job)
@@ -639,6 +661,34 @@ begin
     HttpFetch(Job)
   else
     FailJob(Job, 'the scheme ' + Current.Scheme + ': is not supported');
+end;
+
+procedure TFetcher.RespondFromServiceWorker(JobId: QWord; Response: TFetchResponse; const Body: string);
+var
+  Job: TFetchJob;
+begin
+  if not FindJob(JobId, Job) or (Job.State in [JobFinished, JobCanceled]) then
+  begin
+    Response.Free;
+    Exit;
+  end;
+  CompleteWithBody(Job, Response, Body);
+end;
+
+procedure TFetcher.ContinueWithoutServiceWorker(JobId: QWord);
+var
+  Job: TFetchJob;
+begin
+  if FindJob(JobId, Job) and not (Job.State in [JobFinished, JobCanceled]) then
+    MainFetch(Job);
+end;
+
+procedure TFetcher.FailFromServiceWorker(JobId: QWord; const Reason: string);
+var
+  Job: TFetchJob;
+begin
+  if FindJob(JobId, Job) and not (Job.State in [JobFinished, JobCanceled]) then
+    FailJob(Job, Reason);
 end;
 
 procedure TFetcher.CompleteWithBody(Job: TFetchJob; Response: TFetchResponse; const Body: string);

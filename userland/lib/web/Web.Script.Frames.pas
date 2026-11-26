@@ -84,6 +84,8 @@ type
     function StartFetch(Context: TObject; const Request: TScriptFetchRequest; Sink: TScriptFetchSink): TObject;
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
+    function LoadingContextOf(Context: TObject): TObject; override;
+    function IsWorkerAgent: Boolean; override;
     { The environment it forwards to (the parent's). }
     property Parent: TScriptEnvironment read FParent;
   end;
@@ -288,6 +290,16 @@ end;
 procedure TFrameEnvironment.CancelFetch(Context: TObject; Handle: TObject);
 begin
   FParent.CancelFetch(Context, Handle);
+end;
+
+function TFrameEnvironment.LoadingContextOf(Context: TObject): TObject;
+begin
+  Result := FParent.LoadingContextOf(Context);
+end;
+
+function TFrameEnvironment.IsWorkerAgent: Boolean;
+begin
+  Result := FParent.IsWorkerAgent;
 end;
 
 { Frames }

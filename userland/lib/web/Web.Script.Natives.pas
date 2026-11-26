@@ -75,6 +75,7 @@ uses
   Web.Script.BroadcastChannels,
   Web.Workers.SharedWorkers,
   Web.Script.NativeCaches,
+  Web.Script.NativeServiceWorkers,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents;
@@ -667,6 +668,7 @@ begin
   DefineBroadcastNatives(Context, Natives);
   DefineSharedWorkerNatives(Context, Natives);
   DefineCacheNatives(Context, Natives);
+  DefineServiceWorkerNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

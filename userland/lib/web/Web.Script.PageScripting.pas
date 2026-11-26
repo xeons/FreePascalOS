@@ -93,6 +93,7 @@ type
     FFetches: TScriptFetches;
     FScreenWidth: Integer;
     FScreenHeight: Integer;
+    FWorkerAgent: Boolean;
     function FindTimer(Context: TObject; TimerId: Integer): Integer;
     function LoaderOf(Context: TObject): TObject;
     procedure SetLocalStorage(Value: TWebStorageRegistry);
@@ -138,9 +139,12 @@ type
       override;
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
     function LoadingContextOf(Context: TObject): TObject; override;
+    function IsWorkerAgent: Boolean; override;
     { Writes the local storage that changed. }
     procedure SaveStorage;
     property UserAgentText: string read FUserAgent write FUserAgent;
+    { Set by a worker agent for its own window. }
+    property WorkerAgent: Boolean read FWorkerAgent write FWorkerAgent;
     { Where localStorage lives (the host's, shared by its pages; the page
       keeps one in memory when none is set). }
     property LocalStorage: TWebStorageRegistry read FLocalStorage write SetLocalStorage;

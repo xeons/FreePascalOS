@@ -234,3 +234,8 @@ function TPageScriptEnvironment.LoadingContextOf(Context: TObject): TObject;
 begin
   Result := LoaderOf(Context);
 end;
+
+function TPageScriptEnvironment.IsWorkerAgent: Boolean;
+begin
+  Result := FWorkerAgent;
+end;

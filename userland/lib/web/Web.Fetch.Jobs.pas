@@ -95,6 +95,8 @@ type
     BytesReceived: Int64;
     { The Referer of the current hop ('' for none). }
     Referrer: string;
+    { The service workers had their chance at the request. }
+    ServiceWorkerDone: Boolean;
     { OnCancel: how the job is stopped when its consumer goes first. }
     constructor Create(Id: QWord; Request: TFetchRequest; Consumer: TFetchConsumer; Group: Pointer;
       OnCancel: TFetchJobCancelEvent);

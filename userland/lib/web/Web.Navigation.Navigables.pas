@@ -187,6 +187,10 @@ type
     FChildOrigin: TUrlOrigin;
     FHasChildOrigin: Boolean;
     FEncodingOverride: string;
+    { The client id and controller (Web.Fetch.ServiceWorkerHook) the
+      next committed document takes from its navigation's request. }
+    FCommitClientId: string;
+    FCommitControllerId: QWord;
     procedure SetState(State: TLoadingState);
     procedure CreateInitialDocument;
     function PromptToUnload: Boolean;
@@ -325,6 +329,7 @@ uses
   Http.Priorities,
   Web.EventLoop.Tasks,
   Web.Fetch.MimeTypes,
+  Web.Fetch.ServiceWorkerHook,
   Web.Loading.Priorities,
   Web.Loading.Srcset,
   Web.Navigation.Events,
@@ -683,6 +688,7 @@ begin
   Request.SniffContent := True;
   Request.UserInitiated := Options.UserInitiated;
   Request.InitiatorType := 'navigation';
+  Request.ReservedClientId := NewClientId;
   Request.Priority := PriorityFor(ResourceDocument);
   Request.ReferrerPolicy := Options.ReferrerPolicy;
   if (Options.Source <> nil) and not Options.UserInitiated then
@@ -797,6 +803,12 @@ begin
   FLoader := TDocumentLoader.Create(Document, FWindow, FFetcher, FSink, Url, FSettings, DocumentExecutor, @TopOrigin);
   if HasOrigin then
     FLoader.SetOrigin(Origin);
+  if FCommitClientId = '' then
+    FCommitClientId := NewClientId;
+  FLoader.Client.ServiceWorkerClientId := FCommitClientId;
+  FLoader.Client.ControllerId := FCommitControllerId;
+  FCommitClientId := '';
+  FCommitControllerId := 0;
   FLoader.Times := FNavigationTimes;
   if FLoader.Times.NavigationStart = 0 then
   begin
@@ -913,6 +925,8 @@ begin
     ShowErrorPage(Job.Request.Url, NetworkErrorPage(SerializeUrl(Job.Request.Url), Response.ErrorText));
     Exit;
   end;
+  FCommitClientId := Job.Request.ReservedClientId;
+  FCommitControllerId := Job.Request.ServiceWorkerControllerId;
   if (Response.Status = 204) or (Response.Status = 205) then
   begin
     FNavigationJob := nil;

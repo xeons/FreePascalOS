@@ -88,6 +88,11 @@ type
     { The top-level document's origin (its site, for cookies). }
     TopLevelOrigin: TUrlOrigin;
     HasTopLevelOrigin: Boolean;
+    { The environment's id for service workers (Client.id; '' until the
+      service worker registry gives it one) and the service worker that
+      controls it (0: none). }
+    ServiceWorkerClientId: string;
+    ControllerId: QWord;
     constructor Create;
     destructor Destroy; override;
     { A client for a document at Url (its own origin unless Origin given). }
@@ -131,6 +136,14 @@ type
     Upgraded: Boolean;
     { Sniff the first bytes before the response is handed on. }
     SniffContent: Boolean;
+    { Service workers' mode "none": no service worker sees the request
+      (a worker's own script, the update check). }
+    SkipServiceWorker: Boolean;
+    { A navigation's: the id of the client its document will be, and the
+      service worker that will control it (set when a registration's
+      scope matched). }
+    ReservedClientId: string;
+    ServiceWorkerControllerId: QWord;
     constructor Create(const AMethod: string; constref AUrl: TUrlRecord);
     destructor Destroy; override;
     function CurrentUrl: TUrlRecord;

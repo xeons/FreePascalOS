@@ -93,6 +93,9 @@ type
 var
   { Where agents' console messages go (nil: nowhere). }
   AgentConsole: TAgentConsoleEvent;
+  { Told when a network context goes, after its agents went (the
+    service worker registry forgets it). }
+  AfterNetworkGone: TNetworkContextGoingHook;
 
 { The live agents (tests check that none is left). }
 function LiveAgentCount: Integer;
@@ -100,9 +103,6 @@ function LiveAgentCount: Integer;
 procedure RetireAllAgents;
 
 implementation
-
-uses
-  Web.Script.ContextTasks;
 
 const
   AgentDocument = '<!DOCTYPE html><html><head><title>worker</title></head><body></body></html>';
@@ -126,6 +126,7 @@ begin
   if UserAgent <> '' then
     FExecutor.Environment.UserAgentText := UserAgent;
   FExecutor.OnConsoleMessage := @ConsoleMessage;
+  FExecutor.Environment.WorkerAgent := True;
   FNavigable.Executor := FExecutor;
   Agents.Add(Self);
   FNavigable.LoadHtml(AgentDocument, ScriptUrl);
@@ -199,6 +200,8 @@ begin
   for Index := Agents.Count - 1 downto 0 do
     if (Index < Agents.Count) and (TWorkerAgent(Agents[Index]).Network = Network) then
       TWorkerAgent(Agents[Index]).Free;
+  if Assigned(AfterNetworkGone) then
+    AfterNetworkGone(Network);
 end;
 
 function LiveAgentCount: Integer;

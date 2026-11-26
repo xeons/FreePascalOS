@@ -238,6 +238,9 @@ type
       nil when it has none: workers, service workers and caches find
       the context's event loop, origin and client through it. }
     function LoadingContextOf(Context: TObject): TObject; virtual;
+    { The environment is a worker agent's (Web.Workers.Agents): its
+      window is no page (not a service worker client). }
+    function IsWorkerAgent: Boolean; virtual;
   end;
 
 procedure RaiseUnsupported(const What: string);
@@ -435,6 +438,11 @@ end;
 function TScriptEnvironment.LoadingContextOf(Context: TObject): TObject;
 begin
   Result := nil;
+end;
+
+function TScriptEnvironment.IsWorkerAgent: Boolean;
+begin
+  Result := False;
 end;
 
 end.
