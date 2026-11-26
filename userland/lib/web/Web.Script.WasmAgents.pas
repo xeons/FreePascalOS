@@ -30,11 +30,14 @@
 
   What the agent keeps for the JS heap:
 
-  - The object caches of the JS API (exported functions, Memory, Table
-    and Global objects): one JavaScript object per store object, so
+  - The object caches of the JS API (exported functions, Memory, Table,
+    Global and Tag objects): one JavaScript object per store object, so
     identity is stable (instance.exports.f === instance.exports.f, a
     memory exported twice is one Memory object). Store objects live as
-    long as the store, and so do their objects.
+    long as the store, and so do their objects. A worker's realm, which
+    is an agent of its own in a browser, has caches of its own (so
+    WebAssembly.JSTag is a Tag of its realm there); the windows and
+    frames share the agent's.
   - The current ArrayBuffer of each memory that has one; a memory's
     growth (TWasmMemory.OnGrow, also from memory.grow inside
     WebAssembly) detaches a fixed length one, and the next `buffer`
@@ -47,12 +50,29 @@
     for the objects and errors the engine makes there. Natives find
     their agent through their realm (AgentOfRealm).
 
-  The agent is a root provider of the heap: it marks those objects, the
-  externrefs the store holds (Store.EnumerateReferences: tables,
-  globals, element segments, the live slots of suspended frames) and
-  the JavaScript functions behind host functions (EnumerateHostData).
-  An externref is the JavaScript value's own 64 bits (JS null is the
-  null reference), and a host function's data is the callable's value.
+  - The objects of WebAssembly's collected heap that JavaScript holds:
+    one Exported GC Object per struct or array and one
+    WebAssembly.Exception per exception object (Web.Script.
+    WasmReferences), kept weakly - an entry goes when its object is
+    collected - so identity is stable while anything holds the object.
+  - The JavaScript exception tag (WebAssembly.JSTag), made on first use.
+
+  The two collectors trace through each other (libwasm's protocol b):
+  the agent is a root provider of the heap, and at each collection it
+  starts the store's host trace (Store.BeginHostTrace: the store's
+  roots - tables, globals, element segments, the live slots of
+  suspended frames, pinned objects - are marked and every host word
+  found gives the JavaScript value it holds to the marking); a wrapper
+  of a WebAssembly object, when the marking reaches it, traces on from
+  its object (Store.TraceFromHost); when marking is done (the weak
+  processors' last phase) the dead wrappers leave the caches and
+  Store.EndHostTrace frees every WebAssembly object nothing reached. So
+  a cycle through both heaps (a struct holding a JavaScript object that
+  holds the struct's wrapper) is collected like any other garbage. The
+  agent also marks the objects above and the JavaScript functions
+  behind host functions (EnumerateHostData). Host words are
+  Web.Script.WasmHostValues'; a host function's data is the callable's
+  value.
 
   Long running code: the store's interrupt hook answers the runtime's
   InterruptRequested, which the slow script watchdog sets
@@ -73,19 +93,25 @@ uses
   Js.Objects,
   Js.Heap,
   Js.ArrayBuffers,
+  Wasm.Types,
   Wasm.Runtime,
   Web.IdMaps,
   Web.Bindings.Context;
 
 type
   { The objects a realm's platform script registers. }
-  TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal);
+  TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal, wpTag, wpException);
   TWasmErrorKind = (weCompileError, weLinkError, weRuntimeError);
 
   TWasmRealmData = class
   public
     Prototypes: array[TWasmPrototypeKind] of TJsObject;
     ErrorConstructors: array[TWasmErrorKind] of TJsObject;
+    { A worker's realm (an agent of its own in a browser): the objects
+      made there for store objects, so they are of its realm; nil for a
+      window's or a frame's realm, which use the agent's. }
+    Wrappers: TIdMap;
+    destructor Destroy; override;
   end;
 
   TWasmAgent = class(TWasmStore)
@@ -95,18 +121,23 @@ type
     FWrappers: TIdMap;
     FBuffers: TIdMap;
     FRealms: TIdMap;
+    FReferenceObjects: TIdMap;
+    FJsTag: TWasmTag;
     FTracer: TJsTracer;
+    FHostTracing: Boolean;
     procedure MarkRoots(Tracer: TJsTracer);
+    function FinishTrace(Tracer: TJsTracer; Phase: Integer): Boolean;
     procedure MarkReference(Reference: Pointer);
     procedure MarkObjects(Map: TIdMap);
     function InterruptWanted(Store: TWasmStore): Boolean;
   public
     constructor CreateFor(TopContext: TBindingContext);
     destructor Destroy; override;
-    { The JavaScript object made for a store object (a TWasmFunction,
-      TWasmMemory, TWasmTable or TWasmGlobal), or nil. }
-    function WrapperOf(StoreObject: TObject): TJsObject;
-    procedure SetWrapper(StoreObject: TObject; Wrapper: TJsObject);
+    { The JavaScript object made in Realm's scope (a worker's realm, or
+      the windows and frames) for a store object (a TWasmFunction,
+      TWasmMemory, TWasmTable, TWasmGlobal or TWasmTag), or nil. }
+    function WrapperOf(Realm: TJsRealm; StoreObject: TObject): TJsObject;
+    procedure SetWrapper(Realm: TJsRealm; StoreObject: TObject; Wrapper: TJsObject);
     { A memory's current ArrayBuffer, or nil (none yet, or detached by a
       growth). }
     function BufferOf(Memory: TWasmMemory): TJsArrayBuffer;
@@ -122,6 +153,20 @@ type
     { What the realm's platform script registered (made empty if not). }
     function RealmData(Realm: TJsRealm): TWasmRealmData;
     procedure ForgetRealm(Realm: TJsRealm);
+    { The JavaScript object of a GC heap object (an Exported GC Object or
+      a WebAssembly.Exception), or nil; kept while the object lives. }
+    function ReferenceObjectOf(Reference: Pointer): TJsObject;
+    procedure SetReferenceObject(Reference: Pointer; Wrapper: TJsObject);
+    { A wrapper reached by the marking: what its object reaches is kept. }
+    procedure TraceReference(Reference: Pointer);
+    { How many GC heap objects have a JavaScript object now. }
+    function ReferenceObjectCount: Integer;
+    { WebAssembly.JSTag's tag: (externref) -> (). }
+    function JsTag: TWasmTag;
+  public
+    { The exports object of the wasm:js-string builtins (made by
+      Web.Script.WasmStringBuiltins the first time), kept alive here. }
+    StringBuiltins: TJsObject;
     property Context: TBindingContext read FContext;
   end;
 
@@ -133,12 +178,16 @@ function RegisterRealm(Realm: TJsRealm; Context: TBindingContext): TWasmRealmDat
 function AgentOfRealm(Realm: TJsRealm): TWasmAgent;
 { The agent of a store object's store. }
 function AgentOfStore(Store: TWasmStore): TWasmAgent; inline;
+{ The agent whose host trace Tracer (a heap) is running, or nil. }
+function TracingAgent(Tracer: TJsTracer): TWasmAgent;
 
 implementation
 
 uses
   Js.Runtime,
-  Wasm.Types;
+  Wasm.GcHeap,
+  Wasm.Api,
+  Web.Script.WasmHostValues;
 
 var
   { One per top-level context. }
@@ -149,6 +198,16 @@ var
 function AgentOfStore(Store: TWasmStore): TWasmAgent;
 begin
   Result := TWasmAgent(Store);
+end;
+
+function TracingAgent(Tracer: TJsTracer): TWasmAgent;
+var
+  Index: Integer;
+begin
+  for Index := 0 to High(Agents) do
+    if Agents[Index].FHostTracing and (TJsTracer(Agents[Index].FHeap) = Tracer) then
+      Exit(Agents[Index]);
+  Result := nil;
 end;
 
 function AgentOf(Context: TBindingContext): TWasmAgent;
@@ -168,10 +227,20 @@ end;
 function RegisterRealm(Realm: TJsRealm; Context: TBindingContext): TWasmRealmData;
 var
   Agent: TWasmAgent;
+  Index: Integer;
 begin
   Agent := AgentOf(Context);
   RealmAgents.Add(QWord(PtrUInt(Realm)), Agent);
   Result := Agent.RealmData(Realm);
+  for Index := 0 to High(Context.WorkerEngines) do
+    if (Context.WorkerEngines[Index].Realm = Realm) and (Result.Wrappers = nil) then
+      Result.Wrappers := TIdMap.Create;
+end;
+
+destructor TWasmRealmData.Destroy;
+begin
+  Wrappers.Free;
+  inherited Destroy;
 end;
 
 function AgentOfRealm(Realm: TJsRealm): TWasmAgent;
@@ -221,8 +290,10 @@ begin
   FWrappers := TIdMap.Create;
   FBuffers := TIdMap.Create;
   FRealms := TIdMap.Create;
+  FReferenceObjects := TIdMap.Create;
   OnInterrupt := @InterruptWanted;
   FHeap.AddRootProvider(@MarkRoots);
+  FHeap.AddWeakProcessor(@FinishTrace);
 end;
 
 destructor TWasmAgent.Destroy;
@@ -232,6 +303,8 @@ var
   Index: Integer;
 begin
   FHeap.RemoveRootProvider(@MarkRoots);
+  FHeap.RemoveWeakProcessor(@FinishTrace);
+  FReferenceObjects.Free;
   { The buffers' memory goes with the store: they must not see it. }
   Data := FBuffers.Values;
   for Index := 0 to High(Data) do
@@ -260,7 +333,7 @@ end;
 
 procedure TWasmAgent.MarkReference(Reference: Pointer);
 begin
-  FTracer.MarkValue(TJsValue(PtrUInt(Reference)));
+  MarkHostWord(FTracer, Reference);
 end;
 
 procedure TWasmAgent.MarkObjects(Map: TIdMap);
@@ -273,6 +346,8 @@ begin
     FTracer.MarkCell(TJsCell(Data[Index]));
 end;
 
+{ The start of a collection: the host trace begins here and goes on as
+  wrappers are reached (TraceReference) until FinishTrace. }
 procedure TWasmAgent.MarkRoots(Tracer: TJsTracer);
 var
   Data: TObjectArray;
@@ -282,40 +357,106 @@ var
   Realm: TWasmRealmData;
 begin
   FTracer := Tracer;
-  try
-    MarkObjects(FWrappers);
-    MarkObjects(FBuffers);
-    Data := FRealms.Values;
-    for Index := 0 to High(Data) do
-    begin
-      Realm := TWasmRealmData(Data[Index]);
-      for Kind := Low(Kind) to High(Kind) do
-        if Realm.Prototypes[Kind] <> nil then
-          Tracer.MarkCell(Realm.Prototypes[Kind]);
-      for ErrorKind := Low(ErrorKind) to High(ErrorKind) do
-        if Realm.ErrorConstructors[ErrorKind] <> nil then
-          Tracer.MarkCell(Realm.ErrorConstructors[ErrorKind]);
-    end;
-    EnumerateReferences(@MarkReference);
-    EnumerateHostData(@MarkReference);
-  finally
-    FTracer := nil;
+  MarkObjects(FWrappers);
+  MarkObjects(FBuffers);
+  if StringBuiltins <> nil then
+    Tracer.MarkCell(StringBuiltins);
+  Data := FRealms.Values;
+  for Index := 0 to High(Data) do
+  begin
+    Realm := TWasmRealmData(Data[Index]);
+    if Realm.Wrappers <> nil then
+      MarkObjects(Realm.Wrappers);
+    for Kind := Low(Kind) to High(Kind) do
+      if Realm.Prototypes[Kind] <> nil then
+        Tracer.MarkCell(Realm.Prototypes[Kind]);
+    for ErrorKind := Low(ErrorKind) to High(ErrorKind) do
+      if Realm.ErrorConstructors[ErrorKind] <> nil then
+        Tracer.MarkCell(Realm.ErrorConstructors[ErrorKind]);
   end;
+  EnumerateHostData(@MarkReference);
+  BeginHostTrace(@MarkReference);
+  FHostTracing := True;
 end;
 
-function TWasmAgent.WrapperOf(StoreObject: TObject): TJsObject;
+procedure TWasmAgent.TraceReference(Reference: Pointer);
+begin
+  if FHostTracing then
+    TraceFromHost(Reference, @MarkReference);
+end;
+
+{ Marking is complete: wrappers not marked are garbage (their entries
+  go), and so is every WebAssembly object nothing reached. }
+function TWasmAgent.FinishTrace(Tracer: TJsTracer; Phase: Integer): Boolean;
+var
+  Keys: TIdArray;
+  Wrapper: TObject;
+  Index: Integer;
+begin
+  Result := False;
+  if (Phase <> 1) or not FHostTracing then
+    Exit;
+  Keys := FReferenceObjects.Keys;
+  for Index := 0 to High(Keys) do
+    if FReferenceObjects.TryGetValue(Keys[Index], Wrapper) and not TJsCell(Wrapper).Marked then
+      FReferenceObjects.Remove(Keys[Index]);
+  FHostTracing := False;
+  FTracer := nil;
+  EndHostTrace;
+end;
+
+function TWasmAgent.ReferenceObjectCount: Integer;
+begin
+  Result := FReferenceObjects.Count;
+end;
+
+function TWasmAgent.ReferenceObjectOf(Reference: Pointer): TJsObject;
 var
   Found: TObject;
 begin
-  if FWrappers.TryGetValue(QWord(PtrUInt(StoreObject)), Found) then
+  if FReferenceObjects.TryGetValue(QWord(PtrUInt(Reference)), Found) then
     Result := TJsObject(Found)
   else
     Result := nil;
 end;
 
-procedure TWasmAgent.SetWrapper(StoreObject: TObject; Wrapper: TJsObject);
+procedure TWasmAgent.SetReferenceObject(Reference: Pointer; Wrapper: TJsObject);
 begin
-  FWrappers.Add(QWord(PtrUInt(StoreObject)), Wrapper);
+  { The object stays exposed (alive) while the wrapper's tracing reaches
+    it. }
+  Heap.Expose(Reference);
+  FReferenceObjects.Add(QWord(PtrUInt(Reference)), Wrapper);
+end;
+
+function TWasmAgent.JsTag: TWasmTag;
+begin
+  if FJsTag = nil then
+    FJsTag := WasmNewTag(Self, MakeFunctionType([WasmExternRefType], []));
+  Result := FJsTag;
+end;
+
+function TWasmAgent.WrapperOf(Realm: TJsRealm; StoreObject: TObject): TJsObject;
+var
+  Map: TIdMap;
+  Found: TObject;
+begin
+  Map := RealmData(Realm).Wrappers;
+  if Map = nil then
+    Map := FWrappers;
+  if Map.TryGetValue(QWord(PtrUInt(StoreObject)), Found) then
+    Result := TJsObject(Found)
+  else
+    Result := nil;
+end;
+
+procedure TWasmAgent.SetWrapper(Realm: TJsRealm; StoreObject: TObject; Wrapper: TJsObject);
+var
+  Map: TIdMap;
+begin
+  Map := RealmData(Realm).Wrappers;
+  if Map = nil then
+    Map := FWrappers;
+  Map.Add(QWord(PtrUInt(StoreObject)), Wrapper);
 end;
 
 function TWasmAgent.BufferOf(Memory: TWasmMemory): TJsArrayBuffer;

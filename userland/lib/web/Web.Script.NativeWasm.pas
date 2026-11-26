@@ -17,22 +17,28 @@
 }
 
 {
-  The natives behind the WebAssembly namespace (platform/57-webassembly.js,
-  which does the WebIDL side: arguments, dictionaries, overloads,
-  promises, streaming). Objects are checked here (the host class is the
-  brand); numbers arrive converted.
+  The natives behind the WebAssembly namespace (platform/57-webassembly.js
+  and the scripts after it, which do the WebIDL side: arguments,
+  dictionaries, overloads, promises, streaming). Objects are checked here
+  (the host class is the brand); numbers arrive converted. This unit has
+  the registration, modules and instantiation, and the table of every
+  native; memories, tables and globals are Web.Script.NativeWasmStorage's,
+  tags and exceptions Web.Script.NativeWasmExceptions', the string
+  builtins Web.Script.WasmStringBuiltins'.
 
     wasmRegister(moduleProto, memoryProto, tableProto, globalProto,
-      CompileError, LinkError, RuntimeError)
+      tagProto, exceptionProto, CompileError, LinkError, RuntimeError)
                                      what this realm's objects and
                                      errors are made with
     wasmInstall(scope)               a worker's global scope (a realm of
                                      this window's runtime) gets a
                                      WebAssembly namespace of its own:
-                                     the platform script runs there with
+                                     the platform scripts run there with
                                      natives of that realm (returned)
     wasmCheck(value, kind)           TypeError unless value is a Module,
-                                     Memory, Table or Global (kind 0..3)
+                                     Memory, Table, Global, Tag or
+                                     Exception (kind 0..5)
+    wasmIsModule(value) ... wasmIsException(value)
     wasmCopyBytes(source)            an ArrayBuffer copy of a BufferSource
                                      (TypeError for anything else)
     wasmValidate(source)             boolean
@@ -45,22 +51,9 @@
                                      import (valueType for globals)
     wasmInstantiate(module, values)  the exports object, from one value per
                                      import (functions, Global objects or
-                                     numbers, Memory and Table objects)
+                                     values, Memory, Table and Tag objects)
     wasmCloneModule(module)          a new Module object of the same
                                      compiled module (structured clone)
-    wasmNewMemory(initial, maximum, shared, proto)
-    wasmMemoryBuffer(memory), wasmMemoryGrow(memory, delta)
-    wasmMemoryFixedBuffer(memory), wasmMemoryResizableBuffer(memory)
-    wasmNewTable(element, initial, maximum, value, hasValue, proto)
-    wasmTableLength(table), wasmTableGet(table, index),
-    wasmTableSet(table, index, value, hasValue),
-    wasmTableGrow(table, delta, value, hasValue)
-    wasmNewGlobal(valueType, mutable, value, hasValue, proto)
-    wasmGlobalGet(global), wasmGlobalSet(global, value)
-
-  maximum is undefined when absent. A missing value is the type's
-  default (JS API DefaultValue: undefined for externref, else the zero
-  value or null).
 }
 unit Web.Script.NativeWasm;
 
@@ -92,7 +85,6 @@ uses
   Js.ArrayBuffers,
   Wasm.Types,
   Wasm.Errors,
-  Wasm.Limits,
   Wasm.Module,
   Wasm.Runtime,
   Wasm.Api,
@@ -101,35 +93,14 @@ uses
   Web.Script.PlatformSources,
   Web.Script.WasmAgents,
   Web.Script.WasmObjects,
-  Web.Script.WasmValues;
+  Web.Script.WasmValues,
+  Web.Script.WasmNativeArguments,
+  Web.Script.NativeWasmStorage,
+  Web.Script.NativeWasmExceptions,
+  Web.Script.WasmStringBuiltins;
 
 const
   KindNames: array[TWasmExternalKind] of string = ('function', 'table', 'memory', 'global', 'tag');
-
-type
-  TNativeRoutine = function(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-
-function Arg(Args: PJsValueArray; Count, Index: Integer): TJsValue; inline;
-begin
-  if Index < Count then
-    Result := Args^[Index]
-  else
-    Result := JsUndefined;
-end;
-
-function ArgNumber(R: TJsRealm; Args: PJsValueArray; Count, Index: Integer): Double;
-begin
-  if not ToDouble(R, Arg(Args, Count, Index), Result) then
-    Result := 0;
-end;
-
-function ArgPrototype(Args: PJsValueArray; Count, Index: Integer): TJsObject;
-begin
-  if JsIsObject(Arg(Args, Count, Index)) then
-    Result := JsAsObject(Arg(Args, Count, Index))
-  else
-    Result := nil;
-end;
 
 function SourceBytes(R: TJsRealm; Source: TJsValue; out Bytes: TBytes): Boolean;
 var
@@ -168,57 +139,6 @@ begin
   Result := JsObjectValue(Made);
 end;
 
-function ValueTypeName(const ValueType: TWasmValueType): string;
-begin
-  if (ValueType.Kind = vkReference) and (ValueType.HeapType = HeapTypeFunc) then
-    Result := 'anyfunc'
-  else
-    Result := ValueTypeToString(ValueType);
-end;
-
-function ValueTypeFromName(const Name: string; out ValueType: TWasmValueType): Boolean;
-begin
-  Result := True;
-  if Name = 'i32' then
-    ValueType := WasmI32Type
-  else if Name = 'i64' then
-    ValueType := WasmI64Type
-  else if Name = 'f32' then
-    ValueType := WasmF32Type
-  else if Name = 'f64' then
-    ValueType := WasmF64Type
-  else if Name = 'v128' then
-    ValueType := WasmV128Type
-  else if Name = 'externref' then
-    ValueType := WasmExternRefType
-  else if Name = 'anyfunc' then
-    ValueType := WasmFuncRefType
-  else
-    Result := False;
-end;
-
-{ The JS API's DefaultValue, or the value converted. }
-function ValueOrDefault(R: TJsRealm; Value: TJsValue; HasValue: Boolean; const ValueType: TWasmValueType;
-  out Converted: TWasmValue): Boolean;
-begin
-  if HasValue then
-    Exit(ToWebAssemblyValue(R, Value, ValueType, Converted));
-  if (ValueType.Kind = vkReference) and (ValueType.HeapType = HeapTypeExtern) then
-    Exit(ToWebAssemblyValue(R, JsUndefined, ValueType, Converted));
-  Converted := WasmDefaultValue(ValueType);
-  Result := True;
-end;
-
-function Checked(R: TJsRealm; Value: TJsValue; Kind: TWasmObjectKind; out Data: Pointer): Boolean;
-const
-  Names: array[TWasmObjectKind] of string = ('Module', 'Memory', 'Table', 'Global');
-begin
-  Data := WasmObjectData(Value, Kind);
-  Result := Data <> nil;
-  if not Result then
-    R.ThrowTypeError('Illegal invocation: not a WebAssembly.' + Names[Kind]);
-end;
-
 { Registration and checks }
 
 function NativeRegister(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
@@ -226,24 +146,34 @@ var
   Data: TWasmRealmData;
   Kind: TWasmPrototypeKind;
   ErrorKind: TWasmErrorKind;
+  Given: TJsObject;
 begin
+  { What is undefined stays as registered before (each platform script
+    registers its own). }
   Data := RegisterRealm(R, Context);
   for Kind := Low(Kind) to High(Kind) do
-    Data.Prototypes[Kind] := ArgPrototype(Args, ArgCount, Ord(Kind));
+  begin
+    Given := ArgPrototype(Args, ArgCount, Ord(Kind));
+    if Given <> nil then
+      Data.Prototypes[Kind] := Given;
+  end;
   for ErrorKind := Low(ErrorKind) to High(ErrorKind) do
-    Data.ErrorConstructors[ErrorKind] := ArgPrototype(Args, ArgCount, 4 + Ord(ErrorKind));
+  begin
+    Given := ArgPrototype(Args, ArgCount, Ord(High(TWasmPrototypeKind)) + 1 + Ord(ErrorKind));
+    if Given <> nil then
+      Data.ErrorConstructors[ErrorKind] := Given;
+  end;
   Result := JsUndefined;
 end;
 
-{ The platform script's WebAssembly namespace in a worker's scope. }
+{ The platform scripts of the WebAssembly namespace in a worker's scope:
+  every platform/5x-webassembly*.js, in order, with the same natives. }
 function NativeInstall(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-const
-  ScriptName = '57-webassembly.js';
 var
   Scope, Factory, WindowInternal: TJsValue;
   Engine: TJsEngine;
   Natives, Internal: TJsObject;
-  Index, Script: Integer;
+  Index: Integer;
 begin
   Result := JsUndefined;
   Scope := Arg(Args, ArgCount, 0);
@@ -251,11 +181,7 @@ begin
   for Index := 0 to High(Context.WorkerEngines) do
     if JsObjectValue(Context.WorkerEngines[Index].GlobalObject) = Scope then
       Engine := Context.WorkerEngines[Index];
-  Script := -1;
-  for Index := 0 to PlatformScriptCount - 1 do
-    if PlatformScriptNames[Index] = ScriptName then
-      Script := Index;
-  if (Engine = nil) or (Script < 0) then
+  if Engine = nil then
     Exit;
   Natives := Engine.NewObject;
   DefineWasmNativesIn(Engine, Context, Natives);
@@ -267,8 +193,12 @@ begin
   if JsIsObject(WindowInternal) then
     Internal.Proto := JsAsObject(WindowInternal);
   Engine.SetProperty(JsObjectValue(Internal), 'cloneHooks', Engine.NewArray([]));
-  Factory := Engine.EvaluateBuiltin(PlatformScriptSource(Script), 'platform/' + ScriptName);
-  Engine.Call(Factory, JsUndefined, [JsObjectValue(Natives), Scope, JsObjectValue(Internal)]);
+  for Index := 0 to PlatformScriptCount - 1 do
+    if Pos('-webassembly', PlatformScriptNames[Index]) > 0 then
+    begin
+      Factory := Engine.EvaluateBuiltin(PlatformScriptSource(Index), 'platform/' + PlatformScriptNames[Index]);
+      Engine.Call(Factory, JsUndefined, [JsObjectValue(Natives), Scope, JsObjectValue(Internal)]);
+    end;
   Result := JsObjectValue(Natives);
 end;
 
@@ -280,9 +210,44 @@ begin
   Kind := Trunc(ArgNumber(R, Args, ArgCount, 1));
   if (Kind < Ord(Low(TWasmObjectKind))) or (Kind > Ord(High(TWasmObjectKind))) then
     Kind := 0;
-  if not Checked(R, Arg(Args, ArgCount, 0), TWasmObjectKind(Kind), Data) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), TWasmObjectKind(Kind), Data) then
     Exit(JsException);
   Result := JsUndefined;
+end;
+
+function NativeIsKind(Args: PJsValueArray; ArgCount: Integer; Kind: TWasmObjectKind): TJsValue; inline;
+begin
+  Result := JsBoolean(WasmObjectData(Arg(Args, ArgCount, 0), Kind) <> nil);
+end;
+
+function NativeIsModule(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woModule);
+end;
+
+function NativeIsMemory(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woMemory);
+end;
+
+function NativeIsTable(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woTable);
+end;
+
+function NativeIsGlobal(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woGlobal);
+end;
+
+function NativeIsTag(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woTag);
+end;
+
+function NativeIsException(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+begin
+  Result := NativeIsKind(Args, ArgCount, woException);
 end;
 
 { Modules }
@@ -342,7 +307,7 @@ var
   List: TJsArray;
   Index, Mark: Integer;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Descriptors := WasmModuleExports(Module);
   List := R.NewArray(0);
@@ -361,7 +326,7 @@ var
   List: TJsArray;
   Index, Mark: Integer;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Descriptors := WasmModuleImports(Module);
   List := R.NewArray(0);
@@ -381,7 +346,7 @@ var
   Buffer: TJsArrayBuffer;
   Index, Mark: Integer;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Sections := WasmCustomSections(Module, ValueToText(R, Arg(Args, ArgCount, 1)));
   List := R.NewArray(0);
@@ -411,7 +376,7 @@ var
   Index, Mark: Integer;
   TypeName: string;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Descriptors := WasmModuleImports(Module);
   List := R.NewArray(0);
@@ -454,8 +419,7 @@ begin
         ekMemory: Value := StoreObjectValue(R, woMemory, Exported[Index].External.Memory);
         ekGlobal: Value := StoreObjectValue(R, woGlobal, Exported[Index].External.Global);
       else
-        { A tag: WebAssembly.Tag is not there yet (TODO.md). }
-        Value := JsUndefined;
+        Value := StoreObjectValue(R, woTag, Exported[Index].External.Tag);
       end;
       Target.DefineData(R, ToPropertyKey(R, R.NewString(Exported[Index].Name)), Value, PropertyEnumerable);
     end;
@@ -465,26 +429,63 @@ begin
   end;
 end;
 
+function ImportName(const Descriptor: TWasmImportDescriptor): string;
+begin
+  Result := 'WebAssembly: import ' + Descriptor.ModuleName + '.' + Descriptor.Name;
+end;
+
+{ A value for a global import that is no Global: a constant global of
+  the import's type; a value of the wrong type is a LinkError (JS API
+  "read the imports"). }
+function ConstantGlobalImport(R: TJsRealm; Agent: TWasmAgent; Item: TJsValue; const Descriptor: TWasmImportDescriptor;
+  const TypeIds: TWasmIdArray; out Global: TWasmGlobal): Boolean;
+var
+  ConstantType: TWasmGlobalType;
+  Converted: TWasmValue;
+begin
+  Global := nil;
+  ConstantType := Descriptor.GlobalType;
+  ConstantType.ValueType := WasmStoreValueType(TypeIds, ConstantType.ValueType);
+  ConstantType.Mutable := False;
+  if IsOpaqueType(Agent, ConstantType.ValueType) then
+  begin
+    ThrowWasmErrorOfKind(R, weLinkError, ImportName(Descriptor) + ' must be a WebAssembly.Global');
+    Exit(False);
+  end;
+  if not ToWebAssemblyValue(R, Item, ConstantType.ValueType, Converted) then
+  begin
+    if R.Runtime.HasException and not R.Runtime.Terminating then
+    begin
+      R.Runtime.TakeException;
+      ThrowWasmErrorOfKind(R, weLinkError, ImportName(Descriptor) + ': the value is not of the global''s type');
+    end;
+    Exit(False);
+  end;
+  Global := WasmNewGlobal(Agent, ConstantType, Converted);
+  Result := True;
+end;
+
 function NativeInstantiate(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
 var
   Module: TWasmModule;
   Agent: TWasmAgent;
   Descriptors: TWasmImportDescriptorArray;
   Imports: TWasmExternalArray;
+  TypeIds: TWasmIdArray;
   Values: TJsValue;
   Item: TJsValue;
-  Converted: TWasmValue;
   Instance: TWasmModuleInstance;
   Index, Mark: Integer;
-  ConstantType: TWasmGlobalType;
+  Found: Boolean;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Values := Arg(Args, ArgCount, 1);
   if not JsIsObject(Values) then
     Exit(R.ThrowTypeError('WebAssembly: no import values'));
   Agent := AgentOf(Context);
   Descriptors := WasmModuleImports(Module);
+  TypeIds := WasmModuleTypeIds(Agent, Module);
   Imports := nil;
   SetLength(Imports, Length(Descriptors));
   Mark := R.Runtime.PushRoot(Values);
@@ -503,30 +504,26 @@ begin
               if Imports[Index].Func = nil then
               begin
                 if not JsIsCallable(Item) then
-                  Exit(ThrowWasmErrorOfKind(R, weLinkError, 'WebAssembly: import ' + Descriptors[Index].ModuleName +
-                    '.' + Descriptors[Index].Name + ' is not a function'));
-                Imports[Index].Func := NewImportedFunction(Agent, Descriptors[Index].FunctionType, Item);
+                  Exit(ThrowWasmErrorOfKind(R, weLinkError, ImportName(Descriptors[Index]) + ' is not a function'));
+                Imports[Index].Func := NewImportedFunction(Agent, TypeIds[Module.Imports[Index].TypeIndex], Item);
               end;
             end;
           ekGlobal:
             begin
               Imports[Index].Global := TWasmGlobal(WasmObjectData(Item, woGlobal));
-              if Imports[Index].Global = nil then
-              begin
-                if not ToWebAssemblyValue(R, Item, Descriptors[Index].GlobalType.ValueType, Converted) then
-                  Exit(JsException);
-                ConstantType := Descriptors[Index].GlobalType;
-                ConstantType.Mutable := False;
-                Imports[Index].Global := WasmNewGlobal(Agent, ConstantType, Converted);
-              end;
+              if (Imports[Index].Global = nil) and not ConstantGlobalImport(R, Agent, Item, Descriptors[Index],
+                TypeIds, Imports[Index].Global) then
+                Exit(JsException);
             end;
           ekMemory: Imports[Index].Memory := TWasmMemory(WasmObjectData(Item, woMemory));
           ekTable: Imports[Index].Table := TWasmTable(WasmObjectData(Item, woTable));
+          ekTag: Imports[Index].Tag := TWasmTag(WasmObjectData(Item, woTag));
         end;
-        if (Imports[Index].Func = nil) and (Imports[Index].Global = nil) and (Imports[Index].Memory = nil) and
-          (Imports[Index].Table = nil) then
-          Exit(ThrowWasmErrorOfKind(R, weLinkError, 'WebAssembly: import ' + Descriptors[Index].ModuleName + '.' +
-            Descriptors[Index].Name + ' must be a WebAssembly.' + KindNames[Descriptors[Index].Kind]));
+        Found := (Imports[Index].Func <> nil) or (Imports[Index].Global <> nil) or (Imports[Index].Memory <> nil) or
+          (Imports[Index].Table <> nil) or (Imports[Index].Tag <> nil);
+        if not Found then
+          Exit(ThrowWasmErrorOfKind(R, weLinkError, ImportName(Descriptors[Index]) + ' must be a WebAssembly.' +
+            KindNames[Descriptors[Index].Kind]));
       end;
       Instance := WasmInstantiate(Agent, Module, Imports);
     except
@@ -543,304 +540,61 @@ function NativeCloneModule(R: TJsRealm; Context: TBindingContext; Args: PJsValue
 var
   Module: TWasmModule;
 begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
+  if not CheckedWasmObject(R, Arg(Args, ArgCount, 0), woModule, Pointer(Module)) then
     Exit(JsException);
   Result := NewModuleObject(R, Module, nil);
 end;
 
-{ Memories }
-
-function NativeNewMemory(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  MemoryType: TWasmMemoryType;
-  Memory: TWasmMemory;
-begin
-  MemoryType := Default(TWasmMemoryType);
-  MemoryType.Limits.Minimum := Trunc(ArgNumber(R, Args, ArgCount, 0));
-  MemoryType.Limits.HasMaximum := Arg(Args, ArgCount, 1) <> JsUndefined;
-  if MemoryType.Limits.HasMaximum then
-    MemoryType.Limits.Maximum := Trunc(ArgNumber(R, Args, ArgCount, 1));
-  if MemoryType.Limits.Minimum > MaximumMemoryPages then
-    Exit(R.ThrowRangeError('WebAssembly.Memory: initial is larger than the most pages a memory may have'));
-  if MemoryType.Limits.HasMaximum and (MemoryType.Limits.Maximum > MaximumMemoryPages) then
-    Exit(R.ThrowRangeError('WebAssembly.Memory: maximum is larger than the most pages a memory may have'));
-  if MemoryType.Limits.HasMaximum and (MemoryType.Limits.Maximum < MemoryType.Limits.Minimum) then
-    Exit(R.ThrowRangeError('WebAssembly.Memory: maximum is less than initial'));
-  if ToBoolean(Arg(Args, ArgCount, 2)) then
-  begin
-    if not MemoryType.Limits.HasMaximum then
-      Exit(R.ThrowTypeError('WebAssembly.Memory: a shared memory needs a maximum'));
-    Exit(R.ThrowTypeError('WebAssembly.Memory: shared memories are not supported'));
+type
+  TNativeEntry = record
+    Name: string;
+    Length: Integer;
+    Routine: TWasmNativeRoutine;
   end;
-  try
-    Memory := WasmNewMemory(AgentOf(Context), MemoryType);
-  except
-    on Error: Exception do
-      Exit(ThrowWasmError(R, Error));
-  end;
-  Result := NewStoreObject(R, woMemory, Memory, ArgPrototype(Args, ArgCount, 3));
-end;
-
-function NativeMemoryBuffer(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Memory: TWasmMemory;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woMemory, Pointer(Memory)) then
-    Exit(JsException);
-  Result := MemoryBufferValue(R, Memory);
-end;
-
-function NativeMemoryFixedBuffer(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Memory: TWasmMemory;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woMemory, Pointer(Memory)) then
-    Exit(JsException);
-  Result := MemoryFixedBufferValue(R, Memory);
-end;
-
-function NativeMemoryResizableBuffer(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray;
-  ArgCount: Integer): TJsValue;
-var
-  Memory: TWasmMemory;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woMemory, Pointer(Memory)) then
-    Exit(JsException);
-  Result := MemoryResizableBufferValue(R, Memory);
-end;
-
-function NativeMemoryGrow(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Memory: TWasmMemory;
-  OldPages: Int64;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woMemory, Pointer(Memory)) then
-    Exit(JsException);
-  { A growth, even of 0 pages, detaches the buffer (OnGrow). }
-  try
-    OldPages := WasmMemoryGrow(Memory, QWord(Trunc(ArgNumber(R, Args, ArgCount, 1))));
-  except
-    on Error: Exception do
-      Exit(ThrowWasmError(R, Error));
-  end;
-  if OldPages < 0 then
-    Exit(R.ThrowRangeError('WebAssembly.Memory.grow: the memory cannot grow that much'));
-  Result := JsNumber(OldPages);
-end;
-
-{ Tables }
-
-function ElementTypeOf(R: TJsRealm; Value: TJsValue; out ValueType: TWasmValueType): Boolean;
-var
-  Name: string;
-begin
-  Name := ValueToText(R, Value);
-  Result := (Name = 'anyfunc') or (Name = 'externref');
-  if Name = 'anyfunc' then
-    ValueType := WasmFuncRefType
-  else
-    ValueType := WasmExternRefType;
-  if not Result then
-    R.ThrowTypeError('WebAssembly.Table: the element type must be "anyfunc" or "externref"');
-end;
-
-function NativeNewTable(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  TableType: TWasmTableType;
-  Initial: TWasmValue;
-  Table: TWasmTable;
-  Mark: Integer;
-begin
-  TableType := Default(TWasmTableType);
-  if not ElementTypeOf(R, Arg(Args, ArgCount, 0), TableType.ElementType) then
-    Exit(JsException);
-  TableType.Limits.Minimum := Trunc(ArgNumber(R, Args, ArgCount, 1));
-  TableType.Limits.HasMaximum := Arg(Args, ArgCount, 2) <> JsUndefined;
-  if TableType.Limits.HasMaximum then
-    TableType.Limits.Maximum := Trunc(ArgNumber(R, Args, ArgCount, 2));
-  if TableType.Limits.Minimum > MaximumTableElements then
-    Exit(R.ThrowRangeError('WebAssembly.Table: initial is larger than the most elements a table may have'));
-  if TableType.Limits.HasMaximum and (TableType.Limits.Maximum < TableType.Limits.Minimum) then
-    Exit(R.ThrowRangeError('WebAssembly.Table: maximum is less than initial'));
-  if not ValueOrDefault(R, Arg(Args, ArgCount, 3), ToBoolean(Arg(Args, ArgCount, 4)), TableType.ElementType,
-    Initial) then
-    Exit(JsException);
-  Mark := R.Runtime.PushRoot(Arg(Args, ArgCount, 3));
-  try
-    try
-      Table := WasmNewTable(AgentOf(Context), TableType, Initial.Reference);
-    except
-      on Error: Exception do
-        Exit(ThrowWasmError(R, Error));
-    end;
-    Result := NewStoreObject(R, woTable, Table, ArgPrototype(Args, ArgCount, 5));
-  finally
-    R.Runtime.PopRoots(Mark);
-  end;
-end;
-
-function NativeTableLength(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Table: TWasmTable;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woTable, Pointer(Table)) then
-    Exit(JsException);
-  Result := JsNumber(Table.Size);
-end;
-
-function NativeTableGet(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Table: TWasmTable;
-  Index: Double;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woTable, Pointer(Table)) then
-    Exit(JsException);
-  Index := ArgNumber(R, Args, ArgCount, 1);
-  if Index >= Table.Size then
-    Exit(R.ThrowRangeError('WebAssembly.Table.get: index out of bounds'));
-  Result := ToJSValue(R, WasmReference(Table.TableType.ElementType, Table.Elements[Trunc(Index)]));
-end;
-
-function NativeTableSet(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Table: TWasmTable;
-  Index: Double;
-  Value: TWasmValue;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woTable, Pointer(Table)) then
-    Exit(JsException);
-  Index := ArgNumber(R, Args, ArgCount, 1);
-  if Index >= Table.Size then
-    Exit(R.ThrowRangeError('WebAssembly.Table.set: index out of bounds'));
-  if not ValueOrDefault(R, Arg(Args, ArgCount, 2), ToBoolean(Arg(Args, ArgCount, 3)), Table.TableType.ElementType,
-    Value) then
-    Exit(JsException);
-  Table.Elements[Trunc(Index)] := Value.Reference;
-  Result := JsUndefined;
-end;
-
-function NativeTableGrow(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Table: TWasmTable;
-  Delta: Double;
-  Value: TWasmValue;
-  OldSize: Int64;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woTable, Pointer(Table)) then
-    Exit(JsException);
-  Delta := ArgNumber(R, Args, ArgCount, 1);
-  if not ValueOrDefault(R, Arg(Args, ArgCount, 2), ToBoolean(Arg(Args, ArgCount, 3)), Table.TableType.ElementType,
-    Value) then
-    Exit(JsException);
-  OldSize := WasmTableGrow(Table, Cardinal(Trunc(Delta)), Value.Reference);
-  if OldSize < 0 then
-    Exit(R.ThrowRangeError('WebAssembly.Table.grow: the table cannot grow that much'));
-  Result := JsNumber(OldSize);
-end;
-
-{ Globals }
-
-function NativeNewGlobal(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  GlobalType: TWasmGlobalType;
-  Value: TWasmValue;
-  Global: TWasmGlobal;
-  Mark: Integer;
-begin
-  GlobalType := Default(TWasmGlobalType);
-  if not ValueTypeFromName(ValueToText(R, Arg(Args, ArgCount, 0)), GlobalType.ValueType) then
-    Exit(R.ThrowTypeError('WebAssembly.Global: unknown value type'));
-  if GlobalType.ValueType.Kind = vkV128 then
-    Exit(R.ThrowTypeError('WebAssembly.Global: a v128 global cannot be made from JavaScript'));
-  GlobalType.Mutable := ToBoolean(Arg(Args, ArgCount, 1));
-  if not ValueOrDefault(R, Arg(Args, ArgCount, 2), ToBoolean(Arg(Args, ArgCount, 3)), GlobalType.ValueType, Value) then
-    Exit(JsException);
-  Mark := R.Runtime.PushRoot(Arg(Args, ArgCount, 2));
-  try
-    try
-      Global := WasmNewGlobal(AgentOf(Context), GlobalType, Value);
-    except
-      on Error: Exception do
-        Exit(ThrowWasmError(R, Error));
-    end;
-    Result := NewStoreObject(R, woGlobal, Global, ArgPrototype(Args, ArgCount, 4));
-  finally
-    R.Runtime.PopRoots(Mark);
-  end;
-end;
-
-function NativeGlobalGet(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Global: TWasmGlobal;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woGlobal, Pointer(Global)) then
-    Exit(JsException);
-  Result := ToJSValue(R, WasmGlobalGet(Global));
-end;
-
-function NativeGlobalSet(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-var
-  Global: TWasmGlobal;
-  Value: TWasmValue;
-begin
-  if not Checked(R, Arg(Args, ArgCount, 0), woGlobal, Pointer(Global)) then
-    Exit(JsException);
-  if not Global.GlobalType.Mutable then
-    Exit(R.ThrowTypeError('WebAssembly.Global: the global is immutable'));
-  if Global.GlobalType.ValueType.Kind = vkV128 then
-    Exit(R.ThrowTypeError('WebAssembly.Global: a v128 global cannot be set from JavaScript'));
-  if not ToWebAssemblyValue(R, Arg(Args, ArgCount, 1), Global.GlobalType.ValueType, Value) then
-    Exit(JsException);
-  WasmGlobalSet(Global, Value);
-  Result := JsUndefined;
-end;
 
 const
-  NativeCount = 29;
-  NativeNames: array[0..NativeCount - 1] of string = (
-    'wasmRegister', 'wasmCheck', 'wasmCopyBytes', 'wasmValidate', 'wasmCompile', 'wasmModuleExports',
-    'wasmModuleImports', 'wasmCustomSections', 'wasmImportKinds', 'wasmInstantiate', 'wasmCloneModule',
-    'wasmNewMemory', 'wasmMemoryBuffer', 'wasmMemoryGrow', 'wasmNewTable', 'wasmTableLength', 'wasmTableGet',
-    'wasmTableSet', 'wasmTableGrow', 'wasmNewGlobal', 'wasmGlobalGet', 'wasmGlobalSet', 'wasmIsModule',
-    'wasmIsMemory', 'wasmIsTable', 'wasmIsGlobal', 'wasmMemoryFixedBuffer', 'wasmMemoryResizableBuffer',
-    'wasmInstall');
-  NativeLengths: array[0..NativeCount - 1] of Integer = (7, 2, 1, 1, 2, 1, 1, 2, 1, 2, 1, 4, 1, 2, 6, 1, 2, 4, 4,
-    5, 1, 2, 1, 1, 1, 1, 1, 1, 1);
-
-function NativeIsKind(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer;
-  Kind: TWasmObjectKind): TJsValue; inline;
-begin
-  Result := JsBoolean(WasmObjectData(Arg(Args, ArgCount, 0), Kind) <> nil);
-end;
-
-function NativeIsModule(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-begin
-  Result := NativeIsKind(R, Context, Args, ArgCount, woModule);
-end;
-
-function NativeIsMemory(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-begin
-  Result := NativeIsKind(R, Context, Args, ArgCount, woMemory);
-end;
-
-function NativeIsTable(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-begin
-  Result := NativeIsKind(R, Context, Args, ArgCount, woTable);
-end;
-
-function NativeIsGlobal(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
-begin
-  Result := NativeIsKind(R, Context, Args, ArgCount, woGlobal);
-end;
-
-const
-  NativeRoutines: array[0..NativeCount - 1] of TNativeRoutine = (
-    @NativeRegister, @NativeCheck, @NativeCopyBytes, @NativeValidate, @NativeCompile, @NativeModuleExports,
-    @NativeModuleImports, @NativeCustomSections, @NativeImportKinds, @NativeInstantiate, @NativeCloneModule,
-    @NativeNewMemory, @NativeMemoryBuffer, @NativeMemoryGrow, @NativeNewTable, @NativeTableLength, @NativeTableGet,
-    @NativeTableSet, @NativeTableGrow, @NativeNewGlobal, @NativeGlobalGet, @NativeGlobalSet, @NativeIsModule,
-    @NativeIsMemory, @NativeIsTable, @NativeIsGlobal, @NativeMemoryFixedBuffer, @NativeMemoryResizableBuffer,
-    @NativeInstall);
+  NativeCount = 40;
+  NativeTable: array[0..NativeCount - 1] of TNativeEntry = (
+    (Name: 'wasmRegister'; Length: 9; Routine: @NativeRegister),
+    (Name: 'wasmInstall'; Length: 1; Routine: @NativeInstall),
+    (Name: 'wasmCheck'; Length: 2; Routine: @NativeCheck),
+    (Name: 'wasmIsModule'; Length: 1; Routine: @NativeIsModule),
+    (Name: 'wasmIsMemory'; Length: 1; Routine: @NativeIsMemory),
+    (Name: 'wasmIsTable'; Length: 1; Routine: @NativeIsTable),
+    (Name: 'wasmIsGlobal'; Length: 1; Routine: @NativeIsGlobal),
+    (Name: 'wasmIsTag'; Length: 1; Routine: @NativeIsTag),
+    (Name: 'wasmIsException'; Length: 1; Routine: @NativeIsException),
+    (Name: 'wasmCopyBytes'; Length: 1; Routine: @NativeCopyBytes),
+    (Name: 'wasmValidate'; Length: 1; Routine: @NativeValidate),
+    (Name: 'wasmCompile'; Length: 2; Routine: @NativeCompile),
+    (Name: 'wasmModuleExports'; Length: 1; Routine: @NativeModuleExports),
+    (Name: 'wasmModuleImports'; Length: 1; Routine: @NativeModuleImports),
+    (Name: 'wasmCustomSections'; Length: 2; Routine: @NativeCustomSections),
+    (Name: 'wasmImportKinds'; Length: 1; Routine: @NativeImportKinds),
+    (Name: 'wasmInstantiate'; Length: 2; Routine: @NativeInstantiate),
+    (Name: 'wasmCloneModule'; Length: 1; Routine: @NativeCloneModule),
+    (Name: 'wasmNewMemory'; Length: 5; Routine: @NativeNewMemory),
+    (Name: 'wasmMemoryBuffer'; Length: 1; Routine: @NativeMemoryBuffer),
+    (Name: 'wasmMemoryGrow'; Length: 2; Routine: @NativeMemoryGrow),
+    (Name: 'wasmMemoryFixedBuffer'; Length: 1; Routine: @NativeMemoryFixedBuffer),
+    (Name: 'wasmMemoryResizableBuffer'; Length: 1; Routine: @NativeMemoryResizableBuffer),
+    (Name: 'wasmNewTable'; Length: 7; Routine: @NativeNewTable),
+    (Name: 'wasmTableLength'; Length: 1; Routine: @NativeTableLength),
+    (Name: 'wasmTableGet'; Length: 2; Routine: @NativeTableGet),
+    (Name: 'wasmTableSet'; Length: 4; Routine: @NativeTableSet),
+    (Name: 'wasmTableGrow'; Length: 4; Routine: @NativeTableGrow),
+    (Name: 'wasmAddressType'; Length: 1; Routine: @NativeAddressType),
+    (Name: 'wasmToAddress'; Length: 1; Routine: @NativeToAddress),
+    (Name: 'wasmNewGlobal'; Length: 5; Routine: @NativeNewGlobal),
+    (Name: 'wasmGlobalGet'; Length: 1; Routine: @NativeGlobalGet),
+    (Name: 'wasmGlobalSet'; Length: 2; Routine: @NativeGlobalSet),
+    (Name: 'wasmNewTag'; Length: 2; Routine: @NativeNewTag),
+    (Name: 'wasmJSTag'; Length: 0; Routine: @NativeJsTag),
+    (Name: 'wasmNewException'; Length: 3; Routine: @NativeNewException),
+    (Name: 'wasmExceptionGetArg'; Length: 2; Routine: @NativeExceptionGetArg),
+    (Name: 'wasmExceptionIs'; Length: 2; Routine: @NativeExceptionIs),
+    (Name: 'wasmValidateBuiltins'; Length: 3; Routine: @NativeValidateBuiltins),
+    (Name: 'wasmStringBuiltins'; Length: 0; Routine: @NativeStringBuiltins));
 
 { Every native: a Pascal exception becomes a script error. A worker
   realm's natives carry their window's context. }
@@ -854,7 +608,7 @@ begin
   else
     Context := ContextOfRealm(R);
   try
-    Result := NativeRoutines[Callee.Magic](R, Context, Args, ArgCount);
+    Result := NativeTable[Callee.Magic].Routine(R, Context, Args, ArgCount);
   except
     on Error: Exception do
       Result := ThrowWasmError(R, Error);
@@ -866,7 +620,7 @@ var
   Index: Integer;
 begin
   for Index := 0 to NativeCount - 1 do
-    Context.Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index);
+    Context.Engine.DefineFunction(Natives, NativeTable[Index].Name, @NativeEntry, NativeTable[Index].Length, Index);
 end;
 
 procedure DefineWasmNativesIn(Engine: TJsEngine; Context: TBindingContext; Natives: TJsObject);
@@ -874,7 +628,7 @@ var
   Index: Integer;
 begin
   for Index := 0 to NativeCount - 1 do
-    Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index).HostData :=
+    Engine.DefineFunction(Natives, NativeTable[Index].Name, @NativeEntry, NativeTable[Index].Length, Index).HostData :=
       Context;
 end;
 
