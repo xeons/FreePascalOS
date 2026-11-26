@@ -1457,6 +1457,35 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [x] Polymorphic inline caches (four shapes per site)
 - [ ] Fused instructions for more cases; deeper prototype chains in the inline caches
 
+## WebAssembly engine (libwasm)
+
+- [x] Binary decoder: all sections, the eight element encodings, data count, the name section
+      (function names for stack traces), LEB128 and UTF-8 rules for malformed modules
+- [x] Validator per the spec's algorithm, with the reference interpreter's messages; implementation limits
+- [x] WebAssembly 2.0 features: mutable globals, sign extension, non-trapping conversions, multiple
+      values, bulk memory, reference types (multiple tables, typed select), fixed-width SIMD
+- [x] Compiler to slot code (operands as frame slots, lazy local.get and constants, results stored
+      straight into locals, compare-and-branch and immediate fusions) and an interpreter without Pascal
+      recursion for WebAssembly calls; traps with kind, message and stack trace
+- [x] Exact IEEE semantics on amd64 and arm64 (f32 in single precision, bit exact rounding, min/max and
+      NaN rules); exceptions masked around execution
+- [x] Store, instances, instantiation in the spec's order with bulk memory semantics for segments
+- [x] Embedding API (Wasm.Api): compile, validate, descriptors, instantiate, call, host functions, globals,
+      tables, memories; memory growth notifications; externref enumeration for a collector; interrupt hook
+- [x] make wasm-test (host test, sample module, speed) and make wasm-spec-test (the 2.0 spec suite: all
+      148 core and SIMD files pass)
+- [ ] The JavaScript WebAssembly object on Wasm.Api: Module, Instance, Memory (buffer detached through
+      OnGrow), Table, Global, compile/instantiate/validate, compileStreaming, CompileError / LinkError /
+      RuntimeError / RangeError from the exception classes, externrefs as JS values traced through
+      EnumerateReferences, the watchdog through OnInterrupt
+- [ ] Load hCaptcha's proof-of-work module in the browser (the sample on hand is a truncated download:
+      its 38 whole function bodies validate, compile and instantiate)
+- [ ] 3.0: exception handling, tail calls, memory64, multiple memories (memory index already on memory
+      instructions, Extra field in the slot code), typed function references and GC types (value types
+      are records with a heap type), relaxed SIMD, extended constant expressions
+- [ ] Free instances when nothing refers to them (now they live as long as their store)
+- [ ] Faster SIMD (whole-vector operations instead of lane loops); caching compiled modules
+
 ## Tooling
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results
