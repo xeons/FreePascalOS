@@ -89,12 +89,16 @@
 #                   selectors, the cascade, computed values, media queries, colors
 #                   (against Python's conversions), memory and style sharing
 #   make wasm-test  Check libwasm on the host: decoding and validation, each feature
-#                   area, traps, host functions, memory growth, externrefs for a
-#                   collector, the interrupt hook, a sample module when WASM_SAMPLE
-#                   names one, and the interpreter's speed
+#                   area of 2.0 and 3.0, traps, host functions, memory growth, the
+#                   garbage collector and its protocol with an embedder's, exceptions
+#                   across host functions, the interrupt hook, a sample module when
+#                   WASM_SAMPLE names one, and the interpreter's speed
 #   make wasm-spec-test  Run the WebAssembly 2.0 spec test suite against libwasm on the
-#                   host (WASM_SPEC_DIRECTORY: the spec repository's test/core,
-#                   downloaded into ~/Downloads/sources/wasm-spec; not part of make test)
+#                   host with the 2.0 features (WASM_SPEC_DIRECTORY: the spec repository's
+#                   test/core, downloaded into ~/Downloads/sources/wasm-spec; not part of
+#                   make test)
+#   make wasm-spec-test-3  The same with the 3.0 suite (WASM_SPEC3_DIRECTORY: test/ of the
+#                   wg-3.0 tag, downloaded into ~/Downloads/sources/wasm-spec-3.0)
 #   make svg-test   Check libsvg on the host: SVG documents drawn and probed pixel by
 #                   pixel (shapes, strokes, paints, clips, masks, text, use, images)
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures

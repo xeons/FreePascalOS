@@ -9083,47 +9083,79 @@ every 16 KiB to find missed roots.
 ## WebAssembly engine
 
 libwasm (`userland/lib/wasm`, units `Wasm.*`, built as `libwasm.so` for
-amd64 and arm64 on libsystem alone) runs WebAssembly 2.0 modules: the
-MVP with mutable globals, sign extension, non-trapping float to int
-conversions, multiple values, bulk memory, reference types and the
-fixed-width SIMD instructions. It is portable Pascal, with no assembler,
-so the same code runs on both architectures and on the Linux host. The
-JavaScript `WebAssembly` object is to be built on its interface
-(`Wasm.Api`); nothing links the library yet.
+amd64 and arm64 on libsystem alone) runs WebAssembly 3.0 modules: 2.0
+(the MVP with mutable globals, sign extension, non-trapping float to int
+conversions, multiple values, bulk memory, reference types, fixed-width
+SIMD) and the 3.0 additions: extended constant expressions, tail calls,
+multiple memories, memory64 and table64, exception handling (and the
+legacy form Emscripten still emits: try, catch, catch_all, delegate,
+rethrow), typed function references, garbage collection (structs,
+arrays, i31, recursive types, subtyping, casts) and relaxed SIMD. It is
+portable Pascal, with no assembler, so the same code runs on both
+architectures and on the Linux host. The JavaScript `WebAssembly`
+object is built on its interface (`Wasm.Api`).
+
+**Features** (`Wasm.Features`): every 3.0 feature, and legacy
+exceptions, can be turned off for a module (`WasmCompile(Bytes,
+Features)`); with none of them the engine decodes and validates exactly
+WebAssembly 2.0, which is how the 2.0 spec suite runs (3.0 makes some
+modules valid that 2.0 rejects, and reads limits and offsets as 64-bit
+numbers).
 
 **Decoding** (`Wasm.Reader`, `Wasm.Instructions`, `Wasm.Decoder`) turns
 the binary into a `TWasmModule` (`Wasm.Module`): the index spaces with
-imports first, function bodies, constant expressions and data as ranges
-in the module's own copy of the bytes, and function names from the name
-section for stack traces. LEB128 integers follow the spec's rules for
-overlong and oversized encodings, names must be well formed UTF-8, and
-every function body is decoded instruction by instruction here, so that
-whatever the spec calls malformed is found before validation. One reader
+imports first (functions, tables, memories, globals, tags), function
+bodies, constant expressions and data as ranges in the module's own
+copy of the bytes, and function names from the name section for stack
+traces. LEB128 integers follow the spec's rules for overlong and
+oversized encodings, names must be well formed UTF-8, and every function
+body is decoded instruction by instruction here, so that whatever the
+spec calls malformed is found before validation. One reader
 (`TWasmInstructionReader`) decodes an instruction and unpacks its
-immediates for the decoder, the validator, the compiler and the constant
-expression evaluator alike. Instructions are numbered densely
-(`Wasm.Opcodes`, made from the spec's instruction index): the one byte
-opcodes, $100 plus the 0xFC ones, $200 plus the 0xFD (SIMD) ones, each
-with its text format name, the kind of immediate, and for instructions
-of fixed type a signature that the validator and the compiler share.
-Value types are records (kind, nullability, heap type), not bytes, and
-memory instructions carry a memory index and a 64-bit offset, so typed
-references, multiple memories and memory64 fit without changing them.
+immediates (catch clauses and br_table labels in arrays of the reader)
+for the decoder, the validator, the compiler and the constant expression
+evaluator alike. Instructions are numbered densely (`Wasm.Opcodes`):
+the one byte opcodes, $100 plus the 0xFC ones, $200 plus the 0xFD (SIMD
+and relaxed SIMD) ones, $380 plus the 0xFB (GC) ones, each with its
+text format name, the kind of immediate, and for instructions of fixed
+type a signature that the validator and the compiler share. Value types
+are records (kind, nullability, heap type): abstract heap types are
+their binary codes as negative numbers, concrete ones type indices. The
+type section keeps the defined types (`Wasm.TypeDefinitions`: function,
+struct or array, final or not, a supertype, the rec group) beside the
+function types the rest reads.
 
-**Validation** (`Wasm.Validator`, `Wasm.CodeValidator`) is the spec's:
-limits, import and definition types, constant expressions in the
-restricted context (global.get only of imported immutable globals), the
-functions ref.func may name, unique export names, the start function,
-and every body with the appendix's algorithm (an operand stack of types
-and a control stack; after an unconditional branch the stack is
-polymorphic). The errors are `EWasmMalformed` and `EWasmInvalid` with
-the reference interpreter's messages, then `EWasmLinkError`, `EWasmTrap`
-and `EWasmResourceError` later on (`Wasm.Errors`): one class each for
-the JavaScript errors they become.
+**Validation** (`Wasm.Validator`, `Wasm.ModuleTypes`,
+`Wasm.ConstantValidator`, `Wasm.CodeValidator` and its include files)
+is the spec's. The type section first: rec groups in order, references
+only into the group or backwards, declared supertypes earlier, not
+final, of the same kind and matched (parameters contravariant, results
+and immutable fields covariant, mutable fields exact), at most 63 deep.
+Types are equivalent iso-recursively: each group gets a canonical key
+(members by position, outside types by canonical index), the first group
+with a key is canonical, and every concrete heap type in the module is
+rewritten to its canonical index, so type equality is record equality
+afterwards. Subtyping (`Wasm.Subtyping`) is shared with the run time
+through a small type context (a module's types or a store's). Then
+limits (65536 pages for i32 memories, 2^48 for i64 ones), imports and
+definitions, constant expressions (constants, ref.null, ref.func,
+global.get of an immutable global defined earlier, i32 and i64 add, sub
+and mul, and the allocating GC instructions), segments with their
+address types, the start function, and every body with the appendix's
+algorithm: an operand stack of types and a control stack; after an
+unconditional branch the stack is polymorphic, and a reference popped
+from it has a bottom heap type that matches every heap type; values
+match by subtyping; locals of non-nullable types must be set before
+they are read (a block forgets what it set when it ends); try_table's
+catch clauses name labels outside it. The errors are `EWasmMalformed`
+and `EWasmInvalid` with the reference interpreter's messages, then
+`EWasmLinkError`, `EWasmTrap` and `EWasmResourceError` later on
+(`Wasm.Errors`): one class each for the JavaScript errors they become.
 
-**Compiled code** (`Wasm.Code`, `Wasm.CodeEmitter`, `Wasm.Compiler`). A
-frame is an array of 64-bit slots: the parameters, the declared locals,
-then the operand stack (a v128 takes two slots). The validator knows the
+**Compiled code** (`Wasm.Code`, `Wasm.CodeEmitter`, `Wasm.Compiler` and
+its include files). A frame is an array of 64-bit slots: the
+parameters, the declared locals, hidden locals for legacy catches, then
+the operand stack (a v128 takes two slots). The validator knows the
 stack's height at every instruction, so every operand has a fixed slot,
 and the compiler turns the stack machine into slot code that names its
 operands like registers: i32.add becomes "slot A := slot B + slot C" in
@@ -9137,96 +9169,197 @@ when they are elsewhere. A few fusions cut dispatches in hot loops: a
 comparison followed by br_if or if is one compare-and-branch, and i32
 (and some i64) operations with a constant operand take it as an
 immediate. A callee's frame begins at the caller's argument slots, so a
-call copies nothing and its results land where the arguments were. Code
-after an unconditional branch is not compiled. The compiler records, at
-every call and back edge, which slots hold externrefs.
+call copies nothing and its results land where the arguments were; a
+tail call moves its arguments to the frame's first slot and the callee
+takes the frame's place. Code after an unconditional branch is not
+compiled. At every call, back edge, allocation and throw the compiler
+records a safepoint: the slots holding references the collector traces
+(the any, eq, struct, array, i31 and exn hierarchies, and extern, which
+may also hold an embedder's pointer; not the func hierarchy, whose
+values are function instances the store owns). A try or try_table
+becomes a handler over the code of its body with its catch clauses
+(the instance's tag or catch-all, where the payload goes, the target);
+handlers chain to the one around them, a delegate to its target label's
+handler; a clause aimed at the function's own label goes through a
+returning stub. Memory instructions on memory 0 of an i32 memory keep
+the interpreter's fast path; any other memory and every memory64
+access become generic operations (`Wasm.MemoryAccess`), and table
+instructions on a table64 carry a flag.
 
 **The interpreter** (`Wasm.Interpreter` and its include files by group,
-`Wasm.Simd`, `Wasm.Numerics`) is one loop and one case statement over
-dense operation numbers in a single procedure, so the instruction
-pointer, the frame and memory 0's address and length stay in registers.
-WebAssembly calls do not recurse in Pascal: a call pushes the caller's
-frame record on the store and goes on in the callee, so deep recursion
-is limited by the store (call depth and stack slots, then "call stack
-exhausted") and never by the host thread's stack. Host functions are
-called with the frame pushed. A trap jumps to one place that builds the
-stack trace (function index and name, byte offset in the module) from
-the frame records. Loads and stores check the 33-bit effective address
-against the memory's length; memory may move when it grows, and the
-interpreter reloads its address after calls and memory.grow. Floating
-point follows IEEE 754 with the exceptions masked around execution
-(the -CE checks of arm64 then never fire): f32 arithmetic is done in
-single precision, rounding to integers (ceil, floor, trunc, nearest)
-works on the bits, min and max order the zeros and propagate NaNs as
-the spec says, sign operations never touch NaN payloads, and 64-bit
-integers convert to f32 with a single rounding. Shifts and rotations
-take their counts modulo the width explicitly. SIMD lanes are done lane
-by lane with operands read before the result is written, since a result
-may share slots with an operand.
+`Wasm.Simd`, `Wasm.Numerics`, `Wasm.GcOperations`, `Wasm.Unwinding`) is
+one loop and one case statement over dense operation numbers in a
+single procedure, so the instruction pointer, the frame and memory 0's
+address and length stay in registers. WebAssembly calls do not recurse
+in Pascal: a call pushes the caller's frame record on the store and
+goes on in the callee, so deep recursion is limited by the store (call
+depth and stack slots, then "call stack exhausted") and never by the
+host thread's stack; tail calls do not push at all, so a million deep
+tail recursion runs in one frame. Host functions are called with the
+frame pushed. A trap jumps to one place that builds the stack trace
+(function index and name, byte offset in the module) from the frame
+records. A thrown exception is looked for in the handlers of the frame
+that threw and then of each caller, popping frames, up to the first
+host boundary, where it leaves as `EWasmException`; one a host function
+raises is caught around the host call and thrown on in the caller.
+Traps are never caught. Loads and stores check the effective address
+against the memory's length without overflow (64-bit address plus
+64-bit offset included); memory may move when it grows, and the
+interpreter reloads its address after calls, memory.grow and generic
+memory operations. Floating point follows IEEE 754 with the exceptions
+masked around execution (the -CE checks of arm64 then never fire): f32
+arithmetic is done in single precision, rounding to integers (ceil,
+floor, trunc, nearest) works on the bits, min and max order the zeros
+and propagate NaNs as the spec says, sign operations never touch NaN
+payloads, and 64-bit integers convert to f32 with a single rounding.
+Shifts and rotations take their counts modulo the width explicitly.
+SIMD lanes are done lane by lane with operands read before the result
+is written, since a result may share slots with an operand. Relaxed
+SIMD behaves as the spec's deterministic profile: every relaxed
+instruction as its plain counterpart (swizzle, trunc_sat, bitselect,
+min, max, q15mulr_sat_s), multiply-add not fused (the product is
+rounded, then the sum), the i8 dot products signed times signed with
+the pairs added with saturation.
 
-**The store** (`Wasm.Runtime`) holds function, table, memory and global
-instances and module instances, owns them until it is destroyed, and is
-meant to be one per agent: there is no global mutable state. Function
-types are made canonical per store, so call_indirect and import matching
-compare numbers. Modules are reference counted (an embedder's handle,
-and each instance). **Instantiation** (`Wasm.Instantiation`) is the
-spec's order: imports matched (a link error makes nothing), the instance
-allocated with globals and element references evaluated, then active
-element and data segments applied one by one with bulk memory semantics
-(a segment that does not fit traps and the earlier ones stay written),
-then the start function.
+**The store** (`Wasm.Runtime`) holds function, table, memory, global and
+tag instances and module instances, owns them until it is destroyed,
+and is meant to be one per agent: there is no global mutable state.
+Types are canonical per store (`Wasm.TypeRegistry`): each rec group is
+registered by its key with outside references as store type ids, so
+equivalent types of different modules are one type; a host function's
+type is a group of one final function type. Each store type records its
+supertype chain, so a run time subtype test (call_indirect, ref.test,
+ref.cast, br_on_cast, import matching) is one comparison, and for
+structs and arrays the layout and the traced fields. The run time's
+types (functions, globals, tables, tags) name store type ids. Modules
+are reference counted (an embedder's handle, and each instance).
+**Instantiation** (`Wasm.Instantiation`) is the spec's order: the
+module's types registered and imports matched (a function's type a
+subtype of the import's, limits and address types, globals equal when
+mutable and a subtype when not, tags by type; a link error makes
+nothing), the instance allocated with tables filled by their
+initializers and globals and element references evaluated (no
+collection meanwhile), then active element and data segments applied
+one by one with bulk memory semantics (a segment that does not fit
+traps and the earlier ones stay written), then the start function.
+
+**Garbage collection** (`Wasm.GcHeap`, `Wasm.PointerTable`,
+`Wasm.GcOperations`). Structs, arrays, exceptions and boxes for host
+values in the any hierarchy live in the store's heap; objects never
+move. A reference is a 64-bit word: 0 is null, an odd word an i31 (its
+31 bits shifted left by one, plus one, so equal i31s are equal words),
+an even one a heap object, a function instance (func hierarchy) or, in
+the extern hierarchy, a pointer the embedder owns; the heap's table of
+live objects tells its own pointers apart without trusting bits, and
+embedder pointers must be even. any.convert_extern boxes a host pointer
+(i31s and objects pass unchanged); extern.convert_any unboxes it again,
+so values round-trip. Struct fields take a slot each in operand order
+(struct.new copies its operands as they are, field accesses carry byte
+offsets and access kinds in the compiled code); array elements take
+their storage size (i8, i16, ...). Collection is mark and sweep with
+mark epochs, started when enough was allocated since the last one
+(Options.CollectionThreshold, at least the live size) and only at
+allocations, which are safepoints: the running frame is recorded first.
+The roots are the store's globals, tables of traced types and element
+segments, the slots of every suspended frame by its safepoint map,
+pinned objects, exposed objects and exceptions in flight (pinned by
+`EWasmException`). The heap's size is capped (Options.MaximumHeapBytes);
+an allocation that does not fit after a collection traps with "out of
+memory".
 
 **The embedder's interface** (`Wasm.Api`): `WasmCompile` (bytes to a
-module or an error), `WasmValidate`, import and export descriptors with
-their types, `WasmInstantiate` (one external value per import) or
-`WasmInstantiateWith` (a resolver), `WasmCall` with `TWasmValue`
-arguments, host functions as methods with typed arguments and results
-that may raise to unwind and may call back in, and checked access to
-globals, tables and memories. funcref values are function instances,
-externref values pointers the embedder owns (nil is null). For a
-tracing collector, `TWasmStore.EnumerateReferences` visits every
-externref in tables, globals, element segments and the slots of
-suspended frames (by the compiler's safepoint maps), and
-`EnumerateHostData` the host functions' data. A memory's `OnGrow` tells
-the embedder after each successful grow (an ArrayBuffer over the old
-memory has to be detached). `OnInterrupt` is asked every
-`InterruptInterval` back edges and calls and can stop runaway code with
-a trap of kind `tkInterrupted`.
+module or an error, with optional features), `WasmValidate`, import and
+export descriptors with their types (tags too), `WasmInstantiate` (one
+external value per import) or `WasmInstantiateWith` (a resolver),
+`WasmCall` with `TWasmValue` arguments, host functions as methods with
+typed arguments and results that may raise to unwind and may call back
+in, and checked access to globals, tables and memories. A memory's
+`OnGrow` tells the embedder after each successful grow (an ArrayBuffer
+over the old memory has to be detached). `OnInterrupt` is asked every
+`InterruptInterval` back edges, calls and tail calls and can stop
+runaway code with a trap of kind `tkInterrupted`. Memories are capped by
+Options.MaximumMemoryBytes. For WebAssembly.Tag and Exception:
+`WasmNewTag`, `WasmTagType`, `WasmNewException`, `WasmExceptionTag`,
+`WasmExceptionPayload`, `WasmThrow` and `WasmThrowException` (raise
+`EWasmException`, which a host function does to throw into its
+caller); an exception leaving WebAssembly is `EWasmException` with Tag,
+Payload and Reference (the exnref, pinned while the Pascal exception
+lives). A JavaScript exception crossing into WebAssembly is thrown with
+the JavaScript layer's own JSTag (a tag with an externref parameter),
+so catch_all and catch of that tag see it. For references:
+`WasmClassifyReference` (null, i31, struct, array, exception, boxed host
+value, function, host value), `WasmMakeI31` / `WasmI31Value`,
+`WasmInternalize` / `WasmExternalize`, `WasmValueMatchesType` (what
+ToWebAssemblyValue checks), and reading and writing struct fields and
+array elements.
+
+The collector and the embedder's: every object handed to the embedder
+(call results, host function arguments, values read through the
+interface, exception payloads) is exposed and stays alive until the
+embedder's next trace; `WasmPin` / `WasmUnpin` (counted) keep objects
+regardless; an embedder without a tracing collector pins what it keeps
+and calls `WasmForgetExposed` now and then. A tracing embedder (the
+JavaScript engine) either (a) at each of its collections calls
+`Store.EnumerateReferences(Visitor)`, which gives every embedder pointer
+the store keeps alive (externrefs in tables, globals, segments, frames
+and inside reachable objects, boxed host values), and keeps them all,
+which is simple but leaves a cycle through both heaps alive until the
+store goes; or (b) traces through both heaps: `Store.BeginHostTrace`
+marks what the store's own roots and pins reach and reports the
+embedder pointers found; for every wasm reference its own marking
+reaches (a wrapper object holding it) the embedder calls
+`Store.TraceFromHost(Reference, Visitor)`, which marks on and reports
+more pointers; when its marking is complete, `Store.EndHostTrace`
+forgets exposed objects the host no longer reached and frees every
+unmarked object. No WebAssembly code may run between Begin and End.
+`EnumerateHostData` visits host functions' data.
 
 **Tests.** `make wasm-test` (tools/WasmTest, part of the host tests)
 compiles small modules written in the text format for each feature
-area, checks the traps, host functions, import matching, memory growth
-notifications, the references a collector sees and the interrupt hook,
-instantiates a sample module given as `WASM_SAMPLE`, and prints the
-interpreter's speed: about 30 million calls a second on recursive
-fib(30) and one to two billion WebAssembly instructions a second on
-tight integer and memory loops on the development machine. `make
-wasm-spec-test` (tools/WasmSpecTest, not part of `make test`) runs the
-official spec test suite of release 2.0, downloaded into
-`~/Downloads/sources/wasm-spec` and never committed: its own parser for
-the text format (folded and flat instructions, abbreviations, numbers
-rounded exactly, `module binary` and `module quote`) and the .wast script
-commands, with the `spectest` host module. All 148 files of test/core
-and test/core/simd pass, 53,984 assertions.
+area of 2.0 and 3.0, checks the traps, host functions, import matching,
+memory growth notifications, the references a collector sees, the
+interrupt hook, objects surviving many collections in globals, locals,
+operands and the host's hands while the garbage goes, the host trace
+protocol and pins, and exceptions leaving to, thrown by and passing
+through host functions; instantiates a sample module given as
+`WASM_SAMPLE`; and prints the interpreter's speed: about 30 to 40
+million calls a second on recursive fib(30), one to two and a half
+billion WebAssembly instructions a second on tight integer and memory
+loops, and two million struct allocations a second with collections,
+on the development machine. `make wasm-spec-test` (tools/WasmSpecTest,
+not part of `make test`) runs the official spec test suite of release
+2.0 with the 2.0 features, downloaded into `~/Downloads/sources/wasm-spec`
+and never committed: all 148 files of test/core and test/core/simd
+pass, 53,984 assertions. `make wasm-spec-test-3` runs release 3.0 (the
+wg-3.0 tag, downloaded into `~/Downloads/sources/wasm-spec-3.0`): test/core
+with its feature directories (gc, exceptions, memory64, multi-memory,
+relaxed-simd, simd, bulk-memory) and test/legacy/exceptions, all 262
+files, 65,214 assertions; `--gc-stress` collects at every allocation
+(they pass that way too). WasmSpecTest has its own parser for the text
+format (folded and flat instructions, abbreviations, numbers rounded
+exactly, `module binary`, `module quote`, `module definition` and
+`module instance`) and the .wast script commands (with `either` results,
+`assert_exception` and the reference patterns of 3.0), with the
+`spectest` host module. The text front end reads WebAssembly 3.0: value
+types are kept in their binary encoding (`WasmText.Types`), type
+definitions with structs, arrays, subtypes and recursion groups
+(`WasmText.TypeDefinitions`), implicit type uses reuse only a final
+function type alone in its group, and the instructions of every 3.0
+proposal are encoded (exception handling with the legacy `try` too,
+tail calls, typed references, GC, memory64 and table64, multiple
+memories, relaxed SIMD); annotations are skipped. `--parse-only` only
+checks that every module encodes (and every text module an
+`assert_malformed` expects to fail does not), and `--dump DIRECTORY`
+writes the encoded modules out. The runner caps its address space (8
+GiB), memories (1 GiB) and the heap (512 MiB).
 
-The text front end reads WebAssembly 3.0: value types are kept in their
-binary encoding (`WasmText.Types`), type definitions with structs,
-arrays, subtypes and recursion groups (`WasmText.TypeDefinitions`),
-implicit type uses reuse only a final function type alone in its group,
-and the instructions of every 3.0 proposal are encoded (exception
-handling with the legacy `try` too, tail calls, typed references, GC,
-memory64 and table64, multiple memories, relaxed SIMD); annotations are
-skipped. Given a 3.0 `test/core`, WasmSpecTest also runs its feature
-subdirectories; `--parse-only` only checks that every module encodes
-(and every text module an `assert_malformed` expects to fail does not),
-and `--dump DIRECTORY` writes the encoded modules out.
-
-**Not done yet**: the JavaScript `WebAssembly` object; the 3.0 features
-(exception handling, tail calls, memory64, multiple memories, typed
-function references, garbage collected types, relaxed SIMD), for which
-the value types, memory indices and the opcode numbering leave room;
-collecting instances before the store goes away; streaming compilation
-and caching compiled code; a faster SIMD path than lane by lane.
+**Not done yet**: the JavaScript `WebAssembly` object (being built on
+`Wasm.Api`); collecting instances, functions and tags before the store
+goes away (only heap objects are collected); a faster path for memory64
+and non-zero memories (generic operations now) and for struct and array
+accesses (calls into `Wasm.GcOperations`); streaming compilation and
+caching compiled code; a faster SIMD path than lane by lane; shared
+memories and threads, stack switching and the other post-3.0 proposals.
 
 ## Network drivers
 

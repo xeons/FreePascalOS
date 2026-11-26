@@ -1472,16 +1472,27 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       tables, memories; memory growth notifications; externref enumeration for a collector; interrupt hook
 - [x] make wasm-test (host test, sample module, speed) and make wasm-spec-test (the 2.0 spec suite: all
       148 core and SIMD files pass)
+- [x] 3.0: extended constant expressions, tail calls (constant stack), multiple memories, memory64 and
+      table64, exception handling (try_table, throw, throw_ref, exnref; legacy try/catch/delegate/rethrow),
+      typed function references (non-nullable locals), GC (structs, arrays, i31, rec groups, subtyping,
+      casts, canonical type equivalence across modules), relaxed SIMD (deterministic profile); features can
+      be turned off (2.0 suite runs with 2.0's alone)
+- [x] Tracing collector for GC objects (safepoint maps, globals, tables, segments, pins, exposed objects)
+      with the embedder protocol (EnumerateReferences, or BeginHostTrace / TraceFromHost / EndHostTrace);
+      exceptions across host functions (EWasmException, WasmThrow, tags and payloads in Wasm.Api)
+- [x] make wasm-spec-test-3: the 3.0 spec suite (core, feature directories, legacy exceptions): all 262
+      files pass, also with --gc-stress
 - [ ] The JavaScript WebAssembly object on Wasm.Api: Module, Instance, Memory (buffer detached through
       OnGrow), Table, Global, compile/instantiate/validate, compileStreaming, CompileError / LinkError /
       RuntimeError / RangeError from the exception classes, externrefs as JS values traced through
       EnumerateReferences, the watchdog through OnInterrupt
 - [ ] Load hCaptcha's proof-of-work module in the browser (the sample on hand is a truncated download:
       its 38 whole function bodies validate, compile and instantiate)
-- [ ] 3.0: exception handling, tail calls, memory64, multiple memories (memory index already on memory
-      instructions, Extra field in the slot code), typed function references and GC types (value types
-      are records with a heap type), relaxed SIMD, extended constant expressions
-- [ ] Free instances when nothing refers to them (now they live as long as their store)
+- [ ] Free instances, functions and tags when nothing refers to them (now they live as long as their store;
+      only GC heap objects are collected)
+- [ ] Faster memory64 and non-zero memory accesses (generic operations now) and inline struct/array
+      field accesses in the interpreter loop
+- [ ] Shared memories and threads, stack switching and the other post-3.0 proposals
 - [ ] Faster SIMD (whole-vector operations instead of lane loops); caching compiled modules
 
 ## Tooling
