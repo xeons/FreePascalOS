@@ -16144,7 +16144,12 @@ libtls on host sockets, layout, scripting, the event loop driven like
 the web view) with `EchoConsole` and `FinishMarker` set, so it ends at
 the report line rather than at quiet. A child that exits without a
 report is a CRASH; one that outlives its time plus 15 s is killed, an
-EXTERNAL-TIMEOUT. Tests run `-j N` at once (half the processors).
+EXTERNAL-TIMEOUT. Tests run `-j N` at once (half the processors, from
+sysconf), but never more than half the host's available memory holds
+at the child cap: each child limits its own address space
+(`WPT_CHILD_MEMORY_MB`, 2048 by default) and CPU time (120 s, behind
+the timeouts) first thing (`WptRun.Limits`), since the host has no swap
+and a runaway page must fail its test, not the machine.
 
 **Results** are compared with `tools/WptRun/expectations/AREA.txt`
 (one file per top-level directory, our own data): per test, the

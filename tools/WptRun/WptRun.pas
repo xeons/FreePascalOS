@@ -63,7 +63,8 @@ uses
   WptRun.Jobs,
   WptRun.Server,
   WptRun.Report,
-  WptRun.Child;
+  WptRun.Child,
+  WptRun.Limits;
 
 type
   TWptRunner = class
@@ -101,27 +102,18 @@ begin
   Result := Double(Spec.tv_sec) + Double(Spec.tv_nsec) / 1E9;
 end;
 
-{ The processors the host has online (the "processor" lines of
-  /proc/cpuinfo). }
+const
+  { sysconf's name for the processors online (Linux, glibc and musl). }
+  SysconfProcessorsOnline = 84;
+
+function sysconf(Name: cint): clong; cdecl; external 'c' name 'sysconf';
+
+{ The processors the host has online (sysconf: FPC's TThread.ProcessorCount
+  answers 1 on Linux, and /proc/cpuinfo read through a file stream stops
+  early because /proc files report no size). }
 function OnlineProcessorCount: Integer;
-var
-  Lines: TStringList;
-  Index: Integer;
 begin
-  Result := 0;
-  Lines := TStringList.Create;
-  try
-    try
-      Lines.LoadFromFile('/proc/cpuinfo');
-    except
-      Exit(1);
-    end;
-    for Index := 0 to Lines.Count - 1 do
-      if Copy(Lines[Index], 1, 9) = 'processor' then
-        Inc(Result);
-  finally
-    Lines.Free;
-  end;
+  Result := sysconf(SysconfProcessorsOnline);
   if Result < 1 then
     Result := 1;
 end;
@@ -284,6 +276,7 @@ begin
   if not StartWptServer(WptRoot, 'tools/WptRun/server/config.json', 'tools/WptRun/harness', 'build/wpt') then
     Exit(2);
   try
+    Jobs := JobsThatFitInMemory(Jobs);
     WriteLn(StdErr, Format('wptrun: %d tests, %d at once', [Length(FTests), Jobs]));
     Settings := Default(TRunSettings);
     Settings.Executable := ExpandFileName(ParamStr(0));
@@ -338,7 +331,10 @@ end;
 
 begin
   if (ParamCount >= 1) and (ParamStr(1) = '--child') then
+  begin
+    LimitChildResources;
     Halt(RunChild);
+  end;
   Runner := TWptRunner.Create;
   try
     Index := 1;
