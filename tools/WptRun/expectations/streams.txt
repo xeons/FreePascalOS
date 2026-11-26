@@ -1,0 +1,1498 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/streams/idlharness.any.html
+  !passing
+  ReadableByteStreamController interface: calling error(optional any) on self.readableByteStreamController with too few arguments must throw TypeError
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "close()" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "desiredSize" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "enqueue(ArrayBufferView)" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "error(optional any)" with the proper type
+  ReadableStream interface object name
+  ReadableStream interface: attribute locked
+  ReadableStream interface: calling cancel(optional any) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling from(async_sequence<any>) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling getReader(optional ReadableStreamGetReaderOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling pipeThrough(ReadableWritablePair, optional StreamPipeOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: existence and properties of interface object
+  ReadableStream interface: existence and properties of interface prototype object
+  ReadableStream interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStream interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStream interface: new ReadableStream() must inherit property "cancel(optional any)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "from(async_sequence<any>)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "getReader(optional ReadableStreamGetReaderOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "locked" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeThrough(ReadableWritablePair, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeTo(WritableStream, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "tee()" with the proper type
+  ReadableStream interface: operation tee()
+  ReadableStream must be primary interface of new ReadableStream()
+  ReadableStreamBYOBReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultController interface object name
+  ReadableStreamDefaultController interface: attribute desiredSize
+  ReadableStreamDefaultController interface: calling enqueue(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: calling error(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: existence and properties of interface object
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultController interface: operation close()
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "close()" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "desiredSize" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "enqueue(optional any)" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "error(optional any)" with the proper type
+  ReadableStreamDefaultController must be primary interface of self.readableStreamDefaultController
+  ReadableStreamDefaultReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultReader interface object length
+  ReadableStreamDefaultReader interface object name
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "cancel(optional any)" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "closed" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "read()" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "releaseLock()" with the proper type
+  ReadableStreamDefaultReader interface: calling cancel(optional any) on (new ReadableStream()).getReader() with too few arguments must throw TypeError
+  ReadableStreamDefaultReader interface: existence and properties of interface object
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultReader interface: operation read()
+  ReadableStreamDefaultReader interface: operation releaseLock()
+  ReadableStreamDefaultReader must be primary interface of (new ReadableStream()).getReader()
+  Stringification of (new ReadableStream()).getReader()
+  Stringification of new ReadableStream()
+  Stringification of new TransformStream()
+  Stringification of new WritableStream()
+  Stringification of self.readableStreamDefaultController
+  TransformStream interface object name
+  TransformStream interface: attribute readable
+  TransformStream interface: attribute writable
+  TransformStream interface: existence and properties of interface object
+  TransformStream interface: existence and properties of interface prototype object
+  TransformStream interface: existence and properties of interface prototype object's "constructor" property
+  TransformStream interface: existence and properties of interface prototype object's @@unscopables property
+  TransformStream interface: new TransformStream() must inherit property "readable" with the proper type
+  TransformStream interface: new TransformStream() must inherit property "writable" with the proper type
+  TransformStream must be primary interface of new TransformStream()
+  WritableStream interface object name
+  WritableStream interface: attribute locked
+  WritableStream interface: existence and properties of interface object
+  WritableStream interface: existence and properties of interface prototype object
+  WritableStream interface: existence and properties of interface prototype object's "constructor" property
+  WritableStream interface: existence and properties of interface prototype object's @@unscopables property
+  WritableStream interface: new WritableStream() must inherit property "getWriter()" with the proper type
+  WritableStream interface: new WritableStream() must inherit property "locked" with the proper type
+  WritableStream interface: operation getWriter()
+  WritableStream must be primary interface of new WritableStream()
+  idl_test setup
+  idl_test validation
+/streams/idlharness.any.serviceworker.html
+  !passing
+  ReadableByteStreamController interface: calling error(optional any) on self.readableByteStreamController with too few arguments must throw TypeError
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "close()" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "desiredSize" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "enqueue(ArrayBufferView)" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "error(optional any)" with the proper type
+  ReadableStream interface object name
+  ReadableStream interface: calling cancel(optional any) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling from(async_sequence<any>) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling getReader(optional ReadableStreamGetReaderOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling pipeThrough(ReadableWritablePair, optional StreamPipeOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStream interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStream interface: new ReadableStream() must inherit property "cancel(optional any)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "from(async_sequence<any>)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "getReader(optional ReadableStreamGetReaderOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "locked" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeThrough(ReadableWritablePair, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeTo(WritableStream, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "tee()" with the proper type
+  ReadableStream interface: operation tee()
+  ReadableStreamBYOBReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultController interface object name
+  ReadableStreamDefaultController interface: calling enqueue(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: calling error(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultController interface: operation close()
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "close()" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "desiredSize" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "enqueue(optional any)" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "error(optional any)" with the proper type
+  ReadableStreamDefaultReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultReader interface object length
+  ReadableStreamDefaultReader interface object name
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "cancel(optional any)" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "closed" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "read()" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "releaseLock()" with the proper type
+  ReadableStreamDefaultReader interface: calling cancel(optional any) on (new ReadableStream()).getReader() with too few arguments must throw TypeError
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultReader interface: operation read()
+  ReadableStreamDefaultReader interface: operation releaseLock()
+  Stringification of (new ReadableStream()).getReader()
+  Stringification of new ReadableStream()
+  Stringification of new TransformStream()
+  Stringification of new WritableStream()
+  Stringification of self.readableStreamDefaultController
+  TransformStream interface object name
+  TransformStream interface: existence and properties of interface prototype object's "constructor" property
+  TransformStream interface: existence and properties of interface prototype object's @@unscopables property
+  TransformStream interface: new TransformStream() must inherit property "readable" with the proper type
+  TransformStream interface: new TransformStream() must inherit property "writable" with the proper type
+  WritableStream interface object name
+  WritableStream interface: existence and properties of interface prototype object's "constructor" property
+  WritableStream interface: existence and properties of interface prototype object's @@unscopables property
+  WritableStream interface: new WritableStream() must inherit property "getWriter()" with the proper type
+  WritableStream interface: new WritableStream() must inherit property "locked" with the proper type
+  WritableStream interface: operation getWriter()
+  idl_test setup
+  idl_test validation
+/streams/idlharness.any.sharedworker.html
+  !passing
+  ReadableByteStreamController interface: calling error(optional any) on self.readableByteStreamController with too few arguments must throw TypeError
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "close()" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "desiredSize" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "enqueue(ArrayBufferView)" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "error(optional any)" with the proper type
+  ReadableStream interface object name
+  ReadableStream interface: calling cancel(optional any) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling from(async_sequence<any>) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling getReader(optional ReadableStreamGetReaderOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling pipeThrough(ReadableWritablePair, optional StreamPipeOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStream interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStream interface: new ReadableStream() must inherit property "cancel(optional any)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "from(async_sequence<any>)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "getReader(optional ReadableStreamGetReaderOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "locked" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeThrough(ReadableWritablePair, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeTo(WritableStream, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "tee()" with the proper type
+  ReadableStream interface: operation tee()
+  ReadableStreamBYOBReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultController interface object name
+  ReadableStreamDefaultController interface: calling enqueue(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: calling error(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultController interface: operation close()
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "close()" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "desiredSize" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "enqueue(optional any)" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "error(optional any)" with the proper type
+  ReadableStreamDefaultReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultReader interface object length
+  ReadableStreamDefaultReader interface object name
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "cancel(optional any)" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "closed" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "read()" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "releaseLock()" with the proper type
+  ReadableStreamDefaultReader interface: calling cancel(optional any) on (new ReadableStream()).getReader() with too few arguments must throw TypeError
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultReader interface: operation read()
+  ReadableStreamDefaultReader interface: operation releaseLock()
+  Stringification of (new ReadableStream()).getReader()
+  Stringification of new ReadableStream()
+  Stringification of new TransformStream()
+  Stringification of new WritableStream()
+  Stringification of self.readableStreamDefaultController
+  TransformStream interface object name
+  TransformStream interface: existence and properties of interface prototype object's "constructor" property
+  TransformStream interface: existence and properties of interface prototype object's @@unscopables property
+  TransformStream interface: new TransformStream() must inherit property "readable" with the proper type
+  TransformStream interface: new TransformStream() must inherit property "writable" with the proper type
+  WritableStream interface object name
+  WritableStream interface: existence and properties of interface prototype object's "constructor" property
+  WritableStream interface: existence and properties of interface prototype object's @@unscopables property
+  WritableStream interface: new WritableStream() must inherit property "getWriter()" with the proper type
+  WritableStream interface: new WritableStream() must inherit property "locked" with the proper type
+  WritableStream interface: operation getWriter()
+  idl_test setup
+  idl_test validation
+/streams/idlharness.any.worker.html
+  !passing
+  ReadableByteStreamController interface: calling error(optional any) on self.readableByteStreamController with too few arguments must throw TypeError
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "close()" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "desiredSize" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "enqueue(ArrayBufferView)" with the proper type
+  ReadableByteStreamController interface: self.readableByteStreamController must inherit property "error(optional any)" with the proper type
+  ReadableStream interface object name
+  ReadableStream interface: calling cancel(optional any) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling from(async_sequence<any>) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling getReader(optional ReadableStreamGetReaderOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: calling pipeThrough(ReadableWritablePair, optional StreamPipeOptions) on new ReadableStream() with too few arguments must throw TypeError
+  ReadableStream interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStream interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStream interface: new ReadableStream() must inherit property "cancel(optional any)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "from(async_sequence<any>)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "getReader(optional ReadableStreamGetReaderOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "locked" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeThrough(ReadableWritablePair, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "pipeTo(WritableStream, optional StreamPipeOptions)" with the proper type
+  ReadableStream interface: new ReadableStream() must inherit property "tee()" with the proper type
+  ReadableStream interface: operation tee()
+  ReadableStreamBYOBReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultController interface object name
+  ReadableStreamDefaultController interface: calling enqueue(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: calling error(optional any) on self.readableStreamDefaultController with too few arguments must throw TypeError
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultController interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultController interface: operation close()
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "close()" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "desiredSize" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "enqueue(optional any)" with the proper type
+  ReadableStreamDefaultController interface: self.readableStreamDefaultController must inherit property "error(optional any)" with the proper type
+  ReadableStreamDefaultReader includes ReadableStreamGenericReader: member names are unique
+  ReadableStreamDefaultReader interface object length
+  ReadableStreamDefaultReader interface object name
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "cancel(optional any)" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "closed" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "read()" with the proper type
+  ReadableStreamDefaultReader interface: (new ReadableStream()).getReader() must inherit property "releaseLock()" with the proper type
+  ReadableStreamDefaultReader interface: calling cancel(optional any) on (new ReadableStream()).getReader() with too few arguments must throw TypeError
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's "constructor" property
+  ReadableStreamDefaultReader interface: existence and properties of interface prototype object's @@unscopables property
+  ReadableStreamDefaultReader interface: operation read()
+  ReadableStreamDefaultReader interface: operation releaseLock()
+  Stringification of (new ReadableStream()).getReader()
+  Stringification of new ReadableStream()
+  Stringification of new TransformStream()
+  Stringification of new WritableStream()
+  Stringification of self.readableStreamDefaultController
+  TransformStream interface object name
+  TransformStream interface: existence and properties of interface prototype object's "constructor" property
+  TransformStream interface: existence and properties of interface prototype object's @@unscopables property
+  TransformStream interface: new TransformStream() must inherit property "readable" with the proper type
+  TransformStream interface: new TransformStream() must inherit property "writable" with the proper type
+  WritableStream interface object name
+  WritableStream interface: existence and properties of interface prototype object's "constructor" property
+  WritableStream interface: existence and properties of interface prototype object's @@unscopables property
+  WritableStream interface: new WritableStream() must inherit property "getWriter()" with the proper type
+  WritableStream interface: new WritableStream() must inherit property "locked" with the proper type
+  WritableStream interface: operation getWriter()
+  idl_test setup
+  idl_test validation
+/streams/piping/abort.any.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/abort.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/abort.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/abort.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/close-propagation-backward.any.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/close-propagation-backward.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/close-propagation-backward.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/close-propagation-backward.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/close-propagation-forward.any.html
+  !harness ERROR
+  !passing
+/streams/piping/close-propagation-forward.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/close-propagation-forward.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/close-propagation-forward.any.worker.html
+  !harness ERROR
+  !passing
+/streams/piping/error-propagation-backward.any.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/error-propagation-backward.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/error-propagation-backward.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/error-propagation-backward.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/error-propagation-forward.any.html
+  !harness TIMEOUT
+  !passing
+  Errors must be propagated forward: starts errored; preventAbort = 1 (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = Symbol() (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = [object Object] (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = a (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = true (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = true, preventCancel = true
+  Errors must be propagated forward: starts errored; preventAbort = true, preventCancel = true, preventClose = true
+/streams/piping/error-propagation-forward.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/error-propagation-forward.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/error-propagation-forward.any.worker.html
+  !harness TIMEOUT
+  !passing
+  Errors must be propagated forward: starts errored; preventAbort = 1 (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = Symbol() (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = [object Object] (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = a (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = true (truthy)
+  Errors must be propagated forward: starts errored; preventAbort = true, preventCancel = true
+  Errors must be propagated forward: starts errored; preventAbort = true, preventCancel = true, preventClose = true
+/streams/piping/flow-control.any.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/flow-control.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/flow-control.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/flow-control.any.worker.html
+  !harness TIMEOUT
+/streams/piping/general.any.html
+  !harness ERROR
+  !passing
+  Piping must lock both the ReadableStream and WritableStream
+/streams/piping/general.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/general.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/general.any.worker.html
+  !harness TIMEOUT
+  !passing
+  Piping must lock both the ReadableStream and WritableStream
+/streams/piping/multiple-propagation.any.html
+  !passing
+/streams/piping/multiple-propagation.any.serviceworker.html
+  !passing
+/streams/piping/multiple-propagation.any.sharedworker.html
+  !passing
+/streams/piping/multiple-propagation.any.worker.html
+  !passing
+/streams/piping/pipe-through.any.html
+  !harness TIMEOUT
+  !passing
+  Piping through a duck-typed pass-through transform stream should work
+  pipeThrough should accept a real AbortSignal
+  pipeThrough should brand-check this and not allow '0'
+  pipeThrough should brand-check this and not allow 'NaN'
+  pipeThrough should brand-check this and not allow 'ReadableStream'
+  pipeThrough should brand-check this and not allow '[object ReadableStream]'
+  pipeThrough should brand-check this and not allow 'null'
+  pipeThrough should brand-check this and not allow 'true'
+  pipeThrough should brand-check this and not allow 'undefined'
+  pipeThrough should not care if readable is locked
+  pipeThrough should throw if this is locked
+  pipeThrough should throw if writable is locked
+  pipeThrough() should not throw if option is null
+  pipeThrough() should not throw if signal is undefined
+/streams/piping/pipe-through.any.serviceworker.html
+  !harness TIMEOUT
+/streams/piping/pipe-through.any.sharedworker.html
+  !harness TIMEOUT
+/streams/piping/pipe-through.any.worker.html
+  !harness TIMEOUT
+/streams/piping/then-interception.any.html
+  !passing
+/streams/piping/throwing-options.any.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/throwing-options.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/throwing-options.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/throwing-options.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/piping/transform-streams.any.html
+  !passing
+/streams/piping/transform-streams.any.serviceworker.html
+  !passing
+/streams/piping/transform-streams.any.sharedworker.html
+  !passing
+/streams/piping/transform-streams.any.worker.html
+  !passing
+/streams/queuing-strategies-size-function-navigation.window.html
+  !passing
+/streams/queuing-strategies-size-function-per-global.window.html
+  !passing
+/streams/queuing-strategies.any.html
+  !harness ERROR
+/streams/queuing-strategies.any.serviceworker.html
+  !harness TIMEOUT
+/streams/queuing-strategies.any.sharedworker.html
+  !harness TIMEOUT
+/streams/queuing-strategies.any.worker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/bad-buffers-and-views.any.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/bad-buffers-and-views.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/bad-buffers-and-views.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/bad-buffers-and-views.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/construct-byob-request.any.html
+  !harness ERROR
+/streams/readable-byte-streams/construct-byob-request.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/construct-byob-request.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/construct-byob-request.any.worker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/enqueue-with-detached-buffer.any.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/enqueue-with-detached-buffer.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/enqueue-with-detached-buffer.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/enqueue-with-detached-buffer.any.worker.html
+  !passing
+/streams/readable-byte-streams/general.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source: Construct and expect start and pull being called
+  ReadableStream with byte source: Construct with highWaterMark of 0
+  ReadableStream with byte source: No automatic pull call if start doesn't finish
+  ReadableStream with byte source: Throw if close()-ed more than once
+  ReadableStream with byte source: Throw on enqueue() after close()
+  ReadableStream with byte source: desiredSize when closed
+  ReadableStream with byte source: desiredSize when errored
+  ReadableStream with byte source: start() throws an exception
+  getReader({mode: "byob"}) throws on non-bytes streams
+/streams/readable-byte-streams/general.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/general.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/general.any.worker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source: desiredSize when closed
+  ReadableStream with byte source: desiredSize when errored
+  ReadableStream with byte source: start() throws an exception
+/streams/readable-byte-streams/non-transferable-buffers.any.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/non-transferable-buffers.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/non-transferable-buffers.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/non-transferable-buffers.any.worker.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/patched-global.any.html
+  !passing
+/streams/readable-byte-streams/patched-global.any.serviceworker.html
+  !passing
+/streams/readable-byte-streams/patched-global.any.sharedworker.html
+  !passing
+/streams/readable-byte-streams/patched-global.any.worker.html
+  !passing
+/streams/readable-byte-streams/read-min.any.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-byte-streams/read-min.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/read-min.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/read-min.any.worker.html
+  !passing
+/streams/readable-byte-streams/respond-after-enqueue.any.html
+  byobRequest.respond() after enqueue() with double read should not crash
+/streams/readable-byte-streams/respond-after-enqueue.any.serviceworker.html
+  byobRequest.respond() after enqueue() with double read should not crash
+/streams/readable-byte-streams/respond-after-enqueue.any.sharedworker.html
+  byobRequest.respond() after enqueue() with double read should not crash
+/streams/readable-byte-streams/respond-after-enqueue.any.worker.html
+  byobRequest.respond() after enqueue() with double read should not crash
+/streams/readable-byte-streams/tee.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream teeing with byte source: canceling branch1 should not impact branch2
+  ReadableStream teeing with byte source: canceling branch2 should not impact branch1
+  ReadableStream teeing with byte source: rs.tee() returns an array of two ReadableStreams
+  Running templatedRSTeeCancel with ReadableStream teeing with byte source
+/streams/readable-byte-streams/tee.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/tee.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/tee.any.worker.html
+  !harness TIMEOUT
+/streams/readable-byte-streams/templated.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source (empty) default reader: getReader() again on the stream should fail
+  ReadableStream with byte source (empty) default reader: instances have the correct methods and properties
+  ReadableStream with byte source (empty) default reader: locked should be true
+  ReadableStream with byte source (empty) default reader: read() should never settle
+  ReadableStream with byte source (empty) default reader: read() should return distinct promises each time
+  ReadableStream with byte source (empty) default reader: releasing the lock should cause locked to become false
+  ReadableStream with byte source (empty) default reader: two read()s should both never settle
+  ReadableStream with byte source (empty): instances have the correct methods and properties
+  Running templatedRSEmpty with ReadableStream with byte source (empty)
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) BYOB reader
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) default reader
+  Running templatedRSThrowAfterCloseOrError with ReadableStream with byte source
+/streams/readable-byte-streams/templated.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source (empty) default reader: instances have the correct methods and properties
+  ReadableStream with byte source (empty) default reader: locked should be true
+  ReadableStream with byte source (empty) default reader: read() should never settle
+  ReadableStream with byte source (empty) default reader: read() should return distinct promises each time
+  ReadableStream with byte source (empty) default reader: releasing the lock should cause locked to become false
+  ReadableStream with byte source (empty) default reader: two read()s should both never settle
+  ReadableStream with byte source (empty): instances have the correct methods and properties
+  Running templatedRSEmpty with ReadableStream with byte source (empty)
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) BYOB reader
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) default reader
+  Running templatedRSThrowAfterCloseOrError with ReadableStream with byte source
+/streams/readable-byte-streams/templated.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source (empty) default reader: instances have the correct methods and properties
+  ReadableStream with byte source (empty) default reader: locked should be true
+  ReadableStream with byte source (empty) default reader: read() should never settle
+  ReadableStream with byte source (empty) default reader: read() should return distinct promises each time
+  ReadableStream with byte source (empty) default reader: releasing the lock should cause locked to become false
+  ReadableStream with byte source (empty) default reader: two read()s should both never settle
+  ReadableStream with byte source (empty): instances have the correct methods and properties
+  Running templatedRSEmpty with ReadableStream with byte source (empty)
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) BYOB reader
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) default reader
+  Running templatedRSThrowAfterCloseOrError with ReadableStream with byte source
+/streams/readable-byte-streams/templated.any.worker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream with byte source (empty) default reader: instances have the correct methods and properties
+  ReadableStream with byte source (empty) default reader: locked should be true
+  ReadableStream with byte source (empty) default reader: read() should never settle
+  ReadableStream with byte source (empty) default reader: read() should return distinct promises each time
+  ReadableStream with byte source (empty) default reader: releasing the lock should cause locked to become false
+  ReadableStream with byte source (empty) default reader: two read()s should both never settle
+  ReadableStream with byte source (empty): instances have the correct methods and properties
+  Running templatedRSEmpty with ReadableStream with byte source (empty)
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) BYOB reader
+  Running templatedRSEmptyReader with ReadableStream with byte source (empty) default reader
+  Running templatedRSThrowAfterCloseOrError with ReadableStream with byte source
+/streams/readable-streams/async-iterator.any.html
+  !harness TIMEOUT
+  !passing
+  Async-iterating a closed stream never executes the loop body, but works fine
+  Async-iterating a partially consumed stream
+  Async-iterating a pull source
+  Async-iterating a pull source with undefined values
+  Async-iterating a push source
+  Async-iterating a push source with undefined values
+  Async-iterating an empty but not closed/errored stream never executes the loop body and stalls the async function
+  Async-iterating an errored stream throws
+  Cancellation behavior when breaking inside loop body; preventCancel = false
+  Cancellation behavior when breaking inside loop body; preventCancel = true
+  Cancellation behavior when manually calling return(); preventCancel = false
+  Cancellation behavior when manually calling return(); preventCancel = true
+  Cancellation behavior when returning inside loop body; preventCancel = false
+  Cancellation behavior when returning inside loop body; preventCancel = true
+  Cancellation behavior when throwing inside loop body; preventCancel = true
+  next() rejects if the stream errors
+  return() does not rejects if the stream has not errored yet
+  return() should unlock the stream synchronously when preventCancel = true
+  values() throws if there's already a lock
+/streams/readable-streams/async-iterator.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-streams/async-iterator.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-streams/async-iterator.any.worker.html
+  !harness TIMEOUT
+/streams/readable-streams/bad-strategies.any.html
+  !passing
+  Readable stream: throwing strategy.highWaterMark getter
+/streams/readable-streams/bad-strategies.any.serviceworker.html
+  !passing
+  Readable stream: throwing strategy.highWaterMark getter
+/streams/readable-streams/bad-strategies.any.sharedworker.html
+  !passing
+  Readable stream: throwing strategy.highWaterMark getter
+/streams/readable-streams/bad-strategies.any.worker.html
+  !passing
+  Readable stream: throwing strategy.highWaterMark getter
+/streams/readable-streams/bad-underlying-sources.any.html
+  Underlying source cancel: throwing getter
+  Underlying source cancel: throwing method
+  Underlying source pull: throwing getter (second pull does not result in a second get)
+  Underlying source: throwing pull getter (initial pull)
+  read should not error if it dequeues and pull() throws
+/streams/readable-streams/bad-underlying-sources.any.serviceworker.html
+  !passing
+  Underlying source pull: throwing method (second pull)
+  Underlying source start: throwing getter
+  Underlying source start: throwing method
+  Underlying source: calling error after close should not throw
+  Underlying source: calling error and returning a rejected promise from pull should cause the stream to error with the first error
+  Underlying source: calling error and returning a rejected promise from start should cause the stream to error with the first error
+  Underlying source: calling error twice should not throw
+  Underlying source: throwing pull method (initial pull)
+/streams/readable-streams/bad-underlying-sources.any.sharedworker.html
+  !passing
+  Underlying source pull: throwing method (second pull)
+  Underlying source start: throwing getter
+  Underlying source start: throwing method
+  Underlying source: calling error after close should not throw
+  Underlying source: calling error and returning a rejected promise from pull should cause the stream to error with the first error
+  Underlying source: calling error and returning a rejected promise from start should cause the stream to error with the first error
+  Underlying source: calling error twice should not throw
+  Underlying source: throwing pull method (initial pull)
+/streams/readable-streams/bad-underlying-sources.any.worker.html
+  !passing
+  Underlying source pull: throwing method (second pull)
+  Underlying source start: throwing getter
+  Underlying source start: throwing method
+  Underlying source: calling error after close should not throw
+  Underlying source: calling error and returning a rejected promise from pull should cause the stream to error with the first error
+  Underlying source: calling error and returning a rejected promise from start should cause the stream to error with the first error
+  Underlying source: calling error twice should not throw
+  Underlying source: throwing pull method (initial pull)
+/streams/readable-streams/cancel.any.html
+  !harness ERROR
+  !passing
+  ReadableStream cancellation: cancel(reason) should pass through the given reason to the underlying source
+/streams/readable-streams/cancel.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-streams/cancel.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-streams/cancel.any.worker.html
+  !harness ERROR
+  !passing
+  ReadableStream cancellation: cancel(reason) should pass through the given reason to the underlying source
+/streams/readable-streams/constructor.any.html
+  !passing
+/streams/readable-streams/constructor.any.serviceworker.html
+  !passing
+/streams/readable-streams/constructor.any.sharedworker.html
+  !passing
+/streams/readable-streams/constructor.any.worker.html
+  !passing
+/streams/readable-streams/count-queuing-strategy-integration.any.html
+  !passing
+/streams/readable-streams/count-queuing-strategy-integration.any.serviceworker.html
+  !passing
+/streams/readable-streams/count-queuing-strategy-integration.any.sharedworker.html
+  !passing
+/streams/readable-streams/count-queuing-strategy-integration.any.worker.html
+  !passing
+/streams/readable-streams/default-reader.any.html
+  !harness TIMEOUT
+  !passing
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is closed
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is errored
+  Constructing a ReadableStreamDefaultReader directly should fail if the stream is already locked (via direct construction)
+  Constructing a ReadableStreamDefaultReader directly should fail if the stream is already locked (via getReader)
+  Getting a ReadableStreamDefaultReader via getReader should fail if the stream is already locked (via direct construction)
+  Getting a ReadableStreamDefaultReader via getReader should fail if the stream is already locked (via getReader)
+  ReadableStreamDefaultReader closed should always return the same promise object
+  ReadableStreamDefaultReader constructor should get a ReadableStream object as argument
+  Reading from a reader for an empty stream will wait until a chunk is available
+  cancel() on a reader does not release the reader
+  closed should be fulfilled after stream is closed (.closed access before acquiring)
+/streams/readable-streams/default-reader.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is closed
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is errored
+  ReadableStreamDefaultReader closed should always return the same promise object
+  Reading from a reader for an empty stream will wait until a chunk is available
+  closed should be fulfilled after stream is closed (.closed access before acquiring)
+/streams/readable-streams/default-reader.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is closed
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is errored
+  ReadableStreamDefaultReader closed should always return the same promise object
+  Reading from a reader for an empty stream will wait until a chunk is available
+  closed should be fulfilled after stream is closed (.closed access before acquiring)
+/streams/readable-streams/default-reader.any.worker.html
+  !harness TIMEOUT
+  !passing
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is closed
+  Constructing a ReadableStreamDefaultReader directly should be OK if the stream is errored
+  ReadableStreamDefaultReader closed should always return the same promise object
+  Reading from a reader for an empty stream will wait until a chunk is available
+  closed should be fulfilled after stream is closed (.closed access before acquiring)
+/streams/readable-streams/floating-point-total-queue-size.any.html
+  !passing
+/streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html
+  !passing
+/streams/readable-streams/floating-point-total-queue-size.any.sharedworker.html
+  !passing
+/streams/readable-streams/floating-point-total-queue-size.any.worker.html
+  !passing
+/streams/readable-streams/from.any.html
+  ReadableStream.from accepts a sync iterable of promises
+  ReadableStream.from accepts an array of promises
+  ReadableStream.from throws on invalid iterables; specifically a string
+  ReadableStream.from throws on invalid iterables; specifically an object with an @@asyncIterator method returning a non-object
+  ReadableStream.from throws on invalid iterables; specifically an object with an @@iterator method returning a non-object
+  ReadableStream.from: calls next() after first read()
+  ReadableStream.from: cancel() rejects when return() fulfills with a non-object
+  ReadableStream.from: cancel() rejects when return() is not a method
+  ReadableStream.from: cancel() rejects when return() rejects
+  ReadableStream.from: cancel() rejects when return() throws synchronously
+  ReadableStream.from: cancelling the returned stream calls and awaits return()
+  ReadableStream.from: reader.cancel() inside next()
+  ReadableStream.from: reader.cancel() inside return()
+  ReadableStream.from: reader.read() inside next()
+  ReadableStream.from: stream errors when next() fulfills with a non-object
+  ReadableStream.from: stream errors when next() returns a non-object
+/streams/readable-streams/from.any.serviceworker.html
+  !passing
+  ReadableStream.from accepts a ReadableStream
+  ReadableStream.from accepts a ReadableStream async iterator
+  ReadableStream.from accepts a Set
+  ReadableStream.from accepts a Set iterator
+  ReadableStream.from accepts a sync generator
+  ReadableStream.from accepts a sync iterable of values
+  ReadableStream.from accepts a sync iterable with a function iterator
+  ReadableStream.from accepts an array iterator
+  ReadableStream.from accepts an array of values
+  ReadableStream.from accepts an async generator
+  ReadableStream.from accepts an async iterable
+  ReadableStream.from accepts an async iterable with a function iterator
+  ReadableStream.from accepts an empty iterable
+  ReadableStream.from ignores @@iterator if @@asyncIterator exists
+  ReadableStream.from ignores a null @@asyncIterator
+  ReadableStream.from re-throws errors from calling the @@asyncIterator method
+  ReadableStream.from re-throws errors from calling the @@iterator method
+  ReadableStream.from: cancel() resolves when return() method is missing
+  ReadableStream.from: return() is not called when iterator completes normally
+  ReadableStream.from: stream errors when next() rejects
+  ReadableStream.from: stream errors when next() throws synchronously
+  ReadableStream.from: stream stalls when next() never settles
+/streams/readable-streams/from.any.sharedworker.html
+  !passing
+  ReadableStream.from accepts a ReadableStream
+  ReadableStream.from accepts a ReadableStream async iterator
+  ReadableStream.from accepts a Set
+  ReadableStream.from accepts a Set iterator
+  ReadableStream.from accepts a sync generator
+  ReadableStream.from accepts a sync iterable of values
+  ReadableStream.from accepts a sync iterable with a function iterator
+  ReadableStream.from accepts an array iterator
+  ReadableStream.from accepts an array of values
+  ReadableStream.from accepts an async generator
+  ReadableStream.from accepts an async iterable
+  ReadableStream.from accepts an async iterable with a function iterator
+  ReadableStream.from accepts an empty iterable
+  ReadableStream.from ignores @@iterator if @@asyncIterator exists
+  ReadableStream.from ignores a null @@asyncIterator
+  ReadableStream.from re-throws errors from calling the @@asyncIterator method
+  ReadableStream.from re-throws errors from calling the @@iterator method
+  ReadableStream.from: cancel() resolves when return() method is missing
+  ReadableStream.from: return() is not called when iterator completes normally
+  ReadableStream.from: stream errors when next() rejects
+  ReadableStream.from: stream errors when next() throws synchronously
+  ReadableStream.from: stream stalls when next() never settles
+/streams/readable-streams/from.any.worker.html
+  !passing
+  ReadableStream.from accepts a ReadableStream
+  ReadableStream.from accepts a ReadableStream async iterator
+  ReadableStream.from accepts a Set
+  ReadableStream.from accepts a Set iterator
+  ReadableStream.from accepts a sync generator
+  ReadableStream.from accepts a sync iterable of values
+  ReadableStream.from accepts a sync iterable with a function iterator
+  ReadableStream.from accepts an array iterator
+  ReadableStream.from accepts an array of values
+  ReadableStream.from accepts an async generator
+  ReadableStream.from accepts an async iterable
+  ReadableStream.from accepts an async iterable with a function iterator
+  ReadableStream.from accepts an empty iterable
+  ReadableStream.from ignores @@iterator if @@asyncIterator exists
+  ReadableStream.from ignores a null @@asyncIterator
+  ReadableStream.from re-throws errors from calling the @@asyncIterator method
+  ReadableStream.from re-throws errors from calling the @@iterator method
+  ReadableStream.from: cancel() resolves when return() method is missing
+  ReadableStream.from: return() is not called when iterator completes normally
+  ReadableStream.from: stream errors when next() rejects
+  ReadableStream.from: stream errors when next() throws synchronously
+  ReadableStream.from: stream stalls when next() never settles
+/streams/readable-streams/garbage-collection.any.serviceworker.html
+  Garbage-collecting a ReadableStreamDefaultReader should not unlock its stream
+  ReadableStreamController methods should continue working properly when scripts lose their reference to the readable stream
+/streams/readable-streams/garbage-collection.any.sharedworker.html
+  Garbage-collecting a ReadableStreamDefaultReader should not unlock its stream
+  ReadableStreamController methods should continue working properly when scripts lose their reference to the readable stream
+/streams/readable-streams/garbage-collection.any.worker.html
+  Garbage-collecting a ReadableStreamDefaultReader should not unlock its stream
+  ReadableStreamController methods should continue working properly when scripts lose their reference to the readable stream
+/streams/readable-streams/general.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream can be constructed with no errors
+  ReadableStream constructor should throw for non-function start arguments
+  ReadableStream should be able to call start method within prototype chain of its source
+  ReadableStream should be able to enqueue different objects.
+  ReadableStream start controller parameter should be extensible
+  ReadableStream start returning a thenable should use the then method present when start returns
+  ReadableStream start should be able to return a promise
+  ReadableStream start should be able to return a promise and reject it
+  ReadableStream start should be called with the proper thisArg
+  ReadableStream strategies: the default strategy should give desiredSize of 1 to start, decreasing by 1 per enqueue
+  ReadableStream: desiredSize when closed
+  ReadableStream: desiredSize when errored
+  ReadableStream: enqueue should throw when the stream is closed
+  ReadableStream: enqueue should throw when the stream is readable but draining
+  Subclassing ReadableStream should work
+/streams/readable-streams/general.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream can be constructed with no errors
+  ReadableStream should be able to call start method within prototype chain of its source
+  ReadableStream should be able to enqueue different objects.
+  ReadableStream start controller parameter should be extensible
+  ReadableStream start returning a thenable should use the then method present when start returns
+  ReadableStream start should be able to return a promise
+  ReadableStream start should be able to return a promise and reject it
+  ReadableStream start should be called with the proper thisArg
+  ReadableStream strategies: the default strategy should give desiredSize of 1 to start, decreasing by 1 per enqueue
+  ReadableStream: desiredSize when closed
+  ReadableStream: desiredSize when errored
+  Subclassing ReadableStream should work
+/streams/readable-streams/general.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream can be constructed with no errors
+  ReadableStream should be able to call start method within prototype chain of its source
+  ReadableStream start controller parameter should be extensible
+  ReadableStream start should be able to return a promise
+  ReadableStream start should be called with the proper thisArg
+  ReadableStream strategies: the default strategy should give desiredSize of 1 to start, decreasing by 1 per enqueue
+  ReadableStream: desiredSize when closed
+  ReadableStream: desiredSize when errored
+  Subclassing ReadableStream should work
+/streams/readable-streams/general.any.worker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream can be constructed with no errors
+  ReadableStream should be able to call start method within prototype chain of its source
+  ReadableStream should be able to enqueue different objects.
+  ReadableStream start controller parameter should be extensible
+  ReadableStream start returning a thenable should use the then method present when start returns
+  ReadableStream start should be able to return a promise
+  ReadableStream start should be able to return a promise and reject it
+  ReadableStream start should be called with the proper thisArg
+  ReadableStream strategies: the default strategy should give desiredSize of 1 to start, decreasing by 1 per enqueue
+  ReadableStream: desiredSize when closed
+  ReadableStream: desiredSize when errored
+  Subclassing ReadableStream should work
+/streams/readable-streams/global.html
+  !passing
+  Closing errored stream throws object in appropriate global
+  Correct errors and globals for closed streams
+/streams/readable-streams/owning-type-message-port.tentative.any.html
+  !passing
+/streams/readable-streams/owning-type-message-port.tentative.any.serviceworker.html
+  !passing
+/streams/readable-streams/owning-type-message-port.tentative.any.sharedworker.html
+  !passing
+/streams/readable-streams/owning-type-message-port.tentative.any.worker.html
+  !passing
+/streams/readable-streams/owning-type-video-frame.tentative.any.html
+  !passing
+/streams/readable-streams/owning-type-video-frame.tentative.any.serviceworker.html
+  !passing
+/streams/readable-streams/owning-type-video-frame.tentative.any.sharedworker.html
+  !passing
+/streams/readable-streams/owning-type-video-frame.tentative.any.worker.html
+  !passing
+/streams/readable-streams/owning-type.tentative.any.html
+  ReadableStream of type owning should transfer enqueued chunks
+  ReadableStream should check transfer parameter
+/streams/readable-streams/owning-type.tentative.any.serviceworker.html
+  ReadableStream of type owning should transfer enqueued chunks
+  ReadableStream should check transfer parameter
+/streams/readable-streams/owning-type.tentative.any.sharedworker.html
+  ReadableStream of type owning should transfer enqueued chunks
+  ReadableStream should check transfer parameter
+/streams/readable-streams/owning-type.tentative.any.worker.html
+  ReadableStream of type owning should transfer enqueued chunks
+  ReadableStream should check transfer parameter
+/streams/readable-streams/patched-global.any.html
+  !passing
+  ReadableStream tee() should not call the global ReadableStream
+/streams/readable-streams/patched-global.any.serviceworker.html
+  ReadableStream async iterator should use the original values of getReader() and ReadableStreamDefaultReader methods
+/streams/readable-streams/patched-global.any.sharedworker.html
+  ReadableStream async iterator should use the original values of getReader() and ReadableStreamDefaultReader methods
+/streams/readable-streams/patched-global.any.worker.html
+  ReadableStream async iterator should use the original values of getReader() and ReadableStreamDefaultReader methods
+/streams/readable-streams/reentrant-strategies.any.html
+  !harness TIMEOUT
+  !passing
+/streams/readable-streams/reentrant-strategies.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-streams/reentrant-strategies.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-streams/reentrant-strategies.any.worker.html
+  !harness TIMEOUT
+/streams/readable-streams/tee.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream teeing: canceling branch1 should not impact branch2
+  ReadableStream teeing: canceling branch2 should not impact branch1
+  ReadableStream teeing: rs.tee() returns an array of two ReadableStreams
+  ReadableStream teeing: should be able to read one branch to the end without affecting the other
+  ReadableStream teeing: values should be equal across each branch
+  ReadableStreamTee should not use a modified ReadableStream constructor from the global object
+  Running templatedRSTeeCancel with ReadableStream teeing
+/streams/readable-streams/tee.any.serviceworker.html
+  !harness TIMEOUT
+/streams/readable-streams/tee.any.sharedworker.html
+  !harness TIMEOUT
+/streams/readable-streams/tee.any.worker.html
+  !harness TIMEOUT
+/streams/readable-streams/templated.any.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream (closed via call in start): getReader() should be OK
+  ReadableStream (closed via call in start): locked should be false
+  ReadableStream (closed via call in start): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (closed via call in start): should not be able to acquire a second reader if we don't release the first one
+  ReadableStream (closed via cancel): getReader() should be OK
+  ReadableStream (closed via cancel): locked should be false
+  ReadableStream (closed via cancel): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (closed via cancel): should not be able to acquire a second reader if we don't release the first one
+  ReadableStream (empty) reader: getReader() again on the stream should fail
+  ReadableStream (empty) reader: instances have the correct methods and properties
+  ReadableStream (empty) reader: locked should be true
+  ReadableStream (empty) reader: read() should never settle
+  ReadableStream (empty) reader: read() should return distinct promises each time
+  ReadableStream (empty) reader: releasing the lock should cause locked to become false
+  ReadableStream (empty) reader: two read()s should both never settle
+  ReadableStream (empty): instances have the correct methods and properties
+  ReadableStream (errored via call in start): locked should be false
+  ReadableStream (errored via call in start): should not be able to obtain additional readers if we don't release the first lock
+  ReadableStream (errored via returning a rejected promise in start): locked should be false
+  ReadableStream (two chunks enqueued, still open) reader: read() should return distinct promises each time
+  Running templatedRSClosed with ReadableStream (closed via call in start)
+  Running templatedRSClosed with ReadableStream (closed via cancel)
+  Running templatedRSClosedReader with ReadableStream reader (closed after getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed before getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed via cancel after getting reader)
+  Running templatedRSEmpty with ReadableStream (empty)
+  Running templatedRSEmptyReader with ReadableStream (empty) reader
+  Running templatedRSErrored with ReadableStream (errored via call in start)
+  Running templatedRSErrored with ReadableStream (errored via returning a rejected promise in start)
+  Running templatedRSErroredReader with ReadableStream (errored via returning a rejected promise in start) reader
+  Running templatedRSErroredReader with ReadableStream reader (errored after getting reader)
+  Running templatedRSErroredReader with ReadableStream reader (errored before getting reader)
+  Running templatedRSErroredSyncOnly with ReadableStream (errored via call in start)
+  Running templatedRSThrowAfterCloseOrError with ReadableStream
+  Running templatedRSTwoChunksClosedReader with ReadableStream (two chunks enqueued, then closed) reader
+  Running templatedRSTwoChunksOpenReader with ReadableStream (two chunks enqueued, still open) reader
+/streams/readable-streams/templated.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream (closed via call in start): getReader() should be OK
+  ReadableStream (closed via call in start): locked should be false
+  ReadableStream (closed via call in start): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (closed via cancel): getReader() should be OK
+  ReadableStream (closed via cancel): locked should be false
+  ReadableStream (closed via cancel): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (empty) reader: instances have the correct methods and properties
+  ReadableStream (empty) reader: locked should be true
+  ReadableStream (empty) reader: read() should never settle
+  ReadableStream (empty) reader: read() should return distinct promises each time
+  ReadableStream (empty) reader: releasing the lock should cause locked to become false
+  ReadableStream (empty) reader: two read()s should both never settle
+  ReadableStream (empty): instances have the correct methods and properties
+  ReadableStream (errored via call in start): locked should be false
+  ReadableStream (errored via returning a rejected promise in start): locked should be false
+  ReadableStream (two chunks enqueued, still open) reader: read() should return distinct promises each time
+  Running templatedRSClosed with ReadableStream (closed via call in start)
+  Running templatedRSClosed with ReadableStream (closed via cancel)
+  Running templatedRSClosedReader with ReadableStream reader (closed after getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed before getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed via cancel after getting reader)
+  Running templatedRSEmpty with ReadableStream (empty)
+  Running templatedRSEmptyReader with ReadableStream (empty) reader
+  Running templatedRSErrored with ReadableStream (errored via call in start)
+  Running templatedRSErrored with ReadableStream (errored via returning a rejected promise in start)
+  Running templatedRSErroredReader with ReadableStream (errored via returning a rejected promise in start) reader
+  Running templatedRSErroredReader with ReadableStream reader (errored after getting reader)
+  Running templatedRSErroredReader with ReadableStream reader (errored before getting reader)
+  Running templatedRSErroredSyncOnly with ReadableStream (errored via call in start)
+  Running templatedRSThrowAfterCloseOrError with ReadableStream
+  Running templatedRSTwoChunksClosedReader with ReadableStream (two chunks enqueued, then closed) reader
+  Running templatedRSTwoChunksOpenReader with ReadableStream (two chunks enqueued, still open) reader
+/streams/readable-streams/templated.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream (closed via call in start): getReader() should be OK
+  ReadableStream (closed via call in start): locked should be false
+  ReadableStream (closed via call in start): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (closed via cancel): getReader() should be OK
+  ReadableStream (closed via cancel): locked should be false
+  ReadableStream (closed via cancel): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (empty) reader: instances have the correct methods and properties
+  ReadableStream (empty) reader: locked should be true
+  ReadableStream (empty) reader: read() should never settle
+  ReadableStream (empty) reader: read() should return distinct promises each time
+  ReadableStream (empty) reader: releasing the lock should cause locked to become false
+  ReadableStream (empty) reader: two read()s should both never settle
+  ReadableStream (empty): instances have the correct methods and properties
+  ReadableStream (errored via call in start): locked should be false
+  ReadableStream (errored via returning a rejected promise in start): locked should be false
+  ReadableStream (two chunks enqueued, still open) reader: read() should return distinct promises each time
+  Running templatedRSClosed with ReadableStream (closed via call in start)
+  Running templatedRSClosed with ReadableStream (closed via cancel)
+  Running templatedRSClosedReader with ReadableStream reader (closed after getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed before getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed via cancel after getting reader)
+  Running templatedRSEmpty with ReadableStream (empty)
+  Running templatedRSEmptyReader with ReadableStream (empty) reader
+  Running templatedRSErrored with ReadableStream (errored via call in start)
+  Running templatedRSErrored with ReadableStream (errored via returning a rejected promise in start)
+  Running templatedRSErroredReader with ReadableStream (errored via returning a rejected promise in start) reader
+  Running templatedRSErroredReader with ReadableStream reader (errored after getting reader)
+  Running templatedRSErroredReader with ReadableStream reader (errored before getting reader)
+  Running templatedRSErroredSyncOnly with ReadableStream (errored via call in start)
+  Running templatedRSThrowAfterCloseOrError with ReadableStream
+  Running templatedRSTwoChunksClosedReader with ReadableStream (two chunks enqueued, then closed) reader
+  Running templatedRSTwoChunksOpenReader with ReadableStream (two chunks enqueued, still open) reader
+/streams/readable-streams/templated.any.worker.html
+  !harness TIMEOUT
+  !passing
+  ReadableStream (closed via call in start): getReader() should be OK
+  ReadableStream (closed via call in start): locked should be false
+  ReadableStream (closed via call in start): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (closed via cancel): getReader() should be OK
+  ReadableStream (closed via cancel): locked should be false
+  ReadableStream (closed via cancel): should be able to acquire multiple readers if they are released in succession
+  ReadableStream (empty) reader: instances have the correct methods and properties
+  ReadableStream (empty) reader: locked should be true
+  ReadableStream (empty) reader: read() should never settle
+  ReadableStream (empty) reader: read() should return distinct promises each time
+  ReadableStream (empty) reader: releasing the lock should cause locked to become false
+  ReadableStream (empty) reader: two read()s should both never settle
+  ReadableStream (empty): instances have the correct methods and properties
+  ReadableStream (errored via call in start): locked should be false
+  ReadableStream (errored via returning a rejected promise in start): locked should be false
+  ReadableStream (two chunks enqueued, still open) reader: read() should return distinct promises each time
+  Running templatedRSClosed with ReadableStream (closed via call in start)
+  Running templatedRSClosed with ReadableStream (closed via cancel)
+  Running templatedRSClosedReader with ReadableStream reader (closed after getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed before getting reader)
+  Running templatedRSClosedReader with ReadableStream reader (closed via cancel after getting reader)
+  Running templatedRSEmpty with ReadableStream (empty)
+  Running templatedRSEmptyReader with ReadableStream (empty) reader
+  Running templatedRSErrored with ReadableStream (errored via call in start)
+  Running templatedRSErrored with ReadableStream (errored via returning a rejected promise in start)
+  Running templatedRSErroredReader with ReadableStream (errored via returning a rejected promise in start) reader
+  Running templatedRSErroredReader with ReadableStream reader (errored after getting reader)
+  Running templatedRSErroredReader with ReadableStream reader (errored before getting reader)
+  Running templatedRSErroredSyncOnly with ReadableStream (errored via call in start)
+  Running templatedRSThrowAfterCloseOrError with ReadableStream
+  Running templatedRSTwoChunksClosedReader with ReadableStream (two chunks enqueued, then closed) reader
+  Running templatedRSTwoChunksOpenReader with ReadableStream (two chunks enqueued, still open) reader
+/streams/transferable/audioworklet.https.html
+  !passing
+/streams/transferable/deserialize-error.window.html
+  !harness TIMEOUT
+/streams/transferable/readable-stream.html
+  !harness TIMEOUT
+  !passing
+/streams/transferable/reason.html
+  !passing
+  reason with a type of 'function' should be rejected and error the stream
+  reason with a type of 'symbol' should be rejected and error the stream
+/streams/transferable/service-worker.https.html
+  !passing
+  service-worker
+/streams/transferable/shared-worker.html
+  !passing
+/streams/transferable/transfer-with-messageport.window.html
+  !passing
+  ReadableStream must not be serializable
+  TransformStream must not be serializable
+  WritableStream must not be serializable
+/streams/transferable/transform-stream.html
+  piping through transferred transforms should work
+  window.postMessage should be able to transfer a TransformStream
+/streams/transferable/window.html
+  !passing
+/streams/transferable/worker.html
+  !passing
+/streams/transferable/writable-stream.html
+  !passing
+  a locked WritableStream should not be transferable
+/streams/transform-streams/backpressure.any.html
+  !harness TIMEOUT
+  !passing
+  calling pull() before the first write() with backpressure should work
+  transform() should be able to read the chunk it just enqueued
+  transform() should keep being called as long as there is no backpressure
+/streams/transform-streams/backpressure.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  calling pull() before the first write() with backpressure should work
+  transform() should be able to read the chunk it just enqueued
+  transform() should keep being called as long as there is no backpressure
+/streams/transform-streams/backpressure.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  calling pull() before the first write() with backpressure should work
+  transform() should be able to read the chunk it just enqueued
+  transform() should keep being called as long as there is no backpressure
+/streams/transform-streams/backpressure.any.worker.html
+  !harness TIMEOUT
+  !passing
+  calling pull() before the first write() with backpressure should work
+  transform() should be able to read the chunk it just enqueued
+  transform() should keep being called as long as there is no backpressure
+/streams/transform-streams/cancel.any.html
+  !passing
+/streams/transform-streams/cancel.any.serviceworker.html
+  !passing
+/streams/transform-streams/cancel.any.sharedworker.html
+  !passing
+/streams/transform-streams/cancel.any.worker.html
+  !passing
+/streams/transform-streams/errors.any.html
+  !passing
+  TransformStream constructor should throw when start does
+  TransformStream errors thrown in flush put the writable and readable in an errored state
+  TransformStream errors thrown in transform put the writable and readable in an errored state
+  an exception from transform() should error the stream if terminate has been requested but not completed
+  controller.error() should do nothing after a transformer method has thrown an exception
+  errored TransformStream should not enqueue new chunks
+/streams/transform-streams/errors.any.serviceworker.html
+  !passing
+  TransformStream constructor should throw when start does
+  TransformStream errors thrown in flush put the writable and readable in an errored state
+  TransformStream errors thrown in transform put the writable and readable in an errored state
+  an exception from transform() should error the stream if terminate has been requested but not completed
+  controller.error() should do nothing after a transformer method has thrown an exception
+/streams/transform-streams/errors.any.sharedworker.html
+  !passing
+  TransformStream constructor should throw when start does
+  TransformStream errors thrown in flush put the writable and readable in an errored state
+  TransformStream errors thrown in transform put the writable and readable in an errored state
+  an exception from transform() should error the stream if terminate has been requested but not completed
+  controller.error() should do nothing after a transformer method has thrown an exception
+/streams/transform-streams/errors.any.worker.html
+  !passing
+  TransformStream constructor should throw when start does
+  TransformStream errors thrown in flush put the writable and readable in an errored state
+  TransformStream errors thrown in transform put the writable and readable in an errored state
+  an exception from transform() should error the stream if terminate has been requested but not completed
+  controller.error() should do nothing after a transformer method has thrown an exception
+/streams/transform-streams/flush.any.html
+  closing the writable side should call transformer.flush() and a parallel readable.cancel() should not reject
+  error() during flush should cause writer.close() to reject
+/streams/transform-streams/flush.any.serviceworker.html
+  closing the writable side should call transformer.flush() and a parallel readable.cancel() should not reject
+  error() during flush should cause writer.close() to reject
+/streams/transform-streams/flush.any.sharedworker.html
+  closing the writable side should call transformer.flush() and a parallel readable.cancel() should not reject
+  error() during flush should cause writer.close() to reject
+/streams/transform-streams/flush.any.worker.html
+  closing the writable side should call transformer.flush() and a parallel readable.cancel() should not reject
+  error() during flush should cause writer.close() to reject
+/streams/transform-streams/general.any.html
+  Identity TransformStream: can read from readable what is put into writable
+  TransformStream start, transform, and flush should be strictly ordered
+  controller.terminate() should do nothing the second time it is called
+  it should be possible to call transform() synchronously
+  methods should not not have .apply() or .call() called
+  specifying a defined readableType should throw
+  specifying a defined writableType should throw
+  terminate() should abort writable immediately after readable.cancel()
+  terminate() should do nothing after readable.cancel() resolves
+/streams/transform-streams/general.any.serviceworker.html
+  Identity TransformStream: can read from readable what is put into writable
+  TransformStream start, transform, and flush should be strictly ordered
+  controller.terminate() should do nothing the second time it is called
+  enqueue() should throw after controller.terminate()
+  enqueue() should throw after readable.cancel()
+  it should be possible to call transform() synchronously
+  methods should not not have .apply() or .call() called
+  specifying a defined readableType should throw
+  specifying a defined writableType should throw
+  terminate() should abort writable immediately after readable.cancel()
+  terminate() should do nothing after readable.cancel() resolves
+/streams/transform-streams/general.any.sharedworker.html
+  Identity TransformStream: can read from readable what is put into writable
+  TransformStream start, transform, and flush should be strictly ordered
+  controller.terminate() should do nothing the second time it is called
+  enqueue() should throw after controller.terminate()
+  enqueue() should throw after readable.cancel()
+  it should be possible to call transform() synchronously
+  methods should not not have .apply() or .call() called
+  specifying a defined readableType should throw
+  specifying a defined writableType should throw
+  terminate() should abort writable immediately after readable.cancel()
+  terminate() should do nothing after readable.cancel() resolves
+/streams/transform-streams/general.any.worker.html
+  Identity TransformStream: can read from readable what is put into writable
+  TransformStream start, transform, and flush should be strictly ordered
+  controller.terminate() should do nothing the second time it is called
+  enqueue() should throw after controller.terminate()
+  enqueue() should throw after readable.cancel()
+  it should be possible to call transform() synchronously
+  methods should not not have .apply() or .call() called
+  specifying a defined readableType should throw
+  specifying a defined writableType should throw
+  terminate() should abort writable immediately after readable.cancel()
+  terminate() should do nothing after readable.cancel() resolves
+/streams/transform-streams/reentrant-strategies.any.html
+  !harness TIMEOUT
+  !passing
+/streams/transform-streams/reentrant-strategies.any.serviceworker.html
+  !harness TIMEOUT
+/streams/transform-streams/reentrant-strategies.any.sharedworker.html
+  !harness TIMEOUT
+/streams/transform-streams/reentrant-strategies.any.worker.html
+  !harness TIMEOUT
+/streams/transform-streams/strategies.any.html
+  !passing
+/streams/transform-streams/strategies.any.serviceworker.html
+  !passing
+/streams/transform-streams/strategies.any.sharedworker.html
+  !passing
+/streams/transform-streams/strategies.any.worker.html
+  !passing
+/streams/transform-streams/terminate.any.html
+  !passing
+  controller.enqueue() should throw after controller.terminate()
+/streams/transform-streams/terminate.any.serviceworker.html
+  !passing
+/streams/transform-streams/terminate.any.sharedworker.html
+  !passing
+/streams/transform-streams/terminate.any.worker.html
+  !passing
+/streams/writable-streams/aborting.any.html
+  !harness TIMEOUT
+  !passing
+  Aborting a WritableStream after it is closed is a no-op
+  Aborting a WritableStream passes through the given reason
+  Closing a WritableStream and aborting it while it closes causes the stream to ignore the abort attempt
+  returning a thenable from abort() should work
+/streams/writable-streams/aborting.any.serviceworker.html
+  !harness TIMEOUT
+  !passing
+  Aborting a WritableStream after it is closed is a no-op
+  Aborting a WritableStream passes through the given reason
+  Closing a WritableStream and aborting it while it closes causes the stream to ignore the abort attempt
+  returning a thenable from abort() should work
+/streams/writable-streams/aborting.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+  Aborting a WritableStream after it is closed is a no-op
+  Aborting a WritableStream passes through the given reason
+  Closing a WritableStream and aborting it while it closes causes the stream to ignore the abort attempt
+  returning a thenable from abort() should work
+/streams/writable-streams/aborting.any.worker.html
+  !harness TIMEOUT
+  !passing
+  Aborting a WritableStream after it is closed is a no-op
+  Aborting a WritableStream passes through the given reason
+  Closing a WritableStream and aborting it while it closes causes the stream to ignore the abort attempt
+  returning a thenable from abort() should work
+/streams/writable-streams/bad-strategies.any.html
+  !passing
+/streams/writable-streams/bad-strategies.any.serviceworker.html
+  !passing
+/streams/writable-streams/bad-strategies.any.sharedworker.html
+  !passing
+/streams/writable-streams/bad-strategies.any.worker.html
+  !passing
+/streams/writable-streams/bad-underlying-sinks.any.html
+  !passing
+  close: returning a rejected promise should cause writer close() and ready to reject
+  close: throwing method should cause writer close() and ready to reject
+  start: errors in start cause WritableStream constructor to throw
+  start: non-function start method
+  write: throwing method should cause write() and closed to reject
+/streams/writable-streams/bad-underlying-sinks.any.serviceworker.html
+  !passing
+  close: returning a rejected promise should cause writer close() and ready to reject
+  close: throwing method should cause writer close() and ready to reject
+  write: throwing method should cause write() and closed to reject
+/streams/writable-streams/bad-underlying-sinks.any.sharedworker.html
+  !passing
+  close: returning a rejected promise should cause writer close() and ready to reject
+  close: throwing method should cause writer close() and ready to reject
+  write: throwing method should cause write() and closed to reject
+/streams/writable-streams/bad-underlying-sinks.any.worker.html
+  !passing
+  close: returning a rejected promise should cause writer close() and ready to reject
+  close: throwing method should cause writer close() and ready to reject
+  write: throwing method should cause write() and closed to reject
+/streams/writable-streams/byte-length-queuing-strategy.any.html
+  !passing
+/streams/writable-streams/byte-length-queuing-strategy.any.serviceworker.html
+  !passing
+/streams/writable-streams/byte-length-queuing-strategy.any.sharedworker.html
+  !passing
+/streams/writable-streams/byte-length-queuing-strategy.any.worker.html
+  !passing
+/streams/writable-streams/close.any.html
+  !passing
+  promises must fulfill/reject in the expected order on closure
+  ready promise should be initialised as fulfilled for a writer on a closed stream
+  releaseLock on a stream with a pending close in which controller.error() was called
+  releaseLock on a stream with a pending write in which the stream has been errored
+  returning a thenable from close() should work
+  the promise returned by async abort during close should resolve
+  when close is called on a WritableStream in writable state, ready should return a fulfilled promise
+  when the sink throws during close, and the close is requested while a write is still in-flight, the stream should become errored during the close
+/streams/writable-streams/close.any.serviceworker.html
+  !passing
+  promises must fulfill/reject in the expected order on closure
+  releaseLock on a stream with a pending close in which controller.error() was called
+  releaseLock on a stream with a pending write in which the stream has been errored
+  returning a thenable from close() should work
+  the promise returned by async abort during close should resolve
+  when close is called on a WritableStream in writable state, ready should return a fulfilled promise
+  when the sink throws during close, and the close is requested while a write is still in-flight, the stream should become errored during the close
+/streams/writable-streams/close.any.sharedworker.html
+  !passing
+  promises must fulfill/reject in the expected order on closure
+  releaseLock on a stream with a pending close in which controller.error() was called
+  releaseLock on a stream with a pending write in which the stream has been errored
+  returning a thenable from close() should work
+  the promise returned by async abort during close should resolve
+  when close is called on a WritableStream in writable state, ready should return a fulfilled promise
+  when the sink throws during close, and the close is requested while a write is still in-flight, the stream should become errored during the close
+/streams/writable-streams/close.any.worker.html
+  !passing
+  promises must fulfill/reject in the expected order on closure
+  releaseLock on a stream with a pending close in which controller.error() was called
+  releaseLock on a stream with a pending write in which the stream has been errored
+  returning a thenable from close() should work
+  the promise returned by async abort during close should resolve
+  when close is called on a WritableStream in writable state, ready should return a fulfilled promise
+  when the sink throws during close, and the close is requested while a write is still in-flight, the stream should become errored during the close
+/streams/writable-streams/constructor.any.html
+  !passing
+  WritableStream instances should have standard methods and properties
+  WritableStream should be constructible with no arguments
+  controller argument should not be passed to close method
+/streams/writable-streams/constructor.any.serviceworker.html
+  !passing
+  WritableStream instances should have standard methods and properties
+  WritableStream should be constructible with no arguments
+  controller argument should not be passed to close method
+/streams/writable-streams/constructor.any.sharedworker.html
+  !passing
+  WritableStream instances should have standard methods and properties
+  WritableStream should be constructible with no arguments
+  controller argument should not be passed to close method
+/streams/writable-streams/constructor.any.worker.html
+  !passing
+  WritableStream instances should have standard methods and properties
+  WritableStream should be constructible with no arguments
+  controller argument should not be passed to close method
+/streams/writable-streams/count-queuing-strategy.any.html
+  !passing
+/streams/writable-streams/count-queuing-strategy.any.serviceworker.html
+  !passing
+/streams/writable-streams/count-queuing-strategy.any.sharedworker.html
+  !passing
+/streams/writable-streams/count-queuing-strategy.any.worker.html
+  !passing
+/streams/writable-streams/error.any.html
+  !passing
+/streams/writable-streams/error.any.serviceworker.html
+  !passing
+/streams/writable-streams/error.any.sharedworker.html
+  !passing
+/streams/writable-streams/error.any.worker.html
+  !passing
+/streams/writable-streams/floating-point-total-queue-size.any.html
+  !passing
+/streams/writable-streams/floating-point-total-queue-size.any.serviceworker.html
+  !passing
+/streams/writable-streams/floating-point-total-queue-size.any.sharedworker.html
+  !passing
+/streams/writable-streams/floating-point-total-queue-size.any.worker.html
+  !passing
+/streams/writable-streams/general.any.html
+  closed and ready on a released writer
+  desiredSize on a released writer
+  desiredSize on a writer for a closed stream
+  desiredSize on a writer for an errored stream
+  methods should not not have .apply() or .call() called
+  ready promise should fire before closed on releaseLock
+  ws.getWriter() on an errored WritableStream
+/streams/writable-streams/general.any.serviceworker.html
+  closed and ready on a released writer
+  desiredSize on a released writer
+  desiredSize on a writer for a closed stream
+  desiredSize on a writer for an errored stream
+  methods should not not have .apply() or .call() called
+  ready promise should fire before closed on releaseLock
+  ws.getWriter() on an errored WritableStream
+/streams/writable-streams/general.any.sharedworker.html
+  closed and ready on a released writer
+  desiredSize on a released writer
+  desiredSize on a writer for a closed stream
+  desiredSize on a writer for an errored stream
+  methods should not not have .apply() or .call() called
+  ready promise should fire before closed on releaseLock
+  ws.getWriter() on an errored WritableStream
+/streams/writable-streams/general.any.worker.html
+  closed and ready on a released writer
+  desiredSize on a released writer
+  desiredSize on a writer for a closed stream
+  desiredSize on a writer for an errored stream
+  methods should not not have .apply() or .call() called
+  ready promise should fire before closed on releaseLock
+  ws.getWriter() on an errored WritableStream
+/streams/writable-streams/reentrant-strategy.any.html
+  !passing
+/streams/writable-streams/reentrant-strategy.any.serviceworker.html
+  !passing
+/streams/writable-streams/reentrant-strategy.any.sharedworker.html
+  !passing
+/streams/writable-streams/reentrant-strategy.any.worker.html
+  !passing
+/streams/writable-streams/start.any.html
+  !passing
+  underlying sink's write or close should not be called if start throws
+  underlying sink's write or close should not be invoked if the promise returned by start is rejected
+/streams/writable-streams/start.any.serviceworker.html
+  !passing
+  underlying sink's write or close should not be called if start throws
+  underlying sink's write or close should not be invoked if the promise returned by start is rejected
+/streams/writable-streams/start.any.sharedworker.html
+  !passing
+  underlying sink's write or close should not be called if start throws
+  underlying sink's write or close should not be invoked if the promise returned by start is rejected
+/streams/writable-streams/start.any.worker.html
+  !passing
+  underlying sink's write or close should not be called if start throws
+  underlying sink's write or close should not be invoked if the promise returned by start is rejected
+/streams/writable-streams/write.any.html
+  !passing
+  WritableStream should complete asynchronous writes before close resolves
+  WritableStream should complete synchronous writes before close resolves
+  returning a thenable from write() should work
+/streams/writable-streams/write.any.serviceworker.html
+  !passing
+  WritableStream should complete asynchronous writes before close resolves
+  WritableStream should complete synchronous writes before close resolves
+  returning a thenable from write() should work
+/streams/writable-streams/write.any.sharedworker.html
+  !passing
+  WritableStream should complete asynchronous writes before close resolves
+  WritableStream should complete synchronous writes before close resolves
+  returning a thenable from write() should work
+/streams/writable-streams/write.any.worker.html
+  !passing
+  WritableStream should complete asynchronous writes before close resolves
+  WritableStream should complete synchronous writes before close resolves
+  returning a thenable from write() should work

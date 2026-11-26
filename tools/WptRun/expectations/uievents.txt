@@ -1,0 +1,241 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/uievents/click/auxclick_event.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/click_event_target_child_parent.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/click_event_target_siblings.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/click_events_on_input.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/contextmenu_event.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/dblclick_event_mouse.html
+  !harness TIMEOUT
+  !passing
+/uievents/click/dblclick_event_on_text_control_inputs.html
+  !harness TIMEOUT
+  !passing
+/uievents/constructors/event-getmodifierstate.html
+  KeyboardEvent.getModifierState('AltGraph') reflects modifierAltGraph in isolation
+  KeyboardEvent.getModifierState('CapsLock') reflects modifierCapsLock in isolation
+  KeyboardEvent.getModifierState() reports every modifier when all are set
+  MouseEvent.getModifierState('AltGraph') reflects modifierAltGraph in isolation
+  MouseEvent.getModifierState('CapsLock') reflects modifierCapsLock in isolation
+  MouseEvent.getModifierState() reports every modifier when all are set
+/uievents/getModifierState.html
+  getModifierState true
+/uievents/historical.html
+  !passing
+/uievents/idlharness.window.html
+  CompositionEvent interface object length
+  CompositionEvent interface object name
+  CompositionEvent interface: attribute data
+  CompositionEvent interface: calling initCompositionEvent(DOMString, optional boolean, optional boolean, optional WindowProxy?, optional DOMString) on new CompositionEvent("event") with too few arguments must throw TypeError
+  CompositionEvent interface: existence and properties of interface object
+  CompositionEvent interface: existence and properties of interface prototype object
+  CompositionEvent interface: existence and properties of interface prototype object's "constructor" property
+  CompositionEvent interface: existence and properties of interface prototype object's @@unscopables property
+  CompositionEvent interface: new CompositionEvent("event") must inherit property "data" with the proper type
+  CompositionEvent interface: new CompositionEvent("event") must inherit property "initCompositionEvent(DOMString, optional boolean, optional boolean, optional WindowProxy?, optional DOMString)" with the proper type
+  CompositionEvent interface: operation initCompositionEvent(DOMString, optional boolean, optional boolean, optional WindowProxy?, optional DOMString)
+  CompositionEvent must be primary interface of new CompositionEvent("event")
+  FocusEvent interface: existence and properties of interface object
+  InputEvent interface: existence and properties of interface object
+  KeyboardEvent interface: calling initKeyboardEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString, optional unsigned long, optional boolean, optional boolean, optional boolean, optional boolean) on new KeyboardEvent("event") with too few arguments must throw TypeError
+  KeyboardEvent interface: existence and properties of interface object
+  KeyboardEvent interface: new KeyboardEvent("event") must inherit property "initKeyboardEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString, optional unsigned long, optional boolean, optional boolean, optional boolean, optional boolean)" with the proper type
+  KeyboardEvent interface: operation initKeyboardEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString, optional unsigned long, optional boolean, optional boolean, optional boolean, optional boolean)
+  Stringification of (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })()
+  Stringification of new CompositionEvent("event")
+  TextEvent interface object length
+  TextEvent interface object name
+  TextEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "data" with the proper type
+  TextEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "initTextEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString)" with the proper type
+  TextEvent interface: attribute data
+  TextEvent interface: calling initTextEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString) on (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() with too few arguments must throw TypeError
+  TextEvent interface: existence and properties of interface object
+  TextEvent interface: existence and properties of interface prototype object
+  TextEvent interface: existence and properties of interface prototype object's "constructor" property
+  TextEvent interface: existence and properties of interface prototype object's @@unscopables property
+  TextEvent interface: operation initTextEvent(DOMString, optional boolean, optional boolean, optional Window?, optional DOMString)
+  TextEvent must be primary interface of (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })()
+  UIEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "detail" with the proper type
+  UIEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "initUIEvent(DOMString, optional boolean, optional boolean, optional Window?, optional long)" with the proper type
+  UIEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "view" with the proper type
+  UIEvent interface: (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() must inherit property "which" with the proper type
+  UIEvent interface: calling initUIEvent(DOMString, optional boolean, optional boolean, optional Window?, optional long) on (() => { const ev = document.createEvent("TextEvent"); ev.initTextEvent("event"); return ev; })() with too few arguments must throw TypeError
+  UIEvent interface: calling initUIEvent(DOMString, optional boolean, optional boolean, optional Window?, optional long) on new CompositionEvent("event") with too few arguments must throw TypeError
+  UIEvent interface: existence and properties of interface object
+  UIEvent interface: new CompositionEvent("event") must inherit property "detail" with the proper type
+  UIEvent interface: new CompositionEvent("event") must inherit property "initUIEvent(DOMString, optional boolean, optional boolean, optional Window?, optional long)" with the proper type
+  UIEvent interface: new CompositionEvent("event") must inherit property "view" with the proper type
+  UIEvent interface: new CompositionEvent("event") must inherit property "which" with the proper type
+/uievents/interface/click-event.htm
+  !passing
+/uievents/interface/keyboard-accesskey-click-event.html
+  !harness TIMEOUT
+  !passing
+/uievents/interface/keyboard-click-event.html
+  !harness TIMEOUT
+  !passing
+/uievents/keyboard/keyboardevent-composed.html
+  !harness TIMEOUT
+  !passing
+/uievents/keyboard/keydown-input-events.html
+  !harness ERROR
+  !passing
+/uievents/keyboard/keypress-not-fired-for-modifier-shortcuts.html
+  !harness TIMEOUT
+  !passing
+/uievents/keyboard/modifier-keys-combinations.html
+  !harness TIMEOUT
+  !passing
+/uievents/keyboard/modifier-keys.html
+  !harness TIMEOUT
+  !passing
+/uievents/legacy-domevents-tests/approved/dispatchEvent.click.checkbox.html
+  Test Description: MouseEvent: Default action is performed when a synthetic click event is dispatched on a checkbox element
+/uievents/legacy/Event-subclasses-init.html
+  Call initCompositionEvent without parameters
+/uievents/mouse/attributes.html
+  !passing
+/uievents/mouse/cancel-mousedown-in-subframe.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/layer-coords-transform.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/layout_change_should_fire_mouseover.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/mouse_boundary_events_after_reappending_last_over_target.tentative.html
+  !passing
+/uievents/mouse/mouse_boundary_events_after_removing_last_over_element.html
+  !passing
+/uievents/mouse/mouse_boundary_events_modifier_no_mouse_movement.html?Alt
+  !passing
+/uievents/mouse/mouse_boundary_events_modifier_no_mouse_movement.html?Control
+  !passing
+/uievents/mouse/mouse_boundary_events_modifier_no_mouse_movement.html?Meta
+  !passing
+/uievents/mouse/mouse_boundary_events_modifier_no_mouse_movement.html?Shift
+  !passing
+/uievents/mouse/mouse_boundary_events_on_image_map.html
+  !passing
+/uievents/mouse/mouse_buttons_back_forward.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/mouseenter-mouseleave-on-drag.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/mouseevent-constructor-button-range.html
+  new DragEvent() with button -1
+  new DragEvent() with button -2
+  new DragEvent() with button -3
+  new DragEvent() with button -32768
+  new DragEvent() with button 0
+  new DragEvent() with button 1
+  new DragEvent() with button 2
+  new DragEvent() with button 3
+  new DragEvent() with button 32767
+  new DragEvent() with button 4
+  new DragEvent() with button 5
+  new DragEvent() without button defaults to 0
+  new WheelEvent() with button -1
+  new WheelEvent() with button -2
+  new WheelEvent() with button -3
+  new WheelEvent() with button -32768
+  new WheelEvent() with button 0
+  new WheelEvent() with button 1
+  new WheelEvent() with button 2
+  new WheelEvent() with button 3
+  new WheelEvent() with button 32767
+  new WheelEvent() with button 4
+  new WheelEvent() with button 5
+  new WheelEvent() without button defaults to 0
+/uievents/mouse/mouseevent_move_button.html
+  !harness TIMEOUT
+  !passing
+/uievents/mouse/mousemove-action-interpolation.html
+  !passing
+/uievents/mouse/mousemove_after_mouseover_target_removed.html
+  !passing
+/uievents/mouse/mousemove_prevent_default_action.html
+  !passing
+/uievents/mouse/mouseover-at-removing-mousedown-target.html?duration=16
+  !passing
+/uievents/mouse/mouseover-at-removing-mousedown-target.html?duration=42
+  !passing
+/uievents/mouse/offset_and_page_after_dispatch.tentative.html
+  !passing
+/uievents/mouse/synthetic-mouse-enter-leave-over-out-button-state-after-target-removed.tentative.html?buttonType=LEFT&button=0&buttons=1
+  !passing
+  Setup event listeners and wait for load
+/uievents/mouse/synthetic-mouse-enter-leave-over-out-button-state-after-target-removed.tentative.html?buttonType=MIDDLE&button=1&buttons=4
+  !passing
+  Setup event listeners and wait for load
+/uievents/order-of-events/focus-events/focus-automated-blink-webkit.html
+  !harness ERROR
+  !passing
+/uievents/order-of-events/focus-events/focus-contained.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/focus-events/focus-management-expectations.html
+  !harness TIMEOUT
+  !passing
+/uievents/order-of-events/focus-events/focus.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/click-cancel.html
+  !harness TIMEOUT
+  !passing
+/uievents/order-of-events/mouse-events/click-on-body.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/click-on-div.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/click-on-html.html
+  !passing
+/uievents/order-of-events/mouse-events/click-order.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/mouseevents-mousemove.htm
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/mousemove-across.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/mousemove-between.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/mouseover-out.html
+  !harness TIMEOUT
+  !passing
+/uievents/order-of-events/mouse-events/wheel-basic.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/order-of-events/mouse-events/wheel-multiple-sources-deadlock.html
+  !passing
+/uievents/order-of-events/mouse-events/wheel-scrolling.html
+  !harness EXTERNAL-TIMEOUT
+/uievents/textInput/api.html
+  !passing
+/uievents/textInput/backspace.html
+  !harness TIMEOUT
+  !passing
+/uievents/textInput/basic.html
+  !harness TIMEOUT
+  !passing
+/uievents/textInput/delete-selection.html
+  !harness TIMEOUT
+  !passing
+/uievents/textInput/delete.html
+  !harness TIMEOUT
+  !passing
+/uievents/textInput/enter-input.html
+  !harness TIMEOUT
+  !passing
+/uievents/textInput/enter-textarea-contenteditable.html
+  !harness TIMEOUT
+  !passing
+/uievents/ui_event_pseudo_target.html
+  !passing

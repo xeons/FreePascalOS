@@ -1,0 +1,95 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/webstorage/document-domain.html
+  !passing
+/webstorage/event_basic.html
+  !passing
+/webstorage/event_body_attribute.html
+  !passing
+/webstorage/event_case_sensitive.html
+  !passing
+/webstorage/event_constructor.window.html
+  !passing
+/webstorage/event_initstorageevent.window.html
+  !passing
+/webstorage/event_local_key.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_newvalue.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_oldvalue.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_removeitem.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_storagearea.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_url.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_local_window_open_oldvalue.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_no_duplicates.html
+  !harness TIMEOUT
+  !passing
+  localStorage exists
+  sessionStorage exists
+/webstorage/event_session_key.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_newvalue.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_oldvalue.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_removeitem.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_storagearea.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_url.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_session_window_open_scope.html
+  !harness TIMEOUT
+  !passing
+/webstorage/event_setattribute.html
+  !passing
+/webstorage/localstorage-about-blank-3P-iframe-opens-3P-window.partitioned.html
+  !harness TIMEOUT
+  !passing
+/webstorage/localstorage-basic-partitioned.sub.html
+  !harness TIMEOUT
+  !passing
+/webstorage/localstorage-share-data-unrelated-origins.html
+  !harness TIMEOUT
+  !passing
+/webstorage/sessionStorage-basic-partitioned.sub.html
+  !harness TIMEOUT
+  !passing
+/webstorage/storage_local_quota_independent_from_session.window.html
+  !passing
+/webstorage/storage_local_setitem_quotaexceedederr.window.html
+  !passing
+/webstorage/storage_local_window_open.window.html
+  !harness TIMEOUT
+  !passing
+/webstorage/storage_session_quota_independent_from_local.window.html
+  !passing
+/webstorage/storage_session_setitem_quotaexceedederr.window.html
+  !passing
+/webstorage/storage_session_window_noopener.window.html
+  !harness TIMEOUT
+  !passing
+/webstorage/storage_session_window_open.window.html
+  !harness TIMEOUT
+  !passing
+/webstorage/storage_session_window_reopen.window.html
+  !passing

@@ -1,0 +1,40 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/eventsource/dedicated-worker/eventsource-close2.htm
+  !harness TIMEOUT
+  !passing
+/eventsource/dedicated-worker/eventsource-constructor-no-new.any.worker.html
+  !passing
+/eventsource/dedicated-worker/eventsource-constructor-non-same-origin.htm
+  !passing
+  dedicated worker - EventSource: constructor (act as if there is a network error) (about:blank)
+/eventsource/eventsource-constructor-document-domain.window.html
+  !passing
+/eventsource/eventsource-constructor-empty-url.any.worker.html
+  !passing
+/eventsource/eventsource-constructor-non-same-origin.window.html
+  !passing
+  EventSource: constructor (act as if there is a network error) (about:blank)
+/eventsource/eventsource-cross-origin.window.html
+  EventSource: cross-origin No allow-origin should fail
+  EventSource: cross-origin allow-origin: http://example.org should fail
+  EventSource: cross-origin allow-origin:'' should fail
+/eventsource/eventsource-request-cancellation.window.html
+  !passing
+/eventsource/format-bom-2.any.html
+  !passing
+/eventsource/format-bom-2.any.worker.html
+  !passing
+/eventsource/request-cache-control.any.html
+  !harness TIMEOUT
+  !passing
+/eventsource/request-cache-control.any.worker.html
+  !harness TIMEOUT
+  !passing
+/eventsource/request-credentials.window.html
+  !harness TIMEOUT
+  !passing
+/eventsource/shared-worker/eventsource-constructor-non-same-origin.htm
+  !passing
+  shared worker - EventSource: constructor (act as if there is a network error) (about:blank)

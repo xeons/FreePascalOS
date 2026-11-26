@@ -1,0 +1,620 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/websockets/Close-1000-reason.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-1000-reason.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-1000-verify-code.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-1000-verify-code.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-1000.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-1000.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-1005-verify-code.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-1005-verify-code.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-1005.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-1005.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-2999-reason.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-2999-reason.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-3000-reason.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-3000-reason.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-3000-verify-code.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-3000-verify-code.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-4999-reason.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-4999-reason.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-Reason-124Bytes.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-Reason-124Bytes.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-delayed.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-delayed.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-onlyReason.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-onlyReason.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-readyState-Closed.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-readyState-Closed.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-readyState-Closing.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-readyState-Closing.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-reason-unpaired-surrogates.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-reason-unpaired-surrogates.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-server-initiated-close.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-server-initiated-close.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Close-undefined.any.html?wpt_flags=h2
+  !passing
+/websockets/Close-undefined.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-blocked-port.any.html
+  Basic check
+/websockets/Create-blocked-port.any.worker.html
+  Basic check
+/websockets/Create-extensions-empty.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-extensions-empty.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-non-absolute-url.any.worker.html
+  Create WebSocket - Pass a non absolute URL: \s
+  Create WebSocket - Pass a non absolute URL: ?
+/websockets/Create-on-worker-shutdown.any.html
+  !harness TIMEOUT
+  !passing
+/websockets/Create-on-worker-shutdown.any.worker.html
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.html?default
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.html?wss
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.worker.html?default
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-protocols-repeated-case-insensitive.any.worker.html?wss
+  !passing
+/websockets/Create-valid-url-array-protocols.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-array-protocols.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-binaryType-blob.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-binaryType-blob.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol-setCorrectly.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol-setCorrectly.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol-string.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol-string.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url-protocol.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url.any.html?wpt_flags=h2
+  !passing
+/websockets/Create-valid-url.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-0byte-data.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-0byte-data.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-65K-data.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-65K-data.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-65K-arraybuffer.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-65K-arraybuffer.any.worker.html?default
+  !passing
+/websockets/Send-binary-65K-arraybuffer.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-65K-arraybuffer.any.worker.html?wss
+  !passing
+/websockets/Send-binary-arraybuffer.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybuffer.any.worker.html?default
+  !passing
+/websockets/Send-binary-arraybuffer.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybuffer.any.worker.html?wss
+  !passing
+/websockets/Send-binary-arraybufferview-float16.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-float16.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-float32.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-float32.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-float64.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-float64.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int16-offset.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int16-offset.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int32.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int32.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int8.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-int8.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint16-offset-length.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint16-offset-length.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint32-offset.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint32-offset.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint8-offset-length.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint8-offset-length.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint8-offset.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-arraybufferview-uint8-offset.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-blob.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-binary-blob.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-data.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-data.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-data.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-null.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-null.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-paired-surrogates.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-paired-surrogates.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-unicode-data.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-unicode-data.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/Send-unpaired-surrogates.any.html?wpt_flags=h2
+  !passing
+/websockets/Send-unpaired-surrogates.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/back-forward-cache-closes-open-websocket-connection.tentative.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/back-forward-cache-with-closed-websocket-connection-ccns.tentative.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/back-forward-cache-with-closed-websocket-connection.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/back-forward-cache-with-open-websocket-connection-and-close-it-in-pagehide.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/back-forward-cache-with-open-websocket-connection-ccns.tentative.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/back-forward-cache-with-open-websocket-connection.window.html
+  !harness TIMEOUT
+  !passing
+/websockets/basic-auth.any.html?wpt_flags=h2
+  !passing
+/websockets/basic-auth.any.html?wss
+  !passing
+/websockets/basic-auth.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/basic-auth.any.serviceworker.html?wss
+  !passing
+/websockets/basic-auth.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/basic-auth.any.sharedworker.html?wss
+  !passing
+/websockets/basic-auth.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/basic-auth.any.worker.html?wss
+  !passing
+/websockets/binary/001.html?wpt_flags=h2
+  !passing
+/websockets/binary/001.html?wpt_flags=websocket-h3
+  !passing
+/websockets/binary/002.html?wpt_flags=h2
+  !passing
+/websockets/binary/004.html?wpt_flags=h2
+  !passing
+/websockets/binary/005.html?wpt_flags=h2
+  !passing
+/websockets/binaryType-wrong-value.any.html?wpt_flags=h2
+  !passing
+/websockets/binaryType-wrong-value.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/bufferedAmount-unchanged-by-sync-xhr.any.html?wpt_flags=h2
+  !passing
+/websockets/bufferedAmount-unchanged-by-sync-xhr.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/bufferedAmount-unchanged-by-sync-xhr.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/closing-handshake/002.html?wpt_flags=h2
+  !passing
+/websockets/closing-handshake/003.html?wpt_flags=h2
+  !passing
+/websockets/closing-handshake/004.html?wpt_flags=h2
+  !passing
+/websockets/constructor/006.html?wpt_flags=h2
+  !passing
+/websockets/constructor/009.html?wpt_flags=h2
+  !passing
+/websockets/constructor/013.html?default
+  !harness TIMEOUT
+  !passing
+/websockets/constructor/013.html?wpt_flags=h2
+  !passing
+/websockets/constructor/014.html?default
+  !passing
+/websockets/constructor/014.html?wss
+  !passing
+/websockets/constructor/016.html?wpt_flags=h2
+  !passing
+/websockets/constructor/018.html?wpt_flags=h2
+  !passing
+/websockets/constructor/019.html?wpt_flags=h2
+  !passing
+/websockets/constructor/020.html?wpt_flags=h2
+  !passing
+/websockets/constructor/022.html?wpt_flags=h2
+  !passing
+/websockets/constructor/option-bag.any.html?default
+  Option bag with protocols array should be accepted
+/websockets/constructor/option-bag.any.html?wss
+  Option bag with protocols array should be accepted
+/websockets/constructor/option-bag.any.worker.html?default
+  Option bag with protocols array should be accepted
+/websockets/constructor/option-bag.any.worker.html?wss
+  Option bag with protocols array should be accepted
+/websockets/constructor/target-address-space.any.html?default
+  !passing
+  WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+/websockets/constructor/target-address-space.any.html?wss
+  !passing
+  WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+/websockets/constructor/target-address-space.any.worker.html?default
+  !passing
+  WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+/websockets/constructor/target-address-space.any.worker.html?wss
+  !passing
+  WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+/websockets/cookies/001.html?wpt_flags=h2
+  !passing
+/websockets/cookies/001.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/002.html?wpt_flags=h2
+  !passing
+/websockets/cookies/002.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/003.html?wpt_flags=h2
+  !passing
+/websockets/cookies/003.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/004.html?wss&wpt_flags=https
+  !harness EXTERNAL-TIMEOUT
+/websockets/cookies/005.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/006.html?wpt_flags=h2
+  !passing
+/websockets/cookies/006.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/007.html?default
+  !passing
+/websockets/cookies/007.html?wpt_flags=h2
+  !passing
+/websockets/cookies/007.html?wss&wpt_flags=https
+  !passing
+/websockets/cookies/cross-origin-cookie-set.html
+  !passing
+/websockets/extended-payload-length.html?wpt_flags=h2
+  !passing
+/websockets/idlharness.any.html
+  CloseEvent interface object length
+  WebSocket interface object length
+  WebSocket interface: attribute onclose
+  WebSocket interface: attribute onerror
+  WebSocket interface: attribute onmessage
+  WebSocket interface: attribute onopen
+  WebSocket interface: operation close(optional unsigned short, optional USVString)
+/websockets/idlharness.any.worker.html
+  CloseEvent interface object length
+  CloseEvent interface: attribute code
+  CloseEvent interface: attribute reason
+  CloseEvent interface: attribute wasClean
+  CloseEvent interface: existence and properties of interface object
+  WebSocket interface object length
+  WebSocket interface: attribute binaryType
+  WebSocket interface: attribute bufferedAmount
+  WebSocket interface: attribute extensions
+  WebSocket interface: attribute onclose
+  WebSocket interface: attribute onerror
+  WebSocket interface: attribute onmessage
+  WebSocket interface: attribute onopen
+  WebSocket interface: attribute protocol
+  WebSocket interface: attribute readyState
+  WebSocket interface: attribute url
+  WebSocket interface: existence and properties of interface object
+  WebSocket interface: operation close(optional unsigned short, optional USVString)
+/websockets/interfaces/CloseEvent/clean-close.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-arraybuffer.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-blob.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-getting.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-large.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-unicode.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/close/close-connecting-async.any.html?wss
+  !passing
+/websockets/interfaces/WebSocket/close/close-connecting-async.any.worker.html?wss
+  !passing
+/websockets/interfaces/WebSocket/events/016.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/events/018.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/send/006.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/send/007.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/send/009.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/send/011.html?wpt_flags=h2
+  !passing
+/websockets/interfaces/WebSocket/send/012.html?wpt_flags=h2
+  !passing
+/websockets/keeping-connection-open/001.html?wpt_flags=h2
+  !passing
+/websockets/multi-globals/message-received.html
+  !passing
+/websockets/multi-globals/url-parsing/url-parsing.html
+  !passing
+/websockets/opening-handshake/002.html?wpt_flags=h2
+  !passing
+/websockets/send-many-64K-messages-with-backpressure.any.html?wpt_flags=h2
+  !passing
+/websockets/send-many-64K-messages-with-backpressure.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/send-many-64K-messages-with-backpressure.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/send-many-64K-messages-with-backpressure.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/abort.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/abort.any.html?wss
+  !passing
+/websockets/stream/tentative/abort.any.serviceworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/abort.any.serviceworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/abort.any.sharedworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/abort.any.sharedworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/abort.any.worker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/abort.any.worker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/backpressure-receive.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.serviceworker.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.sharedworker.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-receive.any.worker.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-send.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-send.any.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-send.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-send.any.serviceworker.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-send.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-send.any.sharedworker.html?wss
+  !passing
+/websockets/stream/tentative/backpressure-send.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/backpressure-send.any.worker.html?wss
+  !passing
+/websockets/stream/tentative/close.any.html?default
+  !passing
+/websockets/stream/tentative/close.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/close.any.html?wss
+  !passing
+/websockets/stream/tentative/close.any.serviceworker.html?default
+  !passing
+/websockets/stream/tentative/close.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/close.any.serviceworker.html?wss
+  !passing
+/websockets/stream/tentative/close.any.sharedworker.html?default
+  !passing
+/websockets/stream/tentative/close.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/close.any.sharedworker.html?wss
+  !passing
+/websockets/stream/tentative/close.any.worker.html?default
+  !passing
+/websockets/stream/tentative/close.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/close.any.worker.html?wss
+  !passing
+/websockets/stream/tentative/constructor.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/constructor.any.html?wss
+  !passing
+/websockets/stream/tentative/constructor.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/constructor.any.serviceworker.html?wss
+  !passing
+/websockets/stream/tentative/constructor.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/constructor.any.sharedworker.html?wss
+  !passing
+/websockets/stream/tentative/constructor.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/constructor.any.worker.html?wss
+  !passing
+/websockets/stream/tentative/read.any.html?default
+  !passing
+/websockets/stream/tentative/read.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/read.any.html?wss
+  !passing
+/websockets/stream/tentative/read.any.serviceworker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.serviceworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.serviceworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.sharedworker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.sharedworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.sharedworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.worker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.worker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/read.any.worker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/remote-close.any.html?default
+  !passing
+/websockets/stream/tentative/remote-close.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/remote-close.any.html?wss
+  !passing
+/websockets/stream/tentative/remote-close.any.serviceworker.html?default
+  !passing
+/websockets/stream/tentative/remote-close.any.serviceworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/remote-close.any.serviceworker.html?wss
+  !passing
+/websockets/stream/tentative/remote-close.any.sharedworker.html?default
+  !passing
+/websockets/stream/tentative/remote-close.any.sharedworker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/remote-close.any.sharedworker.html?wss
+  !passing
+/websockets/stream/tentative/remote-close.any.worker.html?default
+  !passing
+/websockets/stream/tentative/remote-close.any.worker.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/remote-close.any.worker.html?wss
+  !passing
+/websockets/stream/tentative/websocket-error.any.html
+  !passing
+/websockets/stream/tentative/websocket-error.any.serviceworker.html
+  !passing
+/websockets/stream/tentative/websocket-error.any.sharedworker.html
+  !passing
+/websockets/stream/tentative/websocket-error.any.worker.html
+  !passing
+/websockets/stream/tentative/write.any.html?default
+  !passing
+/websockets/stream/tentative/write.any.html?wpt_flags=h2
+  !passing
+/websockets/stream/tentative/write.any.html?wss
+  !passing
+/websockets/stream/tentative/write.any.serviceworker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.serviceworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.serviceworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.sharedworker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.sharedworker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.sharedworker.html?wss
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.worker.html?default
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.worker.html?wpt_flags=h2
+  !harness TIMEOUT
+/websockets/stream/tentative/write.any.worker.html?wss
+  !harness TIMEOUT
+/websockets/unload-a-document/001.html?default
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/001.html?wpt_flags=h2
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/001.html?wss
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/002.html?default
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/002.html?wpt_flags=h2
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/002.html?wss
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/003.html
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/004.html
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/005.html?default
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/005.html?wpt_flags=h2
+  !harness TIMEOUT
+  !passing
+/websockets/unload-a-document/005.html?wss
+  !harness TIMEOUT
+  !passing

@@ -1,0 +1,209 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/performance-timeline/back-forward-cache-restoration.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/buffered-flag-with-entryTypes-observer.tentative.any.html
+  !harness ERROR
+/performance-timeline/case-sensitivity.any.html
+  !passing
+  observe() and case sensitivity for types/entryTypes and buffered.
+/performance-timeline/case-sensitivity.any.worker.html
+  !passing
+  observe() and case sensitivity for types/entryTypes and buffered.
+/performance-timeline/droppedentriescount.any.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/droppedentriescount.any.worker.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/get-invalid-entries.html
+  !harness ERROR
+  !passing
+/performance-timeline/getEntriesByName-sort.html
+  !passing
+/performance-timeline/idlharness.any.html
+  Performance interface: calling getEntriesByName(DOMString, optional DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: calling getEntriesByType(DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: operation getEntries()
+  Performance interface: operation getEntriesByName(DOMString, optional DOMString)
+  Performance interface: operation getEntriesByType(DOMString)
+  PerformanceEntry interface object length
+  PerformanceEntry interface: attribute id
+  PerformanceEntry interface: attribute navigationId
+  PerformanceEntry interface: operation toJSON()
+  PerformanceObserver interface: operation disconnect()
+  PerformanceObserver interface: operation observe(optional PerformanceObserverInit)
+  PerformanceObserver interface: operation takeRecords()
+  PerformanceObserverEntryList interface object length
+  PerformanceObserverEntryList interface: calling getEntriesByName(DOMString, optional DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: calling getEntriesByType(DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: operation getEntriesByName(DOMString, optional DOMString)
+/performance-timeline/idlharness.any.serviceworker.html
+  Performance interface: calling getEntriesByName(DOMString, optional DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: calling getEntriesByType(DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: operation getEntries()
+  Performance interface: operation getEntriesByName(DOMString, optional DOMString)
+  Performance interface: operation getEntriesByType(DOMString)
+  PerformanceEntry interface object length
+  PerformanceEntry interface: attribute duration
+  PerformanceEntry interface: attribute entryType
+  PerformanceEntry interface: attribute id
+  PerformanceEntry interface: attribute name
+  PerformanceEntry interface: attribute navigationId
+  PerformanceEntry interface: attribute startTime
+  PerformanceEntry interface: existence and properties of interface object
+  PerformanceEntry interface: existence and properties of interface prototype object
+  PerformanceEntry interface: operation toJSON()
+  PerformanceObserver interface: existence and properties of interface object
+  PerformanceObserver interface: existence and properties of interface prototype object
+  PerformanceObserver interface: operation disconnect()
+  PerformanceObserver interface: operation observe(optional PerformanceObserverInit)
+  PerformanceObserver interface: operation takeRecords()
+  PerformanceObserverEntryList interface object length
+  PerformanceObserverEntryList interface: calling getEntriesByName(DOMString, optional DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: calling getEntriesByType(DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: existence and properties of interface object
+  PerformanceObserverEntryList interface: existence and properties of interface prototype object
+  PerformanceObserverEntryList interface: operation getEntriesByName(DOMString, optional DOMString)
+/performance-timeline/idlharness.any.sharedworker.html
+  Performance interface: calling getEntriesByName(DOMString, optional DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: calling getEntriesByType(DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: operation getEntries()
+  Performance interface: operation getEntriesByName(DOMString, optional DOMString)
+  Performance interface: operation getEntriesByType(DOMString)
+  PerformanceEntry interface object length
+  PerformanceEntry interface: attribute duration
+  PerformanceEntry interface: attribute entryType
+  PerformanceEntry interface: attribute id
+  PerformanceEntry interface: attribute name
+  PerformanceEntry interface: attribute navigationId
+  PerformanceEntry interface: attribute startTime
+  PerformanceEntry interface: existence and properties of interface object
+  PerformanceEntry interface: existence and properties of interface prototype object
+  PerformanceEntry interface: operation toJSON()
+  PerformanceObserver interface: existence and properties of interface object
+  PerformanceObserver interface: existence and properties of interface prototype object
+  PerformanceObserver interface: operation disconnect()
+  PerformanceObserver interface: operation observe(optional PerformanceObserverInit)
+  PerformanceObserver interface: operation takeRecords()
+  PerformanceObserverEntryList interface object length
+  PerformanceObserverEntryList interface: calling getEntriesByName(DOMString, optional DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: calling getEntriesByType(DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: existence and properties of interface object
+  PerformanceObserverEntryList interface: existence and properties of interface prototype object
+  PerformanceObserverEntryList interface: operation getEntriesByName(DOMString, optional DOMString)
+/performance-timeline/idlharness.any.worker.html
+  Performance interface: calling getEntriesByName(DOMString, optional DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: calling getEntriesByType(DOMString) on performance with too few arguments must throw TypeError
+  Performance interface: operation getEntries()
+  Performance interface: operation getEntriesByName(DOMString, optional DOMString)
+  Performance interface: operation getEntriesByType(DOMString)
+  PerformanceEntry interface object length
+  PerformanceEntry interface: attribute duration
+  PerformanceEntry interface: attribute entryType
+  PerformanceEntry interface: attribute id
+  PerformanceEntry interface: attribute name
+  PerformanceEntry interface: attribute navigationId
+  PerformanceEntry interface: attribute startTime
+  PerformanceEntry interface: existence and properties of interface object
+  PerformanceEntry interface: existence and properties of interface prototype object
+  PerformanceEntry interface: operation toJSON()
+  PerformanceObserver interface: existence and properties of interface object
+  PerformanceObserver interface: existence and properties of interface prototype object
+  PerformanceObserver interface: operation disconnect()
+  PerformanceObserver interface: operation observe(optional PerformanceObserverInit)
+  PerformanceObserver interface: operation takeRecords()
+  PerformanceObserverEntryList interface object length
+  PerformanceObserverEntryList interface: calling getEntriesByName(DOMString, optional DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: calling getEntriesByType(DOMString) on entryList with too few arguments must throw TypeError
+  PerformanceObserverEntryList interface: existence and properties of interface object
+  PerformanceObserverEntryList interface: existence and properties of interface prototype object
+  PerformanceObserverEntryList interface: operation getEntriesByName(DOMString, optional DOMString)
+/performance-timeline/navigation-id-element-timing.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-initial-load.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-long-task-task-attribution.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-mark-measure.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-reset.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-resource-timing.tentative.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/navigation-id-worker-created-entries.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/abort-block-bfcache.window.html
+  !passing
+/performance-timeline/not-restored-reasons/attributes.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/bfcache-reasons-stay.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/bfcache.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/cross-origin-bfcache.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/fetch.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/iframes-without-attributes.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/navigation-failure.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/not-bfcached.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/redirect-on-history.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/reload.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/same-origin-bfcache.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/not-restored-reasons/same-origin-replace.window.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/po-callback-mutate.any.html
+  !passing
+/performance-timeline/po-callback-mutate.any.worker.html
+  !passing
+/performance-timeline/po-observe-type.any.html
+  Calling observe() with entryTypes and then type should throw an InvalidModificationError
+  Calling observe() with type and then entryTypes should throw an InvalidModificationError
+/performance-timeline/po-observe-type.any.worker.html
+  !passing
+  Passing in unknown values to type does throw an exception.
+  observe() with different type values stacks.
+/performance-timeline/po-observe.any.html
+  entryTypes must be a sequence or throw a TypeError
+  replace observer if already present
+/performance-timeline/po-observe.any.worker.html
+  entryTypes must be a sequence or throw a TypeError
+  replace observer if already present
+/performance-timeline/po-observe.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/po-resource.html
+  !harness TIMEOUT
+  !passing
+/performance-timeline/supportedEntryTypes.any.html
+  supportedEntryTypes caches result
+/performance-timeline/supportedEntryTypes.any.worker.html
+  supportedEntryTypes caches result

@@ -1,0 +1,21 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/console/console-count-logging.html
+  !passing
+/console/console-countReset-logging.html
+  !passing
+/console/console-is-a-namespace.any.html
+  The prototype chain must be correct
+/console/console-is-a-namespace.any.worker.html
+  The prototype chain must be correct
+/console/console-number-format-specifiers-symbol.html
+  !passing
+/console/console-timing-logging.html
+  !passing
+/console/console-timing-missing-label-warnings.tentative.html
+  !passing
+/console/idlharness.any.html
+  console namespace: [[Prototype]] is Object.prototype
+/console/idlharness.any.worker.html
+  console namespace: [[Prototype]] is Object.prototype

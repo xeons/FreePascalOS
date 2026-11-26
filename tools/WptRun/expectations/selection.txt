@@ -1,0 +1,518 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/selection/anchor-removal.html
+  !passing
+/selection/anonymous/details-ancestor.html
+  !passing
+/selection/anonymous/details-mutate.html
+  !passing
+/selection/bidi/modify-extend-by-character.html
+  !passing
+/selection/bidi/modify-move-by-character.html
+  !passing
+/selection/bidi/modify.tentative.html
+  LTR text with left direction in rtl context
+  LTR text with right direction in ltr context
+  LTR text with right direction in ltr context (which was previously rtl)
+  LTR+RTL text with left direction in rtl context
+  LTR+RTL text with right direction in ltr context
+  LTR+RTL text with right direction in ltr context (which was previously rtl)
+  LTR+RTL+LTR text with left direction in rtl context
+  LTR+RTL+LTR text with right direction in ltr context
+  LTR+RTL+LTR text with right direction in ltr context (which was previously rtl)
+  RTL text with left direction in rtl context
+  RTL text with right direction in ltr context
+  RTL text with right direction in ltr context (which was previously rtl)
+  RTL+LTR text with left direction in rtl context
+  RTL+LTR text with right direction in ltr context
+  RTL+LTR text with right direction in ltr context (which was previously rtl)
+  RTL+LTR+RTL text with left direction in rtl context
+  RTL+LTR+RTL text with right direction in ltr context
+  RTL+LTR+RTL text with right direction in ltr context (which was previously rtl)
+/selection/canvas-click.html
+  !harness TIMEOUT
+  !passing
+/selection/canvas-drag.html
+  !passing
+/selection/caret-position-should-be-correct-while-moveup-movedown.html
+  !passing
+/selection/caret/move-around-contenteditable-false.html
+  !passing
+  Initializing tests
+/selection/caret/move-around-generated-content.html
+  !passing
+  Initializing tests
+/selection/caret/move-through-overflow-scroll.html
+  !harness TIMEOUT
+  !passing
+/selection/contenteditable/collapse.html
+  !passing
+/selection/contenteditable/initial-selection-during-focus-event-propagation.html
+  !harness TIMEOUT
+  !passing
+/selection/contenteditable/initial-selection-on-focus.tentative.html?div
+  !passing
+  editor shouldn't reset selection when it gets focus again
+/selection/contenteditable/initial-selection-on-focus.tentative.html?span
+  !passing
+  editor shouldn't reset selection when it gets focus again
+/selection/contenteditable/modify-around-inline-element-boundary.tentative.html
+  !passing
+/selection/contenteditable/modify-around-non-editable-span.html
+  !passing
+/selection/contenteditable/modify.tentative.html
+  !passing
+/selection/contenteditable/modifying-selection-with-non-primary-mouse-button.tentative.html?middle
+  !passing
+/selection/contenteditable/modifying-selection-with-non-primary-mouse-button.tentative.html?secondary
+  !passing
+/selection/contenteditable/modifying-selection-with-primary-mouse-button.tentative.html
+  !passing
+/selection/deleteFromDocument.html
+  !harness ERROR
+  !passing
+  Selection.prototype.deleteFromDocument.length must equal 0
+/selection/document-selectionchange.html
+  !passing
+  triggers selectionchange event on removeAllRanges
+/selection/drag-disabled-textarea-shadow-dom.html
+  !harness TIMEOUT
+  !passing
+/selection/drag-out-of-floated-content.html
+  !passing
+/selection/drag-selection-contenteditable-to-out-of-flow-user-select-none.html
+  !passing
+/selection/drag-selection-extend-to-user-select-none.html
+  !passing
+/selection/extend-selection-backward-on-input.html
+  !passing
+/selection/extend-selection-in-shadow-tree.html
+  !passing
+/selection/fire-selectionchange-event-on-deleting-single-character-inside-inline-element.html
+  !harness TIMEOUT
+  !passing
+/selection/fire-selectionchange-event-on-document-if-textcontrol-element-is-in-shadow-tree.html
+  !passing
+/selection/fire-selectionchange-event-on-pressing-backspace.html
+  !harness TIMEOUT
+  !passing
+/selection/fire-selectionchange-event-on-textcontrol-element-on-pressing-backspace.html
+  !harness TIMEOUT
+  !passing
+/selection/idlharness.window.html
+  Document interface: attribute onselectionchange
+  Document interface: attribute onselectstart
+  Document interface: document must inherit property "onselectstart" with the proper type
+  HTMLElement interface: attribute onselectionchange
+  HTMLElement interface: attribute onselectstart
+  Selection interface: calling getComposedRanges(optional GetComposedRangesOptions) on getSelection() with too few arguments must throw TypeError
+  Selection interface: existence and properties of interface object
+  Selection interface: getSelection() must inherit property "getComposedRanges(optional GetComposedRangesOptions)" with the proper type
+  Selection interface: operation getComposedRanges(optional GetComposedRangesOptions)
+  Window interface: attribute onselectionchange
+  Window interface: attribute onselectstart
+  Window interface: window must inherit property "onselectionchange" with the proper type
+  Window interface: window must inherit property "onselectstart" with the proper type
+/selection/longpress-selection.html
+  !passing
+/selection/modify-extend-word-trailing-inline-block.tentative.html
+  !passing
+/selection/modify-line-flex-column.tentative.html
+  !passing
+/selection/modify-line-flex-row.tentative.html
+  !passing
+/selection/modify-line-grid-basic.tentative.html
+  !passing
+/selection/modify.tentative.html
+  !passing
+/selection/move-by-word-korean.html
+  !passing
+/selection/move-by-word-with-symbol.html
+  !passing
+/selection/move-paragraph-cross-editing-boundary.tentative.html
+  !passing
+/selection/move-paragraphboundary-cross-editing-boundary.tentative.html
+  !passing
+/selection/move-selection-range-into-different-root.tentative.html
+  Set selection range into a sub-document with selectNode
+  Set selection range into a sub-document with selectNodeContents
+  Set selection range into a sub-document with setEnd
+  Set selection range into a sub-document with setEndAfter
+  Set selection range into a sub-document with setEndBefore
+  Set selection range into a sub-document with setStart
+  Set selection range into a sub-document with setStartAfter
+  Set selection range into a sub-document with setStartBefore
+/selection/onselectionchange-on-distinct-text-controls.html
+  !passing
+/selection/onselectstart-on-key-in-contenteditable.html?preventDefault=no
+  !passing
+/selection/onselectstart-on-key-in-contenteditable.html?preventDefault=yes
+  !passing
+/selection/script-and-style-elements.html
+  !passing
+/selection/select-end-of-line-image.tentative.html
+  !passing
+/selection/selectAllChildren.html
+  Range 0 [], node 1 paras[0].firstChild
+  Range 0 [], node 26 comment
+  Range 0 [], node 3 paras[1].firstChild
+  Range 1 [paras[0].firstChild, 0, paras[0].firstChild, 0], node 1 paras[0].firstChild
+  Range 1 [paras[0].firstChild, 0, paras[0].firstChild, 0], node 26 comment
+  Range 1 [paras[0].firstChild, 0, paras[0].firstChild, 0], node 3 paras[1].firstChild
+  Range 10 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 1], node 1 paras[0].firstChild
+  Range 10 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 1], node 26 comment
+  Range 10 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 1], node 3 paras[1].firstChild
+  Range 11 [detachedPara1.firstChild, 2, detachedPara1.firstChild, 8], node 1 paras[0].firstChild
+  Range 11 [detachedPara1.firstChild, 2, detachedPara1.firstChild, 8], node 26 comment
+  Range 11 [detachedPara1.firstChild, 2, detachedPara1.firstChild, 8], node 3 paras[1].firstChild
+  Range 12 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 0], node 1 paras[0].firstChild
+  Range 12 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 0], node 26 comment
+  Range 12 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 0], node 3 paras[1].firstChild
+  Range 13 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 1], node 1 paras[0].firstChild
+  Range 13 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 1], node 26 comment
+  Range 13 [foreignPara1.firstChild, 0, foreignPara1.firstChild, 1], node 3 paras[1].firstChild
+  Range 14 [foreignPara1.firstChild, 2, foreignPara1.firstChild, 8], node 1 paras[0].firstChild
+  Range 14 [foreignPara1.firstChild, 2, foreignPara1.firstChild, 8], node 26 comment
+  Range 14 [foreignPara1.firstChild, 2, foreignPara1.firstChild, 8], node 3 paras[1].firstChild
+  Range 15 [document.documentElement, 0, document.documentElement, 1], node 1 paras[0].firstChild
+  Range 15 [document.documentElement, 0, document.documentElement, 1], node 26 comment
+  Range 15 [document.documentElement, 0, document.documentElement, 1], node 3 paras[1].firstChild
+  Range 16 [document.documentElement, 0, document.documentElement, 2], node 1 paras[0].firstChild
+  Range 16 [document.documentElement, 0, document.documentElement, 2], node 26 comment
+  Range 16 [document.documentElement, 0, document.documentElement, 2], node 3 paras[1].firstChild
+  Range 17 [document.documentElement, 1, document.documentElement, 2], node 1 paras[0].firstChild
+  Range 17 [document.documentElement, 1, document.documentElement, 2], node 26 comment
+  Range 17 [document.documentElement, 1, document.documentElement, 2], node 3 paras[1].firstChild
+  Range 18 [document.head, 1, document.head, 1], node 1 paras[0].firstChild
+  Range 18 [document.head, 1, document.head, 1], node 26 comment
+  Range 18 [document.head, 1, document.head, 1], node 3 paras[1].firstChild
+  Range 19 [document.body, 0, document.body, 1], node 1 paras[0].firstChild
+  Range 19 [document.body, 0, document.body, 1], node 26 comment
+  Range 19 [document.body, 0, document.body, 1], node 3 paras[1].firstChild
+  Range 2 [paras[0].firstChild, 0, paras[0].firstChild, 1], node 1 paras[0].firstChild
+  Range 2 [paras[0].firstChild, 0, paras[0].firstChild, 1], node 26 comment
+  Range 2 [paras[0].firstChild, 0, paras[0].firstChild, 1], node 3 paras[1].firstChild
+  Range 20 [foreignDoc.documentElement, 0, foreignDoc.documentElement, 1], node 1 paras[0].firstChild
+  Range 20 [foreignDoc.documentElement, 0, foreignDoc.documentElement, 1], node 26 comment
+  Range 20 [foreignDoc.documentElement, 0, foreignDoc.documentElement, 1], node 3 paras[1].firstChild
+  Range 21 [foreignDoc.head, 1, foreignDoc.head, 1], node 1 paras[0].firstChild
+  Range 21 [foreignDoc.head, 1, foreignDoc.head, 1], node 26 comment
+  Range 21 [foreignDoc.head, 1, foreignDoc.head, 1], node 3 paras[1].firstChild
+  Range 22 [foreignDoc.body, 0, foreignDoc.body, 0], node 1 paras[0].firstChild
+  Range 22 [foreignDoc.body, 0, foreignDoc.body, 0], node 26 comment
+  Range 22 [foreignDoc.body, 0, foreignDoc.body, 0], node 3 paras[1].firstChild
+  Range 23 [paras[0], 0, paras[0], 0], node 1 paras[0].firstChild
+  Range 23 [paras[0], 0, paras[0], 0], node 26 comment
+  Range 23 [paras[0], 0, paras[0], 0], node 3 paras[1].firstChild
+  Range 24 [paras[0], 0, paras[0], 1], node 1 paras[0].firstChild
+  Range 24 [paras[0], 0, paras[0], 1], node 26 comment
+  Range 24 [paras[0], 0, paras[0], 1], node 3 paras[1].firstChild
+  Range 25 [detachedPara1, 0, detachedPara1, 0], node 1 paras[0].firstChild
+  Range 25 [detachedPara1, 0, detachedPara1, 0], node 26 comment
+  Range 25 [detachedPara1, 0, detachedPara1, 0], node 3 paras[1].firstChild
+  Range 26 [detachedPara1, 0, detachedPara1, 1], node 1 paras[0].firstChild
+  Range 26 [detachedPara1, 0, detachedPara1, 1], node 26 comment
+  Range 26 [detachedPara1, 0, detachedPara1, 1], node 3 paras[1].firstChild
+  Range 27 [paras[0].firstChild, 0, paras[1].firstChild, 0], node 1 paras[0].firstChild
+  Range 27 [paras[0].firstChild, 0, paras[1].firstChild, 0], node 26 comment
+  Range 27 [paras[0].firstChild, 0, paras[1].firstChild, 0], node 3 paras[1].firstChild
+  Range 28 [paras[0].firstChild, 0, paras[1].firstChild, 8], node 1 paras[0].firstChild
+  Range 28 [paras[0].firstChild, 0, paras[1].firstChild, 8], node 26 comment
+  Range 28 [paras[0].firstChild, 0, paras[1].firstChild, 8], node 3 paras[1].firstChild
+  Range 29 [paras[0].firstChild, 3, paras[3], 1], node 1 paras[0].firstChild
+  Range 29 [paras[0].firstChild, 3, paras[3], 1], node 26 comment
+  Range 29 [paras[0].firstChild, 3, paras[3], 1], node 3 paras[1].firstChild
+  Range 3 [paras[0].firstChild, 2, paras[0].firstChild, 8], node 1 paras[0].firstChild
+  Range 3 [paras[0].firstChild, 2, paras[0].firstChild, 8], node 26 comment
+  Range 3 [paras[0].firstChild, 2, paras[0].firstChild, 8], node 3 paras[1].firstChild
+  Range 30 [paras[0], 0, paras[0].firstChild, 7], node 1 paras[0].firstChild
+  Range 30 [paras[0], 0, paras[0].firstChild, 7], node 26 comment
+  Range 30 [paras[0], 0, paras[0].firstChild, 7], node 3 paras[1].firstChild
+  Range 31 [testDiv, 2, paras[4], 1], node 1 paras[0].firstChild
+  Range 31 [testDiv, 2, paras[4], 1], node 26 comment
+  Range 31 [testDiv, 2, paras[4], 1], node 3 paras[1].firstChild
+  Range 32 [testDiv, 1, paras[2].firstChild, 5], node 1 paras[0].firstChild
+  Range 32 [testDiv, 1, paras[2].firstChild, 5], node 26 comment
+  Range 32 [testDiv, 1, paras[2].firstChild, 5], node 3 paras[1].firstChild
+  Range 33 [document.documentElement, 1, document.body, 0], node 1 paras[0].firstChild
+  Range 33 [document.documentElement, 1, document.body, 0], node 26 comment
+  Range 33 [document.documentElement, 1, document.body, 0], node 3 paras[1].firstChild
+  Range 34 [foreignDoc.documentElement, 1, foreignDoc.body, 0], node 1 paras[0].firstChild
+  Range 34 [foreignDoc.documentElement, 1, foreignDoc.body, 0], node 26 comment
+  Range 34 [foreignDoc.documentElement, 1, foreignDoc.body, 0], node 3 paras[1].firstChild
+  Range 35 [document, 0, document, 1], node 1 paras[0].firstChild
+  Range 35 [document, 0, document, 1], node 26 comment
+  Range 35 [document, 0, document, 1], node 3 paras[1].firstChild
+  Range 36 [document, 0, document, 2], node 1 paras[0].firstChild
+  Range 36 [document, 0, document, 2], node 26 comment
+  Range 36 [document, 0, document, 2], node 3 paras[1].firstChild
+  Range 37 [document, 1, document, 2], node 1 paras[0].firstChild
+  Range 37 [document, 1, document, 2], node 26 comment
+  Range 37 [document, 1, document, 2], node 3 paras[1].firstChild
+  Range 38 [testDiv, 0, comment, 5], node 1 paras[0].firstChild
+  Range 38 [testDiv, 0, comment, 5], node 26 comment
+  Range 38 [testDiv, 0, comment, 5], node 3 paras[1].firstChild
+  Range 39 [paras[2].firstChild, 4, comment, 2], node 1 paras[0].firstChild
+  Range 39 [paras[2].firstChild, 4, comment, 2], node 26 comment
+  Range 39 [paras[2].firstChild, 4, comment, 2], node 3 paras[1].firstChild
+  Range 4 [paras[0].firstChild, 2, paras[0].firstChild, 9], node 1 paras[0].firstChild
+  Range 4 [paras[0].firstChild, 2, paras[0].firstChild, 9], node 26 comment
+  Range 4 [paras[0].firstChild, 2, paras[0].firstChild, 9], node 3 paras[1].firstChild
+  Range 40 [paras[3], 1, comment, 8], node 1 paras[0].firstChild
+  Range 40 [paras[3], 1, comment, 8], node 26 comment
+  Range 40 [paras[3], 1, comment, 8], node 3 paras[1].firstChild
+  Range 41 [foreignDoc, 0, foreignDoc, 0], node 1 paras[0].firstChild
+  Range 41 [foreignDoc, 0, foreignDoc, 0], node 26 comment
+  Range 41 [foreignDoc, 0, foreignDoc, 0], node 3 paras[1].firstChild
+  Range 42 [foreignDoc, 1, foreignComment, 2], node 1 paras[0].firstChild
+  Range 42 [foreignDoc, 1, foreignComment, 2], node 26 comment
+  Range 42 [foreignDoc, 1, foreignComment, 2], node 3 paras[1].firstChild
+  Range 43 [foreignDoc.body, 0, foreignTextNode, 36], node 1 paras[0].firstChild
+  Range 43 [foreignDoc.body, 0, foreignTextNode, 36], node 26 comment
+  Range 43 [foreignDoc.body, 0, foreignTextNode, 36], node 3 paras[1].firstChild
+  Range 44 [xmlDoc, 0, xmlDoc, 0], node 1 paras[0].firstChild
+  Range 44 [xmlDoc, 0, xmlDoc, 0], node 26 comment
+  Range 44 [xmlDoc, 0, xmlDoc, 0], node 3 paras[1].firstChild
+  Range 45 [xmlDoc, 1, xmlComment, 0], node 1 paras[0].firstChild
+  Range 45 [xmlDoc, 1, xmlComment, 0], node 26 comment
+  Range 45 [xmlDoc, 1, xmlComment, 0], node 3 paras[1].firstChild
+  Range 46 [detachedTextNode, 0, detachedTextNode, 8], node 1 paras[0].firstChild
+  Range 46 [detachedTextNode, 0, detachedTextNode, 8], node 26 comment
+  Range 46 [detachedTextNode, 0, detachedTextNode, 8], node 3 paras[1].firstChild
+  Range 47 [detachedForeignTextNode, 7, detachedForeignTextNode, 7], node 1 paras[0].firstChild
+  Range 47 [detachedForeignTextNode, 7, detachedForeignTextNode, 7], node 26 comment
+  Range 47 [detachedForeignTextNode, 7, detachedForeignTextNode, 7], node 3 paras[1].firstChild
+  Range 48 [detachedForeignTextNode, 0, detachedForeignTextNode, 8], node 1 paras[0].firstChild
+  Range 48 [detachedForeignTextNode, 0, detachedForeignTextNode, 8], node 26 comment
+  Range 48 [detachedForeignTextNode, 0, detachedForeignTextNode, 8], node 3 paras[1].firstChild
+  Range 49 [detachedXmlTextNode, 7, detachedXmlTextNode, 7], node 1 paras[0].firstChild
+  Range 49 [detachedXmlTextNode, 7, detachedXmlTextNode, 7], node 26 comment
+  Range 49 [detachedXmlTextNode, 7, detachedXmlTextNode, 7], node 3 paras[1].firstChild
+  Range 5 [paras[1].firstChild, 0, paras[1].firstChild, 0], node 1 paras[0].firstChild
+  Range 5 [paras[1].firstChild, 0, paras[1].firstChild, 0], node 26 comment
+  Range 5 [paras[1].firstChild, 0, paras[1].firstChild, 0], node 3 paras[1].firstChild
+  Range 50 [detachedXmlTextNode, 0, detachedXmlTextNode, 8], node 1 paras[0].firstChild
+  Range 50 [detachedXmlTextNode, 0, detachedXmlTextNode, 8], node 26 comment
+  Range 50 [detachedXmlTextNode, 0, detachedXmlTextNode, 8], node 3 paras[1].firstChild
+  Range 51 [detachedComment, 3, detachedComment, 4], node 1 paras[0].firstChild
+  Range 51 [detachedComment, 3, detachedComment, 4], node 26 comment
+  Range 51 [detachedComment, 3, detachedComment, 4], node 3 paras[1].firstChild
+  Range 52 [detachedComment, 5, detachedComment, 5], node 1 paras[0].firstChild
+  Range 52 [detachedComment, 5, detachedComment, 5], node 26 comment
+  Range 52 [detachedComment, 5, detachedComment, 5], node 3 paras[1].firstChild
+  Range 53 [detachedForeignComment, 0, detachedForeignComment, 1], node 1 paras[0].firstChild
+  Range 53 [detachedForeignComment, 0, detachedForeignComment, 1], node 26 comment
+  Range 53 [detachedForeignComment, 0, detachedForeignComment, 1], node 3 paras[1].firstChild
+  Range 54 [detachedForeignComment, 4, detachedForeignComment, 4], node 1 paras[0].firstChild
+  Range 54 [detachedForeignComment, 4, detachedForeignComment, 4], node 26 comment
+  Range 54 [detachedForeignComment, 4, detachedForeignComment, 4], node 3 paras[1].firstChild
+  Range 55 [detachedXmlComment, 2, detachedXmlComment, 6], node 1 paras[0].firstChild
+  Range 55 [detachedXmlComment, 2, detachedXmlComment, 6], node 26 comment
+  Range 55 [detachedXmlComment, 2, detachedXmlComment, 6], node 3 paras[1].firstChild
+  Range 56 [docfrag, 0, docfrag, 0], node 1 paras[0].firstChild
+  Range 56 [docfrag, 0, docfrag, 0], node 26 comment
+  Range 56 [docfrag, 0, docfrag, 0], node 3 paras[1].firstChild
+  Range 57 [foreignDocfrag, 0, foreignDocfrag, 0], node 1 paras[0].firstChild
+  Range 57 [foreignDocfrag, 0, foreignDocfrag, 0], node 26 comment
+  Range 57 [foreignDocfrag, 0, foreignDocfrag, 0], node 3 paras[1].firstChild
+  Range 58 [xmlDocfrag, 0, xmlDocfrag, 0], node 1 paras[0].firstChild
+  Range 58 [xmlDocfrag, 0, xmlDocfrag, 0], node 26 comment
+  Range 58 [xmlDocfrag, 0, xmlDocfrag, 0], node 3 paras[1].firstChild
+  Range 6 [paras[1].firstChild, 0, paras[1].firstChild, 1], node 1 paras[0].firstChild
+  Range 6 [paras[1].firstChild, 0, paras[1].firstChild, 1], node 26 comment
+  Range 6 [paras[1].firstChild, 0, paras[1].firstChild, 1], node 3 paras[1].firstChild
+  Range 7 [paras[1].firstChild, 2, paras[1].firstChild, 8], node 1 paras[0].firstChild
+  Range 7 [paras[1].firstChild, 2, paras[1].firstChild, 8], node 26 comment
+  Range 7 [paras[1].firstChild, 2, paras[1].firstChild, 8], node 3 paras[1].firstChild
+  Range 8 [paras[1].firstChild, 2, paras[1].firstChild, 9], node 1 paras[0].firstChild
+  Range 8 [paras[1].firstChild, 2, paras[1].firstChild, 9], node 26 comment
+  Range 8 [paras[1].firstChild, 2, paras[1].firstChild, 9], node 3 paras[1].firstChild
+  Range 9 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 0], node 1 paras[0].firstChild
+  Range 9 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 0], node 26 comment
+  Range 9 [detachedPara1.firstChild, 0, detachedPara1.firstChild, 0], node 3 paras[1].firstChild
+/selection/selection-content-visibility-hidden.html
+  !passing
+/selection/selection-direction-on-double-click.tentative.html
+  !passing
+/selection/selection-direction-on-single-click.html
+  !passing
+/selection/selection-direction-on-triple-click.tentative.html
+  !passing
+/selection/selection-focused-element-becomes-nonfocusable.html
+  !harness TIMEOUT
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-minimum-table.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-caption.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-col.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-after-tbody.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-tfoot-before-tbody.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=character&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=character&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=line&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=line&editable=true
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=word&editable=false
+  !passing
+/selection/selection-modify-across-table-containing-thead.html?granularity=word&editable=true
+  !passing
+/selection/selection-modify-extend-word-generated-content.html
+  !passing
+/selection/selection-nested-video.html
+  !harness ERROR
+  !passing
+/selection/selection-range-in-shadow-after-the-shadow-removed.tentative.html?mode=closed
+  !passing
+/selection/selection-range-in-shadow-after-the-shadow-removed.tentative.html?mode=open
+  !passing
+/selection/shadow-dom/cross-shadow-boundary-extend.html
+  !passing
+/selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html
+  Collapse selection to end of the default text
+  Extend selection from end of the default span to start of the default span
+  Extend selection from start of the default span to end of the default span
+  Select all children of the default span
+  Select set base to end of the default span and extent to start of the default span
+  Select set base to start of the default span and extent to end of the default span
+  containsNode of non-assigned node child should return false (when all children of the host is selected)
+  containsNode of non-assigned node child should return false (when the host is selected)
+  containsNode of non-assigned node should return false (when all children of the host is selected)
+  containsNode of non-assigned node should return false (when the host is selected)
+  getRangeAt(0).comparePoint of the start of the default span child should return 0 (when all children of the default span is selected)
+/selection/shadow-dom/tentative/Range-isPointInRange.html
+  isPointInRange() test for collapsed selection
+/selection/shadow-dom/tentative/Selection-anchor-focus-rescoping.tentative.html
+  !passing
+  Document tree, setBaseAndExtent(lightText, 1, lightText, 5): anchor is (lightText, 1), focus is (lightText, 5)
+  Slotted node, setBaseAndExtent(slottedText, 1, slottedText, 5): anchor is (slottedText, 1), focus is (slottedText, 5)
+  Slotted node, setBaseAndExtent(slottedText, 5, slottedText, 1): anchor is (slottedText, 5), focus is (slottedText, 1)
+  Slotted nodes in reverse order, setBaseAndExtent(outerAText, 1, outerBText, 3): anchor is (outerAText, 1), focus is (outerBText, 3)
+  Slotted nodes in reverse order, setBaseAndExtent(outerBText, 3, outerAText, 1): anchor is (outerBText, 3), focus is (outerAText, 1)
+/selection/shadow-dom/tentative/Selection-collapse-and-extend.html
+  !passing
+/selection/shadow-dom/tentative/Selection-direction.html
+  !passing
+  direction returns "backward" when there is a backward-direction selection in the document tree
+  direction returns "forward" when there is a forward-direction selection in the document tree
+  direction returns "none" when there is no selection
+/selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html
+  !passing
+/selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed
+  !passing
+/selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open
+  !passing
+/selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html
+  !passing
+  If selection crosses shadow boundaries, getRangeAt(0) should throw an IndexSizeError because the end is not in the document tree.
+/selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html
+  !passing
+/selection/shadow-dom/tentative/Selection-getComposedRanges.html
+  !passing
+  getComposedRanges should fail if argument is not a shadow root
+/selection/shadow-dom/tentative/Selection-isCollapsed.html
+  !passing
+/selection/shadow-dom/tentative/Selection-later-become-slotted-content.html
+  !passing
+/selection/stringifier_editable_element.tentative.html
+  !harness ERROR
+  !passing
+  toString() should return empty when the focus is not on the editable content
+/selection/textcontrols/click-input-after-iframe-focus.html
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/focus.html
+  !harness ERROR
+/selection/textcontrols/initial-selection-during-focus-event-propagation.html?element=password
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/initial-selection-during-focus-event-propagation.html?element=text
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/initial-selection-during-focus-event-propagation.html?element=textarea
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/onselectionchange-content-attribute.html
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/selectionchange-bubble.html
+  !harness TIMEOUT
+  !passing
+/selection/textcontrols/selectionchange-on-shadow-dom.html
+  !passing
+/selection/textcontrols/selectionchange.html
+  !passing
+  Setting initial zero selection range on the disconnected input element
+  Setting initial zero selection range on the disconnected textarea element
+  Setting initial zero selection range on the input element
+  Setting initial zero selection range on the textarea element
+  Setting initial zero selectionEnd value on the disconnected input element
+  Setting initial zero selectionEnd value on the disconnected textarea element
+  Setting initial zero selectionEnd value on the input element
+  Setting initial zero selectionEnd value on the textarea element
+  Setting initial zero selectionStart value on the disconnected input element
+  Setting initial zero selectionStart value on the disconnected textarea element
+  Setting initial zero selectionStart value on the input element
+  Setting initial zero selectionStart value on the textarea element
+/selection/toString-user-select-none.html
+  !passing
+/selection/user-select-on-input-and-contenteditable.html
+  !harness TIMEOUT
+  !passing

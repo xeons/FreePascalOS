@@ -1896,6 +1896,45 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       client, dedicated/shared workers as service worker clients, one
       shared or service worker per site across content processes, update
       checks of imported scripts
+- [x] web-platform-tests on the host: `make wpt` (tools/WptRun; WPT's own
+      `wpt serve` from a checkout in ~/Downloads/sources/wpt, test domains
+      mapped to 127.0.0.1 and WPT's CA trusted in the host client only,
+      each test a webbrowse session of its own, several at once, results
+      against tools/WptRun/expectations). The curated set
+      (tools/WptRun/curated.txt, 10370 tests, about 36 minutes at -j 32)
+      went from 210570 of 501210 subtests (42.0%, 3322 tests passing) to
+      223986 subtests passing (3716 tests); without /encoding (whose form
+      and URL tests now finish and count over a million subtests) from
+      74.4% to 79.2%. Per directory, subtests passing at the baseline ->
+      now: dom 87.6 -> 88.3%, html/dom 86.0 -> 89.9%, html/webappapis
+      54.9 -> 74.3%, html/browsers 22.4 -> 26.4%, html/semantics/scripting-1
+      56.0 -> 56.3%, url 85.5 -> 85.7%, encoding 7.6% -> 1.7% of many more
+      (18387), xhr 59.6 -> 60.9%, fetch/api 60.3 -> 69.0%, FileAPI 66.9 ->
+      67.0%, streams 25.3 -> 26.5%, webstorage 96.0%, IndexedDB 77.9%, workers
+      49.6 -> 50.6%, webmessaging 72.3 -> 73.3%, websockets 50.6 -> 64.3%,
+      eventsource 80.9%, uievents 41.7%, console 29.9 -> 91.6%, hr-time
+      63.9 -> 74.8%, performance-timeline 28.4 -> 57.5%, user-timing
+      58.5 -> 83.5%, css/cssom 64.9 -> 65.7%, css/cssom-view 36.7 ->
+      41.2%, shadow-dom 24.1 -> 92.8%, custom-elements 73.3 -> 76.7%,
+      selection 97.2%, WebCryptoAPI 2.0%, compression 0.8 -> 32.7%,
+      wasm 0.8% (WebAssembly is being added)
+- [ ] WPT gaps, by size: legacy encoders (GBK, Big5, Shift_JIS,
+      EUC-KR ... for form submission and URLs in legacy-encoded
+      documents; only decoders exist); SubtleCrypto beyond digest
+      (generateKey, importKey, sign, encrypt, CryptoKey; libcryptography
+      has the primitives for TLS); WebAssembly; worker scopes reuse the
+      window's interfaces, so errors the window's natives and platform
+      scripts throw are the window's TypeErrors (instanceof fails in
+      .worker, .sharedworker and .serviceworker variants); streams per
+      the Streams Standard (BYOB readers, tee, pipeTo options, queuing
+      strategies, byte streams); XHTML through the XML parser (it runs no
+      scripts yet, so XHTML still goes through the HTML parser);
+      CharacterData with lone surrogates (DOM strings are UTF-8);
+      importing a module from a blob: URL; the bfcache and
+      origin-keyed agent clusters (html/browsers); window named
+      properties for form, img, embed and object by name and as
+      collections; ARIA enumerated reflection and element references;
+      SharedArrayBuffer
 
 ## Web view and browser
 

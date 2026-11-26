@@ -1,0 +1,420 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/FileAPI/Blob-methods-from-detached-frame.html
+  !passing
+/FileAPI/BlobURL/cross-partition-navigation.https.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/BlobURL/cross-partition-self-fetch.https.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/BlobURL/cross-partition-worker-creation.https.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/BlobURL/cross-partition.https.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/BlobURL/opaque-origin.html
+  Blob URL created from data URL dedicated worker should have 'null' origin
+/FileAPI/FileReader/workers.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/FileReaderSync.worker.html
+  !harness ERROR
+/FileAPI/blob/Blob-array-buffer.any.worker.html
+  !passing
+/FileAPI/blob/Blob-bytes.any.worker.html
+  !passing
+/FileAPI/blob/Blob-constructor-detached-buffer.any.html
+  !passing
+/FileAPI/blob/Blob-constructor-detached-buffer.any.worker.html
+  !passing
+/FileAPI/blob/Blob-constructor-dom.window.html
+  Passing an platform object that supports indexed properties as the blobParts array should work (select).
+/FileAPI/blob/Blob-constructor-endings.any.html
+  !passing
+  Exception propagation from options
+  The "endings" options property is used
+  Valid "endings" value: "native"
+  Valid "endings" value: "transparent"
+/FileAPI/blob/Blob-constructor-endings.any.worker.html
+  !passing
+  Exception propagation from options
+  The "endings" options property is used
+  Valid "endings" value: "native"
+  Valid "endings" value: "transparent"
+/FileAPI/blob/Blob-constructor.any.html
+  Blob interface object
+  Getters and value conversions should happen in order until an exception is thrown.
+  Passing "abc" for options should throw
+  Passing 123 for options should throw
+  Passing 123.4 for options should throw
+  Passing true for options should throw
+  options properties should be accessed in lexicographic order.
+/FileAPI/blob/Blob-constructor.any.worker.html
+  Array with mixed types
+  Array with two buffers
+  Array with two bufferviews
+  ArrayBuffer elements of the blobParts array should be supported.
+  Blob constructor with no arguments, without 'new'
+  Blob interface object
+  Getters and value conversions should happen in order until an exception is thrown.
+  Passing "abc" for options should throw
+  Passing 123 for options should throw
+  Passing 123.4 for options should throw
+  Passing non-objects, Dates and RegExps for blobParts should throw a TypeError.
+  Passing true for options should throw
+  ToString should be called on elements of the blobParts array and any exceptions should be propagated.
+  blobParts not an object: BigInt
+  blobParts not an object: BigInt with BigInt.prototype[Symbol.iterator]
+  blobParts not an object: Symbol
+  blobParts not an object: Symbol with Symbol.prototype[Symbol.iterator]
+  blobParts not an object: boolean
+  blobParts not an object: boolean with Boolean.prototype[Symbol.iterator]
+  blobParts not an object: number
+  blobParts not an object: number with Number.prototype[Symbol.iterator]
+  blobParts not an object: string
+  blobParts not an object: string with String.prototype[Symbol.iterator]
+  options properties should be accessed in lexicographic order.
+/FileAPI/blob/Blob-slice.any.html
+  Slicing test: slice (1,1).
+  Slicing test: slice (1,3).
+  Slicing test: slice (1,5).
+  Slicing test: slice (1,7).
+  Slicing test: slice (1,8).
+  Slicing test: slice (1,9).
+/FileAPI/blob/Blob-slice.any.worker.html
+  Slicing test: slice (1,1).
+  Slicing test: slice (1,3).
+  Slicing test: slice (1,5).
+  Slicing test: slice (1,7).
+  Slicing test: slice (1,8).
+  Slicing test: slice (1,9).
+  Slicing test: slice (9,0).
+  Slicing test: slice (9,1).
+  Slicing test: slice (9,2).
+  Slicing test: slice (9,3).
+/FileAPI/blob/Blob-stream.any.html
+  Reading Blob.stream() with BYOB reader
+/FileAPI/blob/Blob-stream.any.worker.html
+  Reading Blob.stream() with BYOB reader
+/FileAPI/blob/Blob-textStream.any.html
+  !passing
+/FileAPI/blob/Blob-textStream.any.serviceworker.html
+  !passing
+/FileAPI/blob/Blob-textStream.any.sharedworker.html
+  !passing
+/FileAPI/blob/Blob-textStream.any.worker.html
+  !passing
+/FileAPI/file/File-constructor-endings.any.html
+  !passing
+  Exception propagation from options
+  The "endings" options property is used
+  Valid "endings" value: "native"
+  Valid "endings" value: "transparent"
+/FileAPI/file/File-constructor-endings.any.worker.html
+  !passing
+  Exception propagation from options
+  The "endings" options property is used
+  Valid "endings" value: "native"
+  Valid "endings" value: "transparent"
+/FileAPI/file/File-constructor.any.html
+  Invalid property bag: "abc"
+  Invalid property bag: 123
+  Invalid property bag: 123.4
+  Invalid property bag: true
+  No replacement when using special character in fileName
+/FileAPI/file/File-constructor.any.worker.html
+  ArrayBuffer fileBits
+  Invalid bits argument: "hello"
+  Invalid bits argument: 0
+  Invalid bits argument: null
+  Invalid property bag: "abc"
+  Invalid property bag: 123
+  Invalid property bag: 123.4
+  Invalid property bag: true
+  No replacement when using special character in fileName
+  Required arguments
+/FileAPI/file/send-file-form-controls.html
+  !passing
+/FileAPI/file/send-file-form-iso-2022-jp.html
+  !passing
+/FileAPI/file/send-file-form-punctuation.html
+  !passing
+/FileAPI/file/send-file-form-utf-8.html
+  !passing
+/FileAPI/file/send-file-form-windows-1252.html
+  !passing
+/FileAPI/file/send-file-form-x-user-defined.html
+  !passing
+/FileAPI/file/send-file-form.html
+  !passing
+/FileAPI/file/send-file-formdata-controls.any.html
+  Upload file-for-upload-in-form-CR-[\r].txt (ASCII) in fetch with FormData
+  Upload file-for-upload-in-form-LF-CR-[\n\r].txt (ASCII) in fetch with FormData
+  Upload file-for-upload-in-form-LF-[\n].txt (ASCII) in fetch with FormData
+/FileAPI/file/send-file-formdata-controls.any.worker.html
+  Upload file-for-upload-in-form-CR-[\r].txt (ASCII) in fetch with FormData
+  Upload file-for-upload-in-form-LF-CR-[\n\r].txt (ASCII) in fetch with FormData
+  Upload file-for-upload-in-form-LF-[\n].txt (ASCII) in fetch with FormData
+/FileAPI/file/send-file-formdata-punctuation.any.html
+  Upload file-for-upload-in-form-SOLIDUS-[/].txt (ASCII) in fetch with FormData
+/FileAPI/file/send-file-formdata-punctuation.any.worker.html
+  Upload file-for-upload-in-form-SOLIDUS-[/].txt (ASCII) in fetch with FormData
+/FileAPI/fileReader.any.html
+  FileReader States -- events
+/FileAPI/fileReader.any.worker.html
+  FileReader States -- events
+/FileAPI/filelist-section/filelist.html
+  !passing
+/FileAPI/idlharness.any.html
+  Blob interface object length
+  Blob interface: new Blob(["TEST"]) must inherit property "textStream()" with the proper type
+  Blob interface: new File(["myFileBits"], "myFileName") must inherit property "textStream()" with the proper type
+  Blob interface: operation arrayBuffer()
+  Blob interface: operation bytes()
+  Blob interface: operation slice(optional long long, optional long long, optional DOMString)
+  Blob interface: operation text()
+  Blob interface: operation textStream()
+  File interface object length
+  FileList interface object length
+  FileList interface object name
+  FileList interface: attribute length
+  FileList interface: existence and properties of interface object
+  FileList interface: existence and properties of interface prototype object
+  FileList interface: existence and properties of interface prototype object's "constructor" property
+  FileList interface: existence and properties of interface prototype object's @@unscopables property
+  FileList interface: operation item(unsigned long)
+  FileReader interface: attribute onabort
+  FileReader interface: attribute onerror
+  FileReader interface: attribute onload
+  FileReader interface: attribute onloadend
+  FileReader interface: attribute onloadstart
+  FileReader interface: attribute onprogress
+  FileReader interface: constant DONE on interface object
+  FileReader interface: constant DONE on interface prototype object
+  FileReader interface: constant EMPTY on interface object
+  FileReader interface: constant EMPTY on interface prototype object
+  FileReader interface: constant LOADING on interface object
+  FileReader interface: constant LOADING on interface prototype object
+  FileReader interface: new FileReader() must inherit property "DONE" with the proper type
+  FileReader interface: new FileReader() must inherit property "EMPTY" with the proper type
+  FileReader interface: new FileReader() must inherit property "LOADING" with the proper type
+  FileReader interface: operation readAsText(Blob, optional DOMString)
+  URL interface: operation createObjectURL((Blob or MediaSource))
+  URL interface: operation revokeObjectURL(DOMString)
+/FileAPI/idlharness.any.worker.html
+  Blob interface object length
+  Blob interface: attribute size
+  Blob interface: attribute type
+  Blob interface: existence and properties of interface object
+  Blob interface: existence and properties of interface prototype object
+  Blob interface: new Blob(["TEST"]) must inherit property "textStream()" with the proper type
+  Blob interface: new File(["myFileBits"], "myFileName") must inherit property "textStream()" with the proper type
+  Blob interface: operation arrayBuffer()
+  Blob interface: operation bytes()
+  Blob interface: operation slice(optional long long, optional long long, optional DOMString)
+  Blob interface: operation text()
+  Blob interface: operation textStream()
+  File interface object length
+  File interface: attribute lastModified
+  File interface: attribute name
+  File interface: existence and properties of interface object
+  FileList interface object length
+  FileList interface object name
+  FileList interface: attribute length
+  FileList interface: existence and properties of interface object
+  FileList interface: existence and properties of interface prototype object
+  FileList interface: existence and properties of interface prototype object's "constructor" property
+  FileList interface: existence and properties of interface prototype object's @@unscopables property
+  FileList interface: operation item(unsigned long)
+  FileReader interface: attribute error
+  FileReader interface: attribute onabort
+  FileReader interface: attribute onerror
+  FileReader interface: attribute onload
+  FileReader interface: attribute onloadend
+  FileReader interface: attribute onloadstart
+  FileReader interface: attribute onprogress
+  FileReader interface: attribute readyState
+  FileReader interface: attribute result
+  FileReader interface: constant DONE on interface object
+  FileReader interface: constant DONE on interface prototype object
+  FileReader interface: constant EMPTY on interface object
+  FileReader interface: constant EMPTY on interface prototype object
+  FileReader interface: constant LOADING on interface object
+  FileReader interface: constant LOADING on interface prototype object
+  FileReader interface: existence and properties of interface object
+  FileReader interface: new FileReader() must inherit property "DONE" with the proper type
+  FileReader interface: new FileReader() must inherit property "EMPTY" with the proper type
+  FileReader interface: new FileReader() must inherit property "LOADING" with the proper type
+  FileReader interface: operation readAsText(Blob, optional DOMString)
+  FileReaderSync interface object length
+  FileReaderSync interface object name
+  FileReaderSync interface: existence and properties of interface object
+  FileReaderSync interface: existence and properties of interface prototype object
+  FileReaderSync interface: existence and properties of interface prototype object's "constructor" property
+  FileReaderSync interface: existence and properties of interface prototype object's @@unscopables property
+  FileReaderSync interface: operation readAsArrayBuffer(Blob)
+  FileReaderSync interface: operation readAsBinaryString(Blob)
+  FileReaderSync interface: operation readAsDataURL(Blob)
+  FileReaderSync interface: operation readAsText(Blob, optional DOMString)
+  URL interface: operation createObjectURL((Blob or MediaSource))
+  URL interface: operation revokeObjectURL(DOMString)
+/FileAPI/idlharness.html
+  !passing
+  Blob interface object name
+  Blob interface: attribute size
+  Blob interface: attribute type
+  Blob interface: existence and properties of interface object
+  Blob interface: existence and properties of interface prototype object
+  Blob interface: existence and properties of interface prototype object's "constructor" property
+  Blob interface: existence and properties of interface prototype object's @@unscopables property
+  Blob interface: operation stream()
+  File interface object name
+  File interface: attribute lastModified
+  File interface: attribute name
+  File interface: existence and properties of interface object
+  File interface: existence and properties of interface prototype object
+  File interface: existence and properties of interface prototype object's "constructor" property
+  File interface: existence and properties of interface prototype object's @@unscopables property
+  FileReader interface object length
+  FileReader interface object name
+  FileReader interface: attribute error
+  FileReader interface: attribute readyState
+  FileReader interface: attribute result
+  FileReader interface: existence and properties of interface object
+  FileReader interface: existence and properties of interface prototype object
+  FileReader interface: existence and properties of interface prototype object's "constructor" property
+  FileReader interface: existence and properties of interface prototype object's @@unscopables property
+  FileReader interface: operation abort()
+  FileReader interface: operation readAsArrayBuffer(Blob)
+  FileReader interface: operation readAsBinaryString(Blob)
+  FileReader interface: operation readAsDataURL(Blob)
+  FileReaderSync interface: existence and properties of interface object
+  Partial interface URL: member names are unique
+  Partial interface URL: original interface defined
+  Partial interface URL: valid exposure set
+  idl_test setup
+  idl_test validation
+/FileAPI/idlharness.worker.html
+  !passing
+  Blob interface object name
+  Blob interface: existence and properties of interface prototype object's "constructor" property
+  Blob interface: existence and properties of interface prototype object's @@unscopables property
+  Blob interface: operation stream()
+  File interface object name
+  File interface: existence and properties of interface prototype object
+  File interface: existence and properties of interface prototype object's "constructor" property
+  File interface: existence and properties of interface prototype object's @@unscopables property
+  FileReader interface object length
+  FileReader interface object name
+  FileReader interface: existence and properties of interface prototype object
+  FileReader interface: existence and properties of interface prototype object's "constructor" property
+  FileReader interface: existence and properties of interface prototype object's @@unscopables property
+  FileReader interface: operation abort()
+  FileReader interface: operation readAsArrayBuffer(Blob)
+  FileReader interface: operation readAsBinaryString(Blob)
+  FileReader interface: operation readAsDataURL(Blob)
+  Partial interface URL: member names are unique
+  Partial interface URL: original interface defined
+  Partial interface URL: valid exposure set
+  idl_test setup
+  idl_test validation
+/FileAPI/reading-data-section/Determining-Encoding.any.html
+  Blob Determing Encoding with UTF-16BE BOM
+  Blob Determing Encoding with UTF-16LE BOM
+  Blob Determing Encoding with type attribute
+/FileAPI/reading-data-section/Determining-Encoding.any.worker.html
+  Blob Determing Encoding with UTF-16BE BOM
+  Blob Determing Encoding with UTF-16LE BOM
+  Blob Determing Encoding with type attribute
+/FileAPI/reading-data-section/FileReader-multiple-reads.any.html
+  !harness ERROR
+  A new read in a load handler suppresses the old read loadend
+  A new read in an abort handler before loadstart suppresses the old read
+  A new read in an abort handler suppresses the old read loadend
+/FileAPI/reading-data-section/FileReader-multiple-reads.any.worker.html
+  !harness TIMEOUT
+  A new read in a load handler suppresses the old read loadend
+  A new read in an abort handler before loadstart suppresses the old read
+  A new read in an abort handler suppresses the old read loadend
+  test abort and restart in onloadstart event for readAsText
+/FileAPI/reading-data-section/filereader_abort.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_abort.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_events.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_events.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsArrayBuffer.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsArrayBuffer.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsBinaryString.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsBinaryString.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsDataURL.any.html
+  FileReader readyState during readAsDataURL
+/FileAPI/reading-data-section/filereader_readAsDataURL.any.worker.html
+  FileReader readyState during readAsDataURL
+/FileAPI/reading-data-section/filereader_readAsText.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsText.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.html
+  !passing
+  readAsText() encoding argument overrides the Blob type's charset
+/FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.worker.html
+  !passing
+  readAsText() encoding argument overrides the Blob type's charset
+/FileAPI/reading-data-section/filereader_readystate.any.html
+  !passing
+/FileAPI/reading-data-section/filereader_readystate.any.worker.html
+  !passing
+/FileAPI/reading-data-section/filereader_result.any.html
+  !passing
+  readAsArrayBuffer
+  readAsBinaryString
+  readAsDataURL
+  readAsText
+/FileAPI/reading-data-section/filereader_result.any.worker.html
+  !passing
+  readAsBinaryString
+  readAsDataURL
+  readAsText
+/FileAPI/url/cross-global-revoke.sub.html
+  It is possible to revoke same-origin blob URLs from different frames.
+/FileAPI/url/multi-global-origin-serialization.sub.html
+  !passing
+/FileAPI/url/sandboxed-iframe.html
+  !harness TIMEOUT
+/FileAPI/url/url-charset.window.html
+  !harness ERROR
+  !passing
+/FileAPI/url/url-in-tags-revoke.window.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/url/url-in-tags.window.html
+  !harness TIMEOUT
+  !passing
+/FileAPI/url/url-lifetime.html
+  !passing
+/FileAPI/url/url-reload.window.html
+  !passing
+/FileAPI/url/url-with-fetch.any.html
+  Revoke blob URL after creating Request, then clone Request, will fetch
+  Revoke blob URL after creating Request, will fetch
+/FileAPI/url/url-with-fetch.any.worker.html
+  !passing
+  Blob URLs can be used in fetch
+  Only exact matches should revoke URLs, using fetch
+  Revoke blob URL after calling fetch, fetch should succeed
+  fetch should return Content-Type from Blob
+  fetch with a fragment should succeed
+/FileAPI/url/url-with-xhr.any.html
+  Revoke blob URL after open(), will fetch
+/FileAPI/url/url-with-xhr.any.worker.html
+  Revoke blob URL after open(), will fetch

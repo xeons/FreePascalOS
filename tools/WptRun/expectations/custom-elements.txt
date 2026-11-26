@@ -1,0 +1,627 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/custom-elements/CustomElementRegistry-constructor-and-callbacks-are-held-strongly.html
+  adoptedCallback
+/custom-elements/CustomElementRegistry-getName.html
+  customElements.getName must throw when the element interface is not a constructor
+  customElements.getName returns the name of the entry with the given constructor when there is a matching entry.
+/custom-elements/CustomElementRegistry.html
+  customElements.define must get "observedAttributes" property on the constructor prototype when "attributeChangedCallback" is present
+  customElements.define must get callbacks of the constructor prototype
+  customElements.define must get four additional callbacks on the prototype if formAssociated is converted to true
+  customElements.define must rethrow an exception thrown while converting a callback value to Function callback type
+  customElements.define must rethrow an exception thrown while converting the value of disabledFeatures to sequence<DOMString>
+  customElements.define must rethrow an exception thrown while converting the value of observedAttributes to sequence<DOMString>
+  customElements.define must rethrow an exception thrown while getting additional formAssociated callbacks on the constructor prototype
+/custom-elements/Document-createElement-svg.svg
+  !harness EXTERNAL-TIMEOUT
+/custom-elements/Document-createElement.html
+  !passing
+  document.createElement must create an instance of custom elements
+  document.createElement must not report a NotSupportedError when an element child is added and removed during construction
+  document.createElement must not report a NotSupportedError when attribute is added and removed during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a a cloned document during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a a document created by createHTMLDocument during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a a new document during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a an HTML document created by createDocument during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a an HTML document fetched by XHR during construction
+  document.createElement must not report a NotSupportedError when the element is adopted back from a the document of the template elements during construction
+  document.createElement must not report a NotSupportedError when the element is inserted and removed from another element during construction
+  document.createElement with undefined options value should be upgraded.
+/custom-elements/Document-createElementNS-prefix-timing.html
+  !harness ERROR
+  Nested createElementNS calls do not corrupt prefix state
+/custom-elements/Document-createElementNS.html
+  !harness ERROR
+  autonomous: document.createElementNS should create custom elements with prefixes.
+/custom-elements/ElementInternals-accessibility-values.html
+  !passing
+  ariaChecked
+  ariaDisabled
+  ariaExpanded
+  ariaHidden
+  ariaLabel
+  ariaPressed
+  ariaSelected
+  ariaValueNow
+  role
+/custom-elements/ElementInternals-accessibility.html
+  !passing
+  ariaChecked is defined in ElementInternals
+  ariaDisabled is defined in ElementInternals
+  ariaErrorMessageElement is not defined in ElementInternals
+  ariaExpanded is defined in ElementInternals
+  ariaHidden is defined in ElementInternals
+  ariaLabel is defined in ElementInternals
+  ariaPressed is defined in ElementInternals
+  ariaSelected is defined in ElementInternals
+  ariaValueNow is defined in ElementInternals
+  role is defined in ElementInternals
+/custom-elements/ElementInternals-accessibility.tentative.html
+  !passing
+/custom-elements/ElementInternals-role.html
+  !passing
+/custom-elements/adopted-callback.html
+  Inserting a custom element into a detached shadow tree that belongs to the document of an iframe must enqueue and invoke adoptedCallback
+  Inserting a custom element into a shadow tree in the document of an iframe must enqueue and invoke adoptedCallback
+  Inserting a custom element into the document of an iframe must enqueue and invoke adoptedCallback
+  Inserting an ancestor of custom element into the document of an iframe must enqueue and invoke adoptedCallback
+  Inserting the shadow host of a custom element into the document of an iframe must enqueue and invoke adoptedCallback
+  Moving a custom element from the owner document into the document of an iframe must enqueue and invoke adoptedCallback
+  Moving an ancestor of custom element from the owner document into the document of an iframe must enqueue and invoke adoptedCallback
+  Moving the <template>'s content of a custom element from the owner document into the document of an iframe must enqueue and invoke adoptedCallback
+  Moving the shadow host of a custom element from the owner document into the document of an iframe must enqueue and invoke adoptedCallback
+  Moving the shadow host's shadow of a custom element from the owner document into the document of an iframe must enqueue and invoke adoptedCallback
+/custom-elements/attribute-changed-callback.html
+  attributedChangedCallback must be enqueued for style attribute change by mutating inline style declaration
+/custom-elements/connected-callback-before-insertion-steps.html
+  !passing
+/custom-elements/connected-callbacks-html-fragment-parsing.html
+  Inserting a custom element into the document of an iframe using HTML fragment parsing must enqueue a custom element upgrade reaction, not synchronously invoke its constructor
+/custom-elements/connected-callbacks.html
+  Inserting a custom element into a detached shadow tree that belongs to the document of an iframe must not enqueue and invoke connectedCallback
+  Inserting a custom element into a shadow tree in the document of an iframe must enqueue and invoke connectedCallback
+  Inserting a custom element into the document of an iframe must enqueue and invoke connectedCallback
+  Inserting an ancestor of custom element into the document of an iframe must enqueue and invoke connectedCallback
+  Inserting the shadow host of a custom element into the document of an iframe must enqueue and invoke connectedCallback
+/custom-elements/cross-realm-callback-report-exception.html
+  !harness TIMEOUT
+/custom-elements/custom-element-reaction-queue.html
+  Mutating another custom element inside adopted callback must invoke all pending callbacks on the mutated element
+/custom-elements/disconnected-callbacks.html
+  Removing a custom element from a detached shadow tree that belongs to the document of an iframe must not enqueue and invoke disconnectedCallback
+  Removing a custom element from a shadow tree in the document of an iframe must enqueue and invoke disconnectedCallback
+  Removing a custom element from the document of an iframe must enqueue and invoke disconnectedCallback
+  Removing an ancestor of custom element from the document of an iframe must enqueue and invoke disconnectedCallback
+  Removing the shadow host of a custom element from athe document of an iframe must enqueue and invoke disconnectedCallback
+/custom-elements/element-internals-aria-element-reflection-shadow-including-root.tentative.html
+  ariaActiveDescendantElement on ElementInternals ignores an element with a different shadow-including root
+  ariaActiveDescendantElement on ElementInternals of a disconnected element
+  ariaLabelledByElements on ElementInternals skips elements with a different shadow-including root
+/custom-elements/element-internals-aria-element-reflection.html
+  Getting previously-unset ARIA element reflection properties on ElementInternals should return null.
+  Setting aria-labelledby or ariaLabelledByElements on the custom element should supersede the value of ariaLabelledByElements on ElementInternals
+  Setting ariaLabelledByElements on ElementInternals should change the accessible name of the custom element
+/custom-elements/element-internals-behaviors.tentative.html
+  !passing
+  attachInternals({ behaviors: [] }) accepts empty behaviors array
+/custom-elements/enqueue-custom-element-callback-reactions-inside-another-callback.html
+  Adopting an element with adoptingCallback while it has a connectedCallback in its custom element reaction queue must result in connectedCallback getting invoked before the adoption completes
+  Adopting an element without adoptingCallback while it has a connectedCallback in its custom element reaction queue must not result in connectedCallback getting invoked before the adoption completes
+/custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html
+  !harness ERROR
+/custom-elements/form-associated/ElementInternals-form.html
+  ElementInternals.form should return the target element's form owner
+/custom-elements/form-associated/ElementInternals-labels.html
+  !passing
+  ElementInternals.labels should throw NotSupportedError if the target element is not a form-associated custom element
+/custom-elements/form-associated/ElementInternals-setFormValue.html
+  !harness TIMEOUT
+  !passing
+  ElementInternals.setFormValue() should throw NotSupportedError if the target element is not a form-associated custom element
+  Multiple values - name content attribute is ignored
+  Newline normalization - \\r\\n in filename (urlencoded)
+  Newline normalization - \\r\\n in name (urlencoded)
+  Newline normalization - \\r\\n in value (urlencoded)
+  Null value should submit nothing
+  Single value - empty name exists
+  Single value - name is missing
+  setFormValue with an empty FormData should submit nothing
+/custom-elements/form-associated/ElementInternals-setValidity-normalize-newlines.html
+  !passing
+/custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html
+  !harness ERROR
+/custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html
+  !harness ERROR
+/custom-elements/form-associated/ElementInternals-validation.html
+  "anchor" argument of setValidity()
+  Custom control affects :valid :invalid for FORM and FIELDSET
+  Custom control affects validation at the owner form
+  willValidate
+  willValidate after upgrade
+/custom-elements/form-associated/disabled-delegatesFocus.html
+  !passing
+/custom-elements/form-associated/fieldset-elements-after-upgrade.html
+  !passing
+/custom-elements/form-associated/fieldset-elements.html
+  !passing
+/custom-elements/form-associated/focusability.html
+  !passing
+/custom-elements/form-associated/form-associated-callback-form-attribute-removal.html
+  !passing
+/custom-elements/form-associated/form-associated-callback-order.html
+  Inserting a control with a form attribute calls connectedCallback before formAssociatedCallback
+  Removing a control with a form attribute calls disconnectedCallback before formAssociatedCallback
+/custom-elements/form-associated/form-associated-callback.html
+  !passing
+/custom-elements/form-associated/form-disabled-callback.html
+  !harness ERROR
+  !passing
+  A disabled form-associated custom element should not provide an entry for it
+/custom-elements/form-associated/form-disabled-legend.html
+  !passing
+  fieldset.elements includes custom elements inside the legend
+/custom-elements/form-associated/form-elements-namedItem.html
+  !passing
+/custom-elements/form-associated/form-reset-callback.html
+  !passing
+  form.reset() should trigger formResetCallback
+/custom-elements/form-associated/form-upgrade-reactions.html
+  !passing
+  Connected upgrade, disabled by attribute
+  Connected upgrade, enabled
+/custom-elements/form-associated/label-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/custom-elements/htmlconstructor/newtarget-customized-builtins.html
+  !passing
+  HTMLParagraphElement constructor must not get .prototype until it finishes its extends sanity checks, calling proxy constructor directly
+  HTMLParagraphElement constructor must not get .prototype until it finishes its extends sanity checks, calling via Reflect
+/custom-elements/htmlconstructor/newtarget.html
+  !passing
+  Rethrow any exceptions thrown while getting the prototype
+  Use NewTarget's prototype, not the one stored at definition time
+/custom-elements/microtasks-and-constructors.html
+  Microtasks evaluate immediately when the stack is empty inside the parser, causing the checks on no attributes to fail
+/custom-elements/parser/parser-constructs-custom-elements-with-prefix.xhtml
+  !passing
+/custom-elements/parser/parser-fallsback-to-unknown-element.html
+  !passing
+/custom-elements/parser/parser-sets-attributes-after-built-in-constructor.html
+  !harness ERROR
+/custom-elements/parser/parser-uses-create-an-element-for-a-token-svg.svg
+  !harness EXTERNAL-TIMEOUT
+/custom-elements/parser/serializing-html-fragments-customized-builtins.html
+  "is" value should be serialized if the custom element has no "is" content attribute
+/custom-elements/parser/xml-fragment-parser-does-not-construct-synchronously.xhtml
+  !harness ERROR
+/custom-elements/parser/xml-parser-custom-element-reparents-during-construction.xhtml
+  !harness ERROR
+/custom-elements/parser/xml-parser-customized-builtin-input.xhtml
+  !harness ERROR
+/custom-elements/perform-microtask-checkpoint-before-construction-xml-parser.xhtml
+  !harness ERROR
+/custom-elements/perform-microtask-checkpoint-before-construction.html
+  !passing
+/custom-elements/pseudo-class-defined-customized-builtins.html
+  <abbr is="my-abbr"> should not be :defined
+  <p is=""> should not be :defined
+  Without browsing context: createElement("p", is:"") should not be :defined
+  Without browsing context: createElementNS("http://www.w3.org/1999/xhtml", "p", is:"") should not be :defined
+  createElement("p", is:"") should not be :defined
+  createElementNS("http://www.w3.org/1999/xhtml", "p", is:"") should not be :defined
+/custom-elements/reactions/AriaMixin-element-attributes.html
+  !passing
+/custom-elements/reactions/CSSStyleDeclaration.html
+  !passing
+  A camel case attribute (borderWidth) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it adds the style attribute but the style attribute is not observed
+  A camel case attribute (borderWidth) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it mutates the style attribute but the style attribute is not observed
+  A dashed property (border-width) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it adds the style attribute but the style attribute is not observed
+  A dashed property (border-width) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it mutates the style attribute but the style attribute is not observed
+  A webkit prefixed camel case attribute (webkitFilter) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it adds the style attribute but the style attribute is not observed
+  A webkit prefixed camel case attribute (webkitFilter) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it mutates the style attribute but the style attribute is not observed
+  A webkit prefixed dashed property (-webkit-filter) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it adds the style attribute but the style attribute is not observed
+  A webkit prefixed dashed property (-webkit-filter) on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it mutates the style attribute but the style attribute is not observed
+  cssFloat on CSSStyleDeclaration must enqueue an attributeChanged reaction when it adds the observed style attribute
+  cssFloat on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it adds the style attribute but the style attribute is not observed
+  removeProperty on CSSStyleDeclaration must enqueue an attributeChanged reaction when it removes a property from the observed style attribute
+  removeProperty on CSSStyleDeclaration must not enqueue an attributeChanged reaction when it removes a property from the style attribute but the style attribute is not observed
+/custom-elements/reactions/DOMStringMap.html
+  deleter on DOMStringMap must enqueue an attributeChanged reaction when removing an observed data attribute
+  setter on DOMStringMap must enqueue an attributeChanged reaction when adding an observed data attribute
+  setter on DOMStringMap must enqueue an attributeChanged reaction when mutating the value of an observed data attribute
+  setter on DOMStringMap must enqueue an attributeChanged reaction when mutating the value of an observed data attribute to the same value
+/custom-elements/reactions/Document.html
+  execCommand on Document must enqueue a disconnected reaction when deleting a custom element from a contenteditable element
+/custom-elements/reactions/HTMLElement.html
+  draggable on HTMLElement must enqueue an attributeChanged reaction when adding draggable content attribute
+  draggable on HTMLElement must enqueue an attributeChanged reaction when replacing an existing attribute
+  spellcheck on HTMLElement must enqueue an attributeChanged reaction when adding spellcheck content attribute
+  spellcheck on HTMLElement must enqueue an attributeChanged reaction when replacing an existing attribute
+/custom-elements/reactions/HTMLOptionElement.html
+  !passing
+/custom-elements/reactions/HTMLOptionsCollection.html
+  !passing
+  add on HTMLOptionsCollection must enqueue connectedCallback when inserting a custom element
+  remove on HTMLOptionsCollection must enqueue disconnectedCallback when removing a custom element
+/custom-elements/reactions/HTMLSelectElement.html
+  !passing
+  add on HTMLSelectElement must enqueue connectedCallback when inserting a custom element
+  remove on HTMLSelectElement must enqueue disconnectedCallback when removing a custom element
+/custom-elements/reactions/HTMLTableElement.html
+  !passing
+/custom-elements/reactions/HTMLTableRowElement.html
+  !passing
+/custom-elements/reactions/HTMLTableSectionElement.html
+  !passing
+/custom-elements/reactions/Range.html
+  createContextualFragment on Range must construct a custom element
+/custom-elements/reactions/ShadowRoot.html
+  innerHTML on ShadowRoot must upgrade a custom element
+/custom-elements/reactions/customized-builtins/HTMLAreaElement.html
+  ping on HTMLAreaElement must enqueue an attributeChanged reaction when adding a new attribute
+  ping on HTMLAreaElement must enqueue an attributeChanged reaction when replacing an existing attribute
+/custom-elements/registries/Construct.html
+  !passing
+/custom-elements/registries/CustomElementRegistry-define.html
+  !passing
+/custom-elements/registries/CustomElementRegistry-initialize.html
+  !passing
+/custom-elements/registries/CustomElementRegistry-multi-register.html
+  !passing
+/custom-elements/registries/CustomElementRegistry-upgrade.html
+  !passing
+/custom-elements/registries/Document-createElement.html
+  !harness ERROR
+/custom-elements/registries/Document-createElementNS.html
+  !harness ERROR
+/custom-elements/registries/Document-customElementRegistry.html
+  !passing
+/custom-elements/registries/Document-importNode-cross-document.window.html
+  !passing
+/custom-elements/registries/Document-importNode-explicit-registry.window.html
+  !passing
+/custom-elements/registries/Document-importNode.html
+  !harness ERROR
+/custom-elements/registries/Element-attachShadow-disabled-shadow.window.html
+  !passing
+/custom-elements/registries/Element-customElementRegistry-exceptions.html
+  !passing
+  customElementRegistry on a failed custom element created by parser should return the specified custom regsitry
+/custom-elements/registries/Element-customElementRegistry.html
+  !passing
+/custom-elements/registries/Element-innerHTML.html
+  !passing
+/custom-elements/registries/ShadowRoot-init-customElementRegistry.html
+  !passing
+/custom-elements/registries/ShadowRoot-init-declarative.html
+  !passing
+/custom-elements/registries/ShadowRoot-innerHTML.html
+  !passing
+/custom-elements/registries/adoption-before-upgrade.window.html
+  !passing
+/custom-elements/registries/adoption-global-registry.window.html
+  !passing
+/custom-elements/registries/adoption-inherited-scoped-registry.window.html
+  !passing
+/custom-elements/registries/adoption-null-registry-element.window.html
+  !passing
+/custom-elements/registries/adoption-null-registry-shadow-root.window.html
+  !passing
+/custom-elements/registries/adoption.window.html
+  !passing
+/custom-elements/registries/constructor-direct-call-fallback-registry.window.html
+  !passing
+/custom-elements/registries/constructor-from-another-window.window.html
+  !passing
+  Constructing directly uses the registry of the HTMLElement constructor's window
+/custom-elements/registries/constructor-reentry-createElement.window.html
+  !passing
+/custom-elements/registries/constructor-reentry-with-different-definition.html
+  !passing
+/custom-elements/registries/element-mutation-null-registry-removal.html
+  !passing
+/custom-elements/registries/element-mutation.html
+  !passing
+/custom-elements/registries/global-registry-access-timing.window.html
+  !passing
+/custom-elements/registries/global.window.html
+  !passing
+/custom-elements/registries/initial-about-blank.window.html
+  !passing
+/custom-elements/registries/per-document.html
+  !passing
+  document.open() must not replace window.customElements
+/custom-elements/registries/pseudo-class-defined.window.html
+  !passing
+/custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-in-xhtml.xhtml
+  !harness ERROR
+/custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-keep-null-in-xhtml.xhtml
+  !harness ERROR
+/custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute-keep-null.html
+  !passing
+  Element and global shadow root registry boundaries serialize independently
+/custom-elements/registries/scoped-custom-element-registry-customelementregistry-attribute.html
+  !passing
+/custom-elements/registries/scoped-custom-element-registry-serialization.html
+  !passing
+  A detached global registry element does not serialize the attribute
+  Nested template serialization uses the template contents registry
+  Serialization does not repeat the attribute through a null registry subtree
+  Serialization preserves an existing non-empty attribute value
+/custom-elements/registries/scoped-custom-element-registry-xml-serialization-in-xhtml.xhtml
+  !harness ERROR
+  !passing
+/custom-elements/registries/scoped-custom-element-registry-xml-serialization.html
+  !passing
+/custom-elements/registries/scoped-registry-append.html
+  !passing
+/custom-elements/registries/scoped-registry-define-upgrade-criteria.html
+  !harness ERROR
+  !passing
+  Adding definition to global registry should affect shadow roots also using global registry
+/custom-elements/registries/scoped-registry-define-upgrade-order.html
+  !passing
+/custom-elements/registries/scoped-registry-effective-global-registry.html
+  !harness ERROR
+/custom-elements/registries/scoped-registry-initialize-upgrades.html
+  !passing
+/custom-elements/registries/scoped-registry-initialize.html
+  !harness ERROR
+/custom-elements/registries/scoped-registry-registry-define-get-etc.html
+  !passing
+/custom-elements/registries/template.window.html
+  !passing
+  Custom element upgrades inside a declarative shadow root parsed via template.setHTMLUnsafe()
+/custom-elements/registries/valid-custom-element-names.html
+  Valid custom element name: code points: [97,1,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,11,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,123,45,101,108,101,109,101,110,116], string: "a{-element"
+  Valid custom element name: code points: [97,124,45,101,108,101,109,101,110,116], string: "a|-element"
+  Valid custom element name: code points: [97,125,45,101,108,101,109,101,110,116], string: "a}-element"
+  Valid custom element name: code points: [97,126,45,101,108,101,109,101,110,116], string: "a~-element"
+  Valid custom element name: code points: [97,127,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,127345,1,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,11,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,123,45,101,108,101,109,101,110,116], string: "a??{-element"
+  Valid custom element name: code points: [97,127345,124,45,101,108,101,109,101,110,116], string: "a??|-element"
+  Valid custom element name: code points: [97,127345,125,45,101,108,101,109,101,110,116], string: "a??}-element"
+  Valid custom element name: code points: [97,127345,126,45,101,108,101,109,101,110,116], string: "a??~-element"
+  Valid custom element name: code points: [97,127345,127,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,14,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,15,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,16,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,17,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,18,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,19,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,2,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,20,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,21,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,22,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,23,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,24,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,25,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,26,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,27,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,28,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,29,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,3,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,30,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,31,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,33,45,101,108,101,109,101,110,116], string: "a??!-element"
+  Valid custom element name: code points: [97,127345,34,45,101,108,101,109,101,110,116], string: "a??"-element"
+  Valid custom element name: code points: [97,127345,35,45,101,108,101,109,101,110,116], string: "a??#-element"
+  Valid custom element name: code points: [97,127345,36,45,101,108,101,109,101,110,116], string: "a??$-element"
+  Valid custom element name: code points: [97,127345,37,45,101,108,101,109,101,110,116], string: "a??%-element"
+  Valid custom element name: code points: [97,127345,38,45,101,108,101,109,101,110,116], string: "a??&-element"
+  Valid custom element name: code points: [97,127345,39,45,101,108,101,109,101,110,116], string: "a??'-element"
+  Valid custom element name: code points: [97,127345,4,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,40,45,101,108,101,109,101,110,116], string: "a??(-element"
+  Valid custom element name: code points: [97,127345,41,45,101,108,101,109,101,110,116], string: "a??)-element"
+  Valid custom element name: code points: [97,127345,42,45,101,108,101,109,101,110,116], string: "a??*-element"
+  Valid custom element name: code points: [97,127345,43,45,101,108,101,109,101,110,116], string: "a??+-element"
+  Valid custom element name: code points: [97,127345,44,45,101,108,101,109,101,110,116], string: "a??,-element"
+  Valid custom element name: code points: [97,127345,45,11], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,123], string: "a??-{"
+  Valid custom element name: code points: [97,127345,45,124], string: "a??-|"
+  Valid custom element name: code points: [97,127345,45,125], string: "a??-}"
+  Valid custom element name: code points: [97,127345,45,126], string: "a??-~"
+  Valid custom element name: code points: [97,127345,45,127], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,14], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,15], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,16], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,17], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,18], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,19], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,1], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,20], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,21], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,22], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,23], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,24], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,25], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,26], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,27], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,28], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,29], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,2], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,30], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,31], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,33], string: "a??-!"
+  Valid custom element name: code points: [97,127345,45,34], string: "a??-""
+  Valid custom element name: code points: [97,127345,45,35], string: "a??-#"
+  Valid custom element name: code points: [97,127345,45,36], string: "a??-$"
+  Valid custom element name: code points: [97,127345,45,37], string: "a??-%"
+  Valid custom element name: code points: [97,127345,45,38], string: "a??-&"
+  Valid custom element name: code points: [97,127345,45,39], string: "a??-'"
+  Valid custom element name: code points: [97,127345,45,3], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,40], string: "a??-("
+  Valid custom element name: code points: [97,127345,45,41], string: "a??-)"
+  Valid custom element name: code points: [97,127345,45,42], string: "a??-*"
+  Valid custom element name: code points: [97,127345,45,43], string: "a??-+"
+  Valid custom element name: code points: [97,127345,45,44], string: "a??-,"
+  Valid custom element name: code points: [97,127345,45,4], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,58], string: "a??-:"
+  Valid custom element name: code points: [97,127345,45,59], string: "a??-;"
+  Valid custom element name: code points: [97,127345,45,5], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,60], string: "a??-<"
+  Valid custom element name: code points: [97,127345,45,61], string: "a??-="
+  Valid custom element name: code points: [97,127345,45,63], string: "a??-?"
+  Valid custom element name: code points: [97,127345,45,64], string: "a??-@"
+  Valid custom element name: code points: [97,127345,45,6], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,7], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,8], string: "a??-"
+  Valid custom element name: code points: [97,127345,45,91], string: "a??-["
+  Valid custom element name: code points: [97,127345,45,92], string: "a??-\\"
+  Valid custom element name: code points: [97,127345,45,93], string: "a??-]"
+  Valid custom element name: code points: [97,127345,45,94], string: "a??-^"
+  Valid custom element name: code points: [97,127345,45,96], string: "a??-`"
+  Valid custom element name: code points: [97,127345,5,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,58,45,101,108,101,109,101,110,116], string: "a??:-element"
+  Valid custom element name: code points: [97,127345,59,45,101,108,101,109,101,110,116], string: "a??;-element"
+  Valid custom element name: code points: [97,127345,6,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,60,45,101,108,101,109,101,110,116], string: "a??<-element"
+  Valid custom element name: code points: [97,127345,61,45,101,108,101,109,101,110,116], string: "a??=-element"
+  Valid custom element name: code points: [97,127345,63,45,101,108,101,109,101,110,116], string: "a???-element"
+  Valid custom element name: code points: [97,127345,64,45,101,108,101,109,101,110,116], string: "a??@-element"
+  Valid custom element name: code points: [97,127345,7,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,8,45,101,108,101,109,101,110,116], string: "a??-element"
+  Valid custom element name: code points: [97,127345,91,45,101,108,101,109,101,110,116], string: "a??[-element"
+  Valid custom element name: code points: [97,127345,92,45,101,108,101,109,101,110,116], string: "a??\\-element"
+  Valid custom element name: code points: [97,127345,93,45,101,108,101,109,101,110,116], string: "a??]-element"
+  Valid custom element name: code points: [97,127345,94,45,101,108,101,109,101,110,116], string: "a??^-element"
+  Valid custom element name: code points: [97,127345,96,45,101,108,101,109,101,110,116], string: "a??`-element"
+  Valid custom element name: code points: [97,14,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,15,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,16,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,17,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,18,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,19,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,2,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,20,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,21,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,22,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,23,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,24,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,25,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,26,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,27,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,28,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,29,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,3,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,30,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,31,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,33,45,101,108,101,109,101,110,116], string: "a!-element"
+  Valid custom element name: code points: [97,34,45,101,108,101,109,101,110,116], string: "a"-element"
+  Valid custom element name: code points: [97,35,45,101,108,101,109,101,110,116], string: "a#-element"
+  Valid custom element name: code points: [97,36,45,101,108,101,109,101,110,116], string: "a$-element"
+  Valid custom element name: code points: [97,37,45,101,108,101,109,101,110,116], string: "a%-element"
+  Valid custom element name: code points: [97,38,45,101,108,101,109,101,110,116], string: "a&-element"
+  Valid custom element name: code points: [97,39,45,101,108,101,109,101,110,116], string: "a'-element"
+  Valid custom element name: code points: [97,4,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,40,45,101,108,101,109,101,110,116], string: "a(-element"
+  Valid custom element name: code points: [97,41,45,101,108,101,109,101,110,116], string: "a)-element"
+  Valid custom element name: code points: [97,42,45,101,108,101,109,101,110,116], string: "a*-element"
+  Valid custom element name: code points: [97,43,45,101,108,101,109,101,110,116], string: "a+-element"
+  Valid custom element name: code points: [97,44,45,101,108,101,109,101,110,116], string: "a,-element"
+  Valid custom element name: code points: [97,45,11], string: "a-"
+  Valid custom element name: code points: [97,45,123], string: "a-{"
+  Valid custom element name: code points: [97,45,124], string: "a-|"
+  Valid custom element name: code points: [97,45,125], string: "a-}"
+  Valid custom element name: code points: [97,45,126], string: "a-~"
+  Valid custom element name: code points: [97,45,127], string: "a-"
+  Valid custom element name: code points: [97,45,14], string: "a-"
+  Valid custom element name: code points: [97,45,15], string: "a-"
+  Valid custom element name: code points: [97,45,16], string: "a-"
+  Valid custom element name: code points: [97,45,17], string: "a-"
+  Valid custom element name: code points: [97,45,18], string: "a-"
+  Valid custom element name: code points: [97,45,19], string: "a-"
+  Valid custom element name: code points: [97,45,1], string: "a-"
+  Valid custom element name: code points: [97,45,20], string: "a-"
+  Valid custom element name: code points: [97,45,21], string: "a-"
+  Valid custom element name: code points: [97,45,22], string: "a-"
+  Valid custom element name: code points: [97,45,23], string: "a-"
+  Valid custom element name: code points: [97,45,24], string: "a-"
+  Valid custom element name: code points: [97,45,25], string: "a-"
+  Valid custom element name: code points: [97,45,26], string: "a-"
+  Valid custom element name: code points: [97,45,27], string: "a-"
+  Valid custom element name: code points: [97,45,28], string: "a-"
+  Valid custom element name: code points: [97,45,29], string: "a-"
+  Valid custom element name: code points: [97,45,2], string: "a-"
+  Valid custom element name: code points: [97,45,30], string: "a-"
+  Valid custom element name: code points: [97,45,31], string: "a-"
+  Valid custom element name: code points: [97,45,33], string: "a-!"
+  Valid custom element name: code points: [97,45,34], string: "a-""
+  Valid custom element name: code points: [97,45,35], string: "a-#"
+  Valid custom element name: code points: [97,45,36], string: "a-$"
+  Valid custom element name: code points: [97,45,37], string: "a-%"
+  Valid custom element name: code points: [97,45,38], string: "a-&"
+  Valid custom element name: code points: [97,45,39], string: "a-'"
+  Valid custom element name: code points: [97,45,3], string: "a-"
+  Valid custom element name: code points: [97,45,40], string: "a-("
+  Valid custom element name: code points: [97,45,41], string: "a-)"
+  Valid custom element name: code points: [97,45,42], string: "a-*"
+  Valid custom element name: code points: [97,45,43], string: "a-+"
+  Valid custom element name: code points: [97,45,44], string: "a-,"
+  Valid custom element name: code points: [97,45,4], string: "a-"
+  Valid custom element name: code points: [97,45,58], string: "a-:"
+  Valid custom element name: code points: [97,45,59], string: "a-;"
+  Valid custom element name: code points: [97,45,5], string: "a-"
+  Valid custom element name: code points: [97,45,60], string: "a-<"
+  Valid custom element name: code points: [97,45,61], string: "a-="
+  Valid custom element name: code points: [97,45,63], string: "a-?"
+  Valid custom element name: code points: [97,45,64], string: "a-@"
+  Valid custom element name: code points: [97,45,6], string: "a-"
+  Valid custom element name: code points: [97,45,7], string: "a-"
+  Valid custom element name: code points: [97,45,8], string: "a-"
+  Valid custom element name: code points: [97,45,91], string: "a-["
+  Valid custom element name: code points: [97,45,92], string: "a-\\"
+  Valid custom element name: code points: [97,45,93], string: "a-]"
+  Valid custom element name: code points: [97,45,94], string: "a-^"
+  Valid custom element name: code points: [97,45,96], string: "a-`"
+  Valid custom element name: code points: [97,5,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,58,45,101,108,101,109,101,110,116], string: "a:-element"
+  Valid custom element name: code points: [97,59,45,101,108,101,109,101,110,116], string: "a;-element"
+  Valid custom element name: code points: [97,6,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,60,45,101,108,101,109,101,110,116], string: "a<-element"
+  Valid custom element name: code points: [97,61,45,101,108,101,109,101,110,116], string: "a=-element"
+  Valid custom element name: code points: [97,63,45,101,108,101,109,101,110,116], string: "a?-element"
+  Valid custom element name: code points: [97,64,45,101,108,101,109,101,110,116], string: "a@-element"
+  Valid custom element name: code points: [97,7,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,8,45,101,108,101,109,101,110,116], string: "a-element"
+  Valid custom element name: code points: [97,91,45,101,108,101,109,101,110,116], string: "a[-element"
+  Valid custom element name: code points: [97,92,45,101,108,101,109,101,110,116], string: "a\\-element"
+  Valid custom element name: code points: [97,93,45,101,108,101,109,101,110,116], string: "a]-element"
+  Valid custom element name: code points: [97,94,45,101,108,101,109,101,110,116], string: "a^-element"
+  Valid custom element name: code points: [97,96,45,101,108,101,109,101,110,116], string: "a`-element"
+  attachShadow() succeeds for a valid custom element name
+/custom-elements/state/ElementInternals-states.html
+  Updating a CustomStateSet while iterating it should work
+/custom-elements/state/state-css-selector-shadow-dom.html
+  !passing
+/custom-elements/state/state-pseudo-class.html
+  :state(foo) and ::part()
+  :state(foo) and other pseudo classes
+  :state(foo) serialization
+/custom-elements/throw-on-dynamic-markup-insertion-counter-construct-xml-parser.xhtml
+  !harness ERROR
+/custom-elements/throw-on-dynamic-markup-insertion-counter-construct.html
+  !harness CRASH
+/custom-elements/throw-on-dynamic-markup-insertion-counter-reactions-xml-parser.xhtml
+  !harness ERROR
+/custom-elements/throw-on-dynamic-markup-insertion-counter-reactions.html
+  !harness CRASH
+/custom-elements/upgrading.html
+  Adopting (and leaving disconnceted) an unresolved custom element into the document of an iframe must not enqueue a custom element upgrade reaction
+  Adopting and inserting an unresolved custom element into the document of an iframe must enqueue a custom element upgrade reaction
+/custom-elements/upgrading/Document-importNode-customized-builtins.html
+  !passing
+/custom-elements/upgrading/Document-importNode.html
+  !passing
+/custom-elements/upgrading/Node-cloneNode.html
+  Node.prototype.cloneNode(false) must preserve the namespace prefix of a custom element
+/custom-elements/upgrading/upgrade-custom-element-error-event.html
+  !passing
+/custom-elements/upgrading/upgrading-enqueue-reactions.html
+  Upgrading a custom element must not invoke attributeChangedCallback and connectedCallback when the element failed to upgrade

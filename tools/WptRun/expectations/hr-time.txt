@@ -1,0 +1,52 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/hr-time/audioworklet-cross-origin-isolated.https.html
+  !passing
+/hr-time/audioworklet.https.html
+  !passing
+  WorkletPerformance is not exposed on Window
+/hr-time/clamped-time-origin-isolated.https.html
+  !passing
+/hr-time/clamped-time-origin.html
+  !harness TIMEOUT
+  !passing
+/hr-time/cross-origin-isolated-timing-attack.https.html
+  !passing
+/hr-time/idlharness.any.html
+  Partial interface AudioWorkletGlobalScope: original interface defined
+  Performance interface object length
+  Performance interface: attribute timeOrigin
+  Performance interface: operation now()
+  Window interface: attribute performance
+/hr-time/idlharness.any.serviceworker.html
+  Partial interface AudioWorkletGlobalScope: original interface defined
+  Performance interface object length
+  Performance interface: attribute timeOrigin
+  Performance interface: existence and properties of interface object
+  Performance interface: operation now()
+  WorkerGlobalScope interface: attribute performance
+  WorkerGlobalScope interface: self must inherit property "performance" with the proper type
+/hr-time/idlharness.any.sharedworker.html
+  Partial interface AudioWorkletGlobalScope: original interface defined
+  Performance interface object length
+  Performance interface: attribute timeOrigin
+  Performance interface: existence and properties of interface object
+  Performance interface: operation now()
+  WorkerGlobalScope interface: attribute performance
+  WorkerGlobalScope interface: self must inherit property "performance" with the proper type
+/hr-time/idlharness.any.worker.html
+  Partial interface AudioWorkletGlobalScope: original interface defined
+  Performance interface object length
+  Performance interface: attribute timeOrigin
+  Performance interface: existence and properties of interface object
+  Performance interface: operation now()
+  WorkerGlobalScope interface: attribute performance
+  WorkerGlobalScope interface: self must inherit property "performance" with the proper type
+/hr-time/raf-coarsened-time.https.html
+  !passing
+/hr-time/timeOrigin.html
+  !passing
+  Window timeOrigin is close to Date.now() when there is no system clock adjustment.
+/hr-time/window-worker-timeOrigin.window.html
+  !passing

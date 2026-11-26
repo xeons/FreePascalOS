@@ -1,0 +1,1477 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/fetch/api/abort/destroyed-context.html
+  !harness TIMEOUT
+  !passing
+/fetch/api/abort/general.any.html
+  Call text() twice on aborted response
+  Clone aborts with original controller
+  Readable stream synchronously cancels with AbortError if aborted before reading
+  Request is still 'used' if signal is aborted before fetching
+  response.arrayBuffer() rejects if already aborted
+  response.blob() rejects if already aborted
+  response.bytes() rejects if already aborted
+  response.formData() rejects if already aborted
+  response.json() rejects if already aborted
+  response.text() rejects if already aborted
+/fetch/api/abort/general.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/abort/general.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/abort/general.any.worker.html
+  !harness TIMEOUT
+/fetch/api/abort/keepalive.html
+  !harness TIMEOUT
+  aborting a detached keepalive fetch should not do anything
+/fetch/api/abort/request.any.html
+  Aborting a request after calling formData()
+  Calling arrayBuffer() on an aborted consumed nonempty request
+  Calling blob() on an aborted consumed nonempty request
+  Calling formData() on an aborted request
+  Calling json() on an aborted consumed nonempty request
+  Calling text() on an aborted consumed nonempty request
+/fetch/api/abort/request.any.serviceworker.html
+  Aborting a request after calling formData()
+  Calling arrayBuffer() on an aborted consumed nonempty request
+  Calling blob() on an aborted consumed nonempty request
+  Calling formData() on an aborted consumed nonempty request
+  Calling formData() on an aborted request
+  Calling json() on an aborted consumed nonempty request
+  Calling text() on an aborted consumed nonempty request
+/fetch/api/abort/request.any.sharedworker.html
+  Aborting a request after calling formData()
+  Calling arrayBuffer() on an aborted consumed nonempty request
+  Calling blob() on an aborted consumed nonempty request
+  Calling formData() on an aborted consumed nonempty request
+  Calling formData() on an aborted request
+  Calling json() on an aborted consumed nonempty request
+  Calling text() on an aborted consumed nonempty request
+/fetch/api/abort/request.any.worker.html
+  Aborting a request after calling formData()
+  Calling arrayBuffer() on an aborted consumed nonempty request
+  Calling blob() on an aborted consumed nonempty request
+  Calling formData() on an aborted consumed nonempty request
+  Calling formData() on an aborted request
+  Calling json() on an aborted consumed nonempty request
+  Calling text() on an aborted consumed nonempty request
+/fetch/api/abort/serviceworker-intercepted.https.html
+  !harness TIMEOUT
+  !passing
+  Already aborted request does not land in service worker
+  fetch() rejects with abort reason
+/fetch/api/basic/block-mime-as-script.html
+  !passing
+  Should load script with text/html MIME type
+  Should load script with text/plain MIME type
+/fetch/api/basic/error-after-response.any.serviceworker.html
+  !passing
+/fetch/api/basic/error-after-response.any.sharedworker.html
+  !passing
+/fetch/api/basic/error-after-response.any.worker.html
+  !passing
+/fetch/api/basic/fetch-in-popup-from-iframe.html
+  !passing
+/fetch/api/basic/gc.any.html
+  !passing
+  GC/CC should not abruptly close the stream while being consumed by Response
+  GC/CC should not discard a FormData body's Blob before its stream is read
+/fetch/api/basic/gc.any.serviceworker.html
+  !passing
+  GC/CC should not abruptly close the stream while being consumed by Response
+  GC/CC should not discard a FormData body's Blob before its stream is read
+/fetch/api/basic/gc.any.sharedworker.html
+  !passing
+  GC/CC should not abruptly close the stream while being consumed by Response
+  GC/CC should not discard a FormData body's Blob before its stream is read
+/fetch/api/basic/gc.any.worker.html
+  !passing
+  GC/CC should not abruptly close the stream while being consumed by Response
+  GC/CC should not discard a FormData body's Blob before its stream is read
+/fetch/api/basic/header-value-combining.any.html
+  !passing
+/fetch/api/basic/header-value-combining.any.serviceworker.html
+  !passing
+/fetch/api/basic/header-value-combining.any.sharedworker.html
+  !passing
+/fetch/api/basic/header-value-combining.any.worker.html
+  !passing
+/fetch/api/basic/header-value-null-byte.any.html
+  !passing
+/fetch/api/basic/header-value-null-byte.any.serviceworker.html
+  !passing
+/fetch/api/basic/header-value-null-byte.any.sharedworker.html
+  !passing
+/fetch/api/basic/header-value-null-byte.any.worker.html
+  !passing
+/fetch/api/basic/http-response-code.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/basic/http-response-code.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/basic/http-response-code.any.worker.html
+  !harness TIMEOUT
+/fetch/api/basic/integrity.sub.any.html
+  CORS invalid integrity
+  Invalid integrity
+  Multiple integrities: both are invalid
+  Multiple integrities: invalid stronger than valid
+  SHA-* integrity for opaque response
+/fetch/api/basic/integrity.sub.any.sharedworker.html
+  CORS invalid integrity
+  Invalid integrity
+  Multiple integrities: both are invalid
+  Multiple integrities: invalid stronger than valid
+  SHA-* integrity for opaque response
+/fetch/api/basic/integrity.sub.any.worker.html
+  CORS invalid integrity
+  Invalid integrity
+  Multiple integrities: both are invalid
+  Multiple integrities: invalid stronger than valid
+  SHA-* integrity for opaque response
+/fetch/api/basic/keepalive.any.html
+  !harness TIMEOUT
+  [keepalive] simple GET request on 'pagehide' [no payload]
+  [keepalive] simple GET request on 'unload' [no payload]
+  [keepalive] simple POST request on 'pagehide' [no payload]
+  [keepalive] simple POST request on 'unload' [no payload]
+  simple keepalive test for web workers;
+/fetch/api/basic/mediasource.window.html
+  !passing
+/fetch/api/basic/mode-no-cors.sub.any.html
+  Fetch http://web-platform.test:8001/fetch/api/resources/top.txt with no-cors mode
+  Fetch https://web-platform.test:8443/fetch/api/resources/top.txt with no-cors mode
+/fetch/api/basic/mode-no-cors.sub.any.worker.html
+  Fetch http://web-platform.test:8001/fetch/api/resources/top.txt with no-cors mode
+  Fetch https://web-platform.test:8443/fetch/api/resources/top.txt with no-cors mode
+/fetch/api/basic/mode-same-origin.any.worker.html
+  Fetch /fetch/api/basic/../resources/redirect.py?location=http://www1.web-platform.test:8000/fetch/api/resources/top.txt with same-origin mode
+  Fetch /fetch/api/basic/../resources/redirect.py?location=https://web-platform.test:8443/fetch/api/resources/top.txt with same-origin mode
+  Fetch http://www1.web-platform.test:8000/fetch/api/resources/top.txt with same-origin mode
+  Fetch https://web-platform.test:8443/fetch/api/resources/top.txt with same-origin mode
+/fetch/api/basic/referrer.any.worker.html
+  origin-when-cross-origin policy on a same-origin URL
+/fetch/api/basic/request-head.any.serviceworker.html
+  !passing
+/fetch/api/basic/request-head.any.sharedworker.html
+  !passing
+/fetch/api/basic/request-head.any.worker.html
+  !passing
+/fetch/api/basic/request-headers-case.any.html
+  !passing
+/fetch/api/basic/request-headers-case.any.serviceworker.html
+  !passing
+/fetch/api/basic/request-headers-case.any.sharedworker.html
+  !passing
+/fetch/api/basic/request-headers-case.any.worker.html
+  !passing
+/fetch/api/basic/request-headers.any.html
+  Fetch with POST without body
+  Fetch with PUT without body
+/fetch/api/basic/request-headers.any.serviceworker.html
+  Fetch with POST with ArrayBuffer body
+  Fetch with POST without body
+  Fetch with PUT without body
+/fetch/api/basic/request-headers.any.sharedworker.html
+  Fetch with POST with ArrayBuffer body
+  Fetch with POST without body
+  Fetch with PUT without body
+/fetch/api/basic/request-headers.any.worker.html
+  Fetch with POST with ArrayBuffer body
+  Fetch with POST without body
+  Fetch with PUT without body
+/fetch/api/basic/request-referrer-redirected-worker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-referrer.any.worker.html
+  about:client referrer
+/fetch/api/basic/request-upload-421.any.html
+  !passing
+/fetch/api/basic/request-upload-421.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload-421.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload-421.any.worker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.any.html
+  Fetch with POST with ReadableStream containing ArrayBuffer
+  Fetch with POST with ReadableStream containing String
+  Streaming upload shouldn't work on Http/1.1.
+/fetch/api/basic/request-upload.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.any.worker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.h2.any.html
+  !harness TIMEOUT
+  !passing
+  Fetch with POST with ReadableStream on 421 response should return the response and not retry.
+/fetch/api/basic/request-upload.h2.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.h2.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/basic/request-upload.h2.any.worker.html
+  !harness TIMEOUT
+/fetch/api/basic/response-null-body.any.html
+  Response.body is null for responses with method=HEAD
+  Response.body is null for responses with status=204 (method=POST)
+  Response.body is null for responses with status=205 (method=GET)
+  Response.body is null for responses with status=304 (method=POST)
+/fetch/api/basic/response-null-body.any.serviceworker.html
+  Response.body is null for responses with method=HEAD
+  Response.body is null for responses with status=204 (method=POST)
+  Response.body is null for responses with status=205 (method=GET)
+  Response.body is null for responses with status=304 (method=POST)
+/fetch/api/basic/response-null-body.any.sharedworker.html
+  Response.body is null for responses with method=HEAD
+  Response.body is null for responses with status=204 (method=POST)
+  Response.body is null for responses with status=205 (method=GET)
+  Response.body is null for responses with status=304 (method=POST)
+/fetch/api/basic/response-null-body.any.worker.html
+  Response.body is null for responses with method=HEAD
+  Response.body is null for responses with status=204 (method=POST)
+  Response.body is null for responses with status=205 (method=GET)
+  Response.body is null for responses with status=304 (method=POST)
+/fetch/api/basic/scheme-about.any.html
+  !passing
+  Fetching about:config with method GET is KO
+  Fetching about:invalid.com with method GET is KO
+  Fetching about:unicorn with method GET is KO
+/fetch/api/basic/scheme-about.any.serviceworker.html
+  !passing
+/fetch/api/basic/scheme-about.any.sharedworker.html
+  !passing
+/fetch/api/basic/scheme-about.any.worker.html
+  !passing
+/fetch/api/basic/scheme-blob.sub.any.html
+  Fetching URL.createObjectURL(invalid_type_blob) is OK
+/fetch/api/basic/scheme-blob.sub.any.worker.html
+  Fetching URL.createObjectURL(invalid_type_blob) is OK
+  Fetching [DELETE] URL.createObjectURL(blob) is KO
+  Fetching [GET] blob:http://www.web-platform.test:8000/ is KO
+  Fetching [GET] blob:not-backed-by-a-blob/ is KO
+  Fetching [HEAD] URL.createObjectURL(blob) is KO
+  Fetching [INVALID] URL.createObjectURL(blob) is KO
+  Fetching [OPTIONS] URL.createObjectURL(blob) is KO
+  Fetching [POST] URL.createObjectURL(blob) is KO
+  Fetching [PUT] URL.createObjectURL(blob) is KO
+/fetch/api/basic/scheme-data.any.serviceworker.html
+  Fetching [GET] data:notAdataUrl.com is KO
+/fetch/api/basic/scheme-data.any.sharedworker.html
+  Fetching [GET] data:notAdataUrl.com is KO
+/fetch/api/basic/scheme-data.any.worker.html
+  Fetching [GET] data:notAdataUrl.com is KO
+/fetch/api/basic/scheme-others.sub.any.serviceworker.html
+  !passing
+/fetch/api/basic/scheme-others.sub.any.sharedworker.html
+  !passing
+/fetch/api/basic/scheme-others.sub.any.worker.html
+  !passing
+/fetch/api/basic/status.h2.any.html
+  !passing
+/fetch/api/basic/status.h2.any.worker.html
+  !passing
+/fetch/api/basic/stream-safe-creation.any.html
+  !harness TIMEOUT
+  !passing
+  Object.prototype.start accessor returning invalid value should not affect stream creation by 'fetch'
+  throwing Object.prototype.start accessor should not affect stream creation by 'fetch'
+/fetch/api/body/formdata.any.html
+  !passing
+/fetch/api/body/formdata.any.worker.html
+  !passing
+/fetch/api/body/mime-type.any.worker.html
+  Request: setting missing Content-Type
+  Response: setting missing Content-Type
+/fetch/api/body/textstream.any.html
+  !passing
+  Request.textStream() on consumed body throws TypeError
+  Request.textStream() on locked body throws TypeError
+  Response.textStream() on consumed body throws TypeError
+  Response.textStream() on locked body throws TypeError
+/fetch/api/body/textstream.any.serviceworker.html
+  !passing
+  Request.textStream() on consumed body throws TypeError
+  Request.textStream() on locked body throws TypeError
+  Response.textStream() on consumed body throws TypeError
+  Response.textStream() on locked body throws TypeError
+/fetch/api/body/textstream.any.sharedworker.html
+  !passing
+  Request.textStream() on consumed body throws TypeError
+  Request.textStream() on locked body throws TypeError
+  Response.textStream() on consumed body throws TypeError
+  Response.textStream() on locked body throws TypeError
+/fetch/api/body/textstream.any.worker.html
+  !passing
+  Request.textStream() on consumed body throws TypeError
+  Request.textStream() on locked body throws TypeError
+  Response.textStream() on consumed body throws TypeError
+  Response.textStream() on locked body throws TypeError
+/fetch/api/cors/cors-basic.any.html
+  Cross domain basic usage [no-cors mode]
+  Cross domain different port [no-cors mode]
+  Cross domain different protocol [no-cors mode]
+  Same domain different port [no-cors mode]
+  Same domain different protocol different port [no-cors mode]
+/fetch/api/cors/cors-basic.any.worker.html
+  !passing
+  Cross domain basic usage [cors mode]
+  Cross domain different port [cors mode]
+  Cross domain different protocol [cors mode]
+  Same domain different port [cors mode]
+  Same domain different protocol different port [cors mode]
+/fetch/api/cors/cors-cookies-redirect.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-keepalive.any.html
+  !harness TIMEOUT
+  !passing
+  [keepalive] Cross domain basic usage [cors mode, server forbid CORS]
+  [keepalive] Cross domain basic usage [cors mode]
+  [keepalive] Cross domain different port [cors mode, server forbid CORS]
+  [keepalive] Cross domain different port [cors mode]
+  [keepalive] Cross domain different protocol [cors mode, server forbid CORS]
+  [keepalive] Cross domain different protocol [cors mode]
+  [keepalive] Same domain different port [cors mode, server forbid CORS]
+  [keepalive] Same domain different port [cors mode]
+  [keepalive] Same domain different protocol different port [cors mode, server forbid CORS]
+  [keepalive] Same domain different protocol different port [cors mode]
+/fetch/api/cors/cors-multiple-origins.sub.any.serviceworker.html
+  !passing
+/fetch/api/cors/cors-multiple-origins.sub.any.sharedworker.html
+  !passing
+/fetch/api/cors/cors-multiple-origins.sub.any.worker.html
+  !passing
+/fetch/api/cors/cors-no-preflight.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-origin.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-cache-tainted.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-cache.any.html
+  !passing
+  CORS preflight cache does not reuse wildcard header entries for Authorization
+/fetch/api/cors/cors-preflight-cache.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-not-cors-safelisted.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-redirect.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-redirect.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-redirect.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-referrer.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-response-validation.any.html
+  !passing
+/fetch/api/cors/cors-preflight-response-validation.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-safelist-value-size.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-star.any.html
+  CORS that fails with credentials: true; method: patch (allowed: PATCH); header:  (allowed: *)
+  CORS that succeeds with credentials: true; method: patch (allowed: patch); header:  (allowed: *)
+/fetch/api/cors/cors-preflight-star.any.worker.html
+  CORS that fails with credentials: false; method: POST (allowed: *); header: Authorization,123 (allowed: *)
+  CORS that fails with credentials: true; method: DELETE (allowed: delete); header:  (allowed: *)
+  CORS that fails with credentials: true; method: GET (allowed: *); header: X-Test,1 (allowed: *)
+  CORS that fails with credentials: true; method: GET (allowed: get); header: X-Test,1 (allowed: *)
+  CORS that fails with credentials: true; method: OK (allowed: *); header: X-Test,1 (allowed: *)
+  CORS that fails with credentials: true; method: PATCH (allowed: patch); header:  (allowed: *)
+  CORS that fails with credentials: true; method: PUT (allowed: *); header:  (allowed: )
+  CORS that fails with credentials: true; method: PUT (allowed: put); header:  (allowed: *)
+  CORS that fails with credentials: true; method: delete (allowed: delete); header:  (allowed: *)
+  CORS that fails with credentials: true; method: patch (allowed: PATCH); header:  (allowed: *)
+  CORS that fails with credentials: true; method: put (allowed: put); header:  (allowed: *)
+  CORS that succeeds with credentials: true; method: patch (allowed: patch); header:  (allowed: *)
+/fetch/api/cors/cors-preflight-status.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight-unterminated-body.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-preflight.any.html
+  CORS [patcH], server allows
+/fetch/api/cors/cors-preflight.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-redirect-credentials.any.html
+  Redirect 301 from same origin to remote with password
+  Redirect 301 from same origin to remote with user
+  Redirect 301 from same origin to remote with user and password
+  Redirect 302 from same origin to remote with password
+  Redirect 302 from same origin to remote with user
+  Redirect 302 from same origin to remote with user and password
+  Redirect 303 from same origin to remote with password
+  Redirect 303 from same origin to remote with user
+  Redirect 303 from same origin to remote with user and password
+  Redirect 307 from same origin to remote with password
+  Redirect 307 from same origin to remote with user
+  Redirect 307 from same origin to remote with user and password
+  Redirect 308 from same origin to remote with password
+  Redirect 308 from same origin to remote with user
+  Redirect 308 from same origin to remote with user and password
+/fetch/api/cors/cors-redirect-credentials.any.worker.html
+  !passing
+  Redirect 301 from same origin to remote without user and password
+  Redirect 302 from same origin to remote without user and password
+  Redirect 303 from same origin to remote without user and password
+  Redirect 307 from same origin to remote without user and password
+  Redirect 308 from same origin to remote without user and password
+/fetch/api/cors/cors-redirect-preflight.any.html
+  Redirect 301: cors to same origin (preflight after redirection success case)
+  Redirect 302: cors to same origin (preflight after redirection success case)
+  Redirect 303: cors to same origin (preflight after redirection success case)
+  Redirect 307: cors to same origin (preflight after redirection success case)
+  Redirect 308: cors to same origin (preflight after redirection success case)
+/fetch/api/cors/cors-redirect-preflight.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/cors-redirect.any.html
+  Redirect 301: cors to same origin
+  Redirect 302: cors to same origin
+  Redirect 303: cors to same origin
+  Redirect 307: cors to same origin
+  Redirect 308: cors to same origin
+/fetch/api/cors/cors-redirect.any.worker.html
+  !harness TIMEOUT
+/fetch/api/cors/data-url-iframe.html
+  fetching "top.txt" with CORS allowing null origin should be allowed.
+/fetch/api/cors/data-url-shared-worker.html
+  fetching "top.txt" with CORS allowing null origin should be allowed.
+/fetch/api/cors/data-url-worker.html
+  fetching "top.txt" without ACAO should be rejected.
+/fetch/api/credentials/authentication-redirection-stored-credentials.window.html
+  !harness ERROR
+  !passing
+/fetch/api/headers/header-forbidden-compression-dictionary.tentative.any.html
+  Available-Dictionary is a forbidden request header name
+  Dictionary-ID is a forbidden request header name
+/fetch/api/headers/header-forbidden-compression-dictionary.tentative.any.serviceworker.html
+  Available-Dictionary is a forbidden request header name
+  Dictionary-ID is a forbidden request header name
+/fetch/api/headers/header-forbidden-compression-dictionary.tentative.any.sharedworker.html
+  Available-Dictionary is a forbidden request header name
+  Dictionary-ID is a forbidden request header name
+/fetch/api/headers/header-forbidden-compression-dictionary.tentative.any.worker.html
+  Available-Dictionary is a forbidden request header name
+  Dictionary-ID is a forbidden request header name
+/fetch/api/headers/header-setcookie.any.serviceworker.html
+  Adding invalid Set-Cookie headers throws
+/fetch/api/headers/header-setcookie.any.sharedworker.html
+  Adding invalid Set-Cookie headers throws
+/fetch/api/headers/header-setcookie.any.worker.html
+  Adding invalid Set-Cookie headers throws
+/fetch/api/headers/header-values-last-event-id.any.html
+  !passing
+/fetch/api/headers/header-values-last-event-id.any.serviceworker.html
+  !passing
+/fetch/api/headers/header-values-last-event-id.any.sharedworker.html
+  !passing
+/fetch/api/headers/header-values-last-event-id.any.worker.html
+  !passing
+/fetch/api/headers/header-values-normalize.any.html
+  XMLHttpRequest with value %00
+/fetch/api/headers/header-values-normalize.any.serviceworker.html
+  fetch() with value %00
+/fetch/api/headers/header-values-normalize.any.sharedworker.html
+  fetch() with value %00
+/fetch/api/headers/header-values-normalize.any.worker.html
+  fetch() with value %00
+/fetch/api/headers/header-values.any.html
+  XMLHttpRequest with value x%00x needs to throw
+  XMLHttpRequest with value x%0Ax needs to throw
+  XMLHttpRequest with value x%0Dx needs to throw
+/fetch/api/headers/header-values.any.serviceworker.html
+  !passing
+  fetch() with all valid values
+/fetch/api/headers/header-values.any.sharedworker.html
+  !passing
+  fetch() with all valid values
+/fetch/api/headers/header-values.any.worker.html
+  !passing
+  fetch() with all valid values
+/fetch/api/headers/headers-basic.any.html
+  Check entries method
+  Check keys method
+  Check values method
+  Create headers with existing headers with custom iterator
+/fetch/api/headers/headers-basic.any.serviceworker.html
+  Check entries method
+  Check keys method
+  Check values method
+  Create headers with 1 should throw
+  Create headers with existing headers with custom iterator
+  Create headers with null should throw
+/fetch/api/headers/headers-basic.any.sharedworker.html
+  Check entries method
+  Check keys method
+  Check values method
+  Create headers with 1 should throw
+  Create headers with existing headers with custom iterator
+  Create headers with null should throw
+/fetch/api/headers/headers-basic.any.worker.html
+  Check entries method
+  Check keys method
+  Check values method
+  Create headers with 1 should throw
+  Create headers with existing headers with custom iterator
+  Create headers with null should throw
+/fetch/api/headers/headers-errors.any.serviceworker.html
+  !passing
+  Headers forEach loop should stop if callback is throwing exception
+/fetch/api/headers/headers-errors.any.sharedworker.html
+  !passing
+  Headers forEach loop should stop if callback is throwing exception
+/fetch/api/headers/headers-errors.any.worker.html
+  !passing
+  Headers forEach loop should stop if callback is throwing exception
+/fetch/api/headers/headers-record.any.html
+  !passing
+  Passing nothing to Headers constructor
+  Passing null to Headers constructor
+  Passing undefined to Headers constructor
+/fetch/api/headers/headers-record.any.serviceworker.html
+  !passing
+  Passing nothing to Headers constructor
+  Passing undefined to Headers constructor
+/fetch/api/headers/headers-record.any.sharedworker.html
+  !passing
+  Passing nothing to Headers constructor
+  Passing undefined to Headers constructor
+/fetch/api/headers/headers-record.any.worker.html
+  !passing
+  Passing nothing to Headers constructor
+  Passing undefined to Headers constructor
+/fetch/api/idlharness.https.any.html
+  FetchLaterResult interface object length
+  FetchLaterResult interface object name
+  FetchLaterResult interface: attribute activated
+  FetchLaterResult interface: existence and properties of interface object
+  FetchLaterResult interface: existence and properties of interface prototype object
+  FetchLaterResult interface: existence and properties of interface prototype object's "constructor" property
+  FetchLaterResult interface: existence and properties of interface prototype object's @@unscopables property
+  Headers interface object length
+  Headers interface: calling append(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling delete(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling get(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling has(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling set(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: iterable<ByteString, ByteString>
+  Request interface object length
+  Request interface: attribute body
+  Request interface: attribute bodyUsed
+  Request interface: attribute duplex
+  Request interface: attribute isHistoryNavigation
+  Request interface: attribute isReloadNavigation
+  Request interface: new Request('about:blank') must inherit property "textStream()" with the proper type
+  Request interface: operation blob()
+  Request interface: operation formData()
+  Request interface: operation textStream()
+  Response interface object length
+  Response interface: attribute body
+  Response interface: attribute bodyUsed
+  Response interface: calling redirect(USVString, optional unsigned short) on new Response() with too few arguments must throw TypeError
+  Response interface: new Response() must inherit property "textStream()" with the proper type
+  Response interface: operation blob()
+  Response interface: operation error()
+  Response interface: operation formData()
+  Response interface: operation json(any, optional ResponseInit)
+  Response interface: operation redirect(USVString, optional unsigned short)
+  Response interface: operation textStream()
+  Window interface: calling fetch(RequestInfo, optional RequestInit) on window with too few arguments must throw TypeError
+  Window interface: calling fetchLater(RequestInfo, optional DeferredRequestInit) on window with too few arguments must throw TypeError
+  Window interface: operation fetch(RequestInfo, optional RequestInit)
+  Window interface: operation fetchLater(RequestInfo, optional DeferredRequestInit)
+  Window interface: window must inherit property "fetchLater(RequestInfo, optional DeferredRequestInit)" with the proper type
+/fetch/api/idlharness.https.any.serviceworker.html
+  Headers interface object length
+  Headers interface: calling append(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling delete(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling get(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling has(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling set(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: existence and properties of interface object
+  Headers interface: existence and properties of interface prototype object
+  Headers interface: iterable<ByteString, ByteString>
+  Request interface object length
+  Request interface: attribute body
+  Request interface: attribute bodyUsed
+  Request interface: attribute cache
+  Request interface: attribute credentials
+  Request interface: attribute destination
+  Request interface: attribute duplex
+  Request interface: attribute headers
+  Request interface: attribute integrity
+  Request interface: attribute isHistoryNavigation
+  Request interface: attribute isReloadNavigation
+  Request interface: attribute keepalive
+  Request interface: attribute method
+  Request interface: attribute mode
+  Request interface: attribute redirect
+  Request interface: attribute referrer
+  Request interface: attribute referrerPolicy
+  Request interface: attribute signal
+  Request interface: attribute url
+  Request interface: existence and properties of interface object
+  Request interface: existence and properties of interface prototype object
+  Request interface: new Request('about:blank') must inherit property "textStream()" with the proper type
+  Request interface: operation blob()
+  Request interface: operation formData()
+  Request interface: operation textStream()
+  Response interface object length
+  Response interface: attribute body
+  Response interface: attribute bodyUsed
+  Response interface: attribute headers
+  Response interface: attribute ok
+  Response interface: attribute redirected
+  Response interface: attribute status
+  Response interface: attribute statusText
+  Response interface: attribute type
+  Response interface: attribute url
+  Response interface: calling redirect(USVString, optional unsigned short) on new Response() with too few arguments must throw TypeError
+  Response interface: existence and properties of interface object
+  Response interface: existence and properties of interface prototype object
+  Response interface: new Response() must inherit property "textStream()" with the proper type
+  Response interface: operation blob()
+  Response interface: operation error()
+  Response interface: operation formData()
+  Response interface: operation json(any, optional ResponseInit)
+  Response interface: operation redirect(USVString, optional unsigned short)
+  Response interface: operation textStream()
+  WorkerGlobalScope interface: calling fetch(RequestInfo, optional RequestInit) on self with too few arguments must throw TypeError
+  WorkerGlobalScope interface: operation fetch(RequestInfo, optional RequestInit)
+  WorkerGlobalScope interface: self must inherit property "fetch(RequestInfo, optional RequestInit)" with the proper type
+/fetch/api/idlharness.https.any.sharedworker.html
+  Headers interface object length
+  Headers interface: calling append(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling delete(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling get(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling has(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling set(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: existence and properties of interface object
+  Headers interface: existence and properties of interface prototype object
+  Headers interface: iterable<ByteString, ByteString>
+  Request interface object length
+  Request interface: attribute body
+  Request interface: attribute bodyUsed
+  Request interface: attribute cache
+  Request interface: attribute credentials
+  Request interface: attribute destination
+  Request interface: attribute duplex
+  Request interface: attribute headers
+  Request interface: attribute integrity
+  Request interface: attribute isHistoryNavigation
+  Request interface: attribute isReloadNavigation
+  Request interface: attribute keepalive
+  Request interface: attribute method
+  Request interface: attribute mode
+  Request interface: attribute redirect
+  Request interface: attribute referrer
+  Request interface: attribute referrerPolicy
+  Request interface: attribute signal
+  Request interface: attribute url
+  Request interface: existence and properties of interface object
+  Request interface: existence and properties of interface prototype object
+  Request interface: new Request('about:blank') must inherit property "textStream()" with the proper type
+  Request interface: operation blob()
+  Request interface: operation formData()
+  Request interface: operation textStream()
+  Response interface object length
+  Response interface: attribute body
+  Response interface: attribute bodyUsed
+  Response interface: attribute headers
+  Response interface: attribute ok
+  Response interface: attribute redirected
+  Response interface: attribute status
+  Response interface: attribute statusText
+  Response interface: attribute type
+  Response interface: attribute url
+  Response interface: calling redirect(USVString, optional unsigned short) on new Response() with too few arguments must throw TypeError
+  Response interface: existence and properties of interface object
+  Response interface: existence and properties of interface prototype object
+  Response interface: new Response() must inherit property "textStream()" with the proper type
+  Response interface: operation blob()
+  Response interface: operation error()
+  Response interface: operation formData()
+  Response interface: operation json(any, optional ResponseInit)
+  Response interface: operation redirect(USVString, optional unsigned short)
+  Response interface: operation textStream()
+  WorkerGlobalScope interface: calling fetch(RequestInfo, optional RequestInit) on self with too few arguments must throw TypeError
+  WorkerGlobalScope interface: operation fetch(RequestInfo, optional RequestInit)
+  WorkerGlobalScope interface: self must inherit property "fetch(RequestInfo, optional RequestInit)" with the proper type
+/fetch/api/idlharness.https.any.worker.html
+  Headers interface object length
+  Headers interface: calling append(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling delete(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling get(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling has(ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: calling set(ByteString, ByteString) on new Headers() with too few arguments must throw TypeError
+  Headers interface: existence and properties of interface object
+  Headers interface: existence and properties of interface prototype object
+  Headers interface: iterable<ByteString, ByteString>
+  Request interface object length
+  Request interface: attribute body
+  Request interface: attribute bodyUsed
+  Request interface: attribute cache
+  Request interface: attribute credentials
+  Request interface: attribute destination
+  Request interface: attribute duplex
+  Request interface: attribute headers
+  Request interface: attribute integrity
+  Request interface: attribute isHistoryNavigation
+  Request interface: attribute isReloadNavigation
+  Request interface: attribute keepalive
+  Request interface: attribute method
+  Request interface: attribute mode
+  Request interface: attribute redirect
+  Request interface: attribute referrer
+  Request interface: attribute referrerPolicy
+  Request interface: attribute signal
+  Request interface: attribute url
+  Request interface: existence and properties of interface object
+  Request interface: existence and properties of interface prototype object
+  Request interface: new Request('about:blank') must inherit property "textStream()" with the proper type
+  Request interface: operation blob()
+  Request interface: operation formData()
+  Request interface: operation textStream()
+  Response interface object length
+  Response interface: attribute body
+  Response interface: attribute bodyUsed
+  Response interface: attribute headers
+  Response interface: attribute ok
+  Response interface: attribute redirected
+  Response interface: attribute status
+  Response interface: attribute statusText
+  Response interface: attribute type
+  Response interface: attribute url
+  Response interface: calling redirect(USVString, optional unsigned short) on new Response() with too few arguments must throw TypeError
+  Response interface: existence and properties of interface object
+  Response interface: existence and properties of interface prototype object
+  Response interface: new Response() must inherit property "textStream()" with the proper type
+  Response interface: operation blob()
+  Response interface: operation error()
+  Response interface: operation formData()
+  Response interface: operation json(any, optional ResponseInit)
+  Response interface: operation redirect(USVString, optional unsigned short)
+  Response interface: operation textStream()
+  WorkerGlobalScope interface: calling fetch(RequestInfo, optional RequestInit) on self with too few arguments must throw TypeError
+  WorkerGlobalScope interface: operation fetch(RequestInfo, optional RequestInit)
+  WorkerGlobalScope interface: self must inherit property "fetch(RequestInfo, optional RequestInit)" with the proper type
+/fetch/api/policies/csp-blocked-worker.html
+  !passing
+/fetch/api/policies/referrer-origin-service-worker.https.html
+  !passing
+  Fetch in service worker: referrer with no-referrer policy
+/fetch/api/policies/referrer-origin-when-cross-origin-service-worker.https.html
+  Request's referrer is origin
+/fetch/api/policies/referrer-origin-worker.html
+  !passing
+/fetch/api/policies/referrer-origin.html
+  !passing
+/fetch/api/policies/referrer-unsafe-url-worker.html
+  !passing
+/fetch/api/redirect/redirect-back-to-original-origin.any.html
+  original => remote => original with mode: "cors"
+/fetch/api/redirect/redirect-back-to-original-origin.any.serviceworker.html
+  original => remote => original with mode: "cors"
+/fetch/api/redirect/redirect-back-to-original-origin.any.sharedworker.html
+  original => remote => original with mode: "cors"
+/fetch/api/redirect/redirect-back-to-original-origin.any.worker.html
+  original => remote => original with mode: "cors"
+/fetch/api/redirect/redirect-count.any.serviceworker.html
+  Redirect 301 21 times
+  Redirect 302 21 times
+  Redirect 303 21 times
+  Redirect 307 21 times
+  Redirect 308 21 times
+/fetch/api/redirect/redirect-count.any.sharedworker.html
+  Redirect 301 21 times
+  Redirect 302 21 times
+  Redirect 303 21 times
+  Redirect 307 21 times
+  Redirect 308 21 times
+/fetch/api/redirect/redirect-count.any.worker.html
+  Redirect 301 21 times
+  Redirect 302 21 times
+  Redirect 303 21 times
+  Redirect 307 21 times
+  Redirect 308 21 times
+/fetch/api/redirect/redirect-empty-location.any.serviceworker.html
+  !passing
+  redirect response with empty Location, manual mode
+/fetch/api/redirect/redirect-empty-location.any.sharedworker.html
+  !passing
+  redirect response with empty Location, manual mode
+/fetch/api/redirect/redirect-empty-location.any.worker.html
+  !passing
+  redirect response with empty Location, manual mode
+/fetch/api/redirect/redirect-keepalive.any.html
+  !harness TIMEOUT
+  !passing
+/fetch/api/redirect/redirect-location.any.html
+  Redirect 301 in "manual" mode with data location
+  Redirect 301 in "manual" mode with invalid location
+  Redirect 301 in "manual" mode with valid location
+  Redirect 301 in "manual" mode without location
+  Redirect 302 in "manual" mode with data location
+  Redirect 302 in "manual" mode with invalid location
+  Redirect 302 in "manual" mode with valid location
+  Redirect 302 in "manual" mode without location
+  Redirect 303 in "manual" mode with data location
+  Redirect 303 in "manual" mode with invalid location
+  Redirect 303 in "manual" mode with valid location
+  Redirect 303 in "manual" mode without location
+  Redirect 307 in "manual" mode with data location
+  Redirect 307 in "manual" mode with invalid location
+  Redirect 307 in "manual" mode with valid location
+  Redirect 307 in "manual" mode without location
+  Redirect 308 in "manual" mode with data location
+  Redirect 308 in "manual" mode with invalid location
+  Redirect 308 in "manual" mode with valid location
+  Redirect 308 in "manual" mode without location
+/fetch/api/redirect/redirect-location.any.serviceworker.html
+  !passing
+  Redirect 301 in "follow" mode with valid location
+  Redirect 301 in "follow" mode without location
+  Redirect 302 in "follow" mode with valid location
+  Redirect 302 in "follow" mode without location
+  Redirect 303 in "follow" mode with valid location
+  Redirect 303 in "follow" mode without location
+  Redirect 307 in "follow" mode with valid location
+  Redirect 307 in "follow" mode without location
+  Redirect 308 in "follow" mode with valid location
+  Redirect 308 in "follow" mode without location
+/fetch/api/redirect/redirect-location.any.sharedworker.html
+  !passing
+  Redirect 301 in "follow" mode with valid location
+  Redirect 301 in "follow" mode without location
+  Redirect 302 in "follow" mode with valid location
+  Redirect 302 in "follow" mode without location
+  Redirect 303 in "follow" mode with valid location
+  Redirect 303 in "follow" mode without location
+  Redirect 307 in "follow" mode with valid location
+  Redirect 307 in "follow" mode without location
+  Redirect 308 in "follow" mode with valid location
+  Redirect 308 in "follow" mode without location
+/fetch/api/redirect/redirect-location.any.worker.html
+  !passing
+  Redirect 301 in "follow" mode with valid location
+  Redirect 301 in "follow" mode without location
+  Redirect 302 in "follow" mode with valid location
+  Redirect 302 in "follow" mode without location
+  Redirect 303 in "follow" mode with valid location
+  Redirect 303 in "follow" mode without location
+  Redirect 307 in "follow" mode with valid location
+  Redirect 307 in "follow" mode without location
+  Redirect 308 in "follow" mode with valid location
+  Redirect 308 in "follow" mode without location
+/fetch/api/redirect/redirect-mode.any.html
+  cross-origin redirect 301 in manual redirect and cors mode
+  cross-origin redirect 302 in manual redirect and cors mode
+  cross-origin redirect 303 in manual redirect and cors mode
+  cross-origin redirect 307 in manual redirect and cors mode
+  manual redirect with a CORS error should be rejected
+  same-origin redirect 301 in manual redirect and cors mode
+  same-origin redirect 301 in manual redirect and no-cors mode
+  same-origin redirect 302 in manual redirect and cors mode
+  same-origin redirect 302 in manual redirect and no-cors mode
+  same-origin redirect 303 in manual redirect and cors mode
+  same-origin redirect 303 in manual redirect and no-cors mode
+  same-origin redirect 307 in manual redirect and cors mode
+  same-origin redirect 307 in manual redirect and no-cors mode
+/fetch/api/redirect/redirect-mode.any.worker.html
+  !passing
+  cross-origin redirect 301 in follow redirect and cors mode
+  cross-origin redirect 301 in follow redirect and no-cors mode
+  cross-origin redirect 302 in follow redirect and cors mode
+  cross-origin redirect 302 in follow redirect and no-cors mode
+  cross-origin redirect 303 in follow redirect and cors mode
+  cross-origin redirect 303 in follow redirect and no-cors mode
+  cross-origin redirect 307 in follow redirect and cors mode
+  cross-origin redirect 307 in follow redirect and no-cors mode
+  cross-origin redirect 308 in follow redirect and cors mode
+  cross-origin redirect 308 in follow redirect and no-cors mode
+  cross-origin redirect 308 in manual redirect and cors mode
+  same-origin redirect 301 in follow redirect and cors mode
+  same-origin redirect 301 in follow redirect and no-cors mode
+  same-origin redirect 302 in follow redirect and cors mode
+  same-origin redirect 302 in follow redirect and no-cors mode
+  same-origin redirect 303 in follow redirect and cors mode
+  same-origin redirect 303 in follow redirect and no-cors mode
+  same-origin redirect 307 in follow redirect and cors mode
+  same-origin redirect 307 in follow redirect and no-cors mode
+  same-origin redirect 308 in follow redirect and cors mode
+  same-origin redirect 308 in follow redirect and no-cors mode
+  same-origin redirect 308 in manual redirect and cors mode
+  same-origin redirect 308 in manual redirect and no-cors mode
+/fetch/api/redirect/redirect-origin.any.html
+  [GET] Redirect 301 Other origin to same origin
+  [GET] Redirect 302 Other origin to same origin
+  [GET] Redirect 303 Other origin to same origin
+  [GET] Redirect 307 Other origin to same origin
+  [GET] Redirect 308 Other origin to same origin
+  [POST] Redirect 301 Other origin to same origin
+  [POST] Redirect 302 Other origin to same origin
+  [POST] Redirect 303 Other origin to same origin
+  [POST] Redirect 307 Other origin to same origin
+  [POST] Redirect 307 Same origin to same origin
+  [POST] Redirect 308 Other origin to same origin
+  [POST] Redirect 308 Same origin to same origin
+/fetch/api/redirect/redirect-origin.any.worker.html
+  !harness TIMEOUT
+/fetch/api/redirect/redirect-referrer-override.any.html
+  Cross origin redirection, no-referrer init, no-referrer-when-downgrade redirect header \s
+  Cross origin redirection, no-referrer init, origin redirect header \s
+  Cross origin redirection, no-referrer init, origin-when-cross-origin redirect header \s
+  Cross origin redirection, no-referrer init, strict-origin redirect header \s
+  Cross origin redirection, no-referrer init, strict-origin-when-cross-origin redirect header \s
+  Cross origin redirection, no-referrer init, unsafe-url redirect header \s
+  Cross origin redirection, origin init, no-referrer-when-downgrade redirect header \s
+  Cross origin redirection, origin init, unsafe-url redirect header \s
+  Cross origin redirection, strict-origin init, no-referrer-when-downgrade redirect header \s
+  Cross origin redirection, strict-origin init, unsafe-url redirect header \s
+  Same origin redirection, no-referrer init, no-referrer-when-downgrade redirect header \s
+  Same origin redirection, no-referrer init, origin redirect header \s
+  Same origin redirection, no-referrer init, origin-when-cross-origin redirect header \s
+  Same origin redirection, no-referrer init, same-origin redirect header \s
+  Same origin redirection, no-referrer init, strict-origin redirect header \s
+  Same origin redirection, no-referrer init, strict-origin-when-cross-origin redirect header \s
+  Same origin redirection, no-referrer init, unsafe-url redirect header \s
+  Same origin redirection, origin init, no-referrer-when-downgrade redirect header \s
+  Same origin redirection, origin init, origin-when-cross-origin redirect header \s
+  Same origin redirection, origin init, same-origin redirect header \s
+  Same origin redirection, origin init, strict-origin-when-cross-origin redirect header \s
+  Same origin redirection, origin init, unsafe-url redirect header \s
+  Same origin redirection, strict-origin init, no-referrer-when-downgrade redirect header \s
+  Same origin redirection, strict-origin init, origin-when-cross-origin redirect header \s
+  Same origin redirection, strict-origin init, same-origin redirect header \s
+  Same origin redirection, strict-origin init, strict-origin-when-cross-origin redirect header \s
+  Same origin redirection, strict-origin init, unsafe-url redirect header \s
+/fetch/api/redirect/redirect-referrer-override.any.worker.html
+  !harness TIMEOUT
+/fetch/api/redirect/redirect-referrer.any.worker.html
+  !harness TIMEOUT
+/fetch/api/redirect/redirect-schemes.any.serviceworker.html
+  !passing
+/fetch/api/redirect/redirect-schemes.any.sharedworker.html
+  !passing
+/fetch/api/redirect/redirect-schemes.any.worker.html
+  !passing
+/fetch/api/redirect/redirect-to-dataurl.any.serviceworker.html
+  !passing
+/fetch/api/redirect/redirect-to-dataurl.any.sharedworker.html
+  !passing
+/fetch/api/redirect/redirect-to-dataurl.any.worker.html
+  !passing
+/fetch/api/redirect/redirect-upload.h2.any.html
+  !passing
+/fetch/api/redirect/redirect-upload.h2.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/redirect/redirect-upload.h2.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/redirect/redirect-upload.h2.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/destination/fetch-destination-frame.https.html
+  !harness ERROR
+/fetch/api/request/destination/fetch-destination-iframe.https.html
+  !harness ERROR
+/fetch/api/request/destination/fetch-destination-no-load-event.https.html
+  !harness TIMEOUT
+  !passing
+  Background image fetches with an "image" Request.destination
+  Initialize global state
+/fetch/api/request/destination/fetch-destination-prefetch.https.html
+  !harness TIMEOUT
+  HTMLLinkElement with rel=prefetch fetches with an empty string Request.destination
+/fetch/api/request/destination/fetch-destination-worker.https.html
+  !harness TIMEOUT
+  !passing
+  Initialize global state
+/fetch/api/request/destination/fetch-destination.https.html
+  !harness TIMEOUT
+  !passing
+  HTMLImageElement fetches with an "image" Request.destination
+  HTMLImageElement with srcset attribute fetches with an "image" Request.destination
+  Initialize global state
+/fetch/api/request/forbidden-method.any.serviceworker.html
+  !passing
+/fetch/api/request/forbidden-method.any.sharedworker.html
+  !passing
+/fetch/api/request/forbidden-method.any.worker.html
+  !passing
+/fetch/api/request/multi-globals/construct-in-detached-frame.window.html
+  !passing
+/fetch/api/request/request-bad-port.any.html
+  Request on a port that is not bad should succeed through the proxy.
+/fetch/api/request/request-bad-port.any.sharedworker.html
+  !passing
+/fetch/api/request/request-bad-port.any.worker.html
+  !passing
+/fetch/api/request/request-cache-default-conditional.any.html
+  RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Modified-Since header is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+  RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Etag and fresh response
+  RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Last-Modified and fresh response
+/fetch/api/request/request-cache-default-conditional.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-default-conditional.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-default-conditional.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-default.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-default.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-default.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-force-cache.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-force-cache.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-force-cache.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-cache.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-cache.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-cache.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-store.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-store.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-no-store.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-only-if-cached.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-only-if-cached.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-reload.any.serviceworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-reload.any.sharedworker.html
+  !harness TIMEOUT
+/fetch/api/request/request-cache-reload.any.worker.html
+  !harness TIMEOUT
+/fetch/api/request/request-consume-empty.any.html
+  Consume empty FormData request body as text
+/fetch/api/request/request-consume-empty.any.serviceworker.html
+  Consume empty ArrayBuffer request body as text
+  Consume empty FormData request body as text
+  Consume request's body as formData with correct multipart type (error case)
+  Consume request's body as formData without correct type (error case)
+/fetch/api/request/request-consume-empty.any.sharedworker.html
+  Consume empty ArrayBuffer request body as text
+  Consume empty FormData request body as text
+  Consume request's body as formData with correct multipart type (error case)
+  Consume request's body as formData without correct type (error case)
+/fetch/api/request/request-consume-empty.any.worker.html
+  Consume empty ArrayBuffer request body as text
+  Consume empty FormData request body as text
+  Consume request's body as formData with correct multipart type (error case)
+  Consume request's body as formData without correct type (error case)
+/fetch/api/request/request-consume.any.html
+  Consume FormData request's body as FormData
+/fetch/api/request/request-consume.any.serviceworker.html
+  Consume ArrayBuffer request's body as JSON
+  Consume ArrayBuffer request's body as arrayBuffer
+  Consume ArrayBuffer request's body as blob
+  Consume ArrayBuffer request's body as bytes
+  Consume ArrayBuffer request's body as text
+  Consume DataView request's body as bytes
+  Consume Float32Array request's body as bytes
+  Consume FormData request's body as FormData
+  Consume Int8Array request's body as bytes
+  Consume String request's body as bytes
+  Consume Uint8Array request's body as bytes
+  Consume blob response's body as bytes
+  Trying to consume bad JSON text as JSON: '['
+  Trying to consume bad JSON text as JSON: 'a'
+  Trying to consume bad JSON text as JSON: 'undefined'
+  Trying to consume bad JSON text as JSON: '{'
+/fetch/api/request/request-consume.any.sharedworker.html
+  Consume ArrayBuffer request's body as JSON
+  Consume ArrayBuffer request's body as arrayBuffer
+  Consume ArrayBuffer request's body as blob
+  Consume ArrayBuffer request's body as bytes
+  Consume ArrayBuffer request's body as text
+  Consume DataView request's body as bytes
+  Consume Float32Array request's body as bytes
+  Consume FormData request's body as FormData
+  Consume Int8Array request's body as bytes
+  Consume String request's body as bytes
+  Consume Uint8Array request's body as bytes
+  Consume blob response's body as bytes
+  Trying to consume bad JSON text as JSON: '['
+  Trying to consume bad JSON text as JSON: 'a'
+  Trying to consume bad JSON text as JSON: 'undefined'
+  Trying to consume bad JSON text as JSON: '{'
+/fetch/api/request/request-consume.any.worker.html
+  Consume ArrayBuffer request's body as JSON
+  Consume ArrayBuffer request's body as arrayBuffer
+  Consume ArrayBuffer request's body as blob
+  Consume ArrayBuffer request's body as bytes
+  Consume ArrayBuffer request's body as text
+  Consume DataView request's body as bytes
+  Consume Float32Array request's body as bytes
+  Consume FormData request's body as FormData
+  Consume Int8Array request's body as bytes
+  Consume String request's body as bytes
+  Consume Uint8Array request's body as bytes
+  Consume blob response's body as bytes
+  Trying to consume bad JSON text as JSON: '['
+  Trying to consume bad JSON text as JSON: 'a'
+  Trying to consume bad JSON text as JSON: 'undefined'
+  Trying to consume bad JSON text as JSON: '{'
+/fetch/api/request/request-disturbed.any.html
+  Input request used for creating new request became disturbed
+  Request construction failure should not set "bodyUsed"
+/fetch/api/request/request-disturbed.any.serviceworker.html
+  !passing
+  Check creating a new request with a new body from a disturbed request
+  Input request used for creating new request with a new body is not disturbed
+  Request without body cannot be disturbed
+  Request's body: initial state
+/fetch/api/request/request-disturbed.any.sharedworker.html
+  !passing
+  Check creating a new request with a new body from a disturbed request
+  Input request used for creating new request with a new body is not disturbed
+  Request without body cannot be disturbed
+  Request's body: initial state
+/fetch/api/request/request-disturbed.any.worker.html
+  !passing
+  Check creating a new request with a new body from a disturbed request
+  Input request used for creating new request with a new body is not disturbed
+  Request without body cannot be disturbed
+  Request's body: initial state
+/fetch/api/request/request-error.any.html
+  RequestInit's mode is no-cors and method is not simple
+  RequestInit's window is not null
+/fetch/api/request/request-error.any.serviceworker.html
+  !passing
+  Request should get its content-type from init headers if one is provided
+  Request should get its content-type from the body if none is provided
+  Request should get its content-type from the init request
+  Request should not get its content-type from the init request if init headers are provided
+  Request with cache mode: only-if-cached and fetch mode: same-origin
+/fetch/api/request/request-error.any.sharedworker.html
+  !passing
+  Request should get its content-type from init headers if one is provided
+  Request should get its content-type from the body if none is provided
+  Request should get its content-type from the init request
+  Request should not get its content-type from the init request if init headers are provided
+  Request with cache mode: only-if-cached and fetch mode: same-origin
+/fetch/api/request/request-error.any.worker.html
+  !passing
+  Request should get its content-type from init headers if one is provided
+  Request should get its content-type from the body if none is provided
+  Request should get its content-type from the init request
+  Request should not get its content-type from the init request if init headers are provided
+  Request with cache mode: only-if-cached and fetch mode: same-origin
+/fetch/api/request/request-headers.any.html
+  Check that no-cors request constructor is filtering headers provided as part of request parameter
+/fetch/api/request/request-headers.any.serviceworker.html
+  Check that no-cors request constructor is filtering headers provided as part of request parameter
+/fetch/api/request/request-headers.any.sharedworker.html
+  Check that no-cors request constructor is filtering headers provided as part of request parameter
+/fetch/api/request/request-headers.any.worker.html
+  Check that no-cors request constructor is filtering headers provided as part of request parameter
+/fetch/api/request/request-init-001.sub.html
+  Check method init value of patCh and associated getter
+  Check method init value of patch and associated getter
+  Check referrer init value of http://test.url and associated getter
+/fetch/api/request/request-init-002.any.serviceworker.html
+  !passing
+  Initialize Request with headers values
+  Initialize Request's body with "null", null
+  Initialize Request's body with "undefined", undefined
+/fetch/api/request/request-init-002.any.sharedworker.html
+  !passing
+  Initialize Request with headers values
+  Initialize Request's body with "null", null
+  Initialize Request's body with "undefined", undefined
+/fetch/api/request/request-init-002.any.worker.html
+  !passing
+  Initialize Request with headers values
+  Initialize Request's body with "null", null
+  Initialize Request's body with "undefined", undefined
+/fetch/api/request/request-init-priority.any.html
+  fetch() with an invalid priority returns a rejected promise with a TypeError
+  new Request() throws a TypeError if any of RequestInit's members' values are invalid
+/fetch/api/request/request-init-priority.any.worker.html
+  fetch() with an invalid priority returns a rejected promise with a TypeError
+  new Request() throws a TypeError if any of RequestInit's members' values are invalid
+/fetch/api/request/request-init-stream.any.html
+  Constructing a Request with a Request on which body.getReader() is called
+  Constructing a Request with a stream on which getReader() is called
+  Constructing a Request with a stream on which read() and releaseLock() are called
+  Constructing a Request with a stream on which read() is called
+  It is error to omit .duplex when the body is a ReadableStream.
+  It is error to set .duplex = 'full' when the body is a Blob.
+  It is error to set .duplex = 'full' when the body is a ReadableStream.
+  It is error to set .duplex = 'full' when the body is a Uint8Array.
+  It is error to set .duplex = 'full' when the body is a string.
+  It is error to set .duplex = 'full' when the body is null.
+/fetch/api/request/request-init-stream.any.serviceworker.html
+  !passing
+  Constructing a Request with a stream holds the original object.
+  It is OK to omit .duplex when the body is a Blob.
+  It is OK to omit .duplex when the body is a Uint8Array.
+  It is OK to omit .duplex when the body is a string.
+  It is OK to omit .duplex when the body is null.
+  It is OK to omit duplex when init.body is not given and input.body is given.
+  It is OK to set .duplex = 'half' when the body is a Blob.
+  It is OK to set .duplex = 'half' when the body is a ReadableStream.
+  It is OK to set .duplex = 'half' when the body is a Uint8Array.
+  It is OK to set .duplex = 'half' when the body is a string.
+  It is OK to set .duplex = 'half' when the body is null.
+/fetch/api/request/request-init-stream.any.sharedworker.html
+  !passing
+  Constructing a Request with a stream holds the original object.
+  It is OK to omit .duplex when the body is a Blob.
+  It is OK to omit .duplex when the body is a Uint8Array.
+  It is OK to omit .duplex when the body is a string.
+  It is OK to omit .duplex when the body is null.
+  It is OK to omit duplex when init.body is not given and input.body is given.
+  It is OK to set .duplex = 'half' when the body is a Blob.
+  It is OK to set .duplex = 'half' when the body is a ReadableStream.
+  It is OK to set .duplex = 'half' when the body is a Uint8Array.
+  It is OK to set .duplex = 'half' when the body is a string.
+  It is OK to set .duplex = 'half' when the body is null.
+/fetch/api/request/request-init-stream.any.worker.html
+  !passing
+  Constructing a Request with a stream holds the original object.
+  It is OK to omit .duplex when the body is a Blob.
+  It is OK to omit .duplex when the body is a Uint8Array.
+  It is OK to omit .duplex when the body is a string.
+  It is OK to omit .duplex when the body is null.
+  It is OK to omit duplex when init.body is not given and input.body is given.
+  It is OK to set .duplex = 'half' when the body is a Blob.
+  It is OK to set .duplex = 'half' when the body is a ReadableStream.
+  It is OK to set .duplex = 'half' when the body is a Uint8Array.
+  It is OK to set .duplex = 'half' when the body is a string.
+  It is OK to set .duplex = 'half' when the body is null.
+/fetch/api/request/request-keepalive-quota.html?include=fast
+  A Keep-Alive fetch() with a body over the Quota Limit should reject.
+/fetch/api/request/request-keepalive-quota.html?include=slow-2
+  !passing
+/fetch/api/request/request-keepalive-quota.html?include=slow-3
+  !passing
+/fetch/api/request/request-keepalive.any.html
+  keepalive flag with stream body
+/fetch/api/request/request-keepalive.any.serviceworker.html
+  keepalive flag with stream body
+/fetch/api/request/request-keepalive.any.sharedworker.html
+  keepalive flag with stream body
+/fetch/api/request/request-keepalive.any.worker.html
+  keepalive flag with stream body
+/fetch/api/request/request-reset-attributes.https.html
+  !passing
+/fetch/api/response/json.any.worker.html
+  Ensure UTF-16 results in an error
+/fetch/api/response/response-arraybuffer-realm.window.html
+  !passing
+/fetch/api/response/response-blob-realm.any.html
+  !passing
+/fetch/api/response/response-clone.any.html
+  !passing
+  Cancelling stream should not affect cloned one
+  Cannot clone a disturbed response
+  Check Response's clone has the expected attribute values
+  Check Response's clone with default values, without body
+  Check cloned response's body
+  Check original response's body after cloning
+  Cloned responses should provide the same data
+/fetch/api/response/response-clone.any.serviceworker.html
+  !passing
+  Cancelling stream should not affect cloned one
+  Check Response's clone has the expected attribute values
+  Check Response's clone with default values, without body
+  Cloned responses should provide the same data
+/fetch/api/response/response-clone.any.sharedworker.html
+  !passing
+  Cancelling stream should not affect cloned one
+  Check Response's clone has the expected attribute values
+  Check Response's clone with default values, without body
+  Cloned responses should provide the same data
+/fetch/api/response/response-clone.any.worker.html
+  !passing
+  Cancelling stream should not affect cloned one
+  Check Response's clone has the expected attribute values
+  Check Response's clone with default values, without body
+  Cloned responses should provide the same data
+/fetch/api/response/response-consume-empty.any.html
+  Consume empty FormData response body as text
+/fetch/api/response/response-consume-empty.any.serviceworker.html
+  Consume empty ArrayBuffer response body as text
+  Consume empty FormData response body as text
+  Consume response's body as formData with correct multipart type (error case)
+  Consume response's body as formData without correct type (error case)
+/fetch/api/response/response-consume-empty.any.sharedworker.html
+  Consume empty ArrayBuffer response body as text
+  Consume empty FormData response body as text
+  Consume response's body as formData with correct multipart type (error case)
+  Consume response's body as formData without correct type (error case)
+/fetch/api/response/response-consume-empty.any.worker.html
+  Consume empty ArrayBuffer response body as text
+  Consume empty FormData response body as text
+  Consume response's body as formData with correct multipart type (error case)
+  Consume response's body as formData without correct type (error case)
+/fetch/api/response/response-consume-stream.any.html
+  Read URLSearchParams response's body as readableStream with mode=byob
+  Read array buffer response's body as readableStream with mode=byob
+  Read blob response's body as readableStream with mode=byob
+  Read form data response's body as readableStream with mode=byob
+  Read text response's body as readableStream with mode=byob
+  Reading with offset from Response stream
+/fetch/api/response/response-consume-stream.any.serviceworker.html
+  !passing
+  Getting a redirect Response stream
+  Getting an error Response stream
+  Read empty blob response's body as readableStream
+  Read empty text response's body as readableStream
+/fetch/api/response/response-consume-stream.any.sharedworker.html
+  !passing
+  Getting a redirect Response stream
+  Getting an error Response stream
+  Read empty blob response's body as readableStream
+  Read empty text response's body as readableStream
+/fetch/api/response/response-consume-stream.any.worker.html
+  !passing
+  Getting a redirect Response stream
+  Getting an error Response stream
+  Read empty blob response's body as readableStream
+  Read empty text response's body as readableStream
+/fetch/api/response/response-consume.html
+  Consume response's body: from FormData to formData
+  Consume response's body: from blob with correct multipart type to formData
+  Consume response's body: from multipart form data blob to formData
+  Consume response's body: from stream with correct multipart type to formData
+  Consume response's body: from text with correct multipart type to formData
+  Consume response's body: from text with correct multipart type to formData with BOM
+/fetch/api/response/response-error.any.serviceworker.html
+  !passing
+/fetch/api/response/response-error.any.sharedworker.html
+  !passing
+/fetch/api/response/response-error.any.worker.html
+  !passing
+/fetch/api/response/response-form-data.html
+  Empty form data
+  Validate form data - onePartWithEpilogue
+  Validate form data - onePartWithTransportPadding
+  Validate form data - onePartWithoutEpilogue
+  Validate form data - twoPartsWithEpilogue
+  Validate form data - twoPartsWithTransportPadding
+  Validate form data - twoPartsWithoutEpilogue
+/fetch/api/response/response-from-stream.any.html
+  !passing
+/fetch/api/response/response-from-stream.any.serviceworker.html
+  !passing
+/fetch/api/response/response-from-stream.any.sharedworker.html
+  !passing
+/fetch/api/response/response-from-stream.any.worker.html
+  !passing
+/fetch/api/response/response-headers-guard.any.serviceworker.html
+  !passing
+/fetch/api/response/response-headers-guard.any.sharedworker.html
+  !passing
+/fetch/api/response/response-headers-guard.any.worker.html
+  !passing
+/fetch/api/response/response-init-002.any.serviceworker.html
+  Read Response's body as readableStream
+/fetch/api/response/response-init-002.any.sharedworker.html
+  Read Response's body as readableStream
+/fetch/api/response/response-init-002.any.worker.html
+  Read Response's body as readableStream
+/fetch/api/response/response-static-error.any.serviceworker.html
+  the 'guard' of the Headers instance should be immutable
+/fetch/api/response/response-static-error.any.sharedworker.html
+  the 'guard' of the Headers instance should be immutable
+/fetch/api/response/response-static-error.any.worker.html
+  the 'guard' of the Headers instance should be immutable
+/fetch/api/response/response-static-json.any.html
+  Check response returned by static json() with init {"headers":{"content-type":"foo/bar"}}
+/fetch/api/response/response-static-json.any.serviceworker.html
+  Check response returned by static json() with init {"headers":{"content-type":"foo/bar"}}
+  Check static json() throws when data is circular
+  Check static json() throws when data is not encodable
+  Throws TypeError when calling static json() with a status of 204
+  Throws TypeError when calling static json() with a status of 205
+  Throws TypeError when calling static json() with a status of 304
+/fetch/api/response/response-static-json.any.sharedworker.html
+  Check response returned by static json() with init {"headers":{"content-type":"foo/bar"}}
+  Check static json() throws when data is circular
+  Check static json() throws when data is not encodable
+  Throws TypeError when calling static json() with a status of 204
+  Throws TypeError when calling static json() with a status of 205
+  Throws TypeError when calling static json() with a status of 304
+/fetch/api/response/response-static-json.any.worker.html
+  Check response returned by static json() with init {"headers":{"content-type":"foo/bar"}}
+  Check static json() throws when data is circular
+  Check static json() throws when data is not encodable
+  Throws TypeError when calling static json() with a status of 204
+  Throws TypeError when calling static json() with a status of 205
+  Throws TypeError when calling static json() with a status of 304
+/fetch/api/response/response-static-redirect.any.serviceworker.html
+  Check error returned when giving invalid status to redirect(), status = 200
+  Check error returned when giving invalid status to redirect(), status = 309
+  Check error returned when giving invalid status to redirect(), status = 400
+  Check error returned when giving invalid status to redirect(), status = 500
+  Check error returned when giving invalid url to redirect()
+/fetch/api/response/response-static-redirect.any.sharedworker.html
+  Check error returned when giving invalid status to redirect(), status = 200
+  Check error returned when giving invalid status to redirect(), status = 309
+  Check error returned when giving invalid status to redirect(), status = 400
+  Check error returned when giving invalid status to redirect(), status = 500
+  Check error returned when giving invalid url to redirect()
+/fetch/api/response/response-static-redirect.any.worker.html
+  Check error returned when giving invalid status to redirect(), status = 200
+  Check error returned when giving invalid status to redirect(), status = 309
+  Check error returned when giving invalid status to redirect(), status = 400
+  Check error returned when giving invalid status to redirect(), status = 500
+  Check error returned when giving invalid url to redirect()
+/fetch/api/response/response-stream-bad-chunk.any.html
+  !passing
+  ReadableStream with non-Uint8Array chunk passed to Response.formData() causes TypeError
+/fetch/api/response/response-stream-bad-chunk.any.serviceworker.html
+  !passing
+/fetch/api/response/response-stream-bad-chunk.any.sharedworker.html
+  !passing
+/fetch/api/response/response-stream-bad-chunk.any.worker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-2.any.serviceworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-2.any.sharedworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-2.any.worker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-3.any.serviceworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-3.any.sharedworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-3.any.worker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-4.any.serviceworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-4.any.sharedworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-4.any.worker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-5.any.serviceworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-5.any.sharedworker.html
+  !passing
+/fetch/api/response/response-stream-disturbed-5.any.worker.html
+  !passing
+/fetch/api/response/response-stream-with-broken-then.any.html
+  !passing

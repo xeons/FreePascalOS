@@ -1,0 +1,985 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/IndexedDB/back-forward-cache-open-connection.window.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/back-forward-cache-open-transaction.window.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/blob-composite-blob-reads.any.worker.html
+  !passing
+/IndexedDB/database-names-by-origin.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/file_support.sub.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/get-databases.any.html
+  Ensure that databases() doesn't pick up changes that haven't commited.
+/IndexedDB/get-databases.any.worker.html
+  Ensure that databases() doesn't pick up changes that haven't commited.
+  Ensure that databases() returns a promise.
+/IndexedDB/idb-binary-key-detached.any.html
+  !passing
+/IndexedDB/idb-binary-key-detached.any.serviceworker.html
+  !passing
+/IndexedDB/idb-binary-key-detached.any.sharedworker.html
+  !passing
+/IndexedDB/idb-binary-key-detached.any.worker.html
+  !passing
+/IndexedDB/idb-binary-key-roundtrip.any.serviceworker.html
+  !passing
+/IndexedDB/idb-binary-key-roundtrip.any.sharedworker.html
+  !passing
+/IndexedDB/idb-binary-key-roundtrip.any.worker.html
+  !passing
+/IndexedDB/idb-explicit-commit-throw.any.html
+  !passing
+/IndexedDB/idb-explicit-commit-throw.any.worker.html
+  !passing
+/IndexedDB/idb-explicit-commit.any.html
+  !harness TIMEOUT
+  Transactions that explicitly commit and have errors should abort.
+  Transactions that handle all errors properly should behave as expected when an explicit commit is called in an onerror handler.
+  Transactions with same scope should stay in program order, even if one calls commit.
+/IndexedDB/idb-explicit-commit.any.worker.html
+  !harness TIMEOUT
+  Transactions that explicitly commit and have errors should abort.
+  Transactions that handle all errors properly should behave as expected when an explicit commit is called in an onerror handler.
+  Transactions with same scope should stay in program order, even if one calls commit.
+/IndexedDB/idb-partitioned-basic.sub.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/idb-partitioned-coverage.sub.html
+  !harness TIMEOUT
+/IndexedDB/idb-partitioned-persistence.sub.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/idb_binary_key_conversion.any.serviceworker.html
+  !passing
+/IndexedDB/idb_binary_key_conversion.any.sharedworker.html
+  !passing
+/IndexedDB/idb_binary_key_conversion.any.worker.html
+  !passing
+/IndexedDB/idbcursor-advance-exception-order.any.serviceworker.html
+  IDBCursor.advance exception order: TypeError vs. TransactionInactiveError
+/IndexedDB/idbcursor-advance-exception-order.any.sharedworker.html
+  IDBCursor.advance exception order: TypeError vs. TransactionInactiveError
+/IndexedDB/idbcursor-advance-exception-order.any.worker.html
+  IDBCursor.advance exception order: TypeError vs. TransactionInactiveError
+/IndexedDB/idbcursor-advance-invalid.any.serviceworker.html
+  !passing
+  IDBCursor.advance() - invalid - attempt to call advance twice
+/IndexedDB/idbcursor-advance-invalid.any.sharedworker.html
+  !passing
+  IDBCursor.advance() - invalid - attempt to call advance twice
+/IndexedDB/idbcursor-advance-invalid.any.worker.html
+  !passing
+  IDBCursor.advance() - invalid - attempt to call advance twice
+/IndexedDB/idbcursor-source.any.serviceworker.html
+  !passing
+/IndexedDB/idbcursor-source.any.sharedworker.html
+  !passing
+/IndexedDB/idbcursor-source.any.worker.html
+  !passing
+/IndexedDB/idbcursor_advance_index.any.serviceworker.html
+  Calling advance() with count argument 0 should throw TypeError.
+  attempt to pass a count parameter that is not a number
+  index - attempt to advance backwards
+/IndexedDB/idbcursor_advance_index.any.sharedworker.html
+  Calling advance() with count argument 0 should throw TypeError.
+  attempt to pass a count parameter that is not a number
+  index - attempt to advance backwards
+/IndexedDB/idbcursor_advance_index.any.worker.html
+  Calling advance() with count argument 0 should throw TypeError.
+  attempt to pass a count parameter that is not a number
+  index - attempt to advance backwards
+/IndexedDB/idbcursor_advance_objectstore.any.serviceworker.html
+  Calling advance() with count argument 0 should throw TypeError.
+/IndexedDB/idbcursor_advance_objectstore.any.sharedworker.html
+  Calling advance() with count argument 0 should throw TypeError.
+/IndexedDB/idbcursor_advance_objectstore.any.worker.html
+  Calling advance() with count argument 0 should throw TypeError.
+/IndexedDB/idbcursor_update_index.any.serviceworker.html
+  No argument
+/IndexedDB/idbcursor_update_index.any.sharedworker.html
+  No argument
+/IndexedDB/idbcursor_update_index.any.worker.html
+  No argument
+/IndexedDB/idbcursor_update_objectstore.any.serviceworker.html
+  No argument
+/IndexedDB/idbcursor_update_objectstore.any.sharedworker.html
+  No argument
+/IndexedDB/idbcursor_update_objectstore.any.worker.html
+  No argument
+/IndexedDB/idbdatabase-createObjectStore-exception-order.any.html
+  IDBDatabase.createObjectStore exception order: TransactionInactiveError vs. SyntaxError
+/IndexedDB/idbdatabase-createObjectStore-exception-order.any.serviceworker.html
+  IDBDatabase.createObjectStore exception order: TransactionInactiveError vs. SyntaxError
+/IndexedDB/idbdatabase-createObjectStore-exception-order.any.sharedworker.html
+  IDBDatabase.createObjectStore exception order: TransactionInactiveError vs. SyntaxError
+/IndexedDB/idbdatabase-createObjectStore-exception-order.any.worker.html
+  IDBDatabase.createObjectStore exception order: TransactionInactiveError vs. SyntaxError
+/IndexedDB/idbdatabase-deleteObjectStore-exception-order.any.html
+  IDBDatabase.deleteObjectStore exception order: TransactionInactiveError vs. NotFoundError
+/IndexedDB/idbdatabase-deleteObjectStore-exception-order.any.serviceworker.html
+  IDBDatabase.deleteObjectStore exception order: TransactionInactiveError vs. NotFoundError
+/IndexedDB/idbdatabase-deleteObjectStore-exception-order.any.sharedworker.html
+  IDBDatabase.deleteObjectStore exception order: TransactionInactiveError vs. NotFoundError
+/IndexedDB/idbdatabase-deleteObjectStore-exception-order.any.worker.html
+  IDBDatabase.deleteObjectStore exception order: TransactionInactiveError vs. NotFoundError
+/IndexedDB/idbdatabase-transaction-exception-order.any.html
+  IDBDatabase.transaction exception order: NotFoundError vs. TypeError
+/IndexedDB/idbdatabase-transaction-exception-order.any.serviceworker.html
+  IDBDatabase.transaction exception order: NotFoundError vs. TypeError
+  IDBDatabase.transaction throws exception on invalid mode
+/IndexedDB/idbdatabase-transaction-exception-order.any.sharedworker.html
+  IDBDatabase.transaction exception order: NotFoundError vs. TypeError
+  IDBDatabase.transaction throws exception on invalid mode
+/IndexedDB/idbdatabase-transaction-exception-order.any.worker.html
+  IDBDatabase.transaction exception order: NotFoundError vs. TypeError
+  IDBDatabase.transaction throws exception on invalid mode
+/IndexedDB/idbdatabase_transaction.any.serviceworker.html
+  Attempt to open a transaction with invalid mode
+/IndexedDB/idbdatabase_transaction.any.sharedworker.html
+  Attempt to open a transaction with invalid mode
+/IndexedDB/idbdatabase_transaction.any.worker.html
+  Attempt to open a transaction with invalid mode
+/IndexedDB/idbfactory-databases-opaque-origin.html
+  !passing
+  IDBFactory.databases() in data URL shared worker should throw SecurityError
+/IndexedDB/idbfactory-deleteDatabase-opaque-origin.html
+  !passing
+  IDBFactory.deleteDatabase() in data URL shared worker should throw SecurityError
+/IndexedDB/idbfactory-open-opaque-origin.html
+  !passing
+  IDBFactory.open() in data URL shared workers should throw SecurityError
+/IndexedDB/idbfactory-origin-isolation.html
+  !harness TIMEOUT
+  !passing
+/IndexedDB/idbfactory_cmp.any.serviceworker.html
+  Date vs. Number
+  IDBFactory.cmp() - no argument
+  String vs. Date
+/IndexedDB/idbfactory_cmp.any.sharedworker.html
+  Date vs. Number
+  IDBFactory.cmp() - no argument
+  String vs. Date
+/IndexedDB/idbfactory_cmp.any.worker.html
+  Date vs. Number
+  IDBFactory.cmp() - no argument
+  String vs. Date
+/IndexedDB/idbfactory_open.any.serviceworker.html
+  !passing
+  Calling open() with version argument 1.5 should not throw.
+  Calling open() with version argument 9007199254740991 should not throw.
+  Calling open() with version argument undefined should not throw.
+  IDBFactory.open() - database 'name' and 'version' are correctly set
+  IDBFactory.open() - error in upgradeneeded resets db
+  IDBFactory.open() - error in version change transaction aborts open
+  IDBFactory.open() - new database has default version
+  IDBFactory.open() - new database is empty
+  IDBFactory.open() - no version opens current database
+  IDBFactory.open() - open database with a higher version than current
+  IDBFactory.open() - open database with a lower version than current
+  IDBFactory.open() - request has no source
+  IDBFactory.open() - second open's transaction is available to get objectStores
+  IDBFactory.open() - upgradeneeded gets VersionChangeEvent
+/IndexedDB/idbfactory_open.any.sharedworker.html
+  !passing
+  Calling open() with version argument 1.5 should not throw.
+  Calling open() with version argument 9007199254740991 should not throw.
+  Calling open() with version argument undefined should not throw.
+  IDBFactory.open() - database 'name' and 'version' are correctly set
+  IDBFactory.open() - error in upgradeneeded resets db
+  IDBFactory.open() - error in version change transaction aborts open
+  IDBFactory.open() - new database has default version
+  IDBFactory.open() - new database is empty
+  IDBFactory.open() - no version opens current database
+  IDBFactory.open() - open database with a higher version than current
+  IDBFactory.open() - open database with a lower version than current
+  IDBFactory.open() - request has no source
+  IDBFactory.open() - second open's transaction is available to get objectStores
+  IDBFactory.open() - upgradeneeded gets VersionChangeEvent
+/IndexedDB/idbfactory_open.any.worker.html
+  !passing
+  Calling open() with version argument 1.5 should not throw.
+  Calling open() with version argument 9007199254740991 should not throw.
+  Calling open() with version argument undefined should not throw.
+  IDBFactory.open() - database 'name' and 'version' are correctly set
+  IDBFactory.open() - error in upgradeneeded resets db
+  IDBFactory.open() - error in version change transaction aborts open
+  IDBFactory.open() - new database has default version
+  IDBFactory.open() - new database is empty
+  IDBFactory.open() - no version opens current database
+  IDBFactory.open() - open database with a higher version than current
+  IDBFactory.open() - open database with a lower version than current
+  IDBFactory.open() - request has no source
+  IDBFactory.open() - second open's transaction is available to get objectStores
+  IDBFactory.open() - upgradeneeded gets VersionChangeEvent
+/IndexedDB/idbindex-cross-realm-methods.html
+  !passing
+/IndexedDB/idbindex-getAll-enforcerange.any.serviceworker.html
+  !passing
+/IndexedDB/idbindex-getAll-enforcerange.any.sharedworker.html
+  !passing
+/IndexedDB/idbindex-getAll-enforcerange.any.worker.html
+  !passing
+/IndexedDB/idbindex-getAllKeys-enforcerange.any.serviceworker.html
+  !passing
+/IndexedDB/idbindex-getAllKeys-enforcerange.any.sharedworker.html
+  !passing
+/IndexedDB/idbindex-getAllKeys-enforcerange.any.worker.html
+  !passing
+/IndexedDB/idbindex_getAll-options.any.html
+  !passing
+/IndexedDB/idbindex_getAll-options.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAll-options.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAll-options.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAll.any.html
+  Get all values with invalid query keys
+/IndexedDB/idbindex_getAll.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAll.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAll.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys-options.any.html
+  !passing
+/IndexedDB/idbindex_getAllKeys-options.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys-options.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys-options.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys.any.html
+  Get all keys with invalid query keys
+/IndexedDB/idbindex_getAllKeys.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllKeys.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllRecords.any.html
+  !passing
+/IndexedDB/idbindex_getAllRecords.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllRecords.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_getAllRecords.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbindex_keyPath.any.html
+  IDBIndex's keyPath attribute returns the same object.
+/IndexedDB/idbindex_keyPath.any.worker.html
+  IDBIndex's keyPath attribute returns the same object.
+/IndexedDB/idbkeyrange-includes.any.serviceworker.html
+  IDBKeyRange.includes() with invalid input
+  IDBKeyRange.includes() with non-numeric keys
+/IndexedDB/idbkeyrange-includes.any.sharedworker.html
+  IDBKeyRange.includes() with invalid input
+  IDBKeyRange.includes() with non-numeric keys
+/IndexedDB/idbkeyrange-includes.any.worker.html
+  IDBKeyRange.includes() with invalid input
+  IDBKeyRange.includes() with non-numeric keys
+/IndexedDB/idbkeyrange_incorrect.any.serviceworker.html
+  IDBKeyRange.bound() - bound requires more than 0 arguments.
+/IndexedDB/idbkeyrange_incorrect.any.sharedworker.html
+  IDBKeyRange.bound() - bound requires more than 0 arguments.
+/IndexedDB/idbkeyrange_incorrect.any.worker.html
+  IDBKeyRange.bound() - bound requires more than 0 arguments.
+/IndexedDB/idbobjectstore-cross-realm-methods.html
+  !passing
+/IndexedDB/idbobjectstore-getAll-enforcerange.any.serviceworker.html
+  !passing
+/IndexedDB/idbobjectstore-getAll-enforcerange.any.sharedworker.html
+  !passing
+/IndexedDB/idbobjectstore-getAll-enforcerange.any.worker.html
+  !passing
+/IndexedDB/idbobjectstore-getAllKeys-enforcerange.any.serviceworker.html
+  !passing
+/IndexedDB/idbobjectstore-getAllKeys-enforcerange.any.sharedworker.html
+  !passing
+/IndexedDB/idbobjectstore-getAllKeys-enforcerange.any.worker.html
+  !passing
+/IndexedDB/idbobjectstore_createIndex.any.serviceworker.html
+  Index can be valid keys
+/IndexedDB/idbobjectstore_createIndex.any.sharedworker.html
+  Index can be valid keys
+/IndexedDB/idbobjectstore_createIndex.any.worker.html
+  Index can be valid keys
+/IndexedDB/idbobjectstore_get.any.serviceworker.html
+  Key is a date
+/IndexedDB/idbobjectstore_get.any.sharedworker.html
+  Key is a date
+/IndexedDB/idbobjectstore_get.any.worker.html
+  Key is a date
+/IndexedDB/idbobjectstore_getAll-options.any.html
+  !passing
+/IndexedDB/idbobjectstore_getAll-options.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAll-options.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAll-options.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAll.any.html
+  Get all values with invalid query keys
+/IndexedDB/idbobjectstore_getAll.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAll.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAll.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys-options.any.html
+  !passing
+  Get all keys
+  getAllKeys on empty object store
+/IndexedDB/idbobjectstore_getAllKeys-options.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys-options.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys-options.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys.any.html
+  Get all keys with invalid query keys
+/IndexedDB/idbobjectstore_getAllKeys.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllKeys.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllRecords.any.html
+  !passing
+/IndexedDB/idbobjectstore_getAllRecords.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllRecords.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getAllRecords.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/idbobjectstore_getKey.any.worker.html
+  IDBObjectStore.getKey() - invalid parameters
+/IndexedDB/idbobjectstore_keyPath.any.html
+  !passing
+/IndexedDB/idbobjectstore_keyPath.any.worker.html
+  !passing
+/IndexedDB/idbrequest-onupgradeneeded.any.html
+  Abort transaction after deleting database in upgradeneeded event handler
+/IndexedDB/idbrequest-onupgradeneeded.any.serviceworker.html
+  Abort transaction after deleting database in upgradeneeded event handler
+/IndexedDB/idbrequest-onupgradeneeded.any.sharedworker.html
+  Abort transaction after deleting database in upgradeneeded event handler
+/IndexedDB/idbrequest-onupgradeneeded.any.worker.html
+  Abort transaction after deleting database in upgradeneeded event handler
+/IndexedDB/idlharness.any.html
+  IDBCursor interface object length
+  IDBCursor interface: operation continue(optional any)
+  IDBCursorWithValue interface object length
+  IDBDatabase interface object length
+  IDBDatabase interface: attribute onabort
+  IDBDatabase interface: attribute onclose
+  IDBDatabase interface: attribute onerror
+  IDBDatabase interface: attribute onversionchange
+  IDBDatabase interface: operation createObjectStore(DOMString, optional IDBObjectStoreParameters)
+  IDBDatabase interface: operation transaction((DOMString or sequence<DOMString>), optional IDBTransactionMode, optional IDBTransactionOptions)
+  IDBFactory interface object length
+  IDBFactory interface: operation cmp(any, any)
+  IDBFactory interface: operation databases()
+  IDBFactory interface: operation deleteDatabase(DOMString)
+  IDBFactory interface: operation open(DOMString, optional unsigned long long)
+  IDBIndex interface object length
+  IDBIndex interface: operation count(optional any)
+  IDBIndex interface: operation getAll(optional any, optional unsigned long)
+  IDBIndex interface: operation getAllKeys(optional any, optional unsigned long)
+  IDBIndex interface: operation getAllRecords(optional IDBGetAllOptions)
+  IDBIndex interface: operation openCursor(optional any, optional IDBCursorDirection)
+  IDBIndex interface: operation openKeyCursor(optional any, optional IDBCursorDirection)
+  IDBKeyRange interface object length
+  IDBKeyRange interface: operation bound(any, any, optional boolean, optional boolean)
+  IDBKeyRange interface: operation lowerBound(any, optional boolean)
+  IDBKeyRange interface: operation only(any)
+  IDBKeyRange interface: operation upperBound(any, optional boolean)
+  IDBObjectStore interface object length
+  IDBObjectStore interface: operation add(any, optional any)
+  IDBObjectStore interface: operation count(optional any)
+  IDBObjectStore interface: operation createIndex(DOMString, (DOMString or sequence<DOMString>), optional IDBIndexParameters)
+  IDBObjectStore interface: operation getAll(optional any, optional unsigned long)
+  IDBObjectStore interface: operation getAllKeys(optional any, optional unsigned long)
+  IDBObjectStore interface: operation getAllRecords(optional IDBGetAllOptions)
+  IDBObjectStore interface: operation openCursor(optional any, optional IDBCursorDirection)
+  IDBObjectStore interface: operation openKeyCursor(optional any, optional IDBCursorDirection)
+  IDBObjectStore interface: operation put(any, optional any)
+  IDBOpenDBRequest interface object length
+  IDBOpenDBRequest interface: attribute onblocked
+  IDBOpenDBRequest interface: attribute onupgradeneeded
+  IDBRecord interface object length
+  IDBRecord interface object name
+  IDBRecord interface: attribute key
+  IDBRecord interface: attribute primaryKey
+  IDBRecord interface: attribute value
+  IDBRecord interface: existence and properties of interface object
+  IDBRecord interface: existence and properties of interface prototype object
+  IDBRecord interface: existence and properties of interface prototype object's "constructor" property
+  IDBRecord interface: existence and properties of interface prototype object's @@unscopables property
+  IDBRequest interface object length
+  IDBRequest interface: attribute onerror
+  IDBRequest interface: attribute onsuccess
+  IDBTransaction interface object length
+  IDBTransaction interface: attribute onabort
+  IDBTransaction interface: attribute oncomplete
+  IDBTransaction interface: attribute onerror
+  IDBVersionChangeEvent interface object length
+  Window interface: attribute indexedDB
+/IndexedDB/idlharness.any.serviceworker.html
+  !passing
+  IDBCursor interface object name
+  IDBCursor interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursor interface: existence and properties of interface prototype object's @@unscopables property
+  IDBCursor interface: operation advance(unsigned long)
+  IDBCursor interface: operation continuePrimaryKey(any, any)
+  IDBCursor interface: operation delete()
+  IDBCursor interface: operation update(any)
+  IDBCursorWithValue interface object name
+  IDBCursorWithValue interface: existence and properties of interface prototype object
+  IDBCursorWithValue interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursorWithValue interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface object name
+  IDBDatabase interface: existence and properties of interface prototype object
+  IDBDatabase interface: existence and properties of interface prototype object's "constructor" property
+  IDBDatabase interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface: operation close()
+  IDBDatabase interface: operation deleteObjectStore(DOMString)
+  IDBFactory interface object name
+  IDBFactory interface: [object IDBFactory] must inherit property "cmp(any, any)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "databases()" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "deleteDatabase(DOMString)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "open(DOMString, optional unsigned long long)" with the proper type
+  IDBFactory interface: calling cmp(any, any) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling deleteDatabase(DOMString) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling open(DOMString, optional unsigned long long) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: existence and properties of interface prototype object's "constructor" property
+  IDBFactory interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface object name
+  IDBIndex interface: existence and properties of interface prototype object's "constructor" property
+  IDBIndex interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface: operation get(any)
+  IDBIndex interface: operation getKey(any)
+  IDBKeyRange interface object name
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "bound(any, any, optional boolean, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "includes(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lower" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerOpen" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "only(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upper" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperOpen" with the proper type
+  IDBKeyRange interface: calling bound(any, any, optional boolean, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling includes(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling lowerBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling only(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling upperBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: existence and properties of interface prototype object's "constructor" property
+  IDBKeyRange interface: existence and properties of interface prototype object's @@unscopables property
+  IDBKeyRange interface: operation includes(any)
+  IDBObjectStore interface object name
+  IDBObjectStore interface: existence and properties of interface prototype object's "constructor" property
+  IDBObjectStore interface: existence and properties of interface prototype object's @@unscopables property
+  IDBObjectStore interface: operation clear()
+  IDBObjectStore interface: operation delete(any)
+  IDBObjectStore interface: operation deleteIndex(DOMString)
+  IDBObjectStore interface: operation get(any)
+  IDBObjectStore interface: operation getKey(any)
+  IDBObjectStore interface: operation index(DOMString)
+  IDBOpenDBRequest interface object name
+  IDBOpenDBRequest interface: existence and properties of interface prototype object
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBRequest interface object name
+  IDBRequest interface: existence and properties of interface prototype object
+  IDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface object name
+  IDBTransaction interface: existence and properties of interface prototype object
+  IDBTransaction interface: existence and properties of interface prototype object's "constructor" property
+  IDBTransaction interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface: operation abort()
+  IDBTransaction interface: operation commit()
+  IDBTransaction interface: operation objectStore(DOMString)
+  IDBVersionChangeEvent interface object name
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's "constructor" property
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's @@unscopables property
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "newVersion" with the proper type
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "oldVersion" with the proper type
+  Partial interface Window: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: original interface mixin defined
+  Stringification of [object IDBFactory]
+  Stringification of [object IDBKeyRange]
+  Stringification of new IDBVersionChangeEvent("type")
+  Window includes AnimationFrameProvider: member names are unique
+  Window includes GlobalEventHandlers: member names are unique
+  Window includes WindowEventHandlers: member names are unique
+  Window includes WindowLocalStorage: member names are unique
+  Window includes WindowOrWorkerGlobalScope: member names are unique
+  Window includes WindowSessionStorage: member names are unique
+  WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique
+  idl_test setup
+  idl_test validation
+/IndexedDB/idlharness.any.sharedworker.html
+  !passing
+  IDBCursor interface object name
+  IDBCursor interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursor interface: existence and properties of interface prototype object's @@unscopables property
+  IDBCursor interface: operation advance(unsigned long)
+  IDBCursor interface: operation continuePrimaryKey(any, any)
+  IDBCursor interface: operation delete()
+  IDBCursor interface: operation update(any)
+  IDBCursorWithValue interface object name
+  IDBCursorWithValue interface: existence and properties of interface prototype object
+  IDBCursorWithValue interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursorWithValue interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface object name
+  IDBDatabase interface: existence and properties of interface prototype object
+  IDBDatabase interface: existence and properties of interface prototype object's "constructor" property
+  IDBDatabase interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface: operation close()
+  IDBDatabase interface: operation deleteObjectStore(DOMString)
+  IDBFactory interface object name
+  IDBFactory interface: [object IDBFactory] must inherit property "cmp(any, any)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "databases()" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "deleteDatabase(DOMString)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "open(DOMString, optional unsigned long long)" with the proper type
+  IDBFactory interface: calling cmp(any, any) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling deleteDatabase(DOMString) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling open(DOMString, optional unsigned long long) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: existence and properties of interface prototype object's "constructor" property
+  IDBFactory interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface object name
+  IDBIndex interface: existence and properties of interface prototype object's "constructor" property
+  IDBIndex interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface: operation get(any)
+  IDBIndex interface: operation getKey(any)
+  IDBKeyRange interface object name
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "bound(any, any, optional boolean, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "includes(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lower" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerOpen" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "only(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upper" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperOpen" with the proper type
+  IDBKeyRange interface: calling bound(any, any, optional boolean, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling includes(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling lowerBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling only(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling upperBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: existence and properties of interface prototype object's "constructor" property
+  IDBKeyRange interface: existence and properties of interface prototype object's @@unscopables property
+  IDBKeyRange interface: operation includes(any)
+  IDBObjectStore interface object name
+  IDBObjectStore interface: existence and properties of interface prototype object's "constructor" property
+  IDBObjectStore interface: existence and properties of interface prototype object's @@unscopables property
+  IDBObjectStore interface: operation clear()
+  IDBObjectStore interface: operation delete(any)
+  IDBObjectStore interface: operation deleteIndex(DOMString)
+  IDBObjectStore interface: operation get(any)
+  IDBObjectStore interface: operation getKey(any)
+  IDBObjectStore interface: operation index(DOMString)
+  IDBOpenDBRequest interface object name
+  IDBOpenDBRequest interface: existence and properties of interface prototype object
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBRequest interface object name
+  IDBRequest interface: existence and properties of interface prototype object
+  IDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface object name
+  IDBTransaction interface: existence and properties of interface prototype object
+  IDBTransaction interface: existence and properties of interface prototype object's "constructor" property
+  IDBTransaction interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface: operation abort()
+  IDBTransaction interface: operation commit()
+  IDBTransaction interface: operation objectStore(DOMString)
+  IDBVersionChangeEvent interface object name
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's "constructor" property
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's @@unscopables property
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "newVersion" with the proper type
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "oldVersion" with the proper type
+  Partial interface Window: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: original interface mixin defined
+  Stringification of [object IDBFactory]
+  Stringification of [object IDBKeyRange]
+  Stringification of new IDBVersionChangeEvent("type")
+  Window includes AnimationFrameProvider: member names are unique
+  Window includes GlobalEventHandlers: member names are unique
+  Window includes WindowEventHandlers: member names are unique
+  Window includes WindowLocalStorage: member names are unique
+  Window includes WindowOrWorkerGlobalScope: member names are unique
+  Window includes WindowSessionStorage: member names are unique
+  WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique
+  idl_test setup
+  idl_test validation
+/IndexedDB/idlharness.any.worker.html
+  !passing
+  IDBCursor interface object name
+  IDBCursor interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursor interface: existence and properties of interface prototype object's @@unscopables property
+  IDBCursor interface: operation advance(unsigned long)
+  IDBCursor interface: operation continuePrimaryKey(any, any)
+  IDBCursor interface: operation delete()
+  IDBCursor interface: operation update(any)
+  IDBCursorWithValue interface object name
+  IDBCursorWithValue interface: existence and properties of interface prototype object
+  IDBCursorWithValue interface: existence and properties of interface prototype object's "constructor" property
+  IDBCursorWithValue interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface object name
+  IDBDatabase interface: existence and properties of interface prototype object
+  IDBDatabase interface: existence and properties of interface prototype object's "constructor" property
+  IDBDatabase interface: existence and properties of interface prototype object's @@unscopables property
+  IDBDatabase interface: operation close()
+  IDBDatabase interface: operation deleteObjectStore(DOMString)
+  IDBFactory interface object name
+  IDBFactory interface: [object IDBFactory] must inherit property "cmp(any, any)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "databases()" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "deleteDatabase(DOMString)" with the proper type
+  IDBFactory interface: [object IDBFactory] must inherit property "open(DOMString, optional unsigned long long)" with the proper type
+  IDBFactory interface: calling cmp(any, any) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling deleteDatabase(DOMString) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: calling open(DOMString, optional unsigned long long) on [object IDBFactory] with too few arguments must throw TypeError
+  IDBFactory interface: existence and properties of interface prototype object's "constructor" property
+  IDBFactory interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface object name
+  IDBIndex interface: existence and properties of interface prototype object's "constructor" property
+  IDBIndex interface: existence and properties of interface prototype object's @@unscopables property
+  IDBIndex interface: operation get(any)
+  IDBIndex interface: operation getKey(any)
+  IDBKeyRange interface object name
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "bound(any, any, optional boolean, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "includes(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lower" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "lowerOpen" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "only(any)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upper" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperBound(any, optional boolean)" with the proper type
+  IDBKeyRange interface: [object IDBKeyRange] must inherit property "upperOpen" with the proper type
+  IDBKeyRange interface: calling bound(any, any, optional boolean, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling includes(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling lowerBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling only(any) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: calling upperBound(any, optional boolean) on [object IDBKeyRange] with too few arguments must throw TypeError
+  IDBKeyRange interface: existence and properties of interface prototype object's "constructor" property
+  IDBKeyRange interface: existence and properties of interface prototype object's @@unscopables property
+  IDBKeyRange interface: operation includes(any)
+  IDBObjectStore interface object name
+  IDBObjectStore interface: existence and properties of interface prototype object's "constructor" property
+  IDBObjectStore interface: existence and properties of interface prototype object's @@unscopables property
+  IDBObjectStore interface: operation clear()
+  IDBObjectStore interface: operation delete(any)
+  IDBObjectStore interface: operation deleteIndex(DOMString)
+  IDBObjectStore interface: operation get(any)
+  IDBObjectStore interface: operation getKey(any)
+  IDBObjectStore interface: operation index(DOMString)
+  IDBOpenDBRequest interface object name
+  IDBOpenDBRequest interface: existence and properties of interface prototype object
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBOpenDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBRequest interface object name
+  IDBRequest interface: existence and properties of interface prototype object
+  IDBRequest interface: existence and properties of interface prototype object's "constructor" property
+  IDBRequest interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface object name
+  IDBTransaction interface: existence and properties of interface prototype object
+  IDBTransaction interface: existence and properties of interface prototype object's "constructor" property
+  IDBTransaction interface: existence and properties of interface prototype object's @@unscopables property
+  IDBTransaction interface: operation abort()
+  IDBTransaction interface: operation commit()
+  IDBTransaction interface: operation objectStore(DOMString)
+  IDBVersionChangeEvent interface object name
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's "constructor" property
+  IDBVersionChangeEvent interface: existence and properties of interface prototype object's @@unscopables property
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "newVersion" with the proper type
+  IDBVersionChangeEvent interface: new IDBVersionChangeEvent("type") must inherit property "oldVersion" with the proper type
+  Partial interface Window: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: member names are unique
+  Partial interface mixin WindowOrWorkerGlobalScope: original interface mixin defined
+  Stringification of [object IDBFactory]
+  Stringification of [object IDBKeyRange]
+  Stringification of new IDBVersionChangeEvent("type")
+  Window includes AnimationFrameProvider: member names are unique
+  Window includes GlobalEventHandlers: member names are unique
+  Window includes WindowEventHandlers: member names are unique
+  Window includes WindowLocalStorage: member names are unique
+  Window includes WindowOrWorkerGlobalScope: member names are unique
+  Window includes WindowSessionStorage: member names are unique
+  WorkerGlobalScope includes WindowOrWorkerGlobalScope: member names are unique
+  idl_test setup
+  idl_test validation
+/IndexedDB/interleaved-cursors-large.any.serviceworker.html
+  !passing
+/IndexedDB/interleaved-cursors-large.any.sharedworker.html
+  !passing
+/IndexedDB/interleaved-cursors-large.any.worker.html
+  !passing
+/IndexedDB/interleaved-cursors-small.any.serviceworker.html
+  !passing
+/IndexedDB/interleaved-cursors-small.any.sharedworker.html
+  !passing
+/IndexedDB/interleaved-cursors-small.any.worker.html
+  !passing
+/IndexedDB/key-conversion-exceptions.any.html
+  IDBFactory cmp() static with throwing/invalid keys
+/IndexedDB/key-conversion-exceptions.any.serviceworker.html
+  IDBFactory cmp() static with throwing/invalid keys
+/IndexedDB/key-conversion-exceptions.any.sharedworker.html
+  IDBFactory cmp() static with throwing/invalid keys
+/IndexedDB/key-conversion-exceptions.any.worker.html
+  IDBFactory cmp() static with throwing/invalid keys
+/IndexedDB/key_valid.any.serviceworker.html
+  Valid key - new Date()
+  Valid key - new Date(0)
+/IndexedDB/key_valid.any.sharedworker.html
+  Valid key - new Date()
+  Valid key - new Date(0)
+/IndexedDB/key_valid.any.worker.html
+  Valid key - new Date()
+  Valid key - new Date(0)
+/IndexedDB/keygenerator.any.html
+  Key generator vs. explicit key 53 bits
+  Key generator vs. explicit key 63 bits
+  Key generator vs. explicit key 64 bits
+  Key generator vs. explicit key equal to Infinity
+  Key generator vs. explicit key greater than 53 bits, less than 64 bits
+  Key generator vs. explicit key greater than 64 bits, but still finite
+/IndexedDB/keygenerator.any.serviceworker.html
+  Key generator vs. explicit key 53 bits
+  Key generator vs. explicit key 63 bits
+  Key generator vs. explicit key 64 bits
+  Key generator vs. explicit key equal to Infinity
+  Key generator vs. explicit key greater than 53 bits, less than 64 bits
+  Key generator vs. explicit key greater than 64 bits, but still finite
+/IndexedDB/keygenerator.any.sharedworker.html
+  Key generator vs. explicit key 53 bits
+  Key generator vs. explicit key 63 bits
+  Key generator vs. explicit key 64 bits
+  Key generator vs. explicit key equal to Infinity
+  Key generator vs. explicit key greater than 53 bits, less than 64 bits
+  Key generator vs. explicit key greater than 64 bits, but still finite
+/IndexedDB/keygenerator.any.worker.html
+  Key generator vs. explicit key 53 bits
+  Key generator vs. explicit key 63 bits
+  Key generator vs. explicit key 64 bits
+  Key generator vs. explicit key equal to Infinity
+  Key generator vs. explicit key greater than 53 bits, less than 64 bits
+  Key generator vs. explicit key greater than 64 bits, but still finite
+/IndexedDB/keyorder.any.serviceworker.html
+  Database readback sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  Database readback sort - Test different stuff at once
+  Database readback sort - float < Date
+  Database readback sort - float < Date < String < Array
+  IDBKey.cmp sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  IDBKey.cmp sort - Test different stuff at once
+  IDBKey.cmp sort - float < Date
+  IDBKey.cmp sort - float < Date < String < Array
+/IndexedDB/keyorder.any.sharedworker.html
+  Database readback sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  Database readback sort - Test different stuff at once
+  Database readback sort - float < Date
+  Database readback sort - float < Date < String < Array
+  IDBKey.cmp sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  IDBKey.cmp sort - Test different stuff at once
+  IDBKey.cmp sort - float < Date
+  IDBKey.cmp sort - float < Date < String < Array
+/IndexedDB/keyorder.any.worker.html
+  Database readback sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  Database readback sort - Test different stuff at once
+  Database readback sort - float < Date
+  Database readback sort - float < Date < String < Array
+  IDBKey.cmp sort - Date(1 sec ago) < Date(now) < Date(1 minute in future)
+  IDBKey.cmp sort - Test different stuff at once
+  IDBKey.cmp sort - float < Date
+  IDBKey.cmp sort - float < Date < String < Array
+/IndexedDB/keypath.any.html
+  Key path conversion: a self-referential array exhausts the stack
+/IndexedDB/keypath.any.serviceworker.html
+  Key path conversion: a self-referential array exhausts the stack
+/IndexedDB/keypath.any.sharedworker.html
+  Key path conversion: a self-referential array exhausts the stack
+/IndexedDB/keypath.any.worker.html
+  Key path conversion: a self-referential array exhausts the stack
+/IndexedDB/large-requests-abort.any.serviceworker.html
+  !passing
+/IndexedDB/large-requests-abort.any.sharedworker.html
+  !passing
+/IndexedDB/large-requests-abort.any.worker.html
+  !passing
+/IndexedDB/nested-cloning-basic.any.serviceworker.html
+  small typed array
+/IndexedDB/nested-cloning-basic.any.sharedworker.html
+  small typed array
+/IndexedDB/nested-cloning-basic.any.worker.html
+  small typed array
+/IndexedDB/nested-cloning-large-multiple.any.serviceworker.html
+  !passing
+/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html
+  !passing
+/IndexedDB/nested-cloning-large-multiple.any.worker.html
+  !passing
+/IndexedDB/nested-cloning-large.any.serviceworker.html
+  !passing
+/IndexedDB/nested-cloning-large.any.sharedworker.html
+  !passing
+/IndexedDB/nested-cloning-large.any.worker.html
+  !passing
+/IndexedDB/nested-cloning-small.any.serviceworker.html
+  !passing
+  blob array
+  blob array with key generator
+/IndexedDB/nested-cloning-small.any.sharedworker.html
+  !passing
+  blob array
+  blob array with key generator
+/IndexedDB/nested-cloning-small.any.worker.html
+  !passing
+  blob array
+  blob array with key generator
+/IndexedDB/open-request-queue.any.html
+  !passing
+/IndexedDB/open-request-queue.any.serviceworker.html
+  !passing
+/IndexedDB/open-request-queue.any.sharedworker.html
+  !passing
+/IndexedDB/open-request-queue.any.worker.html
+  !passing
+/IndexedDB/ready-state-destroyed-execution-context.html
+  !passing
+/IndexedDB/request-event-ordering-large-mixed-with-small-values.any.html
+  !passing
+/IndexedDB/request-event-ordering-large-mixed-with-small-values.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-mixed-with-small-values.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-mixed-with-small-values.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-then-small-values.any.html
+  !passing
+/IndexedDB/request-event-ordering-large-then-small-values.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-then-small-values.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-then-small-values.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-values.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-values.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-large-values.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-small-values.any.html
+  !passing
+/IndexedDB/request-event-ordering-small-values.any.serviceworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-small-values.any.sharedworker.html
+  !harness TIMEOUT
+/IndexedDB/request-event-ordering-small-values.any.worker.html
+  !harness TIMEOUT
+/IndexedDB/serialize-sharedarraybuffer-throws.https.html
+  !passing
+/IndexedDB/sharedarraybuffer-key.https.html
+  !passing
+/IndexedDB/storage-buckets.https.any.html
+  !passing
+/IndexedDB/storage-buckets.https.any.serviceworker.html
+  !passing
+/IndexedDB/storage-buckets.https.any.sharedworker.html
+  !passing
+/IndexedDB/storage-buckets.https.any.worker.html
+  !passing
+/IndexedDB/structured-clone.any.html?101-last
+  DOMMatrix: matrix(1, 0, 0, 1, 0, 0)
+  DOMMatrixReadOnly: matrix(1, 0, 0, 1, 0, 0)
+  DOMPoint: [object DOMPoint]
+  DOMPointReadOnly: [object DOMPointReadOnly]
+  DOMRect: [object DOMRect]
+  DOMRectReadOnly: [object DOMRectReadOnly]
+  ImageData: [object ImageData]
+  undefined: undefined
+/IndexedDB/structured-clone.any.worker.html?101-last
+  !passing
+  Blob: [object Blob]
+  File: [object File]
+  Not serializable: DedicatedWorkerGlobalScope: [object DedicatedWorkerGlobalScope]
+  Not serializable: Event: [object Event]
+  Not serializable: MessageChannel: [object MessageChannel]
+  Not serializable: function: function() {}
+  Not serializable: symbol: Symbol(desc)
+/IndexedDB/structured-clone.any.worker.html?21-40
+  !passing
+  bigint: -1
+  bigint: -12345678901234567890
+  bigint: 0
+  bigint: 1
+  bigint: 12345678901234567890
+  number: Infinity
+  string: \s
+  string: null()
+  string: this is a sample string
+/IndexedDB/structured-clone.any.worker.html?41-60
+  !passing
+/IndexedDB/structured-clone.any.worker.html?61-80
+  !passing
+/IndexedDB/structured-clone.any.worker.html?81-100
+  !passing
+/IndexedDB/transaction-deactivation-timing.any.html
+  Deactivation of new transactions happens at end of invocation
+/IndexedDB/transaction-deactivation-timing.any.serviceworker.html
+  Deactivation of new transactions happens at end of invocation
+/IndexedDB/transaction-deactivation-timing.any.sharedworker.html
+  Deactivation of new transactions happens at end of invocation
+/IndexedDB/transaction-deactivation-timing.any.worker.html
+  Deactivation of new transactions happens at end of invocation
+/IndexedDB/transaction-inflight-worker-terminate.window.html
+  !passing
+/IndexedDB/transaction-relaxed-durability.any.worker.html
+  Invalid durability option throws a TypeError
+/IndexedDB/upgrade-transaction-lifecycle-user-aborted.any.html
+  in a promise microtask after abort() is called, before the transaction abort event is fired
+  synchronously after abort() is called
+/IndexedDB/upgrade-transaction-lifecycle-user-aborted.any.serviceworker.html
+  in a promise microtask after abort() is called, before the transaction abort event is fired
+  synchronously after abort() is called
+/IndexedDB/upgrade-transaction-lifecycle-user-aborted.any.sharedworker.html
+  in a promise microtask after abort() is called, before the transaction abort event is fired
+  synchronously after abort() is called
+/IndexedDB/upgrade-transaction-lifecycle-user-aborted.any.worker.html
+  in a promise microtask after abort() is called, before the transaction abort event is fired
+  synchronously after abort() is called
+/IndexedDB/value-not-exposed-in-worker.tentative.html
+  !harness ERROR
+  !passing
+/IndexedDB/value.any.serviceworker.html
+  BigInts as values in IndexedDB - BigInt object
+  BigInts as values in IndexedDB - BigInt object inside object
+  Values - Array
+  Values - Date
+/IndexedDB/value.any.sharedworker.html
+  BigInts as values in IndexedDB - BigInt object
+  BigInts as values in IndexedDB - BigInt object inside object
+  Values - Array
+  Values - Date
+/IndexedDB/value.any.worker.html
+  BigInts as values in IndexedDB - BigInt object
+  BigInts as values in IndexedDB - BigInt object inside object
+  Values - Array
+  Values - Date
+/IndexedDB/worker-termination-aborts-upgrade.window.html
+  !harness TIMEOUT
+  !passing

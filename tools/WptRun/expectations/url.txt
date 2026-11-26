@@ -1,0 +1,1356 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/url/IdnaTestV2-removed.any.html
+  ToASCII("-??????????") P1; V6; V3 (ignored)
+  ToASCII("??.???") P1; V5; V6
+  ToASCII("????.???") P1; V6
+  ToASCII("?????") P1; V6
+  ToASCII("?????SS") P1; V5; V6
+  ToASCII("?????Ss") P1; V5; V6
+  ToASCII("?????ss") P1; V5; V6
+  ToASCII("?????ﬂ") P1; V5; V6
+/url/IdnaTestV2.any.html
+  ToASCII("-.-???") V7; V3 (ignored)
+  ToASCII("-.???-") V6; V7; V3 (ignored)
+  ToASCII("-?.?") V6; V3 (ignored)
+  ToASCII("-??") V7; V3 (ignored)
+  ToASCII("-??.??-") V6; V7; V3 (ignored)
+  ToASCII("-??0?????") V6; V3 (ignored)
+  ToASCII("-??0?????????") V6; V3 (ignored)
+  ToASCII("-??8..7.????") V7; V3 (ignored); A4_2 (ignored)
+  ToASCII("-???") V6; V3 (ignored)
+  ToASCII("-???.????8,") V7; V3 (ignored); U1 (ignored)
+  ToASCII("-?????.?-?") V6; V7; V3 (ignored)
+  ToASCII("-?????.?-?") V6; V7; V3 (ignored); A4_2 (ignored)
+  ToASCII("-???????") V3 (ignored); A4_2 (ignored)
+  ToASCII("-???????") V7; V3 (ignored)
+  ToASCII("-?????????") V7; V3 (ignored)
+  ToASCII("-??????????") V7; V3 (ignored); U1 (ignored)
+  ToASCII("1.???.9??") V7
+  ToASCII("1.????") V6; A4_2 (ignored)
+  ToASCII("1.ASSBCSSSSSSSSD??SSSSSSSSSSSSSSSSESSSSSSSSSSSSSSSSSSSSXSSSSSSSSSSSSSSSSSSSSYSSSSSSSSSSSSSSSS?SSZ") A4_2 (ignored)
+  ToASCII("1.Assbcssssssssd??ssssssssssssssssessssssssssssssssssssxssssssssssssssssssssyssssssssssssssss?ssz") A4_2 (ignored)
+  ToASCII("1.assbcssssssssd??ssssssssssssssssessssssssssssssssssssxssssssssssssssssssssyssssssssssssssss?ssz") A4_2 (ignored)
+  ToASCII("11.??????.-??") V7; V3 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.1234567890123456789012345678901234567890123456789012345678901C") A4_1 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.1234567890123456789012345678901234567890123456789012345678901c") A4_1 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890B")
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890B.") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b")
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b.") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890B") A4_1 (ignored); A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b") A4_1 (ignored); A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789A") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789A.") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789a") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890A?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789a.") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.1234567890123456789012345678901234567890123456789012345678901c") A4_1 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b")
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?123456789012345678901234567890123456789012345.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b.") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890b") A4_1 (ignored); A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789a") A4_2 (ignored)
+  ToASCII("123456789012345678901234567890123456789012345678901234567890123.1234567890a?1234567890123456789012345678901234567890123456.123456789012345678901234567890123456789012345678901234567890123.12345678901234567890123456789012345678901234567890123456789a.") A4_2 (ignored)
+  ToASCII("1234567890A?1234567890123456789012345678901234567890123456") A4_2 (ignored)
+  ToASCII("1234567890a?1234567890123456789012345678901234567890123456") A4_2 (ignored)
+  ToASCII("14.????.-??") V7; V3 (ignored)
+  ToASCII("1?SS????") V6
+  ToASCII("1?Ss????") V6
+  ToASCII("1?ss????") V6
+  ToASCII("1?ﬂ????") V6
+  ToASCII("2.??=?????") V7
+  ToASCII("2.???????") V7
+  ToASCII("3,.?1.SS") V6; U1 (ignored)
+  ToASCII("3,.?1.Ss") V6; U1 (ignored)
+  ToASCII("3,.?1.ss") V6; U1 (ignored)
+  ToASCII("3,.?1.ﬂ") V6; U1 (ignored)
+  ToASCII("3????.???8??") V6
+  ToASCII("3?????-") V6; V3 (ignored)
+  ToASCII("5?2???????") V6; V7
+  ToASCII("5??") V6
+  ToASCII("6,??.???") V7; U1 (ignored); A4_2 (ignored)
+  ToASCII("8<?.") A4_2 (ignored)
+  ToASCII("9.?-????-??") V7; V3 (ignored); A4_2 (ignored)
+  ToASCII("9??.???") V7
+  ToASCII("9??????") V7
+  ToASCII("<?7.?SS>?")
+  ToASCII("<?7.?Ss>?")
+  ToASCII("<?7.?ss>?")
+  ToASCII("<?7.?ﬂ>?")
+  ToASCII("<?????SS>?")
+  ToASCII("<?????Ss>?")
+  ToASCII("<?????ss>?")
+  ToASCII("<?????ﬂ>?")
+  ToASCII("=?")
+  ToASCII("=?.") A4_2 (ignored)
+  ToASCII("=?.?")
+  ToASCII("=?.??6")
+  ToASCII("=??>?.???-??")
+  ToASCII("=????") V6
+  ToASCII("=????6")
+  ToASCII("=??????")
+  ToASCII(">?1.?SS") A4_2 (ignored)
+  ToASCII(">?1.?Ss") A4_2 (ignored)
+  ToASCII(">?1.?ss") A4_2 (ignored)
+  ToASCII(">?1.?ﬂ") A4_2 (ignored)
+  ToASCII("?--??.SS")
+  ToASCII("?--??.Ss")
+  ToASCII("?--??.ss")
+  ToASCII("?--??.ﬂ")
+  ToASCII("?-.???SS") V6; V7; V3 (ignored)
+  ToASCII("?-.???Ss") V6; V7; V3 (ignored)
+  ToASCII("?-.???ss") V6; V7; V3 (ignored)
+  ToASCII("?-.???ﬂ") V6; V7; V3 (ignored)
+  ToASCII("?-?.???") V6
+  ToASCII("?-???1") V7; V3 (ignored)
+  ToASCII("?-????.SS") V6; V7
+  ToASCII("?-????.Ss") V6; V7
+  ToASCII("?-????.ss") V6; V7
+  ToASCII("?-????.ﬂ") V6; V7
+  ToASCII("?-?????") V6
+  ToASCII("?-?????") V7; V3 (ignored)
+  ToASCII("?-?????SS") V6; V7
+  ToASCII("?-?????Ss") V6; V7
+  ToASCII("?-?????ss") V6; V7
+  ToASCII("?-?????ﬂ") V6; V7
+  ToASCII("?-????SS") V6; V7; V3 (ignored)
+  ToASCII("?-????Ss") V6; V7; V3 (ignored)
+  ToASCII("?-????ss") V6; V7; V3 (ignored)
+  ToASCII("?-????ﬂ") V6; V7; V3 (ignored)
+  ToASCII("?.-?") V6; V3 (ignored)
+  ToASCII("?.-?????") V6; V7; V3 (ignored)
+  ToASCII("?.16.3????")
+  ToASCII("?.>?")
+  ToASCII("?.>???=?")
+  ToASCII("?.?")
+  ToASCII("?.?-") V3 (ignored); A4_2 (ignored)
+  ToASCII("?.?-??") V6
+  ToASCII("?.?5>?SS")
+  ToASCII("?.?5>?Ss")
+  ToASCII("?.?5>?ss")
+  ToASCII("?.?5>?ﬂ")
+  ToASCII("?.?<?SS?")
+  ToASCII("?.?<?Ss?")
+  ToASCII("?.?<?ss?")
+  ToASCII("?.?<?ﬂ?")
+  ToASCII("?.??")
+  ToASCII("?.??") V6
+  ToASCII("?.??-") V6; V3 (ignored)
+  ToASCII("?.??43") V6
+  ToASCII("?.???")
+  ToASCII("?.???") V6
+  ToASCII("?.???") V6; A4_2 (ignored)
+  ToASCII("?.???") V6; V7
+  ToASCII("?.???") V7
+  ToASCII("?.???") V7; A4_2 (ignored)
+  ToASCII("?.???-") V3 (ignored); A4_2 (ignored)
+  ToASCII("?.????")
+  ToASCII("?.????") V6; V7
+  ToASCII("?.?????") V7
+  ToASCII("?.??????") V6; V7
+  ToASCII("?.??SS?")
+  ToASCII("?.??Ss?")
+  ToASCII("?.FOUR") U1 (ignored)
+  ToASCII("?.Four") U1 (ignored)
+  ToASCII("?.Y??")
+  ToASCII("?.four") U1 (ignored)
+  ToASCII("?.y??")
+  ToASCII("?5??.????") V7
+  ToASCII("?=??????????") V7
+  ToASCII("??")
+  ToASCII("??-.-?") V3 (ignored)
+  ToASCII("??-.-??") V6; V3 (ignored)
+  ToASCII("??-?") V6; V3 (ignored)
+  ToASCII("??-?-?") V3 (ignored)
+  ToASCII("??-?-??") V6; V3 (ignored)
+  ToASCII("??-?-??1.") V7; V3 (ignored); A4_2 (ignored)
+  ToASCII("??-?-???") V7; V3 (ignored)
+  ToASCII("??-???=?-??") V7
+  ToASCII("??-????-??") V7
+  ToASCII("??-????-??") V7; V3 (ignored)
+  ToASCII("??-??????") V7; V3 (ignored)
+  ToASCII("??.") A4_2 (ignored)
+  ToASCII("??.-5SS") V7; V3 (ignored)
+  ToASCII("??.-5Ss") V7; V3 (ignored)
+  ToASCII("??.-5ss") V7; V3 (ignored)
+  ToASCII("??.-5ﬂ") V7; V3 (ignored)
+  ToASCII("??.-??") V6; V7; V3 (ignored)
+  ToASCII("??.-????") V7; V3 (ignored)
+  ToASCII("??.5,?") V6; U1 (ignored)
+  ToASCII("??.7???") V6; A4_2 (ignored)
+  ToASCII("??.<?")
+  ToASCII("??.=?")
+  ToASCII("??.?")
+  ToASCII("??.?") A4_2 (ignored)
+  ToASCII("??.?") V7
+  ToASCII("??.?-?")
+  ToASCII("??.?.???5")
+  ToASCII("??.??")
+  ToASCII("??.??") V6
+  ToASCII("??.??") V6; A4_2 (ignored)
+  ToASCII("??.??") V6; V7
+  ToASCII("??.??") V7
+  ToASCII("??.??") V7; A4_2 (ignored)
+  ToASCII("??.??2") V7
+  ToASCII("??.??6?") V7
+  ToASCII("??.??=?") V6; A4_2 (ignored)
+  ToASCII("??.???") V6; A4_2 (ignored)
+  ToASCII("??.???") V6; U1 (ignored)
+  ToASCII("??.???") V7
+  ToASCII("??.????") V7
+  ToASCII("??.????") V7; A4_2 (ignored)
+  ToASCII("??.?????") V7
+  ToASCII("??.??????") V7
+  ToASCII("??.???????")
+  ToASCII("??.????????")
+  ToASCII("??3?1.?2??") V6; V7
+  ToASCII("??3??4") V6; V7
+  ToASCII("??3????") V6; V7
+  ToASCII("??6?.SS?")
+  ToASCII("??6?.Ss?")
+  ToASCII("??6??SS?")
+  ToASCII("??6??Ss?")
+  ToASCII("??6??ﬂ?")
+  ToASCII("??>?")
+  ToASCII("???")
+  ToASCII("???-") V6; V3 (ignored)
+  ToASCII("???-") V7; V3 (ignored)
+  ToASCII("???-??") V3 (ignored)
+  ToASCII("???-??") V6
+  ToASCII("???-??") V6; V3 (ignored)
+  ToASCII("???-??") V7
+  ToASCII("???-??SS") V7; V3 (ignored)
+  ToASCII("???-??Ss") V7; V3 (ignored)
+  ToASCII("???-??ss") V7; V3 (ignored)
+  ToASCII("???-??ﬂ") V7; V3 (ignored)
+  ToASCII("???.1?") V6; V7
+  ToASCII("???.4?") V7
+  ToASCII("???.5??")
+  ToASCII("???.<?")
+  ToASCII("???.?")
+  ToASCII("???.?") V7
+  ToASCII("???.?-??")
+  ToASCII("???.?11.1.??") V7
+  ToASCII("???.??") V6
+  ToASCII("???.??") V7
+  ToASCII("???.???") V6
+  ToASCII("???.???11.1.??") V7
+  ToASCII("???.????") V7
+  ToASCII("???.?????") V7
+  ToASCII("???.??????") V7
+  ToASCII("???.????????") V7
+  ToASCII("???.???SS?") V7
+  ToASCII("???.???Ss?") V7
+  ToASCII("???.???ss?") V7
+  ToASCII("???.???ﬂ?") V7
+  ToASCII("???.??E????") V6; V7
+  ToASCII("???.??e????") V6; V7
+  ToASCII("???.??…???") V6; V7
+  ToASCII("???.??È???") V6; V7
+  ToASCII("???1,") V7; U1 (ignored)
+  ToASCII("???2.?????") V6; A4_2 (ignored)
+  ToASCII("???2????") V6; V7
+  ToASCII("???3??.7???") V7
+  ToASCII("???4.") A4_2 (ignored)
+  ToASCII("???4????????") V7
+  ToASCII("???8.??") V7
+  ToASCII("???9???1.") A4_2 (ignored)
+  ToASCII("???<?SS?")
+  ToASCII("???<?Ss?")
+  ToASCII("???<?ss?")
+  ToASCII("???<?ﬂ?")
+  ToASCII("???=?-???") V7
+  ToASCII("???=?????") V7
+  ToASCII("???>?") A4_2 (ignored)
+  ToASCII("????")
+  ToASCII("????") A4_2 (ignored)
+  ToASCII("????") V6
+  ToASCII("????") V6; A4_2 (ignored)
+  ToASCII("????") V6; V7
+  ToASCII("????") V7
+  ToASCII("????-") V6; V3 (ignored)
+  ToASCII("????-.?-?") V6; V7; V3 (ignored)
+  ToASCII("????-??") V6; V3 (ignored)
+  ToASCII("????-??-?") V6; V7; V3 (ignored)
+  ToASCII("????-???") V7
+  ToASCII("????.?") V6
+  ToASCII("????.?") V6; A4_2 (ignored)
+  ToASCII("????.?") V6; V7
+  ToASCII("????.??")
+  ToASCII("????.??") V7
+  ToASCII("????.???")
+  ToASCII("????.???") V7
+  ToASCII("????.???") V7; U1 (ignored)
+  ToASCII("????.?????") V6; V7
+  ToASCII("????.I.") A4_2 (ignored)
+  ToASCII("????.i.") A4_2 (ignored)
+  ToASCII("????1..?????9") V7; A4_2 (ignored)
+  ToASCII("????1?-??") V6; V3 (ignored)
+  ToASCII("????>?SS")
+  ToASCII("????>?Ss")
+  ToASCII("????>?ss")
+  ToASCII("????>?ﬂ")
+  ToASCII("?????")
+  ToASCII("?????") V6
+  ToASCII("?????") V6; A4_2 (ignored)
+  ToASCII("?????") V6; V7
+  ToASCII("?????") V7
+  ToASCII("?????") V7; A4_2 (ignored)
+  ToASCII("?????") V7; U1 (ignored)
+  ToASCII("?????-") V3 (ignored)
+  ToASCII("?????-??") V7
+  ToASCII("?????.?")
+  ToASCII("?????.?") V7
+  ToASCII("?????.?") V7; A4_2 (ignored)
+  ToASCII("?????.??") V6; V7
+  ToASCII("?????.??") V7
+  ToASCII("?????.??0??") V6; V7
+  ToASCII("?????.????") V7
+  ToASCII("?????.??????") V6; V7
+  ToASCII("?????14.") V6; V7; A4_2 (ignored)
+  ToASCII("?????20.??") V6; V7
+  ToASCII("?????2?????") V6; V7
+  ToASCII("?????7???") V6
+  ToASCII("?????=?6") V7
+  ToASCII("?????=???") V7
+  ToASCII("??????")
+  ToASCII("??????") V6
+  ToASCII("??????") V6; A4_2 (ignored)
+  ToASCII("??????") V6; V7
+  ToASCII("??????") V7
+  ToASCII("??????") V7; A4_2 (ignored)
+  ToASCII("??????-") V6; V7; V3 (ignored)
+  ToASCII("??????-??") V7; V3 (ignored)
+  ToASCII("??????.?") V7
+  ToASCII("??????.??") V7
+  ToASCII("??????.???") V7
+  ToASCII("??????.COM")
+  ToASCII("??????.com")
+  ToASCII("??????5??")
+  ToASCII("??????6") V7
+  ToASCII("???????")
+  ToASCII("???????") V6
+  ToASCII("???????") V6; V7
+  ToASCII("???????") V7
+  ToASCII("???????") V7; A4_2 (ignored)
+  ToASCII("???????-") V3 (ignored)
+  ToASCII("???????-") V6; V3 (ignored)
+  ToASCII("???????-") V7; V3 (ignored)
+  ToASCII("???????--") V7; V2 (ignored); V3 (ignored)
+  ToASCII("???????-??") V6; V3 (ignored)
+  ToASCII("???????.-??") V7; V3 (ignored)
+  ToASCII("???????.?") V6
+  ToASCII("???????.?") V7
+  ToASCII("???????.??0????") V6; V7
+  ToASCII("???????.COM")
+  ToASCII("???????.com")
+  ToASCII("???????20.??") V6; V7
+  ToASCII("???????8?") V6
+  ToASCII("???????9") V6; V7
+  ToASCII("????????")
+  ToASCII("????????") V6; V7
+  ToASCII("????????") V6; V7; A4_2 (ignored)
+  ToASCII("????????") V7
+  ToASCII("????????-") V7; V3 (ignored)
+  ToASCII("????????4") V7
+  ToASCII("????????5")
+  ToASCII("????????8") V7
+  ToASCII("?????????") V6; V7
+  ToASCII("?????????") V7
+  ToASCII("?????????") V7; A4_2 (ignored)
+  ToASCII("?????????4???") V7
+  ToASCII("??????????")
+  ToASCII("??????????") V6
+  ToASCII("??????????") V6; V7
+  ToASCII("??????????") V7
+  ToASCII("??????????4") V7
+  ToASCII("??????????8??") V6
+  ToASCII("???????????")
+  ToASCII("???????????") V7
+  ToASCII("????????????") V6; V7
+  ToASCII("????????????") V7
+  ToASCII("????????????") V7; A4_2 (ignored)
+  ToASCII("?????????????") V7
+  ToASCII("????????????????") V6; V7
+  ToASCII("???????SS?") V7
+  ToASCII("???????Ss?") V7
+  ToASCII("???????ss?") V7
+  ToASCII("???????ﬂ?") V7
+  ToASCII("??????E????") V6; V7
+  ToASCII("??????e????") V6; V7
+  ToASCII("??????…???") V6; V7
+  ToASCII("??????È???") V6; V7
+  ToASCII("?????SS")
+  ToASCII("?????SS") V6; V7; U1 (ignored)
+  ToASCII("?????SS?")
+  ToASCII("?????Ss")
+  ToASCII("?????Ss") V6; V7; U1 (ignored)
+  ToASCII("?????Ss?")
+  ToASCII("?????ss")
+  ToASCII("?????ss") V6; V7; U1 (ignored)
+  ToASCII("?????ss?")
+  ToASCII("?????≠???????????")
+  ToASCII("?????≠????S?????FFL")
+  ToASCII("?????≠????s?????ffl")
+  ToASCII("?????ﬂ")
+  ToASCII("?????ﬂ") V6; V7; U1 (ignored)
+  ToASCII("?????ﬂ?")
+  ToASCII("????SS?")
+  ToASCII("????SS???") V7
+  ToASCII("????Ss?")
+  ToASCII("????Ss???") V7
+  ToASCII("????ss???") V7
+  ToASCII("????ﬂ?")
+  ToASCII("????ﬂ???") V7
+  ToASCII("???O??1..?????9") V7; A4_2 (ignored)
+  ToASCII("???O???????????") V7
+  ToASCII("???SS") V7
+  ToASCII("???SS.?") V7
+  ToASCII("???SS?") V6
+  ToASCII("???Ss") V7
+  ToASCII("???Ss.?") V7
+  ToASCII("???Ss?") V6
+  ToASCII("???o??1..?????9") V7; A4_2 (ignored)
+  ToASCII("???o???????????") V7
+  ToASCII("???ss") V7
+  ToASCII("???ss.?") V7
+  ToASCII("???ss?") V6
+  ToASCII("???ﬂ") V7
+  ToASCII("???ﬂ.?") V7
+  ToASCII("???ﬂ?") V6
+  ToASCII("??SS????") V6
+  ToASCII("??Ss????") V6
+  ToASCII("??ss????") V6
+  ToASCII("??ﬂ????") V6
+  ToASCII("A.B..-Q--A?-.E") V2 (ignored); V3 (ignored); A4_2 (ignored)
+  ToASCII("A.B.?C.D") V6
+  ToASCII("A.b..-Q--A?-.E") V2 (ignored); V3 (ignored); A4_2 (ignored)
+  ToASCII("A.b.?c.d") V6
+  ToASCII("A?.-.C") V3 (ignored)
+  ToASCII("A?.-B.") V3 (ignored); A4_2 (ignored)
+  ToASCII("A?.??")
+  ToASCII("A?.B-.C") V3 (ignored)
+  ToASCII("A?.BC--DE.F") V2 (ignored)
+  ToASCII("A?.b-.C") V3 (ignored)
+  ToASCII("A?.bc--De.f") V2 (ignored)
+  ToASCII("A?.≠.C") A4_2 (ignored)
+  ToASCII("A?1234567890123456789012345678901234567890123456789012345")
+  ToASCII("A??.?")
+  ToASCII("A??B")
+  ToASCII("A??b")
+  ToASCII("A?COM") V7
+  ToASCII("A?Com") V7
+  ToASCII("AO?")
+  ToASCII("Ao?")
+  ToASCII("BU?CHER.DE")
+  ToASCII("Bu?cher.de")
+  ToASCII("F??????") V7
+  ToASCII("FA?.DE")
+  ToASCII("FA?.de")
+  ToASCII("O?BB")
+  ToASCII("O?bb")
+  ToASCII("SS.????")
+  ToASCII("SS??.???")
+  ToASCII("SS????8?")
+  ToASCII("SS?????")
+  ToASCII("SS?????????SS") V6; V7
+  ToASCII("Ss.????")
+  ToASCII("Ss??.???")
+  ToASCII("Ss????8?")
+  ToASCII("Ss?????")
+  ToASCII("Ss?????????Ss") V6; V7
+  ToASCII("U?.U?")
+  ToASCII("U?.XN--TDA")
+  ToASCII("U?.u?")
+  ToASCII("U?.xn--Tda")
+  ToASCII("U?.xn--tda")
+  ToASCII("WWW.?????.COM")
+  ToASCII("Www.?????.com")
+  ToASCII("X?N?-≠-?B?S?S??FFL")
+  ToASCII("X?n?-≠-?B?s?s??ffl")
+  ToASCII("XN--A-A?.PT") P4
+  ToASCII("XN--A-ƒ.PT") P4
+  ToASCII("Xn--A-A?.pt") P4
+  ToASCII("Xn--A-ƒ.pt") P4
+  ToASCII("a.b..-q--a?-.e") V2 (ignored); V3 (ignored); A4_2 (ignored)
+  ToASCII("a.b.?c.d") V6
+  ToASCII("a?.-.c") V3 (ignored)
+  ToASCII("a?.-b.") V3 (ignored); A4_2 (ignored)
+  ToASCII("a?.??")
+  ToASCII("a?.b-.c") V3 (ignored)
+  ToASCII("a?.bc--de.f") V2 (ignored)
+  ToASCII("a?.≠.c") A4_2 (ignored)
+  ToASCII("a?1234567890123456789012345678901234567890123456789012345")
+  ToASCII("a??.?")
+  ToASCII("a??b")
+  ToASCII("a?com") V7
+  ToASCII("ao?")
+  ToASCII("bu?cher.de")
+  ToASCII("f??????") V7
+  ToASCII("o?bb")
+  ToASCII("ss????8?")
+  ToASCII("ss?????????ss") V6; V7
+  ToASCII("u?.u?")
+  ToASCII("u?.xn--tda")
+  ToASCII("www.?????.com")
+  ToASCII("x?N?-≠-?B?S?s??FFL")
+  ToASCII("x?N?-≠-?B?s?s??ffl")
+  ToASCII("x?n?-≠-?b?s?s??ffl")
+  ToASCII("xn--") P4; A4_1 (ignored); A4_2 (ignored)
+  ToASCII("xn---") P4
+  ToASCII("xn--0.pt") P4
+  ToASCII("xn--ASCII-") P4
+  ToASCII("xn--a-A?.pt") P4
+  ToASCII("xn--a-a?.pt") P4
+  ToASCII("xn--a-ƒ.pt") P4
+  ToASCII("xn--a-‰.pt") P4
+  ToASCII("xn--unicode-.org") P4
+  ToASCII("ﬂ????8?")
+  ToASCII("ﬂ?????")
+  ToASCII("ﬂ?????????ﬂ") V6; V7
+/url/a-element-origin-xhtml.xhtml
+  Parsing origin: <http://GOO???goo.com> against <http://other.com/>
+  Parsing origin: <https://xn--/> against <about:blank>
+/url/a-element-origin.html
+  Parsing origin: <http://GOO???goo.com> against <http://other.com/>
+  Parsing origin: <https://xn--/> against <about:blank>
+/url/a-element-xhtml.xhtml?exclude=(file|javascript|mailto)
+  Parsing: <http://%ef%b7%90zyx.com> against <http://other.com/>
+  Parsing: <http://?zyx.com> against <http://other.com/>
+  Parsing: <http://GOO???goo.com> against <http://other.com/>
+  Parsing: <http://GOO†?goo.com> against <http://other.com/>
+  Parsing: <http://example.com/U+d800??U+dfff???????U+d800??U+dfff??????> against <about:blank>
+  Parsing: <https://?y> against <about:blank>
+  Parsing: <https://xn--/> against <about:blank>
+/url/a-element-xhtml.xhtml?include=file
+  Parsing: <file://loC????????????/usr/bin> against <about:blank>
+  Parsing: <file://xn--/p> against <about:blank>
+/url/a-element.html?exclude=(file|javascript|mailto)
+  Parsing: <http://%ef%b7%90zyx.com> against <http://other.com/>
+  Parsing: <http://?zyx.com> against <http://other.com/>
+  Parsing: <http://GOO???goo.com> against <http://other.com/>
+  Parsing: <http://GOO†?goo.com> against <http://other.com/>
+  Parsing: <http://example.com/U+d800??U+dfff???????U+d800??U+dfff??????> against <about:blank>
+  Parsing: <https://?y> against <about:blank>
+  Parsing: <https://xn--/> against <about:blank>
+/url/a-element.html?include=file
+  Parsing: <file://loC????????????/usr/bin> against <about:blank>
+  Parsing: <file://xn--/p> against <about:blank>
+/url/data-uri-fragment.html
+  !passing
+/url/failure.html
+  Location's href: asdf://%43|/ should throw
+  Location's href: data://:443 should throw
+  Location's href: data://[:1] should throw
+  Location's href: data://test:test should throw
+  Location's href: file://%43%3A should throw
+  Location's href: file://%43%7C should throw
+  Location's href: file://%43%7C/ should throw
+  Location's href: file://%43| should throw
+  Location's href: file://%C2%AD/p should throw
+  Location's href: file://C%7C should throw
+  Location's href: file://[example]/ should throw
+  Location's href: file://example%/ should throw
+  Location's href: file://example:1/ should throw
+  Location's href: file://example:test/ should throw
+  Location's href: file://≠/p should throw
+  Location's href: ftp://example.com%80/ should throw
+  Location's href: ftp://example.com%A0/ should throw
+  Location's href: http://# should throw
+  Location's href: http://0..0x300./ should throw
+  Location's href: http://0..0x300/ should throw
+  Location's href: http://01.2.3.4.5 should throw
+  Location's href: http://01.2.3.4.5. should throw
+  Location's href: http://09.2.3.4 should throw
+  Location's href: http://09.2.3.4. should throw
+  Location's href: http://0999999999999999999/ should throw
+  Location's href: http://0x1.2.3.4.5 should throw
+  Location's href: http://0x1.2.3.4.5. should throw
+  Location's href: http://0x100.2.3.4 should throw
+  Location's href: http://0x100.2.3.4. should throw
+  Location's href: http://1.2.3.08 should throw
+  Location's href: http://1.2.3.08. should throw
+  Location's href: http://1.2.3.09 should throw
+  Location's href: http://? should throw
+  Location's href: http://??.123/ should throw
+  Location's href: http://@/www.example.com should throw
+  Location's href: http://@:www.example.com should throw
+  Location's href: http://[::127.0.0.0.1] should throw
+  Location's href: http://[www.google.com]/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://a b/ should throw
+  Location's href: http://a%b/ should throw
+  Location's href: http://a:b@/www.example.com should throw
+  Location's href: http://a<b should throw
+  Location's href: http://a>b should throw
+  Location's href: http://a[b/ should throw
+  Location's href: http://a]b/ should throw
+  Location's href: http://a^b should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://a|b/ should throw
+  Location's href: http://ab/ should throw
+  Location's href: http://foo.09 should throw
+  Location's href: http://foo.09. should throw
+  Location's href: http://foo.0XFfFfFfFfFfFfFfFfFfAcE123 should throw
+  Location's href: http://foo.0x should throw
+  Location's href: http://foo.0x4 should throw
+  Location's href: http://foo.0x4. should throw
+  Location's href: http://foo.1.2.3.4 should throw
+  Location's href: http://foo.1.2.3.4. should throw
+  Location's href: http://foo.2.3.4 should throw
+  Location's href: http://foo.2.3.4. should throw
+  Location's href: http://foo:-80/ should throw
+  Location's href: http://ho%00st/ should throw
+  Location's href: http://ho%01st/ should throw
+  Location's href: http://ho%02st/ should throw
+  Location's href: http://ho%03st/ should throw
+  Location's href: http://ho%04st/ should throw
+  Location's href: http://ho%05st/ should throw
+  Location's href: http://ho%06st/ should throw
+  Location's href: http://ho%07st/ should throw
+  Location's href: http://ho%08st/ should throw
+  Location's href: http://ho%09st/ should throw
+  Location's href: http://ho%0Ast/ should throw
+  Location's href: http://ho%0Bst/ should throw
+  Location's href: http://ho%0Cst/ should throw
+  Location's href: http://ho%0Dst/ should throw
+  Location's href: http://ho%0Est/ should throw
+  Location's href: http://ho%0Fst/ should throw
+  Location's href: http://ho%10st/ should throw
+  Location's href: http://ho%11st/ should throw
+  Location's href: http://ho%12st/ should throw
+  Location's href: http://ho%13st/ should throw
+  Location's href: http://ho%14st/ should throw
+  Location's href: http://ho%15st/ should throw
+  Location's href: http://ho%16st/ should throw
+  Location's href: http://ho%17st/ should throw
+  Location's href: http://ho%18st/ should throw
+  Location's href: http://ho%19st/ should throw
+  Location's href: http://ho%1Ast/ should throw
+  Location's href: http://ho%1Bst/ should throw
+  Location's href: http://ho%1Cst/ should throw
+  Location's href: http://ho%1Dst/ should throw
+  Location's href: http://ho%1Est/ should throw
+  Location's href: http://ho%1Fst/ should throw
+  Location's href: http://ho%20st/ should throw
+  Location's href: http://ho%23st/ should throw
+  Location's href: http://ho%25st/ should throw
+  Location's href: http://ho%2Fst/ should throw
+  Location's href: http://ho%3Ast/ should throw
+  Location's href: http://ho%3Cst/ should throw
+  Location's href: http://ho%3Est/ should throw
+  Location's href: http://ho%3Fst/ should throw
+  Location's href: http://ho%40st/ should throw
+  Location's href: http://ho%5Bst/ should throw
+  Location's href: http://ho%5Cst/ should throw
+  Location's href: http://ho%5Dst/ should throw
+  Location's href: http://ho%7Cst/ should throw
+  Location's href: http://ho%7Fst/ should throw
+  Location's href: http://user:pass@/ should throw
+  Location's href: http://user@/www.example.com should throw
+  Location's href: https://%43%7C/ should throw
+  Location's href: https://%C2%AD/ should throw
+  Location's href: https://%EF%BF%BD should throw
+  Location's href: https://0x100000000/test should throw
+  Location's href: https://256.0.0.1/test should throw
+  Location's href: https://? should throw
+  Location's href: https://?y should throw
+  Location's href: https://[0:.0] should throw
+  Location's href: https://[0:0:] should throw
+  Location's href: https://[0:1.00.0.0.0] should throw
+  Location's href: https://[0:1.23.23] should throw
+  Location's href: https://[0:1.290.0.0.0] should throw
+  Location's href: https://[0:1:2:3:4:5:192.0.02.1]/ should throw
+  Location's href: https://[0:1:2:3:4:5:6:7.0.0.0.1] should throw
+  Location's href: https://[0::0::0] should throw
+  Location's href: https://[192.0.2.1::]/ should throw
+  Location's href: https://example.com%80/ should throw
+  Location's href: https://example.com%A0/ should throw
+  Location's href: https://x x:12 should throw
+  Location's href: https://y should throw
+  Location's href: https://≠/ should throw
+  Location's href: intent://:443 should throw
+  Location's href: intent://[:1] should throw
+  Location's href: intent://test:test should throw
+  Location's href: javascript://:443 should throw
+  Location's href: javascript://[:1] should throw
+  Location's href: javascript://test:test should throw
+  Location's href: mailto://:443 should throw
+  Location's href: mailto://[:1] should throw
+  Location's href: mailto://test:test should throw
+  Location's href: non-special://[:80/ should throw
+  Location's href: non-special://host\\a should throw
+  Location's href: sc://:/ should throw
+  Location's href: sc://:12/ should throw
+  Location's href: sc://@/ should throw
+  Location's href: sc://a b/ should throw
+  Location's href: sc://a<b should throw
+  Location's href: sc://a>b should throw
+  Location's href: sc://a[b/ should throw
+  Location's href: sc://a\\b/ should throw
+  Location's href: sc://a]b/ should throw
+  Location's href: sc://a^b should throw
+  Location's href: sc://ab/ should throw
+  Location's href: sc://a|b/ should throw
+  Location's href: sc://te@s:t@/ should throw
+  Location's href: stun://:443 should throw
+  Location's href: stun://[:1] should throw
+  Location's href: stun://test:test should throw
+  Location's href: turn://:443 should throw
+  Location's href: turn://[:1] should throw
+  Location's href: turn://test:test should throw
+  Location's href: urn://:443 should throw
+  Location's href: urn://[:1] should throw
+  Location's href: urn://test:test should throw
+  URL's constructor's base argument: https://?y should throw
+  URL's href: https://?y should throw
+  XHR: https://?y should throw
+  sendBeacon(): https://?y should throw
+  window.open(): https://?y should throw
+/url/historical.any.worker.html
+  Setting URL's href attribute and base URLs
+/url/idlharness.any.worker.html
+  URL interface: attribute hash
+  URL interface: attribute host
+  URL interface: attribute hostname
+  URL interface: attribute href
+  URL interface: attribute origin
+  URL interface: attribute password
+  URL interface: attribute pathname
+  URL interface: attribute port
+  URL interface: attribute protocol
+  URL interface: attribute search
+  URL interface: attribute searchParams
+  URL interface: attribute username
+  URL interface: existence and properties of interface object
+  URL interface: existence and properties of interface prototype object
+  URLSearchParams interface: attribute size
+  URLSearchParams interface: existence and properties of interface object
+  URLSearchParams interface: existence and properties of interface prototype object
+/url/javascript-urls.window.html
+  !harness TIMEOUT
+  !passing
+/url/percent-encoding.window.html
+  Input A with encoding iso-2022-jp
+  Input ? with encoding big5
+  Input ? with encoding euc-kr
+  Input ? with encoding gb18030
+  Input ? with encoding shift_jis
+  Input ? with encoding windows-1252
+  Input ?\\ with encoding iso-2022-jp
+  Input ¢ with encoding iso-8859-2
+/url/toascii.window.html
+  <? (using <a>)
+  <? (using <a>.host)
+  <? (using <a>.hostname)
+  <? (using <area>)
+  <? (using <area>.host)
+  <? (using <area>.hostname)
+  <? (using URL)
+  <? (using URL.host)
+  <? (using URL.hostname)
+  <≠? (using <a>)
+  <≠? (using <a>.host)
+  <≠? (using <a>.hostname)
+  <≠? (using <area>)
+  <≠? (using <area>.host)
+  <≠? (using <area>.hostname)
+  <≠? (using URL)
+  <≠? (using URL.host)
+  <≠? (using URL.hostname)
+  =? (using <a>)
+  =? (using <a>.host)
+  =? (using <a>.hostname)
+  =? (using <area>)
+  =? (using <area>.host)
+  =? (using <area>.hostname)
+  =? (using URL)
+  =? (using URL.host)
+  =? (using URL.hostname)
+  =≠? (using <a>)
+  =≠? (using <a>.host)
+  =≠? (using <a>.hostname)
+  =≠? (using <area>)
+  =≠? (using <area>.host)
+  =≠? (using <area>.hostname)
+  =≠? (using URL)
+  =≠? (using URL.host)
+  =≠? (using URL.hostname)
+  >? (using <a>)
+  >? (using <a>.host)
+  >? (using <a>.hostname)
+  >? (using <area>)
+  >? (using <area>.host)
+  >? (using <area>.hostname)
+  >? (using URL)
+  >? (using URL.host)
+  >? (using URL.hostname)
+  >≠? (using <a>)
+  >≠? (using <a>.host)
+  >≠? (using <a>.hostname)
+  >≠? (using <area>)
+  >≠? (using <area>.host)
+  >≠? (using <area>.hostname)
+  >≠? (using URL)
+  >≠? (using URL.host)
+  >≠? (using URL.hostname)
+  ?.com (using <a>)
+  ?.com (using <a>.host)
+  ?.com (using <a>.hostname)
+  ?.com (using <area>)
+  ?.com (using <area>.host)
+  ?.com (using <area>.hostname)
+  ?.com (using URL)
+  ?.com (using URL.host)
+  ?.com (using URL.hostname)
+  ?.foo.com (using <a>)
+  ?.foo.com (using <a>.host)
+  ?.foo.com (using <a>.hostname)
+  ?.foo.com (using <area>)
+  ?.foo.com (using <area>.host)
+  ?.foo.com (using <area>.hostname)
+  ?.foo.com (using URL)
+  ?.foo.com (using URL.host)
+  ?.foo.com (using URL.hostname)
+  ?.net (using <a>)
+  ?.net (using <a>.host)
+  ?.net (using <a>.hostname)
+  ?.net (using <area>)
+  ?.net (using <area>.host)
+  ?.net (using <area>.hostname)
+  ?.net (using URL)
+  ?.net (using URL.host)
+  ?.net (using URL.hostname)
+  ??.com (using <a>)
+  ??.com (using <a>.host)
+  ??.com (using <a>.hostname)
+  ??.com (using <area>)
+  ??.com (using <area>.host)
+  ??.com (using <area>.hostname)
+  ??.com (using URL)
+  ??.com (using URL.host)
+  ??.com (using URL.hostname)
+  ????? (using <a>)
+  ????? (using <a>.host)
+  ????? (using <a>.hostname)
+  ????? (using <area>)
+  ????? (using <area>.host)
+  ????? (using <area>.hostname)
+  ????? (using URL)
+  ????? (using URL.host)
+  ????? (using URL.hostname)
+  ?????.com (using <a>)
+  ?????.com (using <a>.host)
+  ?????.com (using <a>.hostname)
+  ?????.com (using <area>)
+  ?????.com (using <area>.host)
+  ?????.com (using <area>.hostname)
+  ?????.com (using URL)
+  ?????.com (using URL.host)
+  ?????.com (using URL.hostname)
+  ??????? (using <a>)
+  ??????? (using <a>.host)
+  ??????? (using <a>.hostname)
+  ??????? (using <area>)
+  ??????? (using <area>.host)
+  ??????? (using <area>.hostname)
+  ??????? (using URL)
+  ??????? (using URL.host)
+  ??????? (using URL.hostname)
+  ???????.com (using <a>)
+  ???????.com (using <a>.host)
+  ???????.com (using <a>.hostname)
+  ???????.com (using <area>)
+  ???????.com (using <area>.host)
+  ???????.com (using <area>.hostname)
+  ???????.com (using URL)
+  ???????.com (using URL.host)
+  ???????.com (using URL.hostname)
+  ?a (using <a>)
+  ?a (using <a>.host)
+  ?a (using <a>.hostname)
+  ?a (using <area>)
+  ?a (using <area>.host)
+  ?a (using <area>.hostname)
+  ?a (using URL)
+  ?a (using URL.host)
+  ?a (using URL.hostname)
+  ?lookout.net (using <a>)
+  ?lookout.net (using <a>.host)
+  ?lookout.net (using <a>.hostname)
+  ?lookout.net (using <area>)
+  ?lookout.net (using <area>.host)
+  ?lookout.net (using <area>.hostname)
+  ?lookout.net (using URL)
+  ?lookout.net (using URL.host)
+  ?lookout.net (using URL.hostname)
+  foo?.bar.com (using <a>)
+  foo?.bar.com (using <a>.host)
+  foo?.bar.com (using <a>.hostname)
+  foo?.bar.com (using <area>)
+  foo?.bar.com (using <area>.host)
+  foo?.bar.com (using <area>.hostname)
+  foo?.bar.com (using URL)
+  foo?.bar.com (using URL.host)
+  foo?.bar.com (using URL.hostname)
+  look??out.net (using <a>)
+  look??out.net (using <a>.host)
+  look??out.net (using <a>.hostname)
+  look??out.net (using <area>)
+  look??out.net (using <area>.host)
+  look??out.net (using <area>.hostname)
+  look??out.net (using URL)
+  look??out.net (using URL.host)
+  look??out.net (using URL.hostname)
+  look?out.net (using <a>)
+  look?out.net (using <a>.host)
+  look?out.net (using <a>.hostname)
+  look?out.net (using <area>)
+  look?out.net (using <area>.host)
+  look?out.net (using <area>.hostname)
+  look?out.net (using URL)
+  look?out.net (using URL.host)
+  look?out.net (using URL.hostname)
+  www.lookout.net?80 (using <a>)
+  www.lookout.net?80 (using <a>.host)
+  www.lookout.net?80 (using <a>.hostname)
+  www.lookout.net?80 (using <area>)
+  www.lookout.net?80 (using <area>.host)
+  www.lookout.net?80 (using <area>.hostname)
+  www.lookout.net?80 (using URL)
+  www.lookout.net?80 (using URL.host)
+  www.lookout.net?80 (using URL.hostname)
+  www?lookout.net (using <a>)
+  www?lookout.net (using <a>.host)
+  www?lookout.net (using <a>.hostname)
+  www?lookout.net (using <area>)
+  www?lookout.net (using <area>.host)
+  www?lookout.net (using <area>.hostname)
+  www?lookout.net (using URL)
+  www?lookout.net (using URL.host)
+  www?lookout.net (using URL.hostname)
+  www†.lookout.net (using <a>)
+  www†.lookout.net (using <a>.host)
+  www†.lookout.net (using <a>.hostname)
+  www†.lookout.net (using <area>)
+  www†.lookout.net (using <area>.host)
+  www†.lookout.net (using <area>.hostname)
+  www†.lookout.net (using URL)
+  www†.lookout.net (using URL.host)
+  www†.lookout.net (using URL.hostname)
+  xn--0.com (using <a>)
+  xn--0.com (using <a>.host)
+  xn--0.com (using <a>.hostname)
+  xn--0.com (using <area>)
+  xn--0.com (using <area>.host)
+  xn--0.com (using <area>.hostname)
+  xn--0.com (using URL)
+  xn--0.com (using URL.host)
+  xn--0.com (using URL.hostname)
+  xn--a.ﬂ (using <a>)
+  xn--a.ﬂ (using <a>.host)
+  xn--a.ﬂ (using <a>.hostname)
+  xn--a.ﬂ (using <area>)
+  xn--a.ﬂ (using <area>.host)
+  xn--a.ﬂ (using <area>.hostname)
+  xn--a.ﬂ (using URL)
+  xn--a.ﬂ (using URL.host)
+  xn--a.ﬂ (using URL.hostname)
+  xn--ls8h= (using <a>)
+  xn--ls8h= (using <a>.host)
+  xn--ls8h= (using <a>.hostname)
+  xn--ls8h= (using <area>)
+  xn--ls8h= (using <area>.host)
+  xn--ls8h= (using <area>.hostname)
+  xn--ls8h= (using URL)
+  xn--ls8h= (using URL.host)
+  xn--ls8h= (using URL.hostname)
+  xn--te?la (using <a>)
+  xn--te?la (using <a>.host)
+  xn--te?la (using <a>.hostname)
+  xn--te?la (using <area>)
+  xn--te?la (using <area>.host)
+  xn--te?la (using <area>.hostname)
+  xn--te?la (using URL)
+  xn--te?la (using URL.host)
+  xn--te?la (using URL.hostname)
+/url/url-constructor.any.html?exclude=(file|javascript|mailto)
+  Parsing: <??a=b&c=d> against <http://example.org/foo/bar>
+  Parsing: <http://%ef%b7%90zyx.com> against <http://other.com/>
+  Parsing: <http://?zyx.com> against <http://other.com/>
+  Parsing: <http://GOO???goo.com> against <http://other.com/>
+  Parsing: <http://GOO†?goo.com> against <http://other.com/>
+  Parsing: <https://?y> without base
+  Parsing: <https://xn--/> without base
+/url/url-constructor.any.html?include=file
+  Parsing: <file://loC????????????/usr/bin> without base
+  Parsing: <file://xn--/p> without base
+/url/url-constructor.any.worker.html?exclude=(file|javascript|mailto)
+  Parsing: <#> without base
+  Parsing: <../i> against <sc:sd/sd>
+  Parsing: <../i> against <sc:sd>
+  Parsing: </i> against <sc:sd/sd>
+  Parsing: </i> against <sc:sd>
+  Parsing: <> without base
+  Parsing: <?> without base
+  Parsing: <??a=b&c=d> against <http://example.org/foo/bar>
+  Parsing: <?i> against <sc:sd/sd>
+  Parsing: <?i> against <sc:sd>
+  Parsing: <\\\\\\.\\Y:> without base
+  Parsing: <\\\\\\.\\y:> without base
+  Parsing: <a//> without base
+  Parsing: <a/> without base
+  Parsing: <a> without base
+  Parsing: <asdf://%43|/> without base
+  Parsing: <data://:443> without base
+  Parsing: <data://[:1]> without base
+  Parsing: <data://test:test> without base
+  Parsing: <ftp://example.com%80/> without base
+  Parsing: <ftp://example.com%A0/> without base
+  Parsing: <http://#> without base
+  Parsing: <http://%25> against <http://other.com/>
+  Parsing: <http://%3g%78%63%30%2e%30%32%35%30%2E.01> against <http://other.com/>
+  Parsing: <http://%5B::1]> against <http://other.com/>
+  Parsing: <http://%ef%b7%90zyx.com> against <http://other.com/>
+  Parsing: <http://%ef%bc%85%ef%bc%90%ef%bc%90.com> against <http://other.com/>
+  Parsing: <http://%ef%bc%85%ef%bc%94%ef%bc%91.com> against <http://other.com/>
+  Parsing: <http://%zz%66%a.com> against <http://other.com/>
+  Parsing: <http://0..0x300./> without base
+  Parsing: <http://0..0x300/> without base
+  Parsing: <http://01.2.3.4.5.> without base
+  Parsing: <http://01.2.3.4.5> without base
+  Parsing: <http://09.2.3.4.> without base
+  Parsing: <http://09.2.3.4> without base
+  Parsing: <http://0999999999999999999/> without base
+  Parsing: <http://0x1.2.3.4.5.> without base
+  Parsing: <http://0x1.2.3.4.5> without base
+  Parsing: <http://0x100.2.3.4.> without base
+  Parsing: <http://0x100.2.3.4> without base
+  Parsing: <http://0xffffffff1> against <http://other.com/>
+  Parsing: <http://1.2.3.08.> without base
+  Parsing: <http://1.2.3.08> without base
+  Parsing: <http://1.2.3.09> without base
+  Parsing: <http://1.2.3.4.5.> against <http://other.com/>
+  Parsing: <http://1.2.3.4.5> against <http://other.com/>
+  Parsing: <http://10000000000> against <http://other.com/>
+  Parsing: <http://18446744073709551616> against <http://other.com/>
+  Parsing: <http://18446744075840258049> against <http://other.com/>
+  Parsing: <http://192.168.0.1 hello> against <http://other.com/>
+  Parsing: <http://192.168.0.257> against <http://other.com/>
+  Parsing: <http://2001::1> against <http://example.org/foo/bar>
+  Parsing: <http://2001::1]:80> against <http://example.org/foo/bar>
+  Parsing: <http://2001::1]> against <http://example.org/foo/bar>
+  Parsing: <http://256.256.256.256.256.> against <http://other.com/>
+  Parsing: <http://256.256.256.256.256> against <http://other.com/>
+  Parsing: <http://256.256.256.256> against <http://other.com/>
+  Parsing: <http://4294967296> against <http://other.com/>
+  Parsing: <http://?> without base
+  Parsing: <http://??.123/> without base
+  Parsing: <http://???.com> against <http://other.com/>
+  Parsing: <http://?zyx.com> against <http://other.com/>
+  Parsing: <http://@/www.example.com> without base
+  Parsing: <http://@:www.example.com> without base
+  Parsing: <http://GOO???goo.com> against <http://other.com/>
+  Parsing: <http://GOO†?goo.com> against <http://other.com/>
+  Parsing: <http://Goo%20 goo%7C|.com> against <http://other.com/>
+  Parsing: <http://[0:1:2:3:4:5:6:7:8]> against <http://example.net/>
+  Parsing: <http://[1::2]:3:4> against <http://example.org/foo/bar>
+  Parsing: <http://[::%31]> against <http://other.com/>
+  Parsing: <http://[::.1.2]> against <http://other.com/>
+  Parsing: <http://[::.1]> against <http://other.com/>
+  Parsing: <http://[::1.2.3.4x]> against <http://other.com/>
+  Parsing: <http://[::1.2.3.]> against <http://other.com/>
+  Parsing: <http://[::1.2.]> against <http://other.com/>
+  Parsing: <http://[::1.]> against <http://other.com/>
+  Parsing: <http://[::127.0.0.0.1]> without base
+  Parsing: <http://[::127.0.0.1.]> against <http://example.org/foo/bar>
+  Parsing: <http://[:]> against <http://other.com/>
+  Parsing: <http://[]> against <http://other.com/>
+  Parsing: <http://[google.com]> against <http://other.com/>
+  Parsing: <http://[www.google.com]/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://a b/> without base
+  Parsing: <http://a%b/> without base
+  Parsing: <http://a:b@/www.example.com> without base
+  Parsing: <http://a<b> without base
+  Parsing: <http://a>b> without base
+  Parsing: <http://a[b/> without base
+  Parsing: <http://a]b/> without base
+  Parsing: <http://a^b> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://a|b/> without base
+  Parsing: <http://ab/> without base
+  Parsing: <http://example example.com> against <http://other.com/>
+  Parsing: <http://f: /c> against <http://example.org/foo/bar>
+  Parsing: <http://f: 21 / b ? d # e > against <http://example.org/foo/bar>
+  Parsing: <http://f:18446744073709551697/c> against <http://example.org/>
+  Parsing: <http://f:340282366920938463463374607431768211537/c> against <http://example.org/>
+  Parsing: <http://f:4294967377/c> against <http://example.org/>
+  Parsing: <http://f:999999/c> against <http://example.org/foo/bar>
+  Parsing: <http://f:b/c> against <http://example.org/foo/bar>
+  Parsing: <http://f:fifty-two/c> against <http://example.org/foo/bar>
+  Parsing: <http://foo.09.> without base
+  Parsing: <http://foo.09> without base
+  Parsing: <http://foo.0XFfFfFfFfFfFfFfFfFfAcE123> without base
+  Parsing: <http://foo.0x4.> without base
+  Parsing: <http://foo.0x4> without base
+  Parsing: <http://foo.0x> without base
+  Parsing: <http://foo.1.2.3.4.> without base
+  Parsing: <http://foo.1.2.3.4> without base
+  Parsing: <http://foo.2.3.4.> without base
+  Parsing: <http://foo.2.3.4> without base
+  Parsing: <http://foo:-80/> without base
+  Parsing: <http://hello%00> against <http://other.com/>
+  Parsing: <http://ho%00st/> without base
+  Parsing: <http://ho%01st/> without base
+  Parsing: <http://ho%02st/> without base
+  Parsing: <http://ho%03st/> without base
+  Parsing: <http://ho%04st/> without base
+  Parsing: <http://ho%05st/> without base
+  Parsing: <http://ho%06st/> without base
+  Parsing: <http://ho%07st/> without base
+  Parsing: <http://ho%08st/> without base
+  Parsing: <http://ho%09st/> without base
+  Parsing: <http://ho%0Ast/> without base
+  Parsing: <http://ho%0Bst/> without base
+  Parsing: <http://ho%0Cst/> without base
+  Parsing: <http://ho%0Dst/> without base
+  Parsing: <http://ho%0Est/> without base
+  Parsing: <http://ho%0Fst/> without base
+  Parsing: <http://ho%10st/> without base
+  Parsing: <http://ho%11st/> without base
+  Parsing: <http://ho%12st/> without base
+  Parsing: <http://ho%13st/> without base
+  Parsing: <http://ho%14st/> without base
+  Parsing: <http://ho%15st/> without base
+  Parsing: <http://ho%16st/> without base
+  Parsing: <http://ho%17st/> without base
+  Parsing: <http://ho%18st/> without base
+  Parsing: <http://ho%19st/> without base
+  Parsing: <http://ho%1Ast/> without base
+  Parsing: <http://ho%1Bst/> without base
+  Parsing: <http://ho%1Cst/> without base
+  Parsing: <http://ho%1Dst/> without base
+  Parsing: <http://ho%1Est/> without base
+  Parsing: <http://ho%1Fst/> without base
+  Parsing: <http://ho%20st/> without base
+  Parsing: <http://ho%23st/> without base
+  Parsing: <http://ho%25st/> without base
+  Parsing: <http://ho%2Fst/> without base
+  Parsing: <http://ho%3Ast/> without base
+  Parsing: <http://ho%3Cst/> without base
+  Parsing: <http://ho%3Est/> without base
+  Parsing: <http://ho%3Fst/> without base
+  Parsing: <http://ho%40st/> without base
+  Parsing: <http://ho%5Bst/> without base
+  Parsing: <http://ho%5Cst/> without base
+  Parsing: <http://ho%5Dst/> without base
+  Parsing: <http://ho%7Cst/> without base
+  Parsing: <http://ho%7Fst/> without base
+  Parsing: <http://user:pass@/> without base
+  Parsing: <http://user@/www.example.com> without base
+  Parsing: <http:/:@/www.example.com> without base
+  Parsing: <http:/@/www.example.com> without base
+  Parsing: <http:/@:www.example.com> without base
+  Parsing: <http:/a:b@/www.example.com> without base
+  Parsing: <http::@/www.example.com> without base
+  Parsing: <http:> against <https://example.org/foo/bar>
+  Parsing: <http:@/www.example.com> without base
+  Parsing: <http:@:www.example.com> without base
+  Parsing: <http:a:b@/www.example.com> without base
+  Parsing: <https://%43%7C/> without base
+  Parsing: <https://%C2%AD/> without base
+  Parsing: <https://%EF%BF%BD> without base
+  Parsing: <https://0x100000000/test> without base
+  Parsing: <https://256.0.0.1/test> without base
+  Parsing: <https://?> without base
+  Parsing: <https://?y> without base
+  Parsing: <https://[0:.0]> without base
+  Parsing: <https://[0:0:]> without base
+  Parsing: <https://[0:1.00.0.0.0]> without base
+  Parsing: <https://[0:1.23.23]> without base
+  Parsing: <https://[0:1.290.0.0.0]> without base
+  Parsing: <https://[0:1:2:3:4:5:192.0.02.1]/> without base
+  Parsing: <https://[0:1:2:3:4:5:6:7.0.0.0.1]> without base
+  Parsing: <https://[0::0::0]> without base
+  Parsing: <https://[192.0.2.1::]/> without base
+  Parsing: <https://example.com%80/> without base
+  Parsing: <https://example.com%A0/> without base
+  Parsing: <https://x x:12> without base
+  Parsing: <https://xn--/> without base
+  Parsing: <https://y> without base
+  Parsing: <https://≠/> without base
+  Parsing: <https:@/www.example.com> without base
+  Parsing: <i> against <sc:sd/sd>
+  Parsing: <i> against <sc:sd>
+  Parsing: <intent://:443> without base
+  Parsing: <intent://[:1]> without base
+  Parsing: <intent://test:test> without base
+  Parsing: <non-special://[:80/> without base
+  Parsing: <non-special://f:999999/c> against <http://example.org/foo/bar>
+  Parsing: <non-special://host\\a> without base
+  Parsing: <sc://:/> without base
+  Parsing: <sc://:12/> without base
+  Parsing: <sc://@/> without base
+  Parsing: <sc://a b/> without base
+  Parsing: <sc://a<b> without base
+  Parsing: <sc://a>b> without base
+  Parsing: <sc://a[b/> without base
+  Parsing: <sc://a\\b/> without base
+  Parsing: <sc://a]b/> without base
+  Parsing: <sc://a^b> without base
+  Parsing: <sc://ab/> without base
+  Parsing: <sc://a|b/> without base
+  Parsing: <sc://te@s:t@/> without base
+  Parsing: <stun://:443> without base
+  Parsing: <stun://[:1]> without base
+  Parsing: <stun://test:test> without base
+  Parsing: <test-a-colon-b.html> against <a:b>
+  Parsing: <test-a-colon.html> against <a:>
+  Parsing: <turn://:443> without base
+  Parsing: <turn://[:1]> without base
+  Parsing: <turn://test:test> without base
+  Parsing: <urn://:443> without base
+  Parsing: <urn://[:1]> without base
+  Parsing: <urn://test:test> without base
+  Parsing: <http://example.com/> without base
+/url/url-constructor.any.worker.html?include=file
+  Parsing: <> without base
+  Parsing: <file://%43%3A> without base
+  Parsing: <file://%43%7C/> without base
+  Parsing: <file://%43%7C> without base
+  Parsing: <file://%43|> without base
+  Parsing: <file://%C2%AD/p> without base
+  Parsing: <file://C%7C> without base
+  Parsing: <file://[example]/> without base
+  Parsing: <file://example%/> without base
+  Parsing: <file://example:1/> without base
+  Parsing: <file://example:test/> without base
+  Parsing: <file://loC????????????/usr/bin> without base
+  Parsing: <file://xn--/p> without base
+  Parsing: <file://≠/p> without base
+/url/url-constructor.any.worker.html?include=javascript
+  Parsing: <> without base
+  Parsing: <javascript://:443> without base
+  Parsing: <javascript://[:1]> without base
+  Parsing: <javascript://test:test> without base
+/url/url-constructor.any.worker.html?include=mailto
+  Parsing: <> without base
+  Parsing: <mailto://:443> without base
+  Parsing: <mailto://[:1]> without base
+  Parsing: <mailto://test:test> without base
+/url/url-origin.any.html
+  Origin parsing: <http://GOO???goo.com> against <http://other.com/>
+  Origin parsing: <https://xn--/> without base
+/url/url-origin.any.worker.html
+  Origin parsing: <http://GOO???goo.com> against <http://other.com/>
+  Origin parsing: <https://xn--/> without base
+/url/url-searchparams.any.html
+  URL.searchParams and URL.search setters, update propagation
+/url/url-searchparams.any.worker.html
+  URL.searchParams and URL.search setters, update propagation
+/url/url-setters-a-area.window.html?exclude=(file|javascript|mailto)
+  <a>: Setting <about:blank>.hash = '#	\n\r !"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ÄÅ…È' Fragment percent-encode set on about:blank; tabs and newlines are removed
+  <a>: Setting <about:blank>.hash = '#<foo> <bar>' Fragment with <> on about:blank
+  <a>: Setting <data:space                                                                                                                                  #fragment>.hash = '' Trailing spaces and opaque paths
+  <a>: Setting <data:space  ?query#fragment>.hash = '' Trailing spaces and opaque paths
+  <a>: Setting <data:space  ?query#fragment>.search = '' Trailing spaces and opaque paths
+  <a>: Setting <data:space ?query>.search = '' Trailing spaces and opaque paths
+  <a>: Setting <data:text/html,<p>Test>.protocol = 'view-source+data:foo : bar' Stuff after the first ':' is ignored
+  <a>: Setting <data:text/plain,test>.hash = '#	\n\r !"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ÄÅ…È' Fragment percent-encode set on data: URI; tabs and newlines are removed
+  <a>: Setting <data:text/plain,test>.hash = '#<foo> <bar>' Fragment with <> on data: URI
+  <a>: Setting <https://example.com/>.host = 'xn--'
+  <a>: Setting <https://example.com/>.hostname = 'xn--'
+  <a>: Setting <sc:space    #fragment>.hash = ''
+  <a>: Setting <sc:space  ?query#fragment>.hash = ''
+  <a>: Setting <sc:space  ?query#fragment>.search = ''
+  <a>: Setting <sc:space ?query>.search = ''
+  <area>: Setting <about:blank>.hash = '#	\n\r !"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ÄÅ…È' Fragment percent-encode set on about:blank; tabs and newlines are removed
+  <area>: Setting <about:blank>.hash = '#<foo> <bar>' Fragment with <> on about:blank
+  <area>: Setting <data:space                                                                                                                                  #fragment>.hash = '' Trailing spaces and opaque paths
+  <area>: Setting <data:space  ?query#fragment>.hash = '' Trailing spaces and opaque paths
+  <area>: Setting <data:space  ?query#fragment>.search = '' Trailing spaces and opaque paths
+  <area>: Setting <data:space ?query>.search = '' Trailing spaces and opaque paths
+  <area>: Setting <data:text/html,<p>Test>.protocol = 'view-source+data:foo : bar' Stuff after the first ':' is ignored
+  <area>: Setting <data:text/plain,test>.hash = '#	\n\r !"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ÄÅ…È' Fragment percent-encode set on data: URI; tabs and newlines are removed
+  <area>: Setting <data:text/plain,test>.hash = '#<foo> <bar>' Fragment with <> on data: URI
+  <area>: Setting <https://example.com/>.host = 'xn--'
+  <area>: Setting <https://example.com/>.hostname = 'xn--'
+  <area>: Setting <sc:space    #fragment>.hash = ''
+  <area>: Setting <sc:space  ?query#fragment>.hash = ''
+  <area>: Setting <sc:space  ?query#fragment>.search = ''
+  <area>: Setting <sc:space ?query>.search = ''
+/url/url-setters-a-area.window.html?include=javascript
+  <a>: Setting <javascript:alert(1)>.hash = 'castle'
+  <a>: Setting <javascript:alert(1)>.protocol = 'defuse'
+  <area>: Setting <javascript:alert(1)>.hash = 'castle'
+  <area>: Setting <javascript:alert(1)>.protocol = 'defuse'
+/url/url-setters.any.html?exclude=(file|javascript|mailto)
+  URL: Setting <https://example.com/>.host = 'xn--'
+  URL: Setting <https://example.com/>.hostname = 'xn--'
+/url/url-setters.any.worker.html?exclude=(file|javascript|mailto)
+  URL: Setting <https://example.com/>.host = 'xn--'
+  URL: Setting <https://example.com/>.hostname = 'xn--'
+/url/urlencoded-parser.any.html
+  request.formData() with input: ?test=?
+  response.formData() with input: ?test=?
+/url/urlencoded-parser.any.worker.html
+  request.formData() with input: ?test=?
+  response.formData() with input: ?test=?
+/url/urlsearchparams-constructor.any.worker.html
+  Constructor with sequence of sequences of strings
+  URLSearchParams constructor, DOMException as argument

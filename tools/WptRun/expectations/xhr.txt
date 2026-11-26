@@ -1,0 +1,712 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/xhr/XMLHttpRequest-withCredentials.any.html
+  setting withCredentials when in DONE state (synchronous)
+  setting withCredentials when not in UNSENT, OPENED state (asynchronous)
+/xhr/XMLHttpRequest-withCredentials.any.worker.html
+  setting withCredentials when in DONE state (synchronous)
+  setting withCredentials when not in UNSENT, OPENED state (asynchronous)
+/xhr/abort-after-stop.window.html
+  !passing
+/xhr/abort-during-done.window.html
+  !passing
+/xhr/abort-during-upload.any.html
+  !passing
+/xhr/abort-during-upload.any.worker.html
+  !passing
+/xhr/abort-event-order.htm
+  !passing
+/xhr/abort-upload-event-abort.any.html
+  !harness TIMEOUT
+  !passing
+/xhr/abort-upload-event-abort.any.worker.html
+  !harness TIMEOUT
+  !passing
+/xhr/abort-upload-event-loadend.any.html
+  !harness TIMEOUT
+  !passing
+/xhr/abort-upload-event-loadend.any.worker.html
+  !harness TIMEOUT
+  !passing
+/xhr/access-control-and-redirects.any.html
+  Local sync redirect to remote origin
+  Remote sync redirect to local origin
+  Remote sync redirect to same remote origin
+/xhr/access-control-and-redirects.any.worker.html
+  Local sync redirect to remote origin
+  Remote sync redirect to local origin
+  Remote sync redirect to same remote origin
+/xhr/access-control-basic-allow-access-control-origin-header-data-url.htm
+  !passing
+/xhr/access-control-basic-allow-access-control-origin-header.any.html
+  !passing
+/xhr/access-control-basic-allow-access-control-origin-header.any.worker.html
+  !passing
+/xhr/access-control-basic-allow-non-cors-safelisted-method.any.html
+  !passing
+/xhr/access-control-basic-allow-non-cors-safelisted-method.any.worker.html
+  !passing
+/xhr/access-control-basic-allow-preflight-cache-invalidation-by-header.any.html
+  !passing
+/xhr/access-control-basic-allow-preflight-cache-invalidation-by-header.any.worker.html
+  !passing
+/xhr/access-control-basic-allow-star.any.html
+  !passing
+/xhr/access-control-basic-allow-star.any.worker.html
+  !passing
+/xhr/access-control-basic-allow.any.html
+  !passing
+/xhr/access-control-basic-allow.any.worker.html
+  !passing
+/xhr/access-control-basic-cors-safelisted-request-headers.htm
+  !passing
+/xhr/access-control-basic-cors-safelisted-response-headers.htm
+  !passing
+/xhr/access-control-basic-denied.htm
+  !passing
+/xhr/access-control-basic-get-fail-non-simple.htm
+  !passing
+/xhr/access-control-basic-non-cors-safelisted-content-type.htm
+  !passing
+/xhr/access-control-basic-post-with-non-cors-safelisted-content-type.htm
+  !passing
+/xhr/access-control-preflight-async-header-denied.htm
+  !passing
+/xhr/access-control-preflight-async-method-denied.htm
+  !passing
+/xhr/access-control-preflight-async-not-supported.htm
+  !passing
+/xhr/access-control-preflight-credential-sync.htm
+  !passing
+/xhr/access-control-preflight-headers-sync.htm
+  !passing
+/xhr/access-control-preflight-sync-header-denied.htm
+  !passing
+/xhr/access-control-preflight-sync-method-denied.htm
+  !passing
+/xhr/access-control-preflight-sync-not-supported.htm
+  !passing
+/xhr/access-control-response-with-body-sync.htm
+  !passing
+/xhr/access-control-sandboxed-iframe-allow-origin-null.htm
+  !passing
+/xhr/access-control-sandboxed-iframe-allow.htm
+  !passing
+/xhr/access-control-sandboxed-iframe-denied-without-wildcard.htm
+  Sandboxed iframe is denied CORS access to server that allows parent origin
+/xhr/access-control-sandboxed-iframe-denied.htm
+  Sandboxed iframe is denied access to path
+/xhr/allow-lists-starting-with-comma.htm
+  !passing
+/xhr/blob-range.any.html
+  !passing
+/xhr/blob-range.any.worker.html
+  !passing
+/xhr/cors-upload-listener-timing.any.html
+  !passing
+  CORS deny, upload listeners late
+  CORS deny, upload listeners late with upload object
+/xhr/cors-upload-listener-timing.any.worker.html
+  !passing
+  CORS deny, upload listeners late
+  CORS deny, upload listeners late with upload object
+/xhr/data-uri.htm
+  XHR method HEAD with MIME type text/plain
+/xhr/event-error-order.sub.html
+  !passing
+/xhr/event-timeout-order.any.html
+  !passing
+/xhr/event-timeout-order.any.worker.html
+  !passing
+/xhr/event-upload-progress-crossorigin.any.html
+  Upload events registered too late (http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+  Upload events registered too late (resources/redirect.py?code=307&location=http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+/xhr/event-upload-progress-crossorigin.any.worker.html
+  Upload events registered too late (http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+  Upload events registered too late (resources/redirect.py?code=307&location=http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+/xhr/event-upload-progress.any.html
+  Upload events registered too late (http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+  Upload events registered too late (resources/redirect.py?code=307&location=http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+/xhr/event-upload-progress.any.worker.html
+  Upload events registered too late (http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+  Upload events registered too late (resources/redirect.py?code=307&location=http://www1.web-platform.test:8000/xhr/resources/corsenabled.py)
+/xhr/formdata.html
+  Newly created FormData contains entries added to "formData" IDL attribute of FormDataEvent.
+  |new FormData()| in formdata event handler should throw
+/xhr/formdata/append-formelement.html
+  testFormDataAppendToFormString
+  testFormDataAppendToFormWrongPlatformObject
+/xhr/formdata/constructor-formelement.html
+  !passing
+/xhr/formdata/constructor-submitter-coordinate.html
+  !passing
+/xhr/formdata/constructor-submitter.html
+  !passing
+  FormData construction should allow a null submitter
+  FormData construction should allow an undefined form and a null submitter
+  FormData construction should allow an undefined form and an undefined submitter
+  The constructed FormData object should not contain an entry for an unnamed submit button submitter
+/xhr/formdata/constructor.any.worker.html
+  !passing
+/xhr/formdata/iteration.any.html
+  !passing
+/xhr/formdata/iteration.any.worker.html
+  !passing
+/xhr/formdata/set-blob.any.html
+  file with lastModified and custom name
+/xhr/formdata/set-blob.any.worker.html
+  file with lastModified and custom name
+/xhr/formdata/set-formelement.html
+  testFormDataSetToFormString
+  testFormDataSetToFormWrongPlatformObject
+/xhr/formdata/submitter-coordinate-value.html
+  !harness TIMEOUT
+  !passing
+/xhr/getallresponseheaders-after-reuse.html
+  !passing
+/xhr/getallresponseheaders.htm
+  !passing
+/xhr/getresponseheader-special-characters.htm
+  !passing
+/xhr/getresponseheader.any.html
+  !passing
+/xhr/getresponseheader.any.worker.html
+  !passing
+/xhr/header-user-agent-sync.htm
+  !passing
+/xhr/headers-normalize-response.htm
+  !passing
+/xhr/idlharness.any.html
+  FormData interface object length
+  FormData interface: calling append(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, Blob, optional USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, Blob, optional USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling delete(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling delete(USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling delete(USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling get(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling get(USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling get(USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling getAll(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling getAll(USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling getAll(USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling has(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling has(USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling has(USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, Blob, optional USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, Blob, optional USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, USVString) on new FormData(form) with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, USVString) on new FormData(form, submitter) with too few arguments must throw TypeError
+  FormData interface: iterable<USVString, FormDataEntryValue>
+  FormData interface: operation append(USVString, Blob, optional USVString)
+  FormData interface: operation append(USVString, USVString)
+  FormData interface: operation set(USVString, Blob, optional USVString)
+  FormData interface: operation set(USVString, USVString)
+  ProgressEvent interface object length
+  XMLHttpRequest interface: attribute onreadystatechange
+  XMLHttpRequest interface: calling getResponseHeader(ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString, boolean, optional USVString?, optional USVString?) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling overrideMimeType(DOMString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling setRequestHeader(ByteString, ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: constant DONE on interface object
+  XMLHttpRequest interface: constant DONE on interface prototype object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface prototype object
+  XMLHttpRequest interface: constant LOADING on interface object
+  XMLHttpRequest interface: constant LOADING on interface prototype object
+  XMLHttpRequest interface: constant OPENED on interface object
+  XMLHttpRequest interface: constant OPENED on interface prototype object
+  XMLHttpRequest interface: constant UNSENT on interface object
+  XMLHttpRequest interface: constant UNSENT on interface prototype object
+  XMLHttpRequest interface: operation open(ByteString, USVString)
+  XMLHttpRequest interface: operation open(ByteString, USVString, boolean, optional USVString?, optional USVString?)
+  XMLHttpRequest interface: operation send(optional (Document or XMLHttpRequestBodyInit)?)
+  XMLHttpRequestEventTarget interface object length
+  XMLHttpRequestEventTarget interface: attribute onabort
+  XMLHttpRequestEventTarget interface: attribute onerror
+  XMLHttpRequestEventTarget interface: attribute onload
+  XMLHttpRequestEventTarget interface: attribute onloadend
+  XMLHttpRequestEventTarget interface: attribute onloadstart
+  XMLHttpRequestEventTarget interface: attribute onprogress
+  XMLHttpRequestEventTarget interface: attribute ontimeout
+  XMLHttpRequestUpload interface object length
+/xhr/idlharness.any.sharedworker.html
+  FormData interface object length
+  FormData interface: calling append(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling delete(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling get(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling getAll(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling has(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: existence and properties of interface object
+  FormData interface: existence and properties of interface prototype object
+  FormData interface: iterable<USVString, FormDataEntryValue>
+  FormData interface: operation append(USVString, Blob, optional USVString)
+  FormData interface: operation append(USVString, USVString)
+  FormData interface: operation set(USVString, Blob, optional USVString)
+  FormData interface: operation set(USVString, USVString)
+  ProgressEvent interface object length
+  ProgressEvent interface: attribute lengthComputable
+  ProgressEvent interface: attribute loaded
+  ProgressEvent interface: attribute total
+  ProgressEvent interface: existence and properties of interface object
+  XMLHttpRequest interface: attribute onreadystatechange
+  XMLHttpRequest interface: attribute readyState
+  XMLHttpRequest interface: attribute response
+  XMLHttpRequest interface: attribute responseText
+  XMLHttpRequest interface: attribute responseType
+  XMLHttpRequest interface: attribute responseURL
+  XMLHttpRequest interface: attribute status
+  XMLHttpRequest interface: attribute statusText
+  XMLHttpRequest interface: attribute timeout
+  XMLHttpRequest interface: attribute upload
+  XMLHttpRequest interface: attribute withCredentials
+  XMLHttpRequest interface: calling getResponseHeader(ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString, boolean, optional USVString?, optional USVString?) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling overrideMimeType(DOMString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling setRequestHeader(ByteString, ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: constant DONE on interface object
+  XMLHttpRequest interface: constant DONE on interface prototype object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface prototype object
+  XMLHttpRequest interface: constant LOADING on interface object
+  XMLHttpRequest interface: constant LOADING on interface prototype object
+  XMLHttpRequest interface: constant OPENED on interface object
+  XMLHttpRequest interface: constant OPENED on interface prototype object
+  XMLHttpRequest interface: constant UNSENT on interface object
+  XMLHttpRequest interface: constant UNSENT on interface prototype object
+  XMLHttpRequest interface: existence and properties of interface object
+  XMLHttpRequest interface: existence and properties of interface prototype object
+  XMLHttpRequest interface: existence and properties of interface prototype object's "constructor" property
+  XMLHttpRequest interface: member responseXML
+  XMLHttpRequest interface: new XMLHttpRequest() must not have property "responseXML"
+  XMLHttpRequest interface: operation open(ByteString, USVString)
+  XMLHttpRequest interface: operation open(ByteString, USVString, boolean, optional USVString?, optional USVString?)
+  XMLHttpRequest interface: operation send(optional (Document or XMLHttpRequestBodyInit)?)
+  XMLHttpRequestEventTarget interface object length
+  XMLHttpRequestEventTarget interface: attribute onabort
+  XMLHttpRequestEventTarget interface: attribute onerror
+  XMLHttpRequestEventTarget interface: attribute onload
+  XMLHttpRequestEventTarget interface: attribute onloadend
+  XMLHttpRequestEventTarget interface: attribute onloadstart
+  XMLHttpRequestEventTarget interface: attribute onprogress
+  XMLHttpRequestEventTarget interface: attribute ontimeout
+  XMLHttpRequestEventTarget interface: existence and properties of interface object
+  XMLHttpRequestUpload interface object length
+  XMLHttpRequestUpload interface: existence and properties of interface object
+/xhr/idlharness.any.worker.html
+  FormData interface object length
+  FormData interface: calling append(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling append(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling delete(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling get(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling getAll(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling has(USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, Blob, optional USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: calling set(USVString, USVString) on new FormData() with too few arguments must throw TypeError
+  FormData interface: existence and properties of interface object
+  FormData interface: existence and properties of interface prototype object
+  FormData interface: iterable<USVString, FormDataEntryValue>
+  FormData interface: operation append(USVString, Blob, optional USVString)
+  FormData interface: operation append(USVString, USVString)
+  FormData interface: operation set(USVString, Blob, optional USVString)
+  FormData interface: operation set(USVString, USVString)
+  ProgressEvent interface object length
+  ProgressEvent interface: attribute lengthComputable
+  ProgressEvent interface: attribute loaded
+  ProgressEvent interface: attribute total
+  ProgressEvent interface: existence and properties of interface object
+  XMLHttpRequest interface: attribute onreadystatechange
+  XMLHttpRequest interface: attribute readyState
+  XMLHttpRequest interface: attribute response
+  XMLHttpRequest interface: attribute responseText
+  XMLHttpRequest interface: attribute responseType
+  XMLHttpRequest interface: attribute responseURL
+  XMLHttpRequest interface: attribute status
+  XMLHttpRequest interface: attribute statusText
+  XMLHttpRequest interface: attribute timeout
+  XMLHttpRequest interface: attribute upload
+  XMLHttpRequest interface: attribute withCredentials
+  XMLHttpRequest interface: calling getResponseHeader(ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling open(ByteString, USVString, boolean, optional USVString?, optional USVString?) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling overrideMimeType(DOMString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: calling setRequestHeader(ByteString, ByteString) on new XMLHttpRequest() with too few arguments must throw TypeError
+  XMLHttpRequest interface: constant DONE on interface object
+  XMLHttpRequest interface: constant DONE on interface prototype object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface object
+  XMLHttpRequest interface: constant HEADERS_RECEIVED on interface prototype object
+  XMLHttpRequest interface: constant LOADING on interface object
+  XMLHttpRequest interface: constant LOADING on interface prototype object
+  XMLHttpRequest interface: constant OPENED on interface object
+  XMLHttpRequest interface: constant OPENED on interface prototype object
+  XMLHttpRequest interface: constant UNSENT on interface object
+  XMLHttpRequest interface: constant UNSENT on interface prototype object
+  XMLHttpRequest interface: existence and properties of interface object
+  XMLHttpRequest interface: existence and properties of interface prototype object
+  XMLHttpRequest interface: existence and properties of interface prototype object's "constructor" property
+  XMLHttpRequest interface: member responseXML
+  XMLHttpRequest interface: new XMLHttpRequest() must not have property "responseXML"
+  XMLHttpRequest interface: operation open(ByteString, USVString)
+  XMLHttpRequest interface: operation open(ByteString, USVString, boolean, optional USVString?, optional USVString?)
+  XMLHttpRequest interface: operation send(optional (Document or XMLHttpRequestBodyInit)?)
+  XMLHttpRequestEventTarget interface object length
+  XMLHttpRequestEventTarget interface: attribute onabort
+  XMLHttpRequestEventTarget interface: attribute onerror
+  XMLHttpRequestEventTarget interface: attribute onload
+  XMLHttpRequestEventTarget interface: attribute onloadend
+  XMLHttpRequestEventTarget interface: attribute onloadstart
+  XMLHttpRequestEventTarget interface: attribute onprogress
+  XMLHttpRequestEventTarget interface: attribute ontimeout
+  XMLHttpRequestEventTarget interface: existence and properties of interface object
+  XMLHttpRequestUpload interface object length
+  XMLHttpRequestUpload interface: existence and properties of interface object
+/xhr/loadstart-and-state.html
+  open() during loadstart
+/xhr/open-during-abort-event.htm
+  !harness TIMEOUT
+  !passing
+/xhr/open-method-case-insensitive.htm
+  !passing
+/xhr/open-method-case-sensitive.htm
+  !passing
+/xhr/open-method-responsetype-set-sync.htm
+  !passing
+/xhr/open-open-sync-send.htm
+  !passing
+/xhr/open-parameters-toString.htm
+  !passing
+/xhr/open-referer.htm
+  !passing
+/xhr/open-url-about-blank-window.htm
+  !passing
+/xhr/open-url-base-inserted-after-open.htm
+  !passing
+/xhr/open-url-base-inserted.htm
+  !passing
+/xhr/open-url-base.htm
+  !passing
+/xhr/open-url-encoding.htm
+  !passing
+/xhr/open-url-fragment.htm
+  !passing
+/xhr/open-url-javascript-window-2.htm
+  !harness TIMEOUT
+  !passing
+/xhr/open-url-javascript-window.htm
+  !harness TIMEOUT
+  !passing
+/xhr/open-url-multi-window-2.htm
+  !passing
+/xhr/open-url-multi-window-3.htm
+  !passing
+/xhr/open-url-multi-window-4.htm
+  !harness TIMEOUT
+  !passing
+/xhr/open-url-multi-window-5.htm
+  !passing
+/xhr/open-url-multi-window-6.htm
+  !harness TIMEOUT
+  !passing
+/xhr/open-url-redirected-sharedworker-origin.htm
+  Referer header
+/xhr/open-url-redirected-worker-origin.htm
+  !passing
+  Origin header
+/xhr/open-url-worker-origin.htm
+  !passing
+  Origin header
+/xhr/open-url-worker-simple.htm
+  !passing
+/xhr/overridemimetype-blob.html
+  !passing
+  1) MIME types need to be parsed and serialized: text/html;charset=gbk
+  16) MIME types need to be parsed and serialized: text/html;charset='gbk'
+  17) MIME types need to be parsed and serialized: text/html;charset='gbk
+  18) MIME types need to be parsed and serialized: text/html;charset=gbk'
+  31) MIME types need to be parsed and serialized: text/html;charset=" gbk"
+  32) MIME types need to be parsed and serialized: text/html;charset="gbk "
+  39) MIME types need to be parsed and serialized: text/html;0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789=x;charset=gbk
+  40) MIME types need to be parsed and serialized: 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789/0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  42) MIME types need to be parsed and serialized: text/html;valid=";";foo=bar
+  Loading data?
+/xhr/overridemimetype-chunked-response.window.html
+  !passing
+  Response charset is used for every chunk of a chunked response
+/xhr/overridemimetype-edge-cases.window.html
+  If charset is not overridden by overrideMimeType() the original continues to be used
+/xhr/overridemimetype-headers-received-state-force-shiftjis.htm
+  !passing
+/xhr/overridemimetype-invalid-mime-type.htm
+  !passing
+  Bogus MIME type does override MIME type
+/xhr/overridemimetype-unsent-state-force-shiftjis.any.html
+  !passing
+/xhr/overridemimetype-unsent-state-force-shiftjis.any.worker.html
+  !passing
+/xhr/progress-events-response-data-gzip.htm
+  !passing
+/xhr/progressevent-interface.html
+  The ProgressEvent interface
+/xhr/response-body-errors.any.html
+  Synchronous XMLHttpRequest should throw on bad chunk
+/xhr/response-body-errors.any.worker.html
+  Synchronous XMLHttpRequest should throw on bad chunk
+/xhr/response-method.htm
+  !passing
+  HEAD
+/xhr/responseType-document-in-worker.html
+  !passing
+/xhr/responseXML-unavailable-in-worker.html
+  !passing
+/xhr/responseXML-xml-scripting-support-disabled.html
+  !passing
+/xhr/responsedocument-decoding.htm
+  !passing
+  XMLHttpRequest: response document decoding (application/xml;charset=utf-8 %3C%3Fxml%20version%3D'1.0'%20encoding%3D'windows-1252'%3F%3E%3Cx%3E%e6%a9%9f%3C%2Fx%3E)
+  XMLHttpRequest: response document decoding (text/html;charset=utf-8 %3C!doctype%20html%3E%3Cmeta%20charset%3Dwindows-1252%3E%3Cx%3E%e6%a9%9f%3C%2Fx%3E)
+/xhr/responsetext-decoding.htm
+  XMLHttpRequest: responseText decoding (application/xml %3C%3Fxml%20version%3D'1.0'%20encoding%3D'windows-1252'%3F%3E%3Cx%3E%e6%a9%9f%3C%2Fx%3E empty)
+  XMLHttpRequest: responseText decoding (text/plain %FE%FF  text)
+  XMLHttpRequest: responseText decoding (text/plain %FE%FF empty)
+  XMLHttpRequest: responseText decoding (text/plain %FE%FF%FE%FF  text)
+  XMLHttpRequest: responseText decoding (text/plain %FE%FF%FE%FF empty)
+  XMLHttpRequest: responseText decoding (text/xml %FE%FF  text)
+  XMLHttpRequest: responseText decoding (text/xml %FE%FF empty)
+  XMLHttpRequest: responseText decoding (text/xml %FE%FF%FE%FF  text)
+  XMLHttpRequest: responseText decoding (text/xml %FE%FF%FE%FF empty)
+/xhr/responsetype.any.html
+  Set responseType to "" when readyState is DONE and the sync flag is set.
+  Set responseType to "" when readyState is OPENED and the sync flag is set.
+  Set responseType to "arraybuffer" when readyState is DONE and the sync flag is set.
+  Set responseType to "arraybuffer" when readyState is OPENED and the sync flag is set.
+  Set responseType to "blob" when readyState is DONE and the sync flag is set.
+  Set responseType to "blob" when readyState is OPENED and the sync flag is set.
+  Set responseType to "document" when readyState is DONE and the sync flag is set.
+  Set responseType to "document" when readyState is OPENED and the sync flag is set.
+  Set responseType to "json" when readyState is DONE and the sync flag is set.
+  Set responseType to "json" when readyState is OPENED and the sync flag is set.
+  Set responseType to "nosuchtype" when readyState is DONE and the sync flag is set.
+  Set responseType to "text" when readyState is DONE and the sync flag is set.
+  Set responseType to "text" when readyState is OPENED and the sync flag is set.
+/xhr/responsetype.any.worker.html
+  Set responseType to "" when readyState is DONE and the sync flag is set.
+  Set responseType to "arraybuffer" when readyState is DONE and the sync flag is set.
+  Set responseType to "blob" when readyState is DONE and the sync flag is set.
+  Set responseType to "document" when readyState is DONE and the sync flag is set.
+  Set responseType to "document" when readyState is DONE.
+  Set responseType to "document" when readyState is HEADERS_RECEIVED.
+  Set responseType to "document" when readyState is LOADING.
+  Set responseType to "document" when readyState is OPENED and the sync flag is set.
+  Set responseType to "document" when readyState is OPENED.
+  Set responseType to "document" when readyState is UNSENT.
+  Set responseType to "json" when readyState is DONE and the sync flag is set.
+  Set responseType to "nosuchtype" when readyState is DONE and the sync flag is set.
+  Set responseType to "text" when readyState is DONE and the sync flag is set.
+/xhr/responseurl-after-abort.any.html
+  !passing
+  responseURL reflects the new response after abort() and reuse
+/xhr/responseurl-after-abort.any.worker.html
+  !passing
+  responseURL reflects the new response after abort() and reuse
+/xhr/responseurl.html
+  !passing
+/xhr/responsexml-basic.htm
+  XMLHttpRequest: responseXML basic test
+/xhr/responsexml-document-properties.htm
+  !harness ERROR
+/xhr/responsexml-media-type.htm
+  !passing
+  XMLHttpRequest: responseXML MIME type tests ('application/rdf', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('text/html', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('text/plain', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('text/plain;+xml', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('text/plainxml', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('text/xsl', should not parse)
+  XMLHttpRequest: responseXML MIME type tests ('video/x-awesome', should not parse)
+/xhr/send-accept-language.htm
+  !passing
+/xhr/send-accept.htm
+  !passing
+/xhr/send-after-setting-document-domain.htm
+  !harness TIMEOUT
+  !passing
+/xhr/send-authentication-basic-cors-not-enabled.htm
+  !passing
+/xhr/send-authentication-basic-repeat-no-args.htm
+  !passing
+/xhr/send-authentication-basic-setrequestheader-existing-session.htm
+  !passing
+/xhr/send-authentication-basic.htm
+  !passing
+/xhr/send-authentication-competing-names-passwords.htm
+  !passing
+/xhr/send-blob-with-no-mime-type.html
+  Synchronous blob loading with invalid mime type [POST]
+  Synchronous blob loading with invalid mime type [PUT]
+  Synchronous blob loading with no mime type [POST]
+  Synchronous blob loading with no mime type [PUT]
+/xhr/send-conditional.htm
+  !passing
+/xhr/send-content-type-charset.htm
+  !passing
+/xhr/send-content-type-string.htm
+  !passing
+/xhr/send-data-arraybuffer.any.worker.html
+  !passing
+/xhr/send-data-es-object.any.html
+  sending a new ReadableStream instance
+/xhr/send-data-es-object.any.worker.html
+  sending a new ReadableStream instance
+/xhr/send-data-sharedarraybuffer.any.html
+  !passing
+/xhr/send-data-sharedarraybuffer.any.worker.html
+  !passing
+/xhr/send-data-unexpected-tostring.htm
+  send() called from data stringification
+/xhr/send-entity-body-basic.htm
+  !passing
+/xhr/send-entity-body-document.htm
+  !passing
+/xhr/send-entity-body-empty.htm
+  !harness ERROR
+  !passing
+/xhr/send-entity-body-get-head.htm
+  !passing
+/xhr/send-entity-body-none.htm
+  !passing
+/xhr/send-network-error-async-events.sub.htm
+  !passing
+/xhr/send-network-error-sync-events.sub.htm
+  !passing
+/xhr/send-no-response-event-order.htm
+  !passing
+/xhr/send-non-same-origin.htm
+  !passing
+/xhr/send-receive-utf16.htm
+  UTF-16 with BOM, no encoding in content-type
+/xhr/send-redirect-bogus-sync.sub.htm
+  !passing
+/xhr/send-redirect-infinite-sync.htm
+  !passing
+/xhr/send-redirect.htm
+  XMLHttpRequest: send() - Redirects (basics) (307, POST, content.py)
+/xhr/send-sync-blocks-async.htm
+  !passing
+/xhr/send-sync-no-response-event-load.htm
+  !passing
+/xhr/send-sync-no-response-event-loadend.htm
+  !passing
+/xhr/send-sync-no-response-event-order.htm
+  !passing
+/xhr/send-sync-response-event-order.htm
+  !passing
+/xhr/send-timeout-events.htm
+  !passing
+/xhr/send-usp.any.html
+  XMLHttpRequest.send(URLSearchParams): POST replaces the charset parameter of an author-set Content-Type
+/xhr/send-usp.any.worker.html
+  XMLHttpRequest.send(URLSearchParams): POST replaces the charset parameter of an author-set Content-Type
+/xhr/setrequestheader-allow-empty-value.htm
+  !passing
+/xhr/setrequestheader-allow-whitespace-in-value.htm
+  !passing
+/xhr/setrequestheader-bogus-name.htm
+  !passing
+  setRequestHeader should throw with header name "???".
+  setRequestHeader should throw with header name "X-???".
+/xhr/setrequestheader-bogus-value.htm
+  !passing
+  XMLHttpRequest: setRequestHeader() value argument checks 3
+/xhr/setrequestheader-case-insensitive.htm
+  !passing
+/xhr/setrequestheader-combining.window.html
+  !passing
+/xhr/setrequestheader-content-type.htm
+  !passing
+  ArrayBuffer request sends no Content-Type without setRequestHeader() call
+  ArrayBufferView request sends no Content-Type without setRequestHeader() call
+  Blob request with unset type sends no Content-Type without setRequestHeader() call
+/xhr/setrequestheader-header-allowed.htm
+  !passing
+/xhr/setrequestheader-header-forbidden.htm
+  XMLHttpRequest: setRequestHeader() - headers that are forbidden 1
+/xhr/setrequestheader-open-setrequestheader.htm
+  !passing
+/xhr/split-byte-order-mark.any.html
+  responseText uses a UTF-16LE byte order mark split across chunks
+/xhr/split-byte-order-mark.any.worker.html
+  responseText uses a UTF-16LE byte order mark split across chunks
+/xhr/status-async.htm
+  XMLHttpRequest: status/statusText - various responses 25 (GET 699)
+  XMLHttpRequest: status/statusText - various responses 26 (HEAD 699)
+  XMLHttpRequest: status/statusText - various responses 27 (CHICKEN 699)
+/xhr/status-basic.htm
+  !passing
+/xhr/status-error.htm
+  XMLHttpRequest: status error handling GET 699
+  XMLHttpRequest: status error handling HEAD 699
+  XMLHttpRequest: status error handling POST 699
+  XMLHttpRequest: status error handling PUT 699
+/xhr/status.h2.window.html
+  !passing
+/xhr/sync-no-progress.any.html
+  !passing
+/xhr/sync-no-progress.any.worker.html
+  !passing
+/xhr/sync-xhr-supported-by-permissions-policy.tentative.html
+  !passing
+/xhr/template-element.html
+  XMLHttpRequest: template element parsing
+/xhr/timeout-sync.htm
+  !passing
+/xhr/xhr-timeout-longtask.any.html
+  !passing
+/xhr/xhr-timeout-longtask.any.worker.html
+  !passing
+/xhr/xmlhttprequest-network-error-sync.htm
+  !passing
+/xhr/xmlhttprequest-sync-default-permissions-policy.tentative.sub.html
+  permissions policy "sync-xhr" can be disabled in cross-origin iframes using "allow" attribute.
+  permissions policy "sync-xhr" can be disabled in same-origin iframes using "allow" attribute.
+/xhr/xmlhttprequest-timeout-overrides.html?timeout overrides load after a delay
+  !passing
+/xhr/xmlhttprequest-timeout-overridesexpires.html?timeout set to expired value before load fires
+  !passing
+/xhr/xmlhttprequest-timeout-synconmain.html?timeout after open
+  !passing
+/xhr/xmlhttprequest-timeout-synconmain.html?timeout before open
+  !passing
+/xhr/xmlhttprequest-timeout-worker-aborted.html?aborted immediately after send()
+  Timeout test: time to abort is 5000, timeout set at 2000
+/xhr/xmlhttprequest-timeout-worker-aborted.html?call abort() after TIME_NORMAL_LOAD
+  Timeout test: time to abort is 5000, timeout set at 2000
+/xhr/xmlhttprequest-timeout-worker-aborted.html?only open()ed, not aborted
+  Timeout test: time to abort is 5000, timeout set at 2000
+/xhr/xmlhttprequest-timeout-worker-overrides.html?timeout overrides load after a delay
+  !passing
+/xhr/xmlhttprequest-timeout-worker-overridesexpires.html?timeout set to expired value before load fires
+  !passing
+  Timeout test: timeout set to expiring value after load fires, original timeout at 5000, reset at 4000 to 1000
+/xhr/xmlhttprequest-timeout-worker-overridesexpires.html?timeout set to expiring value after load fires
+  !passing
+  Timeout test: timeout set to expiring value after load fires, original timeout at 5000, reset at 4000 to 1000
+/xhr/xmlhttprequest-timeout-worker-overridesexpires.html?timeout set to non-expiring value after timeout fires
+  !passing
+  Timeout test: timeout set to expiring value after load fires, original timeout at 5000, reset at 4000 to 1000
+/xhr/xmlhttprequest-timeout-worker-simple.html?timeout hit before load
+  !passing
+/xhr/xmlhttprequest-timeout-worker-synconworker.html?timeout hit before load
+  !passing
+/xhr/xmlhttprequest-timeout-worker-twice.html?timeout fires normally with same timeout set twice
+  !passing

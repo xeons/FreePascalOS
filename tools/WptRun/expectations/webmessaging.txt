@@ -1,0 +1,137 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/webmessaging/Channel_postMessage_Blob.any.html
+  !harness ERROR
+  !passing
+/webmessaging/Channel_postMessage_Blob.any.worker.html
+  !harness ERROR
+  !passing
+/webmessaging/Channel_postMessage_ports_readonly_array.any.worker.html
+  !passing
+/webmessaging/Channel_postMessage_transfer_target_port.any.html
+  !passing
+  Transferring the entangled target port does not throw
+/webmessaging/Channel_postMessage_transfer_target_port.any.worker.html
+  !passing
+  Transferring the entangled target port does not throw
+/webmessaging/Channel_postMessage_transfer_xsite_incoming_messages.window.html
+  !passing
+/webmessaging/MessageEvent-trusted.any.worker.html
+  With a BroadcastChannel
+/webmessaging/MessageEvent.any.html
+  initMessageEvent with no arguments
+/webmessaging/MessageEvent.any.worker.html
+  initMessageEvent with no arguments
+/webmessaging/MessageEvent_onmessage_postMessage_infinite_loop.html
+  !passing
+/webmessaging/broadcastchannel/basics.any.worker.html
+  BroadcastChannel constructor called as normal function
+/webmessaging/broadcastchannel/cross-partition.https.tentative.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/broadcastchannel/detached-iframe.html
+  BroadcastChannel messages from detached iframe to parent should be ignored (BC created after detaching)
+/webmessaging/broadcastchannel/interface.any.worker.html
+  Should throw if no name is provided
+  postMessage without parameters should throw
+/webmessaging/broadcastchannel/messageerror-listener-gc.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/broadcastchannel/opaque-origin.html
+  BroadcastChannel messages from data URL dedicated workers should be self-contained
+/webmessaging/broadcastchannel/workers.html
+  !harness TIMEOUT
+  !passing
+  BroadcastChannel works in shared workers
+  BroadcastChannel works in workers
+  Closing and re-opening a channel works.
+/webmessaging/message-channels/close.any.html
+  !harness TIMEOUT
+  Inflight messages should be delivered even when sending port is closed afterwards.
+  close() detaches a MessagePort (but not the one its entangled with)
+/webmessaging/message-channels/close.any.worker.html
+  !harness TIMEOUT
+  Inflight messages should be delivered even when sending port is closed afterwards.
+  close() detaches a MessagePort (but not the one its entangled with)
+/webmessaging/message-channels/detached-iframe.window.html
+  MessageChannel created from a detached iframe should not send messages (remove before create)
+/webmessaging/message-channels/dictionary-transferrable.any.html
+  !passing
+/webmessaging/message-channels/dictionary-transferrable.any.worker.html
+  !passing
+/webmessaging/message-channels/messageerror-listener-gc.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/message-channels/transfer-from-closed-port.any.html
+  !passing
+/webmessaging/message-channels/transfer-from-closed-port.any.worker.html
+  !passing
+/webmessaging/message-channels/user-activation.tentative.any.html
+  !passing
+/webmessaging/message-channels/user-activation.tentative.any.worker.html
+  !passing
+/webmessaging/message-channels/worker-post-after-close.any.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/message-channels/worker-post-after-close.any.worker.html
+  !passing
+/webmessaging/message-channels/worker.any.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/message-channels/worker.any.worker.html
+  !passing
+/webmessaging/multi-globals/broadcastchannel-current.sub.html
+  !harness ERROR
+/webmessaging/multi-globals/broadcastchannel-incumbent.sub.html
+  !harness ERROR
+/webmessaging/multi-globals/messageport-current.html
+  !passing
+/webmessaging/postMessage_ArrayBuffer.sub.htm
+  !harness TIMEOUT
+  !passing
+/webmessaging/postMessage_CryptoKey_insecure.sub.html
+  !harness TIMEOUT
+  !passing
+/webmessaging/postMessage_MessagePorts_sorigin.htm
+  !harness TIMEOUT
+  !passing
+/webmessaging/postMessage_MessagePorts_xorigin.sub.htm
+  !harness TIMEOUT
+  !passing
+/webmessaging/postMessage_MessagePorts_xsite.sub.window.html
+  !passing
+/webmessaging/postMessage_cross_domain_image_transfer_2d.sub.htm
+  !passing
+/webmessaging/postMessage_crosssite.sub.htm
+  !harness TIMEOUT
+  !passing
+/webmessaging/postMessage_dup_transfer_objects.htm
+  !harness ERROR
+  !passing
+/webmessaging/with-options/null-transfer.html
+  !passing
+/webmessaging/with-ports/010.html
+  undefined
+/webmessaging/with-ports/017.html
+  !passing
+/webmessaging/with-ports/018.html
+  !passing
+/webmessaging/with-ports/023.html
+  !passing
+/webmessaging/with-ports/025.html
+  !passing
+/webmessaging/with-ports/026.html
+  !passing
+/webmessaging/with-ports/027.html
+  Old-style array objects
+/webmessaging/without-ports/010.html
+  undefined
+/webmessaging/without-ports/017.html
+  !passing
+/webmessaging/without-ports/018.html
+  !passing
+/webmessaging/without-ports/025.html
+  Worker MessagePort should not be [[Callable]]
+/webmessaging/worker_postMessage_user_activation.tentative.html
+  !passing

@@ -1,0 +1,152 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/compression/compression-bad-chunks.any.html
+  chunk of type SharedArrayBuffer should error the stream for brotli
+  chunk of type SharedArrayBuffer should error the stream for deflate
+  chunk of type SharedArrayBuffer should error the stream for deflate-raw
+  chunk of type SharedArrayBuffer should error the stream for gzip
+  chunk of type shared Uint8Array should error the stream for brotli
+  chunk of type shared Uint8Array should error the stream for deflate
+  chunk of type shared Uint8Array should error the stream for deflate-raw
+  chunk of type shared Uint8Array should error the stream for gzip
+/compression/compression-bad-chunks.any.serviceworker.html
+  !passing
+/compression/compression-bad-chunks.any.sharedworker.html
+  !passing
+/compression/compression-bad-chunks.any.worker.html
+  !passing
+/compression/compression-constructor-error.any.serviceworker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/compression-constructor-error.any.sharedworker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/compression-constructor-error.any.worker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/compression-including-empty-chunk.any.serviceworker.html
+  !harness TIMEOUT
+/compression/compression-including-empty-chunk.any.sharedworker.html
+  !harness TIMEOUT
+/compression/compression-including-empty-chunk.any.worker.html
+  !harness TIMEOUT
+/compression/compression-large-flush-output.any.serviceworker.html
+  !harness TIMEOUT
+/compression/compression-large-flush-output.any.sharedworker.html
+  !harness TIMEOUT
+/compression/compression-large-flush-output.any.worker.html
+  !harness TIMEOUT
+/compression/compression-multiple-chunks.any.serviceworker.html
+  !harness TIMEOUT
+/compression/compression-multiple-chunks.any.sharedworker.html
+  !harness TIMEOUT
+/compression/compression-multiple-chunks.any.worker.html
+  !harness TIMEOUT
+/compression/compression-output-length.any.html
+  the length of brotli data should be shorter than that of the original data
+/compression/compression-output-length.any.serviceworker.html
+  the length of brotli data should be shorter than that of the original data
+/compression/compression-output-length.any.sharedworker.html
+  the length of brotli data should be shorter than that of the original data
+/compression/compression-output-length.any.worker.html
+  the length of brotli data should be shorter than that of the original data
+/compression/compression-stream.any.serviceworker.html
+  !harness TIMEOUT
+/compression/compression-stream.any.sharedworker.html
+  !harness TIMEOUT
+/compression/compression-stream.any.worker.html
+  !harness TIMEOUT
+/compression/compression-with-detach.any.serviceworker.html
+  !passing
+/compression/compression-with-detach.any.sharedworker.html
+  !passing
+/compression/compression-with-detach.any.worker.html
+  !passing
+/compression/decompression-bad-chunks.any.html
+  chunk of type SharedArrayBuffer should error the stream for brotli
+  chunk of type SharedArrayBuffer should error the stream for deflate
+  chunk of type SharedArrayBuffer should error the stream for deflate-raw
+  chunk of type SharedArrayBuffer should error the stream for gzip
+  chunk of type shared Uint8Array should error the stream for brotli
+  chunk of type shared Uint8Array should error the stream for deflate
+  chunk of type shared Uint8Array should error the stream for deflate-raw
+  chunk of type shared Uint8Array should error the stream for gzip
+/compression/decompression-bad-chunks.any.serviceworker.html
+  !passing
+/compression/decompression-bad-chunks.any.sharedworker.html
+  !passing
+/compression/decompression-bad-chunks.any.worker.html
+  !passing
+/compression/decompression-brotli-large-window.tentative.any.html
+  !passing
+/compression/decompression-brotli-large-window.tentative.any.serviceworker.html
+  !passing
+/compression/decompression-brotli-large-window.tentative.any.sharedworker.html
+  !passing
+/compression/decompression-brotli-large-window.tentative.any.worker.html
+  !passing
+/compression/decompression-buffersource.any.serviceworker.html
+  !passing
+/compression/decompression-buffersource.any.sharedworker.html
+  !passing
+/compression/decompression-buffersource.any.worker.html
+  !passing
+/compression/decompression-constructor-error.any.serviceworker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/decompression-constructor-error.any.sharedworker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/decompression-constructor-error.any.worker.html
+  !passing
+  non-string input should cause the constructor to throw
+/compression/decompression-correct-input.any.serviceworker.html
+  !passing
+/compression/decompression-correct-input.any.sharedworker.html
+  !passing
+/compression/decompression-correct-input.any.worker.html
+  !passing
+/compression/decompression-corrupt-input.any.serviceworker.html
+  !passing
+/compression/decompression-corrupt-input.any.sharedworker.html
+  !passing
+/compression/decompression-corrupt-input.any.worker.html
+  !passing
+/compression/decompression-empty-input.any.serviceworker.html
+  !passing
+/compression/decompression-empty-input.any.sharedworker.html
+  !passing
+/compression/decompression-empty-input.any.worker.html
+  !passing
+/compression/decompression-extra-input.any.html
+  !passing
+/compression/decompression-extra-input.any.serviceworker.html
+  !passing
+/compression/decompression-extra-input.any.sharedworker.html
+  !passing
+/compression/decompression-extra-input.any.worker.html
+  !passing
+/compression/decompression-split-chunk.any.serviceworker.html
+  !passing
+/compression/decompression-split-chunk.any.sharedworker.html
+  !passing
+/compression/decompression-split-chunk.any.worker.html
+  !passing
+/compression/decompression-uint8array-output.any.serviceworker.html
+  !passing
+/compression/decompression-uint8array-output.any.sharedworker.html
+  !passing
+/compression/decompression-uint8array-output.any.worker.html
+  !passing
+/compression/decompression-with-detach.any.serviceworker.html
+  !passing
+/compression/decompression-with-detach.any.sharedworker.html
+  !passing
+/compression/decompression-with-detach.any.worker.html
+  !passing
+/compression/idlharness.https.any.worker.html
+  CompressionStream interface: existence and properties of interface object
+  CompressionStream interface: existence and properties of interface prototype object
+  DecompressionStream interface: existence and properties of interface object
+  DecompressionStream interface: existence and properties of interface prototype object

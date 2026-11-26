@@ -1,0 +1,754 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/shadow-dom/Document-caretPositionFromPoint.tentative.html
+  !passing
+  document.caretPositionFromPoint() throws when called without the correct parameters
+/shadow-dom/Document-prototype-adoptNode.html
+  !passing
+/shadow-dom/Document-prototype-currentScript.html
+  !harness ERROR
+  document.currentScript must not be set to a script element that loads an external script in a closed shadow tree
+  document.currentScript must not be set to a script element that loads an external script in an open shadow tree
+/shadow-dom/DocumentOrShadowRoot-prototype-elementFromPoint.html
+  !passing
+/shadow-dom/HighlightRegistry-highlightsFromPoint.html
+  !passing
+  CSS.highlights.highlightsFromPoint() should throw when called with nodes that are not ShadowRoot objects in options.
+/shadow-dom/MouseEvent-prototype-offsetX-offsetY.html
+  !passing
+/shadow-dom/ShadowRoot-interface.html
+  ShadowRoot.styleSheets must return a StyleSheetList sequence containing the shadow root style sheets when shadow root is closed.
+  ShadowRoot.styleSheets must return a StyleSheetList sequence containing the shadow root style sheets when shadow root is open.
+/shadow-dom/accesskey.tentative.html
+  !passing
+/shadow-dom/declarative/declarative-shadow-dom-attachment.html
+  Declarative Shadow DOM as a child of <area>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <area>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <area>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <area>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <article>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <article>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <aside>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <aside>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <base>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <base>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <base>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <base>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <blockquote>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <blockquote>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <br>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <br>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <br>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <br>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <caption>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <caption>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <caption>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <caption>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <col>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <col>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <col>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <col>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <colgroup>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <colgroup>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <colgroup>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <colgroup>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <div>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <div>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <embed>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <embed>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <embed>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <embed>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <footer>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <footer>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h1>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h1>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h2>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h2>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h3>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h3>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h4>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h4>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h5>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h5>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <h6>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <h6>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <head>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <head>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <head>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <head>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <header>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <header>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <hr>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <hr>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <hr>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <hr>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <html>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <html>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <html>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <html>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <img>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <img>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <img>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <img>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <input>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <input>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <input>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <input>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <link>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <link>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <link>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <link>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <main>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <main>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <meta>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <meta>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <meta>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <meta>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <nav>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <nav>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <p>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <p>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <param>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <param>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <param>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <param>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <section>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <section>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <source>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <source>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <source>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <source>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <span>, with mode=closed, delegatesFocus=false. Should be safelisted.
+  Declarative Shadow DOM as a child of <span>, with mode=closed, delegatesFocus=true. Should be safelisted.
+  Declarative Shadow DOM as a child of <tbody>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tbody>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <tbody>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tbody>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <td>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <td>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <td>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <td>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <tfoot>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tfoot>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <tfoot>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tfoot>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <th>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <th>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <th>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <th>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <thead>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <thead>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <thead>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <thead>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <tr>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tr>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <tr>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <tr>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <track>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <track>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <track>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <track>, with mode=open, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <wbr>, with mode=closed, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <wbr>, with mode=closed, delegatesFocus=true. Should be disallowed.
+  Declarative Shadow DOM as a child of <wbr>, with mode=open, delegatesFocus=false. Should be disallowed.
+  Declarative Shadow DOM as a child of <wbr>, with mode=open, delegatesFocus=true. Should be disallowed.
+/shadow-dom/declarative/declarative-shadow-dom-basic.html
+  Shadowrootclonable reflection
+  Shadowrootclonable reflection, setter
+  Shadowrootdelegatesfocus reflection
+  Shadowrootdelegatesfocus reflection, setter
+/shadow-dom/declarative/declarative-shadow-dom-opt-in.html
+  XMLHttpRequest cloned document document.open() does not enable declarative shadow DOM when it is previously disabled
+  XMLHttpRequest document.open() does not enable declarative shadow DOM when it is previously disabled
+  document.open() of a document created with parseHTMLUnsafe keeps declarative shadow DOM opt-in
+  document.write disallowed on fresh document
+  iframe
+/shadow-dom/declarative/declarative-shadow-dom-repeats-slot-assignment.html
+  !passing
+/shadow-dom/declarative/declarative-shadow-dom-slot-assignment-serialization.html
+  !passing
+  shadowrootslotassignment=named is not serialized as it's the default
+/shadow-dom/declarative/declarative-shadow-dom-slot-assignment.html
+  !passing
+  Declarative Shadow DOM: missing shadowrootslotassignment defaults to named
+  Declarative Shadow DOM: shadowrootslotassignment invalid value defaults to named
+  Declarative Shadow DOM: shadowrootslotassignment=named
+/shadow-dom/declarative/declarative-shadow-dom-write-to-iframe.html
+  !passing
+/shadow-dom/declarative/declarative-with-disabled-shadow.html
+  !passing
+/shadow-dom/declarative/gethtml-ordering.html
+  !passing
+  attribute position
+/shadow-dom/declarative/move-template-before-closing-tag.html
+  Moving the template node from invalid parent to valid parent should still not attach
+/shadow-dom/declarative/script-access.html
+  Streaming Declarative Shadow DOM: template .content() should be null
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-disconnect-iframe.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-disconnect.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-duplicate-bare-specifier.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-duplicate-importmap.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-duplicate.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-failure.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-clear.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-insertrule.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-reinsert-same.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-reinsert-swap.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-remove-middle.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-mutation-replacesync.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-ordering.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch-shared.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-async-fetch.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-basic.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-clonenode-async-fetch.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-clonenode.html
+  !passing
+  cloneNode(true) with absent shadowrootadoptedstylesheets does not crash and produces an empty adoptedStyleSheets.
+  cloneNode(true) with empty shadowrootadoptedstylesheets produces an empty adoptedStyleSheets on the clone.
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-fetched-module.html
+  !harness TIMEOUT
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-idl-absent-and-empty.html
+  shadowRootAdoptedStyleSheets reflects absent and authored-empty content attributes correctly.
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-idl-feature-detection.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-idl-reflection.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-invalid-specifier.html
+  Mixed valid/invalid specifiers: only valid ones produce entries and apply styles.
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-async.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-basic.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-failure.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-identity.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-nested.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-ordering.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-modulepreload-shared.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-multiple.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-nested-async.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-nested-sync.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-placeholder-identity.html
+  !passing
+/shadow-dom/declarative/tentative/shadowrootadoptedstylesheets/shadowrootadoptedstylesheets-serialization.html
+  !passing
+  ShadowRoot.getHTML() returns children-only markup (no wrapping template).
+/shadow-dom/dragenter-related-target.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/dragleave-related-target.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/event-post-dispatch.html
+  Event properties post dispatch when target get moved into the shadow tree by event listener
+/shadow-dom/execcommand-insertList-in-shadow.html
+  !passing
+/shadow-dom/focus-navigation/delegatesFocus-highlight-sibling.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-fallback-default-tabindex.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-fallback.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-nested-2levels.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-nested-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-nested-fallback.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-nested.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-shadow-in-fallback.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-shadow-in-slot.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slot-with-tabindex.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slots-in-slot.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-slots.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-web-component-radio.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation-with-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-navigation.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-negative-tabindex-at-end-of-shadow-tree.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-nested-slots.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-reverse-unassignable-slot.html
+  !passing
+/shadow-dom/focus-navigation/focus-reverse-unassigned-slot.html
+  !passing
+/shadow-dom/focus-navigation/focus-unassignable-slot.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/focus-with-negative-index.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/menu/tentative/focus-menu-elements.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/carousel-grid-order.html
+  !passing
+/shadow-dom/focus-navigation/reading-flow/flex-flow.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/flex-visual-fragmentation.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/flex-visual-order.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/flex-visual-wrapped-fragmentation.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-auto-flow-reading-order.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-columns-fragmentation.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-columns.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-001.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-002.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-003.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-004.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-006.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-007.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-008.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-010.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-011.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-012.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-013.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-014.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-015.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-016.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-017.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-018.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-019.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-020.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-column-reading-flow-021.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-001.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-002.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-003.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-004.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-005.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-006.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-007.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-008.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-009.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-010.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-lanes-row-reading-flow-011.tentative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-across-scopes.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-pseudo-elements.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-iframe.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-nested-grids.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-popover.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-position-absolute.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-position-fixed.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-order.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/grid-rows.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/normal.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/simplified-layout.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/source-order-invalid.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/reading-flow/source-order-valid.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/tentative/focus-navigation-scroller-interactive-child.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus-navigation/tentative/focus-scroller-layout-update.html
+  !passing
+/shadow-dom/focus/blur-on-shadow-host-delegatesFocus.html
+  Calling blur() on shadow host with delegatesFocus should remove the focus.
+/shadow-dom/focus/click-focus-delegatesFocus-click.html
+  !passing
+  call click() on host with delegatesFocus, all tabindex=0
+  call click() on slotted element in delegatesFocus shadow tree, all tabindex=0
+/shadow-dom/focus/click-focus-delegatesFocus-tabindex-varies.html
+  !passing
+/shadow-dom/focus/click-focus-delegatesFocus-tabindex-zero.html
+  !passing
+/shadow-dom/focus/click-focus-slot-ancestor.html
+  !passing
+/shadow-dom/focus/delegatesFocus-tabindex-change.html
+  !passing
+/shadow-dom/focus/focus-autofocus.html
+  !passing
+  Focus should not be delegated to the autofocus element because the inner host doesn't have delegates focus
+/shadow-dom/focus/focus-click-on-shadow-host.html
+  !passing
+/shadow-dom/focus/focus-delegatesFocus-display-contents.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-method-delegatesFocus.html
+  !passing
+  focus() on host with delegatesFocus and already-focused non-first shadow descendant
+  focus() on host with delegatesFocus, all without tabindex
+/shadow-dom/focus/focus-method-with-delegatesFocus.html
+  If no element is focusable within a delegatesFocus shadow root, the host can't get focus regardless of host's tabIndex.
+  on focus(), focusable xshadow2 with delegatesFocus=true delegates focus into its inner element.
+  xshadow2.focus() shouldn't move focus to #one when its inner element is already focused.
+/shadow-dom/focus/focus-pseudo-matches-on-shadow-host.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-scroll-under-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-selector-delegatesFocus.html
+  !passing
+/shadow-dom/focus/focus-shadowhost-display-none.html
+  !passing
+/shadow-dom/focus/focus-slot-box-generated-tabindex-0.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tab-on-shadow-host.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-negative-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-negative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-slot-one.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-varying-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-varying-tabindex-2.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-varying-tabindex-3.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-varying-tabindex.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-delegatesFocus.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-host-negative.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-host-not-set-scrollable.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-host-not-set.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-host-one.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero-host-scrollable.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/focus-tabindex-order-shadow-zero.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/focus/text-selection-with-delegatesFocus-on-slotted-content.html
+  !passing
+/shadow-dom/focus/text-selection-with-delegatesFocus-text-control.html
+  !passing
+/shadow-dom/focus/text-selection-with-delegatesFocus.html
+  !passing
+/shadow-dom/form-control-form-attribute.html
+  !passing
+  Form element as form control's ancestor should work also in shadow DOM.
+/shadow-dom/host-with-namespace.xhtml
+  !harness ERROR
+/shadow-dom/imperative-slot-api-cross-shadow-root.html
+  HTMLSlotElement.assign drops DidSlotChange for previous_slot in different shadow root
+/shadow-dom/imperative-slot-api-disconnected.html
+  !passing
+/shadow-dom/imperative-slot-api.html
+  Assigning invalid nodes should be allowed.
+  Nodes can be assigned even if slots or nodes aren't in the same tree.
+  Removing a node from the document does not break manually assigned slot linkage.
+/shadow-dom/innerHTML-setter.xhtml
+  !harness ERROR
+/shadow-dom/input-element-list.html
+  !passing
+/shadow-dom/leaktests/html-collection.html
+  document.all should not contain shadow nodes
+  document.anchors should not contain shadow nodes
+  document.applets should not contain any nodes
+/shadow-dom/leaktests/selection.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/leaktests/window-frames.html
+  !passing
+/shadow-dom/manual-slot-assignment-with-details.html
+  !passing
+/shadow-dom/offsetParent-across-shadow-boundaries.html
+  offsetParent must find the first offset parent which is a shadow-including ancestor of the context object even some shadow tree of closed mode did not have any offset parent
+  offsetParent must find the first offset parent which is a shadow-including ancestor of the context object even some shadow tree of open mode did not have any offset parent
+  offsetParent must return null when the context object is assigned to a slot without a fixed containing block in shadow tree of closed mode
+  offsetParent must return null when the context object is assigned to a slot without a fixed containing block in shadow tree of open mode
+  offsetParent must return the fixed position containing block of a fixed element when the context object is assigned to a slot within a fixed containing block in shadow tree of closed mode
+  offsetParent must return the fixed position containing block of a fixed element when the context object is assigned to a slot within a fixed containing block in shadow tree of open mode
+  offsetParent must return the fixed position containing block of an element when the context object is assigned to a slot within a fixed containing block in shadow tree of closed mode
+  offsetParent must return the fixed position containing block of an element when the context object is assigned to a slot within a fixed containing block in shadow tree of open mode
+/shadow-dom/pointer-event-retargeting-leak.https.html
+  !passing
+/shadow-dom/reference-target/tentative/aria-labelledby.html
+  !passing
+/shadow-dom/reference-target/tentative/commandfor.html
+  !passing
+/shadow-dom/reference-target/tentative/dom-mutation.html
+  !passing
+/shadow-dom/reference-target/tentative/event-path.html
+  !harness TIMEOUT
+  !passing
+/shadow-dom/reference-target/tentative/form.html
+  !passing
+/shadow-dom/reference-target/tentative/gethtml-serialization.html
+  !passing
+/shadow-dom/reference-target/tentative/interestfor.tentative.html
+  !passing
+/shadow-dom/reference-target/tentative/label-descendant.html
+  !passing
+/shadow-dom/reference-target/tentative/label-for.html
+  !passing
+/shadow-dom/reference-target/tentative/label-lifetime.html
+  !passing
+/shadow-dom/reference-target/tentative/popovertarget.html
+  !passing
+/shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html
+  button.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  fieldset.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  input.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to button with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to input with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to meter with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to output with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to progress with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to select with reference target with imperative setup
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to textarea with reference target with imperative setup
+  object.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  output.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  select.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+  textarea.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target with imperative setup
+/shadow-dom/reference-target/tentative/property-reflection.html
+  The .labels property of the referenced input element should point to the referencing label element
+  button.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  fieldset.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  input.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to button with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to input with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to meter with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to output with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to progress with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to select with reference target
+  label.control has reflection behavior ReflectsHostReadOnly when pointing to textarea with reference target
+  object.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  output.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  select.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+  textarea.form has reflection behavior ReflectsHostReadOnly when pointing to form with reference target
+/shadow-dom/reference-target/tentative/reference-target-basics.html
+  !passing
+/shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html
+  !passing
+/shadow-dom/scroll-restore-shadow.html
+  !passing
+/shadow-dom/scroll-to-the-fragment-in-shadow-tree.html
+  !passing
+  The user agent should not scroll to an anchor element with a name attribute exactly equal to the decoded fragid in a closed shadow tree
+  The user agent should not scroll to an anchor element with a name attribute exactly equal to the decoded fragid in an open shadow tree
+  The user agent should not scroll to an element with an ID exactly equal to the decoded fragid in a closed shadow tree
+  The user agent should not scroll to an element with an ID exactly equal to the decoded fragid in an open shadow tree
+/shadow-dom/slotchange-customelements.html
+  !passing
+/shadow-dom/slotchange-event.html
+  slotchange event must fire at the end of current microtask after mutation observers are invoked inside a closed shadow root  in a document when slots's contents change
+  slotchange event must fire at the end of current microtask after mutation observers are invoked inside a closed shadow root  not in a document when slots's contents change
+  slotchange event must fire at the end of current microtask after mutation observers are invoked inside an open shadow root  in a document when slots's contents change
+  slotchange event must fire at the end of current microtask after mutation observers are invoked inside an open shadow root  not in a document when slots's contents change
+/shadow-dom/touch-event-retargeting-leak.html
+  !passing
+/shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-011.html
+  !passing
+/shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-004.html
+  !passing
+/shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-006.html
+  A_10_01_02_06_01_T02
+/shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-007.html
+  !passing
+/shadow-dom/untriaged/events/event-dispatch/test-002.html
+  !passing
+/shadow-dom/untriaged/events/event-retargeting/test-003.html
+  !passing
+/shadow-dom/untriaged/events/retargeting-focus-events/test-001.html
+  A_05_03_01_T05
+  A_05_03_01_T06
+/shadow-dom/untriaged/events/retargeting-relatedtarget/test-001.html
+  !passing
+/shadow-dom/untriaged/events/retargeting-relatedtarget/test-002.html
+  !passing
+/shadow-dom/untriaged/events/retargeting-relatedtarget/test-003.html
+  !passing
+/shadow-dom/untriaged/html-elements-in-shadow-trees/html-forms/test-003.html
+  !passing
+/shadow-dom/untriaged/html-elements-in-shadow-trees/inert-html-elements/test-001.html
+  !passing
+/shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html
+  Elements in a shadow tree should not be accessible from owner document's "all" attribute.
+  Elements in a shadow tree should not be accessible from owner document's "anchors" attribute.
+/shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-007.html
+  !passing
+/shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/window-named-properties-001.html
+  !passing
+/shadow-dom/untriaged/styles/test-003.html
+  !passing
+/shadow-dom/untriaged/user-interaction/ranges-and-selections/test-001.html
+  !passing
+/shadow-dom/untriaged/user-interaction/ranges-and-selections/test-002.html
+  !passing
+/shadow-dom/wheel-event-related-target.html
+  !passing

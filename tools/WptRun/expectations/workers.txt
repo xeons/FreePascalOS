@@ -1,0 +1,592 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/workers/SharedWorker-constructor.html
+  !harness ERROR
+  Test recursive worker creation results in exception.
+/workers/SharedWorker-detach-frame-in-error-event.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker-extendedLifetime-blob.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker-extendedLifetime-data.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker-extendedLifetime-named-module.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker-extendedLifetime.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker-script-error.html
+  !harness TIMEOUT
+  Test script error handled.
+/workers/SharedWorkerPerformanceNow.html
+  !harness TIMEOUT
+  !passing
+/workers/SharedWorker_blobUrl.html
+  !harness TIMEOUT
+  !passing
+/workers/Worker-constructor-proto.any.serviceworker.html
+  !passing
+/workers/Worker-constructor-proto.any.sharedworker.html
+  !passing
+/workers/Worker-constructor-proto.any.worker.html
+  !passing
+/workers/Worker-creation-happens-in-parallel.https.html
+  !passing
+/workers/Worker-formdata.any.worker.html
+  !passing
+/workers/Worker-location.sub.any.sharedworker.html
+  !passing
+/workers/Worker-location.sub.any.worker.html
+  !passing
+/workers/Worker-multi-port.html
+  !passing
+  Test postMessage with no port.
+  Test postMessage with no ports and empty array.
+  Test postMessage with two ports.
+/workers/Worker-nested-importScripts-error.html
+  !passing
+/workers/Worker-postMessage-happens-in-parallel.https.html
+  !harness ERROR
+  !passing
+/workers/Worker-replace-self.any.serviceworker.html
+  !passing
+/workers/Worker-replace-self.any.sharedworker.html
+  !passing
+/workers/Worker-replace-self.any.worker.html
+  !passing
+/workers/Worker-simultaneous-errors.html
+  !harness TIMEOUT
+  !passing
+/workers/Worker-structure-message.html
+  !passing
+/workers/Worker-terminate-forever-during-evaluation.html
+  !harness EXTERNAL-TIMEOUT
+/workers/WorkerGlobalScope-close.html
+  !harness TIMEOUT
+  !passing
+  Test type of close function.
+  Test workers do not deliver pending events.
+/workers/WorkerGlobalScope_ErrorEvent_colno.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerGlobalScope_ErrorEvent_filename.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerGlobalScope_ErrorEvent_lineno.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerGlobalScope_ErrorEvent_message.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerGlobalScope_importScripts.htm
+  !passing
+/workers/WorkerGlobalScope_importScripts_NetworkErr.htm
+  !passing
+/workers/WorkerGlobalScope_importScripts_NosniffErr.htm
+  !passing
+/workers/WorkerGlobalScope_requestAnimationFrame.worker.html
+  !passing
+/workers/WorkerGlobalScope_setInterval.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerGlobalScope_setTimeout.htm
+  !harness TIMEOUT
+  !passing
+/workers/WorkerNavigator.any.serviceworker.html
+  !passing
+/workers/WorkerNavigator.any.sharedworker.html
+  !passing
+/workers/WorkerNavigator.any.worker.html
+  !passing
+/workers/WorkerNavigator_userAgentData.https.html
+  !passing
+/workers/WorkerPerformanceNow.html
+  !harness TIMEOUT
+  !passing
+/workers/Worker_ErrorEvent_bubbles_cancelable.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_ErrorEvent_error.htm
+  !harness TIMEOUT
+  !passing
+  Worker_ErrorEvent_error
+/workers/Worker_ErrorEvent_filename.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_ErrorEvent_lineno.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_ErrorEvent_message.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_ErrorEvent_type.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_NosniffErr.htm
+  !harness TIMEOUT
+  !passing
+/workers/Worker_script_mimetype.htm
+  !harness TIMEOUT
+  HTTP(S) URLs which respond with text/plain MIME type must not work
+  HTTP(S) URLs which respond with text/plain MIME type must not work on SharedWorkers
+/workers/baseurl/alpha/import-in-moduleworker.html
+  !passing
+/workers/baseurl/alpha/importScripts-in-sharedworker.html
+  !passing
+/workers/baseurl/alpha/importScripts-in-worker.html
+  !passing
+/workers/baseurl/alpha/worker-in-worker.html
+  !passing
+/workers/baseurl/alpha/xhr-in-moduleworker.html
+  !passing
+/workers/baseurl/alpha/xhr-in-sharedworker.html
+  !passing
+/workers/baseurl/alpha/xhr-in-worker.html
+  !passing
+/workers/constructors/SharedWorker/interface-objects.html
+  !passing
+/workers/constructors/SharedWorker/same-origin.html
+  !passing
+  data_url
+  non-parsable URL
+/workers/constructors/SharedWorker/setting-port-members.html
+  onmessage
+/workers/constructors/Worker/AbstractWorker.onerror.html
+  !passing
+/workers/constructors/Worker/DedicatedWorkerGlobalScope-members.worker.html
+  existence of onoffline
+  existence of ononline
+/workers/constructors/Worker/Worker-constructor.html
+  !harness ERROR
+  Test recursive Worker creation.
+/workers/constructors/Worker/expected-self-properties.worker.html
+  existence of Worker
+/workers/constructors/Worker/same-origin.html
+  !harness TIMEOUT
+  about_blank
+/workers/data-url-shared.html
+  !harness TIMEOUT
+  A data: URL shared worker should not be shared among origins.
+/workers/data-url.html
+  cross-origin worker
+  indexedDB is inaccessible
+/workers/dedicated-worker-from-blob-url.window.html
+  Blob URLs should not resolve relative to document base URL.
+/workers/dedicated-worker-in-data-url-context.window.html
+  Create a data url dedicated worker in a data url dedicated worker
+  Create a dedicated worker in a data url dedicated worker
+/workers/dedicated-worker-runtime-error-is-not-parse-error.html
+  !passing
+  Script parse error dispatches plain Event at Worker
+/workers/importscripts_mime.any.serviceworker.html
+  !passing
+  importScripts() requires scripty MIME types: application/javascript is allowed.
+  importScripts() requires scripty MIME types: text/ecmascript is allowed.
+  importScripts() requires scripty MIME types: text/javascript is allowed.
+  importScripts() requires scripty MIME types: text/javascript; charset=utf-8 is allowed.
+  importScripts() requires scripty MIME types: text/javascript;bla;bla is allowed.
+  importScripts() requires scripty MIME types: text/javascript;charset=utf-8 is allowed.
+/workers/importscripts_mime.any.sharedworker.html
+  !passing
+  importScripts() requires scripty MIME types: application/javascript is allowed.
+  importScripts() requires scripty MIME types: text/ecmascript is allowed.
+  importScripts() requires scripty MIME types: text/javascript is allowed.
+  importScripts() requires scripty MIME types: text/javascript; charset=utf-8 is allowed.
+  importScripts() requires scripty MIME types: text/javascript;bla;bla is allowed.
+  importScripts() requires scripty MIME types: text/javascript;charset=utf-8 is allowed.
+/workers/importscripts_mime.any.worker.html
+  !passing
+/workers/importscripts_mime_local.any.sharedworker.html
+  !passing
+  importScripts() requires scripty MIME types for data: URLs: application/javascript is allowed.
+  importScripts() requires scripty MIME types for data: URLs: text/ecmascript is allowed.
+  importScripts() requires scripty MIME types for data: URLs: text/javascript is allowed.
+  importScripts() requires scripty MIME types for data: URLs: text/javascript; charset=utf-8 is allowed.
+  importScripts() requires scripty MIME types for data: URLs: text/javascript;bla;bla is allowed.
+  importScripts() requires scripty MIME types for data: URLs: text/javascript;charset=utf-8 is allowed.
+/workers/importscripts_mime_local.any.worker.html
+  !passing
+/workers/interfaces/DedicatedWorkerGlobalScope/EventTarget.worker.html
+  target
+/workers/interfaces/DedicatedWorkerGlobalScope/onmessage.worker.html
+  Setting onmessage to 1
+  Setting onmessage to 1 (again)
+/workers/interfaces/DedicatedWorkerGlobalScope/postMessage/event-ports-dedicated.html
+  !passing
+/workers/interfaces/DedicatedWorkerGlobalScope/postMessage/second-argument-dictionary.html
+  !passing
+/workers/interfaces/DedicatedWorkerGlobalScope/postMessage/second-argument-null-in-array.html
+  !passing
+/workers/interfaces/DedicatedWorkerGlobalScope/postMessage/structured-clone-message.html
+  undefined
+/workers/interfaces/WorkerGlobalScope/close/sending-messages.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerGlobalScope/location/redirect-module.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/location/redirect-sharedworker.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/location/redirect.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/location/setting-members.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/exception-in-onerror.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/handled.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/message-classic-DOMException.html
+  !harness ERROR
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/message-classic-Error.html
+  !harness TIMEOUT
+  !passing
+  Throw Error in toplevel: classic: handler
+  Throw Error in toplevel: classic: listener
+/workers/interfaces/WorkerGlobalScope/onerror/message-module-DOMException.html
+  !harness ERROR
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/message-module-Error.html
+  !harness TIMEOUT
+  !passing
+  Throw Error in toplevel: module: handler
+  Throw Error in toplevel: module: listener
+/workers/interfaces/WorkerGlobalScope/onerror/not-handled.html
+  !passing
+/workers/interfaces/WorkerGlobalScope/onerror/propagate-to-window-onerror.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerGlobalScope/self.any.serviceworker.html
+  self = 1
+/workers/interfaces/WorkerGlobalScope/self.any.sharedworker.html
+  self = 1
+/workers/interfaces/WorkerGlobalScope/self.any.worker.html
+  self = 1
+/workers/interfaces/WorkerUtils/WindowTimers/005.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/003.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/004.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/006.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/010.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/011.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/012.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/blob-url.worker.html
+  !harness ERROR
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/catch.sub.any.serviceworker.html
+  !harness TIMEOUT
+/workers/interfaces/WorkerUtils/importScripts/catch.sub.any.sharedworker.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/catch.sub.any.worker.html
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-cross-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-cross-origin.sub.any.worker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-redirect-to-cross-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-redirect-to-cross-origin.sub.any.worker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-same-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-same-origin.sub.any.worker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-cross-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-cross-origin.sub.any.worker.html
+  !harness ERROR
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-redirect-to-cross-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-redirect-to-cross-origin.sub.any.worker.html
+  !harness ERROR
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-same-origin.sub.any.sharedworker.html
+  !harness TIMEOUT
+  !passing
+/workers/interfaces/WorkerUtils/importScripts/report-error-setTimeout-same-origin.sub.any.worker.html
+  !harness ERROR
+  !passing
+/workers/modules/dedicated-worker-blob-url-sandboxed-iframe.html
+  !harness TIMEOUT
+/workers/modules/dedicated-worker-blob-url.window.html
+  A module worker created from a blob URL can import another blob URL.
+  A module worker created from a blob URL revoked immediately after construction can import another blob URL.
+/workers/modules/dedicated-worker-import-blob-url.any.html
+  !passing
+/workers/modules/dedicated-worker-import-blob-url.any.worker.html
+  !passing
+/workers/modules/dedicated-worker-import-csp.html
+  !harness TIMEOUT
+  !passing
+/workers/modules/dedicated-worker-import-data-url-cross-origin.html
+  !passing
+/workers/modules/dedicated-worker-import-data-url.any.html
+  !passing
+/workers/modules/dedicated-worker-import-data-url.any.worker.html
+  !passing
+/workers/modules/dedicated-worker-import-failure.html
+  importScripts() on module worker should throw an exception.
+/workers/modules/dedicated-worker-import-meta.html
+  !passing
+/workers/modules/dedicated-worker-import-referrer.html
+  !harness TIMEOUT
+  !passing
+/workers/modules/dedicated-worker-import.any.html
+  !harness TIMEOUT
+  !passing
+/workers/modules/dedicated-worker-import.any.worker.html
+  !passing
+/workers/modules/dedicated-worker-options-credentials.html
+  !harness TIMEOUT
+  !passing
+  Test initialization: setting up cross-origin cookie
+  new Worker() with type=module and credentials=include should send the credentials
+  new Worker() with type=module and credentials=same-origin should send the credentials
+  new Worker() with type=module and default credentials option should behave as credentials=same-origin and send the credentials
+/workers/modules/dedicated-worker-options-type.html
+  Test worker construction with an empty worker type.
+  Test worker construction with an unknown worker type.
+/workers/modules/dedicated-worker-parse-error-failure.html
+  !harness ERROR
+  !passing
+/workers/modules/shared-worker-import-blob-url.window.html
+  !passing
+/workers/modules/shared-worker-import-csp.html
+  !harness TIMEOUT
+  !passing
+/workers/modules/shared-worker-import-data-url-cross-origin.html
+  !passing
+/workers/modules/shared-worker-import-data-url.window.html
+  !passing
+/workers/modules/shared-worker-import-failure.html
+  SharedWorker construction for a file URL should throw an exception.
+  importScripts() on module worker should throw an exception.
+/workers/modules/shared-worker-import-meta.html
+  !passing
+/workers/modules/shared-worker-import-referrer.html
+  !harness TIMEOUT
+  !passing
+/workers/modules/shared-worker-import.window.html
+  !passing
+/workers/modules/shared-worker-options-credentials.html
+  !harness TIMEOUT
+  !passing
+  Test initialization: setting up cross-origin cookie
+  new SharedWorker() with type=module and credentials=include should send the credentials
+  new SharedWorker() with type=module and credentials=same-origin should send the credentials
+  new SharedWorker() with type=module and default credentials option should behave as credentials=same-origin and send the credentials
+/workers/modules/shared-worker-options-type.html
+  Test worker construction with an empty worker type.
+  Test worker construction with an unknown worker type.
+/workers/modules/shared-worker-parse-error-failure.html
+  !harness ERROR
+  !passing
+/workers/multi-globals/url-parsing.html
+  !passing
+/workers/nested_worker.worker.html
+  !passing
+/workers/nested_worker_close_from_parent_worker.html
+  !passing
+/workers/nested_worker_close_self.worker.html
+  !passing
+/workers/nested_worker_importScripts.worker.html
+  !passing
+/workers/nested_worker_sync_xhr.worker.html
+  !passing
+/workers/nested_worker_terminate_from_document.html
+  !passing
+/workers/opaque-origin.html
+  !harness TIMEOUT
+/workers/postMessage_block.https.html
+  !passing
+/workers/same-origin-check.sub.html
+  Worker: cross-origin (classic)
+  Worker: cross-origin (module)
+  Worker: same-origin-to-cross-origin-redirect (classic)
+  Worker: same-origin-to-cross-origin-redirect (module)
+/workers/same-site-cookies/first-party.all.tentative.https.window.html
+  !passing
+/workers/same-site-cookies/first-party.default.tentative.https.window.html
+  !passing
+/workers/same-site-cookies/first-party.none.tentative.https.window.html
+  !passing
+/workers/same-site-cookies/third-party.all.tentative.sub.https.window.html
+  !passing
+/workers/same-site-cookies/third-party.default.tentative.sub.https.window.html
+  !passing
+/workers/same-site-cookies/third-party.none.tentative.sub.https.window.html
+  !passing
+/workers/semantics/encodings/003.html
+  !passing
+/workers/semantics/encodings/004.html
+  !passing
+/workers/semantics/interface-objects/001.worker.html
+  The ByteLengthQueuingStrategy interface object should be exposed.
+  The CountQueuingStrategy interface object should be exposed.
+  The FileList interface object should be exposed.
+  The FileReaderSync interface object should be exposed.
+  The PromiseRejectionEvent interface object should be exposed.
+  The Worker interface object should be exposed.
+  The WorkerLocation interface object should be exposed.
+  The WorkerNavigator interface object should be exposed.
+/workers/semantics/interface-objects/003.any.sharedworker.html
+  The ByteLengthQueuingStrategy interface object should be exposed
+  The CountQueuingStrategy interface object should be exposed
+  The FileList interface object should be exposed
+  The FileReaderSync interface object should be exposed
+  The PromiseRejectionEvent interface object should be exposed
+  The Worker interface object should be exposed
+  The WorkerLocation interface object should be exposed
+  The WorkerNavigator interface object should be exposed
+/workers/semantics/multiple-workers/003.html
+  !passing
+/workers/semantics/multiple-workers/exposure.any.sharedworker.html
+  Worker exposure
+/workers/semantics/multiple-workers/exposure.any.worker.html
+  Worker exposure
+/workers/semantics/navigation/001.html
+  !harness TIMEOUT
+  !passing
+/workers/semantics/navigation/002.html
+  !harness TIMEOUT
+  !passing
+/workers/semantics/reporting-errors/001.html
+  !passing
+/workers/semantics/reporting-errors/002.html
+  !passing
+/workers/semantics/structured-clone/dedicated.html
+  A detached ArrayBuffer cannot be transferred
+  A detached platform object cannot be transferred
+  A subclass instance will be received as its closest transferable superclass
+  A subclass instance will deserialize as its closest serializable superclass
+  An object whose interface is deleted from the global must still deserialize
+  An object whose interface is deleted from the global object must still be received
+  Array Blob object, Blob NUL
+  Array Blob object, Blob basic
+  Array Blob object, Blob empty
+  Array Blob object, Blob paired surrogates (invalid utf-8)
+  Array Blob object, Blob unpaired high surrogate (invalid utf-8)
+  Array Blob object, Blob unpaired low surrogate (invalid utf-8)
+  Array Blob object, two Blobs
+  Array FileList object, FileList empty
+  ArrayBuffer
+  Blob NUL
+  Blob basic
+  Blob empty
+  Blob paired surrogates (invalid utf-8)
+  Blob unpaired high surrogate (invalid utf-8)
+  Blob unpaired low surrogate (invalid utf-8)
+  Empty Error object
+  Error object
+  EvalError object
+  File basic
+  FileList empty
+  Growable SharedArrayBuffer
+  Length-tracking DataView
+  Length-tracking DataView is transferable
+  Length-tracking TypedArray
+  Length-tracking TypedArray is transferable
+  MessagePort
+  Object Blob object, Blob NUL
+  Object Blob object, Blob basic
+  Object Blob object, Blob empty
+  Object Blob object, Blob paired surrogates (invalid utf-8)
+  Object Blob object, Blob unpaired high surrogate (invalid utf-8)
+  Object Blob object, Blob unpaired low surrogate (invalid utf-8)
+  Object FileList object, FileList empty
+  RangeError object
+  ReferenceError object
+  Resizable ArrayBuffer
+  Resizable ArrayBuffer is transferable
+  SyntaxError object
+  TypeError object
+  URIError object
+/workers/semantics/structured-clone/shared.html
+  A detached ArrayBuffer cannot be transferred
+  A subclass instance will be received as its closest transferable superclass
+  Array FileList object, FileList empty
+  Array ImageBitmap object, ImageBitmap 1x1 transparent black
+  Array ImageBitmap object, ImageBitmap 1x1 transparent non-black
+  Array ImageData object, ImageData 1x1 non-transparent non-black
+  Array ImageData object, ImageData 1x1 transparent black
+  ArrayBuffer
+  Error object
+  EvalError object
+  FileList empty
+  Growable SharedArrayBuffer
+  ImageBitmap
+  ImageBitmap 1x1 non-transparent non-black
+  ImageBitmap 1x1 transparent black
+  ImageData 1x1 non-transparent non-black
+  ImageData 1x1 transparent black
+  Length-tracking DataView is transferable
+  Length-tracking TypedArray is transferable
+  Object FileList object, FileList empty
+  Object ImageBitmap object, ImageBitmap 1x1 transparent black
+  Object ImageBitmap object, ImageBitmap 1x1 transparent non-black
+  Object ImageData object, ImageData 1x1 non-transparent non-black
+  Object ImageData object, ImageData 1x1 transparent black
+  OffscreenCanvas
+  RangeError object
+  ReferenceError object
+  Resizable ArrayBuffer
+  Resizable ArrayBuffer is transferable
+  Serializing OOB DataView throws
+  Serializing OOB TypedArray throws
+  SyntaxError object
+  Transferring OOB DataView throws
+  Transferring OOB TypedArray throws
+  Transferring a non-transferable platform object fails
+  TypeError object
+  URIError object
+/workers/semantics/xhr/002.html
+  !passing
+/workers/semantics/xhr/004.html
+  !passing
+/workers/semantics/xhr/005.html
+  !passing
+/workers/semantics/xhr/006.html
+  !passing
+/workers/shared-worker-from-blob-url.window.html
+  Connecting to a shared worker on a revoked blob URL works.
+/workers/shared-worker-in-data-url-context.window.html
+  Create a shared worker in a data url frame
+/workers/shared-worker-options-mismatch.html
+  !passing
+/workers/shared-worker-partitioned-cookies.tentative.https.html
+  !passing
+/workers/shared-worker-partitioned.tentative.html
+  !harness TIMEOUT
+  !passing
+/workers/shared-worker-runtime-error-is-not-parse-error.html
+  !passing
+  Script parse error dispatches plain Event at SharedWorker
+/workers/worker-performance.worker.html
+  Resource timing seems to work in workers
+  There are no navigation type performance entries in workers
+  performance.navigation is not available in workers
+  performance.timing is not available in workers
+/workers/worker-request-animation-frame.html
+  !harness TIMEOUT
+  !passing
+/workers/worker-url-encoding.html
+  !passing
