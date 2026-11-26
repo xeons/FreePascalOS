@@ -154,6 +154,7 @@ uses
   Web.Loading.Contexts,
   Web.Script.ContextTasks,
   Web.Script.NativeServiceWorkers,
+  Web.Script.PageScripting,
   Web.Workers.Agents;
 
 type
@@ -1551,7 +1552,9 @@ initialization
   ServiceWorkerFetchHook := Hook;
   AddContextEndHook(@ContextEnded);
   AfterNetworkGone := @NetworkGone;
+  PageContextStartedHook := @ClientStarted;
 finalization
+  PageContextStartedHook := nil;
   ServiceWorkerFetchHook := nil;
   AfterNetworkGone := nil;
   ResetServiceWorkers;

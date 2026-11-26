@@ -314,8 +314,16 @@
       source: message.source, ports: received.ports }));
   }
 
-  // The client message queue opens by itself once the document is parsed.
-  if (global.document) global.addEventListener("DOMContentLoaded", function () { container.startMessages(); });
+  // The client message queue opens by itself once the document is parsed
+  // (looked at when a message comes, and while one waits).
+  function parsed() {
+    return !global.document || global.document.readyState !== "loading";
+  }
+  function openWhenParsed() {
+    if (containerState(container).messagesEnabled) return;
+    if (parsed()) container.startMessages();
+    else global.setTimeout(openWhenParsed, 50);
+  }
 
   natives.onServiceWorkerUpdate = function (kind, value, text, ids) {
     if (kind === "registration") {
@@ -338,10 +346,11 @@
       const message = { text: text, ids: ids, source: workerFor(value), origin: new URL(value[1]).origin };
       const state = containerState(container);
       if (state.messagesEnabled) deliverMessage(container, message);
-      else state.queue.push(message);
+      else {
+        // Queued in order; flushed in a task once the queue opens.
+        state.queue.push(message);
+        openWhenParsed();
+      }
     }
   };
-
-  // The window is a client of the service workers from its first task.
-  internal.queueTask(function () { natives.swClientStarted(); });
 })

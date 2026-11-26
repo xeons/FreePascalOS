@@ -238,6 +238,14 @@ type
     property OnConsoleMessage: TScriptConsoleEvent read FOnConsoleMessage write FOnConsoleMessage;
   end;
 
+type
+  TPageContextStartedHook = procedure(Context: TBindingContext);
+
+var
+  { Called when a document's context is ready, its loader known (the
+    service workers make the window a client then). }
+  PageContextStartedHook: TPageContextStartedHook;
+
 const
 {$ifdef CPUAARCH64}
   DefaultScriptUserAgent = 'Mozilla/5.0 (X11; FreePascalOS aarch64) AppleWebKit/537.36 (KHTML, like Gecko) libweb/1.0 ' +
@@ -874,6 +882,8 @@ begin
   FContexts[High(FContexts)].Context := Context;
   FContexts[High(FContexts)].Modules := TContextModules.Create(Context, Loader);
   FContexts[High(FContexts)].Stopped := False;
+  if Assigned(PageContextStartedHook) then
+    PageContextStartedHook(Context);
 end;
 
 procedure TPageScriptExecutor.DocumentTimed(Loader: TObject);

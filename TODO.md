@@ -1800,7 +1800,8 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       Fullscreen API, file inputs with FileList and multipart uploads,
       foreignObject, relative positioning of inline boxes,
       designMode/execCommand, date and time pickers
-- [x] Workers (html5test 273 -> 284): service workers (register, update,
+- [x] Workers (html5test 273 -> 284; 336 merged with IndexedDB and
+      Canvas): service workers (register, update,
       unregister, install/activate with waitUntil, skipWaiting,
       clients.claim, fetch interception of navigations and controlled
       clients, the Clients API, messages both ways, navigation preload),
