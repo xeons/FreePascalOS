@@ -20,16 +20,17 @@
   The JavaScript objects of the WebAssembly API that carry engine
   objects, and the errors the engine's failures become.
 
-  Module, Memory, Table and Global objects are host objects (one host
-  class each, here, for the process) whose native data is the engine's
-  object; their prototypes are the classes the platform script
-  (platform/57-webassembly.js) defines, so the brand check is the host
-  class, not the prototype chain (a subclass's instance passes, an
-  object made with Object.create does not). A Module object holds a
-  reference to its TWasmModule, released when it is collected; the
-  other objects' engine objects belong to the store (Web.Script.
-  WasmAgents), which also caches the objects so each engine object has
-  one.
+  Module, Memory, Table, Global, Tag and Exception objects are host
+  objects (one host class each, here, for the process) whose native data
+  is the engine's object; their prototypes are the classes the platform
+  scripts (platform/57-webassembly.js, 58-webassembly-exceptions.js)
+  define, so the brand check is the host class, not the prototype chain
+  (a subclass's instance passes, an object made with Object.create does
+  not). A Module object holds a reference to its TWasmModule, released
+  when it is collected; the other objects' engine objects belong to the
+  store (Web.Script.WasmAgents), which also caches the objects so each
+  engine object has one (an Exception's exception object is of the
+  collected heap: Web.Script.WasmReferences).
 
   A memory's buffer is an ArrayBuffer over the memory's own bytes (no
   copy), HostDetachOnly so script can neither transfer nor detach it;
@@ -41,8 +42,11 @@
   a WebAssembly.CompileError, a failed link a LinkError, a trap a
   RuntimeError with the WebAssembly frames in its stack, call stack
   exhaustion and running out of memory RangeErrors, the watchdog's
-  interrupt the engine's uncatchable termination, and an exception a
-  JavaScript import threw (EWasmScriptException) goes on unchanged.
+  interrupt the engine's uncatchable termination, a WebAssembly
+  exception leaving WebAssembly (EWasmException) its WebAssembly.Exception
+  or, with the JavaScript tag, the JavaScript value it carries
+  (Web.Script.WasmValues), and a termination pending in the runtime
+  (EWasmScriptException) goes on.
 }
 unit Web.Script.WasmObjects;
 
@@ -67,11 +71,17 @@ type
     to the boundary where it goes on in JavaScript. }
   EWasmScriptException = class(Exception);
 
-  TWasmObjectKind = (woModule, woMemory, woTable, woGlobal);
+  TWasmObjectKind = (woModule, woMemory, woTable, woGlobal, woTag, woException);
 
 { The engine object of Value when it is a WebAssembly object of the
   kind, else nil. }
 function WasmObjectData(Value: TJsValue; Kind: TWasmObjectKind): Pointer;
+{ The same, a TypeError ("Illegal invocation") when it is not one. }
+function CheckedWasmObject(R: TJsRealm; Value: TJsValue; Kind: TWasmObjectKind; out Data: Pointer): Boolean;
+{ The host class (the brand) of a kind. }
+function WasmHostClass(Kind: TWasmObjectKind): TJsHostClass;
+{ The prototype the realm's platform script registered for a kind. }
+function RegisteredWasmPrototype(R: TJsRealm; Kind: TWasmObjectKind): TJsObject;
 { A new Module object for Module (which it retains) with Prototype (nil:
   the realm's registered one). }
 function NewModuleObject(R: TJsRealm; Module: TWasmModule; Prototype: TJsObject): TJsValue;
@@ -102,7 +112,9 @@ uses
   Js.ArrayBuffers,
   Wasm.Types,
   Wasm.Limits,
-  Wasm.Errors;
+  Wasm.Errors,
+  Wasm.Exceptions,
+  Web.Script.WasmValues;
 
 type
   TWasmHostClasses = class
@@ -118,7 +130,7 @@ var
 constructor TWasmHostClasses.Create;
 const
   Names: array[TWasmObjectKind] of string = ('WebAssembly.Module', 'WebAssembly.Memory', 'WebAssembly.Table',
-    'WebAssembly.Global');
+    'WebAssembly.Global', 'WebAssembly.Tag', 'WebAssembly.Exception');
 var
   Kind: TWasmObjectKind;
 begin
@@ -149,9 +161,23 @@ begin
     Result := TJsHostObject(Target).NativeData;
 end;
 
-function RegisteredPrototype(R: TJsRealm; Kind: TWasmObjectKind): TJsObject;
+function CheckedWasmObject(R: TJsRealm; Value: TJsValue; Kind: TWasmObjectKind; out Data: Pointer): Boolean;
+begin
+  Data := WasmObjectData(Value, Kind);
+  Result := Data <> nil;
+  if not Result then
+    R.ThrowTypeError('Illegal invocation: not a ' + HostClasses.Classes[Kind].Name);
+end;
+
+function WasmHostClass(Kind: TWasmObjectKind): TJsHostClass;
+begin
+  Result := HostClasses.Classes[Kind];
+end;
+
+function RegisteredWasmPrototype(R: TJsRealm; Kind: TWasmObjectKind): TJsObject;
 const
-  PrototypeKinds: array[TWasmObjectKind] of TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal);
+  PrototypeKinds: array[TWasmObjectKind] of TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal, wpTag,
+    wpException);
 begin
   Result := nil;
   if AgentOfRealm(R) <> nil then
@@ -163,7 +189,7 @@ end;
 function NewHostObject(R: TJsRealm; Kind: TWasmObjectKind; NativeData: Pointer; Prototype: TJsObject): TJsHostObject;
 begin
   if Prototype = nil then
-    Prototype := RegisteredPrototype(R, Kind);
+    Prototype := RegisteredWasmPrototype(R, Kind);
   Result := TJsHostObject(R.NewObjectOfClass(TJsHostObject, Prototype, ocHost));
   Result.HostClass := HostClasses.Classes[Kind];
   Result.NativeData := NativeData;
@@ -180,7 +206,7 @@ var
   Made: TJsHostObject;
 begin
   Made := NewHostObject(R, Kind, StoreObject, Prototype);
-  AgentOfRealm(R).SetWrapper(StoreObject, Made);
+  AgentOfRealm(R).SetWrapper(R, StoreObject, Made);
   Result := JsObjectValue(Made);
 end;
 
@@ -188,7 +214,7 @@ function StoreObjectValue(R: TJsRealm; Kind: TWasmObjectKind; StoreObject: TObje
 var
   Existing: TJsObject;
 begin
-  Existing := AgentOfRealm(R).WrapperOf(StoreObject);
+  Existing := AgentOfRealm(R).WrapperOf(R, StoreObject);
   if Existing <> nil then
     Exit(JsObjectValue(Existing));
   Result := NewStoreObject(R, Kind, StoreObject, nil);
@@ -318,6 +344,8 @@ begin
       Exit(JsException);
     Exit(R.ThrowError(ekError, 'WebAssembly: an exception was lost'));
   end;
+  if Error is EWasmException then
+    Exit(ThrowEscapedException(R, EWasmException(Error)));
   if Error is EWasmTrap then
     case EWasmTrap(Error).Kind of
       tkCallStackExhausted: Exit(R.ThrowRangeError('Maximum call stack size exceeded'));

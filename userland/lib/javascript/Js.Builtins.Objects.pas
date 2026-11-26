@@ -202,8 +202,15 @@ var
   Desc, Current: TJsPropertyDescriptor;
   Outcome: Integer;
 begin
-  if Target.PreventExtensions(R) < 0 then
+  Outcome := Target.PreventExtensions(R);
+  if Outcome < 0 then
     Exit(False);
+  { An exotic object may refuse (a proxy, a WebAssembly GC object). }
+  if Outcome = 0 then
+  begin
+    R.ThrowTypeError('Cannot prevent extensions');
+    Exit(False);
+  end;
   if ((Target.ObjectFlags and ObjectExotic) = 0) and (Target.ElementCount > 0) then
   begin
     if Frozen then
@@ -634,6 +641,7 @@ function ObjectFreeze(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; Ar
 var
   Value: TJsValue;
   Outcome: Boolean;
+  Prevented: Integer;
 begin
   Value := Arg(Args, ArgCount, 0);
   case Callee.Magic of
@@ -649,8 +657,11 @@ begin
       begin
         if not JsIsObject(Value) then
           Exit(Value);
-        if JsAsObject(Value).PreventExtensions(R) < 0 then
+        Prevented := JsAsObject(Value).PreventExtensions(R);
+        if Prevented < 0 then
           Exit(JsException);
+        if Prevented = 0 then
+          Exit(R.ThrowTypeError('Cannot prevent extensions'));
         Result := Value;
       end;
     3, 4:

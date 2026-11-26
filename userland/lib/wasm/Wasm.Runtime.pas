@@ -238,8 +238,11 @@ type
     { The store type id of a function type (heap types already ids). }
     function CanonicalTypeId(const FunctionType: TWasmFunctionType): Integer;
     function TypeOfId(TypeId: Integer): TWasmFunctionType;
+    { TypeId: the store type id of the function's type (a module's,
+      whose rec group and supertypes it keeps), or -1 to register
+      FunctionType as a type of its own. }
     function NewHostFunction(const FunctionType: TWasmFunctionType; Callback: TWasmHostCallback;
-      Data: Pointer): TWasmFunction;
+      Data: Pointer; TypeId: Integer = -1): TWasmFunction;
     function NewFunction(Instance: TWasmModuleInstance; FunctionIndex: Cardinal): TWasmFunction;
     function NewMemory(const MemoryType: TWasmMemoryType): TWasmMemory;
     function NewTable(const TableType: TWasmTableType; InitialValue: Pointer): TWasmTable;
@@ -549,13 +552,16 @@ begin
 end;
 
 function TWasmStore.NewHostFunction(const FunctionType: TWasmFunctionType; Callback: TWasmHostCallback;
-  Data: Pointer): TWasmFunction;
+  Data: Pointer; TypeId: Integer): TWasmFunction;
 begin
   Result := TWasmFunction.Create;
   Own(Result);
   Result.Store := Self;
   Result.FunctionType := FunctionType;
-  Result.TypeId := CanonicalTypeId(FunctionType);
+  if TypeId >= 0 then
+    Result.TypeId := TypeId
+  else
+    Result.TypeId := CanonicalTypeId(FunctionType);
   Result.ParamSlots := SlotCountOf(FunctionType.Params);
   Result.ResultSlots := SlotCountOf(FunctionType.Results);
   Result.HostCallback := Callback;

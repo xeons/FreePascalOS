@@ -1,18 +1,22 @@
 // The WebAssembly namespace (WebAssembly JavaScript Interface and Web API):
 // validate, compile, instantiate, compileStreaming, instantiateStreaming,
 // Module, Instance, Memory, Table, Global, CompileError, LinkError and
-// RuntimeError. This file is the WebIDL side - argument counts,
-// dictionaries read in their members' order, enforced ranges, overloads,
-// promises settled in later tasks, streaming from a Response - and the
-// engine side is Pascal (Web.Script.NativeWasm over libwasm): the Module,
-// Memory, Table and Global objects are host objects made there with the
-// prototypes registered below, Exported Functions are native functions,
-// and the brand checks are the host classes'.
+// RuntimeError, with memory64's address types and the compile options of
+// the JS string builtins (Tag, Exception and JSTag are
+// 58-webassembly-exceptions.js'). This file is the WebIDL side - argument
+// counts, dictionaries read in their members' order, enforced ranges and
+// address values, overloads, promises settled in later tasks, streaming
+// from a Response - and the engine side is Pascal (Web.Script.NativeWasm
+// over libwasm): the Module, Memory, Table and Global objects are host
+// objects made there with the prototypes registered below, Exported
+// Functions are native functions, and the brand checks are the host
+// classes'.
 //
 // The store is the agent's (the window's runtime, shared by its frames and
-// dedicated workers; workers see this window's WebAssembly object). A Module
-// is structured-cloneable within the agent (structuredClone, postMessage to
-// a frame or a dedicated worker): the copy shares the compiled module.
+// dedicated workers; a worker's scope runs these scripts again for a
+// WebAssembly object of its own). A Module is structured-cloneable within
+// the agent (structuredClone, postMessage to a frame or a dedicated
+// worker): the copy shares the compiled module and its compile options.
 (function (natives, global, internal) {
   "use strict";
   const defineProperty = Object.defineProperty;
@@ -119,12 +123,66 @@
   const LinkError = makeError("LinkError");
   const RuntimeError = makeError("RuntimeError");
 
+  // ---- compile options (JS String Builtins) ----
+
+  // WebAssemblyCompileOptions: builtins (sequence<USVString>: "js-string"
+  // gives the wasm:js-string imports) and importedStringConstants (the
+  // import module whose globals are string constants: their names).
+  const builtinNames = ["cast", "test", "fromCharCodeArray", "intoCharCodeArray", "fromCharCode", "fromCodePoint",
+    "charCodeAt", "codePointAt", "length", "concat", "substring", "equals", "compare"];
+  const noOptions = { builtins: [], importedStringConstants: null, jsString: false };
+  const moduleOptions = new WeakMapClass();
+
+  function compileOptions(value, what) {
+    const fields = dictionary(value, what);
+    if (fields === null) return noOptions;
+    const builtinsValue = member(fields, "builtins");
+    const builtins = [];
+    if (builtinsValue !== undefined) {
+      if (builtinsValue === null || (typeof builtinsValue !== "object" && typeof builtinsValue !== "function") ||
+        typeof builtinsValue[Symbol.iterator] !== "function")
+        throw new TypeError(what + ": builtins must be a sequence");
+      for (const name of builtinsValue) builtins.push(`${name}`);
+    }
+    const stringsValue = member(fields, "importedStringConstants");
+    const importedStringConstants = stringsValue === undefined || stringsValue === null ? null : `${stringsValue}`;
+    return { builtins: builtins, importedStringConstants: importedStringConstants,
+      jsString: builtins.indexOf("js-string") >= 0 };
+  }
+
+  // "Validate builtins and imported strings": no builtin set twice, every
+  // builtin import and string constant import of the right type.
+  function builtinsValid(module, options) {
+    for (let index = 0; index < options.builtins.length; index++)
+      if (options.builtins.indexOf(options.builtins[index]) !== index) return false;
+    return natives.wasmValidateBuiltins(module, options.jsString, options.importedStringConstants);
+  }
+
+  // A Module object of the bytes (CompileError when they or the options'
+  // imports are not valid).
+  function compileWith(bytes, options, prototype) {
+    const module = natives.wasmCompile(bytes, prototype);
+    if (!builtinsValid(module, options))
+      throw new CompileError("WebAssembly: an import does not match its builtin or string constant type");
+    if (options !== noOptions) weakSet.call(moduleOptions, module, options);
+    return module;
+  }
+  function optionsOf(module) {
+    const options = weakGet.call(moduleOptions, module);
+    return options === undefined ? noOptions : options;
+  }
+  function isBuiltinImport(options, moduleName, name) {
+    return (options.jsString && moduleName === "wasm:js-string" && builtinNames.indexOf(name) >= 0) ||
+      (options.importedStringConstants !== null && moduleName === options.importedStringConstants);
+  }
+
   // ---- Module ----
 
   class Module {
-    constructor(bytes) {
+    constructor(bytes, options = undefined) {
       requireArguments(arguments.length, 1, "WebAssembly.Module");
-      return natives.wasmCompile(bytes, prototypeFrom(new.target, Module));
+      const what = "WebAssembly.Module";
+      return compileWith(bytes, compileOptions(options, what), prototypeFrom(new.target, Module));
     }
     static exports(moduleObject) {
       requireArguments(arguments.length, 1, "WebAssembly.Module.exports");
@@ -134,7 +192,13 @@
     static imports(moduleObject) {
       requireArguments(arguments.length, 1, "WebAssembly.Module.imports");
       natives.wasmCheck(moduleObject, MODULE);
-      return natives.wasmModuleImports(moduleObject);
+      const list = natives.wasmModuleImports(moduleObject);
+      const options = optionsOf(moduleObject);
+      if (options === noOptions) return list;
+      const result = [];
+      for (const descriptor of list)
+        if (!isBuiltinImport(options, descriptor.module, descriptor.name)) result.push(descriptor);
+      return result;
     }
     static customSections(moduleObject, sectionName) {
       requireArguments(arguments.length, 2, "WebAssembly.Module.customSections");
@@ -147,18 +211,34 @@
 
   const instanceExports = new WeakMapClass();
 
+  // The objects the builtin sets and the string constants are looked up
+  // in before the import object (JS API "read the imports").
+  function builtinOrStringImports(list, options) {
+    const map = new Map();
+    if (options.jsString) map.set("wasm:js-string", natives.wasmStringBuiltins());
+    if (options.importedStringConstants !== null) {
+      const constants = create(null);
+      for (const entry of list)
+        if (entry[0] === options.importedStringConstants) constants[entry[1]] = entry[1];
+      map.set(options.importedStringConstants, constants);
+    }
+    return map;
+  }
+
   // JS API "read the imports": one value per import, in order, each import
   // module looked up again (getters run once per import).
   function readImports(module, importObject) {
     const list = natives.wasmImportKinds(module);
     if (list.length > 0 && importObject === undefined)
       throw new TypeError("WebAssembly: the module has imports, but no import object was given");
+    const builtins = builtinOrStringImports(list, optionsOf(module));
     const values = [];
     for (let index = 0; index < list.length; index++) {
       const entry = list[index];
       const moduleName = entry[0], name = entry[1], kind = entry[2], valueType = entry[3];
       const where = "import " + JSON.stringify(moduleName) + " " + JSON.stringify(name);
-      const namespace = importObject[moduleName];
+      let namespace = builtins.get(moduleName);
+      if (namespace === undefined || !(name in namespace)) namespace = importObject[moduleName];
       if (namespace === null || (typeof namespace !== "object" && typeof namespace !== "function"))
         throw new TypeError("WebAssembly: " + where + ": the module " + JSON.stringify(moduleName) +
           " is not an object");
@@ -184,6 +264,10 @@
         case "table":
           if (!natives.wasmIsTable(value))
             throw new LinkError("WebAssembly: " + where + ": a WebAssembly.Table is required");
+          break;
+        case "tag":
+          if (!natives.wasmIsTag(value))
+            throw new LinkError("WebAssembly: " + where + ": a WebAssembly.Tag is required");
           break;
       }
       values[index] = value;
@@ -226,9 +310,9 @@
     });
   }
 
-  function compileLater(bytes) {
+  function compileLater(bytes, options) {
     return inTask(function () {
-      return natives.wasmCompile(bytes, Module.prototype);
+      return compileWith(bytes, options, Module.prototype);
     });
   }
 
@@ -243,21 +327,38 @@
 
   // ---- Memory, Table, Global ----
 
+  // memory64 and table64: an "address" member of "i32" (the default) or
+  // "i64"; AddressValueToU64 converts sizes, indices and deltas -
+  // [EnforceRange] unsigned long for i32, a BigInt in 0 .. 2^64-1 for i64 -
+  // and results are Numbers or BigInts to match.
+  function addressType(fields, what) {
+    const value = member(fields, "address");
+    if (value === undefined) return "i32";
+    const name = `${value}`;
+    if (name !== "i32" && name !== "i64") throw new TypeError(what + ": the address type must be \"i32\" or \"i64\"");
+    return name;
+  }
+  function addressValue(value, type, what) {
+    return type === "i64" ? natives.wasmToAddress(value) : enforceRange(value, what);
+  }
+
   class Memory {
     constructor(descriptor) {
       requireArguments(arguments.length, 1, "WebAssembly.Memory");
       const what = "WebAssembly.Memory";
       const fields = dictionary(descriptor, what);
-      const initial = enforceRange(requiredMember(fields, "initial", what), what + ": initial");
+      const address = addressType(fields, what);
+      const initial = addressValue(requiredMember(fields, "initial", what), address, what + ": initial");
       const maximumValue = member(fields, "maximum");
-      const maximum = maximumValue === undefined ? undefined : enforceRange(maximumValue, what + ": maximum");
+      const maximum = maximumValue === undefined ? undefined : addressValue(maximumValue, address, what + ": maximum");
       const shared = !!member(fields, "shared");
-      return natives.wasmNewMemory(initial, maximum, shared, prototypeFrom(new.target, Memory));
+      return natives.wasmNewMemory(initial, maximum, shared, prototypeFrom(new.target, Memory), address === "i64");
     }
     grow(delta) {
       natives.wasmCheck(this, MEMORY);
       requireArguments(arguments.length, 1, "WebAssembly.Memory.grow");
-      return natives.wasmMemoryGrow(this, enforceRange(delta, "WebAssembly.Memory.grow: delta"));
+      return natives.wasmMemoryGrow(this, addressValue(delta, natives.wasmAddressType(this),
+        "WebAssembly.Memory.grow: delta"));
     }
     toFixedLengthBuffer() {
       natives.wasmCheck(this, MEMORY);
@@ -273,10 +374,16 @@
     }
   }
 
+  // The JS API's value types, and the other reference types' names that
+  // engines accept.
+  const referenceTypes = ["externref", "anyfunc", "funcref", "anyref", "eqref", "i31ref", "structref", "arrayref",
+    "nullref", "nullfuncref", "nullexternref", "exnref"];
+  const valueTypes = ["i32", "i64", "f32", "f64", "v128"].concat(referenceTypes);
+
   function elementType(value, what) {
     const name = `${value}`;
-    if (name !== "anyfunc" && name !== "externref")
-      throw new TypeError(what + ": the element type must be \"anyfunc\" or \"externref\"");
+    if (referenceTypes.indexOf(name) < 0)
+      throw new TypeError(what + ": the element type must be a reference type (\"anyfunc\", \"externref\" ...)");
     return name;
   }
 
@@ -286,37 +393,38 @@
       const what = "WebAssembly.Table";
       const fields = dictionary(descriptor, what);
       const element = elementType(requiredMember(fields, "element", what), what);
-      const initial = enforceRange(requiredMember(fields, "initial", what), what + ": initial");
+      const address = addressType(fields, what);
+      const initial = addressValue(requiredMember(fields, "initial", what), address, what + ": initial");
       const maximumValue = member(fields, "maximum");
-      const maximum = maximumValue === undefined ? undefined : enforceRange(maximumValue, what + ": maximum");
+      const maximum = maximumValue === undefined ? undefined : addressValue(maximumValue, address, what + ": maximum");
       return natives.wasmNewTable(element, initial, maximum, value, value !== undefined,
-        prototypeFrom(new.target, Table));
+        prototypeFrom(new.target, Table), address === "i64");
     }
     grow(delta, value = undefined) {
       natives.wasmCheck(this, TABLE);
       requireArguments(arguments.length, 1, "WebAssembly.Table.grow");
-      return natives.wasmTableGrow(this, enforceRange(delta, "WebAssembly.Table.grow: delta"), value,
-        value !== undefined);
+      return natives.wasmTableGrow(this, addressValue(delta, natives.wasmAddressType(this),
+        "WebAssembly.Table.grow: delta"), value, value !== undefined);
     }
     get(index) {
       natives.wasmCheck(this, TABLE);
       requireArguments(arguments.length, 1, "WebAssembly.Table.get");
-      return natives.wasmTableGet(this, enforceRange(index, "WebAssembly.Table.get: index"));
+      return natives.wasmTableGet(this, addressValue(index, natives.wasmAddressType(this),
+        "WebAssembly.Table.get: index"));
     }
     set(index, value = undefined) {
       natives.wasmCheck(this, TABLE);
       requireArguments(arguments.length, 1, "WebAssembly.Table.set");
       // An undefined given is a value (a TypeError for anyfunc), as engines
       // and the tests have it.
-      natives.wasmTableSet(this, enforceRange(index, "WebAssembly.Table.set: index"), value, arguments.length > 1);
+      natives.wasmTableSet(this, addressValue(index, natives.wasmAddressType(this), "WebAssembly.Table.set: index"),
+        value, arguments.length > 1);
     }
     get length() {
       natives.wasmCheck(this, TABLE);
       return natives.wasmTableLength(this);
     }
   }
-
-  const valueTypes = ["i32", "i64", "f32", "f64", "v128", "externref", "anyfunc"];
 
   class Global {
     constructor(descriptor, v = undefined) {
@@ -369,10 +477,10 @@
     return internal.readBodyBytes(response);
   }
 
-  function compileResponse(source) {
+  function compileResponse(source, options) {
     return then(promiseResolve(source), function (response) {
       return then(responseBytes(response), function (bytes) {
-        return compileLater(bytes);
+        return compileLater(bytes, options);
       });
     });
   }
@@ -380,42 +488,55 @@
   // ---- the namespace ----
 
   const namespace = {
-    validate(bytes) {
+    validate(bytes, options = undefined) {
       requireArguments(arguments.length, 1, "WebAssembly.validate");
-      return natives.wasmValidate(bytes);
+      if (options === undefined) return natives.wasmValidate(bytes);
+      const copy = natives.wasmCopyBytes(bytes);
+      const compileOptionsValue = compileOptions(options, "WebAssembly.validate");
+      if (!natives.wasmValidate(copy)) return false;
+      try {
+        compileWith(copy, compileOptionsValue, Module.prototype);
+        return true;
+      } catch (error) {
+        if (error instanceof CompileError) return false;
+        throw error;
+      }
     },
-    compile(bytes) {
+    compile(bytes, options = undefined) {
       try {
         requireArguments(arguments.length, 1, "WebAssembly.compile");
-        return compileLater(natives.wasmCopyBytes(bytes));
+        const copy = natives.wasmCopyBytes(bytes);
+        return compileLater(copy, compileOptions(options, "WebAssembly.compile"));
       } catch (error) {
         return rejected(error);
       }
     },
-    instantiate(source, importObject = undefined) {
+    instantiate(source, importObject = undefined, options = undefined) {
       try {
         requireArguments(arguments.length, 1, "WebAssembly.instantiate");
         if (natives.wasmIsModule(source))
           return instantiateLater(source, optionalObject(importObject, "WebAssembly.instantiate"));
         const bytes = natives.wasmCopyBytes(source);
-        return instantiateCompiled(compileLater(bytes), optionalObject(importObject, "WebAssembly.instantiate"));
+        const imports = optionalObject(importObject, "WebAssembly.instantiate");
+        return instantiateCompiled(compileLater(bytes, compileOptions(options, "WebAssembly.instantiate")), imports);
       } catch (error) {
         return rejected(error);
       }
     },
-    compileStreaming(source) {
+    compileStreaming(source, options = undefined) {
       try {
         requireArguments(arguments.length, 1, "WebAssembly.compileStreaming");
-        return compileResponse(source);
+        return compileResponse(source, compileOptions(options, "WebAssembly.compileStreaming"));
       } catch (error) {
         return rejected(error);
       }
     },
-    instantiateStreaming(source, importObject = undefined) {
+    instantiateStreaming(source, importObject = undefined, options = undefined) {
       try {
         requireArguments(arguments.length, 1, "WebAssembly.instantiateStreaming");
         const imports = optionalObject(importObject, "WebAssembly.instantiateStreaming");
-        return instantiateCompiled(compileResponse(source), imports);
+        const compileOptionsValue = compileOptions(options, "WebAssembly.instantiateStreaming");
+        return instantiateCompiled(compileResponse(source, compileOptionsValue), imports);
       } catch (error) {
         return rejected(error);
       }
@@ -447,18 +568,33 @@
   internal.define(namespace, "RuntimeError", RuntimeError);
   internal.define(global, "WebAssembly", namespace);
 
-  natives.wasmRegister(Module.prototype, Memory.prototype, Table.prototype, Global.prototype, CompileError, LinkError,
-    RuntimeError);
+  // The prototypes and errors of this realm's objects; the Tag and
+  // Exception prototypes come with 58-webassembly-exceptions.js, which
+  // gets what it shares with this script here.
+  natives.wasmRegister(Module.prototype, Memory.prototype, Table.prototype, Global.prototype, undefined, undefined,
+    CompileError, LinkError, RuntimeError);
+  internal.webassembly = {
+    namespace: namespace, finish: finish, requireArguments: requireArguments, dictionary: dictionary,
+    requiredMember: requiredMember, member: member, prototypeFrom: prototypeFrom, enforceRange: enforceRange,
+    valueTypes: valueTypes
+  };
 
   // structuredClone and postMessage within the agent: a new Module object of
-  // the same compiled module.
+  // the same compiled module (and compile options).
   let moduleClones = 0;
   if (internal.cloneHooks === undefined) internal.cloneHooks = [];
   internal.cloneHooks.push(function (value) {
     if (!natives.wasmIsModule(value)) return undefined;
     moduleClones++;
-    return natives.wasmCloneModule(value);
+    const made = natives.wasmCloneModule(value);
+    if (optionsOf(value) !== noOptions) weakSet.call(moduleOptions, made, optionsOf(value));
+    return made;
   });
+  // Compile options for a Module of this realm made by another realm's
+  // adoptModules (on the natives object, which that realm has).
+  natives.wasmAdoptOptions = function (module, options) {
+    weakSet.call(moduleOptions, module, options);
+  };
   // How many Modules were cloned so far (a message for a worker that has
   // some is adopted into the worker's realm before it is delivered).
   internal.wasmModuleClones = function () {
@@ -474,6 +610,7 @@
       if (memory.has(item)) return memory.get(item);
       if (natives.wasmIsModule(item)) {
         const made = realmNatives.wasmCloneModule(item);
+        if (optionsOf(item) !== noOptions) realmNatives.wasmAdoptOptions(made, optionsOf(item));
         memory.set(item, made);
         return made;
       }

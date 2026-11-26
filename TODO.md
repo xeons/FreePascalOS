@@ -1496,7 +1496,7 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       (re-entrant, exceptions unchanged through WebAssembly), externrefs as JS values marked through
       EnumerateReferences and EnumerateHostData; a store per agent; the watchdog through OnInterrupt;
       CSP 'wasm-unsafe-eval'; Modules structured-cloneable within the agent (frames, dedicated workers)
-- [x] WPT wasm/jsapi (2.0 API and resizable buffers) and wasm/webapi pass on the host but for the 3.0 parts
+- [x] WPT wasm/jsapi (2.0 API and resizable buffers) and wasm/webapi pass on the host
 - [x] hCaptcha's hsw.js module (about 1 MB, 198 imports) compiles and is instantiated in its frame
 - [x] 3.0: extended constant expressions, tail calls (constant stack), multiple memories, memory64 and
       table64, exception handling (try_table, throw, throw_ref, exnref; legacy try/catch/delegate/rethrow),
@@ -1508,11 +1508,20 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       exceptions across host functions (EWasmException, WasmThrow, tags and payloads in Wasm.Api)
 - [x] make wasm-spec-test-3: the 3.0 spec suite (core, feature directories, legacy exceptions): all 262
       files pass, also with --gc-stress
-- [ ] JS API of the 3.0 features (libwasm has them now): WebAssembly.Tag, WebAssembly.Exception and JSTag
-      (exception handling), memory64's address types ("address": "i64" descriptors, BigInt values),
-      typed function references and GC objects at the boundary, the JS string builtins and imported string
-      constants (WebAssembly compile options), type reflection (the tentative type() methods,
-      WebAssembly.Function)
+- [x] JS API of the 3.0 features: WebAssembly.Tag, WebAssembly.Exception (getArg, is, stack with traceStack)
+      and JSTag (JavaScript exceptions caught by catch_all and catch $JSTag and rethrown unchanged,
+      exceptions out of WebAssembly the same Exception object each time, exported and imported tags);
+      memory64 and table64 address types ("address": "i64", BigInt sizes and indices); GC values at the
+      boundary (Exported GC Objects, the type checks of every reference type, i31 numbers, odd values as
+      boxed host words) with the two collectors tracing each other (cross-heap cycles collected); the JS
+      string builtins and imported string constants (compile options); all of it in workers too
+- [x] WPT wasm/jsapi on the host: 1002 of 1061 (the rest: type reflection, shared memories, ESM
+      integration's module source, getArg's index conversion); the 3.0 spec's js-api copy 1058 of 1062
+- [ ] Type reflection (tentative): the type() methods of Memory, Table, Global and Tag, the "minimum"
+      descriptor member, WebAssembly.Function (Exported Functions would become its instances)
+- [ ] Exported GC objects and Exceptions of a store object shared by a window and its dedicated worker
+      take the prototype of the realm that wrapped them first (Tags, Memories and the like have a cache per
+      worker realm now)
 - [ ] Shared memories (threads: a SharedArrayBuffer over the memory, atomics) - now a TypeError
 - [ ] Instances, memories and their JavaScript objects freed when unreachable (they live as long as the
       agent's store; the caches are strong)

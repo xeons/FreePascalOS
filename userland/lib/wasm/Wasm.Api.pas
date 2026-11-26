@@ -42,7 +42,10 @@
     (Wasm.Types) and returns its results; a trap is EWasmTrap with Kind,
     message and StackTrace. Host functions come from
     WasmNewHostFunction: a method that gets typed arguments and fills in
-    typed results, and may raise to unwind (EWasmTrap to trap).
+    typed results, and may raise to unwind (EWasmTrap to trap);
+    WasmNewHostFunctionOfType makes one of a module's own type (its id
+    from WasmModuleTypeIds), which keeps the type's rec group and
+    supertypes, so it links where that module imports a function.
 
   References
     funcref values are TWasmFunction objects. externref values are
@@ -132,9 +135,12 @@ uses
   Wasm.Errors,
   Wasm.Module,
   Wasm.Runtime,
+  Wasm.TypeRegistry,
   Wasm.Exceptions;
 
 type
+  TWasmIdArray = Wasm.TypeRegistry.TWasmIdArray;
+
   TWasmImportDescriptor = record
     ModuleName: AnsiString;
     Name: AnsiString;
@@ -188,6 +194,14 @@ function WasmInstanceExports(Instance: TWasmModuleInstance): TWasmNamedExternalA
 function WasmCall(Func: TWasmFunction; const Arguments: TWasmValueArray): TWasmValueArray;
 function WasmNewHostFunction(Store: TWasmStore; const FunctionType: TWasmFunctionType;
   Callback: TWasmHostCallback; Data: Pointer = nil): TWasmFunction;
+{ A host function of a module's type: TypeId is the store's id of it
+  (Store.Registry.RegisterModule's ids), FunctionType that type. }
+function WasmNewHostFunctionOfType(Store: TWasmStore; TypeId: Integer; Callback: TWasmHostCallback;
+  Data: Pointer = nil): TWasmFunction;
+{ The store type ids of a module's types (what an instance would use). }
+function WasmModuleTypeIds(Store: TWasmStore; Module: TWasmModule): TWasmIdArray;
+{ A module value type with its concrete heap type as a store id. }
+function WasmStoreValueType(const TypeIds: TWasmIdArray; const ValueType: TWasmValueType): TWasmValueType;
 
 function WasmNewMemory(Store: TWasmStore; const MemoryType: TWasmMemoryType): TWasmMemory;
 function WasmNewTable(Store: TWasmStore; const TableType: TWasmTableType; InitialValue: Pointer): TWasmTable;
@@ -241,7 +255,6 @@ uses
   Wasm.TypeDefinitions,
   Wasm.Subtyping,
   Wasm.GcHeap,
-  Wasm.TypeRegistry,
   Wasm.GcOperations,
   Wasm.Code,
   Wasm.Decoder,
@@ -396,6 +409,24 @@ function WasmNewHostFunction(Store: TWasmStore; const FunctionType: TWasmFunctio
   Callback: TWasmHostCallback; Data: Pointer): TWasmFunction;
 begin
   Result := Store.NewHostFunction(FunctionType, Callback, Data);
+end;
+
+function WasmNewHostFunctionOfType(Store: TWasmStore; TypeId: Integer; Callback: TWasmHostCallback;
+  Data: Pointer): TWasmFunction;
+begin
+  Result := Store.NewHostFunction(Store.TypeOfId(TypeId), Callback, Data, TypeId);
+end;
+
+function WasmModuleTypeIds(Store: TWasmStore; Module: TWasmModule): TWasmIdArray;
+begin
+  Result := Store.Registry.RegisterModule(Module);
+end;
+
+function WasmStoreValueType(const TypeIds: TWasmIdArray; const ValueType: TWasmValueType): TWasmValueType;
+begin
+  Result := ValueType;
+  if (Result.Kind = vkReference) and (Result.HeapType >= 0) then
+    Result.HeapType := TypeIds[Result.HeapType];
 end;
 
 function WasmNewMemory(Store: TWasmStore; const MemoryType: TWasmMemoryType): TWasmMemory;
