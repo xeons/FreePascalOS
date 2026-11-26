@@ -93,6 +93,9 @@
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
+#   make media-test  Check libmedia on the host: WAV, FLAC, Ogg, Matroska/WebM, MP4
+#                   and MP3 files the host's ffmpeg, flac and lame made, decoded and
+#                   compared with their decoding; Opus over the RFC 8251 test vectors
 #   make served-system-image  The system image compressed for network boot
 #                   (SYSTEM_IMAGE_COMPRESSION=xz, gzip or none)
 #   make userland   Build the user mode libraries and programs
@@ -233,7 +236,7 @@ LOADER_EFI := $(BUILD_DIRECTORY)/$(EFI_BOOT_FILE)
 KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
-	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test ssh-test netstat-test \
 	ports-test pkg-test quic-test css-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
@@ -583,7 +586,7 @@ $(TEST_DISK): scripts/make-test-disk.sh scripts/exfat-tool.py
 
 test-disk: $(TEST_DISK)
 
-test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test ssh-test netstat-test \
+test: unicode-test call-frame-info-test native-fpc-test aml-test region-tree-test mapped-file-test frame-run-test mount-test file-system-image-test scheduler-policy-test clock-page-test aslr-test acpi-device-test acpi-power-test sntp-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test pi5-eeprom-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test apps-test paint-test crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test ssh-test netstat-test \
 		quic-test css-test svg-test web-test javascript-test web-layout-test web-load-test web-script-test web-ipc-test navigation-controls-test imaging-controls-test icon-test cache-policy-test ports-test pkg-test hpet-test clang-driver-test esp $(TEST_DISK) \
 		$(SYSTEM_DISK)
 	scripts/test-qemu.sh $(ARCH) $(ESP_DIRECTORY) $(TEST_DISK) $(SYSTEM_DISK)
@@ -1451,6 +1454,50 @@ decompression-test: $(DECOMPRESSION_TEST) $(DECOMPRESSION_FIXTURES)/manifest.txt
 	@$(DECOMPRESSION_TEST) $(DECOMPRESSION_FIXTURES) > build/tools/decompression-test.out || \
 		{ grep FAIL build/tools/decompression-test.out; echo "DECOMPRESSION TEST FAILED (build/tools/decompression-test.out)"; exit 1; }
 	@echo "DECOMPRESSION TEST PASSED: $$(tail -n 1 build/tools/decompression-test.out | cut -d ' ' -f 3-)"
+
+# libmedia builds for the host too: its containers and audio decoders read
+# files make-*-fixtures.py make with the host's ffmpeg, flac and lame
+# (each script skips what the host cannot make), and what they decode is
+# compared with those tools' own decoding (exactly for PCM and FLAC, by
+# signal-to-noise ratio for the lossy codecs). The Opus decoder is also
+# run over the RFC 6716 / RFC 8251 test vectors (their final range
+# values exactly, their output by signal-to-noise ratio) when the archive
+# is in OPUS_TEST_VECTORS (skipped without it).
+MEDIA_TEST := build/tools/MediaTest
+MEDIA_TEST_UNITS := build/tools/media-test-units
+MEDIA_FIXTURES := build/tools/media-fixtures
+MEDIA_FIXTURE_SCRIPTS := $(wildcard tools/MediaTest/make-*-fixtures.py) tools/MediaTest/fixturetools.py
+MEDIA_TEST_SOURCES := $(wildcard tools/MediaTest/*.pas) tools/CryptoTest/TestChecks.pas \
+	$(filter-out %/Media.Contents.pas,$(wildcard userland/lib/media/*.pas)) $(wildcard userland/lib/media/*.inc)
+OPUS_TEST_VECTORS ?= $(HOME)/Downloads/sources/opus_testvectors-rfc8251.tar.gz
+OPUS_TEST_VECTORS_SHA256 := 6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55
+OPUS_VECTOR_DIRECTORY := build/tools/opus-vectors
+
+$(MEDIA_FIXTURES)/.made: $(MEDIA_FIXTURE_SCRIPTS)
+	@rm -rf $(MEDIA_FIXTURES)
+	@mkdir -p $(MEDIA_FIXTURES)
+	@for script in $(filter %-fixtures.py,$(MEDIA_FIXTURE_SCRIPTS)); do \
+		python3 -I $$script $(MEDIA_FIXTURES) || exit 1; done
+	@touch $@
+
+$(OPUS_VECTOR_DIRECTORY)/.unpacked:
+	@rm -rf $(OPUS_VECTOR_DIRECTORY)
+	@mkdir -p $(OPUS_VECTOR_DIRECTORY)
+	@if [ -f "$(OPUS_TEST_VECTORS)" ] && \
+		echo "$(OPUS_TEST_VECTORS_SHA256)  $(OPUS_TEST_VECTORS)" | sha256sum -c --status; then \
+		tar xzf "$(OPUS_TEST_VECTORS)" -C $(OPUS_VECTOR_DIRECTORY); \
+	else echo "Opus test vectors not found (or wrong checksum) in $(OPUS_TEST_VECTORS): skipped"; fi
+	@touch $@
+
+$(MEDIA_TEST): $(MEDIA_TEST_SOURCES)
+	@mkdir -p $(MEDIA_TEST_UNITS)
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/MediaTest -Futools/CryptoTest -Fuuserland/lib/media -Fiuserland/lib/media \
+		-FU$(MEDIA_TEST_UNITS) -o$@ tools/MediaTest/MediaTest.pas
+
+media-test: $(MEDIA_TEST) $(MEDIA_FIXTURES)/.made $(OPUS_VECTOR_DIRECTORY)/.unpacked
+	@$(MEDIA_TEST) $(MEDIA_FIXTURES) $(OPUS_VECTOR_DIRECTORY)/opus_newvectors > build/tools/media-test.out || \
+		{ grep -A3 FAIL build/tools/media-test.out; echo "MEDIA TEST FAILED (build/tools/media-test.out)"; exit 1; }
+	@echo "MEDIA TEST PASSED: $$(tail -n 1 build/tools/media-test.out | cut -d ' ' -f 3-)"
 
 # libtls but for its socket, file and clock units builds for the host too
 # (with a Crypto.Random of the host's), and is checked there; then its
