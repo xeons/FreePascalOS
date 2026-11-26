@@ -34,12 +34,16 @@ uses
   SysUtils,
   TestChecks,
   WasmTest.Features,
+  WasmTest.Features3,
+  WasmTest.Collector,
   WasmTest.Embedding,
   WasmTest.Programs;
 
 begin
   RunFeatureTests;
+  RunFeature3Tests;
   RunEmbeddingTests;
+  RunCollectorTests;
   RunProgramTests(ParamStr(1));
   FinishChecks('WASM TEST');
 end.
