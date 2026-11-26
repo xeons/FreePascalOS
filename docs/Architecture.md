@@ -7981,6 +7981,141 @@ names, data, modes, DOS and extended times, ZIP64 end records).
 The pax fixture is also read as .tar.zst (two Zstandard frames) and
 .tar.xz. 7z is not read (TODO.md).
 
+### Video: the AV1 decoder (libav1)
+
+**libav1** (`userland/lib/av1`, units `Av1.*`) decodes AV1 (the AOMedia
+Video 1 bitstream, royalty free): all of the Main profile in 8 and
+10 bits, and the High (4:4:4) and Professional (4:2:2, 12-bit)
+profiles' formats too, with every coding tool, film grain synthesis,
+and tiles decoded on several threads. It needs only the runtime
+library, so it builds and is tested on the host as well. Programs give
+`TAv1Decoder` the OBUs of a stream a temporal unit at a time (an IVF
+frame, a Matroska block, an MP4 sample: libmedia's demuxers hand these
+over) and take the frames it shows as `Media.Frames` `TVideoFrame`
+records: one plane each for Y, U and V, bytes for 8-bit streams and
+little-endian words otherwise, cropped to the coded size
+(UpscaledWidth by FrameHeight; the render size is only a hint), with
+the stream's colour description. Until libmedia is merged libav1 keeps
+an identical copy of `Media.Frames`.
+
+```
+  Av1.Decoder         TAv1Decoder: Decode (OBUs, a presentation time),
+                      TakeFrame, Reset; operating point 0
+  Av1.FrameDecoding   after a frame header: CDFs, previous segment ids,
+                      motion field estimation; tile groups (tiles on the
+                      worker pool); the wrapup: post filters, motion field
+                      storage, the reference update; show_existing_frame
+  Av1.Output          the output process: crop, film grain, TVideoFrame
+  Av1.WorkerPool      workers that share a job's indices (tiles, rows)
+=========== headers ========================================================
+  Av1.SequenceHeader  Av1.FrameHeader (TFrameHeader)  Av1.FrameHeaderParsing
+  Av1.BitReader (f(n), uvlc, le, leb128, su, ns)  Av1.References (the slots)
+=========== tiles and blocks: syntax ========================================
+  Av1.TileDecoding    init_symbol, decode_tile, read_lr, exit_symbol
+  Av1.BlockDecoding   decode_partition, decode_block, compute_prediction
+  Av1.BlockFlagsSyntax (segment ids, skip, CDEF, delta q/lf, is_inter)
+  Av1.IntraModeSyntax Av1.PaletteSyntax Av1.InterModeSyntax
+  Av1.ReferenceFrameSyntax Av1.MotionVectorSyntax Av1.TransformSyntax
+  Av1.CoefficientSyntax  Av1.ResidualDecoding (transform blocks and trees)
+  Av1.SymbolDecoder   the arithmetic decoder (64-bit window)  Av1.CdfContext
+=========== prediction and reconstruction ===================================
+  Av1.MvPrediction Av1.MvCandidates Av1.WarpSamples   find_mv_stack ...
+  Av1.MotionField     motion field estimation (projection) and storage
+  Av1.IntraPrediction Av1.IntraEdges Av1.PalettePrediction Av1.ChromaFromLuma
+  Av1.InterPrediction Av1.BlockInterPrediction Av1.MotionVectorScaling
+  Av1.Warp (local and global warp, shear, warp estimation)  Av1.Obmc
+  Av1.CompoundMasks (wedge, difference, inter-intra, distance weights)
+  Av1.Reconstruction  Av1.InverseTransform (DCT/ADST/flip/identity 4-64, WHT)
+=========== post filters ====================================================
+  Av1.PostFilters  Av1.LoopFilter Av1.LoopFilterSamples  Av1.Cdef
+  Av1.SuperRes  Av1.LoopRestoration Av1.Wiener Av1.SelfGuided
+  Av1.RestorationWindow  Av1.FilmGrain Av1.FilmGrainNoise Av1.FilmGrainScaling
+=========== state and tables ================================================
+  Av1.FrameContext (frame-wide arrays)  Av1.TileContext (a tile's block)
+  Av1.Picture (planes of 16-bit samples)  Av1.Common  Av1.ToolStatistics
+  Av1.Constants Av1.Tables Av1.DefaultCdfs Av1.QuantizerMatrices (generated)
+```
+
+**Following the specification.** The decoder is the decoding process of
+the AV1 Bitstream and Decoding Process Specification written out in
+Pascal: the routines carry the specification's names
+(`DecodePartition` is decode_partition, `ReadCoefficients` is coeffs( )),
+the state keeps its variable names (MiRow, YMode, RefFrame, Mv,
+`TBlockInfo` for the per 4x4 arrays YModes, RefFrames, Mvs, MiSizes,
+...), and every constant table (scan orders, default CDFs, filter
+kernels, quantizer lookups and matrices, Gaussian sequence) is generated
+from the specification's own Markdown sources by
+`userland/lib/av1/make-tables.py` into checked in include files
+(`Av1.Constants.inc`, `Av1.Tables.inc`, `Av1.DefaultCdfs.inc`,
+`Av1.QuantizerMatrices.inc`, and the record of adaptive CDFs
+`Av1.CdfFields.inc` with its initialization). Where the specification
+writes a slow but simple formulation the code takes a faster one with
+the same results: the symbol decoder keeps a 64-bit window of inverted
+bits instead of reading bit by bit (running out of data shifts in ones,
+the specification's zero padding), the coefficient contexts work out
+the transform class once per block, CDEF filters a padded copy of each
+8x8 block with an "unavailable" value no strength lets through,
+unscaled inter prediction inside the reference skips clamping and does
+zero fractions as plain scaling.
+
+**State.** A `TFrameContext` holds the frame being decoded: its headers,
+CurrFrame, the CDFs it started with and those saved from the tile
+context_update_tile_id, and the frame-wide arrays indexed by mode info
+position (with room to the next 128 samples and a superblock more,
+since blocks reach past the frame's edges and the specification stores
+them whole). Each tile is decoded with a `TTileContext` (its symbol
+decoder and CDFs, the above and left contexts, the block's variables,
+scratch for prediction and reconstruction); tiles write disjoint parts
+of the frame's arrays, so several decode at once on the worker pool,
+one context per worker. Samples are 16-bit everywhere (8, 10 and
+12-bit streams take the same code), in `TPicture` planes with padding
+past the right and bottom. A decoded frame becomes one
+`TReferenceFrame` (the picture after loop restoration, its sizes and
+order hints, the motion field and segmentation map stored compactly,
+its CDFs, global motion, loop filter deltas, segmentation features and
+film grain parameters) that every slot refresh_frame_flags names shares,
+counting references.
+
+**Post filters.** After the last tile group the frame wrapup runs the
+deblocking filter (in place: all vertical edges of a plane, then all
+horizontal ones), CDEF (into a copy), superres upscaling and loop
+restoration (into another copy), each on the worker pool by superblock
+rows or restoration stripes: within one pass of the deblocking filter
+no two edges touch the same samples (filter lengths follow the
+transform sizes on both sides), so rows can go in any order. Film grain
+is added to the output frame only, as the specification's output
+process does, never to the reference.
+
+**Threads.** `TAv1Decoder.Create(ThreadCount)` makes a pool of
+ThreadCount workers (the calling thread and ThreadCount - 1 threads,
+`Av1.WorkerPool`); the tiles of a tile group and the rows of each post
+filter are shared between them. A stream of one tile still gets its
+post filters spread over the workers.
+
+**Tests.** `make av1-test` builds libav1 on the host with range checks
+(`tools/Av1Test`) and decodes the streams `tools/Av1Test/make-fixtures.py`
+makes at build time with the host's encoders: aomenc with each tool and
+format switched on (intra only, inter at several speeds, global and
+local warp, OBMC, compound modes, 10 and 12 bits, 4:4:4 and 4:2:2,
+monochrome, palettes and intra block copy, film grain, superres,
+uniform and non-uniform tiles, 128x128 superblocks, lossless, quantizer
+matrices, delta q and loop filter, segmentation, error resilience with
+switch frames, reference scaling from resize mode, forward key frames),
+SvtAv1EncApp and rav1e through ffmpeg. Every frame must equal what
+aomdec, libaom's reference decoder, gives, sample for sample, on one
+thread and with four; the test lists how often each coding tool came up
+(`Av1.ToolStatistics`, compiled in only for the test). On the system,
+coretest runs `av1check`, which decodes four small streams built into it
+(`userland/av1check/Av1Check.Streams.inc`, written by
+`tools/Av1Test/make-system-check.py`) on one thread and four and
+compares each frame's hash with aomdec's.
+
+**Not done.** Large scale tile decoding (Annex D: tile list OBUs, for
+light fields) is not supported, and the scalability metadata's
+operating point choice is fixed at 0. Speed comes from tables, integer
+arithmetic and threads; there are no SIMD paths yet, and frames are not
+decoded in parallel with each other.
+
 ## Ports and packages
 
 Software from elsewhere comes to the system as **ports**, as on

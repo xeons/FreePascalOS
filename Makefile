@@ -93,6 +93,8 @@
 #   make image-test  Check libimage on the host against Pillow's decoding of fixtures
 #                   made at build time (BMP, DIB, ICO, CUR, GIF, JPEG)
 #   make decompression-test  Check the RAM disk's xz and gzip decoders on the host
+#   make av1-test   Check libav1 on the host: streams from aomenc, SVT-AV1 and rav1e
+#                   decoded frame for frame as aomdec does (one thread and four)
 #   make served-system-image  The system image compressed for network boot
 #                   (SYSTEM_IMAGE_COMPRESSION=xz, gzip or none)
 #   make userland   Build the user mode libraries and programs
