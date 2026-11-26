@@ -207,3 +207,17 @@ check("XMLSerializer keeps namespaces and escapes", serialized === '<r xmlns="ur
 var htmlSerialized = new XMLSerializer().serializeToString(document.createElement("br"));
 check("XMLSerializer closes an HTML void element", htmlSerialized === '<br xmlns="http://www.w3.org/1999/xhtml" />');
 check("Document.parseHTMLUnsafe", Document.parseHTMLUnsafe("<p>x").body.firstChild.localName === "p");
+
+// document.all: every element, by index and name, callable, and yet
+// typeof "undefined" and false ([[IsHTMLDDA]]).
+document.body.innerHTML = '<p id="allfirst">x</p><form name="allform"></form><img name="allpic">';
+var all = document.all;
+check("document.all is [[IsHTMLDDA]]", typeof all === "undefined" && !all && all == null && all == undefined &&
+  all !== undefined && all !== null && (all ? 1 : 2) === 2 && (all ?? "nullish") === all);
+check("document.all is the same object", document.all === all &&
+  Object.prototype.toString.call(all) === "[object HTMLAllCollection]" && all instanceof HTMLAllCollection);
+check("document.all's elements in tree order", all.length === document.getElementsByTagName("*").length &&
+  all[0] === document.documentElement && all.item(0) === document.documentElement);
+check("document.all by name and id, and called", all.allfirst === document.getElementById("allfirst") &&
+  all.namedItem("allform").localName === "form" && all("allpic").localName === "img" && all("nothing") === null &&
+  all() === null && all["missing"] === undefined);

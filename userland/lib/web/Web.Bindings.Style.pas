@@ -82,7 +82,8 @@ uses
   Web.Namespaces,
   Web.Dom.Exceptions,
   Web.Bindings.Strings,
-  Web.Bindings.Exotic;
+  Web.Bindings.Exotic,
+  Web.Bindings.CustomElementRegistry;
 
 type
   { What a CSSStyleDeclaration is over: a declaration block it reads and
@@ -439,14 +440,21 @@ begin
       Text := ToJsString(R, Value);
     if Text = nil then
       Exit(-1);
+    { A CSS property's attribute is [CEReactions]: the style attribute's
+      attributeChangedCallback runs before the assignment returns. }
+    EnterReactionsScope;
     try
-      TStyleDeclarationData(NativeData).SetProperty(Name, JsStringToText(R.Heap, Text), '');
-    except
-      on Error: Exception do
-      begin
-        Binding.Context.ThrowFromException(Error);
-        Exit(-1);
+      try
+        TStyleDeclarationData(NativeData).SetProperty(Name, JsStringToText(R.Heap, Text), '');
+      except
+        on Error: Exception do
+        begin
+          Binding.Context.ThrowFromException(Error);
+          Exit(-1);
+        end;
       end;
+    finally
+      LeaveReactionsScope(Binding.Context);
     end;
     Exit(1);
   end;

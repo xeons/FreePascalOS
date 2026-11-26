@@ -20,9 +20,10 @@
   The host test262 expects (INTERPRETING.md, "Host-Defined Functions"):
   print, which the runner reads the asynchronous tests' results from,
   and the $262 object: createRealm (another realm sharing the runtime),
-  evalScript, detachArrayBuffer, gc and global. $262.agent is left out:
-  the engine has no shared-memory agents (the runner skips the tests
-  that use it), and so is IsHTMLDDA unless the engine provides one.
+  evalScript, detachArrayBuffer, gc, global and IsHTMLDDA (a function
+  with [[IsHTMLDDA]] that returns null, as document.all does for no
+  argument). $262.agent is left out: the engine has no shared-memory
+  agents (the runner skips the tests that use it).
 
   Modules are files: a module's key is its path (the engine resolves
   "./x_FIXTURE.js" against the importing file's directory).
@@ -162,6 +163,14 @@ begin
   Result := JsUndefined;
 end;
 
+{ $262.IsHTMLDDA(): null for no argument or "" (its other calls are not
+  tested). }
+function HostHtmlDda(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+begin
+  Result := JsNull;
+end;
+
 { TTestHost }
 
 constructor TTestHost.Create(const Options: TJsEngineOptions);
@@ -190,6 +199,7 @@ end;
 procedure TTestHost.Install(Engine: TJsEngine);
 var
   Host: TJsObject;
+  HtmlDda: TJsNativeFunction;
 begin
   Engine.ModuleFetcher := @FetchModule;
   Engine.DefineFunction(Engine.GlobalObject, 'print', @HostPrint, 1);
@@ -198,6 +208,8 @@ begin
   Engine.DefineFunction(Host, 'evalScript', @HostEvalScript, 1);
   Engine.DefineFunction(Host, 'detachArrayBuffer', @HostDetachArrayBuffer, 1);
   Engine.DefineFunction(Host, 'gc', @HostCollectGarbage, 0);
+  HtmlDda := Engine.DefineFunction(Host, 'IsHTMLDDA', @HostHtmlDda, 0);
+  HtmlDda.ObjectFlags := HtmlDda.ObjectFlags or ObjectHtmlDda;
   Engine.DefineValue(Host, 'global', JsObjectValue(Engine.GlobalObject));
   Engine.DefineValue(Engine.GlobalObject, '$262', JsObjectValue(Host));
 end;

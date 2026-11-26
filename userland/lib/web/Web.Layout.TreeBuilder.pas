@@ -117,7 +117,7 @@ implementation
 
 uses
   SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values,
-  Web.Dom.FormControls;
+  Web.Dom.FormControls, Web.Layout.ViewportOverflow;
 
 var
   AtomCanvasElement, AtomIframeElement, AtomEmbedElement, AtomObjectElement, AtomVideoElement,
@@ -270,7 +270,8 @@ begin
       Box.Kind := bkBlock;
     Include(Box.Flags, bfNewFormattingContext);
   end;
-  if OverflowClips(Style) and (Box.Kind <> bkInline) then
+  if OverflowClips(Style) and (Box.Kind <> bkInline) and
+    not ((Box.Node is TElement) and PropagatesOverflowToViewport(TElement(Box.Node))) then
   begin
     Include(Box.Flags, bfClipsOverflow);
     if (Style.Keyword(cpOverflowX) <> kwClip) and (Style.Keyword(cpOverflowY) <> kwClip) then

@@ -32,9 +32,17 @@ interface
 
 uses
   Js.Values,
+  Web.Dom.Events,
+  Web.Dom.UiEvents,
   Web.Bindings.Types;
 
 {$I Web.Bindings.Events.Members.inc}
+
+{ For the event kinds bound in other units (WheelEvent): a constructed
+  event's EventInit members, and a MouseEventInit's (with the UIEventInit
+  and EventModifierInit ones). }
+function StartEvent(var Call: TBindingCall; Event: TEvent): TJsValue;
+procedure ApplyMouseInit(Event: TMouseEvent; const Init: TBindingValue);
 
 implementation
 
@@ -42,8 +50,6 @@ uses
   SysUtils,
   Js.Objects,
   Web.Atoms,
-  Web.Dom.Events,
-  Web.Dom.UiEvents,
   Web.Dom.DataTransfer,
   Web.Dom.SecurityEvents,
   Web.Dom.Exceptions,
@@ -439,6 +445,22 @@ begin
     Include(Event.Modifiers, ModifierMeta);
 end;
 
+procedure ApplyMouseInit(Event: TMouseEvent; const Init: TBindingValue);
+begin
+  ApplyUiInit(Event, Init);
+  ApplyModifierInit(Event, Init);
+  Event.ScreenX := Trunc(Init.Items[MouseEventInit_screenX].Number);
+  Event.ScreenY := Trunc(Init.Items[MouseEventInit_screenY].Number);
+  Event.ClientX := Trunc(Init.Items[MouseEventInit_clientX].Number);
+  Event.ClientY := Trunc(Init.Items[MouseEventInit_clientY].Number);
+  Event.Button := Trunc(Init.Items[MouseEventInit_button].Number);
+  Event.Buttons := Trunc(Init.Items[MouseEventInit_buttons].Number);
+  Event.MovementX := Init.Items[MouseEventInit_movementX].Number;
+  Event.MovementY := Init.Items[MouseEventInit_movementY].Number;
+  if Init.Items[MouseEventInit_relatedTarget].Native <> nil then
+    Event.RelatedTarget := TEventTarget(Init.Items[MouseEventInit_relatedTarget].Native);
+end;
+
 function ThisUiEvent(const Call: TBindingCall): TUiEvent; inline;
 begin
   Result := TUiEvent(Call.Target);
@@ -504,18 +526,7 @@ var
 begin
   Event := TMouseEvent.Create(Call.Text(0));
   Init := @Call.Arguments[1];
-  ApplyUiInit(Event, Init^);
-  ApplyModifierInit(Event, Init^);
-  Event.ScreenX := Trunc(Init^.Items[MouseEventInit_screenX].Number);
-  Event.ScreenY := Trunc(Init^.Items[MouseEventInit_screenY].Number);
-  Event.ClientX := Trunc(Init^.Items[MouseEventInit_clientX].Number);
-  Event.ClientY := Trunc(Init^.Items[MouseEventInit_clientY].Number);
-  Event.Button := Trunc(Init^.Items[MouseEventInit_button].Number);
-  Event.Buttons := Trunc(Init^.Items[MouseEventInit_buttons].Number);
-  Event.MovementX := Init^.Items[MouseEventInit_movementX].Number;
-  Event.MovementY := Init^.Items[MouseEventInit_movementY].Number;
-  if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
-    Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
+  ApplyMouseInit(Event, Init^);
   Result := StartEvent(Call, Event);
 end;
 
@@ -659,18 +670,7 @@ var
 begin
   Event := TPointerEvent.Create(Call.Text(0));
   Init := @Call.Arguments[1];
-  ApplyUiInit(Event, Init^);
-  ApplyModifierInit(Event, Init^);
-  Event.ScreenX := Trunc(Init^.Items[MouseEventInit_screenX].Number);
-  Event.ScreenY := Trunc(Init^.Items[MouseEventInit_screenY].Number);
-  Event.ClientX := Trunc(Init^.Items[MouseEventInit_clientX].Number);
-  Event.ClientY := Trunc(Init^.Items[MouseEventInit_clientY].Number);
-  Event.Button := Trunc(Init^.Items[MouseEventInit_button].Number);
-  Event.Buttons := Trunc(Init^.Items[MouseEventInit_buttons].Number);
-  Event.MovementX := Init^.Items[MouseEventInit_movementX].Number;
-  Event.MovementY := Init^.Items[MouseEventInit_movementY].Number;
-  if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
-    Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
+  ApplyMouseInit(Event, Init^);
   Event.PointerId := Trunc(Init^.Items[PointerEventInit_pointerId].Number);
   Event.Width := Init^.Items[PointerEventInit_width].Number;
   Event.Height := Init^.Items[PointerEventInit_height].Number;

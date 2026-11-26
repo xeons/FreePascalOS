@@ -9734,6 +9734,7 @@ staging/sm/Proxy/revoked-get-function-realm-typeerror.js  # [non-strict] runtime
 staging/sm/Proxy/setPrototypeOf.js  # [non-strict] runtime Test262Error: Assertion failed: expected exception, no exception thrown
 staging/sm/Reflect/apply.js  # [non-strict] runtime Test262Error: Expected SameValue(«Symbol(moon)», «Symbol(moon)») to be true
 staging/sm/Reflect/argumentsList.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+staging/sm/Reflect/defineProperty.js  # [non-strict] runtime Test262Error: Expected SameValue(«true», «false») to be true
 staging/sm/Reflect/isExtensible.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Reflect/ownKeys.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
 staging/sm/Reflect/preventExtensions.js  # [non-strict] runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all

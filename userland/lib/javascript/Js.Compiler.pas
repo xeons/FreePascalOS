@@ -164,10 +164,6 @@ begin
   Result := (FInfo <> nil) and (Scope = FInfo.Scope);
 end;
 
-const
-  { Functions with less source than this are compiled at once. }
-  LazySourceLength = 160;
-
 function FunctionCodeFlags(Info: TJsFunctionInfo): LongWord;
 begin
   Result := 0;
@@ -198,17 +194,6 @@ begin
     Result := 'get ' + Name
   else if Info.Kind = fkSetter then
     Result := 'set ' + Name;
-end;
-
-{ A function compiled on its first call: its body was parsed (early
-  errors checked, its free variables marked captured), but it gets no
-  bytecode until then. Not for class constructors and field
-  initializers, functions using private names, or short ones. }
-function IsLazyCandidate(Info: TJsFunctionInfo): Boolean;
-begin
-  Result := (Info.Kind in [fkNormal, fkArrow, fkMethod, fkGetter, fkSetter]) and not Info.UsesPrivateNames and
-    (Info.SourceFinish - Info.SourceStart >= LazySourceLength) and
-    ((Info.Kind = fkArrow) or (Info.ParametersLine > 0));
 end;
 
 function TJsFunctionCompiler.LazyStub(Info: TJsFunctionInfo; const Name: UnicodeString): TJsCode;
@@ -260,7 +245,7 @@ begin
   FunctionName := Node.Func.Name;
   if (FunctionName = '') and HasName then
     FunctionName := Name;
-  if IsLazyCandidate(Node.Func) then
+  if Node.Func.BodyDiscarded or CompilesLazily(Node.Func) then
     NewCode := LazyStub(Node.Func, FunctionName)
   else
   begin

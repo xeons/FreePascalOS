@@ -174,3 +174,21 @@ function after() {
   check("whenDefined resolved with the constructor", whenDefinedResult === MyElement);
   check("whenDefined rejects invalid names with SyntaxError", rejected !== null && rejected.name === "SyntaxError");
 }
+
+// [CEReactions] on what changes attributes without being a binding's
+// method: a CSS property of the inline style, and a dataset property.
+var styleLog = [];
+class StyleWatcher extends HTMLElement {
+  static get observedAttributes() { return ["style", "data-x"]; }
+  attributeChangedCallback(name, oldValue, newValue) { styleLog.push(name + "=" + newValue); }
+}
+customElements.define("style-watcher", StyleWatcher);
+var watcher = document.createElement("style-watcher");
+watcher.style.opacity = "0.5";
+styleLog.push("after style");
+watcher.dataset.x = "1";
+styleLog.push("after dataset");
+delete watcher.dataset.x;
+styleLog.push("after delete");
+check("a CSS property assignment and dataset run the reactions before they return",
+  styleLog.join("|") === "style=opacity: 0.5;|after style|data-x=1|after dataset|data-x=null|after delete");

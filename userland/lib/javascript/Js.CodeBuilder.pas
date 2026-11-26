@@ -90,9 +90,7 @@ type
     FileName: string;
     { The module being compiled (nil for a script). }
     Module: TJsCell;
-    { The scope chains made for the lazy functions, per scope. }
-    ChainScopes: array of TJsScope;
-    Chains: array of TJsEvalChain;
+    { The scope chain of a lazy function declared in Scope. }
     function ChainFor(Scope: TJsScope): TJsEvalChain;
   end;
 
@@ -253,19 +251,8 @@ end;
 { TJsCompileContext }
 
 function TJsCompileContext.ChainFor(Scope: TJsScope): TJsEvalChain;
-var
-  Index: Integer;
 begin
-  for Index := 0 to High(ChainScopes) do
-    if ChainScopes[Index] = Scope then
-      Exit(Chains[Index]);
-  Result := BuildEvalChain(Scope, False);
-  Realm.Heap.Register(Result, ckOther);
-  Realm.Heap.Account(Result.MemorySize - Result.InstanceSize);
-  SetLength(ChainScopes, Length(ChainScopes) + 1);
-  ChainScopes[High(ChainScopes)] := Scope;
-  SetLength(Chains, Length(Chains) + 1);
-  Chains[High(Chains)] := Result;
+  Result := SharedEvalChain(Realm.Heap, Scope);
 end;
 
 { TJsCodeBuilder }
@@ -759,9 +746,7 @@ function TJsCodeBuilder.AddEvalChain: Integer;
 var
   Chain: TJsEvalChain;
 begin
-  Chain := BuildEvalChain(FScope, FStrict);
-  Heap.Register(Chain, ckOther);
-  Heap.Account(Chain.MemorySize - Chain.InstanceSize);
+  Chain := BuildEvalChain(Heap, FScope, FStrict);
   Result := Length(FEvalChains);
   SetLength(FEvalChains, Result + 1);
   FEvalChains[Result] := Chain;

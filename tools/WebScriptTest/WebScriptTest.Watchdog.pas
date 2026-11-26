@@ -21,7 +21,9 @@
   ends - a loop, promise jobs queueing each other, a timer callback
   that loops, a WebAssembly function that loops (the store's interrupt
   hook) - is stopped after the run limit and reported on the console,
-  and the page's next scripts run normally.
+  and the page's next scripts run normally. A script that allocates
+  without end is stopped at the page's script heap limit
+  (ContextHeapLimit) with an out of memory error.
 }
 unit WebScriptTest.Watchdog;
 
@@ -38,6 +40,7 @@ uses
   SysUtils,
   TestChecks,
   Web.Script.Watchdog,
+  Web.Bindings.Context,
   WebScriptTest.Harness;
 
 const
@@ -76,11 +79,37 @@ begin
   end;
 end;
 
+procedure CheckOutOfMemory;
+const
+  TestHeapLimit = 48 * 1024 * 1024;
+var
+  SavedLimit: Int64;
+  Bed: TTestBed;
+begin
+  SavedLimit := ContextHeapLimit;
+  ContextHeapLimit := TestHeapLimit;
+  try
+    Bed := TTestBed.Create('out-of-memory');
+    try
+      Check(RunBounded(Bed, 'var kept = []; for (;;) kept.push(new Array(1000).fill("x" + kept.length));'),
+        'heap limit: endless allocation is stopped');
+      Check(Pos('Out of memory', Bed.ConsoleText) > 0, 'heap limit: reported' + LineEnding + Bed.ConsoleText);
+      Check(Bed.Evaluate('kept = null; var small = []; for (var i = 0; i < 1000; i++) small.push(i); small.length') =
+        '1000', 'heap limit: the page runs on once the memory is let go');
+    finally
+      Bed.Free;
+    end;
+  finally
+    ContextHeapLimit := SavedLimit;
+  end;
+end;
+
 procedure RunWatchdogTests;
 var
   Saved: QWord;
   Bed: TTestBed;
 begin
+  CheckOutOfMemory;
   Saved := ScriptRunLimitMilliseconds;
   ScriptRunLimitMilliseconds := TestLimitMilliseconds;
   try

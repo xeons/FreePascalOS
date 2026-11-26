@@ -42,6 +42,7 @@
     -t SECONDS     give up after this long (60)
     -q MS          quiet time after load that counts as done (500)
     --stall SECONDS  the watchdog reports a page thread stuck this long (5)
+    --script-limit MS  the slow script limit (10000)
     --no-script    scripting off
     -e JS          evaluate JS once the page is quiet; print the result
     --preload FILE run this script in every document (frames too) before
@@ -82,6 +83,7 @@ uses
   cthreads,
   SysUtils,
   Web.Bindings.Context,
+  Web.Script.Watchdog,
   WebBrowse.HostNetwork,
   WebBrowse.Preload,
   WebBrowse.Session;
@@ -150,6 +152,8 @@ begin
       Options.QuietMilliseconds := StrToFloatDef(NextArgument, 500)
     else if Argument = '--stall' then
       Options.StallSeconds := StrToIntDef(NextArgument, 5)
+    else if Argument = '--script-limit' then
+      ScriptRunLimitMilliseconds := StrToQWordDef(NextArgument, DefaultScriptRunLimitMilliseconds)
     else if Argument = '--no-script' then
       Options.Scripting := False
     else if Argument = '-e' then

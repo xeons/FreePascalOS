@@ -30,6 +30,13 @@
   slots counted from the caller's environment at the call - no lookup
   by name when the eval's code runs - and to with objects and the
   function's eval var object where those are in the way.
+
+  A lazily compiled function keeps such a chain too. A chain is a cell
+  per scope, linked outward (Outer), and a scope's cell is made once
+  (TJsScope.Snapshot): the functions of one scope share it, and so do
+  the functions compiled later inside a function rebuilt from it - a
+  bundle's top level scope of thousands of names is described once, not
+  once per lazy function.
 }
 unit Js.EvalScopes;
 
@@ -39,6 +46,8 @@ interface
 
 uses
   Js.Values,
+  Js.Heap,
+  Js.Lexer,
   Js.Ast;
 
 type
@@ -62,12 +71,37 @@ type
     EvalVarsVariable: Integer;
   end;
 
-  TJsEvalChain = class(TJsCell)
+  TJsEvalChain = class;
+
+  { A level's variables by name, restored into a rebuilt scope as they
+    are looked for. }
+  TJsLevelNames = class(TJsScopeBacking)
+  private
+    FChain: TJsEvalChain;
+    { Open addressing: variable index + 1, 0 empty. }
+    FSlots: array of Integer;
+    function IndexOf(const Name: UnicodeString): Integer;
   public
-    { Innermost first. }
-    Levels: array of TJsEvalLevel;
+    constructor Create(Chain: TJsEvalChain);
+    function Restore(Scope: TJsScope; const Name: UnicodeString): TJsVariable; override;
+    { Restores the variable at Index of the level. }
+    function RestoreIndex(Scope: TJsScope; Index: Integer): TJsVariable;
+  end;
+
+  TJsEvalChain = class(TJsCell)
+  private
+    FNames: TJsLevelNames;
+  public
+    { The scope this cell describes, and the chain of the one around it
+      (nil: this is the outermost). }
+    Level: TJsEvalLevel;
+    Outer: TJsEvalChain;
+    { A direct eval's chain: whether the eval's code is strict. }
     IsStrict: Boolean;
+    procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
+    function Names: TJsLevelNames;
+    destructor Destroy; override;
   end;
 
   { A function compiled when first called: where its parameters start
@@ -87,8 +121,12 @@ type
     procedure Trace(Tracer: TJsTracer); override;
   end;
 
-{ The chain of scopes from Scope out (the call of a direct eval). }
-function BuildEvalChain(Scope: TJsScope; Strict: Boolean): TJsEvalChain;
+{ The chain of scopes from Scope out, shared (a lazy function's): the
+  cells made are registered in Heap. }
+function SharedEvalChain(Heap: TJsHeap; Scope: TJsScope): TJsEvalChain;
+{ The chain of a direct eval's call in Scope: a cell of its own for the
+  innermost scope (with Strict), shared ones around it. }
+function BuildEvalChain(Heap: TJsHeap; Scope: TJsScope; Strict: Boolean): TJsEvalChain;
 { Scopes like the chain's (owned by Arena); the innermost is returned. }
 function BuildScopes(Chain: TJsEvalChain; Arena: TJsAstArena): TJsScope;
 
@@ -99,82 +137,198 @@ begin
   Tracer.MarkCell(Chain);
 end;
 
+procedure TJsEvalChain.Trace(Tracer: TJsTracer);
+begin
+  Tracer.MarkCell(Outer);
+end;
+
 function TJsEvalChain.MemorySize: SizeInt;
+begin
+  Result := InstanceSize + Length(Level.Variables) * (SizeOf(TJsEvalVariable) + 16);
+end;
+
+function TJsEvalChain.Names: TJsLevelNames;
+begin
+  if FNames = nil then
+    FNames := TJsLevelNames.Create(Self);
+  Result := FNames;
+end;
+
+destructor TJsEvalChain.Destroy;
+begin
+  FNames.Free;
+  inherited Destroy;
+end;
+
+function NameHash(const Name: UnicodeString): Cardinal; inline;
+begin
+  Result := Js.Lexer.NameHash(PWideChar(Name), Length(Name));
+end;
+
+constructor TJsLevelNames.Create(Chain: TJsEvalChain);
+var
+  Size, Index: Integer;
+  Mask, Slot: Cardinal;
+  Duplicate: Boolean;
+begin
+  inherited Create;
+  FChain := Chain;
+  Size := 16;
+  while Size < Length(Chain.Level.Variables) * 2 do
+    Size := Size * 2;
+  SetLength(FSlots, Size);
+  Mask := Cardinal(Size - 1);
+  for Index := 0 to High(Chain.Level.Variables) do
+  begin
+    Slot := NameHash(Chain.Level.Variables[Index].Name) and Mask;
+    Duplicate := False;
+    while FSlots[Slot] <> 0 do
+    begin
+      if Chain.Level.Variables[FSlots[Slot] - 1].Name = Chain.Level.Variables[Index].Name then
+      begin
+        Duplicate := True;
+        Break;
+      end;
+      Slot := (Slot + 1) and Mask;
+    end;
+    { The first declaration of a name is the one found. }
+    if not Duplicate then
+      FSlots[Slot] := Index + 1;
+  end;
+end;
+
+function TJsLevelNames.IndexOf(const Name: UnicodeString): Integer;
+var
+  Mask, Slot: Cardinal;
+begin
+  Mask := Cardinal(Length(FSlots) - 1);
+  Slot := NameHash(Name) and Mask;
+  while FSlots[Slot] <> 0 do
+  begin
+    if FChain.Level.Variables[FSlots[Slot] - 1].Name = Name then
+      Exit(FSlots[Slot] - 1);
+    Slot := (Slot + 1) and Mask;
+  end;
+  Result := -1;
+end;
+
+function TJsLevelNames.RestoreIndex(Scope: TJsScope; Index: Integer): TJsVariable;
+var
+  Entry: ^TJsEvalVariable;
+  Info: TJsFunctionInfo;
+begin
+  Entry := @FChain.Level.Variables[Index];
+  Result := Scope.DeclareRestored(Entry^.Name, Entry^.Kind);
+  Result.Index := Entry^.Index;
+  Result.IsGlobal := Entry^.IsGlobal;
+  Result.Captured := Entry^.Captured;
+  Info := Scope.Func;
+  if (Info = nil) or (Info.Scope <> Scope) then
+    Exit;
+  { What the scope analysis keeps of a function. }
+  if Result.Name = '%this' then
+    Info.ThisVariable := Result
+  else if Result.Name = '%newtarget' then
+    Info.NewTargetVariable := Result
+  else if Result.Name = '%home' then
+    Info.HomeVariable := Result
+  else if Result.Name = '%function' then
+    Info.FunctionVariable := Result
+  else if (Result.Name = 'arguments') and (Result.Kind = dkImplicit) then
+    Info.ArgumentsVariable := Result;
+end;
+
+function TJsLevelNames.Restore(Scope: TJsScope; const Name: UnicodeString): TJsVariable;
 var
   Index: Integer;
 begin
-  Result := InstanceSize;
-  for Index := 0 to High(Levels) do
-    Inc(Result, SizeOf(TJsEvalLevel) + Length(Levels[Index].Variables) * (SizeOf(TJsEvalVariable) + 16));
+  Index := IndexOf(Name);
+  if Index < 0 then
+    Exit(nil);
+  Result := RestoreIndex(Scope, Index);
 end;
 
-function BuildEvalChain(Scope: TJsScope; Strict: Boolean): TJsEvalChain;
+procedure DescribeScope(Scope: TJsScope; out Level: TJsEvalLevel);
 var
-  Walk: TJsScope;
-  Count, Index: Integer;
-  Level: ^TJsEvalLevel;
+  Index: Integer;
   Variable: TJsVariable;
 begin
+  Level.Kind := Scope.Kind;
+  Level.FunctionKind := fkNormal;
+  Level.IsStrict := False;
+  if Scope.Func <> nil then
+  begin
+    Level.FunctionKind := Scope.Func.Kind;
+    Level.IsStrict := Scope.Func.IsStrict;
+  end;
+  Level.EnvironmentSize := Scope.EnvironmentSize;
+  Level.EnvironmentProvided := Scope.EnvironmentProvided;
+  Level.WithVariable := -1;
+  Level.EvalVarsVariable := -1;
+  SetLength(Level.Variables, Scope.VariableCount);
+  for Index := 0 to Scope.VariableCount - 1 do
+  begin
+    Variable := Scope.Variables[Index];
+    Level.Variables[Index].Name := Variable.Name;
+    Level.Variables[Index].Kind := Variable.Kind;
+    Level.Variables[Index].Index := Variable.Index;
+    Level.Variables[Index].IsGlobal := Variable.IsGlobal;
+    Level.Variables[Index].Captured := Variable.Captured;
+    if Variable = Scope.WithVariable then
+      Level.WithVariable := Index;
+    if (Scope.Func <> nil) and (Variable = Scope.Func.EvalVarsVariable) then
+      Level.EvalVarsVariable := Index;
+  end;
+end;
+
+function NewChainCell(Heap: TJsHeap; Scope: TJsScope; Outer: TJsEvalChain): TJsEvalChain;
+begin
   Result := TJsEvalChain.Create;
+  DescribeScope(Scope, Result.Level);
+  Result.Outer := Outer;
+  Heap.Register(Result, ckOther);
+  Heap.Account(Result.MemorySize - Result.InstanceSize);
+end;
+
+function SharedEvalChain(Heap: TJsHeap; Scope: TJsScope): TJsEvalChain;
+begin
+  if Scope = nil then
+    Exit(nil);
+  if Scope.Snapshot <> nil then
+    Exit(TJsEvalChain(Scope.Snapshot));
+  Result := NewChainCell(Heap, Scope, SharedEvalChain(Heap, Scope.Parent));
+  Scope.Snapshot := Result;
+end;
+
+function BuildEvalChain(Heap: TJsHeap; Scope: TJsScope; Strict: Boolean): TJsEvalChain;
+begin
+  Result := NewChainCell(Heap, Scope, SharedEvalChain(Heap, Scope.Parent));
   Result.IsStrict := Strict;
-  Count := 0;
-  Walk := Scope;
-  while Walk <> nil do
-  begin
-    Inc(Count);
-    Walk := Walk.Parent;
-  end;
-  SetLength(Result.Levels, Count);
-  Walk := Scope;
-  Count := 0;
-  while Walk <> nil do
-  begin
-    Level := @Result.Levels[Count];
-    Level^.Kind := Walk.Kind;
-    Level^.FunctionKind := fkNormal;
-    Level^.IsStrict := False;
-    if Walk.Func <> nil then
-    begin
-      Level^.FunctionKind := Walk.Func.Kind;
-      Level^.IsStrict := Walk.Func.IsStrict;
-    end;
-    Level^.EnvironmentSize := Walk.EnvironmentSize;
-    Level^.EnvironmentProvided := Walk.EnvironmentProvided;
-    Level^.WithVariable := -1;
-    Level^.EvalVarsVariable := -1;
-    SetLength(Level^.Variables, Walk.VariableCount);
-    for Index := 0 to Walk.VariableCount - 1 do
-    begin
-      Variable := Walk.Variables[Index];
-      Level^.Variables[Index].Name := Variable.Name;
-      Level^.Variables[Index].Kind := Variable.Kind;
-      Level^.Variables[Index].Index := Variable.Index;
-      Level^.Variables[Index].IsGlobal := Variable.IsGlobal;
-      Level^.Variables[Index].Captured := Variable.Captured;
-      if Variable = Walk.WithVariable then
-        Level^.WithVariable := Index;
-      if (Walk.Func <> nil) and (Variable = Walk.Func.EvalVarsVariable) then
-        Level^.EvalVarsVariable := Index;
-    end;
-    Inc(Count);
-    Walk := Walk.Parent;
-  end;
 end;
 
 function BuildScopes(Chain: TJsEvalChain; Arena: TJsAstArena): TJsScope;
 var
-  Index, VariableIndex: Integer;
+  Index: Integer;
+  Cells: array of TJsEvalChain;
+  Walk: TJsEvalChain;
   Level: ^TJsEvalLevel;
   Scope, Outer: TJsScope;
   Info: TJsFunctionInfo;
-  Variable: TJsVariable;
 begin
+  Cells := nil;
+  Walk := Chain;
+  while Walk <> nil do
+  begin
+    SetLength(Cells, Length(Cells) + 1);
+    Cells[High(Cells)] := Walk;
+    Walk := Walk.Outer;
+  end;
   Outer := nil;
   Info := nil;
-  Index := High(Chain.Levels);
+  Index := High(Cells);
   while Index >= 0 do
   begin
-    Level := @Chain.Levels[Index];
+    Level := @Cells[Index].Level;
     Scope := TJsScope.Create;
     Arena.Own(Scope);
     Scope.Kind := Level^.Kind;
@@ -193,28 +347,14 @@ begin
     else
       Scope.FunctionScope := Outer.FunctionScope;
     Scope.Func := Info;
-    for VariableIndex := 0 to High(Level^.Variables) do
-    begin
-      Variable := Scope.Declare(Level^.Variables[VariableIndex].Name, Level^.Variables[VariableIndex].Kind, 0);
-      Variable.Index := Level^.Variables[VariableIndex].Index;
-      Variable.IsGlobal := Level^.Variables[VariableIndex].IsGlobal;
-      Variable.Captured := Level^.Variables[VariableIndex].Captured;
-      if VariableIndex = Level^.WithVariable then
-        Scope.WithVariable := Variable;
-      if VariableIndex = Level^.EvalVarsVariable then
-        Info.EvalVarsVariable := Variable;
-      { What the scope analysis looks for by name. }
-      if Variable.Name = '%this' then
-        Info.ThisVariable := Variable
-      else if Variable.Name = '%newtarget' then
-        Info.NewTargetVariable := Variable
-      else if Variable.Name = '%home' then
-        Info.HomeVariable := Variable
-      else if Variable.Name = '%function' then
-        Info.FunctionVariable := Variable
-      else if (Variable.Name = 'arguments') and (Variable.Kind = dkImplicit) then
-        Info.ArgumentsVariable := Variable;
-    end;
+    { The variables come when looked for; these are looked at directly. }
+    if Level^.WithVariable >= 0 then
+      Scope.WithVariable := Cells[Index].Names.RestoreIndex(Scope, Level^.WithVariable);
+    if Level^.EvalVarsVariable >= 0 then
+      Info.EvalVarsVariable := Cells[Index].Names.RestoreIndex(Scope, Level^.EvalVarsVariable);
+    Scope.Backing := Cells[Index].Names;
+    { The functions compiled inside share the cell this came from. }
+    Scope.Snapshot := Cells[Index];
     Outer := Scope;
     Dec(Index);
   end;

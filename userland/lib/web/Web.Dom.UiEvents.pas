@@ -76,6 +76,13 @@ type
     IsPrimary: Boolean;
   end;
 
+  { UI Events: the wheel's motion along each axis, in DeltaMode units. }
+  TWheelEvent = class(TMouseEvent)
+  public
+    DeltaX, DeltaY, DeltaZ: Double;
+    DeltaMode: LongWord;
+  end;
+
   TKeyboardEvent = class(TUiEvent)
   public
     Key: string;

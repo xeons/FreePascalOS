@@ -87,6 +87,10 @@ const
   { Arguments objects of sloppy functions, error objects: their class
     only informs Object.prototype.toString. }
   ObjectHostData = 2048;
+  { [[IsHTMLDDA]] (Annex B.3.6, the web's document.all): typeof gives
+    "undefined", it converts to false, and it is loosely equal to null
+    and undefined. }
+  ObjectHtmlDda = 4096;
 
   { Descriptor fields present. }
   HasValue = 1;

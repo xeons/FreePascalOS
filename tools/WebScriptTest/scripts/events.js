@@ -166,3 +166,11 @@ var legacyUi = document.createEvent("UIEvents");
 legacyUi.initUIEvent("resize", false, true, null, 5);
 check("initUIEvent", legacyUi.type === "resize" && !legacyUi.bubbles && legacyUi.cancelable && legacyUi.view === null &&
   legacyUi.detail === 5);
+var wheel = new WheelEvent("wheel", { deltaX: 1.5, deltaY: -120, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: 3,
+  ctrlKey: true, bubbles: true, cancelable: true });
+check("WheelEvent: its deltas and the mouse event's members", wheel instanceof MouseEvent &&
+  wheel.deltaX === 1.5 && wheel.deltaY === -120 && wheel.deltaZ === 0 && wheel.deltaMode === 1 &&
+  wheel.clientX === 3 && wheel.ctrlKey && wheel.bubbles && wheel.cancelable && wheel.type === "wheel" &&
+  Object.prototype.toString.call(wheel) === "[object WheelEvent]");
+check("WheelEvent defaults", new WheelEvent("wheel").deltaY === 0 && new WheelEvent("wheel").deltaMode === 0 &&
+  WheelEvent.DOM_DELTA_PAGE === 2);

@@ -30,7 +30,10 @@
   HangTimeoutMilliseconds (and when it answers again); it hands each
   view the messages the IPC thread (WebView.ContentIo) queued for it,
   and the end of its process (crashed or not). It never waits for a
-  content process.
+  content process: one asked to end that has not ended
+  ShutdownGraceMilliseconds later - a script or a storm of tasks keeps
+  it busy, or it is swapping - is ended by force, so closing a tab
+  frees its memory and processor even then.
 }
 unit WebView.ContentProcesses;
 
@@ -109,6 +112,8 @@ const
   { Used when the machine's RAM cannot be read; otherwise a quarter of
     it (WebView.ContentMemory). }
   DefaultMemoryLimitMegabytes = 1024;
+  { How long a process asked to end may take before it is ended. }
+  ShutdownGraceMilliseconds = 3000;
   { Each process takes two of the IPC thread's 64 wait handles. }
   MaximumContentProcesses = 30;
 
@@ -374,6 +379,7 @@ begin
   if Process.ClientCount = 0 then
   begin
     Process.ShutdownSent := True;
+    Process.ShutdownSentAt := GetTickCount64;
     Send(Process, IpcShutdown, 0, 0, nil);
   end;
 end;
@@ -417,6 +423,13 @@ begin
     Process.Client(Index).ProcessResponsive(not NowHung);
 end;
 
+{ Asked to end (no views left) and still running after the grace time. }
+function ShutdownOverdue(Process: TContentProcess): Boolean;
+begin
+  Result := Process.ShutdownSent and not Process.ShutdownForced and (Process.ClientCount = 0) and
+    (GetTickCount64 - Process.ShutdownSentAt > ShutdownGraceMilliseconds);
+end;
+
 procedure TContentProcessManager.PingTimerFired(Sender: TTimer);
 var
   Index: Integer;
@@ -427,6 +440,12 @@ begin
     Process := TContentProcess(FProcesses[Index]);
     if Process.Ended then
       Continue;
+    if ShutdownOverdue(Process) then
+    begin
+      Process.ShutdownForced := True;
+      TerminateProgram(Process.ProcessId, 143);
+      Continue;
+    end;
     Inc(Process.PingSequence);
     Send(Process, IpcPing, 0, 0, EncodeNumber(LongInt(Process.PingSequence)));
     CheckResponsive(Process);

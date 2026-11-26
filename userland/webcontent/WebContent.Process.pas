@@ -76,7 +76,12 @@ uses
   WebContent.IndexedDb,
   Web.Workers.ServiceWorkers,
   WebContent.Views,
-  WebContent.Sandbox;
+  WebContent.Sandbox,
+  Web.Bindings.Context;
+
+const
+  { Eighths of the process's memory limit its pages' script heaps may hold. }
+  ScriptHeapShareEighths = 5;
 
 function OptionValue(const Argument, Name: string; out Value: string): Boolean;
 begin
@@ -357,6 +362,10 @@ begin
     ScriptRunLimitMilliseconds := High(QWord) div 2
   else
     ScriptRunLimitMilliseconds := Options.ScriptRunLimitMilliseconds;
+  { The script heap gets most of the memory the process may commit; the
+    rest is for documents, layout, images and the program itself. }
+  if Options.MemoryLimitMegabytes > 0 then
+    ContextHeapLimit := Int64(Options.MemoryLimitMegabytes) * 1024 * 1024 * ScriptHeapShareEighths div 8;
   Hello := EnterSandbox(Options.Sandbox, Options.MemoryLimitMegabytes);
   WriteLn(StdErr, 'webcontent: ', CurrentProcessId, ' for ', Options.Site, ': ', Hello);
   Runner := TContentProcessRunner.Create(Options);

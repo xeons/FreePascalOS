@@ -195,6 +195,7 @@ type
     procedure PaintPng;
     procedure RunEval;
     procedure Evaluate(const Source: string);
+    procedure PrintScriptHeap;
     procedure SweepHover;
     procedure SavePng(const FileName: string);
     function StepsBusy: Boolean;
@@ -511,6 +512,27 @@ end;
 procedure TBrowseSession.RunEval;
 begin
   Evaluate(FOptions.EvalSource);
+end;
+
+{ The page's script heap: what its cells hold now and at the most. }
+procedure TBrowseSession.PrintScriptHeap;
+var
+  Context: TScriptContext;
+begin
+  if (FDocument = nil) or (FExecutor = nil) then
+    Exit;
+  Context := FExecutor.ContextOf(FDocument);
+  if Context = nil then
+    Exit;
+  WriteLn(Format('script heap: %d kB now, %d kB peak', [Context.Engine.HeapBytes div 1024,
+    Context.Engine.PeakHeapBytes div 1024]));
+  if FOptions.Verbose then
+  begin
+    Context.Engine.Runtime.Heap.Collect;
+    WriteLn(Format('script heap after a collection: %d kB; the biggest kinds:',
+      [Context.Engine.HeapBytes div 1024]));
+    Write(Context.Engine.Runtime.Heap.Census(25));
+  end;
 end;
 
 procedure TBrowseSession.Evaluate(const Source: string);
@@ -965,7 +987,10 @@ begin
           PhaseLongestMilliseconds(Phase)]));
   end;
   if FOptions.ShowMemory then
+  begin
     WriteLn('memory:', PeakMemoryText);
+    PrintScriptHeap;
+  end;
   if FOptions.ShowNetwork then
     FLog.Print(Output);
   if FOptions.ShowConsole then

@@ -23,9 +23,7 @@
   - those needing what this host cannot give: $262.agent (concurrent
     agents sharing memory: the engine has none) and CanBlockIsTrue (the
     main thread here cannot block in Atomics.wait, so the CanBlockIsFalse
-    tests are the ones that apply), and IsHTMLDDA (the engine has no
-    object with [[IsHTMLDDA]], so $262.IsHTMLDDA is absent and, as
-    INTERPRETING.md says, the tests of that feature do not apply).
+    tests are the ones that apply).
 }
 unit Test262.Skips;
 
@@ -100,8 +98,6 @@ begin
   for Index := 0 to High(Metadata.Features) do
     if FFeatures.Find(Metadata.Features[Index], Found) then
       Exit('feature ' + Metadata.Features[Index]);
-  if HasFeature(Metadata, 'IsHTMLDDA') then
-    Exit('IsHTMLDDA');
   if tfCanBlockIsTrue in Metadata.Flags then
     Exit('CanBlockIsTrue');
   if Pos('$262.agent', Source) > 0 then

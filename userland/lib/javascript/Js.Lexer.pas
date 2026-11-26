@@ -103,10 +103,16 @@ type
     FLine: Integer;
     FLineStart: Integer;
     FNewline: Boolean;
+    { The identifier names met so far, each kept once (open addressing):
+      a name written a thousand times is one string. }
+    FNames: array of UnicodeString;
+    FNameCount: Integer;
+    procedure TakeName(var Text: UnicodeString; Start, Count: Integer);
     procedure Fail(const Text: string);
     function Peek(Offset: Integer = 0): WideChar; inline;
     procedure SkipSpace;
     procedure ScanIdentifier(var Token: TJsToken);
+    procedure ScanUnusualIdentifier(var Token: TJsToken);
     function ScanSimpleInteger(var Token: TJsToken): Boolean;
     procedure ScanNumber(var Token: TJsToken);
     procedure ScanString(var Token: TJsToken; Quote: WideChar);
@@ -133,6 +139,9 @@ function IsLineTerminator(Character: WideChar): Boolean; inline;
 function IsJsWhiteSpace(Character: WideChar): Boolean;
 function TokenKindName(Kind: TJsTokenKind): string;
 function KeywordToken(const Name: UnicodeString; out Kind: TJsTokenKind): Boolean;
+{ FNV-1a over UTF-16 units (the name tables of the lexer, scopes and
+  scope chains); never overflows a range check. }
+function NameHash(Text: PWideChar; Count: Integer): LongWord;
 
 implementation
 
@@ -153,6 +162,20 @@ const
     '>>', '>>>', '&', '|', '^', '!', '~', '&&', '||', '??', '?', '?.', ':',
     '=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=',
     '|=', '^=', '&&=', '||=', '??=', '=>', '#', '@');
+
+{$push}{$R-}{$Q-}
+function NameHash(Text: PWideChar; Count: Integer): LongWord;
+const
+  Offset = LongWord(2166136261);
+  Prime = LongWord(16777619);
+var
+  Index: Integer;
+begin
+  Result := Offset;
+  for Index := 0 to Count - 1 do
+    Result := (Result xor LongWord(Ord(Text[Index]))) * Prime;
+end;
+{$pop}
 
 constructor EJsSyntaxError.CreateAt(const Text: string; ALine, AColumn: Integer);
 begin
@@ -184,8 +207,10 @@ var
 begin
   if Length(Name) <> Length(Keyword) then
     Exit(False);
+  { Compared as numbers: a Char to WideChar cast is a conversion through
+    the widestring manager at run time. }
   for Index := 2 to Length(Name) do
-    if Name[Index] <> WideChar(Keyword[Index]) then
+    if Ord(Name[Index]) <> Ord(Keyword[Index]) then
       Exit(False);
   Result := True;
 end;
@@ -201,7 +226,7 @@ begin
     Exit;
   First := Name[1];
   for Candidate := tkBreak to tkWith do
-    if (WideChar(KeywordTexts[Candidate][1]) = First) and SameKeyword(Name, KeywordTexts[Candidate]) then
+    if (Ord(KeywordTexts[Candidate][1]) = Ord(First)) and SameKeyword(Name, KeywordTexts[Candidate]) then
     begin
       Kind := Candidate;
       Exit(True);
@@ -567,16 +592,56 @@ begin
   end;
 end;
 
+procedure TJsLexer.TakeName(var Text: UnicodeString; Start, Count: Integer);
+var
+  Hash, Mask: Cardinal;
+  Index: Integer;
+  Old: array of UnicodeString;
+begin
+  if FNameCount * 2 >= Length(FNames) then
+  begin
+    Old := FNames;
+    FNames := nil;
+    { A power of two (the hash is masked). }
+    if Length(Old) = 0 then
+      SetLength(FNames, 1024)
+    else
+      SetLength(FNames, Length(Old) * 2);
+    FNameCount := 0;
+    Mask := Cardinal(Length(FNames) - 1);
+    for Index := 0 to High(Old) do
+      if Old[Index] <> '' then
+      begin
+        Hash := NameHash(PWideChar(Old[Index]), Length(Old[Index])) and Mask;
+        while FNames[Hash] <> '' do
+          Hash := (Hash + 1) and Mask;
+        FNames[Hash] := Old[Index];
+        Inc(FNameCount);
+      end;
+  end;
+  Mask := Cardinal(Length(FNames) - 1);
+  Hash := NameHash(@FSource[Start], Count) and Mask;
+  while FNames[Hash] <> '' do
+  begin
+    if (Length(FNames[Hash]) = Count) and (CompareWord(FNames[Hash][1], FSource[Start], Count) = 0) then
+    begin
+      Text := FNames[Hash];
+      Exit;
+    end;
+    Hash := (Hash + 1) and Mask;
+  end;
+  FNames[Hash] := Copy(FSource, Start, Count);
+  Inc(FNameCount);
+  Text := FNames[Hash];
+end;
+
+{ The common case, ASCII letters, digits, $ and _ only, taken whole
+  (no managed locals: this runs for every identifier and keyword). }
 procedure TJsLexer.ScanIdentifier(var Token: TJsToken);
 var
-  Name: UnicodeString;
   Character: WideChar;
-  Dummy: TJsToken;
-  Piece: UnicodeString;
-  CodePoint: LongWord;
   Start: Integer;
 begin
-  { The common case: ASCII letters, digits, $ and _ only, taken whole. }
   Start := FPosition;
   while FPosition <= FLength do
   begin
@@ -590,12 +655,24 @@ begin
   end;
   if (FPosition > FLength) or ((FSource[FPosition] <> '\') and (Ord(FSource[FPosition]) < 128)) then
   begin
-    Token.Text := Copy(FSource, Start, FPosition - Start);
+    TakeName(Token.Text, Start, FPosition - Start);
     Token.Kind := tkIdentifier;
     KeywordToken(Token.Text, Token.Kind);
     Exit;
   end;
   FPosition := Start;
+  ScanUnusualIdentifier(Token);
+end;
+
+{ An identifier with escapes or characters beyond ASCII. }
+procedure TJsLexer.ScanUnusualIdentifier(var Token: TJsToken);
+var
+  Name: UnicodeString;
+  Character: WideChar;
+  Dummy: TJsToken;
+  Piece: UnicodeString;
+  CodePoint: LongWord;
+begin
   Name := '';
   while FPosition <= FLength do
   begin
