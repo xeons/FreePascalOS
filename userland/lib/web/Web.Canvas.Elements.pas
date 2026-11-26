@@ -76,7 +76,7 @@ type
     FProvider: TCanvasImageProvider;
     FRegisteredWith: TDocumentResources;
   public
-    { The offscreen canvas the element shows (weak; it clears this). }
+    { The offscreen canvas the element shows (referenced). }
     Offscreen: TOffscreenCanvas;
     constructor Create(AElement: TElement);
     destructor Destroy; override;
@@ -105,6 +105,15 @@ type
     constructor Create(AImage: TImage; AOriginClean: Boolean);
     destructor Destroy; override;
     procedure Close;
+  end;
+
+  { ImageBitmapRenderingContext: the canvas shows the bitmaps given to it. }
+  TBitmapRendererContext = class(TCanvasContextBase)
+  public
+    Alpha: Boolean;
+    { Bitmap's pixels become the surface's and Bitmap is detached; nil
+      shows transparent black of the surface's size. }
+    procedure TransferFrom(Bitmap: TCanvasImageBitmap);
   end;
 
 { The canvas's surface, nil when it has none yet. }
@@ -255,7 +264,7 @@ begin
   if Offscreen <> nil then
   begin
     Offscreen.Placeholder := nil;
-    Offscreen := nil;
+    ReleaseShared(Offscreen);
   end;
   ForgetElementImageProvider(FProvider);
   FProvider.Owner := nil;
@@ -294,6 +303,33 @@ procedure TOffscreenCanvas.Changed;
 begin
   if Placeholder <> nil then
     Placeholder.Changed;
+end;
+
+{ TBitmapRendererContext }
+
+procedure TBitmapRendererContext.TransferFrom(Bitmap: TCanvasImageBitmap);
+var
+  Image: TImage;
+  Index: PtrInt;
+begin
+  if Surface = nil then
+    Exit;
+  if (Bitmap = nil) or (Bitmap.Image = nil) then
+  begin
+    if (Surface.Width > 0) and (Surface.Height > 0) then
+      Surface.AdoptBitmap(TImage.Create(Surface.Width, Surface.Height))
+    else
+      Surface.AdoptBitmap(nil);
+    Exit;
+  end;
+  Image := Bitmap.Image;
+  Bitmap.Image := nil;
+  if not Alpha then
+    for Index := 0 to PtrInt(Image.Width) * Image.Height - 1 do
+      Image.Pixels[Index] := BlendColors(ColorBlack, Image.Pixels[Index]);
+  if not Bitmap.OriginClean then
+    Surface.OriginClean := False;
+  Surface.AdoptBitmap(Image);
 end;
 
 { TCanvasImageBitmap }

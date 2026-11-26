@@ -571,8 +571,9 @@ end;
 function TCanvasContext2D.IsPointInStroke(Path: PCanvasPath; X, Y: Double): Boolean;
 var
   Shape: TCoverageShape;
-  Lines: TPolylines;
-  Index, Count: LongInt;
+  Index, Winding: LongInt;
+  Edge: TPreciseEdge;
+  Side: Double;
 begin
   if not AllFinite([X, Y]) then
     Exit(False);
@@ -580,19 +581,22 @@ begin
     Shape := StrokeShapeOf(FPath.Path, IdentityTransform)
   else
     Shape := StrokeShapeOf(Path^.Path, FState.Transform);
-  { The stroke's edges as one polyline each, for the winding test. }
-  Lines := nil;
-  Count := Shape.Count;
-  SetLength(Lines, Count);
-  for Index := 0 to Count - 1 do
+  { The non-zero winding number of the stroke's outline (its edges are
+    the pieces' closed outlines). }
+  Winding := 0;
+  for Index := 0 to Shape.Count - 1 do
   begin
-    SetLength(Lines[Index].Points, 2);
-    Lines[Index].Points[0] := PrecisePoint(Shape.Edges[Index].FromX, Shape.Edges[Index].FromY);
-    Lines[Index].Points[1] := PrecisePoint(Shape.Edges[Index].ToX, Shape.Edges[Index].ToY);
-    Lines[Index].Count := 2;
-    Lines[Index].Closed := False;
+    Edge := Shape.Edges[Index];
+    Side := (Edge.ToX - Edge.FromX) * (Y - Edge.FromY) - (X - Edge.FromX) * (Edge.ToY - Edge.FromY);
+    if Edge.FromY <= Y then
+    begin
+      if (Edge.ToY > Y) and (Side > 0) then
+        Inc(Winding);
+    end
+    else if (Edge.ToY <= Y) and (Side < 0) then
+      Dec(Winding);
   end;
-  Result := WindingOf(Lines, X, Y, False);
+  Result := Winding <> 0;
 end;
 
 { Text }

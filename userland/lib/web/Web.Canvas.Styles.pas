@@ -67,6 +67,8 @@ type
     Image: TImage;
     Repetition: TCanvasPatternRepetition;
     Transform: TAffineTransform;
+    { Made from an image script may not read: using it taints. }
+    OriginClean: Boolean;
     { Takes Image. }
     constructor Create(AImage: TImage; ARepetition: TCanvasPatternRepetition);
     destructor Destroy; override;
@@ -134,6 +136,7 @@ begin
   Image := AImage;
   Repetition := ARepetition;
   Transform := IdentityTransform;
+  OriginClean := True;
 end;
 
 destructor TCanvasPattern.Destroy;

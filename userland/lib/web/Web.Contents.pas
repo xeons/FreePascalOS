@@ -175,7 +175,21 @@ uses
   Web.Bindings.Install,
   Web.Script.Timers,
   Web.Script.Prelude,
-  Web.Script.Context;
+  Web.Script.Context,
+  Web.Canvas.Shared,
+  Web.Canvas.Paths,
+  Web.Canvas.Styles,
+  Web.Canvas.Fonts,
+  Web.Canvas.Text,
+  Web.Canvas.Filters,
+  Web.Canvas.Rendering,
+  Web.Canvas.State,
+  Web.Canvas.Surfaces,
+  Web.Canvas.Context2D,
+  Web.Canvas.Elements,
+  Web.Canvas.Encoding,
+  Web.Canvas.ScriptObjects,
+  Web.Script.NativeCanvas;
 
 implementation
 

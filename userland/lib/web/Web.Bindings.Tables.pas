@@ -46,7 +46,8 @@ uses
   Web.Bindings.MutationObservers,
   Web.Bindings.Style,
   Web.Bindings.Ranges,
-  Web.Bindings.StyleSheets;
+  Web.Bindings.StyleSheets,
+  Web.Bindings.Canvas;
 
 {$I Web.Bindings.Tables.inc}
 
