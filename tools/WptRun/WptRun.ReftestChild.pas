@@ -18,7 +18,8 @@
 
 {
   One reftest in its own process (wptrun --reftest PATH --wpt ROOT
-  --base URL --seconds S --shots DIR --trust-ca FILE [-f FONTDIR]): the
+  --base URL --seconds S --shots DIR --trust-ca FILE [-f FONTDIR]
+  [--user-fonts DIR]): the
   test and its references, each rendered by a webbrowse session of its
   own (WebBrowse.Session: loaded, quiet, reftest-wait honoured) in the
   test's viewport (800x600 unless <meta name=viewport-size>) and saved
@@ -82,7 +83,7 @@ type
     FShotCount: Integer;
     function Screenshot(const Path: string): TScreenshot;
   public
-    TestPath, Root, BaseUrl, ShotDirectory, FontDirectory: string;
+    TestPath, Root, BaseUrl, ShotDirectory, FontDirectory, UserFontDirectory: string;
     PageSeconds: Double;
     Width, Height: Integer;
     constructor Create;
@@ -144,6 +145,7 @@ begin
   Options.TimeoutSeconds := PageSeconds;
   Options.StallSeconds := 60;
   Options.FontDirectory := FontDirectory;
+  Options.UserFontDirectory := UserFontDirectory;
   Status := RunBrowse(Options);
   if Status = 2 then
   begin
@@ -330,6 +332,8 @@ begin
           TrustCertificateFile(ParamStr(Index + 1))
         else if Argument = '-f' then
           Run.FontDirectory := ParamStr(Index + 1)
+        else if Argument = '--user-fonts' then
+          Run.UserFontDirectory := ParamStr(Index + 1)
         else
         begin
           Inc(Index);

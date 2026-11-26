@@ -51,6 +51,8 @@ type
     QuietMilliseconds: Double;
     StallSeconds: Integer;
     FontDirectory: string;
+    { Families beside the system's (WebUserFontDirectory). }
+    UserFontDirectory: string;
     EvalSource: string;
     Verbose: Boolean;
     { Sample the page thread's stack every millisecond and print where
@@ -1106,6 +1108,11 @@ begin
   begin
     UseSystemFontConfiguration(Options.FontDirectory);
     WebFontDirectory := Options.FontDirectory;
+    ResetWebFontLibrary;
+  end;
+  if Options.UserFontDirectory <> WebUserFontDirectory then
+  begin
+    WebUserFontDirectory := Options.UserFontDirectory;
     ResetWebFontLibrary;
   end;
   StartProfiling(@MonotonicMicroseconds);

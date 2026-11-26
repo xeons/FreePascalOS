@@ -65,6 +65,7 @@
     --trust-ca FILE  also trust the PEM certificate authorities in FILE
                    (a local test server's CA)
     -f FONTDIR     font directory (userland/fonts)
+    --user-fonts DIR  families beside the system's (one subdirectory each)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move
     --profile      sample the page thread every millisecond; print the
@@ -96,7 +97,7 @@ var
 procedure Usage;
 begin
   WriteLn(StdErr, 'usage: webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y Y] [--full] [-l FILE] [--dom FILE] [-c] [-n]');
-  WriteLn(StdErr, '         [--live] [-p] [-m] [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--do STEP]... [-f FONTDIR] [-v] URL');
+  WriteLn(StdErr, '         [--live] [-p] [-m] [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--do STEP]... [-f FONTDIR] [--user-fonts DIR] [-v] URL');
   Halt(2);
 end;
 
@@ -182,6 +183,8 @@ begin
       Options.StepPatienceMilliseconds := StrToFloatDef(NextArgument, 10000)
     else if Argument = '-f' then
       Options.FontDirectory := NextArgument
+    else if Argument = '--user-fonts' then
+      Options.UserFontDirectory := NextArgument
     else if Argument = '--hover' then
       Options.HoverMoves := StrToIntDef(NextArgument, 0)
     else if Argument = '--profile' then

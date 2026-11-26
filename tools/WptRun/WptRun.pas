@@ -45,6 +45,9 @@
     -v             each test as it finishes
     --dry-run      print the tests the paths hold; run none
     -f FONTDIR     font directory (userland/fonts)
+    --shots DIR    where failing reftests leave their screenshots
+                   (build/wpt/reftest-shots; another for a second run
+                   at the same time)
 
   Exit status: 0 when nothing failed unexpectedly, 1 otherwise, 2 when
   the run could not start.
@@ -90,6 +93,8 @@ type
     Jobs: Integer;
     Depth: Integer;
     List, Update, Verbose, DryRun: Boolean;
+    { Screenshots of the reftests that failed, one directory per test. }
+    ShotDirectory: string;
     Multiplier: Double;
     FontDirectory: string;
     constructor Create;
@@ -98,9 +103,33 @@ type
     function Run: Integer;
   end;
 
-const
-  { Screenshots of the reftests that failed, one directory per test. }
-  ReftestShotDirectory = 'build/wpt/reftest-shots';
+
+{ The checkout's fonts/Ahem.ttf as a family of a directory of its own
+  (Directory/ahem), as wptrunner installs it for the tests (which name
+  "Ahem" without @font-face); the directory, '' when there is no Ahem. }
+function InstallTestFonts(const WptRoot, Directory: string): string;
+var
+  Source, Target: TFileStream;
+  Family: string;
+begin
+  Result := '';
+  if not FileExists(IncludeTrailingPathDelimiter(WptRoot) + 'fonts/Ahem.ttf') then
+    Exit;
+  Family := IncludeTrailingPathDelimiter(Directory) + 'ahem';
+  ForceDirectories(Family);
+  Source := TFileStream.Create(IncludeTrailingPathDelimiter(WptRoot) + 'fonts/Ahem.ttf', fmOpenRead or fmShareDenyNone);
+  try
+    Target := TFileStream.Create(Family + '/Ahem.ttf', fmCreate);
+    try
+      Target.CopyFrom(Source, 0);
+    finally
+      Target.Free;
+    end;
+  finally
+    Source.Free;
+  end;
+  Result := ExpandFileName(Directory);
+end;
 
 function NowSeconds: Double;
 var
@@ -142,6 +171,7 @@ begin
     Jobs := 1;
   Multiplier := 1;
   FontDirectory := 'userland/fonts';
+  ShotDirectory := 'build/wpt/reftest-shots';
 end;
 
 destructor TWptRunner.Destroy;
@@ -293,7 +323,8 @@ begin
     Settings.FontDirectory := FontDirectory;
     Settings.TimeoutMultiplier := Multiplier;
     Settings.WptRoot := ExcludeTrailingPathDelimiter(ExpandFileName(WptRoot));
-    Settings.ShotDirectory := ExpandFileName(ReftestShotDirectory);
+    Settings.ShotDirectory := ExpandFileName(ShotDirectory);
+    Settings.UserFontDirectory := InstallTestFonts(WptRoot, 'build/wpt/fonts');
     Started := NowSeconds;
     RunTests(FTests, Settings, @TestFinished);
   finally
@@ -322,7 +353,7 @@ end;
 procedure Usage;
 begin
   WriteLn(StdErr, 'usage: wptrun [-j N] [--wpt DIR] [--list] [--update] [--expectations DIR] [--depth N]');
-  WriteLn(StdErr, '         [--multiplier X] [-v] [--dry-run] [-f FONTDIR] PATH|@FILE...');
+  WriteLn(StdErr, '         [--multiplier X] [-v] [--dry-run] [-f FONTDIR] [--shots DIR] PATH|@FILE...');
   Halt(2);
 end;
 
@@ -376,6 +407,8 @@ begin
         Runner.Verbose := True
       else if Argument = '-f' then
         Runner.FontDirectory := NextArgument
+      else if Argument = '--shots' then
+        Runner.ShotDirectory := NextArgument
       else if (Argument <> '') and (Argument[1] = '-') then
         Usage
       else

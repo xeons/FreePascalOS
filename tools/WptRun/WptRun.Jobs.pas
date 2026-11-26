@@ -51,6 +51,8 @@ type
     { Where reftests leave the screenshots of failures (one directory
       per test). }
     ShotDirectory: string;
+    { Families installed for the tests (Ahem, as wptrunner installs it). }
+    UserFontDirectory: string;
   end;
 
   TResultEvent = procedure(constref Outcome: TTestResult; const Output: string) of object;
@@ -180,6 +182,11 @@ begin
   begin
     Running.Process.Parameters.Add('-f');
     Running.Process.Parameters.Add(Settings.FontDirectory);
+  end;
+  if Settings.UserFontDirectory <> '' then
+  begin
+    Running.Process.Parameters.Add('--user-fonts');
+    Running.Process.Parameters.Add(Settings.UserFontDirectory);
   end;
   Running.Process.Options := [poUsePipes, poStderrToOutPut];
   Running.Process.Execute;
