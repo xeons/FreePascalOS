@@ -41,6 +41,13 @@
     the load event of the document waits for both fetch and decode.
   - loading=lazy images wait until LoadLazyImage (layout: near the
     viewport) or the document's load event, and do not delay it.
+  - The element's image request (Web.Dom.ImageRequests) follows: its
+    URL and loading flag when a fetch starts, the natural size and
+    completely available when decoded, broken when it fails.
+  - An img outside the document (new Image(), one removed while it
+    loads) loads too and gets its load or error event; its state is
+    dropped once that is decided, so nothing keeps the element alive
+    after it (inserted later, it loads again, from the HTTP cache).
 }
 unit Web.Loading.Images;
 
@@ -55,6 +62,7 @@ uses
   Url.Records,
   Image.Model,
   Web.Dom,
+  Web.Dom.ImageRequests,
   Web.Loading.Contexts,
   Web.Loading.BufferedFetches,
   Web.Loading.Preloads,
@@ -95,6 +103,7 @@ type
     procedure FetchComplete(Fetch: TBufferedFetch; Success: Boolean);
     procedure DecodeDone(Data: TObject);
     procedure Fail(State: TImageState);
+    procedure DropIfDetached(State: TImageState);
     procedure EndDelay(State: TImageState);
     procedure FireElementEvent(Element: TElement; const Name: string);
     procedure ReapDecoders;
@@ -187,7 +196,7 @@ var
 
 destructor TImageEvent.Destroy;
 begin
-  Element.Release;
+  Element.EndPendingActivity;
   inherited Destroy;
 end;
 
@@ -209,7 +218,7 @@ begin
     Fetch.Cancel;
     Fetch.Free;
   end;
-  Element.Release;
+  Element.EndPendingActivity;
   inherited Destroy;
 end;
 
@@ -320,7 +329,7 @@ var
 begin
   Item := TImageEvent.Create;
   Item.Element := Element;
-  Element.Retain;
+  Element.BeginPendingActivity;
   Item.Name := Name;
   FContext.Loop.QueueTask(TDataTask.Create(@ImageEventFirer.Fire, Item), TaskSourceDomManipulation, FContext);
 end;
@@ -332,6 +341,18 @@ begin
     State.Delaying := False;
     FContext.UndelayLoad;
   end;
+end;
+
+{ The request has no image (a failed load, no source left). }
+procedure MarkBroken(Element: TElement);
+var
+  Request: TImageRequest;
+begin
+  Request := ImageRequestOf(Element);
+  Request.State := ImageRequestBroken;
+  Request.NaturalWidth := 0;
+  Request.NaturalHeight := 0;
+  Request.Loading := False;
 end;
 
 procedure TImageLoader.ImageChanged(Element: TElement);
@@ -347,7 +368,7 @@ var
   Key: string;
   Lazy: Boolean;
 begin
-  if not FContext.Settings.LoadImages or not Element.IsConnected then
+  if not FContext.Settings.LoadImages then
     Exit;
   State := StateOf(Element);
   Choice := SelectImageSource(Element, FContext.Sink.MediaEnvironment);
@@ -355,13 +376,17 @@ begin
   begin
     State := TImageState.Create;
     State.Element := Element;
-    Element.Retain;
+    Element.BeginPendingActivity;
     FStates.Add(State);
   end;
   if not Choice.Found or (Choice.Url = '') or not FContext.ResolveUrl(Choice.Url, Url) then
   begin
     if State.Key = '' then
+    begin
+      if (State.Fetch = nil) and not State.Decoding then
+        DropIfDetached(State);
       Exit;
+    end;
     Inc(FNextGeneration);
     State.Generation := FNextGeneration;
     State.Key := '';
@@ -372,8 +397,11 @@ begin
     end;
     EndDelay(State);
     FContext.Sink.ImageRemoved(Element);
+    MarkBroken(Element);
     if Element.HasAttributeAtom(AtomSrc) or Element.HasAttributeAtom(AtomSrcset) then
       FireElementEvent(Element, 'error');
+    State.Decoding := False;
+    DropIfDetached(State);
     Exit;
   end;
   Key := SerializeUrl(Url) + ' ' + Element.AttributeValueOf(AtomCrossorigin);
@@ -394,7 +422,11 @@ var
   Request: TFetchRequest;
   Claimed: TBufferedFetch;
   Kind: TResourceKind;
+  ImageRequest: TImageRequest;
 begin
+  ImageRequest := ImageRequestOf(State.Element);
+  ImageRequest.Loading := True;
+  ImageRequest.CurrentUrl := SerializeUrl(Url);
   Inc(FNextGeneration);
   State.Generation := FNextGeneration;
   if State.Fetch <> nil then
@@ -557,6 +589,7 @@ var
   Index: Integer;
   Info: TLoadedImageInfo;
   Image: TImage;
+  ImageRequest: TImageRequest;
 begin
   Decoded := TDecodedImage(Data);
   if FRunningDecodes > 0 then
@@ -582,16 +615,40 @@ begin
   Info.Downscaled := Decoded.Downscaled;
   Image := Decoded.Image;
   Decoded.Image := nil;
-  FContext.Sink.ImageLoaded(State.Element, Image, Info);
+  ImageRequest := ImageRequestOf(State.Element);
+  ImageRequest.State := ImageRequestCompletelyAvailable;
+  ImageRequest.NaturalWidth := Info.NaturalWidth;
+  ImageRequest.NaturalHeight := Info.NaturalHeight;
+  ImageRequest.CurrentUrl := Info.CurrentUrl;
+  ImageRequest.Loading := False;
+  if State.Element.IsConnected then
+    FContext.Sink.ImageLoaded(State.Element, Image, Info)
+  else
+    Image.Free;
   FireElementEvent(State.Element, 'load');
   EndDelay(State);
+  DropIfDetached(State);
 end;
 
 procedure TImageLoader.Fail(State: TImageState);
 begin
-  FContext.Sink.ImageFailed(State.Element);
+  MarkBroken(State.Element);
+  if State.Element.IsConnected then
+    FContext.Sink.ImageFailed(State.Element);
   FireElementEvent(State.Element, 'error');
   EndDelay(State);
+  DropIfDetached(State);
+end;
+
+{ An image outside the document whose outcome is known: the event task
+  holds the element now, the state need not. }
+procedure TImageLoader.DropIfDetached(State: TImageState);
+begin
+  if State.Element.IsConnected then
+    Exit;
+  FStates.Remove(State);
+  FContext.Sink.ImageRemoved(State.Element);
+  State.Free;
 end;
 
 procedure TImageLoader.ImageRemoved(Element: TElement);
@@ -601,9 +658,12 @@ begin
   State := StateOf(Element);
   if State = nil then
     Exit;
+  FContext.Sink.ImageRemoved(Element);
+  { Still loading: it goes on, and ends with its event. }
+  if (State.Fetch <> nil) or State.Decoding then
+    Exit;
   EndDelay(State);
   FStates.Remove(State);
-  FContext.Sink.ImageRemoved(Element);
   State.Free;
 end;
 

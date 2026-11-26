@@ -28,7 +28,11 @@
   spread what they need beyond those. The table is as wide as its width
   says, or shrinks to fit between the sum of the minimums and the sum
   of the maximums; the columns get their minimums plus the free space
-  in proportion to what they could still use. Rows are as tall as
+  in proportion to what they could still use. What a spanning cell
+  needs beyond its columns goes to them in proportion to their maximum
+  widths, its maximum to the columns without a fixed width first (as
+  browsers do), so a long colspan row does not widen a narrow fixed
+  column. Rows are as tall as
   their tallest cell (or their height); cells are laid out at their
   column widths and stretched to their rows, and their contents moved
   for vertical-align (top, middle, bottom, baseline). border-spacing
@@ -70,6 +74,8 @@ type
     CellCount: Integer;
     ColumnCount: Integer;
     ColumnMin, ColumnMax, ColumnWidth: array of Single;
+    { A single-column cell of the column has a fixed width. }
+    ColumnFixed: array of Boolean;
     SpacingX, SpacingY: Single;
   end;
 
@@ -219,19 +225,54 @@ begin
   SetLength(Grid.ColumnMin, Grid.ColumnCount);
   SetLength(Grid.ColumnMax, Grid.ColumnCount);
   SetLength(Grid.ColumnWidth, Grid.ColumnCount);
+  SetLength(Grid.ColumnFixed, Grid.ColumnCount);
+end;
+
+{ Spreads Extra over the columns Cell spans, in proportion to their
+  maximum widths (evenly when those are all zero); with AutoFirst only
+  over the columns without a fixed width, when there are such. }
+procedure DistributeExtra(var Grid: TTableGrid; var Widths: array of Single; constref Cell: TGridCell;
+  Extra: Single; AutoFirst: Boolean);
+var
+  Column, Count: Integer;
+  Total: Single;
+  OnlyAuto: Boolean;
+begin
+  OnlyAuto := False;
+  if AutoFirst then
+    for Column := Cell.Column to Cell.Column + Cell.ColumnSpan - 1 do
+      if not Grid.ColumnFixed[Column] then
+        OnlyAuto := True;
+  Total := 0;
+  Count := 0;
+  for Column := Cell.Column to Cell.Column + Cell.ColumnSpan - 1 do
+    if not OnlyAuto or not Grid.ColumnFixed[Column] then
+    begin
+      Total := Total + Grid.ColumnMax[Column];
+      Inc(Count);
+    end;
+  for Column := Cell.Column to Cell.Column + Cell.ColumnSpan - 1 do
+    if not OnlyAuto or not Grid.ColumnFixed[Column] then
+    begin
+      if Total > 0 then
+        Widths[Column] := Widths[Column] + Extra * Grid.ColumnMax[Column] / Total
+      else
+        Widths[Column] := Widths[Column] + Extra / Count;
+    end;
 end;
 
 procedure ColumnWidths(var Grid: TTableGrid);
 var
   Index, Column, Pass: Integer;
   Cell: ^TGridCell;
-  CellMin, CellMax, SpanMin, SpanMax, Extra, Fixed: Single;
+  CellMin, CellMax, SpanMin, SpanMax, Fixed: Single;
   Value: PCssComputedValue;
 begin
   for Column := 0 to Grid.ColumnCount - 1 do
   begin
     Grid.ColumnMin[Column] := 0;
     Grid.ColumnMax[Column] := 0;
+    Grid.ColumnFixed[Column] := False;
   end;
   for Pass := 0 to 1 do
     for Index := 0 to Grid.CellCount - 1 do
@@ -253,6 +294,8 @@ begin
       if Cell^.ColumnSpan = 1 then
       begin
         Column := Cell^.Column;
+        if Value^.Kind = cvLength then
+          Grid.ColumnFixed[Column] := True;
         Grid.ColumnMin[Column] := Max(Grid.ColumnMin[Column], CellMin);
         Grid.ColumnMax[Column] := Max(Grid.ColumnMax[Column], CellMax);
       end
@@ -266,17 +309,9 @@ begin
           SpanMax := SpanMax + Grid.ColumnMax[Column];
         end;
         if CellMin > SpanMin then
-        begin
-          Extra := (CellMin - SpanMin) / Cell^.ColumnSpan;
-          for Column := Cell^.Column to Cell^.Column + Cell^.ColumnSpan - 1 do
-            Grid.ColumnMin[Column] := Grid.ColumnMin[Column] + Extra;
-        end;
+          DistributeExtra(Grid, Grid.ColumnMin, Cell^, CellMin - SpanMin, False);
         if CellMax > SpanMax then
-        begin
-          Extra := (CellMax - SpanMax) / Cell^.ColumnSpan;
-          for Column := Cell^.Column to Cell^.Column + Cell^.ColumnSpan - 1 do
-            Grid.ColumnMax[Column] := Grid.ColumnMax[Column] + Extra;
-        end;
+          DistributeExtra(Grid, Grid.ColumnMax, Cell^, CellMax - SpanMax, True);
       end;
     end;
   for Column := 0 to Grid.ColumnCount - 1 do

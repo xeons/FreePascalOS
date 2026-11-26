@@ -140,3 +140,82 @@ check("contentEditable", editable.contentEditable === "inherit" && (editable.con
   editable.isContentEditable));
 editable.innerText = "a\nb";
 check("innerText setter makes line breaks", editable.innerHTML === "a<br>b");
+
+var fieldset = document.createElement("fieldset");
+fieldset.innerHTML = "<legend>l</legend><input name=a><div><select name=b></select><output></output></div>" +
+  "<label>x</label><fieldset><button>b</button></fieldset><input type=image>";
+var fieldsetElements = fieldset.elements;
+check("fieldset.elements lists the listed elements under it",
+  fieldsetElements instanceof HTMLCollection && fieldsetElements.length === 6 &&
+  fieldsetElements[0].name === "a" && fieldsetElements.b.tagName === "SELECT" &&
+  fieldsetElements[4].tagName === "BUTTON" && fieldset.elements === fieldsetElements);
+fieldset.appendChild(document.createElement("textarea"));
+check("fieldset.elements is live", fieldsetElements.length === 7);
+
+function typedInput(type, value) {
+  var element = document.createElement("input");
+  element.type = type;
+  if (value !== undefined) element.value = value;
+  return element;
+}
+check("number sanitization", typedInput("number", "foobar").value === "" &&
+  typedInput("number", "1.5e3").value === "1.5e3" && typedInput("number", " 4").value === "" &&
+  typedInput("number", "+4").value === "" && typedInput("number", "-.5").value === "-.5");
+check("date, month, week and time sanitization", typedInput("date", "foobar").value === "" &&
+  typedInput("date", "2024-02-29").value === "2024-02-29" && typedInput("date", "2023-02-29").value === "" &&
+  typedInput("month", "2024-13").value === "" && typedInput("month", "12345-06").value === "12345-06" &&
+  typedInput("week", "2020-W53").value === "2020-W53" && typedInput("week", "2021-W53").value === "" &&
+  typedInput("time", "23:59:59.5").value === "23:59:59.5" && typedInput("time", "24:00").value === "");
+check("datetime-local is normalized",
+  typedInput("datetime-local", "2024-01-02 03:04:00.000").value === "2024-01-02T03:04" &&
+  typedInput("datetime-local", "2024-01-02T03:04:05.120").value === "2024-01-02T03:04:05.12" &&
+  typedInput("datetime-local", "2024-01-02").value === "");
+var range = typedInput("range");
+check("range defaults to the middle and clamps", range.value === "50" && (range.value = "foo", range.value === "50") &&
+  (range.value = "150", range.value === "100") && (range.min = "10", range.max = "20", range.value === "20") &&
+  (range.value = "-3", range.value === "10"));
+range.step = "3";
+range.value = "15";
+check("range rounds to its step", range.value === "16" && (range.value = "14.5", range.value === "16") &&
+  (range.value = "19", range.value === "19"));
+var changed = typedInput("text", "2024-05-06");
+changed.type = "date";
+check("a changed type sanitizes", changed.value === "2024-05-06" && (changed.type = "number", changed.value === ""));
+check("valueAsNumber of the date types", typedInput("date", "1970-01-02").valueAsNumber === 86400000 &&
+  typedInput("month", "1971-03").valueAsNumber === 14 && typedInput("week", "1970-W01").valueAsNumber === -259200000 &&
+  typedInput("time", "01:00").valueAsNumber === 3600000 &&
+  typedInput("datetime-local", "1970-01-01T00:00:01").valueAsNumber === 1000 &&
+  Number.isNaN(typedInput("date", "").valueAsNumber));
+var dated = typedInput("date");
+dated.valueAsNumber = Date.UTC(2026, 10, 25);
+var monthly = typedInput("month");
+monthly.valueAsDate = new Date(Date.UTC(2024, 1, 15));
+var weekly = typedInput("week");
+weekly.valueAsDate = new Date(Date.UTC(2021, 0, 3));
+check("valueAsNumber and valueAsDate set the value", dated.value === "2026-11-25" && monthly.value === "2024-02" &&
+  weekly.value === "2020-W53" && dated.valueAsDate.getTime() === Date.UTC(2026, 10, 25) &&
+  monthly.valueAsDate.getTime() === Date.UTC(2024, 1, 1) && typedInput("text").valueAsDate === null);
+var stepped = typedInput("number", "5");
+stepped.step = "2";
+stepped.min = "1";
+stepped.max = "9";
+stepped.stepUp();
+var steppedUp = stepped.value;
+stepped.stepUp(5);
+var clamped = stepped.value;
+stepped.value = "4";
+stepped.stepDown();
+check("stepUp and stepDown follow min, max and the step base", steppedUp === "7" && clamped === "9" &&
+  stepped.value === "3");
+var timed = typedInput("time", "10:00");
+timed.stepUp(2);
+var daily = typedInput("date", "2024-02-28");
+daily.stepUp(2);
+check("stepping times by minutes and dates by days", timed.value === "10:02" && daily.value === "2024-03-01");
+var anyStep = typedInput("number", "1");
+anyStep.step = "any";
+check("stepUp without an allowed step throws", (function () {
+  try { anyStep.stepUp(); return false; } catch (e) { return e.name === "InvalidStateError"; }
+})() && (function () {
+  try { typedInput("text").stepUp(); return false; } catch (e) { return e.name === "InvalidStateError"; }
+})());

@@ -36,7 +36,7 @@ uses
 type
   TFormControlKind = (FormControlNone, FormControlText, FormControlPassword, FormControlTextArea,
     FormControlCheckbox, FormControlRadio, FormControlSubmit, FormControlReset, FormControlButton,
-    FormControlSelect);
+    FormControlSelect, FormControlRange);
 
 { The a or area element with href at or above Node, nil if none. }
 function LinkElementOf(Node: TNode): TElement;
@@ -125,7 +125,9 @@ begin
       Result := FormControlButton
     else if InputType = 'password' then
       Result := FormControlPassword
-    else if (InputType = 'hidden') or (InputType = 'file') or (InputType = 'range') or (InputType = 'color') then
+    else if InputType = 'range' then
+      Result := FormControlRange
+    else if (InputType = 'hidden') or (InputType = 'file') or (InputType = 'color') then
       Result := FormControlNone
     else
       Result := FormControlText;

@@ -26,6 +26,14 @@
   nearest form ancestor; the form attribute is not looked at yet). The
   state lives with the element (its rare data), so every window and the
   view see the same value.
+
+  Values are sanitized as the standard says for each type (number,
+  range and the date and time types by Web.Dom.InputValues), also when
+  read, so a changed type, min, max or step applies at once. What the
+  user types into a number, date or time field is kept as the field's
+  edit text: the field shows and edits it while its value is what the
+  text sanitizes to (empty until it is valid), as browsers keep a
+  number field's text apart from its value.
 }
 unit Web.Dom.FormControls;
 
@@ -59,6 +67,9 @@ type
     { 'forward', 'backward' or 'none'. }
     SelectionDirection: string;
     HasSelection: Boolean;
+    { The user's text in a number, date or time field (HasEditText). }
+    EditText: string;
+    HasEditText: Boolean;
   end;
 
   TInputValueMode = (ValueModeValue, ValueModeDefault, ValueModeDefaultOn, ValueModeFilename);
@@ -106,7 +117,8 @@ procedure SetTextSelection(Element: TElement; SelectionStart, SelectionEnd: Inte
 implementation
 
 uses
-  Web.Encoding.Utf8;
+  Web.Encoding.Utf8,
+  Web.Dom.InputValues;
 
 { The state is not in the attributes: the document's observers (the
   styler, the layout) are told. }
@@ -191,6 +203,8 @@ begin
     if (Length(Result) <> 7) or (Result[1] <> '#') then
       Result := '#000000';
   end
+  else if IsNumericInputType(TypeName) then
+    Result := SanitizeNumericValue(Input, TypeName, Value)
   else
     Result := Value;
 end;
@@ -213,7 +227,7 @@ begin
     begin
       State := FindFormControlState(Input);
       if (State <> nil) and State.ValueDirty then
-        Result := State.Value
+        Result := SanitizeValue(Input, State.Value)
       else
         Result := SanitizeValue(Input, Input.AttributeValueOf(AtomValue));
     end;
@@ -234,6 +248,8 @@ begin
       State := FormControlState(Input);
       State.Value := SanitizeValue(Input, Value);
       State.ValueDirty := True;
+      State.HasEditText := False;
+      State.EditText := '';
       { A value set from outside puts the caret at its end. }
       State.HasSelection := False;
       StateChanged(Input);
@@ -496,14 +512,21 @@ begin
   if not Element.IsHtmlElement(AtomInput) then
     Exit(False);
   TypeName := InputType(Element);
+  { Number, date and time values are typed (their edit text kept apart:
+    TextControlValue); a picker for them is still to come. }
   Result := (TypeName = 'text') or (TypeName = 'search') or (TypeName = 'url') or (TypeName = 'tel') or
-    (TypeName = 'password') or (TypeName = 'email') or (TypeName = 'number');
+    (TypeName = 'password') or (TypeName = 'email') or IsSanitizedEditType(TypeName);
 end;
 
 function TextControlValue(Element: TElement): string;
+var
+  State: TFormControlState;
 begin
   if Element.IsHtmlElement(AtomTextarea) then
-    Result := TextAreaValue(Element)
+    Exit(TextAreaValue(Element));
+  State := FindFormControlState(Element);
+  if (State <> nil) and State.HasEditText and IsSanitizedEditType(InputType(Element)) then
+    Result := State.EditText
   else
     Result := InputValue(Element);
 end;
@@ -522,6 +545,12 @@ begin
     SetTextAreaValue(Element, Value)
   else
     SetInputValue(Element, Value);
+  if not Element.IsHtmlElement(AtomTextarea) and IsSanitizedEditType(InputType(Element)) then
+  begin
+    State.EditText := Value;
+    State.HasEditText := True;
+    StateChanged(Element);
+  end;
   if Keep then
     SetTextSelection(Element, Start, Finish, Direction);
 end;

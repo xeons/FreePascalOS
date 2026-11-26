@@ -166,6 +166,25 @@ begin
   Document.Release;
 end;
 
+procedure TNode.BeginPendingActivity;
+begin
+  Retain;
+  Inc(RareData.PendingActivity);
+end;
+
+procedure TNode.EndPendingActivity;
+begin
+  if (FRareData = nil) or (FRareData.PendingActivity = 0) then
+    Exit;
+  Dec(FRareData.PendingActivity);
+  Release;
+end;
+
+function TNode.HasPendingActivity: Boolean;
+begin
+  Result := (FRareData <> nil) and (FRareData.PendingActivity <> 0);
+end;
+
 procedure TNode.RetainTarget;
 begin
   Retain;

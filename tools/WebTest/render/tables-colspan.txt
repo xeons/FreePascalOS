@@ -1,0 +1,49 @@
+viewport (anonymous) at (0,0) size 800x600
+  block <html> at (0,0) size 800x225
+    block <body> at (8,8) size 784x209
+      block <div> at (8,8) size 440x151.75
+        table <table> at (8,8) size 440x151.75
+          row-group <thead> at (8,8) size 440x28.62
+            row <tr> at (8,8) size 440x28.62
+              cell <th> at (8,8) size 370.03x28.62
+                line 0 at y 13 height 18.62 baseline 27.85
+                  text "Title" at (18,13) size 40.38x18.62
+              cell <td> at (378.03,8) size 69.97x28.62
+                line 0 at y 13 height 18.62 baseline 27.85
+                  text "5" at (388.03,13) size 10.18x18.62
+          row-group <tbody> at (8,36.62) size 440x123.12
+            row <tr> at (8,36.62) size 440x28.62
+              cell <th> at (8,36.62) size 370.03x28.62
+                line 0 at y 41.62 height 18.62 baseline 56.48
+                  text "A short name" at (18,41.62) size 120.68x18.62
+              cell <td> at (378.03,36.62) size 69.97x28.62
+                line 0 at y 41.62 height 18.62 baseline 56.48
+                  text "Yes ok" at (388.03,41.62) size 49.97x18.62
+            row <tr> at (8,65.25) size 440x65.88
+              cell <th> at (8,65.25) size 440x65.88
+                line 0 at y 70.25 height 18.62 baseline 85.1
+                  text "A long explanation that spans both columns" at (18,70.25) size 398.33x18.62
+                line 1 at y 88.88 height 18.62 baseline 103.73
+                  text "and would be far wider than the box if it were" at (18,88.88) size 415.7x18.62
+                line 2 at y 107.5 height 18.62 baseline 122.35
+                  text "not wrapped onto several lines." at (18,107.5) size 286.66x18.62
+            row <tr> at (8,131.12) size 440x28.62
+              cell <th> at (8,131.12) size 370.03x28.62
+                line 0 at y 136.12 height 18.62 baseline 150.98
+                  text "Another name" at (18,136.12) size 127.83x18.62
+              cell <td> at (378.03,131.12) size 69.97x28.62
+                line 0 at y 136.12 height 18.62 baseline 150.98
+                  text "No x" at (401.69,136.12) size 36.31x18.62
+      table <table> at (8,159.75) size 442.25x57.25
+        row-group <tbody> at (8,159.75) size 442.25x57.25
+          row <tr> at (8,159.75) size 442.25x28.62
+            cell <td> at (8,159.75) size 395.53x28.62
+              line 0 at y 164.75 height 18.62 baseline 179.6
+                text "aaaaaaaaaaaaaaaaaaaaaaaa" at (158.22,164.75) size 235.31x18.62
+            cell <td> at (403.53,159.75) size 46.72x28.62
+              line 0 at y 164.75 height 18.62 baseline 179.6
+                text "b" at (430.09,164.75) size 10.16x18.62
+          row <tr> at (8,188.38) size 442.25x28.62
+            cell <td> at (8,188.38) size 442.25x28.62
+              line 0 at y 193.38 height 18.62 baseline 208.23
+                text "cccccccccccccccccccccccccccccccccccccccccccccccc" at (18,193.38) size 422.25x18.62

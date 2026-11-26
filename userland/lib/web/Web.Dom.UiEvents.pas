@@ -60,6 +60,20 @@ type
     Buttons: Word;
   end;
 
+  { Pointer Events 3: a mouse event with the pointer's identity and
+    shape (a mouse is pointer 1, primary, one pixel, half pressure while
+    a button is held). }
+  TPointerEvent = class(TMouseEvent)
+  public
+    PointerId: LongInt;
+    Width, Height: Double;
+    Pressure, TangentialPressure: Double;
+    TiltX, TiltY, Twist: LongInt;
+    AltitudeAngle, AzimuthAngle: Double;
+    PointerType: string;
+    IsPrimary: Boolean;
+  end;
+
   TKeyboardEvent = class(TUiEvent)
   public
     Key: string;

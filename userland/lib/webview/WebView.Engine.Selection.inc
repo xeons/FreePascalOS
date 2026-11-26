@@ -142,10 +142,20 @@ begin
   Result := FSelection.SelectedText;
 end;
 
+{ The page's copy event first (WebView.ClipboardEvents): a listener may
+  cancel it and put its own text on the clipboard. }
 procedure TWebEngineView.CopySelection;
 var
   Chosen: string;
+  Outcome: TClipboardOutcome;
 begin
+  Outcome := FireCopyEvent(ClipboardEventTarget(FDocument), 'copy');
+  if not Outcome.Proceed then
+  begin
+    if Outcome.HasData then
+      WriteClipboard(Outcome.Data);
+    Exit;
+  end;
   Chosen := SelectedText;
   if Chosen <> '' then
     WriteClipboard(Chosen);

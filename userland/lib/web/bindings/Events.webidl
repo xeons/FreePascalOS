@@ -144,6 +144,61 @@ interface MouseEvent : UIEvent {
     optional EventTarget? relatedTargetArg = null);
 };
 
+dictionary PointerEventInit : MouseEventInit {
+  long pointerId = 0;
+  double width = 1;
+  double height = 1;
+  float pressure = 0;
+  float tangentialPressure = 0;
+  long tiltX = 0;
+  long tiltY = 0;
+  long twist = 0;
+  double altitudeAngle = 1.5707963267948966;
+  double azimuthAngle = 0;
+  DOMString pointerType = "";
+  boolean isPrimary = false;
+};
+
+[Exposed=Window]
+interface PointerEvent : MouseEvent {
+  constructor(DOMString type, optional PointerEventInit eventInitDict = {});
+  readonly attribute long pointerId;
+  readonly attribute double width;
+  readonly attribute double height;
+  readonly attribute float pressure;
+  readonly attribute float tangentialPressure;
+  readonly attribute long tiltX;
+  readonly attribute long tiltY;
+  readonly attribute long twist;
+  readonly attribute double altitudeAngle;
+  readonly attribute double azimuthAngle;
+  readonly attribute DOMString pointerType;
+  readonly attribute boolean isPrimary;
+  sequence<PointerEvent> getCoalescedEvents();
+  sequence<PointerEvent> getPredictedEvents();
+};
+
+[Exposed=Window]
+interface DataTransfer {
+  constructor();
+  attribute DOMString dropEffect;
+  attribute DOMString effectAllowed;
+  readonly attribute any types;
+  DOMString getData(DOMString format);
+  undefined setData(DOMString format, DOMString data);
+  undefined clearData(optional DOMString format);
+};
+
+dictionary ClipboardEventInit : EventInit {
+  DataTransfer? clipboardData = null;
+};
+
+[Exposed=Window]
+interface ClipboardEvent : Event {
+  constructor(DOMString type, optional ClipboardEventInit eventInitDict = {});
+  readonly attribute DataTransfer? clipboardData;
+};
+
 dictionary KeyboardEventInit : EventModifierInit {
   DOMString key = "";
   DOMString code = "";
@@ -223,12 +278,14 @@ interface mixin GlobalEventHandlers {
   attribute EventHandler onfocus;
   attribute EventHandler onfocusin;
   attribute EventHandler onfocusout;
+  attribute EventHandler ongotpointercapture;
   attribute EventHandler oninput;
   attribute EventHandler oninvalid;
   attribute EventHandler onkeydown;
   attribute EventHandler onkeypress;
   attribute EventHandler onkeyup;
   attribute EventHandler onload;
+  attribute EventHandler onlostpointercapture;
   attribute EventHandler onmousedown;
   attribute EventHandler onmouseenter;
   attribute EventHandler onmouseleave;

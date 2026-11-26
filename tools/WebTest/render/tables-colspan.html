@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { margin: 8px; font: 16px sans-serif; }
+  .box { width: 440px; }
+  table { border-spacing: 0; }
+  th, td { padding: 5px 10px; text-align: left; }
+  thead td { width: 44px; }
+  tbody td { white-space: nowrap; text-align: right; }
+</style>
+</head>
+<body>
+<!-- A long row spanning both columns gives its width to the column
+     without a fixed width, not half of it to the narrow fixed one. -->
+<div class="box">
+<table>
+  <thead><tr><th>Title</th><td>5</td></tr></thead>
+  <tbody>
+    <tr><th>A short name</th><td>Yes ok</td></tr>
+    <tr><th colspan="2">A long explanation that spans both columns and would be far wider than the box if it were not wrapped onto several lines.</th></tr>
+    <tr><th>Another name</th><td>No x</td></tr>
+  </tbody>
+</table>
+</div>
+<!-- Without fixed columns the spanning cell's extra goes in proportion
+     to the columns' own maximum widths. -->
+<table>
+  <tr><td>aaaaaaaaaaaaaaaaaaaaaaaa</td><td>b</td></tr>
+  <tr><td colspan="2">cccccccccccccccccccccccccccccccccccccccccccccccc</td></tr>
+</table>
+</body>
+</html>

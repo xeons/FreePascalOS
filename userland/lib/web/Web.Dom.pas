@@ -224,12 +224,23 @@ type
       owns it (Web.Dom.FormControls keeps it). }
     function FormStateObject: TObject;
     procedure SetFormStateObject(Value: TObject);
+    { An img's current image request (nil if none); the node owns it
+      (Web.Dom.ImageRequests keeps it, the image loader fills it). }
+    function ImageRequestObject: TObject;
+    procedure SetImageRequestObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
     function HeldByEvents: Boolean; override;
     { References: see the unit's description. }
     procedure Retain;
     procedure Release;
+    { Pending activity (an image loading, its load or error event still
+      to fire): the node is retained, and its script wrapper, with the
+      listeners waiting for that event, kept alive even outside the
+      document. Begin and End come in pairs. }
+    procedure BeginPendingActivity;
+    procedure EndPendingActivity;
+    function HasPendingActivity: Boolean; inline;
     function IsContainer: Boolean; inline;
     { The insert algorithm without the pre-insertion checks: for the
       parser, which only makes valid trees. Child nil appends. }
@@ -529,6 +540,8 @@ type
     FDefaultView: TEventTarget;
     FTargetElement: TElement;
     FFocusedElement: TElement;
+    FPendingPointerCapture: TElement;
+    FPointerCapture: TElement;
     FBrowsingContext: TObject;
     FOriginText: string;
     FOnReadyStateChange: TDocumentNotifyEvent;
@@ -643,6 +656,12 @@ type
       leaves the document is unfocused (the focus fixup). }
     property FocusedElement: TElement read FFocusedElement;
     procedure SetFocusedElementOnly(Element: TElement);
+    { The mouse pointer's capture (Pointer Events 3: the pending pointer
+      capture target override and the pointer capture target override;
+      Web.Dom.PointerCapture). Not references: an element that leaves
+      the document loses them. }
+    property PendingPointerCapture: TElement read FPendingPointerCapture write FPendingPointerCapture;
+    property PointerCapture: TElement read FPointerCapture write FPointerCapture;
     { The loading side's object for this document (Web.Loading). }
     property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
     { The document's origin when it is not its URL's (Web.Origins writes
@@ -860,6 +879,8 @@ type
     SubtreeReferences: LongWord;
     { Where the node is in the list of nodes to collect, plus one. }
     CollectorSlot: LongWord;
+    { BeginPendingActivity calls not yet ended. }
+    PendingActivity: LongWord;
     Listeners: TEventListenerList;
     ChildNodeList: TChildNodeList;
     ChildrenCollection: THtmlCollection;
@@ -873,6 +894,8 @@ type
     ElementState: Word;
     { A form control's state beyond its attributes (Web.Dom.FormControls). }
     FormState: TObject;
+    { An img's image request (Web.Dom.ImageRequests). }
+    ImageRequest: TObject;
     destructor Destroy; override;
   end;
 

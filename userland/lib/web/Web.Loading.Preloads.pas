@@ -23,7 +23,9 @@
     keyed by URL and destination. A loader that is about to fetch the
     same thing claims the entry instead and gets the response, already
     complete or still arriving; what nobody claimed by the load event is
-    dropped.
+    dropped. What a loader has asked for (claimed or not) is never
+    fetched speculatively again: the scanner sees bytes the parser has
+    already acted on.
   - The preload scanner (HTML Standard 13.2.1, "speculative HTML
     parsing"): while the parser waits for a script, the bytes that
     arrive are scanned by a light tokenizer for <link rel=stylesheet>,
@@ -65,6 +67,8 @@ type
     FContext: TLoadingContext;
     FEntries: TList;
     FSpeculativeCount: Integer;
+    { The keys loaders asked for (sorted, for the scanner to skip). }
+    FAskedFor: TStringList;
     procedure EntryComplete(Fetch: TBufferedFetch; Success: Boolean);
     procedure DeliverLate(Data: TObject);
     function Find(const Key: string): TPreloadEntry;
@@ -118,6 +122,9 @@ begin
   inherited Create;
   FContext := Context;
   FEntries := TList.Create;
+  FAskedFor := TStringList.Create;
+  FAskedFor.Sorted := True;
+  FAskedFor.Duplicates := dupIgnore;
 end;
 
 destructor TPreloadCache.Destroy;
@@ -136,6 +143,7 @@ begin
     Entry.Free;
   end;
   FEntries.Free;
+  FAskedFor.Free;
   inherited Destroy;
 end;
 
@@ -160,7 +168,7 @@ var
   Key: string;
 begin
   Key := KeyOf(Request.Url, Request.Destination);
-  if Find(Key) <> nil then
+  if (Find(Key) <> nil) or (Speculative and (FAskedFor.IndexOf(Key) >= 0)) then
   begin
     Request.Free;
     Exit;
@@ -193,6 +201,7 @@ var
   Late: TLateCompletion;
 begin
   Fetch := nil;
+  FAskedFor.Add(KeyOf(Url, Destination));
   Entry := Find(KeyOf(Url, Destination));
   if Entry = nil then
     Exit(False);

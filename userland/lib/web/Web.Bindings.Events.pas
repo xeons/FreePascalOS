@@ -20,7 +20,8 @@
   bindings/Events.webidl: EventTarget (listeners are TScriptEventListener
   objects in the DOM's lists), Event, CustomEvent (its detail in the
   wrapper's cache), UIEvent, MouseEvent, KeyboardEvent, FocusEvent and
-  InputEvent over Web.Dom.Events and Web.Dom.UiEvents.
+  InputEvent over Web.Dom.Events and Web.Dom.UiEvents; DataTransfer's
+  string data and ClipboardEvent over Web.Dom.DataTransfer.
 }
 unit Web.Bindings.Events;
 
@@ -43,6 +44,7 @@ uses
   Web.Atoms,
   Web.Dom.Events,
   Web.Dom.UiEvents,
+  Web.Dom.DataTransfer,
   Web.Dom.Exceptions,
   Web.Bindings.Context,
   Web.Bindings.Listeners;
@@ -51,6 +53,8 @@ const
   { The cache slot of a CustomEvent's detail (events have no
     [SameObject] attributes and no handlers). }
   CacheSlotDetail = 1;
+  { A ClipboardEvent's clipboardData wrapper. }
+  CacheSlotClipboardData = 1;
 
 function ThisEvent(const Call: TBindingCall): TEvent; inline;
 begin
@@ -294,6 +298,120 @@ begin
   TBindingWrapper(Call.Wrapper).SetCachedValue(CacheSlotDetail, Call.Script(3));
 end;
 
+{ DataTransfer }
+
+function ThisDataTransfer(const Call: TBindingCall): TDataTransfer; inline;
+begin
+  Result := TDataTransfer(Call.Target);
+end;
+
+function DataTransfer_constructor(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).ConstructedObject(Call, TDataTransfer.Create);
+end;
+
+function DataTransfer_get_dropEffect(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).DropEffect);
+end;
+
+function DataTransfer_set_dropEffect(var Call: TBindingCall): TJsValue;
+var
+  Value: string;
+begin
+  Value := Call.Text(0);
+  if (Value = 'none') or (Value = 'copy') or (Value = 'link') or (Value = 'move') then
+    ThisDataTransfer(Call).DropEffect := Value;
+  Result := JsUndefined;
+end;
+
+function DataTransfer_get_effectAllowed(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).EffectAllowed);
+end;
+
+function DataTransfer_set_effectAllowed(var Call: TBindingCall): TJsValue;
+var
+  Value: string;
+begin
+  Value := Call.Text(0);
+  if (Value = 'none') or (Value = 'copy') or (Value = 'copyLink') or (Value = 'copyMove') or (Value = 'link') or
+    (Value = 'linkMove') or (Value = 'move') or (Value = 'all') or (Value = 'uninitialized') then
+    ThisDataTransfer(Call).EffectAllowed := Value;
+  Result := JsUndefined;
+end;
+
+function DataTransfer_get_types(var Call: TBindingCall): TJsValue;
+var
+  Types: TStringArray;
+  Values: array of TJsValue;
+  Index: Integer;
+begin
+  Values := nil;
+  if ThisDataTransfer(Call).Mode <> DataTransferProtected then
+  begin
+    Types := ThisDataTransfer(Call).Types;
+    SetLength(Values, Length(Types));
+    for Index := 0 to High(Types) do
+      Values[Index] := CallContext(Call).TextValue(Types[Index]);
+  end;
+  Result := CallContext(Call).NewArray(Values);
+end;
+
+function DataTransfer_getData(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).GetData(Call.Text(0)));
+end;
+
+function DataTransfer_setData(var Call: TBindingCall): TJsValue;
+begin
+  ThisDataTransfer(Call).SetData(Call.Text(0), Call.Text(1));
+  Result := JsUndefined;
+end;
+
+function DataTransfer_clearData(var Call: TBindingCall): TJsValue;
+begin
+  if Call.Present(0) then
+    ThisDataTransfer(Call).ClearData(Call.Text(0))
+  else
+    ThisDataTransfer(Call).ClearData('');
+  Result := JsUndefined;
+end;
+
+{ ClipboardEvent: the data of an event made by script is the script's
+  DataTransfer (its wrapper kept in the event's cache); the engine's
+  own events own theirs. }
+
+function ClipboardEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TClipboardEvent;
+  Data: PBindingValue;
+begin
+  Event := TClipboardEvent.Create(Call.Text(0));
+  Data := @Call.Arguments[1].Items[ClipboardEventInit_clipboardData];
+  if Data^.Native is TDataTransfer then
+    Event.ClipboardData := TDataTransfer(Data^.Native);
+  Result := StartEvent(Call, Event);
+  if Event.ClipboardData <> nil then
+    CallContext(Call).WrapperOf(Result).SetCachedValue(CacheSlotClipboardData, Data^.Script);
+end;
+
+function ClipboardEvent_get_clipboardData(var Call: TBindingCall): TJsValue;
+var
+  Wrapper: TBindingWrapper;
+  Event: TClipboardEvent;
+begin
+  Wrapper := TBindingWrapper(Call.Wrapper);
+  Result := Wrapper.CachedValue(CacheSlotClipboardData);
+  if Result <> JsUndefined then
+    Exit;
+  Event := TClipboardEvent(Call.Target);
+  if Event.ClipboardData = nil then
+    Exit(JsNull);
+  Result := CallContext(Call).WrapObject(Event.ClipboardData, InterfaceDataTransfer, False, Call.This);
+  Wrapper.SetCachedValue(CacheSlotClipboardData, Result);
+end;
+
 { UIEvent and its kinds: the dictionaries are flattened, so the members
   inherited from EventInit and UIEventInit have the same indexes in all
   of them. }
@@ -511,6 +629,127 @@ end;
 function MouseEvent_getModifierState(var Call: TBindingCall): TJsValue;
 begin
   Result := JsBoolean(ThisMouseEvent(Call).ModifierState(Call.Text(0)));
+end;
+
+function ThisPointerEvent(const Call: TBindingCall): TPointerEvent; inline;
+begin
+  Result := TPointerEvent(Call.Target);
+end;
+
+function PointerEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TPointerEvent;
+  Init: PBindingValue;
+begin
+  Event := TPointerEvent.Create(Call.Text(0));
+  Init := @Call.Arguments[1];
+  ApplyUiInit(Event, Init^);
+  ApplyModifierInit(Event, Init^);
+  Event.ScreenX := Trunc(Init^.Items[MouseEventInit_screenX].Number);
+  Event.ScreenY := Trunc(Init^.Items[MouseEventInit_screenY].Number);
+  Event.ClientX := Trunc(Init^.Items[MouseEventInit_clientX].Number);
+  Event.ClientY := Trunc(Init^.Items[MouseEventInit_clientY].Number);
+  Event.Button := Trunc(Init^.Items[MouseEventInit_button].Number);
+  Event.Buttons := Trunc(Init^.Items[MouseEventInit_buttons].Number);
+  if Init^.Items[MouseEventInit_relatedTarget].Native <> nil then
+    Event.RelatedTarget := TEventTarget(Init^.Items[MouseEventInit_relatedTarget].Native);
+  Event.PointerId := Trunc(Init^.Items[PointerEventInit_pointerId].Number);
+  Event.Width := Init^.Items[PointerEventInit_width].Number;
+  Event.Height := Init^.Items[PointerEventInit_height].Number;
+  Event.Pressure := Init^.Items[PointerEventInit_pressure].Number;
+  Event.TangentialPressure := Init^.Items[PointerEventInit_tangentialPressure].Number;
+  Event.TiltX := Trunc(Init^.Items[PointerEventInit_tiltX].Number);
+  Event.TiltY := Trunc(Init^.Items[PointerEventInit_tiltY].Number);
+  Event.Twist := Trunc(Init^.Items[PointerEventInit_twist].Number);
+  Event.AltitudeAngle := Init^.Items[PointerEventInit_altitudeAngle].Number;
+  Event.AzimuthAngle := Init^.Items[PointerEventInit_azimuthAngle].Number;
+  Event.PointerType := Init^.Items[PointerEventInit_pointerType].Text;
+  Event.IsPrimary := Init^.Items[PointerEventInit_isPrimary].Flag;
+  Result := StartEvent(Call, Event);
+end;
+
+function PointerEvent_get_pointerId(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsInteger(ThisPointerEvent(Call).PointerId);
+end;
+
+function PointerEvent_get_width(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisPointerEvent(Call).Width);
+end;
+
+function PointerEvent_get_height(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisPointerEvent(Call).Height);
+end;
+
+function PointerEvent_get_pressure(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(Single(ThisPointerEvent(Call).Pressure));
+end;
+
+function PointerEvent_get_tangentialPressure(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(Single(ThisPointerEvent(Call).TangentialPressure));
+end;
+
+function PointerEvent_get_tiltX(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsInteger(ThisPointerEvent(Call).TiltX);
+end;
+
+function PointerEvent_get_tiltY(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsInteger(ThisPointerEvent(Call).TiltY);
+end;
+
+function PointerEvent_get_twist(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsInteger(ThisPointerEvent(Call).Twist);
+end;
+
+function PointerEvent_get_altitudeAngle(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisPointerEvent(Call).AltitudeAngle);
+end;
+
+function PointerEvent_get_azimuthAngle(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsNumber(ThisPointerEvent(Call).AzimuthAngle);
+end;
+
+function PointerEvent_get_pointerType(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisPointerEvent(Call).PointerType);
+end;
+
+function PointerEvent_get_isPrimary(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsBoolean(ThisPointerEvent(Call).IsPrimary);
+end;
+
+{ The events coalesced into this one: a trusted pointermove is its own
+  (moves are not merged), the others have none. }
+function PointerEvent_getCoalescedEvents(var Call: TBindingCall): TJsValue;
+var
+  Values: array of TJsValue;
+begin
+  Values := nil;
+  if ThisPointerEvent(Call).IsTrusted and (ThisPointerEvent(Call).TypeName = 'pointermove') then
+  begin
+    SetLength(Values, 1);
+    Values[0] := Call.This;
+  end;
+  Result := CallContext(Call).NewArray(Values);
+end;
+
+{ No predicted positions are made. }
+function PointerEvent_getPredictedEvents(var Call: TBindingCall): TJsValue;
+var
+  Values: array of TJsValue;
+begin
+  Values := nil;
+  Result := CallContext(Call).NewArray(Values);
 end;
 
 function ThisKeyboardEvent(const Call: TBindingCall): TKeyboardEvent; inline;

@@ -82,7 +82,9 @@ uses
   Web.Bindings.UrlResolution,
   WebView.KeyNames,
   WebView.Elements,
-  WebView.Forms;
+  WebView.MouseEvents,
+  WebView.Forms,
+  Web.Dom.AccessKeys;
 
 const
   SystemShift = $01;
@@ -189,6 +191,19 @@ begin
   FNavigable.Navigate(Target, Options);
 end;
 
+{ The element whose access key the key is (Web.Dom.AccessKeys). }
+function AccessKeyElement(ScanCode, Character: LongWord; Document: TDocument): TElement;
+var
+  KeyCode: string;
+begin
+  Result := nil;
+  KeyCode := DomKeyOf(ScanCode, Character).Code;
+  if (Length(KeyCode) = 4) and (Copy(KeyCode, 1, 3) = 'Key') then
+    Result := FindAccessKeyElement(Document, LowerCase(KeyCode[4]))
+  else if (Length(KeyCode) = 6) and (Copy(KeyCode, 1, 5) = 'Digit') then
+    Result := FindAccessKeyElement(Document, KeyCode[6]);
+end;
+
 procedure TPageInput.PressKey(Document: TDocument; ScanCode, Character, Modifiers: LongWord);
 var
   Focused, Next: TElement;
@@ -206,7 +221,15 @@ begin
       DispatchKeyEvent(KeyTarget(Document), 'keypress', ScanCode, Character, Modifiers)) then
     begin
       Focused := Document.FocusedElement;
-      if IsEditableTextField(Focused) and FieldActionOfKey(ScanCode, Character, Modifiers, Action, Options, Typed) and
+      if ((Modifiers and SystemAlt) <> 0) and ((Modifiers and SystemShift) <> 0) and
+        ((Modifiers and SystemControl) = 0) and (AccessKeyElement(ScanCode, Character, Document) <> nil) then
+      begin
+        { An access key, as the web view takes it. }
+        Next := AccessKeyElement(ScanCode, Character, Document);
+        FocusElement(Next);
+        Click(Next);
+      end
+      else if IsEditableTextField(Focused) and FieldActionOfKey(ScanCode, Character, Modifiers, Action, Options, Typed) and
         FEditor.Perform(Focused, Action, Typed, Options) then
         { typed }
       else if ScanCode = ScanTab then
@@ -285,23 +308,17 @@ begin
   Result := True;
 end;
 
-{ A trusted MouseEvent of the primary button. }
+{ A trusted MouseEvent of the primary button, with its pointer event as
+  the web view gives them (WebView.MouseEvents). }
 function FireMouseEvent(Target: TElement; const EventType: string): Boolean;
 var
-  Event: TMouseEvent;
+  Init: TMouseEventInit;
 begin
-  Event := TMouseEvent.Create(EventType, True, True);
-  try
-    Event.IsTrusted := True;
-    Event.Composed := True;
-    Event.HasView := True;
-    if EventType = 'mousedown' then
-      Event.Buttons := 1;
-    Event.Detail := 1;
-    Result := Target.DispatchEvent(Event);
-  finally
-    Event.Release;
-  end;
+  Init := Default(TMouseEventInit);
+  if EventType = 'mousedown' then
+    Init.Buttons := 1;
+  Init.Detail := 1;
+  Result := DispatchMouseEvent(Target, EventType, Init);
 end;
 
 procedure TPageInput.Click(Element: TElement);

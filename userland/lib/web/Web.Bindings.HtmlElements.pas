@@ -26,8 +26,8 @@
   submission by GET through the environment, template content, script
   text and async.
 
-  Layout answers (offsetWidth and the like) are 0 until layout lands;
-  images report no natural size; media are paused.
+  Images report their request's natural size, completeness and URL
+  (Web.Dom.ImageRequests); media are paused.
 }
 unit Web.Bindings.HtmlElements;
 
@@ -47,6 +47,9 @@ implementation
 uses
   Web.Dom.FormControls,
   Web.Dom.Focus,
+  Web.Dom.ImageRequests,
+  Web.Dom.InputValues,
+  Web.Dom.AccessKeys,
   SysUtils,
   Math,
   Js.Objects,
@@ -77,6 +80,12 @@ type
     function Matches(Element: TElement): Boolean; override;
   end;
 
+  { A fieldset's elements: the listed elements under it. }
+  TFieldSetElementsCollection = class(THtmlCollection)
+  protected
+    function Matches(Element: TElement): Boolean; override;
+  end;
+
   TSelectedOptionsCollection = class(THtmlCollection)
   protected
     function Matches(Element: TElement): Boolean; override;
@@ -96,6 +105,11 @@ function TFormElementsCollection.Matches(Element: TElement): Boolean;
 begin
   Result := IsListedElement(Element) and not (Element.IsHtmlElement(AtomInput) and (InputType(Element) = 'image')) and
     (FormOwner(Element) = Root);
+end;
+
+function TFieldSetElementsCollection.Matches(Element: TElement): Boolean;
+begin
+  Result := IsListedElement(Element);
 end;
 
 function TSelectedOptionsCollection.Matches(Element: TElement): Boolean;
@@ -272,6 +286,11 @@ function HTMLOrSVGElement_blur(var Call: TBindingCall): TJsValue;
 begin
   UnfocusElement(ThisElement(Call));
   Result := Nothing;
+end;
+
+function HTMLElement_get_accessKeyLabel(var Call: TBindingCall): TJsValue;
+begin
+  Result := Text(Call, AccessKeyLabel(ThisElement(Call)));
 end;
 
 function HTMLElement_get_contentEditable(var Call: TBindingCall): TJsValue;
@@ -666,29 +685,47 @@ end;
 
 { HTMLImageElement, HTMLMediaElement }
 
+{ The density-corrected natural size of the current request's image,
+  0 when it has none (not loaded yet, broken). }
+function ImageNaturalSide(Element: TElement; Height: Boolean): TJsValue;
+var
+  Request: TImageRequest;
+  Side: Double;
+begin
+  Request := FindImageRequest(Element);
+  if (Request = nil) or (Request.State <> ImageRequestCompletelyAvailable) then
+    Exit(JsInteger(0));
+  if Height then
+    Side := Request.NaturalHeight
+  else
+    Side := Request.NaturalWidth;
+  Result := JsInteger(Trunc(Side));
+end;
+
 function HTMLImageElement_get_naturalWidth(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsInteger(0);
+  Result := ImageNaturalSide(ThisElement(Call), False);
 end;
 
 function HTMLImageElement_get_naturalHeight(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsInteger(0);
+  Result := ImageNaturalSide(ThisElement(Call), True);
 end;
 
 function HTMLImageElement_get_complete(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsTrue;
+  Result := JsBoolean(ImageComplete(ThisElement(Call)));
 end;
 
 function HTMLImageElement_get_currentSrc(var Call: TBindingCall): TJsValue;
 var
-  Resolved: string;
+  Request: TImageRequest;
 begin
-  if not ThisElement(Call).HasAttributeAtom(AtomSrc) or
-    not ResolveUrlText(ThisElement(Call).NodeDocument, ThisElement(Call).AttributeValueOf(AtomSrc), Resolved) then
-    Resolved := '';
-  Result := Text(Call, Resolved);
+  Request := FindImageRequest(ThisElement(Call));
+  if Request = nil then
+    Result := Text(Call, '')
+  else
+    Result := Text(Call, Request.CurrentUrl);
 end;
 
 function HTMLMediaElement_get_paused(var Call: TBindingCall): TJsValue;
@@ -758,8 +795,8 @@ var
   TypeName: string;
 begin
   TypeName := InputType(ThisElement(Call));
-  if ((TypeName = 'number') or (TypeName = 'range')) and
-    ParseHtmlFloat(InputValue(Context(Call), ThisElement(Call)), Number) then
+  if IsNumericInputType(TypeName) and
+    InputValueToNumber(TypeName, InputValue(Context(Call), ThisElement(Call)), Number) then
     Result := JsNumber(Number)
   else
     Result := JsDouble(NaN);
@@ -770,14 +807,68 @@ var
   TypeName: string;
 begin
   TypeName := InputType(ThisElement(Call));
-  if (TypeName <> 'number') and (TypeName <> 'range') then
+  if not IsNumericInputType(TypeName) then
     RaiseDomError(InvalidStateError, 'valueAsNumber does not apply to this input');
   if IsNan(Call.Number(0)) then
     SetInputValue(Context(Call), ThisElement(Call), '')
   else if IsInfinite(Call.Number(0)) then
     raise EBindingTypeError.Create('the value is not finite')
   else
-    SetInputValue(Context(Call), ThisElement(Call), NumberToString(Call.Number(0)));
+    SetInputValue(Context(Call), ThisElement(Call), NumberToInputValue(TypeName, Call.Number(0)));
+  Result := Nothing;
+end;
+
+{ stepUp and stepDown (HTML Standard 4.10.5.4): N steps from the value
+  (from a value off the step grid, to the next value on it), kept within
+  min and max on the grid; no change when that would go the wrong way. }
+procedure StepInput(var Call: TBindingCall; Element: TElement; Direction: Int64);
+var
+  TypeName: string;
+  Step: TInputStep;
+  Minimum, Maximum, Value, Before, Steps: Double;
+  HasMinimum, HasMaximum: Boolean;
+begin
+  TypeName := InputType(Element);
+  if not IsNumericInputType(TypeName) then
+    RaiseDomError(InvalidStateError, 'stepUp and stepDown do not apply to this input');
+  Step := InputAllowedStep(Element, TypeName);
+  if not Step.Allowed then
+    RaiseDomError(InvalidStateError, 'the input has no allowed value step');
+  HasMinimum := InputMinimum(Element, TypeName, Minimum);
+  HasMaximum := InputMaximum(Element, TypeName, Maximum);
+  if HasMinimum and HasMaximum and (Minimum > Maximum) then
+    Exit;
+  if not InputValueToNumber(TypeName, InputValue(Context(Call), Element), Value) then
+    Value := 0;
+  Before := Value;
+  Steps := (Value - Step.Base) / Step.Step;
+  if Abs(Steps - Round(Steps)) > 1E-9 then
+  begin
+    if Direction > 0 then
+      Value := Step.Base + Floor(Steps + 1) * Step.Step
+    else
+      Value := Step.Base + Ceil(Steps - 1) * Step.Step;
+  end
+  else
+    Value := Value + Direction * Step.Step;
+  if HasMinimum and (Value < Minimum) then
+    Value := Step.Base + Ceil((Minimum - Step.Base) / Step.Step - 1E-9) * Step.Step;
+  if HasMaximum and (Value > Maximum) then
+    Value := Step.Base + Floor((Maximum - Step.Base) / Step.Step + 1E-9) * Step.Step;
+  if ((Direction > 0) and (Value < Before)) or ((Direction < 0) and (Value > Before)) then
+    Exit;
+  SetInputValue(Context(Call), Element, NumberToInputValue(TypeName, Value));
+end;
+
+function HTMLInputElement_stepUp(var Call: TBindingCall): TJsValue;
+begin
+  StepInput(Call, ThisElement(Call), Call.Int(0));
+  Result := Nothing;
+end;
+
+function HTMLInputElement_stepDown(var Call: TBindingCall): TJsValue;
+begin
+  StepInput(Call, ThisElement(Call), -Call.Int(0));
   Result := Nothing;
 end;
 
@@ -1499,6 +1590,12 @@ end;
 function HTMLFieldSetElement_get_type(var Call: TBindingCall): TJsValue;
 begin
   Result := Text(Call, 'fieldset');
+end;
+
+function HTMLFieldSetElement_get_elements(var Call: TBindingCall): TJsValue;
+begin
+  Result := Context(Call).WrapObject(TFieldSetElementsCollection.Create(ThisElement(Call)),
+    InterfaceHTMLCollection, True, Call.This);
 end;
 
 function HTMLLegendElement_get_form(var Call: TBindingCall): TJsValue;

@@ -60,6 +60,7 @@ begin
   CheckStickyPainting;
   CheckMaskPainting;
   CheckLayerPainting;
+  CheckGaugePainting;
   CheckStyleSheetChanges;
   CheckTransforms;
   CheckAnimations;

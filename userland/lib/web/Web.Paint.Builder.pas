@@ -55,7 +55,7 @@ uses
   Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
   Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
-  Web.Dom.FormControls, Css.TransformMatrices, Web.Layout.Transforms;
+  Web.Dom.FormControls, Web.Dom.InputValues, Css.TransformMatrices, Web.Layout.Transforms;
 
 type
   TClipEntry = record
@@ -673,13 +673,20 @@ begin
     if (Box.Node <> nil) and Box.Node.IsElement and TElement(Box.Node).IsHtmlElement(AtomInput) and
       Web.Dom.FormControls.InputChecked(TElement(Box.Node)) then
       Entry^.Value := 1;
+    { How far along a range's thumb is, how full a meter or progress bar
+      (-1: an indeterminate progress bar). }
+    if (Box.ControlKind = ControlRange) and (Box.Node <> nil) and Box.Node.IsElement then
+      Entry^.Value := RangeFraction(TElement(Box.Node), InputValue(TElement(Box.Node)))
+    else if (Box.ControlKind = ControlMeter) and (Box.Node <> nil) and Box.Node.IsElement then
+      Entry^.Value := GaugeFraction(TElement(Box.Node));
     if (Box.ControlKind in [ControlTextField, ControlTextArea]) and (Box.Node <> nil) and Box.Node.IsElement then
     begin
       if Box.ControlKind = ControlTextArea then
         Text := TextAreaValue(TElement(Box.Node))
       else if IsTextControl(TElement(Box.Node)) then
       begin
-        Text := InputValue(TElement(Box.Node));
+        { The user's text of a number or date field while it is edited. }
+        Text := TextControlValue(TElement(Box.Node));
         if InputType(TElement(Box.Node)) = 'password' then
           Text := MaskedText(Text);
       end

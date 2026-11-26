@@ -1,8 +1,9 @@
 // Geometry and CSSOM View: DOMRectReadOnly, DOMRect, DOMRectList,
 // DOMPointReadOnly, DOMPoint; element boxes (getBoundingClientRect,
-// getClientRects, offset*, client*, scroll*, scrolling), the window's
-// scroll position and scrolling, elementFromPoint, and getComputedStyle
-// - all answered by the layout through the natives.
+// getClientRects, offset*, client*, scroll*, scrolling, an image's width
+// and height), the window's scroll position and scrolling,
+// elementFromPoint, and getComputedStyle - all answered by the layout
+// through the natives.
 (function (natives, global, internal) {
   "use strict";
   const token = internal.token;
@@ -236,6 +237,23 @@
   getter(HTMLElementPrototype, "offsetTop", function () { return offset(this, 1); });
   getter(HTMLElementPrototype, "offsetWidth", function () { return offset(this, 2); });
   getter(HTMLElementPrototype, "offsetHeight", function () { return offset(this, 3); });
+
+  // HTMLImageElement's width and height (HTML Standard 4.8.4.2): the
+  // rendered content box while the image is rendered; else, as browsers
+  // do, the attribute when there is one, the natural size of its image
+  // or 0. Setting them sets the attributes.
+  const ImagePrototype = global.HTMLImageElement.prototype;
+  for (const side of [["width", "naturalWidth"], ["height", "naturalHeight"]]) {
+    const reflected = Object.getOwnPropertyDescriptor(ImagePrototype, side[0]);
+    getter(ImagePrototype, side[0], function () {
+      if (natives.elementBox(this) !== null) {
+        const used = parseFloat(computed(this, side[0]));
+        if (!isNaN(used)) return Math.round(used);
+      }
+      if (this.hasAttribute(side[0])) return reflected.get.call(this);
+      return this[side[1]];
+    }, reflected.set);
+  }
 
   // The window's scroll position and scrolling.
   function windowScroll(args, relative) {
