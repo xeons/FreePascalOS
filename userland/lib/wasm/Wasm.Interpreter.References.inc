@@ -1,0 +1,147 @@
+{ The interpreter's cases (Wasm.Interpreter.Execute) of WebAssembly 3.0:
+  tail calls and call_ref, typed references, exceptions, memories other
+  than an i32 memory 0, and the garbage collection instructions (whose
+  work is done in Wasm.GcOperations; the allocating ones go through
+  Allocate, which collects first when the heap asks). }
+
+CodeReturnCall:
+  begin
+    Callee := Instance.Functions[P^.A];
+    ArgumentBase := P^.B;
+    goto DoTailCall;
+  end;
+CodeReturnCallIndirect, CodeReturnCallIndirect64:
+  begin
+    Table := Instance.Tables[P^.C];
+    if P^.Operation = CodeReturnCallIndirect64 then
+      Element := S[P^.B + P^.Extra]
+    else
+      Element := PDWord(@S[P^.B + P^.Extra])^;
+    if Element >= QWord(Length(Table.Elements)) then
+    begin
+      TrapKind := tkUndefinedElement;
+      goto Trapped;
+    end;
+    Callee := TWasmFunction(Table.Elements[Element]);
+    if Callee = nil then
+    begin
+      TrapKind := tkUninitializedElement;
+      goto Trapped;
+    end;
+    if not CallTypeMatches(Store, Callee.TypeId, Instance.TypeIds[P^.A]) then
+    begin
+      TrapKind := tkIndirectCallTypeMismatch;
+      goto Trapped;
+    end;
+    ArgumentBase := P^.B;
+    goto DoTailCall;
+  end;
+CodeCallRef, CodeReturnCallRef:
+  begin
+    Callee := TWasmFunction(PtrUInt(S[P^.B + P^.Extra]));
+    if Callee = nil then
+    begin
+      TrapKind := tkNullFunctionReference;
+      goto Trapped;
+    end;
+    ArgumentBase := P^.B;
+    if P^.Operation = CodeCallRef then
+      goto DoCall;
+    goto DoTailCall;
+  end;
+CodeBranchIfNull:
+  if S[P^.B] = 0 then
+  begin
+    Target := P^.A;
+    if P^.Extra <> 0 then
+    begin
+      Dec(Store.InterruptCountdown);
+      if Store.InterruptCountdown <= 0 then
+        goto InterruptCheck;
+    end;
+    P := @CodeStart[Target];
+    Continue;
+  end;
+CodeBranchIfNonNull:
+  if S[P^.B] <> 0 then
+  begin
+    Target := P^.A;
+    if P^.Extra <> 0 then
+    begin
+      Dec(Store.InterruptCountdown);
+      if Store.InterruptCountdown <= 0 then
+        goto InterruptCheck;
+    end;
+    P := @CodeStart[Target];
+    Continue;
+  end;
+CodeRefAsNonNull:
+  begin
+    if S[P^.B] = 0 then
+    begin
+      TrapKind := tkNullReference;
+      goto Trapped;
+    end;
+    S[P^.A] := S[P^.B];
+  end;
+CodeRefEq:
+  PDWord(@S[P^.A])^ := Ord(S[P^.B] = S[P^.C]);
+CodeThrow:
+  begin
+    Index := (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction);
+    if Store.Heap.WantsCollection then
+    begin
+      Store.StackTop := Base + Code.FrameSlots;
+      CollectAtSafepoint(Store, Func, Index + 1, Base);
+    end;
+    Thrown := NewThrownException(Store, Instance.Tags[P^.B], @S[P^.A]);
+    if Thrown = nil then
+    begin
+      Store.StackTop := Base + Code.FrameSlots;
+      CollectAtSafepoint(Store, Func, Index + 1, Base);
+      Thrown := NewThrownException(Store, Instance.Tags[P^.B], @S[P^.A]);
+      if Thrown = nil then
+      begin
+        TrapKind := tkOutOfMemory;
+        goto Trapped;
+      end;
+    end;
+    goto ThrowException;
+  end;
+CodeThrowRef, CodeRethrow:
+  begin
+    Thrown := PWasmGcObject(PtrUInt(S[P^.A]));
+    if Thrown = nil then
+    begin
+      TrapKind := tkNullExceptionReference;
+      goto Trapped;
+    end;
+    goto ThrowException;
+  end;
+CodeMemoryAccessAt, CodeMemorySizeAt, CodeMemoryGrowAt, CodeMemoryFillAt, CodeMemoryCopyAt, CodeMemoryInitAt:
+  begin
+    Outcome := ExecuteMemoryAt(Instance, P^, S, PQWord(Code.Constants));
+    if Instance.DefaultMemory <> nil then
+    begin
+      MemoryBase := Instance.DefaultMemory.Data;
+      MemoryLength := Instance.DefaultMemory.ByteLength;
+    end;
+    if Outcome <> NoTrap then
+    begin
+      TrapKind := TWasmTrapKind(Outcome);
+      goto Trapped;
+    end;
+  end;
+CodeStructNew, CodeStructNewDefault, CodeArrayNew, CodeArrayNewDefault, CodeArrayNewFixed, CodeArrayNewData,
+CodeArrayNewElem, CodeAnyConvertExtern:
+  goto Allocate;
+CodeRefTest, CodeRefCast, CodeStructGet, CodeStructSet, CodeArrayGet, CodeArraySet, CodeArrayLen, CodeArrayFill,
+CodeArrayCopy, CodeArrayInitData, CodeArrayInitElem, CodeExternConvertAny, CodeRefI31, CodeI31Get:
+  begin
+    Outcome := ExecuteGcOperation(Store, Instance, P^, S);
+    if Outcome <> NoTrap then
+    begin
+      TrapKind := TWasmTrapKind(Outcome);
+      goto Trapped;
+    end;
+  end;

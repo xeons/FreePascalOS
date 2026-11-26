@@ -247,7 +247,7 @@ KERNEL_ELF := $(BUILD_DIRECTORY)/kernel.elf
 
 .PHONY: unicode-test call-frame-info-test all loader kernel esp run debug test test-disk image font clean check-kernel imaging-controls-test icon-test apps-test paint-test aml-test region-tree-test mapped-file-test frame-run-test clock-page-test hpet-test mount-test scheduler-policy-test acpi-power-test sntp-test aslr-test acpi-device-test device-tree-test gem-descriptor-test hdmi-audio-test usb-descriptor-test nvme-queue-test acpi-table-test virtio-used-ring-test tcp-test drawing-test font-test text-test chart-test settings-test files-test browser-test controls-test date-controls-test suspend-stress \
 	crypto-test tls-test wget-test http-test ipv6-test network-protocol-test image-test compression-test archive-test decompression-test media-test video-test ssh-test netstat-test av1-test \
-	ports-test pkg-test quic-test css-test wasm-test wasm-spec-test svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
+	ports-test pkg-test quic-test css-test wasm-test wasm-spec-test wasm-spec-test-3 svg-test web-test javascript-test web-layout-test webrender web-load-test web-script-test webbrowse web-ipc-test navigation-controls-test update-fonts
 
 all: esp
 
@@ -1396,9 +1396,21 @@ $(WASM_SPEC_TEST): $(wildcard tools/WasmSpecTest/*.pas) $(WASM_SOURCES)
 
 wasm-spec-test: $(WASM_SPEC_TEST)
 	@test -d $(WASM_SPEC_DIRECTORY) || { echo "no spec tests in $(WASM_SPEC_DIRECTORY)"; exit 1; }
-	@$(WASM_SPEC_TEST) $(WASM_SPEC_DIRECTORY) > build/tools/wasm-spec-test.out || \
+	@$(WASM_SPEC_TEST) --features=2.0 $(WASM_SPEC_DIRECTORY) > build/tools/wasm-spec-test.out || \
 		{ grep -v ' 0 failed' build/tools/wasm-spec-test.out; echo "WASM SPEC TEST FAILED (build/tools/wasm-spec-test.out)"; exit 1; }
 	@echo "WASM SPEC TEST PASSED: $$(tail -n 1 build/tools/wasm-spec-test.out)"
+
+# The 3.0 suite (wg-3.0 tag of the same repository: test/core with its
+# feature subdirectories, and test/legacy/exceptions), downloaded into
+# ~/Downloads/sources/wasm-spec-3.0.
+WASM_SPEC3_DIRECTORY ?= $(HOME)/Downloads/sources/wasm-spec-3.0/test
+
+wasm-spec-test-3: $(WASM_SPEC_TEST)
+	@test -d $(WASM_SPEC3_DIRECTORY)/core || { echo "no spec tests in $(WASM_SPEC3_DIRECTORY)"; exit 1; }
+	@$(WASM_SPEC_TEST) $(WASM_SPEC3_DIRECTORY)/core $(WASM_SPEC3_DIRECTORY)/legacy/exceptions \
+		> build/tools/wasm-spec-test-3.out || \
+		{ grep -v ' 0 failed' build/tools/wasm-spec-test-3.out; echo "WASM SPEC TEST 3.0 FAILED (build/tools/wasm-spec-test-3.out)"; exit 1; }
+	@echo "WASM SPEC TEST 3.0 PASSED: $$(tail -n 1 build/tools/wasm-spec-test-3.out)"
 
 # libsvg on the host (with libcss, libdrawing, libfont and libimage): small
 # SVG documents drawn and their pixels probed where each feature decides

@@ -27,6 +27,11 @@
   bit for a signed one ("integer too large"). Running past the end of
   the range the reader was given is "unexpected end". Offsets in errors
   are from the start of the module.
+
+  Value types are read here too (spec 3.0, section 5.3): a one byte
+  code for the number and vector types and the nullable abstract
+  references, or 0x63 (ref null) / 0x64 (ref) followed by a heap type, a
+  signed 33-bit number that is a type index when not negative.
 }
 unit Wasm.Reader;
 
@@ -40,6 +45,8 @@ interface
 
 uses
   SysUtils,
+  Wasm.Types,
+  Wasm.Features,
   Wasm.Errors;
 
 type
@@ -47,6 +54,8 @@ type
     Bytes: PByte;      { the module's first byte }
     Position: SizeInt; { the next byte, from Bytes }
     Limit: SizeInt;    { the end of the range being read }
+    { What value types may be (all of 3.0 after Initialize). }
+    Features: TWasmFeatures;
     procedure Initialize(ABytes: PByte; AStart, ALimit: SizeInt);
     function AtEnd: Boolean; inline;
     function Remaining: SizeInt; inline;
@@ -65,6 +74,11 @@ type
     procedure Skip(Count: SizeInt);
     { A length-prefixed UTF-8 name; malformed UTF-8 is an error. }
     function ReadName: AnsiString;
+    function ReadHeapType: Int32;
+    function ReadValueType: TWasmValueType;
+    function ReadReferenceType: TWasmValueType;
+    { Whether the next byte starts a value type. }
+    function AtValueType: Boolean;
   end;
 
 { Whether Bytes[0..Count) is well formed UTF-8 (no overlong forms, no
@@ -81,6 +95,13 @@ begin
   Bytes := ABytes;
   Position := AStart;
   Limit := ALimit;
+  Features := WasmFeaturesAll;
+end;
+
+{ The value types of WebAssembly 2.0: numbers, v128, funcref, externref. }
+function IsValueTypeCode20(Code: Byte): Boolean;
+begin
+  Result := (Code in [$7B..$7F]) or (Code = $70) or (Code = $6F);
 end;
 
 function TWasmReader.AtEnd: Boolean;
@@ -277,6 +298,63 @@ begin
   if Count > 0 then
     Move(Bytes[Position], Result[1], Count);
   Inc(Position, Count);
+end;
+
+function TWasmReader.ReadHeapType: Int32;
+var
+  Start: SizeInt;
+  Code: Int64;
+begin
+  Start := Position;
+  Code := ReadS33;
+  if Code < 0 then
+  begin
+    if (Code < FirstAbstractHeapType) or (Code > HeapTypeNoExn) then
+      FailAt(Start, 'malformed heap type');
+    Result := Int32(Code);
+  end
+  else
+  begin
+    if Code > MaximumTypes then
+      FailAt(Start, 'unknown type');
+    Result := Int32(Code);
+  end;
+end;
+
+function TWasmReader.AtValueType: Boolean;
+var
+  ValueType: TWasmValueType;
+  Code: Byte;
+begin
+  Code := PeekByte;
+  if not (wfFunctionReferences in Features) then
+    Exit(IsValueTypeCode20(Code));
+  Result := DecodeValueType(Code, ValueType) or (Code = $63) or (Code = $64);
+end;
+
+function TWasmReader.ReadValueType: TWasmValueType;
+var
+  Code: Byte;
+begin
+  Code := ReadByte;
+  if not (wfFunctionReferences in Features) and not IsValueTypeCode20(Code) then
+    FailAt(Position - 1, 'malformed value type');
+  if DecodeValueType(Code, Result) then
+    Exit;
+  if (Code = $63) or (Code = $64) then
+    Result := MakeReferenceType(ReadHeapType, Code = $63)
+  else
+    FailAt(Position - 1, 'malformed value type');
+end;
+
+function TWasmReader.ReadReferenceType: TWasmValueType;
+var
+  Start: SizeInt;
+begin
+  Start := Position;
+  Result := ReadValueType;
+  if Result.Kind <> vkReference then
+    FailAt(Start, 'malformed reference type');
 end;
 
 function IsValidUtf8(Bytes: PByte; Count: SizeInt): Boolean;

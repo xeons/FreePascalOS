@@ -17,16 +17,14 @@
 }
 
 {
-  Module validation (spec section 3.4): limits, types of imports and
-  definitions, constant expressions, segments, the start function,
+  Module validation (spec section 3.4): the type section
+  (Wasm.ModuleTypes), limits, types of imports and definitions, constant
+  expressions (Wasm.ConstantValidator), segments, the start function,
   exports, and every function body through Wasm.CodeValidator.
 
-  Constant expressions (globals' initializers, segment offsets and
-  element expressions) are checked in the spec's restricted context:
-  global.get may only name an imported, immutable global. The functions
-  a module may take a reference to with ref.func in code are the ones
-  named outside function bodies: in exports, element segments and
-  global initializers.
+  The functions a module may take a reference to with ref.func in code
+  are the ones named outside function bodies: in exports, element
+  segments, and global and table initializers.
 }
 unit Wasm.Validator;
 
@@ -47,23 +45,31 @@ uses
   SysUtils,
   Classes,
   Wasm.Types,
+  Wasm.TypeDefinitions,
+  Wasm.Features,
   Wasm.Errors,
   Wasm.Limits,
   Wasm.Opcodes,
   Wasm.Instructions,
+  Wasm.Subtyping,
+  Wasm.ModuleTypes,
+  Wasm.ConstantValidator,
   Wasm.CodeValidator;
 
 type
   TModuleValidator = class
   private
     FModule: TWasmModule;
+    FContext: TWasmModuleTypeContext;
+    FConstants: TWasmConstantValidator;
     FDeclaredReferences: array of Boolean;
     procedure Fail(const Message: AnsiString);
     procedure CheckTypeIndex(Index: Cardinal);
-    procedure CheckTableLimits(const Limits: TWasmLimits);
-    procedure CheckMemoryLimits(const Limits: TWasmLimits);
-    procedure CheckConstantExpression(const Expression: TWasmConstantExpression;
-      const Expected: TWasmValueType);
+    procedure CheckFunctionTypeIndex(Index: Cardinal);
+    procedure CheckValueType(const ValueType: TWasmValueType);
+    procedure CheckTableType(const TableType: TWasmTableType);
+    procedure CheckMemoryType(const MemoryType: TWasmMemoryType);
+    procedure CheckTagType(TypeIndex: Cardinal);
     procedure DeclareReferences(const Expression: TWasmConstantExpression);
     procedure CollectDeclaredReferences;
     procedure ValidateImports;
@@ -74,8 +80,16 @@ type
     procedure ValidateExports;
     procedure ValidateCode;
   public
+    destructor Destroy; override;
     procedure Validate(Module: TWasmModule);
   end;
+
+destructor TModuleValidator.Destroy;
+begin
+  FConstants.Free;
+  FContext.Free;
+  inherited Destroy;
+end;
 
 procedure TModuleValidator.Fail(const Message: AnsiString);
 begin
@@ -88,69 +102,53 @@ begin
     Fail('unknown type ' + IntToStr(Index));
 end;
 
-procedure TModuleValidator.CheckTableLimits(const Limits: TWasmLimits);
+procedure TModuleValidator.CheckFunctionTypeIndex(Index: Cardinal);
 begin
-  if Limits.HasMaximum and (Limits.Minimum > Limits.Maximum) then
+  CheckTypeIndex(Index);
+  if FModule.TypeDefinitions[Index].Kind <> ckFunction then
+    Fail('type mismatch: not a function type');
+end;
+
+procedure TModuleValidator.CheckValueType(const ValueType: TWasmValueType);
+begin
+  if (ValueType.Kind = vkReference) and (ValueType.HeapType >= 0) then
+    CheckTypeIndex(Cardinal(ValueType.HeapType));
+end;
+
+procedure TModuleValidator.CheckTableType(const TableType: TWasmTableType);
+begin
+  CheckValueType(TableType.ElementType);
+  if TableType.Limits.HasMaximum and (TableType.Limits.Minimum > TableType.Limits.Maximum) then
     Fail('size minimum must not be greater than maximum');
 end;
 
-procedure TModuleValidator.CheckMemoryLimits(const Limits: TWasmLimits);
-begin
-  if (Limits.Minimum > MaximumMemoryPages) or (Limits.HasMaximum and (Limits.Maximum > MaximumMemoryPages)) then
-    Fail('memory size must be at most 65536 pages (4GiB)');
-  if Limits.HasMaximum and (Limits.Minimum > Limits.Maximum) then
-    Fail('size minimum must not be greater than maximum');
-end;
-
-procedure TModuleValidator.CheckConstantExpression(const Expression: TWasmConstantExpression;
-  const Expected: TWasmValueType);
+procedure TModuleValidator.CheckMemoryType(const MemoryType: TWasmMemoryType);
 var
-  Instructions: TWasmInstructionReader;
-  Instruction: TWasmInstruction;
-  Stack: array of TWasmValueType;
-  Count: Integer;
-
-  procedure Push(const ValueType: TWasmValueType);
-  begin
-    if Count >= Length(Stack) then
-      SetLength(Stack, Count * 2 + 4);
-    Stack[Count] := ValueType;
-    Inc(Count);
-  end;
-
+  Largest: QWord;
 begin
-  Count := 0;
-  Instructions.Initialize(PByte(FModule.Bytes), Expression.Start, Expression.Limit);
-  repeat
-    Instructions.Next(Instruction);
-    case Instruction.Opcode of
-      OpI32Const: Push(WasmI32Type);
-      OpI64Const: Push(WasmI64Type);
-      OpF32Const: Push(WasmF32Type);
-      OpF64Const: Push(WasmF64Type);
-      OpV128Const: Push(WasmV128Type);
-      OpRefNull: Push(Instruction.ReferenceType);
-      OpRefFunc:
-        begin
-          if Instruction.Index >= FModule.FunctionCount then
-            Fail('unknown function ' + IntToStr(Instruction.Index));
-          Push(WasmFuncRefType);
-        end;
-      OpGlobalGet:
-        begin
-          if Instruction.Index >= FModule.ImportedGlobalCount then
-            Fail('unknown global ' + IntToStr(Instruction.Index));
-          if FModule.Globals[Instruction.Index].Mutable then
-            Fail('constant expression required');
-          Push(FModule.Globals[Instruction.Index].ValueType);
-        end;
-      OpEnd: ;
+  with MemoryType do
+  begin
+    if AddressType = vkI64 then
+      Largest := MaximumMemory64Pages
     else
-      Fail('constant expression required');
+      Largest := MaximumMemoryPages;
+    if (Limits.Minimum > Largest) or (Limits.HasMaximum and (Limits.Maximum > Largest)) then
+    begin
+      if AddressType = vkI64 then
+        Fail('memory size must be at most 2^48 pages')
+      else
+        Fail('memory size must be at most 65536 pages (4GiB)');
     end;
-  until Instruction.Opcode = OpEnd;
-  if (Count <> 1) or (Stack[0] <> Expected) then
-    Fail('type mismatch');
+    if Limits.HasMaximum and (Limits.Minimum > Limits.Maximum) then
+      Fail('size minimum must not be greater than maximum');
+  end;
+end;
+
+procedure TModuleValidator.CheckTagType(TypeIndex: Cardinal);
+begin
+  CheckFunctionTypeIndex(TypeIndex);
+  if Length(FModule.Types[TypeIndex].Results) <> 0 then
+    Fail('non-empty tag result type');
 end;
 
 procedure TModuleValidator.DeclareReferences(const Expression: TWasmConstantExpression);
@@ -158,7 +156,7 @@ var
   Instructions: TWasmInstructionReader;
   Instruction: TWasmInstruction;
 begin
-  Instructions.Initialize(PByte(FModule.Bytes), Expression.Start, Expression.Limit);
+  Instructions.Initialize(PByte(FModule.Bytes), Expression.Start, Expression.Limit, FModule.Features);
   while not Instructions.AtEnd do
   begin
     Instructions.Next(Instruction);
@@ -174,6 +172,9 @@ begin
   SetLength(FDeclaredReferences, FModule.FunctionCount);
   for Index := 0 to High(FModule.GlobalDefinitions) do
     DeclareReferences(FModule.GlobalDefinitions[Index].Initializer);
+  for Index := 0 to High(FModule.TableDefinitions) do
+    if FModule.TableDefinitions[Index].HasInitializer then
+      DeclareReferences(FModule.TableDefinitions[Index].Initializer);
   for Index := 0 to High(FModule.Elements) do
     with FModule.Elements[Index] do
       if UsesExpressions then
@@ -197,41 +198,60 @@ begin
   for Index := 0 to High(FModule.Imports) do
     with FModule.Imports[Index] do
       case Kind of
-        ekFunction: CheckTypeIndex(TypeIndex);
-        ekTable: CheckTableLimits(TableType.Limits);
-        ekMemory: CheckMemoryLimits(MemoryType.Limits);
-        ekGlobal: ;
+        ekFunction: CheckFunctionTypeIndex(TypeIndex);
+        ekTable: CheckTableType(TableType);
+        ekMemory: CheckMemoryType(MemoryType);
+        ekGlobal: CheckValueType(GlobalType.ValueType);
+        ekTag: CheckTagType(TagTypeIndex);
       end;
 end;
 
 procedure TModuleValidator.ValidateDefinitions;
 var
   Index: Integer;
+  TableIndex: Cardinal;
 begin
   for Index := FModule.ImportedFunctionCount to High(FModule.FunctionTypes) do
-    CheckTypeIndex(FModule.FunctionTypes[Index]);
-  for Index := FModule.ImportedTableCount to High(FModule.Tables) do
-    CheckTableLimits(FModule.Tables[Index].Limits);
+    CheckFunctionTypeIndex(FModule.FunctionTypes[Index]);
+  for Index := FModule.ImportedTagCount to High(FModule.TagTypes) do
+    CheckTagType(FModule.TagTypes[Index]);
+  for Index := 0 to High(FModule.TableDefinitions) do
+  begin
+    TableIndex := FModule.ImportedTableCount + Cardinal(Index);
+    CheckTableType(FModule.Tables[TableIndex]);
+    if FModule.TableDefinitions[Index].HasInitializer then
+      FConstants.Check(FModule.TableDefinitions[Index].Initializer, FModule.Tables[TableIndex].ElementType,
+        Length(FModule.Globals))
+    else if not FModule.Tables[TableIndex].ElementType.Nullable then
+      Fail('type mismatch: a table of non-nullable references needs an initializer');
+  end;
   for Index := FModule.ImportedMemoryCount to High(FModule.Memories) do
-    CheckMemoryLimits(FModule.Memories[Index].Limits);
-  if Length(FModule.Memories) > MaximumMemories then
+    CheckMemoryType(FModule.Memories[Index]);
+  if (Length(FModule.Memories) > 1) and not (wfMultipleMemories in FModule.Features) then
     Fail('multiple memories');
+  if Length(FModule.Memories) > MaximumMemories then
+    Fail('too many memories');
   for Index := 0 to High(FModule.GlobalDefinitions) do
     with FModule.GlobalDefinitions[Index] do
-      CheckConstantExpression(Initializer, GlobalType.ValueType);
+    begin
+      CheckValueType(GlobalType.ValueType);
+      FConstants.Check(Initializer, GlobalType.ValueType, FModule.ImportedGlobalCount + Cardinal(Index));
+    end;
 end;
 
 procedure TModuleValidator.ValidateElements;
 var
   Index, Item: Integer;
+  Table: TWasmTableType;
 begin
   for Index := 0 to High(FModule.Elements) do
     with FModule.Elements[Index] do
     begin
+      CheckValueType(ElementType);
       if UsesExpressions then
       begin
         for Item := 0 to High(Expressions) do
-          CheckConstantExpression(Expressions[Item], ElementType);
+          FConstants.Check(Expressions[Item], ElementType, Length(FModule.Globals));
       end
       else
         for Item := 0 to High(FunctionIndices) do
@@ -241,8 +261,9 @@ begin
       begin
         if TableIndex >= Cardinal(Length(FModule.Tables)) then
           Fail('unknown table ' + IntToStr(TableIndex));
-        CheckConstantExpression(Offset, WasmI32Type);
-        if FModule.Tables[TableIndex].ElementType <> ElementType then
+        Table := FModule.Tables[TableIndex];
+        FConstants.Check(Offset, MakeNumberType(Table.AddressType), Length(FModule.Globals));
+        if not ValueTypeMatches(FContext, ElementType, Table.ElementType) then
           Fail('type mismatch');
       end;
     end;
@@ -258,7 +279,7 @@ begin
       begin
         if MemoryIndex >= Cardinal(Length(FModule.Memories)) then
           Fail('unknown memory ' + IntToStr(MemoryIndex));
-        CheckConstantExpression(Offset, WasmI32Type);
+        FConstants.Check(Offset, MakeNumberType(FModule.Memories[MemoryIndex].AddressType), Length(FModule.Globals));
       end;
 end;
 
@@ -293,6 +314,7 @@ begin
           ekFunction: Count := FModule.FunctionCount;
           ekTable: Count := Length(FModule.Tables);
           ekMemory: Count := Length(FModule.Memories);
+          ekTag: Count := Length(FModule.TagTypes);
         else
           Count := Length(FModule.Globals);
         end;
@@ -313,7 +335,7 @@ var
   CodeValidator: TWasmCodeValidator;
   Index: Integer;
 begin
-  CodeValidator := TWasmCodeValidator.Create(FModule, FDeclaredReferences);
+  CodeValidator := TWasmCodeValidator.Create(FModule, FContext, FDeclaredReferences);
   try
     for Index := 0 to High(FModule.Bodies) do
       CodeValidator.ValidateFunction(Index);
@@ -325,6 +347,9 @@ end;
 procedure TModuleValidator.Validate(Module: TWasmModule);
 begin
   FModule := Module;
+  CanonicalizeModuleTypes(Module);
+  FContext := TWasmModuleTypeContext.Create(Module);
+  FConstants := TWasmConstantValidator.Create(Module, FContext);
   ValidateImports;
   ValidateDefinitions;
   CollectDeclaredReferences;

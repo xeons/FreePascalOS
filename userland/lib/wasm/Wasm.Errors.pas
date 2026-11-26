@@ -72,7 +72,16 @@ type
     tkUninitializedElement,
     tkCallStackExhausted,
     tkInterrupted,
-    tkHostError
+    tkHostError,
+    tkNullReference,
+    tkNullFunctionReference,
+    tkNullStructureReference,
+    tkNullArrayReference,
+    tkNullI31Reference,
+    tkNullExceptionReference,
+    tkCastFailure,
+    tkArrayOutOfBounds,
+    tkOutOfMemory
   );
 
   { One frame of a trap's stack trace, innermost first: the function's
@@ -126,6 +135,15 @@ begin
     tkUninitializedElement: Result := 'uninitialized element';
     tkCallStackExhausted: Result := 'call stack exhausted';
     tkInterrupted: Result := 'execution interrupted';
+    tkNullReference: Result := 'null reference';
+    tkNullFunctionReference: Result := 'null function reference';
+    tkNullStructureReference: Result := 'null structure reference';
+    tkNullArrayReference: Result := 'null array reference';
+    tkNullI31Reference: Result := 'null i31 reference';
+    tkNullExceptionReference: Result := 'null exception reference';
+    tkCastFailure: Result := 'cast failure';
+    tkArrayOutOfBounds: Result := 'out of bounds array access';
+    tkOutOfMemory: Result := 'out of memory';
   else
     Result := 'host error';
   end;

@@ -17,12 +17,13 @@
 }
 
 {
-  The WebAssembly 2.0 instruction set as one dense numbering, and what the
+  The WebAssembly 3.0 instruction set as one dense numbering, and what the
   validator needs to know about each instruction.
 
   An instruction's code is its one byte opcode (0x00 to 0xFF); the 0xFC
-  prefixed instructions are $100 plus their index and the 0xFD (SIMD)
-  ones $200 plus theirs. The compiled code (Wasm.Code) uses the same
+  prefixed instructions are $100 plus their index, the 0xFD (SIMD and
+  relaxed SIMD) ones $200 plus theirs and the 0xFB (garbage collection)
+  ones $380 plus theirs. The compiled code (Wasm.Code) uses the same
   numbers for the operations it keeps as they are and numbers above
   LastWasmOpcode for its own.
 
@@ -73,11 +74,21 @@ type
     ikMemoryMemory,   { memory.copy }
     ikElementTable,   { table.init }
     ikElement,        { elem.drop }
-    ikTableTable      { table.copy }
+    ikTableTable,     { table.copy }
+    ikTag,            { throw, catch: a tag index }
+    ikTryTable,       { try_table: block type and catch clauses }
+    ikTypeIndex,      { call_ref, struct.new, array.new ...: a type index }
+    ikTypeField,      { struct.get / set: type and field index }
+    ikTypeCount,      { array.new_fixed: type and element count }
+    ikTypeData,       { array.new_data, array.init_data: type and data index }
+    ikTypeElement,    { array.new_elem, array.init_elem: type and element index }
+    ikTypeType,       { array.copy: destination and source type }
+    ikHeapType,       { ref.test, ref.cast }
+    ikBranchCast      { br_on_cast(_fail): flags, label, two heap types }
   );
 
   TWasmOpcodeInfo = record
-    Name: string[31];
+    Name: string[39];
     Signature: string[7];
     Immediate: TWasmImmediateKind;
     Alignment: ShortInt;
@@ -524,8 +535,83 @@ const
   OpF64x2ConvertLowI32x4S     = $2FE;
   OpF64x2ConvertLowI32x4U     = $2FF;
 
-  { The highest code of a WebAssembly instruction (0xFD 0xFF). }
-  LastWasmOpcode = $2FF;
+  { WebAssembly 3.0: exception handling, tail calls, typed references. }
+  OpTry                       = $006;
+  OpCatch                     = $007;
+  OpThrow                     = $008;
+  OpRethrow                   = $009;
+  OpThrowRef                  = $00A;
+  OpReturnCall                = $012;
+  OpReturnCallIndirect        = $013;
+  OpCallRef                   = $014;
+  OpReturnCallRef             = $015;
+  OpDelegate                  = $018;
+  OpCatchAll                  = $019;
+  OpTryTable                  = $01F;
+  OpRefEq                     = $0D3;
+  OpRefAsNonNull              = $0D4;
+  OpBrOnNull                  = $0D5;
+  OpBrOnNonNull               = $0D6;
+  { Relaxed SIMD: $200 plus the 0xFD index ($100 on). }
+  OpI8x16RelaxedSwizzle       = $300;
+  OpI32x4RelaxedTruncF32x4S   = $301;
+  OpI32x4RelaxedTruncF32x4U   = $302;
+  OpI32x4RelaxedTruncF64x2SZero= $303;
+  OpI32x4RelaxedTruncF64x2UZero= $304;
+  OpF32x4RelaxedMadd          = $305;
+  OpF32x4RelaxedNmadd         = $306;
+  OpF64x2RelaxedMadd          = $307;
+  OpF64x2RelaxedNmadd         = $308;
+  OpI8x16RelaxedLaneselect    = $309;
+  OpI16x8RelaxedLaneselect    = $30A;
+  OpI32x4RelaxedLaneselect    = $30B;
+  OpI64x2RelaxedLaneselect    = $30C;
+  OpF32x4RelaxedMin           = $30D;
+  OpF32x4RelaxedMax           = $30E;
+  OpF64x2RelaxedMin           = $30F;
+  OpF64x2RelaxedMax           = $310;
+  OpI16x8RelaxedQ15mulrS      = $311;
+  OpI16x8RelaxedDotI8x16I7x16S= $312;
+  OpI32x4RelaxedDotI8x16I7x16AddS= $313;
+  { Garbage collection: the 0xFB instructions are $380 plus their index. }
+  OpStructNew                 = $380;
+  OpStructNewDefault          = $381;
+  OpStructGet                 = $382;
+  OpStructGetS                = $383;
+  OpStructGetU                = $384;
+  OpStructSet                 = $385;
+  OpArrayNew                  = $386;
+  OpArrayNewDefault           = $387;
+  OpArrayNewFixed             = $388;
+  OpArrayNewData              = $389;
+  OpArrayNewElem              = $38A;
+  OpArrayGet                  = $38B;
+  OpArrayGetS                 = $38C;
+  OpArrayGetU                 = $38D;
+  OpArraySet                  = $38E;
+  OpArrayLen                  = $38F;
+  OpArrayFill                 = $390;
+  OpArrayCopy                 = $391;
+  OpArrayInitData             = $392;
+  OpArrayInitElem             = $393;
+  OpRefTest                   = $394;
+  OpRefTestNull               = $395;
+  OpRefCast                   = $396;
+  OpRefCastNull               = $397;
+  OpBrOnCast                  = $398;
+  OpBrOnCastFail              = $399;
+  OpAnyConvertExtern          = $39A;
+  OpExternConvertAny          = $39B;
+  OpRefI31                    = $39C;
+  OpI31GetS                   = $39D;
+  OpI31GetU                   = $39E;
+
+  { The last 0xFD index and the first code of the 0xFB instructions. }
+  LastSimdIndex = $113;
+  GcOpcodeBase = $380;
+  LastGcIndex = 30;
+  { The highest code of a WebAssembly instruction. }
+  LastWasmOpcode = $39F;
 
   WasmOpcodeTable: array[0..LastWasmOpcode] of TWasmOpcodeInfo = (
     (Name: 'unreachable'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
@@ -534,11 +620,11 @@ const
     (Name: 'loop'; Signature: ''; Immediate: ikBlockType; Alignment: -1; Lanes: 0),
     (Name: 'if'; Signature: ''; Immediate: ikBlockType; Alignment: -1; Lanes: 0),
     (Name: 'else'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'try'; Signature: ''; Immediate: ikBlockType; Alignment: -1; Lanes: 0),
+    (Name: 'catch'; Signature: ''; Immediate: ikTag; Alignment: -1; Lanes: 0),
+    (Name: 'throw'; Signature: ''; Immediate: ikTag; Alignment: -1; Lanes: 0),
+    (Name: 'rethrow'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
+    (Name: 'throw_ref'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'end'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'br'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
     (Name: 'br_if'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
@@ -546,20 +632,20 @@ const
     (Name: 'return'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'call'; Signature: ''; Immediate: ikFunction; Alignment: -1; Lanes: 0),
     (Name: 'call_indirect'; Signature: ''; Immediate: ikCallIndirect; Alignment: -1; Lanes: 0),
+    (Name: 'return_call'; Signature: ''; Immediate: ikFunction; Alignment: -1; Lanes: 0),
+    (Name: 'return_call_indirect'; Signature: ''; Immediate: ikCallIndirect; Alignment: -1; Lanes: 0),
+    (Name: 'call_ref'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'return_call_ref'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'delegate'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
+    (Name: 'catch_all'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'drop'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'select'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'select'; Signature: ''; Immediate: ikSelectTypes; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'try_table'; Signature: ''; Immediate: ikTryTable; Alignment: -1; Lanes: 0),
     (Name: 'local.get'; Signature: ''; Immediate: ikLocal; Alignment: -1; Lanes: 0),
     (Name: 'local.set'; Signature: ''; Immediate: ikLocal; Alignment: -1; Lanes: 0),
     (Name: 'local.tee'; Signature: ''; Immediate: ikLocal; Alignment: -1; Lanes: 0),
@@ -739,10 +825,10 @@ const
     (Name: 'ref.null'; Signature: ''; Immediate: ikReferenceType; Alignment: -1; Lanes: 0),
     (Name: 'ref.is_null'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'ref.func'; Signature: '>r'; Immediate: ikFunction; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'ref.eq'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'ref.as_non_null'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'br_on_null'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
+    (Name: 'br_on_non_null'; Signature: ''; Immediate: ikLabel; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
@@ -1295,14 +1381,174 @@ const
     (Name: 'i32x4.trunc_sat_f64x2_s_zero'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'i32x4.trunc_sat_f64x2_u_zero'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
     (Name: 'f64x2.convert_low_i32x4_s'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
-    (Name: 'f64x2.convert_low_i32x4_u'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0)
+    (Name: 'f64x2.convert_low_i32x4_u'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i8x16.relaxed_swizzle'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_trunc_f32x4_s'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_trunc_f32x4_u'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_trunc_f64x2_s_zero'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_trunc_f64x2_u_zero'; Signature: 'v>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f32x4.relaxed_madd'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f32x4.relaxed_nmadd'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f64x2.relaxed_madd'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f64x2.relaxed_nmadd'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i8x16.relaxed_laneselect'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i16x8.relaxed_laneselect'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_laneselect'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i64x2.relaxed_laneselect'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f32x4.relaxed_min'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f32x4.relaxed_max'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f64x2.relaxed_min'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'f64x2.relaxed_max'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i16x8.relaxed_q15mulr_s'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i16x8.relaxed_dot_i8x16_i7x16_s'; Signature: 'vv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i32x4.relaxed_dot_i8x16_i7x16_add_s'; Signature: 'vvv>v'; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'struct.new'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'struct.new_default'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'struct.get'; Signature: ''; Immediate: ikTypeField; Alignment: -1; Lanes: 0),
+    (Name: 'struct.get_s'; Signature: ''; Immediate: ikTypeField; Alignment: -1; Lanes: 0),
+    (Name: 'struct.get_u'; Signature: ''; Immediate: ikTypeField; Alignment: -1; Lanes: 0),
+    (Name: 'struct.set'; Signature: ''; Immediate: ikTypeField; Alignment: -1; Lanes: 0),
+    (Name: 'array.new'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.new_default'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.new_fixed'; Signature: ''; Immediate: ikTypeCount; Alignment: -1; Lanes: 0),
+    (Name: 'array.new_data'; Signature: ''; Immediate: ikTypeData; Alignment: -1; Lanes: 0),
+    (Name: 'array.new_elem'; Signature: ''; Immediate: ikTypeElement; Alignment: -1; Lanes: 0),
+    (Name: 'array.get'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.get_s'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.get_u'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.set'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.len'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'array.fill'; Signature: ''; Immediate: ikTypeIndex; Alignment: -1; Lanes: 0),
+    (Name: 'array.copy'; Signature: ''; Immediate: ikTypeType; Alignment: -1; Lanes: 0),
+    (Name: 'array.init_data'; Signature: ''; Immediate: ikTypeData; Alignment: -1; Lanes: 0),
+    (Name: 'array.init_elem'; Signature: ''; Immediate: ikTypeElement; Alignment: -1; Lanes: 0),
+    (Name: 'ref.test'; Signature: ''; Immediate: ikHeapType; Alignment: -1; Lanes: 0),
+    (Name: 'ref.test'; Signature: ''; Immediate: ikHeapType; Alignment: -1; Lanes: 0),
+    (Name: 'ref.cast'; Signature: ''; Immediate: ikHeapType; Alignment: -1; Lanes: 0),
+    (Name: 'ref.cast'; Signature: ''; Immediate: ikHeapType; Alignment: -1; Lanes: 0),
+    (Name: 'br_on_cast'; Signature: ''; Immediate: ikBranchCast; Alignment: -1; Lanes: 0),
+    (Name: 'br_on_cast_fail'; Signature: ''; Immediate: ikBranchCast; Alignment: -1; Lanes: 0),
+    (Name: 'any.convert_extern'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'extern.convert_any'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'ref.i31'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i31.get_s'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: 'i31.get_u'; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0),
+    (Name: ''; Signature: ''; Immediate: ikNone; Alignment: -1; Lanes: 0)
   );
 
 { The text format name of an instruction code, or 'opcode 0x..' when the
   code names none. }
 function WasmOpcodeName(Code: Integer): AnsiString;
 
-{ Whether Code is an instruction of WebAssembly 2.0. }
+{ Whether Code is an instruction of WebAssembly 3.0. }
 function IsWasmOpcode(Code: Integer): Boolean; inline;
 
 implementation
@@ -1319,6 +1565,8 @@ function WasmOpcodeName(Code: Integer): AnsiString;
 begin
   if IsWasmOpcode(Code) then
     Result := WasmOpcodeTable[Code].Name
+  else if Code >= GcOpcodeBase then
+    Result := Format('opcode 0xFB %d', [Code - GcOpcodeBase])
   else if Code >= $200 then
     Result := Format('opcode 0xFD %d', [Code - $200])
   else if Code >= $100 then

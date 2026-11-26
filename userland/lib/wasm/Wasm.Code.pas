@@ -120,7 +120,68 @@ const
   CodeI64ShlImmediate = CodeFirst + 54;
   CodeI64ShrUImmediate = CodeFirst + 55;
   CodeI64ShrSImmediate = CodeFirst + 56;
-  CodeLast = CodeI64ShrSImmediate;
+  { Tail calls: the arguments go to the frame's slot 0 and the callee
+    takes the frame's place. }
+  CodeReturnCall = CodeFirst + 57;          { function A, arguments at B }
+  CodeReturnCallIndirect = CodeFirst + 58;  { as CodeCallIndirect }
+  CodeCallIndirect64 = CodeFirst + 59;      { a table64: the index is 64-bit }
+  CodeReturnCallIndirect64 = CodeFirst + 60;
+  CodeCallRef = CodeFirst + 61;             { frame at B; Extra parameter slots, the reference after them }
+  CodeReturnCallRef = CodeFirst + 62;
+  CodeBranchIfNull = CodeFirst + 63;        { if reference B is null go to A }
+  CodeBranchIfNonNull = CodeFirst + 64;     { if reference B is not null go to A }
+  CodeRefAsNonNull = CodeFirst + 65;        { A := B, trapping on null }
+  CodeThrow = CodeFirst + 66;               { tag B, payload at home from A }
+  CodeThrowRef = CodeFirst + 67;            { the exception in slot A }
+  CodeRethrow = CodeFirst + 68;             { the caught exception in slot A }
+  { Memories other than an i32 memory 0 (Wasm.MemoryAccess): Extra the
+    WebAssembly opcode, A the value (or the home of a lane access), B the
+    address, C the index in Constants of the offset and the memory. }
+  CodeMemoryAccessAt = CodeFirst + 69;
+  CodeMemorySizeAt = CodeFirst + 70;        { A := size of memory Extra }
+  CodeMemoryGrowAt = CodeFirst + 71;        { A := grow memory Extra by B }
+  CodeMemoryFillAt = CodeFirst + 72;        { operands at home from A; memory Extra }
+  CodeMemoryCopyAt = CodeFirst + 73;        { operands at home from A; memories B (destination), C }
+  CodeMemoryInitAt = CodeFirst + 74;        { operands at home from A; data B, memory Extra }
+  { Garbage collection (Wasm.GcOperations). A heap type operand is an
+    abstract heap type (negative) or the module's canonical type index. }
+  CodeRefTest = CodeFirst + 75;             { A := B matches heap type C; Extra bit 0 null matches, bit 1 negated }
+  CodeRefCast = CodeFirst + 76;             { A := B, trapping unless it matches C (Extra bit 0: null matches) }
+  CodeStructGet = CodeFirst + 77;           { A := field at byte C of struct B; Extra the access }
+  CodeStructSet = CodeFirst + 78;           { field at byte C of struct A := B; Extra the access }
+  CodeStructNew = CodeFirst + 79;           { fields at home from A, type B }
+  CodeStructNewDefault = CodeFirst + 80;    { A := a new struct of type B }
+  CodeArrayNew = CodeFirst + 81;            { value and length at home from A, type B }
+  CodeArrayNewDefault = CodeFirst + 82;     { length at A, type B }
+  CodeArrayNewFixed = CodeFirst + 83;       { C values at home from A, type B }
+  CodeArrayNewData = CodeFirst + 84;        { offset and length at home from A, type B, data C }
+  CodeArrayNewElem = CodeFirst + 85;        { offset and length at home from A, type B, element segment C }
+  CodeArrayGet = CodeFirst + 86;            { A := array B [slot C]; Extra the access }
+  CodeArraySet = CodeFirst + 87;            { array, index, value at home from A; Extra the access }
+  CodeArrayLen = CodeFirst + 88;            { A := length of array B }
+  CodeArrayFill = CodeFirst + 89;           { array, offset, value, count at home from A; Extra the access }
+  CodeArrayCopy = CodeFirst + 90;           { destination, offset, source, offset, count from A; Extra element size }
+  CodeArrayInitData = CodeFirst + 91;       { array, offset, source offset, count from A; type B, data C }
+  CodeArrayInitElem = CodeFirst + 92;       { the same with element segment C }
+  CodeAnyConvertExtern = CodeFirst + 93;    { A := B internalized }
+  CodeExternConvertAny = CodeFirst + 94;    { A := B externalized }
+  CodeRefI31 = CodeFirst + 95;              { A := i31 of B }
+  CodeI31Get = CodeFirst + 96;              { A := value of i31 B; Extra 1 signed }
+  CodeRefEq = CodeFirst + 97;               { A := B = C }
+  CodeLast = CodeRefEq;
+
+  { Field and element accesses (the Extra of struct and array access):
+    the size in the low three bits, AccessSigned for get_s. }
+  AccessI8 = 0;
+  AccessI16 = 1;
+  Access32 = 2;
+  Access64 = 3;
+  Access128 = 4;
+  AccessSigned = 8;
+  { Table instructions' Extra: the table (bit 0) or source table (bit 1)
+    is a table64, indexed with i64. }
+  TableIndex64 = 1;
+  SourceTableIndex64 = 2;
 
 type
   TCodeInstruction = packed record
@@ -131,6 +192,35 @@ type
     C: Int32;
   end;
   PCodeInstruction = ^TCodeInstruction;
+
+  { An exception handler (Wasm.Unwinding): a try_table, a legacy try
+    with catches, or a legacy try ... delegate, covering the code
+    [Start, Limit). A handler that does not catch passes the exception
+    on to Outer (the handler around it, -1 for the caller), a delegate to
+    DelegateTarget. }
+  TCodeHandlerKind = (hkCatch, hkDelegate);
+
+  TCodeHandler = record
+    Kind: TCodeHandlerKind;
+    Start: Int32;
+    Limit: Int32;
+    Outer: Int32;
+    DelegateTarget: Int32;
+    FirstClause: Int32;
+    ClauseCount: Int32;
+  end;
+
+  { A catch clause: Tag is the instance's tag index, -1 for catch_all;
+    the payload goes to slots from Destination, then the exception itself
+    when PushesException; ExceptionSlot (or -1) gets the exception too
+    (a legacy catch, for rethrow). Target is in BranchTargets[TargetEntry]. }
+  TCodeCatchClause = record
+    Tag: Int32;
+    PushesException: Boolean;
+    Destination: Int32;
+    ExceptionSlot: Int32;
+    TargetEntry: Int32;
+  end;
 
   TCompiledFunction = class
   public
@@ -143,13 +233,17 @@ type
     ParamSlots: Integer;
     LocalSlots: Integer;    { parameters and declared locals }
     FrameSlots: Integer;    { locals and the deepest operand stack }
-    { Where externrefs are live when the function is suspended at a call
-      or a back edge (for an embedder's garbage collector): the slots of
-      the safepoint at instruction SafepointInstructions[i] are
-      SafepointSlots[SafepointStarts[i] .. SafepointStarts[i + 1]). }
+    { Where references the collector traces are live when the function is
+      suspended at a call, a back edge or an allocation: the slots of the
+      safepoint at instruction SafepointInstructions[i] are
+      SafepointSlots[SafepointStarts[i] .. SafepointStarts[i + 1]), each
+      as slot times two plus one for an extern slot (which may hold an
+      embedder's pointer). }
     SafepointInstructions: array of Int32;
     SafepointStarts: array of Int32;
     SafepointSlots: array of Int32;
+    Handlers: array of TCodeHandler;
+    Clauses: array of TCodeCatchClause;
     { The slots live at instruction Index; False if it is no safepoint. }
     function FindSafepoint(Index: Integer; out First, Limit: Integer): Boolean;
   end;

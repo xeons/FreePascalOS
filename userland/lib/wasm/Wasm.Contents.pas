@@ -19,7 +19,8 @@
 {
   The contents of libwasm.so, the WebAssembly engine: the binary
   decoder, the validator, the compiler to slot code, the interpreter,
-  the store and instantiation, and the embedder's interface (Wasm.Api).
+  the store with its garbage collected heap and instantiation, and the
+  embedder's interface (Wasm.Api).
   Compiling this unit compiles all of them.
 }
 unit Wasm.Contents;
@@ -30,6 +31,9 @@ interface
 
 uses
   Wasm.Types,
+  Wasm.Features,
+  Wasm.TypeDefinitions,
+  Wasm.Subtyping,
   Wasm.Errors,
   Wasm.Limits,
   Wasm.Opcodes,
@@ -37,6 +41,8 @@ uses
   Wasm.Instructions,
   Wasm.Module,
   Wasm.Decoder,
+  Wasm.ModuleTypes,
+  Wasm.ConstantValidator,
   Wasm.CodeValidator,
   Wasm.Validator,
   Wasm.Code,
@@ -44,7 +50,14 @@ uses
   Wasm.Compiler,
   Wasm.Numerics,
   Wasm.Simd,
+  Wasm.PointerTable,
+  Wasm.GcHeap,
+  Wasm.TypeRegistry,
   Wasm.Runtime,
+  Wasm.Exceptions,
+  Wasm.GcOperations,
+  Wasm.MemoryAccess,
+  Wasm.Unwinding,
   Wasm.Interpreter,
   Wasm.Instantiation,
   Wasm.Api;

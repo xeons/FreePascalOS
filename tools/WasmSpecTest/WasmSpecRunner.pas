@@ -24,7 +24,14 @@
   pass or a failure, and failures are kept with their line and reason.
 
   The assertions check the kind of failure (malformed, invalid,
-  unlinkable, trap, exhaustion), not the exact message.
+  unlinkable, trap, exhaustion, exception), not the exact message.
+
+  Host references: (ref.extern n) is the even pointer (n + 1) * 2, which
+  the engine never looks at; (ref.host n) is the same value internalized
+  into the any hierarchy (any.convert_extern), so results compare by
+  externalizing them. Module definitions are compiled and kept by name
+  for (module instance ...). The store caps memories at 1 GiB and the
+  heap at 512 MiB, so that no test can take the host's memory.
 }
 unit WasmSpecRunner;
 
@@ -36,6 +43,7 @@ interface
 uses
   Classes,
   SysUtils,
+  Wasm.Features,
   WasmScript;
 
 type
@@ -44,6 +52,10 @@ type
     Failed: Integer;
     Failures: TStringList;
   end;
+
+var
+  { What modules are compiled with (WebAssembly 2.0 for its own suite). }
+  SpecFeatures: TWasmFeatures;
 
 { Runs a parsed script; Outcome.Failures must be a list to fill. }
 procedure RunScript(Commands: TScriptCommandList; var Outcome: TScriptOutcome);
@@ -55,6 +67,7 @@ uses
   Wasm.Errors,
   Wasm.Module,
   Wasm.Runtime,
+  Wasm.Exceptions,
   Wasm.Api;
 
 type
@@ -65,6 +78,7 @@ type
     FCurrent: TWasmModuleInstance;
     FNamed: TStringList;       { $name -> instance }
     FRegistered: TStringList;  { import module name -> instance }
+    FDefinitions: TStringList; { $name -> module definition }
     FSpectest: TStringList;    { field -> TWasmExternal (boxed) }
     FOutcome: ^TScriptOutcome;
     FLine: Integer;
@@ -80,6 +94,8 @@ type
     function PerformAction(const Action: TScriptAction): TWasmValueArray;
     function ToValue(const Value: TScriptValue): TWasmValue;
     function Matches(const Actual: TWasmValue; const Expected: TScriptValue): Boolean;
+    function MatchesResult(Command: TScriptCommand; Index: Integer; const Actual: TWasmValue): Boolean;
+    function HostReference(Number: QWord): Pointer;
     function Describe(const Value: TWasmValue): AnsiString;
     procedure RunCommand(Command: TScriptCommand);
   public
@@ -93,13 +109,19 @@ type
   end;
 
 constructor TScriptRunner.Create(var Outcome: TScriptOutcome);
+var
+  Options: TWasmStoreOptions;
 begin
   inherited Create;
   FOutcome := @Outcome;
-  FStore := TWasmStore.Create;
+  Options := TWasmStore.DefaultOptions;
+  Options.MaximumMemoryBytes := QWord(1024) * 1024 * 1024;
+  Options.MaximumHeapBytes := QWord(512) * 1024 * 1024;
+  FStore := TWasmStore.Create(Options);
   FModules := TList.Create;
   FNamed := TStringList.Create;
   FRegistered := TStringList.Create;
+  FDefinitions := TStringList.Create;
   FSpectest := TStringList.Create;
   FSpectest.OwnsObjects := True;
   CreateSpectest;
@@ -115,6 +137,7 @@ begin
   FModules.Free;
   FNamed.Free;
   FRegistered.Free;
+  FDefinitions.Free;
   FSpectest.Free;
   inherited Destroy;
 end;
@@ -147,8 +170,9 @@ procedure TScriptRunner.CreateSpectest;
 var
   Extern: TWasmExternal;
   GlobalType: TWasmGlobalType;
-  TableType: TWasmTableType;
-  MemoryType: TWasmMemoryType;
+  TableType: TWasmTableType = (ElementType: (Kind: vkReference; Nullable: True; HeapType: HeapTypeFunc);
+    Limits: (Minimum: 0; Maximum: 0; HasMaximum: False); AddressType: vkI32);
+  MemoryType: TWasmMemoryType = (Limits: (Minimum: 0; Maximum: 0; HasMaximum: False); AddressType: vkI32);
 
   procedure AddPrint(const Name: AnsiString; const Params: array of TWasmValueType);
   begin
@@ -189,6 +213,11 @@ begin
   Extern.Table := WasmNewTable(FStore, TableType, nil);
   AddSpectest('table', Extern);
   FillChar(Extern, SizeOf(Extern), 0);
+  Extern.Kind := ekTable;
+  TableType.AddressType := vkI64;
+  Extern.Table := WasmNewTable(FStore, TableType, nil);
+  AddSpectest('table64', Extern);
+  FillChar(Extern, SizeOf(Extern), 0);
   Extern.Kind := ekMemory;
   MemoryType.Limits.Minimum := 1;
   MemoryType.Limits.Maximum := 2;
@@ -222,8 +251,13 @@ function TScriptRunner.Compile(const Module: TScriptModule): TWasmModule;
 begin
   if Module.EncodeError <> '' then
     raise EWasmError.Create('text did not encode: ' + Module.EncodeError);
-  Result := WasmCompile(Module.Bytes);
+  Result := WasmCompile(Module.Bytes, SpecFeatures);
   FModules.Add(Result);
+end;
+
+function TScriptRunner.HostReference(Number: QWord): Pointer;
+begin
+  Result := Pointer(PtrUInt((Number + 1) * 2));
 end;
 
 function TScriptRunner.Instantiate(const Module: TScriptModule): TWasmModuleInstance;
@@ -263,11 +297,21 @@ begin
         Result.V128.QWords[1] := Value.Bits[1];
       end;
     svRefNull:
-      if Value.HeapKind = shFunc then
-        Result := WasmFuncRef(nil)
+      case Value.HeapKind of
+        shFunc: Result := WasmFuncRef(nil);
+        shNoFunc: Result := WasmReference(MakeReferenceType(HeapTypeNoFunc), nil);
+        shExtern: Result := WasmExternRef(nil);
+        shNoExtern: Result := WasmReference(MakeReferenceType(HeapTypeNoExtern), nil);
+        shExn: Result := WasmReference(MakeReferenceType(HeapTypeExn), nil);
+        shNoExn: Result := WasmReference(MakeReferenceType(HeapTypeNoExn), nil);
+        shNone: Result := WasmReference(MakeReferenceType(HeapTypeNone), nil);
       else
-        Result := WasmExternRef(nil);
-    svRefExtern: Result := WasmExternRef(Pointer(PtrUInt(Value.Bits[0] + 1)));
+        Result := WasmReference(MakeReferenceType(HeapTypeAny), nil);
+      end;
+    svRefExtern: Result := WasmExternRef(HostReference(Value.Bits[0]));
+    svRefHost:
+      Result := WasmReference(MakeReferenceType(HeapTypeAny, False),
+        WasmInternalize(FStore, HostReference(Value.Bits[0])));
   else
     Result := WasmFuncRef(nil);
   end;
@@ -347,14 +391,41 @@ begin
       end;
     svRefNull:
       Result := (Actual.ValueType.Kind = vkReference) and (Actual.Reference = nil);
-    svRefExtern:
-      if Expected.AnyReference then
-        Result := (Actual.ValueType.Kind = vkReference) and (Actual.Reference <> nil)
-      else
-        Result := (Actual.ValueType.Kind = vkReference) and (PtrUInt(Actual.Reference) = PtrUInt(Expected.Bits[0] + 1));
+    svRefExtern, svRefHost:
+      begin
+        Result := (Actual.ValueType.Kind = vkReference) and (Actual.Reference <> nil);
+        if Result and not Expected.AnyReference then
+          Result := WasmExternalize(FStore, Actual.Reference) = HostReference(Expected.Bits[0]);
+      end;
+    svRefFunc, svRefAny, svRefExn:
+      Result := (Actual.ValueType.Kind = vkReference) and (Actual.Reference <> nil);
+    svRefI31:
+      Result := (Actual.ValueType.Kind = vkReference) and
+        (WasmClassifyReference(FStore, Actual.Reference, Actual.ValueType) = rkI31);
+    svRefStruct:
+      Result := (Actual.ValueType.Kind = vkReference) and
+        (WasmClassifyReference(FStore, Actual.Reference, Actual.ValueType) = rkStruct);
+    svRefArray:
+      Result := (Actual.ValueType.Kind = vkReference) and
+        (WasmClassifyReference(FStore, Actual.Reference, Actual.ValueType) = rkArray);
+    svRefEq:
+      Result := (Actual.ValueType.Kind = vkReference) and
+        (WasmClassifyReference(FStore, Actual.Reference, Actual.ValueType) in [rkI31, rkStruct, rkArray]);
   else
-    Result := (Actual.ValueType.Kind = vkReference) and (Actual.Reference <> nil);
+    Result := False;
   end;
+end;
+
+function TScriptRunner.MatchesResult(Command: TScriptCommand; Index: Integer; const Actual: TWasmValue): Boolean;
+var
+  Alternative: Integer;
+begin
+  if Command.Expected[Index].Kind <> svEither then
+    Exit(Matches(Actual, Command.Expected[Index]));
+  for Alternative := 0 to High(Command.Alternatives[Index]) do
+    if Matches(Actual, Command.Alternatives[Index][Alternative]) then
+      Exit(True);
+  Result := False;
 end;
 
 function TScriptRunner.Describe(const Value: TWasmValue): AnsiString;
@@ -402,10 +473,23 @@ var
   Index: Integer;
   Text: AnsiString;
   Module: TWasmModule;
+  Position: Integer;
 begin
   FLine := Command.Line;
+  WasmForgetExposed(FStore);
   case Command.Kind of
     scModule:
+      if Command.Module.IsDefinition then
+      try
+        Module := Compile(Command.Module);
+        if Command.Module.Name <> '' then
+          FDefinitions.AddObject(Command.Module.Name, Module);
+        Pass;
+      except
+        on E: Exception do
+          Fail('module definition: ' + E.ClassName + ': ' + E.Message);
+      end
+      else
       try
         Instance := Instantiate(Command.Module);
         FCurrent := Instance;
@@ -418,6 +502,33 @@ begin
           FCurrent := nil;
           Fail('module: ' + E.ClassName + ': ' + E.Message);
         end;
+      end;
+    scModuleInstance:
+      try
+        Position := FDefinitions.IndexOf(Command.DefinitionName);
+        if Position < 0 then
+          raise EWasmError.Create('unknown module definition ' + Command.DefinitionName);
+        Instance := WasmInstantiateWith(FStore, TWasmModule(FDefinitions.Objects[Position]), @Resolve);
+        FCurrent := Instance;
+        if Command.InstanceName <> '' then
+          FNamed.AddObject(Command.InstanceName, Instance);
+        Pass;
+      except
+        on E: Exception do
+        begin
+          FCurrent := nil;
+          Fail('module instance: ' + E.ClassName + ': ' + E.Message);
+        end;
+      end;
+    scAssertException:
+      try
+        PerformAction(Command.Action);
+        Fail('expected an exception');
+      except
+        on E: EWasmException do
+          Pass;
+        on E: Exception do
+          Fail('expected an exception, got ' + E.ClassName + ': ' + E.Message);
       end;
     scRegister:
       try
@@ -443,7 +554,7 @@ begin
         begin
           Text := '';
           for Index := 0 to High(Results) do
-            if not Matches(Results[Index], Command.Expected[Index]) then
+            if not MatchesResult(Command, Index, Results[Index]) then
               Text := Text + Format(' result %d is %s', [Index, Describe(Results[Index])]);
           if Text = '' then
             Pass
@@ -483,7 +594,7 @@ begin
           Exit;
         end;
         try
-          Module := WasmCompile(Command.Module.Bytes);
+          Module := WasmCompile(Command.Module.Bytes, SpecFeatures);
           Module.Release;
           Fail('expected ' + Command.Message);
         except
@@ -534,4 +645,6 @@ begin
   end;
 end;
 
+initialization
+  SpecFeatures := WasmFeaturesAll;
 end.

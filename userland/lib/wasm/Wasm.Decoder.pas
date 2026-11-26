@@ -28,6 +28,12 @@
 
   The name section is read for function names (stack traces) and the
   module's name; like any custom section, a damaged one is ignored.
+
+  3.0 adds rec groups and struct, array and sub types to the type
+  section, the tag section (between memory and global), tags as imports
+  and exports, 64-bit limits (flag 4) for memories and tables, tables
+  with an initializer expression (0x40 0x00) and value types of more
+  than one byte. The module's features decide which of these decode.
 }
 unit Wasm.Decoder;
 
@@ -38,15 +44,18 @@ interface
 
 uses
   SysUtils,
+  Wasm.Features,
   Wasm.Module;
 
 { Decodes a module; raises EWasmMalformed. The module copies the bytes. }
 function DecodeModule(const Bytes: TBytes): TWasmModule;
+function DecodeModule(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
 
 implementation
 
 uses
   Wasm.Types,
+  Wasm.TypeDefinitions,
   Wasm.Errors,
   Wasm.Limits,
   Wasm.Reader,
@@ -67,16 +76,19 @@ const
   SectionCode = 10;
   SectionData = 11;
   SectionDataCount = 12;
+  SectionTag = 13;
 
-{ Where each section id may come, data count between element and code. }
+{ Where each section id may come: data count between element and code,
+  tags between memory and global. }
 function SectionRank(Id: Byte): Integer;
 begin
   case Id of
-    SectionDataCount: Result := 10;
-    SectionCode: Result := 11;
-    SectionData: Result := 12;
+    SectionDataCount: Result := 21;
+    SectionCode: Result := 23;
+    SectionData: Result := 25;
+    SectionTag: Result := 11;
   else
-    Result := Id;
+    Result := Id * 2;
   end;
 end;
 
@@ -92,7 +104,10 @@ type
     function ReadCount(Maximum: Cardinal; const What: AnsiString): Cardinal;
     function ReadValueType: TWasmValueType;
     function ReadReferenceType: TWasmValueType;
-    procedure ReadLimits(out Limits: TWasmLimits; Maximum64: Boolean);
+    procedure ReadLimits(out Limits: TWasmLimits; out AddressType: TWasmValueKind);
+    procedure ReadFieldType(out Field: TWasmFieldType);
+    procedure ReadCompositeType(Form: Byte; Index: Cardinal);
+    procedure ReadSubType(Index, GroupStart, GroupSize: Cardinal);
     procedure ReadTableType(out TableType: TWasmTableType);
     procedure ReadMemoryType(out MemoryType: TWasmMemoryType);
     procedure ReadGlobalType(out GlobalType: TWasmGlobalType);
@@ -110,10 +125,11 @@ type
     procedure DecodeFunctionBody(var Body: TWasmFunctionBody; Limit: SizeInt);
     procedure DecodeData;
     procedure DecodeDataCount;
+    procedure DecodeTags;
     procedure DecodeCustom(Limit: SizeInt);
     procedure DecodeNames(Start, Limit: SizeInt);
   public
-    function Decode(const Bytes: TBytes): TWasmModule;
+    function Decode(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
   end;
 
 function TModuleDecoder.ReadCount(Maximum: Cardinal; const What: AnsiString): Cardinal;
@@ -128,47 +144,153 @@ begin
 end;
 
 function TModuleDecoder.ReadValueType: TWasmValueType;
-var
-  Code: Byte;
 begin
-  Code := FReader.ReadByte;
-  if not DecodeValueType(Code, Result) then
-    FReader.FailAt(FReader.Position - 1, 'malformed value type');
+  Result := FReader.ReadValueType;
 end;
 
 function TModuleDecoder.ReadReferenceType: TWasmValueType;
-var
-  Code: Byte;
 begin
-  Code := FReader.ReadByte;
-  if (not DecodeValueType(Code, Result)) or (Result.Kind <> vkReference) then
-    FReader.FailAt(FReader.Position - 1, 'malformed reference type');
+  Result := FReader.ReadReferenceType;
 end;
 
-procedure TModuleDecoder.ReadLimits(out Limits: TWasmLimits; Maximum64: Boolean);
+{ Flags: bit 0 a maximum follows, bit 2 the limits (and addresses) are
+  64-bit (memory64, table64); bit 1, shared memory, is not supported. }
+procedure TModuleDecoder.ReadLimits(out Limits: TWasmLimits; out AddressType: TWasmValueKind);
 var
   Flags: Byte;
 begin
   Flags := FReader.ReadByte;
-  if Flags > 1 then
+  if (Flags > 1) and not ((wfMemory64 in FModule.Features) and (Flags in [4, 5])) then
     FReader.FailAt(FReader.Position - 1, 'integer too large');
-  Limits.Minimum := FReader.ReadU32;
-  Limits.HasMaximum := Flags = 1;
-  if Limits.HasMaximum then
-    Limits.Maximum := FReader.ReadU32
+  Limits.HasMaximum := Flags and 1 <> 0;
+  if Flags and 4 <> 0 then
+  begin
+    AddressType := vkI64;
+    Limits.Minimum := FReader.ReadU64;
+    if Limits.HasMaximum then
+      Limits.Maximum := FReader.ReadU64
+    else
+      Limits.Maximum := 0;
+  end
   else
-    Limits.Maximum := 0;
+  begin
+    AddressType := vkI32;
+    Limits.Minimum := FReader.ReadU32;
+    if Limits.HasMaximum then
+      Limits.Maximum := FReader.ReadU32
+    else
+      Limits.Maximum := 0;
+  end;
 end;
 
 procedure TModuleDecoder.ReadTableType(out TableType: TWasmTableType);
 begin
   TableType.ElementType := ReadReferenceType;
-  ReadLimits(TableType.Limits, False);
+  ReadLimits(TableType.Limits, TableType.AddressType);
 end;
 
 procedure TModuleDecoder.ReadMemoryType(out MemoryType: TWasmMemoryType);
 begin
-  ReadLimits(MemoryType.Limits, False);
+  ReadLimits(MemoryType.Limits, MemoryType.AddressType);
+end;
+
+procedure TModuleDecoder.ReadFieldType(out Field: TWasmFieldType);
+var
+  Mutability: Byte;
+begin
+  case FReader.PeekByte of
+    $78:
+      begin
+        FReader.ReadByte;
+        Field.Storage := skI8;
+        Field.ValueType := WasmI32Type;
+      end;
+    $77:
+      begin
+        FReader.ReadByte;
+        Field.Storage := skI16;
+        Field.ValueType := WasmI32Type;
+      end;
+  else
+    Field.Storage := skValue;
+    Field.ValueType := ReadValueType;
+  end;
+  Mutability := FReader.ReadByte;
+  if Mutability > 1 then
+    FReader.FailAt(FReader.Position - 1, 'malformed mutability');
+  Field.Mutable := Mutability = 1;
+end;
+
+procedure TModuleDecoder.ReadCompositeType(Form: Byte; Index: Cardinal);
+var
+  Count, Item: Cardinal;
+begin
+  with FModule.TypeDefinitions[Index] do
+    case Form of
+      $60:
+        begin
+          Kind := ckFunction;
+          Count := ReadCount(MaximumParams, 'parameters');
+          SetLength(FunctionType.Params, Count);
+          if Count > 0 then
+            for Item := 0 to Count - 1 do
+              FunctionType.Params[Item] := ReadValueType;
+          Count := ReadCount(MaximumResults, 'results');
+          SetLength(FunctionType.Results, Count);
+          if Count > 0 then
+            for Item := 0 to Count - 1 do
+              FunctionType.Results[Item] := ReadValueType;
+          FModule.Types[Index] := FunctionType;
+        end;
+      $5F:
+        begin
+          Kind := ckStruct;
+          Count := ReadCount(MaximumStructFields, 'fields');
+          SetLength(Fields, Count);
+          if Count > 0 then
+            for Item := 0 to Count - 1 do
+              ReadFieldType(Fields[Item]);
+        end;
+      $5E:
+        begin
+          Kind := ckArray;
+          SetLength(Fields, 1);
+          ReadFieldType(Fields[0]);
+        end;
+    else
+      FReader.FailAt(FReader.Position - 1, 'malformed composite type');
+    end;
+end;
+
+procedure TModuleDecoder.ReadSubType(Index, GroupStart, GroupSize: Cardinal);
+var
+  Form: Byte;
+  Count: Cardinal;
+  Definition: ^TWasmTypeDefinition;
+begin
+  Definition := @FModule.TypeDefinitions[Index];
+  Definition^.Final := True;
+  Definition^.HasSuperType := False;
+  Definition^.SuperType := 0;
+  Definition^.GroupStart := GroupStart;
+  Definition^.GroupSize := GroupSize;
+  Form := FReader.ReadByte;
+  if ((Form = $50) or (Form = $4F)) and (wfGarbageCollection in FModule.Features) then
+  begin
+    Definition^.Final := Form = $4F;
+    Count := FReader.ReadU32;
+    if Count > 1 then
+      FReader.Fail('too many supertypes');
+    if Count = 1 then
+    begin
+      Definition^.HasSuperType := True;
+      Definition^.SuperType := FReader.ReadU32;
+    end;
+    Form := FReader.ReadByte;
+  end;
+  if (Form <> $60) and not (wfGarbageCollection in FModule.Features) then
+    FReader.FailAt(FReader.Position - 1, 'integer representation too long');
+  ReadCompositeType(Form, Index);
 end;
 
 procedure TModuleDecoder.ReadGlobalType(out GlobalType: TWasmGlobalType);
@@ -189,41 +311,49 @@ var
   Depth: Integer;
 begin
   Expression.Start := FReader.Position;
-  Instructions.Initialize(FReader.Bytes, FReader.Position, FReader.Limit);
+  Instructions.Initialize(FReader.Bytes, FReader.Position, FReader.Limit, FModule.Features);
   Depth := 0;
   repeat
     Instructions.Next(Instruction);
     case Instruction.Opcode of
-      OpBlock, OpLoop, OpIf: Inc(Depth);
-      OpEnd: Dec(Depth);
+      OpBlock, OpLoop, OpIf, OpTry, OpTryTable: Inc(Depth);
+      OpEnd, OpDelegate: Dec(Depth);
     end;
   until Depth < 0;
   FReader.Position := Instructions.Reader.Position;
   Expression.Limit := FReader.Position;
 end;
 
+{ A rec group (0x4E and its subtypes) counts as one entry of the
+  section but defines as many types as it has members. }
 procedure TModuleDecoder.DecodeTypes;
 var
-  Count, Index, ParamCount, ResultCount, Item: Cardinal;
+  Count, Entry, GroupSize, Member, Index: Cardinal;
 begin
   Count := ReadCount(MaximumTypes, 'types');
-  SetLength(FModule.Types, Count);
-  if Count = 0 then
-    Exit;
-  for Index := 0 to Count - 1 do
+  Index := 0;
+  Entry := 0;
+  while Entry < Count do
   begin
-    if FReader.ReadByte <> $60 then
-      FReader.FailAt(FReader.Position - 1, 'integer representation too long');
-    ParamCount := ReadCount(MaximumParams, 'parameters');
-    SetLength(FModule.Types[Index].Params, ParamCount);
-    if ParamCount > 0 then
-      for Item := 0 to ParamCount - 1 do
-        FModule.Types[Index].Params[Item] := ReadValueType;
-    ResultCount := ReadCount(MaximumResults, 'results');
-    SetLength(FModule.Types[Index].Results, ResultCount);
-    if ResultCount > 0 then
-      for Item := 0 to ResultCount - 1 do
-        FModule.Types[Index].Results[Item] := ReadValueType;
+    if (wfGarbageCollection in FModule.Features) and (FReader.PeekByte = $4E) then
+    begin
+      FReader.ReadByte;
+      GroupSize := ReadCount(MaximumTypes, 'types');
+    end
+    else
+      GroupSize := 1;
+    if Index + GroupSize > MaximumTypes then
+      FReader.Fail('too many types');
+    SetLength(FModule.TypeDefinitions, Index + GroupSize);
+    SetLength(FModule.Types, Index + GroupSize);
+    Member := 0;
+    while Member < GroupSize do
+    begin
+      ReadSubType(Index + Member, Index, GroupSize);
+      Inc(Member);
+    end;
+    Inc(Index, GroupSize);
+    Inc(Entry);
   end;
 end;
 
@@ -275,6 +405,18 @@ begin
             FModule.Globals[High(FModule.Globals)] := GlobalType;
             Inc(FModule.ImportedGlobalCount);
           end;
+        4:
+          begin
+            if FModule.Features * [wfExceptionHandling, wfLegacyExceptions] = [] then
+              FReader.FailAt(FReader.Position - 1, 'malformed import kind');
+            FModule.Imports[Index].Kind := ekTag;
+            if FReader.ReadByte <> 0 then
+              FReader.FailAt(FReader.Position - 1, 'malformed tag attribute');
+            TagTypeIndex := FReader.ReadU32;
+            SetLength(FModule.TagTypes, Length(FModule.TagTypes) + 1);
+            FModule.TagTypes[High(FModule.TagTypes)] := TagTypeIndex;
+            Inc(FModule.ImportedTagCount);
+          end;
       else
         FReader.FailAt(FReader.Position - 1, 'malformed import kind');
       end;
@@ -303,10 +445,24 @@ begin
   Count := ReadCount(MaximumTables, 'tables');
   Base := Length(FModule.Tables);
   SetLength(FModule.Tables, Base + Count);
+  SetLength(FModule.TableDefinitions, Count);
   if Count = 0 then
     Exit;
   for Index := 0 to Count - 1 do
-    ReadTableType(FModule.Tables[Base + Index]);
+  begin
+    FModule.TableDefinitions[Index].HasInitializer := False;
+    if (wfFunctionReferences in FModule.Features) and (FReader.PeekByte = $40) then
+    begin
+      FReader.ReadByte;
+      if FReader.ReadByte <> 0 then
+        FReader.FailAt(FReader.Position - 1, 'malformed table');
+      ReadTableType(FModule.Tables[Base + Index]);
+      FModule.TableDefinitions[Index].HasInitializer := True;
+      ReadConstantExpression(FModule.TableDefinitions[Index].Initializer);
+    end
+    else
+      ReadTableType(FModule.Tables[Base + Index]);
+  end;
 end;
 
 procedure TModuleDecoder.DecodeMemories;
@@ -340,6 +496,23 @@ begin
   end;
 end;
 
+procedure TModuleDecoder.DecodeTags;
+var
+  Count, Index, Base: Cardinal;
+begin
+  Count := ReadCount(MaximumTags, 'tags');
+  Base := Length(FModule.TagTypes);
+  SetLength(FModule.TagTypes, Base + Count);
+  if Count = 0 then
+    Exit;
+  for Index := 0 to Count - 1 do
+  begin
+    if FReader.ReadByte <> 0 then
+      FReader.FailAt(FReader.Position - 1, 'malformed tag attribute');
+    FModule.TagTypes[Base + Index] := FReader.ReadU32;
+  end;
+end;
+
 procedure TModuleDecoder.DecodeExports;
 var
   Count, Index: Cardinal;
@@ -353,7 +526,7 @@ begin
   begin
     FModule.ExportList[Index].Name := FReader.ReadName;
     Kind := FReader.ReadByte;
-    if Kind > 3 then
+    if (Kind > 4) or ((Kind = 4) and (FModule.Features * [wfExceptionHandling, wfLegacyExceptions] = [])) then
       FReader.FailAt(FReader.Position - 1, 'malformed export kind');
     FModule.ExportList[Index].Kind := TWasmExternalKind(Kind);
     FModule.ExportList[Index].Index := FReader.ReadU32;
@@ -455,10 +628,11 @@ var
   ValueType: TWasmValueType;
   Instructions: TWasmInstructionReader;
   Instruction: TWasmInstruction;
-  IsIf: array of Boolean;
+  Opener: array of Integer;
   Depth: Integer;
 begin
   Body_.Initialize(FReader.Bytes, FReader.Position, Limit);
+  Body_.Features := FModule.Features;
   GroupCount := Body_.ReadU32;
   if GroupCount > Body_.Remaining then
     Body_.Fail('too many locals');
@@ -471,8 +645,7 @@ begin
     Total := Total + RunLength;
     if Total > MaximumLocals then
       Body_.Fail('too many locals');
-    if not DecodeValueType(Body_.ReadByte, ValueType) then
-      Body_.FailAt(Body_.Position - 1, 'malformed value type');
+    ValueType := Body_.ReadValueType;
     SetLength(Body.Locals, Total);
     if RunLength > 0 then
       for Item := Total - RunLength to Total - 1 do
@@ -482,30 +655,43 @@ begin
   Body.BodyStart := Body_.Position;
   Body.BodyLimit := Limit;
   Body.Compiled := nil;
-  { The structure: every block, loop and if ends, else only in an if,
-    and the body's own end is its last byte. }
-  Instructions.Initialize(FReader.Bytes, Body_.Position, Limit);
-  SetLength(IsIf, 16);
+  { The structure: every block, loop, if, try and try_table ends (a try
+    perhaps with delegate), else only in an if, catch and catch_all only
+    in a try, and the body's own end is its last byte. }
+  Instructions.Initialize(FReader.Bytes, Body_.Position, Limit, FModule.Features);
+  SetLength(Opener, 16);
   Depth := 0;
-  IsIf[0] := False;
+  Opener[0] := OpBlock;
   while True do
   begin
     if Instructions.AtEnd then
       Instructions.Reader.Fail('END opcode expected');
     Instructions.Next(Instruction);
     case Instruction.Opcode of
-      OpBlock, OpLoop, OpIf:
+      OpBlock, OpLoop, OpIf, OpTry, OpTryTable:
         begin
           Inc(Depth);
-          if Depth >= Length(IsIf) then
-            SetLength(IsIf, Length(IsIf) * 2);
-          IsIf[Depth] := Instruction.Opcode = OpIf;
+          if Depth >= Length(Opener) then
+            SetLength(Opener, Length(Opener) * 2);
+          Opener[Depth] := Instruction.Opcode;
         end;
       OpElse:
         begin
-          if (Depth = 0) or not IsIf[Depth] then
+          if (Depth = 0) or (Opener[Depth] <> OpIf) then
             Instructions.Reader.FailAt(Instruction.Offset, 'illegal opcode else');
-          IsIf[Depth] := False;
+          Opener[Depth] := OpElse;
+        end;
+      OpCatch, OpCatchAll:
+        begin
+          if (Depth = 0) or ((Opener[Depth] <> OpTry) and (Opener[Depth] <> OpCatch)) then
+            Instructions.Reader.FailAt(Instruction.Offset, 'illegal opcode ' + WasmOpcodeName(Instruction.Opcode));
+          Opener[Depth] := Instruction.Opcode;
+        end;
+      OpDelegate:
+        begin
+          if (Depth = 0) or (Opener[Depth] <> OpTry) then
+            Instructions.Reader.FailAt(Instruction.Offset, 'illegal opcode delegate');
+          Dec(Depth);
         end;
       OpEnd:
         begin
@@ -513,7 +699,7 @@ begin
             Break;
           Dec(Depth);
         end;
-      OpMemoryInit, OpDataDrop:
+      OpMemoryInit, OpDataDrop, OpArrayNewData, OpArrayInitData:
         if not FModule.HasDataCount then
           Instructions.Reader.FailAt(Instruction.Offset, 'data count section required');
     end;
@@ -633,7 +819,7 @@ begin
   end;
 end;
 
-function TModuleDecoder.Decode(const Bytes: TBytes): TWasmModule;
+function TModuleDecoder.Decode(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
 var
   Id: Byte;
   Size: Cardinal;
@@ -643,8 +829,10 @@ var
 begin
   FModule := TWasmModule.Create;
   try
+    FModule.Features := Features;
     FModule.Bytes := Copy(Bytes);
     FReader.Initialize(PByte(FModule.Bytes), 0, Length(FModule.Bytes));
+    FReader.Features := Features;
     if Length(FModule.Bytes) < 4 then
       FReader.Fail('unexpected end');
     FReader.ReadRaw(@Magic, 4);
@@ -659,7 +847,8 @@ begin
     while not FReader.AtEnd do
     begin
       Id := FReader.ReadByte;
-      if Id > SectionDataCount then
+      if (Id > SectionTag) or ((Id = SectionTag) and
+        (FModule.Features * [wfExceptionHandling, wfLegacyExceptions] = [])) then
         FReader.FailAt(FReader.Position - 1, 'malformed section id');
       Size := FReader.ReadU32;
       if Size > FReader.Remaining then
@@ -686,6 +875,7 @@ begin
         SectionCode: DecodeCode;
         SectionData: DecodeData;
         SectionDataCount: DecodeDataCount;
+        SectionTag: DecodeTags;
       end;
       if FReader.Position <> SectionLimit then
         FReader.Fail('section size mismatch');
@@ -706,6 +896,11 @@ begin
 end;
 
 function DecodeModule(const Bytes: TBytes): TWasmModule;
+begin
+  Result := DecodeModule(Bytes, WasmFeaturesAll);
+end;
+
+function DecodeModule(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
 var
   Decoder: TModuleDecoder;
 begin
@@ -713,7 +908,7 @@ begin
     raise EWasmMalformed.CreateAt(0, 'module too large');
   Decoder := TModuleDecoder.Create;
   try
-    Result := Decoder.Decode(Bytes);
+    Result := Decoder.Decode(Bytes, Features);
   finally
     Decoder.Free;
   end;

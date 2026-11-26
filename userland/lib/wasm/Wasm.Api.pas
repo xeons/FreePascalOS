@@ -63,6 +63,60 @@
     Store.OnInterrupt is called every Store.Options.InterruptInterval
     back edges and calls; returning True stops the code with a trap of
     kind tkInterrupted (a watchdog's way to end a runaway module).
+
+  Features
+    WasmCompile and WasmValidate take an optional feature set
+    (Wasm.Features): all of 3.0 and legacy exceptions by default.
+
+  Tags and exceptions (WebAssembly.Tag, WebAssembly.Exception)
+    WasmNewTag makes a tag of a function type without results; tags are
+    imported and exported as ekTag (TWasmExternal.Tag). An exception is
+    an exnref: WasmNewException makes one, WasmExceptionTag and
+    WasmExceptionPayload read it. A WebAssembly exception that leaves
+    WebAssembly (WasmCall, WasmInstantiate's start function) raises
+    EWasmException (Wasm.Exceptions) with Tag, Payload and Reference;
+    a host function raises EWasmException (WasmThrow, or by letting one
+    through) to throw into its caller, where try_table, catch and
+    catch_all see it. A JavaScript exception crossing into WebAssembly is
+    thrown with the embedder's own tag (WebAssembly.JSTag: a tag with an
+    externref parameter). Traps (EWasmTrap) are never caught by
+    WebAssembly code.
+
+  References of the garbage collected kinds
+    A reference value is a pointer-sized word: nil is null, an odd word
+    an i31 (WasmMakeI31, WasmI31Value), otherwise a struct, an array or an
+    exception of the store's heap, a TWasmFunction (func hierarchy), or in
+    the extern hierarchy a pointer the embedder owns; WasmClassifyReference
+    tells which. Embedder pointers given as externref must be even (they
+    are aligned) since odd words are i31s once internalized. A host value
+    entering the any hierarchy (WasmInternalize, any.convert_extern) is
+    boxed; WasmExternalize unboxes it again, so values round-trip.
+    WasmValueMatchesType checks a value against a (store) value type the
+    way ToWebAssemblyValue must; WasmStruct... and WasmArray... read and
+    write fields and elements.
+
+  Collection and the embedder's collector
+    Objects live while the store reaches them (globals, tables, element
+    segments, the frames of running code), while pinned (WasmPin /
+    WasmUnpin, counted) and while exposed: every object handed to the
+    embedder (results, host function arguments, values read through this
+    interface, exception payloads) stays alive until the embedder's next
+    trace says it no longer holds it. An embedder without a tracing
+    collector pins what it keeps and calls WasmForgetExposed now and then.
+    One with a tracing collector (the JavaScript engine) either
+      a) at each of its collections calls Store.EnumerateReferences and
+         keeps every pointer it is given (simple; a cycle through both
+         heaps lives until the store goes), or
+      b) traces through both heaps: Store.BeginHostTrace(Visitor) marks
+         what the store's own roots reach and gives the embedder pointers
+         it finds to Visitor; for every wasm reference the embedder's
+         marking reaches (a wrapper object holding it) it calls
+         Store.TraceFromHost(Reference, Visitor), which marks on and gives
+         more pointers; when its marking is complete, Store.EndHostTrace
+         forgets exposed objects not reached and frees every unmarked
+         object. No WebAssembly code may run between Begin and End.
+    The store collects by itself when enough was allocated since the last
+    collection (Options.CollectionThreshold), at safepoints only.
 }
 unit Wasm.Api;
 
@@ -74,9 +128,11 @@ interface
 uses
   SysUtils,
   Wasm.Types,
+  Wasm.Features,
   Wasm.Errors,
   Wasm.Module,
-  Wasm.Runtime;
+  Wasm.Runtime,
+  Wasm.Exceptions;
 
 type
   TWasmImportDescriptor = record
@@ -87,6 +143,7 @@ type
     TableType: TWasmTableType;
     MemoryType: TWasmMemoryType;
     GlobalType: TWasmGlobalType;
+    TagType: TWasmFunctionType;
   end;
   TWasmImportDescriptorArray = array of TWasmImportDescriptor;
 
@@ -97,8 +154,13 @@ type
     TableType: TWasmTableType;
     MemoryType: TWasmMemoryType;
     GlobalType: TWasmGlobalType;
+    TagType: TWasmFunctionType;
   end;
   TWasmExportDescriptorArray = array of TWasmExportDescriptor;
+
+  TWasmReferenceKind = (rkNull, rkI31, rkStruct, rkArray, rkException, rkBoxedHostValue, rkFunction, rkHostValue);
+
+  EWasmException = Wasm.Exceptions.EWasmException;
 
   TWasmNamedExternal = record
     Name: AnsiString;
@@ -112,7 +174,9 @@ type
   TWasmImportResolver = function(const Import: TWasmImportDescriptor; out External: TWasmExternal): Boolean of object;
 
 function WasmCompile(const Bytes: TBytes): TWasmModule;
+function WasmCompile(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
 function WasmValidate(const Bytes: TBytes): Boolean;
+function WasmValidate(const Bytes: TBytes; Features: TWasmFeatures): Boolean;
 function WasmModuleImports(Module: TWasmModule): TWasmImportDescriptorArray;
 function WasmModuleExports(Module: TWasmModule): TWasmExportDescriptorArray;
 function WasmCustomSections(Module: TWasmModule; const Name: AnsiString): TBytesArray;
@@ -140,10 +204,46 @@ function WasmMemoryGrow(Memory: TWasmMemory; DeltaPages: QWord): Int64;
 
 function MakeFunctionType(const Params, Results: array of TWasmValueType): TWasmFunctionType;
 
+{ Tags and exceptions. }
+function WasmNewTag(Store: TWasmStore; const FunctionType: TWasmFunctionType): TWasmTag;
+function WasmTagType(Tag: TWasmTag): TWasmFunctionType;
+function WasmNewException(Store: TWasmStore; Tag: TWasmTag; const Payload: TWasmValueArray): Pointer;
+function WasmExceptionTag(Exception: Pointer): TWasmTag;
+function WasmExceptionPayload(Exception: Pointer): TWasmValueArray;
+{ Raises EWasmException: from a host function, throws into WebAssembly. }
+procedure WasmThrow(Store: TWasmStore; Tag: TWasmTag; const Payload: TWasmValueArray);
+procedure WasmThrowException(Store: TWasmStore; Exception: Pointer);
+
+{ References. ValueType tells the hierarchy (a store value type). }
+function WasmClassifyReference(Store: TWasmStore; Reference: Pointer; const ValueType: TWasmValueType): TWasmReferenceKind;
+function WasmMakeI31(Value: Int32): Pointer;
+function WasmI31Value(Reference: Pointer; Signed: Boolean = True): Int32;
+function WasmInternalize(Store: TWasmStore; Reference: Pointer): Pointer;
+function WasmExternalize(Store: TWasmStore; Reference: Pointer): Pointer;
+function WasmValueMatchesType(Store: TWasmStore; const Value: TWasmValue; const ValueType: TWasmValueType): Boolean;
+function WasmStructFieldCount(Reference: Pointer): Integer;
+function WasmStructGetField(Store: TWasmStore; Reference: Pointer; Field: Integer): TWasmValue;
+procedure WasmStructSetField(Store: TWasmStore; Reference: Pointer; Field: Integer; const Value: TWasmValue);
+function WasmArrayLength(Reference: Pointer): Cardinal;
+function WasmArrayGetElement(Store: TWasmStore; Reference: Pointer; Index: Cardinal): TWasmValue;
+procedure WasmArraySetElement(Store: TWasmStore; Reference: Pointer; Index: Cardinal; const Value: TWasmValue);
+
+{ Collection. }
+procedure WasmCollectGarbage(Store: TWasmStore);
+procedure WasmPin(Store: TWasmStore; Reference: Pointer);
+procedure WasmUnpin(Store: TWasmStore; Reference: Pointer);
+procedure WasmForgetExposed(Store: TWasmStore);
+
 implementation
 
 uses
   Math,
+  Wasm.TypeDefinitions,
+  Wasm.Subtyping,
+  Wasm.GcHeap,
+  Wasm.TypeRegistry,
+  Wasm.GcOperations,
+  Wasm.Code,
   Wasm.Decoder,
   Wasm.Validator,
   Wasm.Compiler,
@@ -152,7 +252,17 @@ uses
 
 function WasmCompile(const Bytes: TBytes): TWasmModule;
 begin
-  Result := DecodeModule(Bytes);
+  Result := WasmCompile(Bytes, WasmFeaturesAll);
+end;
+
+function WasmValidate(const Bytes: TBytes): Boolean;
+begin
+  Result := WasmValidate(Bytes, WasmFeaturesAll);
+end;
+
+function WasmCompile(const Bytes: TBytes; Features: TWasmFeatures): TWasmModule;
+begin
+  Result := DecodeModule(Bytes, Features);
   try
     ValidateModule(Result);
     CompileModule(Result);
@@ -162,12 +272,12 @@ begin
   end;
 end;
 
-function WasmValidate(const Bytes: TBytes): Boolean;
+function WasmValidate(const Bytes: TBytes; Features: TWasmFeatures): Boolean;
 var
   Module: TWasmModule;
 begin
   try
-    Module := DecodeModule(Bytes);
+    Module := DecodeModule(Bytes, Features);
     try
       ValidateModule(Module);
     finally
@@ -194,6 +304,8 @@ begin
       Result[Index].Kind := Kind;
       if Kind = ekFunction then
         Result[Index].FunctionType := Module.Types[TypeIndex];
+      if Kind = ekTag then
+        Result[Index].TagType := Module.Types[TagTypeIndex];
       Result[Index].TableType := TableType;
       Result[Index].MemoryType := MemoryType;
       Result[Index].GlobalType := GlobalType;
@@ -215,6 +327,7 @@ begin
       ekTable: Result[Index].TableType := Module.Tables[Module.ExportList[Index].Index];
       ekMemory: Result[Index].MemoryType := Module.Memories[Module.ExportList[Index].Index];
       ekGlobal: Result[Index].GlobalType := Module.Globals[Module.ExportList[Index].Index];
+      ekTag: Result[Index].TagType := Module.TagType(Module.ExportList[Index].Index);
     end;
   end;
 end;
@@ -297,7 +410,7 @@ end;
 
 function WasmNewGlobal(Store: TWasmStore; const GlobalType: TWasmGlobalType; const Value: TWasmValue): TWasmGlobal;
 begin
-  if Value.ValueType <> GlobalType.ValueType then
+  if not WasmValueMatchesType(Store, Value, GlobalType.ValueType) then
     raise EWasmError.Create('global value of the wrong type');
   Result := Store.NewGlobal(GlobalType, Value);
 end;
@@ -311,7 +424,9 @@ procedure WasmGlobalSet(Global: TWasmGlobal; const Value: TWasmValue);
 begin
   if not Global.GlobalType.Mutable then
     raise EWasmError.Create('global is immutable');
-  if Value.ValueType <> Global.GlobalType.ValueType then
+  if Value.ValueType.Kind <> Global.GlobalType.ValueType.Kind then
+    raise EWasmError.Create('global value of the wrong type');
+  if (Value.ValueType.Kind = vkReference) and (Value.Reference = nil) and not Global.GlobalType.ValueType.Nullable then
     raise EWasmError.Create('global value of the wrong type');
   Global.SetValue(Value);
 end;
@@ -352,5 +467,7 @@ begin
   for Index := 0 to High(Results) do
     Result.Results[Index] := Results[Index];
 end;
+
+{$I Wasm.Api.References.inc}
 
 end.

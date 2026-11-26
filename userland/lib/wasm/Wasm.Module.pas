@@ -23,10 +23,17 @@
 
   The module keeps its own copy of the bytes; function bodies, constant
   expressions and data segments are ranges in it rather than copies.
-  The index spaces are whole: Functions, Tables, Memories and Globals
-  start with the imported ones, as the spec's index spaces do, with the
-  counts of imports alongside. Compiled code (Wasm.Code) hangs off each
-  defined function once the module is compiled.
+  The index spaces are whole: Functions, Tables, Memories, Globals and
+  Tags start with the imported ones, as the spec's index spaces do, with
+  the counts of imports alongside. Compiled code (Wasm.Code) hangs off
+  each defined function once the module is compiled.
+
+  The type section is kept twice: TypeDefinitions has every defined type
+  (function, struct or array, with its subtyping and rec group), Types
+  the function types alone (empty for the others) as the rest of the
+  engine reads them. Once validated, concrete heap types in every value
+  type of the module are canonical indices (the first type equivalent to
+  the one written), so equal types compare equal as records.
 }
 unit Wasm.Module;
 
@@ -37,7 +44,9 @@ interface
 
 uses
   SysUtils,
-  Wasm.Types;
+  Wasm.Types,
+  Wasm.Features,
+  Wasm.TypeDefinitions;
 
 type
   { A constant expression: the range of its instructions (the final end
@@ -55,6 +64,7 @@ type
     TableType: TWasmTableType;    { ekTable }
     MemoryType: TWasmMemoryType;  { ekMemory }
     GlobalType: TWasmGlobalType;  { ekGlobal }
+    TagTypeIndex: Cardinal;       { ekTag }
   end;
 
   TWasmExport = record
@@ -72,6 +82,13 @@ type
 
   TWasmGlobalDefinition = record
     GlobalType: TWasmGlobalType;
+    Initializer: TWasmConstantExpression;
+  end;
+
+  { A defined table's initial value (the 3.0 encoding with an
+    expression; null without one). }
+  TWasmTableDefinition = record
+    HasInitializer: Boolean;
     Initializer: TWasmConstantExpression;
   end;
 
@@ -111,17 +128,25 @@ type
     FReferences: Integer;
   public
     Bytes: TBytes;
+    Features: TWasmFeatures;
     Types: TWasmFunctionTypeArray;
+    TypeDefinitions: TWasmTypeDefinitionArray;
+    { The canonical index of every type index (filled by validation). }
+    CanonicalTypes: array of Cardinal;
     Imports: array of TWasmImport;
     { The type index of every function, imported ones first. }
     FunctionTypes: array of Cardinal;
     Tables: array of TWasmTableType;
     Memories: array of TWasmMemoryType;
     Globals: array of TWasmGlobalType;
+    { The type index of every tag, imported ones first. }
+    TagTypes: array of Cardinal;
     ImportedFunctionCount: Cardinal;
     ImportedTableCount: Cardinal;
     ImportedMemoryCount: Cardinal;
     ImportedGlobalCount: Cardinal;
+    ImportedTagCount: Cardinal;
+    TableDefinitions: array of TWasmTableDefinition;  { the defined tables }
     Bodies: array of TWasmFunctionBody;         { the defined functions }
     GlobalDefinitions: array of TWasmGlobalDefinition;
     ExportList: array of TWasmExport;
@@ -142,6 +167,10 @@ type
     procedure Release;
     function FunctionCount: Cardinal; inline;
     function FunctionType(FunctionIndex: Cardinal): TWasmFunctionType; inline;
+    function TagType(TagIndex: Cardinal): TWasmFunctionType; inline;
+    function IsFunctionTypeIndex(TypeIndex: Cardinal): Boolean; inline;
+    { The canonical index of a type index as an instruction names it. }
+    function CanonicalType(TypeIndex: Cardinal): Int32; inline;
     function FunctionName(FunctionIndex: Cardinal): AnsiString;
     function FindExport(const ExportName: AnsiString; out Found: TWasmExport): Boolean;
   end;
@@ -152,6 +181,7 @@ constructor TWasmModule.Create;
 begin
   inherited Create;
   FReferences := 1;
+  Features := WasmFeaturesAll;
 end;
 
 procedure TWasmModule.Retain;
@@ -183,6 +213,24 @@ end;
 function TWasmModule.FunctionType(FunctionIndex: Cardinal): TWasmFunctionType;
 begin
   Result := Types[FunctionTypes[FunctionIndex]];
+end;
+
+function TWasmModule.TagType(TagIndex: Cardinal): TWasmFunctionType;
+begin
+  Result := Types[TagTypes[TagIndex]];
+end;
+
+function TWasmModule.IsFunctionTypeIndex(TypeIndex: Cardinal): Boolean;
+begin
+  Result := (TypeIndex < Cardinal(Length(TypeDefinitions))) and (TypeDefinitions[TypeIndex].Kind = ckFunction);
+end;
+
+function TWasmModule.CanonicalType(TypeIndex: Cardinal): Int32;
+begin
+  if TypeIndex < Cardinal(Length(CanonicalTypes)) then
+    Result := CanonicalTypes[TypeIndex]
+  else
+    Result := TypeIndex;
 end;
 
 function TWasmModule.FunctionName(FunctionIndex: Cardinal): AnsiString;

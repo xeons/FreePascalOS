@@ -34,6 +34,13 @@
                                          "binary-" before it for modules
                                          written as bytes), for looking at
                                          with other tools
+    --features=2.0                       compile with the features of
+                                         WebAssembly 2.0 only (for its
+                                         suite, which 3.0 contradicts in
+                                         places)
+
+  The process limits its address space to 8 GiB, and the runner's store
+  caps memories and the heap, so that a test cannot exhaust the host.
 
   DIRECTORY is the spec repository's test/core (the 2.0 or 3.0 release,
   downloaded, never committed); its subdirectories simd, gc, exceptions,
@@ -49,8 +56,10 @@ program WasmSpecTest;
 {$H+}
 
 uses
+  BaseUnix,
   Classes,
   SysUtils,
+  Wasm.Features,
   WasmScript,
   WasmSpecRunner;
 
@@ -200,10 +209,20 @@ begin
   end;
 end;
 
+procedure LimitAddressSpace;
+var
+  Limit: TRLimit;
+begin
+  Limit.rlim_cur := QWord(8) * 1024 * 1024 * 1024;
+  Limit.rlim_max := Limit.rlim_cur;
+  FpSetRLimit(RLIMIT_AS, @Limit);
+end;
+
 var
   Index, Feature: Integer;
   Subdirectory: AnsiString;
 begin
+  LimitAddressSpace;
   Files := TStringList.Create;
   Verbose := False;
   ParseOnly := False;
@@ -221,6 +240,8 @@ begin
     end
     else if ParamStr(Index) = '--parse-only' then
       ParseOnly := True
+    else if ParamStr(Index) = '--features=2.0' then
+      SpecFeatures := WasmFeatures20
     else if DirectoryExists(ParamStr(Index)) then
     begin
       AddDirectory(ParamStr(Index));
