@@ -15531,8 +15531,10 @@ EXTERNAL-TIMEOUT. Tests run `-j N` at once (half the processors).
 **Results** are compared with `tools/WptRun/expectations/AREA.txt`
 (one file per top-level directory, our own data): per test, the
 subtests known to fail and `!harness STATUS` when the harness does not
-finish OK; only passing or not counts, so a known failure that turns
-from FAIL into TIMEOUT stays known. The run prints each unexpected
+finish OK; when most of a test's subtests fail, `!passing` and the ones
+that pass instead (the shorter list is kept). Only passing or not
+counts, so a known failure that turns from FAIL into TIMEOUT stays
+known. The run prints each unexpected
 failure and each known failure that now passes, a table per directory
 (tests passing entirely, subtests passed of all, the rate; a test
 without subtests counts as one), and exits 1 on unexpected failures.

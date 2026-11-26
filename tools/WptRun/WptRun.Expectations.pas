@@ -27,9 +27,11 @@
 
   "!harness STATUS" when the harness itself does not finish OK, and the
   name of each subtest that does not pass (a backslash escapes a leading
-  "!" or "\", "\n" a line break). Only passing or not counts: a known
-  failure that now times out is still known. Tests without an entry are
-  expected to pass.
+  "!" or "\", "\n" a line break). When most subtests fail, the entry
+  says "!passing" and names the ones that pass instead (every other
+  subtest is a known failure; "!passing" alone: all of them). Only
+  passing or not counts: a known failure that now times out is still
+  known. Tests without an entry are expected to pass.
 }
 unit WptRun.Expectations;
 
@@ -47,8 +49,12 @@ type
   public
     HarnessFails: Boolean;
     HarnessStatus: string;
-    { Sorted names of the subtests known to fail. }
-    FailingSubtests: TStringList;
+    { Sorted names: the subtests known to fail, or with ListsPassing
+      the ones that pass (all others are known to fail). }
+    Subtests: TStringList;
+    ListsPassing: Boolean;
+    { Whether the subtest so named is a known failure. }
+    function KnownFailure(const Name: string): Boolean;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -87,6 +93,7 @@ uses
 
 const
   HarnessPrefix = '!harness ';
+  PassingMarker = '!passing';
   FileHeader = '# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"'#10 +
     '# when the harness does not finish OK, and each subtest that does not pass.'#10 +
     '# Rewritten by "wptrun --update"; tests not listed are expected to pass.'#10;
@@ -142,16 +149,21 @@ end;
 constructor TTestExpectation.Create;
 begin
   inherited Create;
-  FailingSubtests := TStringList.Create;
-  FailingSubtests.Sorted := True;
-  FailingSubtests.Duplicates := dupIgnore;
-  FailingSubtests.CaseSensitive := True;
+  Subtests := TStringList.Create;
+  Subtests.Sorted := True;
+  Subtests.Duplicates := dupIgnore;
+  Subtests.CaseSensitive := True;
 end;
 
 destructor TTestExpectation.Destroy;
 begin
-  FailingSubtests.Free;
+  Subtests.Free;
   inherited Destroy;
+end;
+
+function TTestExpectation.KnownFailure(const Name: string): Boolean;
+begin
+  Result := (Subtests.IndexOf(Name) >= 0) <> ListsPassing;
 end;
 
 constructor TExpectationSet.Create(const Directory: string);
@@ -206,8 +218,10 @@ begin
         Current.HarnessFails := True;
         Current.HarnessStatus := Copy(Line, Length(HarnessPrefix) + 1, MaxInt);
       end
+      else if Line = PassingMarker then
+        Current.ListsPassing := True
       else
-        Current.FailingSubtests.Add(UnescapeName(Line));
+        Current.Subtests.Add(UnescapeName(Line));
     end;
   finally
     Lines.Free;
@@ -239,7 +253,7 @@ end;
 
 procedure TExpectationSet.Update(constref Outcome: TTestResult);
 var
-  Found, Index: Integer;
+  Found, Index, Failing: Integer;
   Entry: TTestExpectation;
 begin
   if FTests.Find(Outcome.Path, Found) then
@@ -247,10 +261,16 @@ begin
   Entry := TTestExpectation.Create;
   Entry.HarnessFails := Outcome.Harness <> HarnessOk;
   Entry.HarnessStatus := HarnessStatusName(Outcome.Harness);
+  Failing := 0;
   for Index := 0 to High(Outcome.Subtests) do
     if Outcome.Subtests[Index].Status <> SubtestPass then
-      Entry.FailingSubtests.Add(Outcome.Subtests[Index].Name);
-  if Entry.HarnessFails or (Entry.FailingSubtests.Count > 0) then
+      Inc(Failing);
+  { The shorter list: the failing subtests, or the passing ones. }
+  Entry.ListsPassing := 2 * Failing > Length(Outcome.Subtests);
+  for Index := 0 to High(Outcome.Subtests) do
+    if (Outcome.Subtests[Index].Status <> SubtestPass) <> Entry.ListsPassing then
+      Entry.Subtests.Add(Outcome.Subtests[Index].Name);
+  if Entry.HarnessFails or (Failing > 0) then
     FTests.AddObject(Outcome.Path, Entry)
   else
     Entry.Free;
@@ -295,8 +315,10 @@ begin
           Text.Add(FTests[Index]);
           if Entry.HarnessFails then
             Text.Add('  ' + HarnessPrefix + Entry.HarnessStatus);
-          for Subtest := 0 to Entry.FailingSubtests.Count - 1 do
-            Text.Add('  ' + EscapeName(Entry.FailingSubtests[Subtest]));
+          if Entry.ListsPassing then
+            Text.Add('  ' + PassingMarker);
+          for Subtest := 0 to Entry.Subtests.Count - 1 do
+            Text.Add('  ' + EscapeName(Entry.Subtests[Subtest]));
         end;
         Text.SaveToFile(IncludeTrailingPathDelimiter(FDirectory) + Area + '.txt');
       finally
@@ -326,7 +348,7 @@ begin
   for Index := 0 to High(Outcome.Subtests) do
   begin
     Subtest := Outcome.Subtests[Index];
-    Known := (Expectation <> nil) and (Expectation.FailingSubtests.IndexOf(Subtest.Name) >= 0);
+    Known := (Expectation <> nil) and Expectation.KnownFailure(Subtest.Name);
     if (Subtest.Status <> SubtestPass) and not Known then
       Result.UnexpectedFailures.Add(Subtest.Name + ': ' + SubtestStatusName(Subtest.Status) + ': ' + Subtest.Message)
     else if (Subtest.Status = SubtestPass) and Known then
