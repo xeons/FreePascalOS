@@ -20,7 +20,7 @@
   What the containers need to know of the audio codecs' packets without
   decoding them: Opus packet durations (the TOC byte, RFC 6716 3.1) and
   the OpusHead fields (RFC 7845 5.1), FLAC frame block sizes and the
-  STREAMINFO fields, and which codec an Ogg stream's first packet
+  STREAMINFO fields, MPEG audio frame lengths, and which codec an Ogg stream's first packet
   belongs to.
 }
 unit Media.Ogg.Codecs;
@@ -53,6 +53,10 @@ type
 { Samples (at 48 kHz) an Opus packet decodes to; 0 if it is malformed. }
 function OpusPacketDuration(const Packet: TBytes): Integer;
 function ReadOpusHead(const Head: TBytes): TOpusHead;
+{ Samples per channel in the MPEG audio frame Packet starts with (1152
+  for MPEG-1 Layer II and III, 576 for MPEG-2 and 2.5 Layer III, 384 for
+  Layer I); 0 if it is not one. }
+function MpegAudioFrameSamples(const Packet: TBytes): Integer;
 { The block size of the FLAC frame Packet starts with; 0 if it is not one. }
 function FlacFrameBlockSize(const Packet: TBytes): Integer;
 { The fields of a 34-byte STREAMINFO block body. }
@@ -117,6 +121,26 @@ begin
   Result.PreSkip := LittleEndian16(Head, 10);
   Result.InputRate := LittleEndian32(Head, 12);
   Result.Valid := Result.Channels > 0;
+end;
+
+function MpegAudioFrameSamples(const Packet: TBytes): Integer;
+var
+  Version, Layer: Integer;
+begin
+  Result := 0;
+  if (Length(Packet) < 4) or (Packet[0] <> $FF) or ((Packet[1] and $E0) <> $E0) then
+    Exit;
+  Version := (Packet[1] shr 3) and 3;
+  Layer := (Packet[1] shr 1) and 3;
+  case Layer of
+    3: Result := 384;
+    2: Result := 1152;
+    1:
+      if Version = 3 then
+        Result := 1152
+      else
+        Result := 576;
+  end;
 end;
 
 function FlacFrameBlockSize(const Packet: TBytes): Integer;

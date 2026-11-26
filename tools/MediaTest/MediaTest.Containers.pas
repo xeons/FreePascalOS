@@ -193,9 +193,14 @@ var
   Wanted: TExpectedPacket;
   Got: TMediaPacket;
   DurationWrong: Boolean;
+  Last: Integer;
 begin
   Result := '';
   Position := 0;
+  Last := -1;
+  for Index := 0 to High(Expected) do
+    if Expected[Index].Stream = Stream then
+      Last := Index;
   for Index := 0 to High(Expected) do
   begin
     Wanted := Expected[Index];
@@ -209,7 +214,9 @@ begin
       if Tolerance = 0 then
         DurationWrong := Got.Duration <> Wanted.Duration
       else
-        DurationWrong := (Got.Duration <> 0) and (Abs(Got.Duration - Wanted.Duration) > Tolerance);
+        { Rounded times; the last block's duration is the file's own,
+          which FFmpeg replaces with the codec's. }
+        DurationWrong := (Got.Duration <> 0) and (Index <> Last) and (Abs(Got.Duration - Wanted.Duration) > Tolerance);
     if (Length(Got.Data) <> Wanted.Size) or (MD5OfBytes(Got.Data) <> Wanted.Digest)
       or (Wanted.HasTime and (Got.PresentationTime <> Wanted.Time)) or (Got.KeyFrame <> Wanted.Key) or DurationWrong then
       Exit(Format('packet %d: got %s, expected %s', [Position, DescribePacket(Got), DescribeExpected(Wanted)]));
@@ -332,6 +339,24 @@ begin
     Result := Demuxer.Tracks[0];
 end;
 
+{ Where a seek to Target (in Track's units) may land: the start of the
+  packet playing at Target, or the next one after a gap. }
+function SeekLandingTime(const Expected: TExpectedPackets; Stream: Integer; Target: Int64; out Covered: Boolean): Int64;
+var
+  Index: Integer;
+begin
+  Covered := False;
+  Result := High(Int64);
+  for Index := 0 to High(Expected) do
+    if (Expected[Index].Stream = Stream) and Expected[Index].HasTime then
+    begin
+      if (Expected[Index].Time <= Target) and (Expected[Index].Time + Expected[Index].Duration > Target) then
+        Covered := True;
+      if (Expected[Index].Time > Target) and (Expected[Index].Time < Result) then
+        Result := Expected[Index].Time;
+    end;
+end;
+
 function ExpectedHas(const Expected: TExpectedPackets; Stream: Integer; const Packet: TMediaPacket): Boolean;
 var
   Index: Integer;
@@ -347,9 +372,9 @@ procedure CheckSeeking(Demuxer: TMediaDemuxer; const Expected: TExpectedPackets;
 var
   Track: TMediaTrack;
   Fraction: Integer;
-  Target, Total, Time: Int64;
+  Target, Total, Time, Landing: Int64;
   Packet: TMediaPacket;
-  Found, Good: Boolean;
+  Found, Good, Covered: Boolean;
   Report: string;
 begin
   Track := SeekTrackOf(Demuxer);
@@ -381,6 +406,9 @@ begin
       Continue;
     end;
     Time := Track.ToMicroseconds(Packet.PresentationTime);
+    Landing := SeekLandingTime(Expected, Track.Index, Track.FromMicroseconds(Target), Covered);
+    if not Covered and (Packet.PresentationTime = Landing) then
+      Time := Target;
     if (Time > Target + 1000) or (Time < Target - 1500000) or not ExpectedHas(Expected, Track.Index, Packet)
       or ((Track.Kind = mkVideo) and not Packet.KeyFrame) then
     begin
