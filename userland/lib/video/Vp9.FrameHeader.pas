@@ -89,10 +89,9 @@ type
   end;
 
 { Reads the uncompressed header of the frame of Size bytes at Data.
-  ResetProbabilities is called (as setup_past_independence) when the
-  frame starts without the past; it must reset the frame contexts as
-  the header's values (key frame, error resilience, reset mode, context
-  index) say. }
+  For a frame that starts without the past (key, intra-only, error
+  resilient) it resets the segment features, loop filter deltas and sign
+  biases; the caller resets the probabilities and segment maps. }
 procedure ReadUncompressedHeader(Data: PByte; Size: PtrInt; var State: TVp9StreamHeaderState;
   constref References: TVp9ReferenceSizes; out Header: TVp9FrameHeader);
 

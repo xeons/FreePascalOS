@@ -5498,6 +5498,141 @@ coretest makes a WAV file with `tone` and checks `mediaplay -i` and that
 to floats and back exactly), and that a file that is no media file is
 refused.
 
+## Video decoders (libvideo: VP8 and VP9)
+
+libvideo.so (`userland/lib/video`, over libmedia) decodes VP8 (RFC 6386)
+and VP9 (profiles 0 to 3: 4:2:0, 4:2:2, 4:4:0 and 4:4:4 at 8, 10 and 12
+bits) natively, bit exact with the reference decoder, libvpx: every
+picture's MD5 equals vpxdec's. The arithmetic is libvpx's where it
+matters (the 16-bit intermediate values of VP8's transforms, VP9's
+transforms rounded after every multiplication, the way motion vectors
+are clamped and predicted, which pixels intra prediction makes up at the
+frame's edges, the loop filters' order), including its quirks (a VP9
+error-resilient frame drops the sign biases it just read; VP8 clamps
+near vectors whatever the header's clamping type says; a VP9 packet
+shows at most its last frame).
+
+`Video.MediaDecoders` registers `TVp8MediaDecoder` and `TVp9MediaDecoder`
+with libmedia's video decoder registry (using the unit is enough), so a
+program that opens a WebM or MP4 file with libmedia and calls
+`CreateVideoDecoder(codecVp8 / codecVp9)` decodes it; mediaplay does,
+and `mediaplay -k` prints an MD5 per picture. Neither codec reorders, so
+a packet's picture comes out at once with the packet's presentation
+time; decoding errors raise `EMediaError`. `Video.Ivf` reads IVF files
+(what vpxenc writes; libmedia does not demux them).
+
+The frame contract is libmedia's `Media.Frames`: 8-bit samples as bytes,
+10 and 12-bit as 2 bytes little-endian, planes cropped to the visible
+size. VP8 frames say BT.601 limited range; VP9's colour space code maps
+to the H.273 codes (BT.601, 709, SMPTE 170/240, BT.2020, sRGB as
+identity). 4:4:0 has no layout of its own in the contract: such frames
+say `pl420` and their chroma planes are full width and half height (the
+plane sizes are right; a converter that trusts the layout gets the
+colours of the wrong columns, but stays inside the planes).
+
+### VP8
+
+`Vp8.FrameHeader` reads the tag and the first partition's header,
+keeping what lasts in `TVp8StreamState` (probabilities and the copy to
+go back to when a frame does not keep its updates, segmentation, loop
+filter deltas, sign biases). `Vp8.Modes` reads every macroblock's modes
+and vectors first (near vectors from above, left and above-left; split
+macroblocks), into a grid with a border row and column. Reconstruction
+(`Vp8.Reconstruction`) goes row by row, each row's tokens from its
+partition (`Vp8.Residuals`): intra prediction (`Vp8.IntraPrediction`,
+the picture's border holding 127 above and 129 left, the above-right
+pixels of the 4x4 blocks copied down as libvpx does), six tap or
+bilinear motion compensation (`Vp8.InterPrediction`; version 3's whole
+pixel chroma), the inverse DCT and Walsh-Hadamard transforms. Then the
+loop filter (`Vp8.LoopFilter`, normal or simple, levels by segment,
+reference and mode), the borders extended (32 luma pixels, so vectors
+may point outside), and the last, golden and alternate references
+replaced or copied. With several token partitions, rows of different
+partitions are reconstructed on worker threads, each a macroblock and
+one behind the row above (`TVideoProgress`).
+
+### VP9
+
+A packet's superframe index (if any) splits it into frames.
+`Vp9.FrameHeader` reads the uncompressed header (profile, colour format,
+size or a reference's size, the 8 reference slots it refreshes, loop
+filter, quantizers, segmentation, tiles) and the compressed one
+(transform mode, differential probability updates, compound reference
+setup). `Vp9.Decoder` keeps the four frame contexts, resets them for key,
+intra-only and error-resilient frames as libvpx does, and after the
+frame adapts the probabilities from the counts (`Vp9.Probabilities`)
+unless the frame is frame-parallel or error resilient.
+
+Pictures (`Vp9.Pictures`) hold 16-bit samples for every bit depth, so
+one code path serves 8, 10 and 12 bits; they are a whole number of 64x64
+superblocks in size, and keep their motion vectors for the next frame's
+prediction. A tile (`Vp9.TileDecoder`) walks its superblocks, splitting
+partitions down to blocks; each block's modes (`Vp9.Modes`: segment ids
+with temporal prediction, skip, transform size, references with their
+contexts, inter modes, switchable filters, motion vectors from up to 8
+neighbours and the previous frame, sub-8x8 blocks) are read, then the
+block is reconstructed (`Vp9.BlockReconstruction`): intra blocks
+transform block by transform block (`Vp9.IntraPrediction`, 10 modes, the
+4x4 directional modes their own), inter blocks predicted whole
+(`Vp9.InterPrediction`: 8-tap regular, smooth and sharp kernels and
+bilinear, compound averaging, references of another size through fixed
+point scale steps, edges repeated into a scratch block exactly where
+libvpx does) and their residual added. Tokens (`Vp9.Residuals`) use the
+scan orders of the transform type and the Pareto table; the transforms
+(`Vp9.Transforms`: DCT 4 to 32, ADST 4 to 16, Walsh-Hadamard for
+lossless frames) are libvpx's high bit depth ones, converted from its C
+by a script. The loop filter (`Vp9.LoopFilter`) runs after all tiles:
+superblock by superblock, each plane's vertical then horizontal edges,
+4, 8 or 16 wide by transform size, levels by segment, reference and
+mode, with libvpx's general (non-4:2:0) edge rules, which give the same
+result as its bit mask paths.
+
+Threads: the tile columns of a tile row are decoded at the same time
+(they share nothing but disjoint parts of the above contexts and the
+mode info), and superblock rows of the loop filter, each two superblocks
+behind the row above. Frame-parallel decoding (the next frame starting
+while this one finishes) is not done; libvpx dropped it too.
+
+### Threads (Video.WorkerPool)
+
+`TVideoWorkerPool` runs jobs on worker threads (TThread, RTL events) and
+reports the first exception of a job from `WaitAll`; `TVideoProgress`
+counters let a job wait for another's row (spinning, then yielding),
+and are aborted when a job fails so that none waits forever. Decoders use
+`DefaultVideoThreadCount` threads (one per processor, at most 8) unless
+told otherwise (`Video.MediaDecoders.VideoThreadCount`).
+
+### Tests
+
+`make video-test` builds libvideo and libmedia for the host
+(tools/VideoTest, with range checks) and decodes:
+- 28 streams `tools/VideoTest/make-vectors.py` makes at build time with
+  the host's ffmpeg (test patterns) and vpxenc: VP8 versions 0 to 3, 8
+  token partitions, alternate references, error resilience, near
+  lossless, real-time with segmentation, odd sizes; VP9 superframes,
+  2x2 tiles, lossless, segmentation (variance and cyclic refresh), frame
+  parallel, error resilient, no loop filter, profiles 1 (4:4:4, 4:2:2,
+  4:4:0), 2 (10 and 12 bits) and 3 (10-bit 4:4:4, 12-bit 4:2:2), and
+  scaled references (`scaling-encoder.c`, the host's libvpx asked to
+  scale its input internally; left out without a C compiler or libvpx's
+  headers), each on one thread and on three, every picture against
+  vpxdec's MD5;
+- the same streams put in WebM and MP4 files by ffmpeg, through
+  libmedia's demuxers and decoder registry as mediaplay -k does;
+- every stream damaged 8 ways (bytes changed, packets cut or dropped):
+  refusals are fine, range or access errors fail;
+- the interface: registration, frame records, timestamps, the IVF
+  reader, the boolean decoder against an encoder written in the test;
+- the libvpx test vectors when they are in `VIDEO_CONFORMANCE_VECTORS`
+  (default ~/Downloads/sources/libvpx-test-vectors: the 61 vp80-0x
+  vectors and 48 VP9 ones, quantizers, sizes, tiles, resizing, intra-only,
+  show-existing frames, 4:2:2/4:4:0/4:4:4, 10 and 12 bits;
+  `prepare-conformance.py` turns their WebM files into IVF); skipped
+  without them.
+
+coretest decodes a small VP9 WebM file with `mediaplay -k` and checks
+the pictures' MD5s.
+
 ## Networking
 
 A TCP/IP stack in the kernel (`kernel/network`, units `Network.*`),
