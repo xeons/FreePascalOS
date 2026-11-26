@@ -34,12 +34,12 @@ viewport (anonymous) at (0,0) size 800x600
       table <table> at (10,257.88) size 80.15x53.25
         row-group <tbody> at (11,260.88) size 78.15x47.25
           row <tr> at (11,260.88) size 78.15x22.62
-            cell <td> at (13,260.88) size 30.82x22.62
+            cell <td> at (13,260.88) size 26.13x22.62
               line 0 at y 262.88 height 18.62 baseline 277.73
                 text "a" at (15,262.88) size 9.8x18.62
-            cell <td> at (45.82,260.88) size 41.33x22.62
+            cell <td> at (41.13,260.88) size 46.02x22.62
               line 0 at y 262.88 height 18.62 baseline 277.73
-                text "bb" at (47.82,262.88) size 20.31x18.62
+                text "bb" at (43.13,262.88) size 20.31x18.62
           row <tr> at (11,285.5) size 78.15x22.62
             cell <td> at (13,285.5) size 74.15x22.62
               line 0 at y 287.5 height 18.62 baseline 302.36

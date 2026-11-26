@@ -118,6 +118,7 @@ uses
   Web.Script.Context,
   Web.Script.PageScripting,
   Web.Text.Fonts,
+  Font.Configuration,
   Web.Profiling,
   Css.ElementAdapter,
   Web.Bindings.Selectors,
@@ -997,12 +998,28 @@ begin
   end;
 end;
 
+{ The system's font configuration beside the font directory
+  (userland/etc/fonts.conf for userland/fonts), so Arial and Helvetica
+  are Liberation Sans as in the system, not the built-in DejaVu Sans. }
+procedure UseSystemFontConfiguration(const FontDirectory: string);
+var
+  Path: string;
+begin
+  Path := ExtractFilePath(ExcludeTrailingPathDelimiter(ExpandFileName(FontDirectory))) + 'etc' + PathDelim +
+    'fonts.conf';
+  if not FileExists(Path) then
+    Exit;
+  FontConfigurationPath := Path;
+  ResetSystemFontConfiguration;
+end;
+
 function RunBrowse(const Options: TBrowseOptions): Integer;
 var
   Session: TBrowseSession;
 begin
   if Options.FontDirectory <> '' then
   begin
+    UseSystemFontConfiguration(Options.FontDirectory);
     WebFontDirectory := Options.FontDirectory;
     ResetWebFontLibrary;
   end;

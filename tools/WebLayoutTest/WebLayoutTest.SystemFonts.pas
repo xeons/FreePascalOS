@@ -57,8 +57,8 @@ begin
   Width := Font.MeasureText('Arial', 1, 5);
   Check(Abs(Width - (1366 + 682 + 455 + 1139 + 455)) < 0.5, Format('fonts: "Arial" measures as in Arial (%.1f)', [Width]));
   Font := MakeTextFont(['Helvetica'], 16, 700, False);
-  Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation sans') and (Font.Primary.Weight = 700),
-    'fonts: bold Helvetica is Liberation Sans Bold');
+  Check((Font.Primary <> nil) and (Font.Primary.Family = 'nimbus sans') and (Font.Primary.Weight = 700),
+    'fonts: bold Helvetica is Nimbus Sans Bold');
   Font := MakeTextFont(['Times New Roman', 'serif'], 16, 400, True);
   Check((Font.Primary <> nil) and (Font.Primary.Family = 'liberation serif') and Font.Primary.Italic,
     'fonts: italic Times New Roman is Liberation Serif Italic');
