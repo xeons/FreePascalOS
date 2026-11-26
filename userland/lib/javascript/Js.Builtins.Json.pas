@@ -51,6 +51,9 @@ function ParseJsonText(R: TJsRealm; Text: TJsValue): TJsValue;
 
 implementation
 
+uses
+  Js.Builtins.Arrays;
+
 type
   TUnits = record
     Data: array of Word;
@@ -389,6 +392,7 @@ function Internalize(R: TJsRealm; Holder: TJsObject; Key: TJsValue; Reviver: TJs
 var
   Value, Element, Revived: TJsValue;
   Target: TJsObject;
+  ValueIsArray: Boolean;
   Length, Index: Int64;
   Keys: TJsValueList;
   KeyIndex, Mark: Integer;
@@ -403,7 +407,9 @@ begin
     Target := JsAsObject(Value);
     Mark := R.Runtime.PushRoot(Value);
     try
-      if Target.ObjectClass = ocArray then
+      if not IsArray(R, Value, ValueIsArray) then
+        Exit(JsException);
+      if ValueIsArray then
       begin
         if not LengthOfArrayLike(R, Target, Length) then
           Exit(JsException);
@@ -698,6 +704,7 @@ var
   ToJson: TJsValue;
   Pair: array[0..1] of TJsValue;
   Target: TJsObject;
+  ValueIsArray: Boolean;
   Text: TJsString;
   Number: Double;
   Mark: Integer;
@@ -795,7 +802,9 @@ begin
     if JsIsObject(Value) and not JsIsCallable(Value) then
     begin
       Target := JsAsObject(Value);
-      if Target.ObjectClass = ocArray then
+      if not IsArray(Writer.Realm, Value, ValueIsArray) then
+        Exit(False);
+      if ValueIsArray then
         Result := SerializeArray(Writer, Target)
       else
         Result := SerializeObject(Writer, Target);
@@ -817,7 +826,7 @@ var
   Number: Double;
   Text: TJsString;
   Wrapper: TJsObject;
-  Wrote, Duplicate: Boolean;
+  Wrote, Duplicate, ReplacerIsArray: Boolean;
   Position, Mark: Integer;
 begin
   Writer.Realm := R;
@@ -832,7 +841,9 @@ begin
   Replacer := Arg(Args, ArgCount, 1);
   if JsIsCallable(Replacer) then
     Writer.Replacer := Replacer
-  else if JsIsObject(Replacer) and (JsAsObject(Replacer).ObjectClass = ocArray) then
+  else if JsIsObject(Replacer) and not IsArray(R, Replacer, ReplacerIsArray) then
+    Exit(JsException)
+  else if JsIsObject(Replacer) and ReplacerIsArray then
   begin
     Writer.HasPropertyList := True;
     if not LengthOfArrayLike(R, JsAsObject(Replacer), Length) then
