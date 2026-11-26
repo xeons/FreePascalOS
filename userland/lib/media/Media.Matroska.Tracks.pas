@@ -354,6 +354,11 @@ begin
     Track.SeekPreRoll := Fields.SeekPreRoll div 1000
   else if Track.Codec = codecOpus then
     Track.SeekPreRoll := 80000;
+  { MP3's encoder delay, as FFmpeg writes it: samples the decoder drops
+    at the start. (Vorbis' CodecDelay is its first packet, which decodes
+    to nothing anyway; Opus' is the pre-skip, above.) }
+  if (Track.Codec = codecMp3) and (Fields.CodecDelay > 0) and (Track.SampleRate > 0) then
+    Track.CodecDelay := (Fields.CodecDelay * Track.SampleRate + 500000000) div 1000000000;
   { FFmpeg's rounding (to nearest, halves away from zero). }
   Info.DelayTicks := (Fields.CodecDelay + TimestampScale div 2) div TimestampScale;
 end;

@@ -434,7 +434,8 @@ begin
       Packet.Duration := FrameDuration(Info, Frame);
     if (Index = Count - 1) and (DiscardPadding > 0) then
     begin
-      Packet.TrimEnd := DiscardPadding * Info.TrimRate div 1000000000;
+      { Rounded to the nearest sample, as FFmpeg does. }
+      Packet.TrimEnd := (DiscardPadding * Info.TrimRate + 500000000) div 1000000000;
       { A BlockDuration given is already the shortened one (as FFmpeg
         writes it); a duration from the codec is not. }
       if BlockDuration = 0 then

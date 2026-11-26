@@ -48,6 +48,8 @@ const
     'float.mkv');
   LossyFiles: array[0..8] of string = ('vorbis.ogg', 'vorbis.webm', 'mp3.mkv', 'mp3.mp4', 'opus.ogg', 'opus.webm',
     'opus.mp4', 'opus-fragmented.mp4', 'live.webm');
+  { Made from the mono 44.1 kHz source (mono44.wav) instead. }
+  MonoFiles: array[0..1] of string = ('mp3.mkv', 'mp3.mp4');
   { The lossy encodings' least signal-to-noise ratio against the source
     (a shift of one sample costs far more on the chirp). }
   LossyMinimumSnr = 12.0;
@@ -75,8 +77,19 @@ end;
 procedure RunEndToEndTests(const FixtureRoot: string);
 var
   Directory, Name: string;
-  Source, Decoded: TDecodedAudio;
+  Source, MonoSource, Reference, Decoded: TDecodedAudio;
   Snr: Double;
+
+  function MadeFromMono(const FileName: string): Boolean;
+  var
+    Candidate: string;
+  begin
+    Result := False;
+    for Candidate in MonoFiles do
+      if Candidate = FileName then
+        Exit(True);
+  end;
+
 begin
   Directory := FixturePath(FixtureRoot, 'containers');
   if not FileExists(FixturePath(Directory, 'source.wav')) then
@@ -85,6 +98,7 @@ begin
     Exit;
   end;
   Source := DecodeAudioFile(FixturePath(Directory, 'source.wav'));
+  MonoSource := DecodeAudioFile(FixturePath(Directory, 'mono44.wav'));
   for Name in LosslessFiles do
     if TryDecode(FixturePath(Directory, Name), Decoded) then
       Check((Decoded.SampleRate = Source.SampleRate) and (Decoded.Channels = Source.Channels) and
@@ -93,11 +107,15 @@ begin
   for Name in LossyFiles do
     if TryDecode(FixturePath(Directory, Name), Decoded) then
     begin
-      Snr := SignalToNoise(Decoded.Samples, Source.Samples);
-      Check((Decoded.SampleRate = Source.SampleRate) and (Decoded.Channels = Source.Channels) and
-        (Length(Decoded.Samples) = Length(Source.Samples)) and (Snr >= LossyMinimumSnr),
+      if MadeFromMono(Name) then
+        Reference := MonoSource
+      else
+        Reference := Source;
+      Snr := SignalToNoise(Decoded.Samples, Reference.Samples);
+      Check((Decoded.SampleRate = Reference.SampleRate) and (Decoded.Channels = Reference.Channels) and
+        (Length(Decoded.Samples) = Length(Reference.Samples)) and (Snr >= LossyMinimumSnr),
         Format('end-to-end: %s (%s) has the source''s length and waveform (%d of %d samples, SNR %.1f dB)',
-        [Name, Decoded.FormatName, Length(Decoded.Samples), Length(Source.Samples), Snr]));
+        [Name, Decoded.FormatName, Length(Decoded.Samples), Length(Reference.Samples), Snr]));
     end;
 end;
 
