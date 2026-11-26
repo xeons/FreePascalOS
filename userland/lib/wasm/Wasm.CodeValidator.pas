@@ -322,7 +322,8 @@ var
   Frame: TControlFrame;
   First, Second: TOperandType;
   FunctionType: TWasmFunctionType;
-  Index, Arity: Integer;
+  Index, Arity, Item: Integer;
+  Popped: array of TOperandType;
   Info: ^TWasmOpcodeInfo;
 begin
   FOffset := Instruction.Offset;
@@ -388,8 +389,19 @@ begin
             Types := LabelTypes(FControls[Label_(Labels[Index])]);
             if Length(Types) <> Arity then
               Fail('type mismatch');
-            PopTypes(Types);
-            PushTypes(Types);
+            { Pop and push back what was there: unknown stays unknown. }
+            SetLength(Popped, Length(Types));
+            for Item := High(Types) downto 0 do
+            begin
+              Popped[Item] := PopOperand;
+              if Popped[Item].Known and (Popped[Item].ValueType <> Types[Item]) then
+                Fail('type mismatch');
+            end;
+            for Item := 0 to High(Types) do
+              if Popped[Item].Known then
+                PushOperand(Popped[Item].ValueType)
+              else
+                PushUnknown;
           end;
         PopTypes(DefaultTypes);
         MarkUnreachable;

@@ -329,18 +329,20 @@ begin
     Result := B;
 end;
 
+{ Typed, so that they stay doubles (an untyped constant may be a single). }
 const
-  TwoTo31 = 2147483648.0;
-  TwoTo32 = 4294967296.0;
-  TwoTo63 = 9223372036854775808.0;
-  TwoTo64 = 18446744073709551616.0;
+  TwoTo31: Double = 2147483648.0;
+  BelowI32: Double = -2147483649.0;
+  TwoTo32: Double = 4294967296.0;
+  TwoTo63: Double = 9223372036854775808.0;
+  TwoTo64: Double = 18446744073709551616.0;
 
 function TruncateToI32(Value: Double; out Output: Int32): TConversionResult;
 begin
   Output := 0;
   if Value <> Value then
     Exit(crNotANumber);
-  if not ((Value > -TwoTo31 - 1.0) and (Value < TwoTo31)) then
+  if not ((Value > BelowI32) and (Value < TwoTo31)) then
     Exit(crOverflow);
   Output := Int32(Trunc(Value));
   Result := crExact;

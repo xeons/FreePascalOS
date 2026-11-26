@@ -128,6 +128,10 @@ end;
 procedure ReadMemarg(var Reader: TWasmReader; var Instruction: TWasmInstruction);
 begin
   Instruction.Alignment := Reader.ReadU32;
+  { 2 to the alignment must fit in 32 bits; bit 6 is the memory index
+    flag of multiple memories, not in WebAssembly 2.0. }
+  if Instruction.Alignment >= 32 then
+    Reader.Fail('malformed memop flags');
   Instruction.MemoryIndex := 0;
   Instruction.MemoryOffset := Reader.ReadU32;
 end;

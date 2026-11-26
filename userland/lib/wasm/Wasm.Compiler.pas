@@ -228,8 +228,9 @@ begin
   IsLoop := FFrames[Frame].Kind = cfLoop;
   if NeedsMoves(Depth, Destination, Source, Count) or (FFrames[Frame].Kind = cfFunction) then
   begin
-    Skip := Emit(CodeBranchUnless, 0, SourceOf(Condition));
+    Source := SourceOf(Condition);
     MaterializeAll;
+    Skip := Emit(CodeBranchUnless, 0, Source);
     EmitBranchTo(Depth);
     FInstructions[Skip].A := FCount;
     Exit;

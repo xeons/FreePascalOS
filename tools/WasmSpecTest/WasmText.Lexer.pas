@@ -202,7 +202,7 @@ begin
       ';':
         if (FPosition < Length(FSource)) and (FSource[FPosition + 1] = ';') then
         begin
-          while (FPosition <= Length(FSource)) and (FSource[FPosition] <> #10) do
+          while (FPosition <= Length(FSource)) and not (FSource[FPosition] in [#10, #13]) do
             Inc(FPosition);
         end
         else
