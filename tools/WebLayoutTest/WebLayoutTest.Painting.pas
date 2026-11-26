@@ -34,6 +34,7 @@ procedure CheckStickyPainting;
 procedure CheckMaskPainting;
 procedure CheckLayerPainting;
 procedure CheckGaugePainting;
+procedure CheckSnappedPainting;
 procedure ReportPerformance;
 
 implementation
@@ -87,6 +88,15 @@ const
     '<div><meter value=0.25 style="width:100px;height:16px;display:block"></meter></div>' +
     '<div><progress value=3 max=4 style="width:100px;height:16px;display:block"></progress></div>' +
     '</body>';
+
+  { A bordered box over a red one of the same size at y 10.4 (a
+    fractional position, as below a line of normal line-height): the
+    border's edges snap to device pixels like the background's, so no
+    red shows at them (WPT's margin-padding-clear tests). }
+  SnappedPage =
+    '<!doctype html><body style="margin:0;background:#ffffff"><div style="height:10.4px"></div>' +
+    '<div style="position:relative"><div style="position:absolute;width:40px;height:20px;border:4px solid #ff0000">' +
+    '</div><div style="position:absolute;width:40px;height:20px;border:4px solid #008000"></div></div></body>';
 
 function PixelAt(const Surface: TSurface; X, Y: Integer): TColor;
 begin
@@ -164,6 +174,35 @@ begin
   finally
     FreeSurface(Surface);
     FreeSurface(Partial);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckSnappedPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+  X, Y: Integer;
+  Clean: Boolean;
+begin
+  Layout := LayoutText(SnappedPage, 100, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 100, 60, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 100, 60));
+    Clean := True;
+    for Y := 0 to 59 do
+      for X := 0 to 99 do
+        if RedOf(PixelAt(Surface, X, Y)) > GreenOf(PixelAt(Surface, X, Y)) + 8 then
+          Clean := False;
+    Check(Clean, 'paint: border edges snap to device pixels (no red under a box at y 10.4)');
+    CheckPixel(Surface, 20, 10, RgbColor(0, 128, 0), 'snapped border: the top edge at y 10');
+    CheckPixel(Surface, 20, 9, RgbColor(255, 255, 255), 'snapped border: nothing above it');
+  finally
+    FreeSurface(Surface);
     Painter.Free;
     FreeLayout(Layout, Document);
   end;
