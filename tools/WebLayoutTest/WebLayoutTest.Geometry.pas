@@ -58,6 +58,34 @@ const
     '</span></div>' +
     '</body>';
 
+{ An absolutely positioned box without a positioned ancestor is placed
+  in the initial containing block (the viewport at the canvas origin),
+  whatever the root's margin and border (WPT's CSS2 blocks-025). }
+procedure CheckInitialContainingBlock;
+const
+  Page = '<!doctype html><html style="margin:0 0 0 30px;border-left:5px solid"><body style="margin:0">' +
+    '<div id=abs style="position:absolute;left:10px;top:20px;width:10px;height:10px"></div></body></html>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height: Double;
+  Found: Boolean;
+begin
+  Layout := LayoutText(Page, 800, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Found := ScriptLayout.BorderBox(Document.GetElementById('abs'), X, Y, Width, Height);
+    Check(Found and (Abs(X - 10) < 0.5) and (Abs(Y - 20) < 0.5),
+      'geometry: absolute positioning without a positioned ancestor uses the initial containing block (' +
+      FloatToStr(X) + ', ' + FloatToStr(Y) + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -115,6 +143,7 @@ begin
     Check(Found and (Abs(X + 200) < 0.5) and (Abs(Y - (Unscrolled - 100)) < 0.5) and (Abs(Height - 300) < 0.5),
       'geometry: an inline-block''s percentage top, left and height resolve against a definite box (' +
       FloatToStr(X) + ', ' + FloatToStr(Y - Unscrolled) + ', ' + FloatToStr(Height) + ')');
+    CheckInitialContainingBlock;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');
