@@ -12809,6 +12809,113 @@ follows a step of the clock, stepped by nothing); ctest's "event
 descriptors", "epoll" and "inotify" groups check them from C, and a
 coretest line runs the last two as an ordinary user.
 
+### OpenGL, OpenGL ES, EGL and Vulkan (Mesa)
+
+Mesa 26.3.1 is a port (`ports/graphics/mesa`, meson): the software
+renderers llvmpipe (the default: shaders compiled to machine code by
+LLVM at run time), softpipe (`GALLIUM_DRIVER=softpipe`, no LLVM) and the
+Vulkan 1.4 driver lavapipe, behind `libEGL.so.1`, `libGLESv1_CM.so.1`,
+`libGLESv2.so.2` (desktop OpenGL 4.x compatibility and core contexts
+through EGL and `eglGetProcAddress`; there is no GLX and no `libGL`) and
+`libvulkan_lvp.so` with its ICD file, all in `/usr/local/lib`, with
+`libgallium-26.3.1.so` holding the drivers. LLVM's libraries are the
+port `devel/llvm` (23.1.6, static and position independent, the host's
+code generator only, cross-compiled with CMake: LLVM builds its TableGen
+programs natively first), a build dependency only. Mako and MarkupSafe,
+which Mesa's build needs in Python, are sources of the port found
+through `PYTHONPATH`, never installed. The ports tool's CMake toolchain
+files put `scripts/portstool/cmake` on `CMAKE_MODULE_PATH`:
+`Platform/FreePascalOS.cmake` tells CMake the system is a Unix with ELF
+shared libraries named and linked as on Linux.
+
+The patches, one concern each where they can be: Mesa learns the system
+(`DETECT_OS_FREEPASCALOS` beside managarm's, the other mlibc system;
+`_GNU_SOURCE`; non-executable stacks for its assembly), uses its DRI
+frontend without DRM (the "pseudo-drm" platform GNU Hurd uses: no
+libdrm, no kernel graphics interface yet), finds LLVM through its CMake
+package, and gallivm asks for `CallSetMemoryPolicy`
+(`MemoryPolicyAllowDynamicCode`) before compiling anything, as the
+kernel's W^X demands of a JIT (code written into read-write pages, then
+protected read-execute). LLVM's own patches: the `freepascalos` OS in
+target triples (the Clang toolchain's 0001) and its Support library on
+the system (`endian.h`, `statvfs`'s `f_flag`).
+
+**Windows for EGL.** EGL's native platform is the display server
+(`platform_freepascalos.c` in Mesa's `src/egl/drivers/dri2`,
+`_EGL_PLATFORM_FREEPASCALOS`, `-Dplatforms=freepascalos`, which is also
+`egl-native-platform`): `EGLNativeWindowType` is a `struct fpos_window *`
+and `EGLNativeDisplayType` a `struct fpos_display *` (ignored:
+`EGL_DEFAULT_DISPLAY` does as well), from `<freepascalos/windowing.h>`
+(below). The renderers draw into buffers of their own (the "swrast"
+loader); at `eglSwapBuffers` the loader's putImage copies the finished
+frame into the window's surface section, a line at a time, and sends
+`RequestDamage` for it. The drawable's size is read from the window at
+each frame, so after the program gives the window a new surface
+(`EventResized` → `fpos_window_set_surface`) the next frame has the new
+size. Configurations: 32-bit BGRA and BGRX (the surface's $AARRGGBB),
+window and pbuffer, with depth and stencil, buffer age and swap with
+damage; the swap interval is accepted and ignored (there is no vsync to
+wait for yet). EGL's surfaceless platform
+(`EGL_PLATFORM_SURFACELESS_MESA`) gives pbuffers and framebuffer objects
+without a display server.
+
+**Windows for Vulkan.** An instance extension of the system's own,
+`VK_FPOS_window_surface` (added to Mesa's copy of the registry, `vk.xml`:
+platform `freepascalos`, `VK_USE_PLATFORM_FREEPASCALOS_FPOS`, author tag
+`FPOS`, extension number 1999, so
+`VK_STRUCTURE_TYPE_WINDOW_SURFACE_CREATE_INFO_FPOS` is 1001998000;
+`include/vulkan/vulkan_freepascalos.h`): `vkCreateWindowSurfaceFPOS` with a
+`VkWindowSurfaceCreateInfoFPOS` naming a `struct fpos_window`, and
+`vkGetPhysicalDeviceWindowPresentationSupportFPOS`. Mesa's window system
+integration has a backend for it (`wsi_common_freepascalos.c`,
+`VK_ICD_WSI_PLATFORM_FREEPASCALOS`): the surface's current extent is the
+window's surface size, formats B8G8R8A8 UNORM and sRGB, present modes
+FIFO, mailbox and immediate (alike: no vsync); swapchain images are
+processor images (lavapipe is a software device), and presenting copies
+the image into the window's surface and names it damaged, then returns
+`VK_SUBOPTIMAL_KHR` while the window's size differs from the swapchain's
+(the program makes a new one). The Vulkan headers (Mesa's copy, with the
+extension) are installed with the port. There is no Vulkan loader yet: a
+program opens `libvulkan_lvp.so` and takes its functions from
+`vk_icdGetInstanceProcAddr` (`vkcube` does).
+
+**`<freepascalos/windowing.h>`** (installed with the C library's
+headers, beside `<freepascalos/syscall.h>`, which gained the port,
+channel and section calls 79-85) is the display server's protocol for C:
+`struct fpos_window_message` (the same 152 bytes as
+`TWindowMessage`), the request and event numbers C programs need, and
+header-only calls - `fpos_display_connect` (the port `display`,
+`RequestHello` answering pings, `EventWelcome`), `fpos_display_next_event`
+and `fpos_display_wait_for` (events that come while waiting for a reply
+are kept, `EventPing` is answered as it comes), `fpos_window_create`
+(a section of width x height pixels mapped, `RequestCreateWindow`),
+`fpos_window_show`, `fpos_window_set_title`, `fpos_window_set_surface`
+(a new section, `RequestSetSurface`), `fpos_window_damage` and
+`fpos_window_destroy`. Keep it in step with `Windowing.Protocol`.
+
+`ports/graphics/gldemos` (from the port's `files/`, on the system disk)
+has the programs: `gltest` (no window: OpenGL ES 2, OpenGL ES 1.1 and
+desktop OpenGL contexts on EGL's surfaceless platform; clears, a GLSL
+program and a triangle, pixels read back; "gltest: all N checks
+passed"), `glgears` (three turning gears in a window with OpenGL ES 2;
+arrow keys turn the view; `glgears -n FRAMES` draws that many frames,
+checks the picture and prints the rate) and `vkcube` (a turning cube in
+a window with Vulkan through a swapchain, its shaders compiled to SPIR-V
+by the build machine's glslangValidator; `vkcube -n FRAMES` checks the
+window's surface shows the cube). The C library's `<sys/ioccom.h>`
+(ioctl request macros in Linux's encoding, which mlibc keeps in its
+Linux option) came with the port: Mesa's DRM and sync file headers use
+it.
+
+`ports/image.list` puts gldemos (and so mesa) on the system disk, and a
+coretest line runs `gltest` on llvmpipe and on softpipe when the disk
+has it; `glgears -n` and `vkcube -n` need the display server and are
+tried in a session (`scripts/take-screenshots.py` plans). LLVM is
+linked statically into `libgallium` and into `libvulkan_lvp.so` (about
+75 MB each, stripped), which makes the system disk about 150 MB larger
+until LLVM can be one shared library of a package of its own (see
+TODO.md).
+
 ### Tests
 
 `toolchain/ctest`: `ctest` (C: stdio, malloc and mmap, strings, math,
