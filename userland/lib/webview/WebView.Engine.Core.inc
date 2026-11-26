@@ -125,6 +125,7 @@ begin
     TPageScriptExecutor(FExecutor).OnPrompt := @ScriptPrompt;
     TPageScriptExecutor(FExecutor).OnConsoleMessage := @ScriptConsole;
     TPageScriptExecutor(FExecutor).OnOpenWindow := @ScriptOpenWindow;
+    TPageScriptExecutor(FExecutor).OnScreenMode := @ScriptScreenMode;
   end;
   ApplyLoadingSettings;
   if FScriptingEnabled then

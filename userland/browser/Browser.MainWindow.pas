@@ -96,6 +96,9 @@ type
     FContextView: TWebView;
     FTabMenuIndex: Integer;
     FFullScreen: Boolean;
+    { The view whose page is fullscreen (the Fullscreen API: the window
+      fills the screen with the page alone), nil if none. }
+    FPageFullscreenView: TWebView;
     FClosing: Boolean;
     FLastFindText: string;
     { Building. }
@@ -209,6 +212,8 @@ type
     procedure ViewFindDetails(Sender: TWebView; const Needle: string; Found, Wrapped: Boolean; MatchCount: Integer);
     procedure ViewProcessEvent(Sender: TWebView; const What: string; Value: Int64);
     procedure ViewPopupBlocked(Sender: TWebView; const Url: string);
+    function ViewFullscreenRequest(Sender: TWebView; Enter: Boolean): Boolean;
+    procedure LeavePageFullscreen(TellPage: Boolean);
     procedure ViewPageInfo(Sender: TWebView; constref Info: TWebPageInfo);
     procedure ApplyViewSettings(View: TWebView);
     { about:crash, about:kill and about:hang (tests): False for others. }
@@ -475,10 +480,11 @@ var
 begin
   Settings := BrowserApp.Settings;
   FMenus.Bar.Visible := Settings.MenuBar and not FFullScreen;
-  FToolbars.Navigation.Visible := Settings.NavigationToolbar or FToolbars.Customizing;
+  FToolbars.Navigation.Visible := (Settings.NavigationToolbar or FToolbars.Customizing) and
+    (FPageFullscreenView = nil);
   FToolbars.BookmarksBar.Visible := (Settings.BookmarksToolbar and not FFullScreen) or FToolbars.Customizing;
   FStatusBar.Visible := Settings.StatusBar and not FFullScreen;
-  FTabStrip.Visible := Settings.AlwaysShowTabBar or (FTabs.Count > 1);
+  FTabStrip.Visible := (Settings.AlwaysShowTabBar or (FTabs.Count > 1)) and (FPageFullscreenView = nil);
 end;
 
 procedure TBrowserWindow.ApplySettings;

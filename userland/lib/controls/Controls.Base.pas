@@ -144,6 +144,10 @@ type
     { Control starts dragging Data (the host owns it from now on). False
       if no drag can start now (no button is held). }
     function BeginDrag(Control: TControl; Data: TDragData): Boolean; virtual; abstract;
+    { Locks the pointer to the window for Control (its motion goes to
+      Control's PointerMoveLocked) or lets it go; Control hears
+      PointerLockChanged. By default there is no lock (refused). }
+    procedure LockPointer(Control: TControl; Lock: Boolean); virtual;
   private
     FRoot: TControl;
     FLayoutPending: Boolean;
@@ -234,6 +238,10 @@ type
     procedure Paint(var Canvas: TCanvas); virtual;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); virtual;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); virtual;
+    { While the pointer is locked for this control (RequestPointerLock):
+      its motion in pixels; and the lock beginning, ending or refused. }
+    procedure PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord); virtual;
+    procedure PointerLockChanged(Locked: Boolean); virtual;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); virtual;
     procedure PointerEnter; virtual;
     procedure PointerLeave; virtual;
@@ -313,6 +321,10 @@ type
     { The root's place, in pixels (the window's whole surface). }
     procedure SetPixelBounds(const Area: TRectangle);
     procedure Invalidate;
+    { Asks for the pointer to be locked to this control's window and its
+      motion given to PointerMoveLocked (games, the Pointer Lock API), or
+      lets it go; PointerLockChanged says how it went. }
+    procedure RequestPointerLock(Lock: Boolean);
     procedure SetFocus;
     { The child at (X, Y) of this control's pixels, deepest first; Self if
       none. }
@@ -344,6 +356,8 @@ type
     { The window's handlers call these. }
     procedure HandlePointerDown(X, Y: LongInt; Button: LongWord);
     procedure HandlePointerMove(X, Y: LongInt; Buttons: LongWord);
+    procedure HandlePointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+    procedure HandlePointerLockChanged(Locked: Boolean);
     procedure HandlePointerUp(X, Y: LongInt; Button: LongWord);
     procedure HandlePointerEnter;
     procedure HandlePointerLeave;
@@ -467,6 +481,12 @@ begin
 end;
 
 { --- TControlHost --------------------------------------------------------------- }
+
+procedure TControlHost.LockPointer(Control: TControl; Lock: Boolean);
+begin
+  if Lock then
+    Control.HandlePointerLockChanged(False);
+end;
 
 procedure TControlHost.PerformPendingLayout;
 var
@@ -1175,6 +1195,32 @@ end;
 
 procedure TControl.PointerMove(X, Y: LongInt; Buttons: LongWord);
 begin
+end;
+
+procedure TControl.PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+begin
+end;
+
+procedure TControl.PointerLockChanged(Locked: Boolean);
+begin
+end;
+
+procedure TControl.HandlePointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+begin
+  PointerMoveLocked(DeltaX, DeltaY, Buttons);
+end;
+
+procedure TControl.HandlePointerLockChanged(Locked: Boolean);
+begin
+  PointerLockChanged(Locked);
+end;
+
+procedure TControl.RequestPointerLock(Lock: Boolean);
+begin
+  if FHost <> nil then
+    FHost.LockPointer(Self, Lock)
+  else if Lock then
+    PointerLockChanged(False);
 end;
 
 procedure TControl.PointerUp(X, Y: LongInt; Button: LongWord);

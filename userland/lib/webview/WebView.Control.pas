@@ -119,6 +119,9 @@ type
 
   TWebViewEvent = procedure(Sender: TWebView) of object;
   TWebViewTextEvent = procedure(Sender: TWebView; const Value: string) of object;
+  { The page asks to show an element fullscreen (Enter) or to leave it:
+    True when the host does (fills the screen with the view). }
+  TWebViewFullscreenEvent = function(Sender: TWebView; Enter: Boolean): Boolean of object;
   TWebViewLoadingEvent = procedure(Sender: TWebView; State: TLoadingState) of object;
   TWebViewLinkEvent = procedure(Sender: TWebView; const Url: string; Disposition: TLinkDisposition;
     var Handled: Boolean) of object;
@@ -226,6 +229,7 @@ type
     FOnFindDetails: TWebViewFindDetailsEvent;
     FOnPageInfo: TWebViewPageInfoEvent;
     FOnPopupBlocked: TWebViewTextEvent;
+    FOnFullscreenRequest: TWebViewFullscreenEvent;
     FOnScriptDialog: TWebViewDialogEvent;
     FOnProcessEvent: TWebViewProcessEvent;
     function GetPage: TWebPage;
@@ -273,6 +277,8 @@ type
     procedure TakeFindResult(Message: TIpcMessage);
     procedure TakePageInfo(Message: TIpcMessage);
     procedure EnginePopupBlocked(Sender: TWebEngineView; const Value: string);
+    function EngineFullscreenRequest(Sender: TWebEngineView; Enter: Boolean): Boolean;
+    function AskFullscreen(Enter: Boolean): Boolean;
     procedure TellProcessEvent(const What: string; Value: Int64);
     { In the program (WebView.Control.Local.inc). }
     procedure EnsureEngine;
@@ -344,6 +350,8 @@ type
     procedure Layout; override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
+    procedure PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord); override;
+    procedure PointerLockChanged(Locked: Boolean); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     procedure PointerLeave; override;
     procedure Wheel(Steps: LongInt); override;
@@ -467,6 +475,11 @@ type
       second) is refused while True, and its URL told to OnPopupBlocked. }
     property PopupsBlocked: Boolean read FPopupsBlocked write SetPopupsBlocked;
     property OnPopupBlocked: TWebViewTextEvent read FOnPopupBlocked write FOnPopupBlocked;
+    { Element.requestFullscreen (nil: the page cannot go fullscreen). }
+    property OnFullscreenRequest: TWebViewFullscreenEvent read FOnFullscreenRequest write FOnFullscreenRequest;
+    { The host left fullscreen by itself (F11, Escape): the page hears
+      fullscreenchange. }
+    procedure FullscreenEnded;
     property OnProcessEvent: TWebViewProcessEvent read FOnProcessEvent write FOnProcessEvent;
   end;
 
@@ -734,6 +747,45 @@ procedure TWebView.TellPageInfo(constref Info: TWebPageInfo);
 begin
   if Assigned(FOnPageInfo) then
     FOnPageInfo(Self, Info);
+end;
+
+function TWebView.AskFullscreen(Enter: Boolean): Boolean;
+begin
+  Result := Assigned(FOnFullscreenRequest) and FOnFullscreenRequest(Self, Enter);
+end;
+
+function TWebView.EngineFullscreenRequest(Sender: TWebEngineView; Enter: Boolean): Boolean;
+begin
+  Result := AskFullscreen(Enter);
+end;
+
+procedure TWebView.FullscreenEnded;
+begin
+  if FEngine <> nil then
+    FEngine.FullscreenEnded
+  else if FProcess <> nil then
+    SendToProcess(IpcFullscreenChanged, EncodeFlag(False));
+end;
+
+{ The content process's page locked the pointer: its motion goes there. }
+procedure TWebView.PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+var
+  Input: TIpcInputEvent;
+begin
+  if FEngine <> nil then
+    Exit;
+  Input := Default(TIpcInputEvent);
+  Input.Kind := InputPointerMoveLocked;
+  Input.X := DeltaX;
+  Input.Y := DeltaY;
+  Input.Button := Buttons;
+  SendInput(Input);
+end;
+
+procedure TWebView.PointerLockChanged(Locked: Boolean);
+begin
+  if (FEngine = nil) and (FProcess <> nil) then
+    SendToProcess(IpcPointerLockChanged, EncodeFlag(Locked));
 end;
 
 procedure TWebView.TellPopupBlocked(const Url: string);

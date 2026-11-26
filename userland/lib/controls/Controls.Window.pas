@@ -123,6 +123,8 @@ type
     FFocused: TControl;
     FHovered: TControl;
     FPressed: TControl;
+    { The control the pointer is locked for (nil: none). }
+    FPointerLockControl: TControl;
     FDefaultControl: TControl;
     FCancelControl: TControl;
     FPopup: TControlWindow;
@@ -163,6 +165,8 @@ type
     procedure KeyDown(Code, Character, Modifiers: LongWord); override;
     procedure KeyUp(Code, Modifiers: LongWord); override;
     procedure PointerMove(X, Y: LongInt; Buttons: LongWord); override;
+    procedure PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord); override;
+    procedure PointerLockChanged(Locked: Boolean); override;
     procedure PointerDown(X, Y: LongInt; Button: LongWord); override;
     procedure PointerUp(X, Y: LongInt; Button: LongWord); override;
     procedure PointerLeave; override;
@@ -235,6 +239,7 @@ type
     procedure FocusControlAfter(Control: TControl); override;
     function OwnerWindow: TMessageReceiver; override;
     function BeginDrag(Control: TControl; Data: TDragData): Boolean; override;
+    procedure LockPointer(Control: TControl; Lock: Boolean); override;
   end;
 
 constructor TWindowHost.Create(Window: TControlWindow);
@@ -279,8 +284,27 @@ begin
   Result := FWindow.StartDrag(Control, Data);
 end;
 
+procedure TWindowHost.LockPointer(Control: TControl; Lock: Boolean);
+begin
+  if Lock then
+  begin
+    FWindow.FPointerLockControl := Control;
+    FWindow.SetPointerLock(True);
+  end
+  else if FWindow.FPointerLockControl = Control then
+  begin
+    FWindow.FPointerLockControl := nil;
+    FWindow.SetPointerLock(False);
+  end;
+end;
+
 procedure TWindowHost.ControlRemoved(Control: TControl);
 begin
+  if FWindow.FPointerLockControl = Control then
+  begin
+    FWindow.FPointerLockControl := nil;
+    FWindow.SetPointerLock(False);
+  end;
   if FWindow.FDragTarget = Control then
     FWindow.FDragTarget := nil;
   if FWindow.FDragSource = Control then
@@ -896,6 +920,23 @@ begin
       view over a link) set it as the pointer moved. }
     ShowPointerShapeOf(Target);
   end;
+end;
+
+procedure TControlWindow.PointerMoveLocked(DeltaX, DeltaY: LongInt; Buttons: LongWord);
+begin
+  if FPointerLockControl <> nil then
+    FPointerLockControl.HandlePointerMoveLocked(DeltaX, DeltaY, Buttons);
+end;
+
+procedure TControlWindow.PointerLockChanged(Locked: Boolean);
+var
+  Control: TControl;
+begin
+  Control := FPointerLockControl;
+  if not Locked then
+    FPointerLockControl := nil;
+  if Control <> nil then
+    Control.HandlePointerLockChanged(Locked);
 end;
 
 procedure TControlWindow.PointerDown(X, Y: LongInt; Button: LongWord);

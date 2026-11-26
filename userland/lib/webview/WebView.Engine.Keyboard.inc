@@ -89,8 +89,11 @@ var
   Next: TElement;
   ViewHeight: Double;
 begin
-  NoteUserGesture;
   Result := True;
+  { Escape is the user's way out of the pointer lock and fullscreen. }
+  if (Code = KeyEscape) and LeaveScreenModeByKey then
+    Exit;
+  NoteUserGesture;
   Control := (Modifiers and ModifierControl) <> 0;
   if Code <= High(FKeyCharacters) then
     FKeyCharacters[Code] := Character;

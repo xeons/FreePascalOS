@@ -96,6 +96,8 @@ begin
       Inc(Init.ScreenY, TControlWindow(Host.OwnerWindow).ScreenTop);
     end;
   Init.Modifiers := HeldModifiers;
+  Init.MovementX := FMovementX;
+  Init.MovementY := FMovementY;
   if Target = nil then
     Exit;
   if DocumentViewportOrigin(FLayout, Target.NodeDocument, OriginX, OriginY, TargetLayout) then
@@ -122,6 +124,11 @@ begin
   if Target = nil then
     Exit(True);
   FillMouseInit(Target, Init);
+  if EventType <> 'mousemove' then
+  begin
+    Init.MovementX := 0;
+    Init.MovementY := 0;
+  end;
   Init.Button := Button;
   Init.Buttons := FButtonsHeld;
   Init.Detail := Detail;

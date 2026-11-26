@@ -58,6 +58,7 @@ begin
   FEngine.OnScriptPrompt := @EngineScriptPrompt;
   FEngine.OnConsoleMessage := @EngineConsole;
   FEngine.OnPopupBlocked := @EnginePopupBlocked;
+  FEngine.OnFullscreenRequest := @EngineFullscreenRequest;
   ApplyEngineOptions;
   if FZoom <> 1 then
     FEngine.Zoom := FZoom;

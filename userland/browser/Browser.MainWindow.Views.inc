@@ -39,6 +39,7 @@ begin
   View.OnFindDetails := @ViewFindDetails;
   View.OnProcessEvent := @ViewProcessEvent;
   View.OnPopupBlocked := @ViewPopupBlocked;
+  View.OnFullscreenRequest := @ViewFullscreenRequest;
   View.OnPageInfo := @ViewPageInfo;
 end;
 
@@ -184,6 +185,47 @@ begin
   Say('popup-blocked ' + Url);
   if TabOfView(Sender) = FActive then
     ShowStatus('Prevented this site from opening a pop-up window: ' + Url);
+end;
+
+{ A page's element fullscreen: the window fills the screen and shows the
+  page alone (no bars, no tabs) until the page, Escape or F11 ends it. }
+function TBrowserWindow.ViewFullscreenRequest(Sender: TWebView; Enter: Boolean): Boolean;
+begin
+  if not Enter then
+  begin
+    if FPageFullscreenView = Sender then
+      LeavePageFullscreen(False);
+    Exit(True);
+  end;
+  if TabOfView(Sender) <> FActive then
+    Exit(False);
+  if (FPageFullscreenView <> nil) and (FPageFullscreenView <> Sender) then
+    LeavePageFullscreen(True);
+  FPageFullscreenView := Sender;
+  if not FFullScreen then
+  begin
+    FFullScreen := True;
+    Maximize;
+  end;
+  UpdateBarsVisible;
+  Say('page-fullscreen on');
+  Result := True;
+end;
+
+procedure TBrowserWindow.LeavePageFullscreen(TellPage: Boolean);
+var
+  View: TWebView;
+begin
+  View := FPageFullscreenView;
+  if View = nil then
+    Exit;
+  FPageFullscreenView := nil;
+  FFullScreen := False;
+  Restore;
+  UpdateBarsVisible;
+  Say('page-fullscreen off');
+  if TellPage then
+    View.FullscreenEnded;
 end;
 
 procedure TBrowserWindow.ViewPageInfo(Sender: TWebView; constref Info: TWebPageInfo);
