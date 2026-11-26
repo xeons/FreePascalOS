@@ -400,11 +400,15 @@ end;
 
 function WasmNewMemory(Store: TWasmStore; const MemoryType: TWasmMemoryType): TWasmMemory;
 begin
+  if not (MemoryType.AddressType in [vkI32, vkI64]) then
+    raise EWasmError.Create('memory address type must be i32 or i64');
   Result := Store.NewMemory(MemoryType);
 end;
 
 function WasmNewTable(Store: TWasmStore; const TableType: TWasmTableType; InitialValue: Pointer): TWasmTable;
 begin
+  if not (TableType.AddressType in [vkI32, vkI64]) then
+    raise EWasmError.Create('table address type must be i32 or i64');
   Result := Store.NewTable(TableType, InitialValue);
 end;
 
@@ -424,9 +428,7 @@ procedure WasmGlobalSet(Global: TWasmGlobal; const Value: TWasmValue);
 begin
   if not Global.GlobalType.Mutable then
     raise EWasmError.Create('global is immutable');
-  if Value.ValueType.Kind <> Global.GlobalType.ValueType.Kind then
-    raise EWasmError.Create('global value of the wrong type');
-  if (Value.ValueType.Kind = vkReference) and (Value.Reference = nil) and not Global.GlobalType.ValueType.Nullable then
+  if not WasmValueMatchesType(Global.Store, Value, Global.GlobalType.ValueType) then
     raise EWasmError.Create('global value of the wrong type');
   Global.SetValue(Value);
 end;
@@ -442,11 +444,17 @@ procedure WasmTableSet(Table: TWasmTable; Index: Cardinal; Value: Pointer);
 begin
   if Index >= Table.Size then
     raise EWasmTrap.CreateTrap(tkTableOutOfBounds);
+  if not WasmValueMatchesType(Table.Store, WasmReference(Table.TableType.ElementType, Value),
+    Table.TableType.ElementType) then
+    raise EWasmError.Create('table value of the wrong type');
   Table.Elements[Index] := Value;
 end;
 
 function WasmTableGrow(Table: TWasmTable; Delta: Cardinal; Value: Pointer): Int64;
 begin
+  if not WasmValueMatchesType(Table.Store, WasmReference(Table.TableType.ElementType, Value),
+    Table.TableType.ElementType) then
+    raise EWasmError.Create('table value of the wrong type');
   Result := Table.Grow(Delta, Value);
 end;
 

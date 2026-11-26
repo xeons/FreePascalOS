@@ -76,12 +76,17 @@ function ExecuteAllocation(Store: TWasmStore; Instance: TWasmModuleInstance; con
 function ExecuteGcOperation(Store: TWasmStore; Instance: TWasmModuleInstance; const Instruction: TCodeInstruction;
   Slots: PQWord): Integer;
 
+{ Whether a value from the embedder fits a (store) value type: the kind,
+  and for a reference its nullability and its dynamic type. }
+function ValueMatchesType(Store: TWasmStore; const Value: TWasmValue; const ValueType: TWasmValueType): Boolean;
+
 { The access kind of a field (Wasm.Code's Access constants). }
 function FieldAccess(const Field: TWasmFieldType; Signed: Boolean): Integer;
 
 implementation
 
 uses
+  Wasm.Subtyping,
   Wasm.Errors;
 
 function MakeI31(Value: DWord): QWord;
@@ -154,6 +159,36 @@ begin
   else
     Result := False;
   end;
+end;
+
+function ValueMatchesType(Store: TWasmStore; const Value: TWasmValue; const ValueType: TWasmValueType): Boolean;
+var
+  Target: TWasmRuntimeType;
+  Top: Int32;
+begin
+  if Value.ValueType.Kind <> ValueType.Kind then
+    Exit(False);
+  if ValueType.Kind <> vkReference then
+    Exit(True);
+  if Value.Reference = nil then
+    Exit(ValueType.Nullable);
+  Top := HeapTypeTop(Store.Registry, ValueType.HeapType);
+  if Top = HeapTypeFunc then
+  begin
+    if ValueType.HeapType = HeapTypeFunc then
+      Exit(True);
+    if ValueType.HeapType = HeapTypeNoFunc then
+      Exit(False);
+    Exit(Store.Registry.IsSubtype(TWasmFunction(Value.Reference).TypeId, ValueType.HeapType));
+  end;
+  if Top = HeapTypeExtern then
+    Exit(ValueType.HeapType = HeapTypeExtern);
+  if (Top = HeapTypeAny) and (PtrUInt(Value.Reference) and 1 = 0) and not Store.Heap.IsObject(Value.Reference) then
+    Exit(False);
+  Target := nil;
+  if ValueType.HeapType >= 0 then
+    Target := Store.Registry.TypeOf(ValueType.HeapType);
+  Result := ReferenceMatches(Store, QWord(PtrUInt(Value.Reference)), ValueType.HeapType, Target, True);
 end;
 
 function Internalize(Store: TWasmStore; Reference: QWord; out Converted: QWord): Boolean;

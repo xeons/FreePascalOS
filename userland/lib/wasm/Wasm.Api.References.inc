@@ -114,33 +114,8 @@ begin
 end;
 
 function WasmValueMatchesType(Store: TWasmStore; const Value: TWasmValue; const ValueType: TWasmValueType): Boolean;
-var
-  Target: TWasmRuntimeType;
-  Top: Int32;
 begin
-  if Value.ValueType.Kind <> ValueType.Kind then
-    Exit(False);
-  if ValueType.Kind <> vkReference then
-    Exit(True);
-  if Value.Reference = nil then
-    Exit(ValueType.Nullable);
-  Top := HeapTypeTop(Store.Registry, ValueType.HeapType);
-  if Top = HeapTypeFunc then
-  begin
-    if ValueType.HeapType = HeapTypeFunc then
-      Exit(True);
-    if ValueType.HeapType = HeapTypeNoFunc then
-      Exit(False);
-    Exit(Store.Registry.IsSubtype(TWasmFunction(Value.Reference).TypeId, ValueType.HeapType));
-  end;
-  if Top = HeapTypeExtern then
-    Exit(ValueType.HeapType = HeapTypeExtern);
-  if (Top = HeapTypeAny) and (PtrUInt(Value.Reference) and 1 = 0) and not Store.Heap.IsObject(Value.Reference) then
-    Exit(False);
-  Target := nil;
-  if ValueType.HeapType >= 0 then
-    Target := Store.Registry.TypeOf(ValueType.HeapType);
-  Result := ReferenceMatches(Store, QWord(PtrUInt(Value.Reference)), ValueType.HeapType, Target, True);
+  Result := ValueMatchesType(Store, Value, ValueType);
 end;
 
 function StructOf(Reference: Pointer): PWasmGcObject;

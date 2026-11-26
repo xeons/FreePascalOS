@@ -161,6 +161,10 @@ begin
   finally
     Dec(Store.HostNesting);
   end;
+  for Index := 0 to High(Results) do
+    if (Func.FunctionType.Results[Index].Kind = vkReference) and
+      not ValueMatchesType(Store, Results[Index], Func.FunctionType.Results[Index]) then
+      raise EWasmError.CreateFmt('host function result %d of the wrong type', [Index]);
   WriteValues(Store, First, Func.FunctionType.Results, Results);
 end;
 
@@ -588,9 +592,7 @@ begin
   if Length(Arguments) <> Length(Func.FunctionType.Params) then
     raise EWasmError.CreateFmt('expected %d arguments, got %d', [Length(Func.FunctionType.Params), Length(Arguments)]);
   for Index := 0 to High(Arguments) do
-    if (Arguments[Index].ValueType.Kind <> Func.FunctionType.Params[Index].Kind) or
-      ((Arguments[Index].ValueType.Kind = vkReference) and (Arguments[Index].Reference = nil) and
-       not Func.FunctionType.Params[Index].Nullable) then
+    if not ValueMatchesType(Store, Arguments[Index], Func.FunctionType.Params[Index]) then
       raise EWasmError.CreateFmt('argument %d: expected %s, got %s', [Index,
         ValueTypeToString(Func.FunctionType.Params[Index]), ValueTypeToString(Arguments[Index].ValueType)]);
   SavedFrameCount := Store.FrameCount;

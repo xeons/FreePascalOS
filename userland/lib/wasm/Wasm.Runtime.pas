@@ -134,6 +134,7 @@ type
 
   TWasmTable = class
   public
+    Store: TWasmStore;
     { The element type's heap type is a store type id when concrete. }
     TableType: TWasmTableType;
     Elements: array of Pointer;
@@ -146,6 +147,7 @@ type
 
   TWasmGlobal = class
   public
+    Store: TWasmStore;
     GlobalType: TWasmGlobalType;
     { The value's bits: scalars and references in the low eight bytes. }
     Value: TWasmV128;
@@ -584,12 +586,14 @@ function TWasmStore.NewTable(const TableType: TWasmTableType; InitialValue: Poin
 begin
   Result := TWasmTable.Create(TableType, InitialValue);
   Own(Result);
+  Result.Store := Self;
 end;
 
 function TWasmStore.NewGlobal(const GlobalType: TWasmGlobalType; const Value: TWasmValue): TWasmGlobal;
 begin
   Result := TWasmGlobal.Create(GlobalType);
   Own(Result);
+  Result.Store := Self;
   Result.SetValue(Value);
 end;
 
