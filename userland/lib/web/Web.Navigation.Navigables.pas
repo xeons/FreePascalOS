@@ -968,9 +968,8 @@ begin
   end;
   Essence := Response.ComputedEssence;
   Disposition := LowerCase(Response.Headers.Value('content-disposition'));
-  { XHTML stays with the HTML parser for now: the XML parser runs no
-    scripts. }
-  if IsHtmlMimeType(Essence) or (Essence = 'application/xhtml+xml') then
+  { XHTML is an XML document (the XML parser runs its scripts). }
+  if IsHtmlMimeType(Essence) then
     Kind := ContentHtml
   else if IsXmlMimeType(Essence) and not IsSupportedImageType(Essence) then
     Kind := ContentXml
@@ -1014,6 +1013,9 @@ begin
       Job.Referrer);
   if Kind in [ContentText, ContentImage, ContentXml] then
     FLoader.Document.ContentType := Essence;
+  { An XHTML document is a Document, not an XMLDocument. }
+  if Essence = 'application/xhtml+xml' then
+    FLoader.Document.IsXmlDocumentObject := False;
   if Kind = ContentImage then
   begin
     { The image document's img loads the image itself (from the cache). }

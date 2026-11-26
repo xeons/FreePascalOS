@@ -31,6 +31,12 @@
   undefined entity, text or a second element outside the root, no root)
   fails with a message and a line number, and the caller shows the
   parser error document browsers show.
+
+  The open elements are a stack rather than recursion, so the parser
+  can stop after a script element's end tag (OnScriptEnd: the HTML
+  Standard's "pause" for a pending parsing-blocking script) and go on
+  where it was (Resume): a document of a browsing context (XHTML) runs
+  its scripts as the tree grows.
 }
 unit Web.Xml.Parser;
 
@@ -40,56 +46,50 @@ unit Web.Xml.Parser;
 interface
 
 uses
+  SysUtils,
   Web.Dom;
 
-{ Parses Text into Document (which has no children yet). False when the
-  text is not well-formed: Error says why, and Document may hold part
-  of the tree. }
-function ParseXmlInto(Document: TDocument; const Text: string; out Error: string): Boolean;
-{ An XML document from Text, or the parser error document (a
-  <parsererror> in Mozilla's namespace with the message) when it is not
-  well-formed. ContentType: the document's content type. }
-function ParseXmlDocument(const Text, ContentType, Url: string): TDocument;
-
-implementation
-
-uses
-  SysUtils,
-  Classes;
-
-const
-  XmlNamespaceUri = 'http://www.w3.org/XML/1998/namespace';
-  XmlnsNamespaceUri = 'http://www.w3.org/2000/xmlns/';
-  ParserErrorNamespace = 'http://www.mozilla.org/newlayout/xml/parsererror.xml';
-  MaximumDepth = 1024;
-  MaximumEntityDepth = 8;
-  MaximumEntityExpansion = 4 * 1024 * 1024;
-
 type
+  { The parser met the end tag of a script element (HTML namespace):
+    True when a parsing-blocking script is now pending, and the parser
+    pauses until Resume. }
+  TXmlScriptEndEvent = function(Script: TElement): Boolean of object;
+
   EXmlSyntax = class(Exception);
 
-  TEntity = record
+  TXmlEntity = record
     Name, Value: string;
   end;
 
-  TNamespaceBinding = record
+  TXmlNamespaceBinding = record
     Prefix, Uri: string;
     Depth: Integer;
   end;
 
-  TRawAttribute = record
-    QualifiedName, Value: string;
+  TXmlOpenElement = record
+    Element: TElement;
+    QualifiedName: string;
   end;
 
-  TDocumentXmlParser = class
+  { A document's parser that can pause after a script's end tag (the
+    HTML Standard's XML parser in a browsing context): Run parses until
+    the end, a pause or an error. }
+  TXmlDocumentParser = class
   private
     FDocument: TDocument;
     FText: string;
     FPosition, FLength: Integer;
-    FEntities: array of TEntity;
-    FBindings: array of TNamespaceBinding;
+    FEntities: array of TXmlEntity;
+    FBindings: array of TXmlNamespaceBinding;
     FBindingCount: Integer;
     FExpanded: Int64;
+    { The elements whose end tags are still to come, the root first. }
+    FOpen: array of TXmlOpenElement;
+    FOpenCount: Integer;
+    FHaveRoot: Boolean;
+    FEnded, FPaused, FFailed: Boolean;
+    FError: string;
+    FOnScriptEnd: TXmlScriptEndEvent;
     procedure Fail(const Message: string);
     function AtEnd: Boolean; inline;
     function Peek: Char; inline;
@@ -107,13 +107,58 @@ type
     procedure ReadEntityDeclarations(const Subset: string);
     procedure ParseProcessingInstruction(Parent: TNode);
     procedure ParseComment(Parent: TNode);
-    procedure ParseElement(Parent: TNode; Depth: Integer);
-    procedure ParseContent(Element: TElement; const QualifiedName: string; Depth: Integer);
+    procedure ParseStartTag(Parent: TNode);
+    procedure ParseEndTag;
+    procedure ElementEnded(Element: TElement);
+    procedure StepOutsideRoot;
+    procedure StepInContent;
     function LineNumber: Integer;
   public
     constructor Create(Document: TDocument; const Text: string);
-    procedure Parse;
+    { Parses on until the end, a pause (OnScriptEnd) or an error. }
+    procedure Run;
+    { Goes on after a pause. }
+    procedure Resume;
+    property Ended: Boolean read FEnded;
+    property Paused: Boolean read FPaused;
+    { Not well-formed: Error says why (with the line). }
+    property Failed: Boolean read FFailed;
+    property Error: string read FError;
+    { Set before Run: script elements are then marked parser-inserted
+      and reported at their end tags. }
+    property OnScriptEnd: TXmlScriptEndEvent read FOnScriptEnd write FOnScriptEnd;
   end;
+
+{ Parses Text into Document (which has no children yet). False when the
+  text is not well-formed: Error says why, and Document may hold part
+  of the tree. }
+function ParseXmlInto(Document: TDocument; const Text: string; out Error: string): Boolean;
+{ An XML document from Text, or the parser error document (a
+  <parsererror> in Mozilla's namespace with the message) when it is not
+  well-formed. ContentType: the document's content type. }
+function ParseXmlDocument(const Text, ContentType, Url: string): TDocument;
+{ Document's content replaced by the parser error document for Error. }
+procedure ShowXmlParserError(Document: TDocument; const Error: string);
+
+implementation
+
+uses
+  Classes,
+  Web.Atoms;
+
+const
+  XmlNamespaceUri = 'http://www.w3.org/XML/1998/namespace';
+  XmlnsNamespaceUri = 'http://www.w3.org/2000/xmlns/';
+  ParserErrorNamespace = 'http://www.mozilla.org/newlayout/xml/parsererror.xml';
+  MaximumDepth = 1024;
+  MaximumEntityDepth = 8;
+  MaximumEntityExpansion = 4 * 1024 * 1024;
+
+type
+  TRawAttribute = record
+    QualifiedName, Value: string;
+  end;
+
 
 function IsNameStart(Character: Char): Boolean; inline;
 begin
@@ -177,7 +222,7 @@ begin
   Result := StringReplace(Result, #13, #10, [rfReplaceAll]);
 end;
 
-constructor TDocumentXmlParser.Create(Document: TDocument; const Text: string);
+constructor TXmlDocumentParser.Create(Document: TDocument; const Text: string);
 begin
   inherited Create;
   FDocument := Document;
@@ -190,7 +235,7 @@ begin
   PushBinding('xmlns', XmlnsNamespaceUri, -1);
 end;
 
-function TDocumentXmlParser.LineNumber: Integer;
+function TXmlDocumentParser.LineNumber: Integer;
 var
   Index: Integer;
 begin
@@ -200,17 +245,17 @@ begin
       Inc(Result);
 end;
 
-procedure TDocumentXmlParser.Fail(const Message: string);
+procedure TXmlDocumentParser.Fail(const Message: string);
 begin
   raise EXmlSyntax.Create(Message + ' (line ' + IntToStr(LineNumber) + ')');
 end;
 
-function TDocumentXmlParser.AtEnd: Boolean;
+function TXmlDocumentParser.AtEnd: Boolean;
 begin
   Result := FPosition > FLength;
 end;
 
-function TDocumentXmlParser.Peek: Char;
+function TXmlDocumentParser.Peek: Char;
 begin
   if FPosition <= FLength then
     Result := FText[FPosition]
@@ -218,20 +263,20 @@ begin
     Result := #0;
 end;
 
-function TDocumentXmlParser.StartsWith(const Prefix: string): Boolean;
+function TXmlDocumentParser.StartsWith(const Prefix: string): Boolean;
 begin
   Result := (FPosition + Length(Prefix) - 1 <= FLength) and
     (CompareByte(FText[FPosition], Prefix[1], Length(Prefix)) = 0);
 end;
 
-procedure TDocumentXmlParser.SkipWhitespace;
+procedure TXmlDocumentParser.SkipWhitespace;
 begin
   while (FPosition <= FLength) and IsSpace(FText[FPosition]) do
     Inc(FPosition);
 end;
 
 { The text up to Marker; the position moves past it. }
-function TDocumentXmlParser.ReadUntil(const Marker, What: string): string;
+function TXmlDocumentParser.ReadUntil(const Marker, What: string): string;
 var
   Found: Integer;
 begin
@@ -242,7 +287,7 @@ begin
   FPosition := Found + Length(Marker);
 end;
 
-function TDocumentXmlParser.ReadName: string;
+function TXmlDocumentParser.ReadName: string;
 var
   Start: Integer;
 begin
@@ -253,14 +298,14 @@ begin
   Result := Copy(FText, Start, FPosition - Start);
 end;
 
-procedure TDocumentXmlParser.Expect(Character: Char);
+procedure TXmlDocumentParser.Expect(Character: Char);
 begin
   if Peek <> Character then
     Fail('expected "' + Character + '"');
   Inc(FPosition);
 end;
 
-function TDocumentXmlParser.DecodeReferences(const Raw: string; Depth: Integer): string;
+function TXmlDocumentParser.DecodeReferences(const Raw: string; Depth: Integer): string;
 var
   Index, Close, Code, Entity: Integer;
   Name, Expansion: string;
@@ -328,7 +373,7 @@ begin
   end;
 end;
 
-function TDocumentXmlParser.ReadQuoted: string;
+function TXmlDocumentParser.ReadQuoted: string;
 var
   Quote: Char;
   Raw: string;
@@ -348,7 +393,7 @@ begin
   Result := DecodeReferences(Raw, 0);
 end;
 
-function TDocumentXmlParser.LookUpNamespace(const Prefix: string; out Uri: string): Boolean;
+function TXmlDocumentParser.LookUpNamespace(const Prefix: string; out Uri: string): Boolean;
 var
   Index: Integer;
 begin
@@ -362,7 +407,7 @@ begin
   Result := False;
 end;
 
-procedure TDocumentXmlParser.PushBinding(const Prefix, Uri: string; Depth: Integer);
+procedure TXmlDocumentParser.PushBinding(const Prefix, Uri: string; Depth: Integer);
 begin
   if FBindingCount = Length(FBindings) then
     SetLength(FBindings, 2 * FBindingCount + 8);
@@ -372,13 +417,13 @@ begin
   Inc(FBindingCount);
 end;
 
-procedure TDocumentXmlParser.PopBindings(Depth: Integer);
+procedure TXmlDocumentParser.PopBindings(Depth: Integer);
 begin
   while (FBindingCount > 0) and (FBindings[FBindingCount - 1].Depth >= Depth) do
     Dec(FBindingCount);
 end;
 
-procedure TDocumentXmlParser.ReadEntityDeclarations(const Subset: string);
+procedure TXmlDocumentParser.ReadEntityDeclarations(const Subset: string);
 var
   Index, Start, ValueStart: Integer;
   Name: string;
@@ -417,7 +462,7 @@ begin
 end;
 
 { At "<!DOCTYPE". }
-procedure TDocumentXmlParser.ParseDoctype;
+procedure TXmlDocumentParser.ParseDoctype;
 var
   Name, PublicId, SystemId: string;
   Start: Integer;
@@ -473,7 +518,7 @@ begin
 end;
 
 { At "<?". The XML declaration is not a node. }
-procedure TDocumentXmlParser.ParseProcessingInstruction(Parent: TNode);
+procedure TXmlDocumentParser.ParseProcessingInstruction(Parent: TNode);
 var
   Target, Data: string;
 begin
@@ -495,7 +540,7 @@ begin
 end;
 
 { At "<!--". }
-procedure TDocumentXmlParser.ParseComment(Parent: TNode);
+procedure TXmlDocumentParser.ParseComment(Parent: TNode);
 var
   Data: string;
 begin
@@ -506,15 +551,17 @@ begin
   Parent.AppendChild(FDocument.NewComment(Data));
 end;
 
-{ At '<' of a start tag. }
-procedure TDocumentXmlParser.ParseElement(Parent: TNode; Depth: Integer);
+{ At '<' of a start tag: the element appended to Parent and, unless it
+  closes itself, opened. }
+procedure TXmlDocumentParser.ParseStartTag(Parent: TNode);
 var
   QualifiedName, Name, Value, Prefix, LocalName, Uri: string;
   Raw: array of TRawAttribute;
   Element: TElement;
-  Index: Integer;
+  Index, Depth: Integer;
   SelfClosing: Boolean;
 begin
+  Depth := FOpenCount;
   if Depth > MaximumDepth then
     Fail('elements nested too deeply');
   Inc(FPosition);
@@ -571,7 +618,9 @@ begin
     on Error: Exception do
       Fail('a bad element name ' + QualifiedName);
   end;
-  Parent.AppendChild(Element);
+  { A script the parser inserts waits for its end tag. }
+  if Assigned(FOnScriptEnd) and Element.IsHtmlElement(AtomScript) then
+    Element.ElementState := Element.ElementState or ElementStateParserInserted;
   for Index := 0 to High(Raw) do
   begin
     SplitQualifiedName(Raw[Index].QualifiedName, Prefix, LocalName);
@@ -588,131 +637,180 @@ begin
         Fail('a bad attribute ' + Raw[Index].QualifiedName);
     end;
   end;
-  if not SelfClosing then
-    ParseContent(Element, QualifiedName, Depth);
-  PopBindings(Depth);
+  Parent.AppendChild(Element);
+  if Parent = FDocument then
+    FHaveRoot := True;
+  if SelfClosing then
+  begin
+    PopBindings(Depth);
+    ElementEnded(Element);
+    Exit;
+  end;
+  if FOpenCount >= Length(FOpen) then
+    SetLength(FOpen, FOpenCount * 2 + 16);
+  FOpen[FOpenCount].Element := Element;
+  FOpen[FOpenCount].QualifiedName := QualifiedName;
+  Inc(FOpenCount);
 end;
 
-{ The content of Element up to its end tag. }
-procedure TDocumentXmlParser.ParseContent(Element: TElement; const QualifiedName: string; Depth: Integer);
+{ At "</": the end tag of the innermost open element. }
+procedure TXmlDocumentParser.ParseEndTag;
+var
+  Name: string;
+  Element: TElement;
+begin
+  Inc(FPosition, 2);
+  Name := ReadName;
+  if Name <> FOpen[FOpenCount - 1].QualifiedName then
+    Fail('the end tag </' + Name + '> where </' + FOpen[FOpenCount - 1].QualifiedName + '> belongs');
+  SkipWhitespace;
+  Expect('>');
+  Dec(FOpenCount);
+  Element := FOpen[FOpenCount].Element;
+  FOpen[FOpenCount].Element := nil;
+  FOpen[FOpenCount].QualifiedName := '';
+  PopBindings(FOpenCount);
+  ElementEnded(Element);
+end;
+
+{ A script's end: the host prepares it, and the parser pauses while a
+  parsing-blocking script is pending. }
+procedure TXmlDocumentParser.ElementEnded(Element: TElement);
+begin
+  if Assigned(FOnScriptEnd) and Element.IsHtmlElement(AtomScript) then
+    if FOnScriptEnd(Element) then
+      FPaused := True;
+end;
+
+{ One construct of an open element's content. }
+procedure TXmlDocumentParser.StepInContent;
 var
   Start, Close: Integer;
-  Raw, Name: string;
+  Raw: string;
+  Element: TElement;
 begin
-  while not AtEnd do
+  Element := FOpen[FOpenCount - 1].Element;
+  if AtEnd then
+    Fail('no end tag for <' + FOpen[FOpenCount - 1].QualifiedName + '>');
+  if Peek <> '<' then
   begin
-    if Peek <> '<' then
-    begin
-      Start := FPosition;
-      Close := Pos('<', FText, FPosition);
-      if Close = 0 then
-        Close := FLength + 1;
-      FPosition := Close;
-      Raw := Copy(FText, Start, Close - Start);
-      if Pos(']]>', Raw) > 0 then
-        Fail('"]]>" in text');
-      Element.AppendChild(FDocument.NewText(DecodeReferences(Raw, 0)));
-      Continue;
-    end;
-    if StartsWith('</') then
-    begin
-      Inc(FPosition, 2);
-      Name := ReadName;
-      if Name <> QualifiedName then
-        Fail('the end tag </' + Name + '> where </' + QualifiedName + '> belongs');
-      SkipWhitespace;
-      Expect('>');
-      Exit;
-    end;
-    if StartsWith('<!--') then
-      ParseComment(Element)
-    else if StartsWith('<![CDATA[') then
-    begin
-      Inc(FPosition, 9);
-      Element.AppendChild(FDocument.CreateCDataSection(ReadUntil(']]>', 'CDATA section')));
-    end
-    else if StartsWith('<?') then
-      ParseProcessingInstruction(Element)
-    else if StartsWith('<!') then
-      Fail('a declaration inside an element')
-    else
-      ParseElement(Element, Depth + 1);
-  end;
-  Fail('no end tag for <' + QualifiedName + '>');
+    Start := FPosition;
+    Close := Pos('<', FText, FPosition);
+    if Close = 0 then
+      Close := FLength + 1;
+    FPosition := Close;
+    Raw := Copy(FText, Start, Close - Start);
+    if Pos(']]>', Raw) > 0 then
+      Fail('"]]>" in text');
+    Element.AppendChild(FDocument.NewText(DecodeReferences(Raw, 0)));
+  end
+  else if StartsWith('</') then
+    ParseEndTag
+  else if StartsWith('<!--') then
+    ParseComment(Element)
+  else if StartsWith('<![CDATA[') then
+  begin
+    Inc(FPosition, 9);
+    Element.AppendChild(FDocument.CreateCDataSection(ReadUntil(']]>', 'CDATA section')));
+  end
+  else if StartsWith('<?') then
+    ParseProcessingInstruction(Element)
+  else if StartsWith('<!') then
+    Fail('a declaration inside an element')
+  else
+    ParseStartTag(Element);
 end;
 
-procedure TDocumentXmlParser.Parse;
-var
-  HaveRoot: Boolean;
+{ One construct before or after the root element. }
+procedure TXmlDocumentParser.StepOutsideRoot;
 begin
-  HaveRoot := False;
-  while True do
+  SkipWhitespace;
+  if AtEnd then
   begin
-    SkipWhitespace;
-    if AtEnd then
-      Break;
-    if StartsWith('<?') then
-      ParseProcessingInstruction(FDocument)
-    else if StartsWith('<!--') then
-      ParseComment(FDocument)
-    else if StartsWith('<!DOCTYPE') then
+    if not FHaveRoot then
+      Fail('no root element');
+    FEnded := True;
+  end
+  else if StartsWith('<?') then
+    ParseProcessingInstruction(FDocument)
+  else if StartsWith('<!--') then
+    ParseComment(FDocument)
+  else if StartsWith('<!DOCTYPE') then
+  begin
+    if FHaveRoot then
+      Fail('a document type after the root');
+    ParseDoctype;
+  end
+  else if (Peek = '<') and (FPosition < FLength) and IsNameStart(FText[FPosition + 1]) then
+  begin
+    if FHaveRoot then
+      Fail('a second root element');
+    ParseStartTag(FDocument);
+  end
+  else
+    Fail('text outside the root element');
+end;
+
+procedure TXmlDocumentParser.Run;
+begin
+  try
+    while not (FEnded or FPaused or FFailed) do
+      if FOpenCount > 0 then
+        StepInContent
+      else
+        StepOutsideRoot;
+  except
+    on Failure: EXmlSyntax do
     begin
-      if HaveRoot then
-        Fail('a document type after the root');
-      ParseDoctype;
-    end
-    else if (Peek = '<') and (FPosition < FLength) and IsNameStart(FText[FPosition + 1]) then
-    begin
-      if HaveRoot then
-        Fail('a second root element');
-      ParseElement(FDocument, 0);
-      HaveRoot := True;
-    end
-    else
-      Fail('text outside the root element');
+      FFailed := True;
+      FEnded := True;
+      FError := Failure.Message;
+    end;
   end;
-  if not HaveRoot then
-    Fail('no root element');
+end;
+
+procedure TXmlDocumentParser.Resume;
+begin
+  if not FPaused then
+    Exit;
+  FPaused := False;
+  Run;
 end;
 
 function ParseXmlInto(Document: TDocument; const Text: string; out Error: string): Boolean;
 var
-  Parser: TDocumentXmlParser;
+  Parser: TXmlDocumentParser;
 begin
-  Error := '';
-  Parser := TDocumentXmlParser.Create(Document, Text);
+  Parser := TXmlDocumentParser.Create(Document, Text);
   try
-    try
-      Parser.Parse;
-      Result := True;
-    except
-      on Failure: EXmlSyntax do
-      begin
-        Error := Failure.Message;
-        Result := False;
-      end;
-    end;
+    Parser.Run;
+    Error := Parser.Error;
+    Result := not Parser.Failed;
   finally
     Parser.Free;
   end;
 end;
 
+procedure ShowXmlParserError(Document: TDocument; const Error: string);
+var
+  Root: TElement;
+begin
+  Document.ReplaceChildren([]);
+  Root := Document.CreateElementNS(ParserErrorNamespace, 'parsererror');
+  Root.AppendChild(Document.CreateTextNode('XML Parsing Error: ' + Error));
+  Document.AppendChild(Root);
+end;
+
 function ParseXmlDocument(const Text, ContentType, Url: string): TDocument;
 var
   Error: string;
-  Root: TElement;
 begin
   Result := TDocument.CreateDocument(False);
   Result.IsXmlDocumentObject := True;
   Result.ContentType := ContentType;
   Result.Url := Url;
-  if ParseXmlInto(Result, Text, Error) then
-    Exit;
-  while Result.FirstChild <> nil do
-    Result.RemoveChild(Result.FirstChild);
-  Root := Result.CreateElementNS(ParserErrorNamespace, 'parsererror');
-  Result.AppendChild(Root);
-  Root.AppendChild(Result.CreateTextNode('XML Parsing Error: ' + Error));
+  if not ParseXmlInto(Result, Text, Error) then
+    ShowXmlParserError(Result, Error);
 end;
 
 end.

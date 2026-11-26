@@ -127,6 +127,8 @@ type
     { The fetches of FetchScript still running (their TBufferedFetch). }
     FTextFetches: TList;
     FRunningDeferred: Boolean;
+    { The XML parser is preparing a script (its nesting level is 1). }
+    FXmlParserPreparing: Boolean;
     FLastError: string;
     FOnDeferredDone: TNotifyEvent;
     FOnParserResume: TNotifyEvent;
@@ -147,6 +149,8 @@ type
     destructor Destroy; override;
     { The parser's hook. }
     function ScriptEndTagReached(Parser: THtmlParser; Script: TElement): Boolean; override;
+    { The XML parser's hook (the same, for a document's XML parser). }
+    function XmlScriptEndTagReached(Script: TElement): Boolean;
     { A script element became connected (or its src or children
       changed) outside the parser. }
     procedure ScriptChanged(Element: TElement);
@@ -376,6 +380,22 @@ begin
   end;
 end;
 
+function TScriptScheduler.XmlScriptEndTagReached(Script: TElement): Boolean;
+begin
+  FXmlParserPreparing := True;
+  try
+    Prepare(Script, True);
+  finally
+    FXmlParserPreparing := False;
+  end;
+  Result := FParsingBlocking <> nil;
+  if Result and FParsingBlocking.Ready and not BlockedByStyleSheets then
+  begin
+    Execute(FParsingBlocking);
+    Result := False;
+  end;
+end;
+
 procedure TScriptScheduler.ScriptChanged(Element: TElement);
 begin
   if (Element.ElementState and ElementStateParserInserted) <> 0 then
@@ -468,7 +488,8 @@ begin
     else
       FInOrder.Add(Script);
   end
-  else if ParserInserted and BlockedByStyleSheets and (FParser <> nil) and (FParser.ScriptNestingLevel <= 1) then
+  else if ParserInserted and BlockedByStyleSheets and
+    (FXmlParserPreparing or ((FParser <> nil) and (FParser.ScriptNestingLevel <= 1))) then
   begin
     FParsingBlocking := Script;
     Result := True;
