@@ -41,6 +41,7 @@ uses
   WebLoadTest.Pointer,
   WebLoadTest.Frames,
   WebLoadTest.BrowserFeatures,
+  WebLoadTest.Canvas,
   SysUtils,
   Web.Bindings.Context,
   Web.Navigation.Pages;
@@ -63,6 +64,13 @@ begin
     FinishChecks('web load test (pointer)');
     Exit;
   end;
+  { "canvas": only the canvas page test. }
+  if ParamStr(1) = 'canvas' then
+  begin
+    RunCanvasTests;
+    FinishChecks('web load test (canvas)');
+    Exit;
+  end;
   RunEventLoopTests;
   RunFetchRuleTests;
   RunFetchingTests;
@@ -73,5 +81,6 @@ begin
   RunEditingTests;
   RunPointerTests;
   RunBrowserFeatureTests;
+  RunCanvasTests;
   FinishChecks('web load test');
 end.

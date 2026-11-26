@@ -1741,7 +1741,9 @@ WEB_SCRIPT_TEST_SOURCES := $(wildcard tools/WebScriptTest/*.pas) tools/CryptoTes
 	$(filter-out %/Web.Contents.pas,$(wildcard userland/lib/web/*.pas)) $(wildcard userland/lib/web/*.inc) \
 	$(filter-out %/Js.Contents.pas %/Js.SystemClock.pas,$(wildcard userland/lib/javascript/*.pas)) \
 	$(filter-out %/Css.Contents.pas,$(wildcard userland/lib/css/*.pas)) $(wildcard userland/lib/http/Url.*.pas) \
-	tools/TlsTest/Crypto.Random.pas userland/lib/cryptography/Crypto.Digests.pas
+	tools/TlsTest/Crypto.Random.pas userland/lib/cryptography/Crypto.Digests.pas \
+	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/image/*.pas) $(wildcard userland/lib/font/*.pas) \
+	$(wildcard userland/lib/compression/*.pas) $(wildcard userland/lib/svg/*.pas)
 
 $(WEB_SCRIPT_TEST_UNITS)/.generated: userland/lib/web/make-tables.py $(wildcard userland/lib/web/data/*.txt) \
 		$(WEB_BINDING_SOURCES)
@@ -1754,7 +1756,8 @@ $(WEB_SCRIPT_TEST): $(WEB_SCRIPT_TEST_SOURCES) $(WEB_SCRIPT_TEST_UNITS)/.generat
 	@mkdir -p $(WEB_SCRIPT_TEST_UNITS)
 	fpc -Mobjfpc -O2 -vew -Futools/WebScriptTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/cryptography -Fushared -Fishared \
 		-Fuuserland/lib/web -Fuuserland/lib/javascript \
-		-Fuuserland/lib/css -Fuuserland/lib/http -Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
+		-Fuuserland/lib/css -Fuuserland/lib/http -Fuuserland/lib/drawing -Fuuserland/lib/image -Fuuserland/lib/font \
+		-Fuuserland/lib/compression -Fuuserland/lib/svg -Fi$(WEB_SCRIPT_TEST_UNITS) -FU$(WEB_SCRIPT_TEST_UNITS) -o$@ \
 		tools/WebScriptTest/WebScriptTest.pas
 
 web-script-test: $(WEB_SCRIPT_TEST)

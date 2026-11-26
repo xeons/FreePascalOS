@@ -66,7 +66,7 @@
   // What a worker's scope has of the window: functions called on the
   // window, and interfaces (classes) as they are.
   const sharedFunctions = ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask", "fetch",
-    "atob", "btoa", "structuredClone", "reportError"];
+    "atob", "btoa", "structuredClone", "reportError", "createImageBitmap"];
   const sharedObjects = ["crypto", "performance", "console", "navigator", "TextEncoder", "TextDecoder", "URL",
     "URLSearchParams", "Blob", "File", "FileReader", "FormData", "Headers", "Request", "Response", "AbortController",
     "AbortSignal", "ReadableStream", "WritableStream", "TransformStream", "TextEncoderStream", "TextDecoderStream",
@@ -76,7 +76,11 @@
     // IndexedDB and the Cache API (the window's origin is the worker's).
     "indexedDB", "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBRequest", "IDBOpenDBRequest", "IDBObjectStore",
     "IDBIndex", "IDBCursor", "IDBCursorWithValue", "IDBKeyRange", "IDBVersionChangeEvent", "DOMStringList", "caches",
-    "CacheStorage", "Cache", "StorageManager"];
+    "CacheStorage", "Cache", "StorageManager",
+    // Canvas.
+    "OffscreenCanvas", "OffscreenCanvasRenderingContext2D", "ImageBitmapRenderingContext", "ImageBitmap",
+    "ImageData", "Path2D", "CanvasGradient", "CanvasPattern", "TextMetrics", "DOMMatrix", "DOMMatrixReadOnly",
+    "DOMPoint", "DOMPointReadOnly", "DOMRect", "DOMRectReadOnly"];
 
   function workerState(worker) {
     const state = workerData.get(worker);
@@ -167,7 +171,7 @@
     scope.location = locationOf(state.url);
     scope.postMessage = function postMessage(message, transfer) {
       const ports = internal.transferredPorts(transfer).map(internal.movePort);
-      const data = structuredClone(message);
+      const data = internal.cloneWithTransfer(message, transfer);
       internal.queueTask(function () {
         if (!state.terminated) worker.dispatchEvent(new MessageEvent("message", { data: data, ports: ports }));
       });
@@ -232,7 +236,7 @@
     postMessage(message, transfer) {
       const state = workerState(this);
       const ports = internal.transferredPorts(transfer).map(internal.movePort);
-      const data = structuredClone(message);
+      const data = internal.cloneWithTransfer(message, transfer);
       if (state.terminated) return;
       state.pending.push({ data: data, ports: ports });
       flushToWorker(state);

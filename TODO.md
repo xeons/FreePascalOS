@@ -1778,8 +1778,23 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       IDBRecord (IndexedDB 3.0 editor's draft), structuredClone and
       postMessage moved onto the same serializer (ArrayBuffer, typed
       arrays, Blob), the OPFS (navigator.storage.getDirectory)
+- [x] Canvas 2D (CanvasRenderingContext2D complete: paths and Path2D
+      with SVG path data, transforms, fill rules, strokes with dashes,
+      caps and joins, linear/radial/conic gradients, patterns, shadows,
+      globalAlpha with every compositing operator and blend mode, clips,
+      text with fillText/strokeText/measureText from libfont's outlines,
+      drawImage, ImageData, the filter property), toDataURL and toBlob
+      (PNG, JPEG, WebP), OffscreenCanvas (also in workers, transferable),
+      ImageBitmap and createImageBitmap, bitmaprenderer, DOMMatrix;
+      canvases shown through the layout's image providers
+      (html5test: canvas 24 of 25, offscreen 3 of 3; 300 of 588)
+- [ ] Canvas: imageSmoothingQuality (always bilinear), display-p3 and
+      float16 colour spaces, the canvas element's own computed font and
+      colour for relative font sizes, currentcolor and direction:
+      inherit, a GPU path, hit regions (addHitRegion, dropped by the
+      standard)
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
-      Canvas 2D and OffscreenCanvas, CSP enforcement and
+      CSP enforcement and
       SecurityPolicyViolationEvent, WebSocket, custom elements, shadow
       DOM, Web Animations, media playback and Web Audio, the
       Fullscreen API, file inputs with FileList and multipart uploads,
