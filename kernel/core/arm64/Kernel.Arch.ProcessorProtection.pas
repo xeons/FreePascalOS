@@ -39,7 +39,8 @@ unit Kernel.Arch.ProcessorProtection;
 
 interface
 
-{ Turns the protections on (boot processor, once). }
+{ Turns the protections on (boot processor, once), and lets user mode
+  do the cache maintenance code generated at run time needs. }
 procedure EnableProcessorProtection;
 { The same on a processor that started (or woke) later. }
 procedure EnableProcessorProtectionOnThisProcessor;
@@ -57,6 +58,17 @@ const
   MemoryModelPanMask = QWord($F);
   { SCTLR_EL1.SPAN: when set, exceptions leave PSTATE.PAN alone. }
   SystemControlSetPanUnchanged = QWord(1) shl 23;
+  { SCTLR_EL1.DZE, UCT and UCI: user mode may zero cache lines (DC ZVA),
+    read the cache geometry (CTR_EL0) and clean and invalidate caches by
+    address (DC CVAU, DC CIVAC, IC IVAU) - what a compiler at run time
+    does to make freshly written code visible to instruction fetch (GCC's
+    __clear_cache, LLVM's JIT for Mesa's llvmpipe), as Linux allows.
+    Without them those instructions trap and the program dies of SIGILL. }
+  SystemControlUserCacheZero = QWord(1) shl 14;
+  SystemControlUserCacheType = QWord(1) shl 15;
+  SystemControlUserCacheMaintenance = QWord(1) shl 26;
+  SystemControlUserCacheAccess = SystemControlUserCacheZero or SystemControlUserCacheType or
+    SystemControlUserCacheMaintenance;
 
 var
   ArchPanEnabled: Byte; external name 'ArchPanEnabled';
@@ -77,6 +89,11 @@ begin
   ArchSetPrivilegedAccessNever;
 end;
 
+procedure AllowUserCacheMaintenanceHere;
+begin
+  ArchWriteSystemControl(ArchReadSystemControl or SystemControlUserCacheAccess);
+end;
+
 procedure WriteProtectionSummary;
 begin
   DebugBeginMessage;
@@ -91,6 +108,7 @@ end;
 
 procedure EnableProcessorProtection;
 begin
+  AllowUserCacheMaintenanceHere;
   if ProcessorHasPrivilegedAccessNever then
   begin
     SetPrivilegedAccessNeverHere;
@@ -101,6 +119,7 @@ end;
 
 procedure EnableProcessorProtectionOnThisProcessor;
 begin
+  AllowUserCacheMaintenanceHere;
   if ArchPanEnabled <> 0 then
     SetPrivilegedAccessNeverHere;
 end;
