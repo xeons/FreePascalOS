@@ -117,12 +117,24 @@ begin
   Variance := Integer((BestCost - Cost[(YDir + 4) and 7]) shr 10);
 end;
 
+const
+  { Stands for samples outside the filter region in the padded block:
+    its difference from any sample is so large that constrain( ) gives 0
+    for it at every strength and bit depth, and it is left out of the
+    minimum and maximum. }
+  Unavailable = 30000;
+  PaddedStride = 12;
+
+type
+  { The block with two samples of border on each side. }
+  TPaddedBlock = array[0..PaddedStride * PaddedStride - 1] of Integer;
+
+{ constrain( diff, threshold, damping ) with the damping already reduced
+  by FloorLog2( threshold ). }
 function Constrain(Difference, Threshold, DampingAdjust: Integer): Integer; inline;
 var
   Magnitude, Limit: Integer;
 begin
-  if Threshold = 0 then
-    Exit(0);
   Magnitude := Abs(Difference);
   Limit := Threshold - (Magnitude shr DampingAdjust);
   if Limit < 0 then
@@ -138,13 +150,16 @@ end;
 { The CDEF filter process (section 7.15.3) for one plane of the block at r, c. }
 procedure CdefFilter(Frame: TFrameContext; Plane, R, C, PriStr, SecStr, Damping, Dir: Integer);
 var
-  SubX, SubY, X0, Y0, W, H, I, J, K, Sign, DirOffset, CoeffShift: Integer;
-  PlaneWidth, PlaneHeight, Stride: Integer;
-  Sum, X, Maximum, Minimum, Sample, SampleX, SampleY, CandidateDir: Integer;
+  SubX, SubY, X0, Y0, W, H, I, J, K, CoeffShift: Integer;
+  PlaneWidth, PlaneHeight, Stride, SampleX, SampleY: Integer;
+  Sum, X, Maximum, Minimum, Sample, Center, Offset: Integer;
   PriTap, SecTap: array[0..1] of Integer;
+  PriOffset: array[0..1] of Integer;
+  SecOffset: array[0..1, 0..1] of Integer;
   PriDampingAdjust, SecDampingAdjust: Integer;
   Source, Target: PWord;
-  Index: Integer;
+  Padded: TPaddedBlock;
+  Row: PWord;
 begin
   if Plane > 0 then
   begin
@@ -167,10 +182,36 @@ begin
   Stride := Frame.CurrFrame.Planes[Plane].Stride;
   Source := @Frame.CurrFrame.Planes[Plane].Samples[0];
   Target := @Frame.CdefFrame.Planes[Plane].Samples[0];
+  for I := -2 to H + 1 do
+  begin
+    SampleY := Y0 + I;
+    Offset := (I + 2) * PaddedStride;
+    if (SampleY < 0) or (SampleY >= PlaneHeight) then
+    begin
+      for J := 0 to W + 3 do
+        Padded[Offset + J] := Unavailable;
+      Continue;
+    end;
+    Row := @Source[SampleY * Stride];
+    for J := -2 to W + 1 do
+    begin
+      SampleX := X0 + J;
+      if (SampleX >= 0) and (SampleX < PlaneWidth) then
+        Padded[Offset + J + 2] := Row[SampleX]
+      else
+        Padded[Offset + J + 2] := Unavailable;
+    end;
+  end;
   PriTap[0] := Cdef_Pri_Taps[(PriStr shr CoeffShift) and 1][0];
   PriTap[1] := Cdef_Pri_Taps[(PriStr shr CoeffShift) and 1][1];
   SecTap[0] := Cdef_Sec_Taps[(PriStr shr CoeffShift) and 1][0];
   SecTap[1] := Cdef_Sec_Taps[(PriStr shr CoeffShift) and 1][1];
+  for K := 0 to 1 do
+  begin
+    PriOffset[K] := Cdef_Directions[Dir][K][0] * PaddedStride + Cdef_Directions[Dir][K][1];
+    SecOffset[K, 0] := Cdef_Directions[(Dir + 2) and 7][K][0] * PaddedStride + Cdef_Directions[(Dir + 2) and 7][K][1];
+    SecOffset[K, 1] := Cdef_Directions[(Dir - 2) and 7][K][0] * PaddedStride + Cdef_Directions[(Dir - 2) and 7][K][1];
+  end;
   PriDampingAdjust := 0;
   SecDampingAdjust := 0;
   if PriStr <> 0 then
@@ -178,66 +219,100 @@ begin
   if SecStr <> 0 then
     SecDampingAdjust := Max(0, Damping - FloorLog2(SecStr));
   for I := 0 to H - 1 do
+  begin
+    Row := @Target[(Y0 + I) * Stride + X0];
     for J := 0 to W - 1 do
     begin
+      Center := (I + 2) * PaddedStride + J + 2;
+      X := Padded[Center];
       Sum := 0;
-      X := Source[(Y0 + I) * Stride + X0 + J];
       Maximum := X;
       Minimum := X;
       for K := 0 to 1 do
       begin
-        Sign := -1;
-        while Sign <= 1 do
+        Sample := Padded[Center + PriOffset[K]];
+        if Sample <> Unavailable then
         begin
-          { primary taps along dir }
-          SampleY := Y0 + I + Sign * Cdef_Directions[Dir][K][0];
-          SampleX := X0 + J + Sign * Cdef_Directions[Dir][K][1];
-          if (SampleX >= 0) and (SampleX < PlaneWidth) and (SampleY >= 0) and (SampleY < PlaneHeight) then
-          begin
-            Sample := Source[SampleY * Stride + SampleX];
+          if PriStr <> 0 then
             Inc(Sum, PriTap[K] * Constrain(Sample - X, PriStr, PriDampingAdjust));
+          if Sample > Maximum then
+            Maximum := Sample;
+          if Sample < Minimum then
+            Minimum := Sample;
+        end;
+        Sample := Padded[Center - PriOffset[K]];
+        if Sample <> Unavailable then
+        begin
+          if PriStr <> 0 then
+            Inc(Sum, PriTap[K] * Constrain(Sample - X, PriStr, PriDampingAdjust));
+          if Sample > Maximum then
+            Maximum := Sample;
+          if Sample < Minimum then
+            Minimum := Sample;
+        end;
+        if SecStr <> 0 then
+        begin
+          Sample := Padded[Center + SecOffset[K, 0]];
+          if Sample <> Unavailable then
+          begin
+            Inc(Sum, SecTap[K] * Constrain(Sample - X, SecStr, SecDampingAdjust));
             if Sample > Maximum then
               Maximum := Sample;
             if Sample < Minimum then
               Minimum := Sample;
           end;
-          DirOffset := -2;
-          while DirOffset <= 2 do
+          Sample := Padded[Center - SecOffset[K, 0]];
+          if Sample <> Unavailable then
           begin
-            CandidateDir := (Dir + DirOffset) and 7;
-            SampleY := Y0 + I + Sign * Cdef_Directions[CandidateDir][K][0];
-            SampleX := X0 + J + Sign * Cdef_Directions[CandidateDir][K][1];
-            if (SampleX >= 0) and (SampleX < PlaneWidth) and (SampleY >= 0) and (SampleY < PlaneHeight) then
-            begin
-              Sample := Source[SampleY * Stride + SampleX];
-              Inc(Sum, SecTap[K] * Constrain(Sample - X, SecStr, SecDampingAdjust));
-              if Sample > Maximum then
-                Maximum := Sample;
-              if Sample < Minimum then
-                Minimum := Sample;
-            end;
-            Inc(DirOffset, 4);
+            Inc(Sum, SecTap[K] * Constrain(Sample - X, SecStr, SecDampingAdjust));
+            if Sample > Maximum then
+              Maximum := Sample;
+            if Sample < Minimum then
+              Minimum := Sample;
           end;
-          Inc(Sign, 2);
+          Sample := Padded[Center + SecOffset[K, 1]];
+          if Sample <> Unavailable then
+          begin
+            Inc(Sum, SecTap[K] * Constrain(Sample - X, SecStr, SecDampingAdjust));
+            if Sample > Maximum then
+              Maximum := Sample;
+            if Sample < Minimum then
+              Minimum := Sample;
+          end;
+          Sample := Padded[Center - SecOffset[K, 1]];
+          if Sample <> Unavailable then
+          begin
+            Inc(Sum, SecTap[K] * Constrain(Sample - X, SecStr, SecDampingAdjust));
+            if Sample > Maximum then
+              Maximum := Sample;
+            if Sample < Minimum then
+              Minimum := Sample;
+          end;
         end;
       end;
-      Index := (Y0 + I) * Stride + X0 + J;
-      Target[Index] := Clip3(Minimum, Maximum, X + SarLongint(8 + Sum - Ord(Sum < 0), 4));
+      Row[J] := Clip3(Minimum, Maximum, X + SarLongint(8 + Sum - Ord(Sum < 0), 4));
     end;
+  end;
 end;
 
 { The CDEF block process (section 7.15.1) after the copy, for an index other than -1. }
 procedure CdefBlock(Frame: TFrameContext; R, C, Idx: Integer);
 var
   CoeffShift, YDir, Variance, PriStr, SecStr, Dir, VarStr, Damping: Integer;
-  Skip: Boolean;
+  Skip, NeedDirection: Boolean;
 begin
   CoeffShift := Frame.Sequence.BitDepth - 8;
   Skip := Frame.Block(R, C)^.Skip and Frame.Block(R + 1, C)^.Skip and Frame.Block(R, C + 1)^.Skip and
     Frame.Block(R + 1, C + 1)^.Skip;
   if Skip then
     Exit;
-  CdefDirection(Frame, R, C, YDir, Variance);
+  { The direction and variance only matter with a primary strength. }
+  NeedDirection := (Frame.Header.cdef_y_pri_strength[Idx] <> 0) or
+    ((Frame.Sequence.NumPlanes > 1) and (Frame.Header.cdef_uv_pri_strength[Idx] <> 0));
+  YDir := 0;
+  Variance := 0;
+  if NeedDirection then
+    CdefDirection(Frame, R, C, YDir, Variance);
   PriStr := Frame.Header.cdef_y_pri_strength[Idx] shl CoeffShift;
   SecStr := Frame.Header.cdef_y_sec_strength[Idx] shl CoeffShift;
   if PriStr = 0 then
@@ -253,7 +328,9 @@ begin
   else
     PriStr := 0;
   Damping := Frame.Header.CdefDamping + CoeffShift;
-  CdefFilter(Frame, 0, R, C, PriStr, SecStr, Damping, Dir);
+  { With no strength the filter gives every sample back unchanged. }
+  if (PriStr <> 0) or (SecStr <> 0) then
+    CdefFilter(Frame, 0, R, C, PriStr, SecStr, Damping, Dir);
   if Frame.Sequence.NumPlanes = 1 then
     Exit;
   PriStr := Frame.Header.cdef_uv_pri_strength[Idx] shl CoeffShift;
@@ -263,8 +340,11 @@ begin
   else
     Dir := Cdef_Uv_Dir[Frame.Sequence.subsampling_x][Frame.Sequence.subsampling_y][YDir];
   Damping := Frame.Header.CdefDamping + CoeffShift - 1;
-  CdefFilter(Frame, 1, R, C, PriStr, SecStr, Damping, Dir);
-  CdefFilter(Frame, 2, R, C, PriStr, SecStr, Damping, Dir);
+  if (PriStr <> 0) or (SecStr <> 0) then
+  begin
+    CdefFilter(Frame, 1, R, C, PriStr, SecStr, Damping, Dir);
+    CdefFilter(Frame, 2, R, C, PriStr, SecStr, Damping, Dir);
+  end;
 end;
 
 procedure CdefRows(Frame: TFrameContext; RowStart, RowEnd: Integer);

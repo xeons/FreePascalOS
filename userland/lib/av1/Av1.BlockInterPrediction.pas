@@ -60,38 +60,82 @@ begin
   end;
 end;
 
-procedure FilterHorizontallyUnclamped(Tile: TTileContext; Source: PWord; SourceStride: Integer;
-  X, W, Rows, Filter: Integer; Intermediate: PInteger);
+{ The 8-tap sum of eight samples Step apart. }
+function TapSum(Taps: PSmallInt; Samples: PWord; Step: Integer): Integer; inline;
+begin
+  Result := Taps[0] * Samples[0] + Taps[1] * Samples[Step] + Taps[2] * Samples[2 * Step] +
+    Taps[3] * Samples[3 * Step] + Taps[4] * Samples[4 * Step] + Taps[5] * Samples[5 * Step] +
+    Taps[6] * Samples[6 * Step] + Taps[7] * Samples[7 * Step];
+end;
+
+function IntermediateTapSum(Taps: PSmallInt; Values: PInteger): Integer; inline;
+begin
+  Result := Taps[0] * Values[0] + Taps[1] * Values[IntermediateStride] + Taps[2] * Values[2 * IntermediateStride] +
+    Taps[3] * Values[3 * IntermediateStride] + Taps[4] * Values[4 * IntermediateStride] +
+    Taps[5] * Values[5 * IntermediateStride] + Taps[6] * Values[6 * IntermediateStride] +
+    Taps[7] * Values[7 * IntermediateStride];
+end;
+
+{ The block inter prediction process for an unscaled block whose samples
+  are all inside the reference: the same sums as the specification, with
+  the passes that a zero fraction makes a plain scaling done as one. Source
+  points at the sample 3 rows above and 3 columns left of the block. }
+procedure PredictUnscaledInside(Tile: TTileContext; Source: PWord; SourceStride, X, Y, W, H,
+  FilterHorizontal, FilterVertical: Integer; Intermediate, Pred: PInteger; PredStride: Integer);
 var
-  Row, Column, Tap, Sum, Round0, Fraction, Scale: Integer;
-  Taps: PSmallInt;
-  SourceRow, Samples: PWord;
-  Output: PInteger;
+  Round0, Round1, FractionX, FractionY, Row, Column, Shift, Rounding0, Rounding1: Integer;
+  HorizontalTaps, VerticalTaps: PSmallInt;
+  SourceRow: PWord;
+  Output, Input: PInteger;
 begin
   Round0 := Tile.InterRound0;
-  Fraction := ShiftRight(X, 6) and SUBPEL_MASK;
-  Taps := @Subpel_Filters[Filter, Fraction, 0];
-  SourceRow := Source;
-  for Row := 0 to Rows - 1 do
+  Round1 := Tile.InterRound1;
+  Rounding0 := 1 shl (Round0 - 1);
+  Rounding1 := 1 shl (Round1 - 1);
+  FractionX := (X shr 6) and SUBPEL_MASK;
+  FractionY := (Y shr 6) and SUBPEL_MASK;
+  HorizontalTaps := @Subpel_Filters[FilterHorizontal, FractionX, 0];
+  VerticalTaps := @Subpel_Filters[FilterVertical, FractionY, 0];
+  if FractionY = 0 then
   begin
-    Output := Intermediate + Row * IntermediateStride;
-    if Fraction = 0 then
+    { The vertical pass multiplies by 128: Round2( value << 7, Round1 ). }
+    for Row := 0 to H - 1 do
     begin
-      Scale := 128 shr Round0;
-      Samples := SourceRow + 3;
+      SourceRow := Source + (Row + 3) * SourceStride;
+      Output := Pred + Row * PredStride;
+      if FractionX = 0 then
+      begin
+        Shift := 14 - Round0;
+        for Column := 0 to W - 1 do
+          Output[Column] := ((SourceRow[Column + 3] shl Shift) + Rounding1) shr Round1;
+      end
+      else
+        for Column := 0 to W - 1 do
+          Output[Column] := SarLongint((SarLongint(TapSum(HorizontalTaps, SourceRow + Column, 1) + Rounding0, Round0)
+            shl 7) + Rounding1, Round1);
+    end;
+    Exit;
+  end;
+  for Row := 0 to H + 6 do
+  begin
+    SourceRow := Source + Row * SourceStride;
+    Output := Intermediate + Row * IntermediateStride;
+    if FractionX = 0 then
+    begin
+      Shift := 7 - Round0;
       for Column := 0 to W - 1 do
-        Output[Column] := Samples[Column] * Scale;
+        Output[Column] := SourceRow[Column + 3] shl Shift;
     end
     else
       for Column := 0 to W - 1 do
-      begin
-        Samples := SourceRow + Column;
-        Sum := 0;
-        for Tap := 0 to 7 do
-          Sum := Sum + Taps[Tap] * Samples[Tap];
-        Output[Column] := SarLongint(Sum + (1 shl (Round0 - 1)), Round0);
-      end;
-    Inc(SourceRow, SourceStride);
+        Output[Column] := SarLongint(TapSum(HorizontalTaps, SourceRow + Column, 1) + Rounding0, Round0);
+  end;
+  for Row := 0 to H - 1 do
+  begin
+    Input := Intermediate + Row * IntermediateStride;
+    Output := Pred + Row * PredStride;
+    for Column := 0 to W - 1 do
+      Output[Column] := SarLongint(IntermediateTapSum(VerticalTaps, Input + Column) + Rounding1, Round1);
   end;
 end;
 
@@ -165,13 +209,15 @@ begin
   FirstRow := ShiftRight(Y, 10) - 3;
   FirstColumn := ShiftRight(X, 10) - 3;
   LastColumn := ShiftRight(X + StepX * (W - 1), 10) + 4;
-  if (StepX = 1 shl SCALE_SUBPEL_BITS) and (FirstRow >= 0) and (FirstColumn >= 0) and
-    (FirstRow + IntermediateHeight - 1 <= LastY) and (LastColumn <= LastX) then
-    FilterHorizontallyUnclamped(Tile, Source + FirstRow * SourceStride + FirstColumn, SourceStride,
-      X, W, IntermediateHeight, FilterHorizontal, Intermediate)
-  else
-    FilterHorizontallyClamped(Tile, Source, SourceStride, LastX, LastY, X, Y, StepX, W,
-      IntermediateHeight, FilterHorizontal, Intermediate);
+  if (StepX = 1 shl SCALE_SUBPEL_BITS) and (StepY = 1 shl SCALE_SUBPEL_BITS) and (FirstRow >= 0) and
+    (FirstColumn >= 0) and (FirstRow + IntermediateHeight - 1 <= LastY) and (LastColumn <= LastX) then
+  begin
+    PredictUnscaledInside(Tile, Source + FirstRow * SourceStride + FirstColumn, SourceStride, X, Y, W, H,
+      FilterHorizontal, FilterVertical, Intermediate, Pred, PredStride);
+    Exit;
+  end;
+  FilterHorizontallyClamped(Tile, Source, SourceStride, LastX, LastY, X, Y, StepX, W,
+    IntermediateHeight, FilterHorizontal, Intermediate);
   FilterVertically(Tile, Intermediate, Y, StepY, W, H, FilterVertical, Pred, PredStride);
 end;
 
