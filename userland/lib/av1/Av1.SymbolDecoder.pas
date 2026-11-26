@@ -53,6 +53,9 @@ procedure InitializeSymbolDecoder(out Decoder: TSymbolDecoder; Data: PByte; Size
   DisableCdfUpdate: Boolean);
 { read_symbol( cdf ) for a CDF of N symbols (N + 1 words). }
 function ReadSymbol(var Decoder: TSymbolDecoder; Cdf: PWord; N: Integer): Integer;
+{ read_symbol( cdf ) for a CDF that is built for one symbol and thrown
+  away (split_or_horz, split_or_vert): no adaptation. }
+function ReadSymbolWithoutAdaptation(var Decoder: TSymbolDecoder; Cdf: PWord; N: Integer): Integer;
 { read_bool( ): a bit of even probability. }
 function ReadBoolean(var Decoder: TSymbolDecoder): Integer;
 { read_literal( n ): n bits of even probability, most significant first. }
@@ -106,6 +109,25 @@ begin
   Decoder.Range := Range shl Bits;
   if Decoder.Count < 0 then
     Refill(Decoder);
+end;
+
+function ReadSymbolWithoutAdaptation(var Decoder: TSymbolDecoder; Cdf: PWord; N: Integer): Integer;
+var
+  Compared, Current, Previous, Range: LongWord;
+  Symbol: Integer;
+begin
+  Compared := LongWord(Decoder.Difference shr (WindowBits - 16));
+  Range := Decoder.Range;
+  Current := Range;
+  Symbol := -1;
+  repeat
+    Inc(Symbol);
+    Previous := Current;
+    Current := (((Range shr 8) * (LongWord(32768 - Cdf[Symbol]) shr EC_PROB_SHIFT)) shr (7 - EC_PROB_SHIFT))
+      + LongWord(EC_MIN_PROB * (N - Symbol - 1));
+  until Compared >= Current;
+  Normalize(Decoder, Decoder.Difference - (QWord(Current) shl (WindowBits - 16)), Previous - Current);
+  Result := Symbol;
 end;
 
 function ReadSymbol(var Decoder: TSymbolDecoder; Cdf: PWord; N: Integer): Integer;

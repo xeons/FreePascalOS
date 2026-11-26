@@ -74,6 +74,7 @@ type
     RefOrderHint: array[0..NUM_REF_FRAMES - 1] of Integer;
     RefFrameId: array[0..NUM_REF_FRAMES - 1] of Integer;
   end;
+  PReferenceSlots = ^TReferenceSlots;
 
 procedure ReleaseReferenceSlots(var Slots: TReferenceSlots);
 procedure AssignReferenceSlot(var Slots: TReferenceSlots; Index: Integer; Frame: TReferenceFrame);
