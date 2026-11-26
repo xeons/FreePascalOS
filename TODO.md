@@ -2014,13 +2014,23 @@ in the order they would be built:
       (KVM) and arm64 (QEMU virt)
 - [ ] The C runtime on the Raspberry Pi 5 (built, not tried on the board)
 - [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
-- [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
+- [x] AF_UNIX sockets (stream, datagram, seqpacket; paths and the
+      abstract namespace; socketpair; SCM_RIGHTS, SCM_CREDENTIALS,
+      SO_PEERCRED; shutdown, names) (253-258); pseudo-terminal masters as
+      one descriptor (/dev/ptmx, /dev/pts/N, posix_openpt/ptsname/openpty)
+- [ ] Local sockets: collect sockets passed in messages queued on
+      themselves (cycles stay until shutdown); /dev/pts as a directory
+      to list
 - [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
-- [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
+- [x] Atomic pread/pwrite (250, 251; preadv/pwritev), per-file fsync
+      through tagged block cache lines (252), nanosecond file times in
+      stat, utimensat and futimens
+- [ ] fdatasync skipping metadata that is not needed to read the data
+      (it does what fsync does)
 - [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
 - [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
 - [ ] Clang driver support (`--target=x86_64-freepascalos`)
-- [ ] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,
+- [x] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,
       CallQueryMemoryResidency 215); clock_gettime from the clock page
       (AuxiliaryClockPage) instead of a system call
 - [x] C ports through the ports tool (config.sub and libtool taught the
