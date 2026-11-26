@@ -178,6 +178,27 @@ interface PointerEvent : MouseEvent {
   sequence<PointerEvent> getPredictedEvents();
 };
 
+[Exposed=Window]
+interface DataTransfer {
+  constructor();
+  attribute DOMString dropEffect;
+  attribute DOMString effectAllowed;
+  readonly attribute any types;
+  DOMString getData(DOMString format);
+  undefined setData(DOMString format, DOMString data);
+  undefined clearData(optional DOMString format);
+};
+
+dictionary ClipboardEventInit : EventInit {
+  DataTransfer? clipboardData = null;
+};
+
+[Exposed=Window]
+interface ClipboardEvent : Event {
+  constructor(DOMString type, optional ClipboardEventInit eventInitDict = {});
+  readonly attribute DataTransfer? clipboardData;
+};
+
 dictionary KeyboardEventInit : EventModifierInit {
   DOMString key = "";
   DOMString code = "";

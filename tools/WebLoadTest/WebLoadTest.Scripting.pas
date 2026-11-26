@@ -57,6 +57,9 @@ uses
   Web.Script.PageScripting,
   Web.Script.Context,
   WebView.MouseEvents,
+  WebView.FieldEditing,
+  WebView.ClipboardEvents,
+  Web.Dom.FormControls,
   WebLoadTest.Server;
 
 type
@@ -525,8 +528,112 @@ begin
   end;
 end;
 
+type
+  TTestClipboard = class
+  public
+    Text: string;
+    function Read: string;
+    procedure Write(const Value: string);
+  end;
+
+function TTestClipboard.Read: string;
+begin
+  Result := Text;
+end;
+
+procedure TTestClipboard.Write(const Value: string);
+begin
+  Text := Value;
+end;
+
+{ copy, cut and paste events before the field editor's own and the
+  page's copy: a listener reading the pasted text, cancelling a paste,
+  replacing what is copied, a cancelled cut that cuts nothing. }
+procedure CheckClipboardEvents;
+var
+  Environment: TTestEnvironment;
+  Conditions: TScriptConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Document: TDocument;
+  Context: TScriptContext;
+  Editor: TTextFieldEditor;
+  Clipboard: TTestClipboard;
+  Field: TElement;
+  Text: string;
+  Outcome: TClipboardOutcome;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TScriptConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  Editor := TTextFieldEditor.Create;
+  Clipboard := TTestClipboard.Create;
+  Editor.OnReadClipboard := @Clipboard.Read;
+  Editor.OnWriteClipboard := @Clipboard.Write;
+  try
+    Environment.Site.AddRoute('c.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><input id=f value="hello world"><p id="out">x</p><script>var log = [], mode = "";' +
+      'var f = document.getElementById("f");' +
+      '["copy", "cut", "paste"].forEach(function (t) { document.addEventListener(t, function (e) {' +
+      ' log.push(t + ":" + e.target.id + ":" + e.isTrusted + ":" + (e instanceof ClipboardEvent) + ":" +' +
+      ' e.clipboardData.types.join("+") + ":" + e.clipboardData.getData("text"));' +
+      ' if (mode === "replace" && t !== "paste") { e.clipboardData.setData("text/plain", "replaced"); e.preventDefault(); }' +
+      ' if (mode === "block") e.preventDefault(); }); });' +
+      'document.getElementById("out").textContent = "timer";</script>');
+    Navigable.NavigateTo('https://c.test/page.html');
+    Check(Environment.RunUntil(@Conditions.TimerRan), 'clipboard events: the page ran');
+    Document := Navigable.ActiveDocument;
+    Context := Executor.ContextOf(Document);
+    Field := Document.GetElementById('f');
+    Clipboard.Text := ' pasted';
+    Editor.Perform(Field, FieldValueEnd, '', []);
+    Editor.Perform(Field, FieldPaste, '', []);
+    Context.Engine.Evaluate('mode = "block";');
+    Editor.Perform(Field, FieldPaste, '', []);
+    Context.Engine.Evaluate('mode = "replace"; f.setSelectionRange(0, 5);');
+    Editor.Perform(Field, FieldCopy, '', []);
+    Text := Clipboard.Text;
+    Editor.Perform(Field, FieldCut, '', []);
+    Context.Engine.Evaluate('mode = ""; f.blur();');
+    Outcome := FireCopyEvent(ClipboardEventTarget(Document), 'copy');
+    Check(Outcome.Proceed and (TextControlValue(Field) = 'hello world pasted') and (Text = 'replaced'),
+      'clipboard events: a paste goes in, a cancelled one does not, a cancelled copy or cut puts the page''s text (' +
+      TextControlValue(Field) + ', ' + Text + ')');
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('log.join(" ")'));
+    Check(Text = 'paste:f:true:true:text/plain: pasted paste:f:true:true:text/plain: pasted copy:f:true:true:: ' +
+      'cut:f:true:true:: copy::true:true::',
+      'clipboard events: trusted ClipboardEvents with the pasted text at the field, then the body (' + Text + ')');
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('(function () { var d = new DataTransfer();' +
+      ' d.setData("Text", "a"); d.setData("text/html", "<b>b</b>"); d.setData("text/plain", "c");' +
+      ' d.setData("URL", "# comment\nhttps://x.test/\nhttps://y.test/");' +
+      ' var e = new ClipboardEvent("copy", { clipboardData: d, bubbles: true });' +
+      ' var r = [d.types.join("+"), d.getData("text"), d.getData("url"), e.clipboardData === d,' +
+      ' new ClipboardEvent("paste").clipboardData, e.isTrusted];' +
+      ' d.clearData("text/html"); r.push(d.types.join("+")); d.clearData(); r.push(d.types.length);' +
+      ' d.dropEffect = "bogus"; r.push(d.dropEffect); d.effectAllowed = "copyMove"; r.push(d.effectAllowed);' +
+      ' return r.join(); })()'));
+    Check(Text = 'text/html+text/plain+text/uri-list,c,https://x.test/,true,,false,text/plain+text/uri-list,0,none,' +
+      'copyMove', 'clipboard events: DataTransfer and ClipboardEvent made by script (' + Text + ')');
+  finally
+    Editor.Free;
+    Clipboard.Free;
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
+  CheckClipboardEvents;
   CheckPointerEvents;
   CheckEventSource;
   CheckDetachedImages;

@@ -104,6 +104,7 @@ implementation
 uses
   SysUtils,
   Web.Dom.FormControls,
+  WebView.ClipboardEvents,
   WebView.Elements,
   WebView.KeyNames,
   WebView.TextEditing;
@@ -239,12 +240,32 @@ var
       FOnWriteClipboard(Edit.SelectedText);
   end;
 
+  { The clipboard event before a copy, cut or paste (WebView.ClipboardEvents):
+    False when a listener cancelled it (a copy or cut then puts the data
+    it set on the clipboard). The field is read again after it. }
+  function ClipboardEventLetsGo: Boolean;
+  var
+    Outcome: TClipboardOutcome;
+  begin
+    if Action = FieldPaste then
+      Outcome := FirePasteEvent(Element, ClipboardText)
+    else if Action = FieldCut then
+      Outcome := FireCopyEvent(Element, 'cut')
+    else
+      Outcome := FireCopyEvent(Element, 'copy');
+    Result := Outcome.Proceed and IsEditableTextField(Element);
+    if not Outcome.Proceed and Outcome.HasData and Assigned(FOnWriteClipboard) then
+      FOnWriteClipboard(Outcome.Data);
+  end;
+
 begin
   Result := False;
   if not IsEditableTextField(Element) then
     Exit;
   Element.Retain;
   try
+    if (Action in [FieldCopy, FieldCut, FieldPaste]) and not ClipboardEventLetsGo then
+      Exit(True);
     MultiLine := Element.LocalName = 'textarea';
     Secret := (not MultiLine) and (InputType(Element) = 'password');
     ReadOnly := Element.HasAttribute('readonly');

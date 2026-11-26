@@ -616,6 +616,7 @@ uses
   WebView.Forms,
   WebView.KeyNames,
   WebView.TextEditing,
+  WebView.ClipboardEvents,
   WebView.PageInfo,
   Web.Navigation.SessionHistory,
   Web.Loading.Contexts,

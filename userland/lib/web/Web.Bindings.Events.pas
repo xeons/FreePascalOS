@@ -20,7 +20,8 @@
   bindings/Events.webidl: EventTarget (listeners are TScriptEventListener
   objects in the DOM's lists), Event, CustomEvent (its detail in the
   wrapper's cache), UIEvent, MouseEvent, KeyboardEvent, FocusEvent and
-  InputEvent over Web.Dom.Events and Web.Dom.UiEvents.
+  InputEvent over Web.Dom.Events and Web.Dom.UiEvents; DataTransfer's
+  string data and ClipboardEvent over Web.Dom.DataTransfer.
 }
 unit Web.Bindings.Events;
 
@@ -43,6 +44,7 @@ uses
   Web.Atoms,
   Web.Dom.Events,
   Web.Dom.UiEvents,
+  Web.Dom.DataTransfer,
   Web.Dom.Exceptions,
   Web.Bindings.Context,
   Web.Bindings.Listeners;
@@ -51,6 +53,8 @@ const
   { The cache slot of a CustomEvent's detail (events have no
     [SameObject] attributes and no handlers). }
   CacheSlotDetail = 1;
+  { A ClipboardEvent's clipboardData wrapper. }
+  CacheSlotClipboardData = 1;
 
 function ThisEvent(const Call: TBindingCall): TEvent; inline;
 begin
@@ -292,6 +296,120 @@ begin
     Exit;
   ThisEvent(Call).InitEvent(Call.Text(0), Call.Flag(1), Call.Flag(2));
   TBindingWrapper(Call.Wrapper).SetCachedValue(CacheSlotDetail, Call.Script(3));
+end;
+
+{ DataTransfer }
+
+function ThisDataTransfer(const Call: TBindingCall): TDataTransfer; inline;
+begin
+  Result := TDataTransfer(Call.Target);
+end;
+
+function DataTransfer_constructor(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).ConstructedObject(Call, TDataTransfer.Create);
+end;
+
+function DataTransfer_get_dropEffect(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).DropEffect);
+end;
+
+function DataTransfer_set_dropEffect(var Call: TBindingCall): TJsValue;
+var
+  Value: string;
+begin
+  Value := Call.Text(0);
+  if (Value = 'none') or (Value = 'copy') or (Value = 'link') or (Value = 'move') then
+    ThisDataTransfer(Call).DropEffect := Value;
+  Result := JsUndefined;
+end;
+
+function DataTransfer_get_effectAllowed(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).EffectAllowed);
+end;
+
+function DataTransfer_set_effectAllowed(var Call: TBindingCall): TJsValue;
+var
+  Value: string;
+begin
+  Value := Call.Text(0);
+  if (Value = 'none') or (Value = 'copy') or (Value = 'copyLink') or (Value = 'copyMove') or (Value = 'link') or
+    (Value = 'linkMove') or (Value = 'move') or (Value = 'all') or (Value = 'uninitialized') then
+    ThisDataTransfer(Call).EffectAllowed := Value;
+  Result := JsUndefined;
+end;
+
+function DataTransfer_get_types(var Call: TBindingCall): TJsValue;
+var
+  Types: TStringArray;
+  Values: array of TJsValue;
+  Index: Integer;
+begin
+  Values := nil;
+  if ThisDataTransfer(Call).Mode <> DataTransferProtected then
+  begin
+    Types := ThisDataTransfer(Call).Types;
+    SetLength(Values, Length(Types));
+    for Index := 0 to High(Types) do
+      Values[Index] := CallContext(Call).TextValue(Types[Index]);
+  end;
+  Result := CallContext(Call).NewArray(Values);
+end;
+
+function DataTransfer_getData(var Call: TBindingCall): TJsValue;
+begin
+  Result := CallContext(Call).TextValue(ThisDataTransfer(Call).GetData(Call.Text(0)));
+end;
+
+function DataTransfer_setData(var Call: TBindingCall): TJsValue;
+begin
+  ThisDataTransfer(Call).SetData(Call.Text(0), Call.Text(1));
+  Result := JsUndefined;
+end;
+
+function DataTransfer_clearData(var Call: TBindingCall): TJsValue;
+begin
+  if Call.Present(0) then
+    ThisDataTransfer(Call).ClearData(Call.Text(0))
+  else
+    ThisDataTransfer(Call).ClearData('');
+  Result := JsUndefined;
+end;
+
+{ ClipboardEvent: the data of an event made by script is the script's
+  DataTransfer (its wrapper kept in the event's cache); the engine's
+  own events own theirs. }
+
+function ClipboardEvent_constructor(var Call: TBindingCall): TJsValue;
+var
+  Event: TClipboardEvent;
+  Data: PBindingValue;
+begin
+  Event := TClipboardEvent.Create(Call.Text(0));
+  Data := @Call.Arguments[1].Items[ClipboardEventInit_clipboardData];
+  if Data^.Native is TDataTransfer then
+    Event.ClipboardData := TDataTransfer(Data^.Native);
+  Result := StartEvent(Call, Event);
+  if Event.ClipboardData <> nil then
+    CallContext(Call).WrapperOf(Result).SetCachedValue(CacheSlotClipboardData, Data^.Script);
+end;
+
+function ClipboardEvent_get_clipboardData(var Call: TBindingCall): TJsValue;
+var
+  Wrapper: TBindingWrapper;
+  Event: TClipboardEvent;
+begin
+  Wrapper := TBindingWrapper(Call.Wrapper);
+  Result := Wrapper.CachedValue(CacheSlotClipboardData);
+  if Result <> JsUndefined then
+    Exit;
+  Event := TClipboardEvent(Call.Target);
+  if Event.ClipboardData = nil then
+    Exit(JsNull);
+  Result := CallContext(Call).WrapObject(Event.ClipboardData, InterfaceDataTransfer, False, Call.This);
+  Wrapper.SetCachedValue(CacheSlotClipboardData, Result);
 end;
 
 { UIEvent and its kinds: the dictionaries are flattened, so the members

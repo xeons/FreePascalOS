@@ -126,6 +126,7 @@ uses
   WebBrowse.Input,
   WebBrowse.Pointer,
   WebView.PageSelection,
+  WebView.ClipboardEvents,
   WebBrowse.HostNetwork,
   WebBrowse.NetworkLog,
   WebBrowse.Sampler,
@@ -682,6 +683,7 @@ var
   Parts: TStringArray;
   Index: Integer;
   Copied: string;
+  Outcome: TClipboardOutcome;
 
   function Need(Count: Integer): Boolean;
   begin
@@ -755,6 +757,14 @@ begin
     if FLayout.NeedsUpdate then
       FLayout.Update;
     FSelection.Refresh;
+    { The page's copy event first, as the web view sends it. }
+    Outcome := FireCopyEvent(ClipboardEventTarget(FDocument), 'copy');
+    if not Outcome.Proceed then
+    begin
+      WriteLn('copy: cancelled by the page, ', Length(Outcome.Data), ' bytes of its own');
+      WriteLn(Outcome.Data);
+      Exit;
+    end;
     Copied := FSelection.SelectedText;
     WriteLn('copy: ', Length(Copied), ' bytes');
     WriteLn(Copied);

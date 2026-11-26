@@ -97,6 +97,7 @@ uses
   Web.Dom.Exceptions,
   Web.Dom,
   Web.Dom.UiEvents,
+  Web.Dom.DataTransfer,
   Web.Dom.FormControls,
   Web.Bindings.Types,
   Web.Bindings.Strings,
@@ -473,6 +474,8 @@ function EventInterfaceOf(Event: TEvent): Integer;
 begin
   if Event is TPointerEvent then
     Result := InterfacePointerEvent
+  else if Event is TClipboardEvent then
+    Result := InterfaceClipboardEvent
   else if Event is TMouseEvent then
     Result := InterfaceMouseEvent
   else if Event is TKeyboardEvent then
