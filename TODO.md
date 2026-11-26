@@ -1472,12 +1472,30 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       tables, memories; memory growth notifications; externref enumeration for a collector; interrupt hook
 - [x] make wasm-test (host test, sample module, speed) and make wasm-spec-test (the 2.0 spec suite: all
       148 core and SIMD files pass)
-- [ ] The JavaScript WebAssembly object on Wasm.Api: Module, Instance, Memory (buffer detached through
-      OnGrow), Table, Global, compile/instantiate/validate, compileStreaming, CompileError / LinkError /
-      RuntimeError / RangeError from the exception classes, externrefs as JS values traced through
-      EnumerateReferences, the watchdog through OnInterrupt
-- [ ] Load hCaptcha's proof-of-work module in the browser (the sample on hand is a truncated download:
-      its 38 whole function bodies validate, compile and instantiate)
+- [x] The JavaScript WebAssembly object on Wasm.Api (platform/57-webassembly.js, Web.Script.NativeWasm,
+      WasmObjects, WasmValues, WasmAgents): validate, compile, instantiate (both overloads),
+      compileStreaming and instantiateStreaming (MIME type, CORS-same-origin, status, body), Module
+      (exports, imports, customSections), Instance, Memory (buffer detached on growth from either side and
+      not detachable by script, grow, toFixedLengthBuffer, toResizableBuffer), Table, Global (i64 as
+      BigInt), CompileError / LinkError / RuntimeError (with the WebAssembly frames in the stack), RangeError
+      for stack exhaustion and memory; Exported Functions cached per function, JS callables as imports
+      (re-entrant, exceptions unchanged through WebAssembly), externrefs as JS values marked through
+      EnumerateReferences and EnumerateHostData; a store per agent; the watchdog through OnInterrupt;
+      CSP 'wasm-unsafe-eval'; Modules structured-cloneable within the agent (frames, dedicated workers)
+- [x] WPT wasm/jsapi (2.0 API and resizable buffers) and wasm/webapi pass on the host but for the 3.0 parts
+- [x] hCaptcha's hsw.js module (about 1 MB, 198 imports) compiles and is instantiated in its frame
+- [ ] JS API of the 3.0 features once libwasm has them: WebAssembly.Tag, WebAssembly.Exception and JSTag
+      (exception handling), memory64's address types ("address": "i64" descriptors, BigInt values),
+      typed function references and GC objects at the boundary, the JS string builtins and imported string
+      constants (WebAssembly compile options), type reflection (the tentative type() methods,
+      WebAssembly.Function)
+- [ ] Shared memories (threads: a SharedArrayBuffer over the memory, atomics) - now a TypeError
+- [ ] Instances, memories and their JavaScript objects freed when unreachable (they live as long as the
+      agent's store; the caches are strong)
+- [ ] Compile off the page thread (compile and compileStreaming compile in a task on it now) and cache
+      compiled modules; ESM integration (import of .wasm modules)
+- [ ] Watch hCaptcha's proof of work after a click on the OS (webbrowse cannot click into frames): its
+      speed under the interpreter, and that a long one does not hit the 10 s slow script limit
 - [ ] 3.0: exception handling, tail calls, memory64, multiple memories (memory index already on memory
       instructions, Extra field in the slot code), typed function references and GC types (value types
       are records with a heap type), relaxed SIMD, extended constant expressions
