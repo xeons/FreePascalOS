@@ -54,7 +54,13 @@ how the existing pieces fit together.
       wall clock against the kernel's, unmounting the memory volume, the
       HPET broadcast ending late, "sleep took far too long", an idle
       processor refusing a steal; make each deterministic or tolerant of
-      vCPU stalls without losing what it catches
+      vCPU stalls without losing what it catches; also "a physical page
+      stayed in the quarantine" (`TestPhysicalPageQuarantine`) on arm64
+      el2/max with several QEMUs at once, likely racing other processors'
+      allocations; and multi-threaded TCG on arm64 GICv2 sometimes
+      delivers a correctly set generic timer up to 0.75 s late (QEMU, not
+      the kernel; the el2 boot runs `thread=single` to avoid it, el1/max
+      cannot because their scheduler stress test needs parallel vCPUs)
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
