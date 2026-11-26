@@ -1,0 +1,81 @@
+# LLVM's libraries built for the system (not the compilers that build
+# for it: those are build/toolchain/llvm, make clang-toolchain). Mesa's
+# llvmpipe and lavapipe compile shaders with them at run time.
+
+[port]
+name = "llvm"
+version = "23.1.6"
+revision = 0
+summary = "LLVM's compiler libraries, for programs that generate code at run time"
+description = """
+The LLVM compiler infrastructure's libraries (static, position
+independent) with the code generator for the system's own processor
+(X86 on x86-64, AArch64 on AArch64), its headers and CMake package, for
+other ports to build against: Mesa's llvmpipe and lavapipe JIT-compile
+shaders with them. No tools are built.
+"""
+homepage = "https://llvm.org/"
+license = "Apache-2.0 WITH LLVM-exception"
+license_files = ["llvm/LICENSE.TXT"]
+maintainer = "FreePascalOS ports"
+categories = ["devel"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+notes = """
+Cross-compiled with CMake: the build machine's TableGen programs are
+built first in a native build of their own (LLVM's NATIVE folder), with
+the build machine's compilers and none of the target's flags. Patch
+0001 is toolchain/patches/llvm-23.1.6/0001 (the freepascalos OS in
+target triples), so the default triple names the system; 0002 lets the
+Support library build here (endian.h, statvfs's f_flag, local volumes).
+"""
+
+[[sources]]
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/llvm-project-23.1.6.src.tar.xz"
+sha256 = "d3b86ab29cfb4445a6652e5c2642ccc75e04e38084dde3701d323320f35a31da"
+size = 179172364
+extract_dir = "llvm-project-23.1.6.src"
+
+[dependencies]
+host = ["cmake", "ninja", "python3", "cc", "c++"]
+provides = ["libllvm"]
+
+[build]
+system = "cmake"
+toolchain = "c"
+directory = "llvm"
+configure_args = [
+    "-G", "Ninja",
+    "-DLLVM_HOST_TRIPLE=${TRIPLET}",
+    "-DLLVM_DEFAULT_TARGET_TRIPLE=${TRIPLET}",
+    "-DLLVM_TARGETS_TO_BUILD=host",
+    "-DLLVM_ENABLE_PROJECTS=",
+    "-DLLVM_ENABLE_RUNTIMES=",
+    "-DLLVM_ENABLE_PIC=ON",
+    "-DLLVM_ENABLE_THREADS=ON",
+    "-DLLVM_ENABLE_ASSERTIONS=OFF",
+    "-DLLVM_ENABLE_ZLIB=OFF",
+    "-DLLVM_ENABLE_ZSTD=OFF",
+    "-DLLVM_ENABLE_LIBXML2=OFF",
+    "-DLLVM_ENABLE_TERMINFO=OFF",
+    "-DLLVM_ENABLE_LIBEDIT=OFF",
+    "-DLLVM_ENABLE_LIBPFM=OFF",
+    "-DLLVM_ENABLE_BINDINGS=OFF",
+    "-DLLVM_ENABLE_CURL=OFF",
+    "-DLLVM_ENABLE_HTTPLIB=OFF",
+    "-DLLVM_BUILD_TOOLS=OFF",
+    "-DLLVM_INCLUDE_TOOLS=OFF",
+    "-DLLVM_INCLUDE_UTILS=OFF",
+    "-DLLVM_INCLUDE_TESTS=OFF",
+    "-DLLVM_INCLUDE_EXAMPLES=OFF",
+    "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+    "-DLLVM_INCLUDE_DOCS=OFF",
+    "-DLLVM_APPEND_VC_REV=OFF",
+    "-DCROSS_TOOLCHAIN_FLAGS_NATIVE=-DCMAKE_C_COMPILER=cc;-DCMAKE_CXX_COMPILER=c++;-DCMAKE_C_FLAGS=;-DCMAKE_CXX_FLAGS=;-DCMAKE_EXE_LINKER_FLAGS=;-DCMAKE_SYSROOT=;-DCMAKE_TOOLCHAIN_FILE=",
+]
+
+[install]
+strip = false
+
+[test]
+system = ["test -f /usr/local/lib/libLLVMCore.a", "test -f /usr/local/lib/cmake/llvm/LLVMConfig.cmake"]

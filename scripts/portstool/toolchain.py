@@ -143,9 +143,14 @@ def meson_cross_file(toolchain, sysroot, path):
     return path
 
 
+# Platform/FreePascalOS.cmake: what CMake knows of the system.
+CMAKE_MODULES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cmake")
+
+
 def cmake_toolchain_file(toolchain, sysroot, path):
     lines = [
         "set(CMAKE_SYSTEM_NAME FreePascalOS)",
+        f'list(APPEND CMAKE_MODULE_PATH "{CMAKE_MODULES}")',
         f"set(CMAKE_SYSTEM_PROCESSOR {toolchain.processor})",
         f'set(CMAKE_SYSROOT "{sysroot}")',
         f'set(CMAKE_C_COMPILER "{toolchain.tool("gcc")}")',
