@@ -1453,6 +1453,14 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       more Intl locales
 - [x] Sloppy mode mapped arguments
 - [x] Incremental sweeping with pause statistics; lazy compilation of function bodies
+- [x] Big bundles (YouTube's 11 MB): scope lookups by hash, lazy functions' scope chains shared
+      per scope and restored by name, their syntax trees freed once parsed, functions in
+      parentheses compiled at once, identifier names kept once, a lighter lexer and parser
+      (19 s of script and 1 GB down to 3 s and 570 MB on the host)
+- [x] [[IsHTMLDDA]] (document.all; test262's $262.IsHTMLDDA)
+- [ ] Smaller syntax tree nodes (144 bytes each; the eager part of a bundle is a million of them)
+- [ ] Source text kept as Latin-1 when it is (TJsSource holds UTF-16: 22 MB for an 11 MB bundle)
+- [ ] A growth factor below 2 for big heaps (a 200 MB page heap peaks near 400 MB before collecting)
 - [ ] Incremental or generational marking (needs a write barrier on reference stores)
 - [x] Polymorphic inline caches (four shapes per site)
 - [ ] Fused instructions for more cases; deeper prototype chains in the inline caches
@@ -2121,6 +2129,22 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
 - [ ] A NodeIterator moved when the node it rests on is removed
 - [ ] Parse large scripts off the GUI thread (Wikipedia's 790 KB module
       bundle holds the window about 7 s under TCG, half of it parsing)
+- [x] YouTube's front page renders (logged out: masthead, guide icons, "Try
+      searching to get started"; search results with thumbnails): WheelEvent,
+      [CEReactions] for CSS property setters and dataset (Polymer's attribute
+      sync recursed endlessly), the viewport taking the body's overflow (the
+      page was clipped to nothing), the media element API without playback,
+      document.all (Polymer resin hid every guide icon)
+- [x] A closed tab's content process is ended by force when it does not end
+      within 3 s (a busy page thread); a page's script heap is limited
+      (five eighths of the process's memory limit) with an out of memory error
+- [ ] YouTube: video playback (needs the media pipeline in the web view); Google
+      Fonts serves TTF instead of WOFF2 to the engine's user agent (20 MB of
+      YouTube Sans per visit)
+- [ ] Inline style serialization keeps colours as specified (red, not
+      rgb(255, 0, 0)); overflow-x/y computed values (visible becomes auto
+      beside scroll)
+- [ ] innerText skips what is not rendered (script and style text shows up)
 - [ ] Wikipedia's TOC and menus as with JS (check in the browser)
 - [x] DuckDuckGo: typing in the search box (suggestions from /ac/), Enter,
       the results page (main and html.duckduckgo.com/html/, whose late

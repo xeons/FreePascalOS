@@ -8887,16 +8887,33 @@ bindings found by name (var/function on the global object, let/const/
 class in the global lexical environment).
 
 **Lazy compilation.** A function of 160 source characters or more
-(not class constructors, field initializers or functions using private
-names) gets a stub TJsCode: its flags, name, length and source range,
-and a TJsLazyFunction holding the position of its parameter list and
-the chain of scopes around it (`Js.EvalScopes`, shared per scope). The
-first parse still checks its early errors and marks the outer variables
-it uses as captured; its bytecode is made on the first call
-(EnterFrame), by parsing the function again from its parameters inside
-scopes rebuilt from the chain, so its identifiers resolve to the same
-environment hops and slots. The closures keep the TJsCode, which is
-filled in place.
+(not class constructors, field initializers, functions using private
+names, or a function expression right inside parentheses - an IIFE,
+called at once, which would otherwise be parsed twice: a bundle's
+whole body) gets a stub TJsCode: its flags, name, length and source
+range, and a TJsLazyFunction holding the position of its parameter list
+and the chain of scopes around it (`Js.EvalScopes`). The first parse
+still checks its early errors and marks the outer variables it uses as
+captured; then its syntax tree is freed (`Js.LazyBodies`): all the
+scope analysis still needs of it is its scopes and their references,
+one identifier per name and scope, so only those nodes stay (an 11 MB
+bundle went from 2.1 million nodes, some 350 MB while it was parsed, to
+under half). Its bytecode is made on the first call (EnterFrame), by
+parsing the function again from its parameters inside scopes rebuilt
+from the chain, so its identifiers resolve to the same environment hops
+and slots. The closures keep the TJsCode, which is filled in place.
+
+A chain is a TJsEvalChain cell per scope linked outward, made once per
+scope (`TJsScope.Snapshot`) and shared: by the functions of one scope,
+and by the functions compiled later inside a function rebuilt from it.
+A rebuilt scope does not declare its variables up front: they come from
+the cell's name index when looked up (`TJsScopeBacking`), so compiling
+a small function inside a bundle's top level scope of thousands of
+names costs a few lookups, not thousands of declarations (and the chains
+are not thousands of copies of that scope: 255 MB of a page's script
+heap before). Scopes with more than 12 variables find names through a
+hash (`TJsScope.Find`); the lexer keeps each identifier name once per
+source.
 
 **Direct eval, with, arguments** (`Js.Scopes`, `Js.EvalScopes`,
 `Js.DirectEval`, `Js.Arguments`). A call `eval(...)` marks every scope
@@ -9408,10 +9425,12 @@ directory, each with the error it failed with when the list was written
 fails only on a failure the list does not have, and names the listed
 tests that pass now. `tools/Test262/skipped-features.txt` lists the
 stage 3 proposals not implemented (each with why); the runner also
-skips what this host cannot give: `$262.agent` (no concurrent agents),
-CanBlockIsTrue (the main thread cannot block in Atomics.wait) and
-IsHTMLDDA (no such object). Standard features the engine lacks are not
-skipped: their failures are in the expectations.
+skips what this host cannot give: `$262.agent` (no concurrent agents)
+and CanBlockIsTrue (the main thread cannot block in Atomics.wait).
+`$262.IsHTMLDDA` is a function with the engine's [[IsHTMLDDA]] flag
+(`ObjectHtmlDda`: typeof "undefined", ToBoolean false, loosely equal to
+null and undefined - libweb's document.all). Standard features the
+engine lacks are not skipped: their failures are in the expectations.
 
 ### The JavaScript WebAssembly object
 
@@ -15392,7 +15411,13 @@ script at its next backward jump or call with an uncatchable
 termination, and the promise jobs it queued end the same way; the
 console says the script was stopped, and the page's next scripts run as
 usual (WebScriptTest checks a loop, one inside try, promise jobs queueing
-each other and a looping timer callback). document.write goes to
+each other and a looping timer callback). A page's script heap (its
+window, frames and workers share one) is limited too:
+`ContextHeapLimit` (1 GiB, or five eighths of a content process's
+memory limit) is the engine's `MemoryLimit`, and a script still needing
+more after a collection ends with an uncatchable "Out of memory" error
+on the console instead of the process growing until the system runs
+out; the page's later scripts run once the memory is let go. document.write goes to
 the active parser at its insertion point (the parser now saves the old
 insertion point and limit of nested scripts and writes, so scripts
 written by scripts write in the right place). Outside the parser
@@ -15641,10 +15666,12 @@ error) over `TScriptEnvironment`:
 | 68-service-workers | navigator.serviceWorker, ServiceWorkerRegistration, ServiceWorker, NavigationPreloadManager |
 | 69-service-worker-scope | the service worker's scope in its agent: ExtendableEvent, FetchEvent, ExtendableMessageEvent, Clients, Client, WindowClient |
 | 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
+| 71-all-collection | document.all: an HTMLAllCollection (a callable proxy over getElementsByTagName("*"), by index and by name) given [[IsHTMLDDA]] by `natives.markHtmlDda`, so it is typeof "undefined" and false (Polymer resin compares values with it) |
 | 71-traversal | NodeFilter, TreeWalker and NodeIterator (createTreeWalker, createNodeIterator) over the bindings' own tree getters, so a polyfill that redefines firstChild does not change what they walk |
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
+| 79-media-elements | the media element API without playback: load() with a source fails as an unsupported one (error event, MediaError 4, NETWORK_NO_SOURCE), play() rejects with NotSupportedError, canPlayType() is "", volume, muted and the rates are kept; TimeRanges are empty |
 | 80-structured-serialize | StructuredSerializeForStorage and StructuredDeserialize to and from bytes (see "IndexedDB, the Cache API and navigator.storage") |
 | 81-indexeddb-keys | IndexedDB keys as byte strings that sort as keys, key paths, IDBKeyRange |
 | 82-indexeddb-backend | the requests to the storage service and their replies, its notices, tasks that are never clamped |
@@ -15826,7 +15853,12 @@ disconnected, adopted, attribute changes of custom elements. Reactions
 go to the element's reaction queue and the current element queue of
 the reactions stack, which the dispatcher pushes around every operation
 and attribute setter ([CEReactions]; a pending script exception waits
-while they run), or the backup element queue (a microtask).
+while they run) - and around a CSS property assignment of an inline
+style and the named setters and deleters (dataset), which change
+attributes without being a binding's method - or the backup element
+queue (a microtask). (Leaving a style change's attributeChangedCallback
+to a microtask let two of them pile up, which Polymer's attribute to
+property sync then turned into an endless recursion on YouTube.)
 createElement and createElementNS take the is option and construct
 defined elements at once; clones and innerHTML make undefined elements
 that upgrade when connected (the fragment parser's document has no
@@ -15919,6 +15951,8 @@ what is left):
   what it sanitizes to. fieldset.elements.
 - EventSource (`platform/62-eventsource.js`) over the platform fetch:
   the stream parsed as it arrives, reconnection with Last-Event-ID.
+- WheelEvent (`Web.Bindings.WheelEvents`, `bindings/WheelEvents.webidl`):
+  constructed by pages with their deltas.
 - PointerEvent and pointer capture (`Web.Dom.PointerCapture`: the
   pending capture kept by the document and dropped when the element
   leaves it); the pointer events themselves come from the web view
@@ -16598,7 +16632,13 @@ looks for the floats from its margin edge, as in block flow.
   vertical-align, border-spacing, captions above or below the grid).
 - Overflow: boxes whose overflow is not visible clip their contents and
   (except overflow: clip) are scroll containers; their scrollable
-  overflow is computed after layout.
+  overflow is computed after layout. The root's overflow, or the body's
+  when the root's is visible, is the viewport's
+  (`Web.Layout.ViewportOverflow`, CSS Overflow 3.3): that element does
+  not clip, and the viewport shows no bar along an axis it makes hidden
+  (`body { overflow-y: scroll }` over a page of positioned boxes is a
+  scroll bar, not a body 0 px tall clipping everything, as YouTube's
+  page was).
 
 `Web.Layout.Dump` writes the layout tree as text (box kind, element,
 border box in document coordinates, lines and fragments) for the tests.
@@ -16957,8 +16997,8 @@ ready task, no layout due for `-q` ms) or the timeout:
 
     webbrowse [-o OUT.png] [-w W] [-h H] [-s SCALE] [-y SCROLL] [--full]
       [--resize WxH] [-l LAYOUT|-] [--dom HTML|-] [-c] [-n] [--live] [-p] [-m]
-      [-t SECONDS] [-q MS] [--stall S] [--no-script] [-e JS] [--do STEP]...
-      [--hover N] [--profile] [-f FONTDIR] [-v] URL
+      [-t SECONDS] [-q MS] [--stall S] [--script-limit MS] [--no-script] [-e JS]
+      [--do STEP]... [--hover N] [--profile] [-f FONTDIR] [-v] URL
 
 `-n` prints every request (start, time to the head, total, status,
 protocol, destination, bytes, outcome) from a fetch monitor
@@ -16968,7 +17008,10 @@ phase (`Web.Profiling`: the engine marks HTML parsing, style sheet
 parsing, style, box building, layout, painting, script and other tasks;
 nested phases are charged their own time only; off unless a program
 starts profiling with a fine clock); `-c` console messages; `-m` peak
-memory; `--hover N` moves the pointer over the page as the web view
+memory and the page's script heap (now and at the most; with `-v` also
+after a collection, by cell class: `TJsHeap.Census`); `--script-limit`
+sets the slow script limit (to see what a script would do past 10 s);
+`--hover N` moves the pointer over the page as the web view
 does (:hover on the chain under it) and times each move; `--resize`
 changes the viewport once quiet; `-e` evaluates script once quiet;
 `--do` steps are what a user does then, each once the page is quiet
@@ -16992,7 +17035,18 @@ x86-64; the tool keeps frame pointers and line information), and ends
 the process after a minute more. `--profile` samples that stack every
 millisecond while the page thread works and prints the functions it
 was in (self) and under (total), symbolized from the line information
-and `nm` for the run-time library.
+and `nm` for the run-time library, and the program's functions with the
+run-time library's time they called into charged to them (memory,
+strings, exception frames: what a managed local costs).
+
+YouTube's front page (logged out: masthead, guide and "Try searching to
+get started", as other browsers show a session without history) runs an
+11 MB bundle. It took 19 s of script (15.7 s in one task, stopped by
+the slow script watchdog, so the page stayed a skeleton) and 1 GB at
+the most once it rendered; the scope lookups by hash, the shared scope
+chains restored by name, the freed lazy bodies, the IIFE compiled at
+once and the lighter lexer and parser made that 3 s of script (1.1 s
+the longest task) and 570 MB (`-m`).
 
 On the build machine Wikipedia's Main Page (1280 px) loads in about 1.3
 s, most of it network: 30 ms of style, 25 ms of layout, longest frame
@@ -17761,7 +17815,11 @@ javascript: take their opener's. Views of one site share a process up
 to `MaximumViewsPerProcess` (4), two sites never; at most 30 processes
 (two of the IPC thread's 64 wait handles each), past that a view runs
 its page in the browser. A process without views is asked to end
-(`IpcShutdown`).
+(`IpcShutdown`); one that has not ended `ShutdownGraceMilliseconds`
+(3 s) later - a script or a storm of tasks keeps its page thread busy,
+or it is swapping - is ended by force from the ping timer, so closing a
+tab gives back its memory and processor even then (the browser never
+waits for it).
 
 **Navigation across sites.** The engine asks its host before every
 top-level navigation and again when a redirect ended on another URL
@@ -17955,8 +18013,9 @@ named ports (the display server, services), `RestrictProcessControl`
 ending, stopping or asking any other process to end. Refusals are
 `ErrorAccessDenied`. Handles it already holds (its channel, standard
 output) keep working. A renderer also lowers the memory it may commit
-(`--memory-limit`, 1 GiB by default; only root could raise it again)
-and sets its out-of-memory adjustment to 700 while none of its views is
+(`--memory-limit`, 1 GiB by default; only root could raise it again),
+gives five eighths of it to its pages' script heaps
+(`ContextHeapLimit`, below), and sets its out-of-memory adjustment to 700 while none of its views is
 shown and 300 while one is, so a background renderer is ended before
 the browser (0) when memory runs out. The browser's setting
 `Browser/Sandbox` turns the restrictions off for debugging.
