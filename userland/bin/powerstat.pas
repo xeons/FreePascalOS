@@ -42,8 +42,15 @@
                            refused, and the alarm can be turned off and
                            on again; exits 1 if not
 
-  The default listing also shows the cooling devices (fans), the
-  performance states and what may wake the machine (and what did last).
+    powerstat --clock      the kernel's clock and timers only: which
+                           counter the clock reads, where the counter's
+                           and the local timer's rates came from, the
+                           HPET and what wakes processors in deep idle
+                           states
+
+  The default listing also shows the clock and timers, the cooling
+  devices (fans), the performance states and what may wake the machine
+  (and what did last).
     powerstat --check-busy [SECONDS [LIMIT]]
                            for the tests: the dynamic tick. Pins itself
                            to the last processor, spins there in a
@@ -170,6 +177,17 @@ begin
       Line := Line + ' ' + IntToStr(Second.Power.Processors[Index].IdleStateEntries[State]);
     WriteLn(Line);
   end;
+end;
+
+procedure ShowClockInformation;
+var
+  Information: TAbiClockInformation;
+  Line: string;
+begin
+  if GetClockInformation(Information) <> 0 then
+    Exit;
+  for Line in ClockInformationLines(Information) do
+    WriteLn(Line);
 end;
 
 procedure ShowThermalZones;
@@ -488,9 +506,14 @@ begin
     Halt(SetWake(ParamStr(2), ParamStr(3)));
   if (ParamCount >= 1) and (ParamStr(1) = '--check-busy') then
     Halt(CheckBusy(StrToIntDef(ParamStr(2), 3), StrToFloatDef(ParamStr(3), 5)));
+  if (ParamCount >= 1) and (ParamStr(1) = '--clock') then
+  begin
+    ShowClockInformation;
+    Halt(0);
+  end;
   if (ParamCount >= 1) and ((ParamStr(1) = '--help') or (ParamStr(1) = '-h')) then
   begin
-    WriteLn('usage: powerstat [--check-idle [SECONDS [LIMIT]] | --wake INDEX on|off | --check-wake | --check-busy [SECONDS [LIMIT]]]');
+    WriteLn('usage: powerstat [--clock | --check-idle [SECONDS [LIMIT]] | --wake INDEX on|off | --check-wake | --check-busy [SECONDS [LIMIT]]]');
     Halt(0);
   end;
   if not TakeSample(First) then
@@ -501,6 +524,7 @@ begin
   Sleep(1000);
   TakeSample(Second);
   ShowProcessors(First, Second);
+  ShowClockInformation;
   ShowPerformanceStates;
   ShowThermalZones;
   ShowCoolingDevices;

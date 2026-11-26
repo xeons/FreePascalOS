@@ -33,7 +33,8 @@ unit Hal.Platform;
 interface
 
 uses
-  Kernel.PriorityLevel;
+  Kernel.PriorityLevel,
+  Kernel.TimerDescription;
 
 { Prepares the interrupt controller and the timer. Interrupts must still
   be disabled. }
@@ -51,6 +52,22 @@ procedure HalSetClockInterruptIn(Nanoseconds: QWord);
   OriginNanoseconds and the counter's rate. False if programs cannot
   read the kernel's clock (KVM's paravirtual clock). }
 function HalDescribeUserClock(out Origin, OriginNanoseconds, CountsPerSecond: QWord): Boolean;
+
+{ --- Platform timers (see the x86-64 Hal.Platform): AArch64 has no
+  timer outside the processors, so no broadcast timer of its own; the
+  generic timer is the clock and needs no watchdog. --- }
+type
+  THalBroadcastHandler = procedure(Now: QWord);
+
+procedure HalStartPlatformTimers;
+function HalBroadcastTimerIsAvailable: Boolean;
+procedure HalSetBroadcastHandler(Handler: THalBroadcastHandler);
+procedure HalSetBroadcastTimerAt(Deadline: QWord);
+procedure HalDescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
+function HalClockNeedsWatching: Boolean;
+function HalWatchClock: Boolean;
+function HalClockRunsInDeepIdle: Boolean;
+procedure HalDescribeTimers(out Description: TTimerDescription);
 
 procedure HalEndOfInterrupt;
 procedure HalRequestSoftwareInterrupt(Level: TPriorityLevel);
@@ -118,6 +135,8 @@ uses
   Kernel.Interrupts,
   Kernel.Processors,
   Kernel.Panic,
+  Runtime.Text,
+  Runtime.Memory,
   Debug.Output;
 
 const
@@ -192,6 +211,56 @@ end;
 function HalClockSourceName: PChar;
 begin
   Result := 'generic timer';
+end;
+
+procedure HalStartPlatformTimers;
+begin
+end;
+
+function HalBroadcastTimerIsAvailable: Boolean;
+begin
+  Result := False;
+end;
+
+procedure HalSetBroadcastHandler(Handler: THalBroadcastHandler);
+begin
+end;
+
+procedure HalSetBroadcastTimerAt(Deadline: QWord);
+begin
+end;
+
+procedure HalDescribeBroadcastTimer(Text: PChar; Capacity: LongWord);
+begin
+  CopyText(Text, 'none', Capacity);
+end;
+
+function HalClockNeedsWatching: Boolean;
+begin
+  Result := False;
+end;
+
+function HalWatchClock: Boolean;
+begin
+  Result := False;
+end;
+
+function HalClockRunsInDeepIdle: Boolean;
+begin
+  Result := True;
+end;
+
+procedure HalDescribeTimers(out Description: TTimerDescription);
+begin
+  ZeroMemory(@Description, SizeOf(Description));
+  Description.Flags := TimerCounterInvariant;
+  Description.CounterHertz := CounterFrequency;
+  Description.LocalTimerHertz := CounterFrequency;
+  Description.HpetEventComparator := -1;
+  CopyText(@Description.ClockSource[0], 'generic timer', TimerNameCapacity);
+  CopyText(@Description.CounterCalibration[0], 'CNTFRQ_EL0', TimerNameCapacity);
+  CopyText(@Description.LocalTimerCalibration[0], 'CNTFRQ_EL0', TimerNameCapacity);
+  CopyText(@Description.HpetRoute[0], 'none', TimerNameCapacity);
 end;
 
 procedure HalEndOfInterrupt;

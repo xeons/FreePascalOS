@@ -50,6 +50,10 @@ interface
 { True if KVM offers a stable paravirtual clock; it is then started. }
 function StartParavirtualClock: Boolean;
 function ParavirtualClockIsRunning: Boolean;
+{ The time stamp counter's rate as KVM's record scales it (0 if KVM
+  offers no paravirtual clock): a calibration source
+  (Hal.ClockCalibration), whether or not the clock is used. }
+function ParavirtualCounterHertz: QWord;
 { Nanoseconds since the clock started, less the time paused. }
 function ParavirtualClockNanoseconds: QWord;
 procedure PauseParavirtualClock;
@@ -59,6 +63,7 @@ implementation
 
 uses
   Runtime.Atomic,
+  Hal.TimerFrequencies,
   Kernel.Arch.Cpu,
   Memory.PhysicalPages,
   Memory.Layout;
@@ -150,6 +155,51 @@ begin
   WriteModelSpecificRegister(SystemTimeRegister, RecordPhysical or SystemTimeEnable);
 end;
 
+{ KVM offers the clock (the newer MSR): the record is allocated (once)
+  and handed to the host. }
+function PrepareRecord: Boolean;
+var
+  Registers: TCpuidResult;
+begin
+  Result := False;
+  if not HostIsKvm then
+    Exit;
+  ExecuteCpuid(HypervisorFeaturesLeaf, 0, Registers);
+  if (Registers.Eax and FeatureClockSource2) = 0 then
+    Exit;
+  if RecordPhysical = 0 then
+  begin
+    RecordPhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
+    if RecordPhysical = 0 then
+      Exit;
+    TimeRecord := PParavirtualTimeRecord(PhysicalToVirtual(RecordPhysical));
+  end;
+  RegisterRecord;
+  Result := True;
+end;
+
+function ParavirtualCounterHertz: QWord;
+var
+  Version: LongWord;
+  Multiplier: LongWord;
+  Shift: ShortInt;
+begin
+  Result := 0;
+  if not PrepareRecord then
+    Exit;
+  repeat
+    Version := PLongWord(@TimeRecord^.Version)^;
+    FullMemoryBarrier;
+    Multiplier := TimeRecord^.CounterToSystemMultiplier;
+    Shift := TimeRecord^.CounterShift;
+    FullMemoryBarrier;
+  until ((Version and 1) = 0) and (PLongWord(@TimeRecord^.Version)^ = Version);
+  Result := CounterHertzFromParavirtualScale(Multiplier, Shift);
+  { The host stops updating it until the clock is started. }
+  if not Running then
+    WriteModelSpecificRegister(SystemTimeRegister, 0);
+end;
+
 function StartParavirtualClock: Boolean;
 var
   Registers: TCpuidResult;
@@ -159,15 +209,10 @@ begin
   if not HostIsKvm then
     Exit;
   ExecuteCpuid(HypervisorFeaturesLeaf, 0, Registers);
-  if (Registers.Eax and FeatureClockSource2) = 0 then
-    Exit;
   if (Registers.Eax and FeatureStableClock) = 0 then
     Exit;
-  RecordPhysical := AllocateZeroedPhysicalPage(PageUsageGeneral);
-  if RecordPhysical = 0 then
+  if not PrepareRecord then
     Exit;
-  TimeRecord := PParavirtualTimeRecord(PhysicalToVirtual(RecordPhysical));
-  RegisterRecord;
   { The host fills the record before the next entry into the guest. }
   if (TimeRecord^.Flags and FlagCounterStable) = 0 then
   begin

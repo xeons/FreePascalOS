@@ -872,6 +872,15 @@ const
   CallListPerformanceStates = 232;
   { 233-235 are kept for this group. }
 
+  { --- Clocks and timers (236-239) -------------------------------------------- }
+
+  { (InformationAddress): the kernel's clock and timers as a
+    TAbiClockInformation: which counter the clock reads, how the rates
+    were found, the HPET's figures, the broadcast timer of deep idle
+    states and the clock watchdog's. }
+  CallGetClockInformation = 236;
+  { 237-239 are kept for this group. }
+
   { --- Signals and timers (240-249) ---------------------------------------
     Real-time signals (FirstRealTimeSignal .. HighestSignal) queue: each
     one sent waits with its own TAbiSignalInformation, and they are
@@ -1077,6 +1086,27 @@ const
   { A fan is driven, and it runs now. }
   ProcessorPowerFanControlled = $08;
   ProcessorPowerFanRunning = $10;
+  AbiClockNameCapacity = 48;
+  { TAbiClockInformation.Flags. }
+  ClockInformationCounterInvariant = $0001;
+  ClockInformationHpetPresent = $0002;
+  ClockInformationHpet64Bit = $0004;
+  ClockInformationHpetLegacyCapable = $0008;
+  { Legacy replacement is on (the HPET drives IRQ 0 and 8). }
+  ClockInformationHpetLegacyInUse = $0010;
+  { The clock was chosen by the clocksource kernel option. }
+  ClockInformationClockForced = $0020;
+  { The time stamp counter is compared with the HPET once a second. }
+  ClockInformationClockWatched = $0040;
+  { The watchdog found the counter drifting and moved the clock to the
+    HPET. }
+  ClockInformationClockFellBack = $0080;
+  { The platform's timer wakes processors in deep idle states (not the
+    boot processor's clock). }
+  ClockInformationBroadcastDevice = $0100;
+  { Programs read the time from the clock page (else they make the
+    system call). }
+  ClockInformationClockPageCounter = $0200;
   { TAbiThermalZone.Kind. }
   ThermalZoneAcpi = 1;
   ThermalZoneFirmware = 2;
@@ -2046,6 +2076,53 @@ type
     BytesReadFromPages: QWord;
   end;
   PAbiMappedFileStatistics = ^TAbiMappedFileStatistics;
+
+  { What CallGetClockInformation gives. }
+  TAbiClockInformation = record
+    { ClockInformation* flags. }
+    Flags: LongWord;
+    HpetComparators: LongWord;
+    { The clock's counter (time stamp counter, generic timer): its rate,
+      and what it measured against the reference (0: not measured). }
+    CounterHertz: QWord;
+    CounterMeasuredHertz: QWord;
+    { The per-processor clock interrupt's timer (local APIC timer after
+      its divider, generic timer). }
+    LocalTimerHertz: QWord;
+    { The HPET (0 where there is none): its period, the smallest
+      periodic tick the firmware vouches for, its vendor, registers,
+      counter width, the comparator the kernel uses (-1: none) and its
+      interrupts so far. }
+    HpetPeriodFemtoseconds: QWord;
+    HpetMinimumTick: LongWord;
+    HpetVendorId: LongWord;
+    HpetBaseAddress: QWord;
+    HpetEventComparator: LongInt;
+    HpetCounterBits: LongWord;
+    HpetInterrupts: QWord;
+    { Processors woken by the broadcast timer so far. }
+    BroadcastWakes: QWord;
+    { The watchdog's checks, the failed ones and the largest drift seen
+      in one interval. }
+    WatchdogChecks: QWord;
+    WatchdogFailures: QWord;
+    WatchdogLargestDriftNanoseconds: QWord;
+    { "time stamp counter", "HPET", "KVM paravirtual clock", "generic
+      timer". }
+    ClockSource: array[0..AbiClockNameCapacity - 1] of Char;
+    { Where the counter's and the local timer's rates came from: "CPUID
+      15h crystal ratio", "measured against the HPET", ... }
+    CounterCalibration: array[0..AbiClockNameCapacity - 1] of Char;
+    LocalTimerCalibration: array[0..AbiClockNameCapacity - 1] of Char;
+    { How the HPET's comparator interrupts: "I/O APIC input 2",
+      "message (FSB delivery)", "legacy replacement (IRQ 0, input 2)",
+      "none". }
+    HpetRoute: array[0..AbiClockNameCapacity - 1] of Char;
+    { What wakes processors whose timer stops in deep idle states: "boot
+      processor", "HPET comparator 0 (I/O APIC input 2)". }
+    BroadcastTimer: array[0..AbiClockNameCapacity * 2 - 1] of Char;
+  end;
+  PAbiClockInformation = ^TAbiClockInformation;
 
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;

@@ -2930,11 +2930,21 @@ checks.append(('suspend to RAM: the PS/2 mouse and USB tablet work after waking'
                wait_for('WOKEN-EVENTS DONE', 20) and b'motion -3 5' in received and
                b'position 16384 32768' in received))
 
-# Plugging a processor in raises a GPE; its method (\_GPE._E02) tells
-# the processor's device to check itself, which the kernel logs.
+# The battery backed clock's alarm wakes the machine by itself (no
+# system_wakeup), and the kernel says so; the processors' memory type
+# ranges are set again as they wake.
+type_on_serial(b'suspend -t 6; echo ALARM-WOKE $?\r')
+alarm_asleep = wait_for('suspending to RAM', 30)
+checks.append(('suspend to RAM: the alarm wakes the machine (suspend -t)',
+               alarm_asleep and wait_for('ALARM-WOKE 0', 90) and b'woken by the alarm' in received))
+
+# Plugging a processor in (the free slot) raises a GPE; its method
+# (\_GPE._E02) tells the processor's device to check itself (the Notify,
+# which the kernel logs), then its _STA and _MAT, and it is brought up.
 send_to_monitor('device_add ' + cpu_model + ',id=hotcpu,socket-id=0,core-id=' + processors + ',thread-id=0\n')
 checks.append(('a processor plugged in: GPE, its AML method and the Notify',
-               wait_for('notify \\_SB_.CPUS.C00' + processors + ' 0x01', 20)))
+               wait_for('\\_SB_.CPUS.C00' + processors + ' 0x01', 20)))
+checks.append(('a processor plugged in is brought up', wait_for('plugged in and running', 60)))
 
 # The power button: every program ends, the disks are written out, and
 # the machine powers itself off (ACPI S5): QEMU exits on its own.
@@ -2961,19 +2971,6 @@ for name, expected in (('hda', '1000:0.5'), ('ac97', '700:0.5'), ('usb', '500:0.
 counts = re.search(rb'keys pressed: PS/2 (\d+), USB (\d+)', received)
 checks.append(('keys came from the PS/2 and the USB keyboard',
                counts is not None and int(counts.group(1)) > 0 and int(counts.group(2)) > 0))
-
-# The battery backed clock's alarm wakes the machine by itself (no
-# system_wakeup), and the kernel says so; the processors' memory type
-# ranges are set again as they wake.
-type_on_serial(b'suspend -t 6; echo ALARM-WOKE $?\r')
-alarm_asleep = wait_for('suspending to RAM', 30)
-checks.append(('suspend to RAM: the alarm wakes the machine (suspend -t)',
-               alarm_asleep and wait_for('ALARM-WOKE 0', 90) and b'woken by the alarm' in received))
-
-# A processor plugged in (the free slot): its Notify, _STA and _MAT,
-# and it is brought up.
-send_to_monitor('device_add ' + cpu_model + ',id=hotcpu,socket-id=0,core-id=' + processors + ',thread-id=0\n')
-checks.append(('a processor plugged in is brought up', wait_for('plugged in and running', 60)))
 
 # Every program checks its heap (the kernel option heapchecks); a failed
 # check is reported on the console.

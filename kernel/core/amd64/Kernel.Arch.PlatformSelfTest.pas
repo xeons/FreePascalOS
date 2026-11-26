@@ -19,7 +19,8 @@
 {
   Self tests of the platform: the AArch64 one checks its interrupt
   controller, address space identifiers and real-time clock; x86-64's
-  are covered by the other self tests, so there is nothing here.
+  checks its timers (the HPET, the calibration, Kernel.Arch.Timer-
+  SelfTest); the rest is covered by the other self tests.
 }
 unit Kernel.Arch.PlatformSelfTest;
 
@@ -31,8 +32,12 @@ procedure RunPlatformSelfTest;
 
 implementation
 
+uses
+  Kernel.Arch.TimerSelfTest;
+
 procedure RunPlatformSelfTest;
 begin
+  RunTimerSelfTest;
 end;
 
 end.
