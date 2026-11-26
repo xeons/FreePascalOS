@@ -327,6 +327,19 @@ begin
     PlaceReadyThread(ThreadToPlace);
 end;
 
+{ Dynamic tick: a thread alone on Processor (its queues empty) needs no
+  tick, unless a processor-time timer counts its time; with threads
+  waiting behind it, it does. Processor's lock held. }
+procedure DeferOrResumeClockTickLocked(Processor: PProcessor; Running: PThreadControlBlock);
+begin
+  if Running = Processor^.IdleThread then
+    Exit;
+  if (ReadyThreadCountOf(Processor) = 0) and not Running^.NeedsClockTick then
+    DeferClockTick
+  else
+    ResumeClockTick(Running);
+end;
+
 { Switches this processor to NextThread. The processor's lock is held
   (and the dispatcher lock if HandsOverDispatcherLock); the thread that
   runs next releases them. Returns, holding neither, once the current
@@ -352,6 +365,10 @@ begin
     RestartClockTick
   else if (NextThread = Processor^.IdleThread) and (NextThread <> PreviousThread) then
     StopClockTick;
+  { The thread switched to may be alone already (the one it ran beside
+    blocked): its tick is deferred at once rather than at the next one. }
+  if NextThread <> Processor^.IdleThread then
+    DeferOrResumeClockTickLocked(Processor, NextThread);
   NextThread^.LastProcessorIndex := Processor^.Index;
   AtomicIncrement(SwitchCount);
 
@@ -441,16 +458,7 @@ begin
   begin
     if SliceOver then
       Running^.QuantumRemaining := SliceTicks;
-    { Dynamic tick: alone, the running thread needs no tick; with
-      threads waiting behind it, or a processor-time timer counting its
-      time, it does. }
-    if Running <> Processor^.IdleThread then
-    begin
-      if (ReadyThreadCountOf(Processor) = 0) and not Running^.NeedsClockTick then
-        DeferClockTick
-      else
-        ResumeClockTick(Running);
-    end;
+    DeferOrResumeClockTickLocked(Processor, Running);
     UnlockProcessor(Processor);
     Exit;
   end;
