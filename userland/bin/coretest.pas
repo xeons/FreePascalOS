@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..446] of TCommandTest = (
+  CommandTests: array[0..447] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -790,6 +790,9 @@ const
     { The C runtime (mlibc, toolchain/ctest), when the system disk has it:
       stdio, threads, fork/exec, signals, sockets, dlopen, C++. }
     (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest > ctest.log 2>&1; echo $?; grep FAILED ctest.log; tail -n 1 ctest.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Event descriptors (epoll, eventfd, timerfd, signalfd, inotify) for
+      an ordinary user. }
+    (Command: 'if test -x /usr/bin/ctest; then su user -c "/usr/bin/ctest epoll" > /tmp/events.log 2>&1; echo $?; tail -n 1 /tmp/events.log | cut -d " " -f 4-; su user -c "/usr/bin/ctest inotify" > /tmp/events.log 2>&1; echo $?; tail -n 1 /tmp/events.log | cut -d " " -f 4-; rm /tmp/events.log; else echo 0; echo checks passed; echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10'0'#10'checks passed'#10; ExpectedStatus: 0),
     { Files freed once nothing uses them, on the system disk: a library
       loaded and removed, a running program replaced by a rename, a
       mapped file removed while mapped. The cached image sections and

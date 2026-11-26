@@ -259,6 +259,12 @@ function GetVolumeFreeSpace(Volume: PVolume; out FreeBytes: QWord): Boolean;
   is the list of volumes), for a caller who may read it. Flags are Abi
   Watch* flags. }
 function WatchPath(Path: PChar; Flags: LongWord; out Watch: PWatch): TFileSystemStatus;
+{ The same for a watch group (FileSystem.WatchGroups): adds a member
+  watching Path for the GroupWatch* events of Mask, or changes the mask
+  of the one watching it already; Descriptor is its watch descriptor.
+  GroupWatchDontFollow leaves a final symbolic link alone,
+  GroupWatchOnlyDirectory refuses anything but a folder. }
+function WatchPathForGroup(Path: PChar; Group: Pointer; Mask: LongWord; out Descriptor: LongInt): TFileSystemStatus;
 
 { Marks Volume gone (FileSystem.Volumes takes it off its list first):
   waits for the operation running on it, fails every later one, and
@@ -311,7 +317,8 @@ uses
   FileSystem.Volumes,
   FileSystem.Mounts,
   FileSystem.Security,
-  FileSystem.Locks;
+  FileSystem.Locks,
+  FileSystem.WatchGroups;
 
 const
   MaximumComponents = 128;
@@ -2257,6 +2264,54 @@ begin
   if Result = StatusSuccess then
   begin
     Result := WatchNode(Volume, Node, Flags, Watch);
+    ReleaseNodeReference(Volume, Node);
+  end;
+  ReleaseMutex(Volume^.Lock);
+end;
+
+{ The member for WatchPathForGroup on a node (volume lock held). }
+function AddNodeToGroup(Volume: PVolume; Node: PNode; Group: Pointer; Mask: LongWord;
+  out Descriptor: LongInt): TFileSystemStatus;
+begin
+  Descriptor := -1;
+  if not MayAccess(Node^.Information, AccessRead) then
+    Exit(StatusAccessDenied);
+  if ((Mask and GroupWatchOnlyDirectory) <> 0) and not IsDirectoryNode(Node) then
+    Exit(StatusNotADirectory);
+  Descriptor := AddGroupWatch(PWatchGroup(Group), Volume, Node^.Information.NodeNumber, IsDirectoryNode(Node),
+    Mask and not QWord(GroupWatchOnlyDirectory or GroupWatchDontFollow));
+  if Descriptor = -ErrorExists then
+    Exit(StatusAlreadyExists);
+  if Descriptor < 0 then
+    Exit(StatusOutOfMemory);
+  Result := StatusSuccess;
+end;
+
+function WatchPathForGroup(Path: PChar; Group: Pointer; Mask: LongWord; out Descriptor: LongInt): TFileSystemStatus;
+var
+  Volume: PVolume;
+  RemainingPath: PChar;
+  Node: PNode;
+begin
+  Descriptor := -1;
+  Result := SelectVolume(Path, Volume, RemainingPath);
+  if Result <> StatusSuccess then
+    Exit;
+  if Volume = nil then
+  begin
+    Descriptor := AddGroupWatch(PWatchGroup(Group), nil, 0, True,
+      Mask and not QWord(GroupWatchOnlyDirectory or GroupWatchDontFollow));
+    if Descriptor < 0 then
+      Exit(StatusOutOfMemory);
+    Exit(StatusSuccess);
+  end;
+  Result := LockVolume(Volume);
+  if Result <> StatusSuccess then
+    Exit;
+  Result := ResolveInVolume(Volume, RemainingPath, (Mask and GroupWatchDontFollow) = 0, 0, nil, True, Node);
+  if Result = StatusSuccess then
+  begin
+    Result := AddNodeToGroup(Volume, Node, Group, Mask, Descriptor);
     ReleaseNodeReference(Volume, Node);
   end;
   ReleaseMutex(Volume^.Lock);

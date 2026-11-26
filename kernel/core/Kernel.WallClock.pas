@@ -29,6 +29,12 @@
   goes back, as NTP clients adjust it. A new adjustment replaces what is
   left of the last one.
 
+  Whoever keeps times of the wall clock as uptime deadlines (timers due
+  at a date: Objects.TimerDescriptors) registers a step routine, called
+  after every step (not a gradual adjustment), below DispatchLevel. (Not
+  after the time is read from the battery backed clock again on resume:
+  the other processors are still frozen then.)
+
   The state is read without a lock under a sequence count (odd while it
   changes; a reader that sees it change reads again), so any level may
   read the time; changes take a spin lock, with interrupts off.
@@ -75,6 +81,16 @@ procedure StepWallClockTo(Time: TUnixTime);
 function AdjustWallClock(OffsetNanoseconds: Int64; Gradually: Boolean): Boolean;
 { What a gradual adjustment still has to move the clock by. }
 function WallClockAdjustmentRemaining: Int64;
+
+type
+  TWallClockStepRoutine = procedure;
+
+{ Registers Routine to be called after each step of the clock (at most
+  MaximumWallClockStepRoutines, registered once at start). }
+procedure AddWallClockStepRoutine(Routine: TWallClockStepRoutine);
+
+const
+  MaximumWallClockStepRoutines = 4;
 { The offset from the uptime and the gradual adjustment (its total and
   since when), consistent with each other: for the clock page. Any
   level. }
@@ -141,6 +157,26 @@ begin
   BaseOffset := BaseOffset + Progress;
   SlewTotal := SlewTotal - Progress;
   SlewStart := Now;
+end;
+
+var
+  StepRoutines: array[0..MaximumWallClockStepRoutines - 1] of TWallClockStepRoutine;
+  StepRoutineCount: LongInt = 0;
+
+procedure AddWallClockStepRoutine(Routine: TWallClockStepRoutine);
+begin
+  if StepRoutineCount >= MaximumWallClockStepRoutines then
+    Exit;
+  StepRoutines[StepRoutineCount] := Routine;
+  Inc(StepRoutineCount);
+end;
+
+procedure CallStepRoutines;
+var
+  Index: LongInt;
+begin
+  for Index := 0 to StepRoutineCount - 1 do
+    StepRoutines[Index]();
 end;
 
 procedure SetFromHardware;
@@ -230,6 +266,7 @@ begin
   SlewStart := ClockNanoseconds;
   EndChange(PreviousLevel);
   WriteRealTimeClock(Time);
+  CallStepRoutines;
 end;
 
 { Whether stepping the clock (now Current) by Offset keeps it between
@@ -270,7 +307,10 @@ begin
   SlewStart := Now;
   EndChange(PreviousLevel);
   if not Gradually then
+  begin
     WriteRealTimeClock(WallClockSeconds);
+    CallStepRoutines;
+  end;
 end;
 
 function WallClockAdjustmentRemaining: Int64;

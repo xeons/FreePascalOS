@@ -57,6 +57,16 @@
   BoostEvent from SignalEvent, or what SignalEventWithBoost is given (an
   input driver gives BoostInput, for example).
 
+  An event may also have observers (TEventObserver): routines told each
+  time it is signaled (or a semaphore's count goes up), under the
+  dispatcher lock, before its waiters are released. They wait for
+  nothing and consume nothing; an event poll (Processes.EventPolls)
+  keeps one on the readiness events of every object it watches. An
+  observer's routine runs at the level the event is signaled at (up to
+  DispatchLevel, with the dispatcher lock held): it may only look at the
+  event, change state guarded by the dispatcher lock and signal other
+  events with SignalEventLocked.
+
   Events are protected by the dispatcher lock, like all wait queues.
 }
 unit Kernel.Events;
@@ -68,12 +78,24 @@ interface
 
 uses
   Runtime.LinkedList,
+  Kernel.PriorityLevel,
   Kernel.Threads;
 
 type
   TEventKind = (EventKindNotification, EventKindSynchronization, EventKindSemaphore, EventKindMutex);
 
   PEvent = ^TEvent;
+  PEventObserver = ^TEventObserver;
+  TEventObserverRoutine = procedure(Observer: PEventObserver);
+  TEventObserver = record
+    Next: PEventObserver;
+    Previous: PEventObserver;
+    { The event it observes; nil while detached. }
+    Event: PEvent;
+    Routine: TEventObserverRoutine;
+    Context: Pointer;
+  end;
+
   TEvent = record
     Kind: TEventKind;
     IsSignaled: Boolean;
@@ -89,6 +111,8 @@ type
       kinds. }
     Owner: PThreadControlBlock;
     NextOwned: PEvent;
+    { The observers, nil for none (a zeroed event has none). }
+    FirstObserver: PEventObserver;
   end;
 
 procedure InitializeEvent(out Event: TEvent; Kind: TEventKind; InitiallySignaled: Boolean);
@@ -109,6 +133,24 @@ procedure WaitForEvent(var Event: TEvent);
 function WaitForEventWithOptions(var Event: TEvent; TimeoutMilliseconds: QWord;
   Alertable: Boolean): TWaitResult;
 function EventIsSignaled(var Event: TEvent): Boolean;
+
+{ Observers. Attaching tells Routine (with Observer, whose Context is
+  Context) of every later signal of Event; detaching stops it, and once
+  it returns the routine is not running for this observer on any
+  processor. Both at or below DispatchLevel. }
+procedure AttachEventObserver(var Event: TEvent; var Observer: TEventObserver;
+  Routine: TEventObserverRoutine; Context: Pointer);
+procedure DetachEventObserver(var Observer: TEventObserver);
+
+{ The lock events are guarded by (the dispatcher lock), for state an
+  observer's routine shares with others: taken, it raises the level to
+  DispatchLevel. }
+function AcquireEventLock: TPriorityLevel;
+procedure ReleaseEventLock(PreviousLevel: TPriorityLevel);
+{ Signals or resets an event with the event lock held (from an
+  observer's routine, for one). }
+procedure SignalEventLocked(var Event: TEvent);
+procedure ResetEventLocked(var Event: TEvent);
 
 const
   MaximumWaitEvents = 64;
@@ -131,7 +173,6 @@ function WaitForAllEvents(Events: PPEvent; Count: LongInt; TimeoutMilliseconds: 
 implementation
 
 uses
-  Kernel.PriorityLevel,
   Kernel.PriorityBoosts,
   Kernel.Scheduler;
 
@@ -146,6 +187,7 @@ begin
   Event.Abandoned := False;
   Event.Owner := nil;
   Event.NextOwned := nil;
+  Event.FirstObserver := nil;
   InitializeListHead(Event.Waiters);
 end;
 
@@ -265,10 +307,28 @@ end;
   signaled: a notification event releases everyone it can, a
   synchronization event the first it can (which consumes it). Waiters
   for all whose other events are not signaled stay. }
+{ Tells every observer of a signaled event. (A routine must not detach
+  anything: detaching takes the dispatcher lock, held here.) }
+procedure NotifyEventObserversLocked(var Event: TEvent);
+var
+  Observer: PEventObserver;
+  Following: PEventObserver;
+begin
+  Observer := Event.FirstObserver;
+  while Observer <> nil do
+  begin
+    Following := Observer^.Next;
+    Observer^.Routine(Observer);
+    Observer := Following;
+  end;
+end;
+
 procedure ReleaseEventWaitersLocked(var Event: TEvent; Boost: LongWord);
 var
   Block: PWaitBlock;
 begin
+  if Event.IsSignaled and (Event.FirstObserver <> nil) then
+    NotifyEventObserversLocked(Event);
   while Event.IsSignaled do
   begin
     Block := FirstSatisfiedWaiterLocked(Event);
@@ -404,6 +464,66 @@ end;
 function EventIsSignaled(var Event: TEvent): Boolean;
 begin
   Result := Event.IsSignaled;
+end;
+
+procedure AttachEventObserver(var Event: TEvent; var Observer: TEventObserver;
+  Routine: TEventObserverRoutine; Context: Pointer);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  Observer.Routine := Routine;
+  Observer.Context := Context;
+  Observer.Previous := nil;
+  PreviousLevel := AcquireDispatcherLock;
+  Observer.Event := @Event;
+  Observer.Next := Event.FirstObserver;
+  if Event.FirstObserver <> nil then
+    Event.FirstObserver^.Previous := @Observer;
+  Event.FirstObserver := @Observer;
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+procedure DetachEventObserver(var Observer: TEventObserver);
+var
+  PreviousLevel: TPriorityLevel;
+  Event: PEvent;
+begin
+  PreviousLevel := AcquireDispatcherLock;
+  Event := Observer.Event;
+  if Event <> nil then
+  begin
+    if Observer.Previous <> nil then
+      Observer.Previous^.Next := Observer.Next
+    else
+      Event^.FirstObserver := Observer.Next;
+    if Observer.Next <> nil then
+      Observer.Next^.Previous := Observer.Previous;
+    Observer.Event := nil;
+    Observer.Next := nil;
+    Observer.Previous := nil;
+  end;
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+function AcquireEventLock: TPriorityLevel;
+begin
+  Result := AcquireDispatcherLock;
+end;
+
+procedure ReleaseEventLock(PreviousLevel: TPriorityLevel);
+begin
+  ReleaseDispatcherLock(PreviousLevel);
+end;
+
+procedure SignalEventLocked(var Event: TEvent);
+begin
+  Event.IsSignaled := True;
+  ReleaseEventWaitersLocked(Event, BoostEvent);
+end;
+
+procedure ResetEventLocked(var Event: TEvent);
+begin
+  Event.IsSignaled := False;
 end;
 
 end.

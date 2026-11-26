@@ -33,6 +33,13 @@
   are in the header's name record (TObjectNameRecord), which the
   namespace manages.
 
+  Apart from references, the header counts the handles that name the
+  object (in every process, and in messages on their way), which handle
+  tables keep up to date (Processes.Handles): when the last one goes,
+  the event polls watching the object let go of it (Processes.EventPolls,
+  which keeps its registrations on the object in the header too), as a
+  descriptor's registrations go with its last descriptor elsewhere.
+
   A reference count never wraps: one that reaches ObjectReferenceCountLimit
   (only a reference leak gets there) stays there, with a warning in the
   log, and the object is never deleted - a leak instead of a use after
@@ -149,6 +156,15 @@ function ObjectReferenceCount(ObjectBody: Pointer): Int64;
 function ObjectNameRecordOf(ObjectBody: Pointer): PObjectNameRecord;
 function ObjectOfNameLink(Entry: PListEntry): Pointer;
 
+{ Handles: one more names the object, or one fewer; the latter returns
+  True when it was the last. }
+procedure NoteObjectHandleOpened(ObjectBody: Pointer);
+function NoteObjectHandleClosed(ObjectBody: Pointer): Boolean;
+function ObjectHandleCount(ObjectBody: Pointer): Int64;
+{ Where Processes.EventPolls keeps the event polls' registrations on the
+  object (nil for none; changed only under its lock). }
+function ObjectPollRegistrationsOf(ObjectBody: Pointer): PPointer;
+
 { For the self tests only: puts an object's count at Count, so the
   saturation can be reached without 2^40 references. }
 procedure SetObjectReferenceCountForTest(ObjectBody: Pointer; Count: Int64);
@@ -181,6 +197,10 @@ type
     Signature: LongWord;
     Reserved: LongWord;
     ReferenceCount: Int64;
+    { The handles that name the object. }
+    HandleCount: Int64;
+    { Event poll registrations (Processes.EventPolls). }
+    PollRegistrations: Pointer;
     ObjectType: PObjectType;
     NameRecord: TObjectNameRecord;
   end;
@@ -403,6 +423,29 @@ end;
 function ObjectOfNameLink(Entry: PListEntry): Pointer;
 begin
   Result := BodyOf(HeaderOfNameLink(Entry));
+end;
+
+procedure NoteObjectHandleOpened(ObjectBody: Pointer);
+begin
+  AtomicIncrement(HeaderOf(ObjectBody)^.HandleCount);
+end;
+
+function NoteObjectHandleClosed(ObjectBody: Pointer): Boolean;
+begin
+  Result := AtomicDecrement(HeaderOf(ObjectBody)^.HandleCount) <= 0;
+  { Ordered before whatever the caller looks at next (Processes.EventPolls
+    relies on it). }
+  FullMemoryBarrier;
+end;
+
+function ObjectHandleCount(ObjectBody: Pointer): Int64;
+begin
+  Result := AtomicFetchAndAdd(HeaderOf(ObjectBody)^.HandleCount, 0);
+end;
+
+function ObjectPollRegistrationsOf(ObjectBody: Pointer): PPointer;
+begin
+  Result := @HeaderOf(ObjectBody)^.PollRegistrations;
 end;
 
 function ObjectReferenceCount(ObjectBody: Pointer): Int64;

@@ -105,7 +105,8 @@ uses
   Processes.Stopping,
   Processes.ThreadControl,
   Processes.UserAccess,
-  Processes.Arch.UserContext;
+  Processes.Arch.UserContext,
+  Processes.SignalDescriptors;
 
 const
   { Neither blocked nor handled: SIGKILL and SIGSTOP. }
@@ -229,7 +230,18 @@ begin
   Process^.Posix.PendingSignals := Process^.Posix.PendingSignals or SignalBit(Signal);
   Process^.Posix.PendingSenders[Signal] := SenderProcessId;
   ReleaseSpinLock(Process^.Posix.SignalLock, PreviousLevel);
+  { Signal descriptors with it in their mask become ready. }
+  NoteSignalWaiting(Process, Signal);
   WakeTakerOf(Process, Signal);
+end;
+
+{ A signal ignored by default that every thread blocks waits all the
+  same (for a signal descriptor or sigwait to take; unblocked, it is
+  dropped then), as on other systems. }
+function WaitsWhileBlocked(Process: PProcess; Signal: LongInt): Boolean;
+begin
+  Result := (Process^.Posix.Dispositions[Signal] = SignalDispositionDefault) and
+    (DefaultActionOf(Signal) = ActionIgnore) and not SomeThreadTakes(Process, Signal);
 end;
 
 procedure PostSignalFromKernelLocked(Process: PProcess; Signal: LongInt; SenderProcessId: QWord);
@@ -242,7 +254,11 @@ begin
     Exit;
   end;
   if IsDiscarded(Process, Signal) then
+  begin
+    if WaitsWhileBlocked(Process, Signal) then
+      MakePending(Process, Signal, SenderProcessId);
     Exit;
+  end;
   if (Process^.Posix.Dispositions[Signal] = SignalDispositionHandle) and (Process^.Posix.SignalDispatcher <> 0) then
     MakePending(Process, Signal, SenderProcessId)
   else if DefaultActionOf(Signal) = ActionTerminate then

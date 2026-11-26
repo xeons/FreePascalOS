@@ -1271,7 +1271,7 @@ navigation-controls-test: $(NAVIGATION_CONTROLS_TEST)
 # the host too, and is checked there over a storage in memory.
 SETTINGS_TEST := build/tools/SettingsTest
 SETTINGS_TEST_SOURCES := $(wildcard tools/SettingsTest/*.pas) shared/Abi.SystemCalls.pas shared/Abi.SystemCalls.inc \
-	shared/Abi.Networking.inc shared/Runtime.Memory.pas shared/Runtime.Text.pas \
+	shared/Abi.Networking.inc shared/Abi.EventDescriptors.inc shared/Runtime.Memory.pas shared/Runtime.Text.pas \
 	userland/lib/system/Sys.InternetAddresses.pas \
 	$(filter-out %/Configuration.FileStorage.pas %/Configuration.Locations.pas %/Configuration.Contents.pas \
 		%/Configuration.NetworkStatus.pas, $(wildcard userland/lib/configuration/*.pas))

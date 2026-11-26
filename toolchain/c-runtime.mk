@@ -48,7 +48,9 @@ C_STRIP := $(C_TOOLCHAIN)/bin/$(C_TRIPLET)-strip
 C_RUNTIME_OUTPUT := $(USER_BUILD_DIRECTORY)/usr
 C_RUNTIME_STAMP := $(USER_BUILD_DIRECTORY)/c-runtime.stamp
 C_TEST_SOURCES := $(wildcard toolchain/ctest/*.c toolchain/ctest/*.cpp toolchain/ctest/*.h)
-C_FLAGS := -O2 -Wall -Wextra
+# The sysroot named explicitly: a toolchain copied into another tree (a
+# worktree) still has the sysroot it was built with built in.
+C_FLAGS := -O2 -Wall -Wextra --sysroot=$(abspath $(C_SYSROOT))
 # Clang (make clang-toolchain): <triple>.cfg beside it gives the system
 # root and the GCC installation for --target.
 C_CLANG := build/toolchain/llvm/bin/clang
