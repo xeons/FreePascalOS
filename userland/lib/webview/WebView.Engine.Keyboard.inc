@@ -39,6 +39,49 @@ begin
   inherited KeyUp(Code, Modifiers);
 end;
 
+{ The element whose assigned access key (Web.Dom.AccessKeys) the key is:
+  focused and activated as a click would (a link followed, a control
+  activated, a label's control). False when no element has the key. }
+function TWebEngineView.ActivateAccessKey(Code, Character: LongWord): Boolean;
+var
+  KeyCode, Key: string;
+  Element: TElement;
+begin
+  Result := False;
+  KeyCode := DomKeyOf(Code, Character).Code;
+  if (Length(KeyCode) = 4) and (Copy(KeyCode, 1, 3) = 'Key') then
+    Key := LowerCase(KeyCode[4])
+  else if (Length(KeyCode) = 6) and (Copy(KeyCode, 1, 5) = 'Digit') then
+    Key := KeyCode[6]
+  else
+    Exit;
+  Element := FindAccessKeyElement(FDocument, Key);
+  if Element = nil then
+    Exit;
+  Result := True;
+  Element.Retain;
+  try
+    if LinkElementOf(Element) = Element then
+    begin
+      SetFocusedElement(Element, True);
+      ActivateLink(Element, DispositionFor(ButtonLeft, 0, Element));
+    end
+    else if FormControlKindOf(Element) <> FormControlNone then
+    begin
+      SetFocusedElement(Element, True);
+      ActivateControl(Element);
+    end
+    else
+    begin
+      if IsFocusableElement(Element) then
+        SetFocusedElement(Element, True);
+      ClickElement(Element);
+    end;
+  finally
+    Element.Release;
+  end;
+end;
+
 function TWebEngineView.KeyDown(Code, Character, Modifiers: LongWord): Boolean;
 var
   Control: Boolean;
@@ -57,6 +100,11 @@ begin
     Exit;
   if (Character >= 32) and (Character <> 127) and not Control and ((Modifiers and ModifierAlt) = 0) and
     not DispatchKeyboardEvent('keypress', Code, Character, Modifiers) then
+    Exit;
+  { Alt+Shift and an element's access key activates it, also from a
+    text field. }
+  if ((Modifiers and ModifierAlt) <> 0) and ((Modifiers and ModifierShift) <> 0) and not Control and
+     ActivateAccessKey(Code, Character) then
     Exit;
   { A text field with the focus takes what it types. }
   if TypeIntoField(Code, Character, Modifiers) then

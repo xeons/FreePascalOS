@@ -28,6 +28,7 @@ interface HTMLElement : Element {
   [Reflect] attribute boolean inert;
   undefined click();
   [Reflect] attribute DOMString accessKey;
+  readonly attribute DOMString accessKeyLabel;
   [Reflect] attribute boolean draggable;
   [Reflect] attribute DOMString autocapitalize;
   [Reflect] attribute DOMString enterKeyHint;

@@ -49,6 +49,7 @@ uses
   Web.Dom.Focus,
   Web.Dom.ImageRequests,
   Web.Dom.InputValues,
+  Web.Dom.AccessKeys,
   SysUtils,
   Math,
   Js.Objects,
@@ -285,6 +286,11 @@ function HTMLOrSVGElement_blur(var Call: TBindingCall): TJsValue;
 begin
   UnfocusElement(ThisElement(Call));
   Result := Nothing;
+end;
+
+function HTMLElement_get_accessKeyLabel(var Call: TBindingCall): TJsValue;
+begin
+  Result := Text(Call, AccessKeyLabel(ThisElement(Call)));
 end;
 
 function HTMLElement_get_contentEditable(var Call: TBindingCall): TJsValue;

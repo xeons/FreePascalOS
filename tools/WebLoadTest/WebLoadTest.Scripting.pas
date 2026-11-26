@@ -60,6 +60,8 @@ uses
   WebView.FieldEditing,
   WebView.ClipboardEvents,
   Web.Dom.FormControls,
+  WebView.KeyNames,
+  WebBrowse.Input,
   WebLoadTest.Server;
 
 type
@@ -631,8 +633,61 @@ begin
   end;
 end;
 
+{ Access keys: accessKeyLabel ("Alt+Shift+" and the first one-letter or
+  one-digit token), and Alt+Shift with the key clicking the element as
+  the web view does (webbrowse's TPageInput). }
+procedure CheckAccessKeys;
+var
+  Environment: TTestEnvironment;
+  Conditions: TScriptConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Document: TDocument;
+  Context: TScriptContext;
+  Input: TPageInput;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TScriptConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  Input := TPageInput.Create(Navigable);
+  try
+    Environment.Site.AddRoute('k.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><button id=a accesskey="k">a</button><button id=b accesskey="ab 7 c">b</button>' +
+      '<div id=c accesskey="">c</div><p id="out">x</p><script>var log = [];' +
+      'document.addEventListener("click", function (e) { log.push("click " + e.target.id); });' +
+      'document.getElementById("out").textContent = "timer";</script>');
+    Navigable.NavigateTo('https://k.test/page.html');
+    Check(Environment.RunUntil(@Conditions.TimerRan), 'access keys: the page ran');
+    Document := Navigable.ActiveDocument;
+    Context := Executor.ContextOf(Document);
+    Input.PressKey(Document, ScanCodeOfKeyCode('KeyK'), Ord('K'), $05);
+    Input.PressKey(Document, ScanCodeOfKeyCode('Digit7'), Ord('&'), $05);
+    Input.PressKey(Document, ScanCodeOfKeyCode('KeyQ'), Ord('Q'), $05);
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('[document.getElementById("a").accessKeyLabel,' +
+      ' document.getElementById("b").accessKeyLabel, document.getElementById("c").accessKeyLabel,' +
+      ' log.join(" "), document.activeElement.id].join("|")'));
+    Check(Text = 'Alt+Shift+K|Alt+Shift+7||click a click b|b',
+      'access keys: the label and Alt+Shift activating the element (' + Text + ')');
+  finally
+    Input.Free;
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
+  CheckAccessKeys;
   CheckClipboardEvents;
   CheckPointerEvents;
   CheckEventSource;
