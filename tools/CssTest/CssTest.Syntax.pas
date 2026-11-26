@@ -158,6 +158,9 @@ begin
   CheckValue('mask-composite', 'exclude', 'exclude');
   CheckValue('mask-composite', 'add, subtract', 'add, subtract');
   CheckValue('mask-composite', 'xor', '(invalid)');
+  { A color with two positions is two stops: one is enough. }
+  CheckValue('background-image', 'linear-gradient(#fff 0 0)', 'linear-gradient(rgb(255, 255, 255) 0px 0px)');
+  CheckValue('background-image', 'linear-gradient(#fff 0)', '(invalid)');
   CheckValue('color', 'RED', 'rgb(255, 0, 0)');
   CheckValue('color', '#0f08', 'rgba(0, 255, 0, 0.533)');
   CheckValue('color', 'rgb(255 0 0 / 50%)', 'rgba(255, 0, 0, 0.5)');

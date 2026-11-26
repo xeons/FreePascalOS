@@ -185,9 +185,10 @@ type
     procedure ViewportScroll(out Left, Top: Double); virtual; abstract;
     { The topmost element at a point of the viewport, nil if none. }
     function ElementAtPoint(X, Y: Double): TElement; virtual; abstract;
-    { The computed value of a property ('' when the element is not
-      rendered and has no style). }
-    function ComputedValue(Element: TElement; const PropertyName: string): string; virtual; abstract;
+    { The computed value of a property of the element or of a
+      pseudo-element of it ("::before"; '' for one that does not exist). }
+    function ComputedValue(Element: TElement; const PropertyName: string; const PseudoElement: string = ''): string;
+      virtual; abstract;
     { The element's CSS animations and transitions, and script's control
       of one (by default: none). }
     function CssAnimations(Element: TElement): TScriptCssAnimationArray; virtual;

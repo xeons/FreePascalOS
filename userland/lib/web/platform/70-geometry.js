@@ -305,11 +305,13 @@
     if (!(element instanceof global.Element))
       throw new TypeError("Failed to execute 'getComputedStyle' on 'Window': parameter 1 is not of type 'Element'.");
     const target = Object.create(CSSStylePropertiesPrototype);
+    const pseudo = pseudoElement === undefined || pseudoElement === null ? "" : String(pseudoElement);
+    const value = function (name) { return natives.computedValue(element, name, pseudo); };
     const members = {
       getPropertyValue: function getPropertyValue(property) {
         const name = String(property);
-        if (name.indexOf("--") === 0) return natives.computedValue(element, name);
-        return natives.computedValue(element, name.toLowerCase());
+        if (name.indexOf("--") === 0) return value(name);
+        return value(name.toLowerCase());
       },
       getPropertyPriority: function getPropertyPriority() { return ""; },
       item: function item(index) {
@@ -326,10 +328,10 @@
         if (key === "length") return propertyNames().length;
         if (key === "cssText") return "";
         if (key === "parentRule") return null;
-        if (key === "cssFloat") return natives.computedValue(element, "float");
+        if (key === "cssFloat") return value("float");
         if (/^\d+$/.test(key)) return members.item(Number(key));
         if (key in object) return Reflect.get(object, key);
-        return natives.computedValue(element, dashed(key));
+        return value(dashed(key));
       },
       set: function () { readOnly(); },
       has: function (object, key) { return typeof key === "string" ? true : Reflect.has(object, key); }

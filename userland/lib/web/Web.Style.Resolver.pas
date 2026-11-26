@@ -113,6 +113,11 @@ type
       whether or not it is styled in place: for content inline SVG's
       <use> instantiates, which may sit in a hidden sprite sheet. }
     function ResolveStyleUnder(Element: TElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
+    { getComputedStyle's style of the element or one of its pseudo-elements
+      (a new reference, nil for a node outside the flat tree): an element
+      not styled in place (under display: none) is styled for the asking,
+      down from its nearest styled ancestor, as other browsers do. }
+    function StyleForScript(Element: TElement; PseudoElement: TCssPseudoElement): TCssComputedStyle;
     { Observer }
     procedure TreeMutated(Target: TNode; const Added, Removed: TNodeArray; PreviousSibling, NextSibling: TNode);
       override;
@@ -466,6 +471,77 @@ begin
   { Its presentational hints and style attribute must be parsed. }
   PrepareElement(Element, NodeDataOf(Element));
   Result := FEngine.ResolveStyle(Element, ParentStyle);
+end;
+
+function TDocumentStyler.StyleForScript(Element: TElement; PseudoElement: TCssPseudoElement): TCssComputedStyle;
+var
+  Chain, Ancestors: array of TElement;
+  Node: TNode;
+  Index: Integer;
+  Base, Parent, Pseudo: TCssComputedStyle;
+  Data: PNodeData;
+begin
+  Base := StyleOf(Element);
+  if Base <> nil then
+    Base := Base.AddRef
+  else
+  begin
+    { The unstyled elements from Element up, and the styled ancestor. }
+    Chain := nil;
+    Node := Element;
+    while (Node <> nil) and Node.IsElement and (StyleOf(Node) = nil) do
+    begin
+      SetLength(Chain, Length(Chain) + 1);
+      Chain[High(Chain)] := TElement(Node);
+      Node := StyleParentOf(Node);
+      while (Node <> nil) and not Node.IsElement and not (Node is TDocument) do
+        Node := StyleParentOf(Node);
+    end;
+    if (Node = nil) and (Chain[High(Chain)].ParentNode <> nil) then
+      Exit(nil);
+    Parent := nil;
+    if (Node <> nil) and Node.IsElement then
+      Parent := StyleOf(Node);
+    { The ancestor filter must hold every ancestor of what is resolved. }
+    Ancestors := nil;
+    while (Node <> nil) and Node.IsElement do
+    begin
+      SetLength(Ancestors, Length(Ancestors) + 1);
+      Ancestors[High(Ancestors)] := TElement(Node);
+      Node := StyleParentOf(Node);
+      while (Node <> nil) and not Node.IsElement and not (Node is TDocument) do
+        Node := StyleParentOf(Node);
+    end;
+    FEngine.ResetAncestors;
+    for Index := High(Ancestors) downto 0 do
+      FEngine.PushAncestor(Ancestors[Index]);
+    if Parent <> nil then
+      Parent := Parent.AddRef;
+    for Index := High(Chain) downto 0 do
+    begin
+      Base := ResolveStyleUnder(Chain[Index], Parent);
+      Parent.Release;
+      Parent := Base;
+      if Index > 0 then
+        FEngine.PushAncestor(Chain[Index]);
+    end;
+    FEngine.ResetAncestors;
+  end;
+  if PseudoElement = peNone then
+    Exit(Base);
+  Pseudo := nil;
+  Data := ExistingNodeData(Element);
+  if (PseudoElement = peBefore) and (Data <> nil) and (Data^.BeforeStyle <> nil) and (Data^.Style <> nil) then
+    Pseudo := Data^.BeforeStyle.AddRef
+  else if (PseudoElement = peAfter) and (Data <> nil) and (Data^.AfterStyle <> nil) and (Data^.Style <> nil) then
+    Pseudo := Data^.AfterStyle.AddRef
+  else
+    Pseudo := FEngine.ResolvePseudoStyle(Element, Base, PseudoElement);
+  { A pseudo-element no rule styles: what it would inherit. }
+  if Pseudo = nil then
+    Pseudo := FEngine.AnonymousStyle(Base);
+  Base.Release;
+  Result := Pseudo;
 end;
 
 procedure TDocumentStyler.PrepareElement(Element: TElement; Data: PNodeData);

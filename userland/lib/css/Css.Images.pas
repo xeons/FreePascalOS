@@ -48,7 +48,7 @@ function IsGradientFunction(const LowerName: string): Boolean;
 implementation
 
 uses
-  Css.Atoms, Css.Keywords, Css.Units, Css.ValueParser, Css.ColorParser, Css.Colors;
+  Math, Css.Atoms, Css.Keywords, Css.Units, Css.ValueParser, Css.ColorParser, Css.Colors;
 
 function IsGradientFunction(const LowerName: string): Boolean;
 begin
@@ -429,7 +429,7 @@ var
 begin
   Result := nil;
   Pieces := SplitAtCommas(Contents);
-  if Length(Pieces) < 2 then
+  if Length(Pieces) < 1 then
     Exit;
   Conic := Pos('conic', LowerName) > 0;
   Result := NewFunction(LowerName);
@@ -456,8 +456,10 @@ begin
       ReleaseValue(Result);
       Exit;
     end;
+    { A color with two positions is two color stops
+      (linear-gradient(#fff 0 0): a solid image). }
     if not IsHint then
-      Inc(ColorStops);
+      Inc(ColorStops, Max(1, Stop.Count - 1));
     PreviousWasHint := IsHint;
     Result.Add(Stop);
   end;

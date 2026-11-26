@@ -506,7 +506,8 @@ begin
   Element := ElementArgument(Context, Args, ArgCount, 0);
   if (Element = nil) or (Context.Environment.Layout = nil) then
     Exit(Context.TextValue(''));
-  Result := Context.TextValue(Context.Environment.Layout.ComputedValue(Element, ArgText(Context, Args, ArgCount, 1)));
+  Result := Context.TextValue(Context.Environment.Layout.ComputedValue(Element, ArgText(Context, Args, ArgCount, 1),
+    ArgText(Context, Args, ArgCount, 2)));
 end;
 
 function NativeComputedNames(Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
