@@ -223,12 +223,37 @@ begin
   end;
 end;
 
+{ Unicode's Other_ID_Start: kept in ID_Start for compatibility though
+  their categories are not letters. }
+function IsOtherIdentifierStart(Character: LongWord): Boolean;
+begin
+  case Character of
+    $1885, $1886, $2118, $212E, $309B, $309C:
+      Result := True;
+  else
+    Result := False;
+  end;
+end;
+
+{ Other_ID_Continue (with ZWNJ and ZWJ, which ECMAScript adds). }
+function IsOtherIdentifierPart(Character: LongWord): Boolean;
+begin
+  case Character of
+    $00B7, $0387, $1369..$1371, $19DA, $200C, $200D, $30FB, $FF65:
+      Result := True;
+  else
+    Result := False;
+  end;
+end;
+
 function IsIdentifierStart(Character: LongWord): Boolean;
 begin
   if Character < 128 then
     Exit(((Character >= Ord('a')) and (Character <= Ord('z'))) or ((Character >= Ord('A')) and
       (Character <= Ord('Z'))) or (Character = Ord('$')) or (Character = Ord('_')));
   if Character > $FFFF then
+    Exit(True);
+  if IsOtherIdentifierStart(Character) then
     Exit(True);
   Result := TCharacter.IsLetter(WideChar(Character)) or
     (TCharacter.GetUnicodeCategory(WideChar(Character)) = TUnicodeCategory.ucLetterNumber);
@@ -238,7 +263,7 @@ function IsIdentifierPart(Character: LongWord): Boolean;
 begin
   if Character < 128 then
     Exit(IsIdentifierStart(Character) or ((Character >= Ord('0')) and (Character <= Ord('9'))));
-  if (Character = $200C) or (Character = $200D) or (Character > $FFFF) then
+  if (Character > $FFFF) or IsOtherIdentifierPart(Character) then
     Exit(True);
   Result := IsIdentifierStart(Character) or
     (TCharacter.GetUnicodeCategory(WideChar(Character)) in [TUnicodeCategory.ucNonSpacingMark,
@@ -563,7 +588,7 @@ begin
       Break;
     end;
   end;
-  if (FPosition > FLength) or ((FSource[FPosition] <> '') and (Ord(FSource[FPosition]) < 128)) then
+  if (FPosition > FLength) or ((FSource[FPosition] <> '\') and (Ord(FSource[FPosition]) < 128)) then
   begin
     Token.Text := Copy(FSource, Start, FPosition - Start);
     Token.Kind := tkIdentifier;
@@ -585,6 +610,9 @@ begin
       if Piece = '' then
         Fail('Invalid escape in identifier');
       CodePoint := Ord(Piece[1]);
+      { A code point escape beyond the BMP comes back as a surrogate pair. }
+      if (Length(Piece) = 2) and (CodePoint >= $D800) and (CodePoint <= $DBFF) then
+        CodePoint := $10000 + ((CodePoint - $D800) shl 10) + (Ord(Piece[2]) - $DC00);
       if ((Name = '') and not IsIdentifierStart(CodePoint)) or ((Name <> '') and not IsIdentifierPart(CodePoint)) then
         Fail('Invalid identifier escape');
       Token.Escaped := True;
@@ -1133,7 +1161,8 @@ begin
     '#':
       begin
         Inc(FPosition);
-        if (FPosition <= FLength) and (IsIdentifierStart(Ord(FSource[FPosition])) or (FSource[FPosition] = '\')) then
+        if (FPosition <= FLength) and (IsIdentifierStart(Ord(FSource[FPosition])) or (FSource[FPosition] = '\') or
+          ((FSource[FPosition] >= #$D800) and (FSource[FPosition] <= #$DBFF))) then
         begin
           ScanIdentifier(Token);
           Token.Kind := tkPrivateName;

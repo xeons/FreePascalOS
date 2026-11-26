@@ -75,6 +75,9 @@ type
     { Parsing a module (import.meta allowed throughout). }
     ModuleGoal: Boolean;
     procedure Fail(const Text: string);
+    { The early errors of a regular expression literal: its flags and
+      its pattern. }
+    procedure CheckRegExpLiteral(const Pattern, Flags: UnicodeString);
     procedure FailAt(const Token: TJsToken; const Text: string);
     procedure Unexpected;
     procedure Next;
@@ -186,6 +189,9 @@ type
 
 implementation
 
+uses
+  Js.RegExpCompiler;
+
 const
   { Placeholder for "()" and "(...rest)" before =>. }
   ArrowParametersFlag = $8000;
@@ -206,6 +212,31 @@ end;
 function TJsParser.SourceText(Start, Finish: Integer): UnicodeString;
 begin
   Result := FLexer.SourceText(Start, Finish);
+end;
+
+procedure TJsParser.CheckRegExpLiteral(const Pattern, Flags: UnicodeString);
+var
+  Index: Integer;
+  Seen: UnicodeString;
+begin
+  Seen := '';
+  for Index := 1 to Length(Flags) do
+  begin
+    if (Pos(Flags[Index], 'dgimsuvy') = 0) or (Pos(Flags[Index], Seen) > 0) then
+      Fail('Invalid regular expression flags');
+    Seen := Seen + Flags[Index];
+  end;
+  if (Pos('u', Flags) > 0) and (Pos('v', Flags) > 0) then
+    Fail('Invalid regular expression flags');
+  { The v flag's set notation is checked when the literal runs. }
+  if Pos('v', Flags) > 0 then
+    Exit;
+  try
+    ValidateRegExp(Pattern, Pos('i', Flags) > 0, Pos('u', Flags) > 0);
+  except
+    on Error: ERegExpSyntax do
+      Fail(Error.Message);
+  end;
 end;
 
 procedure TJsParser.Fail(const Text: string);
@@ -3216,6 +3247,7 @@ begin
     tkSlash, tkSlashAssign:
       begin
         FLexer.ScanRegExp(FToken);
+        CheckRegExpLiteral(FToken.Text, FToken.Raw);
         Result := NewNode(nkRegExp);
         Result.Text := FToken.Text;
         Result.Name := FToken.Raw;
