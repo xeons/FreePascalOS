@@ -24,6 +24,7 @@ rendering with the installed Firefox.
 | After this work | 273 / 588 | |
 | After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
 | After Canvas 2D, OffscreenCanvas and ImageBitmap | 300 / 588 | canvas 24 of 25 (all but hit regions, which the standard dropped), offscreen 3 of 3 |
+| After shadow DOM, custom elements, Web Animations, Fullscreen and Pointer Lock | 344 / 588 | components.custom and components.shadowdom, animation.webanimation, output.requestFullScreen, input.pointerLock (on the tree with IndexedDB and Canvas, which scored 300) |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -153,19 +154,20 @@ Points are what each costs on html5test (588 in all).
   libhttp's connections (TLS, HTTP/1.1 upgrade; RFC 8441 over HTTP/2
   later); in the browser it has to go through the network service
   process like fetch.
-- **Custom elements** (`components.custom` 4): CustomElementRegistry
-  (define, get, whenDefined, upgrade), constructors through HTMLElement,
-  the reactions (connected, disconnected, adopted, attributeChanged),
-  is="".
-- **Web Animations** (`animation.webanimation` 3): Element.animate,
-  Animation, KeyframeEffect, document.getAnimations over the CSS
-  animation engine (`Web.Style.Animations`), CSSAnimation and
-  CSSTransition objects.
-- **Fullscreen API** (`output.requestFullScreen` 5): element and
-  document fullscreen, :fullscreen, events; the browser window going
-  fullscreen through the web view's IPC.
-- **Pointer Lock** (`input.pointerLock` 3): needs relative pointer
-  motion and a pointer grab from the display server.
+- ~~**Custom elements** (`components.custom` 4)~~: done - the
+  registry, [HTMLConstructor], reactions, upgrades, customized
+  built-ins, ElementInternals and form-associated custom elements,
+  CustomStateSet (docs/Architecture.md, "Custom elements").
+- ~~**Web Animations** (`animation.webanimation` 3)~~: done -
+  Element.animate, KeyframeEffect, Animation's timing model,
+  getAnimations, CSSAnimation and CSSTransition over the CSS animation
+  engine; composite add and accumulate are applied as replace.
+- ~~**Fullscreen API** (`output.requestFullScreen` 5)~~: done - element
+  fullscreen, :fullscreen, events; the browser window shows the page
+  alone through the web view's IPC.
+- ~~**Pointer Lock** (`input.pointerLock` 3)~~: done - the display
+  server locks the pointer to the window and sends its motion
+  (movementX and movementY).
 - **Notifications** (`output.notifications` 5): needs a desktop
   notification service in the OS first.
 - **Relative positioning of inline boxes** (no points; the visible
@@ -180,9 +182,10 @@ Points are what each costs on html5test (588 in all).
 
 - **Canvas hit regions** (`canvas.hittest` 1): addHitRegion was dropped
   from the standard (no browser has it); not done.
-- **Shadow DOM** (`components.shadowdom` 4): attachShadow, slots,
-  retargeting, :host and ::slotted, shadow-including tree order in
-  style, layout and events.
+- ~~**Shadow DOM** (`components.shadowdom` 4)~~: done - attachShadow,
+  slots, retargeting, :host, ::slotted and ::part with scoped sheets,
+  the flat tree in style and boxes, declarative shadow roots
+  (docs/Architecture.md, "Shadow trees").
 - ~~**IndexedDB** (`storage.indexedDB.*` 25)~~: done - IndexedDB 3.0
   on the storage service (Web.IndexedDb.*, in the browser process for
   content processes), with navigator.storage and the Cache API on the
