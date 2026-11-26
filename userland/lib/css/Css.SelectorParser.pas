@@ -321,6 +321,17 @@ begin
   Result := ParseAnPlusBText(Text, A, B);
 end;
 
+{ One compound selector as a whole argument (:host(), :host-context(),
+  ::slotted()). }
+function ParseCompoundArgument(var Parser: TSelectorParser; Arguments: TCssTokenCursor): TCssSelectorList;
+begin
+  Inc(Parser.Depth);
+  Result := ParseList(Parser, Arguments, lmUnforgiving);
+  Dec(Parser.Depth);
+  if (Result <> nil) and ((Result.Count <> 1) or (Length(Result.Items[0].Compounds) <> 1)) then
+    FreeAndNil(Result);
+end;
+
 function ParsePseudoClassFunction(var Parser: TSelectorParser; Token: PCssToken; Arguments: TCssTokenCursor;
   var Simple: TCssSimpleSelector): Boolean;
 var
@@ -396,6 +407,49 @@ begin
           Exit;
         Simple.Value := AsciiLowercase(Item^.Text);
         Result := (Simple.Value = 'ltr') or (Simple.Value = 'rtl');
+      end;
+    pcHost, pcHostContext:
+      begin
+        Simple.Arguments := ParseCompoundArgument(Parser, Arguments);
+        Result := Simple.Arguments <> nil;
+      end;
+    pcState:
+      begin
+        Item := Arguments.NextNonWhitespace;
+        if (Item^.Kind <> tkIdent) or not Arguments.AtEndIgnoringWhitespace then
+          Exit;
+        Simple.Value := Item^.Text;
+        Result := True;
+      end;
+  end;
+end;
+
+{ ::slotted(compound) and ::part(ident+). }
+function ParsePseudoElementFunction(var Parser: TSelectorParser; Token: PCssToken; Arguments: TCssTokenCursor;
+  var Simple: TCssSimpleSelector): Boolean;
+var
+  Item: PCssToken;
+begin
+  Result := False;
+  Simple.PseudoElement := PseudoElementByName(AsciiLowercase(Token^.Text));
+  case Simple.PseudoElement of
+    peSlotted:
+      begin
+        Simple.Arguments := ParseCompoundArgument(Parser, Arguments);
+        Result := Simple.Arguments <> nil;
+      end;
+    pePart:
+      begin
+        repeat
+          Item := Arguments.NextNonWhitespace;
+          if Item^.Kind = tkEof then
+            Break;
+          if Item^.Kind <> tkIdent then
+            Exit;
+          SetLength(Simple.Languages, Length(Simple.Languages) + 1);
+          Simple.Languages[High(Simple.Languages)] := Item^.Text;
+        until False;
+        Result := Length(Simple.Languages) > 0;
       end;
   end;
 end;
@@ -569,6 +623,19 @@ begin
         { A pseudo-element. }
         Inc(Cursor.Position);
         NameToken := Cursor.Next;
+        if (NameToken^.Kind = tkFunction) and (Parser.Depth = 0) and not AfterPseudoElement then
+        begin
+          Simple.Kind := skPseudoElement;
+          if not ParsePseudoElementFunction(Parser, NameToken, Cursor.Contents(NameToken), Simple) then
+          begin
+            FreeAndNil(Simple.Arguments);
+            Invalid := True;
+            Break;
+          end;
+          AddSimple(Compound, Simple);
+          AfterPseudoElement := True;
+          Continue;
+        end;
         if (NameToken^.Kind <> tkIdent) or (Parser.Depth > 0) or AfterPseudoElement then
         begin
           Invalid := True;
@@ -576,7 +643,7 @@ begin
         end;
         Simple.Kind := skPseudoElement;
         Simple.PseudoElement := PseudoElementByName(AsciiLowercase(NameToken^.Text));
-        if Simple.PseudoElement = peNone then
+        if Simple.PseudoElement in [peNone, peSlotted, pePart] then
         begin
           Invalid := True;
           Break;
@@ -612,7 +679,7 @@ begin
           Simple.PseudoClass := PseudoClassByName(LowerName);
           if (Simple.PseudoClass = pcNone) or
             (Simple.PseudoClass in [pcIs, pcWhere, pcNot, pcHas, pcNthChild, pcNthLastChild,
-            pcNthOfType, pcNthLastOfType, pcLang, pcDir]) then
+            pcNthOfType, pcNthLastOfType, pcLang, pcDir, pcHostContext, pcState]) then
           begin
             Invalid := True;
             Break;

@@ -66,6 +66,12 @@ type
     function QuirksMode: TCssQuirksMode; override;
     function StyleAttribute(Element: TCssElement): TCssDeclarationBlock; override;
     function PresentationalHints(Element: TCssElement): TCssDeclarationBlock; override;
+    function TreeScope(Element: TCssElement): TObject; override;
+    function ShadowScope(Element: TCssElement): TObject; override;
+    function AssignedSlot(Element: TCssElement): TCssElement; override;
+    function ParentIsShadowHost(Element: TCssElement): Boolean; override;
+    function HasPart(Element: TCssElement; const Name: string): Boolean; override;
+    function HasCustomState(Element: TCssElement; const Name: string): Boolean; override;
     property Document: TDocument read FDocument;
   end;
 
@@ -189,9 +195,65 @@ begin
   Value := RecordPointer^.Value;
 end;
 
+{ A shadow tree's top elements answer their host (which the matcher
+  shows only to the host's own scope). }
 function TDomElementAdapter.Parent(Element: TCssElement): TCssElement;
+var
+  ParentNode: TNode;
 begin
-  Result := TElement(Element).ParentElement;
+  ParentNode := TElement(Element).ParentNode;
+  if ParentNode = nil then
+    Exit(nil);
+  if ParentNode.IsElement then
+    Exit(ParentNode);
+  if ParentNode is TShadowRoot then
+    Result := TShadowRoot(ParentNode).Host
+  else
+    Result := nil;
+end;
+
+function TDomElementAdapter.ParentIsShadowHost(Element: TCssElement): Boolean;
+begin
+  Result := TElement(Element).ParentNode is TShadowRoot;
+end;
+
+function TDomElementAdapter.TreeScope(Element: TCssElement): TObject;
+var
+  Shadow: TShadowRoot;
+begin
+  if not FDocument.HasShadowRoots then
+    Exit(nil);
+  Shadow := TElement(Element).ContainingShadowRoot;
+  if Shadow = nil then
+    Result := nil
+  else
+    Result := Shadow.StyleScope;
+end;
+
+function TDomElementAdapter.ShadowScope(Element: TCssElement): TObject;
+var
+  Shadow: TShadowRoot;
+begin
+  Shadow := TElement(Element).ShadowRoot;
+  if Shadow = nil then
+    Result := nil
+  else
+    Result := Shadow.StyleScope;
+end;
+
+function TDomElementAdapter.AssignedSlot(Element: TCssElement): TCssElement;
+begin
+  Result := TElement(Element).AssignedSlot;
+end;
+
+function TDomElementAdapter.HasPart(Element: TCssElement; const Name: string): Boolean;
+begin
+  Result := TElement(Element).HasAttributeAtom(AtomPart) and TElement(Element).PartList.Contains(Name);
+end;
+
+function TDomElementAdapter.HasCustomState(Element: TCssElement; const Name: string): Boolean;
+begin
+  Result := TElement(Element).HasCustomState(Name);
 end;
 
 function TDomElementAdapter.PreviousSibling(Element: TCssElement): TCssElement;
@@ -259,9 +321,12 @@ begin
     Result := Data^.States
   else
     Result := [];
+  if Node.IsDefinedElement then
+    Include(Result, esDefined);
+  if (Node = FDocument.FullscreenElement) and (Node.NodeDocument = FDocument) then
+    Include(Result, esFullscreen);
   if not Node.IsHtml then
     Exit;
-  Include(Result, esDefined);
   Name := Node.LocalNameAtom;
   if ((Name = AtomA) or (Name = AtomArea) or (Name = AtomLink)) and Node.HasAttributeAtom(AtomHref) then
     Include(Result, esLink);

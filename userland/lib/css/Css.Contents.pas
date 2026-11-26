@@ -70,6 +70,7 @@ uses
   Css.UserAgentStyleSheet,
   Css.RuleIndex,
   Css.StateInvalidation,
+  Css.TreeScopes,
   Css.Cascade,
   Css.ComputedValues,
   Css.StyleStructs,

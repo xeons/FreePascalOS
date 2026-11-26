@@ -523,7 +523,7 @@ begin
   Result := TLayoutBox(Data^.Box);
   if Node.IsText then
   begin
-    if (Node.ParentNode = nil) or (Result.Style <> StyleOf(Node.ParentNode)) then
+    if (StyleParentOf(Node) = nil) or (Result.Style <> StyleOf(StyleParentOf(Node))) then
       Exit(nil);
   end
   else if Result.Style <> Data^.Style then
@@ -568,8 +568,8 @@ begin
   begin
     if TCharacterData(Node).Data = '' then
       Exit;
-    if (Node.ParentNode <> nil) and (StyleOf(Node.ParentNode) <> nil) then
-      Text := TTextBox.Create(bkText, Node, StyleOf(Node.ParentNode))
+    if (StyleParentOf(Node) <> nil) and (StyleOf(StyleParentOf(Node)) <> nil) then
+      Text := TTextBox.Create(bkText, Node, StyleOf(StyleParentOf(Node)))
     else
       Text := TTextBox.Create(bkText, Node, Parent.Style);
     Include(Text.Flags, bfInlineLevel);
@@ -622,6 +622,7 @@ end;
 procedure TBoxTreeBuilder.AddChildrenOf(Parent: TLayoutBox; Node: TNode);
 var
   Child: TNode;
+  Cursor: TFlatTreeCursor;
 begin
   if IsClosedDetails(Node) then
   begin
@@ -630,11 +631,13 @@ begin
       AddNodeBox(Parent, Child);
     Exit;
   end;
-  Child := Node.FirstChild;
+  { The flat tree: a host shows its shadow tree, a slot its assigned
+    nodes (or its own children when none are). }
+  Child := FlatTreeFirstChild(Node, Cursor);
   while Child <> nil do
   begin
     AddNodeBox(Parent, Child);
-    Child := Child.NextSibling;
+    Child := FlatTreeNextChild(Cursor);
   end;
 end;
 

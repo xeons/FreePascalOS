@@ -586,6 +586,9 @@ type
     procedure SetCustomElementData(Data: TObject);
     { The element is "defined" (:defined): uncustomized or custom. }
     function IsDefinedElement: Boolean;
+    { A custom element's states (CustomStateSet, :state()). }
+    function HasCustomState(const Name: string): Boolean;
+    procedure SetCustomStates(const States: TStringArray);
   end;
 
   TAttr = class(TNode)
@@ -1080,6 +1083,7 @@ type
     IsValue: string;
     CustomDefinition: TObject;
     CustomData: TObject;
+    CustomStates: TStringArray;
     destructor Destroy; override;
   end;
 

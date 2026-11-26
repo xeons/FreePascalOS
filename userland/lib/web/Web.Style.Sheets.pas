@@ -48,6 +48,9 @@ type
     { Every sheet that applies now, user sheets first, then the author
       sheets in tree order, then the adopted ones. }
     function Collect: TCssStyleSheetArray;
+    { The author sheets of a shadow tree: its <style> and <link> sheets
+      in tree order, then its adopted ones. }
+    function CollectShadowRoot(Shadow: TShadowRoot): TCssStyleSheetArray;
   end;
 
 { Whether an element owns a style sheet (<style>, <link rel=stylesheet>),
@@ -93,57 +96,81 @@ begin
     DocumentSheetsOf(Document).OnSheetParsed := @Resources.RequestImports;
 end;
 
-function TDocumentSheetList.Collect: TCssStyleSheetArray;
+procedure AddSheet(Item: TCssStyleSheet; var Result: TCssStyleSheetArray; var Count: Integer);
+begin
+  if Item = nil then
+    Exit;
+  if Count >= Length(Result) then
+    SetLength(Result, Count * 2 + 4);
+  Result[Count] := Item;
+  Inc(Count);
+end;
+
+{ The <style> and <link rel=stylesheet> sheets of Root's tree in tree
+  order (not inside templates or shadow trees), appended to Result. }
+procedure CollectTreeSheets(Root: TNode; Resources: TDocumentResources; var Result: TCssStyleSheetArray;
+  var Count: Integer);
 var
-  Count, Index: Integer;
   Node: TNode;
   Element: TElement;
   Sheet: TCssStyleSheet;
   Sheets: TDocumentSheets;
-
-  procedure Add(Item: TCssStyleSheet);
-  begin
-    if Item = nil then
-      Exit;
-    if Count >= Length(Result) then
-      SetLength(Result, Count * 2 + 4);
-    Result[Count] := Item;
-    Inc(Count);
-  end;
-
 begin
-  Result := nil;
-  Count := 0;
-  Sheets := DocumentSheetsOf(FDocument);
-  if FResources <> nil then
-    for Index := 0 to FResources.UserStyleSheetCount - 1 do
-      Add(FResources.UserStyleSheet(Index));
-  Node := FDocument.FirstChild;
+  Sheets := DocumentSheetsOf(Root.NodeDocument);
+  Node := Root.FirstChild;
   while Node <> nil do
   begin
     if Node.IsElement then
     begin
       Element := TElement(Node);
       if Element.IsHtmlElement(AtomStyle) then
-        Add(Sheets.StyleElementSheet(Element))
-      else if Element.IsHtmlElement(AtomLink) and (FResources <> nil) then
+        AddSheet(Sheets.StyleElementSheet(Element), Result, Count)
+      else if Element.IsHtmlElement(AtomLink) and (Resources <> nil) then
       begin
-        Sheet := FResources.ElementStyleSheet(Element);
+        Sheet := Resources.ElementStyleSheet(Element);
         if (Sheet <> nil) and RelHas(Element.AttributeValueOf(AtomRel), 'stylesheet') and
            not RelHas(Element.AttributeValueOf(AtomRel), 'alternate') and
            not Element.HasAttributeAtom(AtomDisabled) then
-          Add(Sheet);
+          AddSheet(Sheet, Result, Count);
       end
       else if Element.IsHtmlElement(AtomTemplate) then
       begin
-        Node := Node.NextInTreeSkippingChildren(FDocument);
+        Node := Node.NextInTreeSkippingChildren(Root);
         Continue;
       end;
     end;
-    Node := Node.NextInTree(FDocument);
+    Node := Node.NextInTree(Root);
   end;
+end;
+
+function TDocumentSheetList.Collect: TCssStyleSheetArray;
+var
+  Count, Index: Integer;
+  Sheets: TDocumentSheets;
+begin
+  Result := nil;
+  Count := 0;
+  Sheets := DocumentSheetsOf(FDocument);
+  if FResources <> nil then
+    for Index := 0 to FResources.UserStyleSheetCount - 1 do
+      AddSheet(FResources.UserStyleSheet(Index), Result, Count);
+  CollectTreeSheets(FDocument, FResources, Result, Count);
   for Index := 0 to High(Sheets.AdoptedSheets) do
-    Add(Sheets.AdoptedSheets[Index]);
+    AddSheet(Sheets.AdoptedSheets[Index], Result, Count);
+  SetLength(Result, Count);
+end;
+
+function TDocumentSheetList.CollectShadowRoot(Shadow: TShadowRoot): TCssStyleSheetArray;
+var
+  Count, Index: Integer;
+  Adopted: TCssStyleSheetList;
+begin
+  Result := nil;
+  Count := 0;
+  CollectTreeSheets(Shadow, FResources, Result, Count);
+  Adopted := ShadowRootAdoptedSheets(Shadow);
+  for Index := 0 to High(Adopted) do
+    AddSheet(Adopted[Index], Result, Count);
   SetLength(Result, Count);
 end;
 

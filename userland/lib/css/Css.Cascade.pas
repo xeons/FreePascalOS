@@ -53,6 +53,10 @@ type
     LayerRank: Word;
     Specificity: LongWord;
     Order: LongInt;
+    { The shadow tree nesting of the tree the declarations come from
+      (0: the document; CSS Cascade 5's context: for normal declarations
+      the outer tree wins, for important ones the inner). }
+    ShadowDepth: Word;
   end;
   TCssCascadeItemArray = array of TCssCascadeItem;
 
@@ -67,7 +71,8 @@ type
 
 { Adds a block's normal and important declarations as cascade items. }
 procedure AddCascadeBlock(var Items: TCssCascadeItemArray; var Count: Integer; Block: TCssDeclarationBlock;
-  Origin: TCssOrigin; ElementAttached: Boolean; LayerRank: Word; Specificity: LongWord; Order: LongInt);
+  Origin: TCssOrigin; ElementAttached: Boolean; LayerRank: Word; Specificity: LongWord; Order: LongInt;
+  ShadowDepth: Word = 0);
 { Cascades Items[0..Count - 1] (reordered by priority on the way). The
   parent's writing mode and direction are what 'inherit' gives them. }
 procedure RunCascade(var Items: TCssCascadeItemArray; Count: Integer; ParentWritingMode: TCssWritingMode;
@@ -80,7 +85,8 @@ uses
   Css.Keywords;
 
 procedure AddCascadeBlock(var Items: TCssCascadeItemArray; var Count: Integer; Block: TCssDeclarationBlock;
-  Origin: TCssOrigin; ElementAttached: Boolean; LayerRank: Word; Specificity: LongWord; Order: LongInt);
+  Origin: TCssOrigin; ElementAttached: Boolean; LayerRank: Word; Specificity: LongWord; Order: LongInt;
+  ShadowDepth: Word);
 
   procedure Add(Important: Boolean);
   begin
@@ -93,6 +99,7 @@ procedure AddCascadeBlock(var Items: TCssCascadeItemArray; var Count: Integer; B
     Items[Count].LayerRank := LayerRank;
     Items[Count].Specificity := Specificity;
     Items[Count].Order := Order;
+    Items[Count].ShadowDepth := ShadowDepth;
     Inc(Count);
   end;
 
@@ -121,6 +128,13 @@ begin
   TierB := Tier(B);
   if TierA <> TierB then
     Exit(TierA > TierB);
+  if A.ShadowDepth <> B.ShadowDepth then
+  begin
+    if A.Important then
+      Exit(A.ShadowDepth > B.ShadowDepth)
+    else
+      Exit(A.ShadowDepth < B.ShadowDepth);
+  end;
   if A.ElementAttached <> B.ElementAttached then
     Exit(A.ElementAttached);
   if A.LayerRank <> B.LayerRank then

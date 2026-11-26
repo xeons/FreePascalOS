@@ -157,6 +157,25 @@ begin
   Result := CustomElementState in [CustomElementUncustomized, CustomElementCustom];
 end;
 
+function TElement.HasCustomState(const Name: string): Boolean;
+var
+  Index: Integer;
+begin
+  if FRareData <> nil then
+    for Index := 0 to High(FRareData.CustomStates) do
+      if FRareData.CustomStates[Index] = Name then
+        Exit(True);
+  Result := False;
+end;
+
+procedure TElement.SetCustomStates(const States: TStringArray);
+begin
+  if (System.Length(States) = 0) and ((FRareData = nil) or (FRareData.CustomStates = nil)) then
+    Exit;
+  RareData.CustomStates := Copy(States);
+  FOwnerDocument.NotifyCustomElementStateChanged(Self);
+end;
+
 function TElement.PartList: TDomTokenList;
 begin
   if RareData.PartList = nil then

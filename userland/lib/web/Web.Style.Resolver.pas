@@ -45,7 +45,7 @@ interface
 
 uses
   Web.Atoms, Web.Namespaces, Web.Dom, Css.ComputedStyle, Css.StyleEngine, Css.MediaQueries,
-  Css.ElementAdapter, Css.Selectors, Web.Style.NodeData, Web.Style.Adapter, Web.Style.Sheets,
+  Css.ElementAdapter, Css.Selectors, Css.TreeScopes, Web.Style.NodeData, Web.Style.Adapter, Web.Style.Sheets,
   Web.Layout.Resources, Css.Stylesheets, Web.Style.DocumentSheets, Web.Style.Animations;
 
 type
@@ -77,6 +77,9 @@ type
     FOnElementAttributeChanged: TNodeChangedEvent;
     FStylesComputed: Int64;
     FAuthorStylesDisabled: Boolean;
+    { Bumped whenever sheets may have changed: each shadow tree's scope
+      collects its sheets again when it is behind. }
+    FShadowSheetsVersion: LongWord;
     procedure SetAuthorStylesEnabled(Value: Boolean);
     function GetAuthorStylesEnabled: Boolean;
     procedure ResourcesChanged(Change: TResourceChange);
@@ -90,6 +93,9 @@ type
     procedure MarkSiblingsDirty(Parent: TNode);
     procedure MarkLaterSiblingsDirty(Element: TElement);
     procedure CheckSheetOwner(Node: TNode);
+    procedure ShadowSheetsChanged(Node: TNode);
+    function UpdateShadowScope(Host: TElement): Boolean;
+    procedure MarkAssignedNodesDirty(Slot: TElement);
   public
     constructor Create(Document: TDocument; Resources: TDocumentResources);
     destructor Destroy; override;
@@ -115,6 +121,9 @@ type
       const OldValue: string; HadValue: Boolean); override;
     procedure CharacterDataChanged(Node: TCharacterData; const OldValue: string); override;
     procedure ControlStateChanged(Element: TElement); override;
+    procedure ShadowRootAttached(Host: TElement); override;
+    procedure SlotAssignmentChanged(Slot: TElement); override;
+    procedure CustomElementStateChanged(Element: TElement); override;
     property Document: TDocument read FDocument;
     property Engine: TCssStyleEngine read FEngine;
     { Running animations and transitions (Web.Style.Animations). }
@@ -144,6 +153,14 @@ implementation
 
 uses
   Css.PropertyIds, Css.StateInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent;
+
+type
+  { A shadow tree's style scope with the sheets version it collected. }
+  TShadowStyleScope = class(TCssTreeScope)
+  public
+    SheetsVersion: LongWord;
+    Collected: Boolean;
+  end;
 
 var
   AtomStyleAttribute: TAtom;
@@ -248,7 +265,56 @@ begin
   begin
     FSheetsDirty := True;
     FSheetContentsChanged := True;
+    Inc(FShadowSheetsVersion);
   end;
+end;
+
+{ Brings Host's shadow tree scope up to date (made on first use, its
+  sheets collected again when behind); True when its rules changed. }
+function TDocumentStyler.UpdateShadowScope(Host: TElement): Boolean;
+var
+  Shadow, Outer: TShadowRoot;
+  Scope: TShadowStyleScope;
+  Depth: Integer;
+begin
+  Result := False;
+  Shadow := Host.ShadowRoot;
+  if Shadow = nil then
+    Exit;
+  Scope := TShadowStyleScope(Shadow.StyleScope);
+  if Scope = nil then
+  begin
+    Outer := Host.ContainingShadowRoot;
+    Depth := 1;
+    if (Outer <> nil) and (Outer.StyleScope <> nil) then
+      Depth := TCssTreeScope(Outer.StyleScope).Depth + 1;
+    Scope := TShadowStyleScope.Create(Host, Depth);
+    Shadow.StyleScope := Scope;
+  end;
+  if Scope.Collected and (Scope.SheetsVersion = FShadowSheetsVersion) then
+    Exit;
+  Scope.SheetsVersion := FShadowSheetsVersion;
+  Scope.Collected := True;
+  if FAuthorStylesDisabled then
+    Scope.SetSheets([])
+  else
+    Scope.SetSheets(FSheetList.CollectShadowRoot(Shadow));
+  Scope.Invalidate;
+  Result := True;
+end;
+
+{ A sheet owner in a shadow tree changed: the scopes collect again and
+  the host's subtree is styled again. }
+procedure TDocumentStyler.ShadowSheetsChanged(Node: TNode);
+var
+  Shadow: TShadowRoot;
+begin
+  Shadow := Node.ContainingShadowRoot;
+  if (Shadow = nil) or (Shadow.Host = nil) then
+    Exit;
+  Inc(FShadowSheetsVersion);
+  FTreeChanged := True;
+  MarkSubtreeStyleDirty(Shadow.Host);
 end;
 
 { Script changed the sheets (CSSOM): a rule appended at the end of the
@@ -262,6 +328,7 @@ begin
   end;
   FSheetsDirty := True;
   FSheetContentsChanged := True;
+  Inc(FShadowSheetsVersion);
 end;
 
 procedure TDocumentStyler.UpdateSheets;
@@ -358,6 +425,11 @@ begin
     ancestors: their subtrees are not all styled again). }
   Invalidation := FEngine.StateInvalidation(Element, Data^.States >< States);
   Data^.States := States;
+  { The shadow trees' rules are not in the engine's dependencies: their
+    elements are styled again with what may depend on them. }
+  if FDocument.HasShadowRoots and ((Element.ShadowRoot <> nil) or (Element.AssignedSlot <> nil) or
+    (Element.ContainingShadowRoot <> nil)) then
+    Invalidation := [siSelf, siDescendants, siSiblings];
   if Invalidation = [] then
     Exit;
   FTreeChanged := True;
@@ -492,15 +564,26 @@ var
   Child: TNode;
   Data: PNodeData;
   ForceChildren: Boolean;
+  Cursor: TFlatTreeCursor;
 begin
-  Child := Parent.FirstChild;
+  { The flat tree: a host's children are its shadow tree's, a slot's the
+    nodes assigned to it. }
+  Child := FlatTreeFirstChild(Parent, Cursor);
   while Child <> nil do
   begin
     if Child.IsElement then
     begin
       Data := NodeDataOf(Child);
       ForceChildren := False;
-      if Force or (ndStyleDirty in Data^.Flags) then
+      if (TElement(Child).ShadowRoot <> nil) and UpdateShadowScope(TElement(Child)) then
+      begin
+        { New rules for the host (:host) and its shadow tree. }
+        Include(Data^.Flags, ndStyleDirty);
+        ForceChildren := True;
+      end;
+      if ForceChildren then
+        StyleElement(TElement(Child), Data, ParentStyle, True)
+      else if Force or (ndStyleDirty in Data^.Flags) then
         ForceChildren := StyleElement(TElement(Child), Data, ParentStyle, True)
       else if ndAnimationDirty in Data^.Flags then
         ForceChildren := StyleElement(TElement(Child), Data, ParentStyle, False);
@@ -517,7 +600,7 @@ begin
         { Styled again when it is shown. }
         MarkSubtreeStyleDirty(Child);
     end;
-    Child := Child.NextSibling;
+    Child := FlatTreeNextChild(Cursor);
   end;
 end;
 
@@ -565,6 +648,8 @@ begin
     if Ancestor.IsElement and IsStyleSheetOwner(TElement(Ancestor)) then
     begin
       FSheetsDirty := True;
+      if FDocument.HasShadowRoots then
+        ShadowSheetsChanged(Ancestor);
       Exit;
     end;
     Ancestor := Ancestor.ParentNode;
@@ -598,11 +683,19 @@ begin
     if Added[Index].IsElement then
       MarkSubtreeStyleDirty(Added[Index]);
     if SubtreeHasSheetOwner(Added[Index]) then
+    begin
       FSheetsDirty := True;
+      if FDocument.HasShadowRoots then
+        ShadowSheetsChanged(Target);
+    end;
   end;
   for Index := 0 to High(Removed) do
     if Removed[Index].IsElement and SubtreeHasSheetOwner(Removed[Index]) then
+    begin
       FSheetsDirty := True;
+      if FDocument.HasShadowRoots then
+        ShadowSheetsChanged(Target);
+    end;
   CheckSheetOwner(Target);
   MarkSiblingsDirty(Target);
   if Assigned(FOnChildrenChanged) then
@@ -644,7 +737,11 @@ begin
     if Element.IsHtmlElement(AtomTable) then
       MarkHintsOfSubtreeDirty(Element);
     if IsStyleSheetOwner(Element) then
+    begin
       FSheetsDirty := True;
+      if FDocument.HasShadowRoots then
+        ShadowSheetsChanged(Element);
+    end;
   end;
   if Assigned(FOnElementAttributeChanged) then
     FOnElementAttributeChanged(Element);
@@ -661,6 +758,43 @@ begin
     MarkSiblingsDirty(Element.ParentNode);
   if Assigned(FOnElementAttributeChanged) then
     FOnElementAttributeChanged(Element);
+end;
+
+procedure TDocumentStyler.ShadowRootAttached(Host: TElement);
+begin
+  if not Host.IsConnected then
+    Exit;
+  FTreeChanged := True;
+  MarkSubtreeStyleDirty(Host);
+  if Assigned(FOnChildrenChanged) then
+    FOnChildrenChanged(Host);
+end;
+
+procedure TDocumentStyler.MarkAssignedNodesDirty(Slot: TElement);
+var
+  Nodes: TNodeArray;
+  Index: Integer;
+begin
+  Nodes := Slot.AssignedNodes;
+  for Index := 0 to High(Nodes) do
+    if Nodes[Index].IsElement then
+      MarkSubtreeStyleDirty(Nodes[Index]);
+end;
+
+procedure TDocumentStyler.SlotAssignmentChanged(Slot: TElement);
+begin
+  if not Slot.IsConnected then
+    Exit;
+  FTreeChanged := True;
+  MarkSubtreeStyleDirty(Slot);
+  MarkAssignedNodesDirty(Slot);
+  if Assigned(FOnChildrenChanged) then
+    FOnChildrenChanged(Slot);
+end;
+
+procedure TDocumentStyler.CustomElementStateChanged(Element: TElement);
+begin
+  ControlStateChanged(Element);
 end;
 
 procedure TDocumentStyler.CharacterDataChanged(Node: TCharacterData; const OldValue: string);
