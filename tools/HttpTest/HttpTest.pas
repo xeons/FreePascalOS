@@ -21,7 +21,8 @@
 
     HttpTest                      the URL Standard, HPACK (RFC 7541
                                   appendix C), HTTP/2 frames, HTTP/1.1
-                                  and HTTP/2 over pipes, the client
+                                  and HTTP/2 over pipes, the client,
+                                  WebSockets
     HttpTest hpack-export FILE    blocks for libnghttp2 to decode
     HttpTest hpack-import FILE    libnghttp2's blocks decoded
     HttpTest interop PORT         against scripts/test-web-server.py
@@ -47,7 +48,8 @@ uses
   HttpTest.Loopback,
   HttpTest.Client,
   HttpTest.CookiesAndCache,
-  HttpTest.Urls;
+  HttpTest.Urls,
+  HttpTest.WebSockets;
 
 begin
   if ParamStr(1) = 'hpack-export' then
@@ -73,5 +75,6 @@ begin
   TestLoopback;
   TestClient;
   TestCookiesAndCache(ExtractFilePath(ParamStr(0)));
+  TestWebSockets;
   FinishChecks('http test');
 end.

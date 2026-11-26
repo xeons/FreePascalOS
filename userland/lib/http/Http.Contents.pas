@@ -20,7 +20,8 @@
   The contents of libhttp.so: the URL Standard (Url.*) and an HTTP
   client (Http.*) speaking HTTP/1.1 and HTTP/2 over TCP and TLS, with
   cookies, a cache, authentication, redirects, content decoding,
-  alternative services (where HTTP/3 plugs in) and fetches on threads.
+  alternative services (where HTTP/3 plugs in), fetches on threads and
+  WebSocket connections (RFC 6455 with permessage-deflate).
   Compiling this unit compiles all of them.
 
   Everything but Http.SocketTransports and Http.SocketConnector is
@@ -86,6 +87,10 @@ uses
   Http.Messages,
   Http.Client,
   Http.FetchTasks,
+  Http.WebSocketFrames,
+  Http.WebSocketDeflate,
+  Http.WebSocketHandshake,
+  Http.WebSockets,
   Http.ConnectionSecurity,
   Http.SocketTransports,
   Http.SocketConnector;

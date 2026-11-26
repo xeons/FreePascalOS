@@ -138,7 +138,14 @@ type
       OnHead: THttpHeadEvent = nil; Token: THttpCancelToken = nil): THttpResult;
     { GET a URL into a string. }
     function Get(const UrlText: string; out Text: string; out Status: Integer): THttpResult;
+    { The observer told of lookups and connections (a silent one when
+      none is set), and the clock's Unix time: for connections made
+      beside the client's own (WebSockets). }
+    function CurrentObserver: THttpClientObserver;
+    function UnixTimeNow: Int64;
     property Settings: THttpClientSettings read FSettings write FSettings;
+    { How connections are made (the system's sockets, a test's pipes). }
+    property Connector: THttpConnector read FConnector;
     property Pool: THttpConnectionPool read FPool;
     { Not owned; nil: no cookies. }
     property Cookies: TCookieJar read FCookies write FCookies;
@@ -313,6 +320,16 @@ begin
 end;
 
 function THttpClient.Now: Int64;
+begin
+  Result := FClock();
+end;
+
+function THttpClient.CurrentObserver: THttpClientObserver;
+begin
+  Result := Observer;
+end;
+
+function THttpClient.UnixTimeNow: Int64;
 begin
   Result := FClock();
 end;
