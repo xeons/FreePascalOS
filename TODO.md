@@ -2024,12 +2024,19 @@ in the order they would be built:
 - [x] Both architectures: the toolchain built and ctest passing on amd64
       (KVM) and arm64 (QEMU virt)
 - [ ] The C runtime on the Raspberry Pi 5 (built, not tried on the board)
-- [ ] SA_RESTART, sigaltstack, sigtimedwait, real-time signal queues
+- [x] SA_RESTART (with the POSIX calls that never restart), sigaltstack (stack
+      overflows handled on it), sigtimedwait/sigwaitinfo, sigqueue, real-time
+      signal queues with siginfo values in order (240-242)
 - [ ] AF_UNIX sockets and socketpair; pseudo-terminal masters as one descriptor
 - [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
 - [ ] Atomic pread/pwrite, per-file fsync, nanosecond file times in stat
-- [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
-- [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
+- [x] setitimer/getitimer/alarm: all three interval timers in the kernel (248)
+- [x] timer_create and friends (REALTIME, MONOTONIC, process and thread CPU
+      time; SIGEV_SIGNAL/NONE/THREAD), ITIMER_VIRTUAL/PROF; CPU-time clocks
+      from real per-thread times, clock_getcpuclockid/pthread_getcpuclockid (243-249)
+- [ ] CLOCK_REALTIME absolute timers follow a step of the wall clock (now:
+      turned into uptime when set); SIGEV_THREAD_ID; thread-directed
+      queued signals (pthread_sigqueue, tgkill with a value)
 - [x] Clang driver support (`--target=x86_64-freepascalos`, `aarch64-freepascalos`):
       LLVM 23.1.6 patches, `make clang-toolchain`, ctest built by Clang
 - [ ] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,

@@ -12467,12 +12467,27 @@ headers), so there is no `epoll`, `inotify`, `signalfd`, `timerfd` or
   SIGILL, SIGBUS or SIGTRAP: a handler runs and the instruction is
   tried again (or the handler `siglongjmp`s out); without one the
   program says where it faulted and ends as killed by the signal.
-  Writing to a pipe nobody reads raises SIGPIPE. `sigaltstack` is
-  accepted and ignored (handlers run on the thread's stack).
-  `setitimer(ITIMER_REAL)` and `alarm` are a kernel thread of the
-  process (`timers.cpp`, started with the first timer, all signals
-  blocked, system calls only) sleeping on a word until the timer is due
-  and then sending SIGALRM; a child of fork has none.
+  Writing to a pipe nobody reads raises SIGPIPE. `SA_RESTART`,
+  `SA_ONSTACK` and `SA_RESETHAND` go to the kernel as disposition
+  flags; `sigaltstack`, `sigqueue`, `sigtimedwait`/`sigwaitinfo`/
+  `sigwait` are the kernel's (calls 242, 240, 241), and `siginfo_t`
+  carries `SI_USER`, `SI_QUEUE`, `SI_TIMER` or `SI_KERNEL`, the sender,
+  the value and a timer's id and overrun.
+- **Timers and clocks** (`timers.cpp`, `clocks.cpp`): `setitimer`,
+  `getitimer` and `alarm` (all three interval timers) and
+  `timer_create`/`timer_settime`/`timer_gettime`/`timer_delete`/
+  `timer_getoverrun` are the kernel's (calls 243-248). `SIGEV_SIGNAL`
+  and `SIGEV_NONE` are the kernel's own; `SIGEV_THREAD` is made here:
+  the kernel timer signals an event (`TimerNotifyEvent`), and a thread
+  of the timer's (all signals blocked, `sigev_notify_attributes` if
+  given, detached) waits for it, takes the overrun and calls the
+  function; `timer_delete` marks it and wakes it to end. A child of
+  fork closes what SIGEV_THREAD timers left in it. `clock_gettime` and
+  `clock_getres` of `CLOCK_PROCESS_CPUTIME_ID`, `CLOCK_THREAD_CPUTIME_ID`
+  and the clocks `clock_getcpuclockid`/`pthread_getcpuclockid` make
+  (Linux's encoding, negative; mlibc patched with two sysdeps for them,
+  `toolchain/patches/mlibc/0002-processor-time-clock-ids.patch`) read
+  the kernel's real per-thread times (call 249), not the uptime.
 - **Sockets** are the kernel's IPv4 and IPv6 sockets: addresses
   translated from `sockaddr_in`/`sockaddr_in6` (ports in host order in
   the kernel's record), the common `SO_*`, `TCP_*`, `IP_TTL`,
@@ -12543,9 +12558,10 @@ signal; waitpid sees the signal), stopped or continued (`SIGSTOP`,
 `SIGTSTP`, `SIGTTIN`, `SIGTTOU`, `SIGCONT`, through job control),
 dropped (`SIGCHLD`, `SIGURG`, `SIGWINCH` by default, and ignored ones),
 or - handled, or blocked by every thread - left pending, and one thread
-that does not block it is alerted (its wait ends with
-`ErrorInterrupted`, which becomes `EINTR`; there is no `SA_RESTART`),
-unless the sending thread takes it itself (`raise`). The alert is given
+that does not block it (or waits for it in `sigtimedwait`, preferred)
+is alerted (its wait ends with `ErrorInterrupted`, which becomes
+`EINTR`, or the call is made again: below), unless the sending thread
+takes it itself (`raise`). A new thread starts with its creator's mask. The alert is given
 up when that thread is back in user mode, whoever took the signal.
 At the thread's next return to user mode (`DeliverPendingSignals`, at
 the end of every system call and in the interrupt return hook) the
@@ -12561,6 +12577,112 @@ parent's waitpid sees the signal; a child that ends sends SIGCHLD to a
 parent that handles it; a process ended by a processor exception
 nobody took counts as killed by SIGSEGV.
 
+**Signals and timers (calls 240-249)**:
+
+| Call | (Arguments) | C |
+|---|---|---|
+| 240 | `CallQueueSignal` (Pid, Signal, Value) | sigqueue |
+| 241 | `CallWaitForSignal` (MaskAddress, InformationAddress, TimeoutNanoseconds or -1) | sigtimedwait, sigwaitinfo |
+| 242 | `CallSetAlternateSignalStack` (NewAddress, OldAddress) | sigaltstack |
+| 243 | `CallCreatePosixTimer` (ClockId, EventAddress) | timer_create |
+| 244 | `CallSetPosixTimer` (TimerId, Flags, NewAddress, OldAddress) | timer_settime |
+| 245 | `CallGetPosixTimer` (TimerId, SpecAddress) | timer_gettime |
+| 246 | `CallDeletePosixTimer` (TimerId) | timer_delete |
+| 247 | `CallGetTimerOverrun` (TimerId) | timer_getoverrun |
+| 248 | `CallSetIntervalTimer` (Which, NewAddress, OldAddress) | setitimer, getitimer |
+| 249 | `CallGetProcessorClock` (ClockId, TimeAddress, ResolutionAddress) | clock_gettime/getres of CPU clocks |
+
+*Queued signals* (`Processes.SignalQueue`): a signal that does not
+queue waits as a bit with the information of its first sending
+(`PendingInformation`; later ones merge into it). Real-time signals
+(32-64; mlibc's `SIGRTMIN` is 35) queue once per sending, from `kill`
+too: an entry from the kernel heap with the sender, its user id, the
+code and the value, at most `MaximumQueuedSignals` (1024) per process
+(then `EAGAIN`). Of the signals a thread may take the lowest goes
+first, and within a signal the oldest entry, so values arrive in the
+order sent. A timer's entry is part of the timer: it waits at most once,
+and expiries while it waits add to its overrun (`DELAYTIMER_MAX` at
+most), handed over with the signal and kept for `timer_getoverrun`.
+Ignoring a signal drops its entries; deleting a timer drops its entry;
+the end of the process frees the rest.
+
+*sigtimedwait* (`Processes.SignalWaits`): the thread names a set it
+blocks; while it waits the set is its `WaitedSignals`, so a sending of
+one alerts it although it blocks it. It takes the lowest of the set
+(blocked ones too) with its information; a signal outside the set it
+does not block, a stop or the end of the process end the wait with
+`EINTR` (the handler runs as the call returns), the timeout with
+`EAGAIN`.
+
+*Alternate signal stacks* (`Processes.AlternateSignalStacks`): per
+thread, kept by a forked child's thread, forgotten by exec. A signal
+whose disposition has `SignalFlagOnStack` gets its record at the top of
+that stack unless the thread is on it already; processor exceptions of
+a C program (it has a signal dispatcher) go there when the signal the
+C library makes of them (`SignalOfException`) has the flag, so a stack
+overflow - the main thread's reserve or a pthread's guard page - still
+reaches a SIGSEGV handler. Changing the stack while on it is
+`EPERM`, one below `MinimumSignalStackSize` `ENOMEM`; `ss_flags` reads
+`SS_ONSTACK` from the system call's stack pointer.
+
+*SA_RESTART* (`Processes.SystemCallRestart`): a call that failed with
+`ErrorInterrupted` because a signal alerted the thread, and is one that
+may be made again (read, write, open, the console and file-lock
+controls, waitpid, waits for processes and threads, channel messages,
+socket accept/send/receive), is noted at the end of the call. Entering
+a handler with `SignalFlagRestart` rewinds the frame to the system
+call instruction (`RewindSystemCall`: `Rip - 2` and the number in RAX;
+`Elr - 4` and the first argument back in X0), so the call starts over
+when the handler returns; a handler without the flag sees `EINTR`; if
+no handler runs at all (another thread took the signal) the call is
+made again at once. The waits for signals, sleeps, `poll`/`select`
+(`CallWaitForHandles`, `CallWaitForSocket`) and address waits are never
+made again, as POSIX lists. A call made again starts over, timeout and
+all.
+
+*POSIX and interval timers* (`Processes.PosixTimers`,
+`Processes.TimerSchedules`): a table per process, `MaximumPosixTimers`
+(64) POSIX timers (their ids are their places) and the three interval
+timers after them, made when first set. A timer counts on the uptime
+(`CLOCK_MONOTONIC`, `CLOCK_BOOTTIME`, `CLOCK_REALTIME` - whose absolute
+times are wall times turned into uptime when set; `ITIMER_REAL`): a
+kernel timer (`Kernel.Timers`) whose deferred call re-arms it on its
+schedule and queues the signal (`PostTimerSignal`, at `DispatchLevel`
+under the process's signal lock alone, waking a taker with an alert;
+a signal whose default action ends the process ends it when a thread
+takes it); or on processor time: the process's
+(`CLOCK_PROCESS_CPUTIME_ID`, `ITIMER_PROF`), its user-mode part
+(`ITIMER_VIRTUAL`, from the ticks' split of the exact run time) or one
+thread's (`CLOCK_THREAD_CPUTIME_ID`, also of another thread of the
+process). Processor time grows only while a thread runs, so those
+timers are looked at by the process's threads as they go back to user
+mode (`CheckProcessorTimers` in `DeliverPendingSignals`, once per clock
+tick per thread); while one is armed the process's threads keep their
+tick when they run alone (`NeedsClockTick`,
+`SetThreadNeedsClockTick`: the dynamic tick would defer it for a
+second), so such a timer is at most a tick late. Periods keep to their
+schedule (the next due time from the last), and periods that passed
+unseen are overrun. Notification: the signal and value
+(`TimerNotifySignal`; no sigevent: SIGALRM with the timer's id), an
+event handle (`TimerNotifyEvent`, for SIGEV_THREAD; expiries while it
+is still signaled count as overrun, taken by `CallGetTimerOverrun`), or
+nothing (`TimerNotifyNone`). Setting and deleting take one mutex;
+deleting stops the kernel timer and its call (twice, as
+`Objects.Timers` does) and waits for processor-time checks holding the
+timer. exec deletes the POSIX timers and keeps the interval timers; a
+forked child has none; the end of the process deletes them all before
+it is marked as ended.
+
+*Processor-time clocks* (`Processes.ProcessorClocks`): a thread's
+exact run time, a process's sum over its threads (ended ones included);
+the clock of a given process (any running one) or thread (of the
+caller's process) has Linux's encoding, `not (Id shl 3)` plus 2, plus 4
+for a thread. The resolution is a nanosecond.
+
+`Kernel.SignalSelfTest` checks the queue (order, a timer's entry once
+and not counted, the limit, a removed timer entry taking its pending
+bit), the schedule arithmetic, the clock ids and the exception signals.
+
 ### Tests
 
 `toolchain/ctest`: `ctest` (C: stdio, malloc and mmap, strings, math,
@@ -12569,7 +12691,7 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 `posix_spawn`, several children, process groups, pipes with `dup2` and
 `popen`, signal handlers, masks and pending signals, SIGCHLD, SIGPIPE,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
-loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; 410
+loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`; 518
 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own; with Clang (`make
@@ -12580,7 +12702,7 @@ skipped when the disk lacks them). `make c-test` boots
 `init=/usr/bin/ctest` and passes when
 every check did (`scripts/test-c-runtime.sh`, log in
 `build/amd64/c-test-serial.log`); a coretest line runs `ctest` when the
-system disk has it.
+system disk has it, and two more its `realtime-signals` and `timers` groups alone.
 
 ## Style engine (libcss)
 

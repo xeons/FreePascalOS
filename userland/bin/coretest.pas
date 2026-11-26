@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..446] of TCommandTest = (
+  CommandTests: array[0..448] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -852,7 +852,13 @@ const
     { The clock and timers (CallGetClockInformation): the test machine
       (q35) has an HPET whose comparator the kernel took as its event
       timer, and the counter's rate has a source. }
-    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0),
+    { Signals and timers of the C runtime (calls 240-249), by themselves
+      on a system that runs other things: real-time signal queues,
+      sigtimedwait, sigaltstack and stack overflows, SA_RESTART; POSIX
+      timers, interval timers and processor-time clocks. }
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest realtime-signals > rtsig.log 2>&1; echo $?; grep FAILED rtsig.log; tail -n 1 rtsig.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest timers > ctimers.log 2>&1; echo $?; grep FAILED ctimers.log; tail -n 1 ctimers.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0)
   );
 
 var
