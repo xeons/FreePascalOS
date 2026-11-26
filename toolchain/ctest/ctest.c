@@ -52,6 +52,9 @@ static const struct test_group groups[] = {
 	{"sockets", test_sockets},
 	{"dlopen", test_dlopen},
 	{"security", test_security},
+	{"unix-sockets", test_unix_sockets},
+	{"terminals", test_terminals},
+	{"file-io", test_file_io},
 };
 
 /* Runs a program of the suite; its exit code 0 is a pass. */

@@ -77,6 +77,7 @@ struct FreePascalOsSysdepTags :
 	// Memory (libc only).
 	Msync,
 	Mincore,
+	Madvise,
 	// Names.
 	OpenDir,
 	ReadEntries,

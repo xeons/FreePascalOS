@@ -202,7 +202,8 @@ int stat_path(const char *path, bool follow_links, struct stat *statbuf) {
 int stat_handle(int fd, struct stat *statbuf) {
 	struct fpos_file_information information;
 	long result = call(FPOS_CALL_GET_HANDLE_INFORMATION, fd, &information);
-	if (error_of(result))
+	// A pipe, a socket and the like are no node (FPOS_KIND_OTHER).
+	if (error_of(result) || information.kind == FPOS_KIND_OTHER)
 		return stat_of_handle_kind(fd, statbuf);
 	fill_stat(information, statbuf);
 	struct fpos_file_times times;

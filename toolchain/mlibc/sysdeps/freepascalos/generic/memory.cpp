@@ -56,6 +56,18 @@ int Sysdeps<Msync>::operator()(void *addr, size_t length, int flags) {
 	return e == EFAULT ? ENOMEM : e;
 }
 
+// Advice only: the kernel pages memory in as it is touched.
+int Sysdeps<Madvise>::operator()(void *addr, size_t length, int advice) {
+	(void)addr;
+	(void)length;
+	// MADV_NORMAL, MADV_RANDOM, MADV_SEQUENTIAL, MADV_WILLNEED and
+	// MADV_DONTNEED (0-4, the Linux values; mlibc's names for them come
+	// with its linux option).
+	if (advice < 0 || advice > 4)
+		return EINVAL;
+	return 0;
+}
+
 int Sysdeps<Mincore>::operator()(void *addr, size_t length, unsigned char *vec) {
 	int e = fpos::call_checked(FPOS_CALL_QUERY_MEMORY_RESIDENCY, addr, length, vec);
 	if (e)

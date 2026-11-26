@@ -1,0 +1,69 @@
+--- a/options/posix/generic/sys-uio.cpp	2026-11-25 17:57:42.456667000 -0600
++++ b/options/posix/generic/sys-uio.cpp	2026-11-25 17:57:42.463789120 -0600
+@@ -65,12 +65,60 @@
+ 	return written;
+ }
+ 
+-ssize_t preadv(int, const struct iovec *, int, off_t) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++// preadv and pwritev: the pieces gathered into one buffer and read or
++// written at the offset with one Pread or Pwrite (positioned, so the
++// descriptor's offset is left alone and the transfer is one call).
++static bool total_of(const struct iovec *iovs, int iovc, size_t *total) {
++	*total = 0;
++	if(iovc < 0 || iovc > IOV_MAX)
++		return false;
++	for(int i = 0; i < iovc; i++) {
++		if(SSIZE_MAX - *total < iovs[i].iov_len)
++			return false;
++		*total += iovs[i].iov_len;
++	}
++	return true;
+ }
+ 
+-ssize_t pwritev(int, const struct iovec *, int, off_t) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++ssize_t preadv(int fd, const struct iovec *iovs, int iovc, off_t offset) {
++	size_t bytes;
++	if(!total_of(iovs, iovc, &bytes)) {
++		errno = EINVAL;
++		return -1;
++	}
++	frg::vector<char, MemoryAllocator> buffer{getAllocator()};
++	buffer.resize(bytes ? bytes : 1);
++	ssize_t got = 0;
++	if(int e = mlibc::sysdep_or_enosys<Pread>(fd, buffer.data(), bytes, offset, &got); e) {
++		errno = e;
++		return -1;
++	}
++	size_t position = 0;
++	for(int i = 0; i < iovc && position < (size_t)got; i++) {
++		size_t copy = frg::min(iovs[i].iov_len, (size_t)got - position);
++		memcpy(iovs[i].iov_base, buffer.data() + position, copy);
++		position += copy;
++	}
++	return got;
++}
++
++ssize_t pwritev(int fd, const struct iovec *iovs, int iovc, off_t offset) {
++	size_t bytes;
++	if(!total_of(iovs, iovc, &bytes)) {
++		errno = EINVAL;
++		return -1;
++	}
++	frg::vector<char, MemoryAllocator> buffer{getAllocator()};
++	buffer.resize(bytes ? bytes : 1);
++	size_t position = 0;
++	for(int i = 0; i < iovc; i++) {
++		memcpy(buffer.data() + position, iovs[i].iov_base, iovs[i].iov_len);
++		position += iovs[i].iov_len;
++	}
++	ssize_t written = 0;
++	if(int e = mlibc::sysdep_or_enosys<Pwrite>(fd, buffer.data(), bytes, offset, &written); e) {
++		errno = e;
++		return -1;
++	}
++	return written;
+ }

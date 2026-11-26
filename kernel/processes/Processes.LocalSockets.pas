@@ -766,6 +766,8 @@ begin
     Socket^.QueueTail := nil;
   Socket^.QueuedBytes := Socket^.QueuedBytes - (Message^.Length - Message^.Consumed);
   Dec(Socket^.QueuedCount);
+  { Alone from now on: freed as a list of one. }
+  Message^.Next := nil;
 end;
 
 { The message's passed objects move to the receipt (Peek: nothing). }
