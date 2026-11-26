@@ -25,6 +25,9 @@
   without the HttpOnly cookie, readyState and location are the
   loader's, an onclick attribute handles a click, pushState changes the
   location and adds a history entry, and alert reaches the embedder.
+  Images made by script outside the document (new Image()) load and
+  fire load or error at listeners set after src, even when nothing
+  refers to them any more and the collectors run while they load.
 }
 unit WebLoadTest.Scripting;
 
@@ -40,7 +43,11 @@ implementation
 uses
   Classes,
   SysUtils,
+  SyncObjs,
   TestChecks,
+  Image.Model,
+  Image.Codecs,
+  Image.Files,
   Http.Cookies,
   Web.Dom,
   Web.Loading.Contexts,
@@ -281,8 +288,97 @@ begin
   end;
 end;
 
+type
+  TImageConditions = class(TScriptConditions)
+  public
+    function Started: Boolean;
+    function Done: Boolean;
+  end;
+
+function TImageConditions.Started: Boolean;
+begin
+  Result := OutputHas(Navigable, 'started');
+end;
+
+function TImageConditions.Done: Boolean;
+begin
+  Result := OutputHas(Navigable, 'done');
+end;
+
+function SmallPng: string;
+var
+  Image: TImage;
+  Bytes: TBytes;
+begin
+  Image := TImage.Create(3, 2);
+  try
+    Image.Fill($FF808080);
+    Bytes := EncodeImage(Image, ImageFormatPng);
+  finally
+    Image.Free;
+  end;
+  SetString(Result, PChar(@Bytes[0]), Length(Bytes));
+end;
+
+{ new Image() and createElement('img') outside the document: the fetch
+  waits behind a gate while both collectors run, with no reference to
+  the elements left in script; the events still reach the handlers. }
+procedure CheckDetachedImages;
+var
+  Environment: TTestEnvironment;
+  Conditions: TImageConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Route: TTestRoute;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TImageConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  try
+    Environment.Site.AddRoute('i.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><p id="out">x</p><script>var seen = [];' +
+      'function note(t) { seen.push(t); if (seen.length == 3) document.getElementById("out").textContent =' +
+      ' seen.sort().join(",") + " done"; }' +
+      'var image = new Image(); image.src = "slow.png";' +
+      ' image.onload = function () { note("load"); };' +
+      ' image.onerror = function () { note("error slow"); };' +
+      'image = document.createElement("img"); image.src = "data:image/heic;base64,AAAA";' +
+      ' image.addEventListener("error", function () { note("error data"); });' +
+      'image = new Image(); image.src = "missing.png"; image.onerror = function () { note("error missing"); };' +
+      'image = null; document.getElementById("out").textContent = "started";</script>');
+    Route := Environment.Site.AddRoute('i.test/slow.png', 200, 'Content-Type: image/png', SmallPng);
+    Route.HeadGate := TEvent.Create(nil, True, False, '');
+    Navigable.NavigateTo('https://i.test/page.html');
+    Check(Environment.RunUntil(@Conditions.Started), 'detached images: the script ran');
+    Executor.ContextOf(Navigable.ActiveDocument).Engine.CollectGarbage;
+    Web.Dom.CollectGarbage;
+    Executor.ContextOf(Navigable.ActiveDocument).Engine.CollectGarbage;
+    Route.HeadGate.SetEvent;
+    Check(Environment.RunUntil(@Conditions.Done), 'detached images: every event came (' +
+      Trim(Conditions.Console) + ')');
+    Text := Navigable.ActiveDocument.GetElementById('out').TextContent;
+    Check(Text = 'error data,error missing,load done', 'detached images: load and error at the handlers (' +
+      Text + ')');
+    Check(Navigable.Loader.Images.PendingCount = 0, 'detached images: nothing left loading');
+  finally
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
+  CheckDetachedImages;
   CheckScriptedPage;
   CheckScriptFetches;
   CheckImportMaps;

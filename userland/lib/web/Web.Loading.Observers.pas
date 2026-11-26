@@ -22,7 +22,8 @@
   and child changes into calls on whoever loads for them (style sheet
   and icon links, preload links, images and picture sources, scripts,
   base, meta, title, iframes and frames). It only dispatches; TLoadingEvents is implemented
-  by the document loader.
+  by the document loader. An img's attribute changes are passed on also
+  while it is outside the document, since images load there too.
 }
 unit Web.Loading.Observers;
 
@@ -162,7 +163,17 @@ procedure TLoadingObserver.AttributeChanged(Element: TElement; LocalName: TAtom;
 var
   Parent: TElement;
 begin
-  if not Element.IsHtml or not Element.IsConnected or (NamespaceId <> NamespaceNone) then
+  if not Element.IsHtml or (NamespaceId <> NamespaceNone) then
+    Exit;
+  { An img loads whether or not it is in the document (new Image()). }
+  if Element.LocalNameAtom = AtomImg then
+  begin
+    if (LocalName = AtomSrc) or (LocalName = AtomSrcset) or (LocalName = AtomSizes) or
+       (LocalName = AtomCrossorigin) or (LocalName = AtomLoading) then
+      FEvents.ImageChanged(Element);
+    Exit;
+  end;
+  if not Element.IsConnected then
     Exit;
   case Element.LocalNameAtom of
     AtomLink:
@@ -170,10 +181,6 @@ begin
          (LocalName = AtomDisabled) or (LocalName = AtomCrossorigin) or (LocalName = AtomSizes) or
          (LocalName = AtomType) then
         FEvents.LinkChanged(Element);
-    AtomImg:
-      if (LocalName = AtomSrc) or (LocalName = AtomSrcset) or (LocalName = AtomSizes) or
-         (LocalName = AtomCrossorigin) or (LocalName = AtomLoading) then
-        FEvents.ImageChanged(Element);
     AtomSource:
       begin
         Parent := Element.ParentElement;

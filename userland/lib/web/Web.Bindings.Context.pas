@@ -51,7 +51,9 @@
   nothing more is marked. The window's document wrapper is a root, so
   every wrapper of a connected node lives, with its expando properties,
   event listeners and handlers, as long as its node stays in the
-  document; and script never sees two wrappers for one node.
+  document; and script never sees two wrappers for one node. A node with
+  pending activity (TNode.BeginPendingActivity: an image loading outside
+  the document) is a root too, until the event it waits for has fired.
 
   Cycles are fine: a detached subtree whose wrappers only refer to each
   other (expandos, listeners closing over nodes) has no marked wrapper
@@ -891,6 +893,14 @@ begin
   { The window's document: every wrapper of a connected node lives. }
   if FDocument.ScriptWrapper <> nil then
     Tracer.MarkCell(TBindingWrapper(FDocument.ScriptWrapper));
+  { Nodes with pending activity (an image whose load event is still to
+    come) keep their wrappers, and with them their groups. }
+  for Index := 0 to FNodeWrapperCount - 1 do
+  begin
+    Wrapper := FNodeWrappers[Index];
+    if (Wrapper.NativeData <> nil) and TNode(Wrapper.NativeData).HasPendingActivity then
+      Tracer.MarkCell(Wrapper);
+  end;
   { Events being dispatched keep their wrappers (and expandos). }
   for Index := 0 to FEventWrapperCount - 1 do
   begin

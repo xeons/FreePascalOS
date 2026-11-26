@@ -230,6 +230,13 @@ type
     { References: see the unit's description. }
     procedure Retain;
     procedure Release;
+    { Pending activity (an image loading, its load or error event still
+      to fire): the node is retained, and its script wrapper, with the
+      listeners waiting for that event, kept alive even outside the
+      document. Begin and End come in pairs. }
+    procedure BeginPendingActivity;
+    procedure EndPendingActivity;
+    function HasPendingActivity: Boolean; inline;
     function IsContainer: Boolean; inline;
     { The insert algorithm without the pre-insertion checks: for the
       parser, which only makes valid trees. Child nil appends. }
@@ -860,6 +867,8 @@ type
     SubtreeReferences: LongWord;
     { Where the node is in the list of nodes to collect, plus one. }
     CollectorSlot: LongWord;
+    { BeginPendingActivity calls not yet ended. }
+    PendingActivity: LongWord;
     Listeners: TEventListenerList;
     ChildNodeList: TChildNodeList;
     ChildrenCollection: THtmlCollection;

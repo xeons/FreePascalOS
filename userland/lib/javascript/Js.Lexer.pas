@@ -311,7 +311,9 @@ begin
       Inc(FPosition);
       Continue;
     end;
-    if (Character > '/') and (Character < #$80) then
+    { Every other ASCII character above '/' starts a token, except '<'
+      that may open an HTML-like comment. }
+    if (Character > '/') and (Character < #$80) and (Character <> '<') then
       Break;
     if IsLineTerminator(Character) then
     begin
