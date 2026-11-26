@@ -512,7 +512,8 @@ uses
   WebIpc.Wire,
   WebView.Zoom,
   WebView.Sites,
-  WebView.ContentProcesses;
+  WebView.ContentProcesses,
+  WebView.ContentMemory;
 
 type
   { The view's ear on its content process. }

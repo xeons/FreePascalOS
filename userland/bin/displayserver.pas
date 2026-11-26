@@ -72,6 +72,7 @@ uses
   Abi.SystemCalls,
   Sys.Objects,
   Sys.MemoryStatus,
+  Sys.PriorityClasses,
   Sys.ServiceControl,
   Sys.Streams,
   Util.CommandLine,
@@ -191,12 +192,16 @@ end;
 
 { The screen must not go when memory runs out: the kernel ends the
   display server only if it is the one asking (needs root; otherwise it
-  just stays an ordinary candidate). }
+  just stays an ordinary candidate). And it must keep drawing and
+  taking input whatever programs do: the System priority class puts its
+  threads above every program's (Kernel.PriorityClasses), and lets it
+  use the memory kept in reserve. }
 procedure ProtectFromMemoryShortage;
 var
   Previous: LongInt;
 begin
   SetOomScoreAdjust(OomScoreAdjustNever, Previous);
+  SetPriorityClass(0, PriorityClassSystem);
 end;
 
 begin

@@ -52,6 +52,8 @@ uses
   Sys.SystemUsage,
   Sys.MemoryStatus,
   Sys.Restrictions,
+  Sys.PriorityClasses,
+  Sys.Jobs,
   Sys.Power,
   Sys.Time,
   Sys.TimeZones,

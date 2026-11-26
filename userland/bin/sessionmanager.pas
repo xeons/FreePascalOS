@@ -84,6 +84,8 @@ uses
   Util.Logins,
   Util.Messages,
   Sys.Notifications,
+  Sys.MemoryStatus,
+  Sys.PriorityClasses,
   Windowing.Connection,
   Windowing.EndRequests,
   Windowing.Windows,
@@ -187,12 +189,25 @@ begin
   FWindow.Present;
 end;
 
+{ Logging off, locking and the session's end must work whatever a
+  program of the session does: the session manager runs in the
+  Interactive priority class, may use the memory reserve and is never
+  ended for memory unless it is the one asking. }
+procedure ProtectFromRunawayPrograms;
+var
+  Previous: LongInt;
+begin
+  SetPriorityClass(0, PriorityClassInteractive);
+  SetOomScoreAdjust(OomScoreAdjustNever, Previous);
+end;
+
 var
   Manager: TSessionManager;
   Error: LongInt;
 begin
   if CurrentUserId <> RootId then
     Fail(1, 'only root may run the session manager');
+  ProtectFromRunawayPrograms;
   Error := ConnectToDisplay;
   if Error <> ErrorNone then
     FailWithError(1, Error, 'the display server');

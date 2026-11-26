@@ -122,7 +122,7 @@ end;
 function IsShellEvent(Kind: LongWord): Boolean;
 begin
   Result := (Kind = EventShellWindowChanged) or (Kind = EventShellWindowGone) or (Kind = EventDisplaysChanged) or
-    (Kind = EventNotificationIconChanged) or (Kind = EventHotkey);
+    (Kind = EventNotificationIconChanged) or (Kind = EventHotkey) or (Kind = EventShellEndTaskOffered);
 end;
 
 procedure DeliverShellEvent(const Message: TWindowMessage);

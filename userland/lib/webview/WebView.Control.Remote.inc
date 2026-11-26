@@ -489,16 +489,23 @@ end;
 procedure TWebView.RemoteEnded(Crashed: Boolean; ExitCode: LongInt);
 var
   Reason: string;
+  ProcessId: QWord;
 begin
   CloseSheet;
   HideHangBar;
+  ProcessId := 0;
+  if FProcess <> nil then
+    ProcessId := FProcess.ProcessId;
   FProcess := nil;
   FFrames.TakeSurface(0, nil, Default(TSurface));
   if not Crashed then
     Exit;
   TellProcessEvent('crashed', ExitCode);
-  if ExitCode = 137 then
-    Reason := 'The page''s process was ended (it stopped responding, or memory ran out).'
+  if EndedForMemory(ProcessId, ExitCode) then
+    Reason := 'This page ran out of memory, and its process was ended so the rest of the system ' +
+      'could go on. Other tabs are not affected.'
+  else if ExitCode = 137 then
+    Reason := 'The page''s process was ended (it stopped responding).'
   else
     Reason := 'The page''s process ended unexpectedly (status ' + IntToStr(ExitCode) +
       '). Other tabs are not affected.';

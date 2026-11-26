@@ -23,7 +23,11 @@
   no other process controlled), a limit on the memory it may commit,
   and a high out-of-memory score - higher still while none of its
   views is shown - so that when memory runs out a background renderer
-  goes before the browser.
+  goes before the browser. Its priority class follows the same way
+  (Kernel.PriorityClasses): Background while a view of it is shown, so
+  a page's scripts and layout never hold up the browser's window (which
+  runs Normal), the desktop or the display server; Idle while none is,
+  so a hidden tab gets the processor only when nothing else wants it.
 }
 unit WebContent.Sandbox;
 
@@ -50,7 +54,8 @@ uses
   SysUtils,
   Abi.SystemCalls,
   Sys.Restrictions,
-  Sys.MemoryStatus;
+  Sys.MemoryStatus,
+  Sys.PriorityClasses;
 
 var
   LastShown: LongInt = -1;
@@ -86,9 +91,15 @@ begin
     Exit;
   LastShown := Ord(Shown);
   if Shown then
-    SetOomScoreAdjust(ForegroundOomAdjust, Previous)
+  begin
+    SetOomScoreAdjust(ForegroundOomAdjust, Previous);
+    SetPriorityClass(0, PriorityClassBackground);
+  end
   else
+  begin
     SetOomScoreAdjust(BackgroundOomAdjust, Previous);
+    SetPriorityClass(0, PriorityClassIdle);
+  end;
 end;
 
 end.

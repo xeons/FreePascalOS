@@ -442,10 +442,7 @@ begin
       if HitTest(Window, PointerX, PointerY) = DragArea then
         case DragArea of
           HitClose:
-            begin
-              Message := NewMessage(EventCloseRequested, Window.Id);
-              SendToProgram(Window, Message);
-            end;
+            AskToClose(Window);
           HitMaximize:
             ToggleMaximized(Window);
           HitMinimize:
@@ -662,8 +659,7 @@ begin
     { The lock screen is not closed. }
     if ScreenLocked then
       Exit;
-    Message := NewMessage(EventCloseRequested, ActiveWindow.Id);
-    SendToProgram(ActiveWindow, Message);
+    AskToClose(ActiveWindow);
     Exit;
   end;
   Message := NewMessage(EventKey, Target.Id);

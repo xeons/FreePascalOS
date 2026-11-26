@@ -78,6 +78,7 @@ uses
   WebIpc.Messages,
   WebView.Network,
   WebView.ContentProcesses,
+  WebView.ContentMemory,
   Browser.Profile;
 
 const
@@ -371,6 +372,8 @@ end;
 function TAboutPages.SupportPage: string;
 var
   Rows: string;
+  JobCommitted: QWord;
+  JobLimit: QWord;
 
   procedure Row(const Name, Value: string);
   begin
@@ -385,6 +388,11 @@ begin
   Row('Profile folder', BrowserProfileFolder);
   Row('Content processes', IntToStr(ContentProcesses.ProcessCount) + ' (one per site, at most 30)');
   Row('Sandboxed', BoolToStr(ContentProcesses.Sandboxed, 'yes', 'no'));
+  Row('Memory per page', IntToStr(ContentProcesses.MemoryLimitMegabytes) + ' MiB');
+  GetContentJobMemory(JobCommitted, JobLimit);
+  if JobLimit > 0 then
+    Row('Memory of all pages', IntToStr(JobCommitted div 1048576) + ' of ' + IntToStr(JobLimit div 1048576) +
+      ' MiB committed');
   Row('Process protocol', 'version ' + IntToStr(WebIpcProtocolVersion));
   Row('HTTP/3', BoolToStr(Http3Allowed, 'allowed', 'off'));
   Row('Private browsing', BoolToStr(PrivateBrowsing, 'on', 'off'));

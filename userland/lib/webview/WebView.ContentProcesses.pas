@@ -106,6 +106,8 @@ const
   DefaultContentProgram = '/bin/webcontent';
   DefaultHangTimeoutMilliseconds = 8000;
   DefaultMaximumViewsPerProcess = 4;
+  { Used when the machine's RAM cannot be read; otherwise a quarter of
+    it (WebView.ContentMemory). }
   DefaultMemoryLimitMegabytes = 1024;
   { Each process takes two of the IPC thread's 64 wait handles. }
   MaximumContentProcesses = 30;
@@ -126,7 +128,8 @@ uses
   Web.Script.Watchdog,
   WebIpc.Endpoints,
   WebIpc.ViewMessages,
-  WebView.NetworkService;
+  WebView.NetworkService,
+  WebView.ContentMemory;
 
 const
   PingIntervalMilliseconds = 1000;
@@ -154,7 +157,10 @@ begin
   FHangTimeoutMilliseconds := DefaultHangTimeoutMilliseconds;
   FScriptRunLimitMilliseconds := DefaultScriptRunLimitMilliseconds;
   FMaximumViewsPerProcess := DefaultMaximumViewsPerProcess;
-  FMemoryLimitMegabytes := DefaultMemoryLimitMegabytes;
+  if MachineRamMegabytes > 0 then
+    FMemoryLimitMegabytes := PageMemoryLimitFor(MachineRamMegabytes)
+  else
+    FMemoryLimitMegabytes := DefaultMemoryLimitMegabytes;
   FSandboxed := True;
   FProgramPath := DefaultContentProgram;
   FPingTimer := TTimer.Create(Self);
@@ -338,6 +344,9 @@ begin
     CloseHandle(First);
     Exit;
   end;
+  { All pages together are limited too, so many heavy tabs cannot take
+    what the rest of the system needs. }
+  PutInContentJob(Handle, FMemoryLimitMegabytes);
   Result := TContentProcess.Create(TIpcEndpoint.Create(First), Site);
   Result.ProcessHandle := Handle;
   Result.ProcessId := ProcessIdOf(Handle);

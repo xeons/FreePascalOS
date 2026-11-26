@@ -41,11 +41,17 @@ uses
 procedure MinimizeWindow(Window: TServerWindow);
 { Carries out a Manage* command (Windowing.Protocol) on the window. }
 procedure ManageWindow(Window: TServerWindow; Command: LongWord);
+{ Asks the window's program to close it (its close button, Alt+F4, the
+  taskbar); a program that does not respond is offered to the shell to
+  end (EventShellEndTaskOffered). }
+procedure AskToClose(Window: TServerWindow);
 
 implementation
 
 uses
   Windowing.Protocol,
+  Server.Clients,
+  Server.Shell,
   Server.Actions;
 
 procedure MinimizeWindow(Window: TServerWindow);
@@ -69,6 +75,15 @@ var
 begin
   Message := NewMessage(EventCloseRequested, Window.Id);
   SendToProgram(Window, Message);
+  { A program that does not answer its pings will not hear this either:
+    the shell offers to end it, so a hung window can always be closed. }
+  if Window.NotResponding and (Window.Client <> nil) and not IsShell(TClient(Window.Client)) then
+  begin
+    Message := NewMessage(EventShellEndTaskOffered, Window.Id);
+    Message.Value := LongInt(TClient(Window.Client).ProcessId);
+    SetMessageText(Message, Window.Title);
+    SendToShell(Message);
+  end;
 end;
 
 procedure ManageWindow(Window: TServerWindow; Command: LongWord);
