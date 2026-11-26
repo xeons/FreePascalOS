@@ -19,7 +19,7 @@ license = "GPL-3.0-or-later"
 license_files = ["port:files/COPYING"]
 maintainer = "FreePascalOS ports"
 categories = ["graphics"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 
 [dependencies]

@@ -25,7 +25,7 @@ license = "MIT"
 license_files = ["docs/license.rst"]
 maintainer = "FreePascalOS ports"
 categories = ["graphics"]
-status = "untested"
+status = "tested"
 architectures = ["x86_64", "aarch64"]
 notes = """
 The patches teach Mesa the system (DETECT_OS_FREEPASCALOS, _GNU_SOURCE,

@@ -19,7 +19,7 @@ license = "Apache-2.0 WITH LLVM-exception"
 license_files = ["port:files/LICENSE.TXT"]
 maintainer = "FreePascalOS ports"
 categories = ["devel"]
-status = "untested"
+status = "tested"
 conflicts = ["llvm"]
 architectures = ["x86_64", "aarch64"]
 

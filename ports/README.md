@@ -34,10 +34,10 @@ The ports so far:
 | databases/sqlite3 | 3.54.1 | autotools (autosetup), options and a flavour | untested |
 | shells/bash | 5.3 | autotools, signed source | untested |
 | devel/binutils | 2.47 | autotools (host = target), the cross toolchain's patch | tested; on the system disk (with the C toolchain) |
-| devel/llvm | 23.1.6 | cmake (LLVM's libraries only, the host target; TableGen built natively), two patches | built; a build dependency of mesa |
-| devel/llvm-runtime | 23.1.6 | custom: libLLVM.so from llvm's package | tested (x86-64); on the system disk (with mesa) |
-| graphics/mesa | 26.3.1 | meson (llvmpipe, softpipe, lavapipe; EGL and Vulkan platforms for the display server), signed source, Mako as a build-time source | tested (x86-64); on the system disk |
-| graphics/gldemos | 1.0 | custom, from `files/` (gltest, glgears, vkcube) | tested (x86-64); on the system disk |
+| devel/llvm | 23.1.6 | cmake (LLVM's libraries only, the host target; TableGen built natively), two patches | built (x86-64, AArch64); a build dependency of mesa |
+| devel/llvm-runtime | 23.1.6 | custom: libLLVM.so from llvm's package | tested (x86-64, AArch64); on the system disk (with mesa) |
+| graphics/mesa | 26.3.1 | meson (llvmpipe, softpipe, lavapipe; EGL and Vulkan platforms for the display server), signed source, Mako as a build-time source | tested (x86-64; AArch64 headless: gltest); on the system disk |
+| graphics/gldemos | 1.0 | custom, from `files/` (gltest, glgears, vkcube) | tested (x86-64; AArch64: gltest); on the system disk |
 
 "untested" ports are committed but have not been built and run on the
 system yet: the C ports wait for the C toolchain (below) and are skipped

@@ -570,7 +570,13 @@ sets PAN again whatever the interrupted code had, and the exception
 return restores it; a copy that faults (memory another thread freed)
 leaves through `ArchUserCopyFault` with PAN set again in the saved state.
 MSR PAN does not exist on ARMv8.0, so the copy routines test
-`ArchPanEnabled` first. The Cortex-A72 (QEMU's default here, the
+`ArchPanEnabled` first. Every processor also sets SCTLR_EL1.UCT, UCI and
+DZE (as Linux does): user mode may read CTR_EL0, clean and invalidate
+caches by address (DC CVAU, DC CIVAC, IC IVAU) and zero cache lines (DC
+ZVA), which code generated at run time needs to make itself visible to
+instruction fetch (GCC's `__clear_cache`, LLVM's JIT in Mesa's
+llvmpipe); without them those instructions trap and the program dies of
+SIGILL. The Cortex-A72 (QEMU's default here, the
 Raspberry Pi 4) has no PAN; the Pi 5's Cortex-A76 and QEMU's "max"
 processor have it (`CPU=max scripts/run-qemu-arm64.sh`; the AArch64 boot
 test boots it once). Every system call reaches user memory through
