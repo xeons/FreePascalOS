@@ -48,6 +48,9 @@ uses
   Web.Fetch.ContentSecurityPolicy,
   Web.Fetch.Requests,
   Web.Fetch.MixedContent,
+  Web.Fetch.CspSources,
+  Web.Fetch.CspChecks,
+  Url.Origins,
   Web.Fetch.Cors;
 
 var
@@ -244,6 +247,163 @@ begin
   end;
 end;
 
+type
+  TViolationLog = class(TCspViolationReporter)
+  public
+    Text: string;
+    procedure ViolationOccurred(constref Violation: TCspViolation); override;
+  end;
+
+procedure TViolationLog.ViolationOccurred(constref Violation: TCspViolation);
+const
+  Names: array[TCspDisposition] of string = ('enforce', 'report');
+begin
+  Text := Text + Violation.EffectiveDirective + ' ' + Violation.BlockedUri + ' ' + Names[Violation.Disposition];
+  if Violation.Sample <> '' then
+    Text := Text + ' "' + Violation.Sample + '"';
+  Text := Text + ';';
+end;
+
+function Sources(const Text: string): TStringArray;
+begin
+  Result := Text.Split([' '], TStringSplitOptions.ExcludeEmpty);
+end;
+
+procedure ExpectMatch(const List, Url, Origin: string; Expected: Boolean; RedirectCount: Integer = 0);
+var
+  OriginRecord: TUrlOrigin;
+begin
+  OriginRecord := OriginOfUrl(MakeUrl(Origin));
+  Check(UrlMatchesSourceList(MakeUrl(Url), Sources(List), OriginRecord, RedirectCount) = Expected,
+    'csp match: [' + List + '] ' + Url + ' from ' + Origin + ' ' + BoolToStr(Expected, 'matches', 'does not match'));
+end;
+
+{ Source lists as CSP 3 section 6.7.2 matches them (cases after the
+  specification's examples and web-platform-tests' content-security-
+  policy/ matching tests). }
+procedure CheckCspMatching;
+const
+  AlertHash = '5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=';
+begin
+  ExpectMatch('''self''', 'https://a.example/x', 'https://a.example/', True);
+  ExpectMatch('''self''', 'http://a.example/x', 'https://a.example/', False);
+  ExpectMatch('''self''', 'wss://a.example/socket', 'https://a.example/', True);
+  ExpectMatch('''self''', 'https://a.example/', 'http://a.example/', True);
+  ExpectMatch('''self''', 'ws://a.example/', 'http://a.example/', True);
+  ExpectMatch('''self''', 'https://b.example/', 'https://a.example/', False);
+  ExpectMatch('''SELF''', 'https://a.example/', 'https://a.example/', True);
+  ExpectMatch('*', 'https://anything.example/', 'https://a.example/', True);
+  ExpectMatch('*', 'wss://anything.example/', 'https://a.example/', True);
+  ExpectMatch('*', 'data:text/plain,x', 'https://a.example/', False);
+  ExpectMatch('*', 'blob:https://a.example/1', 'https://a.example/', False);
+  ExpectMatch('https:', 'https://x.example/', 'https://a.example/', True);
+  ExpectMatch('https:', 'http://x.example/', 'https://a.example/', False);
+  ExpectMatch('http:', 'https://x.example/', 'https://a.example/', True);
+  ExpectMatch('ws:', 'wss://x.example/', 'https://a.example/', True);
+  ExpectMatch('ws:', 'https://x.example/', 'https://a.example/', True);
+  ExpectMatch('wss:', 'https://x.example/', 'https://a.example/', True);
+  ExpectMatch('data:', 'data:image/png;base64,AA', 'https://a.example/', True);
+  ExpectMatch('*.example.com', 'https://a.example.com/', 'https://a.example/', True);
+  ExpectMatch('*.example.com', 'https://a.b.example.com/', 'https://a.example/', True);
+  ExpectMatch('*.example.com', 'https://example.com/', 'https://a.example/', False);
+  ExpectMatch('example.com', 'https://example.com/', 'https://a.example/', True);
+  ExpectMatch('example.com', 'http://example.com/', 'https://a.example/', False);
+  ExpectMatch('example.com', 'https://example.com:8443/', 'https://a.example/', False);
+  ExpectMatch('EXAMPLE.com:8443', 'https://example.com:8443/', 'https://a.example/', True);
+  ExpectMatch('example.com:*', 'https://example.com:1234/', 'https://a.example/', True);
+  ExpectMatch('http://example.com:80', 'https://example.com/', 'https://a.example/', True);
+  ExpectMatch('https://example.com', 'http://example.com/', 'https://a.example/', False);
+  ExpectMatch('example.com/path/', 'https://example.com/path/file.js', 'https://a.example/', True);
+  ExpectMatch('example.com/path/', 'https://example.com/other/file.js', 'https://a.example/', False);
+  ExpectMatch('example.com/file.js', 'https://example.com/file.js', 'https://a.example/', True);
+  ExpectMatch('example.com/file.js', 'https://example.com/file.js/more', 'https://a.example/', False);
+  ExpectMatch('example.com/file.js', 'https://example.com/elsewhere.js', 'https://a.example/', True, 1);
+  ExpectMatch('example.com/a%20b', 'https://example.com/a%20b', 'https://a.example/', True);
+  ExpectMatch('''none''', 'https://a.example/', 'https://a.example/', False);
+  ExpectMatch('', 'https://a.example/', 'https://a.example/', False);
+  ExpectMatch('''unsafe-inline'' ''nonce-abc''', 'https://a.example/', 'https://a.example/', False);
+  ExpectMatch('[::1]:8080', 'http://[::1]:8080/', 'http://[::1]:8080/', True);
+  Check(SourceListMatchesNonce(Sources('''nonce-abc+/='''), 'abc+/=') and
+    not SourceListMatchesNonce(Sources('''nonce-abc'''), 'abd') and not SourceListMatchesNonce(Sources('''nonce-'''), ''),
+    'csp: nonce sources');
+  Check(SourceListMatchesHash(Sources('''sha256-' + AlertHash + ''''), 'alert(1)'), 'csp: a sha256 hash source');
+  Check(SourceListMatchesHash(Sources('''SHA256-5jFwrAK0UV47oFbVg_iCCBbxD8X1w-QvoOUepu4C2YA'''), 'alert(1)'),
+    'csp: base64url without padding, algorithm in any case');
+  Check(not SourceListMatchesHash(Sources('''sha256-' + AlertHash + ''''), 'alert(2)'), 'csp: a hash of other text');
+  Check(SourceListMatchesHash(Sources('''sha384-' + CspDigestBase64('sha384', 'x') + ''''), 'x') and
+    SourceListMatchesHash(Sources('''sha512-' + CspDigestBase64('sha512', 'x') + ''''), 'x'), 'csp: sha384 and sha512');
+  Check(IntegrityMatchesSourceList('sha256-' + AlertHash + '?opt', Sources('''sha256-' + AlertHash + '''')) and
+    not IntegrityMatchesSourceList('sha256-' + AlertHash + ' sha384-xyz', Sources('''sha256-' + AlertHash + '''')),
+    'csp: integrity metadata against hashes');
+end;
+
+procedure CheckCspDecisions;
+var
+  Client: TFetchClient;
+  Log: TViolationLog;
+begin
+  Client := TFetchClient.ForDocument(MakeUrl('https://site.example/page'));
+  Log := TViolationLog.Create;
+  try
+    Client.CspReporter := Log;
+    Client.Csp.AddFromField('default-src ''none''; img-src *; script-src ''self'' ''nonce-n'' ''report-sample''; ' +
+      'style-src ''unsafe-inline'' ''sha256-5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=''', CspEnforce);
+    Client.Csp.AddFromField('connect-src ''self''', CspReport);
+    Check(not CspBlocksRequest(Client, MakeUrl('https://cdn.example/a.png'), DestinationImage, '', '', False),
+      'csp: img-src * allows an image');
+    Check(CspBlocksRequest(Client, MakeUrl('https://cdn.example/f.woff'), DestinationFont, '', '', False),
+      'csp: font-src falls back to default-src ''none''');
+    Check(not CspBlocksRequest(Client, MakeUrl('https://site.example/a.js'), DestinationScript, '', '', True),
+      'csp: script-src ''self''');
+    Check(not CspBlocksRequest(Client, MakeUrl('https://cdn.example/a.js'), DestinationScript, 'n', '', True),
+      'csp: a nonced script of another origin');
+    Check(CspBlocksRequest(Client, MakeUrl('https://cdn.example/a.js'), DestinationScript, 'x', '', True),
+      'csp: a script with the wrong nonce');
+    Check(not CspBlocksRequest(Client, MakeUrl('https://site.example/w.js'), DestinationWorker, '', '', False),
+      'csp: worker-src falls back to script-src');
+    Check(CspBlocksRequest(Client, MakeUrl('https://cdn.example/frame'), DestinationIframe, '', '', False),
+      'csp: frame-src falls back to default-src');
+    Log.Text := '';
+    Check(CspBlocksRequest(Client, MakeUrl('https://api.example/x#frag'), DestinationEmpty, '', '', False),
+      'csp: connect-src from default-src');
+    Check(Log.Text = 'connect-src https://api.example/x enforce;connect-src https://api.example/x report;',
+      'csp: both policies report, the fragment stripped (' + Log.Text + ')');
+    Log.Text := '';
+    CspBlocksRequest(Client, MakeUrl('https://other.example/path?q'), DestinationEmpty, '', '', False, 1);
+    Check(Pos('connect-src https://other.example enforce', Log.Text) = 1,
+      'csp: a redirect target of another origin is reported as its origin (' + Log.Text + ')');
+    Check(CspBlocksInline(Client, CspInlineScript, 'alert(1)', '', nil) and
+      not CspBlocksInline(Client, CspInlineScript, 'alert(1)', 'n', nil), 'csp: inline script by nonce');
+    Log.Text := '';
+    CspBlocksInline(Client, CspInlineScript, 'var a = "a long script that goes past forty characters";', '', nil);
+    Check(Log.Text = 'script-src-elem inline enforce "var a = "a long script that goes past for";',
+      'csp: report-sample gives the first 40 characters (' + Log.Text + ')');
+    Check(not CspBlocksInline(Client, CspInlineStyle, 'alert(1)', '', nil), 'csp: a style block by hash');
+    Check(CspBlocksInline(Client, CspInlineStyle, 'p { color: red }', '', nil),
+      'csp: ''unsafe-inline'' is ignored beside a hash');
+    Check(CspBlocksInline(Client, CspInlineStyleAttribute, 'alert(1)', '', nil),
+      'csp: a style attribute needs ''unsafe-hashes'' for its hash');
+    Check(CspBlocksEval(Client, 'x'), 'csp: eval without ''unsafe-eval''');
+    Check(not CspBlocksFormAction(Client, MakeUrl('https://elsewhere.example/'), nil),
+      'csp: form-action does not fall back to default-src');
+    Client.Csp.Clear;
+    Client.Csp.AddFromField('script-src ''nonce-n'' ''strict-dynamic'' https://site.example ''unsafe-inline'' ' +
+      '''unsafe-eval''; form-action ''self''; base-uri ''none''', CspEnforce);
+    Check(CspBlocksRequest(Client, MakeUrl('https://site.example/a.js'), DestinationScript, '', '', True) and
+      not CspBlocksRequest(Client, MakeUrl('https://cdn.example/a.js'), DestinationScript, '', '', False),
+      'csp: strict-dynamic: host sources ignored, inserted scripts trusted');
+    Check(CspBlocksInline(Client, CspInlineScript, 'x()', '', nil), 'csp: strict-dynamic: ''unsafe-inline'' ignored');
+    Check(CspBlocksFormAction(Client, MakeUrl('https://elsewhere.example/'), nil) and
+      not CspBlocksFormAction(Client, MakeUrl('https://site.example/post'), nil), 'csp: form-action ''self''');
+    Check(CspBlocksBaseUrl(Client, MakeUrl('https://site.example/'), nil), 'csp: base-uri ''none''');
+    Check(not CspBlocksEval(Client, 'x'), 'csp: ''unsafe-eval'' allows eval');
+  finally
+    Client.Free;
+    Log.Free;
+  end;
+end;
+
+
 procedure CheckMixedContent;
 var
   Client: TFetchClient;
@@ -405,6 +565,8 @@ begin
   CheckReferrers;
   CheckHsts;
   CheckCsp;
+  CheckCspMatching;
+  CheckCspDecisions;
   CheckMixedContent;
   CheckCors;
 end;
