@@ -40,6 +40,16 @@ console.log(parses("var \\u0062reak = 1;"), parses("({ \\u0062reak: 1 }).break;"
   parses("class C { m() { return this.#x; } }"), parses("class C { #x; m() { return this.#x; } }"),
   parses("class C { x = arguments; }"), parses("class C { x = function () { return arguments; }; }"));
 
+// Several computed fields, and private methods next to them, each get their own class slot.
+var key = "b";
+class Fields {
+  *m() { return 42; } [key] = 42; [10] = "meep"; ["not initialized"];
+  #p() { return 1; } get #q() { return 2; } set #q(v) { this.seen = v; }
+  sum() { this.#q = 3; return this.#p() + this.#q + this.seen; }
+}
+var fields = new Fields();
+console.log(Object.keys(fields).join(), fields.b, fields[10], fields.sum());
+
 /* expected
 3 7 1
 5
@@ -52,4 +62,5 @@ TypeError
 TypeError
 TypeError
 SyntaxError ok SyntaxError SyntaxError ok SyntaxError ok SyntaxError ok
+10,b,not initialized 42 meep 6
 */
