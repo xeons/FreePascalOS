@@ -84,28 +84,7 @@ CodeReturn:
   begin
     if (P^.A <> 0) and (P^.B > 0) then
       Move(S[P^.A], S[0], SizeInt(P^.B) * SizeOf(QWord));
-    if Store.FrameCount = EntryFrameCount then
-      goto Finished;
-    Dec(Store.FrameCount);
-    Func := Store.Frames[Store.FrameCount].Func;
-    Base := Store.Frames[Store.FrameCount].Base;
-    Index := Store.Frames[Store.FrameCount].ResumeIndex;
-    Code := Func.Code;
-    CodeStart := @Code.Instructions[0];
-    P := @CodeStart[Index];
-    S := @Store.Stack[Base];
-    Instance := Func.Instance;
-    if Instance.DefaultMemory <> nil then
-    begin
-      MemoryBase := Instance.DefaultMemory.Data;
-      MemoryLength := Instance.DefaultMemory.ByteLength;
-    end
-    else
-    begin
-      MemoryBase := nil;
-      MemoryLength := 0;
-    end;
-    Continue;
+    goto ReturnToCaller;
   end;
 CodeCall:
   begin
@@ -113,10 +92,13 @@ CodeCall:
     ArgumentBase := P^.B;
     goto DoCall;
   end;
-CodeCallIndirect:
+CodeCallIndirect, CodeCallIndirect64:
   begin
     Table := Instance.Tables[P^.C];
-    Element := PDWord(@S[P^.B + P^.Extra])^;
+    if P^.Operation = CodeCallIndirect64 then
+      Element := S[P^.B + P^.Extra]
+    else
+      Element := PDWord(@S[P^.B + P^.Extra])^;
     if Element >= QWord(Length(Table.Elements)) then
     begin
       TrapKind := tkUndefinedElement;
@@ -128,7 +110,7 @@ CodeCallIndirect:
       TrapKind := tkUninitializedElement;
       goto Trapped;
     end;
-    if Callee.TypeId <> Instance.TypeIds[P^.A] then
+    if (Callee.TypeId <> Instance.TypeIds[P^.A]) and not CallTypeMatches(Store, Callee.TypeId, Instance.TypeIds[P^.A]) then
     begin
       TrapKind := tkIndirectCallTypeMismatch;
       goto Trapped;
@@ -187,7 +169,10 @@ OpRefFunc:
 OpTableGet:
   begin
     Table := Instance.Tables[P^.C];
-    Element := PDWord(@S[P^.B])^;
+    if P^.Extra <> 0 then
+      Element := S[P^.B]
+    else
+      Element := PDWord(@S[P^.B])^;
     if Element >= QWord(Length(Table.Elements)) then
     begin
       TrapKind := tkTableOutOfBounds;
@@ -198,7 +183,10 @@ OpTableGet:
 OpTableSet:
   begin
     Table := Instance.Tables[P^.C];
-    Element := PDWord(@S[P^.A])^;
+    if P^.Extra <> 0 then
+      Element := S[P^.A]
+    else
+      Element := PDWord(@S[P^.A])^;
     if Element >= QWord(Length(Table.Elements)) then
     begin
       TrapKind := tkTableOutOfBounds;
@@ -207,8 +195,17 @@ OpTableSet:
     Table.Elements[Element] := Pointer(PtrUInt(S[P^.B]));
   end;
 OpTableSize:
-  PDWord(@S[P^.A])^ := DWord(Length(Instance.Tables[P^.C].Elements));
+  if P^.Extra <> 0 then
+    S[P^.A] := QWord(Length(Instance.Tables[P^.C].Elements))
+  else
+    PDWord(@S[P^.A])^ := DWord(Length(Instance.Tables[P^.C].Elements));
 OpTableGrow:
+  if P^.Extra <> 0 then
+  begin
+    Grown := Instance.Tables[P^.C].Grow(S[P^.A + 1], Pointer(PtrUInt(S[P^.A])));
+    PInt64(@S[P^.A])^ := Grown;
+  end
+  else
   begin
     Grown := Instance.Tables[P^.C].Grow(PDWord(@S[P^.A + 1])^, Pointer(PtrUInt(S[P^.A])));
     PInt32(@S[P^.A])^ := Int32(Grown);
@@ -216,10 +213,18 @@ OpTableGrow:
 OpTableFill:
   begin
     Table := Instance.Tables[P^.C];
-    Destination := PDWord(@S[P^.A])^;
     Value := Pointer(PtrUInt(S[P^.A + 1]));
-    Count := PDWord(@S[P^.A + 2])^;
-    if Destination + Count > QWord(Length(Table.Elements)) then
+    if P^.Extra <> 0 then
+    begin
+      Destination := S[P^.A];
+      Count := S[P^.A + 2];
+    end
+    else
+    begin
+      Destination := PDWord(@S[P^.A])^;
+      Count := PDWord(@S[P^.A + 2])^;
+    end;
+    if (Destination > QWord(Length(Table.Elements))) or (Count > QWord(Length(Table.Elements)) - Destination) then
     begin
       TrapKind := tkTableOutOfBounds;
       goto Trapped;
@@ -235,11 +240,20 @@ OpTableCopy:
   begin
     Table := Instance.Tables[P^.B];
     SourceTable := Instance.Tables[P^.C];
-    Destination := PDWord(@S[P^.A])^;
-    Source := PDWord(@S[P^.A + 1])^;
-    Count := PDWord(@S[P^.A + 2])^;
-    if (Source + Count > QWord(Length(SourceTable.Elements))) or
-      (Destination + Count > QWord(Length(Table.Elements))) then
+    if P^.Extra and TableIndex64 <> 0 then
+      Destination := S[P^.A]
+    else
+      Destination := PDWord(@S[P^.A])^;
+    if P^.Extra and SourceTableIndex64 <> 0 then
+      Source := S[P^.A + 1]
+    else
+      Source := PDWord(@S[P^.A + 1])^;
+    if P^.Extra = (TableIndex64 or SourceTableIndex64) then
+      Count := S[P^.A + 2]
+    else
+      Count := PDWord(@S[P^.A + 2])^;
+    if (Source > QWord(Length(SourceTable.Elements))) or (Count > QWord(Length(SourceTable.Elements)) - Source) or
+      (Destination > QWord(Length(Table.Elements))) or (Count > QWord(Length(Table.Elements)) - Destination) then
     begin
       TrapKind := tkTableOutOfBounds;
       goto Trapped;
@@ -250,11 +264,14 @@ OpTableCopy:
 OpTableInit:
   begin
     Table := Instance.Tables[P^.C];
-    Destination := PDWord(@S[P^.A])^;
+    if P^.Extra <> 0 then
+      Destination := S[P^.A]
+    else
+      Destination := PDWord(@S[P^.A])^;
     Source := PDWord(@S[P^.A + 1])^;
     Count := PDWord(@S[P^.A + 2])^;
     if (Source + Count > QWord(Length(Instance.ElementSegments[P^.B]))) or
-      (Destination + Count > QWord(Length(Table.Elements))) then
+      (Destination > QWord(Length(Table.Elements))) or (Count > QWord(Length(Table.Elements)) - Destination) then
     begin
       TrapKind := tkTableOutOfBounds;
       goto Trapped;

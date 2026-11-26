@@ -31,6 +31,11 @@
   a constant operand becomes an operation with an immediate, and a
   result stored with local.set or local.tee is written to the local
   directly.
+
+  The 3.0 instructions are in include files: tail calls, call_ref and
+  exception handling (Wasm.Compiler.Exceptions.inc), typed references
+  and garbage collection (Wasm.Compiler.References.inc), memories other
+  than an i32 memory 0 and table64 (Wasm.Compiler.Memories.inc).
 }
 unit Wasm.Compiler;
 
@@ -50,21 +55,71 @@ implementation
 uses
   SysUtils,
   Wasm.Types,
+  Wasm.TypeDefinitions,
   Wasm.Opcodes,
   Wasm.Instructions,
   Wasm.Code,
   Wasm.CodeEmitter,
-  Wasm.CodeValidator;
+  Wasm.CodeValidator,
+  Wasm.GcOperations,
+  Wasm.Features;
 
 type
+  { What a conditional branch tests: an i32 not zero, or a reference
+    null or not. }
+  TBranchCondition = (bcNonZero, bcNull, bcNonNull);
+
+  TReturnStub = record
+    TargetEntry: Int32;
+    Source: Int32;
+    Count: Int32;
+  end;
+
   TFunctionCompiler = class(TCodeEmitter)
   private
+    FExceptionLocalBase: Integer;
+    FReturnStubs: array of TReturnStub;
+    function MaximumTryDepth(const Body: TWasmFunctionBody): Integer;
+    { Exceptions and calls. }
+    procedure CompileReturnCall(const Instruction: TWasmInstruction);
+    procedure CompileCallRef(TypeIndex: Cardinal);
+    function ExceptionSlotForDepth: Int32;
+    procedure CompileTry(const Instruction: TWasmInstruction);
+    procedure AddPendingClause(var Frame: TCompileFrame; const Clause: TCodeCatchClause);
+    procedure FinishHandler(var Frame: TCompileFrame);
+    procedure CompileCatch(const Instruction: TWasmInstruction);
+    procedure CompileDelegate(const Instruction: TWasmInstruction);
+    procedure CompileTryTable(const Instruction: TWasmInstruction; const Catches: array of TWasmCatchClause);
+    procedure AddReturnStub(TargetEntry, Source, Count: Int32);
+    procedure EmitReturnStubs;
+    procedure CompileThrow(TagIndex: Cardinal);
+    procedure CompileThrowRef;
+    procedure CompileRethrow(Depth: Cardinal);
+    { References and garbage collection. }
+    function CanonicalReference(const ValueType: TWasmValueType): TWasmValueType;
+    procedure CompileAllocation(Operation: Integer; OperandCount: Integer; B, C: Int32;
+      const ResultType: TWasmValueType);
+    procedure CompileStructAccess(const Instruction: TWasmInstruction);
+    function ArrayElementAccess(TypeIndex: Cardinal; Signed: Boolean): Integer;
+    procedure CompileUnaryReference(Operation: Integer; const ResultType: TWasmValueType; Extra: Integer = 0;
+      C: Int32 = 0);
+    function HeapTypeOperand(const ValueType: TWasmValueType): Int32;
+    procedure CompileBranchOnCast(const Instruction: TWasmInstruction);
+    procedure CompileBranchOnNull(const Instruction: TWasmInstruction);
+    procedure CompileReferenceInstruction(const Instruction: TWasmInstruction);
+    { Memories and tables. }
+    function IsFastMemory(const Instruction: TWasmInstruction): Boolean;
+    function MemoryAddressType(MemoryIndex: Cardinal): TWasmValueType;
+    procedure CompileMemoryAt(const Instruction: TWasmInstruction);
+    function TableFlags(Index: Cardinal): Integer;
+    function TableAddressType(Index: Cardinal): TWasmValueType;
     procedure BlockTypes(const BlockType: TWasmBlockType; out ParamTypes, ResultTypes: TWasmValueTypeArray);
     function LabelTypes(const Frame: TCompileFrame): TWasmValueTypeArray;
     procedure EmitMoves(Destination, Source, Count: Int32);
     function NeedsMoves(Depth: Cardinal; out Destination, Source, Count: Int32): Boolean;
     procedure EmitBranchTo(Depth: Cardinal);
-    procedure EmitConditionalBranch(Depth: Cardinal; Condition: TCompileOperand);
+    procedure EmitConditionalBranch(Depth: Cardinal; Condition: TCompileOperand;
+      Test: TBranchCondition = bcNonZero);
     procedure CompileIf(const Instruction: TWasmInstruction);
     procedure CompileElse;
     procedure CompileEnd;
@@ -77,9 +132,10 @@ type
     procedure CompileSimple(const Instruction: TWasmInstruction);
     procedure CompileAtHome(Operation: Integer; OperandCount: Integer; B, C: Int32; Extra: Integer;
       const ResultType: TWasmValueType; HasResult: Boolean);
-    procedure CompileInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal);
+    procedure CompileInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal;
+      const Catches: array of TWasmCatchClause);
     procedure SkipDeadInstruction(const Instruction: TWasmInstruction; var DeadDepth: Integer;
-      const Labels: array of Cardinal);
+      const Labels: array of Cardinal; const Catches: array of TWasmCatchClause);
   public
     function Compile(DefinedIndex: Cardinal): TCompiledFunction;
   end;
@@ -216,8 +272,13 @@ begin
   end;
 end;
 
-{ A branch taken when Condition (popped already) is not zero. }
-procedure TFunctionCompiler.EmitConditionalBranch(Depth: Cardinal; Condition: TCompileOperand);
+{ A branch taken when Condition (popped already, or for br_on_non_null
+  the reference still on the stack) passes the test. }
+procedure TFunctionCompiler.EmitConditionalBranch(Depth: Cardinal; Condition: TCompileOperand;
+  Test: TBranchCondition);
+const
+  Taken: array[TBranchCondition] of Integer = (CodeBranchIf, CodeBranchIfNull, CodeBranchIfNonNull);
+  NotTaken: array[TBranchCondition] of Integer = (CodeBranchUnless, CodeBranchIfNonNull, CodeBranchIfNull);
 var
   Frame, Index, Skip, Fused: Integer;
   Destination, Source, Count: Int32;
@@ -230,9 +291,23 @@ begin
   begin
     Source := SourceOf(Condition);
     MaterializeAll;
-    Skip := Emit(CodeBranchUnless, 0, Source);
+    Skip := Emit(NotTaken[Test], 0, Source);
     EmitBranchTo(Depth);
     FInstructions[Skip].A := FCount;
+    Exit;
+  end;
+  if Test <> bcNonZero then
+  begin
+    Source := SourceOf(Condition);
+    MaterializeAll;
+    Index := Emit(Taken[Test], 0, Source, 0, Ord(IsLoop));
+    if IsLoop then
+    begin
+      FInstructions[Index].A := FFrames[Frame].LoopStart;
+      RecordSafepoint(Index, FOperandCount);
+    end
+    else
+      AddFixup(FFrames[Frame], Index * 2);
     Exit;
   end;
   Fused := -1;
@@ -319,6 +394,9 @@ begin
   Frame := CurrentFrame;
   if not FFrames[Frame].Unreachable then
     MaterializeAll;
+  if (FFrames[Frame].Kind in [cfTry, cfTryTable]) and (FHandlers[FFrames[Frame].Handler].Kind = hkCatch) then
+    FHandlers[FFrames[Frame].Handler].Limit := FCount;
+  FinishHandler(FFrames[Frame]);
   if FFrames[Frame].Kind = cfFunction then
   begin
     if not FFrames[Frame].Unreachable then
@@ -414,7 +492,10 @@ begin
   for Index := 1 to Length(FunctionType.Params) do
     PopOperand;
   ArgumentBase := FNextHome;
-  Index := Emit(CodeCallIndirect, TypeIndex, ArgumentBase, TableIndex, SlotCountOf(FunctionType.Params));
+  if FModule.Tables[TableIndex].AddressType = vkI64 then
+    Index := Emit(CodeCallIndirect64, TypeIndex, ArgumentBase, TableIndex, SlotCountOf(FunctionType.Params))
+  else
+    Index := Emit(CodeCallIndirect, TypeIndex, ArgumentBase, TableIndex, SlotCountOf(FunctionType.Params));
   RecordSafepoint(Index, FOperandCount);
   for Index := 0 to High(FunctionType.Results) do
     PushOperand(FunctionType.Results[Index]);
@@ -611,13 +692,56 @@ begin
   end;
 end;
 
-procedure TFunctionCompiler.CompileInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal);
+procedure TFunctionCompiler.CompileInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal;
+  const Catches: array of TWasmCatchClause);
 var
   ParamTypes, ResultTypes: TWasmValueTypeArray;
   Operand: TCompileOperand;
   Destination, Source: Int32;
 begin
+  case WasmOpcodeTable[Instruction.Opcode].Immediate of
+    ikMemarg, ikMemargLane:
+      if not IsFastMemory(Instruction) then
+      begin
+        CompileMemoryAt(Instruction);
+        Exit;
+      end;
+  end;
   case Instruction.Opcode of
+    OpReturnCall, OpReturnCallIndirect, OpReturnCallRef:
+      CompileReturnCall(Instruction);
+    OpCallRef:
+      CompileCallRef(Instruction.Index);
+    OpTry:
+      CompileTry(Instruction);
+    OpCatch, OpCatchAll:
+      CompileCatch(Instruction);
+    OpDelegate:
+      CompileDelegate(Instruction);
+    OpTryTable:
+      CompileTryTable(Instruction, Catches);
+    OpThrow:
+      CompileThrow(Instruction.Index);
+    OpThrowRef:
+      CompileThrowRef;
+    OpRethrow:
+      CompileRethrow(Instruction.Index);
+    OpRefAsNonNull, OpRefEq, OpBrOnNull, OpBrOnNonNull, OpStructNew..OpI31GetU:
+      CompileReferenceInstruction(Instruction);
+    OpMemorySize, OpMemoryGrow, OpMemoryFill, OpMemoryCopy, OpMemoryInit:
+      if not IsFastMemory(Instruction) then
+        CompileMemoryAt(Instruction)
+      else
+        case Instruction.Opcode of
+          OpMemoryInit:
+            CompileAtHome(OpMemoryInit, 3, Instruction.Index, 0, Instruction.MemoryIndex, WasmI32Type, False);
+          OpMemoryCopy:
+            CompileAtHome(OpMemoryCopy, 3, 0, 0, 0, WasmI32Type, False);
+          OpMemoryFill:
+            CompileAtHome(OpMemoryFill, 3, 0, 0, Instruction.MemoryIndex, WasmI32Type, False);
+        else
+          CompileSimple(Instruction);
+        end;
     OpUnreachable:
       begin
         Emit(OpUnreachable);
@@ -707,7 +831,7 @@ begin
       end;
     OpRefNull:
       begin
-        Destination := PushOperand(Instruction.ReferenceType);
+        Destination := PushOperand(CanonicalReference(Instruction.ReferenceType));
         EmitResult(CodeConst64, Destination, 0, 0);
       end;
     OpRefIsNull:
@@ -719,7 +843,8 @@ begin
       end;
     OpRefFunc:
       begin
-        Destination := PushOperand(WasmFuncRefType);
+        Destination := PushOperand(MakeReferenceType(FModule.CanonicalType(FModule.FunctionTypes[Instruction.Index]),
+          False));
         EmitResult(OpRefFunc, Destination, Instruction.Index);
       end;
     OpTableGet:
@@ -727,36 +852,34 @@ begin
         Operand := PopOperand;
         Source := SourceOf(Operand);
         Destination := PushOperand(FModule.Tables[Instruction.Index].ElementType);
-        EmitResult(OpTableGet, Destination, Source, Instruction.Index);
+        EmitResult(OpTableGet, Destination, Source, Instruction.Index, TableFlags(Instruction.Index));
       end;
     OpTableSet:
       begin
         Operand := PopOperand;
         Source := SourceOf(Operand);
         Operand := PopOperand;
-        Emit(OpTableSet, SourceOf(Operand), Source, Instruction.Index);
+        Emit(OpTableSet, SourceOf(Operand), Source, Instruction.Index, TableFlags(Instruction.Index));
       end;
     OpTableSize:
       begin
-        Destination := PushOperand(WasmI32Type);
-        EmitResult(OpTableSize, Destination, 0, Instruction.Index);
+        Destination := PushOperand(TableAddressType(Instruction.Index));
+        EmitResult(OpTableSize, Destination, 0, Instruction.Index, TableFlags(Instruction.Index));
       end;
     OpTableGrow:
-      CompileAtHome(OpTableGrow, 2, 0, Instruction.Index, 0, WasmI32Type, True);
+      CompileAtHome(OpTableGrow, 2, 0, Instruction.Index, TableFlags(Instruction.Index),
+        TableAddressType(Instruction.Index), True);
     OpTableFill:
-      CompileAtHome(OpTableFill, 3, 0, Instruction.Index, 0, WasmI32Type, False);
+      CompileAtHome(OpTableFill, 3, 0, Instruction.Index, TableFlags(Instruction.Index), WasmI32Type, False);
     OpTableCopy:
-      CompileAtHome(OpTableCopy, 3, Instruction.Index, Instruction.SecondIndex, 0, WasmI32Type, False);
+      CompileAtHome(OpTableCopy, 3, Instruction.Index, Instruction.SecondIndex,
+        TableFlags(Instruction.Index) or (TableFlags(Instruction.SecondIndex) * SourceTableIndex64), WasmI32Type,
+        False);
     OpTableInit:
-      CompileAtHome(OpTableInit, 3, Instruction.Index, Instruction.SecondIndex, 0, WasmI32Type, False);
+      CompileAtHome(OpTableInit, 3, Instruction.Index, Instruction.SecondIndex, TableFlags(Instruction.SecondIndex),
+        WasmI32Type, False);
     OpElemDrop:
       Emit(OpElemDrop, Instruction.Index);
-    OpMemoryInit:
-      CompileAtHome(OpMemoryInit, 3, Instruction.Index, 0, Instruction.MemoryIndex, WasmI32Type, False);
-    OpMemoryCopy:
-      CompileAtHome(OpMemoryCopy, 3, 0, 0, 0, WasmI32Type, False);
-    OpMemoryFill:
-      CompileAtHome(OpMemoryFill, 3, 0, 0, Instruction.MemoryIndex, WasmI32Type, False);
     OpDataDrop:
       Emit(OpDataDrop, Instruction.Index);
   else
@@ -767,19 +890,64 @@ end;
 { Code after an unconditional branch: only the nesting matters, until
   the else or end that makes code reachable again. }
 procedure TFunctionCompiler.SkipDeadInstruction(const Instruction: TWasmInstruction; var DeadDepth: Integer;
-  const Labels: array of Cardinal);
+  const Labels: array of Cardinal; const Catches: array of TWasmCatchClause);
 begin
   case Instruction.Opcode of
-    OpBlock, OpLoop, OpIf:
+    OpBlock, OpLoop, OpIf, OpTry, OpTryTable:
       Inc(DeadDepth);
-    OpElse:
+    OpElse, OpCatch, OpCatchAll:
       if DeadDepth = 0 then
-        CompileInstruction(Instruction, Labels);
-    OpEnd:
+        CompileInstruction(Instruction, Labels, Catches);
+    OpEnd, OpDelegate:
       if DeadDepth = 0 then
-        CompileInstruction(Instruction, Labels)
+        CompileInstruction(Instruction, Labels, Catches)
       else
         Dec(DeadDepth);
+  end;
+end;
+
+{ The deepest nesting of legacy try blocks: as many hidden locals hold
+  caught exceptions. }
+function TFunctionCompiler.MaximumTryDepth(const Body: TWasmFunctionBody): Integer;
+var
+  Instructions: TWasmInstructionReader;
+  Instruction: TWasmInstruction;
+  Depth: Integer;
+  Opened: array of Boolean;
+  Level: Integer;
+begin
+  Result := 0;
+  if not (wfLegacyExceptions in FModule.Features) then
+    Exit;
+  Depth := 0;
+  Level := 0;
+  SetLength(Opened, 16);
+  Instructions.Initialize(PByte(FModule.Bytes), Body.BodyStart, Body.BodyLimit, FModule.Features);
+  while not Instructions.AtEnd do
+  begin
+    Instructions.Next(Instruction);
+    case Instruction.Opcode of
+      OpBlock, OpLoop, OpIf, OpTry, OpTryTable:
+        begin
+          Inc(Level);
+          if Level >= Length(Opened) then
+            SetLength(Opened, Level * 2);
+          Opened[Level] := Instruction.Opcode = OpTry;
+          if Opened[Level] then
+          begin
+            Inc(Depth);
+            if Depth > Result then
+              Result := Depth;
+          end;
+        end;
+      OpEnd, OpDelegate:
+        if Level > 0 then
+        begin
+          if Opened[Level] then
+            Dec(Depth);
+          Dec(Level);
+        end;
+    end;
   end;
 end;
 
@@ -798,21 +966,29 @@ begin
   FCode := TCompiledFunction.Create;
   try
     FCode.FunctionIndex := FunctionIndex;
-    SetLength(FLocalTypes, Length(FunctionType.Params) + Length(Body.Locals));
+    FExceptionLocalBase := Length(FunctionType.Params) + Length(Body.Locals);
+    SetLength(FLocalTypes, FExceptionLocalBase + MaximumTryDepth(Body));
     for Index := 0 to High(FunctionType.Params) do
       FLocalTypes[Index] := FunctionType.Params[Index];
     for Index := 0 to High(Body.Locals) do
       FLocalTypes[Length(FunctionType.Params) + Index] := Body.Locals[Index];
+    for Index := FExceptionLocalBase to High(FLocalTypes) do
+      FLocalTypes[Index] := MakeReferenceType(HeapTypeExn, True);
     SetLength(FLocalSlots, Length(FLocalTypes));
+    SetLength(FLocalTraces, Length(FLocalTypes));
     FLocalSlotCount := 0;
-    FHasExternLocals := False;
+    FHasTracedLocals := False;
     for Index := 0 to High(FLocalTypes) do
     begin
       FLocalSlots[Index] := FLocalSlotCount;
       Inc(FLocalSlotCount, SlotCount(FLocalTypes[Index]));
-      if (FLocalTypes[Index].Kind = vkReference) and (FLocalTypes[Index].HeapType = HeapTypeExtern) then
-        FHasExternLocals := True;
+      FLocalTraces[Index] := TraceOf(FLocalTypes[Index]);
+      if FLocalTraces[Index] <> rtNone then
+        FHasTracedLocals := True;
     end;
+    FHandlerCount := 0;
+    FClauseCount := 0;
+    FReturnStubs := nil;
     FCode.ParamSlots := SlotCountOf(FunctionType.Params);
     FNextHome := FLocalSlotCount;
     FMaximumSlots := FLocalSlotCount;
@@ -821,17 +997,18 @@ begin
     FCount := 0;
     FLastResult := -1;
     PushFrame(cfFunction, nil, FunctionType.Results);
-    Instructions.Initialize(PByte(FModule.Bytes), Body.BodyStart, Body.BodyLimit);
+    Instructions.Initialize(PByte(FModule.Bytes), Body.BodyStart, Body.BodyLimit, FModule.Features);
     DeadDepth := 0;
     while FFrameCount > 0 do
     begin
       Instructions.Next(Instruction);
       FByteOffset := Instruction.Offset;
       if FFrames[CurrentFrame].Unreachable then
-        SkipDeadInstruction(Instruction, DeadDepth, Instructions.Labels)
+        SkipDeadInstruction(Instruction, DeadDepth, Instructions.Labels, Instructions.Catches)
       else
-        CompileInstruction(Instruction, Instructions.Labels);
+        CompileInstruction(Instruction, Instructions.Labels, Instructions.Catches);
     end;
+    EmitReturnStubs;
     Finish;
     Result := FCode;
   except
@@ -839,6 +1016,10 @@ begin
     raise;
   end;
 end;
+
+{$I Wasm.Compiler.Exceptions.inc}
+{$I Wasm.Compiler.References.inc}
+{$I Wasm.Compiler.Memories.inc}
 
 procedure CompileModule(Module: TWasmModule);
 var

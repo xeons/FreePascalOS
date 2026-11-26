@@ -20,11 +20,16 @@
   WebAssembly's types (spec section 2.3) and values.
 
   A value type is a record rather than a byte: a kind, and for references
-  whether null is allowed and the heap type. WebAssembly 2.0 has two
-  reference types, funcref and externref, both nullable with an abstract
-  heap type (HeapTypeFunc, HeapTypeExtern: their binary codes as negative
-  numbers); typed function references name a type index as their heap
-  type, which leaves room for them without changing this record.
+  whether null is allowed and the heap type. Abstract heap types (func,
+  extern, any, eq, i31, struct, array, exn and the bottom types none,
+  nofunc, noextern, noexn) are their binary codes as negative numbers
+  (HeapTypeFunc = -16 for 0x70 ...); a concrete heap type is a type
+  index, zero or more. In a module's types (Wasm.Module) the index is
+  the module's own, made canonical by the validator (the first of the
+  equivalent types); in the run time's types (functions, globals, tables
+  and tags of a store) it is the store's canonical type id
+  (Wasm.TypeRegistry). Storage types add the packed i8 and i16 of struct
+  fields and array elements.
 
   A TWasmValue is a value as the embedder sees it: its type and its bits.
   Floating point values are kept as bits (F32Bits, F64Bits) so that NaN
@@ -41,8 +46,20 @@ unit Wasm.Types;
 interface
 
 const
-  HeapTypeFunc = -16;   { 0x70 }
-  HeapTypeExtern = -17; { 0x6F }
+  HeapTypeNoExn = -12;    { 0x74 }
+  HeapTypeNoFunc = -13;   { 0x73 }
+  HeapTypeNoExtern = -14; { 0x72 }
+  HeapTypeNone = -15;     { 0x71 }
+  HeapTypeFunc = -16;     { 0x70 }
+  HeapTypeExtern = -17;   { 0x6F }
+  HeapTypeAny = -18;      { 0x6E }
+  HeapTypeEq = -19;       { 0x6D }
+  HeapTypeI31 = -20;      { 0x6C }
+  HeapTypeStruct = -21;   { 0x6B }
+  HeapTypeArray = -22;    { 0x6A }
+  HeapTypeExn = -23;      { 0x69 }
+  { The lowest abstract heap type code. }
+  FirstAbstractHeapType = HeapTypeExn;
 
 type
   TWasmValueKind = (vkI32, vkI64, vkF32, vkF64, vkV128, vkReference);
@@ -68,13 +85,17 @@ type
     HasMaximum: Boolean;
   end;
 
+  { Tables and memories are addressed with i32 or, with memory64 and
+    table64, i64 (AddressType vkI64). }
   TWasmTableType = record
     ElementType: TWasmValueType;
     Limits: TWasmLimits;
+    AddressType: TWasmValueKind;
   end;
 
   TWasmMemoryType = record
     Limits: TWasmLimits;
+    AddressType: TWasmValueKind;
   end;
 
   TWasmGlobalType = record
@@ -82,7 +103,15 @@ type
     Mutable: Boolean;
   end;
 
-  TWasmExternalKind = (ekFunction, ekTable, ekMemory, ekGlobal);
+  TWasmExternalKind = (ekFunction, ekTable, ekMemory, ekGlobal, ekTag);
+
+  { A tag (exception handling): the type of its payload, a function type
+    without results. TypeIndex is the module's type index (in a module)
+    or the store's canonical type id (at run time). }
+  TWasmTagType = record
+    TypeIndex: Cardinal;
+    FunctionType: TWasmFunctionType;
+  end;
 
   TWasmV128 = record
     case Integer of
@@ -119,11 +148,26 @@ function WasmExternRefType: TWasmValueType; inline;
 
 function IsReferenceType(const ValueType: TWasmValueType): Boolean; inline;
 function IsNumberOrVectorType(const ValueType: TWasmValueType): Boolean; inline;
+{ Whether a local of the type starts with a default value (all but the
+  non-nullable references). }
+function IsDefaultable(const ValueType: TWasmValueType): Boolean; inline;
+function IsAbstractHeapType(HeapType: Int32): Boolean; inline;
+{ The top of an abstract heap type's hierarchy: func, extern, any or exn
+  (for a concrete type, its kind decides: see Wasm.Subtyping). }
+function AbstractHeapTypeTop(HeapType: Int32): Int32;
+{ The bottom of the hierarchy whose top is Top: nofunc, noextern, none,
+  noexn. }
+function HierarchyBottom(Top: Int32): Int32;
+function HeapTypeName(HeapType: Int32): AnsiString;
+{ An abstract heap type from its binary code (0x69 to 0x74). }
+function DecodeAbstractHeapType(Code: Byte; out HeapType: Int32): Boolean;
 { The 64-bit slots a value of the type takes in a frame: two for v128. }
 function SlotCount(const ValueType: TWasmValueType): Integer; inline;
 function SlotCountOf(const Types: TWasmValueTypeArray): Integer;
 
-{ The value type a binary code names (0x7F i32 ... 0x6F externref). }
+{ The value type a one byte binary code names (0x7F i32 ... 0x6F
+  externref, and the other nullable abstract reference shorthands);
+  the two byte forms 0x63 / 0x64 are read by Wasm.Reader. }
 function DecodeValueType(Code: Byte; out ValueType: TWasmValueType): Boolean;
 function ValueTypeToString(const ValueType: TWasmValueType): AnsiString;
 function ValueTypesToString(const Types: TWasmValueTypeArray): AnsiString;
@@ -222,6 +266,67 @@ begin
   Result := ValueType.Kind <> vkReference;
 end;
 
+function IsDefaultable(const ValueType: TWasmValueType): Boolean;
+begin
+  Result := (ValueType.Kind <> vkReference) or ValueType.Nullable;
+end;
+
+function IsAbstractHeapType(HeapType: Int32): Boolean;
+begin
+  Result := HeapType < 0;
+end;
+
+function AbstractHeapTypeTop(HeapType: Int32): Int32;
+begin
+  case HeapType of
+    HeapTypeFunc, HeapTypeNoFunc: Result := HeapTypeFunc;
+    HeapTypeExtern, HeapTypeNoExtern: Result := HeapTypeExtern;
+    HeapTypeExn, HeapTypeNoExn: Result := HeapTypeExn;
+  else
+    Result := HeapTypeAny;
+  end;
+end;
+
+function HierarchyBottom(Top: Int32): Int32;
+begin
+  case Top of
+    HeapTypeFunc: Result := HeapTypeNoFunc;
+    HeapTypeExtern: Result := HeapTypeNoExtern;
+    HeapTypeExn: Result := HeapTypeNoExn;
+  else
+    Result := HeapTypeNone;
+  end;
+end;
+
+function HeapTypeName(HeapType: Int32): AnsiString;
+begin
+  case HeapType of
+    HeapTypeNoExn: Result := 'noexn';
+    HeapTypeNoFunc: Result := 'nofunc';
+    HeapTypeNoExtern: Result := 'noextern';
+    HeapTypeNone: Result := 'none';
+    HeapTypeFunc: Result := 'func';
+    HeapTypeExtern: Result := 'extern';
+    HeapTypeAny: Result := 'any';
+    HeapTypeEq: Result := 'eq';
+    HeapTypeI31: Result := 'i31';
+    HeapTypeStruct: Result := 'struct';
+    HeapTypeArray: Result := 'array';
+    HeapTypeExn: Result := 'exn';
+  else
+    Result := IntToStr(HeapType);
+  end;
+end;
+
+function DecodeAbstractHeapType(Code: Byte; out HeapType: Int32): Boolean;
+begin
+  Result := (Code >= $69) and (Code <= $74);
+  if Result then
+    HeapType := Int32(Code) - $80
+  else
+    HeapType := 0;
+end;
+
 function SlotCount(const ValueType: TWasmValueType): Integer;
 begin
   if ValueType.Kind = vkV128 then
@@ -248,8 +353,7 @@ begin
     $7D: ValueType := WasmF32Type;
     $7C: ValueType := WasmF64Type;
     $7B: ValueType := WasmV128Type;
-    $70: ValueType := WasmFuncRefType;
-    $6F: ValueType := WasmExternRefType;
+    $69..$74: ValueType := MakeReferenceType(Int32(Code) - $80);
   else
     ValueType := WasmI32Type;
     Result := False;
@@ -274,12 +378,7 @@ begin
       Result := '(ref ';
       if ValueType.Nullable then
         Result := Result + 'null ';
-      case ValueType.HeapType of
-        HeapTypeFunc: Result := Result + 'func)';
-        HeapTypeExtern: Result := Result + 'extern)';
-      else
-        Result := Result + IntToStr(ValueType.HeapType) + ')';
-      end;
+      Result := Result + HeapTypeName(ValueType.HeapType) + ')';
     end;
   end;
 end;
@@ -324,6 +423,7 @@ begin
     ekFunction: Result := 'function';
     ekTable: Result := 'table';
     ekMemory: Result := 'memory';
+    ekTag: Result := 'tag';
   else
     Result := 'global';
   end;

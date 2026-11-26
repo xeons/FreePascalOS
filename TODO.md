@@ -1498,7 +1498,17 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       CSP 'wasm-unsafe-eval'; Modules structured-cloneable within the agent (frames, dedicated workers)
 - [x] WPT wasm/jsapi (2.0 API and resizable buffers) and wasm/webapi pass on the host but for the 3.0 parts
 - [x] hCaptcha's hsw.js module (about 1 MB, 198 imports) compiles and is instantiated in its frame
-- [ ] JS API of the 3.0 features once libwasm has them: WebAssembly.Tag, WebAssembly.Exception and JSTag
+- [x] 3.0: extended constant expressions, tail calls (constant stack), multiple memories, memory64 and
+      table64, exception handling (try_table, throw, throw_ref, exnref; legacy try/catch/delegate/rethrow),
+      typed function references (non-nullable locals), GC (structs, arrays, i31, rec groups, subtyping,
+      casts, canonical type equivalence across modules), relaxed SIMD (deterministic profile); features can
+      be turned off (2.0 suite runs with 2.0's alone)
+- [x] Tracing collector for GC objects (safepoint maps, globals, tables, segments, pins, exposed objects)
+      with the embedder protocol (EnumerateReferences, or BeginHostTrace / TraceFromHost / EndHostTrace);
+      exceptions across host functions (EWasmException, WasmThrow, tags and payloads in Wasm.Api)
+- [x] make wasm-spec-test-3: the 3.0 spec suite (core, feature directories, legacy exceptions): all 262
+      files pass, also with --gc-stress
+- [ ] JS API of the 3.0 features (libwasm has them now): WebAssembly.Tag, WebAssembly.Exception and JSTag
       (exception handling), memory64's address types ("address": "i64" descriptors, BigInt values),
       typed function references and GC objects at the boundary, the JS string builtins and imported string
       constants (WebAssembly compile options), type reflection (the tentative type() methods,
@@ -1510,10 +1520,11 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       compiled modules; ESM integration (import of .wasm modules)
 - [ ] Watch hCaptcha's proof of work after a click on the OS (webbrowse cannot click into frames): its
       speed under the interpreter, and that a long one does not hit the 10 s slow script limit
-- [ ] 3.0: exception handling, tail calls, memory64, multiple memories (memory index already on memory
-      instructions, Extra field in the slot code), typed function references and GC types (value types
-      are records with a heap type), relaxed SIMD, extended constant expressions
-- [ ] Free instances when nothing refers to them (now they live as long as their store)
+- [ ] Free instances, functions and tags when nothing refers to them (now they live as long as their store;
+      only GC heap objects are collected)
+- [ ] Faster memory64 and non-zero memory accesses (generic operations now) and inline struct/array
+      field accesses in the interpreter loop
+- [ ] Shared memories and threads, stack switching and the other post-3.0 proposals
 - [ ] Faster SIMD (whole-vector operations instead of lane loops); caching compiled modules
 
 ## Tooling

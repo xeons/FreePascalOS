@@ -20,13 +20,36 @@
   The WebAssembly specification test suite against libwasm, on the host:
 
     WasmSpecTest DIRECTORY [--verbose]   every .wast in DIRECTORY and in
-                                         DIRECTORY/simd
+                                         its feature subdirectories
     WasmSpecTest FILE.wast ...           those files
+    --parse-only                         only parse and encode: report
+                                         modules that did not encode
+                                         (outside assert_malformed) and
+                                         text modules an assert_malformed
+                                         expects to fail that did encode
+    --dump DIRECTORY                     also write every module that
+                                         encoded to DIRECTORY, as
+                                         DIR-FILE.LINE.KIND.wasm (KIND:
+                                         valid, invalid or malformed, with
+                                         "binary-" before it for modules
+                                         written as bytes), for looking at
+                                         with other tools
+    --gc-stress                          collect at every allocation
+    --features=2.0                       compile with the features of
+                                         WebAssembly 2.0 only (for its
+                                         suite, which 3.0 contradicts in
+                                         places)
 
-  DIRECTORY is the spec repository's test/core (the 2.0 release,
-  downloaded, never committed). Prints one line per file with its
-  passed and failed assertions, the first failures of each file (all
-  with --verbose) and a total; exits with 1 if anything failed.
+  The process limits its address space to 8 GiB, and the runner's store
+  caps memories and the heap, so that a test cannot exhaust the host.
+
+  DIRECTORY is the spec repository's test/core (the 2.0 or 3.0 release,
+  downloaded, never committed); its subdirectories simd, gc, exceptions,
+  memory64, multi-memory, relaxed-simd and bulk-memory are run too, and
+  so is a "core" subdirectory (the layout of test/legacy/exceptions).
+  Prints one line per file with its passed and failed assertions, the
+  first failures of each file (all with --verbose) and a total; exits
+  with 1 if anything failed.
 }
 program WasmSpecTest;
 
@@ -34,14 +57,21 @@ program WasmSpecTest;
 {$H+}
 
 uses
+  BaseUnix,
   Classes,
   SysUtils,
+  Wasm.Features,
   WasmScript,
   WasmSpecRunner;
 
+const
+  FeatureDirectories: array[0..7] of AnsiString = ('simd', 'gc', 'exceptions', 'memory64', 'multi-memory',
+    'relaxed-simd', 'bulk-memory', 'core');
+
 var
   Files: TStringList;
-  Verbose: Boolean;
+  Verbose, ParseOnly: Boolean;
+  DumpDirectory: AnsiString;
   TotalPassed, TotalFailed, FilesFailed: Integer;
 
 procedure AddDirectory(const Directory: AnsiString);
@@ -65,6 +95,71 @@ begin
   end;
 end;
 
+{ The --parse-only check: each module's encoding against what its
+  command expects of the text. A binary module's malformation is in its
+  bytes, so only text and quote modules count for assert_malformed. }
+procedure CheckEncoding(Commands: TScriptCommandList; var Outcome: TScriptOutcome);
+var
+  Index: Integer;
+  Command: TScriptCommand;
+begin
+  for Index := 0 to Commands.Count - 1 do
+  begin
+    Command := Commands[Index];
+    if not Command.HasModule then
+      Continue;
+    if Command.Kind = scAssertMalformed then
+    begin
+      if (Command.Module.EncodeError = '') and not Command.Module.IsBinary then
+      begin
+        Inc(Outcome.Failed);
+        Outcome.Failures.Add(Format('line %d: malformed text encoded (%s)', [Command.Line, Command.Message]));
+      end
+      else
+        Inc(Outcome.Passed);
+    end
+    else if Command.Module.EncodeError <> '' then
+    begin
+      Inc(Outcome.Failed);
+      Outcome.Failures.Add(Format('line %d: text did not encode: %s', [Command.Line,
+        Command.Module.EncodeError]));
+    end
+    else
+      Inc(Outcome.Passed);
+  end;
+end;
+
+procedure DumpModules(const FileName: AnsiString; Commands: TScriptCommandList);
+var
+  Index: Integer;
+  Command: TScriptCommand;
+  Kind: AnsiString;
+  Stream: TFileStream;
+begin
+  for Index := 0 to Commands.Count - 1 do
+  begin
+    Command := Commands[Index];
+    if not Command.HasModule or (Command.Module.EncodeError <> '') or (Command.Module.Bytes = nil) then
+      Continue;
+    if Command.Kind = scAssertInvalid then
+      Kind := 'invalid'
+    else if Command.Kind = scAssertMalformed then
+      Kind := 'malformed'
+    else
+      Kind := 'valid';
+    if Command.Module.IsBinary then
+      Kind := 'binary-' + Kind;
+    Stream := TFileStream.Create(Format('%s%s-%s.%d.%s.wasm', [IncludeTrailingPathDelimiter(DumpDirectory),
+      ExtractFileName(ExtractFileDir(ExpandFileName(FileName))), ChangeFileExt(ExtractFileName(FileName), ''),
+      Command.Line, Kind]), fmCreate);
+    try
+      Stream.WriteBuffer(Command.Module.Bytes[0], Length(Command.Module.Bytes));
+    finally
+      Stream.Free;
+    end;
+  end;
+end;
+
 procedure RunFile(const FileName: AnsiString);
 var
   Text: TStringList;
@@ -81,7 +176,12 @@ begin
     try
       Commands := ParseScript(Text.Text);
       try
-        RunScript(Commands, Outcome);
+        if DumpDirectory <> '' then
+          DumpModules(FileName, Commands);
+        if ParseOnly then
+          CheckEncoding(Commands, Outcome)
+        else
+          RunScript(Commands, Outcome);
       finally
         Commands.Free;
       end;
@@ -110,25 +210,58 @@ begin
   end;
 end;
 
+procedure LimitAddressSpace;
 var
-  Index: Integer;
+  Limit: TRLimit;
 begin
+  Limit.rlim_cur := QWord(8) * 1024 * 1024 * 1024;
+  Limit.rlim_max := Limit.rlim_cur;
+  FpSetRLimit(RLIMIT_AS, @Limit);
+end;
+
+var
+  Index, Feature: Integer;
+  Subdirectory: AnsiString;
+begin
+  LimitAddressSpace;
   Files := TStringList.Create;
   Verbose := False;
-  for Index := 1 to ParamCount do
+  ParseOnly := False;
+  DumpDirectory := '';
+  Index := 1;
+  while Index <= ParamCount do
+  begin
     if ParamStr(Index) = '--verbose' then
       Verbose := True
+    else if (ParamStr(Index) = '--dump') and (Index < ParamCount) then
+    begin
+      Inc(Index);
+      DumpDirectory := ParamStr(Index);
+      ForceDirectories(DumpDirectory);
+    end
+    else if ParamStr(Index) = '--parse-only' then
+      ParseOnly := True
+    else if ParamStr(Index) = '--features=2.0' then
+      SpecFeatures := WasmFeatures20
+    else if ParamStr(Index) = '--gc-stress' then
+      SpecGcStress := True
     else if DirectoryExists(ParamStr(Index)) then
     begin
       AddDirectory(ParamStr(Index));
-      if DirectoryExists(IncludeTrailingPathDelimiter(ParamStr(Index)) + 'simd') then
-        AddDirectory(IncludeTrailingPathDelimiter(ParamStr(Index)) + 'simd');
+      for Feature := 0 to High(FeatureDirectories) do
+      begin
+        Subdirectory := IncludeTrailingPathDelimiter(ParamStr(Index)) + FeatureDirectories[Feature];
+        if DirectoryExists(Subdirectory) then
+          AddDirectory(Subdirectory);
+      end;
     end
     else
       Files.Add(ParamStr(Index));
+    Inc(Index);
+  end;
   if Files.Count = 0 then
   begin
-    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose]');
+    WriteLn('usage: WasmSpecTest DIRECTORY|FILE.wast... [--verbose] [--parse-only] [--dump DIRECTORY]');
     Halt(2);
   end;
   for Index := 0 to Files.Count - 1 do

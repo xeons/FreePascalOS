@@ -39,9 +39,16 @@ const
   MaximumDataSegments = 100000;
   MaximumElementSegments = 10000000;
   MaximumTables = 100000;
-  MaximumMemories = 1;
+  MaximumMemories = 100;
+  MaximumTags = 1000000;
+  MaximumStructFields = 10000;
+  MaximumFixedArrayLength = 10000;
+  MaximumSubtypeDepth = 63;
   MaximumTableElements = 10000000;
   MaximumMemoryPages = 65536;
+  { A 64-bit memory's limits may name up to 2^48 pages (validation); how
+    much is really allocated is a store's option. }
+  MaximumMemory64Pages = QWord(1) shl 48;
   MaximumParams = 1000;
   MaximumResults = 1000;
   MaximumLocals = 50000;
@@ -57,6 +64,12 @@ const
   DefaultMaximumHostNesting = 200;
   { Back edges and calls between two calls of the interrupt hook. }
   DefaultInterruptInterval = 1000000;
+  { The bytes a memory may really take (its pages times 64 KiB). }
+  DefaultMaximumMemoryBytes = QWord(4) * 1024 * 1024 * 1024;
+  { The bytes of garbage collected objects a store may hold. }
+  DefaultMaximumHeapBytes = QWord(1024) * 1024 * 1024;
+  { Bytes allocated between two collections at the least. }
+  DefaultCollectionThreshold = 4 * 1024 * 1024;
 
 implementation
 

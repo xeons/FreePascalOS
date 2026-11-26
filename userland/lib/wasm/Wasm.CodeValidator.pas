@@ -22,10 +22,19 @@
   frames. After an unconditional branch the rest of a block is
   unreachable and its operand stack polymorphic: popping below the
   frame's height then gives an unknown type, which matches anything.
+  Values match expected types by subtyping (Wasm.Subtyping); a reference
+  popped where any reference will do but none is known has the bottom
+  heap type, which matches every heap type.
+
+  Locals of a non-defaultable type (non-nullable references) must be set
+  before they are read: the locals set so far are a stack, and a block
+  forgets the ones set inside it when it ends.
 
   Instructions with a fixed type come with a signature in the opcode
-  table (Wasm.Opcodes); the rest are typed here one by one. Errors are
-  EWasmInvalid with the offset of the instruction.
+  table (Wasm.Opcodes); the rest are typed here one by one, the
+  references, tables and memories here and exception handling, calls
+  and the garbage collection instructions in their own include files.
+  Errors are EWasmInvalid with the offset of the instruction.
 }
 unit Wasm.CodeValidator;
 
@@ -36,8 +45,15 @@ interface
 
 uses
   Wasm.Types,
+  Wasm.TypeDefinitions,
   Wasm.Module,
+  Wasm.ModuleTypes,
   Wasm.Instructions;
+
+const
+  { The heap type of a reference known only to be a reference (in
+    unreachable code). Never leaves the validator. }
+  HeapTypeBottom = -1000;
 
 type
   TOperandType = record
@@ -50,24 +66,34 @@ type
     StartTypes: TWasmValueTypeArray;
     EndTypes: TWasmValueTypeArray;
     Height: Integer;
+    InitHeight: Integer;
     Unreachable: Boolean;
   end;
 
   TWasmCodeValidator = class
   private
     FModule: TWasmModule;
+    FContext: TWasmModuleTypeContext;
     FDeclaredReferences: array of Boolean;
     FLocals: TWasmValueTypeArray;
+    FLocalSet: array of Boolean;
+    FInits: array of Cardinal;
+    FInitCount: Integer;
+    FResults: TWasmValueTypeArray;
     FOperands: array of TOperandType;
     FOperandCount: Integer;
     FControls: array of TControlFrame;
     FControlCount: Integer;
     FOffset: SizeInt;
     procedure Fail(const Message: AnsiString);
+    function Matches(const Sub, Super: TWasmValueType): Boolean;
+    function HeapType(TypeIndex: Cardinal): Int32;
     procedure PushOperand(const ValueType: TWasmValueType);
     procedure PushUnknown;
     function PopOperand: TOperandType;
     function PopExpected(const Expected: TWasmValueType): TOperandType;
+    { Pops a reference of any type (the bottom reference if unknown). }
+    function PopReference: TWasmValueType;
     procedure PushTypes(const Types: TWasmValueTypeArray);
     procedure PopTypes(const Types: TWasmValueTypeArray);
     procedure PushControl(Opcode: Integer; const StartTypes, EndTypes: TWasmValueTypeArray);
@@ -77,16 +103,34 @@ type
     function Label_(Depth: Cardinal): Integer;
     procedure BlockSignature(const BlockType: TWasmBlockType; out StartTypes, EndTypes: TWasmValueTypeArray);
     procedure ApplySignature(const Signature: ShortString);
-    procedure CheckMemory(Index: Cardinal);
+    procedure CheckTypeIndex(Index: Cardinal);
+    procedure CheckValueType(var ValueType: TWasmValueType);
+    function FunctionTypeAt(TypeIndex: Cardinal): TWasmFunctionType;
+    function StructAt(TypeIndex: Cardinal): TWasmTypeDefinition;
+    function ArrayAt(TypeIndex: Cardinal): TWasmTypeDefinition;
+    function MemoryAddressType(Index: Cardinal): TWasmValueType;
+    function TableAddressType(Index: Cardinal): TWasmValueType;
     procedure CheckMemarg(const Instruction: TWasmInstruction);
     procedure CheckLane(const Instruction: TWasmInstruction);
     procedure CheckTable(Index: Cardinal);
     procedure CheckFunction(Index: Cardinal);
     procedure CheckElement(Index: Cardinal);
     procedure CheckData(Index: Cardinal);
-    procedure ValidateInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal);
+    procedure CheckTag(Index: Cardinal);
+    procedure SetLocal(Index: Cardinal);
+    procedure ValidateLocal(const Instruction: TWasmInstruction);
+    procedure ValidateMemory(const Instruction: TWasmInstruction);
+    procedure ValidateTable(const Instruction: TWasmInstruction);
+    procedure ValidateCall(const Instruction: TWasmInstruction);
+    procedure ValidateReference(const Instruction: TWasmInstruction);
+    procedure ValidateException(const Instruction: TWasmInstruction; const Catches: array of TWasmCatchClause);
+    procedure ValidateAggregate(const Instruction: TWasmInstruction);
+    procedure ValidateCast(const Instruction: TWasmInstruction);
+    procedure ValidateInstruction(const Instruction: TWasmInstruction; const Labels: array of Cardinal;
+      const Catches: array of TWasmCatchClause);
   public
-    constructor Create(AModule: TWasmModule; const DeclaredReferences: array of Boolean);
+    constructor Create(AModule: TWasmModule; AContext: TWasmModuleTypeContext;
+      const DeclaredReferences: array of Boolean);
     { Validates the body of the defined function DefinedIndex (its index
       among the module's own functions). }
     procedure ValidateFunction(DefinedIndex: Cardinal);
@@ -100,6 +144,9 @@ implementation
 uses
   SysUtils,
   Wasm.Errors,
+  Wasm.Limits,
+  Wasm.Features,
+  Wasm.Subtyping,
   Wasm.Opcodes;
 
 function SignatureLetterType(Letter: AnsiChar): TWasmValueType;
@@ -115,12 +162,14 @@ begin
   end;
 end;
 
-constructor TWasmCodeValidator.Create(AModule: TWasmModule; const DeclaredReferences: array of Boolean);
+constructor TWasmCodeValidator.Create(AModule: TWasmModule; AContext: TWasmModuleTypeContext;
+  const DeclaredReferences: array of Boolean);
 var
   Index: Integer;
 begin
   inherited Create;
   FModule := AModule;
+  FContext := AContext;
   SetLength(FDeclaredReferences, Length(DeclaredReferences));
   for Index := 0 to High(DeclaredReferences) do
     FDeclaredReferences[Index] := DeclaredReferences[Index];
@@ -129,6 +178,18 @@ end;
 procedure TWasmCodeValidator.Fail(const Message: AnsiString);
 begin
   raise EWasmInvalid.CreateAt(FOffset, Message);
+end;
+
+function TWasmCodeValidator.Matches(const Sub, Super: TWasmValueType): Boolean;
+begin
+  if (Sub.Kind = vkReference) and (Sub.HeapType = HeapTypeBottom) then
+    Exit((Super.Kind = vkReference) and (Super.Nullable or not Sub.Nullable));
+  Result := ValueTypeMatches(FContext, Sub, Super);
+end;
+
+function TWasmCodeValidator.HeapType(TypeIndex: Cardinal): Int32;
+begin
+  Result := FModule.CanonicalType(TypeIndex);
 end;
 
 procedure TWasmCodeValidator.PushOperand(const ValueType: TWasmValueType);
@@ -169,13 +230,25 @@ end;
 function TWasmCodeValidator.PopExpected(const Expected: TWasmValueType): TOperandType;
 begin
   Result := PopOperand;
-  if Result.Known and (Result.ValueType <> Expected) then
+  if Result.Known and not Matches(Result.ValueType, Expected) then
     Fail('type mismatch');
   if not Result.Known then
   begin
     Result.Known := True;
     Result.ValueType := Expected;
   end;
+end;
+
+function TWasmCodeValidator.PopReference: TWasmValueType;
+var
+  Operand: TOperandType;
+begin
+  Operand := PopOperand;
+  if not Operand.Known then
+    Exit(MakeReferenceType(HeapTypeBottom, False));
+  if Operand.ValueType.Kind <> vkReference then
+    Fail('type mismatch');
+  Result := Operand.ValueType;
 end;
 
 procedure TWasmCodeValidator.PushTypes(const Types: TWasmValueTypeArray);
@@ -202,6 +275,7 @@ begin
   FControls[FControlCount].StartTypes := StartTypes;
   FControls[FControlCount].EndTypes := EndTypes;
   FControls[FControlCount].Height := FOperandCount;
+  FControls[FControlCount].InitHeight := FInitCount;
   FControls[FControlCount].Unreachable := False;
   Inc(FControlCount);
   PushTypes(StartTypes);
@@ -215,6 +289,12 @@ begin
   PopTypes(Result.EndTypes);
   if FOperandCount <> Result.Height then
     Fail('type mismatch');
+  { Locals set inside the block are unset again. }
+  while FInitCount > Result.InitHeight do
+  begin
+    Dec(FInitCount);
+    FLocalSet[FInits[FInitCount]] := False;
+  end;
   Dec(FControlCount);
 end;
 
@@ -239,6 +319,47 @@ begin
   Result := FControlCount - 1 - Integer(Depth);
 end;
 
+procedure TWasmCodeValidator.CheckTypeIndex(Index: Cardinal);
+begin
+  if Index >= Cardinal(Length(FModule.TypeDefinitions)) then
+    Fail('unknown type ' + IntToStr(Index));
+end;
+
+{ A value type written in an instruction: its type index checked and
+  made canonical. }
+procedure TWasmCodeValidator.CheckValueType(var ValueType: TWasmValueType);
+begin
+  if (ValueType.Kind = vkReference) and (ValueType.HeapType >= 0) then
+  begin
+    CheckTypeIndex(ValueType.HeapType);
+    ValueType.HeapType := HeapType(ValueType.HeapType);
+  end;
+end;
+
+function TWasmCodeValidator.FunctionTypeAt(TypeIndex: Cardinal): TWasmFunctionType;
+begin
+  CheckTypeIndex(TypeIndex);
+  if FModule.TypeDefinitions[TypeIndex].Kind <> ckFunction then
+    Fail('type mismatch: not a function type');
+  Result := FModule.Types[TypeIndex];
+end;
+
+function TWasmCodeValidator.StructAt(TypeIndex: Cardinal): TWasmTypeDefinition;
+begin
+  CheckTypeIndex(TypeIndex);
+  Result := FModule.TypeDefinitions[TypeIndex];
+  if Result.Kind <> ckStruct then
+    Fail('type mismatch: not a struct type');
+end;
+
+function TWasmCodeValidator.ArrayAt(TypeIndex: Cardinal): TWasmTypeDefinition;
+begin
+  CheckTypeIndex(TypeIndex);
+  Result := FModule.TypeDefinitions[TypeIndex];
+  if Result.Kind <> ckArray then
+    Fail('type mismatch: not an array type');
+end;
+
 procedure TWasmCodeValidator.BlockSignature(const BlockType: TWasmBlockType;
   out StartTypes, EndTypes: TWasmValueTypeArray);
 begin
@@ -250,13 +371,14 @@ begin
       begin
         SetLength(EndTypes, 1);
         EndTypes[0] := BlockType.ValueType;
+        CheckValueType(EndTypes[0]);
       end;
     btTypeIndex:
       begin
         if BlockType.TypeIndex >= Cardinal(Length(FModule.Types)) then
           Fail('unknown type');
-        StartTypes := FModule.Types[BlockType.TypeIndex].Params;
-        EndTypes := FModule.Types[BlockType.TypeIndex].Results;
+        StartTypes := FunctionTypeAt(BlockType.TypeIndex).Params;
+        EndTypes := FunctionTypeAt(BlockType.TypeIndex).Results;
       end;
   end;
 end;
@@ -272,15 +394,24 @@ begin
     PushOperand(SignatureLetterType(Signature[Index]));
 end;
 
-procedure TWasmCodeValidator.CheckMemory(Index: Cardinal);
+function TWasmCodeValidator.MemoryAddressType(Index: Cardinal): TWasmValueType;
 begin
   if Index >= Cardinal(Length(FModule.Memories)) then
     Fail('unknown memory ' + IntToStr(Index));
+  Result := MakeNumberType(FModule.Memories[Index].AddressType);
+end;
+
+function TWasmCodeValidator.TableAddressType(Index: Cardinal): TWasmValueType;
+begin
+  CheckTable(Index);
+  Result := MakeNumberType(FModule.Tables[Index].AddressType);
 end;
 
 procedure TWasmCodeValidator.CheckMemarg(const Instruction: TWasmInstruction);
 begin
-  CheckMemory(Instruction.MemoryIndex);
+  if MemoryAddressType(Instruction.MemoryIndex).Kind = vkI32 then
+    if Instruction.MemoryOffset > $FFFFFFFF then
+      Fail('offset out of range');
   if Instruction.Alignment > Cardinal(WasmOpcodeTable[Instruction.Opcode].Alignment) then
     Fail('alignment must not be larger than natural');
 end;
@@ -315,269 +446,26 @@ begin
     Fail('unknown data segment ' + IntToStr(Index));
 end;
 
-procedure TWasmCodeValidator.ValidateInstruction(const Instruction: TWasmInstruction;
-  const Labels: array of Cardinal);
-var
-  StartTypes, EndTypes, Types, DefaultTypes: TWasmValueTypeArray;
-  Frame: TControlFrame;
-  First, Second: TOperandType;
-  FunctionType: TWasmFunctionType;
-  Index, Arity, Item: Integer;
-  Popped: array of TOperandType;
-  Info: ^TWasmOpcodeInfo;
+procedure TWasmCodeValidator.CheckTag(Index: Cardinal);
 begin
-  FOffset := Instruction.Offset;
-  Info := @WasmOpcodeTable[Instruction.Opcode];
-  case Instruction.Opcode of
-    OpUnreachable:
-      MarkUnreachable;
-    OpNop: ;
-    OpBlock, OpLoop:
-      begin
-        BlockSignature(Instruction.BlockType, StartTypes, EndTypes);
-        PopTypes(StartTypes);
-        PushControl(Instruction.Opcode, StartTypes, EndTypes);
-      end;
-    OpIf:
-      begin
-        BlockSignature(Instruction.BlockType, StartTypes, EndTypes);
-        PopExpected(WasmI32Type);
-        PopTypes(StartTypes);
-        PushControl(OpIf, StartTypes, EndTypes);
-      end;
-    OpElse:
-      begin
-        Frame := PopControl;
-        if Frame.Opcode <> OpIf then
-          Fail('else without if');
-        PushControl(OpElse, Frame.StartTypes, Frame.EndTypes);
-      end;
-    OpEnd:
-      begin
-        Frame := PopControl;
-        if Frame.Opcode = OpIf then
-        begin
-          { An if without else passes its parameters through. }
-          if Length(Frame.StartTypes) <> Length(Frame.EndTypes) then
-            Fail('type mismatch');
-          for Index := 0 to High(Frame.StartTypes) do
-            if Frame.StartTypes[Index] <> Frame.EndTypes[Index] then
-              Fail('type mismatch');
-        end;
-        PushTypes(Frame.EndTypes);
-      end;
-    OpBr:
-      begin
-        PopTypes(LabelTypes(FControls[Label_(Instruction.Index)]));
-        MarkUnreachable;
-      end;
-    OpBrIf:
-      begin
-        PopExpected(WasmI32Type);
-        Types := LabelTypes(FControls[Label_(Instruction.Index)]);
-        PopTypes(Types);
-        PushTypes(Types);
-      end;
-    OpBrTable:
-      begin
-        PopExpected(WasmI32Type);
-        DefaultTypes := LabelTypes(FControls[Label_(Instruction.Index)]);
-        Arity := Length(DefaultTypes);
-        if Instruction.LabelCount > 0 then
-          for Index := 0 to Integer(Instruction.LabelCount) - 1 do
-          begin
-            Types := LabelTypes(FControls[Label_(Labels[Index])]);
-            if Length(Types) <> Arity then
-              Fail('type mismatch');
-            { Pop and push back what was there: unknown stays unknown. }
-            SetLength(Popped, Length(Types));
-            for Item := High(Types) downto 0 do
-            begin
-              Popped[Item] := PopOperand;
-              if Popped[Item].Known and (Popped[Item].ValueType <> Types[Item]) then
-                Fail('type mismatch');
-            end;
-            for Item := 0 to High(Types) do
-              if Popped[Item].Known then
-                PushOperand(Popped[Item].ValueType)
-              else
-                PushUnknown;
-          end;
-        PopTypes(DefaultTypes);
-        MarkUnreachable;
-      end;
-    OpReturn:
-      begin
-        PopTypes(FControls[0].EndTypes);
-        MarkUnreachable;
-      end;
-    OpCall:
-      begin
-        CheckFunction(Instruction.Index);
-        FunctionType := FModule.FunctionType(Instruction.Index);
-        PopTypes(FunctionType.Params);
-        PushTypes(FunctionType.Results);
-      end;
-    OpCallIndirect:
-      begin
-        CheckTable(Instruction.SecondIndex);
-        if FModule.Tables[Instruction.SecondIndex].ElementType <> WasmFuncRefType then
-          Fail('type mismatch');
-        if Instruction.Index >= Cardinal(Length(FModule.Types)) then
-          Fail('unknown type');
-        PopExpected(WasmI32Type);
-        PopTypes(FModule.Types[Instruction.Index].Params);
-        PushTypes(FModule.Types[Instruction.Index].Results);
-      end;
-    OpDrop:
-      PopOperand;
-    OpSelect:
-      begin
-        PopExpected(WasmI32Type);
-        First := PopOperand;
-        Second := PopOperand;
-        if (First.Known and IsReferenceType(First.ValueType)) or
-          (Second.Known and IsReferenceType(Second.ValueType)) then
-          Fail('type mismatch');
-        if First.Known and Second.Known and (First.ValueType <> Second.ValueType) then
-          Fail('type mismatch');
-        if First.Known then
-          PushOperand(First.ValueType)
-        else if Second.Known then
-          PushOperand(Second.ValueType)
-        else
-          PushUnknown;
-      end;
-    OpSelectTyped:
-      begin
-        if Instruction.SelectTypeCount <> 1 then
-          Fail('invalid result arity');
-        PopExpected(WasmI32Type);
-        PopExpected(Instruction.SelectType);
-        PopExpected(Instruction.SelectType);
-        PushOperand(Instruction.SelectType);
-      end;
-    OpLocalGet, OpLocalSet, OpLocalTee:
-      begin
-        if Instruction.Index >= Cardinal(Length(FLocals)) then
-          Fail('unknown local ' + IntToStr(Instruction.Index));
-        case Instruction.Opcode of
-          OpLocalGet: PushOperand(FLocals[Instruction.Index]);
-          OpLocalSet: PopExpected(FLocals[Instruction.Index]);
-        else
-          PopExpected(FLocals[Instruction.Index]);
-          PushOperand(FLocals[Instruction.Index]);
-        end;
-      end;
-    OpGlobalGet, OpGlobalSet:
-      begin
-        if Instruction.Index >= Cardinal(Length(FModule.Globals)) then
-          Fail('unknown global ' + IntToStr(Instruction.Index));
-        if Instruction.Opcode = OpGlobalGet then
-          PushOperand(FModule.Globals[Instruction.Index].ValueType)
-        else
-        begin
-          if not FModule.Globals[Instruction.Index].Mutable then
-            Fail('global is immutable');
-          PopExpected(FModule.Globals[Instruction.Index].ValueType);
-        end;
-      end;
-    OpTableGet:
-      begin
-        CheckTable(Instruction.Index);
-        PopExpected(WasmI32Type);
-        PushOperand(FModule.Tables[Instruction.Index].ElementType);
-      end;
-    OpTableSet:
-      begin
-        CheckTable(Instruction.Index);
-        PopExpected(FModule.Tables[Instruction.Index].ElementType);
-        PopExpected(WasmI32Type);
-      end;
-    OpTableSize:
-      begin
-        CheckTable(Instruction.Index);
-        PushOperand(WasmI32Type);
-      end;
-    OpTableGrow:
-      begin
-        CheckTable(Instruction.Index);
-        PopExpected(WasmI32Type);
-        PopExpected(FModule.Tables[Instruction.Index].ElementType);
-        PushOperand(WasmI32Type);
-      end;
-    OpTableFill:
-      begin
-        CheckTable(Instruction.Index);
-        PopExpected(WasmI32Type);
-        PopExpected(FModule.Tables[Instruction.Index].ElementType);
-        PopExpected(WasmI32Type);
-      end;
-    OpTableCopy:
-      begin
-        CheckTable(Instruction.Index);
-        CheckTable(Instruction.SecondIndex);
-        if FModule.Tables[Instruction.Index].ElementType <> FModule.Tables[Instruction.SecondIndex].ElementType then
-          Fail('type mismatch');
-        ApplySignature('iii>');
-      end;
-    OpTableInit:
-      begin
-        CheckTable(Instruction.SecondIndex);
-        CheckElement(Instruction.Index);
-        if FModule.Elements[Instruction.Index].ElementType <> FModule.Tables[Instruction.SecondIndex].ElementType then
-          Fail('type mismatch');
-        ApplySignature('iii>');
-      end;
-    OpElemDrop:
-      CheckElement(Instruction.Index);
-    OpMemoryInit:
-      begin
-        CheckMemory(Instruction.MemoryIndex);
-        CheckData(Instruction.Index);
-        ApplySignature('iii>');
-      end;
-    OpDataDrop:
-      CheckData(Instruction.Index);
-    OpRefNull:
-      PushOperand(Instruction.ReferenceType);
-    OpRefIsNull:
-      begin
-        First := PopOperand;
-        if First.Known and not IsReferenceType(First.ValueType) then
-          Fail('type mismatch');
-        PushOperand(WasmI32Type);
-      end;
-    OpRefFunc:
-      begin
-        CheckFunction(Instruction.Index);
-        if (Instruction.Index >= Cardinal(Length(FDeclaredReferences))) or
-          not FDeclaredReferences[Instruction.Index] then
-          Fail('undeclared function reference');
-        PushOperand(WasmFuncRefType);
-      end;
-  else
-    case Info^.Immediate of
-      ikMemarg, ikMemargLane:
-        begin
-          CheckMemarg(Instruction);
-          if Info^.Immediate = ikMemargLane then
-            CheckLane(Instruction);
-        end;
-      ikMemory, ikMemoryMemory:
-        CheckMemory(Instruction.MemoryIndex);
-      ikLane:
-        CheckLane(Instruction);
-      ikShuffle:
-        for Index := 0 to 15 do
-          if Instruction.Vector.Bytes[Index] >= 32 then
-            Fail('invalid lane index');
-    end;
-    if Info^.Signature = '' then
-      Fail('unsupported instruction ' + Info^.Name);
-    ApplySignature(Info^.Signature);
-  end;
+  if Index >= Cardinal(Length(FModule.TagTypes)) then
+    Fail('unknown tag ' + IntToStr(Index));
 end;
+
+procedure TWasmCodeValidator.SetLocal(Index: Cardinal);
+begin
+  if FLocalSet[Index] then
+    Exit;
+  FLocalSet[Index] := True;
+  if FInitCount >= Length(FInits) then
+    SetLength(FInits, FInitCount * 2 + 8);
+  FInits[FInitCount] := Index;
+  Inc(FInitCount);
+end;
+
+{$I Wasm.CodeValidator.Basic.inc}
+{$I Wasm.CodeValidator.Calls.inc}
+{$I Wasm.CodeValidator.Aggregates.inc}
 
 procedure TWasmCodeValidator.ValidateFunction(DefinedIndex: Cardinal);
 var
@@ -592,18 +480,27 @@ begin
   FunctionType := FModule.FunctionType(FunctionIndex);
   Body := FModule.Bodies[DefinedIndex];
   SetLength(FLocals, Length(FunctionType.Params) + Length(Body.Locals));
+  SetLength(FLocalSet, Length(FLocals));
   for Index := 0 to High(FunctionType.Params) do
+  begin
     FLocals[Index] := FunctionType.Params[Index];
+    FLocalSet[Index] := True;
+  end;
   for Index := 0 to High(Body.Locals) do
+  begin
     FLocals[Length(FunctionType.Params) + Index] := Body.Locals[Index];
+    FLocalSet[Length(FunctionType.Params) + Index] := IsDefaultable(Body.Locals[Index]);
+  end;
+  FInitCount := 0;
+  FResults := FunctionType.Results;
   FOperandCount := 0;
   FControlCount := 0;
   PushControl(OpBlock, nil, FunctionType.Results);
-  Instructions.Initialize(PByte(FModule.Bytes), Body.BodyStart, Body.BodyLimit);
+  Instructions.Initialize(PByte(FModule.Bytes), Body.BodyStart, Body.BodyLimit, FModule.Features);
   while FControlCount > 0 do
   begin
     Instructions.Next(Instruction);
-    ValidateInstruction(Instruction, Instructions.Labels);
+    ValidateInstruction(Instruction, Instructions.Labels, Instructions.Catches);
   end;
 end;
 

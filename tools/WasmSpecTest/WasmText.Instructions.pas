@@ -18,10 +18,13 @@
 
 {
   The instruction names of the text format and their binary opcodes
-  (WebAssembly 2.0: the MVP, sign extension, saturating truncation, bulk
-  memory, reference types and fixed width SIMD), with the kind of
-  immediates each takes in text and, for memory instructions, the
-  natural alignment (log2 of the access size) a memarg defaults to.
+  (WebAssembly 3.0: the MVP, sign extension, saturating truncation, bulk
+  memory, reference types, fixed width and relaxed SIMD, multiple
+  memories, tail calls, typed function references, garbage collection
+  and exception handling, plus the legacy exception instructions try,
+  catch, catch_all, delegate and rethrow), with the kind of immediates
+  each takes in text and, for memory instructions, the natural alignment
+  (log2 of the access size) a memarg defaults to.
 
   Runs of consecutive opcodes are registered from name lists, so the
   table reads like the opcode tables of the specification.
@@ -37,17 +40,22 @@ type
   TImmediateKind = (
     ikNone,
     ikBlock, ikLoop, ikIf, ikElse, ikEnd,
-    ikLabel,          { br, br_if }
+    ikTryTable,       { try_table: block type, catch clauses }
+    ikTry,            { legacy try }
+    ikCatch,          { legacy catch: tag index }
+    ikCatchAll,       { legacy catch_all }
+    ikDelegate,       { legacy delegate: label, ends a try }
+    ikLabel,          { br, br_if, br_on_null, br_on_non_null, rethrow }
     ikBranchTable,
     ikFunction,       { call }
     ikCallIndirect,
     ikLocal,
     ikGlobal,
     ikTable,          { table.get/set/size/grow/fill: optional table index }
-    ikMemoryArgument, { loads and stores }
-    ikMemoryZero,     { memory.size, memory.grow, memory.fill: one zero byte }
-    ikMemoryCopy,     { two zero bytes }
-    ikMemoryInit,     { data index, zero byte }
+    ikMemoryArgument, { loads and stores: memory index?, offset, alignment }
+    ikMemoryIndex,    { memory.size, memory.grow, memory.fill: memory index? }
+    ikMemoryCopy,     { two memory indices, or none }
+    ikMemoryInit,     { memory index?, data index }
     ikData,           { data.drop }
     ikTableInit,
     ikElement,        { elem.drop }
@@ -59,11 +67,22 @@ type
     ikMemoryLane,     { v128.loadN_lane / storeN_lane: memarg and lane }
     ikSelect,
     ikReferenceNull,
-    ikReferenceFunction
+    ikReferenceFunction,
+    ikTag,            { throw }
+    ikType,           { call_ref, struct.new, array.get, ...: type index }
+    ikTypeField,      { struct.get, struct.set: type index, field }
+    ikTypeCount,      { array.new_fixed: type index, element count }
+    ikTypeData,       { array.new_data, array.init_data }
+    ikTypeElement,    { array.new_elem, array.init_elem }
+    ikTypeType,       { array.copy: destination and source type }
+    ikReferenceTest,  { ref.test, ref.cast: reference type; Code is the
+                        non-null form's, the nullable one's is Code + 1 }
+    ikBranchCast      { br_on_cast, br_on_cast_fail: label, two
+                        reference types }
   );
 
   TInstructionInfo = record
-    Prefix: Byte;     { 0 for single byte opcodes, $FC or $FD }
+    Prefix: Byte;     { 0 for single byte opcodes, $FB, $FC or $FD }
     Code: Cardinal;
     Immediate: TImmediateKind;
     Alignment: Byte;  { natural alignment (log2) for memory instructions }
@@ -131,8 +150,20 @@ begin
   Add('return', 0, $0F, ikNone);
   Add('call', 0, $10, ikFunction);
   Add('call_indirect', 0, $11, ikCallIndirect);
+  Add('return_call', 0, $12, ikFunction);
+  Add('return_call_indirect', 0, $13, ikCallIndirect);
+  Add('call_ref', 0, $14, ikType);
+  Add('return_call_ref', 0, $15, ikType);
   Add('drop', 0, $1A, ikNone);
   Add('select', 0, $1B, ikSelect);
+  Add('try_table', 0, $1F, ikTryTable);
+  Add('throw', 0, $08, ikTag);
+  Add('throw_ref', 0, $0A, ikNone);
+  Add('try', 0, $06, ikTry);
+  Add('catch', 0, $07, ikCatch);
+  Add('rethrow', 0, $09, ikLabel);
+  Add('delegate', 0, $18, ikDelegate);
+  Add('catch_all', 0, $19, ikCatchAll);
   Add('local.get', 0, $20, ikLocal);
   Add('local.set', 0, $21, ikLocal);
   Add('local.tee', 0, $22, ikLocal);
@@ -163,8 +194,8 @@ begin
   AddMemory('i64.store8', 0, $3C, 0);
   AddMemory('i64.store16', 0, $3D, 1);
   AddMemory('i64.store32', 0, $3E, 2);
-  Add('memory.size', 0, $3F, ikMemoryZero);
-  Add('memory.grow', 0, $40, ikMemoryZero);
+  Add('memory.size', 0, $3F, ikMemoryIndex);
+  Add('memory.grow', 0, $40, ikMemoryIndex);
   Add('i32.const', 0, $41, ikInt32);
   Add('i64.const', 0, $42, ikInt64);
   Add('f32.const', 0, $43, ikFloat32);
@@ -191,6 +222,41 @@ begin
   Add('ref.null', 0, $D0, ikReferenceNull);
   Add('ref.is_null', 0, $D1, ikNone);
   Add('ref.func', 0, $D2, ikReferenceFunction);
+  Add('ref.eq', 0, $D3, ikNone);
+  Add('ref.as_non_null', 0, $D4, ikNone);
+  Add('br_on_null', 0, $D5, ikLabel);
+  Add('br_on_non_null', 0, $D6, ikLabel);
+end;
+
+procedure AddGarbageCollectionInstructions;
+const
+  Gc = $FB;
+begin
+  Add('struct.new', Gc, 0, ikType);
+  Add('struct.new_default', Gc, 1, ikType);
+  Add('struct.get', Gc, 2, ikTypeField);
+  Add('struct.get_s', Gc, 3, ikTypeField);
+  Add('struct.get_u', Gc, 4, ikTypeField);
+  Add('struct.set', Gc, 5, ikTypeField);
+  Add('array.new', Gc, 6, ikType);
+  Add('array.new_default', Gc, 7, ikType);
+  Add('array.new_fixed', Gc, 8, ikTypeCount);
+  Add('array.new_data', Gc, 9, ikTypeData);
+  Add('array.new_elem', Gc, 10, ikTypeElement);
+  Add('array.get', Gc, 11, ikType);
+  Add('array.get_s', Gc, 12, ikType);
+  Add('array.get_u', Gc, 13, ikType);
+  Add('array.set', Gc, 14, ikType);
+  Add('array.len', Gc, 15, ikNone);
+  Add('array.fill', Gc, 16, ikType);
+  Add('array.copy', Gc, 17, ikTypeType);
+  Add('array.init_data', Gc, 18, ikTypeData);
+  Add('array.init_elem', Gc, 19, ikTypeElement);
+  Add('ref.test', Gc, 20, ikReferenceTest);
+  Add('ref.cast', Gc, 22, ikReferenceTest);
+  Add('br_on_cast', Gc, 24, ikBranchCast);
+  Add('br_on_cast_fail', Gc, 25, ikBranchCast);
+  AddRun('', ['any.convert_extern', 'extern.convert_any', 'ref.i31', 'i31.get_s', 'i31.get_u'], Gc, 26);
 end;
 
 procedure AddMiscellaneousInstructions;
@@ -200,7 +266,7 @@ begin
   Add('memory.init', $FC, 8, ikMemoryInit);
   Add('data.drop', $FC, 9, ikData);
   Add('memory.copy', $FC, 10, ikMemoryCopy);
-  Add('memory.fill', $FC, 11, ikMemoryZero);
+  Add('memory.fill', $FC, 11, ikMemoryIndex);
   Add('table.init', $FC, 12, ikTableInit);
   Add('elem.drop', $FC, 13, ikElement);
   Add('table.copy', $FC, 14, ikTableCopy);
@@ -288,6 +354,12 @@ begin
   AddRun('', ['i32x4.trunc_sat_f32x4_s', 'i32x4.trunc_sat_f32x4_u', 'f32x4.convert_i32x4_s',
     'f32x4.convert_i32x4_u', 'i32x4.trunc_sat_f64x2_s_zero', 'i32x4.trunc_sat_f64x2_u_zero',
     'f64x2.convert_low_i32x4_s', 'f64x2.convert_low_i32x4_u'], Vector, 248);
+  AddRun('', ['i8x16.relaxed_swizzle', 'i32x4.relaxed_trunc_f32x4_s', 'i32x4.relaxed_trunc_f32x4_u',
+    'i32x4.relaxed_trunc_f64x2_s_zero', 'i32x4.relaxed_trunc_f64x2_u_zero', 'f32x4.relaxed_madd',
+    'f32x4.relaxed_nmadd', 'f64x2.relaxed_madd', 'f64x2.relaxed_nmadd', 'i8x16.relaxed_laneselect',
+    'i16x8.relaxed_laneselect', 'i32x4.relaxed_laneselect', 'i64x2.relaxed_laneselect', 'f32x4.relaxed_min',
+    'f32x4.relaxed_max', 'f64x2.relaxed_min', 'f64x2.relaxed_max', 'i16x8.relaxed_q15mulr_s',
+    'i16x8.relaxed_dot_i8x16_i7x16_s', 'i32x4.relaxed_dot_i8x16_i7x16_add_s'], Vector, $100);
 end;
 
 procedure BuildTable;
@@ -296,6 +368,7 @@ begin
   InstructionTable.OwnsObjects := True;
   InstructionTable.CaseSensitive := True;
   AddCoreInstructions;
+  AddGarbageCollectionInstructions;
   AddMiscellaneousInstructions;
   AddVectorInstructions;
   InstructionTable.Sorted := True;

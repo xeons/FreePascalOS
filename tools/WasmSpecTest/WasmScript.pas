@@ -24,6 +24,13 @@
     (module $name? ...)               define a module (text, binary or
                                       quote form), instantiated by the
                                       runner and made current
+    (module definition $name? ...)    compile a module only, kept under
+                                      $name (Module.IsDefinition)
+    (module instance $inst? $def?)    instantiate a definition ($def, or
+                                      the last one) as $inst: kind
+                                      scModuleInstance, InstanceName and
+                                      DefinitionName ('' when left out;
+                                      a single name is the instance's)
     (register "name" $name?)          make a module's exports importable
                                       under "name"
     (invoke $name? "field" const*)    an action: call an export
@@ -32,6 +39,8 @@
     (assert_trap action "message")    also (assert_trap module "message"):
                                       instantiation traps
     (assert_exhaustion action "message")
+    (assert_exception action)         the action throws a WebAssembly
+                                      exception (scAssertException)
     (assert_invalid module "message")
     (assert_malformed module "message")
     (assert_unlinkable module "message")
@@ -42,11 +51,26 @@
   assert_malformed expects; anywhere else the runner reports a failure).
 
   Values are kept as bit patterns: Bits[0] holds a scalar (an f32 in its
-  low 32 bits, the number of a ref.extern), a v128 is Bits[0] (bytes 0
-  to 7) and Bits[1] (bytes 8 to 15). Expected results may be NaN patterns
-  instead of values (nan:canonical, nan:arithmetic), for scalars in Nan
-  and per lane of an f32x4 or f64x2 vector in LaneNan; (ref.func) and
-  (ref.extern) without a number match any such reference (AnyReference).
+  low 32 bits, the number of a ref.extern or ref.host), a v128 is
+  Bits[0] (bytes 0 to 7) and Bits[1] (bytes 8 to 15). Expected results
+  may be NaN patterns instead of values (nan:canonical, nan:arithmetic),
+  for scalars in Nan and per lane of an f32x4 or f64x2 vector in
+  LaneNan; (ref.func), (ref.extern) and (ref.host) without a number match
+  any such reference (AnyReference).
+
+  References: (ref.null ht) for any abstract heap type ht (HeapKind;
+  a bare (ref.null), only in results, matches every null:
+  shUnspecified); (ref.extern n) and (ref.host n) as arguments and
+  results; the bare patterns (ref.any), (ref.eq), (ref.i31),
+  (ref.struct), (ref.array) and (ref.exn) only in results, matching any
+  non-null reference of that kind (they set AnyReference too).
+
+  (either v1 v2 ...) in assert_return results: the result may be any of
+  the alternatives. A record cannot hold a dynamic array of its own
+  type, so the value only has Kind svEither, and its alternatives are
+  the command's Alternatives[i], i being the result's position in
+  Expected (Alternatives has an entry per result, empty for results
+  that are not "either").
 }
 unit WasmScript;
 
@@ -63,10 +87,12 @@ uses
   WasmText.Tree;
 
 type
-  TScriptValueKind = (svI32, svI64, svF32, svF64, svV128, svRefNull, svRefExtern, svRefFunc);
+  TScriptValueKind = (svI32, svI64, svF32, svF64, svV128, svRefNull, svRefExtern, svRefFunc, svRefHost,
+    svRefAny, svRefEq, svRefI31, svRefStruct, svRefArray, svRefExn, svEither);
   TScriptNanPattern = (npNone, npCanonical, npArithmetic);
   TScriptLaneShape = (lsI8, lsI16, lsI32, lsI64, lsF32, lsF64);
-  TScriptHeapKind = (shFunc, shExtern);
+  TScriptHeapKind = (shFunc, shExtern, shAny, shEq, shI31, shStruct, shArray, shNone, shNoFunc, shNoExtern,
+    shExn, shNoExn, shUnspecified);
 
   TScriptValue = record
     Kind: TScriptValueKind;
@@ -85,6 +111,8 @@ type
     Bytes: TBytes;
     EncodeError: AnsiString;
     IsQuote, IsBinary: Boolean;
+    { (module definition ...): compile only. }
+    IsDefinition: Boolean;
   end;
 
   TScriptActionKind = (saInvoke, saGet);
@@ -96,7 +124,8 @@ type
   end;
 
   TScriptCommandKind = (scModule, scRegister, scAction, scAssertReturn, scAssertTrap, scAssertExhaustion,
-    scAssertInvalid, scAssertMalformed, scAssertUnlinkable, scAssertUninstantiable);
+    scAssertInvalid, scAssertMalformed, scAssertUnlinkable, scAssertUninstantiable, scAssertException,
+    scModuleInstance);
 
   TScriptCommand = class
   public
@@ -108,9 +137,15 @@ type
     HasModule: Boolean;
     Action: TScriptAction;
     Expected: TScriptValueArray;
+    { Per result of Expected: the alternatives of an (either ...) result
+      (Expected[i].Kind = svEither), empty for the others. }
+    Alternatives: array of TScriptValueArray;
     Message: AnsiString;
     { register: the import name and the module ('' for the current). }
     RegisterAs, RegisterModule: AnsiString;
+    { module instance: the new instance's name and the definition's
+      ('' when left out). }
+    InstanceName, DefinitionName: AnsiString;
   end;
 
   TScriptCommandList = specialize TFPGObjectList<TScriptCommand>;
@@ -203,6 +238,40 @@ begin
   end;
 end;
 
+function HeapKindOf(const Keyword: AnsiString; out Kind: TScriptHeapKind): Boolean;
+const
+  Names: array[shFunc..shNoExn] of AnsiString = ('func', 'extern', 'any', 'eq', 'i31', 'struct', 'array', 'none',
+    'nofunc', 'noextern', 'exn', 'noexn');
+var
+  Candidate: TScriptHeapKind;
+begin
+  for Candidate := Low(Names) to High(Names) do
+    if Names[Candidate] = Keyword then
+    begin
+      Kind := Candidate;
+      Exit(True);
+    end;
+  Kind := shUnspecified;
+  Result := False;
+end;
+
+{ The bare result patterns (ref.any) ... (ref.exn). }
+function ReferencePatternKindOf(const Head: AnsiString; out Kind: TScriptValueKind): Boolean;
+begin
+  Result := True;
+  if Head = 'ref.any' then Kind := svRefAny
+  else if Head = 'ref.eq' then Kind := svRefEq
+  else if Head = 'ref.i31' then Kind := svRefI31
+  else if Head = 'ref.struct' then Kind := svRefStruct
+  else if Head = 'ref.array' then Kind := svRefArray
+  else if Head = 'ref.exn' then Kind := svRefExn
+  else
+  begin
+    Kind := svRefNull;
+    Result := False;
+  end;
+end;
+
 function ParseScriptValue(Node: TTextNode; AllowPatterns: Boolean): TScriptValue;
 var
   Head, Text: AnsiString;
@@ -249,19 +318,25 @@ begin
   else if Head = 'ref.null' then
   begin
     Result.Kind := svRefNull;
-    if (Node.Count <> 2) then
-      Fail(Node, 'unexpected token in ref.null');
-    if Node[1].IsKeyword('func') then
-      Result.HeapKind := shFunc
-    else if Node[1].IsKeyword('extern') then
-      Result.HeapKind := shExtern
-    else
+    if (Node.Count = 1) and AllowPatterns then
+      Result.HeapKind := shUnspecified
+    else if Node.Count <> 2 then
+      Fail(Node, 'unexpected token in ref.null')
+    else if not (Node[1].IsAtomOf(ttKeyword) and HeapKindOf(Node[1].Text, Result.HeapKind)) then
       Fail(Node, 'unexpected token: unknown heap type');
   end
-  else if (Head = 'ref.extern') or (Head = 'ref.func') then
+  else if ReferencePatternKindOf(Head, Result.Kind) then
+  begin
+    if not AllowPatterns or (Node.Count <> 1) then
+      Fail(Node, 'unexpected token in ' + Head);
+    Result.AnyReference := True;
+  end
+  else if (Head = 'ref.extern') or (Head = 'ref.func') or (Head = 'ref.host') then
   begin
     if Head = 'ref.extern' then
       Result.Kind := svRefExtern
+    else if Head = 'ref.host' then
+      Result.Kind := svRefHost
     else
       Result.Kind := svRefFunc;
     if Node.Count = 1 then
@@ -287,6 +362,9 @@ begin
   if not Node.IsListOf('module') then
     Fail(Node, 'unexpected token: expected a module');
   Position := 1;
+  Result.IsDefinition := (Position < Node.Count) and Node[Position].IsKeyword('definition');
+  if Result.IsDefinition then
+    Inc(Position);
   if (Position < Node.Count) and Node[Position].IsAtomOf(ttIdentifier) then
   begin
     Result.Name := Node[Position].Text;
@@ -338,6 +416,18 @@ begin
   end;
 end;
 
+function ParseAlternatives(Node: TTextNode): TScriptValueArray;
+var
+  Index: Integer;
+begin
+  if Node.Count < 2 then
+    Fail(Node, 'unexpected token: either needs alternatives');
+  Result := nil;
+  SetLength(Result, Node.Count - 1);
+  for Index := 1 to Node.Count - 1 do
+    Result[Index - 1] := ParseScriptValue(Node[Index], True);
+end;
+
 function MessageOf(Node: TTextNode; Index: Integer): AnsiString;
 begin
   if (Index <> Node.Count - 1) or not Node[Index].IsAtomOf(ttString) then
@@ -356,7 +446,20 @@ begin
   Result := TScriptCommand.Create;
   try
     Result.Line := Node.Line;
-    if Head = 'module' then
+    if (Head = 'module') and (Node.Count > 1) and Node[1].IsKeyword('instance') then
+    begin
+      Result.Kind := scModuleInstance;
+      if Node.Count > 4 then
+        Fail(Node, 'unexpected token in module instance');
+      for Index := 2 to Node.Count - 1 do
+        if not Node[Index].IsAtomOf(ttIdentifier) then
+          Fail(Node, 'unexpected token in module instance');
+      if Node.Count > 2 then
+        Result.InstanceName := Node[2].Text;
+      if Node.Count > 3 then
+        Result.DefinitionName := Node[3].Text;
+    end
+    else if Head = 'module' then
     begin
       Result.Kind := scModule;
       Result.Module := ParseModule(Node);
@@ -387,8 +490,23 @@ begin
         Fail(Node, 'unexpected token in assert_return');
       Result.Action := ParseAction(Node[1]);
       SetLength(Result.Expected, Node.Count - 2);
+      SetLength(Result.Alternatives, Node.Count - 2);
       for Index := 2 to Node.Count - 1 do
-        Result.Expected[Index - 2] := ParseScriptValue(Node[Index], True);
+        if Node[Index].IsListOf('either') then
+        begin
+          Result.Expected[Index - 2] := Default(TScriptValue);
+          Result.Expected[Index - 2].Kind := svEither;
+          Result.Alternatives[Index - 2] := ParseAlternatives(Node[Index]);
+        end
+        else
+          Result.Expected[Index - 2] := ParseScriptValue(Node[Index], True);
+    end
+    else if Head = 'assert_exception' then
+    begin
+      Result.Kind := scAssertException;
+      if Node.Count <> 2 then
+        Fail(Node, 'unexpected token in assert_exception');
+      Result.Action := ParseAction(Node[1]);
     end
     else if (Head = 'assert_trap') or (Head = 'assert_exhaustion') then
     begin
@@ -433,8 +551,8 @@ var
   Head: AnsiString;
 begin
   Head := Node.Head;
-  Result := (Head = 'type') or (Head = 'import') or (Head = 'func') or (Head = 'table') or
-    (Head = 'memory') or (Head = 'global') or (Head = 'export') or (Head = 'start') or
+  Result := (Head = 'type') or (Head = 'rec') or (Head = 'import') or (Head = 'func') or (Head = 'table') or
+    (Head = 'memory') or (Head = 'global') or (Head = 'tag') or (Head = 'export') or (Head = 'start') or
     (Head = 'elem') or (Head = 'data');
 end;
 

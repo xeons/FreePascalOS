@@ -37,6 +37,17 @@
   records and raises EWasmTrap. Invoke is the way in from outside: it
   checks the arguments, masks floating point exceptions, and restores
   the stack whatever happens.
+
+  A thrown exception (throw, throw_ref, rethrow, or EWasmException out
+  of a host function) is looked for in the handlers of the current
+  frame (Wasm.Unwinding) and then of each caller, popping frames, up to
+  the frame Execute started with; past that it leaves as EWasmException.
+  A tail call moves its arguments to the frame's first slot and runs the
+  callee in the caller's place, so the frame records do not grow.
+  Allocating instructions first collect when the heap asks for it, with
+  the running frame recorded at its safepoint; the garbage collection
+  instructions themselves are in Wasm.GcOperations, memories other than
+  an i32 memory 0 in Wasm.MemoryAccess.
 }
 unit Wasm.Interpreter;
 
@@ -66,8 +77,17 @@ uses
   Wasm.Opcodes,
   Wasm.Code,
   Wasm.Numerics,
-  Wasm.Simd;
+  Wasm.Simd,
+  Wasm.GcHeap,
+  Wasm.TypeDefinitions,
+  Wasm.TypeRegistry,
+  Wasm.GcOperations,
+  Wasm.MemoryAccess,
+  Wasm.Exceptions,
+  Wasm.Unwinding;
 
+{ Values leaving for the embedder: garbage collected objects among them
+  are exposed (Wasm.GcHeap) until the embedder's next trace. }
 procedure ReadValues(Store: TWasmStore; First: SizeInt; const Types: TWasmValueTypeArray; var Values: TWasmValueArray);
 var
   Index: Integer;
@@ -86,6 +106,11 @@ begin
           Values[Index].V128.QWords[0] := Store.Stack[Slot];
           Values[Index].V128.QWords[1] := Store.Stack[Slot + 1];
           Inc(Slot);
+        end;
+      vkReference:
+        begin
+          Values[Index].F64Bits := Store.Stack[Slot];
+          Store.Heap.Expose(Values[Index].Reference);
         end;
     else
       Values[Index].F64Bits := Store.Stack[Slot];
@@ -136,7 +161,90 @@ begin
   finally
     Dec(Store.HostNesting);
   end;
+  for Index := 0 to High(Results) do
+    if (Func.FunctionType.Results[Index].Kind = vkReference) and
+      not ValueMatchesType(Store, Results[Index], Func.FunctionType.Results[Index]) then
+      raise EWasmError.CreateFmt('host function result %d of the wrong type', [Index]);
   WriteValues(Store, First, Func.FunctionType.Results, Results);
+end;
+
+{ CallHost, catching the WebAssembly exception a host function raises
+  (to be thrown on in the caller); nil if there was none. }
+function CallHostCatching(Store: TWasmStore; Func: TWasmFunction; First: SizeInt): PWasmGcObject;
+begin
+  Result := nil;
+  try
+    CallHost(Store, Func, First);
+  except
+    on Thrown: EWasmException do
+      Result := Thrown.Reference;
+  end;
+end;
+
+{ Collects with the running frame recorded at the instruction it is
+  suspended at (whose safepoint lists its live references). }
+procedure CollectAtSafepoint(Store: TWasmStore; Func: TWasmFunction; ResumeIndex: Integer; Base: SizeInt);
+begin
+  if not Store.PushFrame(Func, ResumeIndex, Base) then
+    Exit;
+  try
+    Store.CollectGarbage;
+  finally
+    Dec(Store.FrameCount);
+  end;
+end;
+
+{ A new exception of tag Tag with its payload at Slots; nil when the heap
+  is full. }
+function NewThrownException(Store: TWasmStore; Tag: TWasmTag; Slots: PQWord): PWasmGcObject;
+begin
+  Result := Store.Heap.AllocateException(Tag, Tag.PayloadSlots);
+  if (Result <> nil) and (Tag.PayloadSlots > 0) then
+    Move(Slots^, ObjectPayload(Result)^, Tag.PayloadSlots * SizeOf(QWord));
+end;
+
+{ An allocating instruction at code index Index: collects first if the
+  heap asks, and once more if it is full; NoTrap or the trap. }
+function AllocateAt(Store: TWasmStore; Func: TWasmFunction; Instance: TWasmModuleInstance; P: PCodeInstruction;
+  Base: SizeInt; Index: Integer): Integer;
+begin
+  if Store.Heap.WantsCollection then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+  end;
+  Result := ExecuteAllocation(Store, Instance, P^, @Store.Stack[Base]);
+  if Result = Ord(tkOutOfMemory) then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+    Result := ExecuteAllocation(Store, Instance, P^, @Store.Stack[Base]);
+  end;
+end;
+
+{ A throw at code index Index: its exception, nil when the heap is full
+  even after a collection. }
+function ThrowAt(Store: TWasmStore; Func: TWasmFunction; Tag: TWasmTag; Base: SizeInt; Payload: Int32;
+  Index: Integer): PWasmGcObject;
+begin
+  if Store.Heap.WantsCollection then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+  end;
+  Result := NewThrownException(Store, Tag, @Store.Stack[Base + Payload]);
+  if Result = nil then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+    Result := NewThrownException(Store, Tag, @Store.Stack[Base + Payload]);
+  end;
+end;
+
+{ Whether a function of type TypeId may be called as ExpectedId. }
+function CallTypeMatches(Store: TWasmStore; TypeId, ExpectedId: Integer): Boolean;
+begin
+  Result := (TypeId = ExpectedId) or Store.Registry.IsSubtype(TypeId, ExpectedId);
 end;
 
 procedure RaiseTrap(Store: TWasmStore; Kind: TWasmTrapKind; Func: TWasmFunction; Index: Integer);
@@ -171,7 +279,8 @@ end;
 { Runs the WebAssembly function Callee whose arguments are at slot Base. }
 procedure Execute(Store: TWasmStore; Callee: TWasmFunction; Base: SizeInt);
 label
-  DoCall, InterruptCheck, OutOfBounds, Trapped, Finished;
+  DoCall, DoTailCall, InterruptCheck, ReturnToCaller, ThrowException, ThrowFromCaller, Allocate, OutOfBounds,
+  Trapped, Finished;
 var
   Func: TWasmFunction;
   Code: TCompiledFunction;
@@ -219,6 +328,7 @@ begin
   end;
   TrapKind := tkUnreachable;
   Callee := nil;
+  Value := nil;
   ArgumentBase := 0;
   Target := 0;
   while True do
@@ -229,10 +339,145 @@ begin
       {$I Wasm.Interpreter.Integer.inc}
       {$I Wasm.Interpreter.Float.inc}
       {$I Wasm.Interpreter.Fused.inc}
+      {$I Wasm.Interpreter.References.inc}
     else
       ExecuteSimd(P^, S, PQWord(Code.Constants));
     end;
     Inc(P);
+    Continue;
+
+  Allocate:
+    Index := AllocateAt(Store, Func, Instance, P, Base, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction));
+    if Index <> NoTrap then
+    begin
+      TrapKind := TWasmTrapKind(Index);
+      goto Trapped;
+    end;
+    Inc(P);
+    Continue;
+
+  ThrowFromCaller:
+    { The frame that would catch is gone (a tail call left it): unwind
+      to its caller, which threw at its call instruction. }
+    if Store.FrameCount = EntryFrameCount then
+      RaiseUncaught(Store, Value);
+    Dec(Store.FrameCount);
+    Func := Store.Frames[Store.FrameCount].Func;
+    Base := Store.Frames[Store.FrameCount].Base;
+    Index := Store.Frames[Store.FrameCount].ResumeIndex;
+    Code := Func.Code;
+    CodeStart := @Code.Instructions[0];
+    P := @CodeStart[Index - 1];
+    S := @Store.Stack[Base];
+    Instance := Func.Instance;
+    if Instance.DefaultMemory <> nil then
+    begin
+      MemoryBase := Instance.DefaultMemory.Data;
+      MemoryLength := Instance.DefaultMemory.ByteLength;
+    end
+    else
+    begin
+      MemoryBase := nil;
+      MemoryLength := 0;
+    end;
+
+  ThrowException:
+    { Value was thrown by the instruction at P. }
+    Index := FindCatchClause(Code, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction), Instance, Value);
+    if Index < 0 then
+      goto ThrowFromCaller;
+    P := @CodeStart[DeliverException(Code, Index, Value, S)];
+    Value := nil;
+    Continue;
+
+  DoTailCall:
+    { Callee takes this frame's place, its arguments at ArgumentBase. }
+    Dec(Store.InterruptCountdown);
+    if Store.InterruptCountdown <= 0 then
+    begin
+      if not Store.PushFrame(Func, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction) + 1, Base) then
+      begin
+        TrapKind := tkCallStackExhausted;
+        goto Trapped;
+      end;
+      Store.StackTop := Base + Code.FrameSlots;
+      if Store.InterruptRequested then
+      begin
+        Dec(Store.FrameCount);
+        TrapKind := tkInterrupted;
+        goto Trapped;
+      end;
+      Dec(Store.FrameCount);
+      S := @Store.Stack[Base];
+    end;
+    if (ArgumentBase <> 0) and (Callee.ParamSlots > 0) then
+      Move(S[ArgumentBase], S[0], SizeInt(Callee.ParamSlots) * SizeOf(QWord));
+    if Callee.Code = nil then
+    begin
+      Store.StackTop := Base + Callee.ParamSlots + Callee.ResultSlots;
+      Store.ReserveStack(4);
+      Value := CallHostCatching(Store, Callee, Base);
+      S := @Store.Stack[Base];
+      if Value <> nil then
+        goto ThrowFromCaller;
+      goto ReturnToCaller;
+    end;
+    if Base + Callee.Code.FrameSlots + 4 > Length(Store.Stack) then
+    begin
+      if Base + Callee.Code.FrameSlots + 4 > Store.Options.MaximumStackSlots then
+      begin
+        TrapKind := tkCallStackExhausted;
+        goto Trapped;
+      end;
+      Store.StackTop := Base;
+      Store.ReserveStack(Callee.Code.FrameSlots + 4);
+    end;
+    Func := Callee;
+    Code := Func.Code;
+    S := @Store.Stack[Base];
+    if Code.LocalSlots > Code.ParamSlots then
+      FillQWord(S[Code.ParamSlots], Code.LocalSlots - Code.ParamSlots, 0);
+    CodeStart := @Code.Instructions[0];
+    P := CodeStart;
+    if Instance <> Func.Instance then
+    begin
+      Instance := Func.Instance;
+      if Instance.DefaultMemory <> nil then
+      begin
+        MemoryBase := Instance.DefaultMemory.Data;
+        MemoryLength := Instance.DefaultMemory.ByteLength;
+      end
+      else
+      begin
+        MemoryBase := nil;
+        MemoryLength := 0;
+      end;
+    end;
+    Continue;
+
+  ReturnToCaller:
+    { The results are at the frame's slot 0. }
+    if Store.FrameCount = EntryFrameCount then
+      goto Finished;
+    Dec(Store.FrameCount);
+    Func := Store.Frames[Store.FrameCount].Func;
+    Base := Store.Frames[Store.FrameCount].Base;
+    Index := Store.Frames[Store.FrameCount].ResumeIndex;
+    Code := Func.Code;
+    CodeStart := @Code.Instructions[0];
+    P := @CodeStart[Index];
+    S := @Store.Stack[Base];
+    Instance := Func.Instance;
+    if Instance.DefaultMemory <> nil then
+    begin
+      MemoryBase := Instance.DefaultMemory.Data;
+      MemoryLength := Instance.DefaultMemory.ByteLength;
+    end
+    else
+    begin
+      MemoryBase := nil;
+      MemoryLength := 0;
+    end;
     Continue;
 
   DoCall:
@@ -269,7 +514,7 @@ begin
         goto Trapped;
       end;
       Store.StackTop := Base + Code.FrameSlots;
-      CallHost(Store, Callee, Base + ArgumentBase);
+      Value := CallHostCatching(Store, Callee, Base + ArgumentBase);
       Dec(Store.FrameCount);
       S := @Store.Stack[Base];
       if Instance.DefaultMemory <> nil then
@@ -277,6 +522,8 @@ begin
         MemoryBase := Instance.DefaultMemory.Data;
         MemoryLength := Instance.DefaultMemory.ByteLength;
       end;
+      if Value <> nil then
+        goto ThrowException;
       Inc(P);
       Continue;
     end;
@@ -367,7 +614,7 @@ begin
   if Length(Arguments) <> Length(Func.FunctionType.Params) then
     raise EWasmError.CreateFmt('expected %d arguments, got %d', [Length(Func.FunctionType.Params), Length(Arguments)]);
   for Index := 0 to High(Arguments) do
-    if Arguments[Index].ValueType <> Func.FunctionType.Params[Index] then
+    if not ValueMatchesType(Store, Arguments[Index], Func.FunctionType.Params[Index]) then
       raise EWasmError.CreateFmt('argument %d: expected %s, got %s', [Index,
         ValueTypeToString(Func.FunctionType.Params[Index]), ValueTypeToString(Arguments[Index].ValueType)]);
   SavedFrameCount := Store.FrameCount;

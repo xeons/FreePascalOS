@@ -17,17 +17,21 @@
 }
 
 {
-  The store (spec section 4.2): function, table, memory and global
-  instances, module instances, and the execution stack.
+  The store (spec section 4.2): function, table, memory, global and tag
+  instances, module instances, the garbage collected heap and the
+  execution stack.
 
   A store belongs to one thread of execution (one JS agent); nothing in
   the engine is shared between stores, and the store owns every instance
   made in it until it is destroyed (instances live as long as anything
-  could still reach them, which without a collector of our own is the
-  store's lifetime).
+  could still reach them, which without a collector for them is the
+  store's lifetime). Garbage collected objects (structs, arrays,
+  exceptions) are collected (Wasm.GcHeap) from the roots the store
+  enumerates here.
 
-  Function types are made canonical per store: equal types get the same
-  TypeId, so call_indirect's check and import matching compare numbers.
+  Types are made canonical per store (Wasm.TypeRegistry): equivalent
+  types get the same id, so call_indirect's check, casts and import
+  matching compare numbers or walk a supertype chain.
 
   The execution stack is one array of 64-bit slots shared by all frames
   (Wasm.Code), with a record of the suspended frames beside it; it
@@ -35,6 +39,12 @@
   limited by Options.MaximumCallDepth. Exceeding either traps with "call
   stack exhausted" instead of running the host thread out of stack, as
   does nesting host calls into WebAssembly too deeply.
+
+  Collection and the embedder (see Wasm.Api for the protocol): the roots
+  are the store's globals, tables and element segments, the slots of
+  suspended frames by the compiler's safepoint maps, pinned objects, the
+  objects handed to the embedder since its last trace (exposed), and
+  exceptions in flight (pinned by EWasmException).
 }
 unit Wasm.Runtime;
 
@@ -47,8 +57,11 @@ uses
   SysUtils,
   Classes,
   Wasm.Types,
+  Wasm.TypeDefinitions,
   Wasm.Module,
-  Wasm.Code;
+  Wasm.Code,
+  Wasm.GcHeap,
+  Wasm.TypeRegistry;
 
 type
   TWasmStore = class;
@@ -58,13 +71,15 @@ type
   { A host function: Arguments has one value per parameter, Results one
     per result, already typed; the callback fills in the values. It may
     raise any exception to unwind the WebAssembly frames (EWasmTrap for
-    a trap) and may call back into WebAssembly. }
+    a trap, EWasmException to throw a WebAssembly exception) and may call
+    back into WebAssembly. }
   TWasmHostCallback = procedure(Func: TWasmFunction; const Arguments: TWasmValueArray;
     var Results: TWasmValueArray) of object;
 
   TWasmFunction = class
   public
     Store: TWasmStore;
+    { Heap types in it are the store's type ids. }
     FunctionType: TWasmFunctionType;
     TypeId: Integer;
     ParamSlots: Integer;
@@ -80,6 +95,18 @@ type
     function IsHost: Boolean; inline;
   end;
 
+  { A tag (exception handling): identity matters, two tags of one type
+    are different tags. The payload of its exceptions is a slot per
+    parameter (two for a v128); TracedOffsets (TWasmGcDescriptor) are
+    where references are, for the collector. }
+  TWasmTag = class(TWasmGcDescriptor)
+  public
+    Store: TWasmStore;
+    FunctionType: TWasmFunctionType;
+    TypeId: Integer;
+    PayloadSlots: Integer;
+  end;
+
   TWasmMemory = class;
   { After a memory grows: OldData and OldLength are what the memory was
     (Data may have moved); an embedder detaches views of the old one. }
@@ -93,11 +120,13 @@ type
     FMaximumPages: QWord;
   public
     OnGrow: TWasmMemoryGrowEvent;
-    constructor Create(const AMemoryType: TWasmMemoryType);
+    { MaximumBytes caps what the memory may really take (0: 4 GiB). }
+    constructor Create(const AMemoryType: TWasmMemoryType; MaximumBytes: QWord = 0);
     destructor Destroy; override;
     { Grows by Delta pages; the old size in pages, or -1 if it cannot. }
     function Grow(Delta: QWord): Int64;
     function PageCount: QWord; inline;
+    function Is64: Boolean; inline;
     property Data: PByte read FData;
     property ByteLength: QWord read FByteLength;
     property MemoryType: TWasmMemoryType read FMemoryType;
@@ -105,16 +134,20 @@ type
 
   TWasmTable = class
   public
+    Store: TWasmStore;
+    { The element type's heap type is a store type id when concrete. }
     TableType: TWasmTableType;
     Elements: array of Pointer;
     constructor Create(const ATableType: TWasmTableType; InitialValue: Pointer);
     function Size: Cardinal; inline;
+    function Is64: Boolean; inline;
     { Grows by Delta elements set to Value; the old size, or -1. }
-    function Grow(Delta: Cardinal; Value: Pointer): Int64;
+    function Grow(Delta: QWord; Value: Pointer): Int64;
   end;
 
   TWasmGlobal = class
   public
+    Store: TWasmStore;
     GlobalType: TWasmGlobalType;
     { The value's bits: scalars and references in the low eight bytes. }
     Value: TWasmV128;
@@ -129,6 +162,7 @@ type
     Table: TWasmTable;
     Memory: TWasmMemory;
     Global: TWasmGlobal;
+    Tag: TWasmTag;
   end;
   TWasmExternalArray = array of TWasmExternal;
 
@@ -136,18 +170,23 @@ type
   public
     Store: TWasmStore;
     Module: TWasmModule;
+    { The store's type id of each of the module's type indices. }
     TypeIds: array of Integer;
+    RuntimeTypes: array of TWasmRuntimeType;
     Functions: array of TWasmFunction;
     Tables: array of TWasmTable;
     Memories: array of TWasmMemory;
     { Memory 0, or nil: what the interpreter keeps at hand. }
     DefaultMemory: TWasmMemory;
     Globals: array of TWasmGlobal;
+    Tags: array of TWasmTag;
     { Element segments' references; a dropped segment is empty. }
     ElementSegments: array of array of Pointer;
     DataDropped: array of Boolean;
     function FindExport(const Name: AnsiString; out Found: TWasmExternal): Boolean;
     function ExternalFor(Kind: TWasmExternalKind; Index: Cardinal): TWasmExternal;
+    { A module value type with its concrete heap type as a store id. }
+    function RuntimeValueType(const ValueType: TWasmValueType): TWasmValueType;
   end;
 
   TWasmCallFrame = record
@@ -158,22 +197,30 @@ type
 
   { Returns True to stop the running code (it traps with tkInterrupted). }
   TWasmInterruptHook = function(Store: TWasmStore): Boolean of object;
-  { Called once for every externref an embedder's collector must keep. }
-  TWasmReferenceVisitor = procedure(Reference: Pointer) of object;
+  { Called for every pointer of the embedder's an embedder's collector
+    must keep (externrefs and host values in the any hierarchy). }
+  TWasmReferenceVisitor = TWasmHostReferenceVisitor;
 
+  { Zero for a size option means its default. }
   TWasmStoreOptions = record
     MaximumCallDepth: Integer;
     MaximumStackSlots: SizeInt;
     MaximumHostNesting: Integer;
     InterruptInterval: Integer;
+    MaximumMemoryBytes: QWord;
+    MaximumHeapBytes: QWord;
+    CollectionThreshold: QWord;
   end;
 
   TWasmStore = class
   private
     FObjects: TFPList;
-    FTypeKeys: TStringList;
-    FTypes: array of TWasmFunctionType;
+    FRegistry: TWasmTypeRegistry;
+    FHeap: TWasmGcHeap;
     procedure Own(Item: TObject);
+    function TraceOfRuntimeType(const ValueType: TWasmValueType): TWasmReferenceTrace;
+    procedure MarkRoots(IncludeExposed: Boolean);
+    procedure MarkFrames;
   public
     Options: TWasmStoreOptions;
     { The execution stack (see the unit's header). }
@@ -188,6 +235,7 @@ type
     constructor Create(const AOptions: TWasmStoreOptions);
     destructor Destroy; override;
     class function DefaultOptions: TWasmStoreOptions; static;
+    { The store type id of a function type (heap types already ids). }
     function CanonicalTypeId(const FunctionType: TWasmFunctionType): Integer;
     function TypeOfId(TypeId: Integer): TWasmFunctionType;
     function NewHostFunction(const FunctionType: TWasmFunctionType; Callback: TWasmHostCallback;
@@ -196,17 +244,31 @@ type
     function NewMemory(const MemoryType: TWasmMemoryType): TWasmMemory;
     function NewTable(const TableType: TWasmTableType; InitialValue: Pointer): TWasmTable;
     function NewGlobal(const GlobalType: TWasmGlobalType; const Value: TWasmValue): TWasmGlobal;
+    { TypeId: the store type id of the tag's type, or -1 to register
+      FunctionType as a type of its own. }
+    function NewTag(const FunctionType: TWasmFunctionType; TypeId: Integer = -1): TWasmTag;
     function NewModuleInstance(Module: TWasmModule): TWasmModuleInstance;
     { Makes room for Count more slots after StackTop (may move Stack). }
     procedure ReserveStack(Count: SizeInt);
     function PushFrame(Func: TWasmFunction; ResumeIndex: Integer; Base: SizeInt): Boolean; inline;
     { Calls the interrupt hook when the countdown runs out; True to stop. }
     function InterruptRequested: Boolean;
-    { Every externref held by a table, a global, an element segment or a
-      suspended frame of this store. }
+    { A full collection of the heap (every frame must be suspended at a
+      safepoint). }
+    procedure CollectGarbage;
+    { Every pointer of the embedder's that anything of the store keeps
+      alive: externrefs in tables, globals, element segments, suspended
+      frames, and in the objects reachable from those, pinned and exposed
+      objects (host values boxed into the any hierarchy included). }
     procedure EnumerateReferences(Visitor: TWasmReferenceVisitor);
     { Every host function's HostData. }
     procedure EnumerateHostData(Visitor: TWasmReferenceVisitor);
+    { The embedder's tracing protocol (see Wasm.Api). }
+    procedure BeginHostTrace(Visitor: TWasmReferenceVisitor);
+    procedure TraceFromHost(Reference: Pointer; Visitor: TWasmReferenceVisitor);
+    procedure EndHostTrace;
+    property Registry: TWasmTypeRegistry read FRegistry;
+    property Heap: TWasmGcHeap read FHeap;
   end;
 
 implementation
@@ -222,20 +284,35 @@ end;
 
 { TWasmMemory }
 
-constructor TWasmMemory.Create(const AMemoryType: TWasmMemoryType);
+constructor TWasmMemory.Create(const AMemoryType: TWasmMemoryType; MaximumBytes: QWord);
+var
+  Cap: QWord;
 begin
   inherited Create;
   FMemoryType := AMemoryType;
-  if AMemoryType.Limits.HasMaximum then
+  if MaximumBytes = 0 then
+    MaximumBytes := DefaultMaximumMemoryBytes;
+  if AMemoryType.AddressType = vkI64 then
+    Cap := MaximumMemory64Pages
+  else
+    Cap := MaximumMemoryPages;
+  if MaximumBytes div WasmPageSize < Cap then
+    Cap := MaximumBytes div WasmPageSize;
+  if AMemoryType.Limits.HasMaximum and (AMemoryType.Limits.Maximum < Cap) then
     FMaximumPages := AMemoryType.Limits.Maximum
   else
-    FMaximumPages := MaximumMemoryPages;
-  if FMaximumPages > MaximumMemoryPages then
-    FMaximumPages := MaximumMemoryPages;
+    FMaximumPages := Cap;
+  if AMemoryType.Limits.Minimum > FMaximumPages then
+    raise EWasmResourceError.Create('could not allocate memory');
   FByteLength := AMemoryType.Limits.Minimum * WasmPageSize;
   if FByteLength > 0 then
   begin
-    FData := AllocMem(FByteLength);
+    try
+      FData := AllocMem(FByteLength);
+    except
+      on EOutOfMemory do
+        FData := nil;
+    end;
     if FData = nil then
       raise EWasmResourceError.Create('could not allocate memory');
   end;
@@ -251,6 +328,11 @@ end;
 function TWasmMemory.PageCount: QWord;
 begin
   Result := FByteLength div WasmPageSize;
+end;
+
+function TWasmMemory.Is64: Boolean;
+begin
+  Result := FMemoryType.AddressType = vkI64;
 end;
 
 function TWasmMemory.Grow(Delta: QWord): Int64;
@@ -313,12 +395,19 @@ begin
   Result := Length(Elements);
 end;
 
-function TWasmTable.Grow(Delta: Cardinal; Value: Pointer): Int64;
+function TWasmTable.Is64: Boolean;
+begin
+  Result := TableType.AddressType = vkI64;
+end;
+
+function TWasmTable.Grow(Delta: QWord; Value: Pointer): Int64;
 var
   OldSize, NewSize: QWord;
   Index: SizeInt;
 begin
   OldSize := Length(Elements);
+  if Delta > MaximumTableElements then
+    Exit(-1);
   NewSize := OldSize + Delta;
   if TableType.Limits.HasMaximum and (NewSize > TableType.Limits.Maximum) then
     Exit(-1);
@@ -370,6 +459,7 @@ begin
     ekTable: Result.Table := Tables[Index];
     ekMemory: Result.Memory := Memories[Index];
     ekGlobal: Result.Global := Globals[Index];
+    ekTag: Result.Tag := Tags[Index];
   end;
 end;
 
@@ -384,6 +474,13 @@ begin
     FillChar(Found, SizeOf(Found), 0);
 end;
 
+function TWasmModuleInstance.RuntimeValueType(const ValueType: TWasmValueType): TWasmValueType;
+begin
+  Result := ValueType;
+  if (Result.Kind = vkReference) and (Result.HeapType >= 0) then
+    Result.HeapType := TypeIds[Result.HeapType];
+end;
+
 { TWasmStore }
 
 constructor TWasmStore.Create;
@@ -395,10 +492,15 @@ constructor TWasmStore.Create(const AOptions: TWasmStoreOptions);
 begin
   inherited Create;
   Options := AOptions;
+  if Options.MaximumMemoryBytes = 0 then
+    Options.MaximumMemoryBytes := DefaultMaximumMemoryBytes;
+  if Options.MaximumHeapBytes = 0 then
+    Options.MaximumHeapBytes := DefaultMaximumHeapBytes;
+  if Options.CollectionThreshold = 0 then
+    Options.CollectionThreshold := DefaultCollectionThreshold;
   FObjects := TFPList.Create;
-  FTypeKeys := TStringList.Create;
-  FTypeKeys.Sorted := True;
-  FTypeKeys.CaseSensitive := True;
+  FRegistry := TWasmTypeRegistry.Create;
+  FHeap := TWasmGcHeap.Create(Options.MaximumHeapBytes, Options.CollectionThreshold);
   SetLength(Stack, DefaultInitialStackSlots);
   SetLength(Frames, 256);
   InterruptCountdown := Options.InterruptInterval;
@@ -415,7 +517,8 @@ begin
     TObject(FObjects[Index]).Free;
   end;
   FObjects.Free;
-  FTypeKeys.Free;
+  FHeap.Free;
+  FRegistry.Free;
   inherited Destroy;
 end;
 
@@ -425,6 +528,9 @@ begin
   Result.MaximumStackSlots := DefaultMaximumStackSlots;
   Result.MaximumHostNesting := DefaultMaximumHostNesting;
   Result.InterruptInterval := DefaultInterruptInterval;
+  Result.MaximumMemoryBytes := DefaultMaximumMemoryBytes;
+  Result.MaximumHeapBytes := DefaultMaximumHeapBytes;
+  Result.CollectionThreshold := DefaultCollectionThreshold;
 end;
 
 procedure TWasmStore.Own(Item: TObject);
@@ -432,44 +538,14 @@ begin
   FObjects.Add(Item);
 end;
 
-function TypeKey(const FunctionType: TWasmFunctionType): AnsiString;
-var
-  Index: Integer;
-
-  function TypeCode(const ValueType: TWasmValueType): AnsiString;
-  begin
-    Result := IntToStr(Ord(ValueType.Kind));
-    if ValueType.Kind = vkReference then
-      Result := Result + ':' + IntToStr(Ord(ValueType.Nullable)) + ':' + IntToStr(ValueType.HeapType);
-    Result := Result + ',';
-  end;
-
-begin
-  Result := '';
-  for Index := 0 to High(FunctionType.Params) do
-    Result := Result + TypeCode(FunctionType.Params[Index]);
-  Result := Result + '>';
-  for Index := 0 to High(FunctionType.Results) do
-    Result := Result + TypeCode(FunctionType.Results[Index]);
-end;
-
 function TWasmStore.CanonicalTypeId(const FunctionType: TWasmFunctionType): Integer;
-var
-  Key: AnsiString;
-  Position: Integer;
 begin
-  Key := TypeKey(FunctionType);
-  if FTypeKeys.Find(Key, Position) then
-    Exit(PtrInt(FTypeKeys.Objects[Position]));
-  Result := Length(FTypes);
-  SetLength(FTypes, Result + 1);
-  FTypes[Result] := FunctionType;
-  FTypeKeys.AddObject(Key, TObject(PtrInt(Result)));
+  Result := FRegistry.RegisterFunctionType(FunctionType);
 end;
 
 function TWasmStore.TypeOfId(TypeId: Integer): TWasmFunctionType;
 begin
-  Result := FTypes[TypeId];
+  Result := FRegistry.TypeOf(TypeId).Definition.FunctionType;
 end;
 
 function TWasmStore.NewHostFunction(const FunctionType: TWasmFunctionType; Callback: TWasmHostCallback;
@@ -491,8 +567,8 @@ begin
   Result := TWasmFunction.Create;
   Own(Result);
   Result.Store := Self;
-  Result.FunctionType := Instance.Module.FunctionType(FunctionIndex);
-  Result.TypeId := CanonicalTypeId(Result.FunctionType);
+  Result.TypeId := Instance.TypeIds[Instance.Module.FunctionTypes[FunctionIndex]];
+  Result.FunctionType := TypeOfId(Result.TypeId);
   Result.ParamSlots := SlotCountOf(Result.FunctionType.Params);
   Result.ResultSlots := SlotCountOf(Result.FunctionType.Results);
   Result.Instance := Instance;
@@ -502,7 +578,7 @@ end;
 
 function TWasmStore.NewMemory(const MemoryType: TWasmMemoryType): TWasmMemory;
 begin
-  Result := TWasmMemory.Create(MemoryType);
+  Result := TWasmMemory.Create(MemoryType, Options.MaximumMemoryBytes);
   Own(Result);
 end;
 
@@ -510,13 +586,44 @@ function TWasmStore.NewTable(const TableType: TWasmTableType; InitialValue: Poin
 begin
   Result := TWasmTable.Create(TableType, InitialValue);
   Own(Result);
+  Result.Store := Self;
 end;
 
 function TWasmStore.NewGlobal(const GlobalType: TWasmGlobalType; const Value: TWasmValue): TWasmGlobal;
 begin
   Result := TWasmGlobal.Create(GlobalType);
   Own(Result);
+  Result.Store := Self;
   Result.SetValue(Value);
+end;
+
+function TWasmStore.NewTag(const FunctionType: TWasmFunctionType; TypeId: Integer): TWasmTag;
+var
+  Index, Slot, Count: Integer;
+  Trace: TWasmReferenceTrace;
+begin
+  Result := TWasmTag.Create;
+  Own(Result);
+  Result.Store := Self;
+  Result.FunctionType := FunctionType;
+  if TypeId >= 0 then
+    Result.TypeId := TypeId
+  else
+    Result.TypeId := CanonicalTypeId(FunctionType);
+  Result.PayloadSlots := SlotCountOf(FunctionType.Params);
+  Slot := 0;
+  Count := 0;
+  for Index := 0 to High(FunctionType.Params) do
+  begin
+    Trace := TraceOfRuntimeType(FunctionType.Params[Index]);
+    if Trace <> rtNone then
+    begin
+      SetLength(Result.TracedOffsets, Count + 1);
+      Result.TracedOffsets[Count] := Slot * 8 * 2 + Ord(Trace = rtExternal);
+      Inc(Count);
+    end;
+    Inc(Slot, SlotCount(FunctionType.Params[Index]));
+  end;
 end;
 
 function TWasmStore.NewModuleInstance(Module: TWasmModule): TWasmModuleInstance;
@@ -564,42 +671,20 @@ begin
   Result := Assigned(OnInterrupt) and OnInterrupt(Self);
 end;
 
-procedure TWasmStore.EnumerateReferences(Visitor: TWasmReferenceVisitor);
+function TWasmStore.TraceOfRuntimeType(const ValueType: TWasmValueType): TWasmReferenceTrace;
+begin
+  Result := ReferenceTrace(ValueType, (ValueType.Kind = vkReference) and (ValueType.HeapType >= 0) and
+    (FRegistry.KindOf(ValueType.HeapType) = ckFunction));
+end;
+
+{ A suspended frame stopped at a call, a back edge or an allocation:
+  the instruction before its resume index, whose safepoint lists the
+  live reference slots (slot times two, plus one for an extern slot). }
+procedure TWasmStore.MarkFrames;
 var
-  Index, Item, Frame, First, Limit: Integer;
-  Item_: TObject;
+  Frame, Item, First, Limit, Encoded: Integer;
   Code: TCompiledFunction;
 begin
-  for Index := 0 to FObjects.Count - 1 do
-  begin
-    Item_ := TObject(FObjects[Index]);
-    if Item_ is TWasmTable then
-    begin
-      with TWasmTable(Item_) do
-        if TableType.ElementType.HeapType = HeapTypeExtern then
-          for Item := 0 to High(Elements) do
-            if Elements[Item] <> nil then
-              Visitor(Elements[Item]);
-    end
-    else if Item_ is TWasmGlobal then
-    begin
-      with TWasmGlobal(Item_) do
-        if (GlobalType.ValueType.Kind = vkReference) and (GlobalType.ValueType.HeapType = HeapTypeExtern) and
-          (Value.QWords[0] <> 0) then
-          Visitor(Pointer(PtrUInt(Value.QWords[0])));
-    end
-    else if Item_ is TWasmModuleInstance then
-    begin
-      with TWasmModuleInstance(Item_) do
-        for Item := 0 to High(ElementSegments) do
-          if Module.Elements[Item].ElementType.HeapType = HeapTypeExtern then
-            for Frame := 0 to High(ElementSegments[Item]) do
-              if ElementSegments[Item][Frame] <> nil then
-                Visitor(ElementSegments[Item][Frame]);
-    end;
-  end;
-  { A suspended frame stopped at a call or a back edge: the instruction
-    before its resume index, whose safepoint lists the live slots. }
   for Frame := 0 to FrameCount - 1 do
   begin
     if (Frames[Frame].Func = nil) or (Frames[Frame].Func.Code = nil) then
@@ -607,9 +692,71 @@ begin
     Code := Frames[Frame].Func.Code;
     if Code.FindSafepoint(Frames[Frame].ResumeIndex - 1, First, Limit) then
       for Item := First to Limit - 1 do
-        if Stack[Frames[Frame].Base + Code.SafepointSlots[Item]] <> 0 then
-          Visitor(Pointer(PtrUInt(Stack[Frames[Frame].Base + Code.SafepointSlots[Item]])));
+      begin
+        Encoded := Code.SafepointSlots[Item];
+        FHeap.MarkReference(Stack[Frames[Frame].Base + (Encoded shr 1)], Encoded and 1 <> 0);
+      end;
   end;
+end;
+
+procedure TWasmStore.MarkRoots(IncludeExposed: Boolean);
+var
+  Index, Item, Element: Integer;
+  Entry: TObject;
+  Trace: TWasmReferenceTrace;
+  Instance: TWasmModuleInstance;
+begin
+  for Index := 0 to FObjects.Count - 1 do
+  begin
+    Entry := TObject(FObjects[Index]);
+    if Entry is TWasmTable then
+    begin
+      Trace := TraceOfRuntimeType(TWasmTable(Entry).TableType.ElementType);
+      if Trace <> rtNone then
+        with TWasmTable(Entry) do
+          for Item := 0 to High(Elements) do
+            FHeap.MarkReference(QWord(PtrUInt(Elements[Item])), Trace = rtExternal);
+    end
+    else if Entry is TWasmGlobal then
+    begin
+      Trace := TraceOfRuntimeType(TWasmGlobal(Entry).GlobalType.ValueType);
+      if Trace <> rtNone then
+        FHeap.MarkReference(TWasmGlobal(Entry).Value.QWords[0], Trace = rtExternal);
+    end
+    else if Entry is TWasmModuleInstance then
+    begin
+      Instance := TWasmModuleInstance(Entry);
+      for Item := 0 to High(Instance.ElementSegments) do
+      begin
+        if Length(Instance.ElementSegments[Item]) = 0 then
+          Continue;
+        Trace := TraceOfRuntimeType(Instance.RuntimeValueType(Instance.Module.Elements[Item].ElementType));
+        if Trace <> rtNone then
+          for Element := 0 to High(Instance.ElementSegments[Item]) do
+            FHeap.MarkReference(QWord(PtrUInt(Instance.ElementSegments[Item][Element])), Trace = rtExternal);
+      end;
+    end;
+  end;
+  MarkFrames;
+  FHeap.MarkPinned;
+  if IncludeExposed then
+    FHeap.MarkExposed;
+end;
+
+procedure TWasmStore.CollectGarbage;
+begin
+  FHeap.BeginMark(nil);
+  MarkRoots(True);
+  FHeap.DrainMarks;
+  FHeap.Sweep;
+end;
+
+procedure TWasmStore.EnumerateReferences(Visitor: TWasmReferenceVisitor);
+begin
+  FHeap.BeginMark(Visitor);
+  MarkRoots(True);
+  FHeap.DrainMarks;
+  FHeap.BeginMark(nil);
 end;
 
 procedure TWasmStore.EnumerateHostData(Visitor: TWasmReferenceVisitor);
@@ -620,6 +767,26 @@ begin
     if (TObject(FObjects[Index]) is TWasmFunction) and TWasmFunction(FObjects[Index]).IsHost and
       (TWasmFunction(FObjects[Index]).HostData <> nil) then
       Visitor(TWasmFunction(FObjects[Index]).HostData);
+end;
+
+procedure TWasmStore.BeginHostTrace(Visitor: TWasmReferenceVisitor);
+begin
+  FHeap.BeginMark(Visitor);
+  MarkRoots(False);
+  FHeap.DrainMarks;
+end;
+
+procedure TWasmStore.TraceFromHost(Reference: Pointer; Visitor: TWasmReferenceVisitor);
+begin
+  FHeap.ContinueMark(Visitor);
+  FHeap.MarkReference(QWord(PtrUInt(Reference)), False);
+  FHeap.DrainMarks;
+end;
+
+procedure TWasmStore.EndHostTrace;
+begin
+  FHeap.PruneExposed;
+  FHeap.Sweep;
 end;
 
 end.

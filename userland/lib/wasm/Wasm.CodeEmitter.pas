@@ -33,6 +33,11 @@
   LastResult is the instruction just emitted when its only effect is to
   write the top operand's home (operand A): local.set can then make it
   write the local instead, and br_if can fuse with a comparison.
+
+  Exception handlers (try_table and the legacy try) are recorded here
+  as the code ranges they cover, with the handler that covers code
+  directly inside each frame (ActiveHandler), so that a delegate knows
+  where its target label's handlers are.
 }
 unit Wasm.CodeEmitter;
 
@@ -43,6 +48,7 @@ interface
 
 uses
   Wasm.Types,
+  Wasm.TypeDefinitions,
   Wasm.Module,
   Wasm.Code;
 
@@ -55,7 +61,7 @@ type
     Constant: Int64;
   end;
 
-  TCompileFrameKind = (cfBlock, cfLoop, cfIf, cfElse, cfFunction);
+  TCompileFrameKind = (cfBlock, cfLoop, cfIf, cfElse, cfFunction, cfTry, cfCatch, cfTryTable);
 
   TCompileFrame = record
     Kind: TCompileFrameKind;
@@ -68,6 +74,11 @@ type
     FixupCount: Integer;
     IfBranch: Int32;          { the if's branch to its else, -1 once bound }
     Unreachable: Boolean;
+    Handler: Int32;           { a try's or try_table's own handler, or -1 }
+    ActiveHandler: Int32;     { the handler covering code directly inside, or -1 }
+    ExceptionSlot: Int32;     { a legacy try's slot for the caught exception }
+    PendingClauses: array of TCodeCatchClause;  { the handler's clauses so far }
+    PendingCount: Integer;
   end;
 
   TCodeEmitter = class
@@ -89,7 +100,12 @@ type
     FLocalTypes: TWasmValueTypeArray;
     FLocalSlots: array of Int32;
     FLocalSlotCount: Integer;
-    FHasExternLocals: Boolean;
+    FLocalTraces: array of TWasmReferenceTrace;
+    FHasTracedLocals: Boolean;
+    FHandlers: array of TCodeHandler;
+    FHandlerCount: Integer;
+    FClauses: array of TCodeCatchClause;
+    FClauseCount: Integer;
     FOperands: array of TCompileOperand;
     FOperandCount: Integer;
     FNextHome: Int32;
@@ -106,6 +122,11 @@ type
     function AddConstants(Low, High: QWord): Int32;
     function AddBranchTarget(Target: Int32): Int32;
     procedure RecordSafepoint(InstructionIndex: Integer; OperandLimit: Integer);
+    { How the collector sees a slot of the type (concrete types are the
+      module's canonical indices). }
+    function TraceOf(const ValueType: TWasmValueType): TWasmReferenceTrace;
+    function AddHandler(Kind: TCodeHandlerKind; Outer: Int32): Int32;
+    function AddClause(const Clause: TCodeCatchClause): Int32;
     function PushOperand(const ValueType: TWasmValueType): Int32;
     procedure PushLocal(LocalIndex: Cardinal);
     procedure PushConstant(const ValueType: TWasmValueType; Value: Int64);
@@ -187,32 +208,64 @@ begin
   Inc(FBranchTargetCount);
 end;
 
+function TCodeEmitter.TraceOf(const ValueType: TWasmValueType): TWasmReferenceTrace;
+begin
+  if ValueType.Kind <> vkReference then
+    Exit(rtNone);
+  Result := ReferenceTrace(ValueType, (ValueType.HeapType >= 0) and
+    (ValueType.HeapType < Length(FModule.TypeDefinitions)) and
+    (FModule.TypeDefinitions[ValueType.HeapType].Kind = ckFunction));
+end;
+
+function TCodeEmitter.AddHandler(Kind: TCodeHandlerKind; Outer: Int32): Int32;
+begin
+  if FHandlerCount >= Length(FHandlers) then
+    SetLength(FHandlers, FHandlerCount * 2 + 4);
+  FHandlers[FHandlerCount].Kind := Kind;
+  FHandlers[FHandlerCount].Start := FCount;
+  FHandlers[FHandlerCount].Limit := FCount;
+  FHandlers[FHandlerCount].Outer := Outer;
+  FHandlers[FHandlerCount].DelegateTarget := -1;
+  FHandlers[FHandlerCount].FirstClause := FClauseCount;
+  FHandlers[FHandlerCount].ClauseCount := 0;
+  Result := FHandlerCount;
+  Inc(FHandlerCount);
+end;
+
+function TCodeEmitter.AddClause(const Clause: TCodeCatchClause): Int32;
+begin
+  if FClauseCount >= Length(FClauses) then
+    SetLength(FClauses, FClauseCount * 2 + 4);
+  FClauses[FClauseCount] := Clause;
+  Result := FClauseCount;
+  Inc(FClauseCount);
+end;
+
 procedure TCodeEmitter.RecordSafepoint(InstructionIndex: Integer; OperandLimit: Integer);
 var
   Index, Start: Integer;
+  Trace: TWasmReferenceTrace;
 
-  procedure AddSlot(Slot: Int32);
+  procedure AddSlot(Slot: Int32; ATrace: TWasmReferenceTrace);
   begin
     if FSafepointSlotCount >= Length(FSafepointSlots) then
       SetLength(FSafepointSlots, FSafepointSlotCount * 2 + 16);
-    FSafepointSlots[FSafepointSlotCount] := Slot;
+    FSafepointSlots[FSafepointSlotCount] := Slot * 2 + Ord(ATrace = rtExternal);
     Inc(FSafepointSlotCount);
-  end;
-
-  function IsExtern(const ValueType: TWasmValueType): Boolean;
-  begin
-    Result := (ValueType.Kind = vkReference) and (ValueType.HeapType = HeapTypeExtern);
   end;
 
 begin
   Start := FSafepointSlotCount;
-  if FHasExternLocals then
+  if FHasTracedLocals then
     for Index := 0 to High(FLocalTypes) do
-      if IsExtern(FLocalTypes[Index]) then
-        AddSlot(FLocalSlots[Index]);
+      if FLocalTraces[Index] <> rtNone then
+        AddSlot(FLocalSlots[Index], FLocalTraces[Index]);
   for Index := 0 to OperandLimit - 1 do
-    if IsExtern(FOperands[Index].ValueType) then
-      AddSlot(FOperands[Index].Home);
+  begin
+    Trace := TraceOf(FOperands[Index].ValueType);
+    if Trace <> rtNone then
+      AddSlot(FOperands[Index].Home, Trace);
+  end;
   if FSafepointSlotCount = Start then
     Exit;
   if FSafepointCount + 1 >= Length(FSafepointInstructions) then
@@ -353,6 +406,13 @@ begin
     IfBranch := -1;
     LoopStart := FCount;
     Unreachable := False;
+    Handler := -1;
+    ExceptionSlot := -1;
+    PendingCount := 0;
+    if FFrameCount > 0 then
+      ActiveHandler := FFrames[FFrameCount - 1].ActiveHandler
+    else
+      ActiveHandler := -1;
   end;
   FFrames[FFrameCount].Kind := Kind;
   FFrames[FFrameCount].ParamTypes := ParamTypes;
@@ -410,6 +470,8 @@ begin
     FCode.SafepointStarts[FSafepointCount] := FSafepointSlotCount;
     FCode.SafepointSlots := Copy(FSafepointSlots, 0, FSafepointSlotCount);
   end;
+  FCode.Handlers := Copy(FHandlers, 0, FHandlerCount);
+  FCode.Clauses := Copy(FClauses, 0, FClauseCount);
 end;
 
 end.
