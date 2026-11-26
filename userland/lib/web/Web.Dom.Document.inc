@@ -613,6 +613,10 @@ begin
       FTargetElement := nil;
     if Node = FFocusedElement then
       SetFocusedElementOnly(nil);
+    if Node = FPendingPointerCapture then
+      FPendingPointerCapture := nil;
+    if Node = FPointerCapture then
+      FPointerCapture := nil;
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
     Node := Node.NextInTree(Root);

@@ -82,6 +82,7 @@ uses
   Web.Bindings.UrlResolution,
   WebView.KeyNames,
   WebView.Elements,
+  WebView.MouseEvents,
   WebView.Forms;
 
 const
@@ -285,23 +286,17 @@ begin
   Result := True;
 end;
 
-{ A trusted MouseEvent of the primary button. }
+{ A trusted MouseEvent of the primary button, with its pointer event as
+  the web view gives them (WebView.MouseEvents). }
 function FireMouseEvent(Target: TElement; const EventType: string): Boolean;
 var
-  Event: TMouseEvent;
+  Init: TMouseEventInit;
 begin
-  Event := TMouseEvent.Create(EventType, True, True);
-  try
-    Event.IsTrusted := True;
-    Event.Composed := True;
-    Event.HasView := True;
-    if EventType = 'mousedown' then
-      Event.Buttons := 1;
-    Event.Detail := 1;
-    Result := Target.DispatchEvent(Event);
-  finally
-    Event.Release;
-  end;
+  Init := Default(TMouseEventInit);
+  if EventType = 'mousedown' then
+    Init.Buttons := 1;
+  Init.Detail := 1;
+  Result := DispatchMouseEvent(Target, EventType, Init);
 end;
 
 procedure TPageInput.Click(Element: TElement);

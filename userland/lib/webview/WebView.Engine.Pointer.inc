@@ -198,6 +198,25 @@ begin
     Hit.Node.Release;
 end;
 
+{ mouseleave at the elements of OldChain the pointer left (innermost
+  first), or (Entering) mouseenter at those of NewChain it entered
+  (outermost first); their pointer events come with them. }
+procedure TWebEngineView.FireBoundaryEvents(constref OldChain, NewChain: TElementChain; Entering: Boolean);
+var
+  Index: Integer;
+begin
+  if not Entering then
+  begin
+    for Index := 0 to High(OldChain) do
+      if not ChainContains(NewChain, OldChain[Index]) then
+        FireMouse(OldChain[Index], 'mouseleave', 0, 0);
+    Exit;
+  end;
+  for Index := High(NewChain) downto 0 do
+    if not ChainContains(OldChain, NewChain[Index]) then
+      FireMouse(NewChain[Index], 'mouseenter', 0, 0);
+end;
+
 procedure TWebEngineView.UpdateHover(CssX, CssY: Double);
 var
   Hit: THitTestResult;
@@ -205,6 +224,8 @@ var
   Shape: LongWord;
   Path: TFramePath;
   Status: string;
+  OldChain, NewChain: TElementChain;
+  Index: Integer;
 begin
   if FPainter = nil then
     Exit;
@@ -217,7 +238,14 @@ begin
     Old := FHoverChain[0];
     Old.Retain;
   end;
+  { The chains before and after, held for the boundary events. }
+  OldChain := Copy(FHoverChain);
+  for Index := 0 to High(OldChain) do
+    OldChain[Index].Retain;
   SetChain(FHoverChain, Hit.Element);
+  NewChain := Copy(FHoverChain);
+  for Index := 0 to High(NewChain) do
+    NewChain[Index].Retain;
   { What the hit shows - the link's address, the pointer shape from the
     box's style - is read before any event: the page's handlers may lay
     out again (reading a size) or change the document, which frees the
@@ -247,8 +275,10 @@ begin
     begin
       if Old <> nil then
         FireMouse(Old, 'mouseout', 0, 0);
+      FireBoundaryEvents(OldChain, NewChain, False);
       if Hit.Element <> nil then
         FireMouse(Hit.Element, 'mouseover', 0, 0);
+      FireBoundaryEvents(OldChain, NewChain, True);
     end;
     if Hit.Element <> nil then
       FireMouse(Hit.Element, 'mousemove', 0, 0);
@@ -257,6 +287,10 @@ begin
       Old.Release;
     if Hit.Element <> nil then
       Hit.Element.Release;
+    for Index := 0 to High(OldChain) do
+      OldChain[Index].Release;
+    for Index := 0 to High(NewChain) do
+      NewChain[Index].Release;
   end;
   SetStatus(Status);
   PointerShape := Shape;

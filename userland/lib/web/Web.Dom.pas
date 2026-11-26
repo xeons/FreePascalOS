@@ -540,6 +540,8 @@ type
     FDefaultView: TEventTarget;
     FTargetElement: TElement;
     FFocusedElement: TElement;
+    FPendingPointerCapture: TElement;
+    FPointerCapture: TElement;
     FBrowsingContext: TObject;
     FOriginText: string;
     FOnReadyStateChange: TDocumentNotifyEvent;
@@ -654,6 +656,12 @@ type
       leaves the document is unfocused (the focus fixup). }
     property FocusedElement: TElement read FFocusedElement;
     procedure SetFocusedElementOnly(Element: TElement);
+    { The mouse pointer's capture (Pointer Events 3: the pending pointer
+      capture target override and the pointer capture target override;
+      Web.Dom.PointerCapture). Not references: an element that leaves
+      the document loses them. }
+    property PendingPointerCapture: TElement read FPendingPointerCapture write FPendingPointerCapture;
+    property PointerCapture: TElement read FPointerCapture write FPointerCapture;
     { The loading side's object for this document (Web.Loading). }
     property BrowsingContext: TObject read FBrowsingContext write FBrowsingContext;
     { The document's origin when it is not its URL's (Web.Origins writes

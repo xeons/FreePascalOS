@@ -471,7 +471,9 @@ end;
 
 function EventInterfaceOf(Event: TEvent): Integer;
 begin
-  if Event is TMouseEvent then
+  if Event is TPointerEvent then
+    Result := InterfacePointerEvent
+  else if Event is TMouseEvent then
     Result := InterfaceMouseEvent
   else if Event is TKeyboardEvent then
     Result := InterfaceKeyboardEvent

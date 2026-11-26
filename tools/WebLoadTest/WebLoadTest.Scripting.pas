@@ -55,6 +55,8 @@ uses
   Web.Navigation.Navigables,
   Web.Navigation.Events,
   Web.Script.PageScripting,
+  Web.Script.Context,
+  WebView.MouseEvents,
   WebLoadTest.Server;
 
 type
@@ -439,8 +441,93 @@ begin
   end;
 end;
 
+procedure SendMouse(Document: TDocument; const Id, EventType: string; Buttons: Word);
+var
+  Init: TMouseEventInit;
+begin
+  Init := Default(TMouseEventInit);
+  Init.Buttons := Buttons;
+  DispatchMouseEvent(Document.GetElementById(Id), EventType, Init);
+end;
+
+{ Pointer events before the mouse events the web view sends: the mouse
+  as pointer 1, a capture set in pointerdown taking the move and the up
+  (gotpointercapture, lostpointercapture after the up), a cancelled
+  pointerdown keeping mousedown, mousemove and mouseup back until the
+  pointer is up, PointerEvent made by script, the capture's errors. }
+procedure CheckPointerEvents;
+var
+  Environment: TTestEnvironment;
+  Conditions: TScriptConditions;
+  Sink: TNullResourceSink;
+  Navigable: TNavigable;
+  Executor: TPageScriptExecutor;
+  Document: TDocument;
+  Context: TScriptContext;
+  Text: string;
+begin
+  Environment := TTestEnvironment.Create;
+  Conditions := TScriptConditions.Create;
+  Sink := TNullResourceSink.Create;
+  Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
+  Executor := TPageScriptExecutor.Create(Navigable);
+  Executor.OnConsoleMessage := @Conditions.ConsoleMessage;
+  Navigable.Executor := Executor;
+  Conditions.Navigable := Navigable;
+  try
+    Environment.Site.AddRoute('p.test/page.html', 200, 'Content-Type: text/html',
+      '<!DOCTYPE html><div id=b>b</div><div id=c>c</div><p id="out">x</p><script>var log = [];' +
+      '["pointerdown", "mousedown", "pointerup", "mouseup", "pointermove", "mousemove", "gotpointercapture",' +
+      ' "lostpointercapture"].forEach(function (t) { document.addEventListener(t, function (e) {' +
+      ' log.push(t + ":" + e.target.id + (e instanceof PointerEvent ? ":" + e.pointerType + e.pointerId +' +
+      ' e.isPrimary + e.button : "")); }, true); });' +
+      'var b = document.getElementById("b"), c = document.getElementById("c");' +
+      'b.addEventListener("pointerdown", function (e) { b.setPointerCapture(e.pointerId);' +
+      ' log.push("has " + b.hasPointerCapture(1)); });' +
+      'c.addEventListener("pointerdown", function (e) { e.preventDefault(); });' +
+      'document.getElementById("out").textContent = "timer";</script>');
+    Navigable.NavigateTo('https://p.test/page.html');
+    Check(Environment.RunUntil(@Conditions.TimerRan), 'pointer events: the page ran');
+    Document := Navigable.ActiveDocument;
+    Context := Executor.ContextOf(Document);
+    SendMouse(Document, 'b', 'mousedown', 1);
+    SendMouse(Document, 'c', 'mousemove', 1);
+    SendMouse(Document, 'c', 'mouseup', 0);
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('log.join(" ")'));
+    Check(Text = 'pointerdown:b:mouse1true0 has true mousedown:b gotpointercapture:b:mouse1true-1 ' +
+      'pointermove:b:mouse1true-1 mousemove:b pointerup:b:mouse1true0 mouseup:b lostpointercapture:b:mouse1true-1',
+      'pointer events: pointer before mouse events, a capture taking the move and the up (' + Text + ')');
+    Context.Engine.Evaluate('log = [];');
+    SendMouse(Document, 'c', 'mousedown', 1);
+    SendMouse(Document, 'c', 'mousemove', 1);
+    SendMouse(Document, 'c', 'mouseup', 0);
+    SendMouse(Document, 'c', 'mousemove', 0);
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('log.join(" ")'));
+    Check(Text = 'pointerdown:c:mouse1true0 pointermove:c:mouse1true-1 pointerup:c:mouse1true0 ' +
+      'pointermove:c:mouse1true-1 mousemove:c',
+      'pointer events: a cancelled pointerdown holds the mouse events back until the up (' + Text + ')');
+    Text := Context.Engine.ToText(Context.Engine.Evaluate('(function () { var e = new PointerEvent("pointerdown",' +
+      ' { pointerId: 5, pointerType: "pen", isPrimary: true, pressure: 0.25, width: 3, clientX: 4, bubbles: true });' +
+      ' var r = [e.pointerId, e.pointerType, e.isPrimary, e.pressure, e.width, e.height, e.clientX,' +
+      ' e instanceof MouseEvent, e.getCoalescedEvents().length, e.isTrusted];' +
+      ' try { b.setPointerCapture(7); } catch (x) { r.push(x.name); }' +
+      ' try { document.createElement("i").setPointerCapture(1); } catch (x) { r.push(x.name); }' +
+      ' r.push(b.hasPointerCapture(1)); b.setPointerCapture(1); r.push(b.hasPointerCapture(1));' +
+      ' return r.join(); })()'));
+    Check(Text = '5,pen,true,0.25,3,1,4,true,0,false,NotFoundError,InvalidStateError,false,false',
+      'pointer events: PointerEvent made by script, capture errors, no capture without a button held (' + Text + ')');
+  finally
+    Navigable.Free;
+    Executor.Free;
+    Sink.Free;
+    Conditions.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunScriptingTests;
 begin
+  CheckPointerEvents;
   CheckEventSource;
   CheckDetachedImages;
   CheckScriptedPage;

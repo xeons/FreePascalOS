@@ -50,6 +50,11 @@ interface Element : Node {
   Element? insertAdjacentElement(DOMString where, Element element);
   undefined insertAdjacentText(DOMString where, DOMString data);
 
+  // Pointer Events
+  undefined setPointerCapture(long pointerId);
+  undefined releasePointerCapture(long pointerId);
+  boolean hasPointerCapture(long pointerId);
+
   // DOM Parsing and Serialization, HTML
   attribute [LegacyNullToEmptyString] DOMString innerHTML;
   attribute [LegacyNullToEmptyString] DOMString outerHTML;

@@ -353,6 +353,7 @@ type
     { The pointer pressed and released over what Hit found (its node and
       element retained by the caller). }
     procedure PressAt(constref Hit: THitTestResult; InFrame: Boolean; X, Y: LongInt; Button: LongWord);
+    procedure FireBoundaryEvents(constref OldChain, NewChain: TElementChain; Entering: Boolean);
     procedure ReleaseAt(constref Hit: THitTestResult; Button: LongWord);
     procedure CountClick(X, Y: LongInt; Button: LongWord);
     procedure FireMoveWhilePressed(CssX, CssY: Double);

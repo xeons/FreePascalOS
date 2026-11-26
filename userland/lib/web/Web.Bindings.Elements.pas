@@ -41,6 +41,7 @@ uses
   Web.Atoms,
   Web.Dom,
   Web.Dom.Exceptions,
+  Web.Dom.PointerCapture,
   Web.Html.Markup,
   Web.Html.Serializer,
   Web.Bindings.Context,
@@ -54,6 +55,31 @@ end;
 function Context(const Call: TBindingCall): TBindingContext; inline;
 begin
   Result := TBindingContext(Call.Context);
+end;
+
+procedure CheckCaptureOutcome(Outcome: TPointerCaptureOutcome);
+begin
+  case Outcome of
+    CaptureUnknownPointer: RaiseDomError(NotFoundError, 'no active pointer has that id');
+    CaptureNotConnected: RaiseDomError(InvalidStateError, 'the element is not in a document');
+  end;
+end;
+
+function Element_setPointerCapture(var Call: TBindingCall): TJsValue;
+begin
+  CheckCaptureOutcome(SetPointerCapture(ThisElement(Call), Call.Int(0)));
+  Result := JsUndefined;
+end;
+
+function Element_releasePointerCapture(var Call: TBindingCall): TJsValue;
+begin
+  CheckCaptureOutcome(ReleasePointerCapture(ThisElement(Call), Call.Int(0)));
+  Result := JsUndefined;
+end;
+
+function Element_hasPointerCapture(var Call: TBindingCall): TJsValue;
+begin
+  Result := JsBoolean(HasPointerCapture(ThisElement(Call), Call.Int(0)));
 end;
 
 function OptionalText(const Call: TBindingCall; const Text: string): TJsValue;
