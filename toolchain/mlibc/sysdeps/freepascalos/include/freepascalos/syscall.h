@@ -200,6 +200,29 @@ extern "C" {
 #define FPOS_CALL_RECEIVE_LOCAL_MESSAGE 257
 /* (Handle, Which, BufferAddress): names, peer credentials, the kind. */
 #define FPOS_CALL_QUERY_LOCAL_SOCKET 258
+/* Event descriptors (260-269): eventfd, timerfd, signalfd, epoll,
+   inotify. Each handle is waited on like any other and read with
+   FPOS_CALL_READ. */
+/* (InitialValue, Flags): an event counter. */
+#define FPOS_CALL_CREATE_EVENT_COUNTER 260
+/* (Clock, Flags): a timer descriptor (clock: the Linux clock id). */
+#define FPOS_CALL_CREATE_TIMER_DESCRIPTOR 261
+/* (Handle, Flags, NewSpecification or 0, OldSpecification or 0). */
+#define FPOS_CALL_SET_TIMER_DESCRIPTOR 262
+/* (Handle): POLLIN, POLLOUT, POLLERR, POLLHUP bits. */
+#define FPOS_CALL_QUERY_HANDLE_READINESS 263
+/* (Handle or -1, Mask, Flags): a signal descriptor, or a new mask. */
+#define FPOS_CALL_SET_SIGNAL_DESCRIPTOR 264
+/* (Flags): an event poll. */
+#define FPOS_CALL_CREATE_EVENT_POLL 265
+/* (Poll, Operation, Handle, struct fpos_poll_event *). */
+#define FPOS_CALL_CONTROL_EVENT_POLL 266
+/* (Poll, struct fpos_poll_event *, Capacity, TimeoutMilliseconds). */
+#define FPOS_CALL_WAIT_EVENT_POLL 267
+/* (Flags): a watch group. */
+#define FPOS_CALL_CREATE_WATCH_GROUP 268
+/* (Group, Operation, Path or Descriptor, Mask). */
+#define FPOS_CALL_CHANGE_GROUP_WATCH 269
 
 /* --- Errors --------------------------------------------------------------- */
 
@@ -233,6 +256,11 @@ extern "C" {
 #define FPOS_HANDLE_KIND_THREAD 6
 #define FPOS_HANDLE_KIND_DEVICE 7
 #define FPOS_HANDLE_KIND_SOCKET 14
+#define FPOS_HANDLE_KIND_EVENT_COUNTER 20
+#define FPOS_HANDLE_KIND_TIMER_DESCRIPTOR 21
+#define FPOS_HANDLE_KIND_SIGNAL_DESCRIPTOR 22
+#define FPOS_HANDLE_KIND_EVENT_POLL 23
+#define FPOS_HANDLE_KIND_WATCH_GROUP 24
 
 #define FPOS_TIME_WALL_CLOCK 0
 #define FPOS_TIME_UPTIME_NANOSECONDS 2
@@ -273,6 +301,36 @@ extern "C" {
 #define FPOS_CONTROL_GET_TERMINAL_NUMBER 7
 #define FPOS_CONTROL_LOCK_FILE 300
 #define FPOS_CONTROL_UNLOCK_FILE 301
+/* On an event descriptor: 1 non-blocking, 0 blocking. */
+#define FPOS_CONTROL_SET_NON_BLOCKING 320
+
+/* Event descriptor flags (Abi.EventDescriptors.inc). */
+#define FPOS_EVENT_DESCRIPTOR_NON_BLOCKING 0x800
+#define FPOS_EVENT_COUNTER_SEMAPHORE 1
+#define FPOS_TIMER_ABSOLUTE 1
+#define FPOS_TIMER_CANCEL_ON_SET 2
+#define FPOS_POLL_ADD 1
+#define FPOS_POLL_REMOVE 2
+#define FPOS_POLL_MODIFY 3
+#define FPOS_POLL_MAXIMUM_EVENTS 1024
+#define FPOS_GROUP_WATCH_ADD 1
+#define FPOS_GROUP_WATCH_REMOVE 2
+
+/* An event poll's event and registration (TAbiPollEvent). */
+struct fpos_poll_event {
+	uint32_t events;
+	uint32_t reserved;
+	uint64_t data;
+};
+
+/* A timer descriptor's setting (TAbiTimerSpecification: struct
+   itimerspec on 64-bit). */
+struct fpos_timer_specification {
+	int64_t interval_seconds;
+	int64_t interval_nanoseconds;
+	int64_t value_seconds;
+	int64_t value_nanoseconds;
+};
 #define FPOS_FILE_LOCK_SHARED 1
 #define FPOS_FILE_LOCK_EXCLUSIVE 2
 #define FPOS_FILE_LOCK_NO_WAIT 0x100

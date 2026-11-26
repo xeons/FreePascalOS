@@ -39,10 +39,12 @@ implementation
 uses
   Processes.ObjectCalls,
   Processes.WatchCalls,
+  Processes.EventDescriptorCalls,
   Processes.ProcessDetails,
   Processes.SystemUsage,
   Processes.ClockCalls,
   Processes.PowerCalls,
+  Processes.ClockInformation,
   Processes.PowerDeviceCalls,
   Processes.KeyboardCalls,
   Processes.WaitCalls,
@@ -802,6 +804,8 @@ begin
     CallSetWakeSource: Result := PerformSetWakeSource(Argument0, Argument1);
     CallListCoolingDevices: Result := PerformListCoolingDevices(Argument0, Argument1);
     CallListPerformanceStates: Result := PerformListPerformanceStates(Argument0, Argument1);
+    { Clocks and timers (Processes.ClockInformation). }
+    CallGetClockInformation: Result := PerformGetClockInformation(Argument0);
     CallGetKeyboardSettings: Result := PerformGetKeyboardSettings(Argument0);
     CallSetKeyboardSettings: Result := PerformSetKeyboardSettings(Argument0);
     CallDescribeKeyboardLayout: Result := PerformDescribeKeyboardLayout(Argument0, Argument1);
@@ -920,6 +924,17 @@ begin
     CallSendLocalMessage: Result := PerformSendLocalMessage(Int64(Argument0), Argument1, Argument2);
     CallReceiveLocalMessage: Result := PerformReceiveLocalMessage(Int64(Argument0), Argument1, Argument2);
     CallQueryLocalSocket: Result := PerformQueryLocalSocket(Int64(Argument0), Argument1, Argument2);
+    { Event descriptors (260-269, Processes.EventDescriptorCalls). }
+    CallCreateEventCounter: Result := PerformCreateEventCounter(Argument0, Argument1);
+    CallCreateTimerDescriptor: Result := PerformCreateTimerDescriptor(Argument0, Argument1);
+    CallSetTimerDescriptor: Result := PerformSetTimerDescriptor(Int64(Argument0), Argument1, Argument2, Argument3);
+    CallQueryHandleReadiness: Result := PerformQueryHandleReadiness(Int64(Argument0));
+    CallSetSignalDescriptor: Result := PerformSetSignalDescriptor(Int64(Argument0), Argument1, Argument2);
+    CallCreateEventPoll: Result := PerformCreateEventPoll(Argument0);
+    CallControlEventPoll: Result := PerformControlEventPoll(Int64(Argument0), Argument1, Int64(Argument2), Argument3);
+    CallWaitEventPoll: Result := PerformWaitEventPoll(Int64(Argument0), Argument1, Argument2, Int64(Argument3));
+    CallCreateWatchGroup: Result := PerformCreateWatchGroup(Argument0);
+    CallChangeGroupWatch: Result := PerformChangeGroupWatch(Int64(Argument0), Argument1, Argument2, Argument3);
   else
     Result := Failure(ErrorNotImplemented);
   end;
@@ -1005,6 +1020,7 @@ begin
   InitializeProcessTermination;
   InitializeThreadCalls;
   InitializeWaitCalls;
+  InitializeEventDescriptorCalls;
   { From here on the kernel touches user memory only through checked
     copies, so SMAP can be turned on. }
   InitializeUserCopy;

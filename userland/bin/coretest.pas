@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..445] of TCommandTest = (
+  CommandTests: array[0..447] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -790,6 +790,9 @@ const
     { The C runtime (mlibc, toolchain/ctest), when the system disk has it:
       stdio, threads, fork/exec, signals, sockets, dlopen, C++. }
     (Command: 'if test -x /usr/bin/ctest; then /usr/bin/ctest > ctest.log 2>&1; echo $?; grep FAILED ctest.log; tail -n 1 ctest.log | cut -d " " -f 4-; else echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10; ExpectedStatus: 0),
+    { Event descriptors (epoll, eventfd, timerfd, signalfd, inotify) for
+      an ordinary user. }
+    (Command: 'if test -x /usr/bin/ctest; then su user -c "/usr/bin/ctest epoll" > /tmp/events.log 2>&1; echo $?; tail -n 1 /tmp/events.log | cut -d " " -f 4-; su user -c "/usr/bin/ctest inotify" > /tmp/events.log 2>&1; echo $?; tail -n 1 /tmp/events.log | cut -d " " -f 4-; rm /tmp/events.log; else echo 0; echo checks passed; echo 0; echo checks passed; fi'; ExpectedOutput: '0'#10'checks passed'#10'0'#10'checks passed'#10; ExpectedStatus: 0),
     { Files freed once nothing uses them, on the system disk: a library
       loaded and removed, a running program replaced by a rename, a
       mapped file removed while mapped. The cached image sections and
@@ -848,7 +851,11 @@ const
       fewer than 20 ticks in its quietest second (100 with the periodic
       tick; its own sampling thread, pinned there too, wakes once a
       second). }
-    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --check-busy 3 20 > busy.log; echo $?; grep FAIL busy.log; tail -n 1 busy.log | cut -d " " -f 2-6'; ExpectedOutput: '0'#10'a busy processor running one'#10; ExpectedStatus: 0),
+    { The clock and timers (CallGetClockInformation): the test machine
+      (q35) has an HPET whose comparator the kernel took as its event
+      timer, and the counter's rate has a source. }
+    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
   );
 
 var

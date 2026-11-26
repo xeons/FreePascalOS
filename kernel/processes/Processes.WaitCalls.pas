@@ -27,7 +27,10 @@
   records waiting), a socket's Readable event, a device's ReadyEvent (if its
   driver keeps one: a terminal's says a read would not wait), or for a
   device opened only for writing its WritableEvent (a pseudo-terminal's
-  master side: room to type). A file, and a device whose driver keeps
+  master side: room to type), an event descriptor's (an event counter
+  above zero, a timer descriptor that went off, a signal descriptor with
+  a signal waiting, an event poll with ready entries, a watch group with
+  records). A file, and a device whose driver keeps
   no such event, is always ready, as poll says of them elsewhere: a
   read of it does not wait for anyone else (so a program can wait on
   its standard input and a socket together whatever the input is). The
@@ -79,7 +82,13 @@ uses
   Processes.ObjectCalls,
   FileSystem.Watches,
   Network.Sockets,
-  Processes.LocalSockets;
+  Processes.LocalSockets,
+  FileSystem.WatchGroups,
+  Objects.EventCounters,
+  Objects.TimerDescriptors,
+  Processes.SignalDescriptors,
+  Processes.EventPolls,
+  Processes.EventDescriptorCalls;
 
 var
   { Signaled from the start and never reset: what files wait on. }
@@ -132,6 +141,12 @@ begin
     HandleKindLocalSocket: Result := @PLocalSocket(ObjectBody)^.Readable;
     HandleKindDevice:
       Result := DeviceReadinessEvent(PDeviceFile(ObjectBody));
+    { Event descriptors: ready to read. }
+    HandleKindEventCounter: Result := @PEventCounter(ObjectBody)^.Readable;
+    HandleKindTimerDescriptor: Result := @PTimerDescriptor(ObjectBody)^.Ready;
+    HandleKindSignalDescriptor: Result := @PSignalDescriptor(ObjectBody)^.Ready;
+    HandleKindEventPoll: Result := @PEventPoll(ObjectBody)^.Ready;
+    HandleKindWatchGroup: Result := @PWatchGroup(ObjectBody)^.Ready;
   else
     Result := nil;
   end;
@@ -155,7 +170,10 @@ begin
   end;
   Result := ReferenceHandle(Handle, Kind);
   if Result <> nil then
+  begin
+    PrepareEventDescriptorWait(Kind, Result);
     Event := ReadinessEvent(Kind, Result);
+  end;
 end;
 
 { Waits on the events of the handles; the result as the call returns it. }

@@ -29,6 +29,7 @@
 #include <pty.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
@@ -85,8 +86,16 @@ static void test_openpt(void) {
 		"window size seen on the terminal: %ux%u", seen.ws_row, seen.ws_col);
 	make_raw(terminal);
 
+	int poll_fd = epoll_create1(0);
+	struct epoll_event event = {0};
+	event.events = EPOLLIN;
+	event.data.fd = master;
+	CHECK(epoll_ctl(poll_fd, EPOLL_CTL_ADD, master, &event) == 0, "the master in an event poll: %s", strerror(errno));
 	/* A program's output reaches the master... */
 	CHECK(write(terminal, "output\n", 7) == 7, "write to the terminal");
+	struct epoll_event ready;
+	CHECK(epoll_wait(poll_fd, &ready, 1, 2000) == 1 && (ready.events & EPOLLIN), "epoll: the master is readable");
+	close(poll_fd);
 	struct pollfd waiting = {master, POLLIN, 0};
 	CHECK(poll(&waiting, 1, 2000) == 1 && (waiting.revents & POLLIN), "poll: the master is readable");
 	char buffer[32] = {0};

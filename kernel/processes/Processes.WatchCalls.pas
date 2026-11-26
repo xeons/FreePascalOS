@@ -34,6 +34,8 @@ interface
 
 function PerformCreateWatch(PathAddress: QWord; Flags: QWord): Int64;
 function PerformReadWatch(Handle: Int64; BufferAddress: QWord; Capacity: QWord): Int64;
+{ True for /dev and everything in it (devices are not watched). }
+function IsDevicePath(UserPath: PChar): Boolean;
 
 implementation
 

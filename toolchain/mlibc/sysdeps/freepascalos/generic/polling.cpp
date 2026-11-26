@@ -15,8 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 // poll and select over CallWaitForHandles (pipes, terminals, sockets
-// becoming readable, pipe write ends with room) and CallWaitForSocket
-// (sockets becoming writable). Files are always ready. A wait for what
+// becoming readable, pipe write ends with room, event descriptors
+// becoming readable) and CallWaitForSocket (sockets becoming writable);
+// event descriptors (eventfd, timerfd, signalfd, epoll, inotify) say
+// what they are ready for through CallQueryHandleReadiness. Files are always ready. A wait for what
 // CallWaitForHandles cannot wait for (a socket's room to write) looks
 // again every few milliseconds.
 
@@ -69,6 +71,27 @@ short ready_events(int fd, short requested, bool *waitable, bool *needs_recheck)
 			}
 			*waitable = (requested & (POLLIN | POLLRDNORM)) != 0;
 			if (requested & (POLLOUT | POLLWRNORM))
+				*needs_recheck = true;
+			return result;
+		}
+		case FPOS_HANDLE_KIND_EVENT_COUNTER:
+		case FPOS_HANDLE_KIND_TIMER_DESCRIPTOR:
+		case FPOS_HANDLE_KIND_SIGNAL_DESCRIPTOR:
+		case FPOS_HANDLE_KIND_EVENT_POLL:
+		case FPOS_HANDLE_KIND_WATCH_GROUP: {
+			// The kernel says what they are ready for; waiting on the
+			// handle waits until one is readable.
+			long readiness = call(FPOS_CALL_QUERY_HANDLE_READINESS, fd);
+			short result = 0;
+			if (!error_of(readiness)) {
+				if (readiness & POLLIN)
+					result |= requested & (POLLIN | POLLRDNORM);
+				if (readiness & POLLOUT)
+					result |= requested & (POLLOUT | POLLWRNORM);
+				result |= readiness & (POLLERR | POLLHUP);
+			}
+			*waitable = (requested & (POLLIN | POLLRDNORM)) != 0;
+			if ((requested & (POLLOUT | POLLWRNORM)) && !(result & POLLOUT))
 				*needs_recheck = true;
 			return result;
 		}

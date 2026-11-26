@@ -940,7 +940,6 @@ const
   CallQueryLocalSocket = 258;
   { 259 is kept for this block. }
 
-  CallCount = 260;
 
   { CallSyncHandle flags. }
   SyncHandleDataOnly = $01;
@@ -971,6 +970,100 @@ const
   LocalQueryPeerName = 1;
   LocalQueryPeerCredentials = 2;
   LocalQueryKind = 3;
+
+  { --- Clocks and timers (236-239) -------------------------------------------- }
+
+  { (InformationAddress): the kernel's clock and timers as a
+    TAbiClockInformation: which counter the clock reads, how the rates
+    were found, the HPET's figures, the broadcast timer of deep idle
+    states and the clock watchdog's. }
+  CallGetClockInformation = 236;
+  { 237-239 are kept for this group. }
+
+
+  { --- Event descriptors: eventfd, timerfd, signalfd, epoll, inotify (260-269) -- }
+  { The objects behind these handles are ready for CallWaitForHandles
+    (and poll) and can be watched by an event poll; their Event*,
+    Timer*, Signal*, Poll* and GroupWatch* constants and records are in
+    Abi.EventDescriptors.inc. Read and written with CallRead and
+    CallWrite; CallControlHandle's ControlSetNonBlocking makes reads and
+    writes fail with ErrorWouldBlock instead of waiting. }
+
+  { (InitialValue, Flags): an event counter (eventfd): a 64-bit count a
+    read (of 8 bytes at least) takes whole and leaves at zero, or with
+    EventCounterSemaphore takes one from; a read of a zero count waits.
+    A write of 8 bytes adds its value (not $FFFFFFFFFFFFFFFF), waiting
+    while the sum would pass $FFFFFFFFFFFFFFFE. Ready to read while the
+    count is above zero. Flags: EventCounterSemaphore,
+    EventDescriptorNonBlocking. Returns the handle. }
+  CallCreateEventCounter = 260;
+  { (Clock, Flags): a timer descriptor (timerfd) on TimerClockRealTime,
+    TimerClockMonotonic or TimerClockBoot (the Linux clock ids; the
+    monotonic and boot clocks are the uptime). A read of 8 bytes takes
+    how many times it went off since the last read (waiting while
+    none); ErrorCanceled once an absolute real time timer set with
+    TimerCancelOnSet saw the clock set. Flags:
+    EventDescriptorNonBlocking. }
+  CallCreateTimerDescriptor = 261;
+  { (Handle, Flags, NewAddress, OldAddress): timerfd_settime: arms or
+    (a zero first time) stops it with the TAbiTimerSpecification at
+    NewAddress (0: changes nothing, timerfd_gettime), its first time
+    relative or with TimerAbsolute a time of its clock; first writes
+    what was left of the old setting at OldAddress (if not 0). Flags:
+    TimerAbsolute, TimerCancelOnSet (with TimerAbsolute on the real time
+    clock). Setting it again forgets the times it went off. }
+  CallSetTimerDescriptor = 262;
+  { (Handle): what poll says of the handle now, as PollReadable,
+    PollWritable, PollError, PollHangUp bits (the Linux POLL* values);
+    files are always readable and writable. }
+  CallQueryHandleReadiness = 263;
+  { (Handle, Mask, Flags): a signal descriptor (signalfd) for the signals
+    in Mask (bit N - 1 for signal N; SIGKILL and SIGSTOP left out), or
+    with Handle not -1 a new mask for that one. A read (of
+    SizeOf(TAbiSignalDescriptorRecord) bytes at least) takes the waiting
+    signals of the mask (sent to the process, or to the reading thread)
+    as records, waiting while none; signals meant for it are blocked by
+    the program, so they wait instead of being delivered. Ready while
+    one of its signals waits for the process that made it. Flags:
+    EventDescriptorNonBlocking. Returns the handle. }
+  CallSetSignalDescriptor = 264;
+  { (Flags): an event poll (epoll). Flags: none yet (0). }
+  CallCreateEventPoll = 265;
+  { (Poll, Operation, Handle, EventAddress): epoll_ctl: PollAdd,
+    PollModify (with a TAbiPollEvent at EventAddress) or PollRemove the
+    object Handle names. Events: PollReadable, PollWritable (PollError
+    and PollHangUp are always reported), PollEdgeTriggered,
+    PollOneShot, PollExclusive (accepted on PollAdd). ErrorExists,
+    ErrorNotFound, ErrorNotPermitted for files (always ready),
+    ErrorInvalidArgument for the poll itself, ErrorTooManyLinks for
+    polls nested in a loop or more than PollMaximumNesting deep. A
+    registration lasts until removed or until the object's last handle
+    is closed (in any process). }
+  CallControlEventPoll = 266;
+  { (Poll, EventsAddress, Capacity, TimeoutMilliseconds): epoll_wait:
+    up to Capacity (at most PollMaximumEvents per call) TAbiPollEvent
+    records of objects ready for what they were registered for, waiting
+    up to the timeout (-1: no limit, 0: only looks) while none is.
+    Level triggered registrations stay reported while the object is
+    ready; edge triggered ones once per change; one shot ones once
+    until modified. Returns how many; ErrorInterrupted. }
+  CallWaitEventPoll = 267;
+  { (Flags): a watch group (inotify): watches on folders and files whose
+    changes are read from the one handle as TAbiGroupWatchRecord records
+    (the Linux inotify_event layout), waiting while none is queued.
+    Flags: EventDescriptorNonBlocking. }
+  CallCreateWatchGroup = 268;
+  { (Group, Operation, PathOrDescriptor, Mask): GroupWatchAdd: watches the
+    path (an address) for the GroupWatch* events in Mask (with
+    GroupWatchOnlyDirectory, GroupWatchDontFollow, GroupWatchMaskAdd,
+    GroupWatchMaskCreate, GroupWatchOneShot), returning its watch
+    descriptor (the same one again for something watched already, or
+    ErrorExists with GroupWatchMaskCreate); GroupWatchRemove: removes
+    watch descriptor PathOrDescriptor (a GroupWatchIgnored record
+    follows). Needs read permission on what is watched. }
+  CallChangeGroupWatch = 269;
+
+  CallCount = 270;
 
   { CallSyncMemory flags (the Linux MS_* values). }
   SyncMemoryAsync = 1;
@@ -1063,6 +1156,27 @@ const
   { A fan is driven, and it runs now. }
   ProcessorPowerFanControlled = $08;
   ProcessorPowerFanRunning = $10;
+  AbiClockNameCapacity = 48;
+  { TAbiClockInformation.Flags. }
+  ClockInformationCounterInvariant = $0001;
+  ClockInformationHpetPresent = $0002;
+  ClockInformationHpet64Bit = $0004;
+  ClockInformationHpetLegacyCapable = $0008;
+  { Legacy replacement is on (the HPET drives IRQ 0 and 8). }
+  ClockInformationHpetLegacyInUse = $0010;
+  { The clock was chosen by the clocksource kernel option. }
+  ClockInformationClockForced = $0020;
+  { The time stamp counter is compared with the HPET once a second. }
+  ClockInformationClockWatched = $0040;
+  { The watchdog found the counter drifting and moved the clock to the
+    HPET. }
+  ClockInformationClockFellBack = $0080;
+  { The platform's timer wakes processors in deep idle states (not the
+    boot processor's clock). }
+  ClockInformationBroadcastDevice = $0100;
+  { Programs read the time from the clock page (else they make the
+    system call). }
+  ClockInformationClockPageCounter = $0200;
   { TAbiThermalZone.Kind. }
   ThermalZoneAcpi = 1;
   ThermalZoneFirmware = 2;
@@ -1382,6 +1496,10 @@ const
   FileLockShared = 1;
   FileLockExclusive = 2;
   FileLockNoWait = $100;
+  { Request of CallControlHandle on an event descriptor (event counter,
+    timer, signal descriptor, watch group): Argument 1 makes its reads and
+    writes fail with ErrorWouldBlock instead of waiting, 0 wait again. }
+  ControlSetNonBlocking = 320;
   { Blue, green, red, unused (a little-endian LongWord $00RRGGBB). }
   DisplayFormatBlueGreenRed = 1;
   { Red, green, blue, unused ($00BBGGRR). }
@@ -1590,6 +1708,9 @@ const
 
   { TAbiWatchRecord.Flags: the item is a folder. }
   WatchRecordDirectory = $01;
+  { A name created or removed by a rename (moved in from or out to
+    somewhere not watched by this watch). }
+  WatchRecordMoved = $02;
   { At most this many records wait in a watch; then comes the overflow
     record. }
   MaximumQueuedWatchRecords = 64;
@@ -1650,6 +1771,8 @@ const
   ErrorInProgress = 115;
   { A semaphore released past its limit. }
   ErrorOverflow = 75;
+  { A timer descriptor's timer was canceled by the clock being set. }
+  ErrorCanceled = 125;
 
   { --- Standard handles ------------------------------------------------ }
 
@@ -1705,6 +1828,12 @@ const
   HandleKindSocket = 14;
   HandleKindSemaphore = 15;
   HandleKindMutex = 16;
+  { Event descriptors (calls 260-269). }
+  HandleKindEventCounter = 20;
+  HandleKindTimerDescriptor = 21;
+  HandleKindSignalDescriptor = 22;
+  HandleKindEventPoll = 23;
+  HandleKindWatchGroup = 24;
 
   AbiNameCapacity = 256;
   AbiTextCapacity = 64;
@@ -2041,6 +2170,53 @@ type
     BytesReadFromPages: QWord;
   end;
   PAbiMappedFileStatistics = ^TAbiMappedFileStatistics;
+
+  { What CallGetClockInformation gives. }
+  TAbiClockInformation = record
+    { ClockInformation* flags. }
+    Flags: LongWord;
+    HpetComparators: LongWord;
+    { The clock's counter (time stamp counter, generic timer): its rate,
+      and what it measured against the reference (0: not measured). }
+    CounterHertz: QWord;
+    CounterMeasuredHertz: QWord;
+    { The per-processor clock interrupt's timer (local APIC timer after
+      its divider, generic timer). }
+    LocalTimerHertz: QWord;
+    { The HPET (0 where there is none): its period, the smallest
+      periodic tick the firmware vouches for, its vendor, registers,
+      counter width, the comparator the kernel uses (-1: none) and its
+      interrupts so far. }
+    HpetPeriodFemtoseconds: QWord;
+    HpetMinimumTick: LongWord;
+    HpetVendorId: LongWord;
+    HpetBaseAddress: QWord;
+    HpetEventComparator: LongInt;
+    HpetCounterBits: LongWord;
+    HpetInterrupts: QWord;
+    { Processors woken by the broadcast timer so far. }
+    BroadcastWakes: QWord;
+    { The watchdog's checks, the failed ones and the largest drift seen
+      in one interval. }
+    WatchdogChecks: QWord;
+    WatchdogFailures: QWord;
+    WatchdogLargestDriftNanoseconds: QWord;
+    { "time stamp counter", "HPET", "KVM paravirtual clock", "generic
+      timer". }
+    ClockSource: array[0..AbiClockNameCapacity - 1] of Char;
+    { Where the counter's and the local timer's rates came from: "CPUID
+      15h crystal ratio", "measured against the HPET", ... }
+    CounterCalibration: array[0..AbiClockNameCapacity - 1] of Char;
+    LocalTimerCalibration: array[0..AbiClockNameCapacity - 1] of Char;
+    { How the HPET's comparator interrupts: "I/O APIC input 2",
+      "message (FSB delivery)", "legacy replacement (IRQ 0, input 2)",
+      "none". }
+    HpetRoute: array[0..AbiClockNameCapacity - 1] of Char;
+    { What wakes processors whose timer stops in deep idle states: "boot
+      processor", "HPET comparator 0 (I/O APIC input 2)". }
+    BroadcastTimer: array[0..AbiClockNameCapacity * 2 - 1] of Char;
+  end;
+  PAbiClockInformation = ^TAbiClockInformation;
 
   TAbiProcessorPower = record
     UptimeNanoseconds: QWord;
@@ -2651,3 +2827,4 @@ const
   ModifierSuper = $80;
 
 {$include Abi.Networking.inc}
+{$include Abi.EventDescriptors.inc}

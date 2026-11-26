@@ -1,0 +1,52 @@
+--- a/llvm/include/llvm/TargetParser/Triple.h
++++ b/llvm/include/llvm/TargetParser/Triple.h
+@@ -349,7 +349,8 @@
+     Firmware,
+     QURT,
+     H2,
+-    LastOSType = H2
++    FreePascalOS,
++    LastOSType = FreePascalOS
+   };
+   enum EnvironmentType {
+     UnknownEnvironment,
+@@ -951,6 +952,8 @@
+ 
+   bool isOSManagarm() const { return getOS() == Triple::Managarm; }
+ 
++  bool isOSFreePascalOS() const { return getOS() == Triple::FreePascalOS; }
++
+   bool isOSFirmware() const { return getOS() == Triple::Firmware; }
+ 
+   bool isShaderStageEnvironment() const {
+--- a/llvm/include/llvm/TargetParser/TripleName.def
++++ b/llvm/include/llvm/TargetParser/TripleName.def
+@@ -81,6 +81,7 @@
+ TRIPLE_OS(Firmware, "firmware")
+ TRIPLE_OS(QURT, "qurt")
+ TRIPLE_OS(H2, "h2")
++TRIPLE_OS(FreePascalOS, "freepascalos")
+ 
+ #undef TRIPLE_OS
+ #undef TRIPLE_OS_ALIAS
+--- a/llvm/unittests/TargetParser/TripleTest.cpp
++++ b/llvm/unittests/TargetParser/TripleTest.cpp
+@@ -1469,6 +1469,18 @@
+   EXPECT_EQ(Triple::Managarm, T.getOS());
+   EXPECT_EQ(Triple::Mlibc, T.getEnvironment());
+ 
++  T = Triple("x86_64-unknown-freepascalos");
++  EXPECT_EQ(Triple::x86_64, T.getArch());
++  EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
++  EXPECT_EQ(Triple::FreePascalOS, T.getOS());
++  EXPECT_TRUE(T.isOSFreePascalOS());
++
++  T = Triple("aarch64-unknown-freepascalos");
++  EXPECT_EQ(Triple::aarch64, T.getArch());
++  EXPECT_EQ(Triple::FreePascalOS, T.getOS());
++  EXPECT_EQ("aarch64-unknown-freepascalos",
++            Triple::normalize("aarch64-freepascalos"));
++
+   T = Triple("huh");
+   EXPECT_EQ(Triple::UnknownArch, T.getArch());
+ 

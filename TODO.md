@@ -9,7 +9,18 @@ how the existing pieces fit together.
 - [x] Use the MADT for I/O APICs and interrupt source overrides
 - [x] Use the MADT processor list (starting the other processors)
 - [x] FADT: power off, reset, sleep states (S3, S5)
-- [ ] HPET
+- [x] HPET: driver (ACPI table, 32/64-bit counter, one-shot and periodic
+      comparators, FSB / I/O APIC / legacy replacement routes checked by test
+      interrupts, suspend to RAM), calibration order (hypervisor leaf, kvmclock,
+      CPUID 15h/16h, HPET, ACPI PM timer, PIT), HPET clock source and TSC
+      watchdog, HPET broadcast timer for deep idle states, call 236
+- [ ] HPET follow-ups: a comparator per processor where enough have FSB
+      delivery (no wake-up IPI); FSB messages under interrupt remapping (an IRTE
+      with the HPET's source id from the DMAR/IVRS device scope); /dev/hpet or
+      comparators for programs; the PNP0103 device's _STA (firmware that hides
+      the HPET); the watchdog per processor (counters out of step between
+      processors); verify CPUID 15h crystal figures and the PIT probe on real
+      hardware that gates the PIT off
 - [x] I/O APIC driver; route legacy IRQs onto the device vectors (0x30-0x3F)
 - [x] Map MMIO with proper caching attributes (`Memory.DeviceMapping`)
 - [x] PCI / PCI Express configuration space enumeration (ECAM from MCFG)
@@ -2021,7 +2032,19 @@ in the order they would be built:
 - [ ] Local sockets: collect sockets passed in messages queued on
       themselves (cycles stay until shutdown); /dev/pts as a directory
       to list
-- [ ] epoll/inotify/eventfd/timerfd (mlibc's linux option needs Linux's headers)
+- [x] epoll/inotify/eventfd/timerfd/signalfd (calls 260-269: kernel event
+      counters, timer descriptors, signal descriptors, event polls and
+      watch groups; mlibc's linux-epoll/eventfd/timerfd/signalfd options
+      and its own inotify, without Linux's headers)
+- [ ] inotify: IN_OPEN, IN_ACCESS, IN_CLOSE_WRITE/NOWRITE (the VFS reports
+      no opens, closes or reads); recursive watches are not wanted
+- [ ] epoll: EPOLLEXCLUSIVE wakes every waiter (accepted, not one at a
+      time); a nested poll is ready while its ready list is not empty
+      (not checked deeper)
+- [ ] signalfd reports the signals of the process that made it (after
+      fork the child's reads take its own, readiness follows the
+      parent's); timerfd: absolute real time timers do not follow the
+      clock read again on resume (other processors frozen then)
 - [x] Atomic pread/pwrite (250, 251; preadv/pwritev), per-file fsync
       through tagged block cache lines (252), nanosecond file times in
       stat, utimensat and futimens
@@ -2029,7 +2052,8 @@ in the order they would be built:
       (it does what fsync does)
 - [x] setitimer(ITIMER_REAL)/alarm (a helper thread sending SIGALRM)
 - [ ] timer_create, ITIMER_VIRTUAL/PROF; CPU-time clocks (they give uptime now)
-- [ ] Clang driver support (`--target=x86_64-freepascalos`)
+- [x] Clang driver support (`--target=x86_64-freepascalos`, `aarch64-freepascalos`):
+      LLVM 23.1.6 patches, `make clang-toolchain`, ctest built by Clang
 - [x] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,
       CallQueryMemoryResidency 215); clock_gettime from the clock page
       (AuxiliaryClockPage) instead of a system call

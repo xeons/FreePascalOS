@@ -37,8 +37,9 @@
     emulation reports MONITOR but its MWAIT does not sleep with several
     processors, and a port read there only exits to it), unless
     idle=mwait (or idle=port for port states) asks for them;
-  - the time stamp counter is invariant (it is the kernel's clock, and
-    stops in deep states otherwise);
+  - the kernel's clock keeps counting in them (HalClockRunsInDeepIdle:
+    an invariant time stamp counter, or the HPET where the clock was
+    moved to it; a counter that is not invariant stops in deep states);
   - CPUID 5 states its monitor line size and that interrupts end MWAIT.
   Where the local APIC timer does not keep running in deep states (no
   ARAT, CPUID 6 EAX bit 2) every state deeper than C1 is marked as
@@ -81,7 +82,7 @@ uses
   Kernel.Arch.Cpu,
   Kernel.Options,
   Hal.PortIo,
-  Hal.TimeStampClock;
+  Hal.Platform;
 
 const
   CpuidFeatures = 1;
@@ -169,7 +170,7 @@ begin
   if (Registers.Ecx and (MonitorWaitExtensionsBit or MonitorWaitInterruptBreakBit)) <>
      (MonitorWaitExtensionsBit or MonitorWaitInterruptBreakBit) then
     Exit;
-  if not TimeStampCounterIsInvariant then
+  if not HalClockRunsInDeepIdle then
     Exit;
   Result := True;
 end;
@@ -188,7 +189,7 @@ begin
   end;
   ExecuteCpuid(CpuidFeatures, 0, Registers);
   Hypervisor := (Registers.Ecx and FeatureHypervisorBit) <> 0;
-  PortStatesUsable := not OptionIs('idle', 'halt') and TimeStampCounterIsInvariant and
+  PortStatesUsable := not OptionIs('idle', 'halt') and HalClockRunsInDeepIdle and
     (not Hypervisor or OptionIs('idle', 'port'));
 end;
 

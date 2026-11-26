@@ -50,6 +50,9 @@ uses
   Io.AcpiPower,
   Power.PerformanceStates,
   Kernel.BroadcastSelfTest,
+  Kernel.BroadcastTimer,
+  Kernel.ClockWatchdog,
+  Firmware.Acpi,
   Objects.Events,
   Objects.Semaphores,
   Objects.Timers,
@@ -77,6 +80,7 @@ uses
   Kernel.SelfTest,
   Kernel.MemorySelfTest,
   Kernel.ObjectNamespaceSelfTest,
+  Kernel.EventDescriptorSelfTest,
   Kernel.SynchronizationSelfTest,
   Kernel.SchedulerLatencySelfTest,
   Kernel.ClockSelfTest,
@@ -353,6 +357,12 @@ begin
 
   StartThreadReaper;
   InitializePlatformTables(PBootInformation(Context)^);
+  { The platform's timer (the HPET's comparator), now that its interrupt
+    can be routed: the broadcast timer of deep idle states, before the
+    other processors may enter them. }
+  HalStartPlatformTimers;
+  StartBroadcastDevice;
+  StartClockWatchdog;
   { With the firmware's processor list read, the processors start before
     the drivers, so device interrupts can go to all of them. }
   StartSecondaryProcessors(@RunIdleLoop);
@@ -390,6 +400,7 @@ begin
   RunMemorySelfTests;
   RunSynchronizationSelfTests;
   RunObjectNamespaceSelfTests;
+  RunEventDescriptorSelfTests;
   RunSchedulerLatencySelfTests;
   RunClockSelfTests;
   RunStackTraceSelfTest;
@@ -504,6 +515,8 @@ begin
   RecordBootRamDisk(BootInformation^);
   InitializeExecutiveServices;
 
+  { The HAL looks up its timers in the ACPI tables (the HPET). }
+  InitializeAcpi(BootInformation^.AcpiRootPointer);
   InitializeHal;
   HalWriteDescription;
   InitializeIdleStates;

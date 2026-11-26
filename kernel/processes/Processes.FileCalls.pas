@@ -98,7 +98,8 @@ uses
   Processes.FileLockCalls,
   Processes.SocketCalls,
   Processes.LocalSocketCalls,
-  Processes.Restrictions;
+  Processes.Restrictions,
+  Processes.EventDescriptorCalls;
 
 const
   PathCapacity = ProcessPathCapacity;
@@ -550,6 +551,9 @@ begin
       Result := ReadSocketHandle(ObjectBody, BufferAddress, ByteCount);
     HandleKindLocalSocket:
       Result := ReadLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindEventCounter, HandleKindTimerDescriptor, HandleKindSignalDescriptor, HandleKindEventPoll,
+    HandleKindWatchGroup:
+      Result := ReadEventDescriptor(Kind, ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -646,6 +650,9 @@ begin
       Result := WriteSocketHandle(ObjectBody, BufferAddress, ByteCount);
     HandleKindLocalSocket:
       Result := WriteLocalSocketHandle(ObjectBody, BufferAddress, ByteCount);
+    HandleKindEventCounter, HandleKindTimerDescriptor, HandleKindSignalDescriptor, HandleKindEventPoll,
+    HandleKindWatchGroup:
+      Result := WriteEventDescriptor(Kind, ObjectBody, BufferAddress, ByteCount);
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -747,6 +754,11 @@ begin
     HandleKindSocket, HandleKindLocalSocket: Result := Abi.SystemCalls.HandleKindSocket;
     HandleKindSemaphore: Result := Abi.SystemCalls.HandleKindSemaphore;
     HandleKindMutex: Result := Abi.SystemCalls.HandleKindMutex;
+    HandleKindEventCounter: Result := Abi.SystemCalls.HandleKindEventCounter;
+    HandleKindTimerDescriptor: Result := Abi.SystemCalls.HandleKindTimerDescriptor;
+    HandleKindSignalDescriptor: Result := Abi.SystemCalls.HandleKindSignalDescriptor;
+    HandleKindEventPoll: Result := Abi.SystemCalls.HandleKindEventPoll;
+    HandleKindWatchGroup: Result := Abi.SystemCalls.HandleKindWatchGroup;
   else
     Result := Failure(ErrorBadHandle);
   end;
@@ -1188,6 +1200,8 @@ begin
     Exit(Failure(ErrorBadHandle));
   if (Kind = HandleKindFile) and ((Request = ControlLockFile) or (Request = ControlUnlockFile)) then
     Exit(PerformFileLockRequest(Handle, Request, Argument));
+  if IsEventDescriptorKind(Kind) then
+    Exit(ControlEventDescriptor(Kind, ObjectBody, Request, Argument));
   if Kind <> HandleKindDevice then
     Exit(Failure(ErrorUnsupported));
   { The console's requests are handled by its driver

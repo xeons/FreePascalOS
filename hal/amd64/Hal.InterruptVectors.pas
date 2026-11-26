@@ -28,6 +28,7 @@
     0x2F           Dispatch level software interrupt (level 2)
     0x30 .. 0x3F   Device interrupts (level 3)
     0xD0           Clock (level 13)
+    0xD1           The HPET's comparator: the broadcast timer (level 13)
     0xE0           Inter-processor interrupts (level 14)
     0xF0 .. 0xFF   Legacy PIC (masked, only spurious) and APIC spurious
 }
@@ -46,6 +47,9 @@ const
   DeviceInterruptVectorCount = 16;
 
   ClockInterruptVector = $D0;
+  { The HPET comparator that wakes processors in deep idle states
+    (Hal.HpetEventTimer): at the clock's level, never below it. }
+  PlatformTimerInterruptVector = $D1;
   InterProcessorInterruptVector = $E0;
 
   { The legacy 8259 controllers are remapped here and fully masked. They

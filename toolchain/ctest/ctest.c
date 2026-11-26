@@ -18,16 +18,26 @@
 
 /* The C test suite (/usr/bin/ctest): the C library and the kernel's POSIX
    calls, group by group, then the C++ test (/usr/bin/cxxtest) and the
-   static hello world as programs of their own. Exits with 0 when every
+   static hello world as programs of their own. When the system disk has
+   the programs built with Clang (make clang-toolchain), they run too:
+   this suite as ctest-clang (every group, --groups-only), cxxtest-clang
+   and hello-clang-static (linked with ld.lld). Exits with 0 when every
    check passed. make c-test boots with it as the first program; a
    coretest line runs it when the system disk has it. */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "ctest.h"
+
+#ifdef __clang__
+#define COMPILER_NAME "Clang " __clang_version__
+#else
+#define COMPILER_NAME "GCC " __VERSION__
+#endif
 
 int ctest_checks;
 int ctest_failures;
@@ -55,6 +65,9 @@ static const struct test_group groups[] = {
 	{"unix-sockets", test_unix_sockets},
 	{"terminals", test_terminals},
 	{"file-io", test_file_io},
+	{"event descriptors", test_event_descriptors},
+	{"epoll", test_epoll},
+	{"inotify", test_inotify},
 };
 
 /* Runs a program of the suite; its exit code 0 is a pass. */
@@ -77,6 +90,11 @@ static void run_program(const char *path, const char *argument) {
 
 int main(int argc, char **argv) {
 	const char *only = argc > 1 ? argv[1] : NULL;
+	/* Every group, without the programs (the Clang build of the suite,
+	   run by the GCC build). */
+	bool groups_only = only && strcmp(only, "--groups-only") == 0;
+	if (groups_only)
+		only = NULL;
 	/* What the security group runs this program for. */
 	if (only && strcmp(only, "--report-euid") == 0)
 		return ctest_report_effective_user();
@@ -85,7 +103,7 @@ int main(int argc, char **argv) {
 	if (only && strcmp(only, "--exec-loop") == 0)
 		return ctest_exec_loop(argc > 2 ? argv[2] : "0");
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	printf("ctest: the C library on FreePascalOS\n");
+	printf("ctest: the C library on FreePascalOS (built by %s)\n", COMPILER_NAME);
 	for (size_t i = 0; i < sizeof(groups) / sizeof(groups[0]); i++) {
 		if (only && strcmp(only, groups[i].name) != 0)
 			continue;
@@ -95,9 +113,12 @@ int main(int argc, char **argv) {
 		printf("ctest: %s: %d checks, %s\n", groups[i].name, ctest_checks - checks_before,
 			ctest_failures == failures_before ? "passed" : "FAILED");
 	}
-	if (!only) {
+	if (!only && !groups_only) {
 		run_program("/usr/bin/hello-static", "static");
 		run_program("/usr/bin/cxxtest", NULL);
+		run_program("/usr/bin/ctest-clang", "--groups-only");
+		run_program("/usr/bin/cxxtest-clang", NULL);
+		run_program("/usr/bin/hello-clang-static", "static");
 	}
 	if (ctest_failures == 0)
 		printf("ctest: all %d checks passed\n", ctest_checks);

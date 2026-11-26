@@ -18,6 +18,7 @@
 // locks, access checks and the working directory.
 
 #include "kernel.hpp"
+#include "event-descriptors.hpp"
 #include "files.hpp"
 #include "descriptors.hpp"
 
@@ -121,6 +122,8 @@ int set_status_flags(int fd, int flags) {
 		change_descriptor_flags(fd, 0, descriptor_non_blocking);
 	if (is_socket(fd))
 		call(FPOS_CALL_SET_SOCKET_OPTION, fd, FPOS_SOCKET_OPTION_NON_BLOCKING, (flags & O_NONBLOCK) ? 1 : 0);
+	else if (is_event_descriptor_kind(call(FPOS_CALL_GET_HANDLE_KIND, fd)))
+		call(FPOS_CALL_CONTROL_HANDLE, fd, FPOS_CONTROL_SET_NON_BLOCKING, (flags & O_NONBLOCK) ? 1 : 0);
 	return 0;
 }
 

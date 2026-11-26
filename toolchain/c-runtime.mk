@@ -27,6 +27,13 @@
 #                      without the toolchain
 #   make c-test        Boot with /usr/bin/ctest as the first program and
 #                      check that every C and C++ test passed
+#   make clang-toolchain  Build Clang and lld with the freepascalos targets
+#                      (toolchain/build-clang.sh: build/toolchain/llvm, one
+#                      build for both architectures; optional and long). With
+#                      it, make c-runtime also builds ctest-clang,
+#                      cxxtest-clang and hello-clang-static, which ctest runs
+#   make clang-driver-test  Check the command lines of Clang's freepascalos
+#                      driver (clang -###) for both architectures
 
 ifeq ($(ARCH),arm64)
 C_TRIPLET := aarch64-freepascalos
@@ -41,24 +48,34 @@ C_STRIP := $(C_TOOLCHAIN)/bin/$(C_TRIPLET)-strip
 C_RUNTIME_OUTPUT := $(USER_BUILD_DIRECTORY)/usr
 C_RUNTIME_STAMP := $(USER_BUILD_DIRECTORY)/c-runtime.stamp
 C_TEST_SOURCES := $(wildcard toolchain/ctest/*.c toolchain/ctest/*.cpp toolchain/ctest/*.h)
-# The tree's own sysroot (the compiler's built-in one is where it was
-# built, which for a copied toolchain is another tree's).
+# The sysroot named explicitly: a toolchain copied into another tree (a
+# worktree) still has the sysroot it was built with built in.
 C_FLAGS := -O2 -Wall -Wextra --sysroot=$(abspath $(C_SYSROOT))
+# Clang (make clang-toolchain): <triple>.cfg beside it gives the system
+# root and the GCC installation for --target.
+C_CLANG := build/toolchain/llvm/bin/clang
+C_CLANG_TARGET := --target=$(C_TRIPLET)
 
 # The C runtime's libraries as the system disk has them (stripped).
 C_RUNTIME_LIBRARIES := ld.so libc.so libm.so libpthread.so libdl.so librt.so libutil.so libresolv.so
 C_RUNTIME_GCC_LIBRARIES := libgcc_s.so.1 libstdc++.so.6
 
-.PHONY: c-toolchain c-runtime c-test
+.PHONY: c-toolchain c-runtime c-test clang-toolchain clang-driver-test
 
 c-toolchain:
 	toolchain/build-toolchain.sh $(ARCH)
+
+clang-toolchain:
+	toolchain/build-clang.sh
+
+clang-driver-test:
+	scripts/test-clang-driver.sh $(C_CLANG)
 
 c-runtime: $(C_RUNTIME_STAMP)
 
 # Rebuilt when the toolchain's libc or a test changes; without the
 # toolchain the system disk simply has no C runtime.
-$(C_RUNTIME_STAMP): $(C_TEST_SOURCES) toolchain/c-runtime.mk $(wildcard $(C_SYSROOT)/usr/lib/libc.so)
+$(C_RUNTIME_STAMP): $(C_TEST_SOURCES) toolchain/c-runtime.mk $(wildcard $(C_SYSROOT)/usr/lib/libc.so) $(wildcard $(C_CLANG))
 	@mkdir -p $(USER_BUILD_DIRECTORY)
 	@if [ ! -x "$(C_CC)" ] || [ ! -f "$(C_SYSROOT)/usr/lib/libc.so" ]; then \
 		echo "c-runtime: no C toolchain for $(ARCH) (make c-toolchain); the system disk has no C runtime"; \
@@ -89,7 +106,19 @@ c-runtime-files:
 		echo "$(C_CXX) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest toolchain/ctest/cxxtest.cpp"; \
 		$(C_CXX) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest toolchain/ctest/cxxtest.cpp; \
 	fi
+	@if [ -x $(C_CLANG) ]; then $(MAKE) --no-print-directory c-runtime-clang-files; fi
 	$(C_STRIP) --strip-unneeded $(C_RUNTIME_OUTPUT)/bin/* $(C_RUNTIME_OUTPUT)/lib/libctestplugin.so
+
+# The test programs built with Clang: the C suite linked by GNU ld, the
+# C++ test with libstdc++, and a static program linked by ld.lld.
+.PHONY: c-runtime-clang-files
+c-runtime-clang-files:
+	$(C_CLANG) $(C_CLANG_TARGET) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/ctest-clang toolchain/ctest/ctest*.c -lm -ldl
+	@if [ -f $(C_SYSROOT)/usr/lib/libstdc++.so.6 ]; then \
+		echo "$(C_CLANG)++ $(C_CLANG_TARGET) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest-clang toolchain/ctest/cxxtest.cpp"; \
+		$(C_CLANG)++ $(C_CLANG_TARGET) $(C_FLAGS) -pthread -o $(C_RUNTIME_OUTPUT)/bin/cxxtest-clang toolchain/ctest/cxxtest.cpp; \
+	fi
+	$(C_CLANG) $(C_CLANG_TARGET) $(C_FLAGS) -static -fuse-ld=lld -o $(C_RUNTIME_OUTPUT)/bin/hello-clang-static toolchain/ctest/hello.c
 
 $(SYSTEM_DISK): $(C_RUNTIME_STAMP)
 

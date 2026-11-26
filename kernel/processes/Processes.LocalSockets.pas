@@ -38,7 +38,8 @@
   Processes.LocalSocketNames), and is never held while waiting: each
   socket's events are kept in step with its state under the lock -
   Readable (something to receive, a connection to accept, the end of
-  the stream) and Room (its queue, or a listener's backlog, has room) -
+  the stream), Room (its queue, or a listener's backlog, has room) and
+  Writable (a send would not wait: the peer's Room seen from here) -
   and senders wait for the receiver's Room.
 
   Sockets count their open handles (NoteLocalSocketOpened/Closed, from
@@ -128,6 +129,9 @@ type
     Capacity: QWord;
     Readable: TEvent;
     Room: TEvent;
+    { A send would not wait (room at the peer, or it would fail at
+      once): for event polls and poll (Processes.HandleReadiness). }
+    Writable: TEvent;
     { A listener's backlog: server ends connect made, not accepted yet. }
     Backlog: LongWord;
     PendingHead: PLocalSocket;
@@ -211,6 +215,9 @@ function SetLocalSocketOption(Socket: PLocalSocket; Option: LongWord; Value: Int
   TimeoutMilliseconds (InfiniteWait: no limit) for one of Conditions;
   ErrorTimedOut (negated) if none came. }
 function WaitForLocalSocket(Socket: PLocalSocket; Conditions: LongWord; TimeoutMilliseconds: Int64): Int64;
+{ What poll says of it now (Poll* bits), from its events and state,
+  read without the lock as poll's answers may be a moment old. }
+function LocalSocketReadiness(Socket: PLocalSocket): LongWord;
 { The peer's name and credentials. }
 function GetLocalPeer(Socket: PLocalSocket; out Name: TAbiLocalSocketName;
   out Credentials: TAbiLocalCredentials): LongInt;
@@ -334,10 +341,24 @@ begin
   Result := (Socket^.QueueHead <> nil) or StreamEndedLocked(Socket);
 end;
 
+function IsWritableLocked(Socket: PLocalSocket): Boolean; forward;
+
+procedure UpdateWritableLocked(Socket: PLocalSocket);
+begin
+  if IsWritableLocked(Socket) then
+    SignalEvent(Socket^.Writable)
+  else
+    ResetEvent(Socket^.Writable);
+end;
+
 procedure UpdateReadinessLocked(Socket: PLocalSocket);
 begin
   if Socket = nil then
     Exit;
+  UpdateWritableLocked(Socket);
+  { Room here is what the connected peer's sends wait for. }
+  if (Socket^.Peer <> nil) and (Socket^.Peer^.Peer = Socket) then
+    UpdateWritableLocked(Socket^.Peer);
   if IsReadableLocked(Socket) then
     SignalEvent(Socket^.Readable)
   else
@@ -406,6 +427,7 @@ begin
   Socket^.Capacity := DefaultLocalStreamCapacity;
   InitializeEvent(Socket^.Readable, EventKindNotification, False);
   InitializeEvent(Socket^.Room, EventKindNotification, True);
+  InitializeEvent(Socket^.Writable, EventKindNotification, False);
   Result := ErrorNone;
 end;
 
@@ -1097,6 +1119,24 @@ begin
     { Signaled: look again (another reader may have taken it); the
       remaining time is not tracked, as for network sockets. }
   until False;
+end;
+
+function LocalSocketReadiness(Socket: PLocalSocket): LongWord;
+var
+  Peer: PLocalSocket;
+begin
+  Result := 0;
+  if Socket^.Readable.IsSignaled then
+    Result := Result or PollReadable;
+  if Socket^.Writable.IsSignaled then
+    Result := Result or PollWritable;
+  if Socket^.Kind = LocalSocketDatagram then
+    Exit;
+  Peer := Socket^.Peer;
+  if (Socket^.State = LocalSocketDisconnected) or (Socket^.ReadShut and Socket^.WriteShut) then
+    Result := Result or PollHangUp
+  else if Socket^.ReadShut or ((Socket^.State = LocalSocketConnected) and (Peer <> nil) and Peer^.WriteShut) then
+    Result := Result or PollReadHangUp;
 end;
 
 function GetLocalPeer(Socket: PLocalSocket; out Name: TAbiLocalSocketName;

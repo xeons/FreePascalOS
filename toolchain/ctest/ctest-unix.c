@@ -31,6 +31,7 @@
 #include <signal.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -357,10 +358,39 @@ static void test_shutdown_and_names(void) {
 	close(lone);
 }
 
+/* Local sockets in an event poll: readable once data comes, writable,
+   hang-up once the peer is gone. */
+static void test_epoll_readiness(void) {
+	int pair[2];
+	socketpair(AF_UNIX, SOCK_STREAM, 0, pair);
+	int poll_fd = epoll_create1(0);
+	CHECK(poll_fd >= 0, "epoll_create1: %s", strerror(errno));
+	struct epoll_event event = {0};
+	event.events = EPOLLIN;
+	event.data.fd = pair[1];
+	CHECK(epoll_ctl(poll_fd, EPOLL_CTL_ADD, pair[1], &event) == 0, "epoll_ctl a local socket: %s", strerror(errno));
+	struct epoll_event ready[2];
+	CHECK(epoll_wait(poll_fd, ready, 2, 0) == 0, "nothing to read yet");
+	write(pair[0], "e", 1);
+	CHECK(epoll_wait(poll_fd, ready, 2, 1000) == 1 && ready[0].data.fd == pair[1] && (ready[0].events & EPOLLIN),
+		"readable in the poll");
+	event.events = EPOLLOUT;
+	CHECK(epoll_ctl(poll_fd, EPOLL_CTL_MOD, pair[1], &event) == 0, "modify");
+	CHECK(epoll_wait(poll_fd, ready, 2, 1000) == 1 && (ready[0].events & EPOLLOUT), "writable in the poll");
+	close(pair[0]);
+	event.events = EPOLLIN;
+	epoll_ctl(poll_fd, EPOLL_CTL_MOD, pair[1], &event);
+	CHECK(epoll_wait(poll_fd, ready, 2, 1000) == 1 && (ready[0].events & EPOLLHUP), "hang-up once the peer is gone (%#x)",
+		ready[0].events);
+	close(pair[1]);
+	close(poll_fd);
+}
+
 void test_unix_sockets(void) {
 	test_pairs();
 	test_path_server();
 	test_abstract_and_datagrams();
 	test_passing();
 	test_shutdown_and_names();
+	test_epoll_readiness();
 }

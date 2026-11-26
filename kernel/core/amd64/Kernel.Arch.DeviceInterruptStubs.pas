@@ -172,6 +172,13 @@ asm
   jmp CommonInterruptEntry
 end;
 
+procedure InterruptStubPlatformTimer; assembler; nostackframe;
+asm
+  push qword 0
+  push dword PlatformTimerInterruptVector
+  jmp CommonInterruptEntry
+end;
+
 procedure InterruptStubInterProcessor; assembler; nostackframe;
 asm
   push qword 0
@@ -214,6 +221,7 @@ begin
     DeviceInterruptVectorFirst + 14: Result := @InterruptStubDevice14;
     DeviceInterruptVectorFirst + 15: Result := @InterruptStubDevice15;
     ClockInterruptVector: Result := @InterruptStubClock;
+    PlatformTimerInterruptVector: Result := @InterruptStubPlatformTimer;
     InterProcessorInterruptVector: Result := @InterruptStubInterProcessor;
     LegacyPicSpuriousVector: Result := @InterruptStubLegacyPicSpurious;
     ApicSpuriousVector: Result := @InterruptStubApicSpurious;

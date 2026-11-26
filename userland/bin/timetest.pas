@@ -33,6 +33,12 @@
     gradual adjustment runs it fast (what is left shrinks) and a new
     one replaces it; steps out of 1970-2200 and gradual adjustments
     over an hour are refused.
+  - The clock information (CallGetClockInformation): its lines are
+    printed (the clock source, how the rates were found, the HPET), the
+    clock source agrees with the power call's, the rates are there, an
+    HPET's period is one the specification allows, its counter 32 or 64
+    bits wide with at least three comparators; the clock page mode it
+    states is the one the page has.
   Prints a line per check (FAIL for a failed one) and the count last;
   exits 1 if one failed.
 
@@ -50,6 +56,7 @@ uses
   DateUtils,
   Abi.SystemCalls,
   Sys.Kernel,
+  Sys.Power,
   Sys.Time;
 
 const
@@ -278,6 +285,43 @@ begin
     [PageTime div SpeedRounds, CallTime div SpeedRounds]));
 end;
 
+procedure TestClockInformation;
+const
+  MaximumPeriodFemtoseconds = 100000000;
+var
+  Information: TAbiClockInformation;
+  Power: TAbiProcessorPower;
+  Line: string;
+  Value: Int64;
+  PageOffersCounter: Boolean;
+begin
+  if GetClockInformation(Information) <> 0 then
+  begin
+    Check(False, 'clock information: the call works');
+    Exit;
+  end;
+  for Line in ClockInformationLines(Information) do
+    WriteLn('timetest: ', Line);
+  Check(GetProcessorPower(Power) = 0, 'clock information: the power call works too');
+  Check(StrComp(PChar(@Information.ClockSource[0]), PChar(@Power.ClockSource[0])) = 0,
+    'clock information: the clock source is the power call''s');
+  Check((Information.CounterHertz > 0) and (Information.LocalTimerHertz > 0),
+    'clock information: the counter''s and the local timer''s rates are known');
+  Check(Information.CounterCalibration[0] <> #0, 'clock information: where the counter''s rate came from is said');
+  if (Information.Flags and ClockInformationHpetPresent) <> 0 then
+  begin
+    Check((Information.HpetPeriodFemtoseconds > 0) and
+      (Information.HpetPeriodFemtoseconds <= MaximumPeriodFemtoseconds),
+      Format('clock information: the HPET''s period (%d fs) is one the specification allows',
+        [Information.HpetPeriodFemtoseconds]));
+    Check(((Information.HpetCounterBits = 32) or (Information.HpetCounterBits = 64)) and
+      (Information.HpetComparators >= 3), 'clock information: the HPET''s counter and comparators');
+  end;
+  PageOffersCounter := ReadClockPageTime(TimeUptimeNanoseconds, Value);
+  Check(PageOffersCounter = ((Information.Flags and ClockInformationClockPageCounter) <> 0),
+    'clock information: the clock page mode is the one stated');
+end;
+
 { Counts the uptime reads that went back until StopFile appears. }
 procedure WatchUptime(const StopFile: string);
 const
@@ -328,6 +372,7 @@ begin
   TestNow;
   TestAdjust;
   TestClockPage;
+  TestClockInformation;
   WriteLn(Format('timetest: %d of %d checks passed', [Checks - Failures, Checks]));
   if Failures > 0 then
     Halt(1);
