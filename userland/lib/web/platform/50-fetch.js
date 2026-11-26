@@ -934,8 +934,7 @@
       let bytes = null;
       if (body !== undefined && body !== null && state.method !== "GET" && state.method !== "HEAD") {
         let extracted;
-        if (body instanceof Document) extracted = { bytes: internal.encodeText(new XMLSerializerLike().serialize(body)),
-          type: "text/html;charset=UTF-8" };
+        if (body instanceof Document) extracted = documentBody(body);
         else extracted = extractBody(body);
         bytes = extracted.bytes;
         if (extracted.type && !state.headerList.some(function (entry) { return entry[0].toLowerCase() === "content-type"; }))
@@ -1095,10 +1094,15 @@
   internal.defineHandler(XMLHttpRequest.prototype, "readystatechange");
   internal.finishInterface(XMLHttpRequest, "XMLHttpRequest");
 
-  function XMLSerializerLike() {}
-  XMLSerializerLike.prototype.serialize = function (document) {
-    return document.documentElement ? document.documentElement.outerHTML : "";
-  };
+  // A Document sent: an HTML document as its markup, an XML one in the
+  // XML serialization (platform/56-xml-serializer.js).
+  function documentBody(document) {
+    if (document instanceof global.HTMLDocument) {
+      const root = document.documentElement;
+      return { bytes: internal.encodeText(root === null ? "" : root.outerHTML), type: "text/html;charset=UTF-8" };
+    }
+    return { bytes: internal.encodeText(internal.serializeXml(document)), type: "application/xml;charset=UTF-8" };
+  }
 
   // The document a response is (XMLHttpRequest's "document response"):
   // HTML only when responseType is "document", XML for an XML MIME type,

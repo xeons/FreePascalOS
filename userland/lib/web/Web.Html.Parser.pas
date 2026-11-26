@@ -146,8 +146,10 @@ type
 { Parses a whole document from bytes: sniffing, and a restart when a meta
   charset changes the encoding. The caller releases the document. }
 function ParseHtmlDocument(const Bytes: string; const TransportCharset: string = ''): TDocument;
-{ Parses a document from text already decoded (UTF-8). }
-function ParseHtmlText(const Text: string; ScriptingEnabled: Boolean = False): TDocument;
+{ Parses a document from text already decoded (UTF-8); declarative
+  shadow roots attach when allowed (Document.parseHTMLUnsafe). }
+function ParseHtmlText(const Text: string; ScriptingEnabled: Boolean = False;
+  AllowDeclarativeShadowRoots: Boolean = False): TDocument;
 { The HTML fragment parsing algorithm: the nodes Text parses into in the
   context of Context, in a new fragment of Context's document. }
 function ParseHtmlFragment(Context: TElement; const Text: string;
@@ -464,7 +466,7 @@ begin
     Result := ParseWithEncoding(Bytes, '', Restart, True, Restart);
 end;
 
-function ParseHtmlText(const Text: string; ScriptingEnabled: Boolean): TDocument;
+function ParseHtmlText(const Text: string; ScriptingEnabled: Boolean; AllowDeclarativeShadowRoots: Boolean): TDocument;
 var
   Parser: THtmlParser;
 begin
@@ -472,6 +474,7 @@ begin
   Result.ScriptingEnabled := ScriptingEnabled;
   Parser := THtmlParser.Create(Result);
   try
+    Parser.TreeBuilder.AllowDeclarativeShadowRoots := AllowDeclarativeShadowRoots;
     Parser.WriteText(Text);
     Parser.Finish;
   finally

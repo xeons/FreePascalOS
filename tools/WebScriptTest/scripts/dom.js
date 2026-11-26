@@ -201,3 +201,9 @@ var brokenXml = new DOMParser().parseFromString("<a><b></a>", "text/xml");
 check("XML that is not well-formed gives the parser error document",
   brokenXml.documentElement.localName === "parsererror");
 check("createDocument makes an XMLDocument", document.implementation.createDocument(null, "x") instanceof XMLDocument);
+var serialized = new XMLSerializer().serializeToString(new DOMParser().parseFromString(
+  '<r xmlns="urn:a" xmlns:b="urn:b"><b:c at="1"/>t&amp;</r>', "application/xml"));
+check("XMLSerializer keeps namespaces and escapes", serialized === '<r xmlns="urn:a" xmlns:b="urn:b"><b:c at="1"/>t&amp;</r>');
+var htmlSerialized = new XMLSerializer().serializeToString(document.createElement("br"));
+check("XMLSerializer closes an HTML void element", htmlSerialized === '<br xmlns="http://www.w3.org/1999/xhtml" />');
+check("Document.parseHTMLUnsafe", Document.parseHTMLUnsafe("<p>x").body.firstChild.localName === "p");

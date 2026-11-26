@@ -10,6 +10,7 @@ enum DocumentVisibilityState { "visible", "hidden" };
 
 [Exposed=Window]
 interface Document : Node {
+  [NewObject] static Document parseHTMLUnsafe(DOMString html);
   constructor();
 
   [SameObject] readonly attribute DOMImplementation implementation;

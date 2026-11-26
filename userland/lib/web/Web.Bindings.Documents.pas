@@ -49,6 +49,7 @@ uses
   Web.Dom.UiEvents,
   Web.Dom.Exceptions,
   Web.Html.Markup,
+  Web.Html.Parser,
   Web.Bindings.Context,
   Web.Bindings.Shadow,
   Web.Bindings.UrlResolution;
@@ -112,6 +113,18 @@ begin
   Items := TDocumentCollection.Create(ThisDocument(Call));
   Items.Kind := Kind;
   Result := Context(Call).WrapObject(Items, InterfaceHTMLCollection, True, Call.This);
+end;
+
+{ Document.parseHTMLUnsafe(html): an HTML document of about:blank,
+  scripting off, declarative shadow roots allowed. }
+function Document_parseHTMLUnsafe(var Call: TBindingCall): TJsValue;
+var
+  Document: TDocument;
+begin
+  Document := ParseHtmlText(Call.Text(0), False, True);
+  Document.ContentType := 'text/html';
+  Document.Url := 'about:blank';
+  Result := AdoptNewDocument(Call, Document);
 end;
 
 function Document_constructor(var Call: TBindingCall): TJsValue;
