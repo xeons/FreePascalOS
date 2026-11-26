@@ -109,6 +109,9 @@ const
   NodeFlagAscii = $08;
   NodeFlagHasId = $10;
   NodeFlagHasClass = $20;
+  { An element that is or may become a custom element (a valid custom
+    element name or an is value): the reactions only look at these. }
+  NodeFlagCustomCandidate = $40;
 
   { Element state flags (in the rare data). }
   ElementStateParserInserted = $0001;
@@ -128,6 +131,7 @@ type
   TElement = class;
   TAttr = class;
   TDocumentFragment = class;
+  TShadowRoot = class;
   TDocument = class;
   TNodeList = class;
   THtmlCollection = class;
@@ -146,6 +150,15 @@ type
   { document.readyState (HTML Standard 3.1.5). }
   TDocumentReadyState = (ReadyStateLoading, ReadyStateInteractive, ReadyStateComplete);
   TDocumentNotifyEvent = procedure(Sender: TObject) of object;
+
+  { Shadow roots (DOM Standard 4.8). }
+  TShadowRootMode = (ShadowRootModeOpen, ShadowRootModeClosed);
+  TSlotAssignmentMode = (SlotAssignmentNamed, SlotAssignmentManual);
+
+  { An element's custom element state (DOM Standard 4.9); the zero
+    value is "uncustomized". }
+  TCustomElementState = (CustomElementUncustomized, CustomElementUndefined, CustomElementFailed,
+    CustomElementPrecustomized, CustomElementCustom);
 
   TAttributeRecord = record
     Value: string;
@@ -178,6 +191,45 @@ type
     procedure FocusChanged(Old, New: TElement); virtual;
     { The document's selection (its range or direction) changed. }
     procedure SelectionChanged(Document: TDocument); virtual;
+    { A shadow root was attached to Host (its tree is still empty). }
+    procedure ShadowRootAttached(Host: TElement); virtual;
+    { DOM Standard "signal a slot change": slotchange is due at Slot
+      at the next mutation observer microtask. }
+    procedure SlotChangeSignaled(Slot: TElement); virtual;
+    { The nodes assigned to Slot changed (the flat tree under it). }
+    procedure SlotAssignmentChanged(Slot: TElement); virtual;
+    { Element's custom element state changed (:defined), or its custom
+      states (:state()). }
+    procedure CustomElementStateChanged(Element: TElement); virtual;
+  end;
+
+  { What the DOM asks of the custom element machinery (the script
+    bindings implement it; nil without scripts). The DOM calls it only
+    for elements flagged NodeFlagCustomCandidate. }
+  TCustomElementHost = class
+  public
+    { Element (and the inclusive descendants it was inserted with)
+      became connected: connectedCallback or an upgrade attempt. }
+    procedure ElementConnected(Element: TElement); virtual; abstract;
+    procedure ElementDisconnected(Element: TElement); virtual; abstract;
+    procedure ElementAdopted(Element: TElement; OldDocument, NewDocument: TDocument); virtual; abstract;
+    procedure ElementAttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
+      const OldValue, NewValue: string; HadOldValue, HasNewValue: Boolean); virtual; abstract;
+    { The "create an element" algorithm of the DOM Standard for Document
+      when a definition may apply; nil when no custom element is
+      involved (the caller makes a plain element). Synchronous: the
+      constructor runs now (the parser's "will execute script"). }
+    function CreateElement(Document: TDocument; LocalName: TAtom; NamespaceId: TNamespaceId;
+      const IsValue: string; Synchronous: Boolean): TElement; virtual; abstract;
+    { Whether Document's window has any custom element definition (the
+      parser's quick check). }
+    function HasDefinitions(Document: TDocument): Boolean; virtual; abstract;
+    { The parser's custom element reactions scope around an insertion. }
+    procedure PushReactionsScope; virtual; abstract;
+    procedure PopReactionsScope; virtual; abstract;
+    { A definition's reference was let go by an element (the element
+      went or was customized again). }
+    procedure ReleaseDefinition(Definition: TObject); virtual; abstract;
   end;
 
   TDocumentObserverArray = array of TDocumentObserver;
@@ -231,6 +283,23 @@ type
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
     function HeldByEvents: Boolean; override;
+    { Event dispatch through shadow trees (Web.Dom.Shadow.inc). }
+    function IsNodeTarget: Boolean; override;
+    function TargetRoot: TEventTarget; override;
+    function IsShadowIncludingInclusiveAncestorOf(Other: TEventTarget): Boolean; override;
+    function AssignedSlotTarget: TEventTarget; override;
+    { The shadow-including root (getRootNode({composed: true})). }
+    function GetShadowIncludingRoot: TNode;
+    { The shadow root this node is in (its root), nil outside one. }
+    function ContainingShadowRoot: TShadowRoot;
+    function IsShadowIncludingInclusiveAncestorOfNode(Other: TNode): Boolean;
+    { Shadow-including tree order: the node after this one in Root's
+      shadow-including subtree (an element, then its shadow root and the
+      shadow tree, then its children). }
+    function NextInShadowIncludingTree(Root: TNode): TNode;
+    { The slot this slottable (element or text) is assigned to, nil if
+      none (in any shadow root mode: callers check closed trees). }
+    function AssignedSlot: TElement;
     { References: see the unit's description. }
     procedure Retain;
     procedure Release;
@@ -480,6 +549,43 @@ type
     property TemplateContent: TDocumentFragment read GetTemplateContent;
     { Script element state for the script processing of later phases. }
     property ElementState: Word read GetElementState write SetElementState;
+    { Shadow trees (Web.Dom.Shadow.inc). The shadow root attached to
+      the element in any mode, nil if none. }
+    function ShadowRoot: TShadowRoot;
+    { attachShadow's checks and steps (NotSupportedError for elements
+      that cannot be hosts or already are, unless declarative). }
+    function AttachShadow(Mode: TShadowRootMode; Clonable, Serializable, DelegatesFocus: Boolean;
+      SlotAssignment: TSlotAssignmentMode): TShadowRoot;
+    { Whether the element is an HTML slot element. }
+    function IsSlot: Boolean; inline;
+    { A slot's name (its name attribute, '' when missing). }
+    function SlotName: string;
+    { A slottable's name (its slot attribute, '' when missing). }
+    function SlottableName: string;
+    { A slot's assigned nodes (Web.Dom.Slots.inc). }
+    function AssignedNodes: TNodeArray;
+    { "Find flattened slottables". }
+    function FlattenedAssignedNodes: TNodeArray;
+    { HTMLSlotElement.assign(): the manually assigned nodes. }
+    procedure AssignNodesManually(const Nodes: TNodeArray);
+    { The part attribute's tokens (Element.part). }
+    function PartList: TDomTokenList;
+    { Custom elements (Web.Dom.CustomElements.inc). }
+    function CustomElementState: TCustomElementState;
+    procedure SetCustomElementState(Value: TCustomElementState);
+    { The is value ('' none). }
+    function IsValue: string;
+    procedure SetIsValue(const Value: string);
+    { The custom element definition (the bindings' object), nil if none;
+      setting one holds it until the element goes. }
+    function CustomElementDefinition: TObject;
+    procedure SetCustomElementDefinition(Definition: TObject);
+    { What the bindings keep with the element (reaction queue, element
+      internals); owned by the element. }
+    function CustomElementData: TObject;
+    procedure SetCustomElementData(Data: TObject);
+    { The element is "defined" (:defined): uncustomized or custom. }
+    function IsDefinedElement: Boolean;
   end;
 
   TAttr = class(TNode)
@@ -518,8 +624,53 @@ type
     procedure SetTextContent(const Value: string); override;
     function CloneSelf(Document: TDocument): TNode; override;
   public
-    { The template element whose contents this is, if any. }
+    { The template element whose contents this is, or the shadow host
+      of a shadow root; nil otherwise. }
     property Host: TElement read FHost;
+  end;
+
+  { A shadow root (DOM Standard 4.8): a fragment whose host is its
+    shadow host. The host owns it; references into the shadow tree keep
+    the host alive. }
+  TShadowRoot = class(TDocumentFragment)
+  private
+    FMode: TShadowRootMode;
+    FDelegatesFocus: Boolean;
+    FSlotAssignment: TSlotAssignmentMode;
+    FClonable: Boolean;
+    FSerializable: Boolean;
+    FDeclarative: Boolean;
+    FAvailableToElementInternals: Boolean;
+    FStyleSheets: TObject;
+    FStyleScope: TObject;
+    FMayHaveSlots: Boolean;
+    function GetModeText: string;
+  protected
+    function GetTheParent(Event: TEvent): TEventTarget; override;
+    function CloneSelf(Document: TDocument): TNode; override;
+  public
+    destructor Destroy; override;
+    function ShadowHostTarget: TEventTarget; override;
+    function IsClosedShadowRoot: Boolean; override;
+    { getElementById on the shadow tree. }
+    function GetElementById(const IdValue: string): TElement;
+    property Mode: TShadowRootMode read FMode;
+    property ModeText: string read GetModeText;
+    property DelegatesFocus: Boolean read FDelegatesFocus write FDelegatesFocus;
+    property SlotAssignment: TSlotAssignmentMode read FSlotAssignment;
+    property Clonable: Boolean read FClonable write FClonable;
+    property Serializable: Boolean read FSerializable write FSerializable;
+    property Declarative: Boolean read FDeclarative write FDeclarative;
+    property AvailableToElementInternals: Boolean read FAvailableToElementInternals
+      write FAvailableToElementInternals;
+    { The shadow root's style sheet objects (Web.Style.DocumentSheets),
+      owned. }
+    property StyleSheets: TObject read FStyleSheets write FStyleSheets;
+    { The styler's data for the shadow tree's scope (owned). }
+    property StyleScope: TObject read FStyleScope write FStyleScope;
+    { Whether a slot element was ever inserted in the shadow tree (if
+      not, slot assignment has nothing to look for). }
+    property MayHaveSlots: Boolean read FMayHaveSlots;
   end;
 
   TDocument = class(TContainerNode)
@@ -551,6 +702,9 @@ type
     FLiveRangeCount: Integer;
     FSelection: TDocumentSelection;
     FStyleSheets: TObject;
+    FHasShadowRoots: Boolean;
+    FFullscreenElement: TElement;
+    FPointerLockElement: TElement;
     procedure SetReadyState(Value: TDocumentReadyState);
     function GetReadyStateText: string;
     function GetDocumentElement: TElement;
@@ -593,6 +747,20 @@ type
     { The document's style sheet objects (Web.Style.DocumentSheets makes
       them); freed with the document. }
     property StyleSheets: TObject read FStyleSheets write FStyleSheets;
+    { Whether a shadow root was ever attached to an element of the
+      document (the mutation algorithms skip slot assignment if not). }
+    property HasShadowRoots: Boolean read FHasShadowRoots;
+    { The Fullscreen API's fullscreen element (the top of the top layer's
+      fullscreen elements; Web.Dom.Fullscreen) and the Pointer Lock
+      API's element. Not references: an element leaving the document
+      loses them. }
+    property FullscreenElement: TElement read FFullscreenElement write FFullscreenElement;
+    property PointerLockElement: TElement read FPointerLockElement write FPointerLockElement;
+    { Tells the observers a custom element's state changed. }
+    procedure NotifyCustomElementStateChanged(Element: TElement);
+    { Tells the observers about slots (Web.Dom.Slots.inc). }
+    procedure NotifySlotChangeSignaled(Slot: TElement);
+    procedure NotifySlotAssignmentChanged(Slot: TElement);
     { Tells the observers a form control's state changed (Web.Dom.FormControls). }
     procedure NotifyControlStateChanged(Element: TElement);
     { A new document; the caller holds its first reference (Release). }
@@ -896,14 +1064,51 @@ type
     FormState: TObject;
     { An img's image request (Web.Dom.ImageRequests). }
     ImageRequest: TObject;
+    { Shadow trees: an element's shadow root (owned); a slottable's
+      assigned slot and manual slot assignment, a slot's assigned and
+      manually assigned nodes (weak both ways: a node going takes
+      itself out, Web.Dom.Slots.inc). }
+    ShadowRoot: TShadowRoot;
+    AssignedSlot: TElement;
+    ManualSlotAssignment: TElement;
+    SlotAssignedNodes: TNodeArray;
+    SlotManualNodes: TNodeArray;
+    PartList: TDomTokenList;
+    { Custom elements: state, is value, definition (held through the
+      custom element host) and the bindings' data (owned). }
+    CustomState: TCustomElementState;
+    IsValue: string;
+    CustomDefinition: TObject;
+    CustomData: TObject;
     destructor Destroy; override;
   end;
 
 var
+  { The custom element machinery (Web.Bindings.CustomElements sets it),
+    nil when no scripts run. }
+  CustomElementHost: TCustomElementHost = nil;
   { Copies a form control's state to its clone (HTML's cloning steps of
     input and textarea: the value, checkedness and their dirty flags);
     Web.Dom.FormControls sets it. }
   FormStateCloning: procedure(Source, Copy: TElement) = nil;
+
+type
+  { Walks the children of a node in the flat tree (FlatTreeFirstChild,
+    FlatTreeNextChild). }
+  TFlatTreeCursor = record
+    Nodes: TNodeArray;
+    Index: Integer;
+    Current: TNode;
+  end;
+
+{ The flat tree (CSS Scoping): a node's parent there (a slottable's
+  slot, a shadow tree's host), nil for nodes outside it (a host's
+  unassigned children); and its children (a host's are its shadow
+  root's, a slot's its assigned nodes or else its own). }
+function FlatTreeParent(Node: TNode): TNode;
+function FlatTreeFirstChild(Node: TNode; out Cursor: TFlatTreeCursor): TNode;
+function FlatTreeNextChild(var Cursor: TFlatTreeCursor): TNode;
+function HasFlatTreeChildren(Node: TNode): Boolean;
 
 { Frees detached, unreferenced nodes (see the unit's description). }
 procedure CollectGarbage;
@@ -914,6 +1119,10 @@ function DomVersion: LongWord; inline;
 function ListedNodeCount: Integer;
 { How many node objects exist (for tests and statistics). }
 function LiveNodeCount: Int64;
+
+{ HTML's valid custom element name, and the same for an atom. }
+function IsValidCustomElementName(const Name: string): Boolean;
+function IsCustomElementNameAtom(Atom: TAtom): Boolean;
 
 { Name checks of the DOM Standard (as relaxed in 2025). }
 function IsValidElementLocalName(const Name: string): Boolean;
@@ -947,5 +1156,8 @@ uses
 {$I Web.Dom.Collections.inc}
 {$I Web.Dom.Ranges.inc}
 {$I Web.Dom.Selection.inc}
+{$I Web.Dom.Shadow.inc}
+{$I Web.Dom.Slots.inc}
+{$I Web.Dom.CustomElements.inc}
 
 end.

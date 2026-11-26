@@ -278,17 +278,21 @@ begin
   begin
     AdoptInto(Node, Document);
     LinkChild(Node, Parent, Child);
+    if Document.FHasShadowRoots then
+      SlotsNodeInserted(Node, Parent);
   end
   else
     for Index := 1 to Count do
     begin
       AdoptInto(Nodes[Index - 1], Document);
       LinkChild(Nodes[Index - 1], Parent, Child);
+      if Document.FHasShadowRoots then
+        SlotsNodeInserted(Nodes[Index - 1], Parent);
     end;
+  if Nodes = nil then
+    Nodes := NodeList1(Node);
   if DocumentHasObservers(Document) then
   begin
-    if Nodes = nil then
-      Nodes := NodeList1(Node);
     if not SuppressObservers then
       Document.NotifyTreeMutated(Parent, Nodes, nil, PreviousSibling, Child);
     Document.NotifyChildrenChanged(Parent);
@@ -296,6 +300,9 @@ begin
       for Index := 1 to System.Length(Nodes) do
         Document.NotifySubtreeConnected(Nodes[Index - 1]);
   end;
+  if (CustomElementHost <> nil) and ((Parent.FFlags and NodeFlagConnected) <> 0) then
+    for Index := 1 to System.Length(Nodes) do
+      CustomReactionsConnected(Nodes[Index - 1]);
 end;
 
 { The remove algorithm. }
@@ -305,10 +312,12 @@ var
   OldPrevious, OldNext: TNode;
   WasConnected: Boolean;
   Document: TDocument;
+  OldSlot: TElement;
 begin
   Parent := Node.FParent;
   Document := Parent.FOwnerDocument;
   BumpDomVersion;
+  OldSlot := Node.AssignedSlot;
   { Live ranges are adjusted here (node iterators: later). }
   if Document.FLiveRangeCount > 0 then
     Document.RangesNodeRemoving(Node);
@@ -326,6 +335,8 @@ begin
   Node.FParent := nil;
   Node.FPreviousSibling := nil;
   Node.FNextSibling := nil;
+  if Document.FHasShadowRoots then
+    SlotsNodeRemoved(Node, Parent, OldSlot);
   if WasConnected then
     Document.SubtreeDisconnected(Node);
   BecameRoot(Node, Parent);
@@ -335,6 +346,8 @@ begin
       Document.NotifyTreeMutated(Parent, nil, NodeList1(Node), OldPrevious, OldNext);
     Document.NotifyChildrenChanged(Parent);
   end;
+  if WasConnected and (CustomElementHost <> nil) then
+    CustomReactionsDisconnected(Node);
 end;
 
 { The adopt algorithm. }
@@ -355,6 +368,8 @@ begin
   while Current <> nil do
   begin
     Current.FOwnerDocument := Document;
+    if Current is TShadowRoot then
+      Document.FHasShadowRoots := True;
     if Current.FNodeType = NodeTypeElement then
     begin
       Element := TElement(Current);
@@ -369,9 +384,11 @@ begin
           AdoptInto(Element.FRareData.TemplateContent, Document.TemplateContentsOwner);
       end;
     end;
-    Current := Current.NextInTree(Node);
+    Current := Current.NextInShadowIncludingTree(Node);
   end;
   RootChangedDocument(Node, OldDocument, Document);
+  if CustomElementHost <> nil then
+    CustomReactionsAdopted(Node, OldDocument, Document);
 end;
 
 procedure TNode.InsertNodeBefore(Node, Child: TNode);

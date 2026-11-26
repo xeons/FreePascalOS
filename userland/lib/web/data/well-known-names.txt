@@ -35,7 +35,8 @@ color face size lang dir alt width height disabled hidden selected checked for p
 media async defer nomodule crossorigin integrity srcdoc sandbox colspan rowspan span start
 reversed placeholder readonly required multiple autofocus tabindex accesskey contenteditable
 draggable spellcheck translate part is nonce srcset sizes loading form list min max step pattern
-maxlength minlength cols rows wrap shadowrootmode
+maxlength minlength cols rows wrap shadowrootmode shadowrootdelegatesfocus shadowrootclonable
+shadowrootserializable exportparts
 actuate arcrole role show space
 AtomDefinitionUrl=definitionURL
 AtomDefinitionUrlLowerCase=definitionurl

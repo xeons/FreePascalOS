@@ -84,11 +84,29 @@ begin
     if SubtreeCount(TemplateContent) = 0 then
       FreeTree(TemplateContent);
   end;
+  if ShadowRoot <> nil then
+  begin
+    { References into a shadow tree hold its host, so nothing refers to
+      it any more. }
+    ShadowRoot.FHost := nil;
+    FreeTree(ShadowRoot);
+  end;
+  PartList.Free;
+  CustomData.Free;
   inherited Destroy;
 end;
 
 destructor TNode.Destroy;
 begin
+  if FRareData <> nil then
+  begin
+    if (FRareData.AssignedSlot <> nil) or (FRareData.ManualSlotAssignment <> nil) or
+      (FRareData.SlotAssignedNodes <> nil) or (FRareData.SlotManualNodes <> nil) then
+      SlotsNodeDestroyed(Self);
+    if (FRareData.CustomDefinition <> nil) and (CustomElementHost <> nil) then
+      CustomElementHost.ReleaseDefinition(FRareData.CustomDefinition);
+    FRareData.CustomDefinition := nil;
+  end;
   UnlistFromCollection(Self);
   FreeAndNil(FRareData);
   Dec(NodeObjectCount);
@@ -516,6 +534,7 @@ begin
 end;
 
 procedure CloneTemplateContents(Source, Copy: TElement); forward;
+procedure CloneShadowRoot(Source, Copy: TElement; Document: TDocument); forward;
 
 { Clones Source (and with Deep its descendants) into Document. The
   copy is a detached root, not listed. }
@@ -527,6 +546,8 @@ begin
   if Document = nil then
     Document := Source.FOwnerDocument;
   Result := Source.CloneSelf(Document);
+  if Source.FNodeType = NodeTypeElement then
+    CloneShadowRoot(TElement(Source), TElement(Result), Document);
   if not Deep then
     Exit;
   if (Source.FNodeType = NodeTypeElement) and (TElement(Source).IsHtmlElement(AtomTemplate)) then
@@ -539,6 +560,8 @@ begin
     AppendChildRaw(TContainerNode(CopyParent), Copy);
     if (SourceNode.FNodeType = NodeTypeElement) and TElement(SourceNode).IsHtmlElement(AtomTemplate) then
       CloneTemplateContents(TElement(SourceNode), TElement(Copy));
+    if SourceNode.FNodeType = NodeTypeElement then
+      CloneShadowRoot(TElement(SourceNode), TElement(Copy), Document);
     if SourceNode.GetFirstChild <> nil then
     begin
       CopyParent := Copy;

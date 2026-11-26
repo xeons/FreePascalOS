@@ -294,6 +294,13 @@ begin
   InitializeNode(Result, NodeTypeElement, Self);
   Result.FLocalName := LocalAtom;
   Result.FNamespaceId := Namespace;
+  { A valid custom element name is undefined until defined (DOM
+    Standard: create an element, step 7.3). }
+  if (Web.Namespaces.NamespaceUri(Namespace) = AtomHtmlNamespace) and IsCustomElementNameAtom(LocalAtom) then
+  begin
+    Result.FFlags := Result.FFlags or NodeFlagCustomCandidate;
+    Result.RareData.CustomState := CustomElementUndefined;
+  end;
 end;
 
 function TDocument.NewText(const Text: string): TText;
@@ -577,9 +584,9 @@ begin
   while Node <> nil do
   begin
     Node.FFlags := Node.FFlags or NodeFlagConnected;
-    if (Node.FFlags and NodeFlagHasId) <> 0 then
+    if ((Node.FFlags and NodeFlagHasId) <> 0) and not IsInShadowTreeNode(Node) then
       RegisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
@@ -594,7 +601,7 @@ begin
   begin
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeConnected(Node);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
@@ -607,7 +614,7 @@ begin
   while Node <> nil do
   begin
     Node.FFlags := Node.FFlags and not NodeFlagConnected;
-    if (Node.FFlags and NodeFlagHasId) <> 0 then
+    if ((Node.FFlags and NodeFlagHasId) <> 0) and not IsInShadowTreeNode(Node) then
       UnregisterId(TElement(Node), TElement(Node).AttributeValueOf(AtomId));
     if Node = FTargetElement then
       FTargetElement := nil;
@@ -617,9 +624,13 @@ begin
       FPendingPointerCapture := nil;
     if Node = FPointerCapture then
       FPointerCapture := nil;
+    if Node = FFullscreenElement then
+      FFullscreenElement := nil;
+    if Node = FPointerLockElement then
+      FPointerLockElement := nil;
     for Index := 1 to System.Length(FObservers) do
       FObservers[Index - 1].NodeDisconnected(Node);
-    Node := Node.NextInTree(Root);
+    Node := Node.NextInShadowIncludingTree(Root);
   end;
 end;
 
