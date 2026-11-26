@@ -98,7 +98,6 @@ implementation
 uses
   Js.Runtime,
   Js.Shapes,
-  Js.Functions,
   Js.Interpreter,
   Js.ArrayBuffers,
   Wasm.Types,
