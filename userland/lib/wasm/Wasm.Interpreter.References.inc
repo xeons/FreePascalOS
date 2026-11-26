@@ -106,30 +106,19 @@ CodeRefEq:
   PDWord(@S[P^.A])^ := Ord(S[P^.B] = S[P^.C]);
 CodeThrow:
   begin
-    Index := (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction);
-    if Store.Heap.WantsCollection then
+    Value := ThrowAt(Store, Func, Instance.Tags[P^.B], Base, P^.A,
+      (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction));
+    if Value = nil then
     begin
-      Store.StackTop := Base + Code.FrameSlots;
-      CollectAtSafepoint(Store, Func, Index + 1, Base);
-    end;
-    Thrown := NewThrownException(Store, Instance.Tags[P^.B], @S[P^.A]);
-    if Thrown = nil then
-    begin
-      Store.StackTop := Base + Code.FrameSlots;
-      CollectAtSafepoint(Store, Func, Index + 1, Base);
-      Thrown := NewThrownException(Store, Instance.Tags[P^.B], @S[P^.A]);
-      if Thrown = nil then
-      begin
-        TrapKind := tkOutOfMemory;
-        goto Trapped;
-      end;
+      TrapKind := tkOutOfMemory;
+      goto Trapped;
     end;
     goto ThrowException;
   end;
 CodeThrowRef, CodeRethrow:
   begin
-    Thrown := PWasmGcObject(PtrUInt(S[P^.A]));
-    if Thrown = nil then
+    Value := PWasmGcObject(PtrUInt(S[P^.A]));
+    if Value = nil then
     begin
       TrapKind := tkNullExceptionReference;
       goto Trapped;
@@ -138,15 +127,15 @@ CodeThrowRef, CodeRethrow:
   end;
 CodeMemoryAccessAt, CodeMemorySizeAt, CodeMemoryGrowAt, CodeMemoryFillAt, CodeMemoryCopyAt, CodeMemoryInitAt:
   begin
-    Outcome := ExecuteMemoryAt(Instance, P^, S, PQWord(Code.Constants));
+    Index := ExecuteMemoryAt(Instance, P^, S, PQWord(Code.Constants));
     if Instance.DefaultMemory <> nil then
     begin
       MemoryBase := Instance.DefaultMemory.Data;
       MemoryLength := Instance.DefaultMemory.ByteLength;
     end;
-    if Outcome <> NoTrap then
+    if Index <> NoTrap then
     begin
-      TrapKind := TWasmTrapKind(Outcome);
+      TrapKind := TWasmTrapKind(Index);
       goto Trapped;
     end;
   end;
@@ -156,10 +145,10 @@ CodeArrayNewElem, CodeAnyConvertExtern:
 CodeRefTest, CodeRefCast, CodeStructGet, CodeStructSet, CodeArrayGet, CodeArraySet, CodeArrayLen, CodeArrayFill,
 CodeArrayCopy, CodeArrayInitData, CodeArrayInitElem, CodeExternConvertAny, CodeRefI31, CodeI31Get:
   begin
-    Outcome := ExecuteGcOperation(Store, Instance, P^, S);
-    if Outcome <> NoTrap then
+    Index := ExecuteGcOperation(Store, Instance, P^, S);
+    if Index <> NoTrap then
     begin
-      TrapKind := TWasmTrapKind(Outcome);
+      TrapKind := TWasmTrapKind(Index);
       goto Trapped;
     end;
   end;

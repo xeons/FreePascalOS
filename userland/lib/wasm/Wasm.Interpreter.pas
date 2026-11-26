@@ -203,6 +203,44 @@ begin
     Move(Slots^, ObjectPayload(Result)^, Tag.PayloadSlots * SizeOf(QWord));
 end;
 
+{ An allocating instruction at code index Index: collects first if the
+  heap asks, and once more if it is full; NoTrap or the trap. }
+function AllocateAt(Store: TWasmStore; Func: TWasmFunction; Instance: TWasmModuleInstance; P: PCodeInstruction;
+  Base: SizeInt; Index: Integer): Integer;
+begin
+  if Store.Heap.WantsCollection then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+  end;
+  Result := ExecuteAllocation(Store, Instance, P^, @Store.Stack[Base]);
+  if Result = Ord(tkOutOfMemory) then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+    Result := ExecuteAllocation(Store, Instance, P^, @Store.Stack[Base]);
+  end;
+end;
+
+{ A throw at code index Index: its exception, nil when the heap is full
+  even after a collection. }
+function ThrowAt(Store: TWasmStore; Func: TWasmFunction; Tag: TWasmTag; Base: SizeInt; Payload: Int32;
+  Index: Integer): PWasmGcObject;
+begin
+  if Store.Heap.WantsCollection then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+  end;
+  Result := NewThrownException(Store, Tag, @Store.Stack[Base + Payload]);
+  if Result = nil then
+  begin
+    Store.StackTop := Base + Func.Code.FrameSlots;
+    CollectAtSafepoint(Store, Func, Index + 1, Base);
+    Result := NewThrownException(Store, Tag, @Store.Stack[Base + Payload]);
+  end;
+end;
+
 { Whether a function of type TypeId may be called as ExpectedId. }
 function CallTypeMatches(Store: TWasmStore; TypeId, ExpectedId: Integer): Boolean;
 begin
@@ -244,8 +282,6 @@ label
   DoCall, DoTailCall, InterruptCheck, ReturnToCaller, ThrowException, ThrowFromCaller, Allocate, OutOfBounds,
   Trapped, Finished;
 var
-  Thrown: PWasmGcObject;
-  Outcome: Integer;
   Func: TWasmFunction;
   Code: TCompiledFunction;
   CodeStart, P: PCodeInstruction;
@@ -292,7 +328,7 @@ begin
   end;
   TrapKind := tkUnreachable;
   Callee := nil;
-  Thrown := nil;
+  Value := nil;
   ArgumentBase := 0;
   Target := 0;
   while True do
@@ -311,24 +347,10 @@ begin
     Continue;
 
   Allocate:
-    { An allocating instruction: collect first if the heap asks, and
-      once more if it is full. }
-    Index := (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction);
-    if Store.Heap.WantsCollection then
+    Index := AllocateAt(Store, Func, Instance, P, Base, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction));
+    if Index <> NoTrap then
     begin
-      Store.StackTop := Base + Code.FrameSlots;
-      CollectAtSafepoint(Store, Func, Index + 1, Base);
-    end;
-    Outcome := ExecuteAllocation(Store, Instance, P^, S);
-    if Outcome = Ord(tkOutOfMemory) then
-    begin
-      Store.StackTop := Base + Code.FrameSlots;
-      CollectAtSafepoint(Store, Func, Index + 1, Base);
-      Outcome := ExecuteAllocation(Store, Instance, P^, S);
-    end;
-    if Outcome <> NoTrap then
-    begin
-      TrapKind := TWasmTrapKind(Outcome);
+      TrapKind := TWasmTrapKind(Index);
       goto Trapped;
     end;
     Inc(P);
@@ -338,7 +360,7 @@ begin
     { The frame that would catch is gone (a tail call left it): unwind
       to its caller, which threw at its call instruction. }
     if Store.FrameCount = EntryFrameCount then
-      RaiseUncaught(Store, Thrown);
+      RaiseUncaught(Store, Value);
     Dec(Store.FrameCount);
     Func := Store.Frames[Store.FrameCount].Func;
     Base := Store.Frames[Store.FrameCount].Base;
@@ -360,12 +382,12 @@ begin
     end;
 
   ThrowException:
-    { Thrown was thrown by the instruction at P. }
-    Index := FindCatchClause(Code, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction), Instance, Thrown);
+    { Value was thrown by the instruction at P. }
+    Index := FindCatchClause(Code, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction), Instance, Value);
     if Index < 0 then
       goto ThrowFromCaller;
-    P := @CodeStart[DeliverException(Code, Index, Thrown, S)];
-    Thrown := nil;
+    P := @CodeStart[DeliverException(Code, Index, Value, S)];
+    Value := nil;
     Continue;
 
   DoTailCall:
@@ -394,9 +416,9 @@ begin
     begin
       Store.StackTop := Base + Callee.ParamSlots + Callee.ResultSlots;
       Store.ReserveStack(4);
-      Thrown := CallHostCatching(Store, Callee, Base);
+      Value := CallHostCatching(Store, Callee, Base);
       S := @Store.Stack[Base];
-      if Thrown <> nil then
+      if Value <> nil then
         goto ThrowFromCaller;
       goto ReturnToCaller;
     end;
@@ -492,7 +514,7 @@ begin
         goto Trapped;
       end;
       Store.StackTop := Base + Code.FrameSlots;
-      Thrown := CallHostCatching(Store, Callee, Base + ArgumentBase);
+      Value := CallHostCatching(Store, Callee, Base + ArgumentBase);
       Dec(Store.FrameCount);
       S := @Store.Stack[Base];
       if Instance.DefaultMemory <> nil then
@@ -500,7 +522,7 @@ begin
         MemoryBase := Instance.DefaultMemory.Data;
         MemoryLength := Instance.DefaultMemory.ByteLength;
       end;
-      if Thrown <> nil then
+      if Value <> nil then
         goto ThrowException;
       Inc(P);
       Continue;
