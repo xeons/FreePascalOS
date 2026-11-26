@@ -194,6 +194,35 @@ begin
   end;
 end;
 
+{ A box with a formatting context of its own does not overlap floats
+  along its height: where it does not fit beside them it goes down to
+  the next float bottom (WPT's CSS2 floats-wrap-bfc tests). }
+procedure CheckFormattingContextBesideFloats;
+const
+  Page = '<!doctype html><body style="margin:0"><div style="width:100px">' +
+    '<div style="float:left;width:100px;height:50px"></div><div style="float:left;width:50px;height:50px"></div>' +
+    '<div id=bfc style="overflow:hidden;width:50px;height:50px"></div></div></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height: Double;
+  Found: Boolean;
+begin
+  Layout := LayoutText(Page, 800, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Found := ScriptLayout.BorderBox(Document.GetElementById('bfc'), X, Y, Width, Height);
+    Check(Found and (Abs(X - 50) < 0.5) and (Abs(Y - 50) < 0.5),
+      'geometry: a formatting context root moves down to fit beside floats (' + FloatToStr(X) + ', ' +
+      FloatToStr(Y) + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -265,6 +294,7 @@ begin
     CheckAnonymousTables;
     CheckFixedTableLayout;
     CheckCollapsedBorders;
+    CheckFormattingContextBesideFloats;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');
