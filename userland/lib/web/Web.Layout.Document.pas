@@ -154,7 +154,8 @@ implementation
 uses
   Web.Profiling,
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
-  Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages;
+  Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages,
+  Web.Layout.ViewportOverflow;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -828,8 +829,8 @@ begin
   Result[0].ScrollHeight := FRoot.ScrollHeight;
   Result[0].ScrollX := FRoot.ScrollX;
   Result[0].ScrollY := FRoot.ScrollY;
-  Result[0].BarX := True;
-  Result[0].BarY := True;
+  Result[0].BarX := ViewportShowsBar(FDocument, cpOverflowX);
+  Result[0].BarY := ViewportShowsBar(FDocument, cpOverflowY);
   Count := 1;
   CollectScrollers(FRoot, Result, Count, False);
   SetLength(Result, Count);

@@ -500,6 +500,8 @@ function EventInterfaceOf(Event: TEvent): Integer;
 begin
   if Event is TPointerEvent then
     Result := InterfacePointerEvent
+  else if Event is TWheelEvent then
+    Result := InterfaceWheelEvent
   else if Event is TClipboardEvent then
     Result := InterfaceClipboardEvent
   else if Event is TSecurityPolicyViolationEvent then

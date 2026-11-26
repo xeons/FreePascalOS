@@ -197,6 +197,15 @@ type
     { A direct eval can see the scope's bindings by name: they all live
       in its environment. }
     EvalExposed: Boolean;
+  private
+    { Name lookup for a scope with many variables (a bundle's top level
+      holds thousands): open addressing, slot = variable index + 1 (0:
+      empty), covering Variables[0..FIndexedCount - 1]. }
+    FNameSlots: array of Integer;
+    FIndexedCount: Integer;
+    procedure IndexVariable(Index: Integer);
+    procedure UpdateNameIndex;
+  public
     procedure RemoveVariable(Variable: TJsVariable);
     { The scope's environment, at run time, is pushed on entry. }
     function HasEnvironment: Boolean; inline;
@@ -435,13 +444,79 @@ begin
   Result := EnvironmentSize > 0;
 end;
 
-function TJsScope.Find(const Name: UnicodeString): TJsVariable;
+const
+  { Scopes with more variables than this find names through a hash. }
+  LinearFindLimit = 12;
+
+function NameHash(const Name: UnicodeString): Cardinal;
 var
   Index: Integer;
 begin
-  for Index := 0 to VariableCount - 1 do
-    if Variables[Index].Name = Name then
-      Exit(Variables[Index]);
+  Result := 2166136261;
+  for Index := 1 to Length(Name) do
+    Result := (Result xor Ord(Name[Index])) * 16777619;
+end;
+
+{ Adds Variables[Index] unless an earlier variable has its name (Find
+  gives the first declaration). }
+procedure TJsScope.IndexVariable(Index: Integer);
+var
+  Mask, Slot: Cardinal;
+  Name: UnicodeString;
+begin
+  Name := Variables[Index].Name;
+  Mask := Cardinal(Length(FNameSlots) - 1);
+  Slot := NameHash(Name) and Mask;
+  while FNameSlots[Slot] <> 0 do
+  begin
+    if Variables[FNameSlots[Slot] - 1].Name = Name then
+      Exit;
+    Slot := (Slot + 1) and Mask;
+  end;
+  FNameSlots[Slot] := Index + 1;
+end;
+
+procedure TJsScope.UpdateNameIndex;
+var
+  Size, Index: Integer;
+begin
+  if VariableCount * 2 > Length(FNameSlots) then
+  begin
+    Size := 64;
+    while Size < VariableCount * 4 do
+      Size := Size * 2;
+    FNameSlots := nil;
+    SetLength(FNameSlots, Size);
+    FIndexedCount := 0;
+  end;
+  for Index := FIndexedCount to VariableCount - 1 do
+    IndexVariable(Index);
+  FIndexedCount := VariableCount;
+end;
+
+function TJsScope.Find(const Name: UnicodeString): TJsVariable;
+var
+  Index: Integer;
+  Mask, Slot: Cardinal;
+begin
+  if VariableCount <= LinearFindLimit then
+  begin
+    for Index := 0 to VariableCount - 1 do
+      if Variables[Index].Name = Name then
+        Exit(Variables[Index]);
+    Exit(nil);
+  end;
+  if FIndexedCount <> VariableCount then
+    UpdateNameIndex;
+  Mask := Cardinal(Length(FNameSlots) - 1);
+  Slot := NameHash(Name) and Mask;
+  while FNameSlots[Slot] <> 0 do
+  begin
+    Result := Variables[FNameSlots[Slot] - 1];
+    if Result.Name = Name then
+      Exit;
+    Slot := (Slot + 1) and Mask;
+  end;
   Result := nil;
 end;
 
@@ -478,6 +553,9 @@ begin
       Variables[Index] := Variables[VariableCount - 1];
       Dec(VariableCount);
       Variable.Free;
+      { The index is rebuilt on the next search. }
+      FNameSlots := nil;
+      FIndexedCount := 0;
       Exit;
     end;
 end;

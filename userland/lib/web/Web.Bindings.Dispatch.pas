@@ -335,20 +335,30 @@ function CallSpecial(Context: TBindingContext; Handler: TBindingHandler; Wrapper
   InterfaceId: Integer; const Arguments: TBindingValueArray; out Value: TJsValue): Boolean;
 var
   Call: TBindingCall;
+  Reactions: Boolean;
 begin
   StartCall(Call, Context, Context.Engine.Realm, JsObjectValue(Wrapper), nil, 0, nil, InterfaceId);
   Call.Target := TObject(Wrapper.NativeData);
   Call.Arguments := Arguments;
   Call.PassedCount := Length(Arguments);
+  { Named setters and deleters are [CEReactions] (DOMStringMap's). }
+  Reactions := CustomElementHost <> nil;
+  if Reactions then
+    EnterReactionsScope;
   try
-    Value := Handler(Call);
-    Result := Value <> JsException;
-  except
-    on Error: Exception do
-    begin
-      Value := Context.ThrowFromException(Error);
-      Result := False;
+    try
+      Value := Handler(Call);
+      Result := Value <> JsException;
+    except
+      on Error: Exception do
+      begin
+        Value := Context.ThrowFromException(Error);
+        Result := False;
+      end;
     end;
+  finally
+    if Reactions then
+      LeaveReactionsScope(Context);
   end;
 end;
 

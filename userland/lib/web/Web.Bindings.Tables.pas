@@ -34,6 +34,7 @@ interface
 uses
   Web.Bindings.Types,
   Web.Bindings.Events,
+  Web.Bindings.WheelEvents,
   Web.Bindings.Nodes,
   Web.Bindings.Documents,
   Web.Bindings.Elements,
