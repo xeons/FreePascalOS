@@ -79,8 +79,13 @@ type
     FListeners: TEventListenerList;
   protected
     function GetListenerList(CreateIfMissing: Boolean): TEventListenerList; override;
+    function GetTheParent(Event: TEvent): TEventTarget; override;
   public
     ScriptWrapper: Pointer;
+    { Where events go after this target (a platform script's targets:
+      an IndexedDB request's transaction, a transaction's database);
+      whoever sets it keeps the parent alive as long as this target. }
+    EventParent: TEventTarget;
     destructor Destroy; override;
     property Listeners: TEventListenerList read FListeners;
   end;
@@ -174,6 +179,11 @@ begin
   if (FListeners = nil) and CreateIfMissing then
     FListeners := TEventListenerList.Create;
   Result := FListeners;
+end;
+
+function TStandaloneEventTarget.GetTheParent(Event: TEvent): TEventTarget;
+begin
+  Result := EventParent;
 end;
 
 destructor TStandaloneEventTarget.Destroy;

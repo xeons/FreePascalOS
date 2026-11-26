@@ -59,6 +59,8 @@ uses
   Web.Dom,
   Web.EventLoop,
   Web.Storage,
+  Web.IndexedDb.Service,
+  Web.Script.PageStorage,
   Web.ScriptEnvironment,
   Web.Script.PageFetch,
   Web.Script.Layout,
@@ -93,6 +95,11 @@ type
     FFetches: TScriptFetches;
     FScreenWidth: Integer;
     FScreenHeight: Integer;
+    FStorageService: TPageStorage;
+    function StorageOrigin(Context: TObject): string;
+    function PageStorage: TPageStorage;
+    function GetIndexedDb: TIndexedDbBackend;
+    procedure SetIndexedDb(Value: TIndexedDbBackend);
     function FindTimer(Context: TObject; TimerId: Integer): Integer;
     function LoaderOf(Context: TObject): TObject;
     procedure SetLocalStorage(Value: TWebStorageRegistry);
@@ -129,6 +136,9 @@ type
     function NavigationTiming(Context: TObject): TScriptNavigationTiming; override;
     function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; override;
     procedure StorageChanged(Context: TObject; Area: TWebStorageArea); override;
+    function IndexedDbAccess(Context: TObject): Integer; override;
+    function IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean; override;
+    function QueueScriptTask(Context: TObject; TaskId: Integer): Boolean; override;
     function MediaEnvironment: TCssMediaEnvironment; override;
     function ScreenWidth: Integer; override;
     function ScreenHeight: Integer; override;
@@ -143,6 +153,10 @@ type
     { Where localStorage lives (the host's, shared by its pages; the page
       keeps one in memory when none is set). }
     property LocalStorage: TWebStorageRegistry read FLocalStorage write SetLocalStorage;
+    { Where IndexedDB, the Cache API and navigator.storage live (the
+      host's service or its way to it, not owned; the page keeps a
+      service in memory when none is set). }
+    property IndexedDb: TIndexedDbBackend read GetIndexedDb write SetIndexedDb;
     { The screen in CSS pixels (0: the viewport's size). }
     property ScreenWidthValue: Integer read FScreenWidth write FScreenWidth;
     property ScreenHeightValue: Integer read FScreenHeight write FScreenHeight;
@@ -291,6 +305,7 @@ begin
   ForgetTimers;
   FTimers.Free;
   FFetches.Free;
+  FStorageService.Free;
   SaveStorage;
   if FOwnsLocalStorage then
     FLocalStorage.Free;
@@ -318,6 +333,8 @@ begin
       TScriptTimerRecord(FTimers[Index]).Free;
       FTimers.Delete(Index);
     end;
+  if FStorageService <> nil then
+    FStorageService.ForgetContext(Context);
   if FExecutor.FLoop <> nil then
     FExecutor.FLoop.DiscardTasks(Context);
 end;

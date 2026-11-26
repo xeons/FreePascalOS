@@ -72,7 +72,11 @@
     "AbortSignal", "ReadableStream", "WritableStream", "TransformStream", "TextEncoderStream", "TextDecoderStream",
     "MessageChannel", "MessagePort", "MessageEvent", "BroadcastChannel", "Event", "EventTarget", "CustomEvent",
     "ErrorEvent", "ProgressEvent", "DOMException", "XMLHttpRequest", "EventSource", "WebAssembly", "isSecureContext",
-    "origin"];
+    "origin",
+    // IndexedDB and the Cache API (the window's origin is the worker's).
+    "indexedDB", "IDBFactory", "IDBDatabase", "IDBTransaction", "IDBRequest", "IDBOpenDBRequest", "IDBObjectStore",
+    "IDBIndex", "IDBCursor", "IDBCursorWithValue", "IDBKeyRange", "IDBVersionChangeEvent", "DOMStringList", "caches",
+    "CacheStorage", "Cache", "StorageManager"];
 
   function workerState(worker) {
     const state = workerData.get(worker);
