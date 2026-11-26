@@ -46,6 +46,7 @@ uses
   Web.Navigation.Navigables,
   Web.Fetch.NetworkContexts,
   Web.Storage,
+  Web.IndexedDb.Service,
   WebIpc.Messages,
   WebIpc.ViewMessages,
   WebIpc.SharedSurfaces,
@@ -61,6 +62,8 @@ type
     Connection: TContentConnection;
     Network: TNetworkContext;
     Storage: TWebStorageRegistry;
+    { IndexedDB and the Cache API, kept by the browser. }
+    IndexedDb: TIndexedDbBackend;
     { The site the browser locked this process to (WebView.Sites). }
     Site: string;
     { A view asked for a crash or a hang (tests). }
@@ -176,6 +179,7 @@ begin
   FEngine.Align := AlignClient;
   FEngine.NetworkContext := Context.Network;
   FEngine.LocalStorage := Context.Storage;
+  FEngine.IndexedDb := Context.IndexedDb;
   FEngine.ScriptingEnabled := Setup.ScriptingEnabled;
   FEngine.OnTitleChanged := @EngineTitleChanged;
   FEngine.OnLocationChanged := @EngineLocationChanged;

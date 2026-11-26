@@ -115,6 +115,10 @@ begin
       TPageScriptExecutor(FExecutor).Environment.LocalStorage := FLocalStorage
     else
       TPageScriptExecutor(FExecutor).Environment.LocalStorage := SharedLocalStorage;
+    if FIndexedDb <> nil then
+      TPageScriptExecutor(FExecutor).Environment.IndexedDb := FIndexedDb
+    else
+      TPageScriptExecutor(FExecutor).Environment.IndexedDb := SharedIndexedDb;
     TPageScriptExecutor(FExecutor).Environment.Layout := TDocumentScriptLayout(FScriptLayout);
     TPageScriptExecutor(FExecutor).OnAlert := @ScriptAlert;
     TPageScriptExecutor(FExecutor).OnConfirm := @ScriptConfirm;

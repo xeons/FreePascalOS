@@ -197,6 +197,16 @@ const
   { A request: about:PATH; the reply: found, HTML (the browser's own
     pages, only for a process locked to about:). }
   IpcAboutPage = 312;
+  { IndexedDB, the Cache API and navigator.storage (the browser's
+    storage service, Web.IndexedDb.Service). A request: the renderer's
+    client id, the origin, the request bytes; the reply: the service's
+    reply bytes. }
+  IpcIndexedDbRequest = 340;
+  { The client id: its script context is gone. }
+  IpcIndexedDbClientClosed = 341;
+  { Browser to renderer: the client id and a notice of the service (a
+    versionchange for one of its connections). }
+  IpcIndexedDbNotice = 342;
 
   { The most of the selected text IpcSelectionChanged carries. }
   SelectionTextLimit = 256 * 1024;
@@ -254,6 +264,9 @@ begin
     IpcHopHead: Result := 'hop-head';
     IpcHopData: Result := 'hop-data';
     IpcHopDone: Result := 'hop-done';
+    IpcIndexedDbRequest: Result := 'indexeddb-request';
+    IpcIndexedDbClientClosed: Result := 'indexeddb-client-closed';
+    IpcIndexedDbNotice: Result := 'indexeddb-notice';
   else
     Result := 'kind ' + IntToStr(Kind);
   end;

@@ -22,6 +22,7 @@ rendering with the installed Firefox.
 | Before | none | The page never showed a score: its inline script was a syntax error (`<!--` after a tab), and once that was fixed the test waited forever for images made by `new Image()` |
 | After the two blockers | 241 / 588 | The test runs to the end and shows every result |
 | After this work | 273 / 588 | |
+| After IndexedDB, the Cache API and navigator.storage | 298 / 588 | storage 35 / 35 (`storage.indexedDB.*` 25) |
 | Firefox 160 on the same machine | 547 / 588 | the reference `compare-sites.py` uses |
 
 The page renders close to Firefox's (`compare-sites.py`: 2.2 at 1280 x
@@ -50,7 +51,7 @@ Per category after this work:
 | performance | 11 / 12 | native | 0 / 1 |
 | resource | 7 / 7 | security | 21 / 32 |
 | payments | 0 / 5 | offline | 0 / 13 |
-| storage | 10 / 35 | files | 15 / 15 |
+| storage | 10 / 35 (35 / 35 with IndexedDB) | files | 15 / 15 |
 | scripting | 32 / 32 | other | 9 / 9 |
 
 ## What was fixed
@@ -185,9 +186,11 @@ Points are what each costs on html5test (588 in all).
 - **Shadow DOM** (`components.shadowdom` 4): attachShadow, slots,
   retargeting, :host and ::slotted, shadow-including tree order in
   style, layout and events.
-- **IndexedDB** (`storage.indexedDB.*` 25): the database engine on
-  disk (per origin), transactions, key ranges, cursors, indexes,
-  structured clone of values (Blob, ArrayBuffer).
+- ~~**IndexedDB** (`storage.indexedDB.*` 25)~~: done - IndexedDB 3.0
+  on the storage service (Web.IndexedDb.*, in the browser process for
+  content processes), with navigator.storage and the Cache API on the
+  same service; see "IndexedDB, the Cache API and navigator.storage" in
+  docs/Architecture.md.
 - **Video and audio** (`video.*` 33, `audio.element` 18,
   `streaming.mediasource` 5): media elements that play: demuxers (MP4,
   WebM, Ogg), codecs (H.264, VP8/VP9, AV1, AAC, Opus, Vorbis, FLAC, MP3,
@@ -201,8 +204,8 @@ Points are what each costs on html5test (588 in all).
   connections (ICE, DTLS, SRTP, SCTP data channels), getUserMedia
   (camera and microphone drivers), getDisplayMedia, MediaRecorder.
 - **Service workers and push** (`offline.*` 12): service worker
-  registration, the fetch interception in the network service, the
-  Cache API, push messages.
+  registration, the fetch interception in the network service, push
+  messages (the Cache API is done: 86-cache-storage.js).
 - **WebAssembly** (`native.webassembly` 1): a Wasm engine in
   libjavascript.
 - **MathML** (`elements.mathml` 2): MathML Core layout.
