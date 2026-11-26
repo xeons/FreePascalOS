@@ -23,6 +23,8 @@
   pages' fetchers number theirs apart); its head, body and outcome come
   back as messages the loop hands to Deliver, on the page thread.
   document.cookie and local files are asked for and waited on.
+  WebSockets are the browser's connections too: each gets a number on
+  the wire, its events come back like a hop's.
 }
 unit WebContent.Transport;
 
@@ -46,7 +48,11 @@ type
     FConnection: TContentConnection;
     FRoutes: TList;
     FNextWireId: QWord;
+    FSockets: TList;
     function FindRoute(WireId: QWord): Integer;
+    function FindSocket(WireId: QWord): Integer;
+    function FindSocketOf(Sink: TWebSocketEventSink; SocketId: QWord): Integer;
+    function DeliverSocketEvent(Message: TIpcMessage): Boolean;
   public
     constructor Create(Connection: TContentConnection);
     destructor Destroy; override;
@@ -57,6 +63,11 @@ type
     procedure SetDocumentCookie(constref Url: TUrlRecord; const Cookie: string; Secure: Boolean); override;
     function ReadLocalFile(constref Url: TUrlRecord; out Contents: TBytes; out IsFolder: Boolean;
       out Error: string): Boolean; override;
+    procedure OpenWebSocket(constref Request: TWebSocketOpenRequest; SocketId: QWord; Sink: TWebSocketEventSink);
+      override;
+    procedure SendWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; IsText: Boolean; const Data: TBytes); override;
+    procedure CloseWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; Code: Word; const Reason: string); override;
+    procedure AbortWebSocket(Sink: TWebSocketEventSink; SocketId: QWord); override;
     { A hop's head, piece or outcome from the browser (True when it was
       one; the caller frees the message). }
     function Deliver(Message: TIpcMessage): Boolean;
@@ -84,11 +95,19 @@ type
     Sink: THopResultSink;
   end;
 
+  TSocketRoute = class
+  public
+    WireId: QWord;
+    SocketId: QWord;
+    Sink: TWebSocketEventSink;
+  end;
+
 constructor TContentTransport.Create(Connection: TContentConnection);
 begin
   inherited Create;
   FConnection := Connection;
   FRoutes := TList.Create;
+  FSockets := TList.Create;
 end;
 
 destructor TContentTransport.Destroy;
@@ -98,6 +117,9 @@ begin
   for Index := 0 to FRoutes.Count - 1 do
     TRoute(FRoutes[Index]).Free;
   FRoutes.Free;
+  for Index := 0 to FSockets.Count - 1 do
+    TSocketRoute(FSockets[Index]).Free;
+  FSockets.Free;
   inherited Destroy;
 end;
 
@@ -109,6 +131,148 @@ begin
     if TRoute(FRoutes[Index]).WireId = WireId then
       Exit(Index);
   Result := -1;
+end;
+
+function TContentTransport.FindSocket(WireId: QWord): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to FSockets.Count - 1 do
+    if TSocketRoute(FSockets[Index]).WireId = WireId then
+      Exit(Index);
+  Result := -1;
+end;
+
+function TContentTransport.FindSocketOf(Sink: TWebSocketEventSink; SocketId: QWord): Integer;
+var
+  Index: Integer;
+begin
+  for Index := 0 to FSockets.Count - 1 do
+    if (TSocketRoute(FSockets[Index]).Sink = Sink) and (TSocketRoute(FSockets[Index]).SocketId = SocketId) then
+      Exit(Index);
+  Result := -1;
+end;
+
+procedure TContentTransport.OpenWebSocket(constref Request: TWebSocketOpenRequest; SocketId: QWord;
+  Sink: TWebSocketEventSink);
+var
+  Route: TSocketRoute;
+  Wire: TIpcWebSocketOpen;
+begin
+  Inc(FNextWireId);
+  Route := TSocketRoute.Create;
+  Route.WireId := FNextWireId;
+  Route.SocketId := SocketId;
+  Route.Sink := Sink;
+  FSockets.Add(Route);
+  Wire := Default(TIpcWebSocketOpen);
+  Wire.SocketId := Route.WireId;
+  Wire.Url := Request.Url;
+  Wire.Protocols := Request.Protocols;
+  Wire.Origin := Request.Origin;
+  FConnection.Send(IpcWebSocketOpen, 0, EncodeWebSocketOpen(Wire));
+end;
+
+procedure TContentTransport.SendWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; IsText: Boolean;
+  const Data: TBytes);
+var
+  Index: Integer;
+  Wire: TIpcWebSocketData;
+begin
+  Index := FindSocketOf(Sink, SocketId);
+  if Index < 0 then
+    Exit;
+  Wire.SocketId := TSocketRoute(FSockets[Index]).WireId;
+  Wire.IsText := IsText;
+  Wire.Data := Data;
+  FConnection.Send(IpcWebSocketSend, 0, EncodeWebSocketData(Wire));
+end;
+
+procedure TContentTransport.CloseWebSocket(Sink: TWebSocketEventSink; SocketId: QWord; Code: Word;
+  const Reason: string);
+var
+  Index: Integer;
+  Wire: TIpcWebSocketClose;
+begin
+  Index := FindSocketOf(Sink, SocketId);
+  if Index < 0 then
+    Exit;
+  Wire.SocketId := TSocketRoute(FSockets[Index]).WireId;
+  Wire.Code := Code;
+  Wire.Reason := Reason;
+  FConnection.Send(IpcWebSocketClose, 0, EncodeWebSocketClose(Wire));
+end;
+
+procedure TContentTransport.AbortWebSocket(Sink: TWebSocketEventSink; SocketId: QWord);
+var
+  Index: Integer;
+  Route: TSocketRoute;
+begin
+  Index := FindSocketOf(Sink, SocketId);
+  if Index < 0 then
+    Exit;
+  Route := TSocketRoute(FSockets[Index]);
+  FSockets.Delete(Index);
+  FConnection.Send(IpcWebSocketAbort, 0, EncodeHopId(Route.WireId));
+  Route.Free;
+end;
+
+{ A WebSocket's event from the browser, on the page thread. }
+function TContentTransport.DeliverSocketEvent(Message: TIpcMessage): Boolean;
+var
+  Opened: TIpcWebSocketOpened;
+  Data: TIpcWebSocketData;
+  Closed: TIpcWebSocketClosed;
+  WireId, Count: QWord;
+  Index: Integer;
+  Route: TSocketRoute;
+begin
+  Result := True;
+  case Message.Kind of
+    IpcWebSocketOpened:
+      begin
+        Opened := DecodeWebSocketOpened(Message.Payload);
+        Index := FindSocket(Opened.SocketId);
+        if Index >= 0 then
+          TSocketRoute(FSockets[Index]).Sink.SocketOpened(TSocketRoute(FSockets[Index]).SocketId, Opened.Protocol,
+            Opened.Extensions);
+      end;
+    IpcWebSocketMessage:
+      begin
+        Data := DecodeWebSocketData(Message.Payload);
+        Index := FindSocket(Data.SocketId);
+        if Index >= 0 then
+          TSocketRoute(FSockets[Index]).Sink.SocketMessage(TSocketRoute(FSockets[Index]).SocketId, Data.IsText,
+            Data.Data);
+      end;
+    IpcWebSocketSent:
+      begin
+        DecodeWebSocketSent(Message.Payload, WireId, Count);
+        Index := FindSocket(WireId);
+        if Index >= 0 then
+          TSocketRoute(FSockets[Index]).Sink.SocketBytesSent(TSocketRoute(FSockets[Index]).SocketId, Count);
+      end;
+    IpcWebSocketCloseReceived:
+      begin
+        Index := FindSocket(DecodeHopId(Message.Payload));
+        if Index >= 0 then
+          TSocketRoute(FSockets[Index]).Sink.SocketCloseReceived(TSocketRoute(FSockets[Index]).SocketId);
+      end;
+    IpcWebSocketClosed:
+      begin
+        Closed := DecodeWebSocketClosed(Message.Payload);
+        Index := FindSocket(Closed.SocketId);
+        if Index >= 0 then
+        begin
+          Route := TSocketRoute(FSockets[Index]);
+          FSockets.Delete(Index);
+          Route.Sink.SocketClosed(Route.SocketId, Closed.WasClean, Closed.Code, Closed.Reason, Closed.Failed);
+          Route.Free;
+        end;
+      end;
+  else
+    Result := False;
+  end;
 end;
 
 function BodyBytes(Body: THttpRequestBody): TBytes;
@@ -269,7 +433,7 @@ begin
         Route.Free;
       end;
   else
-    Result := False;
+    Result := DeliverSocketEvent(Message);
   end;
 end;
 

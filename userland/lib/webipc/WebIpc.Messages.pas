@@ -197,6 +197,20 @@ const
   { A request: about:PATH; the reply: found, HTML (the browser's own
     pages, only for a process locked to about:). }
   IpcAboutPage = 312;
+  { WebSockets. Content to browser: open (TIpcWebSocketOpen), send
+    (TIpcWebSocketData), close (TIpcWebSocketClose), abort (the id).
+    Browser to content: opened (TIpcWebSocketOpened), a message
+    (TIpcWebSocketData), bytes sent (id and count), the server's close
+    frame (the id), closed (TIpcWebSocketClosed, last). }
+  IpcWebSocketOpen = 340;
+  IpcWebSocketSend = 341;
+  IpcWebSocketClose = 342;
+  IpcWebSocketAbort = 343;
+  IpcWebSocketOpened = 344;
+  IpcWebSocketMessage = 345;
+  IpcWebSocketSent = 346;
+  IpcWebSocketCloseReceived = 347;
+  IpcWebSocketClosed = 348;
 
   { The most of the selected text IpcSelectionChanged carries. }
   SelectionTextLimit = 256 * 1024;
@@ -254,6 +268,15 @@ begin
     IpcHopHead: Result := 'hop-head';
     IpcHopData: Result := 'hop-data';
     IpcHopDone: Result := 'hop-done';
+    IpcWebSocketOpen: Result := 'websocket-open';
+    IpcWebSocketSend: Result := 'websocket-send';
+    IpcWebSocketClose: Result := 'websocket-close';
+    IpcWebSocketAbort: Result := 'websocket-abort';
+    IpcWebSocketOpened: Result := 'websocket-opened';
+    IpcWebSocketMessage: Result := 'websocket-message';
+    IpcWebSocketSent: Result := 'websocket-sent';
+    IpcWebSocketCloseReceived: Result := 'websocket-close-received';
+    IpcWebSocketClosed: Result := 'websocket-closed';
   else
     Result := 'kind ' + IntToStr(Kind);
   end;

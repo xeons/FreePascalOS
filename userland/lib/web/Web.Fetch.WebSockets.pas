@@ -147,31 +147,6 @@ type
     Observer: TChannelObserver;
   end;
 
-  { Frees an aborted connection once its threads are over. }
-  TConnectionReaper = class(TThread)
-  private
-    FConnection: TWebSocketConnection;
-    FObserver: TChannelObserver;
-  protected
-    procedure Execute; override;
-  public
-    constructor Create(Connection: TWebSocketConnection; Observer: TChannelObserver);
-  end;
-
-constructor TConnectionReaper.Create(Connection: TWebSocketConnection; Observer: TChannelObserver);
-begin
-  FConnection := Connection;
-  FObserver := Observer;
-  FreeOnTerminate := True;
-  inherited Create(False);
-end;
-
-procedure TConnectionReaper.Execute;
-begin
-  FConnection.Free;
-  FObserver.Free;
-end;
-
 { ---- TChannelObserver ---- }
 
 constructor TChannelObserver.Create(Channels: TWebSocketChannels; Id: QWord);
@@ -307,8 +282,7 @@ begin
   if Channel.Connection <> nil then
   begin
     Channel.Observer.CutOff;
-    Channel.Connection.Abort;
-    TConnectionReaper.Create(Channel.Connection, Channel.Observer);
+    DiscardWebSocketConnection(Channel.Connection, Channel.Observer);
   end
   else if FNetwork.Transport <> nil then
     FNetwork.Transport.AbortWebSocket(Self, Channel.Id);

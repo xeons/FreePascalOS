@@ -172,6 +172,10 @@ type
 
 { The http(s) URL a ws(s) URL is fetched as (and the other way). }
 function WebSocketFetchUrl(constref Url: TUrlRecord): TUrlRecord;
+{ Aborts Connection and frees it, then Companion (its observer, say), on
+  a thread of its own once the connection's threads are over: whoever
+  lets go of a connection never waits for the network. }
+procedure DiscardWebSocketConnection(Connection: TWebSocketConnection; Companion: TObject);
 
 implementation
 
@@ -189,6 +193,48 @@ begin
     Result.Scheme := 'http'
   else if Url.Scheme = 'wss' then
     Result.Scheme := 'https';
+end;
+
+type
+  TConnectionReaper = class(TThread)
+  private
+    FConnection: TWebSocketConnection;
+    FCompanion: TObject;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Connection: TWebSocketConnection; Companion: TObject);
+  end;
+
+constructor TConnectionReaper.Create(Connection: TWebSocketConnection; Companion: TObject);
+begin
+  FConnection := Connection;
+  FCompanion := Companion;
+  FreeOnTerminate := True;
+  inherited Create(False);
+end;
+
+procedure TConnectionReaper.Execute;
+begin
+  FConnection.Free;
+  FCompanion.Free;
+end;
+
+procedure DiscardWebSocketConnection(Connection: TWebSocketConnection; Companion: TObject);
+begin
+  if Connection = nil then
+  begin
+    Companion.Free;
+    Exit;
+  end;
+  Connection.Abort;
+  try
+    TConnectionReaper.Create(Connection, Companion);
+  except
+    { No thread to be had: wait here instead. }
+    Connection.Free;
+    Companion.Free;
+  end;
 end;
 
 procedure TWebSocketObserver.CloseReceived(Connection: TWebSocketConnection; Code: Word; const Reason: string);
