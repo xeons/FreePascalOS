@@ -294,8 +294,13 @@ begin
 end;
 
 function TJsParser.IsIdentifierToken: Boolean;
+var
+  Keyword: TJsTokenKind;
 begin
   Result := FToken.Kind = tkIdentifier;
+  { A reserved word spelled with escapes is still reserved (12.7.2). }
+  if Result and FToken.Escaped and KeywordToken(FToken.Text, Keyword) then
+    Result := False;
   if Result and FStrict then
   begin
     if (FToken.Text = 'implements') or (FToken.Text = 'interface') or (FToken.Text = 'package') or
@@ -1551,12 +1556,16 @@ begin
   begin
     { A block's function: lexical in the block. }
     Existing := FScope.Find(Name);
-    if (Existing <> nil) and (FStrict or (Existing.Kind <> dkFunction)) then
+    if (Existing <> nil) and (FStrict or (Existing.Kind <> dkFunction) or not Existing.IsPlainBlockFunction or
+      IsAsync or IsGenerator) then
       FailAt(NameToken, 'Identifier ''' + string(Name) + ''' has already been declared');
     if Existing <> nil then
       Variable := Existing
     else
+    begin
       Variable := FScope.Declare(Name, dkFunction, NameToken.Start);
+      Variable.IsPlainBlockFunction := not IsAsync and not IsGenerator;
+    end;
     Variable.Kind := dkFunction;
     if not FStrict and not IsAsync and not IsGenerator then
     begin
@@ -2334,6 +2343,9 @@ begin
           begin
             if Index <> Node.Count - 1 then
               raise EJsSyntaxError.CreateAt('Rest element must be last element', Element.Line, Element.Column);
+            if Element.A.Kind = nkAssign then
+              raise EJsSyntaxError.CreateAt('Rest element may not have a default initializer', Element.Line,
+                Element.Column);
             Element.Kind := nkRest;
             Element.A := ToPattern(Element.A, Binding);
           end
@@ -2349,6 +2361,9 @@ begin
           Element := Node.List[Index];
           if (Element.Flags and PropertyFlagSpread) <> 0 then
           begin
+            { An object rest takes a name or a property, not a pattern. }
+            if Element.A.Kind in [nkArray, nkObject, nkAssign] then
+              raise EJsSyntaxError.CreateAt('Invalid rest element', Element.Line, Element.Column);
             Element.Kind := nkRest;
             Element.A := ToPattern(Element.A, Binding);
           end

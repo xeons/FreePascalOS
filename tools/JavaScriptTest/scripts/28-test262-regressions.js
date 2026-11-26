@@ -34,6 +34,12 @@ var endless = { [Symbol.iterator]() { return { next() { return { value: 1, done:
 try { new WeakMap(endless); } catch (e) { console.log(e.name); }
 try { Array.prototype.splice.call({ length: 2 ** 53 - 1 }, 0, 0, 1); } catch (e) { console.log(e.name); }
 
+// Early errors found when the script is parsed.
+console.log(parses("var \\u0062reak = 1;"), parses("({ \\u0062reak: 1 }).break;"), parses("[...x = []] = [];"),
+  parses("{ async function f() {} async function f() {} }"), parses("{ function f() {} function f() {} }"),
+  parses("class C { m() { return this.#x; } }"), parses("class C { #x; m() { return this.#x; } }"),
+  parses("class C { x = arguments; }"), parses("class C { x = function () { return arguments; }; }"));
+
 /* expected
 3 7 1
 5
@@ -45,4 +51,5 @@ TypeError
 TypeError
 TypeError
 TypeError
+SyntaxError ok SyntaxError SyntaxError ok SyntaxError ok SyntaxError ok
 */

@@ -162,6 +162,9 @@ type
     DeclarationStart: Integer;
     { Var bindings declared by sloppy block functions (Annex B). }
     IsAnnexB: Boolean;
+    { A block's binding of a plain (not async, not generator) function:
+      sloppy code may declare it again in the same block (B.3.2.4). }
+    IsPlainBlockFunction: Boolean;
     { A declaration of a script's top level: a property of the global
       object or a binding of the global lexical environment, by name. }
     IsGlobal: Boolean;
