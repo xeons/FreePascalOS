@@ -130,6 +130,7 @@ type
     { text decoration }
     cpTextDecorationLine, cpTextDecorationStyle, cpTextDecorationColor,
     cpTextDecorationThickness, cpTextUnderlineOffset, cpTextOverflow, cpUnicodeBidi,
+    cpWebkitLineClamp, cpWebkitBoxOrient,
     { generated content }
     cpContent, cpCounterReset, cpCounterIncrement, cpCounterSet,
     { table }

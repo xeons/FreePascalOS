@@ -52,7 +52,7 @@ procedure BuildDisplayList(Root: TLayoutBox; Resources: TDocumentResources; List
 implementation
 
 uses
-  Math, SysUtils, Web.Dom, Web.Atoms, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
+  Math, SysUtils, Web.Dom, Web.Atoms, Web.Layout.LineClamp, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
   Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
   Web.Dom.FormControls, Web.Dom.InputValues, Css.TransformMatrices, Web.Layout.Transforms;
@@ -698,7 +698,8 @@ begin
       if (Text = '') and TElement(Box.Node).HasAttributeAtom(AtomPlaceholder) then
       begin
         Text := TElement(Box.Node).AttributeValueOf(AtomPlaceholder);
-        Color := FadeColor(Color, 128);
+        { Firefox draws a placeholder in 54% of the text colour. }
+        Color := FadeColor(Color, 138);
       end;
       if Text <> '' then
       begin
@@ -845,6 +846,7 @@ begin
   if not IsVisible(Text) then
     Exit;
   Run.Box := Text;
+  Run.Literal := -1;
   Run.Font := TextFontOf(Text.Style);
   Run.TextStart := Fragment.TextStart;
   Run.TextLength := Fragment.TextLength;
@@ -925,6 +927,31 @@ begin
   Box.Height := SavedHeight;
 end;
 
+{ The ellipses of text-overflow and line clamping, in the container's
+  font and colour. }
+procedure PaintEllipses(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
+var
+  Index: Integer;
+  Run: TTextRun;
+  Entry: PDisplayItem;
+  Ellipsis: TLineEllipsis;
+begin
+  if not IsVisible(Box) then
+    Exit;
+  for Index := 0 to Box.Inline.EllipsisCount - 1 do
+  begin
+    Ellipsis := Box.Inline.Ellipses[Index];
+    Run := Default(TTextRun);
+    Run.Font := TextFontOf(Box.Style);
+    Run.Literal := Builder.List.AddString(EllipsisText);
+    Run.Baseline := Y + Ellipsis.Baseline;
+    Entry := Builder.List.Add(diText, X + Ellipsis.X, Y + Ellipsis.Baseline - Run.Font.Ascent,
+      Run.Font.MeasureText(EllipsisText, 1, Length(EllipsisText)), Run.Font.Ascent + Run.Font.Descent, Box);
+    Entry^.Color := ToColor(Box.Style.Color);
+    Entry^.Index := Builder.List.AddText(Run);
+  end;
+end;
+
 procedure PaintFragments(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single);
 var
   Index: Integer;
@@ -933,9 +960,13 @@ var
 begin
   if Box.Inline = nil then
     Exit;
+  if Box.Inline.EllipsisCount > 0 then
+    PaintEllipses(Builder, Box, X, Y);
   for Index := 0 to Box.Inline.FragmentCount - 1 do
   begin
     Fragment := @Box.Inline.Fragments[Index];
+    if Fragment^.Clipped then
+      Continue;
     case Fragment^.Kind of
       fkText:
         PaintText(Builder, Fragment^, X, Y);

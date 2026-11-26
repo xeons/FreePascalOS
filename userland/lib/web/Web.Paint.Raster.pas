@@ -486,7 +486,11 @@ begin
   Slant := 0;
   if Run.Font.SyntheticItalic then
     Slant := 0.2;
-  Run.Font.PlaceGlyphs(Run.Box.Text, Run.TextStart, Run.TextLength, Raster.Glyphs, Count);
+  if Run.Literal >= 0 then
+    Run.Font.PlaceGlyphs(Raster.List.Strings[Run.Literal], 1, Length(Raster.List.Strings[Run.Literal]),
+      Raster.Glyphs, Count)
+  else
+    Run.Font.PlaceGlyphs(Run.Box.Text, Run.TextStart, Run.TextLength, Raster.Glyphs, Count);
   PixelSize := Max(1, Round(Run.Font.Size * Raster.View.Scale));
   Baseline := DeviceY(Raster, Run.Baseline);
   StartX := Item.X;

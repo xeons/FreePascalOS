@@ -117,7 +117,7 @@ implementation
 
 uses
   SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values,
-  Web.Dom.FormControls, Web.Layout.ViewportOverflow;
+  Web.Dom.FormControls, Web.Layout.ViewportOverflow, Web.Layout.LineClamp;
 
 var
   AtomCanvasElement, AtomIframeElement, AtomEmbedElement, AtomObjectElement, AtomVideoElement,
@@ -330,10 +330,23 @@ begin
             Include(Result.Flags, bfListItem);
         end;
       kwFlex, kwWebkitBox:
-        Result := TLayoutBox.Create(bkFlex, Element, Style);
+        if LineClampOf(Style) > 0 then
+        begin
+          { Legacy line clamping: a block container (Web.Layout.LineClamp). }
+          Result := TLayoutBox.Create(bkBlock, Element, Style);
+          Include(Result.Flags, bfNewFormattingContext);
+        end
+        else
+          Result := TLayoutBox.Create(bkFlex, Element, Style);
       kwInlineFlex, kwWebkitInlineBox:
         begin
-          Result := TLayoutBox.Create(bkFlex, Element, Style);
+          if LineClampOf(Style) > 0 then
+          begin
+            Result := TLayoutBox.Create(bkBlock, Element, Style);
+            Include(Result.Flags, bfNewFormattingContext);
+          end
+          else
+            Result := TLayoutBox.Create(bkFlex, Element, Style);
           Include(Result.Flags, bfInlineLevel);
         end;
       kwGrid:

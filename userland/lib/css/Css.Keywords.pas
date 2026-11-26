@@ -116,7 +116,7 @@ type
     kwWResize, kwEwResize, kwNsResize, kwNeswResize, kwNwseResize, kwColResize, kwRowResize,
     kwAllScroll, kwZoomIn, kwZoomOut,
     kwVisiblePainted, kwVisibleFill, kwVisibleStroke, kwPainted, kwStroke,
-    kwHorizontal, kwVertical, kwCrispEdges, kwPixelated, kwSmooth, kwHighQuality,
+    kwHorizontal, kwVertical, kwInlineAxis, kwBlockAxis, kwCrispEdges, kwPixelated, kwSmooth, kwHighQuality,
     kwLight, kwDark, kwPanX, kwPanY, kwPinchZoom, kwManipulation, kwScrollPosition,
     kwButton, kwTextfield, kwMenulistButton, kwSearchfield, kwTextarea, kwCheckbox, kwRadio,
     kwMenulist, kwListbox, kwMeter, kwProgressBar, kwPushButton, kwSquareButton, kwBothEdges,

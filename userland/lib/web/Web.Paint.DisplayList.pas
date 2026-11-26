@@ -103,6 +103,9 @@ type
     Box: TTextBox;
     Font: TTextFont;
     TextStart, TextLength: Integer;
+    { Text of its own instead of the box's (an ellipsis): an index into
+      Strings, -1 for none (Box is nil then). }
+    Literal: Integer;
     Baseline: Single;
     SpaceExtra, LetterExtra: Single;
   end;

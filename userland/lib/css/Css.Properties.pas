@@ -309,6 +309,9 @@ begin
   for Id := Succ(cpInvalid) to Pred(cpCustom) do
   begin
     Names[Id] := KebabName(GetEnumName(TypeInfo(TCssPropertyId), Ord(Id)));
+    { cpWebkitLineClamp is -webkit-line-clamp. }
+    if Copy(Names[Id], 1, 7) = 'webkit-' then
+      Names[Id] := '-' + Names[Id];
     SortedNames[Count] := Names[Id];
     SortedIds[Count] := Id;
     Inc(Count);

@@ -787,6 +787,7 @@ begin
   State.Content := Container.Inline;
   State.Content.LineCount := 0;
   State.Content.FragmentCount := 0;
+  State.Content.EllipsisCount := 0;
   State.ContentWidth := ContentWidth;
   SetLength(State.Positions, Items.Count + 16);
   State.OpenBoxes := nil;

@@ -149,6 +149,12 @@ begin
   CheckValue('rotate', 'calc(asin(1))', 'calc(90deg)');
   CheckValue('width', 'calc(round(up, 12px, 5px))', 'calc(15px)');
   CheckValue('width', 'fit-content(20%)', 'fit-content(20%)');
+  { Legacy line clamping. }
+  CheckValue('-webkit-line-clamp', '3', '3');
+  CheckValue('-webkit-line-clamp', 'none', 'none');
+  CheckValue('-webkit-line-clamp', '2px', '(invalid)');
+  CheckValue('-webkit-box-orient', 'vertical', 'vertical');
+  CheckValue('-webkit-box-orient', 'block-axis', 'block-axis');
   CheckValue('color', 'RED', 'rgb(255, 0, 0)');
   CheckValue('color', '#0f08', 'rgba(0, 255, 0, 0.533)');
   CheckValue('color', 'rgb(255 0 0 / 50%)', 'rgba(255, 0, 0, 0.5)');

@@ -54,7 +54,7 @@ implementation
 
 uses
   Css.ComputedStyle, Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Floats,
-  Web.Layout.Inline, Web.Layout.Dispatch, Web.Layout.Sizing, Web.Atoms, Web.Dom;
+  Web.Layout.Inline, Web.Layout.Dispatch, Web.Layout.Sizing, Web.Layout.LineClamp, Web.Atoms, Web.Dom;
 
 type
   TMarginStrut = record
@@ -457,6 +457,9 @@ begin
     if bfChildrenInline in Box.Flags then
     begin
       LayoutInlineContent(Box, Inner, ContentWidth, ContentHeight);
+      if LineClampOf(Box.Style) > 0 then
+        ClampLines(Box, LineClampOf(Box.Style), ContentHeight);
+      ApplyTextOverflow(Box);
       SetOwnMargins(Box);
       if (ContentHeight = 0) and (Box.Inline.LineCount = 0) and IsAutoValue(Box.Style, cpHeight) and
          (VerticalBorderPadding(Box) = 0) and not (bfNewFormattingContext in Box.Flags) and

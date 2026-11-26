@@ -542,6 +542,10 @@ begin
   State.Items := nil;
   Direction := Box.Style.Keyword(cpFlexDirection);
   State.Row := KeywordIn(Direction, [kwRow, kwRowReverse]);
+  { The legacy -webkit-box lays its children out in a column when
+    -webkit-box-orient says vertical. }
+  if KeywordIn(Box.Style.Keyword(cpDisplay), [kwWebkitBox, kwWebkitInlineBox]) then
+    State.Row := not KeywordIn(Box.Style.Keyword(cpWebkitBoxOrient), [kwVertical, kwBlockAxis]);
   State.MainReverse := KeywordIn(Direction, [kwRowReverse, kwColumnReverse]);
   State.Wraps := Box.Style.Keyword(cpFlexWrap) <> kwNowrap;
   State.WrapReverse := Box.Style.Keyword(cpFlexWrap) = kwWrapReverse;

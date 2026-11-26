@@ -137,6 +137,8 @@ type
       word-spacing) and after each character (letter-spacing). }
     SpaceExtra: Single;
     LetterExtra: Single;
+    { Hidden behind a line's ellipsis (text-overflow): not painted. }
+    Clipped: Boolean;
   end;
   PLineFragment = ^TLineFragment;
 
@@ -145,12 +147,21 @@ type
     FirstFragment, FragmentCount: Integer;
   end;
 
+  { An ellipsis drawn at the end of a line (text-overflow, line clamping):
+    where its pen starts and its baseline, relative to the container's
+    border box, in the container's font and colour. }
+  TLineEllipsis = record
+    X, Baseline: Single;
+  end;
+
   TInlineContent = class
   public
     Lines: array of TLineBoxRecord;
     LineCount: Integer;
     Fragments: array of TLineFragment;
     FragmentCount: Integer;
+    Ellipses: array of TLineEllipsis;
+    EllipsisCount: Integer;
     { The inline items (Web.Layout.InlineItems), owned; ItemsValid until
       the content changes. }
     Items: TObject;
@@ -302,6 +313,7 @@ procedure TInlineContent.Clear;
 begin
   LineCount := 0;
   FragmentCount := 0;
+  EllipsisCount := 0;
   ItemsValid := False;
 end;
 
@@ -433,6 +445,8 @@ begin
       Box.Inline.Lines[Index].Top := Box.Inline.Lines[Index].Top + Delta;
       Box.Inline.Lines[Index].Baseline := Box.Inline.Lines[Index].Baseline + Delta;
     end;
+    for Index := 0 to Box.Inline.EllipsisCount - 1 do
+      Box.Inline.Ellipses[Index].Baseline := Box.Inline.Ellipses[Index].Baseline + Delta;
     { Inline atomic boxes were moved with the children. }
   end;
   if Box.FirstBaseline >= 0 then

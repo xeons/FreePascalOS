@@ -301,6 +301,10 @@ const
     (Group: pgText; Initial: 'clip'; Grammar: '@text-overflow'; Compute: cmpValue; Animation: atDiscrete),
     (Group: pgText; Initial: 'normal'; Grammar: 'normal | embed | isolate | bidi-override | isolate-override | ' +
       'plaintext'; Compute: cmpKeyword; Animation: atNone),
+    { -webkit-line-clamp, -webkit-box-orient (CSS Overflow 4: legacy line clamping) }
+    (Group: pgText; Initial: 'none'; Grammar: 'none | <integer>'; Compute: cmpInteger; Animation: atDiscrete),
+    (Group: pgText; Initial: 'horizontal'; Grammar: 'horizontal | vertical | inline-axis | block-axis';
+      Compute: cmpKeyword; Animation: atDiscrete),
     { generated content }
     (Group: pgContent; Initial: 'normal'; Grammar: '@content'; Compute: cmpValue; Animation: atDiscrete),
     (Group: pgContent; Initial: 'none'; Grammar: '@counter-reset'; Compute: cmpValue; Animation: atDiscrete),
