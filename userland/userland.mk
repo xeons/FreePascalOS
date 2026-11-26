@@ -21,6 +21,7 @@
 #   lib<name>.so   ld -shared over the object files of a library's units:
 #                  libsystem <- libcryptography <- libcoreutils <- programs
 #                  libsystem <- libaudio (for the sound programs)
+#                  libsystem <- libav1 (the AV1 video decoder)
 #                  libsystem <- libdrawing <- libfont (for graphical programs)
 #                  libsystem <- libdrawing, libcompression <- libimage (image files)
 #                  libsystem <- libconfiguration (settings, per user and system)
@@ -108,6 +109,7 @@ SYSTEM_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/system
 CRYPTO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/cryptography
 CORE_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/coreutils
 AUDIO_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/audio
+AV1_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/av1
 DRAWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/drawing
 FONT_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/font
 WINDOWING_LIBRARY_OBJECTS := $(USER_BUILD_DIRECTORY)/windowing
@@ -131,6 +133,7 @@ SYSTEM_LIBRARY := $(USER_LIBRARY_OUTPUT)/libsystem.so
 CRYPTO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcryptography.so
 CORE_LIBRARY := $(USER_LIBRARY_OUTPUT)/libcoreutils.so
 AUDIO_LIBRARY := $(USER_LIBRARY_OUTPUT)/libaudio.so
+AV1_LIBRARY := $(USER_LIBRARY_OUTPUT)/libav1.so
 DRAWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdrawing.so
 FONT_LIBRARY := $(USER_LIBRARY_OUTPUT)/libfont.so
 WINDOWING_LIBRARY := $(USER_LIBRARY_OUTPUT)/libwindowing.so
@@ -217,7 +220,7 @@ ICONS_STAMP := $(ICON_OUTPUT)/.drawn
 
 .SECONDEXPANSION:
 
-userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
+userland: $(SYSTEM_LIBRARY) $(CRYPTO_LIBRARY) $(CORE_LIBRARY) $(AUDIO_LIBRARY) $(AV1_LIBRARY) $(DRAWING_LIBRARY) $(FONT_LIBRARY) $(WINDOWING_LIBRARY) $(CONTROLS_LIBRARY) \
 	$(CONFIGURATION_LIBRARY) $(TLS_LIBRARY) $(SSH_LIBRARY) $(QUIC_LIBRARY) $(HTTP_LIBRARY) $(CSS_LIBRARY) $(SVG_LIBRARY) $(WEB_LIBRARY) $(WEBIPC_LIBRARY) $(WEBVIEW_LIBRARY) $(JAVASCRIPT_LIBRARY) $(IMAGE_LIBRARY) $(COMPRESSION_LIBRARY) $(ARCHIVE_LIBRARY) $(PLUGIN_LIBRARY) $(TLSTEST_LIBRARY) $(DYNTLS_LIBRARY) $(STATICTLS_LIBRARY) $(DYNPASCAL_LIBRARY) $(USER_PROGRAMS) $(SYSTEM_FONTS_STAMP) \
 	$(OUTLINE_FONTS_STAMP) $(ICONS_STAMP) $(APP_FOLDERS)
 
@@ -291,6 +294,15 @@ $(AUDIO_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/audio/*.pas)
 		-FU$(AUDIO_LIBRARY_OBJECTS) userland/lib/audio/Audio.Contents.pas
 	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libaudio.so -o $@ \
 		$(AUDIO_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
+
+# libav1: the AV1 video decoder (frames as Media.Frames records).
+$(AV1_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/av1/*.pas) $(wildcard userland/lib/av1/*.inc)
+	@rm -rf $(AV1_LIBRARY_OBJECTS)
+	@mkdir -p $(AV1_LIBRARY_OBJECTS)
+	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fuuserland/lib/av1 \
+		-Fiuserland/lib/av1 -FU$(AV1_LIBRARY_OBJECTS) userland/lib/av1/Av1.Contents.pas
+	$(LD) -shared $(USER_LIBRARY_LINK_FLAGS) -soname libav1.so -o $@ \
+		$(AV1_LIBRARY_OBJECTS)/*.o -L$(USER_LIBRARY_OUTPUT) -lsystem
 
 # libdrawing: surfaces, clipping regions and drawing on them.
 $(DRAWING_LIBRARY): $(SYSTEM_LIBRARY) $(wildcard userland/lib/drawing/*.pas)
