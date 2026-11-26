@@ -413,6 +413,32 @@ begin
   Result := PreInsert(Node, Self, Child);
 end;
 
+procedure TNode.MoveBefore(Node, Child: TNode);
+var
+  ReferenceChild: TNode;
+begin
+  if not (FNodeType in [NodeTypeDocument, NodeTypeDocumentFragment, NodeTypeElement]) then
+    HierarchyError('the parent cannot have children');
+  if Node.GetShadowIncludingRoot <> GetShadowIncludingRoot then
+    HierarchyError('the node is in another tree');
+  if IsHostIncludingInclusiveAncestor(Node, Self) then
+    HierarchyError('the node is an ancestor of the parent');
+  if (Child <> nil) and (Child.FParent <> Self) then
+    RaiseDomError(NotFoundError, 'the child is not a child of the parent');
+  if not ((Node.FNodeType = NodeTypeElement) or IsCharacterDataType(Node.FNodeType)) then
+    HierarchyError('only elements and character data move');
+  if IsTextType(Node.FNodeType) and (FNodeType = NodeTypeDocument) then
+    HierarchyError('a document has no text');
+  if (FNodeType = NodeTypeDocument) and (Node.FNodeType = NodeTypeElement) and
+    (HasChildOfType(Self, NodeTypeElement, nil) or ((Child <> nil) and (Child.FNodeType = NodeTypeDocumentType)) or
+    DoctypeFollows(Child)) then
+    HierarchyError('a document can have only one element, after its doctype');
+  ReferenceChild := Child;
+  if ReferenceChild = Node then
+    ReferenceChild := Node.FNextSibling;
+  InsertNode(Node, TContainerNode(Self), ReferenceChild, False);
+end;
+
 function TNode.AppendChild(Node: TNode): TNode;
 begin
   Result := PreInsert(Node, Self, nil);

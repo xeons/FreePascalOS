@@ -58,7 +58,8 @@ uses
   Web.Bindings.Types,
   Web.Bindings.Tables,
   Web.Bindings.Dispatch,
-  Web.Bindings.Exotic;
+  Web.Bindings.Exotic,
+  Web.Bindings.WindowNames;
 
 function NewFunction(Context: TBindingContext; const Name: string; Callback: TJsNativeCallback; Length: Integer;
   InterfaceId: Integer; Data: Pointer): TJsNativeFunction;
@@ -289,6 +290,7 @@ begin
       PropertyHidden);
   if IsGlobal then
   begin
+    InstallWindowNamedProperties(Context, Prototype);
     Global.Proto := Prototype;
     R.Runtime.PrototypeEpoch := R.Runtime.PrototypeEpoch + 1;
   end;

@@ -297,6 +297,12 @@ begin
   Result := JsUndefined;
 end;
 
+function ParentNode_moveBefore(var Call: TBindingCall): TJsValue;
+begin
+  ThisNode(Call).MoveBefore(TNode(Call.Native(0)), TNode(Call.Native(1)));
+  Result := JsUndefined;
+end;
+
 function ParentNode_querySelector(var Call: TBindingCall): TJsValue;
 begin
   Result := Context(Call).WrapNode(QuerySelector(ThisNode(Call), Call.Text(0)));

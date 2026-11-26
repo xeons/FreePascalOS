@@ -351,6 +351,12 @@ type
     function IsDefaultNamespace(const Namespace: string): Boolean;
     { The mutation methods (Node). }
     function InsertBefore(Node, Child: TNode): TNode;
+    { moveBefore (DOM Standard 4.2.6): Node, an element or character
+      data in this tree's shadow-including root, moves before Child.
+      The checks are the pre-move validity steps; the move itself is a
+      removal and an insertion (state the move would keep - focus, a
+      frame's document - is not kept yet). }
+    procedure MoveBefore(Node, Child: TNode);
     function AppendChild(Node: TNode): TNode;
     function ReplaceChild(Node, Child: TNode): TNode;
     function RemoveChild(Child: TNode): TNode;

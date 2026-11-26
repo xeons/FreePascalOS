@@ -59,3 +59,19 @@ window.location = "page3.html";
 check("window.location = navigates (PutForwards href)", lastNavigation().indexOf("page3.html") > 0);
 location.search = "?q=1";
 check("location.search = navigates with the new query", lastNavigation().indexOf("?q=1") > 0);
+var namedTarget = document.createElement("div");
+namedTarget.id = "namedAccessTarget";
+document.body.appendChild(namedTarget);
+check("the window's named properties find an element by id", window.namedAccessTarget === namedTarget &&
+  namedAccessTarget === namedTarget && "namedAccessTarget" in window &&
+  !Object.prototype.hasOwnProperty.call(window, "namedAccessTarget"));
+namedTarget.remove();
+check("a removed element leaves the window's named properties", window.namedAccessTarget === undefined);
+check("the window's own members win over named elements", (function () {
+  var shadow = document.createElement("div");
+  shadow.id = "location";
+  document.body.appendChild(shadow);
+  var kept = window.location !== shadow;
+  shadow.remove();
+  return kept;
+})());

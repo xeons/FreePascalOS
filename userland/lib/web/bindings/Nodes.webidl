@@ -73,6 +73,7 @@ interface mixin ParentNode {
   undefined prepend((Node or DOMString)... nodes);
   undefined append((Node or DOMString)... nodes);
   undefined replaceChildren((Node or DOMString)... nodes);
+  [CEReactions] undefined moveBefore(Node node, Node? child);
 
   Element? querySelector(DOMString selectors);
   [NewObject] NodeList querySelectorAll(DOMString selectors);
