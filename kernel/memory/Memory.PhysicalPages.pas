@@ -196,6 +196,12 @@ procedure WritePhysicalMemorySummary;
 { For the self tests: the offset of the first byte of a quarantined page
   that is no longer the fill, or NoDamage. }
 function QuarantinedPageDamage(PhysicalAddress: TPhysicalAddress): Int64;
+{ For the self tests: watches the page's next entry into the quarantine
+  (Memory.PageQuarantine). }
+procedure WatchPhysicalPageQuarantine(PhysicalAddress: TPhysicalAddress);
+{ Whether the watched page went into the quarantine since, and whether
+  it has left it again (checked, to the free list). }
+procedure GetPhysicalPageQuarantineWatch(out Entered, Departed: Boolean);
 
 { The free page counts below which memory is short (low) and very short
   (critical); Critical is kept at most Low. }
@@ -744,31 +750,40 @@ end;
 
 { The last holder freed Frame (now PageUsageQuarantined, database lock
   not held): fills it, puts it in the quarantine and lets the oldest
-  page there go back to the free list once its fill checked out. }
+  page there go back to the free list once its fill checked out. The
+  oldest page leaves the ring, is checked and is freed in one hold of
+  the lock: checked after the lock was let go, it was for a while
+  neither in the ring nor free, still marked held back, while other
+  processors went on freeing and taking pages (Memory.PageQuarantine). }
 procedure QuarantineFreedFrame(Frame: QWord);
 var
   PreviousLevel: TPriorityLevel;
   Released: QWord;
-  WasReleased: Boolean;
-  Damage: Int64;
 begin
   FillFreedPage(PhysicalToVirtual(Frame shl PageShift));
   PreviousLevel := AcquireSpinLock(DatabaseLock);
-  WasReleased := QuarantineFrame(FreedPageQuarantine, Frame, Released);
   { Held back pages count as free memory. }
   Inc(FreePageCount);
+  if QuarantineFrame(FreedPageQuarantine, Frame, Released) then
+    ReleaseQuarantinedFrameLocked(Released);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
-  if not WasReleased then
-    Exit;
-  { Checked outside the lock; the frame is still PageUsageQuarantined,
-    so nobody else takes it meanwhile. }
-  Damage := FindFreedPageDamage(PhysicalToVirtual(Released shl PageShift));
-  if Damage <> NoDamage then
-    ReportFreedPageDamage(Released shl PageShift, Damage);
+end;
+
+procedure WatchPhysicalPageQuarantine(PhysicalAddress: TPhysicalAddress);
+var
+  PreviousLevel: TPriorityLevel;
+begin
   PreviousLevel := AcquireSpinLock(DatabaseLock);
-  ChangeFrameUsage(Released, PageUsageFree);
-  Dec(FreePageCount);
-  PushFreeFrame(Released);
+  WatchQuarantineFrame(FreedPageQuarantine, PhysicalAddress shr PageShift);
+  ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+procedure GetPhysicalPageQuarantineWatch(out Entered, Departed: Boolean);
+var
+  PreviousLevel: TPriorityLevel;
+begin
+  PreviousLevel := AcquireSpinLock(DatabaseLock);
+  GetQuarantineWatch(FreedPageQuarantine, Entered, Departed);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
 end;
 

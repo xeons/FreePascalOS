@@ -41,7 +41,16 @@
   run out of memory.
 
   The ring itself is a plain data structure; the page allocator keeps it
-  under its database lock.
+  under its database lock, and a frame leaves it, is checked and goes to
+  the free list in one hold of that lock: a page is either in the ring
+  (and PageUsageQuarantined) or on its way to reuse, never out of the
+  ring but still marked held back.
+
+  The ring is first in, first out, so the Nth frame to go in is the Nth
+  to come out; it counts both. The self test watches one frame: the
+  ring notes the number its next entry gets, and the frame has left
+  once that many frames came out - whatever other processors free or
+  take meanwhile, and even if the frame is handed out and freed again.
 }
 unit Memory.PageQuarantine;
 
@@ -66,7 +75,18 @@ type
     { The oldest entry, and how many there are. }
     First: LongWord;
     Count: LongWord;
+    { Frames that went in and came out, since the start. }
+    Entries: QWord;
+    Departures: QWord;
+    { The watched frame (NoWatchedFrame for none), and the entry number
+      of its first entry since it was watched. }
+    WatchedFrame: QWord;
+    WatchedEntered: Boolean;
+    WatchedEntry: QWord;
   end;
+
+const
+  NoWatchedFrame = High(QWord);
 
 { Fills a freed page (by its address in the window). }
 procedure FillFreedPage(Page: Pointer);
@@ -80,6 +100,11 @@ procedure ClearPageQuarantine(out Quarantine: TPageQuarantine);
 function QuarantineFrame(var Quarantine: TPageQuarantine; Frame: QWord; out Released: QWord): Boolean;
 { Takes the oldest frame out; False if the ring is empty. }
 function ReleaseOldestFrame(var Quarantine: TPageQuarantine; out Released: QWord): Boolean;
+{ Watches Frame's next entry (NoWatchedFrame: none). }
+procedure WatchQuarantineFrame(var Quarantine: TPageQuarantine; Frame: QWord);
+{ Whether the watched frame went in since it was watched, and whether
+  it has come out again. }
+procedure GetQuarantineWatch(constref Quarantine: TPageQuarantine; out Entered, Departed: Boolean);
 
 { Stops the system: Page (physical) was written after it was freed. }
 procedure ReportFreedPageDamage(PhysicalAddress: TPhysicalAddress; Offset: Int64); noreturn;
@@ -132,6 +157,34 @@ procedure ClearPageQuarantine(out Quarantine: TPageQuarantine);
 begin
   Quarantine.First := 0;
   Quarantine.Count := 0;
+  Quarantine.Entries := 0;
+  Quarantine.Departures := 0;
+  Quarantine.WatchedFrame := NoWatchedFrame;
+  Quarantine.WatchedEntered := False;
+  Quarantine.WatchedEntry := 0;
+end;
+
+procedure NoteEntry(var Quarantine: TPageQuarantine; Frame: QWord);
+begin
+  if (Frame = Quarantine.WatchedFrame) and not Quarantine.WatchedEntered then
+  begin
+    Quarantine.WatchedEntered := True;
+    Quarantine.WatchedEntry := Quarantine.Entries;
+  end;
+  Inc(Quarantine.Entries);
+end;
+
+procedure WatchQuarantineFrame(var Quarantine: TPageQuarantine; Frame: QWord);
+begin
+  Quarantine.WatchedFrame := Frame;
+  Quarantine.WatchedEntered := False;
+  Quarantine.WatchedEntry := 0;
+end;
+
+procedure GetQuarantineWatch(constref Quarantine: TPageQuarantine; out Entered, Departed: Boolean);
+begin
+  Entered := Quarantine.WatchedEntered;
+  Departed := Entered and (Quarantine.Departures > Quarantine.WatchedEntry);
 end;
 
 function QuarantineFrame(var Quarantine: TPageQuarantine; Frame: QWord; out Released: QWord): Boolean;
@@ -139,9 +192,11 @@ var
   Slot: LongWord;
 begin
   Released := 0;
+  NoteEntry(Quarantine, Frame);
   Result := Quarantine.Count = PageQuarantineCapacity;
   if Result then
   begin
+    Inc(Quarantine.Departures);
     { The oldest leaves; the new one takes its slot, now the newest. }
     Released := Quarantine.Frames[Quarantine.First];
     Quarantine.Frames[Quarantine.First] := Frame;
@@ -162,6 +217,7 @@ begin
   Released := Quarantine.Frames[Quarantine.First];
   Quarantine.First := (Quarantine.First + 1) mod PageQuarantineCapacity;
   Dec(Quarantine.Count);
+  Inc(Quarantine.Departures);
 end;
 
 procedure ReportFreedPageDamage(PhysicalAddress: TPhysicalAddress; Offset: Int64);

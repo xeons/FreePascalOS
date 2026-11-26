@@ -31,7 +31,7 @@
       mapped user page work, copies from a missing one fail safely, and
       the protection is on again afterwards;
     * with "heapchecks": freed physical pages are filled, held back and
-      checked (Memory.PageQuarantine);
+      checked (Memory.PageQuarantine, Kernel.PageQuarantineSelfTest);
     * object reference counts saturate instead of wrapping.
 
   Deliberate violations, which stop the system, are in
@@ -51,14 +51,13 @@ implementation
 uses
   Memory.Layout,
   Memory.PhysicalPages,
-  Memory.HeapChecks,
-  Memory.PageQuarantine,
   Memory.Arch.PageTables,
   Memory.Arch.MappingAudit,
   Kernel.Arch.UserCopy,
   Kernel.Scheduler,
   Kernel.SelfTest,
   Kernel.TestUserSpace,
+  Kernel.PageQuarantineSelfTest,
   Objects.Manager,
   Debug.Output;
 
@@ -195,43 +194,6 @@ begin
     ReportPassed('user copies with SMAP/PAN on')
   else
     ReportPassed('user copies (the processor has no SMAP/PAN)');
-end;
-
-{ --- Physical page quarantine -------------------------------------------- }
-
-procedure TestPhysicalPageQuarantine;
-const
-  DamagedOffset = 100;
-var
-  Page: TPhysicalAddress;
-  Filler: TPhysicalAddress;
-  Count: QWord;
-begin
-  if KernelHeapCheckLevel <> HeapChecksQuarantine then
-  begin
-    WriteSkipped('freed physical pages filled and held back', 'no "heapchecks"');
-    Exit;
-  end;
-  Page := AllocatePhysicalPage(PageUsageGeneral);
-  Check(Page <> 0, 'no physical page for the quarantine test');
-  FreePhysicalPage(Page);
-  Check(PageUsageOf(Page) = PageUsageQuarantined, 'a freed physical page was not held back');
-  Check(QuarantinedPageDamage(Page) = NoDamage, 'a freed physical page was not filled');
-  PByte(PhysicalToVirtual(Page))[DamagedOffset] := 0;
-  Check(QuarantinedPageDamage(Page) = DamagedOffset, 'a write into a freed physical page was not found');
-  PByte(PhysicalToVirtual(Page))[DamagedOffset] := PageFreeFill;
-  { As many frees again push it out of the ring, checked, to the free
-    list. }
-  Count := 0;
-  while Count < PageQuarantineCapacity do
-  begin
-    Filler := AllocatePhysicalPage(PageUsageGeneral);
-    Check(Filler <> 0, 'no physical page for the quarantine test');
-    FreePhysicalPage(Filler);
-    Inc(Count);
-  end;
-  Check(PageUsageOf(Page) <> PageUsageQuarantined, 'a physical page stayed in the quarantine');
-  ReportPassed('freed physical pages filled, held back and checked');
 end;
 
 { --- Reference counts ---------------------------------------------------- }
