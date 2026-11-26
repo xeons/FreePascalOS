@@ -238,10 +238,28 @@ begin
   DoCall:
     { Callee is called with its frame at ArgumentBase; P is the call. }
     Dec(Store.InterruptCountdown);
-    if (Store.InterruptCountdown <= 0) and Store.InterruptRequested then
+    if Store.InterruptCountdown <= 0 then
     begin
-      TrapKind := tkInterrupted;
-      goto Trapped;
+      { The hook runs with this frame recorded (its safepoint is the call). }
+      if not Store.PushFrame(Func, (PtrUInt(P) - PtrUInt(CodeStart)) div SizeOf(TCodeInstruction) + 1, Base) then
+      begin
+        TrapKind := tkCallStackExhausted;
+        goto Trapped;
+      end;
+      Store.StackTop := Base + Code.FrameSlots;
+      if Store.InterruptRequested then
+      begin
+        Dec(Store.FrameCount);
+        TrapKind := tkInterrupted;
+        goto Trapped;
+      end;
+      Dec(Store.FrameCount);
+      S := @Store.Stack[Base];
+      if Instance.DefaultMemory <> nil then
+      begin
+        MemoryBase := Instance.DefaultMemory.Data;
+        MemoryLength := Instance.DefaultMemory.ByteLength;
+      end;
     end;
     if Callee.Code = nil then
     begin
@@ -319,6 +337,11 @@ begin
     end;
     Dec(Store.FrameCount);
     S := @Store.Stack[Base];
+    if Instance.DefaultMemory <> nil then
+    begin
+      MemoryBase := Instance.DefaultMemory.Data;
+      MemoryLength := Instance.DefaultMemory.ByteLength;
+    end;
     P := @CodeStart[Target];
     Continue;
   end;
