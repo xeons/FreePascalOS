@@ -120,6 +120,7 @@ uses
   Processes.Signals,
   { Signals and timers (240-249). }
   Processes.SignalWaits,
+  Processes.SignalSending,
   Processes.AlternateSignalStacks,
   Processes.PosixTimers,
   Processes.ProcessorClocks,

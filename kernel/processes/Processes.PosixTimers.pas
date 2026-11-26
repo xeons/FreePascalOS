@@ -109,12 +109,12 @@ uses
   Processes.Signals,
   Processes.SignalQueue,
   Processes.ProcessorClocks,
+  Processes.TimerSchedules,
   Processes.UserAccess;
 
 const
   IntervalTimerSlots = 3;
   TimerSlotCount = MaximumPosixTimers + IntervalTimerSlots;
-  HighestOverrun = High(LongInt);
 
 type
   TTimerClock = (TimerClockUptime, TimerClockProcessTime, TimerClockProcessUserTime, TimerClockThreadTime);
@@ -173,35 +173,6 @@ end;
 function IsProcessorClock(Clock: TTimerClock): Boolean;
 begin
   Result := Clock <> TimerClockUptime;
-end;
-
-{ --- Schedules ------------------------------------------------------------ }
-
-{ After an expiry due at DueTime, seen at Now: the next due time on the
-  timer's schedule and how many periods passed unseen. }
-function NextDueTime(DueTime, Interval, Now: QWord; out Missed: QWord): QWord;
-var
-  Late: QWord;
-begin
-  Missed := 0;
-  if DueTime > High(QWord) - Interval then
-    Exit(High(QWord));
-  Result := DueTime + Interval;
-  if Result > Now then
-    Exit;
-  Late := (Now - Result) div Interval + 1;
-  Missed := Late;
-  if Late > (High(QWord) - Result) div Interval then
-    Exit(High(QWord));
-  Result := Result + Late * Interval;
-end;
-
-{ Adds Count to an overrun, which stops at HighestOverrun. }
-function AddOverrun(Overrun, Count: QWord): QWord;
-begin
-  Result := Overrun + Count;
-  if (Result < Overrun) or (Result > HighestOverrun) then
-    Result := HighestOverrun;
 end;
 
 { --- Doing what a timer does ---------------------------------------------- }

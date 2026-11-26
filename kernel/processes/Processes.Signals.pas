@@ -89,6 +89,9 @@ function EndRequestTakenAsSignalLocked(Process: PProcess; Reason: LongWord; Send
 function SignalOfEndReason(Reason: LongWord): LongInt;
 
 function SignalBit(Signal: LongInt): QWord;
+{ The default action of Signal is to stop the process (SIGSTOP, SIGTSTP,
+  SIGTTIN, SIGTTOU). }
+function SignalStopsByDefault(Signal: LongInt): Boolean;
 { Takes the lowest signal of Allowed that waits for Thread (sent to it,
   or to its process), with its information; 0 if none. }
 function TakeSignal(Process: PProcess; Thread: PThread; Allowed: QWord;
@@ -111,9 +114,6 @@ procedure ResetSignalHandlersForExec(Process: PProcess);
 procedure DiscardQueuedSignals(Process: PProcess);
 
 function PerformSetSignalDispatcher(Address: QWord): Int64;
-function PerformSendSignal(Target: Int64; Signal: QWord): Int64;
-{ CallQueueSignal (sigqueue). }
-function PerformQueueSignal(Target: Int64; Signal: QWord; Value: Int64): Int64;
 function PerformSetSignalMask(How, MaskAddress, OldMaskAddress: QWord): Int64;
 function PerformSetSignalDisposition(Signal, Disposition, HandlerMask, Flags: QWord): Int64;
 function PerformReturnFromSignal(Frame: PTrapFrame; RecordAddress: QWord): LongInt;
@@ -139,6 +139,7 @@ uses
   Processes.AlternateSignalStacks,
   Processes.SystemCallRestart,
   Processes.PosixTimers,
+  Processes.TimerSchedules,
   Processes.Arch.UserContext;
 
 const
@@ -147,8 +148,6 @@ const
   { How long a sigsuspend waits between looks (it is woken by the alert
     a signal brings). }
   SuspendSliceMilliseconds = 60000;
-  { The most an overrun counts (DELAYTIMER_MAX). }
-  HighestOverrun = High(LongInt);
 
 type
   TDefaultAction = (ActionTerminate, ActionIgnore, ActionStop, ActionContinue);
@@ -172,6 +171,11 @@ begin
   else
     Result := ActionTerminate;
   end;
+end;
+
+function SignalStopsByDefault(Signal: LongInt): Boolean;
+begin
+  Result := DefaultActionOf(Signal) = ActionStop;
 end;
 
 function IsRealTime(Signal: LongInt): Boolean;
@@ -390,11 +394,9 @@ begin
     Exit;
   PreviousLevel := AcquireSpinLock(Process^.Posix.SignalLock);
   Appended := not Entry^.IsQueued;
-  Overrun := QWord(Entry^.Information.Overrun) + Missed;
+  Overrun := AddOverrun(Entry^.Information.Overrun, Missed);
   if not Appended then
-    Inc(Overrun);
-  if Overrun > HighestOverrun then
-    Overrun := HighestOverrun;
+    Overrun := AddOverrun(Overrun, 1);
   Entry^.Information.Overrun := LongWord(Overrun);
   if Appended then
   begin
@@ -675,135 +677,6 @@ begin
     Exit(Failure(ErrorInvalidArgument));
   CurrentProcess^.Posix.SignalDispatcher := Address;
   Result := 0;
-end;
-
-{ --- kill and sigqueue ------------------------------------------------------ }
-
-{ What to do with each process a kill reaches. }
-type
-  TSignalRequest = record
-    Caller: PProcess;
-    Information: TAbiSignalInformation;
-    Target: Int64;
-    Count: Integer;
-    Denied: Integer;
-    Full: Integer;
-  end;
-  PSignalRequest = ^TSignalRequest;
-
-function TargetMatches(Process: PProcess; const Request: TSignalRequest): Boolean;
-begin
-  if Request.Target > 0 then
-    Result := Process^.ProcessId = QWord(Request.Target)
-  else if Request.Target = 0 then
-    Result := Process^.GroupId = Request.Caller^.GroupId
-  else if Request.Target = -1 then
-    Result := (Process <> Request.Caller) and not Process^.NeverEndForMemory
-  else
-    Result := Process^.GroupId = QWord(-Request.Target);
-end;
-
-procedure PostRequested(Process: PProcess; Request: PSignalRequest);
-begin
-  if PostSignalWithInformationLocked(Process, Request^.Information) <> ErrorNone then
-    Inc(Request^.Full);
-end;
-
-procedure SignalVisitedProcess(Process: PProcess; Context: Pointer);
-var
-  Request: PSignalRequest;
-  Signal: LongInt;
-begin
-  Request := PSignalRequest(Context);
-  if not Process^.IsUserProcess or Process^.HasExited or not TargetMatches(Process, Request^) then
-    Exit;
-  if not MayControlProcess(Request^.Caller, Process) then
-  begin
-    Inc(Request^.Denied);
-    Exit;
-  end;
-  Inc(Request^.Count);
-  Signal := LongInt(Request^.Information.Signal);
-  if Signal = 0 then
-    Exit;
-  { Each process the walk reaches is handled by its own dispositions:
-    SIGSTOP always stops, SIGCONT continues (and is delivered), and the
-    other stopping signals stop only where their action is the default
-    one, are delivered where they are handled and do nothing where they
-    are ignored. }
-  if Signal = SignalStop then
-    StopProcessLocked(Process)
-  else if Signal = SignalContinue then
-  begin
-    ContinueProcessLocked(Process);
-    PostRequested(Process, Request);
-  end
-  else if DefaultActionOf(Signal) = ActionStop then
-  begin
-    if Process^.Posix.Dispositions[Signal] = SignalDispositionDefault then
-      StopProcessLocked(Process)
-    else if Process^.Posix.Dispositions[Signal] = SignalDispositionHandle then
-      PostRequested(Process, Request);
-  end
-  else
-    PostRequested(Process, Request);
-end;
-
-function SendRequest(var Request: TSignalRequest): Int64;
-begin
-  Request.Count := 0;
-  Request.Denied := 0;
-  Request.Full := 0;
-  LockProcessRegistry;
-  VisitRunningProcessesLocked(@SignalVisitedProcess, @Request);
-  UnlockProcessRegistry;
-  if Request.Count = 0 then
-  begin
-    if Request.Denied > 0 then
-      Exit(Failure(ErrorNotPermitted));
-    Exit(Failure(ErrorNoSuchProcess));
-  end;
-  if Request.Full = Request.Count then
-    Exit(Failure(ErrorWouldBlock));
-  Result := 0;
-end;
-
-function NewRequest(Target: Int64; Signal: QWord; Code: LongWord; Value: Int64): TSignalRequest;
-begin
-  ZeroMemory(@Result, SizeOf(Result));
-  Result.Caller := CurrentProcess;
-  Result.Target := Target;
-  Result.Information.Signal := LongWord(Signal);
-  Result.Information.Code := Code;
-  Result.Information.SenderProcessId := Int64(Result.Caller^.ProcessId);
-  Result.Information.SenderUserId := Result.Caller^.Credentials.RealUserId;
-  Result.Information.Value := Value;
-end;
-
-function PerformSendSignal(Target: Int64; Signal: QWord): Int64;
-var
-  Request: TSignalRequest;
-begin
-  if Signal > HighestSignal then
-    Exit(Failure(ErrorInvalidArgument));
-  { No group has the negation of the lowest Int64 for its id. }
-  if Target = Low(Int64) then
-    Exit(Failure(ErrorNoSuchProcess));
-  Request := NewRequest(Target, Signal, SignalFromProcess, 0);
-  Result := SendRequest(Request);
-end;
-
-function PerformQueueSignal(Target: Int64; Signal: QWord; Value: Int64): Int64;
-var
-  Request: TSignalRequest;
-begin
-  if Signal > HighestSignal then
-    Exit(Failure(ErrorInvalidArgument));
-  { sigqueue reaches one process. }
-  if Target <= 0 then
-    Exit(Failure(ErrorNoSuchProcess));
-  Request := NewRequest(Target, Signal, SignalFromQueue, Value);
-  Result := SendRequest(Request);
 end;
 
 { --- Masks and dispositions ------------------------------------------------ }
