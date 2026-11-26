@@ -32,6 +32,11 @@ begin
   Result := (FNamespaceId = NamespaceHtml) or (Web.Namespaces.NamespaceUri(FNamespaceId) = AtomHtmlNamespace);
 end;
 
+function TElement.IsSvg: Boolean;
+begin
+  Result := (FNamespaceId = NamespaceSvg) or (Web.Namespaces.NamespaceUri(FNamespaceId) = AtomSvgNamespace);
+end;
+
 function TElement.IsHtmlElement(Name: TAtom): Boolean;
 begin
   Result := (FLocalName = Name) and IsHtml;

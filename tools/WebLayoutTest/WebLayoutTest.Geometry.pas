@@ -66,6 +66,7 @@ var
   X, Y, Width, Height, Unscrolled: Double;
   Rects: TScriptRectArray;
   Found: Boolean;
+  Prefixed: TElement;
 begin
   Layout := LayoutText(GeometryPage, 800, Document);
   ScriptLayout := TDocumentScriptLayout.Create;
@@ -114,6 +115,16 @@ begin
     Check(Found and (Abs(X + 200) < 0.5) and (Abs(Y - (Unscrolled - 100)) < 0.5) and (Abs(Height - 300) < 0.5),
       'geometry: an inline-block''s percentage top, left and height resolve against a definite box (' +
       FloatToStr(X) + ', ' + FloatToStr(Y - Unscrolled) + ', ' + FloatToStr(Height) + ')');
+    { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
+      height attribute sizes it. }
+    Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');
+    Prefixed.SetAttribute('height', '50');
+    Prefixed.SetAttribute('id', 'prefixed');
+    Document.Body.AppendChild(Prefixed);
+    Layout.Update;
+    Found := ScriptLayout.BorderBox(Document.GetElementById('prefixed'), X, Y, Width, Height);
+    Check(Found and (Abs(Height - 50) < 0.5), 'geometry: a prefixed svg:svg takes its height attribute (' +
+      FloatToStr(Height) + ')');
   finally
     ScriptLayout.Free;
     FreeLayout(Layout, Document);

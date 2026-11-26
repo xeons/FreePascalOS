@@ -620,7 +620,7 @@ begin
   if not Element.HasAttributes then
     Exit;
   Parent := Element.ParentElement;
-  Outermost := (NameOfAtom(Element.LocalNameAtom) = 'svg') and ((Parent = nil) or (Parent.NamespaceId <> NamespaceSvg));
+  Outermost := (NameOfAtom(Element.LocalNameAtom) = 'svg') and ((Parent = nil) or (not Parent.IsSvg));
   Text := '';
   for Index := 0 to Element.AttributeCount - 1 do
   begin
@@ -646,7 +646,7 @@ var
   Name: TAtom;
 begin
   Result := nil;
-  if Element.NamespaceId = NamespaceSvg then
+  if Element.IsSvg then
     Exit(BuildSvgHints(Element));
   if not Element.IsHtml then
     Exit;
