@@ -41,8 +41,11 @@
     makes a new one over the memory's new data; a resizable one
     (toResizableBuffer) follows the memory instead, and its resize()
     grows the memory by whole pages (ResizeBuffer).
-  - Per window (realm): the prototypes and error constructors its
-    platform script registered, for objects and errors the engine makes.
+  - Per realm that has a WebAssembly namespace (a window, a frame, a
+    worker's global scope: platform/57-webassembly.js runs in each and
+    registers it): the prototypes and error constructors of that realm,
+    for the objects and errors the engine makes there. Natives find
+    their agent through their realm (AgentOfRealm).
 
   The agent is a root provider of the heap: it marks those objects, the
   externrefs the store holds (Store.EnumerateReferences: tables,
@@ -75,7 +78,7 @@ uses
   Web.Bindings.Context;
 
 type
-  { The objects a window's platform script registers. }
+  { The objects a realm's platform script registers. }
   TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal);
   TWasmErrorKind = (weCompileError, weLinkError, weRuntimeError);
 
@@ -116,14 +119,18 @@ type
     { A resizable buffer's resize(): the memory grows to NewByteLength,
       a whole number of pages no smaller than now. }
     function ResizeBuffer(Buffer: TJsArrayBuffer; NewByteLength: SizeInt): Boolean;
-    { What Context's platform script registered (made empty if not). }
-    function RealmData(Context: TBindingContext): TWasmRealmData;
-    procedure ForgetRealm(Context: TBindingContext);
+    { What the realm's platform script registered (made empty if not). }
+    function RealmData(Realm: TJsRealm): TWasmRealmData;
+    procedure ForgetRealm(Realm: TJsRealm);
     property Context: TBindingContext read FContext;
   end;
 
 { The agent of Context's runtime, made if it has none. }
 function AgentOf(Context: TBindingContext): TWasmAgent;
+{ A realm of Context's runtime gets a WebAssembly namespace: its data. }
+function RegisterRealm(Realm: TJsRealm; Context: TBindingContext): TWasmRealmData;
+{ The agent of a registered realm (nil: none). }
+function AgentOfRealm(Realm: TJsRealm): TWasmAgent;
 { The agent of a store object's store. }
 function AgentOfStore(Store: TWasmStore): TWasmAgent; inline;
 
@@ -136,6 +143,8 @@ uses
 var
   { One per top-level context. }
   Agents: array of TWasmAgent;
+  { Realm to agent, for the realms with a WebAssembly namespace. }
+  RealmAgents: TIdMap;
 
 function AgentOfStore(Store: TWasmStore): TWasmAgent;
 begin
@@ -156,12 +165,31 @@ begin
   Agents[High(Agents)] := Result;
 end;
 
+function RegisterRealm(Realm: TJsRealm; Context: TBindingContext): TWasmRealmData;
+var
+  Agent: TWasmAgent;
+begin
+  Agent := AgentOf(Context);
+  RealmAgents.Add(QWord(PtrUInt(Realm)), Agent);
+  Result := Agent.RealmData(Realm);
+end;
+
+function AgentOfRealm(Realm: TJsRealm): TWasmAgent;
+var
+  Found: TObject;
+begin
+  if RealmAgents.TryGetValue(QWord(PtrUInt(Realm)), Found) then
+    Result := TWasmAgent(Found)
+  else
+    Result := nil;
+end;
+
 { A context going: a top-level one takes its agent along (its engine,
-  freed next, then releases what its objects held), a frame its
-  registered objects. }
+  freed next, then releases what its objects held), a frame its realm's
+  and its workers' registered objects. }
 procedure ContextGoing(Context: TBindingContext);
 var
-  Index: Integer;
+  Index, Worker: Integer;
   Agent: TWasmAgent;
 begin
   for Index := 0 to High(Agents) do
@@ -175,7 +203,11 @@ begin
       Exit;
     end;
     if Context.TopContext = Agent.FContext then
-      Agent.ForgetRealm(Context);
+    begin
+      Agent.ForgetRealm(Context.Engine.Realm);
+      for Worker := 0 to High(Context.WorkerEngines) do
+        Agent.ForgetRealm(Context.WorkerEngines[Worker].Realm);
+    end;
   end;
 end;
 
@@ -196,6 +228,7 @@ end;
 destructor TWasmAgent.Destroy;
 var
   Data: TObjectArray;
+  Keys: TIdArray;
   Index: Integer;
 begin
   FHeap.RemoveRootProvider(@MarkRoots);
@@ -206,6 +239,9 @@ begin
     TJsArrayBuffer(Data[Index]).HostDetachOnly := False;
     TJsArrayBuffer(Data[Index]).Detach;
   end;
+  Keys := FRealms.Keys;
+  for Index := 0 to High(Keys) do
+    RealmAgents.Remove(Keys[Index]);
   Data := FRealms.Values;
   for Index := 0 to High(Data) do
     Data[Index].Free;
@@ -344,26 +380,28 @@ begin
   Result := Memory.Grow((QWord(NewByteLength) - Memory.ByteLength) div WasmPageSize) >= 0;
 end;
 
-function TWasmAgent.RealmData(Context: TBindingContext): TWasmRealmData;
+function TWasmAgent.RealmData(Realm: TJsRealm): TWasmRealmData;
 var
   Found: TObject;
 begin
-  if FRealms.TryGetValue(QWord(PtrUInt(Context)), Found) then
+  if FRealms.TryGetValue(QWord(PtrUInt(Realm)), Found) then
     Exit(TWasmRealmData(Found));
   Result := TWasmRealmData.Create;
-  FRealms.Add(QWord(PtrUInt(Context)), Result);
+  FRealms.Add(QWord(PtrUInt(Realm)), Result);
 end;
 
-procedure TWasmAgent.ForgetRealm(Context: TBindingContext);
+procedure TWasmAgent.ForgetRealm(Realm: TJsRealm);
 var
   Found: TObject;
 begin
-  if not FRealms.TryGetValue(QWord(PtrUInt(Context)), Found) then
+  RealmAgents.Remove(QWord(PtrUInt(Realm)));
+  if not FRealms.TryGetValue(QWord(PtrUInt(Realm)), Found) then
     Exit;
-  FRealms.Remove(QWord(PtrUInt(Context)));
+  FRealms.Remove(QWord(PtrUInt(Realm)));
   Found.Free;
 end;
 
 initialization
+  RealmAgents := TIdMap.Create;
   AddContextGoingHook(@ContextGoing);
 end.

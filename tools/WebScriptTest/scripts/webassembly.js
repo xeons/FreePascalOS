@@ -289,8 +289,13 @@ var workerResult = null;
 var workerSource = "onmessage = function (event) {" +
   "  var instance = new WebAssembly.Instance(event.data.module," +
   "    { env: { callback: function (x) { return x; }, seed: 1 } });" +
+  "  var ownErrors = false;" +
+  "  try { new WebAssembly.Memory(); } catch (e) { ownErrors = e instanceof TypeError; }" +
+  "  try { new WebAssembly.Module(new Uint8Array(1)); } catch (e) {" +
+  "    ownErrors = ownErrors && e instanceof WebAssembly.CompileError && e instanceof Error; }" +
   "  postMessage([event.data.module instanceof WebAssembly.Module, instance.exports.add(3, 4)," +
-  "    typeof WebAssembly.compileStreaming]);" +
+  "    typeof WebAssembly.compileStreaming, ownErrors," +
+  "    Object.getOwnPropertyDescriptor(self, 'WebAssembly').enumerable]);" +
   "};";
 var worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" })));
 worker.onmessage = function (event) { workerResult = event.data; };
@@ -330,4 +335,6 @@ function after() {
   check("instantiateStreaming(fetch())", fromFetch !== null && fromFetch.instance.exports.add(20, 22) === 42);
   check("a worker instantiates a Module it was sent", workerResult !== null && workerResult[0] === true &&
     workerResult[1] === 7 && workerResult[2] === "function");
+  check("a worker's WebAssembly is its own (its realm's errors, a namespace property)", workerResult !== null &&
+    workerResult[3] === true && workerResult[4] === false && WebAssembly !== undefined);
 }

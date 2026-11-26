@@ -452,8 +452,51 @@
 
   // structuredClone and postMessage within the agent: a new Module object of
   // the same compiled module.
+  let moduleClones = 0;
   if (internal.cloneHooks === undefined) internal.cloneHooks = [];
   internal.cloneHooks.push(function (value) {
-    return natives.wasmIsModule(value) ? natives.wasmCloneModule(value) : undefined;
+    if (!natives.wasmIsModule(value)) return undefined;
+    moduleClones++;
+    return natives.wasmCloneModule(value);
   });
+  // How many Modules were cloned so far (a message for a worker that has
+  // some is adopted into the worker's realm before it is delivered).
+  internal.wasmModuleClones = function () {
+    return moduleClones;
+  };
+  // A cloned value (the window's structured clone made it) given to the
+  // realm of RealmNatives (a worker's scope, natives.wasmInstall): its
+  // Module objects made again there, so they are that realm's Modules.
+  internal.adoptModules = function (value, realmNatives) {
+    const memory = new Map();
+    function adopt(item) {
+      if (item === null || typeof item !== "object") return item;
+      if (memory.has(item)) return memory.get(item);
+      if (natives.wasmIsModule(item)) {
+        const made = realmNatives.wasmCloneModule(item);
+        memory.set(item, made);
+        return made;
+      }
+      memory.set(item, item);
+      if (item instanceof Map) {
+        for (const [key, entry] of Array.from(item)) {
+          const newKey = adopt(key);
+          if (newKey !== key) item.delete(key);
+          item.set(newKey, adopt(entry));
+        }
+      } else if (item instanceof Set) {
+        for (const entry of Array.from(item)) {
+          const newEntry = adopt(entry);
+          if (newEntry !== entry) {
+            item.delete(entry);
+            item.add(newEntry);
+          }
+        }
+      } else if (Array.isArray(item) || Object.getPrototypeOf(item) === Object.prototype) {
+        for (const key of Object.keys(item)) item[key] = adopt(item[key]);
+      }
+      return item;
+    }
+    return adopt(value);
+  };
 })

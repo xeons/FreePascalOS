@@ -153,13 +153,10 @@ end;
 function RegisteredPrototype(R: TJsRealm; Kind: TWasmObjectKind): TJsObject;
 const
   PrototypeKinds: array[TWasmObjectKind] of TWasmPrototypeKind = (wpModule, wpMemory, wpTable, wpGlobal);
-var
-  Context: TBindingContext;
 begin
   Result := nil;
-  Context := ContextOfRealm(R);
-  if Context <> nil then
-    Result := AgentOf(Context).RealmData(Context).Prototypes[PrototypeKinds[Kind]];
+  if AgentOfRealm(R) <> nil then
+    Result := AgentOfRealm(R).RealmData(R).Prototypes[PrototypeKinds[Kind]];
   if Result = nil then
     Result := R.Intrinsics[inObjectPrototype];
 end;
@@ -184,7 +181,7 @@ var
   Made: TJsHostObject;
 begin
   Made := NewHostObject(R, Kind, StoreObject, Prototype);
-  AgentOf(ContextOfRealm(R)).SetWrapper(StoreObject, Made);
+  AgentOfRealm(R).SetWrapper(StoreObject, Made);
   Result := JsObjectValue(Made);
 end;
 
@@ -192,7 +189,7 @@ function StoreObjectValue(R: TJsRealm; Kind: TWasmObjectKind; StoreObject: TObje
 var
   Existing: TJsObject;
 begin
-  Existing := AgentOf(ContextOfRealm(R)).WrapperOf(StoreObject);
+  Existing := AgentOfRealm(R).WrapperOf(StoreObject);
   if Existing <> nil then
     Exit(JsObjectValue(Existing));
   Result := NewStoreObject(R, Kind, StoreObject, nil);
@@ -222,7 +219,7 @@ function MemoryBufferValue(R: TJsRealm; Memory: TWasmMemory): TJsValue;
 var
   Agent: TWasmAgent;
 begin
-  Agent := AgentOf(ContextOfRealm(R));
+  Agent := AgentOfRealm(R);
   if Agent.BufferOf(Memory) <> nil then
     Exit(JsObjectValue(Agent.BufferOf(Memory)));
   Result := NewMemoryBuffer(R, Agent, Memory, False);
@@ -232,7 +229,7 @@ function MemoryBufferOfKind(R: TJsRealm; Memory: TWasmMemory; Resizable: Boolean
 var
   Agent: TWasmAgent;
 begin
-  Agent := AgentOf(ContextOfRealm(R));
+  Agent := AgentOfRealm(R);
   if Agent.BufferOf(Memory) <> nil then
   begin
     if Agent.BufferOf(Memory).Resizable = Resizable then
@@ -256,14 +253,12 @@ end;
 
 function ThrowWasmErrorOfKind(R: TJsRealm; Kind: TWasmErrorKind; const Message: string): TJsValue;
 var
-  Context: TBindingContext;
   Constructor_: TJsObject;
   Argument, Made: TJsValue;
 begin
   Constructor_ := nil;
-  Context := ContextOfRealm(R);
-  if Context <> nil then
-    Constructor_ := AgentOf(Context).RealmData(Context).ErrorConstructors[Kind];
+  if AgentOfRealm(R) <> nil then
+    Constructor_ := AgentOfRealm(R).RealmData(R).ErrorConstructors[Kind];
   if Constructor_ = nil then
     Exit(R.ThrowError(ekError, Message));
   Argument := R.NewString(Message);

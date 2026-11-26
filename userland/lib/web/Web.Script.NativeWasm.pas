@@ -24,8 +24,13 @@
 
     wasmRegister(moduleProto, memoryProto, tableProto, globalProto,
       CompileError, LinkError, RuntimeError)
-                                     what this window's objects and
+                                     what this realm's objects and
                                      errors are made with
+    wasmInstall(scope)               a worker's global scope (a realm of
+                                     this window's runtime) gets a
+                                     WebAssembly namespace of its own:
+                                     the platform script runs there with
+                                     natives of that realm (returned)
     wasmCheck(value, kind)           TypeError unless value is a Module,
                                      Memory, Table or Global (kind 0..3)
     wasmCopyBytes(source)            an ArrayBuffer copy of a BufferSource
@@ -66,9 +71,13 @@ interface
 
 uses
   Js.Objects,
+  Js.Engine,
   Web.Bindings.Context;
 
 procedure DefineWasmNatives(Context: TBindingContext; Natives: TJsObject);
+{ The natives of another realm of Context's runtime (a worker's scope):
+  functions of that realm, so what they make and throw is its. }
+procedure DefineWasmNativesIn(Engine: TJsEngine; Context: TBindingContext; Natives: TJsObject);
 
 implementation
 
@@ -89,6 +98,7 @@ uses
   Wasm.Api,
   Web.Fetch.Requests,
   Web.Fetch.CspChecks,
+  Web.Script.PlatformSources,
   Web.Script.WasmAgents,
   Web.Script.WasmObjects,
   Web.Script.WasmValues;
@@ -217,12 +227,49 @@ var
   Kind: TWasmPrototypeKind;
   ErrorKind: TWasmErrorKind;
 begin
-  Data := AgentOf(Context).RealmData(Context);
+  Data := RegisterRealm(R, Context);
   for Kind := Low(Kind) to High(Kind) do
     Data.Prototypes[Kind] := ArgPrototype(Args, ArgCount, Ord(Kind));
   for ErrorKind := Low(ErrorKind) to High(ErrorKind) do
     Data.ErrorConstructors[ErrorKind] := ArgPrototype(Args, ArgCount, 4 + Ord(ErrorKind));
   Result := JsUndefined;
+end;
+
+{ The platform script's WebAssembly namespace in a worker's scope. }
+function NativeInstall(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
+const
+  ScriptName = '57-webassembly.js';
+var
+  Scope, Factory, WindowInternal: TJsValue;
+  Engine: TJsEngine;
+  Natives, Internal: TJsObject;
+  Index, Script: Integer;
+begin
+  Result := JsUndefined;
+  Scope := Arg(Args, ArgCount, 0);
+  Engine := nil;
+  for Index := 0 to High(Context.WorkerEngines) do
+    if JsObjectValue(Context.WorkerEngines[Index].GlobalObject) = Scope then
+      Engine := Context.WorkerEngines[Index];
+  Script := -1;
+  for Index := 0 to PlatformScriptCount - 1 do
+    if PlatformScriptNames[Index] = ScriptName then
+      Script := Index;
+  if (Engine = nil) or (Script < 0) then
+    Exit;
+  Natives := Engine.NewObject;
+  DefineWasmNativesIn(Engine, Context, Natives);
+  { The window's helpers (tasks, the Response internals) through the
+    prototype; clone hooks of its own, which nothing calls: structured
+    clone is the window's. }
+  WindowInternal := Context.Singleton(SingletonPlatformInternal);
+  Internal := Engine.NewObject;
+  if JsIsObject(WindowInternal) then
+    Internal.Proto := JsAsObject(WindowInternal);
+  Engine.SetProperty(JsObjectValue(Internal), 'cloneHooks', Engine.NewArray([]));
+  Factory := Engine.EvaluateBuiltin(PlatformScriptSource(Script), 'platform/' + ScriptName);
+  Engine.Call(Factory, JsUndefined, [JsObjectValue(Natives), Scope, JsObjectValue(Internal)]);
+  Result := JsObjectValue(Natives);
 end;
 
 function NativeCheck(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer): TJsValue;
@@ -747,15 +794,16 @@ begin
 end;
 
 const
-  NativeCount = 28;
+  NativeCount = 29;
   NativeNames: array[0..NativeCount - 1] of string = (
     'wasmRegister', 'wasmCheck', 'wasmCopyBytes', 'wasmValidate', 'wasmCompile', 'wasmModuleExports',
     'wasmModuleImports', 'wasmCustomSections', 'wasmImportKinds', 'wasmInstantiate', 'wasmCloneModule',
     'wasmNewMemory', 'wasmMemoryBuffer', 'wasmMemoryGrow', 'wasmNewTable', 'wasmTableLength', 'wasmTableGet',
     'wasmTableSet', 'wasmTableGrow', 'wasmNewGlobal', 'wasmGlobalGet', 'wasmGlobalSet', 'wasmIsModule',
-    'wasmIsMemory', 'wasmIsTable', 'wasmIsGlobal', 'wasmMemoryFixedBuffer', 'wasmMemoryResizableBuffer');
+    'wasmIsMemory', 'wasmIsTable', 'wasmIsGlobal', 'wasmMemoryFixedBuffer', 'wasmMemoryResizableBuffer',
+    'wasmInstall');
   NativeLengths: array[0..NativeCount - 1] of Integer = (7, 2, 1, 1, 2, 1, 1, 2, 1, 2, 1, 4, 1, 2, 6, 1, 2, 4, 4,
-    5, 1, 2, 1, 1, 1, 1, 1, 1);
+    5, 1, 2, 1, 1, 1, 1, 1, 1, 1);
 
 function NativeIsKind(R: TJsRealm; Context: TBindingContext; Args: PJsValueArray; ArgCount: Integer;
   Kind: TWasmObjectKind): TJsValue; inline;
@@ -789,14 +837,22 @@ const
     @NativeModuleImports, @NativeCustomSections, @NativeImportKinds, @NativeInstantiate, @NativeCloneModule,
     @NativeNewMemory, @NativeMemoryBuffer, @NativeMemoryGrow, @NativeNewTable, @NativeTableLength, @NativeTableGet,
     @NativeTableSet, @NativeTableGrow, @NativeNewGlobal, @NativeGlobalGet, @NativeGlobalSet, @NativeIsModule,
-    @NativeIsMemory, @NativeIsTable, @NativeIsGlobal, @NativeMemoryFixedBuffer, @NativeMemoryResizableBuffer);
+    @NativeIsMemory, @NativeIsTable, @NativeIsGlobal, @NativeMemoryFixedBuffer, @NativeMemoryResizableBuffer,
+    @NativeInstall);
 
-{ Every native: a Pascal exception becomes a script error. }
+{ Every native: a Pascal exception becomes a script error. A worker
+  realm's natives carry their window's context. }
 function NativeEntry(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+var
+  Context: TBindingContext;
 begin
+  if Callee.HostData <> nil then
+    Context := TBindingContext(Callee.HostData)
+  else
+    Context := ContextOfRealm(R);
   try
-    Result := NativeRoutines[Callee.Magic](R, ContextOfRealm(R), Args, ArgCount);
+    Result := NativeRoutines[Callee.Magic](R, Context, Args, ArgCount);
   except
     on Error: Exception do
       Result := ThrowWasmError(R, Error);
@@ -809,6 +865,15 @@ var
 begin
   for Index := 0 to NativeCount - 1 do
     Context.Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index);
+end;
+
+procedure DefineWasmNativesIn(Engine: TJsEngine; Context: TBindingContext; Natives: TJsObject);
+var
+  Index: Integer;
+begin
+  for Index := 0 to NativeCount - 1 do
+    Engine.DefineFunction(Natives, NativeNames[Index], @NativeEntry, NativeLengths[Index], Index).HostData :=
+      Context;
 end;
 
 end.
