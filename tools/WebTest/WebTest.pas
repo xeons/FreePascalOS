@@ -22,8 +22,8 @@
   and byte by byte), the encodings, the DOM (mutation algorithms,
   validity checks, collections, attributes, lifetime), event dispatch,
   serialization, the parser's script hooks, random documents (whole and
-  byte by byte), and the parser's speed and memory per node for a
-  generated document.
+  byte by byte), the parser's speed and memory per node for a
+  generated document, and IndexedDB's storage service.
 
     WebTest <tree construction directory>
 
@@ -42,7 +42,8 @@ uses
   WebTest.Events,
   WebTest.Serialization,
   WebTest.Fuzz,
-  WebTest.Performance;
+  WebTest.Performance,
+  WebTest.IndexedDb;
 
 begin
   if ParamCount >= 1 then
@@ -55,5 +56,6 @@ begin
   RunSerializationTests;
   RunFuzzTests;
   RunPerformanceTests;
+  RunIndexedDbTests;
   FinishChecks('web test');
 end.

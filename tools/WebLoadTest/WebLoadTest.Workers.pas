@@ -29,7 +29,8 @@
     another origin;
   - caches: put, match with Vary, ignoreSearch and ignoreMethod, keys,
     delete, addAll from the site, CacheStorage's match by cacheName,
-    has, delete, and the caches kept through an origin data store;
+    has, delete, and another page seeing them (the Cache API of the
+    storage service, 86-cache-storage.js);
   - service workers: register, install and activate with waitUntil,
     clients.claim and controllerchange, fetch events answered with a
     made response, a cached one, the network after all and a network
@@ -65,7 +66,7 @@ uses
   Web.Script.PageScripting,
   Web.Script.Context,
   Web.Storage.OriginData,
-  Web.Storage.ResponseCaches,
+  Web.IndexedDb.Service,
   Web.Workers.Agents,
   Web.Workers.SharedWorkers,
   Web.Workers.ServiceWorkers,
@@ -93,12 +94,17 @@ type
     function FirstHasMarker: Boolean;
   end;
 
+var
+  TestStorage: TIndexedDbService;
+
 constructor TWorkerPage.Create(Environment: TTestEnvironment; Sink: TResourceSink);
 begin
   inherited Create;
   Navigable := TNavigable.Create(Environment.Fetcher, Sink, DefaultLoadingSettings);
   Executor := TPageScriptExecutor.Create(Navigable);
   Executor.OnConsoleMessage := @ConsoleMessage;
+  { One storage service for every page, as a browser has. }
+  Executor.Environment.IndexedDb := TestStorage;
   Navigable.Executor := Executor;
 end;
 
@@ -305,13 +311,10 @@ var
   Sink: TNullResourceSink;
   Page, Later: TWorkerPage;
   Conditions: TWorkerConditions;
-  Store: TMemoryOriginData;
 begin
   Environment := TTestEnvironment.Create;
   Sink := TNullResourceSink.Create;
   Conditions := TWorkerConditions.Create;
-  Store := TMemoryOriginData.Create;
-  OriginDataBackend := Store;
   try
     Environment.Site.AddRoute('s.test/one.txt', 200, 'Content-Type: text/plain', 'one');
     Environment.Site.AddRoute('s.test/two.txt', 200, 'Content-Type: text/plain', 'two');
@@ -359,7 +362,7 @@ begin
         Page.Output + ')');
       Check(Pos('deleted true false', Page.Output) > 0, 'caches: delete');
       Check(Pos('by name other one one', Page.Output) > 0, 'caches: CacheStorage.match by cacheName and in order');
-      Check(Pos('names c1,c2 true', Page.Output) > 0, 'caches: keys and has');
+      Check(Pos('c1,c2 true', Page.Output) > 0, 'caches: keys (in creation order) and has');
       Check(Pos('storage delete true false', Page.Output) > 0, 'caches: CacheStorage.delete');
       Check(Pos('partial TypeError', Page.Output) > 0, 'caches: a partial response is refused');
       Check(Pos('add failed TypeError', Page.Output) > 0, 'caches: add of a failed request rejects');
@@ -367,22 +370,18 @@ begin
     finally
       Page.Free;
     end;
-    { Everything in memory goes; the store still has the caches. }
-    ForgetAllCaches;
+    { Another page of the origin sees them. }
     Later := TWorkerPage.Create(Environment, Sink);
     try
       Conditions.Pages[0] := Later;
       Later.Navigable.NavigateTo('https://s.test/later.html');
       Finished := Environment.RunUntil(@Conditions.AllHaveMarker);
       Check(Finished and Later.Has('kept one'),
-        'caches: kept through the origin data store (' + Later.Output + ')');
+        'caches: another page sees them (' + Later.Output + ')');
     finally
       Later.Free;
     end;
   finally
-    ForgetAllCaches;
-    OriginDataBackend := nil;
-    Store.Free;
     Conditions.Free;
     Sink.Free;
     Environment.Free;
@@ -551,7 +550,6 @@ begin
     end;
     { Everything in memory goes; the store still has the registration. }
     ResetServiceWorkers;
-    ForgetAllCaches;
     Check(LiveAgentCount = 0, 'service workers: no agent is left (' + IntToStr(LiveAgentCount) + ')');
     Restored := TWorkerPage.Create(Environment, Sink);
     try
@@ -568,7 +566,6 @@ begin
       Trim(AgentConsoleText) + ')');
   finally
     ResetServiceWorkers;
-    ForgetAllCaches;
     AgentConsole := nil;
     OriginDataBackend := nil;
     ConsoleSink.Free;
@@ -621,7 +618,6 @@ begin
     end;
   finally
     ResetServiceWorkers;
-    ForgetAllCaches;
     Conditions.Free;
     Sink.Free;
     Environment.Free;
@@ -630,11 +626,16 @@ end;
 
 procedure RunWorkerTests;
 begin
-  CheckPlatformTests;
-  CheckSharedWorkers;
-  CheckBroadcastChannels;
-  CheckCaches;
-  CheckServiceWorkers;
+  TestStorage := TIndexedDbService.Create('');
+  try
+    CheckPlatformTests;
+    CheckSharedWorkers;
+    CheckBroadcastChannels;
+    CheckCaches;
+    CheckServiceWorkers;
+  finally
+    FreeAndNil(TestStorage);
+  end;
 end;
 
 end.

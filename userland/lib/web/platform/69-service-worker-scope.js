@@ -369,7 +369,7 @@
     state.respondWith.then(function (response) {
       if (!internal.isResponse(response)) throw new TypeError("respondWith: not a Response");
       if (internal.bodyUnusable(response)) throw new TypeError("respondWith: the body is already used");
-      return internal.responseRecord(response);
+      return internal.responseSnapshot(response);
     }).then(function (answer) {
       resolveHandled(undefined);
       natives.swFetchRespond(fetchId, "response", [answer.type, answer.url, answer.status, answer.statusText,

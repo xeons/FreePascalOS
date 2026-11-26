@@ -86,6 +86,7 @@ type
     procedure CancelFetch(Context: TObject; Handle: TObject); override;
     function LoadingContextOf(Context: TObject): TObject; override;
     function IsWorkerAgent: Boolean; override;
+    function SharedStorageBackend: TObject; override;
     { The environment it forwards to (the parent's). }
     property Parent: TScriptEnvironment read FParent;
   end;
@@ -300,6 +301,11 @@ end;
 function TFrameEnvironment.IsWorkerAgent: Boolean;
 begin
   Result := FParent.IsWorkerAgent;
+end;
+
+function TFrameEnvironment.SharedStorageBackend: TObject;
+begin
+  Result := FParent.SharedStorageBackend;
 end;
 
 { Frames }

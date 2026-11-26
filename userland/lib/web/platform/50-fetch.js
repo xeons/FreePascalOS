@@ -558,11 +558,44 @@
     headersState(headers).guard = guard;
   }
 
-  // ---- requests and responses as records (the Cache API's store, a
-  // service worker's fetch event and its answer) ----
+  // For the Cache API (86-cache-storage.js): what a request and a
+  // response are, a response's body bytes, and a response made again
+  // from what was kept.
+  internal.requestRecord = function (request) {
+    const state = requestState(request);
+    return { url: state.url, method: state.method, mode: state.mode, credentials: state.credentials,
+      headers: internal.headerList(state.headers).map(function (entry) { return entry.slice(); }) };
+  };
+  internal.responseRecord = function (response) {
+    const state = responseState(response);
+    return { type: state.type, url: state.url, status: state.status, statusText: state.statusText,
+      redirected: state.redirected, headers: internal.headerList(state.headers).map(function (entry) {
+        return entry.slice();
+      }) };
+  };
+  internal.bodyUnusable = function (object) {
+    const body = bodyOf(object);
+    return body.stream !== null && (internal.streamIsDisturbed(body.stream) || internal.streamIsLocked(body.stream));
+  };
+  internal.readBodyBytes = function (object) {
+    return consume(object, function (bytes) { return bytes; });
+  };
+  internal.makeStoredResponse = function (record, bytes) {
+    const response = new Response(null);
+    responseData.set(response, { type: record.type, url: record.url, status: record.status,
+      statusText: record.statusText, redirected: record.redirected,
+      headers: headersWithGuard(record.headers.map(function (entry) { return entry.slice(); }), "immutable") });
+    if (nullBodyStatuses.indexOf(record.status) >= 0 || record.type === "error") bodyData.set(response,
+      { stream: null, used: false });
+    else bodyData.set(response, bodyRecord({ bytes: bytes }));
+    return response;
+  };
 
-  // The body of an opaque response: script never reads it, but a cache
-  // keeps it and a service worker hands it to the page that asked.
+  // ---- requests and responses as snapshots (a service worker's fetch
+  // event and its answer) ----
+
+  // The body of an opaque response: script never reads it, but a service
+  // worker hands it to the page that asked.
   const opaqueBodies = new WeakMap();
 
   // A Response made by the engine: Record has type, url, status,
@@ -592,14 +625,10 @@
   internal.isRequest = function (value) {
     return value !== null && typeof value === "object" && requestData.has(value);
   };
-  internal.bodyUnusable = function (object) {
-    const body = bodyOf(object);
-    return body.stream !== null && (internal.streamIsDisturbed(body.stream) || internal.streamIsLocked(body.stream));
-  };
 
   // A promise of Response's record (above), its body read to the end
   // (so the body is used afterwards).
-  internal.responseRecord = function (response) {
+  internal.responseSnapshot = function (response) {
     const state = responseState(response);
     const record = { type: state.type === "default" ? "basic" : state.type, url: state.url, status: state.status,
       statusText: state.statusText, redirected: state.redirected,
@@ -625,7 +654,7 @@
   // A request's record: method, url, headerList, mode, credentials,
   // cache, redirect, referrer, referrerPolicy, integrity, destination,
   // keepalive and bytes (a promise of the body, null for none).
-  internal.requestRecord = function (request) {
+  internal.requestSnapshot = function (request) {
     const state = requestState(request);
     const body = bodyOf(request);
     return { method: state.method, url: state.url,

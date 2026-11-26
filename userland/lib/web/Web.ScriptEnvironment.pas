@@ -50,6 +50,12 @@ uses
   Web.Dom,
   Web.Storage;
 
+const
+  { TScriptEnvironment.IndexedDbAccess }
+  IndexedDbNone = 0;
+  IndexedDbAllowed = 1;
+  IndexedDbDenied = 2;
+
 type
   EScriptEnvironmentUnsupported = class(Exception);
 
@@ -214,6 +220,19 @@ type
       StorageChanged follows a change (a local area is saved soon). }
     function StorageArea(Context: TObject; Session: Boolean): TWebStorageArea; virtual;
     procedure StorageChanged(Context: TObject; Area: TWebStorageArea); virtual;
+    { IndexedDB, the Cache API and navigator.storage (Web.IndexedDb.
+      Service). IndexedDbAccess: IndexedDbNone when the environment has
+      no storage service (the interfaces are not exposed),
+      IndexedDbDenied when the context's origin may not have storage
+      (opaque), IndexedDbAllowed. IndexedDbExecute answers a request
+      for the context's origin; notices for the context come later as
+      natives.onIndexedDbNotice(bytes) in a task. }
+    function IndexedDbAccess(Context: TObject): Integer; virtual;
+    function IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean; virtual;
+    { Queues a task (not a timer, so never clamped) that calls
+      natives.onQueuedTask(TaskId) in Context; False when the
+      environment cannot (the script uses a timer). }
+    function QueueScriptTask(Context: TObject; TaskId: Integer): Boolean; virtual;
     { What media queries see (matchMedia); by default a screen of the
       viewport's size. }
     function MediaEnvironment: TCssMediaEnvironment; virtual;
@@ -241,6 +260,10 @@ type
     { The environment is a worker agent's (Web.Workers.Agents): its
       window is no page (not a service worker client). }
     function IsWorkerAgent: Boolean; virtual;
+    { The storage service (Web.IndexedDb.Service.TIndexedDbBackend) the
+      host gave the page, nil when it has none of the host's: a worker
+      agent started for the page uses the same one. }
+    function SharedStorageBackend: TObject; virtual;
   end;
 
 procedure RaiseUnsupported(const What: string);
@@ -394,6 +417,22 @@ procedure TScriptEnvironment.StorageChanged(Context: TObject; Area: TWebStorageA
 begin
 end;
 
+function TScriptEnvironment.IndexedDbAccess(Context: TObject): Integer;
+begin
+  Result := IndexedDbNone;
+end;
+
+function TScriptEnvironment.IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean;
+begin
+  Reply := nil;
+  Result := False;
+end;
+
+function TScriptEnvironment.QueueScriptTask(Context: TObject; TaskId: Integer): Boolean;
+begin
+  Result := False;
+end;
+
 function TScriptEnvironment.MediaEnvironment: TCssMediaEnvironment;
 begin
   Result := DefaultMediaEnvironment;
@@ -443,6 +482,11 @@ end;
 function TScriptEnvironment.IsWorkerAgent: Boolean;
 begin
   Result := False;
+end;
+
+function TScriptEnvironment.SharedStorageBackend: TObject;
+begin
+  Result := nil;
 end;
 
 end.

@@ -72,6 +72,8 @@ uses
   WebContent.Storage,
   WebContent.OriginData,
   Web.Storage.OriginData,
+  WebContent.IndexedDb,
+  Web.Workers.ServiceWorkers,
   WebContent.Views,
   WebContent.Sandbox;
 
@@ -140,6 +142,7 @@ type
     FTransport: TContentTransport;
     FStorageBackend: TContentStorageBackend;
     FOriginData: TContentOriginData;
+    FIndexedDbBackend: TContentIndexedDbBackend;
     FViews: TList;
     FShutdown: Boolean;
     FInterruptions: Integer;
@@ -170,6 +173,11 @@ begin
   { Caches and service worker registrations are the browser's to keep. }
   FOriginData := TContentOriginData.Create(FContext.Connection);
   OriginDataBackend := FOriginData;
+  FIndexedDbBackend := TContentIndexedDbBackend.Create(FContext.Connection);
+  FContext.IndexedDb := FIndexedDbBackend;
+  { A service worker started before any page of its origin has the same
+    storage service. }
+  DefaultStorageBackend := FIndexedDbBackend;
 end;
 
 destructor TContentProcessRunner.Destroy;
@@ -183,6 +191,8 @@ begin
   FStorageBackend.Free;
   OriginDataBackend := nil;
   FOriginData.Free;
+  DefaultStorageBackend := nil;
+  FIndexedDbBackend.Free;
   FContext.Network.Free;
   FContext.Connection.Free;
   FContext.Free;
@@ -207,6 +217,7 @@ begin
     Exit;
   case Message.Kind of
     IpcShutdown: FShutdown := True;
+    IpcIndexedDbNotice: FIndexedDbBackend.DeliverNotice(Message);
     IpcCreateView:
       if FindView(Message.ViewId) = nil then
         FViews.Add(TContentView.Create(FContext, Message.ViewId, DecodeViewSetup(Message.Payload)));

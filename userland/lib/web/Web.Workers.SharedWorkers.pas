@@ -236,7 +236,8 @@ begin
     Worker.Origin := Origin;
     Worker.Url := UrlText;
     Worker.Name := Name;
-    Worker.Agent := TWorkerAgent.Create(TLoadingContext(Loader).Fetcher.Network, Url, Context.Environment.UserAgent);
+    Worker.Agent := TWorkerAgent.Create(TLoadingContext(Loader).Fetcher.Network, Url, Context.Environment.UserAgent,
+      Context.Environment.SharedStorageBackend);
     Worker.Agent.OnRetired := @Worker.AgentRetired;
     Workers.Add(Worker);
     Call := TAgentCall.Create;

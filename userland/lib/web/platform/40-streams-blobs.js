@@ -451,6 +451,12 @@
     get webkitRelativePath() { return ""; }
   }
   internal.finishInterface(File, "File");
+  // A File over bytes already copied (structured deserialization).
+  internal.makeFile = function (bytes, type, name, lastModified) {
+    const result = new File([], name, { type: type, lastModified: lastModified });
+    blobData.set(result, { bytes: bytes, type: normalizeType(type) });
+    return result;
+  };
 
   // FileReader
   const readerStates = new WeakMap();

@@ -205,8 +205,11 @@ var
   HopId: QWord;
   Data: TBytes;
   Url, Cookie, Origin, Key, Value: string;
-  Secure, Refused: Boolean;
-  Truncated: TBytes;
+  Secure: Boolean;
+  ClientId: LongWord;
+  Length_: Integer;
+  Bytes, Cut, Truncated: TBytes;
+  Refused: Boolean;
 begin
   Request := Default(TIpcHopRequest);
   Request.HopId := QWord($100000002);
@@ -290,8 +293,8 @@ begin
   Check((Url = 'https://a.example/') and (Cookie = 'k=v') and Secure, 'payloads: a cookie access');
   DecodeStorageChange(EncodeStorageChange('https://a.example', 'key', 'value'), Origin, Key, Value);
   Check((Origin = 'https://a.example') and (Key = 'key') and (Value = 'value'), 'payloads: a storage change');
-  DecodeOriginData(EncodeOriginData('caches', 'https://a.example', BytesOf('rec')), Key, Origin, Data);
-  Check((Key = 'caches') and (Origin = 'https://a.example') and (StringOf(Data) = 'rec'),
+  DecodeOriginData(EncodeOriginData('service-workers', 'https://a.example', BytesOf('rec')), Key, Origin, Data);
+  Check((Key = 'service-workers') and (Origin = 'https://a.example') and (StringOf(Data) = 'rec'),
     'payloads: an origin data record');
   Check(StringOf(DecodeOriginDataRecord(EncodeOriginDataRecord(BytesOf('abc')))) = 'abc',
     'payloads: an origin data reply');
@@ -305,6 +308,34 @@ begin
       Refused := True;
   end;
   Check(Refused, 'payloads: a cut origin data record is refused');
+
+  Bytes := nil;
+  SetLength(Bytes, 3);
+  Bytes[0] := 16;
+  Bytes[1] := 0;
+  Bytes[2] := 255;
+  DecodeIndexedDbRequest(EncodeIndexedDbRequest(7, 'https://a.example', Bytes), ClientId, Origin, Data);
+  Check((ClientId = 7) and (Origin = 'https://a.example') and (Length(Data) = 3) and (Data[2] = 255),
+    'payloads: an IndexedDB request');
+  DecodeIndexedDbNotice(EncodeIndexedDbNotice(9, Bytes), ClientId, Data);
+  Check((ClientId = 9) and (Length(Data) = 3) and (Data[0] = 16), 'payloads: an IndexedDB notice');
+  DecodeIndexedDbNotice(EncodeIndexedDbNotice(9, nil), ClientId, Data);
+  Check((ClientId = 9) and (Length(Data) = 0), 'payloads: an IndexedDB client closed');
+  { Cut short at every length: refused, never read past. }
+  Bytes := EncodeIndexedDbRequest(7, 'https://a.example', Bytes);
+  Refused := True;
+  for Length_ := 0 to Length(Bytes) - 1 do
+  begin
+    Cut := Copy(Bytes, 0, Length_);
+    try
+      DecodeIndexedDbRequest(Cut, ClientId, Origin, Data);
+      Refused := False;
+    except
+      on EIpcMalformed do
+        ;
+    end;
+  end;
+  Check(Refused, 'payloads: a cut IndexedDB request is refused');
 end;
 
 procedure RunPayloadChecks;

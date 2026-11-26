@@ -121,6 +121,14 @@ procedure DecodeCookieAccess(const Payload: TBytes; out Url, Cookie: string; out
 { A storage change: origin, key, value (as many as the kind has). }
 function EncodeStorageChange(const Origin, Key, Value: string): TBytes;
 procedure DecodeStorageChange(const Payload: TBytes; out Origin, Key, Value: string);
+{ IpcIndexedDbRequest: the client, the origin, the service request. }
+function EncodeIndexedDbRequest(ClientId: LongWord; const Origin: string; const Request: TBytes): TBytes;
+procedure DecodeIndexedDbRequest(const Payload: TBytes; out ClientId: LongWord; out Origin: string;
+  out Request: TBytes);
+{ IpcIndexedDbClientClosed and IpcIndexedDbNotice: the client and (a
+  notice) the service's bytes. }
+function EncodeIndexedDbNotice(ClientId: LongWord; const Notice: TBytes): TBytes;
+procedure DecodeIndexedDbNotice(const Payload: TBytes; out ClientId: LongWord; out Notice: TBytes);
 
 { IpcOriginDataLoad and IpcOriginDataSave: the kind of record ('caches',
   'service-workers'), the origin and (saving) the record; the load's
@@ -461,6 +469,63 @@ begin
     Origin := Reader.ReadString;
     Key := Reader.ReadString;
     Value := Reader.ReadString;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeIndexedDbRequest(ClientId: LongWord; const Origin: string; const Request: TBytes): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteLongWord(ClientId);
+    Writer.WriteString(Origin);
+    Writer.WriteBytes(Request);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+procedure DecodeIndexedDbRequest(const Payload: TBytes; out ClientId: LongWord; out Origin: string;
+  out Request: TBytes);
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    ClientId := Reader.ReadLongWord;
+    Origin := Reader.ReadString;
+    Request := Reader.ReadBytes;
+  finally
+    Reader.Free;
+  end;
+end;
+
+function EncodeIndexedDbNotice(ClientId: LongWord; const Notice: TBytes): TBytes;
+var
+  Writer: TIpcWriter;
+begin
+  Writer := TIpcWriter.Create;
+  try
+    Writer.WriteLongWord(ClientId);
+    Writer.WriteBytes(Notice);
+    Result := Writer.Data;
+  finally
+    Writer.Free;
+  end;
+end;
+
+procedure DecodeIndexedDbNotice(const Payload: TBytes; out ClientId: LongWord; out Notice: TBytes);
+var
+  Reader: TIpcReader;
+begin
+  Reader := TIpcReader.Create(Payload);
+  try
+    ClientId := Reader.ReadLongWord;
+    Notice := Reader.ReadBytes;
   finally
     Reader.Free;
   end;

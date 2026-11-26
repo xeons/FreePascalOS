@@ -155,6 +155,14 @@ uses
   Web.Frames.Views,
   Web.Dom.UiEvents,
   Web.ScriptEnvironment,
+  Web.IndexedDb.Wire,
+  Web.IndexedDb.Keys,
+  Web.IndexedDb.Entries,
+  Web.IndexedDb.Database,
+  Web.IndexedDb.Files,
+  Web.IndexedDb.Operations,
+  Web.IndexedDb.Service,
+  Web.Script.PageStorage,
   { First of the script units: compiled in the order a program using
     them loads them (the bindings' units use each other in a cycle). }
   Web.Script.ImportMaps,

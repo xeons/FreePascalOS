@@ -21,13 +21,16 @@
   network, local files, cookies and storage, answered with the
   program's one network context (WebView.Network: the HTTP client and
   its connections, the cookie jar, the HTTP cache, HSTS) and its local
-  storage. It runs on the browser's IPC thread (WebView.ContentIo) and
+  storage, and its storage service (IndexedDB, the Cache API,
+  navigator.storage: WebView.Network's SharedIndexedDb, a client per
+  script context of the process). It runs on the browser's IPC thread (WebView.ContentIo) and
   on a thread per HTTP exchange, never on the GUI thread, so a busy
   window does not hold pages' loads up.
 
   A renderer is not trusted with what it says of itself. The service
   knows the site each process is locked to (WebView.Sites) and
-  refuses: document.cookie and local storage of any other site; local
+  refuses: document.cookie, local storage and IndexedDB of any other
+  site; local
   files to a process that is not the local files' one; anything but
   http and https exchanges. Whether a request is same-site for its
   cookies it decides itself from the process's site. HSTS is applied
@@ -57,6 +60,7 @@ type
     FLock: TRTLCriticalSection;
     FHops: TList;
     FWaiting: TList;
+    FDatabaseClients: TList;
     procedure StartHop(Message: TIpcMessage);
     procedure LaunchWaiting;
     procedure CancelHop(Message: TIpcMessage);
@@ -67,6 +71,8 @@ type
     procedure ChangeStorage(Message: TIpcMessage);
     procedure LoadOriginData(Message: TIpcMessage);
     procedure SaveOriginData(Message: TIpcMessage);
+    procedure ExecuteIndexedDb(Message: TIpcMessage);
+    procedure CloseIndexedDbClient(Message: TIpcMessage);
     procedure Reply(Message: TIpcMessage; const Payload: TBytes);
     function UrlOfOwnSite(const Url: string): Boolean;
   public
@@ -80,8 +86,8 @@ type
     procedure Reap;
   end;
 
-{ Writes changed local storage to its files (the browser's IPC thread
-  calls it now and then). }
+{ Writes changed local storage and IndexedDB to their files (the
+  browser's IPC thread calls it now and then). }
 procedure SaveServiceStorage;
 
 implementation
@@ -102,6 +108,8 @@ uses
   Web.Fetch.NetworkContexts,
   Web.Storage,
   Web.Storage.OriginData,
+  Web.IndexedDb.Wire,
+  Web.IndexedDb.Service,
   WebIpc.ViewMessages,
   WebIpc.NetworkMessages,
   WebView.Sites,
@@ -115,6 +123,16 @@ const
   LocalFileLimit = 256 * 1024 * 1024;
 
 type
+  { A script context of a content process, as the storage service sees
+    it; its notices go to the process. }
+  TRemoteDatabaseClient = class(TIndexedDbClient)
+  public
+    Process: TContentProcess;
+    ClientId: LongWord;
+    Service: TIndexedDbService;
+    procedure Notice(const Payload: TBytes); override;
+  end;
+
   THopEntry = class
   public
     WireId: QWord;
@@ -126,6 +144,11 @@ type
     procedure TaskData(Task_: THttpFetchTask; Data: Pointer; Count: PtrUInt);
     procedure TaskDone(Task_: THttpFetchTask; constref Outcome: THttpResult);
   end;
+
+procedure TRemoteDatabaseClient.Notice(const Payload: TBytes);
+begin
+  Process.Send(IpcIndexedDbNotice, 0, 0, EncodeIndexedDbNotice(ClientId, Payload));
+end;
 
 procedure SendOutcome(Process: TContentProcess; WireId: QWord; Code: THttpResultCode; const Text: string);
 var
@@ -202,6 +225,7 @@ begin
   InitCriticalSection(FLock);
   FHops := TList.Create;
   FWaiting := TList.Create;
+  FDatabaseClients := TList.Create;
 end;
 
 destructor TContentNetwork.Destroy;
@@ -223,6 +247,12 @@ begin
     Entry.Free;
   end;
   FWaiting.Free;
+  for Index := 0 to FDatabaseClients.Count - 1 do
+  begin
+    TRemoteDatabaseClient(FDatabaseClients[Index]).Service.ClientClosed(TRemoteDatabaseClient(FDatabaseClients[Index]));
+    TRemoteDatabaseClient(FDatabaseClients[Index]).Free;
+  end;
+  FDatabaseClients.Free;
   DoneCriticalSection(FLock);
   inherited Destroy;
 end;
@@ -250,6 +280,8 @@ begin
     IpcStorageSet, IpcStorageRemove, IpcStorageClear: ChangeStorage(Message);
     IpcOriginDataLoad: LoadOriginData(Message);
     IpcOriginDataSave: SaveOriginData(Message);
+    IpcIndexedDbRequest: ExecuteIndexedDb(Message);
+    IpcIndexedDbClientClosed: CloseIndexedDbClient(Message);
   else
     Exit(False);
   end;
@@ -541,7 +573,7 @@ end;
 { Only the known kinds, only for origins of the process's own site. }
 function OriginDataKindKnown(const Kind: string): Boolean;
 begin
-  Result := (Kind = 'caches') or (Kind = 'service-workers');
+  Result := Kind = 'service-workers';
 end;
 
 procedure TContentNetwork.LoadOriginData(Message: TIpcMessage);
@@ -598,8 +630,68 @@ begin
   end;
 end;
 
+procedure TContentNetwork.ExecuteIndexedDb(Message: TIpcMessage);
+var
+  ClientId: LongWord;
+  Origin: string;
+  Request: TBytes;
+  Index: Integer;
+  Client: TRemoteDatabaseClient;
+  Writer: TIdbWriter;
+begin
+  DecodeIndexedDbRequest(Message.Payload, ClientId, Origin, Request);
+  if not UrlOfOwnSite(Origin) then
+  begin
+    WriteLn(StdErr, '[network] refused IndexedDB of ', Origin, ' for a page of ', FProcess.Site);
+    Writer := TIdbWriter.Create;
+    try
+      Writer.WriteByte(IdbStatusSecurity);
+      Writer.WriteRaw('Access to the storage of another site is denied.');
+      Reply(Message, Writer.Data);
+    finally
+      Writer.Free;
+    end;
+    Exit;
+  end;
+  Client := nil;
+  for Index := 0 to FDatabaseClients.Count - 1 do
+    if TRemoteDatabaseClient(FDatabaseClients[Index]).ClientId = ClientId then
+      Client := TRemoteDatabaseClient(FDatabaseClients[Index]);
+  if Client = nil then
+  begin
+    Client := TRemoteDatabaseClient.Create;
+    Client.Process := FProcess;
+    Client.ClientId := ClientId;
+    { A page keeps the service it began with (private browsing may
+      change the shared one). }
+    Client.Service := SharedIndexedDb;
+    FDatabaseClients.Add(Client);
+  end;
+  Reply(Message, Client.Service.Execute(Client, Origin, Request));
+end;
+
+procedure TContentNetwork.CloseIndexedDbClient(Message: TIpcMessage);
+var
+  ClientId: LongWord;
+  Notice: TBytes;
+  Index: Integer;
+  Client: TRemoteDatabaseClient;
+begin
+  DecodeIndexedDbNotice(Message.Payload, ClientId, Notice);
+  for Index := FDatabaseClients.Count - 1 downto 0 do
+  begin
+    Client := TRemoteDatabaseClient(FDatabaseClients[Index]);
+    if Client.ClientId <> ClientId then
+      Continue;
+    FDatabaseClients.Delete(Index);
+    Client.Service.ClientClosed(Client);
+    Client.Free;
+  end;
+end;
+
 procedure SaveServiceStorage;
 begin
+  SaveIndexedDb;
   EnterLocalStorage;
   try
     SharedLocalStorage.SaveAll;

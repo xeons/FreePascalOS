@@ -14041,7 +14041,6 @@ error) over `TScriptEnvironment`:
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort (over message links when its other side is in another heap), BroadcastChannel across the process |
 | 65-workers | dedicated workers (a realm of the window's runtime) and the runner the shared and service workers' scopes are made with |
 | 66-shared-workers | SharedWorker and the shared worker's side in its agent |
-| 67-caches | CacheStorage (caches) and Cache, in secure contexts |
 | 68-service-workers | navigator.serviceWorker, ServiceWorkerRegistration, ServiceWorker, NavigationPreloadManager |
 | 69-service-worker-scope | the service worker's scope in its agent: ExtendableEvent, FetchEvent, ExtendableMessageEvent, Clients, Client, WindowClient |
 | 70-geometry | DOMRect, DOMPoint, getBoundingClientRect, getClientRects (an inline element's line fragments, `Web.Layout.BoxGeometry`; moved by position: relative, translation and the scroll containers above), client*, scroll*, offset*, scrolling, scrollIntoView, the window's scroll position, elementFromPoint, scrollingElement, getComputedStyle |
@@ -14049,6 +14048,13 @@ error) over `TScriptEnvironment`:
 | 72-selection | Range.getClientRects and getBoundingClientRect (the layout's line fragments of the text in the range, the boxes of the elements in it: `TScriptLayout.TextRects`); selectionchange, once a task for any number of changes |
 | 74-cssom | CSSStyleSheet.replace (replaceSync, then a settled promise) |
 | 75-observers | IntersectionObserver and ResizeObserver (checked after observe() and every 200 ms while something is observed) |
+| 80-structured-serialize | StructuredSerializeForStorage and StructuredDeserialize to and from bytes (see "IndexedDB, the Cache API and navigator.storage") |
+| 81-indexeddb-keys | IndexedDB keys as byte strings that sort as keys, key paths, IDBKeyRange |
+| 82-indexeddb-backend | the requests to the storage service and their replies, its notices, tasks that are never clamped |
+| 83-indexeddb | IDBFactory (open, deleteDatabase, databases, cmp), IDBDatabase, IDBTransaction, IDBRequest, IDBOpenDBRequest, IDBVersionChangeEvent, DOMStringList |
+| 84-indexeddb-stores | IDBObjectStore, IDBIndex, IDBCursor, IDBCursorWithValue |
+| 85-storage-manager | StorageManager (navigator.storage: estimate, persist, persisted) |
+| 86-cache-storage | CacheStorage (window.caches) and Cache |
 
 The environment hooks they use (`Web.ScriptEnvironment`):
 `NavigationTiming`, `StorageArea` and `StorageChanged`,
@@ -14281,15 +14287,13 @@ script that cannot be fetched or parsed fires error at every waiting
 SharedWorker; the worker goes with the last document that connected to
 it, or at close().
 
-**The Cache API** (`Web.Storage.ResponseCaches`, natives in
-`Web.Script.NativeCaches`, 67-caches.js): per origin an ordered map of
-named caches of request/response pairs with their bodies, shared by
-every window and worker of the origin in the process; matching (URL
-without fragment, ignoreSearch, ignoreMethod, Vary) is the script's,
-the store applies batches of puts and deletes together (64 MiB per
-origin, QuotaExceededError past it). Opaque responses keep their body
-away from script (50-fetch.js's hidden body) so a cache or a service
-worker can hand it on.
+**Caches in workers.** The Cache API is the storage service's
+(86-cache-storage.js); a worker agent takes the storage service of the
+page that started it (`TScriptEnvironment.SharedStorageBackend`; the
+browser's and a content process's shared one otherwise,
+`DefaultStorageBackend`), so a service worker and its pages see the same
+caches. Opaque responses keep their body away from script (50-fetch.js's
+hidden body) so a service worker can hand it on.
 
 **Service workers**: the records (`Web.Workers.ServiceWorkerModel`:
 registrations by origin and scope with installing, waiting and active
@@ -14332,15 +14336,15 @@ the worker is activating. Navigation preload, when enabled, starts a
 network fetch with the Service-Worker-Navigation-Preload header for
 preloadResponse.
 
-**Kept records** (`Web.Storage.OriginData`): caches and registrations
-(scope, updateViaCache, the waiting or active worker's script, imports
-and whether it handles fetch) are records per origin, loaded when an
+**Kept registrations** (`Web.Storage.OriginData`): a registration (scope,
+updateViaCache, the waiting or active worker's script, imports and
+whether it handles fetch) is kept in a record per origin, loaded when an
 origin is first used and saved after each change through
 `OriginDataBackend`: the browser's `TFolderOriginData` in
 storage/origin-data (a `TMemoryOriginData` while private browsing; the
-switch starts caches and service workers again from the other store),
-and in a content process `TContentOriginData`, which asks the browser
-(`IpcOriginDataLoad` 340, `IpcOriginDataSave` 341; the network service
+switch starts the service workers again from the other store), and in
+a content process `TContentOriginData`, which asks the browser
+(`IpcOriginDataLoad` 343, `IpcOriginDataSave` 344; the network service
 refuses origins of other sites than the process's lock). Without a
 backend (webbrowse) they live in memory.
 
@@ -14351,15 +14355,13 @@ WindowClient.focus (they need a notification click: always refused),
 WindowClient.navigate resolving to the new client (it resolves null),
 dedicated and shared workers as service worker clients, one shared or
 service worker across content processes of one site (each process runs
-its own, and two processes' caches of one origin overwrite each other's
-records), the update check of imported scripts.
+its own, and two processes' registrations of one origin overwrite each
+other's records), the update check of imported scripts.
 
 **Tests.** `make web-load-test` (WebLoadTest.Workers; `WebLoadTest
 workers` runs only them): two pages sharing a shared worker, a port
 through it, a blob: URL, the error, the workers going with the pages;
-BroadcastChannel between pages and not across origins; the Cache API's
-matching, addAll, CacheStorage and the caches kept through a memory
-store; service workers' registration, install and activate with
+BroadcastChannel between pages and not across origins; service workers' registration, install and activate with
 waitUntil, claim, a made, a cached, a network and a failed response,
 messages both ways with a transferred port, matchAll, a navigation
 answered by the worker and controlled from its first script, update
@@ -14371,6 +14373,158 @@ everything in memory was forgotten; and a web-platform-tests subset
 webmessaging/broadcastchannel basics, cache-storage, registration
 checks, SharedWorker). `make web-ipc-test` checks the origin data
 payloads.
+### IndexedDB, the Cache API and navigator.storage
+
+Pages keep structured data in **IndexedDB** (Indexed Database API 3.0),
+responses in the **Cache API**, and ask **navigator.storage** how much
+they use; all three live on one **storage service**
+(`Web.IndexedDb.Service`), which has no DOM and no script engine:
+
+```
+page (platform/80-86*.js)                 storage service (Web.IndexedDb.*)
+  IDB* objects, scheduling, events          origins: databases, stores, records, indexes
+  key paths, index keys, clones      bytes  connections, transactions (undo logs), quota
+  natives.idbExecute(request) ------------> Execute(client, origin, request): reply
+  natives.onIndexedDbNotice   <------------ Notice (versionchange, closed, blocked)
+     |                                         ^
+     | content process: WebContent.IndexedDb   | browser: WebView.NetworkService
+     +---- IpcIndexedDbRequest 340 ----------->|  (refuses other sites' origins)
+     +---- IpcIndexedDbClientClosed 341 ------>|
+     <---- IpcIndexedDbNotice 342 -------------+
+```
+
+**Where it runs.** In the browser the service is WebView.Network's
+`SharedIndexedDb` (in the storage folder's `indexeddb` folder, the
+browser's ~/.settings/browser/storage/indexeddb; while private browsing
+a second one in memory, emptied when private browsing ends) and content
+processes reach it only through the network service: a renderer has no
+files. A content process's `TContentIndexedDbBackend` sends each request
+with its script context's client id and the origin the page environment
+computed, and waits for the reply (`TContentConnection.Call`); the
+network service checks the origin against the site the process is
+locked to (`[network] refused IndexedDB of ...` otherwise) and keeps a
+`TRemoteDatabaseClient` per client id, whose notices go back as
+IpcIndexedDbNotice. A web view without separate processes, webbrowse
+and the tests use a service in the program (the web view the shared
+one, a page without a host one in memory of its own). Clearing local
+storage (`ClearWebStorage`) clears it too. The renderer's request is
+only bytes the service parses (`Web.IndexedDb.Wire`: a reader never
+reads past its data; a malformed request is refused), and every
+connection and transaction belongs to the client that made it: naming
+another's is refused.
+
+**The service.** An origin's databases (namespace 0, what pages open;
+namespace 1, the Cache API's own "caches" database, which pages cannot
+name) are loaded from one file per origin the first time the origin is
+used (`Web.IndexedDb.Files`: a signature, then every database whole;
+written to a temporary file that replaces the old one). A store's
+records and an index's entries are sorted byte strings
+(`Web.IndexedDb.Entries`): keys are encoded so that their bytes sort as
+IndexedDB orders keys (`Web.IndexedDb.Keys`: numbers, then dates,
+strings by UTF-16 code unit, binary, arrays; no encoding is the
+beginning of another), so an index entry is the index key followed by
+the primary key and every bound, "next", "next unique" or "previous
+unique" is a binary search for "at or above" a key or its prefix
+successor (`Web.IndexedDb.Operations`). An index also keeps its pairs
+the other way round, so overwriting or deleting a record finds its
+entries. The page computes index keys (only it can evaluate key paths
+on values); the service checks unique indexes, add's no-overwrite and
+the quota before it changes anything, and bumps the key generator past
+explicit numeric keys. Every change goes to the transaction's undo log
+(`Web.IndexedDb.Database`): list changes through the lists' observer,
+schema changes (stores and indexes made, deleted, renamed, the version,
+generators) explicitly; abort plays it backwards, and an aborted
+upgrade of a database it made removes the database. The service
+schedules between clients: a transaction starts when no running one of
+the same database overlaps it with either readwrite (an upgrade holds
+the whole database); otherwise the page is told to wait and asks again.
+Opening at a higher version or deleting while other connections are
+open sends each a versionchange notice and then the requester a blocked
+notice (in that order, so its blocked event comes after their
+versionchange events); the page asks again until they have closed. An
+origin is written (by `SaveAll`: the browser's IPC thread every 5 s
+with local storage, a page environment's service a second after a
+request, and at the end) only when it changed and no transaction of it
+has uncommitted changes. Quota: 512 MiB of keys and values per origin
+(`QuotaBytes`; QuotaExceededError past it); `persist()` marks the
+origin persistent in its file (nothing is evicted yet).
+
+**The page's side.** The platform scripts implement the API's
+semantics in the window's realm. Values are cloned when stored
+(`80-structured-serialize.js`: primitives with lone surrogates, Boolean,
+Number, BigInt and String objects, Date, RegExp, ArrayBuffer and
+resizable ones, typed arrays and DataView sharing their buffer, Map,
+Set, arrays with holes and extra properties, plain objects, the native
+errors, DOMException, Blob and File with their bytes, cycles; anything
+else is a DataCloneError thrown at once), keys and index keys are
+computed from the clone, and a generated key is asked of the service
+and injected before the value is serialized again. A transaction asks
+the service to start once no earlier unfinished transaction of the
+window overlaps it; a started transaction runs each request's operation
+at once, in order, and queues a task per request (`natives.queueTask`: a
+task of the page's event loop, never clamped like nested timers) that
+fires success or error; while it fires the transaction is active, and it
+stays active through the microtasks after it until the end of that
+microtask checkpoint (`TBindingContext.RequestCheckpointCleanup`, the
+standard's "cleanup Indexed Database transactions"), so promise wrappers
+(idb, Dexie) can chain requests. An inactive transaction with nothing
+left to deliver commits; commit() ends one early. Error events bubble
+from the request to the transaction and the database
+(`natives.setEventParent`: `TStandaloneEventTarget.EventParent`); one
+not canceled aborts the transaction, and so does a handler that threw
+(`natives.reportedErrors`). Abort reverts the service's changes and the
+upgrade's schema and version on the page's side, gives the requests not
+delivered yet AbortError error events, then fires abort. Cursors keep
+their position (key and primary key) and ask the service for the next
+record each step (`Seek`: direction, position, target key and primary
+key, count), so they see changes made while they iterate.
+
+The **Cache API** (secure contexts) keeps caches in namespace 1: a store
+of names with the order they were made in and a store of entries
+(generated keys keep the order they were put in) indexed by cache name
+and by cache name and URL without fragment; each operation is one
+transaction of the service (asked again while the service says wait),
+matching is "query cache" (ignoreSearch, ignoreMethod, ignoreVary, Vary,
+a fragment never counts), and stored responses come back through
+`internal.makeStoredResponse` (50-fetch.js). Service workers, when they
+come, use the same caches. **StorageManager** (secure contexts) asks
+the service for the origin's usage and quota and for its persistence.
+Dedicated workers get the window's indexedDB, caches and the interfaces
+(their origin is the window's).
+
+**Natives and hooks.** `Web.Script.NativeStorage` gives `idbAccess`,
+`idbExecute`, `queueTask`, `requestCheckpointCleanup`,
+`reportedErrors` and `setEventParent`; the environment hooks are
+`IndexedDbAccess` (none, allowed, denied for an opaque origin),
+`IndexedDbExecute` and `QueueScriptTask`. `TPageScriptEnvironment`
+implements them with `Web.Script.PageStorage` (a client per script
+context, closed when the context goes; notices posted to the page's
+event loop from any thread) over its `IndexedDb` backend
+(`TWebEngineView.IndexedDb`, else `SharedIndexedDb`).
+
+**Tests.** `make web-script-test`: `indexeddb.js` (upgrades, stores,
+indexes, cursors, events and their order, abort, versionchange and
+blocked, deleteDatabase, databases), `indexeddb-values.js` (every
+serializable type, DataCloneError, the order of every key type),
+`indexeddb-cursors.js` (directions, advance, continue to a key,
+continuePrimaryKey, getAll with a count, update and delete while
+iterating), `indexeddb-lifetime.js` (promise chains in a transaction,
+commit(), a throwing handler, scheduling of overlapping transactions,
+an upgrade aborted by a unique index over duplicates, two connections),
+`cache-storage.js` (put, match, matchAll, keys, delete, Vary,
+ignoreSearch, caches.keys order, estimate, persist); these follow
+web-platform-tests' IndexedDB and cache-storage cases. `make web-test`
+(`WebTest.IndexedDb`: key order, entry lists, an origin's file read back
+by a new service with committed changes only, abort, an aborted upgrade,
+refused requests, clearing). `make web-ipc-test`: the payloads of 340 to
+342, cut short at every length.
+
+**Not yet.** The service keeps each open origin's databases in memory
+and writes an origin's whole file; storage is never evicted; the
+persistent-storage permission does not follow persist(); IndexedDB's
+getAllRecords() (editor's draft); structuredClone and postMessage still
+use the older in-memory clone (no ArrayBuffer or Blob); the origin
+private file system (navigator.storage.getDirectory) is not there.
 
 ### Styling (Web.Style)
 
@@ -15701,8 +15855,10 @@ clipboard write and read, selection, open URL, script interrupted,
 input handled, unhandled key, page text; version 2: 226 a pop-up
 blocked), 300-399 the network service
 (hop start, cancel, head, data, done; local file; cookie get and set;
-storage load, set, remove, clear; about pages; 340-341 the per-origin
-records of caches and service workers). Records with encoders
+storage load, set, remove, clear; about pages; 340-342 the storage
+service: an IndexedDB request, a client closed, and a notice the other
+way; 343-344 the per-origin records of service worker registrations).
+Records with encoders
 and decoders for the larger payloads are in `WebIpc.ViewMessages` and
 `WebIpc.NetworkMessages`. Version 2 changed three payloads: the history
 state is a `TIpcHistoryState` (can go back and forward, the entries'
@@ -15830,8 +15986,8 @@ the browser (0) when memory runs out. The browser's setting
 
 **What the browser refuses a renderer.** The network service knows the
 site each process is locked to and does not take a renderer's word for
-anything: document.cookie and local storage only of URLs and origins of
-that site (others are refused and logged, `[network] refused ...`),
+anything: document.cookie, local storage and IndexedDB only of URLs and
+origins of that site (others are refused and logged, `[network] refused ...`),
 local files only to the `file:` process, the browser's about pages only
 to the `about:` process, only http and https exchanges; whether a
 request is same-site for its cookies it decides itself. HSTS is the

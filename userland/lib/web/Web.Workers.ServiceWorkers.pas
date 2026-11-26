@@ -126,6 +126,13 @@ function ContextsOfOrigin(const Origin: string): TList;
 
 { The workers running (tests). }
 function RunningWorkerCount: Integer;
+
+var
+  { The storage service a worker gets when no page of its origin has one
+    of the host's (a navigation's worker started before any page;
+    nil: one of the agent's own). The browser and its content processes
+    set their shared service. }
+  DefaultStorageBackend: TObject;
 { Ends every worker and forgets every registration (tests). }
 procedure ResetServiceWorkers;
 
@@ -481,6 +488,23 @@ begin
   Running.Agent.Retire;
 end;
 
+{ The storage service of the origin's pages (their environment's shared
+  one), so the worker sees the caches they see; nil if none has one. }
+function StorageBackendFor(Worker: TServiceWorkerRecord): TObject;
+var
+  Index: Integer;
+  Client: TServiceWorkerClient;
+begin
+  for Index := 0 to ClientCount - 1 do
+  begin
+    Client := ClientAt(Index);
+    if (Client.Origin = Worker.Registration.StorageKey) and ContextIsLive(Client.Context) and
+       (Client.Context.Environment <> nil) and (Client.Context.Environment.SharedStorageBackend <> nil) then
+      Exit(Client.Context.Environment.SharedStorageBackend);
+  end;
+  Result := DefaultStorageBackend;
+end;
+
 { "Run Service Worker": an agent for Worker; its script runs from what
   was stored unless the update check runs it (FetchFirst). }
 function StartWorker(Worker: TServiceWorkerRecord; Network: TNetworkContext; FetchFirst: Boolean): TRunningWorker;
@@ -495,7 +519,7 @@ begin
   Result := TRunningWorker.Create;
   Result.Worker := Worker;
   Result.Network := Network;
-  Result.Agent := TWorkerAgent.Create(Network, Url, LastUserAgent);
+  Result.Agent := TWorkerAgent.Create(Network, Url, LastUserAgent, StorageBackendFor(Worker));
   Result.Agent.OnRetired := @Result.AgentRetired;
   Worker.Agent := Result.Agent;
   Worker.Running := Result;

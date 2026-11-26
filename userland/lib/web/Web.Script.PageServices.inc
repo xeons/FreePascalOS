@@ -121,26 +121,37 @@ begin
   FOwnsLocalStorage := False;
 end;
 
-function TPageScriptEnvironment.StorageArea(Context: TObject; Session: Boolean): TWebStorageArea;
+{ The serialized origin storage is kept under ('' when the context may
+  have none: not http, https or file, or a sandboxed frame's opaque
+  origin). Local files share one origin, file://. }
+function TPageScriptEnvironment.StorageOrigin(Context: TObject): string;
 var
   Url: TUrlRecord;
   Origin: TUrlOrigin;
-  Serialized: string;
 begin
-  Result := nil;
+  Result := '';
   if not (Context is TBindingContext) or not ParseUrl(OriginUrlOf(TBindingContext(Context)), Url) then
     Exit;
   if (Url.Scheme <> 'http') and (Url.Scheme <> 'https') and (Url.Scheme <> 'file') then
     Exit;
-  { A sandboxed frame's opaque origin has no storage. }
   if (Url.Scheme <> 'file') and DocumentOrigin(TBindingContext(Context).Document).Opaque then
     Exit;
   Origin := OriginOfUrl(Url);
   if Url.Scheme = 'file' then
-    Serialized := 'file://'
+    Result := 'file://'
   else
-    Serialized := SerializeOrigin(Origin);
-  if Serialized = 'null' then
+    Result := SerializeOrigin(Origin);
+  if Result = 'null' then
+    Result := '';
+end;
+
+function TPageScriptEnvironment.StorageArea(Context: TObject; Session: Boolean): TWebStorageArea;
+var
+  Serialized: string;
+begin
+  Result := nil;
+  Serialized := StorageOrigin(Context);
+  if Serialized = '' then
     Exit;
   if Session then
     Exit(FSessionStorage.SessionArea(Serialized));
@@ -150,6 +161,48 @@ begin
     FOwnsLocalStorage := True;
   end;
   Result := FLocalStorage.LocalArea(Serialized);
+end;
+
+{ ---- IndexedDB, the Cache API, navigator.storage ---- }
+
+function TPageScriptEnvironment.PageStorage: TPageStorage;
+begin
+  if FStorageService = nil then
+  begin
+    FStorageService := TPageStorage.Create;
+    FStorageService.IsLive := @FExecutor.IsLiveContext;
+  end;
+  FStorageService.Loop := FExecutor.FLoop;
+  Result := FStorageService;
+end;
+
+function TPageScriptEnvironment.GetIndexedDb: TIndexedDbBackend;
+begin
+  Result := PageStorage.HostBackend;
+end;
+
+procedure TPageScriptEnvironment.SetIndexedDb(Value: TIndexedDbBackend);
+begin
+  PageStorage.HostBackend := Value;
+end;
+
+function TPageScriptEnvironment.IndexedDbAccess(Context: TObject): Integer;
+begin
+  if StorageOrigin(Context) = '' then
+    Result := IndexedDbDenied
+  else
+    Result := IndexedDbAllowed;
+end;
+
+function TPageScriptEnvironment.IndexedDbExecute(Context: TObject; const Request: TBytes; out Reply: TBytes): Boolean;
+begin
+  Reply := PageStorage.Execute(Context, StorageOrigin(Context), Request);
+  Result := True;
+end;
+
+function TPageScriptEnvironment.QueueScriptTask(Context: TObject; TaskId: Integer): Boolean;
+begin
+  Result := FExecutor.IsLiveContext(Context) and PageStorage.QueueTask(Context, TaskId);
 end;
 
 procedure TPageScriptEnvironment.StorageChanged(Context: TObject; Area: TWebStorageArea);
@@ -238,4 +291,9 @@ end;
 function TPageScriptEnvironment.IsWorkerAgent: Boolean;
 begin
   Result := FWorkerAgent;
+end;
+
+function TPageScriptEnvironment.SharedStorageBackend: TObject;
+begin
+  Result := PageStorage.SharedBackend;
 end;

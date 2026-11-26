@@ -53,6 +53,7 @@ uses
   Web.Loading.ResourceSink,
   Web.Navigation.Navigables,
   Web.Bindings.Context,
+  Web.IndexedDb.Service,
   Web.Script.PageScripting;
 
 type
@@ -77,7 +78,10 @@ type
   public
     { Tag: what the owner keeps with the agent (its worker record). }
     Tag: TObject;
-    constructor Create(Network: TNetworkContext; constref ScriptUrl: TUrlRecord; const UserAgent: string);
+    { StorageBackend: the starting page's storage service (its
+      environment's SharedStorageBackend; nil: one of the agent's own). }
+    constructor Create(Network: TNetworkContext; constref ScriptUrl: TUrlRecord; const UserAgent: string;
+      StorageBackend: TObject);
     destructor Destroy; override;
     { The host window's context (nil once retired or if it failed). }
     function Context: TBindingContext;
@@ -112,7 +116,8 @@ var
   Retiring: TList;
   Reaping: Boolean;
 
-constructor TWorkerAgent.Create(Network: TNetworkContext; constref ScriptUrl: TUrlRecord; const UserAgent: string);
+constructor TWorkerAgent.Create(Network: TNetworkContext; constref ScriptUrl: TUrlRecord; const UserAgent: string;
+  StorageBackend: TObject);
 begin
   inherited Create;
   FNetwork := Network;
@@ -127,6 +132,8 @@ begin
     FExecutor.Environment.UserAgentText := UserAgent;
   FExecutor.OnConsoleMessage := @ConsoleMessage;
   FExecutor.Environment.WorkerAgent := True;
+  if StorageBackend is TIndexedDbBackend then
+    FExecutor.Environment.IndexedDb := TIndexedDbBackend(StorageBackend);
   FNavigable.Executor := FExecutor;
   Agents.Add(Self);
   FNavigable.LoadHtml(AgentDocument, ScriptUrl);
