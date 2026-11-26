@@ -1758,10 +1758,29 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       ClipboardEvent and DataTransfer's string data, access keys, table
       colspan widths, the preload scanner's double fetches
       (docs/html5test-gaps.md)
+- [x] IndexedDB 3.0 (databases and versions with upgradeneeded, blocked
+      and versionchange, object stores with key paths and key generators,
+      indexes with unique and multiEntry, every cursor direction,
+      continuePrimaryKey and advance, key ranges, getAll/getAllKeys,
+      transactions with auto-commit, commit(), abort and their events)
+      on a storage service (Web.IndexedDb.*) in the browser process
+      (IPC 340-342; refuses other sites' origins; private windows in
+      memory; a file per origin; quota) or in the program; structured
+      serialization to bytes (Blob, File, typed arrays, Map, Set, Date,
+      RegExp, BigInt, errors, cycles); navigator.storage (estimate,
+      persist, persisted); the Cache API on the same service; available
+      to dedicated workers; html5test storage 35/35
+- [ ] IndexedDB follow-ups: a storage format that writes only what
+      changed (the service writes an origin's whole file), eviction of
+      best-effort origins under disk pressure, the persistent-storage
+      permission's state following persist(), getAllRecords() and
+      IDBRecord (IndexedDB 3.0 editor's draft), structuredClone and
+      postMessage moved onto the same serializer (ArrayBuffer, typed
+      arrays, Blob), the OPFS (navigator.storage.getDirectory)
 - [ ] The html5test gaps (docs/html5test-gaps.md has them by size):
       Canvas 2D and OffscreenCanvas, CSP enforcement and
       SecurityPolicyViolationEvent, WebSocket, custom elements, shadow
-      DOM, Web Animations, IndexedDB, media playback and Web Audio, the
+      DOM, Web Animations, media playback and Web Audio, the
       Fullscreen API, file inputs with FileList and multipart uploads,
       SharedWorker, foreignObject, relative positioning of inline boxes,
       designMode/execCommand, date and time pickers
