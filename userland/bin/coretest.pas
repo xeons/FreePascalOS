@@ -135,7 +135,7 @@ const
 
   { Commands run in order in WorkDirectory; later ones may rely on files
     made by earlier ones. }
-  CommandTests: array[0..447] of TCommandTest = (
+  CommandTests: array[0..448] of TCommandTest = (
     { --- the shell -------------------------------------------------- }
     (Command: 'echo hello world'; ExpectedOutput: 'hello world'#10; ExpectedStatus: 0),
     (Command: 'echo -n no line end'; ExpectedOutput: 'no line end'; ExpectedStatus: 0),
@@ -855,7 +855,12 @@ const
     { The clock and timers (CallGetClockInformation): the test machine
       (q35) has an HPET whose comparator the kernel took as its event
       timer, and the counter's rate has a source. }
-    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0)
+    (Command: 'powerstat --clock > clock.log; echo $?; grep -c "^HPET event timer: comparator" clock.log; grep -c "^Counter: .*, rate: " clock.log'; ExpectedOutput: '0'#10'1'#10'1'#10; ExpectedStatus: 0),
+    { libmedia on the system (mediaplay): a WAV file's container and
+      track, its decoding checksummed (16-bit samples decode to floats
+      and back exactly, so the MD5 is the data chunk's), and a file that
+      is no media file refused. }
+    (Command: 'tone -o mp.wav -r 44100 440 0.5 && mediaplay -i mp.wav && mediaplay -k mp.wav > k.txt; cut -d " " -f 1-5 k.txt; cut -d " " -f 6 k.txt > k1; tail -c 88200 mp.wav | md5sum | cut -d " " -f 1 > k2; diff k1 k2 && echo same; mediaplay -i /etc/passwd 2>&1; echo $?'; ExpectedOutput: 'mp.wav: wav, 0:00:00.500, 1 track(s)'#10'  track 0: audio pcm [pcm], 44100 Hz, 2 channel(s), 16 bits, 0:00:00.500'#10'audio 0 22050 44100 2'#10'same'#10'mediaplay: /etc/passwd: not a media file this system reads'#10'1'#10; ExpectedStatus: 0)
   );
 
 var
