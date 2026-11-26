@@ -140,6 +140,8 @@ type
     Functions: array of TWasmFunction;
     Tables: array of TWasmTable;
     Memories: array of TWasmMemory;
+    { Memory 0, or nil: what the interpreter keeps at hand. }
+    DefaultMemory: TWasmMemory;
     Globals: array of TWasmGlobal;
     { Element segments' references; a dropped segment is empty. }
     ElementSegments: array of array of Pointer;
@@ -194,7 +196,7 @@ type
     function NewMemory(const MemoryType: TWasmMemoryType): TWasmMemory;
     function NewTable(const TableType: TWasmTableType; InitialValue: Pointer): TWasmTable;
     function NewGlobal(const GlobalType: TWasmGlobalType; const Value: TWasmValue): TWasmGlobal;
-    function NewInstance(Module: TWasmModule): TWasmModuleInstance;
+    function NewModuleInstance(Module: TWasmModule): TWasmModuleInstance;
     { Makes room for Count more slots after StackTop (may move Stack). }
     procedure ReserveStack(Count: SizeInt);
     function PushFrame(Func: TWasmFunction; ResumeIndex: Integer; Base: SizeInt): Boolean; inline;
@@ -407,7 +409,11 @@ var
   Index: Integer;
 begin
   for Index := FObjects.Count - 1 downto 0 do
+  begin
+    if TObject(FObjects[Index]) is TWasmModuleInstance then
+      TWasmModuleInstance(FObjects[Index]).Module.Release;
     TObject(FObjects[Index]).Free;
+  end;
   FObjects.Free;
   FTypeKeys.Free;
   inherited Destroy;
@@ -513,12 +519,13 @@ begin
   Result.SetValue(Value);
 end;
 
-function TWasmStore.NewInstance(Module: TWasmModule): TWasmModuleInstance;
+function TWasmStore.NewModuleInstance(Module: TWasmModule): TWasmModuleInstance;
 begin
   Result := TWasmModuleInstance.Create;
   Own(Result);
   Result.Store := Self;
   Result.Module := Module;
+  Module.Retain;
 end;
 
 procedure TWasmStore.ReserveStack(Count: SizeInt);

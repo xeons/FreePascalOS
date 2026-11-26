@@ -103,7 +103,12 @@ type
     DataLength: SizeInt;
   end;
 
+  { A module is shared by whoever holds it (an embedder's handle, each
+    instance made from it): it starts with one reference and frees
+    itself when the last is released. }
   TWasmModule = class
+  private
+    FReferences: Integer;
   public
     Bytes: TBytes;
     Types: TWasmFunctionTypeArray;
@@ -131,7 +136,10 @@ type
       (indexed by function index, '' where none was given). }
     Name: AnsiString;
     FunctionNames: array of AnsiString;
+    constructor Create;
     destructor Destroy; override;
+    procedure Retain;
+    procedure Release;
     function FunctionCount: Cardinal; inline;
     function FunctionType(FunctionIndex: Cardinal): TWasmFunctionType; inline;
     function FunctionName(FunctionIndex: Cardinal): AnsiString;
@@ -139,6 +147,24 @@ type
   end;
 
 implementation
+
+constructor TWasmModule.Create;
+begin
+  inherited Create;
+  FReferences := 1;
+end;
+
+procedure TWasmModule.Retain;
+begin
+  Inc(FReferences);
+end;
+
+procedure TWasmModule.Release;
+begin
+  Dec(FReferences);
+  if FReferences = 0 then
+    Free;
+end;
 
 destructor TWasmModule.Destroy;
 var
