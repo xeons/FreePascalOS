@@ -23,7 +23,8 @@
 # Serial output (the kernel debug log) appears on this terminal. A USB
 # tablet is attached, so the pointer moves in and out of the window
 # without being captured (the display server takes absolute positions).
-# With --debug QEMU waits for GDB on localhost:1234.
+# With --debug QEMU waits for GDB on localhost:1234. MEMORY sets the
+# machine's memory (8G by default: the browser on real sites needs it).
 # A disk image after --copy is not booted itself but a fresh copy of it
 # (<name>-session.img), so the session leaves it as it was: the test
 # disk, which the tests expect as built (its orphans, its journals to
@@ -122,7 +123,7 @@ fi
 
 exec "$qemu_binary" \
     "${machine_arguments[@]}" \
-    -m 512M \
+    -m "${MEMORY:-8G}" \
     -smp ${PROCESSORS:-4} \
     -drive if=pflash,format=raw,readonly=on,file="$firmware_code" \
     -drive if=pflash,format=raw,file="$firmware_variables" \

@@ -487,18 +487,21 @@ RUN_SYSTEM_DISK := $(BUILD_DIRECTORY)/system-disk-interactive.img
 $(RUN_SYSTEM_DISK): $(SYSTEM_DISK)
 	cp $(SYSTEM_DISK) $@
 
+# make run's machine memory (RUN_MEMORY=4G and so on; the tests keep their own).
+RUN_MEMORY ?= 8G
+
 ifeq ($(ARCH),arm64)
 run: esp $(RUN_SYSTEM_DISK)
-	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) $(RUN_SYSTEM_DISK)
+	MEMORY=$(RUN_MEMORY) scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) $(RUN_SYSTEM_DISK)
 
 debug: esp $(RUN_SYSTEM_DISK)
-	scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug $(RUN_SYSTEM_DISK)
+	MEMORY=$(RUN_MEMORY) scripts/run-qemu-arm64.sh $(ESP_DIRECTORY) --debug $(RUN_SYSTEM_DISK)
 else
 run: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
+	MEMORY=$(RUN_MEMORY) scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 
 debug: esp $(TEST_DISK) $(RUN_SYSTEM_DISK)
-	scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
+	MEMORY=$(RUN_MEMORY) scripts/run-qemu.sh $(ARCH) $(ESP_DIRECTORY) --debug --copy $(TEST_DISK) $(RUN_SYSTEM_DISK)
 endif
 
 # Tests of the AArch64 build in QEMU's virt machine: the kernel must
