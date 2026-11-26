@@ -1,18 +1,22 @@
 // The WebAssembly namespace (WebAssembly JavaScript Interface and Web API):
 // validate, compile, instantiate, compileStreaming, instantiateStreaming,
 // Module, Instance, Memory, Table, Global, CompileError, LinkError and
-// RuntimeError. This file is the WebIDL side - argument counts,
-// dictionaries read in their members' order, enforced ranges, overloads,
-// promises settled in later tasks, streaming from a Response - and the
-// engine side is Pascal (Web.Script.NativeWasm over libwasm): the Module,
-// Memory, Table and Global objects are host objects made there with the
-// prototypes registered below, Exported Functions are native functions,
-// and the brand checks are the host classes'.
+// RuntimeError, with memory64's address types and the compile options of
+// the JS string builtins (Tag, Exception and JSTag are
+// 58-webassembly-exceptions.js'). This file is the WebIDL side - argument
+// counts, dictionaries read in their members' order, enforced ranges and
+// address values, overloads, promises settled in later tasks, streaming
+// from a Response - and the engine side is Pascal (Web.Script.NativeWasm
+// over libwasm): the Module, Memory, Table and Global objects are host
+// objects made there with the prototypes registered below, Exported
+// Functions are native functions, and the brand checks are the host
+// classes'.
 //
 // The store is the agent's (the window's runtime, shared by its frames and
-// dedicated workers; workers see this window's WebAssembly object). A Module
-// is structured-cloneable within the agent (structuredClone, postMessage to
-// a frame or a dedicated worker): the copy shares the compiled module.
+// dedicated workers; a worker's scope runs these scripts again for a
+// WebAssembly object of its own). A Module is structured-cloneable within
+// the agent (structuredClone, postMessage to a frame or a dedicated
+// worker): the copy shares the compiled module and its compile options.
 (function (natives, global, internal) {
   "use strict";
   const defineProperty = Object.defineProperty;
@@ -586,6 +590,11 @@
     if (optionsOf(value) !== noOptions) weakSet.call(moduleOptions, made, optionsOf(value));
     return made;
   });
+  // Compile options for a Module of this realm made by another realm's
+  // adoptModules (on the natives object, which that realm has).
+  natives.wasmAdoptOptions = function (module, options) {
+    weakSet.call(moduleOptions, module, options);
+  };
   // How many Modules were cloned so far (a message for a worker that has
   // some is adopted into the worker's realm before it is delivered).
   internal.wasmModuleClones = function () {
@@ -601,6 +610,7 @@
       if (memory.has(item)) return memory.get(item);
       if (natives.wasmIsModule(item)) {
         const made = realmNatives.wasmCloneModule(item);
+        if (optionsOf(item) !== noOptions) realmNatives.wasmAdoptOptions(made, optionsOf(item));
         memory.set(item, made);
         return made;
       }

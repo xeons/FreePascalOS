@@ -42,7 +42,10 @@
     (Wasm.Types) and returns its results; a trap is EWasmTrap with Kind,
     message and StackTrace. Host functions come from
     WasmNewHostFunction: a method that gets typed arguments and fills in
-    typed results, and may raise to unwind (EWasmTrap to trap).
+    typed results, and may raise to unwind (EWasmTrap to trap);
+    WasmNewHostFunctionOfType makes one of a module's own type (its id
+    from WasmModuleTypeIds), which keeps the type's rec group and
+    supertypes, so it links where that module imports a function.
 
   References
     funcref values are TWasmFunction objects. externref values are

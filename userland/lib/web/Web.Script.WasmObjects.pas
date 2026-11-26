@@ -20,16 +20,17 @@
   The JavaScript objects of the WebAssembly API that carry engine
   objects, and the errors the engine's failures become.
 
-  Module, Memory, Table and Global objects are host objects (one host
-  class each, here, for the process) whose native data is the engine's
-  object; their prototypes are the classes the platform script
-  (platform/57-webassembly.js) defines, so the brand check is the host
-  class, not the prototype chain (a subclass's instance passes, an
-  object made with Object.create does not). A Module object holds a
-  reference to its TWasmModule, released when it is collected; the
-  other objects' engine objects belong to the store (Web.Script.
-  WasmAgents), which also caches the objects so each engine object has
-  one.
+  Module, Memory, Table, Global, Tag and Exception objects are host
+  objects (one host class each, here, for the process) whose native data
+  is the engine's object; their prototypes are the classes the platform
+  scripts (platform/57-webassembly.js, 58-webassembly-exceptions.js)
+  define, so the brand check is the host class, not the prototype chain
+  (a subclass's instance passes, an object made with Object.create does
+  not). A Module object holds a reference to its TWasmModule, released
+  when it is collected; the other objects' engine objects belong to the
+  store (Web.Script.WasmAgents), which also caches the objects so each
+  engine object has one (an Exception's exception object is of the
+  collected heap: Web.Script.WasmReferences).
 
   A memory's buffer is an ArrayBuffer over the memory's own bytes (no
   copy), HostDetachOnly so script can neither transfer nor detach it;
