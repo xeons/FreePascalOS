@@ -85,7 +85,8 @@ how the existing pieces fit together.
 - [x] Dynamic tick for busy processors (no tick while one thread runs
       alone on a processor: a residual tick a second; a thread queued
       there, a switch or an alert brings it back; dynamictick=off;
-      powerstat --check-busy in coretest)
+      powerstat --check-busy in coretest; a switch to a thread left
+      alone defers it at once, so wake-ups beside it cost no tick)
 - [x] A shared read-only page with the clock's parameters (vDSO-style) so
       the runtime reads the time without a system call (TAbiClockPage,
       AuxiliaryClockPage; RDTSC / CNTVCT_EL0; Sys.Time, Now,

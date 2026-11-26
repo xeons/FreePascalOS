@@ -949,7 +949,16 @@ them between processors and changing their priorities.
   Whoever queues a thread on that processor sees the deferral under the
   same lock and sends it its dispatch interrupt, which starts the tick
   again a whole tick from then (`ResumeClockTick`), and so does any
-  switch: the newcomer waits at most one time slice, as before. An
+  switch: the newcomer waits at most one time slice, as before. A
+  switch to a thread that is then alone (the one it ran beside waited
+  again, or the processor leaves its idle thread) defers the tick at
+  once (`DeferOrResumeClockTickLocked` in `SwitchToThread`), so a
+  thread waking now and then beside a busy one costs the busy one no
+  tick (it used to cost one each time: a processor spinning beside a
+  service polling every 50 ms took 20 ticks a second). The kernel self
+  test runs such a waker on the spinner's processor (25 sleeps and 10
+  kernel timers set there, all checked for lateness) and allows at most
+  10 ticks for its 35 wake-ups. An
   alerted thread (asked to end, stop or take a signal) running on
   another processor is sent a dispatch interrupt too, so it reaches its
   safe point at once rather than at a tick that may be a second away.

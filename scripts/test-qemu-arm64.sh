@@ -85,8 +85,21 @@ run_one() {
         echo "test-exit heapchecks fstest $extra_options" > "$test_esp_directory/FreePascalOS/options.txt"
     fi
     rm -f "$build_directory/QEMU_VARS.fd"
+    # The EL2 boot runs QEMU's four processors on one host thread: with a
+    # thread each (MTTCG) and the GICv2, QEMU now and then sleeps through
+    # a generic timer the kernel set correctly (QEMU's own arm_gt trace
+    # shows it armed for the right tick; its main loop polls on for up
+    # to ~0.75 s while every processor waits for an interrupt), so a
+    # sleep ends that much late. Seen most with four processors; the
+    # others keep a thread per processor (with one thread, the two
+    # processor boots starve the scheduler stress test's meddler: QEMU
+    # runs one processor at a time for long stretches).
+    local accelerator=()
+    if [[ "$name" == el2 ]]; then
+        accelerator=(-- -accel tcg,thread=single)
+    fi
     GIC="$gic_version" CPU="$processor" VIRTUALIZATION="$virtualization" PROCESSORS="$processors" SEMIHOSTING=1 SD_CARD="$sd_card_copy" \
-        timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless \
+        timeout "$timeout_seconds" "$script_directory/run-qemu-arm64.sh" "$test_esp_directory" --headless "${accelerator[@]}" \
         < /dev/null > "$serial_log" 2>&1
     local status=$?
 

@@ -47,8 +47,9 @@
 
   Dynamic tick: a busy processor whose running thread is alone (its
   run queues are empty) has no time slice to end either. The scheduler
-  then defers the tick (DeferClockTick, from the dispatch interrupt
-  under the processor's lock) to a residual tick a second later, which
+  then defers the tick (DeferClockTick, from the dispatch interrupt or
+  a switch to a thread left alone, under the processor's lock) to a
+  residual tick a second later, which
   still charges the ticks that passed (for the split between user mode
   and the kernel) and looks again. Whoever puts a thread on that
   processor's queue sees the deferral under the same lock and sends it
