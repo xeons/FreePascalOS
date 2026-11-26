@@ -81,6 +81,7 @@ uses
   Web.Script.NativeScreenModes,
   Web.Script.NativeStorage,
   Web.Script.NativeCanvas,
+  Web.Script.NativeWasm,
   Web.Origins,
   Web.Bindings.CrossOrigin,
   Web.Dom.RangeContents,
@@ -704,6 +705,7 @@ begin
   DefineScreenModeNatives(Context, Natives);
   DefineStorageNatives(Context, Natives);
   DefineCanvasNatives(Context, Natives);
+  DefineWasmNatives(Context, Natives);
 end;
 
 procedure InstallPlatform(Context: TBindingContext);

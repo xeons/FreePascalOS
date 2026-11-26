@@ -8999,7 +8999,10 @@ MemoryLimit, Interrupt (any thread), CollectGarbage and heap statistics;
 binary data without copies (NewArrayBuffer, NewArrayBufferFrom,
 NewExternalArrayBuffer, NewTypedArray, NewUint8Array, BufferSourceData,
 DetachArrayBuffer, IsArrayBuffer, IsTypedArray; natives use
-Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray); modules
+Js.ArrayBuffers and Js.Builtins.TypedArrays.NewTypedArray; a buffer of
+host memory can have a detach key, `HostDetachOnly`, that makes
+transfer() refuse it, and a `HostResize` hook through which its host
+resizes it: a WebAssembly memory's); modules
 (EvaluateModule, ImportModule, ModuleNamespace, and the ModuleResolver,
 ModuleFetcher and ModuleMetaHook hooks); HostEnsureCanCompileStrings
 as `Realm.CompileStringsCheck` (asked with the source before eval,
@@ -9088,8 +9091,9 @@ MVP with mutable globals, sign extension, non-trapping float to int
 conversions, multiple values, bulk memory, reference types and the
 fixed-width SIMD instructions. It is portable Pascal, with no assembler,
 so the same code runs on both architectures and on the Linux host. The
-JavaScript `WebAssembly` object is to be built on its interface
-(`Wasm.Api`); nothing links the library yet.
+JavaScript `WebAssembly` object of libweb is built on its interface
+(`Wasm.Api`; see "The JavaScript WebAssembly object" below), so libweb
+and every program on it link libwasm.
 
 **Decoding** (`Wasm.Reader`, `Wasm.Instructions`, `Wasm.Decoder`) turns
 the binary into a `TWasmModule` (`Wasm.Module`): the index spaces with
@@ -9209,7 +9213,7 @@ rounded exactly, `module binary` and `module quote`) and the .wast script
 commands, with the `spectest` host module. All 148 files of test/core
 and test/core/simd pass, 53,984 assertions.
 
-**Not done yet**: the JavaScript `WebAssembly` object; the 3.0 features
+**Not done yet**: the 3.0 features
 (exception handling, tail calls, memory64, multiple memories, typed
 function references, garbage collected types, relaxed SIMD), for which
 the value types, memory indices and the opcode numbering leave room;
@@ -9260,6 +9264,161 @@ skips what this host cannot give: `$262.agent` (no concurrent agents),
 CanBlockIsTrue (the main thread cannot block in Atomics.wait) and
 IsHTMLDDA (no such object). Standard features the engine lacks are not
 skipped: their failures are in the expectations.
+
+### The JavaScript WebAssembly object
+
+The WebAssembly JavaScript Interface and Web API in libweb: the
+`WebAssembly` namespace with validate, compile, instantiate (bytes or a
+Module), compileStreaming and instantiateStreaming, the interfaces
+Module (exports, imports, customSections), Instance, Memory (buffer,
+grow, toFixedLengthBuffer, toResizableBuffer), Table (length, get, set,
+grow), Global (value, valueOf) and the errors CompileError, LinkError and
+RuntimeError. Every window and frame has it, and every worker's global
+scope - dedicated, shared and service workers alike, all realms of a
+window's runtime - has one of its own: `natives.wasmInstall(scope)`
+(called by platform/65-workers.js when it makes a scope) runs the
+platform script in the scope's realm with natives made in that realm
+(which carry their window's context), so a worker's Modules, promises
+and errors are its realm's (`e instanceof TypeError` holds there).
+
+**Two halves.** `platform/57-webassembly.js` is the WebIDL side:
+argument counts, dictionaries read member by member in the standard's
+order (each converted as it is read, which the tests watch with
+getters), `[EnforceRange] unsigned long`, the instantiate overloads,
+"read the imports" (each import's module looked up again, the kind
+checked: a callable, a Global or a number or BigInt of the right type,
+a Memory, a Table, else a LinkError), promises settled in tasks of their
+own (the bytes copied at the call), and the streaming checks
+(Content-Type exactly `application/wasm`, a CORS-same-origin response,
+an ok status, a body not yet used, read through fetch's own internals so
+a page replacing Response.prototype changes nothing). The errors are
+native error constructors of their own (callable without new, Error as
+their prototype, no toStringTag). The engine side is Pascal:
+`Web.Script.NativeWasm` (the natives), `Web.Script.WasmObjects` (the
+objects that carry engine objects, memory buffers, errors),
+`Web.Script.WasmValues` (values and calls both ways) and
+`Web.Script.WasmAgents` (the store and what is kept with it).
+
+**The store is the agent's.** `TWasmAgent` subclasses libwasm's
+`TWasmStore`, one per top-level context: its frames and its dedicated
+workers are realms of the same runtime on the same thread and share it;
+a shared or service worker's agent has a window and a store of its own.
+It is made when a realm of the runtime first uses WebAssembly and freed
+when the top-level context goes (before its engine, whose objects then
+only release what they held). Beside the store it keeps the JS API's
+caches - one JavaScript object per function, memory, table and global,
+so `instance.exports.f === instance.exports.f` and a memory exported
+twice is one Memory object - the current buffer of each memory, and per
+realm the prototypes and error constructors its platform script
+registered (`wasmRegister`, which also files the realm under its agent:
+natives find their agent by their realm, `AgentOfRealm`).
+
+**Objects.** Module, Memory, Table and Global objects are host objects
+whose native data is the engine's object, with the registered
+prototypes (or `new.target`'s, for subclasses); the host class is the
+brand, so an object made with `Object.create(WebAssembly.Memory.prototype)`
+is refused. A Module object holds a reference to its compiled
+`TWasmModule` and releases it when collected. structuredClone and
+postMessage to a frame or a dedicated worker (one agent) make a new
+Module object of the same compiled module (a clone hook of the
+platform script; the window's clone runs for a worker's messages too,
+so a message to a worker that had Modules in it is adopted into the
+worker's realm before it is delivered, `internal.adoptModules`);
+serializing one for another heap - a shared or
+service worker, BroadcastChannel, storage - is a DataCloneError, as the
+standard has it for another agent cluster. Instances are ordinary
+objects of the Instance class whose exports object (null prototype,
+read-only enumerable properties, not extensible) is made once.
+
+**Exported Functions** are native functions of the realm that first
+needed them: name the function's index, length its parameter count,
+Function.prototype as their prototype, not constructors. A call
+converts the arguments with ToWebAssemblyValue (i32 by ToInt32, i64 by
+ToBigInt64, f32 rounded to single precision, funcref null or an
+Exported Function, externref anything; v128 in the type is a
+TypeError), runs `WasmCall`, and gives undefined, the one value, or an
+array of several (i64 as BigInt). **Imported JavaScript callables**
+become host functions whose data is the callable; calling one converts
+the arguments, calls with this undefined and converts the result (an
+iterable for several results). Calls nest both ways (an import calling
+an export calling an import) as far as the store allows; a JavaScript
+exception thrown in an import unwinds the WebAssembly frames as
+`EWasmScriptException` and comes out of the Exported Function that
+called in unchanged (the same object). Values only Pascal holds while
+JavaScript may run are pushed as temporary roots.
+
+**externref** values are the JavaScript value's own 64 bits (JS null is
+the null reference; +0.0, whose bits are zero, is kept as the integer
+0), so nothing is boxed. The agent is a root provider of the heap: it
+marks its cached objects and buffers, every externref the store holds
+(`EnumerateReferences`: tables, globals, element segments and the live
+slots of suspended frames, by the compiler's safepoint maps) and the
+callables behind host functions (`EnumerateHostData`). Store objects
+live as long as the store, and with them their JavaScript objects.
+
+**Memory buffers.** A memory's buffer is an ArrayBuffer over the
+memory's own bytes (libjavascript's external buffers) with a detach
+key: `HostDetachOnly` makes transfer() and transfer lists refuse it. A
+growth - memory.grow from script or from WebAssembly, even by 0 pages -
+reaches the agent through `TWasmMemory.OnGrow`, which detaches the
+buffer before the old bytes are freed; the next `buffer` is a new one
+over the new bytes. toResizableBuffer gives a resizable buffer instead
+(its maximum the memory's): it follows the memory's growth, and its
+resize() grows the memory by whole pages through libjavascript's
+`HostResize` hook (a length that is not a page multiple, or smaller, is
+a RangeError).
+
+**Errors.** A module that does not decode or validate is a
+CompileError ("WebAssembly module is malformed/invalid: reason @+offset"),
+a failed link a LinkError, a trap a RuntimeError whose stack begins with
+the WebAssembly frames ("at name (wasm-function[i]:0xoffset)") before
+the JavaScript ones, call stack exhaustion (the store's depth or slots)
+a RangeError, a memory or table that cannot be had a RangeError, a
+shared memory a TypeError (no threads yet).
+
+**CSP.** Compiling (the Module constructor, compile, instantiate with
+bytes, the streaming functions) asks `CspBlocksWasm`: a script-src (or
+default-src) without 'unsafe-eval' or 'wasm-unsafe-eval' refuses it
+with a CompileError and reports a violation of script-src with the
+blocked URI "wasm-eval", as eval's are reported; validate is not
+compilation and still answers.
+
+**Long work.** The store's interrupt hook (asked every million back
+edges and calls) answers the runtime's `InterruptRequested`, which the
+slow script watchdog sets for an entry running longer than its limit: a
+module looping for ever traps with `tkInterrupted`, and the Exported
+Function that called in turns that into the engine's uncatchable
+termination, so it ends exactly as a looping script does (a try around
+the call does not stop it, the console says the script was stopped, the
+page's next scripts run). Page code, WebAssembly included, does not
+answer the browser's pings (`NoteLongWorkStep` is for the engine's own
+work of known length): a renderer busy in a module is shown as not
+responding after the hang timeout, while the browser and its other tabs
+go on, since the browser never waits for a renderer (its sends never
+block, its IPC thread keeps what a renderer does not read).
+
+**Tests.** WebScriptTest's `webassembly.js` assembles modules with a
+small encoder and checks the surface, conversions, multiple results,
+traps and their stacks, call stack exhaustion, exceptions through
+WebAssembly, re-entrant calls, memories (buffers detached by growth
+from both sides, transfer refused, resizable buffers), tables,
+globals, externrefs kept through collections (also with
+`JS_GC_STRESS=1`), structured clone, a Module sent to a dedicated
+worker, the promises (settled later) and the streaming functions over
+Response objects and the bed's fetch (`/module.wasm`); the watchdog
+tests stop a looping module and one called again from a catch;
+WebLoadTest's security tests check the CSP cases. The official tests,
+on the host: WPT `wasm/jsapi` run in a WebScriptTest bed with the real
+testharness.js passes every test of the 2.0 API and of the resizable
+buffers - what fails is the 3.0 and proposal parts (Tag, Exception and
+JSTag of exception handling, type reflection, memory64's address types,
+shared memories, the JS string builtins, JSPI, ESM integration);
+`wasm/webapi`, through webbrowse against WPT's own server, passes all
+but JSTag in its IDL test.
+
+hCaptcha's demo page loads its checkbox frame's hsw.js, whose embedded
+module (about 1 MB, 198 imports, 24 exports) compiles and is
+instantiated in the frame at load, without errors.
 
 ## Network drivers
 
@@ -15198,6 +15357,7 @@ error) over `TScriptEnvironment`:
 | 40-streams-blobs | ReadableStream (default readers, tee, pipes, async iteration), WritableStream, TransformStream, TextDecoderStream and TextEncoderStream; Blob, File, FileReader, blob: URLs; FormData |
 | 50-fetch | AbortController and AbortSignal (abort, timeout, any), Headers (guards, forbidden names), Request, Response (the body mixin, clone with tee), fetch(), XMLHttpRequest (asynchronous; all response types) |
 | 55-serialization | StructuredSerialize to text and back, for values going to another heap (worker agents, BroadcastChannel, message links): primitives, arrays, objects, the wrapper objects, Date, RegExp, Map, Set, errors, ArrayBuffer, typed arrays and DataView, Blob, File, transferred ports |
+| 57-webassembly | the WebAssembly namespace (see "The JavaScript WebAssembly object") |
 | 60-messaging | postMessage with the calling window as source (libjavascript notes the caller realm of a cross-realm call), MessageEvent, MessageChannel, MessagePort (over message links when its other side is in another heap), BroadcastChannel across the process |
 | 65-workers | dedicated workers (a realm of the window's runtime) and the runner the shared and service workers' scopes are made with |
 | 66-shared-workers | SharedWorker and the shared worker's side in its agent |
