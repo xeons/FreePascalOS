@@ -252,7 +252,10 @@ begin
   if Input.Floats <> nil then
     FloatsBefore := Input.Floats.Count;
   ResolveBoxEdges(Box, Input.AvailableWidth);
-  IsContainingBlock := Box.IsPositioned or (bfRootElement in Box.Flags) or (Box.Kind = bkViewport) or
+  { Without a positioned ancestor the containing block is the initial
+    one (CSS 2.2 10.1): the viewport's size at the canvas origin, not the
+    root element's box (its margins and borders do not move it). }
+  IsContainingBlock := Box.IsPositioned or (Box.Kind = bkViewport) or
     (Box.Style.Value(cpTransform)^.Kind <> cvKeyword);
   ContentInput := Input;
   OwnList := nil;
