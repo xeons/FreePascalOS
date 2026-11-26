@@ -222,14 +222,6 @@ system = 'freepascalos'
 cpu_family = '$CPU'
 cpu = '$CPU'
 endian = 'little'
-
-# The sysroot of this tree, also when the compilers were copied from
-# another one (their built-in sysroot is where they were built).
-[built-in options]
-c_args = ['--sysroot=$SYSROOT']
-cpp_args = ['--sysroot=$SYSROOT']
-c_link_args = ['--sysroot=$SYSROOT']
-cpp_link_args = ['--sysroot=$SYSROOT']
 EOF
 }
 

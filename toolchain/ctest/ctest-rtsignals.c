@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/signalfd.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -138,6 +139,28 @@ static void test_queue_order(void) {
 		taken_values[1], taken_signals[2], taken_values[2]);
 	signal(SIGRTMIN, SIG_DFL);
 	signal(SIGRTMIN + 1, SIG_DFL);
+}
+
+/* A signal descriptor reads real-time signals from their queue, in
+   order, with their values. */
+static void test_signalfd_queue(void) {
+	sigset_t set;
+	block_only(SIGRTMIN + 6, 0, 0, &set);
+	int fd = signalfd(-1, &set, SFD_NONBLOCK);
+	CHECK(fd >= 0, "signalfd: %s", strerror(errno));
+	queue_value(SIGRTMIN + 6, 61);
+	queue_value(SIGRTMIN + 6, 62);
+	struct signalfd_siginfo items[2];
+	memset(items, 0, sizeof(items));
+	ssize_t got = read(fd, items, sizeof(items));
+	CHECK(got == (ssize_t)sizeof(items) && items[0].ssi_signo == (uint32_t)(SIGRTMIN + 6) &&
+		items[0].ssi_int == 61 && items[1].ssi_int == 62 && items[0].ssi_code == SI_QUEUE &&
+		items[0].ssi_pid == (uint32_t)getpid(), "signalfd: %zd bytes, values %d %d, code %d", got,
+		items[0].ssi_int, items[1].ssi_int, items[0].ssi_code);
+	errno = 0;
+	CHECK(read(fd, items, sizeof(items)) < 0 && errno == EAGAIN, "signalfd emptied the queue");
+	close(fd);
+	sigprocmask(SIG_UNBLOCK, &set, NULL);
 }
 
 static void *send_later(void *argument) {
@@ -399,6 +422,7 @@ static void test_restart(void) {
 void test_realtime_signals(void) {
 	CHECK(SIGRTMAX - SIGRTMIN >= 8, "real-time signals %d..%d", SIGRTMIN, SIGRTMAX);
 	test_queue_order();
+	test_signalfd_queue();
 	test_timed_waits();
 	test_alternate_stack();
 	check_overflow_child(0);

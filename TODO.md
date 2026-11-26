@@ -2046,9 +2046,10 @@ in the order they would be built:
 - [x] timer_create and friends (REALTIME, MONOTONIC, process and thread CPU
       time; SIGEV_SIGNAL/NONE/THREAD), ITIMER_VIRTUAL/PROF; CPU-time clocks
       from real per-thread times, clock_getcpuclockid/pthread_getcpuclockid (243-249)
-- [ ] CLOCK_REALTIME absolute timers follow a step of the wall clock (now:
-      turned into uptime when set); SIGEV_THREAD_ID; thread-directed
-      queued signals (pthread_sigqueue, tgkill with a value)
+- [x] Absolute CLOCK_REALTIME timers follow steps of the wall clock; signalfd
+      reads the real-time queues with their values
+- [ ] SIGEV_THREAD_ID; thread-directed queued signals (pthread_sigqueue,
+      tgkill with a value)
 - [x] Clang driver support (`--target=x86_64-freepascalos`, `aarch64-freepascalos`):
       LLVM 23.1.6 patches, `make clang-toolchain`, ctest built by Clang
 - [ ] msync and mincore in mlibc's sysdeps (CallSyncMemory 214,

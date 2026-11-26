@@ -12679,7 +12679,9 @@ all.
 (64) POSIX timers (their ids are their places) and the three interval
 timers after them, made when first set. A timer counts on the uptime
 (`CLOCK_MONOTONIC`, `CLOCK_BOOTTIME`, `CLOCK_REALTIME` - whose absolute
-times are wall times turned into uptime when set; `ITIMER_REAL`): a
+times are wall times turned into uptime when set and moved with every
+step of the wall clock (`AddWallClockStepRoutine`, the period too);
+`ITIMER_REAL`): a
 kernel timer (`Kernel.Timers`) whose deferred call re-arms it on its
 schedule and queues the signal (`PostTimerSignal`, at `DispatchLevel`
 under the process's signal lock alone, waking a taker with an alert;
@@ -12786,8 +12788,11 @@ with `TimerCancelOnSet`, it is stopped and reads fail with
 **Signal descriptors.** A program blocks the signals and reads them: a
 read takes the lowest waiting signal of the mask - the process's or the
 reading thread's - as a `TAbiSignalDescriptorRecord` (struct
-signalfd_siginfo: the signal, the sender and `SignalCodeUser` or
-`SignalCodeKernel`), as many as fit. A descriptor reports the signals
+signalfd_siginfo: the signal, the sender and its user, `SignalCodeUser`,
+`SignalCodeKernel`, `SignalCodeQueue` or `SignalCodeTimer`, the value, a
+timer's id and overrun), as many as fit, through
+`Processes.Signals.TakeSignal`: real-time signals come from their queue
+in order, a timer's with its overrun. A descriptor reports the signals
 of the process that made it: `Processes.Signals` tells it of every
 signal made to wait (`NoteSignalWaiting` signals its Ready), and Ready
 is brought up to date before every wait on it and after every read, so
@@ -12839,7 +12844,7 @@ with mutexes, condition variables, `__thread` and once, fork/exec/waitpid,
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
 loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`;
 eventfd, timerfd, signalfd, epoll (a hundred pipes, a TCP server,
-nesting, fork) and inotify; 569 checks), then `hello-static` and `cxxtest` (iostreams, containers,
+nesting, fork) and inotify; 657 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
 mutexes, atomics, chrono) as programs of their own; with Clang (`make
 clang-toolchain`) also `ctest-clang --groups-only` (every group again,
