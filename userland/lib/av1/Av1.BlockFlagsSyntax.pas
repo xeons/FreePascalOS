@@ -117,6 +117,8 @@ begin
       Context := 0;
     Value := ReadSymbol(Tile.Symbols, @Tile.Cdf.SegmentIdCdf[Context], MAX_SEGMENTS);
     Tile.segment_id := NegDeinterleave(Value, Pred, Tile.Header^.LastActiveSegId + 1);
+    if (Tile.segment_id < 0) or (Tile.segment_id > Tile.Header^.LastActiveSegId) then
+      RaiseAv1Error('segment_id out of range');
   end;
 end;
 

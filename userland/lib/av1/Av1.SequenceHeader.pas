@@ -240,6 +240,9 @@ begin
   Header.frame_height_bits_minus_1 := ReadBits(Reader, 4);
   Header.max_frame_width_minus_1 := ReadBits(Reader, Header.frame_width_bits_minus_1 + 1);
   Header.max_frame_height_minus_1 := ReadBits(Reader, Header.frame_height_bits_minus_1 + 1);
+  { The largest frames of the highest level are 16384 by 8704. }
+  if (Header.max_frame_width_minus_1 >= 16384) or (Header.max_frame_height_minus_1 >= 16384) then
+    RaiseAv1Error('frames larger than 16384 samples on a side');
   if Header.reduced_still_picture_header then
     Header.frame_id_numbers_present_flag := False
   else

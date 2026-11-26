@@ -172,6 +172,18 @@ begin
     Reference := FSlots.Frames[FFrame.Header.ref_frame_idx[Index]];
     if Reference = nil then
       RaiseAv1Error('missing reference frame');
+    { The specification requires references of the frame's format, and
+      sizes within the scaling limits. }
+    if (Reference.RefBitDepth <> FFrame.Sequence.BitDepth) or
+      (Reference.RefSubsamplingX <> FFrame.Sequence.subsampling_x) or
+      (Reference.RefSubsamplingY <> FFrame.Sequence.subsampling_y) or
+      (Reference.Picture.NumPlanes <> FFrame.Sequence.NumPlanes) then
+      RaiseAv1Error('a reference frame of another format');
+    if (2 * FFrame.Header.FrameWidth < Reference.RefUpscaledWidth) or
+      (2 * FFrame.Header.FrameHeight < Reference.RefFrameHeight) or
+      (FFrame.Header.FrameWidth > 16 * Reference.RefUpscaledWidth) or
+      (FFrame.Header.FrameHeight > 16 * Reference.RefFrameHeight) then
+      RaiseAv1Error('a reference frame beyond the scaling limits');
     FFrame.ReferenceFrames[LAST_FRAME + Index] := Reference.Acquire;
   end;
 end;
@@ -331,6 +343,8 @@ begin
     TgStart := ReadBits(Reader, TileBits);
     TgEnd := ReadBits(Reader, TileBits);
   end;
+  if (TgStart > TgEnd) or (TgEnd >= NumTiles) then
+    RaiseAv1Error('a tile group with tiles the frame does not have');
   AlignToByte(Reader);
   HeaderBytes := BytePosition(Reader);
   Offset := HeaderBytes;

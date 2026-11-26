@@ -1408,7 +1408,8 @@ compression-test: $(COMPRESSION_TEST) $(COMPRESSION_FIXTURES)/manifest.txt
 # makes with the host's AV1 encoders (aomenc with each coding tool and
 # format, SvtAv1EncApp, rav1e through ffmpeg): every frame must equal
 # what libaom's reference decoder (aomdec) gives, sample for sample, on
-# one thread and with tiles on four. The test also lists which coding
+# one thread and with tiles on four; damaged copies of them must be
+# decoded or refused, nothing worse. The test also lists which coding
 # tools the streams exercised (build/tools/av1-test.out). Its units are
 # built from scratch each time (the library's units refer to each other
 # in both directions, which incremental builds can get wrong).
@@ -1434,6 +1435,8 @@ av1-test: $(AV1_TEST) $(AV1_FIXTURES)/manifest.txt
 		{ grep FAIL build/tools/av1-test.out; echo "AV1 TEST FAILED (build/tools/av1-test.out)"; exit 1; }
 	@$(AV1_TEST) $(AV1_FIXTURES) --threads 4 > build/tools/av1-test-threads.out || \
 		{ grep FAIL build/tools/av1-test-threads.out; echo "AV1 TEST FAILED with threads (build/tools/av1-test-threads.out)"; exit 1; }
+	@$(AV1_TEST) $(AV1_FIXTURES) --fuzz 4 > build/tools/av1-test-fuzz.out || \
+		{ grep FAIL build/tools/av1-test-fuzz.out; echo "AV1 TEST FAILED on damaged streams (build/tools/av1-test-fuzz.out)"; exit 1; }
 	@echo "AV1 TEST PASSED: $$(tail -n 1 build/tools/av1-test.out)"
 
 # libarchive builds for the host too (over libcompression): it reads the

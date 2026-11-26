@@ -37,12 +37,13 @@ program Av1Test;
 
 uses
   {$ifdef UNIX}cthreads,{$endif}
-  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1.ToolStatistics, Av1Test.Ivf;
+  Classes, SysUtils, DateUtils, Media.Frames, Av1.Common, Av1.Decoder, Av1.ToolStatistics, Av1Test.Ivf, Av1Test.Fuzzing;
 
 var
   FixtureDirectory: string;
   ThreadCount: Integer = 0;
   OnlyName: string = '';
+  FuzzRounds: Integer = 0;
   Passed: Integer = 0;
   Failed: Integer = 0;
   TotalFrames: Int64 = 0;
@@ -166,13 +167,36 @@ begin
   end;
 end;
 
+{ Damaged copies of a stream: decoded or refused, never anything worse. }
+procedure RunFuzzCase(const Name, StreamFile: string);
+var
+  Failure: string;
+  Seed: LongWord;
+  Index: Integer;
+begin
+  Seed := 2166136261;
+  for Index := 1 to Length(Name) do
+    Seed := LongWord((QWord(Seed xor Ord(Name[Index])) * 16777619) and $FFFFFFFF);
+  Failure := FuzzStream(FixtureDirectory + '/' + StreamFile, FuzzRounds, Seed);
+  if Failure = '' then
+  begin
+    Inc(Passed);
+    WriteLn(Format('ok   %s (%d damaged copies)', [Name, FuzzRounds]));
+  end
+  else
+  begin
+    Inc(Failed);
+    WriteLn(Format('FAIL %s: %s', [Name, Failure]));
+  end;
+end;
+
 procedure ParseArguments;
 var
   Index: Integer;
 begin
   if ParamCount < 1 then
   begin
-    WriteLn('usage: Av1Test FIXTURES [--threads N] [--only NAME]');
+    WriteLn('usage: Av1Test FIXTURES [--threads N] [--only NAME] [--fuzz ROUNDS]');
     Halt(2);
   end;
   FixtureDirectory := ParamStr(1);
@@ -182,6 +206,11 @@ begin
     if (ParamStr(Index) = '--threads') and (Index < ParamCount) then
     begin
       ThreadCount := StrToInt(ParamStr(Index + 1));
+      Inc(Index);
+    end
+    else if (ParamStr(Index) = '--fuzz') and (Index < ParamCount) then
+    begin
+      FuzzRounds := StrToInt(ParamStr(Index + 1));
       Inc(Index);
     end
     else if (ParamStr(Index) = '--only') and (Index < ParamCount) then
@@ -213,7 +242,10 @@ begin
         Continue;
       if (OnlyName <> '') and (Fields[0] <> OnlyName) then
         Continue;
-      RunCase(Fields[0], Fields[1], Fields[2], StrToInt(Fields[3]));
+      if FuzzRounds > 0 then
+        RunFuzzCase(Fields[0], Fields[1])
+      else
+        RunCase(Fields[0], Fields[1], Fields[2], StrToInt(Fields[3]));
     end;
   finally
     Fields.Free;

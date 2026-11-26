@@ -106,6 +106,9 @@ end;
 { superres_params( ) and compute_image_size( ). }
 procedure ParseSuperresParams(var Reader: TBitReader; const Sequence: TSequenceHeader; var Header: TFrameHeader);
 begin
+  if (Header.FrameWidth > Sequence.max_frame_width_minus_1 + 1) or
+    (Header.FrameHeight > Sequence.max_frame_height_minus_1 + 1) then
+    RaiseAv1Error('a frame larger than the sequence allows');
   if Sequence.enable_superres then
     Header.use_superres := ReadFlag(Reader)
   else

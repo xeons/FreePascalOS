@@ -359,6 +359,8 @@ begin
   Tile.AvailL := Tile.IsInside(R, C - 1);
   Tile.AvailUChroma := Tile.AvailU;
   Tile.AvailLChroma := Tile.AvailL;
+  if Tile.HasChroma and (Tile.GetPlaneResidualSize(SubSize, 1) = BLOCK_INVALID) then
+    RaiseAv1Error('a block size the chroma subsampling does not allow');
   if Tile.HasChroma then
   begin
     if (Tile.Sequence^.subsampling_y <> 0) and (Bh4 = 1) then
