@@ -61,6 +61,7 @@ var
   Index: Integer;
 begin
   FormState.Free;
+  ImageRequest.Free;
   Listeners.Free;
   ChildNodeList.Free;
   if ChildrenCollection <> nil then
@@ -123,6 +124,22 @@ begin
   if FRareData = nil then
     Exit(nil);
   Result := FRareData.FormState;
+end;
+
+function TNode.ImageRequestObject: TObject;
+begin
+  if FRareData = nil then
+    Exit(nil);
+  Result := FRareData.ImageRequest;
+end;
+
+procedure TNode.SetImageRequestObject(Value: TObject);
+begin
+  if (Value = nil) and (FRareData = nil) then
+    Exit;
+  if RareData.ImageRequest <> Value then
+    RareData.ImageRequest.Free;
+  RareData.ImageRequest := Value;
 end;
 
 procedure TNode.SetFormStateObject(Value: TObject);

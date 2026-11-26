@@ -26,8 +26,8 @@
   submission by GET through the environment, template content, script
   text and async.
 
-  Layout answers (offsetWidth and the like) are 0 until layout lands;
-  images report no natural size; media are paused.
+  Images report their request's natural size, completeness and URL
+  (Web.Dom.ImageRequests); media are paused.
 }
 unit Web.Bindings.HtmlElements;
 
@@ -47,6 +47,7 @@ implementation
 uses
   Web.Dom.FormControls,
   Web.Dom.Focus,
+  Web.Dom.ImageRequests,
   SysUtils,
   Math,
   Js.Objects,
@@ -677,29 +678,47 @@ end;
 
 { HTMLImageElement, HTMLMediaElement }
 
+{ The density-corrected natural size of the current request's image,
+  0 when it has none (not loaded yet, broken). }
+function ImageNaturalSide(Element: TElement; Height: Boolean): TJsValue;
+var
+  Request: TImageRequest;
+  Side: Double;
+begin
+  Request := FindImageRequest(Element);
+  if (Request = nil) or (Request.State <> ImageRequestCompletelyAvailable) then
+    Exit(JsInteger(0));
+  if Height then
+    Side := Request.NaturalHeight
+  else
+    Side := Request.NaturalWidth;
+  Result := JsInteger(Trunc(Side));
+end;
+
 function HTMLImageElement_get_naturalWidth(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsInteger(0);
+  Result := ImageNaturalSide(ThisElement(Call), False);
 end;
 
 function HTMLImageElement_get_naturalHeight(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsInteger(0);
+  Result := ImageNaturalSide(ThisElement(Call), True);
 end;
 
 function HTMLImageElement_get_complete(var Call: TBindingCall): TJsValue;
 begin
-  Result := JsTrue;
+  Result := JsBoolean(ImageComplete(ThisElement(Call)));
 end;
 
 function HTMLImageElement_get_currentSrc(var Call: TBindingCall): TJsValue;
 var
-  Resolved: string;
+  Request: TImageRequest;
 begin
-  if not ThisElement(Call).HasAttributeAtom(AtomSrc) or
-    not ResolveUrlText(ThisElement(Call).NodeDocument, ThisElement(Call).AttributeValueOf(AtomSrc), Resolved) then
-    Resolved := '';
-  Result := Text(Call, Resolved);
+  Request := FindImageRequest(ThisElement(Call));
+  if Request = nil then
+    Result := Text(Call, '')
+  else
+    Result := Text(Call, Request.CurrentUrl);
 end;
 
 function HTMLMediaElement_get_paused(var Call: TBindingCall): TJsValue;

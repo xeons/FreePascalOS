@@ -224,6 +224,10 @@ type
       owns it (Web.Dom.FormControls keeps it). }
     function FormStateObject: TObject;
     procedure SetFormStateObject(Value: TObject);
+    { An img's current image request (nil if none); the node owns it
+      (Web.Dom.ImageRequests keeps it, the image loader fills it). }
+    function ImageRequestObject: TObject;
+    procedure SetImageRequestObject(Value: TObject);
     procedure RetainTarget; override;
     procedure ReleaseTarget; override;
     function HeldByEvents: Boolean; override;
@@ -882,6 +886,8 @@ type
     ElementState: Word;
     { A form control's state beyond its attributes (Web.Dom.FormControls). }
     FormState: TObject;
+    { An img's image request (Web.Dom.ImageRequests). }
+    ImageRequest: TObject;
     destructor Destroy; override;
   end;
 

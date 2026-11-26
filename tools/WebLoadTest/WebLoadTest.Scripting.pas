@@ -344,15 +344,17 @@ begin
   try
     Environment.Site.AddRoute('i.test/page.html', 200, 'Content-Type: text/html',
       '<!DOCTYPE html><p id="out">x</p><script>var seen = [];' +
-      'function note(t) { seen.push(t); if (seen.length == 3) document.getElementById("out").textContent =' +
+      'function note(t) { seen.push(t); if (seen.length == 4) document.getElementById("out").textContent =' +
       ' seen.sort().join(",") + " done"; }' +
-      'var image = new Image(); image.src = "slow.png";' +
-      ' image.onload = function () { note("load"); };' +
+      'var image = new Image(); image.src = "slow.png"; var before = image.complete + " " + image.naturalWidth;' +
+      ' image.onload = function () { note("load " + before + " " + this.complete + " " + this.naturalWidth + "x" +' +
+      ' this.naturalHeight + " " + this.width + "x" + this.height + " " + this.currentSrc); };' +
       ' image.onerror = function () { note("error slow"); };' +
       'image = document.createElement("img"); image.src = "data:image/heic;base64,AAAA";' +
       ' image.addEventListener("error", function () { note("error data"); });' +
       'image = new Image(); image.src = "missing.png"; image.onerror = function () { note("error missing"); };' +
-      'image = null; document.getElementById("out").textContent = "started";</script>');
+      'image = null; var empty = new Image(); note("empty " + empty.complete + " " + empty.naturalWidth);' +
+      'document.getElementById("out").textContent = "started";</script>');
     Route := Environment.Site.AddRoute('i.test/slow.png', 200, 'Content-Type: image/png', SmallPng);
     Route.HeadGate := TEvent.Create(nil, True, False, '');
     Navigable.NavigateTo('https://i.test/page.html');
@@ -364,8 +366,8 @@ begin
     Check(Environment.RunUntil(@Conditions.Done), 'detached images: every event came (' +
       Trim(Conditions.Console) + ')');
     Text := Navigable.ActiveDocument.GetElementById('out').TextContent;
-    Check(Text = 'error data,error missing,load done', 'detached images: load and error at the handlers (' +
-      Text + ')');
+    Check(Text = 'empty true 0,error data,error missing,load false 0 true 3x2 3x2 https://i.test/slow.png done',
+      'detached images: load and error at the handlers, the natural size, complete and currentSrc (' + Text + ')');
     Check(Navigable.Loader.Images.PendingCount = 0, 'detached images: nothing left loading');
   finally
     Navigable.Free;

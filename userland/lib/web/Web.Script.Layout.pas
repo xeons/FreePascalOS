@@ -68,6 +68,8 @@ uses
   Css.ComputedStyle,
   Css.PropertyIds,
   Css.Properties,
+  Css.Keywords,
+  Css.Serialization,
   Web.Layout.Boxes,
   Web.Layout.BoxGeometry,
   Web.Layout.TextOffsets,
@@ -348,6 +350,33 @@ begin
   end;
 end;
 
+{ The resolved value of width or height (CSSOM 9): the used size of a
+  rendered box the property applies to (not a non-replaced inline box),
+  by its box-sizing; '' otherwise (the computed value is the answer). }
+function UsedSize(Box: TLayoutBox; Id: TCssPropertyId): string;
+var
+  Size: Single;
+begin
+  Result := '';
+  if (Box = nil) or (Box.Kind in [bkInline, bkText, bkLineBreak]) then
+    Exit;
+  if Id = cpWidth then
+  begin
+    Size := Box.Width;
+    if Box.Style.Keyword(cpBoxSizing) <> kwBorderBox then
+      Size := Box.ContentWidth;
+  end
+  else
+  begin
+    Size := Box.Height;
+    if Box.Style.Keyword(cpBoxSizing) <> kwBorderBox then
+      Size := Size - Box.Border[sideTop] - Box.Border[sideBottom] - Box.Padding[sideTop] - Box.Padding[sideBottom];
+  end;
+  if Size < 0 then
+    Size := 0;
+  Result := SerializeNumber(Size) + 'px';
+end;
+
 function TDocumentScriptLayout.ComputedValue(Element: TElement; const PropertyName: string): string;
 var
   Style: TCssComputedStyle;
@@ -364,6 +393,12 @@ begin
     Exit(Style.CustomProperty(PropertyName));
   if Id = cpInvalid then
     Exit;
+  if (Id = cpWidth) or (Id = cpHeight) then
+  begin
+    Result := UsedSize(Layout.BoxOf(Element), Id);
+    if Result <> '' then
+      Exit;
+  end;
   Result := Style.SerializeProperty(Id);
 end;
 

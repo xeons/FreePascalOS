@@ -21,7 +21,8 @@
   getClientRects through the script layout): an inline element's
   fragments (a link has a size, one rectangle per line), position:
   relative and translate moving the box, a scrolled container moving
-  what is in it.
+  what is in it; the resolved width and height getComputedStyle gives
+  (the used size of a box by its box-sizing, auto for an inline box).
 }
 unit WebLayoutTest.Geometry;
 
@@ -48,6 +49,8 @@ const
     '<div id=scroller style="height:50px;overflow:auto"><div style="height:30px"></div>' +
     '<div id=inside style="height:200px"></div></div>' +
     '<span id=empty></span>' +
+    '<div id=sized style="width:50%;padding:5px;border:2px solid;height:auto"><p style="margin:0;height:30px"></p></div>' +
+    '<div id=bordered style="box-sizing:border-box;width:100px;padding:10px;height:40px"></div>' +
     '</body>';
 
 procedure CheckElementGeometry;
@@ -91,6 +94,16 @@ begin
       FloatToStr(Unscrolled) + ' -> ' + FloatToStr(Y) + ')');
     Check(Length(ScriptLayout.ClientRects(Document.GetElementById('empty'))) <= 1,
       'geometry: an empty span has at most one rectangle');
+    Check((ScriptLayout.ComputedValue(Document.GetElementById('sized'), 'width') = '400px') and
+      (ScriptLayout.ComputedValue(Document.GetElementById('sized'), 'height') = '30px'),
+      'geometry: the resolved width and height are the used content size (' +
+      ScriptLayout.ComputedValue(Document.GetElementById('sized'), 'width') + ' x ' +
+      ScriptLayout.ComputedValue(Document.GetElementById('sized'), 'height') + ')');
+    Check((ScriptLayout.ComputedValue(Document.GetElementById('bordered'), 'width') = '100px') and
+      (ScriptLayout.ComputedValue(Document.GetElementById('bordered'), 'height') = '40px'),
+      'geometry: with box-sizing: border-box the border box size');
+    Check(ScriptLayout.ComputedValue(Document.GetElementById('short'), 'width') = 'auto',
+      'geometry: an inline box''s width stays auto');
   finally
     ScriptLayout.Free;
     FreeLayout(Layout, Document);

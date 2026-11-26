@@ -41,6 +41,9 @@
     the load event of the document waits for both fetch and decode.
   - loading=lazy images wait until LoadLazyImage (layout: near the
     viewport) or the document's load event, and do not delay it.
+  - The element's image request (Web.Dom.ImageRequests) follows: its
+    URL and loading flag when a fetch starts, the natural size and
+    completely available when decoded, broken when it fails.
   - An img outside the document (new Image(), one removed while it
     loads) loads too and gets its load or error event; its state is
     dropped once that is decided, so nothing keeps the element alive
@@ -59,6 +62,7 @@ uses
   Url.Records,
   Image.Model,
   Web.Dom,
+  Web.Dom.ImageRequests,
   Web.Loading.Contexts,
   Web.Loading.BufferedFetches,
   Web.Loading.Preloads,
@@ -339,6 +343,18 @@ begin
   end;
 end;
 
+{ The request has no image (a failed load, no source left). }
+procedure MarkBroken(Element: TElement);
+var
+  Request: TImageRequest;
+begin
+  Request := ImageRequestOf(Element);
+  Request.State := ImageRequestBroken;
+  Request.NaturalWidth := 0;
+  Request.NaturalHeight := 0;
+  Request.Loading := False;
+end;
+
 procedure TImageLoader.ImageChanged(Element: TElement);
 begin
   Update(Element, False);
@@ -381,6 +397,7 @@ begin
     end;
     EndDelay(State);
     FContext.Sink.ImageRemoved(Element);
+    MarkBroken(Element);
     if Element.HasAttributeAtom(AtomSrc) or Element.HasAttributeAtom(AtomSrcset) then
       FireElementEvent(Element, 'error');
     State.Decoding := False;
@@ -405,7 +422,11 @@ var
   Request: TFetchRequest;
   Claimed: TBufferedFetch;
   Kind: TResourceKind;
+  ImageRequest: TImageRequest;
 begin
+  ImageRequest := ImageRequestOf(State.Element);
+  ImageRequest.Loading := True;
+  ImageRequest.CurrentUrl := SerializeUrl(Url);
   Inc(FNextGeneration);
   State.Generation := FNextGeneration;
   if State.Fetch <> nil then
@@ -568,6 +589,7 @@ var
   Index: Integer;
   Info: TLoadedImageInfo;
   Image: TImage;
+  ImageRequest: TImageRequest;
 begin
   Decoded := TDecodedImage(Data);
   if FRunningDecodes > 0 then
@@ -593,6 +615,12 @@ begin
   Info.Downscaled := Decoded.Downscaled;
   Image := Decoded.Image;
   Decoded.Image := nil;
+  ImageRequest := ImageRequestOf(State.Element);
+  ImageRequest.State := ImageRequestCompletelyAvailable;
+  ImageRequest.NaturalWidth := Info.NaturalWidth;
+  ImageRequest.NaturalHeight := Info.NaturalHeight;
+  ImageRequest.CurrentUrl := Info.CurrentUrl;
+  ImageRequest.Loading := False;
   if State.Element.IsConnected then
     FContext.Sink.ImageLoaded(State.Element, Image, Info)
   else
@@ -604,6 +632,7 @@ end;
 
 procedure TImageLoader.Fail(State: TImageState);
 begin
+  MarkBroken(State.Element);
   if State.Element.IsConnected then
     FContext.Sink.ImageFailed(State.Element);
   FireElementEvent(State.Element, 'error');
