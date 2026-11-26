@@ -272,11 +272,23 @@ begin
     Expected := ReadF32Reference(FixturePath(Directory, Fields[1]));
     if Decoded.Channels <= 0 then
       Decoded.Channels := 1;
+    { The demuxer honours the first page's granule position (samples to
+      drop at the start, as libvorbis' vorbisfile does), which the
+      reference (ffmpeg, which ignores it for Vorbis) keeps: either may
+      start later than the other. }
     Offset := FindAlignment(Decoded.Samples, Expected, Decoded.Channels);
     Aligned := Copy(Decoded.Samples, Offset * Decoded.Channels, Length(Decoded.Samples));
     Snr := SignalToNoise(Aligned, Expected);
+    if Snr < MinimumSnr then
+    begin
+      Offset := FindAlignment(Expected, Decoded.Samples, Decoded.Channels);
+      Aligned := Copy(Expected, Offset * Decoded.Channels, Length(Expected));
+      Snr := SignalToNoise(Decoded.Samples, Aligned);
+      Offset := -Offset;
+    end;
     Check((Decoded.Codec = codecVorbis) and (Snr >= MinimumSnr),
-      Format('vorbis: %s through the Ogg demuxer matches libvorbis (SNR %.1f dB)', [Fields[0], Snr]));
+      Format('vorbis: %s through the Ogg demuxer matches libvorbis (SNR %.1f dB, %d frames, %d expected, offset %d)',
+      [Fields[0], Snr, Length(Decoded.Samples) div Decoded.Channels, Length(Expected) div Decoded.Channels, Offset]));
   finally
     Fields.Free;
   end;
