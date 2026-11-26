@@ -251,25 +251,46 @@ begin
     Result := nil;
 end;
 
+{ The names of the subtests that fail at least once (sorted). }
+function FailingNamesOf(constref Outcome: TTestResult): TStringList;
+var
+  Index: Integer;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+  Result.CaseSensitive := True;
+  for Index := 0 to High(Outcome.Subtests) do
+    if Outcome.Subtests[Index].Status <> SubtestPass then
+      Result.Add(Outcome.Subtests[Index].Name);
+end;
+
 procedure TExpectationSet.Update(constref Outcome: TTestResult);
 var
   Found, Index, Failing: Integer;
   Entry: TTestExpectation;
+  FailingNames: TStringList;
 begin
   if FTests.Find(Outcome.Path, Found) then
     FTests.Delete(Found);
   Entry := TTestExpectation.Create;
   Entry.HarnessFails := Outcome.Harness <> HarnessOk;
   Entry.HarnessStatus := HarnessStatusName(Outcome.Harness);
-  Failing := 0;
-  for Index := 0 to High(Outcome.Subtests) do
-    if Outcome.Subtests[Index].Status <> SubtestPass then
-      Inc(Failing);
-  { The shorter list: the failing subtests, or the passing ones. }
-  Entry.ListsPassing := 2 * Failing > Length(Outcome.Subtests);
-  for Index := 0 to High(Outcome.Subtests) do
-    if (Outcome.Subtests[Index].Status <> SubtestPass) <> Entry.ListsPassing then
-      Entry.Subtests.Add(Outcome.Subtests[Index].Name);
+  FailingNames := FailingNamesOf(Outcome);
+  try
+    Failing := 0;
+    for Index := 0 to High(Outcome.Subtests) do
+      if Outcome.Subtests[Index].Status <> SubtestPass then
+        Inc(Failing);
+    { The shorter list: the failing subtests, or the passing ones (a
+      name that also fails, as repeated names can, is a failing one). }
+    Entry.ListsPassing := 2 * Failing > Length(Outcome.Subtests);
+    for Index := 0 to High(Outcome.Subtests) do
+      if (FailingNames.IndexOf(Outcome.Subtests[Index].Name) >= 0) <> Entry.ListsPassing then
+        Entry.Subtests.Add(Outcome.Subtests[Index].Name);
+  finally
+    FailingNames.Free;
+  end;
   if Entry.HarnessFails or (Failing > 0) then
     FTests.AddObject(Outcome.Path, Entry)
   else
@@ -335,6 +356,7 @@ var
   Index: Integer;
   Subtest: TSubtestResult;
   Known: Boolean;
+  FailingNames: TStringList;
 begin
   Result.UnexpectedFailures := TStringList.Create;
   Result.NewlyPassing := TStringList.Create;
@@ -345,14 +367,20 @@ begin
   end
   else if (Expectation <> nil) and Expectation.HarnessFails then
     Result.NewlyPassing.Add('harness: OK');
-  for Index := 0 to High(Outcome.Subtests) do
-  begin
-    Subtest := Outcome.Subtests[Index];
-    Known := (Expectation <> nil) and Expectation.KnownFailure(Subtest.Name);
-    if (Subtest.Status <> SubtestPass) and not Known then
-      Result.UnexpectedFailures.Add(Subtest.Name + ': ' + SubtestStatusName(Subtest.Status) + ': ' + Subtest.Message)
-    else if (Subtest.Status = SubtestPass) and Known then
-      Result.NewlyPassing.Add(Subtest.Name);
+  FailingNames := FailingNamesOf(Outcome);
+  try
+    for Index := 0 to High(Outcome.Subtests) do
+    begin
+      Subtest := Outcome.Subtests[Index];
+      Known := (Expectation <> nil) and Expectation.KnownFailure(Subtest.Name);
+      if (Subtest.Status <> SubtestPass) and not Known then
+        Result.UnexpectedFailures.Add(Subtest.Name + ': ' + SubtestStatusName(Subtest.Status) + ': ' +
+          Subtest.Message)
+      else if (Subtest.Status = SubtestPass) and Known and (FailingNames.IndexOf(Subtest.Name) < 0) then
+        Result.NewlyPassing.Add(Subtest.Name);
+    end;
+  finally
+    FailingNames.Free;
   end;
 end;
 
