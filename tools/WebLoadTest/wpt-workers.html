@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<!-- A representative subset of web-platform-tests for workers, adapted to a
+     small testharness.js work-alike (test, async_test, promise_test and the
+     asserts used): webmessaging/broadcastchannel/basics.any.js,
+     service-workers/cache-storage (cache-put, cache-match, cache-keys,
+     cache-storage-keys basics) and service-workers/service-worker
+     (registration-scope, registration-mime-types, getregistration basics),
+     and workers/shared-worker basics. Results go to #out as
+     "wpt PASSED/FAILED" lines; WebLoadTest.Workers loads it. -->
+<p id="out"></p>
+<script>
+"use strict";
+const results = [];
+let pending = 0;
+let started = false;
+function report() {
+  if (pending > 0 || !started) return;
+  const failed = results.filter(r => !r.ok);
+  document.getElementById("out").textContent = "wpt " + (failed.length === 0 ? "PASSED" : "FAILED") + " " +
+    (results.length - failed.length) + "/" + results.length +
+    failed.map(r => " | " + r.name + ": " + r.message).join("") + " | done";
+}
+function record(name, ok, message) { results.push({ name: name, ok: ok, message: message || "" }); }
+function AssertionError(message) { this.message = message; }
+function assert(condition, message) { if (!condition) throw new AssertionError(message); }
+function assert_true(value, description) { assert(value === true, (description || "") + " expected true got " + value); }
+function assert_false(value, description) { assert(value === false, (description || "") + " expected false got " + value); }
+function assert_equals(actual, expected, description) {
+  assert(Object.is(actual, expected), (description || "") + " expected " + String(expected) + " got " + String(actual));
+}
+function assert_array_equals(actual, expected, description) {
+  assert(actual.length === expected.length && actual.every((v, i) => Object.is(v, expected[i])),
+    (description || "") + " expected [" + expected + "] got [" + actual + "]");
+}
+function assert_unreached(description) { assert(false, "reached unreachable code: " + (description || "")); }
+function assert_throws_js(Constructor, work, description) {
+  try { work(); } catch (e) { assert(e instanceof Constructor, (description || "") + " wrong exception " + e); return; }
+  assert(false, (description || "") + " did not throw");
+}
+function message(error) { return error instanceof AssertionError ? error.message : String(error); }
+function test(body, name) {
+  try { body(); record(name, true); } catch (e) { record(name, false, message(e)); }
+}
+function async_test(body, name) {
+  pending++;
+  let finished = false;
+  const t = {
+    step_func: function (f) {
+      return function () {
+        if (finished) return;
+        try { return f.apply(this, arguments); } catch (e) { finished = true; record(name, false, message(e)); pending--; report(); }
+      };
+    },
+    step_func_done: function (f) {
+      const wrapped = t.step_func(f || function () {});
+      return function () { wrapped.apply(this, arguments); t.done(); };
+    },
+    unreached_func: function (text) { return t.step_func(function () { assert_unreached(text); }); },
+    step_timeout: function (f, ms) { return setTimeout(t.step_func(f), ms); },
+    done: function () { if (finished) return; finished = true; record(name, true); pending--; report(); }
+  };
+  t.step_func(body)(t);
+  setTimeout(function () { if (!finished) { finished = true; record(name, false, "timed out"); pending--; report(); } }, 4000);
+}
+// Promise tests run one after another, as testharness.js runs them.
+let promiseChain = Promise.resolve();
+function promise_test(body, name) {
+  pending++;
+  promiseChain = promiseChain.then(body).then(function () { record(name, true); },
+    function (e) { record(name, false, message(e)); }).then(function () { pending--; report(); });
+}
+function promise_rejects_js(t, Constructor, promise, description) {
+  return promise.then(function () { assert_unreached((description || "") + " should reject"); },
+    function (e) { assert(e instanceof Constructor, (description || "") + " wrong rejection " + e); });
+}
+function promise_rejects_dom(t, name, promise, description) {
+  return promise.then(function () { assert_unreached((description || "") + " should reject"); },
+    function (e) { assert(e instanceof DOMException && e.name === name, (description || "") + " wrong rejection " + e); });
+}
+
+// ---- webmessaging/broadcastchannel/basics.any.js ----
+
+test(function () {
+  assert_throws_js(TypeError, function () { BroadcastChannel(""); });
+}, "BroadcastChannel constructor called as normal function");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("eventType");
+  const c2 = new BroadcastChannel("eventType");
+  c2.onmessage = t.step_func(function (e) {
+    assert_true(e instanceof MessageEvent);
+    assert_equals(e.target, c2);
+    assert_equals(e.type, "message");
+    assert_equals(e.origin, location.origin, "origin");
+    assert_equals(e.data, "hello world");
+    assert_equals(e.source, null, "source");
+    t.done();
+  });
+  c1.postMessage("hello world");
+}, "postMessage results in correct event");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("order");
+  const c2 = new BroadcastChannel("order");
+  const c3 = new BroadcastChannel("order");
+  const events = [];
+  let doneCount = 0;
+  const handler = t.step_func(function (e) {
+    events.push(e);
+    if (e.data === "done") {
+      doneCount++;
+      if (doneCount === 2) {
+        assert_equals(events.length, 6);
+        assert_equals(events[0].target, c2, "target for event 0");
+        assert_equals(events[0].data, "from c1");
+        assert_equals(events[1].target, c3, "target for event 1");
+        assert_equals(events[1].data, "from c1");
+        assert_equals(events[2].target, c1, "target for event 2");
+        assert_equals(events[2].data, "from c3");
+        assert_equals(events[3].target, c2, "target for event 3");
+        assert_equals(events[3].data, "from c3");
+        assert_equals(events[4].target, c1, "target for event 4");
+        assert_equals(events[4].data, "done");
+        assert_equals(events[5].target, c3, "target for event 5");
+        assert_equals(events[5].data, "done");
+        t.done();
+      }
+    }
+  });
+  c1.onmessage = handler;
+  c2.onmessage = handler;
+  c3.onmessage = handler;
+  c1.postMessage("from c1");
+  c3.postMessage("from c3");
+  c2.postMessage("done");
+}, "messages are delivered in port creation order");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("closed");
+  const c2 = new BroadcastChannel("closed");
+  const c3 = new BroadcastChannel("closed");
+  c2.onmessage = t.unreached_func("closed port got message");
+  c2.close();
+  c3.onmessage = t.step_func_done();
+  c1.postMessage("test");
+}, "messages aren't delivered to a closed port");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("closed2");
+  const c2 = new BroadcastChannel("closed2");
+  const c3 = new BroadcastChannel("closed2");
+  c2.onmessage = t.unreached_func("closed port got message");
+  c3.onmessage = t.step_func_done();
+  c1.postMessage("test");
+  c2.close();
+}, "messages aren't delivered to a port closed after calling postMessage");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("create-in-onmessage");
+  const c2 = new BroadcastChannel("create-in-onmessage");
+  c2.onmessage = t.step_func(function (e) {
+    assert_equals(e.data, "first");
+    c2.close();
+    const c3 = new BroadcastChannel("create-in-onmessage");
+    c3.onmessage = t.step_func_done(function (e) { assert_equals(e.data, "done"); });
+    c1.postMessage("done");
+  });
+  c1.postMessage("first");
+  c2.postMessage("second");
+}, "closing and creating channels during message delivery works correctly");
+
+async_test(function (t) {
+  const c1 = new BroadcastChannel("close-in-onmessage");
+  const c2 = new BroadcastChannel("close-in-onmessage");
+  const c3 = new BroadcastChannel("close-in-onmessage");
+  const events = [];
+  c1.onmessage = function (e) { events.push("c1: " + e.data); };
+  c2.onmessage = function (e) { events.push("c2: " + e.data); };
+  c3.onmessage = function (e) { events.push("c3: " + e.data); };
+  c1.addEventListener("message", function () { c2.close(); });
+  c3.postMessage("test");
+  t.step_timeout(function () {
+    assert_array_equals(events, ["c1: test"]);
+    t.done();
+  }, 50);
+}, "Closing a channel in onmessage prevents already queued tasks from firing onmessage events");
+
+// ---- service-workers/cache-storage ----
+
+promise_test(function () {
+  return caches.delete("wpt-put").then(() => caches.open("wpt-put")).then(function (cache) {
+    const response = new Response("Hello", { headers: { "Content-Type": "text/plain" } });
+    return cache.put(new Request("/wpt/put"), response).then(() => cache.match("/wpt/put")).then(function (result) {
+      assert_equals(result.status, 200, "status");
+      assert_equals(result.headers.get("Content-Type"), "text/plain", "headers");
+      return result.text();
+    }).then(text => assert_equals(text, "Hello"));
+  });
+}, "Cache.put called with simple Request and Response");
+
+promise_test(function (t) {
+  return caches.open("wpt-put").then(function (cache) {
+    return promise_rejects_js(t, TypeError, cache.put(new Request("/wpt/post", { method: "POST", body: "x" }),
+      new Response("")), "POST");
+  });
+}, "Cache.put with a POST request");
+
+promise_test(function (t) {
+  return caches.open("wpt-put").then(function (cache) {
+    const response = new Response("used");
+    return response.text().then(() => promise_rejects_js(t, TypeError, cache.put("/wpt/used", response)));
+  });
+}, "Cache.put with a used response body");
+
+promise_test(function () {
+  return caches.open("wpt-match").then(function (cache) {
+    return Promise.all([cache.put("/wpt/a?q", new Response("a")), cache.put("/wpt/b", new Response("b"))])
+      .then(() => cache.matchAll("/wpt/a", { ignoreSearch: true }))
+      .then(list => assert_equals(list.length, 1))
+      .then(() => cache.match("/wpt/missing"))
+      .then(result => assert_equals(result, undefined, "no match is undefined"));
+  });
+}, "Cache.match and matchAll with ignoreSearch and no match");
+
+promise_test(function () {
+  return caches.open("wpt-match").then(function (cache) {
+    return cache.keys().then(function (requests) {
+      assert_true(requests.every(r => r instanceof Request), "keys are Requests");
+      assert_array_equals(requests.map(r => new URL(r.url).pathname), ["/wpt/a", "/wpt/b"]);
+    });
+  });
+}, "Cache.keys returns the requests in insertion order");
+
+promise_test(function () {
+  return caches.open("wpt-z").then(() => caches.keys()).then(function (keys) {
+    assert_true(keys.indexOf("wpt-z") > keys.indexOf("wpt-match"), "creation order");
+    return caches.delete("wpt-z");
+  }).then(deleted => { assert_true(deleted); return caches.has("wpt-z"); }).then(has => assert_false(has));
+}, "CacheStorage.keys, delete and has");
+
+// ---- service-workers/service-worker ----
+
+promise_test(function (t) {
+  return promise_rejects_dom(t, "SecurityError", navigator.serviceWorker.register("/wpt-sw/narrow.js", { scope: "/" }));
+}, "Registering with a scope above the script's directory");
+
+promise_test(function (t) {
+  return promise_rejects_dom(t, "SecurityError", navigator.serviceWorker.register("data:text/javascript,"));
+}, "Registering a data: URL script");
+
+promise_test(function (t) {
+  return promise_rejects_dom(t, "SecurityError", navigator.serviceWorker.register("/wpt-sw/plain.js",
+    { scope: "/wpt-sw/plain/" }));
+}, "Registering a script with a text/plain MIME type");
+
+promise_test(function (t) {
+  return promise_rejects_dom(t, "SecurityError", navigator.serviceWorker.register("/wpt-sw/x.js",
+    { scope: "/wpt-sw/a%2fb/" }));
+}, "Scope with an escaped slash");
+
+promise_test(function () {
+  return navigator.serviceWorker.getRegistration("/nothing/here").then(r => assert_equals(r, undefined));
+}, "getRegistration with no registration");
+
+promise_test(function (t) {
+  return promise_rejects_js(t, TypeError, navigator.serviceWorker.register("x.js", { updateViaCache: "sometimes" }));
+}, "register with an invalid updateViaCache");
+
+// ---- workers/shared-worker ----
+
+async_test(function (t) {
+  const worker = new SharedWorker("data:text/javascript,onconnect = e => e.ports[0].postMessage(self.name)", "wpt");
+  worker.port.onmessage = t.step_func_done(function (e) { assert_equals(e.data, "wpt"); });
+}, "SharedWorker with a data: URL and a name");
+
+test(function () {
+  assert_throws_js(TypeError, function () { SharedWorker("x.js"); });
+}, "SharedWorker called as normal function");
+
+started = true;
+report();
+</script>

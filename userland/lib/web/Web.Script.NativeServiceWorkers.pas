@@ -741,7 +741,8 @@ begin
     Exit(Context.ThrowDomException('SecurityError', 'Failed to get a ServiceWorkerRegistration: The origin of the ' +
       'provided documentURL does not match the current origin.'));
   Registration := MatchRegistration(ContextOriginText(Context), SerializeUrl(Url));
-  if Registration = nil then
+  { One whose first worker is still being fetched is not shown yet. }
+  if (Registration = nil) or (Registration.Newest = nil) then
     Exit(JsUndefined);
   Result := LiveRegistrationValue(Context, Registration);
 end;
@@ -755,9 +756,12 @@ begin
   List := RegistrationsOf(ContextOriginText(Context));
   try
     Values := nil;
-    SetLength(Values, List.Count);
     for Index := 0 to List.Count - 1 do
-      Values[Index] := LiveRegistrationValue(Context, TServiceWorkerRegistration(List[Index]));
+      if TServiceWorkerRegistration(List[Index]).Newest <> nil then
+      begin
+        SetLength(Values, Length(Values) + 1);
+        Values[High(Values)] := LiveRegistrationValue(Context, TServiceWorkerRegistration(List[Index]));
+      end;
     Result := Context.NewArray(Values);
   finally
     List.Free;

@@ -579,8 +579,58 @@ begin
   end;
 end;
 
+function ReadFixture(const Path: string): string;
+var
+  Lines: TStringList;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(Path);
+    Result := Lines.Text;
+  finally
+    Lines.Free;
+  end;
+end;
+
+{ The web-platform-tests subset (wpt-workers.html). }
+procedure CheckPlatformTests;
+var
+  Environment: TTestEnvironment;
+  Sink: TNullResourceSink;
+  Page: TWorkerPage;
+  Conditions: TWorkerConditions;
+  Finished: Boolean;
+begin
+  Environment := TTestEnvironment.Create;
+  Sink := TNullResourceSink.Create;
+  Conditions := TWorkerConditions.Create;
+  try
+    Environment.Site.AddRoute('s.test/wpt.html', 200, HtmlType, ReadFixture('tools/WebLoadTest/wpt-workers.html'));
+    Environment.Site.AddRoute('s.test/wpt-sw/narrow.js', 200, JavaScriptType, '');
+    Environment.Site.AddRoute('s.test/wpt-sw/plain.js', 200, 'Content-Type: text/plain', '');
+    Page := TWorkerPage.Create(Environment, Sink);
+    try
+      SetLength(Conditions.Pages, 1);
+      Conditions.Pages[0] := Page;
+      Conditions.Marker := 'done';
+      Page.Navigable.NavigateTo('https://s.test/wpt.html');
+      Finished := Environment.RunUntil(@Conditions.AllHaveMarker, 15000);
+      Check(Finished and Page.Has('wpt PASSED'), 'web-platform-tests subset: ' + Page.Output + ' ' + Trim(Page.Console));
+    finally
+      Page.Free;
+    end;
+  finally
+    ResetServiceWorkers;
+    ForgetAllCaches;
+    Conditions.Free;
+    Sink.Free;
+    Environment.Free;
+  end;
+end;
+
 procedure RunWorkerTests;
 begin
+  CheckPlatformTests;
   CheckSharedWorkers;
   CheckBroadcastChannels;
   CheckCaches;
