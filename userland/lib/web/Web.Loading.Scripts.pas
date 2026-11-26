@@ -105,6 +105,8 @@ type
     procedure DocumentStopped(Loader: TObject); virtual;
     { The loader is going: what the engine kept for its document goes. }
     procedure DocumentFreed(Loader: TObject); virtual;
+    { A message for the page's console from the loader (CSP refusals). }
+    procedure LoaderConsoleMessage(Loader: TObject; const Level, Text: string); virtual;
   end;
 
   TBlockingQuery = function: Boolean of object;
@@ -281,6 +283,10 @@ begin
 end;
 
 procedure TScriptExecutor.DocumentFreed(Loader: TObject);
+begin
+end;
+
+procedure TScriptExecutor.LoaderConsoleMessage(Loader: TObject; const Level, Text: string);
 begin
 end;
 

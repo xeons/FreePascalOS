@@ -54,9 +54,12 @@ uses
   Web.Loading.Contexts;
 
 type
+  TCspConsoleEvent = procedure(const Level, Text: string) of object;
+
   TDocumentCspReporter = class(TCspViolationReporter)
   private
     FLoader: TLoadingContext;
+    FOnConsole: TCspConsoleEvent;
     FEndpointNames: TStringList;
     FSent: TStringList;
     procedure DispatchTask(Data: TObject);
@@ -69,6 +72,8 @@ type
     { Reporting-Endpoints (an RFC 8941 dictionary of URL strings). }
     procedure SetEndpoints(const FieldValue: string);
     function EndpointUrl(const Name: string; out Url: TUrlRecord): Boolean;
+    { Each violation is told to the page's console too. }
+    property OnConsole: TCspConsoleEvent read FOnConsole write FOnConsole;
   end;
 
 { A local-scheme document's policies, its creator's (Source). }
@@ -208,6 +213,13 @@ var
   Task: TViolationTask;
   Key: string;
 begin
+  if Assigned(FOnConsole) then
+    if Violation.Disposition = CspEnforce then
+      FOnConsole('error', 'Refused by the Content Security Policy (' + Violation.EffectiveDirective + '): ' +
+        Violation.BlockedUri)
+    else
+      FOnConsole('warn', 'Would be refused by the report-only Content Security Policy (' +
+        Violation.EffectiveDirective + '): ' + Violation.BlockedUri);
   Key := DispositionName(Violation.Disposition) + ' ' + Violation.EffectiveDirective + ' ' + Violation.BlockedUri +
     ' ' + Violation.OriginalPolicy;
   if Violation.Element = nil then

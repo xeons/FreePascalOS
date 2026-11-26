@@ -97,6 +97,16 @@ inference from sanitization: the fields can be typed into (their edit
 text kept apart from the value as browsers do) but there is no picker
 yet (see below).
 
+## Closed by the networking and security work
+
+| Feature | Points | Where |
+|---|---|---|
+| WebSocket (RFC 6455 with permessage-deflate, through the browser's network service in a browser; binaryType, bufferedAmount, the close handshake, CloseEvent) | `communication.websocket.basic`, `.binary` | libhttp `Http.WebSockets`; `Web.Fetch.WebSockets`, `Web.Script.PageSockets`, `63-websocket.js`; `WebView.NetworkSockets` |
+| CSP Level 3 enforcement (requests by destination, nonces, hashes, 'strict-dynamic', inline scripts and styles, handlers, eval through libjavascript's compile-strings hook, form-action, base-uri, report-only, reports) | `security.csp10` (the frame whose meta policy must refuse eval) | `Web.Fetch.CspSources`, `Web.Fetch.CspChecks`, `Web.Loading.CspReports` |
+| SecurityPolicyViolationEvent, fired for every violation | `security.csp11` | `Web.Dom.SecurityEvents`, Events.webidl |
+
+Trusted Types is not done (the test does not ask for it).
+
 ## Credited by the test with less behind it
 
 - `audio.loop`, `audio.preload` (2 points): the attributes reflect, but
@@ -138,16 +148,6 @@ Points are what each costs on html5test (588 in all).
 
 ### Medium (days)
 
-- **CSP enforcement** (`security.csp10` 3, `security.csp11` 2):
-  Content-Security-Policy is parsed (`Web.Fetch.ContentSecurityPolicy`)
-  but only upgrade-insecure-requests is applied. Needs script-src
-  (inline, nonces, hashes, 'strict-dynamic', eval through a libjavascript
-  host hook), style-src, img-src, connect-src, default-src fallback,
-  report-only, violation reports and SecurityPolicyViolationEvent.
-- **WebSocket** (`communication.websocket.*` 15): RFC 6455 over
-  libhttp's connections (TLS, HTTP/1.1 upgrade; RFC 8441 over HTTP/2
-  later); in the browser it has to go through the network service
-  process like fetch.
 - **Custom elements** (`components.custom` 4): CustomElementRegistry
   (define, get, whenDefined, upgrade), constructors through HTMLElement,
   the reactions (connected, disconnected, adopted, attributeChanged),

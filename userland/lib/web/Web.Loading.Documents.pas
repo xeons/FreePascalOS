@@ -131,6 +131,7 @@ type
     FOnFrameChanged: TLoaderFrameEvent;
     FOnFrameRemoved: TLoaderFrameEvent;
     FCspReporter: TDocumentCspReporter;
+    procedure CspConsoleMessage(const Level, Text: string);
     procedure ParserCall(Bytes: PByte; Count: SizeInt; Finish, Resume: Boolean);
     procedure CheckRestart;
     procedure ScanIfBlocked;
@@ -339,6 +340,7 @@ begin
     SetDocumentOrigin(FDocument, FClient.Origin);
   FDocument.BrowsingContext := Self;
   FCspReporter := TDocumentCspReporter.Create(Self);
+  FCspReporter.OnConsole := @CspConsoleMessage;
   FClient.CspReporter := FCspReporter;
   FDocument.SecurityPolicy := FClient;
   FDocument.ScriptingEnabled := Executor <> nil;
@@ -396,6 +398,12 @@ begin
     FDocument.BrowsingContext := nil;
   FDocument.Release;
   inherited Destroy;
+end;
+
+procedure TDocumentLoader.CspConsoleMessage(const Level, Text: string);
+begin
+  if (FScripts <> nil) and (FScripts.Executor <> nil) then
+    FScripts.Executor.LoaderConsoleMessage(Self, Level, Text);
 end;
 
 procedure TDocumentLoader.ApplyResponsePolicies(const Enforced, ReportOnly, Endpoints, Referrer: string);

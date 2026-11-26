@@ -214,6 +214,7 @@ type
     procedure DocumentTimed(Loader: TObject); override;
     procedure DocumentStopped(Loader: TObject); override;
     procedure DocumentFreed(Loader: TObject); override;
+    procedure LoaderConsoleMessage(Loader: TObject; const Level, Text: string); override;
     { The live context of Document, nil if none. }
     function ContextOf(Document: TDocument): TScriptContext;
     function IsLiveContext(Context: TObject): Boolean;
@@ -869,6 +870,11 @@ begin
   Index := IndexOfLoader(Loader);
   if Index >= 0 then
     FContexts[Index].Context.SetTimeOrigin(TDocumentLoader(Loader).Times.NavigationStart);
+end;
+
+procedure TPageScriptExecutor.LoaderConsoleMessage(Loader: TObject; const Level, Text: string);
+begin
+  ConsoleMessage(Level, Text);
 end;
 
 procedure TPageScriptExecutor.DocumentStopped(Loader: TObject);

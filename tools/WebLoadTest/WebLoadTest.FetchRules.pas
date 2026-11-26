@@ -283,7 +283,7 @@ end;
   policy/ matching tests). }
 procedure CheckCspMatching;
 const
-  AlertHash = '5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=';
+  AlertHash = 'bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI=';
 begin
   ExpectMatch('''self''', 'https://a.example/x', 'https://a.example/', True);
   ExpectMatch('''self''', 'http://a.example/x', 'https://a.example/', False);
@@ -327,7 +327,7 @@ begin
     not SourceListMatchesNonce(Sources('''nonce-abc'''), 'abd') and not SourceListMatchesNonce(Sources('''nonce-'''), ''),
     'csp: nonce sources');
   Check(SourceListMatchesHash(Sources('''sha256-' + AlertHash + ''''), 'alert(1)'), 'csp: a sha256 hash source');
-  Check(SourceListMatchesHash(Sources('''SHA256-5jFwrAK0UV47oFbVg_iCCBbxD8X1w-QvoOUepu4C2YA'''), 'alert(1)'),
+  Check(SourceListMatchesHash(Sources('''SHA256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF-pI'''), 'alert(1)'),
     'csp: base64url without padding, algorithm in any case');
   Check(not SourceListMatchesHash(Sources('''sha256-' + AlertHash + ''''), 'alert(2)'), 'csp: a hash of other text');
   Check(SourceListMatchesHash(Sources('''sha384-' + CspDigestBase64('sha384', 'x') + ''''), 'x') and
@@ -347,7 +347,7 @@ begin
   try
     Client.CspReporter := Log;
     Client.Csp.AddFromField('default-src ''none''; img-src *; script-src ''self'' ''nonce-n'' ''report-sample''; ' +
-      'style-src ''unsafe-inline'' ''sha256-5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=''', CspEnforce);
+      'style-src ''unsafe-inline'' ''sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI=''', CspEnforce);
     Client.Csp.AddFromField('connect-src ''self''', CspReport);
     Check(not CspBlocksRequest(Client, MakeUrl('https://cdn.example/a.png'), DestinationImage, '', '', False),
       'csp: img-src * allows an image');
@@ -376,7 +376,7 @@ begin
       not CspBlocksInline(Client, CspInlineScript, 'alert(1)', 'n', nil), 'csp: inline script by nonce');
     Log.Text := '';
     CspBlocksInline(Client, CspInlineScript, 'var a = "a long script that goes past forty characters";', '', nil);
-    Check(Log.Text = 'script-src-elem inline enforce "var a = "a long script that goes past for";',
+    Check(Log.Text = 'script-src-elem inline enforce "var a = "a long script that goes past fo";',
       'csp: report-sample gives the first 40 characters (' + Log.Text + ')');
     Check(not CspBlocksInline(Client, CspInlineStyle, 'alert(1)', '', nil), 'csp: a style block by hash');
     Check(CspBlocksInline(Client, CspInlineStyle, 'p { color: red }', '', nil),
