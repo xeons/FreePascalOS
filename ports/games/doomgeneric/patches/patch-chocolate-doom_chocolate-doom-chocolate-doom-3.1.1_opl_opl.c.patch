@@ -1,0 +1,55 @@
+--- a/chocolate-doom/chocolate-doom-chocolate-doom-3.1.1/opl/opl.c
++++ b/chocolate-doom/chocolate-doom-chocolate-doom-3.1.1/opl/opl.c
+@@ -21,7 +21,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#ifndef __freepascalos__
+ #include "SDL.h"
++#endif
+ 
+ #include "opl.h"
+ #include "opl_internal.h"
+@@ -44,7 +46,9 @@
+ #ifdef _WIN32
+     &opl_win32_driver,
+ #endif
+-#ifndef DISABLE_SDL2MIXER
++#ifdef __freepascalos__
++    &opl_freepascalos_driver,
++#elif !defined(DISABLE_SDL2MIXER)
+     &opl_sdl_driver,
+ #endif // DISABLE_SDL2MIXER
+     NULL
+@@ -447,6 +451,22 @@
+     }
+ }
+ 
++#ifdef __freepascalos__
++
++// The FreePascalOS driver has no thread of its own: its clock moves as
++// samples are generated, in the caller's thread. Waiting would never
++// end, so the driver runs its clock forward instead.
++
++void OPL_Delay(uint64_t us)
++{
++    if (driver != NULL)
++    {
++        OPL_FreePascalOS_Delay(us);
++    }
++}
++
++#else
++
+ typedef struct
+ {
+     int finished;
+@@ -512,6 +532,8 @@
+     SDL_DestroyCond(delay_data.cond);
+ }
+ 
++#endif
++
+ void OPL_SetPaused(int paused)
+ {
+     if (driver != NULL)

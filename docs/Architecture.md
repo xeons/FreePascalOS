@@ -14673,15 +14673,51 @@ key codes (Ctrl fires, Space uses, Shift runs, Alt strafes), every key
 held is released when the window loses the keyboard, and closing the
 window quits as the menu does (`I_Quit`: the configuration saved).
 Ticks come from `CLOCK_MONOTONIC`; `DG_SleepMs` waits on the display's
-channel with a timeout (a key ends the wait). The sound effects
-(`files/doomgeneric_freepascalos_sound.c`, a `sound_module_t`) are
-mixed in the program (DMX lumps, unsigned 8-bit, stepped in 32.32 fixed
-point with linear interpolation and Doom's volume and separation) into
-a stream of `/dev/audio` (16-bit stereo at `snd_samplerate`, set with
-`ControlAudioSetFormat`), topped up to 85 ms ahead each tic by asking
-`ControlAudioGetQueued`, so a write never waits; without an audio output
-Doom plays silently. Music is not played (OPL emulation is to come).
-Four patches: IWADs searched in the current folder, `DOOMWADDIR`,
+channel with a timeout (a key ends the wait).
+
+Sound and music share one stream of `/dev/audio`
+(`files/doomgeneric_freepascalos_audio.c`: 16-bit stereo at
+`snd_samplerate`, set with `ControlAudioSetFormat`) with two sources,
+each a function that adds its next frames to a 32-bit mix: the sound
+effects (`files/doomgeneric_freepascalos_sound.c`, a `sound_module_t`:
+DMX lumps, unsigned 8-bit, stepped in 32.32 fixed point with linear
+interpolation and Doom's volume and separation) and the music. The
+stream is topped up to 85 ms ahead by asking `ControlAudioGetQueued`,
+the sources mixed, clipped and written, so a write never waits; that
+happens every tic (the sound module's Update and the music module's
+Poll) and in `DG_SleepMs`, since Doom's screen wipe loops on `I_Sleep`
+without updating the sound. Without an audio output Doom plays
+silently.
+
+The music is Doom's OPL music, as an AdLib or Sound Blaster played it,
+from Chocolate Doom 3.1.1 (a second source of the port, unpacked inside
+doomgeneric's tree): `src/i_oplmusic.c` (MUS converted to MIDI by
+doomgeneric's own `mus2mid.c`, read by `src/midifile.c`, played with the
+WAD's GENMIDI instruments with DMX's voice allocation for the game's
+version) on its `opl/` library (`opl.c`, `opl_queue.c` and the Nuked
+OPL3 emulator `opl3.c`). Chocolate Doom's SDL driver is replaced by
+`files/opl_freepascalos.c`: the chip is the stream's music source, and
+the clock the player's `OPL_SetCallback` events wait for is the frames
+it has made. Asked for frames, it makes them up to the next event's
+frame, runs the event (registers written, the next one scheduled), and
+goes on, all in Doom's thread, so nothing locks and the timing is exact
+to the frame whatever the tic rate; the chip's two timers (read by the
+detection) run on the same clock, and `OPL_Delay` runs it forward by
+making frames that are dropped. The DMX music module the engine asks
+for (`DG_music_module`, `files/doomgeneric_freepascalos_music.c`) wraps
+`music_opl_module`. `snd_musicdevice` 3 or 2 turns it on (the default,
+0 off), `snd_dmxoption` (`-opl3`, the default, or empty for an OPL2)
+picks the chip. The Nuked OPL3 emulator takes about 2% of a core at
+48 kHz (measured on the build machine; `tools/DoomMusicCheck/run.sh`
+plays a Freedoom song through the same files into a WAV and checks it
+is not silent). Patches make doomgeneric's headers Chocolate Doom 3.1's
+where the music needs it (`PACKED_STRUCT`, `opl_driver_ver_t`), bind
+and save `snd_dmxoption`, and give `opl.c` the FreePascalOS driver and
+its `OPL_Delay` in place of SDL's; `files/chocolate_doom_compat.h`
+supplies the few helpers (`SDL_SwapBE32`, `I_Realloc`, ...) the music
+files expect.
+
+Four further patches: IWADs searched in the current folder, `DOOMWADDIR`,
 `DOOMWADPATH`, `/usr/local/share/games/doom` and
 `/usr/share/games/doom`, Freedoom Phase 1 preferred to Phase 2;
 settings and saves in `~/.doom/` (saves per IWAD); `I_Quit` exits; no

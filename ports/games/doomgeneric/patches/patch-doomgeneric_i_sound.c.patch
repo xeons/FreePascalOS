@@ -9,3 +9,13 @@
  #include <SDL_mixer.h>
  #endif
  
+@@ -407,6 +407,9 @@
+     M_BindVariable("snd_musiccmd",      &snd_musiccmd);
+     M_BindVariable("snd_samplerate",    &snd_samplerate);
+     M_BindVariable("snd_cachesize",     &snd_cachesize);
++#ifdef __freepascalos__
++    M_BindVariable("snd_dmxoption",     &snd_dmxoption);
++#endif
+ 
+ #ifdef FEATURE_SOUND
+     M_BindVariable("use_libsamplerate",   &use_libsamplerate);

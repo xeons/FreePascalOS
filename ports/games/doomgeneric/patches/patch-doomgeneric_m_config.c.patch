@@ -1,6 +1,21 @@
 --- a/doomgeneric/m_config.c
 +++ b/doomgeneric/m_config.c
-@@ -2042,11 +2042,30 @@
+@@ -819,6 +819,14 @@
+     CONFIG_VARIABLE_INT_HEX(opl_io_port),
+ 
+     //!
++    // Value to set for the DMXOPTION environment variable. If this contains
++    // "-opl3", output for an OPL3 chip is generated when in OPL MIDI
++    // playback mode.
++    //
++
++    CONFIG_VARIABLE_STRING(snd_dmxoption),
++
++    //!
+     // @game doom heretic strife
+     //
+     // If non-zero, the ENDOOM text screen is displayed when exiting the
+@@ -2042,11 +2050,30 @@
  
  static char *GetDefaultConfigDir(void)
  {
@@ -31,7 +46,7 @@
  }
  
  // 
-@@ -2087,7 +2106,7 @@
+@@ -2087,7 +2114,7 @@
  char *M_GetSaveGameDir(char *iwadname)
  {
      char *savegamedir;
@@ -40,7 +55,7 @@
      char *topdir;
  #endif
  
-@@ -2100,7 +2119,7 @@
+@@ -2100,7 +2127,7 @@
      }
      else
      {

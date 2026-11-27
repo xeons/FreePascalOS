@@ -1,0 +1,16 @@
+--- a/chocolate-doom/chocolate-doom-chocolate-doom-3.1.1/src/i_oplmusic.c
++++ b/chocolate-doom/chocolate-doom-chocolate-doom-3.1.1/src/i_oplmusic.c
+@@ -349,7 +349,13 @@
+ // Configuration file variable, containing the port number for the
+ // adlib chip.
+ 
++#ifdef __freepascalos__
++// FreePascalOS: OPL3 (the emulator always is one) unless the setting
++// says otherwise ("" for OPL2, as an AdLib or a Sound Blaster Pro had).
++char *snd_dmxoption = "-opl3";
++#else
+ char *snd_dmxoption = "";
++#endif
+ int opl_io_port = 0x388;
+ 
+ // If true, OPL sound channels are reversed to their correct arrangement

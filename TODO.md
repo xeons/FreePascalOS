@@ -1700,9 +1700,12 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       /dev/audio) and games/freedoom (Phase 1 and 2 IWADs in
       /usr/local/share/games/doom); built for x86-64 and AArch64
 - [ ] Doom: try it on the system and set both ports' status to "tested"
-- [ ] Doom: music (an OPL2/OPL3 emulator playing the MUS scores through
-      GENMIDI's instruments, as Chocolate Doom's music_opl_module; Nuked OPL3
-      is LGPL-2.1, DOSBox's dbopl GPL-2.0-or-later)
+- [x] Doom: music (Chocolate Doom 3.1.1's OPL player and Nuked OPL3,
+      GPL-2.0-or-later there, on a driver of our own that mixes the chip into
+      the effects' /dev/audio stream, timed by its frames; OPL3 by default,
+      OPL2 with snd_dmxoption ""; tools/DoomMusicCheck renders it on the host)
+- [ ] Doom: General MIDI music (a soft synthesizer with a SoundFont, or
+      native MIDI output) and the Gravis UltraSound's patches (GUS)
 - [ ] Doom: the mouse (pointer lock, RequestSetPointerLock, posted as
       ev_mouse events), and an error box when no IWAD is found (I_Error
       only writes to stderr, unseen from the Start menu)

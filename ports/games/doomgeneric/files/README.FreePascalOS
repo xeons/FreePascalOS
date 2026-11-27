@@ -30,5 +30,23 @@ switches, Shift runs, Alt strafes (with the arrows), 1-7 choose weapons,
 Tab shows the map, Escape opens the menu, Enter and Y/N answer it, F2
 saves, F3 loads, F11 changes the gamma. Closing the window quits.
 
-Sound effects play through /dev/audio when the system has an audio
-output; music is not played yet.
+Sound effects and music play through /dev/audio when the system has an
+audio output. The music is played the way an AdLib or a Sound Blaster
+played it: FM synthesis on an emulated OPL chip (Chocolate Doom's OPL
+music player and the Nuked OPL3 emulator), with the instruments of the
+WAD's GENMIDI lump, so Freedoom's and your own WADs each sound as their
+authors made them. Making the music takes about 2% of a core.
+
+  Music Volume (Escape, Options, Sound Volume) sets its volume.
+  doom -nomusic plays without it this time; for good, set
+    snd_musicdevice 0 in ~/.doom/default.cfg (3, the default, or 2
+    turns it back on).
+  OPL3 or OPL2: snd_dmxoption in ~/.doom/doomgenericdoom.cfg is
+    "-opl3" by default: an OPL3 (Sound Blaster 16, Pro 2), 18 voices in
+    stereo. "" plays it as an OPL2 (AdLib, Sound Blaster 1.0-2.0) did:
+    9 voices, mono. Adding -reverse ("-opl3 -reverse") swaps left and
+    right, which DMX had the wrong way round. The DMXOPTION environment
+    variable, when set, is used instead.
+
+General MIDI (a synthesizer, or sampled instruments) and the Gravis
+UltraSound are not played yet.

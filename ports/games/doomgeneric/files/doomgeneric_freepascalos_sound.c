@@ -18,10 +18,9 @@
 
 /*
  * Doom's sound effects on FreePascalOS: a sound module (sound_module_t,
- * i_sound.h) that mixes the playing effects itself and writes them to
- * an audio stream of /dev/audio (every open of the device is a stream
- * of its own, which the kernel mixes with the others' and converts to
- * the hardware's rate).
+ * i_sound.h) that mixes the playing effects itself, as the effects
+ * source of the audio output (doomgeneric_freepascalos_audio.c, which
+ * mixes them with the music into one stream of /dev/audio).
  *
  * An effect is a DMX lump: 3, 0, the sample rate (16 bits), the length
  * (32 bits), then unsigned 8-bit samples; as DMX did, the first and last
@@ -30,24 +29,14 @@
  * interpolation between samples) with a left and a right gain from
  * Doom's volume (0-127) and separation (0 left .. 254 right).
  *
- * Nothing runs on its own: Doom calls Update about once a tic, and it
- * tops the stream up to OUTPUT_LATENCY_MS of mixed sound (asking the
- * kernel how much is still queued), so a write never waits and a new
- * effect is heard within that time. Without an audio output the module
- * does not start, and Doom plays silently.
- *
- * Music is not played: the music module is silent (OPL emulation for
- * Doom's MUS scores is still to come).
+ * Doom calls Update about once a tic, which tops the stream up. Without
+ * an audio output the module does not start, and the effects are not
+ * heard. The music module is doomgeneric_freepascalos_music.c.
  */
 
-#include <fcntl.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-
-#include <freepascalos/syscall.h>
 
 #include "doomtype.h"
 #include "deh_str.h"
@@ -56,24 +45,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 
-/* Audio output requests (CallControlHandle on /dev/audio,
-   shared/Abi.SystemCalls.inc), for a sysroot whose header predates them. */
-#ifndef FPOS_CONTROL_AUDIO_SET_FORMAT
-#define FPOS_CONTROL_AUDIO_SET_FORMAT 101
-#endif
-#ifndef FPOS_CONTROL_AUDIO_GET_QUEUED
-#define FPOS_CONTROL_AUDIO_GET_QUEUED 107
-#endif
-#ifndef FPOS_AUDIO_SAMPLE_SIGNED16
-#define FPOS_AUDIO_SAMPLE_SIGNED16 2
-#endif
-
-#define AUDIO_DEVICE_PATH "/dev/audio"
-#define OUTPUT_CHANNELS 2
-#define LOWEST_OUTPUT_RATE 8000
-#define HIGHEST_OUTPUT_RATE 48000
-#define OUTPUT_LATENCY_MS 85
-#define LARGEST_MIX_FRAMES (HIGHEST_OUTPUT_RATE * OUTPUT_LATENCY_MS / 1000)
+#include "doomgeneric_freepascalos_audio.h"
 
 #define MIXER_CHANNEL_COUNT 16
 #define DMX_HEADER_SIZE 8
@@ -100,12 +72,9 @@ struct mixer_channel {
 	int right_gain;
 };
 
-static int audio_stream = -1;
-static uint32_t output_rate;
+static boolean effects_attached;
 static boolean use_sound_prefix;
 static struct mixer_channel channels[MIXER_CHANNEL_COUNT];
-static int32_t mix_buffer[LARGEST_MIX_FRAMES * OUTPUT_CHANNELS];
-static int16_t output_buffer[LARGEST_MIX_FRAMES * OUTPUT_CHANNELS];
 
 static snddevice_t handled_devices[] = {
 	SNDDEVICE_SB,
@@ -115,18 +84,6 @@ static snddevice_t handled_devices[] = {
 	SNDDEVICE_SOUNDCANVAS,
 	SNDDEVICE_AWE32,
 };
-
-static long control_audio(long request, long argument)
-{
-	return fpos_syscall3(FPOS_CALL_CONTROL_HANDLE, audio_stream, request, argument);
-}
-
-static void close_audio(void)
-{
-	if (audio_stream >= 0)
-		close(audio_stream);
-	audio_stream = -1;
-}
 
 /* --- Effects -------------------------------------------------------------- */
 
@@ -213,67 +170,38 @@ static void mix_channel(struct mixer_channel *channel, int32_t *output, uint32_t
 		int32_t first = (int32_t)effect->samples[index] - 128;
 		int32_t second = index + 1 < effect->length ? (int32_t)effect->samples[index + 1] - 128 : first;
 		int32_t sample = (first * 256) + (((second - first) * 256 * (int32_t)fraction) >> 16);
-		output[frame * OUTPUT_CHANNELS] += sample * channel->left_gain / FULL_GAIN;
-		output[frame * OUTPUT_CHANNELS + 1] += sample * channel->right_gain / FULL_GAIN;
+		output[frame * AUDIO_OUTPUT_CHANNELS] += sample * channel->left_gain / FULL_GAIN;
+		output[frame * AUDIO_OUTPUT_CHANNELS + 1] += sample * channel->right_gain / FULL_GAIN;
 		channel->position += channel->step;
 	}
 	if (channel->position >= end)
 		channel->effect = NULL;
 }
 
-static void mix_and_write(uint32_t frames)
+/* The effects source of the audio output. */
+static void mix_effects(int32_t *mix, uint32_t frames)
 {
-	uint32_t index;
 	int channel;
-	memset(mix_buffer, 0, (size_t)frames * OUTPUT_CHANNELS * sizeof(*mix_buffer));
 	for (channel = 0; channel < MIXER_CHANNEL_COUNT; channel++)
 		if (channels[channel].effect)
-			mix_channel(&channels[channel], mix_buffer, frames);
-	for (index = 0; index < frames * OUTPUT_CHANNELS; index++) {
-		int32_t sample = mix_buffer[index];
-		if (sample > INT16_MAX)
-			sample = INT16_MAX;
-		else if (sample < INT16_MIN)
-			sample = INT16_MIN;
-		output_buffer[index] = (int16_t)sample;
-	}
-	if (write(audio_stream, output_buffer, (size_t)frames * OUTPUT_CHANNELS * sizeof(*output_buffer)) < 0) {
-		fprintf(stderr, "doom: the audio stream failed; going on without sound\n");
-		close_audio();
-	}
+			mix_channel(&channels[channel], mix, frames);
 }
 
 /* --- The sound module --------------------------------------------------- */
 
 static boolean sound_initialize(boolean use_sfx_prefix)
 {
-	long result;
 	use_sound_prefix = use_sfx_prefix;
 	memset(channels, 0, sizeof(channels));
-	output_rate = (uint32_t)snd_samplerate;
-	if (output_rate < LOWEST_OUTPUT_RATE)
-		output_rate = LOWEST_OUTPUT_RATE;
-	if (output_rate > HIGHEST_OUTPUT_RATE)
-		output_rate = HIGHEST_OUTPUT_RATE;
-	audio_stream = open(AUDIO_DEVICE_PATH, O_WRONLY);
-	if (audio_stream < 0) {
-		fprintf(stderr, "doom: no audio output (%s); sound effects are off\n", AUDIO_DEVICE_PATH);
-		return false;
-	}
-	result = control_audio(FPOS_CONTROL_AUDIO_SET_FORMAT,
-			       (long)output_rate << 16 | OUTPUT_CHANNELS << 8 | FPOS_AUDIO_SAMPLE_SIGNED16);
-	if (result < 0) {
-		fprintf(stderr, "doom: the audio output takes no %u Hz stereo stream; sound effects are off\n",
-			(unsigned)output_rate);
-		close_audio();
-		return false;
-	}
-	return true;
+	effects_attached = audio_output_attach(AUDIO_SOURCE_EFFECTS, mix_effects);
+	return effects_attached;
 }
 
 static void sound_shut_down(void)
 {
-	close_audio();
+	if (effects_attached)
+		audio_output_detach(AUDIO_SOURCE_EFFECTS);
+	effects_attached = false;
 }
 
 static int sound_lump_number(sfxinfo_t *sfx)
@@ -285,19 +213,7 @@ static int sound_lump_number(sfxinfo_t *sfx)
 
 static void sound_update(void)
 {
-	long queued;
-	uint32_t wanted_frames, queued_frames;
-	if (audio_stream < 0)
-		return;
-	queued = control_audio(FPOS_CONTROL_AUDIO_GET_QUEUED, 0);
-	if (queued < 0) {
-		close_audio();
-		return;
-	}
-	wanted_frames = output_rate * OUTPUT_LATENCY_MS / 1000;
-	queued_frames = (uint32_t)(queued / (OUTPUT_CHANNELS * (long)sizeof(int16_t)));
-	if (queued_frames < wanted_frames)
-		mix_and_write(wanted_frames - queued_frames);
+	audio_output_update();
 }
 
 static void sound_update_parameters(int channel, int volume, int separation)
@@ -310,7 +226,7 @@ static int sound_start(sfxinfo_t *sfx, int channel, int volume, int separation)
 {
 	const struct sound_effect *effect;
 	struct mixer_channel *mixer_channel;
-	if (audio_stream < 0 || channel < 0 || channel >= MIXER_CHANNEL_COUNT)
+	if (!effects_attached || channel < 0 || channel >= MIXER_CHANNEL_COUNT)
 		return -1;
 	mixer_channel = &channels[channel];
 	mixer_channel->effect = NULL;
@@ -318,7 +234,7 @@ static int sound_start(sfxinfo_t *sfx, int channel, int volume, int separation)
 	if (!effect)
 		return -1;
 	mixer_channel->position = 0;
-	mixer_channel->step = ((uint64_t)effect->rate << 32) / output_rate;
+	mixer_channel->step = ((uint64_t)effect->rate << 32) / audio_output_rate();
 	set_channel_gains(mixer_channel, volume, separation);
 	mixer_channel->effect = effect;
 	return channel;
@@ -355,71 +271,4 @@ sound_module_t DG_sound_module = {
 	sound_stop,
 	sound_is_playing,
 	sound_cache,
-};
-
-/* --- Music: silent -------------------------------------------------------- */
-
-static boolean music_initialize(void)
-{
-	return false;
-}
-
-static void music_shut_down(void)
-{
-}
-
-static void music_set_volume(int volume)
-{
-	(void)volume;
-}
-
-static void music_pause(void)
-{
-}
-
-static void music_resume(void)
-{
-}
-
-static void *music_register(void *data, int length)
-{
-	(void)data;
-	(void)length;
-	return NULL;
-}
-
-static void music_unregister(void *handle)
-{
-	(void)handle;
-}
-
-static void music_play(void *handle, boolean looping)
-{
-	(void)handle;
-	(void)looping;
-}
-
-static void music_stop(void)
-{
-}
-
-static boolean music_is_playing(void)
-{
-	return false;
-}
-
-music_module_t DG_music_module = {
-	handled_devices,
-	sizeof(handled_devices) / sizeof(handled_devices[0]),
-	music_initialize,
-	music_shut_down,
-	music_set_volume,
-	music_pause,
-	music_resume,
-	music_register,
-	music_unregister,
-	music_play,
-	music_stop,
-	music_is_playing,
-	NULL,
 };

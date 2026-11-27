@@ -38,7 +38,7 @@ The ports so far:
 | devel/llvm-runtime | 23.1.6 | custom: libLLVM.so from llvm's package | tested (x86-64, AArch64); on the system disk (with mesa) |
 | graphics/mesa | 26.3.1 | meson (llvmpipe, softpipe, lavapipe; EGL and Vulkan platforms for the display server), signed source, Mako as a build-time source | tested (x86-64; AArch64 headless: gltest); on the system disk |
 | graphics/gldemos | 1.0 | custom, from `files/` (gltest, glgears, vkcube) | tested (x86-64; AArch64: gltest); on the system disk |
-| games/doomgeneric | 0.0.20261011 | custom (a Makefile of the port's own; the platform layer and sound in `files/`), a pinned commit, four patches | built (x86-64, AArch64); on the system disk (with the C toolchain) |
+| games/doomgeneric | 0.0.20261011 | custom (a Makefile of the port's own; the platform layer, sound and OPL music driver in `files/`), a pinned commit and Chocolate Doom 3.1.1's OPL music, nine patches | built (x86-64, AArch64); on the system disk (with the C toolchain) |
 | games/freedoom | 0.13.0 | none (data: the IWADs into share/games/doom), signed source | built; on the system disk with doomgeneric |
 
 "untested" ports are committed but have not been built and run on the

@@ -1,0 +1,14 @@
+--- a/doomgeneric/doomtype.h
++++ b/doomgeneric/doomtype.h
+@@ -52,6 +52,11 @@
+ #define PACKEDATTR
+ #endif
+ 
++// A packed structure, as Chocolate Doom writes it (i_oplmusic.c):
++// PACKED_STRUCT ({ ... }) name;
++#define PACKEDPREFIX
++#define PACKED_STRUCT(...) PACKEDPREFIX struct __VA_ARGS__ PACKEDATTR
++
+ // C99 integer types; with gcc we just use this.  Other compilers 
+ // should add conditional statements that define the C99 types.
+ 

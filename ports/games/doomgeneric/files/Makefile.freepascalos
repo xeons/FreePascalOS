@@ -15,14 +15,17 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Builds doomgeneric for FreePascalOS: upstream's engine files (the list
-# of its own Makefile, less the X11 platform file) and the platform
-# layer kept in the port's files/ (PLATFORM_DIRECTORY). Run in
+# of its own Makefile, less the X11 platform file), Chocolate Doom's OPL
+# music (CHOCOLATE_DOOM_DIRECTORY: its release unpacked) and the
+# platform layer kept in the port's files/ (PLATFORM_DIRECTORY). Run in
 # doomgeneric's source folder with CC, CFLAGS and LDFLAGS from the
 # ports tool's C toolchain:
 #
-#   make -f .../Makefile.freepascalos PLATFORM_DIRECTORY=.../files
+#   make -f .../Makefile.freepascalos PLATFORM_DIRECTORY=.../files \
+#       CHOCOLATE_DOOM_DIRECTORY=.../chocolate-doom-3.1.1
 
 PLATFORM_DIRECTORY ?= .
+CHOCOLATE_DOOM_DIRECTORY ?= ../chocolate-doom/chocolate-doom-chocolate-doom-3.1.1
 OUTPUT := doom
 OBJECT_DIRECTORY := build-freepascalos
 
@@ -34,7 +37,7 @@ ENGINE_DEFINES := -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DFEATURE_SOUND \
 # Upstream's code is 1990s C: its warnings are its own and not ours to
 # fix in a port; the platform layer is held to -Wall -Wextra.
 ENGINE_FLAGS := $(ENGINE_DEFINES) -std=gnu99 -fcommon -w
-PLATFORM_FLAGS := $(ENGINE_DEFINES) -std=gnu99 -Wall -Wextra -I.
+PLATFORM_FLAGS := $(ENGINE_DEFINES) -std=gnu99 -Wall -Wextra -I. -I$(CHOCOLATE_DOOM_DIRECTORY)/opl
 
 ENGINE_OBJECTS := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad d_loop d_main d_mode d_net \
 	f_finale f_wipe g_game hu_lib hu_stuff info i_cdmus i_endoom i_joystick i_scale i_sound i_system i_timer \
@@ -42,19 +45,47 @@ ENGINE_OBJECTS := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad 
 	p_floor p_inter p_lights p_map p_maputl p_mobj p_plats p_pspr p_saveg p_setup p_sight p_spec p_switch \
 	p_telept p_tick p_user r_bsp r_data r_draw r_main r_plane r_segs r_sky r_things sha1 sounds statdump \
 	st_lib st_stuff s_sound tables v_video wi_stuff w_checksum w_file w_main w_wad z_zone w_file_stdc \
-	i_input i_video doomgeneric
-PLATFORM_OBJECTS := doomgeneric_freepascalos doomgeneric_freepascalos_sound
+	i_input i_video doomgeneric mus2mid
+PLATFORM_OBJECTS := doomgeneric_freepascalos doomgeneric_freepascalos_audio doomgeneric_freepascalos_sound \
+	doomgeneric_freepascalos_music opl_freepascalos
+
+# Chocolate Doom's music player (MUS and MIDI through the GENMIDI
+# instruments) and the MIDI file reader it plays from, compiled against
+# doomgeneric's headers: they are copied out of Chocolate Doom's src/,
+# whose own headers would be found first beside them. Its OPL library is
+# compiled where it is (its files include only each other): the
+# front end, the callback queue and the Nuked OPL3 emulator; the
+# FreePascalOS driver replaces the SDL one.
+MUSIC_SOURCES := i_oplmusic midifile
+MUSIC_HEADERS := midifile.h
+OPL_SOURCES := opl opl_queue opl3
+MUSIC_DIRECTORY := $(OBJECT_DIRECTORY)/chocolate-doom
+MUSIC_FLAGS := $(ENGINE_FLAGS) -I. -I$(CHOCOLATE_DOOM_DIRECTORY)/opl -I$(MUSIC_DIRECTORY) \
+	-include $(PLATFORM_DIRECTORY)/chocolate_doom_compat.h
+OPL_FLAGS := $(ENGINE_FLAGS) -I.
 
 ENGINE_OBJECT_FILES := $(addprefix $(OBJECT_DIRECTORY)/,$(addsuffix .o,$(ENGINE_OBJECTS)))
 PLATFORM_OBJECT_FILES := $(addprefix $(OBJECT_DIRECTORY)/,$(addsuffix .o,$(PLATFORM_OBJECTS)))
+MUSIC_OBJECT_FILES := $(addprefix $(MUSIC_DIRECTORY)/,$(addsuffix .o,$(MUSIC_SOURCES)))
+MUSIC_COPIES := $(addprefix $(MUSIC_DIRECTORY)/,$(addsuffix .c,$(MUSIC_SOURCES)) $(MUSIC_HEADERS))
+OPL_OBJECT_FILES := $(addprefix $(MUSIC_DIRECTORY)/,$(addsuffix .o,$(OPL_SOURCES)))
 
 all: $(OUTPUT)
 
-$(OUTPUT): $(ENGINE_OBJECT_FILES) $(PLATFORM_OBJECT_FILES)
+$(OUTPUT): $(ENGINE_OBJECT_FILES) $(MUSIC_OBJECT_FILES) $(OPL_OBJECT_FILES) $(PLATFORM_OBJECT_FILES)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
 
-$(OBJECT_DIRECTORY):
+$(OBJECT_DIRECTORY) $(MUSIC_DIRECTORY):
 	mkdir -p $@
+
+$(MUSIC_COPIES): $(MUSIC_DIRECTORY)/%: $(CHOCOLATE_DOOM_DIRECTORY)/src/% | $(MUSIC_DIRECTORY)
+	cp $< $@
+
+$(MUSIC_OBJECT_FILES): $(MUSIC_DIRECTORY)/%.o: $(MUSIC_DIRECTORY)/%.c $(MUSIC_DIRECTORY)/midifile.h
+	$(CC) $(CFLAGS) $(MUSIC_FLAGS) -c $< -o $@
+
+$(OPL_OBJECT_FILES): $(MUSIC_DIRECTORY)/%.o: $(CHOCOLATE_DOOM_DIRECTORY)/opl/%.c | $(MUSIC_DIRECTORY)
+	$(CC) $(CFLAGS) $(OPL_FLAGS) -c $< -o $@
 
 $(ENGINE_OBJECT_FILES): $(OBJECT_DIRECTORY)/%.o: %.c | $(OBJECT_DIRECTORY)
 	$(CC) $(CFLAGS) $(ENGINE_FLAGS) -c $< -o $@

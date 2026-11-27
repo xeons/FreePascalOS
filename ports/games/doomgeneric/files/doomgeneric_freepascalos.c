@@ -34,7 +34,9 @@
  * (doomkeys.h) into a queue DG_GetKey empties. When the window loses the
  * keyboard every key still held is released, so none sticks. Closing
  * the window quits the way the menu's Quit does (I_Quit: the
- * configuration saved, sound shut down).
+ * configuration saved, sound shut down). The sound effects and the
+ * music are doomgeneric_freepascalos_sound.c and _music.c, mixed into
+ * one stream by doomgeneric_freepascalos_audio.c.
  */
 
 #include <stdint.h>
@@ -48,6 +50,8 @@
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "i_system.h"
+
+#include "doomgeneric_freepascalos_audio.h"
 
 #define FRAME_WIDTH DOOMGENERIC_RESX
 #define FRAME_HEIGHT DOOMGENERIC_RESY
@@ -319,9 +323,12 @@ void DG_DrawFrame(void)
 }
 
 /* Waits on the display's channel rather than a plain sleep, so a key
-   pressed meanwhile ends the wait (DG_GetKey then reads it). */
+   pressed meanwhile ends the wait (DG_GetKey then reads it). Doom waits
+   here between tics and through screen wipes, which do not update the
+   sound: the audio stream is topped up first, so the music plays on. */
 void DG_SleepMs(uint32_t milliseconds)
 {
+	audio_output_update();
 	if (display.broken) {
 		struct timespec pause = {.tv_sec = milliseconds / 1000, .tv_nsec = (long)(milliseconds % 1000) * 1000000L};
 		nanosleep(&pause, NULL);
