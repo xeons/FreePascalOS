@@ -98,27 +98,36 @@ procedure ReportCommitRefusals;
 var
   Failures: QWord;
   Physical: TPhysicalMemoryStatistics;
+  Committed, Untouched, Limit, KernelHeld, Kept: QWord;
 begin
   Failures := SystemCommitFailures;
   if Failures = FailuresReported then
     Exit;
+  { Every figure is read before the message begins: the debug output
+    holds its lock at the highest level, where the page lock that these
+    figures take may not be acquired. }
   GetPhysicalMemoryStatistics(Physical);
+  Committed := SystemCommittedPages;
+  Untouched := OutstandingCommitments;
+  Limit := SystemCommitLimitPages;
+  KernelHeld := KernelHeldPages;
+  Kept := KeptCachePages;
   DebugBeginMessage;
   DebugWriteTag('memory');
   DebugWrite('commit limit refused ');
   DebugWriteDecimal(Failures - FailuresReported);
   DebugWrite(' commitments: ');
-  DebugWriteSize(SystemCommittedPages * PageSize);
+  DebugWriteSize(Committed * PageSize);
   DebugWrite(' committed (');
-  DebugWriteSize(OutstandingCommitments * PageSize);
+  DebugWriteSize(Untouched * PageSize);
   DebugWrite(' not touched) of ');
-  DebugWriteSize(SystemCommitLimitPages * PageSize);
+  DebugWriteSize(Limit * PageSize);
   DebugWrite('; ');
   DebugWriteSize(Physical.FreePages * PageSize);
   DebugWrite(' free, ');
-  DebugWriteSize(KernelHeldPages * PageSize);
+  DebugWriteSize(KernelHeld * PageSize);
   DebugWrite(' kernel, ');
-  DebugWriteSize(KeptCachePages * PageSize);
+  DebugWriteSize(Kept * PageSize);
   DebugWriteLine(' kept by caches');
   DebugEndMessage;
   FailuresReported := Failures;
