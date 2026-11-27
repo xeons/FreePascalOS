@@ -30,7 +30,10 @@
 
   Incremental layout: a box that is not dirty, was laid out for the
   same input and does not depend on floats or containing blocks outside
-  it keeps its previous layout and is skipped.
+  it keeps its previous layout and is skipped. MeasureBox does the same
+  for the layouts flex and grid containers make only to measure their
+  items. A box laid out is marked for its scrollable overflow to be
+  found again (Web.Layout.Overflow).
 }
 unit Web.Layout.Dispatch;
 
@@ -43,6 +46,14 @@ uses
   Web.Layout.Boxes, Web.Layout.Context;
 
 procedure LayoutBox(Box: TLayoutBox; const Input: TLayoutInput);
+{ Lays a box out only to learn its border box size and baseline (the
+  first, else the bottom of its border box): a flex or grid container
+  sizing its lines or tracks, which then lays the box out for the input
+  it settles on. A box measured for the same input and unchanged since
+  is not laid out again; its size from then is the answer (as Gecko
+  keeps a flex item's block axis measurement). The box's layout is the
+  caller's to make afterwards: it is either this one or an earlier. }
+procedure MeasureBox(Box: TLayoutBox; const Input: TLayoutInput; out Width, Height, Baseline: Single);
 { An input for the children of a box: the content width and height
   (Indefinite when unknown) and the width mode, the rest inherited. }
 function MakeChildInput(const Parent: TLayoutInput; ContentWidth, ContentHeight: Single;
@@ -245,11 +256,14 @@ begin
   Box.CollapsesThrough := False;
 end;
 
+const
+  { A box with one of these is laid out whatever its input. }
+  AlwaysLaidOutFlags = [bfNeedsLayout, bfChildNeedsLayout, bfSawOutsideFloats, bfHasEscapingAbsolute,
+    bfHasEscapingFloats];
+
 function CanSkip(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
 begin
-  Result := ([bfNeedsLayout, bfChildNeedsLayout, bfSawOutsideFloats, bfHasEscapingAbsolute,
-    bfHasEscapingFloats] * Box.Flags = []) and
-    SameLayoutInput(Box, Input) and (Box.Kind <> bkViewport);
+  Result := (AlwaysLaidOutFlags * Box.Flags = []) and SameLayoutInput(Box, Input) and (Box.Kind <> bkViewport);
 end;
 
 procedure LayoutBox(Box: TLayoutBox; const Input: TLayoutInput);
@@ -262,9 +276,13 @@ begin
   if CanSkip(Box, Input) then
   begin
     Inc(BoxesSkipped);
+    Box.Margin := Box.LaidOutMargin;
+    Box.Border := Box.LaidOutBorder;
+    Box.Padding := Box.LaidOutPadding;
     Exit;
   end;
   Inc(BoxesLaidOut);
+  Box.MarkOverflowDirty;
   Box.Flags := Box.Flags - [bfSawOutsideFloats, bfHasEscapingAbsolute, bfHasEscapingFloats];
   FloatsBefore := 0;
   if Input.Floats <> nil then
@@ -321,6 +339,40 @@ begin
     Include(Box.Flags, bfHasEscapingFloats);
   Box.Flags := Box.Flags - [bfNeedsLayout, bfChildNeedsLayout];
   RememberLayoutInput(Box, Input);
+  Box.LaidOutMargin := Box.Margin;
+  Box.LaidOutBorder := Box.Border;
+  Box.LaidOutPadding := Box.Padding;
+end;
+
+procedure MeasureBox(Box: TLayoutBox; const Input: TLayoutInput; out Width, Height, Baseline: Single);
+begin
+  if (bfMeasured in Box.Flags) and (AlwaysLaidOutFlags * Box.Flags = []) and SameMeasureInput(Box, Input) then
+  begin
+    { The edges as the measuring layout left them (the caller may have
+      resolved them for another width since). }
+    Box.Margin := Box.MeasuredMargin;
+    Box.Border := Box.MeasuredBorder;
+    Box.Padding := Box.MeasuredPadding;
+    Width := Box.MeasuredWidth;
+    Height := Box.MeasuredHeight;
+    Baseline := Box.MeasuredBaseline;
+    Exit;
+  end;
+  LayoutBox(Box, Input);
+  Width := Box.Width;
+  Height := Box.Height;
+  if Box.FirstBaseline >= 0 then
+    Baseline := Box.FirstBaseline
+  else
+    Baseline := Box.Height;
+  RememberMeasureInput(Box, Input);
+  Box.MeasuredWidth := Width;
+  Box.MeasuredHeight := Height;
+  Box.MeasuredBaseline := Baseline;
+  Box.MeasuredMargin := Box.Margin;
+  Box.MeasuredBorder := Box.Border;
+  Box.MeasuredPadding := Box.Padding;
+  Include(Box.Flags, bfMeasured);
 end;
 
 end.

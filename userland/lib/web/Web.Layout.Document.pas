@@ -155,7 +155,7 @@ uses
   Web.Profiling,
   Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
   Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages,
-  Web.Layout.ViewportOverflow;
+  Web.Layout.ViewportOverflow, Web.Layout.Overflow;
 
 constructor TDocumentLayout.Create(Document: TDocument; Resources: TDocumentResources);
 begin
@@ -299,10 +299,29 @@ begin
   end;
 end;
 
+{ Whether a style differs from the one before only in what painting
+  reads and in sizes, offsets, margins, padding, borders and flex or
+  grid properties, which the box tree is built without (its children's
+  boxes stay; the box is laid out again). }
+function ChangesOnlyGeometry(Old, New: TCssComputedStyle): Boolean;
+const
+  BuildGroups = [pgFont, pgInheritedText, pgInheritedTable, pgList, pgBox, pgTable, pgColumn, pgContent];
+var
+  Group: TCssStructGroup;
+begin
+  if (Old = nil) or (New = nil) then
+    Exit(False);
+  for Group := Low(TCssStructGroup) to High(TCssStructGroup) do
+    if (Group in BuildGroups) and (Old.Structs[Group] <> New.Structs[Group]) then
+      Exit(False);
+  Result := True;
+end;
+
 procedure TDocumentLayout.StyleChanged(Element: TElement; Change: TStyleChangeKind);
 var
   Box: TLayoutBox;
   Data: PNodeData;
+  SameBoxes: Boolean;
 begin
   if FFullRebuild or (FRoot = nil) then
     Exit;
@@ -315,18 +334,21 @@ begin
       MarkBoxesOf(StyleParentOf(Element));
     Exit;
   end;
+  SameBoxes := (Data <> nil) and ((Change in [scPaint, scMove]) or
+    ((Change = scLayout) and (Box.Kind <> bkReplaced) and ChangesOnlyGeometry(Box.Style, Data^.Style)));
   { Same boxes, new style. }
   if (Data <> nil) and (Box.Style <> Data^.Style) then
   begin
     Box.Style.Release;
     Box.Style := Data^.Style.AddRef;
   end;
-  if (Change in [scPaint, scMove]) and (Data <> nil) then
+  if SameBoxes then
   begin
-    { Only painting changes: the boxes take the new styles, no layout;
-      a new translation lays out the box again (its offset). }
+    { The boxes take the new styles; only painting changed, or what a
+      layout of the box reads: a new translation lays it out again (its
+      offset), as does a new size, margin, padding or border. }
     TakePaintStyles(Box, Element, Data^.Style);
-    if Change = scMove then
+    if Change <> scPaint then
     begin
       Box.MarkNeedsLayout;
       FLayoutDirty := True;
@@ -367,6 +389,33 @@ begin
   end;
 end;
 
+{ Whether Node is an element with display: none or inside one, below
+  its nearest box: what changes in there is not rendered (building the
+  box's children again would build nothing for it). Not below a
+  replaced box, which may draw its subtree its own way (a select shows
+  its selected option). }
+function InHiddenSubtree(Node: TNode): Boolean;
+var
+  Current: TNode;
+  Data: PNodeData;
+  Hidden: Boolean;
+begin
+  Hidden := False;
+  Current := Node;
+  while Current <> nil do
+  begin
+    Data := ExistingNodeData(Current);
+    if Data = nil then
+      Exit(False);
+    if Data^.Box <> nil then
+      Exit(Hidden and (TLayoutBox(Data^.Box).Kind <> bkReplaced));
+    if (Data^.Style <> nil) and Data^.Style.IsDisplayNone then
+      Hidden := True;
+    Current := StyleParentOf(Current);
+  end;
+  Result := False;
+end;
+
 procedure TDocumentLayout.TextChanged(Node: TNode);
 var
   Box: TLayoutBox;
@@ -378,7 +427,7 @@ begin
     Box.MarkNeedsLayout;
     FLayoutDirty := True;
   end
-  else if StyleParentOf(Node) <> nil then
+  else if (StyleParentOf(Node) <> nil) and not InHiddenSubtree(StyleParentOf(Node)) then
     MarkBoxesOf(StyleParentOf(Node));
 end;
 
@@ -410,7 +459,8 @@ end;
 procedure TDocumentLayout.ChildrenChanged(Node: TNode);
 begin
   Inc(FPaintVersion);
-  MarkBoxesOf(Node);
+  if not InHiddenSubtree(Node) then
+    MarkBoxesOf(Node);
 end;
 
 procedure TDocumentLayout.AttributeChanged(Node: TNode);
@@ -438,7 +488,7 @@ end;
 
 procedure TDocumentLayout.ResourcesChanged(Change: TResourceChange);
 var
-  Node: TNode;
+  Element: TElement;
   Box: TLayoutBox;
 begin
   Inc(FPaintVersion);
@@ -456,22 +506,18 @@ begin
   end;
   if Change <> rcImages then
     Exit;
-  { Images arrived: replaced boxes take them and are laid out again. }
-  if FRoot = nil then
+  { An element's image arrived: its replaced box takes it and is laid
+    out again (a url() image changes no replaced box). }
+  Element := FResources.ChangedImageElement;
+  if (FRoot = nil) or (Element = nil) then
     Exit;
-  Node := FDocument;
-  while Node <> nil do
+  Box := BoxOf(Element);
+  if (Box is TReplacedBox) and (TReplacedBox(Box).Image <> FResources.ElementImage(Element)) and
+     not IsOutermostSvgElement(Element) then
   begin
-    Box := BoxOf(Node);
-    if (Box <> nil) and (Box is TReplacedBox) and Node.IsElement then
-      if (TReplacedBox(Box).Image <> FResources.ElementImage(TElement(Node))) and
-         not IsOutermostSvgElement(TElement(Node)) then
-      begin
-        TakeElementImage(TReplacedBox(Box), TElement(Node));
-        Box.MarkNeedsLayout;
-        FLayoutDirty := True;
-      end;
-    Node := Node.NextInShadowIncludingTree(FDocument);
+    TakeElementImage(TReplacedBox(Box), Element);
+    Box.MarkNeedsLayout;
+    FLayoutDirty := True;
   end;
 end;
 
@@ -627,11 +673,14 @@ begin
   finally
     LeavePhase;
   end;
-  EnterPhase(PhaseBoxes);
-  try
-    UpdateBoxes;
-  finally
-    LeavePhase;
+  if FFullRebuild or FBoxesChanged or (FRoot = nil) then
+  begin
+    EnterPhase(PhaseBoxes);
+    try
+      UpdateBoxes;
+    finally
+      LeavePhase;
+    end;
   end;
   Viewport := FRoot;
   if FLayoutDirty or ([bfNeedsLayout, bfChildNeedsLayout] * Viewport.Flags <> []) then
@@ -687,66 +736,13 @@ begin
   end;
 end;
 
-{ The scrollable overflow of each scroll container (and the viewport):
-  the union of its descendants' border boxes, from its padding box. }
-procedure ExtentOf(Box: TLayoutBox; OffsetX, OffsetY: Single; var Right, Bottom: Single);
-var
-  Child: TLayoutBox;
-  ChildX, ChildY, InnerRight, InnerBottom: Single;
-  Index: Integer;
-  Fragment: PLineFragment;
-begin
-  Child := Box.FirstChild;
-  while Child <> nil do
-  begin
-    if Child.Kind = bkInline then
-      ExtentOf(Child, OffsetX, OffsetY, Right, Bottom)
-    else if not (bfFixed in Child.Flags) then
-    begin
-      ChildX := OffsetX + Child.X + Child.RelativeX;
-      ChildY := OffsetY + Child.Y + Child.RelativeY;
-      if Child.Kind <> bkText then
-      begin
-        if ChildX + Child.Width > Right then
-          Right := ChildX + Child.Width;
-        if ChildY + Child.Height > Bottom then
-          Bottom := ChildY + Child.Height;
-      end;
-      if not (bfClipsOverflow in Child.Flags) then
-        ExtentOf(Child, ChildX, ChildY, Right, Bottom);
-      if bfScrollContainer in Child.Flags then
-      begin
-        InnerRight := 0;
-        InnerBottom := 0;
-        ExtentOf(Child, -Child.Border[sideLeft], -Child.Border[sideTop], InnerRight, InnerBottom);
-        Child.ScrollWidth := Max(InnerRight + Child.Padding[sideRight], Child.Width - Child.Border[sideLeft] -
-          Child.Border[sideRight]);
-        Child.ScrollHeight := Max(InnerBottom + Child.Padding[sideBottom], Child.Height - Child.Border[sideTop] -
-          Child.Border[sideBottom]);
-      end;
-    end;
-    Child := Child.NextSibling;
-  end;
-  if Box.Inline <> nil then
-    for Index := 0 to Box.Inline.FragmentCount - 1 do
-    begin
-      Fragment := @Box.Inline.Fragments[Index];
-      if OffsetX + Fragment^.X + Fragment^.Width > Right then
-        Right := OffsetX + Fragment^.X + Fragment^.Width;
-      if OffsetY + Fragment^.Y + Fragment^.Height > Bottom then
-        Bottom := OffsetY + Fragment^.Y + Fragment^.Height;
-    end;
-end;
-
+{ The scrollable overflow of each scroll container (and the viewport),
+  found again only where the layout changed something. }
 procedure TDocumentLayout.ComputeScrollExtents;
-var
-  Right, Bottom: Single;
 begin
-  Right := 0;
-  Bottom := 0;
-  ExtentOf(FRoot, 0, 0, Right, Bottom);
-  FRoot.ScrollWidth := Max(Right, FViewportWidth);
-  FRoot.ScrollHeight := Max(Bottom, FViewportHeight);
+  UpdateScrollableOverflow(FRoot);
+  FRoot.ScrollWidth := Max(Max(0, FRoot.DescendantRight), FViewportWidth);
+  FRoot.ScrollHeight := Max(Max(0, FRoot.DescendantBottom), FViewportHeight);
   SetScrollOffset(nil, FRoot.ScrollX, FRoot.ScrollY);
 end;
 

@@ -528,6 +528,7 @@ var
   Data: PNodeData;
   Index: Integer;
   OldParent: TLayoutBox;
+  WasDirty: Boolean;
 begin
   Result := nil;
   Data := ExistingNodeData(Node);
@@ -562,8 +563,12 @@ begin
         Break;
       end;
   end;
+  { Its new ancestors are laid out again; the box itself only if it was
+    to be already (a new size or translation in its style). }
+  WasDirty := bfNeedsLayout in Result.Flags;
   Result.MarkNeedsLayout;
-  Result.Flags := Result.Flags - [bfNeedsLayout];
+  if not WasDirty then
+    Exclude(Result.Flags, bfNeedsLayout);
 end;
 
 procedure TBoxTreeBuilder.AddNodeBox(Parent: TLayoutBox; Node: TNode);

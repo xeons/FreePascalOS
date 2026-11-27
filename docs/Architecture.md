@@ -17103,6 +17103,40 @@ flow around them (4chan's posts were laid over their thumbnails once an
 icon in them loaded). A block inside an inline box (block-in-inline)
 looks for the floats from its margin edge, as in block flow.
 
+Script reading geometry in a loop (offsetHeight, getBoundingClientRect,
+getComputedStyle after each change: layout thrashing) makes a layout per
+read, so each must cost what the change touched, not the page:
+
+- A skipped box gives back the edges its layout left (`LaidOutMargin` and
+  friends): flex and grid resolve their items' edges for another width
+  before laying them out.
+- Flex and grid containers lay their items out to measure them (a grid
+  item at its column width before the rows are sized, a row flex item
+  before its line's cross size is known, a column item for its base
+  size), then once more for the size they settle on. `MeasureBox`
+  (`Web.Layout.Dispatch`) keeps the measured size, baseline and edges
+  with the input (`bfMeasured`, forgotten by `MarkNeedsLayout` on the box
+  or below), as Gecko keeps a flex item's block axis measurement; the
+  final layout is skipped when it is the one the box had. Before, every
+  item of a container was laid out twice whenever anything in the
+  container changed (a 2000-card grid: 23 ms per forced layout, now 1).
+- A style change that differs only in sizes, offsets, margins, padding,
+  borders, flex or grid properties (and painting) keeps the box's
+  children and lays the box out again; a box moved over to a rebuilt
+  parent stays dirty if it was.
+- Text and children changed inside a `display: none` subtree change no
+  boxes.
+- Scrollable overflow (`Web.Layout.Overflow`): each box keeps the right
+  and bottom edges its descendants reach; a box laid out is marked
+  (`bfOverflowDirty`, its ancestors `bfChildOverflowDirty`) and only
+  those find theirs again, bottom-up from their children's, as Gecko
+  stores overflow areas on frames. Scroll containers inside fixed boxes
+  and `overflow: clip` boxes get their scroll sizes too.
+- Counters and generated text pass by subtrees that neither have
+  generated text nor touch a counter (`bfCounterFree`).
+- An image arriving updates its own element's box
+  (`ChangedImageElement`), not a walk of the document.
+
 - Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
   8.3.1): widths with auto margins, min/max, box-sizing and percentages;
   margin collapsing between siblings, through parents' tops and bottoms

@@ -930,24 +930,23 @@ begin
         Exit(Value^.Data.Items[Index].Keyword);
 end;
 
-procedure LayItemOut(var State: TGridState; Box: TLayoutBox; Width, Height: Single; Shrink: Boolean;
-  ContainingHeight: Single);
-var
-  ChildInput: TLayoutInput;
+{ The input an item is laid out with: its width (or shrink-to-fit in
+  it) and height (-1: its content's). }
+function ItemInput(const State: TGridState; Width, Height: Single; Shrink: Boolean;
+  ContainingHeight: Single): TLayoutInput;
 begin
-  ChildInput := MakeChildInput(State.Input, Width, ContainingHeight, wmFixed);
-  ChildInput.Floats := nil;
-  ChildInput.BfcX := 0;
-  ChildInput.BfcY := 0;
+  Result := MakeChildInput(State.Input, Width, ContainingHeight, wmFixed);
+  Result.Floats := nil;
+  Result.BfcX := 0;
+  Result.BfcY := 0;
   if Shrink then
   begin
-    ChildInput.WidthMode := wmShrinkToFit;
-    ChildInput.AvailableWidth := Width;
+    Result.WidthMode := wmShrinkToFit;
+    Result.AvailableWidth := Width;
   end
   else
-    ChildInput.FixedWidth := Width;
-  ChildInput.FixedHeight := Height;
-  LayoutBox(Box, ChildInput);
+    Result.FixedWidth := Width;
+  Result.FixedHeight := Height;
 end;
 
 procedure LayoutGridContainer(Box: TLayoutBox; const Input: TLayoutInput);
@@ -963,6 +962,9 @@ var
   JustifySelf, AlignSelf: TCssKeyword;
   StretchWidth, StretchHeight: Boolean;
   MinWidth, MaxWidth: Single;
+  MeasuredWidth, MeasuredBaseline: Single;
+  MeasuredHeights: array of Single;
+  ItemInputs: array of TLayoutInput;
 begin
   ComputeUsedWidth(Box, Input);
   Box.FirstBaseline := -1;
@@ -1000,6 +1002,8 @@ begin
   SetLength(Ends, Count);
   SetLength(MinSizes, Count);
   SetLength(MaxSizes, Count);
+  SetLength(MeasuredHeights, Count);
+  SetLength(ItemInputs, Count);
   { Columns from the items' min/max-content widths. }
   for Index := 0 to Count - 1 do
   begin
@@ -1025,12 +1029,13 @@ begin
       JustifySelf := KeywordOf(Box.Style, cpJustifyItems);
     StretchWidth := KeywordIn(JustifySelf, [kwNormal, kwStretch, kwAuto, kwLegacy]) and
       IsAutoValue(ItemBox.Style, cpWidth) and (ItemBox.Kind <> bkReplaced);
-    LayItemOut(State, ItemBox, Max(0, AreaWidth - ItemBox.Margin[sideLeft] - ItemBox.Margin[sideRight]), -1,
-      not StretchWidth, ContentHeight);
+    ItemInputs[Index] := ItemInput(State, Max(0, AreaWidth - ItemBox.Margin[sideLeft] - ItemBox.Margin[sideRight]),
+      -1, not StretchWidth, ContentHeight);
+    MeasureBox(ItemBox, ItemInputs[Index], MeasuredWidth, MeasuredHeights[Index], MeasuredBaseline);
     Starts[Index] := Item^.RowStart;
     Ends[Index] := Item^.RowEnd;
-    MinSizes[Index] := ItemBox.MarginBoxHeight;
-    MaxSizes[Index] := ItemBox.MarginBoxHeight;
+    MinSizes[Index] := MeasuredHeights[Index] + ItemBox.Margin[sideTop] + ItemBox.Margin[sideBottom];
+    MaxSizes[Index] := MinSizes[Index];
   end;
   SizeTracks(State.Rows, Starts, Ends, MinSizes, MaxSizes, ContentHeight, State.RowGap,
     KeywordIn(KeywordOf(Box.Style, cpAlignContent), [kwNormal, kwStretch]));
@@ -1061,11 +1066,12 @@ begin
     ItemHeight := -1;
     if StretchHeight then
       ItemHeight := Max(0, AreaHeight - ItemBox.Margin[sideTop] - ItemBox.Margin[sideBottom]);
-    if StretchHeight and (Abs(ItemHeight - ItemBox.Height) > 0.01) then
-    begin
-      ItemBox.MarkNeedsLayout;
-      LayItemOut(State, ItemBox, ItemWidth, ItemHeight, not StretchWidth, ContentHeight);
-    end;
+    { Laid out at its stretched height, else as measured (skipped when
+      it was laid out so last). }
+    if StretchHeight and (Abs(ItemHeight - MeasuredHeights[Index]) > 0.01) then
+      LayoutBox(ItemBox, ItemInput(State, ItemWidth, ItemHeight, not StretchWidth, ContentHeight))
+    else
+      LayoutBox(ItemBox, ItemInputs[Index]);
     OffsetX := 0;
     Free := AreaWidth - ItemBox.MarginBoxWidth;
     if Free > 0 then

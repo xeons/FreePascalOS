@@ -50,6 +50,11 @@ interface
 uses
   Web.Dom, Css.ComputedStyle, Image.Model, Web.Text.FontInstances;
 
+const
+  { A box's DescendantRight and DescendantBottom when nothing below it
+    reaches out. }
+  NoDescendantExtent = -1.0e30;
+
 type
   TBoxKind = (
     { A block container (block, list-item, flow-root, inline-block's
@@ -114,7 +119,18 @@ type
     bfHasEscapingFloats,
     { A table with collapsing borders, or one of its cells: its used
       borders are its CollapsedBorder (halves of the collapsed edges). }
-    bfCollapsedBorders);
+    bfCollapsedBorders,
+    { Its Measured* fields hold a measuring layout's result that is still
+      good (nothing in it changed since). }
+    bfMeasured,
+    { It was laid out (its DescendantRight and DescendantBottom are to be
+      found again), or a box below it was. }
+    bfOverflowDirty,
+    bfChildOverflowDirty,
+    { Neither it nor a box below it has generated text or touches a
+      counter (Web.Layout.Counters passes it by); forgotten when the box
+      or something below it changes. }
+    bfCounterFree);
   TBoxFlags = set of TBoxFlag;
 
   TBoxSide = (sideTop, sideRight, sideBottom, sideLeft);
@@ -195,6 +211,21 @@ type
     { The available width it was last laid out for (incremental layout). }
     LastAvailableWidth: Single;
     LastAvailableHeight: Single;
+    { The edges that layout left (a skipped layout gives them back: its
+      parent may have resolved them for another width meanwhile). }
+    LaidOutMargin, LaidOutBorder, LaidOutPadding: TBoxEdges;
+    { The last layout made only to measure the box (flex lines and grid
+      tracks are sized from it): its input, kept like LastAvailableWidth
+      and LastAvailableHeight, and the border box size and baseline it
+      gave, with the edges it resolved. Valid while bfMeasured. }
+    MeasuredInputWidth, MeasuredInputHeight: Single;
+    MeasuredWidth, MeasuredHeight, MeasuredBaseline: Single;
+    MeasuredMargin, MeasuredBorder, MeasuredPadding: TBoxEdges;
+    { The scrollable overflow its descendants make: the furthest right
+      and bottom edges they reach, relative to its border box (very
+      negative when nothing reaches out); kept from layout to layout and
+      found again only below boxes that were laid out. }
+    DescendantRight, DescendantBottom: Single;
     { Inline content (bfChildrenInline). }
     Inline: TInlineContent;
     { Scrolling (bfScrollContainer): the size of the scrollable
@@ -241,6 +272,9 @@ type
     function MarginBoxHeight: Single; inline;
     { Marks this box and the way up for layout. }
     procedure MarkNeedsLayout;
+    { Marks this box for its scrollable overflow to be found again after
+      layout (Web.Layout.Overflow), and the way up. }
+    procedure MarkOverflowDirty;
     { The nearest ancestor whose border box this box's X, Y are relative to. }
     function LayoutParent: TLayoutBox;
     { This box's border box origin relative to Ancestor's (an ancestor). }
@@ -357,6 +391,8 @@ begin
   FirstBaseline := -1;
   LastBaseline := -1;
   LastAvailableWidth := -1;
+  DescendantRight := NoDescendantExtent;
+  DescendantBottom := NoDescendantExtent;
   MinContentWidth := -1;
   MaxContentWidth := -1;
   Inc(LiveBoxCount);
@@ -445,6 +481,7 @@ var
 begin
   if Delta = 0 then
     Exit;
+  Box.MarkOverflowDirty;
   ShiftChildren(Box, Delta);
   if Box.Inline <> nil then
   begin
@@ -598,7 +635,7 @@ procedure TLayoutBox.MarkNeedsLayout;
 var
   Ancestor: TLayoutBox;
 begin
-  Include(Flags, bfNeedsLayout);
+  Flags := Flags + [bfNeedsLayout] - [bfMeasured, bfCounterFree];
   MinContentWidth := -1;
   MaxContentWidth := -1;
   Ancestor := Parent;
@@ -606,6 +643,7 @@ begin
   begin
     Ancestor.MinContentWidth := -1;
     Ancestor.MaxContentWidth := -1;
+    Ancestor.Flags := Ancestor.Flags - [bfMeasured, bfCounterFree];
     { Its inline items hold this box's measurements. }
     if Ancestor.Inline <> nil then
       Ancestor.Inline.ItemsValid := False;
@@ -613,6 +651,21 @@ begin
       that did not reach it (stopping there left the root unaware, and
       lines kept pointing at boxes that were freed). }
     Include(Ancestor.Flags, bfChildNeedsLayout);
+    Ancestor := Ancestor.Parent;
+  end;
+end;
+
+procedure TLayoutBox.MarkOverflowDirty;
+var
+  Ancestor: TLayoutBox;
+begin
+  Include(Flags, bfOverflowDirty);
+  { An ancestor marked has its ancestors marked too: the marks all go
+    when the overflow is found again. }
+  Ancestor := Parent;
+  while (Ancestor <> nil) and not (bfChildOverflowDirty in Ancestor.Flags) do
+  begin
+    Include(Ancestor.Flags, bfChildOverflowDirty);
     Ancestor := Ancestor.Parent;
   end;
 end;

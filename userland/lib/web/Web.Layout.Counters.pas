@@ -446,15 +446,36 @@ begin
   end;
 end;
 
+function IsEmptyList(List: PCssComputedValue): Boolean;
+begin
+  Result := (List^.Kind <> cvValue) or (List^.Data = nil) or (List^.Data.Count = 0);
+end;
+
+{ Whether an element's principal box leaves the counters alone. }
+function TouchesNoCounter(Box: TLayoutBox): Boolean;
+begin
+  Result := not (bfListItem in Box.Flags) and IsEmptyList(Box.Style.Value(cpCounterReset)) and
+    IsEmptyList(Box.Style.Value(cpCounterIncrement)) and IsEmptyList(Box.Style.Value(cpCounterSet));
+end;
+
+{ Applies Box's counters and fills in its generated text, then its
+  children's; a subtree found free of both is passed by the next time
+  (bfCounterFree) until something in it changes. }
 procedure WalkBox(var State: TCounterState; Box: TLayoutBox);
 var
   Child: TLayoutBox;
-  IsPrincipal: Boolean;
+  IsPrincipal, Free: Boolean;
 begin
+  if bfCounterFree in Box.Flags then
+    Exit;
   IsPrincipal := (Box.Node <> nil) and Box.Node.IsElement and
     ([bfBefore, bfAfter, bfMarker, bfAnonymous] * Box.Flags = []);
+  Free := [bfBefore, bfAfter, bfMarker] * Box.Flags = [];
   if IsPrincipal then
-    ApplyCounters(State, Box, Box.Style)
+  begin
+    ApplyCounters(State, Box, Box.Style);
+    Free := TouchesNoCounter(Box);
+  end
   else if ([bfBefore, bfAfter] * Box.Flags <> []) then
   begin
     ApplyCounters(State, Box, Box.Style);
@@ -466,9 +487,13 @@ begin
   while Child <> nil do
   begin
     WalkBox(State, Child);
+    if not (bfCounterFree in Child.Flags) then
+      Free := False;
     Child := Child.NextSibling;
   end;
   PopCounters(State, Box);
+  if Free then
+    Include(Box.Flags, bfCounterFree);
 end;
 
 procedure ResolveGeneratedContent(Root: TLayoutBox);
