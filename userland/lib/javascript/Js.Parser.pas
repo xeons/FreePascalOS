@@ -97,7 +97,6 @@ type
     FLabelBase: Integer;
     FLoopDepth: Integer;
     FSwitchDepth: Integer;
-    FPrivateScopes: array of TJsScope;
     { Parsing a module (import.meta allowed throughout). }
     ModuleGoal: Boolean;
     procedure Fail(const Text: string);
@@ -2223,7 +2222,6 @@ var
   Member: TJsNode;
   SavedStrict: Boolean;
   InstanceInit, StaticInit: TJsFunctionInfo;
-  Index: Integer;
   Inner: TJsVariable;
   Initializer: TJsNode;
 begin

@@ -8976,19 +8976,33 @@ can precede initialisation. A script's own declarations are global
 bindings found by name (var/function on the global object, let/const/
 class in the global lexical environment).
 
+**Lexer and syntax tree.** A token is a record without strings (kind,
+offsets, line, column, number, an index into the lexer's name table):
+the parser copies tokens freely. Identifier names and reserved words
+are interned once per source, and a name's entry says whether it is a
+reserved word or a contextual word (async, await, yield, let, of...),
+so keywords are never looked up by text. String, template, regular
+expression and BigInt values are taken from the source only when the
+parser asks for them. Nodes live in pooled memory (`Js.NodePool`:
+zeroed slots handed out in order from blocks, the latest given back
+together) instead of one heap object each.
+
 **Lazy compilation.** A function of 160 source characters or more
 (not class constructors, field initializers, functions using private
-names, or a function expression right inside parentheses - an IIFE,
+names, or a function or arrow right inside parentheses - an IIFE,
 called at once, which would otherwise be parsed twice: a bundle's
 whole body) gets a stub TJsCode: its flags, name, length and source
 range, and a TJsLazyFunction holding the position of its parameter list
 and the chain of scopes around it (`Js.EvalScopes`). The first parse
-still checks its early errors and marks the outer variables it uses as
-captured; then its syntax tree is freed (`Js.LazyBodies`): all the
-scope analysis still needs of it is its scopes and their references,
-one identifier per name and scope, so only those nodes stay (an 11 MB
-bundle went from 2.1 million nodes, some 350 MB while it was parsed, to
-under half). Its bytecode is made on the first call (EnterFrame), by
+still checks its early errors (by the same code as a full parse) and
+marks the outer variables it uses as captured; then its syntax tree is
+released (`Js.LazyBodies`): all the scope analysis still needs of it is
+its scopes and their references, one identifier per name and scope,
+copied into nodes of their own, and every node made since the function
+began goes back to the pool for the next function. A lazy body costs a
+scratch tree, reset when it is checked (an 11 MB bundle keeps 800 000
+nodes of eager code; it parsed at 15 million characters a second, 38
+now). Its bytecode is made on the first call (EnterFrame), by
 parsing the function again from its parameters inside scopes rebuilt
 from the chain, so its identifiers resolve to the same environment hops
 and slots. The closures keep the TJsCode, which is filled in place.
