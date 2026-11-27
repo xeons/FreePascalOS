@@ -62,16 +62,59 @@ begin
     Result := R.Call(This, Args^[0], @Args^[1], ArgCount - 1);
 end;
 
-function FunctionPrototypeApply(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
-  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+const
+  { apply copies a short dense array's elements to the stack. }
+  LongestStackArguments = 16;
+
+type
+  TStackArguments = array[0..LongestStackArguments - 1] of TJsValue;
+
+{ The elements of a short array without holes (whose length and
+  elements are plain data: reading them runs nothing). }
+function CopyShortArray(Source: TJsValue; out Buffer: TStackArguments; out Count: Integer): Boolean;
+var
+  Target: TJsObject;
+  Index: Integer;
+begin
+  Count := 0;
+  if not JsIsObject(Source) then
+    Exit(False);
+  Target := JsAsObject(Source);
+  if not (Target is TJsArray) or ((Target.ObjectFlags and (ObjectExotic or ObjectIndexedByName)) <> 0) or
+    (LongWord(Target.ElementCount) <> TJsArray(Target).ArrayLength) or
+    (Target.ElementCount > LongestStackArguments) then
+    Exit(False);
+  for Index := 0 to Target.ElementCount - 1 do
+  begin
+    if Target.Elements^[Index] = JsHole then
+      Exit(False);
+    Buffer[Index] := Target.Elements^[Index];
+  end;
+  Count := Target.ElementCount;
+  Result := True;
+end;
+
+function ApplyArrayLike(R: TJsRealm; F, This, Source: TJsValue): TJsValue;
 var
   List: TJsValueList;
 begin
+  if not CreateListFromArrayLike(R, Source, List) then
+    Exit(JsException);
+  Result := R.Call(F, This, @List[0], Length(List));
+end;
+
+function FunctionPrototypeApply(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
+  Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
+var
+  Buffer: TStackArguments;
+  Count: Integer;
+begin
   if not JsIsCallable(This) then
     Exit(R.ThrowTypeError('Function.prototype.apply was called on a non-function'));
-  if not CreateListFromArrayLike(R, Arg(Args, ArgCount, 1), List) then
-    Exit(JsException);
-  Result := R.Call(This, Arg(Args, ArgCount, 0), @List[0], Length(List));
+  if CopyShortArray(Arg(Args, ArgCount, 1), Buffer, Count) then
+    Result := R.Call(This, Arg(Args, ArgCount, 0), @Buffer[0], Count)
+  else
+    Result := ApplyArrayLike(R, This, Arg(Args, ArgCount, 0), Arg(Args, ArgCount, 1));
 end;
 
 function FunctionPrototypeBind(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
