@@ -277,9 +277,21 @@ how the existing pieces fit together.
       pressure (room under the limit below the low watermark) reported as memory short,
       counted as a pressure event and shrinking the caches for untouched promises;
       refusals logged; simulated in ResponsivenessPolicyTest (CommitSimulation)
-- [ ] Run the whole suite on the new commit policy (memorytest cache on amd64 512 MiB
-      and arm64 1 GiB, responsivetest, test-memory-pressure.sh) and tune from the
-      kernel's "commit limit refused" lines if normal workloads are refused
+- [x] Heuristic overcommitment by default (Mesa's softpipe was refused at 437 MiB
+      committed of 451 MiB with 227 MiB untouched and 235 MiB free): only one
+      commitment larger than the backable pages or a total beyond 4 times them is
+      refused; commitlimit=PERCENT is strict accounting (100: every commitment
+      backed), commitlimit=off none; job and process limits strict under every policy;
+      the policy and the largest commitment in TAbiMemoryPressure, free and the boot log
+- [x] mlibc: malloc returns null with ENOMEM when the kernel refuses memory instead
+      of panicking (toolchain/patches/mlibc/0005); ctest "allocation failure", cxxtest
+      std::bad_alloc
+- [ ] Run the whole suite on the overcommit default (coretest's gltest on softpipe,
+      ctest, memorytest cache on amd64 512 MiB and arm64 1 GiB, responsivetest,
+      test-memory-pressure.sh now without commitlimit=off) and tune the ceiling
+      (OvercommitCeilingPercent) from the kernel's "commit limit refused" lines
+- [ ] Offer upstream mlibc the allocation failure patch (map() returning 0; the
+      sharded slab allocator on master asserts the same way)
 - [ ] Charge the copies writable images and private file mappings may need when a
       page is first written rather than when mapped (what is charged now is the whole
       writable part, touched or not)

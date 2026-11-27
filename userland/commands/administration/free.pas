@@ -118,6 +118,26 @@ begin
   PrintStringLine(Line);
 end;
 
+procedure ShowCommit(const Pressure: TMemoryPressure);
+const
+  PageBytes = 4096;
+var
+  Line: string;
+begin
+  Line := Format('Commit: %s committed', [FormatHumanSize(Pressure.CommittedPages * PageBytes)]);
+  case Pressure.CommitPolicy of
+    AbiCommitPolicyStrict:
+      Line := Line + Format(' of %s (strict)', [FormatHumanSize(Pressure.CommitLimitPages * PageBytes)]);
+    AbiCommitPolicyOvercommit:
+      Line := Line + Format(' of %s (overcommit, one commitment up to %s)',
+        [FormatHumanSize(Pressure.CommitLimitPages * PageBytes),
+         FormatHumanSize(Pressure.LargestCommitPages * PageBytes)]);
+  else
+    Line := Line + ' (no limit)';
+  end;
+  PrintStringLine(Line + Format(', %d refused', [Pressure.CommitFailures]));
+end;
+
 var
   CommandLine: TCommandLine;
   Code: Integer;
@@ -149,4 +169,5 @@ begin
   ShowMemory(SystemUsage, Cache);
   ShowCache(Cache);
   ShowPressure(Pressure);
+  ShowCommit(Pressure);
 end.

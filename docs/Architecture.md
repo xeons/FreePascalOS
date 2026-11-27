@@ -11593,17 +11593,20 @@ charged region, `AllocateCommittedPhysicalPage`, or of a section - goes
 down to half the watermark, because the commit limit granted it and left
 the watermark for it; an essential process (Interactive or System
 class, the initial program: `Processes.PriorityClassCalls`) goes down to
-a quarter, and the kernel's own allocations to the last page. With
-`commitlimit=off` (or above 100%) nothing is backed and committed pages
-are claimed like any other. The allocator asks the process manager's
+a quarter, and the kernel's own allocations to the last page. Only
+strict accounting at no more than 100% (`commitlimit=PERCENT`) backs
+what it promises: under the default overcommitment, `commitlimit=off`
+or a strict limit above 100%, committed pages are claimed like any
+other. The allocator asks the process manager's
 query (`SetReserveAccessQuery`) only near the watermark. So the display
 server still draws, the desktop still closes windows and the task
 manager still opens while a program has taken everything else, the
 kernel's heap (channel messages, sockets) does not fail first - and a
 page whose commitment was granted is not refused while the caches or
-the reserve can back it. (Before, committed pages were held to the
-watermark like file pages: under a commit limit a program could be
-granted memory and then find no page when it touched it.)
+the reserve can back it under strict accounting. (Before, committed
+pages were held to the watermark like file pages: under a commit limit
+a program could be granted memory and then find no page when it touched
+it.)
 
 **The thrash guard** (`Memory.ThrashGuard`). With no swap, the only
 memory the shrinkers can take from running programs is their mapped
@@ -11621,35 +11624,68 @@ what it kept.
 **The commit limit** (`Memory.CommitCharge`). A commitment is charged
 to the process (`ProcessLimitCommit`), its job if it is in one, and the
 system, and fails with `ErrorOutOfMemory` if any of them would go over
-its limit: a program's allocation fails cleanly instead of the system
-degrading when it touches what it was promised.
+its limit: a program's allocation fails cleanly (C programs get null
+from `malloc` with `ENOMEM`, see "The C toolchain") instead of the
+system degrading when it touches what it was promised.
 
-*The policy, for a system without a paging file.* NT charges commit
-against RAM plus the paging file and backs every commitment; Linux
-overcommits by heuristics and ends a process when promises are touched
-that cannot be met. With no paging file here, the only place a
-committed page can come from is RAM, so commitments are backed by RAM
-and only by what of it can really be given to them: the system's limit
-is all of RAM less what the kernel holds for itself (its image, heap,
-stacks, page tables, page database, drivers' buffers; freed pages held
-back by `heapchecks` count as free), less what the caches keep however
-short memory is - the block cache's minimum and the file pages running
-programs map (`RegisterKeptPagesQuery`: `Io.BlockCache`, and
+*The backable pages.* With no paging file the only place a committed
+page can come from is RAM, and only what of it can really be given to
+processes: all of RAM less what the kernel holds for itself (its image,
+heap, stacks, page tables, page database, drivers' buffers; freed pages
+held back by `heapchecks` count as free), less what the caches keep
+however short memory is - the block cache's minimum and the file pages
+running programs map (`RegisterKeptPagesQuery`: `Io.BlockCache`, and
 `Processes.MappedFileEviction` with `MappedFilePageCount`, the file
 pages held by a mapping besides their file) - less the critical
-watermark, scaled by the kernel option `commitlimit=PERCENT` (100 by
-default; above 100 overcommits and the out-of-memory policy then backs
-the promises; `off` for none). Everything else the caches hold counts
-as available: it is given back when the promised pages are touched.
-Leaving out the mapped pages is what keeps a runaway from thrashing the
-system: promising them would mean taking every program's code away
-when the promise was touched, the thrash guard only limiting how fast.
-So, however much is committed, every committed page can be had by
-dropping clean cache down to its minimum, above the critical watermark -
-and the committed page claim (above) covers what the accounting cannot
-see (stack growth beyond the charge, page tables). The memory pressure
-thread recomputes the limit each second. The last 1/32 of it is only
-for essential processes (`TAddressSpace.MayUseCommitReserve`). What is
+watermark. Everything else the caches hold counts as available: it is
+given back when promised pages are touched. Leaving out the mapped
+pages is what keeps a runaway from thrashing the system: promising them
+would mean taking every program's code away when the promise was
+touched, the thrash guard only limiting how fast. The memory pressure
+thread recomputes the figures each second.
+
+*The policy* (`TCommitPolicy`, `ComputeSystemCommitLimits` in
+`Memory.Reserves`; the kernel option `commitlimit`, logged at boot as
+"commit policy: ..."). NT charges commit against RAM plus the paging
+file and backs every commitment; Linux overcommits by heuristics and
+ends a process when promises are touched that cannot be met. Strict
+backing was the default here first, and it refused ported Unix programs
+while most of the memory was free: they map far more than they touch
+(allocators' arenas, thread stacks, buffers sized for the worst case) -
+Mesa's softpipe in `gltest` was refused at 437 MiB committed of a 451
+MiB limit with 227 MiB of it never touched and 235 MiB free, and mlibc
+then panicked inside `malloc`. So:
+
+- **by default** (no option, or `commitlimit=overcommit`): heuristic
+  overcommitment, as on Linux (`vm.overcommit_memory=0`). Only what can
+  never be satisfied is refused: one commitment larger than the
+  backable pages (`TAbiMemoryPressure.LargestCommitPages`; Linux's
+  heuristic likewise refuses a single request beyond RAM plus swap),
+  and a total beyond `OvercommitCeilingPercent` (400%) of them - four
+  times is generous for untouched reservations and still stops a
+  runaway that commits without end. A page touched when none is left
+  is refused at the reserve's watermark like any ordinary page; the
+  fault reclaims, then the out-of-memory policy ends a process (below:
+  never with a kernel panic, never an essential process while another
+  may go). Commit pressure (below) is measured against the ceiling and
+  shrinks nothing ahead of time;
+- **`commitlimit=PERCENT`**: strict accounting against PERCENT of the
+  backable pages (10 to 10000). At 100 every commitment is backed - so,
+  however much is committed, every committed page can be had by
+  dropping clean cache down to its minimum, above the critical
+  watermark, the committed page claim (above) covering what the
+  accounting cannot see (stack growth beyond the charge, page tables):
+  a committed page never faults for want of memory. Above 100 more is
+  promised than RAM backs, and the out-of-memory policy settles it;
+- **`commitlimit=off`**: no system limit.
+
+The last 1/32 of the system's limit is only for essential processes
+(`TAddressSpace.MayUseCommitReserve`). A process's and a job's own
+limits are strict under every policy: they are caps someone chose (the
+browser's content-process job, `ProcessLimitCommit`) and count what was
+promised, touched or not, so a runaway page is refused at its cap
+before it can take the system's memory - overcommitment only loosens
+what the system as a whole may promise. What is
 charged: committed allocations and reservation parts, thread data,
 sections, writable images and private writable file mappings (the
 copies they may need), and only the first 64 KiB of a stack
@@ -11658,20 +11694,25 @@ reserved large (1 MiB a thread, 8 MiB the main one) and mostly never
 touched, and charging them whole would refuse threads long before
 memory is short; what a stack grows into beyond that is resident memory
 the policy below weighs. Reservations are not charged until committed.
-`TAbiMemoryPressure` reports the limit and the commitments refused
-(`CallGetMemoryPressure`); the pressure thread logs refusals with the
-figures ("commit limit refused N commitments: ... committed (... not
-touched) of ...; ... free, ... kernel, ... kept by caches").
+`TAbiMemoryPressure` reports the policy (`CommitPolicy`,
+`AbiCommitPolicy*`), the limit, the largest single commitment and the
+commitments refused (`CallGetMemoryPressure`; `free` prints them); the
+pressure thread logs refusals with the figures ("commit limit refused N
+commitments (the last of ..., one may be up to ...): ... committed (...
+not touched) of ...; ... free, ... kernel, ... kept by caches").
 
-*Commit pressure* (`Memory.CommitPressure`). Since the limit counts the
-caches as available, the promises not touched yet
-(`OutstandingCommitPages`: commitments less the processes' resident
-private and section pages) may need the caches' pages. When the room
-left under the limit (for ordinary programs) falls below the low
-watermark, memory is short as surely as when free pages are: the charge
-wakes the pressure thread, which counts a pressure event when commit
-pressure begins and shrinks the caches gently until the outstanding
-promises and the low watermark are free (`CommitReclaimTarget`);
+*Commit pressure* (`Memory.CommitPressure`). When the room left under
+the limit (for ordinary programs) falls below the low watermark, memory
+is short as surely as when free pages are: the charge wakes the
+pressure thread, which counts a pressure event when commit pressure
+begins. Under strict accounting the limit counts the caches as
+available, so the promises not touched yet (`OutstandingCommitPages`:
+commitments less the processes' resident private and section pages)
+may need the caches' pages, and the thread also shrinks the caches
+gently until the outstanding promises and the low watermark are free
+(`CommitReclaimTarget`); overcommitted promises are not expected to be
+touched all, so they shrink nothing ahead of time and the free pages'
+own pressure looks after the caches;
 `TAbiMemoryPressure.Level` is the higher of the free pages' level and
 the commitments' (critical with less than the critical watermark of
 room). A program watching it (`memorytest hog --until-pressure`, a
@@ -11748,15 +11789,21 @@ the commit limit refuses it, so its last lines can still be printed
 256 MiB guest with `memorytest` as the first program: a hog without end
 must be ended with 137 while a bystander and the system live on, and a
 small process with the adjustment 1000 must be ended before a hog;
-then the discards above (booted with `commitlimit=off`, so the hogs
-reach the policy rather than the commit limit).
+then the discards above (booted with the default commit policy: the
+hogs touch what they commit and run out of pages long before the
+overcommit ceiling, so the out-of-memory policy, not the commit limit,
+stops them).
 `scripts/test-responsiveness.sh` (in `make test`, also `make
 responsiveness-test`) boots a 512 MiB guest with four processors and
 `responsivetest` as the first program: the priority class rules; the
 lateness of a 10 ms sleep loop alone, beside `burn -t 16` in the Normal
 class (fair share) and the Interactive class, and beside a memory hog
-without end, which must be refused by the commit limit (status 0 or
-203) or ended (137); afterwards a program must still start, 32 MiB be
+without end, which must be refused (status 0 or 203) or ended (137 -
+under the default overcommitment the out-of-memory policy ends it); the
+commit limits the policy reports (overcommitting: one commitment
+bounded below the RAM, all together above it; strict: below the RAM),
+and a commitment larger than the RAM refused at once; afterwards a
+program must still start, 32 MiB be
 taken and free memory come back; and a hog in a job limited to 48 MiB
 beyond the test's own charge must be refused at that limit. The rules
 themselves are checked on the host by `tools/ResponsivenessPolicyTest`
@@ -11767,8 +11814,15 @@ when memory is short on a 512 MiB machine and on a 1 GiB one with many
 untouched promises - memory found short, the caches giving back, no
 committed page refused; a runaway refused by the limit, after which
 every promise is touched without taking the programs' code, the reserve
-is still there and an essential process still gets memory; and no limit
-at all) and `tools/CachePolicyTest`.
+is still there and an essential process still gets memory; no limit
+at all; and overcommitment: the `gltest` case - a ported program
+refused by strict accounting with a third of the memory free, granted
+in full when overcommitting with no page refused and no cache shrunk; a
+runaway that touches what it commits stopped at the reserve's
+watermark, the programs' code, the block cache's minimum and an
+essential process's pages intact, memory back once it is ended; one
+that only commits refused at the ceiling, one commitment larger than
+RAM at once) and `tools/CachePolicyTest`.
 
 ### Processor exceptions
 
@@ -14043,6 +14097,21 @@ mlibc keeps in the linux option, is the sysdeps' own (`inotify.cpp` and
 an installed `<sys/inotify.h>` with Linux's values). See "Event
 descriptors (260-269)".
 
+When the kernel refuses memory (the commit limit, `ENOMEM` from
+`mmap`), `malloc` returns null: upstream mlibc (7.0.0, and master in
+November 2026) asserts that its allocator's anonymous mapping succeeds
+and panics instead ("`__ensure(!mlibc::sysdep<AnonAllocate>(...))`
+failed"). `toolchain/patches/mlibc/0005-allocation-failure-returns-null.patch`
+has `VirtualAllocator::map()` return 0 on failure, which frigg's slab
+pool already turns into a null result (`ld.so`, which cannot go on
+without its memory, still stops there); `malloc` and `realloc` set
+`errno` to `ENOMEM` when they return null (upstream only `calloc` and
+`posix_memalign` reported it), and `malloc`, `realloc` and
+`posix_memalign` refuse sizes above `PTRDIFF_MAX` before the slab
+pool's rounding to pages can wrap. C++ `operator new` throws
+`std::bad_alloc` from that null. ctest's "allocation failure" group and
+`cxxtest` check it.
+
 - **Descriptors** are the kernel's handles, same numbers. What POSIX
   keeps per descriptor and the kernel does not - close-on-exec,
   `O_NONBLOCK`, the path a directory was opened with (for `openat` and
@@ -14596,9 +14665,12 @@ clock page against the system call, signal handlers, masks and pending signals, 
 SIGSEGV caught with `siglongjmp`, signals between processes, TCP over
 loopback between threads with `poll`, UDP with `select`, `dlopen`, exec from a process with a thread running, exec of a Free Pascal program (`/bin/echo`), `alarm` and a periodic `setitimer`; real-time signal order with `sigqueue`, `kill` and handlers, `sigtimedwait` timeouts and sendings from a thread and a child, `sigaltstack` with `SS_ONSTACK` and stack overflows handled on it in the main thread and a pthread, `SA_RESTART` and the never-restarted `nanosleep`; POSIX timers with values and overruns, the default notification, `SIGEV_NONE`, `SIGEV_THREAD`, absolute real-time expiries, processor-time timers of the process and a thread, `ITIMER_VIRTUAL` and `ITIMER_PROF`, the processor-time clocks and `clock_getcpuclockid`/`pthread_getcpuclockid`;
 eventfd, timerfd, signalfd, epoll (a hundred pipes, a TCP server,
-nesting, fork) and inotify; 786 checks), then `hello-static` and `cxxtest` (iostreams, containers,
+nesting, fork) and inotify; allocation failure: `malloc` of `SIZE_MAX`,
+of half the address space and of 1 TiB, `calloc`, `realloc` (the old
+block intact) and `posix_memalign` of 1 TiB fail with `ENOMEM` and the
+heap works on; 798 checks), then `hello-static` and `cxxtest` (iostreams, containers,
 exceptions through ten frames and across threads, `std::thread`,
-mutexes, atomics, chrono) as programs of their own; with Clang (`make
+mutexes, atomics, chrono, `new` of 1 TiB throwing `std::bad_alloc`) as programs of their own; with Clang (`make
 clang-toolchain`) also `ctest-clang --groups-only` (every group again,
 compiled by Clang), `cxxtest-clang` and `hello-clang-static` (printed as
 skipped when the disk lacks them). `make c-test` boots

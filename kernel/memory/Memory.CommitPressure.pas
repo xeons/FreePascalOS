@@ -20,15 +20,17 @@
   Commit pressure: how close what processes were promised is to what
   the system can back (Memory.Reserves has the rules).
 
-  The system's commit limit counts the caches as available, so the
-  promises not touched yet may need the caches' pages. When the headroom
-  under the limit falls below the low watermark, memory is short as
-  surely as when free pages are: the memory pressure thread
-  (Memory.Pressure) counts it as a pressure event, shrinks the caches
-  gently until the outstanding promises and the low watermark are free,
-  and CallGetMemoryPressure reports the higher of the two levels, so a
-  program watching it stops asking (and gives memory back) before its
-  commitments are refused.
+  When the headroom under the system's commit limit falls below the low
+  watermark, memory is short as surely as when free pages are: the
+  memory pressure thread (Memory.Pressure) counts it as a pressure
+  event, and CallGetMemoryPressure reports the higher of the two levels,
+  so a program watching it stops asking (and gives memory back) before
+  its commitments are refused. Under strict accounting the limit counts
+  the caches as available, so the promises not touched yet may need the
+  caches' pages: the thread also shrinks the caches gently until the
+  outstanding promises and the low watermark are free. Overcommitted
+  promises are not expected to be touched all, so they shrink nothing
+  ahead of time.
 
   It also writes a kernel log line when commitments were refused since
   the last look, with the figures that refused them.
@@ -87,7 +89,7 @@ var
   Low: QWord;
   Critical: QWord;
 begin
-  if CurrentCommitPressure = CommitPressureNone then
+  if not SystemCommitmentsBacked or (CurrentCommitPressure = CommitPressureNone) then
     Exit(0);
   GetPhysicalMemoryStatistics(Physical);
   GetMemoryWatermarks(Low, Critical);
@@ -98,7 +100,7 @@ procedure ReportCommitRefusals;
 var
   Failures: QWord;
   Physical: TPhysicalMemoryStatistics;
-  Committed, Untouched, Limit, KernelHeld, Kept: QWord;
+  Committed, Untouched, Limit, KernelHeld, Kept, Largest, Refused: QWord;
 begin
   Failures := SystemCommitFailures;
   if Failures = FailuresReported then
@@ -112,11 +114,20 @@ begin
   Limit := SystemCommitLimitPages;
   KernelHeld := KernelHeldPages;
   Kept := KeptCachePages;
+  Largest := LargestSystemCommitPages;
+  Refused := LastRefusedCommitPages;
   DebugBeginMessage;
   DebugWriteTag('memory');
   DebugWrite('commit limit refused ');
   DebugWriteDecimal(Failures - FailuresReported);
-  DebugWrite(' commitments: ');
+  DebugWrite(' commitments (the last of ');
+  DebugWriteSize(Refused * PageSize);
+  if Largest <> 0 then
+  begin
+    DebugWrite(', one may be up to ');
+    DebugWriteSize(Largest * PageSize);
+  end;
+  DebugWrite('): ');
   DebugWriteSize(Committed * PageSize);
   DebugWrite(' committed (');
   DebugWriteSize(Untouched * PageSize);

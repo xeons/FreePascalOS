@@ -22,22 +22,42 @@
   rules, as pure arithmetic for the host test
   (tools/ResponsivenessPolicyTest).
 
-  * Commitments are backed. With no paging file, the only place a
-    committed page can come from when it is first touched is RAM, so
-    the system's commit limit is the RAM processes may have for their
-    own pages: all of it less what the kernel holds for itself, less
-    what the caches keep however short memory is (the block cache's
-    minimum, the pages of the files running programs map - their code,
-    which must stay resident or every program reads it again turn after
-    turn), less the critical watermark. Caches beyond that count as
-    available: they are given back when the promised pages are touched,
-    and shrunk ahead of time when the commitments come close to the
-    limit (commit pressure, below). The kernel option
-    commitlimit=PERCENT scales the limit (100 by default: no
-    overcommitment; above 100 promises more than can be backed, and the
-    out-of-memory policy then ends a process when they are touched;
-    "off" for none). The last EssentialCommitShift-th of the limit is
-    only for essential processes.
+  * Commitments. With no paging file, the only place a committed page
+    can come from when it is first touched is RAM: the RAM processes may
+    have for their own pages is all of it less what the kernel holds
+    for itself, less what the caches keep however short memory is (the
+    block cache's minimum, the pages of the files running programs map
+    - their code, which must stay resident or every program reads it
+    again turn after turn), less the critical watermark
+    (SystemCommitLimit at 100%: the backable pages). Caches beyond that
+    count as available: they are given back when the promised pages are
+    touched. The kernel option commitlimit chooses the policy
+    (TCommitPolicy, ComputeSystemCommitLimits):
+
+    - by default (or commitlimit=overcommit), heuristic overcommitment,
+      as Unix programs expect: they map far more than they touch
+      (allocators' arenas, thread stacks, buffers sized for the worst
+      case) and a strict limit refuses them while most of the memory is
+      free. Only what can never be satisfied is refused: one commitment
+      larger than the backable pages, or a total beyond
+      OvercommitCeilingPercent of them (4 times: generous enough for
+      programs' untouched reservations, and still a stop for a runaway
+      that commits without end). A page touched when none is left goes
+      to the fault's reclaim and then the out-of-memory policy, which
+      ends a process (never the kernel, never an essential process
+      before the others: Processes.OutOfMemory);
+    - commitlimit=PERCENT, strict accounting against PERCENT of the
+      backable pages: at 100 nothing is promised that cannot be backed,
+      so a committed page is never refused when touched (above 100 more
+      is promised, and the out-of-memory policy settles it);
+    - commitlimit=off: no system limit at all.
+
+    The last EssentialCommitShift-th of the limit is only for essential
+    processes. A job's and a process's own commit limits are strict
+    under every policy: they are caps someone chose (the browser's
+    content processes, ProcessLimitCommit), and they count what was
+    promised, touched or not, so a runaway page is stopped at its cap
+    before it can take the system's memory.
 
   * Pages. Below the critical watermark the free pages are a reserve,
     claimed in order of need (TPageClaim): a file's page or a page
@@ -50,15 +70,18 @@
     essential process (the display server, the session manager, the
     desktop, the task manager: Processes.PriorityClassCalls) goes down
     to a quarter, and the kernel's own allocations to the last page.
-    With no commit limit nothing was promised, and committed pages are
-    claimed as ordinary ones.
+    Unless commitments are backed (strict accounting at no more than
+    100%) nothing was promised, and committed pages are claimed as
+    ordinary ones.
 
-  * Commit pressure. Promises not touched yet (OutstandingCommitPages)
-    must find free memory when they are: when the headroom left under
-    the limit falls below the low watermark, memory is reported short
-    (so programs that watch it give memory back, and stop asking) and
-    the caches are shrunk gently until the outstanding promises and the
-    low watermark are free (CommitReclaimTarget).
+  * Commit pressure. When the headroom left under the limit falls below
+    the low watermark, memory is reported short (so programs that watch
+    it give memory back, and stop asking). While commitments are backed
+    the promises not touched yet (OutstandingCommitPages) must find free
+    memory when they are, so the caches are also shrunk gently until
+    the outstanding promises and the low watermark are free
+    (CommitReclaimTarget); overcommitted promises are not expected to be
+    touched, and the free pages' own pressure looks after the caches.
 }
 unit Memory.Reserves;
 
@@ -67,14 +90,29 @@ unit Memory.Reserves;
 interface
 
 const
-  { The default share of the processes' RAM that may be committed. }
+  { The share of the backable pages commitlimit=PERCENT allows when no
+    number is given with it. }
   DefaultCommitLimitPercent = 100;
+  { Heuristic overcommitment: all commitments together up to this share
+    of the backable pages. }
+  OvercommitCeilingPercent = 400;
   MinimumCommitLimitPercent = 10;
   MaximumCommitLimitPercent = 10000;
   { 1/32 of the commit limit is for essential processes alone. }
   EssentialCommitShift = 5;
 
 type
+  { What the system's commit limit is (the kernel option commitlimit), in
+    the order of AbiCommitPolicy*. }
+  TCommitPolicy = (
+    { commitlimit=off: none. }
+    CommitPolicyNone,
+    { commitlimit=PERCENT: strict accounting against that share of the
+      backable pages. }
+    CommitPolicyStrict,
+    { The default: refuse only what can never be satisfied. }
+    CommitPolicyOvercommit);
+
   { Who asks for a page of process memory, the most entitled first. }
   TPageClaim = (
     { The kernel's own allocations (and kernel threads): every page. }
@@ -105,11 +143,22 @@ function PageClaimAllowed(FreePages, CriticalPages: QWord; Claim: TPageClaim): B
   as the reserve, scaled by Percent. At least one page (0 means no
   limit, which only "off" gives). }
 function SystemCommitLimit(UsablePages, KernelPages, KeptPages, CriticalPages, Percent: QWord): QWord;
+{ The system's limits under Policy (Percent for the strict one): Limit
+  on all commitments together and LargestRequest on any one of them (0:
+  none). }
+procedure ComputeSystemCommitLimits(Policy: TCommitPolicy; UsablePages, KernelPages, KeptPages, CriticalPages,
+  Percent: QWord; out Limit, LargestRequest: QWord);
+{ Whether the policy promises only what RAM can back (so committed pages
+  may go further into the reserve). }
+function CommitPolicyBacksCommitments(Policy: TCommitPolicy; Percent: QWord): Boolean;
 { The part of Limit only essential processes may commit. }
 function EssentialCommitReserve(Limit: QWord): QWord;
 { Whether Pages more may be committed with Charged committed already
   against Limit (0: no limit). }
 function CommitAllowed(Charged, Pages, Limit: QWord; MayUseReserve: Boolean): Boolean;
+
+{ CommitAllowed, and Pages no more than LargestRequest (0: any). }
+function SystemCommitAllowed(Charged, Pages, Limit, LargestRequest: QWord; MayUseReserve: Boolean): Boolean;
 
 { The promised pages not resident yet: Committed less the pages of
   processes' own memory resident now. }
@@ -177,6 +226,30 @@ begin
     Result := 1;
 end;
 
+procedure ComputeSystemCommitLimits(Policy: TCommitPolicy; UsablePages, KernelPages, KeptPages, CriticalPages,
+  Percent: QWord; out Limit, LargestRequest: QWord);
+var
+  Backable: QWord;
+begin
+  Limit := 0;
+  LargestRequest := 0;
+  case Policy of
+    CommitPolicyStrict:
+      Limit := SystemCommitLimit(UsablePages, KernelPages, KeptPages, CriticalPages, Percent);
+    CommitPolicyOvercommit:
+      begin
+        Backable := SystemCommitLimit(UsablePages, KernelPages, KeptPages, CriticalPages, 100);
+        LargestRequest := Backable;
+        Limit := Backable * OvercommitCeilingPercent div 100;
+      end;
+  end;
+end;
+
+function CommitPolicyBacksCommitments(Policy: TCommitPolicy; Percent: QWord): Boolean;
+begin
+  Result := (Policy = CommitPolicyStrict) and (Percent <= 100);
+end;
+
 function EssentialCommitReserve(Limit: QWord): QWord;
 begin
   Result := Limit shr EssentialCommitShift;
@@ -192,6 +265,11 @@ begin
   if not MayUseReserve then
     Ceiling := Limit - EssentialCommitReserve(Limit);
   Result := (Pages <= Ceiling) and (Charged <= Ceiling - Pages);
+end;
+
+function SystemCommitAllowed(Charged, Pages, Limit, LargestRequest: QWord; MayUseReserve: Boolean): Boolean;
+begin
+  Result := ((LargestRequest = 0) or (Pages <= LargestRequest)) and CommitAllowed(Charged, Pages, Limit, MayUseReserve);
 end;
 
 function OutstandingCommitPages(CommittedPages, ResidentPrivatePages: QWord): QWord;

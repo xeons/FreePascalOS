@@ -32,10 +32,15 @@
     first alone (the baseline), then beside the busy program both in
     the Normal class (fair share and wake boosts must keep it close)
     and the Interactive class (strictly above the busy program);
-  * memory: the hog's allocations fail or it is ended (status 0 after
-    "could not take more", 203 if its heap was refused, or 137), while this program goes on
-    measuring; the kernel reports the commit limit and counts what it
-    refused;
+  * memory: the kernel reports its commit policy and limits (by default
+    overcommitment: one commitment bounded below the RAM, all of them
+    above it; strict accounting under commitlimit=PERCENT: below the
+    RAM); a commitment larger than the RAM is refused at once; the
+    hog's allocations fail or it is ended (status 0 after "could not
+    take more", 203 if its heap was refused, or 137 - when
+    overcommitting, the out-of-memory policy ends it), while this
+    program goes on measuring; the kernel counts what it refused or
+    ended;
   * afterwards: a program still starts and ends, 32 MiB can still be
     taken and touched, free memory comes back;
   * jobs: a hog started in a job limited to 48 MiB beyond what is
@@ -245,6 +250,49 @@ begin
   EndAndClose(Busy);
 end;
 
+{ The limits the policy reports: overcommitting, one commitment is
+  bounded below the RAM and all of them together above it; strictly,
+  the limit is below the RAM (at the default 100%). }
+procedure CheckCommitLimits(const Pressure: TMemoryPressure);
+begin
+  Check(Pressure.CommitLimitPages > 0, Format('there is a commit limit (%d MiB of %d MiB, policy %d)',
+    [Pressure.CommitLimitPages * PageBytes div Mebibyte, Pressure.TotalPages * PageBytes div Mebibyte,
+     Pressure.CommitPolicy]));
+  case Pressure.CommitPolicy of
+    AbiCommitPolicyOvercommit:
+      begin
+        Check((Pressure.LargestCommitPages > 0) and (Pressure.LargestCommitPages < Pressure.TotalPages),
+          Format('overcommitting: one commitment up to %d MiB, below the RAM',
+          [Pressure.LargestCommitPages * PageBytes div Mebibyte]));
+        Check(Pressure.CommitLimitPages > Pressure.TotalPages, 'and all of them together beyond it');
+      end;
+    AbiCommitPolicyStrict:
+      Check(Pressure.CommitLimitPages < Pressure.TotalPages, 'strict: below the RAM there is');
+  else
+    Check(False, 'a commit policy with a limit');
+  end;
+end;
+
+{ A commitment larger than the RAM can never be backed: refused at once,
+  and counted. }
+procedure CheckOversizedCommitment(const Pressure: TMemoryPressure);
+var
+  Bytes: QWord;
+  Reservation: Int64;
+  After: TMemoryPressure;
+begin
+  Bytes := (Pressure.TotalPages + 1024) * PageBytes;
+  Reservation := KernelReserveMemory(Bytes);
+  Check(Reservation > 0, Format('reserved %d MiB (more than the RAM)', [Bytes div Mebibyte]));
+  if Reservation <= 0 then
+    Exit;
+  Check(KernelCommitMemory(Pointer(PtrUInt(Reservation)), Bytes, MemoryReadWrite) = -ErrorOutOfMemory,
+    'committing all of it is refused');
+  Check((GetMemoryPressure(After) = ErrorNone) and (After.CommitFailures > Pressure.CommitFailures),
+    'and the refusal is counted');
+  KernelFreeMemory(Pointer(PtrUInt(Reservation)));
+end;
+
 procedure CheckMemoryHog(const Baseline: TLateness; Busy: Int64);
 var
   Hog: Int64;
@@ -254,9 +302,9 @@ var
   Status: LongInt;
 begin
   Check(GetMemoryPressure(Before) = ErrorNone, 'the kernel reports memory');
-  Check(Before.CommitLimitPages > 0, Format('there is a commit limit (%d MiB of %d MiB)',
-    [Before.CommitLimitPages * PageBytes div Mebibyte, Before.TotalPages * PageBytes div Mebibyte]));
-  Check(Before.CommitLimitPages < Before.TotalPages, 'below the RAM there is');
+  CheckCommitLimits(Before);
+  CheckOversizedCommitment(Before);
+  GetMemoryPressure(Before);
   Hog := Start('/bin/memorytest', ['hog', '--step', '8', '--hold', '2']);
   Check(Hog >= 0, 'started a program taking memory without end');
   if Hog < 0 then

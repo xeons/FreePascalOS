@@ -134,6 +134,8 @@ begin
   CopyText(@Pressure.LastEndedName[0], @Ended.LastEndedName[0], SizeOf(Pressure.LastEndedName));
   Pressure.CommitLimitPages := SystemCommitLimitPages;
   Pressure.CommitFailures := SystemCommitFailures;
+  Pressure.CommitPolicy := LongWord(Ord(SystemCommitPolicy));
+  Pressure.LargestCommitPages := LargestSystemCommitPages;
   Pressure.ReserveRefusals := ReserveRefusalCount;
   Pressure.ThrashGuardRefusals := ThrashGuardRefusedPages;
   Result := -Int64(CopyToUser(PressureAddress, @Pressure, SizeOf(Pressure)));

@@ -23,9 +23,11 @@
 # Boots amd64 with 512 MiB of RAM and four processors, /bin/responsivetest
 # as the first program: priority classes, the lateness of a 10 ms sleep
 # loop beside a program spinning 16 threads (Normal and Interactive class)
-# and beside a program taking memory without end, that program refused by
-# the commit limit or ended, the system usable afterwards, and a job's
-# commit limit. Passes if responsivetest passed and the kernel did not
+# and beside a program taking memory without end, the commit policy's
+# limits (by default overcommitment: a commitment larger than the RAM is
+# refused at once), that program refused or ended by the out-of-memory
+# policy, the system usable afterwards, and a job's commit limit (strict
+# under every policy). Passes if responsivetest passed and the kernel did not
 # panic. The serial log is kept in the build directory
 # (test-responsiveness-serial.log).
 

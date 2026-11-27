@@ -33,14 +33,23 @@
     comes back once it calms down;
   * the memory reserves (Memory.Reserves): which page claims are
     refused near the critical watermark, the system commit limit (less
-    what the caches keep), the essential processes' part of it, commit
-    pressure and what the caches give back for it;
-  * the commit policy simulated (CommitSimulation): a hog stopping when
-    it sees memory short, on a small machine and on one with many
-    untouched promises (memory found short, the caches give back, no
-    committed page refused); a runaway refused by the limit, after
-    which every promise is kept without taking the programs' code and
-    an essential process still gets memory; no limit at all;
+    what the caches keep), the limits of each commit policy (strict,
+    heuristic overcommitment, none), the essential processes' part of
+    the limit, commit pressure and what the caches give back for it;
+  * the commit policy simulated (CommitSimulation), strict accounting:
+    a hog stopping when it sees memory short, on a small machine and on
+    one with many untouched promises (memory found short, the caches
+    give back, no committed page refused); a runaway refused by the
+    limit, after which every promise is kept without taking the
+    programs' code and an essential process still gets memory; no limit
+    at all;
+  * overcommitment simulated: a ported program that maps far more than
+    it touches (refused by strict accounting with most memory free,
+    granted when overcommitting); a runaway that touches what it
+    commits stopped at the reserve's watermark (its fault then goes to
+    the out-of-memory policy) with the reserve, the programs' code and
+    an essential process's pages intact; one that only commits refused
+    at the ceiling, and one commitment larger than RAM refused at once;
   * the thrash guard (Memory.ThrashGuard): its rate, bucket and refill.
 
   Prints every failed check and exits with 1 if there was one.
@@ -375,6 +384,39 @@ begin
   Check(not CommitAllowed(10, High(QWord) - 5, 32768, True), 'a huge request does not wrap');
 end;
 
+procedure TestCommitPolicies;
+const
+  Backable = 131072 - 10000 - 1024;
+var
+  Limit: QWord;
+  Largest: QWord;
+begin
+  ComputeSystemCommitLimits(CommitPolicyStrict, 131072, 10000, 0, 1024, 100, Limit, Largest);
+  Check((Limit = Backable) and (Largest = 0), 'strict: the backable pages, no bound on one commitment');
+  ComputeSystemCommitLimits(CommitPolicyStrict, 131072, 10000, 0, 1024, 150, Limit, Largest);
+  Check(Limit = Backable * 3 div 2, 'strict at 150%');
+  ComputeSystemCommitLimits(CommitPolicyOvercommit, 131072, 10000, 0, 1024, 100, Limit, Largest);
+  Check(Largest = Backable, 'overcommit: one commitment up to the backable pages');
+  Check(Limit = Backable * OvercommitCeilingPercent div 100, 'all of them up to the ceiling');
+  Check(Limit > 131072, 'which is more than the RAM');
+  ComputeSystemCommitLimits(CommitPolicyOvercommit, 131072, 10000, 0, 1024, 30, Limit, Largest);
+  Check(Largest = Backable, 'overcommit ignores the percentage');
+  ComputeSystemCommitLimits(CommitPolicyNone, 131072, 10000, 0, 1024, 100, Limit, Largest);
+  Check((Limit = 0) and (Largest = 0), 'none: no limits');
+  Check(SystemCommitAllowed(0, Backable, 4 * Backable, Backable, False), 'a commitment of all the backable pages');
+  Check(not SystemCommitAllowed(0, Backable + 1, 4 * Backable, Backable, True),
+    'one larger is refused, even for an essential process');
+  Check(SystemCommitAllowed(0, Backable + 1, 4 * Backable, 0, False), 'no bound: the limit decides');
+  Check(not SystemCommitAllowed(4 * Backable - 10, 100, 4 * Backable, Backable, True), 'the ceiling still holds');
+  Check(not SystemCommitAllowed(0, High(QWord), 0, Backable, True), 'with no ceiling one commitment is still bounded');
+  Check(CommitPolicyBacksCommitments(CommitPolicyStrict, 100), 'strict at 100% backs its commitments');
+  Check(not CommitPolicyBacksCommitments(CommitPolicyStrict, 101), 'above 100% it does not');
+  Check(not CommitPolicyBacksCommitments(CommitPolicyOvercommit, 100), 'nor does overcommitment');
+  Check(not CommitPolicyBacksCommitments(CommitPolicyNone, 100), 'nor no limit');
+  Check(ProcessPageClaim(False, True, CommitPolicyBacksCommitments(CommitPolicyOvercommit, 100)) = PageClaimOrdinary,
+    'an overcommitted page is claimed as an ordinary one');
+end;
+
 procedure TestCommitPressure;
 const
   Limit = 32768;
@@ -414,7 +456,7 @@ begin
   begin
     if not SimulatedCommit(Memory, Step, False) then
       Exit(True);
-    SimulatedTouch(Memory, Step, PageClaimCommitted);
+    SimulatedTouch(Memory, Step, SimulatedCommittedClaim(Memory));
     HogPages := HogPages + Step;
     Inc(Steps);
     if Steps mod 4 = 0 then
@@ -432,7 +474,7 @@ end;
 procedure AddOtherProcesses(var Memory: TSimulatedMemory; Resident, Outstanding: QWord);
 begin
   Check(SimulatedCommit(Memory, Resident + Outstanding, False), 'the other processes commit');
-  Check(SimulatedTouch(Memory, Resident, PageClaimCommitted) = 0, 'and touch what they use');
+  Check(SimulatedTouch(Memory, Resident, SimulatedCommittedClaim(Memory)) = 0, 'and touch what they use');
 end;
 
 procedure CheckHogUntilPressure(const Name: string; var Memory: TSimulatedMemory);
@@ -517,13 +559,126 @@ var
   Refused: QWord;
 begin
   InitializeSimulatedMemory(Memory, 65536, 8000, 1024, 8000, 2048, 4000, 3000);
-  Memory.LimitPages := 0;
+  SetSimulatedPolicy(Memory, CommitPolicyNone);
+  Check(Memory.LimitPages = 0, 'no limit at all');
   Refused := 0;
   while (Refused = 0) and (Memory.ResidentPrivatePages < 65536) do
     Refused := SimulatedTouch(Memory, 256, ProcessPageClaim(False, True, False));
   Check(Refused > 0, 'without a limit the hog meets the watermark');
   Check(Memory.FreePages <= Memory.CriticalPages, 'having taken the caches and the free pages down to it');
   Check(SimulatedTouch(Memory, 16, PageClaimEssential) = 0, 'an essential process still gets pages');
+end;
+
+{ --- Overcommitment, simulated ------------------------------------------------ }
+
+{ The machine of the report that led to overcommitment: 512 MiB, 29 MiB
+  for the kernel, 20 MiB kept by the caches; other programs with 100
+  MiB committed, then a ported program (Mesa's softpipe) committing
+  384 MiB in 16 MiB pieces and touching two fifths of it. }
+procedure RunPortedProgram(Policy: TCommitPolicy; out Memory: TSimulatedMemory; out ProgramPages: QWord);
+const
+  Piece = 4096;
+  Wanted = 24 * Piece;
+begin
+  InitializeSimulatedMemory(Memory, 131072, 7500, 2048, 8000, 4096, 4000, 1000);
+  SetSimulatedPolicy(Memory, Policy);
+  AddOtherProcesses(Memory, 15000, 10600);
+  ProgramPages := 0;
+  while (ProgramPages < Wanted) and SimulatedCommit(Memory, Piece, False) do
+    ProgramPages := ProgramPages + Piece;
+  SimulatedTouch(Memory, ProgramPages * 2 div 5, SimulatedCommittedClaim(Memory));
+  SimulatedPressureLook(Memory);
+end;
+
+procedure TestSimulatedPortedProgram;
+var
+  Memory: TSimulatedMemory;
+  ProgramPages: QWord;
+begin
+  RunPortedProgram(CommitPolicyStrict, Memory, ProgramPages);
+  Check(Memory.RefusedCommitments > 0, 'strict accounting refuses the ported program');
+  Check(Memory.FreePages > 131072 div 3, Format('while a third of the memory is free (%d pages)',
+    [Memory.FreePages]));
+  RunPortedProgram(CommitPolicyOvercommit, Memory, ProgramPages);
+  Check(Memory.RefusedCommitments = 0, 'overcommitment grants it');
+  Check(ProgramPages = 24 * 4096, Format('all of it (%d pages)', [ProgramPages]));
+  Check(Memory.CommittedPages > Memory.LargestRequestPages, 'more than the RAM processes may use is promised');
+  Check(Memory.RefusedPages = 0, 'and every page it touched was there');
+  Check(Memory.CachePagesGivenBack = 0, 'the caches were not shrunk for promises nobody touched');
+  Check(SimulatedReportedLevel(Memory) = 0, 'memory is not reported short');
+end;
+
+{ A runaway touching all it commits: no commitment is refused, but the
+  pages run out at the reserve's watermark - its fault then goes to the
+  out-of-memory policy, which ends it. Until then the reserve, the
+  programs' code and the block cache's minimum stay, and an essential
+  process still gets pages. }
+procedure TestSimulatedOvercommitRunaway;
+const
+  Step = 256;
+var
+  Memory: TSimulatedMemory;
+  HogPages: QWord;
+  Refused: QWord;
+  MappedBefore: QWord;
+  Rounds: Integer;
+begin
+  InitializeSimulatedMemory(Memory, 131072, 12000, 2048, 30000, 4096, 12000, 9000);
+  SetSimulatedPolicy(Memory, CommitPolicyOvercommit);
+  MappedBefore := Memory.MappedFilePages;
+  AddOtherProcesses(Memory, 12000, 20000);
+  HogPages := 0;
+  Refused := 0;
+  while (Refused = 0) and (HogPages < 4 * 131072) do
+  begin
+    Check(SimulatedCommit(Memory, Step, False), 'overcommitment grants the runaway''s commitments');
+    Refused := SimulatedTouch(Memory, Step, SimulatedCommittedClaim(Memory));
+    HogPages := HogPages + Step - Refused;
+    if (HogPages div Step) mod 4 = 0 then
+      SimulatedPressureLook(Memory);
+  end;
+  Check(Refused > 0, 'its pages run out (the out-of-memory policy takes over)');
+  Check(Memory.FreePages = Memory.CriticalPages, Format('at the watermark: the reserve is still there (%d free of %d)',
+    [Memory.FreePages, Memory.CriticalPages]));
+  Check(Memory.MappedFilePages = MappedBefore, 'the running programs'' code was not taken');
+  Check(Memory.BlockCachePages >= Memory.BlockCacheMinimum, 'the block cache kept its minimum');
+  Check(SimulatedReportedLevel(Memory) = 1, 'memory is reported short');
+  Check(SimulatedCommit(Memory, 64, True), 'an essential process may still commit');
+  Check(SimulatedTouch(Memory, 64, PageClaimEssential) = 0, 'and touch it');
+  { The out-of-memory policy ends the runaway. }
+  SimulatedRelease(Memory, HogPages);
+  for Rounds := 1 to 3 do
+    SimulatedPressureLook(Memory);
+  Check(Memory.FreePages > Memory.LowPages, 'the runaway ended, free memory came back');
+  Check(SimulatedReportedLevel(Memory) = 0, 'and memory is no longer short');
+end;
+
+{ Commitments nobody touches: refused at the ceiling, an essential
+  process keeping its part; one commitment larger than the RAM
+  processes may use is refused at once. }
+procedure TestSimulatedOvercommitCeiling;
+var
+  Memory: TSimulatedMemory;
+  Granted: QWord;
+begin
+  InitializeSimulatedMemory(Memory, 131072, 12000, 2048, 30000, 4096, 12000, 9000);
+  SetSimulatedPolicy(Memory, CommitPolicyOvercommit);
+  Check(not SimulatedCommit(Memory, Memory.LargestRequestPages + 1, False),
+    'one commitment larger than the RAM processes may use is refused');
+  Check(Memory.CommittedPages = 0, 'and nothing was charged');
+  Check(SimulatedCommit(Memory, Memory.LargestRequestPages, False), 'one of all of it is granted');
+  Granted := Memory.LargestRequestPages;
+  while SimulatedCommit(Memory, 4096, False) do
+    Granted := Granted + 4096;
+  Check(Memory.RefusedCommitments = 2, 'commitments without end are refused at the ceiling');
+  Check(Granted > 3 * Memory.LargestRequestPages, Format('after more than three times the RAM (%d of %d pages)',
+    [Granted, Memory.LargestRequestPages]));
+  Check(Memory.CommittedPages <= Memory.LimitPages - EssentialCommitReserve(Memory.LimitPages),
+    'ordinary programs stop short of the essential part');
+  Check(SimulatedCommit(Memory, 4096, True), 'an essential process may still commit');
+  Check(SimulatedReportedLevel(Memory) = 2, 'commit pressure is reported');
+  SimulatedPressureLook(Memory);
+  Check(Memory.CachePagesGivenBack = 0, 'but the caches are not shrunk for overcommitted promises');
 end;
 
 { --- Thrash guard -------------------------------------------------------- }
@@ -561,11 +716,15 @@ begin
   TestBusyProcessBesideAnother;
   TestPageReserve;
   TestCommitLimit;
+  TestCommitPolicies;
   TestCommitPressure;
   TestSimulatedSmallMachine;
   TestSimulatedUntouchedPromises;
   TestSimulatedRunaway;
   TestSimulatedNoLimit;
+  TestSimulatedPortedProgram;
+  TestSimulatedOvercommitRunaway;
+  TestSimulatedOvercommitCeiling;
   TestThrashGuard;
   if Failures > 0 then
   begin

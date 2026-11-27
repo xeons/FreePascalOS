@@ -2294,6 +2294,14 @@ const
   AbiMemoryPressureLow = 1;
   AbiMemoryPressureCritical = 2;
 
+  { TAbiMemoryPressure.CommitPolicy: the kernel option commitlimit. }
+  { commitlimit=off: no system commit limit. }
+  AbiCommitPolicyNone = 0;
+  { commitlimit=PERCENT: strict accounting. }
+  AbiCommitPolicyStrict = 1;
+  { The default: heuristic overcommitment (LargestCommitPages). }
+  AbiCommitPolicyOvercommit = 2;
+
 type
   TAbiMemoryPressure = record
     TotalPages: QWord;
@@ -2306,7 +2314,8 @@ type
       left under CommitLimitPages, critical with less than
       CriticalWatermarkPages). }
     Level: LongWord;
-    Reserved: LongWord;
+    { AbiCommitPolicy*. }
+    CommitPolicy: LongWord;
     { Times memory was found short, calls asking the caches for memory
       and the pages they gave back, page allocations that failed. }
     PressureEvents: QWord;
@@ -2320,10 +2329,11 @@ type
     ProcessesEnded: QWord;
     LastEndedProcessId: QWord;
     LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
-    { The most pages all processes may have committed (the RAM they may
-      use, less the kernel's own, what the caches keep whatever happens
-      and the reserve, as the kernel option commitlimit=PERCENT scales
-      it), and commitments refused for it. }
+    { The most pages all processes may have committed (from the RAM they
+      may use, less the kernel's own, what the caches keep whatever
+      happens and the reserve: that, scaled by commitlimit=PERCENT, under
+      strict accounting; four times it when overcommitting; 0 with no
+      limit), and commitments refused (for it, or for LargestCommitPages). }
     CommitLimitPages: QWord;
     CommitFailures: QWord;
     { Page allocations of ordinary programs refused because only the
@@ -2332,6 +2342,10 @@ type
       evicted (Memory.ThrashGuard). }
     ReserveRefusals: QWord;
     ThrashGuardRefusals: QWord;
+    { The most one commitment may be (0: no bound of its own; when
+      overcommitting, the RAM processes may use - more could never be
+      backed). }
+    LargestCommitPages: QWord;
   end;
   PAbiMemoryPressure = ^TAbiMemoryPressure;
 

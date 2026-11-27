@@ -30,20 +30,24 @@
   * the process (Processes.AddressSpace: CommitChargePages against
     CommitLimitPages, ProcessLimitCommit);
   * its job, if it is in one (a TCommitPool: Processes.Jobs);
-  * the system: SystemCommitLimit (Memory.Reserves) of the RAM
-    processes may use - less what the kernel holds for itself and what
-    the caches keep whatever happens (RegisterKeptPagesQuery: the block
-    cache's minimum, the file pages running programs map) - recomputed
-    as those change (RefreshSystemCommitLimit, from the memory pressure
-    thread each second), the last part of it kept for essential
-    processes.
+  * the system, under the policy the kernel option commitlimit chooses
+    (Memory.Reserves: TCommitPolicy, ComputeSystemCommitLimits), from
+    the RAM processes may use - less what the kernel holds for itself
+    and what the caches keep whatever happens (RegisterKeptPagesQuery:
+    the block cache's minimum, the file pages running programs map) -
+    recomputed as those change (RefreshSystemCommitLimit, from the
+    memory pressure thread each second), the last part of the limit
+    kept for essential processes. By default it overcommits: only a
+    commitment larger than that RAM, or a total beyond a generous
+    multiple of it, is refused. With commitlimit=PERCENT it is strict.
 
-  So a program that asks for more than there is gets an error from the
-  allocation, while there is still memory for everything else, instead
-  of the system running out when it touches what it was promised; and
-  what was promised is backed (SetCommitmentsBacked: committed pages may
-  go further into the reserve, Memory.Reserves). How close the
-  commitments are to the limit is Memory.CommitPressure's.
+  The process's and the job's limits are strict under every policy. So
+  a program that asks for more than it may, or than there could ever
+  be, gets an error from the allocation instead of the system running
+  out when it touches what it was promised; under strict accounting
+  what was promised is also backed (SetCommitmentsBacked: committed
+  pages may go further into the reserve, Memory.Reserves). How close
+  the commitments are to the limit is Memory.CommitPressure's.
 }
 unit Memory.CommitCharge;
 
@@ -52,7 +56,8 @@ unit Memory.CommitCharge;
 interface
 
 uses
-  Kernel.SpinLock;
+  Kernel.SpinLock,
+  Memory.Reserves;
 
 type
   { Pages charged against a limit (a job's). }
@@ -91,12 +96,15 @@ type
 procedure RegisterKeptPagesQuery(Query: TKeptPagesQuery);
 procedure SetCommitPressureCallback(Callback: TCommitPressureCallback);
 
-{ Reads the kernel option commitlimit and sets the first limit. }
+{ Reads the kernel option commitlimit (absent or "overcommit": heuristic
+  overcommitment; a number: strict accounting against that percentage;
+  "off": no limit) and sets the first limits. }
 procedure InitializeSystemCommitLimit;
 { Recomputes the system's limit from the kernel's use of memory now. }
 procedure RefreshSystemCommitLimit;
-{ Charges Pages to the system if they fit under its limit (the whole
-  limit if MayUseReserve, else all but the essential reserve). }
+{ Charges Pages to the system if the policy allows them: no larger than
+  the largest commitment it allows, and under its limit (the whole limit
+  if MayUseReserve, else all but the essential reserve). }
 function TryChargeSystemCommit(Pages: QWord; MayUseReserve: Boolean): Boolean;
 procedure UnchargeSystemCommit(Pages: QWord);
 { The pages committed by all processes together, the most there ever
@@ -105,6 +113,13 @@ function SystemCommittedPages: QWord;
 function PeakSystemCommittedPages: QWord;
 function SystemCommitLimitPages: QWord;
 function SystemCommitFailures: QWord;
+{ The policy, the most one commitment may be (0: no bound of its own),
+  the pages of the last commitment refused, and whether commitments are
+  backed (strict accounting at no more than 100%). }
+function SystemCommitPolicy: TCommitPolicy;
+function LargestSystemCommitPages: QWord;
+function LastRefusedCommitPages: QWord;
+function SystemCommitmentsBacked: Boolean;
 { The pages the caches keep, as last summed for the limit. }
 function KeptCachePages: QWord;
 { The pages the kernel holds for itself (not caches it gives back, not
@@ -114,10 +129,12 @@ function KernelHeldPages: QWord;
 implementation
 
 uses
+  Runtime.Text,
   Kernel.PriorityLevel,
   Kernel.Options,
+  Memory.Layout,
   Memory.PhysicalPages,
-  Memory.Reserves;
+  Debug.Output;
 
 const
   MaximumKeptPagesQueries = 4;
@@ -125,8 +142,12 @@ const
 var
   SystemPool: TCommitPool;
   SystemReady: Boolean = False;
+  Policy: TCommitPolicy = CommitPolicyOvercommit;
   LimitPercent: QWord = DefaultCommitLimitPercent;
-  LimitIsOff: Boolean = False;
+  { The most one commitment may be (0: no bound of its own); under the
+    pool's lock. }
+  LargestRequestPages: QWord = 0;
+  LastRefusedPages: QWord = 0;
   KeptPagesQueries: array[0..MaximumKeptPagesQueries - 1] of TKeptPagesQuery;
   KeptPagesQueryCount: Integer = 0;
   LastKeptPages: QWord = 0;
@@ -266,21 +287,64 @@ begin
     Callback;
 end;
 
-procedure InitializeSystemCommitLimit;
+procedure ReadCommitLimitOption;
 var
   Value: array[0..15] of Char;
   Number: QWord;
 begin
-  EnsureSystemPool;
-  if GetKernelOptionValue('commitlimit', @Value[0], SizeOf(Value)) and
-     (Value[0] = 'o') and (Value[1] = 'f') and (Value[2] = 'f') then
-    LimitIsOff := True
+  if not GetKernelOptionValue('commitlimit', @Value[0], SizeOf(Value)) then
+    Exit;
+  if TextIsEqual(@Value[0], 'off') then
+    Policy := CommitPolicyNone
   else if GetKernelOptionNumber('commitlimit', Number) then
+  begin
+    Policy := CommitPolicyStrict;
     LimitPercent := Number;
-  { Above 100% more is promised than RAM can back: committed pages are
-    then claimed like any other. }
-  SetCommitmentsBacked(not LimitIsOff and (LimitPercent <= 100));
+  end;
+  { "overcommit" (or anything else) keeps the default. }
+end;
+
+procedure LogCommitPolicy;
+var
+  Limit: QWord;
+  Largest: QWord;
+begin
+  Limit := SystemPool.LimitPages;
+  Largest := LargestRequestPages;
+  DebugBeginMessage;
+  DebugWriteTag('memory');
+  case Policy of
+    CommitPolicyNone:
+      DebugWriteLine('commit policy: no limit (commitlimit=off)');
+    CommitPolicyStrict:
+      begin
+        DebugWrite('commit policy: strict, ');
+        DebugWriteDecimal(LimitPercent);
+        DebugWrite('% of the RAM processes may use: ');
+        DebugWriteSize(Limit * PageSize);
+        DebugWriteLine('');
+      end;
+    CommitPolicyOvercommit:
+      begin
+        DebugWrite('commit policy: overcommit, one commitment up to ');
+        DebugWriteSize(Largest * PageSize);
+        DebugWrite(', all together up to ');
+        DebugWriteSize(Limit * PageSize);
+        DebugWriteLine('');
+      end;
+  end;
+  DebugEndMessage;
+end;
+
+procedure InitializeSystemCommitLimit;
+begin
+  EnsureSystemPool;
+  ReadCommitLimitOption;
+  { Only strict accounting at no more than 100% backs what it promises:
+    otherwise committed pages are claimed like any other. }
+  SetCommitmentsBacked(CommitPolicyBacksCommitments(Policy, LimitPercent));
   RefreshSystemCommitLimit;
+  LogCommitPolicy;
 end;
 
 procedure RefreshSystemCommitLimit;
@@ -289,21 +353,23 @@ var
   Low: QWord;
   Critical: QWord;
   Limit: QWord;
+  Largest: QWord;
   PreviousLevel: TPriorityLevel;
 begin
   EnsureSystemPool;
-  if LimitIsOff then
-    Limit := 0
-  else
+  Limit := 0;
+  Largest := 0;
+  if Policy <> CommitPolicyNone then
   begin
     GetPhysicalMemoryStatistics(Physical);
     GetMemoryWatermarks(Low, Critical);
     LastKeptPages := SumKeptPages;
-    Limit := SystemCommitLimit(Physical.TotalUsablePages, KernelHeldPages, LastKeptPages, Critical,
-      LimitPercent);
+    ComputeSystemCommitLimits(Policy, Physical.TotalUsablePages, KernelHeldPages, LastKeptPages, Critical,
+      LimitPercent, Limit, Largest);
   end;
   PreviousLevel := AcquireSpinLock(SystemPool.Lock);
   SystemPool.LimitPages := Limit;
+  LargestRequestPages := Largest;
   ReleaseSpinLock(SystemPool.Lock, PreviousLevel);
 end;
 
@@ -317,14 +383,18 @@ begin
     Exit(True);
   EnsureSystemPool;
   PreviousLevel := AcquireSpinLock(SystemPool.Lock);
-  Result := CommitAllowed(SystemPool.ChargedPages, Pages, SystemPool.LimitPages, MayUseReserve);
+  Result := SystemCommitAllowed(SystemPool.ChargedPages, Pages, SystemPool.LimitPages, LargestRequestPages,
+    MayUseReserve);
   if Result then
   begin
     SystemPool.ChargedPages := SystemPool.ChargedPages + Pages;
     NotePeakLocked(@SystemPool);
   end
   else
+  begin
     Inc(SystemPool.Failures);
+    LastRefusedPages := Pages;
+  end;
   Charged := SystemPool.ChargedPages;
   Limit := SystemPool.LimitPages;
   ReleaseSpinLock(SystemPool.Lock, PreviousLevel);
@@ -355,6 +425,26 @@ end;
 function SystemCommitFailures: QWord;
 begin
   Result := SystemPool.Failures;
+end;
+
+function SystemCommitPolicy: TCommitPolicy;
+begin
+  Result := Policy;
+end;
+
+function LargestSystemCommitPages: QWord;
+begin
+  Result := LargestRequestPages;
+end;
+
+function LastRefusedCommitPages: QWord;
+begin
+  Result := LastRefusedPages;
+end;
+
+function SystemCommitmentsBacked: Boolean;
+begin
+  Result := CommitPolicyBacksCommitments(Policy, LimitPercent);
 end;
 
 end.

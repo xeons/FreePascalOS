@@ -65,10 +65,13 @@ done
 
 rm -rf "$test_esp_directory"
 cp -r "$esp_directory" "$test_esp_directory"
-# commitlimit=off: the hogs must be allowed to commit past the RAM, so the
-# out-of-memory policy (not the commit limit) is what stops them here;
-# scripts/test-responsiveness.sh checks the commit limit itself.
-echo "test-exit init=/bin/memorytest commitlimit=off" > "$test_esp_directory/FreePascalOS/options.txt"
+# The default commit policy overcommits: the hogs touch every page they
+# commit and run out of pages long before the commit ceiling (four times
+# the RAM processes may use), so the out-of-memory policy (not the
+# commit limit) is what stops them here, as it is for any program that
+# touches more than there is; scripts/test-responsiveness.sh checks the
+# commit limits themselves.
+echo "test-exit init=/bin/memorytest" > "$test_esp_directory/FreePascalOS/options.txt"
 firmware_variables="$build_directory/test-memory-OVMF_VARS.fd"
 cp -f "$firmware_variables_template" "$firmware_variables"
 

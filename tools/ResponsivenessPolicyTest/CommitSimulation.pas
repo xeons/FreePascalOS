@@ -23,9 +23,11 @@
   its limit, all decided by the rules of Memory.Reserves as the kernel
   applies them:
 
-  * a commitment is charged against the limit (CommitAllowed), which
-    SystemCommitLimit computes from the RAM, the kernel's pages, the
-    pages the caches keep and the critical watermark;
+  * a commitment is charged against the limits of the policy
+    (SystemCommitAllowed), which ComputeSystemCommitLimits computes from
+    the RAM, the kernel's pages, the pages the caches keep and the
+    critical watermark - strict accounting at 100% unless the test sets
+    the policy (SetSimulatedPolicy);
   * touching a page takes a free page of its claim; refused, the fault
     reclaims (file pages nobody maps, then the block cache down to its
     minimum - never the mapped pages, which would be thrashing) and
@@ -33,8 +35,8 @@
     anyone;
   * the memory pressure thread's look: below the low watermark it
     reclaims to the comfort level; under commit pressure it counts an
-    event when that begins and reclaims gently for the promises
-    (CommitReclaimTarget);
+    event when that begins and, while commitments are backed, reclaims
+    gently for the promises (CommitReclaimTarget);
   * a program watching the level sees the higher of the free pages'
     and the commitments'.
 }
@@ -61,6 +63,8 @@ type
     CommittedPages: QWord;
     ResidentPrivatePages: QWord;
     LimitPages: QWord;
+    LargestRequestPages: QWord;
+    Policy: TCommitPolicy;
     { What happened. }
     PressureEvents: QWord;
     InCommitPressure: Boolean;
@@ -74,6 +78,13 @@ type
   ones; the rest is free. }
 procedure InitializeSimulatedMemory(out Memory: TSimulatedMemory; Usable, Kernel, Low, BlockCache,
   BlockCacheMinimum, UnmappedFiles, MappedFiles: QWord);
+{ Sets the commit policy (strict at 100% after initializing) and
+  recomputes the limits. }
+procedure SetSimulatedPolicy(var Memory: TSimulatedMemory; Policy: TCommitPolicy);
+{ Whether committed pages are backed under the policy. }
+function SimulatedCommitmentsBacked(const Memory: TSimulatedMemory): Boolean;
+{ The claim of an ordinary program's committed page under the policy. }
+function SimulatedCommittedClaim(const Memory: TSimulatedMemory): TPageClaim;
 { Recomputes the limit (the pressure thread does each second). }
 procedure RefreshSimulatedLimit(var Memory: TSimulatedMemory);
 { Charges Pages (refused: counted, False). }
@@ -104,7 +115,24 @@ begin
   Memory.UnmappedFilePages := UnmappedFiles;
   Memory.MappedFilePages := MappedFiles;
   Memory.FreePages := Usable - Kernel - BlockCache - UnmappedFiles - MappedFiles;
+  Memory.Policy := CommitPolicyStrict;
   RefreshSimulatedLimit(Memory);
+end;
+
+procedure SetSimulatedPolicy(var Memory: TSimulatedMemory; Policy: TCommitPolicy);
+begin
+  Memory.Policy := Policy;
+  RefreshSimulatedLimit(Memory);
+end;
+
+function SimulatedCommitmentsBacked(const Memory: TSimulatedMemory): Boolean;
+begin
+  Result := CommitPolicyBacksCommitments(Memory.Policy, DefaultCommitLimitPercent);
+end;
+
+function SimulatedCommittedClaim(const Memory: TSimulatedMemory): TPageClaim;
+begin
+  Result := ProcessPageClaim(False, True, SimulatedCommitmentsBacked(Memory));
 end;
 
 procedure RefreshSimulatedLimit(var Memory: TSimulatedMemory);
@@ -116,8 +144,8 @@ begin
     Kept := Kept + Memory.BlockCachePages
   else
     Kept := Kept + Memory.BlockCacheMinimum;
-  Memory.LimitPages := SystemCommitLimit(Memory.UsablePages, Memory.KernelPages, Kept, Memory.CriticalPages,
-    DefaultCommitLimitPercent);
+  ComputeSystemCommitLimits(Memory.Policy, Memory.UsablePages, Memory.KernelPages, Kept, Memory.CriticalPages,
+    DefaultCommitLimitPercent, Memory.LimitPages, Memory.LargestRequestPages);
 end;
 
 { Clean cache pages given back: file pages nobody maps first, then the
@@ -170,7 +198,8 @@ end;
 
 function SimulatedCommit(var Memory: TSimulatedMemory; Pages: QWord; Essential: Boolean): Boolean;
 begin
-  Result := CommitAllowed(Memory.CommittedPages, Pages, Memory.LimitPages, Essential);
+  Result := SystemCommitAllowed(Memory.CommittedPages, Pages, Memory.LimitPages, Memory.LargestRequestPages,
+    Essential);
   if Result then
     Memory.CommittedPages := Memory.CommittedPages + Pages
   else
@@ -222,7 +251,7 @@ begin
   if UnderPressure and not Memory.InCommitPressure then
     Inc(Memory.PressureEvents);
   Memory.InCommitPressure := UnderPressure;
-  if UnderPressure then
+  if UnderPressure and SimulatedCommitmentsBacked(Memory) then
   begin
     Wanted := CommitReclaimTarget(OutstandingCommitPages(Memory.CommittedPages, Memory.ResidentPrivatePages),
       Memory.FreePages, Memory.LowPages);
