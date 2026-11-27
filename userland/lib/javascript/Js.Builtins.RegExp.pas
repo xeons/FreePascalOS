@@ -71,6 +71,11 @@ const
   FlagUnicode = 32;
   FlagUnicodeSets = 64;
   FlagSticky = 128;
+  { The flag getters' names, in the order of the flags text. }
+  FlagNames: array[0..7] of TJsAtomName = (anHasIndices, anGlobal, anIgnoreCase, anMultiline, anDotAll, anUnicode,
+    anUnicodeSets, anSticky);
+  FlagMasks: array[0..7] of Integer = (FlagHasIndices, FlagGlobal, FlagIgnoreCase, FlagMultiline, FlagDotAll,
+    FlagUnicode, FlagUnicodeSets, FlagSticky);
 
 type
   TJsRegExp = class(TJsObject)
@@ -671,8 +676,6 @@ end;
 function RegExpPrototypeFlags(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 const
-  Names: array[0..7] of TJsAtomName = (anHasIndices, anGlobal, anIgnoreCase, anMultiline, anDotAll, anUnicode,
-    anUnicodeSets, anSticky);
   Letters: array[0..7] of Char = ('d', 'g', 'i', 'm', 's', 'u', 'v', 'y');
 var
   Index: Integer;
@@ -684,7 +687,7 @@ begin
   Text := '';
   for Index := 0 to 7 do
   begin
-    Value := JsAsObject(This).GetValue(R, R.Atom(Names[Index]));
+    Value := JsAsObject(This).GetValue(R, R.Atom(FlagNames[Index]));
     if Value = JsException then
       Exit(JsException);
     if ToBoolean(Value) then
@@ -773,6 +776,60 @@ begin
   Result := False;
 end;
 
+{ Whether Holder's own Key is an accessor whose getter is the built-in
+  Callback with Magic. }
+function IsBuiltinGetter(R: TJsRealm; Holder: TJsObject; Key: TJsValue; Callback: TJsNativeCallback;
+  Magic: Integer): Boolean;
+var
+  Desc: TJsPropertyDescriptor;
+  Getter: TJsObject;
+begin
+  if (Holder.GetOwnProperty(R, Key, Desc) <= 0) or not JsIsObject(Desc.Getter) then
+    Exit(False);
+  Getter := JsAsObject(Desc.Getter);
+  Result := (Getter is TJsNativeFunction) and (TJsNativeFunction(Getter).Callback = Callback) and
+    (TJsNativeFunction(Getter).Magic = Magic);
+end;
+
+{ The flags of a regexp that has no own property but lastIndex and
+  inherits the built-in flags getters: reading "flags" could run no
+  script and gives its own flags. False when anything may differ. }
+function IntactFlagBits(R: TJsRealm; Target: TJsObject; out Bits: Integer): Boolean;
+var
+  Prototype: TJsObject;
+  Index: Integer;
+begin
+  Bits := 0;
+  Prototype := R.Intrinsics[inRegExpPrototype];
+  if not (Target is TJsRegExp) or (Target.Proto <> Prototype) or (Target.Shape.PropertyCount <> 1) or
+    not IsBuiltinGetter(R, Prototype, R.Atom(anFlags), @RegExpPrototypeFlags, 0) then
+    Exit(False);
+  for Index := 0 to High(FlagNames) do
+    if not IsBuiltinGetter(R, Prototype, R.Atom(FlagNames[Index]), @RegExpPrototypeFlag, FlagMasks[Index]) then
+      Exit(False);
+  Bits := TJsRegExp(Target).FlagBits;
+  Result := True;
+end;
+
+{ The flags as Get(rx, "flags") gives them, as bits (other letters
+  ignored); False after throwing. }
+function FlagBitsOf(R: TJsRealm; Target: TJsObject; out Bits: Integer): Boolean;
+var
+  Text: TJsString;
+  Index: Integer;
+const
+  Letters: array[0..7] of Char = ('d', 'g', 'i', 'm', 's', 'u', 'v', 'y');
+begin
+  if IntactFlagBits(R, Target, Bits) then
+    Exit(True);
+  if not FlagsOf(R, Target, Text) then
+    Exit(False);
+  for Index := 0 to High(Letters) do
+    if HasFlag(Text, Letters[Index]) then
+      Bits := Bits or FlagMasks[Index];
+  Result := True;
+end;
+
 { The matched text of RegExpExecMatch's outcome (a match's captures or a
   result object): nil after throwing. }
 function MatchedText(R: TJsRealm; Text: TJsString; Outcome: TJsValue; const Captures: TRxCaptures): TJsString;
@@ -799,7 +856,8 @@ function RegExpSymbolMatch(R: TJsRealm; const This: TJsValue; Args: PJsValueArra
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Target: TJsObject;
-  Text, Flags, Matched: TJsString;
+  Text, Matched: TJsString;
+  Flags: Integer;
   Outcome: TJsValue;
   Created: TJsArray;
   Captures: TRxCaptures;
@@ -811,9 +869,9 @@ begin
   Text := ToJsString(R, Arg(Args, ArgCount, 0));
   if Text = nil then
     Exit(JsException);
-  if not FlagsOf(R, Target, Flags) then
+  if not FlagBitsOf(R, Target, Flags) then
     Exit(JsException);
-  if not HasFlag(Flags, 'g') then
+  if (Flags and FlagGlobal) = 0 then
     Exit(RegExpExec(R, Target, Text));
   if not SetLastIndex(R, Target, 0) then
     Exit(JsException);
@@ -837,7 +895,7 @@ begin
         Exit(JsException);
       AppendElement(R, Created, JsStringValue(Matched));
       if Matched.Length = 0 then
-        if not SkipEmptyMatch(R, Target, Text, HasFlag(Flags, 'u') or HasFlag(Flags, 'v')) then
+        if not SkipEmptyMatch(R, Target, Text, (Flags and (FlagUnicode or FlagUnicodeSets)) <> 0) then
           Exit(JsException);
     end;
   finally
@@ -1013,7 +1071,8 @@ function RegExpSymbolReplace(R: TJsRealm; const This: TJsValue; Args: PJsValueAr
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Target: TJsObject;
-  Text, Flags, Replacement, Matched, Piece, Accumulated: TJsString;
+  Text, Replacement, Matched, Piece, Accumulated: TJsString;
+  Flags: Integer;
   ReplaceValue, Outcome: TJsValue;
   Global, Unicode: Boolean;
   Results: TJsArray;
@@ -1038,10 +1097,10 @@ begin
     if Replacement = nil then
       Exit(JsException);
   end;
-  if not FlagsOf(R, Target, Flags) then
+  if not FlagBitsOf(R, Target, Flags) then
     Exit(JsException);
-  Global := HasFlag(Flags, 'g');
-  Unicode := HasFlag(Flags, 'u') or HasFlag(Flags, 'v');
+  Global := (Flags and FlagGlobal) <> 0;
+  Unicode := (Flags and (FlagUnicode or FlagUnicodeSets)) <> 0;
   if Global then
     if not SetLastIndex(R, Target, 0) then
       Exit(JsException);
