@@ -1,0 +1,62 @@
+--- a/doomgeneric/d_iwad.c
++++ b/doomgeneric/d_iwad.c
+@@ -42,8 +42,15 @@
+     { "chex.wad",     pack_chex, shareware,  "Chex Quest" },
+     { "hacx.wad",     pack_hacx, commercial, "Hacx" },
+     { "freedm.wad",   doom2,     commercial, "FreeDM" },
++#ifdef __freepascalos__
++    // FreePascalOS: with both Freedoom IWADs installed, "doom" starts
++    // Phase 1 (Doom's episodes); -iwad freedoom2.wad picks Phase 2.
++    { "freedoom1.wad", doom,     retail,     "Freedoom: Phase 1" },
++    { "freedoom2.wad", doom2,    commercial, "Freedoom: Phase 2" },
++#else
+     { "freedoom2.wad", doom2,    commercial, "Freedoom: Phase 2" },
+     { "freedoom1.wad", doom,     retail,     "Freedoom: Phase 1" },
++#endif
+     { "heretic.wad",  heretic,   retail,     "Heretic" },
+     { "heretic1.wad", heretic,   shareware,  "Heretic Shareware" },
+     { "hexen.wad",    hexen,     commercial, "Hexen" },
+@@ -508,7 +515,7 @@
+     return mission;
+ }
+ 
+-#if ORIGCODE
++#if ORIGCODE || defined(__freepascalos__)
+ //
+ // Add directories from the list in the DOOMWADPATH environment variable.
+ //
+@@ -566,7 +573,33 @@
+ 
+ static void BuildIWADDirList(void)
+ {
+-#if ORIGCODE
++#ifdef __freepascalos__
++    char *doomwaddir;
++
++    if (iwad_dirs_built)
++    {
++        return;
++    }
++
++    // FreePascalOS: the current folder, DOOMWADDIR, DOOMWADPATH, then
++    // where ports install IWADs (the freedoom port) and /usr's.
++
++    AddIWADDir(".");
++
++    doomwaddir = getenv("DOOMWADDIR");
++
++    if (doomwaddir != NULL)
++    {
++        AddIWADDir(doomwaddir);
++    }
++
++    AddDoomWadPath();
++
++    AddIWADDir("/usr/local/share/games/doom");
++    AddIWADDir("/usr/share/games/doom");
++
++    iwad_dirs_built = true;
++#elif ORIGCODE
+     char *doomwaddir;
+ 
+     if (iwad_dirs_built)

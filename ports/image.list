@@ -4,7 +4,7 @@
 # package. One port a line: name, name@flavor or category/name. A port
 # that needs a download (DISTDIR, ~/Downloads/sources) makes the disk
 # build need it too; one this machine cannot build (no C toolchain yet)
-# is skipped.
+# is skipped. "PORT with OTHER": PORT only when OTHER is on the disk.
 
 hello
 # GNU as and ld (and ar, nm, objdump ...) running on the system: native
@@ -18,3 +18,7 @@ gldemos
 # terminal. Skipped without the C toolchain.
 lua
 sqlite3
+# Doom (doomgeneric) and Freedoom's game data for it. Doom is skipped
+# without the C toolchain, and Freedoom (nothing to build) goes with it.
+doomgeneric
+freedoom with doomgeneric

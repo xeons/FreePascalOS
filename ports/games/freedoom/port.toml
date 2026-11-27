@@ -1,0 +1,57 @@
+# Freedoom: free game data for Doom engines, as a data port (nothing is
+# built). The IWADs go to /usr/local/share/games/doom, where doom (the
+# doomgeneric port) and other Doom engines look for them. id Software's
+# own WADs are not free to hand out and are never part of a port; users
+# copy their own into the same folder.
+
+[port]
+name = "freedoom"
+version = "0.13.0"
+revision = 0
+summary = "Free game data for Doom engines: Freedoom Phase 1 and Phase 2"
+description = """
+Freedoom is a complete, free game for Doom engines: new levels, art,
+sounds and music, made by its contributors under a BSD licence. Phase 1
+(freedoom1.wad) has four episodes of nine levels, playable as Doom's
+episodes; Phase 2 (freedoom2.wad) has 32 levels, as Doom II's.
+
+The IWADs are installed in /usr/local/share/games/doom, with Freedoom's
+manual (PDF, English, Spanish and French), README, news and credits in
+share/doc/freedoom. doom starts Phase 1; doom -iwad freedoom2.wad starts
+Phase 2.
+"""
+homepage = "https://freedoom.github.io/"
+license = "BSD-3-Clause"
+license_files = ["COPYING.txt"]
+maintainer = "FreePascalOS ports"
+categories = ["games"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+notes = """
+The release archive is signed by Freedoom's release key (Steven
+Elliott, 90BB 5F79 7B0E D14D 310F 90BE 39B3 786A 18C9 3DAD, from
+keys.openpgp.org); its SHA-256 also matches the release's signed
+freedoom-0.13.0-CHECKSUM. The same files for every architecture.
+"""
+
+[[sources]]
+url = "https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip"
+sha256 = "3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59"
+size = 24143781
+extract_dir = "freedoom-0.13.0"
+signature = { url = "https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip.sig", type = "gpg", key = "freedoom-signing-key.gpg" }
+
+[build]
+system = "none"
+
+[install]
+files = [
+    { from = "freedoom1.wad", to = "share/games/doom/freedoom1.wad", mode = "0644" },
+    { from = "freedoom2.wad", to = "share/games/doom/freedoom2.wad", mode = "0644" },
+]
+docs = ["README.html", "NEWS.html", "CREDITS.txt", "CREDITS-MUSIC.txt", "freedoom-manual-en.pdf",
+    "freedoom-manual-es.pdf", "freedoom-manual-fr.pdf"]
+strip = false
+
+[test]
+system = ["test -s /usr/local/share/games/doom/freedoom1.wad", "test -s /usr/local/share/games/doom/freedoom2.wad"]

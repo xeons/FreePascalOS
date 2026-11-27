@@ -1,0 +1,51 @@
+--- a/doomgeneric/m_config.c
++++ b/doomgeneric/m_config.c
+@@ -2042,11 +2042,30 @@
+ 
+ static char *GetDefaultConfigDir(void)
+ {
++#ifdef __freepascalos__
++    // FreePascalOS: ~/.doom/ (made here, as M_MakeDirectory makes one
++    // folder), else the current folder.
++
++    char *home = getenv("HOME");
++
++    if (home != NULL && home[0] != '\0')
++    {
++        char *dir = M_StringJoin(home, DIR_SEPARATOR_S, ".doom", NULL);
++
++        M_MakeDirectory(dir);
++        free(dir);
++
++        return M_StringJoin(home, DIR_SEPARATOR_S, ".doom", DIR_SEPARATOR_S, NULL);
++    }
++
++    return strdup("./");
++#else
+     char *result = (char *)malloc(2);
+     result[0] = '.';
+     result[1] = '\0';
+ 
+     return result;
++#endif
+ }
+ 
+ // 
+@@ -2087,7 +2106,7 @@
+ char *M_GetSaveGameDir(char *iwadname)
+ {
+     char *savegamedir;
+-#if ORIGCODE
++#if ORIGCODE || defined(__freepascalos__)
+     char *topdir;
+ #endif
+ 
+@@ -2100,7 +2119,7 @@
+     }
+     else
+     {
+-#if ORIGCODE
++#if ORIGCODE || defined(__freepascalos__)
+         // ~/.chocolate-doom/savegames
+ 
+         topdir = M_StringJoin(configdir, "savegame", NULL);

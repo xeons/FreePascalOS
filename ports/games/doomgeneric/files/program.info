@@ -1,0 +1,12 @@
+# Doom (the doomgeneric port): how the Start menu and the desktop show
+# it (Configuration.ProgramInfo). Installed as
+# /usr/local/app/doom/program.info, beside a link to /usr/local/bin/doom.
+
+[Program]
+Name = Doom
+Description = The 1993 first-person shooter (Freedoom's game data, or your own IWAD)
+Category = Games
+Icon = app-game
+Executable = doom
+Keywords = ["doom", "freedoom", "game", "shooter", "fps"]
+Version = 0.0.20261011

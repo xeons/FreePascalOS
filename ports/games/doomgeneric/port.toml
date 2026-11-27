@@ -1,0 +1,82 @@
+# Doom, from doomgeneric: id Software's Doom source (by way of Chocolate
+# Doom) made portable behind a few platform functions, which
+# files/doomgeneric_freepascalos.c implements on the display server's
+# windows. The package is named after the engine, which has no releases
+# (a pinned commit, versioned 0.0.DATE of that commit), so that other
+# Doom engines can be ported beside it; the program is "doom". Game
+# data is not part of it: the freedoom port installs Freedoom's IWADs
+# where it looks for them.
+
+[port]
+name = "doomgeneric"
+version = "0.0.20261011"
+revision = 0
+summary = "Doom, the 1993 first-person shooter, in a window"
+description = """
+doomgeneric is id Software's Doom engine (as Chocolate Doom keeps it,
+faithful to the original game) made portable: the FreePascalOS platform
+layer shows it in a resizable window of the display server, its 320x200
+frame scaled to the window at Doom's 4:3 shape and the display's scale,
+reads the keyboard, and plays the sound effects through /dev/audio.
+
+The program is doom. It needs an IWAD (the game's data): it looks in
+the current folder, the folder DOOMWADDIR names, the folders of
+DOOMWADPATH, /usr/local/share/games/doom and /usr/share/games/doom. The
+freedoom package puts Freedoom Phase 1 and Phase 2 there; doom starts
+Phase 1, doom -iwad freedoom2.wad the other. A Doom IWAD of your own
+(doom.wad, doom2.wad, ...) dropped into /usr/local/share/games/doom is
+found too, and is preferred to Freedoom.
+
+Keys: arrows move and turn, Ctrl fires, Space uses (doors, switches),
+Shift runs, Alt strafes, Tab shows the map, 1-7 choose weapons, Escape
+opens the menu, Enter and Y/N answer it. Music is not played yet.
+"""
+homepage = "https://github.com/ozkl/doomgeneric"
+license = "GPL-2.0-or-later AND GPL-3.0-or-later"
+license_files = ["LICENSE", "port:files/COPYING"]
+maintainer = "FreePascalOS ports"
+categories = ["games"]
+status = "untested"
+architectures = ["x86_64", "aarch64"]
+notes = """
+doomgeneric is GPL-2.0-or-later; the platform layer in files/ is
+GPL-3.0-or-later, so the program built from both is distributed under
+GPL-3.0. Upstream has no releases: the source is a pinned commit's
+archive. Recommends freedoom (game data) but does not depend on it: any
+IWAD will do.
+"""
+
+[[sources]]
+url = "https://github.com/ozkl/doomgeneric/archive/e257a09527062bfb986b6e5e0780839b6cbd5b71.tar.gz"
+filename = "doomgeneric-e257a09527062bfb986b6e5e0780839b6cbd5b71.tar.gz"
+sha256 = "26f8f60daa6c6e4d3c01e5eac9fb700d592dede803d13ac848154ff356b2a2e7"
+size = 3090826
+extract_dir = "doomgeneric-e257a09527062bfb986b6e5e0780839b6cbd5b71"
+
+[dependencies]
+host = ["make"]
+
+[build]
+system = "custom"
+toolchain = "c"
+
+[build.steps]
+build = [
+    "make -j${JOBS} -C doomgeneric -f ${FILES}/Makefile.freepascalos PLATFORM_DIRECTORY=${FILES} CC=\"$CC\" CFLAGS=\"$CFLAGS\" LDFLAGS=\"$LDFLAGS\"",
+]
+install = [
+    "mkdir -p ${STAGE}${PREFIX}/bin ${STAGE}${PREFIX}/app/doom",
+    "install -m 0755 doomgeneric/doom ${STAGE}${PREFIX}/bin/doom",
+    # The Start menu lists the programs of /usr/local/app as it does
+    # /app's: the folder holds the description and the program (a link
+    # to the one on PATH).
+    "install -m 0644 ${FILES}/program.info ${STAGE}${PREFIX}/app/doom/program.info",
+    "ln -s ../../bin/doom ${STAGE}${PREFIX}/app/doom/doom",
+]
+
+[install]
+files = [{ from = "port:files/README.FreePascalOS", to = "share/doc/doomgeneric/README.FreePascalOS", mode = "0644" }]
+docs = ["README.md"]
+
+[test]
+system = ["test -x /usr/local/bin/doom", "test -f /usr/local/app/doom/program.info"]

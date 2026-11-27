@@ -8803,8 +8803,9 @@ line per path), then `+DESC`, the scripts, and the payload. libarchive
 reads tar.zst for pkg (and tar.xz; see "Archives").
 
 **On the system disk.** `ports/image.list` names the ports the disk
-carries installed: `make system-disk` builds their packages and their
-run dependencies, `install-to-image` installs them into
+carries installed (a line `PORT with OTHER` only when OTHER's package
+could be built, for data that is no use without a program): `make
+system-disk` builds their packages and their run dependencies, `install-to-image` installs them into
 `build/ARCH/ports/image-root` with their `/var/db/pkg` entries (pkg
 treats them like any other package; their install scripts do not run),
 adds `pkg-selftest`'s package to `/var/cache/pkg` for coretest, and
@@ -12899,12 +12900,20 @@ name. Keys and category names are read in any case; an unknown key or a
 line that cannot be read is reported but not fatal; a missing or wrong
 required key makes the folder no program.
 
+Ported software's graphical programs have folders of the same kind
+under `/usr/local/app` (ports install only under `/usr/local`): the
+doomgeneric port installs `/usr/local/app/doom/program.info` beside
+`doom`, a link to `/usr/local/bin/doom`. The desktop and Files list
+both roots; a port's folder named like one of `/app`'s is left out (the
+system's program keeps its name).
+
 Reading them is libconfiguration's: `Configuration.ProgramInfo`
 (`ParseProgramInfo`: the record, whether it is valid, the problems)
 and `Configuration.ProgramFolders` (`DiscoverPrograms`: every folder
-of `/app` whose description is valid and whose executable is there,
+of a root whose description is valid and whose executable is there,
 sorted by category, then name, the folders left out with why;
-`ShownPrograms`, `FindProgramByExecutable`, `FindProgramByFolder`,
+`DiscoverProgramsIn` over several roots, `DiscoverInstalledPrograms`
+over `/app` and `/usr/local/app`; `ShownPrograms`, `FindProgramByExecutable`, `FindProgramByFolder`,
 `ProgramExecutablePath`, `ProgramIconName`: the folder's icon file as a
 full path, else the theme's name, which `Controls.IconFiles` both
 takes). Neither uses anything but the runtime library, so both are
@@ -14649,6 +14658,36 @@ it.
 coretest line runs `gltest` on llvmpipe and on softpipe when the disk
 has it; `glgears -n` and `vkcube -n` need the display server and are
 tried in a session (`scripts/take-screenshots.py` plans).
+
+`ports/games/doomgeneric` is Doom on the same header: doomgeneric (id
+Software's Doom source, as Chocolate Doom keeps it, behind six platform
+functions) with a platform layer of the port's own
+(`files/doomgeneric_freepascalos.c`). Its window starts at the largest
+whole multiple of 320x240 logical units (up to three) that fits the
+screen, in pixels at the display's scale, and is resizable; each frame
+the engine's 320x200 picture is scaled (nearest pixel, a column table
+and repeated rows copied) to the largest 4:3 rectangle of the surface,
+with black bars around it, the surface made again after `EventResized`
+and `EventScaleChanged`. Keys are translated from scan codes to Doom's
+key codes (Ctrl fires, Space uses, Shift runs, Alt strafes), every key
+held is released when the window loses the keyboard, and closing the
+window quits as the menu does (`I_Quit`: the configuration saved).
+Ticks come from `CLOCK_MONOTONIC`; `DG_SleepMs` waits on the display's
+channel with a timeout (a key ends the wait). The sound effects
+(`files/doomgeneric_freepascalos_sound.c`, a `sound_module_t`) are
+mixed in the program (DMX lumps, unsigned 8-bit, stepped in 32.32 fixed
+point with linear interpolation and Doom's volume and separation) into
+a stream of `/dev/audio` (16-bit stereo at `snd_samplerate`, set with
+`ControlAudioSetFormat`), topped up to 85 ms ahead each tic by asking
+`ControlAudioGetQueued`, so a write never waits; without an audio output
+Doom plays silently. Music is not played (OPL emulation is to come).
+Four patches: IWADs searched in the current folder, `DOOMWADDIR`,
+`DOOMWADPATH`, `/usr/local/share/games/doom` and
+`/usr/share/games/doom`, Freedoom Phase 1 preferred to Phase 2;
+settings and saves in `~/.doom/` (saves per IWAD); `I_Quit` exits; no
+zenity. `ports/games/freedoom` installs Freedoom's IWADs in
+`/usr/local/share/games/doom`; `ports/image.list` puts both on the disk
+(`freedoom with doomgeneric`: the data only with the game).
 
 ### Tests
 
