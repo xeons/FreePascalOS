@@ -82,7 +82,7 @@ function HigherPriority(const A, B: TCssCascadeItem): Boolean;
 implementation
 
 uses
-  Css.Keywords;
+  Css.Keywords, Css.PointerMaps;
 
 procedure AddCascadeBlock(var Items: TCssCascadeItemArray; var Count: Integer; Block: TCssDeclarationBlock;
   Origin: TCssOrigin; ElementAttached: Boolean; LayerRank: Word; Specificity: LongWord; Order: LongInt;
@@ -149,21 +149,92 @@ begin
   Result := A.Order > B.Order;
 end;
 
+type
+  { HigherPriority as two numbers, the larger the higher: the origin
+    and importance tier, the shadow tree context, element-attached,
+    the layer and the specificity packed into Major, order of
+    appearance in Minor. }
+  TPriorityKey = record
+    Major: QWord;
+    Minor: Int64;
+  end;
+  TPriorityKeyArray = array of TPriorityKey;
+
+function PriorityKey(const Item: TCssCascadeItem): TPriorityKey; inline;
+var
+  ShadowRank, LayerRank: QWord;
+begin
+  if Item.Important then
+  begin
+    ShadowRank := Item.ShadowDepth;
+    LayerRank := High(Word) - Item.LayerRank;
+  end
+  else
+  begin
+    ShadowRank := High(Word) - Item.ShadowDepth;
+    LayerRank := Item.LayerRank;
+  end;
+  Result.Major := (QWord(Tier(Item)) shl 61) or (ShadowRank shl 45) or (QWord(Ord(Item.ElementAttached)) shl 44) or
+    (LayerRank shl 28) or (QWord(Item.Specificity) and $0FFFFFFF);
+  Result.Minor := Item.Order;
+end;
+
+function KeyAbove(const A, B: TPriorityKey): Boolean; inline;
+begin
+  Result := (A.Major > B.Major) or ((A.Major = B.Major) and (A.Minor > B.Minor));
+end;
+
+{ Specificities this large (over 255 ids, classes or types) do not fit
+  the packed key: compared field by field. }
+function KeysFit(const Items: TCssCascadeItemArray; Count: Integer): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Count - 1 do
+    if Items[Index].Specificity > $0FFFFFFF then
+      Exit(False);
+  Result := True;
+end;
+
 procedure SortByPriority(var Items: TCssCascadeItemArray; Count: Integer);
 var
   Index, Other: Integer;
   Item: TCssCascadeItem;
+  Keys: array of TPriorityKey;
+  Key: TPriorityKey;
 begin
+  if not KeysFit(Items, Count) then
+  begin
+    for Index := 1 to Count - 1 do
+    begin
+      Item := Items[Index];
+      Other := Index - 1;
+      while (Other >= 0) and HigherPriority(Item, Items[Other]) do
+      begin
+        Items[Other + 1] := Items[Other];
+        Dec(Other);
+      end;
+      Items[Other + 1] := Item;
+    end;
+    Exit;
+  end;
+  Keys := nil;
+  SetLength(Keys, Count);
+  for Index := 0 to Count - 1 do
+    Keys[Index] := PriorityKey(Items[Index]);
   for Index := 1 to Count - 1 do
   begin
     Item := Items[Index];
+    Key := Keys[Index];
     Other := Index - 1;
-    while (Other >= 0) and HigherPriority(Item, Items[Other]) do
+    while (Other >= 0) and KeyAbove(Key, Keys[Other]) do
     begin
       Items[Other + 1] := Items[Other];
+      Keys[Other + 1] := Keys[Other];
       Dec(Other);
     end;
     Items[Other + 1] := Item;
+    Keys[Other + 1] := Key;
   end;
 end;
 
@@ -176,6 +247,8 @@ type
     ElementAttached: Boolean;
     LayerRank: Word;
   end;
+
+  TPhysicalSkips = array[TCssPhysicalId] of TSkip;
 
 function Skipped(const Skip: TSkip; const Item: TCssCascadeItem): Boolean; inline;
 begin
@@ -231,103 +304,152 @@ begin
   Result := kwInvalid;
 end;
 
+type
+  { The custom properties met so far while cascading one element: what
+    'revert' skips for each and whether it is decided, and an index by
+    name once there are many (a root declaring hundreds of variables
+    would otherwise search them all for each declaration). }
+  TCustomCascade = record
+    Skips: array of TSkip;
+    Decided: array of Boolean;
+    Index: TCssPointerMap;
+  end;
+
+const
+  { Names searched in order below this many, by the index above. }
+  CustomIndexThreshold = 16;
+
+{ The slot of custom property Name in Cascaded, added when new. }
+function CustomSlot(var Cascaded: TCssCascadedValues; var Custom: TCustomCascade; Name: TCssAtom): Integer;
+var
+  Slot: PtrInt;
+  Index: Integer;
+begin
+  if Custom.Index <> nil then
+  begin
+    if Custom.Index.TryGet(Pointer(PtrUInt(Name)), Slot) then
+      Exit(Slot);
+  end
+  else
+    for Index := 0 to Cascaded.CustomCount - 1 do
+      if Cascaded.CustomNames[Index] = Name then
+        Exit(Index);
+  Result := Cascaded.CustomCount;
+  Inc(Cascaded.CustomCount);
+  if Cascaded.CustomCount > Length(Cascaded.CustomNames) then
+  begin
+    SetLength(Cascaded.CustomNames, Cascaded.CustomCount * 2 + 4);
+    SetLength(Cascaded.CustomValues, Length(Cascaded.CustomNames));
+    SetLength(Custom.Skips, Length(Cascaded.CustomNames));
+    SetLength(Custom.Decided, Length(Cascaded.CustomNames));
+  end;
+  Cascaded.CustomNames[Result] := Name;
+  Cascaded.CustomValues[Result] := nil;
+  Custom.Skips[Result].Kind := skipNone;
+  Custom.Decided[Result] := False;
+  if Custom.Index <> nil then
+    Custom.Index.Put(Pointer(PtrUInt(Name)), Result)
+  else if Cascaded.CustomCount >= CustomIndexThreshold then
+  begin
+    Custom.Index := TCssPointerMap.Create;
+    for Index := 0 to Cascaded.CustomCount - 1 do
+      Custom.Index.Put(Pointer(PtrUInt(Cascaded.CustomNames[Index])), Index);
+  end;
+end;
+
+{ Custom properties cascade by name. }
+procedure CascadeCustom(var Cascaded: TCssCascadedValues; var Custom: TCustomCascade; const Item: TCssCascadeItem;
+  Declaration: PCssDeclaration);
+var
+  Slot: Integer;
+  Value: TCssValue;
+begin
+  Slot := CustomSlot(Cascaded, Custom, Declaration^.CustomName);
+  if Custom.Decided[Slot] or Skipped(Custom.Skips[Slot], Item) then
+    Exit;
+  Value := Declaration^.Value;
+  if Value.IsKeyword(kwRevert) then
+    SetSkip(Custom.Skips[Slot], skipOrigin, Item)
+  else if Value.IsKeyword(kwRevertLayer) then
+    SetSkip(Custom.Skips[Slot], skipLayer, Item)
+  else
+  begin
+    Cascaded.CustomValues[Slot] := Value;
+    Custom.Decided[Slot] := True;
+  end;
+end;
+
+{ A longhand (mapped to its physical property) unless decided already. }
+procedure CascadeLonghand(var Cascaded: TCssCascadedValues; var Skips: TPhysicalSkips; const Item: TCssCascadeItem;
+  Declaration: PCssDeclaration);
+var
+  Id: TCssPropertyId;
+  Value: TCssValue;
+begin
+  Id := Declaration^.Id;
+  if IsLogical(Id) then
+    Id := PhysicalProperty(Id, Cascaded.WritingMode, Cascaded.RightToLeft);
+  if (Id <= cpInvalid) or (Id > High(TCssPhysicalId)) then
+    Exit;
+  if (Cascaded.Values[Id] <> nil) or Skipped(Skips[Id], Item) then
+    Exit;
+  Value := Declaration^.Value;
+  if Value.IsKeyword(kwRevert) then
+    { The user agent origin has nothing below it: like unset. }
+    SetSkip(Skips[Id], skipOrigin, Item)
+  else if Value.IsKeyword(kwRevertLayer) then
+    SetSkip(Skips[Id], skipLayer, Item)
+  else
+    Cascaded.Values[Id] := Value;
+end;
+
+{ Writing mode and direction first: logical properties need them. }
+procedure CascadeWritingMode(const Items: TCssCascadeItemArray; Count: Integer; ParentWritingMode: TCssWritingMode;
+  ParentRightToLeft: Boolean; var Cascaded: TCssCascadedValues);
+begin
+  Cascaded.WritingMode := WritingModeOf(FirstKeyword(Items, Count, cpWritingMode), ParentWritingMode);
+  case FirstKeyword(Items, Count, cpDirection) of
+    kwRtl: Cascaded.RightToLeft := True;
+    kwLtr, kwInitial: Cascaded.RightToLeft := False;
+  else
+    Cascaded.RightToLeft := ParentRightToLeft;
+  end;
+end;
+
 procedure RunCascade(var Items: TCssCascadeItemArray; Count: Integer; ParentWritingMode: TCssWritingMode;
   ParentRightToLeft: Boolean; out Cascaded: TCssCascadedValues);
 var
-  Skips: array[TCssPhysicalId] of TSkip;
-  CustomSkips: array of TSkip;
-  CustomDecided: array of Boolean;
-  ItemIndex, DeclarationIndex, CustomIndex: Integer;
+  Skips: TPhysicalSkips;
+  Custom: TCustomCascade;
+  ItemIndex, DeclarationIndex: Integer;
   Item: ^TCssCascadeItem;
   Declaration: PCssDeclaration;
-  Id: TCssPropertyId;
-  Value: TCssValue;
-  Keyword: TCssKeyword;
-  Found: Boolean;
 begin
   FillChar(Cascaded.Values, SizeOf(Cascaded.Values), 0);
   Cascaded.CustomNames := nil;
   Cascaded.CustomValues := nil;
   Cascaded.CustomCount := 0;
   FillChar(Skips, SizeOf(Skips), 0);
-  CustomSkips := nil;
-  CustomDecided := nil;
+  Custom := Default(TCustomCascade);
   SortByPriority(Items, Count);
-  { Writing mode and direction first: logical properties need them. }
-  Keyword := FirstKeyword(Items, Count, cpWritingMode);
-  Cascaded.WritingMode := WritingModeOf(Keyword, ParentWritingMode);
-  Keyword := FirstKeyword(Items, Count, cpDirection);
-  case Keyword of
-    kwRtl: Cascaded.RightToLeft := True;
-    kwLtr, kwInitial: Cascaded.RightToLeft := False;
-  else
-    Cascaded.RightToLeft := ParentRightToLeft;
-  end;
-  for ItemIndex := 0 to Count - 1 do
-  begin
-    Item := @Items[ItemIndex];
-    for DeclarationIndex := 0 to Item^.Block.Count - 1 do
+  CascadeWritingMode(Items, Count, ParentWritingMode, ParentRightToLeft, Cascaded);
+  try
+    for ItemIndex := 0 to Count - 1 do
     begin
-      Declaration := Item^.Block.Item(DeclarationIndex);
-      if Declaration^.Important <> Item^.Important then
-        Continue;
-      Value := Declaration^.Value;
-      Id := Declaration^.Id;
-      if Id = cpCustom then
+      Item := @Items[ItemIndex];
+      for DeclarationIndex := 0 to Item^.Block.Count - 1 do
       begin
-        { Custom properties cascade by name. }
-        Found := False;
-        for CustomIndex := 0 to Cascaded.CustomCount - 1 do
-          if Cascaded.CustomNames[CustomIndex] = Declaration^.CustomName then
-          begin
-            Found := True;
-            Break;
-          end;
-        if not Found then
-        begin
-          CustomIndex := Cascaded.CustomCount;
-          Inc(Cascaded.CustomCount);
-          SetLength(Cascaded.CustomNames, Cascaded.CustomCount);
-          SetLength(Cascaded.CustomValues, Cascaded.CustomCount);
-          SetLength(CustomSkips, Cascaded.CustomCount);
-          SetLength(CustomDecided, Cascaded.CustomCount);
-          Cascaded.CustomNames[CustomIndex] := Declaration^.CustomName;
-          Cascaded.CustomValues[CustomIndex] := nil;
-          CustomSkips[CustomIndex].Kind := skipNone;
-          CustomDecided[CustomIndex] := False;
-        end;
-        if CustomDecided[CustomIndex] or Skipped(CustomSkips[CustomIndex], Item^) then
+        Declaration := Item^.Block.Item(DeclarationIndex);
+        if Declaration^.Important <> Item^.Important then
           Continue;
-        if Value.IsKeyword(kwRevert) then
-          SetSkip(CustomSkips[CustomIndex], skipOrigin, Item^)
-        else if Value.IsKeyword(kwRevertLayer) then
-          SetSkip(CustomSkips[CustomIndex], skipLayer, Item^)
+        if Declaration^.Id = cpCustom then
+          CascadeCustom(Cascaded, Custom, Item^, Declaration)
         else
-        begin
-          Cascaded.CustomValues[CustomIndex] := Value;
-          CustomDecided[CustomIndex] := True;
-        end;
-        Continue;
+          CascadeLonghand(Cascaded, Skips, Item^, Declaration);
       end;
-      if IsLogical(Id) then
-        Id := PhysicalProperty(Id, Cascaded.WritingMode, Cascaded.RightToLeft);
-      if (Id <= cpInvalid) or (Id > High(TCssPhysicalId)) then
-        Continue;
-      if (Cascaded.Values[Id] <> nil) or Skipped(Skips[Id], Item^) then
-        Continue;
-      if Value.IsKeyword(kwRevert) then
-      begin
-        { The user agent origin has nothing below it: like unset. }
-        SetSkip(Skips[Id], skipOrigin, Item^);
-        Continue;
-      end;
-      if Value.IsKeyword(kwRevertLayer) then
-      begin
-        SetSkip(Skips[Id], skipLayer, Item^);
-        Continue;
-      end;
-      Cascaded.Values[Id] := Value;
     end;
+  finally
+    Custom.Index.Free;
   end;
 end;
 

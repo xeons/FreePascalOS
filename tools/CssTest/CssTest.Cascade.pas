@@ -36,7 +36,7 @@ uses
   SysUtils, Math, TestChecks, Css.Atoms, Css.Keywords, Css.Tokens, Css.Tokenizer, Css.Colors, Css.ColorParser,
   Css.Values, Css.PropertyIds, Css.Properties, Css.Stylesheets, Css.Parser, Css.MediaQueries,
   Css.ElementAdapter, Css.ComputedValues, Css.ComputedStyle, Css.StyleEngine, Css.Supports, Css.Selectors,
-  CssTest.Tree;
+  Css.CustomProperties, Css.Serialization, Css.NameInvalidation, CssTest.Tree;
 
 type
   TStyler = record
@@ -458,6 +458,151 @@ begin
     'display-p3 red clips to sRGB red');
 end;
 
+function TokensText(Properties: TCssCustomProperties; const Name: string): string;
+var
+  Tokens: TCssTokenArray;
+begin
+  if Properties.Find(InternAtom(Name), Tokens) then
+    Result := SerializeTokenArray(Tokens)
+  else
+    Result := '(none)';
+end;
+
+{ Layered custom property sets: a child set holds only its differences
+  from the flat set below, is flattened past a few dozen, and a set
+  equal to its parent's is the parent's. }
+procedure TestCustomPropertySets;
+var
+  Root, Child, Grandchild, Same: TCssCustomProperties;
+  Index: Integer;
+begin
+  Root := TCssCustomProperties.Over(nil);
+  for Index := 0 to 99 do
+    Root.Put(InternAtom('--root-' + IntToStr(Index)), TokenizeCss(IntToStr(Index) + 'px'));
+  Root := Root.Finish(nil);
+  Check(Root.Count = 100, 'custom properties: a flat set has its entries');
+
+  Child := TCssCustomProperties.Over(Root);
+  Child.Put(InternAtom('--root-5'), TokenizeCss('red'));
+  Child.Put(InternAtom('--own'), TokenizeCss('1'));
+  Child.Remove(InternAtom('--root-7'));
+  Child := Child.Finish(Root);
+  Check(Child <> Root, 'custom properties: a set with differences is its own');
+  Check(TokensText(Child, '--root-5') = 'red', 'custom properties: a difference hides the base value');
+  Check(TokensText(Child, '--root-6') = '6px', 'custom properties: the rest comes from the base');
+  Check(TokensText(Child, '--root-7') = '(none)', 'custom properties: a removed name is gone');
+  Check(Child.Count = 100, 'custom properties: one added, one removed');
+
+  Grandchild := TCssCustomProperties.Over(Child);
+  Grandchild.Put(InternAtom('--deeper'), TokenizeCss('2'));
+  Grandchild := Grandchild.Finish(Child);
+  Check(TokensText(Grandchild, '--root-5') = 'red', 'custom properties: differences are carried down');
+  Check(TokensText(Grandchild, '--root-7') = '(none)', 'custom properties: removals are carried down');
+  Check(TokensText(Grandchild, '--deeper') = '2', 'custom properties: and the set''s own');
+
+  Same := TCssCustomProperties.Over(Child);
+  Same := Same.Finish(Child);
+  Check(Same = Child, 'custom properties: a set with nothing changed is the parent''s');
+  Same.Release;
+
+  Same := TCssCustomProperties.Over(Root);
+  Same.Put(InternAtom('--root-5'), TokenizeCss('red'));
+  Same.Put(InternAtom('--own'), TokenizeCss('1'));
+  Same.Remove(InternAtom('--root-7'));
+  Same := Same.Finish(Root);
+  Check(Same.Equals(Child) and Child.Equals(Same), 'custom properties: equal sets made apart are equal');
+  Check(not Grandchild.Equals(Child), 'custom properties: a set with one more is not equal');
+  Same.Release;
+
+  Same := TCssCustomProperties.Over(Grandchild);
+  for Index := 0 to 49 do
+    Same.Put(InternAtom('--many-' + IntToStr(Index)), TokenizeCss(IntToStr(Index)));
+  Same := Same.Finish(Grandchild);
+  Check(Same.Count = 151, 'custom properties: a set with many differences, flattened, has them all');
+  Check((TokensText(Same, '--root-5') = 'red') and (TokensText(Same, '--root-7') = '(none)') and
+    (TokensText(Same, '--many-49') = '49') and (TokensText(Same, '--root-99') = '99px'),
+    'custom properties: flattening keeps every value');
+  Same.Release;
+
+  Grandchild.Release;
+  Child.Release;
+  Root.Release;
+end;
+
+{ Elements declaring no custom property share their parent's set, also
+  with registered properties that do not inherit (their initial values
+  are what the parent has). }
+procedure TestCustomPropertySharing;
+var
+  S: TStyler;
+  Html, Body, Plain, Declaring, Below: TTestElement;
+begin
+  StartStyler(S, False);
+  try
+    Html := AddElement(nil, 'html', []);
+    S.Root := Html;
+    Body := AddElement(Html, 'body', []);
+    Plain := AddElement(Body, 'div', []);
+    Declaring := AddElement(Body, 'div', ['class', 'declaring']);
+    Below := AddElement(Declaring, 'span', []);
+    AddSheet(S,
+      '@property --local { syntax: "<length>"; inherits: false; initial-value: 4px }'#10 +
+      '@property --shared { syntax: "<color>"; inherits: true; initial-value: red }'#10 +
+      ':root { --a: 1px; --b: 2px }'#10 +
+      '.declaring { --a: 9px; --local: 7px; --shared: blue; width: var(--local); height: var(--a) }'#10 +
+      'span { width: var(--local); height: var(--b) }', coAuthor);
+    StyleAll(S);
+    Check(Body.Style.Custom = Html.Style.Custom, 'custom property sharing: an element declaring none shares');
+    Check(Plain.Style.Custom = Html.Style.Custom, 'custom property sharing: also with registered properties');
+    Check(Declaring.Style.Custom <> Html.Style.Custom, 'custom property sharing: a declaring element has its own');
+    CheckComputed(Declaring, 'width', '7px', 'custom property sharing: a non-inherited registered value');
+    CheckComputed(Below, 'width', '4px', 'custom property sharing: not inherited, the initial value below');
+    CheckComputed(Below, 'height', '2px', 'custom property sharing: the root''s value through the layer');
+    Check(TokensText(Below.Style.Custom, '--shared') = 'blue', 'custom property sharing: an inherited registered value');
+    Check(TokensText(Plain.Style.Custom, '--local') = '4px', 'custom property sharing: the initial value everywhere');
+  finally
+    StopStyler(S);
+  end;
+end;
+
+{ What a class, id or attribute change asks to be styled again, by
+  where the selectors have the name. }
+procedure TestNameInvalidation;
+var
+  S: TStyler;
+
+  procedure CheckName(Kind: TCssSelectorNameKind; const Name: string; Expected: TCssNameInvalidation;
+    const What: string);
+  begin
+    Check(S.Engine.NameInvalidation(Kind, InternAtom(Name)) = Expected, 'name invalidation: ' + What);
+  end;
+
+begin
+  StartStyler(S, False);
+  try
+    S.Root := AddElement(nil, 'html', []);
+    AddSheet(S,
+      '.a .b { color: red } .c + .d { color: red } #x { color: red } [data-y] > p { color: red }'#10 +
+      ':is(.e .f) { color: red } .g:has(.h) { color: red } li:nth-child(2 of .k) { color: red }'#10 +
+      '.Mixed { color: red } :not(.n) { color: red } .s ~ div .t { color: red }', coAuthor);
+    CheckName(snClass, 'a', [niDescendants], 'left of a descendant combinator');
+    CheckName(snClass, 'b', [niSelf], 'the subject');
+    CheckName(snClass, 'c', [niSiblings], 'left of a sibling combinator');
+    CheckName(snId, 'x', [niSelf], 'an id');
+    CheckName(snAttribute, 'data-y', [niDescendants], 'an attribute');
+    CheckName(snClass, 'e', [niSelf, niDescendants, niSiblings], 'in a complex argument');
+    CheckName(snClass, 'f', [niSelf], 'the subject of an argument');
+    CheckName(snClass, 'h', [niEverywhere], 'inside :has()');
+    CheckName(snClass, 'k', [niEverywhere], 'the selector of :nth-child(of)');
+    CheckName(snClass, 'mixed', [niSelf], 'any case');
+    CheckName(snClass, 'n', [niSelf], 'inside :not()');
+    CheckName(snClass, 's', [niSiblings], 'left of siblings and descendants');
+    CheckName(snClass, 'unknown', [], 'a name no selector has');
+  finally
+    StopStyler(S);
+  end;
+end;
+
 procedure RunCascadeTests;
 begin
   TestOrigins;
@@ -468,6 +613,9 @@ begin
   TestUserAgentSheet;
   TestMediaQueries;
   TestColors;
+  TestCustomPropertySets;
+  TestCustomPropertySharing;
+  TestNameInvalidation;
 end;
 
 end.

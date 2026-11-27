@@ -317,10 +317,12 @@ end;
 
 function HasClass(Adapter: TCssElementAdapter; Element: TCssElement; Name: TCssAtom): Boolean;
 var
-  Index: Integer;
+  Index, ClassCount: Integer;
+  ClassList: PCssAtom;
 begin
-  for Index := 0 to Adapter.ClassCount(Element) - 1 do
-    if Adapter.ClassAt(Element, Index) = Name then
+  ClassList := Adapter.Classes(Element, ClassCount);
+  for Index := 0 to ClassCount - 1 do
+    if ClassList[Index] = Name then
       Exit(True);
   Result := False;
 end;

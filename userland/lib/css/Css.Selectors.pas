@@ -237,9 +237,27 @@ begin
   end;
 end;
 
+var
+  { The names, made once from the enum names (the parser looks every
+    pseudo-class and pseudo-element up by name). }
+  PseudoClassNames: array[TCssPseudoClass] of string;
+  PseudoElementNames: array[TCssPseudoElement] of string;
+
+procedure MakePseudoNames;
+var
+  PseudoClass: TCssPseudoClass;
+  PseudoElement: TCssPseudoElement;
+begin
+  for PseudoClass := Low(TCssPseudoClass) to High(TCssPseudoClass) do
+    PseudoClassNames[PseudoClass] := EnumToCssName(GetEnumName(TypeInfo(TCssPseudoClass), Ord(PseudoClass)), 2);
+  for PseudoElement := Low(TCssPseudoElement) to High(TCssPseudoElement) do
+    PseudoElementNames[PseudoElement] :=
+      EnumToCssName(GetEnumName(TypeInfo(TCssPseudoElement), Ord(PseudoElement)), 2);
+end;
+
 function PseudoClassName(PseudoClass: TCssPseudoClass): string;
 begin
-  Result := EnumToCssName(GetEnumName(TypeInfo(TCssPseudoClass), Ord(PseudoClass)), 2);
+  Result := PseudoClassNames[PseudoClass];
 end;
 
 function PseudoClassByName(const LowerName: string): TCssPseudoClass;
@@ -259,7 +277,7 @@ end;
 
 function PseudoElementName(PseudoElement: TCssPseudoElement): string;
 begin
-  Result := EnumToCssName(GetEnumName(TypeInfo(TCssPseudoElement), Ord(PseudoElement)), 2);
+  Result := PseudoElementNames[PseudoElement];
 end;
 
 function PseudoElementByName(const LowerName: string): TCssPseudoElement;
@@ -521,4 +539,6 @@ begin
   end;
 end;
 
+initialization
+  MakePseudoNames;
 end.

@@ -41,7 +41,7 @@ interface
 uses
   Css.Atoms, Css.Selectors, Css.Declarations, Css.Stylesheets, Css.MediaQueries, Css.ElementAdapter,
   Css.BloomFilter, Css.SelectorMatching, Css.RuleIndex, Css.Cascade, Css.StyleStructs, Css.ComputedStyle,
-  Css.StyleCompute, Css.PropertyIds, Css.StateInvalidation, Css.TreeScopes;
+  Css.StyleCompute, Css.PropertyIds, Css.StateInvalidation, Css.NameInvalidation, Css.TreeScopes;
 
 type
   TCssStyleStatistics = record
@@ -80,6 +80,7 @@ type
     FFilter: TCssAncestorFilter;
     FIndex: TCssRuleIndex;
     FStateDependencies: TCssStateDependencies;
+    FNameDependencies: TCssNameDependencies;
     FStructCache: TCssStructCache;
     FComputer: TCssStyleComputer;
     FSheets: array of TCssStyleSheet;
@@ -98,13 +99,22 @@ type
     FShareFlags: array of LongWord;
     FShareStyles: array of TCssComputedStyle;
     FShareCount: Integer;
+    { The candidates of pseudo-element rules seen while resolving the
+      style of FPseudoOwner (entry indexes and their pseudo-elements), for
+      its pseudo-elements' styles right after. }
+    FPseudoOwner: TCssElement;
+    FPseudoEntries: TCssIntegerArray;
+    FPseudoKinds: array of TCssPseudoElement;
+    FPseudoCount: Integer;
     procedure EnsureIndex;
+    procedure RecordPseudoCandidate(EntryIndex: Integer; PseudoElement: TCssPseudoElement);
+    procedure RecordedPseudoCandidates(PseudoElement: TCssPseudoElement; out Count: Integer);
     procedure ClearSharing;
     function FindShared(Hash: LongWord; Parent: TCssComputedStyle; Flags: LongWord; Count: Integer): TCssComputedStyle;
     procedure AddShared(Hash: LongWord; Parent: TCssComputedStyle; Flags: LongWord; Count: Integer;
       Style: TCssComputedStyle);
     function Resolve(Element: TCssElement; Parent: TCssComputedStyle; PseudoElement: TCssPseudoElement;
-      RequireMatch: Boolean): TCssComputedStyle;
+      RequireMatch, AfterElement: Boolean): TCssComputedStyle;
     procedure MatchScopeRules(Index: TCssRuleIndex; Element: TCssElement; PseudoElement: TCssPseudoElement;
       ShadowHost: TCssElement; Depth: Integer; Target: TCssElement; AuthorOnly: Boolean; var ItemCount: Integer);
     procedure MatchShadowRules(Element: TCssElement; PseudoElement: TCssPseudoElement; ElementScope: TCssTreeScope;
@@ -136,9 +146,12 @@ type
       the root). A new reference for the caller. }
     function ResolveStyle(Element: TCssElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
     { The style of a pseudo-element of Element (whose style is
-      ElementStyle), or nil when no rule targets it. }
+      ElementStyle), or nil when no rule targets it. AfterElement: the
+      caller resolved Element's style with ResolveStyle just before, with
+      nothing changed since, so the pseudo-element rules seen then are
+      the only candidates. }
     function ResolvePseudoStyle(Element: TCssElement; ElementStyle: TCssComputedStyle;
-      PseudoElement: TCssPseudoElement): TCssComputedStyle;
+      PseudoElement: TCssPseudoElement; AfterElement: Boolean = False): TCssComputedStyle;
     { The style of an anonymous box under ParentStyle (inherited values
       from it, initial values for the rest); a new reference. }
     function AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
@@ -157,6 +170,10 @@ type
     { What must be styled again when Element's states Changed (the
       selectors using them decide; Css.StateInvalidation). }
     function StateInvalidation(Element: TCssElement; Changed: TCssElementStates): TCssStateInvalidation;
+    { What must be styled again when an element's class, id or attribute
+      Name (Kind says which) is added, removed or changed (the selectors
+      naming it decide; Css.NameInvalidation). }
+    function NameInvalidation(Kind: TCssSelectorNameKind; Name: TCssAtom): TCssNameInvalidation;
     property Matcher: TCssSelectorMatcher read FMatcher;
     property StructCache: TCssStructCache read FStructCache;
   end;
@@ -179,6 +196,7 @@ begin
   FFilter := TCssAncestorFilter.Create;
   FIndex := TCssRuleIndex.Create;
   FStateDependencies := TCssStateDependencies.Create;
+  FNameDependencies := TCssNameDependencies.Create;
   FStructCache := TCssStructCache.Create;
   FUseUserAgentSheet := UseUserAgentSheet;
   FEnvironment := DefaultMediaEnvironment;
@@ -193,6 +211,7 @@ begin
   FStructCache.Free;
   FIndex.Free;
   FStateDependencies.Free;
+  FNameDependencies.Free;
   FFilter.Free;
   FMatcher.Free;
   inherited Destroy;
@@ -267,6 +286,7 @@ begin
   SetLength(Sheets, Count);
   FIndex.Build(Sheets, FEnvironment);
   FStateDependencies.Build(FIndex);
+  FNameDependencies.Build(FIndex);
   ClearSharing;
   FreeAndNil(FComputer);
   FComputer := TCssStyleComputer.Create(FStructCache, FIndex, FEnvironment);
@@ -280,6 +300,8 @@ begin
 end;
 
 function TCssStyleEngine.AppendRule(Sheet: TCssStyleSheet; Rule: TCssRule): Boolean;
+var
+  First: Integer;
 begin
   Result := False;
   if FDirty or (Length(FSheets) = 0) or (FSheets[High(FSheets)] <> Sheet) or (Sheet.Origin <> coAuthor) or
@@ -289,9 +311,11 @@ begin
     Exit;
   if (Length(Sheet.Rules) = 0) or (Sheet.Rules[High(Sheet.Rules)] <> Rule) then
     Exit;
+  First := FIndex.Count;
   if not FIndex.AppendAuthorRule(Rule) then
     Exit;
   FStateDependencies.Build(FIndex);
+  FNameDependencies.AddEntries(FIndex, First);
   ClearSharing;
   FMatcher.Refresh;
   Result := True;
@@ -315,6 +339,8 @@ begin
   FShareFlags := nil;
   FShareStyles := nil;
   FShareCount := 0;
+  { Entry indexes and the tree may change too. }
+  FPseudoOwner := nil;
 end;
 
 function TCssStyleEngine.FindShared(Hash: LongWord; Parent: TCssComputedStyle; Flags: LongWord;
@@ -427,6 +453,34 @@ begin
   Result := FComputer.Compute(Cascaded, Parent, FRootStyle, False);
 end;
 
+procedure TCssStyleEngine.RecordPseudoCandidate(EntryIndex: Integer; PseudoElement: TCssPseudoElement);
+begin
+  if FPseudoCount >= Length(FPseudoEntries) then
+  begin
+    SetLength(FPseudoEntries, FPseudoCount * 2 + 32);
+    SetLength(FPseudoKinds, Length(FPseudoEntries));
+  end;
+  FPseudoEntries[FPseudoCount] := EntryIndex;
+  FPseudoKinds[FPseudoCount] := PseudoElement;
+  Inc(FPseudoCount);
+end;
+
+{ The recorded candidates for PseudoElement into FCandidates. }
+procedure TCssStyleEngine.RecordedPseudoCandidates(PseudoElement: TCssPseudoElement; out Count: Integer);
+var
+  Index: Integer;
+begin
+  Count := 0;
+  if Length(FCandidates) < FPseudoCount then
+    SetLength(FCandidates, FPseudoCount);
+  for Index := 0 to FPseudoCount - 1 do
+    if FPseudoKinds[Index] = PseudoElement then
+    begin
+      FCandidates[Count] := FPseudoEntries[Index];
+      Inc(Count);
+    end;
+end;
+
 { The rules of one index that match Element (as the originating element
   of PseudoElement) with ShadowHost featureless, added at Depth. For
   ::slotted() and ::part() (PseudoElement peSlotted, pePart) Element is
@@ -512,7 +566,7 @@ begin
 end;
 
 function TCssStyleEngine.Resolve(Element: TCssElement; Parent: TCssComputedStyle; PseudoElement: TCssPseudoElement;
-  RequireMatch: Boolean): TCssComputedStyle;
+  RequireMatch, AfterElement: Boolean): TCssComputedStyle;
 var
   CandidateCount, ItemCount, SignatureCount, Index: Integer;
   Entry: PCssRuleEntry;
@@ -534,7 +588,19 @@ begin
     FMatcher.Filter := FFilter
   else
     FMatcher.Filter := nil;
-  FIndex.Candidates(FAdapter, Element, FCandidates, CandidateCount);
+  { An element's own pass notes its pseudo-element candidates; a pass for
+    one of its pseudo-elements right after takes them from there. }
+  if (PseudoElement <> peNone) and AfterElement and (FPseudoOwner = Element) then
+    RecordedPseudoCandidates(PseudoElement, CandidateCount)
+  else
+    FIndex.Candidates(FAdapter, Element, FCandidates, CandidateCount);
+  if PseudoElement = peNone then
+  begin
+    FPseudoOwner := Element;
+    FPseudoCount := 0;
+  end
+  else if FPseudoOwner <> Element then
+    FPseudoOwner := nil;
   ItemCount := 0;
   SignatureCount := 0;
   Shareable := True;
@@ -545,7 +611,11 @@ begin
     Entry := FIndex.Entry(FCandidates[Index]);
     Inc(FStatistics.SelectorsTested);
     if Entry^.Selector.PseudoElement <> PseudoElement then
+    begin
+      if PseudoElement = peNone then
+        RecordPseudoCandidate(FCandidates[Index], Entry^.Selector.PseudoElement);
       Continue;
+    end;
     { The document's author rules do not reach into shadow trees. }
     if (ElementScope <> nil) and (Entry^.Origin = coAuthor) then
       Continue;
@@ -567,6 +637,8 @@ begin
   if (ElementScope <> nil) or (FAdapter.ShadowScope(Element) <> nil) or (FAdapter.AssignedSlot(Element) <> nil) then
   begin
     Shareable := False;
+    { The shadow trees' rules are not in the index's candidates. }
+    FPseudoOwner := nil;
     MatchShadowRules(Element, PseudoElement, ElementScope, ItemCount);
   end;
   FMatcher.Filter := nil;
@@ -627,13 +699,13 @@ end;
 
 function TCssStyleEngine.ResolveStyle(Element: TCssElement; ParentStyle: TCssComputedStyle): TCssComputedStyle;
 begin
-  Result := Resolve(Element, ParentStyle, peNone, False);
+  Result := Resolve(Element, ParentStyle, peNone, False, False);
 end;
 
 function TCssStyleEngine.ResolvePseudoStyle(Element: TCssElement; ElementStyle: TCssComputedStyle;
-  PseudoElement: TCssPseudoElement): TCssComputedStyle;
+  PseudoElement: TCssPseudoElement; AfterElement: Boolean): TCssComputedStyle;
 begin
-  Result := Resolve(Element, ElementStyle, PseudoElement, True);
+  Result := Resolve(Element, ElementStyle, PseudoElement, True, AfterElement);
 end;
 
 function TCssStyleEngine.AnonymousStyle(ParentStyle: TCssComputedStyle): TCssComputedStyle;
@@ -646,6 +718,12 @@ function TCssStyleEngine.StateInvalidation(Element: TCssElement; Changed: TCssEl
 begin
   EnsureIndex;
   Result := FStateDependencies.Invalidation(FAdapter, Element, Changed);
+end;
+
+function TCssStyleEngine.NameInvalidation(Kind: TCssSelectorNameKind; Name: TCssAtom): TCssNameInvalidation;
+begin
+  EnsureIndex;
+  Result := FNameDependencies.Invalidation(Kind, Name);
 end;
 
 procedure TCssStyleEngine.PushAncestor(Element: TCssElement);

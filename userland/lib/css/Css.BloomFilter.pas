@@ -100,8 +100,9 @@ end;
 
 procedure TCssAncestorFilter.Push(Adapter: TCssElementAdapter; Element: TCssElement);
 var
-  Index: Integer;
+  Index, ClassCount: Integer;
   Atom: TCssAtom;
+  ClassList: PCssAtom;
 begin
   if FDepth >= Length(FFrames) then
   begin
@@ -115,8 +116,9 @@ begin
   Atom := Adapter.Id(Element);
   if Atom <> NoAtom then
     AddHash(AtomHash(LowercaseAtom(Atom)));
-  for Index := 0 to Adapter.ClassCount(Element) - 1 do
-    AddHash(AtomHash(LowercaseAtom(Adapter.ClassAt(Element, Index))));
+  ClassList := Adapter.Classes(Element, ClassCount);
+  for Index := 0 to ClassCount - 1 do
+    AddHash(AtomHash(LowercaseAtom(ClassList[Index])));
 end;
 
 procedure TCssAncestorFilter.Pop;

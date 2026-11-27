@@ -21,9 +21,18 @@
   Level 1 and 2): the computed set an element has, and var() and env()
   substitution.
 
-  A set is immutable and reference counted; an element that declares no
-  custom property shares its parent's set. Values are token lists
-  (substituted already: a set never holds a var()).
+  A set is immutable once made and reference counted; an element that
+  declares no custom property shares its parent's set. Values are token
+  lists (substituted already: a set never holds a var()).
+
+  Pages declare hundreds of variables on the root and a few more here
+  and there below it, so a set made for an element that declares some
+  does not copy its parent's: it is layered over a flat set (the
+  parent's, or the one the parent is layered over) and holds only what
+  differs from it, a removed name as a tombstone. When the differences
+  grow past LayerLimit the set is flattened, and the sets below layer
+  over it in turn. A lookup is then at most two binary searches, and
+  making a set costs the differences, not the whole set.
 }
 unit Css.CustomProperties;
 
@@ -39,22 +48,36 @@ type
   TCssCustomProperties = class
   private
     FReferences: LongInt;
+    { The flat set this one is layered over (nil: this set is flat). }
+    FBase: TCssCustomProperties;
+    { Sorted by name: all the entries of a flat set, the differences
+      from FBase of a layered one. }
     FNames: array of TCssAtom;
     FValues: array of TCssTokenArray;
     FCount: Integer;
     function Search(Name: TCssAtom; out Index: Integer): Boolean;
+    procedure InsertAt(Index: Integer; Name: TCssAtom; const Tokens: TCssTokenArray);
+    procedure DeleteAt(Index: Integer);
+    procedure Flatten;
+    function SameEntries(Other: TCssCustomProperties): Boolean;
   public
     constructor Create;
+    destructor Destroy; override;
+    { A modifiable set with Parent's entries (none for nil), to build a
+      child's set; Finish it when done. }
+    class function Over(Parent: TCssCustomProperties): TCssCustomProperties;
+    { Ends building a set made Over(Parent): Parent itself (a new
+      reference, Self released) when nothing differs from it, else Self,
+      flattened when its differences grew too many. nil for an empty
+      set over nil. }
+    function Finish(Parent: TCssCustomProperties): TCssCustomProperties;
     function AddRef: TCssCustomProperties;
     procedure Release;
-    { A modifiable copy (for building a child's set). }
-    function Clone: TCssCustomProperties;
     function Find(Name: TCssAtom; out Tokens: TCssTokenArray): Boolean;
     procedure Put(Name: TCssAtom; const Tokens: TCssTokenArray);
     procedure Remove(Name: TCssAtom);
+    { The number of custom properties in the set. }
     function Count: Integer;
-    function NameAt(Index: Integer): TCssAtom;
-    function ValueAt(Index: Integer): TCssTokenArray;
     function Equals(Other: TCssCustomProperties): Boolean; reintroduce;
     function Bytes: PtrUInt;
   end;
@@ -80,10 +103,136 @@ implementation
 uses
   SysUtils, Css.Tokenizer;
 
+const
+  { The most differences a layered set keeps before it is flattened. }
+  LayerLimit = 32;
+
+var
+  { The value of a layered set's tombstones (compared by pointer). }
+  RemovedValue: TCssTokenArray;
+
+function IsRemoved(const Tokens: TCssTokenArray): Boolean; inline;
+begin
+  Result := Pointer(Tokens) = Pointer(RemovedValue);
+end;
+
 constructor TCssCustomProperties.Create;
 begin
   inherited Create;
   FReferences := 1;
+end;
+
+destructor TCssCustomProperties.Destroy;
+begin
+  FBase.Release;
+  inherited Destroy;
+end;
+
+class function TCssCustomProperties.Over(Parent: TCssCustomProperties): TCssCustomProperties;
+var
+  Index: Integer;
+begin
+  Result := TCssCustomProperties.Create;
+  if Parent = nil then
+    Exit;
+  if Parent.FBase = nil then
+  begin
+    Result.FBase := Parent.AddRef;
+    Exit;
+  end;
+  { Over the same flat set as the parent, starting with its differences. }
+  Result.FBase := Parent.FBase.AddRef;
+  SetLength(Result.FNames, Parent.FCount);
+  SetLength(Result.FValues, Parent.FCount);
+  for Index := 0 to Parent.FCount - 1 do
+  begin
+    Result.FNames[Index] := Parent.FNames[Index];
+    Result.FValues[Index] := Parent.FValues[Index];
+  end;
+  Result.FCount := Parent.FCount;
+end;
+
+{ Whether Self's own entries are Other's, by pointer. }
+function TCssCustomProperties.SameEntries(Other: TCssCustomProperties): Boolean;
+var
+  Index: Integer;
+begin
+  if FCount <> Other.FCount then
+    Exit(False);
+  for Index := 0 to FCount - 1 do
+    if (FNames[Index] <> Other.FNames[Index]) or (Pointer(FValues[Index]) <> Pointer(Other.FValues[Index])) then
+      Exit(False);
+  Result := True;
+end;
+
+function TCssCustomProperties.Finish(Parent: TCssCustomProperties): TCssCustomProperties;
+begin
+  if Parent = nil then
+  begin
+    if FCount = 0 then
+    begin
+      Release;
+      Exit(nil);
+    end;
+    Exit(Self);
+  end;
+  if ((Parent.FBase = nil) and (FBase = Parent) and (FCount = 0)) or
+    ((Parent.FBase <> nil) and (FBase = Parent.FBase) and SameEntries(Parent)) then
+  begin
+    Release;
+    Exit(Parent.AddRef);
+  end;
+  if FCount > LayerLimit then
+    Flatten;
+  Result := Self;
+end;
+
+{ Merges the differences into a copy of the base: the set becomes flat. }
+procedure TCssCustomProperties.Flatten;
+var
+  Names: array of TCssAtom;
+  Values: array of TCssTokenArray;
+  Merged, BaseIndex, OwnIndex: Integer;
+  Base: TCssCustomProperties;
+
+  procedure Add(Name: TCssAtom; const Tokens: TCssTokenArray);
+  begin
+    if IsRemoved(Tokens) then
+      Exit;
+    Names[Merged] := Name;
+    Values[Merged] := Tokens;
+    Inc(Merged);
+  end;
+
+begin
+  Base := FBase;
+  if Base = nil then
+    Exit;
+  Names := nil;
+  Values := nil;
+  SetLength(Names, Base.FCount + FCount);
+  SetLength(Values, Base.FCount + FCount);
+  Merged := 0;
+  BaseIndex := 0;
+  OwnIndex := 0;
+  while (BaseIndex < Base.FCount) or (OwnIndex < FCount) do
+    if (OwnIndex >= FCount) or ((BaseIndex < Base.FCount) and (Base.FNames[BaseIndex] < FNames[OwnIndex])) then
+    begin
+      Add(Base.FNames[BaseIndex], Base.FValues[BaseIndex]);
+      Inc(BaseIndex);
+    end
+    else
+    begin
+      if (BaseIndex < Base.FCount) and (Base.FNames[BaseIndex] = FNames[OwnIndex]) then
+        Inc(BaseIndex);
+      Add(FNames[OwnIndex], FValues[OwnIndex]);
+      Inc(OwnIndex);
+    end;
+  FNames := Names;
+  FValues := Values;
+  FCount := Merged;
+  FBase := nil;
+  Base.Release;
 end;
 
 function TCssCustomProperties.AddRef: TCssCustomProperties;
@@ -99,23 +248,6 @@ begin
     Exit;
   if InterlockedDecrement(FReferences) = 0 then
     Free;
-end;
-
-function TCssCustomProperties.Clone: TCssCustomProperties;
-var
-  Index: Integer;
-begin
-  Result := TCssCustomProperties.Create;
-  if Self = nil then
-    Exit;
-  SetLength(Result.FNames, FCount);
-  SetLength(Result.FValues, FCount);
-  for Index := 0 to FCount - 1 do
-  begin
-    Result.FNames[Index] := FNames[Index];
-    Result.FValues[Index] := FValues[Index];
-  end;
-  Result.FCount := FCount;
 end;
 
 function TCssCustomProperties.Search(Name: TCssAtom; out Index: Integer): Boolean;
@@ -141,6 +273,38 @@ begin
   Result := False;
 end;
 
+{ The entries move as raw memory: a value's reference moves with it, so
+  no count changes (the slot left behind is cleared without a release). }
+procedure TCssCustomProperties.InsertAt(Index: Integer; Name: TCssAtom; const Tokens: TCssTokenArray);
+begin
+  if FCount >= Length(FNames) then
+  begin
+    SetLength(FNames, FCount * 2 + 4);
+    SetLength(FValues, Length(FNames));
+  end;
+  if Index < FCount then
+  begin
+    Move(FNames[Index], FNames[Index + 1], (FCount - Index) * SizeOf(TCssAtom));
+    Move(FValues[Index], FValues[Index + 1], (FCount - Index) * SizeOf(Pointer));
+    Pointer(FValues[Index]) := nil;
+  end;
+  FNames[Index] := Name;
+  FValues[Index] := Tokens;
+  Inc(FCount);
+end;
+
+procedure TCssCustomProperties.DeleteAt(Index: Integer);
+begin
+  FValues[Index] := nil;
+  if Index < FCount - 1 then
+  begin
+    Move(FNames[Index + 1], FNames[Index], (FCount - Index - 1) * SizeOf(TCssAtom));
+    Move(FValues[Index + 1], FValues[Index], (FCount - Index - 1) * SizeOf(Pointer));
+    Pointer(FValues[FCount - 1]) := nil;
+  end;
+  Dec(FCount);
+end;
+
 function TCssCustomProperties.Find(Name: TCssAtom; out Tokens: TCssTokenArray): Boolean;
 var
   Index: Integer;
@@ -148,66 +312,121 @@ begin
   Tokens := nil;
   if Self = nil then
     Exit(False);
-  Result := Search(Name, Index);
-  if Result then
+  if Search(Name, Index) then
+  begin
+    if IsRemoved(FValues[Index]) then
+      Exit(False);
     Tokens := FValues[Index];
+    Exit(True);
+  end;
+  Result := FBase.Find(Name, Tokens);
 end;
 
 procedure TCssCustomProperties.Put(Name: TCssAtom; const Tokens: TCssTokenArray);
 var
-  Index, Other: Integer;
+  Index: Integer;
+  Found: Boolean;
+  BaseTokens: TCssTokenArray;
 begin
-  if Search(Name, Index) then
+  Found := Search(Name, Index);
+  { The base's own value is no difference to keep (so that a set equal
+    to its parent's is seen to be). }
+  if (FBase <> nil) and FBase.Find(Name, BaseTokens) and (Pointer(BaseTokens) = Pointer(Tokens)) then
   begin
-    FValues[Index] := Tokens;
+    if Found then
+      DeleteAt(Index);
     Exit;
   end;
-  if FCount >= Length(FNames) then
-  begin
-    SetLength(FNames, FCount * 2 + 4);
-    SetLength(FValues, Length(FNames));
-  end;
-  for Other := FCount downto Index + 1 do
-  begin
-    FNames[Other] := FNames[Other - 1];
-    FValues[Other] := FValues[Other - 1];
-  end;
-  FNames[Index] := Name;
-  FValues[Index] := Tokens;
-  Inc(FCount);
+  if Found then
+    FValues[Index] := Tokens
+  else
+    InsertAt(Index, Name, Tokens);
 end;
 
 procedure TCssCustomProperties.Remove(Name: TCssAtom);
 var
-  Index, Other: Integer;
+  Index: Integer;
+  Found: Boolean;
+  Tokens: TCssTokenArray;
 begin
-  if not Search(Name, Index) then
-    Exit;
-  for Other := Index to FCount - 2 do
+  Found := Search(Name, Index);
+  if FBase.Find(Name, Tokens) then
   begin
-    FNames[Other] := FNames[Other + 1];
-    FValues[Other] := FValues[Other + 1];
+    { The base has it: a tombstone hides it. }
+    if Found then
+      FValues[Index] := RemovedValue
+    else
+      InsertAt(Index, Name, RemovedValue);
+  end
+  else if Found then
+    DeleteAt(Index);
+end;
+
+type
+  { Walks a set's entries in name order, through its layer. }
+  TEntryCursor = record
+    Properties: TCssCustomProperties;
+    OwnIndex, BaseIndex: Integer;
+    Name: TCssAtom;
+    { The entry's TCssTokenArray, not counted. }
+    Value: Pointer;
   end;
-  Dec(FCount);
-  FValues[FCount] := nil;
+
+procedure StartCursor(out Cursor: TEntryCursor; Properties: TCssCustomProperties);
+begin
+  Cursor.Properties := Properties;
+  Cursor.OwnIndex := 0;
+  Cursor.BaseIndex := 0;
+  Cursor.Name := NoAtom;
+  Cursor.Value := nil;
+end;
+
+{ Moves to the next entry (an own entry hides the base's of its name, a
+  tombstone hides both); False at the end. }
+function NextEntry(var Cursor: TEntryCursor): Boolean;
+var
+  Own, Base: TCssCustomProperties;
+  OwnLeft, BaseLeft: Boolean;
+begin
+  Own := Cursor.Properties;
+  if Own = nil then
+    Exit(False);
+  Base := Own.FBase;
+  repeat
+    OwnLeft := Cursor.OwnIndex < Own.FCount;
+    BaseLeft := (Base <> nil) and (Cursor.BaseIndex < Base.FCount);
+    if not OwnLeft and not BaseLeft then
+      Exit(False);
+    if OwnLeft and (not BaseLeft or (Own.FNames[Cursor.OwnIndex] <= Base.FNames[Cursor.BaseIndex])) then
+    begin
+      if BaseLeft and (Base.FNames[Cursor.BaseIndex] = Own.FNames[Cursor.OwnIndex]) then
+        Inc(Cursor.BaseIndex);
+      Cursor.Name := Own.FNames[Cursor.OwnIndex];
+      Cursor.Value := Pointer(Own.FValues[Cursor.OwnIndex]);
+      Inc(Cursor.OwnIndex);
+    end
+    else
+    begin
+      Cursor.Name := Base.FNames[Cursor.BaseIndex];
+      Cursor.Value := Pointer(Base.FValues[Cursor.BaseIndex]);
+      Inc(Cursor.BaseIndex);
+    end;
+  until Cursor.Value <> Pointer(RemovedValue);
+  Result := True;
 end;
 
 function TCssCustomProperties.Count: Integer;
+var
+  Cursor: TEntryCursor;
 begin
   if Self = nil then
-    Result := 0
-  else
-    Result := FCount;
-end;
-
-function TCssCustomProperties.NameAt(Index: Integer): TCssAtom;
-begin
-  Result := FNames[Index];
-end;
-
-function TCssCustomProperties.ValueAt(Index: Integer): TCssTokenArray;
-begin
-  Result := FValues[Index];
+    Exit(0);
+  if FBase = nil then
+    Exit(FCount);
+  Result := 0;
+  StartCursor(Cursor, Self);
+  while NextEntry(Cursor) do
+    Inc(Result);
 end;
 
 function SameTokens(const A, B: TCssTokenArray): Boolean;
@@ -225,18 +444,49 @@ begin
   Result := True;
 end;
 
-function TCssCustomProperties.Equals(Other: TCssCustomProperties): Boolean;
+{ Whether two sets layered over the same base differ in nothing. }
+function SameDifferences(Mine, Theirs: TCssCustomProperties): Boolean;
 var
   Index: Integer;
 begin
-  if Self = Other then
-    Exit(True);
-  if Count <> Other.Count then
+  if (Mine.FBase <> Theirs.FBase) or (Mine.FCount <> Theirs.FCount) then
     Exit(False);
-  for Index := 0 to FCount - 1 do
-    if (FNames[Index] <> Other.FNames[Index]) or not SameTokens(FValues[Index], Other.FValues[Index]) then
+  for Index := 0 to Mine.FCount - 1 do
+    if (Mine.FNames[Index] <> Theirs.FNames[Index]) or
+      (IsRemoved(Mine.FValues[Index]) <> IsRemoved(Theirs.FValues[Index])) or
+      not SameTokens(Mine.FValues[Index], Theirs.FValues[Index]) then
       Exit(False);
   Result := True;
+end;
+
+function TCssCustomProperties.Equals(Other: TCssCustomProperties): Boolean;
+var
+  MineCursor, TheirCursor: TEntryCursor;
+  MineMore, TheirMore: Boolean;
+begin
+  if Self = Other then
+    Exit(True);
+  if (Self <> nil) and (Other <> nil) then
+  begin
+    if SameDifferences(Self, Other) then
+      Exit(True);
+    { Flat sets have no tombstones: their entries are the whole answer. }
+    if (FBase = nil) and (Other.FBase = nil) then
+      Exit(False);
+  end;
+  StartCursor(MineCursor, Self);
+  StartCursor(TheirCursor, Other);
+  repeat
+    MineMore := NextEntry(MineCursor);
+    TheirMore := NextEntry(TheirCursor);
+    if MineMore <> TheirMore then
+      Exit(False);
+    if not MineMore then
+      Exit(True);
+    if (MineCursor.Name <> TheirCursor.Name) or
+      not SameTokens(TCssTokenArray(MineCursor.Value), TCssTokenArray(TheirCursor.Value)) then
+      Exit(False);
+  until False;
 end;
 
 function TCssCustomProperties.Bytes: PtrUInt;
@@ -446,5 +696,7 @@ begin
 end;
 
 initialization
+  SetLength(RemovedValue, 1);
+  RemovedValue[0] := EofToken;
   SetDefaultEnvironment;
 end.

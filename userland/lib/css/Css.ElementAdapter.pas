@@ -61,7 +61,11 @@ type
 
   TCssDirection = (dirLeftToRight, dirRightToLeft);
 
+  PCssAtom = ^TCssAtom;
+
   TCssElementAdapter = class
+  private
+    FClassBuffer: array of TCssAtom;
   public
     { The element's local name as an atom; for HTML elements the
       lowercase name the HTML parser stores. }
@@ -75,6 +79,12 @@ type
     function Id(Element: TCssElement): TCssAtom; virtual; abstract;
     function ClassCount(Element: TCssElement): Integer; virtual; abstract;
     function ClassAt(Element: TCssElement; Index: Integer): TCssAtom; virtual; abstract;
+    { The element's classes as Count consecutive atoms, for the loops of
+      matching and the rule index: no copy and no reference counting.
+      A host that keeps them in an array returns it (valid until the
+      class attribute changes); the default copies ClassAt's answers into
+      a buffer the next call reuses. }
+    function Classes(Element: TCssElement; out Count: Integer): PCssAtom; virtual;
     { The attribute in namespace NamespaceUri (NoAtom: none) with local
       name LocalName (lowercase for HTML elements in HTML documents). }
     function FindAttribute(Element: TCssElement; AttributeNamespace, AttributeName: TCssAtom;
@@ -129,6 +139,20 @@ type
   end;
 
 implementation
+
+function TCssElementAdapter.Classes(Element: TCssElement; out Count: Integer): PCssAtom;
+var
+  Index: Integer;
+begin
+  Count := ClassCount(Element);
+  if Count = 0 then
+    Exit(nil);
+  if Length(FClassBuffer) < Count then
+    SetLength(FClassBuffer, Count);
+  for Index := 0 to Count - 1 do
+    FClassBuffer[Index] := ClassAt(Element, Index);
+  Result := @FClassBuffer[0];
+end;
 
 function TCssElementAdapter.TreeScope(Element: TCssElement): TObject;
 begin

@@ -725,8 +725,9 @@ end;
 
 function TCssSelectorMatcher.MatchSimple(const Simple: TCssSimpleSelector; Element: TCssElement): Boolean;
 var
-  Index: Integer;
+  Index, ClassCount: Integer;
   Wanted: TCssAtom;
+  ClassList: PCssAtom;
 begin
   if (FShadowHost <> nil) and (Element = FShadowHost) then
     Exit(MatchFeaturelessHost(Simple, Element));
@@ -753,10 +754,17 @@ begin
           Wanted := Simple.LowerName
         else
           Wanted := Simple.Name;
-        for Index := 0 to FAdapter.ClassCount(Element) - 1 do
-          if (FQuirks and (LowercaseAtom(FAdapter.ClassAt(Element, Index)) = Wanted)) or
-            (not FQuirks and (FAdapter.ClassAt(Element, Index) = Wanted)) then
-            Exit(True);
+        ClassList := FAdapter.Classes(Element, ClassCount);
+        if FQuirks then
+        begin
+          for Index := 0 to ClassCount - 1 do
+            if LowercaseAtom(ClassList[Index]) = Wanted then
+              Exit(True);
+        end
+        else
+          for Index := 0 to ClassCount - 1 do
+            if ClassList[Index] = Wanted then
+              Exit(True);
       end;
     skAttribute: Result := MatchAttribute(Simple, Element);
     skPseudoClass: Result := MatchPseudoClass(Simple, Element);

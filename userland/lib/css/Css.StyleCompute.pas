@@ -43,7 +43,7 @@ interface
 
 uses
   Css.Atoms, Css.Units, Css.Colors, Css.Values, Css.PropertyIds, Css.ComputedValues, Css.StyleStructs,
-  Css.ComputedStyle, Css.Cascade, Css.CustomProperties, Css.RuleIndex, Css.MediaQueries;
+  Css.ComputedStyle, Css.Cascade, Css.CustomProperties, Css.RuleIndex, Css.MediaQueries, Css.SubstitutionCache;
 
 type
   TCssInitialStructs = array[TCssStructGroup] of PCssStyleStruct;
@@ -69,6 +69,7 @@ type
     FInitial: TCssInitialStructs;
     FIndex: TCssRuleIndex;
     FEnvironment: TCssMediaEnvironment;
+    FSubstitutions: TCssSubstitutionCache;
     procedure BuildInitialStructs;
   public
     constructor Create(Cache: TCssStructCache; Index: TCssRuleIndex; const Environment: TCssMediaEnvironment);
@@ -537,33 +538,43 @@ begin
   Result := Valid;
 end;
 
-function ComputeCustomProperties(var Cascaded: TCssCascadedValues; Parent: TCssComputedStyle;
-  Index: TCssRuleIndex; IsRoot: Boolean): TCssCustomProperties;
+{ Whether an element declaring no custom property has exactly its
+  parent's set: every registered (@property) property that does not
+  inherit has its initial value there (or none, without one) and every
+  registered one with an initial value is there. }
+function ParentSetCarriesOver(ParentSet: TCssCustomProperties; Index: TCssRuleIndex): Boolean;
 var
-  Resolution: TCustomResolution;
-  CustomIndex, Item: Integer;
-  ParentSet: TCssCustomProperties;
-  Value: TCssValue;
-  Name: TCssAtom;
+  Item: Integer;
   Registered: TCssRegisteredProperty;
   Tokens: TCssTokenArray;
-  NeedsCopy: Boolean;
+  Present: Boolean;
 begin
-  ParentSet := nil;
-  if Parent <> nil then
-    ParentSet := Parent.Custom;
-  NeedsCopy := Cascaded.CustomCount > 0;
-  if Index.HasRegisteredProperties then
-    NeedsCopy := True;
-  if not NeedsCopy then
-    Exit(ParentSet.AddRef);
-  Result := ParentSet.Clone;
-  { Registered properties: non-inherited ones start from their initial
-    value on every element; every initial value is there at the root. }
-  if Index.HasRegisteredProperties then
-    for Item := Result.Count - 1 downto 0 do
-      if Index.FindRegisteredProperty(Result.NameAt(Item), Registered) and not Registered.Inherits then
-        Result.Remove(Result.NameAt(Item));
+  for Item := 0 to Index.RegisteredCount - 1 do
+  begin
+    Registered := Index.RegisteredAt(Item);
+    Present := ParentSet.Find(Registered.Name, Tokens);
+    if not Registered.Inherits then
+    begin
+      if Present <> Registered.Rule.HasInitialValue then
+        Exit(False);
+      if Present and (Pointer(Tokens) <> Pointer(Registered.Rule.InitialValue)) then
+        Exit(False);
+    end
+    else if Registered.Rule.HasInitialValue and not Present then
+      Exit(False);
+  end;
+  Result := True;
+end;
+
+{ The element's own declarations without var() in them, in Properties. }
+procedure ApplyPlainCustomDeclarations(const Cascaded: TCssCascadedValues; ParentSet,
+  Properties: TCssCustomProperties);
+var
+  CustomIndex: Integer;
+  Name: TCssAtom;
+  Value: TCssValue;
+  Tokens: TCssTokenArray;
+begin
   for CustomIndex := 0 to Cascaded.CustomCount - 1 do
   begin
     Name := Cascaded.CustomNames[CustomIndex];
@@ -573,34 +584,81 @@ begin
     if Value.Kind = vkKeyword then
     begin
       case Value.Keyword of
-        kwInitial: Result.Remove(Name);
+        kwInitial: Properties.Remove(Name);
         kwInherit:
           if ParentSet.Find(Name, Tokens) then
-            Result.Put(Name, Tokens)
+            Properties.Put(Name, Tokens)
           else
-            Result.Remove(Name);
+            Properties.Remove(Name);
       end;
-      { unset: inherited (already copied from the parent). }
+      { unset: inherited (already there from the parent). }
     end
     else if not HasVariableReference(Value.Tokens) then
-      Result.Put(Name, Value.Tokens);
+      Properties.Put(Name, Value.Tokens);
   end;
+end;
+
+{ The element's own declarations with var() in them, substituted in
+  dependency order (a cycle makes its members invalid). }
+procedure ResolveCustomReferences(var Cascaded: TCssCascadedValues; Properties: TCssCustomProperties);
+var
+  Resolution: TCustomResolution;
+  CustomIndex: Integer;
+  Value: TCssValue;
+  AnyPending: Boolean;
+begin
   Resolution.Cascaded := @Cascaded;
-  Resolution.Properties := Result;
+  Resolution.Properties := Properties;
+  Resolution.States := nil;
   SetLength(Resolution.States, Cascaded.CustomCount);
   Resolution.Stack := nil;
   Resolution.Depth := 0;
+  AnyPending := False;
   for CustomIndex := 0 to Cascaded.CustomCount - 1 do
   begin
     Value := Cascaded.CustomValues[CustomIndex];
     if (Value <> nil) and (Value.Kind = vkUnparsed) and HasVariableReference(Value.Tokens) then
-      Resolution.States[CustomIndex] := csPending
+    begin
+      Resolution.States[CustomIndex] := csPending;
+      AnyPending := True;
+    end
     else
       Resolution.States[CustomIndex] := csDone;
   end;
+  if not AnyPending then
+    Exit;
   for CustomIndex := 0 to Cascaded.CustomCount - 1 do
     if Resolution.States[CustomIndex] = csPending then
       ResolveCustom(Resolution, CustomIndex);
+end;
+
+{ The element's custom property set (a new reference). The parent's is
+  shared when nothing changes it; else the new set is layered over it
+  (Css.CustomProperties). }
+function ComputeCustomProperties(var Cascaded: TCssCascadedValues; Parent: TCssComputedStyle;
+  Index: TCssRuleIndex): TCssCustomProperties;
+var
+  Item: Integer;
+  ParentSet: TCssCustomProperties;
+  Registered: TCssRegisteredProperty;
+  Tokens: TCssTokenArray;
+begin
+  ParentSet := nil;
+  if Parent <> nil then
+    ParentSet := Parent.Custom;
+  if (Cascaded.CustomCount = 0) and (not Index.HasRegisteredProperties or ParentSetCarriesOver(ParentSet, Index)) then
+    Exit(ParentSet.AddRef);
+  Result := TCssCustomProperties.Over(ParentSet);
+  { Registered properties: non-inherited ones start from their initial
+    value on every element; every initial value is there at the root. }
+  for Item := 0 to Index.RegisteredCount - 1 do
+  begin
+    Registered := Index.RegisteredAt(Item);
+    if not Registered.Inherits then
+      Result.Remove(Registered.Name);
+  end;
+  ApplyPlainCustomDeclarations(Cascaded, ParentSet, Result);
+  ResolveCustomReferences(Cascaded, Result);
   { Registered initial values where nothing gave a value. }
   for Item := 0 to Index.RegisteredCount - 1 do
   begin
@@ -608,6 +666,7 @@ begin
     if Registered.Rule.HasInitialValue and not Result.Find(Registered.Name, Tokens) then
       Result.Put(Registered.Name, Registered.Rule.InitialValue);
   end;
+  Result := Result.Finish(ParentSet);
 end;
 
 { ---- the computer ---- }
@@ -619,6 +678,7 @@ begin
   FCache := Cache;
   FIndex := Index;
   FEnvironment := Environment;
+  FSubstitutions := TCssSubstitutionCache.Create;
   BuildInitialStructs;
 end;
 
@@ -628,6 +688,7 @@ var
 begin
   for Group := Low(TCssStructGroup) to High(TCssStructGroup) do
     ReleaseStruct(FInitial[Group]);
+  FSubstitutions.Free;
   inherited Destroy;
 end;
 
@@ -799,15 +860,24 @@ begin
   Result := TCssCustomProperties(Data).Find(Name, Tokens);
 end;
 
-{ The value of an unparsed (var()) declaration for physical Id, or nil
-  when it is invalid at computed-value time. }
-function ResolveUnparsed(Id: TCssPropertyId; Value: TCssValue; Properties: TCssCustomProperties;
-  const Cascaded: TCssCascadedValues; var Resolved: TResolvedValues): TCssValue;
+{ Whether the shorthand's longhand Longhand is physical Id. }
+function LonghandIs(Longhand, Id: TCssPropertyId; const Cascaded: TCssCascadedValues): Boolean;
+begin
+  Result := (Longhand = Id) or (IsLogical(Longhand) and
+    (PhysicalProperty(Longhand, Cascaded.WritingMode, Cascaded.RightToLeft) = Id));
+end;
+
+{ Substitutes and parses an unparsed (var()) declaration: the value for
+  physical Id (a new reference), nil when it is invalid at computed-value
+  time. A shorthand's other longhands go into the cache, since their own
+  declarations are this same value. }
+function SubstituteUnparsed(Id: TCssPropertyId; Value: TCssValue; Properties: TCssCustomProperties;
+  const Cascaded: TCssCascadedValues; Cache: TCssSubstitutionCache): TCssValue;
 var
   Tokens: TCssTokenArray;
   Cursor: TCssTokenCursor;
   Keyword: TCssKeyword;
-  Shorthand: TCssPropertyId;
+  Shorthand, Physical: TCssPropertyId;
   Longhands: TCssPropertyIdArray;
   Values: TCssValueArray;
   Index: Integer;
@@ -823,34 +893,47 @@ begin
   begin
     Cursor.NextNonWhitespace;
     if Cursor.AtEndIgnoringWhitespace then
-    begin
-      Result := NewKeyword(Keyword);
-      Keep(Resolved, Result);
-      Exit;
-    end;
+      Exit(NewKeyword(Keyword));
     Cursor := TrimRange(TCssTokenCursor.Create(Tokens));
   end;
-  if Value.Shorthand >= 0 then
-  begin
-    Shorthand := TCssPropertyId(Value.Shorthand);
-    if not ExpandShorthand(Shorthand, Cursor, Values) then
-      Exit;
-    Longhands := ShorthandLonghands(Shorthand);
-    for Index := 0 to High(Longhands) do
-    begin
-      if (Result = nil) and ((Longhands[Index] = Id) or
-        (IsLogical(Longhands[Index]) and (PhysicalProperty(Longhands[Index], Cascaded.WritingMode,
-        Cascaded.RightToLeft) = Id))) then
-      begin
-        Result := Values[Index];
-        Keep(Resolved, Result);
-      end
-      else
-        Values[Index].Release;
-    end;
+  if Value.Shorthand < 0 then
+    Exit(ParseLonghandValue(Id, Cursor));
+  Shorthand := TCssPropertyId(Value.Shorthand);
+  if not ExpandShorthand(Shorthand, Cursor, Values) then
     Exit;
+  Longhands := ShorthandLonghands(Shorthand);
+  for Index := 0 to High(Longhands) do
+  begin
+    if (Result = nil) and LonghandIs(Longhands[Index], Id, Cascaded) then
+      Result := Values[Index]
+    else
+    begin
+      Physical := Longhands[Index];
+      if IsLogical(Physical) then
+        Physical := PhysicalProperty(Physical, Cascaded.WritingMode, Cascaded.RightToLeft);
+      Cache.Store(SubstitutionKey(Value, Properties, Physical, Cascaded.WritingMode, Cascaded.RightToLeft),
+        Values[Index]);
+      Values[Index].Release;
+    end;
   end;
-  Result := ParseLonghandValue(Id, Cursor);
+end;
+
+{ The value of an unparsed (var()) declaration for physical Id, or nil
+  when it is invalid at computed-value time; remembered for the next
+  element with the same declaration and custom properties. }
+function ResolveUnparsed(Id: TCssPropertyId; Value: TCssValue; Properties: TCssCustomProperties;
+  const Cascaded: TCssCascadedValues; Cache: TCssSubstitutionCache; var Resolved: TResolvedValues): TCssValue;
+var
+  Key: TCssSubstitutionKey;
+begin
+  Key := SubstitutionKey(Value, Properties, Id, Cascaded.WritingMode, Cascaded.RightToLeft);
+  if Cache.Find(Key, Result) then
+    Result := Result.AddRef
+  else
+  begin
+    Result := SubstituteUnparsed(Id, Value, Properties, Cascaded, Cache);
+    Cache.Store(Key, Result);
+  end;
   if Result <> nil then
     Keep(Resolved, Result);
 end;
@@ -878,14 +961,14 @@ begin
   Resolved.Values := nil;
   Resolved.Count := 0;
   try
-    Result.Custom := ComputeCustomProperties(Cascaded, Parent, FIndex, IsRoot);
+    Result.Custom := ComputeCustomProperties(Cascaded, Parent, FIndex);
     { var() first, so that every value below is parsed. }
     for Id := Succ(cpInvalid) to High(TCssPhysicalId) do
     begin
       Value := Cascaded.Values[Id];
       if (Value <> nil) and (Value.Kind = vkUnparsed) then
       begin
-        Value := ResolveUnparsed(Id, Value, Result.Custom, Cascaded, Resolved);
+        Value := ResolveUnparsed(Id, Value, Result.Custom, Cascaded, FSubstitutions, Resolved);
         { Invalid at computed-value time: as unset. }
         if Value = nil then
         begin

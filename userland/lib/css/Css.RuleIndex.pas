@@ -502,17 +502,18 @@ procedure TCssRuleIndex.Candidates(Adapter: TCssElementAdapter; Element: TCssEle
 var
   Index, Other, ClassCount: Integer;
   Atom: TCssAtom;
+  ClassList: PCssAtom;
   Duplicate: Boolean;
 begin
   Count := 0;
   AddBucket(BucketId, LowercaseAtom(Adapter.Id(Element)));
-  ClassCount := Adapter.ClassCount(Element);
+  ClassList := Adapter.Classes(Element, ClassCount);
   for Index := 0 to ClassCount - 1 do
   begin
-    Atom := LowercaseAtom(Adapter.ClassAt(Element, Index));
+    Atom := LowercaseAtom(ClassList[Index]);
     Duplicate := False;
     for Other := 0 to Index - 1 do
-      if LowercaseAtom(Adapter.ClassAt(Element, Other)) = Atom then
+      if LowercaseAtom(ClassList[Other]) = Atom then
         Duplicate := True;
     if not Duplicate then
       AddBucket(BucketClass, Atom);
