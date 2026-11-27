@@ -130,19 +130,18 @@ begin
     Result := -1;
 end;
 
-function ParseString(var Parser: TJsonParser): TJsValue;
+{ A string with escapes, from its first character at Start to past its
+  closing quote. }
+function ParseEscapedString(var Parser: TJsonParser; Start: Integer): TJsValue;
 var
   Units: TUnits;
   Code: Integer;
   Value, Index, Digit: Integer;
-  Start: Integer;
-  Plain: Boolean;
 begin
-  Inc(Parser.Position);
-  Start := Parser.Position;
-  Plain := True;
   Units.Data := nil;
   Units.Count := 0;
+  for Index := Start to Parser.Position - 1 do
+    Put(Units, Parser.Text.CharAt(Index));
   while True do
   begin
     Code := Current(Parser);
@@ -154,12 +153,6 @@ begin
       Exit(Fail(Parser, 'Bad control character in string literal in JSON'));
     if Code = Ord('\') then
     begin
-      if Plain then
-      begin
-        for Index := Start to Parser.Position - 1 do
-          Put(Units, Parser.Text.CharAt(Index));
-        Plain := False;
-      end;
       Inc(Parser.Position);
       Code := Current(Parser);
       case Code of
@@ -195,34 +188,99 @@ begin
       Inc(Parser.Position);
       Continue;
     end;
-    if not Plain then
-      Put(Units, Code);
+    Put(Units, Code);
     Inc(Parser.Position);
   end;
-  if Plain then
-    Result := JsStringValue(SubString(Parser.Realm.Heap, Parser.Text, Start, Parser.Position - Start))
-  else if Units.Count = 0 then
+  if Units.Count = 0 then
     Result := Parser.Realm.Atom(anEmpty)
   else
     Result := JsStringValue(NewUtf16String(Parser.Realm.Heap, @Units.Data[0], Units.Count));
   Inc(Parser.Position);
 end;
 
-function ParseNumber(var Parser: TJsonParser): TJsValue;
+{ The property key of a string without escapes: interned straight from
+  a Latin-1 text (no string made when the name is known). }
+function PlainKey(var Parser: TJsonParser; Start, Count: Integer): TJsValue;
 var
+  Atom: TJsString;
+  Index: LongWord;
+begin
+  if Parser.Text.IsWide then
+    Exit(ToPropertyKey(Parser.Realm, JsStringValue(SubString(Parser.Realm.Heap, Parser.Text, Start, Count))));
+  Atom := Parser.Realm.Runtime.Atoms.InternLatin1(Parser.Text.Chars8 + Start, Count);
+  if Atom.ArrayIndex(Index) and (Index <= 2147483647) then
+    Result := JsInteger(LongInt(Index))
+  else
+    Result := JsStringValue(Atom);
+end;
+
+{ A string at the opening quote: its value, or as a property key. }
+function ParseString(var Parser: TJsonParser; AsKey: Boolean): TJsValue;
+var
+  Code: Word;
   Start: Integer;
+begin
+  Inc(Parser.Position);
+  Start := Parser.Position;
+  while Parser.Position < Parser.Text.Length do
+  begin
+    Code := Parser.Text.CharAt(Parser.Position);
+    if Code = Ord('"') then
+    begin
+      if AsKey then
+        Result := PlainKey(Parser, Start, Parser.Position - Start)
+      else
+        Result := JsStringValue(SubString(Parser.Realm.Heap, Parser.Text, Start, Parser.Position - Start));
+      Inc(Parser.Position);
+      Exit;
+    end;
+    if (Code = Ord('\')) or (Code < 32) then
+      Break;
+    Inc(Parser.Position);
+  end;
+  Result := ParseEscapedString(Parser, Start);
+  if AsKey and (Result <> JsException) then
+    Result := ToPropertyKey(Parser.Realm, Result);
+end;
+
+function NumberFromText(var Parser: TJsonParser; Start: Integer): TJsValue;
+var
   Text: string;
   Index: Integer;
+begin
+  Text := '';
+  SetLength(Text, Parser.Position - Start);
+  for Index := Start to Parser.Position - 1 do
+    Text[Index - Start + 1] := Char(Parser.Text.CharAt(Index));
+  Result := JsNumber(TextToNumber(Text));
+end;
+
+function ParseNumber(var Parser: TJsonParser): TJsValue;
+const
+  { Integers of up to 15 digits are exact in a double. }
+  LongestExactInteger = 15;
+var
+  Start: Integer;
+  Negative, IsInteger: Boolean;
+  Magnitude: Int64;
 
   procedure Digits;
   begin
     while (Current(Parser) >= Ord('0')) and (Current(Parser) <= Ord('9')) do
+    begin
+      Magnitude := Magnitude * 10 + (Current(Parser) - Ord('0'));
       Inc(Parser.Position);
+      if Parser.Position - Start > LongestExactInteger + 1 then
+        Magnitude := 0;
+    end;
   end;
 
 begin
   Start := Parser.Position;
-  if Current(Parser) = Ord('-') then
+  Magnitude := 0;
+  IsInteger := True;
+  Negative := Current(Parser) = Ord('-');
+  if Negative then
     Inc(Parser.Position);
   if Current(Parser) = Ord('0') then
     Inc(Parser.Position)
@@ -232,6 +290,7 @@ begin
     Exit(Fail(Parser, ''));
   if Current(Parser) = Ord('.') then
   begin
+    IsInteger := False;
     Inc(Parser.Position);
     if not ((Current(Parser) >= Ord('0')) and (Current(Parser) <= Ord('9'))) then
       Exit(Fail(Parser, ''));
@@ -239,6 +298,7 @@ begin
   end;
   if (Current(Parser) = Ord('e')) or (Current(Parser) = Ord('E')) then
   begin
+    IsInteger := False;
     Inc(Parser.Position);
     if (Current(Parser) = Ord('+')) or (Current(Parser) = Ord('-')) then
       Inc(Parser.Position);
@@ -246,11 +306,15 @@ begin
       Exit(Fail(Parser, ''));
     Digits;
   end;
-  Text := '';
-  SetLength(Text, Parser.Position - Start);
-  for Index := Start to Parser.Position - 1 do
-    Text[Index - Start + 1] := Char(Parser.Text.CharAt(Index));
-  Result := JsNumber(TextToNumber(Text));
+  { An exact integer (but -0, a double) without the text conversion. }
+  if IsInteger and (Parser.Position - Start - Ord(Negative) <= LongestExactInteger) and
+    not (Negative and (Magnitude = 0)) then
+  begin
+    if Negative then
+      Magnitude := -Magnitude;
+    Exit(JsNumber(Double(Magnitude)));
+  end;
+  Result := NumberFromText(Parser, Start);
 end;
 
 function MatchWord(var Parser: TJsonParser; const Word: string): Boolean;
@@ -265,127 +329,136 @@ begin
   Result := True;
 end;
 
-function ParseValue(var Parser: TJsonParser): TJsValue;
+function ParseValue(var Parser: TJsonParser): TJsValue; forward;
+
+{ An object at its opening brace. }
+function ParseObject(var Parser: TJsonParser): TJsValue;
 var
   Target: TJsObject;
-  Created: TJsArray;
   Key, Value: TJsValue;
   Mark: Integer;
 begin
-  SkipSpace(Parser);
-  Inc(Parser.Depth);
-  if Parser.Depth > 5000 then
-    Exit(Parser.Realm.ThrowRangeError('JSON nesting too deep'));
+  Inc(Parser.Position);
+  Target := Parser.Realm.NewPlainObject;
+  Mark := Parser.Realm.Runtime.PushRoot(JsObjectValue(Target));
   try
-    case Current(Parser) of
-      Ord('{'):
-        begin
-          Inc(Parser.Position);
-          Target := Parser.Realm.NewPlainObject;
-          Mark := Parser.Realm.Runtime.PushRoot(JsObjectValue(Target));
-          try
-            SkipSpace(Parser);
-            if Current(Parser) = Ord('}') then
-            begin
-              Inc(Parser.Position);
-              Exit(JsObjectValue(Target));
-            end;
-            while True do
-            begin
-              SkipSpace(Parser);
-              if Current(Parser) <> Ord('"') then
-                Exit(Fail(Parser, ''));
-              Key := ParseString(Parser);
-              if Key = JsException then
-                Exit(JsException);
-              SkipSpace(Parser);
-              if Current(Parser) <> Ord(':') then
-                Exit(Fail(Parser, ''));
-              Inc(Parser.Position);
-              Value := ParseValue(Parser);
-              if Value = JsException then
-                Exit(JsException);
-              Key := ToPropertyKey(Parser.Realm, Key);
-              Target.CreateDataProperty(Parser.Realm, Key, Value);
-              SkipSpace(Parser);
-              if Current(Parser) = Ord(',') then
-              begin
-                Inc(Parser.Position);
-                Continue;
-              end;
-              if Current(Parser) = Ord('}') then
-              begin
-                Inc(Parser.Position);
-                Break;
-              end;
-              Exit(Fail(Parser, ''));
-            end;
-            Result := JsObjectValue(Target);
-          finally
-            Parser.Realm.Runtime.PopRoots(Mark);
-          end;
-        end;
-      Ord('['):
-        begin
-          Inc(Parser.Position);
-          Created := Parser.Realm.NewArray(0);
-          Mark := Parser.Realm.Runtime.PushRoot(JsObjectValue(Created));
-          try
-            SkipSpace(Parser);
-            if Current(Parser) = Ord(']') then
-            begin
-              Inc(Parser.Position);
-              Exit(JsObjectValue(Created));
-            end;
-            while True do
-            begin
-              Value := ParseValue(Parser);
-              if Value = JsException then
-                Exit(JsException);
-              Created.CreateDataProperty(Parser.Realm, JsInteger(Created.ArrayLength), Value);
-              SkipSpace(Parser);
-              if Current(Parser) = Ord(',') then
-              begin
-                Inc(Parser.Position);
-                Continue;
-              end;
-              if Current(Parser) = Ord(']') then
-              begin
-                Inc(Parser.Position);
-                Break;
-              end;
-              Exit(Fail(Parser, ''));
-            end;
-            Result := JsObjectValue(Created);
-          finally
-            Parser.Realm.Runtime.PopRoots(Mark);
-          end;
-        end;
-      Ord('"'):
-        Result := ParseString(Parser);
-      Ord('-'), Ord('0')..Ord('9'):
-        Result := ParseNumber(Parser);
-      Ord('t'):
-        if MatchWord(Parser, 'true') then
-          Result := JsTrue
-        else
-          Result := Fail(Parser, '');
-      Ord('f'):
-        if MatchWord(Parser, 'false') then
-          Result := JsFalse
-        else
-          Result := Fail(Parser, '');
-      Ord('n'):
-        if MatchWord(Parser, 'null') then
-          Result := JsNull
-        else
-          Result := Fail(Parser, '');
-    else
-      Result := Fail(Parser, '');
+    SkipSpace(Parser);
+    if Current(Parser) = Ord('}') then
+    begin
+      Inc(Parser.Position);
+      Exit(JsObjectValue(Target));
     end;
+    while True do
+    begin
+      SkipSpace(Parser);
+      if Current(Parser) <> Ord('"') then
+        Exit(Fail(Parser, ''));
+      Key := ParseString(Parser, True);
+      if Key = JsException then
+        Exit(JsException);
+      SkipSpace(Parser);
+      if Current(Parser) <> Ord(':') then
+        Exit(Fail(Parser, ''));
+      Inc(Parser.Position);
+      Value := ParseValue(Parser);
+      if Value = JsException then
+        Exit(JsException);
+      Target.CreateDataProperty(Parser.Realm, Key, Value);
+      SkipSpace(Parser);
+      if Current(Parser) = Ord(',') then
+      begin
+        Inc(Parser.Position);
+        Continue;
+      end;
+      if Current(Parser) = Ord('}') then
+      begin
+        Inc(Parser.Position);
+        Break;
+      end;
+      Exit(Fail(Parser, ''));
+    end;
+    Result := JsObjectValue(Target);
   finally
-    Dec(Parser.Depth);
+    Parser.Realm.Runtime.PopRoots(Mark);
   end;
+end;
+
+{ An array at its opening bracket. }
+function ParseArray(var Parser: TJsonParser): TJsValue;
+var
+  Created: TJsArray;
+  Value: TJsValue;
+  Mark: Integer;
+begin
+  Inc(Parser.Position);
+  Created := Parser.Realm.NewArray(0);
+  Mark := Parser.Realm.Runtime.PushRoot(JsObjectValue(Created));
+  try
+    SkipSpace(Parser);
+    if Current(Parser) = Ord(']') then
+    begin
+      Inc(Parser.Position);
+      Exit(JsObjectValue(Created));
+    end;
+    while True do
+    begin
+      Value := ParseValue(Parser);
+      if Value = JsException then
+        Exit(JsException);
+      AppendElement(Parser.Realm, Created, Value);
+      SkipSpace(Parser);
+      if Current(Parser) = Ord(',') then
+      begin
+        Inc(Parser.Position);
+        Continue;
+      end;
+      if Current(Parser) = Ord(']') then
+      begin
+        Inc(Parser.Position);
+        Break;
+      end;
+      Exit(Fail(Parser, ''));
+    end;
+    Result := JsObjectValue(Created);
+  finally
+    Parser.Realm.Runtime.PopRoots(Mark);
+  end;
+end;
+
+function ParseValue(var Parser: TJsonParser): TJsValue;
+begin
+  SkipSpace(Parser);
+  if Parser.Depth >= 5000 then
+    Exit(Parser.Realm.ThrowRangeError('JSON nesting too deep'));
+  Inc(Parser.Depth);
+  case Current(Parser) of
+    Ord('{'):
+      Result := ParseObject(Parser);
+    Ord('['):
+      Result := ParseArray(Parser);
+    Ord('"'):
+      Result := ParseString(Parser, False);
+    Ord('-'), Ord('0')..Ord('9'):
+      Result := ParseNumber(Parser);
+    Ord('t'):
+      if MatchWord(Parser, 'true') then
+        Result := JsTrue
+      else
+        Result := Fail(Parser, '');
+    Ord('f'):
+      if MatchWord(Parser, 'false') then
+        Result := JsFalse
+      else
+        Result := Fail(Parser, '');
+    Ord('n'):
+      if MatchWord(Parser, 'null') then
+        Result := JsNull
+      else
+        Result := Fail(Parser, '');
+  else
+    Result := Fail(Parser, '');
+  end;
+  Dec(Parser.Depth);
 end;
 
 function Internalize(R: TJsRealm; Holder: TJsObject; Key: TJsValue; Reviver: TJsValue): TJsValue;
@@ -508,31 +581,70 @@ type
     Stack: array of TJsObject;
   end;
 
-procedure QuoteJson(var Writer: TJsonWriter; Text: TJsString);
 const
-  Hex = '0123456789abcdef';
+  HexDigits = '0123456789abcdef';
+
+{ A quote, a backslash or a control character, escaped. }
+procedure PutEscaped(var Units: TUnits; Code: Word);
+begin
+  case Code of
+    Ord('"'): PutAscii(Units, '\"');
+    Ord('\'): PutAscii(Units, '\\');
+    8: PutAscii(Units, '\b');
+    12: PutAscii(Units, '\f');
+    10: PutAscii(Units, '\n');
+    13: PutAscii(Units, '\r');
+    9: PutAscii(Units, '\t');
+  else
+    PutAscii(Units, '\u00' + HexDigits[(Code shr 4) + 1] + HexDigits[(Code and 15) + 1]);
+  end;
+end;
+
+function NeedsEscape(Code: Word): Boolean; inline;
+begin
+  Result := (Code < 32) or (Code = Ord('"')) or (Code = Ord('\'));
+end;
+
+procedure QuoteLatin1(var Units: TUnits; Characters: PByte; Count: Integer);
+var
+  Index: Integer;
+begin
+  for Index := 0 to Count - 1 do
+    if NeedsEscape(Characters[Index]) then
+      PutEscaped(Units, Characters[Index])
+    else
+      Put(Units, Characters[Index]);
+end;
+
+{ \uXXXX for a lone surrogate. }
+procedure PutUnicodeEscape(var Units: TUnits; Code: Word);
+begin
+  PutAscii(Units, '\u' + HexDigits[(Code shr 12) + 1] + HexDigits[((Code shr 8) and 15) + 1] +
+    HexDigits[((Code shr 4) and 15) + 1] + HexDigits[(Code and 15) + 1]);
+end;
+
+procedure QuoteJson(var Writer: TJsonWriter; Text: TJsString);
 var
   Index: Integer;
   Code, Next: Word;
 begin
   Text.Flatten(Writer.Realm.Heap);
   Put(Writer.Output, Ord('"'));
+  if not Text.IsWide then
+  begin
+    QuoteLatin1(Writer.Output, Text.Chars8, Text.Length);
+    Put(Writer.Output, Ord('"'));
+    Exit;
+  end;
   Index := 0;
   while Index < Text.Length do
   begin
     Code := Text.CharAt(Index);
-    case Code of
-      Ord('"'): PutAscii(Writer.Output, '\"');
-      Ord('\'): PutAscii(Writer.Output, '\\');
-      8: PutAscii(Writer.Output, '\b');
-      12: PutAscii(Writer.Output, '\f');
-      10: PutAscii(Writer.Output, '\n');
-      13: PutAscii(Writer.Output, '\r');
-      9: PutAscii(Writer.Output, '\t');
+    if NeedsEscape(Code) then
+      PutEscaped(Writer.Output, Code)
     else
-      if (Code < 32) then
-        PutAscii(Writer.Output, '\u00' + Hex[(Code shr 4) + 1] + Hex[(Code and 15) + 1])
-      else if (Code >= $D800) and (Code <= $DFFF) then
+    begin
+      if (Code >= $D800) and (Code <= $DFFF) then
       begin
         Next := 0;
         if Index + 1 < Text.Length then
@@ -544,8 +656,7 @@ begin
           Inc(Index);
         end
         else
-          PutAscii(Writer.Output, '\u' + Hex[(Code shr 12) + 1] + Hex[((Code shr 8) and 15) + 1] +
-            Hex[((Code shr 4) and 15) + 1] + Hex[(Code and 15) + 1]);
+          PutUnicodeEscape(Writer.Output, Code);
       end
       else
         Put(Writer.Output, Code);
@@ -553,6 +664,32 @@ begin
     Inc(Index);
   end;
   Put(Writer.Output, Ord('"'));
+end;
+
+procedure PutInteger(var Units: TUnits; Value: LongInt);
+var
+  Digits: array[0..11] of Byte;
+  Count: Integer;
+  Magnitude: LongWord;
+begin
+  if Value < 0 then
+  begin
+    Put(Units, Ord('-'));
+    Magnitude := LongWord(-Int64(Value));
+  end
+  else
+    Magnitude := LongWord(Value);
+  Count := 0;
+  repeat
+    Digits[Count] := Ord('0') + Magnitude mod 10;
+    Magnitude := Magnitude div 10;
+    Inc(Count);
+  until Magnitude = 0;
+  while Count > 0 do
+  begin
+    Dec(Count);
+    Put(Units, Digits[Count]);
+  end;
 end;
 
 { Writes the value of Holder[Key]; Wrote False when nothing is written
@@ -787,7 +924,9 @@ begin
     if JsIsNumber(Value) then
     begin
       Number := JsNumberValue(Value);
-      if IsFiniteDouble(Number) and not IsNaNDouble(Number) then
+      if JsIsInteger(Value) then
+        PutInteger(Writer.Output, JsAsInteger(Value))
+      else if IsFiniteDouble(Number) and not IsNaNDouble(Number) then
         PutAscii(Writer.Output, NumberToString(Number))
       else
         PutAscii(Writer.Output, 'null');
