@@ -87,6 +87,9 @@ procedure FillHorizontalGradient(const Canvas: TCanvas; const Rectangle: TRectan
 
 implementation
 
+uses
+  Drawing.SpanBlending;
+
 procedure BeginCanvas(out Canvas: TCanvas; const Surface: TSurface);
 begin
   Canvas.Surface := Surface;
@@ -120,12 +123,9 @@ var
   Start: LongInt;
   Finish: LongInt;
   Line: PLongWord;
-  X: LongInt;
-  Opaque: Boolean;
 begin
   if (Left >= Right) or (AlphaOf(Color) = 0) then
     Exit;
-  Opaque := AlphaOf(Color) = AlphaOpaque;
   Line := SurfaceLine(Canvas.Surface, Y);
   for Index := 0 to Canvas.Clip.Count - 1 do
   begin
@@ -138,12 +138,8 @@ begin
     Finish := Right;
     if Finish > Piece.Right then
       Finish := Piece.Right;
-    if Opaque then
-      for X := Start to Finish - 1 do
-        Line[X] := Color
-    else
-      for X := Start to Finish - 1 do
-        Line[X] := BlendColors(Line[X], Color);
+    if Finish > Start then
+      BlendColorSpan(Line + Start, Finish - Start, Color);
   end;
 end;
 
@@ -198,7 +194,7 @@ var
   Piece: TRectangle;
   Index: LongInt;
   Row: LongInt;
-  Column: LongInt;
+  Width: LongInt;
   SourceLine: PLongWord;
   TargetLine: PLongWord;
   ShiftX: LongInt;
@@ -214,18 +210,52 @@ begin
   begin
     if not IntersectRectangles(Destination, Canvas.Clip.Rectangles[Index], Piece) then
       Continue;
+    Width := RectangleWidth(Piece);
     for Row := Piece.Top to Piece.Bottom - 1 do
     begin
-      SourceLine := SurfaceLine(Source, Row - ShiftY);
-      TargetLine := SurfaceLine(Canvas.Surface, Row);
+      SourceLine := SurfaceLine(Source, Row - ShiftY) + (Piece.Left - ShiftX);
+      TargetLine := SurfaceLine(Canvas.Surface, Row) + Piece.Left;
       if not Blend then
-        Move(SourceLine[Piece.Left - ShiftX], TargetLine[Piece.Left], RectangleWidth(Piece) * SizeOf(LongWord))
-      else if Opacity = AlphaOpaque then
-        for Column := Piece.Left to Piece.Right - 1 do
-          TargetLine[Column] := BlendColors(TargetLine[Column], SourceLine[Column - ShiftX])
+        Move(SourceLine^, TargetLine^, Width * SizeOf(LongWord))
       else
-        for Column := Piece.Left to Piece.Right - 1 do
-          TargetLine[Column] := BlendColors(TargetLine[Column], FadeColor(SourceLine[Column - ShiftX], Opacity));
+        BlendFadedPixelSpan(TargetLine, SourceLine, Width, Opacity);
+    end;
+  end;
+end;
+
+{ Count pixels from Target, each the pixel of SourceLine under its
+  centre, Span source pixels being stretched over Length target pixels
+  of which Target is pixel Offset. The centre of target pixel I,
+  (I + 1/2) target pixels in, is (2I + 1) * Span / (2 * Length) source
+  pixels in; its whole part and remainder are stepped along pixel by
+  pixel, so there is no division per pixel. }
+procedure StretchLine(Target, SourceLine: PLongWord; Count: LongInt; Offset, Span, Length: Int64;
+  Blend: Boolean);
+var
+  Divisor: Int64;
+  Column: Int64;
+  Remainder: Int64;
+  Step: Int64;
+  StepRemainder: Int64;
+  Index: LongInt;
+begin
+  Divisor := 2 * Length;
+  Column := ((2 * Offset + 1) * Span) div Divisor;
+  Remainder := ((2 * Offset + 1) * Span) mod Divisor;
+  Step := (2 * Span) div Divisor;
+  StepRemainder := (2 * Span) mod Divisor;
+  for Index := 0 to Count - 1 do
+  begin
+    if Blend then
+      Target[Index] := BlendColors(Target[Index], SourceLine[Column])
+    else
+      Target[Index] := SourceLine[Column];
+    Column := Column + Step;
+    Remainder := Remainder + StepRemainder;
+    if Remainder >= Divisor then
+    begin
+      Remainder := Remainder - Divisor;
+      Inc(Column);
     end;
   end;
 end;
@@ -238,22 +268,14 @@ var
   Piece: TRectangle;
   Index: LongInt;
   Row: LongInt;
-  Column: LongInt;
   SourceRow: LongInt;
-  SourceColumn: LongInt;
-  SourceLine: PLongWord;
-  TargetLine: PLongWord;
-  FromWidth: Int64;
   FromHeight: Int64;
-  TargetWidth: Int64;
   TargetHeight: Int64;
 begin
   if not IntersectRectangles(SourceRectangle, SurfaceBounds(Source), From) or RectangleIsEmpty(Destination) then
     Exit;
-  FromWidth := RectangleWidth(From);
   FromHeight := RectangleHeight(From);
   Target := OffsetRectangle(Destination, Canvas.OriginX, Canvas.OriginY);
-  TargetWidth := RectangleWidth(Target);
   TargetHeight := RectangleHeight(Target);
   for Index := 0 to Canvas.Clip.Count - 1 do
   begin
@@ -261,19 +283,11 @@ begin
       Continue;
     for Row := Piece.Top to Piece.Bottom - 1 do
     begin
-      { The centre of the target pixel, (Row - Top + 1/2), in source
-        pixels; worked doubled so it stays whole. }
+      { The source row under the centre of this one, found as
+        StretchLine finds columns. }
       SourceRow := From.Top + ((2 * Int64(Row - Target.Top) + 1) * FromHeight) div (2 * TargetHeight);
-      SourceLine := SurfaceLine(Source, SourceRow);
-      TargetLine := SurfaceLine(Canvas.Surface, Row);
-      for Column := Piece.Left to Piece.Right - 1 do
-      begin
-        SourceColumn := From.Left + ((2 * Int64(Column - Target.Left) + 1) * FromWidth) div (2 * TargetWidth);
-        if Blend then
-          TargetLine[Column] := BlendColors(TargetLine[Column], SourceLine[SourceColumn])
-        else
-          TargetLine[Column] := SourceLine[SourceColumn];
-      end;
+      StretchLine(SurfaceLine(Canvas.Surface, Row) + Piece.Left, SurfaceLine(Source, SourceRow) + From.Left,
+        RectangleWidth(Piece), Piece.Left - Target.Left, RectangleWidth(From), RectangleWidth(Target), Blend);
     end;
   end;
 end;

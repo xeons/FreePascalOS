@@ -67,7 +67,6 @@ implementation
 function CreateSurface(out Surface: TSurface; Width, Height: LongInt; Fill: TColor): Boolean;
 var
   Count: PtrUInt;
-  Index: PtrUInt;
 begin
   Surface.Pixels := nil;
   Surface.Width := 0;
@@ -80,8 +79,7 @@ begin
   Surface.Pixels := GetMem(Count * SizeOf(LongWord));
   if Surface.Pixels = nil then
     Exit(False);
-  for Index := 0 to Count - 1 do
-    Surface.Pixels[Index] := Fill;
+  FillDWord(Surface.Pixels^, Count, Fill);
   Surface.Width := Width;
   Surface.Height := Height;
   Surface.Stride := Width;

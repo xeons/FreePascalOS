@@ -86,7 +86,8 @@ procedure CompositeSpan(Destination, Source: PLongWord; Weights: PByte; Count: L
 implementation
 
 uses
-  Math;
+  Math,
+  Drawing.SpanBlending;
 
 function CompositeOperationFromName(const Name: string; out Operation: TCompositeOperation): Boolean;
 var
@@ -412,6 +413,12 @@ var
   Weight: Byte;
   Before, After: TPremultipliedColor;
 begin
+  { Plain source over, the usual case, as one run. }
+  if (Operation = CompositeSourceOver) and (Weights = nil) then
+  begin
+    BlendPixelSpan(Destination, Source, Count);
+    Exit;
+  end;
   for Index := 0 to Count - 1 do
   begin
     if Weights <> nil then

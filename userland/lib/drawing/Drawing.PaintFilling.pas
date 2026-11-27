@@ -74,7 +74,8 @@ implementation
 
 uses
   Math,
-  Drawing.Regions;
+  Drawing.Regions,
+  Drawing.SpanBlending;
 
 function MaskFromShape(const Shape: TCoverageShape; Rule: TFillRule; const Area: TRectangle): TCoverageMask;
 begin
@@ -226,15 +227,18 @@ begin
     begin
       SourceLine := SurfaceLine(Layer, Row - Y);
       TargetLine := SurfaceLine(Canvas.Surface, Row);
+      { Without a mask every pixel takes the same opacity: a whole run. }
+      if Mask = nil then
+      begin
+        BlendFadedPixelSpan(TargetLine + Piece.Left, SourceLine + (Piece.Left - X), RectangleWidth(Piece), Opacity);
+        Continue;
+      end;
       for Column := Piece.Left to Piece.Right - 1 do
       begin
         Color := SourceLine[Column - X];
         if AlphaOf(Color) = 0 then
           Continue;
-        if Mask <> nil then
-          Weight := (LongWord(Opacity) * MaskValue(Mask^, Column, Row) + 127) div 255
-        else
-          Weight := Opacity;
+        Weight := MultiplyChannels(Opacity, MaskValue(Mask^, Column, Row));
         if Weight = 0 then
           Continue;
         if Weight < 255 then

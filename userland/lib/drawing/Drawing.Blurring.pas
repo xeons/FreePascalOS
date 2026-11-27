@@ -30,6 +30,7 @@ unit Drawing.Blurring;
 
 {$mode objfpc}
 {$H+}
+{$pointermath on}
 
 interface
 
@@ -65,74 +66,128 @@ begin
   Result := (BoxSize(Sigma) * 3) div 2 + 2;
 end;
 
-{ One box blur along a line of Count values Stride apart: each value
-  becomes the mean of the Size values from Offset before it. Scratch
-  holds Count values. }
-procedure BoxLine(Data: PByte; Count, Stride, Size, Offset: LongInt; var Scratch: array of Byte);
-var
-  Index, Sum, Entering, Leaving: LongInt;
+const
+  { Bits of the fixed-point reciprocal of a box's size. }
+  ReciprocalShift = 54;
+
+{ 2^ReciprocalShift / Size rounded up. A box's sum (plus half of Size
+  for rounding) is below 2^8 x Size; times this it errs by under
+  2^8 x Size x Size / 2^ReciprocalShift, less than one for any Size
+  below 2^23, so shifted down it is the mean exactly, with a multiply
+  in place of a division. }
+function ReciprocalOfSize(Size: LongInt): QWord;
 begin
-  for Index := 0 to Count - 1 do
-    Scratch[Index] := Data[Index * Stride];
+  Result := (QWord(1) shl ReciprocalShift + LongWord(Size) - 1) div LongWord(Size);
+end;
+
+{ One box blur along a row of Count values: each value becomes the mean
+  of the Size values from Offset before it, rounded. Scratch has room
+  for Count values with Size + 1 zeros either side (values beyond the
+  row count as zero), so the window's ends need no checks. }
+procedure BoxRow(Data: PByte; Count, Size, Offset: LongInt; Scratch: PByte);
+var
+  Index, Sum: LongInt;
+  Reciprocal: QWord;
+  Entering, Leaving: PByte;
+begin
+  Move(Data^, Scratch^, Count);
+  Reciprocal := ReciprocalOfSize(Size);
   Sum := 0;
   { The window for value I covers I - Offset .. I - Offset + Size - 1. }
   for Index := -Offset to -Offset + Size - 2 do
-    if (Index >= 0) and (Index < Count) then
-      Inc(Sum, Scratch[Index]);
+    Inc(Sum, Scratch[Index]);
+  Entering := Scratch - Offset + Size - 1;
+  Leaving := Scratch - Offset;
   for Index := 0 to Count - 1 do
   begin
-    Entering := Index - Offset + Size - 1;
-    if (Entering >= 0) and (Entering < Count) then
-      Inc(Sum, Scratch[Entering]);
-    Data[Index * Stride] := (Sum + Size div 2) div Size;
-    Leaving := Index - Offset;
-    if (Leaving >= 0) and (Leaving < Count) then
-      Dec(Sum, Scratch[Leaving]);
+    Inc(Sum, Entering[Index]);
+    Data[Index] := Byte((QWord(Sum + Size div 2) * Reciprocal) shr ReciprocalShift);
+    Dec(Sum, Leaving[Index]);
+  end;
+end;
+
+{ BoxRow down every column of a Width x Height plane at once: a running
+  sum per column, the plane read a row at a time (column by column it
+  would touch a new cache line for every value). Scratch has room for
+  the plane with Size + 1 rows of zeros above and below; Sums for Width
+  sums. }
+procedure BoxColumns(Data: PByte; Width, Height, Size, Offset: LongInt; Scratch: PByte; Sums: PLongInt);
+var
+  Row, Column, Sum: LongInt;
+  Reciprocal: QWord;
+  Entering, Leaving, Output: PByte;
+begin
+  Move(Data^, Scratch^, Width * Height);
+  Reciprocal := ReciprocalOfSize(Size);
+  FillDWord(Sums^, Width, 0);
+  for Row := -Offset to -Offset + Size - 2 do
+    for Column := 0 to Width - 1 do
+      Inc(Sums[Column], Scratch[Row * Width + Column]);
+  for Row := 0 to Height - 1 do
+  begin
+    Entering := Scratch + (Row - Offset + Size - 1) * Width;
+    Leaving := Scratch + (Row - Offset) * Width;
+    Output := Data + Row * Width;
+    for Column := 0 to Width - 1 do
+    begin
+      Sum := Sums[Column] + Entering[Column];
+      Output[Column] := Byte((QWord(Sum + Size div 2) * Reciprocal) shr ReciprocalShift);
+      Sums[Column] := Sum - Leaving[Column];
+    end;
+  end;
+end;
+
+{ The size and offset of each of the three boxes for a box of Size
+  (BoxSize): three of Size when it is odd; when even, Size centred
+  either way and one of Size + 1. }
+procedure BoxesFor(Size: LongInt; out Sizes, Offsets: array of LongInt);
+begin
+  Sizes[0] := Size;
+  Sizes[1] := Size;
+  Offsets[0] := Size div 2;
+  Offsets[2] := Size div 2;
+  if Odd(Size) then
+  begin
+    Sizes[2] := Size;
+    Offsets[1] := Size div 2;
+  end
+  else
+  begin
+    Sizes[2] := Size + 1;
+    Offsets[1] := Size div 2 - 1;
   end;
 end;
 
 { The three boxes along every row (Horizontal) or column. }
 procedure BlurDirection(var Plane: TBlurPlane; Width, Height: LongInt; Sigma: Double; Horizontal: Boolean);
 var
-  Size, Line, Lines, Count, Stride: LongInt;
+  Size, Line, Box, Margin: LongInt;
+  Sizes, Offsets: array[0..2] of LongInt;
   Scratch: array of Byte;
-  Start: PByte;
+  Sums: array of LongInt;
 begin
   Size := BoxSize(Sigma);
   if Size < 2 then
     Exit;
+  BoxesFor(Size, Sizes, Offsets);
+  { Zeros either side, enough for the largest box (Size + 1); SetLength
+    zeroes them and the boxes only write between. }
+  Margin := Size + 2;
+  Scratch := nil;
   if Horizontal then
   begin
-    Lines := Height;
-    Count := Width;
-    Stride := 1;
+    SetLength(Scratch, Width + 2 * Margin);
+    for Line := 0 to Height - 1 do
+      for Box := 0 to 2 do
+        BoxRow(@Plane[Line * Width], Width, Sizes[Box], Offsets[Box], @Scratch[Margin]);
   end
   else
   begin
-    Lines := Width;
-    Count := Height;
-    Stride := Width;
-  end;
-  Scratch := nil;
-  SetLength(Scratch, Count);
-  for Line := 0 to Lines - 1 do
-  begin
-    if Horizontal then
-      Start := @Plane[Line * Width]
-    else
-      Start := @Plane[Line];
-    if Odd(Size) then
-    begin
-      BoxLine(Start, Count, Stride, Size, Size div 2, Scratch);
-      BoxLine(Start, Count, Stride, Size, Size div 2, Scratch);
-      BoxLine(Start, Count, Stride, Size, Size div 2, Scratch);
-    end
-    else
-    begin
-      BoxLine(Start, Count, Stride, Size, Size div 2, Scratch);
-      BoxLine(Start, Count, Stride, Size, Size div 2 - 1, Scratch);
-      BoxLine(Start, Count, Stride, Size + 1, Size div 2, Scratch);
-    end;
+    SetLength(Scratch, (Height + 2 * Margin) * Width);
+    Sums := nil;
+    SetLength(Sums, Width);
+    for Box := 0 to 2 do
+      BoxColumns(@Plane[0], Width, Height, Sizes[Box], Offsets[Box], @Scratch[Margin * Width], @Sums[0]);
   end;
 end;
 
@@ -167,9 +222,9 @@ begin
     Color := Pixels[Index];
     A := AlphaOf(Color);
     Alpha[Index] := A;
-    Red[Index] := (RedOf(Color) * A + 127) div 255;
-    Green[Index] := (GreenOf(Color) * A + 127) div 255;
-    Blue[Index] := (BlueOf(Color) * A + 127) div 255;
+    Red[Index] := MultiplyChannels(RedOf(Color), A);
+    Green[Index] := MultiplyChannels(GreenOf(Color), A);
+    Blue[Index] := MultiplyChannels(BlueOf(Color), A);
   end;
   BlurPlane(Alpha, Width, Height, Sigma, Sigma);
   BlurPlane(Red, Width, Height, Sigma, Sigma);
