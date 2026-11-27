@@ -92,6 +92,7 @@ type
     procedure UpdateBoxes;
     procedure ApplyEnvironment;
     procedure ComputeScrollExtents;
+    procedure ClearMarksAboveFixedBoxes;
     procedure UpdateFrames;
     procedure TakeFrames;
     function FramesNeedUpdate: Boolean;
@@ -112,6 +113,9 @@ type
     procedure Update;
     { Whether Update has work to do. }
     function NeedsUpdate: Boolean;
+    { Brings only the styles up to date (what script reading a computed
+      value that does not depend on layout needs). }
+    procedure UpdateStyles;
     { The document's size (the viewport's scrollable overflow). }
     function DocumentWidth: Single;
     function DocumentHeight: Single;
@@ -639,6 +643,21 @@ begin
     Result := FResources.ImageProvidersPending;
 end;
 
+procedure TDocumentLayout.UpdateStyles;
+var
+  Data: PNodeData;
+begin
+  Data := ExistingNodeData(FDocument);
+  if not FStyler.SheetsDirty and ((Data = nil) or not (ndDescendantStyleDirty in Data^.Flags)) then
+    Exit;
+  EnterPhase(PhaseStyle);
+  try
+    FStyler.UpdateStyles;
+  finally
+    LeavePhase;
+  end;
+end;
+
 function TDocumentLayout.AnimationsRunning: Boolean;
 begin
   Result := FStyler.Animations.Running;
@@ -699,6 +718,7 @@ begin
       Input.FixedBoxes := FFixedBoxes;
       LayoutBox(Viewport, Input);
       LayoutPositionedBoxes(Viewport, FFixedBoxes, Input);
+      ClearMarksAboveFixedBoxes;
       ComputeScrollExtents;
       FLayoutDirty := False;
       Inc(FPaintVersion);
@@ -708,6 +728,28 @@ begin
   end;
   if FResources.FrameCount > 0 then
     UpdateFrames;
+end;
+
+{ A layout inside a fixed box may mark the way up for layout (a block
+  laid out again beside floats, a cell grown to its row), then lay the
+  box out at once. Fixed boxes are laid out after the viewport, so the
+  marks stay on boxes laid out already: the tree would look dirty after
+  every layout, and every question script asks about geometry would lay
+  the page out again. }
+procedure TDocumentLayout.ClearMarksAboveFixedBoxes;
+var
+  Index: Integer;
+  Ancestor: TLayoutBox;
+begin
+  for Index := 0 to FFixedBoxes.Count - 1 do
+  begin
+    Ancestor := FFixedBoxes.Boxes[Index].Parent;
+    while (Ancestor <> nil) and (bfChildNeedsLayout in Ancestor.Flags) do
+    begin
+      Exclude(Ancestor.Flags, bfChildNeedsLayout);
+      Ancestor := Ancestor.Parent;
+    end;
+  end;
 end;
 
 { The box tree brought up to date with the styles: built whole the first
