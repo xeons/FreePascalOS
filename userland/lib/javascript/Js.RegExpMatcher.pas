@@ -127,6 +127,8 @@ implementation
 
 const
   StepsBetweenChecks = 100000;
+  { Entries of the stacks kept between searches. }
+  LargestKeptStack = 65536;
 
 function IsLineTerminator(Code: LongWord): Boolean; inline;
 begin
@@ -786,6 +788,12 @@ begin
       Result := roOutOfMemory;
     end;
   end;
+  { A matcher outlives its regexps in the program cache: a stack grown
+    by one pathological search is given back. }
+  if Length(FStack) > LargestKeptStack then
+    FStack := nil;
+  if Length(FSavedCaptures) > LargestKeptStack then
+    FSavedCaptures := nil;
 end;
 
 function TRxMatcher.MatchAt(Text: TJsString; Position: Integer): TRxOutcome;
