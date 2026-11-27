@@ -31,9 +31,16 @@
     threads on four processors next to a single thread program: the
     busy one is pushed below the other's base within a second and
     comes back once it calms down;
-  * the memory reserves (Memory.Reserves): which page allocations are
-    refused near the critical watermark, the system commit limit and
-    the essential processes' part of it;
+  * the memory reserves (Memory.Reserves): which page claims are
+    refused near the critical watermark, the system commit limit (less
+    what the caches keep), the essential processes' part of it, commit
+    pressure and what the caches give back for it;
+  * the commit policy simulated (CommitSimulation): a hog stopping when
+    it sees memory short, on a small machine and on one with many
+    untouched promises (memory found short, the caches give back, no
+    committed page refused); a runaway refused by the limit, after
+    which every promise is kept without taking the programs' code and
+    an essential process still gets memory; no limit at all;
   * the thrash guard (Memory.ThrashGuard): its rate, bucket and refill.
 
   Prints every failed check and exits with 1 if there was one.
@@ -49,7 +56,8 @@ uses
   Kernel.PriorityClasses,
   Kernel.FairShare,
   Memory.Reserves,
-  Memory.ThrashGuard;
+  Memory.ThrashGuard,
+  CommitSimulation;
 
 const
   Millisecond = QWord(1000000);
@@ -325,24 +333,39 @@ procedure TestPageReserve;
 const
   Critical = 1024;
 begin
-  Check(UserPageAllowed(Critical + 1, Critical, False), 'above the watermark a program gets a page');
-  Check(not UserPageAllowed(Critical, Critical, False), 'at the watermark a program does not');
-  Check(UserPageAllowed(Critical, Critical, True), 'an essential process does');
-  Check(UserPageAllowed(Critical div 2 + 1, Critical, True), 'down to half the watermark');
-  Check(not UserPageAllowed(Critical div 2, Critical, True), 'but not below');
-  Check(UserPageFloor(Critical, False) > UserPageFloor(Critical, True), 'programs stop before essential ones');
+  Check(PageClaimAllowed(Critical + 1, Critical, PageClaimOrdinary), 'above the watermark a program gets a page');
+  Check(not PageClaimAllowed(Critical, Critical, PageClaimOrdinary), 'at the watermark a program does not');
+  Check(PageClaimAllowed(Critical, Critical, PageClaimCommitted), 'a page it committed does');
+  Check(PageClaimAllowed(Critical div 2 + 1, Critical, PageClaimCommitted), 'down to half the watermark');
+  Check(not PageClaimAllowed(Critical div 2, Critical, PageClaimCommitted), 'but not below');
+  Check(PageClaimAllowed(Critical div 2, Critical, PageClaimEssential), 'an essential process goes further');
+  Check(PageClaimAllowed(Critical div 4 + 1, Critical, PageClaimEssential), 'down to a quarter');
+  Check(not PageClaimAllowed(Critical div 4, Critical, PageClaimEssential), 'but not below');
+  Check(PageClaimAllowed(1, Critical, PageClaimKernel), 'the kernel takes the last page');
+  Check(not PageClaimAllowed(0, Critical, PageClaimKernel), 'but no page that is not there');
+  Check((PageClaimFloor(Critical, PageClaimOrdinary) > PageClaimFloor(Critical, PageClaimCommitted)) and
+    (PageClaimFloor(Critical, PageClaimCommitted) > PageClaimFloor(Critical, PageClaimEssential)) and
+    (PageClaimFloor(Critical, PageClaimEssential) > PageClaimFloor(Critical, PageClaimKernel)),
+    'uncommitted pages stop first, then committed ones, then essential processes, then the kernel');
+  Check(ProcessPageClaim(False, False, True) = PageClaimOrdinary, 'a page nobody committed is ordinary');
+  Check(ProcessPageClaim(False, True, True) = PageClaimCommitted, 'a committed page is backed by the limit');
+  Check(ProcessPageClaim(False, True, False) = PageClaimOrdinary, 'with no limit nothing was promised');
+  Check(ProcessPageClaim(True, False, False) = PageClaimEssential, 'an essential process''s pages are essential');
 end;
 
 procedure TestCommitLimit;
 var
   Limit: QWord;
 begin
-  Limit := SystemCommitLimit(131072, 10000, 1024, 100);
+  Limit := SystemCommitLimit(131072, 10000, 0, 1024, 100);
   Check(Limit = 131072 - 10000 - 1024, 'the limit is what the kernel leaves (100%)');
-  Check(SystemCommitLimit(131072, 10000, 1024, 200) = 2 * Limit, '200% doubles it');
-  Check(SystemCommitLimit(131072, 10000, 1024, 1) = Limit * MinimumCommitLimitPercent div 100,
+  Check(SystemCommitLimit(131072, 10000, 5000, 1024, 100) = Limit - 5000, 'less what the caches keep');
+  Check(SystemCommitLimit(131072, 10000, 0, 1024, 200) = 2 * Limit, '200% doubles it');
+  Check(SystemCommitLimit(131072, 10000, 0, 1024, 1) = Limit * MinimumCommitLimitPercent div 100,
     'the percentage has a floor');
-  Check(SystemCommitLimit(1000, 2000, 10, 100) = 1, 'a kernel holding everything leaves one page');
+  Check(SystemCommitLimit(1000, 2000, 0, 10, 100) = 1, 'a kernel holding everything leaves one page');
+  Check(SystemCommitLimit(1000, 100, 900, 10, 100) = 1, 'caches keeping everything leave one page');
+  Check(SystemCommitLimit(1000, 100, High(QWord) - 50, 10, 100) = 1, 'huge kept counts do not wrap');
   Check(EssentialCommitReserve(32768) = 1024, 'a 32nd is for essential processes');
   Check(CommitAllowed(0, 100, 0, False), 'no limit allows anything');
   Check(CommitAllowed(32768 - 1024 - 100, 100, 32768, False), 'a program may commit up to the reserve');
@@ -350,6 +373,157 @@ begin
   Check(CommitAllowed(32768 - 100, 100, 32768, True), 'an essential process may');
   Check(not CommitAllowed(32768 - 99, 100, 32768, True), 'but not past the limit');
   Check(not CommitAllowed(10, High(QWord) - 5, 32768, True), 'a huge request does not wrap');
+end;
+
+procedure TestCommitPressure;
+const
+  Limit = 32768;
+  Ceiling = Limit - Limit div 32;
+begin
+  Check(OutstandingCommitPages(5000, 3000) = 2000, 'promised and not resident');
+  Check(OutstandingCommitPages(3000, 5000) = 0, 'resident beyond the promises: none outstanding');
+  Check(CommitPressureLevel(Ceiling - 2048, Limit, 2048, 1024) = CommitPressureNone,
+    'a low watermark of room: no commit pressure');
+  Check(CommitPressureLevel(Ceiling - 2047, Limit, 2048, 1024) = CommitPressureLow, 'less: low');
+  Check(CommitPressureLevel(Ceiling - 1023, Limit, 2048, 1024) = CommitPressureCritical,
+    'less than the critical watermark: critical');
+  Check(CommitPressureLevel(Limit + 5, Limit, 2048, 1024) = CommitPressureCritical, 'over the limit: critical');
+  Check(CommitPressureLevel(High(QWord), 0, 2048, 1024) = CommitPressureNone, 'no limit, no commit pressure');
+  Check(CommitReclaimTarget(5000, 3000, 2048) = 4048, 'reclaim what the promises and the watermark need');
+  Check(CommitReclaimTarget(100, 5000, 2048) = 0, 'nothing when free memory covers them');
+end;
+
+{ --- The commit policy, simulated -------------------------------------------- }
+
+{ A hog taking a MiB at a time and touching it, the pressure thread
+  looking every fourth step; with UntilPressure it stops when it sees
+  memory short (memorytest hog --until-pressure). Returns whether a
+  commitment was refused. }
+function RunSimulatedHog(var Memory: TSimulatedMemory; UntilPressure: Boolean; out HogPages: QWord;
+  out SawPressure: Boolean): Boolean;
+const
+  Step = 256;
+var
+  Steps: Integer;
+begin
+  HogPages := 0;
+  SawPressure := False;
+  Result := False;
+  Steps := 0;
+  while Steps < 100000 do
+  begin
+    if not SimulatedCommit(Memory, Step, False) then
+      Exit(True);
+    SimulatedTouch(Memory, Step, PageClaimCommitted);
+    HogPages := HogPages + Step;
+    Inc(Steps);
+    if Steps mod 4 = 0 then
+      SimulatedPressureLook(Memory);
+    if UntilPressure and (SimulatedReportedLevel(Memory) <> 0) then
+    begin
+      SawPressure := True;
+      Exit;
+    end;
+  end;
+end;
+
+{ Other processes: Resident pages committed and touched, Outstanding
+  committed and not touched yet. }
+procedure AddOtherProcesses(var Memory: TSimulatedMemory; Resident, Outstanding: QWord);
+begin
+  Check(SimulatedCommit(Memory, Resident + Outstanding, False), 'the other processes commit');
+  Check(SimulatedTouch(Memory, Resident, PageClaimCommitted) = 0, 'and touch what they use');
+end;
+
+procedure CheckHogUntilPressure(const Name: string; var Memory: TSimulatedMemory);
+var
+  HogPages: QWord;
+  SawPressure: Boolean;
+  Refused: Boolean;
+  EventsBefore: QWord;
+begin
+  EventsBefore := Memory.PressureEvents;
+  Refused := RunSimulatedHog(Memory, True, HogPages, SawPressure);
+  SimulatedPressureLook(Memory);
+  Check(not Refused and SawPressure, Name + ': the hog sees memory short before the limit refuses it');
+  Check(Memory.RefusedPages = 0, Name + ': no page it committed was refused');
+  Check(Memory.PressureEvents > EventsBefore, Name + ': memory was found short');
+  Check(Memory.CachePagesGivenBack > 0, Name + ': the caches gave memory back');
+  Check(Memory.BlockCachePages >= Memory.BlockCacheMinimum, Name + ': the block cache kept its minimum');
+  Check(HogPages > 0, Name + ': the hog got memory');
+end;
+
+{ 512 MiB, few untouched promises: memory runs short of free pages. }
+procedure TestSimulatedSmallMachine;
+var
+  Memory: TSimulatedMemory;
+begin
+  InitializeSimulatedMemory(Memory, 131072, 12000, 2048, 20000, 4096, 8000, 6000);
+  AddOtherProcesses(Memory, 15000, 2000);
+  CheckHogUntilPressure('512 MiB', Memory);
+end;
+
+{ 1 GiB, many promises nobody touched yet: the commitments come close
+  to the limit while free pages are plentiful - the caches must still
+  make room for the promises, and the hog must see it. }
+procedure TestSimulatedUntouchedPromises;
+var
+  Memory: TSimulatedMemory;
+begin
+  InitializeSimulatedMemory(Memory, 262144, 14000, 4096, 40000, 16384, 10000, 8000);
+  AddOtherProcesses(Memory, 10000, 60000);
+  CheckHogUntilPressure('1 GiB with untouched promises', Memory);
+end;
+
+{ A hog without end: refused by the limit; then every promise is
+  touched - none may be refused, the mapped pages (code) are never
+  needed, an essential process still gets pages, and the hog's end
+  brings free memory back. }
+procedure TestSimulatedRunaway;
+var
+  Memory: TSimulatedMemory;
+  HogPages: QWord;
+  SawPressure: Boolean;
+  Outstanding: QWord;
+  MappedBefore: QWord;
+  Rounds: Integer;
+begin
+  InitializeSimulatedMemory(Memory, 131072, 12000, 2048, 30000, 4096, 12000, 9000);
+  MappedBefore := Memory.MappedFilePages;
+  AddOtherProcesses(Memory, 12000, 20000);
+  Check(RunSimulatedHog(Memory, False, HogPages, SawPressure), 'a hog without end is refused by the limit');
+  Check(Memory.RefusedPages = 0, 'every page the hog committed was there when touched');
+  Outstanding := OutstandingCommitPages(Memory.CommittedPages, Memory.ResidentPrivatePages);
+  Check(SimulatedTouch(Memory, Outstanding, PageClaimCommitted) = 0,
+    Format('then every other promise (%d pages) is kept', [Outstanding]));
+  Check(Memory.MappedFilePages = MappedBefore, 'without taking the running programs'' code');
+  Check(Memory.FreePages >= Memory.CriticalPages, Format('the reserve is still there (%d free of %d)',
+    [Memory.FreePages, Memory.CriticalPages]));
+  Check(SimulatedCommit(Memory, 64, True), 'an essential process may still commit');
+  Check(SimulatedTouch(Memory, 64, PageClaimEssential) = 0, 'and touch it');
+  SimulatedRelease(Memory, HogPages);
+  for Rounds := 1 to 3 do
+    SimulatedPressureLook(Memory);
+  Check(Memory.FreePages > Memory.LowPages, 'the hog ended, free memory came back');
+  Check(SimulatedReportedLevel(Memory) = 0, 'and memory is no longer short');
+end;
+
+{ With no commit limit nothing is promised: the hog runs into the
+  reserve's watermark and its fault fails (the out-of-memory policy then
+  ends it), while an essential process still gets pages below it. }
+procedure TestSimulatedNoLimit;
+var
+  Memory: TSimulatedMemory;
+  Refused: QWord;
+begin
+  InitializeSimulatedMemory(Memory, 65536, 8000, 1024, 8000, 2048, 4000, 3000);
+  Memory.LimitPages := 0;
+  Refused := 0;
+  while (Refused = 0) and (Memory.ResidentPrivatePages < 65536) do
+    Refused := SimulatedTouch(Memory, 256, ProcessPageClaim(False, True, False));
+  Check(Refused > 0, 'without a limit the hog meets the watermark');
+  Check(Memory.FreePages <= Memory.CriticalPages, 'having taken the caches and the free pages down to it');
+  Check(SimulatedTouch(Memory, 16, PageClaimEssential) = 0, 'an essential process still gets pages');
 end;
 
 { --- Thrash guard -------------------------------------------------------- }
@@ -387,6 +561,11 @@ begin
   TestBusyProcessBesideAnother;
   TestPageReserve;
   TestCommitLimit;
+  TestCommitPressure;
+  TestSimulatedSmallMachine;
+  TestSimulatedUntouchedPromises;
+  TestSimulatedRunaway;
+  TestSimulatedNoLimit;
   TestThrashGuard;
   if Failures > 0 then
   begin

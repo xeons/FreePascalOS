@@ -761,14 +761,16 @@ scheduler-policy-test: $(SCHEDULER_POLICY_TEST)
 
 # What keeps the system usable whatever one program does, on the host:
 # priority classes, fair share between processes (with a small
-# simulation), the memory reserves and commit limit, the thrash guard.
+# simulation), the memory reserves, commit limit and commit pressure
+# (with a simulation of the commit policy), the thrash guard.
 RESPONSIVENESS_POLICY_TEST := build/tools/ResponsivenessPolicyTest
 
 $(RESPONSIVENESS_POLICY_TEST): tools/ResponsivenessPolicyTest/ResponsivenessPolicyTest.pas \
+		tools/ResponsivenessPolicyTest/CommitSimulation.pas \
 		kernel/core/Kernel.PriorityBoosts.pas kernel/core/Kernel.PriorityClasses.pas kernel/core/Kernel.FairShare.pas \
 		kernel/memory/Memory.Reserves.pas kernel/memory/Memory.ThrashGuard.pas shared/Abi.SystemCalls.inc
 	@mkdir -p build/tools/responsiveness-policy-units
-	$(FPC) -O2 -Cr -Co -Fukernel/core -Fukernel/memory -Fushared -FEbuild/tools \
+	$(FPC) -O2 -Cr -Co -Futools/ResponsivenessPolicyTest -Fukernel/core -Fukernel/memory -Fushared -FEbuild/tools \
 		-FUbuild/tools/responsiveness-policy-units $<
 
 .PHONY: responsiveness-policy-test

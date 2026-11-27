@@ -42,6 +42,7 @@ uses
   Memory.PhysicalPages,
   Memory.Pressure,
   Memory.CommitCharge,
+  Memory.CommitPressure,
   Io.BlockCache,
   FileSystem.Types,
   FileSystem.Discards,
@@ -119,7 +120,10 @@ begin
   Pressure.TotalPages := Physical.TotalUsablePages;
   Pressure.FreePages := Physical.FreePages;
   GetMemoryWatermarks(Pressure.LowWatermarkPages, Pressure.CriticalWatermarkPages);
+  { Short of free pages or of room to commit, whichever is worse. }
   Pressure.Level := LongWord(Ord(CurrentMemoryPressure));
+  if LongWord(Ord(CurrentCommitPressure)) > Pressure.Level then
+    Pressure.Level := LongWord(Ord(CurrentCommitPressure));
   Pressure.PressureEvents := Reclaim.PressureEvents;
   Pressure.ReclaimCalls := Reclaim.ReclaimCalls;
   Pressure.ReclaimedPages := Reclaim.ReclaimedPages;

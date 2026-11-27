@@ -11575,25 +11575,35 @@ heap check quarantine (with `heapchecks`) and the block cache. The
 allocator's callback only queues a deferred call, which wakes the
 `MemoryPressure` system thread: it asks the shrinkers (gently, or hard
 below the critical watermark: dirty data written back first) until free
-memory is half the low watermark above it, and also looks once a second.
-A caller that needs a page now and may wait reclaims itself
+memory is half the low watermark above it, and also looks once a second
+(and when commitments come close to the commit limit: commit pressure,
+below). A caller that needs a page now and may wait reclaims itself
 (`ReclaimMemory`): a kernel heap allocation that failed at passive level
 with interrupts on reclaims and tries once more before returning nil
 (kernel allocations fail cleanly, they never end a process), and so does
-a user page fault.
+a user page fault, and creating a section (its pages were charged).
 
 **The reserve** (`Memory.Reserves`). Below the critical watermark the
-free pages belong to the kernel and the essential processes: a page for
-a process's memory, a mapped file or a section (`IsProcessPageUsage`) is
-refused there for an ordinary program (counted as a failed allocation
-and in `ReserveRefusalCount`), while an essential process (Interactive
-or System class, the initial program: `Processes.PriorityClassCalls`)
-may go down to half the watermark and the kernel's own allocations to
-the last page. The allocator asks the process manager's query
-(`SetReserveAccessQuery`) only near the watermark. So the display
+free pages are a reserve, claimed by need (`TPageClaim`): a page of a
+mapped file or a page nobody committed, for an ordinary program, is
+refused at the watermark (counted as a failed allocation and in
+`ReserveRefusalCount`; the fault then reclaims, and ends a process if
+that finds nothing); a page an ordinary program committed - one of a
+charged region, `AllocateCommittedPhysicalPage`, or of a section - goes
+down to half the watermark, because the commit limit granted it and left
+the watermark for it; an essential process (Interactive or System
+class, the initial program: `Processes.PriorityClassCalls`) goes down to
+a quarter, and the kernel's own allocations to the last page. With
+`commitlimit=off` (or above 100%) nothing is backed and committed pages
+are claimed like any other. The allocator asks the process manager's
+query (`SetReserveAccessQuery`) only near the watermark. So the display
 server still draws, the desktop still closes windows and the task
-manager still opens while a program has taken everything else, and the
-kernel's heap (channel messages, sockets) does not fail first.
+manager still opens while a program has taken everything else, the
+kernel's heap (channel messages, sockets) does not fail first - and a
+page whose commitment was granted is not refused while the caches or
+the reserve can back it. (Before, committed pages were held to the
+watermark like file pages: under a commit limit a program could be
+granted memory and then find no page when it touched it.)
 
 **The thrash guard** (`Memory.ThrashGuard`). With no swap, the only
 memory the shrinkers can take from running programs is their mapped
@@ -11612,20 +11622,62 @@ what it kept.
 to the process (`ProcessLimitCommit`), its job if it is in one, and the
 system, and fails with `ErrorOutOfMemory` if any of them would go over
 its limit: a program's allocation fails cleanly instead of the system
-degrading when it touches what it was promised. The system's limit is
-the RAM processes may use - all of it less what the kernel holds for
-itself (its image, heap, stacks, page tables, page database, drivers'
-buffers; not the caches it gives back) and the critical watermark -
-scaled by the kernel option `commitlimit=PERCENT` (100 by default;
-`off` for none); the memory pressure thread recomputes it each second.
-The last 1/32 of it is only for essential processes
-(`TAddressSpace.MayUseCommitReserve`). A stack is charged only its
-first 64 KiB (`StackChargeBytes`), as committed stack is elsewhere:
-stacks are reserved large (1 MiB a thread, 8 MiB the main one) and
-mostly never touched, and charging them whole would refuse threads long
-before memory is short; what a stack grows into beyond that is resident
-memory the policy below weighs. `TAbiMemoryPressure` reports the limit
-and the commitments refused (`CallGetMemoryPressure`).
+degrading when it touches what it was promised.
+
+*The policy, for a system without a paging file.* NT charges commit
+against RAM plus the paging file and backs every commitment; Linux
+overcommits by heuristics and ends a process when promises are touched
+that cannot be met. With no paging file here, the only place a
+committed page can come from is RAM, so commitments are backed by RAM
+and only by what of it can really be given to them: the system's limit
+is all of RAM less what the kernel holds for itself (its image, heap,
+stacks, page tables, page database, drivers' buffers; freed pages held
+back by `heapchecks` count as free), less what the caches keep however
+short memory is - the block cache's minimum and the file pages running
+programs map (`RegisterKeptPagesQuery`: `Io.BlockCache`, and
+`Processes.MappedFileEviction` with `MappedFilePageCount`, the file
+pages held by a mapping besides their file) - less the critical
+watermark, scaled by the kernel option `commitlimit=PERCENT` (100 by
+default; above 100 overcommits and the out-of-memory policy then backs
+the promises; `off` for none). Everything else the caches hold counts
+as available: it is given back when the promised pages are touched.
+Leaving out the mapped pages is what keeps a runaway from thrashing the
+system: promising them would mean taking every program's code away
+when the promise was touched, the thrash guard only limiting how fast.
+So, however much is committed, every committed page can be had by
+dropping clean cache down to its minimum, above the critical watermark -
+and the committed page claim (above) covers what the accounting cannot
+see (stack growth beyond the charge, page tables). The memory pressure
+thread recomputes the limit each second. The last 1/32 of it is only
+for essential processes (`TAddressSpace.MayUseCommitReserve`). What is
+charged: committed allocations and reservation parts, thread data,
+sections, writable images and private writable file mappings (the
+copies they may need), and only the first 64 KiB of a stack
+(`StackChargeBytes`), as committed stack is elsewhere: stacks are
+reserved large (1 MiB a thread, 8 MiB the main one) and mostly never
+touched, and charging them whole would refuse threads long before
+memory is short; what a stack grows into beyond that is resident memory
+the policy below weighs. Reservations are not charged until committed.
+`TAbiMemoryPressure` reports the limit and the commitments refused
+(`CallGetMemoryPressure`); the pressure thread logs refusals with the
+figures ("commit limit refused N commitments: ... committed (... not
+touched) of ...; ... free, ... kernel, ... kept by caches").
+
+*Commit pressure* (`Memory.CommitPressure`). Since the limit counts the
+caches as available, the promises not touched yet
+(`OutstandingCommitPages`: commitments less the processes' resident
+private and section pages) may need the caches' pages. When the room
+left under the limit (for ordinary programs) falls below the low
+watermark, memory is short as surely as when free pages are: the charge
+wakes the pressure thread, which counts a pressure event when commit
+pressure begins and shrinks the caches gently until the outstanding
+promises and the low watermark are free (`CommitReclaimTarget`);
+`TAbiMemoryPressure.Level` is the higher of the free pages' level and
+the commitments' (critical with less than the critical watermark of
+room). A program watching it (`memorytest hog --until-pressure`, a
+browser dropping caches) stops asking before its commitments are
+refused, and the caches shrink under commit pressure, not only when
+free pages run short.
 
 **Jobs** (`Processes.Jobs`, `Processes.JobCalls`, libsystem's
 `Sys.Jobs`). A job (`CallCreateJob` 271, a handle of `HandleKindJob`)
@@ -11687,9 +11739,12 @@ committed, and the processes ended (the last one's id and name). `free`
 shows the memory (total, used, free, cache, available), the cache and
 the pressure; the kernel shell's `mem` and `cache` the watermarks and
 counts. `memorytest cache` (a coretest line) reads /bin until the cache
-has grown, then has a hog take memory until it is short while reading
-on: the cache must give lines back, every read work and nobody be
-ended. `scripts/test-memory-pressure.sh` (in `make test`) boots a
+has grown, then has a hog take memory until it is short (of free pages
+or of room under the commit limit) while reading on: the hog must end
+with 0, memory be found short, the caches give memory back, every read
+work and nobody be ended. The hog keeps 256 KiB back and frees it when
+the commit limit refuses it, so its last lines can still be printed
+(once a program is refused, any allocation of it may be). `scripts/test-memory-pressure.sh` (in `make test`) boots a
 256 MiB guest with `memorytest` as the first program: a hog without end
 must be ended with 137 while a bystander and the system live on, and a
 small process with the adjustment 1000 must be ended before a hog;
@@ -11706,7 +11761,14 @@ taken and free memory come back; and a hog in a job limited to 48 MiB
 beyond the test's own charge must be refused at that limit. The rules
 themselves are checked on the host by `tools/ResponsivenessPolicyTest`
 (`make responsiveness-policy-test`, with a simulation of an 8-thread
-busy process beside a single-thread one) and `tools/CachePolicyTest`.
+busy process beside a single-thread one, and one of the commit policy,
+`tools/ResponsivenessPolicyTest/CommitSimulation.pas`: a hog stopping
+when memory is short on a 512 MiB machine and on a 1 GiB one with many
+untouched promises - memory found short, the caches giving back, no
+committed page refused; a runaway refused by the limit, after which
+every promise is touched without taking the programs' code, the reserve
+is still there and an essential process still gets memory; and no limit
+at all) and `tools/CachePolicyTest`.
 
 ### Processor exceptions
 

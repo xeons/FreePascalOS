@@ -18,29 +18,47 @@
 
 {
   Memory kept back so the system stays usable when a program takes all
-  it can: the rules, as pure arithmetic for the host test
-  (tools/SchedulerPolicyTest).
+  it can, and what may be promised with no paging file behind it: the
+  rules, as pure arithmetic for the host test
+  (tools/ResponsivenessPolicyTest).
 
-  * Pages. Below the critical watermark (Memory.PhysicalPages) the free
-    pages belong to the kernel and to the essential processes (the
-    display server, the session manager, the desktop, the task manager:
-    Processes.PriorityClassCalls): a page for an ordinary program's
-    memory, a mapped file or a section is refused there - its fault then
-    reclaims, and if that finds nothing a process is ended
-    (Processes.OutOfMemory) - while an essential process may go down to
-    half the watermark, and the kernel's own allocations (heap, stacks,
-    page tables, drivers) to the last page. So closing a window, drawing
-    the task manager and ending the culprit never wait for memory the
-    culprit holds.
+  * Commitments are backed. With no paging file, the only place a
+    committed page can come from when it is first touched is RAM, so
+    the system's commit limit is the RAM processes may have for their
+    own pages: all of it less what the kernel holds for itself, less
+    what the caches keep however short memory is (the block cache's
+    minimum, the pages of the files running programs map - their code,
+    which must stay resident or every program reads it again turn after
+    turn), less the critical watermark. Caches beyond that count as
+    available: they are given back when the promised pages are touched,
+    and shrunk ahead of time when the commitments come close to the
+    limit (commit pressure, below). The kernel option
+    commitlimit=PERCENT scales the limit (100 by default: no
+    overcommitment; above 100 promises more than can be backed, and the
+    out-of-memory policy then ends a process when they are touched;
+    "off" for none). The last EssentialCommitShift-th of the limit is
+    only for essential processes.
 
-  * Commitments. The system's commit limit is the RAM processes may use
-    - all of it less what the kernel holds for itself and its reserve
-    (the critical watermark) - scaled by the kernel option
-    commitlimit=PERCENT (100 by default; "off" for none). A commitment
-    beyond it fails with ErrorOutOfMemory: a program's allocation fails
-    cleanly instead of the system degrading when it touches the memory.
-    The last EssentialCommitShift-th of the limit is only for essential
-    processes.
+  * Pages. Below the critical watermark the free pages are a reserve,
+    claimed in order of need (TPageClaim): a file's page or a page
+    nobody committed, for an ordinary program, stops at the watermark
+    (the fault then reclaims, and if that finds nothing a process is
+    ended: Processes.OutOfMemory); a page an ordinary program committed
+    goes down to half of it, since the commit limit promised it and
+    left the watermark for it - so a page whose commitment was granted
+    is not refused while caches or the reserve can back it; an
+    essential process (the display server, the session manager, the
+    desktop, the task manager: Processes.PriorityClassCalls) goes down
+    to a quarter, and the kernel's own allocations to the last page.
+    With no commit limit nothing was promised, and committed pages are
+    claimed as ordinary ones.
+
+  * Commit pressure. Promises not touched yet (OutstandingCommitPages)
+    must find free memory when they are: when the headroom left under
+    the limit falls below the low watermark, memory is reported short
+    (so programs that watch it give memory back, and stop asking) and
+    the caches are shrunk gently until the outstanding promises and the
+    low watermark are free (CommitReclaimTarget).
 }
 unit Memory.Reserves;
 
@@ -56,46 +74,100 @@ const
   { 1/32 of the commit limit is for essential processes alone. }
   EssentialCommitShift = 5;
 
-{ Whether a page for a process's memory may be taken with FreePages
-  free, CriticalPages the critical watermark; MayUseReserve for the
-  kernel's threads and essential processes. }
-function UserPageAllowed(FreePages, CriticalPages: QWord; MayUseReserve: Boolean): Boolean;
-{ The free pages below which an allocation of that kind is refused. }
-function UserPageFloor(CriticalPages: QWord; MayUseReserve: Boolean): QWord;
+type
+  { Who asks for a page of process memory, the most entitled first. }
+  TPageClaim = (
+    { The kernel's own allocations (and kernel threads): every page. }
+    PageClaimKernel,
+    { An essential process: down to a quarter of the critical watermark. }
+    PageClaimEssential,
+    { A page an ordinary program committed, under a commit limit: down to
+      half of it. }
+    PageClaimCommitted,
+    { A file's page, a page nobody committed, or any page with no commit
+      limit: down to the watermark. }
+    PageClaimOrdinary);
+
+  { How close the commitments are to the limit (as the memory pressure
+    levels: none, low, critical). }
+  TCommitPressure = (CommitPressureNone, CommitPressureLow, CommitPressureCritical);
+
+{ The claim of a page of process memory: for an essential process, or a
+  committed page while commitments are backed by a limit. }
+function ProcessPageClaim(IsEssential, IsCommitted, CommitmentsBacked: Boolean): TPageClaim;
+{ The free pages below which a page of that claim is refused. }
+function PageClaimFloor(CriticalPages: QWord; Claim: TPageClaim): QWord;
+{ Whether a page of that claim may be taken with FreePages free. }
+function PageClaimAllowed(FreePages, CriticalPages: QWord; Claim: TPageClaim): Boolean;
 
 { The system's commit limit: UsablePages of RAM, KernelPages held by the
-  kernel, CriticalPages kept for it, scaled by Percent. At least one
-  page (0 means no limit, which only "off" gives). }
-function SystemCommitLimit(UsablePages, KernelPages, CriticalPages, Percent: QWord): QWord;
+  kernel, KeptPages the caches keep whatever happens, CriticalPages kept
+  as the reserve, scaled by Percent. At least one page (0 means no
+  limit, which only "off" gives). }
+function SystemCommitLimit(UsablePages, KernelPages, KeptPages, CriticalPages, Percent: QWord): QWord;
 { The part of Limit only essential processes may commit. }
 function EssentialCommitReserve(Limit: QWord): QWord;
 { Whether Pages more may be committed with Charged committed already
   against Limit (0: no limit). }
 function CommitAllowed(Charged, Pages, Limit: QWord; MayUseReserve: Boolean): Boolean;
 
+{ The promised pages not resident yet: Committed less the pages of
+  processes' own memory resident now. }
+function OutstandingCommitPages(CommittedPages, ResidentPrivatePages: QWord): QWord;
+{ Commit pressure: low with less than LowPages of headroom under what
+  ordinary programs may commit, critical with less than CriticalPages;
+  none without a limit (0). }
+function CommitPressureLevel(CommittedPages, Limit, LowPages, CriticalPages: QWord): TCommitPressure;
+{ The pages to reclaim so the outstanding promises and the low
+  watermark are free (0 when they are). }
+function CommitReclaimTarget(OutstandingPages, FreePages, LowPages: QWord): QWord;
+
 implementation
 
-function UserPageFloor(CriticalPages: QWord; MayUseReserve: Boolean): QWord;
+function ProcessPageClaim(IsEssential, IsCommitted, CommitmentsBacked: Boolean): TPageClaim;
 begin
-  if MayUseReserve then
-    Result := CriticalPages div 2
+  if IsEssential then
+    Result := PageClaimEssential
+  else if IsCommitted and CommitmentsBacked then
+    Result := PageClaimCommitted
+  else
+    Result := PageClaimOrdinary;
+end;
+
+function PageClaimFloor(CriticalPages: QWord; Claim: TPageClaim): QWord;
+begin
+  case Claim of
+    PageClaimKernel: Result := 0;
+    PageClaimEssential: Result := CriticalPages div 4;
+    PageClaimCommitted: Result := CriticalPages div 2;
   else
     Result := CriticalPages;
+  end;
 end;
 
-function UserPageAllowed(FreePages, CriticalPages: QWord; MayUseReserve: Boolean): Boolean;
+function PageClaimAllowed(FreePages, CriticalPages: QWord; Claim: TPageClaim): Boolean;
 begin
-  Result := FreePages > UserPageFloor(CriticalPages, MayUseReserve);
+  Result := FreePages > PageClaimFloor(CriticalPages, Claim);
 end;
 
-function SystemCommitLimit(UsablePages, KernelPages, CriticalPages, Percent: QWord): QWord;
+function SystemCommitLimit(UsablePages, KernelPages, KeptPages, CriticalPages, Percent: QWord): QWord;
 var
   Available: QWord;
 begin
-  if KernelPages + CriticalPages >= UsablePages then
+  { Taken away one at a time: no sum can wrap. }
+  Available := UsablePages;
+  if KernelPages >= Available then
+    Available := 0
+  else
+    Available := Available - KernelPages;
+  if KeptPages >= Available then
+    Available := 0
+  else
+    Available := Available - KeptPages;
+  if CriticalPages >= Available then
     Available := 1
   else
-    Available := UsablePages - KernelPages - CriticalPages;
+    Available := Available - CriticalPages;
   if Percent < MinimumCommitLimitPercent then
     Percent := MinimumCommitLimitPercent;
   if Percent > MaximumCommitLimitPercent then
@@ -120,6 +192,45 @@ begin
   if not MayUseReserve then
     Ceiling := Limit - EssentialCommitReserve(Limit);
   Result := (Pages <= Ceiling) and (Charged <= Ceiling - Pages);
+end;
+
+function OutstandingCommitPages(CommittedPages, ResidentPrivatePages: QWord): QWord;
+begin
+  if CommittedPages > ResidentPrivatePages then
+    Result := CommittedPages - ResidentPrivatePages
+  else
+    Result := 0;
+end;
+
+function CommitPressureLevel(CommittedPages, Limit, LowPages, CriticalPages: QWord): TCommitPressure;
+var
+  Ceiling: QWord;
+  Headroom: QWord;
+begin
+  if Limit = 0 then
+    Exit(CommitPressureNone);
+  Ceiling := Limit - EssentialCommitReserve(Limit);
+  if CommittedPages >= Ceiling then
+    Headroom := 0
+  else
+    Headroom := Ceiling - CommittedPages;
+  if Headroom < CriticalPages then
+    Result := CommitPressureCritical
+  else if Headroom < LowPages then
+    Result := CommitPressureLow
+  else
+    Result := CommitPressureNone;
+end;
+
+function CommitReclaimTarget(OutstandingPages, FreePages, LowPages: QWord): QWord;
+var
+  Wanted: QWord;
+begin
+  Wanted := OutstandingPages + LowPages;
+  if Wanted > FreePages then
+    Result := Wanted - FreePages
+  else
+    Result := 0;
 end;
 
 end.

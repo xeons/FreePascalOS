@@ -42,6 +42,14 @@
   thread runs in the real-time class (Kernel.Startup), so no busy
   program, boosted or not, keeps it from relieving the pressure.
 
+  Commit pressure (Memory.CommitPressure) counts as memory short too:
+  when a commitment leaves less than the low watermark of headroom under
+  the system's commit limit (or is refused), the thread is woken; it
+  counts a pressure event when commit pressure begins and shrinks the
+  caches gently until the promises not touched yet and the low
+  watermark are free - the limit counted those caches as available. It
+  also logs the commitments refused.
+
   ReclaimMemory runs one at a time (a second caller waits, then finds
   the memory the first freed). A shrinker that itself allocates and
   fails must not reclaim again: CanReclaimMemoryHere is False on the
@@ -110,6 +118,8 @@ uses
   Memory.KernelHeap,
   Memory.HeapChecks,
   Memory.CommitCharge,
+  Memory.CommitPressure,
+  Memory.Reserves,
   Kernel.Arch.Cpu,
   Kernel.PriorityLevel,
   Kernel.Mutex,
@@ -136,10 +146,18 @@ var
   WakeWatcherCall: TDeferredCall;
   IsInitialized: Boolean;
   Counters: TMemoryPressureStatistics;
+  { Commit pressure was there at the last look (used by the thread). }
+  InCommitPressure: Boolean;
 
 procedure WakeWatcher(Context: Pointer);
 begin
   SignalEvent(PressureEvent);
+end;
+
+{ The commit charge's callback: any level up to dispatch. }
+procedure NoteCommitPressure;
+begin
+  QueueDeferredCall(WakeWatcherCall);
 end;
 
 { The allocator's callback: any level, perhaps with spin locks held. }
@@ -181,6 +199,7 @@ begin
   InitializeDeferredCall(WakeWatcherCall, @WakeWatcher, nil);
   IsInitialized := True;
   SetMemoryPressureCallback(@NoteMemoryPressure);
+  SetCommitPressureCallback(@NoteCommitPressure);
   SetKernelHeapReclaimer(@ReclaimForKernelHeap);
   RegisterShrinker('heap check quarantine', @ShrinkHeapQuarantine);
 end;
@@ -295,6 +314,26 @@ begin
   AcknowledgeMemoryPressure;
 end;
 
+{ Commit pressure: an event when it begins; the caches give back what
+  the promises not touched yet would need, gently. }
+procedure RelieveCommitPressure;
+var
+  UnderPressure: Boolean;
+  Wanted: QWord;
+begin
+  UnderPressure := CurrentCommitPressure <> CommitPressureNone;
+  if UnderPressure and not InCommitPressure then
+    Inc(Counters.PressureEvents);
+  InCommitPressure := UnderPressure;
+  if not UnderPressure then
+    Exit;
+  repeat
+    Wanted := CommitReclaimPagesWanted;
+    if Wanted = 0 then
+      Break;
+  until ReclaimMemory(Wanted, ShrinkGently) = 0;
+end;
+
 procedure RunMemoryPressureWatcher(Context: Pointer);
 var
   FailuresSeen: QWord;
@@ -304,9 +343,11 @@ begin
   begin
     WaitForEventWithOptions(PressureEvent, WatcherIntervalMilliseconds, False);
     RelievePressure(FailuresSeen);
-    { The kernel's own share of memory changed: so does what processes
-      may commit (Memory.CommitCharge). }
+    { The kernel's own share of memory and what the caches keep changed:
+      so does what processes may commit (Memory.CommitCharge). }
     RefreshSystemCommitLimit;
+    RelieveCommitPressure;
+    ReportCommitRefusals;
   end;
 end;
 

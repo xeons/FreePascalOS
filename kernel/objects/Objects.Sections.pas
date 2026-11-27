@@ -68,6 +68,7 @@ uses
   Abi.SystemCalls,
   Memory.PhysicalPages,
   Memory.KernelHeap,
+  Memory.Pressure,
   Objects.Manager;
 
 var
@@ -103,6 +104,15 @@ begin
   SetObjectTypeOpenKind(SectionObjectType, HandleKindSection);
 end;
 
+{ A page of a section whose pages were charged: committed memory, so the
+  caches are asked before it is refused. }
+function AllocateSectionPage: TPhysicalAddress;
+begin
+  Result := AllocateZeroedCommittedPhysicalPage(PageUsageSection);
+  if (Result = 0) and (ReclaimMemory(PagesShortOfComfort + 1, ShrinkHard) > 0) then
+    Result := AllocateZeroedCommittedPhysicalPage(PageUsageSection);
+end;
+
 function CreateSectionObject(Length: QWord): PSectionObject;
 var
   Index: QWord;
@@ -122,7 +132,7 @@ begin
   end;
   for Index := 0 to Result^.PageCount - 1 do
   begin
-    Result^.Pages[Index] := AllocateZeroedPhysicalPage(PageUsageSection);
+    Result^.Pages[Index] := AllocateSectionPage;
     if Result^.Pages[Index] = 0 then
     begin
       DereferenceObject(Result);

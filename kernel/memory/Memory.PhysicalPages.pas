@@ -61,12 +61,14 @@
 
   The reserve (Memory.Reserves). Below the critical watermark, a page for
   a process's memory, a mapped file or a section (IsProcessPageUsage) is
-  refused unless the reserve access query (set by the process manager)
-  says the current thread may use the reserve - a kernel thread or an
-  essential process, which may go down to half the watermark; kernel
-  allocations of every other use may take the last page. A refusal is
-  counted as a failed allocation (and in ReserveRefusalCount), so the
-  faulting program's out-of-memory handling starts at once while the
+  claimed by need: an ordinary program's page stops at the watermark, a
+  page it committed (AllocateCommittedPhysicalPage, while the commit
+  limit backs commitments) at half of it, a kernel thread's or an
+  essential process's (the reserve access query, set by the process
+  manager, says which) at a quarter; kernel allocations of every other
+  use may take the last page. A refusal is counted as a failed
+  allocation (and in ReserveRefusalCount), so the faulting program's
+  out-of-memory handling (reclaiming first) starts at once while the
   kernel and the user's shell still have memory to work with.
 }
 unit Memory.PhysicalPages;
@@ -138,6 +140,16 @@ function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 { Like AllocatePhysicalPage, but the page is filled with zeros. }
 function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 
+{ A page of process memory the process committed (its commitment was
+  charged): while commitments are backed (SetCommitmentsBacked) it may
+  go further into the reserve than other process pages
+  (Memory.Reserves, PageClaimCommitted). }
+function AllocateCommittedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+function AllocateZeroedCommittedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+{ Whether the commit limit backs commitments (Memory.CommitCharge: on
+  unless commitlimit=off). }
+procedure SetCommitmentsBacked(Backed: Boolean);
+
 { A zeroed page that ends at or below Limit (for devices that only take
   32-bit addresses, say), or zero if there is none. Slower: it searches
   the free list. }
@@ -191,6 +203,9 @@ procedure ReferencePhysicalPage(PhysicalAddress: TPhysicalAddress);
 function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;
 { How many holders the page has (1 for a page with one owner). }
 function PhysicalPageHolderCount(PhysicalAddress: TPhysicalAddress): QWord;
+{ Pages of mapped files (PageUsageProgramImage) held by someone besides
+  their file - mapped into a process, mostly: running programs' code. }
+function MappedFilePageCount: QWord;
 
 function PageUsageOf(PhysicalAddress: TPhysicalAddress): TPageUsage;
 
@@ -290,6 +305,10 @@ var
   FailedAllocations: QWord;
   ReserveRefusals: QWord;
   ReserveAccessQuery: TReserveAccessQuery = nil;
+  CommitmentsBacked: Boolean = False;
+  { Pages of mapped files (PageUsageProgramImage) with a holder besides
+    their file: mapped by a process (under the database lock). }
+  HeldFilePages: QWord = 0;
 
 { Counts every page's use once the database is built; from then on the
   counts follow each change. }
@@ -587,10 +606,10 @@ begin
   Result := Usage in [PageUsageUserMemory, PageUsageProgramImage, PageUsageSection];
 end;
 
-{ The free pages a process page must leave: the reserve's floor, or 0
-  when the caller may take any (asked outside the lock, and only when
-  memory is near the reserve). }
-function ReserveFloorFor(Usage: TPageUsage): QWord;
+{ The free pages a process page must leave: the floor of its claim on
+  the reserve, or 0 when the caller may take any (asked outside the
+  lock, and only when memory is near the reserve). }
+function ReserveFloorFor(Usage: TPageUsage; IsCommitted: Boolean): QWord;
 var
   Query: TReserveAccessQuery;
 begin
@@ -600,10 +619,10 @@ begin
   Query := ReserveAccessQuery;
   if not Assigned(Query) then
     Exit;
-  Result := UserPageFloor(CriticalWatermarkPages, Query());
+  Result := PageClaimFloor(CriticalWatermarkPages, ProcessPageClaim(Query(), IsCommitted, CommitmentsBacked));
 end;
 
-function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+function AllocatePageForClaim(Usage: TPageUsage; IsCommitted: Boolean): TPhysicalAddress;
 var
   PreviousLevel: TPriorityLevel;
   Frame: QWord;
@@ -611,7 +630,7 @@ var
   MustSignal: Boolean;
   Floor: QWord;
 begin
-  Floor := ReserveFloorFor(Usage);
+  Floor := ReserveFloorFor(Usage, IsCommitted);
   PreviousLevel := AcquireSpinLock(DatabaseLock);
   if (Floor > 0) and (FreePageCount <= Floor) then
   begin
@@ -647,11 +666,33 @@ begin
   Result := Frame shl PageShift;
 end;
 
+function AllocatePhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+begin
+  Result := AllocatePageForClaim(Usage, False);
+end;
+
 function AllocateZeroedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
 begin
   Result := AllocatePhysicalPage(Usage);
   if Result <> 0 then
     ZeroMemory(PhysicalToVirtual(Result), PageSize);
+end;
+
+function AllocateCommittedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+begin
+  Result := AllocatePageForClaim(Usage, True);
+end;
+
+function AllocateZeroedCommittedPhysicalPage(Usage: TPageUsage): TPhysicalAddress;
+begin
+  Result := AllocateCommittedPhysicalPage(Usage);
+  if Result <> 0 then
+    ZeroMemory(PhysicalToVirtual(Result), PageSize);
+end;
+
+procedure SetCommitmentsBacked(Backed: Boolean);
+begin
+  CommitmentsBacked := Backed;
 end;
 
 { The first frame past the frames whose page ends at or below Limit. }
@@ -879,7 +920,12 @@ begin
 
   MustQuarantine := False;
   if FrameDatabase[Frame].ExtraReferences > 0 then
-    Dec(FrameDatabase[Frame].ExtraReferences)
+  begin
+    Dec(FrameDatabase[Frame].ExtraReferences);
+    if (FrameDatabase[Frame].ExtraReferences = 0) and (FrameDatabase[Frame].Usage = PageUsageProgramImage) and
+       (HeldFilePages > 0) then
+      Dec(HeldFilePages);
+  end
   else if KernelHeapCheckLevel = HeapChecksQuarantine then
   begin
     ChangeFrameUsage(Frame, PageUsageQuarantined);
@@ -916,8 +962,15 @@ begin
     KernelPanicWithCode(PanicOutOfPhysicalMemory,
       'referencing a free physical page', PhysicalAddress, 0, 0, 0);
   end;
+  if (FrameDatabase[Frame].ExtraReferences = 0) and (FrameDatabase[Frame].Usage = PageUsageProgramImage) then
+    Inc(HeldFilePages);
   Inc(FrameDatabase[Frame].ExtraReferences);
   ReleaseSpinLock(DatabaseLock, PreviousLevel);
+end;
+
+function MappedFilePageCount: QWord;
+begin
+  Result := HeldFilePages;
 end;
 
 function PhysicalPageIsShared(PhysicalAddress: TPhysicalAddress): Boolean;

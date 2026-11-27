@@ -2301,7 +2301,10 @@ type
     { Fewer free pages than these: memory is short, very short. }
     LowWatermarkPages: QWord;
     CriticalWatermarkPages: QWord;
-    { AbiMemoryPressure*. }
+    { AbiMemoryPressure*: the higher of what the free pages say and what
+      the commitments do (low with less than LowWatermarkPages of room
+      left under CommitLimitPages, critical with less than
+      CriticalWatermarkPages). }
     Level: LongWord;
     Reserved: LongWord;
     { Times memory was found short, calls asking the caches for memory
@@ -2318,8 +2321,9 @@ type
     LastEndedProcessId: QWord;
     LastEndedName: array[0..AbiModuleNameCapacity - 1] of Char;
     { The most pages all processes may have committed (the RAM they may
-      use, less the kernel's own and its reserve, as the kernel option
-      commitlimit=PERCENT scales it), and commitments refused for it. }
+      use, less the kernel's own, what the caches keep whatever happens
+      and the reserve, as the kernel option commitlimit=PERCENT scales
+      it), and commitments refused for it. }
     CommitLimitPages: QWord;
     CommitFailures: QWord;
     { Page allocations of ordinary programs refused because only the

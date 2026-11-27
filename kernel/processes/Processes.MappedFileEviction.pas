@@ -36,6 +36,11 @@
   eviction cursor), so the pages taken rotate through the file. The
   shrinker never takes a volume's lock or writes anything back (that
   happens on the background writer): it only unmaps and frees.
+
+  The pages running programs map (their working set of code and data
+  from files: MappedWorkingSetPages) are what the cache keeps for the
+  commit limit (Memory.CommitCharge): promising them to a program would
+  mean taking every program's code away when it touched the promise.
 }
 unit Processes.MappedFileEviction;
 
@@ -53,6 +58,9 @@ procedure InitializeMappedFileEviction;
 function EvictMappedFilePages(PagesWanted: QWord; Urgency: TShrinkUrgency): QWord;
 { Mapped pages the thrash guard kept from being evicted, since start. }
 function ThrashGuardRefusedPages: QWord;
+{ The file pages running programs have mapped (pages of mapped files
+  with a holder besides the file: Memory.PhysicalPages). Any level. }
+function MappedWorkingSetPages: QWord;
 
 implementation
 
@@ -60,6 +68,7 @@ uses
   Kernel.Clock,
   Memory.PhysicalPages,
   Memory.ThrashGuard,
+  Memory.CommitCharge,
   Processes.MappedFiles,
   Processes.MappedFileMappings;
 
@@ -163,9 +172,15 @@ begin
   Result := Guard.Refused;
 end;
 
+function MappedWorkingSetPages: QWord;
+begin
+  Result := MappedFilePageCount;
+end;
+
 procedure InitializeMappedFileEviction;
 begin
   RegisterShrinker('mapped files', @EvictMappedFilePages);
+  RegisterKeptPagesQuery(@MappedWorkingSetPages);
 end;
 
 end.

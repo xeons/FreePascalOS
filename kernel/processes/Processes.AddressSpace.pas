@@ -80,7 +80,10 @@
   thread, 8 MiB the main one) and mostly never touched, and charging
   them whole would refuse threads long before memory is short; what a
   stack grows into beyond that is resident memory the out-of-memory
-  policy weighs.
+  policy weighs. The pages of a charged region are taken as committed
+  pages (AllocateCommittedPhysicalPage), which may go further into the
+  reserve than a file's page: their commitment was granted, and the
+  system's limit left room for them (Memory.Reserves).
 
   A section (memory shared between processes, Objects.Sections) is
   mapped the same way, its pages mapped at once, each with a reference
@@ -1319,11 +1322,31 @@ begin
 end;
 
 { Maps a fresh zero filled page for Region at PageAddress. }
+{ A page of Region is backed by the commit charge: the region is charged
+  (a stack only for its first pages, but what it grows into is the
+  program's own memory all the same). Such pages may go further into
+  the reserve (Memory.Reserves): their commitment was granted. }
+function RegionPagesAreCommitted(Region: PUserRegion): Boolean;
+begin
+  Result := RegionChargePages(Region^) > 0;
+end;
+
+function AllocateRegionPage(Region: PUserRegion): TPhysicalAddress;
+begin
+  if RegionPagesAreCommitted(Region) then
+    Result := AllocateCommittedPhysicalPage(PageUsageUserMemory)
+  else
+    Result := AllocatePhysicalPage(PageUsageUserMemory);
+end;
+
 function CommitPageLocked(Space: PAddressSpace; PageAddress: QWord; Region: PUserRegion): LongInt;
 var
   PhysicalAddress: TPhysicalAddress;
 begin
-  PhysicalAddress := AllocateZeroedPhysicalPage(PageUsageUserMemory);
+  if RegionPagesAreCommitted(Region) then
+    PhysicalAddress := AllocateZeroedCommittedPhysicalPage(PageUsageUserMemory)
+  else
+    PhysicalAddress := AllocateZeroedPhysicalPage(PageUsageUserMemory);
   if PhysicalAddress = 0 then
     Exit(ErrorOutOfMemory);
   if not MapPageInAddressSpace(Space^.Root, PageAddress, PhysicalAddress, RegionMapping(Region)) then
@@ -1462,7 +1485,7 @@ begin
   WasShared := PageUsageOf(Shared) <> PageUsageUserMemory;
   if WasShared or PhysicalPageIsShared(Shared) then
   begin
-    Copy := AllocatePhysicalPage(PageUsageUserMemory);
+    Copy := AllocateRegionPage(Region);
     if Copy = 0 then
       Exit(ErrorOutOfMemory);
     CopyMemory(PhysicalToVirtual(Copy), PhysicalToVirtual(Shared), PageSize);

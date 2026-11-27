@@ -270,8 +270,19 @@ how the existing pieces fit together.
       so a deep recursion is refused by the commit limit, not ended by the policy
 - [ ] Accessed bits for mapped file eviction (the thrash guard only limits the rate;
       eviction itself still rotates without regard to use)
-- [ ] Check the strict default commit limit against the whole suite (512 MiB guests);
-      memorytest cache may now meet the limit before memory is short
+- [x] Commit policy for a system without a paging file: commitments backed by RAM less
+      the kernel's pages, the caches' kept pages (block cache minimum, mapped file
+      pages) and the critical watermark; committed pages claim the reserve down to
+      half the watermark (never refused while caches or the reserve back them); commit
+      pressure (room under the limit below the low watermark) reported as memory short,
+      counted as a pressure event and shrinking the caches for untouched promises;
+      refusals logged; simulated in ResponsivenessPolicyTest (CommitSimulation)
+- [ ] Run the whole suite on the new commit policy (memorytest cache on amd64 512 MiB
+      and arm64 1 GiB, responsivetest, test-memory-pressure.sh) and tune from the
+      kernel's "commit limit refused" lines if normal workloads are refused
+- [ ] Charge the copies writable images and private file mappings may need when a
+      page is first written rather than when mapped (what is charged now is the whole
+      writable part, touched or not)
 - [x] Process creation and teardown
 - [x] Waiting on process objects (exit notification)
 - [x] Multiple threads per user process (CreateThread, ExitThread, WaitForThread,

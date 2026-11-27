@@ -193,6 +193,7 @@ uses
   Memory.PhysicalPages,
   Memory.KernelHeap,
   Memory.Pressure,
+  Memory.CommitCharge,
   Kernel.Mutex,
   Kernel.Clock,
   Kernel.Options,
@@ -290,6 +291,16 @@ begin
     FreeUnusedChunk(Spare);
 end;
 
+{ What the cache keeps however short memory is (its minimum): not
+  available to commit (Memory.CommitCharge). }
+function BlockCacheKeptPages: QWord;
+begin
+  Result := LiveLineCount;
+  if Result > CacheSize.MinimumLines then
+    Result := CacheSize.MinimumLines;
+  Result := Result * (CacheLineSize div PageSize);
+end;
+
 procedure InitializeBlockCache;
 var
   Options: TBlockCacheSizingOptions;
@@ -304,6 +315,7 @@ begin
   if LiveLineCount = 0 then
     KernelPanic('no memory for block cache pages');
   RegisterShrinker('block cache', @ShrinkBlockCache);
+  RegisterKeptPagesQuery(@BlockCacheKeptPages);
 end;
 
 procedure RegisterCacheWriterTask(Task: TCacheWriterTask);

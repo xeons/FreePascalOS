@@ -22,8 +22,10 @@
 
   memorytest cache
       Reads /bin until the block cache has grown, then starts a memory
-      hog that takes memory until it finds memory short, reading files
-      all the while: the caches (block cache, mapped file pages or
+      hog that takes memory until it finds memory short (free pages
+      below the low watermark, or the commitments within it of the
+      commit limit), reading files all the while: the caches (block
+      cache, mapped file pages or
       relocated copies) must give memory back, every read must work
       and the hog must end normally. (A coretest line.)
   memorytest oom
@@ -116,11 +118,19 @@ begin
 end;
 
 procedure RunHog(StepMebibytes, LimitMebibytes, HoldSeconds: QWord; UntilPressure: Boolean);
+const
+  ReportReserveBytes = 256 * 1024;
 var
   Taken: QWord;
   Block: PByte;
+  ReportReserve: Pointer;
 begin
   Taken := 0;
+  { Once the commit limit refuses this program, any allocation of it may
+    be refused: a little is kept back for the lines it prints then, and
+    the output stream is made now. }
+  ReportReserve := AllocateMemory(ReportReserveBytes);
+  PrintString('');
   while (LimitMebibytes = 0) or (Taken < LimitMebibytes) do
   begin
     { The system's commit limit can refuse the memory before it runs
@@ -134,6 +144,8 @@ begin
     end;
     if Block = nil then
     begin
+      FreeMemory(ReportReserve);
+      ReportReserve := nil;
       PrintStringLine(Format('memorytest: hog could not take more than %d MiB', [Taken]));
       Break;
     end;
@@ -146,6 +158,7 @@ begin
     end;
   end;
   PrintStringLine(Format('memorytest: hog holds %d MiB', [Taken]));
+  FreeMemory(ReportReserve);
   SleepMilliseconds(HoldSeconds * 1000);
   Halt(0);
 end;

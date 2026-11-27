@@ -31,13 +31,19 @@
     CommitLimitPages, ProcessLimitCommit);
   * its job, if it is in one (a TCommitPool: Processes.Jobs);
   * the system: SystemCommitLimit (Memory.Reserves) of the RAM
-    processes may use, recomputed as the kernel's own use changes
-    (RefreshSystemCommitLimit, from the memory pressure thread each
-    second), the last part of it kept for essential processes.
+    processes may use - less what the kernel holds for itself and what
+    the caches keep whatever happens (RegisterKeptPagesQuery: the block
+    cache's minimum, the file pages running programs map) - recomputed
+    as those change (RefreshSystemCommitLimit, from the memory pressure
+    thread each second), the last part of it kept for essential
+    processes.
 
   So a program that asks for more than there is gets an error from the
   allocation, while there is still memory for everything else, instead
-  of the system running out when it touches what it was promised.
+  of the system running out when it touches what it was promised; and
+  what was promised is backed (SetCommitmentsBacked: committed pages may
+  go further into the reserve, Memory.Reserves). How close the
+  commitments are to the limit is Memory.CommitPressure's.
 }
 unit Memory.CommitCharge;
 
@@ -71,6 +77,20 @@ procedure UnchargeCommitPool(Pool: PCommitPool; Pages: QWord);
 { Sets the pool's limit (0: none); returns the one before. }
 function SetCommitPoolLimit(Pool: PCommitPool; LimitPages: QWord): QWord;
 
+type
+  { Pages a cache keeps however short memory is (not available to
+    commit). Passive level. }
+  TKeptPagesQuery = function: QWord;
+
+  { Runs when a charge leaves less than the low watermark of headroom
+    under the system's limit, or is refused. Any level up to dispatch
+    (it may only queue a deferred call). }
+  TCommitPressureCallback = procedure;
+
+{ Adds a cache's kept pages to what the system's limit leaves out. }
+procedure RegisterKeptPagesQuery(Query: TKeptPagesQuery);
+procedure SetCommitPressureCallback(Callback: TCommitPressureCallback);
+
 { Reads the kernel option commitlimit and sets the first limit. }
 procedure InitializeSystemCommitLimit;
 { Recomputes the system's limit from the kernel's use of memory now. }
@@ -85,6 +105,11 @@ function SystemCommittedPages: QWord;
 function PeakSystemCommittedPages: QWord;
 function SystemCommitLimitPages: QWord;
 function SystemCommitFailures: QWord;
+{ The pages the caches keep, as last summed for the limit. }
+function KeptCachePages: QWord;
+{ The pages the kernel holds for itself (not caches it gives back, not
+  processes' pages, not free pages held back for the heap checks). }
+function KernelHeldPages: QWord;
 
 implementation
 
@@ -94,11 +119,18 @@ uses
   Memory.PhysicalPages,
   Memory.Reserves;
 
+const
+  MaximumKeptPagesQueries = 4;
+
 var
   SystemPool: TCommitPool;
   SystemReady: Boolean = False;
   LimitPercent: QWord = DefaultCommitLimitPercent;
   LimitIsOff: Boolean = False;
+  KeptPagesQueries: array[0..MaximumKeptPagesQueries - 1] of TKeptPagesQuery;
+  KeptPagesQueryCount: Integer = 0;
+  LastKeptPages: QWord = 0;
+  PressureCallback: TCommitPressureCallback = nil;
 
 procedure InitializeCommitPool(out Pool: TCommitPool);
 begin
@@ -179,8 +211,8 @@ begin
   SystemReady := True;
 end;
 
-{ The pages the kernel holds for itself (not caches it gives back, not
-  processes' pages). }
+{ Held back freed pages (PageUsageQuarantined) count as free: the
+  allocator lets them go as soon as the free list runs dry. }
 function KernelHeldPages: QWord;
 var
   Counts: TPageUsageCounts;
@@ -188,7 +220,50 @@ begin
   GetPageUsageCounts(Counts);
   Result := Counts[PageUsageKernelImage] + Counts[PageUsageBootData] + Counts[PageUsagePageTable] +
     Counts[PageUsageFrameDatabase] + Counts[PageUsageKernelHeap] + Counts[PageUsageKernelStack] +
-    Counts[PageUsageGeneral] + Counts[PageUsageQuarantined];
+    Counts[PageUsageGeneral];
+end;
+
+procedure RegisterKeptPagesQuery(Query: TKeptPagesQuery);
+begin
+  if KeptPagesQueryCount >= MaximumKeptPagesQueries then
+    Exit;
+  KeptPagesQueries[KeptPagesQueryCount] := Query;
+  Inc(KeptPagesQueryCount);
+end;
+
+function SumKeptPages: QWord;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := 0 to KeptPagesQueryCount - 1 do
+    Result := Result + KeptPagesQueries[Index]();
+end;
+
+function KeptCachePages: QWord;
+begin
+  Result := LastKeptPages;
+end;
+
+procedure SetCommitPressureCallback(Callback: TCommitPressureCallback);
+begin
+  PressureCallback := Callback;
+end;
+
+{ After a charge (outside the pool's lock): the callback, if the charge
+  was refused or left little headroom. }
+procedure NoteSystemCharge(Charged, Limit: QWord; Refused: Boolean);
+var
+  Callback: TCommitPressureCallback;
+  Low: QWord;
+  Critical: QWord;
+begin
+  Callback := PressureCallback;
+  if not Assigned(Callback) or (Limit = 0) then
+    Exit;
+  GetMemoryWatermarks(Low, Critical);
+  if Refused or (CommitPressureLevel(Charged, Limit, Low, Critical) <> CommitPressureNone) then
+    Callback;
 end;
 
 procedure InitializeSystemCommitLimit;
@@ -202,6 +277,9 @@ begin
     LimitIsOff := True
   else if GetKernelOptionNumber('commitlimit', Number) then
     LimitPercent := Number;
+  { Above 100% more is promised than RAM can back: committed pages are
+    then claimed like any other. }
+  SetCommitmentsBacked(not LimitIsOff and (LimitPercent <= 100));
   RefreshSystemCommitLimit;
 end;
 
@@ -220,7 +298,9 @@ begin
   begin
     GetPhysicalMemoryStatistics(Physical);
     GetMemoryWatermarks(Low, Critical);
-    Limit := SystemCommitLimit(Physical.TotalUsablePages, KernelHeldPages, Critical, LimitPercent);
+    LastKeptPages := SumKeptPages;
+    Limit := SystemCommitLimit(Physical.TotalUsablePages, KernelHeldPages, LastKeptPages, Critical,
+      LimitPercent);
   end;
   PreviousLevel := AcquireSpinLock(SystemPool.Lock);
   SystemPool.LimitPages := Limit;
@@ -230,6 +310,8 @@ end;
 function TryChargeSystemCommit(Pages: QWord; MayUseReserve: Boolean): Boolean;
 var
   PreviousLevel: TPriorityLevel;
+  Charged: QWord;
+  Limit: QWord;
 begin
   if Pages = 0 then
     Exit(True);
@@ -243,7 +325,10 @@ begin
   end
   else
     Inc(SystemPool.Failures);
+  Charged := SystemPool.ChargedPages;
+  Limit := SystemPool.LimitPages;
   ReleaseSpinLock(SystemPool.Lock, PreviousLevel);
+  NoteSystemCharge(Charged, Limit, not Result);
 end;
 
 procedure UnchargeSystemCommit(Pages: QWord);
