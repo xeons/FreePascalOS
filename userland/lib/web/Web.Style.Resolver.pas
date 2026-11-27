@@ -25,9 +25,10 @@
   subtrees whose dirty bits say something changed. It is a document
   observer: tree, attribute and text changes set the dirty bits (an
   inserted subtree and the siblings that structural selectors may now
-  match differently; an element whose class or id changed and its
-  subtree; a style attribute change only the element), and changes to
-  <style> and <link> elements mark the sheets dirty.
+  match differently; for an element whose class, id or other attribute
+  changed what the selectors naming them reach (Css.NameInvalidation);
+  a style attribute change only the element), and changes to <style>
+  and <link> elements mark the sheets dirty.
 
   After restyling an element the styler compares the new style with
   the old one struct by struct (structs are interned, so pointers
@@ -46,7 +47,7 @@ interface
 uses
   Web.Atoms, Web.Namespaces, Web.Dom, Css.ComputedStyle, Css.StyleEngine, Css.MediaQueries,
   Css.ElementAdapter, Css.Selectors, Css.TreeScopes, Web.Style.NodeData, Web.Style.Adapter, Web.Style.Sheets,
-  Web.Layout.Resources, Css.Stylesheets, Web.Style.DocumentSheets, Web.Style.Animations;
+  Web.Layout.Resources, Css.Stylesheets, Web.Style.DocumentSheets, Web.Style.Animations, Web.Style.SheetChanges;
 
 type
   { scMove: painting and the box's translation (transform, translate),
@@ -80,18 +81,25 @@ type
     { Bumped whenever sheets may have changed: each shadow tree's scope
       collects its sheets again when it is behind. }
     FShadowSheetsVersion: LongWord;
+    { What rules newly in effect may style, marked at the next update. }
+    FNewRuleTargets: TStyleRuleTargets;
     procedure SetAuthorStylesEnabled(Value: Boolean);
     function GetAuthorStylesEnabled: Boolean;
     procedure ResourcesChanged(Change: TResourceChange);
     procedure DocumentSheetsChanged(Change: TSheetChange; Sheet: TCssStyleSheet; Rule: TCssRule);
     procedure UpdateSheets;
+    procedure NoteSheetChange(const Old, New: TCssStyleSheetArray; ContentsChanged: Boolean);
     procedure PrepareElement(Element: TElement; Data: PNodeData);
     procedure StyleChildren(Parent: TNode; ParentStyle: TCssComputedStyle; Force: Boolean);
     function StyleElement(Element: TElement; Data: PNodeData; ParentStyle: TCssComputedStyle;
       Cascade: Boolean): Boolean;
-    procedure ResolvePseudoStyles(Element: TElement; Data: PNodeData; var Change: TStyleChangeKind);
+    procedure ResolvePseudoStyles(Element: TElement; Data: PNodeData; AfterElement: Boolean;
+      var Change: TStyleChangeKind);
     procedure MarkSiblingsDirty(Parent: TNode);
     procedure MarkLaterSiblingsDirty(Element: TElement);
+    function CanNarrowAttributeChange(Element: TElement; NamespaceId: TNamespaceId): Boolean;
+    procedure MarkAttributeChangeDirty(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
+      const OldValue: string);
     procedure CheckSheetOwner(Node: TNode);
     procedure ShadowSheetsChanged(Node: TNode);
     function UpdateShadowScope(Host: TElement): Boolean;
@@ -157,8 +165,9 @@ function CompareStyles(Old, New: TCssComputedStyle): TStyleChangeKind;
 implementation
 
 uses
-  Css.PropertyIds, Css.StateInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords, Css.Parser, Web.Style.Hints, Web.Style.UserAgent,
-  Web.Fetch.Requests, Web.Fetch.CspChecks;
+  Css.PropertyIds, Css.StateInvalidation, Css.NameInvalidation, Css.StyleStructs, Css.ComputedValues, Css.Keywords,
+  Css.Parser, Web.Style.Hints, Web.Style.UserAgent, Web.Style.AttributeChanges, Web.Fetch.Requests,
+  Web.Fetch.CspChecks;
 
 type
   { A shadow tree's style scope with the sheets version it collected. }
@@ -228,7 +237,22 @@ begin
   for Group := Low(TCssStructGroup) to High(TCssStructGroup) do
     if (Group in InheritedGroups) and (Old.Structs[Group] <> New.Structs[Group]) then
       Exit(True);
-  Result := Old.Custom <> New.Custom;
+  { Equal sets made separately (an element declaring variables gets a new
+    one each time) change nothing below. }
+  Result := not Old.Custom.Equals(New.Custom);
+end;
+
+{ An equal custom property set made again (an element declaring
+  variables gets a new one each time) gives way to the old one, whose
+  pointer the children's sets are layered over and the engine's
+  substitution cache is keyed by: equal content, so the style stays
+  what it was computed to be. }
+procedure KeepEqualCustomProperties(Old, New: TCssComputedStyle);
+begin
+  if (Old = nil) or (New = nil) or (Old.Custom = New.Custom) or not Old.Custom.Equals(New.Custom) then
+    Exit;
+  New.Custom.Release;
+  New.Custom := Old.Custom.AddRef;
 end;
 
 constructor TDocumentStyler.Create(Document: TDocument; Resources: TDocumentResources);
@@ -240,6 +264,7 @@ begin
   FEngine := TCssStyleEngine.Create(FAdapter, True);
   FAnimations := TStyleAnimations.Create(FEngine);
   FSheetList := TDocumentSheetList.Create(Document, Resources);
+  FNewRuleTargets := TStyleRuleTargets.Create;
   { The engine's additions to the user agent sheet come first. }
   FEngine.AddStyleSheet(EngineUserAgentSheet);
   FSheetsDirty := True;
@@ -261,6 +286,7 @@ begin
   FAnimations.Free;
   FEngine.Free;
   FSheetList.Free;
+  FNewRuleTargets.Free;
   FAdapter.Free;
   inherited Destroy;
 end;
@@ -329,7 +355,9 @@ procedure TDocumentStyler.DocumentSheetsChanged(Change: TSheetChange; Sheet: TCs
 begin
   if (Change = scRuleAppended) and not FSheetsDirty and FEngine.AppendRule(Sheet, Rule) then
   begin
-    MarkSubtreeStyleDirty(FDocument);
+    FNewRuleTargets.AddRule(Rule);
+    { Nothing is dirty yet: the update must still come here. }
+    MarkStyleDirty(FDocument);
     Exit;
   end;
   FSheetsDirty := True;
@@ -337,18 +365,55 @@ begin
   Inc(FShadowSheetsVersion);
 end;
 
+{ The sheets of New that are not in Old, when New is Old with sheets
+  inserted (Old's in the same order); False when sheets were removed or
+  moved. }
+function AddedSheets(const Old, New: TCssStyleSheetArray; out Added: TCssStyleSheetArray): Boolean;
+var
+  OldIndex, NewIndex, Count: Integer;
+begin
+  Added := nil;
+  SetLength(Added, Length(New));
+  Count := 0;
+  OldIndex := 0;
+  for NewIndex := 0 to High(New) do
+    if (OldIndex <= High(Old)) and (New[NewIndex] = Old[OldIndex]) then
+      Inc(OldIndex)
+    else
+    begin
+      Added[Count] := New[NewIndex];
+      Inc(Count);
+    end;
+  SetLength(Added, Count);
+  Result := OldIndex > High(Old);
+end;
+
+{ Notes what the change of sheets from Old to New may restyle: only
+  what the rules of added sheets may style when sheets were only added
+  (Web.Style.SheetChanges), else everything. }
+procedure TDocumentStyler.NoteSheetChange(const Old, New: TCssStyleSheetArray; ContentsChanged: Boolean);
+var
+  Added: TCssStyleSheetArray;
+begin
+  if not ContentsChanged and AddedSheets(Old, New, Added) then
+    FNewRuleTargets.AddSheets(Added)
+  else
+    FNewRuleTargets.AddEverything;
+end;
+
 procedure TDocumentStyler.UpdateSheets;
 var
   Sheets: TCssStyleSheetArray;
   Index: Integer;
-  Same: Boolean;
+  Same, ContentsChanged: Boolean;
 begin
   FSheetsDirty := False;
   if FAuthorStylesDisabled then
     Sheets := nil
   else
     Sheets := FSheetList.Collect;
-  Same := (Length(Sheets) = Length(FActiveSheets)) and not FSheetContentsChanged;
+  ContentsChanged := FSheetContentsChanged;
+  Same := (Length(Sheets) = Length(FActiveSheets)) and not ContentsChanged;
   FSheetContentsChanged := False;
   if Same then
     for Index := 0 to High(Sheets) do
@@ -360,12 +425,12 @@ begin
     FEngine.RemoveStyleSheet(FActiveSheets[Index]);
   for Index := 0 to High(Sheets) do
     FEngine.AddStyleSheet(Sheets[Index]);
+  NoteSheetChange(FActiveSheets, Sheets, ContentsChanged);
   FActiveSheets := Sheets;
   FEngine.Invalidate;
   { Indexed now, so the sheets and rules the CSSOM took out can go. }
   FEngine.Prepare;
   DocumentSheetsOf(FDocument).FreeRetired;
-  MarkSubtreeStyleDirty(FDocument);
 end;
 
 function TDocumentStyler.GetAuthorStylesEnabled: Boolean;
@@ -574,7 +639,10 @@ begin
   end;
 end;
 
-procedure TDocumentStyler.ResolvePseudoStyles(Element: TElement; Data: PNodeData; var Change: TStyleChangeKind);
+{ AfterElement: the element's style was just cascaded (the engine then
+  knows its pseudo-element rule candidates). }
+procedure TDocumentStyler.ResolvePseudoStyles(Element: TElement; Data: PNodeData; AfterElement: Boolean;
+  var Change: TStyleChangeKind);
 var
   Before, After, Marker: TCssComputedStyle;
 begin
@@ -586,12 +654,12 @@ begin
   end
   else
   begin
-    Before := FEngine.ResolvePseudoStyle(Element, Data^.Style, peBefore);
-    After := FEngine.ResolvePseudoStyle(Element, Data^.Style, peAfter);
+    Before := FEngine.ResolvePseudoStyle(Element, Data^.Style, peBefore, AfterElement);
+    After := FEngine.ResolvePseudoStyle(Element, Data^.Style, peAfter, AfterElement);
     Marker := nil;
     if KeywordIn(Data^.Style.Keyword(cpDisplay), [kwListItem, kwInlineListItem]) or
        IsListItemDisplay(Data^.Style) then
-      Marker := FEngine.ResolvePseudoStyle(Element, Data^.Style, peMarker);
+      Marker := FEngine.ResolvePseudoStyle(Element, Data^.Style, peMarker, AfterElement);
   end;
   if (CompareStyles(Data^.BeforeStyle, Before) <> scNone) or (CompareStyles(Data^.AfterStyle, After) <> scNone) or
      (CompareStyles(Data^.MarkerStyle, Marker) <> scNone) then
@@ -630,13 +698,14 @@ begin
   Base.Release;
   OldBase.Release;
   OldShown.Release;
+  KeepEqualCustomProperties(Data^.Style, NewStyle);
   Change := CompareStyles(Data^.Style, NewStyle);
   Result := InheritedChanged(Data^.Style, NewStyle) or (Data^.Style = nil) or
     (Data^.Style.IsDisplayNone <> NewStyle.IsDisplayNone);
   Data^.Style.Release;
   Data^.Style := NewStyle;
   if Cascade or (Change <> scNone) then
-    ResolvePseudoStyles(Element, Data, Change);
+    ResolvePseudoStyles(Element, Data, Cascade, Change);
   Data^.Flags := Data^.Flags - [ndStyleDirty, ndAnimationDirty];
   if (Change <> scNone) and Assigned(FOnStyleChanged) then
     FOnStyleChanged(Element, Change);
@@ -693,6 +762,7 @@ var
 begin
   if FSheetsDirty then
     UpdateSheets;
+  FNewRuleTargets.MarkDirty(FDocument, FAdapter);
   Data := NodeDataOf(FDocument);
   if not (ndDescendantStyleDirty in Data^.Flags) and not (ndStyleDirty in Data^.Flags) then
     Exit;
@@ -794,6 +864,53 @@ begin
   FreeNodeData(Node);
 end;
 
+{ Whether a change of an attribute of Element can be followed through
+  the selectors naming it (else everything around is styled again). }
+function TDocumentStyler.CanNarrowAttributeChange(Element: TElement; NamespaceId: TNamespaceId): Boolean;
+begin
+  Result := False;
+  if NamespaceId <> NamespaceNone then
+    Exit;
+  { Cells read their table's cellpadding and border. }
+  if Element.IsHtmlElement(AtomTable) then
+    Exit;
+  { The shadow trees' rules are not in the engine's dependencies. }
+  if FDocument.HasShadowRoots and ((Element.ShadowRoot <> nil) or (Element.AssignedSlot <> nil) or
+    (Element.ContainingShadowRoot <> nil)) then
+    Exit;
+  Result := True;
+end;
+
+{ Marks what an attribute change asks to be styled again: the element
+  (its presentational hints may change), and what the selectors naming
+  the attribute, class or id reach. }
+procedure TDocumentStyler.MarkAttributeChangeDirty(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
+  const OldValue: string);
+var
+  Invalidation: TCssNameInvalidation;
+begin
+  if CanNarrowAttributeChange(Element, NamespaceId) then
+    Invalidation := AttributeChangeInvalidation(FEngine, Element, LocalName, OldValue)
+  else
+    Invalidation := [niEverywhere];
+  if niEverywhere in Invalidation then
+  begin
+    FTreeChanged := True;
+    MarkSubtreeStyleDirty(Element);
+    if Element.ParentNode <> nil then
+      MarkSiblingsDirty(Element.ParentNode);
+    if Element.IsHtmlElement(AtomTable) then
+      MarkHintsOfSubtreeDirty(Element);
+    Exit;
+  end;
+  if niDescendants in Invalidation then
+    MarkSubtreeStyleDirty(Element)
+  else
+    MarkStyleDirty(Element);
+  if niSiblings in Invalidation then
+    MarkLaterSiblingsDirty(Element);
+end;
+
 procedure TDocumentStyler.AttributeChanged(Element: TElement; LocalName: TAtom; NamespaceId: TNamespaceId;
   const OldValue: string; HadValue: Boolean);
 var
@@ -802,7 +919,6 @@ begin
   if not Element.IsConnected then
     Exit;
   Data := NodeDataOf(Element);
-  FTreeChanged := True;
   if (LocalName = AtomStyleAttribute) and (NamespaceId = NamespaceNone) then
   begin
     Include(Data^.Flags, ndStyleAttributeDirty);
@@ -811,14 +927,11 @@ begin
   else
   begin
     if LocalName = AtomId then
-      Exclude(Data^.Flags, ndIdKnown);
+      Exclude(Data^.Flags, ndIdKnown)
+    else if LocalName = AtomClass then
+      Exclude(Data^.Flags, ndClassesKnown);
     Include(Data^.Flags, ndHintsDirty);
-    MarkSubtreeStyleDirty(Element);
-    if Element.ParentNode <> nil then
-      MarkSiblingsDirty(Element.ParentNode);
-    { Cells read their table's cellpadding and border. }
-    if Element.IsHtmlElement(AtomTable) then
-      MarkHintsOfSubtreeDirty(Element);
+    MarkAttributeChangeDirty(Element, LocalName, NamespaceId, OldValue);
     if IsStyleSheetOwner(Element) then
     begin
       FSheetsDirty := True;

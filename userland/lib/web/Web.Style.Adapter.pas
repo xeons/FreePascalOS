@@ -40,6 +40,8 @@ type
   TDomElementAdapter = class(TCssElementAdapter)
   private
     FDocument: TDocument;
+    { The classes of the detached element asked about last. }
+    FDetachedClasses: TCssAtomArray;
   public
     constructor Create(Document: TDocument);
     function LocalName(Element: TCssElement): TCssAtom; override;
@@ -48,6 +50,7 @@ type
     function Id(Element: TCssElement): TCssAtom; override;
     function ClassCount(Element: TCssElement): Integer; override;
     function ClassAt(Element: TCssElement; Index: Integer): TCssAtom; override;
+    function Classes(Element: TCssElement; out Count: Integer): PCssAtom; override;
     function FindAttribute(Element: TCssElement; AttributeNamespace, AttributeName: TCssAtom;
       out Value: string): Boolean; override;
     function AttributeCount(Element: TCssElement): Integer; override;
@@ -143,21 +146,62 @@ begin
   Result := ElementIdAtom(TElement(Element));
 end;
 
+{ Fills List with the element's classes as libcss atoms. }
+procedure ReadClassAtoms(Element: TElement; var List: TCssAtomArray);
+var
+  Atoms: TAtomArray;
+  Index: Integer;
+begin
+  Atoms := Element.ClassAtoms;
+  SetLength(List, Length(Atoms));
+  for Index := 0 to High(Atoms) do
+    List[Index] := CssAtomOf(Atoms[Index]);
+end;
+
+function TDomElementAdapter.Classes(Element: TCssElement; out Count: Integer): PCssAtom;
+var
+  Data: PNodeData;
+begin
+  Count := 0;
+  Result := nil;
+  if (TElement(Element).Flags and NodeFlagHasClass) = 0 then
+    Exit;
+  { Styled (connected) elements keep them in their node data, which the
+    styler marks stale when the class attribute changes; script may
+    match detached ones, read each time. }
+  if TElement(Element).IsConnected then
+  begin
+    Data := NodeDataOf(TElement(Element));
+    if not (ndClassesKnown in Data^.Flags) then
+    begin
+      ReadClassAtoms(TElement(Element), Data^.Classes);
+      Include(Data^.Flags, ndClassesKnown);
+    end;
+    Count := Length(Data^.Classes);
+    if Count > 0 then
+      Result := @Data^.Classes[0];
+    Exit;
+  end;
+  ReadClassAtoms(TElement(Element), FDetachedClasses);
+  Count := Length(FDetachedClasses);
+  if Count > 0 then
+    Result := @FDetachedClasses[0];
+end;
+
 function TDomElementAdapter.ClassCount(Element: TCssElement): Integer;
 begin
-  if (TElement(Element).Flags and NodeFlagHasClass) = 0 then
-    Exit(0);
-  Result := Length(TElement(Element).ClassAtoms);
+  Classes(Element, Result);
 end;
 
 function TDomElementAdapter.ClassAt(Element: TCssElement; Index: Integer): TCssAtom;
 var
-  Classes: TAtomArray;
+  Count: Integer;
+  List: PCssAtom;
 begin
-  Classes := TElement(Element).ClassAtoms;
-  if (Index < 0) or (Index >= Length(Classes)) then
+  List := Classes(Element, Count);
+  if (Index < 0) or (Index >= Count) then
     Exit(NoAtom);
-  Result := CssAtomOf(Classes[Index]);
+  Result := List[Index];
 end;
 
 function TDomElementAdapter.FindAttribute(Element: TCssElement; AttributeNamespace, AttributeName: TCssAtom;

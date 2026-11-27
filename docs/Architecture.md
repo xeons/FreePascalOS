@@ -14975,7 +14975,18 @@ initial struct; every rebuilt struct is interned in the struct cache, so
 elements with equal values in a group share one struct. A computed
 style (`Css.ComputedStyle`) is a pointer per group, the custom property
 set (shared with the parent when the element declares none) and its
-pseudo-element.
+pseudo-element. Custom property sets (`Css.CustomProperties`) are
+layered, as Stylo shares its maps: a set made for an element that
+declares variables holds only its differences from a flat set below it
+(the parent's, or the one the parent is layered over; a removed name is
+a tombstone) and is flattened past 32 differences, so pages with
+hundreds of variables on the root do not copy them for every element; a
+set equal to its parent's is the parent's, and registered (@property)
+properties that do not inherit keep the parent's set when it already
+has their initial values. A var() declaration's substituted and parsed
+value is remembered per declaration, custom property set and longhand
+(`Css.SubstitutionCache`), since a shared set meets the same declaration
+over and over.
 
 **The style engine.** `TCssStyleEngine` (`Css.StyleEngine`) keeps the
 sheets (the HTML user agent sheet of the HTML Standard's rendering
@@ -14994,9 +15005,19 @@ walking themselves call PushAncestor and
 PopAncestor). Elements with the same parent style that match the same
 rules, with no style attribute or presentational hints and no attr()
 in their declarations, get the same computed style from the sharing
-cache without cascading again. `TreeChanged` forgets sibling positions
-and shared styles; `Invalidate` rebuilds the index (sheets changed,
-media changed).
+cache without cascading again. An element's own pass notes the
+candidates of pseudo-element rules, and its ::before, ::after and
+::marker resolved right after take them from there instead of asking the
+index again. The adapter gives an element's classes as a run of atoms
+(`Classes`), read without copies by matching, the index and the bloom
+filter. `TreeChanged` forgets sibling positions and shared styles;
+`Invalidate` rebuilds the index (sheets changed, media changed).
+`NameInvalidation` answers what a class, id or attribute change can
+restyle (`Css.NameInvalidation`, built with the index like the state
+dependencies: each name with where its selectors have it - the subject,
+left of descendant or child combinators, left of sibling combinators;
+in complex :is()/:not() arguments all three, under :has() or an
+:nth-*(... of S) everything).
 
 Media queries (`Css.MediaQueries`) are Level 4 and 5: media types, not
 and only, and/or/not conditions, the range syntax (`400px <= width <
@@ -16886,8 +16907,8 @@ its keywords in enum order), so `Web.Style.Atoms` maps each libweb atom
 once to the libcss atom of the same name, in an array indexed by the
 libweb atom; `TDomElementAdapter` (`Web.Style.Adapter`) then answers the
 selector matcher with array reads (local names, namespaces, attribute
-names, classes from the element's cached class atoms) and the id atom
-kept in the node's data, and allocates nothing per element. The states
+names) and the id and class atoms kept in the node's data (made again
+when the attribute changes), and allocates nothing per element. The states
 of the dynamic pseudo-classes come from the node's data (set by the web
 view: hover, focus, active ...) plus those the document gives (links,
 disabled/enabled/checked controls, required, read-only, placeholder
@@ -16896,7 +16917,7 @@ shown, open details).
 Each styled node has a small record in its `LayoutData` slot
 (`Web.Style.NodeData`): its computed style and those of its ::before,
 ::after and ::marker, its parsed style attribute and presentational
-hints, its id atom, its states, dirty bits and its first box. The record
+hints, its id and class atoms, its states, dirty bits and its first box. The record
 is freed when the node leaves the document.
 
 `TDocumentStyler` (`Web.Style.Resolver`) owns the `TCssStyleEngine`: it
@@ -16925,9 +16946,21 @@ Styling walks the tree top-down with the engine's ancestor bloom filter
 (PushAncestor/PopAncestor), visiting only subtrees whose dirty bits say
 something changed. The styler is a document observer: an inserted
 subtree is marked for styling with its new siblings (structural
-selectors), an attribute change restyles the element's subtree and
-siblings (a style attribute change only the element), and
-`<style>`/`<link>` changes mark the sheets dirty. A change of states
+selectors), an attribute change restyles what the selectors naming the
+classes added or removed, the old and new id or the attribute reach
+(`Web.Style.AttributeChanges` over the engine's name dependencies: the
+element, its subtree, its later siblings; attributes the adapter turns
+into states or reads up the tree, such as href, disabled, lang and dir,
+and changes in or around shadow trees restyle the element's subtree and
+siblings), a style attribute change only the element, and
+`<style>`/`<link>` changes mark the sheets dirty. Sheets added and rules
+appended from script restyle only the elements whose id, class or type
+(or :root) their selectors' subjects name (`Web.Style.SheetChanges`);
+removals, imports, other at-rules and subjects naming none of these
+restyle everything. An element declaring variables keeps its old custom
+property set when the new one is equal, so its children's sets and the
+substitution cache stay valid and an equal set does not restyle the
+children. A change of states
 (:hover, :focus, :active ...) restyles only what the selectors reading
 those states can reach (libcss's `Css.StateInvalidation`, built with the
 rule index: each compound with a state pseudo-class, keyed by its type,

@@ -23,9 +23,10 @@
   A record made when the node is first styled (or laid out, for text)
   and freed when the node leaves the document: the computed style and
   those of its ::before, ::after and ::marker, the parsed style
-  attribute and presentational hints, the id as a libcss atom, the
-  dynamic states (hover, focus ...) the web view sets, the dirty bits of
-  incremental restyling and box building, and the node's first box.
+  attribute and presentational hints, the id and classes as libcss
+  atoms, the dynamic states (hover, focus ...) the web view sets, the
+  dirty bits of incremental restyling and box building, and the node's
+  first box.
 
   Dirty bits go up the tree as "something below is dirty" bits, so that
   an update walks down only into the subtrees that changed.
@@ -55,6 +56,8 @@ type
     ndDescendantBoxesDirty,
     { The id atom is known. }
     ndIdKnown,
+    { The class atoms are known. }
+    ndClassesKnown,
     { Only time moved for the element's animations and transitions: its
       style is made again from BaseStyle without cascading. }
     ndAnimationDirty);
@@ -69,6 +72,8 @@ type
     StyleAttribute: TCssDeclarationBlock;
     Hints: TCssDeclarationBlock;
     IdAtom: TCssAtom;
+    { The class attribute's classes as libcss atoms (ndClassesKnown). }
+    Classes: TCssAtomArray;
     Flags: TNodeDataFlags;
     States: TCssElementStates;
     { The node's principal box (a TLayoutBox), nil when it has none. }
