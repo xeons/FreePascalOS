@@ -60,7 +60,10 @@ how the existing pieces fit together.
       allocations; and multi-threaded TCG on arm64 GICv2 sometimes
       delivers a correctly set generic timer up to 0.75 s late (QEMU, not
       the kernel; the el2 boot runs `thread=single` to avoid it, el1/max
-      cannot because their scheduler stress test needs parallel vCPUs)
+      cannot because their scheduler stress test needs parallel vCPUs;
+      the dynamic tick's waker check now fails only when most of its
+      rounds are late, as a left-deferred tick makes them, so one such
+      late timer no longer fails the el1 boot)
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,

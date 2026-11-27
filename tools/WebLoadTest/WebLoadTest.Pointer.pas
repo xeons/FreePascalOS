@@ -468,7 +468,11 @@ begin
         Inc(Uncaught);
     Check(Uncaught = 0, Name + ': no uncaught script errors (' + IntToStr(Uncaught) + ')' + LineEnding +
       Copy(Run.Console.Text, 1, 2000));
-    Check(Context.Engine.Evaluate('counts.events > 1000 && counts.upsets > 300 && counts.layouts > 30') = JsTrue,
+    { In proportion to the steps: the page's upsets can empty it (no text
+      left to cross gives fewer pointer events), and the collector stress
+      run takes far fewer steps than the others. }
+    Check(Context.Engine.Evaluate(Format('counts.events > %d && counts.upsets > %d && counts.layouts > %d',
+      [StepCount, StepCount div 4, StepCount div 40])) = JsTrue,
       Name + ': the page saw the events and upset itself (' +
       Context.Engine.ToText(Context.Engine.Evaluate('JSON.stringify(counts) + " last exception: " + lastException')) + ')');
     Check(Copies > 10, Name + ': text was selected and copied (' + IntToStr(Copies) + ' times)');

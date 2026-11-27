@@ -86,7 +86,8 @@ const
     would end about 980 ms late, every time (the deferral is renewed as
     the waker waits). The limit stays below that but above the ~750 ms
     QEMU's multi-threaded TCG sometimes sleeps through a correctly
-    armed generic timer (scripts/test-qemu-arm64.sh). }
+    armed generic timer (scripts/test-qemu-arm64.sh), in a round or two
+    (the checks fail only when most rounds are late). }
   WakerLatenessLimitMilliseconds = 800;
   { The page's time and the kernel's, read one after the other. }
   ClockAgreementNanoseconds = 2 * NanosecondsPerMillisecond;
@@ -106,6 +107,10 @@ var
   WakerTimerFiredAt: QWord;
   WakerSleepLateness: QWord;
   WakerTimerLateness: QWord;
+  { Rounds that ended later than the limit: a tick left deferred makes
+    every round late; QEMU's missed wake-ups only some. }
+  WakerLateSleeps: Integer;
+  WakerLateTimers: Integer;
 
 function LastOnlineProcessor: LongWord;
 var
@@ -189,6 +194,8 @@ begin
   WaitForEvent(WakerGo);
   WakerSleepLateness := 0;
   WakerTimerLateness := 0;
+  WakerLateSleeps := 0;
+  WakerLateTimers := 0;
   for Round := 1 to WakerSleeps do
   begin
     Start := ClockNanoseconds;
@@ -196,6 +203,8 @@ begin
     Lateness := LatenessAfter(Start, ClockNanoseconds);
     if Lateness > WakerSleepLateness then
       WakerSleepLateness := Lateness;
+    if Lateness > WakerLatenessLimitMilliseconds * NanosecondsPerMillisecond then
+      Inc(WakerLateSleeps);
   end;
   InitializeTimer(Timer);
   InitializeDeferredCall(Call, @NoteWakerTimer, nil);
@@ -209,6 +218,8 @@ begin
     Lateness := LatenessAfter(Start, WakerTimerFiredAt);
     if Lateness > WakerTimerLateness then
       WakerTimerLateness := Lateness;
+    if Lateness > WakerLatenessLimitMilliseconds * NanosecondsPerMillisecond then
+      Inc(WakerLateTimers);
   end;
   { The call lives on this stack: no processor may still be in it. }
   CancelDeferredCall(Call);
@@ -237,10 +248,13 @@ begin
   WaitForEvent(WakerFinished);
   Ticks := Processor^.TickInterruptCount - TicksBefore;
   DereferenceObject(Waker);
-  Check(WakerSleepLateness <= WakerLatenessLimitMilliseconds * NanosecondsPerMillisecond,
-    'a sleep on a processor whose tick was deferred ended far too late');
-  Check(WakerTimerLateness <= WakerLatenessLimitMilliseconds * NanosecondsPerMillisecond,
-    'a timer set on a processor whose tick was deferred expired far too late');
+  { Most rounds late is the deferred tick's fault; one or two late is
+    QEMU's multi-threaded TCG sleeping through an armed timer, which a
+    single maximum could not tell apart. }
+  Check(WakerLateSleeps <= WakerSleeps div 2,
+    'sleeps on a processor whose tick was deferred ended far too late');
+  Check(WakerLateTimers <= WakerTimers div 2,
+    'timers set on a processor whose tick was deferred expired far too late');
   Check(Ticks <= WakerTickLimit,
     'a lone thread took a tick for every wake-up of a thread beside it (the tick was not deferred when it waited)');
 end;
