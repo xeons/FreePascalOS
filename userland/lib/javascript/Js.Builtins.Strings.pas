@@ -55,6 +55,9 @@ procedure InstallString(R: TJsInterpreterRealm);
   part); NamedGroups is undefined or an object. }
 function GetSubstitution(R: TJsRealm; Matched, Text: TJsString; Position: Integer; const Captures: TJsValueList;
   NamedGroups: TJsValue; Replacement: TJsString): TJsString;
+{ Count units of the flat Text from Start: the shared strings when
+  that is none or one Latin-1 character. }
+function SubStringOf(R: TJsRealm; Text: TJsString; Start, Count: Integer): TJsString;
 
 implementation
 
@@ -62,6 +65,21 @@ uses
   Character,
   Js.CaseMapping,
   Js.Normalization;
+
+function SubStringOf(R: TJsRealm; Text: TJsString; Start, Count: Integer): TJsString;
+var
+  CodeUnit: Word;
+begin
+  if Count <= 0 then
+    Exit(R.Runtime.EmptyString);
+  if Count = 1 then
+  begin
+    CodeUnit := Text.CharAt(Start);
+    if CodeUnit < 256 then
+      Exit(R.Runtime.CharacterString(CodeUnit));
+  end;
+  Result := SubString(R.Heap, Text, Start, Count);
+end;
 
 function ThisString(R: TJsRealm; This: TJsValue; const Name: string): TJsString;
 begin
@@ -444,6 +462,22 @@ begin
   Result := JsStringValue(SubString(R.Heap, Text, Start, Finish - Start));
 end;
 
+{ The full Unicode case mapping of a text that is not all ASCII. }
+function UnicodeCase(R: TJsRealm; Text: TJsString; Upper: Boolean): TJsValue;
+var
+  Unicode: UnicodeString;
+begin
+  Unicode := StringToUnicode(R.Heap, Text);
+  if not Upper then
+    Unicode := JsLowerCase(Unicode)
+  else
+  begin
+    Unicode := JsUpperCase(Unicode);
+    Unicode := UnicodeStringReplace(Unicode, #$DF, 'SS', [rfReplaceAll]);
+  end;
+  Result := JsStringValue(NewStringFromUnicode(R.Heap, Unicode));
+end;
+
 { toLowerCase (0), toUpperCase (1) }
 function StringCase(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
@@ -452,7 +486,6 @@ var
   Index: Integer;
   Code: Word;
   Ascii, Changed: Boolean;
-  Unicode: UnicodeString;
 begin
   Text := ThisString(R, This, 'toLowerCase');
   if Text = nil then
@@ -487,15 +520,7 @@ begin
     end;
     Exit(JsStringValue(Outcome));
   end;
-  Unicode := StringToUnicode(R.Heap, Text);
-  if Callee.Magic = 0 then
-    Unicode := JsLowerCase(Unicode)
-  else
-  begin
-    Unicode := JsUpperCase(Unicode);
-    Unicode := UnicodeStringReplace(Unicode, #$DF, 'SS', [rfReplaceAll]);
-  end;
-  Result := JsStringValue(NewStringFromUnicode(R.Heap, Unicode));
+  Result := UnicodeCase(R, Text, Callee.Magic = 1);
 end;
 
 { trim (0), trimStart (1), trimEnd (2) }
@@ -607,7 +632,7 @@ begin
     begin
       if Created.ArrayLength >= Limit then
         Break;
-      Created.CreateDataProperty(R, JsInteger(Index), JsStringValue(R.Runtime.CharacterString(Text.CharAt(Index))));
+      AppendElement(R, Created, JsStringValue(R.Runtime.CharacterString(Text.CharAt(Index))));
     end;
     Exit;
   end;
@@ -617,14 +642,12 @@ begin
     Found := StringIndexOf(Text, Separator, Position);
     if Found < 0 then
       Break;
-    Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-      JsStringValue(SubString(R.Heap, Text, Position, Found - Position)));
+    AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Position, Found - Position)));
     if Created.ArrayLength >= Limit then
       Exit;
     Position := Found + Separator.Length;
   end;
-  Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-    JsStringValue(SubString(R.Heap, Text, Position, Text.Length - Position)));
+  AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Position, Text.Length - Position)));
 end;
 
 { Delegates to Pattern[Symbol] when the pattern has that method:
@@ -833,7 +856,7 @@ begin
       FlagText := ToJsString(R, Flags);
       if FlagText = nil then
         Exit(JsException);
-      if StringIndexOf(FlagText, JsAsString(R.Intern('g')), 0) < 0 then
+      if StringIndexOf(FlagText, R.Runtime.CharacterString(Ord('g')), 0) < 0 then
         Exit(R.ThrowTypeError('replaceAll must be called with a global RegExp'));
     end;
   end;
@@ -860,7 +883,8 @@ begin
     Found := StringIndexOf(Text, Search, Position);
     if (Found < 0) or (Found > Text.Length) then
       Break;
-    SetLength(Positions, Count + 1);
+    if Count >= Length(Positions) then
+      SetLength(Positions, Count * 2 + 4);
     Positions[Count] := Found;
     Inc(Count);
     if Callee.Magic = 0 then
@@ -933,7 +957,7 @@ begin
       FlagText := ToJsString(R, Flags);
       if FlagText = nil then
         Exit(JsException);
-      if StringIndexOf(FlagText, JsAsString(R.Intern('g')), 0) < 0 then
+      if StringIndexOf(FlagText, R.Runtime.CharacterString(Ord('g')), 0) < 0 then
         Exit(R.ThrowTypeError('matchAll must be called with a global RegExp'));
     end;
   end;

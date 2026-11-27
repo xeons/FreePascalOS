@@ -75,6 +75,9 @@ type
       changes a named property, or an object's prototype changes:
       caches of properties found deeper on a prototype chain compare it. }
     PrototypeShapeEpoch: LongWord;
+    { The compiled regular expressions kept for reuse (a
+      TRxProgramCache of Js.Builtins.RegExp; freed with the runtime). }
+    RegExpPrograms: TObject;
     constructor Create;
     destructor Destroy; override;
     function PushRoot(Value: TJsValue): Integer;
@@ -125,6 +128,7 @@ destructor TJsRuntime.Destroy;
 begin
   Atoms.Free;
   Heap.Free;
+  RegExpPrograms.Free;
   inherited Destroy;
 end;
 

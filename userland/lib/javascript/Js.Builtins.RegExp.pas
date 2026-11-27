@@ -52,6 +52,7 @@ uses
   Js.Interpreter,
   Js.RegExpCompiler,
   Js.RegExpMatcher,
+  Js.RegExpCache,
   Js.Builtins.Strings;
 
 procedure InstallRegExp(R: TJsInterpreterRealm);
@@ -70,6 +71,11 @@ const
   FlagUnicode = 32;
   FlagUnicodeSets = 64;
   FlagSticky = 128;
+  { The flag getters' names, in the order of the flags text. }
+  FlagNames: array[0..7] of TJsAtomName = (anHasIndices, anGlobal, anIgnoreCase, anMultiline, anDotAll, anUnicode,
+    anUnicodeSets, anSticky);
+  FlagMasks: array[0..7] of Integer = (FlagHasIndices, FlagGlobal, FlagIgnoreCase, FlagMultiline, FlagDotAll,
+    FlagUnicode, FlagUnicodeSets, FlagSticky);
 
 type
   TJsRegExp = class(TJsObject)
@@ -77,6 +83,8 @@ type
     Source: TJsString;
     FlagBits: Integer;
     Program_: TRxProgram;
+    { The program's matcher (shared by the regexps of the program: a
+      match runs to its end without calling scripts). }
     Matcher: TRxMatcher;
     destructor Destroy; override;
     procedure Trace(Tracer: TJsTracer); override;
@@ -95,8 +103,7 @@ type
 
 destructor TJsRegExp.Destroy;
 begin
-  Matcher.Free;
-  Program_.Free;
+  Program_.Release;
   inherited Destroy;
 end;
 
@@ -167,6 +174,57 @@ begin
     Result := Result + 'y';
 end;
 
+const
+  { The flags that change the program. }
+  CompileFlags = FlagIgnoreCase or FlagMultiline or FlagDotAll or FlagUnicode or FlagUnicodeSets;
+
+{ Compiles the (flat) pattern and keeps the program in Cache: nil
+  after throwing a SyntaxError. }
+function CompileAndCache(R: TJsRealm; Cache: TRxProgramCache; Pattern: TJsString; Bits: Integer): TRxProgram;
+var
+  Text: UnicodeString;
+begin
+  Text := StringToUnicode(R.Heap, Pattern);
+  try
+    Result := CompileRegExp(Text, (Bits and FlagIgnoreCase) <> 0, (Bits and FlagMultiline) <> 0,
+      (Bits and FlagDotAll) <> 0, (Bits and (FlagUnicode or FlagUnicodeSets)) <> 0);
+  except
+    on Error: ERegExpSyntax do
+    begin
+      R.ThrowError(ekSyntax, Error.Message);
+      Exit(nil);
+    end;
+  end;
+  Cache.Insert(Pattern, Text, Bits and CompileFlags, Result);
+end;
+
+{ The program for the pattern and flags: the runtime's cached one, or
+  compiled and cached (nil after throwing a SyntaxError). The caller
+  owns a reference. }
+function ProgramFor(R: TJsRealm; Pattern: TJsString; Bits: Integer): TRxProgram;
+var
+  Cache: TRxProgramCache;
+begin
+  if R.Runtime.RegExpPrograms = nil then
+    R.Runtime.RegExpPrograms := TRxProgramCache.Create;
+  Cache := TRxProgramCache(R.Runtime.RegExpPrograms);
+  Pattern.Flatten(R.Heap);
+  Result := Cache.Lookup(Pattern, Bits and CompileFlags);
+  if Result = nil then
+    Result := CompileAndCache(R, Cache, Pattern, Bits);
+end;
+
+procedure ThrowInvalidFlags(R: TJsRealm; Flags: TJsString);
+begin
+  R.ThrowError(ekSyntax, 'Invalid flags supplied to RegExp constructor ''' + StringToUtf8(R.Heap, Flags) + '''');
+end;
+
+{ The flags text of the bits as a string. }
+function FlagsString(R: TJsRealm; Bits: Integer): TJsString;
+begin
+  Result := NewStringFromUtf8(R.Heap, FlagsText(Bits));
+end;
+
 { Sets up a regexp object from pattern and flag text. }
 function Initialize(R: TJsRealm; Target: TJsRegExp; Pattern, Flags: TJsString): Boolean;
 var
@@ -176,24 +234,17 @@ begin
   Result := False;
   if not ParseFlags(Flags, Bits) then
   begin
-    R.ThrowError(ekSyntax, 'Invalid flags supplied to RegExp constructor ''' + StringToUtf8(R.Heap, Flags) + '''');
+    ThrowInvalidFlags(R, Flags);
     Exit;
   end;
-  Pattern.Flatten(R.Heap);
-  try
-    Compiled := CompileRegExp(StringToUnicode(R.Heap, Pattern), (Bits and FlagIgnoreCase) <> 0,
-      (Bits and FlagMultiline) <> 0, (Bits and FlagDotAll) <> 0, (Bits and (FlagUnicode or FlagUnicodeSets)) <> 0);
-  except
-    on Error: ERegExpSyntax do
-    begin
-      R.ThrowError(ekSyntax, Error.Message);
-      Exit;
-    end;
-  end;
-  Target.Matcher.Free;
-  Target.Program_.Free;
+  Compiled := ProgramFor(R, Pattern, Bits);
+  if Compiled = nil then
+    Exit;
+  Target.Program_.Release;
   Target.Program_ := Compiled;
-  Target.Matcher := TRxMatcher.Create(Compiled, @R.Runtime.InterruptRequested);
+  if Compiled.Matcher = nil then
+    Compiled.Matcher := TRxMatcher.Create(Compiled, @R.Runtime.InterruptRequested);
+  Target.Matcher := TRxMatcher(Compiled.Matcher);
   Target.Source := Pattern;
   Target.FlagBits := Bits;
   Result := Target.Put(R, R.Atom(anLastIndex), JsInteger(0));
@@ -242,7 +293,7 @@ begin
   begin
     PatternText := TJsRegExp(JsAsObject(Pattern)).Source;
     if Flags = JsUndefined then
-      FlagText := NewStringFromUtf8(R.Heap, FlagsText(TJsRegExp(JsAsObject(Pattern)).FlagBits))
+      FlagText := FlagsString(R, TJsRegExp(JsAsObject(Pattern)).FlagBits)
     else
     begin
       FlagText := ToJsString(R, Flags);
@@ -328,23 +379,20 @@ begin
   Result := SetPropertyByKey(R, JsObjectValue(Target), R.Atom(anLastIndex), JsNumber(Index), True);
 end;
 
-function BuiltinExec(R: TJsRealm; Target: TJsRegExp; Text: TJsString): TJsValue;
+{ The built-in exec up to its match: lastIndex read and updated, the
+  legacy statics recorded. JsTrue with the capture positions when it
+  matched, else JsNull or JsException. }
+function BuiltinMatch(R: TJsRealm; Target: TJsRegExp; Text: TJsString; out Captures: TRxCaptures): TJsValue;
 var
   LastIndex: Int64;
-  Global, Sticky, HasIndices: Boolean;
+  Global, Sticky: Boolean;
   Outcome: TRxOutcome;
-  Captures: TRxCaptures;
-  Created, Indices, Pair: TJsArray;
-  Groups, IndexGroups: TJsObject;
-  Index, Start, Finish, Mark: Integer;
-  Value: TJsValue;
-  Program_: TRxProgram;
 begin
+  Captures := nil;
   if not GetLastIndex(R, Target, LastIndex) then
     Exit(JsException);
   Global := (Target.FlagBits and FlagGlobal) <> 0;
   Sticky := (Target.FlagBits and FlagSticky) <> 0;
-  HasIndices := (Target.FlagBits and FlagHasIndices) <> 0;
   if not Global and not Sticky then
     LastIndex := 0;
   Text.Flatten(R.Heap);
@@ -372,82 +420,134 @@ begin
     Exit(JsNull);
   end;
   Captures := Copy(Target.Matcher.Captures);
-  Program_ := Target.Program_;
-  RecordLegacyMatch(R, Text, Captures, Program_.GroupCount);
+  RecordLegacyMatch(R, Text, Captures, Target.Program_.GroupCount);
   if Global or Sticky then
     if not SetLastIndex(R, Target, Captures[1]) then
       Exit(JsException);
+  Result := JsTrue;
+end;
+
+{ The text of a group of a match: undefined when it did not take part. }
+function CaptureValue(R: TJsRealm; Text: TJsString; const Captures: TRxCaptures; Group: Integer): TJsValue;
+var
+  Start, Finish: Integer;
+begin
+  Start := Captures[Group * 2];
+  Finish := Captures[Group * 2 + 1];
+  if (Start >= 0) and (Finish >= Start) then
+    Result := JsStringValue(SubStringOf(R, Text, Start, Finish - Start))
+  else
+    Result := JsUndefined;
+end;
+
+{ The groups object of a match from the texts of its groups (Values,
+  by group number); nil when the pattern names no group. A name shared
+  by groups in different alternatives takes the one that matched. }
+function GroupsObject(R: TJsRealm; Program_: TRxProgram; const Values: TJsValueList): TJsObject;
+var
+  Index: Integer;
+  Key, Value: TJsValue;
+begin
+  if Length(Program_.GroupNames) = 0 then
+    Exit(nil);
+  Result := R.NewObject(nil);
+  for Index := 0 to High(Program_.GroupNames) do
+  begin
+    Key := JsStringValue(R.Runtime.Atoms.Intern(NewStringFromUnicode(R.Heap, Program_.GroupNames[Index].Name)));
+    Value := Values[Program_.GroupNames[Index].Group];
+    if (Value = JsUndefined) and (Result.HasProperty(R, Key) > 0) then
+      Continue;
+    Result.CreateDataProperty(R, Key, Value);
+  end;
+end;
+
+{ The d flag's indices array of a match. }
+function IndicesArray(R: TJsRealm; Program_: TRxProgram; const Captures: TRxCaptures): TJsArray;
+var
+  Index, Start, Finish: Integer;
+  Pair: TJsArray;
+  IndexGroups: TJsObject;
+begin
+  Result := R.NewArray(0);
+  for Index := 0 to Program_.GroupCount do
+  begin
+    Start := Captures[Index * 2];
+    Finish := Captures[Index * 2 + 1];
+    if (Start >= 0) and (Finish >= Start) then
+    begin
+      Pair := R.NewArray(0);
+      AppendElement(R, Pair, JsInteger(Start));
+      AppendElement(R, Pair, JsInteger(Finish));
+      AppendElement(R, Result, JsObjectValue(Pair));
+    end
+    else
+      AppendElement(R, Result, JsUndefined);
+  end;
+  if Length(Program_.GroupNames) > 0 then
+  begin
+    IndexGroups := R.NewObject(nil);
+    for Index := 0 to High(Program_.GroupNames) do
+      IndexGroups.CreateDataProperty(R, JsStringValue(R.Runtime.Atoms.Intern(NewStringFromUnicode(R.Heap,
+        Program_.GroupNames[Index].Name))), Result.Elements^[Program_.GroupNames[Index].Group]);
+    Result.CreateDataProperty(R, R.Atom(anGroups), JsObjectValue(IndexGroups));
+  end
+  else
+    Result.CreateDataProperty(R, R.Atom(anGroups), JsUndefined);
+end;
+
+{ The result array of a built-in exec's match: the groups' texts, index,
+  input, groups and, with the d flag, indices. }
+function MatchArray(R: TJsRealm; Target: TJsRegExp; Text: TJsString; const Captures: TRxCaptures): TJsValue;
+var
+  Created: TJsArray;
+  Groups: TJsObject;
+  Values: TJsValueList;
+  Index, Mark: Integer;
+  Program_: TRxProgram;
+begin
+  Program_ := Target.Program_;
   Created := R.NewArray(0);
   Mark := R.Runtime.PushRoot(JsObjectValue(Created));
   try
+    SetLength(Values, Program_.GroupCount + 1);
     for Index := 0 to Program_.GroupCount do
     begin
-      Start := Captures[Index * 2];
-      Finish := Captures[Index * 2 + 1];
-      if (Start >= 0) and (Finish >= Start) then
-        Value := JsStringValue(SubString(R.Heap, Text, Start, Finish - Start))
-      else
-        Value := JsUndefined;
-      Created.CreateDataProperty(R, JsInteger(Index), Value);
+      Values[Index] := CaptureValue(R, Text, Captures, Index);
+      AppendElement(R, Created, Values[Index]);
     end;
     Created.CreateDataProperty(R, R.Atom(anIndex), JsInteger(Captures[0]));
     Created.CreateDataProperty(R, R.Atom(anInput), JsStringValue(Text));
-    Groups := nil;
-    if Length(Program_.GroupNames) > 0 then
-    begin
-      Groups := R.NewObject(nil);
-      for Index := 0 to High(Program_.GroupNames) do
-      begin
-        Value := Created.Elements^[Program_.GroupNames[Index].Group];
-        if (Value = JsUndefined) and (Groups.HasProperty(R, R.Runtime.Intern(UTF8Encode(Program_.GroupNames[Index].Name))) > 0) then
-          Continue;
-        Groups.CreateDataProperty(R, JsStringValue(R.Runtime.Atoms.Intern(NewStringFromUnicode(R.Heap,
-          Program_.GroupNames[Index].Name))), Value);
-      end;
-      Created.CreateDataProperty(R, R.Atom(anGroups), JsObjectValue(Groups));
-    end
+    Groups := GroupsObject(R, Program_, Values);
+    if Groups <> nil then
+      Created.CreateDataProperty(R, R.Atom(anGroups), JsObjectValue(Groups))
     else
       Created.CreateDataProperty(R, R.Atom(anGroups), JsUndefined);
-    if HasIndices then
-    begin
-      Indices := R.NewArray(0);
-      for Index := 0 to Program_.GroupCount do
-      begin
-        Start := Captures[Index * 2];
-        Finish := Captures[Index * 2 + 1];
-        if (Start >= 0) and (Finish >= Start) then
-        begin
-          Pair := R.NewArray(0);
-          Pair.CreateDataProperty(R, JsInteger(0), JsInteger(Start));
-          Pair.CreateDataProperty(R, JsInteger(1), JsInteger(Finish));
-          Indices.CreateDataProperty(R, JsInteger(Index), JsObjectValue(Pair));
-        end
-        else
-          Indices.CreateDataProperty(R, JsInteger(Index), JsUndefined);
-      end;
-      if Groups <> nil then
-      begin
-        IndexGroups := R.NewObject(nil);
-        for Index := 0 to High(Program_.GroupNames) do
-          IndexGroups.CreateDataProperty(R, JsStringValue(R.Runtime.Atoms.Intern(NewStringFromUnicode(R.Heap,
-            Program_.GroupNames[Index].Name))), Indices.Elements^[Program_.GroupNames[Index].Group]);
-        Indices.CreateDataProperty(R, R.Atom(anGroups), JsObjectValue(IndexGroups));
-      end
-      else
-        Indices.CreateDataProperty(R, R.Atom(anGroups), JsUndefined);
-      Created.CreateDataProperty(R, R.Atom(anIndices), JsObjectValue(Indices));
-    end;
+    if (Target.FlagBits and FlagHasIndices) <> 0 then
+      Created.CreateDataProperty(R, R.Atom(anIndices), JsObjectValue(IndicesArray(R, Program_, Captures)));
     Result := JsObjectValue(Created);
   finally
     R.Runtime.PopRoots(Mark);
   end;
 end;
 
-{ RegExpExec: the object's exec if it has its own, else the built-in. }
-function RegExpExec(R: TJsRealm; Target: TJsObject; Text: TJsString): TJsValue;
+function BuiltinExec(R: TJsRealm; Target: TJsRegExp; Text: TJsString): TJsValue;
+var
+  Captures: TRxCaptures;
+begin
+  Result := BuiltinMatch(R, Target, Text, Captures);
+  if Result = JsTrue then
+    Result := MatchArray(R, Target, Text, Captures);
+end;
+
+{ RegExpExec for a caller that only reads the result: when the built-in
+  exec runs, JsTrue with the capture positions instead of a result
+  array nobody else could see; else the object's own exec's result (an
+  object or null), or JsNull or JsException. }
+function RegExpExecMatch(R: TJsRealm; Target: TJsObject; Text: TJsString; out Captures: TRxCaptures): TJsValue;
 var
   Exec, Argument: TJsValue;
 begin
+  Captures := nil;
   Exec := Target.GetValue(R, R.Atom(anExec));
   if Exec = JsException then
     Exit(JsException);
@@ -462,7 +562,17 @@ begin
   end;
   if not (Target is TJsRegExp) then
     Exit(R.ThrowTypeError('RegExp exec method called on incompatible receiver'));
-  Result := BuiltinExec(R, TJsRegExp(Target), Text);
+  Result := BuiltinMatch(R, TJsRegExp(Target), Text, Captures);
+end;
+
+{ RegExpExec: the object's exec if it has its own, else the built-in. }
+function RegExpExec(R: TJsRealm; Target: TJsObject; Text: TJsString): TJsValue;
+var
+  Captures: TRxCaptures;
+begin
+  Result := RegExpExecMatch(R, Target, Text, Captures);
+  if Result = JsTrue then
+    Result := MatchArray(R, TJsRegExp(Target), Text, Captures);
 end;
 
 function ThisRegExp(R: TJsRealm; Value: TJsValue; out Target: TJsRegExp): Boolean;
@@ -496,13 +606,14 @@ function RegExpPrototypeTest(R: TJsRealm; const This: TJsValue; Args: PJsValueAr
 var
   Text: TJsString;
   Outcome: TJsValue;
+  Captures: TRxCaptures;
 begin
   if not JsIsObject(This) then
     Exit(R.ThrowTypeError('RegExp.prototype.test called on non-object'));
   Text := ToJsString(R, Arg(Args, ArgCount, 0));
   if Text = nil then
     Exit(JsException);
-  Outcome := RegExpExec(R, JsAsObject(This), Text);
+  Outcome := RegExpExecMatch(R, JsAsObject(This), Text, Captures);
   if Outcome = JsException then
     Exit(JsException);
   Result := JsBoolean(Outcome <> JsNull);
@@ -584,8 +695,6 @@ end;
 function RegExpPrototypeFlags(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 const
-  Names: array[0..7] of string = ('hasIndices', 'global', 'ignoreCase', 'multiline', 'dotAll', 'unicode',
-    'unicodeSets', 'sticky');
   Letters: array[0..7] of Char = ('d', 'g', 'i', 'm', 's', 'u', 'v', 'y');
 var
   Index: Integer;
@@ -597,7 +706,7 @@ begin
   Text := '';
   for Index := 0 to 7 do
   begin
-    Value := JsAsObject(This).GetValue(R, R.Intern(Names[Index]));
+    Value := JsAsObject(This).GetValue(R, R.Atom(FlagNames[Index]));
     if Value = JsException then
       Exit(JsException);
     if ToBoolean(Value) then
@@ -640,7 +749,7 @@ begin
   if IsRegExpObject(Arg(Args, ArgCount, 0)) then
   begin
     Pattern := TJsRegExp(JsAsObject(Args^[0])).Source;
-    Flags := NewStringFromUtf8(R.Heap, FlagsText(TJsRegExp(JsAsObject(Args^[0])).FlagBits));
+    Flags := FlagsString(R, TJsRegExp(JsAsObject(Args^[0])).FlagBits);
   end
   else
   begin
@@ -686,14 +795,91 @@ begin
   Result := False;
 end;
 
+{ Whether Holder's own Key is an accessor whose getter is the built-in
+  Callback with Magic. }
+function IsBuiltinGetter(R: TJsRealm; Holder: TJsObject; Key: TJsValue; Callback: TJsNativeCallback;
+  Magic: Integer): Boolean;
+var
+  Desc: TJsPropertyDescriptor;
+  Getter: TJsObject;
+begin
+  if (Holder.GetOwnProperty(R, Key, Desc) <= 0) or not JsIsObject(Desc.Getter) then
+    Exit(False);
+  Getter := JsAsObject(Desc.Getter);
+  Result := (Getter is TJsNativeFunction) and (TJsNativeFunction(Getter).Callback = Callback) and
+    (TJsNativeFunction(Getter).Magic = Magic);
+end;
+
+{ The flags of a regexp that has no own property but lastIndex and
+  inherits the built-in flags getters: reading "flags" could run no
+  script and gives its own flags. False when anything may differ. }
+function IntactFlagBits(R: TJsRealm; Target: TJsObject; out Bits: Integer): Boolean;
+var
+  Prototype: TJsObject;
+  Index: Integer;
+begin
+  Bits := 0;
+  Prototype := R.Intrinsics[inRegExpPrototype];
+  if not (Target is TJsRegExp) or (Target.Proto <> Prototype) or (Target.Shape.PropertyCount <> 1) or
+    not IsBuiltinGetter(R, Prototype, R.Atom(anFlags), @RegExpPrototypeFlags, 0) then
+    Exit(False);
+  for Index := 0 to High(FlagNames) do
+    if not IsBuiltinGetter(R, Prototype, R.Atom(FlagNames[Index]), @RegExpPrototypeFlag, FlagMasks[Index]) then
+      Exit(False);
+  Bits := TJsRegExp(Target).FlagBits;
+  Result := True;
+end;
+
+{ The flags as Get(rx, "flags") gives them, as bits (other letters
+  ignored); False after throwing. }
+function FlagBitsOf(R: TJsRealm; Target: TJsObject; out Bits: Integer): Boolean;
+var
+  Text: TJsString;
+  Index: Integer;
+const
+  Letters: array[0..7] of Char = ('d', 'g', 'i', 'm', 's', 'u', 'v', 'y');
+begin
+  if IntactFlagBits(R, Target, Bits) then
+    Exit(True);
+  if not FlagsOf(R, Target, Text) then
+    Exit(False);
+  for Index := 0 to High(Letters) do
+    if HasFlag(Text, Letters[Index]) then
+      Bits := Bits or FlagMasks[Index];
+  Result := True;
+end;
+
+{ The matched text of RegExpExecMatch's outcome (a match's captures or a
+  result object): nil after throwing. }
+function MatchedText(R: TJsRealm; Text: TJsString; Outcome: TJsValue; const Captures: TRxCaptures): TJsString;
+var
+  MatchedValue: TJsValue;
+begin
+  if Outcome = JsTrue then
+    Exit(SubStringOf(R, Text, Captures[0], Captures[1] - Captures[0]));
+  MatchedValue := GetPropertyByKey(R, Outcome, JsInteger(0));
+  if MatchedValue = JsException then
+    Exit(nil);
+  Result := ToJsString(R, MatchedValue);
+end;
+
+{ After an empty match of a global regexp: lastIndex past it. }
+function SkipEmptyMatch(R: TJsRealm; Target: TJsObject; Text: TJsString; Unicode: Boolean): Boolean;
+var
+  LastIndex: Int64;
+begin
+  Result := GetLastIndex(R, Target, LastIndex) and SetLastIndex(R, Target, AdvanceIndex(Text, LastIndex, Unicode));
+end;
+
 function RegExpSymbolMatch(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Target: TJsObject;
-  Text, Flags, Matched: TJsString;
-  Outcome, MatchedValue: TJsValue;
+  Text, Matched: TJsString;
+  Flags: Integer;
+  Outcome: TJsValue;
   Created: TJsArray;
-  LastIndex: Int64;
+  Captures: TRxCaptures;
   Mark: Integer;
 begin
   if not JsIsObject(This) then
@@ -702,9 +888,9 @@ begin
   Text := ToJsString(R, Arg(Args, ArgCount, 0));
   if Text = nil then
     Exit(JsException);
-  if not FlagsOf(R, Target, Flags) then
+  if not FlagBitsOf(R, Target, Flags) then
     Exit(JsException);
-  if not HasFlag(Flags, 'g') then
+  if (Flags and FlagGlobal) = 0 then
     Exit(RegExpExec(R, Target, Text));
   if not SetLastIndex(R, Target, 0) then
     Exit(JsException);
@@ -714,7 +900,7 @@ begin
   try
     while True do
     begin
-      Outcome := RegExpExec(R, Target, Text);
+      Outcome := RegExpExecMatch(R, Target, Text, Captures);
       if Outcome = JsException then
         Exit(JsException);
       if Outcome = JsNull then
@@ -723,20 +909,13 @@ begin
           Exit(JsNull);
         Exit(JsObjectValue(Created));
       end;
-      MatchedValue := GetPropertyByKey(R, Outcome, JsInteger(0));
-      if MatchedValue = JsException then
-        Exit(JsException);
-      Matched := ToJsString(R, MatchedValue);
+      Matched := MatchedText(R, Text, Outcome, Captures);
       if Matched = nil then
         Exit(JsException);
-      Created.CreateDataProperty(R, JsInteger(Created.ArrayLength), JsStringValue(Matched));
+      AppendElement(R, Created, JsStringValue(Matched));
       if Matched.Length = 0 then
-      begin
-        if not GetLastIndex(R, Target, LastIndex) then
+        if not SkipEmptyMatch(R, Target, Text, (Flags and (FlagUnicode or FlagUnicodeSets)) <> 0) then
           Exit(JsException);
-        if not SetLastIndex(R, Target, AdvanceIndex(Text, LastIndex, HasFlag(Flags, 'u') or HasFlag(Flags, 'v'))) then
-          Exit(JsException);
-      end;
     end;
   finally
     R.Runtime.PopRoots(Mark);
@@ -749,6 +928,7 @@ var
   Target: TJsObject;
   Text: TJsString;
   Previous, Outcome: TJsValue;
+  Captures: TRxCaptures;
 begin
   if not JsIsObject(This) then
     Exit(R.ThrowTypeError('RegExp.prototype[Symbol.search] called on non-object'));
@@ -762,33 +942,164 @@ begin
   if not SameValue(Previous, JsInteger(0), R.Heap) then
     if not Target.Put(R, R.Atom(anLastIndex), JsInteger(0)) then
       Exit(JsException);
-  Outcome := RegExpExec(R, Target, Text);
+  Outcome := RegExpExecMatch(R, Target, Text, Captures);
   if Outcome = JsException then
     Exit(JsException);
   if not Target.Put(R, R.Atom(anLastIndex), Previous) then
     Exit(JsException);
   if Outcome = JsNull then
     Exit(JsInteger(-1));
+  if Outcome = JsTrue then
+    Exit(JsInteger(Captures[0]));
   Result := GetPropertyByKey(R, Outcome, R.Atom(anIndex));
+end;
+
+type
+  { One result of replace's exec loop: the captures of a built-in
+    match (with the program that made it: a replacer may recompile the
+    regexp), or nil Captures for a result object (kept in a rooted
+    array at the same index). }
+  TReplaceMatch = record
+    Captures: TRxCaptures;
+    Compiled: TRxProgram;
+  end;
+  TReplaceMatches = array of TReplaceMatch;
+
+  { What GetSubstitution or the replacer is given for one match. }
+  TReplaceParts = record
+    Matched: TJsString;
+    Position: Int64;
+    Captures: TJsValueList;
+    NamedGroups: TJsValue;
+  end;
+
+{ The parts of a built-in match. }
+procedure BuiltinMatchParts(R: TJsRealm; Text: TJsString; constref Match: TReplaceMatch; out Parts: TReplaceParts);
+var
+  Values: TJsValueList;
+  Index: Integer;
+  Groups: TJsObject;
+begin
+  Parts.Matched := SubStringOf(R, Text, Match.Captures[0], Match.Captures[1] - Match.Captures[0]);
+  Parts.Position := Match.Captures[0];
+  Values := nil;
+  SetLength(Values, Match.Compiled.GroupCount + 1);
+  for Index := 1 to Match.Compiled.GroupCount do
+    Values[Index] := CaptureValue(R, Text, Match.Captures, Index);
+  Parts.Captures := Copy(Values, 1, Match.Compiled.GroupCount);
+  Groups := GroupsObject(R, Match.Compiled, Values);
+  if Groups <> nil then
+    Parts.NamedGroups := JsObjectValue(Groups)
+  else
+    Parts.NamedGroups := JsUndefined;
+end;
+
+{ The parts of a result object, read as the specification says. }
+function ResultObjectParts(R: TJsRealm; Text: TJsString; MatchObject: TJsObject; out Parts: TReplaceParts): Boolean;
+var
+  Length_: Int64;
+  CaptureCount, Index: Integer;
+  MatchedValue, PositionValue, Capture: TJsValue;
+  Number: Double;
+begin
+  Result := False;
+  Parts.Captures := nil;
+  Parts.NamedGroups := JsUndefined;
+  Parts.Matched := nil;
+  Parts.Position := 0;
+  if not LengthOfArrayLike(R, MatchObject, Length_) then
+    Exit;
+  CaptureCount := Max(Length_ - 1, 0);
+  MatchedValue := MatchObject.GetValue(R, JsInteger(0));
+  if MatchedValue = JsException then
+    Exit;
+  Parts.Matched := ToJsString(R, MatchedValue);
+  if Parts.Matched = nil then
+    Exit;
+  PositionValue := MatchObject.GetValue(R, R.Atom(anIndex));
+  if PositionValue = JsException then
+    Exit;
+  if not ToIntegerOrInfinity(R, PositionValue, Number) then
+    Exit;
+  Parts.Position := Trunc(Max(Min(Number, Text.Length), 0));
+  SetLength(Parts.Captures, CaptureCount);
+  for Index := 1 to CaptureCount do
+  begin
+    Capture := MatchObject.GetValue(R, JsInteger(Index));
+    if Capture = JsException then
+      Exit;
+    if Capture <> JsUndefined then
+    begin
+      Capture := ToStringValue(R, Capture);
+      if Capture = JsException then
+        Exit;
+    end;
+    Parts.Captures[Index - 1] := Capture;
+  end;
+  Parts.NamedGroups := MatchObject.GetValue(R, R.Atom(anGroups));
+  Result := Parts.NamedGroups <> JsException;
+end;
+
+{ The replacement of one match: the replacer's result or the expanded
+  replacement text; nil after throwing. }
+function ReplacementOf(R: TJsRealm; Text: TJsString; var Parts: TReplaceParts; ReplaceValue: TJsValue;
+  Replacement: TJsString): TJsString;
+var
+  CallArgs: TJsValueList;
+  Index, CaptureCount: Integer;
+  Outcome: TJsValue;
+begin
+  CaptureCount := Length(Parts.Captures);
+  if Replacement = nil then
+  begin
+    CallArgs := nil;
+    SetLength(CallArgs, CaptureCount + 3);
+    CallArgs[0] := JsStringValue(Parts.Matched);
+    for Index := 0 to CaptureCount - 1 do
+      CallArgs[Index + 1] := Parts.Captures[Index];
+    CallArgs[CaptureCount + 1] := JsNumber(Parts.Position);
+    CallArgs[CaptureCount + 2] := JsStringValue(Text);
+    if Parts.NamedGroups <> JsUndefined then
+    begin
+      SetLength(CallArgs, CaptureCount + 4);
+      CallArgs[CaptureCount + 3] := Parts.NamedGroups;
+    end;
+    Outcome := R.Call(ReplaceValue, JsUndefined, @CallArgs[0], Length(CallArgs));
+    if Outcome = JsException then
+      Exit(nil);
+    Exit(ToJsString(R, Outcome));
+  end;
+  if Parts.NamedGroups <> JsUndefined then
+  begin
+    Parts.NamedGroups := ToObject(R, Parts.NamedGroups);
+    if Parts.NamedGroups = JsException then
+      Exit(nil);
+  end;
+  Result := GetSubstitution(R, Parts.Matched, Text, Parts.Position, Parts.Captures, Parts.NamedGroups, Replacement);
+end;
+
+procedure ReleaseMatches(var Matches: TReplaceMatches; Count: Integer);
+var
+  Index: Integer;
+begin
+  for Index := 0 to Count - 1 do
+    Matches[Index].Compiled.Release;
 end;
 
 function RegExpSymbolReplace(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
   Target: TJsObject;
-  Text, Flags, Replacement, Matched, Piece, Accumulated: TJsString;
-  ReplaceValue, Outcome, MatchedValue, PositionValue, Capture, NamedGroups: TJsValue;
-  Global, Unicode, Functional: Boolean;
+  Text, Replacement, Matched, Piece, Accumulated: TJsString;
+  Flags: Integer;
+  ReplaceValue, Outcome: TJsValue;
+  Global, Unicode: Boolean;
   Results: TJsArray;
-  Index, CaptureCount, Mark: Integer;
-  ResultIndex: Integer;
-  NextSourcePosition, Position: Int64;
-  Number: Double;
-  Captures: TJsValueList;
-  CallArgs: TJsValueList;
-  LastIndex: Int64;
-  MatchObject: TJsObject;
-  Length_: Int64;
+  Matches: TReplaceMatches;
+  MatchCount, ResultIndex, Mark, AccumulatedRoot: Integer;
+  Captures: TRxCaptures;
+  NextSourcePosition: Int64;
+  Parts: TReplaceParts;
 begin
   if not JsIsObject(This) then
     Exit(R.ThrowTypeError('RegExp.prototype[Symbol.replace] called on non-object'));
@@ -798,18 +1109,17 @@ begin
     Exit(JsException);
   Text.Flatten(R.Heap);
   ReplaceValue := Arg(Args, ArgCount, 1);
-  Functional := JsIsCallable(ReplaceValue);
   Replacement := nil;
-  if not Functional then
+  if not JsIsCallable(ReplaceValue) then
   begin
     Replacement := ToJsString(R, ReplaceValue);
     if Replacement = nil then
       Exit(JsException);
   end;
-  if not FlagsOf(R, Target, Flags) then
+  if not FlagBitsOf(R, Target, Flags) then
     Exit(JsException);
-  Global := HasFlag(Flags, 'g');
-  Unicode := HasFlag(Flags, 'u') or HasFlag(Flags, 'v');
+  Global := (Flags and FlagGlobal) <> 0;
+  Unicode := (Flags and (FlagUnicode or FlagUnicodeSets)) <> 0;
   if Global then
     if not SetLastIndex(R, Target, 0) then
       Exit(JsException);
@@ -818,107 +1128,59 @@ begin
   R.Runtime.PushRoot(JsStringValue(Text));
   if Replacement <> nil then
     R.Runtime.PushRoot(JsStringValue(Replacement));
+  AccumulatedRoot := R.Runtime.PushRoot(JsUndefined);
+  Matches := nil;
+  MatchCount := 0;
   try
+    { Every match first, then the replacements (the replacer runs after
+      the last exec). }
     while True do
     begin
-      Outcome := RegExpExec(R, Target, Text);
+      Outcome := RegExpExecMatch(R, Target, Text, Captures);
       if Outcome = JsException then
         Exit(JsException);
       if Outcome = JsNull then
         Break;
-      Results.CreateDataProperty(R, JsInteger(Results.ArrayLength), Outcome);
+      if MatchCount >= Length(Matches) then
+        SetLength(Matches, MatchCount * 2 + 4);
+      Matches[MatchCount].Captures := Captures;
+      Matches[MatchCount].Compiled := nil;
+      if Outcome = JsTrue then
+      begin
+        Matches[MatchCount].Compiled := TJsRegExp(Target).Program_;
+        Matches[MatchCount].Compiled.AddReference;
+        AppendElement(R, Results, JsUndefined);
+      end
+      else
+        AppendElement(R, Results, Outcome);
+      Inc(MatchCount);
       if not Global then
         Break;
-      MatchedValue := GetPropertyByKey(R, Outcome, JsInteger(0));
-      if MatchedValue = JsException then
-        Exit(JsException);
-      Matched := ToJsString(R, MatchedValue);
+      Matched := MatchedText(R, Text, Outcome, Captures);
       if Matched = nil then
         Exit(JsException);
       if Matched.Length = 0 then
-      begin
-        if not GetLastIndex(R, Target, LastIndex) then
+        if not SkipEmptyMatch(R, Target, Text, Unicode) then
           Exit(JsException);
-        if not SetLastIndex(R, Target, AdvanceIndex(Text, LastIndex, Unicode)) then
-          Exit(JsException);
-      end;
     end;
     Accumulated := R.Runtime.EmptyString;
     NextSourcePosition := 0;
-    for ResultIndex := 0 to Results.ElementCount - 1 do
+    for ResultIndex := 0 to MatchCount - 1 do
     begin
-      MatchObject := JsAsObject(Results.Elements^[ResultIndex]);
-      if not LengthOfArrayLike(R, MatchObject, Length_) then
+      if Matches[ResultIndex].Compiled <> nil then
+        BuiltinMatchParts(R, Text, Matches[ResultIndex], Parts)
+      else if not ResultObjectParts(R, Text, JsAsObject(Results.Elements^[ResultIndex]), Parts) then
         Exit(JsException);
-      CaptureCount := Max(Length_ - 1, 0);
-      MatchedValue := MatchObject.GetValue(R, JsInteger(0));
-      if MatchedValue = JsException then
+      Piece := ReplacementOf(R, Text, Parts, ReplaceValue, Replacement);
+      if Piece = nil then
         Exit(JsException);
-      Matched := ToJsString(R, MatchedValue);
-      if Matched = nil then
-        Exit(JsException);
-      PositionValue := MatchObject.GetValue(R, R.Atom(anIndex));
-      if PositionValue = JsException then
-        Exit(JsException);
-      if not ToIntegerOrInfinity(R, PositionValue, Number) then
-        Exit(JsException);
-      Position := Trunc(Max(Min(Number, Text.Length), 0));
-      Captures := nil;
-      SetLength(Captures, CaptureCount);
-      for Index := 1 to CaptureCount do
-      begin
-        Capture := MatchObject.GetValue(R, JsInteger(Index));
-        if Capture = JsException then
-          Exit(JsException);
-        if Capture <> JsUndefined then
-        begin
-          Capture := ToStringValue(R, Capture);
-          if Capture = JsException then
-            Exit(JsException);
-        end;
-        Captures[Index - 1] := Capture;
-      end;
-      NamedGroups := MatchObject.GetValue(R, R.Atom(anGroups));
-      if NamedGroups = JsException then
-        Exit(JsException);
-      if Functional then
-      begin
-        CallArgs := nil;
-        SetLength(CallArgs, CaptureCount + 3);
-        CallArgs[0] := JsStringValue(Matched);
-        for Index := 0 to CaptureCount - 1 do
-          CallArgs[Index + 1] := Captures[Index];
-        CallArgs[CaptureCount + 1] := JsNumber(Position);
-        CallArgs[CaptureCount + 2] := JsStringValue(Text);
-        if NamedGroups <> JsUndefined then
-        begin
-          SetLength(CallArgs, CaptureCount + 4);
-          CallArgs[CaptureCount + 3] := NamedGroups;
-        end;
-        Outcome := R.Call(ReplaceValue, JsUndefined, @CallArgs[0], Length(CallArgs));
-        if Outcome = JsException then
-          Exit(JsException);
-        Piece := ToJsString(R, Outcome);
-        if Piece = nil then
-          Exit(JsException);
-      end
-      else
-      begin
-        if NamedGroups <> JsUndefined then
-        begin
-          NamedGroups := ToObject(R, NamedGroups);
-          if NamedGroups = JsException then
-            Exit(JsException);
-        end;
-        Piece := GetSubstitution(R, Matched, Text, Position, Captures, NamedGroups, Replacement);
-      end;
-      if Position >= NextSourcePosition then
+      if Parts.Position >= NextSourcePosition then
       begin
         Accumulated := ConcatStrings(R.Heap, Accumulated, SubString(R.Heap, Text, NextSourcePosition,
-          Position - NextSourcePosition));
+          Parts.Position - NextSourcePosition));
         Accumulated := ConcatStrings(R.Heap, Accumulated, Piece);
-        R.Runtime.PushRoot(JsStringValue(Accumulated));
-        NextSourcePosition := Position + Matched.Length;
+        R.Runtime.SetRoot(AccumulatedRoot, JsStringValue(Accumulated));
+        NextSourcePosition := Parts.Position + Parts.Matched.Length;
       end;
     end;
     if NextSourcePosition >= Text.Length then
@@ -926,6 +1188,7 @@ begin
     Result := JsStringValue(ConcatStrings(R.Heap, Accumulated, SubString(R.Heap, Text, NextSourcePosition,
       Text.Length - NextSourcePosition)));
   finally
+    ReleaseMatches(Matches, MatchCount);
     R.Runtime.PopRoots(Mark);
   end;
 end;
@@ -940,7 +1203,6 @@ var
   Previous, Position, Finish, Index, Mark: Integer;
   Matcher: TRxMatcher;
   Outcome: TRxOutcome;
-  Start, Stop: Integer;
   Unicode: Boolean;
 begin
   if not ThisRegExp(R, This, Target) then
@@ -964,14 +1226,16 @@ begin
     if Text.Length = 0 then
     begin
       if Matcher.MatchAt(Text, 0) = roNoMatch then
-        Created.CreateDataProperty(R, JsInteger(0), JsStringValue(Text));
+        AppendElement(R, Created, JsStringValue(Text));
       Exit;
     end;
     Previous := 0;
     Position := 0;
     while Position < Text.Length do
     begin
-      Outcome := Matcher.MatchAt(Text, Position);
+      { The next position from here where the splitter matches (the
+        specification tries each in turn). }
+      Outcome := Matcher.Search(Text, Position, False);
       if Outcome = roOutOfMemory then
         Exit(R.ThrowRangeError('Out of memory matching the regular expression'));
       if Outcome = roInterrupted then
@@ -979,11 +1243,9 @@ begin
         R.Runtime.Terminating := True;
         Exit(R.ThrowError(ekInternal, 'Script interrupted'));
       end;
-      if Outcome = roNoMatch then
-      begin
-        Position := AdvanceIndex(Text, Position, Unicode);
-        Continue;
-      end;
+      if (Outcome = roNoMatch) or (Matcher.Captures[0] >= Text.Length) then
+        Break;
+      Position := Matcher.Captures[0];
       Finish := Matcher.Captures[1];
       if Finish > Text.Length then
         Finish := Text.Length;
@@ -992,27 +1254,19 @@ begin
         Position := AdvanceIndex(Text, Position, Unicode);
         Continue;
       end;
-      Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-        JsStringValue(SubString(R.Heap, Text, Previous, Position - Previous)));
+      AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Previous, Position - Previous)));
       if Created.ArrayLength >= Limit then
         Exit;
       for Index := 1 to Target.Program_.GroupCount do
       begin
-        Start := Matcher.Captures[Index * 2];
-        Stop := Matcher.Captures[Index * 2 + 1];
-        if (Start >= 0) and (Stop >= Start) then
-          Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-            JsStringValue(SubString(R.Heap, Text, Start, Stop - Start)))
-        else
-          Created.CreateDataProperty(R, JsInteger(Created.ArrayLength), JsUndefined);
+        AppendElement(R, Created, CaptureValue(R, Text, Matcher.Captures, Index));
         if Created.ArrayLength >= Limit then
           Exit;
       end;
       Previous := Finish;
       Position := Finish;
     end;
-    Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-      JsStringValue(SubString(R.Heap, Text, Previous, Text.Length - Previous)));
+    AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Previous, Text.Length - Previous)));
   finally
     R.Runtime.PopRoots(Mark);
   end;
