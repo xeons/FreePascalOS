@@ -165,6 +165,19 @@ begin
   Result := False;
 end;
 
+{ DefineAt for an array being filled in order: appended directly when
+  Index is the length of a dense, extensible array. }
+function DefineNext(R: TJsRealm; Target: TJsObject; Index: Int64; Value: TJsValue): Boolean;
+begin
+  if IsDense(Target) and (Index = TJsArray(Target).ArrayLength) and Target.IsExtensibleFlag and
+    ((Target.ObjectFlags and (ObjectLengthReadOnly or ObjectElementsSealed)) = 0) then
+  begin
+    AppendElement(R, TJsArray(Target), Value);
+    Exit(True);
+  end;
+  Result := DefineAt(R, Target, Index, Value);
+end;
+
 function SetLengthOf(R: TJsRealm; Target: TJsObject; Length: Int64): Boolean;
 begin
   if (Target.ObjectClass = ocArray) and ((Target.ObjectFlags and ObjectLengthReadOnly) = 0) and
@@ -586,6 +599,30 @@ begin
   Result := JsNumber(Like.Length + ArgCount);
 end;
 
+{ splice's moves when it takes out at least as many elements as it
+  puts in, done on the elements of a dense array without holes from
+  Start on: every index written is an own writable data property and
+  the ones dropped are configurable, so nothing could observe the
+  difference. False (nothing done) for any other array. }
+function SpliceDenseInPlace(R: TJsRealm; Target: TJsObject; Length, Start, DeleteCount: Int64;
+  Items: PJsValueArray; ItemCount: Integer): Boolean;
+var
+  Index: Int64;
+begin
+  if (ItemCount > DeleteCount) or not IsDense(Target) or (Target.ElementCount <> Length) or
+    ((Target.ObjectFlags and (ObjectLengthReadOnly or ObjectElementsSealed)) <> 0) then
+    Exit(False);
+  for Index := Start to Length - 1 do
+    if Target.Elements^[Index] = JsHole then
+      Exit(False);
+  if (ItemCount < DeleteCount) and (Length - Start - DeleteCount > 0) then
+    Move(Target.Elements^[Start + DeleteCount], Target.Elements^[Start + ItemCount],
+      (Length - Start - DeleteCount) * SizeOf(TJsValue));
+  for Index := 0 to ItemCount - 1 do
+    Target.Elements^[Start + Index] := Items^[Index];
+  Result := TJsArray(Target).SetLength(R, LongWord(Length - DeleteCount + ItemCount));
+end;
+
 function ArraySplice(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
 var
@@ -634,12 +671,14 @@ begin
       if Found > 0 then
       begin
         Value := GetAt(R, Like.Target, Start + Index);
-        if (Value = JsException) or not DefineAt(R, RemovedArray, Index, Value) then
+        if (Value = JsException) or not DefineNext(R, RemovedArray, Index, Value) then
           Exit(JsException);
       end;
     end;
     if not SetPropertyByKey(R, Removed, R.LengthKey, JsNumber(DeleteCount), True) then
       Exit(JsException);
+    if SpliceDenseInPlace(R, Like.Target, Like.Length, Start, DeleteCount, @Args^[Min(ArgCount, 2)], ItemCount) then
+      Exit(Removed);
     NewLength := Like.Length - DeleteCount + ItemCount;
     if ItemCount < DeleteCount then
     begin
@@ -1131,12 +1170,12 @@ begin
           Exit(JsException);
         case Operation of
           IterateMap:
-            if not DefineAt(R, Target, Index, Outcome) then
+            if not DefineNext(R, Target, Index, Outcome) then
               Exit(JsException);
           IterateFilter:
             if ToBoolean(Outcome) then
             begin
-              if not DefineAt(R, Target, Kept, Value) then
+              if not DefineNext(R, Target, Kept, Value) then
                 Exit(JsException);
               Inc(Kept);
             end;
@@ -1366,7 +1405,7 @@ begin
           Exit(JsException);
       end;
       Text.Flatten(R.Heap);
-      Holder.CreateDataProperty(R, JsInteger(Holder.ArrayLength), JsStringValue(Text));
+      AppendElement(R, Holder, JsStringValue(Text));
       Pieces[Index] := Text;
       Inc(Total, Text.Length);
       if Text.IsWide then
@@ -1418,7 +1457,7 @@ begin
   if not ThisArrayLike(R, This, Like) then
     Exit(JsException);
   if Arg(Args, ArgCount, 0) = JsUndefined then
-    Separator := JsAsString(R.Intern(','))
+    Separator := R.Runtime.CharacterString(Ord(','))
   else
   begin
     Separator := ToJsString(R, Args^[0]);
@@ -1467,7 +1506,7 @@ begin
   if not ThisArrayLike(R, This, Like) then
     Exit(JsException);
   Outcome := R.Runtime.EmptyString;
-  Comma := JsAsString(R.Intern(','));
+  Comma := R.Runtime.CharacterString(Ord(','));
   for Index := 0 to Like.Length - 1 do
   begin
     if Index > 0 then

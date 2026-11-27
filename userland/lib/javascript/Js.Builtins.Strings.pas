@@ -462,6 +462,22 @@ begin
   Result := JsStringValue(SubString(R.Heap, Text, Start, Finish - Start));
 end;
 
+{ The full Unicode case mapping of a text that is not all ASCII. }
+function UnicodeCase(R: TJsRealm; Text: TJsString; Upper: Boolean): TJsValue;
+var
+  Unicode: UnicodeString;
+begin
+  Unicode := StringToUnicode(R.Heap, Text);
+  if not Upper then
+    Unicode := JsLowerCase(Unicode)
+  else
+  begin
+    Unicode := JsUpperCase(Unicode);
+    Unicode := UnicodeStringReplace(Unicode, #$DF, 'SS', [rfReplaceAll]);
+  end;
+  Result := JsStringValue(NewStringFromUnicode(R.Heap, Unicode));
+end;
+
 { toLowerCase (0), toUpperCase (1) }
 function StringCase(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
   Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue;
@@ -470,7 +486,6 @@ var
   Index: Integer;
   Code: Word;
   Ascii, Changed: Boolean;
-  Unicode: UnicodeString;
 begin
   Text := ThisString(R, This, 'toLowerCase');
   if Text = nil then
@@ -505,15 +520,7 @@ begin
     end;
     Exit(JsStringValue(Outcome));
   end;
-  Unicode := StringToUnicode(R.Heap, Text);
-  if Callee.Magic = 0 then
-    Unicode := JsLowerCase(Unicode)
-  else
-  begin
-    Unicode := JsUpperCase(Unicode);
-    Unicode := UnicodeStringReplace(Unicode, #$DF, 'SS', [rfReplaceAll]);
-  end;
-  Result := JsStringValue(NewStringFromUnicode(R.Heap, Unicode));
+  Result := UnicodeCase(R, Text, Callee.Magic = 1);
 end;
 
 { trim (0), trimStart (1), trimEnd (2) }
