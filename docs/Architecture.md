@@ -9132,10 +9132,11 @@ JavaScript, `Js.Builtins.SelfHosted`), iterator helpers
 Date (proleptic Gregorian arithmetic, ISO and toString/toUTCString
 parsing, en-US locale strings), RegExp (`Js.RegExpCompiler` and
 `Js.RegExpMatcher`: a backtracking matcher with an undo stack, a
-quantified single character run as a loop, a search that skips the
-positions where no match can begin (`Js.RegExpStartFilter`: first
-characters, ^ anchor, literal prefix), compiled programs shared by
-pattern and flags (`Js.RegExpCache`); named groups, back references,
+quantified single character run as a loop, ?, * and + of a body that
+cannot match empty compiled to splits without a counter, a search that
+skips the positions where no match can begin (`Js.RegExpStartFilter`:
+first characters, ^ anchor, literal prefix), compiled programs shared
+by pattern and flags (`Js.RegExpCache`); named groups, back references,
 lookahead and lookbehind, the u, v, y, s, d, i, m, g flags, \p general
 categories and 38 scripts by their blocks),
 globalThis, the URI functions, parseInt/parseFloat, eval,

@@ -105,6 +105,7 @@ type
     function SaveCaptures: Integer;
     procedure RestoreCaptures(Offset: Integer);
     function MatchBackReference(PC: Integer; var Position: Integer): Boolean;
+    function LatinClassRunEnd(Members: TRxClass; Position, Limit: Integer): Integer;
     function RepeatCharacter(PC: Integer; var Position: Integer): Boolean;
     function Backtrack(Base: Integer; var PC, Position: Integer): Boolean;
     function Run(StartPC, StartPosition: Integer): Boolean;
@@ -334,6 +335,18 @@ begin
       Dec(Position, Length_);
 end;
 
+{ The end of the run of Latin-1 characters from Position (before
+  Limit) that are members of the class. }
+function TRxMatcher.LatinClassRunEnd(Members: TRxClass; Position, Limit: Integer): Integer;
+var
+  LatinMembers: TRxLatinSet;
+begin
+  LatinMembers := Members.LatinSet;
+  Result := Position;
+  while (Result < Limit) and InLatinSet(LatinMembers, FChars8[Result]) do
+    Inc(Result);
+end;
+
 { RxCharRepeat: takes the characters (as many as allowed when greedy,
   the minimum when lazy) and pushes the other choices as one entry. }
 function TRxMatcher.RepeatCharacter(PC: Integer; var Position: Integer): Boolean;
@@ -351,14 +364,24 @@ begin
   Count := 0;
   if Code[PC + 5] = 0 then
     Maximum := Minimum;
-  while (Maximum < 0) or (Count < Maximum) do
+  if (Atom = RxClass) and (FChars8 <> nil) then
   begin
-    Next := Position;
-    if not ReadForward(Next, Character) or not AtomMatches(Atom, Operand, Character) then
-      Break;
-    Position := Next;
-    Inc(Count);
-  end;
+    { A Latin-1 text has a character per unit: scan the class's set. }
+    if (Maximum >= 0) and (Maximum < FLength - Position) then
+      Position := LatinClassRunEnd(FProgram.Classes[Operand], Position, Position + Maximum)
+    else
+      Position := LatinClassRunEnd(FProgram.Classes[Operand], Position, FLength);
+    Count := Position - Start;
+  end
+  else
+    while (Maximum < 0) or (Count < Maximum) do
+    begin
+      Next := Position;
+      if not ReadForward(Next, Character) or not AtomMatches(Atom, Operand, Character) then
+        Break;
+      Position := Next;
+      Inc(Count);
+    end;
   Inc(FSteps, Count);
   if Count < Minimum then
     Exit(False);

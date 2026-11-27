@@ -856,7 +856,7 @@ begin
       FlagText := ToJsString(R, Flags);
       if FlagText = nil then
         Exit(JsException);
-      if StringIndexOf(FlagText, JsAsString(R.Intern('g')), 0) < 0 then
+      if StringIndexOf(FlagText, R.Runtime.CharacterString(Ord('g')), 0) < 0 then
         Exit(R.ThrowTypeError('replaceAll must be called with a global RegExp'));
     end;
   end;
@@ -883,7 +883,8 @@ begin
     Found := StringIndexOf(Text, Search, Position);
     if (Found < 0) or (Found > Text.Length) then
       Break;
-    SetLength(Positions, Count + 1);
+    if Count >= Length(Positions) then
+      SetLength(Positions, Count * 2 + 4);
     Positions[Count] := Found;
     Inc(Count);
     if Callee.Magic = 0 then
@@ -956,7 +957,7 @@ begin
       FlagText := ToJsString(R, Flags);
       if FlagText = nil then
         Exit(JsException);
-      if StringIndexOf(FlagText, JsAsString(R.Intern('g')), 0) < 0 then
+      if StringIndexOf(FlagText, R.Runtime.CharacterString(Ord('g')), 0) < 0 then
         Exit(R.ThrowTypeError('matchAll must be called with a global RegExp'));
     end;
   end;

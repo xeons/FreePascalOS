@@ -34,7 +34,9 @@
   that matched the empty string ends the loop (no endless loops). A
   quantified single character (a literal, a class or the dot) reading
   forwards is one instruction: it never matches empty and has no
-  captures to reset, so the matcher runs it as a plain loop.
+  captures to reset, so the matcher runs it as a plain loop. ?, * and +
+  of a body that cannot match the empty string are splits and jumps,
+  without the counter and the empty-iteration check.
 
   After compiling, Js.RegExpStartFilter works out where a match can
   begin (the first characters, an anchor, a literal prefix) so that a
@@ -635,6 +637,8 @@ type
     function GroupsIn(Node: TRxNode; out First, Last: Integer): Boolean;
     procedure Emit(Value: LongInt);
     function GenerateCharacterRepeat(Node: TRxNode): Boolean;
+    procedure EmitCaptureReset(Body: TRxNode);
+    function GenerateSimpleLoop(Node: TRxNode; Direction: Integer): Boolean;
     procedure Generate(Node: TRxNode; Direction: Integer);
   public
     constructor Create(const Pattern: UnicodeString; Target: TRxProgram);
@@ -1739,6 +1743,106 @@ begin
   Emit(Ord(Node.Greedy));
 end;
 
+{ Whether the node might match the empty string (assertions and back
+  references count as might). }
+function MayMatchEmpty(Node: TRxNode): Boolean;
+var
+  Index: Integer;
+begin
+  case Node.Kind of
+    rnChar, rnAny, rnClass:
+      Result := False;
+    rnSequence:
+      begin
+        for Index := 0 to High(Node.Children) do
+          if not MayMatchEmpty(Node.Children[Index]) then
+            Exit(False);
+        Result := True;
+      end;
+    rnAlternation:
+      begin
+        for Index := 0 to High(Node.Children) do
+          if MayMatchEmpty(Node.Children[Index]) then
+            Exit(True);
+        Result := False;
+      end;
+    rnGroup:
+      Result := (Length(Node.Children) = 0) or MayMatchEmpty(Node.Children[0]);
+    rnRepeat:
+      Result := (Node.Minimum = 0) or MayMatchEmpty(Node.Children[0]);
+  else
+    Result := True;
+  end;
+end;
+
+procedure TRxCompiler.EmitCaptureReset(Body: TRxNode);
+var
+  First, Last: Integer;
+begin
+  if GroupsIn(Body, First, Last) then
+  begin
+    Emit(RxResetCaptures);
+    Emit(First);
+    Emit(Last);
+  end;
+end;
+
+{ ?, * and + of a body that cannot match the empty string, as splits
+  and jumps: no iteration can be empty, so the loop needs no counter
+  and no empty check. False for any other quantifier. }
+function TRxCompiler.GenerateSimpleLoop(Node: TRxNode; Direction: Integer): Boolean;
+var
+  Body: TRxNode;
+  Head, SplitAt: Integer;
+begin
+  Body := Node.Children[0];
+  Result := (Node.Minimum <= 1) and ((Node.Maximum = -1) or ((Node.Minimum = 0) and (Node.Maximum = 1))) and
+    not MayMatchEmpty(Body);
+  if not Result then
+    Exit;
+  Head := Length(FProgram.Code);
+  if Node.Minimum = 1 then
+  begin
+    { body, then another iteration or on }
+    EmitCaptureReset(Body);
+    Generate(Body, Direction);
+    SplitAt := Length(FProgram.Code);
+    Emit(RxSplit);
+    if Node.Greedy then
+    begin
+      Emit(Head);
+      Emit(SplitAt + 3);
+    end
+    else
+    begin
+      Emit(SplitAt + 3);
+      Emit(Head);
+    end;
+    Exit;
+  end;
+  { a choice between an iteration and on (back to it after one for *) }
+  Emit(RxSplit);
+  Emit(0);
+  Emit(0);
+  EmitCaptureReset(Body);
+  Generate(Body, Direction);
+  if Node.Maximum = -1 then
+  begin
+    Emit(RxJump);
+    Emit(Head);
+  end;
+  if Node.Greedy then
+  begin
+    FProgram.Code[Head + 1] := Head + 3;
+    FProgram.Code[Head + 2] := Length(FProgram.Code);
+  end
+  else
+  begin
+    FProgram.Code[Head + 1] := Length(FProgram.Code);
+    FProgram.Code[Head + 2] := Head + 3;
+  end;
+end;
+
 procedure TRxCompiler.Generate(Node: TRxNode; Direction: Integer);
 var
   Index, SplitAt, JumpAt, Counter, PositionRegister, LoopHead, ExitPatch, First, Last: Integer;
@@ -1828,6 +1932,8 @@ begin
         if (Node.Maximum = 0) then
           Exit;
         if (Direction = ForwardDirection) and GenerateCharacterRepeat(Node) then
+          Exit;
+        if GenerateSimpleLoop(Node, Direction) then
           Exit;
         Counter := FProgram.CounterCount;
         Inc(FProgram.CounterCount);

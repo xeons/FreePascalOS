@@ -174,24 +174,16 @@ begin
     Result := Result + 'y';
 end;
 
-{ The program for the pattern and flags: the runtime's cached one, or
-  compiled and cached (nil after throwing a SyntaxError). The caller
-  owns a reference. }
-function ProgramFor(R: TJsRealm; Pattern: TJsString; Bits: Integer): TRxProgram;
 const
   { The flags that change the program. }
   CompileFlags = FlagIgnoreCase or FlagMultiline or FlagDotAll or FlagUnicode or FlagUnicodeSets;
+
+{ Compiles the (flat) pattern and keeps the program in Cache: nil
+  after throwing a SyntaxError. }
+function CompileAndCache(R: TJsRealm; Cache: TRxProgramCache; Pattern: TJsString; Bits: Integer): TRxProgram;
 var
-  Cache: TRxProgramCache;
   Text: UnicodeString;
 begin
-  if R.Runtime.RegExpPrograms = nil then
-    R.Runtime.RegExpPrograms := TRxProgramCache.Create;
-  Cache := TRxProgramCache(R.Runtime.RegExpPrograms);
-  Pattern.Flatten(R.Heap);
-  Result := Cache.Lookup(Pattern, Bits and CompileFlags);
-  if Result <> nil then
-    Exit;
   Text := StringToUnicode(R.Heap, Pattern);
   try
     Result := CompileRegExp(Text, (Bits and FlagIgnoreCase) <> 0, (Bits and FlagMultiline) <> 0,
@@ -206,6 +198,33 @@ begin
   Cache.Insert(Pattern, Text, Bits and CompileFlags, Result);
 end;
 
+{ The program for the pattern and flags: the runtime's cached one, or
+  compiled and cached (nil after throwing a SyntaxError). The caller
+  owns a reference. }
+function ProgramFor(R: TJsRealm; Pattern: TJsString; Bits: Integer): TRxProgram;
+var
+  Cache: TRxProgramCache;
+begin
+  if R.Runtime.RegExpPrograms = nil then
+    R.Runtime.RegExpPrograms := TRxProgramCache.Create;
+  Cache := TRxProgramCache(R.Runtime.RegExpPrograms);
+  Pattern.Flatten(R.Heap);
+  Result := Cache.Lookup(Pattern, Bits and CompileFlags);
+  if Result = nil then
+    Result := CompileAndCache(R, Cache, Pattern, Bits);
+end;
+
+procedure ThrowInvalidFlags(R: TJsRealm; Flags: TJsString);
+begin
+  R.ThrowError(ekSyntax, 'Invalid flags supplied to RegExp constructor ''' + StringToUtf8(R.Heap, Flags) + '''');
+end;
+
+{ The flags text of the bits as a string. }
+function FlagsString(R: TJsRealm; Bits: Integer): TJsString;
+begin
+  Result := NewStringFromUtf8(R.Heap, FlagsText(Bits));
+end;
+
 { Sets up a regexp object from pattern and flag text. }
 function Initialize(R: TJsRealm; Target: TJsRegExp; Pattern, Flags: TJsString): Boolean;
 var
@@ -215,7 +234,7 @@ begin
   Result := False;
   if not ParseFlags(Flags, Bits) then
   begin
-    R.ThrowError(ekSyntax, 'Invalid flags supplied to RegExp constructor ''' + StringToUtf8(R.Heap, Flags) + '''');
+    ThrowInvalidFlags(R, Flags);
     Exit;
   end;
   Compiled := ProgramFor(R, Pattern, Bits);
@@ -274,7 +293,7 @@ begin
   begin
     PatternText := TJsRegExp(JsAsObject(Pattern)).Source;
     if Flags = JsUndefined then
-      FlagText := NewStringFromUtf8(R.Heap, FlagsText(TJsRegExp(JsAsObject(Pattern)).FlagBits))
+      FlagText := FlagsString(R, TJsRegExp(JsAsObject(Pattern)).FlagBits)
     else
     begin
       FlagText := ToJsString(R, Flags);
@@ -730,7 +749,7 @@ begin
   if IsRegExpObject(Arg(Args, ArgCount, 0)) then
   begin
     Pattern := TJsRegExp(JsAsObject(Args^[0])).Source;
-    Flags := NewStringFromUtf8(R.Heap, FlagsText(TJsRegExp(JsAsObject(Args^[0])).FlagBits));
+    Flags := FlagsString(R, TJsRegExp(JsAsObject(Args^[0])).FlagBits);
   end
   else
   begin
