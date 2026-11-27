@@ -84,6 +84,14 @@ type
     { An addition: the shape after it, and the prototype epoch then. }
     NewShape: TJsShape;
     Epoch: LongWord;
+    { A property found further up the chain than the prototype (Holder
+      Depth links up from Prototype, the receiver's prototype; NewShape
+      is the holder's shape and Epoch the prototype shape epoch then,
+      HolderShape nil); HolderAccessor when it is a getter to call.
+      Prototype is nil for the other entries. }
+    Depth: Byte;
+    HolderAccessor: Boolean;
+    Prototype: TJsObject;
     Extra: PJsPropertyCacheExtra;
   end;
   PJsPropertyCache = ^TJsPropertyCache;
@@ -313,6 +321,7 @@ begin
   Tracer.MarkCell(Entry.Holder);
   Tracer.MarkCell(Entry.HolderShape);
   Tracer.MarkCell(Entry.NewShape);
+  Tracer.MarkCell(Entry.Prototype);
 end;
 
 { TJsCode }

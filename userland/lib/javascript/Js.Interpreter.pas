@@ -145,6 +145,12 @@ type
     function FindHandler(Frame: PJsFrame; IsReturnCompletion: Boolean): Integer;
     { Property access with inline caches. }
     function GetNamedSlow(Base, Key: TJsValue; Cache: PJsPropertyCache): TJsValue;
+    { A cache entry for Target's shape of a property found further up the
+      chain than its prototype, still valid; nil when there is none. }
+    function ChainEntryFor(Target: TJsObject; Cache: PJsPropertyCache): PJsPropertyCache;
+    { Caches Key when it is found past Target's prototype, through
+      cacheable prototypes only. }
+    procedure FillChainEntry(Target: TJsObject; Key: TJsValue; Cache: PJsPropertyCache);
     function SetNamedSlow(Base, Key, Value: TJsValue; Cache: PJsPropertyCache; Strict: Boolean): Boolean;
     function DefineFieldSlow(Target: TJsObject; Key, Value: TJsValue; Cache: PJsPropertyCache): Boolean;
     function GetGlobal(Key: TJsValue; Cache: PJsPropertyCache; ForTypeof: Boolean): TJsValue;
@@ -1186,9 +1192,78 @@ end;
 
 { Property access }
 
+{ Whether an object of the chain can be cached through: an ordinary
+  prototype whose changes bump the prototype shape epoch. }
+function IsCacheablePrototype(Target: TJsObject): Boolean; inline;
+begin
+  Result := (Target.ObjectFlags and (ObjectExotic or ObjectLazyPrototype or ObjectIsPrototype)) = ObjectIsPrototype;
+end;
+
+function TJsInterpreterRealm.ChainEntryFor(Target: TJsObject; Cache: PJsPropertyCache): PJsPropertyCache;
+var
+  Walk: TJsObject;
+  Steps: Integer;
+begin
+  if Cache^.Shape = Target.Shape then
+    Result := Cache
+  else if Cache^.Extra <> nil then
+    Result := FindCacheEntry(Cache, Target.Shape)
+  else
+    Exit(nil);
+  if (Result = nil) or (Result^.Prototype = nil) or (Result^.Prototype <> Target.Proto) or
+    (Result^.Epoch <> Runtime.PrototypeShapeEpoch) or (Result^.Generation <> Target.Shape.Generation) or
+    (Result^.Holder.Shape <> Result^.NewShape) then
+    Exit(nil);
+  { The links themselves, as some are made directly at setup. }
+  Walk := Result^.Prototype;
+  for Steps := 2 to Result^.Depth do
+  begin
+    Walk := Walk.Proto;
+    if Walk = nil then
+      Exit(nil);
+  end;
+  if Walk <> Result^.Holder then
+    Result := nil;
+end;
+
+procedure TJsInterpreterRealm.FillChainEntry(Target: TJsObject; Key: TJsValue; Cache: PJsPropertyCache);
+var
+  Holder: TJsObject;
+  Depth, Slot: Integer;
+  Flags: Byte;
+begin
+  Holder := Target.Proto;
+  if (Holder = nil) or not IsCacheablePrototype(Holder) or (Holder.Shape.Find(Key, Flags) >= 0) then
+    Exit;
+  Depth := 1;
+  repeat
+    Holder := Holder.Proto;
+    Inc(Depth);
+    if (Holder = nil) or (Depth > High(Byte)) or not IsCacheablePrototype(Holder) then
+      Exit;
+    Slot := Holder.Shape.Find(Key, Flags);
+  until Slot >= 0;
+  Cache := CacheEntryFor(Cache, Target.Shape);
+  Cache^.Shape := Target.Shape;
+  Cache^.Generation := Target.Shape.Generation;
+  Cache^.Slot := Slot;
+  Cache^.Holder := Holder;
+  { Kept apart from HolderShape, which stays nil so that the interpreter's
+    own prototype check never takes this entry (a receiver of the same
+    shape whose prototype is the holder would read an accessor's slot). }
+  Cache^.HolderShape := nil;
+  Cache^.NewShape := Holder.Shape;
+  Cache^.Epoch := Runtime.PrototypeShapeEpoch;
+  Cache^.Depth := Depth;
+  Cache^.HolderAccessor := (Flags and PropertyAccessor) <> 0;
+  Cache^.Prototype := Target.Proto;
+end;
+
 function TJsInterpreterRealm.GetNamedSlow(Base, Key: TJsValue; Cache: PJsPropertyCache): TJsValue;
 var
   Target, Holder: TJsObject;
+  Entry: PJsPropertyCache;
+  Pair: TJsAccessorPair;
   Slot: Integer;
   Flags: Byte;
 begin
@@ -1197,6 +1272,19 @@ begin
     Target := JsAsObject(Base);
     if ((Target.ObjectFlags and (ObjectExotic or ObjectLazyPrototype)) = 0) and (Key <> LengthKey) then
     begin
+      { Found further up the chain before (the interpreter's own check
+        covers the receiver and its prototype). }
+      Entry := ChainEntryFor(Target, Cache);
+      if Entry <> nil then
+      begin
+        Result := Entry^.Holder.GetSlot(Entry^.Slot);
+        if not Entry^.HolderAccessor then
+          Exit;
+        Pair := TJsAccessorPair(JsAsCell(Result));
+        if Pair.Getter = JsUndefined then
+          Exit(JsUndefined);
+        Exit(Call(Pair.Getter, Base, nil, 0));
+      end;
       Slot := Target.Shape.Find(Key, Flags);
       if Slot >= 0 then
       begin
@@ -1207,6 +1295,7 @@ begin
           Cache^.Generation := Target.Shape.Generation;
           Cache^.Slot := Slot;
           Cache^.Holder := nil;
+          Cache^.Prototype := nil;
           Exit(Target.GetSlot(Slot));
         end;
       end
@@ -1227,8 +1316,11 @@ begin
             Cache^.Slot := Slot;
             Cache^.Holder := Holder;
             Cache^.HolderShape := Holder.Shape;
+            Cache^.Prototype := nil;
             Exit(Holder.GetSlot(Slot));
           end;
+          if (Slot < 0) and not JsIsInteger(Key) then
+            FillChainEntry(Target, Key, Cache);
         end;
       end;
     end;
@@ -2123,6 +2215,8 @@ DispatchLoop:
         end;
       opSetNamed:
         begin
+          { A cached addition skips prototypes: theirs go the slow way, which
+            bumps the prototype shape epoch. }
           A := Regs[Code[PC + 1]];
           Cache := @CodeObject.Caches[Code[PC + 4]];
           if JsIsObject(A) then
@@ -2139,7 +2233,7 @@ DispatchLoop:
                   Continue;
                 end;
               end
-              else if (Cache^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+              else if (Cache^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
               begin
                 Target.EnsureSlotCapacity(Self, Cache^.Slot + 1);
                 Target.Shape := Cache^.NewShape;
@@ -2162,7 +2256,7 @@ DispatchLoop:
                     Continue;
                   end;
                 end
-                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
                 begin
                   Target.EnsureSlotCapacity(Self, Entry^.Slot + 1);
                   Target.Shape := Entry^.NewShape;
@@ -2305,7 +2399,7 @@ DispatchLoop:
           Target := JsAsObject(Regs[Code[PC + 1]]);
           Cache := @CodeObject.Caches[Code[PC + 4]];
           if (Target.Shape = Cache^.Shape) and (Cache^.NewShape <> nil) and
-            ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+            ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
           begin
             Target.EnsureSlotCapacity(Self, Cache^.Slot + 1);
             Target.Shape := Cache^.NewShape;

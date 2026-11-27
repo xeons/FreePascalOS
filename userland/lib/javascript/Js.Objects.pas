@@ -617,14 +617,15 @@ begin
   SetSlot(Slot, Value);
   if JsIsInteger(Key) then
     ObjectFlags := ObjectFlags or ObjectIndexedByName;
-  if ((ObjectFlags and ObjectIsPrototype) <> 0) and
-    ((PropertyFlags and (PropertyAccessor or PropertyWritable)) <> PropertyWritable) then
-    Inc(R.Runtime.PrototypeEpoch);
+  if (ObjectFlags and ObjectIsPrototype) <> 0 then
+  begin
+    Inc(R.Runtime.PrototypeShapeEpoch);
+    if (PropertyFlags and (PropertyAccessor or PropertyWritable)) <> PropertyWritable then
+      Inc(R.Runtime.PrototypeEpoch);
+  end;
   Result := True;
 end;
 
-{ Stores a new element at Index (no property there yet): dense when it
-  extends the elements by little, by name when it is far beyond them. }
 { The atom of an index past the integer keys: apart from its callers,
   which then need no text of their own (an exception frame each). }
 function IndexName(R: TJsRealm; Index: LongWord): TJsValue;
@@ -632,6 +633,8 @@ begin
   Result := R.Runtime.Intern(IntToStr(Index));
 end;
 
+{ Stores a new element at Index (no property there yet): dense when it
+  extends the elements by little, by name when it is far beyond them. }
 function TJsObject.StoreNewElement(R: TJsRealm; Index: LongWord; Value: TJsValue): Boolean;
 var
   Position: Integer;
@@ -791,7 +794,10 @@ begin
     MakeDictionary(R);
     DictionarySetFlags(Shape, Key, NewFlags);
     if ((ObjectFlags and ObjectIsPrototype) <> 0) then
+    begin
       Inc(R.Runtime.PrototypeEpoch);
+      Inc(R.Runtime.PrototypeShapeEpoch);
+    end;
   end;
   if ToAccessor then
   begin
@@ -1294,6 +1300,8 @@ begin
   MakeDictionary(R);
   SetSlot(Slot, JsUndefined);
   DictionaryRemove(R.Heap, Shape, Key);
+  if (ObjectFlags and ObjectIsPrototype) <> 0 then
+    Inc(R.Runtime.PrototypeShapeEpoch);
   Result := 1;
 end;
 
@@ -1378,6 +1386,7 @@ begin
   if Prototype <> nil then
     R.NoteIsPrototype(Prototype);
   Inc(R.Runtime.PrototypeEpoch);
+  Inc(R.Runtime.PrototypeShapeEpoch);
   Result := 1;
 end;
 
