@@ -31,6 +31,12 @@
   more properties gets a hash table of all of them the first time it
   is searched.
 
+  A shape's transitions are a short list searched in order while there
+  are few of them; past TransitionLinearLimit the list becomes an open
+  addressed hash table of the children by key and attributes (the root
+  shape and the shapes of objects built key by key from data can have
+  thousands).
+
   An object that has many properties, or has one deleted or
   reconfigured, gets a dictionary shape of its own: a table it changes
   in place. Every such change bumps the shape's Generation, which the
@@ -66,6 +72,8 @@ const
   ShapeLinearSearchLimit = 8;
   { An object with more properties goes to a dictionary. }
   ShapeTreeLimit = 128;
+  { Shapes with more transitions keep them in a hash table. }
+  TransitionLinearLimit = 8;
 
 type
   TJsShapeEntry = record
@@ -94,10 +102,22 @@ type
 
   TJsShape = class(TJsCell)
   private
+    { The children: a list of FTransitionCount while FTransitionsHashed
+      is False, else a hash table (nil empty, TransitionRemoved for a
+      child that left) of FTransitionCount live children and
+      FTransitionsRemoved removed ones. }
     FTransitions: array of TJsShape;
     FTransitionCount: Integer;
+    FTransitionsRemoved: Integer;
+    FTransitionsHashed: Boolean;
+    { The hash of Key and Flags, kept for the parent's table (the key
+      may be gone by the time a dying child leaves it). }
+    FTransitionHash: LongWord;
+    function FindTransition(SearchKey: TJsValue; PropertyFlags: Byte; Hash: LongWord): TJsShape;
     procedure AddTransition(Child: TJsShape);
     procedure RemoveTransition(Child: TJsShape);
+    procedure InsertHashedTransition(Child: TJsShape);
+    procedure RehashTransitions(Size: Integer);
     procedure BuildTable;
   public
     Parent: TJsShape;
@@ -134,6 +154,14 @@ procedure DictionaryRemove(Heap: TJsHeap; Shape: TJsShape; Key: TJsValue);
 procedure DictionarySetFlags(Shape: TJsShape; Key: TJsValue; PropertyFlags: Byte);
 
 implementation
+
+const
+  TransitionRemoved = Pointer(1);
+
+function TransitionHash(Key: TJsValue; PropertyFlags: Byte): LongWord; inline;
+begin
+  Result := KeyHash(Key) xor (LongWord(PropertyFlags) * LongWord($9E3779B1));
+end;
 
 function KeyHash(Key: TJsValue): LongWord;
 var
@@ -284,25 +312,130 @@ begin
     Inc(Result, Table.MemorySize);
 end;
 
-procedure TJsShape.AddTransition(Child: TJsShape);
+function TJsShape.FindTransition(SearchKey: TJsValue; PropertyFlags: Byte; Hash: LongWord): TJsShape;
+var
+  Index, Mask: Integer;
 begin
-  if FTransitionCount >= Length(FTransitions) then
-    SetLength(FTransitions, Length(FTransitions) * 2 + 2);
-  FTransitions[FTransitionCount] := Child;
+  if not FTransitionsHashed then
+  begin
+    for Index := 0 to FTransitionCount - 1 do
+    begin
+      Result := FTransitions[Index];
+      if (Result.Key = SearchKey) and (Result.Flags = PropertyFlags) then
+        Exit;
+    end;
+    Exit(nil);
+  end;
+  Mask := Length(FTransitions) - 1;
+  Index := Integer(Hash and LongWord(Mask));
+  while True do
+  begin
+    Result := FTransitions[Index];
+    if Result = nil then
+      Exit;
+    if (Pointer(Result) <> TransitionRemoved) and (Result.Key = SearchKey) and (Result.Flags = PropertyFlags) then
+      Exit;
+    Index := (Index + 1) and Mask;
+  end;
+end;
+
+procedure TJsShape.InsertHashedTransition(Child: TJsShape);
+var
+  Index, Mask: Integer;
+begin
+  Mask := Length(FTransitions) - 1;
+  Index := Integer(Child.FTransitionHash and LongWord(Mask));
+  while (FTransitions[Index] <> nil) and (Pointer(FTransitions[Index]) <> TransitionRemoved) do
+    Index := (Index + 1) and Mask;
+  if Pointer(FTransitions[Index]) = TransitionRemoved then
+    Dec(FTransitionsRemoved);
+  FTransitions[Index] := Child;
   Inc(FTransitionCount);
+end;
+
+{ Moves the children (list or table) into a new table of Size. }
+procedure TJsShape.RehashTransitions(Size: Integer);
+var
+  Old: array of TJsShape;
+  Index, OldCount: Integer;
+  WasHashed: Boolean;
+begin
+  Old := FTransitions;
+  OldCount := FTransitionCount;
+  WasHashed := FTransitionsHashed;
+  FTransitions := nil;
+  SetLength(FTransitions, Size);
+  FTransitionCount := 0;
+  FTransitionsRemoved := 0;
+  FTransitionsHashed := True;
+  if WasHashed then
+  begin
+    for Index := 0 to High(Old) do
+      if (Old[Index] <> nil) and (Pointer(Old[Index]) <> TransitionRemoved) then
+        InsertHashedTransition(Old[Index]);
+  end
+  else
+    for Index := 0 to OldCount - 1 do
+      InsertHashedTransition(Old[Index]);
+end;
+
+procedure TJsShape.AddTransition(Child: TJsShape);
+var
+  Size: Integer;
+begin
+  if not FTransitionsHashed then
+  begin
+    if FTransitionCount < TransitionLinearLimit then
+    begin
+      if FTransitionCount >= Length(FTransitions) then
+        SetLength(FTransitions, Length(FTransitions) * 2 + 2);
+      FTransitions[FTransitionCount] := Child;
+      Inc(FTransitionCount);
+      Exit;
+    end;
+    RehashTransitions(TransitionLinearLimit * 4);
+  end
+  else if (FTransitionCount + FTransitionsRemoved + 1) * 2 > Length(FTransitions) then
+  begin
+    { At most half full: grow when the live children need it, else
+      only drop the removed ones. }
+    Size := Length(FTransitions);
+    if (FTransitionCount + 1) * 4 > Size then
+      Size := Size * 2;
+    RehashTransitions(Size);
+  end;
+  InsertHashedTransition(Child);
 end;
 
 procedure TJsShape.RemoveTransition(Child: TJsShape);
 var
-  Index: Integer;
+  Index, Mask: Integer;
 begin
-  for Index := 0 to FTransitionCount - 1 do
+  if not FTransitionsHashed then
+  begin
+    for Index := 0 to FTransitionCount - 1 do
+      if FTransitions[Index] = Child then
+      begin
+        FTransitions[Index] := FTransitions[FTransitionCount - 1];
+        FTransitions[FTransitionCount - 1] := nil;
+        Dec(FTransitionCount);
+        Exit;
+      end;
+    Exit;
+  end;
+  Mask := Length(FTransitions) - 1;
+  Index := Integer(Child.FTransitionHash and LongWord(Mask));
+  while FTransitions[Index] <> nil do
+  begin
     if FTransitions[Index] = Child then
     begin
-      FTransitions[Index] := FTransitions[FTransitionCount - 1];
+      FTransitions[Index] := TJsShape(TransitionRemoved);
       Dec(FTransitionCount);
+      Inc(FTransitionsRemoved);
       Exit;
     end;
+    Index := (Index + 1) and Mask;
+  end;
 end;
 
 procedure TJsShape.BuildTable;
@@ -402,7 +535,7 @@ end;
 
 function ShapeWithProperty(Heap: TJsHeap; Shape: TJsShape; Key: TJsValue; PropertyFlags: Byte): TJsShape;
 var
-  Index: Integer;
+  Hash: LongWord;
   Child: TJsShape;
 begin
   if Shape.IsDictionary then
@@ -413,17 +546,16 @@ begin
     Inc(Shape.Generation);
     Exit(Shape);
   end;
-  for Index := 0 to Shape.FTransitionCount - 1 do
-  begin
-    Child := Shape.FTransitions[Index];
-    if (Child.Key = Key) and (Child.Flags = PropertyFlags) then
-      Exit(Child);
-  end;
+  Hash := TransitionHash(Key, PropertyFlags);
+  Child := Shape.FindTransition(Key, PropertyFlags, Hash);
+  if Child <> nil then
+    Exit(Child);
   Child := TJsShape.Create;
   Heap.Register(Child, ckShape);
   Child.Parent := Shape;
   Child.Key := Key;
   Child.Flags := PropertyFlags;
+  Child.FTransitionHash := Hash;
   Child.Slot := Shape.SlotCount;
   Child.SlotCount := Shape.SlotCount + 1;
   Child.PropertyCount := Shape.PropertyCount + 1;
