@@ -51,8 +51,7 @@ const
 
 type
   { Where a token starts: what the hot parsing functions keep of their
-    first token (a TJsToken copy carries two strings: reference counts,
-    initialization and an exception frame in every call). }
+    first token. }
   TJsSourceMark = record
     Start: Integer;
     Line: Integer;
@@ -81,13 +80,17 @@ type
       at once (an IIFE), so compiled eagerly rather than parsed twice. }
     FFunctionInParentheses: Boolean;
     { What ParseFunction is told about the function it parses next: it
-      is right inside parentheses; its body is wanted (the function a
-      lazy compilation parses again). }
+      is right inside parentheses. }
     FNextFunctionInParentheses: Boolean;
-    FKeepNextBody: Boolean;
+    { Where the function starts whose body is wanted though it compiles
+      lazily (the function a lazy compilation parses again); 0: none. }
+    FKeepBodyStart: Integer;
     FDepth: Integer;
+    { The labels around the statement being parsed; those of the
+      current function from FLabelBase on. }
     FLabels: array of UnicodeString;
     FLabelCount: Integer;
+    FLabelBase: Integer;
     FLoopDepth: Integer;
     FSwitchDepth: Integer;
     FPrivateScopes: array of TJsScope;
@@ -104,7 +107,14 @@ type
     function Accept(Kind: TJsTokenKind): Boolean;
     procedure Expect(Kind: TJsTokenKind);
     function IsIdentifierToken: Boolean;
-    function IsContextual(const Word: UnicodeString): Boolean;
+    function IsContextual(Word: TJsWord): Boolean; inline;
+    { The current identifier's name. }
+    function TokenText: UnicodeString;
+    { The current string token's value. }
+    function StringText: UnicodeString;
+    { Any identifier name, reserved words included (after a dot, as a
+      key): put in Text, and the token is taken. }
+    procedure TakeIdentifierName(var Text: UnicodeString);
     function IdentifierName: UnicodeString;
     procedure ConsumeSemicolon;
     procedure Enter;
@@ -116,17 +126,22 @@ type
     function PushScope(Kind: TJsScopeKind): TJsScope;
     procedure PopScope;
     function NewIdentifier(const Name: UnicodeString; const Token: TJsToken): TJsNode;
+    { An identifier of an interned name (TJsToken.Name). }
+    function NewIdentifierAt(Name: Integer; const Token: TJsToken): TJsNode;
     function DeclareName(const Name: UnicodeString; Kind: TJsDeclarationKind; const Token: TJsToken): TJsVariable;
     procedure DeclarePatternNames(Pattern: TJsNode; Kind: TJsDeclarationKind);
     { The names of a let or const pattern count as initialised from here
       (references before this point check the dead zone). }
     procedure MarkInitialized(Pattern: TJsNode);
     procedure NameFunctionExpression(Info: TJsFunctionInfo);
+    { A binding identifier: its interned name, the token taken. }
+    function BindingIdentifier: Integer;
     function BindingIdentifierName: UnicodeString;
 
     { Statements }
     function ParseStatementListItem: TJsNode;
     function ParseStatement: TJsNode;
+    function ParseStatementAtDepth: TJsNode;
     function ParseBlock(NewScope: Boolean = True): TJsNode;
     function ParseVariableStatement(Kind: TJsDeclarationKind; InFor: Boolean): TJsNode;
     function ParseIf: TJsNode;
@@ -140,6 +155,7 @@ type
     function ParseSwitch: TJsNode;
     function ParseWith: TJsNode;
     function ParseLabeledOrExpression: TJsNode;
+    function ParseLabeledStatement: TJsNode;
     function ParseFunctionDeclaration(IsAsync: Boolean; DefaultExport: Boolean = False): TJsNode;
     function ParseClassDeclaration: TJsNode;
     function IsLetDeclaration: Boolean;
@@ -159,13 +175,19 @@ type
     { Functions and classes }
     function ParseFunction(Kind: TJsFunctionKind; IsAsync, IsGenerator: Boolean;
       const Name: UnicodeString; const StartToken: TJsToken): TJsFunctionInfo;
+    function ParseFunctionExpression(const StartToken: TJsToken): TJsNode;
+    function ParseAsyncFunctionExpression(const StartToken: TJsToken): TJsNode;
+    { Whether a function just parsed is released (compiled lazily, and
+      not the function a lazy compilation wants). }
+    function DiscardsBody(Info: TJsFunctionInfo): Boolean;
     procedure ParseParameters(Info: TJsFunctionInfo);
     procedure ParseFunctionBody(Info: TJsFunctionInfo);
     function ParsePrivateIn(NoIn: Boolean): TJsNode;
     function AsyncArrowParameterFollows: Boolean;
     function ParseAsyncArrowWithIdentifier(const Start: TJsSourceMark): TJsNode;
     function ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsSourceMark;
-      ReferenceMark, ChildMark: Integer; OuterScope: TJsScope): TJsNode;
+      ReferenceMark, ChildMark, NodeMark: Integer; OuterScope: TJsScope): TJsNode;
+    procedure ParseArrowBody(Info: TJsFunctionInfo);
     function ParseClass(IsExpression: Boolean; const StartToken: TJsToken): TJsNode;
     function ParseClassMember(ClassNode: TJsNode; var InstanceInit, StaticInit: TJsFunctionInfo): TJsNode;
     function ParsePropertyKey(out Computed: Boolean; out KeyName: UnicodeString): TJsNode;
@@ -173,20 +195,28 @@ type
 
     { Patterns }
     function ParseBindingTarget(Kind: TJsDeclarationKind): TJsNode;
+    function ParseArrayBindingPattern(Kind: TJsDeclarationKind): TJsNode;
+    function ParseObjectBindingPattern(Kind: TJsDeclarationKind): TJsNode;
     function ParseBindingElement(Kind: TJsDeclarationKind): TJsNode;
     function ToPattern(Node: TJsNode; Binding: Boolean): TJsNode;
 
     { Expressions }
     function ParseExpression(NoIn: Boolean = False): TJsNode;
     function ParseAssignment(NoIn: Boolean = False): TJsNode;
+    function ParseAssignmentAtDepth(NoIn: Boolean): TJsNode;
+    function ParseAssignmentOperator(Left: TJsNode; const Start: TJsSourceMark; NoIn: Boolean): TJsNode;
     function ParseConditional(NoIn: Boolean): TJsNode;
     function ParseBinary(MinimumPrecedence: Integer; NoIn: Boolean): TJsNode;
     function ParseUnary: TJsNode;
+    function ParseUnaryAtDepth: TJsNode;
     function ParseUpdate: TJsNode;
     function ParseLeftHandSide: TJsNode;
     function ParseCallTail(Node: TJsNode; AllowCall: Boolean): TJsNode;
+    { The name after . or ?. (a private name: its reference too). }
+    procedure ParseMemberName(Member: TJsNode);
     function ParseArguments(Call: TJsNode): TJsNode;
     function ParsePrimary: TJsNode;
+    function ParseIdentifierReference: TJsNode;
     function ParseArrayLiteral: TJsNode;
     function ParseObjectLiteral: TJsNode;
     function ParseTemplate(Tagged: Boolean): TJsNode;
@@ -278,7 +308,7 @@ begin
   if FToken.Kind = tkEnd then
     Fail('Unexpected end of input')
   else if FToken.Kind in [tkIdentifier, tkPrivateName] then
-    Fail('Unexpected identifier ''' + string(FToken.Text) + '''')
+    Fail('Unexpected identifier ''' + string(TokenText) + '''')
   else if FToken.Kind in [tkString, tkTemplate] then
     Fail('Unexpected string')
   else
@@ -318,44 +348,56 @@ begin
 end;
 
 function TJsParser.IsIdentifierToken: Boolean;
-var
-  Keyword: TJsTokenKind;
 begin
-  Result := FToken.Kind = tkIdentifier;
+  if FToken.Kind <> tkIdentifier then
+    Exit(False);
   { A reserved word spelled with escapes is still reserved (12.7.2). }
-  if Result and FToken.Escaped and KeywordToken(FToken.Text, Keyword) then
-    Result := False;
-  if Result and FStrict then
-  begin
-    if (FToken.Text = 'implements') or (FToken.Text = 'interface') or (FToken.Text = 'package') or
-      (FToken.Text = 'private') or (FToken.Text = 'protected') or (FToken.Text = 'public') or
-      (FToken.Text = 'static') or (FToken.Text = 'let') then
-      Result := False;
+  if FToken.Escaped and FLexer.IsReservedName(FToken.Name) then
+    Exit(False);
+  case FToken.Word of
+    jwImplements, jwInterface, jwPackage, jwPrivate, jwProtected, jwPublic, jwStatic, jwLet:
+      Result := not FStrict;
+    jwYield:
+      Result := not (FInGenerator or FStrict);
+    jwAwait:
+      Result := not FInAsync;
+  else
+    Result := True;
   end;
-  if Result and (FToken.Text = 'yield') and (FInGenerator or FStrict) then
-    Result := False;
-  if Result and (FToken.Text = 'await') and FInAsync then
-    Result := False;
 end;
 
-function TJsParser.IsContextual(const Word: UnicodeString): Boolean;
+function TJsParser.IsContextual(Word: TJsWord): Boolean;
 begin
-  Result := (FToken.Kind = tkIdentifier) and (FToken.Text = Word) and not FToken.Escaped;
+  Result := (FToken.Kind = tkIdentifier) and (FToken.Word = Word) and not FToken.Escaped;
 end;
 
-{ Any identifier name, reserved words included (after a dot, as a key). }
+function TJsParser.TokenText: UnicodeString;
+begin
+  if FToken.Name >= 0 then
+    Result := FLexer.Names[FToken.Name]
+  else
+    Result := '';
+end;
+
+function TJsParser.StringText: UnicodeString;
+begin
+  Result := '';
+  FLexer.DecodeString(FToken, Result);
+end;
+
+procedure TJsParser.TakeIdentifierName(var Text: UnicodeString);
+begin
+  { Reserved words are interned names too. }
+  if (FToken.Kind <> tkIdentifier) and not (FToken.Kind in [tkBreak..tkWith]) then
+    Unexpected;
+  Text := FLexer.Names[FToken.Name];
+  Next;
+end;
+
 function TJsParser.IdentifierName: UnicodeString;
 begin
-  if FToken.Kind = tkIdentifier then
-    Result := FToken.Text
-  else if FToken.Kind in [tkBreak..tkWith] then
-    Result := UnicodeString(Copy(FLexer.SourceText(FToken.Start, FToken.Finish), 1, MaxInt))
-  else
-  begin
-    Unexpected;
-    Result := '';
-  end;
-  Next;
+  Result := '';
+  TakeIdentifierName(Result);
 end;
 
 procedure TJsParser.ConsumeSemicolon;
@@ -429,6 +471,14 @@ function TJsParser.NewIdentifier(const Name: UnicodeString; const Token: TJsToke
 begin
   Result := NewNodeAt(nkIdentifier, Token);
   Result.Text := Name;
+  Result.Number := Token.Start;
+  FScope.AddReference(Result);
+end;
+
+function TJsParser.NewIdentifierAt(Name: Integer; const Token: TJsToken): TJsNode;
+begin
+  Result := NewNodeAt(nkIdentifier, Token);
+  Result.Text := FLexer.Names[Name];
   Result.Number := Token.Start;
   FScope.AddReference(Result);
 end;
@@ -541,17 +591,22 @@ begin
     Info.SelfVariable := Info.Scope.Declare(Info.Name, dkImplicit, 0);
 end;
 
-function TJsParser.BindingIdentifierName: UnicodeString;
+function TJsParser.BindingIdentifier: Integer;
 begin
   if not IsIdentifierToken then
   begin
-    if (FToken.Kind = tkIdentifier) and (FToken.Text = 'yield') and not FInGenerator and not FStrict then
-    else if (FToken.Kind = tkIdentifier) and (FToken.Text = 'await') and not FInAsync then
+    if (FToken.Kind = tkIdentifier) and (FToken.Word = jwYield) and not FInGenerator and not FStrict then
+    else if (FToken.Kind = tkIdentifier) and (FToken.Word = jwAwait) and not FInAsync then
     else
       Unexpected;
   end;
-  Result := FToken.Text;
+  Result := FToken.Name;
   Next;
+end;
+
+function TJsParser.BindingIdentifierName: UnicodeString;
+begin
+  Result := FLexer.Names[BindingIdentifier];
 end;
 
 { Programs }
@@ -593,7 +648,7 @@ begin
   begin
     if Directives then
     begin
-      if (FToken.Kind = tkString) and (FLexer.SourceText(FToken.Start + 1, FToken.Finish - 1) = 'use strict') then
+      if FLexer.IsUseStrict(FToken) then
       begin
         if PeekToken.Kind in [tkSemicolon, tkRightBrace, tkEnd] then
         begin
@@ -629,6 +684,7 @@ begin
   FLexer.RestorePosition(Start, Line, Start - Column + 1);
   Next;
   StartToken := FToken;
+  FKeepBodyStart := StartToken.Start;
   if Kind = fkArrow then
   begin
     Node := ParseAssignment;
@@ -636,7 +692,6 @@ begin
       Fail('Internal error: lazy function');
     Exit(Node.Func);
   end;
-  FKeepNextBody := True;
   Result := ParseFunction(Kind, IsAsync, IsGenerator, Name, StartToken);
   if HasSelfName then
     NameFunctionExpression(Result);
@@ -668,7 +723,7 @@ var
   Index: Integer;
 begin
   Result := False;
-  if not ((FToken.Kind = tkWith) or (IsContextual('assert') and not FToken.NewlineBefore)) then
+  if not ((FToken.Kind = tkWith) or (IsContextual(jwAssert) and not FToken.NewlineBefore)) then
     Exit;
   Next;
   Expect(tkLeftBrace);
@@ -677,7 +732,7 @@ begin
   begin
     if FToken.Kind = tkString then
     begin
-      Key := FToken.Text;
+      Key := StringText;
       Next;
     end
     else
@@ -690,7 +745,7 @@ begin
     Expect(tkColon);
     if FToken.Kind <> tkString then
       Unexpected;
-    Value := FToken.Text;
+    Value := StringText;
     Next;
     if Key <> 'type' then
       Fail('Unsupported import attribute ''' + string(Key) + '''');
@@ -708,7 +763,7 @@ function TJsParser.ParseModuleSpecifier(out Json: Boolean): UnicodeString;
 begin
   if FToken.Kind <> tkString then
     Unexpected;
-  Result := FToken.Text;
+  Result := StringText;
   Next;
   Json := ParseImportAttributes;
 end;
@@ -721,7 +776,7 @@ begin
   IsString := FToken.Kind = tkString;
   if not IsString then
     Exit(IdentifierName);
-  Result := FToken.Text;
+  Result := StringText;
   { Lone surrogates are not allowed in export names. }
   Index := 1;
   while Index <= Length(Result) do
@@ -798,7 +853,7 @@ begin
     if FToken.Kind = tkStar then
     begin
       Next;
-      if not IsContextual('as') then
+      if not IsContextual(jwAs) then
         Unexpected;
       Next;
       NameToken := FToken;
@@ -811,7 +866,7 @@ begin
       begin
         NameToken := FToken;
         ImportName := ParseModuleExportName(IsString);
-        if IsContextual('as') then
+        if IsContextual(jwAs) then
         begin
           Next;
           NameToken := FToken;
@@ -831,7 +886,7 @@ begin
     else
       Unexpected;
   end;
-  if not IsContextual('from') then
+  if not IsContextual(jwFrom) then
     Unexpected;
   Next;
   Specifier := ParseModuleSpecifier(Json);
@@ -942,11 +997,11 @@ begin
       begin
         Next;
         Result := NewNode(nkEmpty);
-        if IsContextual('as') then
+        if IsContextual(jwAs) then
         begin
           Next;
           Entry.ExportName := ParseModuleExportName(IsString);
-          if not IsContextual('from') then
+          if not IsContextual(jwFrom) then
             Unexpected;
           Next;
           Specifier := ParseModuleSpecifier(Json);
@@ -957,7 +1012,7 @@ begin
         end
         else
         begin
-          if not IsContextual('from') then
+          if not IsContextual(jwFrom) then
             Unexpected;
           Next;
           Specifier := ParseModuleSpecifier(Json);
@@ -977,7 +1032,7 @@ begin
           Pending[High(Pending)].Token := FToken;
           Pending[High(Pending)].LocalName := ParseModuleExportName(IsString);
           Pending[High(Pending)].LocalIsString := IsString;
-          if IsContextual('as') then
+          if IsContextual(jwAs) then
           begin
             Next;
             Pending[High(Pending)].ExportName := ParseModuleExportName(IsString);
@@ -989,7 +1044,7 @@ begin
         end;
         Expect(tkRightBrace);
         Result := NewNode(nkEmpty);
-        if IsContextual('from') then
+        if IsContextual(jwFrom) then
         begin
           Next;
           Specifier := ParseModuleSpecifier(Json);
@@ -1023,7 +1078,7 @@ begin
           AddLocalExport('default', Result.A.Text, NameToken);
           Exit;
         end;
-        if IsContextual('async') then
+        if IsContextual(jwAsync) then
         begin
           Peeked := PeekToken;
           if (Peeked.Kind = tkFunction) and not Peeked.NewlineBefore then
@@ -1072,7 +1127,7 @@ begin
     NameToken := FToken;
     if IsLetDeclaration then
       Result := ParseVariableStatement(dkLet, False)
-    else if IsContextual('async') and (PeekToken.Kind = tkFunction) then
+    else if IsContextual(jwAsync) and (PeekToken.Kind = tkFunction) then
       Result := ParseStatementListItem
     else
     begin
@@ -1131,7 +1186,7 @@ var
   Peeked: TJsToken;
 begin
   Result := False;
-  if not IsContextual('let') then
+  if not IsContextual(jwLet) then
     Exit;
   Peeked := PeekToken;
   if Peeked.Kind in [tkLeftBracket, tkLeftBrace] then
@@ -1164,7 +1219,7 @@ begin
   end;
   if IsLetDeclaration then
     Exit(ParseVariableStatement(dkLet, False));
-  if IsContextual('async') then
+  if IsContextual(jwAsync) then
   begin
     Peeked := PeekToken;
     if (Peeked.Kind = tkFunction) and not Peeked.NewlineBefore then
@@ -1176,53 +1231,57 @@ begin
   Result := ParseStatement;
 end;
 
+{ The depth is counted without an exception frame: after a syntax
+  error the parser is not used again. }
 function TJsParser.ParseStatement: TJsNode;
 begin
   Enter;
-  try
-    case FToken.Kind of
-      tkLeftBrace: Result := ParseBlock;
-      tkSemicolon:
-        begin
-          Result := NewNode(nkEmpty);
-          Next;
-        end;
-      tkVar: Result := ParseVariableStatement(dkVar, False);
-      tkIf: Result := ParseIf;
-      tkFor: Result := ParseFor;
-      tkWhile: Result := ParseWhile;
-      tkDo: Result := ParseDoWhile;
-      tkReturn: Result := ParseReturn;
-      tkBreak: Result := ParseBreakContinue(nkBreak);
-      tkContinue: Result := ParseBreakContinue(nkContinue);
-      tkThrow: Result := ParseThrow;
-      tkTry: Result := ParseTry;
-      tkSwitch: Result := ParseSwitch;
-      tkWith: Result := ParseWith;
-      tkDebugger:
-        begin
-          Result := NewNode(nkDebugger);
-          Next;
-          ConsumeSemicolon;
-        end;
-      tkFunction:
-        begin
-          if FStrict then
-            Fail('In strict mode code, functions can only be declared at top level or inside a block');
-          Result := ParseFunctionDeclaration(False);
-        end;
-      tkClass, tkConst:
-        begin
-          Unexpected;
-          Result := nil;
-        end;
-    else
-      if IsLetDeclaration and (PeekToken.Kind = tkLeftBracket) then
-        Fail('Lexical declaration cannot appear in a single-statement context');
-      Result := ParseLabeledOrExpression;
-    end;
-  finally
-    Leave;
+  Result := ParseStatementAtDepth;
+  Leave;
+end;
+
+function TJsParser.ParseStatementAtDepth: TJsNode;
+begin
+  case FToken.Kind of
+    tkLeftBrace: Result := ParseBlock;
+    tkSemicolon:
+      begin
+        Result := NewNode(nkEmpty);
+        Next;
+      end;
+    tkVar: Result := ParseVariableStatement(dkVar, False);
+    tkIf: Result := ParseIf;
+    tkFor: Result := ParseFor;
+    tkWhile: Result := ParseWhile;
+    tkDo: Result := ParseDoWhile;
+    tkReturn: Result := ParseReturn;
+    tkBreak: Result := ParseBreakContinue(nkBreak);
+    tkContinue: Result := ParseBreakContinue(nkContinue);
+    tkThrow: Result := ParseThrow;
+    tkTry: Result := ParseTry;
+    tkSwitch: Result := ParseSwitch;
+    tkWith: Result := ParseWith;
+    tkDebugger:
+      begin
+        Result := NewNode(nkDebugger);
+        Next;
+        ConsumeSemicolon;
+      end;
+    tkFunction:
+      begin
+        if FStrict then
+          Fail('In strict mode code, functions can only be declared at top level or inside a block');
+        Result := ParseFunctionDeclaration(False);
+      end;
+    tkClass, tkConst:
+      begin
+        Unexpected;
+        Result := nil;
+      end;
+  else
+    if IsLetDeclaration and (PeekToken.Kind = tkLeftBracket) then
+      Fail('Lexical declaration cannot appear in a single-statement context');
+    Result := ParseLabeledOrExpression;
   end;
 end;
 
@@ -1320,7 +1379,7 @@ begin
   StartToken := FToken;
   Next;
   IsAwait := False;
-  if IsContextual('await') and FInAsync then
+  if IsContextual(jwAwait) and FInAsync then
   begin
     IsAwait := True;
     if FFunction.Kind = fkModule then
@@ -1343,7 +1402,7 @@ begin
   end
   else
     Init := ParseExpression(True);
-  if (Init <> nil) and (IsContextual('of') or (FToken.Kind = tkIn)) then
+  if (Init <> nil) and (IsContextual(jwOf) or (FToken.Kind = tkIn)) then
   begin
     if FToken.Kind = tkIn then
       Result := NewNodeAt(nkForIn, StartToken)
@@ -1410,9 +1469,9 @@ begin
   Next;
   if (FToken.Kind = tkIdentifier) and not FToken.NewlineBefore then
   begin
-    Result.Text := FToken.Text;
+    Result.Text := FLexer.Names[FToken.Name];
     Found := False;
-    for Index := 0 to FLabelCount - 1 do
+    for Index := FLabelBase to FLabelCount - 1 do
       if FLabels[Index] = Result.Text then
         Found := True;
     if not Found then
@@ -1511,51 +1570,49 @@ begin
   Result.Scope := PushScope(skBlock);
   Result.Scope.WithVariable := Result.Scope.Declare('%with', dkImplicit, 0);
   Result.Scope.WithVariable.Captured := True;
-  try
-    Result.B := ParseStatement;
-  finally
-    PopScope;
-  end;
+  Result.B := ParseStatement;
+  PopScope;
 end;
 
 function TJsParser.ParseLabeledOrExpression: TJsNode;
 var
   StartToken: TJsToken;
   Expression: TJsNode;
-  LabelName: UnicodeString;
 begin
-  StartToken := FToken;
   if (FToken.Kind = tkIdentifier) and (PeekToken.Kind = tkColon) and IsIdentifierToken then
-  begin
-    LabelName := FToken.Text;
-    Next;
-    Next;
-    Result := NewNodeAt(nkLabeled, StartToken);
-    Result.Text := LabelName;
-    if FLabelCount >= Length(FLabels) then
-      SetLength(FLabels, Length(FLabels) * 2 + 4);
-    FLabels[FLabelCount] := LabelName;
-    Inc(FLabelCount);
-    if FToken.Kind = tkFunction then
-    begin
-      if FStrict then
-        Fail('In strict mode code, functions can only be declared at top level or inside a block');
-      Result.A := ParseFunctionDeclaration(False);
-    end
-    else
-    begin
-      { A labelled statement that is not a loop still takes break. }
-      Inc(FSwitchDepth);
-      Result.A := ParseStatement;
-      Dec(FSwitchDepth);
-    end;
-    Dec(FLabelCount);
-    Exit;
-  end;
+    Exit(ParseLabeledStatement);
+  StartToken := FToken;
   Expression := ParseExpression;
   Result := NewNodeAt(nkExpressionStatement, StartToken);
   Result.A := Expression;
   ConsumeSemicolon;
+end;
+
+{ label: statement (the current token is the label). }
+function TJsParser.ParseLabeledStatement: TJsNode;
+begin
+  Result := NewNode(nkLabeled);
+  Result.Text := FLexer.Names[FToken.Name];
+  Next;
+  Next;
+  if FLabelCount >= Length(FLabels) then
+    SetLength(FLabels, Length(FLabels) * 2 + 4);
+  FLabels[FLabelCount] := Result.Text;
+  Inc(FLabelCount);
+  if FToken.Kind = tkFunction then
+  begin
+    if FStrict then
+      Fail('In strict mode code, functions can only be declared at top level or inside a block');
+    Result.A := ParseFunctionDeclaration(False);
+  end
+  else
+  begin
+    { A labelled statement that is not a loop still takes break. }
+    Inc(FSwitchDepth);
+    Result.A := ParseStatement;
+    Dec(FSwitchDepth);
+  end;
+  Dec(FLabelCount);
 end;
 
 function TJsParser.ParseFunctionDeclaration(IsAsync: Boolean; DefaultExport: Boolean): TJsNode;
@@ -1651,19 +1708,22 @@ end;
 
 { Functions }
 
+function TJsParser.DiscardsBody(Info: TJsFunctionInfo): Boolean;
+begin
+  Result := CompilesLazily(Info) and (Info.SourceStart <> FKeepBodyStart);
+end;
+
+{ The parser's state is restored on the way out without an exception
+  frame: after a syntax error the parser is not used again. }
 function TJsParser.ParseFunction(Kind: TJsFunctionKind; IsAsync, IsGenerator: Boolean;
   const Name: UnicodeString; const StartToken: TJsToken): TJsFunctionInfo;
 var
   SavedFunction: TJsFunctionInfo;
   SavedStrict, SavedGenerator, SavedAsync, SavedClassField: Boolean;
-  SavedLabels: array of UnicodeString;
-  SavedLabelCount, SavedLoop, SavedSwitch: Integer;
+  SavedLabelBase, SavedLoop, SavedSwitch: Integer;
   NodeMark: Integer;
-  KeepBody: Boolean;
 begin
   NodeMark := FArena.NodeCount;
-  KeepBody := FKeepNextBody;
-  FKeepNextBody := False;
   Result := TJsFunctionInfo.Create;
   FArena.Own(Result);
   Result.Name := Name;
@@ -1680,43 +1740,37 @@ begin
   SavedGenerator := FInGenerator;
   SavedAsync := FInAsync;
   SavedClassField := FInClassField;
-  SavedLabels := FLabels;
-  SavedLabelCount := FLabelCount;
+  SavedLabelBase := FLabelBase;
   SavedLoop := FLoopDepth;
   SavedSwitch := FSwitchDepth;
   FFunction := Result;
-  FLabels := nil;
-  FLabelCount := 0;
+  FLabelBase := FLabelCount;
   FLoopDepth := 0;
   FSwitchDepth := 0;
   FInClassField := False;
   Result.IsStrict := FStrict;
   Result.Scope := PushScope(skFunction);
-  try
-    FInGenerator := IsGenerator;
-    FInAsync := IsAsync;
-    Result.ParametersStart := FToken.Start;
-    Result.ParametersLine := FToken.Line;
-    Result.ParametersColumn := FToken.Column;
-    ParseParameters(Result);
-    ParseFunctionBody(Result);
-    Result.SourceFinish := FPreviousFinish;
-  finally
-    PopScope;
-    FFunction := SavedFunction;
-    if Result.UsesPrivateNames and (FFunction <> nil) then
-      FFunction.UsesPrivateNames := True;
-    FStrict := SavedStrict;
-    FInGenerator := SavedGenerator;
-    FInAsync := SavedAsync;
-    FInClassField := SavedClassField;
-    FLabels := SavedLabels;
-    FLabelCount := SavedLabelCount;
-    FLoopDepth := SavedLoop;
-    FSwitchDepth := SavedSwitch;
-  end;
+  FInGenerator := IsGenerator;
+  FInAsync := IsAsync;
+  Result.ParametersStart := FToken.Start;
+  Result.ParametersLine := FToken.Line;
+  Result.ParametersColumn := FToken.Column;
+  ParseParameters(Result);
+  ParseFunctionBody(Result);
+  Result.SourceFinish := FPreviousFinish;
+  PopScope;
+  FFunction := SavedFunction;
+  if Result.UsesPrivateNames and (FFunction <> nil) then
+    FFunction.UsesPrivateNames := True;
+  FStrict := SavedStrict;
+  FInGenerator := SavedGenerator;
+  FInAsync := SavedAsync;
+  FInClassField := SavedClassField;
+  FLabelBase := SavedLabelBase;
+  FLoopDepth := SavedLoop;
+  FSwitchDepth := SavedSwitch;
   { Compiled from its source when called: its nodes are not needed. }
-  if not KeepBody and (Kind in [fkNormal, fkMethod, fkGetter, fkSetter]) and CompilesLazily(Result) then
+  if DiscardsBody(Result) then
     DiscardLazyBody(FArena, Result, NodeMark);
 end;
 
@@ -1781,7 +1835,7 @@ begin
       Unexpected;
     if Directives then
     begin
-      if (FToken.Kind = tkString) and (FLexer.SourceText(FToken.Start + 1, FToken.Finish - 1) = 'use strict') then
+      if FLexer.IsUseStrict(FToken) then
       begin
         if not Info.HasSimpleParameters then
           Fail('Illegal ''use strict'' directive in function with non-simple parameter list');
@@ -1802,19 +1856,17 @@ begin
   Next;
 end;
 
+{ The arrow's parameters were parsed as an expression from NodeMark
+  (a node count) on, in OuterScope from its reference and child counts
+  on. }
 function TJsParser.ParseArrowFunction(Parameters: TJsNode; IsAsync: Boolean; const StartToken: TJsSourceMark;
-  ReferenceMark, ChildMark: Integer; OuterScope: TJsScope): TJsNode;
+  ReferenceMark, ChildMark, NodeMark: Integer; OuterScope: TJsScope): TJsNode;
 var
   Info: TJsFunctionInfo;
   Scope: TJsScope;
-  Index: Integer;
+  Index, Count: Integer;
   Parameter: TJsNode;
-  Items: array of TJsNode;
-  ItemCount: Integer;
   SavedFunction: TJsFunctionInfo;
-  SavedStrict, SavedGenerator, SavedAsync: Boolean;
-  SavedLabels: array of UnicodeString;
-  SavedLabelCount, SavedLoop, SavedSwitch: Integer;
   Counting: Boolean;
 begin
   if FToken.NewlineBefore then
@@ -1846,31 +1898,22 @@ begin
   OuterScope.ChildCount := ChildMark;
   OuterScope.AddChild(Scope);
   { The parameter list. }
-  Items := nil;
-  ItemCount := 0;
-  if Parameters <> nil then
-  begin
-    if (Parameters.Kind = nkSequence) then
-    begin
-      for Index := 0 to Parameters.Count - 1 do
-      begin
-        SetLength(Items, ItemCount + 1);
-        Items[ItemCount] := Parameters.List[Index];
-        Inc(ItemCount);
-      end;
-    end
-    else
-    begin
-      SetLength(Items, 1);
-      Items[0] := Parameters;
-      ItemCount := 1;
-    end;
-  end;
+  if Parameters = nil then
+    Count := 0
+  else if Parameters.Kind = nkSequence then
+    Count := Parameters.Count
+  else
+    Count := 1;
+  SetLength(Info.Parameters, Count);
   Info.HasSimpleParameters := True;
   Counting := True;
-  for Index := 0 to ItemCount - 1 do
+  for Index := 0 to Count - 1 do
   begin
-    Parameter := ToPattern(Items[Index], True);
+    if Parameters.Kind = nkSequence then
+      Parameter := Parameters.List[Index]
+    else
+      Parameter := Parameters;
+    Parameter := ToPattern(Parameter, True);
     if Parameter.Kind <> nkIdentifier then
       Info.HasSimpleParameters := False;
     if Parameter.Kind in [nkAssignPattern, nkRest] then
@@ -1878,44 +1921,50 @@ begin
     if Counting then
       Inc(Info.Length);
     DeclarePatternNames(Parameter, dkParameter);
-    SetLength(Info.Parameters, Info.ParameterCount + 1);
     Info.Parameters[Info.ParameterCount] := Parameter;
     Inc(Info.ParameterCount);
   end;
+  ParseArrowBody(Info);
+  PopScope;
+  FFunction := SavedFunction;
+  if Info.UsesPrivateNames and (FFunction <> nil) then
+    FFunction.UsesPrivateNames := True;
+  { Compiled from its source when called: neither its parameters nor
+    its body are needed. }
+  if DiscardsBody(Info) then
+    DiscardLazyBody(FArena, Info, NodeMark);
+  Result := NewNodeAtMark(nkFunction, StartToken);
+  Result.Func := Info;
+end;
+
+{ After =>: a block or an expression. }
+procedure TJsParser.ParseArrowBody(Info: TJsFunctionInfo);
+var
+  SavedStrict, SavedGenerator, SavedAsync: Boolean;
+  SavedLabelBase, SavedLoop, SavedSwitch: Integer;
+begin
   SavedStrict := FStrict;
   SavedGenerator := FInGenerator;
   SavedAsync := FInAsync;
-  SavedLabels := FLabels;
-  SavedLabelCount := FLabelCount;
+  SavedLabelBase := FLabelBase;
   SavedLoop := FLoopDepth;
   SavedSwitch := FSwitchDepth;
-  FLabels := nil;
-  FLabelCount := 0;
+  FLabelBase := FLabelCount;
   FLoopDepth := 0;
   FSwitchDepth := 0;
   FInGenerator := False;
-  FInAsync := IsAsync;
-  try
-    if FToken.Kind = tkLeftBrace then
-      ParseFunctionBody(Info)
-    else
-      Info.ExpressionBody := ParseAssignment;
-    Info.SourceFinish := FPreviousFinish;
-  finally
-    FStrict := SavedStrict;
-    FInGenerator := SavedGenerator;
-    FInAsync := SavedAsync;
-    FLabels := SavedLabels;
-    FLabelCount := SavedLabelCount;
-    FLoopDepth := SavedLoop;
-    FSwitchDepth := SavedSwitch;
-    PopScope;
-    FFunction := SavedFunction;
-    if Info.UsesPrivateNames and (FFunction <> nil) then
-      FFunction.UsesPrivateNames := True;
-  end;
-  Result := NewNodeAtMark(nkFunction, StartToken);
-  Result.Func := Info;
+  FInAsync := Info.IsAsync;
+  if FToken.Kind = tkLeftBrace then
+    ParseFunctionBody(Info)
+  else
+    Info.ExpressionBody := ParseAssignment;
+  Info.SourceFinish := FPreviousFinish;
+  FStrict := SavedStrict;
+  FInGenerator := SavedGenerator;
+  FInAsync := SavedAsync;
+  FLabelBase := SavedLabelBase;
+  FLoopDepth := SavedLoop;
+  FSwitchDepth := SavedSwitch;
 end;
 
 { Classes }
@@ -1944,8 +1993,8 @@ begin
     tkString:
       begin
         Result := NewNode(nkString);
-        Result.Text := FToken.Text;
-        KeyName := FToken.Text;
+        FLexer.DecodeString(FToken, Result.Text);
+        KeyName := Result.Text;
         Next;
       end;
     tkNumber:
@@ -1957,7 +2006,7 @@ begin
     tkBigInt:
       begin
         Result := NewNode(nkBigInt);
-        Result.Text := FToken.Text;
+        FLexer.DecodeBigInt(FToken, Result.Text);
         Result.Number := FToken.Number;
         Next;
       end;
@@ -1971,13 +2020,13 @@ begin
     tkPrivateName:
       begin
         Result := NewNode(nkPrivateName);
-        Result.Text := '#' + FToken.Text;
+        Result.Text := '#' + FLexer.Names[FToken.Name];
         KeyName := Result.Text;
         Next;
       end;
   else
     Result := NewNode(nkString);
-    KeyName := IdentifierName;
+    TakeIdentifierName(KeyName);
     Result.Text := KeyName;
   end;
 end;
@@ -2011,7 +2060,7 @@ begin
   IsAsync := False;
   IsGenerator := False;
   Kind := fkMethod;
-  if IsContextual('static') and NextIsKeyStart then
+  if IsContextual(jwStatic) and NextIsKeyStart then
   begin
     Next;
     IsStatic := True;
@@ -2031,7 +2080,6 @@ begin
       FInClassField := True;
       FInAsync := False;
       FInGenerator := False;
-      Inc(FLoopDepth, 0);
       Block := ParseBlock;
       FScope := SavedScope;
       FFunction := SavedFunction;
@@ -2043,7 +2091,7 @@ begin
       Exit;
     end;
   end;
-  if IsContextual('async') then
+  if IsContextual(jwAsync) then
   begin
     Peeked := PeekToken;
     if not (Peeked.Kind in [tkLeftParen, tkAssign, tkSemicolon, tkRightBrace]) and not Peeked.NewlineBefore then
@@ -2057,12 +2105,12 @@ begin
     Next;
     IsGenerator := True;
   end;
-  if (IsContextual('get') or IsContextual('set')) and not IsAsync and not IsGenerator then
+  if (IsContextual(jwGet) or IsContextual(jwSet)) and not IsAsync and not IsGenerator then
   begin
     Peeked := PeekToken;
     if not (Peeked.Kind in [tkLeftParen, tkAssign, tkSemicolon, tkRightBrace]) then
     begin
-      if FToken.Text = 'get' then
+      if FToken.Word = jwGet then
       begin
         Kind := fkGetter;
         Result.Flags := Result.Flags or PropertyFlagGetter;
@@ -2138,15 +2186,12 @@ begin
     FInClassField := True;
     FInAsync := False;
     FInGenerator := False;
-    try
-      Result.B := ParseAssignment;
-    finally
-      FScope := SavedScope;
-      FFunction := SavedFunction;
-      FInClassField := SavedClassField;
-      FInAsync := SavedAsync;
-      FInGenerator := SavedGenerator;
-    end;
+    Result.B := ParseAssignment;
+    FScope := SavedScope;
+    FFunction := SavedFunction;
+    FInClassField := SavedClassField;
+    FInAsync := SavedAsync;
+    FInGenerator := SavedGenerator;
   end;
   ConsumeSemicolon;
 end;
@@ -2167,9 +2212,9 @@ begin
   Result := NewNodeAt(nkClass, StartToken);
   Name := '';
   NameToken := FToken;
-  if IsIdentifierToken or ((FToken.Kind = tkIdentifier) and (FToken.Text = 'await') and not FInAsync) then
+  if IsIdentifierToken or ((FToken.Kind = tkIdentifier) and (FToken.Word = jwAwait) and not FInAsync) then
   begin
-    Name := FToken.Text;
+    Name := TokenText;
     Next;
   end
   else if not IsExpression then
@@ -2240,96 +2285,107 @@ end;
 function TJsParser.ParseBindingTarget(Kind: TJsDeclarationKind): TJsNode;
 var
   StartToken: TJsToken;
-  Name: UnicodeString;
+  Name: Integer;
+begin
+  case FToken.Kind of
+    tkLeftBracket:
+      Result := ParseArrayBindingPattern(Kind);
+    tkLeftBrace:
+      Result := ParseObjectBindingPattern(Kind);
+  else
+    StartToken := FToken;
+    Name := BindingIdentifier;
+    if (Kind in [dkLet, dkConst]) and (StartToken.Word = jwLet) then
+      FailAt(StartToken, 'let is disallowed as a lexically bound name');
+    DeclareName(FLexer.Names[Name], Kind, StartToken);
+    Result := NewIdentifierAt(Name, StartToken);
+  end;
+end;
+
+function TJsParser.ParseArrayBindingPattern(Kind: TJsDeclarationKind): TJsNode;
+var
+  Element: TJsNode;
+begin
+  Result := NewNode(nkArrayPattern);
+  Next;
+  while FToken.Kind <> tkRightBracket do
+  begin
+    if FToken.Kind = tkComma then
+    begin
+      Result.Add(NewNode(nkHole));
+      Next;
+      Continue;
+    end;
+    if FToken.Kind = tkEllipsis then
+    begin
+      Element := NewNode(nkRest);
+      Next;
+      Element.A := ParseBindingTarget(Kind);
+      Result.Add(Element);
+      Break;
+    end;
+    Result.Add(ParseBindingElement(Kind));
+    if FToken.Kind <> tkRightBracket then
+      Expect(tkComma);
+  end;
+  Expect(tkRightBracket);
+end;
+
+function TJsParser.ParseObjectBindingPattern(Kind: TJsDeclarationKind): TJsNode;
+var
+  StartToken: TJsToken;
+  Name: Integer;
   Element, Key, Property_: TJsNode;
   Computed: Boolean;
   KeyName: UnicodeString;
 begin
-  StartToken := FToken;
-  case FToken.Kind of
-    tkLeftBracket:
+  Result := NewNode(nkObjectPattern);
+  Next;
+  while FToken.Kind <> tkRightBrace do
+  begin
+    if FToken.Kind = tkEllipsis then
+    begin
+      Element := NewNode(nkRest);
+      Next;
+      StartToken := FToken;
+      Name := BindingIdentifier;
+      DeclareName(FLexer.Names[Name], Kind, StartToken);
+      Element.A := NewIdentifierAt(Name, StartToken);
+      Result.Add(Element);
+      Break;
+    end;
+    Property_ := NewNode(nkProperty);
+    StartToken := FToken;
+    Key := ParsePropertyKey(Computed, KeyName);
+    Property_.A := Key;
+    if Computed then
+      Property_.Flags := PropertyFlagComputed;
+    if Accept(tkColon) then
+      Property_.B := ParseBindingElement(Kind)
+    else
+    begin
+      if (Key.Kind <> nkString) or (StartToken.Kind <> tkIdentifier) then
+        Unexpected;
+      if (KeyName = 'yield') and (FInGenerator or FStrict) or (KeyName = 'await') and FInAsync then
+        Unexpected;
+      DeclareName(KeyName, Kind, StartToken);
+      Element := NewIdentifier(KeyName, StartToken);
+      if FToken.Kind = tkAssign then
       begin
-        Result := NewNode(nkArrayPattern);
         Next;
-        while FToken.Kind <> tkRightBracket do
-        begin
-          if FToken.Kind = tkComma then
-          begin
-            Result.Add(NewNode(nkHole));
-            Next;
-            Continue;
-          end;
-          if FToken.Kind = tkEllipsis then
-          begin
-            Element := NewNode(nkRest);
-            Next;
-            Element.A := ParseBindingTarget(Kind);
-            Result.Add(Element);
-            Break;
-          end;
-          Result.Add(ParseBindingElement(Kind));
-          if FToken.Kind <> tkRightBracket then
-            Expect(tkComma);
-        end;
-        Expect(tkRightBracket);
-      end;
-    tkLeftBrace:
-      begin
-        Result := NewNode(nkObjectPattern);
-        Next;
-        while FToken.Kind <> tkRightBrace do
-        begin
-          if FToken.Kind = tkEllipsis then
-          begin
-            Element := NewNode(nkRest);
-            Next;
-            StartToken := FToken;
-            Name := BindingIdentifierName;
-            DeclareName(Name, Kind, StartToken);
-            Element.A := NewIdentifier(Name, StartToken);
-            Result.Add(Element);
-            Break;
-          end;
-          Property_ := NewNode(nkProperty);
-          StartToken := FToken;
-          Key := ParsePropertyKey(Computed, KeyName);
-          Property_.A := Key;
-          if Computed then
-            Property_.Flags := PropertyFlagComputed;
-          if Accept(tkColon) then
-            Property_.B := ParseBindingElement(Kind)
-          else
-          begin
-            if (Key.Kind <> nkString) or (StartToken.Kind <> tkIdentifier) then
-              Unexpected;
-            if (KeyName = 'yield') and (FInGenerator or FStrict) or (KeyName = 'await') and FInAsync then
-              Unexpected;
-            DeclareName(KeyName, Kind, StartToken);
-            Element := NewIdentifier(KeyName, StartToken);
-            if FToken.Kind = tkAssign then
-            begin
-              Next;
-              Property_.B := NewNodeAt(nkAssignPattern, StartToken);
-              Property_.B.A := Element;
-              Property_.B.B := ParseAssignment;
-            end
-            else
-              Property_.B := Element;
-            Property_.Flags := Property_.Flags or PropertyFlagShorthand;
-          end;
-          Result.Add(Property_);
-          if FToken.Kind <> tkRightBrace then
-            Expect(tkComma);
-        end;
-        Expect(tkRightBrace);
-      end;
-  else
-    Name := BindingIdentifierName;
-    if (Kind in [dkLet, dkConst]) and (Name = 'let') then
-      FailAt(StartToken, 'let is disallowed as a lexically bound name');
-    DeclareName(Name, Kind, StartToken);
-    Result := NewIdentifier(Name, StartToken);
+        Property_.B := NewNodeAt(nkAssignPattern, StartToken);
+        Property_.B.A := Element;
+        Property_.B.B := ParseAssignment;
+      end
+      else
+        Property_.B := Element;
+      Property_.Flags := Property_.Flags or PropertyFlagShorthand;
+    end;
+    Result.Add(Property_);
+    if FToken.Kind <> tkRightBrace then
+      Expect(tkComma);
   end;
+  Expect(tkRightBrace);
 end;
 
 function TJsParser.ParseBindingElement(Kind: TJsDeclarationKind): TJsNode;
@@ -2479,7 +2535,7 @@ begin
     Exit;
   end;
   if not (FToken.Kind in [tkRightParen, tkRightBracket, tkRightBrace, tkComma, tkSemicolon, tkColon, tkEnd,
-    tkIn]) and not ((FToken.Kind = tkIdentifier) and (FToken.Text = 'of')) then
+    tkIn]) and not ((FToken.Kind = tkIdentifier) and (FToken.Word = jwOf)) then
     Result.A := ParseAssignment(NoIn);
 end;
 
@@ -2495,10 +2551,9 @@ end;
 { async x => ...: from async (the current token) on. }
 function TJsParser.ParseAsyncArrowWithIdentifier(const Start: TJsSourceMark): TJsNode;
 var
-  ReferenceMark, ChildMark: Integer;
+  ReferenceMark, ChildMark, NodeMark: Integer;
   OuterScope: TJsScope;
   ParameterToken: TJsToken;
-  Name: UnicodeString;
   Left: TJsNode;
 begin
   { The function's source starts at async (toString, and parsing it
@@ -2506,83 +2561,89 @@ begin
   Next;
   ReferenceMark := FScope.ReferenceCount;
   ChildMark := FScope.ChildCount;
+  NodeMark := FArena.NodeCount;
   OuterScope := FScope;
   ParameterToken := FToken;
-  Name := BindingIdentifierName;
-  Left := NewIdentifier(Name, ParameterToken);
+  Left := NewIdentifierAt(BindingIdentifier, ParameterToken);
   if FToken.Kind <> tkArrow then
     Unexpected;
-  Result := ParseArrowFunction(Left, True, Start, ReferenceMark, ChildMark, OuterScope);
+  Result := ParseArrowFunction(Left, True, Start, ReferenceMark, ChildMark, NodeMark, OuterScope);
 end;
 
-{ The rare paths of ParseAssignment have the managed locals: this runs
-  for every expression. }
+{ The depth is counted without an exception frame: after a syntax
+  error the parser is not used again. }
 function TJsParser.ParseAssignment(NoIn: Boolean): TJsNode;
+begin
+  Enter;
+  Result := ParseAssignmentAtDepth(NoIn);
+  Leave;
+end;
+
+function TJsParser.ParseAssignmentAtDepth(NoIn: Boolean): TJsNode;
 var
   Start: TJsSourceMark;
   StartIsIdentifier, StartIsAsync: Boolean;
-  ReferenceMark, ChildMark: Integer;
+  ReferenceMark, ChildMark, NodeMark: Integer;
   OuterScope: TJsScope;
-  Left, Node: TJsNode;
-  Op: TJsTokenKind;
-  Arguments: TJsNode;
+  Left, Arguments: TJsNode;
   Index: Integer;
 begin
-  Enter;
-  try
-    Start := CurrentMark;
-    StartIsIdentifier := FToken.Kind = tkIdentifier;
-    StartIsAsync := StartIsIdentifier and (FToken.Text = 'async');
-    if StartIsIdentifier and (FToken.Text = 'yield') and FInGenerator and not FToken.Escaped then
-      Exit(ParseYield(NoIn));
-    { async arrow functions: async x => ..., async (x) => ... }
-    if IsContextual('async') and AsyncArrowParameterFollows then
-      Exit(ParseAsyncArrowWithIdentifier(Start));
-    ReferenceMark := FScope.ReferenceCount;
-    ChildMark := FScope.ChildCount;
-    OuterScope := FScope;
-    Left := ParseConditional(NoIn);
-    if FToken.Kind = tkArrow then
+  Start := CurrentMark;
+  StartIsIdentifier := FToken.Kind = tkIdentifier;
+  StartIsAsync := StartIsIdentifier and (FToken.Word = jwAsync);
+  if StartIsIdentifier and (FToken.Word = jwYield) and FInGenerator and not FToken.Escaped then
+    Exit(ParseYield(NoIn));
+  { async arrow functions: async x => ..., async (x) => ... }
+  if IsContextual(jwAsync) and AsyncArrowParameterFollows then
+    Exit(ParseAsyncArrowWithIdentifier(Start));
+  ReferenceMark := FScope.ReferenceCount;
+  ChildMark := FScope.ChildCount;
+  NodeMark := FArena.NodeCount;
+  OuterScope := FScope;
+  Left := ParseConditional(NoIn);
+  if FToken.Kind = tkArrow then
+  begin
+    if (Left.Kind = nkIdentifier) and StartIsIdentifier and (Left.Flags and NodeFlagParenthesized = 0) then
+      Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, NodeMark, OuterScope));
+    if ((Left.Flags and NodeFlagParenthesized) <> 0) or ((Left.Flags and ArrowParametersFlag) <> 0) then
+      Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, NodeMark, OuterScope));
+    if (Left.Kind = nkCall) and (Left.A.Kind = nkIdentifier) and (Left.A.Text = 'async') and StartIsAsync then
     begin
-      if (Left.Kind = nkIdentifier) and StartIsIdentifier and (Left.Flags and NodeFlagParenthesized = 0) then
-        Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, OuterScope));
-      if ((Left.Flags and NodeFlagParenthesized) <> 0) or ((Left.Flags and ArrowParametersFlag) <> 0) then
-        Exit(ParseArrowFunction(Left, False, Start, ReferenceMark, ChildMark, OuterScope));
-      if (Left.Kind = nkCall) and (Left.A.Kind = nkIdentifier) and (Left.A.Text = 'async') and StartIsAsync then
-      begin
-        Arguments := NewNode(nkSequence);
-        for Index := 0 to Left.Count - 1 do
-          Arguments.Add(Left.List[Index]);
-        Exit(ParseArrowFunction(Arguments, True, Start, ReferenceMark, ChildMark, OuterScope));
-      end;
-      Unexpected;
+      Arguments := NewNode(nkSequence);
+      for Index := 0 to Left.Count - 1 do
+        Arguments.Add(Left.List[Index]);
+      Exit(ParseArrowFunction(Arguments, True, Start, ReferenceMark, ChildMark, NodeMark, OuterScope));
     end;
-    if (Left.Flags and ArrowParametersFlag) <> 0 then
-      Unexpected;
-    if FToken.Kind in [tkAssign..tkQuestionQuestionAssign] then
-    begin
-      Op := FToken.Kind;
-      if Op = tkAssign then
-      begin
-        if Left.Kind in [nkArray, nkObject] then
-          Left := ToPattern(Left, False)
-        else if not IsSimpleAssignmentTarget(Left) then
-          Fail('Invalid left-hand side in assignment');
-      end
-      else if not IsSimpleAssignmentTarget(Left) or (Left.Kind = nkCall) and
-        (Op in [tkAndAndAssign, tkOrOrAssign, tkQuestionQuestionAssign]) then
-        Fail('Invalid left-hand side in assignment');
-      Next;
-      Node := NewNodeAtMark(nkAssign, Start);
-      Node.Op := Op;
-      Node.A := Left;
-      Node.B := ParseAssignment(NoIn);
-      Exit(Node);
-    end;
-    Result := Left;
-  finally
-    Leave;
+    Unexpected;
   end;
+  if (Left.Flags and ArrowParametersFlag) <> 0 then
+    Unexpected;
+  if FToken.Kind in [tkAssign..tkQuestionQuestionAssign] then
+    Exit(ParseAssignmentOperator(Left, Start, NoIn));
+  Result := Left;
+end;
+
+{ Left, then an assignment operator (the current token). }
+function TJsParser.ParseAssignmentOperator(Left: TJsNode; const Start: TJsSourceMark; NoIn: Boolean): TJsNode;
+var
+  Op: TJsTokenKind;
+begin
+  Op := FToken.Kind;
+  if Op = tkAssign then
+  begin
+    if Left.Kind in [nkArray, nkObject] then
+      Left := ToPattern(Left, False)
+    else if not IsSimpleAssignmentTarget(Left) then
+      Fail('Invalid left-hand side in assignment');
+  end
+  else if not IsSimpleAssignmentTarget(Left) or (Left.Kind = nkCall) and
+    (Op in [tkAndAndAssign, tkOrOrAssign, tkQuestionQuestionAssign]) then
+    Fail('Invalid left-hand side in assignment');
+  Next;
+  Result := NewNodeAtMark(nkAssign, Start);
+  Result.Op := Op;
+  Result.A := Left;
+  Result.B := ParseAssignment(NoIn);
 end;
 
 function TJsParser.ParseConditional(NoIn: Boolean): TJsNode;
@@ -2636,7 +2697,7 @@ var
   PrivateName: UnicodeString;
 begin
   StartToken := FToken;
-  PrivateName := '#' + FToken.Text;
+  PrivateName := '#' + FLexer.Names[FToken.Name];
   Next;
   Next;
   Result := NewNodeAt(nkPrivateIn, StartToken);
@@ -2691,55 +2752,59 @@ begin
   end;
 end;
 
+{ The depth is counted without an exception frame: after a syntax
+  error the parser is not used again. }
 function TJsParser.ParseUnary: TJsNode;
+begin
+  Enter;
+  Result := ParseUnaryAtDepth;
+  Leave;
+end;
+
+function TJsParser.ParseUnaryAtDepth: TJsNode;
 var
   StartToken: TJsSourceMark;
   Op: TJsTokenKind;
 begin
-  Enter;
-  try
-    StartToken := CurrentMark;
-    case FToken.Kind of
-      tkBang, tkTilde, tkPlus, tkMinus, tkTypeof, tkVoid, tkDelete:
-        begin
-          Op := FToken.Kind;
-          Next;
-          Result := NewNodeAtMark(nkUnary, StartToken);
-          Result.Op := Op;
-          Result.A := ParseUnary();
-          if (Op = tkDelete) and FStrict and (Result.A.Kind = nkIdentifier) then
-            Fail('Delete of an unqualified identifier in strict mode.');
-          if (Op = tkDelete) and (Result.A.Kind = nkMember) and ((Result.A.Flags and MemberFlagPrivate) <> 0) then
-            Fail('Private fields can not be deleted');
-        end;
-      tkPlusPlus, tkMinusMinus:
-        begin
-          Op := FToken.Kind;
-          Next;
-          Result := NewNodeAtMark(nkUpdate, StartToken);
-          Result.Op := Op;
-          Result.Flags := UpdateFlagPrefix;
-          Result.A := ParseUnary();
-          if not IsSimpleAssignmentTarget(Result.A) then
-            Fail('Invalid left-hand side expression in prefix operation');
-        end;
-    else
-      { A class field's initializer is not async (FInAsync is off in
-        it): await there can only be in an async arrow inside it, where
-        it is that arrow's. }
-      if IsContextual('await') and (FInAsync or ((FFunction.Kind = fkScript) and False)) then
+  StartToken := CurrentMark;
+  case FToken.Kind of
+    tkBang, tkTilde, tkPlus, tkMinus, tkTypeof, tkVoid, tkDelete:
       begin
-        if FFunction.Kind = fkModule then
-          FFunction.IsAsync := True;
+        Op := FToken.Kind;
         Next;
-        Result := NewNodeAtMark(nkAwait, StartToken);
+        Result := NewNodeAtMark(nkUnary, StartToken);
+        Result.Op := Op;
         Result.A := ParseUnary();
-      end
-      else
-        Result := ParseUpdate;
-    end;
-  finally
-    Leave;
+        if (Op = tkDelete) and FStrict and (Result.A.Kind = nkIdentifier) then
+          Fail('Delete of an unqualified identifier in strict mode.');
+        if (Op = tkDelete) and (Result.A.Kind = nkMember) and ((Result.A.Flags and MemberFlagPrivate) <> 0) then
+          Fail('Private fields can not be deleted');
+      end;
+    tkPlusPlus, tkMinusMinus:
+      begin
+        Op := FToken.Kind;
+        Next;
+        Result := NewNodeAtMark(nkUpdate, StartToken);
+        Result.Op := Op;
+        Result.Flags := UpdateFlagPrefix;
+        Result.A := ParseUnary();
+        if not IsSimpleAssignmentTarget(Result.A) then
+          Fail('Invalid left-hand side expression in prefix operation');
+      end;
+  else
+    { A class field's initializer is not async (FInAsync is off in
+      it): await there can only be in an async arrow inside it, where
+      it is that arrow's. }
+    if IsContextual(jwAwait) and FInAsync then
+    begin
+      if FFunction.Kind = fkModule then
+        FFunction.IsAsync := True;
+      Next;
+      Result := NewNodeAtMark(nkAwait, StartToken);
+      Result.A := ParseUnary();
+    end
+    else
+      Result := ParseUpdate;
   end;
 end;
 
@@ -2795,7 +2860,7 @@ begin
   if FToken.Kind = tkDot then
   begin
     Next;
-    if not IsContextual('target') then
+    if not IsContextual(jwTarget) then
       Unexpected;
     if FFunction.Kind = fkScript then
     begin
@@ -2840,7 +2905,7 @@ begin
     else if Accept(tkDot) then
     begin
       Result := NewNodeAtMark(nkSuperMember, StartToken);
-      Result.Text := IdentifierName;
+      TakeIdentifierName(Result.Text);
     end
     else if Accept(tkLeftBracket) then
     begin
@@ -2861,7 +2926,7 @@ begin
     Next;
     if Accept(tkDot) then
     begin
-      if not IsContextual('meta') then
+      if not IsContextual(jwMeta) then
         Unexpected;
       if not ModuleGoal then
         Fail('Cannot use ''import.meta'' outside a module');
@@ -2885,13 +2950,29 @@ begin
   Result := ParseCallTail(Result, True);
 end;
 
+procedure TJsParser.ParseMemberName(Member: TJsNode);
+var
+  NameToken: TJsToken;
+  Name: UnicodeString;
+begin
+  if FToken.Kind = tkPrivateName then
+  begin
+    NameToken := FToken;
+    Name := '#' + FLexer.Names[FToken.Name];
+    Next;
+    Member.Flags := Member.Flags or MemberFlagPrivate;
+    Member.B := NewIdentifier(Name, NameToken);
+    Member.Text := Name;
+  end
+  else
+    TakeIdentifierName(Member.Text);
+end;
+
 function TJsParser.ParseCallTail(Node: TJsNode; AllowCall: Boolean): TJsNode;
 var
   Member, Call, Chain: TJsNode;
   InOptionalChain: Boolean;
   StartLine, StartColumn: Integer;
-  Name: UnicodeString;
-  NameToken: TJsToken;
 begin
   Result := Node;
   InOptionalChain := False;
@@ -2905,17 +2986,7 @@ begin
           Next;
           Member := FArena.NewNode(nkMember, StartLine, StartColumn);
           Member.A := Result;
-          if FToken.Kind = tkPrivateName then
-          begin
-            NameToken := FToken;
-            Name := '#' + FToken.Text;
-            Next;
-            Member.Flags := MemberFlagPrivate;
-            Member.B := NewIdentifier(Name, NameToken);
-            Member.Text := Name;
-          end
-          else
-            Member.Text := IdentifierName;
+          ParseMemberName(Member);
           Result := Member;
         end;
       tkQuestionDot:
@@ -2948,17 +3019,7 @@ begin
             Member := FArena.NewNode(nkMember, StartLine, StartColumn);
             Member.A := Result;
             Member.Flags := MemberFlagOptional;
-            if FToken.Kind = tkPrivateName then
-            begin
-              NameToken := FToken;
-              Name := '#' + FToken.Text;
-              Next;
-              Member.Flags := Member.Flags or MemberFlagPrivate;
-              Member.B := NewIdentifier(Name, NameToken);
-              Member.Text := Name;
-            end
-            else
-              Member.Text := IdentifierName;
+            ParseMemberName(Member);
             Result := Member;
           end;
         end;
@@ -3022,8 +3083,7 @@ begin
     if FToken.InvalidEscape and not Tagged then
       Fail('Invalid escape sequence in template');
     Piece := NewNode(nkString);
-    Piece.Text := FToken.Text;
-    Piece.Name := FToken.Raw;
+    FLexer.DecodeTemplate(FToken, Piece.Text, Piece.Name);
     if FToken.InvalidEscape then
       Piece.Flags := 1;
     Result.Add(Piece);
@@ -3099,7 +3159,7 @@ begin
     IsAsync := False;
     IsGenerator := False;
     Kind := fkMethod;
-    if IsContextual('async') then
+    if IsContextual(jwAsync) then
     begin
       Peeked := PeekToken;
       if not (Peeked.Kind in [tkLeftParen, tkColon, tkComma, tkRightBrace, tkAssign]) and not Peeked.NewlineBefore then
@@ -3113,12 +3173,12 @@ begin
       Next;
       IsGenerator := True;
     end;
-    if (IsContextual('get') or IsContextual('set')) and not IsAsync and not IsGenerator then
+    if (IsContextual(jwGet) or IsContextual(jwSet)) and not IsAsync and not IsGenerator then
     begin
       Peeked := PeekToken;
       if not (Peeked.Kind in [tkLeftParen, tkColon, tkComma, tkRightBrace, tkAssign]) then
       begin
-        if FToken.Text = 'get' then
+        if FToken.Word = jwGet then
         begin
           Kind := fkGetter;
           Property_.Flags := PropertyFlagGetter;
@@ -3163,7 +3223,7 @@ begin
         Unexpected;
       if ((KeyName = 'yield') and (FInGenerator or FStrict)) or ((KeyName = 'await') and FInAsync) then
         Unexpected;
-      Value := NewIdentifier(KeyName, StartToken);
+      Value := NewIdentifierAt(StartToken.Name, StartToken);
       Property_.Flags := Property_.Flags or PropertyFlagShorthand;
       if FToken.Kind = tkAssign then
       begin
@@ -3209,11 +3269,8 @@ begin
       Next;
       { Declared when the arrow is made, in its scope. }
       FNoDeclare := True;
-      try
-        Rest.A := ParseBindingTarget(dkParameter);
-      finally
-        FNoDeclare := False;
-      end;
+      Rest.A := ParseBindingTarget(dkParameter);
+      FNoDeclare := False;
       Sequence.Add(Rest);
       Expect(tkRightParen);
       if FToken.Kind <> tkArrow then
@@ -3249,58 +3306,18 @@ end;
 function TJsParser.ParsePrimary: TJsNode;
 var
   StartToken, Peeked: TJsToken;
-  Name: UnicodeString;
-  InParentheses: Boolean;
 begin
   StartToken := FToken;
   case FToken.Kind of
     tkIdentifier:
       begin
-        if IsContextual('async') then
+        if IsContextual(jwAsync) then
         begin
           Peeked := PeekToken;
           if (Peeked.Kind = tkFunction) and not Peeked.NewlineBefore then
-          begin
-            Next;
-            Next;
-            Result := NewNodeAt(nkFunction, StartToken);
-            if Accept(tkStar) then
-            begin
-              if IsIdentifierToken or (FToken.Kind = tkIdentifier) and (FToken.Text = 'yield') then
-                Name := BindingIdentifierName
-              else
-                Name := '';
-              Result.Func := ParseFunction(fkNormal, True, True, Name, StartToken);
-            end
-            else
-            begin
-              if FToken.Kind = tkIdentifier then
-              begin
-                if (FToken.Text = 'await') then
-                  Unexpected;
-                Name := BindingIdentifierName;
-              end
-              else
-                Name := '';
-              Result.Func := ParseFunction(fkNormal, True, False, Name, StartToken);
-            end;
-            Result.Func.IsExpression := True;
-            NameFunctionExpression(Result.Func);
-            Exit;
-          end;
+            Exit(ParseAsyncFunctionExpression(StartToken));
         end;
-        if not IsIdentifierToken then
-        begin
-          if (FToken.Text = 'let') and not FStrict then
-          else if (FToken.Text = 'yield') and not FInGenerator and not FStrict then
-          else if (FToken.Text = 'await') and not FInAsync then
-          else if (FToken.Text = 'static') and not FStrict then
-          else
-            Unexpected;
-        end;
-        Name := FToken.Text;
-        Next;
-        Result := NewIdentifier(Name, StartToken);
+        Result := ParseIdentifierReference;
       end;
     tkNumber:
       begin
@@ -3313,7 +3330,7 @@ begin
     tkBigInt:
       begin
         Result := NewNode(nkBigInt);
-        Result.Text := FToken.Text;
+        FLexer.DecodeBigInt(FToken, Result.Text);
         Result.Number := FToken.Number;
         Next;
       end;
@@ -3322,7 +3339,7 @@ begin
         if FToken.LegacyOctal and FStrict then
           Fail('Octal escape sequences are not allowed in strict mode.');
         Result := NewNode(nkString);
-        Result.Text := FToken.Text;
+        FLexer.DecodeString(FToken, Result.Text);
         Next;
       end;
     tkTemplate:
@@ -3330,10 +3347,9 @@ begin
     tkSlash, tkSlashAssign:
       begin
         FLexer.ScanRegExp(FToken);
-        CheckRegExpLiteral(FToken.Text, FToken.Raw);
         Result := NewNode(nkRegExp);
-        Result.Text := FToken.Text;
-        Result.Name := FToken.Raw;
+        FLexer.DecodeRegExp(FToken, Result.Text, Result.Name);
+        CheckRegExpLiteral(Result.Text, Result.Name);
         Next;
       end;
     tkThis:
@@ -3364,48 +3380,87 @@ begin
     tkLeftParen:
       Result := ParseParenthesized;
     tkFunction:
-      begin
-        InParentheses := FFunctionInParentheses;
-        FFunctionInParentheses := False;
-        Next;
-        Result := NewNodeAt(nkFunction, StartToken);
-        FNextFunctionInParentheses := InParentheses;
-        if Accept(tkStar) then
-        begin
-          if FToken.Kind = tkIdentifier then
-          begin
-            if FToken.Text = 'yield' then
-              Unexpected;
-            Name := BindingIdentifierName;
-          end
-          else
-            Name := '';
-          Result.Func := ParseFunction(fkNormal, False, True, Name, StartToken);
-        end
-        else
-        begin
-          if FToken.Kind = tkIdentifier then
-            Name := BindingIdentifierName
-          else
-            Name := '';
-          Result.Func := ParseFunction(fkNormal, False, False, Name, StartToken);
-        end;
-        Result.Func.IsExpression := True;
-        NameFunctionExpression(Result.Func);
-      end;
+      Result := ParseFunctionExpression(StartToken);
     tkClass:
       Result := ParseClass(True, StartToken);
     tkNew:
       Result := ParseNew;
-    tkPrivateName:
-      begin
-        Unexpected;
-        Result := nil;
-      end;
   else
     Unexpected;
     Result := nil;
   end;
+end;
+
+{ An identifier as an expression (the current token). }
+function TJsParser.ParseIdentifierReference: TJsNode;
+var
+  StartToken: TJsToken;
+begin
+  if not IsIdentifierToken then
+  begin
+    if (FToken.Word = jwLet) and not FStrict then
+    else if (FToken.Word = jwYield) and not FInGenerator and not FStrict then
+    else if (FToken.Word = jwAwait) and not FInAsync then
+    else if (FToken.Word = jwStatic) and not FStrict then
+    else
+      Unexpected;
+  end;
+  StartToken := FToken;
+  Next;
+  Result := NewIdentifierAt(StartToken.Name, StartToken);
+end;
+
+{ function [*] [name] (parameters) body as an expression, from function
+  (StartToken, a copy: the current token moves on). }
+function TJsParser.ParseFunctionExpression(const StartToken: TJsToken): TJsNode;
+var
+  Name: UnicodeString;
+  InParentheses, IsGenerator: Boolean;
+begin
+  InParentheses := FFunctionInParentheses;
+  FFunctionInParentheses := False;
+  Next;
+  Result := NewNodeAt(nkFunction, StartToken);
+  FNextFunctionInParentheses := InParentheses;
+  IsGenerator := Accept(tkStar);
+  Name := '';
+  if FToken.Kind = tkIdentifier then
+  begin
+    if IsGenerator and (FToken.Word = jwYield) then
+      Unexpected;
+    Name := BindingIdentifierName;
+  end;
+  Result.Func := ParseFunction(fkNormal, False, IsGenerator, Name, StartToken);
+  Result.Func.IsExpression := True;
+  NameFunctionExpression(Result.Func);
+end;
+
+{ async function [*] [name] (parameters) body as an expression, from async
+  (StartToken, a copy). }
+function TJsParser.ParseAsyncFunctionExpression(const StartToken: TJsToken): TJsNode;
+var
+  Name: UnicodeString;
+  IsGenerator: Boolean;
+begin
+  Next;
+  Next;
+  Result := NewNodeAt(nkFunction, StartToken);
+  IsGenerator := Accept(tkStar);
+  Name := '';
+  if IsGenerator then
+  begin
+    if IsIdentifierToken or (FToken.Kind = tkIdentifier) and (FToken.Word = jwYield) then
+      Name := BindingIdentifierName;
+  end
+  else if FToken.Kind = tkIdentifier then
+  begin
+    if FToken.Word = jwAwait then
+      Unexpected;
+    Name := BindingIdentifierName;
+  end;
+  Result.Func := ParseFunction(fkNormal, True, IsGenerator, Name, StartToken);
+  Result.Func.IsExpression := True;
+  NameFunctionExpression(Result.Func);
 end;
 
 end.

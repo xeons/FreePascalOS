@@ -41,7 +41,8 @@ unit Js.Ast;
 interface
 
 uses
-  Js.Lexer;
+  Js.Lexer,
+  Js.NodePool;
 
 type
   TJsNodeKind = (
@@ -147,6 +148,9 @@ type
       first) to look the name up in before Variable. }
     DynamicScopes: array of TJsVariable;
     procedure Add(Node: TJsNode);
+    { Frees what the node holds: its strings and arrays (every managed
+      field above). The node itself lives in its arena's memory. }
+    procedure ReleaseFields; inline;
   end;
 
   TJsVariable = class
@@ -348,21 +352,29 @@ type
     procedure AddExport(const Entry: TJsExportEntry);
   end;
 
-  { Owns every node and scope made for one compilation. }
+  { Owns every node and scope made for one compilation. Nodes are made
+  in order in pooled memory (Js.NodePool), and the most recent can be
+  released together: a lazily compiled function's body, once checked. }
   TJsAstArena = class
   private
-    FNodes: array of TJsNode;
-    FNodeCount: Integer;
+    FNodes: TJsSlotPool;
+    { Nodes kept apart from the tree, never released before the arena:
+      the references a released body leaves in its scopes. }
+    FReferences: TJsSlotPool;
     FObjects: array of TObject;
     FObjectCount: Integer;
+    function GetNodeCount: Integer; inline;
   public
+    constructor Create;
     destructor Destroy; override;
     function NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
+    { A node that stays when the tree around it is released. }
+    function NewReferenceNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
     procedure Own(Item: TObject);
-    { Frees the nodes made since Mark (a NodeCount) that no scope
-      references (ReferenceScope nil). }
-    procedure ReleaseUnreferencedNodes(Mark: Integer);
-    property NodeCount: Integer read FNodeCount;
+    { Frees the nodes made since Mark (a NodeCount); nothing may point
+      to them any more. }
+    procedure ReleaseNodes(Mark: Integer);
+    property NodeCount: Integer read GetNodeCount;
   end;
 
 const
@@ -473,6 +485,19 @@ begin
     SetLength(List, Length(List) * 2 + 4);
   List[Count] := Node;
   Inc(Count);
+end;
+
+procedure TJsNode.ReleaseFields;
+begin
+  { Most are empty: tested here rather than in a runtime call each. }
+  if Pointer(Text) <> nil then
+    Text := '';
+  if Pointer(Name) <> nil then
+    Name := '';
+  if Pointer(List) <> nil then
+    List := nil;
+  if Pointer(DynamicScopes) <> nil then
+    DynamicScopes := nil;
 end;
 
 function TJsVariable.IsLexical: Boolean;
@@ -634,47 +659,65 @@ begin
   inherited Destroy;
 end;
 
+{ A node's slot taken back (TJsSlotRelease). }
+procedure ReleaseNode(Slot: Pointer);
+begin
+  TJsNode(Slot).ReleaseFields;
+end;
+
+constructor TJsAstArena.Create;
+begin
+  inherited Create;
+  FNodes := TJsSlotPool.Create(TJsNode.InstanceSize);
+  FReferences := TJsSlotPool.Create(TJsNode.InstanceSize);
+end;
+
+{ Nodes are not freed one by one (no destructor, no trip through the
+  heap): their fields are released and the pools go. }
 destructor TJsAstArena.Destroy;
 var
   Index: Integer;
 begin
-  for Index := 0 to FNodeCount - 1 do
-    FNodes[Index].Free;
+  ReleaseNodes(0);
+  FReferences.Truncate(0, @ReleaseNode);
+  FReferences.Free;
+  FNodes.Free;
   for Index := 0 to FObjectCount - 1 do
     FObjects[Index].Free;
   inherited Destroy;
 end;
 
-function TJsAstArena.NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
+function TJsAstArena.GetNodeCount: Integer;
 begin
-  Result := TJsNode.Create;
+  Result := FNodes.Count;
+end;
+
+{ A node in a zeroed slot. Zero is every field's initial value (nil
+  strings, arrays and references), so the class pointer is all that
+  TObject.InitInstance would add: TJsNode has no interfaces and no
+  fields needing more initialization. }
+function PlaceNode(Slot: Pointer; Kind: TJsNodeKind; Line, Column: Integer): TJsNode; inline;
+begin
+  PPointer(Slot)^ := Pointer(TJsNode);
+  Result := TJsNode(Slot);
   Result.Kind := Kind;
   Result.Line := Line;
   Result.Column := Column;
-  if FNodeCount >= Length(FNodes) then
-    SetLength(FNodes, Length(FNodes) * 2 + 256);
-  FNodes[FNodeCount] := Result;
-  Inc(FNodeCount);
 end;
 
-procedure TJsAstArena.ReleaseUnreferencedNodes(Mark: Integer);
-var
-  Index, Kept: Integer;
-  Node: TJsNode;
+function TJsAstArena.NewNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
 begin
-  Kept := Mark;
-  for Index := Mark to FNodeCount - 1 do
-  begin
-    Node := FNodes[Index];
-    if Node.ReferenceScope = nil then
-      Node.Free
-    else
-    begin
-      FNodes[Kept] := Node;
-      Inc(Kept);
-    end;
-  end;
-  FNodeCount := Kept;
+  Result := PlaceNode(FNodes.Allocate, Kind, Line, Column);
+end;
+
+function TJsAstArena.NewReferenceNode(Kind: TJsNodeKind; Line, Column: Integer): TJsNode;
+begin
+  Result := PlaceNode(FReferences.Allocate, Kind, Line, Column);
+end;
+
+procedure TJsAstArena.ReleaseNodes(Mark: Integer);
+begin
+  FNodes.Truncate(Mark, @ReleaseNode);
 end;
 
 function CompilesLazily(Info: TJsFunctionInfo): Boolean;

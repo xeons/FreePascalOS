@@ -24,12 +24,16 @@
   and which implicit variables of the functions around it (this,
   arguments) it needs. That is the references its scopes record - and
   of identifiers only one per name and scope, as they all resolve
-  alike. Every other node of the function is freed at once, and the
-  function's scopes stay (they are small).
+  alike. Those are copied into nodes of their own (the arena's
+  reference nodes), the function infos inside forget their nodes, and
+  every node made since the function began is released at once: the
+  next function is parsed into the same memory. The function's scopes
+  stay (they are small).
 
-  A bundle of megabytes of minified code is mostly such functions: its
-  tree was hundreds of megabytes while it was parsed. The functions are
-  parsed again from their source when first called (Js.Compiler).
+  So a lazy function's body costs a scratch tree, not a tree: a bundle
+  of megabytes of minified code is mostly such functions (its tree was
+  hundreds of megabytes while it was parsed). The functions are parsed
+  again from their source when first called (Js.Compiler).
 }
 unit Js.LazyBodies;
 
@@ -41,65 +45,107 @@ uses
   Js.Lexer,
   Js.Ast;
 
-{ Frees the nodes of Info's parameters and body (made since the arena's
-  node count was Mark) but the references its scopes resolve. }
+{ Keeps the references of Info's scopes and releases every node made
+  since the arena's node count was Mark (Info's parameters and body). }
 procedure DiscardLazyBody(Arena: TJsAstArena; Info: TJsFunctionInfo; Mark: Integer);
 
 implementation
 
-{ A scope's references with one identifier per name (the first). }
-procedure CompactReferences(Scope: TJsScope);
+const
+  { Scopes with more kept identifiers than this find duplicates
+    through a hash. }
+  LinearDuplicateLimit = 16;
+
+type
+  { The identifier names a scope keeps, by the address of their text:
+    names are interned by the lexer, so one name is one string (a name
+    made otherwise, never equal by address, is merely kept twice). }
+  TKeptNames = record
+    Slots: array of Pointer;
+    Mask: LongWord;
+  end;
+
+function PointerHash(Key: Pointer): LongWord; inline;
+begin
+  {$push}{$R-}{$Q-}
+  Result := LongWord(PtrUInt(Key) shr 3) * LongWord(2654435761);
+  {$pop}
+end;
+
+{ Adds Key; False when it was there. }
+function AddKeptName(var Names: TKeptNames; Key: Pointer): Boolean;
 var
-  Names: array of UnicodeString;
-  Slots: array of Integer;
-  Mask, Hash: Cardinal;
-  Index, Kept: Integer;
+  Slot: LongWord;
+begin
+  Slot := PointerHash(Key) and Names.Mask;
+  while Names.Slots[Slot] <> nil do
+  begin
+    if Names.Slots[Slot] = Key then
+      Exit(False);
+    Slot := (Slot + 1) and Names.Mask;
+  end;
+  Names.Slots[Slot] := Key;
+  Result := True;
+end;
+
+{ Whether an identifier with Text's name is among References[0..Count - 1]. }
+function KeptLinearly(const References: array of TJsNode; Count: Integer; Text: Pointer): Boolean;
+var
+  Index: Integer;
+begin
+  for Index := 0 to Count - 1 do
+    if (References[Index].Kind = nkIdentifier) and (Pointer(References[Index].Text) = Text) then
+      Exit(True);
+  Result := False;
+end;
+
+{ A reference node of the arena standing for Node. }
+function CopyReference(Arena: TJsAstArena; Node: TJsNode): TJsNode;
+begin
+  Result := Arena.NewReferenceNode(Node.Kind, Node.Line, Node.Column);
+  Result.Op := Node.Op;
+  Result.Flags := Node.Flags;
+  Result.Text := Node.Text;
+  Result.Number := Node.Number;
+  Result.Scope := Node.Scope;
+end;
+
+{ The scope's references, one identifier per name (the first), copied
+  out of the tree. }
+procedure KeepReferences(Arena: TJsAstArena; Scope: TJsScope);
+var
+  Names: TKeptNames;
+  Index, Kept, Size: Integer;
   Node: TJsNode;
-  Duplicate: Boolean;
+  Hashed: Boolean;
 begin
   if Scope.ReferenceCount = 0 then
     Exit;
-  Mask := 16;
-  while Mask < Cardinal(Scope.ReferenceCount) * 2 do
-    Mask := Mask * 2;
-  SetLength(Slots, Mask);
-  SetLength(Names, Scope.ReferenceCount);
-  Dec(Mask);
+  Hashed := Scope.ReferenceCount > LinearDuplicateLimit;
+  if Hashed then
+  begin
+    Size := 32;
+    while Size < Scope.ReferenceCount * 2 do
+      Size := Size * 2;
+    SetLength(Names.Slots, Size);
+    Names.Mask := LongWord(Size - 1);
+  end;
   Kept := 0;
   for Index := 0 to Scope.ReferenceCount - 1 do
   begin
     Node := Scope.References[Index];
-    Duplicate := False;
     if Node.Kind = nkIdentifier then
     begin
-      Hash := NameHash(PWideChar(Node.Text), Length(Node.Text)) and Mask;
-      while Slots[Hash] <> 0 do
+      if Hashed then
       begin
-        if Names[Slots[Hash] - 1] = Node.Text then
-        begin
-          Duplicate := True;
-          Break;
-        end;
-        Hash := (Hash + 1) and Mask;
-      end;
-      if not Duplicate then
-      begin
-        Names[Kept] := Node.Text;
-        Slots[Hash] := Kept + 1;
-      end;
+        if not AddKeptName(Names, Pointer(Node.Text)) then
+          Continue;
+      end
+      else if KeptLinearly(Scope.References, Kept, Pointer(Node.Text)) then
+        Continue;
     end;
-    if Duplicate then
-    begin
-      Node.ReferenceScope := nil;
-      Continue;
-    end;
-    { What the analysis reads is the node itself, not its children. }
-    Node.A := nil;
-    Node.B := nil;
-    Node.C := nil;
-    Node.D := nil;
-    Node.List := nil;
-    Node.Count := 0;
+    Node := CopyReference(Arena, Node);
+    Node.ReferenceScope := Scope;
     Scope.References[Kept] := Node;
     Inc(Kept);
   end;
@@ -107,33 +153,47 @@ begin
   SetLength(Scope.References, Kept);
 end;
 
-{ The nodes the function infos of the scope tree hold go away. }
-procedure ForgetNodes(Scope: TJsScope);
+{ The nodes a function info holds go away. }
+procedure ForgetInfoNodes(Info: TJsFunctionInfo);
+begin
+  Info.Parameters := nil;
+  Info.ParameterCount := 0;
+  Info.Body := nil;
+  Info.BodyCount := 0;
+  Info.ExpressionBody := nil;
+  Info.FieldInitializer := nil;
+  Info.ClassNode := nil;
+  Info.BodyDiscarded := True;
+end;
+
+{ The scope tree's references copied out, its function infos without
+  nodes. A function inside that was discarded already (its own body
+  finished first) has nothing left in the tree but what its caller set
+  on its info since. }
+procedure KeepScopeTree(Arena: TJsAstArena; Scope: TJsScope; Root: Boolean);
 var
   Index: Integer;
   Info: TJsFunctionInfo;
 begin
-  CompactReferences(Scope);
   Info := Scope.Func;
   if (Info <> nil) and (Info.Scope = Scope) then
   begin
-    Info.Parameters := nil;
-    Info.ParameterCount := 0;
-    Info.Body := nil;
-    Info.BodyCount := 0;
-    Info.ExpressionBody := nil;
-    Info.FieldInitializer := nil;
-    Info.ClassNode := nil;
-    Info.BodyDiscarded := True;
+    if Info.BodyDiscarded and not Root then
+    begin
+      ForgetInfoNodes(Info);
+      Exit;
+    end;
+    ForgetInfoNodes(Info);
   end;
+  KeepReferences(Arena, Scope);
   for Index := 0 to Scope.ChildCount - 1 do
-    ForgetNodes(Scope.Children[Index]);
+    KeepScopeTree(Arena, Scope.Children[Index], False);
 end;
 
 procedure DiscardLazyBody(Arena: TJsAstArena; Info: TJsFunctionInfo; Mark: Integer);
 begin
-  ForgetNodes(Info.Scope);
-  Arena.ReleaseUnreferencedNodes(Mark);
+  KeepScopeTree(Arena, Info.Scope, True);
+  Arena.ReleaseNodes(Mark);
 end;
 
 end.
