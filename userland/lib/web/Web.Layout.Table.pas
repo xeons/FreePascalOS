@@ -37,7 +37,7 @@
   column widths and stretched to their rows, and their contents moved
   for vertical-align (top, middle, bottom, baseline). border-spacing
   separates the cells; a caption goes above (or below) the grid.
-  Collapsing borders are laid out as separate ones without spacing.
+  Collapsing borders are resolved by Web.Layout.TableBorders.
 }
 unit Web.Layout.Table;
 

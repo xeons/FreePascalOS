@@ -8832,16 +8832,12 @@
   Script 15
   Script 16
   Scripts with for and event attributes
-/html/semantics/scripting-1/the-script-element/script-noembed-noframes-iframe.xhtml
-  !passing
 /html/semantics/scripting-1/the-script-element/script-onerror-insertion-point-1.html
   !passing
 /html/semantics/scripting-1/the-script-element/script-onload-insertion-point.html
   !passing
 /html/semantics/scripting-1/the-script-element/script-supports.html
   HTMLScriptElement.supports resurns true for 'module'
-/html/semantics/scripting-1/the-script-element/script-text-xhtml.xhtml
-  !harness EXTERNAL-TIMEOUT
 /html/semantics/scripting-1/the-script-element/script-type-and-language-js-svg.svg
   !harness EXTERNAL-TIMEOUT
 /html/semantics/scripting-1/the-script-element/script-type-and-language-js-xhtml.xhtml
@@ -8965,7 +8961,7 @@
 /html/semantics/scripting-1/the-script-element/text-module/service-worker-test.https.html
   !passing
 /html/semantics/scripting-1/the-template-element/additions-to-parsing-xhtml-documents/tag-name.xhtml
-  !harness ERROR
+  !passing
 /html/semantics/scripting-1/the-template-element/additions-to-serializing-xhtml-documents/outerhtml.html
   !passing
 /html/semantics/scripting-1/the-template-element/definitions/template-contents-owner-document-type.html
