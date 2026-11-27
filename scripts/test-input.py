@@ -176,6 +176,16 @@ def wait_for(text, seconds):
     return False
 
 
+def wait_for_after(text, start, seconds):
+    # The text seen in what came after position start of the output.
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        collect(0.2)
+        if text.encode() in received[start:]:
+            return True
+    return False
+
+
 def report_qemu_gone():
     # QEMU ended in the middle of the test (the serial pipe broke): say
     # how it ended and what it printed, and keep everything it left, so
@@ -1045,18 +1055,23 @@ checks.append(('remembered display settings: deleted, the displays\' own come ba
 type_on_serial(b'displayserver &\r')
 wait_for('displayserver: ready', 20)
 point_tablet_at(900, 700)
-type_on_serial(b'ownertest > /tmp/o.log &\r')
-time.sleep(2.5)
+# Each step is waited for by its line ("step N", which ownertest prints
+# when it takes the key), not by a fixed time: under TCG on a busy host a
+# key can take longer than any sleep chosen here.
+owner_start = len(received)
+type_on_serial(b'ownertest | tee /tmp/o.log &\r')
+wait_for_after('visible A 1 B 1 C 1', owner_start, 20)
 overlaps = []
-for step in range(7):
+for step in range(1, 8):
     press('a')
-    time.sleep(0.8)
+    wait_for_after('step %d' % step, owner_start, 15)
+    time.sleep(0.5)
     overlaps.append(take_screen()(400, 320))
 press('a')
-time.sleep(0.5)
+wait_for_after('step 8', owner_start, 15)
 type_on_serial(b'm=DONE; cat /tmp/o.log; kill %1; wait; echo OWNERS $m\r')
 owners_ok = wait_for('OWNERS DONE', 15)
-log_from_here = bytes(received[received.rfind(b'ownertest >'):])
+log_from_here = bytes(received[received.rfind(b'ownertest |'):])
 checks.append(('owned windows: hidden with its owner, the program is told (Visible follows)',
                owners_ok and b'visible B 0' in log_from_here and b'visible A 0 B 0 C 1' in log_from_here and
                b'visible B 1' in log_from_here and b'visible A 1 B 1 C 1' in log_from_here))

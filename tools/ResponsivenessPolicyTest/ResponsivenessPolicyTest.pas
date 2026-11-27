@@ -97,8 +97,8 @@ begin
   Check(ThreadBasePriority(PriorityClassNormal, 19) = 4, 'normal, nice 19 is 4 (as before)');
   Check(ThreadBasePriority(PriorityClassSystem, 0) = 12, 'the display server runs at 12');
   Check(ThreadBasePriority(PriorityClassInteractive, 0) = 10, 'the desktop runs at 10');
-  Check(ThreadBasePriority(PriorityClassBackground, 0) = 6, 'a shown page runs at 6');
-  Check(ThreadBasePriority(PriorityClassIdle, 0) = 4, 'a hidden page runs at 4');
+  Check(ThreadBasePriority(PriorityClassBackground, 0) = 6, 'the background class (a hidden page) runs at 6');
+  Check(ThreadBasePriority(PriorityClassIdle, 0) = 4, 'the idle class runs at 4');
   Check(ThreadBasePriority(PriorityClassSystem, 0) > ThreadBasePriority(PriorityClassInteractive, 0),
     'the display server above the desktop');
   Check(ThreadBasePriority(PriorityClassInteractive, 0) > ThreadBasePriority(PriorityClassNormal, 0),

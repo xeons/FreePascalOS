@@ -18527,11 +18527,13 @@ restrictions off for debugging.
 the whole system to a crawl, then memory running out) is answered at
 three levels:
 
-- *Processor.* A renderer is in the Background priority class while one
-  of its views is shown and Idle while none is (`WebContent.Sandbox`,
-  see "Priority classes"), below the browser's window (Normal), the
-  desktop and task manager (Interactive) and the display server
-  (System); fair share keeps a renderer with many busy threads from
+- *Processor.* A renderer is in the Normal priority class while one of
+  its views is shown, like the browser's window, and Background while
+  none is (`WebContent.Sandbox`, see "Priority classes"); it starts as
+  shown (Idle at its start made a renderer under TCG miss the pings
+  of the hang check while its window's scripts were made). The desktop
+  and task manager (Interactive) and the display server (System) stay
+  above it, and fair share keeps a renderer with many busy threads from
   crowding out other programs at its level.
 - *Memory.* Every content process is put in one job
   (`WebView.ContentMemory.PutInContentJob`, `Sys.Jobs`) whose commit

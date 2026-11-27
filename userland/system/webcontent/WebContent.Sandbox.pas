@@ -24,10 +24,14 @@
   and a high out-of-memory score - higher still while none of its
   views is shown - so that when memory runs out a background renderer
   goes before the browser. Its priority class follows the same way
-  (Kernel.PriorityClasses): Background while a view of it is shown, so
-  a page's scripts and layout never hold up the browser's window (which
-  runs Normal), the desktop or the display server; Idle while none is,
-  so a hidden tab gets the processor only when nothing else wants it.
+  (Kernel.PriorityClasses): Normal while a view of it is shown, as the
+  page in front of the user deserves (the desktop, the task manager and
+  the display server stay above it, and fair share keeps a page with
+  many busy threads from crowding out other programs); Background while
+  none is, so a hidden tab never holds up what is shown. A renderer
+  starts as shown: it is started for the tab being opened, and at Idle
+  or Background it could miss the pings that tell the browser it is
+  alive while its window's scripts are made (slow under emulation).
 }
 unit WebContent.Sandbox;
 
@@ -73,7 +77,7 @@ begin
     else
       Result := 'memory limit refused (' + IntToStr(Error) + ')';
   end;
-  SetShown(False);
+  SetShown(True);
   if not Restrict then
     Exit(Result + ', not sandboxed');
   Error := RestrictThisProcess(RestrictionsAll);
@@ -93,12 +97,12 @@ begin
   if Shown then
   begin
     SetOomScoreAdjust(ForegroundOomAdjust, Previous);
-    SetPriorityClass(0, PriorityClassBackground);
+    SetPriorityClass(0, PriorityClassNormal);
   end
   else
   begin
     SetOomScoreAdjust(BackgroundOomAdjust, Previous);
-    SetPriorityClass(0, PriorityClassIdle);
+    SetPriorityClass(0, PriorityClassBackground);
   end;
 end;
 
