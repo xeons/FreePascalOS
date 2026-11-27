@@ -17136,6 +17136,14 @@ read, so each must cost what the change touched, not the page:
   generated text nor touch a counter (`bfCounterFree`).
 - An image arriving updates its own element's box
   (`ChangedImageElement`), not a walk of the document.
+- Nothing is left marked after a layout: fixed boxes are laid out after
+  the viewport, and a mark made inside one (a block moved below floats,
+  a cell grown to its row) used to stay on the boxes above it, so every
+  later geometry read laid the page out again (a fixed flex header made
+  a read loop lay out 800 times instead of 10). The marks above fixed
+  boxes are cleared once they are laid out.
+- getComputedStyle brings only the styles up to date unless it reads a
+  used width or height (`TDocumentLayout.UpdateStyles`).
 
 - Block formatting (`Web.Layout.Block`, CSS 2.2 9.4.1, 10.3.3, 10.6.3,
   8.3.1): widths with auto margins, min/max, box-sizing and percentages;
