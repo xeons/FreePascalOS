@@ -64,6 +64,11 @@ how the existing pieces fit together.
       the dynamic tick's waker check now fails only when most of its
       rounds are late, as a left-deferred tick makes them, so one such
       late timer no longer fails the el1 boot)
+- [ ] arm64 coretest: `timetest` failed once under the KVM run's arm64 (TCG) coretest
+      (463 of 464) and passed in the next run; its output was lost: the arm64 test
+      prints only the failing command, not the expected and received output, and the
+      next run overwrites build/arm64/test-arm64-coretest.log — print both and keep
+      the log of a failed run
 - [x] Timeouts on waits, and alertable waits (`WaitForEventWithOptions`)
 - [x] Mutexes (owner tracking, recursion)
 - [x] Semaphores and reader/writer locks (kernel; semaphore objects for programs,
