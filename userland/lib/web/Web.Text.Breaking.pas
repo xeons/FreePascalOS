@@ -48,7 +48,10 @@ type
 
 { The code point at Text[Index] (1 based), and its length in bytes. }
 function CodePointAt(const Text: string; Index: Integer; out ByteCount: Integer): LongWord;
-procedure AppendCodePoint(var Text: string; CodePoint: LongWord);
+procedure AppendCodePoint(var Text: string; CodePoint: LongWord); overload;
+{ The same into a buffer: Used of Text's bytes are written, Text grows
+  when full. }
+procedure AppendCodePoint(var Text: string; var Used: SizeInt; CodePoint: LongWord); overload;
 function IsIdeographic(CodePoint: LongWord): Boolean;
 function IsClosingPunctuation(CodePoint: LongWord): Boolean;
 { Whether a line may break between Previous and Next. }
@@ -115,6 +118,38 @@ begin
   else
     Text := Text + Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
       Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
+end;
+
+procedure AppendCodePoint(var Text: string; var Used: SizeInt; CodePoint: LongWord);
+begin
+  if Used + 4 > Length(Text) then
+    SetLength(Text, (Length(Text) + 4) * 2);
+  if CodePoint < $80 then
+  begin
+    Text[Used + 1] := Chr(CodePoint);
+    Inc(Used);
+  end
+  else if CodePoint < $800 then
+  begin
+    Text[Used + 1] := Chr($C0 or (CodePoint shr 6));
+    Text[Used + 2] := Chr($80 or (CodePoint and $3F));
+    Inc(Used, 2);
+  end
+  else if CodePoint < $10000 then
+  begin
+    Text[Used + 1] := Chr($E0 or (CodePoint shr 12));
+    Text[Used + 2] := Chr($80 or ((CodePoint shr 6) and $3F));
+    Text[Used + 3] := Chr($80 or (CodePoint and $3F));
+    Inc(Used, 3);
+  end
+  else
+  begin
+    Text[Used + 1] := Chr($F0 or (CodePoint shr 18));
+    Text[Used + 2] := Chr($80 or ((CodePoint shr 12) and $3F));
+    Text[Used + 3] := Chr($80 or ((CodePoint shr 6) and $3F));
+    Text[Used + 4] := Chr($80 or (CodePoint and $3F));
+    Inc(Used, 4);
+  end;
 end;
 
 function IsIdeographic(CodePoint: LongWord): Boolean;
