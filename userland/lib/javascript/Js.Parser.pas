@@ -105,6 +105,10 @@ type
       its pattern. }
     procedure CheckRegExpLiteral(const Pattern, Flags: UnicodeString);
     procedure FailAt(const Token: TJsToken; const Text: string);
+    { The messages with a name are made here: a routine building one
+      would need an exception frame for its strings on every call. }
+    procedure FailRedeclared(const Token: TJsToken; const Name: UnicodeString);
+    procedure FailUndefinedLabel(const Name: UnicodeString);
     procedure Unexpected;
     procedure Next;
     function PeekToken: TJsToken;
@@ -307,6 +311,16 @@ begin
   raise EJsSyntaxError.CreateAt(Text, Token.Line, Token.Column);
 end;
 
+procedure TJsParser.FailRedeclared(const Token: TJsToken; const Name: UnicodeString);
+begin
+  FailAt(Token, 'Identifier ''' + string(Name) + ''' has already been declared');
+end;
+
+procedure TJsParser.FailUndefinedLabel(const Name: UnicodeString);
+begin
+  Fail('Undefined label ''' + string(Name) + '''');
+end;
+
 procedure TJsParser.Unexpected;
 begin
   if FToken.Kind = tkEnd then
@@ -507,7 +521,7 @@ begin
     begin
       Existing := Walk.Find(Name);
       if (Existing <> nil) and Existing.IsLexical then
-        FailAt(Token, 'Identifier ''' + string(Name) + ''' has already been declared');
+        FailRedeclared(Token, Name);
       Walk := Walk.Parent;
     end;
     Target := FScope.FunctionScope;
@@ -520,7 +534,7 @@ begin
     if (Kind in [dkLet, dkConst, dkClass]) or (Existing.IsLexical and (Kind <> dkImplicit)) then
     begin
       if not ((Existing.Kind = dkParameter) and (Kind = dkVar)) then
-        FailAt(Token, 'Identifier ''' + string(Name) + ''' has already been declared');
+        FailRedeclared(Token, Name);
     end;
     if (Kind = dkFunction) and (Existing.Kind in [dkVar, dkParameter, dkFunction]) then
       Existing.Kind := dkFunction;
@@ -1479,7 +1493,7 @@ begin
       if FLabels[Index] = Result.Text then
         Found := True;
     if not Found then
-      Fail('Undefined label ''' + string(Result.Text) + '''');
+      FailUndefinedLabel(Result.Text);
     Next;
   end
   else if (Kind = nkContinue) and (FLoopDepth = 0) then
@@ -1656,7 +1670,7 @@ begin
     Existing := FScope.Find(Name);
     if (Existing <> nil) and (FStrict or (Existing.Kind <> dkFunction) or not Existing.IsPlainBlockFunction or
       IsAsync or IsGenerator) then
-      FailAt(NameToken, 'Identifier ''' + string(Name) + ''' has already been declared');
+      FailRedeclared(NameToken, Name);
     if Existing <> nil then
       Variable := Existing
     else

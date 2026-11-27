@@ -144,9 +144,7 @@ begin
       else if KeptLinearly(Scope.References, Kept, Pointer(Node.Text)) then
         Continue;
     end;
-    Node := CopyReference(Arena, Node);
-    Node.ReferenceScope := Scope;
-    Scope.References[Kept] := Node;
+    Scope.References[Kept] := CopyReference(Arena, Node);
     Inc(Kept);
   end;
   Scope.ReferenceCount := Kept;

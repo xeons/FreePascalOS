@@ -124,6 +124,8 @@ type
   TJsNameArray = array of UnicodeString;
   TJsVariable = class;
 
+  { The small fields come first, packed (a bundle's tree has a million
+    nodes). }
   TJsNode = class
   public
     Kind: TJsNodeKind;
@@ -131,9 +133,9 @@ type
     Flags: Word;
     Line: Integer;
     Column: Integer;
+    Count: Integer;
     A, B, C, D: TJsNode;
     List: array of TJsNode;
-    Count: Integer;
     Text: UnicodeString;
     Name: UnicodeString;
     Number: Double;
@@ -141,8 +143,6 @@ type
     Func: TJsFunctionInfo;
     { An identifier's variable (nil: a global by name). }
     Variable: TJsVariable;
-    { The scope an identifier appears in. }
-    ReferenceScope: TJsScope;
     { An identifier inside with statements or below a function with a
       sloppy direct eval: the objects (variables holding them, innermost
       first) to look the name up in before Variable. }
@@ -625,7 +625,6 @@ begin
     SetLength(References, Length(References) * 2 + 8);
   References[ReferenceCount] := Node;
   Inc(ReferenceCount);
-  Node.ReferenceScope := Self;
   if (Node.Kind = nkCall) and ((Node.Flags and CallFlagDirectEval) <> 0) then
     HasDirectEval := True;
 end;
